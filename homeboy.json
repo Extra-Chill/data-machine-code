@@ -1,0 +1,22 @@
+{
+  "auto_cleanup": false,
+  "changelog_target": "docs/CHANGELOG.md",
+  "extensions": {
+    "wordpress": {
+      "php": "8.2",
+      "node": "20"
+    }
+  },
+  "id": "data-machine-code",
+  "remote_path": "wp-content/plugins/data-machine-code",
+  "version_targets": [
+    {
+      "file": "data-machine-code.php",
+      "pattern": "Version:\\s*([0-9.]+)"
+    },
+    {
+      "file": "data-machine-code.php",
+      "pattern": "DATAMACHINE_CODE_VERSION',\\s*'([0-9.]+)'"
+    }
+  ]
+}
