@@ -129,12 +129,21 @@ function datamachine_code_register_system_abilities() {
 }
 
 /**
- * Register WP-CLI commands.
+ * Register WP-CLI commands after core is loaded.
  */
-if ( defined( 'WP_CLI' ) && WP_CLI ) {
+function datamachine_code_register_cli_commands() {
+	if ( ! defined( 'WP_CLI' ) || ! WP_CLI ) {
+		return;
+	}
+
+	if ( ! class_exists( 'DataMachine\Cli\BaseCommand' ) ) {
+		return;
+	}
+
 	\WP_CLI::add_command( 'datamachine-code github', \DataMachineCode\Cli\Commands\GitHubCommand::class );
 	\WP_CLI::add_command( 'datamachine-code workspace', \DataMachineCode\Cli\Commands\WorkspaceCommand::class );
 }
+add_action( 'plugins_loaded', 'datamachine_code_register_cli_commands', 21 );
 
 /**
  * Register chat tools.
