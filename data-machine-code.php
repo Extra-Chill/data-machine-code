@@ -171,6 +171,38 @@ add_filter( 'datamachine_tasks', function ( array $tasks ): array {
 } );
 
 /**
+ * Register code context memory file.
+ *
+ * Scaffolds contexts/code.md with GitHub, workspace, and git instructions.
+ * The file is written once — after that, the agent owns it.
+ */
+add_filter( 'datamachine_default_context_files', function ( array $defaults ): array {
+	$content = <<<'MD'
+# Code Context
+
+This context is active when you have developer tools available — GitHub integration, workspace file operations, and git workflows.
+
+## GitHub Issue Creation
+
+When using create_github_issue: include a clear title and detailed body with context, reproduction steps, and relevant log snippets. Use labels to categorize. Route to the most appropriate repo. Never create duplicates.
+MD;
+
+	// Append available repos dynamically.
+	if ( class_exists( '\DataMachineCode\Abilities\GitHubAbilities' ) ) {
+		$repos = \DataMachineCode\Abilities\GitHubAbilities::getRegisteredRepos();
+		if ( ! empty( $repos ) ) {
+			$content .= "\n\nAvailable repositories for issue creation:\n";
+			foreach ( $repos as $entry ) {
+				$content .= '- ' . $entry['owner'] . '/' . $entry['repo'] . ' — ' . $entry['label'] . "\n";
+			}
+		}
+	}
+
+	$defaults['code'] = $content;
+	return $defaults;
+} );
+
+/**
  * Register GitHub repos for issue creation.
  */
 add_filter( 'datamachine_github_issue_repos', function ( array $repos ): array {
