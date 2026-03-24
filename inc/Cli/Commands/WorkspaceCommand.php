@@ -17,7 +17,7 @@ namespace DataMachineCode\Cli\Commands;
 
 use WP_CLI;
 use DataMachine\Cli\BaseCommand;
-use DataMachine\Core\FilesRepository\Workspace;
+use DataMachineCode\Workspace\Workspace;
 
 defined( 'ABSPATH' ) || exit;
 

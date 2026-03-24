@@ -15,9 +15,9 @@
 namespace DataMachineCode\Abilities;
 
 use DataMachine\Abilities\PermissionHelper;
-use DataMachine\Core\FilesRepository\Workspace;
-use DataMachine\Core\FilesRepository\WorkspaceReader;
-use DataMachine\Core\FilesRepository\WorkspaceWriter;
+use DataMachineCode\Workspace\Workspace;
+use DataMachineCode\Workspace\WorkspaceReader;
+use DataMachineCode\Workspace\WorkspaceWriter;
 
 defined( 'ABSPATH' ) || exit;
 
