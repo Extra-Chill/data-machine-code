@@ -92,8 +92,8 @@ class GitHub extends FetchHandler {
 			$items  = $result['issues'] ?? array();
 		}
 
-		if ( ! $result['success'] ) {
-			$context->log( 'error', 'GitHub: API error — ' . ( $result['error'] ?? 'Unknown' ) );
+		if ( is_wp_error( $result ) ) {
+			$context->log( 'error', 'GitHub: API error — ' . $result->get_error_message() );
 			return array();
 		}
 

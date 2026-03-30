@@ -86,17 +86,13 @@ class Workspace {
 	/**
 	 * Ensure the workspace directory exists with correct permissions.
 	 *
-	 * @return array{success: bool, path: string, message?: string, created?: bool}
+	 * @return array{success: bool, path: string, created?: bool}|\WP_Error
 	 */
-	public function ensure_exists(): array {
+	public function ensure_exists(): array|\WP_Error {
 		$path = $this->workspace_path;
 
 		if ( '' === $path ) {
-			return array(
-				'success' => false,
-				'path'    => '',
-				'message' => 'Workspace unavailable: no writable path outside the web root. Define DATAMACHINE_WORKSPACE_PATH in wp-config.php or ensure /var/lib/datamachine/ is writable.',
-			);
+			return new \WP_Error( 'workspace_unavailable', 'Workspace unavailable: no writable path outside the web root. Define DATAMACHINE_WORKSPACE_PATH in wp-config.php or ensure /var/lib/datamachine/ is writable.', array( 'status' => 500 ) );
 		}
 
 		if ( is_dir( $path ) ) {
@@ -111,11 +107,7 @@ class Workspace {
 		$created = wp_mkdir_p( $path );
 
 		if ( ! $created ) {
-			return array(
-				'success' => false,
-				'path'    => $path,
-				'message' => sprintf( 'Failed to create workspace directory: %s', $path ),
-			);
+			return new \WP_Error( 'workspace_create_failed', sprintf( 'Failed to create workspace directory: %s', $path ), array( 'status' => 500 ) );
 		}
 
 		// Set permissions for multi-user access (web server group).
@@ -194,25 +186,19 @@ class Workspace {
 	 *
 	 * @param string      $url  Git clone URL.
 	 * @param string|null $name Directory name override (derived from URL if null).
-	 * @return array{success: bool, name?: string, path?: string, message?: string}
+	 * @return array{success: bool, name?: string, path?: string, message?: string}|\WP_Error
 	 */
-	public function clone_repo( string $url, ?string $name = null ): array {
+	public function clone_repo( string $url, ?string $name = null ): array|\WP_Error {
 		// Validate URL.
 		if ( empty( $url ) ) {
-			return array(
-				'success' => false,
-				'message' => 'Repository URL is required.',
-			);
+			return new \WP_Error( 'missing_url', 'Repository URL is required.', array( 'status' => 400 ) );
 		}
 
 		// Derive name from URL if not provided.
 		if ( null === $name || '' === $name ) {
 			$name = $this->derive_repo_name( $url );
 			if ( null === $name ) {
-				return array(
-					'success' => false,
-					'message' => sprintf( 'Could not derive repository name from URL: %s. Use --name to specify.', $url ),
-				);
+				return new \WP_Error( 'invalid_url', sprintf( 'Could not derive repository name from URL: %s. Use --name to specify.', $url ), array( 'status' => 400 ) );
 			}
 		}
 
@@ -221,17 +207,12 @@ class Workspace {
 
 		// Check if already exists.
 		if ( is_dir( $repo_path ) ) {
-			return array(
-				'success' => false,
-				'name'    => $name,
-				'path'    => $repo_path,
-				'message' => sprintf( 'Directory already exists: %s. Use "remove" first to re-clone.', $name ),
-			);
+			return new \WP_Error( 'repo_exists', sprintf( 'Directory already exists: %s. Use "remove" first to re-clone.', $name ), array( 'status' => 400 ) );
 		}
 
 		// Ensure workspace exists.
 		$ensure = $this->ensure_exists();
-		if ( ! $ensure['success'] ) {
+		if ( is_wp_error( $ensure ) ) {
 			return $ensure;
 		}
 
@@ -244,11 +225,7 @@ class Workspace {
 		exec( $command, $output, $exit_code );
 
 		if ( 0 !== $exit_code ) {
-			return array(
-				'success' => false,
-				'name'    => $name,
-				'message' => sprintf( 'Git clone failed (exit %d): %s', $exit_code, implode( "\n", $output ) ),
-			);
+			return new \WP_Error( 'clone_failed', sprintf( 'Git clone failed (exit %d): %s', $exit_code, implode( "\n", $output ) ), array( 'status' => 500 ) );
 		}
 
 		return array(
@@ -263,26 +240,20 @@ class Workspace {
 	 * Remove a repository from the workspace.
 	 *
 	 * @param string $name Repository directory name.
-	 * @return array{success: bool, message: string}
+	 * @return array{success: bool, message: string}|\WP_Error
 	 */
-	public function remove_repo( string $name ): array {
+	public function remove_repo( string $name ): array|\WP_Error {
 		$name      = $this->sanitize_name( $name );
 		$repo_path = $this->workspace_path . '/' . $name;
 
 		if ( ! is_dir( $repo_path ) ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'Repository "%s" not found in workspace.', $name ),
-			);
+			return new \WP_Error( 'repo_not_found', sprintf( 'Repository "%s" not found in workspace.', $name ), array( 'status' => 404 ) );
 		}
 
 		// Safety: ensure path is within workspace.
 		$validation = $this->validate_containment( $repo_path, $this->workspace_path );
 		if ( ! $validation['valid'] ) {
-			return array(
-				'success' => false,
-				'message' => $validation['message'],
-			);
+			return new \WP_Error( 'path_traversal', $validation['message'], array( 'status' => 403 ) );
 		}
 
 		// Remove recursively.
@@ -291,10 +262,7 @@ class Workspace {
 		exec( sprintf( 'rm -rf %s 2>&1', $escaped ), $output, $exit_code );
 
 		if ( 0 !== $exit_code ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'Failed to remove (exit %d): %s', $exit_code, implode( "\n", $output ) ),
-			);
+			return new \WP_Error( 'remove_failed', sprintf( 'Failed to remove (exit %d): %s', $exit_code, implode( "\n", $output ) ), array( 'status' => 500 ) );
 		}
 
 		return array(
@@ -307,17 +275,14 @@ class Workspace {
 	 * Show detailed info about a workspace repo.
 	 *
 	 * @param string $name Repository directory name.
-	 * @return array{success: bool, name?: string, path?: string, branch?: string, remote?: string, commit?: string, dirty?: int, message?: string}
+	 * @return array{success: bool, name?: string, path?: string, branch?: string, remote?: string, commit?: string, dirty?: int}|\WP_Error
 	 */
-	public function show_repo( string $name ): array {
+	public function show_repo( string $name ): array|\WP_Error {
 		$name      = $this->sanitize_name( $name );
 		$repo_path = $this->workspace_path . '/' . $name;
 
 		if ( ! is_dir( $repo_path ) ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'Repository "%s" not found in workspace.', $name ),
-			);
+			return new \WP_Error( 'repo_not_found', sprintf( 'Repository "%s" not found in workspace.', $name ), array( 'status' => 404 ) );
 		}
 
 		$escaped = escapeshellarg( $repo_path );
@@ -346,14 +311,14 @@ class Workspace {
 	 * @param string $name Repository directory name.
 	 * @return array
 	 */
-	public function git_status( string $name ): array {
+	public function git_status( string $name ): array|\WP_Error {
 		$repo_path = $this->resolve_repo_path( $name );
-		if ( is_array( $repo_path ) ) {
+		if ( is_wp_error( $repo_path ) ) {
 			return $repo_path;
 		}
 
 		$status_result = $this->run_git( $repo_path, 'status --porcelain' );
-		if ( ! $status_result['success'] ) {
+		if ( is_wp_error( $status_result ) ) {
 			return $status_result;
 		}
 
@@ -367,9 +332,9 @@ class Workspace {
 			'success' => true,
 			'name'    => $this->sanitize_name( $name ),
 			'path'    => $repo_path,
-			'branch'  => $branch_result['success'] ? trim( (string) $branch_result['output'] ) : null,
-			'remote'  => $remote_result['success'] ? trim( (string) $remote_result['output'] ) : null,
-			'commit'  => $latest_result['success'] ? trim( (string) $latest_result['output'] ) : null,
+			'branch'  => ! is_wp_error( $branch_result ) ? trim( (string) $branch_result['output'] ) : null,
+			'remote'  => ! is_wp_error( $remote_result ) ? trim( (string) $remote_result['output'] ) : null,
+			'commit'  => ! is_wp_error( $latest_result ) ? trim( (string) $latest_result['output'] ) : null,
 			'dirty'   => count( $files ),
 			'files'   => array_values( $files ),
 		);
@@ -382,32 +347,29 @@ class Workspace {
 	 * @param bool   $allow_dirty Allow pull with dirty working tree.
 	 * @return array
 	 */
-	public function git_pull( string $name, bool $allow_dirty = false ): array {
+	public function git_pull( string $name, bool $allow_dirty = false ): array|\WP_Error {
 		$repo_path = $this->resolve_repo_path( $name );
-		if ( is_array( $repo_path ) ) {
+		if ( is_wp_error( $repo_path ) ) {
 			return $repo_path;
 		}
 
 		$policy_check = $this->ensure_git_mutation_allowed( $this->sanitize_name( $name ) );
-		if ( ! $policy_check['success'] ) {
+		if ( is_wp_error( $policy_check ) ) {
 			return $policy_check;
 		}
 
 		$status = $this->git_status( $name );
-		if ( ! $status['success'] ) {
+		if ( is_wp_error( $status ) ) {
 			return $status;
 		}
 
 		if ( ! $allow_dirty && ( $status['dirty'] ?? 0 ) > 0 ) {
-			return array(
-				'success' => false,
-				'message' => 'Working tree is dirty. Commit/stash changes first or pass allow_dirty=true.',
-			);
+			return new \WP_Error( 'dirty_working_tree', 'Working tree is dirty. Commit/stash changes first or pass allow_dirty=true.', array( 'status' => 400 ) );
 		}
 
 		$result = $this->run_git( $repo_path, 'pull --ff-only' );
 
-		if ( ! $result['success'] ) {
+		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
 
@@ -425,31 +387,25 @@ class Workspace {
 	 * @param array  $paths Relative paths to stage.
 	 * @return array
 	 */
-	public function git_add( string $name, array $paths ): array {
+	public function git_add( string $name, array $paths ): array|\WP_Error {
 		$repo_name = $this->sanitize_name( $name );
 		$repo_path = $this->resolve_repo_path( $name );
-		if ( is_array( $repo_path ) ) {
+		if ( is_wp_error( $repo_path ) ) {
 			return $repo_path;
 		}
 
 		$policy_check = $this->ensure_git_mutation_allowed( $repo_name );
-		if ( ! $policy_check['success'] ) {
+		if ( is_wp_error( $policy_check ) ) {
 			return $policy_check;
 		}
 
 		if ( empty( $paths ) ) {
-			return array(
-				'success' => false,
-				'message' => 'At least one path is required for git add.',
-			);
+			return new \WP_Error( 'missing_paths', 'At least one path is required for git add.', array( 'status' => 400 ) );
 		}
 
 		$allowed_roots = $this->get_repo_allowed_paths( $repo_name );
 		if ( empty( $allowed_roots ) ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'No allowed paths configured for repo "%s".', $repo_name ),
-			);
+			return new \WP_Error( 'no_allowed_paths', sprintf( 'No allowed paths configured for repo "%s".', $repo_name ), array( 'status' => 403 ) );
 		}
 
 		$clean_paths = array();
@@ -460,40 +416,28 @@ class Workspace {
 			}
 
 			if ( $this->has_traversal( $relative ) || str_starts_with( $relative, '/' ) ) {
-				return array(
-					'success' => false,
-					'message' => sprintf( 'Invalid path for git add: %s', $relative ),
-				);
+				return new \WP_Error( 'invalid_path', sprintf( 'Invalid path for git add: %s', $relative ), array( 'status' => 400 ) );
 			}
 
 			if ( $this->is_sensitive_path( $relative ) ) {
-				return array(
-					'success' => false,
-					'message' => sprintf( 'Refusing to stage sensitive path: %s', $relative ),
-				);
+				return new \WP_Error( 'sensitive_path', sprintf( 'Refusing to stage sensitive path: %s', $relative ), array( 'status' => 403 ) );
 			}
 
 			if ( ! $this->is_path_allowed( $relative, $allowed_roots ) ) {
-				return array(
-					'success' => false,
-					'message' => sprintf( 'Path "%s" is outside configured allowlist.', $relative ),
-				);
+				return new \WP_Error( 'path_not_allowed', sprintf( 'Path "%s" is outside configured allowlist.', $relative ), array( 'status' => 403 ) );
 			}
 
 			$clean_paths[] = $relative;
 		}
 
 		if ( empty( $clean_paths ) ) {
-			return array(
-				'success' => false,
-				'message' => 'No valid paths provided for git add.',
-			);
+			return new \WP_Error( 'no_valid_paths', 'No valid paths provided for git add.', array( 'status' => 400 ) );
 		}
 
 		$escaped_paths = array_map( 'escapeshellarg', $clean_paths );
 		$result        = $this->run_git( $repo_path, 'add -- ' . implode( ' ', $escaped_paths ) );
 
-		if ( ! $result['success'] ) {
+		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
 
@@ -512,55 +456,43 @@ class Workspace {
 	 * @param string $message Commit message.
 	 * @return array
 	 */
-	public function git_commit( string $name, string $message ): array {
+	public function git_commit( string $name, string $message ): array|\WP_Error {
 		$repo_name = $this->sanitize_name( $name );
 		$repo_path = $this->resolve_repo_path( $name );
-		if ( is_array( $repo_path ) ) {
+		if ( is_wp_error( $repo_path ) ) {
 			return $repo_path;
 		}
 
 		$policy_check = $this->ensure_git_mutation_allowed( $repo_name, true );
-		if ( ! $policy_check['success'] ) {
+		if ( is_wp_error( $policy_check ) ) {
 			return $policy_check;
 		}
 
 		$message = trim( $message );
 		if ( '' === $message ) {
-			return array(
-				'success' => false,
-				'message' => 'Commit message is required.',
-			);
+			return new \WP_Error( 'missing_message', 'Commit message is required.', array( 'status' => 400 ) );
 		}
 
 		if ( strlen( $message ) < 8 ) {
-			return array(
-				'success' => false,
-				'message' => 'Commit message must be at least 8 characters.',
-			);
+			return new \WP_Error( 'message_too_short', 'Commit message must be at least 8 characters.', array( 'status' => 400 ) );
 		}
 
 		if ( strlen( $message ) > 200 ) {
-			return array(
-				'success' => false,
-				'message' => 'Commit message must be 200 characters or fewer.',
-			);
+			return new \WP_Error( 'message_too_long', 'Commit message must be 200 characters or fewer.', array( 'status' => 400 ) );
 		}
 
 		$staged = $this->run_git( $repo_path, 'diff --cached --name-only' );
-		if ( ! $staged['success'] ) {
+		if ( is_wp_error( $staged ) ) {
 			return $staged;
 		}
 
 		$staged_files = array_filter( array_map( 'trim', explode( "\n", $staged['output'] ?? '' ) ) );
 		if ( empty( $staged_files ) ) {
-			return array(
-				'success' => false,
-				'message' => 'No staged changes to commit.',
-			);
+			return new \WP_Error( 'nothing_staged', 'No staged changes to commit.', array( 'status' => 400 ) );
 		}
 
 		$commit = $this->run_git( $repo_path, 'commit -m ' . escapeshellarg( $message ) );
-		if ( ! $commit['success'] ) {
+		if ( is_wp_error( $commit ) ) {
 			return $commit;
 		}
 
@@ -580,20 +512,20 @@ class Workspace {
 	 * @param string|null $branch Branch override.
 	 * @return array
 	 */
-	public function git_push( string $name, string $remote = 'origin', ?string $branch = null ): array {
+	public function git_push( string $name, string $remote = 'origin', ?string $branch = null ): array|\WP_Error {
 		$repo_name = $this->sanitize_name( $name );
 		$repo_path = $this->resolve_repo_path( $name );
-		if ( is_array( $repo_path ) ) {
+		if ( is_wp_error( $repo_path ) ) {
 			return $repo_path;
 		}
 
 		$policy_check = $this->ensure_git_mutation_allowed( $repo_name, true );
-		if ( ! $policy_check['success'] ) {
+		if ( is_wp_error( $policy_check ) ) {
 			return $policy_check;
 		}
 
 		$current_branch_result = $this->run_git( $repo_path, 'rev-parse --abbrev-ref HEAD' );
-		if ( ! $current_branch_result['success'] ) {
+		if ( is_wp_error( $current_branch_result ) ) {
 			return $current_branch_result;
 		}
 
@@ -602,16 +534,13 @@ class Workspace {
 
 		$fixed_branch = $this->get_repo_fixed_branch( $repo_name );
 		if ( null !== $fixed_branch && $target_branch !== $fixed_branch ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'Push blocked: repo "%s" is restricted to branch "%s".', $repo_name, $fixed_branch ),
-			);
+			return new \WP_Error( 'branch_restricted', sprintf( 'Push blocked: repo "%s" is restricted to branch "%s".', $repo_name, $fixed_branch ), array( 'status' => 403 ) );
 		}
 
 		$cmd    = sprintf( 'push %s %s', escapeshellarg( $remote ), escapeshellarg( $target_branch ) );
 		$result = $this->run_git( $repo_path, $cmd );
 
-		if ( ! $result['success'] ) {
+		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
 
@@ -631,9 +560,9 @@ class Workspace {
 	 * @param int    $limit Number of entries.
 	 * @return array
 	 */
-	public function git_log( string $name, int $limit = 20 ): array {
+	public function git_log( string $name, int $limit = 20 ): array|\WP_Error {
 		$repo_path = $this->resolve_repo_path( $name );
-		if ( is_array( $repo_path ) ) {
+		if ( is_wp_error( $repo_path ) ) {
 			return $repo_path;
 		}
 
@@ -641,7 +570,7 @@ class Workspace {
 		$cmd   = sprintf( 'log -n %d --pretty=format:%s', $limit, escapeshellarg( '%h|%an|%ad|%s' ) );
 		$log   = $this->run_git( $repo_path, $cmd );
 
-		if ( ! $log['success'] ) {
+		if ( is_wp_error( $log ) ) {
 			return $log;
 		}
 
@@ -678,9 +607,9 @@ class Workspace {
 	 * @param string|null $path   Optional relative path filter.
 	 * @return array
 	 */
-	public function git_diff( string $name, ?string $from = null, ?string $to = null, bool $staged = false, ?string $path = null ): array {
+	public function git_diff( string $name, ?string $from = null, ?string $to = null, bool $staged = false, ?string $path = null ): array|\WP_Error {
 		$repo_path = $this->resolve_repo_path( $name );
-		if ( is_array( $repo_path ) ) {
+		if ( is_wp_error( $repo_path ) ) {
 			return $repo_path;
 		}
 
@@ -700,10 +629,7 @@ class Workspace {
 		if ( ! empty( $path ) ) {
 			$relative = trim( $path );
 			if ( $this->has_traversal( $relative ) || str_starts_with( $relative, '/' ) ) {
-				return array(
-					'success' => false,
-					'message' => sprintf( 'Invalid diff path: %s', $relative ),
-				);
+				return new \WP_Error( 'invalid_path', sprintf( 'Invalid diff path: %s', $relative ), array( 'status' => 400 ) );
 			}
 
 			$args[] = '--';
@@ -711,7 +637,7 @@ class Workspace {
 		}
 
 		$diff = $this->run_git( $repo_path, implode( ' ', $args ) );
-		if ( ! $diff['success'] ) {
+		if ( is_wp_error( $diff ) ) {
 			return $diff;
 		}
 
@@ -794,32 +720,23 @@ class Workspace {
 	 * Resolve and validate repository path by name.
 	 *
 	 * @param string $name Repository name.
-	 * @return string|array String path on success, error array on failure.
+	 * @return string|\WP_Error String path on success, WP_Error on failure.
 	 */
-	private function resolve_repo_path( string $name ): string|array {
+	private function resolve_repo_path( string $name ): string|\WP_Error {
 		$sanitized = $this->sanitize_name( $name );
 		$repo_path = $this->workspace_path . '/' . $sanitized;
 
 		if ( ! is_dir( $repo_path ) ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'Repository "%s" not found in workspace.', $sanitized ),
-			);
+			return new \WP_Error( 'repo_not_found', sprintf( 'Repository "%s" not found in workspace.', $sanitized ), array( 'status' => 404 ) );
 		}
 
 		if ( ! is_dir( $repo_path . '/.git' ) ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'Repository "%s" is not a git repository.', $sanitized ),
-			);
+			return new \WP_Error( 'not_git_repo', sprintf( 'Repository "%s" is not a git repository.', $sanitized ), array( 'status' => 400 ) );
 		}
 
 		$validation = $this->validate_containment( $repo_path, $this->workspace_path );
 		if ( ! $validation['valid'] ) {
-			return array(
-				'success' => false,
-				'message' => $validation['message'],
-			);
+			return new \WP_Error( 'path_traversal', $validation['message'], array( 'status' => 403 ) );
 		}
 
 		return $validation['real_path'];
@@ -832,7 +749,7 @@ class Workspace {
 	 * @param string $git_args  Git arguments (without leading "git").
 	 * @return array
 	 */
-	private function run_git( string $repo_path, string $git_args ): array {
+	private function run_git( string $repo_path, string $git_args ): array|\WP_Error {
 		$escaped_repo = escapeshellarg( $repo_path );
 		$command      = sprintf( 'git -C %s %s 2>&1', $escaped_repo, $git_args );
 
@@ -840,11 +757,7 @@ class Workspace {
 		exec( $command, $output, $exit_code );
 
 		if ( 0 !== $exit_code ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'Git command failed (exit %d): %s', $exit_code, implode( "\n", $output ) ),
-				'output'  => implode( "\n", $output ),
-			);
+			return new \WP_Error( 'git_command_failed', sprintf( 'Git command failed (exit %d): %s', $exit_code, implode( "\n", $output ) ), array( 'status' => 500, 'output' => implode( "\n", $output ) ) );
 		}
 
 		return array(
@@ -860,25 +773,19 @@ class Workspace {
 	 * @param bool   $require_push Whether push must also be enabled.
 	 * @return array
 	 */
-	private function ensure_git_mutation_allowed( string $repo_name, bool $require_push = false ): array {
+	private function ensure_git_mutation_allowed( string $repo_name, bool $require_push = false ): true|\WP_Error {
 		$policies = $this->get_workspace_git_policies();
 		$repo     = $policies['repos'][ $repo_name ] ?? null;
 
 		if ( ! is_array( $repo ) || empty( $repo['write_enabled'] ) ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'Git write operations are disabled for repo "%s".', $repo_name ),
-			);
+			return new \WP_Error( 'git_write_disabled', sprintf( 'Git write operations are disabled for repo "%s".', $repo_name ), array( 'status' => 403 ) );
 		}
 
 		if ( $require_push && empty( $repo['push_enabled'] ) ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'Git push is disabled for repo "%s".', $repo_name ),
-			);
+			return new \WP_Error( 'git_push_disabled', sprintf( 'Git push is disabled for repo "%s".', $repo_name ), array( 'status' => 403 ) );
 		}
 
-		return array( 'success' => true );
+		return true;
 	}
 
 	/**

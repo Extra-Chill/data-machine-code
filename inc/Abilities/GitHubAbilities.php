@@ -334,10 +334,10 @@ class GitHubAbilities {
 	// Ability Callbacks
 	// -------------------------------------------------------------------------
 
-	public static function listIssues( array $input ): array {
+	public static function listIssues( array $input ): array|\WP_Error {
 		$repo = sanitize_text_field( $input['repo'] ?? '' );
 		if ( empty( $repo ) ) {
-			return array( 'success' => false, 'error' => 'Repository is required (owner/repo format).' );
+			return new \WP_Error( 'missing_repo', 'Repository is required (owner/repo format).', array( 'status' => 400 ) );
 		}
 
 		$pat = self::getPat();
@@ -364,7 +364,7 @@ class GitHubAbilities {
 		$url      = sprintf( '%s/repos/%s/issues', self::API_BASE, $repo );
 		$response = self::apiGet( $url, $query_params, $pat );
 
-		if ( ! $response['success'] ) {
+		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
 
@@ -376,12 +376,12 @@ class GitHubAbilities {
 		return array( 'success' => true, 'issues' => $normalized, 'count' => count( $normalized ) );
 	}
 
-	public static function getIssue( array $input ): array {
+	public static function getIssue( array $input ): array|\WP_Error {
 		$repo         = sanitize_text_field( $input['repo'] ?? '' );
 		$issue_number = (int) ( $input['issue_number'] ?? 0 );
 
 		if ( empty( $repo ) || $issue_number <= 0 ) {
-			return array( 'success' => false, 'error' => 'Repository (owner/repo) and issue_number are required.' );
+			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and issue_number are required.', array( 'status' => 400 ) );
 		}
 
 		$pat = self::getPat();
@@ -392,19 +392,19 @@ class GitHubAbilities {
 		$url      = sprintf( '%s/repos/%s/issues/%d', self::API_BASE, $repo, $issue_number );
 		$response = self::apiGet( $url, array(), $pat );
 
-		if ( ! $response['success'] ) {
+		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
 
 		return array( 'success' => true, 'issue' => self::normalizeIssue( $response['data'] ) );
 	}
 
-	public static function updateIssue( array $input ): array {
+	public static function updateIssue( array $input ): array|\WP_Error {
 		$repo         = sanitize_text_field( $input['repo'] ?? '' );
 		$issue_number = (int) ( $input['issue_number'] ?? 0 );
 
 		if ( empty( $repo ) || $issue_number <= 0 ) {
-			return array( 'success' => false, 'error' => 'Repository (owner/repo) and issue_number are required.' );
+			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and issue_number are required.', array( 'status' => 400 ) );
 		}
 
 		$pat = self::getPat();
@@ -430,13 +430,13 @@ class GitHubAbilities {
 		}
 
 		if ( empty( $body ) ) {
-			return array( 'success' => false, 'error' => 'No fields to update. Provide title, body, state, labels, or assignees.' );
+			return new \WP_Error( 'no_fields', 'No fields to update. Provide title, body, state, labels, or assignees.', array( 'status' => 400 ) );
 		}
 
 		$url      = sprintf( '%s/repos/%s/issues/%d', self::API_BASE, $repo, $issue_number );
 		$response = self::apiRequest( 'PATCH', $url, $body, $pat );
 
-		if ( ! $response['success'] ) {
+		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
 
@@ -447,15 +447,15 @@ class GitHubAbilities {
 		);
 	}
 
-	public static function createIssue( array $input ): array {
+	public static function createIssue( array $input ): array|\WP_Error {
 		$repo = self::resolveRepo( sanitize_text_field( $input['repo'] ?? '' ) );
 		if ( empty( $repo ) ) {
-			return array( 'success' => false, 'error' => 'Repository (owner/repo) is required or configure a default repo.' );
+			return new \WP_Error( 'missing_repo', 'Repository (owner/repo) is required or configure a default repo.', array( 'status' => 400 ) );
 		}
 
 		$title = sanitize_text_field( $input['title'] ?? '' );
 		if ( empty( $title ) ) {
-			return array( 'success' => false, 'error' => 'Issue title is required.' );
+			return new \WP_Error( 'missing_title', 'Issue title is required.', array( 'status' => 400 ) );
 		}
 
 		$pat = self::getPat();
@@ -478,7 +478,7 @@ class GitHubAbilities {
 		$url      = sprintf( '%s/repos/%s/issues', self::API_BASE, $repo );
 		$response = self::apiRequest( 'POST', $url, $body, $pat );
 
-		if ( ! $response['success'] ) {
+		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
 
@@ -494,13 +494,13 @@ class GitHubAbilities {
 		);
 	}
 
-	public static function commentOnIssue( array $input ): array {
+	public static function commentOnIssue( array $input ): array|\WP_Error {
 		$repo         = sanitize_text_field( $input['repo'] ?? '' );
 		$issue_number = (int) ( $input['issue_number'] ?? 0 );
 		$body         = $input['body'] ?? '';
 
 		if ( empty( $repo ) || $issue_number <= 0 || empty( $body ) ) {
-			return array( 'success' => false, 'error' => 'Repository, issue_number, and body are required.' );
+			return new \WP_Error( 'missing_params', 'Repository, issue_number, and body are required.', array( 'status' => 400 ) );
 		}
 
 		$pat = self::getPat();
@@ -511,7 +511,7 @@ class GitHubAbilities {
 		$url      = sprintf( '%s/repos/%s/issues/%d/comments', self::API_BASE, $repo, $issue_number );
 		$response = self::apiRequest( 'POST', $url, array( 'body' => $body ), $pat );
 
-		if ( ! $response['success'] ) {
+		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
 
@@ -526,10 +526,10 @@ class GitHubAbilities {
 		);
 	}
 
-	public static function listPulls( array $input ): array {
+	public static function listPulls( array $input ): array|\WP_Error {
 		$repo = sanitize_text_field( $input['repo'] ?? '' );
 		if ( empty( $repo ) ) {
-			return array( 'success' => false, 'error' => 'Repository is required (owner/repo format).' );
+			return new \WP_Error( 'missing_repo', 'Repository is required (owner/repo format).', array( 'status' => 400 ) );
 		}
 
 		$pat = self::getPat();
@@ -546,7 +546,7 @@ class GitHubAbilities {
 		$url      = sprintf( '%s/repos/%s/pulls', self::API_BASE, $repo );
 		$response = self::apiGet( $url, $query_params, $pat );
 
-		if ( ! $response['success'] ) {
+		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
 
@@ -555,10 +555,10 @@ class GitHubAbilities {
 		return array( 'success' => true, 'pulls' => $normalized, 'count' => count( $normalized ) );
 	}
 
-	public static function listRepos( array $input ): array {
+	public static function listRepos( array $input ): array|\WP_Error {
 		$owner = sanitize_text_field( $input['owner'] ?? '' );
 		if ( empty( $owner ) ) {
-			return array( 'success' => false, 'error' => 'Owner (user or org) is required.' );
+			return new \WP_Error( 'missing_owner', 'Owner (user or org) is required.', array( 'status' => 400 ) );
 		}
 
 		$pat = self::getPat();
@@ -579,11 +579,11 @@ class GitHubAbilities {
 		$url      = sprintf( '%s/orgs/%s/repos', self::API_BASE, $owner );
 		$response = self::apiGet( $url, $query_params, $pat );
 
-		if ( ! $response['success'] ) {
+		if ( is_wp_error( $response ) ) {
 			$url      = sprintf( '%s/users/%s/repos', self::API_BASE, $owner );
 			$response = self::apiGet( $url, $query_params, $pat );
 
-			if ( ! $response['success'] ) {
+			if ( is_wp_error( $response ) ) {
 				return $response;
 			}
 		}
@@ -597,7 +597,7 @@ class GitHubAbilities {
 	// HTTP Helpers
 	// -------------------------------------------------------------------------
 
-	public static function apiGet( string $url, array $query_params, string $pat ): array {
+	public static function apiGet( string $url, array $query_params, string $pat ): array|\WP_Error {
 		if ( ! empty( $query_params ) ) {
 			$url = add_query_arg( $query_params, $url );
 		}
@@ -610,7 +610,7 @@ class GitHubAbilities {
 		return self::parseResponse( $response );
 	}
 
-	public static function apiRequest( string $method, string $url, array $body, string $pat ): array {
+	public static function apiRequest( string $method, string $url, array $body, string $pat ): array|\WP_Error {
 		$response = wp_remote_request( $url, array(
 			'method'  => $method,
 			'headers' => self::getHeaders( $pat ),
@@ -621,9 +621,9 @@ class GitHubAbilities {
 		return self::parseResponse( $response );
 	}
 
-	private static function parseResponse( $response ): array {
+	private static function parseResponse( $response ): array|\WP_Error {
 		if ( is_wp_error( $response ) ) {
-			return array( 'success' => false, 'error' => 'GitHub API request failed: ' . $response->get_error_message() );
+			return new \WP_Error( 'github_request_failed', 'GitHub API request failed: ' . $response->get_error_message(), array( 'status' => 500 ) );
 		}
 
 		$status_code = wp_remote_retrieve_response_code( $response );
@@ -631,7 +631,8 @@ class GitHubAbilities {
 
 		if ( $status_code >= 400 ) {
 			$message = $body['message'] ?? 'Unknown error';
-			return array( 'success' => false, 'error' => sprintf( 'GitHub API error (%d): %s', $status_code, $message ) );
+			$code    = $status_code >= 500 ? 'github_server_error' : ( 404 === $status_code ? 'github_not_found' : 'github_api_error' );
+			return new \WP_Error( $code, sprintf( 'GitHub API error (%d): %s', $status_code, $message ), array( 'status' => $status_code ) );
 		}
 
 		return array( 'success' => true, 'data' => $body );
@@ -766,8 +767,8 @@ class GitHubAbilities {
 		return '';
 	}
 
-	private static function patError(): array {
-		return array( 'success' => false, 'error' => 'GitHub Personal Access Token not configured. Set github_pat in Data Machine settings.' );
+	private static function patError(): \WP_Error {
+		return new \WP_Error( 'pat_not_configured', 'GitHub Personal Access Token not configured. Set github_pat in Data Machine settings.', array( 'status' => 403 ) );
 	}
 
 	private static function clampPerPage( $per_page ): int {

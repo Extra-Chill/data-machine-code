@@ -184,8 +184,8 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		if ( ! $result['success'] ) {
-			WP_CLI::error( $result['message'] );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
@@ -242,8 +242,8 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		if ( ! $result['success'] ) {
-			WP_CLI::error( $result['message'] );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
@@ -284,8 +284,8 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		if ( ! $result['success'] ) {
-			WP_CLI::error( $result['message'] );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
@@ -376,8 +376,8 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		if ( ! $result['success'] ) {
-			WP_CLI::error( $result['message'] );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
@@ -448,8 +448,8 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		if ( ! $result['success'] ) {
-			WP_CLI::error( $result['message'] );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
@@ -552,8 +552,8 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		if ( ! $result['success'] ) {
-			WP_CLI::error( $result['message'] );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
@@ -632,8 +632,8 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		if ( ! $result['success'] ) {
-			WP_CLI::error( $result['message'] );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
@@ -842,8 +842,8 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		if ( empty( $result['success'] ) ) {
-			WP_CLI::error( $result['message'] ?? 'Workspace git operation failed.' );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 

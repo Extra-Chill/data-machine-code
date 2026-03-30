@@ -41,7 +41,7 @@ class GitHubIssueTool extends BaseTool {
 	 * @return array Result with pending status on success.
 	 */
 	public function handle_tool_call( array $parameters, array $tool_def = array() ): array {
-		$ability = function_exists( 'wp_get_ability' ) ? wp_get_ability( 'datamachine/create-github-issue' ) : null;
+		$ability = wp_get_ability( 'datamachine/create-github-issue' );
 
 		if ( ! $ability ) {
 			return $this->buildErrorResponse(
