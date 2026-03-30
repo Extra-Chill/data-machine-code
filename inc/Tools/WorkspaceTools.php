@@ -23,7 +23,7 @@ class WorkspaceTools extends BaseTool {
 	 * @return bool
 	 */
 	public static function is_configured(): bool {
-		return function_exists( 'wp_get_ability' );
+		return (bool) wp_get_ability( 'datamachine/workspace-path' );
 	}
 
 	/**
@@ -101,13 +101,6 @@ class WorkspaceTools extends BaseTool {
 			return $this->buildErrorResponse( $result->get_error_message(), 'workspace_path' );
 		}
 
-		if ( ! $this->isAbilitySuccess( $result ) ) {
-			return $this->buildErrorResponse(
-				$this->getAbilityError( $result, 'Failed to get workspace path.' ),
-				'workspace_path'
-			);
-		}
-
 		return array(
 			'success'   => true,
 			'data'      => $result,
@@ -131,13 +124,6 @@ class WorkspaceTools extends BaseTool {
 
 		if ( is_wp_error( $result ) ) {
 			return $this->buildErrorResponse( $result->get_error_message(), 'workspace_list' );
-		}
-
-		if ( ! $this->isAbilitySuccess( $result ) ) {
-			return $this->buildErrorResponse(
-				$this->getAbilityError( $result, 'Failed to list workspace repositories.' ),
-				'workspace_list'
-			);
 		}
 
 		return array(
@@ -170,13 +156,6 @@ class WorkspaceTools extends BaseTool {
 			return $this->buildErrorResponse( $result->get_error_message(), 'workspace_show' );
 		}
 
-		if ( ! $this->isAbilitySuccess( $result ) ) {
-			return $this->buildErrorResponse(
-				$this->getAbilityError( $result, 'Failed to get workspace repository details.' ),
-				'workspace_show'
-			);
-		}
-
 		return array(
 			'success'   => true,
 			'data'      => $result,
@@ -206,13 +185,6 @@ class WorkspaceTools extends BaseTool {
 
 		if ( is_wp_error( $result ) ) {
 			return $this->buildErrorResponse( $result->get_error_message(), 'workspace_ls' );
-		}
-
-		if ( ! $this->isAbilitySuccess( $result ) ) {
-			return $this->buildErrorResponse(
-				$this->getAbilityError( $result, 'Failed to list workspace directory.' ),
-				'workspace_ls'
-			);
 		}
 
 		return array(
@@ -256,13 +228,6 @@ class WorkspaceTools extends BaseTool {
 
 		if ( is_wp_error( $result ) ) {
 			return $this->buildErrorResponse( $result->get_error_message(), 'workspace_read' );
-		}
-
-		if ( ! $this->isAbilitySuccess( $result ) ) {
-			return $this->buildErrorResponse(
-				$this->getAbilityError( $result, 'Failed to read workspace file.' ),
-				'workspace_read'
-			);
 		}
 
 		return array(

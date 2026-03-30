@@ -73,8 +73,8 @@ class GitHubCommand extends BaseCommand {
 
 		$result = GitHubAbilities::listIssues( $input );
 
-		if ( empty( $result['success'] ) ) {
-			WP_CLI::error( $result['error'] ?? 'Failed to list issues.' );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
@@ -150,8 +150,8 @@ class GitHubCommand extends BaseCommand {
 
 		$result = GitHubAbilities::getIssue( $input );
 
-		if ( empty( $result['success'] ) ) {
-			WP_CLI::error( $result['error'] ?? 'Failed to fetch issue.' );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
@@ -227,16 +227,16 @@ class GitHubCommand extends BaseCommand {
 				'body'         => $assoc_args['comment'],
 			) );
 
-			if ( empty( $comment_result['success'] ) ) {
-				WP_CLI::warning( 'Failed to add comment: ' . ( $comment_result['error'] ?? 'Unknown error' ) );
+			if ( is_wp_error( $comment_result ) ) {
+				WP_CLI::warning( 'Failed to add comment: ' . $comment_result->get_error_message() );
 			}
 		}
 
 		$input['state'] = 'closed';
 		$result         = GitHubAbilities::updateIssue( $input );
 
-		if ( empty( $result['success'] ) ) {
-			WP_CLI::error( $result['error'] ?? 'Failed to close issue.' );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
@@ -282,8 +282,8 @@ class GitHubCommand extends BaseCommand {
 
 		$result = GitHubAbilities::commentOnIssue( $input );
 
-		if ( empty( $result['success'] ) ) {
-			WP_CLI::error( $result['error'] ?? 'Failed to add comment.' );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
@@ -331,8 +331,8 @@ class GitHubCommand extends BaseCommand {
 
 		$result = GitHubAbilities::listPulls( $input );
 
-		if ( empty( $result['success'] ) ) {
-			WP_CLI::error( $result['error'] ?? 'Failed to list pull requests.' );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
@@ -422,8 +422,8 @@ class GitHubCommand extends BaseCommand {
 
 		$result = GitHubAbilities::listRepos( $input );
 
-		if ( empty( $result['success'] ) ) {
-			WP_CLI::error( $result['error'] ?? 'Failed to list repositories.' );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 

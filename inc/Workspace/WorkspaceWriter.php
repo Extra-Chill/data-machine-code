@@ -43,32 +43,23 @@ class WorkspaceWriter {
 	 * @param string $name    Repository directory name.
 	 * @param string $path    Relative file path within the repo.
 	 * @param string $content File content to write.
-	 * @return array{success: bool, path?: string, size?: int, created?: bool, message?: string}
+	 * @return array{success: bool, path?: string, size?: int, created?: bool}|\WP_Error
 	 */
-	public function write_file( string $name, string $path, string $content ): array {
+	public function write_file( string $name, string $path, string $content ): array|\WP_Error {
 		$repo_path = $this->workspace->get_repo_path( $name );
 		$path      = ltrim( $path, '/' );
 
 		if ( ! is_dir( $repo_path ) ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'Repository "%s" not found in workspace.', $name ),
-			);
+			return new \WP_Error( 'repo_not_found', sprintf( 'Repository "%s" not found in workspace.', $name ), array( 'status' => 404 ) );
 		}
 
 		if ( '' === $path ) {
-			return array(
-				'success' => false,
-				'message' => 'File path is required.',
-			);
+			return new \WP_Error( 'missing_path', 'File path is required.', array( 'status' => 400 ) );
 		}
 
 		// Reject path traversal components.
 		if ( $this->has_traversal( $path ) ) {
-			return array(
-				'success' => false,
-				'message' => 'Path traversal detected. Access denied.',
-			);
+			return new \WP_Error( 'path_traversal', 'Path traversal detected. Access denied.', array( 'status' => 403 ) );
 		}
 
 		$file_path = $repo_path . '/' . $path;
@@ -80,10 +71,7 @@ class WorkspaceWriter {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir
 			$created = mkdir( $parent, 0755, true );
 			if ( ! $created ) {
-				return array(
-					'success' => false,
-					'message' => sprintf( 'Failed to create directory: %s', dirname( $path ) ),
-				);
+				return new \WP_Error( 'mkdir_failed', sprintf( 'Failed to create directory: %s', dirname( $path ) ), array( 'status' => 500 ) );
 			}
 		}
 
@@ -92,10 +80,7 @@ class WorkspaceWriter {
 		$bytes = file_put_contents( $file_path, $content );
 
 		if ( false === $bytes ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'Failed to write file: %s', $path ),
-			);
+			return new \WP_Error( 'write_failed', sprintf( 'Failed to write file: %s', $path ), array( 'status' => 500 ) );
 		}
 
 		// Belt-and-suspenders: verify the written file actually landed inside
@@ -108,10 +93,7 @@ class WorkspaceWriter {
 				// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
 				unlink( $file_path );
 			}
-			return array(
-				'success' => false,
-				'message' => 'Path traversal detected. Written file removed.',
-			);
+			return new \WP_Error( 'path_traversal', 'Path traversal detected. Written file removed.', array( 'status' => 403 ) );
 		}
 
 		return array(
@@ -134,81 +116,57 @@ class WorkspaceWriter {
 	 * @param string $old_string  Text to find.
 	 * @param string $new_string  Replacement text.
 	 * @param bool   $replace_all Replace all occurrences (default false).
-	 * @return array{success: bool, path?: string, replacements?: int, message?: string}
+	 * @return array{success: bool, path?: string, replacements?: int}|\WP_Error
 	 */
-	public function edit_file( string $name, string $path, string $old_string, string $new_string, bool $replace_all = false ): array {
+	public function edit_file( string $name, string $path, string $old_string, string $new_string, bool $replace_all = false ): array|\WP_Error {
 		$fs        = FilesystemHelper::get();
 		$repo_path = $this->workspace->get_repo_path( $name );
 		$path      = ltrim( $path, '/' );
 
 		if ( ! is_dir( $repo_path ) ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'Repository "%s" not found in workspace.', $name ),
-			);
+			return new \WP_Error( 'repo_not_found', sprintf( 'Repository "%s" not found in workspace.', $name ), array( 'status' => 404 ) );
 		}
 
 		$file_path  = $repo_path . '/' . $path;
 		$validation = $this->workspace->validate_containment( $file_path, $repo_path );
 
 		if ( ! $validation['valid'] ) {
-			return array(
-				'success' => false,
-				'message' => $validation['message'],
-			);
+			return new \WP_Error( 'path_traversal', $validation['message'], array( 'status' => 403 ) );
 		}
 
 		$real_path = $validation['real_path'];
 
 		if ( ! is_file( $real_path ) ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'File not found: %s', $path ),
-			);
+			return new \WP_Error( 'file_not_found', sprintf( 'File not found: %s', $path ), array( 'status' => 404 ) );
 		}
 
 		if ( ! is_readable( $real_path ) || ! $fs->is_writable( $real_path ) ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'File not readable/writable: %s', $path ),
-			);
+			return new \WP_Error( 'file_not_writable', sprintf( 'File not readable/writable: %s', $path ), array( 'status' => 403 ) );
 		}
 
 		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
 		$content = file_get_contents( $real_path );
 
 		if ( false === $content ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'Failed to read file: %s', $path ),
-			);
+			return new \WP_Error( 'read_failed', sprintf( 'Failed to read file: %s', $path ), array( 'status' => 500 ) );
 		}
 
 		if ( $old_string === $new_string ) {
-			return array(
-				'success' => false,
-				'message' => 'old_string and new_string are identical.',
-			);
+			return new \WP_Error( 'identical_strings', 'old_string and new_string are identical.', array( 'status' => 400 ) );
 		}
 
 		// Count occurrences.
 		$count = substr_count( $content, $old_string );
 
 		if ( 0 === $count ) {
-			return array(
-				'success' => false,
-				'message' => 'old_string not found in file content.',
-			);
+			return new \WP_Error( 'string_not_found', 'old_string not found in file content.', array( 'status' => 400 ) );
 		}
 
 		if ( $count > 1 && ! $replace_all ) {
-			return array(
-				'success' => false,
-				'message' => sprintf(
-					'Found %d matches for old_string. Use replace_all to replace all, or provide more context to make the match unique.',
-					$count
-				),
-			);
+			return new \WP_Error( 'multiple_matches', sprintf(
+				'Found %d matches for old_string. Use replace_all to replace all, or provide more context to make the match unique.',
+				$count
+			), array( 'status' => 400 ) );
 		}
 
 		// Perform replacement.
@@ -223,10 +181,7 @@ class WorkspaceWriter {
 		$bytes = file_put_contents( $real_path, $new_content );
 
 		if ( false === $bytes ) {
-			return array(
-				'success' => false,
-				'message' => sprintf( 'Failed to write file: %s', $path ),
-			);
+			return new \WP_Error( 'write_failed', sprintf( 'Failed to write file: %s', $path ), array( 'status' => 500 ) );
 		}
 
 		return array(

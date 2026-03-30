@@ -30,8 +30,8 @@ class GitHubIssueTask extends SystemTask {
 	public function execute( int $jobId, array $params ): void {
 		$result = GitHubAbilities::createIssue( $params );
 
-		if ( ! $result['success'] ) {
-			$this->failJob( $jobId, $result['error'] ?? 'Unknown error creating GitHub issue' );
+		if ( is_wp_error( $result ) ) {
+			$this->failJob( $jobId, $result->get_error_message() );
 			return;
 		}
 

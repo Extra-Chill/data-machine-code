@@ -102,20 +102,14 @@ function datamachine_code_register_system_abilities() {
 			),
 			'execute_callback'    => function ( array $input ) {
 				if ( ! class_exists( 'DataMachine\Engine\AI\System\TaskScheduler' ) ) {
-					return array(
-						'success' => false,
-						'error'   => 'TaskScheduler not available.',
-					);
+					return new \WP_Error( 'scheduler_unavailable', 'TaskScheduler not available.', array( 'status' => 500 ) );
 				}
 
 				$scheduler = new \DataMachine\Engine\AI\System\TaskScheduler();
 				$job_id    = $scheduler->schedule( 'github_create_issue', $input );
 
 				if ( is_wp_error( $job_id ) ) {
-					return array(
-						'success' => false,
-						'error'   => $job_id->get_error_message(),
-					);
+					return $job_id;
 				}
 
 				return $job_id;

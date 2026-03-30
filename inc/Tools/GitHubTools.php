@@ -101,8 +101,8 @@ class GitHubTools extends BaseTool {
 	public function handleListIssues( array $parameters, array $tool_def = array() ): array {
 		$result = GitHubAbilities::listIssues( $parameters );
 
-		if ( empty( $result['success'] ) ) {
-			return $this->buildErrorResponse( $result['error'] ?? 'Failed to list issues.', 'list_github_issues' );
+		if ( is_wp_error( $result ) ) {
+			return $this->buildErrorResponse( $result->get_error_message(), 'list_github_issues' );
 		}
 
 		return array(
@@ -161,8 +161,8 @@ class GitHubTools extends BaseTool {
 	public function handleGetIssue( array $parameters, array $tool_def = array() ): array {
 		$result = GitHubAbilities::getIssue( $parameters );
 
-		if ( empty( $result['success'] ) ) {
-			return $this->buildErrorResponse( $result['error'] ?? 'Failed to get issue.', 'get_github_issue' );
+		if ( is_wp_error( $result ) ) {
+			return $this->buildErrorResponse( $result->get_error_message(), 'get_github_issue' );
 		}
 
 		return array(
@@ -223,8 +223,8 @@ class GitHubTools extends BaseTool {
 			$result = GitHubAbilities::updateIssue( $parameters );
 		}
 
-		if ( empty( $result['success'] ) ) {
-			return $this->buildErrorResponse( $result['error'] ?? 'Failed to manage issue.', 'manage_github_issue' );
+		if ( is_wp_error( $result ) ) {
+			return $this->buildErrorResponse( $result->get_error_message(), 'manage_github_issue' );
 		}
 
 		return array(
@@ -293,8 +293,8 @@ class GitHubTools extends BaseTool {
 	public function handleListPulls( array $parameters, array $tool_def = array() ): array {
 		$result = GitHubAbilities::listPulls( $parameters );
 
-		if ( empty( $result['success'] ) ) {
-			return $this->buildErrorResponse( $result['error'] ?? 'Failed to list pull requests.', 'list_github_pulls' );
+		if ( is_wp_error( $result ) ) {
+			return $this->buildErrorResponse( $result->get_error_message(), 'list_github_pulls' );
 		}
 
 		return array(
@@ -343,8 +343,8 @@ class GitHubTools extends BaseTool {
 	public function handleListRepos( array $parameters, array $tool_def = array() ): array {
 		$result = GitHubAbilities::listRepos( $parameters );
 
-		if ( empty( $result['success'] ) ) {
-			return $this->buildErrorResponse( $result['error'] ?? 'Failed to list repos.', 'list_github_repos' );
+		if ( is_wp_error( $result ) ) {
+			return $this->buildErrorResponse( $result->get_error_message(), 'list_github_repos' );
 		}
 
 		return array(
