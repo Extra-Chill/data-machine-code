@@ -2,6 +2,20 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.2.0] - 2026-04-02
+
+### Added
+- own workspace service classes — migrated from data-machine core
+- register code.md context file via datamachine_default_context_files
+- initial scaffold — extract developer tools from Data Machine core
+
+### Changed
+- Migrate all ability callbacks to WP_Error returns
+- Add homeboy project config and composer lock
+
+### Fixed
+- move CLI registration to plugins_loaded to resolve load order
+
 ## [0.1.0] - 2026-03-21
 
 ### Added
