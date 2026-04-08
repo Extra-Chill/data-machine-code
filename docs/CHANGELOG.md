@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.2.1] - 2026-04-07
+
+### Fixed
+- add $HOME/.datamachine/workspace fallback for local/macOS environments
+
 ## [0.2.0] - 2026-04-02
 
 ### Added
