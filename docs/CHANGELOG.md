@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.2.2] - 2026-04-08
+
+### Fixed
+- resolve PHPCS and PHPStan lint issues
+
 ## [0.2.1] - 2026-04-07
 
 ### Fixed
