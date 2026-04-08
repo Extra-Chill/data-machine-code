@@ -170,7 +170,7 @@ class GitHub extends FetchHandler {
 	}
 
 	private function buildIssueContent( array $issue ): string {
-		$parts = array();
+		$parts   = array();
 		$parts[] = sprintf( '**State:** %s', $issue['state'] ?? 'unknown' );
 		$parts[] = sprintf( '**Author:** %s', $issue['user'] ?? 'unknown' );
 		if ( ! empty( $issue['labels'] ) ) {
@@ -190,7 +190,7 @@ class GitHub extends FetchHandler {
 	}
 
 	private function buildPrContent( array $pr ): string {
-		$parts = array();
+		$parts   = array();
 		$parts[] = sprintf( '**State:** %s', $pr['state'] ?? 'unknown' );
 		$parts[] = sprintf( '**Author:** %s', $pr['user'] ?? 'unknown' );
 		$parts[] = sprintf( '**Branch:** %s → %s', $pr['head'] ?? '?', $pr['base'] ?? '?' );

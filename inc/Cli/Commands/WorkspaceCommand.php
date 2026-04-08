@@ -184,11 +184,6 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		if ( is_wp_error( $result ) ) {
-			WP_CLI::error( $result->get_error_message() );
-			return;
-		}
-
 		WP_CLI::success( $result['message'] );
 		WP_CLI::log( sprintf( 'Path: %s', $result['path'] ) );
 	}
@@ -242,11 +237,6 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		if ( is_wp_error( $result ) ) {
-			WP_CLI::error( $result->get_error_message() );
-			return;
-		}
-
 		WP_CLI::success( $result['message'] );
 	}
 
@@ -278,11 +268,6 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$result = $ability->execute( array( 'name' => $args[0] ) );
-
-		if ( is_wp_error( $result ) ) {
-			WP_CLI::error( $result->get_error_message() );
-			return;
-		}
 
 		if ( is_wp_error( $result ) ) {
 			WP_CLI::error( $result->get_error_message() );
@@ -376,11 +361,6 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		if ( is_wp_error( $result ) ) {
-			WP_CLI::error( $result->get_error_message() );
-			return;
-		}
-
 		// Output raw content — suitable for piping.
 		WP_CLI::log( $result['content'] );
 	}
@@ -442,11 +422,6 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$result = $ability->execute( $input );
-
-		if ( is_wp_error( $result ) ) {
-			WP_CLI::error( $result->get_error_message() );
-			return;
-		}
 
 		if ( is_wp_error( $result ) ) {
 			WP_CLI::error( $result->get_error_message() );
@@ -552,11 +527,6 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		if ( is_wp_error( $result ) ) {
-			WP_CLI::error( $result->get_error_message() );
-			return;
-		}
-
 		$action = ! empty( $result['created'] ) ? 'Created' : 'Updated';
 		WP_CLI::success( sprintf( '%s %s (%s)', $action, $result['path'], size_format( $result['size'] ) ) );
 	}
@@ -626,11 +596,6 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$result = $ability->execute( $input );
-
-		if ( is_wp_error( $result ) ) {
-			WP_CLI::error( $result->get_error_message() );
-			return;
-		}
 
 		if ( is_wp_error( $result ) ) {
 			WP_CLI::error( $result->get_error_message() );
@@ -836,11 +801,6 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$result = $ability->execute( $input );
-
-		if ( is_wp_error( $result ) ) {
-			WP_CLI::error( $result->get_error_message() );
-			return;
-		}
 
 		if ( is_wp_error( $result ) ) {
 			WP_CLI::error( $result->get_error_message() );
