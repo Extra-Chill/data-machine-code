@@ -35,7 +35,11 @@ class Workspace {
 	/**
 	 * Resolve the workspace directory path.
 	 *
-	 * Priority: DATAMACHINE_WORKSPACE_PATH constant > /var/lib/datamachine/workspace (if writable) > empty string.
+	 * Priority:
+	 * 1. DATAMACHINE_WORKSPACE_PATH constant (if defined)
+	 * 2. /var/lib/datamachine/workspace (if writable — typical on VPS)
+	 * 3. $HOME/.datamachine/workspace (local/macOS fallback)
+	 * 4. Empty string (no workspace available)
 	 *
 	 * @return string Workspace path or empty string if unavailable.
 	 */
@@ -59,6 +63,25 @@ class Workspace {
 
 		if ( $base_writable || $parent_writable ) {
 			return $system_path;
+		}
+
+		// Local/macOS fallback: $HOME/.datamachine/workspace.
+		// Matches the path setup.sh uses in --local mode.
+		$home = getenv( 'HOME' );
+		if ( false !== $home && '' !== $home ) {
+			$home_path = rtrim( $home, '/' ) . '/.datamachine/workspace';
+			$home_base = dirname( $home_path );
+
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_writable
+			if ( is_dir( $home_base ) && is_writable( $home_base ) ) {
+				return $home_path;
+			}
+
+			// Base doesn't exist yet — check if $HOME/.datamachine can be created.
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_writable
+			if ( ! file_exists( $home_base ) && is_writable( dirname( $home_base ) ) ) {
+				return $home_path;
+			}
 		}
 
 		return '';
@@ -92,7 +115,7 @@ class Workspace {
 		$path = $this->workspace_path;
 
 		if ( '' === $path ) {
-			return new \WP_Error( 'workspace_unavailable', 'Workspace unavailable: no writable path outside the web root. Define DATAMACHINE_WORKSPACE_PATH in wp-config.php or ensure /var/lib/datamachine/ is writable.', array( 'status' => 500 ) );
+			return new \WP_Error( 'workspace_unavailable', 'Workspace unavailable: no writable path outside the web root. Define DATAMACHINE_WORKSPACE_PATH in wp-config.php, ensure /var/lib/datamachine/ is writable, or ensure $HOME is set.', array( 'status' => 500 ) );
 		}
 
 		if ( is_dir( $path ) ) {

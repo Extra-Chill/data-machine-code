@@ -28,8 +28,8 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * Displays the resolved workspace path. The path is determined by:
 	 * 1. DATAMACHINE_WORKSPACE_PATH constant (if defined)
-	 * 2. /var/lib/datamachine/workspace (if writable)
-	 * 3. wp-content/uploads/datamachine-files/workspace (fallback)
+	 * 2. /var/lib/datamachine/workspace (if writable — VPS)
+	 * 3. $HOME/.datamachine/workspace (local/macOS)
 	 *
 	 * ## OPTIONS
 	 *
