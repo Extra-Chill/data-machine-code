@@ -780,7 +780,14 @@ class Workspace {
 		exec( $command, $output, $exit_code );
 
 		if ( 0 !== $exit_code ) {
-			return new \WP_Error( 'git_command_failed', sprintf( 'Git command failed (exit %d): %s', $exit_code, implode( "\n", $output ) ), array( 'status' => 500, 'output' => implode( "\n", $output ) ) );
+			return new \WP_Error(
+				'git_command_failed',
+				sprintf( 'Git command failed (exit %d): %s', $exit_code, implode( "\n", $output ) ),
+				array(
+					'status' => 500,
+					'output' => implode( "\n", $output ),
+				)
+			);
 		}
 
 		return array(
@@ -794,7 +801,7 @@ class Workspace {
 	 *
 	 * @param string $repo_name    Repository name.
 	 * @param bool   $require_push Whether push must also be enabled.
-	 * @return array
+	 * @return true|\WP_Error
 	 */
 	private function ensure_git_mutation_allowed( string $repo_name, bool $require_push = false ): true|\WP_Error {
 		$policies = $this->get_workspace_git_policies();

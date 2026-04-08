@@ -373,7 +373,11 @@ class GitHubAbilities {
 
 		$normalized = array_map( array( self::class, 'normalizeIssue' ), $issues );
 
-		return array( 'success' => true, 'issues' => $normalized, 'count' => count( $normalized ) );
+		return array(
+			'success' => true,
+			'issues'  => $normalized,
+			'count'   => count( $normalized ),
+		);
 	}
 
 	public static function getIssue( array $input ): array|\WP_Error {
@@ -396,7 +400,10 @@ class GitHubAbilities {
 			return $response;
 		}
 
-		return array( 'success' => true, 'issue' => self::normalizeIssue( $response['data'] ) );
+		return array(
+			'success' => true,
+			'issue'   => self::normalizeIssue( $response['data'] ),
+		);
 	}
 
 	public static function updateIssue( array $input ): array|\WP_Error {
@@ -552,7 +559,11 @@ class GitHubAbilities {
 
 		$normalized = array_map( array( self::class, 'normalizePull' ), $response['data'] );
 
-		return array( 'success' => true, 'pulls' => $normalized, 'count' => count( $normalized ) );
+		return array(
+			'success' => true,
+			'pulls'   => $normalized,
+			'count'   => count( $normalized ),
+		);
 	}
 
 	public static function listRepos( array $input ): array|\WP_Error {
@@ -590,7 +601,11 @@ class GitHubAbilities {
 
 		$normalized = array_map( array( self::class, 'normalizeRepo' ), $response['data'] );
 
-		return array( 'success' => true, 'repos' => $normalized, 'count' => count( $normalized ) );
+		return array(
+			'success' => true,
+			'repos'   => $normalized,
+			'count'   => count( $normalized ),
+		);
 	}
 
 	// -------------------------------------------------------------------------
@@ -635,7 +650,10 @@ class GitHubAbilities {
 			return new \WP_Error( $code, sprintf( 'GitHub API error (%d): %s', $status_code, $message ), array( 'status' => $status_code ) );
 		}
 
-		return array( 'success' => true, 'data' => $body );
+		return array(
+			'success' => true,
+			'data'    => $body,
+		);
 	}
 
 	private static function getHeaders( string $pat ): array {

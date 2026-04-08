@@ -718,8 +718,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters.
 	 * @return array Result.
 	 */
-	public static function listRepos( array $input ): array {
-		$input;
+	public static function listRepos( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 		$workspace = new Workspace();
 		return $workspace->list_repos();
 	}
