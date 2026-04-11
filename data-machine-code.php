@@ -211,3 +211,54 @@ add_filter( 'datamachine_github_issue_repos', function ( array $repos ): array {
 	}
 	return $repos;
 } );
+
+/*
+|--------------------------------------------------------------------------
+| AGENTS.md — composable file registration
+|--------------------------------------------------------------------------
+| data-machine-code owns AGENTS.md as a coding-agent concern. The file is
+| registered as composable in the MemoryFileRegistry, and sections are
+| contributed by DM core, this plugin, and other extensions (mattic, etc.)
+| via SectionRegistry.
+|
+| Convention copy at ABSPATH/AGENTS.md ensures coding agents (Claude Code,
+| OpenCode, etc.) discover it at the expected location.
+|
+| Registered at plugins_loaded priority 22 (after DM core bootstrap at 20)
+| to ensure MemoryFileRegistry and SectionRegistry are available.
+*/
+
+add_action( 'plugins_loaded', function () {
+	if ( ! class_exists( '\DataMachine\Engine\AI\MemoryFileRegistry' ) ) {
+		return;
+	}
+
+	\DataMachine\Engine\AI\MemoryFileRegistry::register( 'AGENTS.md', 5, array(
+		'layer'           => \DataMachine\Engine\AI\MemoryFileRegistry::LAYER_SHARED,
+		'protected'       => true,
+		'composable'      => true,
+		'convention_path' => 'AGENTS.md',
+		'label'           => 'Agent Instructions',
+		'description'     => 'Auto-generated from registered sections. Regenerate via: wp datamachine agent compose AGENTS.md',
+	) );
+
+	if ( ! class_exists( '\DataMachine\Engine\AI\SectionRegistry' ) ) {
+		return;
+	}
+
+	// Core DM memory section — memory file discovery and guidance.
+	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'datamachine-memory', 10, function () {
+		return "### Data Machine\n\nData Machine manages your persistent memory. Discover your files: `wp datamachine agent paths`\n\nUpdate MEMORY.md when you learn something persistent — read it first, append new info.";
+	}, array(
+		'label'       => 'Data Machine Memory',
+		'description' => 'Memory file discovery and guidance.',
+	) );
+
+	// Workspace section — developer tools and git workspace.
+	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'datamachine-workspace', 30, function () {
+		return "### Workspace\n\nAll coding happens in the Data Machine workspace — a managed git sandbox with full read/write access. Discoverable: `wp help datamachine-code workspace`";
+	}, array(
+		'label'       => 'Workspace',
+		'description' => 'Developer workspace discovery.',
+	) );
+}, 22 );
