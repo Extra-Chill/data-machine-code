@@ -246,19 +246,116 @@ add_action( 'plugins_loaded', function () {
 		return;
 	}
 
-	// Core DM memory section — memory file discovery and guidance.
-	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'datamachine-memory', 10, function () {
-		return "### Data Machine\n\nData Machine manages your persistent memory. Discover your files: `wp datamachine agent paths`\n\nUpdate MEMORY.md when you learn something persistent — read it first, append new info.";
+	$wp = datamachine_code_resolve_wp_cli_cmd();
+
+	// Data Machine — memory, automation, code, system.
+	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'datamachine', 10, function () use ( $wp ) {
+		return <<<MD
+### Data Machine
+
+Data Machine is your operating layer — memory, automation, and orchestration via WP-CLI.
+
+**Memory:** Persistent files across sessions. Discover yours: `{$wp} datamachine agent paths`
+- Read/write/search memory: `{$wp} datamachine agent read|write|search`
+- Update MEMORY.md when you learn something persistent — read it first, append new info.
+
+**Automation:** Self-scheduling workflows that run without human intervention.
+- Flows: `{$wp} datamachine flow create|run|list` — scheduled or on-demand tasks
+- Pipelines: `{$wp} datamachine pipeline create|list` — multi-step processing chains
+- Jobs: `{$wp} datamachine jobs list|retry|summary` — monitor queued work
+- Discover available step types: `{$wp} datamachine step-types list`
+- Discover available handlers: `{$wp} datamachine handlers list`
+
+**Code (data-machine-code):** Managed git workspace and GitHub integration.
+- Workspace: `{$wp} datamachine-code workspace clone|read|write|edit|git`
+- GitHub: `{$wp} datamachine-code github issues|pulls|repos|comment`
+
+**System:** `{$wp} datamachine system health|prompts|run`
+
+Use `--help` on any command to discover options and subcommands.
+MD;
 	}, array(
-		'label'       => 'Data Machine Memory',
-		'description' => 'Memory file discovery and guidance.',
+		'label'       => 'Data Machine',
+		'description' => 'Memory, automation, workspace, and system operations.',
 	) );
 
-	// Workspace section — developer tools and git workspace.
-	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'datamachine-workspace', 30, function () {
-		return "### Workspace\n\nAll coding happens in the Data Machine workspace — a managed git sandbox with full read/write access. Discoverable: `wp help datamachine-code workspace`";
+	// Abilities — WordPress Abilities API discovery.
+	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'abilities', 20, function () use ( $wp ) {
+		return <<<MD
+### Abilities
+
+WordPress Abilities are the universal tool surface. Plugins register abilities that are automatically available via WP-CLI, REST API, MCP, and chat. Discover what's available: `{$wp} help abilities`
+
+The tool surface grows as plugins are installed — always discover before assuming what's available.
+MD;
 	}, array(
-		'label'       => 'Workspace',
-		'description' => 'Developer workspace discovery.',
+		'label'       => 'Abilities',
+		'description' => 'WordPress Abilities API discovery.',
 	) );
+
+	// WordPress Source — direct reference material.
+	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'wordpress-source', 30, function () {
+		return <<<'MD'
+### WordPress Source
+
+Direct reference material — grep it as needed:
+- `wp-content/plugins/` — all plugin source
+- `wp-content/themes/` — all theme source
+- `wp-includes/` — WordPress core (read-only)
+MD;
+	}, array(
+		'label'       => 'WordPress Source',
+		'description' => 'Pointers to WordPress source directories.',
+	) );
+
+	// Multisite — conditional, only on multisite installs.
+	if ( is_multisite() ) {
+		\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'multisite', 40, function () use ( $wp ) {
+			return <<<MD
+### Multisite
+
+This is a WordPress multisite. Use `--url` to target specific sites:
+```
+{$wp} --url=site.example.com <command>
+```
+Without `--url`, commands default to the main site.
+MD;
+		}, array(
+			'label'       => 'Multisite',
+			'description' => 'Multisite-specific WP-CLI guidance.',
+		) );
+	}
 }, 22 );
+
+/**
+ * Resolve the WP-CLI command prefix for the current environment.
+ *
+ * Mirrors the {{WP_CLI_CMD}} substitution from wp-coding-agents setup scripts.
+ * Produces a command prefix like "wp --allow-root --path=/var/www/example.com"
+ * for server environments, or plain "wp" for local/Studio contexts.
+ *
+ * @since 0.3.0
+ *
+ * @return string WP-CLI command prefix.
+ */
+function datamachine_code_resolve_wp_cli_cmd(): string {
+	// Studio environments use a bare "wp" (Studio wraps it).
+	if ( defined( 'STARTER_STUDIO_PATH' ) ) {
+		return 'wp';
+	}
+
+	$parts = array( 'wp' );
+
+	// Server environments need --allow-root when running as root.
+	if ( function_exists( 'posix_geteuid' ) && 0 === posix_geteuid() ) {
+		$parts[] = '--allow-root';
+	}
+
+	// Add --path when ABSPATH isn't the default WordPress location.
+	$abspath = rtrim( ABSPATH, '/' );
+	if ( '/var/www/html' !== $abspath ) {
+		$parts[] = '--path=' . $abspath;
+	}
+
+	return implode( ' ', $parts );
+}
