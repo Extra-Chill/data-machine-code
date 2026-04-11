@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.3.0] - 2026-04-11
+
+### Added
+- full AGENTS.md sections with dynamic WP-CLI resolution
+
+### Fixed
+- Fix section registry slugs to use datamachine prefix
+
 ## [0.2.2] - 2026-04-08
 
 ### Fixed
