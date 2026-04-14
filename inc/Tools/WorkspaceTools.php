@@ -54,11 +54,11 @@ class WorkspaceTools extends BaseTool {
 	 */
 	public function __construct() {
 		$contexts = array( 'chat', 'pipeline' );
-		$this->registerTool( 'workspace_path', array( $this, 'getPathDefinition' ), $contexts );
-		$this->registerTool( 'workspace_list', array( $this, 'getListDefinition' ), $contexts );
-		$this->registerTool( 'workspace_show', array( $this, 'getShowDefinition' ), $contexts );
-		$this->registerTool( 'workspace_ls', array( $this, 'getLsDefinition' ), $contexts );
-		$this->registerTool( 'workspace_read', array( $this, 'getReadDefinition' ), $contexts );
+		$this->registerTool( 'workspace_path', array( $this, 'getPathDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-path' ) );
+		$this->registerTool( 'workspace_list', array( $this, 'getListDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-list' ) );
+		$this->registerTool( 'workspace_show', array( $this, 'getShowDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-show' ) );
+		$this->registerTool( 'workspace_ls', array( $this, 'getLsDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-ls' ) );
+		$this->registerTool( 'workspace_read', array( $this, 'getReadDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-read' ) );
 	}
 
 	/**

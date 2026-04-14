@@ -50,7 +50,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'Get Workspace Path',
 					'description'         => 'Get the agent workspace directory path. Optionally create the directory.',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
@@ -80,7 +80,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'List Workspace Repos',
 					'description'         => 'List repositories in the agent workspace.',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(),
@@ -116,7 +116,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'Show Workspace Repo',
 					'description'         => 'Show detailed info about a workspace repository (branch, remote, latest commit, dirty status).',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
@@ -154,7 +154,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'Read Workspace File',
 					'description'         => 'Read the contents of a text file from a workspace repository.',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
@@ -203,7 +203,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'List Workspace Directory',
 					'description'         => 'List directory contents within a workspace repository.',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
@@ -252,7 +252,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'Clone Workspace Repo',
 					'description'         => 'Clone a git repository into the workspace.',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
@@ -287,7 +287,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'Remove Workspace Repo',
 					'description'         => 'Remove a repository from the workspace.',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
@@ -316,7 +316,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'Write Workspace File',
 					'description'         => 'Create or overwrite a file in a workspace repository.',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
@@ -355,7 +355,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'Edit Workspace File',
 					'description'         => 'Find-and-replace text in a workspace repository file.',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
@@ -401,7 +401,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'Workspace Git Status',
 					'description'         => 'Get git status information for a workspace repository.',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
@@ -439,7 +439,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'Workspace Git Log',
 					'description'         => 'Read git log entries for a workspace repository.',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
@@ -484,7 +484,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'Workspace Git Diff',
 					'description'         => 'Read git diff output for a workspace repository.',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
@@ -530,7 +530,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'Workspace Git Pull',
 					'description'         => 'Run git pull --ff-only for a workspace repository.',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
@@ -564,7 +564,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'Workspace Git Add',
 					'description'         => 'Stage repository paths with git add.',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
@@ -603,7 +603,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'Workspace Git Commit',
 					'description'         => 'Commit staged changes in a workspace repository.',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
@@ -638,7 +638,7 @@ class WorkspaceAbilities {
 				array(
 					'label'               => 'Workspace Git Push',
 					'description'         => 'Push commits for a workspace repository.',
-					'category'            => 'datamachine',
+					'category'            => 'datamachine-code/workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
