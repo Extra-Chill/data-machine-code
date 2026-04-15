@@ -64,12 +64,28 @@ function datamachine_code_register_system_abilities() {
 		return;
 	}
 
+	wp_register_ability_category(
+		'datamachine-code/workspace',
+		array(
+			'label'       => __( 'Code Workspace', 'data-machine-code' ),
+			'description' => __( 'Git workspace management — clone, read, write, edit, and git operations.', 'data-machine-code' ),
+		)
+	);
+
+	wp_register_ability_category(
+		'datamachine-code/github',
+		array(
+			'label'       => __( 'GitHub', 'data-machine-code' ),
+			'description' => __( 'GitHub issue, pull request, and repository operations.', 'data-machine-code' ),
+		)
+	);
+
 	wp_register_ability(
 		'datamachine/create-github-issue',
 		array(
 			'label'               => 'Create GitHub Issue',
 			'description'         => 'Create a new GitHub issue in a repository.',
-			'category'            => 'datamachine',
+			'category'            => 'datamachine-code/github',
 			'input_schema'        => array(
 				'type'       => 'object',
 				'required'   => array( 'title' ),

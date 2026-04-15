@@ -24,11 +24,11 @@ class GitHubTools extends BaseTool {
 	 */
 	public function __construct() {
 		$contexts = array( 'chat', 'pipeline' );
-		$this->registerTool( 'list_github_issues', array( $this, 'getListIssuesDefinition' ), $contexts );
-		$this->registerTool( 'get_github_issue', array( $this, 'getGetIssueDefinition' ), $contexts );
-		$this->registerTool( 'manage_github_issue', array( $this, 'getManageIssueDefinition' ), $contexts );
-		$this->registerTool( 'list_github_pulls', array( $this, 'getListPullsDefinition' ), $contexts );
-		$this->registerTool( 'list_github_repos', array( $this, 'getListReposDefinition' ), $contexts );
+		$this->registerTool( 'list_github_issues', array( $this, 'getListIssuesDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
+		$this->registerTool( 'get_github_issue', array( $this, 'getGetIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
+		$this->registerTool( 'manage_github_issue', array( $this, 'getManageIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
+		$this->registerTool( 'list_github_pulls', array( $this, 'getListPullsDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
+		$this->registerTool( 'list_github_repos', array( $this, 'getListReposDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 	}
 
 	/**
