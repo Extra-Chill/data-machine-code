@@ -266,9 +266,11 @@ Data Machine is your operating layer — memory, automation, and orchestration v
 - Discover available step types: `{$wp} datamachine step-types list`
 - Discover available handlers: `{$wp} datamachine handlers list`
 
-**Code (data-machine-code):** Managed git workspace and GitHub integration.
-- Workspace: `{$wp} datamachine-code workspace clone|read|write|edit|git`
-- GitHub: `{$wp} datamachine-code github issues|pulls|repos|comment`
+**Code (data-machine-code):** All code changes go through the managed workspace and GitHub — never edit site files directly.
+- Workspace: `{$wp} datamachine-code workspace clone|read|write|edit|git` — clone repos, create branches, edit files, commit, and push
+- GitHub: `{$wp} datamachine-code github issues|pulls|repos|comment` — create PRs, manage issues, comment on reviews
+- **Workflow:** clone → branch → edit → commit → push → PR. The workspace is a git checkout separate from the live site.
+- **Rule:** Never modify files under `wp-content/plugins/` or `wp-content/themes/` directly. Those paths are for **reading source** only. All code changes must go through the workspace so they are tracked in git and reviewed via pull requests.
 
 **System:** `{$wp} datamachine system health|prompts|run`
 
@@ -293,14 +295,15 @@ MD;
 		'description' => 'WordPress Abilities API discovery.',
 	) );
 
-	// WordPress Source — direct reference material.
+	// WordPress Source — read-only reference material.
 	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'wordpress-source', 30, function () {
 		return <<<'MD'
-### WordPress Source
+### WordPress Source (Read-Only Reference)
 
-Direct reference material — grep it as needed:
-- `wp-content/plugins/` — all plugin source
-- `wp-content/themes/` — all theme source
+These directories are **read-only reference material** — grep and read them to understand code, but never edit them directly. All code changes go through the workspace (see Code above).
+
+- `wp-content/plugins/` — plugin source (read-only)
+- `wp-content/themes/` — theme source (read-only)
 - `wp-includes/` — WordPress core (read-only)
 MD;
 	}, array(
