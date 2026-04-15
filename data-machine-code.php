@@ -349,20 +349,16 @@ MD;
 /**
  * Resolve the WP-CLI command prefix for the current environment.
  *
- * Mirrors the {{WP_CLI_CMD}} substitution from wp-coding-agents setup scripts.
- * Produces a command prefix like "wp --allow-root --path=/var/www/example.com"
- * for server environments, or plain "wp" for local/Studio contexts.
+ * Builds a default prefix (e.g. "wp --allow-root --path=/var/www/example.com")
+ * then passes it through the `datamachine_wp_cli_cmd` filter so that
+ * environment-specific plugins can override it (e.g. Studio → "studio wp").
  *
  * @since 0.3.0
+ * @since 0.4.0 Added `datamachine_wp_cli_cmd` filter. Removed hardcoded Studio detection.
  *
  * @return string WP-CLI command prefix.
  */
 function datamachine_code_resolve_wp_cli_cmd(): string {
-	// Studio environments use a bare "wp" (Studio wraps it).
-	if ( defined( 'STARTER_STUDIO_PATH' ) ) {
-		return 'wp';
-	}
-
 	$parts = array( 'wp' );
 
 	// Server environments need --allow-root when running as root.
@@ -376,5 +372,17 @@ function datamachine_code_resolve_wp_cli_cmd(): string {
 		$parts[] = '--path=' . $abspath;
 	}
 
-	return implode( ' ', $parts );
+	$default = implode( ' ', $parts );
+
+	/**
+	 * Filter the WP-CLI command prefix used in AGENTS.md and other agent-facing output.
+	 *
+	 * Environment-specific plugins should hook this to provide the correct
+	 * command. For example, a Studio environment plugin would return "studio wp".
+	 *
+	 * @since 0.4.0
+	 *
+	 * @param string $wp_cli_cmd The default WP-CLI command prefix.
+	 */
+	return apply_filters( 'datamachine_wp_cli_cmd', $default );
 }
