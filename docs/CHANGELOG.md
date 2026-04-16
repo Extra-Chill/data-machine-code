@@ -2,6 +2,18 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.4.0] - 2026-04-15
+
+### Added
+- ability categories and tool-ability linkage
+
+### Changed
+- Make WP-CLI command prefix filterable via datamachine_wp_cli_cmd
+- Emphasize workspace/GitHub workflow over direct file editing in AGENTS.md sections
+
+### Fixed
+- Fix ability category registration — correct hook and slug format
+
 ## [0.3.0] - 2026-04-11
 
 ### Added
