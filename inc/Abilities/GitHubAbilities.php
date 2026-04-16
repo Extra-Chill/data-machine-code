@@ -56,7 +56,7 @@ class GitHubAbilities {
 				array(
 					'label'               => 'List GitHub Issues',
 					'description'         => 'List issues from a GitHub repository with optional filters',
-					'category'            => 'datamachine-code/github',
+					'category'            => 'datamachine-code-github',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'required'   => array( 'repo' ),
@@ -111,7 +111,7 @@ class GitHubAbilities {
 				array(
 					'label'               => 'Get GitHub Issue',
 					'description'         => 'Get a single GitHub issue with full details',
-					'category'            => 'datamachine-code/github',
+					'category'            => 'datamachine-code-github',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'required'   => array( 'repo', 'issue_number' ),
@@ -145,7 +145,7 @@ class GitHubAbilities {
 				array(
 					'label'               => 'Update GitHub Issue',
 					'description'         => 'Update a GitHub issue (title, body, labels, assignees, state)',
-					'category'            => 'datamachine-code/github',
+					'category'            => 'datamachine-code-github',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'required'   => array( 'repo', 'issue_number' ),
@@ -199,7 +199,7 @@ class GitHubAbilities {
 				array(
 					'label'               => 'Comment on GitHub Issue',
 					'description'         => 'Add a comment to a GitHub issue',
-					'category'            => 'datamachine-code/github',
+					'category'            => 'datamachine-code-github',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'required'   => array( 'repo', 'issue_number', 'body' ),
@@ -237,7 +237,7 @@ class GitHubAbilities {
 				array(
 					'label'               => 'List GitHub Pull Requests',
 					'description'         => 'List pull requests from a GitHub repository',
-					'category'            => 'datamachine-code/github',
+					'category'            => 'datamachine-code-github',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'required'   => array( 'repo' ),
@@ -280,7 +280,7 @@ class GitHubAbilities {
 				array(
 					'label'               => 'List GitHub Repositories',
 					'description'         => 'List repositories for a user or organization',
-					'category'            => 'datamachine-code/github',
+					'category'            => 'datamachine-code-github',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'required'   => array( 'owner' ),
