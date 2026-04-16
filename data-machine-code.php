@@ -51,10 +51,37 @@ function datamachine_code_bootstrap() {
 	// Load Handlers (they self-register).
 	new \DataMachineCode\Handlers\GitHub\GitHub();
 
+	// Register ability categories on the correct hook (must happen during wp_abilities_api_categories_init).
+	add_action( 'wp_abilities_api_categories_init', 'datamachine_code_register_ability_categories' );
+
 	// Register GitHub issue creation ability via SystemAbilities hook.
 	add_action( 'wp_abilities_api_init', 'datamachine_code_register_system_abilities' );
 }
 add_action( 'plugins_loaded', 'datamachine_code_bootstrap', 20 );
+
+/**
+ * Register ability categories for data-machine-code.
+ *
+ * Must be called on `wp_abilities_api_categories_init` — WordPress core
+ * enforces that categories are only registered during this action.
+ */
+function datamachine_code_register_ability_categories() {
+	wp_register_ability_category(
+		'datamachine-code-workspace',
+		array(
+			'label'       => __( 'Code Workspace', 'data-machine-code' ),
+			'description' => __( 'Git workspace management — clone, read, write, edit, and git operations.', 'data-machine-code' ),
+		)
+	);
+
+	wp_register_ability_category(
+		'datamachine-code-github',
+		array(
+			'label'       => __( 'GitHub', 'data-machine-code' ),
+			'description' => __( 'GitHub issue, pull request, and repository operations.', 'data-machine-code' ),
+		)
+	);
+}
 
 /**
  * Register system-level abilities (GitHub issue creation).
@@ -64,28 +91,12 @@ function datamachine_code_register_system_abilities() {
 		return;
 	}
 
-	wp_register_ability_category(
-		'datamachine-code/workspace',
-		array(
-			'label'       => __( 'Code Workspace', 'data-machine-code' ),
-			'description' => __( 'Git workspace management — clone, read, write, edit, and git operations.', 'data-machine-code' ),
-		)
-	);
-
-	wp_register_ability_category(
-		'datamachine-code/github',
-		array(
-			'label'       => __( 'GitHub', 'data-machine-code' ),
-			'description' => __( 'GitHub issue, pull request, and repository operations.', 'data-machine-code' ),
-		)
-	);
-
 	wp_register_ability(
 		'datamachine/create-github-issue',
 		array(
 			'label'               => 'Create GitHub Issue',
 			'description'         => 'Create a new GitHub issue in a repository.',
-			'category'            => 'datamachine-code/github',
+			'category'            => 'datamachine-code-github',
 			'input_schema'        => array(
 				'type'       => 'object',
 				'required'   => array( 'title' ),
