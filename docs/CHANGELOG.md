@@ -2,7 +2,7 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
-## [Unreleased]
+## [0.5.0] - 2026-04-17
 
 ### Added
 - Worktree-native workspace: each branch lives in its own directory at `<workspace>/<repo>@<branch-slug>`. Multiple agent sessions can edit different branches of the same repo simultaneously.
@@ -11,6 +11,7 @@ All notable changes to Data Machine Code will be documented in this file.
 - All read/write/git abilities accept the new `<repo>@<branch-slug>` handle format alongside bare repo names.
 - Pure-PHP smoke test for handle parsing and slug generation (`tests/smoke-worktree-handles.php`).
 - Manual end-to-end test plan (`tests/TESTING.md`).
+- worktree-native workspace for parallel branch work
 
 ### Changed
 - `clone` rejects names containing `@` — that suffix is reserved for worktrees.
