@@ -45,18 +45,45 @@ wp datamachine-code workspace path
 wp datamachine-code workspace list
 wp datamachine-code workspace clone https://github.com/org/repo.git
 wp datamachine-code workspace show repo-name
-wp datamachine-code workspace read repo-name src/main.php
-wp datamachine-code workspace ls repo-name src/
-wp datamachine-code workspace write repo-name path/to/file.txt @content.txt
-wp datamachine-code workspace edit repo-name path/to/file.txt --old="foo" --new="bar"
+
+# Worktrees — one per branch, parallel-safe
+wp datamachine-code workspace worktree add repo-name fix/foo
+wp datamachine-code workspace worktree list
+wp datamachine-code workspace worktree remove repo-name fix/foo
+wp datamachine-code workspace worktree prune
+
+# All read/write/git ops accept either <repo> (primary) or <repo>@<branch-slug> (worktree)
+wp datamachine-code workspace read repo-name@fix-foo src/main.php
+wp datamachine-code workspace ls repo-name@fix-foo src/
+wp datamachine-code workspace write repo-name@fix-foo path/to/file.txt @content.txt
+wp datamachine-code workspace edit repo-name@fix-foo path/to/file.txt --old="foo" --new="bar"
 wp datamachine-code workspace remove repo-name
-wp datamachine-code workspace git status repo-name
-wp datamachine-code workspace git pull repo-name
-wp datamachine-code workspace git add repo-name --paths=src/file.php
-wp datamachine-code workspace git commit repo-name --message="fix: something"
-wp datamachine-code workspace git push repo-name
-wp datamachine-code workspace git log repo-name
-wp datamachine-code workspace git diff repo-name
+wp datamachine-code workspace git status repo-name@fix-foo
+wp datamachine-code workspace git pull repo-name@fix-foo
+wp datamachine-code workspace git add repo-name@fix-foo --path=src/file.php
+wp datamachine-code workspace git commit repo-name@fix-foo "fix: something"
+wp datamachine-code workspace git push repo-name@fix-foo
+wp datamachine-code workspace git log repo-name@fix-foo
+wp datamachine-code workspace git diff repo-name@fix-foo
+```
+
+### Worktrees: parallel-safe branch work
+
+The workspace is **worktree-native**. Each branch lives in its own directory at
+`<workspace>/<repo>@<branch-slug>` (slashes in branch names become dashes). Multiple
+agent sessions can edit different branches of the same repo simultaneously without
+stepping on each other.
+
+The primary checkout (bare `<repo>`) is **read-only by default** for mutating
+operations — pass `--allow-primary-mutation` to override. The default-deny is
+intentional: the primary tracks the deployed branch, and silent branch-switches
+on it are how parallel agents corrupt each other's work.
+
+```
+~/.datamachine/workspace/
+├── data-machine/                    ← primary, hands-off by default
+├── data-machine@fix-foo/            ← worktree for fix/foo
+└── data-machine@feat-bar/           ← worktree for feat/bar
 ```
 
 ## Requirements

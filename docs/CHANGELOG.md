@@ -2,6 +2,22 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Worktree-native workspace: each branch lives in its own directory at `<workspace>/<repo>@<branch-slug>`. Multiple agent sessions can edit different branches of the same repo simultaneously.
+- Four new abilities: `datamachine/workspace-worktree-add|list|remove|prune`.
+- New CLI subcommand: `wp datamachine-code workspace worktree add|list|remove|prune`.
+- All read/write/git abilities accept the new `<repo>@<branch-slug>` handle format alongside bare repo names.
+- Pure-PHP smoke test for handle parsing and slug generation (`tests/smoke-worktree-handles.php`).
+- Manual end-to-end test plan (`tests/TESTING.md`).
+
+### Changed
+- `clone` rejects names containing `@` — that suffix is reserved for worktrees.
+- `remove` refuses to delete a primary checkout that has linked worktrees attached.
+- `git push` only enforces the `fixed_branch` policy on the primary checkout. Worktrees may push any branch.
+- Mutating ops (`git pull|add|commit|push`) on a primary checkout require `--allow-primary-mutation` (CLI) / `allow_primary_mutation: true` (ability input). Worktrees are always allowed. Default-deny prevents parallel agents from clobbering the deployed branch.
+
 ## [0.4.0] - 2026-04-15
 
 ### Added
