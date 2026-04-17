@@ -124,6 +124,8 @@ class WorkspaceCommand extends BaseCommand {
 			function ( $repo ) {
 				return array(
 					'name'   => $repo['name'],
+					'kind'   => ! empty( $repo['is_worktree'] ) ? 'worktree' : 'primary',
+					'repo'   => $repo['repo'] ?? $repo['name'],
 					'branch' => $repo['branch'] ?? '-',
 					'remote' => $repo['remote'] ?? '-',
 					'git'    => $repo['git'] ? 'yes' : 'no',
@@ -135,7 +137,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$this->format_items(
 			$items,
-			array( 'name', 'branch', 'remote', 'git' ),
+			array( 'name', 'kind', 'repo', 'branch', 'remote', 'git' ),
 			$assoc_args,
 			'name'
 		);
@@ -668,6 +670,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * [--allow-dirty]
 	 * : Allow pull with dirty working tree.
+	 *
+	 * [--allow-primary-mutation]
+	 * : Permit mutating ops (pull/add/commit/push) on the primary checkout. Default-deny — use a worktree handle (`<repo>@<branch-slug>`) instead whenever possible.
 	 *
 	 * [--remote=<remote>]
 	 * : Remote name for push (default: origin).

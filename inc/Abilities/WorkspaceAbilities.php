@@ -767,8 +767,9 @@ class WorkspaceAbilities {
 										'repo'        => array( 'type' => 'string' ),
 										'is_worktree' => array( 'type' => 'boolean' ),
 										'is_primary'  => array( 'type' => 'boolean' ),
-										'branch_slug' => array( 'type' => 'string' ),
-										'branch'      => array( 'type' => 'string' ),
+										'external'    => array( 'type' => 'boolean' ),
+										'branch_slug' => array( 'type' => array( 'string', 'null' ) ),
+										'branch'      => array( 'type' => array( 'string', 'null' ) ),
 										'head'        => array( 'type' => 'string' ),
 										'path'        => array( 'type' => 'string' ),
 										'dirty'       => array( 'type' => 'integer' ),
@@ -865,7 +866,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters.
 	 * @return array Result.
 	 */
-	public static function getPath( array $input ): array {
+	public static function getPath( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 
 		if ( ! empty( $input['ensure'] ) ) {
@@ -892,7 +893,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters.
 	 * @return array Result.
 	 */
-	public static function listRepos( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+	public static function listRepos( array $input ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 		$workspace = new Workspace();
 		return $workspace->list_repos();
 	}
@@ -903,7 +904,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name'.
 	 * @return array Result.
 	 */
-	public static function showRepo( array $input ): array {
+	public static function showRepo( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->show_repo( $input['name'] ?? '' );
 	}
@@ -914,7 +915,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'repo', 'path', optional 'max_size', 'offset', 'limit'.
 	 * @return array Result.
 	 */
-	public static function readFile( array $input ): array {
+	public static function readFile( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$reader    = new WorkspaceReader( $workspace );
 
@@ -933,7 +934,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'repo', optional 'path'.
 	 * @return array Result.
 	 */
-	public static function listDirectory( array $input ): array {
+	public static function listDirectory( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$reader    = new WorkspaceReader( $workspace );
 
@@ -949,7 +950,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'url', optional 'name'.
 	 * @return array Result.
 	 */
-	public static function cloneRepo( array $input ): array {
+	public static function cloneRepo( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->clone_repo(
 			$input['url'] ?? '',
@@ -963,7 +964,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name'.
 	 * @return array Result.
 	 */
-	public static function removeRepo( array $input ): array {
+	public static function removeRepo( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->remove_repo( $input['name'] ?? '' );
 	}
@@ -974,7 +975,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'repo', 'path', 'content'.
 	 * @return array Result.
 	 */
-	public static function writeFile( array $input ): array {
+	public static function writeFile( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$writer    = new WorkspaceWriter( $workspace );
 
@@ -991,7 +992,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'repo', 'path', 'old_string', 'new_string', optional 'replace_all'.
 	 * @return array Result.
 	 */
-	public static function editFile( array $input ): array {
+	public static function editFile( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$writer    = new WorkspaceWriter( $workspace );
 
@@ -1010,7 +1011,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name'.
 	 * @return array
 	 */
-	public static function gitStatus( array $input ): array {
+	public static function gitStatus( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->git_status( $input['name'] ?? '' );
 	}
@@ -1021,7 +1022,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name', optional 'allow_dirty'.
 	 * @return array
 	 */
-	public static function gitPull( array $input ): array {
+	public static function gitPull( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->git_pull(
 			$input['name'] ?? '',
@@ -1036,7 +1037,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name', 'paths'.
 	 * @return array
 	 */
-	public static function gitAdd( array $input ): array {
+	public static function gitAdd( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$paths     = $input['paths'] ?? array();
 
@@ -1053,7 +1054,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name', 'message'.
 	 * @return array
 	 */
-	public static function gitCommit( array $input ): array {
+	public static function gitCommit( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->git_commit(
 			$input['name'] ?? '',
@@ -1068,7 +1069,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name', optional 'remote', 'branch'.
 	 * @return array
 	 */
-	public static function gitPush( array $input ): array {
+	public static function gitPush( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->git_push(
 			$input['name'] ?? '',
@@ -1084,7 +1085,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'repo', 'branch', optional 'from'.
 	 * @return array
 	 */
-	public static function worktreeAdd( array $input ): array {
+	public static function worktreeAdd( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->worktree_add(
 			$input['repo'] ?? '',
@@ -1099,7 +1100,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with optional 'repo'.
 	 * @return array
 	 */
-	public static function worktreeList( array $input ): array {
+	public static function worktreeList( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$repo      = isset( $input['repo'] ) && '' !== trim( (string) $input['repo'] )
 			? (string) $input['repo']
@@ -1113,7 +1114,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'repo', 'branch', optional 'force'.
 	 * @return array
 	 */
-	public static function worktreeRemove( array $input ): array {
+	public static function worktreeRemove( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->worktree_remove(
 			$input['repo'] ?? '',
@@ -1128,7 +1129,7 @@ class WorkspaceAbilities {
 	 * @param array $input Unused.
 	 * @return array
 	 */
-	public static function worktreePrune( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+	public static function worktreePrune( array $input ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 		$workspace = new Workspace();
 		return $workspace->worktree_prune();
 	}
@@ -1139,7 +1140,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name', optional 'limit'.
 	 * @return array
 	 */
-	public static function gitLog( array $input ): array {
+	public static function gitLog( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->git_log(
 			$input['name'] ?? '',
@@ -1153,7 +1154,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters.
 	 * @return array
 	 */
-	public static function gitDiff( array $input ): array {
+	public static function gitDiff( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->git_diff(
 			$input['name'] ?? '',

@@ -890,7 +890,7 @@ class Workspace {
 		if ( 0 === $exists_local ) {
 			$cmd = sprintf( 'worktree add %s %s', escapeshellarg( $wt_path ), escapeshellarg( $branch ) );
 		} else {
-			$base = $from && '' !== trim( $from ) ? trim( $from ) : 'HEAD';
+			$base = $from && '' !== trim( $from ) ? trim( $from ) : $this->resolve_default_base( $primary_path );
 			// Fetch first to make sure remote refs are current.
 			$this->run_git( $primary_path, 'fetch --quiet origin' );
 			$cmd = sprintf( 'worktree add -b %s %s %s', escapeshellarg( $branch ), escapeshellarg( $wt_path ), escapeshellarg( $base ) );
@@ -961,9 +961,21 @@ class Workspace {
 					continue;
 				}
 
-				$relative   = substr( $wt['path'], strlen( $this->workspace_path ) + 1 );
-				$is_primary = ( $wt['path'] === $primary_path );
-				$parsed     = $this->parse_handle( $relative );
+				$is_primary    = ( $wt['path'] === $primary_path );
+				$workspace_pfx = $this->workspace_path . '/';
+				$inside_ws     = str_starts_with( $wt['path'], $workspace_pfx );
+				$relative      = $inside_ws ? substr( $wt['path'], strlen( $workspace_pfx ) ) : '';
+				$parsed        = $inside_ws ? $this->parse_handle( $relative ) : array( 'branch_slug' => null );
+
+				if ( $is_primary ) {
+					$handle = $primary;
+				} elseif ( $inside_ws ) {
+					$handle = $relative;
+				} else {
+					// External worktree (created via raw `git worktree add` outside the workspace).
+					// Show the absolute path so it is still useful, even though it has no `<repo>@<slug>` handle.
+					$handle = $wt['path'];
+				}
 
 				$dirty_result = $this->run_git( $wt['path'], 'status --porcelain' );
 				$dirty_files  = is_wp_error( $dirty_result )
@@ -971,10 +983,11 @@ class Workspace {
 					: count( array_filter( array_map( 'trim', explode( "\n", $dirty_result['output'] ?? '' ) ) ) );
 
 				$worktrees[] = array(
-					'handle'      => $is_primary ? $primary : $relative,
+					'handle'      => $handle,
 					'repo'        => $primary,
 					'is_worktree' => ! $is_primary,
 					'is_primary'  => $is_primary,
+					'external'    => ! $is_primary && ! $inside_ws,
 					'branch_slug' => $is_primary ? null : ( $parsed['branch_slug'] ?? null ),
 					'branch'      => $wt['branch'],
 					'head'        => $wt['head'],
@@ -1069,6 +1082,26 @@ class Workspace {
 			'success' => true,
 			'pruned'  => $pruned,
 		);
+	}
+
+	/**
+	 * Resolve a sensible default base for new branches.
+	 *
+	 * Prefers `origin/HEAD` (typically `origin/main` or `origin/trunk`); falls
+	 * back to plain `HEAD` if no remote default is configured.
+	 *
+	 * @param string $repo_path Primary repo path.
+	 * @return string
+	 */
+	private function resolve_default_base( string $repo_path ): string {
+		$result = $this->run_git( $repo_path, 'symbolic-ref --quiet refs/remotes/origin/HEAD' );
+		if ( ! is_wp_error( $result ) ) {
+			$ref = trim( (string) ( $result['output'] ?? '' ) );
+			if ( '' !== $ref ) {
+				return $ref;
+			}
+		}
+		return 'HEAD';
 	}
 
 	/**
