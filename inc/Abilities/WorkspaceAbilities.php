@@ -122,7 +122,7 @@ class WorkspaceAbilities {
 						'properties' => array(
 							'name' => array(
 								'type'        => 'string',
-								'description' => 'Repository directory name.',
+								'description' => 'Workspace handle: `<repo>` for primary checkout or `<repo>@<branch-slug>` for a worktree.',
 							),
 						),
 						'required'   => array( 'name' ),
@@ -130,13 +130,15 @@ class WorkspaceAbilities {
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success' => array( 'type' => 'boolean' ),
-							'name'    => array( 'type' => 'string' ),
-							'path'    => array( 'type' => 'string' ),
-							'branch'  => array( 'type' => 'string' ),
-							'remote'  => array( 'type' => 'string' ),
-							'commit'  => array( 'type' => 'string' ),
-							'dirty'   => array( 'type' => 'integer' ),
+							'success'     => array( 'type' => 'boolean' ),
+							'name'        => array( 'type' => 'string' ),
+							'repo'        => array( 'type' => 'string' ),
+							'is_worktree' => array( 'type' => 'boolean' ),
+							'path'        => array( 'type' => 'string' ),
+							'branch'      => array( 'type' => 'string' ),
+							'remote'      => array( 'type' => 'string' ),
+							'commit'      => array( 'type' => 'string' ),
+							'dirty'       => array( 'type' => 'integer' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'showRepo' ),
@@ -160,7 +162,7 @@ class WorkspaceAbilities {
 						'properties' => array(
 							'repo'     => array(
 								'type'        => 'string',
-								'description' => 'Repository directory name.',
+								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
 							'path'     => array(
 								'type'        => 'string',
@@ -209,7 +211,7 @@ class WorkspaceAbilities {
 						'properties' => array(
 							'repo' => array(
 								'type'        => 'string',
-								'description' => 'Repository directory name.',
+								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
 							'path' => array(
 								'type'        => 'string',
@@ -251,7 +253,7 @@ class WorkspaceAbilities {
 				'datamachine/workspace-clone',
 				array(
 					'label'               => 'Clone Workspace Repo',
-					'description'         => 'Clone a git repository into the workspace.',
+					'description'         => 'Clone a git repository into the workspace as a primary checkout. Worktrees are created separately via `workspace-worktree-add`.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -286,14 +288,14 @@ class WorkspaceAbilities {
 				'datamachine/workspace-remove',
 				array(
 					'label'               => 'Remove Workspace Repo',
-					'description'         => 'Remove a repository from the workspace.',
+					'description'         => 'Remove a workspace handle. Refuses to remove a primary that has linked worktrees.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
 							'name' => array(
 								'type'        => 'string',
-								'description' => 'Repository directory name to remove.',
+								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
 						),
 						'required'   => array( 'name' ),
@@ -322,7 +324,7 @@ class WorkspaceAbilities {
 						'properties' => array(
 							'repo'    => array(
 								'type'        => 'string',
-								'description' => 'Repository directory name.',
+								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
 							'path'    => array(
 								'type'        => 'string',
@@ -361,7 +363,7 @@ class WorkspaceAbilities {
 						'properties' => array(
 							'repo'        => array(
 								'type'        => 'string',
-								'description' => 'Repository directory name.',
+								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
 							'path'        => array(
 								'type'        => 'string',
@@ -400,14 +402,14 @@ class WorkspaceAbilities {
 				'datamachine/workspace-git-status',
 				array(
 					'label'               => 'Workspace Git Status',
-					'description'         => 'Get git status information for a workspace repository.',
+					'description'         => 'Get git status information for a workspace handle (primary or worktree).',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
 							'name' => array(
 								'type'        => 'string',
-								'description' => 'Repository directory name.',
+								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
 						),
 						'required'   => array( 'name' ),
@@ -415,14 +417,16 @@ class WorkspaceAbilities {
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success' => array( 'type' => 'boolean' ),
-							'name'    => array( 'type' => 'string' ),
-							'path'    => array( 'type' => 'string' ),
-							'branch'  => array( 'type' => 'string' ),
-							'remote'  => array( 'type' => 'string' ),
-							'commit'  => array( 'type' => 'string' ),
-							'dirty'   => array( 'type' => 'integer' ),
-							'files'   => array(
+							'success'     => array( 'type' => 'boolean' ),
+							'name'        => array( 'type' => 'string' ),
+							'repo'        => array( 'type' => 'string' ),
+							'is_worktree' => array( 'type' => 'boolean' ),
+							'path'        => array( 'type' => 'string' ),
+							'branch'      => array( 'type' => 'string' ),
+							'remote'      => array( 'type' => 'string' ),
+							'commit'      => array( 'type' => 'string' ),
+							'dirty'       => array( 'type' => 'integer' ),
+							'files'       => array(
 								'type'  => 'array',
 								'items' => array( 'type' => 'string' ),
 							),
@@ -438,14 +442,14 @@ class WorkspaceAbilities {
 				'datamachine/workspace-git-log',
 				array(
 					'label'               => 'Workspace Git Log',
-					'description'         => 'Read git log entries for a workspace repository.',
+					'description'         => 'Read git log entries for a workspace handle.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
 							'name'  => array(
 								'type'        => 'string',
-								'description' => 'Repository directory name.',
+								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
 							'limit' => array(
 								'type'        => 'integer',
@@ -483,14 +487,14 @@ class WorkspaceAbilities {
 				'datamachine/workspace-git-diff',
 				array(
 					'label'               => 'Workspace Git Diff',
-					'description'         => 'Read git diff output for a workspace repository.',
+					'description'         => 'Read git diff output for a workspace handle.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
 							'name'   => array(
 								'type'        => 'string',
-								'description' => 'Repository directory name.',
+								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
 							'from'   => array(
 								'type'        => 'string',
@@ -529,18 +533,22 @@ class WorkspaceAbilities {
 				'datamachine/workspace-git-pull',
 				array(
 					'label'               => 'Workspace Git Pull',
-					'description'         => 'Run git pull --ff-only for a workspace repository.',
+					'description'         => 'Run git pull --ff-only for a workspace handle. Mutating ops on the primary checkout require allow_primary_mutation=true.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'name'        => array(
+							'name'                   => array(
 								'type'        => 'string',
-								'description' => 'Repository directory name.',
+								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
-							'allow_dirty' => array(
+							'allow_dirty'            => array(
 								'type'        => 'boolean',
 								'description' => 'Allow pull when working tree is dirty.',
+							),
+							'allow_primary_mutation' => array(
+								'type'        => 'boolean',
+								'description' => 'Permit mutation on the primary checkout (default false). Worktrees are always allowed.',
 							),
 						),
 						'required'   => array( 'name' ),
@@ -563,19 +571,23 @@ class WorkspaceAbilities {
 				'datamachine/workspace-git-add',
 				array(
 					'label'               => 'Workspace Git Add',
-					'description'         => 'Stage repository paths with git add.',
+					'description'         => 'Stage repository paths with git add. Mutating ops on the primary checkout require allow_primary_mutation=true.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'name'  => array(
+							'name'                   => array(
 								'type'        => 'string',
-								'description' => 'Repository directory name.',
+								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
-							'paths' => array(
+							'paths'                  => array(
 								'type'        => 'array',
 								'description' => 'Relative paths to stage.',
 								'items'       => array( 'type' => 'string' ),
+							),
+							'allow_primary_mutation' => array(
+								'type'        => 'boolean',
+								'description' => 'Permit mutation on the primary checkout (default false). Worktrees are always allowed.',
 							),
 						),
 						'required'   => array( 'name', 'paths' ),
@@ -602,18 +614,22 @@ class WorkspaceAbilities {
 				'datamachine/workspace-git-commit',
 				array(
 					'label'               => 'Workspace Git Commit',
-					'description'         => 'Commit staged changes in a workspace repository.',
+					'description'         => 'Commit staged changes in a workspace handle. Mutating ops on the primary checkout require allow_primary_mutation=true.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'name'    => array(
+							'name'                   => array(
 								'type'        => 'string',
-								'description' => 'Repository directory name.',
+								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
-							'message' => array(
+							'message'                => array(
 								'type'        => 'string',
 								'description' => 'Commit message.',
+							),
+							'allow_primary_mutation' => array(
+								'type'        => 'boolean',
+								'description' => 'Permit mutation on the primary checkout (default false). Worktrees are always allowed.',
 							),
 						),
 						'required'   => array( 'name', 'message' ),
@@ -637,22 +653,26 @@ class WorkspaceAbilities {
 				'datamachine/workspace-git-push',
 				array(
 					'label'               => 'Workspace Git Push',
-					'description'         => 'Push commits for a workspace repository.',
+					'description'         => 'Push commits for a workspace handle. `fixed_branch` policy applies only to the primary checkout; worktrees may push any branch.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'name'   => array(
+							'name'                   => array(
 								'type'        => 'string',
-								'description' => 'Repository directory name.',
+								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
-							'remote' => array(
+							'remote'                 => array(
 								'type'        => 'string',
 								'description' => 'Remote name (default origin).',
 							),
-							'branch' => array(
+							'branch'                 => array(
 								'type'        => 'string',
 								'description' => 'Branch override.',
+							),
+							'allow_primary_mutation' => array(
+								'type'        => 'boolean',
+								'description' => 'Permit pushing from the primary checkout (default false). Worktrees are always allowed.',
 							),
 						),
 						'required'   => array( 'name' ),
@@ -668,6 +688,161 @@ class WorkspaceAbilities {
 						),
 					),
 					'execute_callback'    => array( self::class, 'gitPush' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			// -----------------------------------------------------------------
+			// Worktree abilities (mutating, CLI-only by default).
+			// -----------------------------------------------------------------
+
+			wp_register_ability(
+				'datamachine/workspace-worktree-add',
+				array(
+					'label'               => 'Add Workspace Worktree',
+					'description'         => 'Create a git worktree for a branch under `<repo>@<branch-slug>`. Branches are created off the supplied `from` ref (default `origin/HEAD`) when they do not yet exist locally.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'repo'   => array(
+								'type'        => 'string',
+								'description' => 'Primary repo name (no @-suffix).',
+							),
+							'branch' => array(
+								'type'        => 'string',
+								'description' => 'Branch to check out in the worktree (e.g. fix/foo-bar). Slashes become dashes in the on-disk slug.',
+							),
+							'from'   => array(
+								'type'        => 'string',
+								'description' => 'Base ref when creating the branch (default origin/HEAD).',
+							),
+						),
+						'required'   => array( 'repo', 'branch' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'        => array( 'type' => 'boolean' ),
+							'handle'         => array( 'type' => 'string' ),
+							'path'           => array( 'type' => 'string' ),
+							'branch'         => array( 'type' => 'string' ),
+							'slug'           => array( 'type' => 'string' ),
+							'created_branch' => array( 'type' => 'boolean' ),
+							'message'        => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeAdd' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/workspace-worktree-list',
+				array(
+					'label'               => 'List Workspace Worktrees',
+					'description'         => 'List all worktrees in the workspace (optionally filtered by repo).',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'repo' => array(
+								'type'        => 'string',
+								'description' => 'Optional repo name to limit the list.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'   => array( 'type' => 'boolean' ),
+							'worktrees' => array(
+								'type'  => 'array',
+								'items' => array(
+									'type'       => 'object',
+									'properties' => array(
+										'handle'      => array( 'type' => 'string' ),
+										'repo'        => array( 'type' => 'string' ),
+										'is_worktree' => array( 'type' => 'boolean' ),
+										'is_primary'  => array( 'type' => 'boolean' ),
+										'external'    => array( 'type' => 'boolean' ),
+										'branch_slug' => array( 'type' => array( 'string', 'null' ) ),
+										'branch'      => array( 'type' => array( 'string', 'null' ) ),
+										'head'        => array( 'type' => 'string' ),
+										'path'        => array( 'type' => 'string' ),
+										'dirty'       => array( 'type' => 'integer' ),
+									),
+								),
+							),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeList' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/workspace-worktree-remove',
+				array(
+					'label'               => 'Remove Workspace Worktree',
+					'description'         => 'Remove a worktree by repo and branch (or branch slug). Refuses if the worktree has uncommitted changes unless `force` is true.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'repo'   => array(
+								'type'        => 'string',
+								'description' => 'Primary repo name.',
+							),
+							'branch' => array(
+								'type'        => 'string',
+								'description' => 'Branch (or slug) of the worktree.',
+							),
+							'force'  => array(
+								'type'        => 'boolean',
+								'description' => 'Force removal even if dirty (default false).',
+							),
+						),
+						'required'   => array( 'repo', 'branch' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'handle'  => array( 'type' => 'string' ),
+							'message' => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeRemove' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/workspace-worktree-prune',
+				array(
+					'label'               => 'Prune Workspace Worktrees',
+					'description'         => 'Run git worktree prune across all primary checkouts to drop stale registry entries.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'pruned'  => array(
+								'type'  => 'array',
+								'items' => array( 'type' => 'string' ),
+							),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreePrune' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
 				)
@@ -691,7 +866,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters.
 	 * @return array Result.
 	 */
-	public static function getPath( array $input ): array {
+	public static function getPath( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 
 		if ( ! empty( $input['ensure'] ) ) {
@@ -718,7 +893,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters.
 	 * @return array Result.
 	 */
-	public static function listRepos( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+	public static function listRepos( array $input ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 		$workspace = new Workspace();
 		return $workspace->list_repos();
 	}
@@ -729,7 +904,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name'.
 	 * @return array Result.
 	 */
-	public static function showRepo( array $input ): array {
+	public static function showRepo( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->show_repo( $input['name'] ?? '' );
 	}
@@ -740,7 +915,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'repo', 'path', optional 'max_size', 'offset', 'limit'.
 	 * @return array Result.
 	 */
-	public static function readFile( array $input ): array {
+	public static function readFile( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$reader    = new WorkspaceReader( $workspace );
 
@@ -759,7 +934,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'repo', optional 'path'.
 	 * @return array Result.
 	 */
-	public static function listDirectory( array $input ): array {
+	public static function listDirectory( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$reader    = new WorkspaceReader( $workspace );
 
@@ -775,7 +950,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'url', optional 'name'.
 	 * @return array Result.
 	 */
-	public static function cloneRepo( array $input ): array {
+	public static function cloneRepo( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->clone_repo(
 			$input['url'] ?? '',
@@ -789,7 +964,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name'.
 	 * @return array Result.
 	 */
-	public static function removeRepo( array $input ): array {
+	public static function removeRepo( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->remove_repo( $input['name'] ?? '' );
 	}
@@ -800,7 +975,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'repo', 'path', 'content'.
 	 * @return array Result.
 	 */
-	public static function writeFile( array $input ): array {
+	public static function writeFile( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$writer    = new WorkspaceWriter( $workspace );
 
@@ -817,7 +992,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'repo', 'path', 'old_string', 'new_string', optional 'replace_all'.
 	 * @return array Result.
 	 */
-	public static function editFile( array $input ): array {
+	public static function editFile( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$writer    = new WorkspaceWriter( $workspace );
 
@@ -836,7 +1011,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name'.
 	 * @return array
 	 */
-	public static function gitStatus( array $input ): array {
+	public static function gitStatus( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->git_status( $input['name'] ?? '' );
 	}
@@ -847,11 +1022,12 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name', optional 'allow_dirty'.
 	 * @return array
 	 */
-	public static function gitPull( array $input ): array {
+	public static function gitPull( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->git_pull(
 			$input['name'] ?? '',
-			! empty( $input['allow_dirty'] )
+			! empty( $input['allow_dirty'] ),
+			! empty( $input['allow_primary_mutation'] )
 		);
 	}
 
@@ -861,7 +1037,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name', 'paths'.
 	 * @return array
 	 */
-	public static function gitAdd( array $input ): array {
+	public static function gitAdd( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$paths     = $input['paths'] ?? array();
 
@@ -869,7 +1045,7 @@ class WorkspaceAbilities {
 			$paths = array();
 		}
 
-		return $workspace->git_add( $input['name'] ?? '', $paths );
+		return $workspace->git_add( $input['name'] ?? '', $paths, ! empty( $input['allow_primary_mutation'] ) );
 	}
 
 	/**
@@ -878,11 +1054,12 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name', 'message'.
 	 * @return array
 	 */
-	public static function gitCommit( array $input ): array {
+	public static function gitCommit( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->git_commit(
 			$input['name'] ?? '',
-			$input['message'] ?? ''
+			$input['message'] ?? '',
+			! empty( $input['allow_primary_mutation'] )
 		);
 	}
 
@@ -892,13 +1069,69 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name', optional 'remote', 'branch'.
 	 * @return array
 	 */
-	public static function gitPush( array $input ): array {
+	public static function gitPush( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->git_push(
 			$input['name'] ?? '',
 			$input['remote'] ?? 'origin',
-			$input['branch'] ?? null
+			$input['branch'] ?? null,
+			! empty( $input['allow_primary_mutation'] )
 		);
+	}
+
+	/**
+	 * Add a worktree for a branch.
+	 *
+	 * @param array $input Input parameters with 'repo', 'branch', optional 'from'.
+	 * @return array
+	 */
+	public static function worktreeAdd( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		return $workspace->worktree_add(
+			$input['repo'] ?? '',
+			$input['branch'] ?? '',
+			$input['from'] ?? null
+		);
+	}
+
+	/**
+	 * List worktrees in the workspace.
+	 *
+	 * @param array $input Input parameters with optional 'repo'.
+	 * @return array
+	 */
+	public static function worktreeList( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		$repo      = isset( $input['repo'] ) && '' !== trim( (string) $input['repo'] )
+			? (string) $input['repo']
+			: null;
+		return $workspace->worktree_list( $repo );
+	}
+
+	/**
+	 * Remove a worktree.
+	 *
+	 * @param array $input Input parameters with 'repo', 'branch', optional 'force'.
+	 * @return array
+	 */
+	public static function worktreeRemove( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		return $workspace->worktree_remove(
+			$input['repo'] ?? '',
+			$input['branch'] ?? '',
+			! empty( $input['force'] )
+		);
+	}
+
+	/**
+	 * Prune stale worktree registry entries.
+	 *
+	 * @param array $input Unused.
+	 * @return array
+	 */
+	public static function worktreePrune( array $input ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+		$workspace = new Workspace();
+		return $workspace->worktree_prune();
 	}
 
 	/**
@@ -907,7 +1140,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters with 'name', optional 'limit'.
 	 * @return array
 	 */
-	public static function gitLog( array $input ): array {
+	public static function gitLog( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->git_log(
 			$input['name'] ?? '',
@@ -921,7 +1154,7 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters.
 	 * @return array
 	 */
-	public static function gitDiff( array $input ): array {
+	public static function gitDiff( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		return $workspace->git_diff(
 			$input['name'] ?? '',

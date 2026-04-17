@@ -124,6 +124,8 @@ class WorkspaceCommand extends BaseCommand {
 			function ( $repo ) {
 				return array(
 					'name'   => $repo['name'],
+					'kind'   => ! empty( $repo['is_worktree'] ) ? 'worktree' : 'primary',
+					'repo'   => $repo['repo'] ?? $repo['name'],
 					'branch' => $repo['branch'] ?? '-',
 					'remote' => $repo['remote'] ?? '-',
 					'git'    => $repo['git'] ? 'yes' : 'no',
@@ -135,7 +137,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$this->format_items(
 			$items,
-			array( 'name', 'branch', 'remote', 'git' ),
+			array( 'name', 'kind', 'repo', 'branch', 'remote', 'git' ),
 			$assoc_args,
 			'name'
 		);
@@ -669,6 +671,9 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--allow-dirty]
 	 * : Allow pull with dirty working tree.
 	 *
+	 * [--allow-primary-mutation]
+	 * : Permit mutating ops (pull/add/commit/push) on the primary checkout. Default-deny — use a worktree handle (`<repo>@<branch-slug>`) instead whenever possible.
+	 *
 	 * [--remote=<remote>]
 	 * : Remote name for push (default: origin).
 	 *
@@ -744,6 +749,11 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$input = array( 'name' => $repo );
+
+		// Mutating ops accept --allow-primary-mutation to operate on a primary checkout.
+		if ( in_array( $operation, array( 'pull', 'add', 'commit', 'push' ), true ) ) {
+			$input['allow_primary_mutation'] = ! empty( $assoc_args['allow-primary-mutation'] );
+		}
 
 		if ( 'pull' === $operation ) {
 			$input['allow_dirty'] = ! empty( $assoc_args['allow-dirty'] );
@@ -860,6 +870,183 @@ class WorkspaceCommand extends BaseCommand {
 
 			default:
 				WP_CLI::success( $result['message'] ?? 'Workspace git operation completed.' );
+				return;
+		}
+	}
+
+	/**
+	 * Manage workspace git worktrees.
+	 *
+	 * Worktrees let multiple agent sessions work on the same repo without
+	 * stepping on each other. Each branch lives in its own directory at
+	 * `<workspace>/<repo>@<branch-slug>`. Branch slashes become dashes in
+	 * the slug (`fix/foo` → `fix-foo`).
+	 *
+	 * ## OPTIONS
+	 *
+	 * <operation>
+	 * : Worktree operation: add, list, remove, prune.
+	 *
+	 * [<repo>]
+	 * : Primary repo name (required for add and remove).
+	 *
+	 * [<branch>]
+	 * : Branch name (required for add and remove).
+	 *
+	 * [--from=<ref>]
+	 * : Base ref when creating a branch on add (default origin/HEAD).
+	 *
+	 * [--force]
+	 * : Force-remove a worktree even if it is dirty.
+	 *
+	 * [--format=<format>]
+	 * : Output format for list (table, json, csv, yaml).
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     # Create a worktree for fix/foo on data-machine
+	 *     wp datamachine workspace worktree add data-machine fix/foo
+	 *
+	 *     # Create off a specific base
+	 *     wp datamachine workspace worktree add data-machine feat/bar --from=origin/develop
+	 *
+	 *     # List all worktrees
+	 *     wp datamachine workspace worktree list
+	 *
+	 *     # List worktrees for one repo
+	 *     wp datamachine workspace worktree list data-machine
+	 *
+	 *     # Remove a worktree
+	 *     wp datamachine workspace worktree remove data-machine fix/foo
+	 *
+	 *     # Force-remove a dirty worktree
+	 *     wp datamachine workspace worktree remove data-machine fix/foo --force
+	 *
+	 *     # Prune stale worktree registry entries across all primaries
+	 *     wp datamachine workspace worktree prune
+	 *
+	 * @subcommand worktree
+	 */
+	public function worktree( array $args, array $assoc_args ): void {
+		$operation = $args[0] ?? '';
+
+		if ( '' === $operation ) {
+			WP_CLI::error( 'Usage: wp datamachine workspace worktree <add|list|remove|prune> [<repo>] [<branch>] [--flags]' );
+			return;
+		}
+
+		$ability_name = match ( $operation ) {
+			'add'    => 'datamachine/workspace-worktree-add',
+			'list'   => 'datamachine/workspace-worktree-list',
+			'remove' => 'datamachine/workspace-worktree-remove',
+			'prune'  => 'datamachine/workspace-worktree-prune',
+			default  => '',
+		};
+
+		if ( '' === $ability_name ) {
+			WP_CLI::error( sprintf( 'Unknown worktree operation: %s', $operation ) );
+			return;
+		}
+
+		$ability = wp_get_ability( $ability_name );
+		if ( ! $ability ) {
+			WP_CLI::error( sprintf( 'Worktree ability not available: %s', $ability_name ) );
+			return;
+		}
+
+		$input = array();
+
+		switch ( $operation ) {
+			case 'add':
+				if ( empty( $args[1] ) || empty( $args[2] ) ) {
+					WP_CLI::error( 'Usage: worktree add <repo> <branch> [--from=<ref>]' );
+					return;
+				}
+				$input['repo']   = $args[1];
+				$input['branch'] = $args[2];
+				if ( ! empty( $assoc_args['from'] ) ) {
+					$input['from'] = (string) $assoc_args['from'];
+				}
+				break;
+
+			case 'list':
+				if ( ! empty( $args[1] ) ) {
+					$input['repo'] = $args[1];
+				}
+				break;
+
+			case 'remove':
+				if ( empty( $args[1] ) || empty( $args[2] ) ) {
+					WP_CLI::error( 'Usage: worktree remove <repo> <branch> [--force]' );
+					return;
+				}
+				$input['repo']   = $args[1];
+				$input['branch'] = $args[2];
+				$input['force']  = ! empty( $assoc_args['force'] );
+				break;
+		}
+
+		$result = $ability->execute( $input );
+
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+
+		$this->renderWorktreeResult( $operation, $result, $assoc_args );
+	}
+
+	/**
+	 * Render CLI output for worktree operations.
+	 *
+	 * @param string $operation  Worktree operation.
+	 * @param array  $result     Ability result.
+	 * @param array  $assoc_args CLI assoc args.
+	 */
+	private function renderWorktreeResult( string $operation, array $result, array $assoc_args ): void {
+		switch ( $operation ) {
+			case 'list':
+				$worktrees = $result['worktrees'] ?? array();
+				if ( empty( $worktrees ) ) {
+					WP_CLI::log( 'No worktrees found.' );
+					return;
+				}
+				$items = array_map(
+					fn( $wt ) => array(
+						'handle' => $wt['handle'] ?? '',
+						'repo'   => $wt['repo'] ?? '',
+						'kind'   => ! empty( $wt['is_primary'] ) ? 'primary' : 'worktree',
+						'branch' => $wt['branch'] ?? '-',
+						'head'   => isset( $wt['head'] ) ? substr( (string) $wt['head'], 0, 7 ) : '-',
+						'dirty'  => (int) ( $wt['dirty'] ?? 0 ),
+						'path'   => $wt['path'] ?? '',
+					),
+					$worktrees
+				);
+				$this->format_items( $items, array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'path' ), $assoc_args, 'handle' );
+				return;
+
+			case 'prune':
+				$pruned = $result['pruned'] ?? array();
+				if ( empty( $pruned ) ) {
+					WP_CLI::log( 'Nothing to prune.' );
+					return;
+				}
+				WP_CLI::success( sprintf( 'Pruned worktree registry across: %s', implode( ', ', $pruned ) ) );
+				return;
+
+			case 'add':
+				WP_CLI::success( $result['message'] ?? 'Worktree created.' );
+				if ( ! empty( $result['handle'] ) ) {
+					WP_CLI::log( sprintf( 'Handle: %s', $result['handle'] ) );
+					WP_CLI::log( sprintf( 'Path:   %s', $result['path'] ?? '-' ) );
+					WP_CLI::log( sprintf( 'Branch: %s%s', $result['branch'] ?? '-', ! empty( $result['created_branch'] ) ? ' (created)' : '' ) );
+				}
+				return;
+
+			case 'remove':
+			default:
+				WP_CLI::success( $result['message'] ?? 'Worktree operation complete.' );
 				return;
 		}
 	}

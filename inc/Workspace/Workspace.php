@@ -97,13 +97,97 @@ class Workspace {
 	}
 
 	/**
-	 * Get the full path to a repo within the workspace.
+	 * Get the full path to a workspace handle.
 	 *
-	 * @param string $name Repository name (directory name).
-	 * @return string Full path.
+	 * Handles can be either a primary checkout (`<repo>`) or a worktree
+	 * (`<repo>@<branch-slug>`). The directory name on disk equals the handle.
+	 *
+	 * @param string $handle Workspace handle (`<repo>` or `<repo>@<branch-slug>`).
+	 * @return string Full filesystem path.
 	 */
-	public function get_repo_path( string $name ): string {
-		return $this->workspace_path . '/' . $this->sanitize_name( $name );
+	public function get_repo_path( string $handle ): string {
+		$parsed = $this->parse_handle( $handle );
+		return $this->workspace_path . '/' . $parsed['dir_name'];
+	}
+
+	/**
+	 * Parse a workspace handle into its components.
+	 *
+	 * Accepts either:
+	 *   - `<repo>`           → primary checkout
+	 *   - `<repo>@<slug>`    → worktree (slug = slugified branch name)
+	 *
+	 * @param string $handle Workspace handle.
+	 * @return array{repo: string, branch_slug: string|null, is_worktree: bool, dir_name: string}
+	 */
+	public function parse_handle( string $handle ): array {
+		$handle = trim( $handle );
+
+		if ( str_contains( $handle, '@' ) ) {
+			$parts = explode( '@', $handle, 2 );
+			$repo  = $this->sanitize_name( $parts[0] );
+			$slug  = $this->sanitize_slug( $parts[1] );
+
+			if ( '' !== $repo && '' !== $slug ) {
+				return array(
+					'repo'        => $repo,
+					'branch_slug' => $slug,
+					'is_worktree' => true,
+					'dir_name'    => $repo . '@' . $slug,
+				);
+			}
+		}
+
+		$repo = $this->sanitize_name( $handle );
+
+		return array(
+			'repo'        => $repo,
+			'branch_slug' => null,
+			'is_worktree' => false,
+			'dir_name'    => $repo,
+		);
+	}
+
+	/**
+	 * Convert a branch name to a filesystem-safe slug.
+	 *
+	 * Slashes become dashes (`fix/foo-bar` → `fix-foo-bar`). Anything else
+	 * outside [A-Za-z0-9._-] is stripped.
+	 *
+	 * @param string $branch Branch name.
+	 * @return string Slug (empty if branch is invalid).
+	 */
+	public function slugify_branch( string $branch ): string {
+		$branch = trim( $branch );
+		if ( '' === $branch ) {
+			return '';
+		}
+
+		$slug = str_replace( '/', '-', $branch );
+		return $this->sanitize_slug( $slug );
+	}
+
+	/**
+	 * Sanitize a branch slug. Allows alphanumerics, dots, dashes, underscores.
+	 *
+	 * @param string $slug Raw slug.
+	 * @return string
+	 */
+	private function sanitize_slug( string $slug ): string {
+		$slug = preg_replace( '/[^a-zA-Z0-9._-]/', '', $slug );
+		// Collapse runs of dashes for readability.
+		$slug = preg_replace( '/-{2,}/', '-', (string) $slug );
+		return trim( (string) $slug, '-.' );
+	}
+
+	/**
+	 * Get the primary checkout path for a repo.
+	 *
+	 * @param string $repo Repository name (no @-suffix).
+	 * @return string
+	 */
+	public function get_primary_path( string $repo ): string {
+		return $this->workspace_path . '/' . $this->sanitize_name( $repo );
 	}
 
 	/**
@@ -175,14 +259,25 @@ class Workspace {
 				continue;
 			}
 
+			$git_path  = $entry_path . '/.git';
+			$is_git    = is_dir( $git_path ) || is_file( $git_path );
+			$is_wt     = is_file( $git_path );
+			$parsed    = $this->parse_handle( $entry );
+
 			$repo_info = array(
-				'name' => $entry,
-				'path' => $entry_path,
-				'git'  => is_dir( $entry_path . '/.git' ),
+				'name'        => $entry,
+				'path'        => $entry_path,
+				'git'         => $is_git,
+				'is_worktree' => $is_wt || $parsed['is_worktree'],
+				'repo'        => $parsed['repo'],
 			);
 
+			if ( $parsed['is_worktree'] ) {
+				$repo_info['branch_slug'] = $parsed['branch_slug'];
+			}
+
 			// Get git remote if available.
-			if ( $repo_info['git'] ) {
+			if ( $is_git ) {
 				$remote = $this->git_get_remote( $entry_path );
 				if ( null !== $remote ) {
 					$repo_info['remote'] = $remote;
@@ -225,6 +320,11 @@ class Workspace {
 			}
 		}
 
+		// Reject @-suffixed names — those are reserved for worktrees.
+		if ( str_contains( $name, '@' ) ) {
+			return new \WP_Error( 'invalid_clone_name', 'Repository names cannot contain "@". The "@<branch-slug>" suffix is reserved for worktrees (use "workspace worktree add" instead).', array( 'status' => 400 ) );
+		}
+
 		$name      = $this->sanitize_name( $name );
 		$repo_path = $this->workspace_path . '/' . $name;
 
@@ -265,18 +365,30 @@ class Workspace {
 	 * @param string $name Repository directory name.
 	 * @return array{success: bool, message: string}|\WP_Error
 	 */
-	public function remove_repo( string $name ): array|\WP_Error {
-		$name      = $this->sanitize_name( $name );
-		$repo_path = $this->workspace_path . '/' . $name;
+	public function remove_repo( string $handle ): array|\WP_Error {
+		$parsed    = $this->parse_handle( $handle );
+		$repo_path = $this->workspace_path . '/' . $parsed['dir_name'];
 
 		if ( ! is_dir( $repo_path ) ) {
-			return new \WP_Error( 'repo_not_found', sprintf( 'Repository "%s" not found in workspace.', $name ), array( 'status' => 404 ) );
+			return new \WP_Error( 'repo_not_found', sprintf( 'Workspace handle "%s" not found.', $parsed['dir_name'] ), array( 'status' => 404 ) );
 		}
 
 		// Safety: ensure path is within workspace.
 		$validation = $this->validate_containment( $repo_path, $this->workspace_path );
 		if ( ! $validation['valid'] ) {
 			return new \WP_Error( 'path_traversal', $validation['message'], array( 'status' => 403 ) );
+		}
+
+		// Refuse to remove a primary that still has live worktrees attached.
+		if ( ! $parsed['is_worktree'] ) {
+			$worktrees = $this->worktree_list( $parsed['repo'] );
+			if ( ! is_wp_error( $worktrees ) ) {
+				$linked = array_filter( $worktrees['worktrees'] ?? array(), fn( $wt ) => ! empty( $wt['is_worktree'] ) );
+				if ( ! empty( $linked ) ) {
+					$slugs = array_map( fn( $wt ) => $wt['branch_slug'] ?? '?', $linked );
+					return new \WP_Error( 'has_worktrees', sprintf( 'Cannot remove primary "%s": linked worktrees exist (%s). Remove them first with "workspace worktree remove".', $parsed['repo'], implode( ', ', $slugs ) ), array( 'status' => 400 ) );
+				}
+			}
 		}
 
 		// Remove recursively.
@@ -288,9 +400,19 @@ class Workspace {
 			return new \WP_Error( 'remove_failed', sprintf( 'Failed to remove (exit %d): %s', $exit_code, implode( "\n", $output ) ), array( 'status' => 500 ) );
 		}
 
+		// If we removed a worktree directory but didn't go through `git worktree remove`,
+		// prune the registry on the primary so it doesn't keep stale entries.
+		if ( $parsed['is_worktree'] ) {
+			$primary_path = $this->get_primary_path( $parsed['repo'] );
+			if ( is_dir( $primary_path . '/.git' ) ) {
+				// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
+				exec( sprintf( 'git -C %s worktree prune 2>&1', escapeshellarg( $primary_path ) ) );
+			}
+		}
+
 		return array(
 			'success' => true,
-			'message' => sprintf( 'Removed "%s" from workspace.', $name ),
+			'message' => sprintf( 'Removed "%s" from workspace.', $parsed['dir_name'] ),
 		);
 	}
 
@@ -300,12 +422,12 @@ class Workspace {
 	 * @param string $name Repository directory name.
 	 * @return array{success: bool, name?: string, path?: string, branch?: string, remote?: string, commit?: string, dirty?: int}|\WP_Error
 	 */
-	public function show_repo( string $name ): array|\WP_Error {
-		$name      = $this->sanitize_name( $name );
-		$repo_path = $this->workspace_path . '/' . $name;
+	public function show_repo( string $handle ): array|\WP_Error {
+		$parsed    = $this->parse_handle( $handle );
+		$repo_path = $this->workspace_path . '/' . $parsed['dir_name'];
 
 		if ( ! is_dir( $repo_path ) ) {
-			return new \WP_Error( 'repo_not_found', sprintf( 'Repository "%s" not found in workspace.', $name ), array( 'status' => 404 ) );
+			return new \WP_Error( 'repo_not_found', sprintf( 'Workspace handle "%s" not found.', $parsed['dir_name'] ), array( 'status' => 404 ) );
 		}
 
 		$escaped = escapeshellarg( $repo_path );
@@ -318,13 +440,15 @@ class Workspace {
 		// phpcs:enable
 
 		return array(
-			'success' => true,
-			'name'    => $name,
-			'path'    => $repo_path,
-			'branch'  => $branch ? $branch : null,
-			'remote'  => $remote ? $remote : null,
-			'commit'  => $commit ? $commit : null,
-			'dirty'   => (int) $status,
+			'success'     => true,
+			'name'        => $parsed['dir_name'],
+			'repo'        => $parsed['repo'],
+			'is_worktree' => $parsed['is_worktree'],
+			'path'        => $repo_path,
+			'branch'      => $branch ? $branch : null,
+			'remote'      => $remote ? $remote : null,
+			'commit'      => $commit ? $commit : null,
+			'dirty'       => (int) $status,
 		);
 	}
 
@@ -334,8 +458,9 @@ class Workspace {
 	 * @param string $name Repository directory name.
 	 * @return array
 	 */
-	public function git_status( string $name ): array|\WP_Error {
-		$repo_path = $this->resolve_repo_path( $name );
+	public function git_status( string $handle ): array|\WP_Error {
+		$parsed    = $this->parse_handle( $handle );
+		$repo_path = $this->resolve_repo_path( $handle );
 		if ( is_wp_error( $repo_path ) ) {
 			return $repo_path;
 		}
@@ -352,14 +477,16 @@ class Workspace {
 		$files = array_filter( array_map( 'trim', explode( "\n", $status_result['output'] ?? '' ) ) );
 
 		return array(
-			'success' => true,
-			'name'    => $this->sanitize_name( $name ),
-			'path'    => $repo_path,
-			'branch'  => ! is_wp_error( $branch_result ) ? trim( (string) $branch_result['output'] ) : null,
-			'remote'  => ! is_wp_error( $remote_result ) ? trim( (string) $remote_result['output'] ) : null,
-			'commit'  => ! is_wp_error( $latest_result ) ? trim( (string) $latest_result['output'] ) : null,
-			'dirty'   => count( $files ),
-			'files'   => array_values( $files ),
+			'success'     => true,
+			'name'        => $parsed['dir_name'],
+			'repo'        => $parsed['repo'],
+			'is_worktree' => $parsed['is_worktree'],
+			'path'        => $repo_path,
+			'branch'      => ! is_wp_error( $branch_result ) ? trim( (string) $branch_result['output'] ) : null,
+			'remote'      => ! is_wp_error( $remote_result ) ? trim( (string) $remote_result['output'] ) : null,
+			'commit'      => ! is_wp_error( $latest_result ) ? trim( (string) $latest_result['output'] ) : null,
+			'dirty'       => count( $files ),
+			'files'       => array_values( $files ),
 		);
 	}
 
@@ -370,18 +497,24 @@ class Workspace {
 	 * @param bool   $allow_dirty Allow pull with dirty working tree.
 	 * @return array
 	 */
-	public function git_pull( string $name, bool $allow_dirty = false ): array|\WP_Error {
-		$repo_path = $this->resolve_repo_path( $name );
+	public function git_pull( string $handle, bool $allow_dirty = false, bool $allow_primary_mutation = false ): array|\WP_Error {
+		$parsed    = $this->parse_handle( $handle );
+		$repo_path = $this->resolve_repo_path( $handle );
 		if ( is_wp_error( $repo_path ) ) {
 			return $repo_path;
 		}
 
-		$policy_check = $this->ensure_git_mutation_allowed( $this->sanitize_name( $name ) );
+		$policy_check = $this->ensure_git_mutation_allowed( $parsed['repo'] );
 		if ( is_wp_error( $policy_check ) ) {
 			return $policy_check;
 		}
 
-		$status = $this->git_status( $name );
+		$primary_check = $this->ensure_primary_mutation_allowed( $parsed, $allow_primary_mutation );
+		if ( is_wp_error( $primary_check ) ) {
+			return $primary_check;
+		}
+
+		$status = $this->git_status( $handle );
 		if ( is_wp_error( $status ) ) {
 			return $status;
 		}
@@ -399,7 +532,7 @@ class Workspace {
 		return array(
 			'success' => true,
 			'message' => trim( (string) $result['output'] ),
-			'name'    => $this->sanitize_name( $name ),
+			'name'    => $parsed['dir_name'],
 		);
 	}
 
@@ -410,9 +543,10 @@ class Workspace {
 	 * @param array  $paths Relative paths to stage.
 	 * @return array
 	 */
-	public function git_add( string $name, array $paths ): array|\WP_Error {
-		$repo_name = $this->sanitize_name( $name );
-		$repo_path = $this->resolve_repo_path( $name );
+	public function git_add( string $handle, array $paths, bool $allow_primary_mutation = false ): array|\WP_Error {
+		$parsed    = $this->parse_handle( $handle );
+		$repo_name = $parsed['repo'];
+		$repo_path = $this->resolve_repo_path( $handle );
 		if ( is_wp_error( $repo_path ) ) {
 			return $repo_path;
 		}
@@ -420,6 +554,11 @@ class Workspace {
 		$policy_check = $this->ensure_git_mutation_allowed( $repo_name );
 		if ( is_wp_error( $policy_check ) ) {
 			return $policy_check;
+		}
+
+		$primary_check = $this->ensure_primary_mutation_allowed( $parsed, $allow_primary_mutation );
+		if ( is_wp_error( $primary_check ) ) {
+			return $primary_check;
 		}
 
 		if ( empty( $paths ) ) {
@@ -466,7 +605,8 @@ class Workspace {
 
 		return array(
 			'success' => true,
-			'name'    => $repo_name,
+			'name'    => $parsed['dir_name'],
+			'repo'    => $repo_name,
 			'paths'   => $clean_paths,
 			'message' => 'Paths staged successfully.',
 		);
@@ -475,13 +615,15 @@ class Workspace {
 	/**
 	 * Commit staged changes in a workspace repository.
 	 *
-	 * @param string $name    Repository directory name.
-	 * @param string $message Commit message.
+	 * @param string $handle               Workspace handle.
+	 * @param string $message              Commit message.
+	 * @param bool   $allow_primary_mutation Whether the primary checkout may be mutated.
 	 * @return array
 	 */
-	public function git_commit( string $name, string $message ): array|\WP_Error {
-		$repo_name = $this->sanitize_name( $name );
-		$repo_path = $this->resolve_repo_path( $name );
+	public function git_commit( string $handle, string $message, bool $allow_primary_mutation = false ): array|\WP_Error {
+		$parsed    = $this->parse_handle( $handle );
+		$repo_name = $parsed['repo'];
+		$repo_path = $this->resolve_repo_path( $handle );
 		if ( is_wp_error( $repo_path ) ) {
 			return $repo_path;
 		}
@@ -489,6 +631,11 @@ class Workspace {
 		$policy_check = $this->ensure_git_mutation_allowed( $repo_name, true );
 		if ( is_wp_error( $policy_check ) ) {
 			return $policy_check;
+		}
+
+		$primary_check = $this->ensure_primary_mutation_allowed( $parsed, $allow_primary_mutation );
+		if ( is_wp_error( $primary_check ) ) {
+			return $primary_check;
 		}
 
 		$message = trim( $message );
@@ -521,7 +668,8 @@ class Workspace {
 
 		return array(
 			'success' => true,
-			'name'    => $repo_name,
+			'name'    => $parsed['dir_name'],
+			'repo'    => $repo_name,
 			'commit'  => trim( (string) $commit['output'] ),
 			'message' => 'Commit created successfully.',
 		);
@@ -530,14 +678,19 @@ class Workspace {
 	/**
 	 * Push commits for a workspace repository.
 	 *
-	 * @param string      $name   Repository directory name.
-	 * @param string      $remote Remote name.
-	 * @param string|null $branch Branch override.
+	 * `fixed_branch` policy applies only to primary checkouts. Worktrees
+	 * may push any branch (they exist precisely for feature work).
+	 *
+	 * @param string      $handle               Workspace handle.
+	 * @param string      $remote               Remote name.
+	 * @param string|null $branch               Branch override.
+	 * @param bool        $allow_primary_mutation Whether the primary may be pushed.
 	 * @return array
 	 */
-	public function git_push( string $name, string $remote = 'origin', ?string $branch = null ): array|\WP_Error {
-		$repo_name = $this->sanitize_name( $name );
-		$repo_path = $this->resolve_repo_path( $name );
+	public function git_push( string $handle, string $remote = 'origin', ?string $branch = null, bool $allow_primary_mutation = false ): array|\WP_Error {
+		$parsed    = $this->parse_handle( $handle );
+		$repo_name = $parsed['repo'];
+		$repo_path = $this->resolve_repo_path( $handle );
 		if ( is_wp_error( $repo_path ) ) {
 			return $repo_path;
 		}
@@ -545,6 +698,11 @@ class Workspace {
 		$policy_check = $this->ensure_git_mutation_allowed( $repo_name, true );
 		if ( is_wp_error( $policy_check ) ) {
 			return $policy_check;
+		}
+
+		$primary_check = $this->ensure_primary_mutation_allowed( $parsed, $allow_primary_mutation );
+		if ( is_wp_error( $primary_check ) ) {
+			return $primary_check;
 		}
 
 		$current_branch_result = $this->run_git( $repo_path, 'rev-parse --abbrev-ref HEAD' );
@@ -555,9 +713,12 @@ class Workspace {
 		$current_branch = trim( (string) $current_branch_result['output'] );
 		$target_branch  = $branch ? trim( $branch ) : $current_branch;
 
-		$fixed_branch = $this->get_repo_fixed_branch( $repo_name );
-		if ( null !== $fixed_branch && $target_branch !== $fixed_branch ) {
-			return new \WP_Error( 'branch_restricted', sprintf( 'Push blocked: repo "%s" is restricted to branch "%s".', $repo_name, $fixed_branch ), array( 'status' => 403 ) );
+		// fixed_branch only constrains the primary checkout.
+		if ( ! $parsed['is_worktree'] ) {
+			$fixed_branch = $this->get_repo_fixed_branch( $repo_name );
+			if ( null !== $fixed_branch && $target_branch !== $fixed_branch ) {
+				return new \WP_Error( 'branch_restricted', sprintf( 'Push blocked: primary checkout of "%s" is restricted to branch "%s". Use a worktree for other branches.', $repo_name, $fixed_branch ), array( 'status' => 403 ) );
+			}
 		}
 
 		$cmd    = sprintf( 'push %s %s', escapeshellarg( $remote ), escapeshellarg( $target_branch ) );
@@ -569,7 +730,8 @@ class Workspace {
 
 		return array(
 			'success' => true,
-			'name'    => $repo_name,
+			'name'    => $parsed['dir_name'],
+			'repo'    => $repo_name,
 			'remote'  => $remote,
 			'branch'  => $target_branch,
 			'message' => trim( (string) $result['output'] ),
@@ -613,9 +775,11 @@ class Workspace {
 			);
 		}
 
+		$parsed = $this->parse_handle( $name );
 		return array(
 			'success' => true,
-			'name'    => $this->sanitize_name( $name ),
+			'name'    => $parsed['dir_name'],
+			'repo'    => $parsed['repo'],
 			'entries' => $entries,
 		);
 	}
@@ -664,11 +828,308 @@ class Workspace {
 			return $diff;
 		}
 
+		$parsed = $this->parse_handle( $name );
 		return array(
 			'success' => true,
-			'name'    => $this->sanitize_name( $name ),
+			'name'    => $parsed['dir_name'],
+			'repo'    => $parsed['repo'],
 			'diff'    => $diff['output'] ?? '',
 		);
+	}
+
+	// =========================================================================
+	// Worktree operations
+	// =========================================================================
+
+	/**
+	 * Create a git worktree for a branch.
+	 *
+	 * Layout: `<workspace>/<repo>@<branch-slug>` is added as a worktree of
+	 * `<workspace>/<repo>` checked out to `<branch>`. If the branch does not
+	 * exist locally, it is created from `<from>` (default `origin/HEAD`).
+	 *
+	 * @param string      $repo   Primary repo name (no @-suffix).
+	 * @param string      $branch Branch to check out (e.g. "fix/foo-bar").
+	 * @param string|null $from   Base ref when creating the branch.
+	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string}|\WP_Error
+	 */
+	public function worktree_add( string $repo, string $branch, ?string $from = null ): array|\WP_Error {
+		$repo   = $this->sanitize_name( $repo );
+		$branch = trim( $branch );
+
+		if ( '' === $repo ) {
+			return new \WP_Error( 'invalid_repo', 'Repository name is required.', array( 'status' => 400 ) );
+		}
+
+		if ( '' === $branch ) {
+			return new \WP_Error( 'invalid_branch', 'Branch name is required.', array( 'status' => 400 ) );
+		}
+
+		$slug = $this->slugify_branch( $branch );
+		if ( '' === $slug ) {
+			return new \WP_Error( 'invalid_branch', sprintf( 'Branch "%s" produced an empty slug.', $branch ), array( 'status' => 400 ) );
+		}
+
+		$primary_path = $this->get_primary_path( $repo );
+		if ( ! is_dir( $primary_path ) || ! is_dir( $primary_path . '/.git' ) ) {
+			return new \WP_Error( 'primary_not_found', sprintf( 'Primary checkout for "%s" does not exist. Clone it first.', $repo ), array( 'status' => 404 ) );
+		}
+
+		$wt_handle = $repo . '@' . $slug;
+		$wt_path   = $this->workspace_path . '/' . $wt_handle;
+
+		if ( is_dir( $wt_path ) ) {
+			return new \WP_Error( 'worktree_exists', sprintf( 'Worktree handle "%s" already exists.', $wt_handle ), array( 'status' => 400 ) );
+		}
+
+		// Does the branch already exist locally?
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
+		exec( sprintf( 'git -C %s show-ref --verify --quiet %s 2>&1', escapeshellarg( $primary_path ), escapeshellarg( 'refs/heads/' . $branch ) ), $_unused, $exists_local );
+		$created_branch = false;
+
+		if ( 0 === $exists_local ) {
+			$cmd = sprintf( 'worktree add %s %s', escapeshellarg( $wt_path ), escapeshellarg( $branch ) );
+		} else {
+			$base = $from && '' !== trim( $from ) ? trim( $from ) : $this->resolve_default_base( $primary_path );
+			// Fetch first to make sure remote refs are current.
+			$this->run_git( $primary_path, 'fetch --quiet origin' );
+			$cmd = sprintf( 'worktree add -b %s %s %s', escapeshellarg( $branch ), escapeshellarg( $wt_path ), escapeshellarg( $base ) );
+			$created_branch = true;
+		}
+
+		$result = $this->run_git( $primary_path, $cmd );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return array(
+			'success'        => true,
+			'handle'         => $wt_handle,
+			'path'           => $wt_path,
+			'branch'         => $branch,
+			'slug'           => $slug,
+			'created_branch' => $created_branch,
+			'message'        => sprintf( 'Worktree "%s" added at %s (branch %s).', $wt_handle, $wt_path, $branch ),
+		);
+	}
+
+	/**
+	 * List worktrees in the workspace.
+	 *
+	 * @param string|null $repo Optional repo filter (only this primary's worktrees).
+	 * @return array{success: bool, worktrees: array}|\WP_Error
+	 */
+	public function worktree_list( ?string $repo = null ): array|\WP_Error {
+		if ( ! is_dir( $this->workspace_path ) ) {
+			return array(
+				'success'   => true,
+				'worktrees' => array(),
+			);
+		}
+
+		$primaries = array();
+		$entries   = scandir( $this->workspace_path );
+		foreach ( $entries as $entry ) {
+			if ( '.' === $entry || '..' === $entry || str_contains( $entry, '@' ) ) {
+				continue;
+			}
+			$entry_path = $this->workspace_path . '/' . $entry;
+			if ( ! is_dir( $entry_path . '/.git' ) ) {
+				continue;
+			}
+			$primaries[] = $entry;
+		}
+
+		if ( null !== $repo ) {
+			$repo      = $this->sanitize_name( $repo );
+			$primaries = array_values( array_filter( $primaries, fn( $p ) => $p === $repo ) );
+		}
+
+		$worktrees = array();
+
+		foreach ( $primaries as $primary ) {
+			$primary_path = $this->workspace_path . '/' . $primary;
+			$result       = $this->run_git( $primary_path, 'worktree list --porcelain' );
+			if ( is_wp_error( $result ) ) {
+				continue;
+			}
+
+			$blocks = preg_split( "/\n\n+/", trim( (string) ( $result['output'] ?? '' ) ) );
+			foreach ( $blocks as $block ) {
+				$wt = $this->parse_worktree_block( $block );
+				if ( null === $wt ) {
+					continue;
+				}
+
+				$is_primary    = ( $wt['path'] === $primary_path );
+				$workspace_pfx = $this->workspace_path . '/';
+				$inside_ws     = str_starts_with( $wt['path'], $workspace_pfx );
+				$relative      = $inside_ws ? substr( $wt['path'], strlen( $workspace_pfx ) ) : '';
+				$parsed        = $inside_ws ? $this->parse_handle( $relative ) : array( 'branch_slug' => null );
+
+				if ( $is_primary ) {
+					$handle = $primary;
+				} elseif ( $inside_ws ) {
+					$handle = $relative;
+				} else {
+					// External worktree (created via raw `git worktree add` outside the workspace).
+					// Show the absolute path so it is still useful, even though it has no `<repo>@<slug>` handle.
+					$handle = $wt['path'];
+				}
+
+				$dirty_result = $this->run_git( $wt['path'], 'status --porcelain' );
+				$dirty_files  = is_wp_error( $dirty_result )
+					? 0
+					: count( array_filter( array_map( 'trim', explode( "\n", $dirty_result['output'] ?? '' ) ) ) );
+
+				$worktrees[] = array(
+					'handle'      => $handle,
+					'repo'        => $primary,
+					'is_worktree' => ! $is_primary,
+					'is_primary'  => $is_primary,
+					'external'    => ! $is_primary && ! $inside_ws,
+					'branch_slug' => $is_primary ? null : ( $parsed['branch_slug'] ?? null ),
+					'branch'      => $wt['branch'],
+					'head'        => $wt['head'],
+					'path'        => $wt['path'],
+					'dirty'       => $dirty_files,
+				);
+			}
+		}
+
+		return array(
+			'success'   => true,
+			'worktrees' => $worktrees,
+		);
+	}
+
+	/**
+	 * Remove a worktree.
+	 *
+	 * Refuses if the worktree has uncommitted changes unless `$force` is true.
+	 *
+	 * @param string $repo   Primary repo name.
+	 * @param string $branch Branch (or slug) of the worktree.
+	 * @param bool   $force  Force removal even if dirty.
+	 * @return array{success: bool, handle: string, message: string}|\WP_Error
+	 */
+	public function worktree_remove( string $repo, string $branch, bool $force = false ): array|\WP_Error {
+		$repo = $this->sanitize_name( $repo );
+		if ( '' === $repo ) {
+			return new \WP_Error( 'invalid_repo', 'Repository name is required.', array( 'status' => 400 ) );
+		}
+
+		$slug = $this->slugify_branch( $branch );
+		if ( '' === $slug ) {
+			return new \WP_Error( 'invalid_branch', 'Branch/slug is required.', array( 'status' => 400 ) );
+		}
+
+		$primary_path = $this->get_primary_path( $repo );
+		if ( ! is_dir( $primary_path . '/.git' ) ) {
+			return new \WP_Error( 'primary_not_found', sprintf( 'Primary checkout for "%s" does not exist.', $repo ), array( 'status' => 404 ) );
+		}
+
+		$wt_handle = $repo . '@' . $slug;
+		$wt_path   = $this->workspace_path . '/' . $wt_handle;
+
+		if ( ! is_dir( $wt_path ) ) {
+			return new \WP_Error( 'worktree_not_found', sprintf( 'Worktree "%s" not found.', $wt_handle ), array( 'status' => 404 ) );
+		}
+
+		$cmd    = sprintf( 'worktree remove %s%s', $force ? '--force ' : '', escapeshellarg( $wt_path ) );
+		$result = $this->run_git( $primary_path, $cmd );
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return array(
+			'success' => true,
+			'handle'  => $wt_handle,
+			'message' => sprintf( 'Worktree "%s" removed.', $wt_handle ),
+		);
+	}
+
+	/**
+	 * Prune stale worktree registry entries across all primaries.
+	 *
+	 * @return array{success: bool, pruned: array}
+	 */
+	public function worktree_prune(): array {
+		$pruned = array();
+
+		if ( ! is_dir( $this->workspace_path ) ) {
+			return array(
+				'success' => true,
+				'pruned'  => $pruned,
+			);
+		}
+
+		$entries = scandir( $this->workspace_path );
+		foreach ( $entries as $entry ) {
+			if ( '.' === $entry || '..' === $entry || str_contains( $entry, '@' ) ) {
+				continue;
+			}
+			$primary_path = $this->workspace_path . '/' . $entry;
+			if ( ! is_dir( $primary_path . '/.git' ) ) {
+				continue;
+			}
+			$this->run_git( $primary_path, 'worktree prune -v' );
+			$pruned[] = $entry;
+		}
+
+		return array(
+			'success' => true,
+			'pruned'  => $pruned,
+		);
+	}
+
+	/**
+	 * Resolve a sensible default base for new branches.
+	 *
+	 * Prefers `origin/HEAD` (typically `origin/main` or `origin/trunk`); falls
+	 * back to plain `HEAD` if no remote default is configured.
+	 *
+	 * @param string $repo_path Primary repo path.
+	 * @return string
+	 */
+	private function resolve_default_base( string $repo_path ): string {
+		$result = $this->run_git( $repo_path, 'symbolic-ref --quiet refs/remotes/origin/HEAD' );
+		if ( ! is_wp_error( $result ) ) {
+			$ref = trim( (string) ( $result['output'] ?? '' ) );
+			if ( '' !== $ref ) {
+				return $ref;
+			}
+		}
+		return 'HEAD';
+	}
+
+	/**
+	 * Parse a `git worktree list --porcelain` block.
+	 *
+	 * @param string $block Newline-separated key/value lines.
+	 * @return array{path: string, head: string, branch: string|null}|null
+	 */
+	private function parse_worktree_block( string $block ): ?array {
+		$lines = array_filter( array_map( 'trim', explode( "\n", $block ) ) );
+		$out   = array(
+			'path'   => '',
+			'head'   => '',
+			'branch' => null,
+		);
+		foreach ( $lines as $line ) {
+			if ( str_starts_with( $line, 'worktree ' ) ) {
+				$out['path'] = substr( $line, strlen( 'worktree ' ) );
+			} elseif ( str_starts_with( $line, 'HEAD ' ) ) {
+				$out['head'] = substr( $line, strlen( 'HEAD ' ) );
+			} elseif ( str_starts_with( $line, 'branch ' ) ) {
+				$ref            = substr( $line, strlen( 'branch ' ) );
+				$out['branch']  = preg_replace( '#^refs/heads/#', '', $ref );
+			} elseif ( 'detached' === $line ) {
+				$out['branch'] = null;
+			}
+		}
+		return ( '' === $out['path'] ) ? null : $out;
 	}
 
 	// =========================================================================
@@ -740,21 +1201,28 @@ class Workspace {
 	}
 
 	/**
-	 * Resolve and validate repository path by name.
+	 * Resolve and validate a workspace handle to a filesystem path.
 	 *
-	 * @param string $name Repository name.
-	 * @return string|\WP_Error String path on success, WP_Error on failure.
+	 * Accepts both primary handles (`<repo>`) and worktree handles
+	 * (`<repo>@<branch-slug>`). For worktrees, the .git is a file
+	 * pointing back at the primary's .git directory — we accept both
+	 * directory and file forms.
+	 *
+	 * @param string $handle Workspace handle.
+	 * @return string|\WP_Error Real path on success, WP_Error on failure.
 	 */
-	private function resolve_repo_path( string $name ): string|\WP_Error {
-		$sanitized = $this->sanitize_name( $name );
-		$repo_path = $this->workspace_path . '/' . $sanitized;
+	private function resolve_repo_path( string $handle ): string|\WP_Error {
+		$parsed    = $this->parse_handle( $handle );
+		$repo_path = $this->workspace_path . '/' . $parsed['dir_name'];
 
 		if ( ! is_dir( $repo_path ) ) {
-			return new \WP_Error( 'repo_not_found', sprintf( 'Repository "%s" not found in workspace.', $sanitized ), array( 'status' => 404 ) );
+			return new \WP_Error( 'repo_not_found', sprintf( 'Workspace handle "%s" not found.', $parsed['dir_name'] ), array( 'status' => 404 ) );
 		}
 
-		if ( ! is_dir( $repo_path . '/.git' ) ) {
-			return new \WP_Error( 'not_git_repo', sprintf( 'Repository "%s" is not a git repository.', $sanitized ), array( 'status' => 400 ) );
+		// .git can be a directory (primary) or a file (worktree).
+		$git_path = $repo_path . '/.git';
+		if ( ! is_dir( $git_path ) && ! is_file( $git_path ) ) {
+			return new \WP_Error( 'not_git_repo', sprintf( 'Handle "%s" is not a git repository or worktree.', $parsed['dir_name'] ), array( 'status' => 400 ) );
 		}
 
 		$validation = $this->validate_containment( $repo_path, $this->workspace_path );
@@ -793,6 +1261,35 @@ class Workspace {
 		return array(
 			'success' => true,
 			'output'  => implode( "\n", $output ),
+		);
+	}
+
+	/**
+	 * Block mutating ops on the primary checkout unless explicitly allowed.
+	 *
+	 * The primary is intentionally treated as the "deployed" checkout —
+	 * agents should branch via worktrees, not switch the primary's HEAD.
+	 * Worktree handles are always allowed.
+	 *
+	 * @param array{is_worktree: bool, repo: string, dir_name: string} $parsed
+	 * @param bool                                                     $allow
+	 * @return true|\WP_Error
+	 */
+	private function ensure_primary_mutation_allowed( array $parsed, bool $allow ): true|\WP_Error {
+		if ( $parsed['is_worktree'] ) {
+			return true;
+		}
+		if ( $allow ) {
+			return true;
+		}
+		return new \WP_Error(
+			'primary_mutation_blocked',
+			sprintf(
+				'Primary checkout "%s" is read-only by default. Pass allow_primary_mutation=true to operate on it, or use a worktree handle (e.g. %s@<branch-slug>).',
+				$parsed['repo'],
+				$parsed['repo']
+			),
+			array( 'status' => 403 )
 		);
 	}
 

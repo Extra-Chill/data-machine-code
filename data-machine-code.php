@@ -294,9 +294,11 @@ Data Machine is your operating layer — memory, automation, and orchestration v
 - Discover available handlers: `{$wp} datamachine handlers list`
 
 **Code (data-machine-code):** All code changes go through the managed workspace and GitHub — never edit site files directly.
-- Workspace: `{$wp} datamachine-code workspace clone|read|write|edit|git` — clone repos, create branches, edit files, commit, and push
+- Workspace: `{$wp} datamachine-code workspace clone|worktree|read|write|edit|git` — clone repos, create per-branch worktrees, edit files, commit, and push
 - GitHub: `{$wp} datamachine-code github issues|pulls|repos|comment` — create PRs, manage issues, comment on reviews
-- **Workflow:** clone → branch → edit → commit → push → PR. The workspace is a git checkout separate from the live site.
+- **Workflow:** clone → `worktree add <repo> <branch>` → edit → commit → push → PR. Operate on the `<repo>@<branch-slug>` handle (e.g. `data-machine@fix-foo-bar`); never branch-switch the primary checkout.
+- **Why worktrees:** every parallel session gets its own checkout on disk. Multiple agents can cook features in the same repo without stepping on each other.
+- **Primary is read-only by default:** mutating ops on bare `<repo>` handles require `--allow-primary-mutation`. The primary tracks the deployed branch — leave it alone unless you really mean it.
 - **Rule:** Never modify files under `wp-content/plugins/` or `wp-content/themes/` directly. Those paths are for **reading source** only. All code changes must go through the workspace so they are tracked in git and reviewed via pull requests.
 
 **System:** `{$wp} datamachine system health|prompts|run`
