@@ -176,10 +176,12 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$result = $ability->execute( array(
-			'url'  => $args[0],
-			'name' => $assoc_args['name'] ?? null,
-		) );
+		$input = array( 'url' => $args[0] );
+		if ( ! empty( $assoc_args['name'] ) ) {
+			$input['name'] = $assoc_args['name'];
+		}
+
+		$result = $ability->execute( $input );
 
 		if ( is_wp_error( $result ) ) {
 			WP_CLI::error( $result->get_error_message() );
