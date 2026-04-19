@@ -276,6 +276,53 @@ class GitHubAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/create-or-update-github-file',
+				array(
+					'label'               => 'Create or Update GitHub File',
+					'description'         => 'Create or update a file in a GitHub repository via the Contents API (upsert). If the file exists, it is updated; if not, it is created.',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'file_path', 'content', 'commit_message' ),
+						'properties' => array(
+							'repo'           => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'file_path'      => array(
+								'type'        => 'string',
+								'description' => 'Path within the repository (e.g., docs/getting-started.md).',
+							),
+							'content'        => array(
+								'type'        => 'string',
+								'description' => 'File content (will be base64-encoded automatically).',
+							),
+							'commit_message' => array(
+								'type'        => 'string',
+								'description' => 'Commit message for the change.',
+							),
+							'branch'         => array(
+								'type'        => 'string',
+								'description' => 'Target branch. Defaults to the repository\'s default branch.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'      => array( 'type' => 'boolean' ),
+							'commit'       => array( 'type' => 'object' ),
+							'content'      => array( 'type' => 'object' ),
+							'error'        => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'createOrUpdateFile' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/list-github-repos',
 				array(
 					'label'               => 'List GitHub Repositories',
@@ -605,6 +652,85 @@ class GitHubAbilities {
 			'success' => true,
 			'repos'   => $normalized,
 			'count'   => count( $normalized ),
+		);
+	}
+
+	public static function createOrUpdateFile( array $input ): array|\WP_Error {
+		$repo = self::resolveRepo( sanitize_text_field( $input['repo'] ?? '' ) );
+		if ( empty( $repo ) ) {
+			return new \WP_Error( 'missing_repo', 'Repository (owner/repo) is required or configure a default repo.', array( 'status' => 400 ) );
+		}
+
+		$file_path = sanitize_text_field( $input['file_path'] ?? '' );
+		if ( empty( $file_path ) ) {
+			return new \WP_Error( 'missing_file_path', 'File path is required.', array( 'status' => 400 ) );
+		}
+
+		$content = $input['content'] ?? '';
+		if ( '' === $content ) {
+			return new \WP_Error( 'missing_content', 'File content is required.', array( 'status' => 400 ) );
+		}
+
+		$commit_message = sanitize_text_field( $input['commit_message'] ?? '' );
+		if ( empty( $commit_message ) ) {
+			return new \WP_Error( 'missing_commit_message', 'Commit message is required.', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPat();
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$branch = sanitize_text_field( $input['branch'] ?? '' );
+
+		// Check if the file already exists to get its SHA for update.
+		$get_url    = sprintf( '%s/repos/%s/contents/%s', self::API_BASE, $repo, $file_path );
+		$get_params = array();
+		if ( ! empty( $branch ) ) {
+			$get_params['ref'] = $branch;
+		}
+
+		$existing = self::apiGet( $get_url, $get_params, $pat );
+
+		$body = array(
+			'message' => $commit_message,
+			'content' => base64_encode( $content ), // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- Required by GitHub API.
+		);
+
+		// If the file exists, include its SHA for the update.
+		if ( ! is_wp_error( $existing ) && ! empty( $existing['data']['sha'] ) ) {
+			$body['sha'] = $existing['data']['sha'];
+		}
+
+		if ( ! empty( $branch ) ) {
+			$body['branch'] = $branch;
+		}
+
+		$put_url  = sprintf( '%s/repos/%s/contents/%s', self::API_BASE, $repo, $file_path );
+		$response = self::apiRequest( 'PUT', $put_url, $body, $pat );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$data = $response['data'];
+
+		return array(
+			'success' => true,
+			'commit'  => array(
+				'sha'       => $data['commit']['sha'] ?? '',
+				'html_url'  => $data['commit']['html_url'] ?? '',
+				'message'   => $data['commit']['message'] ?? '',
+			),
+			'content' => array(
+				'path'      => $data['content']['path'] ?? $file_path,
+				'html_url'  => $data['content']['html_url'] ?? '',
+			),
+			'message' => sprintf(
+				'File %s in %s.',
+				isset( $data['content'] ) ? 'updated' : 'created',
+				$repo
+			),
 		);
 	}
 
