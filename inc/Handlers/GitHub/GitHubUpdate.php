@@ -89,7 +89,7 @@ class GitHubUpdate extends UpsertHandler {
 	 * @param array $handler_config Handler configuration from settings.
 	 * @return array Success/failure response.
 	 */
-	protected function executeUpdate( array $parameters, array $handler_config ): array {
+	protected function executeUpsert( array $parameters, array $handler_config ): array {
 		$job_id = $parameters['job_id'] ?? null;
 
 		// Resolve repo: AI param > handler config > default repo setting.
