@@ -1226,7 +1226,7 @@ class Workspace {
 		$removed = array();
 
 		foreach ( $candidates as $cand ) {
-			$remove = $this->worktree_remove( $cand['repo'], $cand['branch'], $force );
+			$remove = $this->remove_worktree_by_path( $cand['repo'], $cand['branch'], $cand['path'], $force );
 			if ( is_wp_error( $remove ) ) {
 				$skipped[] = array(
 					'handle' => $cand['handle'],
@@ -1251,6 +1251,92 @@ class Workspace {
 			'candidates' => $candidates,
 			'removed'    => $removed,
 			'skipped'    => $skipped,
+		);
+	}
+
+	/**
+	 * Remove a worktree at an explicit path.
+	 *
+	 * Path-aware counterpart to `worktree_remove()`, which reconstructs the
+	 * path from `<repo>@<slug>` convention. Cleanup code must use this so
+	 * legacy worktrees (created before the @-slug convention landed, or via
+	 * raw `git worktree add`) can still be removed.
+	 *
+	 * Hard safety rails applied here before any removal:
+	 *   1. Primary repo's `.git` must exist (we're about to invoke it)
+	 *   2. The worktree path must be a real directory
+	 *   3. The worktree path must be inside `$workspace_path` (containment
+	 *      validation — no external targets, ever)
+	 *   4. The worktree's `.git` must be a file (worktree marker), not a
+	 *      directory. A directory `.git` means it's a primary, not a
+	 *      worktree — removing it would be catastrophic.
+	 *   5. If dirty and not forcing, refuse.
+	 *
+	 * @param string $repo    Primary repo directory name (for routing git commands).
+	 * @param string $branch  Branch the worktree is checked out to.
+	 * @param string $wt_path Absolute path to the worktree directory.
+	 * @param bool   $force   Pass --force to `git worktree remove`.
+	 * @return array{success: bool, handle: string, message: string}|\WP_Error
+	 */
+	private function remove_worktree_by_path( string $repo, string $branch, string $wt_path, bool $force ): array|\WP_Error {
+		$repo = $this->sanitize_name( $repo );
+		if ( '' === $repo ) {
+			return new \WP_Error( 'invalid_repo', 'Repository name is required.', array( 'status' => 400 ) );
+		}
+
+		$primary_path = $this->get_primary_path( $repo );
+		if ( ! is_dir( $primary_path . '/.git' ) ) {
+			return new \WP_Error( 'primary_not_found', sprintf( 'Primary checkout for "%s" does not exist.', $repo ), array( 'status' => 404 ) );
+		}
+
+		if ( '' === $wt_path || ! is_dir( $wt_path ) ) {
+			return new \WP_Error( 'worktree_path_missing', sprintf( 'Worktree path does not exist: %s', $wt_path ), array( 'status' => 404 ) );
+		}
+
+		// Belt-and-suspenders containment — cleanup callers already skip
+		// `external` worktrees, but validate again at the blast radius.
+		$validation = $this->validate_containment( $wt_path, $this->workspace_path );
+		if ( ! $validation['valid'] ) {
+			return new \WP_Error(
+				'path_outside_workspace',
+				sprintf( 'Refusing to remove "%s": path is outside workspace (%s).', $wt_path, $validation['message'] ?? '' ),
+				array( 'status' => 403 )
+			);
+		}
+
+		// A worktree's .git is a FILE pointing at the primary's .git dir.
+		// A directory .git means we're looking at a primary checkout — never
+		// touch those.
+		$git_marker = rtrim( $validation['real_path'], '/' ) . '/.git';
+		if ( ! is_file( $git_marker ) ) {
+			return new \WP_Error(
+				'not_a_worktree',
+				sprintf( 'Refusing to remove "%s": .git is not a worktree marker file (got: %s). This may be a primary checkout.', $wt_path, is_dir( $git_marker ) ? 'directory' : 'missing' ),
+				array( 'status' => 403 )
+			);
+		}
+
+		$cmd    = sprintf( 'worktree remove %s%s', $force ? '--force ' : '', escapeshellarg( $validation['real_path'] ) );
+		$result = $this->run_git( $primary_path, $cmd );
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		// If the directory survived `git worktree remove` (can happen for
+		// locked worktrees, or when the worktree was already detached), prune
+		// the directory manually so cleanup is effective.
+		if ( is_dir( $validation['real_path'] ) ) {
+			$escaped = escapeshellarg( $validation['real_path'] );
+			// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
+			exec( sprintf( 'rm -rf %s 2>&1', $escaped ) );
+		}
+
+		return array(
+			'success' => true,
+			'handle'  => basename( $wt_path ),
+			'message' => sprintf( 'Worktree at "%s" removed.', $wt_path ),
+			'branch'  => $branch,
 		);
 	}
 
