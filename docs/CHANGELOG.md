@@ -2,6 +2,21 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.6.0] - 2026-04-19
+
+### Added
+- `worktree cleanup` subcommand for merged branches
+- add DataMachineCode\Environment as the local-runtime signal
+
+### Changed
+- Add 'files' data source to GitHub fetch handler
+- rename GitHubUpdate → GitHubUpsert for naming accuracy
+- Add GitHub update handler for committing files back to repos
+
+### Fixed
+- path-aware worktree cleanup + safety rails + tests
+- Fix workspace-clone ability validation: omit name when not provided
+
 ## [0.5.0] - 2026-04-17
 
 ### Added
