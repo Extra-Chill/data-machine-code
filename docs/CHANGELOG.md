@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.6.2] - 2026-04-19
+
+### Changed
+- rename executeUpdate() → executeUpsert() to match renamed base class
+
 ## [0.6.1] - 2026-04-19
 
 ### Fixed
