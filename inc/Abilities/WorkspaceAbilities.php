@@ -847,6 +847,45 @@ class WorkspaceAbilities {
 					'meta'                => array( 'show_in_rest' => false ),
 				)
 			);
+
+			wp_register_ability(
+				'datamachine/workspace-worktree-cleanup',
+				array(
+					'label'               => 'Cleanup Merged Worktrees',
+					'description'         => 'Remove worktrees whose branch is merged to the remote default branch. Detects merge via `upstream: gone` (remote branch deleted, e.g. by GitHub auto-delete on PR merge) or closed+merged PR via the GitHub API. Deletes the local branch and prunes the git registry after removal. Dry-run supported.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'dry_run'     => array(
+								'type'        => 'boolean',
+								'description' => 'If true, return the plan without removing anything.',
+							),
+							'force'       => array(
+								'type'        => 'boolean',
+								'description' => 'If true, ignore dirty working-tree safety check.',
+							),
+							'skip_github' => array(
+								'type'        => 'boolean',
+								'description' => 'If true, rely solely on the local upstream-gone signal and skip GitHub API lookup.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'    => array( 'type' => 'boolean' ),
+							'dry_run'    => array( 'type' => 'boolean' ),
+							'candidates' => array( 'type' => 'array' ),
+							'removed'    => array( 'type' => 'array' ),
+							'skipped'    => array( 'type' => 'array' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeCleanup' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
 		};
 
 		if ( doing_action( 'wp_abilities_api_init' ) ) {
@@ -1132,6 +1171,23 @@ class WorkspaceAbilities {
 	public static function worktreePrune( array $input ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 		$workspace = new Workspace();
 		return $workspace->worktree_prune();
+	}
+
+	/**
+	 * Remove merged worktrees across all primary checkouts.
+	 *
+	 * @param array $input Input parameters (dry_run, force, skip_github).
+	 * @return array
+	 */
+	public static function worktreeCleanup( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		return $workspace->worktree_cleanup_merged(
+			array(
+				'dry_run'     => ! empty( $input['dry_run'] ),
+				'force'       => ! empty( $input['force'] ),
+				'skip_github' => ! empty( $input['skip_github'] ),
+			)
+		);
 	}
 
 	/**

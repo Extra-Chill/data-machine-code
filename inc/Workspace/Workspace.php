@@ -1085,6 +1085,304 @@ class Workspace {
 	}
 
 	/**
+	 * Cleanup merged worktrees across all primary checkouts.
+	 *
+	 * Scans all worktrees, consults upstream tracking + GitHub PR state,
+	 * and (unless dry-run) removes worktrees whose work is already merged
+	 * to the remote default branch. Also deletes the local branch and
+	 * prunes the git registry afterwards.
+	 *
+	 * A worktree is considered prunable when ALL of:
+	 *   - It is not the primary checkout
+	 *   - Its branch is not main/master/trunk/develop/HEAD
+	 *   - It has no uncommitted changes (unless $force)
+	 *   - At least one merge signal is present:
+	 *       a) `git for-each-ref` reports upstream status "gone" (branch
+	 *          was deleted on the remote — typical after GitHub
+	 *          "auto-delete head branches" fires on PR merge), OR
+	 *       b) GitHub API reports a closed+merged PR whose head
+	 *          branch matches this worktree's branch.
+	 *
+	 * Signal (a) is local and fast; signal (b) requires a PAT + network
+	 * but catches the case where the remote branch still exists (e.g.
+	 * manual merge without branch deletion).
+	 *
+	 * @param array $opts {
+	 *     @type bool $dry_run If true, return the plan without removing anything.
+	 *     @type bool $force   If true, ignore dirty working-tree safety.
+	 *     @type bool $skip_github If true, only use upstream-gone signal (no API calls).
+	 * }
+	 * @return array{
+	 *     success: bool,
+	 *     dry_run: bool,
+	 *     candidates: array<int,array>,
+	 *     removed: array<int,array>,
+	 *     skipped: array<int,array>,
+	 * }|\WP_Error
+	 */
+	public function worktree_cleanup_merged( array $opts = array() ): array|\WP_Error {
+		$dry_run     = ! empty( $opts['dry_run'] );
+		$force       = ! empty( $opts['force'] );
+		$skip_github = ! empty( $opts['skip_github'] );
+
+		$listing = $this->worktree_list();
+		if ( is_wp_error( $listing ) ) {
+			return $listing;
+		}
+
+		$protected_branches = array( 'main', 'master', 'trunk', 'develop', 'HEAD' );
+		$candidates         = array();
+		$skipped            = array();
+
+		// Fetch + prune each primary once up-front so upstream-gone signals are fresh.
+		$fetched = array();
+
+		foreach ( $listing['worktrees'] ?? array() as $wt ) {
+			if ( ! empty( $wt['is_primary'] ) ) {
+				continue;
+			}
+			if ( ! empty( $wt['external'] ) ) {
+				$skipped[] = array(
+					'handle' => $wt['handle'] ?? '?',
+					'reason' => 'external worktree (outside workspace)',
+				);
+				continue;
+			}
+
+			$repo        = $wt['repo'] ?? '';
+			$branch      = $wt['branch'] ?? '';
+			$wt_path     = $wt['path'] ?? '';
+			$dirty_count = (int) ( $wt['dirty'] ?? 0 );
+
+			if ( '' === $repo || '' === $branch || '' === $wt_path ) {
+				$skipped[] = array(
+					'handle' => $wt['handle'] ?? '?',
+					'reason' => 'missing repo/branch/path',
+				);
+				continue;
+			}
+
+			if ( in_array( $branch, $protected_branches, true ) ) {
+				$skipped[] = array(
+					'handle' => $wt['handle'] ?? '?',
+					'reason' => sprintf( 'protected branch (%s)', $branch ),
+				);
+				continue;
+			}
+
+			if ( $dirty_count > 0 && ! $force ) {
+				$skipped[] = array(
+					'handle' => $wt['handle'] ?? '?',
+					'reason' => sprintf( 'working tree dirty (%d files) — pass force=true to override', $dirty_count ),
+				);
+				continue;
+			}
+
+			$primary_path = $this->get_primary_path( $repo );
+			if ( ! is_dir( $primary_path . '/.git' ) ) {
+				$skipped[] = array(
+					'handle' => $wt['handle'] ?? '?',
+					'reason' => 'primary checkout missing',
+				);
+				continue;
+			}
+
+			if ( empty( $fetched[ $repo ] ) ) {
+				$this->run_git( $primary_path, 'fetch --prune --quiet origin' );
+				$fetched[ $repo ] = true;
+			}
+
+			$signal = $this->detect_merge_signal( $primary_path, $repo, $branch, $skip_github );
+			if ( null === $signal ) {
+				$skipped[] = array(
+					'handle' => $wt['handle'] ?? '?',
+					'reason' => 'no merge signal — leaving in place',
+				);
+				continue;
+			}
+
+			$candidates[] = array(
+				'handle'  => $wt['handle'],
+				'repo'    => $repo,
+				'branch'  => $branch,
+				'path'    => $wt_path,
+				'dirty'   => $dirty_count,
+				'signal'  => $signal['signal'],
+				'reason'  => $signal['reason'],
+				'pr_url'  => $signal['pr_url'] ?? null,
+			);
+		}
+
+		if ( $dry_run ) {
+			return array(
+				'success'    => true,
+				'dry_run'    => true,
+				'candidates' => $candidates,
+				'removed'    => array(),
+				'skipped'    => $skipped,
+			);
+		}
+
+		$removed = array();
+
+		foreach ( $candidates as $cand ) {
+			$remove = $this->worktree_remove( $cand['repo'], $cand['branch'], $force );
+			if ( is_wp_error( $remove ) ) {
+				$skipped[] = array(
+					'handle' => $cand['handle'],
+					'reason' => 'remove failed: ' . $remove->get_error_message(),
+				);
+				continue;
+			}
+
+			// Delete the now-detached local branch.
+			$primary_path = $this->get_primary_path( $cand['repo'] );
+			$this->run_git( $primary_path, sprintf( 'branch -D %s', escapeshellarg( $cand['branch'] ) ) );
+
+			$removed[] = $cand;
+		}
+
+		// Final sweep to drop any remaining registry entries.
+		$this->worktree_prune();
+
+		return array(
+			'success'    => true,
+			'dry_run'    => false,
+			'candidates' => $candidates,
+			'removed'    => $removed,
+			'skipped'    => $skipped,
+		);
+	}
+
+	/**
+	 * Detect whether a branch looks merged into the remote default branch.
+	 *
+	 * Returns an array with `signal` and `reason`, or null if no signal is
+	 * present (leave the worktree alone).
+	 *
+	 * Signal priority:
+	 *   1. `upstream-gone` — local branch's upstream tracking ref is gone.
+	 *      Typical after GitHub auto-deletes the head branch on PR merge.
+	 *   2. `pr-merged` — GitHub API reports a closed+merged PR for this
+	 *      branch. Requires $skip_github = false and a configured PAT.
+	 *
+	 * @param string $primary_path Path to the primary git checkout.
+	 * @param string $repo         Primary repo directory name.
+	 * @param string $branch       Branch name.
+	 * @param bool   $skip_github  If true, skip GitHub API lookup.
+	 * @return array{signal: string, reason: string, pr_url?: string}|null
+	 */
+	private function detect_merge_signal( string $primary_path, string $repo, string $branch, bool $skip_github ): ?array {
+		$ref    = 'refs/heads/' . $branch;
+		$format = '%(upstream:track)';
+		$result = $this->run_git( $primary_path, sprintf( 'for-each-ref --format=%s %s', escapeshellarg( $format ), escapeshellarg( $ref ) ) );
+
+		if ( ! is_wp_error( $result ) ) {
+			$track = trim( (string) ( $result['output'] ?? '' ) );
+			if ( str_contains( $track, 'gone' ) ) {
+				return array(
+					'signal' => 'upstream-gone',
+					'reason' => 'remote branch deleted (likely merged + auto-deleted)',
+				);
+			}
+		}
+
+		if ( $skip_github ) {
+			return null;
+		}
+
+		$gh_slug = $this->resolve_github_slug( $primary_path );
+		if ( null === $gh_slug ) {
+			return null;
+		}
+
+		$pr = $this->find_merged_pr_for_branch( $gh_slug, $branch );
+		if ( null === $pr ) {
+			return null;
+		}
+
+		return array(
+			'signal' => 'pr-merged',
+			'reason' => sprintf( 'PR #%d merged (%s)', $pr['number'], $pr['state'] ),
+			'pr_url' => $pr['html_url'] ?? null,
+		);
+	}
+
+	/**
+	 * Extract owner/repo slug from a primary checkout's origin remote.
+	 *
+	 * @param string $primary_path Primary checkout path.
+	 * @return string|null `owner/repo` or null if origin is not a GitHub URL.
+	 */
+	private function resolve_github_slug( string $primary_path ): ?string {
+		$remote = $this->git_get_remote( $primary_path );
+		if ( null === $remote || '' === $remote ) {
+			return null;
+		}
+
+		// Match https://github.com/owner/repo(.git) and git@github.com:owner/repo(.git)
+		if ( preg_match( '#github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?/?$#', $remote, $m ) ) {
+			return $m[1] . '/' . $m[2];
+		}
+
+		return null;
+	}
+
+	/**
+	 * Look up a merged PR for a branch via the GitHub API.
+	 *
+	 * Queries `GET /repos/{slug}/pulls?state=closed&head={owner}:{branch}`
+	 * and returns the first entry whose `merged_at` is non-null.
+	 *
+	 * @param string $slug   owner/repo.
+	 * @param string $branch Branch name.
+	 * @return array|null PR data or null.
+	 */
+	private function find_merged_pr_for_branch( string $slug, string $branch ): ?array {
+		if ( ! class_exists( '\DataMachineCode\Abilities\GitHubAbilities' ) ) {
+			return null;
+		}
+
+		$pat = \DataMachineCode\Abilities\GitHubAbilities::getPat();
+		if ( empty( $pat ) ) {
+			return null;
+		}
+
+		$owner = explode( '/', $slug )[0] ?? '';
+		if ( '' === $owner ) {
+			return null;
+		}
+
+		$url      = sprintf( 'https://api.github.com/repos/%s/pulls', $slug );
+		$response = \DataMachineCode\Abilities\GitHubAbilities::apiGet(
+			$url,
+			array(
+				'state'    => 'closed',
+				'head'     => $owner . ':' . $branch,
+				'per_page' => 5,
+			),
+			$pat
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return null;
+		}
+
+		foreach ( (array) ( $response['data'] ?? array() ) as $pr ) {
+			if ( ! empty( $pr['merged_at'] ) ) {
+				return array(
+					'number'    => (int) ( $pr['number'] ?? 0 ),
+					'state'     => (string) ( $pr['state'] ?? 'closed' ),
+					'merged_at' => (string) $pr['merged_at'],
+					'html_url'  => (string) ( $pr['html_url'] ?? '' ),
+				);
+			}
+		}
+
+		return null;
+	}
+
+	/**
 	 * Resolve a sensible default base for new branches.
 	 *
 	 * Prefers `origin/HEAD` (typically `origin/main` or `origin/trunk`); falls
