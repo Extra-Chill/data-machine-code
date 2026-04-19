@@ -14,20 +14,20 @@ namespace DataMachineCode\Handlers\GitHub;
 
 use DataMachineCode\Abilities\GitHubAbilities;
 use DataMachine\Core\Steps\HandlerRegistrationTrait;
-use DataMachine\Core\Steps\Update\Handlers\UpdateHandler;
+use DataMachine\Core\Steps\Upsert\Handlers\UpsertHandler;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-class GitHubUpdate extends UpdateHandler {
+class GitHubUpdate extends UpsertHandler {
 
 	use HandlerRegistrationTrait;
 
 	public function __construct() {
 		self::registerHandler(
 			'github_update',
-			'update',
+			'upsert',
 			self::class,
 			'GitHub Update',
 			'Commit files to GitHub repositories via the Contents API',
