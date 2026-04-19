@@ -2,6 +2,18 @@
 
 End-to-end test plan for the worktree-native workspace. Pure unit-style coverage
 of handle parsing and slugification lives in `smoke-worktree-handles.php`.
+Integration coverage for the cleanup-merged flow (real git repos in a tmpdir,
+including safety-rail regressions) lives in `smoke-worktree-cleanup.php`.
+
+## 0. Pre-flight — the automated smoke tests
+
+```bash
+php tests/smoke-worktree-handles.php     # pure-unit, fast
+php tests/smoke-worktree-cleanup.php     # spawns a real git workspace
+```
+
+Expected: `32/32 passed` and `18/18 passed` respectively. Skip
+`smoke-worktree-cleanup.php` if `git` is unavailable.
 
 Prereqs:
 - WordPress 6.9+ with Data Machine + data-machine-code activated.
