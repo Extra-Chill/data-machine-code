@@ -1,8 +1,8 @@
 <?php
 /**
- * GitHub Update Handler Settings
+ * GitHub Upsert Handler Settings
  *
- * Defines settings fields for the GitHub update handler UI.
+ * Defines settings fields for the GitHub upsert handler UI.
  * Configures repository, branch, file path, and commit message
  * for committing generated content back to GitHub repositories.
  *
@@ -18,10 +18,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-class GitHubUpdateSettings extends SettingsHandler {
+class GitHubUpsertSettings extends SettingsHandler {
 
 	/**
-	 * Get settings fields for GitHub update handler.
+	 * Get settings fields for GitHub upsert handler.
 	 *
 	 * @return array
 	 */
