@@ -1,9 +1,11 @@
 <?php
 /**
- * GitHub Update Handler
+ * GitHub Upsert Handler
  *
- * Commits files back to GitHub repositories via the Contents API.
- * Used as the final step in automated documentation pipelines:
+ * Commits files to GitHub repositories via the Contents API. Genuinely
+ * upsert: GET for SHA first, then PUT — creates the file if it doesn't
+ * exist, updates it if it does. Used as the final step in automated
+ * documentation pipelines:
  * fetch source → AI translate → publish to WordPress → commit docs back to repo.
  *
  * @package DataMachineCode\Handlers\GitHub
@@ -20,26 +22,26 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-class GitHubUpdate extends UpsertHandler {
+class GitHubUpsert extends UpsertHandler {
 
 	use HandlerRegistrationTrait;
 
 	public function __construct() {
 		self::registerHandler(
-			'github_update',
+			'github_upsert',
 			'upsert',
 			self::class,
-			'GitHub Update',
-			'Commit files to GitHub repositories via the Contents API',
+			'GitHub Upsert',
+			'Create or update files in GitHub repositories via the Contents API',
 			false,
 			null,
-			GitHubUpdateSettings::class,
+			GitHubUpsertSettings::class,
 			array( self::class, 'registerTools' )
 		);
 	}
 
 	/**
-	 * Register the AI tool for the update step.
+	 * Register the AI tool for the upsert step.
 	 *
 	 * The AI step in the pipeline calls this tool with the generated content.
 	 * Parameters from the AI override handler config defaults.
@@ -47,14 +49,14 @@ class GitHubUpdate extends UpsertHandler {
 	 * @param array  $tools          Registered tools.
 	 * @param string $handler_slug   Current handler slug.
 	 * @param array  $handler_config Handler configuration from settings.
-	 * @return array Tools with GitHub update tool added.
+	 * @return array Tools with GitHub upsert tool added.
 	 */
 	public static function registerTools( $tools, $handler_slug, $handler_config ) {
-		if ( 'github_update' === $handler_slug ) {
-			$tools['github_update'] = array(
+		if ( 'github_upsert' === $handler_slug ) {
+			$tools['github_upsert'] = array(
 				'class'       => self::class,
 				'method'      => 'handle_tool_call',
-				'handler'     => 'github_update',
+				'handler'     => 'github_upsert',
 				'description' => 'Commit a file to a GitHub repository. Creates the file if it does not exist, or updates it if it does.',
 				'parameters'  => array(
 					'type'       => 'object',
@@ -80,10 +82,11 @@ class GitHubUpdate extends UpsertHandler {
 	}
 
 	/**
-	 * Execute the GitHub file update.
+	 * Execute the GitHub file upsert.
 	 *
 	 * Merges AI-provided parameters with handler config defaults,
-	 * then delegates to GitHubAbilities::createOrUpdateFile().
+	 * then delegates to GitHubAbilities::createOrUpdateFile() which
+	 * performs GET-for-SHA followed by PUT (create-or-update).
 	 *
 	 * @param array $parameters    Tool parameters (job_id, engine, plus AI-provided fields).
 	 * @param array $handler_config Handler configuration from settings.
@@ -102,11 +105,11 @@ class GitHubUpdate extends UpsertHandler {
 		}
 
 		if ( empty( $repo ) ) {
-			return $this->errorResponse( 'GitHub Update: No repository configured and no default repo set.', array( 'job_id' => $job_id ) );
+			return $this->errorResponse( 'GitHub Upsert: No repository configured and no default repo set.', array( 'job_id' => $job_id ) );
 		}
 
 		if ( ! GitHubAbilities::isConfigured() ) {
-			return $this->errorResponse( 'GitHub Update: Personal Access Token not configured.', array( 'job_id' => $job_id ) );
+			return $this->errorResponse( 'GitHub Upsert: Personal Access Token not configured.', array( 'job_id' => $job_id ) );
 		}
 
 		// Resolve file path: AI param > handler config.
@@ -115,7 +118,7 @@ class GitHubUpdate extends UpsertHandler {
 			: ( $handler_config['file_path'] ?? '' );
 
 		if ( empty( $file_path ) ) {
-			return $this->errorResponse( 'GitHub Update: file_path is required (provide via AI tool call or handler config).', array( 'job_id' => $job_id ) );
+			return $this->errorResponse( 'GitHub Upsert: file_path is required (provide via AI tool call or handler config).', array( 'job_id' => $job_id ) );
 		}
 
 		// Resolve commit message: AI param > handler config > default.
@@ -130,7 +133,7 @@ class GitHubUpdate extends UpsertHandler {
 
 		$content = $parameters['content'] ?? '';
 		if ( '' === $content ) {
-			return $this->errorResponse( 'GitHub Update: content is required.', array( 'job_id' => $job_id ) );
+			return $this->errorResponse( 'GitHub Upsert: content is required.', array( 'job_id' => $job_id ) );
 		}
 
 		$input = array(
@@ -148,7 +151,7 @@ class GitHubUpdate extends UpsertHandler {
 
 		if ( is_wp_error( $result ) ) {
 			return $this->errorResponse(
-				'GitHub Update: ' . $result->get_error_message(),
+				'GitHub Upsert: ' . $result->get_error_message(),
 				array(
 					'job_id'    => $job_id,
 					'repo'      => $repo,
@@ -166,7 +169,7 @@ class GitHubUpdate extends UpsertHandler {
 				'commit_url'  => $result['commit']['html_url'] ?? '',
 				'file_url'    => $result['content']['html_url'] ?? '',
 			),
-			'tool_name' => 'github_update',
+			'tool_name' => 'github_upsert',
 		);
 	}
 
@@ -176,6 +179,6 @@ class GitHubUpdate extends UpsertHandler {
 	 * @return string
 	 */
 	public static function get_label(): string {
-		return __( 'GitHub Update', 'data-machine-code' );
+		return __( 'GitHub Upsert', 'data-machine-code' );
 	}
 }
