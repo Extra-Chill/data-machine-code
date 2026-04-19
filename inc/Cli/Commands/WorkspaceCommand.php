@@ -927,22 +927,35 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Prune stale worktree registry entries across all primaries
 	 *     wp datamachine workspace worktree prune
 	 *
+	 *     # Preview worktrees that would be removed (upstream gone or PR merged)
+	 *     wp datamachine workspace worktree cleanup --dry-run
+	 *
+	 *     # Remove all merged worktrees
+	 *     wp datamachine workspace worktree cleanup
+	 *
+	 *     # Local-only detection (no GitHub API call)
+	 *     wp datamachine workspace worktree cleanup --skip-github
+	 *
+	 *     # Ignore dirty working-tree safety (caution)
+	 *     wp datamachine workspace worktree cleanup --force
+	 *
 	 * @subcommand worktree
 	 */
 	public function worktree( array $args, array $assoc_args ): void {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error( 'Usage: wp datamachine workspace worktree <add|list|remove|prune> [<repo>] [<branch>] [--flags]' );
+			WP_CLI::error( 'Usage: wp datamachine workspace worktree <add|list|remove|prune|cleanup> [<repo>] [<branch>] [--flags]' );
 			return;
 		}
 
 		$ability_name = match ( $operation ) {
-			'add'    => 'datamachine/workspace-worktree-add',
-			'list'   => 'datamachine/workspace-worktree-list',
-			'remove' => 'datamachine/workspace-worktree-remove',
-			'prune'  => 'datamachine/workspace-worktree-prune',
-			default  => '',
+			'add'     => 'datamachine/workspace-worktree-add',
+			'list'    => 'datamachine/workspace-worktree-list',
+			'remove'  => 'datamachine/workspace-worktree-remove',
+			'prune'   => 'datamachine/workspace-worktree-prune',
+			'cleanup' => 'datamachine/workspace-worktree-cleanup',
+			default   => '',
 		};
 
 		if ( '' === $ability_name ) {
@@ -985,6 +998,12 @@ class WorkspaceCommand extends BaseCommand {
 				$input['repo']   = $args[1];
 				$input['branch'] = $args[2];
 				$input['force']  = ! empty( $assoc_args['force'] );
+				break;
+
+			case 'cleanup':
+				$input['dry_run']     = ! empty( $assoc_args['dry-run'] );
+				$input['force']       = ! empty( $assoc_args['force'] );
+				$input['skip_github'] = ! empty( $assoc_args['skip-github'] );
 				break;
 		}
 
@@ -1035,6 +1054,52 @@ class WorkspaceCommand extends BaseCommand {
 					return;
 				}
 				WP_CLI::success( sprintf( 'Pruned worktree registry across: %s', implode( ', ', $pruned ) ) );
+				return;
+
+			case 'cleanup':
+				$candidates = $result['candidates'] ?? array();
+				$removed    = $result['removed'] ?? array();
+				$skipped    = $result['skipped'] ?? array();
+				$dry_run    = ! empty( $result['dry_run'] );
+
+				if ( empty( $candidates ) && empty( $skipped ) ) {
+					WP_CLI::log( 'No worktrees found.' );
+					return;
+				}
+
+				if ( ! empty( $candidates ) ) {
+					WP_CLI::log( $dry_run ? 'Would remove:' : 'Removed:' );
+					$rows = array_map(
+						fn( $c ) => array(
+							'handle' => $c['handle'] ?? '',
+							'branch' => $c['branch'] ?? '',
+							'signal' => $c['signal'] ?? '',
+							'reason' => $c['reason'] ?? '',
+						),
+						$candidates
+					);
+					$this->format_items( $rows, array( 'handle', 'branch', 'signal', 'reason' ), $assoc_args, 'handle' );
+				}
+
+				if ( ! empty( $skipped ) ) {
+					WP_CLI::log( '' );
+					WP_CLI::log( 'Skipped:' );
+					$rows = array_map(
+						fn( $s ) => array(
+							'handle' => $s['handle'] ?? '',
+							'reason' => $s['reason'] ?? '',
+						),
+						$skipped
+					);
+					$this->format_items( $rows, array( 'handle', 'reason' ), $assoc_args, 'handle' );
+				}
+
+				if ( $dry_run ) {
+					WP_CLI::log( '' );
+					WP_CLI::success( sprintf( '%d worktree(s) would be removed. Re-run without --dry-run to apply.', count( $candidates ) ) );
+				} else {
+					WP_CLI::success( sprintf( 'Removed %d worktree(s); %d skipped.', count( $removed ), count( $skipped ) ) );
+				}
 				return;
 
 			case 'add':
