@@ -40,6 +40,7 @@ class GitHubSettings extends FetchHandlerSettings {
 				'options'     => array(
 					'issues' => __( 'Issues', 'data-machine-code' ),
 					'pulls'  => __( 'Pull Requests', 'data-machine-code' ),
+					'files'  => __( 'Source Files', 'data-machine-code' ),
 				),
 			),
 			'state'       => array(
@@ -59,6 +60,31 @@ class GitHubSettings extends FetchHandlerSettings {
 				'label'       => __( 'Label Filter', 'data-machine-code' ),
 				'description' => __( 'Comma-separated label names to filter by (issues only).', 'data-machine-code' ),
 				'required'    => false,
+			),
+			'branch'       => array(
+				'type'        => 'text',
+				'label'       => __( 'Branch', 'data-machine-code' ),
+				'description' => __( 'Git branch or ref to read from (files data source). Defaults to the repository default branch.', 'data-machine-code' ),
+				'required'    => false,
+			),
+			'file_path'    => array(
+				'type'        => 'text',
+				'label'       => __( 'File Path', 'data-machine-code' ),
+				'description' => __( 'Directory or file path prefix to filter (files data source). E.g., "inc/" or "src/Commands/". Leave empty for all files.', 'data-machine-code' ),
+				'required'    => false,
+			),
+			'file_pattern' => array(
+				'type'        => 'text',
+				'label'       => __( 'File Pattern', 'data-machine-code' ),
+				'description' => __( 'Glob pattern to filter filenames (files data source). E.g., "*.php" or "*.php,*.json". Leave empty for all file types.', 'data-machine-code' ),
+				'required'    => false,
+			),
+			'max_file_size' => array(
+				'type'        => 'number',
+				'label'       => __( 'Max File Size (bytes)', 'data-machine-code' ),
+				'description' => __( 'Skip files larger than this size in bytes (files data source). Default: 512000 (500 KB).', 'data-machine-code' ),
+				'required'    => false,
+				'default'     => 512000,
 			),
 		);
 
