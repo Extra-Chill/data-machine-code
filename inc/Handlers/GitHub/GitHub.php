@@ -2,9 +2,10 @@
 /**
  * GitHub Fetch Handler
  *
- * Fetches issues or pull requests from a GitHub repository and returns
- * them as DataPackets for pipeline processing. Supports deduplication
- * via processed items, timeframe filtering, and keyword search.
+ * Fetches issues, pull requests, or source file contents from a GitHub
+ * repository and returns them as DataPackets for pipeline processing.
+ * Supports deduplication via processed items, timeframe filtering, and
+ * keyword search.
  *
  * @package DataMachineCode\Handlers\GitHub
  * @since 0.1.0
@@ -33,7 +34,7 @@ class GitHub extends FetchHandler {
 			'fetch',
 			self::class,
 			'GitHub',
-			'Fetch issues and pull requests from GitHub repositories',
+			'Fetch issues, pull requests, or source file contents from GitHub repositories',
 			false,
 			null,
 			GitHubSettings::class,
@@ -51,8 +52,6 @@ class GitHub extends FetchHandler {
 	protected function executeFetch( array $config, ExecutionContext $context ): array {
 		$repo        = $config['repo'] ?? '';
 		$data_source = $config['data_source'] ?? 'issues';
-		$state       = $config['state'] ?? 'open';
-		$labels      = $config['labels'] ?? '';
 
 		if ( empty( $repo ) ) {
 			$repo = GitHubAbilities::getDefaultRepo();
@@ -71,8 +70,131 @@ class GitHub extends FetchHandler {
 		$context->log( 'debug', 'GitHub: Fetching data', array(
 			'repo'        => $repo,
 			'data_source' => $data_source,
-			'state'       => $state,
 		) );
+
+		if ( 'files' === $data_source ) {
+			return $this->fetchFiles( $config, $context, $repo );
+		}
+
+		return $this->fetchIssuesOrPulls( $config, $context, $repo, $data_source );
+	}
+
+	/**
+	 * Fetch source file contents from a GitHub repository.
+	 *
+	 * Uses the Git Trees API to list files, applies path/pattern filters,
+	 * then fetches content for each matching file via the Contents API.
+	 *
+	 * @param array            $config  Handler configuration.
+	 * @param ExecutionContext $context Execution context.
+	 * @param string           $repo    Repository in owner/repo format.
+	 * @return array DataPacket-compatible array or empty on no data.
+	 */
+	private function fetchFiles( array $config, ExecutionContext $context, string $repo ): array {
+		$branch       = $config['branch'] ?? '';
+		$file_path    = $config['file_path'] ?? '';
+		$file_pattern = $config['file_pattern'] ?? '';
+
+		$context->log( 'info', sprintf( 'GitHub: Fetching file tree for %s', $repo ) );
+
+		$result = GitHubAbilities::getRepoTree( array(
+			'repo'   => $repo,
+			'branch' => $branch,
+		) );
+
+		if ( is_wp_error( $result ) ) {
+			$context->log( 'error', 'GitHub: Tree API error — ' . $result->get_error_message() );
+			return array();
+		}
+
+		$files = $result['files'] ?? array();
+
+		if ( empty( $files ) ) {
+			$context->log( 'info', 'GitHub: No files found in repository.' );
+			return array();
+		}
+
+		// Apply path prefix filter.
+		if ( ! empty( $file_path ) ) {
+			$prefix = rtrim( $file_path, '/' ) . '/';
+			$files  = array_filter( $files, fn( $f ) => str_starts_with( $f['path'], $prefix ) || $f['path'] === trim( $file_path, '/' ) );
+			$files  = array_values( $files );
+		}
+
+		// Apply file pattern filter (simple glob: *.php, *.md, etc.).
+		if ( ! empty( $file_pattern ) ) {
+			$files = $this->filterByPattern( $files, $file_pattern );
+		}
+
+		// Filter out binary/large files (> 500 KB, likely not source).
+		$max_file_size = (int) ( $config['max_file_size'] ?? 512000 );
+		$files = array_filter( $files, fn( $f ) => $f['size'] > 0 && $f['size'] <= $max_file_size );
+		$files = array_values( $files );
+
+		if ( empty( $files ) ) {
+			$context->log( 'info', 'GitHub: No files matched filters.' );
+			return array();
+		}
+
+		$context->log( 'info', sprintf( 'GitHub: Found %d matching files.', count( $files ) ) );
+
+		$eligible_items = array();
+
+		foreach ( $files as $file ) {
+			$file_result = GitHubAbilities::getFileContents( array(
+				'repo'   => $repo,
+				'path'   => $file['path'],
+				'branch' => $branch,
+			) );
+
+			if ( is_wp_error( $file_result ) ) {
+				$context->log( 'debug', sprintf( 'GitHub: Skipped %s — %s', $file['path'], $file_result->get_error_message() ) );
+				continue;
+			}
+
+			$file_data   = $file_result['file'];
+			$guid        = sprintf( 'github_%s_files_%s', $repo, $file['sha'] );
+
+			$eligible_items[] = array(
+				'title'    => $file_data['path'],
+				'content'  => $file_data['content'],
+				'metadata' => array(
+					'source_type'       => 'github',
+					'original_id'       => $guid,
+					'dedup_key'         => $guid,
+					'original_title'    => $file_data['path'],
+					'github_repo'       => $repo,
+					'github_type'       => 'files',
+					'github_file_path'  => $file_data['path'],
+					'github_file_size'  => $file_data['size'],
+					'github_file_sha'   => $file_data['sha'],
+					'github_url'        => $file_data['html_url'],
+					'source_url'        => $file_data['html_url'],
+				),
+			);
+		}
+
+		if ( empty( $eligible_items ) ) {
+			$context->log( 'info', 'GitHub: No file contents could be retrieved.' );
+			return array();
+		}
+
+		$context->log( 'info', sprintf( 'GitHub: Retrieved %d file contents.', count( $eligible_items ) ) );
+		return array( 'items' => $eligible_items );
+	}
+
+	/**
+	 * Fetch issues or pull requests from a GitHub repository.
+	 *
+	 * @param array            $config      Handler configuration.
+	 * @param ExecutionContext $context     Execution context.
+	 * @param string           $repo        Repository in owner/repo format.
+	 * @param string           $data_source 'issues' or 'pulls'.
+	 * @return array DataPacket-compatible array or empty on no data.
+	 */
+	private function fetchIssuesOrPulls( array $config, ExecutionContext $context, string $repo, string $data_source ): array {
+		$state  = $config['state'] ?? 'open';
+		$labels = $config['labels'] ?? '';
 
 		$input = array(
 			'repo'     => $repo,
@@ -167,6 +289,35 @@ class GitHub extends FetchHandler {
 
 		$context->log( 'info', sprintf( 'GitHub: Found %d eligible items.', count( $eligible_items ) ) );
 		return array( 'items' => $eligible_items );
+	}
+
+	/**
+	 * Filter files by a glob-like pattern.
+	 *
+	 * Supports simple patterns like `*.php`, `*.md`, `*.css`.
+	 * Multiple patterns can be comma-separated: `*.php,*.json`.
+	 *
+	 * @param array  $files   Normalized file entries from getRepoTree.
+	 * @param string $pattern Glob pattern(s).
+	 * @return array Filtered files.
+	 */
+	private function filterByPattern( array $files, string $pattern ): array {
+		$patterns = array_map( 'trim', explode( ',', $pattern ) );
+		$patterns = array_filter( $patterns );
+
+		if ( empty( $patterns ) ) {
+			return $files;
+		}
+
+		return array_values( array_filter( $files, function ( $file ) use ( $patterns ) {
+			$filename = basename( $file['path'] );
+			foreach ( $patterns as $p ) {
+				if ( fnmatch( $p, $filename ) ) {
+					return true;
+				}
+			}
+			return false;
+		} ) );
 	}
 
 	private function buildIssueContent( array $issue ): string {

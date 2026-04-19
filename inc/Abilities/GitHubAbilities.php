@@ -3,8 +3,9 @@
  * GitHub Abilities
  *
  * Core business logic for GitHub API interactions: listing issues, PRs,
- * repos, and managing issues (update, close, comment). All GitHub
- * operations — CLI, REST, chat tools, fetch handler — route through here.
+ * repos, reading repo source files, and managing issues (update, close,
+ * comment). All GitHub operations — CLI, REST, chat tools, fetch handler —
+ * route through here.
  *
  * Auth: Uses the github_pat stored in Data Machine PluginSettings.
  *
@@ -655,6 +656,18 @@ class GitHubAbilities {
 		);
 	}
 
+	/**
+	 * Create or update a file in a repository via the Contents API.
+	 *
+	 * GET for SHA (if exists) → PUT with base64 content. Genuinely upsert:
+	 * creates the file if it doesn't exist, updates it if it does.
+	 *
+	 * @param array $input {
+	 *     Required: repo, file_path, content, commit_message.
+	 *     Optional: branch.
+	 * }
+	 * @return array|\WP_Error Success payload or error.
+	 */
 	public static function createOrUpdateFile( array $input ): array|\WP_Error {
 		$repo = self::resolveRepo( sanitize_text_field( $input['repo'] ?? '' ) );
 		if ( empty( $repo ) ) {
@@ -731,6 +744,111 @@ class GitHubAbilities {
 				isset( $data['content'] ) ? 'updated' : 'created',
 				$repo
 			),
+		);
+	}
+
+	/**
+	 * Get the recursive file tree for a repository branch.
+	 *
+	 * Calls `GET /repos/{owner}/{repo}/git/trees/{sha}?recursive=1`.
+	 * Returns all files and directories in a single response.
+	 *
+	 * @param array $input {
+	 *     Required: repo. Optional: branch (default: default branch).
+	 * }
+	 * @return array|\WP_Error { files: normalized[], count: int } or error.
+	 */
+	public static function getRepoTree( array $input ): array|\WP_Error {
+		$repo = sanitize_text_field( $input['repo'] ?? '' );
+		if ( empty( $repo ) ) {
+			return new \WP_Error( 'missing_repo', 'Repository is required (owner/repo format).', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPat();
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$branch = sanitize_text_field( $input['branch'] ?? '' );
+		$ref    = ! empty( $branch ) ? $branch : 'HEAD';
+
+		$url      = sprintf( '%s/repos/%s/git/trees/%s', self::API_BASE, $repo, $ref );
+		$response = self::apiGet( $url, array( 'recursive' => '1' ), $pat );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$tree = $response['data']['tree'] ?? array();
+
+		// Filter to blobs (files) only — skip trees (directories).
+		$files = array_filter( $tree, fn( $entry ) => 'blob' === ( $entry['type'] ?? '' ) );
+		$files = array_values( array_map( array( self::class, 'normalizeTreeEntry' ), $files ) );
+
+		return array(
+			'success' => true,
+			'files'   => $files,
+			'count'   => count( $files ),
+		);
+	}
+
+	/**
+	 * Get the decoded content of a single file from a repository.
+	 *
+	 * Calls `GET /repos/{owner}/{repo}/contents/{path}`.
+	 * GitHub returns base64-encoded content for files ≤ 1 MB.
+	 *
+	 * @param array $input {
+	 *     Required: repo, path. Optional: branch.
+	 * }
+	 * @return array|\WP_Error { success: bool, file: normalized } or error.
+	 */
+	public static function getFileContents( array $input ): array|\WP_Error {
+		$repo = sanitize_text_field( $input['repo'] ?? '' );
+		$path = sanitize_text_field( $input['path'] ?? '' );
+
+		if ( empty( $repo ) || empty( $path ) ) {
+			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and file path are required.', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPat();
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$query_params = array();
+		$branch       = sanitize_text_field( $input['branch'] ?? '' );
+		if ( ! empty( $branch ) ) {
+			$query_params['ref'] = $branch;
+		}
+
+		$url      = sprintf( '%s/repos/%s/contents/%s', self::API_BASE, $repo, ltrim( $path, '/' ) );
+		$response = self::apiGet( $url, $query_params, $pat );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$data = $response['data'];
+
+		// GitHub returns a directory listing if path is a directory.
+		if ( isset( $data[0] ) && is_array( $data[0] ) ) {
+			return new \WP_Error( 'is_directory', 'Path is a directory, not a file.', array( 'status' => 400 ) );
+		}
+
+		// Reject large files (> 1 MB returns HTML URL instead of content).
+		if ( empty( $data['content'] ) ) {
+			return new \WP_Error( 'file_too_large', 'File content not available (may exceed 1 MB GitHub API limit).', array( 'status' => 400 ) );
+		}
+
+		$decoded = base64_decode( $data['content'], true );
+		if ( false === $decoded ) {
+			return new \WP_Error( 'decode_failed', 'Failed to decode file content.', array( 'status' => 500 ) );
+		}
+
+		return array(
+			'success' => true,
+			'file'    => self::normalizeFileContent( $data, $decoded ),
 		);
 	}
 
@@ -845,6 +963,33 @@ class GitHubAbilities {
 			'default_branch'   => $repo['default_branch'] ?? 'main',
 			'pushed_at'        => $repo['pushed_at'] ?? '',
 			'updated_at'       => $repo['updated_at'] ?? '',
+		);
+	}
+
+	/**
+	 * Normalize a git tree entry (file listing from getRepoTree).
+	 */
+	public static function normalizeTreeEntry( array $entry ): array {
+		return array(
+			'path' => $entry['path'] ?? '',
+			'size' => (int) ( $entry['size'] ?? 0 ),
+			'sha'  => $entry['sha'] ?? '',
+		);
+	}
+
+	/**
+	 * Normalize a file content response from getFileContents.
+	 *
+	 * @param array  $data     Raw GitHub API response data.
+	 * @param string $decoded  Base64-decoded file content.
+	 */
+	public static function normalizeFileContent( array $data, string $decoded ): array {
+		return array(
+			'path'    => $data['path'] ?? '',
+			'size'    => (int) ( $data['size'] ?? 0 ),
+			'sha'     => $data['sha'] ?? '',
+			'content' => $decoded,
+			'html_url' => $data['html_url'] ?? '',
 		);
 	}
 
