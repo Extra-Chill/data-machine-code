@@ -13,6 +13,8 @@
 namespace DataMachineCode\Workspace;
 
 use DataMachine\Core\FilesRepository\FilesystemHelper;
+use DataMachineCode\Support\GitRunner;
+use DataMachineCode\Support\PathSecurity;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -1550,27 +1552,7 @@ class Workspace {
 	 * @return array{valid: bool, real_path?: string, message?: string}
 	 */
 	public function validate_containment( string $target, string $container ): array {
-		$real_container = realpath( $container );
-		$real_target    = realpath( $target );
-
-		if ( false === $real_container || false === $real_target ) {
-			return array(
-				'valid'   => false,
-				'message' => 'Path does not exist.',
-			);
-		}
-
-		if ( 0 !== strpos( $real_target, $real_container . '/' ) && $real_target !== $real_container ) {
-			return array(
-				'valid'   => false,
-				'message' => 'Path traversal detected. Access denied.',
-			);
-		}
-
-		return array(
-			'valid'     => true,
-			'real_path' => $real_target,
-		);
+		return PathSecurity::validateContainment( $target, $container );
 	}
 
 	/**
@@ -1639,27 +1621,7 @@ class Workspace {
 	 * @return array
 	 */
 	private function run_git( string $repo_path, string $git_args ): array|\WP_Error {
-		$escaped_repo = escapeshellarg( $repo_path );
-		$command      = sprintf( 'git -C %s %s 2>&1', $escaped_repo, $git_args );
-
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		exec( $command, $output, $exit_code );
-
-		if ( 0 !== $exit_code ) {
-			return new \WP_Error(
-				'git_command_failed',
-				sprintf( 'Git command failed (exit %d): %s', $exit_code, implode( "\n", $output ) ),
-				array(
-					'status' => 500,
-					'output' => implode( "\n", $output ),
-				)
-			);
-		}
-
-		return array(
-			'success' => true,
-			'output'  => implode( "\n", $output ),
-		);
+		return GitRunner::run( $repo_path, $git_args );
 	}
 
 	/**
@@ -1788,25 +1750,7 @@ class Workspace {
 	 * @return bool
 	 */
 	private function is_sensitive_path( string $path ): bool {
-		$normalized = strtolower( ltrim( str_replace( '\\', '/', $path ), '/' ) );
-
-		$sensitive_patterns = array(
-			'.env',
-			'credentials.json',
-			'id_rsa',
-			'id_ed25519',
-			'.pem',
-			'.key',
-			'secrets',
-		);
-
-		foreach ( $sensitive_patterns as $pattern ) {
-			if ( str_contains( $normalized, $pattern ) ) {
-				return true;
-			}
-		}
-
-		return false;
+		return PathSecurity::isSensitivePath( $path );
 	}
 
 	/**
@@ -1816,14 +1760,7 @@ class Workspace {
 	 * @return bool
 	 */
 	private function has_traversal( string $path ): bool {
-		$parts = explode( '/', str_replace( '\\', '/', $path ) );
-		foreach ( $parts as $part ) {
-			if ( '..' === $part || '.' === $part ) {
-				return true;
-			}
-		}
-
-		return false;
+		return PathSecurity::hasTraversal( $path );
 	}
 
 	/**
