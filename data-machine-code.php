@@ -47,6 +47,7 @@ function datamachine_code_bootstrap() {
 	// Load Abilities (they self-register).
 	new \DataMachineCode\Abilities\GitHubAbilities();
 	new \DataMachineCode\Abilities\WorkspaceAbilities();
+	new \DataMachineCode\Abilities\GitSyncAbilities();
 
 	// Load Handlers (they self-register).
 	new \DataMachineCode\Handlers\GitHub\GitHub();
@@ -80,6 +81,14 @@ function datamachine_code_register_ability_categories() {
 		array(
 			'label'       => __( 'GitHub', 'data-machine-code' ),
 			'description' => __( 'GitHub issue, pull request, and repository operations.', 'data-machine-code' ),
+		)
+	);
+
+	wp_register_ability_category(
+		'datamachine-code-gitsync',
+		array(
+			'label'       => __( 'GitSync', 'data-machine-code' ),
+			'description' => __( 'Bind site-owned directories to remote git repositories with pull/status/list semantics.', 'data-machine-code' ),
 		)
 	);
 }
@@ -164,6 +173,7 @@ function datamachine_code_register_cli_commands() {
 
 	\WP_CLI::add_command( 'datamachine-code github', \DataMachineCode\Cli\Commands\GitHubCommand::class );
 	\WP_CLI::add_command( 'datamachine-code workspace', \DataMachineCode\Cli\Commands\WorkspaceCommand::class );
+	\WP_CLI::add_command( 'datamachine-code gitsync', \DataMachineCode\Cli\Commands\GitSyncCommand::class );
 }
 add_action( 'plugins_loaded', 'datamachine_code_register_cli_commands', 21 );
 
