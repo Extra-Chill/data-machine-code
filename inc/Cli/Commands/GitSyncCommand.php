@@ -2,10 +2,10 @@
 /**
  * WP-CLI GitSync Command
  *
- * Thin CLI shell over the `datamachine/gitsync-*` abilities. Every
- * subcommand resolves the corresponding ability via `wp_get_ability()`,
- * maps CLI args into the ability's input schema, and formats the output
- * — no business logic lives here.
+ * Thin shell over the `datamachine/gitsync-*` abilities. Every subcommand
+ * resolves the matching ability via `wp_get_ability()`, maps CLI args
+ * into the ability's input schema, and formats the response — no
+ * business logic in the CLI layer.
  *
  * @package DataMachineCode\Cli\Commands
  * @since   0.7.0
@@ -39,7 +39,6 @@ class GitSyncCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     wp datamachine-code gitsync list
-	 *     wp datamachine-code gitsync list --format=json
 	 *
 	 * @subcommand list
 	 */
@@ -55,15 +54,15 @@ class GitSyncCommand extends BaseCommand {
 		$items = array_map(
 			function ( array $b ): array {
 				return array(
-					'slug'          => $b['slug'],
-					'local_path'    => $b['local_path'],
-					'remote_url'    => $b['remote_url'],
-					'branch'        => $b['branch'],
-					'is_repo'       => ! empty( $b['is_repo'] ) ? 'yes' : 'no',
-					'auto_pull'     => ! empty( $b['auto_pull'] ) ? 'yes' : 'no',
-					'interval'      => (string) ( $b['pull_interval'] ?? '-' ),
-					'last_pulled'   => (string) ( $b['last_pulled'] ?? '-' ),
-					'last_commit'   => (string) ( $b['last_commit'] ?? '-' ),
+					'slug'        => $b['slug'],
+					'local_path'  => $b['local_path'],
+					'remote_url'  => $b['remote_url'],
+					'branch'      => $b['branch'],
+					'exists'      => ! empty( $b['exists'] ) ? 'yes' : 'no',
+					'write'       => ! empty( $b['write_enabled'] ) ? 'yes' : 'no',
+					'direct'      => ! empty( $b['push_enabled'] ) ? 'yes' : 'no',
+					'pulled'      => (int) ( $b['pulled_count'] ?? 0 ),
+					'last_pulled' => (string) ( $b['last_pulled'] ?? '-' ),
 				);
 			},
 			$result['bindings']
@@ -71,17 +70,17 @@ class GitSyncCommand extends BaseCommand {
 
 		$this->format_items(
 			$items,
-			array( 'slug', 'local_path', 'remote_url', 'branch', 'is_repo', 'auto_pull', 'interval', 'last_pulled', 'last_commit' ),
+			array( 'slug', 'local_path', 'remote_url', 'branch', 'exists', 'write', 'direct', 'pulled', 'last_pulled' ),
 			$assoc_args,
 			'slug'
 		);
 	}
 
 	/**
-	 * Bind a site-owned directory to a remote git repository.
+	 * Bind a site-owned directory to a GitHub repository.
 	 *
-	 * Clones the remote into the target path, or adopts an existing
-	 * checkout whose origin matches `--remote`.
+	 * Registers the binding but does NOT clone files. Run `gitsync pull`
+	 * after bind to materialize upstream content.
 	 *
 	 * ## OPTIONS
 	 *
@@ -89,16 +88,16 @@ class GitSyncCommand extends BaseCommand {
 	 * : Unique binding identifier. Lowercase letters, digits, hyphen, underscore.
 	 *
 	 * --local=<path>
-	 * : Path relative to ABSPATH (leading slash). e.g. /wp-content/uploads/markdown/wiki/
+	 * : ABSPATH-relative path (leading slash). e.g. /wp-content/uploads/markdown/wiki/
 	 *
 	 * --remote=<url>
-	 * : Git remote URL (https:// or git@).
+	 * : GitHub URL (https://github.com/owner/repo or git@github.com:owner/repo).
 	 *
 	 * [--branch=<branch>]
 	 * : Branch to track. Default: main.
 	 *
 	 * [--conflict=<strategy>]
-	 * : Conflict policy.
+	 * : Conflict policy for pull.
 	 * ---
 	 * default: fail
 	 * options:
@@ -107,50 +106,24 @@ class GitSyncCommand extends BaseCommand {
 	 *   - manual
 	 * ---
 	 *
-	 * [--auto-pull]
-	 * : Opt the binding into scheduled sync (Phase 3 honors this flag).
-	 *
-	 * [--pull-interval=<interval>]
-	 * : Scheduled pull cadence. Default: hourly.
-	 *
 	 * ## EXAMPLES
 	 *
-	 *     # Bind the wiki content directory
 	 *     wp datamachine-code gitsync bind intelligence-wiki \
 	 *       --local=/wp-content/uploads/markdown/wiki/ \
 	 *       --remote=https://github.com/Automattic/a8c-wiki-woocommerce
-	 *
-	 *     # Bind + auto-pull hourly
-	 *     wp datamachine-code gitsync bind wg-agent-def \
-	 *       --local=/wp-content/uploads/datamachine-files/agents/wiki-generator/ \
-	 *       --remote=https://github.com/Automattic/a8c-wiki-generator \
-	 *       --auto-pull --pull-interval=hourly
 	 *
 	 * @subcommand bind
 	 */
 	public function bind( array $args, array $assoc_args ): void {
 		$slug = $args[0] ?? '';
 		if ( '' === $slug ) {
-			WP_CLI::error( 'Binding slug is required (first positional argument).' );
-			return;
+			WP_CLI::error( 'Binding slug is required.' );
 		}
 
 		$local  = (string) ( $assoc_args['local'] ?? '' );
 		$remote = (string) ( $assoc_args['remote'] ?? '' );
 		if ( '' === $local || '' === $remote ) {
 			WP_CLI::error( 'Both --local and --remote are required.' );
-			return;
-		}
-
-		$policy = array();
-		if ( isset( $assoc_args['conflict'] ) ) {
-			$policy['conflict'] = (string) $assoc_args['conflict'];
-		}
-		if ( ! empty( $assoc_args['auto-pull'] ) ) {
-			$policy['auto_pull'] = true;
-		}
-		if ( isset( $assoc_args['pull-interval'] ) ) {
-			$policy['pull_interval'] = (string) $assoc_args['pull-interval'];
 		}
 
 		$input = array(
@@ -161,27 +134,17 @@ class GitSyncCommand extends BaseCommand {
 		if ( ! empty( $assoc_args['branch'] ) ) {
 			$input['branch'] = (string) $assoc_args['branch'];
 		}
-		if ( ! empty( $policy ) ) {
-			$input['policy'] = $policy;
+		if ( isset( $assoc_args['conflict'] ) ) {
+			$input['policy'] = array( 'conflict' => (string) $assoc_args['conflict'] );
 		}
 
 		$result = $this->execute_ability( 'datamachine/gitsync-bind', $input );
 
-		$verb = ! empty( $result['adopted'] ) ? 'Adopted existing' : 'Cloned and bound';
-		WP_CLI::success( sprintf( '%s: %s → %s', $verb, $slug, $result['local_path'] ?? '' ) );
-		WP_CLI::log( sprintf( '  remote: %s', $result['binding']['remote_url'] ?? '' ) );
-		WP_CLI::log( sprintf( '  branch: %s', $result['binding']['branch'] ?? '' ) );
-		if ( ! empty( $result['binding']['last_commit'] ) ) {
-			WP_CLI::log( sprintf( '  head:   %s', $result['binding']['last_commit'] ) );
-		}
+		WP_CLI::success( (string) ( $result['message'] ?? 'Bound.' ) );
 	}
 
 	/**
 	 * Unbind a GitSync binding.
-	 *
-	 * By default the on-disk directory is preserved — the binding is
-	 * metadata, not ownership of the filesystem. Pass `--purge` to also
-	 * delete the working tree.
 	 *
 	 * ## OPTIONS
 	 *
@@ -205,11 +168,8 @@ class GitSyncCommand extends BaseCommand {
 		$slug = $args[0] ?? '';
 		if ( '' === $slug ) {
 			WP_CLI::error( 'Binding slug is required.' );
-			return;
 		}
-
 		$purge = ! empty( $assoc_args['purge'] );
-
 		if ( $purge && empty( $assoc_args['yes'] ) ) {
 			WP_CLI::confirm( sprintf( 'Purge the on-disk directory for binding "%s"? This permanently deletes files.', $slug ) );
 		}
@@ -222,7 +182,7 @@ class GitSyncCommand extends BaseCommand {
 			)
 		);
 
-		if ( $result['purged'] ?? false ) {
+		if ( ! empty( $result['purged'] ) ) {
 			WP_CLI::success( sprintf( 'Unbound "%s" and purged %s', $slug, $result['local_path'] ?? '' ) );
 		} else {
 			WP_CLI::success( sprintf( 'Unbound "%s" (directory preserved: %s)', $slug, $result['local_path'] ?? '' ) );
@@ -230,7 +190,7 @@ class GitSyncCommand extends BaseCommand {
 	}
 
 	/**
-	 * Pull the remote into a bound directory.
+	 * Pull the remote into a bound directory via GitHub Contents API.
 	 *
 	 * ## OPTIONS
 	 *
@@ -238,12 +198,11 @@ class GitSyncCommand extends BaseCommand {
 	 * : Binding slug.
 	 *
 	 * [--allow-dirty]
-	 * : Bypass dirty-working-tree safety for this pull only.
+	 * : Bypass the conflict policy for this pull only.
 	 *
 	 * ## EXAMPLES
 	 *
 	 *     wp datamachine-code gitsync pull intelligence-wiki
-	 *     wp datamachine-code gitsync pull intelligence-wiki --allow-dirty
 	 *
 	 * @subcommand pull
 	 */
@@ -251,7 +210,6 @@ class GitSyncCommand extends BaseCommand {
 		$slug = $args[0] ?? '';
 		if ( '' === $slug ) {
 			WP_CLI::error( 'Binding slug is required.' );
-			return;
 		}
 
 		$result = $this->execute_ability(
@@ -262,18 +220,28 @@ class GitSyncCommand extends BaseCommand {
 			)
 		);
 
-		$previous = $result['previous_head'] ?? '-';
-		$head     = $result['head'] ?? '-';
+		$updated   = (array) ( $result['updated'] ?? array() );
+		$deleted   = (array) ( $result['deleted'] ?? array() );
+		$conflicts = (array) ( $result['conflicts'] ?? array() );
+		$unchanged = (int) ( $result['unchanged'] ?? 0 );
 
-		if ( $previous === $head ) {
-			WP_CLI::success( sprintf( 'Already up to date: %s @ %s', $slug, (string) $head ) );
-		} else {
-			WP_CLI::success( sprintf( 'Pulled %s: %s → %s', $slug, (string) $previous, (string) $head ) );
+		WP_CLI::success( sprintf(
+			'Pulled %s: %d updated, %d unchanged, %d deleted, %d conflicts',
+			$slug,
+			count( $updated ),
+			$unchanged,
+			count( $deleted ),
+			count( $conflicts )
+		) );
+
+		if ( ! empty( $conflicts ) ) {
+			WP_CLI::warning( 'Conflicts (run with --allow-dirty to override, or change conflict policy):' );
+			foreach ( $conflicts as $c ) {
+				WP_CLI::log( sprintf( '  %s — %s', $c['path'] ?? '?', $c['reason'] ?? '?' ) );
+			}
 		}
-
-		$message = trim( (string) ( $result['message'] ?? '' ) );
-		if ( '' !== $message ) {
-			WP_CLI::log( $message );
+		if ( ! empty( $result['truncated'] ) ) {
+			WP_CLI::warning( 'GitHub tree response was truncated. Some paths may be missing. Consider narrowing the repo or upgrading to Git Data API pagination (not yet implemented).' );
 		}
 	}
 
@@ -295,20 +263,13 @@ class GitSyncCommand extends BaseCommand {
 	 *   - yaml
 	 * ---
 	 *
-	 * ## EXAMPLES
-	 *
-	 *     wp datamachine-code gitsync status intelligence-wiki
-	 *     wp datamachine-code gitsync status intelligence-wiki --format=json
-	 *
 	 * @subcommand status
 	 */
 	public function status( array $args, array $assoc_args ): void {
 		$slug = $args[0] ?? '';
 		if ( '' === $slug ) {
 			WP_CLI::error( 'Binding slug is required.' );
-			return;
 		}
-
 		$result = $this->execute_ability( 'datamachine/gitsync-status', array( 'slug' => $slug ) );
 
 		$format = $assoc_args['format'] ?? 'table';
@@ -316,162 +277,25 @@ class GitSyncCommand extends BaseCommand {
 			WP_CLI::log( wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
 			return;
 		}
-		if ( 'yaml' === $format ) {
-			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_print_r
-			WP_CLI::log( (string) print_r( $result, true ) );
-			return;
-		}
 
-		// Default table-like summary — a single record flattened into key/value rows.
 		$rows = array(
 			array( 'field' => 'slug',           'value' => (string) ( $result['slug'] ?? '' ) ),
 			array( 'field' => 'local_path',     'value' => (string) ( $result['local_path'] ?? '' ) ),
 			array( 'field' => 'remote_url',     'value' => (string) ( $result['remote_url'] ?? '' ) ),
 			array( 'field' => 'tracked_branch', 'value' => (string) ( $result['tracked_branch'] ?? '' ) ),
 			array( 'field' => 'exists',         'value' => ! empty( $result['exists'] ) ? 'yes' : 'no' ),
-			array( 'field' => 'is_repo',        'value' => ! empty( $result['is_repo'] ) ? 'yes' : 'no' ),
-			array( 'field' => 'branch',         'value' => (string) ( $result['branch'] ?? '-' ) ),
-			array( 'field' => 'head',           'value' => (string) ( $result['head'] ?? '-' ) ),
-			array( 'field' => 'dirty',          'value' => (string) ( (int) ( $result['dirty'] ?? 0 ) ) ),
-			array( 'field' => 'ahead',          'value' => null === ( $result['ahead'] ?? null ) ? '-' : (string) $result['ahead'] ),
-			array( 'field' => 'behind',         'value' => null === ( $result['behind'] ?? null ) ? '-' : (string) $result['behind'] ),
+			array( 'field' => 'pulled_count',   'value' => (string) ( (int) ( $result['pulled_count'] ?? 0 ) ) ),
 			array( 'field' => 'last_pulled',    'value' => (string) ( $result['last_pulled'] ?? '-' ) ),
+			array( 'field' => 'last_commit',    'value' => (string) ( $result['last_commit'] ?? '-' ) ),
 		);
-
 		$this->format_items( $rows, array( 'field', 'value' ), $assoc_args, 'field' );
-	}
-
-	/**
-	 * Stage paths for commit in a binding's working tree.
-	 *
-	 * ## OPTIONS
-	 *
-	 * <slug>
-	 * : Binding slug.
-	 *
-	 * <paths>...
-	 * : Relative paths inside the binding to stage. Must live under
-	 *   policy.allowed_paths; sensitive-file patterns are always refused.
-	 *
-	 * ## EXAMPLES
-	 *
-	 *     wp datamachine-code gitsync add intelligence-wiki articles/new-article.md
-	 *     wp datamachine-code gitsync add intelligence-wiki articles/a.md articles/b.md
-	 *
-	 * @subcommand add
-	 */
-	public function add( array $args, array $assoc_args ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
-		$slug = $args[0] ?? '';
-		if ( '' === $slug ) {
-			WP_CLI::error( 'Binding slug is required.' );
-		}
-		$paths = array_slice( $args, 1 );
-		if ( empty( $paths ) ) {
-			WP_CLI::error( 'At least one path is required.' );
-		}
-
-		$result = $this->execute_ability(
-			'datamachine/gitsync-add',
-			array(
-				'slug'  => $slug,
-				'paths' => $paths,
-			)
-		);
-
-		WP_CLI::success( (string) ( $result['message'] ?? 'Staged.' ) );
-	}
-
-	/**
-	 * Commit staged changes in a binding's working tree.
-	 *
-	 * ## OPTIONS
-	 *
-	 * <slug>
-	 * : Binding slug.
-	 *
-	 * --message=<message>
-	 * : Commit message (8–200 characters).
-	 *
-	 * ## EXAMPLES
-	 *
-	 *     wp datamachine-code gitsync commit intelligence-wiki \
-	 *       --message="Add new CIAB article"
-	 *
-	 * @subcommand commit
-	 */
-	public function commit( array $args, array $assoc_args ): void {
-		$slug = $args[0] ?? '';
-		if ( '' === $slug ) {
-			WP_CLI::error( 'Binding slug is required.' );
-		}
-		$message = (string) ( $assoc_args['message'] ?? '' );
-		if ( '' === $message ) {
-			WP_CLI::error( '--message is required.' );
-		}
-
-		$result = $this->execute_ability(
-			'datamachine/gitsync-commit',
-			array(
-				'slug'    => $slug,
-				'message' => $message,
-			)
-		);
-
-		WP_CLI::success( (string) ( $result['message'] ?? 'Committed.' ) );
-		if ( ! empty( $result['commit'] ) ) {
-			WP_CLI::log( sprintf( '  head: %s', $result['commit'] ) );
-		}
-	}
-
-	/**
-	 * Direct-push a binding to its pinned branch on origin.
-	 *
-	 * Requires policy.push_enabled=true AND policy.safe_direct_push=true.
-	 * For most workflows you want `submit` instead, which pushes to a
-	 * feature branch and opens a PR.
-	 *
-	 * ## OPTIONS
-	 *
-	 * <slug>
-	 * : Binding slug.
-	 *
-	 * [--force]
-	 * : Use git push --force-with-lease. Default: false.
-	 *
-	 * ## EXAMPLES
-	 *
-	 *     wp datamachine-code gitsync push personal-wiki
-	 *     wp datamachine-code gitsync push personal-wiki --force
-	 *
-	 * @subcommand push
-	 */
-	public function push( array $args, array $assoc_args ): void {
-		$slug = $args[0] ?? '';
-		if ( '' === $slug ) {
-			WP_CLI::error( 'Binding slug is required.' );
-		}
-
-		$result = $this->execute_ability(
-			'datamachine/gitsync-push',
-			array(
-				'slug'  => $slug,
-				'force' => ! empty( $assoc_args['force'] ),
-			)
-		);
-
-		WP_CLI::success( sprintf( 'Pushed %s → %s @ %s', $slug, (string) ( $result['branch'] ?? '' ), (string) ( $result['head'] ?? '-' ) ) );
-		$output = trim( (string) ( $result['message'] ?? '' ) );
-		if ( '' !== $output ) {
-			WP_CLI::log( $output );
-		}
 	}
 
 	/**
 	 * Submit local edits as a pull request.
 	 *
-	 * Orchestrates the sticky proposal branch flow: align with upstream,
-	 * push gitsync/<slug> with --force-with-lease, open or update a PR.
-	 * Phase 2 supports github.com remotes only.
+	 * Uploads changed files to the sticky proposal branch (gitsync/<slug>)
+	 * and opens or updates a PR against the pinned branch.
 	 *
 	 * ## OPTIONS
 	 *
@@ -479,14 +303,14 @@ class GitSyncCommand extends BaseCommand {
 	 * : Binding slug.
 	 *
 	 * --message=<message>
-	 * : Commit message (8–200 characters).
+	 * : Commit / PR title (8–200 chars).
 	 *
 	 * [--paths=<paths>]
-	 * : Comma-separated list of relative paths to stage. If omitted,
-	 *   every dirty file under policy.allowed_paths is staged.
+	 * : Comma-separated list of relative paths to submit. If omitted,
+	 *   every changed file under allowed_paths is included.
 	 *
 	 * [--title=<title>]
-	 * : PR title. Defaults to the commit message.
+	 * : PR title. Defaults to --message.
 	 *
 	 * [--body=<body>]
 	 * : PR body. Defaults to a generated summary.
@@ -495,11 +319,6 @@ class GitSyncCommand extends BaseCommand {
 	 *
 	 *     wp datamachine-code gitsync submit intelligence-wiki \
 	 *       --message="Add CIAB kickoff article"
-	 *
-	 *     wp datamachine-code gitsync submit intelligence-wiki \
-	 *       --message="Update two articles" \
-	 *       --paths=articles/a.md,articles/b.md \
-	 *       --title="docs: update a + b"
 	 *
 	 * @subcommand submit
 	 */
@@ -537,8 +356,54 @@ class GitSyncCommand extends BaseCommand {
 			(string) ( $result['branch'] ?? '' ),
 			(string) ( $pr['html_url'] ?? '' )
 		) );
-		WP_CLI::log( sprintf( '  commit: %s', (string) ( $result['commit'] ?? '-' ) ) );
-		WP_CLI::log( sprintf( '  files:  %d staged', count( (array) ( $result['staged'] ?? array() ) ) ) );
+		WP_CLI::log( sprintf( '  commits: %d', count( (array) ( $result['commits'] ?? array() ) ) ) );
+	}
+
+	/**
+	 * Commit changes directly to the pinned branch — no PR.
+	 *
+	 * Requires policy.write_enabled=true AND policy.safe_direct_push=true.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <slug>
+	 * : Binding slug.
+	 *
+	 * --message=<message>
+	 * : Commit message base.
+	 *
+	 * [--paths=<paths>]
+	 * : Comma-separated list of relative paths. If omitted, every changed
+	 *   file under allowed_paths is committed.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code gitsync push personal-wiki \
+	 *       --message="Daily notes"
+	 *
+	 * @subcommand push
+	 */
+	public function push( array $args, array $assoc_args ): void {
+		$slug = $args[0] ?? '';
+		if ( '' === $slug ) {
+			WP_CLI::error( 'Binding slug is required.' );
+		}
+		$message = (string) ( $assoc_args['message'] ?? '' );
+		if ( '' === $message ) {
+			WP_CLI::error( '--message is required.' );
+		}
+
+		$input = array(
+			'slug'    => $slug,
+			'message' => $message,
+		);
+		if ( isset( $assoc_args['paths'] ) && '' !== $assoc_args['paths'] ) {
+			$input['paths'] = array_values( array_filter( array_map( 'trim', explode( ',', (string) $assoc_args['paths'] ) ) ) );
+		}
+
+		$result = $this->execute_ability( 'datamachine/gitsync-push', $input );
+
+		WP_CLI::success( sprintf( 'Pushed %d file(s) to %s on "%s"', count( (array) ( $result['commits'] ?? array() ) ), $result['branch'] ?? '', $slug ) );
 	}
 
 	/**
@@ -550,17 +415,14 @@ class GitSyncCommand extends BaseCommand {
 	 * : Binding slug.
 	 *
 	 * [--write-enabled=<bool>]
-	 * : Gate add + commit.
-	 *
-	 * [--push-enabled=<bool>]
-	 * : Gate push + submit.
+	 * : Gate submit + push.
 	 *
 	 * [--safe-direct-push=<bool>]
 	 * : Second key required for direct push to the pinned branch.
 	 *
 	 * [--allowed-paths=<list>]
-	 * : Comma-separated list of relative path prefixes that may be staged.
-	 *   Use "clear" to reset to an empty allowlist.
+	 * : Comma-separated relative path prefixes that may be uploaded. Use
+	 *   "clear" to empty the allowlist.
 	 *
 	 * [--conflict=<strategy>]
 	 * : Conflict strategy for pull.
@@ -572,21 +434,15 @@ class GitSyncCommand extends BaseCommand {
 	 * ---
 	 *
 	 * [--auto-pull=<bool>]
-	 * : Enroll in scheduled sync (Phase 3).
+	 * : Mark binding for scheduled sync (honored when a future task consumes it).
 	 *
 	 * [--pull-interval=<interval>]
-	 * : Scheduled pull cadence.
+	 * : Scheduled pull cadence hint.
 	 *
 	 * ## EXAMPLES
 	 *
-	 *     # Open up writes + submit for a wiki binding
 	 *     wp datamachine-code gitsync policy intelligence-wiki \
-	 *       --write-enabled=true --push-enabled=true \
-	 *       --allowed-paths=articles/,images/
-	 *
-	 *     # Allow direct push for a personal (single-owner) binding
-	 *     wp datamachine-code gitsync policy personal-wiki \
-	 *       --push-enabled=true --safe-direct-push=true
+	 *       --write-enabled=true --allowed-paths=articles/,images/
 	 *
 	 * @subcommand policy
 	 */
@@ -599,7 +455,6 @@ class GitSyncCommand extends BaseCommand {
 		$patch = array();
 		$bool_keys = array(
 			'write-enabled'    => 'write_enabled',
-			'push-enabled'     => 'push_enabled',
 			'safe-direct-push' => 'safe_direct_push',
 			'auto-pull'        => 'auto_pull',
 		);
@@ -629,10 +484,7 @@ class GitSyncCommand extends BaseCommand {
 
 		$result = $this->execute_ability(
 			'datamachine/gitsync-policy-update',
-			array(
-				'slug'   => $slug,
-				'policy' => $patch,
-			)
+			array( 'slug' => $slug, 'policy' => $patch )
 		);
 
 		WP_CLI::success( sprintf( 'Policy updated for "%s".', $slug ) );
@@ -643,39 +495,22 @@ class GitSyncCommand extends BaseCommand {
 	// Helpers
 	// =========================================================================
 
-	/**
-	 * Coerce a CLI-provided string into a boolean. Treats common truthy
-	 * strings (`true`, `1`, `yes`, `on`) as true; everything else as false.
-	 */
-	private function coerce_bool( string $value ): bool {
-		return in_array( strtolower( trim( $value ) ), array( '1', 'true', 'yes', 'on' ), true );
-	}
-
-	/**
-	 * Resolve + execute an ability, erroring out on missing or failed calls.
-	 *
-	 * Centralized so every subcommand gets the same "ability missing → CLI
-	 * error" and "WP_Error result → CLI error" behavior without boilerplate.
-	 *
-	 * @param string               $ability_name Fully qualified ability name.
-	 * @param array<string, mixed> $input        Ability input payload.
-	 * @return array<string, mixed> On success. Exits via WP_CLI::error otherwise.
-	 */
 	private function execute_ability( string $ability_name, array $input ): array {
 		if ( ! function_exists( 'wp_get_ability' ) ) {
 			WP_CLI::error( 'WordPress Abilities API unavailable — requires WP 6.9+ or the Abilities API plugin.' );
 		}
-
 		$ability = wp_get_ability( $ability_name );
 		if ( ! $ability ) {
 			WP_CLI::error( sprintf( 'Ability "%s" is not registered.', $ability_name ) );
 		}
-
 		$result = $ability->execute( $input );
 		if ( is_wp_error( $result ) ) {
 			WP_CLI::error( $result->get_error_message() );
 		}
-
 		return is_array( $result ) ? $result : array();
+	}
+
+	private function coerce_bool( string $value ): bool {
+		return in_array( strtolower( trim( $value ) ), array( '1', 'true', 'yes', 'on' ), true );
 	}
 }
