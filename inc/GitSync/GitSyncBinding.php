@@ -30,12 +30,18 @@ final class GitSyncBinding {
 	 * @var array<string, mixed>
 	 */
 	public const DEFAULT_POLICY = array(
-		'auto_pull'     => false,
-		'pull_interval' => 'hourly',
-		'write_enabled' => false,
-		'push_enabled'  => false,
-		'allowed_paths' => array(),
-		'conflict'      => 'fail',
+		'auto_pull'        => false,
+		'pull_interval'    => 'hourly',
+		'write_enabled'    => false,
+		'push_enabled'     => false,
+		// Second key for direct push to the pinned branch. Even with
+		// push_enabled=true, pushes straight to the tracked branch are
+		// refused unless this is also true. submit() pushes to a feature
+		// branch and does NOT require this flag — PR flow is the
+		// intended default for bindings that allow writes.
+		'safe_direct_push' => false,
+		'allowed_paths'    => array(),
+		'conflict'         => 'fail',
 	);
 
 	/**
@@ -100,10 +106,14 @@ final class GitSyncBinding {
 			return new \WP_Error( 'missing_remote_url', 'remote_url is required.', array( 'status' => 400 ) );
 		}
 
-		if ( ! preg_match( '#^(https?://|git@)#', $remote ) ) {
+		// Accept https://, http:// (for self-hosted git), git@ SSH, and
+		// file:// (useful for local bare-repo testing). Anything outside
+		// these schemes is refused — guards against accidental bindings
+		// to filesystem paths that git's URL-sniffing might still accept.
+		if ( ! preg_match( '#^(https?://|git@|file://)#', $remote ) ) {
 			return new \WP_Error(
 				'invalid_remote_url',
-				'remote_url must be an https:// or git@ URL.',
+				'remote_url must be an https://, http://, git@, or file:// URL.',
 				array( 'status' => 400 )
 			);
 		}

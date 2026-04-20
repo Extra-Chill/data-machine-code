@@ -68,8 +68,11 @@ namespace {
 
 	require __DIR__ . '/../inc/Support/GitRunner.php';
 	require __DIR__ . '/../inc/Support/PathSecurity.php';
+	require __DIR__ . '/../inc/Support/GitHubRemote.php';
+	require __DIR__ . '/../inc/GitSync/GitRepo.php';
 	require __DIR__ . '/../inc/GitSync/GitSyncBinding.php';
 	require __DIR__ . '/../inc/GitSync/GitSyncRegistry.php';
+	require __DIR__ . '/../inc/GitSync/GitSyncSubmitter.php';
 	require __DIR__ . '/../inc/GitSync/GitSync.php';
 
 	$failures = 0;

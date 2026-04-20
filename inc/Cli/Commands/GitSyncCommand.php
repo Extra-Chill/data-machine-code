@@ -341,9 +341,315 @@ class GitSyncCommand extends BaseCommand {
 		$this->format_items( $rows, array( 'field', 'value' ), $assoc_args, 'field' );
 	}
 
+	/**
+	 * Stage paths for commit in a binding's working tree.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <slug>
+	 * : Binding slug.
+	 *
+	 * <paths>...
+	 * : Relative paths inside the binding to stage. Must live under
+	 *   policy.allowed_paths; sensitive-file patterns are always refused.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code gitsync add intelligence-wiki articles/new-article.md
+	 *     wp datamachine-code gitsync add intelligence-wiki articles/a.md articles/b.md
+	 *
+	 * @subcommand add
+	 */
+	public function add( array $args, array $assoc_args ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+		$slug = $args[0] ?? '';
+		if ( '' === $slug ) {
+			WP_CLI::error( 'Binding slug is required.' );
+		}
+		$paths = array_slice( $args, 1 );
+		if ( empty( $paths ) ) {
+			WP_CLI::error( 'At least one path is required.' );
+		}
+
+		$result = $this->execute_ability(
+			'datamachine/gitsync-add',
+			array(
+				'slug'  => $slug,
+				'paths' => $paths,
+			)
+		);
+
+		WP_CLI::success( (string) ( $result['message'] ?? 'Staged.' ) );
+	}
+
+	/**
+	 * Commit staged changes in a binding's working tree.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <slug>
+	 * : Binding slug.
+	 *
+	 * --message=<message>
+	 * : Commit message (8–200 characters).
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code gitsync commit intelligence-wiki \
+	 *       --message="Add new CIAB article"
+	 *
+	 * @subcommand commit
+	 */
+	public function commit( array $args, array $assoc_args ): void {
+		$slug = $args[0] ?? '';
+		if ( '' === $slug ) {
+			WP_CLI::error( 'Binding slug is required.' );
+		}
+		$message = (string) ( $assoc_args['message'] ?? '' );
+		if ( '' === $message ) {
+			WP_CLI::error( '--message is required.' );
+		}
+
+		$result = $this->execute_ability(
+			'datamachine/gitsync-commit',
+			array(
+				'slug'    => $slug,
+				'message' => $message,
+			)
+		);
+
+		WP_CLI::success( (string) ( $result['message'] ?? 'Committed.' ) );
+		if ( ! empty( $result['commit'] ) ) {
+			WP_CLI::log( sprintf( '  head: %s', $result['commit'] ) );
+		}
+	}
+
+	/**
+	 * Direct-push a binding to its pinned branch on origin.
+	 *
+	 * Requires policy.push_enabled=true AND policy.safe_direct_push=true.
+	 * For most workflows you want `submit` instead, which pushes to a
+	 * feature branch and opens a PR.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <slug>
+	 * : Binding slug.
+	 *
+	 * [--force]
+	 * : Use git push --force-with-lease. Default: false.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code gitsync push personal-wiki
+	 *     wp datamachine-code gitsync push personal-wiki --force
+	 *
+	 * @subcommand push
+	 */
+	public function push( array $args, array $assoc_args ): void {
+		$slug = $args[0] ?? '';
+		if ( '' === $slug ) {
+			WP_CLI::error( 'Binding slug is required.' );
+		}
+
+		$result = $this->execute_ability(
+			'datamachine/gitsync-push',
+			array(
+				'slug'  => $slug,
+				'force' => ! empty( $assoc_args['force'] ),
+			)
+		);
+
+		WP_CLI::success( sprintf( 'Pushed %s → %s @ %s', $slug, (string) ( $result['branch'] ?? '' ), (string) ( $result['head'] ?? '-' ) ) );
+		$output = trim( (string) ( $result['message'] ?? '' ) );
+		if ( '' !== $output ) {
+			WP_CLI::log( $output );
+		}
+	}
+
+	/**
+	 * Submit local edits as a pull request.
+	 *
+	 * Orchestrates the sticky proposal branch flow: align with upstream,
+	 * push gitsync/<slug> with --force-with-lease, open or update a PR.
+	 * Phase 2 supports github.com remotes only.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <slug>
+	 * : Binding slug.
+	 *
+	 * --message=<message>
+	 * : Commit message (8–200 characters).
+	 *
+	 * [--paths=<paths>]
+	 * : Comma-separated list of relative paths to stage. If omitted,
+	 *   every dirty file under policy.allowed_paths is staged.
+	 *
+	 * [--title=<title>]
+	 * : PR title. Defaults to the commit message.
+	 *
+	 * [--body=<body>]
+	 * : PR body. Defaults to a generated summary.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code gitsync submit intelligence-wiki \
+	 *       --message="Add CIAB kickoff article"
+	 *
+	 *     wp datamachine-code gitsync submit intelligence-wiki \
+	 *       --message="Update two articles" \
+	 *       --paths=articles/a.md,articles/b.md \
+	 *       --title="docs: update a + b"
+	 *
+	 * @subcommand submit
+	 */
+	public function submit( array $args, array $assoc_args ): void {
+		$slug = $args[0] ?? '';
+		if ( '' === $slug ) {
+			WP_CLI::error( 'Binding slug is required.' );
+		}
+		$message = (string) ( $assoc_args['message'] ?? '' );
+		if ( '' === $message ) {
+			WP_CLI::error( '--message is required.' );
+		}
+
+		$input = array(
+			'slug'    => $slug,
+			'message' => $message,
+		);
+		if ( isset( $assoc_args['paths'] ) && '' !== $assoc_args['paths'] ) {
+			$input['paths'] = array_values( array_filter( array_map( 'trim', explode( ',', (string) $assoc_args['paths'] ) ) ) );
+		}
+		if ( isset( $assoc_args['title'] ) ) {
+			$input['title'] = (string) $assoc_args['title'];
+		}
+		if ( isset( $assoc_args['body'] ) ) {
+			$input['body'] = (string) $assoc_args['body'];
+		}
+
+		$result = $this->execute_ability( 'datamachine/gitsync-submit', $input );
+
+		$pr = $result['pr'] ?? array();
+		WP_CLI::success( sprintf(
+			'%s PR #%d on %s: %s',
+			'updated' === ( $pr['action'] ?? '' ) ? 'Updated' : 'Opened',
+			(int) ( $pr['number'] ?? 0 ),
+			(string) ( $result['branch'] ?? '' ),
+			(string) ( $pr['html_url'] ?? '' )
+		) );
+		WP_CLI::log( sprintf( '  commit: %s', (string) ( $result['commit'] ?? '-' ) ) );
+		WP_CLI::log( sprintf( '  files:  %d staged', count( (array) ( $result['staged'] ?? array() ) ) ) );
+	}
+
+	/**
+	 * Update policy fields on an existing binding.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <slug>
+	 * : Binding slug.
+	 *
+	 * [--write-enabled=<bool>]
+	 * : Gate add + commit.
+	 *
+	 * [--push-enabled=<bool>]
+	 * : Gate push + submit.
+	 *
+	 * [--safe-direct-push=<bool>]
+	 * : Second key required for direct push to the pinned branch.
+	 *
+	 * [--allowed-paths=<list>]
+	 * : Comma-separated list of relative path prefixes that may be staged.
+	 *   Use "clear" to reset to an empty allowlist.
+	 *
+	 * [--conflict=<strategy>]
+	 * : Conflict strategy for pull.
+	 * ---
+	 * options:
+	 *   - fail
+	 *   - upstream_wins
+	 *   - manual
+	 * ---
+	 *
+	 * [--auto-pull=<bool>]
+	 * : Enroll in scheduled sync (Phase 3).
+	 *
+	 * [--pull-interval=<interval>]
+	 * : Scheduled pull cadence.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     # Open up writes + submit for a wiki binding
+	 *     wp datamachine-code gitsync policy intelligence-wiki \
+	 *       --write-enabled=true --push-enabled=true \
+	 *       --allowed-paths=articles/,images/
+	 *
+	 *     # Allow direct push for a personal (single-owner) binding
+	 *     wp datamachine-code gitsync policy personal-wiki \
+	 *       --push-enabled=true --safe-direct-push=true
+	 *
+	 * @subcommand policy
+	 */
+	public function policy( array $args, array $assoc_args ): void {
+		$slug = $args[0] ?? '';
+		if ( '' === $slug ) {
+			WP_CLI::error( 'Binding slug is required.' );
+		}
+
+		$patch = array();
+		$bool_keys = array(
+			'write-enabled'    => 'write_enabled',
+			'push-enabled'     => 'push_enabled',
+			'safe-direct-push' => 'safe_direct_push',
+			'auto-pull'        => 'auto_pull',
+		);
+		foreach ( $bool_keys as $cli_key => $policy_key ) {
+			if ( array_key_exists( $cli_key, $assoc_args ) ) {
+				$patch[ $policy_key ] = $this->coerce_bool( (string) $assoc_args[ $cli_key ] );
+			}
+		}
+		if ( isset( $assoc_args['conflict'] ) ) {
+			$patch['conflict'] = (string) $assoc_args['conflict'];
+		}
+		if ( isset( $assoc_args['pull-interval'] ) ) {
+			$patch['pull_interval'] = (string) $assoc_args['pull-interval'];
+		}
+		if ( isset( $assoc_args['allowed-paths'] ) ) {
+			$raw = (string) $assoc_args['allowed-paths'];
+			if ( 'clear' === trim( strtolower( $raw ) ) ) {
+				$patch['allowed_paths'] = array();
+			} else {
+				$patch['allowed_paths'] = array_values( array_filter( array_map( 'trim', explode( ',', $raw ) ) ) );
+			}
+		}
+
+		if ( empty( $patch ) ) {
+			WP_CLI::error( 'No policy flags provided.' );
+		}
+
+		$result = $this->execute_ability(
+			'datamachine/gitsync-policy-update',
+			array(
+				'slug'   => $slug,
+				'policy' => $patch,
+			)
+		);
+
+		WP_CLI::success( sprintf( 'Policy updated for "%s".', $slug ) );
+		WP_CLI::log( wp_json_encode( $result['policy'] ?? array(), JSON_PRETTY_PRINT ) );
+	}
+
 	// =========================================================================
 	// Helpers
 	// =========================================================================
+
+	/**
+	 * Coerce a CLI-provided string into a boolean. Treats common truthy
+	 * strings (`true`, `1`, `yes`, `on`) as true; everything else as false.
+	 */
+	private function coerce_bool( string $value ): bool {
+		return in_array( strtolower( trim( $value ) ), array( '1', 'true', 'yes', 'on' ), true );
+	}
 
 	/**
 	 * Resolve + execute an ability, erroring out on missing or failed calls.
