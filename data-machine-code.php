@@ -293,7 +293,6 @@ add_action( 'plugins_loaded', function () {
 		'convention_path' => 'AGENTS.md',
 		'label'           => 'Agent Instructions',
 		'description'     => 'Auto-generated from registered sections. Regenerate via: wp datamachine agent compose AGENTS.md',
-		'header'          => '# AI Instructions',
 	) );
 
 	if ( ! class_exists( '\DataMachine\Engine\AI\SectionRegistry' ) ) {
@@ -305,7 +304,7 @@ add_action( 'plugins_loaded', function () {
 	// Data Machine — memory, automation, code, system.
 	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'datamachine', 10, function () use ( $wp ) {
 		return <<<MD
-### Data Machine
+## Data Machine
 
 Data Machine is your operating layer — memory, automation, and orchestration via WP-CLI.
 
@@ -340,7 +339,7 @@ MD;
 	// Abilities — WordPress Abilities API discovery.
 	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'abilities', 20, function () use ( $wp ) {
 		return <<<MD
-### Abilities
+## Abilities
 
 WordPress Abilities are the universal tool surface. Plugins register abilities that are automatically available via WP-CLI, REST API, MCP, and chat. Discover what's available: `{$wp} help abilities`
 
@@ -354,7 +353,7 @@ MD;
 	// WordPress Source — read-only reference material.
 	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'wordpress-source', 30, function () {
 		return <<<'MD'
-### WordPress Source (Read-Only Reference)
+## WordPress Source (Read-Only Reference)
 
 These directories are **read-only reference material** — grep and read them to understand code, but never edit them directly. All code changes go through the workspace (see Code above).
 
@@ -371,7 +370,7 @@ MD;
 	if ( is_multisite() ) {
 		\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'multisite', 40, function () use ( $wp ) {
 			return <<<MD
-### Multisite
+## Multisite
 
 This is a WordPress multisite. Use `--url` to target specific sites:
 ```
