@@ -130,13 +130,91 @@ Containment is enforced at every mutation point:
 
 Shared with the Workspace system via `DataMachineCode\Support\PathSecurity` — the block list and traversal detection have one canonical source of truth.
 
-## What's next (follow-up PRs)
+## Write path (Phase 2)
 
-**Phase 2 — write path:**
+Five more abilities/CLI commands let a binding propose changes upstream.
 
-- `datamachine/gitsync-push` + `gitsync push` CLI.
-- `datamachine/gitsync-policy-update` for toggling `write_enabled`, `push_enabled`, `allowed_paths`, `conflict`.
-- Stage/commit containment using `allowed_paths` (same shape Workspace already uses).
+| Ability | CLI | Purpose |
+|---|---|---|
+| `datamachine/gitsync-add` | `gitsync add <slug> <paths>…` | Stage paths. Enforces `allowed_paths` + sensitive-file filter. |
+| `datamachine/gitsync-commit` | `gitsync commit <slug> --message=…` | Commit staged changes. 8–200 char message. |
+| `datamachine/gitsync-push` | `gitsync push <slug> [--force]` | Direct push to pinned branch. Two-key auth. |
+| `datamachine/gitsync-submit` | `gitsync submit <slug> --message=…` | Blessed PR flow on the sticky proposal branch. |
+| `datamachine/gitsync-policy-update` | `gitsync policy <slug> --flag=…` | Modify policy fields on an existing binding. |
+
+All mutating, all CLI-only (`show_in_rest = false`), all gated by `PermissionHelper::can_manage()`.
+
+### Policy gates
+
+Every write passes through policy checkpoints:
+
+| Policy | Gates |
+|---|---|
+| `write_enabled` (default: false) | `add` + `commit` |
+| `push_enabled` (default: false) | `push` + `submit` |
+| `safe_direct_push` (default: false) | `push` (direct push to pinned branch). Second key — `push_enabled` alone isn't enough. |
+| `allowed_paths` (default: `[]`) | Every staged path must sit under one of these roots. Empty allowlist = nothing stageable. |
+
+`safe_direct_push=true` requires `push_enabled=true` — the policy-update validator refuses the orphan combination.
+
+Typical progression for a wiki-content binding:
+
+```bash
+# 1. Bind read-only (Phase 1 default)
+wp datamachine-code gitsync bind wiki \
+  --local=/wp-content/uploads/markdown/wiki/ \
+  --remote=https://github.com/Automattic/a8c-wiki-woocommerce
+
+# 2. Open writes + submit, restricted to the articles subtree
+wp datamachine-code gitsync policy wiki \
+  --write-enabled=true --push-enabled=true \
+  --allowed-paths=articles/,images/
+
+# 3. Stage + commit + propose via PR
+wp datamachine-code gitsync submit wiki \
+  --message="Add CIAB kickoff article"
+```
+
+Personal-wiki (single-owner) bindings can flip the third key for direct push:
+
+```bash
+wp datamachine-code gitsync policy personal-wiki \
+  --push-enabled=true --safe-direct-push=true \
+  --allowed-paths=notes/,daily/
+```
+
+### `submit` — the sticky proposal branch
+
+Each binding gets exactly one feature branch on the remote: `gitsync/<slug>`. Every submit rewrites it from upstream + user's edits and opens (or updates) a single PR.
+
+Algorithm:
+
+1. `git fetch origin --prune` — refresh upstream refs.
+2. Stash any dirty/untracked files on the pinned branch.
+3. `git reset --hard origin/<pinned>` — align local pinned branch with upstream.
+4. `git checkout -B gitsync/<slug>` — create/reset the feature branch.
+5. `git stash pop` — restore edits on the feature branch.
+6. Stage (explicit `--paths=` list, or every dirty file under `allowed_paths`).
+7. `git commit`.
+8. `git push --force origin gitsync/<slug>` — we own this branch exclusively.
+9. Open/update PR via GitHubAbilities (using existing PAT).
+10. `git checkout <pinned>` — leave the working tree clean.
+
+Any step can fail and the `finally`-shaped cleanup always tries to return you to the pinned branch. A failed `stash pop` leaves the stash in place and logs a warning so your edits are recoverable via `git stash list`.
+
+Phase 2 supports `github.com` remotes only for `submit` — the PR backend is DMC's `GitHubAbilities`. Non-GitHub remotes error with `unsupported_remote`; pluggable backends (GitLab MR, Gitea) are Phase 3+.
+
+### Direct push — why two keys?
+
+`push_enabled` alone doesn't authorize direct push to the pinned branch. `safe_direct_push` must also be true. Rationale: bindings model a *read-synchronized mirror that tracks upstream*. The default posture says "changes go upstream via PR review" (`submit`), and anyone wanting to bypass that flow has to flip two explicit keys. Half-opting-in (write_enabled + push_enabled + push to feature branch via submit) stays safe by default; full direct-push to the tracked branch requires deliberate intent.
+
+### Auth
+
+- **github.com remotes:** the existing GitHubAbilities PAT is injected into the push URL as `https://<token>@github.com/...`. Standard pattern, matches DMC's other git-writing code.
+- **Other https remotes:** fall back to the system's `credential.helper`. Works out of the box on macOS/Linux; may need config in Studio WASM.
+- **SSH / non-GitHub PRs:** Phase 3+.
+
+## What's next
 
 **Phase 3 — scheduled sync:**
 

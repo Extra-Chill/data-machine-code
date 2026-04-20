@@ -251,6 +251,174 @@ class GitSyncAbilities {
 					'meta'                => array( 'show_in_rest' => false ),
 				)
 			);
+
+			// -----------------------------------------------------------------
+			// Phase 2 — write path (all CLI-only).
+			// -----------------------------------------------------------------
+
+			wp_register_ability(
+				'datamachine/gitsync-add',
+				array(
+					'label'               => 'Stage Paths in GitSync Binding',
+					'description'         => 'Stage one or more relative paths in a binding\'s working tree. Paths must sit under policy.allowed_paths.',
+					'category'            => 'datamachine-code-gitsync',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'slug', 'paths' ),
+						'properties' => array(
+							'slug'  => array( 'type' => 'string' ),
+							'paths' => array(
+								'type'  => 'array',
+								'items' => array( 'type' => 'string' ),
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'slug'    => array( 'type' => 'string' ),
+							'paths'   => array( 'type' => 'array' ),
+							'message' => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'add' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/gitsync-commit',
+				array(
+					'label'               => 'Commit Staged Changes in GitSync Binding',
+					'description'         => 'Commit the currently-staged changes on a binding\'s working tree. Requires policy.write_enabled=true.',
+					'category'            => 'datamachine-code-gitsync',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'slug', 'message' ),
+						'properties' => array(
+							'slug'    => array( 'type' => 'string' ),
+							'message' => array( 'type' => 'string' ),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'slug'    => array( 'type' => 'string' ),
+							'commit'  => array( 'type' => array( 'string', 'null' ) ),
+							'message' => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'commit' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/gitsync-push',
+				array(
+					'label'               => 'Push GitSync Binding to Pinned Branch',
+					'description'         => 'Direct push to the pinned branch on origin. Requires policy.push_enabled=true AND policy.safe_direct_push=true (two-key authorization). Use submit() for PR-based flow.',
+					'category'            => 'datamachine-code-gitsync',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'slug' ),
+						'properties' => array(
+							'slug'  => array( 'type' => 'string' ),
+							'force' => array(
+								'type'        => 'boolean',
+								'description' => 'Use --force-with-lease for the push. Default: false.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'slug'    => array( 'type' => 'string' ),
+							'branch'  => array( 'type' => 'string' ),
+							'head'    => array( 'type' => array( 'string', 'null' ) ),
+							'message' => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'push' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/gitsync-submit',
+				array(
+					'label'               => 'Submit GitSync Binding as Pull Request',
+					'description'         => 'Stage + commit + push the sticky proposal branch (gitsync/<slug>) and open or update a PR upstream. Phase 2 requires a github.com remote.',
+					'category'            => 'datamachine-code-gitsync',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'slug', 'message' ),
+						'properties' => array(
+							'slug'    => array( 'type' => 'string' ),
+							'message' => array( 'type' => 'string' ),
+							'paths'   => array(
+								'type'        => 'array',
+								'items'       => array( 'type' => 'string' ),
+								'description' => 'Optional explicit list of relative paths to stage. If omitted, every dirty file under allowed_paths is staged.',
+							),
+							'title'   => array( 'type' => 'string' ),
+							'body'    => array( 'type' => 'string' ),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'slug'    => array( 'type' => 'string' ),
+							'branch'  => array( 'type' => 'string' ),
+							'commit'  => array( 'type' => array( 'string', 'null' ) ),
+							'staged'  => array( 'type' => 'array' ),
+							'pr'      => array( 'type' => 'object' ),
+							'message' => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'submit' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/gitsync-policy-update',
+				array(
+					'label'               => 'Update GitSync Binding Policy',
+					'description'         => 'Update one or more policy fields on an existing binding (write_enabled, push_enabled, safe_direct_push, allowed_paths, conflict, auto_pull, pull_interval).',
+					'category'            => 'datamachine-code-gitsync',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'slug', 'policy' ),
+						'properties' => array(
+							'slug'   => array( 'type' => 'string' ),
+							'policy' => array(
+								'type'        => 'object',
+								'description' => 'Subset of policy keys to update.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'slug'    => array( 'type' => 'string' ),
+							'policy'  => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'policyUpdate' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
 		};
 
 		// Matches the WorkspaceAbilities lifecycle: register now if we're
@@ -291,5 +459,42 @@ class GitSyncAbilities {
 			(string) ( $input['slug'] ?? '' ),
 			! empty( $input['allow_dirty'] )
 		);
+	}
+
+	public static function add( array $input ): array|\WP_Error {
+		$paths = $input['paths'] ?? array();
+		if ( ! is_array( $paths ) ) {
+			$paths = array();
+		}
+		return ( new GitSync() )->add( (string) ( $input['slug'] ?? '' ), $paths );
+	}
+
+	public static function commit( array $input ): array|\WP_Error {
+		return ( new GitSync() )->commit(
+			(string) ( $input['slug'] ?? '' ),
+			(string) ( $input['message'] ?? '' )
+		);
+	}
+
+	public static function push( array $input ): array|\WP_Error {
+		return ( new GitSync() )->push(
+			(string) ( $input['slug'] ?? '' ),
+			! empty( $input['force'] )
+		);
+	}
+
+	public static function submit( array $input ): array|\WP_Error {
+		$slug = (string) ( $input['slug'] ?? '' );
+		$args = $input;
+		unset( $args['slug'] );
+		return ( new GitSync() )->submit( $slug, $args );
+	}
+
+	public static function policyUpdate( array $input ): array|\WP_Error {
+		$patch = $input['policy'] ?? array();
+		if ( ! is_array( $patch ) ) {
+			$patch = array();
+		}
+		return ( new GitSync() )->updatePolicy( (string) ( $input['slug'] ?? '' ), $patch );
 	}
 }

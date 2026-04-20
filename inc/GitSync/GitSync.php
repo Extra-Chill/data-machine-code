@@ -28,6 +28,9 @@
 
 namespace DataMachineCode\GitSync;
 
+use DataMachineCode\GitSync\GitRepo;
+use DataMachineCode\GitSync\GitSyncSubmitter;
+use DataMachineCode\Support\GitHubRemote;
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\PathSecurity;
 
@@ -91,7 +94,7 @@ final class GitSync {
 			return $materialize;
 		}
 
-		$binding->last_commit = $this->readHead( $absolute );
+		$binding->last_commit = GitRepo::head( $absolute );
 		$binding->last_pulled = gmdate( 'c' );
 		$this->registry->save( $binding );
 
@@ -184,8 +187,8 @@ final class GitSync {
 			return $repo_err;
 		}
 
-		$previous_head = $this->readHead( $absolute );
-		$dirty_count   = $this->countDirty( $absolute );
+		$previous_head = GitRepo::head( $absolute );
+		$dirty_count   = GitRepo::dirtyCount( $absolute );
 		$conflict      = (string) ( $binding->policy['conflict'] ?? 'fail' );
 
 		if ( $dirty_count > 0 && ! $allow_dirty ) {
@@ -208,7 +211,7 @@ final class GitSync {
 		}
 
 		// Refuse any pull that would change branches.
-		$current_branch = $this->readBranch( $absolute );
+		$current_branch = GitRepo::branch( $absolute );
 		if ( null !== $current_branch && $current_branch !== $binding->branch ) {
 			return new \WP_Error(
 				'branch_mismatch',
@@ -227,7 +230,7 @@ final class GitSync {
 			return $pull;
 		}
 
-		$new_head             = $this->readHead( $absolute );
+		$new_head             = GitRepo::head( $absolute );
 		$binding->last_pulled = gmdate( 'c' );
 		$binding->last_commit = $new_head;
 		$this->registry->save( $binding );
@@ -285,9 +288,9 @@ final class GitSync {
 			return $data;
 		}
 
-		$data['branch'] = $this->readBranch( $absolute );
-		$data['head']   = $this->readHead( $absolute );
-		$data['dirty']  = $this->countDirty( $absolute );
+		$data['branch'] = GitRepo::branch( $absolute );
+		$data['head']   = GitRepo::head( $absolute );
+		$data['dirty']  = GitRepo::dirtyCount( $absolute );
 
 		$upstream = 'origin/' . $binding->branch;
 		$ahead    = GitRunner::run( $absolute, 'rev-list --count ' . escapeshellarg( $upstream ) . '..HEAD' );
@@ -328,6 +331,331 @@ final class GitSync {
 			'success'  => true,
 			'bindings' => $out,
 		);
+	}
+
+	// =========================================================================
+	// Phase 2 — write path
+	// =========================================================================
+
+	/**
+	 * Stage one or more relative paths for commit on a binding's working tree.
+	 *
+	 * Every path runs through the same checkpoint:
+	 *   1. Not absolute, no traversal, not sensitive.
+	 *   2. Under at least one of the binding's `allowed_paths` roots.
+	 *   3. Actually exists under the binding's working tree.
+	 *
+	 * A single rejected path fails the whole call — we never partially stage.
+	 * This keeps the outcome predictable: either all requested paths are
+	 * staged, or none are.
+	 *
+	 * @param string   $slug  Binding slug.
+	 * @param string[] $paths Relative paths inside the binding.
+	 * @return array{success: true, slug: string, paths: string[], message: string}|\WP_Error
+	 */
+	public function add( string $slug, array $paths ): array|\WP_Error {
+		$binding = $this->registry->get( $slug );
+		if ( null === $binding ) {
+			return $this->notFound( $slug );
+		}
+
+		if ( empty( $binding->policy['write_enabled'] ) ) {
+			return new \WP_Error(
+				'write_disabled',
+				sprintf( 'Writes are disabled for binding "%s" (policy.write_enabled=false).', $slug ),
+				array( 'status' => 403 )
+			);
+		}
+
+		$allowed_roots = is_array( $binding->policy['allowed_paths'] ?? null )
+			? $binding->policy['allowed_paths']
+			: array();
+		if ( empty( $allowed_roots ) ) {
+			return new \WP_Error(
+				'no_allowed_paths',
+				sprintf( 'Binding "%s" has no allowed_paths configured — nothing can be staged.', $slug ),
+				array( 'status' => 403 )
+			);
+		}
+
+		$absolute = $binding->resolveAbsolutePath();
+		$repo_err = $this->assertRepo( $absolute, $slug );
+		if ( is_wp_error( $repo_err ) ) {
+			return $repo_err;
+		}
+
+		$clean = array();
+		foreach ( $paths as $raw ) {
+			$relative = ltrim( trim( (string) $raw ), '/' );
+			if ( '' === $relative ) {
+				continue;
+			}
+
+			if ( PathSecurity::hasTraversal( $relative ) ) {
+				return new \WP_Error( 'path_traversal', sprintf( 'Invalid path (traversal): %s', $relative ), array( 'status' => 400 ) );
+			}
+			if ( PathSecurity::isSensitivePath( $relative ) ) {
+				return new \WP_Error( 'sensitive_path', sprintf( 'Refusing to stage sensitive path: %s', $relative ), array( 'status' => 403 ) );
+			}
+			if ( ! PathSecurity::isPathAllowed( $relative, $allowed_roots ) ) {
+				return new \WP_Error(
+					'path_not_allowed',
+					sprintf( 'Path "%s" is outside the binding\'s allowed_paths allowlist.', $relative ),
+					array( 'status' => 403, 'allowed_paths' => $allowed_roots )
+				);
+			}
+
+			$clean[] = $relative;
+		}
+
+		if ( empty( $clean ) ) {
+			return new \WP_Error( 'no_paths', 'At least one non-empty path is required.', array( 'status' => 400 ) );
+		}
+
+		$escaped = array_map( 'escapeshellarg', $clean );
+		$result  = GitRunner::run( $absolute, 'add -- ' . implode( ' ', $escaped ) );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return array(
+			'success' => true,
+			'slug'    => $slug,
+			'paths'   => $clean,
+			'message' => sprintf( 'Staged %d path(s) on "%s".', count( $clean ), $slug ),
+		);
+	}
+
+	/**
+	 * Commit staged changes on a binding's working tree.
+	 *
+	 * Message constraints mirror Workspace for consistency: 8–200 characters.
+	 * Refuses when nothing is staged so empty commits never sneak through.
+	 *
+	 * @param string $slug    Binding slug.
+	 * @param string $message Commit message.
+	 * @return array{success: true, slug: string, commit: ?string, message: string}|\WP_Error
+	 */
+	public function commit( string $slug, string $message ): array|\WP_Error {
+		$binding = $this->registry->get( $slug );
+		if ( null === $binding ) {
+			return $this->notFound( $slug );
+		}
+
+		if ( empty( $binding->policy['write_enabled'] ) ) {
+			return new \WP_Error( 'write_disabled', sprintf( 'Writes are disabled for binding "%s".', $slug ), array( 'status' => 403 ) );
+		}
+
+		$message = trim( $message );
+		if ( '' === $message ) {
+			return new \WP_Error( 'missing_message', 'Commit message is required.', array( 'status' => 400 ) );
+		}
+		if ( strlen( $message ) < 8 ) {
+			return new \WP_Error( 'message_too_short', 'Commit message must be at least 8 characters.', array( 'status' => 400 ) );
+		}
+		if ( strlen( $message ) > 200 ) {
+			return new \WP_Error( 'message_too_long', 'Commit message must be 200 characters or fewer.', array( 'status' => 400 ) );
+		}
+
+		$absolute = $binding->resolveAbsolutePath();
+		$repo_err = $this->assertRepo( $absolute, $slug );
+		if ( is_wp_error( $repo_err ) ) {
+			return $repo_err;
+		}
+
+		$staged = GitRunner::run( $absolute, 'diff --cached --name-only' );
+		if ( is_wp_error( $staged ) ) {
+			return $staged;
+		}
+		$staged_files = array_filter( array_map( 'trim', explode( "\n", (string) ( $staged['output'] ?? '' ) ) ) );
+		if ( empty( $staged_files ) ) {
+			return new \WP_Error( 'nothing_staged', 'No staged changes to commit.', array( 'status' => 400 ) );
+		}
+
+		$result = GitRunner::run( $absolute, 'commit -m ' . escapeshellarg( $message ) );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return array(
+			'success' => true,
+			'slug'    => $slug,
+			'commit'  => GitRepo::head( $absolute ),
+			'message' => sprintf( 'Committed %d file(s) on "%s".', count( $staged_files ), $slug ),
+		);
+	}
+
+	/**
+	 * Push the binding's pinned branch to origin.
+	 *
+	 * Direct push requires two keys: `push_enabled=true` AND
+	 * `safe_direct_push=true`. Missing either refuses — use submit() for
+	 * the PR-based flow if you don't want to flip both.
+	 *
+	 * `--force` is honored but uses `--force-with-lease` under the hood so
+	 * a concurrent upstream move isn't silently overwritten.
+	 *
+	 * @param string $slug  Binding slug.
+	 * @param bool   $force Force push (uses --force-with-lease).
+	 * @return array{success: true, slug: string, branch: string, head: ?string, message: string}|\WP_Error
+	 */
+	public function push( string $slug, bool $force = false ): array|\WP_Error {
+		$binding = $this->registry->get( $slug );
+		if ( null === $binding ) {
+			return $this->notFound( $slug );
+		}
+
+		if ( empty( $binding->policy['push_enabled'] ) ) {
+			return new \WP_Error( 'push_disabled', sprintf( 'Pushes are disabled for binding "%s" (policy.push_enabled=false).', $slug ), array( 'status' => 403 ) );
+		}
+
+		if ( empty( $binding->policy['safe_direct_push'] ) ) {
+			return new \WP_Error(
+				'direct_push_blocked',
+				sprintf(
+					'Direct push to the pinned branch is blocked for binding "%s". Set policy.safe_direct_push=true, or use submit() to open a PR instead.',
+					$slug
+				),
+				array( 'status' => 403 )
+			);
+		}
+
+		$absolute = $binding->resolveAbsolutePath();
+		$repo_err = $this->assertRepo( $absolute, $slug );
+		if ( is_wp_error( $repo_err ) ) {
+			return $repo_err;
+		}
+
+		$current = GitRepo::branch( $absolute );
+		if ( null !== $current && $current !== $binding->branch ) {
+			return new \WP_Error(
+				'branch_mismatch',
+				sprintf(
+					'Binding "%s" is pinned to "%s" but working tree is on "%s". Refusing to push.',
+					$slug, $binding->branch, $current
+				),
+				array( 'status' => 409 )
+			);
+		}
+
+		$push_url = $this->resolveAuthenticatedPushUrl( $binding );
+		$flag     = $force ? '--force-with-lease ' : '';
+		$cmd      = sprintf(
+			'push %s%s %s',
+			$flag,
+			escapeshellarg( $push_url ),
+			escapeshellarg( $binding->branch . ':' . $binding->branch )
+		);
+
+		$result = GitRunner::run( $absolute, $cmd );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		$binding->last_commit = GitRepo::head( $absolute );
+		$this->registry->save( $binding );
+
+		return array(
+			'success' => true,
+			'slug'    => $slug,
+			'branch'  => $binding->branch,
+			'head'    => $binding->last_commit,
+			'message' => trim( (string) ( $result['output'] ?? '' ) ),
+		);
+	}
+
+	/**
+	 * Submit local edits as a pull request.
+	 *
+	 * Delegates the orchestration to GitSyncSubmitter — this method is a
+	 * thin wrapper so the ability callback has a short spelling.
+	 *
+	 * @param string $slug Binding slug.
+	 * @param array<string, mixed> $args Submit args (message, paths, title, body).
+	 * @return array<string, mixed>|\WP_Error
+	 */
+	public function submit( string $slug, array $args ): array|\WP_Error {
+		$binding = $this->registry->get( $slug );
+		if ( null === $binding ) {
+			return $this->notFound( $slug );
+		}
+
+		return ( new GitSyncSubmitter( $this->registry ) )->submit( $binding, $args );
+	}
+
+	/**
+	 * Update policy fields on an existing binding.
+	 *
+	 * Accepts a subset of policy keys and merges them into the current
+	 * policy. Validates the same way `GitSyncBinding::create()` does so
+	 * bad values are refused before they hit storage.
+	 *
+	 * @param string               $slug  Binding slug.
+	 * @param array<string, mixed> $patch Policy keys to update.
+	 * @return array{success: true, slug: string, policy: array<string, mixed>}|\WP_Error
+	 */
+	public function updatePolicy( string $slug, array $patch ): array|\WP_Error {
+		$binding = $this->registry->get( $slug );
+		if ( null === $binding ) {
+			return $this->notFound( $slug );
+		}
+
+		$merged = array_merge( $binding->policy, array() );
+		foreach ( $patch as $key => $value ) {
+			if ( ! array_key_exists( $key, GitSyncBinding::DEFAULT_POLICY ) ) {
+				return new \WP_Error( 'unknown_policy_key', sprintf( 'Unknown policy key: %s', $key ), array( 'status' => 400 ) );
+			}
+			$merged[ $key ] = $value;
+		}
+
+		if ( ! in_array( $merged['conflict'] ?? 'fail', GitSyncBinding::CONFLICT_STRATEGIES, true ) ) {
+			return new \WP_Error(
+				'invalid_conflict_strategy',
+				sprintf( 'conflict must be one of: %s.', implode( ', ', GitSyncBinding::CONFLICT_STRATEGIES ) ),
+				array( 'status' => 400 )
+			);
+		}
+
+		if ( ! is_array( $merged['allowed_paths'] ?? null ) ) {
+			return new \WP_Error( 'invalid_allowed_paths', 'allowed_paths must be an array.', array( 'status' => 400 ) );
+		}
+
+		// Safety coupling: safe_direct_push only meaningful with push_enabled.
+		if ( ! empty( $merged['safe_direct_push'] ) && empty( $merged['push_enabled'] ) ) {
+			return new \WP_Error(
+				'policy_conflict',
+				'safe_direct_push=true requires push_enabled=true.',
+				array( 'status' => 400 )
+			);
+		}
+
+		$binding->policy = $merged;
+		$this->registry->save( $binding );
+
+		return array(
+			'success' => true,
+			'slug'    => $slug,
+			'policy'  => $binding->policy,
+		);
+	}
+
+	/**
+	 * Resolve the push URL, injecting a GitHub PAT when the remote is
+	 * github.com and DMC has one registered. Non-GitHub remotes pass
+	 * through unchanged and rely on the system's credential.helper.
+	 *
+	 * Thin wrapper around Support\GitHubRemote — the actual rewriting
+	 * and host detection live there so every GitHub-aware caller
+	 * (GitSync, GitSyncSubmitter, future write paths) stays consistent.
+	 */
+	private function resolveAuthenticatedPushUrl( GitSyncBinding $binding ): string {
+		if ( ! GitHubRemote::isGitHubRemote( $binding->remote_url ) ) {
+			return $binding->remote_url;
+		}
+		if ( ! class_exists( '\DataMachineCode\Abilities\GitHubAbilities' ) ) {
+			return $binding->remote_url;
+		}
+		return GitHubRemote::pushUrlWithPat( $binding->remote_url, \DataMachineCode\Abilities\GitHubAbilities::getPat() );
 	}
 
 	// =========================================================================
@@ -478,33 +806,6 @@ final class GitSync {
 			return new \WP_Error( 'not_a_repo', sprintf( 'Binding "%s" is not a git repository (no .git at %s).', $slug, $absolute ), array( 'status' => 409 ) );
 		}
 		return null;
-	}
-
-	private function readHead( string $absolute ): ?string {
-		$result = GitRunner::run( $absolute, 'rev-parse --short HEAD' );
-		if ( is_wp_error( $result ) ) {
-			return null;
-		}
-		$head = trim( (string) $result['output'] );
-		return '' === $head ? null : $head;
-	}
-
-	private function readBranch( string $absolute ): ?string {
-		$result = GitRunner::run( $absolute, 'rev-parse --abbrev-ref HEAD' );
-		if ( is_wp_error( $result ) ) {
-			return null;
-		}
-		$branch = trim( (string) $result['output'] );
-		return '' === $branch ? null : $branch;
-	}
-
-	private function countDirty( string $absolute ): int {
-		$result = GitRunner::run( $absolute, 'status --porcelain' );
-		if ( is_wp_error( $result ) ) {
-			return 0;
-		}
-		$lines = array_filter( array_map( 'trim', explode( "\n", (string) $result['output'] ) ) );
-		return count( $lines );
 	}
 
 	private function notFound( string $slug ): \WP_Error {
