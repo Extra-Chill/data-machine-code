@@ -194,19 +194,28 @@ add_filter( 'datamachine_tasks', function ( array $tasks ): array {
 } );
 
 /**
- * Action Scheduler — recurring schedules for DM-code system tasks.
+ * Register recurring schedules for DM-code system tasks.
  *
- * These files are hook-only (no classes) so the PSR-4 autoloader
- * doesn't pick them up; they require explicit loading. Wait for
- * plugins_loaded priority 22 so DM core (loaded at priority 10) has
- * already registered `TaskRegistry` and `TaskScheduler`.
+ * DM core's RecurringScheduleRegistry iterates this filter on
+ * action_scheduler_init and wires one AS hook per schedule that dispatches
+ * into TaskScheduler::schedule(). No bespoke scheduling glue needed —
+ * declare the cadence + setting_key here and everything else (scheduling,
+ * idempotent reschedule, stagger, persistence verify, unschedule-on-disable)
+ * is provided by the shared RecurringScheduler primitive.
+ *
+ * @see https://github.com/Extra-Chill/data-machine/pull/1117
  */
-add_action( 'plugins_loaded', static function (): void {
-	if ( ! class_exists( 'DataMachine\Abilities\PermissionHelper' ) ) {
-		return;
-	}
-	require_once DATAMACHINE_CODE_PATH . 'inc/ActionScheduler/WorktreeCleanupSchedule.php';
-}, 22 );
+add_filter( 'datamachine_recurring_schedules', function ( array $schedules ): array {
+	$schedules['worktree_cleanup'] = array(
+		'task_type'        => 'worktree_cleanup',
+		'interval'         => 'daily',
+		'enabled_setting'  => \DataMachineCode\Tasks\WorktreeCleanupTask::SETTING_KEY,
+		'default_enabled'  => false,
+		'label'            => 'Daily — cleans up merged worktrees',
+		'task_params'      => array( 'source' => 'recurring_schedule' ),
+	);
+	return $schedules;
+} );
 
 /**
  * Register code context memory file.

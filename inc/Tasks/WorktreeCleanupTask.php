@@ -71,15 +71,16 @@ class WorktreeCleanupTask extends SystemTask {
 	 * Task metadata for the Data Machine system surface.
 	 *
 	 * `setting_key` wires this task into the standard DM settings plumbing:
-	 * the React admin UI renders an enable/disable toggle, the
-	 * TaskRegistry resolves live state from `PluginSettings::get()`, and
-	 * the recurring Action Scheduler hook in
-	 * `WorktreeCleanupSchedule.php` reads the same key to schedule or
-	 * unschedule its daily tick.
+	 * the React admin UI renders an enable/disable toggle, the TaskRegistry
+	 * resolves live state from `PluginSettings::get()`, and the recurring
+	 * schedule registration (see `data-machine-code.php`'s
+	 * `datamachine_recurring_schedules` filter) reads the same key to
+	 * schedule or unschedule its daily tick.
 	 *
-	 * `trigger_type => 'cron'` signals to the admin UI that this task runs
-	 * on a schedule (as opposed to 'manual' / 'tool' / 'event'). The
-	 * schedule itself is owned by `WorktreeCleanupSchedule.php`.
+	 * The `trigger` / `trigger_type` fields are intentionally omitted — DM
+	 * core's `TaskRegistry::getRegistry()` resolves them from the bound
+	 * schedule in `RecurringScheduleRegistry`. A task is a pure handler
+	 * (what runs); a schedule is a binding (when it runs).
 	 */
 	public static function getTaskMeta(): array {
 		return array(
@@ -90,8 +91,6 @@ class WorktreeCleanupTask extends SystemTask {
 			// on explicitly (via React UI, REST, or `wp datamachine settings
 			// set worktree_cleanup_enabled true`).
 			'default_enabled' => false,
-			'trigger'         => 'Daily via Action Scheduler when enabled; manual via CLI/REST/MCP anytime.',
-			'trigger_type'    => 'cron',
 			'supports_run'    => true,
 		);
 	}
