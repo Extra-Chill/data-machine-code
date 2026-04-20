@@ -120,7 +120,7 @@ class WorktreeCleanupTask extends SystemTask {
 			'skip_github' => ! empty( $params['skip_github'] ),
 		);
 
-		$workspace = Workspace::instance();
+		$workspace = new Workspace();
 		$result    = $workspace->worktree_cleanup_merged( $opts );
 
 		if ( is_wp_error( $result ) ) {

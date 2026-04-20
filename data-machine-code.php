@@ -194,6 +194,21 @@ add_filter( 'datamachine_tasks', function ( array $tasks ): array {
 } );
 
 /**
+ * Action Scheduler — recurring schedules for DM-code system tasks.
+ *
+ * These files are hook-only (no classes) so the PSR-4 autoloader
+ * doesn't pick them up; they require explicit loading. Wait for
+ * plugins_loaded priority 22 so DM core (loaded at priority 10) has
+ * already registered `TaskRegistry` and `TaskScheduler`.
+ */
+add_action( 'plugins_loaded', static function (): void {
+	if ( ! class_exists( 'DataMachine\Abilities\PermissionHelper' ) ) {
+		return;
+	}
+	require_once DATAMACHINE_CODE_PATH . 'inc/ActionScheduler/WorktreeCleanupSchedule.php';
+}, 22 );
+
+/**
  * Register code context memory file.
  *
  * Scaffolds contexts/code.md with GitHub, workspace, and git instructions.
