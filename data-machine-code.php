@@ -189,6 +189,7 @@ add_action( 'plugins_loaded', 'datamachine_code_load_chat_tools', 25 );
  */
 add_filter( 'datamachine_tasks', function ( array $tasks ): array {
 	$tasks['github_create_issue'] = \DataMachineCode\Tasks\GitHubIssueTask::class;
+	$tasks['worktree_cleanup']    = \DataMachineCode\Tasks\WorktreeCleanupTask::class;
 	return $tasks;
 } );
 

@@ -887,7 +887,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## OPTIONS
 	 *
 	 * <operation>
-	 * : Worktree operation: add, list, remove, prune.
+	 * : Worktree operation: add, list, remove, prune, cleanup.
 	 *
 	 * [<repo>]
 	 * : Primary repo name (required for add and remove).
@@ -899,7 +899,16 @@ class WorkspaceCommand extends BaseCommand {
 	 * : Base ref when creating a branch on add (default origin/HEAD).
 	 *
 	 * [--force]
-	 * : Force-remove a worktree even if it is dirty.
+	 * : Force-remove a worktree even if it is dirty (applies to `remove` and
+	 *   `cleanup`). Does NOT override the unpushed-commits safety in cleanup.
+	 *
+	 * [--dry-run]
+	 * : Preview cleanup candidates without removing anything (cleanup only).
+	 *
+	 * [--skip-github]
+	 * : Skip the GitHub API lookup and rely only on the local `upstream-gone`
+	 *   signal (cleanup only). Faster, but misses merged branches where the
+	 *   remote branch wasn't auto-deleted.
 	 *
 	 * [--format=<format>]
 	 * : Output format for list (table, json, csv, yaml).
