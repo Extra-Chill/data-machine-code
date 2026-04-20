@@ -13,6 +13,7 @@
 namespace DataMachineCode\Workspace;
 
 use DataMachine\Core\FilesRepository\FilesystemHelper;
+use DataMachineCode\Support\GitHubRemote;
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\PathSecurity;
 
@@ -1421,13 +1422,7 @@ class Workspace {
 		if ( null === $remote || '' === $remote ) {
 			return null;
 		}
-
-		// Match https://github.com/owner/repo(.git) and git@github.com:owner/repo(.git)
-		if ( preg_match( '#github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?/?$#', $remote, $m ) ) {
-			return $m[1] . '/' . $m[2];
-		}
-
-		return null;
+		return GitHubRemote::slug( $remote );
 	}
 
 	/**
@@ -1455,9 +1450,8 @@ class Workspace {
 			return null;
 		}
 
-		$url      = sprintf( 'https://api.github.com/repos/%s/pulls', $slug );
 		$response = \DataMachineCode\Abilities\GitHubAbilities::apiGet(
-			$url,
+			GitHubRemote::apiUrl( $slug, 'pulls' ),
 			array(
 				'state'    => 'closed',
 				'head'     => $owner . ':' . $branch,

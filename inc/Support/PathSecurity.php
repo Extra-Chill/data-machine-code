@@ -90,6 +90,42 @@ final class PathSecurity {
 	}
 
 	/**
+	 * Check whether a relative path is under any of a set of prefix roots.
+	 *
+	 * Used to enforce `allowed_paths` policy when staging for commit —
+	 * a path must sit inside at least one of the configured roots to be
+	 * stageable. Roots are compared as directory prefixes (so root
+	 * `articles` matches `articles/foo.md` but not `articlesX/foo.md`),
+	 * and an exact-match counts.
+	 *
+	 * Empty `$allowed_paths` returns false — an empty allowlist means
+	 * nothing is allowed, matching the conservative Phase 2 default.
+	 *
+	 * @param string   $path          Normalized relative path (no leading slash).
+	 * @param string[] $allowed_paths Roots the path must sit inside.
+	 * @return bool
+	 */
+	public static function isPathAllowed( string $path, array $allowed_paths ): bool {
+		$normalized = ltrim( str_replace( '\\', '/', $path ), '/' );
+		if ( '' === $normalized ) {
+			return false;
+		}
+
+		foreach ( $allowed_paths as $allowed ) {
+			$root = trim( str_replace( '\\', '/', (string) $allowed ) );
+			$root = trim( $root, '/' );
+			if ( '' === $root ) {
+				continue;
+			}
+			if ( $normalized === $root || str_starts_with( $normalized, $root . '/' ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
 	 * Check whether a path looks sensitive (env files, credentials, keys).
 	 *
 	 * @param string $path Relative path.
