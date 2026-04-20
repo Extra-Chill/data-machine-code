@@ -1178,6 +1178,20 @@ class Workspace {
 				continue;
 			}
 
+			// Hard stop: worktrees with local commits the remote hasn't seen.
+			// Upstream may be "gone" because a human manually deleted the
+			// remote branch without merging — nuking the worktree would lose
+			// those commits. `force` does NOT override this: data loss is a
+			// harder problem than dirty-file loss, and this guard is cheap.
+			$unpushed = $this->count_unpushed_commits( $wt_path );
+			if ( $unpushed > 0 ) {
+				$skipped[] = array(
+					'handle' => $wt['handle'] ?? '?',
+					'reason' => sprintf( '%d unpushed commit(s) — refusing to delete even with force (push or reset explicitly)', $unpushed ),
+				);
+				continue;
+			}
+
 			$primary_path = $this->get_primary_path( $repo );
 			if ( ! is_dir( $primary_path . '/.git' ) ) {
 				$skipped[] = array(
@@ -1845,6 +1859,58 @@ class Workspace {
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
 		$remote = exec( sprintf( 'git -C %s config --get remote.origin.url 2>/dev/null', $escaped ) );
 		return ( '' !== $remote ) ? $remote : null;
+	}
+
+	/**
+	 * Count commits on HEAD that the upstream branch hasn't seen.
+	 *
+	 * Used by `worktree_cleanup_merged()` as a hard stop against data loss:
+	 * if a worktree has local commits ahead of upstream, we refuse to delete
+	 * it even when the "branch merged" signal fires. This catches the case
+	 * where someone manually deleted a remote branch (triggering
+	 * upstream-gone) without first merging the local commits.
+	 *
+	 * Returns 0 when:
+	 *   - Upstream is configured and HEAD is at or behind it.
+	 *   - Upstream is `gone` but no local commits exist above its last-known
+	 *     commit (`@{push}` or `@{upstream}` can still resolve for a gone
+	 *     ref in some git versions).
+	 *   - Any git command error (fail-open-ish by returning 0, since the
+	 *     dirty-count and merge-signal checks still apply). The intent is
+	 *     to avoid blocking cleanup on exotic repo states where we can't
+	 *     definitively say commits would be lost.
+	 *
+	 * Returns >0 when the worktree has unambiguously unpushed commits.
+	 *
+	 * @param string $wt_path Worktree path.
+	 * @return int Number of unpushed commits (0 when safe or indeterminate).
+	 */
+	private function count_unpushed_commits( string $wt_path ): int {
+		if ( '' === $wt_path || ! is_dir( $wt_path ) ) {
+			return 0;
+		}
+
+		$escaped = escapeshellarg( $wt_path );
+
+		// Prefer `@{push}` (respects push.default / push.remote mapping); fall
+		// back to `@{upstream}` for the common case where they're the same.
+		// Both expand to the tracked remote ref; if that ref is gone, this
+		// returns non-zero exit and we can't compute unpushed — treat as 0
+		// and let dirty / merge-signal checks handle it.
+		$commands = array(
+			'git -C %s rev-list --count @{push}..HEAD 2>/dev/null',
+			'git -C %s rev-list --count @{upstream}..HEAD 2>/dev/null',
+		);
+
+		foreach ( $commands as $template ) {
+			// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
+			$output = exec( sprintf( $template, $escaped ), $_, $exit_code );
+			if ( 0 === $exit_code && '' !== $output && ctype_digit( (string) $output ) ) {
+				return (int) $output;
+			}
+		}
+
+		return 0;
 	}
 
 	/**
