@@ -33,12 +33,30 @@
 
 namespace DataMachineCode\Tasks;
 
+use DataMachine\Core\PluginSettings;
 use DataMachine\Engine\AI\System\Tasks\SystemTask;
 use DataMachineCode\Workspace\Workspace;
 
 defined( 'ABSPATH' ) || exit;
 
+/**
+ * PluginSettings key that gates both manual and scheduled runs.
+ *
+ * Declared on the class so the task, the schedule file, and any external
+ * admin tooling all reference the same constant. The React UI surfaces
+ * this key as a toggle via `TaskRegistry::getRegistry()` → the `enabled`
+ * field resolves through `PluginSettings::get( $setting_key,
+ * $default_enabled )`.
+ */
+
 class WorktreeCleanupTask extends SystemTask {
+
+	/**
+	 * PluginSettings key that gates both manual and scheduled runs.
+	 *
+	 * Toggled by the React admin UI via `TaskRegistry::getRegistry()`.
+	 */
+	public const SETTING_KEY = 'worktree_cleanup_enabled';
 
 	/**
 	 * Task type identifier.
@@ -51,18 +69,28 @@ class WorktreeCleanupTask extends SystemTask {
 
 	/**
 	 * Task metadata for the Data Machine system surface.
+	 *
+	 * `setting_key` wires this task into the standard DM settings plumbing:
+	 * the React admin UI renders an enable/disable toggle, the TaskRegistry
+	 * resolves live state from `PluginSettings::get()`, and the recurring
+	 * schedule registration (see `data-machine-code.php`'s
+	 * `datamachine_recurring_schedules` filter) reads the same key to
+	 * schedule or unschedule its daily tick.
+	 *
+	 * The `trigger` / `trigger_type` fields are intentionally omitted — DM
+	 * core's `TaskRegistry::getRegistry()` resolves them from the bound
+	 * schedule in `RecurringScheduleRegistry`. A task is a pure handler
+	 * (what runs); a schedule is a binding (when it runs).
 	 */
 	public static function getTaskMeta(): array {
 		return array(
 			'label'           => 'Worktree Cleanup',
-			'description'     => 'Remove worktrees whose branches have been merged and deleted upstream. Destructive: removes worktree directories and deletes local branches.',
-			'setting_key'     => null,
-			// Opt-in only. `default_enabled => false` signals to the DM system
-			// surface that this task ships disabled; enable via filter or via
-			// manual `wp datamachine system run worktree_cleanup`.
+			'description'     => 'Remove worktrees whose branches have been merged and deleted upstream. Destructive: removes worktree directories and deletes local branches. Runs daily when enabled.',
+			'setting_key'     => self::SETTING_KEY,
+			// Opt-in only — cleanup is destructive, agents should flip this
+			// on explicitly (via React UI, REST, or `wp datamachine settings
+			// set worktree_cleanup_enabled true`).
 			'default_enabled' => false,
-			'trigger'         => 'On-demand via CLI, REST, or MCP.',
-			'trigger_type'    => 'manual',
 			'supports_run'    => true,
 		);
 	}
@@ -90,25 +118,18 @@ class WorktreeCleanupTask extends SystemTask {
 	 * @param array $params Task parameters from engine_data.
 	 */
 	public function execute( int $jobId, array $params ): void {
-		/**
-		 * Filter whether the worktree cleanup task is enabled.
-		 *
-		 * Return false to short-circuit the task without running any git
-		 * operations. Useful for environments where cleanup should only
-		 * ever happen interactively via the CLI.
-		 *
-		 * @since 0.7.0
-		 *
-		 * @param bool  $enabled Default true.
-		 * @param array $params  Task parameters.
-		 */
-		$enabled = (bool) apply_filters( 'datamachine_code_worktree_cleanup_enabled', true, $params );
+		// Gate on the same PluginSetting the React UI toggles and the
+		// recurring schedule reads. Defensive — scheduled runs already
+		// wouldn't fire when the setting is off, but manual runs via
+		// `wp datamachine system run worktree_cleanup` bypass the
+		// schedule layer, so the task itself has to self-police too.
+		$enabled = (bool) PluginSettings::get( self::SETTING_KEY, false );
 		if ( ! $enabled ) {
 			$this->completeJob(
 				$jobId,
 				array(
 					'skipped' => true,
-					'reason'  => 'Worktree cleanup disabled via datamachine_code_worktree_cleanup_enabled filter.',
+					'reason'  => sprintf( 'Worktree cleanup disabled (PluginSettings: %s=false).', self::SETTING_KEY ),
 				)
 			);
 			return;
@@ -120,7 +141,7 @@ class WorktreeCleanupTask extends SystemTask {
 			'skip_github' => ! empty( $params['skip_github'] ),
 		);
 
-		$workspace = Workspace::instance();
+		$workspace = new Workspace();
 		$result    = $workspace->worktree_cleanup_merged( $opts );
 
 		if ( is_wp_error( $result ) ) {

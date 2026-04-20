@@ -194,6 +194,30 @@ add_filter( 'datamachine_tasks', function ( array $tasks ): array {
 } );
 
 /**
+ * Register recurring schedules for DM-code system tasks.
+ *
+ * DM core's RecurringScheduleRegistry iterates this filter on
+ * action_scheduler_init and wires one AS hook per schedule that dispatches
+ * into TaskScheduler::schedule(). No bespoke scheduling glue needed —
+ * declare the cadence + setting_key here and everything else (scheduling,
+ * idempotent reschedule, stagger, persistence verify, unschedule-on-disable)
+ * is provided by the shared RecurringScheduler primitive.
+ *
+ * @see https://github.com/Extra-Chill/data-machine/pull/1117
+ */
+add_filter( 'datamachine_recurring_schedules', function ( array $schedules ): array {
+	$schedules['worktree_cleanup'] = array(
+		'task_type'        => 'worktree_cleanup',
+		'interval'         => 'daily',
+		'enabled_setting'  => \DataMachineCode\Tasks\WorktreeCleanupTask::SETTING_KEY,
+		'default_enabled'  => false,
+		'label'            => 'Daily — cleans up merged worktrees',
+		'task_params'      => array( 'source' => 'recurring_schedule' ),
+	);
+	return $schedules;
+} );
+
+/**
  * Register code context memory file.
  *
  * Scaffolds contexts/code.md with GitHub, workspace, and git instructions.
