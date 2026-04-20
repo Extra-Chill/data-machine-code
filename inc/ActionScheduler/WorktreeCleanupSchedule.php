@@ -3,23 +3,28 @@
  * Worktree Cleanup — Recurring Action Scheduler schedule.
  *
  * Registers a recurring Action Scheduler action that enqueues the
- * `worktree_cleanup` Data Machine system task once per day. When fired,
- * the AS action creates a DM job via `TaskScheduler::schedule()` — the
- * same path `wp datamachine system run worktree_cleanup` uses — which
- * means every automatic run flows through the normal DM job runner,
- * respects `SystemTask` semantics, and emits the usual audit logs.
+ * `worktree_cleanup` Data Machine system task once per day. Pairs with
+ * {@see \DataMachineCode\Tasks\WorktreeCleanupTask} — the task owns the
+ * "what", this file owns the "when".
  *
- * Disabled by default. Opt in with:
+ * Gated on the same PluginSettings key the React UI toggles
+ * (`WorktreeCleanupTask::SETTING_KEY`). Flip the toggle in the admin
+ * (or via REST / `wp datamachine settings set`) and the next
+ * `action_scheduler_init` run — which fires on every admin pageload —
+ * schedules or unschedules the recurring action accordingly. No code
+ * changes, no custom filters, no parallel config paths: the UI toggle
+ * is the single source of truth.
  *
- *     add_filter( 'datamachine_code_worktree_cleanup_schedule_enabled',
- *                 '__return_true' );
+ * When the AS action fires, the handler enqueues a DM job via
+ * `TaskScheduler::schedule()` — the same code path manual runs via
+ * `wp datamachine system run worktree_cleanup` use. Scheduled and
+ * manual runs share the DM job runner, the SystemTask execution
+ * contract, retry semantics, and the `datamachine_log` audit pipe.
  *
- * The filter is re-evaluated on every `action_scheduler_init`, so
- * toggling it off also unschedules the recurring action — no stale
- * timers, no manual cleanup needed.
- *
- * Disabled AS action is registered unconditionally so if the filter is
- * toggled on later, the hook handler is already wired up.
+ * Mirrors the pattern in DM core's
+ * `SystemAgentServiceProvider::manageDailyMemorySchedule()` — keeps the
+ * dm-code extension consistent with the rest of the ecosystem rather
+ * than inventing a parallel scheduler.
  *
  * @package DataMachineCode\ActionScheduler
  * @since   0.8.0
@@ -28,6 +33,10 @@
 
 defined( 'ABSPATH' ) || exit;
 
+use DataMachine\Core\PluginSettings;
+use DataMachine\Engine\Tasks\TaskScheduler;
+use DataMachineCode\Tasks\WorktreeCleanupTask;
+
 /**
  * AS hook handler — enqueue a DM `worktree_cleanup` job.
  *
@@ -35,21 +44,22 @@ defined( 'ABSPATH' ) || exit;
  * runner executes. Keeps the recurring layer thin: this handler owns
  * only the "when", the SystemTask owns the "what".
  *
- * Defensive: re-checks the opt-in filter at fire time. If the filter
- * flipped off between scheduling and firing, short-circuit silently
- * rather than racing the unschedule path.
+ * Defensive: re-checks the enable setting at fire time. If the user
+ * disabled cleanup between scheduling and firing, short-circuit
+ * silently rather than racing the unschedule path.
  */
 add_action(
 	'datamachine_code_recurring_worktree_cleanup',
 	static function (): void {
-		$enabled = (bool) apply_filters( 'datamachine_code_worktree_cleanup_schedule_enabled', false );
-		if ( ! $enabled ) {
+		if ( ! class_exists( '\DataMachine\Core\PluginSettings' ) ) {
+			return;
+		}
+
+		if ( ! (bool) PluginSettings::get( WorktreeCleanupTask::SETTING_KEY, false ) ) {
 			return;
 		}
 
 		if ( ! class_exists( '\DataMachine\Engine\Tasks\TaskScheduler' ) ) {
-			// DM core not available for some reason — log and bail. AS will
-			// retry on its own cadence; no need to fail hard.
 			do_action(
 				'datamachine_log',
 				'warning',
@@ -58,7 +68,7 @@ add_action(
 			return;
 		}
 
-		$job_id = \DataMachine\Engine\Tasks\TaskScheduler::schedule(
+		$job_id = TaskScheduler::schedule(
 			'worktree_cleanup',
 			array(
 				'source' => 'recurring_schedule',
@@ -82,15 +92,20 @@ add_action(
 /**
  * Register / unregister the recurring action once AS is ready.
  *
- * Runs at `action_scheduler_init` (which fires after AS has its tables
- * set up) and only in admin context to avoid hitting the DB on every
- * frontend request. Admin-only matches the pattern DM core uses for its
- * own recurring cleanup actions (see `JobsCleanup`, `LogCleanup`, etc.).
+ * Runs at `action_scheduler_init` (fires after AS has its tables set up)
+ * and only in admin context to avoid hitting the DB on every frontend
+ * request. Admin-only matches the pattern DM core uses for its own
+ * recurring actions (see `JobsCleanup`, `LogCleanup`, etc.).
  *
  * Idempotent in both directions:
  *   - Enabled + not scheduled → schedule it.
  *   - Disabled + scheduled   → unschedule it.
  *   - Already in desired state → no-op.
+ *
+ * Admin-only means: when a user toggles the React UI off, the next
+ * admin pageload runs this callback and unschedules. The user
+ * doesn't have to wait until AS's normal tick to notice — any admin
+ * pageview is enough.
  */
 add_action(
 	'action_scheduler_init',
@@ -103,15 +118,24 @@ add_action(
 			return;
 		}
 
+		if ( ! class_exists( '\DataMachine\Core\PluginSettings' ) ) {
+			return;
+		}
+
 		$hook    = 'datamachine_code_recurring_worktree_cleanup';
 		$group   = 'data-machine-code';
-		$enabled = (bool) apply_filters( 'datamachine_code_worktree_cleanup_schedule_enabled', false );
+		$enabled = (bool) PluginSettings::get( WorktreeCleanupTask::SETTING_KEY, false );
 
 		$is_scheduled = (bool) as_next_scheduled_action( $hook, array(), $group );
 
 		if ( $enabled && ! $is_scheduled ) {
 			/**
 			 * Filter the recurring interval for worktree cleanup.
+			 *
+			 * Developer knob, not a user setting — hence a filter rather
+			 * than a PluginSetting. Most installs should never touch it;
+			 * the daily default is the sensible cadence for
+			 * "branch merged upstream" detection.
 			 *
 			 * @since 0.8.0
 			 *
