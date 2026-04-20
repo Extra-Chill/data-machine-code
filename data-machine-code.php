@@ -293,6 +293,7 @@ add_action( 'plugins_loaded', function () {
 		'convention_path' => 'AGENTS.md',
 		'label'           => 'Agent Instructions',
 		'description'     => 'Auto-generated from registered sections. Regenerate via: wp datamachine agent compose AGENTS.md',
+		'header'          => '# AI Instructions',
 	) );
 
 	if ( ! class_exists( '\DataMachine\Engine\AI\SectionRegistry' ) ) {
