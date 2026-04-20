@@ -46,23 +46,82 @@ final class GitHubRemote {
 	}
 
 	/**
-	 * Rewrite an https://github.com/... URL to include a PAT for auth.
+	 * Compute a git-blob SHA for a string of content.
 	 *
-	 * Non-https URLs (git@ SSH, file://, non-GitHub) pass through untouched
-	 * — SSH uses ssh-agent, file:// has no auth surface, and non-GitHub
-	 * hosts should rely on system credential.helper.
-	 *
-	 * The PAT is rawurlencoded before injection so exotic token characters
-	 * don't break URL parsing downstream.
+	 * Git hashes blobs as `sha1("blob " + len + "\0" + content)`. Matching
+	 * this lets us compare local files against the `sha` field GitHub's
+	 * tree API returns without needing a git binary, so both read (Fetcher
+	 * deciding which files to download) and write (Proposer deciding
+	 * which files to upload) can short-circuit when SHAs already match.
 	 */
-	public static function pushUrlWithPat( string $url, string $pat ): string {
-		if ( '' === $pat ) {
-			return $url;
+	public static function blobSha( string $content ): string {
+		return sha1( 'blob ' . strlen( $content ) . "\0" . $content );
+	}
+
+	/**
+	 * Fetch a branch's recursive tree and flatten it into a path → sha map.
+	 *
+	 * Pulls `GET /repos/:slug/git/trees/:branch?recursive=1`, skips
+	 * non-blob entries and paths containing traversal segments, and
+	 * returns the blob map plus metadata (raw tree SHA + truncation flag).
+	 *
+	 * Used by both Fetcher (pull) and Proposer (submit/push context) so
+	 * the tree-fetch-and-flatten step has one implementation.
+	 *
+	 * **Why this exists next to `GitHubAbilities::getRepoTree`.** That
+	 * ability returns the normalized `{success, files, count}` shape
+	 * designed for MCP / REST callers, and strips `tree_sha` + the
+	 * `truncated` flag during normalization. GitSync needs both: the
+	 * tree SHA seeds `binding->last_commit` so we can detect upstream
+	 * drift between pulls, and the truncation flag drives a CLI warning
+	 * when the repo is too large for a single-response tree. Keeping
+	 * this helper alongside the ability (rather than widening the
+	 * ability's output schema and churning a public contract) is the
+	 * smaller blast radius.
+	 *
+	 * @return array{blobs: array<string, string>, tree_sha: string, truncated: bool}|\WP_Error
+	 */
+	public static function fetchTree( string $slug, string $branch, string $pat ): array|\WP_Error {
+		if ( ! class_exists( '\DataMachineCode\Abilities\GitHubAbilities' ) ) {
+			return new \WP_Error( 'github_abilities_unavailable', 'GitHubAbilities class is not loaded.', array( 'status' => 500 ) );
 		}
-		if ( ! str_starts_with( $url, 'https://github.com/' ) ) {
-			return $url;
+
+		$response = \DataMachineCode\Abilities\GitHubAbilities::apiGet(
+			self::apiUrl( $slug, 'git/trees/' . rawurlencode( $branch ) ),
+			array( 'recursive' => '1' ),
+			$pat
+		);
+		if ( is_wp_error( $response ) ) {
+			return $response;
 		}
-		return 'https://' . rawurlencode( $pat ) . '@' . substr( $url, strlen( 'https://' ) );
+
+		$data      = is_array( $response['data'] ?? null ) ? $response['data'] : array();
+		$tree_sha  = (string) ( $data['sha'] ?? '' );
+		$truncated = ! empty( $data['truncated'] );
+		$blobs     = array();
+
+		foreach ( (array) ( $data['tree'] ?? array() ) as $entry ) {
+			if ( 'blob' !== ( $entry['type'] ?? '' ) ) {
+				continue;
+			}
+			$path = (string) ( $entry['path'] ?? '' );
+			if ( '' === $path ) {
+				continue;
+			}
+			// Defense-in-depth: refuse traversal even though GitHub would
+			// never ship such a path. Keeping the filter here means both
+			// Fetcher and Proposer inherit it without having to remember.
+			if ( PathSecurity::hasTraversal( $path ) ) {
+				continue;
+			}
+			$blobs[ $path ] = (string) ( $entry['sha'] ?? '' );
+		}
+
+		return array(
+			'blobs'     => $blobs,
+			'tree_sha'  => $tree_sha,
+			'truncated' => $truncated,
+		);
 	}
 
 	/**
