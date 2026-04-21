@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.8.0] - 2026-04-21
+
+### Added
+- migrate GitHubIssueTask + WorktreeCleanupTask to executeTask() contract
+- inject originating site agent context into worktrees
+
+### Fixed
+- allow nullable branch/remote/commit in workspace output schemas
+
 ## [0.7.0] - 2026-04-21
 
 ### Added
