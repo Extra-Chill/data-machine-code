@@ -378,7 +378,7 @@ MD;
 
 Plugins in the Data Machine ecosystem compose through **filter contracts** and **ability registrations** — never through `class_exists()` gates on specific plugin classes inside a feature's execution path.
 
-- **Filter-based integration.** A provider plugin exposes hooks (e.g. `markdown_db_frontmatter`, `datamachine_memory_store`, `datamachine_auth_providers`); consumers register callbacks. If the provider is absent, the hook never fires — consuming code is unchanged.
+- **Filter-based integration.** A provider plugin exposes hooks (e.g. `datamachine_memory_store`, `datamachine_auth_providers`); consumers register callbacks. If the provider is absent, the hook never fires — consuming code is unchanged.
 - **Provider contracts.** For swappable capabilities (storage, auth, content mirroring, etc.) define an interface; plugins register implementations via filter. Consumers resolve by capability, not by plugin identity.
 - **Acceptable capability gate:** load-gating an *entirely separate* enhancement module at bootstrap (e.g. "if Data Machine Code is installed, load the disk-sync companion module"). The gate wraps `require_once`, not a branch inside a feature.
 - **Forbidden pattern:** `if ( class_exists( 'Some_Plugin' ) ) { /* path A */ } else { /* path B */ }` inside a user-visible feature flow. That produces two code paths to test, two to maintain, and a feature that behaves differently depending on what's installed — exactly what this rule prevents.
