@@ -346,6 +346,50 @@ MD;
 		'description' => 'Memory, automation, workspace, and system operations.',
 	) );
 
+	// Agent Orchestration — flows-as-schedules, queues, chaining.
+	//
+	// Migrated out of `data-machine/AGENTS.md` (the DM repo-root file),
+	// which is now scoped strictly to developer/build/test content. This
+	// section is the live runtime narrative for agents setting up flows
+	// and pipelines; the composer surfaces it into every site's
+	// composed AGENTS.md, so agents can discover the pattern without
+	// spelunking DM source.
+	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'agent-orchestration', 15, function () use ( $wp ) {
+		return <<<MD
+## Agent Orchestration
+
+Data Machine doubles as a **reminder system + task manager + workflow executor** for agents. Three concepts unlock most workflows:
+
+1. **Flows are scheduled.** Set `scheduling_config` with interval (manual, hourly, daily) or a cron expression. Agents create "ping me at X to do Y" flows without any external scheduler.
+2. **Step-level prompt queues.** AI and Agent Ping steps use `QueueableTrait`. When `queue_enabled` is true and the configured prompt is empty, the step pops the next prompt from its queue — so recurring schedules can fire varied tasks, not the same ping every time.
+3. **Multiple purpose-specific flows.** Prefer separate flows for separate concerns, each with its own schedule and queue: content generation, content ideation, maintenance tasks, coding tasks. The queue becomes the agent's persistent project memory — multi-phase work lives in the queue, not in a single agent's context window.
+
+**Chaining pattern.** When an agent receives a ping it should: (1) execute the immediate task, (2) queue the next logical task if continuation is needed, (3) let the cycle continue. This keeps long-running projects progressing across scheduled boundaries.
+MD;
+	}, array(
+		'label'       => 'Agent Orchestration',
+		'description' => 'Flows, scheduling, queues, and chaining patterns.',
+	) );
+
+	// Composition — ecosystem-wide rule for how plugins integrate.
+	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'composition', 25, function () {
+		return <<<'MD'
+## Composition
+
+Plugins in the Data Machine ecosystem compose through **filter contracts** and **ability registrations** — never through `class_exists()` gates on specific plugin classes inside a feature's execution path.
+
+- **Filter-based integration.** A provider plugin exposes hooks (e.g. `markdown_db_frontmatter`, `datamachine_memory_store`, `datamachine_auth_providers`); consumers register callbacks. If the provider is absent, the hook never fires — consuming code is unchanged.
+- **Provider contracts.** For swappable capabilities (storage, auth, content mirroring, etc.) define an interface; plugins register implementations via filter. Consumers resolve by capability, not by plugin identity.
+- **Acceptable capability gate:** load-gating an *entirely separate* enhancement module at bootstrap (e.g. "if Data Machine Code is installed, load the disk-sync companion module"). The gate wraps `require_once`, not a branch inside a feature.
+- **Forbidden pattern:** `if ( class_exists( 'Some_Plugin' ) ) { /* path A */ } else { /* path B */ }` inside a user-visible feature flow. That produces two code paths to test, two to maintain, and a feature that behaves differently depending on what's installed — exactly what this rule prevents.
+
+**Why it matters.** Features must run identically across environments: self-hosted with every extension installed, Studio local dev, managed hosts without drop-ins (WP.com, VIP), and minimal installs with only Data Machine. Dual code paths inside features break portability guarantees the ecosystem depends on.
+MD;
+	}, array(
+		'label'       => 'Composition',
+		'description' => 'Ecosystem-wide rule for plugin integration via filters and provider contracts.',
+	) );
+
 	// Abilities — WordPress Abilities API discovery.
 	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'abilities', 20, function () use ( $wp ) {
 		return <<<MD
