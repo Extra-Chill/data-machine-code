@@ -2,7 +2,7 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
-## [0.7.0] - 2026-04-21
+## [Unreleased]
 
 ### Added
 - **GitSync subsystem** (Phases 1–3): site-owned directories bound to remote git repos via the GitHub Contents API. Managed-hosting compatible; conflict policies (`manual_fail`, `upstream_wins`); sticky proposal-branch submit path. Core classes: `GitSync`, `GitSyncBinding`, `GitSyncAbilities`.
