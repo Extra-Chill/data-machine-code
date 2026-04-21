@@ -98,8 +98,9 @@ class WorkspaceAbilities {
 										'name'   => array( 'type' => 'string' ),
 										'path'   => array( 'type' => 'string' ),
 										'git'    => array( 'type' => 'boolean' ),
-										'remote' => array( 'type' => 'string' ),
-										'branch' => array( 'type' => 'string' ),
+										// Local-only repos have no remote; detached HEAD has no branch.
+										'remote' => array( 'type' => array( 'string', 'null' ) ),
+										'branch' => array( 'type' => array( 'string', 'null' ) ),
 									),
 								),
 							),
@@ -135,9 +136,11 @@ class WorkspaceAbilities {
 							'repo'        => array( 'type' => 'string' ),
 							'is_worktree' => array( 'type' => 'boolean' ),
 							'path'        => array( 'type' => 'string' ),
-							'branch'      => array( 'type' => 'string' ),
-							'remote'      => array( 'type' => 'string' ),
-							'commit'      => array( 'type' => 'string' ),
+							// Nullable: detached HEAD has no branch; local-only repos
+							// have no remote; freshly-init'd repos have no commit yet.
+							'branch'      => array( 'type' => array( 'string', 'null' ) ),
+							'remote'      => array( 'type' => array( 'string', 'null' ) ),
+							'commit'      => array( 'type' => array( 'string', 'null' ) ),
 							'dirty'       => array( 'type' => 'integer' ),
 						),
 					),
@@ -422,9 +425,11 @@ class WorkspaceAbilities {
 							'repo'        => array( 'type' => 'string' ),
 							'is_worktree' => array( 'type' => 'boolean' ),
 							'path'        => array( 'type' => 'string' ),
-							'branch'      => array( 'type' => 'string' ),
-							'remote'      => array( 'type' => 'string' ),
-							'commit'      => array( 'type' => 'string' ),
+							// Nullable: detached HEAD has no branch; local-only repos
+							// have no remote; freshly-init'd repos have no commit yet.
+							'branch'      => array( 'type' => array( 'string', 'null' ) ),
+							'remote'      => array( 'type' => array( 'string', 'null' ) ),
+							'commit'      => array( 'type' => array( 'string', 'null' ) ),
 							'dirty'       => array( 'type' => 'integer' ),
 							'files'       => array(
 								'type'  => 'array',
