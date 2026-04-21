@@ -117,7 +117,7 @@ class WorktreeCleanupTask extends SystemTask {
 	 * @param int   $jobId  Job ID from DM Jobs table.
 	 * @param array $params Task parameters from engine_data.
 	 */
-	public function execute( int $jobId, array $params ): void {
+	public function executeTask( int $jobId, array $params ): void {
 		// Gate on the same PluginSetting the React UI toggles and the
 		// recurring schedule reads. Defensive — scheduled runs already
 		// wouldn't fire when the setting is off, but manual runs via
