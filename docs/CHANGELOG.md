@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.6.3] - 2026-04-21
+
+### Fixed
+- workspace git wrapper: `git pull/add/commit/push` no longer fail with `git_write_disabled` on repos that have no entry in `datamachine_workspace_git_policies`. Unconfigured repos now default to permissive (primary-vs-worktree protection remains via `--allow-primary-mutation`). Explicit `write_enabled: false` / `push_enabled: false` still deny. Error messages clarified to reference the policy option.
+- `workspace git add`: `no_allowed_paths` no longer blocks unconfigured repos. The `allowed_paths` list is now opt-in — when configured, it restricts; when absent, any relative path is accepted (sensitive-path + traversal checks still enforced).
+
+### Added
+- `datamachine_workspace_git_policies` filter for runtime-injected policy (alongside the existing option). Allows site config to declare per-repo policy without persisting to the option.
+- Documentation in `get_workspace_git_policies()` describing the policy schema and defaults.
+
 ## [0.6.2] - 2026-04-19
 
 ### Changed

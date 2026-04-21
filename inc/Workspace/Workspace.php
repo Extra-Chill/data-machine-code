@@ -568,10 +568,11 @@ class Workspace {
 			return new \WP_Error( 'missing_paths', 'At least one path is required for git add.', array( 'status' => 400 ) );
 		}
 
+		// Allowed paths are opt-in: when configured, they restrict which relative
+		// paths may be staged; when absent, any path within the repo is allowed.
+		// This mirrors ensure_git_mutation_allowed's permissive-by-default model.
+		// Sensitive-path + traversal checks still apply unconditionally.
 		$allowed_roots = $this->get_repo_allowed_paths( $repo_name );
-		if ( empty( $allowed_roots ) ) {
-			return new \WP_Error( 'no_allowed_paths', sprintf( 'No allowed paths configured for repo "%s".', $repo_name ), array( 'status' => 403 ) );
-		}
 
 		$clean_paths = array();
 		foreach ( $paths as $path ) {
@@ -588,7 +589,8 @@ class Workspace {
 				return new \WP_Error( 'sensitive_path', sprintf( 'Refusing to stage sensitive path: %s', $relative ), array( 'status' => 403 ) );
 			}
 
-			if ( ! $this->is_path_allowed( $relative, $allowed_roots ) ) {
+			// Only enforce the allowlist when one has been configured.
+			if ( ! empty( $allowed_roots ) && ! $this->is_path_allowed( $relative, $allowed_roots ) ) {
 				return new \WP_Error( 'path_not_allowed', sprintf( 'Path "%s" is outside configured allowlist.', $relative ), array( 'status' => 403 ) );
 			}
 
@@ -1650,6 +1652,19 @@ class Workspace {
 	/**
 	 * Check if repo has git mutation permissions enabled.
 	 *
+	 * Unconfigured repos are permissive by default: `datamachine_workspace_git_policies`
+	 * is an opt-in restriction layer. When no entry exists for $repo_name, both
+	 * write and push are allowed. When an entry exists, its flags (`write_enabled`,
+	 * `push_enabled`) are honored; missing flags default to `true` so a partial
+	 * config doesn't accidentally lock out ops that weren't explicitly restricted.
+	 *
+	 * The primary-vs-worktree gate (see ensure_primary_mutation_allowed) remains
+	 * the documented default safety mechanism for protecting tracked branches.
+	 *
+	 * To explicitly deny a repo, add an entry with `write_enabled: false` and/or
+	 * `push_enabled: false`. The `datamachine_workspace_git_policies` filter also
+	 * lets plugins inject policy at runtime.
+	 *
 	 * @param string $repo_name    Repository name.
 	 * @param bool   $require_push Whether push must also be enabled.
 	 * @return true|\WP_Error
@@ -1658,12 +1673,43 @@ class Workspace {
 		$policies = $this->get_workspace_git_policies();
 		$repo     = $policies['repos'][ $repo_name ] ?? null;
 
-		if ( ! is_array( $repo ) || empty( $repo['write_enabled'] ) ) {
-			return new \WP_Error( 'git_write_disabled', sprintf( 'Git write operations are disabled for repo "%s".', $repo_name ), array( 'status' => 403 ) );
+		// No entry = permissive default. Callers should still respect
+		// primary-vs-worktree separation via ensure_primary_mutation_allowed.
+		if ( null === $repo ) {
+			return true;
 		}
 
-		if ( $require_push && empty( $repo['push_enabled'] ) ) {
-			return new \WP_Error( 'git_push_disabled', sprintf( 'Git push is disabled for repo "%s".', $repo_name ), array( 'status' => 403 ) );
+		if ( ! is_array( $repo ) ) {
+			return true;
+		}
+
+		// Entry exists — honor explicit flags. Missing flags default to true
+		// so a partial config (e.g. only setting allowed_paths) doesn't
+		// accidentally disable write/push.
+		$write_enabled = array_key_exists( 'write_enabled', $repo ) ? (bool) $repo['write_enabled'] : true;
+		if ( ! $write_enabled ) {
+			return new \WP_Error(
+				'git_write_disabled',
+				sprintf(
+					'Git write operations are explicitly disabled for repo "%s" via datamachine_workspace_git_policies.',
+					$repo_name
+				),
+				array( 'status' => 403 )
+			);
+		}
+
+		if ( $require_push ) {
+			$push_enabled = array_key_exists( 'push_enabled', $repo ) ? (bool) $repo['push_enabled'] : true;
+			if ( ! $push_enabled ) {
+				return new \WP_Error(
+					'git_push_disabled',
+					sprintf(
+						'Git push is explicitly disabled for repo "%s" via datamachine_workspace_git_policies.',
+						$repo_name
+					),
+					array( 'status' => 403 )
+				);
+			}
 		}
 
 		return true;
@@ -1760,7 +1806,21 @@ class Workspace {
 	/**
 	 * Read workspace git policy settings.
 	 *
-	 * @return array
+	 * The option defaults to an empty array, which is treated as "no
+	 * restrictions" by the mutation gates (see ensure_git_mutation_allowed
+	 * and git_add's allowed_paths check). To restrict a repo, configure an
+	 * entry under `repos[<repo_name>]` with any combination of:
+	 *
+	 *   - write_enabled (bool, default true)
+	 *   - push_enabled  (bool, default true)
+	 *   - allowed_paths (string[], optional — if set, restricts git_add)
+	 *   - fixed_branch  (string, optional — constrains push on primary)
+	 *
+	 * The `datamachine_workspace_git_policies` filter allows plugins and
+	 * site configuration to inject or override policy at runtime without
+	 * touching the stored option.
+	 *
+	 * @return array{repos: array<string, array<string, mixed>>}
 	 */
 	private function get_workspace_git_policies(): array {
 		$defaults = array(
@@ -1769,11 +1829,29 @@ class Workspace {
 
 		$settings = get_option( 'datamachine_workspace_git_policies', $defaults );
 		if ( ! is_array( $settings ) ) {
-			return $defaults;
+			$settings = $defaults;
 		}
 
 		if ( ! isset( $settings['repos'] ) || ! is_array( $settings['repos'] ) ) {
 			$settings['repos'] = array();
+		}
+
+		/**
+		 * Filter the workspace git policy map.
+		 *
+		 * Allows plugins to inject or override per-repo git mutation policy
+		 * without persisting changes to the `datamachine_workspace_git_policies`
+		 * option. Useful for environment-specific policy (dev vs prod) or for
+		 * tying policy to site configuration managed elsewhere.
+		 *
+		 * @since 0.x.0
+		 *
+		 * @param array $settings Current policy array, shape { repos: { <name>: {...} } }.
+		 */
+		$settings = apply_filters( 'datamachine_workspace_git_policies', $settings );
+
+		if ( ! is_array( $settings ) || ! isset( $settings['repos'] ) || ! is_array( $settings['repos'] ) ) {
+			return $defaults;
 		}
 
 		return $settings;
