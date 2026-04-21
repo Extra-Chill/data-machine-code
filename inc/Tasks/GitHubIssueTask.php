@@ -27,7 +27,7 @@ class GitHubIssueTask extends SystemTask {
 	 * @param int   $jobId  Job ID from DM Jobs table.
 	 * @param array $params Task parameters from engine_data.
 	 */
-	public function execute( int $jobId, array $params ): void {
+	public function executeTask( int $jobId, array $params ): void {
 		$result = GitHubAbilities::createIssue( $params );
 
 		if ( is_wp_error( $result ) ) {
