@@ -853,12 +853,21 @@ class Workspace {
 	 * `<workspace>/<repo>` checked out to `<branch>`. If the branch does not
 	 * exist locally, it is created from `<from>` (default `origin/HEAD`).
 	 *
-	 * @param string      $repo   Primary repo name (no @-suffix).
-	 * @param string      $branch Branch to check out (e.g. "fix/foo-bar").
-	 * @param string|null $from   Base ref when creating the branch.
-	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string}|\WP_Error
+	 * When `$inject_context` is true (default) and Data Machine's agent memory
+	 * layer is available, the originating site's MEMORY.md / USER.md / RULES.md
+	 * are snapshotted into the new worktree as runtime-agnostic local-only
+	 * files (`.claude/CLAUDE.local.md`, `.opencode/AGENTS.local.md`) and added
+	 * to the worktree's per-checkout `info/exclude`. When the memory layer is
+	 * absent the worktree is still created successfully; injection silently
+	 * skips.
+	 *
+	 * @param string      $repo           Primary repo name (no @-suffix).
+	 * @param string      $branch         Branch to check out (e.g. "fix/foo-bar").
+	 * @param string|null $from           Base ref when creating the branch.
+	 * @param bool        $inject_context Whether to inject site-agent context (default true).
+	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, context_injected?: bool, context_files?: string[], context_skip_reason?: string}|\WP_Error
 	 */
-	public function worktree_add( string $repo, string $branch, ?string $from = null ): array|\WP_Error {
+	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true ): array|\WP_Error {
 		$repo   = $this->sanitize_name( $repo );
 		$branch = trim( $branch );
 
@@ -907,7 +916,7 @@ class Workspace {
 			return $result;
 		}
 
-		return array(
+		$response = array(
 			'success'        => true,
 			'handle'         => $wt_handle,
 			'path'           => $wt_path,
@@ -915,6 +924,95 @@ class Workspace {
 			'slug'           => $slug,
 			'created_branch' => $created_branch,
 			'message'        => sprintf( 'Worktree "%s" added at %s (branch %s).', $wt_handle, $wt_path, $branch ),
+		);
+
+		if ( ! $inject_context ) {
+			$response['context_injected']    = false;
+			$response['context_skip_reason'] = 'inject_context flag disabled';
+			return $response;
+		}
+
+		$payload = WorktreeContextInjector::build_payload();
+		if ( null === $payload ) {
+			$response['context_injected']    = false;
+			$response['context_skip_reason'] = 'agent memory layer unavailable';
+			return $response;
+		}
+
+		$injection = WorktreeContextInjector::inject( $wt_path, $payload );
+		if ( is_wp_error( $injection ) ) {
+			$response['context_injected']    = false;
+			$response['context_skip_reason'] = 'inject failed: ' . $injection->get_error_message();
+			return $response;
+		}
+
+		WorktreeContextInjector::store_metadata( $wt_handle, $payload );
+
+		$response['context_injected'] = true;
+		$response['context_files']    = $injection['written'];
+		if ( ! empty( $injection['exclude_path'] ) ) {
+			$response['context_exclude_path'] = $injection['exclude_path'];
+		}
+
+		return $response;
+	}
+
+	/**
+	 * Rewrite a worktree's injected context files from the originating site's
+	 * current memory state.
+	 *
+	 * Uses the site option snapshot stored at worktree-creation time for
+	 * logging / diagnostics, then re-reads memory from the currently active
+	 * Data Machine agent layer. Cross-machine refresh is deliberately not
+	 * supported: callers must invoke this from the same site that created
+	 * the worktree.
+	 *
+	 * @param string $handle Workspace handle (`<repo>@<branch-slug>`).
+	 * @return array{success: bool, handle: string, path: string, written: string[], exclude_path: ?string, metadata: ?array, message: string}|\WP_Error
+	 */
+	public function worktree_refresh_context( string $handle ): array|\WP_Error {
+		$parsed = $this->parse_handle( $handle );
+		if ( ! $parsed['is_worktree'] ) {
+			return new \WP_Error(
+				'not_a_worktree',
+				sprintf( 'Handle "%s" is a primary checkout, not a worktree. Context injection is worktree-only.', $handle ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$wt_path = $this->workspace_path . '/' . $parsed['dir_name'];
+		if ( ! is_dir( $wt_path ) ) {
+			return new \WP_Error(
+				'worktree_not_found',
+				sprintf( 'Worktree "%s" does not exist on disk.', $parsed['dir_name'] ),
+				array( 'status' => 404 )
+			);
+		}
+
+		$payload = WorktreeContextInjector::build_payload();
+		if ( null === $payload ) {
+			return new \WP_Error(
+				'agent_layer_unavailable',
+				'Data Machine agent memory layer is not available — cannot refresh context. Ensure this command is run from the site that created the worktree.',
+				array( 'status' => 500 )
+			);
+		}
+
+		$injection = WorktreeContextInjector::inject( $wt_path, $payload );
+		if ( is_wp_error( $injection ) ) {
+			return $injection;
+		}
+
+		WorktreeContextInjector::store_metadata( $parsed['dir_name'], $payload );
+
+		return array(
+			'success'      => true,
+			'handle'       => $parsed['dir_name'],
+			'path'         => $wt_path,
+			'written'      => $injection['written'],
+			'exclude_path' => $injection['exclude_path'] ?? null,
+			'metadata'     => WorktreeContextInjector::get_metadata( $parsed['dir_name'] ),
+			'message'      => sprintf( 'Refreshed injected context in "%s" (%d file%s).', $parsed['dir_name'], count( $injection['written'] ), 1 === count( $injection['written'] ) ? '' : 's' ),
 		);
 	}
 
@@ -1047,6 +1145,8 @@ class Workspace {
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
+
+		WorktreeContextInjector::forget_metadata( $wt_handle );
 
 		return array(
 			'success' => true,
@@ -1350,6 +1450,8 @@ class Workspace {
 			// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
 			exec( sprintf( 'rm -rf %s 2>&1', $escaped ) );
 		}
+
+		WorktreeContextInjector::forget_metadata( basename( $wt_path ) );
 
 		return array(
 			'success' => true,
