@@ -2,7 +2,7 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
-## [Unreleased]
+## [0.7.0] - 2026-04-21
 
 ### Added
 - **GitSync subsystem** (Phases 1–3): site-owned directories bound to remote git repos via the GitHub Contents API. Managed-hosting compatible; conflict policies (`manual_fail`, `upstream_wins`); sticky proposal-branch submit path. Core classes: `GitSync`, `GitSyncBinding`, `GitSyncAbilities`.
@@ -10,13 +10,20 @@ All notable changes to Data Machine Code will be documented in this file.
 - `WorktreeCleanupTask` system task + `worktree cleanup` subcommand for merged branches, on a daily recurring schedule via `data-machine#1117`.
 - `DataMachineCode\Environment` signal for local-runtime detection.
 - `datamachine_workspace_git_policies` filter for runtime-injected per-repo policy alongside the existing option.
+- Phase 2 — write path + sticky proposal branch submit (#38)
+- Phase 1 — bind site-owned dirs to remote git repos (#38)
+- daily recurring schedule via Extra-Chill/data-machine#1117
+- WorktreeCleanupTask system task + unpushed-commits guard
 
 ### Fixed
 - workspace git wrapper: `git pull/add/commit/push` no longer fail with `git_write_disabled` on repos that have no entry in `datamachine_workspace_git_policies`. Unconfigured repos now default to permissive (primary-vs-worktree protection remains via `--allow-primary-mutation`). Explicit `write_enabled: false` / `push_enabled: false` still deny. Error messages clarified to reference the policy option.
 - `workspace git add`: `no_allowed_paths` no longer blocks unconfigured repos. The `allowed_paths` list is now opt-in — when configured, it restricts; when absent, any relative path is accepted (sensitive-path + traversal checks still enforced).
+- permissive-by-default git mutation gates
 
 ### Changed
 - AGENTS.md: flatten hierarchy to H2 top-level sections; declare header via `MemoryFileRegistry` arg.
+- restore on-disk version + changelog to v0.6.2 state
+- rebuild on GitHub Contents API for managed-hosting compatibility (#38)
 
 ## [0.6.2] - 2026-04-19
 

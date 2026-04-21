@@ -3,7 +3,7 @@
  * Plugin Name: Data Machine Code
  * Plugin URI: https://github.com/Extra-Chill/data-machine-code
  * Description: Developer tools extension for Data Machine. GitHub integration, workspace management, git operations, and code tools for WordPress AI agents.
- * Version: 0.6.2
+ * Version: 0.7.0
  * Requires at least: 6.9
  * Requires PHP: 8.2
  * Requires Plugins: data-machine
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 	die;
 }
 
-define( 'DATAMACHINE_CODE_VERSION', '0.6.2' );
+define( 'DATAMACHINE_CODE_VERSION', '0.7.0' );
 define( 'DATAMACHINE_CODE_PATH', plugin_dir_path( __FILE__ ) );
 define( 'DATAMACHINE_CODE_URL', plugin_dir_url( __FILE__ ) );
 
