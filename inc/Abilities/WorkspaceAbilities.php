@@ -706,22 +706,26 @@ class WorkspaceAbilities {
 				'datamachine/workspace-worktree-add',
 				array(
 					'label'               => 'Add Workspace Worktree',
-					'description'         => 'Create a git worktree for a branch under `<repo>@<branch-slug>`. Branches are created off the supplied `from` ref (default `origin/HEAD`) when they do not yet exist locally.',
+					'description'         => 'Create a git worktree for a branch under `<repo>@<branch-slug>`. Branches are created off the supplied `from` ref (default `origin/HEAD`) when they do not yet exist locally. When `inject_context` is true (default), the originating site\'s agent memory is snapshotted into `.claude/CLAUDE.local.md` and `.opencode/AGENTS.local.md` and added to the worktree\'s per-checkout `info/exclude`.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'repo'   => array(
+							'repo'           => array(
 								'type'        => 'string',
 								'description' => 'Primary repo name (no @-suffix).',
 							),
-							'branch' => array(
+							'branch'         => array(
 								'type'        => 'string',
 								'description' => 'Branch to check out in the worktree (e.g. fix/foo-bar). Slashes become dashes in the on-disk slug.',
 							),
-							'from'   => array(
+							'from'           => array(
 								'type'        => 'string',
 								'description' => 'Base ref when creating the branch (default origin/HEAD).',
+							),
+							'inject_context' => array(
+								'type'        => 'boolean',
+								'description' => 'Inject the originating site\'s agent context (MEMORY.md, USER.md, RULES.md) into the new worktree. Default true. Set false to create a bare worktree.',
 							),
 						),
 						'required'   => array( 'repo', 'branch' ),
@@ -729,16 +733,60 @@ class WorkspaceAbilities {
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success'        => array( 'type' => 'boolean' ),
-							'handle'         => array( 'type' => 'string' ),
-							'path'           => array( 'type' => 'string' ),
-							'branch'         => array( 'type' => 'string' ),
-							'slug'           => array( 'type' => 'string' ),
-							'created_branch' => array( 'type' => 'boolean' ),
-							'message'        => array( 'type' => 'string' ),
+							'success'             => array( 'type' => 'boolean' ),
+							'handle'              => array( 'type' => 'string' ),
+							'path'                => array( 'type' => 'string' ),
+							'branch'              => array( 'type' => 'string' ),
+							'slug'                => array( 'type' => 'string' ),
+							'created_branch'      => array( 'type' => 'boolean' ),
+							'message'             => array( 'type' => 'string' ),
+							'context_injected'    => array( 'type' => 'boolean' ),
+							'context_files'       => array(
+								'type'  => 'array',
+								'items' => array( 'type' => 'string' ),
+							),
+							'context_exclude_path' => array( 'type' => 'string' ),
+							'context_skip_reason' => array( 'type' => 'string' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreeAdd' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/workspace-worktree-refresh-context',
+				array(
+					'label'               => 'Refresh Worktree Context',
+					'description'         => 'Re-read the originating site\'s agent memory and rewrite the injected context files (`.claude/CLAUDE.local.md`, `.opencode/AGENTS.local.md`) in an existing worktree. Must be run from the site that created the worktree — cross-machine refresh is not supported.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'handle' => array(
+								'type'        => 'string',
+								'description' => 'Worktree handle (`<repo>@<branch-slug>`).',
+							),
+						),
+						'required'   => array( 'handle' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'      => array( 'type' => 'boolean' ),
+							'handle'       => array( 'type' => 'string' ),
+							'path'         => array( 'type' => 'string' ),
+							'written'      => array(
+								'type'  => 'array',
+								'items' => array( 'type' => 'string' ),
+							),
+							'exclude_path' => array( 'type' => 'string' ),
+							'metadata'     => array( 'type' => 'object' ),
+							'message'      => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeRefreshContext' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
 				)
@@ -1131,11 +1179,25 @@ class WorkspaceAbilities {
 	 */
 	public static function worktreeAdd( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
+		// Default inject_context=true; only false when explicitly provided.
+		$inject_context = array_key_exists( 'inject_context', $input ) ? (bool) $input['inject_context'] : true;
 		return $workspace->worktree_add(
 			$input['repo'] ?? '',
 			$input['branch'] ?? '',
-			$input['from'] ?? null
+			$input['from'] ?? null,
+			$inject_context
 		);
+	}
+
+	/**
+	 * Refresh a worktree's injected context from the originating site.
+	 *
+	 * @param array $input Input parameters with 'handle'.
+	 * @return array|\WP_Error
+	 */
+	public static function worktreeRefreshContext( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		return $workspace->worktree_refresh_context( $input['handle'] ?? '' );
 	}
 
 	/**

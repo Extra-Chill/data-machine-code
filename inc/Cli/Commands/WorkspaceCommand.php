@@ -887,16 +887,25 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## OPTIONS
 	 *
 	 * <operation>
-	 * : Worktree operation: add, list, remove, prune, cleanup.
+	 * : Worktree operation: add, list, remove, prune, cleanup, refresh-context.
 	 *
 	 * [<repo>]
-	 * : Primary repo name (required for add and remove).
+	 * : Primary repo name (required for add and remove). For refresh-context,
+	 *   pass the full worktree handle (`<repo>@<branch-slug>`) here instead.
 	 *
 	 * [<branch>]
 	 * : Branch name (required for add and remove).
 	 *
 	 * [--from=<ref>]
 	 * : Base ref when creating a branch on add (default origin/HEAD).
+	 *
+	 * [--skip-context-injection]
+	 * : Skip injecting the originating site's agent context into a new
+	 *   worktree (applies to `add` only). Default behavior is to write
+	 *   `.claude/CLAUDE.local.md` and `.opencode/AGENTS.local.md` containing
+	 *   the site's MEMORY.md / USER.md / RULES.md snapshot, and add both
+	 *   paths to the repository's `info/exclude`. The ability-level input
+	 *   is `inject_context=false`; this flag is the CLI shorthand.
 	 *
 	 * [--force]
 	 * : Force-remove a worktree even if it is dirty (applies to `remove` and
@@ -948,23 +957,30 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Ignore dirty working-tree safety (caution)
 	 *     wp datamachine workspace worktree cleanup --force
 	 *
+	 *     # Create a worktree without injecting site-agent context
+	 *     wp datamachine workspace worktree add data-machine fix/foo --skip-context-injection
+	 *
+	 *     # Re-read the originating site's agent memory into an existing worktree
+	 *     wp datamachine workspace worktree refresh-context data-machine@fix-foo
+	 *
 	 * @subcommand worktree
 	 */
 	public function worktree( array $args, array $assoc_args ): void {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error( 'Usage: wp datamachine workspace worktree <add|list|remove|prune|cleanup> [<repo>] [<branch>] [--flags]' );
+			WP_CLI::error( 'Usage: wp datamachine workspace worktree <add|list|remove|prune|cleanup|refresh-context> [<repo>] [<branch>] [--flags]' );
 			return;
 		}
 
 		$ability_name = match ( $operation ) {
-			'add'     => 'datamachine/workspace-worktree-add',
-			'list'    => 'datamachine/workspace-worktree-list',
-			'remove'  => 'datamachine/workspace-worktree-remove',
-			'prune'   => 'datamachine/workspace-worktree-prune',
-			'cleanup' => 'datamachine/workspace-worktree-cleanup',
-			default   => '',
+			'add'             => 'datamachine/workspace-worktree-add',
+			'list'            => 'datamachine/workspace-worktree-list',
+			'remove'          => 'datamachine/workspace-worktree-remove',
+			'prune'           => 'datamachine/workspace-worktree-prune',
+			'cleanup'         => 'datamachine/workspace-worktree-cleanup',
+			'refresh-context' => 'datamachine/workspace-worktree-refresh-context',
+			default           => '',
 		};
 
 		if ( '' === $ability_name ) {
@@ -983,7 +999,7 @@ class WorkspaceCommand extends BaseCommand {
 		switch ( $operation ) {
 			case 'add':
 				if ( empty( $args[1] ) || empty( $args[2] ) ) {
-					WP_CLI::error( 'Usage: worktree add <repo> <branch> [--from=<ref>]' );
+					WP_CLI::error( 'Usage: worktree add <repo> <branch> [--from=<ref>] [--skip-context-injection]' );
 					return;
 				}
 				$input['repo']   = $args[1];
@@ -991,6 +1007,16 @@ class WorkspaceCommand extends BaseCommand {
 				if ( ! empty( $assoc_args['from'] ) ) {
 					$input['from'] = (string) $assoc_args['from'];
 				}
+				// --skip-context-injection disables the default-on injection step.
+				$input['inject_context'] = empty( $assoc_args['skip-context-injection'] );
+				break;
+
+			case 'refresh-context':
+				if ( empty( $args[1] ) ) {
+					WP_CLI::error( 'Usage: worktree refresh-context <handle>' );
+					return;
+				}
+				$input['handle'] = (string) $args[1];
 				break;
 
 			case 'list':
@@ -1117,6 +1143,36 @@ class WorkspaceCommand extends BaseCommand {
 					WP_CLI::log( sprintf( 'Handle: %s', $result['handle'] ) );
 					WP_CLI::log( sprintf( 'Path:   %s', $result['path'] ?? '-' ) );
 					WP_CLI::log( sprintf( 'Branch: %s%s', $result['branch'] ?? '-', ! empty( $result['created_branch'] ) ? ' (created)' : '' ) );
+				}
+				if ( isset( $result['context_injected'] ) ) {
+					if ( ! empty( $result['context_injected'] ) ) {
+						$written = $result['context_files'] ?? array();
+						WP_CLI::log( sprintf( 'Context: injected (%d file%s)', count( $written ), 1 === count( $written ) ? '' : 's' ) );
+						foreach ( $written as $file ) {
+							WP_CLI::log( '  - ' . $file );
+						}
+						if ( ! empty( $result['context_exclude_path'] ) ) {
+							WP_CLI::log( sprintf( 'Excluded via: %s', $result['context_exclude_path'] ) );
+						}
+					} else {
+						$reason = $result['context_skip_reason'] ?? 'unknown';
+						WP_CLI::log( sprintf( 'Context: not injected (%s)', $reason ) );
+					}
+				}
+				return;
+
+			case 'refresh-context':
+				WP_CLI::success( $result['message'] ?? 'Worktree context refreshed.' );
+				WP_CLI::log( sprintf( 'Handle: %s', $result['handle'] ?? '-' ) );
+				WP_CLI::log( sprintf( 'Path:   %s', $result['path'] ?? '-' ) );
+				foreach ( (array) ( $result['written'] ?? array() ) as $file ) {
+					WP_CLI::log( '  - ' . $file );
+				}
+				if ( ! empty( $result['exclude_path'] ) ) {
+					WP_CLI::log( sprintf( 'Exclude file: %s', $result['exclude_path'] ) );
+				}
+				if ( ! empty( $result['metadata']['site_url'] ) ) {
+					WP_CLI::log( sprintf( 'Originating site: %s', $result['metadata']['site_url'] ) );
 				}
 				return;
 
