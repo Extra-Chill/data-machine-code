@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.10.0] - 2026-04-24
+
+### Added
+- feat(agents-md): surface full DM CLI command surface (chat, email, agents mgmt, content ops, retention, gitsync)
+
 ## [0.9.0] - 2026-04-24
 
 ### Added
