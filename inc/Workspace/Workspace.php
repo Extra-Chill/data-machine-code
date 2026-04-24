@@ -876,7 +876,7 @@ class Workspace {
 	 * @param string|null $from           Base ref when creating the branch.
 	 * @param bool        $inject_context Whether to inject site-agent context (default true).
 	 * @param bool        $bootstrap      Whether to run submodule/package/composer install after creation (default true).
-	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array}|\WP_Error
+	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string}|\WP_Error
 	 */
 	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true ): array|\WP_Error {
 		$repo   = $this->sanitize_name( $repo );
@@ -907,18 +907,25 @@ class Workspace {
 			return new \WP_Error( 'worktree_exists', sprintf( 'Worktree handle "%s" already exists.', $wt_handle ), array( 'status' => 400 ) );
 		}
 
+		// Always fetch first so staleness data (and the default base) reflects the
+		// current remote. Failure is logged but never aborts — offline work should
+		// still be possible, the agent just needs to know staleness is unknown.
+		$fetch        = WorktreeStalenessProbe::fetch( $primary_path );
+		$fetch_failed = ! $fetch['ok'];
+		$fetch_error  = $fetch['error'] ?? null;
+
 		// Does the branch already exist locally?
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
 		exec( sprintf( 'git -C %s show-ref --verify --quiet %s 2>&1', escapeshellarg( $primary_path ), escapeshellarg( 'refs/heads/' . $branch ) ), $_unused, $exists_local );
 		$created_branch = false;
+		$resolved_base  = null;
 
 		if ( 0 === $exists_local ) {
 			$cmd = sprintf( 'worktree add %s %s', escapeshellarg( $wt_path ), escapeshellarg( $branch ) );
 		} else {
-			$base = $from && '' !== trim( $from ) ? trim( $from ) : $this->resolve_default_base( $primary_path );
-			// Fetch first to make sure remote refs are current.
-			$this->run_git( $primary_path, 'fetch --quiet origin' );
-			$cmd = sprintf( 'worktree add -b %s %s %s', escapeshellarg( $branch ), escapeshellarg( $wt_path ), escapeshellarg( $base ) );
+			$base          = $from && '' !== trim( $from ) ? trim( $from ) : $this->resolve_default_base( $primary_path );
+			$resolved_base = $base;
+			$cmd           = sprintf( 'worktree add -b %s %s %s', escapeshellarg( $branch ), escapeshellarg( $wt_path ), escapeshellarg( $base ) );
 			$created_branch = true;
 		}
 
@@ -936,6 +943,49 @@ class Workspace {
 			'created_branch' => $created_branch,
 			'message'        => sprintf( 'Worktree "%s" added at %s (branch %s).', $wt_handle, $wt_path, $branch ),
 		);
+
+		if ( $fetch_failed ) {
+			$response['fetch_failed'] = true;
+			if ( null !== $fetch_error && '' !== $fetch_error ) {
+				$response['fetch_error'] = $fetch_error;
+			}
+		}
+
+		// Compute staleness. Only meaningful when fetch succeeded — otherwise the
+		// upstream refs are potentially stale themselves and any behind-count we
+		// produce would be misleading.
+		if ( ! $fetch_failed ) {
+			if ( ! $created_branch ) {
+				// Existing local branch: compare against its configured upstream.
+				$behind = WorktreeStalenessProbe::behind_count( $wt_path, $branch, '@{upstream}' );
+				if ( is_int( $behind ) ) {
+					$response['stale_commits_behind'] = $behind;
+					// Derive a human-readable upstream label. Best-effort; silently
+					// skipped when git's plumbing doesn't cooperate.
+					$upstream_name = $this->run_git(
+						$wt_path,
+						sprintf( 'rev-parse --abbrev-ref --symbolic-full-name %s', escapeshellarg( $branch . '@{upstream}' ) )
+					);
+					if ( ! is_wp_error( $upstream_name ) ) {
+						$label = trim( (string) ( $upstream_name['output'] ?? '' ) );
+						if ( '' !== $label ) {
+							$response['upstream'] = $label;
+						}
+					}
+				}
+				// null → no upstream configured; WP_Error → unexpected failure.
+				// Both cases: silently omit staleness fields.
+			} elseif ( null !== $resolved_base && ! $this->is_remote_tracking_ref( $resolved_base ) && 'HEAD' !== $resolved_base ) {
+				// New branch cut from a local ref: compare that ref to its origin
+				// counterpart so the agent sees when the base itself was stale.
+				$base_upstream = 'origin/' . $resolved_base;
+				$behind        = WorktreeStalenessProbe::behind_count( $primary_path, $resolved_base, $base_upstream );
+				if ( is_int( $behind ) ) {
+					$response['base_stale_commits_behind'] = $behind;
+					$response['base_upstream']             = $base_upstream;
+				}
+			}
+		}
 
 		if ( ! $inject_context ) {
 			$response['context_injected']    = false;
@@ -1611,6 +1661,21 @@ class Workspace {
 			}
 		}
 		return 'HEAD';
+	}
+
+	/**
+	 * Does a ref look like a remote-tracking ref?
+	 *
+	 * `resolve_default_base()` returns fully-qualified paths
+	 * (`refs/remotes/origin/main`), but callers may pass short forms like
+	 * `origin/main`. Both are "already at-tip post-fetch" and staleness
+	 * comparisons against them would be nonsensical.
+	 *
+	 * @param string $ref Ref name to classify.
+	 * @return bool
+	 */
+	private function is_remote_tracking_ref( string $ref ): bool {
+		return str_starts_with( $ref, 'refs/remotes/' ) || str_starts_with( $ref, 'origin/' );
 	}
 
 	/**

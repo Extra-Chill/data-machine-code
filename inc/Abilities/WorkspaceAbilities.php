@@ -755,6 +755,30 @@ class WorkspaceAbilities {
 								'type'        => 'object',
 								'description' => 'Present only when bootstrap=true. Contains success/ran_any booleans and a steps array.',
 							),
+							'fetch_failed'        => array(
+								'type'        => 'boolean',
+								'description' => 'Present only when the pre-create `git fetch origin` failed. Worktree creation continues either way; staleness fields are omitted when true.',
+							),
+							'fetch_error'         => array(
+								'type'        => 'string',
+								'description' => 'Present only when fetch_failed=true. Trimmed error output from the failing fetch.',
+							),
+							'stale_commits_behind' => array(
+								'type'        => 'integer',
+								'description' => 'For the existing-local-branch path, how many commits the worktree branch is behind its configured upstream. Omitted when no upstream is configured.',
+							),
+							'upstream'            => array(
+								'type'        => 'string',
+								'description' => 'Paired with stale_commits_behind: the upstream ref label (e.g. `origin/fix/foo`).',
+							),
+							'base_stale_commits_behind' => array(
+								'type'        => 'integer',
+								'description' => 'For the new-branch path cut from a local base ref: how many commits that local base is behind its origin counterpart at fetch time.',
+							),
+							'base_upstream'       => array(
+								'type'        => 'string',
+								'description' => 'Paired with base_stale_commits_behind: the origin ref the local base was compared against (e.g. `origin/main`).',
+							),
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreeAdd' ),

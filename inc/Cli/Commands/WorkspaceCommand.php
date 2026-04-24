@@ -1188,6 +1188,7 @@ class WorkspaceCommand extends BaseCommand {
 						WP_CLI::warning( 'Worktree was created but bootstrap had failures. Re-run the failing step manually, or remove and retry.' );
 					}
 				}
+				$this->render_worktree_freshness( $result );
 				return;
 
 			case 'refresh-context':
@@ -1210,5 +1211,70 @@ class WorkspaceCommand extends BaseCommand {
 				WP_CLI::success( $result['message'] ?? 'Worktree operation complete.' );
 				return;
 		}
+	}
+
+	/**
+	 * Render the freshness block for `worktree add` results.
+	 *
+	 * States, in priority order:
+	 *   - fetch_failed=true         → `⚠ fetch failed — staleness unknown` (warning)
+	 *   - stale_commits_behind>0    → `⚠ <N> commits behind <upstream>` (warning + rebase hint)
+	 *   - base_stale_commits_behind>0 → `⚠ base was <N> commits behind <base_upstream>` (warning + rebase hint)
+	 *   - otherwise                 → `Freshness: up to date` (log)
+	 *
+	 * When no staleness signal is present at all (no fetch attempt recorded,
+	 * no upstream configured, defaults used) the line is elided entirely —
+	 * silence beats an ambiguous "up to date" we can't actually vouch for.
+	 *
+	 * @param array $result Ability result payload.
+	 * @return void
+	 */
+	private function render_worktree_freshness( array $result ): void {
+		if ( ! empty( $result['fetch_failed'] ) ) {
+			$msg = 'Freshness: ⚠ fetch failed — staleness unknown';
+			if ( ! empty( $result['fetch_error'] ) ) {
+				$msg .= "\n  " . $result['fetch_error'];
+			}
+			WP_CLI::warning( $msg );
+			return;
+		}
+
+		if ( isset( $result['stale_commits_behind'] ) ) {
+			$behind   = (int) $result['stale_commits_behind'];
+			$upstream = isset( $result['upstream'] ) ? (string) $result['upstream'] : 'upstream';
+			if ( $behind > 0 ) {
+				WP_CLI::warning( sprintf(
+					"Freshness: ⚠ %d commits behind %s\n  Rebase before opening a PR:\n    git -C %s pull --rebase origin %s",
+					$behind,
+					$upstream,
+					$result['path'] ?? '<worktree>',
+					$result['branch'] ?? '<branch>'
+				) );
+				return;
+			}
+			WP_CLI::log( sprintf( 'Freshness: up to date (vs %s)', $upstream ) );
+			return;
+		}
+
+		if ( isset( $result['base_stale_commits_behind'] ) ) {
+			$behind        = (int) $result['base_stale_commits_behind'];
+			$base_upstream = isset( $result['base_upstream'] ) ? (string) $result['base_upstream'] : 'origin';
+			if ( $behind > 0 ) {
+				WP_CLI::warning( sprintf(
+					"Freshness: ⚠ base was %d commits behind %s\n  Rebase before opening a PR:\n    git -C %s pull --rebase origin %s",
+					$behind,
+					$base_upstream,
+					$result['path'] ?? '<worktree>',
+					$result['branch'] ?? '<branch>'
+				) );
+				return;
+			}
+			WP_CLI::log( sprintf( 'Freshness: up to date (base %s)', $base_upstream ) );
+			return;
+		}
+
+		// No signal available (default base was origin/HEAD, or no upstream
+		// configured for the existing branch). Elide the line rather than
+		// print a potentially-misleading "up to date".
 	}
 }
