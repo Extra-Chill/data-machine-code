@@ -1,6 +1,6 @@
 <?php
 /**
- * Pure-PHP smoke test for WorktreeStalenessProbe.
+ * Pure-PHP smoke test for WorktreeStalenessProbe + related staleness helpers.
  *
  * Run: php tests/smoke-worktree-staleness.php
  *
@@ -12,6 +12,8 @@
  *   - behind_count() returns null when upstream is not configured
  *   - parse_count() handles empty / whitespace / non-numeric output
  *   - is_missing_upstream() matches common git phrasings
+ *   - rebase into an upstream tip clears behind-count to 0
+ *   - rebase conflict aborts cleanly (pre-rebase HEAD preserved)
  */
 
 declare( strict_types=1 );
@@ -196,6 +198,111 @@ if ( '' === $which_git ) {
 		'fetch() failure: error mentions origin/remote/repository'
 	);
 	$cleanup( $no_origin );
+
+	// -----------------------------------------------------------------------------
+	// Rebase behavior — smoke coverage for the gate+rebase PR
+	// -----------------------------------------------------------------------------
+
+	echo "\nrebase behavior (real git fixtures)\n";
+
+	// Scenario A: clean rebase — a branch 2 behind its upstream rebases cleanly
+	// onto the tip and behind_count afterwards is 0.
+	$upstream_a = sys_get_temp_dir() . '/dmc-rebase-up-' . bin2hex( random_bytes( 4 ) );
+	mkdir( $upstream_a, 0755, true );
+	exec( sprintf( 'cd %s && git init -q --initial-branch=main', escapeshellarg( $upstream_a ) ) );
+	for ( $i = 1; $i <= 3; $i++ ) {
+		file_put_contents( $upstream_a . '/a.txt', "a{$i}\n" );
+		exec( sprintf(
+			'cd %s && git -c user.email=t@t -c user.name=t add -A && git -c user.email=t@t -c user.name=t commit -q -m "up-%d"',
+			escapeshellarg( $upstream_a ),
+			$i
+		) );
+	}
+
+	$consumer_a = sys_get_temp_dir() . '/dmc-rebase-con-' . bin2hex( random_bytes( 4 ) );
+	exec( sprintf( 'git clone -q %s %s', escapeshellarg( $upstream_a ), escapeshellarg( $consumer_a ) ) );
+	// Consumer lags 2 behind, and has an independent commit to rebase.
+	exec( sprintf( 'cd %s && git reset -q --hard HEAD~2', escapeshellarg( $consumer_a ) ) );
+	file_put_contents( $consumer_a . '/consumer.txt', "c\n" );
+	exec( sprintf(
+		'cd %s && git -c user.email=t@t -c user.name=t add -A && git -c user.email=t@t -c user.name=t commit -q -m "consumer work"',
+		escapeshellarg( $consumer_a )
+	) );
+
+	// Pre-rebase: 2 behind.
+	$pre = WorktreeStalenessProbe::behind_count( $consumer_a, 'main', '@{upstream}' );
+	$assert( 2, $pre, 'pre-rebase: 2 behind @{upstream}' );
+
+	// Clean rebase.
+	exec( sprintf(
+		'cd %s && git -c user.email=t@t -c user.name=t rebase @{upstream} 2>&1',
+		escapeshellarg( $consumer_a )
+	), $rebase_out, $rebase_code );
+	$assert( 0, $rebase_code, 'clean rebase onto @{upstream} exit 0' );
+
+	// Post-rebase: 0 behind, and consumer commit still present.
+	$post = WorktreeStalenessProbe::behind_count( $consumer_a, 'main', '@{upstream}' );
+	$assert( 0, $post, 'post-rebase: 0 behind @{upstream}' );
+
+	$log_out = shell_exec( sprintf( 'cd %s && git log --oneline | head -5', escapeshellarg( $consumer_a ) ) );
+	$assert_true(
+		false !== strpos( (string) $log_out, 'consumer work' ),
+		'post-rebase: consumer commit still present on HEAD'
+	);
+
+	$cleanup( $consumer_a );
+	$cleanup( $upstream_a );
+
+	// Scenario B: conflicting rebase — rebase fails, we abort, and pre-rebase
+	// HEAD is preserved.
+	$upstream_b = sys_get_temp_dir() . '/dmc-conflict-up-' . bin2hex( random_bytes( 4 ) );
+	mkdir( $upstream_b, 0755, true );
+	exec( sprintf( 'cd %s && git init -q --initial-branch=main', escapeshellarg( $upstream_b ) ) );
+	file_put_contents( $upstream_b . '/f.txt', "original\n" );
+	exec( sprintf(
+		'cd %s && git -c user.email=t@t -c user.name=t add -A && git -c user.email=t@t -c user.name=t commit -q -m "base"',
+		escapeshellarg( $upstream_b )
+	) );
+
+	$consumer_b = sys_get_temp_dir() . '/dmc-conflict-con-' . bin2hex( random_bytes( 4 ) );
+	exec( sprintf( 'git clone -q %s %s', escapeshellarg( $upstream_b ), escapeshellarg( $consumer_b ) ) );
+
+	// Consumer and upstream edit the same line differently.
+	file_put_contents( $consumer_b . '/f.txt', "consumer side\n" );
+	exec( sprintf(
+		'cd %s && git -c user.email=t@t -c user.name=t add -A && git -c user.email=t@t -c user.name=t commit -q -m "consumer edit"',
+		escapeshellarg( $consumer_b )
+	) );
+
+	file_put_contents( $upstream_b . '/f.txt', "upstream side\n" );
+	exec( sprintf(
+		'cd %s && git -c user.email=t@t -c user.name=t add -A && git -c user.email=t@t -c user.name=t commit -q -m "upstream edit"',
+		escapeshellarg( $upstream_b )
+	) );
+
+	// Fetch so the consumer sees the conflict-inducing upstream commit.
+	exec( sprintf( 'cd %s && git fetch -q origin', escapeshellarg( $consumer_b ) ) );
+
+	$pre_sha = trim( (string) shell_exec( sprintf( 'cd %s && git rev-parse HEAD', escapeshellarg( $consumer_b ) ) ) );
+
+	// Attempt the rebase; expect non-zero exit.
+	exec( sprintf(
+		'cd %s && git -c user.email=t@t -c user.name=t rebase @{upstream} 2>&1',
+		escapeshellarg( $consumer_b )
+	), $conflict_out, $conflict_code );
+	$assert_true( 0 !== $conflict_code, 'conflicting rebase: non-zero exit' );
+
+	// Abort and confirm we're back on the consumer commit.
+	exec( sprintf( 'cd %s && git rebase --abort 2>&1', escapeshellarg( $consumer_b ) ) );
+	$post_sha = trim( (string) shell_exec( sprintf( 'cd %s && git rev-parse HEAD', escapeshellarg( $consumer_b ) ) ) );
+	$assert( $pre_sha, $post_sha, 'rebase --abort: HEAD restored to pre-rebase SHA' );
+
+	// And behind-count still reflects the pre-rebase lag (1 behind).
+	$still_behind = WorktreeStalenessProbe::behind_count( $consumer_b, 'main', '@{upstream}' );
+	$assert( 1, $still_behind, 'post-abort: still 1 behind @{upstream}' );
+
+	$cleanup( $consumer_b );
+	$cleanup( $upstream_b );
 }
 
 // -----------------------------------------------------------------------------

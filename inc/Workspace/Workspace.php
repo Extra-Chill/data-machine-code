@@ -871,14 +871,26 @@ class Workspace {
 	 * Pass `$bootstrap = false` (or `--no-bootstrap` on the CLI) for a bare
 	 * checkout when you only need to read code on that branch.
 	 *
+	 * When the materialized branch (or its local base) is more than
+	 * `datamachine_worktree_stale_threshold` commits behind upstream and
+	 * neither `$allow_stale` nor `$rebase_base` is set, the worktree is
+	 * torn down and the call returns a `worktree_stale` WP_Error with
+	 * remediation guidance. Pass `$allow_stale = true` to proceed anyway,
+	 * or `$rebase_base = true` to auto-rebase onto the upstream tip before
+	 * returning. On rebase conflicts the rebase is aborted (worktree stays
+	 * at its pre-rebase state) and `rebase_failed: true` is surfaced in
+	 * the response so the agent can resolve manually.
+	 *
 	 * @param string      $repo           Primary repo name (no @-suffix).
 	 * @param string      $branch         Branch to check out (e.g. "fix/foo-bar").
 	 * @param string|null $from           Base ref when creating the branch.
 	 * @param bool        $inject_context Whether to inject site-agent context (default true).
 	 * @param bool        $bootstrap      Whether to run submodule/package/composer install after creation (default true).
-	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string}|\WP_Error
+	 * @param bool        $allow_stale    Bypass the staleness gate (default false).
+	 * @param bool        $rebase_base    Rebase onto upstream after creation (default false).
+	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
-	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true ): array|\WP_Error {
+	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false ): array|\WP_Error {
 		$repo   = $this->sanitize_name( $repo );
 		$branch = trim( $branch );
 
@@ -984,6 +996,69 @@ class Workspace {
 					$response['base_stale_commits_behind'] = $behind;
 					$response['base_upstream']             = $base_upstream;
 				}
+			}
+		}
+
+		// Rebase BEFORE gating: if the agent explicitly asked to rebase, try
+		// that first. Success cancels the gate trigger entirely. Failure leaves
+		// the worktree at its pre-rebase state AND still trips the gate, so
+		// --rebase-base alone on a conflicting rebase isn't a silent bypass.
+		if ( $rebase_base && ! $fetch_failed ) {
+			$rebase_result = $this->try_rebase_worktree( $wt_path, $response, $created_branch );
+			if ( null !== $rebase_result ) {
+				$response = array_merge( $response, $rebase_result );
+			}
+		}
+
+		// Staleness gate. Threshold filterable per-site / per-repo. Only fires
+		// when fetch succeeded (otherwise behind-counts are unreliable) and
+		// rebase didn't already zero out the staleness.
+		if ( ! $allow_stale && ! $fetch_failed ) {
+			/**
+			 * Filters the staleness threshold above which `worktree_add` refuses
+			 * to return a stale worktree without explicit `--allow-stale` opt-in.
+			 *
+			 * @param int    $threshold Default 50 commits behind upstream.
+			 * @param string $repo      Repository name.
+			 * @param string $branch    Branch being materialized.
+			 */
+			$threshold                   = (int) apply_filters( 'datamachine_worktree_stale_threshold', 50, $repo, $branch );
+			$response['gate_threshold']  = $threshold;
+			$effective_behind            = $this->effective_behind_count( $response );
+
+			if ( null !== $effective_behind && $effective_behind > $threshold ) {
+				// Tear the worktree down so we don't leak a half-cooked
+				// checkout on the user's disk.
+				$this->run_git( $primary_path, sprintf( 'worktree remove --force %s', escapeshellarg( $wt_path ) ) );
+
+				$label = $response['upstream'] ?? ( $response['base_upstream'] ?? 'upstream' );
+				$guidance = sprintf(
+					"Worktree base is %d commits behind %s (threshold: %d).\n"
+					. "Options:\n"
+					. "  - workspace git-pull %s --allow-primary-mutation  (refresh primary first)\n"
+					. "  - worktree add … --from=origin/%s  (cut from remote ref directly)\n"
+					. "  - worktree add … --rebase-base  (auto-rebase onto upstream)\n"
+					. "  - worktree add … --allow-stale  (proceed with known-stale base)",
+					$effective_behind,
+					$label,
+					$threshold,
+					$repo,
+					ltrim( (string) ( $response['upstream'] ?? $resolved_base ?? 'main' ), 'origin/' )
+				);
+
+				return new \WP_Error(
+					'worktree_stale',
+					$guidance,
+					array(
+						'status'                    => 409,
+						'stale_commits_behind'      => $response['stale_commits_behind'] ?? null,
+						'base_stale_commits_behind' => $response['base_stale_commits_behind'] ?? null,
+						'upstream'                  => $response['upstream'] ?? null,
+						'base_upstream'             => $response['base_upstream'] ?? null,
+						'gate_threshold'            => $threshold,
+						'fetch_failed'              => false,
+					)
+				);
 			}
 		}
 
@@ -1676,6 +1751,107 @@ class Workspace {
 	 */
 	private function is_remote_tracking_ref( string $ref ): bool {
 		return str_starts_with( $ref, 'refs/remotes/' ) || str_starts_with( $ref, 'origin/' );
+	}
+
+	/**
+	 * Pull the single behind-count that matters for gate decisions.
+	 *
+	 * The staleness probe records up to two behind-counts depending on
+	 * the path: `stale_commits_behind` for an existing branch vs its
+	 * upstream, or `base_stale_commits_behind` for a new branch cut off a
+	 * stale local base. At most one of these is present in practice;
+	 * whichever exists is the one we gate on.
+	 *
+	 * @param array $response Accumulated response payload.
+	 * @return int|null Behind-count, or null if no staleness data was collected.
+	 */
+	private function effective_behind_count( array $response ): ?int {
+		if ( isset( $response['stale_commits_behind'] ) ) {
+			return (int) $response['stale_commits_behind'];
+		}
+		if ( isset( $response['base_stale_commits_behind'] ) ) {
+			return (int) $response['base_stale_commits_behind'];
+		}
+		return null;
+	}
+
+	/**
+	 * Attempt to rebase the worktree onto its upstream.
+	 *
+	 * Target selection:
+	 *   - Existing-local-branch path → rebase onto `@{upstream}` if one is
+	 *     configured AND we observed stale_commits_behind > 0.
+	 *   - New-branch-off-local-base path → rebase onto `<base_upstream>` if
+	 *     we observed base_stale_commits_behind > 0.
+	 *
+	 * Returns an associative array to merge into the response:
+	 *   rebase_attempted, rebase_target, rebase_succeeded [, rebase_error]
+	 *
+	 * On success, clears the relevant staleness field (behind-count zeroes
+	 * out and the gate will not trip). On conflict the rebase is aborted
+	 * so the worktree stays at its pre-rebase state, and the gate may
+	 * still trip — `--rebase-base` is not a silent `--allow-stale`.
+	 *
+	 * Returns null when there's nothing meaningful to rebase (up to date,
+	 * no upstream, or staleness couldn't be computed).
+	 *
+	 * @param string $wt_path        Worktree path.
+	 * @param array  $response       Accumulated response payload.
+	 * @param bool   $created_branch Whether this was a freshly-created branch.
+	 * @return array|null
+	 */
+	private function try_rebase_worktree( string $wt_path, array &$response, bool $created_branch ): ?array {
+		$target = null;
+		$clear  = null;
+
+		if ( ! $created_branch
+			&& isset( $response['stale_commits_behind'] )
+			&& (int) $response['stale_commits_behind'] > 0
+		) {
+			$target = '@{upstream}';
+			$clear  = 'stale_commits_behind';
+		} elseif ( $created_branch
+			&& isset( $response['base_stale_commits_behind'] )
+			&& (int) $response['base_stale_commits_behind'] > 0
+			&& ! empty( $response['base_upstream'] )
+		) {
+			$target = (string) $response['base_upstream'];
+			$clear  = 'base_stale_commits_behind';
+		}
+
+		if ( null === $target ) {
+			return null;
+		}
+
+		$result = $this->run_git( $wt_path, sprintf( 'rebase %s', escapeshellarg( $target ) ) );
+
+		if ( is_wp_error( $result ) ) {
+			// Abort so the worktree stays at its pre-rebase HEAD. Agent can
+			// retry manually after resolving conflicts.
+			$this->run_git( $wt_path, 'rebase --abort' );
+
+			$data  = $result->get_error_data();
+			$tail  = is_array( $data ) && isset( $data['output'] ) ? trim( (string) $data['output'] ) : '';
+			$error = '' !== $tail ? $tail : $result->get_error_message();
+
+			return array(
+				'rebase_attempted' => true,
+				'rebase_target'    => $target,
+				'rebase_succeeded' => false,
+				'rebase_error'     => $error,
+			);
+		}
+
+		// Success: zero out the behind-count so the gate sees a fresh worktree.
+		if ( null !== $clear ) {
+			unset( $response[ $clear ] );
+		}
+
+		return array(
+			'rebase_attempted' => true,
+			'rebase_target'    => $target,
+			'rebase_succeeded' => true,
+		);
 	}
 
 	/**

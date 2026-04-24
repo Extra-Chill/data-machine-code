@@ -731,6 +731,14 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Run detected bootstrap steps (submodule init, package-manager install, composer install) after creating the worktree. Default true. Steps are skipped gracefully when their trigger file or tool is missing. Set false for a bare checkout (e.g. when only reading code).',
 							),
+							'allow_stale'    => array(
+								'type'        => 'boolean',
+								'description' => 'Bypass the staleness gate. When false (default) and the new worktree would be more than `datamachine_worktree_stale_threshold` commits behind upstream, worktree creation is rolled back and a `worktree_stale` error is returned. Set true to opt in to a known-stale checkout.',
+							),
+							'rebase_base'    => array(
+								'type'        => 'boolean',
+								'description' => 'After creating the worktree, rebase onto the upstream tip (the branch\'s @{upstream} for existing branches, origin/<base> for new branches off a local base). Default false. On rebase conflicts the rebase is aborted; the worktree stays at its pre-rebase state and `rebase_succeeded: false` is surfaced.',
+							),
 						),
 						'required'   => array( 'repo', 'branch' ),
 					),
@@ -778,6 +786,26 @@ class WorkspaceAbilities {
 							'base_upstream'       => array(
 								'type'        => 'string',
 								'description' => 'Paired with base_stale_commits_behind: the origin ref the local base was compared against (e.g. `origin/main`).',
+							),
+							'gate_threshold'      => array(
+								'type'        => 'integer',
+								'description' => 'Echo of the staleness threshold (in commits) that was evaluated. Present whenever the gate ran (i.e. `allow_stale` was false and fetch succeeded).',
+							),
+							'rebase_attempted'    => array(
+								'type'        => 'boolean',
+								'description' => 'Set when `rebase_base=true` AND there was meaningful staleness to rebase over. Absent when rebase was not requested or there was nothing to do.',
+							),
+							'rebase_target'       => array(
+								'type'        => 'string',
+								'description' => 'Paired with `rebase_attempted`: the ref the worktree was rebased onto (e.g. `@{upstream}` or `origin/main`).',
+							),
+							'rebase_succeeded'    => array(
+								'type'        => 'boolean',
+								'description' => 'Paired with `rebase_attempted`: true when the rebase landed cleanly, false when it hit conflicts and was aborted.',
+							),
+							'rebase_error'       => array(
+								'type'        => 'string',
+								'description' => 'Present only when `rebase_succeeded=false`. Trimmed error output from the failing rebase.',
 							),
 						),
 					),
@@ -1215,12 +1243,18 @@ class WorkspaceAbilities {
 		$inject_context = array_key_exists( 'inject_context', $input ) ? (bool) $input['inject_context'] : true;
 		// Default bootstrap=true; only false when explicitly provided.
 		$bootstrap = array_key_exists( 'bootstrap', $input ) ? (bool) $input['bootstrap'] : true;
+		// Default allow_stale=false (gate enforced); only true when explicitly opted in.
+		$allow_stale = array_key_exists( 'allow_stale', $input ) ? (bool) $input['allow_stale'] : false;
+		// Default rebase_base=false; only true when explicitly requested.
+		$rebase_base = array_key_exists( 'rebase_base', $input ) ? (bool) $input['rebase_base'] : false;
 		return $workspace->worktree_add(
 			$input['repo'] ?? '',
 			$input['branch'] ?? '',
 			$input['from'] ?? null,
 			$inject_context,
-			$bootstrap
+			$bootstrap,
+			$allow_stale,
+			$rebase_base
 		);
 	}
 
