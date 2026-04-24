@@ -2,6 +2,13 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.9.0] - 2026-04-24
+
+### Added
+- gate stale worktree creation + opt-in rebase
+- surface worktree staleness at create-time
+- bootstrap worktrees by default (closes #50)
+
 ## [0.8.0] - 2026-04-21
 
 ### Added
