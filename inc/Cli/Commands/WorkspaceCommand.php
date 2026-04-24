@@ -920,6 +920,24 @@ class WorkspaceCommand extends BaseCommand {
 	 *   `bootstrap=false`; this flag is the CLI shorthand (matches the
 	 *   existing `--skip-context-injection` convention).
 	 *
+	 * [--allow-stale]
+	 * : Bypass the staleness gate (applies to `add` only). By default,
+	 *   `worktree add` refuses to return a worktree that would be more than
+	 *   `datamachine_worktree_stale_threshold` commits (default 50) behind
+	 *   upstream — the stale checkout is torn down and a `worktree_stale`
+	 *   error is returned with remediation options. Pass `--allow-stale` to
+	 *   opt in to a known-stale checkout. The ability-level input is
+	 *   `allow_stale=true`.
+	 *
+	 * [--rebase-base]
+	 * : After creating the worktree, rebase onto the upstream tip (applies
+	 *   to `add` only). For existing branches this is `@{upstream}`; for
+	 *   new branches cut off a local base this is `origin/<base>`. On
+	 *   rebase conflicts the rebase is aborted and the worktree stays at
+	 *   its pre-rebase state — `--rebase-base` is not a silent
+	 *   `--allow-stale` bypass. The ability-level input is
+	 *   `rebase_base=true`.
+	 *
 	 * [--force]
 	 * : Force-remove a worktree even if it is dirty (applies to `remove` and
 	 *   `cleanup`). Does NOT override the unpushed-commits safety in cleanup.
@@ -976,6 +994,12 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Create a bare worktree (skip the default bootstrap pass)
 	 *     wp datamachine workspace worktree add data-machine fix/foo --skip-bootstrap
 	 *
+	 *     # Proceed with a known-stale base (bypass the staleness gate)
+	 *     wp datamachine workspace worktree add data-machine fix/foo --allow-stale
+	 *
+	 *     # Auto-rebase onto upstream after creation
+	 *     wp datamachine workspace worktree add data-machine fix/foo --rebase-base
+	 *
 	 *     # Re-read the originating site's agent memory into an existing worktree
 	 *     wp datamachine workspace worktree refresh-context data-machine@fix-foo
 	 *
@@ -1015,7 +1039,7 @@ class WorkspaceCommand extends BaseCommand {
 		switch ( $operation ) {
 			case 'add':
 				if ( empty( $args[1] ) || empty( $args[2] ) ) {
-					WP_CLI::error( 'Usage: worktree add <repo> <branch> [--from=<ref>] [--skip-context-injection] [--skip-bootstrap]' );
+					WP_CLI::error( 'Usage: worktree add <repo> <branch> [--from=<ref>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--rebase-base]' );
 					return;
 				}
 				$input['repo']   = $args[1];
@@ -1027,6 +1051,10 @@ class WorkspaceCommand extends BaseCommand {
 				$input['inject_context'] = empty( $assoc_args['skip-context-injection'] );
 				// --skip-bootstrap disables the default-on bootstrap step.
 				$input['bootstrap'] = empty( $assoc_args['skip-bootstrap'] );
+				// --allow-stale opts in to a known-stale worktree (default: gate enforced).
+				$input['allow_stale'] = ! empty( $assoc_args['allow-stale'] );
+				// --rebase-base auto-rebases onto upstream after creation (default: off).
+				$input['rebase_base'] = ! empty( $assoc_args['rebase-base'] );
 				break;
 
 			case 'refresh-context':
@@ -1218,6 +1246,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * States, in priority order:
 	 *   - fetch_failed=true         → `⚠ fetch failed — staleness unknown` (warning)
+	 *   - rebase_attempted=true     → success or conflict status (log or warning)
 	 *   - stale_commits_behind>0    → `⚠ <N> commits behind <upstream>` (warning + rebase hint)
 	 *   - base_stale_commits_behind>0 → `⚠ base was <N> commits behind <base_upstream>` (warning + rebase hint)
 	 *   - otherwise                 → `Freshness: up to date` (log)
@@ -1237,6 +1266,24 @@ class WorkspaceCommand extends BaseCommand {
 			}
 			WP_CLI::warning( $msg );
 			return;
+		}
+
+		if ( ! empty( $result['rebase_attempted'] ) ) {
+			$target = isset( $result['rebase_target'] ) ? (string) $result['rebase_target'] : 'upstream';
+			if ( ! empty( $result['rebase_succeeded'] ) ) {
+				WP_CLI::log( sprintf( 'Freshness: rebased onto %s', $target ) );
+				// Fall through in case either behind-count is still set (e.g. the
+				// "other" path's metadata is present but zeroed). Renderer below
+				// handles the 0-case correctly.
+			} else {
+				$msg = sprintf( 'Freshness: ⚠ rebase onto %s failed — worktree stayed at pre-rebase HEAD', $target );
+				if ( ! empty( $result['rebase_error'] ) ) {
+					$msg .= "\n  " . $result['rebase_error'];
+				}
+				WP_CLI::warning( $msg );
+				// Staleness block below will still fire with the pre-rebase
+				// behind-count so the agent sees exactly how stale it is.
+			}
 		}
 
 		if ( isset( $result['stale_commits_behind'] ) ) {
