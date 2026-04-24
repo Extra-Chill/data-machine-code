@@ -318,8 +318,11 @@ add_action( 'plugins_loaded', function () {
 
 Data Machine is your operating layer — memory, automation, and orchestration via WP-CLI.
 
-**Memory:** Persistent files across sessions. Discover yours: `{$wp} datamachine agent paths`
-- Read/write/search memory: `{$wp} datamachine agent read|write|search`
+Discover the full command surface: `{$wp} datamachine --help`. The groups below are the major command families — always run `--help` on any subcommand to see its options.
+
+**Memory & Agents:** Persistent files across sessions plus agent identity management.
+- Memory paths / read / write / search: `{$wp} datamachine agent paths|read|write|search`
+- Agent management: `{$wp} datamachine agents list|create|access|tokens` — identities, permissions, bearer tokens
 - Update MEMORY.md when you learn something persistent — read it first, append new info.
 
 **Automation:** Self-scheduling workflows that run without human intervention.
@@ -328,16 +331,30 @@ Data Machine is your operating layer — memory, automation, and orchestration v
 - Jobs: `{$wp} datamachine jobs list|retry|summary` — monitor queued work
 - Discover available step types: `{$wp} datamachine step-types list`
 - Discover available handlers: `{$wp} datamachine handlers list`
+- Processed items (dedupe): `{$wp} datamachine processed-items`
+- Retention policies: `{$wp} datamachine retention`
+
+**Communication:** Chat sessions and email I/O.
+- Chat: `{$wp} datamachine chat` — multi-turn agent conversations with tool calling
+- Email: `{$wp} datamachine email` — IMAP read / SMTP reply (wired to the site's mail stack)
+
+**Content ops:** Post-level and site-wide content tooling.
+- Posts / taxonomy / blocks: `{$wp} datamachine post|taxonomy|block`
+- SEO helpers: `{$wp} datamachine alt-text|meta-description|image|link|indexnow`
+- Analytics & logs: `{$wp} datamachine analytics|logs`
+- Settings & auth: `{$wp} datamachine settings|auth`
+- External sites & handler tests: `{$wp} datamachine external|test`
 
 **Code (data-machine-code):** All code changes go through the managed workspace and GitHub — never edit site files directly.
-- Workspace: `{$wp} datamachine-code workspace clone|worktree|read|write|edit|git` — clone repos, create per-branch worktrees, edit files, commit, and push
+- Workspace: `{$wp} datamachine-code workspace clone|worktree|read|write|edit|ls|list|show|remove|git` — clone repos, create per-branch worktrees, edit files, commit, and push
 - GitHub: `{$wp} datamachine-code github issues|pulls|repos|comment` — create PRs, manage issues, comment on reviews
+- Git sync: `{$wp} datamachine-code gitsync` — sync workspace repos with remotes
 - **Workflow:** clone → `worktree add <repo> <branch>` → edit → commit → push → PR. Operate on the `<repo>@<branch-slug>` handle (e.g. `data-machine@fix-foo-bar`); never branch-switch the primary checkout.
 - **Why worktrees:** every parallel session gets its own checkout on disk. Multiple agents can cook features in the same repo without stepping on each other.
 - **Primary is read-only by default:** mutating ops on bare `<repo>` handles require `--allow-primary-mutation`. The primary tracks the deployed branch — leave it alone unless you really mean it.
 - **Rule:** Never modify files under `wp-content/plugins/` or `wp-content/themes/` directly. Those paths are for **reading source** only. All code changes must go through the workspace so they are tracked in git and reviewed via pull requests.
 
-**System:** `{$wp} datamachine system health|prompts|run`
+**System:** `{$wp} datamachine system health|prompts|run` — site health, prompt inspection, diagnostic runs.
 
 Use `--help` on any command to discover options and subcommands.
 MD;
