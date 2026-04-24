@@ -706,7 +706,7 @@ class WorkspaceAbilities {
 				'datamachine/workspace-worktree-add',
 				array(
 					'label'               => 'Add Workspace Worktree',
-					'description'         => 'Create a git worktree for a branch under `<repo>@<branch-slug>`. Branches are created off the supplied `from` ref (default `origin/HEAD`) when they do not yet exist locally. When `inject_context` is true (default), the originating site\'s agent memory is snapshotted into `.claude/CLAUDE.local.md` and `.opencode/AGENTS.local.md` and added to the worktree\'s per-checkout `info/exclude`.',
+					'description'         => 'Create a git worktree for a branch under `<repo>@<branch-slug>`. Branches are created off the supplied `from` ref (default `origin/HEAD`) when they do not yet exist locally. When `inject_context` is true (default), the originating site\'s agent memory is snapshotted into `.claude/CLAUDE.local.md` and `.opencode/AGENTS.local.md` and added to the worktree\'s per-checkout `info/exclude`. When `bootstrap` is true (default), submodule init + package-manager install + composer install run after creation so the worktree is immediately test/build-ready; set false to create a bare checkout.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -726,6 +726,10 @@ class WorkspaceAbilities {
 							'inject_context' => array(
 								'type'        => 'boolean',
 								'description' => 'Inject the originating site\'s agent context (MEMORY.md, USER.md, RULES.md) into the new worktree. Default true. Set false to create a bare worktree.',
+							),
+							'bootstrap'      => array(
+								'type'        => 'boolean',
+								'description' => 'Run detected bootstrap steps (submodule init, package-manager install, composer install) after creating the worktree. Default true. Steps are skipped gracefully when their trigger file or tool is missing. Set false for a bare checkout (e.g. when only reading code).',
 							),
 						),
 						'required'   => array( 'repo', 'branch' ),
@@ -747,6 +751,10 @@ class WorkspaceAbilities {
 							),
 							'context_exclude_path' => array( 'type' => 'string' ),
 							'context_skip_reason' => array( 'type' => 'string' ),
+							'bootstrap'           => array(
+								'type'        => 'object',
+								'description' => 'Present only when bootstrap=true. Contains success/ran_any booleans and a steps array.',
+							),
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreeAdd' ),
@@ -1181,11 +1189,14 @@ class WorkspaceAbilities {
 		$workspace = new Workspace();
 		// Default inject_context=true; only false when explicitly provided.
 		$inject_context = array_key_exists( 'inject_context', $input ) ? (bool) $input['inject_context'] : true;
+		// Default bootstrap=true; only false when explicitly provided.
+		$bootstrap = array_key_exists( 'bootstrap', $input ) ? (bool) $input['bootstrap'] : true;
 		return $workspace->worktree_add(
 			$input['repo'] ?? '',
 			$input['branch'] ?? '',
 			$input['from'] ?? null,
-			$inject_context
+			$inject_context,
+			$bootstrap
 		);
 	}
 

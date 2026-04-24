@@ -10,10 +10,12 @@ including safety-rail regressions) lives in `smoke-worktree-cleanup.php`.
 ```bash
 php tests/smoke-worktree-handles.php     # pure-unit, fast
 php tests/smoke-worktree-cleanup.php     # spawns a real git workspace
+php tests/smoke-worktree-bootstrap.php   # fixture + real git, no WP required
 ```
 
-Expected: `32/32 passed` and `18/18 passed` respectively. Skip
-`smoke-worktree-cleanup.php` if `git` is unavailable.
+Expected: `32/32 passed`, `18/18 passed`, and `30/30 passed` respectively.
+Skip `smoke-worktree-cleanup.php` and `smoke-worktree-bootstrap.php` if `git`
+is unavailable.
 
 Prereqs:
 - WordPress 6.9+ with Data Machine + data-machine-code activated.
@@ -65,6 +67,41 @@ wp datamachine-code workspace worktree add data-machine-code feat/test-worktree
 ```
 
 Expected: `worktree_exists` error.
+
+### 3a. Bootstrap-on-by-default and the `--skip-bootstrap` escape hatch
+
+`worktree add` runs the bootstrap pass by default:
+
+```bash
+wp datamachine-code workspace worktree add data-machine-code feat/bootstrap-smoke
+ls ~/.datamachine/workspace/data-machine-code@feat-bootstrap-smoke/vendor/composer/
+```
+
+Expected:
+- Output includes a `Bootstrap: ok` block listing each step (submodules
+  skipped, packages skipped or ran depending on lockfile presence,
+  composer ran).
+- `vendor/composer/` exists inside the worktree (composer install ran).
+- For a repo with `package-lock.json` the bootstrap block shows `packages
+  ran: npm ci` (pnpm/bun/yarn equivalents for their lockfiles) and
+  `node_modules/` is populated.
+- Re-running `worktree add` still errors with `worktree_exists` before
+  bootstrap runs — a failed bootstrap never half-creates worktrees.
+
+Escape hatch — skip the bootstrap pass when you only need to read code:
+
+```bash
+wp datamachine-code workspace worktree add data-machine-code feat/readonly-smoke --skip-bootstrap
+ls ~/.datamachine/workspace/data-machine-code@feat-readonly-smoke/vendor 2>&1
+```
+
+Expected:
+- No `Bootstrap: …` block in the output.
+- `vendor/` and `node_modules/` do not exist in the worktree.
+
+Negative case — a step with a missing tool downgrades to skipped rather
+than failing (simulate by temporarily moving `composer` off PATH; skip the
+submodule step by adding a repo without `.gitmodules`).
 
 ## 4. Operate on the worktree handle
 

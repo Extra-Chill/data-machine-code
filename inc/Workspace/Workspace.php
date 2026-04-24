@@ -861,13 +861,24 @@ class Workspace {
 	 * absent the worktree is still created successfully; injection silently
 	 * skips.
 	 *
+	 * When `$bootstrap` is true (default), a bootstrap pass runs after the
+	 * worktree is created: `git submodule update --init --recursive` if
+	 * `.gitmodules` is present, a package-manager install if a lockfile is
+	 * present (pnpm/bun/yarn/npm), and `composer install` if `composer.lock`
+	 * is present. Steps are independent and each one is skipped gracefully
+	 * when its tool is unavailable. A failing step is surfaced in the result
+	 * but does not roll back the worktree — the checkout exists either way.
+	 * Pass `$bootstrap = false` (or `--no-bootstrap` on the CLI) for a bare
+	 * checkout when you only need to read code on that branch.
+	 *
 	 * @param string      $repo           Primary repo name (no @-suffix).
 	 * @param string      $branch         Branch to check out (e.g. "fix/foo-bar").
 	 * @param string|null $from           Base ref when creating the branch.
 	 * @param bool        $inject_context Whether to inject site-agent context (default true).
-	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, context_injected?: bool, context_files?: string[], context_skip_reason?: string}|\WP_Error
+	 * @param bool        $bootstrap      Whether to run submodule/package/composer install after creation (default true).
+	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array}|\WP_Error
 	 */
-	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true ): array|\WP_Error {
+	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true ): array|\WP_Error {
 		$repo   = $this->sanitize_name( $repo );
 		$branch = trim( $branch );
 
@@ -929,29 +940,29 @@ class Workspace {
 		if ( ! $inject_context ) {
 			$response['context_injected']    = false;
 			$response['context_skip_reason'] = 'inject_context flag disabled';
-			return $response;
+		} else {
+			$payload = WorktreeContextInjector::build_payload();
+			if ( null === $payload ) {
+				$response['context_injected']    = false;
+				$response['context_skip_reason'] = 'agent memory layer unavailable';
+			} else {
+				$injection = WorktreeContextInjector::inject( $wt_path, $payload );
+				if ( is_wp_error( $injection ) ) {
+					$response['context_injected']    = false;
+					$response['context_skip_reason'] = 'inject failed: ' . $injection->get_error_message();
+				} else {
+					WorktreeContextInjector::store_metadata( $wt_handle, $payload );
+					$response['context_injected'] = true;
+					$response['context_files']    = $injection['written'];
+					if ( ! empty( $injection['exclude_path'] ) ) {
+						$response['context_exclude_path'] = $injection['exclude_path'];
+					}
+				}
+			}
 		}
 
-		$payload = WorktreeContextInjector::build_payload();
-		if ( null === $payload ) {
-			$response['context_injected']    = false;
-			$response['context_skip_reason'] = 'agent memory layer unavailable';
-			return $response;
-		}
-
-		$injection = WorktreeContextInjector::inject( $wt_path, $payload );
-		if ( is_wp_error( $injection ) ) {
-			$response['context_injected']    = false;
-			$response['context_skip_reason'] = 'inject failed: ' . $injection->get_error_message();
-			return $response;
-		}
-
-		WorktreeContextInjector::store_metadata( $wt_handle, $payload );
-
-		$response['context_injected'] = true;
-		$response['context_files']    = $injection['written'];
-		if ( ! empty( $injection['exclude_path'] ) ) {
-			$response['context_exclude_path'] = $injection['exclude_path'];
+		if ( $bootstrap ) {
+			$response['bootstrap'] = WorktreeBootstrapper::bootstrap( $wt_path );
 		}
 
 		return $response;

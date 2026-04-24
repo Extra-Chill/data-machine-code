@@ -907,6 +907,19 @@ class WorkspaceCommand extends BaseCommand {
 	 *   paths to the repository's `info/exclude`. The ability-level input
 	 *   is `inject_context=false`; this flag is the CLI shorthand.
 	 *
+	 * [--skip-bootstrap]
+	 * : Skip the default bootstrap pass (applies to `add` only). By default,
+	 *   `worktree add` runs detected setup so the checkout is immediately
+	 *   test/build-ready:
+	 *     - git submodule update --init --recursive (if .gitmodules)
+	 *     - pnpm/bun/yarn/npm install (based on lockfile)
+	 *     - composer install --no-interaction (if composer.lock)
+	 *   Each step is skipped gracefully when its trigger file or tool is
+	 *   missing. Pass `--skip-bootstrap` to create a bare checkout for pure
+	 *   read use (faster, no deps installed). The ability-level input is
+	 *   `bootstrap=false`; this flag is the CLI shorthand (matches the
+	 *   existing `--skip-context-injection` convention).
+	 *
 	 * [--force]
 	 * : Force-remove a worktree even if it is dirty (applies to `remove` and
 	 *   `cleanup`). Does NOT override the unpushed-commits safety in cleanup.
@@ -960,6 +973,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Create a worktree without injecting site-agent context
 	 *     wp datamachine workspace worktree add data-machine fix/foo --skip-context-injection
 	 *
+	 *     # Create a bare worktree (skip the default bootstrap pass)
+	 *     wp datamachine workspace worktree add data-machine fix/foo --skip-bootstrap
+	 *
 	 *     # Re-read the originating site's agent memory into an existing worktree
 	 *     wp datamachine workspace worktree refresh-context data-machine@fix-foo
 	 *
@@ -999,7 +1015,7 @@ class WorkspaceCommand extends BaseCommand {
 		switch ( $operation ) {
 			case 'add':
 				if ( empty( $args[1] ) || empty( $args[2] ) ) {
-					WP_CLI::error( 'Usage: worktree add <repo> <branch> [--from=<ref>] [--skip-context-injection]' );
+					WP_CLI::error( 'Usage: worktree add <repo> <branch> [--from=<ref>] [--skip-context-injection] [--skip-bootstrap]' );
 					return;
 				}
 				$input['repo']   = $args[1];
@@ -1009,6 +1025,8 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				// --skip-context-injection disables the default-on injection step.
 				$input['inject_context'] = empty( $assoc_args['skip-context-injection'] );
+				// --skip-bootstrap disables the default-on bootstrap step.
+				$input['bootstrap'] = empty( $assoc_args['skip-bootstrap'] );
 				break;
 
 			case 'refresh-context':
@@ -1157,6 +1175,17 @@ class WorkspaceCommand extends BaseCommand {
 					} else {
 						$reason = $result['context_skip_reason'] ?? 'unknown';
 						WP_CLI::log( sprintf( 'Context: not injected (%s)', $reason ) );
+					}
+				}
+				if ( isset( $result['bootstrap'] ) && is_array( $result['bootstrap'] ) ) {
+					$bs      = $result['bootstrap'];
+					$ok      = ! empty( $bs['success'] );
+					$ran_any = ! empty( $bs['ran_any'] );
+					$label   = $ok ? ( $ran_any ? 'Bootstrap: ok' : 'Bootstrap: nothing to do' ) : 'Bootstrap: one or more steps FAILED';
+					WP_CLI::log( $label );
+					WP_CLI::log( \DataMachineCode\Workspace\WorktreeBootstrapper::format( $bs ) );
+					if ( ! $ok ) {
+						WP_CLI::warning( 'Worktree was created but bootstrap had failures. Re-run the failing step manually, or remove and retry.' );
 					}
 				}
 				return;
