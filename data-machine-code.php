@@ -323,7 +323,7 @@ Data Machine is your operating layer — memory, automation, and orchestration v
 Discover the full command surface: `{$wp} datamachine --help`. The groups below are the major command families — always run `--help` on any subcommand to see its options.
 
 **Memory & Agents:** Persistent files across sessions plus agent identity management.
-- Memory paths / read / write / search: `{$wp} datamachine agent paths|read|write|search`
+- Memory paths / read / write / search: `{$wp} datamachine memory paths|read|write|search`
 - Agent management: `{$wp} datamachine agents list|create|access|tokens` — identities, permissions, bearer tokens
 - Update MEMORY.md when you learn something persistent — read it first, append new info.
 
