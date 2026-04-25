@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.12.0] - 2026-04-25
+
+### Added
+- expose metadata in listings
+
+### Fixed
+- align $metadata assignment with surrounding block
+- rename workspace --path to --rel (collides with WP-CLI global)
+- clear lint check blockers
+
 ## [0.11.0] - 2026-04-25
 
 ### Added
