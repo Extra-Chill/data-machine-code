@@ -74,8 +74,8 @@ final class GitSyncRegistry {
 	 * Persist a binding (insert or update).
 	 */
 	public function save( GitSyncBinding $binding ): void {
-		$all                     = $this->loadRawArray();
-		$all[ $binding->slug ]   = $binding->toArray();
+		$all                   = $this->loadRawArray();
+		$all[ $binding->slug ] = $binding->toArray();
 		update_option( self::OPTION_KEY, $all, false );
 	}
 

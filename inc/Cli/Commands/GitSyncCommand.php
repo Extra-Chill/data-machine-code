@@ -279,14 +279,38 @@ class GitSyncCommand extends BaseCommand {
 		}
 
 		$rows = array(
-			array( 'field' => 'slug',           'value' => (string) ( $result['slug'] ?? '' ) ),
-			array( 'field' => 'local_path',     'value' => (string) ( $result['local_path'] ?? '' ) ),
-			array( 'field' => 'remote_url',     'value' => (string) ( $result['remote_url'] ?? '' ) ),
-			array( 'field' => 'tracked_branch', 'value' => (string) ( $result['tracked_branch'] ?? '' ) ),
-			array( 'field' => 'exists',         'value' => ! empty( $result['exists'] ) ? 'yes' : 'no' ),
-			array( 'field' => 'pulled_count',   'value' => (string) ( (int) ( $result['pulled_count'] ?? 0 ) ) ),
-			array( 'field' => 'last_pulled',    'value' => (string) ( $result['last_pulled'] ?? '-' ) ),
-			array( 'field' => 'last_commit',    'value' => (string) ( $result['last_commit'] ?? '-' ) ),
+			array(
+				'field' => 'slug',
+				'value' => (string) ( $result['slug'] ?? '' ),
+			),
+			array(
+				'field' => 'local_path',
+				'value' => (string) ( $result['local_path'] ?? '' ),
+			),
+			array(
+				'field' => 'remote_url',
+				'value' => (string) ( $result['remote_url'] ?? '' ),
+			),
+			array(
+				'field' => 'tracked_branch',
+				'value' => (string) ( $result['tracked_branch'] ?? '' ),
+			),
+			array(
+				'field' => 'exists',
+				'value' => ! empty( $result['exists'] ) ? 'yes' : 'no',
+			),
+			array(
+				'field' => 'pulled_count',
+				'value' => (string) ( (int) ( $result['pulled_count'] ?? 0 ) ),
+			),
+			array(
+				'field' => 'last_pulled',
+				'value' => (string) ( $result['last_pulled'] ?? '-' ),
+			),
+			array(
+				'field' => 'last_commit',
+				'value' => (string) ( $result['last_commit'] ?? '-' ),
+			),
 		);
 		$this->format_items( $rows, array( 'field', 'value' ), $assoc_args, 'field' );
 	}
@@ -452,7 +476,7 @@ class GitSyncCommand extends BaseCommand {
 			WP_CLI::error( 'Binding slug is required.' );
 		}
 
-		$patch = array();
+		$patch     = array();
 		$bool_keys = array(
 			'write-enabled'    => 'write_enabled',
 			'safe-direct-push' => 'safe_direct_push',
@@ -484,7 +508,10 @@ class GitSyncCommand extends BaseCommand {
 
 		$result = $this->execute_ability(
 			'datamachine/gitsync-policy-update',
-			array( 'slug' => $slug, 'policy' => $patch )
+			array(
+				'slug'   => $slug,
+				'policy' => $patch,
+			)
 		);
 
 		WP_CLI::success( sprintf( 'Policy updated for "%s".', $slug ) );

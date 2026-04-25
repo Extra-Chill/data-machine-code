@@ -163,11 +163,11 @@ class GitHubUpsert extends UpsertHandler {
 		return array(
 			'success'   => true,
 			'data'      => array(
-				'repo'        => $repo,
-				'file_path'   => $file_path,
-				'commit_sha'  => $result['commit']['sha'] ?? '',
-				'commit_url'  => $result['commit']['html_url'] ?? '',
-				'file_url'    => $result['content']['html_url'] ?? '',
+				'repo'       => $repo,
+				'file_path'  => $file_path,
+				'commit_sha' => $result['commit']['sha'] ?? '',
+				'commit_url' => $result['commit']['html_url'] ?? '',
+				'file_url'   => $result['content']['html_url'] ?? '',
 			),
 			'tool_name' => 'github_upsert',
 		);

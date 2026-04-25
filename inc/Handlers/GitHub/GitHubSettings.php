@@ -25,13 +25,13 @@ class GitHubSettings extends FetchHandlerSettings {
 	 */
 	public static function get_fields(): array {
 		$fields = array(
-			'repo'        => array(
+			'repo'          => array(
 				'type'        => 'text',
 				'label'       => __( 'Repository', 'data-machine-code' ),
 				'description' => __( 'GitHub repository in owner/repo format (e.g., Extra-Chill/data-machine). Falls back to default repo in settings.', 'data-machine-code' ),
 				'required'    => false,
 			),
-			'data_source' => array(
+			'data_source'   => array(
 				'type'        => 'select',
 				'label'       => __( 'Data Source', 'data-machine-code' ),
 				'description' => __( 'What to fetch from the repository.', 'data-machine-code' ),
@@ -43,7 +43,7 @@ class GitHubSettings extends FetchHandlerSettings {
 					'files'  => __( 'Source Files', 'data-machine-code' ),
 				),
 			),
-			'state'       => array(
+			'state'         => array(
 				'type'        => 'select',
 				'label'       => __( 'State Filter', 'data-machine-code' ),
 				'description' => __( 'Filter by issue/PR state.', 'data-machine-code' ),
@@ -55,25 +55,25 @@ class GitHubSettings extends FetchHandlerSettings {
 					'all'    => __( 'All', 'data-machine-code' ),
 				),
 			),
-			'labels'      => array(
+			'labels'        => array(
 				'type'        => 'text',
 				'label'       => __( 'Label Filter', 'data-machine-code' ),
 				'description' => __( 'Comma-separated label names to filter by (issues only).', 'data-machine-code' ),
 				'required'    => false,
 			),
-			'branch'       => array(
+			'branch'        => array(
 				'type'        => 'text',
 				'label'       => __( 'Branch', 'data-machine-code' ),
 				'description' => __( 'Git branch or ref to read from (files data source). Defaults to the repository default branch.', 'data-machine-code' ),
 				'required'    => false,
 			),
-			'file_path'    => array(
+			'file_path'     => array(
 				'type'        => 'text',
 				'label'       => __( 'File Path', 'data-machine-code' ),
 				'description' => __( 'Directory or file path prefix to filter (files data source). E.g., "inc/" or "src/Commands/". Leave empty for all files.', 'data-machine-code' ),
 				'required'    => false,
 			),
-			'file_pattern' => array(
+			'file_pattern'  => array(
 				'type'        => 'text',
 				'label'       => __( 'File Pattern', 'data-machine-code' ),
 				'description' => __( 'Glob pattern to filter filenames (files data source). E.g., "*.php" or "*.php,*.json". Leave empty for all file types.', 'data-machine-code' ),

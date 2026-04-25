@@ -117,7 +117,7 @@ class GitHub extends FetchHandler {
 		// Apply path prefix filter.
 		if ( ! empty( $file_path ) ) {
 			$prefix = rtrim( $file_path, '/' ) . '/';
-			$files  = array_filter( $files, fn( $f ) => str_starts_with( $f['path'], $prefix ) || $f['path'] === trim( $file_path, '/' ) );
+			$files  = array_filter( $files, fn( $f ) => str_starts_with( $f['path'], $prefix ) || trim( $file_path, '/' ) === $f['path'] );
 			$files  = array_values( $files );
 		}
 
@@ -128,8 +128,8 @@ class GitHub extends FetchHandler {
 
 		// Filter out binary/large files (> 500 KB, likely not source).
 		$max_file_size = (int) ( $config['max_file_size'] ?? 512000 );
-		$files = array_filter( $files, fn( $f ) => $f['size'] > 0 && $f['size'] <= $max_file_size );
-		$files = array_values( $files );
+		$files         = array_filter( $files, fn( $f ) => $f['size'] > 0 && $f['size'] <= $max_file_size );
+		$files         = array_values( $files );
 
 		if ( empty( $files ) ) {
 			$context->log( 'info', 'GitHub: No files matched filters.' );
@@ -152,24 +152,24 @@ class GitHub extends FetchHandler {
 				continue;
 			}
 
-			$file_data   = $file_result['file'];
-			$guid        = sprintf( 'github_%s_files_%s', $repo, $file['sha'] );
+			$file_data = $file_result['file'];
+			$guid      = sprintf( 'github_%s_files_%s', $repo, $file['sha'] );
 
 			$eligible_items[] = array(
 				'title'    => $file_data['path'],
 				'content'  => $file_data['content'],
 				'metadata' => array(
-					'source_type'       => 'github',
-					'original_id'       => $guid,
-					'dedup_key'         => $guid,
-					'original_title'    => $file_data['path'],
-					'github_repo'       => $repo,
-					'github_type'       => 'files',
-					'github_file_path'  => $file_data['path'],
-					'github_file_size'  => $file_data['size'],
-					'github_file_sha'   => $file_data['sha'],
-					'github_url'        => $file_data['html_url'],
-					'source_url'        => $file_data['html_url'],
+					'source_type'      => 'github',
+					'original_id'      => $guid,
+					'dedup_key'        => $guid,
+					'original_title'   => $file_data['path'],
+					'github_repo'      => $repo,
+					'github_type'      => 'files',
+					'github_file_path' => $file_data['path'],
+					'github_file_size' => $file_data['size'],
+					'github_file_sha'  => $file_data['sha'],
+					'github_url'       => $file_data['html_url'],
+					'source_url'       => $file_data['html_url'],
 				),
 			);
 		}

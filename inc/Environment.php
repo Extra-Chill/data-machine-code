@@ -85,6 +85,7 @@ class Environment {
 			return false;
 		}
 
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_writable -- Environment capability probe.
 		return is_writable( WP_CONTENT_DIR );
 	}
 }

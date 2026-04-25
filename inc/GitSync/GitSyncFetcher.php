@@ -97,12 +97,16 @@ final class GitSyncFetcher {
 
 			if ( PathSecurity::isSensitivePath( $path ) ) {
 				// Upstream shouldn't ship credentials, but defend anyway.
-				$conflicts[] = array( 'path' => $path, 'reason' => 'sensitive_path' );
+				$conflicts[] = array(
+					'path'   => $path,
+					'reason' => 'sensitive_path',
+				);
 				continue;
 			}
 
 			$local_exists = is_file( $dest );
-			$local_sha    = $local_exists ? GitHubRemote::blobSha( (string) file_get_contents( $dest ) ) : null;
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Local file SHA comparison, not a remote URL fetch.
+			$local_sha = $local_exists ? GitHubRemote::blobSha( (string) file_get_contents( $dest ) ) : null;
 
 			if ( $local_exists && $local_sha === $remote_sha ) {
 				$unchanged[] = $path;
@@ -115,11 +119,17 @@ final class GitSyncFetcher {
 			// edited it between pulls.
 			$tracked = in_array( $path, $binding->pulled_paths, true );
 			if ( $local_exists && $tracked && 'fail' === $conflict_policy && ! $allow_dirty ) {
-				$conflicts[] = array( 'path' => $path, 'reason' => 'local_modified' );
+				$conflicts[] = array(
+					'path'   => $path,
+					'reason' => 'local_modified',
+				);
 				continue;
 			}
 			if ( $local_exists && $tracked && 'manual' === $conflict_policy && ! $allow_dirty ) {
-				$conflicts[] = array( 'path' => $path, 'reason' => 'local_modified_manual' );
+				$conflicts[] = array(
+					'path'   => $path,
+					'reason' => 'local_modified_manual',
+				);
 				continue;
 			}
 			// upstream_wins or allow_dirty or untracked: fall through and overwrite.
@@ -134,7 +144,7 @@ final class GitSyncFetcher {
 				return new \WP_Error( 'mkdir_failed', sprintf( 'Could not create %s.', $parent ), array( 'status' => 500 ) );
 			}
 
-			$bytes = file_put_contents( $dest, $content );
+			$bytes = file_put_contents( $dest, $content ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- GitSync writes local bound files intentionally.
 			if ( false === $bytes ) {
 				return new \WP_Error( 'write_failed', sprintf( 'Could not write %s.', $dest ), array( 'status' => 500 ) );
 			}
@@ -151,6 +161,7 @@ final class GitSyncFetcher {
 			}
 			$victim = $absolute . '/' . $path;
 			if ( is_file( $victim ) ) {
+				// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- GitSync removes files that disappeared upstream.
 				unlink( $victim );
 			}
 			$deleted[] = $path;
@@ -166,9 +177,9 @@ final class GitSyncFetcher {
 			}
 		}
 
-		$binding->pulled_paths = array_values( $new_pulled );
+		$binding->pulled_paths = $new_pulled;
 		$binding->last_pulled  = gmdate( 'c' );
-		$binding->last_commit  = $tree_sha ?: $binding->last_commit;
+		$binding->last_commit  = $tree_sha ? $tree_sha : $binding->last_commit;
 		$this->registry->save( $binding );
 
 		return array(
@@ -196,7 +207,9 @@ final class GitSyncFetcher {
 	private function fetchBlobContent( string $slug, string $path, string $branch, string $pat ): string|\WP_Error {
 		$response = GitHubAbilities::apiGet(
 			GitHubRemote::apiUrl( $slug, 'contents/' . ltrim( $path, '/' ) ),
-			array( 'ref' => $branch ),
+			array(
+				'ref' => $branch,
+			),
 			$pat
 		);
 		if ( is_wp_error( $response ) ) {
@@ -221,7 +234,7 @@ final class GitSyncFetcher {
 			);
 		}
 
-		$decoded = base64_decode( (string) $data['content'], true );
+		$decoded = base64_decode( (string) $data['content'], true ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode -- Required by GitHub Contents API.
 		if ( false === $decoded ) {
 			return new \WP_Error( 'base64_decode_failed', sprintf( 'Could not decode base64 content for %s.', $path ), array( 'status' => 500 ) );
 		}
@@ -246,12 +259,11 @@ final class GitSyncFetcher {
 		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
-		$data = is_array( $response['data'] ?? null ) ? $response['data'] : array();
-		$decoded = base64_decode( (string) ( $data['content'] ?? '' ), true );
+		$data    = is_array( $response['data'] ?? null ) ? $response['data'] : array();
+		$decoded = base64_decode( (string) ( $data['content'] ?? '' ), true ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode -- Required by GitHub Git Data API.
 		if ( false === $decoded ) {
 			return new \WP_Error( 'base64_decode_failed', sprintf( 'Could not decode large blob %s.', $sha ), array( 'status' => 500 ) );
 		}
 		return $decoded;
 	}
-
 }

@@ -311,10 +311,10 @@ class GitHubAbilities {
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success'      => array( 'type' => 'boolean' ),
-							'commit'       => array( 'type' => 'object' ),
-							'content'      => array( 'type' => 'object' ),
-							'error'        => array( 'type' => 'string' ),
+							'success' => array( 'type' => 'boolean' ),
+							'commit'  => array( 'type' => 'object' ),
+							'content' => array( 'type' => 'object' ),
+							'error'   => array( 'type' => 'string' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'createOrUpdateFile' ),
@@ -731,13 +731,13 @@ class GitHubAbilities {
 		return array(
 			'success' => true,
 			'commit'  => array(
-				'sha'       => $data['commit']['sha'] ?? '',
-				'html_url'  => $data['commit']['html_url'] ?? '',
-				'message'   => $data['commit']['message'] ?? '',
+				'sha'      => $data['commit']['sha'] ?? '',
+				'html_url' => $data['commit']['html_url'] ?? '',
+				'message'  => $data['commit']['message'] ?? '',
 			),
 			'content' => array(
-				'path'      => $data['content']['path'] ?? $file_path,
-				'html_url'  => $data['content']['html_url'] ?? '',
+				'path'     => $data['content']['path'] ?? $file_path,
+				'html_url' => $data['content']['html_url'] ?? '',
 			),
 			'message' => sprintf(
 				'File %s in %s.',
@@ -841,7 +841,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'file_too_large', 'File content not available (may exceed 1 MB GitHub API limit).', array( 'status' => 400 ) );
 		}
 
-		$decoded = base64_decode( $data['content'], true );
+		$decoded = base64_decode( $data['content'], true ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode -- Required by GitHub Contents API.
 		if ( false === $decoded ) {
 			return new \WP_Error( 'decode_failed', 'Failed to decode file content.', array( 'status' => 500 ) );
 		}
@@ -985,10 +985,10 @@ class GitHubAbilities {
 	 */
 	public static function normalizeFileContent( array $data, string $decoded ): array {
 		return array(
-			'path'    => $data['path'] ?? '',
-			'size'    => (int) ( $data['size'] ?? 0 ),
-			'sha'     => $data['sha'] ?? '',
-			'content' => $decoded,
+			'path'     => $data['path'] ?? '',
+			'size'     => (int) ( $data['size'] ?? 0 ),
+			'sha'      => $data['sha'] ?? '',
+			'content'  => $decoded,
 			'html_url' => $data['html_url'] ?? '',
 		);
 	}

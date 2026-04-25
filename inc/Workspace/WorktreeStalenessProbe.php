@@ -80,7 +80,7 @@ final class WorktreeStalenessProbe {
 			return $result;
 		}
 
-		$count = self::parse_count( (string) ( $result['output'] ?? '' ) );
+		$count = self::parse_count( $result['output'] );
 		return $count;
 	}
 

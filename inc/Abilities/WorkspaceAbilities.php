@@ -745,37 +745,37 @@ class WorkspaceAbilities {
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success'             => array( 'type' => 'boolean' ),
-							'handle'              => array( 'type' => 'string' ),
-							'path'                => array( 'type' => 'string' ),
-							'branch'              => array( 'type' => 'string' ),
-							'slug'                => array( 'type' => 'string' ),
-							'created_branch'      => array( 'type' => 'boolean' ),
-							'message'             => array( 'type' => 'string' ),
-							'context_injected'    => array( 'type' => 'boolean' ),
-							'context_files'       => array(
+							'success'                   => array( 'type' => 'boolean' ),
+							'handle'                    => array( 'type' => 'string' ),
+							'path'                      => array( 'type' => 'string' ),
+							'branch'                    => array( 'type' => 'string' ),
+							'slug'                      => array( 'type' => 'string' ),
+							'created_branch'            => array( 'type' => 'boolean' ),
+							'message'                   => array( 'type' => 'string' ),
+							'context_injected'          => array( 'type' => 'boolean' ),
+							'context_files'             => array(
 								'type'  => 'array',
 								'items' => array( 'type' => 'string' ),
 							),
-							'context_exclude_path' => array( 'type' => 'string' ),
-							'context_skip_reason' => array( 'type' => 'string' ),
-							'bootstrap'           => array(
+							'context_exclude_path'      => array( 'type' => 'string' ),
+							'context_skip_reason'       => array( 'type' => 'string' ),
+							'bootstrap'                 => array(
 								'type'        => 'object',
 								'description' => 'Present only when bootstrap=true. Contains success/ran_any booleans and a steps array.',
 							),
-							'fetch_failed'        => array(
+							'fetch_failed'              => array(
 								'type'        => 'boolean',
 								'description' => 'Present only when the pre-create `git fetch origin` failed. Worktree creation continues either way; staleness fields are omitted when true.',
 							),
-							'fetch_error'         => array(
+							'fetch_error'               => array(
 								'type'        => 'string',
 								'description' => 'Present only when fetch_failed=true. Trimmed error output from the failing fetch.',
 							),
-							'stale_commits_behind' => array(
+							'stale_commits_behind'      => array(
 								'type'        => 'integer',
 								'description' => 'For the existing-local-branch path, how many commits the worktree branch is behind its configured upstream. Omitted when no upstream is configured.',
 							),
-							'upstream'            => array(
+							'upstream'                  => array(
 								'type'        => 'string',
 								'description' => 'Paired with stale_commits_behind: the upstream ref label (e.g. `origin/fix/foo`).',
 							),
@@ -783,27 +783,27 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'For the new-branch path cut from a local base ref: how many commits that local base is behind its origin counterpart at fetch time.',
 							),
-							'base_upstream'       => array(
+							'base_upstream'             => array(
 								'type'        => 'string',
 								'description' => 'Paired with base_stale_commits_behind: the origin ref the local base was compared against (e.g. `origin/main`).',
 							),
-							'gate_threshold'      => array(
+							'gate_threshold'            => array(
 								'type'        => 'integer',
 								'description' => 'Echo of the staleness threshold (in commits) that was evaluated. Present whenever the gate ran (i.e. `allow_stale` was false and fetch succeeded).',
 							),
-							'rebase_attempted'    => array(
+							'rebase_attempted'          => array(
 								'type'        => 'boolean',
 								'description' => 'Set when `rebase_base=true` AND there was meaningful staleness to rebase over. Absent when rebase was not requested or there was nothing to do.',
 							),
-							'rebase_target'       => array(
+							'rebase_target'             => array(
 								'type'        => 'string',
 								'description' => 'Paired with `rebase_attempted`: the ref the worktree was rebased onto (e.g. `@{upstream}` or `origin/main`).',
 							),
-							'rebase_succeeded'    => array(
+							'rebase_succeeded'          => array(
 								'type'        => 'boolean',
 								'description' => 'Paired with `rebase_attempted`: true when the rebase landed cleanly, false when it hit conflicts and was aborted.',
 							),
-							'rebase_error'       => array(
+							'rebase_error'              => array(
 								'type'        => 'string',
 								'description' => 'Present only when `rebase_succeeded=false`. Trimmed error output from the failing rebase.',
 							),
