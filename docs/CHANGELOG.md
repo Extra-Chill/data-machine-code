@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.11.0] - 2026-04-25
+
+### Added
+- feat(agents-md): contribute homeboy CLI section when on PATH
+
+### Fixed
+- fix(agents-md): include resolved workspace root
+
 ## [0.10.0] - 2026-04-24
 
 ### Added
