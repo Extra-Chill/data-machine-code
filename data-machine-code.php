@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Data Machine Code
  * Plugin URI: https://github.com/Extra-Chill/data-machine-code
- * Description: Developer tools extension for Data Machine. GitHub integration, workspace management, git operations, and code tools for WordPress AI agents.
+ * Description: Bridge between WordPress and an external coding-agent runtime (Claude Code, OpenCode, kimaki, etc.). Owns AGENTS.md, the workspace area, and the GitHub / workspace / git abilities the runtime calls back into. Activation is the declarative "a coding agent lives here" signal.
  * Version: 0.10.0
  * Requires at least: 6.9
  * Requires PHP: 8.2
