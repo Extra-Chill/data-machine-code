@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.13.0] - 2026-04-25
+
+### Added
+- feat(agents.md): priority-0 marker section + tighten Code subsection
+- add delete primitive (closes #64)
+
+### Fixed
+- collect repeatable --rel flag from argv (closes #67)
+- land delete_path impl + ability registration missed by #65
+
 ## [0.12.1] - 2026-04-25
 
 ### Fixed
