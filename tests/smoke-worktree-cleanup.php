@@ -74,7 +74,22 @@ namespace {
 
 	if ( ! function_exists( 'get_option' ) ) {
 		function get_option( string $name, $default = false ) {
-			return $default;
+			global $datamachine_code_test_options;
+			return $datamachine_code_test_options[ $name ] ?? $default;
+		}
+	}
+
+	if ( ! function_exists( 'update_option' ) ) {
+		function update_option( string $name, $value, $autoload = null ): bool {
+			global $datamachine_code_test_options;
+			$datamachine_code_test_options[ $name ] = $value;
+			return true;
+		}
+	}
+
+	if ( ! function_exists( 'apply_filters' ) ) {
+		function apply_filters( string $hook_name, $value ) {
+			return $value;
 		}
 	}
 
@@ -84,6 +99,10 @@ namespace {
 		}
 	}
 
+	require __DIR__ . '/../inc/Support/GitHubRemote.php';
+	require __DIR__ . '/../inc/Support/GitRunner.php';
+	require __DIR__ . '/../inc/Support/PathSecurity.php';
+	require __DIR__ . '/../inc/Workspace/WorktreeContextInjector.php';
 	require __DIR__ . '/../inc/Workspace/Workspace.php';
 
 	// Skip if git missing.
@@ -102,10 +121,11 @@ namespace {
 		}
 	} );
 
-	define( 'DATAMACHINE_WORKSPACE_PATH', $tmp );
+	define( 'DATAMACHINE_WORKSPACE_PATH', realpath( $tmp ) ?: $tmp );
 
 	$failures = 0;
 	$total    = 0;
+	$datamachine_code_test_options = array();
 
 	$assert = function ( $expected, $actual, string $message ) use ( &$failures, &$total ): void {
 		$total++;
@@ -191,6 +211,17 @@ namespace {
 	// Dirty the dirty worktree.
 	file_put_contents( $tmp . '/demo@dirty-branch/scratch.txt', 'dirty' );
 
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_metadata(
+		'demo@unmerged-feature',
+		array(
+			'site_url'   => 'http://example.test',
+			'site_name'  => 'Example',
+			'agent_slug' => 'agent-one',
+			'abspath'    => '/example',
+			'timestamp'  => '2026-04-25T00:00:00+00:00',
+		)
+	);
+
 	// Simulate "remote deleted the merged-autodelete branch" — classic
 	// GitHub auto-delete-on-merge scenario. After a fetch --prune, the
 	// local branch's upstream tracking ref will be "gone".
@@ -215,6 +246,12 @@ namespace {
 
 	$assert( true, ! is_wp_error( $plan ) && ( $plan['success'] ?? false ), 'dry_run returns success' );
 	$assert( true, $plan['dry_run'] ?? false, 'dry_run flag echoes back true' );
+
+	$list = $ws->worktree_list( 'demo' );
+	$metadata_items = array_filter( $list['worktrees'] ?? array(), fn( $wt ) => ( $wt['handle'] ?? '' ) === 'demo@unmerged-feature' );
+	$metadata_item  = array_values( $metadata_items )[0] ?? array();
+	$assert( '2026-04-25T00:00:00+00:00', $metadata_item['created_at'] ?? null, 'worktree list exposes creation metadata for agent runtime' );
+	$assert( 'agent-one', $metadata_item['metadata']['agent_slug'] ?? null, 'worktree list exposes agent metadata for agent runtime' );
 
 	$assert_contains( $plan['candidates'] ?? array(), 'demo@merged-autodelete', 'canonical merged worktree flagged prunable' );
 
@@ -277,7 +314,6 @@ namespace {
 
 	// Verify validate_containment catches a primary being passed in.
 	$reflection = new \ReflectionMethod( \DataMachineCode\Workspace\Workspace::class, 'remove_worktree_by_path' );
-	$reflection->setAccessible( true );
 	$safety = $reflection->invoke( $ws, 'demo', 'main', $primary, false );
 	$is_error = is_wp_error( $safety );
 	$assert( true, $is_error, 'remove_worktree_by_path refuses primary (is WP_Error)' );

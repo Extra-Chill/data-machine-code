@@ -886,6 +886,8 @@ class WorkspaceAbilities {
 										'head'        => array( 'type' => 'string' ),
 										'path'        => array( 'type' => 'string' ),
 										'dirty'       => array( 'type' => 'integer' ),
+										'created_at'  => array( 'type' => array( 'string', 'null' ) ),
+										'metadata'    => array( 'type' => array( 'object', 'null' ) ),
 									),
 								),
 							),
