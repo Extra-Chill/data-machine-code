@@ -1,10 +1,23 @@
 # Data Machine Code
 
-Developer tools extension for [Data Machine](https://github.com/Extra-Chill/data-machine). GitHub integration, workspace management, git operations, and code tools for WordPress AI agents.
+The bridge between WordPress and an external coding-agent runtime (Claude Code, OpenCode, kimaki, etc.). Built on [Data Machine](https://github.com/Extra-Chill/data-machine).
 
-## What It Does
+## What It Is
 
-Data Machine Code extracts developer-oriented tooling from Data Machine core into a standalone extension. Not every WordPress site needs GitHub integration or workspace management — but if you're using Data Machine as a coding agent platform, this plugin gives your agents the tools to work with code repositories directly from WordPress.
+Data Machine Code's activation is the declarative answer to **"is there a coding agent here?"** When DMC is loaded, the WordPress install is no longer just a site running an AI — it is the WordPress half of a coding-agent system. The other half is whatever runtime the user pointed at the install (Claude Code, OpenCode, kimaki, Studio Code, etc.).
+
+That framing reshapes what every other plugin can assume:
+
+- **AGENTS.md is composed and written to the WP root**, where the runtime discovers it on session start. DMC owns the file, contributes core sections, and lets other plugins register more via Data Machine's `SectionRegistry`.
+- **The runtime gains GitHub, workspace, and git abilities** through the Abilities API — every ability is automatically callable from chat, MCP, REST, and WP-CLI.
+- **A worktree-native workspace area** at `~/.datamachine/workspace/` lets agents clone repos, edit files in isolated branches, and push changes — all gated by per-repo policies.
+- **`\DataMachineCode\Environment` is a capability surface** plugins can read to ask "is a coding agent here?", "can we shell out?", "is the filesystem writable outside `/uploads`?". Other DM plugins use it to gate disk-side hooks (e.g. Intelligence's `SKILL.md` sync).
+
+On managed hosts (WordPress.com, VIP, sandboxed environments) DMC is **never installed by design**. The class doesn't exist, AGENTS.md isn't composed, no shell capabilities are advertised. Site owners get a vanilla Data Machine install without any expectation of a coding agent running alongside it. That asymmetry is the whole point — DMC is the seam between "WordPress that knows about a coding agent" and "WordPress that doesn't."
+
+## How It Differs From Other Data Machine Extensions
+
+Sibling extensions like `data-machine-socials` and `data-machine-business` are **handler-adding** — they extend DM's pipeline machinery with new sources, destinations, or transforms. DMC is **runtime-altering** — its presence changes what kind of system this is. That's why DMC owns AGENTS.md, declares environment capabilities, and gates the existence of an entire class of disk-side functionality. Same plugin chassis, fundamentally different role.
 
 ## Features
 
@@ -91,6 +104,7 @@ on it are how parallel agents corrupt each other's work.
 - WordPress 6.9+
 - PHP 8.2+
 - [Data Machine](https://github.com/Extra-Chill/data-machine) plugin (core)
+- A coding-agent runtime on the same host (Claude Code, OpenCode, kimaki, etc.) — DMC is the WordPress half of that pairing. Without a runtime calling back, DMC's abilities still register but nothing exercises them.
 
 ## Installation
 
@@ -98,6 +112,7 @@ on it are how parallel agents corrupt each other's work.
 2. Clone this repo to `wp-content/plugins/data-machine-code`
 3. Run `composer install`
 4. Activate the plugin
+5. Point a coding-agent runtime at the install (out of scope for this README; see [`wp-coding-agents`](https://github.com/Extra-Chill/wp-coding-agents) for an opinionated setup)
 
 ## Configuration
 
@@ -110,17 +125,58 @@ Workspace git policies are configured via the `datamachine_workspace_git_policie
 ## Architecture
 
 ```
-data-machine (core)
-├── AI engine, pipelines, jobs, agents
-├── Memory system, tools framework
-└── Base classes for extensions
-    │
-    ├── data-machine-socials (social platforms)
-    ├── data-machine-code (developer tools) ← this plugin
-    └── data-machine-business (transforms)
+┌──────────────────────────────────────────────────────────────────┐
+│ Coding-agent runtime (Claude Code, OpenCode, kimaki, ...)        │
+│  - reads AGENTS.md on session start                              │
+│  - calls back into WP via WP-CLI, MCP, REST                      │
+└──────────────────────────────────────────────────────────────────┘
+                              ▲
+                              │  bridge
+                              ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ data-machine-code (this plugin)                                  │
+│  - composes & owns AGENTS.md at the WP root                      │
+│  - declares \DataMachineCode\Environment capabilities            │
+│  - hosts the workspace area (~/.datamachine/workspace/)          │
+│  - registers GitHub / workspace / git abilities                  │
+└──────────────────────────────────────────────────────────────────┘
+                              ▲
+                              │  built on
+                              ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ data-machine (core)                                              │
+│  - AI engine, pipelines, jobs, agents                            │
+│  - Memory system, MemoryFileRegistry, SectionRegistry            │
+│  - Abilities API plumbing, tool framework                        │
+└──────────────────────────────────────────────────────────────────┘
+                              ▲
+                              │  also extended by
+                              ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ Handler-adding siblings — different role from DMC                │
+│  - data-machine-socials (social platforms)                       │
+│  - data-machine-business (transforms)                            │
+│  - ...                                                           │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-Data Machine Code extends core base classes (`BaseTool`, `SystemTask`, `BaseCommand`, `FetchHandler`) and registers its capabilities through standard Data Machine hooks (`datamachine_tools`, `datamachine_tasks`, Abilities API).
+DMC extends core base classes (`BaseTool`, `SystemTask`, `BaseCommand`, `FetchHandler`) and registers its capabilities through standard Data Machine hooks (`datamachine_tools`, `datamachine_tasks`, `MemoryFileRegistry`, `SectionRegistry`, Abilities API). Its difference from the handler-adding siblings is **what it changes about the install**, not what API it uses to register things.
+
+### Capability detection
+
+Other plugins gate disk-side or shell-using behavior on DMC's presence rather than on platform sniffing:
+
+```php
+if ( class_exists( '\DataMachineCode\Environment' ) ) {
+    // Co-located coding-agent runtime exists — register disk hooks,
+    // sync SKILL.md to .opencode/skills/, write MEMORY.md, etc.
+}
+
+\DataMachineCode\Environment::has_shell();        // can we shell_exec?
+\DataMachineCode\Environment::has_writable_fs();  // can we write outside /uploads?
+```
+
+This is intentionally simpler than detecting WP.com vs VIP vs self-hosted — those distinctions don't matter. What matters is "is a coding agent listening?" and that question has exactly one answer: "is DMC active?"
 
 ## Roadmap
 
