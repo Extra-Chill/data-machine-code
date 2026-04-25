@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.12.1] - 2026-04-25
+
+### Fixed
+- fix(agents-md): point Memory verb at `datamachine memory`, not `datamachine agent`
+
 ## [0.12.0] - 2026-04-25
 
 ### Added
