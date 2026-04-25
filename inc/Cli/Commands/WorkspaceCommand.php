@@ -693,6 +693,46 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	/**
+	 * Collect every `--<flag>=<value>` occurrence from the raw process argv.
+	 *
+	 * WP-CLI's parsed `$assoc_args` is last-wins for repeated assoc flags —
+	 * it never returns an array, even when the synopsis declares the flag as
+	 * repeatable (`...`). For commands that document a flag as repeatable
+	 * (`--rel`, `--include`, etc.), we walk $GLOBALS['argv'] directly so
+	 * every occurrence is preserved in argv order.
+	 *
+	 * Empty values are filtered out. Bare `--<flag>` (no value) is ignored
+	 * because it's ambiguous in the assoc-flag context.
+	 *
+	 * @param string $flag Flag name without the leading `--` (e.g. 'rel').
+	 * @return string[] Every value, in argv order, for the named flag.
+	 */
+	private function collectRepeatableFlag( string $flag ): array {
+		$argv = $GLOBALS['argv'] ?? array();
+		if ( ! is_array( $argv ) ) {
+			return array();
+		}
+
+		$prefix    = '--' . $flag . '=';
+		$prefix_len = strlen( $prefix );
+		$values    = array();
+
+		foreach ( $argv as $token ) {
+			if ( ! is_string( $token ) ) {
+				continue;
+			}
+			if ( 0 === strpos( $token, $prefix ) ) {
+				$value = substr( $token, $prefix_len );
+				if ( '' !== $value ) {
+					$values[] = $value;
+				}
+			}
+		}
+
+		return $values;
+	}
+
+	/**
 	 * Resolve @file syntax — if a string starts with @, read file contents.
 	 *
 	 * Mirrors curl's -d @filename convention. If the value doesn't start
@@ -840,11 +880,7 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( 'add' === $operation ) {
-			$paths = $assoc_args['rel'] ?? array();
-			if ( ! is_array( $paths ) ) {
-				$paths = array( $paths );
-			}
-			$input['paths'] = array_values( array_filter( array_map( 'strval', $paths ) ) );
+			$input['paths'] = $this->collectRepeatableFlag( 'rel' );
 
 			if ( empty( $input['paths'] ) ) {
 				WP_CLI::error( 'git add requires at least one --rel=<relative/path>.' );
@@ -884,9 +920,9 @@ class WorkspaceCommand extends BaseCommand {
 			if ( ! empty( $assoc_args['staged'] ) ) {
 				$input['staged'] = true;
 			}
-			if ( isset( $assoc_args['rel'] ) ) {
-				$rel           = $assoc_args['rel'];
-				$input['path'] = is_array( $rel ) ? (string) reset( $rel ) : (string) $rel;
+			$diff_paths = $this->collectRepeatableFlag( 'rel' );
+			if ( ! empty( $diff_paths ) ) {
+				$input['path'] = (string) $diff_paths[0];
 			}
 		}
 
