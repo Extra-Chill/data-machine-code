@@ -313,6 +313,8 @@ add_action( 'plugins_loaded', function () {
 
 	// Data Machine — memory, automation, code, system.
 	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'datamachine', 10, function () use ( $wp ) {
+		$workspace_path = datamachine_code_resolve_workspace_path_for_agents_md();
+
 		return <<<MD
 ## Data Machine
 
@@ -346,6 +348,7 @@ Discover the full command surface: `{$wp} datamachine --help`. The groups below 
 - External sites & handler tests: `{$wp} datamachine external|test`
 
 **Code (data-machine-code):** All code changes go through the managed workspace and GitHub — never edit site files directly.
+- Workspace root: `{$workspace_path}`
 - Workspace: `{$wp} datamachine-code workspace clone|worktree|read|write|edit|ls|list|show|remove|git` — clone repos, create per-branch worktrees, edit files, commit, and push
 - GitHub: `{$wp} datamachine-code github issues|pulls|repos|comment` — create PRs, manage issues, comment on reviews
 - Git sync: `{$wp} datamachine-code gitsync` — sync workspace repos with remotes
@@ -482,4 +485,25 @@ function datamachine_code_resolve_wp_cli_cmd(): string {
 	 * @param string $wp_cli_cmd The default WP-CLI command prefix.
 	 */
 	return apply_filters( 'datamachine_wp_cli_cmd', $default );
+}
+
+/**
+ * Resolve the live workspace path for agent-facing instructions.
+ *
+ * AGENTS.md can be recomposed long after setup. Resolve from Workspace at
+ * compose time so custom DATAMACHINE_WORKSPACE_PATH installs do not regress to
+ * generic/default workspace guidance after invalidation.
+ *
+ * @return string Resolved workspace path or a diagnostic fallback.
+ */
+function datamachine_code_resolve_workspace_path_for_agents_md(): string {
+	if ( class_exists( '\DataMachineCode\Workspace\Workspace' ) ) {
+		$workspace_path = ( new \DataMachineCode\Workspace\Workspace() )->get_path();
+
+		if ( '' !== $workspace_path ) {
+			return $workspace_path;
+		}
+	}
+
+	return 'unavailable; run datamachine-code workspace path to diagnose';
 }
