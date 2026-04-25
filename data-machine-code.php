@@ -393,6 +393,37 @@ MD;
 		'description' => 'Pointers to WordPress source directories.',
 	) );
 
+	// Homeboy — conditional, only on hosts where the `homeboy` CLI is
+	// callable from PATH. Mirrors the house style of other AGENTS.md
+	// sections: lead with a one-line definition, group with bold
+	// sub-labels, end with a discoverability hint. `homeboy --help`
+	// is the canonical verb list; this section just surfaces the
+	// verbs agents reach for and the repo-level rules.
+	if ( \DataMachineCode\Homeboy::is_available() ) {
+		\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'homeboy', 35, function () {
+			return <<<'MD'
+## Homeboy
+
+`homeboy` is a Rust CLI on this host. Every verb runs the same locally as in CI.
+
+**Quality:** `homeboy audit | lint | test | refactor`
+
+**Git:** prefer `homeboy git changes | status | commit | push | pull | tag` — auto-baselines, structured output, `--json` bulk. One-off reads (`git diff`, `git show`, `git blame`) stay on raw `git`.
+
+**Perf + envs:** `homeboy bench` for pinned benchmarks, `homeboy rig` for reproducible dev environments.
+
+**Repo rules** (when `homeboy.json` is present):
+- **NEVER edit `CHANGELOG.md`** — generated from conventional commits at release time.
+- **NEVER hand-bump version strings** — `feat:`/`fix:`/`BREAKING CHANGE` drive semver; Homeboy rewrites version targets in `homeboy.json`.
+
+Run `homeboy --help` for the full verb list. Operator verbs (`release`, `deploy`, `fleet`, `ssh`) only on explicit ask.
+MD;
+		}, array(
+			'label'       => 'Homeboy',
+			'description' => 'Homeboy CLI — verbs agents reach for + repo rules.',
+		) );
+	}
+
 	// Multisite — conditional, only on multisite installs.
 	if ( is_multisite() ) {
 		\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'multisite', 40, function () use ( $wp ) {
