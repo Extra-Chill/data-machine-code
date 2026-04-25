@@ -667,8 +667,9 @@ class WorkspaceCommand extends BaseCommand {
 	 * [<value>]
 	 * : Optional operation value (e.g., commit message for commit).
 	 *
-	 * [--path=<path>]
-	 * : Relative path (repeatable) for add/diff operations.
+	 * [--rel=<path>]
+	 * : Relative path (repeatable) for add/diff operations. Named `--rel`
+	 *   to avoid colliding with WP-CLI's documented global `--path` flag.
 	 *
 	 * [--allow-dirty]
 	 * : Allow pull with dirty working tree.
@@ -703,7 +704,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine workspace git pull data-machine
 	 *
 	 *     # Stage docs paths
-	 *     wp datamachine workspace git add extrachill-docs --path=ec_docs/community/getting-started.md
+	 *     wp datamachine workspace git add extrachill-docs --rel=ec_docs/community/getting-started.md
 	 *
 	 *     # Commit staged changes
 	 *     wp datamachine workspace git commit extrachill-docs "docs: update community guide"
@@ -715,7 +716,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine workspace git log data-machine --limit=10
 	 *
 	 *     # Show diff for a path
-	 *     wp datamachine workspace git diff data-machine --path=inc/Core/FilesRepository/Workspace.php
+	 *     wp datamachine workspace git diff data-machine --rel=inc/Core/FilesRepository/Workspace.php
 	 *
 	 * @subcommand git
 	 */
@@ -762,14 +763,14 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( 'add' === $operation ) {
-			$paths = $assoc_args['path'] ?? array();
+			$paths = $assoc_args['rel'] ?? array();
 			if ( ! is_array( $paths ) ) {
 				$paths = array( $paths );
 			}
 			$input['paths'] = array_values( array_filter( array_map( 'strval', $paths ) ) );
 
 			if ( empty( $input['paths'] ) ) {
-				WP_CLI::error( 'git add requires at least one --path=<relative/path>.' );
+				WP_CLI::error( 'git add requires at least one --rel=<relative/path>.' );
 				return;
 			}
 		}
@@ -806,9 +807,9 @@ class WorkspaceCommand extends BaseCommand {
 			if ( ! empty( $assoc_args['staged'] ) ) {
 				$input['staged'] = true;
 			}
-			if ( isset( $assoc_args['path'] ) ) {
-				$path          = $assoc_args['path'];
-				$input['path'] = is_array( $path ) ? (string) reset( $path ) : (string) $path;
+			if ( isset( $assoc_args['rel'] ) ) {
+				$rel           = $assoc_args['rel'];
+				$input['path'] = is_array( $rel ) ? (string) reset( $rel ) : (string) $rel;
 			}
 		}
 

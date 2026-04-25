@@ -142,7 +142,7 @@ option). For this smoke pass, set `write_enabled` and `push_enabled` for
 ```bash
 wp datamachine-code workspace write data-machine-code@feat-test-worktree tests/SMOKE.txt --content="hello"
 wp datamachine-code workspace git status data-machine-code@feat-test-worktree
-wp datamachine-code workspace git add data-machine-code@feat-test-worktree --path=tests/SMOKE.txt
+wp datamachine-code workspace git add data-machine-code@feat-test-worktree --rel=tests/SMOKE.txt
 wp datamachine-code workspace git commit data-machine-code@feat-test-worktree "test: smoke worktree commit"
 wp datamachine-code workspace git log data-machine-code@feat-test-worktree --limit=3
 ```

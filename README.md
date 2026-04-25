@@ -73,7 +73,7 @@ wp datamachine-code workspace edit repo-name@fix-foo path/to/file.txt --old="foo
 wp datamachine-code workspace remove repo-name
 wp datamachine-code workspace git status repo-name@fix-foo
 wp datamachine-code workspace git pull repo-name@fix-foo
-wp datamachine-code workspace git add repo-name@fix-foo --path=src/file.php
+wp datamachine-code workspace git add repo-name@fix-foo --rel=src/file.php
 wp datamachine-code workspace git commit repo-name@fix-foo "fix: something"
 wp datamachine-code workspace git push repo-name@fix-foo
 wp datamachine-code workspace git log repo-name@fix-foo
