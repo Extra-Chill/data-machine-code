@@ -616,6 +616,83 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	/**
+	 * Delete a tracked or untracked path from a workspace repo.
+	 *
+	 * Tracked paths are removed via `git rm` (working tree + index in one
+	 * shot). Untracked paths are unlinked from disk; directories require
+	 * --recursive. Sensitive-path, traversal, allowlist, and primary-mutation
+	 * gates apply just like `workspace git add`.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <repo>
+	 * : Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).
+	 *
+	 * <path>
+	 * : Relative path within the repo (file or directory).
+	 *
+	 * [--recursive]
+	 * : Required when target is a directory.
+	 *
+	 * [--allow-primary-mutation]
+	 * : Permit mutation on the primary checkout (default off). Worktrees are always allowed.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     # Delete a tracked file (staged via git rm)
+	 *     wp datamachine-code workspace delete homeboy@my-branch src/old_module.rs
+	 *
+	 *     # Delete an entire directory tree
+	 *     wp datamachine-code workspace delete homeboy@my-branch src/legacy --recursive
+	 *
+	 *     # Delete on the primary checkout (rare, gated)
+	 *     wp datamachine-code workspace delete homeboy notes.md --allow-primary-mutation
+	 *
+	 * @subcommand delete
+	 */
+	public function delete( array $args, array $assoc_args ): void {
+		if ( empty( $args[0] ) || empty( $args[1] ) ) {
+			WP_CLI::error( 'Usage: wp datamachine-code workspace delete <repo> <path> [--recursive] [--allow-primary-mutation]' );
+			return;
+		}
+
+		$ability = wp_get_ability( 'datamachine/workspace-delete' );
+		if ( ! $ability ) {
+			WP_CLI::error( 'Workspace delete ability not available.' );
+			return;
+		}
+
+		$input = array(
+			'repo' => $args[0],
+			'path' => $args[1],
+		);
+
+		if ( ! empty( $assoc_args['recursive'] ) ) {
+			$input['recursive'] = true;
+		}
+		if ( ! empty( $assoc_args['allow-primary-mutation'] ) ) {
+			$input['allow_primary_mutation'] = true;
+		}
+
+		$result = $ability->execute( $input );
+
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+
+		$count = is_array( $result['deleted'] ?? null ) ? count( $result['deleted'] ) : 1;
+		$mode  = ! empty( $result['was_tracked'] ) ? 'git rm' : 'unlink';
+		WP_CLI::success( sprintf(
+			'Deleted %s via %s (%d path%s removed)',
+			$result['path'],
+			$mode,
+			$count,
+			1 === $count ? '' : 's'
+		) );
+	}
+
+	/**
 	 * Resolve @file syntax — if a string starts with @, read file contents.
 	 *
 	 * Mirrors curl's -d @filename convention. If the value doesn't start
