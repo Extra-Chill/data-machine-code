@@ -150,19 +150,19 @@ class WorktreeCleanupTask extends SystemTask {
 				'error',
 				'Worktree cleanup task failed',
 				array(
-					'task'   => $this->getTaskType(),
-					'jobId'  => $jobId,
-					'error'  => $result->get_error_message(),
-					'code'   => $result->get_error_code(),
+					'task'  => $this->getTaskType(),
+					'jobId' => $jobId,
+					'error' => $result->get_error_message(),
+					'code'  => $result->get_error_code(),
 				)
 			);
 			$this->failJob( $jobId, $result->get_error_message() );
 			return;
 		}
 
-		$removed_count  = count( $result['removed'] ?? array() );
-		$skipped_count  = count( $result['skipped'] ?? array() );
-		$candidate_count = count( $result['candidates'] ?? array() );
+		$removed_count   = count( $result['removed'] );
+		$skipped_count   = count( $result['skipped'] );
+		$candidate_count = count( $result['candidates'] );
 
 		do_action(
 			'datamachine_log',
@@ -175,23 +175,23 @@ class WorktreeCleanupTask extends SystemTask {
 				$skipped_count
 			),
 			array(
-				'task'      => $this->getTaskType(),
-				'jobId'     => $jobId,
-				'dry_run'   => $opts['dry_run'],
-				'removed'   => $result['removed'] ?? array(),
-				'skipped'   => $result['skipped'] ?? array(),
+				'task'    => $this->getTaskType(),
+				'jobId'   => $jobId,
+				'dry_run' => $opts['dry_run'],
+				'removed' => $result['removed'],
+				'skipped' => $result['skipped'],
 			)
 		);
 
 		$this->completeJob(
 			$jobId,
 			array(
-				'dry_run'        => $opts['dry_run'],
-				'candidates'     => $candidate_count,
-				'removed_count'  => $removed_count,
-				'skipped_count'  => $skipped_count,
-				'removed'        => $result['removed'] ?? array(),
-				'skipped'        => $result['skipped'] ?? array(),
+				'dry_run'       => $opts['dry_run'],
+				'candidates'    => $candidate_count,
+				'removed_count' => $removed_count,
+				'skipped_count' => $skipped_count,
+				'removed'       => $result['removed'],
+				'skipped'       => $result['skipped'],
 			)
 		);
 	}

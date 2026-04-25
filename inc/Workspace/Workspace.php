@@ -262,10 +262,10 @@ class Workspace {
 				continue;
 			}
 
-			$git_path  = $entry_path . '/.git';
-			$is_git    = is_dir( $git_path ) || is_file( $git_path );
-			$is_wt     = is_file( $git_path );
-			$parsed    = $this->parse_handle( $entry );
+			$git_path = $entry_path . '/.git';
+			$is_git   = is_dir( $git_path ) || is_file( $git_path );
+			$is_wt    = is_file( $git_path );
+			$parsed   = $this->parse_handle( $entry );
 
 			$repo_info = array(
 				'name'        => $entry,
@@ -365,7 +365,7 @@ class Workspace {
 	/**
 	 * Remove a repository from the workspace.
 	 *
-	 * @param string $name Repository directory name.
+	 * @param string $handle Workspace handle.
 	 * @return array{success: bool, message: string}|\WP_Error
 	 */
 	public function remove_repo( string $handle ): array|\WP_Error {
@@ -386,7 +386,7 @@ class Workspace {
 		if ( ! $parsed['is_worktree'] ) {
 			$worktrees = $this->worktree_list( $parsed['repo'] );
 			if ( ! is_wp_error( $worktrees ) ) {
-				$linked = array_filter( $worktrees['worktrees'] ?? array(), fn( $wt ) => ! empty( $wt['is_worktree'] ) );
+				$linked = array_filter( $worktrees['worktrees'], fn( $wt ) => ! empty( $wt['is_worktree'] ) );
 				if ( ! empty( $linked ) ) {
 					$slugs = array_map( fn( $wt ) => $wt['branch_slug'] ?? '?', $linked );
 					return new \WP_Error( 'has_worktrees', sprintf( 'Cannot remove primary "%s": linked worktrees exist (%s). Remove them first with "workspace worktree remove".', $parsed['repo'], implode( ', ', $slugs ) ), array( 'status' => 400 ) );
@@ -422,7 +422,7 @@ class Workspace {
 	/**
 	 * Show detailed info about a workspace repo.
 	 *
-	 * @param string $name Repository directory name.
+	 * @param string $handle Workspace handle.
 	 * @return array{success: bool, name?: string, path?: string, branch?: string, remote?: string, commit?: string, dirty?: int}|\WP_Error
 	 */
 	public function show_repo( string $handle ): array|\WP_Error {
@@ -458,7 +458,7 @@ class Workspace {
 	/**
 	 * Get git status details for a workspace repository.
 	 *
-	 * @param string $name Repository directory name.
+	 * @param string $handle Workspace handle.
 	 * @return array
 	 */
 	public function git_status( string $handle ): array|\WP_Error {
@@ -496,7 +496,7 @@ class Workspace {
 	/**
 	 * Pull latest changes for a workspace repository.
 	 *
-	 * @param string $name        Repository directory name.
+	 * @param string $handle      Workspace handle.
 	 * @param bool   $allow_dirty Allow pull with dirty working tree.
 	 * @return array
 	 */
@@ -542,7 +542,7 @@ class Workspace {
 	/**
 	 * Stage paths in a workspace repository.
 	 *
-	 * @param string $name  Repository directory name.
+	 * @param string $handle Workspace handle.
 	 * @param array  $paths Relative paths to stage.
 	 * @return array
 	 */
@@ -935,9 +935,9 @@ class Workspace {
 		if ( 0 === $exists_local ) {
 			$cmd = sprintf( 'worktree add %s %s', escapeshellarg( $wt_path ), escapeshellarg( $branch ) );
 		} else {
-			$base          = $from && '' !== trim( $from ) ? trim( $from ) : $this->resolve_default_base( $primary_path );
-			$resolved_base = $base;
-			$cmd           = sprintf( 'worktree add -b %s %s %s', escapeshellarg( $branch ), escapeshellarg( $wt_path ), escapeshellarg( $base ) );
+			$base           = $from && '' !== trim( $from ) ? trim( $from ) : $this->resolve_default_base( $primary_path );
+			$resolved_base  = $base;
+			$cmd            = sprintf( 'worktree add -b %s %s %s', escapeshellarg( $branch ), escapeshellarg( $wt_path ), escapeshellarg( $base ) );
 			$created_branch = true;
 		}
 
@@ -1022,23 +1022,23 @@ class Workspace {
 			 * @param string $repo      Repository name.
 			 * @param string $branch    Branch being materialized.
 			 */
-			$threshold                   = (int) apply_filters( 'datamachine_worktree_stale_threshold', 50, $repo, $branch );
-			$response['gate_threshold']  = $threshold;
-			$effective_behind            = $this->effective_behind_count( $response );
+			$threshold                  = (int) apply_filters( 'datamachine_worktree_stale_threshold', 50, $repo, $branch );
+			$response['gate_threshold'] = $threshold;
+			$effective_behind           = $this->effective_behind_count( $response );
 
 			if ( null !== $effective_behind && $effective_behind > $threshold ) {
 				// Tear the worktree down so we don't leak a half-cooked
 				// checkout on the user's disk.
 				$this->run_git( $primary_path, sprintf( 'worktree remove --force %s', escapeshellarg( $wt_path ) ) );
 
-				$label = $response['upstream'] ?? ( $response['base_upstream'] ?? 'upstream' );
+				$label    = $response['upstream'] ?? ( $response['base_upstream'] ?? 'upstream' );
 				$guidance = sprintf(
-					"Worktree base is %d commits behind %s (threshold: %d).\n"
-					. "Options:\n"
-					. "  - workspace git-pull %s --allow-primary-mutation  (refresh primary first)\n"
-					. "  - worktree add … --from=origin/%s  (cut from remote ref directly)\n"
-					. "  - worktree add … --rebase-base  (auto-rebase onto upstream)\n"
-					. "  - worktree add … --allow-stale  (proceed with known-stale base)",
+					'Worktree base is %d commits behind %s (threshold: %d).' . "\n"
+					. 'Options:' . "\n"
+					. '  - workspace git-pull %s --allow-primary-mutation  (refresh primary first)' . "\n"
+					. '  - worktree add … --from=origin/%s  (cut from remote ref directly)' . "\n"
+					. '  - worktree add … --rebase-base  (auto-rebase onto upstream)' . "\n"
+					. '  - worktree add … --allow-stale  (proceed with known-stale base)',
 					$effective_behind,
 					$label,
 					$threshold,
@@ -1378,7 +1378,7 @@ class Workspace {
 		// Fetch + prune each primary once up-front so upstream-gone signals are fresh.
 		$fetched = array();
 
-		foreach ( $listing['worktrees'] ?? array() as $wt ) {
+		foreach ( $listing['worktrees'] as $wt ) {
 			if ( ! empty( $wt['is_primary'] ) ) {
 				continue;
 			}
@@ -1457,14 +1457,14 @@ class Workspace {
 			}
 
 			$candidates[] = array(
-				'handle'  => $wt['handle'],
-				'repo'    => $repo,
-				'branch'  => $branch,
-				'path'    => $wt_path,
-				'dirty'   => $dirty_count,
-				'signal'  => $signal['signal'],
-				'reason'  => $signal['reason'],
-				'pr_url'  => $signal['pr_url'] ?? null,
+				'handle' => $wt['handle'],
+				'repo'   => $repo,
+				'branch' => $branch,
+				'path'   => $wt_path,
+				'dirty'  => $dirty_count,
+				'signal' => $signal['signal'],
+				'reason' => $signal['reason'],
+				'pr_url' => $signal['pr_url'] ?? null,
 			);
 		}
 
@@ -1685,7 +1685,7 @@ class Workspace {
 			return null;
 		}
 
-		$owner = explode( '/', $slug )[0] ?? '';
+		$owner = explode( '/', $slug )[0];
 		if ( '' === $owner ) {
 			return null;
 		}
@@ -1843,9 +1843,7 @@ class Workspace {
 		}
 
 		// Success: zero out the behind-count so the gate sees a fresh worktree.
-		if ( null !== $clear ) {
-			unset( $response[ $clear ] );
-		}
+		unset( $response[ $clear ] );
 
 		return array(
 			'rebase_attempted' => true,
@@ -1873,8 +1871,8 @@ class Workspace {
 			} elseif ( str_starts_with( $line, 'HEAD ' ) ) {
 				$out['head'] = substr( $line, strlen( 'HEAD ' ) );
 			} elseif ( str_starts_with( $line, 'branch ' ) ) {
-				$ref            = substr( $line, strlen( 'branch ' ) );
-				$out['branch']  = preg_replace( '#^refs/heads/#', '', $ref );
+				$ref           = substr( $line, strlen( 'branch ' ) );
+				$out['branch'] = preg_replace( '#^refs/heads/#', '', $ref );
 			} elseif ( 'detached' === $line ) {
 				$out['branch'] = null;
 			}
@@ -2030,10 +2028,6 @@ class Workspace {
 		// No entry = permissive default. Callers should still respect
 		// primary-vs-worktree separation via ensure_primary_mutation_allowed.
 		if ( null === $repo ) {
-			return true;
-		}
-
-		if ( ! is_array( $repo ) ) {
 			return true;
 		}
 
@@ -2204,7 +2198,7 @@ class Workspace {
 		 */
 		$settings = apply_filters( 'datamachine_workspace_git_policies', $settings );
 
-		if ( ! is_array( $settings ) || ! isset( $settings['repos'] ) || ! is_array( $settings['repos'] ) ) {
+		if ( ! isset( $settings['repos'] ) || ! is_array( $settings['repos'] ) ) {
 			return $defaults;
 		}
 

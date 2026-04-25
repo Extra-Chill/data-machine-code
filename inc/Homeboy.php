@@ -53,7 +53,8 @@ class Homeboy {
 			return false;
 		}
 
-		$output = @shell_exec( 'command -v homeboy 2>/dev/null' );
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_shell_exec -- Host CLI capability probe.
+		$output                = shell_exec( 'command -v homeboy 2>/dev/null' );
 		self::$available_cache = ! empty( trim( (string) $output ) );
 		return self::$available_cache;
 	}

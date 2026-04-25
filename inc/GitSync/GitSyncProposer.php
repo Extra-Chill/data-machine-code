@@ -65,7 +65,7 @@ final class GitSyncProposer {
 			return $gate;
 		}
 
-		$message = trim( (string) ( $args['message'] ?? '' ) );
+		$message     = trim( (string) ( $args['message'] ?? '' ) );
 		$message_err = $this->validateMessage( $message );
 		if ( is_wp_error( $message_err ) ) {
 			return $message_err;
@@ -117,7 +117,11 @@ final class GitSyncProposer {
 				return new \WP_Error(
 					'upload_failed',
 					sprintf( 'Commit of %s to %s failed: %s', $change['path'], $feature_branch, $result->get_error_message() ),
-					array( 'status' => 502, 'path' => $change['path'], 'branch' => $feature_branch )
+					array(
+						'status' => 502,
+						'path'   => $change['path'],
+						'branch' => $feature_branch,
+					)
 				);
 			}
 			$commits[] = array(
@@ -131,11 +135,16 @@ final class GitSyncProposer {
 			return new \WP_Error(
 				'pr_failed',
 				sprintf( 'Branch "%s" updated, but PR open/update failed: %s', $feature_branch, $pr->get_error_message() ),
-				array( 'status' => 502, 'branch' => $feature_branch, 'commits' => $commits, 'pr_error' => $pr->get_error_code() )
+				array(
+					'status'   => 502,
+					'branch'   => $feature_branch,
+					'commits'  => $commits,
+					'pr_error' => $pr->get_error_code(),
+				)
 			);
 		}
 
-		$binding->last_commit = end( $commits )['commit'] ?? $binding->last_commit;
+		$binding->last_commit = $commits[ array_key_last( $commits ) ]['commit'];
 		$this->registry->save( $binding );
 
 		return array(
@@ -179,7 +188,7 @@ final class GitSyncProposer {
 			);
 		}
 
-		$message = trim( (string) ( $args['message'] ?? '' ) );
+		$message     = trim( (string) ( $args['message'] ?? '' ) );
 		$message_err = $this->validateMessage( $message );
 		if ( is_wp_error( $message_err ) ) {
 			return $message_err;
@@ -213,7 +222,11 @@ final class GitSyncProposer {
 				return new \WP_Error(
 					'upload_failed',
 					sprintf( 'Commit of %s to %s failed: %s', $change['path'], $binding->branch, $result->get_error_message() ),
-					array( 'status' => 502, 'path' => $change['path'], 'branch' => $binding->branch )
+					array(
+						'status' => 502,
+						'path'   => $change['path'],
+						'branch' => $binding->branch,
+					)
 				);
 			}
 			$commits[] = array(
@@ -222,7 +235,7 @@ final class GitSyncProposer {
 			);
 		}
 
-		$binding->last_commit = end( $commits )['commit'] ?? $binding->last_commit;
+		$binding->last_commit = $commits[ array_key_last( $commits ) ]['commit'];
 		$this->registry->save( $binding );
 
 		return array(
@@ -369,7 +382,10 @@ final class GitSyncProposer {
 					// No diff against upstream; skip this explicitly-requested file.
 					continue;
 				}
-				$changes[] = array( 'path' => $rel, 'content' => $content );
+				$changes[] = array(
+					'path'    => $rel,
+					'content' => $content,
+				);
 			}
 			return $changes;
 		}
@@ -389,10 +405,13 @@ final class GitSyncProposer {
 				continue;
 			}
 			$local_sha = GitHubRemote::blobSha( $content );
-			if ( $local_sha === ( $ctx['upstream'][ $rel ] ?? null ) ) {
+			if ( ( $ctx['upstream'][ $rel ] ?? null ) === $local_sha ) {
 				continue;
 			}
-			$changes[] = array( 'path' => $rel, 'content' => $content );
+			$changes[] = array(
+				'path'    => $rel,
+				'content' => $content,
+			);
 		}
 		return $changes;
 	}
@@ -402,6 +421,7 @@ final class GitSyncProposer {
 		if ( ! is_file( $full ) ) {
 			return new \WP_Error( 'missing_file', sprintf( 'Local file %s does not exist.', $full ), array( 'status' => 404 ) );
 		}
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Local file proposal content, not a remote URL fetch.
 		$content = file_get_contents( $full );
 		if ( false === $content ) {
 			return new \WP_Error( 'read_failed', sprintf( 'Could not read %s.', $full ), array( 'status' => 500 ) );
@@ -494,7 +514,7 @@ final class GitSyncProposer {
 	private function putFile( string $slug, string $path, string $content, string $message, string $branch, ?string $existing_sha, string $pat ): array|\WP_Error {
 		$body = array(
 			'message' => $message,
-			'content' => base64_encode( $content ),
+			'content' => base64_encode( $content ), // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- Required by GitHub Contents API.
 			'branch'  => $branch,
 		);
 		if ( null !== $existing_sha ) {
@@ -558,7 +578,10 @@ final class GitSyncProposer {
 			$patched = GitHubAbilities::apiRequest(
 				'PATCH',
 				GitHubRemote::apiUrl( $slug, 'pulls/' . (int) $existing_pr['number'] ),
-				array( 'title' => $title, 'body' => $body ),
+				array(
+					'title' => $title,
+					'body'  => $body,
+				),
 				$pat
 			);
 			if ( is_wp_error( $patched ) ) {
@@ -616,5 +639,4 @@ Proposed by GitSync binding **{$binding->slug}** from local edits.
 *Opened via `datamachine/gitsync-submit`. Re-running submit updates this PR in place.*
 BODY;
 	}
-
 }

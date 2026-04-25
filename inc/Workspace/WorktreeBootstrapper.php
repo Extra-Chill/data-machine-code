@@ -302,7 +302,7 @@ final class WorktreeBootstrapper {
 	 * invocations, not user input. The `cd` target is escaped.
 	 */
 	private static function run_command( string $step, string $worktree_path, string $command ): array {
-		$cd = escapeshellarg( $worktree_path );
+		$cd        = escapeshellarg( $worktree_path );
 		$shell_cmd = sprintf( 'cd %s && %s 2>&1', $cd, $command );
 
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec

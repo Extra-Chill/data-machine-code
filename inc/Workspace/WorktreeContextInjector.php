@@ -221,7 +221,7 @@ class WorktreeContextInjector {
 		foreach ( self::INJECTED_PATHS as $relative ) {
 			$abs = rtrim( $worktree_path, '/' ) . '/' . $relative;
 			if ( is_file( $abs ) ) {
-				// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_unlink
+				// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes DMC-injected local-only context files from a worktree.
 				unlink( $abs );
 				$removed[] = $abs;
 			}
@@ -426,7 +426,7 @@ class WorktreeContextInjector {
 			$current = (string) file_get_contents( $exclude );
 		}
 
-		$existing = array_filter( array_map( 'trim', explode( "\n", $current ) ), 'strlen' );
+		$existing = array_filter( array_map( 'trim', explode( "\n", $current ) ), static fn( string $line ): bool => '' !== $line );
 		$missing  = array();
 		foreach ( $paths as $path ) {
 			$needle = trim( $path );

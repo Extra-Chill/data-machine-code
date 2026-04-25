@@ -299,7 +299,8 @@ final class GitSync {
 		foreach ( $iterator as $entry ) {
 			/** @var \SplFileInfo $entry */
 			$target = $entry->getPathname();
-			$ok     = $entry->isDir() ? @rmdir( $target ) : @unlink( $target );
+			// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_system_operations_rmdir, WordPress.WP.AlternativeFunctions.unlink_unlink -- Recursive purge inside a policy-gated local binding.
+			$ok = $entry->isDir() ? @rmdir( $target ) : @unlink( $target );
 			if ( ! $ok ) {
 				return new \WP_Error(
 					'purge_failed',
@@ -309,6 +310,7 @@ final class GitSync {
 			}
 		}
 
+		// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_system_operations_rmdir -- Recursive purge inside a policy-gated local binding.
 		if ( ! @rmdir( $path ) ) {
 			return new \WP_Error(
 				'purge_failed',

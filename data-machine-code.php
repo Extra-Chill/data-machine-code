@@ -217,12 +217,12 @@ add_filter( 'datamachine_tasks', function ( array $tasks ): array {
  */
 add_filter( 'datamachine_recurring_schedules', function ( array $schedules ): array {
 	$schedules['worktree_cleanup'] = array(
-		'task_type'        => 'worktree_cleanup',
-		'interval'         => 'daily',
-		'enabled_setting'  => \DataMachineCode\Tasks\WorktreeCleanupTask::SETTING_KEY,
-		'default_enabled'  => false,
-		'label'            => 'Daily — cleans up merged worktrees',
-		'task_params'      => array( 'source' => 'recurring_schedule' ),
+		'task_type'       => 'worktree_cleanup',
+		'interval'        => 'daily',
+		'enabled_setting' => \DataMachineCode\Tasks\WorktreeCleanupTask::SETTING_KEY,
+		'default_enabled' => false,
+		'label'           => 'Daily — cleans up merged worktrees',
+		'task_params'     => array( 'source' => 'recurring_schedule' ),
 	);
 	return $schedules;
 } );
