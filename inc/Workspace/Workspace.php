@@ -1220,6 +1220,7 @@ class Workspace {
 				$dirty_files  = is_wp_error( $dirty_result )
 					? 0
 					: count( array_filter( array_map( 'trim', explode( "\n", $dirty_result['output'] ?? '' ) ) ) );
+				$metadata = ( ! $is_primary && $inside_ws ) ? WorktreeContextInjector::get_metadata( $relative ) : null;
 
 				$worktrees[] = array(
 					'handle'      => $handle,
@@ -1232,6 +1233,8 @@ class Workspace {
 					'head'        => $wt['head'],
 					'path'        => $wt['path'],
 					'dirty'       => $dirty_files,
+					'created_at'  => is_array( $metadata ) ? ( $metadata['created_at'] ?? null ) : null,
+					'metadata'    => $metadata,
 				);
 			}
 		}
