@@ -618,6 +618,152 @@ class Workspace {
 	}
 
 	/**
+	 * Delete a tracked or untracked path inside a workspace repository.
+	 *
+	 * Tracked paths are removed via `git rm` so the deletion lands in the
+	 * working tree and the index in one shot. Untracked paths fall back to a
+	 * filesystem unlink (file) or a recursive directory removal (directory,
+	 * only when $recursive is true). Sensitive-path, traversal, allowlist,
+	 * and primary-mutation gates mirror `git_add`.
+	 *
+	 * @param string $handle                 Workspace handle.
+	 * @param string $path                   Relative path within the repo.
+	 * @param bool   $recursive              Required when target is a directory.
+	 * @param bool   $allow_primary_mutation Whether the primary checkout may be mutated.
+	 * @return array{success: bool, name: string, repo: string, path: string, deleted: array<int,string>, was_tracked: bool}|\WP_Error
+	 */
+	public function delete_path( string $handle, string $path, bool $recursive = false, bool $allow_primary_mutation = false ): array|\WP_Error {
+		$parsed    = $this->parse_handle( $handle );
+		$repo_name = $parsed['repo'];
+		$repo_path = $this->resolve_repo_path( $handle );
+		if ( is_wp_error( $repo_path ) ) {
+			return $repo_path;
+		}
+
+		$policy_check = $this->ensure_git_mutation_allowed( $repo_name );
+		if ( is_wp_error( $policy_check ) ) {
+			return $policy_check;
+		}
+
+		$primary_check = $this->ensure_primary_mutation_allowed( $parsed, $allow_primary_mutation );
+		if ( is_wp_error( $primary_check ) ) {
+			return $primary_check;
+		}
+
+		$relative = trim( $path );
+		if ( '' === $relative ) {
+			return new \WP_Error( 'missing_path', 'Path is required for delete.', array( 'status' => 400 ) );
+		}
+
+		if ( $this->has_traversal( $relative ) || str_starts_with( $relative, '/' ) ) {
+			return new \WP_Error( 'invalid_path', sprintf( 'Invalid path for delete: %s', $relative ), array( 'status' => 400 ) );
+		}
+
+		if ( $this->is_sensitive_path( $relative ) ) {
+			return new \WP_Error( 'sensitive_path', sprintf( 'Refusing to delete sensitive path: %s', $relative ), array( 'status' => 403 ) );
+		}
+
+		$allowed_roots = $this->get_repo_allowed_paths( $repo_name );
+		if ( ! empty( $allowed_roots ) && ! $this->is_path_allowed( $relative, $allowed_roots ) ) {
+			return new \WP_Error( 'path_not_allowed', sprintf( 'Path "%s" is outside configured allowlist.', $relative ), array( 'status' => 403 ) );
+		}
+
+		$absolute = $repo_path . '/' . $relative;
+		if ( ! file_exists( $absolute ) && ! is_link( $absolute ) ) {
+			return new \WP_Error( 'not_found', sprintf( 'Path not found: %s', $relative ), array( 'status' => 404 ) );
+		}
+
+		$is_dir = is_dir( $absolute ) && ! is_link( $absolute );
+		if ( $is_dir && ! $recursive ) {
+			return new \WP_Error( 'directory_requires_recursive', sprintf( 'Path "%s" is a directory; pass recursive=true to delete.', $relative ), array( 'status' => 400 ) );
+		}
+
+		$ls_files = $this->run_git( $repo_path, 'ls-files --error-unmatch -- ' . escapeshellarg( $relative ) );
+		$is_tracked = ! is_wp_error( $ls_files );
+
+		$deleted = array();
+		if ( $is_tracked ) {
+			$flags  = $is_dir ? '-r ' : '';
+			$result = $this->run_git( $repo_path, 'rm ' . $flags . '-- ' . escapeshellarg( $relative ) );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+			foreach ( explode( "\n", $result['output'] ?? '' ) as $line ) {
+				if ( preg_match( '/^rm \'(.+)\'$/', trim( $line ), $matches ) ) {
+					$deleted[] = $matches[1];
+				}
+			}
+			if ( empty( $deleted ) ) {
+				$deleted[] = $relative;
+			}
+		} else {
+			if ( $is_dir ) {
+				$removed = $this->remove_directory_recursive( $absolute, $repo_path );
+				if ( is_wp_error( $removed ) ) {
+					return $removed;
+				}
+				$deleted = $removed;
+			} else {
+				// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+				if ( ! unlink( $absolute ) ) {
+					return new \WP_Error( 'delete_failed', sprintf( 'Failed to delete file: %s', $relative ), array( 'status' => 500 ) );
+				}
+				$deleted[] = $relative;
+			}
+		}
+
+		return array(
+			'success'     => true,
+			'name'        => $parsed['dir_name'],
+			'repo'        => $repo_name,
+			'path'        => $relative,
+			'deleted'     => $deleted,
+			'was_tracked' => $is_tracked,
+		);
+	}
+
+	/**
+	 * Recursively remove an untracked directory under a repo, returning the
+	 * list of relative paths removed (deepest first).
+	 *
+	 * @param string $absolute  Absolute path to remove.
+	 * @param string $repo_path Repo root for relative-path computation.
+	 * @return array<int,string>|\WP_Error
+	 */
+	private function remove_directory_recursive( string $absolute, string $repo_path ): array|\WP_Error {
+		$deleted = array();
+		$entries = @scandir( $absolute );
+		if ( false === $entries ) {
+			return new \WP_Error( 'scandir_failed', sprintf( 'Failed to read directory: %s', $absolute ), array( 'status' => 500 ) );
+		}
+		foreach ( $entries as $entry ) {
+			if ( '.' === $entry || '..' === $entry ) {
+				continue;
+			}
+			$child = $absolute . '/' . $entry;
+			if ( is_dir( $child ) && ! is_link( $child ) ) {
+				$nested = $this->remove_directory_recursive( $child, $repo_path );
+				if ( is_wp_error( $nested ) ) {
+					return $nested;
+				}
+				$deleted = array_merge( $deleted, $nested );
+			} else {
+				// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+				if ( ! unlink( $child ) ) {
+					return new \WP_Error( 'delete_failed', sprintf( 'Failed to delete file: %s', $child ), array( 'status' => 500 ) );
+				}
+				$deleted[] = ltrim( substr( $child, strlen( $repo_path ) ), '/' );
+			}
+		}
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_rmdir
+		if ( ! rmdir( $absolute ) ) {
+			return new \WP_Error( 'delete_failed', sprintf( 'Failed to remove directory: %s', $absolute ), array( 'status' => 500 ) );
+		}
+		$deleted[] = ltrim( substr( $absolute, strlen( $repo_path ) ), '/' );
+		return $deleted;
+	}
+
+	/**
 	 * Commit staged changes in a workspace repository.
 	 *
 	 * @param string $handle               Workspace handle.

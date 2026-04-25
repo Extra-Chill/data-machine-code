@@ -616,6 +616,58 @@ class WorkspaceAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/workspace-delete',
+				array(
+					'label'               => 'Delete Workspace Path',
+					'description'         => 'Delete a tracked or untracked file or directory from a workspace repository. Tracked paths are removed via git rm; untracked paths are unlinked from disk. Mutating ops on the primary checkout require allow_primary_mutation=true.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'repo'                   => array(
+								'type'        => 'string',
+								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
+							),
+							'path'                   => array(
+								'type'        => 'string',
+								'description' => 'Relative path within the repo (file or directory).',
+							),
+							'recursive'              => array(
+								'type'        => 'boolean',
+								'description' => 'Required when target is a directory. Default false.',
+							),
+							'allow_primary_mutation' => array(
+								'type'        => 'boolean',
+								'description' => 'Permit mutation on the primary checkout (default false). Worktrees are always allowed.',
+							),
+						),
+						'required'   => array( 'repo', 'path' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'     => array( 'type' => 'boolean' ),
+							'name'        => array( 'type' => 'string' ),
+							'repo'        => array( 'type' => 'string' ),
+							'path'        => array( 'type' => 'string' ),
+							'deleted'     => array(
+								'type'        => 'array',
+								'description' => 'Every relative path removed (recursive deletes report each entry).',
+								'items'       => array( 'type' => 'string' ),
+							),
+							'was_tracked' => array(
+								'type'        => 'boolean',
+								'description' => 'True when the path was removed via git rm; false for untracked filesystem deletes.',
+							),
+						),
+					),
+					'execute_callback'    => array( self::class, 'deletePath' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/workspace-git-commit',
 				array(
 					'label'               => 'Workspace Git Commit',
@@ -1200,6 +1252,23 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->git_add( $input['name'] ?? '', $paths, ! empty( $input['allow_primary_mutation'] ) );
+	}
+
+	/**
+	 * Delete a tracked or untracked path from a workspace repository.
+	 *
+	 * @param array $input Input parameters with 'repo', 'path', optional 'recursive', 'allow_primary_mutation'.
+	 * @return array
+	 */
+	public static function deletePath( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+
+		return $workspace->delete_path(
+			$input['repo'] ?? '',
+			$input['path'] ?? '',
+			! empty( $input['recursive'] ),
+			! empty( $input['allow_primary_mutation'] )
+		);
 	}
 
 	/**
