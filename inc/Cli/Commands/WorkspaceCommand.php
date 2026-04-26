@@ -1013,6 +1013,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--from=<ref>]
 	 * : Base ref when creating a branch on add (default origin/HEAD).
 	 *
+	 * [--base-branch=<branch>]
+	 * : Convenience alias for branch-shaped bases. `--base-branch=main`
+	 *   maps to `--from=origin/main`. Use `--from` for exact refs.
+	 *
 	 * [--skip-context-injection]
 	 * : Skip injecting the originating site's agent context into a new
 	 *   worktree (applies to `add` only). Default behavior is to write
@@ -1074,6 +1078,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 *     # Create off a specific base
 	 *     wp datamachine workspace worktree add data-machine feat/bar --from=origin/develop
+	 *     wp datamachine workspace worktree add data-machine feat/bar --base-branch=develop
 	 *
 	 *     # List all worktrees
 	 *     wp datamachine workspace worktree list
@@ -1153,13 +1158,19 @@ class WorkspaceCommand extends BaseCommand {
 		switch ( $operation ) {
 			case 'add':
 				if ( empty( $args[1] ) || empty( $args[2] ) ) {
-					WP_CLI::error( 'Usage: worktree add <repo> <branch> [--from=<ref>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--rebase-base]' );
+					WP_CLI::error( 'Usage: worktree add <repo> <branch> [--from=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--rebase-base]' );
 					return;
 				}
 				$input['repo']   = $args[1];
 				$input['branch'] = $args[2];
+				if ( ! empty( $assoc_args['from'] ) && ! empty( $assoc_args['base-branch'] ) ) {
+					WP_CLI::error( 'Use either --from=<ref> or --base-branch=<branch>, not both.' );
+					return;
+				}
 				if ( ! empty( $assoc_args['from'] ) ) {
 					$input['from'] = (string) $assoc_args['from'];
+				} elseif ( ! empty( $assoc_args['base-branch'] ) ) {
+					$input['from'] = self::base_branch_to_ref( (string) $assoc_args['base-branch'] );
 				}
 				// --skip-context-injection disables the default-on injection step.
 				$input['inject_context'] = empty( $assoc_args['skip-context-injection'] );
@@ -1437,5 +1448,24 @@ class WorkspaceCommand extends BaseCommand {
 		// No signal available (default base was origin/HEAD, or no upstream
 		// configured for the existing branch). Elide the line rather than
 		// print a potentially-misleading "up to date".
+	}
+
+	/**
+	 * Convert a branch-shaped CLI alias into the exact ref expected downstream.
+	 *
+	 * `--from` remains the exact-ref escape hatch. `--base-branch` is for the
+	 * common branch-name case agents reach for, so bare names become origin refs.
+	 *
+	 * @param string $base_branch Branch or ref passed to --base-branch.
+	 * @return string Ref to pass to the worktree-add ability.
+	 */
+	private static function base_branch_to_ref( string $base_branch ): string {
+		$base_branch = trim( $base_branch );
+
+		if ( preg_match( '/^(?:refs\/|(?:origin|upstream)\/|HEAD$|[a-f0-9]{7,40}$)/i', $base_branch ) ) {
+			return $base_branch;
+		}
+
+		return 'origin/' . ltrim( $base_branch, '/' );
 	}
 }
