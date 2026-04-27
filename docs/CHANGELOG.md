@@ -2,6 +2,13 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.15.0] - 2026-04-27
+
+### Added
+- upsert managed PR review comments
+- add PR review flow scaffold
+- validate PR review webhooks
+
 ## [0.14.0] - 2026-04-27
 
 ### Added
