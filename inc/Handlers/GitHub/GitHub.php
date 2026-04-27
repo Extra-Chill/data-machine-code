@@ -100,10 +100,16 @@ class GitHub extends FetchHandler {
 		}
 
 		$result = GitHubAbilities::getPullReviewContext( array(
-			'repo'            => $repo,
-			'pull_number'     => $pull_number,
-			'head_sha'        => $config['head_sha'] ?? '',
-			'max_patch_chars' => $config['max_patch_chars'] ?? 200000,
+			'repo'                    => $repo,
+			'pull_number'             => $pull_number,
+			'head_sha'                => $config['head_sha'] ?? '',
+			'max_patch_chars'         => $config['max_patch_chars'] ?? 200000,
+			'include_file_contents'   => ! empty( $config['include_file_contents'] ),
+			'include_base_contents'   => ! empty( $config['include_base_contents'] ),
+			'context_paths'           => $config['context_paths'] ?? array(),
+			'max_file_content_chars'  => $config['max_file_content_chars'] ?? 20000,
+			'max_context_files'       => $config['max_context_files'] ?? 10,
+			'max_total_context_chars' => $config['max_total_context_chars'] ?? 100000,
 		) );
 
 		if ( is_wp_error( $result ) ) {

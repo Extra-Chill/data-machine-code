@@ -149,7 +149,104 @@ namespace {
 	$assert( 40 === $content['truncation']['max_patch_chars'], 'truncation records configured limit' );
 	$assert( 1 === $content['truncation']['truncated_files'], 'truncation counts omitted patches' );
 	$assert( true === $content['truncation']['truncated'], 'truncation boolean is true when a patch is omitted' );
+	$assert( ! isset( $content['expanded_context'] ), 'default output omits expanded_context' );
 	$assert( $content === $packet['metadata']['review_context'], 'metadata carries same review context for downstream consumers' );
+
+	$fetcher = function ( string $path, string $ref ): array|\WP_Error {
+		$fixtures = array(
+			'abc123head:inc/Handlers/GitHub/GitHub.php' => 'head changed file content',
+			'def456base:inc/Handlers/GitHub/GitHub.php' => 'base changed file content',
+			'abc123head:docs/context.md'                => 'extra context file content',
+			'abc123head:docs/one.md'                    => 'one',
+			'abc123head:docs/two.md'                    => 'two',
+		);
+
+		$key = $ref . ':' . $path;
+		if ( ! isset( $fixtures[ $key ] ) ) {
+			return new \WP_Error( 'github_not_found', 'Fixture not found.' );
+		}
+
+		return array(
+			'file' => array(
+				'path'     => $path,
+				'sha'      => substr( sha1( $key ), 0, 12 ),
+				'size'     => strlen( $fixtures[ $key ] ),
+				'content'  => $fixtures[ $key ],
+				'html_url' => 'https://github.test/' . $path,
+			),
+		);
+	};
+
+	$expanded = \DataMachineCode\Abilities\GitHubAbilities::buildPullReviewExpandedContext(
+		'Extra-Chill/data-machine-code',
+		$pull,
+		array_slice( $files, 0, 1 ),
+		array(
+			'include_file_contents'   => true,
+			'include_base_contents'   => true,
+			'context_paths'           => array( 'docs/context.md' ),
+			'max_file_content_chars'  => 10,
+			'max_context_files'       => 3,
+			'max_total_context_chars' => 50,
+		),
+		$fetcher
+	);
+
+	$assert( is_array( $expanded ), 'expanded context is built when expansion is requested' );
+	$assert( 1 === count( $expanded['changed_files'] ), 'expanded context separates changed-file contents' );
+	$assert( 1 === count( $expanded['extra_files'] ), 'expanded context separates explicit context paths' );
+	$assert( 'head chang' === $expanded['changed_files'][0]['head']['content'], 'changed-file head content is included and per-file bounded' );
+	$assert( 'base chang' === $expanded['changed_files'][0]['base']['content'], 'base content is included only when requested' );
+	$assert( true === $expanded['changed_files'][0]['head']['truncated'], 'per-file truncation is explicit' );
+	$assert( 'docs/context.md' === $expanded['extra_files'][0]['path'], 'explicit context path is included' );
+	$assert( 30 === $expanded['summary']['included_chars'], 'expanded context tracks included character total' );
+
+	$total_limited = \DataMachineCode\Abilities\GitHubAbilities::buildPullReviewExpandedContext(
+		'Extra-Chill/data-machine-code',
+		$pull,
+		array_slice( $files, 0, 1 ),
+		array(
+			'include_file_contents'   => true,
+			'context_paths'           => array( 'docs/context.md' ),
+			'max_file_content_chars'  => 20,
+			'max_context_files'       => 2,
+			'max_total_context_chars' => 25,
+		),
+		$fetcher
+	);
+
+	$assert( 25 === $total_limited['summary']['included_chars'], 'total context limit is enforced' );
+	$assert( 5 === $total_limited['extra_files'][0]['head']['included_chars'], 'remaining total budget bounds later files' );
+	$assert( true === $total_limited['extra_files'][0]['head']['truncated'], 'total-limit truncation is explicit' );
+
+	$file_limited = \DataMachineCode\Abilities\GitHubAbilities::buildPullReviewExpandedContext(
+		'Extra-Chill/data-machine-code',
+		$pull,
+		array(),
+		array(
+			'context_paths'           => array( 'docs/one.md', 'docs/two.md' ),
+			'max_context_files'       => 1,
+			'max_total_context_chars' => 100,
+		),
+		$fetcher
+	);
+
+	$assert( 1 === count( $file_limited['extra_files'] ), 'context path inclusion respects file-count limit' );
+	$assert( 1 === count( $file_limited['skipped'] ), 'file-count limit records skipped files' );
+	$assert( 'limit_exceeded' === $file_limited['skipped'][0]['reason'], 'skipped file includes machine-readable reason' );
+
+	$packet_with_expansion = \DataMachineCode\Abilities\GitHubAbilities::normalizePullReviewContext(
+		'Extra-Chill/data-machine-code',
+		$pull,
+		$files,
+		array(
+			'expanded_context' => $expanded,
+		)
+	);
+	$expanded_content = json_decode( $packet_with_expansion['content'], true );
+	$assert( isset( $expanded_content['expanded_context'] ), 'review packet carries expanded_context when provided' );
+	$assert( isset( $expanded_content['changed_files'] ), 'review packet keeps patch changed_files at the top level' );
+	$assert( isset( $expanded_content['expanded_context']['changed_files'][0]['head']['content'] ), 'expanded changed-file content stays under expanded_context' );
 
 	$mismatch = \DataMachineCode\Abilities\GitHubAbilities::normalizePullReviewContext(
 		'Extra-Chill/data-machine-code',
