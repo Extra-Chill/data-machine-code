@@ -31,8 +31,8 @@ namespace DataMachine\Engine\AI\Tools {
 
 namespace DataMachine\Core {
 	class PluginSettings {
-		public static function get( string $key, string $default = '' ): string {
-			return 'github_pat' === $key ? 'test-token' : $default;
+		public static function get( string $key, string $default_value = '' ): string {
+			return 'github_pat' === $key ? 'test-token' : $default_value;
 		}
 	}
 }

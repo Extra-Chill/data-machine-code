@@ -913,9 +913,10 @@ class GitHubAbilities {
 			}
 
 			$page_files = $file_page['files'] ?? array();
+			$page_count = count( $page_files );
 			$files      = array_merge( $files, $page_files );
-			$page++;
-		} while ( count( $page_files ) >= self::MAX_PER_PAGE );
+			++$page;
+		} while ( $page_count >= self::MAX_PER_PAGE );
 
 		$context = self::normalizePullReviewContext(
 			$repo,
@@ -1191,7 +1192,7 @@ class GitHubAbilities {
 				return $entry_path === $path_prefix || str_starts_with( $entry_path, $path_prefix . '/' );
 			}
 		);
-		$files = array_values( array_map( array( self::class, 'normalizeTreeEntry' ), $files ) );
+		$files       = array_values( array_map( array( self::class, 'normalizeTreeEntry' ), $files ) );
 
 		return array(
 			'success' => true,
@@ -1411,7 +1412,7 @@ class GitHubAbilities {
 			$include    = '' !== $patch && ( 0 === $max_patch_chars || $patch_chars + $patch_size <= $max_patch_chars );
 
 			if ( '' !== $patch && ! $include ) {
-				$truncated_files++;
+				++$truncated_files;
 			}
 
 			$entry = array(

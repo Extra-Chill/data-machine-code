@@ -29,11 +29,26 @@ class GitHubTools extends BaseTool {
 		$this->registerTool( 'manage_github_issue', array( $this, 'getManageIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'comment_github_pull_request', array( $this, 'getCommentPullRequestDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'list_github_pulls', array( $this, 'getListPullsDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
-		$this->registerTool( 'get_github_pull', array( $this, 'getGetPullDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine/get-github-pull' ) );
-		$this->registerTool( 'get_github_pull_files', array( $this, 'getPullFilesDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine/list-github-pull-files' ) );
-		$this->registerTool( 'get_github_pull_review_context', array( $this, 'getPullReviewContextDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine/get-github-pull-review-context' ) );
-		$this->registerTool( 'list_github_tree', array( $this, 'getListTreeDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine/list-github-tree' ) );
-		$this->registerTool( 'get_github_file', array( $this, 'getGetFileDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine/get-github-file' ) );
+		$this->registerTool( 'get_github_pull', array( $this, 'getGetPullDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine/get-github-pull',
+		) );
+		$this->registerTool( 'get_github_pull_files', array( $this, 'getPullFilesDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine/list-github-pull-files',
+		) );
+		$this->registerTool( 'get_github_pull_review_context', array( $this, 'getPullReviewContextDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine/get-github-pull-review-context',
+		) );
+		$this->registerTool( 'list_github_tree', array( $this, 'getListTreeDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine/list-github-tree',
+		) );
+		$this->registerTool( 'get_github_file', array( $this, 'getGetFileDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine/get-github-file',
+		) );
 		$this->registerTool( 'list_github_repos', array( $this, 'getListReposDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 	}
 
