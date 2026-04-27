@@ -29,6 +29,11 @@ class GitHubTools extends BaseTool {
 		$this->registerTool( 'manage_github_issue', array( $this, 'getManageIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'comment_github_pull_request', array( $this, 'getCommentPullRequestDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'list_github_pulls', array( $this, 'getListPullsDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
+		$this->registerTool( 'get_github_pull', array( $this, 'getGetPullDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine/get-github-pull' ) );
+		$this->registerTool( 'get_github_pull_files', array( $this, 'getPullFilesDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine/list-github-pull-files' ) );
+		$this->registerTool( 'get_github_pull_review_context', array( $this, 'getPullReviewContextDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine/get-github-pull-review-context' ) );
+		$this->registerTool( 'list_github_tree', array( $this, 'getListTreeDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine/list-github-tree' ) );
+		$this->registerTool( 'get_github_file', array( $this, 'getGetFileDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine/get-github-file' ) );
 		$this->registerTool( 'list_github_repos', array( $this, 'getListReposDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 	}
 
@@ -61,6 +66,11 @@ class GitHubTools extends BaseTool {
 			'manage_github_issue',
 			'comment_github_pull_request',
 			'list_github_pulls',
+			'get_github_pull',
+			'get_github_pull_files',
+			'get_github_pull_review_context',
+			'list_github_tree',
+			'get_github_file',
 			'list_github_repos',
 		);
 		if ( ! in_array( $tool_id, $github_tools, true ) ) {
@@ -386,6 +396,245 @@ class GitHubTools extends BaseTool {
 					'type'        => 'string',
 					'required'    => false,
 					'description' => 'PR state: open, closed, or all. Default: open.',
+				),
+			),
+		);
+	}
+
+	// -------------------------------------------------------------------------
+	// Read-only PR and source context tools.
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Execute a registered GitHub ability for a tool call.
+	 *
+	 * @param string $ability_name Ability slug.
+	 * @param string $tool_name    Tool name for the response envelope.
+	 * @param array  $parameters   Tool parameters.
+	 * @return array
+	 */
+	private function executeGitHubAbility( string $ability_name, string $tool_name, array $parameters ): array {
+		if ( ! function_exists( 'wp_get_ability' ) ) {
+			return $this->buildErrorResponse( 'WordPress Abilities API is not available.', $tool_name );
+		}
+
+		$ability = wp_get_ability( $ability_name );
+		if ( ! $ability ) {
+			return $this->buildErrorResponse( sprintf( 'GitHub ability %s is not available.', $ability_name ), $tool_name );
+		}
+
+		$result = $ability->execute( $parameters );
+		if ( is_wp_error( $result ) ) {
+			return $this->buildErrorResponse( $result->get_error_message(), $tool_name );
+		}
+
+		return array(
+			'success'   => true,
+			'data'      => $result,
+			'tool_name' => $tool_name,
+		);
+	}
+
+	/**
+	 * Handle get_github_pull tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleGetPull( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine/get-github-pull', 'get_github_pull', $parameters );
+	}
+
+	/**
+	 * Get tool definition for get_github_pull.
+	 *
+	 * @return array
+	 */
+	public function getGetPullDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleGetPull',
+			'description' => 'Get one GitHub pull request with normalized title, body, branch, SHA, labels, and merge metadata.',
+			'parameters'  => array(
+				'repo'        => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'pull_number' => array(
+					'type'        => 'integer',
+					'required'    => true,
+					'description' => 'Pull request number.',
+				),
+			),
+		);
+	}
+
+	/**
+	 * Handle get_github_pull_files tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handlePullFiles( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine/list-github-pull-files', 'get_github_pull_files', $parameters );
+	}
+
+	/**
+	 * Get tool definition for get_github_pull_files.
+	 *
+	 * @return array
+	 */
+	public function getPullFilesDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handlePullFiles',
+			'description' => 'List files changed by a GitHub pull request, including filename, status, additions, deletions, and patch when available.',
+			'parameters'  => array(
+				'repo'        => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'pull_number' => array(
+					'type'        => 'integer',
+					'required'    => true,
+					'description' => 'Pull request number.',
+				),
+				'per_page'    => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Results per page (max: 100). Default: 100.',
+				),
+				'page'        => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Page number. Default: 1.',
+				),
+			),
+		);
+	}
+
+	/**
+	 * Handle get_github_pull_review_context tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handlePullReviewContext( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine/get-github-pull-review-context', 'get_github_pull_review_context', $parameters );
+	}
+
+	/**
+	 * Get tool definition for get_github_pull_review_context.
+	 *
+	 * @return array
+	 */
+	public function getPullReviewContextDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handlePullReviewContext',
+			'description' => 'Build a review-ready context packet for a GitHub pull request, including normalized PR metadata and changed-file patches.',
+			'parameters'  => array(
+				'repo'            => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'pull_number'     => array(
+					'type'        => 'integer',
+					'required'    => true,
+					'description' => 'Pull request number.',
+				),
+				'head_sha'        => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Optional expected pull request head SHA. Returns an error if GitHub reports a different head SHA.',
+				),
+				'max_patch_chars' => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Maximum cumulative patch characters to include. Default: 200000.',
+				),
+			),
+		);
+	}
+
+	/**
+	 * Handle list_github_tree tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleListTree( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine/list-github-tree', 'list_github_tree', $parameters );
+	}
+
+	/**
+	 * Get tool definition for list_github_tree.
+	 *
+	 * @return array
+	 */
+	public function getListTreeDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleListTree',
+			'description' => 'List files in a GitHub repository tree at a branch, tag, or commit SHA. Optionally filter to a path prefix.',
+			'parameters'  => array(
+				'repo' => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'ref'  => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Branch, tag, or commit SHA. Defaults to HEAD.',
+				),
+				'path' => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Optional path prefix to filter returned files.',
+				),
+			),
+		);
+	}
+
+	/**
+	 * Handle get_github_file tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleGetFile( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine/get-github-file', 'get_github_file', $parameters );
+	}
+
+	/**
+	 * Get tool definition for get_github_file.
+	 *
+	 * @return array
+	 */
+	public function getGetFileDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleGetFile',
+			'description' => 'Get decoded content for a single file from a GitHub repository.',
+			'parameters'  => array(
+				'repo' => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'path' => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'File path within the repository.',
+				),
+				'ref'  => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Branch, tag, or commit SHA. Defaults to the repository default branch.',
 				),
 			),
 		);
