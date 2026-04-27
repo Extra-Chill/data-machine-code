@@ -408,8 +408,11 @@ class Workspace {
 		if ( $parsed['is_worktree'] ) {
 			$primary_path = $this->get_primary_path( $parsed['repo'] );
 			if ( is_dir( $primary_path . '/.git' ) ) {
-				// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-				exec( sprintf( 'git -C %s worktree prune 2>&1', escapeshellarg( $primary_path ) ) );
+				WorkspaceMutationLock::with_repo(
+					$this->workspace_path,
+					$parsed['repo'],
+					fn() => $this->run_git( $primary_path, 'worktree prune' )
+				);
 			}
 		}
 
@@ -1066,6 +1069,65 @@ class Workspace {
 			return new \WP_Error( 'worktree_exists', sprintf( 'Worktree handle "%s" already exists.', $wt_handle ), array( 'status' => 400 ) );
 		}
 
+		$response = WorkspaceMutationLock::with_repo(
+			$this->workspace_path,
+			$repo,
+			fn() => $this->worktree_add_locked(
+				$repo,
+				$branch,
+				$from,
+				$inject_context,
+				$allow_stale,
+				$rebase_base,
+				$slug,
+				$wt_handle,
+				$wt_path,
+				$primary_path
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		if ( $bootstrap ) {
+			$response['bootstrap'] = WorktreeBootstrapper::bootstrap( $wt_path );
+		}
+
+		return $response;
+	}
+
+	/**
+	 * Create a worktree while the primary repo lifecycle lock is held.
+	 *
+	 * @param string      $repo           Primary repo name.
+	 * @param string      $branch         Branch to check out.
+	 * @param string|null $from           Base ref when creating the branch.
+	 * @param bool        $inject_context Whether to inject site-agent context.
+	 * @param bool        $allow_stale    Bypass the staleness gate.
+	 * @param bool        $rebase_base    Rebase onto upstream after creation.
+	 * @param string      $slug           Branch slug.
+	 * @param string      $wt_handle      Worktree handle.
+	 * @param string      $wt_path        Worktree path.
+	 * @param string      $primary_path   Primary checkout path.
+	 * @return array|\WP_Error
+	 */
+	private function worktree_add_locked(
+		string $repo,
+		string $branch,
+		?string $from,
+		bool $inject_context,
+		bool $allow_stale,
+		bool $rebase_base,
+		string $slug,
+		string $wt_handle,
+		string $wt_path,
+		string $primary_path
+	): array|\WP_Error {
+		if ( is_dir( $wt_path ) ) {
+			return new \WP_Error( 'worktree_exists', sprintf( 'Worktree handle "%s" already exists.', $wt_handle ), array( 'status' => 400 ) );
+		}
+
 		// Always fetch first so staleness data (and the default base) reflects the
 		// current remote. Failure is logged but never aborts — offline work should
 		// still be possible, the agent just needs to know staleness is unknown.
@@ -1231,10 +1293,6 @@ class Workspace {
 					}
 				}
 			}
-		}
-
-		if ( $bootstrap ) {
-			$response['bootstrap'] = WorktreeBootstrapper::bootstrap( $wt_path );
 		}
 
 		return $response;
@@ -1425,14 +1483,25 @@ class Workspace {
 			return new \WP_Error( 'worktree_not_found', sprintf( 'Worktree "%s" not found.', $wt_handle ), array( 'status' => 404 ) );
 		}
 
-		$cmd    = sprintf( 'worktree remove %s%s', $force ? '--force ' : '', escapeshellarg( $wt_path ) );
-		$result = $this->run_git( $primary_path, $cmd );
+		$result = WorkspaceMutationLock::with_repo(
+			$this->workspace_path,
+			$repo,
+			function () use ( $primary_path, $wt_path, $force, $wt_handle ) {
+				$cmd    = sprintf( 'worktree remove %s%s', $force ? '--force ' : '', escapeshellarg( $wt_path ) );
+				$result = $this->run_git( $primary_path, $cmd );
+
+				if ( is_wp_error( $result ) ) {
+					return $result;
+				}
+
+				WorktreeContextInjector::forget_metadata( $wt_handle );
+				return $result;
+			}
+		);
 
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
-
-		WorktreeContextInjector::forget_metadata( $wt_handle );
 
 		return array(
 			'success' => true,
@@ -1444,9 +1513,9 @@ class Workspace {
 	/**
 	 * Prune stale worktree registry entries across all primaries.
 	 *
-	 * @return array{success: bool, pruned: array}
+	 * @return array{success: bool, pruned: array}|\WP_Error
 	 */
-	public function worktree_prune(): array {
+	public function worktree_prune(): array|\WP_Error {
 		$pruned = array();
 
 		if ( ! is_dir( $this->workspace_path ) ) {
@@ -1465,7 +1534,14 @@ class Workspace {
 			if ( ! is_dir( $primary_path . '/.git' ) ) {
 				continue;
 			}
-			$this->run_git( $primary_path, 'worktree prune -v' );
+			$result = WorkspaceMutationLock::with_repo(
+				$this->workspace_path,
+				$entry,
+				fn() => $this->run_git( $primary_path, 'worktree prune -v' )
+			);
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
 			$pruned[] = $entry;
 		}
 
@@ -1631,7 +1707,22 @@ class Workspace {
 		$removed = array();
 
 		foreach ( $candidates as $cand ) {
-			$remove = $this->remove_worktree_by_path( $cand['repo'], $cand['branch'], $cand['path'], $force );
+			$remove = WorkspaceMutationLock::with_repo(
+				$this->workspace_path,
+				$cand['repo'],
+				function () use ( $cand, $force ) {
+					$remove = $this->remove_worktree_by_path( $cand['repo'], $cand['branch'], $cand['path'], $force );
+					if ( is_wp_error( $remove ) ) {
+						return $remove;
+					}
+
+					// Delete the now-detached local branch while the repo lock still covers
+					// shared git metadata.
+					$primary_path = $this->get_primary_path( $cand['repo'] );
+					$branch       = $this->run_git( $primary_path, sprintf( 'branch -D %s', escapeshellarg( $cand['branch'] ) ) );
+					return is_wp_error( $branch ) ? $branch : $remove;
+				}
+			);
 			if ( is_wp_error( $remove ) ) {
 				$skipped[] = array(
 					'handle' => $cand['handle'],
@@ -1639,11 +1730,6 @@ class Workspace {
 				);
 				continue;
 			}
-
-			// Delete the now-detached local branch.
-			$primary_path = $this->get_primary_path( $cand['repo'] );
-			$this->run_git( $primary_path, sprintf( 'branch -D %s', escapeshellarg( $cand['branch'] ) ) );
-
 			$removed[] = $cand;
 		}
 
