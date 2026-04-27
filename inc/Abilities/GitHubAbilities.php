@@ -614,6 +614,145 @@ class GitHubAbilities {
 		);
 	}
 
+	/**
+	 * Get one pull request with full review context.
+	 *
+	 * @param array $input {
+	 *     Required: repo, pull_number. Optional: head_sha, max_patch_chars.
+	 * }
+	 * @return array|\WP_Error Success payload or error.
+	 */
+	public static function getPullReviewContext( array $input ): array|\WP_Error {
+		$repo        = sanitize_text_field( $input['repo'] ?? '' );
+		$pull_number = (int) ( $input['pull_number'] ?? $input['pr_number'] ?? 0 );
+
+		if ( empty( $repo ) || $pull_number <= 0 ) {
+			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and pull_number are required.', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPat();
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$pull = self::getPull( array(
+			'repo'        => $repo,
+			'pull_number' => $pull_number,
+		) );
+		if ( is_wp_error( $pull ) ) {
+			return $pull;
+		}
+
+		$files = array();
+		$page  = 1;
+		do {
+			$file_page = self::listPullFiles( array(
+				'repo'        => $repo,
+				'pull_number' => $pull_number,
+				'per_page'    => self::MAX_PER_PAGE,
+				'page'        => $page,
+			) );
+			if ( is_wp_error( $file_page ) ) {
+				return $file_page;
+			}
+
+			$page_files = $file_page['files'] ?? array();
+			$files      = array_merge( $files, $page_files );
+			$page++;
+		} while ( count( $page_files ) >= self::MAX_PER_PAGE );
+
+		$context = self::normalizePullReviewContext(
+			$repo,
+			$pull['pull'],
+			$files,
+			array(
+				'head_sha'        => sanitize_text_field( $input['head_sha'] ?? '' ),
+				'max_patch_chars' => (int) ( $input['max_patch_chars'] ?? 200000 ),
+			)
+		);
+
+		if ( is_wp_error( $context ) ) {
+			return $context;
+		}
+
+		return array(
+			'success' => true,
+			'context' => $context,
+		);
+	}
+
+	/**
+	 * Get a single pull request.
+	 *
+	 * @param array $input Required: repo, pull_number.
+	 * @return array|\WP_Error { success: bool, pull: normalized } or error.
+	 */
+	public static function getPull( array $input ): array|\WP_Error {
+		$repo        = sanitize_text_field( $input['repo'] ?? '' );
+		$pull_number = (int) ( $input['pull_number'] ?? $input['pr_number'] ?? 0 );
+
+		if ( empty( $repo ) || $pull_number <= 0 ) {
+			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and pull_number are required.', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPat();
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$url      = sprintf( '%s/repos/%s/pulls/%d', self::API_BASE, $repo, $pull_number );
+		$response = self::apiGet( $url, array(), $pat );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		return array(
+			'success' => true,
+			'pull'    => self::normalizePull( $response['data'] ),
+		);
+	}
+
+	/**
+	 * List changed files for a pull request.
+	 *
+	 * @param array $input Required: repo, pull_number. Optional: per_page, page.
+	 * @return array|\WP_Error { success: bool, files: normalized[], count: int } or error.
+	 */
+	public static function listPullFiles( array $input ): array|\WP_Error {
+		$repo        = sanitize_text_field( $input['repo'] ?? '' );
+		$pull_number = (int) ( $input['pull_number'] ?? $input['pr_number'] ?? 0 );
+
+		if ( empty( $repo ) || $pull_number <= 0 ) {
+			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and pull_number are required.', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPat();
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$query_params = array(
+			'per_page' => self::clampPerPage( $input['per_page'] ?? self::MAX_PER_PAGE ),
+			'page'     => max( 1, (int) ( $input['page'] ?? 1 ) ),
+		);
+
+		$url      = sprintf( '%s/repos/%s/pulls/%d/files', self::API_BASE, $repo, $pull_number );
+		$response = self::apiGet( $url, $query_params, $pat );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$normalized = array_map( array( self::class, 'normalizePullFile' ), $response['data'] );
+
+		return array(
+			'success' => true,
+			'files'   => $normalized,
+			'count'   => count( $normalized ),
+		);
+	}
+
 	public static function listRepos( array $input ): array|\WP_Error {
 		$owner = sanitize_text_field( $input['owner'] ?? '' );
 		if ( empty( $owner ) ) {
@@ -939,7 +1078,11 @@ class GitHubAbilities {
 			'html_url'   => $pr['html_url'] ?? '',
 			'user'       => $pr['user']['login'] ?? '',
 			'head'       => $pr['head']['ref'] ?? '',
+			'head_ref'   => $pr['head']['ref'] ?? '',
+			'head_sha'   => $pr['head']['sha'] ?? '',
 			'base'       => $pr['base']['ref'] ?? '',
+			'base_ref'   => $pr['base']['ref'] ?? '',
+			'base_sha'   => $pr['base']['sha'] ?? '',
 			'draft'      => $pr['draft'] ?? false,
 			'merged'     => ! empty( $pr['merged_at'] ),
 			'labels'     => array_map( fn( $label ) => $label['name'] ?? '', $pr['labels'] ?? array() ),
@@ -947,6 +1090,121 @@ class GitHubAbilities {
 			'updated_at' => $pr['updated_at'] ?? '',
 			'closed_at'  => $pr['closed_at'] ?? '',
 			'merged_at'  => $pr['merged_at'] ?? '',
+		);
+	}
+
+	/**
+	 * Normalize one changed file from the pull files API.
+	 */
+	public static function normalizePullFile( array $file ): array {
+		return array(
+			'filename'  => $file['filename'] ?? '',
+			'status'    => $file['status'] ?? '',
+			'additions' => (int) ( $file['additions'] ?? 0 ),
+			'deletions' => (int) ( $file['deletions'] ?? 0 ),
+			'changes'   => (int) ( $file['changes'] ?? 0 ),
+			'patch'     => $file['patch'] ?? '',
+			'raw_url'   => $file['raw_url'] ?? '',
+			'blob_url'  => $file['blob_url'] ?? '',
+		);
+	}
+
+	/**
+	 * Build a review-ready DataPacket for one pull request.
+	 *
+	 * @param string $repo Repository in owner/repo format.
+	 * @param array  $pull Normalized pull request payload.
+	 * @param array  $files Normalized changed file payloads.
+	 * @param array  $options Optional head_sha and max_patch_chars.
+	 * @return array|\WP_Error DataPacket-compatible array or validation error.
+	 */
+	public static function normalizePullReviewContext( string $repo, array $pull, array $files, array $options = array() ): array|\WP_Error {
+		$pull_number = (int) ( $pull['number'] ?? 0 );
+		$head_sha    = (string) ( $pull['head_sha'] ?? '' );
+		$expected    = (string) ( $options['head_sha'] ?? '' );
+
+		if ( '' !== $expected && '' !== $head_sha && $expected !== $head_sha ) {
+			return new \WP_Error(
+				'github_pr_head_sha_mismatch',
+				sprintf( 'GitHub PR head SHA mismatch for %s#%d: expected %s, found %s.', $repo, $pull_number, $expected, $head_sha ),
+				array( 'status' => 409 )
+			);
+		}
+
+		$max_patch_chars = max( 0, (int) ( $options['max_patch_chars'] ?? 200000 ) );
+		$patch_chars     = 0;
+		$truncated_files = 0;
+		$changed_files   = array();
+
+		foreach ( $files as $file ) {
+			$patch      = (string) ( $file['patch'] ?? '' );
+			$patch_size = strlen( $patch );
+			$include    = '' !== $patch && ( 0 === $max_patch_chars || $patch_chars + $patch_size <= $max_patch_chars );
+
+			if ( '' !== $patch && ! $include ) {
+				$truncated_files++;
+			}
+
+			$entry = array(
+				'filename'       => $file['filename'] ?? '',
+				'status'         => $file['status'] ?? '',
+				'additions'      => (int) ( $file['additions'] ?? 0 ),
+				'deletions'      => (int) ( $file['deletions'] ?? 0 ),
+				'changes'        => (int) ( $file['changes'] ?? 0 ),
+				'patch'          => $include ? $patch : '',
+				'patch_included' => $include,
+				'patch_bytes'    => $patch_size,
+			);
+
+			if ( $include ) {
+				$patch_chars += $patch_size;
+			}
+
+			$changed_files[] = $entry;
+		}
+
+		$item_identifier = sprintf( '%s#%d@%s', $repo, $pull_number, $head_sha );
+		$title           = sprintf( 'PR review context: %s#%d %s', $repo, $pull_number, $pull['title'] ?? '' );
+
+		$context = array(
+			'repo'          => $repo,
+			'pull_number'   => $pull_number,
+			'url'           => $pull['html_url'] ?? '',
+			'title'         => $pull['title'] ?? '',
+			'body'          => $pull['body'] ?? '',
+			'author'        => $pull['user'] ?? '',
+			'base_ref'      => $pull['base_ref'] ?? $pull['base'] ?? '',
+			'base_sha'      => $pull['base_sha'] ?? '',
+			'head_ref'      => $pull['head_ref'] ?? $pull['head'] ?? '',
+			'head_sha'      => $head_sha,
+			'changed_files' => $changed_files,
+			'truncation'    => array(
+				'max_patch_chars'      => $max_patch_chars,
+				'included_patch_chars' => $patch_chars,
+				'truncated_files'      => $truncated_files,
+				'truncated'            => $truncated_files > 0,
+			),
+		);
+
+		return array(
+			'title'    => $title,
+			'content'  => wp_json_encode( $context, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ),
+			'metadata' => array(
+				'source_type'       => 'github_pr_review',
+				'item_identifier'   => $item_identifier,
+				'original_id'       => $item_identifier,
+				'dedup_key'         => $item_identifier,
+				'original_title'    => $pull['title'] ?? '',
+				'original_date_gmt' => $pull['updated_at'] ?? $pull['created_at'] ?? '',
+				'github_repo'       => $repo,
+				'github_type'       => 'pull_review_context',
+				'github_number'     => $pull_number,
+				'github_head_sha'   => $head_sha,
+				'github_base_sha'   => $pull['base_sha'] ?? '',
+				'github_url'        => $pull['html_url'] ?? '',
+				'source_url'        => $pull['html_url'] ?? '',
+				'review_context'    => $context,
+			),
 		);
 	}
 
