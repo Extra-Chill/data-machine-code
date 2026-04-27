@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.13.2] - 2026-04-27
+
+### Changed
+- test(agents-md): pin memory compose marker
+
+### Fixed
+- serialize worktree mutations per repo
+- surface minion routing in injected context
+
 ## [0.13.1] - 2026-04-27
 
 ### Fixed
