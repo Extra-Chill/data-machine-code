@@ -62,6 +62,14 @@ function datamachine_code_bootstrap() {
 add_action( 'plugins_loaded', 'datamachine_code_bootstrap', 20 );
 
 /**
+ * Register DMC-owned webhook verifier modes with Data Machine core.
+ */
+add_filter( 'datamachine_webhook_verifier_modes', function ( array $modes ): array {
+	$modes['github_pull_request'] = \DataMachineCode\Support\GitHubWebhookValidator::class;
+	return $modes;
+} );
+
+/**
  * Register ability categories for data-machine-code.
  *
  * Must be called on `wp_abilities_api_categories_init` — WordPress core
