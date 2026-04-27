@@ -434,8 +434,6 @@ MD;
 
 **Git:** prefer `homeboy git changes | status | commit | push | pull | tag` — auto-baselines, structured output, `--json` bulk. One-off reads (`git diff`, `git show`, `git blame`) stay on raw `git`.
 
-**Triage:** `homeboy triage component|project|fleet|rig` for read-only attention reports across configured repos — open issues, PRs, review/check state, stale work, and clickable GitHub URLs.
-
 **Perf + envs:** `homeboy bench` for pinned benchmarks with baseline + ratchet; `homeboy rig up|check|down|status` for reproducible multi-component dev environments.
 
 **Stacks:** `homeboy stack list|show|apply|status|sync|inspect` for combined-fixes branches built from upstream PRs.
