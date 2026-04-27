@@ -27,6 +27,7 @@ Sibling extensions like `data-machine-socials` and `data-machine-business` are *
 - Create issues (async via Action Scheduler)
 - GitHub fetch handler for pipeline workflows
 - GitHub pull request webhook validation mode for review-flow triggers
+- PR review flow scaffold for webhook-triggered review automation
 
 ### Workspace Management
 - Clone and manage git repositories in a secure workspace directory
@@ -52,6 +53,7 @@ wp datamachine-code github close 123 --repo=owner/repo
 wp datamachine-code github comment 123 "Fixed." --repo=owner/repo
 wp datamachine-code github pulls --repo=owner/repo
 wp datamachine-code github repos owner
+wp datamachine-code github review-flow create --repo=owner/repo --agent=code-reviewer
 wp datamachine-code github status
 
 # Workspace

@@ -14,6 +14,7 @@ namespace DataMachineCode\Cli\Commands;
 use WP_CLI;
 use DataMachine\Cli\BaseCommand;
 use DataMachineCode\Abilities\GitHubAbilities;
+use DataMachineCode\GitHub\PrReviewFlowScaffold;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -499,6 +500,84 @@ class GitHubCommand extends BaseCommand {
 
 			$this->format_items( $repo_items, array( 'repo', 'label' ), $assoc_args );
 		}
+	}
+
+	/**
+	 * Scaffold a GitHub PR review flow definition.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <action>
+	 * : Scaffold action. Currently supports: create.
+	 *
+	 * [--repo=<repo>]
+	 * : Repository in owner/repo format. Falls back to default repo in settings.
+	 *
+	 * [--agent=<agent>]
+	 * : Agent slug or ID that should own the generated flow when imported.
+	 *
+	 * [--name=<name>]
+	 * : Pipeline/flow display name.
+	 * ---
+	 * default: GitHub PR review
+	 * ---
+	 *
+	 * [--comment-mode=<mode>]
+	 * : PR comment behavior hint for the generated AI step.
+	 * ---
+	 * default: managed
+	 * options:
+	 *   - managed
+	 *   - append
+	 *   - dry_run
+	 * ---
+	 *
+	 * [--actions=<actions>]
+	 * : Comma-separated GitHub pull_request actions.
+	 * ---
+	 * default: opened,reopened,synchronize,ready_for_review
+	 * ---
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: json
+	 * options:
+	 *   - json
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code github review-flow create \
+	 *       --repo=Extra-Chill/data-machine-code \
+	 *       --agent=code-reviewer \
+	 *       --name="DMC PR review" \
+	 *       --comment-mode=managed
+	 *
+	 * @subcommand review-flow
+	 */
+	public function review_flow( array $args, array $assoc_args ): void {
+		$action = $args[0] ?? '';
+		if ( 'create' !== $action ) {
+			WP_CLI::error( 'Usage: wp datamachine-code github review-flow create [--repo=<owner/repo>] [--agent=<agent>] [--name=<name>] [--comment-mode=<managed|append|dry_run>] [--actions=<csv>]' );
+			return;
+		}
+
+		$repo = GitHubAbilities::resolveRepo( $assoc_args['repo'] ?? '' );
+		if ( empty( $repo ) ) {
+			WP_CLI::error( 'Required: --repo=<owner/repo> (or set a default repo in settings).' );
+			return;
+		}
+
+		$definition = PrReviewFlowScaffold::build( array(
+			'repo'         => $repo,
+			'agent'        => $assoc_args['agent'] ?? '',
+			'name'         => $assoc_args['name'] ?? 'GitHub PR review',
+			'comment_mode' => $assoc_args['comment-mode'] ?? 'managed',
+			'actions'      => $assoc_args['actions'] ?? PrReviewFlowScaffold::DEFAULT_ACTIONS,
+		) );
+
+		WP_CLI::line( wp_json_encode( $definition, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
 	}
 
 	// -------------------------------------------------------------------------
