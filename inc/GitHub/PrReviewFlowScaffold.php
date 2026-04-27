@@ -93,11 +93,15 @@ class PrReviewFlowScaffold {
 	public static function default_prompt(): string {
 		return implode( "\n", array(
 			'You are reviewing a GitHub pull request. Return findings first, ordered by severity.',
+			'Read the initial pull_review_context packet first, then identify what you still need to know before reviewing.',
+			'Use read-only GitHub tools on demand to inspect specific PR metadata, changed files, base/head file contents, neighboring files, dependency files, or repository tree paths that are necessary to verify a finding.',
+			'Keep context gathering bounded: fetch only targeted paths, avoid broad repository scans, and stop when you have enough evidence for or against high-confidence findings.',
 			'Only report high-confidence bugs, security risks, behavioral regressions, or missing tests that directly matter for this PR.',
 			'Do not praise the change, summarize obvious edits, or leave generic style feedback.',
 			'Each finding must include a concise title, severity, affected file/path when known, and why it matters.',
 			'If there are no findings, say exactly: No high-confidence findings.',
-			'Use read-only GitHub tools for additional context when needed. Use the PR comment tool only for the final review comment.',
+			'Use the managed PR review comment tool exactly once, after all context gathering is complete, to publish the final review.',
+			'When calling that final tool, pass repo, pull_number, body, marker "data-machine-code-pr-review", mode "per_head_sha", and the PR head_sha so repeated runs update the managed comment for the same head only.',
 		) );
 	}
 
@@ -175,12 +179,14 @@ class PrReviewFlowScaffold {
 				'get_github_pull_review_context',
 				'get_github_file',
 				'list_github_tree',
-				'comment_github_pull_request',
+				'upsert_github_pull_review_comment',
 			),
 			'comment_policy' => array(
-				'tool'   => 'comment_github_pull_request',
-				'mode'   => $comment_mode,
-				'marker' => 'data-machine-code-pr-review',
+				'tool'      => 'upsert_github_pull_review_comment',
+				'mode'      => 'per_head_sha',
+				'head_sha'  => '{{metadata.head_sha}}',
+				'marker'    => 'data-machine-code-pr-review',
+				'requested' => $comment_mode,
 			),
 		);
 	}

@@ -27,7 +27,7 @@ Sibling extensions like `data-machine-socials` and `data-machine-business` are *
 - Create issues (async via Action Scheduler)
 - GitHub fetch handler for pipeline workflows
 - GitHub pull request webhook validation mode for review-flow triggers
-- PR review flow scaffold for webhook-triggered review automation
+- PR review flow scaffold for webhook-triggered review automation with bounded context gathering and managed comment upsert
 
 ### Workspace Management
 - Clone and manage git repositories in a secure workspace directory
@@ -40,7 +40,7 @@ Sibling extensions like `data-machine-socials` and `data-machine-business` are *
 - Per-repo write/push policies with path allowlists and branch restrictions
 
 ### AI Agent Tools
-- 10 chat tools for GitHub and workspace operations
+- GitHub and workspace chat tools for read-only context gathering plus managed PR review comments
 - Async GitHub issue creation via system tasks
 - All tools register through Data Machine's tool system
 
