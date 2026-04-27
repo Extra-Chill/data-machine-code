@@ -60,6 +60,11 @@ class WorktreeContextInjector {
 	private const MEMORY_FILES = array( 'MEMORY.md', 'USER.md', 'RULES.md' );
 
 	/**
+	 * Site-provided sections that should be visible before long memory snapshots.
+	 */
+	private const PRIORITY_RULE_SECTIONS = array( 'Minion Session Routing' );
+
+	/**
 	 * Build a payload capturing the originating site's agent context.
 	 *
 	 * Returns null when Data Machine's agent memory layer is unavailable
@@ -127,6 +132,14 @@ class WorktreeContextInjector {
 		$out .= "on {$timestamp}. The agent that created it has the following\n";
 		$out .= "persistent context snapshotted below.\n\n";
 
+		$priority_rules = self::extract_priority_rules( (string) ( $files['RULES.md'] ?? '' ) );
+		if ( '' !== $priority_rules ) {
+			$out .= "## Priority rules from RULES.md\n\n";
+			$out .= "These site-provided rules are repeated here before the full context snapshot\n";
+			$out .= "so spawned agents see them before long memory sections.\n\n";
+			$out .= $priority_rules . "\n\n";
+		}
+
 		foreach ( self::MEMORY_FILES as $filename ) {
 			if ( empty( $files[ $filename ] ) ) {
 				continue;
@@ -149,6 +162,64 @@ class WorktreeContextInjector {
 		$out .= '- Studio path: ' . ( '' !== $abspath ? $abspath : '(unknown)' ) . "\n";
 
 		return $out;
+	}
+
+	/**
+	 * Extract high-priority site rules that need to survive long memory payloads.
+	 *
+	 * @param string $rules_md Full RULES.md body from the originating site.
+	 * @return string Markdown containing matched rule sections, or empty string.
+	 */
+	private static function extract_priority_rules( string $rules_md ): string {
+		$rules_md = trim( $rules_md );
+		if ( '' === $rules_md ) {
+			return '';
+		}
+
+		$sections = array();
+		foreach ( self::PRIORITY_RULE_SECTIONS as $section_title ) {
+			$section = self::extract_markdown_h2_section( $rules_md, $section_title );
+			if ( '' !== $section ) {
+				$sections[] = $section;
+			}
+		}
+
+		return implode( "\n\n", $sections );
+	}
+
+	/**
+	 * Extract one H2 markdown section by exact title.
+	 *
+	 * @param string $markdown      Markdown document.
+	 * @param string $section_title H2 title without the leading `##`.
+	 * @return string Section markdown including its H2 heading, or empty string.
+	 */
+	private static function extract_markdown_h2_section( string $markdown, string $section_title ): string {
+		$lines      = preg_split( '/\r\n|\r|\n/', $markdown );
+		if ( false === $lines ) {
+			return '';
+		}
+		$capturing  = false;
+		$captured   = array();
+		$wanted_h2  = '## ' . $section_title;
+
+		foreach ( $lines as $line ) {
+			$is_h2 = str_starts_with( $line, '## ' ) && ! str_starts_with( $line, '### ' );
+			if ( $is_h2 ) {
+				if ( $capturing ) {
+					break;
+				}
+				if ( trim( $line ) === $wanted_h2 ) {
+					$capturing = true;
+				}
+			}
+
+			if ( $capturing ) {
+				$captured[] = $line;
+			}
+		}
+
+		return trim( implode( "\n", $captured ) );
 	}
 
 	/**
