@@ -168,7 +168,18 @@ namespace {
 			'method'   => 'handlePullReviewContext',
 			'callback' => array( GitHubAbilities::class, 'getPullReviewContext' ),
 			'required' => array( 'repo', 'pull_number' ),
-			'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'pull_number' => 89, 'head_sha' => 'abc123' ),
+			'optional' => array( 'head_sha', 'max_patch_chars', 'include_file_contents', 'include_base_contents', 'context_paths', 'max_file_content_chars', 'max_context_files', 'max_total_context_chars' ),
+			'params'   => array(
+				'repo'                    => 'Extra-Chill/data-machine-code',
+				'pull_number'             => 89,
+				'head_sha'                => 'abc123',
+				'include_file_contents'   => true,
+				'include_base_contents'   => true,
+				'context_paths'           => array( 'README.md' ),
+				'max_file_content_chars'  => 20000,
+				'max_context_files'       => 10,
+				'max_total_context_chars' => 100000,
+			),
 		),
 	);
 
@@ -187,6 +198,11 @@ namespace {
 		$assert( "{$tool_name} definition uses narrow handler", $spec['method'] === ( $definition['method'] ?? '' ) );
 		foreach ( $spec['required'] as $param ) {
 			$assert( "{$tool_name} requires {$param}", true === ( $definition['parameters'][ $param ]['required'] ?? false ) );
+		}
+		foreach ( $spec['optional'] ?? array() as $param ) {
+			$assert( "{$tool_name} exposes optional {$param}", array_key_exists( $param, $definition['parameters'] ?? array() ) );
+			$assert( "{$tool_name} does not require optional {$param}", false === ( $definition['parameters'][ $param ]['required'] ?? false ) );
+			$assert( "{$tool_name} ability schema exposes optional {$param}", array_key_exists( $param, $GLOBALS['dmc_registered_abilities'][ $ability_name ]['input_schema']['properties'] ?? array() ) );
 		}
 
 		$response = $tools->handle_tool_call( $spec['params'], $definition );

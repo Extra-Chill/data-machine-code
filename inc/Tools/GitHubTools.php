@@ -551,25 +551,55 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handlePullReviewContext',
 			'description' => 'Build a review-ready context packet for a GitHub pull request, including normalized PR metadata and changed-file patches.',
 			'parameters'  => array(
-				'repo'            => array(
+				'repo'                    => array(
 					'type'        => 'string',
 					'required'    => true,
 					'description' => 'Repository in owner/repo format.',
 				),
-				'pull_number'     => array(
+				'pull_number'             => array(
 					'type'        => 'integer',
 					'required'    => true,
 					'description' => 'Pull request number.',
 				),
-				'head_sha'        => array(
+				'head_sha'                => array(
 					'type'        => 'string',
 					'required'    => false,
 					'description' => 'Optional expected pull request head SHA. Returns an error if GitHub reports a different head SHA.',
 				),
-				'max_patch_chars' => array(
+				'max_patch_chars'         => array(
 					'type'        => 'integer',
 					'required'    => false,
 					'description' => 'Maximum cumulative patch characters to include. Default: 200000.',
+				),
+				'include_file_contents'   => array(
+					'type'        => 'boolean',
+					'required'    => false,
+					'description' => 'Opt in to bounded full-file contents for changed files.',
+				),
+				'include_base_contents'   => array(
+					'type'        => 'boolean',
+					'required'    => false,
+					'description' => 'When changed file contents are enabled, also include bounded base-branch contents for comparison.',
+				),
+				'context_paths'           => array(
+					'type'        => 'array',
+					'required'    => false,
+					'description' => 'Additional repository paths to include from the PR head ref.',
+				),
+				'max_file_content_chars'  => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Maximum characters included per expanded file content block. Default: 20000.',
+				),
+				'max_context_files'       => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Maximum number of files included in expanded PR review context. Default: 10.',
+				),
+				'max_total_context_chars' => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Maximum cumulative characters included across expanded PR review context files. Default: 100000.',
 				),
 			),
 		);

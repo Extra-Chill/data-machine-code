@@ -405,21 +405,45 @@ class GitHubAbilities {
 						'type'       => 'object',
 						'required'   => array( 'repo', 'pull_number' ),
 						'properties' => array(
-							'repo'            => array(
+							'repo'                    => array(
 								'type'        => 'string',
 								'description' => 'Repository in owner/repo format.',
 							),
-							'pull_number'     => array(
+							'pull_number'             => array(
 								'type'        => 'integer',
 								'description' => 'Pull request number.',
 							),
-							'head_sha'        => array(
+							'head_sha'                => array(
 								'type'        => 'string',
 								'description' => 'Optional expected pull request head SHA.',
 							),
-							'max_patch_chars' => array(
+							'max_patch_chars'         => array(
 								'type'        => 'integer',
 								'description' => 'Maximum cumulative patch characters to include (default: 200000).',
+							),
+							'include_file_contents'   => array(
+								'type'        => 'boolean',
+								'description' => 'Whether to include bounded full-file contents for changed files.',
+							),
+							'include_base_contents'   => array(
+								'type'        => 'boolean',
+								'description' => 'Whether to include bounded base-file contents for changed files.',
+							),
+							'context_paths'           => array(
+								'type'        => array( 'array', 'string' ),
+								'description' => 'Additional repository paths to include from the PR head ref, as an array or comma/newline-separated string.',
+							),
+							'max_file_content_chars'  => array(
+								'type'        => 'integer',
+								'description' => 'Maximum characters included per expanded file content block (default: 20000).',
+							),
+							'max_context_files'       => array(
+								'type'        => 'integer',
+								'description' => 'Maximum number of files included in expanded PR review context (default: 10).',
+							),
+							'max_total_context_chars' => array(
+								'type'        => 'integer',
+								'description' => 'Maximum cumulative characters included across expanded PR review context files (default: 100000).',
 							),
 						),
 					),
