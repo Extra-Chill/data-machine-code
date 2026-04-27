@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.16.0] - 2026-04-27
+
+### Added
+- add PR review check status context
+- strengthen PR review context loop
+
 ## [0.15.0] - 2026-04-27
 
 ### Added
