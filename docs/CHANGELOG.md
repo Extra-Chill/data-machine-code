@@ -2,6 +2,13 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.13.1] - 2026-04-27
+
+### Fixed
+- bootstrap nested dependency roots
+- accept base-branch worktree alias
+- fix(agents-md): point compose verb at `datamachine memory`, not `datamachine agent`
+
 ## [0.13.0] - 2026-04-25
 
 ### Added
