@@ -1030,8 +1030,8 @@ class WorkspaceCommand extends BaseCommand {
 	 *   `worktree add` runs detected setup so the checkout is immediately
 	 *   test/build-ready:
 	 *     - git submodule update --init --recursive (if .gitmodules)
-	 *     - pnpm/bun/yarn/npm install (based on lockfile)
-	 *     - composer install --no-interaction (if composer.lock)
+	 *     - pnpm/bun/yarn/npm install (based on root or one-level nested lockfiles)
+	 *     - composer install --no-interaction (based on root or one-level nested composer.lock)
 	 *   Each step is skipped gracefully when its trigger file or tool is
 	 *   missing. Pass `--skip-bootstrap` to create a bare checkout for pure
 	 *   read use (faster, no deps installed). The ability-level input is
