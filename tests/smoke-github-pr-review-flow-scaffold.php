@@ -91,16 +91,27 @@ namespace {
 	$prompt  = $ai_step['user_message'];
 	$tools   = $ai_step['enabled_tools'];
 	$assert( 'prompt requires findings-first review', str_contains( $prompt, 'findings first' ) || str_contains( $prompt, 'findings' ) );
+	$assert( 'prompt requires initial context packet read', str_contains( $prompt, 'initial pull_review_context packet' ) );
+	$assert( 'prompt requires on-demand context gathering', str_contains( $prompt, 'on demand' ) && str_contains( $prompt, 'specific PR metadata' ) );
+	$assert( 'prompt bounds context gathering', str_contains( $prompt, 'Keep context gathering bounded' ) && str_contains( $prompt, 'targeted paths' ) );
 	$assert( 'prompt rejects praise spam', str_contains( $prompt, 'Do not praise' ) );
 	$assert( 'prompt asks for high-confidence findings', str_contains( $prompt, 'high-confidence' ) );
+	$assert( 'prompt requires exactly one final managed comment', str_contains( $prompt, 'managed PR review comment tool exactly once' ) );
+	$assert( 'prompt instructs same-head managed upsert parameters', str_contains( $prompt, 'mode "per_head_sha"' ) && str_contains( $prompt, 'head_sha' ) && str_contains( $prompt, 'same head only' ) );
 	$assert( 'read-only get_github_pull tool enabled', in_array( 'get_github_pull', $tools, true ) );
 	$assert( 'read-only get_github_pull_files tool enabled', in_array( 'get_github_pull_files', $tools, true ) );
 	$assert( 'read-only get_github_pull_review_context tool enabled', in_array( 'get_github_pull_review_context', $tools, true ) );
 	$assert( 'read-only get_github_file tool enabled', in_array( 'get_github_file', $tools, true ) );
 	$assert( 'read-only list_github_tree tool enabled', in_array( 'list_github_tree', $tools, true ) );
-	$assert( 'PR comment tool enabled', in_array( 'comment_github_pull_request', $tools, true ) );
-	$assert( 'comment policy points at PR comment tool', 'comment_github_pull_request' === $ai_step['comment_policy']['tool'] );
+	$assert( 'plain PR comment tool is not enabled', ! in_array( 'comment_github_pull_request', $tools, true ) );
+	$assert( 'managed PR review comment upsert tool enabled', in_array( 'upsert_github_pull_review_comment', $tools, true ) );
+	$assert( 'comment policy points at managed upsert tool', 'upsert_github_pull_review_comment' === $ai_step['comment_policy']['tool'] );
+	$assert( 'comment policy uses per-head SHA dedupe', 'per_head_sha' === $ai_step['comment_policy']['mode'] && '{{metadata.head_sha}}' === $ai_step['comment_policy']['head_sha'] );
 	$assert( 'comment policy includes managed marker', 'data-machine-code-pr-review' === $ai_step['comment_policy']['marker'] );
+	$assert( 'comment policy records requested mode for importer visibility', 'managed' === $ai_step['comment_policy']['requested'] );
+
+	$read_only_tools = array_diff( $tools, array( 'upsert_github_pull_review_comment' ) );
+	$assert( 'all pre-final context tools are read-only', empty( array_intersect( $read_only_tools, array( 'manage_github_issue', 'comment_github_pull_request' ) ) ) );
 
 	$custom = PrReviewFlowScaffold::build( array(
 		'actions'      => 'opened,synchronize,invalid action',
