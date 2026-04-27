@@ -434,9 +434,9 @@ MD;
 
 **Git:** prefer `homeboy git changes | status | commit | push | pull | tag` — auto-baselines, structured output, `--json` bulk. One-off reads (`git diff`, `git show`, `git blame`) stay on raw `git`.
 
-**Bench:** `homeboy bench` for pinned benchmarks with baseline + ratchet.
+**Perf + envs:** `homeboy bench` for pinned benchmarks with baseline + ratchet; `homeboy rig up|check|down|status` for reproducible multi-component dev environments.
 
-**Rig:** `homeboy rig up | check | down | status` — dev-environment-as-code at `~/.config/homeboy/rigs/<id>.json`. When a project's setup is multi-component (a fork wired up next to its consumer, checkouts symlinked into a runtime, app + sidecar service), declare it in a rig spec rather than reproducing setup by hand. `rig check` is the structured answer to "is my dev environment currently in the declared state" — reach for it before any "I tested this" claim.
+**Stacks:** `homeboy stack list|show|apply|status|sync|inspect` for combined-fixes branches built from upstream PRs.
 
 **Repo rules** (when `homeboy.json` is present):
 - **NEVER edit `CHANGELOG.md`** — generated from conventional commits at release time.
