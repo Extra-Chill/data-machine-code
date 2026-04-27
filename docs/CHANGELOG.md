@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.14.0] - 2026-04-27
+
+### Added
+- expose expanded review context tool params
+- expose read-only source context tools
+- expand PR review context
+- add PR review context fetch
+- add narrow PR comment tool
+
 ## [0.13.2] - 2026-04-27
 
 ### Changed
