@@ -319,6 +319,202 @@ class GitHubAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/get-github-pull',
+				array(
+					'label'               => 'Get GitHub Pull Request',
+					'description'         => 'Get a single GitHub pull request with normalized metadata',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'pull_number' ),
+						'properties' => array(
+							'repo'        => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'pull_number' => array(
+								'type'        => 'integer',
+								'description' => 'Pull request number.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'pull'    => array( 'type' => 'object' ),
+							'error'   => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'getPull' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/list-github-pull-files',
+				array(
+					'label'               => 'List GitHub Pull Request Files',
+					'description'         => 'List changed files for a GitHub pull request',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'pull_number' ),
+						'properties' => array(
+							'repo'        => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'pull_number' => array(
+								'type'        => 'integer',
+								'description' => 'Pull request number.',
+							),
+							'per_page'    => array(
+								'type'        => 'integer',
+								'description' => 'Results per page (default: 100, max: 100).',
+							),
+							'page'        => array(
+								'type'        => 'integer',
+								'description' => 'Page number (default: 1).',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'files'   => array( 'type' => 'array' ),
+							'count'   => array( 'type' => 'integer' ),
+							'error'   => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'listPullFiles' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/get-github-pull-review-context',
+				array(
+					'label'               => 'Get GitHub Pull Request Review Context',
+					'description'         => 'Get a review-ready payload for a GitHub pull request and its changed files',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'pull_number' ),
+						'properties' => array(
+							'repo'            => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'pull_number'     => array(
+								'type'        => 'integer',
+								'description' => 'Pull request number.',
+							),
+							'head_sha'        => array(
+								'type'        => 'string',
+								'description' => 'Optional expected pull request head SHA.',
+							),
+							'max_patch_chars' => array(
+								'type'        => 'integer',
+								'description' => 'Maximum cumulative patch characters to include (default: 200000).',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'context' => array( 'type' => 'object' ),
+							'error'   => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'getPullReviewContext' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/list-github-tree',
+				array(
+					'label'               => 'List GitHub Repository Tree',
+					'description'         => 'List files in a GitHub repository tree at a branch or ref',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo' ),
+						'properties' => array(
+							'repo' => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'ref'  => array(
+								'type'        => 'string',
+								'description' => 'Branch, tag, or commit SHA. Defaults to HEAD.',
+							),
+							'path' => array(
+								'type'        => 'string',
+								'description' => 'Optional path prefix to filter returned files.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'files'   => array( 'type' => 'array' ),
+							'count'   => array( 'type' => 'integer' ),
+							'error'   => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'getRepoTree' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/get-github-file',
+				array(
+					'label'               => 'Get GitHub File',
+					'description'         => 'Get decoded content for a single file in a GitHub repository',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'path' ),
+						'properties' => array(
+							'repo' => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'path' => array(
+								'type'        => 'string',
+								'description' => 'File path within the repository.',
+							),
+							'ref'  => array(
+								'type'        => 'string',
+								'description' => 'Branch, tag, or commit SHA. Defaults to the repository default branch.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'file'    => array( 'type' => 'object' ),
+							'error'   => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'getFileContents' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/create-or-update-github-file',
 				array(
 					'label'               => 'Create or Update GitHub File',
@@ -717,9 +913,10 @@ class GitHubAbilities {
 			}
 
 			$page_files = $file_page['files'] ?? array();
+			$page_count = count( $page_files );
 			$files      = array_merge( $files, $page_files );
-			$page++;
-		} while ( count( $page_files ) >= self::MAX_PER_PAGE );
+			++$page;
+		} while ( $page_count >= self::MAX_PER_PAGE );
 
 		$context = self::normalizePullReviewContext(
 			$repo,
@@ -1177,7 +1374,7 @@ class GitHubAbilities {
 			return self::patError();
 		}
 
-		$branch = sanitize_text_field( $input['branch'] ?? '' );
+		$branch = sanitize_text_field( $input['ref'] ?? $input['branch'] ?? '' );
 		$ref    = ! empty( $branch ) ? $branch : 'HEAD';
 
 		$url      = sprintf( '%s/repos/%s/git/trees/%s', self::API_BASE, $repo, $ref );
@@ -1190,8 +1387,21 @@ class GitHubAbilities {
 		$tree = $response['data']['tree'] ?? array();
 
 		// Filter to blobs (files) only — skip trees (directories).
-		$files = array_filter( $tree, fn( $entry ) => 'blob' === ( $entry['type'] ?? '' ) );
-		$files = array_values( array_map( array( self::class, 'normalizeTreeEntry' ), $files ) );
+		$path_prefix = trim( sanitize_text_field( $input['path'] ?? '' ), '/' );
+		$files       = array_filter(
+			$tree,
+			function ( $entry ) use ( $path_prefix ) {
+				if ( 'blob' !== ( $entry['type'] ?? '' ) ) {
+					return false;
+				}
+				if ( '' === $path_prefix ) {
+					return true;
+				}
+				$entry_path = (string) ( $entry['path'] ?? '' );
+				return $entry_path === $path_prefix || str_starts_with( $entry_path, $path_prefix . '/' );
+			}
+		);
+		$files       = array_values( array_map( array( self::class, 'normalizeTreeEntry' ), $files ) );
 
 		return array(
 			'success' => true,
@@ -1225,7 +1435,7 @@ class GitHubAbilities {
 		}
 
 		$query_params = array();
-		$branch       = sanitize_text_field( $input['branch'] ?? '' );
+		$branch       = sanitize_text_field( $input['ref'] ?? $input['branch'] ?? '' );
 		if ( ! empty( $branch ) ) {
 			$query_params['ref'] = $branch;
 		}
@@ -1411,7 +1621,7 @@ class GitHubAbilities {
 			$include    = '' !== $patch && ( 0 === $max_patch_chars || $patch_chars + $patch_size <= $max_patch_chars );
 
 			if ( '' !== $patch && ! $include ) {
-				$truncated_files++;
+				++$truncated_files;
 			}
 
 			$entry = array(
