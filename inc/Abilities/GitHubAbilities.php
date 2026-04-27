@@ -405,21 +405,45 @@ class GitHubAbilities {
 						'type'       => 'object',
 						'required'   => array( 'repo', 'pull_number' ),
 						'properties' => array(
-							'repo'            => array(
+							'repo'                    => array(
 								'type'        => 'string',
 								'description' => 'Repository in owner/repo format.',
 							),
-							'pull_number'     => array(
+							'pull_number'             => array(
 								'type'        => 'integer',
 								'description' => 'Pull request number.',
 							),
-							'head_sha'        => array(
+							'head_sha'                => array(
 								'type'        => 'string',
 								'description' => 'Optional expected pull request head SHA.',
 							),
-							'max_patch_chars' => array(
+							'max_patch_chars'         => array(
 								'type'        => 'integer',
 								'description' => 'Maximum cumulative patch characters to include (default: 200000).',
+							),
+							'include_file_contents'   => array(
+								'type'        => 'boolean',
+								'description' => 'Whether to include bounded full-file contents for changed files.',
+							),
+							'include_base_contents'   => array(
+								'type'        => 'boolean',
+								'description' => 'Whether to include bounded base-file contents for changed files.',
+							),
+							'context_paths'           => array(
+								'type'        => array( 'array', 'string' ),
+								'description' => 'Additional repository paths to include from the PR head ref, as an array or comma/newline-separated string.',
+							),
+							'max_file_content_chars'  => array(
+								'type'        => 'integer',
+								'description' => 'Maximum characters included per expanded file content block (default: 20000).',
+							),
+							'max_context_files'       => array(
+								'type'        => 'integer',
+								'description' => 'Maximum number of files included in expanded PR review context (default: 10).',
+							),
+							'max_total_context_chars' => array(
+								'type'        => 'integer',
+								'description' => 'Maximum cumulative characters included across expanded PR review context files (default: 100000).',
 							),
 						),
 					),
@@ -959,14 +983,16 @@ class GitHubAbilities {
 		}
 
 		$limits = array(
-			'max_file_content_chars' => max( 1, (int) ( $options['max_file_content_chars'] ?? 20000 ) ),
-			'max_context_files'      => max( 1, (int) ( $options['max_context_files'] ?? 10 ) ),
+			'max_file_content_chars'  => max( 1, (int) ( $options['max_file_content_chars'] ?? 20000 ) ),
+			'max_context_files'       => max( 1, (int) ( $options['max_context_files'] ?? 10 ) ),
 			'max_total_context_chars' => max( 1, (int) ( $options['max_total_context_chars'] ?? 100000 ) ),
 		);
 
 		$head_ref = (string) ( $pull['head_sha'] ?? $pull['head_ref'] ?? $pull['head'] ?? '' );
 		$base_ref = (string) ( $pull['base_sha'] ?? $pull['base_ref'] ?? $pull['base'] ?? '' );
-		$fetcher  = $fetcher ?? static function ( string $path, string $ref, string $_side ) use ( $repo ): array|\WP_Error {
+		$fetcher  = $fetcher ?? static function ( string $path, string $ref, string $side ) use ( $repo ): array|\WP_Error {
+			unset( $side );
+
 			return self::getFileContents(
 				array(
 					'repo'   => $repo,
@@ -1019,7 +1045,7 @@ class GitHubAbilities {
 				}
 
 				$expanded['changed_files'][] = $entry;
-				$remaining_files--;
+				--$remaining_files;
 			}
 		}
 
@@ -1035,7 +1061,7 @@ class GitHubAbilities {
 				'path' => $path,
 				'head' => $file_context,
 			);
-			$remaining_files--;
+			--$remaining_files;
 		}
 
 		$expanded['summary']['included_files'] = count( $expanded['changed_files'] ) + count( $expanded['extra_files'] );
@@ -1047,7 +1073,8 @@ class GitHubAbilities {
 	 */
 	private static function normalizeContextPaths( mixed $paths ): array {
 		if ( is_string( $paths ) ) {
-			$paths = preg_split( '/[\r\n,]+/', $paths ) ?: array();
+			$split_paths = preg_split( '/[\r\n,]+/', $paths );
+			$paths       = false === $split_paths ? array() : $split_paths;
 		}
 
 		if ( ! is_array( $paths ) ) {
@@ -1122,13 +1149,13 @@ class GitHubAbilities {
 	 */
 	private static function applyContextFileAccounting( array &$expanded, array $file_context, int &$remaining_chars ): void {
 		if ( empty( $file_context['included'] ) ) {
-			$expanded['summary']['skipped_files']++;
+			++$expanded['summary']['skipped_files'];
 			return;
 		}
 
-		$included_chars = (int) ( $file_context['included_chars'] ?? 0 );
+		$included_chars                         = (int) ( $file_context['included_chars'] ?? 0 );
 		$expanded['summary']['included_chars'] += $included_chars;
-		$remaining_chars                       = max( 0, $remaining_chars - $included_chars );
+		$remaining_chars                        = max( 0, $remaining_chars - $included_chars );
 
 		if ( ! empty( $file_context['truncated'] ) ) {
 			$expanded['summary']['truncated'] = true;
@@ -1144,7 +1171,7 @@ class GitHubAbilities {
 			'source' => $source,
 			'reason' => $reason,
 		);
-		$expanded['summary']['skipped_files']++;
+		++$expanded['summary']['skipped_files'];
 	}
 
 	/**
