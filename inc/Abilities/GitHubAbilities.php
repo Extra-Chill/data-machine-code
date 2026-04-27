@@ -234,6 +234,48 @@ class GitHubAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/comment-github-pull-request',
+				array(
+					'label'               => 'Comment on GitHub Pull Request',
+					'description'         => 'Add a comment to a GitHub pull request without broader issue-management permissions',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'pull_number', 'body' ),
+						'properties' => array(
+							'repo'        => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'pull_number' => array(
+								'type'        => 'integer',
+								'description' => 'Pull request number.',
+							),
+							'body'        => array(
+								'type'        => 'string',
+								'description' => 'Comment body (supports GitHub Markdown).',
+							),
+							'marker'      => array(
+								'type'        => 'string',
+								'description' => 'Optional stable marker appended as an HTML comment for future update-by-marker support.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'comment' => array( 'type' => 'object' ),
+							'error'   => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'commentOnPullRequest' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/list-github-pulls',
 				array(
 					'label'               => 'List GitHub Pull Requests',
@@ -578,6 +620,24 @@ class GitHubAbilities {
 				'created_at' => $response['data']['created_at'] ?? '',
 			),
 			'message' => sprintf( 'Comment added to issue #%d.', $issue_number ),
+		);
+	}
+
+	public static function commentOnPullRequest( array $input ): array|\WP_Error {
+		return self::commentOnIssue( self::buildPullRequestCommentInput( $input ) );
+	}
+
+	private static function buildPullRequestCommentInput( array $input ): array {
+		$body = $input['body'] ?? '';
+		if ( isset( $input['marker'] ) && '' !== (string) $input['marker'] ) {
+			$marker = str_replace( '--', '-', trim( (string) $input['marker'] ) );
+			$body  .= "\n\n<!-- {$marker} -->";
+		}
+
+		return array(
+			'repo'         => $input['repo'] ?? '',
+			'issue_number' => (int) ( $input['pull_number'] ?? 0 ),
+			'body'         => $body,
 		);
 	}
 

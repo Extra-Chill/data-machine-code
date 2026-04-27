@@ -27,6 +27,7 @@ class GitHubTools extends BaseTool {
 		$this->registerTool( 'list_github_issues', array( $this, 'getListIssuesDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'get_github_issue', array( $this, 'getGetIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'manage_github_issue', array( $this, 'getManageIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
+		$this->registerTool( 'comment_github_pull_request', array( $this, 'getCommentPullRequestDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'list_github_pulls', array( $this, 'getListPullsDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'list_github_repos', array( $this, 'getListReposDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 	}
@@ -58,6 +59,7 @@ class GitHubTools extends BaseTool {
 			'list_github_issues',
 			'get_github_issue',
 			'manage_github_issue',
+			'comment_github_pull_request',
 			'list_github_pulls',
 			'list_github_repos',
 		);
@@ -274,6 +276,66 @@ class GitHubTools extends BaseTool {
 					'type'        => 'array',
 					'required'    => false,
 					'description' => 'Labels to set (update action). Replaces existing labels.',
+				),
+			),
+		);
+	}
+
+	// -------------------------------------------------------------------------
+	// Comment Pull Request
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Handle comment_github_pull_request tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @param array $tool_def   Tool definition.
+	 * @return array
+	 */
+	public function handleCommentPullRequest( array $parameters, array $tool_def = array() ): array {
+		$result = GitHubAbilities::commentOnPullRequest( $parameters );
+
+		if ( is_wp_error( $result ) ) {
+			return $this->buildErrorResponse( $result->get_error_message(), 'comment_github_pull_request' );
+		}
+
+		return array(
+			'success'   => true,
+			'data'      => $result,
+			'tool_name' => 'comment_github_pull_request',
+		);
+	}
+
+	/**
+	 * Get tool definition for comment_github_pull_request.
+	 *
+	 * @return array
+	 */
+	public function getCommentPullRequestDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleCommentPullRequest',
+			'description' => 'Comment on a GitHub pull request without granting broader issue update or close capabilities.',
+			'parameters'  => array(
+				'repo'        => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'pull_number' => array(
+					'type'        => 'integer',
+					'required'    => true,
+					'description' => 'Pull request number.',
+				),
+				'body'        => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Comment body (supports GitHub Markdown).',
+				),
+				'marker'      => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Optional stable marker appended as an HTML comment for future update-by-marker support.',
 				),
 			),
 		);
