@@ -38,10 +38,30 @@ class GitHubSettings extends FetchHandlerSettings {
 				'required'    => true,
 				'default'     => 'issues',
 				'options'     => array(
-					'issues' => __( 'Issues', 'data-machine-code' ),
-					'pulls'  => __( 'Pull Requests', 'data-machine-code' ),
-					'files'  => __( 'Source Files', 'data-machine-code' ),
+					'issues'              => __( 'Issues', 'data-machine-code' ),
+					'pulls'               => __( 'Pull Requests', 'data-machine-code' ),
+					'pull_review_context' => __( 'PR Review Context', 'data-machine-code' ),
+					'files'               => __( 'Source Files', 'data-machine-code' ),
 				),
+			),
+			'pull_number'   => array(
+				'type'        => 'number',
+				'label'       => __( 'Pull Request Number', 'data-machine-code' ),
+				'description' => __( 'Pull request number to prepare for review context.', 'data-machine-code' ),
+				'required'    => false,
+			),
+			'head_sha'      => array(
+				'type'        => 'text',
+				'label'       => __( 'Expected Head SHA', 'data-machine-code' ),
+				'description' => __( 'Optional guard SHA. If set, the fetch fails when the live PR head differs.', 'data-machine-code' ),
+				'required'    => false,
+			),
+			'max_patch_chars' => array(
+				'type'        => 'number',
+				'label'       => __( 'Max Patch Characters', 'data-machine-code' ),
+				'description' => __( 'Maximum cumulative patch characters included in PR review context. Set 0 for unlimited.', 'data-machine-code' ),
+				'required'    => false,
+				'default'     => 200000,
 			),
 			'state'         => array(
 				'type'        => 'select',

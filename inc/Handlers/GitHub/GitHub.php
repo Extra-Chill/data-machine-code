@@ -72,11 +72,53 @@ class GitHub extends FetchHandler {
 			'data_source' => $data_source,
 		) );
 
+		if ( 'pull_review_context' === $data_source ) {
+			return $this->fetchPullReviewContext( $config, $context, $repo );
+		}
+
 		if ( 'files' === $data_source ) {
 			return $this->fetchFiles( $config, $context, $repo );
 		}
 
 		return $this->fetchIssuesOrPulls( $config, $context, $repo, $data_source );
+	}
+
+	/**
+	 * Fetch one pull request as review-ready context.
+	 *
+	 * @param array            $config  Handler configuration.
+	 * @param ExecutionContext $context Execution context.
+	 * @param string           $repo    Repository in owner/repo format.
+	 * @return array DataPacket-compatible array or empty on no data.
+	 */
+	private function fetchPullReviewContext( array $config, ExecutionContext $context, string $repo ): array {
+		$pull_number = (int) ( $config['pull_number'] ?? $config['pr_number'] ?? 0 );
+
+		if ( $pull_number <= 0 ) {
+			$context->log( 'error', 'GitHub: pull_number is required for pull_review_context.' );
+			return array();
+		}
+
+		$result = GitHubAbilities::getPullReviewContext( array(
+			'repo'            => $repo,
+			'pull_number'     => $pull_number,
+			'head_sha'        => $config['head_sha'] ?? '',
+			'max_patch_chars' => $config['max_patch_chars'] ?? 200000,
+		) );
+
+		if ( is_wp_error( $result ) ) {
+			$context->log( 'error', 'GitHub: PR review context error — ' . $result->get_error_message() );
+			return array();
+		}
+
+		$packet = $result['context'] ?? array();
+		if ( empty( $packet ) ) {
+			$context->log( 'info', 'GitHub: No PR review context returned.' );
+			return array();
+		}
+
+		$context->log( 'info', sprintf( 'GitHub: Prepared PR review context for %s#%d.', $repo, $pull_number ) );
+		return array( 'items' => array( $packet ) );
 	}
 
 	/**
