@@ -41,6 +41,14 @@ class GitHubTools extends BaseTool {
 			'access_level' => 'editor',
 			'ability'      => 'datamachine/list-github-pull-files',
 		) );
+		$this->registerTool( 'get_github_check_runs', array( $this, 'getCheckRunsDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine/get-github-check-runs',
+		) );
+		$this->registerTool( 'get_github_commit_statuses', array( $this, 'getCommitStatusesDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine/get-github-commit-statuses',
+		) );
 		$this->registerTool( 'get_github_pull_review_context', array( $this, 'getPullReviewContextDefinition' ), $contexts, array(
 			'access_level' => 'editor',
 			'ability'      => 'datamachine/get-github-pull-review-context',
@@ -88,6 +96,8 @@ class GitHubTools extends BaseTool {
 			'list_github_pulls',
 			'get_github_pull',
 			'get_github_pull_files',
+			'get_github_check_runs',
+			'get_github_commit_statuses',
 			'get_github_pull_review_context',
 			'list_github_tree',
 			'get_github_file',
@@ -591,6 +601,86 @@ class GitHubTools extends BaseTool {
 	}
 
 	/**
+	 * Handle get_github_check_runs tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleCheckRuns( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine/get-github-check-runs', 'get_github_check_runs', $parameters );
+	}
+
+	/**
+	 * Get tool definition for get_github_check_runs.
+	 *
+	 * @return array
+	 */
+	public function getCheckRunsDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleCheckRuns',
+			'description' => 'Get GitHub check runs for a commit SHA or ref, including aggregate state and failing check names/URLs.',
+			'parameters'  => array(
+				'repo'                 => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'sha'                  => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Commit SHA, branch, or tag ref.',
+				),
+				'per_page'             => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Results per page (max: 100). Default: 30.',
+				),
+				'include_check_output' => array(
+					'type'        => 'boolean',
+					'required'    => false,
+					'description' => 'Include bounded check output summaries and text.',
+				),
+			),
+		);
+	}
+
+	/**
+	 * Handle get_github_commit_statuses tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleCommitStatuses( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine/get-github-commit-statuses', 'get_github_commit_statuses', $parameters );
+	}
+
+	/**
+	 * Get tool definition for get_github_commit_statuses.
+	 *
+	 * @return array
+	 */
+	public function getCommitStatusesDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleCommitStatuses',
+			'description' => 'Get legacy GitHub commit statuses for a commit SHA or ref, including aggregate state and failing contexts.',
+			'parameters'  => array(
+				'repo' => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'sha'  => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Commit SHA, branch, or tag ref.',
+				),
+			),
+		);
+	}
+
+	/**
 	 * Handle get_github_pull_review_context tool call.
 	 *
 	 * @param array $parameters Tool parameters.
@@ -660,6 +750,26 @@ class GitHubTools extends BaseTool {
 					'type'        => 'integer',
 					'required'    => false,
 					'description' => 'Maximum cumulative characters included across expanded PR review context files. Default: 100000.',
+				),
+				'include_checks'          => array(
+					'type'        => 'boolean',
+					'required'    => false,
+					'description' => 'Include GitHub check runs for the PR head SHA.',
+				),
+				'include_statuses'        => array(
+					'type'        => 'boolean',
+					'required'    => false,
+					'description' => 'Include legacy commit statuses for the PR head SHA.',
+				),
+				'max_check_runs'          => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Maximum check runs to include. Default: 30.',
+				),
+				'include_check_output'    => array(
+					'type'        => 'boolean',
+					'required'    => false,
+					'description' => 'Include bounded check output summaries and text.',
 				),
 			),
 		);

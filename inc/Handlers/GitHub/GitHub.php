@@ -76,6 +76,14 @@ class GitHub extends FetchHandler {
 			return $this->fetchPullReviewContext( $config, $context, $repo );
 		}
 
+		if ( 'check_runs' === $data_source ) {
+			return $this->fetchCheckRuns( $config, $context, $repo );
+		}
+
+		if ( 'commit_statuses' === $data_source ) {
+			return $this->fetchCommitStatuses( $config, $context, $repo );
+		}
+
 		if ( 'files' === $data_source ) {
 			return $this->fetchFiles( $config, $context, $repo );
 		}
@@ -110,6 +118,10 @@ class GitHub extends FetchHandler {
 			'max_file_content_chars'  => $config['max_file_content_chars'] ?? 20000,
 			'max_context_files'       => $config['max_context_files'] ?? 10,
 			'max_total_context_chars' => $config['max_total_context_chars'] ?? 100000,
+			'include_checks'          => ! empty( $config['include_checks'] ),
+			'include_statuses'        => ! empty( $config['include_statuses'] ),
+			'max_check_runs'          => $config['max_check_runs'] ?? 30,
+			'include_check_output'    => ! empty( $config['include_check_output'] ),
 		) );
 
 		if ( is_wp_error( $result ) ) {
@@ -125,6 +137,78 @@ class GitHub extends FetchHandler {
 
 		$context->log( 'info', sprintf( 'GitHub: Prepared PR review context for %s#%d.', $repo, $pull_number ) );
 		return array( 'items' => array( $packet ) );
+	}
+
+	/**
+	 * Fetch check runs for one commit SHA or ref.
+	 */
+	private function fetchCheckRuns( array $config, ExecutionContext $context, string $repo ): array {
+		$sha = $this->resolveShaFromConfig( $config );
+		if ( '' === $sha ) {
+			$context->log( 'error', 'GitHub: sha or head_sha is required for check_runs.' );
+			return array();
+		}
+
+		$result = GitHubAbilities::getCheckRuns( array(
+			'repo'                 => $repo,
+			'sha'                  => $sha,
+			'per_page'             => $config['max_check_runs'] ?? $config['per_page'] ?? 30,
+			'include_check_output' => ! empty( $config['include_check_output'] ),
+		) );
+
+		if ( is_wp_error( $result ) ) {
+			$context->log( 'error', 'GitHub: Check runs error — ' . $result->get_error_message() );
+			return array();
+		}
+
+		return array( 'items' => array( $this->buildStatusPacket( $repo, $sha, 'check_runs', $result ) ) );
+	}
+
+	/**
+	 * Fetch legacy commit statuses for one commit SHA or ref.
+	 */
+	private function fetchCommitStatuses( array $config, ExecutionContext $context, string $repo ): array {
+		$sha = $this->resolveShaFromConfig( $config );
+		if ( '' === $sha ) {
+			$context->log( 'error', 'GitHub: sha or head_sha is required for commit_statuses.' );
+			return array();
+		}
+
+		$result = GitHubAbilities::getCommitStatuses( array(
+			'repo' => $repo,
+			'sha'  => $sha,
+		) );
+
+		if ( is_wp_error( $result ) ) {
+			$context->log( 'error', 'GitHub: Commit statuses error — ' . $result->get_error_message() );
+			return array();
+		}
+
+		return array( 'items' => array( $this->buildStatusPacket( $repo, $sha, 'commit_statuses', $result ) ) );
+	}
+
+	private function resolveShaFromConfig( array $config ): string {
+		return trim( (string) ( $config['sha'] ?? $config['head_sha'] ?? $config['ref'] ?? '' ) );
+	}
+
+	private function buildStatusPacket( string $repo, string $sha, string $type, array $result ): array {
+		$item_identifier = sprintf( '%s_%s_%s', $repo, $type, $sha );
+
+		return array(
+			'title'    => sprintf( 'GitHub %s: %s@%s', str_replace( '_', ' ', $type ), $repo, $sha ),
+			'content'  => wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ),
+			'metadata' => array(
+				'source_type'     => 'github',
+				'original_id'     => $item_identifier,
+				'dedup_key'       => $item_identifier,
+				'original_title'  => sprintf( '%s for %s', $type, $sha ),
+				'github_repo'     => $repo,
+				'github_type'     => $type,
+				'github_head_sha' => $sha,
+				'github_state'    => $result['summary']['state'] ?? '',
+				'review_context'  => $result,
+			),
+		);
 	}
 
 	/**
