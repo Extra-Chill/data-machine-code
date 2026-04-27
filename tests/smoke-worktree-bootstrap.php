@@ -6,7 +6,7 @@
  *
  * Covers:
  *   - detect() returns the expected booleans / package-manager slug for
- *     synthetic worktree fixtures with various lockfile combinations
+ *     synthetic worktree fixtures with root and nested lockfile combinations
  *   - bootstrap() skips gracefully when nothing is present (all STATUS_SKIPPED)
  *   - bootstrap() runs `git submodule update` successfully against a real
  *     on-disk repo with an empty `.gitmodules`
@@ -140,6 +140,26 @@ $pkg_only = $make_fixture( array( 'package.json' => '{}' ) );
 $assert( null, WorktreeBootstrapper::detect( $pkg_only )['packages'], 'package.json alone → null (no lockfile)' );
 $cleanup( $pkg_only );
 
+$monorepo = $make_fixture(
+	array(
+		'wordpress/package.json'       => '{"name":"wordpress-extension"}',
+		'wordpress/package-lock.json'  => '{}',
+		'wordpress/composer.json'      => '{"name":"example/wordpress-extension"}',
+		'wordpress/composer.lock'      => '{"packages":[]}',
+		'node_modules/package-lock.json' => '{}',
+		'vendor/composer.lock'         => '{"packages":[]}',
+	)
+);
+$d = WorktreeBootstrapper::detect( $monorepo );
+$assert( null, $d['packages'], 'monorepo fixture: root packages still null' );
+$assert( false, $d['composer'], 'monorepo fixture: root composer still false' );
+$assert( 1, count( $d['package_roots'] ), 'monorepo fixture: one nested package root' );
+$assert( 'wordpress', $d['package_roots'][0]['relative'], 'monorepo fixture: package root relative path' );
+$assert( 'npm', $d['package_roots'][0]['manager'], 'monorepo fixture: nested package manager detected' );
+$assert( 1, count( $d['composer_roots'] ), 'monorepo fixture: one nested composer root' );
+$assert( 'wordpress', $d['composer_roots'][0]['relative'], 'monorepo fixture: composer root relative path' );
+$cleanup( $monorepo );
+
 // -----------------------------------------------------------------------------
 // bootstrap() skip behavior
 // -----------------------------------------------------------------------------
@@ -191,6 +211,72 @@ if ( 0 !== $init_exit ) {
 	$assert( WorktreeBootstrapper::STATUS_SKIPPED, $by_step['composer']['status'], 'composer: skipped (no composer.lock)' );
 }
 $cleanup( $repo );
+
+// -----------------------------------------------------------------------------
+// bootstrap() nested monorepo dependency roots
+// -----------------------------------------------------------------------------
+
+echo "\nbootstrap() discovers nested monorepo roots\n";
+
+$mono = $make_fixture(
+	array(
+		'wordpress/package-lock.json' => '{}',
+		'wordpress/composer.lock'     => '{"packages":[]}',
+	)
+);
+$r = WorktreeBootstrapper::bootstrap( $mono );
+
+$by_step = array();
+foreach ( $r['steps'] as $step ) {
+	$key             = $step['step'] . ':' . ( $step['relative'] ?? '.' );
+	$by_step[ $key ] = $step;
+}
+
+$assert_true( isset( $by_step['packages:wordpress'] ), 'nested package root produces package step' );
+$assert_true( isset( $by_step['composer:wordpress'] ), 'nested composer root produces composer step' );
+$assert_true(
+	in_array( $by_step['packages:wordpress']['status'], array( WorktreeBootstrapper::STATUS_RAN, WorktreeBootstrapper::STATUS_SKIPPED, WorktreeBootstrapper::STATUS_FAILED ), true ),
+	'nested package step has valid status'
+);
+$assert_true(
+	in_array( $by_step['composer:wordpress']['status'], array( WorktreeBootstrapper::STATUS_RAN, WorktreeBootstrapper::STATUS_SKIPPED, WorktreeBootstrapper::STATUS_FAILED ), true ),
+	'nested composer step has valid status'
+);
+
+$mono_format = WorktreeBootstrapper::format( $r );
+$assert_true( str_contains( $mono_format, 'packages[wordpress]' ), 'format: nested package label includes relative path' );
+$assert_true( str_contains( $mono_format, 'composer[wordpress]' ), 'format: nested composer label includes relative path' );
+$cleanup( $mono );
+
+// -----------------------------------------------------------------------------
+// bootstrap() nvm fallback for non-interactive shells
+// -----------------------------------------------------------------------------
+
+echo "\nbootstrap() resolves npm from nvm when PATH is sparse\n";
+
+$old_home = getenv( 'HOME' );
+$old_path = getenv( 'PATH' );
+$home     = $make_fixture( array() );
+$npm_bin  = $home . '/.nvm/versions/node/v99.0.0/bin';
+mkdir( $npm_bin, 0755, true );
+file_put_contents( $npm_bin . '/npm', "#!/bin/sh\nexit 0\n" );
+chmod( $npm_bin . '/npm', 0755 );
+
+$npm_fixture = $make_fixture( array( 'package-lock.json' => '{}' ) );
+putenv( 'HOME=' . $home );
+putenv( 'PATH=/nonexistent' );
+$r = WorktreeBootstrapper::bootstrap( $npm_fixture );
+
+$by_step = array();
+foreach ( $r['steps'] as $step ) {
+	$by_step[ $step['step'] ] = $step;
+}
+$assert( WorktreeBootstrapper::STATUS_RAN, $by_step['packages']['status'], 'npm runs from nvm fallback path' );
+
+false === $old_home ? putenv( 'HOME' ) : putenv( 'HOME=' . $old_home );
+false === $old_path ? putenv( 'PATH' ) : putenv( 'PATH=' . $old_path );
+$cleanup( $npm_fixture );
+$cleanup( $home );
 
 // -----------------------------------------------------------------------------
 // format() output shape
