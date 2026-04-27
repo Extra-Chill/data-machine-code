@@ -28,6 +28,10 @@ class GitHubTools extends BaseTool {
 		$this->registerTool( 'get_github_issue', array( $this, 'getGetIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'manage_github_issue', array( $this, 'getManageIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'comment_github_pull_request', array( $this, 'getCommentPullRequestDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
+		$this->registerTool( 'upsert_github_pull_review_comment', array( $this, 'getUpsertPullReviewCommentDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine/upsert-github-pull-review-comment',
+		) );
 		$this->registerTool( 'list_github_pulls', array( $this, 'getListPullsDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'get_github_pull', array( $this, 'getGetPullDefinition' ), $contexts, array(
 			'access_level' => 'editor',
@@ -80,6 +84,7 @@ class GitHubTools extends BaseTool {
 			'get_github_issue',
 			'manage_github_issue',
 			'comment_github_pull_request',
+			'upsert_github_pull_review_comment',
 			'list_github_pulls',
 			'get_github_pull',
 			'get_github_pull_files',
@@ -361,6 +366,61 @@ class GitHubTools extends BaseTool {
 					'type'        => 'string',
 					'required'    => false,
 					'description' => 'Optional stable marker appended as an HTML comment for future update-by-marker support.',
+				),
+			),
+		);
+	}
+
+	/**
+	 * Handle upsert_github_pull_review_comment tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleUpsertPullReviewComment( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine/upsert-github-pull-review-comment', 'upsert_github_pull_review_comment', $parameters );
+	}
+
+	/**
+	 * Get tool definition for upsert_github_pull_review_comment.
+	 *
+	 * @return array
+	 */
+	public function getUpsertPullReviewCommentDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleUpsertPullReviewComment',
+			'description' => 'Create or update one managed bot-authored GitHub pull request review comment identified by a hidden marker.',
+			'parameters'  => array(
+				'repo'        => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'pull_number' => array(
+					'type'        => 'integer',
+					'required'    => true,
+					'description' => 'Pull request number.',
+				),
+				'body'        => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Review comment body (supports GitHub Markdown). Hidden marker text is appended automatically.',
+				),
+				'marker'      => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Hidden HTML comment marker used to find the managed comment. Default: <!-- datamachine-pr-review -->.',
+				),
+				'head_sha'    => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Optional pull request head SHA. Required to separate comments when mode is per_head_sha.',
+				),
+				'mode'        => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Comment policy: update_existing or per_head_sha. Default: update_existing.',
 				),
 			),
 		);
