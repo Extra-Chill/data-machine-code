@@ -157,6 +157,10 @@ class PrReviewFlowScaffold {
 				'max_file_content_chars'  => 20000,
 				'max_context_files'       => 10,
 				'max_total_context_chars' => 100000,
+				'include_checks'          => true,
+				'include_statuses'        => true,
+				'max_check_runs'          => 30,
+				'include_check_output'    => false,
 			),
 		);
 	}
@@ -177,6 +181,8 @@ class PrReviewFlowScaffold {
 				'get_github_pull',
 				'get_github_pull_files',
 				'get_github_pull_review_context',
+				'get_github_check_runs',
+				'get_github_commit_statuses',
 				'get_github_file',
 				'list_github_tree',
 				'upsert_github_pull_review_comment',

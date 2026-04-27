@@ -448,6 +448,88 @@ class GitHubAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/get-github-check-runs',
+				array(
+					'label'               => 'Get GitHub Check Runs',
+					'description'         => 'Get GitHub check runs for a commit SHA or ref with an overall summary',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'sha' ),
+						'properties' => array(
+							'repo'                 => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'sha'                  => array(
+								'type'        => 'string',
+								'description' => 'Commit SHA, branch, or tag ref.',
+							),
+							'per_page'             => array(
+								'type'        => 'integer',
+								'description' => 'Results per page (default: 30, max: 100).',
+							),
+							'include_check_output' => array(
+								'type'        => 'boolean',
+								'description' => 'Whether to include bounded check output summaries and text.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'    => array( 'type' => 'boolean' ),
+							'sha'        => array( 'type' => 'string' ),
+							'summary'    => array( 'type' => 'object' ),
+							'check_runs' => array( 'type' => 'array' ),
+							'count'      => array( 'type' => 'integer' ),
+							'error'      => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'getCheckRuns' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/get-github-commit-statuses',
+				array(
+					'label'               => 'Get GitHub Commit Statuses',
+					'description'         => 'Get legacy GitHub commit statuses for a commit SHA or ref',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'sha' ),
+						'properties' => array(
+							'repo' => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'sha'  => array(
+								'type'        => 'string',
+								'description' => 'Commit SHA, branch, or tag ref.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'  => array( 'type' => 'boolean' ),
+							'sha'      => array( 'type' => 'string' ),
+							'summary'  => array( 'type' => 'object' ),
+							'statuses' => array( 'type' => 'array' ),
+							'count'    => array( 'type' => 'integer' ),
+							'error'    => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'getCommitStatuses' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/get-github-pull-review-context',
 				array(
 					'label'               => 'Get GitHub Pull Request Review Context',
@@ -496,6 +578,22 @@ class GitHubAbilities {
 							'max_total_context_chars' => array(
 								'type'        => 'integer',
 								'description' => 'Maximum cumulative characters included across expanded PR review context files (default: 100000).',
+							),
+							'include_checks'           => array(
+								'type'        => 'boolean',
+								'description' => 'Whether to include GitHub check runs for the PR head SHA.',
+							),
+							'include_statuses'         => array(
+								'type'        => 'boolean',
+								'description' => 'Whether to include legacy commit statuses for the PR head SHA.',
+							),
+							'max_check_runs'           => array(
+								'type'        => 'integer',
+								'description' => 'Maximum check runs to include (default: 30, max: 100).',
+							),
+							'include_check_output'     => array(
+								'type'        => 'boolean',
+								'description' => 'Whether to include bounded check output summaries and text.',
 							),
 						),
 					),
@@ -1178,9 +1276,10 @@ class GitHubAbilities {
 			$pull['pull'],
 			$files,
 			array(
-				'head_sha'         => sanitize_text_field( $input['head_sha'] ?? '' ),
-				'max_patch_chars'  => (int) ( $input['max_patch_chars'] ?? 200000 ),
+				'head_sha'        => sanitize_text_field( $input['head_sha'] ?? '' ),
+				'max_patch_chars' => (int) ( $input['max_patch_chars'] ?? 200000 ),
 				'expanded_context' => self::buildPullReviewExpandedContext( $repo, $pull['pull'], $files, $input ),
+				'checks'          => self::buildPullReviewCheckContext( $repo, $pull['pull'], $input ),
 			)
 		);
 
@@ -1297,6 +1396,72 @@ class GitHubAbilities {
 
 		$expanded['summary']['included_files'] = count( $expanded['changed_files'] ) + count( $expanded['extra_files'] );
 		return $expanded;
+	}
+
+	/**
+	 * Build optional CI context for PR review packets.
+	 */
+	private static function buildPullReviewCheckContext( string $repo, array $pull, array $options = array() ): ?array {
+		$include_checks   = ! empty( $options['include_checks'] );
+		$include_statuses = ! empty( $options['include_statuses'] );
+
+		if ( ! $include_checks && ! $include_statuses ) {
+			return null;
+		}
+
+		$sha = (string) ( $pull['head_sha'] ?? '' );
+		if ( '' === $sha ) {
+			return array(
+				'sha'    => '',
+				'errors' => array( 'missing_head_sha' => 'Pull request head SHA is missing.' ),
+			);
+		}
+
+		$context = array(
+			'sha' => $sha,
+		);
+
+		if ( $include_checks ) {
+			$checks = self::getCheckRuns(
+				array(
+					'repo'                 => $repo,
+					'sha'                  => $sha,
+					'per_page'             => $options['max_check_runs'] ?? self::DEFAULT_PER_PAGE,
+					'include_check_output' => ! empty( $options['include_check_output'] ),
+				)
+			);
+
+			if ( is_wp_error( $checks ) ) {
+				$context['errors']['check_runs'] = $checks->get_error_message();
+			} else {
+				$context['check_runs'] = array(
+					'summary' => $checks['summary'] ?? array(),
+					'items'   => $checks['check_runs'] ?? array(),
+					'count'   => $checks['count'] ?? 0,
+				);
+			}
+		}
+
+		if ( $include_statuses ) {
+			$statuses = self::getCommitStatuses(
+				array(
+					'repo' => $repo,
+					'sha'  => $sha,
+				)
+			);
+
+			if ( is_wp_error( $statuses ) ) {
+				$context['errors']['commit_statuses'] = $statuses->get_error_message();
+			} else {
+				$context['commit_statuses'] = array(
+					'summary' => $statuses['summary'] ?? array(),
+					'items'   => $statuses['statuses'] ?? array(),
+					'count'   => $statuses['count'] ?? 0,
+				);
+			}
+		}
+
+		return $context;
 	}
 
 	/**
@@ -1474,6 +1639,88 @@ class GitHubAbilities {
 			'success' => true,
 			'files'   => $normalized,
 			'count'   => count( $normalized ),
+		);
+	}
+
+	/**
+	 * Get check runs for one commit SHA or ref.
+	 *
+	 * @param array $input Required: repo, sha. Optional: per_page, include_check_output.
+	 * @return array|\WP_Error
+	 */
+	public static function getCheckRuns( array $input ): array|\WP_Error {
+		$repo = sanitize_text_field( $input['repo'] ?? '' );
+		$sha  = sanitize_text_field( $input['sha'] ?? $input['ref'] ?? $input['head_sha'] ?? '' );
+
+		if ( empty( $repo ) || empty( $sha ) ) {
+			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and sha are required.', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPat();
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$query_params = array(
+			'per_page' => self::clampPerPage( $input['per_page'] ?? $input['max_check_runs'] ?? self::DEFAULT_PER_PAGE ),
+		);
+
+		$url      = sprintf( '%s/repos/%s/commits/%s/check-runs', self::API_BASE, $repo, $sha );
+		$response = self::apiGet( $url, $query_params, $pat );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$include_output = ! empty( $input['include_check_output'] );
+		$check_runs     = array_map(
+			fn( $run ) => self::normalizeCheckRun( $run, $include_output ),
+			$response['data']['check_runs'] ?? array()
+		);
+
+		return array(
+			'success'    => true,
+			'sha'        => $sha,
+			'summary'    => self::summarizeCheckRuns( $check_runs ),
+			'check_runs' => $check_runs,
+			'count'      => count( $check_runs ),
+		);
+	}
+
+	/**
+	 * Get legacy commit statuses for one commit SHA or ref.
+	 *
+	 * @param array $input Required: repo, sha.
+	 * @return array|\WP_Error
+	 */
+	public static function getCommitStatuses( array $input ): array|\WP_Error {
+		$repo = sanitize_text_field( $input['repo'] ?? '' );
+		$sha  = sanitize_text_field( $input['sha'] ?? $input['ref'] ?? $input['head_sha'] ?? '' );
+
+		if ( empty( $repo ) || empty( $sha ) ) {
+			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and sha are required.', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPat();
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$url      = sprintf( '%s/repos/%s/commits/%s/status', self::API_BASE, $repo, $sha );
+		$response = self::apiGet( $url, array(), $pat );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$statuses = array_map( array( self::class, 'normalizeCommitStatus' ), $response['data']['statuses'] ?? array() );
+
+		return array(
+			'success'  => true,
+			'sha'      => $sha,
+			'summary'  => self::summarizeCommitStatuses( $statuses, $response['data']['state'] ?? '' ),
+			'statuses' => $statuses,
+			'count'    => count( $statuses ),
 		);
 	}
 
@@ -1847,6 +2094,166 @@ class GitHubAbilities {
 	}
 
 	/**
+	 * Normalize one GitHub check run.
+	 */
+	public static function normalizeCheckRun( array $run, bool $include_output = false ): array {
+		$normalized = array(
+			'id'           => (int) ( $run['id'] ?? 0 ),
+			'name'         => $run['name'] ?? '',
+			'status'       => $run['status'] ?? '',
+			'conclusion'   => $run['conclusion'] ?? '',
+			'html_url'     => $run['html_url'] ?? '',
+			'details_url'  => $run['details_url'] ?? '',
+			'started_at'   => $run['started_at'] ?? '',
+			'completed_at' => $run['completed_at'] ?? '',
+			'app'          => $run['app']['slug'] ?? $run['app']['name'] ?? '',
+		);
+
+		if ( $include_output ) {
+			$output               = $run['output'] ?? array();
+			$normalized['output'] = array(
+				'title'   => $output['title'] ?? '',
+				'summary' => substr( (string) ( $output['summary'] ?? '' ), 0, 2000 ),
+				'text'    => substr( (string) ( $output['text'] ?? '' ), 0, 4000 ),
+			);
+		}
+
+		return $normalized;
+	}
+
+	/**
+	 * Normalize one legacy commit status.
+	 */
+	public static function normalizeCommitStatus( array $status ): array {
+		return array(
+			'id'          => (int) ( $status['id'] ?? 0 ),
+			'context'     => $status['context'] ?? '',
+			'state'       => $status['state'] ?? '',
+			'description' => $status['description'] ?? '',
+			'target_url'  => $status['target_url'] ?? '',
+			'created_at'  => $status['created_at'] ?? '',
+			'updated_at'  => $status['updated_at'] ?? '',
+		);
+	}
+
+	/**
+	 * Summarize check-run states into one review-friendly status.
+	 */
+	public static function summarizeCheckRuns( array $check_runs ): array {
+		$counts = array(
+			'success'   => 0,
+			'failure'   => 0,
+			'pending'   => 0,
+			'skipped'   => 0,
+			'cancelled' => 0,
+			'neutral'   => 0,
+		);
+		$failing = array();
+
+		foreach ( $check_runs as $run ) {
+			$state = self::normalizeCheckRunState( (string) ( $run['status'] ?? '' ), (string) ( $run['conclusion'] ?? '' ) );
+			++$counts[ $state ];
+
+			if ( 'failure' === $state ) {
+				$failing[] = array(
+					'name'       => $run['name'] ?? '',
+					'conclusion' => $run['conclusion'] ?? '',
+					'html_url'   => $run['html_url'] ?? '',
+					'summary'    => $run['output']['summary'] ?? '',
+				);
+			}
+		}
+
+		return array(
+			'state'   => self::resolveAggregateState( $counts, count( $check_runs ) ),
+			'counts'  => $counts,
+			'failing' => $failing,
+		);
+	}
+
+	/**
+	 * Summarize legacy commit statuses.
+	 */
+	public static function summarizeCommitStatuses( array $statuses, string $combined_state = '' ): array {
+		$counts = array(
+			'success'   => 0,
+			'failure'   => 0,
+			'pending'   => 0,
+			'skipped'   => 0,
+			'cancelled' => 0,
+			'neutral'   => 0,
+		);
+		$failing = array();
+
+		foreach ( $statuses as $status ) {
+			$state = self::normalizeCommitStatusState( (string) ( $status['state'] ?? '' ) );
+			++$counts[ $state ];
+
+			if ( 'failure' === $state ) {
+				$failing[] = array(
+					'name'        => $status['context'] ?? '',
+					'conclusion'  => $status['state'] ?? '',
+					'html_url'    => $status['target_url'] ?? '',
+					'description' => $status['description'] ?? '',
+				);
+			}
+		}
+
+		$state = '' !== $combined_state ? self::normalizeCommitStatusState( $combined_state ) : self::resolveAggregateState( $counts, count( $statuses ) );
+
+		return array(
+			'state'   => $state,
+			'counts'  => $counts,
+			'failing' => $failing,
+		);
+	}
+
+	private static function normalizeCheckRunState( string $status, string $conclusion ): string {
+		if ( 'completed' !== $status ) {
+			return 'pending';
+		}
+
+		return match ( $conclusion ) {
+			'success' => 'success',
+			'skipped' => 'skipped',
+			'neutral' => 'neutral',
+			'cancelled' => 'cancelled',
+			default => 'failure',
+		};
+	}
+
+	private static function normalizeCommitStatusState( string $state ): string {
+		return match ( $state ) {
+			'success' => 'success',
+			'pending' => 'pending',
+			default => 'failure',
+		};
+	}
+
+	private static function resolveAggregateState( array $counts, int $total ): string {
+		if ( 0 === $total ) {
+			return 'neutral';
+		}
+		if ( ( $counts['failure'] ?? 0 ) > 0 ) {
+			return 'failure';
+		}
+		if ( ( $counts['pending'] ?? 0 ) > 0 ) {
+			return 'pending';
+		}
+		if ( ( $counts['cancelled'] ?? 0 ) > 0 ) {
+			return 'cancelled';
+		}
+		if ( ( $counts['success'] ?? 0 ) > 0 ) {
+			return 'success';
+		}
+		if ( ( $counts['skipped'] ?? 0 ) > 0 ) {
+			return 'skipped';
+		}
+
+		return 'neutral';
+	}
+
+	/**
 	 * Build a review-ready DataPacket for one pull request.
 	 *
 	 * @param string $repo Repository in owner/repo format.
@@ -1925,6 +2332,10 @@ class GitHubAbilities {
 
 		if ( isset( $options['expanded_context'] ) && is_array( $options['expanded_context'] ) ) {
 			$context['expanded_context'] = $options['expanded_context'];
+		}
+
+		if ( isset( $options['checks'] ) && is_array( $options['checks'] ) ) {
+			$context['checks'] = $options['checks'];
 		}
 
 		return array(
