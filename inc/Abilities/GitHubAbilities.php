@@ -276,6 +276,58 @@ class GitHubAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/upsert-github-pull-review-comment',
+				array(
+					'label'               => 'Upsert GitHub Pull Request Review Comment',
+					'description'         => 'Create or update one managed bot-authored GitHub pull request review comment identified by a hidden marker',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'pull_number', 'body' ),
+						'properties' => array(
+							'repo'        => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'pull_number' => array(
+								'type'        => 'integer',
+								'description' => 'Pull request number.',
+							),
+							'body'        => array(
+								'type'        => 'string',
+								'description' => 'Review comment body (supports GitHub Markdown). Hidden marker text is appended automatically.',
+							),
+							'marker'      => array(
+								'type'        => 'string',
+								'description' => 'Hidden HTML comment marker used to find the managed comment. Default: <!-- datamachine-pr-review -->.',
+							),
+							'head_sha'    => array(
+								'type'        => 'string',
+								'description' => 'Optional pull request head SHA. Required to separate comments when mode is per_head_sha.',
+							),
+							'mode'        => array(
+								'type'        => 'string',
+								'description' => 'Comment policy: update_existing or per_head_sha. Default: update_existing.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'    => array( 'type' => 'boolean' ),
+							'action'     => array( 'type' => 'string' ),
+							'comment_id' => array( 'type' => 'integer' ),
+							'html_url'   => array( 'type' => 'string' ),
+							'error'      => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'upsertPullReviewComment' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/list-github-pulls',
 				array(
 					'label'               => 'List GitHub Pull Requests',
@@ -845,6 +897,185 @@ class GitHubAbilities {
 
 	public static function commentOnPullRequest( array $input ): array|\WP_Error {
 		return self::commentOnIssue( self::buildPullRequestCommentInput( $input ) );
+	}
+
+	/**
+	 * Create or update one managed bot-authored PR review comment.
+	 *
+	 * @param array         $input       Ability input.
+	 * @param callable|null $api_get     Optional test seam: fn(string $url, array $query, string $pat): array|WP_Error.
+	 * @param callable|null $api_request Optional test seam: fn(string $method, string $url, array $body, string $pat): array|WP_Error.
+	 * @return array|\WP_Error Success payload or error.
+	 */
+	public static function upsertPullReviewComment( array $input, ?callable $api_get = null, ?callable $api_request = null ): array|\WP_Error {
+		$repo        = sanitize_text_field( $input['repo'] ?? '' );
+		$pull_number = (int) ( $input['pull_number'] ?? 0 );
+		$body        = (string) ( $input['body'] ?? '' );
+		$mode        = sanitize_text_field( $input['mode'] ?? 'update_existing' );
+		$head_sha    = sanitize_text_field( $input['head_sha'] ?? '' );
+
+		if ( empty( $repo ) || $pull_number <= 0 || '' === $body ) {
+			return new \WP_Error( 'missing_params', 'Repository, pull_number, and body are required.', array( 'status' => 400 ) );
+		}
+
+		if ( ! in_array( $mode, array( 'update_existing', 'per_head_sha' ), true ) ) {
+			return new \WP_Error( 'invalid_mode', 'Mode must be update_existing or per_head_sha.', array( 'status' => 400 ) );
+		}
+
+		if ( 'per_head_sha' === $mode && '' === $head_sha ) {
+			return new \WP_Error( 'missing_head_sha', 'head_sha is required when mode is per_head_sha.', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPat();
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$api_get     = $api_get ?? array( self::class, 'apiGet' );
+		$api_request = $api_request ?? array( self::class, 'apiRequest' );
+		$marker      = self::normalizeManagedCommentMarker( $input['marker'] ?? '<!-- datamachine-pr-review -->' );
+		$target_body = self::buildManagedPullReviewCommentBody( $body, $marker, $head_sha, $mode );
+
+		$user_response = $api_get( self::API_BASE . '/user', array(), $pat );
+		if ( is_wp_error( $user_response ) ) {
+			return $user_response;
+		}
+
+		$login = (string) ( $user_response['data']['login'] ?? '' );
+		if ( '' === $login ) {
+			return new \WP_Error( 'github_identity_missing', 'GitHub API did not return the authenticated user login.', array( 'status' => 500 ) );
+		}
+
+		$comments = array();
+		$page     = 1;
+		do {
+			$comments_url = sprintf( '%s/repos/%s/issues/%d/comments', self::API_BASE, $repo, $pull_number );
+			$page_result  = $api_get(
+				$comments_url,
+				array(
+					'per_page' => self::MAX_PER_PAGE,
+					'page'     => $page,
+				),
+				$pat
+			);
+			if ( is_wp_error( $page_result ) ) {
+				return $page_result;
+			}
+
+			$page_comments = is_array( $page_result['data'] ?? null ) ? $page_result['data'] : array();
+			$page_count    = count( $page_comments );
+			$comments      = array_merge( $comments, $page_comments );
+			++$page;
+		} while ( $page_count >= self::MAX_PER_PAGE );
+
+		$existing = self::findManagedPullReviewComment( $comments, $login, $marker, $head_sha, $mode );
+		if ( null !== $existing ) {
+			$comment_id = (int) ( $existing['id'] ?? 0 );
+			if ( $comment_id <= 0 ) {
+				return new \WP_Error( 'github_comment_missing_id', 'Matched GitHub comment did not include an id.', array( 'status' => 500 ) );
+			}
+
+			$response = $api_request(
+				'PATCH',
+				sprintf( '%s/repos/%s/issues/comments/%d', self::API_BASE, $repo, $comment_id ),
+				array( 'body' => $target_body ),
+				$pat
+			);
+			if ( is_wp_error( $response ) ) {
+				return $response;
+			}
+
+			return self::buildManagedCommentResponse( 'updated', $response['data'] ?? array() );
+		}
+
+		$response = $api_request(
+			'POST',
+			sprintf( '%s/repos/%s/issues/%d/comments', self::API_BASE, $repo, $pull_number ),
+			array( 'body' => $target_body ),
+			$pat
+		);
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		return self::buildManagedCommentResponse( 'created', $response['data'] ?? array() );
+	}
+
+	private static function normalizeManagedCommentMarker( string $marker ): string {
+		$marker = trim( $marker );
+		if ( '' === $marker ) {
+			$marker = '<!-- datamachine-pr-review -->';
+		}
+
+		if ( str_starts_with( $marker, '<!--' ) && str_ends_with( $marker, '-->' ) ) {
+			$inner = trim( substr( $marker, 4, -3 ) );
+		} else {
+			$inner = $marker;
+		}
+
+		$inner = str_replace( '--', '-', $inner );
+		return '<!-- ' . trim( $inner ) . ' -->';
+	}
+
+	private static function buildManagedPullReviewCommentBody( string $body, string $marker, string $head_sha, string $mode ): string {
+		$markers = array( $marker );
+		if ( 'per_head_sha' === $mode ) {
+			$markers[] = self::buildManagedHeadMarker( $head_sha );
+		}
+
+		return rtrim( $body ) . "\n\n" . implode( "\n", $markers );
+	}
+
+	private static function buildManagedHeadMarker( string $head_sha ): string {
+		return '<!-- datamachine-pr-review-head-sha: ' . str_replace( '--', '-', $head_sha ) . ' -->';
+	}
+
+	private static function findManagedPullReviewComment( array $comments, string $login, string $marker, string $head_sha, string $mode ): ?array {
+		$matched = null;
+		foreach ( $comments as $comment ) {
+			if ( ! is_array( $comment ) ) {
+				continue;
+			}
+
+			if ( (string) ( $comment['user']['login'] ?? '' ) !== $login ) {
+				continue;
+			}
+
+			$comment_body = (string) ( $comment['body'] ?? '' );
+			if ( ! str_contains( $comment_body, $marker ) ) {
+				continue;
+			}
+
+			if ( 'per_head_sha' === $mode && ! str_contains( $comment_body, self::buildManagedHeadMarker( $head_sha ) ) ) {
+				continue;
+			}
+
+			if ( null === $matched || self::isNewerGitHubComment( $comment, $matched ) ) {
+				$matched = $comment;
+			}
+		}
+
+		return $matched;
+	}
+
+	private static function isNewerGitHubComment( array $candidate, array $current ): bool {
+		$candidate_time = (string) ( $candidate['updated_at'] ?? $candidate['created_at'] ?? '' );
+		$current_time   = (string) ( $current['updated_at'] ?? $current['created_at'] ?? '' );
+
+		if ( '' === $candidate_time || '' === $current_time ) {
+			return true;
+		}
+
+		return $current_time <= $candidate_time;
+	}
+
+	private static function buildManagedCommentResponse( string $action, array $comment ): array {
+		return array(
+			'success'    => true,
+			'action'     => $action,
+			'comment_id' => (int) ( $comment['id'] ?? 0 ),
+			'html_url'   => (string) ( $comment['html_url'] ?? '' ),
+		);
 	}
 
 	private static function buildPullRequestCommentInput( array $input ): array {
