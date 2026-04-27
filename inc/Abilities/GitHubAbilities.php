@@ -726,8 +726,9 @@ class GitHubAbilities {
 			$pull['pull'],
 			$files,
 			array(
-				'head_sha'        => sanitize_text_field( $input['head_sha'] ?? '' ),
-				'max_patch_chars' => (int) ( $input['max_patch_chars'] ?? 200000 ),
+				'head_sha'         => sanitize_text_field( $input['head_sha'] ?? '' ),
+				'max_patch_chars'  => (int) ( $input['max_patch_chars'] ?? 200000 ),
+				'expanded_context' => self::buildPullReviewExpandedContext( $repo, $pull['pull'], $files, $input ),
 			)
 		);
 
@@ -739,6 +740,214 @@ class GitHubAbilities {
 			'success' => true,
 			'context' => $context,
 		);
+	}
+
+	/**
+	 * Build optional full-file context for PR review packets.
+	 *
+	 * @param string        $repo    Repository in owner/repo format.
+	 * @param array         $pull    Normalized pull request payload.
+	 * @param array         $files   Normalized changed file payloads.
+	 * @param array         $options Expansion options.
+	 * @param callable|null $fetcher Optional test seam: fn(string $path, string $ref, string $side): array|WP_Error.
+	 * @return array|null Expanded context object, or null when no expansion was requested.
+	 */
+	public static function buildPullReviewExpandedContext( string $repo, array $pull, array $files, array $options = array(), ?callable $fetcher = null ): ?array {
+		$include_file_contents = ! empty( $options['include_file_contents'] );
+		$include_base_contents = ! empty( $options['include_base_contents'] );
+		$context_paths         = self::normalizeContextPaths( $options['context_paths'] ?? array() );
+
+		if ( ! $include_file_contents && empty( $context_paths ) ) {
+			return null;
+		}
+
+		$limits = array(
+			'max_file_content_chars' => max( 1, (int) ( $options['max_file_content_chars'] ?? 20000 ) ),
+			'max_context_files'      => max( 1, (int) ( $options['max_context_files'] ?? 10 ) ),
+			'max_total_context_chars' => max( 1, (int) ( $options['max_total_context_chars'] ?? 100000 ) ),
+		);
+
+		$head_ref = (string) ( $pull['head_sha'] ?? $pull['head_ref'] ?? $pull['head'] ?? '' );
+		$base_ref = (string) ( $pull['base_sha'] ?? $pull['base_ref'] ?? $pull['base'] ?? '' );
+		$fetcher  = $fetcher ?? static function ( string $path, string $ref, string $_side ) use ( $repo ): array|\WP_Error {
+			return self::getFileContents(
+				array(
+					'repo'   => $repo,
+					'path'   => $path,
+					'branch' => $ref,
+				)
+			);
+		};
+
+		$expanded = array(
+			'changed_files' => array(),
+			'extra_files'   => array(),
+			'skipped'       => array(),
+			'limits'        => $limits,
+			'summary'       => array(
+				'included_files' => 0,
+				'included_chars' => 0,
+				'skipped_files'  => 0,
+				'truncated'      => false,
+			),
+		);
+
+		$remaining_files = $limits['max_context_files'];
+		$remaining_chars = $limits['max_total_context_chars'];
+
+		if ( $include_file_contents ) {
+			foreach ( $files as $file ) {
+				$path = (string) ( $file['filename'] ?? '' );
+				if ( '' === $path ) {
+					continue;
+				}
+
+				if ( $remaining_files <= 0 || $remaining_chars <= 0 ) {
+					self::recordExpandedContextSkip( $expanded, $path, 'changed_file', 'limit_exceeded' );
+					continue;
+				}
+
+				$entry = array(
+					'path' => $path,
+				);
+
+				if ( '' !== $head_ref ) {
+					$entry['head'] = self::fetchBoundedContextFile( $fetcher, $path, $head_ref, 'head', $limits['max_file_content_chars'], $remaining_chars );
+					self::applyContextFileAccounting( $expanded, $entry['head'], $remaining_chars );
+				}
+
+				if ( $include_base_contents && '' !== $base_ref && $remaining_chars > 0 ) {
+					$entry['base'] = self::fetchBoundedContextFile( $fetcher, $path, $base_ref, 'base', $limits['max_file_content_chars'], $remaining_chars );
+					self::applyContextFileAccounting( $expanded, $entry['base'], $remaining_chars );
+				}
+
+				$expanded['changed_files'][] = $entry;
+				$remaining_files--;
+			}
+		}
+
+		foreach ( $context_paths as $path ) {
+			if ( $remaining_files <= 0 || $remaining_chars <= 0 ) {
+				self::recordExpandedContextSkip( $expanded, $path, 'context_path', 'limit_exceeded' );
+				continue;
+			}
+
+			$file_context = self::fetchBoundedContextFile( $fetcher, $path, $head_ref, 'head', $limits['max_file_content_chars'], $remaining_chars );
+			self::applyContextFileAccounting( $expanded, $file_context, $remaining_chars );
+			$expanded['extra_files'][] = array(
+				'path' => $path,
+				'head' => $file_context,
+			);
+			$remaining_files--;
+		}
+
+		$expanded['summary']['included_files'] = count( $expanded['changed_files'] ) + count( $expanded['extra_files'] );
+		return $expanded;
+	}
+
+	/**
+	 * Normalize context paths from array or comma/newline separated string input.
+	 */
+	private static function normalizeContextPaths( mixed $paths ): array {
+		if ( is_string( $paths ) ) {
+			$paths = preg_split( '/[\r\n,]+/', $paths ) ?: array();
+		}
+
+		if ( ! is_array( $paths ) ) {
+			return array();
+		}
+
+		$normalized = array();
+		foreach ( $paths as $path ) {
+			$path = trim( (string) $path );
+			$path = ltrim( $path, '/' );
+			if ( '' === $path || str_contains( $path, '..' ) ) {
+				continue;
+			}
+			$normalized[ $path ] = true;
+		}
+
+		return array_keys( $normalized );
+	}
+
+	/**
+	 * Fetch and bound one expanded-context file response.
+	 */
+	private static function fetchBoundedContextFile( callable $fetcher, string $path, string $ref, string $side, int $max_file_chars, int $remaining_chars ): array {
+		if ( '' === $ref ) {
+			return array(
+				'ref'      => $ref,
+				'included' => false,
+				'reason'   => 'missing_ref',
+			);
+		}
+
+		if ( $remaining_chars <= 0 ) {
+			return array(
+				'ref'      => $ref,
+				'included' => false,
+				'reason'   => 'total_limit_exceeded',
+			);
+		}
+
+		$result = $fetcher( $path, $ref, $side );
+		if ( is_wp_error( $result ) ) {
+			return array(
+				'ref'      => $ref,
+				'included' => false,
+				'reason'   => $result->get_error_code(),
+				'error'    => $result->get_error_message(),
+			);
+		}
+
+		$file     = $result['file'] ?? $result;
+		$content  = (string) ( $file['content'] ?? '' );
+		$original = strlen( $content );
+		$limit    = min( $max_file_chars, $remaining_chars );
+		$included = substr( $content, 0, $limit );
+		$chars    = strlen( $included );
+
+		return array(
+			'ref'            => $ref,
+			'sha'            => $file['sha'] ?? '',
+			'size'           => (int) ( $file['size'] ?? $original ),
+			'html_url'       => $file['html_url'] ?? '',
+			'content'        => $included,
+			'included'       => true,
+			'included_chars' => $chars,
+			'original_chars' => $original,
+			'truncated'      => $chars < $original,
+		);
+	}
+
+	/**
+	 * Apply char accounting for one expanded-context file side.
+	 */
+	private static function applyContextFileAccounting( array &$expanded, array $file_context, int &$remaining_chars ): void {
+		if ( empty( $file_context['included'] ) ) {
+			$expanded['summary']['skipped_files']++;
+			return;
+		}
+
+		$included_chars = (int) ( $file_context['included_chars'] ?? 0 );
+		$expanded['summary']['included_chars'] += $included_chars;
+		$remaining_chars                       = max( 0, $remaining_chars - $included_chars );
+
+		if ( ! empty( $file_context['truncated'] ) ) {
+			$expanded['summary']['truncated'] = true;
+		}
+	}
+
+	/**
+	 * Record a file skipped before any API fetch was attempted.
+	 */
+	private static function recordExpandedContextSkip( array &$expanded, string $path, string $source, string $reason ): void {
+		$expanded['skipped'][] = array(
+			'path'   => $path,
+			'source' => $source,
+			'reason' => $reason,
+		);
+		$expanded['summary']['skipped_files']++;
 	}
 
 	/**
@@ -1245,6 +1454,10 @@ class GitHubAbilities {
 				'truncated'            => $truncated_files > 0,
 			),
 		);
+
+		if ( isset( $options['expanded_context'] ) && is_array( $options['expanded_context'] ) ) {
+			$context['expanded_context'] = $options['expanded_context'];
+		}
 
 		return array(
 			'title'    => $title,
