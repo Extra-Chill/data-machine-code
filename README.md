@@ -26,6 +26,7 @@ Sibling extensions like `data-machine-socials` and `data-machine-business` are *
 - List pull requests and repositories
 - Create issues (async via Action Scheduler)
 - GitHub fetch handler for pipeline workflows
+- GitHub pull request webhook validation mode for review-flow triggers
 
 ### Workspace Management
 - Clone and manage git repositories in a secure workspace directory
@@ -119,6 +120,29 @@ on it are how parallel agents corrupt each other's work.
 Set your GitHub Personal Access Token and default repository in Data Machine settings:
 - `github_pat` — GitHub Personal Access Token with repo access
 - `github_default_repo` — Default repository in `owner/repo` format
+
+### GitHub PR review webhooks
+
+DMC registers a Data Machine webhook verifier mode named `github_pull_request` for PR-review flows. Configure the flow's webhook auth verifier with that mode and the same secret configured in the GitHub repository webhook.
+
+The verifier checks `X-Hub-Signature-256` against the raw request body, requires `X-GitHub-Event: pull_request`, accepts only `opened`, `reopened`, `synchronize`, and `ready_for_review` actions by default, optionally restricts `repository.full_name`, and skips draft PRs unless `allow_drafts` is true.
+
+Example verifier config:
+
+```php
+array(
+    'mode'            => 'github_pull_request',
+    'secrets'         => array(
+        array(
+            'id'    => 'github_webhook',
+            'value' => '<shared webhook secret>',
+        ),
+    ),
+    'repo'            => 'Extra-Chill/data-machine-code',
+    'allowed_actions' => array( 'opened', 'reopened', 'synchronize', 'ready_for_review' ),
+    'allow_drafts'    => false,
+)
+```
 
 Workspace git policies are configured via the `datamachine_workspace_git_policies` option for per-repo write/push controls.
 
