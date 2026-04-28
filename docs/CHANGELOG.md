@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.20.1] - 2026-04-28
+
+### Fixed
+- polish worktree cleanup UX
+
 ## [0.20.0] - 2026-04-28
 
 ### Added
