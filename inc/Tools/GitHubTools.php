@@ -57,6 +57,10 @@ class GitHubTools extends BaseTool {
 			'access_level' => 'editor',
 			'ability'      => 'datamachine/get-github-pull-review-context',
 		) );
+		$this->registerTool( 'github_repo_review_profile', array( $this, 'getRepoReviewProfileDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine/get-github-repo-review-profile',
+		) );
 		$this->registerTool( 'list_github_tree', array( $this, 'getListTreeDefinition' ), $contexts, array(
 			'access_level' => 'editor',
 			'ability'      => 'datamachine/list-github-tree',
@@ -104,6 +108,7 @@ class GitHubTools extends BaseTool {
 			'get_github_commit_statuses',
 			'get_github_homeboy_ci_results',
 			'get_github_pull_review_context',
+			'github_repo_review_profile',
 			'list_github_tree',
 			'get_github_file',
 			'list_github_repos',
@@ -840,6 +845,61 @@ class GitHubTools extends BaseTool {
 					'type'        => 'string',
 					'required'    => false,
 					'description' => 'GitHub Actions artifact name for Homeboy CI results. Default: homeboy-ci-results.',
+				),
+			),
+		);
+	}
+
+	/**
+	 * Handle github_repo_review_profile tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleRepoReviewProfile( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine/get-github-repo-review-profile', 'github_repo_review_profile', $parameters );
+	}
+
+	/**
+	 * Get tool definition for github_repo_review_profile.
+	 *
+	 * @return array
+	 */
+	public function getRepoReviewProfileDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleRepoReviewProfile',
+			'description' => 'Build bounded repository-level review context from AGENTS.md, README, contributing docs, Homeboy config, and small architecture/development docs. Use before reviewing to learn repo-specific rules and conventions.',
+			'parameters'  => array(
+				'repo'                  => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'ref'                   => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Branch, tag, or commit SHA. Defaults to HEAD.',
+				),
+				'max_profile_files'     => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Maximum profile files to include. Default: 14.',
+				),
+				'max_file_chars'        => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Maximum characters per profile file. Default: 12000.',
+				),
+				'max_total_chars'       => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Maximum cumulative profile characters. Default: 60000.',
+				),
+				'max_architecture_docs' => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Maximum docs/** architecture/development files to include. Default: 8.',
 				),
 			),
 		);

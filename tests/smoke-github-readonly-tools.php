@@ -125,6 +125,10 @@ namespace {
 						'success' => true,
 						'context' => array( 'metadata' => array( 'github_type' => 'pull_review_context' ) ),
 					),
+					'datamachine/get-github-repo-review-profile' => array(
+						'success' => true,
+						'profile' => array( 'schema' => 'data-machine-code/repo-review-profile/v1' ),
+					),
 					default => array( 'success' => true ),
 				};
 			}
@@ -226,6 +230,21 @@ namespace {
 				'include_check_output'    => false,
 				'include_homeboy_ci'      => true,
 				'artifact_name'           => 'homeboy-ci-results',
+			),
+		),
+		'github_repo_review_profile'     => array(
+			'ability'  => 'datamachine/get-github-repo-review-profile',
+			'method'   => 'handleRepoReviewProfile',
+			'callback' => array( GitHubAbilities::class, 'getRepoReviewProfile' ),
+			'required' => array( 'repo' ),
+			'optional' => array( 'ref', 'max_profile_files', 'max_file_chars', 'max_total_chars', 'max_architecture_docs' ),
+			'params'   => array(
+				'repo'                  => 'Extra-Chill/data-machine-code',
+				'ref'                   => 'main',
+				'max_profile_files'     => 8,
+				'max_file_chars'        => 12000,
+				'max_total_chars'       => 60000,
+				'max_architecture_docs' => 4,
 			),
 		),
 	);

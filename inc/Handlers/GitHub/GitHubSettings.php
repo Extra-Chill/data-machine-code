@@ -41,6 +41,7 @@ class GitHubSettings extends FetchHandlerSettings {
 					'issues'              => __( 'Issues', 'data-machine-code' ),
 					'pulls'               => __( 'Pull Requests', 'data-machine-code' ),
 					'pull_review_context' => __( 'PR Review Context', 'data-machine-code' ),
+					'repo_review_profile' => __( 'Repository Review Profile', 'data-machine-code' ),
 					'check_runs'          => __( 'Check Runs', 'data-machine-code' ),
 					'commit_statuses'     => __( 'Commit Statuses', 'data-machine-code' ),
 					'homeboy_ci_results'  => __( 'Homeboy CI Results', 'data-machine-code' ),

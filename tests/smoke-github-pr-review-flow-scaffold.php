@@ -98,6 +98,7 @@ namespace {
 	$tools   = $ai_step['enabled_tools'];
 	$assert( 'prompt requires findings-first review', str_contains( $prompt, 'findings first' ) || str_contains( $prompt, 'findings' ) );
 	$assert( 'prompt requires initial context packet read', str_contains( $prompt, 'initial pull_review_context packet' ) );
+	$assert( 'prompt requires repository review profile', str_contains( $prompt, 'github_repo_review_profile once' ) && str_contains( $prompt, 'repo-level architecture' ) );
 	$assert( 'prompt requires on-demand context gathering', str_contains( $prompt, 'on demand' ) && str_contains( $prompt, 'specific PR metadata' ) );
 	$assert( 'prompt bounds context gathering', str_contains( $prompt, 'Keep context gathering bounded' ) && str_contains( $prompt, 'targeted paths' ) );
 	$assert( 'prompt rejects praise spam', str_contains( $prompt, 'Do not praise' ) );
@@ -110,6 +111,7 @@ namespace {
 	$assert( 'read-only get_github_check_runs tool enabled', in_array( 'get_github_check_runs', $tools, true ) );
 	$assert( 'read-only get_github_commit_statuses tool enabled', in_array( 'get_github_commit_statuses', $tools, true ) );
 	$assert( 'read-only get_github_homeboy_ci_results tool enabled', in_array( 'get_github_homeboy_ci_results', $tools, true ) );
+	$assert( 'read-only github_repo_review_profile tool enabled', in_array( 'github_repo_review_profile', $tools, true ) );
 	$assert( 'read-only get_github_file tool enabled', in_array( 'get_github_file', $tools, true ) );
 	$assert( 'read-only list_github_tree tool enabled', in_array( 'list_github_tree', $tools, true ) );
 	$assert( 'plain PR comment tool is not enabled', ! in_array( 'comment_github_pull_request', $tools, true ) );
