@@ -2019,6 +2019,11 @@ class Workspace {
 			}
 		}
 
+		$local_merged = $this->detect_local_merged_signal( $primary_path, $branch );
+		if ( null !== $local_merged ) {
+			return $local_merged;
+		}
+
 		if ( $skip_github ) {
 			return null;
 		}
@@ -2044,6 +2049,59 @@ class Workspace {
 			'reason' => sprintf( 'PR #%d merged (%s)', $pr['number'], $pr['state'] ),
 			'pr_url' => $pr['html_url'] ?? null,
 		);
+	}
+
+	/**
+	 * Detect branches already contained in the remote default branch using local git refs only.
+	 *
+	 * This catches manually-merged branches before falling through to the GitHub
+	 * API, which keeps GitHub-backed cleanup bounded while avoiding unnecessary
+	 * network calls for branches whose merge state is already locally provable.
+	 *
+	 * @param string $primary_path Path to the primary git checkout.
+	 * @param string $branch       Branch name.
+	 * @return array{signal: string, reason: string}|null
+	 */
+	private function detect_local_merged_signal( string $primary_path, string $branch ): ?array {
+		$default_ref = $this->resolve_remote_default_ref( $primary_path );
+		if ( null === $default_ref ) {
+			return null;
+		}
+
+		$branch_ref = 'refs/heads/' . $branch;
+		$result     = $this->run_git(
+			$primary_path,
+			sprintf( 'rev-list --count %s..%s', escapeshellarg( $default_ref ), escapeshellarg( $branch_ref ) )
+		);
+		if ( is_wp_error( $result ) ) {
+			return null;
+		}
+
+		$unique_commits = (int) trim( (string) ( $result['output'] ?? '' ) );
+		if ( 0 !== $unique_commits ) {
+			return null;
+		}
+
+		return array(
+			'signal' => 'local-merged',
+			'reason' => sprintf( 'branch has no commits outside remote default (%s)', $default_ref ),
+		);
+	}
+
+	/**
+	 * Resolve the remote default branch ref for local cleanup checks.
+	 *
+	 * @param string $primary_path Path to the primary git checkout.
+	 * @return string|null Fully-qualified remote default ref, or null when unavailable.
+	 */
+	private function resolve_remote_default_ref( string $primary_path ): ?string {
+		$result = $this->run_git( $primary_path, 'symbolic-ref --quiet refs/remotes/origin/HEAD' );
+		if ( is_wp_error( $result ) ) {
+			return null;
+		}
+
+		$ref = trim( (string) ( $result['output'] ?? '' ) );
+		return '' === $ref ? null : $ref;
 	}
 
 	/**
