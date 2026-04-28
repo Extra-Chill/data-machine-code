@@ -155,6 +155,23 @@ namespace {
 	datamachine_code_cleanup_assert( str_contains( $decoded['skipped'][11]['hint'] ?? '', 'workspace worktree prune' ), 'JSON missing_metadata includes remediation hint' );
 	datamachine_code_cleanup_assert( 10 === (int) ( $decoded['summary']['skipped_by_reason']['no_merge_signal'] ?? 0 ), 'JSON summary includes reason counts' );
 
+	echo "\n[1b] --apply-plan decodes JSON and forbids force\n";
+	$plan_file = sys_get_temp_dir() . '/dmc-cleanup-plan-' . bin2hex( random_bytes( 3 ) ) . '.json';
+	file_put_contents( $plan_file, wp_json_encode( datamachine_code_cleanup_report() ) );
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree( array( 'cleanup' ), array( 'apply-plan' => $plan_file, 'skip-github' => true, 'format' => 'json' ) );
+	datamachine_code_cleanup_assert( false === ( $ability->last_input['dry_run'] ?? null ), '--apply-plan does not imply dry-run' );
+	datamachine_code_cleanup_assert( false === ( $ability->last_input['force'] ?? null ), '--apply-plan forwards force=false' );
+	datamachine_code_cleanup_assert( 'repo@merged' === ( $ability->last_input['apply_plan']['candidates'][0]['handle'] ?? '' ), '--apply-plan forwards decoded plan' );
+	try {
+		$command->worktree( array( 'cleanup' ), array( 'apply-plan' => $plan_file, 'force' => true ) );
+		datamachine_code_cleanup_assert( false, '--apply-plan --force throws' );
+	} catch ( RuntimeException $e ) {
+		datamachine_code_cleanup_assert( str_contains( $e->getMessage(), 'Do not combine --apply-plan with --force' ), '--apply-plan --force is rejected' );
+	}
+	unlink( $plan_file );
+
 	echo "\n[2] default output is concise and summary-first\n";
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();

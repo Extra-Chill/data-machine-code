@@ -189,7 +189,7 @@ namespace {
 	$run( 'git push -u origin main', $primary );
 
 	// Helper: make a branch on the remote too so "upstream" tracking exists.
-	$make_branch = function ( string $branch, string $content ) use ( $primary, $run, $remote ) {
+	$make_branch = function ( string $branch, string $content ) use ( $primary, $run ) {
 		$run( sprintf( 'git checkout -b %s', escapeshellarg( $branch ) ), $primary );
 		file_put_contents( $primary . '/' . str_replace( '/', '-', $branch ) . '.txt', $content );
 		$run( sprintf( 'git add . && git commit -m %s', escapeshellarg( 'work on ' . $branch ) ), $primary );
@@ -199,6 +199,7 @@ namespace {
 
 	// Branches that have branches on the remote.
 	$make_branch( 'merged-autodelete', 'a' );   // → simulate remote delete below
+	$make_branch( 'merged-stale-plan', 'a2' );  // → candidate in plan, dirty before apply
 	$make_branch( 'merged-live-remote', 'b' );  // → simulate via PR-merged (stubbed → none)
 	$make_branch( 'unmerged-feature', 'c' );    // still active
 	$make_branch( 'dirty-branch', 'd' );        // will be dirty in worktree
@@ -210,6 +211,7 @@ namespace {
 	//   - canonical path for the unmerged one
 	//   - canonical path for dirty
 	$run( sprintf( 'git worktree add %s merged-autodelete', escapeshellarg( $tmp . '/demo@merged-autodelete' ) ), $primary );
+	$run( sprintf( 'git worktree add %s merged-stale-plan', escapeshellarg( $tmp . '/demo@merged-stale-plan' ) ), $primary );
 	$run( sprintf( 'git worktree add %s merged-live-remote', escapeshellarg( $tmp . '/demo-legacy-merged' ) ), $primary );
 	$run( sprintf( 'git worktree add %s unmerged-feature', escapeshellarg( $tmp . '/demo@unmerged-feature' ) ), $primary );
 	$run( sprintf( 'git worktree add %s dirty-branch', escapeshellarg( $tmp . '/demo@dirty-branch' ) ), $primary );
@@ -239,6 +241,7 @@ namespace {
 	// origin. But our origin IS the bare repo — so we need to update the
 	// bare ref directly.)
 	$run( sprintf( 'git --git-dir=%s update-ref -d refs/heads/merged-autodelete', escapeshellarg( $remote ) ) );
+	$run( sprintf( 'git --git-dir=%s update-ref -d refs/heads/merged-stale-plan', escapeshellarg( $remote ) ) );
 
 	// -------------------------------------------------------------------------
 	// Dry-run assertions
@@ -283,7 +286,7 @@ namespace {
 	$assert( 'external_worktree', $external_row['reason_code'] ?? '', 'external worktree exposes stable reason code' );
 	$assert( true, str_contains( $external_row['hint'] ?? '', 'outside the DMC workspace' ), 'external worktree includes remediation hint' );
 
-	$assert( 1, (int) ( $plan['summary']['would_remove'] ?? 0 ), 'summary counts cleanup candidates' );
+	$assert( 2, (int) ( $plan['summary']['would_remove'] ?? 0 ), 'summary counts cleanup candidates' );
 	$assert( 1, (int) ( $plan['summary']['skipped_by_reason']['dirty_worktree'] ?? 0 ), 'summary counts dirty skips by reason' );
 	$assert( true, isset( $plan['summary']['skipped_by_reason']['no_merge_signal'] ), 'summary includes no_merge_signal bucket' );
 
@@ -314,6 +317,24 @@ namespace {
 	$assert( array( 'repo', 'branch', 'path' ), $missing_row['missing_fields'] ?? array(), 'missing metadata lists missing fields' );
 	$assert( true, str_contains( $missing_row['hint'] ?? '', 'workspace worktree prune' ), 'missing metadata includes prune remediation hint' );
 
+	$scope_reflection = new \ReflectionMethod( \DataMachineCode\Workspace\Workspace::class, 'scope_worktree_cleanup_to_plan' );
+	$scoped_mismatch  = $scope_reflection->invoke(
+		$ws,
+		array(
+			array(
+				'handle' => 'demo@merged-autodelete',
+				'repo'   => 'demo',
+				'branch' => 'merged-autodelete',
+				'path'   => $tmp . '/demo@merged-autodelete',
+				'signal' => 'pr-merged',
+			),
+		),
+		$plan['candidates'] ?? array(),
+		$plan['skipped'] ?? array()
+	);
+	$assert( 0, count( $scoped_mismatch['candidates'] ?? array() ), 'plan mismatch does not leave a removable candidate' );
+	$assert( 'plan_mismatch', $scoped_mismatch['skipped'][0]['reason_code'] ?? '', 'plan mismatch reports a stable reason code' );
+
 	// External worktrees are reported with routing metadata, but never owned by cleanup.
 	$external_skips = array_filter( $plan['skipped'] ?? array(), fn( $s ) => ( $s['path'] ?? '' ) === $external_real );
 	$assert( 1, count( $external_skips ), 'external worktree skipped with exactly one entry' );
@@ -338,11 +359,16 @@ namespace {
 	// Execute
 	// -------------------------------------------------------------------------
 
-	echo "\nExecuting cleanup\n";
+	// The reviewed plan still contains this row, but the worktree changes before
+	// apply. Plan application must re-run the dirty gate and leave it in place.
+	file_put_contents( $tmp . '/demo@merged-stale-plan/late-dirty.txt', 'changed after plan' );
+
+	echo "\nExecuting cleanup from reviewed plan\n";
 	$result = $ws->worktree_cleanup_merged(
 		array(
 			'dry_run'     => false,
 			'skip_github' => true,
+			'apply_plan'  => $plan,
 		)
 	);
 
@@ -351,6 +377,10 @@ namespace {
 
 	// The merged-autodelete candidate should be in removed[].
 	$assert_contains( $result['removed'] ?? array(), 'demo@merged-autodelete', 'canonical merged worktree was actually removed' );
+
+	$stale_skips = array_values( array_filter( $result['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@merged-stale-plan' ) );
+	$assert( 1, count( $stale_skips ), 'stale plan row is skipped after revalidation' );
+	$assert( 'dirty_worktree', $stale_skips[0]['reason_code'] ?? '', 'stale plan row reuses dirty safety gate' );
 
 	// Directory should be gone from disk.
 	$assert( false, is_dir( $tmp . '/demo@merged-autodelete' ), 'merged worktree directory no longer exists on disk' );
@@ -361,6 +391,7 @@ namespace {
 	// Protected branches: unmerged/dirty worktrees survive.
 	$assert( true, is_dir( $tmp . '/demo@unmerged-feature' ), 'unmerged worktree survives cleanup' );
 	$assert( true, is_dir( $tmp . '/demo@dirty-branch' ), 'dirty worktree survives cleanup' );
+	$assert( true, is_dir( $tmp . '/demo@merged-stale-plan' ), 'dirty stale-plan worktree survives cleanup' );
 	$assert( true, is_dir( $tmp . '-external/demo-external' ), 'external worktree survives cleanup' );
 
 	// The local branch for the removed worktree should be gone.

@@ -1063,6 +1063,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--dry-run]
 	 * : Preview cleanup candidates without removing anything (cleanup only).
 	 *
+	 * [--apply-plan=<file>]
+	 * : Apply a previously reviewed cleanup JSON report. The destructive pass
+	 *   revalidates every planned row and removes only exact current matches.
+	 *
 	 * [--skip-github]
 	 * : Skip the GitHub API lookup and rely only on the local `upstream-gone`
 	 *   signal (cleanup only). Faster, but misses merged branches where the
@@ -1108,6 +1112,10 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 *     # Remove all merged worktrees
 	 *     wp datamachine workspace worktree cleanup
+	 *
+	 *     # Review a plan, then apply only those rows after revalidation
+	 *     wp datamachine workspace worktree cleanup --dry-run --format=json > cleanup-plan.json
+	 *     wp datamachine workspace worktree cleanup --apply-plan=cleanup-plan.json
 	 *
 	 *     # Local-only detection (no GitHub API call)
 	 *     wp datamachine workspace worktree cleanup --skip-github
@@ -1218,6 +1226,13 @@ class WorkspaceCommand extends BaseCommand {
 				$input['dry_run']     = ! empty( $assoc_args['dry-run'] );
 				$input['force']       = ! empty( $assoc_args['force'] );
 				$input['skip_github'] = ! empty( $assoc_args['skip-github'] );
+				if ( ! empty( $assoc_args['apply-plan'] ) ) {
+					if ( ! empty( $assoc_args['force'] ) ) {
+						WP_CLI::error( 'Do not combine --apply-plan with --force. Plan application always revalidates and refuses dirty worktrees.' );
+						return;
+					}
+					$input['apply_plan'] = $this->read_worktree_cleanup_plan( (string) $assoc_args['apply-plan'] );
+				}
 				break;
 		}
 
@@ -1460,6 +1475,38 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 		WP_CLI::success( sprintf( 'Removed %d worktree(s); %d skipped.', count( $result['removed'] ?? array() ), count( $result['skipped'] ?? array() ) ) );
+	}
+
+	/**
+	 * Read and decode a cleanup plan file for --apply-plan.
+	 *
+	 * @param string $path Plan file path.
+	 * @return array
+	 */
+	private function read_worktree_cleanup_plan( string $path ): array {
+		if ( '' === trim( $path ) ) {
+			WP_CLI::error( '--apply-plan requires a file path.' );
+			return array();
+		}
+
+		if ( ! is_readable( $path ) ) {
+			WP_CLI::error( sprintf( 'Cleanup plan is not readable: %s', $path ) );
+			return array();
+		}
+
+		$raw = file_get_contents( $path );
+		if ( false === $raw ) {
+			WP_CLI::error( sprintf( 'Failed to read cleanup plan: %s', $path ) );
+			return array();
+		}
+
+		$decoded = json_decode( $raw, true );
+		if ( JSON_ERROR_NONE !== json_last_error() || ! is_array( $decoded ) ) {
+			WP_CLI::error( sprintf( 'Cleanup plan must be a JSON object: %s', json_last_error_msg() ) );
+			return array();
+		}
+
+		return $decoded;
 	}
 
 	/**

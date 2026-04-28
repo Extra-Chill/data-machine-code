@@ -1613,6 +1613,19 @@ class Workspace {
 		$dry_run     = ! empty( $opts['dry_run'] );
 		$force       = ! empty( $opts['force'] );
 		$skip_github = ! empty( $opts['skip_github'] );
+		$apply_plan  = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
+
+		$planned_candidates = null;
+		if ( null !== $apply_plan ) {
+			$planned_candidates = $this->extract_worktree_cleanup_plan_candidates( $apply_plan );
+			if ( is_wp_error( $planned_candidates ) ) {
+				return $planned_candidates;
+			}
+
+			// Applying a stale plan must never use the dirty override. The current
+			// workspace state is re-evaluated below and dirty rows stay skipped.
+			$force = false;
+		}
 
 		$listing = $this->worktree_list();
 		if ( is_wp_error( $listing ) ) {
@@ -1802,6 +1815,12 @@ class Workspace {
 			);
 		}
 
+		if ( null !== $planned_candidates ) {
+			$scoped     = $this->scope_worktree_cleanup_to_plan( $planned_candidates, $candidates, $skipped );
+			$candidates = $scoped['candidates'];
+			$skipped    = $scoped['skipped'];
+		}
+
 		$summary = $this->build_worktree_cleanup_summary( $candidates, array(), $skipped );
 
 		if ( $dry_run ) {
@@ -1894,6 +1913,115 @@ class Workspace {
 			'skipped'              => count( $skipped ),
 			'skipped_by_reason'    => $skipped_by_reason,
 			'candidates_by_signal' => $candidates_by_signal,
+		);
+	}
+
+	/**
+	 * Extract cleanup candidates from a dry-run JSON report.
+	 *
+	 * @param array $plan Decoded cleanup report.
+	 * @return array<int,array>|\WP_Error
+	 */
+	private function extract_worktree_cleanup_plan_candidates( array $plan ): array|\WP_Error {
+		$candidates = $plan['candidates'] ?? null;
+		if ( ! is_array( $candidates ) ) {
+			return new \WP_Error( 'invalid_cleanup_plan', 'Cleanup plan must contain a candidates array.', array( 'status' => 400 ) );
+		}
+
+		$required = array( 'handle', 'repo', 'branch', 'path', 'signal' );
+		foreach ( $candidates as $index => $row ) {
+			if ( ! is_array( $row ) ) {
+				return new \WP_Error( 'invalid_cleanup_plan', sprintf( 'Cleanup plan candidate #%d is not an object.', (int) $index ), array( 'status' => 400 ) );
+			}
+			foreach ( $required as $field ) {
+				if ( '' === trim( (string) ( $row[ $field ] ?? '' ) ) ) {
+					return new \WP_Error( 'invalid_cleanup_plan', sprintf( 'Cleanup plan candidate #%d is missing %s.', (int) $index, $field ), array( 'status' => 400 ) );
+				}
+			}
+		}
+
+		return array_values( $candidates );
+	}
+
+	/**
+	 * Restrict a freshly-evaluated cleanup report to a reviewed plan.
+	 *
+	 * The destructive pass still re-runs every cleanup gate. Only rows that are
+	 * current safe candidates and exactly match the reviewed handle/path/branch/
+	 * signal are removed; anything that drifted is reported as skipped.
+	 *
+	 * @param array<int,array> $planned_candidates Candidate rows from the plan file.
+	 * @param array<int,array> $current_candidates Freshly detected safe candidates.
+	 * @param array<int,array> $current_skipped    Freshly detected skipped rows.
+	 * @return array{candidates: array<int,array>, skipped: array<int,array>}
+	 */
+	private function scope_worktree_cleanup_to_plan( array $planned_candidates, array $current_candidates, array $current_skipped ): array {
+		$current_by_handle = array();
+		foreach ( $current_candidates as $row ) {
+			$handle = (string) ( $row['handle'] ?? '' );
+			if ( '' !== $handle ) {
+				$current_by_handle[ $handle ] = $row;
+			}
+		}
+
+		$skipped_by_handle = array();
+		foreach ( $current_skipped as $row ) {
+			$handle = (string) ( $row['handle'] ?? '' );
+			if ( '' !== $handle && ! isset( $skipped_by_handle[ $handle ] ) ) {
+				$skipped_by_handle[ $handle ] = $row;
+			}
+		}
+
+		$scoped_candidates = array();
+		$scoped_skipped    = array();
+
+		foreach ( $planned_candidates as $plan_row ) {
+			$handle = (string) ( $plan_row['handle'] ?? '' );
+			$current = $current_by_handle[ $handle ] ?? null;
+
+			if ( null === $current ) {
+				$skip = $skipped_by_handle[ $handle ] ?? array(
+					'handle'      => $handle,
+					'repo'        => (string) ( $plan_row['repo'] ?? '' ),
+					'branch'      => (string) ( $plan_row['branch'] ?? '' ),
+					'path'        => (string) ( $plan_row['path'] ?? '' ),
+					'reason_code' => 'plan_not_current',
+					'reason'      => 'planned cleanup row is no longer present in the current worktree list',
+				);
+				$skip['planned_signal'] = (string) ( $plan_row['signal'] ?? '' );
+				$scoped_skipped[]       = $skip;
+				continue;
+			}
+
+			$mismatches = array();
+			foreach ( array( 'repo', 'branch', 'path', 'signal' ) as $field ) {
+				$planned = (string) ( $plan_row[ $field ] ?? '' );
+				$actual  = (string) ( $current[ $field ] ?? '' );
+				if ( $planned !== $actual ) {
+					$mismatches[] = sprintf( '%s planned=%s current=%s', $field, $planned, $actual );
+				}
+			}
+
+			if ( array() !== $mismatches ) {
+				$scoped_skipped[] = array(
+					'handle'         => $handle,
+					'repo'           => (string) ( $current['repo'] ?? $plan_row['repo'] ?? '' ),
+					'branch'         => (string) ( $current['branch'] ?? $plan_row['branch'] ?? '' ),
+					'path'           => (string) ( $current['path'] ?? $plan_row['path'] ?? '' ),
+					'reason_code'    => 'plan_mismatch',
+					'reason'         => 'planned cleanup row no longer matches current state: ' . implode( '; ', $mismatches ),
+					'planned_signal' => (string) ( $plan_row['signal'] ?? '' ),
+					'current_signal' => (string) ( $current['signal'] ?? '' ),
+				);
+				continue;
+			}
+
+			$scoped_candidates[] = $current;
+		}
+
+		return array(
+			'candidates' => $scoped_candidates,
+			'skipped'    => $scoped_skipped,
 		);
 	}
 
