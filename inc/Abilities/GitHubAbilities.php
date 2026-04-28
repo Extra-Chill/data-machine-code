@@ -1428,27 +1428,11 @@ class GitHubAbilities {
 		$ref = sanitize_text_field( $input['ref'] ?? $input['branch'] ?? '' );
 
 		$fetcher = static function ( string $path ) use ( $repo, $ref ): array|\WP_Error {
-			$args = array(
-				'repo' => $repo,
-				'path' => $path,
-			);
-			if ( '' !== $ref ) {
-				$args['ref'] = $ref;
-			}
-
-			return self::getFileContents( $args );
+			return self::getFileContents( self::buildRepoPathInput( $repo, $path, $ref ) );
 		};
 
 		$tree_fetcher = static function ( string $path ) use ( $repo, $ref ): array|\WP_Error {
-			$args = array(
-				'repo' => $repo,
-				'path' => $path,
-			);
-			if ( '' !== $ref ) {
-				$args['ref'] = $ref;
-			}
-
-			return self::getRepoTree( $args );
+			return self::getRepoTree( self::buildRepoPathInput( $repo, $path, $ref ) );
 		};
 
 		return array(
@@ -1640,6 +1624,21 @@ class GitHubAbilities {
 		}
 
 		return array_merge( $current, $incoming );
+	}
+
+	/**
+	 * Build common repo/path/ref input for GitHub file and tree reads.
+	 */
+	private static function buildRepoPathInput( string $repo, string $path, string $ref ): array {
+		$args = array(
+			'repo' => $repo,
+			'path' => $path,
+		);
+		if ( '' !== $ref ) {
+			$args['ref'] = $ref;
+		}
+
+		return $args;
 	}
 
 	/**
