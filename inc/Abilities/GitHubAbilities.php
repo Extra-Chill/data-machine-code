@@ -2390,14 +2390,14 @@ class GitHubAbilities {
 	// HTTP Helpers
 	// -------------------------------------------------------------------------
 
-	public static function apiGet( string $url, array $query_params, string $pat ): array|\WP_Error {
+	public static function apiGet( string $url, array $query_params, string $pat, int $timeout = 30 ): array|\WP_Error {
 		if ( ! empty( $query_params ) ) {
 			$url = add_query_arg( $query_params, $url );
 		}
 
 		$response = wp_remote_get( $url, array(
 			'headers' => self::getHeaders( $pat ),
-			'timeout' => 30,
+			'timeout' => $timeout,
 		) );
 
 		return self::parseResponse( $response );

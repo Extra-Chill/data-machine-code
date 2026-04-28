@@ -27,6 +27,16 @@ class Workspace {
 	const MAX_READ_SIZE = 1048576;
 
 	/**
+	 * Bound GitHub cleanup checks so one slow repo cannot stall cleanup.
+	 */
+	private const CLEANUP_GITHUB_TIMEOUT = 5;
+
+	/**
+	 * Closed PR pages to inspect per repo during cleanup.
+	 */
+	private const CLEANUP_GITHUB_MAX_PAGES = 3;
+
+	/**
 	 * @var string Resolved workspace path.
 	 */
 	private string $workspace_path;
@@ -1600,6 +1610,7 @@ class Workspace {
 		$protected_branches = array( 'main', 'master', 'trunk', 'develop', 'HEAD' );
 		$candidates         = array();
 		$skipped            = array();
+		$github_cache       = array();
 
 		// Fetch + prune each primary once up-front so upstream-gone signals are fresh.
 		$fetched = array();
@@ -1673,11 +1684,19 @@ class Workspace {
 				$fetched[ $repo ] = true;
 			}
 
-			$signal = $this->detect_merge_signal( $primary_path, $repo, $branch, $skip_github );
+			$signal = $this->detect_merge_signal( $primary_path, $repo, $branch, $skip_github, $github_cache );
 			if ( null === $signal ) {
 				$skipped[] = array(
 					'handle' => $wt['handle'] ?? '?',
 					'reason' => 'no merge signal — leaving in place',
+				);
+				continue;
+			}
+
+			if ( 'github-unknown' === ( $signal['signal'] ?? '' ) ) {
+				$skipped[] = array(
+					'handle' => $wt['handle'] ?? '?',
+					'reason' => $signal['reason'],
 				);
 				continue;
 			}
@@ -1849,9 +1868,10 @@ class Workspace {
 	 * @param string $repo         Primary repo directory name.
 	 * @param string $branch       Branch name.
 	 * @param bool   $skip_github  If true, skip GitHub API lookup.
+	 * @param array  $github_cache Run-local cache for GitHub repo lookups.
 	 * @return array{signal: string, reason: string, pr_url?: string}|null
 	 */
-	private function detect_merge_signal( string $primary_path, string $repo, string $branch, bool $skip_github ): ?array {
+	private function detect_merge_signal( string $primary_path, string $repo, string $branch, bool $skip_github, array &$github_cache = array() ): ?array {
 		$ref    = 'refs/heads/' . $branch;
 		$format = '%(upstream:track)';
 		$result = $this->run_git( $primary_path, sprintf( 'for-each-ref --format=%s %s', escapeshellarg( $format ), escapeshellarg( $ref ) ) );
@@ -1875,7 +1895,13 @@ class Workspace {
 			return null;
 		}
 
-		$pr = $this->find_merged_pr_for_branch( $gh_slug, $branch );
+		$pr = $this->find_merged_pr_for_branch( $gh_slug, $branch, $github_cache );
+		if ( is_wp_error( $pr ) ) {
+			return array(
+				'signal' => 'github-unknown',
+				'reason' => 'unknown_github_state — ' . $pr->get_error_message(),
+			);
+		}
 		if ( null === $pr ) {
 			return null;
 		}
@@ -1902,56 +1928,115 @@ class Workspace {
 	}
 
 	/**
-	 * Look up a merged PR for a branch via the GitHub API.
+	 * Look up a merged PR for a branch via a cached GitHub API snapshot.
 	 *
-	 * Queries `GET /repos/{slug}/pulls?state=closed&head={owner}:{branch}`
-	 * and returns the first entry whose `merged_at` is non-null.
+	 * Cleanup may inspect hundreds of worktrees for the same repo. Querying
+	 * GitHub once per branch does not scale, so each repo gets one bounded
+	 * closed-PR snapshot per cleanup run and branch lookups read that cache.
 	 *
-	 * @param string $slug   owner/repo.
-	 * @param string $branch Branch name.
-	 * @return array|null PR data or null.
+	 * @param string $slug         owner/repo.
+	 * @param string $branch       Branch name.
+	 * @param array  $github_cache Run-local cache keyed by owner/repo.
+	 * @return array|null|\WP_Error PR data, null when no PR matched, or lookup failure.
 	 */
-	private function find_merged_pr_for_branch( string $slug, string $branch ): ?array {
+	private function find_merged_pr_for_branch( string $slug, string $branch, array &$github_cache = array() ): array|\WP_Error|null {
+		$lookup = $this->get_cleanup_github_lookup( $slug, $github_cache );
+		if ( is_wp_error( $lookup ) ) {
+			return $lookup;
+		}
+
+		if ( null === $lookup ) {
+			return null;
+		}
+
+		return $lookup[ $branch ] ?? null;
+	}
+
+	/**
+	 * Load and cache merged same-repo PRs for a GitHub repo.
+	 *
+	 * @param string $slug         owner/repo.
+	 * @param array  $github_cache Run-local cache keyed by owner/repo.
+	 * @return array<string,array>|null|\WP_Error Branch-name map, null when GitHub is unavailable, or lookup failure.
+	 */
+	private function get_cleanup_github_lookup( string $slug, array &$github_cache ): array|\WP_Error|null {
+		if ( array_key_exists( $slug, $github_cache ) ) {
+			return $github_cache[ $slug ];
+		}
+
 		if ( ! class_exists( '\DataMachineCode\Abilities\GitHubAbilities' ) ) {
+			$github_cache[ $slug ] = null;
 			return null;
 		}
 
 		$pat = \DataMachineCode\Abilities\GitHubAbilities::getPat();
 		if ( empty( $pat ) ) {
+			$github_cache[ $slug ] = null;
 			return null;
 		}
 
-		$owner = explode( '/', $slug )[0];
-		if ( '' === $owner ) {
+		$parts = explode( '/', $slug, 2 );
+		$owner = $parts[0] ?? '';
+		if ( '' === $owner || empty( $parts[1] ) ) {
+			$github_cache[ $slug ] = null;
 			return null;
 		}
 
-		$response = \DataMachineCode\Abilities\GitHubAbilities::apiGet(
-			GitHubRemote::apiUrl( $slug, 'pulls' ),
-			array(
-				'state'    => 'closed',
-				'head'     => $owner . ':' . $branch,
-				'per_page' => 5,
-			),
-			$pat
-		);
+		$merged = array();
+		$url    = GitHubRemote::apiUrl( $slug, 'pulls' );
 
-		if ( is_wp_error( $response ) ) {
-			return null;
-		}
+		for ( $page = 1; $page <= self::CLEANUP_GITHUB_MAX_PAGES; $page++ ) {
+			$response = \DataMachineCode\Abilities\GitHubAbilities::apiGet(
+				$url,
+				array(
+					'state'     => 'closed',
+					'sort'      => 'updated',
+					'direction' => 'desc',
+					'per_page'  => 100,
+					'page'      => $page,
+				),
+				$pat,
+				self::CLEANUP_GITHUB_TIMEOUT
+			);
 
-		foreach ( (array) ( $response['data'] ?? array() ) as $pr ) {
-			if ( ! empty( $pr['merged_at'] ) ) {
-				return array(
+			if ( is_wp_error( $response ) ) {
+				$error                 = new \WP_Error(
+					'github_cleanup_lookup_failed',
+					sprintf( 'GitHub cleanup lookup failed for %s: %s', $slug, $response->get_error_message() ),
+					$response->get_error_data()
+				);
+				$github_cache[ $slug ] = $error;
+				return $error;
+			}
+
+			$items = (array) ( $response['data'] ?? array() );
+			foreach ( $items as $pr ) {
+				if ( empty( $pr['merged_at'] ) ) {
+					continue;
+				}
+
+				$head      = is_array( $pr['head'] ?? null ) ? $pr['head'] : array();
+				$head_repo = is_array( $head['repo'] ?? null ) ? (string) ( $head['repo']['full_name'] ?? '' ) : '';
+				$head_ref  = (string) ( $head['ref'] ?? '' );
+				if ( $head_repo !== $slug || '' === $head_ref ) {
+					continue;
+				}
+
+				$merged[ $head_ref ] = array(
 					'number'    => (int) ( $pr['number'] ?? 0 ),
 					'state'     => (string) ( $pr['state'] ?? 'closed' ),
 					'merged_at' => (string) $pr['merged_at'],
 					'html_url'  => (string) ( $pr['html_url'] ?? '' ),
 				);
 			}
+
+			if ( count( $items ) < 100 ) {
+				break;
+			}
 		}
 
-		return null;
+		$github_cache[ $slug ] = $merged;
+		return $merged;
 	}
 
 	/**
