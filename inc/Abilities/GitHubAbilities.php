@@ -17,12 +17,17 @@ namespace DataMachineCode\Abilities;
 
 use DataMachine\Abilities\PermissionHelper;
 use DataMachine\Core\PluginSettings;
+use DataMachineCode\GitHub\PrReviewEscalationPolicy;
 use DataMachineCode\Support\GitHubCredentialResolver;
 
 defined( 'ABSPATH' ) || exit;
 
 if ( ! class_exists( GitHubCredentialResolver::class ) ) {
 	require_once dirname( __DIR__ ) . '/Support/GitHubCredentialResolver.php';
+}
+
+if ( ! class_exists( PrReviewEscalationPolicy::class ) ) {
+	require_once dirname( __DIR__ ) . '/GitHub/PrReviewEscalationPolicy.php';
 }
 
 class GitHubAbilities {
@@ -1499,6 +1504,7 @@ class GitHubAbilities {
 
 			if ( is_wp_error( $checks ) ) {
 				$context['errors']['check_runs'] = $checks->get_error_message();
+				$context['error_codes']['check_runs'] = $checks->get_error_code();
 			} else {
 				$context['check_runs'] = array(
 					'summary' => $checks['summary'] ?? array(),
@@ -1518,6 +1524,7 @@ class GitHubAbilities {
 
 			if ( is_wp_error( $statuses ) ) {
 				$context['errors']['commit_statuses'] = $statuses->get_error_message();
+				$context['error_codes']['commit_statuses'] = $statuses->get_error_code();
 			} else {
 				$context['commit_statuses'] = array(
 					'summary' => $statuses['summary'] ?? array(),
@@ -1540,6 +1547,7 @@ class GitHubAbilities {
 
 			if ( is_wp_error( $homeboy ) ) {
 				$context['errors']['homeboy_ci_results'] = $homeboy->get_error_message();
+				$context['error_codes']['homeboy_ci_results'] = $homeboy->get_error_code();
 			} else {
 				$context['homeboy_ci_results'] = $homeboy['results'] ?? array();
 			}
@@ -2776,6 +2784,16 @@ class GitHubAbilities {
 
 		if ( isset( $options['checks'] ) && is_array( $options['checks'] ) ) {
 			$context['checks'] = $options['checks'];
+		}
+
+		if ( false !== ( $options['include_escalation_policy'] ?? true ) ) {
+			$context['escalation_policy'] = PrReviewEscalationPolicy::evaluate(
+				$repo,
+				$pull,
+				$changed_files,
+				isset( $context['checks'] ) && is_array( $context['checks'] ) ? $context['checks'] : array(),
+				isset( $options['escalation_policy'] ) && is_array( $options['escalation_policy'] ) ? $options['escalation_policy'] : array()
+			);
 		}
 
 		return array(
