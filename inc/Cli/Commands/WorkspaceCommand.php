@@ -1073,7 +1073,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * [--only=<section>]
 	 * : Limit cleanup rows to one section or reason code. Supported values:
-	 *   candidates, removed, no_merge_signal, dirty_worktree,
+	 *   candidates, would-remove, would_remove, removed, no_merge_signal, dirty_worktree,
 	 *   unpushed_commits, missing_metadata, external_worktree.
 	 *
 	 * [--format=<format>]
@@ -1347,7 +1347,7 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function render_worktree_cleanup_result( array $result, array $assoc_args ): void {
 		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
-		$only   = isset( $assoc_args['only'] ) ? (string) $assoc_args['only'] : '';
+		$only   = isset( $assoc_args['only'] ) ? $this->normalize_worktree_cleanup_only( (string) $assoc_args['only'] ) : '';
 		$report = $this->filter_worktree_cleanup_report( $result, $only );
 
 		if ( 'json' === $format ) {
@@ -1401,14 +1401,16 @@ class WorkspaceCommand extends BaseCommand {
 			WP_CLI::log( $dry_run ? 'Would remove:' : 'Candidates:' );
 			$candidate_rows = array_map(
 				fn( $c ) => array(
-					'handle' => $c['handle'] ?? '',
-					'branch' => $c['branch'] ?? '',
-					'signal' => $c['signal'] ?? '',
-					'reason' => $c['reason'] ?? '',
+					'handle'      => $c['handle'] ?? '',
+					'branch'      => $c['branch'] ?? '',
+					'signal'      => $c['signal'] ?? '',
+					'reason_code' => $c['reason_code'] ?? ( $c['signal'] ?? '' ),
+					'reason'      => $c['reason'] ?? '',
 				),
 				array_slice( $candidates, 0, $limit )
 			);
-			$this->format_items( $candidate_rows, array( 'handle', 'branch', 'signal', 'reason' ), array( 'format' => 'table' ), 'handle' );
+			$fields = $verbose ? array( 'handle', 'branch', 'signal', 'reason' ) : array( 'handle', 'branch', 'signal', 'reason_code' );
+			$this->format_items( $candidate_rows, $fields, array( 'format' => 'table' ), 'handle' );
 			$this->render_cleanup_truncation_hint( count( $candidates ), $limit, 'candidate rows' );
 		}
 
@@ -1417,14 +1419,16 @@ class WorkspaceCommand extends BaseCommand {
 			WP_CLI::log( 'Removed:' );
 			$removed_rows = array_map(
 				fn( $c ) => array(
-					'handle' => $c['handle'] ?? '',
-					'branch' => $c['branch'] ?? '',
-					'signal' => $c['signal'] ?? '',
-					'reason' => $c['reason'] ?? '',
+					'handle'      => $c['handle'] ?? '',
+					'branch'      => $c['branch'] ?? '',
+					'signal'      => $c['signal'] ?? '',
+					'reason_code' => $c['reason_code'] ?? ( $c['signal'] ?? '' ),
+					'reason'      => $c['reason'] ?? '',
 				),
 				array_slice( $removed, 0, $limit )
 			);
-			$this->format_items( $removed_rows, array( 'handle', 'branch', 'signal', 'reason' ), array( 'format' => 'table' ), 'handle' );
+			$fields = $verbose ? array( 'handle', 'branch', 'signal', 'reason' ) : array( 'handle', 'branch', 'signal', 'reason_code' );
+			$this->format_items( $removed_rows, $fields, array( 'format' => 'table' ), 'handle' );
 			$this->render_cleanup_truncation_hint( count( $removed ), $limit, 'removed rows' );
 		}
 
@@ -1435,7 +1439,7 @@ class WorkspaceCommand extends BaseCommand {
 				fn( $s ) => array(
 					'handle'       => $s['handle'] ?? '',
 					'reason_code'  => $s['reason_code'] ?? '',
-					'reason'       => $s['reason'] ?? '',
+					'reason'       => $verbose ? ( $s['reason'] ?? '' ) : $this->shorten_cleanup_reason( (string) ( $s['reason'] ?? '' ) ),
 					'repo'         => $s['repo'] ?? '',
 					'branch'       => $s['branch'] ?? '',
 					'path'         => $s['path'] ?? '',
@@ -1445,7 +1449,8 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array_slice( $skipped, 0, $limit )
 			);
-			$this->format_items( $skipped_rows, array( 'handle', 'reason_code', 'reason', 'repo', 'branch', 'path', 'primary_path', 'missing', 'hint' ), array( 'format' => 'table' ), 'handle' );
+			$fields = $verbose ? array( 'handle', 'reason_code', 'reason', 'repo', 'branch', 'path', 'primary_path', 'missing', 'hint' ) : array( 'handle', 'reason_code', 'reason' );
+			$this->format_items( $skipped_rows, $fields, array( 'format' => 'table' ), 'handle' );
 			$this->render_cleanup_truncation_hint( count( $skipped ), $limit, 'skipped rows' );
 		}
 
@@ -1465,17 +1470,11 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array
 	 */
 	private function filter_worktree_cleanup_report( array $report, string $only ): array {
+		$only = $this->normalize_worktree_cleanup_only( $only );
+
 		if ( '' === $only ) {
 			return $report;
 		}
-
-		$aliases = array(
-			'dirty'            => 'dirty_worktree',
-			'unpushed'         => 'unpushed_commits',
-			'missing-metadata' => 'missing_metadata',
-			'external'         => 'external_worktree',
-		);
-		$only    = $aliases[ $only ] ?? $only;
 
 		if ( 'candidates' !== $only ) {
 			$report['candidates'] = array();
@@ -1494,6 +1493,39 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		return $report;
+	}
+
+	/**
+	 * Normalize cleanup section/reason aliases used by --only.
+	 *
+	 * @param string $only Raw CLI filter value.
+	 * @return string Normalized filter value.
+	 */
+	private function normalize_worktree_cleanup_only( string $only ): string {
+		$aliases = array(
+			'would-remove'     => 'candidates',
+			'would_remove'     => 'candidates',
+			'dirty'            => 'dirty_worktree',
+			'unpushed'         => 'unpushed_commits',
+			'missing-metadata' => 'missing_metadata',
+			'external'         => 'external_worktree',
+		);
+
+		return $aliases[ $only ] ?? $only;
+	}
+
+	/**
+	 * Shorten cleanup reasons for compact human tables.
+	 *
+	 * @param string $reason Full reason text.
+	 * @return string Shortened reason text.
+	 */
+	private function shorten_cleanup_reason( string $reason ): string {
+		if ( strlen( $reason ) <= 72 ) {
+			return $reason;
+		}
+
+		return rtrim( substr( $reason, 0, 69 ) ) . '...';
 	}
 
 	/**
