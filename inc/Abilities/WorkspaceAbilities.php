@@ -1040,6 +1040,10 @@ class WorkspaceAbilities {
 								'type'        => 'object',
 								'description' => 'Decoded cleanup dry-run report to apply after revalidating every candidate.',
 							),
+							'older_than'  => array(
+								'type'        => 'string',
+								'description' => 'Optional candidate age filter such as 7d, 24h, 30m, or 60s. Uses lifecycle created_at metadata only.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -1388,19 +1392,24 @@ class WorkspaceAbilities {
 	/**
 	 * Remove merged worktrees across all primary checkouts.
 	 *
-	 * @param array $input Input parameters (dry_run, force, skip_github).
+	 * @param array $input Input parameters (dry_run, force, skip_github, apply_plan, older_than).
 	 * @return array
 	 */
 	public static function worktreeCleanup( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
-		return $workspace->worktree_cleanup_merged(
-			array(
-				'dry_run'     => ! empty( $input['dry_run'] ),
-				'force'       => ! empty( $input['force'] ),
-				'skip_github' => ! empty( $input['skip_github'] ),
-				'apply_plan'  => isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ? $input['apply_plan'] : null,
-			)
+		$opts      = array(
+			'dry_run'     => ! empty( $input['dry_run'] ),
+			'force'       => ! empty( $input['force'] ),
+			'skip_github' => ! empty( $input['skip_github'] ),
 		);
+		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
+			$opts['apply_plan'] = $input['apply_plan'];
+		}
+		if ( isset( $input['older_than'] ) && '' !== trim( (string) $input['older_than'] ) ) {
+			$opts['older_than'] = trim( (string) $input['older_than'] );
+		}
+
+		return $workspace->worktree_cleanup_merged( $opts );
 	}
 
 	/**

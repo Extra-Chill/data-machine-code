@@ -73,9 +73,9 @@ namespace {
 	}
 
 	if ( ! function_exists( 'get_option' ) ) {
-		function get_option( string $name, $default = false ) {
+		function get_option( string $name, $default_value = false ) {
 			global $datamachine_code_test_options;
-			return $datamachine_code_test_options[ $name ] ?? $default;
+			return $datamachine_code_test_options[ $name ] ?? $default_value;
 		}
 	}
 
@@ -125,7 +125,7 @@ namespace {
 		}
 	} );
 
-	define( 'DATAMACHINE_WORKSPACE_PATH', realpath( $tmp ) ?: $tmp );
+	define( 'DATAMACHINE_WORKSPACE_PATH', realpath( $tmp ) ? realpath( $tmp ) : $tmp );
 
 	$failures = 0;
 	$total    = 0;
@@ -180,7 +180,7 @@ namespace {
 	// Primary checkout: clone + initial commit on main + push.
 	$primary = $tmp . '/demo';
 	$run( sprintf( 'git clone %s %s', escapeshellarg( $remote ), escapeshellarg( $primary ) ) );
-	$primary_real = realpath( $primary ) ?: $primary;
+	$primary_real = realpath( $primary ) ? realpath( $primary ) : $primary;
 	$run( 'git config user.email test@example.com', $primary );
 	$run( 'git config user.name test', $primary );
 	file_put_contents( $primary . '/README.md', "demo\n" );
@@ -200,10 +200,12 @@ namespace {
 	// Branches that have branches on the remote.
 	$make_branch( 'merged-autodelete', 'a' );   // → simulate remote delete below
 	$make_branch( 'merged-stale-plan', 'a2' );  // → candidate in plan, dirty before apply
-	$make_branch( 'merged-live-remote', 'b' );  // → simulate via PR-merged (stubbed → none)
-	$make_branch( 'unmerged-feature', 'c' );    // still active
-	$make_branch( 'dirty-branch', 'd' );        // will be dirty in worktree
-	$make_branch( 'external-branch', 'e' );     // outside workspace, should never be removed
+	$make_branch( 'merged-recent', 'b' );       // → merged, but too new for age-filtered cleanup
+	$make_branch( 'merged-unknown-age', 'c' );  // → merged, but missing created_at metadata
+	$make_branch( 'merged-live-remote', 'd' );  // → simulate via PR-merged (stubbed → none)
+	$make_branch( 'unmerged-feature', 'e' );    // still active
+	$make_branch( 'dirty-branch', 'f' );        // will be dirty in worktree
+	$make_branch( 'external-branch', 'g' );     // outside workspace, should never be removed
 
 	// Create worktrees at various paths:
 	//   - canonical slug path (demo@merged-autodelete)
@@ -212,15 +214,39 @@ namespace {
 	//   - canonical path for dirty
 	$run( sprintf( 'git worktree add %s merged-autodelete', escapeshellarg( $tmp . '/demo@merged-autodelete' ) ), $primary );
 	$run( sprintf( 'git worktree add %s merged-stale-plan', escapeshellarg( $tmp . '/demo@merged-stale-plan' ) ), $primary );
+	$run( sprintf( 'git worktree add %s merged-recent', escapeshellarg( $tmp . '/demo@merged-recent' ) ), $primary );
+	$run( sprintf( 'git worktree add %s merged-unknown-age', escapeshellarg( $tmp . '/demo@merged-unknown-age' ) ), $primary );
 	$run( sprintf( 'git worktree add %s merged-live-remote', escapeshellarg( $tmp . '/demo-legacy-merged' ) ), $primary );
 	$run( sprintf( 'git worktree add %s unmerged-feature', escapeshellarg( $tmp . '/demo@unmerged-feature' ) ), $primary );
 	$run( sprintf( 'git worktree add %s dirty-branch', escapeshellarg( $tmp . '/demo@dirty-branch' ) ), $primary );
 	mkdir( $tmp . '-external', 0755, true );
 	$run( sprintf( 'git worktree add %s external-branch', escapeshellarg( $tmp . '-external/demo-external' ) ), $primary );
-	$external_real = realpath( $tmp . '-external/demo-external' ) ?: $tmp . '-external/demo-external';
+	$external_real = realpath( $tmp . '-external/demo-external' ) ? realpath( $tmp . '-external/demo-external' ) : $tmp . '-external/demo-external';
 
 	// Dirty the dirty worktree.
 	file_put_contents( $tmp . '/demo@dirty-branch/scratch.txt', 'dirty' );
+
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_metadata(
+		'demo@merged-autodelete',
+		array(
+			'site_url'   => 'http://example.test',
+			'site_name'  => 'Example',
+			'agent_slug' => 'agent-one',
+			'abspath'    => '/example',
+			'timestamp'  => gmdate( 'c', time() - 14 * 86400 ),
+		)
+	);
+
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_metadata(
+		'demo@merged-recent',
+		array(
+			'site_url'   => 'http://example.test',
+			'site_name'  => 'Example',
+			'agent_slug' => 'agent-one',
+			'abspath'    => '/example',
+			'timestamp'  => gmdate( 'c', time() - 3600 ),
+		)
+	);
 
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_metadata(
 		'demo@unmerged-feature',
@@ -233,7 +259,7 @@ namespace {
 		)
 	);
 
-	// Simulate "remote deleted the merged-autodelete branch" — classic
+	// Simulate "remote deleted the merged-* branches" — classic
 	// GitHub auto-delete-on-merge scenario. After a fetch --prune, the
 	// local branch's upstream tracking ref will be "gone".
 	$run( sprintf( 'git -C %s push origin --delete merged-autodelete', escapeshellarg( $remote ) ) );
@@ -242,6 +268,8 @@ namespace {
 	// bare ref directly.)
 	$run( sprintf( 'git --git-dir=%s update-ref -d refs/heads/merged-autodelete', escapeshellarg( $remote ) ) );
 	$run( sprintf( 'git --git-dir=%s update-ref -d refs/heads/merged-stale-plan', escapeshellarg( $remote ) ) );
+	$run( sprintf( 'git --git-dir=%s update-ref -d refs/heads/merged-recent', escapeshellarg( $remote ) ) );
+	$run( sprintf( 'git --git-dir=%s update-ref -d refs/heads/merged-unknown-age', escapeshellarg( $remote ) ) );
 
 	// -------------------------------------------------------------------------
 	// Dry-run assertions
@@ -266,6 +294,8 @@ namespace {
 	$assert( 'agent-one', $metadata_item['metadata']['agent_slug'] ?? null, 'worktree list exposes agent metadata for agent runtime' );
 
 	$assert_contains( $plan['candidates'] ?? array(), 'demo@merged-autodelete', 'canonical merged worktree flagged prunable' );
+	$assert_contains( $plan['candidates'] ?? array(), 'demo@merged-recent', 'recent merged worktree is still prunable without age filter' );
+	$assert_contains( $plan['candidates'] ?? array(), 'demo@merged-unknown-age', 'merged worktree without age metadata is still prunable without age filter' );
 
 	// dirty-branch should be skipped (reason: dirty)
 	$dirty_skips = array_filter( $plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@dirty-branch' );
@@ -286,9 +316,38 @@ namespace {
 	$assert( 'external_worktree', $external_row['reason_code'] ?? '', 'external worktree exposes stable reason code' );
 	$assert( true, str_contains( $external_row['hint'] ?? '', 'outside the DMC workspace' ), 'external worktree includes remediation hint' );
 
-	$assert( 2, (int) ( $plan['summary']['would_remove'] ?? 0 ), 'summary counts cleanup candidates' );
+	$assert( 4, (int) ( $plan['summary']['would_remove'] ?? 0 ), 'summary counts cleanup candidates' );
 	$assert( 1, (int) ( $plan['summary']['skipped_by_reason']['dirty_worktree'] ?? 0 ), 'summary counts dirty skips by reason' );
 	$assert( true, isset( $plan['summary']['skipped_by_reason']['no_merge_signal'] ), 'summary includes no_merge_signal bucket' );
+
+	$age_plan = $ws->worktree_cleanup_merged(
+		array(
+			'dry_run'     => true,
+			'skip_github' => true,
+			'older_than'  => '7d',
+		)
+	);
+	$assert( true, ! is_wp_error( $age_plan ) && ( $age_plan['success'] ?? false ), 'age-filtered dry_run returns success' );
+	$assert( 1, (int) ( $age_plan['summary']['would_remove'] ?? 0 ), 'older_than keeps only old cleanup candidate' );
+	$assert( 1, (int) ( $age_plan['summary']['age_filter']['excluded'] ?? 0 ), 'age filter summary counts newer candidate exclusion' );
+	$assert( 2, (int) ( $age_plan['summary']['age_filter']['unknown_age'] ?? 0 ), 'age filter summary counts unknown-age candidate exclusions' );
+	$assert_contains( $age_plan['candidates'] ?? array(), 'demo@merged-autodelete', 'older_than keeps old merged worktree' );
+	$recent_age_rows = array_values( array_filter( $age_plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@merged-recent' ) );
+	$assert( 'age_filter', $recent_age_rows[0]['reason_code'] ?? '', 'newer merged worktree is skipped by age_filter' );
+	$assert( 'excluded', $recent_age_rows[0]['age_filter']['decision'] ?? '', 'age-filter skip row exposes excluded decision' );
+	$unknown_age_rows = array_values( array_filter( $age_plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@merged-unknown-age' ) );
+	$assert( 'unknown_age', $unknown_age_rows[0]['reason_code'] ?? '', 'missing created_at candidate is skipped as unknown_age when age filter is active' );
+	$assert( 'unknown_age', $unknown_age_rows[0]['age_filter']['decision'] ?? '', 'unknown-age skip row exposes age-filter decision' );
+	$old_age_rows = array_values( array_filter( $age_plan['candidates'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@merged-autodelete' ) );
+	$assert( 'included', $old_age_rows[0]['age_filter']['decision'] ?? '', 'kept candidate exposes included age-filter decision' );
+	$invalid_age_plan = $ws->worktree_cleanup_merged(
+		array(
+			'dry_run'     => true,
+			'skip_github' => true,
+			'older_than'  => 'soon',
+		)
+	);
+	$assert( true, is_wp_error( $invalid_age_plan ), 'invalid older_than duration returns WP_Error' );
 
 	class Missing_Metadata_Workspace extends \DataMachineCode\Workspace\Workspace {
 		public function worktree_list( ?string $repo = null ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
@@ -377,6 +436,8 @@ namespace {
 
 	// The merged-autodelete candidate should be in removed[].
 	$assert_contains( $result['removed'] ?? array(), 'demo@merged-autodelete', 'canonical merged worktree was actually removed' );
+	$assert_contains( $result['removed'] ?? array(), 'demo@merged-recent', 'recent merged worktree was actually removed without age filter' );
+	$assert_contains( $result['removed'] ?? array(), 'demo@merged-unknown-age', 'unknown-age merged worktree was actually removed without age filter' );
 
 	$stale_skips = array_values( array_filter( $result['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@merged-stale-plan' ) );
 	$assert( 1, count( $stale_skips ), 'stale plan row is skipped after revalidation' );
@@ -384,6 +445,8 @@ namespace {
 
 	// Directory should be gone from disk.
 	$assert( false, is_dir( $tmp . '/demo@merged-autodelete' ), 'merged worktree directory no longer exists on disk' );
+	$assert( false, is_dir( $tmp . '/demo@merged-recent' ), 'recent merged worktree directory no longer exists on disk' );
+	$assert( false, is_dir( $tmp . '/demo@merged-unknown-age' ), 'unknown-age merged worktree directory no longer exists on disk' );
 
 	// Primary survives.
 	$assert( true, is_dir( $primary . '/.git' ), 'primary .git survives cleanup' );

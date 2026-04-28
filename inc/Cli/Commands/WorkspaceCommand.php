@@ -1072,13 +1072,18 @@ class WorkspaceCommand extends BaseCommand {
 	 *   signal (cleanup only). Faster, but misses merged branches where the
 	 *   remote branch wasn't auto-deleted.
 	 *
+	 * [--older-than=<duration>]
+	 * : Limit cleanup candidates to worktrees with lifecycle `created_at`
+	 *   metadata older than the compact duration (cleanup only, e.g. 7d, 24h).
+	 *   Candidate worktrees without valid `created_at` metadata are skipped.
+	 *
 	 * [--verbose]
 	 * : Show every cleanup row instead of concise samples (cleanup only).
 	 *
 	 * [--only=<section>]
 	 * : Limit cleanup rows to one section or reason code. Supported values:
 	 *   candidates, would-remove, would_remove, removed, no_merge_signal, dirty_worktree,
-	 *   unpushed_commits, missing_metadata, external_worktree.
+	 *   unpushed_commits, missing_metadata, external_worktree, age_filter, unknown_age.
 	 *
 	 * [--format=<format>]
 	 * : Output format for list and cleanup (table, json, csv, yaml).
@@ -1232,6 +1237,9 @@ class WorkspaceCommand extends BaseCommand {
 						return;
 					}
 					$input['apply_plan'] = $this->read_worktree_cleanup_plan( (string) $assoc_args['apply-plan'] );
+				}
+				if ( isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ) {
+					$input['older_than'] = trim( (string) $assoc_args['older-than'] );
 				}
 				break;
 		}
@@ -1405,6 +1413,16 @@ class WorkspaceCommand extends BaseCommand {
 				'count'  => (int) $count,
 			);
 		}
+		if ( isset( $summary['age_filter'] ) && is_array( $summary['age_filter'] ) ) {
+			$summary_rows[] = array(
+				'metric' => 'age_filter:excluded',
+				'count'  => (int) ( $summary['age_filter']['excluded'] ?? 0 ),
+			);
+			$summary_rows[] = array(
+				'metric' => 'age_filter:unknown_age',
+				'count'  => (int) ( $summary['age_filter']['unknown_age'] ?? 0 ),
+			);
+		}
 		$this->format_items( $summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric' );
 
 		if ( '' !== $only ) {
@@ -1424,7 +1442,7 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array_slice( $candidates, 0, $limit )
 			);
-			$fields = $verbose ? array( 'handle', 'branch', 'signal', 'reason' ) : array( 'handle', 'branch', 'signal', 'reason_code' );
+			$fields         = $verbose ? array( 'handle', 'branch', 'signal', 'reason' ) : array( 'handle', 'branch', 'signal', 'reason_code' );
 			$this->format_items( $candidate_rows, $fields, array( 'format' => 'table' ), 'handle' );
 			$this->render_cleanup_truncation_hint( count( $candidates ), $limit, 'candidate rows' );
 		}
@@ -1442,7 +1460,7 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array_slice( $removed, 0, $limit )
 			);
-			$fields = $verbose ? array( 'handle', 'branch', 'signal', 'reason' ) : array( 'handle', 'branch', 'signal', 'reason_code' );
+			$fields       = $verbose ? array( 'handle', 'branch', 'signal', 'reason' ) : array( 'handle', 'branch', 'signal', 'reason_code' );
 			$this->format_items( $removed_rows, $fields, array( 'format' => 'table' ), 'handle' );
 			$this->render_cleanup_truncation_hint( count( $removed ), $limit, 'removed rows' );
 		}
@@ -1464,7 +1482,7 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array_slice( $skipped, 0, $limit )
 			);
-			$fields = $verbose ? array( 'handle', 'reason_code', 'reason', 'repo', 'branch', 'path', 'primary_path', 'missing', 'hint' ) : array( 'handle', 'reason_code', 'reason' );
+			$fields       = $verbose ? array( 'handle', 'reason_code', 'reason', 'repo', 'branch', 'path', 'primary_path', 'missing', 'hint' ) : array( 'handle', 'reason_code', 'reason' );
 			$this->format_items( $skipped_rows, $fields, array( 'format' => 'table' ), 'handle' );
 			$this->render_cleanup_truncation_hint( count( $skipped ), $limit, 'skipped rows' );
 		}
