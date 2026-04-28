@@ -1281,6 +1281,18 @@ class Workspace {
 			}
 		}
 
+		$lifecycle_metadata = WorktreeContextInjector::build_lifecycle_metadata(
+			array(
+				'repo'         => $repo,
+				'branch'      => $branch,
+				'base_ref'    => $created_branch ? $resolved_base : null,
+				'base_source' => $created_branch ? ( null !== $from && '' !== trim( $from ) ? 'requested_ref' : 'default_base' ) : 'existing_local_branch',
+			)
+		);
+		WorktreeContextInjector::store_lifecycle_metadata( $wt_handle, $lifecycle_metadata );
+		$response['created_at'] = $lifecycle_metadata['created_at'] ?? null;
+		$response['metadata']   = WorktreeContextInjector::get_metadata( $wt_handle );
+
 		if ( ! $inject_context ) {
 			$response['context_injected']    = false;
 			$response['context_skip_reason'] = 'inject_context flag disabled';
@@ -1296,6 +1308,7 @@ class Workspace {
 					$response['context_skip_reason'] = 'inject failed: ' . $injection->get_error_message();
 				} else {
 					WorktreeContextInjector::store_metadata( $wt_handle, $payload );
+					$response['metadata'] = WorktreeContextInjector::get_metadata( $wt_handle );
 					$response['context_injected'] = true;
 					$response['context_files']    = $injection['written'];
 					if ( ! empty( $injection['exclude_path'] ) ) {
@@ -1624,6 +1637,8 @@ class Workspace {
 			$repo         = $wt['repo'] ?? '';
 			$branch       = $wt['branch'] ?? '';
 			$wt_path      = $wt['path'] ?? '';
+			$metadata     = $wt['metadata'] ?? null;
+			$created_at   = $wt['created_at'] ?? null;
 			$primary_path = '' !== $repo ? $this->get_primary_path( $repo ) : '';
 
 			if ( ! empty( $wt['external'] ) ) {
@@ -1637,6 +1652,8 @@ class Workspace {
 					'branch'       => $branch,
 					'path'         => $wt_path,
 					'primary_path' => $primary_path,
+					'created_at'  => $created_at,
+					'metadata'    => $metadata,
 				);
 				continue;
 			}
@@ -1665,6 +1682,8 @@ class Workspace {
 					'reason'         => 'missing repo/branch/path',
 					'missing_fields' => $missing_fields,
 					'hint'           => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
+					'created_at'     => $created_at,
+					'metadata'       => $metadata,
 				);
 				continue;
 			}
@@ -1677,6 +1696,8 @@ class Workspace {
 					'path'        => $wt_path,
 					'reason_code' => 'protected_branch',
 					'reason'      => sprintf( 'protected branch (%s)', $branch ),
+					'created_at'  => $created_at,
+					'metadata'    => $metadata,
 				);
 				continue;
 			}
@@ -1690,6 +1711,8 @@ class Workspace {
 					'reason_code' => 'dirty_worktree',
 					'reason'      => sprintf( 'working tree dirty (%d files) — pass force=true to override', $dirty_count ),
 					'dirty'       => $dirty_count,
+					'created_at'  => $created_at,
+					'metadata'    => $metadata,
 				);
 				continue;
 			}
@@ -1709,6 +1732,8 @@ class Workspace {
 					'reason_code' => 'unpushed_commits',
 					'reason'      => sprintf( '%d unpushed commit(s) — refusing to delete even with force (push or reset explicitly)', $unpushed ),
 					'unpushed'    => $unpushed,
+					'created_at'  => $created_at,
+					'metadata'    => $metadata,
 				);
 				continue;
 			}
@@ -1723,6 +1748,8 @@ class Workspace {
 					'reason_code' => 'missing_metadata',
 					'reason'      => 'primary checkout missing',
 					'hint'        => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
+					'created_at'  => $created_at,
+					'metadata'    => $metadata,
 				);
 				continue;
 			}
@@ -1741,14 +1768,22 @@ class Workspace {
 					'path'        => $wt_path,
 					'reason_code' => 'no_merge_signal',
 					'reason'      => 'no merge signal — leaving in place',
+					'created_at'  => $created_at,
+					'metadata'    => $metadata,
 				);
 				continue;
 			}
 
 			if ( 'github-unknown' === ( $signal['signal'] ?? '' ) ) {
 				$skipped[] = array(
-					'handle' => $wt['handle'] ?? '?',
-					'reason' => $signal['reason'],
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'github_unknown',
+					'reason'      => $signal['reason'],
+					'created_at'  => $created_at,
+					'metadata'    => $metadata,
 				);
 				continue;
 			}
@@ -1763,6 +1798,8 @@ class Workspace {
 				'reason_code' => $signal['signal'],
 				'reason'      => $signal['reason'],
 				'pr_url'      => $signal['pr_url'] ?? null,
+				'created_at'  => $created_at,
+				'metadata'    => $metadata,
 			);
 		}
 
@@ -1806,6 +1843,8 @@ class Workspace {
 					'path'        => $cand['path'] ?? '',
 					'reason_code' => 'remove_failed',
 					'reason'      => 'remove failed: ' . $remove->get_error_message(),
+					'created_at'  => $cand['created_at'] ?? null,
+					'metadata'    => $cand['metadata'] ?? null,
 				);
 				continue;
 			}
