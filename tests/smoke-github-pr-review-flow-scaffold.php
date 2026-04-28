@@ -133,6 +133,7 @@ namespace {
 	$command_source = file_get_contents( __DIR__ . '/../inc/Cli/Commands/GitHubCommand.php' );
 	$assert( 'CLI exposes review-flow subcommand', str_contains( $command_source, '@subcommand review-flow' ) );
 	$assert( 'CLI calls scaffold builder', str_contains( $command_source, 'PrReviewFlowScaffold::build' ) );
+	$assert( 'CLI exposes review-flow installer', str_contains( $command_source, 'PrReviewFlowInstaller::install' ) );
 
 	if ( ! empty( $failures ) ) {
 		echo "\nFAIL: " . count( $failures ) . " assertion(s) failed out of {$total}\n";
