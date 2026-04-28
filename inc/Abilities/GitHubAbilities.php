@@ -2044,7 +2044,7 @@ class GitHubAbilities {
 			);
 
 			if ( is_wp_error( $checks ) ) {
-				$context['errors']['check_runs'] = $checks->get_error_message();
+				$context['errors']['check_runs']      = $checks->get_error_message();
 				$context['error_codes']['check_runs'] = $checks->get_error_code();
 			} else {
 				$context['check_runs'] = array(
@@ -2064,7 +2064,7 @@ class GitHubAbilities {
 			);
 
 			if ( is_wp_error( $statuses ) ) {
-				$context['errors']['commit_statuses'] = $statuses->get_error_message();
+				$context['errors']['commit_statuses']      = $statuses->get_error_message();
 				$context['error_codes']['commit_statuses'] = $statuses->get_error_code();
 			} else {
 				$context['commit_statuses'] = array(
@@ -2087,7 +2087,7 @@ class GitHubAbilities {
 			);
 
 			if ( is_wp_error( $homeboy ) ) {
-				$context['errors']['homeboy_ci_results'] = $homeboy->get_error_message();
+				$context['errors']['homeboy_ci_results']      = $homeboy->get_error_message();
 				$context['error_codes']['homeboy_ci_results'] = $homeboy->get_error_code();
 			} else {
 				$context['homeboy_ci_results'] = $homeboy['results'] ?? array();

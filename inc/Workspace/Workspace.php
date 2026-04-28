@@ -691,7 +691,7 @@ class Workspace {
 			return new \WP_Error( 'directory_requires_recursive', sprintf( 'Path "%s" is a directory; pass recursive=true to delete.', $relative ), array( 'status' => 400 ) );
 		}
 
-		$ls_files = $this->run_git( $repo_path, 'ls-files --error-unmatch -- ' . escapeshellarg( $relative ) );
+		$ls_files   = $this->run_git( $repo_path, 'ls-files --error-unmatch -- ' . escapeshellarg( $relative ) );
 		$is_tracked = ! is_wp_error( $ls_files );
 
 		$deleted = array();
@@ -709,20 +709,18 @@ class Workspace {
 			if ( empty( $deleted ) ) {
 				$deleted[] = $relative;
 			}
-		} else {
-			if ( $is_dir ) {
-				$removed = $this->remove_directory_recursive( $absolute, $repo_path );
-				if ( is_wp_error( $removed ) ) {
-					return $removed;
-				}
-				$deleted = $removed;
-			} else {
-				// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
-				if ( ! unlink( $absolute ) ) {
-					return new \WP_Error( 'delete_failed', sprintf( 'Failed to delete file: %s', $relative ), array( 'status' => 500 ) );
-				}
-				$deleted[] = $relative;
+		} elseif ( $is_dir ) {
+			$removed = $this->remove_directory_recursive( $absolute, $repo_path );
+			if ( is_wp_error( $removed ) ) {
+				return $removed;
 			}
+			$deleted = $removed;
+		} else {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+			if ( ! unlink( $absolute ) ) {
+				return new \WP_Error( 'delete_failed', sprintf( 'Failed to delete file: %s', $relative ), array( 'status' => 500 ) );
+			}
+			$deleted[] = $relative;
 		}
 
 		return array(
@@ -745,6 +743,7 @@ class Workspace {
 	 */
 	private function remove_directory_recursive( string $absolute, string $repo_path ): array|\WP_Error {
 		$deleted = array();
+		// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Failure is converted into a WP_Error below.
 		$entries = @scandir( $absolute );
 		if ( false === $entries ) {
 			return new \WP_Error( 'scandir_failed', sprintf( 'Failed to read directory: %s', $absolute ), array( 'status' => 500 ) );
@@ -1283,7 +1282,7 @@ class Workspace {
 
 		$lifecycle_metadata = WorktreeContextInjector::build_lifecycle_metadata(
 			array(
-				'repo'         => $repo,
+				'repo'        => $repo,
 				'branch'      => $branch,
 				'base_ref'    => $created_branch ? $resolved_base : null,
 				'base_source' => $created_branch ? ( null !== $from && '' !== trim( $from ) ? 'requested_ref' : 'default_base' ) : 'existing_local_branch',
@@ -1308,7 +1307,7 @@ class Workspace {
 					$response['context_skip_reason'] = 'inject failed: ' . $injection->get_error_message();
 				} else {
 					WorktreeContextInjector::store_metadata( $wt_handle, $payload );
-					$response['metadata'] = WorktreeContextInjector::get_metadata( $wt_handle );
+					$response['metadata']         = WorktreeContextInjector::get_metadata( $wt_handle );
 					$response['context_injected'] = true;
 					$response['context_files']    = $injection['written'];
 					if ( ! empty( $injection['exclude_path'] ) ) {
@@ -1652,8 +1651,8 @@ class Workspace {
 					'branch'       => $branch,
 					'path'         => $wt_path,
 					'primary_path' => $primary_path,
-					'created_at'  => $created_at,
-					'metadata'    => $metadata,
+					'created_at'   => $created_at,
+					'metadata'     => $metadata,
 				);
 				continue;
 			}
@@ -1877,12 +1876,12 @@ class Workspace {
 		$candidates_by_signal = array();
 
 		foreach ( $skipped as $row ) {
-			$code = (string) ( $row['reason_code'] ?? 'unknown' );
+			$code                       = (string) ( $row['reason_code'] ?? 'unknown' );
 			$skipped_by_reason[ $code ] = ( $skipped_by_reason[ $code ] ?? 0 ) + 1;
 		}
 
 		foreach ( $candidates as $row ) {
-			$signal = (string) ( $row['signal'] ?? $row['reason_code'] ?? 'unknown' );
+			$signal                          = (string) ( $row['signal'] ?? $row['reason_code'] ?? 'unknown' );
 			$candidates_by_signal[ $signal ] = ( $candidates_by_signal[ $signal ] ?? 0 ) + 1;
 		}
 

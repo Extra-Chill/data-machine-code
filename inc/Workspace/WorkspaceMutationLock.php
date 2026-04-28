@@ -74,6 +74,7 @@ final class WorkspaceMutationLock {
 		if ( ! is_dir( $lock_dir ) ) {
 			$created = function_exists( 'wp_mkdir_p' )
 				? wp_mkdir_p( $lock_dir )
+				// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir -- Fallback for non-WordPress smoke tests.
 				: mkdir( $lock_dir, 0755, true );
 			if ( ! $created && ! is_dir( $lock_dir ) ) {
 				return new \WP_Error(

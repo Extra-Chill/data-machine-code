@@ -57,15 +57,15 @@ final class GitHubCredentialResolver {
 		$mode = self::mode();
 
 		return array(
-			'mode'                         => $mode,
-			'pat_configured'               => '' !== self::setting( 'github_pat' ),
-			'app_id_configured'            => '' !== self::setting( 'github_app_id' ),
-			'app_installation_configured'  => '' !== self::setting( 'github_app_installation_id' ),
-			'app_private_key_configured'   => '' !== self::setting( 'github_app_private_key' ),
-			'configured'                   => self::isConfigured(),
-			'checks_permission'            => 'read',
-			'commit_statuses_permission'   => 'read',
-			'actions_permission'           => 'read recommended when fetching workflow artifacts',
+			'mode'                        => $mode,
+			'pat_configured'              => '' !== self::setting( 'github_pat' ),
+			'app_id_configured'           => '' !== self::setting( 'github_app_id' ),
+			'app_installation_configured' => '' !== self::setting( 'github_app_installation_id' ),
+			'app_private_key_configured'  => '' !== self::setting( 'github_app_private_key' ),
+			'configured'                  => self::isConfigured(),
+			'checks_permission'           => 'read',
+			'commit_statuses_permission'  => 'read',
+			'actions_permission'          => 'read recommended when fetching workflow artifacts',
 		);
 	}
 
@@ -101,9 +101,10 @@ final class GitHubCredentialResolver {
 			'iss' => $app_id,
 		);
 
-		$unsigned = self::base64UrlEncode( wp_json_encode( $header ) ) . '.' . self::base64UrlEncode( wp_json_encode( $payload ) );
+		$unsigned  = self::base64UrlEncode( wp_json_encode( $header ) ) . '.' . self::base64UrlEncode( wp_json_encode( $payload ) );
 		$signature = '';
-		$ok        = @openssl_sign( $unsigned, $signature, $private_key, OPENSSL_ALGO_SHA256 );
+		// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- openssl_sign emits warnings for invalid keys; callers receive a WP_Error below.
+		$ok = @openssl_sign( $unsigned, $signature, $private_key, OPENSSL_ALGO_SHA256 );
 		if ( ! $ok ) {
 			return new \WP_Error( 'github_app_private_key_invalid', 'GitHub App private key is invalid or could not sign a JWT.', array( 'status' => 400 ) );
 		}
@@ -218,8 +219,8 @@ final class GitHubCredentialResolver {
 		);
 	}
 
-	private static function setting( string $key, string $default = '' ): string {
-		return trim( (string) PluginSettings::get( $key, $default ) );
+	private static function setting( string $key, string $default_value = '' ): string {
+		return trim( (string) PluginSettings::get( $key, $default_value ) );
 	}
 
 	private static function cacheKey( string $app_id, string $installation_id ): string {
@@ -231,6 +232,7 @@ final class GitHubCredentialResolver {
 	}
 
 	private static function base64UrlEncode( string $value ): string {
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions -- Required for API authentication, not obfuscation.
 		return rtrim( strtr( base64_encode( $value ), '+/', '-_' ), '=' );
 	}
 }
