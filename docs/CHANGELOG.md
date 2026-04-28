@@ -2,6 +2,18 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.19.0] - 2026-04-28
+
+### Added
+- record worktree lifecycle metadata
+- add PR documentation impact packets
+- add PR review escalation policy
+
+### Fixed
+- route external cleanup skips
+- cache cleanup GitHub lookups
+- stabilize cleanup report contract
+
 ## [0.18.0] - 2026-04-27
 
 ### Added
