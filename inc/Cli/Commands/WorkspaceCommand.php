@@ -1248,17 +1248,23 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				$items = array_map(
 					fn( $wt ) => array(
-						'handle' => $wt['handle'] ?? '',
-						'repo'   => $wt['repo'] ?? '',
-						'kind'   => ! empty( $wt['is_primary'] ) ? 'primary' : 'worktree',
-						'branch' => $wt['branch'] ?? '-',
-						'head'   => isset( $wt['head'] ) ? substr( (string) $wt['head'], 0, 7 ) : '-',
-						'dirty'  => (int) ( $wt['dirty'] ?? 0 ),
-						'path'   => $wt['path'] ?? '',
+						'handle'     => $wt['handle'] ?? '',
+						'repo'       => $wt['repo'] ?? '',
+						'kind'       => ! empty( $wt['is_primary'] ) ? 'primary' : 'worktree',
+						'branch'     => $wt['branch'] ?? '-',
+						'head'       => isset( $wt['head'] ) ? substr( (string) $wt['head'], 0, 7 ) : '-',
+						'dirty'      => (int) ( $wt['dirty'] ?? 0 ),
+						'created_at' => $wt['created_at'] ?? null,
+						'metadata'   => $wt['metadata'] ?? null,
+						'path'       => $wt['path'] ?? '',
 					),
 					$worktrees
 				);
-				$this->format_items( $items, array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'path' ), $assoc_args, 'handle' );
+				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'created_at', 'path' );
+				if ( in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
+					$fields[] = 'metadata';
+				}
+				$this->format_items( $items, $fields, $assoc_args, 'handle' );
 				return;
 
 			case 'prune':
