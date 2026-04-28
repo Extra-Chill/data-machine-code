@@ -1620,20 +1620,23 @@ class Workspace {
 				continue;
 			}
 
-			$handle  = $wt['handle'] ?? '?';
-			$repo    = $wt['repo'] ?? '';
-			$branch  = $wt['branch'] ?? '';
-			$wt_path = $wt['path'] ?? '';
+			$handle       = $wt['handle'] ?? '?';
+			$repo         = $wt['repo'] ?? '';
+			$branch       = $wt['branch'] ?? '';
+			$wt_path      = $wt['path'] ?? '';
+			$primary_path = '' !== $repo ? $this->get_primary_path( $repo ) : '';
 
 			if ( ! empty( $wt['external'] ) ) {
 				$skipped[] = array(
-					'handle'      => $handle,
-					'repo'        => $repo,
-					'branch'      => $branch,
-					'path'        => $wt_path,
-					'reason_code' => 'external_worktree',
-					'reason'      => 'external worktree (outside workspace)',
-					'hint'        => 'Inspect manually; cleanup never removes worktrees outside the DMC workspace.',
+					'handle'       => $handle,
+					'reason_code'  => 'external_worktree',
+					'reason'       => 'external worktree (outside workspace)',
+					'hint'         => 'External worktree outside the DMC workspace; remove with the owning tool or inspect with git worktree list from the primary repo.',
+					'repo'         => $repo,
+					'owning_repo'  => $repo,
+					'branch'       => $branch,
+					'path'         => $wt_path,
+					'primary_path' => $primary_path,
 				);
 				continue;
 			}

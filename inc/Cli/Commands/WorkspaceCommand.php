@@ -1427,15 +1427,19 @@ class WorkspaceCommand extends BaseCommand {
 			WP_CLI::log( 'Skipped:' );
 			$skipped_rows = array_map(
 				fn( $s ) => array(
-					'handle'      => $s['handle'] ?? '',
-					'reason_code' => $s['reason_code'] ?? '',
-					'reason'      => $s['reason'] ?? '',
-					'missing'     => implode( ',', (array) ( $s['missing_fields'] ?? array() ) ),
-					'hint'        => $s['hint'] ?? '',
+					'handle'       => $s['handle'] ?? '',
+					'reason_code'  => $s['reason_code'] ?? '',
+					'reason'       => $s['reason'] ?? '',
+					'repo'         => $s['repo'] ?? '',
+					'branch'       => $s['branch'] ?? '',
+					'path'         => $s['path'] ?? '',
+					'primary_path' => $s['primary_path'] ?? '',
+					'missing'      => implode( ',', (array) ( $s['missing_fields'] ?? array() ) ),
+					'hint'         => $s['hint'] ?? '',
 				),
 				array_slice( $skipped, 0, $limit )
 			);
-			$this->format_items( $skipped_rows, array( 'handle', 'reason_code', 'reason', 'missing', 'hint' ), array( 'format' => 'table' ), 'handle' );
+			$this->format_items( $skipped_rows, array( 'handle', 'reason_code', 'reason', 'repo', 'branch', 'path', 'primary_path', 'missing', 'hint' ), array( 'format' => 'table' ), 'handle' );
 			$this->render_cleanup_truncation_hint( count( $skipped ), $limit, 'skipped rows' );
 		}
 
