@@ -125,7 +125,24 @@ namespace {
 	};
 
 	$find = new \ReflectionMethod( Workspace::class, 'find_merged_pr_for_branch' );
+	$detect = new \ReflectionMethod( Workspace::class, 'detect_merge_signal' );
 	$workspace = new Workspace();
+	$run = function ( string $command, string $cwd = '' ): string {
+		$full = '' === $cwd ? $command : sprintf( 'cd %s && %s', escapeshellarg( $cwd ), $command );
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
+		exec( $full . ' 2>&1', $output, $code );
+		if ( 0 !== $code ) {
+			throw new \RuntimeException( sprintf( "Command failed (%d): %s\n%s", $code, $full, implode( "\n", $output ) ) );
+		}
+		return implode( "\n", $output );
+	};
+	$rm_rf = function ( string $path ): void {
+		if ( '' === $path || '/' === $path || ! file_exists( $path ) ) {
+			return;
+		}
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
+		exec( sprintf( 'rm -rf %s', escapeshellarg( $path ) ) );
+	};
 
 	$merged_pr = array(
 		'number'    => 42,
@@ -190,6 +207,42 @@ namespace {
 	$disabled = $find->invokeArgs( $workspace, array( 'Extra-Chill/data-machine-code', 'merged-branch', &$cache ) );
 	$assert( null, $disabled, 'no PAT returns no GitHub signal' );
 	$assert( 0, count( GitHubAbilities::$calls ), 'no PAT avoids API call entirely' );
+
+	echo "\n[4] locally merged branches skip GitHub lookup\n";
+	GitHubAbilities::$pat       = 'test-token';
+	GitHubAbilities::$calls     = array();
+	GitHubAbilities::$responses = array( array( 'data' => array( $merged_pr ) ) );
+	$cache = array();
+	$tmp   = sys_get_temp_dir() . '/dmc-cleanup-local-merged-' . bin2hex( random_bytes( 4 ) );
+	mkdir( $tmp, 0755, true );
+
+	try {
+		$run( 'git init -q --initial-branch=main', $tmp );
+		$run( 'git config user.email test@example.test', $tmp );
+		$run( 'git config user.name Test', $tmp );
+		$run( 'git remote add origin https://github.com/Extra-Chill/data-machine-code.git', $tmp );
+		file_put_contents( $tmp . '/README.md', "# Demo\n" );
+		$run( 'git add README.md && git commit -q -m initial', $tmp );
+		$run( 'git checkout -q -b merged-local', $tmp );
+		file_put_contents( $tmp . '/feature.txt', "feature\n" );
+		$run( 'git add feature.txt && git commit -q -m feature', $tmp );
+		$run( 'git checkout -q main && git merge -q --no-ff merged-local -m merge-feature', $tmp );
+		$run( 'git update-ref refs/remotes/origin/main HEAD', $tmp );
+		$run( 'git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main', $tmp );
+
+		$signal = $detect->invokeArgs( $workspace, array( $tmp, 'data-machine-code', 'merged-local', true, &$cache ) );
+		$assert( 'local-merged', $signal['signal'] ?? null, 'local ancestry produces cleanup signal' );
+		$assert( 0, count( GitHubAbilities::$calls ), 'local ancestry signal avoids GitHub API call even with skip_github enabled' );
+
+		$run( 'git checkout -q -b not-merged main', $tmp );
+		file_put_contents( $tmp . '/unmerged.txt', "unmerged\n" );
+		$run( 'git add unmerged.txt && git commit -q -m unmerged', $tmp );
+		$unmerged = $detect->invokeArgs( $workspace, array( $tmp, 'data-machine-code', 'not-merged', false, &$cache ) );
+		$assert( null, $unmerged, 'unmerged local branch falls through to missing GitHub signal' );
+		$assert( 1, count( GitHubAbilities::$calls ), 'unmerged local branch still performs bounded GitHub lookup' );
+	} finally {
+		$rm_rf( $tmp );
+	}
 
 	if ( $failures > 0 ) {
 		echo "\nFAIL: {$failures}/{$total} assertions failed.\n";
