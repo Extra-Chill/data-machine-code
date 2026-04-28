@@ -76,6 +76,10 @@ class GitHub extends FetchHandler {
 			return $this->fetchPullReviewContext( $config, $context, $repo );
 		}
 
+		if ( 'github_pr_documentation_impact' === $data_source ) {
+			return $this->fetchPullDocumentationImpact( $config, $context, $repo );
+		}
+
 		if ( 'check_runs' === $data_source ) {
 			return $this->fetchCheckRuns( $config, $context, $repo );
 		}
@@ -144,6 +148,62 @@ class GitHub extends FetchHandler {
 
 		$context->log( 'info', sprintf( 'GitHub: Prepared PR review context for %s#%d.', $repo, $pull_number ) );
 		return array( 'items' => array( $packet ) );
+	}
+
+	/**
+	 * Fetch a documentation-impact packet for one pull request.
+	 *
+	 * @param array            $config  Handler configuration.
+	 * @param ExecutionContext $context Execution context.
+	 * @param string           $repo    Repository in owner/repo format.
+	 * @return array DataPacket-compatible array or empty on no data.
+	 */
+	private function fetchPullDocumentationImpact( array $config, ExecutionContext $context, string $repo ): array {
+		$pull_number = (int) ( $config['pull_number'] ?? $config['pr_number'] ?? 0 );
+
+		if ( $pull_number <= 0 ) {
+			$context->log( 'error', 'GitHub: pull_number is required for github_pr_documentation_impact.' );
+			return array();
+		}
+
+		$result = GitHubAbilities::getPullDocumentationImpact( array(
+			'repo'        => $repo,
+			'pull_number' => $pull_number,
+			'head_sha'    => $config['head_sha'] ?? '',
+			'base_ref'    => $config['base_ref'] ?? '',
+			'docs_paths'  => $config['docs_paths'] ?? $config['docs_path_allowlist'] ?? array(),
+		) );
+
+		if ( is_wp_error( $result ) ) {
+			$context->log( 'error', 'GitHub: PR documentation impact error — ' . $result->get_error_message() );
+			return array();
+		}
+
+		$packet = $result['packet'] ?? array();
+		if ( empty( $packet ) ) {
+			$context->log( 'info', 'GitHub: No PR documentation impact packet returned.' );
+			return array();
+		}
+
+		$item_identifier = sprintf( '%s#%d@%s_documentation_impact', $repo, $pull_number, $packet['head_sha'] ?? '' );
+		$data_packet     = array(
+			'title'    => sprintf( 'PR documentation impact: %s#%d', $repo, $pull_number ),
+			'content'  => wp_json_encode( $packet, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ),
+			'metadata' => array(
+				'source_type'     => 'github_pr_documentation_impact',
+				'item_identifier' => $item_identifier,
+				'original_id'     => $item_identifier,
+				'dedup_key'       => $item_identifier,
+				'github_repo'     => $repo,
+				'github_type'     => 'github_pr_documentation_impact',
+				'github_number'   => $pull_number,
+				'github_head_sha' => $packet['head_sha'] ?? '',
+				'review_context'  => $packet,
+			),
+		);
+
+		$context->log( 'info', sprintf( 'GitHub: Prepared PR documentation impact packet for %s#%d.', $repo, $pull_number ) );
+		return array( 'items' => array( $data_packet ) );
 	}
 
 	/**
