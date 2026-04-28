@@ -129,6 +129,11 @@ namespace {
 						'success' => true,
 						'profile' => array( 'schema' => 'data-machine-code/repo-review-profile/v1' ),
 					),
+					'datamachine-code/run-pr-homeboy-review' => array(
+						'success' => true,
+						'schema'  => 'data-machine-code/pr-homeboy-review/v1',
+						'status'  => 'passed',
+					),
 					'datamachine/get-github-pr-documentation-impact' => array(
 						'success' => true,
 						'packet'  => array( 'schema' => 'data-machine-code/pr-documentation-impact/v1' ),
@@ -249,6 +254,19 @@ namespace {
 				'max_file_chars'        => 12000,
 				'max_total_chars'       => 60000,
 				'max_architecture_docs' => 4,
+			),
+		),
+		'run_pr_homeboy_review'          => array(
+			'ability'  => 'datamachine-code/run-pr-homeboy-review',
+			'method'   => 'handleRunPrHomeboyReview',
+			'callback' => array( GitHubAbilities::class, 'runPrHomeboyReview' ),
+			'required' => array( 'repo', 'pull_number', 'head_sha' ),
+			'optional' => array( 'base_ref' ),
+			'params'   => array(
+				'repo'        => 'Extra-Chill/data-machine-code',
+				'pull_number' => 111,
+				'head_sha'    => 'abc123',
+				'base_ref'    => 'main',
 			),
 		),
 		'github_pr_documentation_impact' => array(

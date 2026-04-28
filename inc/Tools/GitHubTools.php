@@ -61,6 +61,10 @@ class GitHubTools extends BaseTool {
 			'access_level' => 'editor',
 			'ability'      => 'datamachine/get-github-repo-review-profile',
 		) );
+		$this->registerTool( 'run_pr_homeboy_review', array( $this, 'getRunPrHomeboyReviewDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine-code/run-pr-homeboy-review',
+		) );
 		$this->registerTool( 'github_pr_documentation_impact', array( $this, 'getPullDocumentationImpactDefinition' ), $contexts, array(
 			'access_level' => 'editor',
 			'ability'      => 'datamachine/get-github-pr-documentation-impact',
@@ -113,6 +117,7 @@ class GitHubTools extends BaseTool {
 			'get_github_homeboy_ci_results',
 			'get_github_pull_review_context',
 			'github_repo_review_profile',
+			'run_pr_homeboy_review',
 			'github_pr_documentation_impact',
 			'list_github_tree',
 			'get_github_file',
@@ -761,6 +766,16 @@ class GitHubTools extends BaseTool {
 	}
 
 	/**
+	 * Handle run_pr_homeboy_review tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleRunPrHomeboyReview( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine-code/run-pr-homeboy-review', 'run_pr_homeboy_review', $parameters );
+	}
+
+	/**
 	 * Get tool definition for get_github_pull_review_context.
 	 *
 	 * @return array
@@ -905,6 +920,41 @@ class GitHubTools extends BaseTool {
 					'type'        => 'integer',
 					'required'    => false,
 					'description' => 'Maximum docs/** architecture/development files to include. Default: 8.',
+				),
+			),
+		);
+	}
+
+	/**
+	 * Get tool definition for run_pr_homeboy_review.
+	 *
+	 * @return array
+	 */
+	public function getRunPrHomeboyReviewDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleRunPrHomeboyReview',
+			'description' => 'Run checkout-backed Homeboy review checks for a pull request in an isolated DMC workspace worktree. Does not post comments or mutate the pull request.',
+			'parameters'  => array(
+				'repo'        => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'pull_number' => array(
+					'type'        => 'integer',
+					'required'    => true,
+					'description' => 'Pull request number.',
+				),
+				'head_sha'    => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Expected pull request head SHA. Execution fails closed if GitHub reports a different head.',
+				),
+				'base_ref'    => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Optional base ref. Defaults to the pull request base ref.',
 				),
 			),
 		);
