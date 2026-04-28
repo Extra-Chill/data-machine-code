@@ -188,6 +188,8 @@ Workspace git policies are configured via the `datamachine_workspace_git_policie
 
 DMC extends core base classes (`BaseTool`, `SystemTask`, `BaseCommand`, `FetchHandler`) and registers its capabilities through standard Data Machine hooks (`datamachine_tools`, `datamachine_tasks`, `MemoryFileRegistry`, `SectionRegistry`, Abilities API). Its difference from the handler-adding siblings is **what it changes about the install**, not what API it uses to register things.
 
+Memory and guideline disk projection follows the same boundary: Data Machine owns logical memory semantics and storage backends; DMC owns local runtime/file projection when explicit update events and writable disk are available. See [Memory Disk Projection](docs/memory-disk-projection.md).
+
 ### Capability detection
 
 Other plugins gate disk-side or shell-using behavior on DMC's presence rather than on platform sniffing:
