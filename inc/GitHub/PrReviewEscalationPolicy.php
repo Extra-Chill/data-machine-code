@@ -14,11 +14,11 @@ defined( 'ABSPATH' ) || exit;
  */
 class PrReviewEscalationPolicy {
 
-	private const SCHEMA = 'data-machine-code/pr-review-escalation/v1';
+	private const SCHEMA  = 'data-machine-code/pr-review-escalation/v1';
 	private const VERSION = 'v1';
 
-	private const DEFAULT_MAX_FILES = 20;
-	private const DEFAULT_MAX_PATCH_BYTES = 100000;
+	private const DEFAULT_MAX_FILES         = 20;
+	private const DEFAULT_MAX_PATCH_BYTES   = 100000;
 	private const DEFAULT_MAX_TOTAL_CHANGES = 1000;
 
 	/**
@@ -58,7 +58,7 @@ class PrReviewEscalationPolicy {
 
 			foreach ( self::classifyPath( $path ) as $group => $reason ) {
 				$metrics['touched_groups'][ $group ] = true;
-				$reasons[] = $reason;
+				$reasons[]                           = $reason;
 			}
 		}
 

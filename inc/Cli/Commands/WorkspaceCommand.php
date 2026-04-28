@@ -713,9 +713,9 @@ class WorkspaceCommand extends BaseCommand {
 			return array();
 		}
 
-		$prefix    = '--' . $flag . '=';
+		$prefix     = '--' . $flag . '=';
 		$prefix_len = strlen( $prefix );
-		$values    = array();
+		$values     = array();
 
 		foreach ( $argv as $token ) {
 			if ( ! is_string( $token ) ) {
@@ -1246,7 +1246,7 @@ class WorkspaceCommand extends BaseCommand {
 					WP_CLI::log( 'No worktrees found.' );
 					return;
 				}
-				$items = array_map(
+				$items  = array_map(
 					fn( $wt ) => array(
 						'handle'     => $wt['handle'] ?? '',
 						'repo'       => $wt['repo'] ?? '',

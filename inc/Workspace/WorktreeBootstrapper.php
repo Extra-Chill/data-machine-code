@@ -100,8 +100,8 @@ final class WorktreeBootstrapper {
 		$steps = array();
 
 		$steps[] = self::run_submodules( $worktree_path );
-		$steps = array_merge( $steps, self::run_packages( $worktree_path ) );
-		$steps = array_merge( $steps, self::run_composer( $worktree_path ) );
+		$steps   = array_merge( $steps, self::run_packages( $worktree_path ) );
+		$steps   = array_merge( $steps, self::run_composer( $worktree_path ) );
 
 		$failed  = array_filter( $steps, fn( $s ) => self::STATUS_FAILED === ( $s['status'] ?? '' ) );
 		$ran_any = (bool) array_filter( $steps, fn( $s ) => self::STATUS_RAN === ( $s['status'] ?? '' ) );
@@ -127,13 +127,13 @@ final class WorktreeBootstrapper {
 	 * }
 	 */
 	public static function detect( string $worktree_path ): array {
-		$package_roots = self::discover_package_roots( $worktree_path );
+		$package_roots  = self::discover_package_roots( $worktree_path );
 		$composer_roots = self::discover_composer_roots( $worktree_path );
 
 		return array(
-			'submodules'    => is_file( rtrim( $worktree_path, '/' ) . '/.gitmodules' ),
-			'packages'      => self::detect_package_manager( $worktree_path ),
-			'composer'      => is_file( rtrim( $worktree_path, '/' ) . '/composer.lock' ),
+			'submodules'     => is_file( rtrim( $worktree_path, '/' ) . '/.gitmodules' ),
+			'packages'       => self::detect_package_manager( $worktree_path ),
+			'composer'       => is_file( rtrim( $worktree_path, '/' ) . '/composer.lock' ),
 			'package_roots'  => $package_roots,
 			'composer_roots' => $composer_roots,
 		);
@@ -353,6 +353,7 @@ final class WorktreeBootstrapper {
 			),
 		);
 
+		// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Unreadable roots are skipped as non-candidates below.
 		$entries = @scandir( $root );
 		if ( false === $entries ) {
 			return $candidates;
@@ -463,7 +464,8 @@ final class WorktreeBootstrapper {
 		}
 
 		$versions_dir = rtrim( $home, '/' ) . '/.nvm/versions/node';
-		$entries      = @scandir( $versions_dir );
+		// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Missing NVM directories simply mean no NVM bin paths are available.
+		$entries = @scandir( $versions_dir );
 		if ( false === $entries ) {
 			return array();
 		}

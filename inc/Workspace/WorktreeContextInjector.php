@@ -223,13 +223,13 @@ class WorktreeContextInjector {
 	 * @return string Section markdown including its H2 heading, or empty string.
 	 */
 	private static function extract_markdown_h2_section( string $markdown, string $section_title ): string {
-		$lines      = preg_split( '/\r\n|\r|\n/', $markdown );
+		$lines = preg_split( '/\r\n|\r|\n/', $markdown );
 		if ( false === $lines ) {
 			return '';
 		}
-		$capturing  = false;
-		$captured   = array();
-		$wanted_h2  = '## ' . $section_title;
+		$capturing = false;
+		$captured  = array();
+		$wanted_h2 = '## ' . $section_title;
 
 		foreach ( $lines as $line ) {
 			$is_h2 = str_starts_with( $line, '## ' ) && ! str_starts_with( $line, '### ' );
