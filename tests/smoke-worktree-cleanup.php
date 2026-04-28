@@ -120,6 +120,9 @@ namespace {
 		if ( is_dir( $tmp ) ) {
 			exec( 'rm -rf ' . escapeshellarg( $tmp ) );
 		}
+		if ( is_dir( $tmp . '-external' ) ) {
+			exec( 'rm -rf ' . escapeshellarg( $tmp . '-external' ) );
+		}
 	} );
 
 	define( 'DATAMACHINE_WORKSPACE_PATH', realpath( $tmp ) ?: $tmp );
@@ -198,6 +201,7 @@ namespace {
 	$make_branch( 'merged-live-remote', 'b' );  // → simulate via PR-merged (stubbed → none)
 	$make_branch( 'unmerged-feature', 'c' );    // still active
 	$make_branch( 'dirty-branch', 'd' );        // will be dirty in worktree
+	$make_branch( 'external-branch', 'e' );     // outside workspace, should never be removed
 
 	// Create worktrees at various paths:
 	//   - canonical slug path (demo@merged-autodelete)
@@ -208,6 +212,8 @@ namespace {
 	$run( sprintf( 'git worktree add %s merged-live-remote', escapeshellarg( $tmp . '/demo-legacy-merged' ) ), $primary );
 	$run( sprintf( 'git worktree add %s unmerged-feature', escapeshellarg( $tmp . '/demo@unmerged-feature' ) ), $primary );
 	$run( sprintf( 'git worktree add %s dirty-branch', escapeshellarg( $tmp . '/demo@dirty-branch' ) ), $primary );
+	mkdir( $tmp . '-external', 0755, true );
+	$run( sprintf( 'git worktree add %s external-branch', escapeshellarg( $tmp . '-external/demo-external' ) ), $primary );
 
 	// Dirty the dirty worktree.
 	file_put_contents( $tmp . '/demo@dirty-branch/scratch.txt', 'dirty' );
@@ -259,12 +265,52 @@ namespace {
 	// dirty-branch should be skipped (reason: dirty)
 	$dirty_skips = array_filter( $plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@dirty-branch' );
 	$assert( 1, count( $dirty_skips ), 'dirty worktree skipped with exactly one entry' );
-	$dirty_reason = array_values( $dirty_skips )[0]['reason'] ?? '';
+	$dirty_row = array_values( $dirty_skips )[0] ?? array();
+	$dirty_reason = $dirty_row['reason'] ?? '';
 	$assert( true, str_contains( $dirty_reason, 'dirty' ), 'dirty skip reason mentions dirty' );
+	$assert( 'dirty_worktree', $dirty_row['reason_code'] ?? '', 'dirty skip exposes stable reason code' );
 
 	// unmerged-feature should be skipped (no merge signal)
 	$unmerged = array_filter( $plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@unmerged-feature' );
 	$assert( 1, count( $unmerged ), 'unmerged worktree skipped with exactly one entry' );
+	$unmerged_row = array_values( $unmerged )[0] ?? array();
+	$assert( 'no_merge_signal', $unmerged_row['reason_code'] ?? '', 'unmerged skip exposes stable reason code' );
+
+	$external_rows = array_values( array_filter( $plan['skipped'] ?? array(), fn( $s ) => ( $s['reason_code'] ?? '' ) === 'external_worktree' ) );
+	$external_row  = $external_rows[0] ?? array();
+	$assert( 'external_worktree', $external_row['reason_code'] ?? '', 'external worktree exposes stable reason code' );
+	$assert( true, str_contains( $external_row['hint'] ?? '', 'outside the DMC workspace' ), 'external worktree includes remediation hint' );
+
+	$assert( 1, (int) ( $plan['summary']['would_remove'] ?? 0 ), 'summary counts cleanup candidates' );
+	$assert( 1, (int) ( $plan['summary']['skipped_by_reason']['dirty_worktree'] ?? 0 ), 'summary counts dirty skips by reason' );
+	$assert( true, isset( $plan['summary']['skipped_by_reason']['no_merge_signal'] ), 'summary includes no_merge_signal bucket' );
+
+	class Missing_Metadata_Workspace extends \DataMachineCode\Workspace\Workspace {
+		public function worktree_list( ?string $repo = null ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+			return array(
+				'success'   => true,
+				'worktrees' => array(
+					array(
+						'handle' => 'broken@metadata',
+						'repo'   => '',
+						'branch' => '',
+						'path'   => '',
+					),
+				),
+			);
+		}
+	}
+
+	$missing_plan = ( new Missing_Metadata_Workspace() )->worktree_cleanup_merged(
+		array(
+			'dry_run'     => true,
+			'skip_github' => true,
+		)
+	);
+	$missing_row = $missing_plan['skipped'][0] ?? array();
+	$assert( 'missing_metadata', $missing_row['reason_code'] ?? '', 'missing metadata exposes stable reason code' );
+	$assert( array( 'repo', 'branch', 'path' ), $missing_row['missing_fields'] ?? array(), 'missing metadata lists missing fields' );
+	$assert( true, str_contains( $missing_row['hint'] ?? '', 'workspace worktree prune' ), 'missing metadata includes prune remediation hint' );
 
 	// Primary itself should NEVER show up as a candidate.
 	foreach ( $plan['candidates'] ?? array() as $c ) {
@@ -302,6 +348,7 @@ namespace {
 	// Protected branches: unmerged/dirty worktrees survive.
 	$assert( true, is_dir( $tmp . '/demo@unmerged-feature' ), 'unmerged worktree survives cleanup' );
 	$assert( true, is_dir( $tmp . '/demo@dirty-branch' ), 'dirty worktree survives cleanup' );
+	$assert( true, is_dir( $tmp . '-external/demo-external' ), 'external worktree survives cleanup' );
 
 	// The local branch for the removed worktree should be gone.
 	$branch_check = $run( 'git for-each-ref --format="%(refname:short)" refs/heads/merged-autodelete', $primary );
