@@ -117,6 +117,10 @@ namespace {
 						'statuses' => array(),
 						'count'    => 0,
 					),
+					'datamachine/get-github-homeboy-ci-results' => array(
+						'success' => true,
+						'results' => array( 'state' => 'success', 'mode' => 'review' ),
+					),
 					'datamachine/get-github-pull-review-context' => array(
 						'success' => true,
 						'context' => array( 'metadata' => array( 'github_type' => 'pull_review_context' ) ),
@@ -192,12 +196,20 @@ namespace {
 			'required' => array( 'repo', 'sha' ),
 			'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'sha' => 'abc123' ),
 		),
+		'get_github_homeboy_ci_results'  => array(
+			'ability'  => 'datamachine/get-github-homeboy-ci-results',
+			'method'   => 'handleHomeboyCiResults',
+			'callback' => array( GitHubAbilities::class, 'getHomeboyCiResults' ),
+			'required' => array( 'repo' ),
+			'optional' => array( 'head_sha', 'pull_number', 'artifact_name', 'max_artifact_bytes', 'include_raw' ),
+			'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'head_sha' => 'abc123', 'artifact_name' => 'homeboy-ci-results' ),
+		),
 		'get_github_pull_review_context' => array(
 			'ability'  => 'datamachine/get-github-pull-review-context',
 			'method'   => 'handlePullReviewContext',
 			'callback' => array( GitHubAbilities::class, 'getPullReviewContext' ),
 			'required' => array( 'repo', 'pull_number' ),
-			'optional' => array( 'head_sha', 'max_patch_chars', 'include_file_contents', 'include_base_contents', 'context_paths', 'max_file_content_chars', 'max_context_files', 'max_total_context_chars', 'include_checks', 'include_statuses', 'max_check_runs', 'include_check_output' ),
+			'optional' => array( 'head_sha', 'max_patch_chars', 'include_file_contents', 'include_base_contents', 'context_paths', 'max_file_content_chars', 'max_context_files', 'max_total_context_chars', 'include_checks', 'include_statuses', 'max_check_runs', 'include_check_output', 'include_homeboy_ci', 'artifact_name' ),
 			'params'   => array(
 				'repo'                    => 'Extra-Chill/data-machine-code',
 				'pull_number'             => 89,
@@ -212,6 +224,8 @@ namespace {
 				'include_statuses'        => true,
 				'max_check_runs'          => 30,
 				'include_check_output'    => false,
+				'include_homeboy_ci'      => true,
+				'artifact_name'           => 'homeboy-ci-results',
 			),
 		),
 	);

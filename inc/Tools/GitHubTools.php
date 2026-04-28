@@ -49,6 +49,10 @@ class GitHubTools extends BaseTool {
 			'access_level' => 'editor',
 			'ability'      => 'datamachine/get-github-commit-statuses',
 		) );
+		$this->registerTool( 'get_github_homeboy_ci_results', array( $this, 'getHomeboyCiResultsDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine/get-github-homeboy-ci-results',
+		) );
 		$this->registerTool( 'get_github_pull_review_context', array( $this, 'getPullReviewContextDefinition' ), $contexts, array(
 			'access_level' => 'editor',
 			'ability'      => 'datamachine/get-github-pull-review-context',
@@ -98,6 +102,7 @@ class GitHubTools extends BaseTool {
 			'get_github_pull_files',
 			'get_github_check_runs',
 			'get_github_commit_statuses',
+			'get_github_homeboy_ci_results',
 			'get_github_pull_review_context',
 			'list_github_tree',
 			'get_github_file',
@@ -656,6 +661,16 @@ class GitHubTools extends BaseTool {
 	}
 
 	/**
+	 * Handle get_github_homeboy_ci_results tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleHomeboyCiResults( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine/get-github-homeboy-ci-results', 'get_github_homeboy_ci_results', $parameters );
+	}
+
+	/**
 	 * Get tool definition for get_github_commit_statuses.
 	 *
 	 * @return array
@@ -675,6 +690,51 @@ class GitHubTools extends BaseTool {
 					'type'        => 'string',
 					'required'    => true,
 					'description' => 'Commit SHA, branch, or tag ref.',
+				),
+			),
+		);
+	}
+
+	/**
+	 * Get tool definition for get_github_homeboy_ci_results.
+	 *
+	 * @return array
+	 */
+	public function getHomeboyCiResultsDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleHomeboyCiResults',
+			'description' => 'Download and summarize the Homeboy CI results artifact for a pull request or commit SHA. Uses GitHub Actions artifacts, preferring review.json and falling back to audit/lint/test JSON files.',
+			'parameters'  => array(
+				'repo'               => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'head_sha'           => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Commit SHA to match the Homeboy artifact against.',
+				),
+				'pull_number'        => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Pull request number. Used to resolve head_sha when head_sha is omitted.',
+				),
+				'artifact_name'      => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'GitHub Actions artifact name. Default: homeboy-ci-results.',
+				),
+				'max_artifact_bytes' => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Maximum artifact ZIP bytes to download. Default: 2000000.',
+				),
+				'include_raw'        => array(
+					'type'        => 'boolean',
+					'required'    => false,
+					'description' => 'Include bounded raw parsed JSON payloads.',
 				),
 			),
 		);
@@ -770,6 +830,16 @@ class GitHubTools extends BaseTool {
 					'type'        => 'boolean',
 					'required'    => false,
 					'description' => 'Include bounded check output summaries and text.',
+				),
+				'include_homeboy_ci'      => array(
+					'type'        => 'boolean',
+					'required'    => false,
+					'description' => 'Include parsed Homeboy CI result artifact data for the PR head SHA.',
+				),
+				'artifact_name'           => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'GitHub Actions artifact name for Homeboy CI results. Default: homeboy-ci-results.',
 				),
 			),
 		);

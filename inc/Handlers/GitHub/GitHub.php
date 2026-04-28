@@ -84,6 +84,10 @@ class GitHub extends FetchHandler {
 			return $this->fetchCommitStatuses( $config, $context, $repo );
 		}
 
+		if ( 'homeboy_ci_results' === $data_source ) {
+			return $this->fetchHomeboyCiResults( $config, $context, $repo );
+		}
+
 		if ( 'files' === $data_source ) {
 			return $this->fetchFiles( $config, $context, $repo );
 		}
@@ -122,6 +126,9 @@ class GitHub extends FetchHandler {
 			'include_statuses'        => ! empty( $config['include_statuses'] ),
 			'max_check_runs'          => $config['max_check_runs'] ?? 30,
 			'include_check_output'    => ! empty( $config['include_check_output'] ),
+			'include_homeboy_ci'      => ! empty( $config['include_homeboy_ci'] ),
+			'artifact_name'           => $config['artifact_name'] ?? $config['homeboy_artifact_name'] ?? 'homeboy-ci-results',
+			'max_artifact_bytes'      => $config['max_artifact_bytes'] ?? 2000000,
 		) );
 
 		if ( is_wp_error( $result ) ) {
@@ -185,6 +192,54 @@ class GitHub extends FetchHandler {
 		}
 
 		return array( 'items' => array( $this->buildStatusPacket( $repo, $sha, 'commit_statuses', $result ) ) );
+	}
+
+	/**
+	 * Fetch Homeboy CI result artifacts for one pull request or head SHA.
+	 */
+	private function fetchHomeboyCiResults( array $config, ExecutionContext $context, string $repo ): array {
+		$result = GitHubAbilities::getHomeboyCiResults( array(
+			'repo'               => $repo,
+			'pull_number'        => (int) ( $config['pull_number'] ?? $config['pr_number'] ?? 0 ),
+			'head_sha'           => $config['head_sha'] ?? $config['sha'] ?? '',
+			'artifact_name'      => $config['artifact_name'] ?? $config['homeboy_artifact_name'] ?? 'homeboy-ci-results',
+			'max_artifact_bytes' => $config['max_artifact_bytes'] ?? 2000000,
+			'include_raw'        => ! empty( $config['include_raw'] ),
+		) );
+
+		if ( is_wp_error( $result ) ) {
+			$context->log( 'error', 'GitHub: Homeboy CI result error — ' . $result->get_error_message() );
+			return array();
+		}
+
+		$results = $result['results'] ?? array();
+		if ( empty( $results ) ) {
+			$context->log( 'info', 'GitHub: No Homeboy CI results returned.' );
+			return array();
+		}
+
+		$sha             = (string) ( $results['head_sha'] ?? $config['head_sha'] ?? '' );
+		$item_key        = '' !== $sha ? $sha : (string) ( $config['pull_number'] ?? '' );
+		$item_identifier = sprintf( '%s_homeboy_ci_results_%s', $repo, $item_key );
+
+		$packet = array(
+			'title'    => sprintf( 'Homeboy CI results: %s@%s', $repo, $sha ),
+			'content'  => wp_json_encode( $results, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ),
+			'metadata' => array(
+				'source_type'     => 'github',
+				'original_id'     => $item_identifier,
+				'dedup_key'       => $item_identifier,
+				'original_title'  => sprintf( 'Homeboy CI results for %s', $sha ),
+				'github_repo'     => $repo,
+				'github_type'     => 'homeboy_ci_results',
+				'github_head_sha' => $sha,
+				'github_state'    => $results['state'] ?? '',
+				'review_context'  => $results,
+			),
+		);
+
+		$context->log( 'info', sprintf( 'GitHub: Prepared Homeboy CI results for %s@%s.', $repo, $sha ) );
+		return array( 'items' => array( $packet ) );
 	}
 
 	private function resolveShaFromConfig( array $config ): string {

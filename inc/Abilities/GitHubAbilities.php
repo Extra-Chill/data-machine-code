@@ -530,6 +530,56 @@ class GitHubAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/get-github-homeboy-ci-results',
+				array(
+					'label'               => 'Get GitHub Homeboy CI Results',
+					'description'         => 'Download and summarize the homeboy-ci-results artifact for a pull request or commit SHA',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo' ),
+						'properties' => array(
+							'repo'               => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'head_sha'           => array(
+								'type'        => 'string',
+								'description' => 'Pull request head SHA or commit SHA to match artifacts against.',
+							),
+							'pull_number'        => array(
+								'type'        => 'integer',
+								'description' => 'Pull request number. Used to resolve head_sha when head_sha is omitted.',
+							),
+							'artifact_name'      => array(
+								'type'        => 'string',
+								'description' => 'GitHub Actions artifact name. Default: homeboy-ci-results.',
+							),
+							'max_artifact_bytes' => array(
+								'type'        => 'integer',
+								'description' => 'Maximum artifact ZIP bytes to download. Default: 2000000.',
+							),
+							'include_raw'        => array(
+								'type'        => 'boolean',
+								'description' => 'Include bounded raw parsed JSON payloads.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'results' => array( 'type' => 'object' ),
+							'error'   => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'getHomeboyCiResults' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/get-github-pull-review-context',
 				array(
 					'label'               => 'Get GitHub Pull Request Review Context',
@@ -579,21 +629,29 @@ class GitHubAbilities {
 								'type'        => 'integer',
 								'description' => 'Maximum cumulative characters included across expanded PR review context files (default: 100000).',
 							),
-							'include_checks'           => array(
+							'include_checks'          => array(
 								'type'        => 'boolean',
 								'description' => 'Whether to include GitHub check runs for the PR head SHA.',
 							),
-							'include_statuses'         => array(
+							'include_statuses'        => array(
 								'type'        => 'boolean',
 								'description' => 'Whether to include legacy commit statuses for the PR head SHA.',
 							),
-							'max_check_runs'           => array(
+							'max_check_runs'          => array(
 								'type'        => 'integer',
 								'description' => 'Maximum check runs to include (default: 30, max: 100).',
 							),
-							'include_check_output'     => array(
+							'include_check_output'    => array(
 								'type'        => 'boolean',
 								'description' => 'Whether to include bounded check output summaries and text.',
+							),
+							'include_homeboy_ci'      => array(
+								'type'        => 'boolean',
+								'description' => 'Whether to include parsed Homeboy CI result artifacts for the PR head SHA.',
+							),
+							'artifact_name'           => array(
+								'type'        => 'string',
+								'description' => 'Homeboy CI artifact name. Default: homeboy-ci-results.',
 							),
 						),
 					),
@@ -1276,10 +1334,10 @@ class GitHubAbilities {
 			$pull['pull'],
 			$files,
 			array(
-				'head_sha'        => sanitize_text_field( $input['head_sha'] ?? '' ),
-				'max_patch_chars' => (int) ( $input['max_patch_chars'] ?? 200000 ),
+				'head_sha'         => sanitize_text_field( $input['head_sha'] ?? '' ),
+				'max_patch_chars'  => (int) ( $input['max_patch_chars'] ?? 200000 ),
 				'expanded_context' => self::buildPullReviewExpandedContext( $repo, $pull['pull'], $files, $input ),
-				'checks'          => self::buildPullReviewCheckContext( $repo, $pull['pull'], $input ),
+				'checks'           => self::buildPullReviewCheckContext( $repo, $pull['pull'], $input ),
 			)
 		);
 
@@ -1404,8 +1462,9 @@ class GitHubAbilities {
 	private static function buildPullReviewCheckContext( string $repo, array $pull, array $options = array() ): ?array {
 		$include_checks   = ! empty( $options['include_checks'] );
 		$include_statuses = ! empty( $options['include_statuses'] );
+		$include_homeboy  = ! empty( $options['include_homeboy_ci'] );
 
-		if ( ! $include_checks && ! $include_statuses ) {
+		if ( ! $include_checks && ! $include_statuses && ! $include_homeboy ) {
 			return null;
 		}
 
@@ -1458,6 +1517,24 @@ class GitHubAbilities {
 					'items'   => $statuses['statuses'] ?? array(),
 					'count'   => $statuses['count'] ?? 0,
 				);
+			}
+		}
+
+		if ( $include_homeboy ) {
+			$homeboy = self::getHomeboyCiResults(
+				array(
+					'repo'               => $repo,
+					'head_sha'           => $sha,
+					'pull_number'        => (int) ( $pull['number'] ?? 0 ),
+					'artifact_name'      => $options['artifact_name'] ?? $options['homeboy_artifact_name'] ?? 'homeboy-ci-results',
+					'max_artifact_bytes' => $options['max_artifact_bytes'] ?? 2000000,
+				)
+			);
+
+			if ( is_wp_error( $homeboy ) ) {
+				$context['errors']['homeboy_ci_results'] = $homeboy->get_error_message();
+			} else {
+				$context['homeboy_ci_results'] = $homeboy['results'] ?? array();
 			}
 		}
 
@@ -1722,6 +1799,333 @@ class GitHubAbilities {
 			'statuses' => $statuses,
 			'count'    => count( $statuses ),
 		);
+	}
+
+	/**
+	 * Download and summarize a Homeboy CI artifact for a pull request or head SHA.
+	 *
+	 * @param array         $input Required: repo plus head_sha or pull_number.
+	 * @param callable|null $api_get Test seam for JSON GitHub GET calls.
+	 * @param callable|null $download Test seam for artifact ZIP download.
+	 * @param callable|null $extract Test seam for ZIP extraction.
+	 * @return array|\WP_Error
+	 */
+	public static function getHomeboyCiResults( array $input, ?callable $api_get = null, ?callable $download = null, ?callable $extract = null ): array|\WP_Error {
+		$repo          = sanitize_text_field( $input['repo'] ?? '' );
+		$head_sha      = sanitize_text_field( $input['head_sha'] ?? $input['sha'] ?? '' );
+		$pull_number   = (int) ( $input['pull_number'] ?? $input['pr_number'] ?? 0 );
+		$artifact_name = sanitize_text_field( $input['artifact_name'] ?? 'homeboy-ci-results' );
+		$include_raw   = ! empty( $input['include_raw'] );
+
+		if ( empty( $repo ) ) {
+			return new \WP_Error( 'missing_params', 'Repository (owner/repo) is required.', array( 'status' => 400 ) );
+		}
+
+		if ( '' === $head_sha && $pull_number <= 0 ) {
+			return new \WP_Error( 'missing_params', 'Either head_sha or pull_number is required.', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPat();
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$api_get = $api_get ?? static fn( string $url, array $query ) => self::apiGet( $url, $query, $pat );
+		if ( '' === $head_sha ) {
+			$pull_response = $api_get( sprintf( '%s/repos/%s/pulls/%d', self::API_BASE, $repo, $pull_number ), array() );
+			if ( is_wp_error( $pull_response ) ) {
+				return $pull_response;
+			}
+
+			$head_sha = sanitize_text_field( $pull_response['data']['head']['sha'] ?? '' );
+			if ( '' === $head_sha ) {
+				return new \WP_Error( 'github_homeboy_ci_missing_head_sha', 'Pull request head SHA could not be resolved.', array( 'status' => 404 ) );
+			}
+		}
+
+		$artifacts_response = $api_get(
+			sprintf( '%s/repos/%s/actions/artifacts', self::API_BASE, $repo ),
+			array(
+				'name'     => $artifact_name,
+				'per_page' => self::MAX_PER_PAGE,
+			)
+		);
+
+		if ( is_wp_error( $artifacts_response ) ) {
+			return $artifacts_response;
+		}
+
+		$artifact_result = self::selectHomeboyArtifact( $artifacts_response['data']['artifacts'] ?? array(), $artifact_name, $head_sha );
+		if ( is_wp_error( $artifact_result ) ) {
+			$pending = self::detectPendingHomeboyChecks( $repo, $head_sha, $api_get );
+			if ( ! empty( $pending ) ) {
+				return new \WP_Error(
+					'github_homeboy_ci_pending',
+					'Homeboy CI checks are still pending for this head SHA.',
+					array(
+						'status' => 202,
+						'checks' => $pending,
+					)
+				);
+			}
+
+			return $artifact_result;
+		}
+
+		$artifact = $artifact_result;
+		$download = $download ?? static fn( string $url, int $max_bytes ) => self::apiRawGet( $url, $pat, $max_bytes );
+		$zip      = $download( (string) ( $artifact['archive_download_url'] ?? '' ), max( 1, (int) ( $input['max_artifact_bytes'] ?? 2000000 ) ) );
+		if ( is_wp_error( $zip ) ) {
+			return $zip;
+		}
+
+		$extract = $extract ?? array( self::class, 'extractZipJsonFiles' );
+		$files   = $extract( $zip );
+		if ( is_wp_error( $files ) ) {
+			return $files;
+		}
+
+		$results = self::summarizeHomeboyCiArtifact( $files, array(
+			'repo'          => $repo,
+			'head_sha'      => $head_sha,
+			'pull_number'   => $pull_number,
+			'artifact'      => $artifact,
+			'artifact_name' => $artifact_name,
+			'include_raw'   => $include_raw,
+		) );
+
+		if ( is_wp_error( $results ) ) {
+			return $results;
+		}
+
+		return array(
+			'success' => true,
+			'results' => $results,
+		);
+	}
+
+	/**
+	 * Pick the newest matching Homeboy artifact for a head SHA.
+	 */
+	public static function selectHomeboyArtifact( array $artifacts, string $artifact_name, string $head_sha ): array|\WP_Error {
+		$expired_match = null;
+		$matches       = array();
+
+		foreach ( $artifacts as $artifact ) {
+			if ( (string) ( $artifact['name'] ?? '' ) !== $artifact_name ) {
+				continue;
+			}
+
+			$artifact_sha = (string) ( $artifact['workflow_run']['head_sha'] ?? $artifact['head_sha'] ?? '' );
+			if ( $head_sha !== $artifact_sha ) {
+				continue;
+			}
+
+			if ( ! empty( $artifact['expired'] ) ) {
+				$expired_match = $artifact;
+				continue;
+			}
+
+			$matches[] = $artifact;
+		}
+
+		if ( empty( $matches ) ) {
+			if ( null !== $expired_match ) {
+				return new \WP_Error( 'github_homeboy_ci_artifact_expired', 'Homeboy CI artifact exists for this head SHA but has expired.', array( 'status' => 410 ) );
+			}
+
+			return new \WP_Error( 'github_homeboy_ci_artifact_not_found', 'No homeboy-ci-results artifact found for this head SHA.', array( 'status' => 404 ) );
+		}
+
+		usort( $matches, static fn( $a, $b ) => strcmp( (string) ( $b['updated_at'] ?? $b['created_at'] ?? '' ), (string) ( $a['updated_at'] ?? $a['created_at'] ?? '' ) ) );
+		return $matches[0];
+	}
+
+	/**
+	 * Parse Homeboy JSON files from a GitHub artifact ZIP.
+	 */
+	public static function extractZipJsonFiles( string $zip_bytes ): array|\WP_Error {
+		if ( ! class_exists( '\ZipArchive' ) ) {
+			return new \WP_Error( 'github_homeboy_ci_zip_unavailable', 'ZipArchive is not available, so GitHub artifact ZIPs cannot be parsed.', array( 'status' => 500 ) );
+		}
+
+		$tmp = tempnam( sys_get_temp_dir(), 'dmc-homeboy-ci-' );
+		if ( false === $tmp ) {
+			return new \WP_Error( 'github_homeboy_ci_temp_failed', 'Could not allocate a temporary file for artifact parsing.', array( 'status' => 500 ) );
+		}
+
+		file_put_contents( $tmp, $zip_bytes ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Required for ZipArchive.
+		$zip = new \ZipArchive();
+		if ( true !== $zip->open( $tmp ) ) {
+			self::deleteTempFile( $tmp );
+			return new \WP_Error( 'github_homeboy_ci_zip_invalid', 'Homeboy CI artifact is not a valid ZIP archive.', array( 'status' => 422 ) );
+		}
+
+		$files = array();
+		for ( $i = 0; $i < $zip->numFiles; ++$i ) {
+			$name = (string) $zip->getNameIndex( $i );
+			if ( ! str_ends_with( $name, '.json' ) ) {
+				continue;
+			}
+
+			$raw = $zip->getFromIndex( $i );
+			if ( false === $raw ) {
+				continue;
+			}
+
+			$data = json_decode( $raw, true );
+			if ( ! is_array( $data ) ) {
+				$zip->close();
+				self::deleteTempFile( $tmp );
+				return new \WP_Error( 'github_homeboy_ci_malformed_json', sprintf( 'Homeboy CI artifact file %s is not valid JSON.', $name ), array( 'status' => 422 ) );
+			}
+
+			$files[ basename( $name ) ] = $data;
+		}
+
+		$zip->close();
+		self::deleteTempFile( $tmp );
+		return $files;
+	}
+
+	private static function deleteTempFile( string $path ): void {
+		if ( function_exists( 'wp_delete_file' ) ) {
+			wp_delete_file( $path );
+			return;
+		}
+
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Pure-PHP smoke tests load this file without WordPress filesystem helpers.
+		unlink( $path );
+	}
+
+	/**
+	 * Summarize Homeboy review.json or legacy per-command artifacts.
+	 */
+	public static function summarizeHomeboyCiArtifact( array $files, array $context = array() ): array|\WP_Error {
+		$manifest = is_array( $files['manifest.json'] ?? null ) ? $files['manifest.json'] : array();
+		$review   = is_array( $files['review.json'] ?? null ) ? $files['review.json'] : null;
+		$stages   = array();
+
+		if ( null !== $review ) {
+			$data    = is_array( $review['data'] ?? null ) ? $review['data'] : array();
+			$summary = is_array( $data['summary'] ?? null ) ? $data['summary'] : array();
+
+			foreach ( array( 'audit', 'lint', 'test' ) as $stage ) {
+				if ( isset( $data[ $stage ] ) && is_array( $data[ $stage ] ) ) {
+					$stages[ $stage ] = self::summarizeHomeboyStage( $data[ $stage ] );
+				}
+			}
+
+			$passed = isset( $summary['passed'] ) ? (bool) $summary['passed'] : (bool) ( $review['success'] ?? false );
+			$state  = $passed ? 'success' : 'failure';
+			if ( isset( $summary['status'] ) && 'passed' !== $summary['status'] ) {
+				$state = 'failure';
+			}
+
+			$mode = 'review';
+		} else {
+			foreach ( array( 'audit', 'lint', 'test' ) as $stage ) {
+				$file = $stage . '.json';
+				if ( isset( $files[ $file ] ) && is_array( $files[ $file ] ) ) {
+					$stages[ $stage ] = self::summarizeHomeboyLegacyStage( $stage, $files[ $file ] );
+				}
+			}
+
+			if ( empty( $stages ) ) {
+				return new \WP_Error( 'github_homeboy_ci_payload_not_found', 'Homeboy CI artifact did not contain review.json or legacy audit/lint/test JSON files.', array( 'status' => 422 ) );
+			}
+
+			$summary = array(
+				'passed'         => ! in_array( false, array_column( $stages, 'passed' ), true ),
+				'total_findings' => array_sum( array_map( static fn( $stage ) => (int) ( $stage['finding_count'] ?? 0 ), $stages ) ),
+			);
+			$passed  = (bool) $summary['passed'];
+			$state   = $passed ? 'success' : 'failure';
+			$mode    = 'legacy';
+		}
+
+		$artifact = is_array( $context['artifact'] ?? null ) ? $context['artifact'] : array();
+		$result   = array(
+			'state'       => $state,
+			'mode'        => $mode,
+			'repo'        => (string) ( $context['repo'] ?? $manifest['repo'] ?? '' ),
+			'head_sha'    => (string) ( $context['head_sha'] ?? $manifest['head_sha'] ?? '' ),
+			'pull_number' => (int) ( $context['pull_number'] ?? 0 ),
+			'summary'     => $summary,
+			'stages'      => $stages,
+			'artifact'    => array(
+				'id'         => (int) ( $artifact['id'] ?? 0 ),
+				'name'       => (string) ( $artifact['name'] ?? $context['artifact_name'] ?? 'homeboy-ci-results' ),
+				'url'        => (string) ( $artifact['url'] ?? '' ),
+				'expired'    => ! empty( $artifact['expired'] ),
+				'created_at' => (string) ( $artifact['created_at'] ?? '' ),
+				'updated_at' => (string) ( $artifact['updated_at'] ?? '' ),
+			),
+			'workflow'    => array(
+				'run_id'      => (string) ( $manifest['run_id'] ?? $artifact['workflow_run']['id'] ?? '' ),
+				'run_attempt' => (string) ( $manifest['run_attempt'] ?? '' ),
+				'url'         => (string) ( $manifest['check_url'] ?? $artifact['workflow_run']['html_url'] ?? '' ),
+			),
+		);
+
+		if ( ! empty( $manifest ) ) {
+			$result['manifest'] = $manifest;
+		}
+
+		if ( ! empty( $context['include_raw'] ) ) {
+			$result['raw'] = $files;
+		}
+
+		return $result;
+	}
+
+	private static function summarizeHomeboyStage( array $stage ): array {
+		return array(
+			'ran'            => (bool) ( $stage['ran'] ?? false ),
+			'passed'         => isset( $stage['passed'] ) ? (bool) $stage['passed'] : null,
+			'exit_code'      => isset( $stage['exit_code'] ) ? (int) $stage['exit_code'] : null,
+			'finding_count'  => (int) ( $stage['finding_count'] ?? 0 ),
+			'skipped_reason' => (string) ( $stage['skipped_reason'] ?? '' ),
+			'hint'           => (string) ( $stage['hint'] ?? '' ),
+		);
+	}
+
+	private static function summarizeHomeboyLegacyStage( string $stage, array $payload ): array {
+		$data          = is_array( $payload['data'] ?? null ) ? $payload['data'] : array();
+		$finding_count = (int) ( $data['finding_count'] ?? $data['total_findings'] ?? $data['summary']['total_findings'] ?? count( $data['findings'] ?? array() ) );
+
+		return array(
+			'ran'           => true,
+			'passed'        => (bool) ( $payload['success'] ?? false ),
+			'exit_code'     => isset( $data['exit_code'] ) ? (int) $data['exit_code'] : null,
+			'finding_count' => $finding_count,
+			'hint'          => sprintf( 'Deep dive: homeboy %s', $stage ),
+		);
+	}
+
+	private static function detectPendingHomeboyChecks( string $repo, string $head_sha, callable $api_get ): array {
+		$response = $api_get(
+			sprintf( '%s/repos/%s/commits/%s/check-runs', self::API_BASE, $repo, $head_sha ),
+			array( 'per_page' => self::MAX_PER_PAGE )
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return array();
+		}
+
+		$pending = array();
+		foreach ( (array) ( $response['data']['check_runs'] ?? array() ) as $run ) {
+			$name = strtolower( (string) ( $run['name'] ?? '' ) );
+			if ( ! str_contains( $name, 'homeboy' ) ) {
+				continue;
+			}
+
+			if ( 'completed' !== (string) ( $run['status'] ?? '' ) ) {
+				$pending[] = self::normalizeCheckRun( $run );
+			}
+		}
+
+		return $pending;
 	}
 
 	public static function listRepos( array $input ): array|\WP_Error {
@@ -2003,6 +2407,33 @@ class GitHubAbilities {
 		return self::parseResponse( $response );
 	}
 
+	public static function apiRawGet( string $url, string $pat, int $max_bytes = 2000000 ): string|\WP_Error {
+		if ( '' === $url ) {
+			return new \WP_Error( 'github_homeboy_ci_download_missing', 'GitHub artifact download URL is missing.', array( 'status' => 404 ) );
+		}
+
+		$response = wp_remote_get( $url, array(
+			'headers' => array_merge( self::getHeaders( $pat ), array( 'Accept' => 'application/vnd.github+json' ) ),
+			'timeout' => 30,
+		) );
+
+		if ( is_wp_error( $response ) ) {
+			return new \WP_Error( 'github_request_failed', 'GitHub API request failed: ' . $response->get_error_message(), array( 'status' => 500 ) );
+		}
+
+		$status_code = wp_remote_retrieve_response_code( $response );
+		$body        = (string) wp_remote_retrieve_body( $response );
+		if ( $status_code >= 400 ) {
+			return new \WP_Error( 404 === $status_code ? 'github_not_found' : 'github_api_error', sprintf( 'GitHub API error (%d) while downloading artifact.', $status_code ), array( 'status' => $status_code ) );
+		}
+
+		if ( strlen( $body ) > $max_bytes ) {
+			return new \WP_Error( 'github_homeboy_ci_artifact_too_large', sprintf( 'Homeboy CI artifact exceeded the configured %d byte limit.', $max_bytes ), array( 'status' => 413 ) );
+		}
+
+		return $body;
+	}
+
 	private static function parseResponse( $response ): array|\WP_Error {
 		if ( is_wp_error( $response ) ) {
 			return new \WP_Error( 'github_request_failed', 'GitHub API request failed: ' . $response->get_error_message(), array( 'status' => 500 ) );
@@ -2140,7 +2571,7 @@ class GitHubAbilities {
 	 * Summarize check-run states into one review-friendly status.
 	 */
 	public static function summarizeCheckRuns( array $check_runs ): array {
-		$counts = array(
+		$counts  = array(
 			'success'   => 0,
 			'failure'   => 0,
 			'pending'   => 0,
@@ -2175,7 +2606,7 @@ class GitHubAbilities {
 	 * Summarize legacy commit statuses.
 	 */
 	public static function summarizeCommitStatuses( array $statuses, string $combined_state = '' ): array {
-		$counts = array(
+		$counts  = array(
 			'success'   => 0,
 			'failure'   => 0,
 			'pending'   => 0,
