@@ -160,10 +160,19 @@ namespace {
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true ) );
 	datamachine_code_cleanup_assert( 'Summary:' === ( WP_CLI::$logs[0] ?? '' ), 'human output starts with summary' );
+	datamachine_code_cleanup_assert( in_array( 'table:1:handle,branch,signal,reason_code', WP_CLI::$logs, true ), 'default candidate table uses compact fields' );
+	datamachine_code_cleanup_assert( in_array( 'table:10:handle,reason_code,reason', WP_CLI::$logs, true ), 'default skipped table omits path and hint fields' );
 	datamachine_code_cleanup_assert( in_array( 'Showing 10 of 12 skipped rows. Re-run with --verbose for all rows or --only=<reason_code> to filter.', WP_CLI::$logs, true ), 'human output truncates skipped rows with hint' );
 	datamachine_code_cleanup_assert( 1 === count( WP_CLI::$successes ), 'human output keeps success suffix' );
 
-	echo "\n[3] --only filters rows while keeping full summary\n";
+	echo "\n[3] verbose output keeps detailed human fields\n";
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'verbose' => true ) );
+	datamachine_code_cleanup_assert( in_array( 'table:1:handle,branch,signal,reason', WP_CLI::$logs, true ), 'verbose candidate table keeps full reason field' );
+	datamachine_code_cleanup_assert( in_array( 'table:12:handle,reason_code,reason,repo,branch,path,primary_path,missing,hint', WP_CLI::$logs, true ), 'verbose skipped table keeps diagnostic fields' );
+
+	echo "\n[4] --only filters rows while keeping full summary\n";
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'only' => 'missing-metadata', 'format' => 'json' ) );
@@ -172,6 +181,18 @@ namespace {
 	datamachine_code_cleanup_assert( 1 === count( $filtered['skipped'] ?? array() ), '--only reason keeps matching skipped rows only' );
 	datamachine_code_cleanup_assert( 'missing_metadata' === ( $filtered['skipped'][0]['reason_code'] ?? '' ), '--only alias resolves to reason code' );
 	datamachine_code_cleanup_assert( 12 === (int) ( $filtered['summary']['skipped'] ?? 0 ), '--only leaves summary counts unfiltered' );
+
+	echo "\n[5] --only aliases resolve candidate section\n";
+	foreach ( array( 'candidates', 'would-remove', 'would_remove' ) as $alias ) {
+		WP_CLI::$logs      = array();
+		WP_CLI::$successes = array();
+		$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'only' => $alias, 'format' => 'json' ) );
+		$filtered = json_decode( WP_CLI::$logs[0], true );
+		datamachine_code_cleanup_assert( 1 === count( $filtered['candidates'] ?? array() ), "--only={$alias} keeps candidates" );
+		datamachine_code_cleanup_assert( array() === ( $filtered['removed'] ?? null ), "--only={$alias} hides removed" );
+		datamachine_code_cleanup_assert( array() === ( $filtered['skipped'] ?? null ), "--only={$alias} hides skipped" );
+		datamachine_code_cleanup_assert( 1 === (int) ( $filtered['summary']['would_remove'] ?? 0 ), "--only={$alias} keeps summary counts" );
+	}
 
 	echo "\nAll worktree cleanup CLI smoke tests passed.\n";
 }
