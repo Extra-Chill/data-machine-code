@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.21.0] - 2026-04-28
+
+### Added
+- document disk projection boundary
+- add cleanup age filter
+
+### Fixed
+- add cleanup plan apply workflow
+- reduce cleanup GitHub lookups
+
 ## [0.20.1] - 2026-04-28
 
 ### Fixed
