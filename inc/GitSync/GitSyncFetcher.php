@@ -58,7 +58,7 @@ final class GitSyncFetcher {
 
 		$pat = (string) GitHubAbilities::getPat();
 		if ( '' === $pat ) {
-			return new \WP_Error( 'missing_pat', 'GitHub PAT not configured.', array( 'status' => 500 ) );
+			return new \WP_Error( 'missing_github_auth', 'GitHub authentication is not configured.', array( 'status' => 500 ) );
 		}
 
 		$absolute = $binding->resolveAbsolutePath();

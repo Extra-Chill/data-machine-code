@@ -468,17 +468,42 @@ class GitHubCommand extends BaseCommand {
 	 * @subcommand status
 	 */
 	public function status( array $args, array $assoc_args ): void {
-		$configured   = GitHubAbilities::isConfigured();
+		$auth_status  = GitHubAbilities::getAuthStatus();
+		$configured   = ! empty( $auth_status['configured'] );
 		$default_repo = GitHubAbilities::getDefaultRepo();
 
 		$items = array(
 			array(
-				'setting' => 'GitHub PAT',
+				'setting' => 'Auth Mode',
+				'value'   => $auth_status['mode'] ?? 'pat',
+			),
+			array(
+				'setting' => 'Configured',
 				'value'   => $configured ? 'Configured' : 'Not configured',
+			),
+			array(
+				'setting' => 'GitHub PAT',
+				'value'   => ! empty( $auth_status['pat_configured'] ) ? 'Configured' : 'Not configured',
+			),
+			array(
+				'setting' => 'GitHub App ID',
+				'value'   => ! empty( $auth_status['app_id_configured'] ) ? 'Configured' : 'Not configured',
+			),
+			array(
+				'setting' => 'GitHub App Installation ID',
+				'value'   => ! empty( $auth_status['app_installation_configured'] ) ? 'Configured' : 'Not configured',
+			),
+			array(
+				'setting' => 'GitHub App Private Key',
+				'value'   => ! empty( $auth_status['app_private_key_configured'] ) ? 'Configured' : 'Not configured',
 			),
 			array(
 				'setting' => 'Default Repository',
 				'value'   => $default_repo ? $default_repo : 'Not set',
+			),
+			array(
+				'setting' => 'App Permissions',
+				'value'   => 'Contents: read, Issues: read/write, Pull requests: read/write, Checks: read, Commit statuses: read, Actions: read for artifacts',
 			),
 		);
 
@@ -589,7 +614,7 @@ class GitHubCommand extends BaseCommand {
 	 */
 	private function requireConfig(): void {
 		if ( ! GitHubAbilities::isConfigured() ) {
-			WP_CLI::error( 'GitHub PAT not configured. Set github_pat in Data Machine settings.' );
+			WP_CLI::error( 'GitHub authentication is not configured. Set github_pat for PAT mode or GitHub App credentials for app mode.' );
 		}
 	}
 

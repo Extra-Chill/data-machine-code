@@ -5,7 +5,7 @@
  * One place for GitHub-specific URL manipulation:
  *   - "is this a GitHub remote?"
  *   - "parse owner/repo out of the URL"
- *   - "rewrite the URL with a PAT injected for authenticated push"
+ *   - shared API URL and tree helpers for authenticated GitHub operations
  *
  * Shared by GitSync (push + submit) and Workspace (merge-signal lookup)
  * so the regex + host-detection logic has a single source of truth.
