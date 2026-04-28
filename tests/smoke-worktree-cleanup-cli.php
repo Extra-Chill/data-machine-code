@@ -129,7 +129,18 @@ namespace {
 
 		public function execute( array $input ): array {
 			$this->last_input = $input;
-			return datamachine_code_cleanup_report();
+			$report = datamachine_code_cleanup_report();
+			if ( isset( $input['older_than'] ) ) {
+				$report['summary']['age_filter'] = array(
+					'type'             => 'older_than',
+					'older_than'       => $input['older_than'],
+					'duration_seconds' => 604800,
+					'threshold'        => '2026-04-21T00:00:00+00:00',
+					'excluded'         => 2,
+					'unknown_age'      => 1,
+				);
+			}
+			return $report;
 		}
 	}
 
@@ -210,6 +221,20 @@ namespace {
 		datamachine_code_cleanup_assert( array() === ( $filtered['skipped'] ?? null ), "--only={$alias} hides skipped" );
 		datamachine_code_cleanup_assert( 1 === (int) ( $filtered['summary']['would_remove'] ?? 0 ), "--only={$alias} keeps summary counts" );
 	}
+
+	echo "\n[6] --older-than forwards and renders age summary\n";
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'older-than' => '7d' ) );
+	datamachine_code_cleanup_assert( array( 'dry_run' => true, 'force' => false, 'skip_github' => true, 'older_than' => '7d' ) === $ability->last_input, 'older-than forwards to cleanup ability as older_than' );
+	datamachine_code_cleanup_assert( in_array( 'table:8:metric,count', WP_CLI::$logs, true ), 'age filter summary adds two summary rows' );
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'older-than' => '7d', 'format' => 'json' ) );
+	$older_than_json = json_decode( WP_CLI::$logs[0], true );
+	datamachine_code_cleanup_assert( '7d' === ( $older_than_json['summary']['age_filter']['older_than'] ?? '' ), 'JSON summary exposes older_than filter value' );
+	datamachine_code_cleanup_assert( 2 === (int) ( $older_than_json['summary']['age_filter']['excluded'] ?? 0 ), 'JSON summary exposes age-filter excluded count' );
 
 	echo "\nAll worktree cleanup CLI smoke tests passed.\n";
 }

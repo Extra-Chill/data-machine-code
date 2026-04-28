@@ -103,6 +103,8 @@ class WorktreeCleanupTask extends SystemTask {
 	 *   - `force` (bool)        — override dirty-worktree safety. Default: false.
 	 *                             Does NOT override the unpushed-commits safety.
 	 *   - `skip_github` (bool)  — only use local `upstream-gone` signal. Default: false.
+	 *   - `older_than` (string) — optional age filter such as 7d or 24h. Uses
+	 *                             lifecycle created_at metadata only.
 	 *
 	 * Opt-out:
 	 *   Apply the `datamachine_code_worktree_cleanup_enabled` filter with
@@ -140,6 +142,9 @@ class WorktreeCleanupTask extends SystemTask {
 			'force'       => ! empty( $params['force'] ),
 			'skip_github' => ! empty( $params['skip_github'] ),
 		);
+		if ( isset( $params['older_than'] ) && '' !== trim( (string) $params['older_than'] ) ) {
+			$opts['older_than'] = trim( (string) $params['older_than'] );
+		}
 
 		$workspace = new Workspace();
 		$result    = $workspace->worktree_cleanup_merged( $opts );

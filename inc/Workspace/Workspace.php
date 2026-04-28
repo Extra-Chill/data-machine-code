@@ -635,7 +635,7 @@ class Workspace {
 	 *
 	 * Tracked paths are removed via `git rm` so the deletion lands in the
 	 * working tree and the index in one shot. Untracked paths fall back to a
-	 * filesystem unlink (file) or a recursive directory removal (directory,
+	 * filesystem wp_delete_file( file ) or a recursive directory removal (directory,
 	 * only when $recursive is true). Sensitive-path, traversal, allowlist,
 	 * and primary-mutation gates mirror `git_add`.
 	 *
@@ -1600,6 +1600,7 @@ class Workspace {
 	 *     @type bool $dry_run If true, return the plan without removing anything.
 	 *     @type bool $force   If true, ignore dirty working-tree safety.
 	 *     @type bool $skip_github If true, only use upstream-gone signal (no API calls).
+	 *     @type string $older_than Optional duration such as 7d, 24h, or 30m. Candidates newer than this are skipped.
 	 * }
 	 * @return array{
 	 *     success: bool,
@@ -1614,6 +1615,7 @@ class Workspace {
 		$force       = ! empty( $opts['force'] );
 		$skip_github = ! empty( $opts['skip_github'] );
 		$apply_plan  = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
+		$older_than  = isset( $opts['older_than'] ) ? trim( (string) $opts['older_than'] ) : '';
 
 		$planned_candidates = null;
 		if ( null !== $apply_plan ) {
@@ -1625,6 +1627,25 @@ class Workspace {
 			// Applying a stale plan must never use the dirty override. The current
 			// workspace state is re-evaluated below and dirty rows stay skipped.
 			$force = false;
+		}
+
+		$age_filter = null;
+		if ( '' !== $older_than ) {
+			$duration_seconds = $this->parse_worktree_cleanup_duration( $older_than );
+			if ( is_wp_error( $duration_seconds ) ) {
+				return $duration_seconds;
+			}
+
+			$threshold_ts = time() - $duration_seconds;
+			$age_filter   = array(
+				'type'             => 'older_than',
+				'older_than'       => $older_than,
+				'duration_seconds' => $duration_seconds,
+				'threshold'        => gmdate( 'c', $threshold_ts ),
+				'threshold_unix'   => $threshold_ts,
+				'excluded'         => 0,
+				'unknown_age'      => 0,
+			);
 		}
 
 		$listing = $this->worktree_list();
@@ -1800,7 +1821,59 @@ class Workspace {
 				continue;
 			}
 
-			$candidates[] = array(
+			$age_decision = null;
+			if ( null !== $age_filter ) {
+				$created_ts = is_string( $created_at ) && '' !== $created_at ? strtotime( $created_at ) : false;
+				if ( false === $created_ts ) {
+					++$age_filter['unknown_age'];
+					$skipped[] = array(
+						'handle'      => $handle,
+						'repo'        => $repo,
+						'branch'      => $branch,
+						'path'        => $wt_path,
+						'reason_code' => 'unknown_age',
+						'reason'      => 'missing or invalid created_at metadata - age filter cannot decide safely',
+						'created_at'  => $created_at,
+						'metadata'    => $metadata,
+						'age_filter'  => array(
+							'type'       => 'older_than',
+							'older_than' => $age_filter['older_than'],
+							'threshold'  => $age_filter['threshold'],
+							'decision'   => 'unknown_age',
+						),
+					);
+					continue;
+				}
+
+				$age_seconds  = time() - $created_ts;
+				$age_decision = array(
+					'type'        => 'older_than',
+					'older_than'  => $age_filter['older_than'],
+					'threshold'   => $age_filter['threshold'],
+					'created_at'  => $created_at,
+					'age_seconds' => $age_seconds,
+				);
+
+				if ( $created_ts > $age_filter['threshold_unix'] ) {
+					++$age_filter['excluded'];
+					$skipped[] = array(
+						'handle'      => $handle,
+						'repo'        => $repo,
+						'branch'      => $branch,
+						'path'        => $wt_path,
+						'reason_code' => 'age_filter',
+						'reason'      => sprintf( 'created_at %s is newer than --older-than=%s threshold %s', $created_at, $age_filter['older_than'], $age_filter['threshold'] ),
+						'created_at'  => $created_at,
+						'metadata'    => $metadata,
+						'age_filter'  => array_merge( $age_decision, array( 'decision' => 'excluded' ) ),
+					);
+					continue;
+				}
+
+				$age_decision['decision'] = 'included';
+			}
+
+			$candidate = array(
 				'handle'      => $wt['handle'],
 				'repo'        => $repo,
 				'branch'      => $branch,
@@ -1813,6 +1886,10 @@ class Workspace {
 				'created_at'  => $created_at,
 				'metadata'    => $metadata,
 			);
+			if ( null !== $age_decision ) {
+				$candidate['age_filter'] = $age_decision;
+			}
+			$candidates[] = $candidate;
 		}
 
 		if ( null !== $planned_candidates ) {
@@ -1821,7 +1898,7 @@ class Workspace {
 			$skipped    = $scoped['skipped'];
 		}
 
-		$summary = $this->build_worktree_cleanup_summary( $candidates, array(), $skipped );
+		$summary = $this->build_worktree_cleanup_summary( $candidates, array(), $skipped, $age_filter );
 
 		if ( $dry_run ) {
 			return array(
@@ -1878,7 +1955,7 @@ class Workspace {
 			'candidates' => $candidates,
 			'removed'    => $removed,
 			'skipped'    => $skipped,
-			'summary'    => $this->build_worktree_cleanup_summary( $candidates, $removed, $skipped ),
+			'summary'    => $this->build_worktree_cleanup_summary( $candidates, $removed, $skipped, $age_filter ),
 		);
 	}
 
@@ -1890,7 +1967,7 @@ class Workspace {
 	 * @param array<int,array> $skipped    Skipped rows.
 	 * @return array<string,mixed>
 	 */
-	private function build_worktree_cleanup_summary( array $candidates, array $removed, array $skipped ): array {
+	private function build_worktree_cleanup_summary( array $candidates, array $removed, array $skipped, ?array $age_filter = null ): array {
 		$skipped_by_reason    = array();
 		$candidates_by_signal = array();
 
@@ -1907,13 +1984,47 @@ class Workspace {
 		ksort( $skipped_by_reason );
 		ksort( $candidates_by_signal );
 
-		return array(
+		$summary = array(
 			'would_remove'         => count( $candidates ),
 			'removed'              => count( $removed ),
 			'skipped'              => count( $skipped ),
 			'skipped_by_reason'    => $skipped_by_reason,
 			'candidates_by_signal' => $candidates_by_signal,
 		);
+
+		if ( null !== $age_filter ) {
+			unset( $age_filter['threshold_unix'] );
+			$summary['age_filter'] = $age_filter;
+		}
+
+		return $summary;
+	}
+
+	/**
+	 * Parse a compact cleanup age duration.
+	 *
+	 * @param string $duration Duration like 7d, 24h, 30m, or 60s.
+	 * @return int|\WP_Error Seconds on success.
+	 */
+	private function parse_worktree_cleanup_duration( string $duration ): int|\WP_Error {
+		if ( ! preg_match( '/^(\d+)([smhdw])$/', trim( $duration ), $matches ) ) {
+			return new \WP_Error( 'invalid_cleanup_age_filter', 'Invalid --older-than duration. Use a compact value like 7d, 24h, 30m, or 60s.', array( 'status' => 400 ) );
+		}
+
+		$value = (int) $matches[1];
+		if ( $value <= 0 ) {
+			return new \WP_Error( 'invalid_cleanup_age_filter', 'Invalid --older-than duration. Duration must be greater than zero.', array( 'status' => 400 ) );
+		}
+
+		$unit_seconds = array(
+			's' => 1,
+			'm' => 60,
+			'h' => 3600,
+			'd' => 86400,
+			'w' => 604800,
+		);
+
+		return $value * $unit_seconds[ $matches[2] ];
 	}
 
 	/**
