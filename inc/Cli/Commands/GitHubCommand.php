@@ -14,6 +14,7 @@ namespace DataMachineCode\Cli\Commands;
 use WP_CLI;
 use DataMachine\Cli\BaseCommand;
 use DataMachineCode\Abilities\GitHubAbilities;
+use DataMachineCode\GitHub\PrReviewFlowInstaller;
 use DataMachineCode\GitHub\PrReviewFlowScaffold;
 
 defined( 'ABSPATH' ) || exit;
@@ -528,12 +529,12 @@ class GitHubCommand extends BaseCommand {
 	}
 
 	/**
-	 * Scaffold a GitHub PR review flow definition.
+	 * Scaffold or install a GitHub PR review flow definition.
 	 *
 	 * ## OPTIONS
 	 *
 	 * <action>
-	 * : Scaffold action. Currently supports: create.
+	 * : Review-flow action. Supports: create, install.
 	 *
 	 * [--repo=<repo>]
 	 * : Repository in owner/repo format. Falls back to default repo in settings.
@@ -563,6 +564,30 @@ class GitHubCommand extends BaseCommand {
 	 * default: opened,reopened,synchronize,ready_for_review
 	 * ---
 	 *
+	 * [--mode=<mode>]
+	 * : create action mode. `scaffold` preserves the historical JSON-only output; `install` creates the Data Machine pipeline/flow.
+	 * ---
+	 * default: scaffold
+	 * options:
+	 *   - scaffold
+	 *   - install
+	 * ---
+	 *
+	 * [--secret-id=<id>]
+	 * : Webhook secret roster id used when installing. A secret is generated unless --secret is supplied.
+	 * ---
+	 * default: github_webhook
+	 * ---
+	 *
+	 * [--secret=<secret>]
+	 * : Explicit webhook secret. Prefer the generated secret to avoid putting secrets in shell history.
+	 *
+	 * [--allow-drafts]
+	 * : Allow draft pull_request events through the GitHub verifier.
+	 *
+	 * [--force]
+	 * : Install even when an existing DMC PR review flow marker exists for the repo.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -579,12 +604,17 @@ class GitHubCommand extends BaseCommand {
 	 *       --name="DMC PR review" \
 	 *       --comment-mode=managed
 	 *
+	 *     wp datamachine-code github review-flow install \
+	 *       --repo=Extra-Chill/data-machine-code \
+	 *       --agent=code-reviewer \
+	 *       --secret-id=github_pr_review
+	 *
 	 * @subcommand review-flow
 	 */
 	public function review_flow( array $args, array $assoc_args ): void {
 		$action = $args[0] ?? '';
-		if ( 'create' !== $action ) {
-			WP_CLI::error( 'Usage: wp datamachine-code github review-flow create [--repo=<owner/repo>] [--agent=<agent>] [--name=<name>] [--comment-mode=<managed|append|dry_run>] [--actions=<csv>]' );
+		if ( ! in_array( $action, array( 'create', 'install' ), true ) ) {
+			WP_CLI::error( 'Usage: wp datamachine-code github review-flow <create|install> [--repo=<owner/repo>] [--agent=<agent>] [--name=<name>] [--comment-mode=<managed|append|dry_run>] [--actions=<csv>]' );
 			return;
 		}
 
@@ -594,13 +624,36 @@ class GitHubCommand extends BaseCommand {
 			return;
 		}
 
-		$definition = PrReviewFlowScaffold::build( array(
+		$options = array(
 			'repo'         => $repo,
 			'agent'        => $assoc_args['agent'] ?? '',
 			'name'         => $assoc_args['name'] ?? 'GitHub PR review',
 			'comment_mode' => $assoc_args['comment-mode'] ?? 'managed',
 			'actions'      => $assoc_args['actions'] ?? PrReviewFlowScaffold::DEFAULT_ACTIONS,
-		) );
+			'secret_id'    => $assoc_args['secret-id'] ?? 'github_webhook',
+			'secret'       => $assoc_args['secret'] ?? '',
+			'allow_drafts' => ! empty( $assoc_args['allow-drafts'] ),
+			'force'        => ! empty( $assoc_args['force'] ),
+		);
+
+		$mode = 'install' === $action ? 'install' : (string) ( $assoc_args['mode'] ?? 'scaffold' );
+		if ( ! in_array( $mode, array( 'scaffold', 'install' ), true ) ) {
+			WP_CLI::error( 'Invalid --mode. Expected scaffold or install.' );
+			return;
+		}
+
+		if ( 'install' === $mode ) {
+			$installed = PrReviewFlowInstaller::install( $options );
+			if ( is_wp_error( $installed ) ) {
+				WP_CLI::error( $installed->get_error_message() );
+				return;
+			}
+
+			WP_CLI::line( wp_json_encode( $installed, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
+			return;
+		}
+
+		$definition = PrReviewFlowScaffold::build( $options );
 
 		WP_CLI::line( wp_json_encode( $definition, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
 	}
