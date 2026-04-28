@@ -1068,8 +1068,16 @@ class WorkspaceCommand extends BaseCommand {
 	 *   signal (cleanup only). Faster, but misses merged branches where the
 	 *   remote branch wasn't auto-deleted.
 	 *
+	 * [--verbose]
+	 * : Show every cleanup row instead of concise samples (cleanup only).
+	 *
+	 * [--only=<section>]
+	 * : Limit cleanup rows to one section or reason code. Supported values:
+	 *   candidates, removed, no_merge_signal, dirty_worktree,
+	 *   unpushed_commits, missing_metadata, external_worktree.
+	 *
 	 * [--format=<format>]
-	 * : Output format for list (table, json, csv, yaml).
+	 * : Output format for list and cleanup (table, json, csv, yaml).
 	 *
 	 * ## EXAMPLES
 	 *
@@ -1240,17 +1248,23 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				$items = array_map(
 					fn( $wt ) => array(
-						'handle' => $wt['handle'] ?? '',
-						'repo'   => $wt['repo'] ?? '',
-						'kind'   => ! empty( $wt['is_primary'] ) ? 'primary' : 'worktree',
-						'branch' => $wt['branch'] ?? '-',
-						'head'   => isset( $wt['head'] ) ? substr( (string) $wt['head'], 0, 7 ) : '-',
-						'dirty'  => (int) ( $wt['dirty'] ?? 0 ),
-						'path'   => $wt['path'] ?? '',
+						'handle'     => $wt['handle'] ?? '',
+						'repo'       => $wt['repo'] ?? '',
+						'kind'       => ! empty( $wt['is_primary'] ) ? 'primary' : 'worktree',
+						'branch'     => $wt['branch'] ?? '-',
+						'head'       => isset( $wt['head'] ) ? substr( (string) $wt['head'], 0, 7 ) : '-',
+						'dirty'      => (int) ( $wt['dirty'] ?? 0 ),
+						'created_at' => $wt['created_at'] ?? null,
+						'metadata'   => $wt['metadata'] ?? null,
+						'path'       => $wt['path'] ?? '',
 					),
 					$worktrees
 				);
-				$this->format_items( $items, array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'path' ), $assoc_args, 'handle' );
+				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'created_at', 'path' );
+				if ( in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
+					$fields[] = 'metadata';
+				}
+				$this->format_items( $items, $fields, $assoc_args, 'handle' );
 				return;
 
 			case 'prune':
@@ -1263,49 +1277,7 @@ class WorkspaceCommand extends BaseCommand {
 				return;
 
 			case 'cleanup':
-				$candidates = $result['candidates'] ?? array();
-				$removed    = $result['removed'] ?? array();
-				$skipped    = $result['skipped'] ?? array();
-				$dry_run    = ! empty( $result['dry_run'] );
-
-				if ( empty( $candidates ) && empty( $skipped ) ) {
-					WP_CLI::log( 'No worktrees found.' );
-					return;
-				}
-
-				if ( ! empty( $candidates ) ) {
-					WP_CLI::log( $dry_run ? 'Would remove:' : 'Removed:' );
-					$rows = array_map(
-						fn( $c ) => array(
-							'handle' => $c['handle'] ?? '',
-							'branch' => $c['branch'] ?? '',
-							'signal' => $c['signal'] ?? '',
-							'reason' => $c['reason'] ?? '',
-						),
-						$candidates
-					);
-					$this->format_items( $rows, array( 'handle', 'branch', 'signal', 'reason' ), $assoc_args, 'handle' );
-				}
-
-				if ( ! empty( $skipped ) ) {
-					WP_CLI::log( '' );
-					WP_CLI::log( 'Skipped:' );
-					$rows = array_map(
-						fn( $s ) => array(
-							'handle' => $s['handle'] ?? '',
-							'reason' => $s['reason'] ?? '',
-						),
-						$skipped
-					);
-					$this->format_items( $rows, array( 'handle', 'reason' ), $assoc_args, 'handle' );
-				}
-
-				if ( $dry_run ) {
-					WP_CLI::log( '' );
-					WP_CLI::success( sprintf( '%d worktree(s) would be removed. Re-run without --dry-run to apply.', count( $candidates ) ) );
-				} else {
-					WP_CLI::success( sprintf( 'Removed %d worktree(s); %d skipped.', count( $removed ), count( $skipped ) ) );
-				}
+				$this->render_worktree_cleanup_result( $result, $assoc_args );
 				return;
 
 			case 'add':
@@ -1364,6 +1336,179 @@ class WorkspaceCommand extends BaseCommand {
 				WP_CLI::success( $result['message'] ?? 'Worktree operation complete.' );
 				return;
 		}
+	}
+
+	/**
+	 * Render cleanup output with a machine-safe JSON contract and concise tables.
+	 *
+	 * @param array $result     Cleanup ability result.
+	 * @param array $assoc_args CLI assoc args.
+	 * @return void
+	 */
+	private function render_worktree_cleanup_result( array $result, array $assoc_args ): void {
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
+		$only   = isset( $assoc_args['only'] ) ? (string) $assoc_args['only'] : '';
+		$report = $this->filter_worktree_cleanup_report( $result, $only );
+
+		if ( 'json' === $format ) {
+			$json = wp_json_encode( $report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+			WP_CLI::log( false === $json ? '{}' : $json );
+			return;
+		}
+
+		$candidates = $report['candidates'] ?? array();
+		$removed    = $report['removed'] ?? array();
+		$skipped    = $report['skipped'] ?? array();
+		$summary    = $report['summary'] ?? array();
+		$dry_run    = ! empty( $report['dry_run'] );
+		$verbose    = ! empty( $assoc_args['verbose'] );
+		$limit      = $verbose ? PHP_INT_MAX : 10;
+
+		if ( empty( $candidates ) && empty( $removed ) && empty( $skipped ) ) {
+			WP_CLI::log( 'No worktrees found.' );
+			return;
+		}
+
+		WP_CLI::log( 'Summary:' );
+		$summary_rows = array(
+			array(
+				'metric' => 'would_remove',
+				'count'  => (int) ( $summary['would_remove'] ?? count( $candidates ) ),
+			),
+			array(
+				'metric' => 'removed',
+				'count'  => (int) ( $summary['removed'] ?? count( $removed ) ),
+			),
+			array(
+				'metric' => 'skipped',
+				'count'  => (int) ( $summary['skipped'] ?? count( $skipped ) ),
+			),
+		);
+		foreach ( (array) ( $summary['skipped_by_reason'] ?? array() ) as $reason_code => $count ) {
+			$summary_rows[] = array(
+				'metric' => 'skipped:' . $reason_code,
+				'count'  => (int) $count,
+			);
+		}
+		$this->format_items( $summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric' );
+
+		if ( '' !== $only ) {
+			WP_CLI::log( sprintf( 'Filter: %s', $only ) );
+		}
+
+		if ( ! empty( $candidates ) && ( '' === $only || 'candidates' === $only ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( $dry_run ? 'Would remove:' : 'Candidates:' );
+			$candidate_rows = array_map(
+				fn( $c ) => array(
+					'handle' => $c['handle'] ?? '',
+					'branch' => $c['branch'] ?? '',
+					'signal' => $c['signal'] ?? '',
+					'reason' => $c['reason'] ?? '',
+				),
+				array_slice( $candidates, 0, $limit )
+			);
+			$this->format_items( $candidate_rows, array( 'handle', 'branch', 'signal', 'reason' ), array( 'format' => 'table' ), 'handle' );
+			$this->render_cleanup_truncation_hint( count( $candidates ), $limit, 'candidate rows' );
+		}
+
+		if ( ! empty( $removed ) && ( '' === $only || 'removed' === $only ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Removed:' );
+			$removed_rows = array_map(
+				fn( $c ) => array(
+					'handle' => $c['handle'] ?? '',
+					'branch' => $c['branch'] ?? '',
+					'signal' => $c['signal'] ?? '',
+					'reason' => $c['reason'] ?? '',
+				),
+				array_slice( $removed, 0, $limit )
+			);
+			$this->format_items( $removed_rows, array( 'handle', 'branch', 'signal', 'reason' ), array( 'format' => 'table' ), 'handle' );
+			$this->render_cleanup_truncation_hint( count( $removed ), $limit, 'removed rows' );
+		}
+
+		if ( ! empty( $skipped ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Skipped:' );
+			$skipped_rows = array_map(
+				fn( $s ) => array(
+					'handle'       => $s['handle'] ?? '',
+					'reason_code'  => $s['reason_code'] ?? '',
+					'reason'       => $s['reason'] ?? '',
+					'repo'         => $s['repo'] ?? '',
+					'branch'       => $s['branch'] ?? '',
+					'path'         => $s['path'] ?? '',
+					'primary_path' => $s['primary_path'] ?? '',
+					'missing'      => implode( ',', (array) ( $s['missing_fields'] ?? array() ) ),
+					'hint'         => $s['hint'] ?? '',
+				),
+				array_slice( $skipped, 0, $limit )
+			);
+			$this->format_items( $skipped_rows, array( 'handle', 'reason_code', 'reason', 'repo', 'branch', 'path', 'primary_path', 'missing', 'hint' ), array( 'format' => 'table' ), 'handle' );
+			$this->render_cleanup_truncation_hint( count( $skipped ), $limit, 'skipped rows' );
+		}
+
+		WP_CLI::log( '' );
+		if ( $dry_run ) {
+			WP_CLI::success( sprintf( '%d worktree(s) would be removed. Re-run without --dry-run to apply.', count( $result['candidates'] ?? array() ) ) );
+			return;
+		}
+		WP_CLI::success( sprintf( 'Removed %d worktree(s); %d skipped.', count( $result['removed'] ?? array() ), count( $result['skipped'] ?? array() ) ) );
+	}
+
+	/**
+	 * Filter cleanup row arrays for --only without changing summary counts.
+	 *
+	 * @param array  $report Cleanup report.
+	 * @param string $only   Section or reason-code filter.
+	 * @return array
+	 */
+	private function filter_worktree_cleanup_report( array $report, string $only ): array {
+		if ( '' === $only ) {
+			return $report;
+		}
+
+		$aliases = array(
+			'dirty'            => 'dirty_worktree',
+			'unpushed'         => 'unpushed_commits',
+			'missing-metadata' => 'missing_metadata',
+			'external'         => 'external_worktree',
+		);
+		$only    = $aliases[ $only ] ?? $only;
+
+		if ( 'candidates' !== $only ) {
+			$report['candidates'] = array();
+		}
+		if ( 'removed' !== $only ) {
+			$report['removed'] = array();
+		}
+
+		if ( ! in_array( $only, array( 'candidates', 'removed' ), true ) ) {
+			$report['skipped'] = array_values( array_filter(
+				(array) ( $report['skipped'] ?? array() ),
+				fn( $row ) => (string) ( $row['reason_code'] ?? '' ) === $only
+			) );
+		} else {
+			$report['skipped'] = array();
+		}
+
+		return $report;
+	}
+
+	/**
+	 * Print a concise-output truncation hint.
+	 *
+	 * @param int    $total Total rows.
+	 * @param int    $limit Rendered row limit.
+	 * @param string $label Row label.
+	 * @return void
+	 */
+	private function render_cleanup_truncation_hint( int $total, int $limit, string $label ): void {
+		if ( $total <= $limit ) {
+			return;
+		}
+		WP_CLI::log( sprintf( 'Showing %d of %d %s. Re-run with --verbose for all rows or --only=<reason_code> to filter.', $limit, $total, $label ) );
 	}
 
 	/**

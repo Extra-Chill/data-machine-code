@@ -130,6 +130,10 @@ namespace {
 						'schema'  => 'data-machine-code/pr-homeboy-review/v1',
 						'status'  => 'passed',
 					),
+					'datamachine/get-github-pr-documentation-impact' => array(
+						'success' => true,
+						'packet'  => array( 'schema' => 'data-machine-code/pr-documentation-impact/v1' ),
+					),
 					default => array( 'success' => true ),
 				};
 			}
@@ -244,6 +248,20 @@ namespace {
 				'pull_number' => 111,
 				'head_sha'    => 'abc123',
 				'base_ref'    => 'main',
+			),
+		),
+		'github_pr_documentation_impact' => array(
+			'ability'  => 'datamachine/get-github-pr-documentation-impact',
+			'method'   => 'handlePullDocumentationImpact',
+			'callback' => array( GitHubAbilities::class, 'getPullDocumentationImpact' ),
+			'required' => array( 'repo', 'pull_number' ),
+			'optional' => array( 'head_sha', 'base_ref', 'docs_paths' ),
+			'params'   => array(
+				'repo'        => 'Extra-Chill/data-machine-code',
+				'pull_number' => 110,
+				'head_sha'    => 'abc123',
+				'base_ref'    => 'main',
+				'docs_paths'  => array( 'README.md', 'docs/' ),
 			),
 		),
 	);

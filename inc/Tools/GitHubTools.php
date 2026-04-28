@@ -61,6 +61,10 @@ class GitHubTools extends BaseTool {
 			'access_level' => 'editor',
 			'ability'      => 'datamachine-code/run-pr-homeboy-review',
 		) );
+		$this->registerTool( 'github_pr_documentation_impact', array( $this, 'getPullDocumentationImpactDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine/get-github-pr-documentation-impact',
+		) );
 		$this->registerTool( 'list_github_tree', array( $this, 'getListTreeDefinition' ), $contexts, array(
 			'access_level' => 'editor',
 			'ability'      => 'datamachine/list-github-tree',
@@ -109,6 +113,7 @@ class GitHubTools extends BaseTool {
 			'get_github_homeboy_ci_results',
 			'get_github_pull_review_context',
 			'run_pr_homeboy_review',
+			'github_pr_documentation_impact',
 			'list_github_tree',
 			'get_github_file',
 			'list_github_repos',
@@ -890,6 +895,56 @@ class GitHubTools extends BaseTool {
 					'type'        => 'string',
 					'required'    => false,
 					'description' => 'Optional base ref. Defaults to the pull request base ref.',
+				),
+			),
+		);
+	}
+
+	/**
+	 * Handle github_pr_documentation_impact tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handlePullDocumentationImpact( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine/get-github-pr-documentation-impact', 'github_pr_documentation_impact', $parameters );
+	}
+
+	/**
+	 * Get tool definition for github_pr_documentation_impact.
+	 *
+	 * @return array
+	 */
+	public function getPullDocumentationImpactDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handlePullDocumentationImpact',
+			'description' => 'Build a heuristic documentation-impact packet for a GitHub pull request. Use this before documentation/content freshness workflows to identify changed command, ability/tool, REST/webhook, settings, and public PHP surfaces with evidence.',
+			'parameters'  => array(
+				'repo'        => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'pull_number' => array(
+					'type'        => 'integer',
+					'required'    => true,
+					'description' => 'Pull request number.',
+				),
+				'head_sha'    => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Optional expected pull request head SHA. Returns an error if GitHub reports a different head SHA.',
+				),
+				'base_ref'    => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Optional base ref used for docs tree lookup. Defaults to the PR base ref.',
+				),
+				'docs_paths'  => array(
+					'type'        => 'array',
+					'required'    => false,
+					'description' => 'Optional documentation path allow-list used when suggesting likely stale docs.',
 				),
 			),
 		);

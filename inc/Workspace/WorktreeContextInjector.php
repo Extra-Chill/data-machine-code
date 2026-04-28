@@ -14,9 +14,9 @@
  * worktree's `info/exclude` file, so the tracked `.gitignore` is never touched
  * and other worktrees / the primary checkout are unaffected.
  *
- * Per-worktree metadata (`created_from_site`) is persisted in the
- * `datamachine_worktree_metadata` site option so later `refresh-context`
- * calls can resolve back to the originating site.
+ * Per-worktree lifecycle metadata is persisted in the
+ * `datamachine_worktree_metadata` site option so later list, cleanup, and
+ * `refresh-context` calls can reason about where a worktree came from.
  *
  * Cross-machine federation is explicitly out of scope: the originating site
  * is always the site invoking this code; if that site is not reachable
@@ -36,13 +36,8 @@ class WorktreeContextInjector {
 	/**
 	 * Site option key used to persist per-worktree metadata.
 	 *
-	 * Shape: array<string, array{
-	 *   site_url: string,
-	 *   site_name: string,
-	 *   agent_slug: string,
-	 *   abspath: string,
-	 *   created_at: string,
-	 * }> keyed by workspace handle.
+	 * Shape: array<string, array<string,mixed>> keyed by workspace handle.
+	 * Older records may contain only the original context-injection fields.
 	 */
 	public const METADATA_OPTION = 'datamachine_worktree_metadata';
 
@@ -63,6 +58,39 @@ class WorktreeContextInjector {
 	 * Site-provided sections that should be visible before long memory snapshots.
 	 */
 	private const PRIORITY_RULE_SECTIONS = array( 'Minion Session Routing' );
+
+	/**
+	 * Build best-effort lifecycle metadata for a newly-created worktree.
+	 *
+	 * @param array $args Worktree creation context.
+	 * @return array<string,mixed>
+	 */
+	public static function build_lifecycle_metadata( array $args = array() ): array {
+		$site_url  = function_exists( 'home_url' ) ? (string) home_url() : '';
+		$site_name = function_exists( 'get_bloginfo' ) ? (string) get_bloginfo( 'name' ) : '';
+		$user      = self::resolve_origin_user();
+		$agent     = self::resolve_origin_agent();
+
+		$metadata = array(
+			'created_at'       => gmdate( 'c' ),
+			'origin_site'      => '' !== $site_name ? $site_name : ( '' !== $site_url ? $site_url : null ),
+			'origin_site_url'  => '' !== $site_url ? $site_url : null,
+			'origin_site_name' => '' !== $site_name ? $site_name : null,
+			'origin_agent'     => $agent,
+			'origin_user'      => $user,
+			'base_ref'         => isset( $args['base_ref'] ) && '' !== (string) $args['base_ref'] ? (string) $args['base_ref'] : null,
+			'base_source'      => isset( $args['base_source'] ) && '' !== (string) $args['base_source'] ? (string) $args['base_source'] : null,
+			'branch'           => isset( $args['branch'] ) && '' !== (string) $args['branch'] ? (string) $args['branch'] : null,
+			'repo'             => isset( $args['repo'] ) && '' !== (string) $args['repo'] ? (string) $args['repo'] : null,
+		);
+
+		// Preserve the original context metadata field names for existing callers.
+		$metadata['site_url']   = $metadata['origin_site_url'] ?? '';
+		$metadata['site_name']  = $metadata['origin_site_name'] ?? '';
+		$metadata['agent_slug'] = is_string( $agent ) ? $agent : '';
+
+		return array_filter( $metadata, fn( $value ) => null !== $value );
+	}
 
 	/**
 	 * Build a payload capturing the originating site's agent context.
@@ -305,12 +333,12 @@ class WorktreeContextInjector {
 	}
 
 	/**
-	 * Persist `created_from_site` metadata for a worktree handle.
+	 * Persist lifecycle metadata for a worktree handle.
 	 *
-	 * @param string $handle  Workspace handle.
-	 * @param array  $payload Payload from {@see self::build_payload()}.
+	 * @param string $handle   Workspace handle.
+	 * @param array  $metadata Metadata fields.
 	 */
-	public static function store_metadata( string $handle, array $payload ): void {
+	public static function store_lifecycle_metadata( string $handle, array $metadata ): void {
 		if ( ! function_exists( 'get_option' ) || ! function_exists( 'update_option' ) ) {
 			return;
 		}
@@ -320,15 +348,79 @@ class WorktreeContextInjector {
 			$all = array();
 		}
 
-		$all[ $handle ] = array(
-			'site_url'   => (string) ( $payload['site_url'] ?? '' ),
-			'site_name'  => (string) ( $payload['site_name'] ?? '' ),
-			'agent_slug' => (string) ( $payload['agent_slug'] ?? '' ),
-			'abspath'    => (string) ( $payload['abspath'] ?? '' ),
-			'created_at' => (string) ( $payload['timestamp'] ?? gmdate( 'c' ) ),
-		);
+		$existing       = isset( $all[ $handle ] ) && is_array( $all[ $handle ] ) ? $all[ $handle ] : array();
+		$all[ $handle ] = array_merge( $existing, $metadata );
 
 		update_option( self::METADATA_OPTION, $all, false );
+	}
+
+	/**
+	 * Persist context-injection metadata for a worktree handle.
+	 *
+	 * @param string $handle  Workspace handle.
+	 * @param array  $payload Payload from {@see self::build_payload()}.
+	 */
+	public static function store_metadata( string $handle, array $payload ): void {
+		self::store_lifecycle_metadata( $handle, array(
+			'site_url'         => (string) ( $payload['site_url'] ?? '' ),
+			'site_name'        => (string) ( $payload['site_name'] ?? '' ),
+			'agent_slug'       => (string) ( $payload['agent_slug'] ?? '' ),
+			'origin_site'      => '' !== (string) ( $payload['site_name'] ?? '' ) ? (string) $payload['site_name'] : (string) ( $payload['site_url'] ?? '' ),
+			'origin_site_url'  => (string) ( $payload['site_url'] ?? '' ),
+			'origin_site_name' => (string) ( $payload['site_name'] ?? '' ),
+			'origin_agent'     => (string) ( $payload['agent_slug'] ?? '' ),
+			'abspath'          => (string) ( $payload['abspath'] ?? '' ),
+			'created_at'       => (string) ( $payload['timestamp'] ?? gmdate( 'c' ) ),
+		) );
+	}
+
+	/**
+	 * Resolve a non-sensitive current user summary.
+	 *
+	 * @return array{id:int,login:string,display_name:string}|null
+	 */
+	private static function resolve_origin_user(): ?array {
+		if ( ! function_exists( 'get_current_user_id' ) ) {
+			return null;
+		}
+		$user_id = (int) get_current_user_id();
+		if ( $user_id <= 0 ) {
+			return null;
+		}
+
+		$summary = array(
+			'id'           => $user_id,
+			'login'        => '',
+			'display_name' => '',
+		);
+
+		if ( function_exists( 'get_userdata' ) ) {
+			$user = get_userdata( $user_id );
+			if ( is_object( $user ) ) {
+				$summary['login']        = (string) ( $user->user_login ?? '' );
+				$summary['display_name'] = (string) ( $user->display_name ?? '' );
+			}
+		}
+
+		return $summary;
+	}
+
+	/**
+	 * Resolve the active Data Machine agent slug when available.
+	 */
+	private static function resolve_origin_agent(): ?string {
+		if ( ! class_exists( '\DataMachine\Core\FilesRepository\DirectoryManager' ) ) {
+			return null;
+		}
+
+		try {
+			$dm         = new \DataMachine\Core\FilesRepository\DirectoryManager();
+			$user_id    = method_exists( $dm, 'get_effective_user_id' ) ? $dm->get_effective_user_id( 0 ) : 0;
+			$agent_slug = method_exists( $dm, 'resolve_agent_slug' ) ? $dm->resolve_agent_slug( array( 'user_id' => $user_id ) ) : '';
+			return '' !== (string) $agent_slug ? (string) $agent_slug : null;
+		} catch ( \Throwable $e ) {
+			return null;
+		}
 	}
 
 	/**
