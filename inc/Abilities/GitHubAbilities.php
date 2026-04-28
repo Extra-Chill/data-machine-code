@@ -17,6 +17,7 @@ namespace DataMachineCode\Abilities;
 
 use DataMachine\Abilities\PermissionHelper;
 use DataMachine\Core\PluginSettings;
+use DataMachineCode\GitHub\PrHomeboyReviewRunner;
 use DataMachineCode\GitHub\PrReviewEscalationPolicy;
 use DataMachineCode\Support\GitHubCredentialResolver;
 
@@ -28,6 +29,10 @@ if ( ! class_exists( GitHubCredentialResolver::class ) ) {
 
 if ( ! class_exists( PrReviewEscalationPolicy::class ) ) {
 	require_once dirname( __DIR__ ) . '/GitHub/PrReviewEscalationPolicy.php';
+}
+
+if ( ! class_exists( PrHomeboyReviewRunner::class ) ) {
+	require_once dirname( __DIR__ ) . '/GitHub/PrHomeboyReviewRunner.php';
 }
 
 class GitHubAbilities {
@@ -676,6 +681,55 @@ class GitHubAbilities {
 						),
 					),
 					'execute_callback'    => array( self::class, 'getPullReviewContext' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine-code/run-pr-homeboy-review',
+				array(
+					'label'               => 'Run PR Homeboy Review',
+					'description'         => 'Create or reuse a DMC worktree for a pull request, check out its exact head SHA, and run constrained Homeboy checks.',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'pull_number', 'head_sha' ),
+						'properties' => array(
+							'repo'        => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'pull_number' => array(
+								'type'        => 'integer',
+								'description' => 'Pull request number.',
+							),
+							'head_sha'    => array(
+								'type'        => 'string',
+								'description' => 'Expected pull request head SHA. Execution fails closed when GitHub reports a different head.',
+							),
+							'base_ref'    => array(
+								'type'        => 'string',
+								'description' => 'Optional base ref for worktree creation and audit changed-since. Defaults to the pull request base ref.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'     => array( 'type' => 'boolean' ),
+							'schema'      => array( 'type' => 'string' ),
+							'repo'        => array( 'type' => 'string' ),
+							'pull_number' => array( 'type' => 'integer' ),
+							'head_sha'    => array( 'type' => 'string' ),
+							'base_ref'    => array( 'type' => 'string' ),
+							'status'      => array( 'type' => 'string' ),
+							'commands'    => array( 'type' => 'array' ),
+							'worktree'    => array( 'type' => 'object' ),
+							'checkout'    => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'runPrHomeboyReview' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
 				)
@@ -1407,6 +1461,17 @@ class GitHubAbilities {
 			'success' => true,
 			'context' => $context,
 		);
+	}
+
+	/**
+	 * Run checkout-backed Homeboy review checks for a pull request.
+	 *
+	 * @param array $input Required: repo, pull_number, head_sha. Optional: base_ref.
+	 * @return array|\WP_Error
+	 */
+	public static function runPrHomeboyReview( array $input ): array|\WP_Error {
+		$runner = new PrHomeboyReviewRunner();
+		return $runner->run( $input );
 	}
 
 	/**

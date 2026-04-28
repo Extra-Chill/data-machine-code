@@ -125,6 +125,11 @@ namespace {
 						'success' => true,
 						'context' => array( 'metadata' => array( 'github_type' => 'pull_review_context' ) ),
 					),
+					'datamachine-code/run-pr-homeboy-review' => array(
+						'success' => true,
+						'schema'  => 'data-machine-code/pr-homeboy-review/v1',
+						'status'  => 'passed',
+					),
 					'datamachine/get-github-pr-documentation-impact' => array(
 						'success' => true,
 						'packet'  => array( 'schema' => 'data-machine-code/pr-documentation-impact/v1' ),
@@ -230,6 +235,19 @@ namespace {
 				'include_check_output'    => false,
 				'include_homeboy_ci'      => true,
 				'artifact_name'           => 'homeboy-ci-results',
+			),
+		),
+		'run_pr_homeboy_review'          => array(
+			'ability'  => 'datamachine-code/run-pr-homeboy-review',
+			'method'   => 'handleRunPrHomeboyReview',
+			'callback' => array( GitHubAbilities::class, 'runPrHomeboyReview' ),
+			'required' => array( 'repo', 'pull_number', 'head_sha' ),
+			'optional' => array( 'base_ref' ),
+			'params'   => array(
+				'repo'        => 'Extra-Chill/data-machine-code',
+				'pull_number' => 111,
+				'head_sha'    => 'abc123',
+				'base_ref'    => 'main',
 			),
 		),
 		'github_pr_documentation_impact' => array(
