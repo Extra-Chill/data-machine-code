@@ -1046,6 +1046,7 @@ class WorkspaceAbilities {
 							'candidates' => array( 'type' => 'array' ),
 							'removed'    => array( 'type' => 'array' ),
 							'skipped'    => array( 'type' => 'array' ),
+							'summary'    => array( 'type' => 'object' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreeCleanup' ),

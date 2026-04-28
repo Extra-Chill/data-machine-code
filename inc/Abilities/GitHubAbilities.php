@@ -17,12 +17,17 @@ namespace DataMachineCode\Abilities;
 
 use DataMachine\Abilities\PermissionHelper;
 use DataMachine\Core\PluginSettings;
+use DataMachineCode\GitHub\PrReviewEscalationPolicy;
 use DataMachineCode\Support\GitHubCredentialResolver;
 
 defined( 'ABSPATH' ) || exit;
 
 if ( ! class_exists( GitHubCredentialResolver::class ) ) {
 	require_once dirname( __DIR__ ) . '/Support/GitHubCredentialResolver.php';
+}
+
+if ( ! class_exists( PrReviewEscalationPolicy::class ) ) {
+	require_once dirname( __DIR__ ) . '/GitHub/PrReviewEscalationPolicy.php';
 }
 
 class GitHubAbilities {
@@ -721,6 +726,52 @@ class GitHubAbilities {
 						),
 					),
 					'execute_callback'    => array( self::class, 'getRepoReviewProfile' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/get-github-pr-documentation-impact',
+				array(
+					'label'               => 'Get GitHub PR Documentation Impact',
+					'description'         => 'Build a heuristic documentation-impact packet for a GitHub pull request',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'pull_number' ),
+						'properties' => array(
+							'repo'        => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'pull_number' => array(
+								'type'        => 'integer',
+								'description' => 'Pull request number.',
+							),
+							'head_sha'    => array(
+								'type'        => 'string',
+								'description' => 'Optional expected pull request head SHA.',
+							),
+							'base_ref'    => array(
+								'type'        => 'string',
+								'description' => 'Optional base ref used for docs tree lookup. Defaults to the PR base ref.',
+							),
+							'docs_paths'  => array(
+								'type'        => array( 'array', 'string' ),
+								'description' => 'Optional docs path allow-list, as an array or comma/newline-separated string.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'packet'  => array( 'type' => 'object' ),
+							'error'   => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'getPullDocumentationImpact' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
 				)
@@ -1442,6 +1493,78 @@ class GitHubAbilities {
 	}
 
 	/**
+	 * Get one pull request as a documentation-impact packet.
+	 *
+	 * @param array         $input Required: repo, pull_number. Optional: head_sha, base_ref, docs_paths.
+	 * @param callable|null $tree_fetcher Optional test seam: fn(string $ref): array|WP_Error.
+	 * @return array|\WP_Error Success payload or error.
+	 */
+	public static function getPullDocumentationImpact( array $input, ?callable $tree_fetcher = null ): array|\WP_Error {
+		$repo        = sanitize_text_field( $input['repo'] ?? '' );
+		$pull_number = (int) ( $input['pull_number'] ?? $input['pr_number'] ?? 0 );
+
+		if ( empty( $repo ) || $pull_number <= 0 ) {
+			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and pull_number are required.', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPat();
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$pull = self::getPull( array(
+			'repo'        => $repo,
+			'pull_number' => $pull_number,
+		) );
+		if ( is_wp_error( $pull ) ) {
+			return $pull;
+		}
+
+		$files = array();
+		$page  = 1;
+		do {
+			$file_page = self::listPullFiles( array(
+				'repo'        => $repo,
+				'pull_number' => $pull_number,
+				'per_page'    => self::MAX_PER_PAGE,
+				'page'        => $page,
+			) );
+			if ( is_wp_error( $file_page ) ) {
+				return $file_page;
+			}
+
+			$page_files = $file_page['files'] ?? array();
+			$page_count = count( $page_files );
+			$files      = array_merge( $files, $page_files );
+			++$page;
+		} while ( $page_count >= self::MAX_PER_PAGE );
+
+		$docs_paths = self::normalizeContextPaths( $input['docs_paths'] ?? $input['docs_path_allowlist'] ?? array() );
+		$base_ref   = sanitize_text_field( $input['base_ref'] ?? ( $pull['pull']['base_ref'] ?? '' ) );
+		$repo_docs  = self::resolveDocumentationTreePaths( $repo, $base_ref, $docs_paths, $tree_fetcher );
+
+		$packet = self::buildDocumentationImpactPacket(
+			$repo,
+			$pull['pull'],
+			$files,
+			array(
+				'head_sha'  => sanitize_text_field( $input['head_sha'] ?? '' ),
+				'base_ref'  => $base_ref,
+				'repo_docs' => $repo_docs,
+			)
+		);
+
+		if ( is_wp_error( $packet ) ) {
+			return $packet;
+		}
+
+		return array(
+			'success' => true,
+			'packet'  => $packet,
+		);
+	}
+
+	/**
 	 * Build a deterministic repository review profile from bounded file fetchers.
 	 *
 	 * @param string   $repo         Repository in owner/repo format.
@@ -1642,6 +1765,81 @@ class GitHubAbilities {
 	}
 
 	/**
+	 * Build a heuristic documentation-impact packet from normalized PR files.
+	 *
+	 * DMC intentionally emits code-derived facts only; downstream content systems
+	 * decide which docs/wiki/content artifacts to update.
+	 */
+	public static function buildDocumentationImpactPacket( string $repo, array $pull, array $files, array $options = array() ): array|\WP_Error {
+		$pull_number = (int) ( $pull['number'] ?? 0 );
+		$head_sha    = (string) ( $pull['head_sha'] ?? '' );
+		$expected    = (string) ( $options['head_sha'] ?? '' );
+
+		if ( '' !== $expected && '' !== $head_sha && $expected !== $head_sha ) {
+			return new \WP_Error(
+				'github_pr_head_sha_mismatch',
+				sprintf( 'GitHub PR head SHA mismatch for %s#%d: expected %s, found %s.', $repo, $pull_number, $expected, $head_sha ),
+				array( 'status' => 409 )
+			);
+		}
+
+		$packet = array(
+			'schema'                   => 'data-machine-code/pr-documentation-impact/v1',
+			'repo'                     => $repo,
+			'pull_number'              => $pull_number,
+			'head_sha'                 => $head_sha,
+			'base_ref'                 => (string) ( $options['base_ref'] ?? $pull['base_ref'] ?? $pull['base'] ?? '' ),
+			'impacts'                  => array(),
+			'changed_docs'             => array(),
+			'likely_stale_docs'        => array(),
+			'suggested_search_queries' => array(),
+			'evidence'                 => array(),
+		);
+
+		$changed_docs = array();
+		$impact_keys  = array();
+		$evidence_ids = array();
+
+		foreach ( $files as $file ) {
+			$path  = (string) ( $file['filename'] ?? '' );
+			$patch = (string) ( $file['patch'] ?? '' );
+			if ( '' === $path ) {
+				continue;
+			}
+
+			if ( self::isDocumentationPath( $path ) ) {
+				$changed_docs[ $path ] = array(
+					'path'      => $path,
+					'status'    => $file['status'] ?? '',
+					'additions' => (int) ( $file['additions'] ?? 0 ),
+					'deletions' => (int) ( $file['deletions'] ?? 0 ),
+					'evidence'  => self::appendDocumentationEvidence( $packet['evidence'], $evidence_ids, $path, 'changed_doc', 'Documentation file changed in the pull request.' ),
+				);
+			}
+
+			foreach ( self::detectDocumentationImpactsForFile( $path, $patch ) as $impact ) {
+				$key = $impact['category'] . '|' . $impact['type'] . '|' . $path . '|' . ( $impact['symbol'] ?? '' );
+				if ( isset( $impact_keys[ $key ] ) ) {
+					continue;
+				}
+
+				$evidence_id = self::appendDocumentationEvidence( $packet['evidence'], $evidence_ids, $path, $impact['type'], $impact['reason'], $impact['snippet'] ?? '' );
+				unset( $impact['snippet'] );
+				$impact['path']      = $path;
+				$impact['evidence']  = array( $evidence_id );
+				$packet['impacts'][] = $impact;
+				$impact_keys[ $key ] = true;
+			}
+		}
+
+		$packet['changed_docs']             = array_values( $changed_docs );
+		$packet['likely_stale_docs']        = self::suggestLikelyStaleDocs( $packet['impacts'], array_keys( $changed_docs ), $options['repo_docs'] ?? array() );
+		$packet['suggested_search_queries'] = self::suggestDocumentationSearchQueries( $repo, $packet['impacts'], array_keys( $changed_docs ) );
+
+		return $packet;
+	}
+
+	/**
 	 * Build optional full-file context for PR review packets.
 	 *
 	 * @param string        $repo    Repository in owner/repo format.
@@ -1782,6 +1980,7 @@ class GitHubAbilities {
 
 			if ( is_wp_error( $checks ) ) {
 				$context['errors']['check_runs'] = $checks->get_error_message();
+				$context['error_codes']['check_runs'] = $checks->get_error_code();
 			} else {
 				$context['check_runs'] = array(
 					'summary' => $checks['summary'] ?? array(),
@@ -1801,6 +2000,7 @@ class GitHubAbilities {
 
 			if ( is_wp_error( $statuses ) ) {
 				$context['errors']['commit_statuses'] = $statuses->get_error_message();
+				$context['error_codes']['commit_statuses'] = $statuses->get_error_code();
 			} else {
 				$context['commit_statuses'] = array(
 					'summary' => $statuses['summary'] ?? array(),
@@ -1823,6 +2023,7 @@ class GitHubAbilities {
 
 			if ( is_wp_error( $homeboy ) ) {
 				$context['errors']['homeboy_ci_results'] = $homeboy->get_error_message();
+				$context['error_codes']['homeboy_ci_results'] = $homeboy->get_error_code();
 			} else {
 				$context['homeboy_ci_results'] = $homeboy['results'] ?? array();
 			}
@@ -1855,6 +2056,213 @@ class GitHubAbilities {
 		}
 
 		return array_keys( $normalized );
+	}
+
+	private static function resolveDocumentationTreePaths( string $repo, string $ref, array $docs_paths, ?callable $tree_fetcher = null ): array {
+		if ( ! empty( $docs_paths ) ) {
+			return array_values( array_filter( $docs_paths, array( self::class, 'isDocumentationPath' ) ) );
+		}
+
+		$tree_fetcher = $tree_fetcher ?? static function ( string $lookup_ref ) use ( $repo ): array|\WP_Error {
+			return self::getRepoTree(
+				array(
+					'repo' => $repo,
+					'ref'  => '' !== $lookup_ref ? $lookup_ref : 'HEAD',
+				)
+			);
+		};
+
+		$result = $tree_fetcher( $ref );
+		if ( is_wp_error( $result ) ) {
+			return array();
+		}
+
+		$paths = array();
+		foreach ( $result['files'] ?? array() as $file ) {
+			$path = (string) ( $file['path'] ?? $file['filename'] ?? '' );
+			if ( self::isDocumentationPath( $path ) ) {
+				$paths[ $path ] = true;
+			}
+		}
+
+		return array_keys( $paths );
+	}
+
+	private static function isDocumentationPath( string $path ): bool {
+		$path  = ltrim( strtolower( $path ), '/' );
+		$base  = basename( $path );
+		$parts = explode( '/', $path );
+
+		if ( preg_match( '/\.(md|mdx|rst|adoc|txt)$/', $path ) ) {
+			return true;
+		}
+
+		if ( in_array( $base, array( 'readme', 'readme.txt', 'handbook.txt' ), true ) ) {
+			return true;
+		}
+
+		return ! empty( array_intersect( $parts, array( 'docs', 'doc', 'documentation', 'handbook', 'wiki' ) ) );
+	}
+
+	private static function detectDocumentationImpactsForFile( string $path, string $patch ): array {
+		$path_lc  = strtolower( $path );
+		$haystack = $path . "\n" . $patch;
+		$impacts  = array();
+
+		if ( str_contains( $path_lc, '/cli/' ) || str_contains( $path_lc, 'command.php' ) || str_contains( $haystack, 'WP_CLI::add_command' ) || preg_match( '/\+\s*\$assoc_args\[[\'\"][^\'\"]+[\'\"]\]/', $patch ) ) {
+			$impacts[] = self::documentationImpact( 'wp_cli', 'changed_wp_cli_surface', 'Changed WP-CLI command surface or option handling.', $patch, self::extractWpCliSymbol( $path, $patch ) );
+		}
+
+		if ( str_contains( $path_lc, '/abilities/' ) || str_contains( $path_lc, '/tools/' ) || str_contains( $haystack, 'wp_register_ability' ) || str_contains( $haystack, 'registerTool' ) || str_contains( $haystack, 'input_schema' ) || str_contains( $haystack, 'output_schema' ) ) {
+			$impacts[] = self::documentationImpact( 'abilities_tools', 'changed_ability_or_tool_schema', 'Changed ability/tool registration or schema surface.', $patch, self::extractQuotedSymbol( $patch, '/[\'\"]datamachine\/[a-z0-9\-_]+[\'\"]/i' ) );
+		}
+
+		if ( str_contains( $path_lc, 'rest' ) || str_contains( $path_lc, 'webhook' ) || str_contains( $haystack, 'register_rest_route' ) || str_contains( $haystack, 'wp-json' ) || str_contains( $haystack, 'webhook' ) ) {
+			$impacts[] = self::documentationImpact( 'rest_webhook', 'changed_rest_or_webhook_contract', 'Changed REST endpoint, webhook verifier, payload, or scheduling contract.', $patch );
+		}
+
+		if ( str_contains( $path_lc, 'settings' ) || str_contains( $path_lc, 'config' ) || str_contains( $haystack, 'PluginSettings::' ) || preg_match( '/[\'\"](datamachine_code_|github_)[a-z0-9_\-]+[\'\"]/', $patch ) ) {
+			$impacts[] = self::documentationImpact( 'settings_config', 'changed_setting_or_config_key', 'Changed settings/config key or schema surface.', $patch, self::extractQuotedSymbol( $patch, '/[\'\"](?:datamachine_code_|github_)[a-z0-9_\-]+[\'\"]/i' ) );
+		}
+
+		if ( preg_match( '/\.php$/', $path_lc ) && preg_match( '/^\+\s*(?:final\s+|abstract\s+)?(?:class|interface|trait)\s+([A-Za-z_][A-Za-z0-9_]*)|^\+\s*(?:public\s+)?(?:static\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)|^\+\s*(?:public\s+)?const\s+([A-Z_][A-Z0-9_]*)/m', $patch ) ) {
+			$impacts[] = self::documentationImpact( 'public_php', 'changed_public_php_symbol', 'Changed public PHP class, function, method, or constant surface.', $patch, self::extractPhpSymbol( $patch ) );
+		}
+
+		return $impacts;
+	}
+
+	private static function documentationImpact( string $category, string $type, string $reason, string $patch, string $symbol = '' ): array {
+		$impact = array(
+			'category'   => $category,
+			'type'       => $type,
+			'reason'     => $reason,
+			'confidence' => '' === $patch ? 'medium' : 'high',
+			'snippet'    => self::firstAddedPatchLine( $patch ),
+		);
+
+		if ( '' !== $symbol ) {
+			$impact['symbol'] = $symbol;
+		}
+
+		return $impact;
+	}
+
+	private static function appendDocumentationEvidence( array &$evidence, array &$seen, string $path, string $kind, string $reason, string $snippet = '' ): string {
+		$key = $path . '|' . $kind . '|' . $reason . '|' . $snippet;
+		if ( isset( $seen[ $key ] ) ) {
+			return $seen[ $key ];
+		}
+
+		$id             = 'e' . ( count( $evidence ) + 1 );
+		$seen[ $key ]   = $id;
+		$evidence_entry = array(
+			'id'     => $id,
+			'path'   => $path,
+			'kind'   => $kind,
+			'reason' => $reason,
+		);
+
+		if ( '' !== $snippet ) {
+			$evidence_entry['snippet'] = $snippet;
+		}
+
+		$evidence[] = $evidence_entry;
+		return $id;
+	}
+
+	private static function suggestLikelyStaleDocs( array $impacts, array $changed_docs, array $repo_docs ): array {
+		$changed = array_fill_keys( $changed_docs, true );
+		$docs    = ! empty( $repo_docs ) ? $repo_docs : array( 'README.md', 'docs/cli.md', 'docs/abilities.md', 'docs/webhooks.md', 'docs/settings.md', 'docs/development.md' );
+		$wanted  = array();
+
+		foreach ( $impacts as $impact ) {
+			$category = $impact['category'] ?? '';
+			foreach ( $docs as $doc ) {
+				$doc_lc       = strtolower( $doc );
+				$category_doc = match ( $category ) {
+					'wp_cli' => str_contains( $doc_lc, 'cli' ) || str_contains( $doc_lc, 'command' ),
+					'abilities_tools' => str_contains( $doc_lc, 'abilit' ) || str_contains( $doc_lc, 'tool' ) || str_contains( $doc_lc, 'agent' ),
+					'rest_webhook' => str_contains( $doc_lc, 'rest' ) || str_contains( $doc_lc, 'webhook' ) || str_contains( $doc_lc, 'api' ),
+					'settings_config' => str_contains( $doc_lc, 'setting' ) || str_contains( $doc_lc, 'config' ) || str_contains( $doc_lc, 'setup' ),
+					'public_php' => str_contains( $doc_lc, 'develop' ) || str_contains( $doc_lc, 'api' ) || str_contains( $doc_lc, 'reference' ),
+					default => false,
+				};
+				$match = 'README.md' === $doc || $category_doc;
+
+				if ( $match && ! isset( $changed[ $doc ] ) ) {
+					$wanted[ $doc ]['path']       = $doc;
+					$wanted[ $doc ]['confidence'] = 'medium';
+					$wanted[ $doc ]['reasons'][]  = $category;
+				}
+			}
+		}
+
+		foreach ( $wanted as &$entry ) {
+			$entry['reasons'] = array_values( array_unique( $entry['reasons'] ?? array() ) );
+		}
+
+		return array_values( $wanted );
+	}
+
+	private static function suggestDocumentationSearchQueries( string $repo, array $impacts, array $changed_docs ): array {
+		$queries = array();
+		foreach ( $impacts as $impact ) {
+			$category  = str_replace( '_', ' ', (string) ( $impact['category'] ?? '' ) );
+			$symbol    = (string) ( $impact['symbol'] ?? '' );
+			$queries[] = trim( $repo . ' ' . $category . ' ' . $symbol );
+		}
+
+		foreach ( $changed_docs as $doc ) {
+			$queries[] = $repo . ' ' . basename( $doc );
+		}
+
+		return array_values( array_unique( array_filter( $queries ) ) );
+	}
+
+	private static function firstAddedPatchLine( string $patch ): string {
+		$lines = preg_split( '/\R/', $patch );
+		if ( false === $lines ) {
+			$lines = array();
+		}
+
+		foreach ( $lines as $line ) {
+			if ( str_starts_with( $line, '+' ) && ! str_starts_with( $line, '+++' ) ) {
+				return substr( $line, 0, 240 );
+			}
+		}
+
+		return '';
+	}
+
+	private static function extractWpCliSymbol( string $path, string $patch ): string {
+		if ( preg_match( '/WP_CLI::add_command\(\s*[\'\"]([^\'\"]+)/', $patch, $matches ) ) {
+			return $matches[1];
+		}
+
+		return basename( $path, '.php' );
+	}
+
+	private static function extractPhpSymbol( string $patch ): string {
+		if ( preg_match( '/^\+\s*(?:final\s+|abstract\s+)?(?:class|interface|trait)\s+([A-Za-z_][A-Za-z0-9_]*)/m', $patch, $matches ) ) {
+			return $matches[1];
+		}
+		if ( preg_match( '/^\+\s*(?:public\s+)?(?:static\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)/m', $patch, $matches ) ) {
+			return $matches[1];
+		}
+		if ( preg_match( '/^\+\s*(?:public\s+)?const\s+([A-Z_][A-Z0-9_]*)/m', $patch, $matches ) ) {
+			return $matches[1];
+		}
+
+		return '';
+	}
+
+	private static function extractQuotedSymbol( string $patch, string $pattern ): string {
+		if ( preg_match( $pattern, $patch, $matches ) ) {
+			return trim( $matches[0], "'\"" );
+		}
+
+		return '';
 	}
 
 	/**
@@ -2673,14 +3081,14 @@ class GitHubAbilities {
 	// HTTP Helpers
 	// -------------------------------------------------------------------------
 
-	public static function apiGet( string $url, array $query_params, string $pat ): array|\WP_Error {
+	public static function apiGet( string $url, array $query_params, string $pat, int $timeout = 30 ): array|\WP_Error {
 		if ( ! empty( $query_params ) ) {
 			$url = add_query_arg( $query_params, $url );
 		}
 
 		$response = wp_remote_get( $url, array(
 			'headers' => self::getHeaders( $pat ),
-			'timeout' => 30,
+			'timeout' => $timeout,
 		) );
 
 		return self::parseResponse( $response );
@@ -3059,6 +3467,16 @@ class GitHubAbilities {
 
 		if ( isset( $options['checks'] ) && is_array( $options['checks'] ) ) {
 			$context['checks'] = $options['checks'];
+		}
+
+		if ( false !== ( $options['include_escalation_policy'] ?? true ) ) {
+			$context['escalation_policy'] = PrReviewEscalationPolicy::evaluate(
+				$repo,
+				$pull,
+				$changed_files,
+				isset( $context['checks'] ) && is_array( $context['checks'] ) ? $context['checks'] : array(),
+				isset( $options['escalation_policy'] ) && is_array( $options['escalation_policy'] ) ? $options['escalation_policy'] : array()
+			);
 		}
 
 		return array(

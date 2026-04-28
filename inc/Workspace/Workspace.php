@@ -27,6 +27,16 @@ class Workspace {
 	const MAX_READ_SIZE = 1048576;
 
 	/**
+	 * Bound GitHub cleanup checks so one slow repo cannot stall cleanup.
+	 */
+	private const CLEANUP_GITHUB_TIMEOUT = 5;
+
+	/**
+	 * Closed PR pages to inspect per repo during cleanup.
+	 */
+	private const CLEANUP_GITHUB_MAX_PAGES = 3;
+
+	/**
 	 * @var string Resolved workspace path.
 	 */
 	private string $workspace_path;
@@ -1271,6 +1281,18 @@ class Workspace {
 			}
 		}
 
+		$lifecycle_metadata = WorktreeContextInjector::build_lifecycle_metadata(
+			array(
+				'repo'         => $repo,
+				'branch'      => $branch,
+				'base_ref'    => $created_branch ? $resolved_base : null,
+				'base_source' => $created_branch ? ( null !== $from && '' !== trim( $from ) ? 'requested_ref' : 'default_base' ) : 'existing_local_branch',
+			)
+		);
+		WorktreeContextInjector::store_lifecycle_metadata( $wt_handle, $lifecycle_metadata );
+		$response['created_at'] = $lifecycle_metadata['created_at'] ?? null;
+		$response['metadata']   = WorktreeContextInjector::get_metadata( $wt_handle );
+
 		if ( ! $inject_context ) {
 			$response['context_injected']    = false;
 			$response['context_skip_reason'] = 'inject_context flag disabled';
@@ -1286,6 +1308,7 @@ class Workspace {
 					$response['context_skip_reason'] = 'inject failed: ' . $injection->get_error_message();
 				} else {
 					WorktreeContextInjector::store_metadata( $wt_handle, $payload );
+					$response['metadata'] = WorktreeContextInjector::get_metadata( $wt_handle );
 					$response['context_injected'] = true;
 					$response['context_files']    = $injection['written'];
 					if ( ! empty( $injection['exclude_path'] ) ) {
@@ -1600,6 +1623,7 @@ class Workspace {
 		$protected_branches = array( 'main', 'master', 'trunk', 'develop', 'HEAD' );
 		$candidates         = array();
 		$skipped            = array();
+		$github_cache       = array();
 
 		// Fetch + prune each primary once up-front so upstream-gone signals are fresh.
 		$fetched = array();
@@ -1608,39 +1632,87 @@ class Workspace {
 			if ( ! empty( $wt['is_primary'] ) ) {
 				continue;
 			}
+
+			$handle       = $wt['handle'] ?? '?';
+			$repo         = $wt['repo'] ?? '';
+			$branch       = $wt['branch'] ?? '';
+			$wt_path      = $wt['path'] ?? '';
+			$metadata     = $wt['metadata'] ?? null;
+			$created_at   = $wt['created_at'] ?? null;
+			$primary_path = '' !== $repo ? $this->get_primary_path( $repo ) : '';
+
 			if ( ! empty( $wt['external'] ) ) {
 				$skipped[] = array(
-					'handle' => $wt['handle'] ?? '?',
-					'reason' => 'external worktree (outside workspace)',
+					'handle'       => $handle,
+					'reason_code'  => 'external_worktree',
+					'reason'       => 'external worktree (outside workspace)',
+					'hint'         => 'External worktree outside the DMC workspace; remove with the owning tool or inspect with git worktree list from the primary repo.',
+					'repo'         => $repo,
+					'owning_repo'  => $repo,
+					'branch'       => $branch,
+					'path'         => $wt_path,
+					'primary_path' => $primary_path,
+					'created_at'  => $created_at,
+					'metadata'    => $metadata,
 				);
 				continue;
 			}
 
-			$repo        = $wt['repo'] ?? '';
-			$branch      = $wt['branch'] ?? '';
-			$wt_path     = $wt['path'] ?? '';
 			$dirty_count = (int) ( $wt['dirty'] ?? 0 );
 
 			if ( '' === $repo || '' === $branch || '' === $wt_path ) {
+				$missing_fields = array();
+				foreach (
+					array(
+						'repo'   => $repo,
+						'branch' => $branch,
+						'path'   => $wt_path,
+					) as $field => $value
+				) {
+					if ( '' === $value ) {
+						$missing_fields[] = $field;
+					}
+				}
 				$skipped[] = array(
-					'handle' => $wt['handle'] ?? '?',
-					'reason' => 'missing repo/branch/path',
+					'handle'         => $handle,
+					'repo'           => $repo,
+					'branch'         => $branch,
+					'path'           => $wt_path,
+					'reason_code'    => 'missing_metadata',
+					'reason'         => 'missing repo/branch/path',
+					'missing_fields' => $missing_fields,
+					'hint'           => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
+					'created_at'     => $created_at,
+					'metadata'       => $metadata,
 				);
 				continue;
 			}
 
 			if ( in_array( $branch, $protected_branches, true ) ) {
 				$skipped[] = array(
-					'handle' => $wt['handle'] ?? '?',
-					'reason' => sprintf( 'protected branch (%s)', $branch ),
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'protected_branch',
+					'reason'      => sprintf( 'protected branch (%s)', $branch ),
+					'created_at'  => $created_at,
+					'metadata'    => $metadata,
 				);
 				continue;
 			}
 
 			if ( $dirty_count > 0 && ! $force ) {
 				$skipped[] = array(
-					'handle' => $wt['handle'] ?? '?',
-					'reason' => sprintf( 'working tree dirty (%d files) — pass force=true to override', $dirty_count ),
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'dirty_worktree',
+					'reason'      => sprintf( 'working tree dirty (%d files) — pass force=true to override', $dirty_count ),
+					'dirty'       => $dirty_count,
+					'created_at'  => $created_at,
+					'metadata'    => $metadata,
 				);
 				continue;
 			}
@@ -1653,8 +1725,15 @@ class Workspace {
 			$unpushed = $this->count_unpushed_commits( $wt_path );
 			if ( $unpushed > 0 ) {
 				$skipped[] = array(
-					'handle' => $wt['handle'] ?? '?',
-					'reason' => sprintf( '%d unpushed commit(s) — refusing to delete even with force (push or reset explicitly)', $unpushed ),
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'unpushed_commits',
+					'reason'      => sprintf( '%d unpushed commit(s) — refusing to delete even with force (push or reset explicitly)', $unpushed ),
+					'unpushed'    => $unpushed,
+					'created_at'  => $created_at,
+					'metadata'    => $metadata,
 				);
 				continue;
 			}
@@ -1662,8 +1741,15 @@ class Workspace {
 			$primary_path = $this->get_primary_path( $repo );
 			if ( ! is_dir( $primary_path . '/.git' ) ) {
 				$skipped[] = array(
-					'handle' => $wt['handle'] ?? '?',
-					'reason' => 'primary checkout missing',
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'missing_metadata',
+					'reason'      => 'primary checkout missing',
+					'hint'        => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
+					'created_at'  => $created_at,
+					'metadata'    => $metadata,
 				);
 				continue;
 			}
@@ -1673,26 +1759,51 @@ class Workspace {
 				$fetched[ $repo ] = true;
 			}
 
-			$signal = $this->detect_merge_signal( $primary_path, $repo, $branch, $skip_github );
+			$signal = $this->detect_merge_signal( $primary_path, $repo, $branch, $skip_github, $github_cache );
 			if ( null === $signal ) {
 				$skipped[] = array(
-					'handle' => $wt['handle'] ?? '?',
-					'reason' => 'no merge signal — leaving in place',
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'no_merge_signal',
+					'reason'      => 'no merge signal — leaving in place',
+					'created_at'  => $created_at,
+					'metadata'    => $metadata,
+				);
+				continue;
+			}
+
+			if ( 'github-unknown' === ( $signal['signal'] ?? '' ) ) {
+				$skipped[] = array(
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'github_unknown',
+					'reason'      => $signal['reason'],
+					'created_at'  => $created_at,
+					'metadata'    => $metadata,
 				);
 				continue;
 			}
 
 			$candidates[] = array(
-				'handle' => $wt['handle'],
-				'repo'   => $repo,
-				'branch' => $branch,
-				'path'   => $wt_path,
-				'dirty'  => $dirty_count,
-				'signal' => $signal['signal'],
-				'reason' => $signal['reason'],
-				'pr_url' => $signal['pr_url'] ?? null,
+				'handle'      => $wt['handle'],
+				'repo'        => $repo,
+				'branch'      => $branch,
+				'path'        => $wt_path,
+				'dirty'       => $dirty_count,
+				'signal'      => $signal['signal'],
+				'reason_code' => $signal['signal'],
+				'reason'      => $signal['reason'],
+				'pr_url'      => $signal['pr_url'] ?? null,
+				'created_at'  => $created_at,
+				'metadata'    => $metadata,
 			);
 		}
+
+		$summary = $this->build_worktree_cleanup_summary( $candidates, array(), $skipped );
 
 		if ( $dry_run ) {
 			return array(
@@ -1701,6 +1812,7 @@ class Workspace {
 				'candidates' => $candidates,
 				'removed'    => array(),
 				'skipped'    => $skipped,
+				'summary'    => $summary,
 			);
 		}
 
@@ -1725,8 +1837,14 @@ class Workspace {
 			);
 			if ( is_wp_error( $remove ) ) {
 				$skipped[] = array(
-					'handle' => $cand['handle'],
-					'reason' => 'remove failed: ' . $remove->get_error_message(),
+					'handle'      => $cand['handle'],
+					'repo'        => $cand['repo'] ?? '',
+					'branch'      => $cand['branch'] ?? '',
+					'path'        => $cand['path'] ?? '',
+					'reason_code' => 'remove_failed',
+					'reason'      => 'remove failed: ' . $remove->get_error_message(),
+					'created_at'  => $cand['created_at'] ?? null,
+					'metadata'    => $cand['metadata'] ?? null,
 				);
 				continue;
 			}
@@ -1742,6 +1860,41 @@ class Workspace {
 			'candidates' => $candidates,
 			'removed'    => $removed,
 			'skipped'    => $skipped,
+			'summary'    => $this->build_worktree_cleanup_summary( $candidates, $removed, $skipped ),
+		);
+	}
+
+	/**
+	 * Build stable cleanup counts for CLI and automation consumers.
+	 *
+	 * @param array<int,array> $candidates Candidate rows.
+	 * @param array<int,array> $removed    Removed rows.
+	 * @param array<int,array> $skipped    Skipped rows.
+	 * @return array<string,mixed>
+	 */
+	private function build_worktree_cleanup_summary( array $candidates, array $removed, array $skipped ): array {
+		$skipped_by_reason    = array();
+		$candidates_by_signal = array();
+
+		foreach ( $skipped as $row ) {
+			$code = (string) ( $row['reason_code'] ?? 'unknown' );
+			$skipped_by_reason[ $code ] = ( $skipped_by_reason[ $code ] ?? 0 ) + 1;
+		}
+
+		foreach ( $candidates as $row ) {
+			$signal = (string) ( $row['signal'] ?? $row['reason_code'] ?? 'unknown' );
+			$candidates_by_signal[ $signal ] = ( $candidates_by_signal[ $signal ] ?? 0 ) + 1;
+		}
+
+		ksort( $skipped_by_reason );
+		ksort( $candidates_by_signal );
+
+		return array(
+			'would_remove'         => count( $candidates ),
+			'removed'              => count( $removed ),
+			'skipped'              => count( $skipped ),
+			'skipped_by_reason'    => $skipped_by_reason,
+			'candidates_by_signal' => $candidates_by_signal,
 		);
 	}
 
@@ -1849,9 +2002,10 @@ class Workspace {
 	 * @param string $repo         Primary repo directory name.
 	 * @param string $branch       Branch name.
 	 * @param bool   $skip_github  If true, skip GitHub API lookup.
+	 * @param array  $github_cache Run-local cache for GitHub repo lookups.
 	 * @return array{signal: string, reason: string, pr_url?: string}|null
 	 */
-	private function detect_merge_signal( string $primary_path, string $repo, string $branch, bool $skip_github ): ?array {
+	private function detect_merge_signal( string $primary_path, string $repo, string $branch, bool $skip_github, array &$github_cache = array() ): ?array {
 		$ref    = 'refs/heads/' . $branch;
 		$format = '%(upstream:track)';
 		$result = $this->run_git( $primary_path, sprintf( 'for-each-ref --format=%s %s', escapeshellarg( $format ), escapeshellarg( $ref ) ) );
@@ -1875,7 +2029,13 @@ class Workspace {
 			return null;
 		}
 
-		$pr = $this->find_merged_pr_for_branch( $gh_slug, $branch );
+		$pr = $this->find_merged_pr_for_branch( $gh_slug, $branch, $github_cache );
+		if ( is_wp_error( $pr ) ) {
+			return array(
+				'signal' => 'github-unknown',
+				'reason' => 'unknown_github_state — ' . $pr->get_error_message(),
+			);
+		}
 		if ( null === $pr ) {
 			return null;
 		}
@@ -1902,56 +2062,115 @@ class Workspace {
 	}
 
 	/**
-	 * Look up a merged PR for a branch via the GitHub API.
+	 * Look up a merged PR for a branch via a cached GitHub API snapshot.
 	 *
-	 * Queries `GET /repos/{slug}/pulls?state=closed&head={owner}:{branch}`
-	 * and returns the first entry whose `merged_at` is non-null.
+	 * Cleanup may inspect hundreds of worktrees for the same repo. Querying
+	 * GitHub once per branch does not scale, so each repo gets one bounded
+	 * closed-PR snapshot per cleanup run and branch lookups read that cache.
 	 *
-	 * @param string $slug   owner/repo.
-	 * @param string $branch Branch name.
-	 * @return array|null PR data or null.
+	 * @param string $slug         owner/repo.
+	 * @param string $branch       Branch name.
+	 * @param array  $github_cache Run-local cache keyed by owner/repo.
+	 * @return array|null|\WP_Error PR data, null when no PR matched, or lookup failure.
 	 */
-	private function find_merged_pr_for_branch( string $slug, string $branch ): ?array {
+	private function find_merged_pr_for_branch( string $slug, string $branch, array &$github_cache = array() ): array|\WP_Error|null {
+		$lookup = $this->get_cleanup_github_lookup( $slug, $github_cache );
+		if ( is_wp_error( $lookup ) ) {
+			return $lookup;
+		}
+
+		if ( null === $lookup ) {
+			return null;
+		}
+
+		return $lookup[ $branch ] ?? null;
+	}
+
+	/**
+	 * Load and cache merged same-repo PRs for a GitHub repo.
+	 *
+	 * @param string $slug         owner/repo.
+	 * @param array  $github_cache Run-local cache keyed by owner/repo.
+	 * @return array<string,array>|null|\WP_Error Branch-name map, null when GitHub is unavailable, or lookup failure.
+	 */
+	private function get_cleanup_github_lookup( string $slug, array &$github_cache ): array|\WP_Error|null {
+		if ( array_key_exists( $slug, $github_cache ) ) {
+			return $github_cache[ $slug ];
+		}
+
 		if ( ! class_exists( '\DataMachineCode\Abilities\GitHubAbilities' ) ) {
+			$github_cache[ $slug ] = null;
 			return null;
 		}
 
 		$pat = \DataMachineCode\Abilities\GitHubAbilities::getPat();
 		if ( empty( $pat ) ) {
+			$github_cache[ $slug ] = null;
 			return null;
 		}
 
-		$owner = explode( '/', $slug )[0];
-		if ( '' === $owner ) {
+		$parts = explode( '/', $slug, 2 );
+		$owner = $parts[0] ?? '';
+		if ( '' === $owner || empty( $parts[1] ) ) {
+			$github_cache[ $slug ] = null;
 			return null;
 		}
 
-		$response = \DataMachineCode\Abilities\GitHubAbilities::apiGet(
-			GitHubRemote::apiUrl( $slug, 'pulls' ),
-			array(
-				'state'    => 'closed',
-				'head'     => $owner . ':' . $branch,
-				'per_page' => 5,
-			),
-			$pat
-		);
+		$merged = array();
+		$url    = GitHubRemote::apiUrl( $slug, 'pulls' );
 
-		if ( is_wp_error( $response ) ) {
-			return null;
-		}
+		for ( $page = 1; $page <= self::CLEANUP_GITHUB_MAX_PAGES; $page++ ) {
+			$response = \DataMachineCode\Abilities\GitHubAbilities::apiGet(
+				$url,
+				array(
+					'state'     => 'closed',
+					'sort'      => 'updated',
+					'direction' => 'desc',
+					'per_page'  => 100,
+					'page'      => $page,
+				),
+				$pat,
+				self::CLEANUP_GITHUB_TIMEOUT
+			);
 
-		foreach ( (array) ( $response['data'] ?? array() ) as $pr ) {
-			if ( ! empty( $pr['merged_at'] ) ) {
-				return array(
+			if ( is_wp_error( $response ) ) {
+				$error                 = new \WP_Error(
+					'github_cleanup_lookup_failed',
+					sprintf( 'GitHub cleanup lookup failed for %s: %s', $slug, $response->get_error_message() ),
+					$response->get_error_data()
+				);
+				$github_cache[ $slug ] = $error;
+				return $error;
+			}
+
+			$items = (array) ( $response['data'] ?? array() );
+			foreach ( $items as $pr ) {
+				if ( empty( $pr['merged_at'] ) ) {
+					continue;
+				}
+
+				$head      = is_array( $pr['head'] ?? null ) ? $pr['head'] : array();
+				$head_repo = is_array( $head['repo'] ?? null ) ? (string) ( $head['repo']['full_name'] ?? '' ) : '';
+				$head_ref  = (string) ( $head['ref'] ?? '' );
+				if ( $head_repo !== $slug || '' === $head_ref ) {
+					continue;
+				}
+
+				$merged[ $head_ref ] = array(
 					'number'    => (int) ( $pr['number'] ?? 0 ),
 					'state'     => (string) ( $pr['state'] ?? 'closed' ),
 					'merged_at' => (string) $pr['merged_at'],
 					'html_url'  => (string) ( $pr['html_url'] ?? '' ),
 				);
 			}
+
+			if ( count( $items ) < 100 ) {
+				break;
+			}
 		}
 
-		return null;
+		$github_cache[ $slug ] = $merged;
+		return $merged;
 	}
 
 	/**

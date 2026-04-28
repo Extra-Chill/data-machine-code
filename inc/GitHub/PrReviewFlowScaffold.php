@@ -97,6 +97,7 @@ class PrReviewFlowScaffold {
 			'Read the initial pull_review_context packet first, then identify what you still need to know before reviewing.',
 			'Call github_repo_review_profile once for stable repo-level architecture, command, and review-rule context before judging project-specific conventions.',
 			'Use read-only GitHub tools on demand to inspect specific PR metadata, changed files, base/head file contents, neighboring files, dependency files, or repository tree paths that are necessary to verify a finding.',
+			'Read escalation_policy from the pull_review_context packet. Treat should_escalate=true as a deterministic recommendation for checkout-backed validation; if no checkout execution result is present yet, say that deeper validation is recommended instead of pretending it ran.',
 			'Keep context gathering bounded: fetch only targeted paths, avoid broad repository scans, and stop when you have enough evidence for or against high-confidence findings.',
 			'Only report high-confidence bugs, security risks, behavioral regressions, or missing tests that directly matter for this PR.',
 			'Do not praise the change, summarize obvious edits, or leave generic style feedback.',
@@ -162,9 +163,15 @@ class PrReviewFlowScaffold {
 				'include_checks'          => true,
 				'include_statuses'        => true,
 				'include_homeboy_ci'      => true,
+				'include_escalation_policy' => true,
 				'max_check_runs'          => 30,
 				'include_check_output'    => false,
 				'artifact_name'           => 'homeboy-ci-results',
+				'escalation_policy'       => array(
+					'max_files'         => 20,
+					'max_patch_bytes'   => 100000,
+					'max_total_changes' => 1000,
+				),
 			),
 		);
 	}

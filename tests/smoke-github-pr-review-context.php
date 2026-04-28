@@ -149,6 +149,10 @@ namespace {
 	$assert( 40 === $content['truncation']['max_patch_chars'], 'truncation records configured limit' );
 	$assert( 1 === $content['truncation']['truncated_files'], 'truncation counts omitted patches' );
 	$assert( true === $content['truncation']['truncated'], 'truncation boolean is true when a patch is omitted' );
+	$assert( isset( $content['escalation_policy'] ), 'review context carries escalation_policy by default' );
+	$assert( 'data-machine-code/pr-review-escalation/v1' === $content['escalation_policy']['schema'], 'escalation policy schema is versioned' );
+	$assert( true === $content['escalation_policy']['should_escalate'], 'missing Homeboy context recommends escalation' );
+	$assert( in_array( 'missing_homeboy_artifact', $content['escalation_policy']['reasons'], true ), 'missing Homeboy context reason is explicit' );
 	$assert( ! isset( $content['expanded_context'] ), 'default output omits expanded_context' );
 	$assert( $content === $packet['metadata']['review_context'], 'metadata carries same review context for downstream consumers' );
 
@@ -247,6 +251,30 @@ namespace {
 	$assert( isset( $expanded_content['expanded_context'] ), 'review packet carries expanded_context when provided' );
 	$assert( isset( $expanded_content['changed_files'] ), 'review packet keeps patch changed_files at the top level' );
 	$assert( isset( $expanded_content['expanded_context']['changed_files'][0]['head']['content'] ), 'expanded changed-file content stays under expanded_context' );
+
+	$packet_with_checks = \DataMachineCode\Abilities\GitHubAbilities::normalizePullReviewContext(
+		'Extra-Chill/data-machine-code',
+		$pull,
+		array(
+			array(
+				'filename'  => 'src/internal-review-helper.php',
+				'status'    => 'modified',
+				'additions' => 2,
+				'deletions' => 1,
+				'changes'   => 3,
+				'patch'     => "@@ -1 +1 @@\n-old\n+new\n",
+			),
+		),
+		array(
+			'checks' => array(
+				'homeboy_ci_results' => array( 'workflow' => array( 'head_sha' => 'abc123head' ) ),
+				'check_runs'         => array( 'summary' => array( 'state' => 'success' ) ),
+				'commit_statuses'    => array( 'summary' => array( 'state' => 'success' ) ),
+			),
+		)
+	);
+	$checked_content = json_decode( $packet_with_checks['content'], true );
+	$assert( false === $checked_content['escalation_policy']['should_escalate'], 'passing checks and fresh Homeboy artifact avoid escalation' );
 
 	$mismatch = \DataMachineCode\Abilities\GitHubAbilities::normalizePullReviewContext(
 		'Extra-Chill/data-machine-code',

@@ -89,9 +89,11 @@ namespace {
 	$assert( 'review context includes check runs by default', true === $review_config['include_checks'] );
 	$assert( 'review context includes commit statuses by default', true === $review_config['include_statuses'] );
 	$assert( 'review context includes Homeboy CI by default', true === $review_config['include_homeboy_ci'] );
+	$assert( 'review context includes escalation policy by default', true === $review_config['include_escalation_policy'] );
 	$assert( 'review context bounds check runs', 30 === $review_config['max_check_runs'] );
 	$assert( 'review context omits check output by default', false === $review_config['include_check_output'] );
 	$assert( 'review context names Homeboy artifact', 'homeboy-ci-results' === $review_config['artifact_name'] );
+	$assert( 'review context carries escalation thresholds', 20 === $review_config['escalation_policy']['max_files'] && 100000 === $review_config['escalation_policy']['max_patch_bytes'] );
 
 	$ai_step = $steps[2];
 	$prompt  = $ai_step['user_message'];
@@ -99,6 +101,7 @@ namespace {
 	$assert( 'prompt requires findings-first review', str_contains( $prompt, 'findings first' ) || str_contains( $prompt, 'findings' ) );
 	$assert( 'prompt requires initial context packet read', str_contains( $prompt, 'initial pull_review_context packet' ) );
 	$assert( 'prompt requires repository review profile', str_contains( $prompt, 'github_repo_review_profile once' ) && str_contains( $prompt, 'repo-level architecture' ) );
+	$assert( 'prompt requires escalation policy handling', str_contains( $prompt, 'escalation_policy' ) && str_contains( $prompt, 'checkout-backed validation' ) );
 	$assert( 'prompt requires on-demand context gathering', str_contains( $prompt, 'on demand' ) && str_contains( $prompt, 'specific PR metadata' ) );
 	$assert( 'prompt bounds context gathering', str_contains( $prompt, 'Keep context gathering bounded' ) && str_contains( $prompt, 'targeted paths' ) );
 	$assert( 'prompt rejects praise spam', str_contains( $prompt, 'Do not praise' ) );
