@@ -180,6 +180,7 @@ namespace {
 	// Primary checkout: clone + initial commit on main + push.
 	$primary = $tmp . '/demo';
 	$run( sprintf( 'git clone %s %s', escapeshellarg( $remote ), escapeshellarg( $primary ) ) );
+	$primary_real = realpath( $primary ) ?: $primary;
 	$run( 'git config user.email test@example.com', $primary );
 	$run( 'git config user.name test', $primary );
 	file_put_contents( $primary . '/README.md', "demo\n" );
@@ -214,6 +215,7 @@ namespace {
 	$run( sprintf( 'git worktree add %s dirty-branch', escapeshellarg( $tmp . '/demo@dirty-branch' ) ), $primary );
 	mkdir( $tmp . '-external', 0755, true );
 	$run( sprintf( 'git worktree add %s external-branch', escapeshellarg( $tmp . '-external/demo-external' ) ), $primary );
+	$external_real = realpath( $tmp . '-external/demo-external' ) ?: $tmp . '-external/demo-external';
 
 	// Dirty the dirty worktree.
 	file_put_contents( $tmp . '/demo@dirty-branch/scratch.txt', 'dirty' );
@@ -311,6 +313,17 @@ namespace {
 	$assert( 'missing_metadata', $missing_row['reason_code'] ?? '', 'missing metadata exposes stable reason code' );
 	$assert( array( 'repo', 'branch', 'path' ), $missing_row['missing_fields'] ?? array(), 'missing metadata lists missing fields' );
 	$assert( true, str_contains( $missing_row['hint'] ?? '', 'workspace worktree prune' ), 'missing metadata includes prune remediation hint' );
+
+	// External worktrees are reported with routing metadata, but never owned by cleanup.
+	$external_skips = array_filter( $plan['skipped'] ?? array(), fn( $s ) => ( $s['path'] ?? '' ) === $external_real );
+	$assert( 1, count( $external_skips ), 'external worktree skipped with exactly one entry' );
+	$external_skip = array_values( $external_skips )[0] ?? array();
+	$assert( 'external_worktree', $external_skip['reason_code'] ?? '', 'external skip has stable reason_code' );
+	$assert( 'demo', $external_skip['repo'] ?? '', 'external skip includes owning repo' );
+	$assert( 'demo', $external_skip['owning_repo'] ?? '', 'external skip includes owning_repo alias' );
+	$assert( 'external-branch', $external_skip['branch'] ?? '', 'external skip includes branch' );
+	$assert( $primary_real, $external_skip['primary_path'] ?? '', 'external skip includes primary repo path' );
+	$assert( true, str_contains( $external_skip['hint'] ?? '', 'owning tool' ), 'external skip includes remediation hint' );
 
 	// Primary itself should NEVER show up as a candidate.
 	foreach ( $plan['candidates'] ?? array() as $c ) {
