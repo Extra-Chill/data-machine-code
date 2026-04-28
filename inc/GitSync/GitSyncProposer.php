@@ -308,7 +308,7 @@ final class GitSyncProposer {
 
 		$pat = (string) GitHubAbilities::getPat();
 		if ( '' === $pat ) {
-			return new \WP_Error( 'missing_pat', 'GitHub PAT not configured — cannot write.', array( 'status' => 500 ) );
+			return new \WP_Error( 'missing_github_auth', 'GitHub authentication is not configured — cannot write.', array( 'status' => 500 ) );
 		}
 
 		$absolute = $binding->resolveAbsolutePath();

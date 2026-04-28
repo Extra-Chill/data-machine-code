@@ -7,7 +7,7 @@
  * comment). All GitHub operations — CLI, REST, chat tools, fetch handler —
  * route through here.
  *
- * Auth: Uses the github_pat stored in Data Machine PluginSettings.
+ * Auth: Uses either github_pat or GitHub App settings stored in Data Machine PluginSettings.
  *
  * @package DataMachineCode\Abilities
  * @since 0.1.0
@@ -17,12 +17,19 @@ namespace DataMachineCode\Abilities;
 
 use DataMachine\Abilities\PermissionHelper;
 use DataMachine\Core\PluginSettings;
+use DataMachineCode\Support\GitHubCredentialResolver;
 
 defined( 'ABSPATH' ) || exit;
+
+if ( ! class_exists( GitHubCredentialResolver::class ) ) {
+	require_once dirname( __DIR__ ) . '/Support/GitHubCredentialResolver.php';
+}
 
 class GitHubAbilities {
 
 	private static bool $registered = false;
+
+	private static ?\WP_Error $last_auth_error = null;
 
 	/**
 	 * GitHub API base URL.
@@ -2024,8 +2031,10 @@ class GitHubAbilities {
 	}
 
 	private static function getHeaders( string $pat ): array {
+		$authorization = 'app' === GitHubCredentialResolver::mode() ? 'Bearer ' . $pat : 'token ' . $pat;
+
 		return array(
-			'Authorization' => 'token ' . $pat,
+			'Authorization' => $authorization,
 			'Accept'        => 'application/vnd.github.v3+json',
 			'User-Agent'    => 'DataMachineCode',
 			'Content-Type'  => 'application/json',
@@ -2408,11 +2417,27 @@ class GitHubAbilities {
 	// -------------------------------------------------------------------------
 
 	public static function getPat(): string {
-		return trim( PluginSettings::get( 'github_pat', '' ) );
+		$credential = GitHubCredentialResolver::resolve();
+		if ( is_wp_error( $credential ) ) {
+			self::$last_auth_error = $credential;
+			return '';
+		}
+
+		self::$last_auth_error = null;
+		return (string) $credential['token'];
 	}
 
 	public static function isConfigured(): bool {
-		return ! empty( self::getPat() );
+		return GitHubCredentialResolver::isConfigured();
+	}
+
+	/**
+	 * Return non-secret GitHub auth status for CLI/status surfaces.
+	 *
+	 * @return array<string, mixed>
+	 */
+	public static function getAuthStatus(): array {
+		return GitHubCredentialResolver::status();
 	}
 
 	public static function getDefaultRepo(): string {
@@ -2467,7 +2492,11 @@ class GitHubAbilities {
 	}
 
 	private static function patError(): \WP_Error {
-		return new \WP_Error( 'pat_not_configured', 'GitHub Personal Access Token not configured. Set github_pat in Data Machine settings.', array( 'status' => 403 ) );
+		if ( self::$last_auth_error ) {
+			return self::$last_auth_error;
+		}
+
+		return new \WP_Error( 'github_auth_not_configured', 'GitHub authentication is not configured. Set github_pat for PAT mode or GitHub App credentials for app mode.', array( 'status' => 403 ) );
 	}
 
 	private static function clampPerPage( $per_page ): int {
