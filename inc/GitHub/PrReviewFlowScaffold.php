@@ -51,6 +51,7 @@ class PrReviewFlowScaffold {
 				'This scaffold is intentionally a normal Data Machine workflow definition, not runtime magic.',
 				'Import/create the pipeline and flow through Data Machine, then inspect and edit the generated steps normally.',
 				'The GitHub pull_review_context step uses webhook-derived placeholders for the PR number and head SHA, including Homeboy CI artifacts when available.',
+				'The AI review step can call github_repo_review_profile once for bounded repository rules and architecture context before making findings.',
 			),
 			'webhook'      => array(
 				'provider'      => 'github',
@@ -94,6 +95,7 @@ class PrReviewFlowScaffold {
 		return implode( "\n", array(
 			'You are reviewing a GitHub pull request. Return findings first, ordered by severity.',
 			'Read the initial pull_review_context packet first, then identify what you still need to know before reviewing.',
+			'Call github_repo_review_profile once for stable repo-level architecture, command, and review-rule context before judging project-specific conventions.',
 			'Use read-only GitHub tools on demand to inspect specific PR metadata, changed files, base/head file contents, neighboring files, dependency files, or repository tree paths that are necessary to verify a finding.',
 			'Read escalation_policy from the pull_review_context packet. Treat should_escalate=true as a deterministic recommendation for checkout-backed validation; if no checkout execution result is present yet, say that deeper validation is recommended instead of pretending it ran.',
 			'Keep context gathering bounded: fetch only targeted paths, avoid broad repository scans, and stop when you have enough evidence for or against high-confidence findings.',
@@ -193,6 +195,7 @@ class PrReviewFlowScaffold {
 				'get_github_check_runs',
 				'get_github_commit_statuses',
 				'get_github_homeboy_ci_results',
+				'github_repo_review_profile',
 				'get_github_file',
 				'list_github_tree',
 				'upsert_github_pull_review_comment',

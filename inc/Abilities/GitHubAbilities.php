@@ -687,6 +687,56 @@ class GitHubAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/get-github-repo-review-profile',
+				array(
+					'label'               => 'Get GitHub Repository Review Profile',
+					'description'         => 'Get bounded repository-level review context for a GitHub repository',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo' ),
+						'properties' => array(
+							'repo'                  => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'ref'                   => array(
+								'type'        => 'string',
+								'description' => 'Branch, tag, or commit SHA. Defaults to HEAD.',
+							),
+							'max_profile_files'     => array(
+								'type'        => 'integer',
+								'description' => 'Maximum profile files to include. Default: 14.',
+							),
+							'max_file_chars'        => array(
+								'type'        => 'integer',
+								'description' => 'Maximum characters per profile file. Default: 12000.',
+							),
+							'max_total_chars'       => array(
+								'type'        => 'integer',
+								'description' => 'Maximum cumulative profile characters. Default: 60000.',
+							),
+							'max_architecture_docs' => array(
+								'type'        => 'integer',
+								'description' => 'Maximum docs/** architecture/development files to include. Default: 8.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'profile' => array( 'type' => 'object' ),
+							'error'   => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'getRepoReviewProfile' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine-code/run-pr-homeboy-review',
 				array(
 					'label'               => 'Run PR Homeboy Review',
@@ -1464,6 +1514,39 @@ class GitHubAbilities {
 	}
 
 	/**
+	 * Get bounded repository-level context for PR review agents.
+	 *
+	 * @param array $input Required: repo. Optional: ref and profile limits.
+	 * @return array|\WP_Error Success payload or error.
+	 */
+	public static function getRepoReviewProfile( array $input ): array|\WP_Error {
+		$repo = sanitize_text_field( $input['repo'] ?? '' );
+		if ( empty( $repo ) ) {
+			return new \WP_Error( 'missing_repo', 'Repository is required (owner/repo format).', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPat();
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$ref = sanitize_text_field( $input['ref'] ?? $input['branch'] ?? '' );
+
+		$fetcher = static function ( string $path ) use ( $repo, $ref ): array|\WP_Error {
+			return self::getFileContents( self::buildRepoPathInput( $repo, $path, $ref ) );
+		};
+
+		$tree_fetcher = static function ( string $path ) use ( $repo, $ref ): array|\WP_Error {
+			return self::getRepoTree( self::buildRepoPathInput( $repo, $path, $ref ) );
+		};
+
+		return array(
+			'success' => true,
+			'profile' => self::buildRepoReviewProfile( $repo, $input, $fetcher, $tree_fetcher ),
+		);
+	}
+
+	/**
 	 * Run checkout-backed Homeboy review checks for a pull request.
 	 *
 	 * @param array $input Required: repo, pull_number, head_sha. Optional: base_ref.
@@ -1544,6 +1627,206 @@ class GitHubAbilities {
 			'success' => true,
 			'packet'  => $packet,
 		);
+	}
+
+	/**
+	 * Build a deterministic repository review profile from bounded file fetchers.
+	 *
+	 * @param string   $repo         Repository in owner/repo format.
+	 * @param array    $options      Limit and ref options.
+	 * @param callable $fetcher      fn(string $path): array|WP_Error.
+	 * @param callable $tree_fetcher fn(string $path): array|WP_Error.
+	 * @return array<string,mixed>
+	 */
+	public static function buildRepoReviewProfile( string $repo, array $options, callable $fetcher, callable $tree_fetcher ): array {
+		$max_files = max( 1, (int) ( $options['max_profile_files'] ?? 14 ) );
+		$max_docs  = max( 0, (int) ( $options['max_architecture_docs'] ?? 8 ) );
+		$limits    = array(
+			'max_profile_files'     => $max_files,
+			'max_file_chars'        => max( 1, (int) ( $options['max_file_chars'] ?? 12000 ) ),
+			'max_total_chars'       => max( 1, (int) ( $options['max_total_chars'] ?? 60000 ) ),
+			'max_architecture_docs' => $max_docs,
+		);
+
+		$profile = array(
+			'schema'          => 'data-machine-code/repo-review-profile/v1',
+			'repo'            => $repo,
+			'profile_files'   => array(),
+			'commands'        => array(),
+			'review_rules'    => array(),
+			'public_surfaces' => array(),
+			'docs_surfaces'   => array(),
+			'truncation'      => array_merge(
+				$limits,
+				array(
+					'included_files'  => 0,
+					'included_chars'  => 0,
+					'truncated_files' => 0,
+					'skipped_files'   => 0,
+					'truncated'       => false,
+					'errors'          => array(),
+				)
+			),
+		);
+
+		$paths = array(
+			'AGENTS.md',
+			'README.md',
+			'CONTRIBUTING.md',
+			'homeboy.json',
+			'docs/review-context.md',
+			'.dmc/review-profile.json',
+		);
+
+		if ( $max_docs > 0 ) {
+			$docs_tree = $tree_fetcher( 'docs' );
+			if ( is_wp_error( $docs_tree ) ) {
+				if ( ! in_array( $docs_tree->get_error_code(), array( 'github_not_found', 'not_found' ), true ) ) {
+					$profile['truncation']['errors']['docs_tree'] = $docs_tree->get_error_message();
+				}
+			} else {
+				$docs_paths = self::selectReviewProfileDocs( $docs_tree['files'] ?? array(), $max_docs );
+				$paths      = array_merge( $paths, $docs_paths );
+			}
+		}
+
+		$paths           = array_values( array_unique( $paths ) );
+		$remaining_chars = $limits['max_total_chars'];
+
+		foreach ( $paths as $path ) {
+			if ( $profile['truncation']['included_files'] >= $limits['max_profile_files'] || $remaining_chars <= 0 ) {
+				++$profile['truncation']['skipped_files'];
+				$profile['truncation']['truncated'] = true;
+				continue;
+			}
+
+			$file_result = $fetcher( $path );
+			if ( is_wp_error( $file_result ) ) {
+				if ( ! in_array( $file_result->get_error_code(), array( 'github_not_found', 'not_found' ), true ) ) {
+					$profile['truncation']['errors'][ $path ] = $file_result->get_error_message();
+				}
+				continue;
+			}
+
+			$file                       = $file_result['file'] ?? $file_result;
+			$content                    = (string) ( $file['content'] ?? '' );
+			$entry                      = self::buildReviewProfileFileEntry( $file, $content, $limits['max_file_chars'], $remaining_chars );
+			$profile['profile_files'][] = $entry;
+
+			++$profile['truncation']['included_files'];
+			$profile['truncation']['included_chars'] += $entry['included_chars'];
+			$remaining_chars                          = max( 0, $remaining_chars - $entry['included_chars'] );
+
+			if ( ! empty( $entry['truncated'] ) ) {
+				++$profile['truncation']['truncated_files'];
+				$profile['truncation']['truncated'] = true;
+			}
+
+			self::applyReviewProfileStructuredFile( $profile, $path, $content );
+		}
+
+		return $profile;
+	}
+
+	/**
+	 * Select deterministic architecture/development docs from a tree listing.
+	 */
+	private static function selectReviewProfileDocs( array $files, int $limit ): array {
+		$paths = array();
+		foreach ( $files as $file ) {
+			$path       = (string) ( $file['path'] ?? '' );
+			$lower_path = strtolower( $path );
+			$base       = basename( $lower_path );
+			if ( ! str_starts_with( $path, 'docs/' ) || ! str_ends_with( $base, '.md' ) ) {
+				continue;
+			}
+
+			if ( str_contains( $lower_path, 'architecture' ) || str_contains( $lower_path, 'development' ) ) {
+				$paths[] = $path;
+			}
+		}
+
+		sort( $paths, SORT_STRING );
+		return array_slice( array_values( array_unique( $paths ) ), 0, $limit );
+	}
+
+	/**
+	 * Build one bounded profile file entry.
+	 */
+	private static function buildReviewProfileFileEntry( array $file, string $content, int $max_file_chars, int $remaining_chars ): array {
+		$original = strlen( $content );
+		$limit    = min( $max_file_chars, $remaining_chars );
+		$included = substr( $content, 0, $limit );
+		$chars    = strlen( $included );
+
+		return array(
+			'path'           => (string) ( $file['path'] ?? '' ),
+			'sha'            => (string) ( $file['sha'] ?? '' ),
+			'size'           => (int) ( $file['size'] ?? $original ),
+			'html_url'       => (string) ( $file['html_url'] ?? '' ),
+			'content'        => $included,
+			'included_chars' => $chars,
+			'original_chars' => $original,
+			'truncated'      => $chars < $original,
+		);
+	}
+
+	/**
+	 * Extract machine-readable review profile fields from known files.
+	 */
+	private static function applyReviewProfileStructuredFile( array &$profile, string $path, string $content ): void {
+		if ( 'homeboy.json' === $path ) {
+			$decoded = json_decode( $content, true );
+			if ( is_array( $decoded ) ) {
+				foreach ( array( 'audit', 'lint', 'test', 'build', 'bench', 'refactor' ) as $command ) {
+					if ( array_key_exists( $command, $decoded ) ) {
+						$profile['commands'][ $command ] = $decoded[ $command ];
+					}
+				}
+			}
+		}
+
+		if ( '.dmc/review-profile.json' === $path ) {
+			$decoded = json_decode( $content, true );
+			if ( is_array( $decoded ) ) {
+				foreach ( array( 'commands', 'review_rules', 'public_surfaces', 'docs_surfaces' ) as $key ) {
+					if ( isset( $decoded[ $key ] ) && is_array( $decoded[ $key ] ) ) {
+						$profile[ $key ] = self::mergeReviewProfileField( $profile[ $key ], $decoded[ $key ] );
+					}
+				}
+			}
+		}
+
+		if ( str_starts_with( $path, 'docs/' ) ) {
+			$profile['docs_surfaces'][] = $path;
+			$profile['docs_surfaces']   = array_values( array_unique( $profile['docs_surfaces'] ) );
+		}
+	}
+
+	/**
+	 * Merge list or map fields while preserving deterministic keys.
+	 */
+	private static function mergeReviewProfileField( array $current, array $incoming ): array {
+		if ( array_is_list( $current ) && array_is_list( $incoming ) ) {
+			return array_values( array_unique( array_merge( $current, $incoming ), SORT_REGULAR ) );
+		}
+
+		return array_merge( $current, $incoming );
+	}
+
+	/**
+	 * Build common repo/path/ref input for GitHub file and tree reads.
+	 */
+	private static function buildRepoPathInput( string $repo, string $path, string $ref ): array {
+		$args = array(
+			'repo' => $repo,
+			'path' => $path,
+		);
+		if ( '' !== $ref ) {
+			$args['ref'] = $ref;
+		}
+
+		return $args;
 	}
 
 	/**

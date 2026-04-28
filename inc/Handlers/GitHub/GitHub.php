@@ -76,6 +76,10 @@ class GitHub extends FetchHandler {
 			return $this->fetchPullReviewContext( $config, $context, $repo );
 		}
 
+		if ( 'repo_review_profile' === $data_source ) {
+			return $this->fetchRepoReviewProfile( $config, $context, $repo );
+		}
+
 		if ( 'github_pr_documentation_impact' === $data_source ) {
 			return $this->fetchPullDocumentationImpact( $config, $context, $repo );
 		}
@@ -147,6 +151,54 @@ class GitHub extends FetchHandler {
 		}
 
 		$context->log( 'info', sprintf( 'GitHub: Prepared PR review context for %s#%d.', $repo, $pull_number ) );
+		return array( 'items' => array( $packet ) );
+	}
+
+	/**
+	 * Fetch bounded repository-level review context.
+	 *
+	 * @param array            $config  Handler configuration.
+	 * @param ExecutionContext $context Execution context.
+	 * @param string           $repo    Repository in owner/repo format.
+	 * @return array DataPacket-compatible array or empty on no data.
+	 */
+	private function fetchRepoReviewProfile( array $config, ExecutionContext $context, string $repo ): array {
+		$result = GitHubAbilities::getRepoReviewProfile( array(
+			'repo'                  => $repo,
+			'ref'                   => $config['ref'] ?? $config['branch'] ?? '',
+			'max_profile_files'     => $config['max_profile_files'] ?? 14,
+			'max_file_chars'        => $config['max_file_chars'] ?? 12000,
+			'max_total_chars'       => $config['max_total_chars'] ?? 60000,
+			'max_architecture_docs' => $config['max_architecture_docs'] ?? 8,
+		) );
+
+		if ( is_wp_error( $result ) ) {
+			$context->log( 'error', 'GitHub: Repo review profile error — ' . $result->get_error_message() );
+			return array();
+		}
+
+		$profile = $result['profile'] ?? array();
+		if ( empty( $profile ) ) {
+			$context->log( 'info', 'GitHub: No repo review profile returned.' );
+			return array();
+		}
+
+		$item_identifier = sprintf( '%s_repo_review_profile_%s', $repo, $config['ref'] ?? $config['branch'] ?? 'HEAD' );
+		$packet          = array(
+			'title'    => sprintf( 'Repository review profile: %s', $repo ),
+			'content'  => wp_json_encode( $profile, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ),
+			'metadata' => array(
+				'source_type'    => 'github',
+				'original_id'    => $item_identifier,
+				'dedup_key'      => $item_identifier,
+				'original_title' => sprintf( 'Repository review profile for %s', $repo ),
+				'github_repo'    => $repo,
+				'github_type'    => 'repo_review_profile',
+				'review_context' => $profile,
+			),
+		);
+
+		$context->log( 'info', sprintf( 'GitHub: Prepared repo review profile for %s.', $repo ) );
 		return array( 'items' => array( $packet ) );
 	}
 
