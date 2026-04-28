@@ -1036,6 +1036,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'If true, rely solely on the local upstream-gone signal and skip GitHub API lookup.',
 							),
+							'apply_plan'  => array(
+								'type'        => 'object',
+								'description' => 'Decoded cleanup dry-run report to apply after revalidating every candidate.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -1394,6 +1398,7 @@ class WorkspaceAbilities {
 				'dry_run'     => ! empty( $input['dry_run'] ),
 				'force'       => ! empty( $input['force'] ),
 				'skip_github' => ! empty( $input['skip_github'] ),
+				'apply_plan'  => isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ? $input['apply_plan'] : null,
 			)
 		);
 	}
