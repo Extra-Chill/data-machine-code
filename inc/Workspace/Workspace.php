@@ -1608,39 +1608,74 @@ class Workspace {
 			if ( ! empty( $wt['is_primary'] ) ) {
 				continue;
 			}
+
+			$handle  = $wt['handle'] ?? '?';
+			$repo    = $wt['repo'] ?? '';
+			$branch  = $wt['branch'] ?? '';
+			$wt_path = $wt['path'] ?? '';
+
 			if ( ! empty( $wt['external'] ) ) {
 				$skipped[] = array(
-					'handle' => $wt['handle'] ?? '?',
-					'reason' => 'external worktree (outside workspace)',
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'external_worktree',
+					'reason'      => 'external worktree (outside workspace)',
+					'hint'        => 'Inspect manually; cleanup never removes worktrees outside the DMC workspace.',
 				);
 				continue;
 			}
 
-			$repo        = $wt['repo'] ?? '';
-			$branch      = $wt['branch'] ?? '';
-			$wt_path     = $wt['path'] ?? '';
 			$dirty_count = (int) ( $wt['dirty'] ?? 0 );
 
 			if ( '' === $repo || '' === $branch || '' === $wt_path ) {
+				$missing_fields = array();
+				foreach (
+					array(
+						'repo'   => $repo,
+						'branch' => $branch,
+						'path'   => $wt_path,
+					) as $field => $value
+				) {
+					if ( '' === $value ) {
+						$missing_fields[] = $field;
+					}
+				}
 				$skipped[] = array(
-					'handle' => $wt['handle'] ?? '?',
-					'reason' => 'missing repo/branch/path',
+					'handle'         => $handle,
+					'repo'           => $repo,
+					'branch'         => $branch,
+					'path'           => $wt_path,
+					'reason_code'    => 'missing_metadata',
+					'reason'         => 'missing repo/branch/path',
+					'missing_fields' => $missing_fields,
+					'hint'           => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
 				);
 				continue;
 			}
 
 			if ( in_array( $branch, $protected_branches, true ) ) {
 				$skipped[] = array(
-					'handle' => $wt['handle'] ?? '?',
-					'reason' => sprintf( 'protected branch (%s)', $branch ),
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'protected_branch',
+					'reason'      => sprintf( 'protected branch (%s)', $branch ),
 				);
 				continue;
 			}
 
 			if ( $dirty_count > 0 && ! $force ) {
 				$skipped[] = array(
-					'handle' => $wt['handle'] ?? '?',
-					'reason' => sprintf( 'working tree dirty (%d files) — pass force=true to override', $dirty_count ),
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'dirty_worktree',
+					'reason'      => sprintf( 'working tree dirty (%d files) — pass force=true to override', $dirty_count ),
+					'dirty'       => $dirty_count,
 				);
 				continue;
 			}
@@ -1653,8 +1688,13 @@ class Workspace {
 			$unpushed = $this->count_unpushed_commits( $wt_path );
 			if ( $unpushed > 0 ) {
 				$skipped[] = array(
-					'handle' => $wt['handle'] ?? '?',
-					'reason' => sprintf( '%d unpushed commit(s) — refusing to delete even with force (push or reset explicitly)', $unpushed ),
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'unpushed_commits',
+					'reason'      => sprintf( '%d unpushed commit(s) — refusing to delete even with force (push or reset explicitly)', $unpushed ),
+					'unpushed'    => $unpushed,
 				);
 				continue;
 			}
@@ -1662,8 +1702,13 @@ class Workspace {
 			$primary_path = $this->get_primary_path( $repo );
 			if ( ! is_dir( $primary_path . '/.git' ) ) {
 				$skipped[] = array(
-					'handle' => $wt['handle'] ?? '?',
-					'reason' => 'primary checkout missing',
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'missing_metadata',
+					'reason'      => 'primary checkout missing',
+					'hint'        => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
 				);
 				continue;
 			}
@@ -1676,23 +1721,30 @@ class Workspace {
 			$signal = $this->detect_merge_signal( $primary_path, $repo, $branch, $skip_github );
 			if ( null === $signal ) {
 				$skipped[] = array(
-					'handle' => $wt['handle'] ?? '?',
-					'reason' => 'no merge signal — leaving in place',
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'no_merge_signal',
+					'reason'      => 'no merge signal — leaving in place',
 				);
 				continue;
 			}
 
 			$candidates[] = array(
-				'handle' => $wt['handle'],
-				'repo'   => $repo,
-				'branch' => $branch,
-				'path'   => $wt_path,
-				'dirty'  => $dirty_count,
-				'signal' => $signal['signal'],
-				'reason' => $signal['reason'],
-				'pr_url' => $signal['pr_url'] ?? null,
+				'handle'      => $wt['handle'],
+				'repo'        => $repo,
+				'branch'      => $branch,
+				'path'        => $wt_path,
+				'dirty'       => $dirty_count,
+				'signal'      => $signal['signal'],
+				'reason_code' => $signal['signal'],
+				'reason'      => $signal['reason'],
+				'pr_url'      => $signal['pr_url'] ?? null,
 			);
 		}
+
+		$summary = $this->build_worktree_cleanup_summary( $candidates, array(), $skipped );
 
 		if ( $dry_run ) {
 			return array(
@@ -1701,6 +1753,7 @@ class Workspace {
 				'candidates' => $candidates,
 				'removed'    => array(),
 				'skipped'    => $skipped,
+				'summary'    => $summary,
 			);
 		}
 
@@ -1725,8 +1778,12 @@ class Workspace {
 			);
 			if ( is_wp_error( $remove ) ) {
 				$skipped[] = array(
-					'handle' => $cand['handle'],
-					'reason' => 'remove failed: ' . $remove->get_error_message(),
+					'handle'      => $cand['handle'],
+					'repo'        => $cand['repo'] ?? '',
+					'branch'      => $cand['branch'] ?? '',
+					'path'        => $cand['path'] ?? '',
+					'reason_code' => 'remove_failed',
+					'reason'      => 'remove failed: ' . $remove->get_error_message(),
 				);
 				continue;
 			}
@@ -1742,6 +1799,41 @@ class Workspace {
 			'candidates' => $candidates,
 			'removed'    => $removed,
 			'skipped'    => $skipped,
+			'summary'    => $this->build_worktree_cleanup_summary( $candidates, $removed, $skipped ),
+		);
+	}
+
+	/**
+	 * Build stable cleanup counts for CLI and automation consumers.
+	 *
+	 * @param array<int,array> $candidates Candidate rows.
+	 * @param array<int,array> $removed    Removed rows.
+	 * @param array<int,array> $skipped    Skipped rows.
+	 * @return array<string,mixed>
+	 */
+	private function build_worktree_cleanup_summary( array $candidates, array $removed, array $skipped ): array {
+		$skipped_by_reason    = array();
+		$candidates_by_signal = array();
+
+		foreach ( $skipped as $row ) {
+			$code = (string) ( $row['reason_code'] ?? 'unknown' );
+			$skipped_by_reason[ $code ] = ( $skipped_by_reason[ $code ] ?? 0 ) + 1;
+		}
+
+		foreach ( $candidates as $row ) {
+			$signal = (string) ( $row['signal'] ?? $row['reason_code'] ?? 'unknown' );
+			$candidates_by_signal[ $signal ] = ( $candidates_by_signal[ $signal ] ?? 0 ) + 1;
+		}
+
+		ksort( $skipped_by_reason );
+		ksort( $candidates_by_signal );
+
+		return array(
+			'would_remove'         => count( $candidates ),
+			'removed'              => count( $removed ),
+			'skipped'              => count( $skipped ),
+			'skipped_by_reason'    => $skipped_by_reason,
+			'candidates_by_signal' => $candidates_by_signal,
 		);
 	}
 
