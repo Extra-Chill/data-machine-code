@@ -53,9 +53,9 @@ $assert(
 );
 
 $hooks = MemoryDiskProjection::expected_event_hooks();
-$assert( 'memory update hook named', 'datamachine_agent_memory_updated' === ( $hooks['memory_updated'] ?? '' ) );
-$assert( 'memory delete hook named', 'datamachine_agent_memory_deleted' === ( $hooks['memory_deleted'] ?? '' ) );
-$assert( 'guideline update hook named', 'datamachine_guideline_updated' === ( $hooks['guideline_updated'] ?? '' ) );
+$assert( 'memory update hook named', MemoryDiskProjection::HOOK_MEMORY_UPDATED === ( $hooks['memory_updated'] ?? '' ) );
+$assert( 'memory delete hook named', MemoryDiskProjection::HOOK_MEMORY_DELETED === ( $hooks['memory_deleted'] ?? '' ) );
+$assert( 'guideline update hook named', MemoryDiskProjection::HOOK_GUIDELINE_UPDATED === ( $hooks['guideline_updated'] ?? '' ) );
 
 $assert( 'guideline substrate absent without WP helpers', false === MemoryDiskProjection::has_guideline_substrate() );
 

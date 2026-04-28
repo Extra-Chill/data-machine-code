@@ -19,8 +19,8 @@ class MemoryDiskProjection {
 	public const GUIDELINE_POST_TYPE = 'wp_guideline';
 	public const GUIDELINE_TAXONOMY  = 'wp_guideline_type';
 
-	public const HOOK_MEMORY_UPDATED   = 'datamachine_agent_memory_updated';
-	public const HOOK_MEMORY_DELETED   = 'datamachine_agent_memory_deleted';
+	public const HOOK_MEMORY_UPDATED    = 'datamachine_agent_memory_updated';
+	public const HOOK_MEMORY_DELETED    = 'datamachine_agent_memory_deleted';
 	public const HOOK_GUIDELINE_UPDATED = 'datamachine_guideline_updated';
 
 	/**
