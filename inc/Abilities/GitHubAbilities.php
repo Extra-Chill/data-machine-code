@@ -1543,7 +1543,7 @@ class GitHubAbilities {
 
 			++$profile['truncation']['included_files'];
 			$profile['truncation']['included_chars'] += $entry['included_chars'];
-			$remaining_chars                         = max( 0, $remaining_chars - $entry['included_chars'] );
+			$remaining_chars                          = max( 0, $remaining_chars - $entry['included_chars'] );
 
 			if ( ! empty( $entry['truncated'] ) ) {
 				++$profile['truncation']['truncated_files'];
