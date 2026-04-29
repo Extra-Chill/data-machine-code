@@ -96,6 +96,7 @@ namespace {
 	require __DIR__ . '/../inc/Support/GitRunner.php';
 	require __DIR__ . '/../inc/Support/PathSecurity.php';
 	require __DIR__ . '/../inc/Workspace/WorkspaceMutationLock.php';
+	require __DIR__ . '/../inc/Workspace/WorktreeDiskBudget.php';
 	require __DIR__ . '/../inc/Workspace/WorktreeContextInjector.php';
 	require __DIR__ . '/../inc/Workspace/Workspace.php';
 

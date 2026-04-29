@@ -791,6 +791,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'After creating the worktree, rebase onto the upstream tip (the branch\'s @{upstream} for existing branches, origin/<base> for new branches off a local base). Default false. On rebase conflicts the rebase is aborted; the worktree stays at its pre-rebase state and `rebase_succeeded: false` is surfaced.',
 							),
+							'force'          => array(
+								'type'        => 'boolean',
+								'description' => 'Explicitly bypass the disk-budget refusal threshold. The disk-budget report still appears in output so the override is visible.',
+							),
 						),
 						'required'   => array( 'repo', 'branch' ),
 					),
@@ -842,6 +846,10 @@ class WorkspaceAbilities {
 							'gate_threshold'            => array(
 								'type'        => 'integer',
 								'description' => 'Echo of the staleness threshold (in commits) that was evaluated. Present whenever the gate ran (i.e. `allow_stale` was false and fetch succeeded).',
+							),
+							'disk_budget'               => array(
+								'type'        => 'object',
+								'description' => 'Pre-create disk-budget report: free bytes/GiB, worktree count, thresholds, status, warnings, and force override state.',
 							),
 							'rebase_attempted'          => array(
 								'type'        => 'boolean',
@@ -1327,6 +1335,7 @@ class WorkspaceAbilities {
 		$allow_stale = array_key_exists( 'allow_stale', $input ) ? (bool) $input['allow_stale'] : false;
 		// Default rebase_base=false; only true when explicitly requested.
 		$rebase_base = array_key_exists( 'rebase_base', $input ) ? (bool) $input['rebase_base'] : false;
+		$force       = ! empty( $input['force'] );
 		return $workspace->worktree_add(
 			$input['repo'] ?? '',
 			$input['branch'] ?? '',
@@ -1334,7 +1343,8 @@ class WorkspaceAbilities {
 			$inject_context,
 			$bootstrap,
 			$allow_stale,
-			$rebase_base
+			$rebase_base,
+			$force
 		);
 	}
 

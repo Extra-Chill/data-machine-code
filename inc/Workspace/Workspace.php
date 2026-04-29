@@ -1047,9 +1047,10 @@ class Workspace {
 	 * @param bool        $bootstrap      Whether to run submodule/package/composer install after creation (default true).
 	 * @param bool        $allow_stale    Bypass the staleness gate (default false).
 	 * @param bool        $rebase_base    Rebase onto upstream after creation (default false).
-	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
+	 * @param bool        $force          Bypass the disk-budget refusal threshold (default false).
+	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
-	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false ): array|\WP_Error {
+	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false ): array|\WP_Error {
 		$repo   = $this->sanitize_name( $repo );
 		$branch = trim( $branch );
 
@@ -1078,6 +1079,22 @@ class Workspace {
 			return new \WP_Error( 'worktree_exists', sprintf( 'Worktree handle "%s" already exists.', $wt_handle ), array( 'status' => 400 ) );
 		}
 
+		$disk_budget = WorktreeDiskBudget::inspect( $this->workspace_path, WorktreeDiskBudget::thresholds( $repo, $branch ), $force );
+		if ( 'refused' === ( $disk_budget['status'] ?? '' ) ) {
+			return new \WP_Error(
+				'worktree_disk_budget_exceeded',
+				sprintf(
+					"Refusing to create worktree: %s\nRun %s to review cleanup candidates, or retry with --force to override the disk-budget refusal threshold.",
+					implode( ' ', (array) ( $disk_budget['warnings'] ?? array() ) ),
+					$disk_budget['cleanup_dry_run_command']
+				),
+				array(
+					'status'      => 507,
+					'disk_budget' => $disk_budget,
+				)
+			);
+		}
+
 		$response = WorkspaceMutationLock::with_repo(
 			$this->workspace_path,
 			$repo,
@@ -1098,6 +1115,8 @@ class Workspace {
 		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
+
+		$response['disk_budget'] = $disk_budget;
 
 		if ( $bootstrap ) {
 			$response['bootstrap'] = WorktreeBootstrapper::bootstrap( $wt_path );
