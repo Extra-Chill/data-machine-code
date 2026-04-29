@@ -191,6 +191,8 @@ namespace {
 	file_put_contents( $primary . '/README.md', "# Demo\n" );
 	$run( 'git add README.md', $primary );
 	$run( 'git commit -m initial', $primary );
+	putenv( 'OPENCODE_RUN_ID=smoke-run-123' );
+	putenv( 'OPENCODE_PID=12345' );
 
 	$ws     = new \DataMachineCode\Workspace\Workspace();
 	$result = $ws->worktree_add( 'demo', 'feature/metadata', 'HEAD', false, false, true, false );
@@ -203,12 +205,33 @@ namespace {
 	$assert( 42, $metadata['origin_user']['id'] ?? null, 'origin user id is recorded without sensitive fields' );
 	$assert( 'HEAD', $metadata['base_ref'] ?? null, 'base ref is recorded' );
 	$assert( 'requested_ref', $metadata['base_source'] ?? null, 'base source is recorded' );
+	$assert( 'active', $metadata['lifecycle_state'] ?? null, 'new worktree lifecycle state defaults to active' );
+	$assert( 'demo@feature-metadata', $metadata['handle'] ?? null, 'worktree handle is recorded' );
+	$assert( DATAMACHINE_WORKSPACE_PATH . '/demo@feature-metadata', $metadata['path'] ?? null, 'worktree path is recorded' );
+	$assert( true, isset( $metadata['origin_session'] ) && is_array( $metadata['origin_session'] ), 'origin session metadata is recorded when runtime env is available' );
 
 	$list  = $ws->worktree_list( 'demo' );
 	$items = array_values( array_filter( $list['worktrees'] ?? array(), fn( $wt ) => ( $wt['handle'] ?? '' ) === 'demo@feature-metadata' ) );
 	$item  = $items[0] ?? array();
 	$assert( $metadata['created_at'] ?? null, $item['created_at'] ?? null, 'list data exposes created_at metadata' );
 	$assert( 'Origin Site', $item['metadata']['origin_site'] ?? null, 'list data exposes nested lifecycle metadata' );
+	$assert( 'active', $item['lifecycle_state'] ?? null, 'list data exposes lifecycle state' );
+
+	$finalized = $ws->worktree_finalize( 'demo@feature-metadata', 'pr_opened', 'https://github.com/acme/demo/pull/123' );
+	$assert( true, ! is_wp_error( $finalized ) && ( $finalized['success'] ?? false ), 'worktree_finalize succeeds with PR URL' );
+	$assert( 'pr_opened', $finalized['lifecycle_state'] ?? null, 'finalizer stores pr_opened state' );
+	$assert( 123, $finalized['metadata']['pr_number'] ?? null, 'finalizer extracts PR number' );
+	$assert( 'https://github.com/acme/demo/pull/123', $finalized['metadata']['pr_url'] ?? null, 'finalizer stores normalized PR URL' );
+
+	$filtered = $ws->worktree_list( 'demo', 'pr_opened' );
+	$filtered_items = array_values( array_filter( $filtered['worktrees'] ?? array(), fn( $wt ) => ( $wt['handle'] ?? '' ) === 'demo@feature-metadata' ) );
+	$assert( 1, count( $filtered_items ), 'worktree_list can filter by lifecycle state' );
+
+	$invalid_state = $ws->worktree_finalize( 'demo@feature-metadata', 'donezo' );
+	$assert( true, is_wp_error( $invalid_state ), 'invalid finalizer state returns WP_Error' );
+
+	$eligible = $ws->worktree_finalize( 'demo@feature-metadata', 'cleanup_eligible' );
+	$assert( true, ! is_wp_error( $eligible ) && ( $eligible['success'] ?? false ), 'worktree can be marked cleanup_eligible' );
 
 	$result_old = $ws->worktree_add( 'demo', 'feature/old-record', 'HEAD', false, false, true, false );
 	$assert( true, ! is_wp_error( $result_old ) && ( $result_old['success'] ?? false ), 'second worktree_add succeeds' );
@@ -229,8 +252,12 @@ namespace {
 		)
 	);
 	$assert( true, ! is_wp_error( $plan ) && ( $plan['success'] ?? false ), 'cleanup dry-run succeeds with mixed metadata records' );
+	$eligible_candidates = array_values( array_filter( $plan['candidates'] ?? array(), fn( $cand ) => ( $cand['handle'] ?? '' ) === 'demo@feature-metadata' ) );
+	$assert( 1, count( $eligible_candidates ), 'cleanup dry-run treats cleanup_eligible metadata as a candidate signal' );
+	$assert( 'cleanup_eligible', $eligible_candidates[0]['signal'] ?? null, 'cleanup_eligible candidate exposes stable signal' );
 	$feature_skip = array_values( array_filter( $plan['skipped'] ?? array(), fn( $skip ) => ( $skip['handle'] ?? '' ) === 'demo@feature-metadata' ) );
-	$assert( 'Origin Site', $feature_skip[0]['metadata']['origin_site'] ?? null, 'cleanup dry-run exposes metadata on skipped worktree records' );
+	$old_skip = array_values( array_filter( $plan['skipped'] ?? array(), fn( $skip ) => ( $skip['handle'] ?? '' ) === 'demo@feature-old-record' ) );
+	$assert( null, $old_skip[0]['metadata'] ?? null, 'cleanup dry-run tolerates worktrees with missing metadata' );
 
 	if ( $failures > 0 ) {
 		echo "\n{$failures} failure(s) across {$assertions} assertion(s).\n";
