@@ -206,8 +206,9 @@ add_action( 'plugins_loaded', 'datamachine_code_load_chat_tools', 25 );
  * Register system tasks.
  */
 add_filter( 'datamachine_tasks', function ( array $tasks ): array {
-	$tasks['github_create_issue'] = \DataMachineCode\Tasks\GitHubIssueTask::class;
-	$tasks['worktree_cleanup']    = \DataMachineCode\Tasks\WorktreeCleanupTask::class;
+	$tasks['github_create_issue']      = \DataMachineCode\Tasks\GitHubIssueTask::class;
+	$tasks['worktree_cleanup']         = \DataMachineCode\Tasks\WorktreeCleanupTask::class;
+	$tasks['workspace_hygiene_report'] = \DataMachineCode\Tasks\WorkspaceHygieneReportTask::class;
 	return $tasks;
 } );
 
@@ -224,13 +225,26 @@ add_filter( 'datamachine_tasks', function ( array $tasks ): array {
  * @see https://github.com/Extra-Chill/data-machine/pull/1117
  */
 add_filter( 'datamachine_recurring_schedules', function ( array $schedules ): array {
-	$schedules['worktree_cleanup'] = array(
+	$schedules['worktree_cleanup']         = array(
 		'task_type'       => 'worktree_cleanup',
 		'interval'        => 'daily',
 		'enabled_setting' => \DataMachineCode\Tasks\WorktreeCleanupTask::SETTING_KEY,
 		'default_enabled' => false,
 		'label'           => 'Daily — cleans up merged worktrees',
 		'task_params'     => array( 'source' => 'recurring_schedule' ),
+	);
+	$schedules['workspace_hygiene_report'] = array(
+		'task_type'       => 'workspace_hygiene_report',
+		'interval'        => 'weekly',
+		'enabled_setting' => \DataMachineCode\Tasks\WorkspaceHygieneReportTask::SETTING_KEY,
+		'default_enabled' => false,
+		'label'           => 'Weekly — reports workspace disk hygiene',
+		'task_params'     => array(
+			'source'          => 'recurring_schedule',
+			'include_cleanup' => true,
+			'include_sizes'   => true,
+			'size_limit'      => 200,
+		),
 	);
 	return $schedules;
 } );

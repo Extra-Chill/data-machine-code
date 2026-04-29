@@ -245,6 +245,63 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	/**
+	 * Show a non-destructive workspace hygiene report.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 * ---
+	 *
+	 * [--skip-cleanup]
+	 * : Skip the local cleanup dry-run summary.
+	 *
+	 * [--skip-sizes]
+	 * : Skip best-effort workspace size collection.
+	 *
+	 * [--size-limit=<count>]
+	 * : Maximum top-level workspace entries to size.
+	 * ---
+	 * default: 200
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code workspace hygiene
+	 *     wp datamachine-code workspace hygiene --format=json
+	 *
+	 * @subcommand hygiene
+	 */
+	public function hygiene( array $args, array $assoc_args ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+		$ability = wp_get_ability( 'datamachine/workspace-hygiene-report' );
+		if ( ! $ability ) {
+			WP_CLI::error( 'Workspace hygiene ability not available.' );
+			return;
+		}
+
+		$input = array(
+			'include_cleanup' => empty( $assoc_args['skip-cleanup'] ),
+			'include_sizes'   => empty( $assoc_args['skip-sizes'] ),
+		);
+		if ( isset( $assoc_args['size-limit'] ) ) {
+			$input['size_limit'] = (int) $assoc_args['size-limit'];
+		}
+
+		$result = $ability->execute( $input );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+
+		$this->render_workspace_hygiene_report( $result, $assoc_args );
+	}
+
+	/**
 	 * Show detailed info about a workspace repo.
 	 *
 	 * ## OPTIONS
@@ -1446,6 +1503,137 @@ class WorkspaceCommand extends BaseCommand {
 			default:
 				WP_CLI::success( $result['message'] ?? 'Worktree operation complete.' );
 				return;
+		}
+	}
+
+	/**
+	 * Render workspace hygiene report output.
+	 *
+	 * @param array $report     Hygiene report.
+	 * @param array $assoc_args CLI args.
+	 * @return void
+	 */
+	private function render_workspace_hygiene_report( array $report, array $assoc_args ): void {
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
+		if ( 'json' === $format ) {
+			$json = wp_json_encode( $report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+			WP_CLI::log( false === $json ? '{}' : $json );
+			return;
+		}
+
+		$size            = (array) ( $report['size'] ?? array() );
+		$disk            = (array) ( $report['disk'] ?? array() );
+		$worktrees       = (array) ( $report['worktrees'] ?? array() );
+		$cleanup         = (array) ( $report['cleanup'] ?? array() );
+		$cleanup_summary = (array) ( $cleanup['summary'] ?? array() );
+
+		WP_CLI::log( 'Workspace hygiene:' );
+		$this->format_items(
+			array(
+				array(
+					'metric' => 'workspace_path',
+					'value'  => (string) ( $report['workspace_path'] ?? '' ),
+				),
+				array(
+					'metric' => 'workspace_size',
+					'value'  => (string) ( $size['total_human'] ?? '-' ),
+				),
+				array(
+					'metric' => 'size_mode',
+					'value'  => (string) ( $size['mode'] ?? '-' ),
+				),
+				array(
+					'metric' => 'size_scan_complete',
+					'value'  => ! empty( $size['scan_complete'] ) ? 'yes' : 'no',
+				),
+				array(
+					'metric' => 'disk_free',
+					'value'  => (string) ( $disk['free_human'] ?? '-' ),
+				),
+				array(
+					'metric' => 'worktree_count',
+					'value'  => (string) ( $worktrees['worktrees'] ?? 0 ),
+				),
+				array(
+					'metric' => 'dirty_protected',
+					'value'  => (string) ( $worktrees['protected_dirty'] ?? 0 ),
+				),
+				array(
+					'metric' => 'unpushed_protected',
+					'value'  => (string) ( $worktrees['protected_unpushed'] ?? 0 ),
+				),
+				array(
+					'metric' => 'missing_metadata',
+					'value'  => (string) ( $worktrees['missing_metadata'] ?? 0 ),
+				),
+				array(
+					'metric' => 'external_worktrees',
+					'value'  => (string) ( $worktrees['external'] ?? 0 ),
+				),
+				array(
+					'metric' => 'cleanup_candidates',
+					'value'  => (string) ( $cleanup_summary['would_remove'] ?? 0 ),
+				),
+			),
+			array( 'metric', 'value' ),
+			array( 'format' => 'table' ),
+			'metric'
+		);
+
+		$top_size = array_slice( (array) ( $report['top_repos_by_size'] ?? array() ), 0, 10 );
+		if ( array() !== $top_size ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Top repos by size:' );
+			$this->format_items(
+				array_map(
+					fn( $row ) => array(
+						'repo'  => $row['repo'] ?? '',
+						'size'  => $row['human'] ?? '',
+						'bytes' => $row['bytes'] ?? 0,
+					),
+					$top_size
+				),
+				array( 'repo', 'size', 'bytes' ),
+				array( 'format' => 'table' ),
+				'bytes'
+			);
+		}
+
+		$top_counts = array_slice( (array) ( $report['top_repos_by_worktrees'] ?? array() ), 0, 10 );
+		if ( array() !== $top_counts ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Top repos by worktree count:' );
+			$this->format_items( $top_counts, array( 'repo', 'worktree_count' ), array( 'format' => 'table' ), 'worktree_count' );
+		}
+
+		$candidates = array_slice( (array) ( $cleanup['biggest_candidates'] ?? array() ), 0, 10 );
+		if ( array() !== $candidates ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Cleanup candidates:' );
+			$this->format_items(
+				array_map(
+					fn( $row ) => array(
+						'handle' => $row['handle'] ?? '',
+						'branch' => $row['branch'] ?? '',
+						'signal' => $row['signal'] ?? '',
+						'size'   => $row['size_human'] ?? '',
+					),
+					$candidates
+				),
+				array( 'handle', 'branch', 'signal', 'size' ),
+				array( 'format' => 'table' ),
+				'handle'
+			);
+		}
+
+		if ( ! empty( $report['suggested_cleanup_command'] ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Suggested cleanup review:' );
+			WP_CLI::log( (string) $report['suggested_cleanup_command'] );
+		}
+
+		foreach ( (array) ( $report['notes'] ?? array() ) as $note ) {
+			WP_CLI::log( 'Note: ' . $note );
 		}
 	}
 

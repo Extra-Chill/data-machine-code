@@ -1,0 +1,147 @@
+<?php
+/**
+ * Smoke test for workspace hygiene CLI rendering.
+ *
+ *   php tests/smoke-workspace-hygiene-cli.php
+ *
+ * @package DataMachineCode\Tests
+ */
+
+declare( strict_types=1 );
+
+namespace {
+	if ( ! defined( 'ABSPATH' ) ) {
+		define( 'ABSPATH', __DIR__ );
+	}
+
+	$GLOBALS['__cli_logs'] = array();
+
+	class WP_CLI {
+		public static function error( string $message ): void {
+			throw new RuntimeException( $message );
+		}
+
+		public static function success( string $message ): void {
+			$GLOBALS['__cli_logs'][] = 'success: ' . $message;
+		}
+
+		public static function log( string $message ): void {
+			$GLOBALS['__cli_logs'][] = $message;
+		}
+	}
+
+	function is_wp_error( $value ): bool {
+		return false;
+	}
+
+	function wp_get_ability( string $name ) {
+		return $GLOBALS['__abilities'][ $name ] ?? null;
+	}
+
+	function wp_json_encode( $data, int $flags = 0 ) {
+		return json_encode( $data, $flags );
+	}
+}
+
+namespace DataMachine\Cli {
+	class BaseCommand {
+		protected function format_items( array $items, array $fields, array $assoc_args, string $default_sort = '' ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
+			\WP_CLI::log( 'table:' . count( $items ) . ':' . implode( ',', $fields ) );
+		}
+	}
+}
+
+namespace {
+	require_once dirname( __DIR__ ) . '/inc/Cli/Commands/WorkspaceCommand.php';
+
+	function datamachine_code_hygiene_assert( bool $condition, string $message ): void {
+		if ( $condition ) {
+			echo "  [PASS] {$message}\n";
+			return;
+		}
+		echo "  [FAIL] {$message}\n";
+		exit( 1 );
+	}
+
+	function datamachine_code_hygiene_report(): array {
+		return array(
+			'success'                   => true,
+			'generated_at'              => '2026-04-29T00:00:00+00:00',
+			'workspace_path'            => '/workspace',
+			'destructive'               => false,
+			'size'                      => array(
+				'mode'            => 'best_effort_top_level_du',
+				'mode_note'       => 'Workspace size is best-effort.',
+				'total_human'     => '712.6 GiB',
+				'scan_complete'   => true,
+				'top_entries'     => array(),
+			),
+			'disk'                      => array(
+				'free_human' => '1.1 GiB',
+			),
+			'worktrees'                 => array(
+				'worktrees'          => 42,
+				'protected_dirty'    => 3,
+				'protected_unpushed' => 2,
+				'missing_metadata'   => 4,
+				'external'           => 7,
+			),
+			'top_repos_by_worktrees'    => array(
+				array( 'repo' => 'data-machine', 'worktree_count' => 17 ),
+			),
+			'top_repos_by_size'         => array(
+				array( 'repo' => 'data-machine', 'bytes' => 4096, 'human' => '4.0 KiB' ),
+			),
+			'cleanup'                   => array(
+				'included'           => true,
+				'dry_run'            => true,
+				'skip_github'        => true,
+				'summary'            => array( 'would_remove' => 9 ),
+				'biggest_candidates' => array(
+					array( 'handle' => 'data-machine@merged', 'branch' => 'merged', 'signal' => 'upstream-gone' ),
+				),
+			),
+			'suggested_cleanup_command' => 'wp datamachine-code workspace worktree cleanup --dry-run --skip-github --format=json',
+			'notes'                     => array( 'Cleanup summary uses local-only dry-run detection (--skip-github); no GitHub API lookups are required.' ),
+		);
+	}
+
+	class FakeHygieneAbility {
+		public array $last_input = array();
+
+		public function execute( array $input ): array {
+			$this->last_input = $input;
+			return datamachine_code_hygiene_report();
+		}
+	}
+
+	echo "=== smoke-workspace-hygiene-cli ===\n";
+
+	$ability                 = new FakeHygieneAbility();
+	$GLOBALS['__abilities'] = array(
+		'datamachine/workspace-hygiene-report' => $ability,
+	);
+	$command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
+
+	echo "\n[1] JSON output is parseable and forwards bounded flags\n";
+	$GLOBALS['__cli_logs'] = array();
+	$command->hygiene( array(), array( 'format' => 'json', 'skip-cleanup' => true, 'skip-sizes' => true, 'size-limit' => '25' ) );
+	datamachine_code_hygiene_assert( array( 'include_cleanup' => false, 'include_sizes' => false, 'size_limit' => 25 ) === $ability->last_input, 'CLI forwards skip flags and size limit' );
+	datamachine_code_hygiene_assert( 1 === count( $GLOBALS['__cli_logs'] ), 'JSON path writes one stdout document' );
+	$decoded = json_decode( (string) $GLOBALS['__cli_logs'][0], true );
+	datamachine_code_hygiene_assert( JSON_ERROR_NONE === json_last_error(), 'JSON output parses cleanly' );
+	datamachine_code_hygiene_assert( false === ( $decoded['destructive'] ?? true ), 'JSON report is explicitly non-destructive' );
+	datamachine_code_hygiene_assert( '1.1 GiB' === ( $decoded['disk']['free_human'] ?? '' ), 'JSON report includes free disk space' );
+
+	echo "\n[2] Human output is summary-first and includes actionable sections\n";
+	$GLOBALS['__cli_logs'] = array();
+	$command->hygiene( array(), array() );
+	datamachine_code_hygiene_assert( 'Workspace hygiene:' === ( $GLOBALS['__cli_logs'][0] ?? '' ), 'human output starts with report heading' );
+	datamachine_code_hygiene_assert( in_array( 'table:11:metric,value', $GLOBALS['__cli_logs'], true ), 'human output renders summary table' );
+	datamachine_code_hygiene_assert( in_array( 'Top repos by size:', $GLOBALS['__cli_logs'], true ), 'human output renders size leaders' );
+	datamachine_code_hygiene_assert( in_array( 'Top repos by worktree count:', $GLOBALS['__cli_logs'], true ), 'human output renders worktree-count leaders' );
+	datamachine_code_hygiene_assert( in_array( 'Cleanup candidates:', $GLOBALS['__cli_logs'], true ), 'human output renders cleanup candidates' );
+	datamachine_code_hygiene_assert( in_array( 'Suggested cleanup review:', $GLOBALS['__cli_logs'], true ), 'human output renders cleanup command' );
+
+	echo "\nAll workspace hygiene CLI smoke tests passed.\n";
+}

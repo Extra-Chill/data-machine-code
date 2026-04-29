@@ -954,6 +954,52 @@ class WorkspaceAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/workspace-hygiene-report',
+				array(
+					'label'               => 'Workspace Hygiene Report',
+					'description'         => 'Build a non-destructive workspace hygiene report with disk, size, worktree, and local cleanup dry-run summaries.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'include_cleanup' => array(
+								'type'        => 'boolean',
+								'description' => 'Include a local-only worktree cleanup dry-run summary. Default true.',
+							),
+							'include_sizes'   => array(
+								'type'        => 'boolean',
+								'description' => 'Include best-effort top-level workspace size data. Default true.',
+							),
+							'size_limit'      => array(
+								'type'        => 'integer',
+								'description' => 'Maximum top-level workspace entries to size. Default 200.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'                   => array( 'type' => 'boolean' ),
+							'generated_at'              => array( 'type' => 'string' ),
+							'workspace_path'            => array( 'type' => 'string' ),
+							'destructive'               => array( 'type' => 'boolean' ),
+							'size'                      => array( 'type' => 'object' ),
+							'disk'                      => array( 'type' => 'object' ),
+							'worktrees'                 => array( 'type' => 'object' ),
+							'top_repos_by_worktrees'    => array( 'type' => 'array' ),
+							'top_repos_by_size'         => array( 'type' => 'array' ),
+							'cleanup'                   => array( 'type' => 'object' ),
+							'suggested_cleanup_command' => array( 'type' => 'string' ),
+							'notes'                     => array( 'type' => 'array' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'workspaceHygieneReport' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/workspace-worktree-list',
 				array(
 					'label'               => 'List Workspace Worktrees',
@@ -1447,6 +1493,28 @@ class WorkspaceAbilities {
 			? (string) $input['state']
 			: null;
 		return $workspace->worktree_list( $repo, $state );
+	}
+
+	/**
+	 * Build a non-destructive workspace hygiene report.
+	 *
+	 * @param array $input Input parameters.
+	 * @return array|\WP_Error
+	 */
+	public static function workspaceHygieneReport( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		$opts      = array();
+		if ( array_key_exists( 'include_cleanup', $input ) ) {
+			$opts['include_cleanup'] = (bool) $input['include_cleanup'];
+		}
+		if ( array_key_exists( 'include_sizes', $input ) ) {
+			$opts['include_sizes'] = (bool) $input['include_sizes'];
+		}
+		if ( isset( $input['size_limit'] ) ) {
+			$opts['size_limit'] = (int) $input['size_limit'];
+		}
+
+		return $workspace->workspace_hygiene_report( $opts );
 	}
 
 	/**
