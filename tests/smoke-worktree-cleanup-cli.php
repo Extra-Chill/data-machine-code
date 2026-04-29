@@ -76,6 +76,9 @@ namespace {
 				'repo'        => 'repo',
 				'branch'      => 'feature-' . $i,
 				'path'        => '/workspace/repo@feature-' . $i,
+				'age_days'    => 20 + $i,
+				'size_bytes'          => 1024 * 1024 * $i,
+				'artifact_size_bytes' => 512 * 1024 * $i,
 				'reason_code' => 1 === $i ? 'dirty_worktree' : 'no_merge_signal',
 				'reason'      => 1 === $i ? 'working tree dirty (1 files) - pass force=true to override' : 'no merge signal - leaving in place',
 			);
@@ -86,10 +89,12 @@ namespace {
 			'repo'           => '',
 			'branch'         => '',
 			'path'           => '',
-			'reason_code'    => 'missing_metadata',
-			'reason'         => 'missing repo/branch/path',
-			'missing_fields' => array( 'repo', 'branch', 'path' ),
-			'hint'           => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
+			'reason_code'         => 'missing_metadata',
+			'reason'              => 'missing repo/branch/path',
+			'missing_fields'      => array( 'repo', 'branch', 'path' ),
+			'hint'                => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
+			'size_bytes'          => 0,
+			'artifact_size_bytes' => 0,
 		);
 
 		return array(
@@ -101,6 +106,9 @@ namespace {
 					'repo'        => 'repo',
 					'branch'      => 'merged',
 					'path'        => '/workspace/repo@merged',
+					'age_days'    => 42,
+					'size_bytes'          => 4 * 1024 * 1024 * 1024,
+					'artifact_size_bytes' => 3 * 1024 * 1024 * 1024,
 					'signal'      => 'upstream-gone',
 					'reason_code' => 'upstream-gone',
 					'reason'      => 'remote branch deleted (likely merged + auto-deleted)',
@@ -120,6 +128,10 @@ namespace {
 				'candidates_by_signal' => array(
 					'upstream-gone' => 1,
 				),
+				'total_size_bytes'      => 10 * 1024 * 1024 * 1024,
+				'artifact_size_bytes'   => 7 * 1024 * 1024 * 1024,
+				'size_by_repo'          => array( 'repo' => 10 * 1024 * 1024 * 1024 ),
+				'artifact_size_by_repo' => array( 'repo' => 7 * 1024 * 1024 * 1024 ),
 			),
 		);
 	}
@@ -144,13 +156,69 @@ namespace {
 		}
 	}
 
+	class FakeListAbility {
+		public function execute( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+			return array(
+				'success'   => true,
+				'worktrees' => array(
+					array(
+						'handle'      => 'repo',
+						'repo'        => 'repo',
+						'is_primary'  => true,
+						'branch'      => 'main',
+						'head'        => 'abcdef123',
+						'dirty'       => 0,
+						'path'        => '/workspace/repo',
+					),
+					array(
+						'handle'              => 'repo@old',
+						'repo'                => 'repo',
+						'is_primary'          => false,
+						'branch'              => 'old',
+						'head'                => 'abcdef456',
+						'dirty'               => 0,
+						'created_at'          => '2026-04-01T00:00:00+00:00',
+						'age_days'            => 28,
+						'size_bytes'          => 4 * 1024 * 1024,
+						'artifact_size_bytes' => 3 * 1024 * 1024,
+						'artifacts'           => array( array( 'path' => 'target', 'size_bytes' => 3 * 1024 * 1024 ) ),
+						'stale_reason'        => 'older_than_threshold',
+						'path'                => '/workspace/repo@old',
+					),
+					array(
+						'handle'              => 'repo@dirty',
+						'repo'                => 'repo',
+						'is_primary'          => false,
+						'branch'              => 'dirty',
+						'head'                => 'abcdef789',
+						'dirty'               => 1,
+						'age_days'            => null,
+						'size_bytes'          => 1024,
+						'artifact_size_bytes' => 0,
+						'artifacts'           => array(),
+						'stale_reason'        => 'dirty',
+						'path'                => '/workspace/repo@dirty',
+					),
+				),
+			);
+		}
+	}
+
 	echo "=== smoke-worktree-cleanup-cli ===\n";
 
 	$ability = new FakeCleanupAbility();
+	$list_ability = new FakeListAbility();
 	$GLOBALS['__abilities'] = array(
 		'datamachine/workspace-worktree-cleanup' => $ability,
+		'datamachine/workspace-worktree-list'    => $list_ability,
 	);
 	$command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
+
+	echo "\n[0] list stale output exposes disk fields\n";
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree( array( 'list' ), array( 'stale' => true ) );
+	datamachine_code_cleanup_assert( in_array( 'table:2:handle,repo,kind,branch,head,dirty,state,created_at,pr,age_days,size,artifacts,stale,path', WP_CLI::$logs, true ), 'worktree list --stale filters to stale rows and includes disk fields' );
 
 	echo "\n[1] JSON output is one parseable document\n";
 	WP_CLI::$logs      = array();
@@ -188,8 +256,9 @@ namespace {
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true ) );
 	datamachine_code_cleanup_assert( 'Summary:' === ( WP_CLI::$logs[0] ?? '' ), 'human output starts with summary' );
-	datamachine_code_cleanup_assert( in_array( 'table:1:handle,branch,signal,reason_code', WP_CLI::$logs, true ), 'default candidate table uses compact fields' );
-	datamachine_code_cleanup_assert( in_array( 'table:10:handle,reason_code,reason', WP_CLI::$logs, true ), 'default skipped table omits path and hint fields' );
+	datamachine_code_cleanup_assert( in_array( 'table:1:handle,branch,age_days,size,artifacts,signal,reason_code', WP_CLI::$logs, true ), 'default candidate table uses compact disk fields' );
+	datamachine_code_cleanup_assert( in_array( 'table:10:handle,reason_code,age_days,size,artifacts,reason', WP_CLI::$logs, true ), 'default skipped table omits path and hint fields but keeps disk fields' );
+	datamachine_code_cleanup_assert( in_array( 'Top repos by worktree size:', WP_CLI::$logs, true ), 'human output includes top repo size summary' );
 	datamachine_code_cleanup_assert( in_array( 'Showing 10 of 12 skipped rows. Re-run with --verbose for all rows or --only=<reason_code> to filter.', WP_CLI::$logs, true ), 'human output truncates skipped rows with hint' );
 	datamachine_code_cleanup_assert( 1 === count( WP_CLI::$successes ), 'human output keeps success suffix' );
 
@@ -197,8 +266,8 @@ namespace {
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'verbose' => true ) );
-	datamachine_code_cleanup_assert( in_array( 'table:1:handle,branch,signal,reason', WP_CLI::$logs, true ), 'verbose candidate table keeps full reason field' );
-	datamachine_code_cleanup_assert( in_array( 'table:12:handle,reason_code,reason,repo,branch,path,primary_path,missing,hint', WP_CLI::$logs, true ), 'verbose skipped table keeps diagnostic fields' );
+	datamachine_code_cleanup_assert( in_array( 'table:1:handle,branch,age_days,size,artifacts,signal,reason', WP_CLI::$logs, true ), 'verbose candidate table keeps full reason field' );
+	datamachine_code_cleanup_assert( in_array( 'table:12:handle,reason_code,reason,age_days,size,artifacts,repo,branch,path,primary_path,missing,hint', WP_CLI::$logs, true ), 'verbose skipped table keeps diagnostic fields' );
 
 	echo "\n[4] --only filters rows while keeping full summary\n";
 	WP_CLI::$logs      = array();
@@ -227,7 +296,7 @@ namespace {
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'older-than' => '7d' ) );
 	datamachine_code_cleanup_assert( array( 'dry_run' => true, 'force' => false, 'skip_github' => true, 'older_than' => '7d' ) === $ability->last_input, 'older-than forwards to cleanup ability as older_than' );
-	datamachine_code_cleanup_assert( in_array( 'table:8:metric,count', WP_CLI::$logs, true ), 'age filter summary adds two summary rows' );
+	datamachine_code_cleanup_assert( in_array( 'table:10:metric,count', WP_CLI::$logs, true ), 'age filter and disk summary rows are rendered' );
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
@@ -235,6 +304,12 @@ namespace {
 	$older_than_json = json_decode( WP_CLI::$logs[0], true );
 	datamachine_code_cleanup_assert( '7d' === ( $older_than_json['summary']['age_filter']['older_than'] ?? '' ), 'JSON summary exposes older_than filter value' );
 	datamachine_code_cleanup_assert( 2 === (int) ( $older_than_json['summary']['age_filter']['excluded'] ?? 0 ), 'JSON summary exposes age-filter excluded count' );
+
+	echo "\n[7] --sort forwards cleanup sorting field\n";
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'sort' => 'size', 'format' => 'json' ) );
+	datamachine_code_cleanup_assert( 'size' === ( $ability->last_input['sort'] ?? null ), '--sort forwards to cleanup ability' );
 
 	echo "\nAll worktree cleanup CLI smoke tests passed.\n";
 }

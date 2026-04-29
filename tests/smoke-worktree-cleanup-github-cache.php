@@ -125,7 +125,7 @@ namespace {
 		echo "  ✗ {$message}\n";
 	};
 
-	$find = new \ReflectionMethod( Workspace::class, 'find_merged_pr_for_branch' );
+	$find = new \ReflectionMethod( Workspace::class, 'find_closed_pr_for_branch' );
 	$detect = new \ReflectionMethod( Workspace::class, 'detect_merge_signal' );
 	$workspace = new Workspace();
 	$run = function ( string $command, string $cwd = '' ): string {
@@ -165,20 +165,33 @@ namespace {
 			'repo' => array( 'full_name' => 'someone/data-machine-code' ),
 		),
 	);
+	$closed_pr = array(
+		'number'    => 44,
+		'state'     => 'closed',
+		'merged_at' => null,
+		'html_url'  => 'https://github.com/Extra-Chill/data-machine-code/pull/44',
+		'head'      => array(
+			'ref'  => 'closed-branch',
+			'repo' => array( 'full_name' => 'Extra-Chill/data-machine-code' ),
+		),
+	);
 
 	echo "=== smoke-worktree-cleanup-github-cache ===\n";
 
 	echo "\n[1] one repo lookup is cached across branch checks\n";
 	GitHubAbilities::$pat       = 'test-token';
 	GitHubAbilities::$calls     = array();
-	GitHubAbilities::$responses = array( array( 'data' => array( $merged_pr, $fork_pr ) ) );
+	GitHubAbilities::$responses = array( array( 'data' => array( $merged_pr, $fork_pr, $closed_pr ) ) );
 	$cache = array();
 
 	$hit  = $find->invokeArgs( $workspace, array( 'Extra-Chill/data-machine-code', 'merged-branch', &$cache ) );
 	$miss = $find->invokeArgs( $workspace, array( 'Extra-Chill/data-machine-code', 'missing-branch', &$cache ) );
 	$fork = $find->invokeArgs( $workspace, array( 'Extra-Chill/data-machine-code', 'fork-branch', &$cache ) );
+	$closed = $find->invokeArgs( $workspace, array( 'Extra-Chill/data-machine-code', 'closed-branch', &$cache ) );
 
 	$assert( 42, $hit['number'] ?? null, 'merged same-repo branch is found' );
+	$assert( 44, $closed['number'] ?? null, 'closed same-repo branch is found' );
+	$assert( '', $closed['merged_at'] ?? null, 'closed unmerged PR keeps empty merged_at' );
 	$assert( null, $miss, 'missing branch returns null' );
 	$assert( null, $fork, 'fork branch with same ref is ignored' );
 	$assert( 1, count( GitHubAbilities::$calls ), 'GitHub API called once for three branch checks' );

@@ -1064,21 +1064,32 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--dry-run]
 	 * : Preview cleanup candidates without removing anything (cleanup only).
 	 *
-	 * [--apply-plan=<file>]
-	 * : Apply a previously reviewed cleanup JSON report. The destructive pass
-	 *   revalidates every planned row and removes only exact current matches.
-	 *
-	 * [--skip-github]
-	 * : Skip the GitHub API lookup and rely only on the local `upstream-gone`
-	 *   signal (cleanup only). Faster, but misses merged branches where the
-	 *   remote branch wasn't auto-deleted.
-	 *
-	 * [--older-than=<duration>]
-	 * : Limit cleanup candidates to worktrees with lifecycle `created_at`
-	 *   metadata older than the compact duration (cleanup only, e.g. 7d, 24h).
-	 *   Candidate worktrees without valid `created_at` metadata are skipped.
-	 *
-	 * [--verbose]
+		 * [--apply-plan=<file>]
+		 * : Apply a previously reviewed cleanup JSON report. The destructive pass
+		 *   revalidates every planned row and removes only exact current matches.
+		 *
+		 * [--skip-github]
+		 * : Skip the GitHub API lookup and rely only on the local `upstream-gone`
+		 *   signal (cleanup only). Faster, but misses merged branches where the
+		 *   remote branch wasn't auto-deleted.
+		 *
+		 * [--older-than=<duration>]
+		 * : Limit cleanup candidates to worktrees with lifecycle `created_at`
+		 *   metadata older than the compact duration (cleanup only, e.g. 7d, 24h).
+		 *   Candidate worktrees without valid `created_at` metadata are skipped.
+		 *
+		 * [--sort=<field>]
+		 * : Sort cleanup candidates by reporting field (cleanup only).
+		 * ---
+		 * options:
+		 *   - size
+		 *   - age
+		 * ---
+		 *
+		 * [--stale]
+		 * : For list, show only worktrees with a stale_reason (old, dirty, or missing metadata).
+		 *
+		 * [--verbose]
 	 * : Show every cleanup row instead of concise samples (cleanup only).
 	 *
 	 * [--only=<section>]
@@ -1277,6 +1288,9 @@ class WorkspaceCommand extends BaseCommand {
 				if ( isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ) {
 					$input['older_than'] = trim( (string) $assoc_args['older-than'] );
 				}
+				if ( isset( $assoc_args['sort'] ) && '' !== trim( (string) $assoc_args['sort'] ) ) {
+					$input['sort'] = trim( (string) $assoc_args['sort'] );
+				}
 				break;
 		}
 
@@ -1307,29 +1321,39 @@ class WorkspaceCommand extends BaseCommand {
 		switch ( $operation ) {
 			case 'list':
 				$worktrees = $result['worktrees'] ?? array();
+				if ( ! empty( $assoc_args['stale'] ) ) {
+					$worktrees = array_values( array_filter( $worktrees, fn( $wt ) => ! empty( $wt['stale_reason'] ) ) );
+				}
 				if ( empty( $worktrees ) ) {
 					WP_CLI::log( 'No worktrees found.' );
 					return;
 				}
 				$items  = array_map(
 					fn( $wt ) => array(
-						'handle'     => $wt['handle'] ?? '',
-						'repo'       => $wt['repo'] ?? '',
-						'kind'       => ! empty( $wt['is_primary'] ) ? 'primary' : 'worktree',
-						'branch'     => $wt['branch'] ?? '-',
-						'head'       => isset( $wt['head'] ) ? substr( (string) $wt['head'], 0, 7 ) : '-',
-						'dirty'      => (int) ( $wt['dirty'] ?? 0 ),
-						'created_at' => $wt['created_at'] ?? null,
-						'state'      => $wt['lifecycle_state'] ?? null,
-						'pr'         => $wt['pr_url'] ?? null,
-						'metadata'   => $wt['metadata'] ?? null,
-						'path'       => $wt['path'] ?? '',
+						'handle'              => $wt['handle'] ?? '',
+						'repo'                => $wt['repo'] ?? '',
+						'kind'                => ! empty( $wt['is_primary'] ) ? 'primary' : 'worktree',
+						'branch'              => $wt['branch'] ?? '-',
+						'head'                => isset( $wt['head'] ) ? substr( (string) $wt['head'], 0, 7 ) : '-',
+						'dirty'               => (int) ( $wt['dirty'] ?? 0 ),
+						'created_at'          => $wt['created_at'] ?? null,
+						'state'               => $wt['lifecycle_state'] ?? null,
+						'pr'                  => $wt['pr_url'] ?? null,
+						'age_days'            => $wt['age_days'] ?? null,
+						'size_bytes'          => $wt['size_bytes'] ?? null,
+						'size'                => $this->format_bytes( $wt['size_bytes'] ?? null ),
+						'artifact_size_bytes' => $wt['artifact_size_bytes'] ?? 0,
+						'artifacts'           => $this->format_bytes( $wt['artifact_size_bytes'] ?? 0 ),
+						'artifact_paths'      => $wt['artifacts'] ?? array(),
+						'stale'               => $wt['stale_reason'] ?? '',
+						'metadata'            => $wt['metadata'] ?? null,
+						'path'                => $wt['path'] ?? '',
 					),
 					$worktrees
 				);
-				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'created_at', 'pr', 'path' );
+				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'created_at', 'pr', 'age_days', 'size', 'artifacts', 'stale', 'path' );
 				if ( in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
-					$fields[] = 'metadata';
+					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'created_at', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'metadata', 'path' );
 				}
 				$this->format_items( $items, $fields, $assoc_args, 'handle' );
 				return;
@@ -1487,7 +1511,28 @@ class WorkspaceCommand extends BaseCommand {
 				'count'  => (int) ( $summary['age_filter']['unknown_age'] ?? 0 ),
 			);
 		}
+		$summary_rows[] = array(
+			'metric' => 'total_size',
+			'count'  => $this->format_bytes( $summary['total_size_bytes'] ?? null ),
+		);
+		$summary_rows[] = array(
+			'metric' => 'artifact_size',
+			'count'  => $this->format_bytes( $summary['artifact_size_bytes'] ?? null ),
+		);
 		$this->format_items( $summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric' );
+
+		if ( ! empty( $summary['size_by_repo'] ) && is_array( $summary['size_by_repo'] ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Top repos by worktree size:' );
+			$repo_rows = array();
+			foreach ( array_slice( $summary['size_by_repo'], 0, 5, true ) as $repo => $bytes ) {
+				$repo_rows[] = array(
+					'repo' => (string) $repo,
+					'size' => $this->format_bytes( $bytes ),
+				);
+			}
+			$this->format_items( $repo_rows, array( 'repo', 'size' ), array( 'format' => 'table' ), 'size' );
+		}
 
 		if ( '' !== $only ) {
 			WP_CLI::log( sprintf( 'Filter: %s', $only ) );
@@ -1500,13 +1545,16 @@ class WorkspaceCommand extends BaseCommand {
 				fn( $c ) => array(
 					'handle'      => $c['handle'] ?? '',
 					'branch'      => $c['branch'] ?? '',
+					'age_days'    => $c['age_days'] ?? '',
+					'size'        => $this->format_bytes( $c['size_bytes'] ?? null ),
+					'artifacts'   => $this->format_bytes( $c['artifact_size_bytes'] ?? 0 ),
 					'signal'      => $c['signal'] ?? '',
 					'reason_code' => $c['reason_code'] ?? ( $c['signal'] ?? '' ),
 					'reason'      => $c['reason'] ?? '',
 				),
 				array_slice( $candidates, 0, $limit )
 			);
-			$fields         = $verbose ? array( 'handle', 'branch', 'signal', 'reason' ) : array( 'handle', 'branch', 'signal', 'reason_code' );
+			$fields         = $verbose ? array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason' ) : array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason_code' );
 			$this->format_items( $candidate_rows, $fields, array( 'format' => 'table' ), 'handle' );
 			$this->render_cleanup_truncation_hint( count( $candidates ), $limit, 'candidate rows' );
 		}
@@ -1518,13 +1566,16 @@ class WorkspaceCommand extends BaseCommand {
 				fn( $c ) => array(
 					'handle'      => $c['handle'] ?? '',
 					'branch'      => $c['branch'] ?? '',
+					'age_days'    => $c['age_days'] ?? '',
+					'size'        => $this->format_bytes( $c['size_bytes'] ?? null ),
+					'artifacts'   => $this->format_bytes( $c['artifact_size_bytes'] ?? 0 ),
 					'signal'      => $c['signal'] ?? '',
 					'reason_code' => $c['reason_code'] ?? ( $c['signal'] ?? '' ),
 					'reason'      => $c['reason'] ?? '',
 				),
 				array_slice( $removed, 0, $limit )
 			);
-			$fields       = $verbose ? array( 'handle', 'branch', 'signal', 'reason' ) : array( 'handle', 'branch', 'signal', 'reason_code' );
+			$fields       = $verbose ? array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason' ) : array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason_code' );
 			$this->format_items( $removed_rows, $fields, array( 'format' => 'table' ), 'handle' );
 			$this->render_cleanup_truncation_hint( count( $removed ), $limit, 'removed rows' );
 		}
@@ -1537,6 +1588,9 @@ class WorkspaceCommand extends BaseCommand {
 					'handle'       => $s['handle'] ?? '',
 					'reason_code'  => $s['reason_code'] ?? '',
 					'reason'       => $verbose ? ( $s['reason'] ?? '' ) : $this->shorten_cleanup_reason( (string) ( $s['reason'] ?? '' ) ),
+					'age_days'     => $s['age_days'] ?? '',
+					'size'         => $this->format_bytes( $s['size_bytes'] ?? null ),
+					'artifacts'    => $this->format_bytes( $s['artifact_size_bytes'] ?? 0 ),
 					'repo'         => $s['repo'] ?? '',
 					'branch'       => $s['branch'] ?? '',
 					'path'         => $s['path'] ?? '',
@@ -1546,7 +1600,7 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array_slice( $skipped, 0, $limit )
 			);
-			$fields       = $verbose ? array( 'handle', 'reason_code', 'reason', 'repo', 'branch', 'path', 'primary_path', 'missing', 'hint' ) : array( 'handle', 'reason_code', 'reason' );
+			$fields       = $verbose ? array( 'handle', 'reason_code', 'reason', 'age_days', 'size', 'artifacts', 'repo', 'branch', 'path', 'primary_path', 'missing', 'hint' ) : array( 'handle', 'reason_code', 'age_days', 'size', 'artifacts', 'reason' );
 			$this->format_items( $skipped_rows, $fields, array( 'format' => 'table' ), 'handle' );
 			$this->render_cleanup_truncation_hint( count( $skipped ), $limit, 'skipped rows' );
 		}
@@ -1670,6 +1724,30 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 		WP_CLI::log( sprintf( 'Showing %d of %d %s. Re-run with --verbose for all rows or --only=<reason_code> to filter.', $limit, $total, $label ) );
+	}
+
+	/**
+	 * Format a byte count without depending on WordPress helpers in smoke tests.
+	 *
+	 * @param mixed $bytes Raw byte count.
+	 * @return string Human-readable size.
+	 */
+	private function format_bytes( mixed $bytes ): string {
+		if ( null === $bytes || '' === $bytes ) {
+			return '-';
+		}
+
+		$bytes      = max( 0, (float) $bytes );
+		$units      = array( 'B', 'KiB', 'MiB', 'GiB', 'TiB' );
+		$unit       = 0;
+		$unit_count = count( $units );
+		while ( $bytes >= 1024 && $unit < $unit_count - 1 ) {
+			$bytes /= 1024;
+			++$unit;
+		}
+
+		$precision = 0 === $unit ? 0 : 1;
+		return number_format( $bytes, $precision ) . ' ' . $units[ $unit ];
 	}
 
 	/**

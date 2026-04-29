@@ -37,6 +37,11 @@ class Workspace {
 	private const CLEANUP_GITHUB_MAX_PAGES = 3;
 
 	/**
+	 * Number of largest/oldest rows to expose in cleanup summaries.
+	 */
+	private const CLEANUP_SUMMARY_TOP_LIMIT = 10;
+
+	/**
 	 * @var string Resolved workspace path.
 	 */
 	private string $workspace_path;
@@ -1523,13 +1528,19 @@ class Workspace {
 					? 0
 					: count( array_filter( array_map( 'trim', explode( "\n", $dirty_result['output'] ?? '' ) ) ) );
 				$metadata     = ( ! $is_primary && $inside_ws ) ? WorktreeContextInjector::get_metadata( $relative ) : null;
+				$created_at   = is_array( $metadata ) ? ( $metadata['created_at'] ?? null ) : null;
+				$disk         = $this->build_worktree_disk_report( $primary, $wt['path'], ! $is_primary, $created_at, $metadata );
+				$stale_reason = $this->detect_worktree_stale_reason( ! $is_primary, $dirty_files, $disk['age_days'] ?? null, $created_at );
+				if ( null !== $stale_reason ) {
+					$disk['stale_reason'] = $stale_reason;
+				}
 
 				$lifecycle_state = is_array( $metadata ) ? ( $metadata['lifecycle_state'] ?? null ) : null;
 				if ( null !== $state && $lifecycle_state !== $state ) {
 					continue;
 				}
 
-				$worktrees[] = array(
+				$worktrees[] = array_merge( array(
 					'handle'      => $handle,
 					'repo'        => $primary,
 					'is_worktree' => ! $is_primary,
@@ -1540,12 +1551,12 @@ class Workspace {
 					'head'        => $wt['head'],
 					'path'        => $wt['path'],
 					'dirty'       => $dirty_files,
-					'created_at'  => is_array( $metadata ) ? ( $metadata['created_at'] ?? null ) : null,
+					'created_at'  => $created_at,
 					'lifecycle_state' => $lifecycle_state,
 					'pr_url'      => is_array( $metadata ) ? ( $metadata['pr_url'] ?? null ) : null,
 					'pr_number'   => is_array( $metadata ) ? ( $metadata['pr_number'] ?? null ) : null,
 					'metadata'    => $metadata,
-				);
+				), $disk );
 			}
 		}
 
@@ -1699,6 +1710,11 @@ class Workspace {
 		$skip_github = ! empty( $opts['skip_github'] );
 		$apply_plan  = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
 		$older_than  = isset( $opts['older_than'] ) ? trim( (string) $opts['older_than'] ) : '';
+		$sort        = isset( $opts['sort'] ) ? trim( (string) $opts['sort'] ) : '';
+
+		if ( '' !== $sort && ! in_array( $sort, array( 'size', 'age' ), true ) ) {
+			return new \WP_Error( 'invalid_cleanup_sort', 'Invalid cleanup sort. Use size or age.', array( 'status' => 400 ) );
+		}
 
 		$planned_candidates = null;
 		if ( null !== $apply_plan ) {
@@ -1755,10 +1771,11 @@ class Workspace {
 			$wt_path      = $wt['path'] ?? '';
 			$metadata     = $wt['metadata'] ?? null;
 			$created_at   = $wt['created_at'] ?? null;
+			$disk_fields  = $this->extract_worktree_disk_fields( $wt );
 			$primary_path = '' !== $repo ? $this->get_primary_path( $repo ) : '';
 
 			if ( ! empty( $wt['external'] ) ) {
-				$skipped[] = array(
+				$skipped[] = array_merge( array(
 					'handle'       => $handle,
 					'reason_code'  => 'external_worktree',
 					'reason'       => 'external worktree (outside workspace)',
@@ -1770,7 +1787,7 @@ class Workspace {
 					'primary_path' => $primary_path,
 					'created_at'   => $created_at,
 					'metadata'     => $metadata,
-				);
+				), $disk_fields );
 				continue;
 			}
 
@@ -1789,7 +1806,7 @@ class Workspace {
 						$missing_fields[] = $field;
 					}
 				}
-				$skipped[] = array(
+				$skipped[] = array_merge( array(
 					'handle'         => $handle,
 					'repo'           => $repo,
 					'branch'         => $branch,
@@ -1800,12 +1817,12 @@ class Workspace {
 					'hint'           => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
 					'created_at'     => $created_at,
 					'metadata'       => $metadata,
-				);
+				), $disk_fields );
 				continue;
 			}
 
 			if ( in_array( $branch, $protected_branches, true ) ) {
-				$skipped[] = array(
+				$skipped[] = array_merge( array(
 					'handle'      => $handle,
 					'repo'        => $repo,
 					'branch'      => $branch,
@@ -1814,12 +1831,12 @@ class Workspace {
 					'reason'      => sprintf( 'protected branch (%s)', $branch ),
 					'created_at'  => $created_at,
 					'metadata'    => $metadata,
-				);
+				), $disk_fields );
 				continue;
 			}
 
 			if ( $dirty_count > 0 && ! $force ) {
-				$skipped[] = array(
+				$skipped[] = array_merge( array(
 					'handle'      => $handle,
 					'repo'        => $repo,
 					'branch'      => $branch,
@@ -1829,7 +1846,7 @@ class Workspace {
 					'dirty'       => $dirty_count,
 					'created_at'  => $created_at,
 					'metadata'    => $metadata,
-				);
+				), $disk_fields );
 				continue;
 			}
 
@@ -1840,7 +1857,7 @@ class Workspace {
 			// harder problem than dirty-file loss, and this guard is cheap.
 			$unpushed = $this->count_unpushed_commits( $wt_path );
 			if ( $unpushed > 0 ) {
-				$skipped[] = array(
+				$skipped[] = array_merge( array(
 					'handle'      => $handle,
 					'repo'        => $repo,
 					'branch'      => $branch,
@@ -1850,13 +1867,13 @@ class Workspace {
 					'unpushed'    => $unpushed,
 					'created_at'  => $created_at,
 					'metadata'    => $metadata,
-				);
+				), $disk_fields );
 				continue;
 			}
 
 			$primary_path = $this->get_primary_path( $repo );
 			if ( ! is_dir( $primary_path . '/.git' ) ) {
-				$skipped[] = array(
+				$skipped[] = array_merge( array(
 					'handle'      => $handle,
 					'repo'        => $repo,
 					'branch'      => $branch,
@@ -1866,7 +1883,7 @@ class Workspace {
 					'hint'        => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
 					'created_at'  => $created_at,
 					'metadata'    => $metadata,
-				);
+				), $disk_fields );
 				continue;
 			}
 
@@ -1888,7 +1905,7 @@ class Workspace {
 				$signal = $this->detect_merge_signal( $primary_path, $repo, $branch, $skip_github, $github_cache );
 			}
 			if ( null === $signal ) {
-				$skipped[] = array(
+				$skipped[] = array_merge( array(
 					'handle'      => $handle,
 					'repo'        => $repo,
 					'branch'      => $branch,
@@ -1897,12 +1914,12 @@ class Workspace {
 					'reason'      => 'no merge signal — leaving in place',
 					'created_at'  => $created_at,
 					'metadata'    => $metadata,
-				);
+				), $disk_fields );
 				continue;
 			}
 
 			if ( 'github-unknown' === ( $signal['signal'] ?? '' ) ) {
-				$skipped[] = array(
+				$skipped[] = array_merge( array(
 					'handle'      => $handle,
 					'repo'        => $repo,
 					'branch'      => $branch,
@@ -1911,7 +1928,7 @@ class Workspace {
 					'reason'      => $signal['reason'],
 					'created_at'  => $created_at,
 					'metadata'    => $metadata,
-				);
+				), $disk_fields );
 				continue;
 			}
 
@@ -1920,7 +1937,7 @@ class Workspace {
 				$created_ts = is_string( $created_at ) && '' !== $created_at ? strtotime( $created_at ) : false;
 				if ( false === $created_ts ) {
 					++$age_filter['unknown_age'];
-					$skipped[] = array(
+					$skipped[] = array_merge( array(
 						'handle'      => $handle,
 						'repo'        => $repo,
 						'branch'      => $branch,
@@ -1935,7 +1952,7 @@ class Workspace {
 							'threshold'  => $age_filter['threshold'],
 							'decision'   => 'unknown_age',
 						),
-					);
+					), $disk_fields );
 					continue;
 				}
 
@@ -1950,7 +1967,7 @@ class Workspace {
 
 				if ( $created_ts > $age_filter['threshold_unix'] ) {
 					++$age_filter['excluded'];
-					$skipped[] = array(
+					$skipped[] = array_merge( array(
 						'handle'      => $handle,
 						'repo'        => $repo,
 						'branch'      => $branch,
@@ -1960,14 +1977,14 @@ class Workspace {
 						'created_at'  => $created_at,
 						'metadata'    => $metadata,
 						'age_filter'  => array_merge( $age_decision, array( 'decision' => 'excluded' ) ),
-					);
+					), $disk_fields );
 					continue;
 				}
 
 				$age_decision['decision'] = 'included';
 			}
 
-			$candidate = array(
+			$candidate = array_merge( array(
 				'handle'      => $wt['handle'],
 				'repo'        => $repo,
 				'branch'      => $branch,
@@ -1979,12 +1996,14 @@ class Workspace {
 				'pr_url'      => $signal['pr_url'] ?? null,
 				'created_at'  => $created_at,
 				'metadata'    => $metadata,
-			);
+			), $disk_fields );
 			if ( null !== $age_decision ) {
 				$candidate['age_filter'] = $age_decision;
 			}
 			$candidates[] = $candidate;
 		}
+
+		$candidates = $this->sort_worktree_cleanup_rows( $candidates, $sort );
 
 		if ( null !== $planned_candidates ) {
 			$scoped     = $this->scope_worktree_cleanup_to_plan( $planned_candidates, $candidates, $skipped );
@@ -2034,6 +2053,7 @@ class Workspace {
 					'reason'      => 'remove failed: ' . $remove->get_error_message(),
 					'created_at'  => $cand['created_at'] ?? null,
 					'metadata'    => $cand['metadata'] ?? null,
+					'size_bytes'  => $cand['size_bytes'] ?? null,
 				);
 				continue;
 			}
@@ -2064,6 +2084,11 @@ class Workspace {
 	private function build_worktree_cleanup_summary( array $candidates, array $removed, array $skipped, ?array $age_filter = null ): array {
 		$skipped_by_reason    = array();
 		$candidates_by_signal = array();
+		$size_by_repo         = array();
+		$artifact_by_repo     = array();
+		$total_size_bytes     = 0;
+		$total_artifact_bytes = 0;
+		$all_rows             = array_merge( $candidates, $removed, $skipped );
 
 		foreach ( $skipped as $row ) {
 			$code                       = (string) ( $row['reason_code'] ?? 'unknown' );
@@ -2075,15 +2100,38 @@ class Workspace {
 			$candidates_by_signal[ $signal ] = ( $candidates_by_signal[ $signal ] ?? 0 ) + 1;
 		}
 
+		foreach ( $all_rows as $row ) {
+			$repo           = (string) ( $row['repo'] ?? 'unknown' );
+			$size_bytes     = isset( $row['size_bytes'] ) ? (int) $row['size_bytes'] : 0;
+			$artifact_bytes = isset( $row['artifact_size_bytes'] ) ? (int) $row['artifact_size_bytes'] : 0;
+
+			if ( $size_bytes > 0 ) {
+				$size_by_repo[ $repo ] = ( $size_by_repo[ $repo ] ?? 0 ) + $size_bytes;
+				$total_size_bytes     += $size_bytes;
+			}
+			if ( $artifact_bytes > 0 ) {
+				$artifact_by_repo[ $repo ] = ( $artifact_by_repo[ $repo ] ?? 0 ) + $artifact_bytes;
+				$total_artifact_bytes     += $artifact_bytes;
+			}
+		}
+
 		ksort( $skipped_by_reason );
 		ksort( $candidates_by_signal );
+		arsort( $size_by_repo );
+		arsort( $artifact_by_repo );
 
 		$summary = array(
-			'would_remove'         => count( $candidates ),
-			'removed'              => count( $removed ),
-			'skipped'              => count( $skipped ),
-			'skipped_by_reason'    => $skipped_by_reason,
-			'candidates_by_signal' => $candidates_by_signal,
+			'would_remove'          => count( $candidates ),
+			'removed'               => count( $removed ),
+			'skipped'               => count( $skipped ),
+			'skipped_by_reason'     => $skipped_by_reason,
+			'candidates_by_signal'  => $candidates_by_signal,
+			'total_size_bytes'      => $total_size_bytes,
+			'artifact_size_bytes'   => $total_artifact_bytes,
+			'size_by_repo'          => $size_by_repo,
+			'artifact_size_by_repo' => $artifact_by_repo,
+			'top_by_size'           => $this->summarize_top_worktree_rows( $all_rows, 'size_bytes' ),
+			'top_by_age'            => $this->summarize_top_worktree_rows( $all_rows, 'age_days' ),
 		);
 
 		if ( null !== $age_filter ) {
@@ -2092,6 +2140,268 @@ class Workspace {
 		}
 
 		return $summary;
+	}
+
+	/**
+	 * Determine a non-destructive stale reason for list/reporting surfaces.
+	 *
+	 * @param bool        $is_worktree Whether the row is a worktree.
+	 * @param int         $dirty_files Dirty file count.
+	 * @param int|null    $age_days    Whole-day age.
+	 * @param string|null $created_at  Lifecycle timestamp.
+	 * @return string|null Stale reason code.
+	 */
+	private function detect_worktree_stale_reason( bool $is_worktree, int $dirty_files, ?int $age_days, ?string $created_at ): ?string {
+		if ( ! $is_worktree ) {
+			return null;
+		}
+
+		if ( $dirty_files > 0 ) {
+			return 'dirty';
+		}
+
+		if ( null === $created_at || '' === $created_at || null === $age_days ) {
+			return 'missing_metadata';
+		}
+
+		$threshold = (int) apply_filters( 'datamachine_code_worktree_stale_days', 14 );
+		if ( $threshold > 0 && $age_days >= $threshold ) {
+			return 'older_than_threshold';
+		}
+
+		return null;
+	}
+
+	/**
+	 * Build disk and artifact metadata for a worktree/list row.
+	 *
+	 * @param string      $repo        Primary repo name.
+	 * @param string      $path        Worktree path.
+	 * @param bool        $is_worktree Whether the row is a linked worktree.
+	 * @param string|null $created_at Lifecycle creation timestamp.
+	 * @param array|null $metadata    Stored lifecycle/context metadata.
+	 * @return array<string,mixed>
+	 */
+	private function build_worktree_disk_report( string $repo, string $path, bool $is_worktree, ?string $created_at, ?array $metadata ): array {
+		$size_bytes      = $this->estimate_path_size_bytes( $path );
+		$last_touched_at = $this->detect_worktree_last_touched_at( $path, $metadata, $created_at );
+		$age_days        = $this->calculate_age_days( $created_at );
+		$artifacts       = $is_worktree ? $this->detect_worktree_artifacts( $repo, $path ) : array();
+		$artifact_bytes  = array_sum( array_map( fn( $artifact ) => (int) ( $artifact['size_bytes'] ?? 0 ), $artifacts ) );
+
+		return array(
+			'size_bytes'           => $size_bytes,
+			'estimated_size_bytes' => $size_bytes,
+			'last_touched_at'      => $last_touched_at,
+			'age_days'             => $age_days,
+			'artifacts'            => $artifacts,
+			'artifact_size_bytes'  => $artifact_bytes,
+		);
+	}
+
+	/**
+	 * Pull disk fields from an existing worktree row for cleanup output.
+	 *
+	 * @param array $wt Worktree row.
+	 * @return array<string,mixed>
+	 */
+	private function extract_worktree_disk_fields( array $wt ): array {
+		return array(
+			'size_bytes'           => $wt['size_bytes'] ?? null,
+			'estimated_size_bytes' => $wt['estimated_size_bytes'] ?? ( $wt['size_bytes'] ?? null ),
+			'last_touched_at'      => $wt['last_touched_at'] ?? null,
+			'age_days'             => $wt['age_days'] ?? null,
+			'stale_reason'         => $wt['stale_reason'] ?? null,
+			'artifacts'            => $wt['artifacts'] ?? array(),
+			'artifact_size_bytes'  => $wt['artifact_size_bytes'] ?? 0,
+		);
+	}
+
+	/**
+	 * Estimate a path's on-disk size using the platform's fast `du` primitive.
+	 *
+	 * @param string $path Path to inspect.
+	 * @return int|null Size in bytes, or null when unavailable.
+	 */
+	private function estimate_path_size_bytes( string $path ): ?int {
+		if ( '' === $path || ( ! file_exists( $path ) && ! is_link( $path ) ) ) {
+			return null;
+		}
+
+		$output = array();
+		$code   = 1;
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
+		exec( sprintf( 'du -sk %s 2>/dev/null', escapeshellarg( $path ) ), $output, $code );
+		if ( 0 !== $code || empty( $output[0] ) ) {
+			return null;
+		}
+
+		$parts = preg_split( '/\s+/', trim( (string) $output[0] ) );
+		$kb    = isset( $parts[0] ) && ctype_digit( $parts[0] ) ? (int) $parts[0] : 0;
+		return $kb > 0 ? $kb * 1024 : 0;
+	}
+
+	/**
+	 * Detect non-source artifact directories worth reporting separately.
+	 *
+	 * @param string $repo Repo name.
+	 * @param string $path Worktree path.
+	 * @return array<int,array<string,mixed>> Artifact rows.
+	 */
+	private function detect_worktree_artifacts( string $repo, string $path ): array {
+		$patterns = $this->get_worktree_artifact_profile( $repo, $path );
+		$rows     = array();
+
+		foreach ( $patterns as $relative => $label ) {
+			$relative = trim( (string) $relative, '/' );
+			if ( '' === $relative || str_contains( $relative, '..' ) ) {
+				continue;
+			}
+
+			$artifact_path = rtrim( $path, '/' ) . '/' . $relative;
+			if ( ! is_dir( $artifact_path ) ) {
+				continue;
+			}
+
+			$size   = $this->estimate_path_size_bytes( $artifact_path );
+			$rows[] = array(
+				'path'       => $relative,
+				'label'      => (string) $label,
+				'size_bytes' => $size,
+			);
+		}
+
+		usort( $rows, fn( $a, $b ) => (int) ( $b['size_bytes'] ?? 0 ) <=> (int) ( $a['size_bytes'] ?? 0 ) );
+		return $rows;
+	}
+
+	/**
+	 * Resolve repo-specific artifact profile paths.
+	 *
+	 * @param string $repo Repo name.
+	 * @param string $path Worktree path.
+	 * @return array<string,string> Relative path => label map.
+	 */
+	private function get_worktree_artifact_profile( string $repo, string $path ): array {
+		$profile = array();
+
+		if ( is_file( rtrim( $path, '/' ) . '/Cargo.toml' ) || 'homeboy' === $repo ) {
+			$profile['target'] = 'Rust build artifacts';
+		}
+
+		if ( is_file( rtrim( $path, '/' ) . '/package.json' ) ) {
+			$profile['node_modules'] = 'Node dependencies';
+			$profile['.next']        = 'Next.js build cache';
+			$profile['dist']         = 'JavaScript build output';
+			$profile['coverage']     = 'test coverage output';
+		}
+
+		if ( is_file( rtrim( $path, '/' ) . '/composer.json' ) ) {
+			$profile['vendor'] = 'Composer dependencies';
+		}
+
+		/**
+		 * Filters non-source artifact paths reported for a workspace worktree.
+		 *
+		 * Reporting is non-destructive. Future cleanup actions should reuse this
+		 * profile but add separate opt-in delete gates.
+		 *
+		 * @param array<string,string> $profile Relative path => label map.
+		 * @param string               $repo    Repo name.
+		 * @param string               $path    Worktree path.
+		 */
+		$filtered = apply_filters( 'datamachine_code_worktree_artifact_profile', $profile, $repo, $path );
+		return is_array( $filtered ) ? $filtered : $profile;
+	}
+
+	/**
+	 * Resolve the most useful last-touched timestamp for a worktree.
+	 *
+	 * @param string      $path       Worktree path.
+	 * @param array|null  $metadata   Stored lifecycle/context metadata.
+	 * @param string|null $created_at Created timestamp fallback.
+	 * @return string|null ISO timestamp.
+	 */
+	private function detect_worktree_last_touched_at( string $path, ?array $metadata, ?string $created_at ): ?string {
+		foreach ( array( 'last_touched_at', 'updated_at', 'timestamp' ) as $key ) {
+			if ( is_array( $metadata ) && ! empty( $metadata[ $key ] ) && false !== strtotime( (string) $metadata[ $key ] ) ) {
+				return gmdate( 'c', (int) strtotime( (string) $metadata[ $key ] ) );
+			}
+		}
+
+		$git_marker = rtrim( $path, '/' ) . '/.git';
+		$mtime      = file_exists( $git_marker ) ? filemtime( $git_marker ) : false;
+		if ( false === $mtime && file_exists( $path ) ) {
+			$mtime = filemtime( $path );
+		}
+
+		if ( false !== $mtime ) {
+			return gmdate( 'c', (int) $mtime );
+		}
+
+		return $created_at;
+	}
+
+	/**
+	 * Calculate whole-day age from an ISO timestamp.
+	 *
+	 * @param string|null $created_at Created timestamp.
+	 * @return int|null Whole days old, or null when unknown.
+	 */
+	private function calculate_age_days( ?string $created_at ): ?int {
+		if ( null === $created_at || '' === $created_at ) {
+			return null;
+		}
+
+		$created_ts = strtotime( $created_at );
+		if ( false === $created_ts ) {
+			return null;
+		}
+
+		return max( 0, (int) floor( ( time() - $created_ts ) / 86400 ) );
+	}
+
+	/**
+	 * Sort cleanup rows by requested reporting dimension.
+	 *
+	 * @param array<int,array> $rows Rows to sort.
+	 * @param string           $sort size|age|empty.
+	 * @return array<int,array>
+	 */
+	private function sort_worktree_cleanup_rows( array $rows, string $sort ): array {
+		if ( 'size' === $sort ) {
+			usort( $rows, fn( $a, $b ) => (int) ( $b['size_bytes'] ?? 0 ) <=> (int) ( $a['size_bytes'] ?? 0 ) );
+		} elseif ( 'age' === $sort ) {
+			usort( $rows, fn( $a, $b ) => (int) ( $b['age_days'] ?? -1 ) <=> (int) ( $a['age_days'] ?? -1 ) );
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Produce compact top-N rows for cleanup summaries.
+	 *
+	 * @param array<int,array> $rows Rows to summarize.
+	 * @param string           $field Numeric field to sort by.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function summarize_top_worktree_rows( array $rows, string $field ): array {
+		$rows = array_values( array_filter( $rows, fn( $row ) => isset( $row[ $field ] ) && null !== $row[ $field ] && (int) $row[ $field ] > 0 ) );
+		usort( $rows, fn( $a, $b ) => (int) ( $b[ $field ] ?? 0 ) <=> (int) ( $a[ $field ] ?? 0 ) );
+
+		return array_map(
+			fn( $row ) => array(
+				'handle'              => $row['handle'] ?? '',
+				'repo'                => $row['repo'] ?? '',
+				'branch'              => $row['branch'] ?? '',
+				'path'                => $row['path'] ?? '',
+				'size_bytes'          => $row['size_bytes'] ?? null,
+				'artifact_size_bytes' => $row['artifact_size_bytes'] ?? 0,
+				'age_days'            => $row['age_days'] ?? null,
+				'reason_code'         => $row['reason_code'] ?? '',
+			),
+			array_slice( $rows, 0, self::CLEANUP_SUMMARY_TOP_LIMIT )
+		);
 	}
 
 	/**
@@ -2181,11 +2491,11 @@ class Workspace {
 		$scoped_skipped    = array();
 
 		foreach ( $planned_candidates as $plan_row ) {
-			$handle = (string) ( $plan_row['handle'] ?? '' );
+			$handle  = (string) ( $plan_row['handle'] ?? '' );
 			$current = $current_by_handle[ $handle ] ?? null;
 
 			if ( null === $current ) {
-				$skip = $skipped_by_handle[ $handle ] ?? array(
+				$skip                   = $skipped_by_handle[ $handle ] ?? array(
 					'handle'      => $handle,
 					'repo'        => (string) ( $plan_row['repo'] ?? '' ),
 					'branch'      => (string) ( $plan_row['branch'] ?? '' ),
@@ -2366,7 +2676,7 @@ class Workspace {
 			return null;
 		}
 
-		$pr = $this->find_merged_pr_for_branch( $gh_slug, $branch, $github_cache );
+		$pr = $this->find_closed_pr_for_branch( $gh_slug, $branch, $github_cache );
 		if ( is_wp_error( $pr ) ) {
 			return array(
 				'signal' => 'github-unknown',
@@ -2377,9 +2687,17 @@ class Workspace {
 			return null;
 		}
 
+		if ( ! empty( $pr['merged_at'] ) ) {
+			return array(
+				'signal' => 'pr-merged',
+				'reason' => sprintf( 'PR #%d merged (%s)', $pr['number'], $pr['state'] ),
+				'pr_url' => $pr['html_url'] ?? null,
+			);
+		}
+
 		return array(
-			'signal' => 'pr-merged',
-			'reason' => sprintf( 'PR #%d merged (%s)', $pr['number'], $pr['state'] ),
+			'signal' => 'pr-closed',
+			'reason' => sprintf( 'PR #%d closed without merge', $pr['number'] ),
 			'pr_url' => $pr['html_url'] ?? null,
 		);
 	}
@@ -2452,7 +2770,7 @@ class Workspace {
 	}
 
 	/**
-	 * Look up a merged PR for a branch via a cached GitHub API snapshot.
+	 * Look up a closed PR for a branch via a cached GitHub API snapshot.
 	 *
 	 * Cleanup may inspect hundreds of worktrees for the same repo. Querying
 	 * GitHub once per branch does not scale, so each repo gets one bounded
@@ -2463,7 +2781,7 @@ class Workspace {
 	 * @param array  $github_cache Run-local cache keyed by owner/repo.
 	 * @return array|null|\WP_Error PR data, null when no PR matched, or lookup failure.
 	 */
-	private function find_merged_pr_for_branch( string $slug, string $branch, array &$github_cache = array() ): array|\WP_Error|null {
+	private function find_closed_pr_for_branch( string $slug, string $branch, array &$github_cache = array() ): array|\WP_Error|null {
 		$lookup = $this->get_cleanup_github_lookup( $slug, $github_cache );
 		if ( is_wp_error( $lookup ) ) {
 			return $lookup;
@@ -2477,7 +2795,7 @@ class Workspace {
 	}
 
 	/**
-	 * Load and cache merged same-repo PRs for a GitHub repo.
+	 * Load and cache closed same-repo PRs for a GitHub repo.
 	 *
 	 * @param string $slug         owner/repo.
 	 * @param array  $github_cache Run-local cache keyed by owner/repo.
@@ -2506,7 +2824,7 @@ class Workspace {
 			return null;
 		}
 
-		$merged = array();
+		$closed = array();
 		$url    = GitHubRemote::apiUrl( $slug, 'pulls' );
 
 		for ( $page = 1; $page <= self::CLEANUP_GITHUB_MAX_PAGES; $page++ ) {
@@ -2535,10 +2853,6 @@ class Workspace {
 
 			$items = (array) ( $response['data'] ?? array() );
 			foreach ( $items as $pr ) {
-				if ( empty( $pr['merged_at'] ) ) {
-					continue;
-				}
-
 				$head      = is_array( $pr['head'] ?? null ) ? $pr['head'] : array();
 				$head_repo = is_array( $head['repo'] ?? null ) ? (string) ( $head['repo']['full_name'] ?? '' ) : '';
 				$head_ref  = (string) ( $head['ref'] ?? '' );
@@ -2546,10 +2860,10 @@ class Workspace {
 					continue;
 				}
 
-				$merged[ $head_ref ] = array(
+				$closed[ $head_ref ] = array(
 					'number'    => (int) ( $pr['number'] ?? 0 ),
 					'state'     => (string) ( $pr['state'] ?? 'closed' ),
-					'merged_at' => (string) $pr['merged_at'],
+					'merged_at' => (string) ( $pr['merged_at'] ?? '' ),
 					'html_url'  => (string) ( $pr['html_url'] ?? '' ),
 				);
 			}
@@ -2559,8 +2873,8 @@ class Workspace {
 			}
 		}
 
-		$github_cache[ $slug ] = $merged;
-		return $merged;
+		$github_cache[ $slug ] = $closed;
+		return $closed;
 	}
 
 	/**
