@@ -139,6 +139,8 @@ namespace {
 	$assert( 'CLI exposes review-flow subcommand', str_contains( $command_source, '@subcommand review-flow' ) );
 	$assert( 'CLI calls scaffold builder', str_contains( $command_source, 'PrReviewFlowScaffold::build' ) );
 	$assert( 'CLI exposes review-flow installer', str_contains( $command_source, 'PrReviewFlowInstaller::install' ) );
+	$assert( 'CLI exposes workflow_run trigger option', str_contains( $command_source, '--trigger=<trigger>' ) && str_contains( $command_source, 'workflow_run' ) );
+	$assert( 'CLI exposes workflow filter options', str_contains( $command_source, '--workflow-names=<names>' ) && str_contains( $command_source, '--workflow-paths=<paths>' ) );
 
 	if ( ! empty( $failures ) ) {
 		echo "\nFAIL: " . count( $failures ) . " assertion(s) failed out of {$total}\n";

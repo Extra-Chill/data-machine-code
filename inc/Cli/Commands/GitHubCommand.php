@@ -558,11 +558,26 @@ class GitHubCommand extends BaseCommand {
 	 *   - dry_run
 	 * ---
 	 *
-	 * [--actions=<actions>]
-	 * : Comma-separated GitHub pull_request actions.
-	 * ---
-	 * default: opened,reopened,synchronize,ready_for_review
-	 * ---
+		 * [--actions=<actions>]
+		 * : Comma-separated GitHub webhook actions. Defaults depend on --trigger.
+		 * ---
+		 * default: opened,reopened,synchronize,ready_for_review for pull_request; completed for workflow_run
+		 * ---
+		 *
+		 * [--trigger=<trigger>]
+		 * : GitHub webhook event to review from.
+		 * ---
+		 * default: pull_request
+		 * options:
+		 *   - pull_request
+		 *   - workflow_run
+		 * ---
+		 *
+		 * [--workflow-names=<names>]
+		 * : Comma-separated workflow_run.name allow-list, for example Homeboy CI.
+		 *
+		 * [--workflow-paths=<paths>]
+		 * : Comma-separated workflow_run.path allow-list, for example .github/workflows/homeboy.yml.
 	 *
 	 * [--mode=<mode>]
 	 * : create action mode. `scaffold` preserves the historical JSON-only output; `install` creates the Data Machine pipeline/flow.
@@ -625,15 +640,18 @@ class GitHubCommand extends BaseCommand {
 		}
 
 		$options = array(
-			'repo'         => $repo,
-			'agent'        => $assoc_args['agent'] ?? '',
-			'name'         => $assoc_args['name'] ?? 'GitHub PR review',
-			'comment_mode' => $assoc_args['comment-mode'] ?? 'managed',
-			'actions'      => $assoc_args['actions'] ?? PrReviewFlowScaffold::DEFAULT_ACTIONS,
-			'secret_id'    => $assoc_args['secret-id'] ?? 'github_webhook',
-			'secret'       => $assoc_args['secret'] ?? '',
-			'allow_drafts' => ! empty( $assoc_args['allow-drafts'] ),
-			'force'        => ! empty( $assoc_args['force'] ),
+			'repo'           => $repo,
+			'agent'          => $assoc_args['agent'] ?? '',
+			'name'           => $assoc_args['name'] ?? 'GitHub PR review',
+			'comment_mode'   => $assoc_args['comment-mode'] ?? 'managed',
+			'trigger'        => $assoc_args['trigger'] ?? 'pull_request',
+			'actions'        => $assoc_args['actions'] ?? null,
+			'workflow_names' => $assoc_args['workflow-names'] ?? '',
+			'workflow_paths' => $assoc_args['workflow-paths'] ?? '',
+			'secret_id'      => $assoc_args['secret-id'] ?? 'github_webhook',
+			'secret'         => $assoc_args['secret'] ?? '',
+			'allow_drafts'   => ! empty( $assoc_args['allow-drafts'] ),
+			'force'          => ! empty( $assoc_args['force'] ),
 		);
 
 		$mode = 'install' === $action ? 'install' : (string) ( $assoc_args['mode'] ?? 'scaffold' );

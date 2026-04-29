@@ -16,13 +16,16 @@ defined( 'ABSPATH' ) || exit;
  */
 class GitHubWebhookValidator {
 
-	const DEFAULT_ALLOWED_ACTIONS = array( 'opened', 'reopened', 'synchronize', 'ready_for_review' );
+	const DEFAULT_ALLOWED_ACTIONS              = array( 'opened', 'reopened', 'synchronize', 'ready_for_review' );
+	const DEFAULT_WORKFLOW_RUN_ALLOWED_ACTIONS = array( 'completed' );
 
 	const WRONG_EVENT       = 'github_wrong_event';
 	const DISALLOWED_ACTION = 'github_disallowed_action';
 	const REPO_MISMATCH     = 'github_repo_mismatch';
 	const DRAFT_SKIPPED     = 'github_draft_skipped';
 	const MALFORMED_PAYLOAD = 'github_malformed_payload';
+	const WORKFLOW_MISMATCH = 'github_workflow_mismatch';
+	const NO_PULL_REQUEST   = 'github_workflow_run_no_pull_request';
 
 	/**
 	 * Verify a GitHub pull_request webhook.
@@ -85,14 +88,29 @@ class GitHubWebhookValidator {
 			return WebhookVerificationResult::fail( WebhookVerificationResult::BAD_SIGNATURE, 'signature mismatch' );
 		}
 
-		$event = trim( (string) ( $headers['x-github-event'] ?? '' ) );
-		if ( 'pull_request' !== $event ) {
-			return WebhookVerificationResult::fail( self::WRONG_EVENT, 'event is not pull_request' );
-		}
-
 		$payload = json_decode( $raw_body, true );
 		if ( ! is_array( $payload ) ) {
 			return WebhookVerificationResult::fail( self::MALFORMED_PAYLOAD, 'payload is not valid JSON' );
+		}
+
+		$mode = (string) ( $config['mode'] ?? 'github_pull_request' );
+		return 'github_workflow_run' === $mode
+			? self::verifyWorkflowRunPayload( $payload, $headers, $config, $matched_secret_id )
+			: self::verifyPullRequestPayload( $payload, $headers, $config, $matched_secret_id );
+	}
+
+	/**
+	 * Verify a pull_request payload after HMAC validation.
+	 *
+	 * @param array<string,mixed> $payload Payload body.
+	 * @param array<string,string> $headers Lower-cased request headers.
+	 * @param array<string,mixed> $config Verifier config.
+	 * @param string $matched_secret_id Matched secret id.
+	 */
+	private static function verifyPullRequestPayload( array $payload, array $headers, array $config, string $matched_secret_id ): WebhookVerificationResult {
+		$event = trim( (string) ( $headers['x-github-event'] ?? '' ) );
+		if ( 'pull_request' !== $event ) {
+			return WebhookVerificationResult::fail( self::WRONG_EVENT, 'event is not pull_request' );
 		}
 
 		$action = (string) ( $payload['action'] ?? '' );
@@ -125,23 +143,87 @@ class GitHubWebhookValidator {
 	}
 
 	/**
+	 * Verify a workflow_run payload after HMAC validation.
+	 *
+	 * @param array<string,mixed> $payload Payload body.
+	 * @param array<string,string> $headers Lower-cased request headers.
+	 * @param array<string,mixed> $config Verifier config.
+	 * @param string $matched_secret_id Matched secret id.
+	 */
+	private static function verifyWorkflowRunPayload( array $payload, array $headers, array $config, string $matched_secret_id ): WebhookVerificationResult {
+		$event = trim( (string) ( $headers['x-github-event'] ?? '' ) );
+		if ( 'workflow_run' !== $event ) {
+			return WebhookVerificationResult::fail( self::WRONG_EVENT, 'event is not workflow_run' );
+		}
+
+		$action = (string) ( $payload['action'] ?? '' );
+		if ( '' === $action ) {
+			return WebhookVerificationResult::fail( self::MALFORMED_PAYLOAD, 'payload action missing' );
+		}
+
+		$allowed_actions = self::allowedActions( $config );
+		if ( ! in_array( $action, $allowed_actions, true ) ) {
+			return WebhookVerificationResult::fail( self::DISALLOWED_ACTION, 'action=' . $action );
+		}
+
+		$repo = (string) ( $payload['repository']['full_name'] ?? '' );
+		if ( '' === $repo ) {
+			return WebhookVerificationResult::fail( self::MALFORMED_PAYLOAD, 'repository.full_name missing' );
+		}
+
+		$allowed_repos = self::allowedRepos( $config );
+		if ( ! empty( $allowed_repos ) && ! in_array( strtolower( $repo ), $allowed_repos, true ) ) {
+			return WebhookVerificationResult::fail( self::REPO_MISMATCH, 'repo=' . $repo );
+		}
+
+		$workflow_run = is_array( $payload['workflow_run'] ?? null ) ? $payload['workflow_run'] : array();
+		if ( empty( $workflow_run ) ) {
+			return WebhookVerificationResult::fail( self::MALFORMED_PAYLOAD, 'workflow_run missing' );
+		}
+
+		$workflow_name   = (string) ( $workflow_run['name'] ?? '' );
+		$workflow_path   = (string) ( $workflow_run['path'] ?? '' );
+		$allowed_names   = self::stringList( $config['workflow_names'] ?? $config['allowed_workflow_names'] ?? array() );
+		$allowed_paths   = self::stringList( $config['workflow_paths'] ?? $config['allowed_workflow_paths'] ?? array() );
+		$normalized_name = strtolower( $workflow_name );
+		$normalized_path = strtolower( $workflow_path );
+
+		if ( ! empty( $allowed_names ) && ! in_array( $normalized_name, array_map( 'strtolower', $allowed_names ), true ) ) {
+			return WebhookVerificationResult::fail( self::WORKFLOW_MISMATCH, 'workflow=' . $workflow_name );
+		}
+
+		if ( ! empty( $allowed_paths ) && ! in_array( $normalized_path, array_map( 'strtolower', $allowed_paths ), true ) ) {
+			return WebhookVerificationResult::fail( self::WORKFLOW_MISMATCH, 'workflow_path=' . $workflow_path );
+		}
+
+		$pull_requests = is_array( $workflow_run['pull_requests'] ?? null ) ? $workflow_run['pull_requests'] : array();
+		if ( empty( $pull_requests ) || ! is_array( $pull_requests[0] ?? null ) || empty( $pull_requests[0]['number'] ) ) {
+			return WebhookVerificationResult::fail( self::NO_PULL_REQUEST, 'workflow_run.pull_requests is empty' );
+		}
+
+		return WebhookVerificationResult::ok( $matched_secret_id );
+	}
+
+	/**
 	 * Build a Data Machine webhook verifier config for GitHub PR review flows.
 	 *
 	 * @param string $secret  Webhook secret from GitHub.
-	 * @param array  $options Optional allowed_actions, repo, allowed_repos, allow_drafts.
+	 * @param array  $options Optional mode, allowed_actions, repo, allowed_repos, allow_drafts, workflow filters.
 	 * @return array
 	 */
 	public static function buildVerifierConfig( string $secret, array $options = array() ): array {
 		$config = array_merge(
 			array(
-				'mode'            => 'github_pull_request',
+				'mode'            => (string) ( $options['mode'] ?? 'github_pull_request' ),
 				'secrets'         => array(
 					array(
 						'id'    => 'github_webhook',
 						'value' => $secret,
 					),
 				),
-				'allowed_actions' => self::DEFAULT_ALLOWED_ACTIONS,
+				'allowed_actions' => 'github_workflow_run' === ( $options['mode'] ?? '' )
+					? self::DEFAULT_WORKFLOW_RUN_ALLOWED_ACTIONS
+					: self::DEFAULT_ALLOWED_ACTIONS,
 				'allow_drafts'    => false,
 			),
 			$options
@@ -201,12 +283,24 @@ class GitHubWebhookValidator {
 	 * @return array<int,string>
 	 */
 	private static function allowedActions( array $config ): array {
-		$actions = $config['allowed_actions'] ?? self::DEFAULT_ALLOWED_ACTIONS;
+		$default = 'github_workflow_run' === ( $config['mode'] ?? '' ) ? self::DEFAULT_WORKFLOW_RUN_ALLOWED_ACTIONS : self::DEFAULT_ALLOWED_ACTIONS;
+		$actions = $config['allowed_actions'] ?? $default;
 		if ( is_string( $actions ) ) {
 			$actions = array_map( 'trim', explode( ',', $actions ) );
 		}
 		$actions = array_values( array_filter( array_map( 'strval', (array) $actions ) ) );
-		return ! empty( $actions ) ? $actions : self::DEFAULT_ALLOWED_ACTIONS;
+		return ! empty( $actions ) ? $actions : $default;
+	}
+
+	/**
+	 * @param mixed $value Raw list value.
+	 * @return array<int,string>
+	 */
+	private static function stringList( mixed $value ): array {
+		if ( is_string( $value ) ) {
+			$value = array_map( 'trim', explode( ',', $value ) );
+		}
+		return array_values( array_filter( array_map( 'strval', (array) $value ) ) );
 	}
 
 	/**

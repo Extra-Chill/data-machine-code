@@ -134,6 +134,27 @@ namespace {
 	$assert( ! isset( $webhook_input['template']['secrets'] ), 'template does not carry raw secret storage' );
 	$assert( true === ( $webhook_input['generate_secret'] ?? null ), 'installer generates secret by default' );
 	$assert( 'github_pr_review' === ( $webhook_input['secret_id'] ?? '' ), 'installer passes requested secret id' );
+	$assert( 'pull_request' === ( $result['webhook_event'] ?? '' ), 'default installer result keeps pull_request event' );
+	$assert( 'pull_request' === ( $create_input['flow_config']['scheduling_config']['data_machine_code_github_pr_review']['trigger'] ?? '' ), 'flow marker records default trigger' );
+
+	Flows::$summary_rows = array();
+	$workflow_result = PrReviewFlowInstaller::install( array(
+		'repo'           => 'Extra-Chill/data-machine-code',
+		'trigger'        => 'workflow_run',
+		'workflow_names' => 'Homeboy CI',
+		'workflow_paths' => '.github/workflows/homeboy.yml',
+	) );
+	$workflow_create_input  = $GLOBALS['dmc_test_create_pipeline']->last_input;
+	$workflow_webhook_input = $GLOBALS['dmc_test_webhook_enable']->last_input;
+	$assert( ! is_wp_error( $workflow_result ), 'workflow_run installer succeeds through same public abilities' );
+	$assert( 'workflow_run' === ( $workflow_result['webhook_event'] ?? '' ), 'workflow_run installer result carries event' );
+	$assert( array( 'completed' ) === ( $workflow_result['webhook_actions'] ?? array() ), 'workflow_run installer defaults action to completed' );
+	$assert( 'workflow_run' === ( $workflow_create_input['flow_config']['scheduling_config']['webhook_event'] ?? '' ), 'workflow_run scheduling config carries event' );
+	$assert( 'workflow_run' === ( $workflow_create_input['flow_config']['scheduling_config']['data_machine_code_github_pr_review']['trigger'] ?? '' ), 'workflow_run marker records trigger' );
+	$assert( 'github_workflow_run' === ( $workflow_webhook_input['template']['mode'] ?? '' ), 'workflow_run webhook template uses workflow_run verifier mode' );
+	$assert( array( 'completed' ) === ( $workflow_webhook_input['template']['allowed_actions'] ?? array() ), 'workflow_run verifier scopes completed action' );
+	$assert( array( 'Homeboy CI' ) === ( $workflow_webhook_input['template']['workflow_names'] ?? array() ), 'workflow_run verifier carries workflow name filter' );
+	$assert( array( '.github/workflows/homeboy.yml' ) === ( $workflow_webhook_input['template']['workflow_paths'] ?? array() ), 'workflow_run verifier carries workflow path filter' );
 
 	Flows::$summary_rows = array(
 		array(
@@ -147,6 +168,8 @@ namespace {
 	);
 	$existing = PrReviewFlowInstaller::install( array( 'repo' => 'Extra-Chill/data-machine-code' ) );
 	$assert( is_wp_error( $existing ) && 'github_pr_review_flow_exists' === $existing->get_error_code(), 'existing repo install fails clearly' );
+	$workflow_not_blocked = PrReviewFlowInstaller::install( array( 'repo' => 'Extra-Chill/data-machine-code', 'trigger' => 'workflow_run' ) );
+	$assert( ! is_wp_error( $workflow_not_blocked ), 'legacy pull_request install marker does not block workflow_run install' );
 
 	$forced = PrReviewFlowInstaller::install( array( 'repo' => 'Extra-Chill/data-machine-code', 'force' => true ) );
 	$assert( ! is_wp_error( $forced ), '--force bypasses existing install guard' );
