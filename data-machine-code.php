@@ -400,11 +400,13 @@ Discover the full command surface: `{$wp} datamachine --help`. The groups below 
 - Settings & auth: `{$wp} datamachine settings|auth`
 - External sites & handler tests: `{$wp} datamachine external|test`
 
-**Code (data-machine-code):** All code changes happen in worktrees under `{$workspace_path}`. The DMC workspace commands own **structure and lifecycle**; file CRUD inside a worktree uses whatever tool is fastest.
+**Code (data-machine-code):** All code changes happen in worktrees under `{$workspace_path}`. DMC owns workspace lifecycle, evidence capture, GitHub workflow glue, and GitSync; file CRUD inside a worktree uses whatever tool is fastest.
 - Workspace root: `{$workspace_path}`
-- **Lifecycle (use the CLI):** `{$wp} datamachine-code workspace clone|worktree add|worktree list|worktree cleanup|worktree remove` — keeps the on-disk registry consistent and enforces the `<repo>@<slug>` handle convention.
-- **GitHub:** `{$wp} datamachine-code github issues|pulls|repos|review-flow|comment` — create PRs, manage issues, install review flows, comment on reviews.
-- **Git sync:** `{$wp} datamachine-code gitsync` — sync workspace repos with remotes.
+- **Workspace lifecycle:** `{$wp} datamachine-code workspace clone|worktree add|worktree list|worktree cleanup|worktree remove` — keeps the on-disk registry consistent and enforces the `<repo>@<slug>` handle convention.
+- **Workspace hygiene:** `worktree cleanup|cleanup-artifacts|reconcile-metadata|refresh-context` plus `workspace hygiene` for disk/metadata maintenance and evidence that worktrees are still safe to keep.
+- **Code tasks:** `{$wp} datamachine-code code-task create` — turn evidence packets into reviewable workspace tasks with prompts and branches.
+- **GitHub:** `{$wp} datamachine-code github issues|pulls|repos|status|view|close|review-flow|comment` — create PRs, manage issues, inspect state, install review flows, comment on reviews.
+- **Git sync:** `{$wp} datamachine-code gitsync bind|status|pull|submit|push|policy` — bind site-owned directories to remotes; `submit` opens the PR path, `push` writes directly to the configured branch.
 - **Editing inside a worktree:** any tool. The workspace `read|write|edit|ls|git` abilities exist for remote/MCP/chat agents without filesystem access; for a local agent on the same disk, native file I/O and raw `git` are faster and lose nothing. Routing local edits through the abilities is ceremony, not safety.
 - **Workflow:** `workspace clone <repo>` → `worktree add <repo> <branch>` → edit files in the worktree with any tool → commit → push → PR.
 - **Why worktrees:** parallel-session isolation on disk. Multiple agents cook features in the same repo without stepping on each other.
@@ -463,11 +465,13 @@ MD;
 
 `homeboy` is a Rust CLI on this host. Every verb runs the same locally as in CI.
 
-**Quality:** `homeboy audit | lint | test | review | refactor`
+**Quality:** `homeboy audit | lint | test | review | refactor`; use `homeboy review --changed-since --report=pr-comment` for PR-style review loops.
 
-**Git:** prefer `homeboy changes | status` and `homeboy git status|commit|push|pull|tag|rebase|cherry-pick` — structured output, component/worktree awareness, safer write verbs. One-off reads (`git diff`, `git show`, `git blame`) stay on raw `git`.
+**Git:** prefer `homeboy changes | status` and `homeboy git status|commit|push|pull|tag|rebase|cherry-pick` — structured output, component/worktree awareness, safer write verbs. Use `--path <checkout>` when operating outside a registered component or overriding component resolution. One-off reads (`git diff`, `git show`, `git blame`) stay on raw `git`.
 
-**Perf + envs:** `homeboy bench` for pinned benchmarks with baseline + ratchet; `homeboy rig install|update|up|check|down|status` for reproducible multi-component dev environments.
+**Perf + envs:** `homeboy bench` for pinned iterations/runs/concurrency, baselines, rig/profile comparisons; `homeboy trace` for black-box behavioral traces; `homeboy rig install|update|up|check|down|status` for reproducible multi-component dev environments.
+
+**Reports:** `homeboy triage` and `homeboy report` are read/report surfaces for turning quality output into follow-up work.
 
 **Stacks:** `homeboy stack list|show|apply|rebase|status|sync|push|diff|inspect` for combined-fixes branches built from upstream PRs.
 
