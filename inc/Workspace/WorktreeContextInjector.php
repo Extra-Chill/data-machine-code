@@ -34,6 +34,28 @@ defined( 'ABSPATH' ) || exit;
 class WorktreeContextInjector {
 
 	/**
+	 * Lifecycle states stored on worktree metadata records.
+	 */
+	public const STATE_ACTIVE = 'active';
+	public const STATE_PR_OPENED = 'pr_opened';
+	public const STATE_MERGED = 'merged';
+	public const STATE_CLOSED = 'closed';
+	public const STATE_ABANDONED = 'abandoned';
+	public const STATE_CLEANUP_ELIGIBLE = 'cleanup_eligible';
+
+	/**
+	 * Valid worktree lifecycle state values.
+	 */
+	public const VALID_STATES = array(
+		self::STATE_ACTIVE,
+		self::STATE_PR_OPENED,
+		self::STATE_MERGED,
+		self::STATE_CLOSED,
+		self::STATE_ABANDONED,
+		self::STATE_CLEANUP_ELIGIBLE,
+	);
+
+	/**
 	 * Site option key used to persist per-worktree metadata.
 	 *
 	 * Shape: array<string, array<string,mixed>> keyed by workspace handle.
@@ -70,13 +92,18 @@ class WorktreeContextInjector {
 		$site_name = function_exists( 'get_bloginfo' ) ? (string) get_bloginfo( 'name' ) : '';
 		$user      = self::resolve_origin_user();
 		$agent     = self::resolve_origin_agent();
+		$session   = self::resolve_origin_session();
 
 		$metadata = array(
 			'created_at'       => gmdate( 'c' ),
+			'lifecycle_state'  => self::STATE_ACTIVE,
+			'handle'           => isset( $args['handle'] ) && '' !== (string) $args['handle'] ? (string) $args['handle'] : null,
+			'path'             => isset( $args['path'] ) && '' !== (string) $args['path'] ? (string) $args['path'] : null,
 			'origin_site'      => '' !== $site_name ? $site_name : ( '' !== $site_url ? $site_url : null ),
 			'origin_site_url'  => '' !== $site_url ? $site_url : null,
 			'origin_site_name' => '' !== $site_name ? $site_name : null,
 			'origin_agent'     => $agent,
+			'origin_session'   => $session,
 			'origin_user'      => $user,
 			'base_ref'         => isset( $args['base_ref'] ) && '' !== (string) $args['base_ref'] ? (string) $args['base_ref'] : null,
 			'base_source'      => isset( $args['base_source'] ) && '' !== (string) $args['base_source'] ? (string) $args['base_source'] : null,
@@ -90,6 +117,70 @@ class WorktreeContextInjector {
 		$metadata['agent_slug'] = is_string( $agent ) ? $agent : '';
 
 		return array_filter( $metadata, fn( $value ) => null !== $value );
+	}
+
+	/**
+	 * Validate a lifecycle state string.
+	 *
+	 * @param string $state Raw lifecycle state.
+	 * @return string|null Normalized state, or null when invalid.
+	 */
+	public static function normalize_state( string $state ): ?string {
+		$state = strtolower( trim( $state ) );
+		return in_array( $state, self::VALID_STATES, true ) ? $state : null;
+	}
+
+	/**
+	 * Build metadata fields for finalizing a worktree lifecycle.
+	 *
+	 * @param string      $state Lifecycle state.
+	 * @param string|null $pr    Optional PR URL or number.
+	 * @return array<string,mixed>
+	 */
+	public static function build_finalizer_metadata( string $state, ?string $pr = null ): array {
+		$normalized = self::normalize_state( $state );
+		if ( null === $normalized ) {
+			$normalized = self::STATE_ACTIVE;
+		}
+
+		$metadata = array(
+			'lifecycle_state' => $normalized,
+			'finalized_at'    => gmdate( 'c' ),
+		);
+
+		$pr_metadata = self::parse_pr_reference( $pr );
+		if ( ! empty( $pr_metadata ) ) {
+			$metadata = array_merge( $metadata, $pr_metadata );
+		}
+
+		return $metadata;
+	}
+
+	/**
+	 * Parse a GitHub PR reference into stable metadata fields.
+	 *
+	 * @param string|null $pr PR URL or number.
+	 * @return array<string,mixed>
+	 */
+	public static function parse_pr_reference( ?string $pr ): array {
+		$pr = trim( (string) $pr );
+		if ( '' === $pr ) {
+			return array();
+		}
+
+		$metadata = array( 'pr_ref' => $pr );
+		if ( preg_match( '~^https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)(?:[/?#].*)?$~', $pr, $matches ) ) {
+			$metadata['pr_url']    = sprintf( 'https://github.com/%s/%s/pull/%d', $matches[1], $matches[2], (int) $matches[3] );
+			$metadata['pr_number'] = (int) $matches[3];
+			$metadata['pr_repo']   = $matches[1] . '/' . $matches[2];
+			return $metadata;
+		}
+
+		if ( preg_match( '/^#?(\d+)$/', $pr, $matches ) ) {
+			$metadata['pr_number'] = (int) $matches[1];
+		}
+
+		return $metadata;
 	}
 
 	/**
@@ -421,6 +512,42 @@ class WorktreeContextInjector {
 		} catch ( \Throwable $e ) {
 			return null;
 		}
+	}
+
+	/**
+	 * Resolve non-sensitive runtime/session hints from the creating process.
+	 *
+	 * @return array<string,mixed>|null
+	 */
+	private static function resolve_origin_session(): ?array {
+		$session = array();
+
+		$opencode_run_id = getenv( 'OPENCODE_RUN_ID' );
+		if ( is_string( $opencode_run_id ) && '' !== trim( $opencode_run_id ) ) {
+			$session['opencode_run_id'] = trim( $opencode_run_id );
+		}
+
+		$opencode_pid = getenv( 'OPENCODE_PID' );
+		if ( is_string( $opencode_pid ) && ctype_digit( $opencode_pid ) ) {
+			$session['opencode_pid'] = (int) $opencode_pid;
+		}
+
+		$kimaki_session_id = getenv( 'KIMAKI_SESSION_ID' );
+		if ( is_string( $kimaki_session_id ) && '' !== trim( $kimaki_session_id ) ) {
+			$session['kimaki_session_id'] = trim( $kimaki_session_id );
+		}
+
+		$kimaki_thread_id = getenv( 'KIMAKI_THREAD_ID' );
+		if ( is_string( $kimaki_thread_id ) && '' !== trim( $kimaki_thread_id ) ) {
+			$session['kimaki_thread_id'] = trim( $kimaki_thread_id );
+		}
+
+		$kimaki_thread_url = getenv( 'KIMAKI_THREAD_URL' );
+		if ( is_string( $kimaki_thread_url ) && preg_match( '#^https?://#', $kimaki_thread_url ) ) {
+			$session['kimaki_thread_url'] = trim( $kimaki_thread_url );
+		}
+
+		return empty( $session ) ? null : $session;
 	}
 
 	/**

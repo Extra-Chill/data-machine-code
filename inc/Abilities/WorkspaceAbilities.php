@@ -913,10 +913,51 @@ class WorkspaceAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/workspace-worktree-finalize',
+				array(
+					'label'               => 'Finalize Workspace Worktree',
+					'description'         => 'Attach lifecycle metadata to a worktree after a coding-agent session opens a PR, completes, or marks the worktree cleanup-eligible. This metadata is a cleanup signal only; dirty/unpushed safety gates still apply.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'handle' => array(
+								'type'        => 'string',
+								'description' => 'Worktree handle (`<repo>@<branch-slug>`).',
+							),
+							'state'  => array(
+								'type'        => 'string',
+								'description' => 'Lifecycle state: active, pr_opened, merged, closed, abandoned, cleanup_eligible.',
+							),
+							'pr'     => array(
+								'type'        => 'string',
+								'description' => 'Optional GitHub PR URL or number.',
+							),
+						),
+						'required'   => array( 'handle', 'state' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'         => array( 'type' => 'boolean' ),
+							'handle'          => array( 'type' => 'string' ),
+							'path'            => array( 'type' => 'string' ),
+							'lifecycle_state' => array( 'type' => 'string' ),
+							'metadata'        => array( 'type' => 'object' ),
+							'message'         => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeFinalize' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/workspace-worktree-list',
 				array(
 					'label'               => 'List Workspace Worktrees',
-					'description'         => 'List all worktrees in the workspace (optionally filtered by repo).',
+					'description'         => 'List all worktrees in the workspace (optionally filtered by repo and lifecycle state).',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -924,6 +965,10 @@ class WorkspaceAbilities {
 							'repo' => array(
 								'type'        => 'string',
 								'description' => 'Optional repo name to limit the list.',
+							),
+							'state' => array(
+								'type'        => 'string',
+								'description' => 'Optional lifecycle state filter.',
 							),
 						),
 					),
@@ -947,6 +992,9 @@ class WorkspaceAbilities {
 										'path'        => array( 'type' => 'string' ),
 										'dirty'       => array( 'type' => 'integer' ),
 										'created_at'  => array( 'type' => array( 'string', 'null' ) ),
+										'lifecycle_state' => array( 'type' => array( 'string', 'null' ) ),
+										'pr_url'      => array( 'type' => array( 'string', 'null' ) ),
+										'pr_number'   => array( 'type' => array( 'integer', 'null' ) ),
 										'metadata'    => array( 'type' => array( 'object', 'null' ) ),
 									),
 								),
@@ -1360,6 +1408,21 @@ class WorkspaceAbilities {
 	}
 
 	/**
+	 * Attach lifecycle metadata to a worktree.
+	 *
+	 * @param array $input Input parameters with handle, state, optional pr.
+	 * @return array|\WP_Error
+	 */
+	public static function worktreeFinalize( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		return $workspace->worktree_finalize(
+			$input['handle'] ?? '',
+			$input['state'] ?? '',
+			isset( $input['pr'] ) ? (string) $input['pr'] : null
+		);
+	}
+
+	/**
 	 * List worktrees in the workspace.
 	 *
 	 * @param array $input Input parameters with optional 'repo'.
@@ -1370,7 +1433,10 @@ class WorkspaceAbilities {
 		$repo      = isset( $input['repo'] ) && '' !== trim( (string) $input['repo'] )
 			? (string) $input['repo']
 			: null;
-		return $workspace->worktree_list( $repo );
+		$state     = isset( $input['state'] ) && '' !== trim( (string) $input['state'] )
+			? (string) $input['state']
+			: null;
+		return $workspace->worktree_list( $repo, $state );
 	}
 
 	/**

@@ -1301,6 +1301,8 @@ class Workspace {
 
 		$lifecycle_metadata = WorktreeContextInjector::build_lifecycle_metadata(
 			array(
+				'handle'      => $wt_handle,
+				'path'        => $wt_path,
 				'repo'        => $repo,
 				'branch'      => $branch,
 				'base_ref'    => $created_branch ? $resolved_base : null,
@@ -1337,6 +1339,52 @@ class Workspace {
 		}
 
 		return $response;
+	}
+
+	/**
+	 * Attach lifecycle finalizer metadata to a worktree record.
+	 *
+	 * @param string      $handle Workspace worktree handle.
+	 * @param string      $state  Lifecycle state.
+	 * @param string|null $pr     Optional PR URL or number.
+	 * @return array{success: bool, handle: string, path: string, lifecycle_state: string, metadata: array, message: string}|\WP_Error
+	 */
+	public function worktree_finalize( string $handle, string $state, ?string $pr = null ): array|\WP_Error {
+		$parsed = $this->parse_handle( $handle );
+		if ( ! $parsed['is_worktree'] ) {
+			return new \WP_Error( 'not_a_worktree', sprintf( 'Handle "%s" is a primary checkout, not a worktree.', $handle ), array( 'status' => 400 ) );
+		}
+
+		$normalized_state = WorktreeContextInjector::normalize_state( $state );
+		if ( null === $normalized_state ) {
+			return new \WP_Error( 'invalid_lifecycle_state', sprintf( 'Invalid lifecycle state "%s". Valid states: %s.', $state, implode( ', ', WorktreeContextInjector::VALID_STATES ) ), array( 'status' => 400 ) );
+		}
+
+		$wt_path = $this->workspace_path . '/' . $parsed['dir_name'];
+		if ( ! is_dir( $wt_path ) ) {
+			return new \WP_Error( 'worktree_not_found', sprintf( 'Worktree "%s" does not exist on disk.', $parsed['dir_name'] ), array( 'status' => 404 ) );
+		}
+
+		$metadata = WorktreeContextInjector::build_finalizer_metadata( $normalized_state, $pr );
+		$metadata = array_merge(
+			array(
+				'handle' => $parsed['dir_name'],
+				'path'   => $wt_path,
+				'repo'   => $parsed['repo'],
+			),
+			$metadata
+		);
+		WorktreeContextInjector::store_lifecycle_metadata( $parsed['dir_name'], $metadata );
+
+		$stored = WorktreeContextInjector::get_metadata( $parsed['dir_name'] ) ?? array();
+		return array(
+			'success'         => true,
+			'handle'          => $parsed['dir_name'],
+			'path'            => $wt_path,
+			'lifecycle_state' => (string) ( $stored['lifecycle_state'] ?? $normalized_state ),
+			'metadata'        => $stored,
+			'message'         => sprintf( 'Worktree "%s" marked %s.', $parsed['dir_name'], (string) ( $stored['lifecycle_state'] ?? $normalized_state ) ),
+		);
 	}
 
 	/**
@@ -1404,7 +1452,15 @@ class Workspace {
 	 * @param string|null $repo Optional repo filter (only this primary's worktrees).
 	 * @return array{success: bool, worktrees: array}|\WP_Error
 	 */
-	public function worktree_list( ?string $repo = null ): array|\WP_Error {
+	public function worktree_list( ?string $repo = null, ?string $state = null ): array|\WP_Error {
+		if ( null !== $state && '' !== trim( $state ) ) {
+			$state = WorktreeContextInjector::normalize_state( (string) $state );
+			if ( null === $state ) {
+				return new \WP_Error( 'invalid_lifecycle_state', sprintf( 'Invalid lifecycle state. Valid states: %s.', implode( ', ', WorktreeContextInjector::VALID_STATES ) ), array( 'status' => 400 ) );
+			}
+		} else {
+			$state = null;
+		}
 		if ( ! is_dir( $this->workspace_path ) ) {
 			return array(
 				'success'   => true,
@@ -1468,6 +1524,11 @@ class Workspace {
 					: count( array_filter( array_map( 'trim', explode( "\n", $dirty_result['output'] ?? '' ) ) ) );
 				$metadata     = ( ! $is_primary && $inside_ws ) ? WorktreeContextInjector::get_metadata( $relative ) : null;
 
+				$lifecycle_state = is_array( $metadata ) ? ( $metadata['lifecycle_state'] ?? null ) : null;
+				if ( null !== $state && $lifecycle_state !== $state ) {
+					continue;
+				}
+
 				$worktrees[] = array(
 					'handle'      => $handle,
 					'repo'        => $primary,
@@ -1480,6 +1541,9 @@ class Workspace {
 					'path'        => $wt['path'],
 					'dirty'       => $dirty_files,
 					'created_at'  => is_array( $metadata ) ? ( $metadata['created_at'] ?? null ) : null,
+					'lifecycle_state' => $lifecycle_state,
+					'pr_url'      => is_array( $metadata ) ? ( $metadata['pr_url'] ?? null ) : null,
+					'pr_number'   => is_array( $metadata ) ? ( $metadata['pr_number'] ?? null ) : null,
 					'metadata'    => $metadata,
 				);
 			}
@@ -1811,7 +1875,18 @@ class Workspace {
 				$fetched[ $repo ] = true;
 			}
 
-			$signal = $this->detect_merge_signal( $primary_path, $repo, $branch, $skip_github, $github_cache );
+			$signal = null;
+			if ( is_array( $metadata ) && WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE === ( $metadata['lifecycle_state'] ?? null ) ) {
+				$signal = array(
+					'signal' => 'cleanup_eligible',
+					'reason' => 'worktree explicitly marked cleanup_eligible',
+				);
+				if ( ! empty( $metadata['pr_url'] ) ) {
+					$signal['pr_url'] = (string) $metadata['pr_url'];
+				}
+			} else {
+				$signal = $this->detect_merge_signal( $primary_path, $repo, $branch, $skip_github, $github_cache );
+			}
 			if ( null === $signal ) {
 				$skipped[] = array(
 					'handle'      => $handle,

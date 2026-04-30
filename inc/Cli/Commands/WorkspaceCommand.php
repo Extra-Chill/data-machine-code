@@ -1144,13 +1144,17 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Re-read the originating site's agent memory into an existing worktree
 	 *     wp datamachine workspace worktree refresh-context data-machine@fix-foo
 	 *
+	 *     # Attach PR/finalizer metadata to a worktree
+	 *     wp datamachine workspace worktree finalize data-machine@fix-foo --pr=https://github.com/org/repo/pull/123
+	 *     wp datamachine workspace worktree mark-cleanup-eligible data-machine@fix-foo
+	 *
 	 * @subcommand worktree
 	 */
 	public function worktree( array $args, array $assoc_args ): void {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error( 'Usage: wp datamachine workspace worktree <add|list|remove|prune|cleanup|refresh-context> [<repo>] [<branch>] [--flags]' );
+			WP_CLI::error( 'Usage: wp datamachine workspace worktree <add|list|remove|prune|cleanup|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
 			return;
 		}
 
@@ -1161,6 +1165,8 @@ class WorkspaceCommand extends BaseCommand {
 			'prune'           => 'datamachine/workspace-worktree-prune',
 			'cleanup'         => 'datamachine/workspace-worktree-cleanup',
 			'refresh-context' => 'datamachine/workspace-worktree-refresh-context',
+			'finalize'        => 'datamachine/workspace-worktree-finalize',
+			'mark-cleanup-eligible' => 'datamachine/workspace-worktree-finalize',
 			default           => '',
 		};
 
@@ -1214,9 +1220,36 @@ class WorkspaceCommand extends BaseCommand {
 				$input['handle'] = (string) $args[1];
 				break;
 
+			case 'finalize':
+				if ( empty( $args[1] ) ) {
+					WP_CLI::error( 'Usage: worktree finalize <handle> [--pr=<url-or-number>] [--state=<state>]' );
+					return;
+				}
+				$input['handle'] = (string) $args[1];
+				$input['state']  = isset( $assoc_args['state'] ) && '' !== trim( (string) $assoc_args['state'] ) ? (string) $assoc_args['state'] : ( isset( $assoc_args['pr'] ) ? 'pr_opened' : 'active' );
+				if ( isset( $assoc_args['pr'] ) && '' !== trim( (string) $assoc_args['pr'] ) ) {
+					$input['pr'] = (string) $assoc_args['pr'];
+				}
+				break;
+
+			case 'mark-cleanup-eligible':
+				if ( empty( $args[1] ) ) {
+					WP_CLI::error( 'Usage: worktree mark-cleanup-eligible <handle> [--pr=<url-or-number>]' );
+					return;
+				}
+				$input['handle'] = (string) $args[1];
+				$input['state']  = 'cleanup_eligible';
+				if ( isset( $assoc_args['pr'] ) && '' !== trim( (string) $assoc_args['pr'] ) ) {
+					$input['pr'] = (string) $assoc_args['pr'];
+				}
+				break;
+
 			case 'list':
 				if ( ! empty( $args[1] ) ) {
 					$input['repo'] = $args[1];
+				}
+				if ( isset( $assoc_args['state'] ) && '' !== trim( (string) $assoc_args['state'] ) ) {
+					$input['state'] = (string) $assoc_args['state'];
 				}
 				break;
 
@@ -1287,12 +1320,14 @@ class WorkspaceCommand extends BaseCommand {
 						'head'       => isset( $wt['head'] ) ? substr( (string) $wt['head'], 0, 7 ) : '-',
 						'dirty'      => (int) ( $wt['dirty'] ?? 0 ),
 						'created_at' => $wt['created_at'] ?? null,
+						'state'      => $wt['lifecycle_state'] ?? null,
+						'pr'         => $wt['pr_url'] ?? null,
 						'metadata'   => $wt['metadata'] ?? null,
 						'path'       => $wt['path'] ?? '',
 					),
 					$worktrees
 				);
-				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'created_at', 'path' );
+				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'created_at', 'pr', 'path' );
 				if ( in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
 					$fields[] = 'metadata';
 				}
@@ -1370,6 +1405,16 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				if ( ! empty( $result['metadata']['site_url'] ) ) {
 					WP_CLI::log( sprintf( 'Originating site: %s', $result['metadata']['site_url'] ) );
+				}
+				return;
+
+			case 'finalize':
+			case 'mark-cleanup-eligible':
+				WP_CLI::success( $result['message'] ?? 'Worktree finalized.' );
+				WP_CLI::log( sprintf( 'Handle: %s', $result['handle'] ?? '-' ) );
+				WP_CLI::log( sprintf( 'State:  %s', $result['lifecycle_state'] ?? '-' ) );
+				if ( ! empty( $result['metadata']['pr_url'] ) ) {
+					WP_CLI::log( sprintf( 'PR:     %s', $result['metadata']['pr_url'] ) );
 				}
 				return;
 
