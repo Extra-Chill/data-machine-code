@@ -21,6 +21,21 @@ require __DIR__ . '/../inc/Homeboy.php';
 use DataMachineCode\Environment;
 use DataMachineCode\Homeboy;
 
+$homeboy_option = null;
+
+if ( ! function_exists( 'get_option' ) ) {
+	function get_option( string $name, $default = false ) {
+		global $homeboy_option;
+		return 'datamachine_code_homeboy_available' === $name ? $homeboy_option : $default;
+	}
+}
+
+if ( ! function_exists( 'apply_filters' ) ) {
+	function apply_filters( string $hook_name, $value ) {
+		return $value;
+	}
+}
+
 $failures = array();
 $assert = function ( string $label, bool $cond ) use ( &$failures ): void {
 	if ( $cond ) {
@@ -49,13 +64,29 @@ $original_path = getenv( 'PATH' ) ?: '';
 $tmp_root      = sys_get_temp_dir() . '/dmc-homeboy-smoke-' . uniqid( '', true );
 mkdir( $tmp_root, 0755, true );
 
-// ── Branch 2: empty PATH → binary not found ────────────────────
+// ── Branch 2: installer-declared availability wins ─────────────
+$homeboy_option = '1';
+putenv( 'PATH=' . $tmp_root );
+Homeboy::reset_cache();
+$assert( 'declared true: is_available() returns true without PATH binary', true === Homeboy::is_available() );
+
+$homeboy_option = '0';
+$fake_bin       = $tmp_root . '/homeboy';
+file_put_contents( $fake_bin, "#!/bin/sh\nexit 0\n" );
+chmod( $fake_bin, 0755 );
+Homeboy::reset_cache();
+$assert( 'declared false: is_available() returns false even with PATH binary', false === Homeboy::is_available() );
+unlink( $fake_bin );
+
+$homeboy_option = null;
+
+// ── Branch 3: empty PATH → binary not found ────────────────────
 putenv( 'PATH=' . $tmp_root );
 Homeboy::reset_cache();
 $assert( 'empty PATH: is_available() returns false', false === Homeboy::is_available() );
 $assert( 'absent: result is memoized (second call same as first)', false === Homeboy::is_available() );
 
-// ── Branch 3: synthetic homeboy on PATH → detected ─────────────
+// ── Branch 4: synthetic homeboy on PATH → detected ─────────────
 $fake_bin = $tmp_root . '/homeboy';
 file_put_contents( $fake_bin, "#!/bin/sh\nexit 0\n" );
 chmod( $fake_bin, 0755 );
