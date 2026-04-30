@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.23.3] - 2026-04-29
+
+### Fixed
+- expose inventory-only cleanup CLI flag
+
 ## [0.23.2] - 2026-04-29
 
 ### Fixed
