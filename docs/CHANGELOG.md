@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.22.0] - 2026-04-29
+
+### Added
+- add hygiene report
+- report worktree disk cleanup pressure
+- track worktree finalizer metadata
+
+### Fixed
+- guard worktree creation by disk budget
+
 ## [0.21.0] - 2026-04-28
 
 ### Added
