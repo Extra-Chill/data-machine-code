@@ -156,6 +156,44 @@ namespace {
 		}
 	}
 
+	class FakeArtifactCleanupAbility {
+		public array $last_input = array();
+
+		public function execute( array $input ): array {
+			$this->last_input = $input;
+			return array(
+				'success'    => true,
+				'dry_run'    => ! empty( $input['dry_run'] ),
+				'candidates' => array(
+					array(
+						'handle'    => 'repo@old',
+						'repo'      => 'repo',
+						'branch'    => 'old',
+						'path'      => '/workspace/repo@old',
+						'artifacts' => array( array( 'path' => 'target', 'size_bytes' => 1024 ) ),
+					),
+				),
+				'removed'    => array(),
+				'skipped'    => array(
+					array(
+						'handle'      => 'repo@active',
+						'repo'        => 'repo',
+						'branch'      => 'active',
+						'artifacts'   => array( array( 'path' => 'target', 'size_bytes' => 2048 ) ),
+						'reason_code' => 'active_symlink_target',
+						'reason'      => 'worktree is an active symlink target',
+					),
+				),
+				'summary'    => array(
+					'would_remove_artifacts' => 1,
+					'removed_artifacts'      => 0,
+					'skipped'                => 1,
+					'artifact_size_bytes'    => 1024,
+				),
+			);
+		}
+	}
+
 	class FakeListAbility {
 		public function execute( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 			return array(
@@ -207,10 +245,12 @@ namespace {
 	echo "=== smoke-worktree-cleanup-cli ===\n";
 
 	$ability = new FakeCleanupAbility();
+	$artifact_ability = new FakeArtifactCleanupAbility();
 	$list_ability = new FakeListAbility();
 	$GLOBALS['__abilities'] = array(
-		'datamachine/workspace-worktree-cleanup' => $ability,
-		'datamachine/workspace-worktree-list'    => $list_ability,
+		'datamachine/workspace-worktree-cleanup'           => $ability,
+		'datamachine/workspace-worktree-cleanup-artifacts' => $artifact_ability,
+		'datamachine/workspace-worktree-list'              => $list_ability,
 	);
 	$command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
 	$doc_comment = ( new ReflectionMethod( $command, 'worktree' ) )->getDocComment() ?: '';
@@ -321,6 +361,25 @@ namespace {
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'inventory-only' => true, 'skip-github' => true, 'format' => 'json' ) );
 	datamachine_code_cleanup_assert( true === ( $ability->last_input['inventory_only'] ?? null ), '--inventory-only forwards to cleanup ability' );
+
+	echo "\n[9] cleanup-artifacts forwards plan-first flags and renders separately\n";
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree( array( 'cleanup-artifacts' ), array( 'dry-run' => true, 'format' => 'json' ) );
+	datamachine_code_cleanup_assert( array( 'dry_run' => true, 'force' => false ) === $artifact_ability->last_input, 'cleanup-artifacts dry-run flags forwarded to ability' );
+	$artifact_json = json_decode( WP_CLI::$logs[0] ?? '', true );
+	datamachine_code_cleanup_assert( 'target' === ( $artifact_json['candidates'][0]['artifacts'][0]['path'] ?? '' ), 'cleanup-artifacts JSON includes artifact paths' );
+
+	$artifact_plan_file = sys_get_temp_dir() . '/dmc-artifact-cleanup-plan-' . bin2hex( random_bytes( 3 ) ) . '.json';
+	file_put_contents( $artifact_plan_file, wp_json_encode( $artifact_json ) );
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree( array( 'cleanup-artifacts' ), array( 'apply-plan' => $artifact_plan_file, 'force' => true ) );
+	datamachine_code_cleanup_assert( false === ( $artifact_ability->last_input['dry_run'] ?? null ), 'cleanup-artifacts apply-plan enters apply mode' );
+	datamachine_code_cleanup_assert( true === ( $artifact_ability->last_input['force'] ?? null ), 'cleanup-artifacts forwards explicit force for dirty/unpushed artifacts' );
+	datamachine_code_cleanup_assert( 'repo@old' === ( $artifact_ability->last_input['apply_plan']['candidates'][0]['handle'] ?? '' ), 'cleanup-artifacts forwards decoded apply plan' );
+	datamachine_code_cleanup_assert( 'Artifact cleanup summary:' === ( WP_CLI::$logs[0] ?? '' ), 'cleanup-artifacts human output uses artifact-specific summary' );
+	unlink( $artifact_plan_file );
 
 	echo "\nAll worktree cleanup CLI smoke tests passed.\n";
 }
