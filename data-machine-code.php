@@ -402,7 +402,8 @@ Discover the full command surface: `{$wp} datamachine --help`. The groups below 
 
 **Code (data-machine-code):** All code changes happen in worktrees under `{$workspace_path}`. DMC owns workspace lifecycle, evidence capture, GitHub workflow glue, and GitSync; file CRUD inside a worktree uses whatever tool is fastest.
 - Workspace root: `{$workspace_path}`
-- **Workspace lifecycle:** `{$wp} datamachine-code workspace clone|worktree add|worktree list|worktree cleanup|worktree remove` — keeps the on-disk registry consistent and enforces the `<repo>@<slug>` handle convention.
+- **Workspace lifecycle:** `{$wp} datamachine-code workspace clone|worktree add|worktree list|worktree cleanup|worktree remove` — scans the workspace root for primary checkouts and `<repo>@<slug>` worktrees; owns worktree lifecycle metadata, cleanup, and handle conventions.
+- **Path visibility:** If the configured workspace path is not visible to PHP, DMC cannot see the checkouts.
 - **Workspace hygiene:** `worktree cleanup|cleanup-artifacts|reconcile-metadata|refresh-context` plus `workspace hygiene` for disk/metadata maintenance and evidence that worktrees are still safe to keep.
 - **Code tasks:** `{$wp} datamachine-code code-task create` — turn evidence packets into reviewable workspace tasks with prompts and branches.
 - **GitHub:** `{$wp} datamachine-code github issues|pulls|repos|status|view|close|review-flow|comment` — create PRs, manage issues, inspect state, install review flows, comment on reviews.

@@ -38,6 +38,7 @@ $stale_marker               = 'datamachine agent compose AGENTS.md';
 $expected_agent_cli         = 'datamachine agent list|create|access|token|installed|install|diff';
 $stale_agent_cli            = 'datamachine agents list|create|access|tokens';
 $expected_worktree_cli      = 'datamachine-code workspace clone|worktree add|worktree list|worktree cleanup|worktree remove';
+$expected_workspace_scan    = 'scans the workspace root for primary checkouts and `<repo>@<slug>` worktrees';
 $expected_workspace_hygiene = 'worktree cleanup|cleanup-artifacts|reconcile-metadata|refresh-context';
 $expected_code_task_cli     = 'datamachine-code code-task create';
 $expected_gitsync_cli       = 'gitsync bind|status|pull|submit|push|policy';
@@ -46,6 +47,7 @@ $expected_homeboy_path      = '--path <checkout>';
 $expected_homeboy_trace     = 'homeboy trace';
 $expected_homeboy_review    = 'homeboy review --changed-since --report=pr-comment';
 $stale_homeboy_git          = 'homeboy git changes';
+$stale_workspace_registry   = 'keeps the on-disk registry consistent';
 
 $assert(
 	'auto-generated marker uses memory compose command',
@@ -70,6 +72,14 @@ $assert(
 $assert(
 	'workspace lifecycle guidance includes cleanup command',
 	str_contains( $source, $expected_worktree_cli )
+);
+$assert(
+	'workspace guidance describes scanned checkouts instead of a primary registry',
+	str_contains( $source, $expected_workspace_scan )
+);
+$assert(
+	'stale workspace registry wording is absent',
+	! str_contains( $source, $stale_workspace_registry )
 );
 $assert(
 	'workspace hygiene guidance includes modern maintenance surfaces',
