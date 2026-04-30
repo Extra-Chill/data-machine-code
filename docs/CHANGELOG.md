@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.23.0] - 2026-04-29
+
+### Added
+- add workflow run PR review trigger
+
 ## [0.22.0] - 2026-04-29
 
 ### Added
