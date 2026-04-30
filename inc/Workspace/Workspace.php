@@ -418,7 +418,7 @@ class Workspace {
 			return new \WP_Error( 'adopt_path_unresolved', sprintf( 'Could not resolve checkout path: %s', $path ), array( 'status' => 400 ) );
 		}
 
-		$git_path  = $real_path . '/.git';
+		$git_path = $real_path . '/.git';
 		if ( is_file( $git_path ) ) {
 			return new \WP_Error( 'adopt_linked_worktree', 'Cannot adopt a linked worktree as a primary checkout. Pass the primary checkout path instead.', array( 'status' => 400 ) );
 		}
