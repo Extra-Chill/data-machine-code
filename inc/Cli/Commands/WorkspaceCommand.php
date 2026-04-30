@@ -1201,6 +1201,10 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine workspace worktree cleanup --dry-run --format=json > cleanup-plan.json
 	 *     wp datamachine workspace worktree cleanup --apply-plan=cleanup-plan.json
 	 *
+	 *     # Review and apply artifact-only cleanup without removing worktrees
+	 *     wp datamachine workspace worktree cleanup-artifacts --dry-run --format=json > artifact-plan.json
+	 *     wp datamachine workspace worktree cleanup-artifacts --apply-plan=artifact-plan.json
+	 *
 	 *     # Local-only detection (no GitHub API call)
 	 *     wp datamachine workspace worktree cleanup --skip-github
 	 *
@@ -1237,21 +1241,22 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error( 'Usage: wp datamachine workspace worktree <add|list|remove|prune|cleanup|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
+			WP_CLI::error( 'Usage: wp datamachine workspace worktree <add|list|remove|prune|cleanup|cleanup-artifacts|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
 			return;
 		}
 
 		$ability_name = match ( $operation ) {
-			'add'             => 'datamachine/workspace-worktree-add',
-			'list'            => 'datamachine/workspace-worktree-list',
-			'remove'          => 'datamachine/workspace-worktree-remove',
-			'prune'           => 'datamachine/workspace-worktree-prune',
-			'cleanup'         => 'datamachine/workspace-worktree-cleanup',
-			'reconcile-metadata' => 'datamachine/workspace-worktree-reconcile-metadata',
-			'refresh-context' => 'datamachine/workspace-worktree-refresh-context',
-			'finalize'        => 'datamachine/workspace-worktree-finalize',
+			'add'                   => 'datamachine/workspace-worktree-add',
+			'list'                  => 'datamachine/workspace-worktree-list',
+			'remove'                => 'datamachine/workspace-worktree-remove',
+			'prune'                 => 'datamachine/workspace-worktree-prune',
+			'cleanup'               => 'datamachine/workspace-worktree-cleanup',
+			'cleanup-artifacts'     => 'datamachine/workspace-worktree-cleanup-artifacts',
+			'reconcile-metadata'    => 'datamachine/workspace-worktree-reconcile-metadata',
+			'refresh-context'       => 'datamachine/workspace-worktree-refresh-context',
+			'finalize'              => 'datamachine/workspace-worktree-finalize',
 			'mark-cleanup-eligible' => 'datamachine/workspace-worktree-finalize',
-			default           => '',
+			default                 => '',
 		};
 
 		if ( '' === $ability_name ) {
@@ -1366,11 +1371,18 @@ class WorkspaceCommand extends BaseCommand {
 					$input['sort'] = trim( (string) $assoc_args['sort'] );
 				}
 				break;
-
 			case 'reconcile-metadata':
 				$input['dry_run'] = ! empty( $assoc_args['dry-run'] );
 				if ( ! empty( $assoc_args['apply-plan'] ) ) {
 					$input['apply_plan'] = $this->read_worktree_json_plan( (string) $assoc_args['apply-plan'], 'metadata reconciliation' );
+				}
+				break;
+
+			case 'cleanup-artifacts':
+				$input['dry_run'] = ! empty( $assoc_args['dry-run'] );
+				$input['force']   = ! empty( $assoc_args['force'] );
+				if ( ! empty( $assoc_args['apply-plan'] ) ) {
+					$input['apply_plan'] = $this->read_worktree_cleanup_plan( (string) $assoc_args['apply-plan'] );
 				}
 				break;
 		}
@@ -1451,9 +1463,12 @@ class WorkspaceCommand extends BaseCommand {
 			case 'cleanup':
 				$this->render_worktree_cleanup_result( $result, $assoc_args );
 				return;
-
 			case 'reconcile-metadata':
 				$this->render_worktree_metadata_reconciliation_result( $result, $assoc_args );
+				return;
+
+			case 'cleanup-artifacts':
+				$this->render_worktree_artifact_cleanup_result( $result, $assoc_args );
 				return;
 
 			case 'add':
@@ -1942,6 +1957,121 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 		WP_CLI::success( sprintf( 'Wrote metadata for %d worktree(s); %d skipped.', count( $written ), count( $skipped ) ) );
+	}
+
+	/**
+	 * Render artifact-only cleanup output.
+	 *
+	 * @param array $result     Artifact cleanup ability result.
+	 * @param array $assoc_args CLI assoc args.
+	 * @return void
+	 */
+	private function render_worktree_artifact_cleanup_result( array $result, array $assoc_args ): void {
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
+		if ( 'json' === $format ) {
+			$json = wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+			WP_CLI::log( false === $json ? '{}' : $json );
+			return;
+		}
+
+		$candidates = (array) ( $result['candidates'] ?? array() );
+		$removed    = (array) ( $result['removed'] ?? array() );
+		$skipped    = (array) ( $result['skipped'] ?? array() );
+		$summary    = (array) ( $result['summary'] ?? array() );
+		$dry_run    = ! empty( $result['dry_run'] );
+
+		if ( empty( $candidates ) && empty( $removed ) && empty( $skipped ) ) {
+			WP_CLI::log( 'No worktree artifacts found.' );
+			return;
+		}
+
+		WP_CLI::log( 'Artifact cleanup summary:' );
+		$this->format_items(
+			array(
+				array(
+					'metric' => 'would_remove_artifacts',
+					'count'  => (int) ( $summary['would_remove_artifacts'] ?? 0 ),
+				),
+				array(
+					'metric' => 'removed_artifacts',
+					'count'  => (int) ( $summary['removed_artifacts'] ?? 0 ),
+				),
+				array(
+					'metric' => 'skipped_worktrees',
+					'count'  => (int) ( $summary['skipped'] ?? count( $skipped ) ),
+				),
+				array(
+					'metric' => 'artifact_size',
+					'count'  => $this->format_bytes( $summary['artifact_size_bytes'] ?? null ),
+				),
+			),
+			array( 'metric', 'count' ),
+			array( 'format' => 'table' ),
+			'metric'
+		);
+
+		if ( ! empty( $candidates ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( $dry_run ? 'Would remove artifacts:' : 'Artifact candidates:' );
+			$this->format_items( $this->flatten_artifact_cleanup_rows( $candidates ), array( 'handle', 'repo', 'branch', 'artifact', 'size', 'path' ), array( 'format' => 'table' ), 'handle' );
+		}
+
+		if ( ! empty( $removed ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Removed artifacts:' );
+			$this->format_items( $this->flatten_artifact_cleanup_rows( $removed ), array( 'handle', 'repo', 'branch', 'artifact', 'size', 'path' ), array( 'format' => 'table' ), 'handle' );
+		}
+
+		if ( ! empty( $skipped ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Skipped worktrees:' );
+			$rows = array_map(
+				fn( $row ) => array(
+					'handle'      => $row['handle'] ?? '',
+					'repo'        => $row['repo'] ?? '',
+					'branch'      => $row['branch'] ?? '',
+					'artifacts'   => count( (array) ( $row['artifacts'] ?? array() ) ),
+					'reason_code' => $row['reason_code'] ?? '',
+					'reason'      => $row['reason'] ?? '',
+				),
+				$skipped
+			);
+			$this->format_items( $rows, array( 'handle', 'repo', 'branch', 'artifacts', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle' );
+		}
+
+		WP_CLI::log( '' );
+		if ( $dry_run ) {
+			WP_CLI::success( sprintf( '%d artifact(s) would be removed. Save JSON and re-run with --apply-plan=<file> to apply.', (int) ( $summary['would_remove_artifacts'] ?? 0 ) ) );
+			return;
+		}
+		WP_CLI::success( sprintf( 'Removed %d artifact(s); %d worktree(s) skipped.', (int) ( $summary['removed_artifacts'] ?? 0 ), count( $skipped ) ) );
+	}
+
+	/**
+	 * Flatten artifact cleanup worktree rows into table rows.
+	 *
+	 * @param array<int,array> $rows Worktree artifact rows.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function flatten_artifact_cleanup_rows( array $rows ): array {
+		$flat = array();
+		foreach ( $rows as $row ) {
+			foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
+				if ( ! is_array( $artifact ) ) {
+					continue;
+				}
+				$flat[] = array(
+					'handle'   => $row['handle'] ?? '',
+					'repo'     => $row['repo'] ?? '',
+					'branch'   => $row['branch'] ?? '',
+					'artifact' => $artifact['path'] ?? '',
+					'size'     => $this->format_bytes( $artifact['size_bytes'] ?? null ),
+					'path'     => rtrim( (string) ( $row['path'] ?? '' ), '/' ) . '/' . ltrim( (string) ( $artifact['path'] ?? '' ), '/' ),
+				);
+			}
+		}
+
+		return $flat;
 	}
 
 	/**

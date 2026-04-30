@@ -1220,6 +1220,46 @@ class WorkspaceAbilities {
 					'meta'                => array( 'show_in_rest' => false ),
 				)
 			);
+
+			wp_register_ability(
+				'datamachine/workspace-worktree-cleanup-artifacts',
+				array(
+					'label'               => 'Cleanup Worktree Artifacts',
+					'description'         => 'Remove profile-derived, reconstructable artifact directories inside workspace worktrees. Requires a dry-run plan before deletion and revalidates exact paths before applying.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'dry_run'    => array(
+								'type'        => 'boolean',
+								'description' => 'If true, return the artifact cleanup plan without deleting anything.',
+							),
+							'force'      => array(
+								'type'        => 'boolean',
+								'description' => 'If true, allow artifact cleanup in dirty or unpushed worktrees. Active plugin/theme symlink targets remain protected.',
+							),
+							'apply_plan' => array(
+								'type'        => 'object',
+								'description' => 'Decoded artifact cleanup dry-run report to apply after revalidating every worktree and artifact path.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'    => array( 'type' => 'boolean' ),
+							'dry_run'    => array( 'type' => 'boolean' ),
+							'candidates' => array( 'type' => 'array' ),
+							'removed'    => array( 'type' => 'array' ),
+							'skipped'    => array( 'type' => 'array' ),
+							'summary'    => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeCleanupArtifacts' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
 		};
 
 		if ( doing_action( 'wp_abilities_api_init' ) ) {
@@ -1635,6 +1675,25 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->worktree_reconcile_metadata( $opts );
+	}
+
+	/**
+	 * Remove profile-derived artifacts inside workspace worktrees.
+	 *
+	 * @param array $input Input parameters (dry_run, force, apply_plan).
+	 * @return array
+	 */
+	public static function worktreeCleanupArtifacts( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		$opts      = array(
+			'dry_run' => ! empty( $input['dry_run'] ),
+			'force'   => ! empty( $input['force'] ),
+		);
+		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
+			$opts['apply_plan'] = $input['apply_plan'];
+		}
+
+		return $workspace->worktree_cleanup_artifacts( $opts );
 	}
 
 	/**
