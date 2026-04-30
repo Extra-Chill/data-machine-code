@@ -42,6 +42,11 @@ class Workspace {
 	private const CLEANUP_SUMMARY_TOP_LIMIT = 10;
 
 	/**
+	 * Default number of workspace entries to size in hygiene reports.
+	 */
+	private const HYGIENE_DEFAULT_SIZE_LIMIT = 200;
+
+	/**
 	 * @var string Resolved workspace path.
 	 */
 	private string $workspace_path;
@@ -1564,6 +1569,372 @@ class Workspace {
 			'success'   => true,
 			'worktrees' => $worktrees,
 		);
+	}
+
+	/**
+	 * Build a non-destructive workspace hygiene report.
+	 *
+	 * The report intentionally defaults to local-only cleanup detection so an
+	 * on-demand or scheduled run never depends on GitHub API availability. Size
+	 * collection is best-effort and bounded by a top-level entry limit.
+	 *
+	 * @param array $opts {
+	 *     @type bool $include_cleanup Whether to include a cleanup dry-run. Default true.
+	 *     @type bool $include_sizes   Whether to include best-effort `du` sizes. Default true.
+	 *     @type int  $size_limit      Maximum top-level workspace entries to size. Default 200.
+	 * }
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function workspace_hygiene_report( array $opts = array() ): array|\WP_Error {
+		$include_cleanup = array_key_exists( 'include_cleanup', $opts ) ? (bool) $opts['include_cleanup'] : true;
+		$include_sizes   = array_key_exists( 'include_sizes', $opts ) ? (bool) $opts['include_sizes'] : true;
+		$size_limit      = isset( $opts['size_limit'] ) ? max( 0, (int) $opts['size_limit'] ) : self::HYGIENE_DEFAULT_SIZE_LIMIT;
+
+		$listing = $this->worktree_list();
+		if ( is_wp_error( $listing ) ) {
+			return $listing;
+		}
+
+		$worktrees     = (array) ( $listing['worktrees'] ?? array() );
+		$size_report   = $include_sizes ? $this->build_workspace_size_report( $size_limit ) : $this->empty_workspace_size_report( $size_limit, false );
+		$cleanup       = null;
+		$cleanup_error = null;
+
+		if ( $include_cleanup ) {
+			$cleanup = $this->worktree_cleanup_merged(
+				array(
+					'dry_run'     => true,
+					'force'       => false,
+					'skip_github' => true,
+				)
+			);
+			if ( $cleanup instanceof \WP_Error ) {
+				$cleanup_error = array(
+					'code'    => $cleanup->get_error_code(),
+					'message' => $cleanup->get_error_message(),
+				);
+				$cleanup       = null;
+			}
+		}
+		return array(
+			'success'                   => true,
+			'generated_at'              => gmdate( 'c' ),
+			'workspace_path'            => $this->workspace_path,
+			'destructive'               => false,
+			'size'                      => $size_report,
+			'disk'                      => $this->build_workspace_disk_report(),
+			'worktrees'                 => $this->summarize_workspace_worktrees( $worktrees, $cleanup ),
+			'top_repos_by_worktrees'    => $this->top_repos_by_worktree_count( $worktrees, 10 ),
+			'top_repos_by_size'         => $this->top_repos_by_size( (array) ( $size_report['entries'] ?? array() ), 10 ),
+			'cleanup'                   => $this->summarize_workspace_cleanup( $cleanup, $cleanup_error, (array) ( $size_report['entries'] ?? array() ) ),
+			'suggested_cleanup_command' => 'wp datamachine-code workspace worktree cleanup --dry-run --skip-github --format=json',
+			'notes'                     => array_values( array_filter( array(
+				$include_sizes ? (string) ( $size_report['mode_note'] ?? '' ) : 'Size scan disabled by request.',
+				$include_cleanup ? 'Cleanup summary uses local-only dry-run detection (--skip-github); no GitHub API lookups are required.' : 'Cleanup dry-run disabled by request.',
+			) ) ),
+		);
+	}
+
+	/**
+	 * Build best-effort workspace size data from top-level entries.
+	 *
+	 * @param int $limit Maximum entries to size.
+	 * @return array<string,mixed>
+	 */
+	private function build_workspace_size_report( int $limit ): array {
+		if ( '' === $this->workspace_path || ! is_dir( $this->workspace_path ) ) {
+			return $this->empty_workspace_size_report( $limit, true );
+		}
+
+		$entries = scandir( $this->workspace_path );
+		if ( false === $entries ) {
+			return $this->empty_workspace_size_report( $limit, true );
+		}
+
+		$dirs = array_values( array_filter(
+			$entries,
+			fn( $entry ) => '.' !== $entry && '..' !== $entry && is_dir( $this->workspace_path . '/' . $entry )
+		) );
+		sort( $dirs, SORT_NATURAL );
+
+		$total_dirs = count( $dirs );
+		$sample     = array_slice( $dirs, 0, $limit );
+		$rows       = array();
+		$total      = 0;
+
+		foreach ( $sample as $entry ) {
+			$path = $this->workspace_path . '/' . $entry;
+			$size = $this->directory_size_bytes_best_effort( $path );
+			if ( null === $size ) {
+				continue;
+			}
+
+			$parsed = $this->parse_handle( $entry );
+			$total += $size;
+			$rows[] = array(
+				'handle'      => $entry,
+				'repo'        => $parsed['repo'],
+				'is_worktree' => ! empty( $parsed['is_worktree'] ),
+				'path'        => $path,
+				'bytes'       => $size,
+				'human'       => $this->format_bytes( $size ),
+			);
+		}
+
+		usort( $rows, fn( $a, $b ) => (int) $b['bytes'] <=> (int) $a['bytes'] );
+		$scanned_count = count( $sample );
+
+		return array(
+			'mode'            => 'best_effort_top_level_du',
+			'mode_note'       => 'Workspace size is best-effort: top-level entries are sized with du and capped by size_limit.',
+			'size_limit'      => $limit,
+			'total_entries'   => $total_dirs,
+			'scanned_entries' => $scanned_count,
+			'scan_complete'   => $scanned_count >= $total_dirs,
+			'total_bytes'     => $total,
+			'total_human'     => $this->format_bytes( $total ),
+			'entries'         => $rows,
+			'top_entries'     => array_slice( $rows, 0, 10 ),
+		);
+	}
+
+	/**
+	 * Empty size-report envelope.
+	 *
+	 * @param int  $limit   Configured size limit.
+	 * @param bool $enabled Whether size scanning was requested.
+	 * @return array<string,mixed>
+	 */
+	private function empty_workspace_size_report( int $limit, bool $enabled ): array {
+		return array(
+			'mode'            => $enabled ? 'best_effort_top_level_du' : 'disabled',
+			'mode_note'       => $enabled ? 'Workspace path is unavailable or unreadable; no size data collected.' : 'Size scan disabled by request.',
+			'size_limit'      => $limit,
+			'total_entries'   => 0,
+			'scanned_entries' => 0,
+			'scan_complete'   => true,
+			'total_bytes'     => 0,
+			'total_human'     => $this->format_bytes( 0 ),
+			'entries'         => array(),
+			'top_entries'     => array(),
+		);
+	}
+
+	/**
+	 * Best-effort directory size via `du -sk`.
+	 *
+	 * @param string $path Directory path.
+	 * @return int|null Size in bytes, or null when unavailable.
+	 */
+	private function directory_size_bytes_best_effort( string $path ): ?int {
+		if ( ! is_dir( $path ) ) {
+			return null;
+		}
+
+		$output = array();
+		$exit   = 0;
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Local workspace hygiene needs best-effort disk usage; input path is shell-escaped.
+		exec( sprintf( 'du -sk %s 2>/dev/null', escapeshellarg( $path ) ), $output, $exit );
+		if ( 0 !== $exit || empty( $output[0] ) ) {
+			return null;
+		}
+
+		$parts = preg_split( '/\s+/', trim( (string) $output[0] ) );
+		$kb    = isset( $parts[0] ) ? (int) $parts[0] : 0;
+		return max( 0, $kb ) * 1024;
+	}
+
+	/**
+	 * Build workspace disk/free-space report.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function build_workspace_disk_report(): array {
+		$path  = '' !== $this->workspace_path && is_dir( $this->workspace_path ) ? $this->workspace_path : dirname( $this->workspace_path );
+		$free  = '' !== $path ? disk_free_space( $path ) : false;
+		$total = '' !== $path ? disk_total_space( $path ) : false;
+
+		$free_bytes  = false === $free ? null : (int) $free;
+		$total_bytes = false === $total ? null : (int) $total;
+
+		return array(
+			'path'        => $path,
+			'free_bytes'  => $free_bytes,
+			'free_human'  => null === $free_bytes ? null : $this->format_bytes( $free_bytes ),
+			'total_bytes' => $total_bytes,
+			'total_human' => null === $total_bytes ? null : $this->format_bytes( $total_bytes ),
+		);
+	}
+
+	/**
+	 * Summarize worktree listing and cleanup-protected counts.
+	 *
+	 * @param array<int,array> $worktrees Worktree rows.
+	 * @param array|null       $cleanup   Cleanup dry-run report.
+	 * @return array<string,mixed>
+	 */
+	private function summarize_workspace_worktrees( array $worktrees, ?array $cleanup ): array {
+		$summary = array(
+			'total'              => count( $worktrees ),
+			'primaries'          => 0,
+			'worktrees'          => 0,
+			'external'           => 0,
+			'dirty'              => 0,
+			'protected_dirty'    => 0,
+			'protected_unpushed' => 0,
+			'missing_metadata'   => 0,
+		);
+
+		foreach ( $worktrees as $row ) {
+			if ( ! empty( $row['is_primary'] ) ) {
+				++$summary['primaries'];
+			} else {
+				++$summary['worktrees'];
+			}
+
+			if ( ! empty( $row['external'] ) ) {
+				++$summary['external'];
+			}
+
+			if ( (int) ( $row['dirty'] ?? 0 ) > 0 ) {
+				++$summary['dirty'];
+			}
+		}
+
+		if ( null !== $cleanup ) {
+			$by_reason                     = (array) ( $cleanup['summary']['skipped_by_reason'] ?? array() );
+			$summary['protected_dirty']    = (int) ( $by_reason['dirty_worktree'] ?? 0 );
+			$summary['protected_unpushed'] = (int) ( $by_reason['unpushed_commits'] ?? 0 );
+			$summary['missing_metadata']   = (int) ( $by_reason['missing_metadata'] ?? 0 );
+			$summary['external']           = max( $summary['external'], (int) ( $by_reason['external_worktree'] ?? 0 ) );
+		}
+
+		return $summary;
+	}
+
+	/**
+	 * Summarize cleanup dry-run output for hygiene reports.
+	 *
+	 * @param array|null $cleanup Cleanup report.
+	 * @param array|null $error   Cleanup error envelope.
+	 * @return array<string,mixed>
+	 */
+	private function summarize_workspace_cleanup( ?array $cleanup, ?array $error, array $size_entries = array() ): array {
+		if ( null === $cleanup ) {
+			return array(
+				'included' => false,
+				'error'    => $error,
+			);
+		}
+
+		$candidates     = (array) ( $cleanup['candidates'] ?? array() );
+		$size_by_handle = array();
+		foreach ( $size_entries as $entry ) {
+			$handle = (string) ( $entry['handle'] ?? '' );
+			if ( '' !== $handle ) {
+				$size_by_handle[ $handle ] = array(
+					'bytes' => (int) ( $entry['bytes'] ?? 0 ),
+					'human' => (string) ( $entry['human'] ?? '' ),
+				);
+			}
+		}
+		foreach ( $candidates as &$candidate ) {
+			$handle = (string) ( $candidate['handle'] ?? '' );
+			if ( isset( $size_by_handle[ $handle ] ) ) {
+				$candidate['size_bytes'] = $size_by_handle[ $handle ]['bytes'];
+				$candidate['size_human'] = $size_by_handle[ $handle ]['human'];
+			}
+		}
+		unset( $candidate );
+		usort( $candidates, fn( $a, $b ) => (int) ( $b['size_bytes'] ?? 0 ) <=> (int) ( $a['size_bytes'] ?? 0 ) );
+		return array(
+			'included'             => true,
+			'dry_run'              => true,
+			'skip_github'          => true,
+			'summary'              => $cleanup['summary'] ?? array(),
+			'biggest_candidates'   => array_slice( $candidates, 0, 10 ),
+			'skipped_by_reason'    => $cleanup['summary']['skipped_by_reason'] ?? array(),
+			'candidates_by_signal' => $cleanup['summary']['candidates_by_signal'] ?? array(),
+		);
+	}
+
+	/**
+	 * Count worktrees by repo.
+	 *
+	 * @param array<int,array> $worktrees Worktree rows.
+	 * @param int              $limit     Max rows.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function top_repos_by_worktree_count( array $worktrees, int $limit ): array {
+		$counts = array();
+		foreach ( $worktrees as $row ) {
+			if ( ! empty( $row['is_primary'] ) ) {
+				continue;
+			}
+			$repo = (string) ( $row['repo'] ?? '' );
+			if ( '' === $repo ) {
+				continue;
+			}
+			$counts[ $repo ] = ( $counts[ $repo ] ?? 0 ) + 1;
+		}
+
+		arsort( $counts );
+		$rows = array();
+		foreach ( array_slice( $counts, 0, $limit, true ) as $repo => $count ) {
+			$rows[] = array(
+				'repo'           => $repo,
+				'worktree_count' => (int) $count,
+			);
+		}
+		return $rows;
+	}
+
+	/**
+	 * Sum best-effort size rows by repo.
+	 *
+	 * @param array<int,array> $entries Size rows.
+	 * @param int              $limit   Max rows.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function top_repos_by_size( array $entries, int $limit ): array {
+		$sizes = array();
+		foreach ( $entries as $entry ) {
+			$repo = (string) ( $entry['repo'] ?? '' );
+			if ( '' === $repo ) {
+				continue;
+			}
+			$sizes[ $repo ] = ( $sizes[ $repo ] ?? 0 ) + (int) ( $entry['bytes'] ?? 0 );
+		}
+
+		arsort( $sizes );
+		$rows = array();
+		foreach ( array_slice( $sizes, 0, $limit, true ) as $repo => $bytes ) {
+			$rows[] = array(
+				'repo'  => $repo,
+				'bytes' => (int) $bytes,
+				'human' => $this->format_bytes( (int) $bytes ),
+			);
+		}
+		return $rows;
+	}
+
+	/**
+	 * Format bytes for reports.
+	 *
+	 * @param int $bytes Byte count.
+	 * @return string
+	 */
+	private function format_bytes( int $bytes ): string {
+		$units      = array( 'B', 'KiB', 'MiB', 'GiB', 'TiB' );
+		$unit_count = count( $units );
+		$value      = (float) max( 0, $bytes );
+		$index      = 0;
+		while ( $value >= 1024 && $index < $unit_count - 1 ) {
+			$value /= 1024;
+			++$index;
+		}
+
+		return sprintf( $index > 0 ? '%.1f %s' : '%.0f %s', $value, $units[ $index ] );
 	}
 
 	/**
