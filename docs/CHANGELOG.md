@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.25.0] - 2026-04-30
+
+### Added
+- adopt existing primary checkouts
+
+### Fixed
+- diagnose invisible workspace roots
+- verify shell commands execute
+
 ## [0.24.0] - 2026-04-30
 
 ### Added
