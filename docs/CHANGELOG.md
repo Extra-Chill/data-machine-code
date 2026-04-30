@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.23.1] - 2026-04-29
+
+### Fixed
+- keep hygiene cheap without status scans
+
 ## [0.23.0] - 2026-04-29
 
 ### Added
