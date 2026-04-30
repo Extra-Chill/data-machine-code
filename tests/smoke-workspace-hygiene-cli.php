@@ -97,13 +97,14 @@ namespace {
 				'included'           => true,
 				'dry_run'            => true,
 				'skip_github'        => true,
+				'inventory_only'     => true,
 				'summary'            => array( 'would_remove' => 9 ),
 				'biggest_candidates' => array(
 					array( 'handle' => 'data-machine@merged', 'branch' => 'merged', 'signal' => 'upstream-gone' ),
 				),
 			),
-			'suggested_cleanup_command' => 'wp datamachine-code workspace worktree cleanup --dry-run --skip-github --format=json',
-			'notes'                     => array( 'Cleanup summary uses local-only dry-run detection (--skip-github); no GitHub API lookups are required.' ),
+			'suggested_cleanup_command' => 'wp datamachine-code workspace worktree cleanup --dry-run --inventory-only --skip-github --format=json',
+			'notes'                     => array( 'Cleanup summary uses inventory-only dry-run detection (--inventory-only --skip-github); no per-worktree git probes or GitHub API lookups are required.' ),
 		);
 	}
 

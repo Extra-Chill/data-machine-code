@@ -1149,6 +1149,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'If true, rely solely on the local upstream-gone signal and skip GitHub API lookup.',
 							),
+							'inventory_only' => array(
+								'type'        => 'boolean',
+								'description' => 'If true, build a dry-run review from cheap top-level inventory and explicit lifecycle cleanup signals only. Avoids full git worktree/status scans and GitHub lookups.',
+							),
 							'apply_plan'  => array(
 								'type'        => 'object',
 								'description' => 'Decoded cleanup dry-run report to apply after revalidating every candidate.',
@@ -1554,15 +1558,16 @@ class WorkspaceAbilities {
 	/**
 	 * Remove merged worktrees across all primary checkouts.
 	 *
-	 * @param array $input Input parameters (dry_run, force, skip_github, apply_plan, older_than, sort).
+	 * @param array $input Input parameters (dry_run, force, skip_github, inventory_only, apply_plan, older_than, sort).
 	 * @return array
 	 */
 	public static function worktreeCleanup( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$opts      = array(
-			'dry_run'     => ! empty( $input['dry_run'] ),
-			'force'       => ! empty( $input['force'] ),
-			'skip_github' => ! empty( $input['skip_github'] ),
+			'dry_run'        => ! empty( $input['dry_run'] ),
+			'force'          => ! empty( $input['force'] ),
+			'skip_github'    => ! empty( $input['skip_github'] ),
+			'inventory_only' => ! empty( $input['inventory_only'] ),
 		);
 		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
 			$opts['apply_plan'] = $input['apply_plan'];

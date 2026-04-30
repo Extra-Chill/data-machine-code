@@ -25,6 +25,7 @@ namespace {
 	mkdir( $workspace_root . '/alpha', 0755, true );
 	mkdir( $workspace_root . '/alpha@feat-one', 0755, true );
 	mkdir( $workspace_root . '/beta@missing-metadata', 0755, true );
+	mkdir( $workspace_root . '/gamma@eligible', 0755, true );
 	file_put_contents( $workspace_root . '/not-a-dir.txt', 'ignored' );
 
 	define( 'ABSPATH', __DIR__ . '/' );
@@ -36,6 +37,12 @@ namespace {
 			'lifecycle_state' => 'active',
 			'pr_url'          => 'https://github.com/Extra-Chill/data-machine-code/pull/1',
 			'pr_number'       => 1,
+		),
+		'gamma@eligible' => array(
+			'created_at'      => '2026-04-01T00:00:00+00:00',
+			'lifecycle_state' => 'cleanup_eligible',
+			'pr_url'          => 'https://github.com/Extra-Chill/data-machine-code/pull/2',
+			'pr_number'       => 2,
 		),
 	);
 
@@ -129,10 +136,24 @@ namespace {
 		datamachine_code_hygiene_report_assert( 0 === $workspace->full_listing_calls, 'minimal report does not call full worktree_list' );
 		datamachine_code_hygiene_report_assert( 'top_level_inventory' === ( $minimal['worktree_status_mode'] ?? '' ), 'minimal report declares inventory mode' );
 		datamachine_code_hygiene_report_assert( 1 === (int) ( $minimal['worktrees']['primaries'] ?? 0 ), 'inventory counts primaries' );
-		datamachine_code_hygiene_report_assert( 2 === (int) ( $minimal['worktrees']['worktrees'] ?? 0 ), 'inventory counts worktrees' );
+		datamachine_code_hygiene_report_assert( 3 === (int) ( $minimal['worktrees']['worktrees'] ?? 0 ), 'inventory counts worktrees' );
 		datamachine_code_hygiene_report_assert( 1 === (int) ( $minimal['worktrees']['missing_metadata'] ?? 0 ), 'inventory counts missing metadata from registry only' );
 		datamachine_code_hygiene_report_assert( 'alpha' === ( $minimal['top_repos_by_worktrees'][0]['repo'] ?? '' ), 'inventory builds repo count leaders' );
 		datamachine_code_hygiene_report_assert( 1 === (int) ( $minimal['top_repos_by_worktrees'][0]['worktree_count'] ?? 0 ), 'repo count leaders ignore primaries and missing-metadata repo still sorts after alpha' );
+
+		echo "\n[1b] Default cleanup summary uses inventory-only review\n";
+		$with_cleanup = $workspace->workspace_hygiene_report(
+			array(
+				'include_sizes' => false,
+			)
+		);
+		datamachine_code_hygiene_report_assert( ! is_wp_error( $with_cleanup ), 'inventory cleanup hygiene report succeeds' );
+		datamachine_code_hygiene_report_assert( 0 === $workspace->full_listing_calls, 'inventory cleanup does not call full worktree_list' );
+		datamachine_code_hygiene_report_assert( str_contains( $with_cleanup['suggested_cleanup_command'] ?? '', '--inventory-only' ), 'suggested cleanup command uses inventory-only review' );
+		datamachine_code_hygiene_report_assert( true === ( $with_cleanup['cleanup']['inventory_only'] ?? false ), 'cleanup report declares inventory_only mode' );
+		datamachine_code_hygiene_report_assert( 1 === (int) ( $with_cleanup['cleanup']['summary']['would_remove'] ?? 0 ), 'inventory cleanup counts explicit cleanup signal' );
+		datamachine_code_hygiene_report_assert( 1 === (int) ( $with_cleanup['cleanup']['summary']['skipped_by_reason']['no_inventory_cleanup_signal'] ?? 0 ), 'inventory cleanup skips active metadata with stable reason' );
+		datamachine_code_hygiene_report_assert( 1 === (int) ( $with_cleanup['cleanup']['summary']['skipped_by_reason']['requires_full_scan'] ?? 0 ), 'inventory cleanup skips missing metadata with full-scan reason' );
 
 		echo "\n[2] Full report remains explicitly available\n";
 		$full = $workspace->workspace_hygiene_report(

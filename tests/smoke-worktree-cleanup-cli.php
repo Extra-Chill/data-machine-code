@@ -224,7 +224,7 @@ namespace {
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'format' => 'json' ) );
-	datamachine_code_cleanup_assert( array( 'dry_run' => true, 'force' => false, 'skip_github' => true ) === $ability->last_input, 'cleanup flags forwarded to ability' );
+	datamachine_code_cleanup_assert( array( 'dry_run' => true, 'force' => false, 'skip_github' => true, 'inventory_only' => false ) === $ability->last_input, 'cleanup flags forwarded to ability' );
 	datamachine_code_cleanup_assert( 1 === count( WP_CLI::$logs ), 'JSON path writes exactly one stdout log entry' );
 	datamachine_code_cleanup_assert( array() === WP_CLI::$successes, 'JSON path emits no success suffix' );
 	$decoded = json_decode( WP_CLI::$logs[0], true );
@@ -295,7 +295,7 @@ namespace {
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'older-than' => '7d' ) );
-	datamachine_code_cleanup_assert( array( 'dry_run' => true, 'force' => false, 'skip_github' => true, 'older_than' => '7d' ) === $ability->last_input, 'older-than forwards to cleanup ability as older_than' );
+	datamachine_code_cleanup_assert( array( 'dry_run' => true, 'force' => false, 'skip_github' => true, 'inventory_only' => false, 'older_than' => '7d' ) === $ability->last_input, 'older-than forwards to cleanup ability as older_than' );
 	datamachine_code_cleanup_assert( in_array( 'table:10:metric,count', WP_CLI::$logs, true ), 'age filter and disk summary rows are rendered' );
 
 	WP_CLI::$logs      = array();
@@ -310,6 +310,12 @@ namespace {
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'sort' => 'size', 'format' => 'json' ) );
 	datamachine_code_cleanup_assert( 'size' === ( $ability->last_input['sort'] ?? null ), '--sort forwards to cleanup ability' );
+
+	echo "\n[8] --inventory-only forwards bounded cleanup review flag\n";
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'inventory-only' => true, 'skip-github' => true, 'format' => 'json' ) );
+	datamachine_code_cleanup_assert( true === ( $ability->last_input['inventory_only'] ?? null ), '--inventory-only forwards to cleanup ability' );
 
 	echo "\nAll worktree cleanup CLI smoke tests passed.\n";
 }
