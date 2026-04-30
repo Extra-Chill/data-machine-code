@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.23.2] - 2026-04-29
+
+### Fixed
+- add inventory-only cleanup review
+
 ## [0.23.1] - 2026-04-29
 
 ### Fixed
