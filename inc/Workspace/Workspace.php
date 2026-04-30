@@ -2202,7 +2202,7 @@ class Workspace {
 		}
 
 		$listing = $this->worktree_list();
-		if ( is_wp_error( $listing ) ) {
+		if ( $listing instanceof \WP_Error ) {
 			return $listing;
 		}
 
@@ -2524,6 +2524,400 @@ class Workspace {
 			'removed'    => $removed,
 			'skipped'    => $skipped,
 			'summary'    => $this->build_worktree_cleanup_summary( $candidates, $removed, $skipped, $age_filter ),
+		);
+	}
+
+	/**
+	 * Reconcile lifecycle metadata for legacy worktrees without removing anything.
+	 *
+	 * Dry-runs build a reviewed plan from the current full git worktree listing.
+	 * Applying a plan revalidates handle/path/repo/branch before writing metadata.
+	 *
+	 * @param array $opts Options: dry_run bool, apply_plan array.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function worktree_reconcile_metadata( array $opts = array() ): array|\WP_Error {
+		$dry_run    = ! empty( $opts['dry_run'] );
+		$apply_plan = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
+
+		if ( null !== $apply_plan ) {
+			return $this->apply_worktree_metadata_reconciliation_plan( $apply_plan );
+		}
+
+		if ( ! $dry_run ) {
+			return new \WP_Error( 'metadata_reconcile_requires_review', 'Metadata reconciliation is dry-run-first. Pass --dry-run to write a review plan, then --apply-plan=<file> after review.', array( 'status' => 400 ) );
+		}
+
+		$listing = $this->worktree_list();
+		if ( is_wp_error( $listing ) ) {
+			return $listing;
+		}
+
+		$proposals = array();
+		$skipped   = array();
+
+		foreach ( (array) ( $listing['worktrees'] ?? array() ) as $wt ) {
+			if ( ! empty( $wt['is_primary'] ) ) {
+				continue;
+			}
+
+			$proposal = $this->build_worktree_metadata_reconciliation_row( $wt );
+			if ( isset( $proposal['proposal'] ) ) {
+				$proposals[] = $proposal['proposal'];
+			} elseif ( isset( $proposal['skip'] ) ) {
+				$skipped[] = $proposal['skip'];
+			}
+		}
+
+		return array(
+			'success'        => true,
+			'dry_run'        => true,
+			'applied'        => false,
+			'generated_at'   => gmdate( 'c' ),
+			'workspace_path' => $this->workspace_path,
+			'proposals'      => $proposals,
+			'written'        => array(),
+			'skipped'        => $skipped,
+			'summary'        => $this->build_worktree_metadata_reconciliation_summary( count( (array) ( $listing['worktrees'] ?? array() ) ), $proposals, array(), $skipped ),
+		);
+	}
+
+	/**
+	 * Build one metadata reconciliation row for a current worktree listing row.
+	 *
+	 * @param array<string,mixed> $wt Worktree list row.
+	 * @return array{proposal?:array<string,mixed>,skip?:array<string,mixed>}
+	 */
+	private function build_worktree_metadata_reconciliation_row( array $wt ): array {
+		$handle   = (string) ( $wt['handle'] ?? '' );
+		$repo     = (string) ( $wt['repo'] ?? '' );
+		$branch   = (string) ( $wt['branch'] ?? '' );
+		$path     = (string) ( $wt['path'] ?? '' );
+		$metadata = is_array( $wt['metadata'] ?? null ) ? (array) $wt['metadata'] : array();
+
+		$base_row = array(
+			'handle'   => $handle,
+			'repo'     => $repo,
+			'branch'   => $branch,
+			'path'     => $path,
+			'metadata' => array() === $metadata ? null : $metadata,
+		);
+
+		if ( ! empty( $wt['external'] ) ) {
+			return array(
+				'skip' => array_merge(
+					$base_row,
+					array(
+						'reason_code' => 'external_worktree',
+						'reason'      => 'external worktree outside the DMC workspace',
+					)
+				),
+			);
+		}
+
+		$missing = array_values( array_filter( array(
+			'' === $handle ? 'handle' : '',
+			'' === $repo ? 'repo' : '',
+			'' === $branch ? 'branch' : '',
+			'' === $path ? 'path' : '',
+		) ) );
+		if ( array() !== $missing ) {
+			return array(
+				'skip' => array_merge(
+					$base_row,
+					array(
+						'reason_code'    => 'missing_identity',
+						'reason'         => 'current worktree row is missing required identity fields',
+						'missing_fields' => $missing,
+					)
+				),
+			);
+		}
+
+		$parsed = $this->parse_handle( $handle );
+		if ( empty( $parsed['is_worktree'] ) || $parsed['repo'] !== $repo ) {
+			return array(
+				'skip' => array_merge(
+					$base_row,
+					array(
+						'reason_code' => 'noncanonical_handle',
+						'reason'      => 'worktree is not represented by a canonical <repo>@<slug> workspace handle',
+					)
+				),
+			);
+		}
+
+		$proposed   = $metadata;
+		$source_map = array();
+		$this->set_reconciled_metadata_field( $proposed, $source_map, 'handle', $handle, 'filesystem' );
+		$this->set_reconciled_metadata_field( $proposed, $source_map, 'repo', $repo, 'filesystem' );
+		$this->set_reconciled_metadata_field( $proposed, $source_map, 'branch', $branch, 'git' );
+		$this->set_reconciled_metadata_field( $proposed, $source_map, 'path', $path, 'git' );
+
+		$created_source = '';
+		$created_at     = '';
+		foreach ( array( 'created_at', 'timestamp' ) as $key ) {
+			if ( ! empty( $metadata[ $key ] ) && false !== strtotime( (string) $metadata[ $key ] ) ) {
+				$created_at     = gmdate( 'c', (int) strtotime( (string) $metadata[ $key ] ) );
+				$created_source = 'metadata';
+				break;
+			}
+		}
+		if ( '' === $created_at ) {
+			$mtime = file_exists( $path ) ? filemtime( $path ) : false;
+			if ( false !== $mtime ) {
+				$created_at     = gmdate( 'c', (int) $mtime );
+				$created_source = 'filesystem';
+			}
+		}
+		if ( '' !== $created_at ) {
+			$this->set_reconciled_metadata_field( $proposed, $source_map, 'created_at', $created_at, $created_source );
+		}
+
+		$existing_state = isset( $metadata['lifecycle_state'] ) ? WorktreeContextInjector::normalize_state( (string) $metadata['lifecycle_state'] ) : null;
+		if ( null !== $existing_state ) {
+			$this->set_reconciled_metadata_field( $proposed, $source_map, 'lifecycle_state', $existing_state, 'metadata' );
+		} else {
+			$this->set_reconciled_metadata_field( $proposed, $source_map, 'lifecycle_state', WorktreeContextInjector::STATE_ACTIVE, 'operator_plan' );
+		}
+
+		$missing_after = array_values( array_filter( array(
+			empty( $proposed['created_at'] ) ? 'created_at' : '',
+			empty( $proposed['lifecycle_state'] ) ? 'lifecycle_state' : '',
+		) ) );
+		if ( array() !== $missing_after ) {
+			return array(
+				'skip' => array_merge(
+					$base_row,
+					array(
+						'reason_code'    => 'insufficient_signal',
+						'reason'         => 'not enough stable metadata could be inferred safely',
+						'missing_fields' => $missing_after,
+					)
+				),
+			);
+		}
+
+		$metadata_missing = array();
+		foreach ( array( 'handle', 'repo', 'branch', 'path', 'created_at', 'lifecycle_state' ) as $field ) {
+			if ( ! array_key_exists( $field, $metadata ) || '' === (string) $metadata[ $field ] ) {
+				$metadata_missing[] = $field;
+			}
+		}
+
+		if ( array() === $metadata_missing ) {
+			return array();
+		}
+
+		return array(
+			'proposal' => array_merge(
+				$base_row,
+				array(
+					'reason_code'       => 'metadata_backfill',
+					'reason'            => 'legacy worktree metadata can be backfilled without changing cleanup eligibility',
+					'dirty'             => (int) ( $wt['dirty'] ?? 0 ),
+					'unpushed'          => $this->count_unpushed_commits( $path ),
+					'missing_fields'    => $metadata_missing,
+					'proposed_metadata' => $proposed,
+					'source_map'        => $source_map,
+				)
+			),
+		);
+	}
+
+	/**
+	 * Set a reconciled metadata field and record its source.
+	 *
+	 * @param array<string,mixed> $metadata Metadata under construction.
+	 * @param array<string,string> $source_map Field source map.
+	 * @param string $field Field name.
+	 * @param mixed  $value Field value.
+	 * @param string $source Source label.
+	 */
+	private function set_reconciled_metadata_field( array &$metadata, array &$source_map, string $field, mixed $value, string $source ): void {
+		if ( null === $value || '' === (string) $value ) {
+			return;
+		}
+		$metadata[ $field ]    = $value;
+		$source_map[ $field ]  = $source;
+	}
+
+	/**
+	 * Apply a reviewed metadata reconciliation plan after exact revalidation.
+	 *
+	 * @param array<string,mixed> $plan Dry-run plan.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function apply_worktree_metadata_reconciliation_plan( array $plan ): array|\WP_Error {
+		$planned = $this->extract_worktree_metadata_reconciliation_plan( $plan );
+		if ( $planned instanceof \WP_Error ) {
+			return $planned;
+		}
+
+		$listing = $this->worktree_list();
+		if ( $listing instanceof \WP_Error ) {
+			return $listing;
+		}
+
+		$current_by_handle = array();
+		foreach ( (array) ( $listing['worktrees'] ?? array() ) as $wt ) {
+			$handle = (string) ( $wt['handle'] ?? '' );
+			if ( '' !== $handle ) {
+				$current_by_handle[ $handle ] = $wt;
+			}
+		}
+
+		$written = array();
+		$skipped = array();
+		foreach ( $planned as $row ) {
+			$handle  = (string) ( $row['handle'] ?? '' );
+			$current = $current_by_handle[ $handle ] ?? null;
+			if ( null === $current ) {
+				$skipped[] = $this->build_reconcile_apply_skip( $row, null, 'plan_not_current', 'planned worktree is no longer present in the current listing' );
+				continue;
+			}
+
+			$mismatches = array();
+			foreach ( array( 'repo', 'branch', 'path' ) as $field ) {
+				if ( (string) ( $row[ $field ] ?? '' ) !== (string) ( $current[ $field ] ?? '' ) ) {
+					$mismatches[] = sprintf( '%s planned=%s current=%s', $field, (string) ( $row[ $field ] ?? '' ), (string) ( $current[ $field ] ?? '' ) );
+				}
+			}
+			if ( array() !== $mismatches ) {
+				$skipped[] = $this->build_reconcile_apply_skip( $row, $current, 'plan_identity_mismatch', 'planned identity does not match current row: ' . implode( '; ', $mismatches ) );
+				continue;
+			}
+
+			$metadata   = (array) ( $row['proposed_metadata'] ?? array() );
+			$source_map = (array) ( $row['source_map'] ?? array() );
+			$state      = WorktreeContextInjector::normalize_state( (string) ( $metadata['lifecycle_state'] ?? '' ) );
+			if ( null === $state ) {
+				$skipped[] = $this->build_reconcile_apply_skip( $row, $current, 'invalid_lifecycle_state', 'proposed lifecycle_state is invalid' );
+				continue;
+			}
+			$metadata['lifecycle_state'] = $state;
+
+			if ( WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE === $state ) {
+				$dirty    = (int) ( $current['dirty'] ?? 0 );
+				$unpushed = $this->count_unpushed_commits( (string) ( $current['path'] ?? '' ) );
+				if ( $dirty > 0 || $unpushed > 0 ) {
+					$skipped[] = $this->build_reconcile_apply_skip( $row, $current, 'unsafe_cleanup_eligible_state', 'refusing to mark dirty or unpushed worktree cleanup_eligible from a reconciliation plan' );
+					continue;
+				}
+			}
+
+			foreach ( array( 'handle', 'repo', 'branch', 'path', 'created_at', 'lifecycle_state' ) as $field ) {
+				if ( ! isset( $source_map[ $field ] ) || '' === (string) $source_map[ $field ] ) {
+					$skipped[] = $this->build_reconcile_apply_skip( $row, $current, 'missing_source_map', sprintf( 'proposed field %s is missing a source', $field ) );
+					continue 2;
+				}
+			}
+
+			$metadata['reconciled_at']      = gmdate( 'c' );
+			$metadata['reconciled_sources'] = $source_map;
+			WorktreeContextInjector::store_lifecycle_metadata( $handle, $metadata );
+
+			$written[] = array(
+				'handle'   => $handle,
+				'repo'     => (string) ( $current['repo'] ?? '' ),
+				'branch'   => (string) ( $current['branch'] ?? '' ),
+				'path'     => (string) ( $current['path'] ?? '' ),
+				'metadata' => WorktreeContextInjector::get_metadata( $handle ),
+			);
+		}
+
+		return array(
+			'success'        => true,
+			'dry_run'        => false,
+			'applied'        => true,
+			'generated_at'   => gmdate( 'c' ),
+			'workspace_path' => $this->workspace_path,
+			'proposals'      => $planned,
+			'written'        => $written,
+			'skipped'        => $skipped,
+			'summary'        => $this->build_worktree_metadata_reconciliation_summary( count( (array) ( $listing['worktrees'] ?? array() ) ), $planned, $written, $skipped ),
+		);
+	}
+
+	/**
+	 * Extract reconciliation proposals from a dry-run plan.
+	 *
+	 * @param array<string,mixed> $plan Plan file.
+	 * @return array<int,array<string,mixed>>|\WP_Error
+	 */
+	private function extract_worktree_metadata_reconciliation_plan( array $plan ): array|\WP_Error {
+		$proposals = $plan['proposals'] ?? null;
+		if ( ! is_array( $proposals ) ) {
+			return new \WP_Error( 'invalid_metadata_reconcile_plan', 'Metadata reconciliation plan must contain a proposals array.', array( 'status' => 400 ) );
+		}
+
+		foreach ( $proposals as $index => $row ) {
+			if ( ! is_array( $row ) ) {
+				return new \WP_Error( 'invalid_metadata_reconcile_plan', sprintf( 'Plan proposal #%d is not an object.', (int) $index ), array( 'status' => 400 ) );
+			}
+			foreach ( array( 'handle', 'repo', 'branch', 'path', 'proposed_metadata', 'source_map' ) as $field ) {
+				if ( ! array_key_exists( $field, $row ) || ( is_string( $row[ $field ] ) && '' === trim( $row[ $field ] ) ) ) {
+					return new \WP_Error( 'invalid_metadata_reconcile_plan', sprintf( 'Plan proposal #%d is missing %s.', (int) $index, $field ), array( 'status' => 400 ) );
+				}
+			}
+		}
+
+		return array_values( $proposals );
+	}
+
+	/**
+	 * Build an apply skip row.
+	 *
+	 * @param array<string,mixed>      $planned Planned row.
+	 * @param array<string,mixed>|null $current Current row.
+	 * @param string                   $code Reason code.
+	 * @param string                   $reason Human reason.
+	 * @return array<string,mixed>
+	 */
+	private function build_reconcile_apply_skip( array $planned, ?array $current, string $code, string $reason ): array {
+		return array(
+			'handle'      => (string) ( $planned['handle'] ?? '' ),
+			'repo'        => (string) ( $current['repo'] ?? $planned['repo'] ?? '' ),
+			'branch'      => (string) ( $current['branch'] ?? $planned['branch'] ?? '' ),
+			'path'        => (string) ( $current['path'] ?? $planned['path'] ?? '' ),
+			'reason_code' => $code,
+			'reason'      => $reason,
+			'planned'     => $planned,
+			'current'     => $current,
+		);
+	}
+
+	/**
+	 * Build stable reconciliation summary counts.
+	 *
+	 * @param int   $inspected Worktree rows inspected.
+	 * @param array $proposals Proposal rows.
+	 * @param array $written Written rows.
+	 * @param array $skipped Skipped rows.
+	 * @return array<string,mixed>
+	 */
+	private function build_worktree_metadata_reconciliation_summary( int $inspected, array $proposals, array $written, array $skipped ): array {
+		$skipped_by_reason = array();
+		foreach ( $skipped as $row ) {
+			$code                       = (string) ( $row['reason_code'] ?? 'unknown' );
+			$skipped_by_reason[ $code ] = ( $skipped_by_reason[ $code ] ?? 0 ) + 1;
+		}
+		ksort( $skipped_by_reason );
+
+		$states = array();
+		foreach ( $proposals as $row ) {
+			$state            = (string) ( $row['proposed_metadata']['lifecycle_state'] ?? 'unknown' );
+			$states[ $state ] = ( $states[ $state ] ?? 0 ) + 1;
+		}
+		ksort( $states );
+
+		return array(
+			'inspected'         => $inspected,
+			'proposed'          => count( $proposals ),
+			'written'           => count( $written ),
+			'skipped'           => count( $skipped ),
+			'skipped_by_reason' => $skipped_by_reason,
+			'proposed_by_state' => $states,
 		);
 	}
 

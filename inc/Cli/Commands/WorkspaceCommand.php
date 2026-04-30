@@ -1062,7 +1062,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## OPTIONS
 	 *
 	 * <operation>
-	 * : Worktree operation: add, list, remove, prune, cleanup, refresh-context.
+	 * : Worktree operation: add, list, remove, prune, cleanup, reconcile-metadata, refresh-context.
 	 *
 	 * [<repo>]
 	 * : Primary repo name (required for add and remove). For refresh-context,
@@ -1128,6 +1128,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--apply-plan=<file>]
 	 * : Apply a previously reviewed cleanup JSON report. The destructive pass
 	 *   revalidates every planned row and removes only exact current matches.
+	 *   For reconcile-metadata, applies a reviewed non-destructive metadata plan.
 	 *
 	 * [--skip-github]
 	 * : Skip the GitHub API lookup and rely only on the local `upstream-gone`
@@ -1205,6 +1206,8 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 *     # Bounded review on huge workspaces (no per-worktree git probes)
 	 *     wp datamachine workspace worktree cleanup --dry-run --inventory-only --skip-github --format=json
+	 *     wp datamachine workspace worktree reconcile-metadata --dry-run --format=json > reconcile-plan.json
+	 *     wp datamachine workspace worktree reconcile-metadata --apply-plan=reconcile-plan.json
 	 *
 	 *     # Ignore dirty working-tree safety (caution)
 	 *     wp datamachine workspace worktree cleanup --force
@@ -1234,7 +1237,7 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error( 'Usage: wp datamachine workspace worktree <add|list|remove|prune|cleanup|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
+			WP_CLI::error( 'Usage: wp datamachine workspace worktree <add|list|remove|prune|cleanup|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
 			return;
 		}
 
@@ -1244,6 +1247,7 @@ class WorkspaceCommand extends BaseCommand {
 			'remove'          => 'datamachine/workspace-worktree-remove',
 			'prune'           => 'datamachine/workspace-worktree-prune',
 			'cleanup'         => 'datamachine/workspace-worktree-cleanup',
+			'reconcile-metadata' => 'datamachine/workspace-worktree-reconcile-metadata',
 			'refresh-context' => 'datamachine/workspace-worktree-refresh-context',
 			'finalize'        => 'datamachine/workspace-worktree-finalize',
 			'mark-cleanup-eligible' => 'datamachine/workspace-worktree-finalize',
@@ -1362,6 +1366,13 @@ class WorkspaceCommand extends BaseCommand {
 					$input['sort'] = trim( (string) $assoc_args['sort'] );
 				}
 				break;
+
+			case 'reconcile-metadata':
+				$input['dry_run'] = ! empty( $assoc_args['dry-run'] );
+				if ( ! empty( $assoc_args['apply-plan'] ) ) {
+					$input['apply_plan'] = $this->read_worktree_json_plan( (string) $assoc_args['apply-plan'], 'metadata reconciliation' );
+				}
+				break;
 		}
 
 		$result = $ability->execute( $input );
@@ -1439,6 +1450,10 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'cleanup':
 				$this->render_worktree_cleanup_result( $result, $assoc_args );
+				return;
+
+			case 'reconcile-metadata':
+				$this->render_worktree_metadata_reconciliation_result( $result, $assoc_args );
 				return;
 
 			case 'add':
@@ -1819,31 +1834,154 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	/**
+	 * Render metadata reconciliation output.
+	 *
+	 * @param array $result     Reconciliation ability result.
+	 * @param array $assoc_args CLI assoc args.
+	 * @return void
+	 */
+	private function render_worktree_metadata_reconciliation_result( array $result, array $assoc_args ): void {
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
+		if ( 'json' === $format ) {
+			$json = wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+			WP_CLI::log( false === $json ? '{}' : $json );
+			return;
+		}
+
+		$summary   = (array) ( $result['summary'] ?? array() );
+		$proposals = (array) ( $result['proposals'] ?? array() );
+		$written   = (array) ( $result['written'] ?? array() );
+		$skipped   = (array) ( $result['skipped'] ?? array() );
+		$verbose   = ! empty( $assoc_args['verbose'] );
+		$limit     = $verbose ? PHP_INT_MAX : 10;
+
+		WP_CLI::log( 'Summary:' );
+		$summary_rows = array(
+			array(
+				'metric' => 'inspected',
+				'count'  => (int) ( $summary['inspected'] ?? 0 ),
+			),
+			array(
+				'metric' => 'proposed',
+				'count'  => (int) ( $summary['proposed'] ?? count( $proposals ) ),
+			),
+			array(
+				'metric' => 'written',
+				'count'  => (int) ( $summary['written'] ?? count( $written ) ),
+			),
+			array(
+				'metric' => 'skipped',
+				'count'  => (int) ( $summary['skipped'] ?? count( $skipped ) ),
+			),
+		);
+		foreach ( (array) ( $summary['skipped_by_reason'] ?? array() ) as $reason_code => $count ) {
+			$summary_rows[] = array(
+				'metric' => 'skipped:' . $reason_code,
+				'count'  => (int) $count,
+			);
+		}
+		foreach ( (array) ( $summary['proposed_by_state'] ?? array() ) as $state => $count ) {
+			$summary_rows[] = array(
+				'metric' => 'state:' . $state,
+				'count'  => (int) $count,
+			);
+		}
+		$this->format_items( $summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric' );
+
+		if ( ! empty( $proposals ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( ! empty( $result['dry_run'] ) ? 'Would write metadata:' : 'Reviewed proposals:' );
+			$proposal_rows = array_map(
+				fn( $row ) => array(
+					'handle'   => $row['handle'] ?? '',
+					'branch'   => $row['branch'] ?? '',
+					'state'    => $row['proposed_metadata']['lifecycle_state'] ?? '',
+					'missing'  => implode( ',', (array) ( $row['missing_fields'] ?? array() ) ),
+					'dirty'    => (int) ( $row['dirty'] ?? 0 ),
+					'unpushed' => (int) ( $row['unpushed'] ?? 0 ),
+				),
+				array_slice( $proposals, 0, $limit )
+			);
+			$this->format_items( $proposal_rows, array( 'handle', 'branch', 'state', 'missing', 'dirty', 'unpushed' ), array( 'format' => 'table' ), 'handle' );
+			$this->render_cleanup_truncation_hint( count( $proposals ), $limit, 'proposal rows' );
+		}
+
+		if ( ! empty( $written ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Written:' );
+			$written_rows = array_map(
+				fn( $row ) => array(
+					'handle' => $row['handle'] ?? '',
+					'branch' => $row['branch'] ?? '',
+					'state'  => $row['metadata']['lifecycle_state'] ?? '',
+				),
+				array_slice( $written, 0, $limit )
+			);
+			$this->format_items( $written_rows, array( 'handle', 'branch', 'state' ), array( 'format' => 'table' ), 'handle' );
+			$this->render_cleanup_truncation_hint( count( $written ), $limit, 'written rows' );
+		}
+
+		if ( ! empty( $skipped ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Skipped:' );
+			$skipped_rows = array_map(
+				fn( $row ) => array(
+					'handle'      => $row['handle'] ?? '',
+					'reason_code' => $row['reason_code'] ?? '',
+					'reason'      => $verbose ? ( $row['reason'] ?? '' ) : $this->shorten_cleanup_reason( (string) ( $row['reason'] ?? '' ) ),
+				),
+				array_slice( $skipped, 0, $limit )
+			);
+			$this->format_items( $skipped_rows, array( 'handle', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle' );
+			$this->render_cleanup_truncation_hint( count( $skipped ), $limit, 'skipped rows' );
+		}
+
+		WP_CLI::log( '' );
+		if ( ! empty( $result['dry_run'] ) ) {
+			WP_CLI::success( sprintf( '%d metadata reconciliation proposal(s). Review JSON, then apply with --apply-plan.', count( $proposals ) ) );
+			return;
+		}
+		WP_CLI::success( sprintf( 'Wrote metadata for %d worktree(s); %d skipped.', count( $written ), count( $skipped ) ) );
+	}
+
+	/**
 	 * Read and decode a cleanup plan file for --apply-plan.
 	 *
 	 * @param string $path Plan file path.
 	 * @return array
 	 */
 	private function read_worktree_cleanup_plan( string $path ): array {
+		return $this->read_worktree_json_plan( $path, 'cleanup' );
+	}
+
+	/**
+	 * Read and decode a JSON plan file for --apply-plan.
+	 *
+	 * @param string $path Plan file path.
+	 * @param string $label Human label for errors.
+	 * @return array
+	 */
+	private function read_worktree_json_plan( string $path, string $label ): array {
 		if ( '' === trim( $path ) ) {
 			WP_CLI::error( '--apply-plan requires a file path.' );
 			return array();
 		}
 
 		if ( ! is_readable( $path ) ) {
-			WP_CLI::error( sprintf( 'Cleanup plan is not readable: %s', $path ) );
+			WP_CLI::error( sprintf( '%s plan is not readable: %s', ucfirst( $label ), $path ) );
 			return array();
 		}
 
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
 		$raw = file_get_contents( $path );
 		if ( false === $raw ) {
-			WP_CLI::error( sprintf( 'Failed to read cleanup plan: %s', $path ) );
+			WP_CLI::error( sprintf( 'Failed to read %s plan: %s', $label, $path ) );
 			return array();
 		}
 
 		$decoded = json_decode( $raw, true );
 		if ( JSON_ERROR_NONE !== json_last_error() || ! is_array( $decoded ) ) {
-			WP_CLI::error( sprintf( 'Cleanup plan must be a JSON object: %s', json_last_error_msg() ) );
+			WP_CLI::error( sprintf( '%s plan must be a JSON object: %s', ucfirst( $label ), json_last_error_msg() ) );
 			return array();
 		}
 

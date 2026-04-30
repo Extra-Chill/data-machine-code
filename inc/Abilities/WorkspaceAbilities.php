@@ -1183,6 +1183,43 @@ class WorkspaceAbilities {
 					'meta'                => array( 'show_in_rest' => false ),
 				)
 			);
+
+			wp_register_ability(
+				'datamachine/workspace-worktree-reconcile-metadata',
+				array(
+					'label'               => 'Reconcile Legacy Worktree Metadata',
+					'description'         => 'Build or apply a reviewed, non-destructive lifecycle metadata backfill plan for legacy workspace worktrees. Never removes worktrees and never infers cleanup eligibility.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'dry_run'    => array(
+								'type'        => 'boolean',
+								'description' => 'If true, return a review plan without writing metadata.',
+							),
+							'apply_plan' => array(
+								'type'        => 'object',
+								'description' => 'Decoded dry-run plan to apply after exact handle/path/repo/branch revalidation.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'   => array( 'type' => 'boolean' ),
+							'dry_run'   => array( 'type' => 'boolean' ),
+							'applied'   => array( 'type' => 'boolean' ),
+							'proposals' => array( 'type' => 'array' ),
+							'written'   => array( 'type' => 'array' ),
+							'skipped'   => array( 'type' => 'array' ),
+							'summary'   => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeReconcileMetadata' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
 		};
 
 		if ( doing_action( 'wp_abilities_api_init' ) ) {
@@ -1580,6 +1617,24 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->worktree_cleanup_merged( $opts );
+	}
+
+	/**
+	 * Reconcile legacy worktree lifecycle metadata.
+	 *
+	 * @param array $input Input parameters (dry_run, apply_plan).
+	 * @return array
+	 */
+	public static function worktreeReconcileMetadata( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		$opts      = array(
+			'dry_run' => ! empty( $input['dry_run'] ),
+		);
+		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
+			$opts['apply_plan'] = $input['apply_plan'];
+		}
+
+		return $workspace->worktree_reconcile_metadata( $opts );
 	}
 
 	/**
