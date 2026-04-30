@@ -1057,8 +1057,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *   `rebase_base=true`.
 	 *
 	 * [--force]
-	 * : Force-remove a worktree even if it is dirty (applies to `remove` and
-	 *   `cleanup`). Does NOT override the unpushed-commits safety in cleanup.
+	 * : For `add`, explicitly bypass the disk-budget refusal threshold. For
+	 *   `remove`, force-remove a worktree even if it is dirty. For `cleanup`,
+	 *   force dirty-worktree removal but not the unpushed-commits safety.
 	 *
 	 * [--dry-run]
 	 * : Preview cleanup candidates without removing anything (cleanup only).
@@ -1179,7 +1180,7 @@ class WorkspaceCommand extends BaseCommand {
 		switch ( $operation ) {
 			case 'add':
 				if ( empty( $args[1] ) || empty( $args[2] ) ) {
-					WP_CLI::error( 'Usage: worktree add <repo> <branch> [--from=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--rebase-base]' );
+					WP_CLI::error( 'Usage: worktree add <repo> <branch> [--from=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--rebase-base] [--force]' );
 					return;
 				}
 				$input['repo']   = $args[1];
@@ -1201,6 +1202,8 @@ class WorkspaceCommand extends BaseCommand {
 				$input['allow_stale'] = ! empty( $assoc_args['allow-stale'] );
 				// --rebase-base auto-rebases onto upstream after creation (default: off).
 				$input['rebase_base'] = ! empty( $assoc_args['rebase-base'] );
+				// --force is an explicit disk-budget override for add.
+				$input['force'] = ! empty( $assoc_args['force'] );
 				break;
 
 			case 'refresh-context':
@@ -1262,6 +1265,12 @@ class WorkspaceCommand extends BaseCommand {
 	 * @param array  $assoc_args CLI assoc args.
 	 */
 	private function renderWorktreeResult( string $operation, array $result, array $assoc_args ): void {
+		if ( 'add' === $operation && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			$json = wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+			WP_CLI::log( false === $json ? '{}' : $json );
+			return;
+		}
+
 		switch ( $operation ) {
 			case 'list':
 				$worktrees = $result['worktrees'] ?? array();
@@ -1305,6 +1314,16 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'add':
 				WP_CLI::success( $result['message'] ?? 'Worktree created.' );
+				if ( isset( $result['disk_budget'] ) && is_array( $result['disk_budget'] ) ) {
+					$budget = $result['disk_budget'];
+					WP_CLI::log( \DataMachineCode\Workspace\WorktreeDiskBudget::format_summary( $budget ) );
+					foreach ( (array) ( $budget['warnings'] ?? array() ) as $warning ) {
+						WP_CLI::warning( $warning );
+					}
+					if ( ! empty( $budget['force_override_applied'] ) ) {
+						WP_CLI::warning( 'Disk budget override applied because --force was explicit.' );
+					}
+				}
 				if ( ! empty( $result['handle'] ) ) {
 					WP_CLI::log( sprintf( 'Handle: %s', $result['handle'] ) );
 					WP_CLI::log( sprintf( 'Path:   %s', $result['path'] ?? '-' ) );

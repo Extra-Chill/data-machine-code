@@ -15,6 +15,14 @@ namespace {
 	class WP_CLI {
 		public static array $logs = array();
 
+		public static function reset_logs(): void {
+			self::$logs = array();
+		}
+
+		public static function get_logs(): array {
+			return self::$logs;
+		}
+
 		public static function error( string $message ): void {
 			throw new RuntimeException( $message );
 		}
@@ -39,6 +47,10 @@ namespace {
 	function wp_get_ability( string $name ) {
 		return $GLOBALS['__abilities'][ $name ] ?? null;
 	}
+
+	function wp_json_encode( $data, int $flags = 0 ) {
+		return json_encode( $data, $flags );
+	}
 }
 
 namespace DataMachine\Cli {
@@ -49,6 +61,7 @@ namespace DataMachine\Cli {
 
 namespace {
 	require_once dirname( __DIR__ ) . '/inc/Cli/Commands/WorkspaceCommand.php';
+	require_once dirname( __DIR__ ) . '/inc/Workspace/WorktreeDiskBudget.php';
 
 	function datamachine_code_assert( bool $condition, string $message ): void {
 		if ( $condition ) {
@@ -71,6 +84,14 @@ namespace {
 				'path'           => '/tmp/worktree',
 				'branch'         => $input['branch'] ?? '',
 				'created_branch' => true,
+				'disk_budget'    => array(
+					'status'                  => 'warning',
+					'free_gib'                => 4.5,
+					'worktree_count'          => 123,
+					'warnings'                => array( 'low disk' ),
+					'force_override_applied'  => ! empty( $input['force'] ),
+					'cleanup_dry_run_command' => 'studio wp datamachine-code workspace worktree cleanup --dry-run',
+				),
 			);
 		}
 	}
@@ -91,6 +112,7 @@ namespace {
 	datamachine_code_assert( 'origin/main' === $ability->last_input['from'], 'main maps to origin/main' );
 	datamachine_code_assert( false === $ability->last_input['bootstrap'], 'skip-bootstrap still forwarded' );
 	datamachine_code_assert( false === $ability->last_input['inject_context'], 'skip-context-injection still forwarded' );
+	datamachine_code_assert( false === $ability->last_input['force'], 'force defaults false for add' );
 
 	echo "\n[2] branch names with slashes still map to origin refs\n";
 	$command->worktree(
@@ -116,6 +138,19 @@ namespace {
 	} catch ( RuntimeException $e ) {
 		datamachine_code_assert( str_contains( $e->getMessage(), 'not both' ), 'ambiguous flags fail clearly' );
 	}
+
+	echo "\n[5] --force is forwarded for add and JSON output keeps disk budget\n";
+	\WP_CLI::reset_logs();
+	$command->worktree(
+		array( 'add', 'data-machine', 'feat/test' ),
+		array( 'force' => true, 'format' => 'json' )
+	);
+	datamachine_code_assert( true === $ability->last_input['force'], 'force forwarded for add' );
+	$logs    = \WP_CLI::get_logs();
+	$decoded = json_decode( $logs[0] ?? '', true );
+	datamachine_code_assert( is_array( $decoded ), 'JSON output decodes' );
+	datamachine_code_assert( 'warning' === ( $decoded['disk_budget']['status'] ?? '' ), 'JSON output includes disk budget status' );
+	datamachine_code_assert( true === ( $decoded['disk_budget']['force_override_applied'] ?? false ), 'JSON output includes explicit force override' );
 
 	echo "\nAll worktree base-branch CLI smoke tests passed.\n";
 }
