@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.24.0] - 2026-04-30
+
+### Added
+- reconcile legacy worktree metadata
+- feat(code-task): scaffold tasks from evidence packets
+
+### Fixed
+- declare homeboy availability for compose
+- add artifact-only cleanup plans
+
 ## [0.23.3] - 2026-04-29
 
 ### Fixed
