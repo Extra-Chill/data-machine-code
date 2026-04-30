@@ -120,6 +120,95 @@ class Workspace {
 	}
 
 	/**
+	 * Inspect whether the configured workspace root is visible to PHP.
+	 *
+	 * @return array{path: string, configured: bool, is_dir: bool, is_readable: bool, scandir: string, readable: bool}
+	 */
+	public function inspect_workspace_path(): array {
+		$path        = $this->workspace_path;
+		$is_dir      = '' !== $path && is_dir( $path );
+		$is_readable = '' !== $path && is_readable( $path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_readable
+		$entries     = ( $is_dir && $is_readable ) ? scandir( $path ) : false;
+
+		return array(
+			'path'        => $path,
+			'configured'  => defined( 'DATAMACHINE_WORKSPACE_PATH' ),
+			'is_dir'      => $is_dir,
+			'is_readable' => $is_readable,
+			'scandir'     => false === $entries ? 'failed' : 'ok',
+			'readable'    => $is_dir && false !== $entries,
+		);
+	}
+
+	/**
+	 * Require the configured workspace root to be visible before substrate checks.
+	 *
+	 * @return \WP_Error|null
+	 */
+	private function require_workspace_visible(): ?\WP_Error {
+		$diagnostic = $this->inspect_workspace_path();
+
+		if ( '' === $diagnostic['path'] ) {
+			return new \WP_Error(
+				'workspace_unavailable',
+				'Workspace unavailable: no writable path outside the web root. Define DATAMACHINE_WORKSPACE_PATH in wp-config.php, ensure /var/lib/datamachine/ is writable, or ensure $HOME is set.',
+				$this->workspace_visibility_error_data( $diagnostic )
+			);
+		}
+
+		if ( ! $diagnostic['is_dir'] ) {
+			if ( empty( $diagnostic['configured'] ) ) {
+				return null;
+			}
+
+			return new \WP_Error(
+				'workspace_path_invisible',
+				$this->format_workspace_visibility_message( $diagnostic ),
+				$this->workspace_visibility_error_data( $diagnostic )
+			);
+		}
+
+		if ( ! $diagnostic['readable'] ) {
+			return new \WP_Error(
+				'workspace_path_unreadable',
+				$this->format_workspace_visibility_message( $diagnostic ),
+				$this->workspace_visibility_error_data( $diagnostic )
+			);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Build error data for workspace visibility failures.
+	 *
+	 * @param array<string,mixed> $diagnostic Path visibility details.
+	 * @return array{status: int, workspace: array<string,mixed>}
+	 */
+	private function workspace_visibility_error_data( array $diagnostic ): array {
+		return array(
+			'status'    => 500,
+			'workspace' => $diagnostic,
+		);
+	}
+
+	/**
+	 * Format a workspace visibility diagnostic for CLI/API callers.
+	 *
+	 * @param array<string,mixed> $diagnostic Path visibility details.
+	 * @return string
+	 */
+	private function format_workspace_visibility_message( array $diagnostic ): string {
+		return sprintf(
+			'Workspace path is not accessible from PHP: %s (is_dir=%s, is_readable=%s, scandir=%s). If this is a Studio/local host path, ensure the path is mounted into the PHP runtime or update DATAMACHINE_WORKSPACE_PATH to a PHP-visible workspace.',
+			(string) ( $diagnostic['path'] ?? '' ),
+			! empty( $diagnostic['is_dir'] ) ? 'true' : 'false',
+			! empty( $diagnostic['is_readable'] ) ? 'true' : 'false',
+			(string) ( $diagnostic['scandir'] ?? 'failed' )
+		);
+	}
+
+	/**
 	 * Get the full path to a workspace handle.
 	 *
 	 * Handles can be either a primary checkout (`<repo>`) or a worktree
@@ -222,10 +311,16 @@ class Workspace {
 		$path = $this->workspace_path;
 
 		if ( '' === $path ) {
-			return new \WP_Error( 'workspace_unavailable', 'Workspace unavailable: no writable path outside the web root. Define DATAMACHINE_WORKSPACE_PATH in wp-config.php, ensure /var/lib/datamachine/ is writable, or ensure $HOME is set.', array( 'status' => 500 ) );
+			$visible = $this->require_workspace_visible();
+			return null !== $visible ? $visible : new \WP_Error( 'workspace_unavailable', 'Workspace unavailable: no writable path outside the web root.', array( 'status' => 500 ) );
 		}
 
 		if ( is_dir( $path ) ) {
+			$visible = $this->require_workspace_visible();
+			if ( null !== $visible ) {
+				return $visible;
+			}
+
 			return array(
 				'success' => true,
 				'path'    => $path,
@@ -256,10 +351,14 @@ class Workspace {
 	/**
 	 * List repositories in the workspace.
 	 *
-	 * @return array{success: bool, repos: array, path: string}
+	 * @return array{success: bool, repos: array, path: string}|\WP_Error
 	 */
-	public function list_repos(): array {
-		$path = $this->workspace_path;
+	public function list_repos(): array|\WP_Error {
+		$path    = $this->workspace_path;
+		$visible = $this->require_workspace_visible();
+		if ( null !== $visible ) {
+			return $visible;
+		}
 
 		if ( ! is_dir( $path ) ) {
 			return array(
@@ -330,6 +429,11 @@ class Workspace {
 	 * @return array{success: bool, name?: string, path?: string, message?: string}|\WP_Error
 	 */
 	public function clone_repo( string $url, ?string $name = null ): array|\WP_Error {
+		$visible = $this->require_workspace_visible();
+		if ( null !== $visible ) {
+			return $visible;
+		}
+
 		// Validate URL.
 		if ( empty( $url ) ) {
 			return new \WP_Error( 'missing_url', 'Repository URL is required.', array( 'status' => 400 ) );
@@ -1061,6 +1165,11 @@ class Workspace {
 	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
 	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false ): array|\WP_Error {
+		$visible = $this->require_workspace_visible();
+		if ( null !== $visible ) {
+			return $visible;
+		}
+
 		$repo   = $this->sanitize_name( $repo );
 		$branch = trim( $branch );
 
