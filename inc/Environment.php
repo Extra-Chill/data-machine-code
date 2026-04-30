@@ -34,6 +34,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Environment {
 
 	/**
+	 * Memoized shell capability diagnostic. Null until the first probe.
+	 *
+	 * @var array{ok: bool, reason: string, output?: string, exit_code?: int|null}|null
+	 */
+	private static $shell_diagnostic_cache = null;
+
+	/**
 	 * Is the coding agent runtime bridge available on this install?
 	 *
 	 * Returns true whenever this class is loaded, which is equivalent to
@@ -50,23 +57,110 @@ class Environment {
 	}
 
 	/**
-	 * Can this install execute shell commands via `shell_exec`?
+	 * Can this install execute shell commands?
 	 *
 	 * Some hosts disable shell functions via `disable_functions` in
-	 * php.ini. Coding-agent integrations that spawn processes (e.g. MCP
-	 * bridges, git operations through proc_open) should gate on this.
+	 * php.ini. Other hosts expose the functions but cannot execute external
+	 * commands. Coding-agent integrations that spawn processes should gate on
+	 * this.
 	 *
 	 * @since 0.6.0
 	 *
-	 * @return bool True if `shell_exec` is callable.
+	 * @return bool True if command execution is usable.
 	 */
 	public static function has_shell(): bool {
-		if ( ! function_exists( 'shell_exec' ) ) {
-			return false;
+		$diagnostic = self::shell_diagnostic();
+		return true === $diagnostic['ok'];
+	}
+
+	/**
+	 * Return the shell capability diagnostic for this request.
+	 *
+	 * @since 0.24.0
+	 *
+	 * @return array{ok: bool, reason: string, output?: string, exit_code?: int|null}
+	 */
+	public static function shell_diagnostic(): array {
+		if ( null !== self::$shell_diagnostic_cache ) {
+			return self::$shell_diagnostic_cache;
 		}
 
-		$disabled = array_map( 'trim', explode( ',', (string) ini_get( 'disable_functions' ) ) );
-		return ! in_array( 'shell_exec', $disabled, true );
+		self::$shell_diagnostic_cache = self::evaluate_shell_capability(
+			static function ( string $function_name ): bool {
+				return function_exists( $function_name );
+			},
+			(string) ini_get( 'disable_functions' ),
+			static function ( string $command ): array {
+				$output    = array();
+				$exit_code = null;
+
+				// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Environment capability probe.
+				exec( $command, $output, $exit_code );
+
+				return array(
+					'output'    => $output,
+					'exit_code' => $exit_code,
+				);
+			}
+		);
+
+		return self::$shell_diagnostic_cache;
+	}
+
+	/**
+	 * Evaluate shell capability with injectable probes for tests.
+	 *
+	 * @since 0.24.0
+	 *
+	 * @param callable $function_exists    Callback receiving a function name and returning availability.
+	 * @param string   $disabled_functions Raw `disable_functions` value.
+	 * @param callable $command_runner     Callback receiving command and returning output plus exit code.
+	 * @return array{ok: bool, reason: string, output?: string, exit_code?: int|null}
+	 */
+	private static function evaluate_shell_capability( callable $function_exists, string $disabled_functions, callable $command_runner ): array {
+		$required_functions = array( 'exec', 'shell_exec' );
+		$disabled           = array_filter( array_map( 'trim', explode( ',', $disabled_functions ) ) );
+
+		foreach ( $required_functions as $function_name ) {
+			if ( ! $function_exists( $function_name ) ) {
+				return array(
+					'ok'     => false,
+					'reason' => $function_name . '_missing',
+				);
+			}
+
+			if ( in_array( $function_name, $disabled, true ) ) {
+				return array(
+					'ok'     => false,
+					'reason' => $function_name . '_disabled',
+				);
+			}
+		}
+
+		$marker = '__datamachine_code_shell_ok__';
+
+		/** @var array{output: array<int, string>, exit_code: int|null} $result */
+		$result = $command_runner( 'printf ' . escapeshellarg( $marker ) . ' 2>&1' );
+
+		$output    = $result['output'];
+		$exit_code = $result['exit_code'];
+
+		$actual_output = trim( implode( "\n", array_map( 'strval', $output ) ) );
+		if ( 0 !== $exit_code || $marker !== $actual_output ) {
+			return array(
+				'ok'        => false,
+				'reason'    => 'probe_failed',
+				'output'    => $actual_output,
+				'exit_code' => $exit_code,
+			);
+		}
+
+		return array(
+			'ok'        => true,
+			'reason'    => 'ok',
+			'output'    => $actual_output,
+			'exit_code' => $exit_code,
+		);
 	}
 
 	/**
