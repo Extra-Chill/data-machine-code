@@ -159,6 +159,15 @@ namespace {
 		echo "    haystack: " . implode( ', ', array_map( fn( $i ) => is_array( $i ) ? ( $i['handle'] ?? '?' ) : $i, $haystack ) ) . "\n";
 	};
 
+	class Cleanup_Inventory_Workspace extends \DataMachineCode\Workspace\Workspace {
+		public int $full_listing_calls = 0;
+
+		public function worktree_list( ?string $repo = null, ?string $state = null ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+			++$this->full_listing_calls;
+			return parent::worktree_list( $repo, $state );
+		}
+	}
+
 	$run = function ( string $cmd, string $cwd = '' ) {
 		$full = '' === $cwd ? $cmd : sprintf( 'cd %s && %s', escapeshellarg( $cwd ), $cmd );
 		exec( $full . ' 2>&1', $out, $rc );
@@ -264,6 +273,25 @@ namespace {
 			'timestamp'  => '2026-04-25T00:00:00+00:00',
 		)
 	);
+	mkdir( $tmp . '/demo@inventory-cleanup-eligible', 0755, true );
+	mkdir( $tmp . '/demo@inventory-active', 0755, true );
+	mkdir( $tmp . '/demo@inventory-missing-metadata', 0755, true );
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
+		'demo@inventory-cleanup-eligible',
+		array(
+			'created_at'      => '2026-04-01T00:00:00+00:00',
+			'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE,
+			'pr_url'          => 'https://github.com/acme/demo/pull/42',
+			'pr_number'       => 42,
+		)
+	);
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
+		'demo@inventory-active',
+		array(
+			'created_at'      => '2026-04-01T00:00:00+00:00',
+			'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
+		)
+	);
 
 	// Simulate "remote deleted the merged-* branches" — classic
 	// GitHub auto-delete-on-merge scenario. After a fetch --prune, the
@@ -335,6 +363,27 @@ namespace {
 	$assert( true, (int) ( $plan['summary']['total_size_bytes'] ?? 0 ) > 0, 'summary reports total worktree size bytes' );
 	$assert( true, (int) ( $plan['summary']['artifact_size_bytes'] ?? 0 ) > 0, 'summary reports artifact size bytes' );
 	$assert( true, ! empty( $plan['summary']['top_by_size'] ), 'summary reports top worktrees by size' );
+
+	echo "\nInventory-only dry-run scenario\n";
+	$inventory_ws   = new Cleanup_Inventory_Workspace();
+	$inventory_plan = $inventory_ws->worktree_cleanup_merged(
+		array(
+			'dry_run'        => true,
+			'skip_github'    => true,
+			'inventory_only' => true,
+		)
+	);
+	$assert( true, ! is_wp_error( $inventory_plan ) && ( $inventory_plan['success'] ?? false ), 'inventory-only dry_run returns success' );
+	$assert( true, $inventory_plan['inventory_only'] ?? false, 'inventory-only flag echoes back true' );
+	$assert( 0, $inventory_ws->full_listing_calls, 'inventory-only cleanup does not call full worktree_list' );
+	$assert_contains( $inventory_plan['candidates'] ?? array(), 'demo@inventory-cleanup-eligible', 'inventory-only flags explicit cleanup_eligible worktree' );
+	$assert( 1, count( $inventory_plan['candidates'] ?? array() ), 'inventory-only only returns explicit cheap cleanup signals as candidates' );
+	$inventory_active = array_values( array_filter( $inventory_plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@inventory-active' ) )[0] ?? array();
+	$assert( 'no_inventory_cleanup_signal', $inventory_active['reason_code'] ?? '', 'inventory-only active metadata uses stable ambiguous reason' );
+	$inventory_missing = array_values( array_filter( $inventory_plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@inventory-missing-metadata' ) )[0] ?? array();
+	$assert( 'requires_full_scan', $inventory_missing['reason_code'] ?? '', 'inventory-only missing metadata requires full scan' );
+	$inventory_apply = $inventory_ws->worktree_cleanup_merged( array( 'inventory_only' => true ) );
+	$assert( true, is_wp_error( $inventory_apply ), 'inventory-only cleanup refuses non-dry-run apply path' );
 
 	$size_plan = $ws->worktree_cleanup_merged(
 		array(

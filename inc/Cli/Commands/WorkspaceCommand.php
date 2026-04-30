@@ -1195,11 +1195,14 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine workspace worktree cleanup --dry-run --format=json > cleanup-plan.json
 	 *     wp datamachine workspace worktree cleanup --apply-plan=cleanup-plan.json
 	 *
-	 *     # Local-only detection (no GitHub API call)
-	 *     wp datamachine workspace worktree cleanup --skip-github
-	 *
-	 *     # Ignore dirty working-tree safety (caution)
-	 *     wp datamachine workspace worktree cleanup --force
+		 *     # Local-only detection (no GitHub API call)
+		 *     wp datamachine workspace worktree cleanup --skip-github
+		 *
+		 *     # Bounded review on huge workspaces (no per-worktree git probes)
+		 *     wp datamachine workspace worktree cleanup --dry-run --inventory-only --skip-github --format=json
+		 *
+		 *     # Ignore dirty working-tree safety (caution)
+		 *     wp datamachine workspace worktree cleanup --force
 	 *
 	 *     # Create a worktree without injecting site-agent context
 	 *     wp datamachine workspace worktree add data-machine fix/foo --skip-context-injection
@@ -1336,9 +1339,10 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 
 			case 'cleanup':
-				$input['dry_run']     = ! empty( $assoc_args['dry-run'] );
-				$input['force']       = ! empty( $assoc_args['force'] );
-				$input['skip_github'] = ! empty( $assoc_args['skip-github'] );
+				$input['dry_run']        = ! empty( $assoc_args['dry-run'] );
+				$input['force']          = ! empty( $assoc_args['force'] );
+				$input['skip_github']    = ! empty( $assoc_args['skip-github'] );
+				$input['inventory_only'] = ! empty( $assoc_args['inventory-only'] );
 				if ( ! empty( $assoc_args['apply-plan'] ) ) {
 					if ( ! empty( $assoc_args['force'] ) ) {
 						WP_CLI::error( 'Do not combine --apply-plan with --force. Plan application always revalidates and refuses dirty worktrees.' );

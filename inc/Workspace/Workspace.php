@@ -1611,9 +1611,10 @@ class Workspace {
 		if ( $include_cleanup ) {
 			$cleanup = $this->worktree_cleanup_merged(
 				array(
-					'dry_run'     => true,
-					'force'       => false,
-					'skip_github' => true,
+					'dry_run'        => true,
+					'force'          => false,
+					'skip_github'    => true,
+					'inventory_only' => true,
 				)
 			);
 			if ( $cleanup instanceof \WP_Error ) {
@@ -1636,11 +1637,11 @@ class Workspace {
 			'top_repos_by_worktrees'    => $this->top_repos_by_worktree_count( $worktrees, 10 ),
 			'top_repos_by_size'         => $this->top_repos_by_size( (array) ( $size_report['entries'] ?? array() ), 10 ),
 			'cleanup'                   => $this->summarize_workspace_cleanup( $cleanup, $cleanup_error, (array) ( $size_report['entries'] ?? array() ) ),
-			'suggested_cleanup_command' => 'wp datamachine-code workspace worktree cleanup --dry-run --skip-github --format=json',
+			'suggested_cleanup_command' => 'wp datamachine-code workspace worktree cleanup --dry-run --inventory-only --skip-github --format=json',
 			'notes'                     => array_values( array_filter( array(
 				$include_sizes ? (string) ( $size_report['mode_note'] ?? '' ) : 'Size scan disabled by request.',
 				$include_worktree_status ? 'Full worktree status enabled; this may run git status across every worktree.' : 'Worktree status uses cheap top-level inventory; pass --include-worktree-status for full git status.',
-				$include_cleanup ? 'Cleanup summary uses local-only dry-run detection (--skip-github); no GitHub API lookups are required.' : 'Cleanup dry-run disabled by request.',
+				$include_cleanup ? 'Cleanup summary uses inventory-only dry-run detection (--inventory-only --skip-github); no per-worktree git probes or GitHub API lookups are required.' : 'Cleanup dry-run disabled by request.',
 			) ) ),
 		);
 	}
@@ -1920,6 +1921,7 @@ class Workspace {
 			'included'             => true,
 			'dry_run'              => true,
 			'skip_github'          => true,
+			'inventory_only'       => ! empty( $cleanup['inventory_only'] ),
 			'summary'              => $cleanup['summary'] ?? array(),
 			'biggest_candidates'   => array_slice( $candidates, 0, 10 ),
 			'skipped_by_reason'    => $cleanup['summary']['skipped_by_reason'] ?? array(),
@@ -2145,15 +2147,27 @@ class Workspace {
 	 * }|\WP_Error
 	 */
 	public function worktree_cleanup_merged( array $opts = array() ): array|\WP_Error {
-		$dry_run     = ! empty( $opts['dry_run'] );
-		$force       = ! empty( $opts['force'] );
-		$skip_github = ! empty( $opts['skip_github'] );
-		$apply_plan  = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
-		$older_than  = isset( $opts['older_than'] ) ? trim( (string) $opts['older_than'] ) : '';
-		$sort        = isset( $opts['sort'] ) ? trim( (string) $opts['sort'] ) : '';
+		$dry_run        = ! empty( $opts['dry_run'] );
+		$force          = ! empty( $opts['force'] );
+		$skip_github    = ! empty( $opts['skip_github'] );
+		$inventory_only = ! empty( $opts['inventory_only'] );
+		$apply_plan     = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
+		$older_than     = isset( $opts['older_than'] ) ? trim( (string) $opts['older_than'] ) : '';
+		$sort           = isset( $opts['sort'] ) ? trim( (string) $opts['sort'] ) : '';
 
 		if ( '' !== $sort && ! in_array( $sort, array( 'size', 'age' ), true ) ) {
 			return new \WP_Error( 'invalid_cleanup_sort', 'Invalid cleanup sort. Use size or age.', array( 'status' => 400 ) );
+		}
+
+		if ( $inventory_only ) {
+			if ( ! $dry_run ) {
+				return new \WP_Error( 'inventory_cleanup_requires_dry_run', 'Inventory-only cleanup is review-only. Pass --dry-run, then run full cleanup to apply a reviewed plan.', array( 'status' => 400 ) );
+			}
+			if ( null !== $apply_plan ) {
+				return new \WP_Error( 'inventory_cleanup_apply_plan_unsupported', 'Inventory-only cleanup cannot apply a plan because it intentionally skips full safety revalidation.', array( 'status' => 400 ) );
+			}
+
+			return $this->worktree_cleanup_inventory_only( $older_than, $sort );
 		}
 
 		$planned_candidates = null;
@@ -2510,6 +2524,147 @@ class Workspace {
 			'removed'    => $removed,
 			'skipped'    => $skipped,
 			'summary'    => $this->build_worktree_cleanup_summary( $candidates, $removed, $skipped, $age_filter ),
+		);
+	}
+
+	/**
+	 * Build a bounded cleanup review from top-level inventory only.
+	 *
+	 * This mode is deliberately dry-run-only. It avoids git worktree discovery,
+	 * per-worktree status, unpushed-commit checks, fetches, and GitHub lookups.
+	 * Only explicit lifecycle cleanup signals become candidates; every ambiguous
+	 * worktree is skipped with stable reason codes for review.
+	 *
+	 * @param string $older_than Optional age filter duration.
+	 * @param string $sort       Optional candidate sort.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function worktree_cleanup_inventory_only( string $older_than, string $sort ): array|\WP_Error {
+		$age_filter = null;
+		if ( '' !== $older_than ) {
+			$duration_seconds = $this->parse_worktree_cleanup_duration( $older_than );
+			if ( is_wp_error( $duration_seconds ) ) {
+				return $duration_seconds;
+			}
+
+			$threshold_ts = time() - $duration_seconds;
+			$age_filter   = array(
+				'type'             => 'older_than',
+				'older_than'       => $older_than,
+				'duration_seconds' => $duration_seconds,
+				'threshold'        => gmdate( 'c', $threshold_ts ),
+				'threshold_unix'   => $threshold_ts,
+				'excluded'         => 0,
+				'unknown_age'      => 0,
+			);
+		}
+
+		$candidates = array();
+		$skipped    = array();
+
+		foreach ( $this->build_workspace_inventory_rows() as $wt ) {
+			if ( ! empty( $wt['is_primary'] ) ) {
+				continue;
+			}
+
+			$handle       = (string) ( $wt['handle'] ?? '?' );
+			$repo         = (string) ( $wt['repo'] ?? '' );
+			$branch       = (string) ( $wt['branch_slug'] ?? '' );
+			$path         = (string) ( $wt['path'] ?? '' );
+			$metadata     = $wt['metadata'] ?? null;
+			$created_at   = $wt['created_at'] ?? null;
+			$base_row     = array(
+				'handle'     => $handle,
+				'repo'       => $repo,
+				'branch'     => $branch,
+				'path'       => $path,
+				'created_at' => $created_at,
+				'metadata'   => $metadata,
+			);
+
+			if ( ! is_array( $metadata ) ) {
+				$skipped[] = array_merge( $base_row, array(
+					'reason_code' => 'requires_full_scan',
+					'reason'      => 'inventory row has no lifecycle metadata; cleanup safety requires a full scan',
+					'hint'        => 'Run workspace worktree cleanup --dry-run without --inventory-only when you are ready for full git safety probes.',
+				) );
+				continue;
+			}
+
+			if ( WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE !== ( $metadata['lifecycle_state'] ?? null ) ) {
+				$skipped[] = array_merge( $base_row, array(
+					'reason_code' => 'no_inventory_cleanup_signal',
+					'reason'      => 'no explicit inventory cleanup signal — leaving in place',
+					'hint'        => 'Mark the worktree cleanup-eligible after review, or run full cleanup to detect merge signals.',
+				) );
+				continue;
+			}
+
+			if ( null !== $age_filter ) {
+				$created_ts = is_string( $created_at ) && '' !== $created_at ? strtotime( $created_at ) : false;
+				if ( false === $created_ts ) {
+					++$age_filter['unknown_age'];
+					$skipped[] = array_merge( $base_row, array(
+						'reason_code' => 'unknown_age',
+						'reason'      => 'missing or invalid created_at metadata - age filter cannot decide safely',
+						'age_filter'  => array(
+							'type'       => 'older_than',
+							'older_than' => $age_filter['older_than'],
+							'threshold'  => $age_filter['threshold'],
+							'decision'   => 'unknown_age',
+						),
+					) );
+					continue;
+				}
+
+				if ( $created_ts > $age_filter['threshold_unix'] ) {
+					++$age_filter['excluded'];
+					$skipped[] = array_merge( $base_row, array(
+						'reason_code' => 'age_filter',
+						'reason'      => sprintf( 'created_at %s is newer than --older-than=%s threshold %s', $created_at, $age_filter['older_than'], $age_filter['threshold'] ),
+						'age_filter'  => array(
+							'type'        => 'older_than',
+							'older_than'  => $age_filter['older_than'],
+							'threshold'   => $age_filter['threshold'],
+							'created_at'  => $created_at,
+							'age_seconds' => time() - $created_ts,
+							'decision'    => 'excluded',
+						),
+					) );
+					continue;
+				}
+			}
+
+			$candidate = array_merge( $base_row, array(
+				'dirty'       => 0,
+				'signal'      => 'cleanup_eligible',
+				'reason_code' => 'cleanup_eligible',
+				'reason'      => 'worktree explicitly marked cleanup_eligible',
+				'pr_url'      => $metadata['pr_url'] ?? null,
+			) );
+			if ( null !== $age_filter && is_string( $created_at ) && '' !== $created_at ) {
+				$candidate['age_filter'] = array(
+					'type'        => 'older_than',
+					'older_than'  => $age_filter['older_than'],
+					'threshold'   => $age_filter['threshold'],
+					'created_at'  => $created_at,
+					'age_seconds' => time() - (int) strtotime( $created_at ),
+					'decision'    => 'included',
+				);
+			}
+
+			$candidates[] = $candidate;
+		}
+
+		$candidates = $this->sort_worktree_cleanup_rows( $candidates, $sort );
+		return array(
+			'success'        => true,
+			'dry_run'        => true,
+			'inventory_only' => true,
+			'candidates'     => $candidates,
+			'removed'        => array(),
+			'skipped'        => $skipped,
+			'summary'        => $this->build_worktree_cleanup_summary( $candidates, array(), $skipped, $age_filter ),
 		);
 	}
 
