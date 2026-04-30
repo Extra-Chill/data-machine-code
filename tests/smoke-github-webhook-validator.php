@@ -65,7 +65,7 @@ namespace {
 	};
 
 	$secret = 'test-webhook-secret';
-	$body   = json_encode(
+	$body   = (string) json_encode(
 		array(
 			'action'       => 'opened',
 			'repository'   => array( 'full_name' => 'Extra-Chill/data-machine-code' ),
@@ -169,13 +169,14 @@ namespace {
 	$assert( $draft_allowed->ok, 'draft PR behavior can be explicitly enabled' );
 
 	foreach ( array( $missing, $invalid, $wrong_event, $closed, $repo_mismatch, $draft ) as $result ) {
-		$encoded = json_encode( $result );
+		$encoded = (string) json_encode( $result );
 		$assert( false === strpos( $encoded, $secret ), 'errors do not leak secret' );
 		$assert( false === strpos( $encoded, $signature ), 'errors do not leak full signature' );
 	}
 
-	$plugin_source = file_get_contents( __DIR__ . '/../data-machine-code.php' );
+	$plugin_source = (string) file_get_contents( __DIR__ . '/../data-machine-code.php' );
 	$assert( str_contains( $plugin_source, "'github_pull_request'" ), 'plugin registers github_pull_request verifier mode' );
+	$assert( str_contains( $plugin_source, "'github_workflow_run'" ), 'plugin registers github_workflow_run verifier mode' );
 
 	echo "\n{$passes} passed, {$failures} failed\n";
 	if ( $failures > 0 ) {

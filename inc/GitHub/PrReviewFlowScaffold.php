@@ -14,7 +14,8 @@ defined( 'ABSPATH' ) || exit;
  */
 class PrReviewFlowScaffold {
 
-	public const DEFAULT_ACTIONS = array( 'opened', 'reopened', 'synchronize', 'ready_for_review' );
+	public const DEFAULT_ACTIONS              = array( 'opened', 'reopened', 'synchronize', 'ready_for_review' );
+	public const DEFAULT_WORKFLOW_RUN_ACTIONS = array( 'completed' );
 
 	/**
 	 * Build the scaffold definition.
@@ -27,17 +28,20 @@ class PrReviewFlowScaffold {
 		$name         = self::clean_string( $args['name'] ?? 'GitHub PR review' );
 		$agent        = self::clean_string( $args['agent'] ?? '' );
 		$comment_mode = self::normalize_comment_mode( $args['comment_mode'] ?? 'managed' );
+		$trigger      = self::normalize_trigger( $args['trigger'] ?? 'pull_request' );
 
-		$actions = $args['actions'] ?? self::DEFAULT_ACTIONS;
+		$actions = $args['actions'] ?? self::default_actions_for_trigger( $trigger );
 		if ( is_string( $actions ) ) {
 			$actions = array_filter( array_map( 'trim', explode( ',', $actions ) ) );
 		}
-		$actions = array_values( array_unique( array_filter( array_map( 'sanitize_key', is_array( $actions ) ? $actions : self::DEFAULT_ACTIONS ) ) ) );
+		$actions = array_values( array_unique( array_filter( array_map( 'sanitize_key', is_array( $actions ) ? $actions : self::default_actions_for_trigger( $trigger ) ) ) ) );
 		if ( empty( $actions ) ) {
-			$actions = self::DEFAULT_ACTIONS;
+			$actions = self::default_actions_for_trigger( $trigger );
 		}
 
-		$dedupe_key = '{repository.full_name}#{pull_request.number}@{pull_request.head.sha}';
+		$dedupe_key     = self::dedupe_key_for_trigger( $trigger );
+		$workflow_names = self::string_list( $args['workflow_names'] ?? $args['workflow-name'] ?? array() );
+		$workflow_paths = self::string_list( $args['workflow_paths'] ?? $args['workflow-path'] ?? array() );
 
 		return array(
 			'schema'       => 'data-machine-code/github-pr-review-flow-scaffold/v1',
@@ -54,23 +58,22 @@ class PrReviewFlowScaffold {
 				'The AI review step can call github_repo_review_profile once for bounded repository rules and architecture context before making findings.',
 			),
 			'webhook'      => array(
-				'provider'      => 'github',
-				'event'         => 'pull_request',
-				'actions'       => $actions,
-				'dedupe_key'    => $dedupe_key,
-				'auth_mode'     => 'hmac',
-				'preset_hint'   => 'github',
-				'payload_paths' => array(
-					'repo'        => 'repository.full_name',
-					'pull_number' => 'pull_request.number',
-					'action'      => 'action',
-					'head_sha'    => 'pull_request.head.sha',
+				'provider'         => 'github',
+				'event'            => $trigger,
+				'actions'          => $actions,
+				'dedupe_key'       => $dedupe_key,
+				'auth_mode'        => 'hmac',
+				'preset_hint'      => 'github',
+				'payload_paths'    => self::payload_paths_for_trigger( $trigger ),
+				'workflow_filters' => array(
+					'names' => $workflow_names,
+					'paths' => $workflow_paths,
 				),
 			),
 			'workflow'     => array(
 				'type'  => 'pipeline_template',
 				'steps' => array(
-					self::webhook_payload_step( $dedupe_key ),
+					self::webhook_payload_step( $dedupe_key, $trigger ),
 					self::pull_review_context_step( $repo ),
 					self::ai_review_step( $comment_mode ),
 				),
@@ -81,7 +84,7 @@ class PrReviewFlowScaffold {
 				'scheduling_config' => array(
 					'interval'        => 'manual',
 					'webhook_enabled' => true,
-					'webhook_event'   => 'pull_request',
+					'webhook_event'   => $trigger,
 					'webhook_actions' => $actions,
 				),
 			),
@@ -114,24 +117,20 @@ class PrReviewFlowScaffold {
 	 * @param string $dedupe_key Dedupe key template.
 	 * @return array<string,mixed>
 	 */
-	private static function webhook_payload_step( string $dedupe_key ): array {
+	private static function webhook_payload_step( string $dedupe_key, string $trigger ): array {
+		$workflow_run = 'workflow_run' === $trigger;
 		return array(
-			'id'             => 'github_pull_request_payload',
+			'id'             => $workflow_run ? 'github_workflow_run_payload' : 'github_pull_request_payload',
 			'type'           => 'fetch',
-			'label'          => 'GitHub pull request webhook payload',
+			'label'          => $workflow_run ? 'GitHub workflow run webhook payload' : 'GitHub pull request webhook payload',
 			'handler_slug'   => 'webhook_payload',
 			'handler_config' => array(
-				'source_type'              => 'github_pull_request_webhook',
-				'title_path'               => 'pull_request.title',
-				'content_path'             => 'pull_request.body',
+				'source_type'              => $workflow_run ? 'github_workflow_run_webhook' : 'github_pull_request_webhook',
+				'title_path'               => $workflow_run ? 'workflow_run.display_title' : 'pull_request.title',
+				'content_path'             => $workflow_run ? 'workflow_run.html_url' : 'pull_request.body',
 				'item_identifier_template' => $dedupe_key,
 				'ignore_missing_paths'     => false,
-				'metadata'                 => array(
-					'repo'        => 'repository.full_name',
-					'pull_number' => 'pull_request.number',
-					'action'      => 'action',
-					'head_sha'    => 'pull_request.head.sha',
-				),
+				'metadata'                 => self::payload_paths_for_trigger( $trigger ),
 			),
 		);
 	}
@@ -220,6 +219,69 @@ class PrReviewFlowScaffold {
 			? sanitize_key( (string) $mode )
 			: strtolower( preg_replace( '/[^a-z0-9_\-]/i', '', (string) $mode ) );
 		return in_array( $mode, array( 'managed', 'append', 'dry_run' ), true ) ? $mode : 'managed';
+	}
+
+	/**
+	 * Normalize trigger mode.
+	 *
+	 * @param mixed $trigger Raw trigger mode.
+	 */
+	private static function normalize_trigger( mixed $trigger ): string {
+		$trigger = function_exists( 'sanitize_key' )
+			? sanitize_key( (string) $trigger )
+			: strtolower( preg_replace( '/[^a-z0-9_\-]/i', '', (string) $trigger ) );
+		return in_array( $trigger, array( 'pull_request', 'workflow_run' ), true ) ? $trigger : 'pull_request';
+	}
+
+	/**
+	 * @return array<int,string>
+	 */
+	private static function default_actions_for_trigger( string $trigger ): array {
+		return 'workflow_run' === $trigger ? self::DEFAULT_WORKFLOW_RUN_ACTIONS : self::DEFAULT_ACTIONS;
+	}
+
+	/**
+	 * Build the existing processed-items dedupe template for a trigger.
+	 */
+	private static function dedupe_key_for_trigger( string $trigger ): string {
+		return 'workflow_run' === $trigger
+			? '{repository.full_name}#{workflow_run.pull_requests.0.number}@{workflow_run.head_sha}'
+			: '{repository.full_name}#{pull_request.number}@{pull_request.head.sha}';
+	}
+
+	/**
+	 * @return array<string,string>
+	 */
+	private static function payload_paths_for_trigger( string $trigger ): array {
+		if ( 'workflow_run' === $trigger ) {
+			return array(
+				'repo'            => 'repository.full_name',
+				'pull_number'     => 'workflow_run.pull_requests.0.number',
+				'action'          => 'action',
+				'head_sha'        => 'workflow_run.head_sha',
+				'workflow_run_id' => 'workflow_run.id',
+				'workflow_name'   => 'workflow_run.name',
+				'conclusion'      => 'workflow_run.conclusion',
+			);
+		}
+
+		return array(
+			'repo'        => 'repository.full_name',
+			'pull_number' => 'pull_request.number',
+			'action'      => 'action',
+			'head_sha'    => 'pull_request.head.sha',
+		);
+	}
+
+	/**
+	 * @param mixed $value Raw list value.
+	 * @return array<int,string>
+	 */
+	private static function string_list( mixed $value ): array {
+		if ( is_string( $value ) ) {
+			$value = array_map( 'trim', explode( ',', $value ) );
+		}
+		return array_values( array_filter( array_map( 'strval', (array) $value ) ) );
 	}
 
 	/**

@@ -27,17 +27,18 @@ class PrReviewFlowInstaller {
 	public static function install( array $args ): array|\WP_Error {
 		$definition = PrReviewFlowScaffold::build( $args );
 		$repo       = (string) ( $definition['repo'] ?? '' );
+		$trigger    = (string) ( $definition['webhook']['event'] ?? 'pull_request' );
 		if ( '' === $repo ) {
 			return new \WP_Error( 'missing_repo', 'Repository is required.' );
 		}
 
 		$force = ! empty( $args['force'] );
 		if ( ! $force ) {
-			$existing = self::findExistingInstall( $repo );
+			$existing = self::findExistingInstallForTrigger( $repo, $trigger );
 			if ( $existing ) {
 				return new \WP_Error(
 					'github_pr_review_flow_exists',
-					sprintf( 'A GitHub PR review flow already exists for %s (flow_id=%d). Pass --force to create another one.', $repo, (int) $existing['flow_id'] ),
+					sprintf( 'A GitHub PR review flow already exists for %s with trigger %s (flow_id=%d). Pass --force to create another one.', $repo, $trigger, (int) $existing['flow_id'] ),
 					array( 'existing' => $existing )
 				);
 			}
@@ -61,7 +62,7 @@ class PrReviewFlowInstaller {
 			'workflow'      => $definition['workflow'] ?? array(),
 			'flow_config'   => array(
 				'flow_name'         => $name,
-				'scheduling_config' => self::buildSchedulingConfig( $repo, $actions, $definition ),
+				'scheduling_config' => self::buildSchedulingConfig( $repo, $actions, $trigger, $definition ),
 			),
 		);
 
@@ -74,7 +75,7 @@ class PrReviewFlowInstaller {
 			return new \WP_Error( 'create_pipeline_failed', (string) ( $created['error'] ?? 'Failed to create Data Machine pipeline/flow.' ), $created );
 		}
 
-		$webhook = self::enableWebhook( (int) $created['flow_id'], $repo, $actions, $args );
+		$webhook = self::enableWebhook( (int) $created['flow_id'], $repo, $actions, $trigger, $definition, $args );
 		if ( is_wp_error( $webhook ) ) {
 			return $webhook;
 		}
@@ -89,13 +90,13 @@ class PrReviewFlowInstaller {
 			'flow_name'       => (string) $created['flow_name'],
 			'flow_step_ids'   => $created['flow_step_ids'] ?? array(),
 			'webhook_url'     => (string) ( $webhook['webhook_url'] ?? '' ),
-			'webhook_event'   => 'pull_request',
+			'webhook_event'   => $trigger,
 			'webhook_actions' => array_values( (array) $actions ),
 			'webhook_auth'    => array(
-				'mode'         => 'github_pull_request',
+				'mode'         => self::verifierModeForTrigger( $trigger ),
 				'secret_ids'   => $webhook['secret_ids'] ?? array(),
 				'secret'       => $webhook['secret'] ?? null,
-				'instructions' => 'Configure the GitHub repository webhook for pull_request events, use the webhook_url, and set the secret shown here or stored under the listed secret id.',
+				'instructions' => sprintf( 'Configure the GitHub repository webhook for %s events, use the webhook_url, and set the secret shown here or stored under the listed secret id.', $trigger ),
 			),
 			'scaffold_schema' => (string) ( $definition['schema'] ?? '' ),
 		);
@@ -106,16 +107,17 @@ class PrReviewFlowInstaller {
 	 * @param array<string,mixed> $definition
 	 * @return array<string,mixed>
 	 */
-	private static function buildSchedulingConfig( string $repo, array $actions, array $definition ): array {
+	private static function buildSchedulingConfig( string $repo, array $actions, string $trigger, array $definition ): array {
 		$config = array(
 			'interval'        => 'manual',
-			'webhook_event'   => 'pull_request',
+			'webhook_event'   => $trigger,
 			'webhook_actions' => array_values( $actions ),
 		);
 
 		$config[ self::SCHEDULING_MARKER_KEY ] = array(
-			'schema' => (string) ( $definition['schema'] ?? '' ),
-			'repo'   => $repo,
+			'schema'  => (string) ( $definition['schema'] ?? '' ),
+			'repo'    => $repo,
+			'trigger' => $trigger,
 		);
 
 		return $config;
@@ -126,24 +128,34 @@ class PrReviewFlowInstaller {
 	 * @param array<string,mixed> $args
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private static function enableWebhook( int $flow_id, string $repo, array $actions, array $args ): array|\WP_Error {
+	private static function enableWebhook( int $flow_id, string $repo, array $actions, string $trigger, array $definition, array $args ): array|\WP_Error {
 		$enable_webhook = function_exists( 'wp_get_ability' ) ? wp_get_ability( 'datamachine/webhook-trigger-enable' ) : null;
 		if ( ! $enable_webhook ) {
 			return new \WP_Error( 'webhook_enable_missing', 'Data Machine webhook-trigger-enable ability is not available.' );
 		}
 
-		$secret = isset( $args['secret'] ) ? (string) $args['secret'] : '';
-		$input  = array(
+		$secret           = isset( $args['secret'] ) ? (string) $args['secret'] : '';
+		$webhook          = is_array( $definition['webhook'] ?? null ) ? $definition['webhook'] : array();
+		$filters          = is_array( $webhook['workflow_filters'] ?? null ) ? $webhook['workflow_filters'] : array();
+		$template_options = array(
+			'mode'            => self::verifierModeForTrigger( $trigger ),
+			'repo'            => $repo,
+			'allowed_repos'   => array( $repo ),
+			'allowed_actions' => array_values( $actions ),
+			'allow_drafts'    => ! empty( $args['allow_drafts'] ),
+		);
+
+		if ( 'workflow_run' === $trigger ) {
+			$template_options['workflow_names'] = array_values( (array) ( $filters['names'] ?? array() ) );
+			$template_options['workflow_paths'] = array_values( (array) ( $filters['paths'] ?? array() ) );
+		}
+
+		$input = array(
 			'flow_id'         => $flow_id,
 			'auth_mode'       => 'hmac',
 			'template'        => GitHubWebhookValidator::buildVerifierConfig(
 				'',
-				array(
-					'repo'            => $repo,
-					'allowed_repos'   => array( $repo ),
-					'allowed_actions' => array_values( $actions ),
-					'allow_drafts'    => ! empty( $args['allow_drafts'] ),
-				)
+				$template_options
 			),
 			'secret_id'       => self::sanitizeSecretId( (string) ( $args['secret_id'] ?? 'github_webhook' ) ),
 			'generate_secret' => '' === $secret,
@@ -166,6 +178,10 @@ class PrReviewFlowInstaller {
 	private static function sanitizeSecretId( string $secret_id ): string {
 		$secret_id = function_exists( 'sanitize_key' ) ? sanitize_key( $secret_id ) : strtolower( preg_replace( '/[^a-z0-9_\-]/i', '', $secret_id ) );
 		return '' !== $secret_id ? $secret_id : 'github_webhook';
+	}
+
+	private static function verifierModeForTrigger( string $trigger ): string {
+		return 'workflow_run' === $trigger ? 'github_workflow_run' : 'github_pull_request';
 	}
 
 	/**
@@ -198,7 +214,7 @@ class PrReviewFlowInstaller {
 	/**
 	 * @return array<string,mixed>|null
 	 */
-	private static function findExistingInstall( string $repo ): ?array {
+	private static function findExistingInstallForTrigger( string $repo, string $trigger ): ?array {
 		if ( ! class_exists( '\\DataMachine\\Core\\Database\\Flows\\Flows' ) ) {
 			return null;
 		}
@@ -211,9 +227,10 @@ class PrReviewFlowInstaller {
 			$flows      = $flows_repo->get_all_flows_summary( $per_page, $offset );
 			$flow_count = count( $flows );
 			foreach ( $flows as $flow ) {
-				$config = is_array( $flow['scheduling_config'] ?? null ) ? $flow['scheduling_config'] : array();
-				$marker = is_array( $config[ self::SCHEDULING_MARKER_KEY ] ?? null ) ? $config[ self::SCHEDULING_MARKER_KEY ] : array();
-				if ( strtolower( $repo ) === strtolower( (string) ( $marker['repo'] ?? '' ) ) ) {
+				$config         = is_array( $flow['scheduling_config'] ?? null ) ? $flow['scheduling_config'] : array();
+				$marker         = is_array( $config[ self::SCHEDULING_MARKER_KEY ] ?? null ) ? $config[ self::SCHEDULING_MARKER_KEY ] : array();
+				$marker_trigger = (string) ( $marker['trigger'] ?? 'pull_request' );
+				if ( strtolower( $repo ) === strtolower( (string) ( $marker['repo'] ?? '' ) ) && $trigger === $marker_trigger ) {
 					return array(
 						'flow_id'     => (int) $flow['flow_id'],
 						'flow_name'   => (string) $flow['flow_name'],
