@@ -264,6 +264,9 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--skip-sizes]
 	 * : Skip best-effort workspace size collection.
 	 *
+	 * [--include-worktree-status]
+	 * : Include full per-worktree git status. This can be expensive on huge workspaces.
+	 *
 	 * [--size-limit=<count>]
 	 * : Maximum top-level workspace entries to size.
 	 * ---
@@ -285,8 +288,9 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$input = array(
-			'include_cleanup' => empty( $assoc_args['skip-cleanup'] ),
-			'include_sizes'   => empty( $assoc_args['skip-sizes'] ),
+			'include_cleanup'         => empty( $assoc_args['skip-cleanup'] ),
+			'include_sizes'           => empty( $assoc_args['skip-sizes'] ),
+			'include_worktree_status' => ! empty( $assoc_args['include-worktree-status'] ),
 		);
 		if ( isset( $assoc_args['size-limit'] ) ) {
 			$input['size_limit'] = (int) $assoc_args['size-limit'];
@@ -1549,6 +1553,10 @@ class WorkspaceCommand extends BaseCommand {
 				array(
 					'metric' => 'disk_free',
 					'value'  => (string) ( $disk['free_human'] ?? '-' ),
+				),
+				array(
+					'metric' => 'worktree_status_mode',
+					'value'  => (string) ( $report['worktree_status_mode'] ?? '-' ),
 				),
 				array(
 					'metric' => 'worktree_count',
