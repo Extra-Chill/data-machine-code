@@ -383,6 +383,83 @@ class Workspace {
 	}
 
 	/**
+	 * Adopt an existing primary checkout already located in the workspace.
+	 *
+	 * There is no persistent primary registry today; primary checkouts are
+	 * discovered by their on-disk directory names. Adoption is therefore a
+	 * non-destructive validation step that makes that convention explicit.
+	 *
+	 * @param string      $path Existing checkout path.
+	 * @param string|null $name Workspace name override (derived from basename if null).
+	 * @return array{success: bool, name?: string, path?: string, already_adopted?: bool, message?: string}|\WP_Error
+	 */
+	public function adopt_repo( string $path, ?string $name = null ): array|\WP_Error {
+		$path = rtrim( trim( $path ), '/' );
+		if ( '' === $path ) {
+			return new \WP_Error( 'missing_path', 'Checkout path is required.', array( 'status' => 400 ) );
+		}
+
+		if ( ! is_dir( $path ) || ! is_readable( $path ) ) {
+			return new \WP_Error( 'adopt_path_unreadable', sprintf( 'Checkout path does not exist or is not readable: %s', $path ), array( 'status' => 400 ) );
+		}
+
+		$ensure = $this->ensure_exists();
+		if ( is_wp_error( $ensure ) ) {
+			return $ensure;
+		}
+
+		$validation = $this->validate_containment( $path, $this->workspace_path );
+		if ( ! $validation['valid'] ) {
+			return new \WP_Error( 'adopt_outside_workspace', 'Only checkouts already under DATAMACHINE_WORKSPACE_PATH can be adopted.', array( 'status' => 400 ) );
+		}
+
+		$real_path = $validation['real_path'] ?? '';
+		if ( '' === $real_path ) {
+			return new \WP_Error( 'adopt_path_unresolved', sprintf( 'Could not resolve checkout path: %s', $path ), array( 'status' => 400 ) );
+		}
+
+		$git_path  = $real_path . '/.git';
+		if ( is_file( $git_path ) ) {
+			return new \WP_Error( 'adopt_linked_worktree', 'Cannot adopt a linked worktree as a primary checkout. Pass the primary checkout path instead.', array( 'status' => 400 ) );
+		}
+
+		if ( ! is_dir( $git_path ) ) {
+			return new \WP_Error( 'adopt_not_git_primary', sprintf( 'Path is not a git primary checkout: %s', $real_path ), array( 'status' => 400 ) );
+		}
+
+		if ( null === $name || '' === trim( $name ) ) {
+			$name = basename( $real_path );
+		}
+
+		if ( str_contains( $name, '@' ) ) {
+			return new \WP_Error( 'invalid_adopt_name', 'Repository names cannot contain "@". The "@<branch-slug>" suffix is reserved for worktrees.', array( 'status' => 400 ) );
+		}
+
+		$name = $this->sanitize_name( $name );
+		if ( '' === $name ) {
+			return new \WP_Error( 'invalid_adopt_name', 'Adopted repository name is empty after sanitization.', array( 'status' => 400 ) );
+		}
+
+		$expected_path = $this->workspace_path . '/' . $name;
+		if ( is_dir( $expected_path ) ) {
+			$expected_real = realpath( $expected_path );
+			if ( false !== $expected_real && $expected_real !== $real_path ) {
+				return new \WP_Error( 'adopt_name_collision', sprintf( 'Workspace name "%s" already points at a different directory: %s', $name, $expected_real ), array( 'status' => 400 ) );
+			}
+		} else {
+			return new \WP_Error( 'adopt_requires_workspace_path', sprintf( 'Adoption is non-destructive: %s must already be located at %s. Move or symlink operations are intentionally not performed by v1.', $real_path, $expected_path ), array( 'status' => 400 ) );
+		}
+
+		return array(
+			'success'         => true,
+			'name'            => $name,
+			'path'            => $real_path,
+			'already_adopted' => true,
+			'message'         => sprintf( 'Workspace checkout "%s" is already adopted at %s. No filesystem changes were made.', $name, $real_path ),
+		);
+	}
+
+	/**
 	 * Remove a repository from the workspace.
 	 *
 	 * @param string $handle Workspace handle.
