@@ -3,11 +3,11 @@
  * Homeboy capability helper.
  *
  * Detects whether the [Homeboy](https://github.com/Extra-Chill/homeboy)
- * Rust CLI is callable from this host's shell. Homeboy is a code-factory
- * tool that runs release automation, audits, lints, tests, and git
- * primitives over local projects. It operates outside WordPress and
- * never speaks PHP — the only thing DMC needs to know is whether the
- * binary is on PATH so it can teach agents about the verbs.
+ * Rust CLI is available to the co-located coding-agent runtime. Homeboy is a
+ * code-factory tool that runs release automation, audits, lints, tests, and
+ * git primitives over local projects. It operates outside WordPress and never
+ * speaks PHP — the only thing DMC needs to know is whether agents should be
+ * taught about the verbs.
  *
  * Detection runs once per request and is memoized. Callers should not
  * shell out themselves; use `is_available()` and rely on Data Machine
@@ -33,11 +33,12 @@ class Homeboy {
 	private static $available_cache = null;
 
 	/**
-	 * Is the `homeboy` CLI on this host's PATH?
+	 * Is the `homeboy` CLI available to the coding-agent runtime?
 	 *
-	 * Probes via `command -v homeboy` exactly once per request. Returns
-	 * false on hosts that disable shell functions, on hosts that lack
-	 * the binary, and any time `Environment::has_shell()` returns false.
+	 * Prefer the installer-provided `datamachine_code_homeboy_available` option
+	 * because Studio's WordPress PHP runtime may not see the host shell PATH even
+	 * when the external coding-agent runtime can call Homeboy. Falls back to a
+	 * direct shell probe for VPS and non-sandboxed local installs.
 	 *
 	 * @since 0.11.0
 	 *
@@ -45,6 +46,12 @@ class Homeboy {
 	 */
 	public static function is_available(): bool {
 		if ( null !== self::$available_cache ) {
+			return self::$available_cache;
+		}
+
+		$declared = self::get_declared_availability();
+		if ( null !== $declared ) {
+			self::$available_cache = $declared;
 			return self::$available_cache;
 		}
 
@@ -57,6 +64,44 @@ class Homeboy {
 		$output                = shell_exec( 'command -v homeboy 2>/dev/null' );
 		self::$available_cache = ! empty( trim( (string) $output ) );
 		return self::$available_cache;
+	}
+
+	/**
+	 * Read installer-declared Homeboy availability.
+	 *
+	 * @since 0.23.4
+	 *
+	 * @return bool|null True/false when declared, null when no declaration exists.
+	 */
+	private static function get_declared_availability(): ?bool {
+		$declared = null;
+
+		if ( function_exists( 'get_option' ) ) {
+			$declared = get_option( 'datamachine_code_homeboy_available', null );
+		}
+
+		if ( function_exists( 'apply_filters' ) ) {
+			$declared = apply_filters( 'datamachine_code_homeboy_available', $declared );
+		}
+
+		if ( null === $declared || '' === $declared ) {
+			return null;
+		}
+
+		if ( is_bool( $declared ) ) {
+			return $declared;
+		}
+
+		$normalized = strtolower( trim( (string) $declared ) );
+		if ( in_array( $normalized, array( '1', 'true', 'yes', 'on' ), true ) ) {
+			return true;
+		}
+
+		if ( in_array( $normalized, array( '0', 'false', 'no', 'off' ), true ) ) {
+			return false;
+		}
+
+		return null;
 	}
 
 	/**

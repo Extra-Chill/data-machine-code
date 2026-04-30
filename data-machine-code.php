@@ -376,8 +376,8 @@ Data Machine is your operating layer — memory, automation, and orchestration v
 Discover the full command surface: `{$wp} datamachine --help`. The groups below are the major command families — always run `--help` on any subcommand to see its options.
 
 **Memory & Agents:** Persistent files across sessions plus agent identity management.
-- Memory paths / read / write / search: `{$wp} datamachine memory paths|read|write|search`
-- Agent management: `{$wp} datamachine agents list|create|access|tokens` — identities, permissions, bearer tokens
+- Memory paths / read / write / search / compose: `{$wp} datamachine memory paths|read|write|search|compose`
+- Agent management: `{$wp} datamachine agent list|create|access|token|installed|install|diff` — identities, permissions, bearer tokens, portable bundles
 - Update MEMORY.md when you learn something persistent — read it first, append new info.
 
 **Automation:** Self-scheduling workflows that run without human intervention.
@@ -402,8 +402,8 @@ Discover the full command surface: `{$wp} datamachine --help`. The groups below 
 
 **Code (data-machine-code):** All code changes happen in worktrees under `{$workspace_path}`. The DMC workspace commands own **structure and lifecycle**; file CRUD inside a worktree uses whatever tool is fastest.
 - Workspace root: `{$workspace_path}`
-- **Lifecycle (use the CLI):** `{$wp} datamachine-code workspace clone|worktree add|worktree list|worktree remove|worktree prune` — keeps the on-disk registry consistent and enforces the `<repo>@<slug>` handle convention.
-- **GitHub:** `{$wp} datamachine-code github issues|pulls|repos|comment` — create PRs, manage issues, comment on reviews.
+- **Lifecycle (use the CLI):** `{$wp} datamachine-code workspace clone|worktree add|worktree list|worktree cleanup|worktree remove` — keeps the on-disk registry consistent and enforces the `<repo>@<slug>` handle convention.
+- **GitHub:** `{$wp} datamachine-code github issues|pulls|repos|review-flow|comment` — create PRs, manage issues, install review flows, comment on reviews.
 - **Git sync:** `{$wp} datamachine-code gitsync` — sync workspace repos with remotes.
 - **Editing inside a worktree:** any tool. The workspace `read|write|edit|ls|git` abilities exist for remote/MCP/chat agents without filesystem access; for a local agent on the same disk, native file I/O and raw `git` are faster and lose nothing. Routing local edits through the abilities is ceremony, not safety.
 - **Workflow:** `workspace clone <repo>` → `worktree add <repo> <branch>` → edit files in the worktree with any tool → commit → push → PR.
@@ -463,13 +463,15 @@ MD;
 
 `homeboy` is a Rust CLI on this host. Every verb runs the same locally as in CI.
 
-**Quality:** `homeboy audit | lint | test | refactor`
+**Quality:** `homeboy audit | lint | test | review | refactor`
 
-**Git:** prefer `homeboy git changes | status | commit | push | pull | tag` — auto-baselines, structured output, `--json` bulk. One-off reads (`git diff`, `git show`, `git blame`) stay on raw `git`.
+**Git:** prefer `homeboy changes | status` and `homeboy git status|commit|push|pull|tag|rebase|cherry-pick` — structured output, component/worktree awareness, safer write verbs. One-off reads (`git diff`, `git show`, `git blame`) stay on raw `git`.
 
-**Perf + envs:** `homeboy bench` for pinned benchmarks with baseline + ratchet; `homeboy rig up|check|down|status` for reproducible multi-component dev environments.
+**Perf + envs:** `homeboy bench` for pinned benchmarks with baseline + ratchet; `homeboy rig install|update|up|check|down|status` for reproducible multi-component dev environments.
 
-**Stacks:** `homeboy stack list|show|apply|status|sync|inspect` for combined-fixes branches built from upstream PRs.
+**Stacks:** `homeboy stack list|show|apply|rebase|status|sync|push|diff|inspect` for combined-fixes branches built from upstream PRs.
+
+**Deps:** `homeboy deps` for dependency update workflows when a component declares them.
 
 **Repo rules** (when `homeboy.json` is present):
 - **NEVER edit `CHANGELOG.md`** — generated from conventional commits at release time.
