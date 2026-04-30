@@ -213,6 +213,11 @@ namespace {
 		'datamachine/workspace-worktree-list'    => $list_ability,
 	);
 	$command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
+	$doc_comment = ( new ReflectionMethod( $command, 'worktree' ) )->getDocComment() ?: '';
+
+	echo "\n[0a] WP-CLI synopsis exposes cleanup flags\n";
+	datamachine_code_cleanup_assert( str_contains( $doc_comment, "\n\t * [--inventory-only]" ), 'worktree synopsis declares --inventory-only at top level' );
+	datamachine_code_cleanup_assert( ! str_contains( $doc_comment, "\n\t\t * [--apply-plan=<file>]" ), 'cleanup flags are not hidden behind nested docblock indentation' );
 
 	echo "\n[0] list stale output exposes disk fields\n";
 	WP_CLI::$logs      = array();

@@ -1125,32 +1125,37 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--dry-run]
 	 * : Preview cleanup candidates without removing anything (cleanup only).
 	 *
-		 * [--apply-plan=<file>]
-		 * : Apply a previously reviewed cleanup JSON report. The destructive pass
-		 *   revalidates every planned row and removes only exact current matches.
-		 *
-		 * [--skip-github]
-		 * : Skip the GitHub API lookup and rely only on the local `upstream-gone`
-		 *   signal (cleanup only). Faster, but misses merged branches where the
-		 *   remote branch wasn't auto-deleted.
-		 *
-		 * [--older-than=<duration>]
-		 * : Limit cleanup candidates to worktrees with lifecycle `created_at`
-		 *   metadata older than the compact duration (cleanup only, e.g. 7d, 24h).
-		 *   Candidate worktrees without valid `created_at` metadata are skipped.
-		 *
-		 * [--sort=<field>]
-		 * : Sort cleanup candidates by reporting field (cleanup only).
-		 * ---
-		 * options:
-		 *   - size
-		 *   - age
-		 * ---
-		 *
-		 * [--stale]
-		 * : For list, show only worktrees with a stale_reason (old, dirty, or missing metadata).
-		 *
-		 * [--verbose]
+	 * [--apply-plan=<file>]
+	 * : Apply a previously reviewed cleanup JSON report. The destructive pass
+	 *   revalidates every planned row and removes only exact current matches.
+	 *
+	 * [--skip-github]
+	 * : Skip the GitHub API lookup and rely only on the local `upstream-gone`
+	 *   signal (cleanup only). Faster, but misses merged branches where the
+	 *   remote branch wasn't auto-deleted.
+	 *
+	 * [--inventory-only]
+	 * : Build a dry-run review from cheap top-level inventory and explicit
+	 *   lifecycle cleanup signals only (cleanup only). Avoids full git worktree
+	 *   scans, per-worktree status checks, and GitHub lookups.
+	 *
+	 * [--older-than=<duration>]
+	 * : Limit cleanup candidates to worktrees with lifecycle `created_at`
+	 *   metadata older than the compact duration (cleanup only, e.g. 7d, 24h).
+	 *   Candidate worktrees without valid `created_at` metadata are skipped.
+	 *
+	 * [--sort=<field>]
+	 * : Sort cleanup candidates by reporting field (cleanup only).
+	 * ---
+	 * options:
+	 *   - size
+	 *   - age
+	 * ---
+	 *
+	 * [--stale]
+	 * : For list, show only worktrees with a stale_reason (old, dirty, or missing metadata).
+	 *
+	 * [--verbose]
 	 * : Show every cleanup row instead of concise samples (cleanup only).
 	 *
 	 * [--only=<section>]
@@ -1195,14 +1200,14 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine workspace worktree cleanup --dry-run --format=json > cleanup-plan.json
 	 *     wp datamachine workspace worktree cleanup --apply-plan=cleanup-plan.json
 	 *
-		 *     # Local-only detection (no GitHub API call)
-		 *     wp datamachine workspace worktree cleanup --skip-github
-		 *
-		 *     # Bounded review on huge workspaces (no per-worktree git probes)
-		 *     wp datamachine workspace worktree cleanup --dry-run --inventory-only --skip-github --format=json
-		 *
-		 *     # Ignore dirty working-tree safety (caution)
-		 *     wp datamachine workspace worktree cleanup --force
+	 *     # Local-only detection (no GitHub API call)
+	 *     wp datamachine workspace worktree cleanup --skip-github
+	 *
+	 *     # Bounded review on huge workspaces (no per-worktree git probes)
+	 *     wp datamachine workspace worktree cleanup --dry-run --inventory-only --skip-github --format=json
+	 *
+	 *     # Ignore dirty working-tree safety (caution)
+	 *     wp datamachine workspace worktree cleanup --force
 	 *
 	 *     # Create a worktree without injecting site-agent context
 	 *     wp datamachine workspace worktree add data-machine fix/foo --skip-context-injection
