@@ -86,6 +86,7 @@ namespace {
 				'missing_metadata'   => 4,
 				'external'           => 7,
 			),
+			'worktree_status_mode'      => 'top_level_inventory',
 			'top_repos_by_worktrees'    => array(
 				array( 'repo' => 'data-machine', 'worktree_count' => 17 ),
 			),
@@ -126,18 +127,24 @@ namespace {
 	echo "\n[1] JSON output is parseable and forwards bounded flags\n";
 	$GLOBALS['__cli_logs'] = array();
 	$command->hygiene( array(), array( 'format' => 'json', 'skip-cleanup' => true, 'skip-sizes' => true, 'size-limit' => '25' ) );
-	datamachine_code_hygiene_assert( array( 'include_cleanup' => false, 'include_sizes' => false, 'size_limit' => 25 ) === $ability->last_input, 'CLI forwards skip flags and size limit' );
+	datamachine_code_hygiene_assert( array( 'include_cleanup' => false, 'include_sizes' => false, 'include_worktree_status' => false, 'size_limit' => 25 ) === $ability->last_input, 'CLI forwards skip flags, status mode, and size limit' );
 	datamachine_code_hygiene_assert( 1 === count( $GLOBALS['__cli_logs'] ), 'JSON path writes one stdout document' );
 	$decoded = json_decode( (string) $GLOBALS['__cli_logs'][0], true );
 	datamachine_code_hygiene_assert( JSON_ERROR_NONE === json_last_error(), 'JSON output parses cleanly' );
 	datamachine_code_hygiene_assert( false === ( $decoded['destructive'] ?? true ), 'JSON report is explicitly non-destructive' );
 	datamachine_code_hygiene_assert( '1.1 GiB' === ( $decoded['disk']['free_human'] ?? '' ), 'JSON report includes free disk space' );
+	datamachine_code_hygiene_assert( 'top_level_inventory' === ( $decoded['worktree_status_mode'] ?? '' ), 'JSON report exposes cheap worktree status mode' );
 
-	echo "\n[2] Human output is summary-first and includes actionable sections\n";
+	echo "\n[2] Full status flag is opt-in\n";
+	$GLOBALS['__cli_logs'] = array();
+	$command->hygiene( array(), array( 'format' => 'json', 'include-worktree-status' => true ) );
+	datamachine_code_hygiene_assert( true === ( $ability->last_input['include_worktree_status'] ?? false ), 'CLI forwards explicit worktree status opt-in' );
+
+	echo "\n[3] Human output is summary-first and includes actionable sections\n";
 	$GLOBALS['__cli_logs'] = array();
 	$command->hygiene( array(), array() );
 	datamachine_code_hygiene_assert( 'Workspace hygiene:' === ( $GLOBALS['__cli_logs'][0] ?? '' ), 'human output starts with report heading' );
-	datamachine_code_hygiene_assert( in_array( 'table:11:metric,value', $GLOBALS['__cli_logs'], true ), 'human output renders summary table' );
+	datamachine_code_hygiene_assert( in_array( 'table:12:metric,value', $GLOBALS['__cli_logs'], true ), 'human output renders summary table' );
 	datamachine_code_hygiene_assert( in_array( 'Top repos by size:', $GLOBALS['__cli_logs'], true ), 'human output renders size leaders' );
 	datamachine_code_hygiene_assert( in_array( 'Top repos by worktree count:', $GLOBALS['__cli_logs'], true ), 'human output renders worktree-count leaders' );
 	datamachine_code_hygiene_assert( in_array( 'Cleanup candidates:', $GLOBALS['__cli_logs'], true ), 'human output renders cleanup candidates' );

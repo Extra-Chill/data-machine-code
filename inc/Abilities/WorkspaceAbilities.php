@@ -970,6 +970,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Include best-effort top-level workspace size data. Default true.',
 							),
+							'include_worktree_status' => array(
+								'type'        => 'boolean',
+								'description' => 'Include full per-worktree git status. Default false for huge-workspace safety.',
+							),
 							'size_limit'      => array(
 								'type'        => 'integer',
 								'description' => 'Maximum top-level workspace entries to size. Default 200.',
@@ -986,6 +990,7 @@ class WorkspaceAbilities {
 							'size'                      => array( 'type' => 'object' ),
 							'disk'                      => array( 'type' => 'object' ),
 							'worktrees'                 => array( 'type' => 'object' ),
+							'worktree_status_mode'      => array( 'type' => 'string' ),
 							'top_repos_by_worktrees'    => array( 'type' => 'array' ),
 							'top_repos_by_size'         => array( 'type' => 'array' ),
 							'cleanup'                   => array( 'type' => 'object' ),
@@ -1509,6 +1514,9 @@ class WorkspaceAbilities {
 		}
 		if ( array_key_exists( 'include_sizes', $input ) ) {
 			$opts['include_sizes'] = (bool) $input['include_sizes'];
+		}
+		if ( array_key_exists( 'include_worktree_status', $input ) ) {
+			$opts['include_worktree_status'] = (bool) $input['include_worktree_status'];
 		}
 		if ( isset( $input['size_limit'] ) ) {
 			$opts['size_limit'] = (int) $input['size_limit'];

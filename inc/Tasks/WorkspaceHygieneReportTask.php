@@ -73,9 +73,10 @@ class WorkspaceHygieneReportTask extends SystemTask {
 		$workspace = new Workspace();
 		$result    = $workspace->workspace_hygiene_report(
 			array(
-				'include_cleanup' => array_key_exists( 'include_cleanup', $params ) ? (bool) $params['include_cleanup'] : true,
-				'include_sizes'   => array_key_exists( 'include_sizes', $params ) ? (bool) $params['include_sizes'] : true,
-				'size_limit'      => isset( $params['size_limit'] ) ? (int) $params['size_limit'] : 200,
+				'include_cleanup'         => array_key_exists( 'include_cleanup', $params ) ? (bool) $params['include_cleanup'] : true,
+				'include_sizes'           => array_key_exists( 'include_sizes', $params ) ? (bool) $params['include_sizes'] : true,
+				'include_worktree_status' => array_key_exists( 'include_worktree_status', $params ) ? (bool) $params['include_worktree_status'] : false,
+				'size_limit'              => isset( $params['size_limit'] ) ? (int) $params['size_limit'] : 200,
 			)
 		);
 

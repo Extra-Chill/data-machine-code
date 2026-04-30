@@ -1579,23 +1579,31 @@ class Workspace {
 	 * collection is best-effort and bounded by a top-level entry limit.
 	 *
 	 * @param array $opts {
-	 *     @type bool $include_cleanup Whether to include a cleanup dry-run. Default true.
-	 *     @type bool $include_sizes   Whether to include best-effort `du` sizes. Default true.
-	 *     @type int  $size_limit      Maximum top-level workspace entries to size. Default 200.
+	 *     @type bool $include_cleanup         Whether to include a cleanup dry-run. Default true.
+	 *     @type bool $include_sizes           Whether to include best-effort `du` sizes. Default true.
+	 *     @type bool $include_worktree_status Whether to include full git worktree status. Default false.
+	 *     @type int  $size_limit              Maximum top-level workspace entries to size. Default 200.
 	 * }
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function workspace_hygiene_report( array $opts = array() ): array|\WP_Error {
-		$include_cleanup = array_key_exists( 'include_cleanup', $opts ) ? (bool) $opts['include_cleanup'] : true;
-		$include_sizes   = array_key_exists( 'include_sizes', $opts ) ? (bool) $opts['include_sizes'] : true;
-		$size_limit      = isset( $opts['size_limit'] ) ? max( 0, (int) $opts['size_limit'] ) : self::HYGIENE_DEFAULT_SIZE_LIMIT;
+		$include_cleanup         = array_key_exists( 'include_cleanup', $opts ) ? (bool) $opts['include_cleanup'] : true;
+		$include_sizes           = array_key_exists( 'include_sizes', $opts ) ? (bool) $opts['include_sizes'] : true;
+		$include_worktree_status = array_key_exists( 'include_worktree_status', $opts ) ? (bool) $opts['include_worktree_status'] : false;
+		$size_limit              = isset( $opts['size_limit'] ) ? max( 0, (int) $opts['size_limit'] ) : self::HYGIENE_DEFAULT_SIZE_LIMIT;
 
-		$listing = $this->worktree_list();
-		if ( is_wp_error( $listing ) ) {
-			return $listing;
+		if ( $include_worktree_status ) {
+			$listing = $this->worktree_list();
+			if ( is_wp_error( $listing ) ) {
+				return $listing;
+			}
+			$worktrees            = (array) ( $listing['worktrees'] ?? array() );
+			$worktree_status_mode = 'full_git_status';
+		} else {
+			$worktrees            = $this->build_workspace_inventory_rows();
+			$worktree_status_mode = 'top_level_inventory';
 		}
 
-		$worktrees     = (array) ( $listing['worktrees'] ?? array() );
 		$size_report   = $include_sizes ? $this->build_workspace_size_report( $size_limit ) : $this->empty_workspace_size_report( $size_limit, false );
 		$cleanup       = null;
 		$cleanup_error = null;
@@ -1624,15 +1632,72 @@ class Workspace {
 			'size'                      => $size_report,
 			'disk'                      => $this->build_workspace_disk_report(),
 			'worktrees'                 => $this->summarize_workspace_worktrees( $worktrees, $cleanup ),
+			'worktree_status_mode'      => $worktree_status_mode,
 			'top_repos_by_worktrees'    => $this->top_repos_by_worktree_count( $worktrees, 10 ),
 			'top_repos_by_size'         => $this->top_repos_by_size( (array) ( $size_report['entries'] ?? array() ), 10 ),
 			'cleanup'                   => $this->summarize_workspace_cleanup( $cleanup, $cleanup_error, (array) ( $size_report['entries'] ?? array() ) ),
 			'suggested_cleanup_command' => 'wp datamachine-code workspace worktree cleanup --dry-run --skip-github --format=json',
 			'notes'                     => array_values( array_filter( array(
 				$include_sizes ? (string) ( $size_report['mode_note'] ?? '' ) : 'Size scan disabled by request.',
+				$include_worktree_status ? 'Full worktree status enabled; this may run git status across every worktree.' : 'Worktree status uses cheap top-level inventory; pass --include-worktree-status for full git status.',
 				$include_cleanup ? 'Cleanup summary uses local-only dry-run detection (--skip-github); no GitHub API lookups are required.' : 'Cleanup dry-run disabled by request.',
 			) ) ),
 		);
+	}
+
+	/**
+	 * Build cheap workspace inventory rows from top-level directory names.
+	 *
+	 * This intentionally avoids `git worktree list` and per-worktree `git status`.
+	 * It is the safe default for huge workspaces where hygiene should still be
+	 * able to return a bounded JSON report.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function build_workspace_inventory_rows(): array {
+		if ( '' === $this->workspace_path || ! is_dir( $this->workspace_path ) ) {
+			return array();
+		}
+
+		$entries = scandir( $this->workspace_path );
+		if ( false === $entries ) {
+			return array();
+		}
+
+		$rows = array();
+		foreach ( $entries as $entry ) {
+			if ( '.' === $entry || '..' === $entry ) {
+				continue;
+			}
+
+			$path = $this->workspace_path . '/' . $entry;
+			if ( ! is_dir( $path ) ) {
+				continue;
+			}
+
+			$parsed      = $this->parse_handle( $entry );
+			$is_worktree = ! empty( $parsed['is_worktree'] );
+			$metadata    = $is_worktree ? WorktreeContextInjector::get_metadata( $parsed['dir_name'] ) : null;
+
+			$rows[] = array(
+				'handle'           => $parsed['dir_name'],
+				'repo'             => $parsed['repo'],
+				'is_worktree'      => $is_worktree,
+				'is_primary'       => ! $is_worktree,
+				'external'         => false,
+				'branch_slug'      => $parsed['branch_slug'],
+				'path'             => $path,
+				'dirty'            => 0,
+				'created_at'       => is_array( $metadata ) ? ( $metadata['created_at'] ?? null ) : null,
+				'lifecycle_state'  => is_array( $metadata ) ? ( $metadata['lifecycle_state'] ?? null ) : null,
+				'pr_url'           => is_array( $metadata ) ? ( $metadata['pr_url'] ?? null ) : null,
+				'pr_number'        => is_array( $metadata ) ? ( $metadata['pr_number'] ?? null ) : null,
+				'missing_metadata' => $is_worktree && ! is_array( $metadata ),
+				'metadata'         => $metadata,
+			);
+		}
+
+		return $rows;
 	}
 
 	/**
@@ -1798,6 +1863,10 @@ class Workspace {
 
 			if ( (int) ( $row['dirty'] ?? 0 ) > 0 ) {
 				++$summary['dirty'];
+			}
+
+			if ( ! empty( $row['missing_metadata'] ) ) {
+				++$summary['missing_metadata'];
 			}
 		}
 
