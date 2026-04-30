@@ -288,6 +288,42 @@ class WorkspaceAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/workspace-adopt',
+				array(
+					'label'               => 'Adopt Workspace Repo',
+					'description'         => 'Validate an existing git primary checkout already located under the workspace root so it can be managed by workspace commands.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'path' => array(
+								'type'        => 'string',
+								'description' => 'Existing git primary checkout path under DATAMACHINE_WORKSPACE_PATH.',
+							),
+							'name' => array(
+								'type'        => 'string',
+								'description' => 'Workspace name override (derived from path basename if omitted).',
+							),
+						),
+						'required'   => array( 'path' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'         => array( 'type' => 'boolean' ),
+							'name'            => array( 'type' => 'string' ),
+							'path'            => array( 'type' => 'string' ),
+							'already_adopted' => array( 'type' => 'boolean' ),
+							'message'         => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'adoptRepo' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/workspace-remove',
 				array(
 					'label'               => 'Remove Workspace Repo',
@@ -1367,6 +1403,20 @@ class WorkspaceAbilities {
 		$workspace = new Workspace();
 		return $workspace->clone_repo(
 			$input['url'] ?? '',
+			$input['name'] ?? null
+		);
+	}
+
+	/**
+	 * Adopt an existing primary checkout already under the workspace root.
+	 *
+	 * @param array $input Input parameters with 'path', optional 'name'.
+	 * @return array Result.
+	 */
+	public static function adoptRepo( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		return $workspace->adopt_repo(
+			$input['path'] ?? '',
 			$input['name'] ?? null
 		);
 	}

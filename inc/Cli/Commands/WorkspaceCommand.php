@@ -193,6 +193,52 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	/**
+	 * Adopt an existing primary checkout already under the workspace root.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <path>
+	 * : Existing git primary checkout path to adopt.
+	 *
+	 * [--name=<name>]
+	 * : Workspace name (derived from path basename if omitted).
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine workspace adopt /Users/chubes/Developer/homeboy --name=homeboy
+	 *
+	 * @subcommand adopt
+	 */
+	public function adopt_repo( array $args, array $assoc_args ): void {
+		if ( empty( $args[0] ) ) {
+			WP_CLI::error( 'Checkout path is required.' );
+			return;
+		}
+
+		$ability = wp_get_ability( 'datamachine/workspace-adopt' );
+		if ( ! $ability ) {
+			WP_CLI::error( 'Workspace adopt ability not available.' );
+			return;
+		}
+
+		$input = array( 'path' => $args[0] );
+		if ( ! empty( $assoc_args['name'] ) ) {
+			$input['name'] = $assoc_args['name'];
+		}
+
+		$result = $ability->execute( $input );
+
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+
+		WP_CLI::success( $result['message'] );
+		WP_CLI::log( sprintf( 'Name: %s', $result['name'] ) );
+		WP_CLI::log( sprintf( 'Path: %s', $result['path'] ) );
+	}
+
+	/**
 	 * Remove a repository from the workspace.
 	 *
 	 * ## OPTIONS
