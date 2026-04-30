@@ -980,22 +980,28 @@ class WorkspaceAbilities {
 								'type'  => 'array',
 								'items' => array(
 									'type'       => 'object',
-									'properties' => array(
-										'handle'      => array( 'type' => 'string' ),
-										'repo'        => array( 'type' => 'string' ),
-										'is_worktree' => array( 'type' => 'boolean' ),
-										'is_primary'  => array( 'type' => 'boolean' ),
-										'external'    => array( 'type' => 'boolean' ),
-										'branch_slug' => array( 'type' => array( 'string', 'null' ) ),
-										'branch'      => array( 'type' => array( 'string', 'null' ) ),
-										'head'        => array( 'type' => 'string' ),
-										'path'        => array( 'type' => 'string' ),
-										'dirty'       => array( 'type' => 'integer' ),
-										'created_at'  => array( 'type' => array( 'string', 'null' ) ),
+										'properties' => array(
+										'handle'          => array( 'type' => 'string' ),
+										'repo'            => array( 'type' => 'string' ),
+										'is_worktree'     => array( 'type' => 'boolean' ),
+										'is_primary'      => array( 'type' => 'boolean' ),
+										'external'        => array( 'type' => 'boolean' ),
+										'branch_slug'     => array( 'type' => array( 'string', 'null' ) ),
+										'branch'          => array( 'type' => array( 'string', 'null' ) ),
+										'head'            => array( 'type' => 'string' ),
+										'path'            => array( 'type' => 'string' ),
+										'dirty'           => array( 'type' => 'integer' ),
+										'created_at'      => array( 'type' => array( 'string', 'null' ) ),
 										'lifecycle_state' => array( 'type' => array( 'string', 'null' ) ),
-										'pr_url'      => array( 'type' => array( 'string', 'null' ) ),
-										'pr_number'   => array( 'type' => array( 'integer', 'null' ) ),
-										'metadata'    => array( 'type' => array( 'object', 'null' ) ),
+										'pr_url'          => array( 'type' => array( 'string', 'null' ) ),
+										'pr_number'       => array( 'type' => array( 'integer', 'null' ) ),
+										'last_touched_at' => array( 'type' => array( 'string', 'null' ) ),
+										'age_days'        => array( 'type' => array( 'integer', 'null' ) ),
+										'size_bytes'      => array( 'type' => array( 'integer', 'null' ) ),
+										'artifact_size_bytes' => array( 'type' => 'integer' ),
+										'artifacts'       => array( 'type' => 'array' ),
+										'stale_reason'    => array( 'type' => array( 'string', 'null' ) ),
+										'metadata'        => array( 'type' => array( 'object', 'null' ) ),
 									),
 								),
 							),
@@ -1099,6 +1105,10 @@ class WorkspaceAbilities {
 							'older_than'  => array(
 								'type'        => 'string',
 								'description' => 'Optional candidate age filter such as 7d, 24h, 30m, or 60s. Uses lifecycle created_at metadata only.',
+							),
+							'sort'        => array(
+								'type'        => 'string',
+								'description' => 'Optional cleanup candidate sort: size or age.',
 							),
 						),
 					),
@@ -1468,7 +1478,7 @@ class WorkspaceAbilities {
 	/**
 	 * Remove merged worktrees across all primary checkouts.
 	 *
-	 * @param array $input Input parameters (dry_run, force, skip_github, apply_plan, older_than).
+	 * @param array $input Input parameters (dry_run, force, skip_github, apply_plan, older_than, sort).
 	 * @return array
 	 */
 	public static function worktreeCleanup( array $input ): array|\WP_Error {
@@ -1483,6 +1493,9 @@ class WorkspaceAbilities {
 		}
 		if ( isset( $input['older_than'] ) && '' !== trim( (string) $input['older_than'] ) ) {
 			$opts['older_than'] = trim( (string) $input['older_than'] );
+		}
+		if ( isset( $input['sort'] ) && '' !== trim( (string) $input['sort'] ) ) {
+			$opts['sort'] = trim( (string) $input['sort'] );
 		}
 
 		return $workspace->worktree_cleanup_merged( $opts );

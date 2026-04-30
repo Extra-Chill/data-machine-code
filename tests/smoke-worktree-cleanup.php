@@ -185,7 +185,10 @@ namespace {
 	$run( 'git config user.email test@example.com', $primary );
 	$run( 'git config user.name test', $primary );
 	file_put_contents( $primary . '/README.md', "demo\n" );
+	file_put_contents( $primary . '/Cargo.toml', "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n" );
+	file_put_contents( $primary . '/.gitignore', "target/\n" );
 	$run( 'git add README.md && git commit -m init', $primary );
+	$run( 'git add Cargo.toml .gitignore && git commit -m tooling', $primary );
 	$run( 'git branch -M main', $primary );
 	$run( 'git push -u origin main', $primary );
 
@@ -226,6 +229,8 @@ namespace {
 
 	// Dirty the dirty worktree.
 	file_put_contents( $tmp . '/demo@dirty-branch/scratch.txt', 'dirty' );
+	mkdir( $tmp . '/demo@merged-autodelete/target', 0755, true );
+	file_put_contents( $tmp . '/demo@merged-autodelete/target/artifact.bin', str_repeat( 'x', 4096 ) );
 
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_metadata(
 		'demo@merged-autodelete',
@@ -293,6 +298,13 @@ namespace {
 	$metadata_item  = array_values( $metadata_items )[0] ?? array();
 	$assert( '2026-04-25T00:00:00+00:00', $metadata_item['created_at'] ?? null, 'worktree list exposes creation metadata for agent runtime' );
 	$assert( 'agent-one', $metadata_item['metadata']['agent_slug'] ?? null, 'worktree list exposes agent metadata for agent runtime' );
+	$assert( true, isset( $metadata_item['size_bytes'] ), 'worktree list exposes estimated size bytes' );
+	$assert( true, isset( $metadata_item['age_days'] ), 'worktree list exposes age_days' );
+
+	$artifact_items = array_filter( $list['worktrees'] ?? array(), fn( $wt ) => ( $wt['handle'] ?? '' ) === 'demo@merged-autodelete' );
+	$artifact_item  = array_values( $artifact_items )[0] ?? array();
+	$assert( true, (int) ( $artifact_item['artifact_size_bytes'] ?? 0 ) > 0, 'worktree list reports Rust target artifact size' );
+	$assert( 'target', $artifact_item['artifacts'][0]['path'] ?? '', 'worktree list reports Rust target artifact path' );
 
 	$assert_contains( $plan['candidates'] ?? array(), 'demo@merged-autodelete', 'canonical merged worktree flagged prunable' );
 	$assert_contains( $plan['candidates'] ?? array(), 'demo@merged-recent', 'recent merged worktree is still prunable without age filter' );
@@ -320,6 +332,21 @@ namespace {
 	$assert( 4, (int) ( $plan['summary']['would_remove'] ?? 0 ), 'summary counts cleanup candidates' );
 	$assert( 1, (int) ( $plan['summary']['skipped_by_reason']['dirty_worktree'] ?? 0 ), 'summary counts dirty skips by reason' );
 	$assert( true, isset( $plan['summary']['skipped_by_reason']['no_merge_signal'] ), 'summary includes no_merge_signal bucket' );
+	$assert( true, (int) ( $plan['summary']['total_size_bytes'] ?? 0 ) > 0, 'summary reports total worktree size bytes' );
+	$assert( true, (int) ( $plan['summary']['artifact_size_bytes'] ?? 0 ) > 0, 'summary reports artifact size bytes' );
+	$assert( true, ! empty( $plan['summary']['top_by_size'] ), 'summary reports top worktrees by size' );
+
+	$size_plan = $ws->worktree_cleanup_merged(
+		array(
+			'dry_run'     => true,
+			'skip_github' => true,
+			'sort'        => 'size',
+		)
+	);
+	$assert( true, ! is_wp_error( $size_plan ) && ( $size_plan['success'] ?? false ), 'size-sorted dry_run returns success' );
+	$first_size = (int) ( $size_plan['candidates'][0]['size_bytes'] ?? 0 );
+	$second_size = (int) ( $size_plan['candidates'][1]['size_bytes'] ?? 0 );
+	$assert( true, $first_size >= $second_size, 'sort=size orders cleanup candidates by size descending' );
 
 	$age_plan = $ws->worktree_cleanup_merged(
 		array(
