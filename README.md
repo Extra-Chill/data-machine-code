@@ -90,6 +90,10 @@ The workspace is **worktree-native**. Each branch lives in its own directory at
 agent sessions can edit different branches of the same repo simultaneously without
 stepping on each other.
 
+DMC discovers primary checkouts and worktrees by scanning the configured workspace
+root. Worktree lifecycle metadata supports cleanup and reconciliation; if that
+workspace path is not visible to PHP, DMC cannot see the checkouts.
+
 The primary checkout (bare `<repo>`) is **read-only by default** for mutating
 operations — pass `--allow-primary-mutation` to override. The default-deny is
 intentional: the primary tracks the deployed branch, and silent branch-switches
