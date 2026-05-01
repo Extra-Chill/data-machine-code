@@ -466,13 +466,13 @@ MD;
 
 `homeboy` is a Rust CLI on this host. Every verb runs the same locally as in CI.
 
-**Quality:** `homeboy audit | lint | test | review | refactor`; use `homeboy review --changed-since --report=pr-comment` for PR-style review loops.
+**Quality:** `homeboy audit | lint | test | review | refactor`; use `homeboy review --changed-since --report=pr-comment` for PR-style review loops, and `--baseline` / `--ratchet` when a command supports observation baselines.
 
 **Git:** prefer `homeboy changes | status` and `homeboy git status|commit|push|pull|tag|rebase|cherry-pick` — structured output, component/worktree awareness, safer write verbs. Use `--path <checkout>` when operating outside a registered component or overriding component resolution. One-off reads (`git diff`, `git show`, `git blame`) stay on raw `git`.
 
 **Perf + envs:** `homeboy bench` for pinned iterations/runs/concurrency, baselines, rig/profile comparisons; `homeboy trace` for black-box behavioral traces; `homeboy rig install|update|up|check|down|status` for reproducible multi-component dev environments.
 
-**Reports:** `homeboy triage` and `homeboy report` are read/report surfaces for turning quality output into follow-up work.
+**Reports + observations:** `homeboy triage` surfaces issue/PR/check attention; `homeboy report` renders structured Homeboy output artifacts; `homeboy runs list|show|artifacts|export|import` inspects persisted observation runs before rerunning expensive bench/trace/rig checks.
 
 **Stacks:** `homeboy stack list|show|apply|rebase|status|sync|push|diff|inspect` for combined-fixes branches built from upstream PRs.
 
