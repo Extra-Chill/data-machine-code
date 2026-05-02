@@ -39,10 +39,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Show workspace path
-	 *     wp datamachine workspace path
+	 *     wp datamachine-code workspace path
 	 *
 	 *     # Show path and create if missing
-	 *     wp datamachine workspace path --ensure
+	 *     wp datamachine-code workspace path --ensure
 	 *
 	 * @subcommand path
 	 */
@@ -93,10 +93,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # List workspace repos
-	 *     wp datamachine workspace list
+	 *     wp datamachine-code workspace list
 	 *
 	 *     # List as JSON
-	 *     wp datamachine workspace list --format=json
+	 *     wp datamachine-code workspace list --format=json
 	 *
 	 * @subcommand list
 	 */
@@ -116,7 +116,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( empty( $result['repos'] ) ) {
 			WP_CLI::log( sprintf( 'No repos in workspace (%s).', $result['path'] ?? '' ) );
-			WP_CLI::log( 'Clone one with: wp datamachine workspace clone <url>' );
+			WP_CLI::log( 'Clone one with: wp datamachine-code workspace clone <url>' );
 			return;
 		}
 
@@ -157,10 +157,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Clone a repo
-	 *     wp datamachine workspace clone https://github.com/Extra-Chill/homeboy.git
+	 *     wp datamachine-code workspace clone https://github.com/Extra-Chill/homeboy.git
 	 *
 	 *     # Clone with custom name
-	 *     wp datamachine workspace clone https://github.com/Extra-Chill/homeboy.git --name=homeboy-dev
+	 *     wp datamachine-code workspace clone https://github.com/Extra-Chill/homeboy.git --name=homeboy-dev
 	 *
 	 * @subcommand clone
 	 */
@@ -205,7 +205,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * ## EXAMPLES
 	 *
-	 *     wp datamachine workspace adopt /Users/chubes/Developer/homeboy --name=homeboy
+	 *     wp datamachine-code workspace adopt /Users/chubes/Developer/homeboy --name=homeboy
 	 *
 	 * @subcommand adopt
 	 */
@@ -252,10 +252,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Remove a repo (with confirmation)
-	 *     wp datamachine workspace remove homeboy
+	 *     wp datamachine-code workspace remove homeboy
 	 *
 	 *     # Remove without confirmation
-	 *     wp datamachine workspace remove homeboy --yes
+	 *     wp datamachine-code workspace remove homeboy --yes
 	 *
 	 * @subcommand remove
 	 */
@@ -362,7 +362,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Show repo info
-	 *     wp datamachine workspace show homeboy
+	 *     wp datamachine-code workspace show homeboy
 	 *
 	 * @subcommand show
 	 */
@@ -426,19 +426,19 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Read a file
-	 *     wp datamachine workspace read homeboy src/main.rs
+	 *     wp datamachine-code workspace read homeboy src/main.rs
 	 *
 	 *     # Read with custom size limit
-	 *     wp datamachine workspace read homeboy Cargo.toml --max-size=2097152
+	 *     wp datamachine-code workspace read homeboy Cargo.toml --max-size=2097152
 	 *
 	 *     # Read lines 100-130 from a file
-	 *     wp datamachine workspace read extrachill style.css --offset=100 --limit=30
+	 *     wp datamachine-code workspace read extrachill style.css --offset=100 --limit=30
 	 *
 	 * @subcommand read
 	 */
 	public function read( array $args, array $assoc_args ): void {
 		if ( empty( $args[0] ) || empty( $args[1] ) ) {
-			WP_CLI::error( 'Usage: wp datamachine workspace read <repo> <path>' );
+			WP_CLI::error( 'Usage: wp datamachine-code workspace read <repo> <path>' );
 			return;
 		}
 
@@ -504,19 +504,19 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # List repo root
-	 *     wp datamachine workspace ls homeboy
+	 *     wp datamachine-code workspace ls homeboy
 	 *
 	 *     # List subdirectory
-	 *     wp datamachine workspace ls homeboy src/commands
+	 *     wp datamachine-code workspace ls homeboy src/commands
 	 *
 	 *     # List as JSON
-	 *     wp datamachine workspace ls homeboy --format=json
+	 *     wp datamachine-code workspace ls homeboy --format=json
 	 *
 	 * @subcommand ls
 	 */
 	public function ls( array $args, array $assoc_args ): void {
 		if ( empty( $args[0] ) ) {
-			WP_CLI::error( 'Usage: wp datamachine workspace ls <repo> [<path>]' );
+			WP_CLI::error( 'Usage: wp datamachine-code workspace ls <repo> [<path>]' );
 			return;
 		}
 
@@ -584,19 +584,19 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Write with content flag
-	 *     wp datamachine workspace write homeboy src/new.rs --content="fn main() {}"
+	 *     wp datamachine-code workspace write homeboy src/new.rs --content="fn main() {}"
 	 *
 	 *     # Write from a local file (@ syntax)
-	 *     wp datamachine workspace write homeboy src/main.rs --content=@/tmp/staged-code.rs
+	 *     wp datamachine-code workspace write homeboy src/main.rs --content=@/tmp/staged-code.rs
 	 *
 	 *     # Write from stdin
-	 *     cat local-file.rs | wp datamachine workspace write homeboy src/main.rs
+	 *     cat local-file.rs | wp datamachine-code workspace write homeboy src/main.rs
 	 *
 	 * @subcommand write
 	 */
 	public function write( array $args, array $assoc_args ): void {
 		if ( empty( $args[0] ) || empty( $args[1] ) ) {
-			WP_CLI::error( 'Usage: wp datamachine workspace write <repo> <path> --content=<content>' );
+			WP_CLI::error( 'Usage: wp datamachine-code workspace write <repo> <path> --content=<content>' );
 			return;
 		}
 
@@ -668,19 +668,19 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Replace a single occurrence
-	 *     wp datamachine workspace edit homeboy src/main.rs --old="old_func" --new="new_func"
+	 *     wp datamachine-code workspace edit homeboy src/main.rs --old="old_func" --new="new_func"
 	 *
 	 *     # Replace using @ file syntax
-	 *     wp datamachine workspace edit homeboy src/main.rs --old=@/tmp/old.txt --new=@/tmp/new.txt
+	 *     wp datamachine-code workspace edit homeboy src/main.rs --old=@/tmp/old.txt --new=@/tmp/new.txt
 	 *
 	 *     # Replace all occurrences
-	 *     wp datamachine workspace edit homeboy src/main.rs --old="v1" --new="v2" --replace-all
+	 *     wp datamachine-code workspace edit homeboy src/main.rs --old="v1" --new="v2" --replace-all
 	 *
 	 * @subcommand edit
 	 */
 	public function edit( array $args, array $assoc_args ): void {
 		if ( empty( $args[0] ) || empty( $args[1] ) ) {
-			WP_CLI::error( 'Usage: wp datamachine workspace edit <repo> <path> --old=<string> --new=<string>' );
+			WP_CLI::error( 'Usage: wp datamachine-code workspace edit <repo> <path> --old=<string> --new=<string>' );
 			return;
 		}
 
@@ -922,25 +922,25 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Show git status for a workspace repo
-	 *     wp datamachine workspace git status data-machine
+	 *     wp datamachine-code workspace git status data-machine
 	 *
 	 *     # Pull latest changes
-	 *     wp datamachine workspace git pull data-machine
+	 *     wp datamachine-code workspace git pull data-machine
 	 *
 	 *     # Stage docs paths
-	 *     wp datamachine workspace git add extrachill-docs --rel=ec_docs/community/getting-started.md
+	 *     wp datamachine-code workspace git add extrachill-docs --rel=ec_docs/community/getting-started.md
 	 *
 	 *     # Commit staged changes
-	 *     wp datamachine workspace git commit extrachill-docs "docs: update community guide"
+	 *     wp datamachine-code workspace git commit extrachill-docs "docs: update community guide"
 	 *
 	 *     # Push current branch to origin
-	 *     wp datamachine workspace git push extrachill-docs --remote=origin
+	 *     wp datamachine-code workspace git push extrachill-docs --remote=origin
 	 *
 	 *     # Show recent log
-	 *     wp datamachine workspace git log data-machine --limit=10
+	 *     wp datamachine-code workspace git log data-machine --limit=10
 	 *
 	 *     # Show diff for a path
-	 *     wp datamachine workspace git diff data-machine --rel=inc/Core/FilesRepository/Workspace.php
+	 *     wp datamachine-code workspace git diff data-machine --rel=inc/Core/FilesRepository/Workspace.php
 	 *
 	 * @subcommand git
 	 */
@@ -949,7 +949,7 @@ class WorkspaceCommand extends BaseCommand {
 		$repo      = $args[1] ?? '';
 
 		if ( '' === $operation || '' === $repo ) {
-			WP_CLI::error( 'Usage: wp datamachine workspace git <operation> <repo> [<value>] [--flags]' );
+			WP_CLI::error( 'Usage: wp datamachine-code workspace git <operation> <repo> [<value>] [--flags]' );
 			return;
 		}
 
@@ -1216,70 +1216,70 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Create a worktree for fix/foo on data-machine
-	 *     wp datamachine workspace worktree add data-machine fix/foo
+	 *     wp datamachine-code workspace worktree add data-machine fix/foo
 	 *
 	 *     # Create off a specific base
-	 *     wp datamachine workspace worktree add data-machine feat/bar --from=origin/develop
-	 *     wp datamachine workspace worktree add data-machine feat/bar --base-branch=develop
+	 *     wp datamachine-code workspace worktree add data-machine feat/bar --from=origin/develop
+	 *     wp datamachine-code workspace worktree add data-machine feat/bar --base-branch=develop
 	 *
 	 *     # List all worktrees
-	 *     wp datamachine workspace worktree list
+	 *     wp datamachine-code workspace worktree list
 	 *
 	 *     # List worktrees for one repo
-	 *     wp datamachine workspace worktree list data-machine
+	 *     wp datamachine-code workspace worktree list data-machine
 	 *
 	 *     # Remove a worktree
-	 *     wp datamachine workspace worktree remove data-machine fix/foo
+	 *     wp datamachine-code workspace worktree remove data-machine fix/foo
 	 *
 	 *     # Force-remove a dirty worktree
-	 *     wp datamachine workspace worktree remove data-machine fix/foo --force
+	 *     wp datamachine-code workspace worktree remove data-machine fix/foo --force
 	 *
 	 *     # Prune stale worktree registry entries across all primaries
-	 *     wp datamachine workspace worktree prune
+	 *     wp datamachine-code workspace worktree prune
 	 *
 	 *     # Preview worktrees that would be removed (upstream gone or PR merged)
-	 *     wp datamachine workspace worktree cleanup --dry-run
+	 *     wp datamachine-code workspace worktree cleanup --dry-run
 	 *
 	 *     # Remove all merged worktrees
-	 *     wp datamachine workspace worktree cleanup
+	 *     wp datamachine-code workspace worktree cleanup
 	 *
 	 *     # Review a plan, then apply only those rows after revalidation
-	 *     wp datamachine workspace worktree cleanup --dry-run --format=json > cleanup-plan.json
-	 *     wp datamachine workspace worktree cleanup --apply-plan=cleanup-plan.json
-	 *
-	 *     # Review and apply artifact-only cleanup without removing worktrees
-	 *     wp datamachine workspace worktree cleanup-artifacts --dry-run --format=json > artifact-plan.json
-	 *     wp datamachine workspace worktree cleanup-artifacts --apply-plan=artifact-plan.json
+	 *     wp datamachine-code workspace worktree cleanup --dry-run --format=json > cleanup-plan.json
+	 *     wp datamachine-code workspace worktree cleanup --apply-plan=cleanup-plan.json
+		 *
+		 *     # Review and apply artifact-only cleanup without removing worktrees
+		 *     wp datamachine-code workspace worktree cleanup-artifacts --dry-run --format=json > artifact-plan.json
+		 *     wp datamachine-code workspace worktree cleanup-artifacts --apply-plan=artifact-plan.json
 	 *
 	 *     # Local-only detection (no GitHub API call)
-	 *     wp datamachine workspace worktree cleanup --skip-github
-	 *
-	 *     # Bounded review on huge workspaces (no per-worktree git probes)
-	 *     wp datamachine workspace worktree cleanup --dry-run --inventory-only --skip-github --format=json
-	 *     wp datamachine workspace worktree reconcile-metadata --dry-run --format=json > reconcile-plan.json
-	 *     wp datamachine workspace worktree reconcile-metadata --apply-plan=reconcile-plan.json
+	 *     wp datamachine-code workspace worktree cleanup --skip-github
+		 *
+		 *     # Bounded review on huge workspaces (no per-worktree git probes)
+		 *     wp datamachine-code workspace worktree cleanup --dry-run --inventory-only --skip-github --format=json
+		 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json > reconcile-plan.json
+		 *     wp datamachine-code workspace worktree reconcile-metadata --apply-plan=reconcile-plan.json
 	 *
 	 *     # Ignore dirty working-tree safety (caution)
-	 *     wp datamachine workspace worktree cleanup --force
+	 *     wp datamachine-code workspace worktree cleanup --force
 	 *
 	 *     # Create a worktree without injecting site-agent context
-	 *     wp datamachine workspace worktree add data-machine fix/foo --skip-context-injection
+	 *     wp datamachine-code workspace worktree add data-machine fix/foo --skip-context-injection
 	 *
 	 *     # Create a bare worktree (skip the default bootstrap pass)
-	 *     wp datamachine workspace worktree add data-machine fix/foo --skip-bootstrap
+	 *     wp datamachine-code workspace worktree add data-machine fix/foo --skip-bootstrap
 	 *
 	 *     # Proceed with a known-stale base (bypass the staleness gate)
-	 *     wp datamachine workspace worktree add data-machine fix/foo --allow-stale
+	 *     wp datamachine-code workspace worktree add data-machine fix/foo --allow-stale
 	 *
 	 *     # Auto-rebase onto upstream after creation
-	 *     wp datamachine workspace worktree add data-machine fix/foo --rebase-base
+	 *     wp datamachine-code workspace worktree add data-machine fix/foo --rebase-base
 	 *
 	 *     # Re-read the originating site's agent memory into an existing worktree
-	 *     wp datamachine workspace worktree refresh-context data-machine@fix-foo
+	 *     wp datamachine-code workspace worktree refresh-context data-machine@fix-foo
 	 *
 	 *     # Attach PR/finalizer metadata to a worktree
-	 *     wp datamachine workspace worktree finalize data-machine@fix-foo --pr=https://github.com/org/repo/pull/123
-	 *     wp datamachine workspace worktree mark-cleanup-eligible data-machine@fix-foo
+	 *     wp datamachine-code workspace worktree finalize data-machine@fix-foo --pr=https://github.com/org/repo/pull/123
+	 *     wp datamachine-code workspace worktree mark-cleanup-eligible data-machine@fix-foo
 	 *
 	 * @subcommand worktree
 	 */
@@ -1287,7 +1287,7 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error( 'Usage: wp datamachine workspace worktree <add|list|remove|prune|cleanup|cleanup-artifacts|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
+			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <add|list|remove|prune|cleanup|cleanup-artifacts|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
 			return;
 		}
 

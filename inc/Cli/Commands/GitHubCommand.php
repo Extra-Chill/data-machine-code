@@ -57,13 +57,13 @@ class GitHubCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # List open issues for a repo
-	 *     $ wp datamachine github issues --repo=Extra-Chill/data-machine
+	 *     $ wp datamachine-code github issues --repo=Extra-Chill/data-machine
 	 *
 	 *     # List issues with specific labels
-	 *     $ wp datamachine github issues --repo=Extra-Chill/data-machine --labels=enhancement
+	 *     $ wp datamachine-code github issues --repo=Extra-Chill/data-machine --labels=enhancement
 	 *
 	 *     # List closed issues
-	 *     $ wp datamachine github issues --repo=Extra-Chill/data-machine --state=closed --per_page=10
+	 *     $ wp datamachine-code github issues --repo=Extra-Chill/data-machine --state=closed --per_page=10
 	 *
 	 * @subcommand issues
 	 */
@@ -133,7 +133,7 @@ class GitHubCommand extends BaseCommand {
 	 *
 	 * ## EXAMPLES
 	 *
-	 *     $ wp datamachine github view 413 --repo=Extra-Chill/data-machine
+	 *     $ wp datamachine-code github view 413 --repo=Extra-Chill/data-machine
 	 *
 	 * @subcommand view
 	 */
@@ -201,9 +201,9 @@ class GitHubCommand extends BaseCommand {
 	 *
 	 * ## EXAMPLES
 	 *
-	 *     $ wp datamachine github close 315 --repo=Extra-Chill/data-machine
+	 *     $ wp datamachine-code github close 315 --repo=Extra-Chill/data-machine
 	 *
-	 *     $ wp datamachine github close 315 --repo=Extra-Chill/data-machine --comment="Fixed in v0.33.0"
+	 *     $ wp datamachine-code github close 315 --repo=Extra-Chill/data-machine --comment="Fixed in v0.33.0"
 	 *
 	 * @subcommand close
 	 */
@@ -261,7 +261,7 @@ class GitHubCommand extends BaseCommand {
 	 *
 	 * ## EXAMPLES
 	 *
-	 *     $ wp datamachine github comment 315 "Investigating this now."
+	 *     $ wp datamachine-code github comment 315 "Investigating this now."
 	 *
 	 * @subcommand comment
 	 */
@@ -321,7 +321,7 @@ class GitHubCommand extends BaseCommand {
 	 *
 	 * ## EXAMPLES
 	 *
-	 *     $ wp datamachine github pulls --repo=Extra-Chill/data-machine
+	 *     $ wp datamachine-code github pulls --repo=Extra-Chill/data-machine
 	 *
 	 * @subcommand pulls
 	 */
@@ -404,9 +404,9 @@ class GitHubCommand extends BaseCommand {
 	 *
 	 * ## EXAMPLES
 	 *
-	 *     $ wp datamachine github repos Extra-Chill
+	 *     $ wp datamachine-code github repos Extra-Chill
 	 *
-	 *     $ wp datamachine github repos chubes4 --sort=pushed
+	 *     $ wp datamachine-code github repos chubes4 --sort=pushed
 	 *
 	 * @subcommand repos
 	 */
@@ -464,7 +464,7 @@ class GitHubCommand extends BaseCommand {
 	 *
 	 * ## EXAMPLES
 	 *
-	 *     $ wp datamachine github status
+	 *     $ wp datamachine-code github status
 	 *
 	 * @subcommand status
 	 */
