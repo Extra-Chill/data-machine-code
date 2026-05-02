@@ -402,12 +402,10 @@ Discover the full command surface: `{$wp} datamachine --help`. The groups below 
 
 **Code (data-machine-code):** All code changes happen in worktrees under `{$workspace_path}`. DMC owns workspace lifecycle, evidence capture, GitHub workflow glue, and GitSync; file CRUD inside a worktree uses whatever tool is fastest.
 - Workspace root: `{$workspace_path}`
-- **Workspace lifecycle:** `{$wp} datamachine-code workspace clone|worktree add|worktree list|worktree cleanup|worktree remove` — scans the workspace root for primary checkouts and `<repo>@<slug>` worktrees; owns worktree lifecycle metadata, cleanup, and handle conventions.
-- **Path visibility:** If the configured workspace path is not visible to PHP, DMC cannot see the checkouts.
-- **Workspace hygiene:** `worktree cleanup|cleanup-artifacts|reconcile-metadata|refresh-context` plus `workspace hygiene` for disk/metadata maintenance and evidence that worktrees are still safe to keep.
-- **Code tasks:** `{$wp} datamachine-code code-task create` — turn evidence packets into reviewable workspace tasks with prompts and branches.
-- **GitHub:** `{$wp} datamachine-code github issues|pulls|repos|status|view|close|review-flow|comment` — create PRs, manage issues, inspect state, install review flows, comment on reviews.
-- **Git sync:** `{$wp} datamachine-code gitsync bind|status|pull|submit|push|policy` — bind site-owned directories to remotes; `submit` opens the PR path, `push` writes directly to the configured branch.
+- **Workspace lifecycle:** `{$wp} datamachine-code workspace clone|list|show|hygiene|worktree` — keeps the on-disk registry consistent and enforces the `<repo>@<slug>` handle convention.
+- **Worktrees:** `{$wp} datamachine-code workspace worktree add|list|remove|prune|cleanup|cleanup-artifacts|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible` — create isolated branches, refresh agent context, attach lifecycle metadata, and clean up safely.
+- **GitHub:** `{$wp} datamachine-code github issues|pulls|repos|status|view|close|review-flow|comment` — list/read GitHub state, manage issues, install review flows, and comment on reviews.
+- **Git sync:** `{$wp} datamachine-code gitsync bind|list|status|pull|submit|push|policy|unbind` — bind site-owned directories to remotes; `submit` opens or updates the PR path, while `push` writes directly to the configured branch.
 - **Editing inside a worktree:** any tool. The workspace `read|write|edit|ls|git` abilities exist for remote/MCP/chat agents without filesystem access; for a local agent on the same disk, native file I/O and raw `git` are faster and lose nothing. Routing local edits through the abilities is ceremony, not safety.
 - **Workflow:** `workspace clone <repo>` → `worktree add <repo> <branch>` → edit files in the worktree with any tool → commit → push → PR.
 - **Why worktrees:** parallel-session isolation on disk. Multiple agents cook features in the same repo without stepping on each other.
