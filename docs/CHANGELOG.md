@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.25.1] - 2026-05-02
+
+### Changed
+- Internal improvements
+
 ## [0.25.0] - 2026-04-30
 
 ### Added
