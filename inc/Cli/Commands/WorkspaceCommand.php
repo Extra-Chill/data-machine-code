@@ -1246,18 +1246,18 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Review a plan, then apply only those rows after revalidation
 	 *     wp datamachine-code workspace worktree cleanup --dry-run --format=json > cleanup-plan.json
 	 *     wp datamachine-code workspace worktree cleanup --apply-plan=cleanup-plan.json
-		 *
-		 *     # Review and apply artifact-only cleanup without removing worktrees
-		 *     wp datamachine-code workspace worktree cleanup-artifacts --dry-run --format=json > artifact-plan.json
-		 *     wp datamachine-code workspace worktree cleanup-artifacts --apply-plan=artifact-plan.json
+	 *
+	 *     # Review and apply artifact-only cleanup without removing worktrees
+	 *     wp datamachine-code workspace worktree cleanup-artifacts --dry-run --format=json > artifact-plan.json
+	 *     wp datamachine-code workspace worktree cleanup-artifacts --apply-plan=artifact-plan.json
 	 *
 	 *     # Local-only detection (no GitHub API call)
 	 *     wp datamachine-code workspace worktree cleanup --skip-github
-		 *
-		 *     # Bounded review on huge workspaces (no per-worktree git probes)
-		 *     wp datamachine-code workspace worktree cleanup --dry-run --inventory-only --skip-github --format=json
-		 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json > reconcile-plan.json
-		 *     wp datamachine-code workspace worktree reconcile-metadata --apply-plan=reconcile-plan.json
+	 *
+	 *     # Bounded review on huge workspaces (no per-worktree git probes)
+	 *     wp datamachine-code workspace worktree cleanup --dry-run --inventory-only --skip-github --format=json
+	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json > reconcile-plan.json
+	 *     wp datamachine-code workspace worktree reconcile-metadata --apply-plan=reconcile-plan.json
 	 *
 	 *     # Ignore dirty working-tree safety (caution)
 	 *     wp datamachine-code workspace worktree cleanup --force
