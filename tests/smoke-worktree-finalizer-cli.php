@@ -118,6 +118,10 @@ namespace {
 		'datamachine/workspace-worktree-list'     => $list,
 	);
 	$command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
+	$worktree_method = new ReflectionMethod( $command, 'worktree' );
+	$worktree_docs   = (string) $worktree_method->getDocComment();
+	datamachine_code_finalizer_assert( str_contains( $worktree_docs, '[--pr=<url-or-number>]' ), 'worktree synopsis documents finalizer PR flag' );
+	datamachine_code_finalizer_assert( str_contains( $worktree_docs, '[--state=<state>]' ), 'worktree synopsis documents finalizer state flag' );
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();

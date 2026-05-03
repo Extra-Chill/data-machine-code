@@ -1108,10 +1108,12 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## OPTIONS
 	 *
 	 * <operation>
-	 * : Worktree operation: add, list, remove, prune, cleanup, reconcile-metadata, refresh-context.
+	 * : Worktree operation: add, list, remove, prune, cleanup, cleanup-artifacts,
+	 *   reconcile-metadata, refresh-context, finalize, mark-cleanup-eligible.
 	 *
 	 * [<repo>]
-	 * : Primary repo name (required for add and remove). For refresh-context,
+	 * : Primary repo name (required for add and remove). For refresh-context, finalize,
+	 *   and mark-cleanup-eligible,
 	 *   pass the full worktree handle (`<repo>@<branch-slug>`) here instead.
 	 *
 	 * [<branch>]
@@ -1167,6 +1169,13 @@ class WorkspaceCommand extends BaseCommand {
 	 * : For `add`, explicitly bypass the disk-budget refusal threshold. For
 	 *   `remove`, force-remove a worktree even if it is dirty. For `cleanup`,
 	 *   force dirty-worktree removal but not the unpushed-commits safety.
+	 *
+	 * [--pr=<url-or-number>]
+	 * : Attach pull request metadata when finalizing or marking a worktree
+	 *   cleanup-eligible.
+	 *
+	 * [--state=<state>]
+	 * : Lifecycle state to record when finalizing a worktree.
 	 *
 	 * [--dry-run]
 	 * : Preview cleanup candidates without removing anything (cleanup only).
