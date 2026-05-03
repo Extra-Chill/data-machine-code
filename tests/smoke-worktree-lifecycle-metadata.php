@@ -100,7 +100,11 @@ namespace {
 	}
 
 	if ( ! function_exists( 'apply_filters' ) ) {
-		function apply_filters( string $hook_name, $value ) {
+		function apply_filters( string $hook_name, $value, ...$args ) {
+			global $datamachine_code_test_filters;
+			if ( isset( $datamachine_code_test_filters[ $hook_name ] ) && is_callable( $datamachine_code_test_filters[ $hook_name ] ) ) {
+				return $datamachine_code_test_filters[ $hook_name ]( $value, ...$args );
+			}
 			return $value;
 		}
 	}
@@ -195,7 +199,20 @@ namespace {
 	putenv( 'OPENCODE_RUN_ID=smoke-run-123' );
 	putenv( 'OPENCODE_PID=12345' );
 
-	$ws     = new \DataMachineCode\Workspace\Workspace();
+	$ws = new \DataMachineCode\Workspace\Workspace();
+
+	$GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds'] = function ( array $thresholds ): array {
+		$thresholds['refuse_free_bytes'] = PHP_INT_MAX;
+		$thresholds['warn_free_bytes']   = PHP_INT_MAX;
+		return $thresholds;
+	};
+	$refused = $ws->worktree_add( 'demo', 'feature/disk-budget-refusal', 'HEAD', true, true, true, false, false );
+	unset( $GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds'] );
+	$assert( true, is_wp_error( $refused ), 'worktree_add refuses before creation when disk budget is unsafe' );
+	$assert( false, is_dir( DATAMACHINE_WORKSPACE_PATH . '/demo@feature-disk-budget-refusal' ), 'refused disk budget does not leave a worktree directory' );
+	$assert( true, str_contains( $refused->get_error_message(), DATAMACHINE_WORKSPACE_PATH ), 'disk budget refusal names workspace root' );
+	$assert( true, str_contains( $refused->get_error_message(), 'cleanup-artifacts --dry-run' ), 'disk budget refusal suggests artifact cleanup' );
+
 	$result = $ws->worktree_add( 'demo', 'feature/metadata', 'HEAD', false, false, true, false );
 	$assert( true, ! is_wp_error( $result ) && ( $result['success'] ?? false ), 'worktree_add succeeds without context injection' );
 
