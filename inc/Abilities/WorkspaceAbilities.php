@@ -1705,6 +1705,9 @@ class WorkspaceAbilities {
 		if ( isset( $input['sort'] ) && '' !== trim( (string) $input['sort'] ) ) {
 			$opts['sort'] = trim( (string) $input['sort'] );
 		}
+		if ( isset( $input['progress_callback'] ) && is_callable( $input['progress_callback'] ) ) {
+			$opts['progress_callback'] = $input['progress_callback'];
+		}
 
 		return $workspace->worktree_cleanup_merged( $opts );
 	}

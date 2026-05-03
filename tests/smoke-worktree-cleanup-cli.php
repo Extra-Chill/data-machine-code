@@ -141,6 +141,20 @@ namespace {
 
 		public function execute( array $input ): array {
 			$this->last_input = $input;
+			if ( isset( $input['progress_callback'] ) && is_callable( $input['progress_callback'] ) ) {
+				$input['progress_callback'](
+					array(
+						'event'      => 'checking',
+						'handle'     => 'repo@merged',
+						'checked'    => 1,
+						'total'      => 13,
+						'candidates' => 1,
+						'skipped'    => 0,
+						'removed'    => 0,
+						'elapsed'    => 1.2,
+					)
+				);
+			}
 			$report = datamachine_code_cleanup_report();
 			if ( isset( $input['older_than'] ) ) {
 				$report['summary']['age_filter'] = array(
@@ -300,7 +314,8 @@ namespace {
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true ) );
-	datamachine_code_cleanup_assert( 'Summary:' === ( WP_CLI::$logs[0] ?? '' ), 'human output starts with summary' );
+	datamachine_code_cleanup_assert( str_starts_with( WP_CLI::$logs[0] ?? '', 'Cleanup progress:' ), 'human output streams cleanup progress before summary' );
+	datamachine_code_cleanup_assert( in_array( 'Summary:', WP_CLI::$logs, true ), 'human output includes summary after progress' );
 	datamachine_code_cleanup_assert( in_array( 'table:1:handle,branch,age_days,size,artifacts,signal,reason_code', WP_CLI::$logs, true ), 'default candidate table uses compact disk fields' );
 	datamachine_code_cleanup_assert( in_array( 'table:10:handle,reason_code,age_days,size,artifacts,reason', WP_CLI::$logs, true ), 'default skipped table omits path and hint fields but keeps disk fields' );
 	datamachine_code_cleanup_assert( in_array( 'Top repos by worktree size:', WP_CLI::$logs, true ), 'human output includes top repo size summary' );
@@ -340,7 +355,8 @@ namespace {
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'older-than' => '7d' ) );
-	datamachine_code_cleanup_assert( array( 'dry_run' => true, 'force' => false, 'skip_github' => true, 'inventory_only' => false, 'older_than' => '7d' ) === $ability->last_input, 'older-than forwards to cleanup ability as older_than' );
+	datamachine_code_cleanup_assert( '7d' === ( $ability->last_input['older_than'] ?? null ), 'older-than forwards to cleanup ability as older_than' );
+	datamachine_code_cleanup_assert( is_callable( $ability->last_input['progress_callback'] ?? null ), 'human cleanup passes progress callback to ability' );
 	datamachine_code_cleanup_assert( in_array( 'table:10:metric,count', WP_CLI::$logs, true ), 'age filter and disk summary rows are rendered' );
 
 	WP_CLI::$logs      = array();

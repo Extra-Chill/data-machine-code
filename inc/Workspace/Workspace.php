@@ -32,6 +32,11 @@ class Workspace {
 	private const CLEANUP_GITHUB_TIMEOUT = 5;
 
 	/**
+	 * Bound per-worktree git cleanup probes so one wedged checkout cannot stall cleanup.
+	 */
+	private const CLEANUP_GIT_PROBE_TIMEOUT = 5;
+
+	/**
 	 * Closed PR pages to inspect per repo during cleanup.
 	 */
 	private const CLEANUP_GITHUB_MAX_PAGES = 3;
@@ -2344,6 +2349,8 @@ class Workspace {
 		$apply_plan     = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
 		$older_than     = isset( $opts['older_than'] ) ? trim( (string) $opts['older_than'] ) : '';
 		$sort           = isset( $opts['sort'] ) ? trim( (string) $opts['sort'] ) : '';
+		$progress       = isset( $opts['progress_callback'] ) && is_callable( $opts['progress_callback'] ) ? $opts['progress_callback'] : null;
+		$started_at     = microtime( true );
 
 		if ( '' !== $sort && ! in_array( $sort, array( 'size', 'age' ), true ) ) {
 			return new \WP_Error( 'invalid_cleanup_sort', 'Invalid cleanup sort. Use size or age.', array( 'status' => 400 ) );
@@ -2400,15 +2407,17 @@ class Workspace {
 		$candidates         = array();
 		$skipped            = array();
 		$github_cache       = array();
+		$worktrees          = array_values( array_filter( (array) $listing['worktrees'], fn( $wt ) => empty( $wt['is_primary'] ) ) );
+		$checked            = 0;
+		$removed_count      = 0;
+
+		$this->emit_worktree_cleanup_progress( $progress, 'start', '', $checked, count( $worktrees ), $candidates, $skipped, $removed_count, $started_at );
 
 		// Fetch + prune each primary once up-front so upstream-gone signals are fresh.
 		$fetched = array();
+		$fetch_timeouts = array();
 
-		foreach ( $listing['worktrees'] as $wt ) {
-			if ( ! empty( $wt['is_primary'] ) ) {
-				continue;
-			}
-
+		foreach ( $worktrees as $wt ) {
 			$handle       = $wt['handle'] ?? '?';
 			$repo         = $wt['repo'] ?? '';
 			$branch       = $wt['branch'] ?? '';
@@ -2436,6 +2445,9 @@ class Workspace {
 			}
 
 			$dirty_count = (int) ( $wt['dirty'] ?? 0 );
+
+			++$checked;
+			$this->emit_worktree_cleanup_progress( $progress, 'checking', (string) $handle, $checked, count( $worktrees ), $candidates, $skipped, $removed_count, $started_at );
 
 			if ( '' === $repo || '' === $branch || '' === $wt_path ) {
 				$missing_fields = array();
@@ -2499,7 +2511,11 @@ class Workspace {
 			// remote branch without merging — nuking the worktree would lose
 			// those commits. `force` does NOT override this: data loss is a
 			// harder problem than dirty-file loss, and this guard is cheap.
-			$unpushed = $this->count_unpushed_commits( $wt_path );
+			$unpushed = $this->count_unpushed_commits( $wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+			if ( is_wp_error( $unpushed ) ) {
+				$skipped[] = $this->build_worktree_probe_timeout_skip( $handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $unpushed );
+				continue;
+			}
 			if ( $unpushed > 0 ) {
 				$skipped[] = array_merge( array(
 					'handle'      => $handle,
@@ -2531,8 +2547,18 @@ class Workspace {
 				continue;
 			}
 
+			if ( isset( $fetch_timeouts[ $repo ] ) ) {
+				$skipped[] = $this->build_worktree_probe_timeout_skip( $handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $fetch_timeouts[ $repo ] );
+				continue;
+			}
+
 			if ( empty( $fetched[ $repo ] ) ) {
-				$this->run_git( $primary_path, 'fetch --prune --quiet origin' );
+				$fetch = $this->run_git( $primary_path, 'fetch --prune --quiet origin', self::CLEANUP_GIT_PROBE_TIMEOUT );
+				if ( $this->is_git_timeout_error( $fetch ) ) {
+					$fetch_timeouts[ $repo ] = $fetch;
+					$skipped[]              = $this->build_worktree_probe_timeout_skip( $handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $fetch );
+					continue;
+				}
 				$fetched[ $repo ] = true;
 			}
 
@@ -2556,6 +2582,20 @@ class Workspace {
 					'path'        => $wt_path,
 					'reason_code' => 'no_merge_signal',
 					'reason'      => 'no merge signal — leaving in place',
+					'created_at'  => $created_at,
+					'metadata'    => $metadata,
+				), $disk_fields );
+				continue;
+			}
+
+			if ( 'probe-timeout' === ( $signal['signal'] ?? '' ) ) {
+				$skipped[] = array_merge( array(
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'probe_timeout',
+					'reason'      => $signal['reason'],
 					'created_at'  => $created_at,
 					'metadata'    => $metadata,
 				), $disk_fields );
@@ -2658,6 +2698,8 @@ class Workspace {
 		$summary = $this->build_worktree_cleanup_summary( $candidates, array(), $skipped, $age_filter );
 
 		if ( $dry_run ) {
+			$this->emit_worktree_cleanup_progress( $progress, 'done', '', $checked, count( $worktrees ), $candidates, $skipped, $removed_count, $started_at );
+
 			return array(
 				'success'    => true,
 				'dry_run'    => true,
@@ -2671,6 +2713,7 @@ class Workspace {
 		$removed = array();
 
 		foreach ( $candidates as $cand ) {
+			$this->emit_worktree_cleanup_progress( $progress, 'removing', (string) ( $cand['handle'] ?? '' ), $checked, count( $worktrees ), $candidates, $skipped, $removed_count, $started_at );
 			$remove = WorkspaceMutationLock::with_repo(
 				$this->workspace_path,
 				$cand['repo'],
@@ -2702,10 +2745,13 @@ class Workspace {
 				continue;
 			}
 			$removed[] = $cand;
+			++$removed_count;
 		}
 
 		// Final sweep to drop any remaining registry entries.
 		$this->worktree_prune();
+
+		$this->emit_worktree_cleanup_progress( $progress, 'done', '', $checked, count( $worktrees ), $candidates, $skipped, $removed_count, $started_at );
 
 		return array(
 			'success'    => true,
@@ -2714,6 +2760,68 @@ class Workspace {
 			'removed'    => $removed,
 			'skipped'    => $skipped,
 			'summary'    => $this->build_worktree_cleanup_summary( $candidates, $removed, $skipped, $age_filter ),
+		);
+	}
+
+	/**
+	 * Emit a bounded cleanup progress event for human CLI callers.
+	 *
+	 * @param callable|null $callback      Progress callback.
+	 * @param string        $event         Event name.
+	 * @param string        $handle        Current worktree handle.
+	 * @param int           $checked       Checked worktree count.
+	 * @param int           $total         Total worktree count.
+	 * @param array         $candidates    Candidate rows.
+	 * @param array         $skipped       Skipped rows.
+	 * @param int           $removed_count Removed count.
+	 * @param float         $started_at    Start timestamp from microtime(true).
+	 * @return void
+	 */
+	private function emit_worktree_cleanup_progress( ?callable $callback, string $event, string $handle, int $checked, int $total, array $candidates, array $skipped, int $removed_count, float $started_at ): void {
+		if ( null === $callback ) {
+			return;
+		}
+
+		$callback(
+			array(
+				'event'      => $event,
+				'handle'     => $handle,
+				'checked'    => $checked,
+				'total'      => $total,
+				'candidates' => count( $candidates ),
+				'skipped'    => count( $skipped ),
+				'removed'    => $removed_count,
+				'elapsed'    => round( max( 0, microtime( true ) - $started_at ), 1 ),
+			)
+		);
+	}
+
+	/**
+	 * Build a standard cleanup skip row for timed-out safety probes.
+	 *
+	 * @param string    $handle     Worktree handle.
+	 * @param string    $repo       Repo name.
+	 * @param string    $branch     Branch name.
+	 * @param string    $path       Worktree path.
+	 * @param mixed     $created_at Created timestamp.
+	 * @param mixed     $metadata   Worktree metadata.
+	 * @param array     $disk_fields Disk summary fields.
+	 * @param \WP_Error $error      Probe error.
+	 * @return array<string,mixed>
+	 */
+	private function build_worktree_probe_timeout_skip( string $handle, string $repo, string $branch, string $path, mixed $created_at, mixed $metadata, array $disk_fields, \WP_Error $error ): array {
+		return array_merge(
+			array(
+				'handle'      => $handle,
+				'repo'        => $repo,
+				'branch'      => $branch,
+				'path'        => $path,
+				'reason_code' => 'probe_timeout',
+				'reason'      => 'cleanup safety probe timed out - leaving in place: ' . $error->get_error_message(),
+				'created_at'  => $created_at,
+				'metadata'    => $metadata,
+			),
+			$disk_fields
 		);
 	}
 
@@ -3424,7 +3532,15 @@ class Workspace {
 				continue;
 			}
 
-			$unpushed = $this->count_unpushed_commits( $wt_path );
+			$unpushed = $this->count_unpushed_commits( $wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+			if ( is_wp_error( $unpushed ) ) {
+				$skipped[] = array_merge( $base_row, array(
+					'reason_code' => 'probe_timeout',
+					'reason'      => 'artifact cleanup safety probe timed out - leaving artifacts in place: ' . $unpushed->get_error_message(),
+					'artifacts'   => $artifacts,
+				) );
+				continue;
+			}
 			if ( $unpushed > 0 && ! $force ) {
 				$skipped[] = array_merge( $base_row, array(
 					'reason_code' => 'unpushed_commits',
@@ -4291,7 +4407,14 @@ class Workspace {
 	private function detect_merge_signal( string $primary_path, string $repo, string $branch, bool $skip_github, array &$github_cache = array() ): ?array {
 		$ref    = 'refs/heads/' . $branch;
 		$format = '%(upstream:track)';
-		$result = $this->run_git( $primary_path, sprintf( 'for-each-ref --format=%s %s', escapeshellarg( $format ), escapeshellarg( $ref ) ) );
+		$result = $this->run_git( $primary_path, sprintf( 'for-each-ref --format=%s %s', escapeshellarg( $format ), escapeshellarg( $ref ) ), self::CLEANUP_GIT_PROBE_TIMEOUT );
+
+		if ( $this->is_git_timeout_error( $result ) ) {
+			return array(
+				'signal' => 'probe-timeout',
+				'reason' => $result->get_error_message(),
+			);
+		}
 
 		if ( ! is_wp_error( $result ) ) {
 			$track = trim( (string) ( $result['output'] ?? '' ) );
@@ -4355,7 +4478,13 @@ class Workspace {
 	 * @return array{signal: string, reason: string}|null
 	 */
 	private function detect_local_merged_signal( string $primary_path, string $branch ): ?array {
-		$default_ref = $this->resolve_remote_default_ref( $primary_path );
+		$default_ref = $this->resolve_remote_default_ref( $primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( $default_ref instanceof \WP_Error ) {
+			return array(
+				'signal' => 'probe-timeout',
+				'reason' => $default_ref->get_error_message(),
+			);
+		}
 		if ( null === $default_ref ) {
 			return null;
 		}
@@ -4363,8 +4492,15 @@ class Workspace {
 		$branch_ref = 'refs/heads/' . $branch;
 		$result     = $this->run_git(
 			$primary_path,
-			sprintf( 'rev-list --count %s..%s', escapeshellarg( $default_ref ), escapeshellarg( $branch_ref ) )
+			sprintf( 'rev-list --count %s..%s', escapeshellarg( $default_ref ), escapeshellarg( $branch_ref ) ),
+			self::CLEANUP_GIT_PROBE_TIMEOUT
 		);
+		if ( $this->is_git_timeout_error( $result ) ) {
+			return array(
+				'signal' => 'probe-timeout',
+				'reason' => $result->get_error_message(),
+			);
+		}
 		if ( is_wp_error( $result ) ) {
 			return null;
 		}
@@ -4384,10 +4520,13 @@ class Workspace {
 	 * Resolve the remote default branch ref for local cleanup checks.
 	 *
 	 * @param string $primary_path Path to the primary git checkout.
-	 * @return string|null Fully-qualified remote default ref, or null when unavailable.
+	 * @return string|\WP_Error|null Fully-qualified remote default ref, timeout error, or null when unavailable.
 	 */
-	private function resolve_remote_default_ref( string $primary_path ): ?string {
-		$result = $this->run_git( $primary_path, 'symbolic-ref --quiet refs/remotes/origin/HEAD' );
+	private function resolve_remote_default_ref( string $primary_path, int $timeout_seconds = 0 ): string|\WP_Error|null {
+		$result = $this->run_git( $primary_path, 'symbolic-ref --quiet refs/remotes/origin/HEAD', $timeout_seconds );
+		if ( $this->is_git_timeout_error( $result ) ) {
+			return $result;
+		}
 		if ( is_wp_error( $result ) ) {
 			return null;
 		}
@@ -4765,11 +4904,30 @@ class Workspace {
 	 * Run a git command in a repository.
 	 *
 	 * @param string $repo_path Resolved repository path.
-	 * @param string $git_args  Git arguments (without leading "git").
+	 * @param string $git_args        Git arguments (without leading "git").
+	 * @param int    $timeout_seconds Optional timeout in seconds.
 	 * @return array
 	 */
-	private function run_git( string $repo_path, string $git_args ): array|\WP_Error {
-		return GitRunner::run( $repo_path, $git_args );
+	private function run_git( string $repo_path, string $git_args, int $timeout_seconds = 0 ): array|\WP_Error {
+		return GitRunner::run( $repo_path, $git_args, $timeout_seconds );
+	}
+
+	/**
+	 * Determine whether a git result is a timeout error.
+	 *
+	 * @param mixed $result Git result.
+	 * @return bool
+	 */
+	private function is_git_timeout_error( mixed $result ): bool {
+		if ( ! is_wp_error( $result ) ) {
+			return false;
+		}
+
+		if ( method_exists( $result, 'get_error_code' ) ) {
+			return 'git_command_timeout' === $result->get_error_code();
+		}
+
+		return isset( $result->code ) && 'git_command_timeout' === $result->code;
 	}
 
 	/**
@@ -5039,15 +5197,14 @@ class Workspace {
 	 *
 	 * Returns >0 when the worktree has unambiguously unpushed commits.
 	 *
-	 * @param string $wt_path Worktree path.
-	 * @return int Number of unpushed commits (0 when safe or indeterminate).
+	 * @param string $wt_path         Worktree path.
+	 * @param int    $timeout_seconds Optional git probe timeout in seconds.
+	 * @return int|\WP_Error Number of unpushed commits (0 when safe or indeterminate), or timeout error.
 	 */
-	private function count_unpushed_commits( string $wt_path ): int {
+	private function count_unpushed_commits( string $wt_path, int $timeout_seconds = 0 ): int|\WP_Error {
 		if ( '' === $wt_path || ! is_dir( $wt_path ) ) {
 			return 0;
 		}
-
-		$escaped = escapeshellarg( $wt_path );
 
 		// Prefer `@{push}` (respects push.default / push.remote mapping); fall
 		// back to `@{upstream}` for the common case where they're the same.
@@ -5055,15 +5212,20 @@ class Workspace {
 		// returns non-zero exit and we can't compute unpushed — treat as 0
 		// and let dirty / merge-signal checks handle it.
 		$commands = array(
-			'git -C %s rev-list --count @{push}..HEAD 2>/dev/null',
-			'git -C %s rev-list --count @{upstream}..HEAD 2>/dev/null',
+			'rev-list --count @{push}..HEAD',
+			'rev-list --count @{upstream}..HEAD',
 		);
 
-		foreach ( $commands as $template ) {
-			// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-			$output = exec( sprintf( $template, $escaped ), $_, $exit_code );
-			if ( 0 === $exit_code && '' !== $output && ctype_digit( (string) $output ) ) {
-				return (int) $output;
+		foreach ( $commands as $command ) {
+			$result = $this->run_git( $wt_path, $command, $timeout_seconds );
+			if ( $this->is_git_timeout_error( $result ) ) {
+				return $result;
+			}
+			if ( ! is_wp_error( $result ) ) {
+				$output = trim( (string) ( $result['output'] ?? '' ) );
+				if ( '' !== $output && ctype_digit( $output ) ) {
+					return (int) $output;
+				}
 			}
 		}
 
