@@ -1842,6 +1842,90 @@ class Workspace {
 	}
 
 	/**
+	 * Run age-gated workspace retention cleanup and return a compact report.
+	 *
+	 * This is the scheduled/manual orchestration layer over the lower-level
+	 * cleanup primitives: whole worktrees require a merge/finalization signal,
+	 * while reconstructable artifacts are removed from any currently safe
+	 * non-active worktree.
+	 *
+	 * @param array $opts Retention options.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function workspace_retention_cleanup( array $opts = array() ): array|\WP_Error {
+		$dry_run             = ! empty( $opts['dry_run'] );
+		$force               = ! empty( $opts['force'] );
+		$skip_github         = array_key_exists( 'skip_github', $opts ) ? (bool) $opts['skip_github'] : true;
+		$worktree_cleanup    = array_key_exists( 'worktree_cleanup', $opts ) ? (bool) $opts['worktree_cleanup'] : true;
+		$artifact_cleanup    = array_key_exists( 'artifact_cleanup', $opts ) ? (bool) $opts['artifact_cleanup'] : true;
+		$worktree_older_than = isset( $opts['worktree_older_than'] ) && '' !== trim( (string) $opts['worktree_older_than'] ) ? trim( (string) $opts['worktree_older_than'] ) : '14d';
+
+		$worktree_result = null;
+		$artifact_result = null;
+
+		if ( $worktree_cleanup ) {
+			$worktree_result = $this->worktree_cleanup_merged(
+				array(
+					'dry_run'     => $dry_run,
+					'force'       => $force,
+					'skip_github' => $skip_github,
+					'older_than'  => $worktree_older_than,
+					'sort'        => 'age',
+				)
+			);
+			if ( $worktree_result instanceof \WP_Error ) {
+				return $worktree_result;
+			}
+		}
+
+		if ( $artifact_cleanup ) {
+			$artifact_plan = $this->worktree_cleanup_artifacts(
+				array(
+					'dry_run' => true,
+					'force'   => $force,
+				)
+			);
+			if ( $artifact_plan instanceof \WP_Error ) {
+				return $artifact_plan;
+			}
+
+			$artifact_result = $artifact_plan;
+			if ( ! $dry_run && ! empty( $artifact_plan['candidates'] ) ) {
+				$artifact_result = $this->worktree_cleanup_artifacts(
+					array(
+						'apply_plan' => $artifact_plan,
+						'force'      => $force,
+					)
+				);
+				if ( $artifact_result instanceof \WP_Error ) {
+					return $artifact_result;
+				}
+			}
+		}
+
+		$report = $this->build_workspace_retention_report( $worktree_result, $artifact_result, $dry_run );
+
+		return array(
+			'success'        => true,
+			'dry_run'        => $dry_run,
+			'destructive'    => ! $dry_run,
+			'generated_at'   => gmdate( 'c' ),
+			'workspace_path' => $this->workspace_path,
+			'policy'         => array(
+				'worktree_cleanup'    => $worktree_cleanup,
+				'artifact_cleanup'    => $artifact_cleanup,
+				'worktree_older_than' => $worktree_older_than,
+				'skip_github'         => $skip_github,
+				'force'               => $force,
+			),
+			'report'         => $report,
+			'worktrees'      => $worktree_result,
+			'artifacts'      => $artifact_result,
+			'disk'           => $this->build_workspace_disk_report(),
+		);
+	}
+
+	/**
 	 * Build cheap workspace inventory rows from top-level directory names.
 	 *
 	 * This intentionally avoids `git worktree list` and per-worktree `git status`.
@@ -2122,6 +2206,81 @@ class Workspace {
 			'skipped_by_reason'    => $cleanup['summary']['skipped_by_reason'] ?? array(),
 			'candidates_by_signal' => $cleanup['summary']['candidates_by_signal'] ?? array(),
 		);
+	}
+
+	/**
+	 * Build the compact retention cleanup report used by automation surfaces.
+	 *
+	 * @param array|null $worktree_result Whole-worktree cleanup result.
+	 * @param array|null $artifact_result Artifact cleanup result.
+	 * @param bool       $dry_run         Whether the retention run was non-destructive.
+	 * @return array<string,mixed>
+	 */
+	private function build_workspace_retention_report( ?array $worktree_result, ?array $artifact_result, bool $dry_run ): array {
+		$worktree_summary = (array) ( $worktree_result['summary'] ?? array() );
+		$artifact_summary = (array) ( $artifact_result['summary'] ?? array() );
+		$disk             = $this->build_workspace_disk_report();
+
+		$removed_worktree_bytes = $this->sum_cleanup_rows_bytes( (array) ( $worktree_result['removed'] ?? array() ), 'size_bytes' );
+		$removed_artifact_bytes = (int) ( $artifact_summary['removed_size_bytes'] ?? 0 );
+		$would_free_bytes       = (int) ( $worktree_summary['total_size_bytes'] ?? 0 ) + (int) ( $artifact_summary['artifact_size_bytes'] ?? 0 );
+		$freed_bytes            = $dry_run ? 0 : $removed_worktree_bytes + $removed_artifact_bytes;
+		$skip_reasons           = array_merge_recursive(
+			(array) ( $worktree_summary['skipped_by_reason'] ?? array() ),
+			(array) ( $artifact_summary['skipped_by_reason'] ?? array() )
+		);
+		$dirty_skipped          = $this->sum_reason_count( $skip_reasons, 'dirty_worktree' );
+		$unpushed_skipped       = $this->sum_reason_count( $skip_reasons, 'unpushed_commits' );
+
+		return array(
+			'removed_count'                 => (int) ( $worktree_summary['removed'] ?? 0 ) + (int) ( $artifact_summary['removed_artifacts'] ?? 0 ),
+			'removed_worktrees'             => (int) ( $worktree_summary['removed'] ?? 0 ),
+			'removed_artifacts'             => (int) ( $artifact_summary['removed_artifacts'] ?? 0 ),
+			'would_remove_worktrees'        => (int) ( $worktree_summary['would_remove'] ?? 0 ),
+			'would_remove_artifacts'        => (int) ( $artifact_summary['would_remove_artifacts'] ?? 0 ),
+			'freed_bytes'                   => $freed_bytes,
+			'freed_human'                   => $this->format_bytes( $freed_bytes ),
+			'would_free_bytes'              => $would_free_bytes,
+			'would_free_human'              => $this->format_bytes( $would_free_bytes ),
+			'skipped_dirty_unpushed_count'  => $dirty_skipped + $unpushed_skipped,
+			'skipped_dirty_count'           => $dirty_skipped,
+			'skipped_unpushed_count'        => $unpushed_skipped,
+			'remaining_disk_budget_bytes'   => $disk['free_bytes'] ?? null,
+			'remaining_disk_budget_human'   => $disk['free_human'] ?? null,
+			'remaining_disk_budget_summary' => sprintf( '%s free', (string) ( $disk['free_human'] ?? 'unknown' ) ),
+			'worktree_skipped_by_reason'    => (array) ( $worktree_summary['skipped_by_reason'] ?? array() ),
+			'artifact_skipped_by_reason'    => (array) ( $artifact_summary['skipped_by_reason'] ?? array() ),
+		);
+	}
+
+	/**
+	 * Sum an integer field across cleanup rows.
+	 *
+	 * @param array<int,array> $rows  Cleanup rows.
+	 * @param string           $field Field to sum.
+	 * @return int
+	 */
+	private function sum_cleanup_rows_bytes( array $rows, string $field ): int {
+		$total = 0;
+		foreach ( $rows as $row ) {
+			$total += max( 0, (int) ( is_array( $row ) ? ( $row[ $field ] ?? 0 ) : 0 ) );
+		}
+		return $total;
+	}
+
+	/**
+	 * Read a reason count from a possibly merge_recursive-shaped map.
+	 *
+	 * @param array  $reasons Reason count map.
+	 * @param string $key     Reason key.
+	 * @return int
+	 */
+	private function sum_reason_count( array $reasons, string $key ): int {
+		$value = $reasons[ $key ] ?? 0;
+		if ( is_array( $value ) ) {
+			return array_sum( array_map( 'intval', $value ) );
+		}
+		return (int) $value;
 	}
 
 	/**
