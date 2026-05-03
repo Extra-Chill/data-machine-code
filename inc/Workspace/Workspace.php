@@ -44,7 +44,7 @@ class Workspace {
 	/**
 	 * Default number of workspace entries to size in hygiene reports.
 	 */
-	private const HYGIENE_DEFAULT_SIZE_LIMIT = 200;
+	private const HYGIENE_DEFAULT_SIZE_LIMIT = 1000;
 
 	/**
 	 * @var string Resolved workspace path.
@@ -1768,7 +1768,7 @@ class Workspace {
 	 *     @type bool $include_cleanup         Whether to include a cleanup dry-run. Default true.
 	 *     @type bool $include_sizes           Whether to include best-effort `du` sizes. Default true.
 	 *     @type bool $include_worktree_status Whether to include full git worktree status. Default false.
-	 *     @type int  $size_limit              Maximum top-level workspace entries to size. Default 200.
+	 *     @type int  $size_limit              Maximum top-level workspace entries to size. Default 1000.
 	 * }
 	 * @return array<string,mixed>|\WP_Error
 	 */
@@ -1863,14 +1863,16 @@ class Workspace {
 			}
 
 			$parsed      = $this->parse_handle( $entry );
-			$is_worktree = ! empty( $parsed['is_worktree'] );
+			$kind        = $this->classify_workspace_entry_kind( $entry, $parsed, $path );
+			$is_worktree = 'worktree' === $kind;
 			$metadata    = $is_worktree ? WorktreeContextInjector::get_metadata( $parsed['dir_name'] ) : null;
 
 			$rows[] = array(
 				'handle'           => $parsed['dir_name'],
 				'repo'             => $parsed['repo'],
+				'kind'             => $kind,
 				'is_worktree'      => $is_worktree,
-				'is_primary'       => ! $is_worktree,
+				'is_primary'       => 'primary' === $kind,
 				'external'         => false,
 				'branch_slug'      => $parsed['branch_slug'],
 				'path'             => $path,
@@ -1927,6 +1929,7 @@ class Workspace {
 				'handle'      => $entry,
 				'repo'        => $parsed['repo'],
 				'is_worktree' => ! empty( $parsed['is_worktree'] ),
+				'kind'        => $this->classify_workspace_entry_kind( $entry, $parsed, $path ),
 				'path'        => $path,
 				'bytes'       => $size,
 				'human'       => $this->format_bytes( $size ),
@@ -1945,6 +1948,7 @@ class Workspace {
 			'scan_complete'   => $scanned_count >= $total_dirs,
 			'total_bytes'     => $total,
 			'total_human'     => $this->format_bytes( $total ),
+			'by_kind'         => $this->workspace_size_by_kind( $rows ),
 			'entries'         => $rows,
 			'top_entries'     => array_slice( $rows, 0, 10 ),
 		);
@@ -1967,6 +1971,7 @@ class Workspace {
 			'scan_complete'   => true,
 			'total_bytes'     => 0,
 			'total_human'     => $this->format_bytes( 0 ),
+			'by_kind'         => array(),
 			'entries'         => array(),
 			'top_entries'     => array(),
 		);
@@ -2030,6 +2035,7 @@ class Workspace {
 			'total'              => count( $worktrees ),
 			'primaries'          => 0,
 			'worktrees'          => 0,
+			'artifacts'          => 0,
 			'external'           => 0,
 			'dirty'              => 0,
 			'protected_dirty'    => 0,
@@ -2040,8 +2046,10 @@ class Workspace {
 		foreach ( $worktrees as $row ) {
 			if ( ! empty( $row['is_primary'] ) ) {
 				++$summary['primaries'];
-			} else {
+			} elseif ( ! empty( $row['is_worktree'] ) ) {
 				++$summary['worktrees'];
+			} elseif ( 'artifact' === (string) ( $row['kind'] ?? '' ) ) {
+				++$summary['artifacts'];
 			}
 
 			if ( ! empty( $row['external'] ) ) {
@@ -2125,7 +2133,7 @@ class Workspace {
 	private function top_repos_by_worktree_count( array $worktrees, int $limit ): array {
 		$counts = array();
 		foreach ( $worktrees as $row ) {
-			if ( ! empty( $row['is_primary'] ) ) {
+			if ( empty( $row['is_worktree'] ) ) {
 				continue;
 			}
 			$repo = (string) ( $row['repo'] ?? '' );
@@ -2173,6 +2181,66 @@ class Workspace {
 			);
 		}
 		return $rows;
+	}
+
+	/**
+	 * Sum best-effort size rows by top-level workspace entry kind.
+	 *
+	 * @param array<int,array> $entries Size rows.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function workspace_size_by_kind( array $entries ): array {
+		$sizes = array(
+			'primary'  => 0,
+			'worktree' => 0,
+			'artifact' => 0,
+			'other'    => 0,
+		);
+
+		foreach ( $entries as $entry ) {
+			$kind = (string) ( $entry['kind'] ?? 'other' );
+			if ( ! array_key_exists( $kind, $sizes ) ) {
+				$kind = 'other';
+			}
+			$sizes[ $kind ] += (int) ( $entry['bytes'] ?? 0 );
+		}
+
+		$rows = array();
+		foreach ( $sizes as $kind => $bytes ) {
+			$rows[] = array(
+				'kind'  => $kind,
+				'bytes' => (int) $bytes,
+				'human' => $this->format_bytes( (int) $bytes ),
+			);
+		}
+
+		usort( $rows, fn( $a, $b ) => (int) $b['bytes'] <=> (int) $a['bytes'] );
+		return $rows;
+	}
+
+	/**
+	 * Classify a top-level workspace directory without probing git state.
+	 *
+	 * @param string $entry  Directory basename.
+	 * @param array  $parsed Parsed workspace handle.
+	 * @param string $path   Top-level directory path.
+	 * @return string
+	 */
+	private function classify_workspace_entry_kind( string $entry, array $parsed, string $path ): string {
+		if ( ! empty( $parsed['is_worktree'] ) ) {
+			return 'worktree';
+		}
+
+		if ( is_dir( rtrim( $path, '/' ) . '/.git' ) ) {
+			return 'primary';
+		}
+
+		$artifact_names = array( '.cache', '.composer', '.npm', '.pnpm-store', '.tmp', 'artifacts', 'cache', 'tmp' );
+		if ( in_array( strtolower( $entry ), $artifact_names, true ) ) {
+			return 'artifact';
+		}
+
+		return '' !== (string) ( $parsed['repo'] ?? '' ) ? 'primary' : 'other';
 	}
 
 	/**
@@ -3240,7 +3308,7 @@ class Workspace {
 		$skipped    = array();
 
 		foreach ( $this->build_workspace_inventory_rows() as $wt ) {
-			if ( ! empty( $wt['is_primary'] ) ) {
+			if ( empty( $wt['is_worktree'] ) ) {
 				continue;
 			}
 

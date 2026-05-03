@@ -74,13 +74,19 @@ namespace {
 				'mode_note'       => 'Workspace size is best-effort.',
 				'total_human'     => '712.6 GiB',
 				'scan_complete'   => true,
-				'top_entries'     => array(),
+				'by_kind'         => array(
+					array( 'kind' => 'worktree', 'bytes' => 4096, 'human' => '4.0 KiB' ),
+				),
+				'top_entries'     => array(
+					array( 'handle' => 'data-machine@big', 'kind' => 'worktree', 'repo' => 'data-machine', 'bytes' => 4096, 'human' => '4.0 KiB' ),
+				),
 			),
 			'disk'                      => array(
 				'free_human' => '1.1 GiB',
 			),
 			'worktrees'                 => array(
 				'worktrees'          => 42,
+				'artifacts'          => 1,
 				'protected_dirty'    => 3,
 				'protected_unpushed' => 2,
 				'missing_metadata'   => 4,
@@ -145,7 +151,9 @@ namespace {
 	$GLOBALS['__cli_logs'] = array();
 	$command->hygiene( array(), array() );
 	datamachine_code_hygiene_assert( 'Workspace hygiene:' === ( $GLOBALS['__cli_logs'][0] ?? '' ), 'human output starts with report heading' );
-	datamachine_code_hygiene_assert( in_array( 'table:12:metric,value', $GLOBALS['__cli_logs'], true ), 'human output renders summary table' );
+	datamachine_code_hygiene_assert( in_array( 'table:13:metric,value', $GLOBALS['__cli_logs'], true ), 'human output renders summary table' );
+	datamachine_code_hygiene_assert( in_array( 'Workspace size by kind:', $GLOBALS['__cli_logs'], true ), 'human output renders size kind grouping' );
+	datamachine_code_hygiene_assert( in_array( 'Top workspace entries by size:', $GLOBALS['__cli_logs'], true ), 'human output renders top offenders' );
 	datamachine_code_hygiene_assert( in_array( 'Top repos by size:', $GLOBALS['__cli_logs'], true ), 'human output renders size leaders' );
 	datamachine_code_hygiene_assert( in_array( 'Top repos by worktree count:', $GLOBALS['__cli_logs'], true ), 'human output renders worktree-count leaders' );
 	datamachine_code_hygiene_assert( in_array( 'Cleanup candidates:', $GLOBALS['__cli_logs'], true ), 'human output renders cleanup candidates' );

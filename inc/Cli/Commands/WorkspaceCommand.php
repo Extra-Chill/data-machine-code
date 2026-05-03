@@ -316,7 +316,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--size-limit=<count>]
 	 * : Maximum top-level workspace entries to size.
 	 * ---
-	 * default: 200
+	 * default: 1000
 	 * ---
 	 *
 	 * ## EXAMPLES
@@ -1648,6 +1648,10 @@ class WorkspaceCommand extends BaseCommand {
 					'value'  => (string) ( $worktrees['worktrees'] ?? 0 ),
 				),
 				array(
+					'metric' => 'artifact_dirs',
+					'value'  => (string) ( $worktrees['artifacts'] ?? 0 ),
+				),
+				array(
 					'metric' => 'dirty_protected',
 					'value'  => (string) ( $worktrees['protected_dirty'] ?? 0 ),
 				),
@@ -1674,6 +1678,47 @@ class WorkspaceCommand extends BaseCommand {
 		);
 
 		$top_size = array_slice( (array) ( $report['top_repos_by_size'] ?? array() ), 0, 10 );
+		$by_kind  = array_slice( (array) ( $size['by_kind'] ?? array() ), 0, 10 );
+		$entries  = array_slice( (array) ( $size['top_entries'] ?? array() ), 0, 10 );
+
+		if ( array() !== $by_kind ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Workspace size by kind:' );
+			$this->format_items(
+				array_map(
+					fn( $row ) => array(
+						'kind'  => $row['kind'] ?? '',
+						'size'  => $row['human'] ?? '',
+						'bytes' => $row['bytes'] ?? 0,
+					),
+					$by_kind
+				),
+				array( 'kind', 'size', 'bytes' ),
+				array( 'format' => 'table' ),
+				'bytes'
+			);
+		}
+
+		if ( array() !== $entries ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Top workspace entries by size:' );
+			$this->format_items(
+				array_map(
+					fn( $row ) => array(
+						'handle' => $row['handle'] ?? '',
+						'kind'   => $row['kind'] ?? '',
+						'repo'   => $row['repo'] ?? '',
+						'size'   => $row['human'] ?? '',
+						'bytes'  => $row['bytes'] ?? 0,
+					),
+					$entries
+				),
+				array( 'handle', 'kind', 'repo', 'size', 'bytes' ),
+				array( 'format' => 'table' ),
+				'bytes'
+			);
+		}
+
 		if ( array() !== $top_size ) {
 			WP_CLI::log( '' );
 			WP_CLI::log( 'Top repos by size:' );
