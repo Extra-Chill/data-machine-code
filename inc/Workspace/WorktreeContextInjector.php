@@ -94,8 +94,11 @@ class WorktreeContextInjector {
 		$agent     = self::resolve_origin_agent();
 		$session   = self::resolve_origin_session();
 
+		$created_at = gmdate( 'c' );
+
 		$metadata = array(
-			'created_at'       => gmdate( 'c' ),
+			'created_at'       => $created_at,
+			'observed_at'      => $created_at,
 			'lifecycle_state'  => self::STATE_ACTIVE,
 			'handle'           => isset( $args['handle'] ) && '' !== (string) $args['handle'] ? (string) $args['handle'] : null,
 			'path'             => isset( $args['path'] ) && '' !== (string) $args['path'] ? (string) $args['path'] : null,

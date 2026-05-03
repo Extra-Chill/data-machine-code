@@ -2755,6 +2755,8 @@ class Workspace {
 			}
 		}
 
+		$classified_skips = $this->classify_worktree_metadata_reconciliation_skips( $skipped );
+
 		return array(
 			'success'        => true,
 			'dry_run'        => true,
@@ -2762,8 +2764,11 @@ class Workspace {
 			'generated_at'   => gmdate( 'c' ),
 			'workspace_path' => $this->workspace_path,
 			'proposals'      => $proposals,
+			'repaired'       => array(),
 			'written'        => array(),
 			'skipped'        => $skipped,
+			'still_unsafe'      => $classified_skips['still_unsafe'],
+			'external_worktrees' => $classified_skips['external_worktrees'],
 			'summary'        => $this->build_worktree_metadata_reconciliation_summary( count( (array) ( $listing['worktrees'] ?? array() ) ), $proposals, array(), $skipped ),
 		);
 	}
@@ -2839,6 +2844,19 @@ class Workspace {
 		$this->set_reconciled_metadata_field( $proposed, $source_map, 'repo', $repo, 'filesystem' );
 		$this->set_reconciled_metadata_field( $proposed, $source_map, 'branch', $branch, 'git' );
 		$this->set_reconciled_metadata_field( $proposed, $source_map, 'path', $path, 'git' );
+		$this->set_reconciled_metadata_field( $proposed, $source_map, 'observed_at', gmdate( 'c' ), 'reconcile_run' );
+
+		$origin_site_name = function_exists( 'get_bloginfo' ) ? (string) get_bloginfo( 'name' ) : '';
+		$origin_site_url  = function_exists( 'home_url' ) ? (string) home_url() : '';
+		if ( empty( $proposed['origin_site'] ) ) {
+			$this->set_reconciled_metadata_field( $proposed, $source_map, 'origin_site', '' !== $origin_site_name ? $origin_site_name : $origin_site_url, 'current_site' );
+		}
+		if ( empty( $proposed['origin_site_name'] ) ) {
+			$this->set_reconciled_metadata_field( $proposed, $source_map, 'origin_site_name', $origin_site_name, 'current_site' );
+		}
+		if ( empty( $proposed['origin_site_url'] ) ) {
+			$this->set_reconciled_metadata_field( $proposed, $source_map, 'origin_site_url', $origin_site_url, 'current_site' );
+		}
 
 		$created_source = '';
 		$created_at     = '';
@@ -2860,12 +2878,18 @@ class Workspace {
 			$this->set_reconciled_metadata_field( $proposed, $source_map, 'created_at', $created_at, $created_source );
 		}
 
+		$invalid_fields = array();
 		$existing_state = isset( $metadata['lifecycle_state'] ) ? WorktreeContextInjector::normalize_state( (string) $metadata['lifecycle_state'] ) : null;
+		$raw_state      = isset( $metadata['lifecycle_state'] ) ? (string) $metadata['lifecycle_state'] : '';
+		if ( '' !== $raw_state && null === $existing_state ) {
+			$invalid_fields[] = 'lifecycle_state';
+		}
 		if ( null !== $existing_state ) {
 			$this->set_reconciled_metadata_field( $proposed, $source_map, 'lifecycle_state', $existing_state, 'metadata' );
 		} else {
 			$this->set_reconciled_metadata_field( $proposed, $source_map, 'lifecycle_state', WorktreeContextInjector::STATE_ACTIVE, 'operator_plan' );
 		}
+		$proposed['metadata_repaired'] = true;
 
 		$missing_after = array_values( array_filter( array(
 			empty( $proposed['created_at'] ) ? 'created_at' : '',
@@ -2885,13 +2909,13 @@ class Workspace {
 		}
 
 		$metadata_missing = array();
-		foreach ( array( 'handle', 'repo', 'branch', 'path', 'created_at', 'lifecycle_state' ) as $field ) {
+		foreach ( array( 'handle', 'repo', 'branch', 'path', 'created_at', 'observed_at', 'lifecycle_state' ) as $field ) {
 			if ( ! array_key_exists( $field, $metadata ) || '' === (string) $metadata[ $field ] ) {
 				$metadata_missing[] = $field;
 			}
 		}
 
-		if ( array() === $metadata_missing ) {
+		if ( array() === $metadata_missing && array() === $invalid_fields ) {
 			return array();
 		}
 
@@ -2904,6 +2928,7 @@ class Workspace {
 					'dirty'             => (int) ( $wt['dirty'] ?? 0 ),
 					'unpushed'          => $this->count_unpushed_commits( $path ),
 					'missing_fields'    => $metadata_missing,
+					'invalid_fields'    => $invalid_fields,
 					'proposed_metadata' => $proposed,
 					'source_map'        => $source_map,
 				)
@@ -2992,7 +3017,7 @@ class Workspace {
 				}
 			}
 
-			foreach ( array( 'handle', 'repo', 'branch', 'path', 'created_at', 'lifecycle_state' ) as $field ) {
+			foreach ( array( 'handle', 'repo', 'branch', 'path', 'created_at', 'observed_at', 'lifecycle_state' ) as $field ) {
 				if ( ! isset( $source_map[ $field ] ) || '' === (string) $source_map[ $field ] ) {
 					$skipped[] = $this->build_reconcile_apply_skip( $row, $current, 'missing_source_map', sprintf( 'proposed field %s is missing a source', $field ) );
 					continue 2;
@@ -3012,6 +3037,8 @@ class Workspace {
 			);
 		}
 
+		$classified_skips = $this->classify_worktree_metadata_reconciliation_skips( $skipped );
+
 		return array(
 			'success'        => true,
 			'dry_run'        => false,
@@ -3019,9 +3046,38 @@ class Workspace {
 			'generated_at'   => gmdate( 'c' ),
 			'workspace_path' => $this->workspace_path,
 			'proposals'      => $planned,
+			'repaired'       => $written,
 			'written'        => $written,
 			'skipped'        => $skipped,
+			'still_unsafe'      => $classified_skips['still_unsafe'],
+			'external_worktrees' => $classified_skips['external_worktrees'],
 			'summary'        => $this->build_worktree_metadata_reconciliation_summary( count( (array) ( $listing['worktrees'] ?? array() ) ), $planned, $written, $skipped ),
+		);
+	}
+
+	/**
+	 * Split reconciliation skips into stable operator-facing buckets.
+	 *
+	 * @param array<int,array<string,mixed>> $skipped Skipped rows.
+	 * @return array{still_unsafe:array<int,array<string,mixed>>,external_worktrees:array<int,array<string,mixed>>}
+	 */
+	private function classify_worktree_metadata_reconciliation_skips( array $skipped ): array {
+		$still_unsafe       = array();
+		$external_worktrees = array();
+
+		foreach ( $skipped as $row ) {
+			$reason_code = (string) ( $row['reason_code'] ?? '' );
+			if ( 'external_worktree' === $reason_code ) {
+				$external_worktrees[] = $row;
+			}
+			if ( in_array( $reason_code, array( 'unsafe_cleanup_eligible_state', 'plan_identity_mismatch', 'plan_not_current' ), true ) ) {
+				$still_unsafe[] = $row;
+			}
+		}
+
+		return array(
+			'still_unsafe'      => $still_unsafe,
+			'external_worktrees' => $external_worktrees,
 		);
 	}
 
@@ -3097,10 +3153,18 @@ class Workspace {
 		}
 		ksort( $states );
 
+		$repaired_metadata = 0;
+		foreach ( $written as $row ) {
+			if ( ! empty( $row['metadata']['metadata_repaired'] ) ) {
+				++$repaired_metadata;
+			}
+		}
+
 		return array(
 			'inspected'         => $inspected,
 			'proposed'          => count( $proposals ),
 			'written'           => count( $written ),
+			'repaired'          => $repaired_metadata,
 			'skipped'           => count( $skipped ),
 			'skipped_by_reason' => $skipped_by_reason,
 			'proposed_by_state' => $states,
@@ -3269,10 +3333,12 @@ class Workspace {
 			}
 
 			if ( WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE !== ( $metadata['lifecycle_state'] ?? null ) ) {
+				$repaired = ! empty( $metadata['metadata_repaired'] );
 				$skipped[] = array_merge( $base_row, array(
-					'reason_code' => 'no_inventory_cleanup_signal',
-					'reason'      => 'no explicit inventory cleanup signal — leaving in place',
-					'hint'        => 'Mark the worktree cleanup-eligible after review, or run full cleanup to detect merge signals.',
+					'reason_code'   => $repaired ? 'missing_metadata_repaired' : 'no_inventory_cleanup_signal',
+					'reason'        => $repaired ? 'legacy metadata was repaired conservatively; no cleanup signal yet' : 'no explicit inventory cleanup signal — leaving in place',
+					'repair_status' => $repaired ? 'missing_metadata_repaired' : null,
+					'hint'          => 'Mark the worktree cleanup-eligible after review, or run full cleanup to detect merge signals.',
 				) );
 				continue;
 			}
@@ -3721,6 +3787,7 @@ class Workspace {
 	private function build_worktree_cleanup_summary( array $candidates, array $removed, array $skipped, ?array $age_filter = null ): array {
 		$skipped_by_reason    = array();
 		$candidates_by_signal = array();
+		$repair_status_counts = array();
 		$size_by_repo         = array();
 		$artifact_by_repo     = array();
 		$total_size_bytes     = 0;
@@ -3741,6 +3808,11 @@ class Workspace {
 			$repo           = (string) ( $row['repo'] ?? 'unknown' );
 			$size_bytes     = isset( $row['size_bytes'] ) ? (int) $row['size_bytes'] : 0;
 			$artifact_bytes = isset( $row['artifact_size_bytes'] ) ? (int) $row['artifact_size_bytes'] : 0;
+			$repair_status  = (string) ( $row['repair_status'] ?? '' );
+
+			if ( '' !== $repair_status ) {
+				$repair_status_counts[ $repair_status ] = ( $repair_status_counts[ $repair_status ] ?? 0 ) + 1;
+			}
 
 			if ( $size_bytes > 0 ) {
 				$size_by_repo[ $repo ] = ( $size_by_repo[ $repo ] ?? 0 ) + $size_bytes;
@@ -3754,6 +3826,7 @@ class Workspace {
 
 		ksort( $skipped_by_reason );
 		ksort( $candidates_by_signal );
+		ksort( $repair_status_counts );
 		arsort( $size_by_repo );
 		arsort( $artifact_by_repo );
 
@@ -3763,6 +3836,7 @@ class Workspace {
 			'skipped'               => count( $skipped ),
 			'skipped_by_reason'     => $skipped_by_reason,
 			'candidates_by_signal'  => $candidates_by_signal,
+			'repair_status'         => $repair_status_counts,
 			'total_size_bytes'      => $total_size_bytes,
 			'artifact_size_bytes'   => $total_artifact_bytes,
 			'size_by_repo'          => $size_by_repo,

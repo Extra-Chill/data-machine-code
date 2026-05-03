@@ -1909,12 +1909,15 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$summary   = (array) ( $result['summary'] ?? array() );
-		$proposals = (array) ( $result['proposals'] ?? array() );
-		$written   = (array) ( $result['written'] ?? array() );
-		$skipped   = (array) ( $result['skipped'] ?? array() );
-		$verbose   = ! empty( $assoc_args['verbose'] );
-		$limit     = $verbose ? PHP_INT_MAX : 10;
+		$summary            = (array) ( $result['summary'] ?? array() );
+		$proposals          = (array) ( $result['proposals'] ?? array() );
+		$repaired           = (array) ( $result['repaired'] ?? array() );
+		$written            = (array) ( $result['written'] ?? array() );
+		$skipped            = (array) ( $result['skipped'] ?? array() );
+		$still_unsafe      = (array) ( $result['still_unsafe'] ?? array() );
+		$external_worktrees = (array) ( $result['external_worktrees'] ?? array() );
+		$verbose            = ! empty( $assoc_args['verbose'] );
+		$limit              = $verbose ? PHP_INT_MAX : 10;
 
 		WP_CLI::log( 'Summary:' );
 		$summary_rows = array(
@@ -1929,6 +1932,10 @@ class WorkspaceCommand extends BaseCommand {
 			array(
 				'metric' => 'written',
 				'count'  => (int) ( $summary['written'] ?? count( $written ) ),
+			),
+			array(
+				'metric' => 'repaired',
+				'count'  => (int) ( $summary['repaired'] ?? count( $repaired ) ),
 			),
 			array(
 				'metric' => 'skipped',
@@ -1969,17 +1976,49 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( ! empty( $written ) ) {
 			WP_CLI::log( '' );
-			WP_CLI::log( 'Written:' );
+			WP_CLI::log( 'Repaired:' );
 			$written_rows = array_map(
 				fn( $row ) => array(
-					'handle' => $row['handle'] ?? '',
-					'branch' => $row['branch'] ?? '',
-					'state'  => $row['metadata']['lifecycle_state'] ?? '',
+					'handle'      => $row['handle'] ?? '',
+					'branch'      => $row['branch'] ?? '',
+					'state'       => $row['metadata']['lifecycle_state'] ?? '',
+					'observed_at' => $row['metadata']['observed_at'] ?? '',
 				),
 				array_slice( $written, 0, $limit )
 			);
-			$this->format_items( $written_rows, array( 'handle', 'branch', 'state' ), array( 'format' => 'table' ), 'handle' );
+			$this->format_items( $written_rows, array( 'handle', 'branch', 'state', 'observed_at' ), array( 'format' => 'table' ), 'handle' );
 			$this->render_cleanup_truncation_hint( count( $written ), $limit, 'written rows' );
+		}
+
+		if ( ! empty( $still_unsafe ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Still unsafe:' );
+			$unsafe_rows = array_map(
+				fn( $row ) => array(
+					'handle'      => $row['handle'] ?? '',
+					'reason_code' => $row['reason_code'] ?? '',
+					'reason'      => $verbose ? ( $row['reason'] ?? '' ) : $this->shorten_cleanup_reason( (string) ( $row['reason'] ?? '' ) ),
+				),
+				array_slice( $still_unsafe, 0, $limit )
+			);
+			$this->format_items( $unsafe_rows, array( 'handle', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle' );
+			$this->render_cleanup_truncation_hint( count( $still_unsafe ), $limit, 'still-unsafe rows' );
+		}
+
+		if ( ! empty( $external_worktrees ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'External worktrees:' );
+			$external_rows = array_map(
+				fn( $row ) => array(
+					'handle' => $row['handle'] ?? '',
+					'repo'   => $row['repo'] ?? '',
+					'branch' => $row['branch'] ?? '',
+					'path'   => $row['path'] ?? '',
+				),
+				array_slice( $external_worktrees, 0, $limit )
+			);
+			$this->format_items( $external_rows, array( 'handle', 'repo', 'branch', 'path' ), array( 'format' => 'table' ), 'handle' );
+			$this->render_cleanup_truncation_hint( count( $external_worktrees ), $limit, 'external worktree rows' );
 		}
 
 		if ( ! empty( $skipped ) ) {
