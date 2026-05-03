@@ -1998,7 +1998,7 @@ class WorkspaceCommand extends BaseCommand {
 			sprintf(
 				'Cleanup progress: %s%s checked=%d/%d candidates=%d skipped=%d removed=%d elapsed=%.1fs',
 				$label,
-				'' !== (string) ( $event['handle'] ?? '' ) ? ' handle=' . (string) $event['handle'] : '',
+				(string) ( $event['handle'] ?? '' ) !== '' ? ' handle=' . (string) $event['handle'] : '',
 				(int) ( $event['checked'] ?? 0 ),
 				(int) ( $event['total'] ?? 0 ),
 				(int) ( $event['candidates'] ?? 0 ),

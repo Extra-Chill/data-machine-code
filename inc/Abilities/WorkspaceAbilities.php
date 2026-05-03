@@ -1067,7 +1067,7 @@ class WorkspaceAbilities {
 								'type'  => 'array',
 								'items' => array(
 									'type'       => 'object',
-										'properties' => array(
+									'properties' => array(
 										'handle'          => array( 'type' => 'string' ),
 										'repo'            => array( 'type' => 'string' ),
 										'is_worktree'     => array( 'type' => 'boolean' ),
