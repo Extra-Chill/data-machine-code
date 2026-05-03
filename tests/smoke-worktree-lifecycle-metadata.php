@@ -237,11 +237,13 @@ namespace {
 
 	$finalized = $ws->worktree_finalize( 'demo@feature-metadata', 'pr_opened', 'https://github.com/acme/demo/pull/123' );
 	$assert( true, ! is_wp_error( $finalized ) && ( $finalized['success'] ?? false ), 'worktree_finalize succeeds with PR URL' );
-	$assert( 'pr_opened', $finalized['lifecycle_state'] ?? null, 'finalizer stores pr_opened state' );
+	$assert( 'cleanup_eligible', $finalized['lifecycle_state'] ?? null, 'PR finalizer safely transitions lifecycle state to cleanup_eligible' );
+	$assert( 'pr_opened', $finalized['metadata']['finalized_state'] ?? null, 'PR finalizer preserves requested finalizer state' );
+	$assert( true, isset( $finalized['metadata']['cleanup_eligible_at'] ), 'PR finalizer records cleanup eligibility timestamp' );
 	$assert( 123, $finalized['metadata']['pr_number'] ?? null, 'finalizer extracts PR number' );
 	$assert( 'https://github.com/acme/demo/pull/123', $finalized['metadata']['pr_url'] ?? null, 'finalizer stores normalized PR URL' );
 
-	$filtered = $ws->worktree_list( 'demo', 'pr_opened' );
+	$filtered = $ws->worktree_list( 'demo', 'cleanup_eligible' );
 	$filtered_items = array_values( array_filter( $filtered['worktrees'] ?? array(), fn( $wt ) => ( $wt['handle'] ?? '' ) === 'demo@feature-metadata' ) );
 	$assert( 1, count( $filtered_items ), 'worktree_list can filter by lifecycle state' );
 
@@ -250,6 +252,11 @@ namespace {
 
 	$eligible = $ws->worktree_finalize( 'demo@feature-metadata', 'cleanup_eligible' );
 	$assert( true, ! is_wp_error( $eligible ) && ( $eligible['success'] ?? false ), 'worktree can be marked cleanup_eligible' );
+
+	$merged = $ws->worktree_finalize( 'demo@feature-metadata', 'merged' );
+	$assert( true, ! is_wp_error( $merged ) && ( $merged['success'] ?? false ), 'merged finalizer succeeds' );
+	$assert( 'cleanup_eligible', $merged['lifecycle_state'] ?? null, 'merged finalizer safely transitions lifecycle state to cleanup_eligible' );
+	$assert( 'merged', $merged['metadata']['finalized_state'] ?? null, 'merged finalizer preserves requested finalizer state' );
 
 	$result_old = $ws->worktree_add( 'demo', 'feature/old-record', 'HEAD', false, false, true, false );
 	$assert( true, ! is_wp_error( $result_old ) && ( $result_old['success'] ?? false ), 'second worktree_add succeeds' );

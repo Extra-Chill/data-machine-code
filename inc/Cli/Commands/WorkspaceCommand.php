@@ -1219,6 +1219,16 @@ class WorkspaceCommand extends BaseCommand {
 	 *   candidates, would-remove, would_remove, removed, no_merge_signal, dirty_worktree,
 	 *   unpushed_commits, missing_metadata, external_worktree, age_filter, unknown_age.
 	 *
+	 * [--pr=<url-or-number>]
+	 * : Pull request URL or number for `finalize` or `mark-cleanup-eligible`
+	 *   metadata. Supplying `--pr` to `finalize` defaults the requested finalizer
+	 *   state to `pr_opened` and records the worktree as cleanup-eligible.
+	 *
+	 * [--state=<state>]
+	 * : Requested lifecycle state for `finalize`. Defaults to `pr_opened` when
+	 *   `--pr` is supplied, otherwise `active`. PR/completed states are safely
+	 *   transitioned to cleanup eligibility metadata.
+	 *
 	 * [--format=<format>]
 	 * : Output format for list and cleanup (table, json, csv, yaml).
 	 *

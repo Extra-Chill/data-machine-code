@@ -156,7 +156,70 @@ class WorktreeContextInjector {
 			$metadata = array_merge( $metadata, $pr_metadata );
 		}
 
+		if ( self::should_mark_cleanup_eligible( $normalized, $pr_metadata ) ) {
+			$metadata['finalized_state']     = $normalized;
+			$metadata['lifecycle_state']     = self::STATE_CLEANUP_ELIGIBLE;
+			$metadata['cleanup_eligible_at'] = $metadata['finalized_at'];
+		}
+
 		return $metadata;
+	}
+
+	/**
+	 * Determine whether a finalizer transition is safe to expose as a cleanup signal.
+	 *
+	 * @param string              $state       Normalized requested lifecycle state.
+	 * @param array<string,mixed> $pr_metadata Parsed PR metadata.
+	 * @return bool
+	 */
+	private static function should_mark_cleanup_eligible( string $state, array $pr_metadata ): bool {
+		if ( self::STATE_CLEANUP_ELIGIBLE === $state ) {
+			return true;
+		}
+
+		if ( in_array( $state, array( self::STATE_MERGED, self::STATE_CLOSED, self::STATE_ABANDONED ), true ) ) {
+			return true;
+		}
+
+		return self::STATE_PR_OPENED === $state && ! empty( $pr_metadata );
+	}
+
+	/**
+	 * Determine whether persisted lifecycle metadata exposes a cleanup signal.
+	 *
+	 * This accepts both current records (`lifecycle_state=cleanup_eligible`) and
+	 * older PR-finalized records that were stored before the cleanup transition
+	 * was automatic.
+	 *
+	 * @param array<string,mixed> $metadata Worktree lifecycle metadata.
+	 * @return bool
+	 */
+	public static function has_cleanup_signal( array $metadata ): bool {
+		$state = isset( $metadata['lifecycle_state'] ) ? self::normalize_state( (string) $metadata['lifecycle_state'] ) : null;
+		if ( null !== $state && self::should_mark_cleanup_eligible( $state, self::extract_pr_metadata( $metadata ) ) ) {
+			return true;
+		}
+
+		$finalized_state = isset( $metadata['finalized_state'] ) ? self::normalize_state( (string) $metadata['finalized_state'] ) : null;
+		return null !== $finalized_state && self::should_mark_cleanup_eligible( $finalized_state, self::extract_pr_metadata( $metadata ) );
+	}
+
+	/**
+	 * Extract PR-like fields from a persisted metadata record.
+	 *
+	 * @param array<string,mixed> $metadata Worktree lifecycle metadata.
+	 * @return array<string,mixed>
+	 */
+	private static function extract_pr_metadata( array $metadata ): array {
+		return array_filter(
+			array(
+				'pr_ref'    => $metadata['pr_ref'] ?? null,
+				'pr_url'    => $metadata['pr_url'] ?? null,
+				'pr_number' => $metadata['pr_number'] ?? null,
+				'pr_repo'   => $metadata['pr_repo'] ?? null,
+			),
+			fn( $value ) => null !== $value && '' !== $value
+		);
 	}
 
 	/**

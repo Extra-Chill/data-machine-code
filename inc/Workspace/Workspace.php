@@ -2790,10 +2790,10 @@ class Workspace {
 			}
 
 			$signal = null;
-			if ( is_array( $metadata ) && WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE === ( $metadata['lifecycle_state'] ?? null ) ) {
+			if ( is_array( $metadata ) && WorktreeContextInjector::has_cleanup_signal( $metadata ) ) {
 				$signal = array(
 					'signal' => 'cleanup_eligible',
-					'reason' => 'worktree explicitly marked cleanup_eligible',
+					'reason' => 'worktree finalized or explicitly marked cleanup_eligible',
 				);
 				if ( ! empty( $metadata['pr_url'] ) ) {
 					$signal['pr_url'] = (string) $metadata['pr_url'];
@@ -4064,7 +4064,7 @@ class Workspace {
 				continue;
 			}
 
-			if ( WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE !== ( $metadata['lifecycle_state'] ?? null ) ) {
+			if ( ! WorktreeContextInjector::has_cleanup_signal( $metadata ) ) {
 				$repaired = ! empty( $metadata['metadata_repaired'] );
 				$skipped[] = array_merge( $base_row, array(
 					'reason_code'   => $repaired ? 'missing_metadata_repaired' : 'no_inventory_cleanup_signal',
@@ -4114,7 +4114,7 @@ class Workspace {
 				'dirty'       => 0,
 				'signal'      => 'cleanup_eligible',
 				'reason_code' => 'cleanup_eligible',
-				'reason'      => 'worktree explicitly marked cleanup_eligible',
+				'reason'      => 'worktree finalized or explicitly marked cleanup_eligible',
 				'pr_url'      => $metadata['pr_url'] ?? null,
 			) );
 			if ( null !== $age_filter && is_string( $created_at ) && '' !== $created_at ) {
