@@ -194,6 +194,52 @@ namespace {
 		}
 	}
 
+	class FakeEmergencyCleanupAbility {
+		public array $last_input = array();
+
+		public function execute( array $input ): array {
+			$this->last_input = $input;
+			return array(
+				'success'             => true,
+				'mode'                => 'emergency',
+				'dry_run'             => empty( $input['apply_plan'] ),
+				'artifact_candidates' => array(
+					array(
+						'handle'    => 'repo@old',
+						'repo'      => 'repo',
+						'branch'    => 'old',
+						'path'      => '/workspace/repo@old',
+						'artifacts' => array( array( 'path' => 'target', 'size_bytes' => 1024 ) ),
+					),
+				),
+				'worktree_candidates' => array(
+					array(
+						'handle'      => 'repo@eligible',
+						'repo'        => 'repo',
+						'branch'      => 'eligible',
+						'path'        => '/workspace/repo@eligible',
+						'age_days'    => 90,
+						'size_bytes'  => 4096,
+						'signal'      => 'cleanup_eligible',
+						'reason_code' => 'cleanup_eligible',
+					),
+				),
+				'removed_artifacts'   => empty( $input['apply_plan'] ) ? array() : array( array( 'handle' => 'repo@old', 'repo' => 'repo', 'branch' => 'old', 'path' => '/workspace/repo@old', 'artifacts' => array( array( 'path' => 'target', 'size_bytes' => 1024 ) ) ) ),
+				'removed_worktrees'   => array(),
+				'skipped'             => array(),
+				'summary'             => array(
+					'would_remove_artifacts' => 1,
+					'would_remove_worktrees' => 1,
+					'removed_artifacts'      => empty( $input['apply_plan'] ) ? 0 : 1,
+					'removed_worktrees'      => 0,
+					'skipped'                => 0,
+					'artifact_size_bytes'    => 1024,
+					'worktree_size_bytes'    => 4096,
+				),
+			);
+		}
+	}
+
 	class FakeListAbility {
 		public function execute( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 			return array(
@@ -246,10 +292,12 @@ namespace {
 
 	$ability = new FakeCleanupAbility();
 	$artifact_ability = new FakeArtifactCleanupAbility();
+	$emergency_ability = new FakeEmergencyCleanupAbility();
 	$list_ability = new FakeListAbility();
 	$GLOBALS['__abilities'] = array(
 		'datamachine/workspace-worktree-cleanup'           => $ability,
 		'datamachine/workspace-worktree-cleanup-artifacts' => $artifact_ability,
+		'datamachine/workspace-worktree-emergency-cleanup' => $emergency_ability,
 		'datamachine/workspace-worktree-list'              => $list_ability,
 	);
 	$command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
@@ -361,6 +409,26 @@ namespace {
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'inventory-only' => true, 'skip-github' => true, 'format' => 'json' ) );
 	datamachine_code_cleanup_assert( true === ( $ability->last_input['inventory_only'] ?? null ), '--inventory-only forwards to cleanup ability' );
+
+	echo "\n[8b] emergency-cleanup emits fast plan and apply-plan path\n";
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree( array( 'emergency-cleanup' ), array( 'format' => 'json' ) );
+	datamachine_code_cleanup_assert( array( 'dry_run' => true, 'force' => false ) === $emergency_ability->last_input, 'emergency-cleanup defaults to dry-run and no force' );
+	$emergency_json = json_decode( WP_CLI::$logs[0] ?? '', true );
+	datamachine_code_cleanup_assert( 'emergency' === ( $emergency_json['mode'] ?? '' ), 'emergency-cleanup JSON includes mode' );
+	datamachine_code_cleanup_assert( 'target' === ( $emergency_json['artifact_candidates'][0]['artifacts'][0]['path'] ?? '' ), 'emergency-cleanup JSON includes artifact candidates first' );
+
+	$emergency_plan_file = sys_get_temp_dir() . '/dmc-emergency-cleanup-plan-' . bin2hex( random_bytes( 3 ) ) . '.json';
+	file_put_contents( $emergency_plan_file, wp_json_encode( $emergency_json ) );
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree( array( 'emergency-cleanup' ), array( 'apply-plan' => $emergency_plan_file, 'force' => true ) );
+	datamachine_code_cleanup_assert( false === ( $emergency_ability->last_input['dry_run'] ?? null ), 'emergency-cleanup apply-plan enters apply mode' );
+	datamachine_code_cleanup_assert( true === ( $emergency_ability->last_input['force'] ?? null ), 'emergency-cleanup forwards explicit force for human-reviewed apply' );
+	datamachine_code_cleanup_assert( 'repo@old' === ( $emergency_ability->last_input['apply_plan']['artifact_candidates'][0]['handle'] ?? '' ), 'emergency-cleanup forwards decoded apply plan' );
+	datamachine_code_cleanup_assert( 'Emergency cleanup summary:' === ( WP_CLI::$logs[0] ?? '' ), 'emergency-cleanup human output uses emergency summary' );
+	unlink( $emergency_plan_file );
 
 	echo "\n[9] cleanup-artifacts forwards plan-first flags and renders separately\n";
 	WP_CLI::$logs      = array();

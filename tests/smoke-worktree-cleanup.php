@@ -385,6 +385,25 @@ namespace {
 	$inventory_apply = $inventory_ws->worktree_cleanup_merged( array( 'inventory_only' => true ) );
 	$assert( true, is_wp_error( $inventory_apply ), 'inventory-only cleanup refuses non-dry-run apply path' );
 
+	echo "\nEmergency cleanup dry-run scenario\n";
+	$emergency_ws   = new Cleanup_Inventory_Workspace();
+	$emergency_plan = $emergency_ws->worktree_emergency_cleanup();
+	$assert( true, ! is_wp_error( $emergency_plan ) && ( $emergency_plan['success'] ?? false ), 'emergency cleanup dry-run returns success' );
+	$assert( 'emergency', $emergency_plan['mode'] ?? '', 'emergency cleanup exposes mode' );
+	$assert( true, $emergency_plan['dry_run'] ?? false, 'emergency cleanup defaults to dry-run' );
+	$assert( 0, $emergency_ws->full_listing_calls, 'emergency cleanup initial plan does not call full worktree_list' );
+	$assert_contains( $emergency_plan['artifact_candidates'] ?? array(), 'demo@merged-autodelete', 'emergency cleanup prioritizes reconstructable artifacts' );
+	$assert_contains( $emergency_plan['worktree_candidates'] ?? array(), 'demo@inventory-cleanup-eligible', 'emergency cleanup includes explicit cleanup-eligible worktrees' );
+	$assert( 1, (int) ( $emergency_plan['summary']['would_remove_worktrees'] ?? 0 ), 'emergency cleanup counts worktree candidates separately' );
+	$assert( true, (int) ( $emergency_plan['summary']['would_remove_artifacts'] ?? 0 ) > 0, 'emergency cleanup counts artifact candidates separately' );
+	foreach ( array_merge( $emergency_plan['artifact_candidates'] ?? array(), $emergency_plan['worktree_candidates'] ?? array() ) as $candidate ) {
+		if ( ! empty( $candidate['is_primary'] ) || 'demo' === ( $candidate['handle'] ?? '' ) ) {
+			$failures++;
+			$total++;
+			echo "  ✗ emergency cleanup listed primary as a candidate\n";
+		}
+	}
+
 	$size_plan = $ws->worktree_cleanup_merged(
 		array(
 			'dry_run'     => true,

@@ -1296,6 +1296,49 @@ class WorkspaceAbilities {
 					'meta'                => array( 'show_in_rest' => false ),
 				)
 			);
+
+			wp_register_ability(
+				'datamachine/workspace-worktree-emergency-cleanup',
+				array(
+					'label'               => 'Emergency Cleanup Worktrees',
+					'description'         => 'Build or apply a disk-pressure emergency cleanup plan using cheap workspace inventory first. The plan prioritizes artifact/cache deletion and oldest finalized or cleanup-eligible worktrees without running full git status or GitHub checks before initial output.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'dry_run'    => array(
+								'type'        => 'boolean',
+								'description' => 'If true, return the emergency plan without deleting anything. Emergency cleanup defaults to dry-run unless apply_plan is provided.',
+							),
+							'force'      => array(
+								'type'        => 'boolean',
+								'description' => 'If true during apply-plan, allow dirty or unpushed worktree deletion after human review. Primary checkouts remain protected.',
+							),
+							'apply_plan' => array(
+								'type'        => 'object',
+								'description' => 'Decoded emergency cleanup dry-run report to apply after current-state revalidation.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'             => array( 'type' => 'boolean' ),
+							'mode'                => array( 'type' => 'string' ),
+							'dry_run'             => array( 'type' => 'boolean' ),
+							'artifact_candidates' => array( 'type' => 'array' ),
+							'worktree_candidates' => array( 'type' => 'array' ),
+							'removed_artifacts'   => array( 'type' => 'array' ),
+							'removed_worktrees'   => array( 'type' => 'array' ),
+							'skipped'             => array( 'type' => 'array' ),
+							'summary'             => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeEmergencyCleanup' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
 		};
 
 		if ( doing_action( 'wp_abilities_api_init' ) ) {
@@ -1744,6 +1787,25 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->worktree_cleanup_artifacts( $opts );
+	}
+
+	/**
+	 * Build or apply a disk-pressure emergency cleanup plan.
+	 *
+	 * @param array $input Input parameters (dry_run, force, apply_plan).
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function worktreeEmergencyCleanup( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		$opts      = array(
+			'dry_run' => ! empty( $input['dry_run'] ),
+			'force'   => ! empty( $input['force'] ),
+		);
+		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
+			$opts['apply_plan'] = $input['apply_plan'];
+		}
+
+		return $workspace->worktree_emergency_cleanup( $opts );
 	}
 
 	/**
