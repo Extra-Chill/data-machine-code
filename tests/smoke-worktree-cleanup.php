@@ -274,6 +274,7 @@ namespace {
 		)
 	);
 	mkdir( $tmp . '/demo@inventory-cleanup-eligible', 0755, true );
+	mkdir( $tmp . '/demo@inventory-finalized-pr', 0755, true );
 	mkdir( $tmp . '/demo@inventory-active', 0755, true );
 	mkdir( $tmp . '/demo@inventory-missing-metadata', 0755, true );
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
@@ -283,6 +284,16 @@ namespace {
 			'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE,
 			'pr_url'          => 'https://github.com/acme/demo/pull/42',
 			'pr_number'       => 42,
+		)
+	);
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
+		'demo@inventory-finalized-pr',
+		array(
+			'created_at'      => '2026-04-01T00:00:00+00:00',
+			'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_PR_OPENED,
+			'finalized_at'    => '2026-04-02T00:00:00+00:00',
+			'pr_url'          => 'https://github.com/acme/demo/pull/43',
+			'pr_number'       => 43,
 		)
 	);
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
@@ -377,7 +388,8 @@ namespace {
 	$assert( true, $inventory_plan['inventory_only'] ?? false, 'inventory-only flag echoes back true' );
 	$assert( 0, $inventory_ws->full_listing_calls, 'inventory-only cleanup does not call full worktree_list' );
 	$assert_contains( $inventory_plan['candidates'] ?? array(), 'demo@inventory-cleanup-eligible', 'inventory-only flags explicit cleanup_eligible worktree' );
-	$assert( 1, count( $inventory_plan['candidates'] ?? array() ), 'inventory-only only returns explicit cheap cleanup signals as candidates' );
+	$assert_contains( $inventory_plan['candidates'] ?? array(), 'demo@inventory-finalized-pr', 'inventory-only flags persisted PR-finalized worktree' );
+	$assert( 2, count( $inventory_plan['candidates'] ?? array() ), 'inventory-only only returns cheap cleanup signals as candidates' );
 	$inventory_active = array_values( array_filter( $inventory_plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@inventory-active' ) )[0] ?? array();
 	$assert( 'no_inventory_cleanup_signal', $inventory_active['reason_code'] ?? '', 'inventory-only active metadata uses stable ambiguous reason' );
 	$inventory_missing = array_values( array_filter( $inventory_plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@inventory-missing-metadata' ) )[0] ?? array();
