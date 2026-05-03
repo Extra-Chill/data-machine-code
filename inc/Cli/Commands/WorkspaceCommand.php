@@ -1403,6 +1403,11 @@ class WorkspaceCommand extends BaseCommand {
 				$input['force']          = ! empty( $assoc_args['force'] );
 				$input['skip_github']    = ! empty( $assoc_args['skip-github'] );
 				$input['inventory_only'] = ! empty( $assoc_args['inventory-only'] );
+				if ( ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
+					$input['progress_callback'] = function ( array $event ): void {
+						$this->render_worktree_cleanup_progress( $event );
+					};
+				}
 				if ( ! empty( $assoc_args['apply-plan'] ) ) {
 					if ( ! empty( $assoc_args['force'] ) ) {
 						WP_CLI::error( 'Do not combine --apply-plan with --force. Plan application always revalidates and refuses dirty worktrees.' );
@@ -1892,6 +1897,34 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 		WP_CLI::success( sprintf( 'Removed %d worktree(s); %d skipped.', count( $result['removed'] ?? array() ), count( $result['skipped'] ?? array() ) ) );
+	}
+
+	/**
+	 * Render one human cleanup progress line.
+	 *
+	 * @param array $event Progress event.
+	 * @return void
+	 */
+	private function render_worktree_cleanup_progress( array $event ): void {
+		$label = (string) ( $event['event'] ?? 'progress' );
+		if ( 'start' === $label ) {
+			WP_CLI::log( sprintf( 'Cleanup progress: starting scan of %d worktree(s).', (int) ( $event['total'] ?? 0 ) ) );
+			return;
+		}
+
+		WP_CLI::log(
+			sprintf(
+				'Cleanup progress: %s%s checked=%d/%d candidates=%d skipped=%d removed=%d elapsed=%.1fs',
+				$label,
+				'' !== (string) ( $event['handle'] ?? '' ) ? ' handle=' . (string) $event['handle'] : '',
+				(int) ( $event['checked'] ?? 0 ),
+				(int) ( $event['total'] ?? 0 ),
+				(int) ( $event['candidates'] ?? 0 ),
+				(int) ( $event['skipped'] ?? 0 ),
+				(int) ( $event['removed'] ?? 0 ),
+				(float) ( $event['elapsed'] ?? 0 )
+			)
+		);
 	}
 
 	/**
