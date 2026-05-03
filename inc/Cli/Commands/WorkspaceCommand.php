@@ -1260,6 +1260,10 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace worktree cleanup-artifacts --dry-run --format=json > artifact-plan.json
 	 *     wp datamachine-code workspace worktree cleanup-artifacts --apply-plan=artifact-plan.json
 	 *
+	 *     # Emergency disk-pressure plan: cheap inventory first, artifacts before worktrees
+	 *     wp datamachine-code workspace worktree emergency-cleanup --format=json > emergency-plan.json
+	 *     wp datamachine-code workspace worktree emergency-cleanup --apply-plan=emergency-plan.json
+	 *
 	 *     # Local-only detection (no GitHub API call)
 	 *     wp datamachine-code workspace worktree cleanup --skip-github
 	 *
@@ -1296,7 +1300,7 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <add|list|remove|prune|cleanup|cleanup-artifacts|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
+			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <add|list|remove|prune|cleanup|cleanup-artifacts|emergency-cleanup|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
 			return;
 		}
 
@@ -1307,6 +1311,7 @@ class WorkspaceCommand extends BaseCommand {
 			'prune'                 => 'datamachine/workspace-worktree-prune',
 			'cleanup'               => 'datamachine/workspace-worktree-cleanup',
 			'cleanup-artifacts'     => 'datamachine/workspace-worktree-cleanup-artifacts',
+			'emergency-cleanup'     => 'datamachine/workspace-worktree-emergency-cleanup',
 			'reconcile-metadata'    => 'datamachine/workspace-worktree-reconcile-metadata',
 			'refresh-context'       => 'datamachine/workspace-worktree-refresh-context',
 			'finalize'              => 'datamachine/workspace-worktree-finalize',
@@ -1445,6 +1450,15 @@ class WorkspaceCommand extends BaseCommand {
 					$input['apply_plan'] = $this->read_worktree_cleanup_plan( (string) $assoc_args['apply-plan'] );
 				}
 				break;
+
+			case 'emergency-cleanup':
+				$input['dry_run'] = true;
+				$input['force']   = ! empty( $assoc_args['force'] );
+				if ( ! empty( $assoc_args['apply-plan'] ) ) {
+					$input['dry_run']    = false;
+					$input['apply_plan'] = $this->read_worktree_json_plan( (string) $assoc_args['apply-plan'], 'emergency cleanup' );
+				}
+				break;
 		}
 
 		$result = $ability->execute( $input );
@@ -1529,6 +1543,10 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'cleanup-artifacts':
 				$this->render_worktree_artifact_cleanup_result( $result, $assoc_args );
+				return;
+
+			case 'emergency-cleanup':
+				$this->render_worktree_emergency_cleanup_result( $result, $assoc_args );
 				return;
 
 			case 'add':
@@ -2160,6 +2178,119 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		return $flat;
+	}
+
+	/**
+	 * Render emergency cleanup output.
+	 *
+	 * @param array $result     Emergency cleanup result.
+	 * @param array $assoc_args CLI args.
+	 * @return void
+	 */
+	private function render_worktree_emergency_cleanup_result( array $result, array $assoc_args ): void {
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
+		if ( 'json' === $format ) {
+			$json = wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+			WP_CLI::log( false === $json ? '{}' : $json );
+			return;
+		}
+
+		$summary             = (array) ( $result['summary'] ?? array() );
+		$artifact_candidates = (array) ( $result['artifact_candidates'] ?? array() );
+		$worktree_candidates = (array) ( $result['worktree_candidates'] ?? array() );
+		$removed_artifacts   = (array) ( $result['removed_artifacts'] ?? array() );
+		$removed_worktrees   = (array) ( $result['removed_worktrees'] ?? array() );
+		$skipped             = (array) ( $result['skipped'] ?? array() );
+		$dry_run             = ! empty( $result['dry_run'] );
+
+		WP_CLI::log( 'Emergency cleanup summary:' );
+		$summary_rows = array(
+			array(
+				'metric' => 'would_remove_artifacts',
+				'count'  => (int) ( $summary['would_remove_artifacts'] ?? 0 ),
+			),
+			array(
+				'metric' => 'would_remove_worktrees',
+				'count'  => (int) ( $summary['would_remove_worktrees'] ?? 0 ),
+			),
+			array(
+				'metric' => 'removed_artifacts',
+				'count'  => (int) ( $summary['removed_artifacts'] ?? 0 ),
+			),
+			array(
+				'metric' => 'removed_worktrees',
+				'count'  => (int) ( $summary['removed_worktrees'] ?? 0 ),
+			),
+			array(
+				'metric' => 'artifact_size',
+				'count'  => $this->format_bytes( $summary['artifact_size_bytes'] ?? null ),
+			),
+			array(
+				'metric' => 'worktree_size',
+				'count'  => $this->format_bytes( $summary['worktree_size_bytes'] ?? null ),
+			),
+			array(
+				'metric' => 'skipped',
+				'count'  => (int) ( $summary['skipped'] ?? 0 ),
+			),
+		);
+		$this->format_items( $summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric' );
+
+		if ( ! empty( $artifact_candidates ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Priority 1 - artifact/cache deletion:' );
+			$this->format_items( $this->flatten_artifact_cleanup_rows( $artifact_candidates ), array( 'handle', 'repo', 'branch', 'artifact', 'size', 'path' ), array( 'format' => 'table' ), 'handle' );
+		}
+
+		if ( ! empty( $worktree_candidates ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Priority 2 - oldest finalized/eligible worktrees:' );
+			$rows = array_map(
+				fn( $row ) => array(
+					'handle'      => $row['handle'] ?? '',
+					'branch'      => $row['branch'] ?? '',
+					'age_days'    => $row['age_days'] ?? '',
+					'size'        => $this->format_bytes( $row['size_bytes'] ?? null ),
+					'signal'      => $row['signal'] ?? '',
+					'reason_code' => $row['reason_code'] ?? '',
+				),
+				$worktree_candidates
+			);
+			$this->format_items( $rows, array( 'handle', 'branch', 'age_days', 'size', 'signal', 'reason_code' ), array( 'format' => 'table' ), 'handle' );
+		}
+
+		if ( ! empty( $removed_artifacts ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Removed artifacts:' );
+			$this->format_items( $this->flatten_artifact_cleanup_rows( $removed_artifacts ), array( 'handle', 'repo', 'branch', 'artifact', 'size', 'path' ), array( 'format' => 'table' ), 'handle' );
+		}
+
+		if ( ! empty( $removed_worktrees ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Removed worktrees:' );
+			$this->format_items( $removed_worktrees, array( 'handle', 'repo', 'branch', 'path' ), array( 'format' => 'table' ), 'handle' );
+		}
+
+		if ( ! empty( $skipped ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Skipped:' );
+			$rows = array_map(
+				fn( $row ) => array(
+					'handle'      => $row['handle'] ?? '',
+					'reason_code' => $row['reason_code'] ?? '',
+					'reason'      => $this->shorten_cleanup_reason( (string) ( $row['reason'] ?? '' ) ),
+				),
+				$skipped
+			);
+			$this->format_items( $rows, array( 'handle', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle' );
+		}
+
+		WP_CLI::log( '' );
+		if ( $dry_run ) {
+			WP_CLI::success( 'Emergency plan generated. Review JSON, then apply with --apply-plan=<file>.' );
+			return;
+		}
+		WP_CLI::success( sprintf( 'Emergency cleanup removed %d artifact group(s) and %d worktree(s); %d skipped.', count( $removed_artifacts ), count( $removed_worktrees ), count( $skipped ) ) );
 	}
 
 	/**
