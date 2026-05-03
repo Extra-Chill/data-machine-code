@@ -2,6 +2,21 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.26.0] - 2026-05-03
+
+### Added
+- add retention cleanup task
+
+### Fixed
+- clean up release-blocking workspace lint
+- mark finalized PR worktrees cleanup eligible
+- surface disk inventory offenders
+- repair legacy worktree metadata
+- add emergency worktree cleanup mode
+- bound worktree cleanup probes
+- refuse unsafe worktree disk budgets
+- document worktree finalizer CLI flags
+
 ## [0.25.1] - 2026-05-02
 
 ### Changed
