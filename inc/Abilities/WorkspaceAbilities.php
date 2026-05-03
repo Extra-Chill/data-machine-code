@@ -1012,7 +1012,7 @@ class WorkspaceAbilities {
 							),
 							'size_limit'      => array(
 								'type'        => 'integer',
-								'description' => 'Maximum top-level workspace entries to size. Default 200.',
+								'description' => 'Maximum top-level workspace entries to size. Default 1000.',
 							),
 						),
 					),

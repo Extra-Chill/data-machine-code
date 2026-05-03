@@ -26,6 +26,10 @@ namespace {
 	mkdir( $workspace_root . '/alpha@feat-one', 0755, true );
 	mkdir( $workspace_root . '/beta@missing-metadata', 0755, true );
 	mkdir( $workspace_root . '/gamma@eligible', 0755, true );
+	mkdir( $workspace_root . '/cache', 0755, true );
+	file_put_contents( $workspace_root . '/alpha/payload.bin', str_repeat( 'a', 1024 ) );
+	file_put_contents( $workspace_root . '/alpha@feat-one/payload.bin', str_repeat( 'b', 2048 ) );
+	file_put_contents( $workspace_root . '/cache/payload.bin', str_repeat( 'c', 3072 ) );
 	file_put_contents( $workspace_root . '/not-a-dir.txt', 'ignored' );
 
 	define( 'ABSPATH', __DIR__ . '/' );
@@ -140,6 +144,21 @@ namespace {
 		datamachine_code_hygiene_report_assert( 1 === (int) ( $minimal['worktrees']['missing_metadata'] ?? 0 ), 'inventory counts missing metadata from registry only' );
 		datamachine_code_hygiene_report_assert( 'alpha' === ( $minimal['top_repos_by_worktrees'][0]['repo'] ?? '' ), 'inventory builds repo count leaders' );
 		datamachine_code_hygiene_report_assert( 1 === (int) ( $minimal['top_repos_by_worktrees'][0]['worktree_count'] ?? 0 ), 'repo count leaders ignore primaries and missing-metadata repo still sorts after alpha' );
+
+		echo "\n[1a] Size report exposes top offenders and kind grouping\n";
+		$with_sizes = $workspace->workspace_hygiene_report(
+			array(
+				'include_cleanup' => false,
+				'size_limit'      => 10,
+			)
+		);
+		datamachine_code_hygiene_report_assert( ! is_wp_error( $with_sizes ), 'size report succeeds' );
+		datamachine_code_hygiene_report_assert( true === ( $with_sizes['size']['scan_complete'] ?? false ), 'bounded size scan completes under limit' );
+		datamachine_code_hygiene_report_assert( ! empty( $with_sizes['size']['top_entries'][0]['kind'] ), 'top entries include kind classification' );
+		$kind_rows = array_column( $with_sizes['size']['by_kind'] ?? array(), 'bytes', 'kind' );
+		datamachine_code_hygiene_report_assert( array_key_exists( 'primary', $kind_rows ), 'size grouping includes primary bucket' );
+		datamachine_code_hygiene_report_assert( array_key_exists( 'worktree', $kind_rows ), 'size grouping includes worktree bucket' );
+		datamachine_code_hygiene_report_assert( array_key_exists( 'artifact', $kind_rows ), 'size grouping includes artifact bucket' );
 
 		echo "\n[1b] Default cleanup summary uses inventory-only review\n";
 		$with_cleanup = $workspace->workspace_hygiene_report(
