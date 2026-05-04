@@ -2,6 +2,17 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.28.0] - 2026-05-04
+
+### Added
+- bounded cleanup-eligible apply for explicit lifecycle metadata
+- surface agent/session liveness on worktrees (#221)
+
+### Fixed
+- bound artifact cleanup dry-run on huge workspaces
+- bounded batched reconciliation for legacy worktrees
+- scale workspace worktree list on huge workspaces (#213)
+
 ## [0.27.2] - 2026-05-03
 
 ### Changed
