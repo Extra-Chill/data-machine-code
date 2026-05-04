@@ -4089,11 +4089,11 @@ class Workspace {
 	 * @param string $path Worktree path.
 	 * @return int|\WP_Error Dirty file count, or WP_Error when git probe failed.
 	 */
-	private function probe_worktree_dirty_count( string $path ): int|\WP_Error {
+	private function probe_worktree_dirty_count( string $path, int $timeout_seconds = 0 ): int|\WP_Error {
 		if ( '' === $path || ! is_dir( $path ) ) {
 			return new \WP_Error( 'worktree_path_missing', 'worktree path is not a directory', array( 'status' => 400 ) );
 		}
-		$result = $this->run_git( $path, 'status --porcelain' );
+		$result = $this->run_git( $path, 'status --porcelain', $timeout_seconds );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -5772,12 +5772,10 @@ class Workspace {
 			}
 		}
 
-		// When the caller wants per-worktree dirty + unpushed probes (apply
-		// path, exhaustive dry-run), use the full git-backed worktree listing.
-		// Otherwise scan the cheap top-level inventory directly to skip the
-		// per-worktree `git status` round and `count_unpushed_commits` calls
-		// that dominate runtime on huge workspaces.
-		if ( $safety_probes ) {
+		// Exhaustive dry-run still uses the full git-backed listing. Apply-plan
+		// calls provide `only_handles`; keep those bounded by starting from cheap
+		// inventory and probing only the planned rows below.
+		if ( $safety_probes && null === $only_handles ) {
 			$listing = $this->worktree_list();
 			if ( $listing instanceof \WP_Error ) {
 				return $listing;
@@ -5814,6 +5812,10 @@ class Workspace {
 			$wt_path = (string) ( $wt['path'] ?? '' );
 			if ( $safety_probes ) {
 				$branch = (string) ( $wt['branch'] ?? '' );
+				if ( '' === $branch ) {
+					$resolved = $wt_path !== '' ? $this->resolve_worktree_branch_from_head_file( $wt_path ) : null;
+					$branch   = (string) ( $resolved ?? $wt['branch_slug'] ?? '' );
+				}
 			} else {
 				// Inventory rows only carry `branch_slug` (the directory slug,
 				// e.g. `fix-foo`). The plan apply path revalidates against the
@@ -5827,7 +5829,7 @@ class Workspace {
 			// Inventory rows don't include detected artifacts; detect them on
 			// the fly so the bounded path stays focused on artifact-bearing
 			// worktrees only.
-			if ( $safety_probes ) {
+			if ( $safety_probes && isset( $wt['artifacts'] ) ) {
 				$artifacts = array_values( array_filter( (array) ( $wt['artifacts'] ?? array() ), fn( $artifact ) => is_array( $artifact ) ) );
 			} else {
 				$artifacts = $wt_path !== '' ? $this->detect_worktree_artifacts( $repo, $wt_path ) : array();
@@ -5873,7 +5875,20 @@ class Workspace {
 			}
 
 			if ( $safety_probes ) {
-				$dirty_count = (int) ( $wt['dirty'] ?? 0 );
+				if ( null === $only_handles && null !== ( $wt['dirty'] ?? null ) ) {
+					$dirty_count = (int) ( $wt['dirty'] ?? 0 );
+				} else {
+					$dirty_probe = $this->probe_worktree_dirty_count( $wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+					if ( is_wp_error( $dirty_probe ) ) {
+						$skipped[] = array_merge( $base_row, array(
+							'reason_code' => 'probe_timeout',
+							'reason'      => 'artifact cleanup dirty-state probe failed - leaving artifacts in place: ' . $dirty_probe->get_error_message(),
+							'artifacts'   => $artifacts,
+						) );
+						continue;
+					}
+					$dirty_count = (int) $dirty_probe;
+				}
 				if ( $dirty_count > 0 && ! $force ) {
 					$skipped[] = array_merge( $base_row, array(
 						'reason_code' => 'dirty_worktree',
