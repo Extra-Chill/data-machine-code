@@ -1538,6 +1538,69 @@ class WorkspaceAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/workspace-worktree-bounded-cleanup-eligible-apply',
+				array(
+					'label'               => 'Bounded Cleanup Apply for Obvious Worktrees',
+					'description'         => 'Apply only worktrees with explicit lifecycle cleanup_eligible metadata in a bounded batch using cheap workspace inventory. Revalidates dirty/unpushed/missing-metadata/external/primary safety gates immediately before each removal. Optionally schedules per-candidate chunk jobs for resumable async apply. Produces evidence with processed/removed/skipped/bytes_reclaimed/continuation.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'dry_run'    => array(
+								'type'        => 'boolean',
+								'description' => 'Preview the bounded batch without removing anything.',
+							),
+							'limit'      => array(
+								'type'        => 'integer',
+								'description' => 'Maximum candidates to attempt this call (default 25, hard ceiling 200).',
+							),
+							'older_than' => array(
+								'type'        => 'string',
+								'description' => 'Restrict candidates to lifecycle created_at older than the duration (e.g. 7d, 24h).',
+							),
+							'sort'       => array(
+								'type'        => 'string',
+								'description' => 'Candidate ordering before bounding: size or age (default age).',
+							),
+							'force'      => array(
+								'type'        => 'boolean',
+								'description' => 'Allow apply on dirty worktrees. Unpushed-commit gate is never overridden.',
+							),
+							'via_jobs'   => array(
+								'type'        => 'boolean',
+								'description' => 'Schedule each candidate as a single-row worktree_cleanup_chunk job for resumable async apply.',
+							),
+							'source'     => array(
+								'type'        => 'string',
+								'description' => 'Caller source marker recorded in evidence.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'         => array( 'type' => 'boolean' ),
+							'mode'            => array( 'type' => 'string' ),
+							'dry_run'         => array( 'type' => 'boolean' ),
+							'destructive'     => array( 'type' => 'boolean' ),
+							'job_backed'      => array( 'type' => 'boolean' ),
+							'workspace_path'  => array( 'type' => 'string' ),
+							'generated_at'    => array( 'type' => 'string' ),
+							'candidates'      => array( 'type' => 'array' ),
+							'removed'         => array( 'type' => 'array' ),
+							'skipped'         => array( 'type' => 'array' ),
+							'summary'         => array( 'type' => 'object' ),
+							'continuation'    => array( 'type' => 'object' ),
+							'evidence'        => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeBoundedCleanupEligibleApply' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/workspace-cleanup-plan',
 				array(
 					'label'               => 'Build Workspace Cleanup Plan Chunks',
@@ -2182,6 +2245,35 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->worktree_cleanup_artifacts( $opts );
+	}
+
+	/**
+	 * Apply only worktrees with explicit lifecycle cleanup_eligible metadata in a bounded batch.
+	 *
+	 * @param array $input Input parameters (dry_run, limit, older_than, sort, force, via_jobs, source).
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function worktreeBoundedCleanupEligibleApply( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		$opts      = array(
+			'dry_run'  => ! empty( $input['dry_run'] ),
+			'force'    => ! empty( $input['force'] ),
+			'via_jobs' => ! empty( $input['via_jobs'] ),
+		);
+		if ( isset( $input['limit'] ) ) {
+			$opts['limit'] = (int) $input['limit'];
+		}
+		if ( isset( $input['older_than'] ) && '' !== trim( (string) $input['older_than'] ) ) {
+			$opts['older_than'] = trim( (string) $input['older_than'] );
+		}
+		if ( isset( $input['sort'] ) && '' !== trim( (string) $input['sort'] ) ) {
+			$opts['sort'] = trim( (string) $input['sort'] );
+		}
+		if ( isset( $input['source'] ) && '' !== trim( (string) $input['source'] ) ) {
+			$opts['source'] = trim( (string) $input['source'] );
+		}
+
+		return $workspace->worktree_bounded_cleanup_eligible_apply( $opts );
 	}
 
 	/**
