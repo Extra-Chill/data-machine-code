@@ -120,6 +120,15 @@ namespace {
 	require __DIR__ . '/../inc/Workspace/WorktreeContextInjector.php';
 	require __DIR__ . '/../inc/Workspace/Workspace.php';
 
+	class Artifact_Bounded_Workspace extends \DataMachineCode\Workspace\Workspace {
+		public int $full_listing_calls = 0;
+
+		public function worktree_list( ?string $repo = null, ?string $state = null, array $opts = array() ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+			++$this->full_listing_calls;
+			return parent::worktree_list( $repo, $state, $opts );
+		}
+	}
+
 	// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
 	exec( 'git --version 2>&1', $_gv, $gv_exit );
 	if ( 0 !== $gv_exit ) {
@@ -210,7 +219,7 @@ namespace {
 		}
 	}
 
-	$workspace = new \DataMachineCode\Workspace\Workspace();
+	$workspace = new Artifact_Bounded_Workspace();
 
 	// Default bounded dry-run honors the default cap.
 	$start    = microtime( true );
@@ -233,26 +242,21 @@ namespace {
 	$assert_lt( 2.0, $elapsed, 'limit=25 page completes quickly (' . number_format( $elapsed, 3 ) . 's)' );
 
 	// only_handles surfaces from apply_plan path: passing apply_plan with a
-	// single planned candidate should restrict the scan to just that handle.
-	// Re-build the plan from a real exhaustive dry-run so the planned path
-	// matches the canonical realpath form `worktree_list` returns (`/private/...`
-	// on macOS) — we can't construct the path string by hand without recreating
-	// the symlink resolution that the apply revalidation does internally.
-	$exhaustive_plan = $workspace->worktree_cleanup_artifacts(
-		array( 'dry_run' => true, 'exhaustive' => true, 'limit' => 0 )
-	);
-	$assert( false, is_wp_error( $exhaustive_plan ), 'exhaustive scan succeeds for apply path setup' );
+	// single bounded dry-run candidate should restrict revalidation to just that
+	// handle and must not fall back to the full git-backed worktree listing.
 	$apply_plan = array( 'candidates' => array_values( array_filter(
-		(array) ( $exhaustive_plan['candidates'] ?? array() ),
+		(array) ( $page['candidates'] ?? array() ),
 		fn( $row ) => 'demo@feature-real' === ( $row['handle'] ?? '' )
 	) ) );
 	$assert( 1, count( $apply_plan['candidates'] ), 'extracted exactly one planned candidate' );
 
+	$workspace->full_listing_calls = 0;
 	$start   = microtime( true );
 	$apply   = $workspace->worktree_cleanup_artifacts( array( 'apply_plan' => $apply_plan ) );
 	$elapsed = microtime( true ) - $start;
 	$assert( false, is_wp_error( $apply ), 'apply_plan revalidation succeeds on huge workspace' );
-	$assert( 'exhaustive', $apply['pagination']['mode'] ?? '', 'apply_plan revalidation runs in exhaustive (safety_probes=true) mode' );
+	$assert( 0, $workspace->full_listing_calls, 'apply_plan revalidation does not call full worktree_list' );
+	$assert( true, (bool) ( $apply['pagination']['safety_probes'] ?? false ), 'apply_plan revalidation still runs safety probes' );
 	$assert( 1, (int) ( $apply['summary']['removed_artifacts'] ?? 0 ), 'apply_plan removes the planned artifact' );
 	$assert( false, is_dir( $tmp . '/demo@feature-real/target' ), 'apply_plan revalidation removes the target directory' );
 	$assert_lt( 5.0, $elapsed, 'apply_plan revalidation stays fast because only_handles narrows the scan (' . number_format( $elapsed, 3 ) . 's)' );
