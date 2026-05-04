@@ -1041,6 +1041,56 @@ class WorkspaceAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/workspace-cleanup-run',
+				array(
+					'label'               => 'Schedule Workspace Cleanup Run',
+					'description'         => 'Schedule a background workspace cleanup system task. Review/dry-run commands are separate synchronous abilities.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'mode'       => array(
+								'type'        => 'string',
+								'description' => 'Cleanup mode: inventory, metadata, artifacts, retention, or emergency.',
+							),
+							'force'      => array(
+								'type'        => 'boolean',
+								'description' => 'Forward force=true to cleanup tasks that support it.',
+							),
+							'dry_run'    => array(
+								'type'        => 'boolean',
+								'description' => 'Rejected for background cleanup scheduling; use review abilities for dry-runs.',
+							),
+							'older_than' => array(
+								'type'        => 'string',
+								'description' => 'Optional worktree retention age gate such as 14d.',
+							),
+							'source'     => array(
+								'type'        => 'string',
+								'description' => 'Caller source marker.',
+							),
+							'user_id'    => array( 'type' => 'integer' ),
+							'agent_id'   => array( 'type' => 'integer' ),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'   => array( 'type' => 'boolean' ),
+							'state'     => array( 'type' => 'string' ),
+							'run_id'    => array( 'type' => 'string' ),
+							'job_id'    => array( 'type' => 'integer' ),
+							'mode'      => array( 'type' => 'string' ),
+							'task_type' => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'workspaceCleanupRun' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/workspace-worktree-list',
 				array(
 					'label'               => 'List Workspace Worktrees',
@@ -1735,6 +1785,109 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->workspace_hygiene_report( $opts );
+	}
+
+	/**
+	 * Schedule a background workspace cleanup system task.
+	 *
+	 * @param array $input Input parameters.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function workspaceCleanupRun( array $input ): array|\WP_Error {
+		if ( ! empty( $input['dry_run'] ) ) {
+			return new \WP_Error( 'workspace_cleanup_run_no_dry_run', 'Background cleanup scheduling does not accept dry_run. Use the synchronous workspace cleanup review abilities instead.', array( 'status' => 400 ) );
+		}
+
+		$mode = strtolower( preg_replace( '/[^a-z0-9_\-]/', '', (string) ( $input['mode'] ?? 'retention' ) ) );
+		$map  = array(
+			'inventory' => array(
+				'task_type' => 'workspace_hygiene_report',
+				'params'    => array(
+					'include_cleanup'         => true,
+					'include_sizes'           => true,
+					'include_worktree_status' => false,
+					'size_limit'              => 200,
+				),
+			),
+			'metadata'  => array(
+				'task_type' => 'workspace_retention_cleanup',
+				'params'    => array(
+					'dry_run'          => false,
+					'artifact_cleanup' => false,
+					'worktree_cleanup' => false,
+					'metadata_repair'  => true,
+					'skip_github'      => true,
+				),
+			),
+			'artifacts' => array(
+				'task_type' => 'workspace_retention_cleanup',
+				'params'    => array(
+					'dry_run'          => false,
+					'artifact_cleanup' => true,
+					'worktree_cleanup' => false,
+					'metadata_repair'  => false,
+					'skip_github'      => true,
+				),
+			),
+			'retention' => array(
+				'task_type' => 'workspace_retention_cleanup',
+				'params'    => array(
+					'dry_run'              => false,
+					'artifact_cleanup'     => true,
+					'worktree_cleanup'     => true,
+					'metadata_repair'      => true,
+					'skip_github'          => true,
+					'worktree_older_than'  => '14d',
+				),
+			),
+			'emergency' => array(
+				'task_type' => 'workspace_disk_emergency_cleanup',
+				'params'    => array(
+					'artifact_chunk_size' => 10,
+				),
+			),
+		);
+
+		if ( ! isset( $map[ $mode ] ) ) {
+			return new \WP_Error( 'unknown_workspace_cleanup_mode', sprintf( 'Unknown cleanup mode: %s.', $mode ), array( 'status' => 400 ) );
+		}
+
+		if ( ! class_exists( '\DataMachine\Engine\Tasks\TaskScheduler' ) ) {
+			return new \WP_Error( 'task_scheduler_unavailable', 'Data Machine TaskScheduler is unavailable.', array( 'status' => 500 ) );
+		}
+
+		$task_type = (string) $map[ $mode ]['task_type'];
+		$params    = (array) $map[ $mode ]['params'];
+		$params['source'] = (string) ( $input['source'] ?? 'workspace_cleanup_ability' );
+
+		if ( isset( $input['force'] ) ) {
+			$params['force'] = (bool) $input['force'];
+		}
+		if ( isset( $input['older_than'] ) && '' !== trim( (string) $input['older_than'] ) ) {
+			$params['worktree_older_than'] = trim( (string) $input['older_than'] );
+		}
+
+		$context = array();
+		if ( isset( $input['user_id'] ) ) {
+			$context['user_id'] = (int) $input['user_id'];
+		}
+		if ( isset( $input['agent_id'] ) ) {
+			$context['agent_id'] = (int) $input['agent_id'];
+		}
+
+		$job_id = \DataMachine\Engine\Tasks\TaskScheduler::schedule( $task_type, $params, $context );
+		if ( false === $job_id ) {
+			return new \WP_Error( 'workspace_cleanup_schedule_failed', 'Failed to schedule workspace cleanup task.', array( 'status' => 500 ) );
+		}
+
+		return array(
+			'success'   => true,
+			'state'     => 'jobs_queued',
+			'run_id'    => 'cleanup-run-' . (int) $job_id,
+			'job_id'    => (int) $job_id,
+			'mode'      => $mode,
+			'task_type' => $task_type,
+		);
 	}
 
 	/**

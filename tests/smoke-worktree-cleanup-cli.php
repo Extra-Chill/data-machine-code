@@ -302,30 +302,52 @@ namespace {
 		}
 	}
 
-	class FakeCreatePipelineAbility {
+	class FakeCleanupRunAbility {
 		public array $last_input = array();
 
 		public function execute( array $input ): array {
 			$this->last_input = $input;
 			return array(
-				'success'     => true,
-				'pipeline_id' => 77,
-				'flow_id'     => 88,
-				'flow_name'   => $input['flow_config']['flow_name'] ?? 'DMC Cleanup',
+				'success'   => true,
+				'state'     => 'jobs_queued',
+				'run_id'    => 'cleanup-run-123',
+				'job_id'    => 123,
+				'mode'      => (string) ( $input['mode'] ?? '' ),
+				'task_type' => 'workspace_retention_cleanup',
 			);
 		}
 	}
 
-	class FakeRunFlowAbility {
+	class FakeHygieneAbility {
 		public array $last_input = array();
 
 		public function execute( array $input ): array {
 			$this->last_input = $input;
 			return array(
-				'success'    => true,
-				'flow_id'    => (int) $input['flow_id'],
-				'job_id'     => 123,
-				'first_step' => 'step_1',
+				'success'        => true,
+				'generated_at'   => '2026-05-04T00:00:00+00:00',
+				'workspace_path' => '/workspace',
+				'destructive'    => false,
+				'size'           => array(),
+				'disk'           => array(),
+				'worktrees'      => array(),
+				'notes'          => array(),
+			);
+		}
+	}
+
+	class FakeMetadataReconcileAbility {
+		public array $last_input = array();
+
+		public function execute( array $input ): array {
+			$this->last_input = $input;
+			return array(
+				'success'   => true,
+				'dry_run'   => ! empty( $input['dry_run'] ),
+				'proposals' => array(),
+				'written'   => array(),
+				'skipped'   => array(),
+				'summary'   => array( 'proposed' => 0 ),
 			);
 		}
 	}
@@ -337,9 +359,9 @@ namespace {
 				'jobs'    => array(
 					array(
 						'job_id'       => (int) $input['job_id'],
-						'flow_id'      => 88,
-						'pipeline_id'  => 77,
-						'source'       => 'pipeline',
+						'flow_id'      => null,
+						'pipeline_id'  => null,
+						'source'       => 'system',
 						'status'       => 'processing',
 						'created_at'   => '2026-05-03 00:00:00',
 						'completed_at' => null,
@@ -389,18 +411,20 @@ namespace {
 	$artifact_ability = new FakeArtifactCleanupAbility();
 	$emergency_ability = new FakeEmergencyCleanupAbility();
 	$list_ability = new FakeListAbility();
-	$create_pipeline_ability = new FakeCreatePipelineAbility();
-	$run_flow_ability = new FakeRunFlowAbility();
+	$cleanup_run_ability = new FakeCleanupRunAbility();
+	$hygiene_ability = new FakeHygieneAbility();
+	$metadata_ability = new FakeMetadataReconcileAbility();
 	$get_jobs_ability = new FakeGetJobsAbility();
 	$retry_job_ability = new FakeRetryJobAbility();
 	$fail_job_ability = new FakeFailJobAbility();
 	$GLOBALS['__abilities'] = array(
+		'datamachine/workspace-cleanup-run'                 => $cleanup_run_ability,
+		'datamachine/workspace-hygiene-report'              => $hygiene_ability,
+		'datamachine/workspace-worktree-reconcile-metadata' => $metadata_ability,
 		'datamachine/workspace-worktree-cleanup'           => $ability,
 		'datamachine/workspace-worktree-cleanup-artifacts' => $artifact_ability,
 		'datamachine/workspace-worktree-emergency-cleanup' => $emergency_ability,
 		'datamachine/workspace-worktree-list'              => $list_ability,
-		'datamachine/create-pipeline'                      => $create_pipeline_ability,
-		'datamachine/run-flow'                             => $run_flow_ability,
 		'datamachine/get-jobs'                             => $get_jobs_ability,
 		'datamachine/retry-job'                            => $retry_job_ability,
 		'datamachine/fail-job'                             => $fail_job_ability,
@@ -412,34 +436,39 @@ namespace {
 	echo "\n[0a] WP-CLI synopsis exposes cleanup flags\n";
 	datamachine_code_cleanup_assert( str_contains( $doc_comment, "\n\t * [--inventory-only]" ), 'worktree synopsis declares --inventory-only at top level' );
 	datamachine_code_cleanup_assert( ! str_contains( $doc_comment, "\n\t\t * [--apply-plan=<file>]" ), 'cleanup flags are not hidden behind nested docblock indentation' );
-	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, 'Control flow-backed workspace cleanup runs.' ), 'workspace cleanup command documents flow-backed controller surface' );
+	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, 'Control task-backed workspace cleanup runs.' ), 'workspace cleanup command documents task-backed controller surface' );
 	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, '<run|status|resume|cancel|evidence>' ), 'workspace cleanup synopsis exposes run/status/resume/cancel/evidence' );
+	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, '[--dry-run]' ), 'task-backed cleanup synopsis keeps synchronous dry-run review' );
 
-	echo "\n[0b] flow-backed workspace cleanup run/status/control output\n";
+	echo "\n[0b] task-backed workspace cleanup run/status/control output\n";
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->cleanup( array( 'run' ), array( 'mode' => 'retention', 'format' => 'json' ) );
 	$run_json = json_decode( WP_CLI::$logs[0] ?? '', true );
-	datamachine_code_cleanup_assert( 'flow_created' === ( $run_json['state'] ?? '' ), 'cleanup run distinguishes newly-created flow state' );
+	datamachine_code_cleanup_assert( 'jobs_queued' === ( $run_json['state'] ?? '' ), 'cleanup run queues a system task' );
 	datamachine_code_cleanup_assert( 'cleanup-run-123' === ( $run_json['run_id'] ?? '' ), 'cleanup run returns stable run id' );
-	datamachine_code_cleanup_assert( 88 === (int) ( $run_json['flow_id'] ?? 0 ), 'cleanup run returns flow id' );
-	datamachine_code_cleanup_assert( 'workspace_retention_cleanup' === ( $create_pipeline_ability->last_input['workflow']['steps'][0]['handler_config']['task'] ?? '' ), 'retention mode creates a system-task cleanup flow' );
-	datamachine_code_cleanup_assert( 'workspace_cleanup_cli' === ( $create_pipeline_ability->last_input['workflow']['steps'][0]['handler_config']['params']['source'] ?? '' ), 'cleanup flow params identify explicit CLI source' );
-	datamachine_code_cleanup_assert( 'retention' === ( $run_flow_ability->last_input['initial_data']['cleanup_run']['mode'] ?? '' ), 'run-flow receives cleanup run metadata' );
+	datamachine_code_cleanup_assert( 'retention' === ( $cleanup_run_ability->last_input['mode'] ?? '' ), 'cleanup run ability receives mode' );
+	datamachine_code_cleanup_assert( 'workspace_cleanup_cli' === ( $cleanup_run_ability->last_input['source'] ?? '' ), 'cleanup run ability identifies explicit CLI source' );
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
-	$command->cleanup( array( 'run' ), array( 'flow' => 55, 'mode' => 'inventory', 'format' => 'json' ) );
-	$existing_flow_json = json_decode( WP_CLI::$logs[0] ?? '', true );
-	datamachine_code_cleanup_assert( 'jobs_queued' === ( $existing_flow_json['state'] ?? '' ), 'cleanup run distinguishes existing flow queued state' );
-	datamachine_code_cleanup_assert( 55 === (int) ( $run_flow_ability->last_input['flow_id'] ?? 0 ), 'cleanup run can target an existing flow id' );
+	$command->cleanup( array( 'run' ), array( 'mode' => 'artifacts', 'dry-run' => true, 'format' => 'json' ) );
+	datamachine_code_cleanup_assert( true === ( $artifact_ability->last_input['dry_run'] ?? false ), 'cleanup run --dry-run uses artifact cleanup ability directly' );
+	datamachine_code_cleanup_assert( 'retention' === ( $cleanup_run_ability->last_input['mode'] ?? '' ), 'cleanup run --dry-run does not schedule cleanup run ability' );
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup( array( 'run' ), array( 'mode' => 'inventory', 'format' => 'json' ) );
+	$inventory_run_json = json_decode( WP_CLI::$logs[0] ?? '', true );
+	datamachine_code_cleanup_assert( 'jobs_queued' === ( $inventory_run_json['state'] ?? '' ), 'cleanup run queues inventory as a task' );
+	datamachine_code_cleanup_assert( 'inventory' === ( $cleanup_run_ability->last_input['mode'] ?? '' ), 'cleanup run can schedule inventory mode' );
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->cleanup( array( 'status', 'cleanup-run-123' ), array( 'format' => 'json' ) );
 	$status_json = json_decode( WP_CLI::$logs[0] ?? '', true );
 	datamachine_code_cleanup_assert( 'running' === ( $status_json['state'] ?? '' ), 'cleanup status maps processing job to running state' );
-	datamachine_code_cleanup_assert( 88 === (int) ( $status_json['flow_id'] ?? 0 ), 'cleanup status links underlying flow id' );
+	datamachine_code_cleanup_assert( ! isset( $status_json['flow_id'] ), 'cleanup status is not linked to a flow id' );
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();

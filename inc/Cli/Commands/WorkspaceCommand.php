@@ -17,60 +17,15 @@ namespace DataMachineCode\Cli\Commands;
 
 use WP_CLI;
 use DataMachine\Cli\BaseCommand;
-use DataMachineCode\Maintenance\MaintenanceFlowProvisioner;
 use DataMachineCode\Workspace\Workspace;
 
 defined( 'ABSPATH' ) || exit;
 
 class WorkspaceCommand extends BaseCommand {
 
-	private const CLEANUP_FLOW_SOURCE = 'workspace_cleanup_cli';
+	private const CLEANUP_CLI_SOURCE = 'workspace_cleanup_cli';
 
-	private const CLEANUP_MODES = array(
-		'inventory' => array(
-			'task_type' => 'worktree_cleanup',
-			'params'    => array(
-				'dry_run'        => true,
-				'inventory_only' => true,
-				'skip_github'    => true,
-			),
-		),
-		'metadata'  => array(
-			'task_type' => 'worktree_cleanup',
-			'params'    => array(
-				'dry_run'        => true,
-				'inventory_only' => true,
-				'skip_github'    => true,
-			),
-		),
-		'artifacts' => array(
-			'task_type' => 'workspace_retention_cleanup',
-			'params'    => array(
-				'dry_run'          => false,
-				'artifact_cleanup' => true,
-				'worktree_cleanup' => false,
-				'skip_github'      => true,
-			),
-		),
-		'retention' => array(
-			'task_type' => 'workspace_retention_cleanup',
-			'params'    => array(
-				'dry_run'          => false,
-				'artifact_cleanup' => true,
-				'worktree_cleanup' => true,
-				'skip_github'      => true,
-			),
-		),
-		'emergency' => array(
-			'task_type' => 'workspace_retention_cleanup',
-			'params'    => array(
-				'dry_run'          => false,
-				'artifact_cleanup' => true,
-				'worktree_cleanup' => true,
-				'skip_github'      => true,
-			),
-		),
-	);
+	private const CLEANUP_MODES = array( 'inventory', 'metadata', 'artifacts', 'retention', 'emergency' );
 
 	/**
 	 * Show the workspace directory path.
@@ -121,82 +76,6 @@ class WorkspaceCommand extends BaseCommand {
 		if ( empty( $result['exists'] ) && empty( $assoc_args['ensure'] ) ) {
 			WP_CLI::warning( 'Directory does not exist yet. Use --ensure to create it.' );
 		}
-	}
-
-	/**
-	 * Provision agent-owned workspace maintenance flows.
-	 *
-	 * Creates or updates the DMC maintenance pipeline/flow instances for a coding
-	 * agent: inventory, metadata repair, artifact cleanup, retention cleanup, and
-	 * emergency cleanup. The operation is idempotent and uses stable portable
-	 * slugs, so rerunning setup updates existing flows instead of duplicating them.
-	 *
-	 * ## OPTIONS
-	 *
-	 * <action>
-	 * : Maintenance flow action. Supports: provision.
-	 *
-	 * --agent=<agent>
-	 * : Agent slug or numeric agent ID that should own the flows.
-	 *
-	 * [--format=<format>]
-	 * : Output format.
-	 * ---
-	 * default: table
-	 * options:
-	 *   - table
-	 *   - json
-	 *   - csv
-	 *   - yaml
-	 * ---
-	 *
-	 * ## EXAMPLES
-	 *
-	 *     wp datamachine-code workspace maintenance-flows provision --agent=intelligence-chubes4
-	 *
-	 *     wp datamachine-code workspace maintenance-flows provision --agent=3 --format=json
-	 *
-	 * @subcommand maintenance-flows
-	 */
-	public function maintenance_flows( array $args, array $assoc_args ): void {
-		$action = (string) ( $args[0] ?? '' );
-		if ( 'provision' !== $action ) {
-			WP_CLI::error( 'Usage: wp datamachine-code workspace maintenance-flows provision --agent=<agent>' );
-			return;
-		}
-
-		$agent = (string) ( $assoc_args['agent'] ?? '' );
-		if ( '' === trim( $agent ) ) {
-			WP_CLI::error( '--agent=<slug|id> is required.' );
-			return;
-		}
-
-		$input  = ctype_digit( $agent ) ? array( 'agent_id' => (int) $agent ) : array( 'agent' => $agent );
-		$result = ( new MaintenanceFlowProvisioner() )->provision( $input );
-		if ( is_wp_error( $result ) ) {
-			WP_CLI::error( $result->get_error_message() );
-			return;
-		}
-
-		if ( 'json' === ( $assoc_args['format'] ?? '' ) ) {
-			WP_CLI::line( wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
-			return;
-		}
-
-		WP_CLI::success( sprintf( 'Provisioned DMC maintenance flows for agent %s (ID %d).', (string) $result['agent_slug'], (int) $result['agent_id'] ) );
-		$items = array_map(
-			static function ( array $flow ): array {
-				return array(
-					'slug'     => $flow['slug'],
-					'status'   => $flow['status'],
-					'flow_id'  => $flow['flow_id'],
-					'interval' => $flow['interval'],
-					'name'     => $flow['flow_name'],
-				);
-			},
-			(array) ( $result['flows'] ?? array() )
-		);
-		$this->format_items( $items, array( 'slug', 'status', 'flow_id', 'interval', 'name' ), $assoc_args, 'slug' );
 	}
 
 	/**
@@ -364,13 +243,12 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	/**
-	 * Control flow-backed workspace cleanup runs.
+	 * Control task-backed workspace cleanup runs.
 	 *
-	 * This is the high-level operator surface for cleanup. It starts a Data
-	 * Machine flow and returns immediately with run/flow/job identifiers; heavy
-	 * cleanup work runs from the queued flow job. The lower-level
-	 * `workspace worktree cleanup*` commands remain available for targeted
-	 * debugging and plan rendering.
+	 * This is the high-level operator surface for cleanup. Destructive runs are
+	 * scheduled through Data Machine's system-task scheduler and return immediately
+	 * with job identifiers. Dry-runs stay synchronous and delegate to the same
+	 * workspace abilities as the lower-level `workspace worktree cleanup*` commands.
 	 *
 	 * ## OPTIONS
 	 *
@@ -393,11 +271,8 @@ class WorkspaceCommand extends BaseCommand {
 	 *   - emergency
 	 * ---
 	 *
-	 * [--flow=<flow_id>]
-	 * : Run an existing cleanup flow instead of creating a fresh one.
-	 *
 	 * [--dry-run]
-	 * : Request dry-run task params where the selected mode supports it.
+	 * : Run the selected cleanup review synchronously through workspace abilities.
 	 *
 	 * [--force]
 	 * : Pass force=true into the cleanup task params for modes that support it.
@@ -417,8 +292,11 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * ## EXAMPLES
 	 *
-	 *     # Start flow-backed retention cleanup and return immediately
+	 *     # Start task-backed retention cleanup and return immediately
 	 *     wp datamachine-code workspace cleanup run --mode=retention
+	 *
+	 *     # Review artifact cleanup synchronously
+	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run
 	 *
 	 *     # Inspect progress for a returned run
 	 *     wp datamachine-code workspace cleanup status cleanup-run-123
@@ -443,7 +321,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		switch ( $operation ) {
 			case 'run':
-				$this->run_cleanup_flow( $assoc_args );
+				$this->run_cleanup_task( $assoc_args );
 				return;
 
 			case 'status':
@@ -472,118 +350,139 @@ class WorkspaceCommand extends BaseCommand {
 		}
 	}
 
-	private function run_cleanup_flow( array $assoc_args ): void {
+	private function run_cleanup_task( array $assoc_args ): void {
+		if ( isset( $assoc_args['dry-run'] ) ) {
+			$this->run_cleanup_review( $assoc_args );
+			return;
+		}
+
 		$mode = strtolower( preg_replace( '/[^a-z0-9_\-]/', '', (string) ( $assoc_args['mode'] ?? 'retention' ) ) );
-		if ( ! isset( self::CLEANUP_MODES[ $mode ] ) ) {
-			WP_CLI::error( sprintf( 'Unknown cleanup mode: %s. Expected one of: %s.', $mode, implode( ', ', array_keys( self::CLEANUP_MODES ) ) ) );
+		if ( ! in_array( $mode, self::CLEANUP_MODES, true ) ) {
+			WP_CLI::error( sprintf( 'Unknown cleanup mode: %s. Expected one of: %s.', $mode, implode( ', ', self::CLEANUP_MODES ) ) );
 			return;
 		}
 
-		$flow_created = false;
-		$flow_id      = isset( $assoc_args['flow'] ) ? (int) $assoc_args['flow'] : 0;
-		if ( $flow_id <= 0 ) {
-			$created = $this->create_cleanup_flow( $mode, $assoc_args );
-			if ( ! ( $created['success'] ?? false ) ) {
-				WP_CLI::error( (string) ( $created['error'] ?? 'Failed to create cleanup flow.' ) );
-				return;
-			}
-			$flow_id      = (int) ( $created['flow_id'] ?? 0 );
-			$flow_created = true;
-		}
-
-		$ability = wp_get_ability( 'datamachine/run-flow' );
+		$ability = wp_get_ability( 'datamachine/workspace-cleanup-run' );
 		if ( ! $ability ) {
-			WP_CLI::error( 'Run flow ability not registered.' );
+			WP_CLI::error( 'Workspace cleanup run ability not registered.' );
 			return;
 		}
 
-		$result = $ability->execute(
-			array(
-				'flow_id'      => $flow_id,
-				'initial_data' => array(
-					'cleanup_run' => array(
-						'mode'       => $mode,
-						'source'     => self::CLEANUP_FLOW_SOURCE,
-						'created_at' => gmdate( 'c' ),
-					),
-				),
-			)
-		);
+		$result = $ability->execute( $this->cleanup_run_input( $mode, $assoc_args ) );
 
 		if ( ! ( $result['success'] ?? false ) ) {
-			WP_CLI::error( (string) ( $result['error'] ?? 'Failed to run cleanup flow.' ) );
+			WP_CLI::error( (string) ( $result['error'] ?? 'Failed to schedule cleanup run.' ) );
 			return;
 		}
 
-		$job_id = (int) ( $result['job_id'] ?? 0 );
-		$output = array(
-			'success'      => true,
-			'state'        => $flow_created ? 'flow_created' : 'jobs_queued',
-			'run_id'       => $this->cleanup_run_id( $job_id ),
-			'flow_id'      => $flow_id,
-			'job_id'       => $job_id,
-			'first_step'   => $result['first_step'] ?? '',
-			'mode'         => $mode,
-			'flow_created' => $flow_created,
-		);
-
-		$this->render_cleanup_control_result( $output, $assoc_args );
+		$this->render_cleanup_control_result( $result, $assoc_args );
 	}
 
-	private function create_cleanup_flow( string $mode, array $assoc_args ): array {
-		$ability = wp_get_ability( 'datamachine/create-pipeline' );
-		if ( ! $ability ) {
-			return array(
-				'success' => false,
-				'error'   => 'Create pipeline ability not registered. Pass --flow=<flow_id> for an existing cleanup flow.',
-			);
-		}
-
-		$mode_config = self::CLEANUP_MODES[ $mode ];
-		$params      = $this->cleanup_mode_params( $mode, $assoc_args );
-
-		return $ability->execute(
-			array(
-				'pipeline_name' => sprintf( 'DMC Cleanup: %s', $mode ),
-				'workflow'      => array(
-					'steps' => array(
-						array(
-							'type'           => 'system_task',
-							'label'          => sprintf( 'Run %s cleanup', $mode ),
-							'handler_config' => array(
-								'task'   => $mode_config['task_type'],
-								'params' => $params,
-							),
-						),
-					),
-				),
-				'flow_config'   => array(
-					'flow_name'         => sprintf( 'DMC Cleanup: %s', $mode ),
-					'scheduling_config' => array( 'interval' => 'manual' ),
-				),
-			)
+	private function cleanup_run_input( string $mode, array $assoc_args ): array {
+		$input = array(
+			'mode'   => $mode,
+			'source' => self::CLEANUP_CLI_SOURCE,
 		);
-	}
-
-	private function cleanup_mode_params( string $mode, array $assoc_args ): array {
-		$params           = self::CLEANUP_MODES[ $mode ]['params'];
-		$params['source'] = self::CLEANUP_FLOW_SOURCE;
-
-		if ( isset( $assoc_args['dry-run'] ) ) {
-			$params['dry_run'] = (bool) $assoc_args['dry-run'];
-		}
 		if ( isset( $assoc_args['force'] ) ) {
-			$params['force'] = (bool) $assoc_args['force'];
+			$input['force'] = (bool) $assoc_args['force'];
 		}
 		if ( isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ) {
-			if ( 'workspace_retention_cleanup' === self::CLEANUP_MODES[ $mode ]['task_type'] ) {
-				$params['worktree_older_than'] = trim( (string) $assoc_args['older-than'] );
-			} else {
-				$params['older_than'] = trim( (string) $assoc_args['older-than'] );
-			}
+			$input['older_than'] = trim( (string) $assoc_args['older-than'] );
 		}
 
-		return $params;
+		return $input;
+	}
+
+	private function run_cleanup_review( array $assoc_args ): void {
+		$mode = strtolower( preg_replace( '/[^a-z0-9_\-]/', '', (string) ( $assoc_args['mode'] ?? 'retention' ) ) );
+		if ( ! in_array( $mode, self::CLEANUP_MODES, true ) ) {
+			WP_CLI::error( sprintf( 'Unknown cleanup mode: %s. Expected one of: %s.', $mode, implode( ', ', self::CLEANUP_MODES ) ) );
+			return;
+		}
+
+		switch ( $mode ) {
+			case 'inventory':
+				$ability = wp_get_ability( 'datamachine/workspace-hygiene-report' );
+				$result  = $ability ? $ability->execute(
+					array(
+						'include_cleanup'         => true,
+						'include_sizes'           => true,
+						'include_worktree_status' => false,
+						'size_limit'              => 200,
+					)
+				) : new \WP_Error( 'workspace_hygiene_ability_missing', 'Workspace hygiene ability not registered.' );
+				$this->render_workspace_hygiene_report_from_ability( $result, $assoc_args );
+				return;
+
+			case 'metadata':
+				$ability = wp_get_ability( 'datamachine/workspace-worktree-reconcile-metadata' );
+				$result  = $ability ? $ability->execute( array( 'dry_run' => true ) ) : new \WP_Error( 'metadata_reconcile_ability_missing', 'Metadata reconciliation ability not registered.' );
+				$this->render_worktree_metadata_reconciliation_result_from_ability( $result, $assoc_args );
+				return;
+
+			case 'artifacts':
+				$ability = wp_get_ability( 'datamachine/workspace-worktree-cleanup-artifacts' );
+				$result  = $ability ? $ability->execute( array( 'dry_run' => true, 'force' => ! empty( $assoc_args['force'] ) ) ) : new \WP_Error( 'artifact_cleanup_ability_missing', 'Artifact cleanup ability not registered.' );
+				$this->render_worktree_artifact_cleanup_result_from_ability( $result, $assoc_args );
+				return;
+
+			case 'emergency':
+				$ability = wp_get_ability( 'datamachine/workspace-worktree-emergency-cleanup' );
+				$result  = $ability ? $ability->execute( array( 'dry_run' => true, 'force' => ! empty( $assoc_args['force'] ) ) ) : new \WP_Error( 'emergency_cleanup_ability_missing', 'Emergency cleanup ability not registered.' );
+				$this->render_worktree_emergency_cleanup_result_from_ability( $result, $assoc_args );
+				return;
+
+			case 'retention':
+			default:
+				$ability = wp_get_ability( 'datamachine/workspace-worktree-cleanup' );
+				$input   = array( 'dry_run' => true, 'force' => ! empty( $assoc_args['force'] ), 'skip_github' => true );
+				if ( isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ) {
+					$input['older_than'] = trim( (string) $assoc_args['older-than'] );
+				}
+				$result = $ability ? $ability->execute( $input ) : new \WP_Error( 'worktree_cleanup_ability_missing', 'Worktree cleanup ability not registered.' );
+				$this->render_worktree_cleanup_result_from_ability( $result, $assoc_args );
+				return;
+		}
+	}
+
+	private function render_workspace_hygiene_report_from_ability( array|\WP_Error $result, array $assoc_args ): void {
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+		$this->render_workspace_hygiene_report( $result, $assoc_args );
+	}
+
+	private function render_worktree_cleanup_result_from_ability( array|\WP_Error $result, array $assoc_args ): void {
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+		$this->render_worktree_cleanup_result( $result, $assoc_args );
+	}
+
+	private function render_worktree_metadata_reconciliation_result_from_ability( array|\WP_Error $result, array $assoc_args ): void {
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+		$this->render_worktree_metadata_reconciliation_result( $result, $assoc_args );
+	}
+
+	private function render_worktree_artifact_cleanup_result_from_ability( array|\WP_Error $result, array $assoc_args ): void {
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+		$this->render_worktree_artifact_cleanup_result( $result, $assoc_args );
+	}
+
+	private function render_worktree_emergency_cleanup_result_from_ability( array|\WP_Error $result, array $assoc_args ): void {
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+		$this->render_worktree_emergency_cleanup_result( $result, $assoc_args );
 	}
 
 	private function render_cleanup_run_status( int $job_id, array $assoc_args, bool $evidence ): void {
@@ -599,8 +498,6 @@ class WorkspaceCommand extends BaseCommand {
 			'state'       => $this->cleanup_job_state( (string) ( $job['status'] ?? '' ) ),
 			'run_id'      => $this->cleanup_run_id( $job_id ),
 			'job_id'      => $job_id,
-			'flow_id'     => $job['flow_id'] ?? null,
-			'pipeline_id' => $job['pipeline_id'] ?? null,
 			'status'      => $job['status'] ?? '',
 			'created_at'  => $job['created_at'] ?? '',
 			'completed_at' => $job['completed_at'] ?? '',
@@ -674,7 +571,7 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		WP_CLI::log( sprintf( 'State: %s', $result['state'] ?? 'unknown' ) );
-		foreach ( array( 'run_id', 'flow_id', 'job_id', 'pipeline_id', 'mode', 'status', 'first_step' ) as $key ) {
+		foreach ( array( 'run_id', 'job_id', 'mode', 'task_type', 'status' ) as $key ) {
 			if ( isset( $result[ $key ] ) && '' !== (string) $result[ $key ] ) {
 				WP_CLI::log( sprintf( '%s: %s', ucfirst( str_replace( '_', ' ', $key ) ), (string) $result[ $key ] ) );
 			}

@@ -55,7 +55,7 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 	public function executeTask( int $jobId, array $params ): void {
 		$source  = (string) ( $params['source'] ?? '' );
 		$enabled = (bool) PluginSettings::get( self::SETTING_KEY, false )
-			|| in_array( $source, array( 'workspace_cleanup_cli', 'agent_maintenance_flow' ), true );
+			|| 'workspace_cleanup_cli' === $source;
 		if ( ! $enabled ) {
 			$this->completeJob(
 				$jobId,
