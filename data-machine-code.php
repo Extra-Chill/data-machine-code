@@ -412,7 +412,8 @@ Discover the full command surface: `{$wp} datamachine --help`. The groups below 
 **Automation:** Self-scheduling workflows that run without human intervention.
 - Flows: `{$wp} datamachine flow create|run|list` — scheduled or on-demand tasks
 - Pipelines: `{$wp} datamachine pipeline create|list` — multi-step processing chains
-- Jobs: `{$wp} datamachine jobs list|retry|summary` — monitor queued work
+- Jobs / pending actions: `{$wp} datamachine jobs list|retry|summary`, `{$wp} datamachine pending-actions` — monitor queued work and approval gates
+- Drain due work: `{$wp} datamachine drain` — run due actions until empty or budgeted
 - Discover available step types: `{$wp} datamachine step-types list`
 - Discover available handlers: `{$wp} datamachine handlers list`
 - Processed items (dedupe): `{$wp} datamachine processed-items`
@@ -429,9 +430,9 @@ Discover the full command surface: `{$wp} datamachine --help`. The groups below 
 - Settings & auth: `{$wp} datamachine settings|auth`
 - External sites & handler tests: `{$wp} datamachine external|test`
 
-**Code (data-machine-code):** All code changes happen in worktrees under `{$workspace_path}`. DMC owns workspace lifecycle, evidence capture, GitHub workflow glue, and GitSync; file CRUD inside a worktree uses whatever tool is fastest.
+**Code (data-machine-code):** All code changes happen in Data Machine Code worktrees under `{$workspace_path}`. DMC owns workspace lifecycle, evidence capture, GitHub workflow glue, and GitSync; file CRUD inside a worktree uses whatever tool is fastest.
 - Workspace root: `{$workspace_path}`
-- **Workspace lifecycle:** `{$wp} datamachine-code workspace clone|list|show|hygiene|worktree` — keeps the on-disk registry consistent and enforces the `<repo>@<slug>` handle convention.
+- **Workspace lifecycle:** `{$wp} datamachine-code workspace adopt|clone|list|show|path|hygiene|remove|worktree` — keeps the on-disk registry consistent and enforces the `<repo>@<slug>` handle convention.
 - **Worktrees:** `{$wp} datamachine-code workspace worktree add|list|remove|prune|cleanup|cleanup-artifacts|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible` — create isolated branches, refresh agent context, attach lifecycle metadata, and clean up safely.
 - **GitHub:** `{$wp} datamachine-code github issues|pulls|repos|status|view|close|review-flow|comment` — list/read GitHub state, manage issues, install review flows, and comment on reviews.
 - **Git sync:** `{$wp} datamachine-code gitsync bind|list|status|pull|submit|push|policy|unbind` — bind site-owned directories to remotes; `submit` opens or updates the PR path, while `push` writes directly to the configured branch.
@@ -495,11 +496,11 @@ MD;
 
 **Quality:** `homeboy audit | lint | test | review | refactor`; use `homeboy review --changed-since --report=pr-comment` for PR-style review loops, and `--baseline` / `--ratchet` when a command supports observation baselines.
 
-**Git:** prefer `homeboy changes | status` and `homeboy git status|commit|push|pull|tag|rebase|cherry-pick` — structured output, component/worktree awareness, safer write verbs. Use `--path <checkout>` when operating outside a registered component or overriding component resolution. One-off reads (`git diff`, `git show`, `git blame`) stay on raw `git`.
+**Git:** prefer `homeboy changes | status` and `homeboy git status|commit|push|pull|tag|rebase|cherry-pick|pr|issue` — structured output, component/worktree awareness, safer write verbs. Use `--path <checkout>` when operating outside a registered component or overriding component resolution. One-off reads (`git diff`, `git show`, `git blame`) stay on raw `git`.
 
-**Perf + envs:** `homeboy bench` for pinned iterations/runs/concurrency, baselines, rig/profile comparisons; `homeboy trace` for black-box behavioral traces; `homeboy rig install|update|up|check|down|status` for reproducible multi-component dev environments.
+**Perf + envs:** `homeboy bench` for pinned iterations/runs/concurrency, baselines, rig/profile comparisons; `homeboy trace` and `homeboy observe` for behavioral evidence; `homeboy rig install|update|up|check|down|repair|status` for reproducible multi-component dev environments.
 
-**Reports + observations:** `homeboy triage` surfaces issue/PR/check attention; `homeboy report` renders structured Homeboy output artifacts; `homeboy runs list|show|artifacts|export|import` inspects persisted observation runs before rerunning expensive bench/trace/rig checks.
+**Reports + observations:** `homeboy triage` surfaces issue/PR/check attention; `homeboy report` renders structured Homeboy output artifacts; `homeboy runs list|show|artifacts|findings|export|import|reconcile` inspects persisted observation runs before rerunning expensive bench/trace/rig checks.
 
 **Stacks:** `homeboy stack list|show|apply|rebase|status|sync|push|diff|inspect` for combined-fixes branches built from upstream PRs.
 
