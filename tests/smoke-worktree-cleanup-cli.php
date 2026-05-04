@@ -98,12 +98,12 @@ namespace {
 		);
 
 		$skipped[] = array(
-			'handle'      => 'repo@legacy-repaired',
+			'handle'      => 'repo@repaired-metadata',
 			'repo'        => 'repo',
-			'branch'      => 'legacy-repaired',
-			'path'        => '/workspace/repo@legacy-repaired',
-			'reason_code' => 'missing_metadata_repaired',
-			'reason'      => 'legacy metadata was repaired conservatively; no cleanup signal yet',
+			'branch'      => 'repaired-metadata',
+			'path'        => '/workspace/repo@repaired-metadata',
+			'reason_code' => 'repaired_metadata',
+			'reason'      => 'repaired metadata was repaired conservatively; no cleanup signal yet',
 		);
 		$skipped[] = array(
 			'handle'      => 'repo@needs-full-scan',
@@ -148,14 +148,14 @@ namespace {
 				'skipped_by_reason'    => array(
 					'dirty_worktree'               => 1,
 					'missing_metadata'             => 1,
-					'missing_metadata_repaired'    => 1,
+					'repaired_metadata'    => 1,
 					'no_inventory_cleanup_signal'  => 1,
 					'no_merge_signal'              => 10,
 					'requires_full_scan'           => 1,
 				),
 				'skipped_next_commands' => array(
 					array(
-						'reason_code' => 'missing_metadata_repaired',
+						'reason_code' => 'repaired_metadata',
 						'count'       => 1,
 						'command'     => 'studio wp datamachine-code workspace cleanup run --mode=retention --older-than=7d',
 						'alternative' => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25 --older-than=7d',
@@ -558,7 +558,7 @@ namespace {
 
 	echo "\n[0a] WP-CLI synopsis exposes cleanup flags\n";
 	datamachine_code_cleanup_assert( str_contains( $doc_comment, "\n\t * [--inventory-only]" ), 'worktree synopsis declares --inventory-only at top level' );
-	datamachine_code_cleanup_assert( str_contains( $doc_comment, "\n\t * [--include-legacy-repaired]" ), 'worktree synopsis declares --include-legacy-repaired at top level' );
+	datamachine_code_cleanup_assert( str_contains( $doc_comment, "\n\t * [--include-repaired-metadata]" ), 'worktree synopsis declares --include-repaired-metadata at top level' );
 	datamachine_code_cleanup_assert( ! str_contains( $doc_comment, "\n\t\t * [--apply-plan=<file>]" ), 'cleanup flags are not hidden behind nested docblock indentation' );
 	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, 'Control task-backed workspace cleanup runs.' ), 'workspace cleanup command documents task-backed controller surface' );
 	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, '<run|status|resume|cancel|evidence>' ), 'workspace cleanup synopsis exposes run/status/resume/cancel/evidence' );
@@ -631,7 +631,7 @@ namespace {
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'format' => 'json' ) );
-	datamachine_code_cleanup_assert( array( 'dry_run' => true, 'force' => false, 'skip_github' => true, 'inventory_only' => false, 'include_legacy_repaired' => false ) === $ability->last_input, 'cleanup flags forwarded to ability' );
+	datamachine_code_cleanup_assert( array( 'dry_run' => true, 'force' => false, 'skip_github' => true, 'inventory_only' => false, 'include_repaired_metadata' => false ) === $ability->last_input, 'cleanup flags forwarded to ability' );
 	datamachine_code_cleanup_assert( 1 === count( WP_CLI::$logs ), 'JSON path writes exactly one stdout log entry' );
 	datamachine_code_cleanup_assert( array() === WP_CLI::$successes, 'JSON path emits no success suffix' );
 	$decoded = json_decode( WP_CLI::$logs[0], true );
@@ -731,8 +731,8 @@ namespace {
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'inventory-only' => true, 'skip-github' => true, 'format' => 'json' ) );
 	datamachine_code_cleanup_assert( true === ( $ability->last_input['inventory_only'] ?? null ), '--inventory-only forwards to cleanup ability' );
-	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'inventory-only' => true, 'include-legacy-repaired' => true, 'format' => 'json' ) );
-	datamachine_code_cleanup_assert( true === ( $ability->last_input['include_legacy_repaired'] ?? null ), '--include-legacy-repaired forwards to cleanup ability' );
+	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'inventory-only' => true, 'include-repaired-metadata' => true, 'format' => 'json' ) );
+	datamachine_code_cleanup_assert( true === ( $ability->last_input['include_repaired_metadata'] ?? null ), '--include-repaired-metadata forwards to cleanup ability' );
 
 	echo "\n[8b] emergency-cleanup emits fast plan and apply-plan path\n";
 	WP_CLI::$logs      = array();

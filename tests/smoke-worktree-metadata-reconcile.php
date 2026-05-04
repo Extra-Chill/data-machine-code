@@ -176,24 +176,24 @@ namespace {
 		$run( sprintf( 'git push -u origin %s', escapeshellarg( $branch ) ), $primary );
 		$run( 'git checkout main', $primary );
 	};
-	$make_branch( 'legacy-missing' );
-	$make_branch( 'legacy-partial' );
-	$make_branch( 'legacy-dirty' );
-	$make_branch( 'legacy-invalid' );
+	$make_branch( 'unmanaged-missing' );
+	$make_branch( 'unmanaged-partial' );
+	$make_branch( 'unmanaged-dirty' );
+	$make_branch( 'unmanaged-invalid' );
 	$make_branch( 'already-current' );
 	$make_branch( 'external-branch' );
 
-	$run( sprintf( 'git worktree add %s legacy-missing', escapeshellarg( $tmp . '/demo@legacy-missing' ) ), $primary );
-	$run( sprintf( 'git worktree add %s legacy-partial', escapeshellarg( $tmp . '/demo@legacy-partial' ) ), $primary );
-	$run( sprintf( 'git worktree add %s legacy-dirty', escapeshellarg( $tmp . '/demo@legacy-dirty' ) ), $primary );
-	$run( sprintf( 'git worktree add %s legacy-invalid', escapeshellarg( $tmp . '/demo@legacy-invalid' ) ), $primary );
+	$run( sprintf( 'git worktree add %s unmanaged-missing', escapeshellarg( $tmp . '/demo@unmanaged-missing' ) ), $primary );
+	$run( sprintf( 'git worktree add %s unmanaged-partial', escapeshellarg( $tmp . '/demo@unmanaged-partial' ) ), $primary );
+	$run( sprintf( 'git worktree add %s unmanaged-dirty', escapeshellarg( $tmp . '/demo@unmanaged-dirty' ) ), $primary );
+	$run( sprintf( 'git worktree add %s unmanaged-invalid', escapeshellarg( $tmp . '/demo@unmanaged-invalid' ) ), $primary );
 	$run( sprintf( 'git worktree add %s already-current', escapeshellarg( $tmp . '/demo@already-current' ) ), $primary );
 	mkdir( $tmp . '-external', 0755, true );
 	$run( sprintf( 'git worktree add %s external-branch', escapeshellarg( $tmp . '-external/demo-external' ) ), $primary );
-	file_put_contents( $tmp . '/demo@legacy-dirty/scratch.txt', 'dirty' );
+	file_put_contents( $tmp . '/demo@unmanaged-dirty/scratch.txt', 'dirty' );
 
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_metadata(
-		'demo@legacy-partial',
+		'demo@unmanaged-partial',
 		array(
 			'site_url'   => 'http://example.test',
 			'site_name'  => 'Example',
@@ -203,12 +203,12 @@ namespace {
 		)
 	);
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
-		'demo@legacy-invalid',
+		'demo@unmanaged-invalid',
 		array(
-			'handle'          => 'demo@legacy-invalid',
+			'handle'          => 'demo@unmanaged-invalid',
 			'repo'            => 'demo',
-			'branch'          => 'legacy-invalid',
-			'path'            => $tmp . '/demo@legacy-invalid',
+			'branch'          => 'unmanaged-invalid',
+			'path'            => $tmp . '/demo@unmanaged-invalid',
 			'created_at'      => '2026-04-02T00:00:00+00:00',
 			'lifecycle_state' => 'donezo',
 		)
@@ -232,7 +232,7 @@ namespace {
 	$plan = $ws->worktree_reconcile_metadata( array( 'dry_run' => true ) );
 	$assert( true, ! is_wp_error( $plan ) && ( $plan['success'] ?? false ), 'dry-run succeeds' );
 	$assert( true, $plan['dry_run'] ?? false, 'dry-run flag is true' );
-	$assert( 4, (int) ( $plan['summary']['proposed'] ?? 0 ), 'dry-run proposes only legacy rows' );
+	$assert( 4, (int) ( $plan['summary']['proposed'] ?? 0 ), 'dry-run proposes only unmanaged rows' );
 	$assert( 0, (int) ( $plan['summary']['written'] ?? 0 ), 'dry-run writes nothing' );
 	$assert( 1, (int) ( $plan['summary']['skipped_by_reason']['external_worktree'] ?? 0 ), 'dry-run distinguishes external worktrees' );
 	$assert( 1, count( $plan['external_worktrees'] ?? array() ), 'dry-run exposes external worktree bucket' );
@@ -241,16 +241,16 @@ namespace {
 	foreach ( $plan['proposals'] as $row ) {
 		$by_handle[ $row['handle'] ] = $row;
 	}
-	$assert( 'operator_plan', $by_handle['demo@legacy-missing']['source_map']['lifecycle_state'] ?? '', 'missing metadata lifecycle source is operator_plan' );
-	$assert( 'filesystem', $by_handle['demo@legacy-missing']['source_map']['created_at'] ?? '', 'missing metadata created_at source is filesystem' );
-	$assert( 'reconcile_run', $by_handle['demo@legacy-missing']['source_map']['observed_at'] ?? '', 'missing metadata observed_at source is reconcile run' );
-	$assert( 'current_site', $by_handle['demo@legacy-missing']['source_map']['origin_site'] ?? '', 'missing metadata origin site is inferred from current site' );
-	$assert( 'metadata', $by_handle['demo@legacy-partial']['source_map']['created_at'] ?? '', 'partial metadata preserves created_at source' );
-	$assert( 'git', $by_handle['demo@legacy-partial']['source_map']['branch'] ?? '', 'branch source is git' );
-	$assert( array( 'lifecycle_state' ), $by_handle['demo@legacy-invalid']['invalid_fields'] ?? array(), 'invalid lifecycle state is planned for repair' );
-	$assert( \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE, $by_handle['demo@legacy-invalid']['proposed_metadata']['lifecycle_state'] ?? '', 'invalid lifecycle state becomes conservative active proposal' );
-	$assert( 1, (int) ( $by_handle['demo@legacy-dirty']['dirty'] ?? 0 ), 'dirty row is visible but not cleanup-eligible' );
-	$assert( \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE, $by_handle['demo@legacy-dirty']['proposed_metadata']['lifecycle_state'] ?? '', 'dirty row proposal stays active' );
+	$assert( 'operator_plan', $by_handle['demo@unmanaged-missing']['source_map']['lifecycle_state'] ?? '', 'missing metadata lifecycle source is operator_plan' );
+	$assert( 'filesystem', $by_handle['demo@unmanaged-missing']['source_map']['created_at'] ?? '', 'missing metadata created_at source is filesystem' );
+	$assert( 'reconcile_run', $by_handle['demo@unmanaged-missing']['source_map']['observed_at'] ?? '', 'missing metadata observed_at source is reconcile run' );
+	$assert( 'current_site', $by_handle['demo@unmanaged-missing']['source_map']['origin_site'] ?? '', 'missing metadata origin site is inferred from current site' );
+	$assert( 'metadata', $by_handle['demo@unmanaged-partial']['source_map']['created_at'] ?? '', 'partial metadata preserves created_at source' );
+	$assert( 'git', $by_handle['demo@unmanaged-partial']['source_map']['branch'] ?? '', 'branch source is git' );
+	$assert( array( 'lifecycle_state' ), $by_handle['demo@unmanaged-invalid']['invalid_fields'] ?? array(), 'invalid lifecycle state is planned for repair' );
+	$assert( \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE, $by_handle['demo@unmanaged-invalid']['proposed_metadata']['lifecycle_state'] ?? '', 'invalid lifecycle state becomes conservative active proposal' );
+	$assert( 1, (int) ( $by_handle['demo@unmanaged-dirty']['dirty'] ?? 0 ), 'dirty row is visible but not cleanup-eligible' );
+	$assert( \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE, $by_handle['demo@unmanaged-dirty']['proposed_metadata']['lifecycle_state'] ?? '', 'dirty row proposal stays active' );
 	$stale_plan  = $plan;
 	$unsafe_plan = $plan;
 
@@ -264,8 +264,8 @@ namespace {
 	$assert( 4, (int) ( $apply['summary']['written'] ?? 0 ), 'apply reports written metadata rows' );
 	$assert( 0, (int) ( $apply['summary']['skipped'] ?? 0 ), 'apply skips nothing for current plan' );
 	$assert( 4, count( $apply['written'] ?? array() ), 'apply exposes written rows distinctly' );
-	$stored = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@legacy-missing' );
-	$assert( 'demo@legacy-missing', $stored['handle'] ?? '', 'stored metadata includes handle' );
+	$stored = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@unmanaged-missing' );
+	$assert( 'demo@unmanaged-missing', $stored['handle'] ?? '', 'stored metadata includes handle' );
 	$assert( true, ! empty( $stored['observed_at'] ), 'stored metadata includes observed_at' );
 	$assert( 'Origin Test', $stored['origin_site'] ?? '', 'stored metadata includes origin site when available' );
 	$assert( 'operator_plan', $stored['reconciled_sources']['lifecycle_state'] ?? '', 'stored metadata keeps source map' );
@@ -281,14 +281,14 @@ namespace {
 	$assert( 'plan_identity_mismatch', $stale_apply['skipped'][0]['reason_code'] ?? '', 'apply revalidates branch identity before writing' );
 
 	foreach ( $unsafe_plan['proposals'] as &$row ) {
-		if ( 'demo@legacy-dirty' === $row['handle'] ) {
+		if ( 'demo@unmanaged-dirty' === $row['handle'] ) {
 			$row['proposed_metadata']['lifecycle_state'] = \DataMachineCode\Workspace\WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE;
 			$row['source_map']['lifecycle_state']        = 'operator_plan';
 		}
 	}
 	unset( $row );
 	$unsafe_apply = $ws->worktree_reconcile_metadata( array( 'apply_plan' => $unsafe_plan ) );
-	$unsafe_skips = array_values( array_filter( $unsafe_apply['skipped'] ?? array(), fn( $row ) => 'demo@legacy-dirty' === ( $row['handle'] ?? '' ) ) );
+	$unsafe_skips = array_values( array_filter( $unsafe_apply['skipped'] ?? array(), fn( $row ) => 'demo@unmanaged-dirty' === ( $row['handle'] ?? '' ) ) );
 	$assert( 'unsafe_cleanup_eligible_state', $unsafe_skips[0]['reason_code'] ?? '', 'dirty worktree cannot become cleanup_eligible through reconciliation plan' );
 	$assert( 1, count( $unsafe_apply['still_unsafe'] ?? array() ), 'apply exposes still-unsafe rows distinctly' );
 

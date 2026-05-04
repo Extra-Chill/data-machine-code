@@ -198,17 +198,17 @@ namespace {
 	$assert( 'https://github.test/actions/runs/1001' === ( $results['workflow']['url'] ?? '' ), 'workflow URL is carried from manifest' );
 	$assert( 'homeboy-ci-results' === ( $api_calls[1]['query']['name'] ?? '' ), 'artifact lookup filters by artifact name' );
 
-	$legacy = \DataMachineCode\Abilities\GitHubAbilities::summarizeHomeboyCiArtifact(
+	$classic = \DataMachineCode\Abilities\GitHubAbilities::summarizeHomeboyCiArtifact(
 		array(
 			'audit.json' => array( 'success' => true, 'data' => array( 'finding_count' => 0 ) ),
 			'lint.json'  => array( 'success' => false, 'data' => array( 'finding_count' => 4 ) ),
 		),
 		array( 'repo' => 'Extra-Chill/data-machine-code', 'head_sha' => 'abc123head' )
 	);
-	$assert( ! is_wp_error( $legacy ), 'legacy audit/lint/test fallback summarizes without review.json' );
-	$assert( 'legacy' === ( $legacy['mode'] ?? '' ), 'legacy fallback mode is explicit' );
-	$assert( false === ( $legacy['summary']['passed'] ?? true ), 'legacy fallback fails if any stage fails' );
-	$assert( 4 === (int) ( $legacy['summary']['total_findings'] ?? -1 ), 'legacy fallback totals findings' );
+	$assert( ! is_wp_error( $classic ), 'classic audit/lint/test fallback summarizes without review.json' );
+	$assert( 'classic' === ( $classic['mode'] ?? '' ), 'classic fallback mode is explicit' );
+	$assert( false === ( $classic['summary']['passed'] ?? true ), 'classic fallback fails if any stage fails' );
+	$assert( 4 === (int) ( $classic['summary']['total_findings'] ?? -1 ), 'classic fallback totals findings' );
 
 	$expired = \DataMachineCode\Abilities\GitHubAbilities::selectHomeboyArtifact(
 		array( array_merge( $artifact, array( 'expired' => true ) ) ),

@@ -2,7 +2,7 @@
 /**
  * GitHub credential resolver.
  *
- * Supports the legacy PAT path and GitHub App installation tokens behind the
+ * Supports the classic PAT path and GitHub App installation tokens behind the
  * same API-token contract used by GitHubAbilities.
  *
  * @package DataMachineCode\Support

@@ -142,7 +142,7 @@ class WorktreeCleanupTask extends SystemTask {
 			'dry_run'                 => ! empty( $params['dry_run'] ),
 			'force'                   => ! empty( $params['force'] ),
 			'skip_github'             => ! empty( $params['skip_github'] ),
-			'include_legacy_repaired' => ! empty( $params['include_legacy_repaired'] ),
+			'include_repaired_metadata' => ! empty( $params['include_repaired_metadata'] ),
 		);
 		if ( isset( $params['older_than'] ) && '' !== trim( (string) $params['older_than'] ) ) {
 			$opts['older_than'] = trim( (string) $params['older_than'] );

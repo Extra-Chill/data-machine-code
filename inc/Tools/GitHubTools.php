@@ -694,7 +694,7 @@ class GitHubTools extends BaseTool {
 		return array(
 			'class'       => __CLASS__,
 			'method'      => 'handleCommitStatuses',
-			'description' => 'Get legacy GitHub commit statuses for a commit SHA or ref, including aggregate state and failing contexts.',
+			'description' => 'Get unmanaged GitHub commit statuses for a commit SHA or ref, including aggregate state and failing contexts.',
 			'parameters'  => array(
 				'repo' => array(
 					'type'        => 'string',
@@ -844,7 +844,7 @@ class GitHubTools extends BaseTool {
 				'include_statuses'        => array(
 					'type'        => 'boolean',
 					'required'    => false,
-					'description' => 'Include legacy commit statuses for the PR head SHA.',
+					'description' => 'Include classic commit statuses for the PR head SHA.',
 				),
 				'max_check_runs'          => array(
 					'type'        => 'integer',

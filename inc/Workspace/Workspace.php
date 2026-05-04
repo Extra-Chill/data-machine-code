@@ -2812,7 +2812,7 @@ class Workspace {
 		$force          = ! empty( $opts['force'] );
 		$skip_github    = ! empty( $opts['skip_github'] );
 		$inventory_only = ! empty( $opts['inventory_only'] );
-		$include_legacy_repaired = ! empty( $opts['include_legacy_repaired'] );
+		$include_repaired_metadata = ! empty( $opts['include_repaired_metadata'] );
 		$apply_plan     = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
 		$older_than     = isset( $opts['older_than'] ) ? trim( (string) $opts['older_than'] ) : '';
 		$sort           = isset( $opts['sort'] ) ? trim( (string) $opts['sort'] ) : '';
@@ -2831,7 +2831,7 @@ class Workspace {
 				return new \WP_Error( 'inventory_cleanup_apply_plan_unsupported', 'Inventory-only cleanup cannot apply a plan because it intentionally skips full safety revalidation.', array( 'status' => 400 ) );
 			}
 
-			return $this->worktree_cleanup_inventory_only( $older_than, $sort, $include_legacy_repaired );
+			return $this->worktree_cleanup_inventory_only( $older_than, $sort, $include_repaired_metadata );
 		}
 
 		$planned_candidates = null;
@@ -3038,10 +3038,10 @@ class Workspace {
 				if ( ! empty( $metadata['pr_url'] ) ) {
 					$signal['pr_url'] = (string) $metadata['pr_url'];
 				}
-			} elseif ( $include_legacy_repaired && is_array( $metadata ) && ! empty( $metadata['metadata_repaired'] ) ) {
+			} elseif ( $include_repaired_metadata && is_array( $metadata ) && ! empty( $metadata['metadata_repaired'] ) ) {
 				$signal = array(
-					'signal' => 'missing_metadata_repaired',
-					'reason' => 'operator-approved cleanup of conservatively repaired legacy metadata',
+					'signal' => 'repaired_metadata',
+					'reason' => 'operator-approved cleanup of repaired metadata',
 				);
 			} else {
 				$signal = $this->detect_merge_signal( $primary_path, $repo, $branch, $skip_github, $github_cache );
@@ -4693,7 +4693,7 @@ class Workspace {
 	 * @param string $sort       Optional candidate sort.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function worktree_cleanup_inventory_only( string $older_than, string $sort, bool $include_legacy_repaired = false ): array|\WP_Error {
+	private function worktree_cleanup_inventory_only( string $older_than, string $sort, bool $include_repaired_metadata = false ): array|\WP_Error {
 		$age_filter = null;
 		if ( '' !== $older_than ) {
 			$duration_seconds = $this->parse_worktree_cleanup_duration( $older_than );
@@ -4747,7 +4747,7 @@ class Workspace {
 
 			if ( ! WorktreeContextInjector::has_cleanup_signal( $metadata ) ) {
 				$repaired = ! empty( $metadata['metadata_repaired'] );
-				if ( $include_legacy_repaired && $repaired ) {
+				if ( $include_repaired_metadata && $repaired ) {
 					$age_decision = null;
 					if ( null !== $age_filter ) {
 						$created_ts = is_string( $created_at ) && '' !== $created_at ? strtotime( $created_at ) : false;
@@ -4787,10 +4787,10 @@ class Workspace {
 
 					$candidate = array_merge( $base_row, array(
 						'dirty'         => 0,
-						'signal'        => 'missing_metadata_repaired',
-						'reason_code'   => 'missing_metadata_repaired',
-						'reason'        => 'operator-approved cleanup of conservatively repaired legacy metadata',
-						'repair_status' => 'missing_metadata_repaired',
+						'signal'        => 'repaired_metadata',
+						'reason_code'   => 'repaired_metadata',
+						'reason'        => 'operator-approved cleanup of repaired metadata',
+						'repair_status' => 'repaired_metadata',
 					) );
 					if ( null !== $age_decision ) {
 						$candidate['age_filter'] = $age_decision;
@@ -4905,7 +4905,7 @@ class Workspace {
 		$dry_run    = ! empty( $opts['dry_run'] );
 		$force      = ! empty( $opts['force'] );
 		$via_jobs   = ! empty( $opts['via_jobs'] );
-		$include_legacy_repaired = ! empty( $opts['include_legacy_repaired'] );
+		$include_repaired_metadata = ! empty( $opts['include_repaired_metadata'] );
 		$older_than = isset( $opts['older_than'] ) ? trim( (string) $opts['older_than'] ) : '';
 		$sort       = isset( $opts['sort'] ) ? trim( (string) $opts['sort'] ) : 'age';
 		$source     = isset( $opts['source'] ) ? trim( (string) $opts['source'] ) : 'workspace_bounded_cleanup_eligible_apply';
@@ -4931,7 +4931,7 @@ class Workspace {
 		// the bounded cleanup-eligible apply never triggers full worktree_list / fetch / GitHub
 		// API work just to plan. This intentionally does not honor `apply_plan`
 		// — bounded cleanup-eligible apply IS the apply path; no separate plan file is needed.
-		$inventory = $this->worktree_cleanup_inventory_only( $older_than, $sort, $include_legacy_repaired );
+		$inventory = $this->worktree_cleanup_inventory_only( $older_than, $sort, $include_repaired_metadata );
 		if ( $inventory instanceof \WP_Error ) {
 			return $inventory;
 		}
@@ -4979,7 +4979,7 @@ class Workspace {
 		}
 
 		if ( $via_jobs ) {
-			return $this->schedule_bounded_cleanup_eligible_chunks( $batch, $deferred, $force, $source, $started_at, $continuation, $include_legacy_repaired );
+			return $this->schedule_bounded_cleanup_eligible_chunks( $batch, $deferred, $force, $source, $started_at, $continuation, $include_repaired_metadata );
 		}
 
 		$processed       = 0;
@@ -5310,7 +5310,7 @@ class Workspace {
 	 * @param array<string,mixed>             $continuation Continuation envelope.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function schedule_bounded_cleanup_eligible_chunks( array $batch, array $deferred, bool $force, string $source, float $started_at, array $continuation, bool $include_legacy_repaired = false ): array|\WP_Error {
+	private function schedule_bounded_cleanup_eligible_chunks( array $batch, array $deferred, bool $force, string $source, float $started_at, array $continuation, bool $include_repaired_metadata = false ): array|\WP_Error {
 		if ( ! class_exists( '\DataMachine\Engine\Tasks\TaskScheduler' ) ) {
 			return new \WP_Error( 'task_scheduler_unavailable', 'Data Machine TaskScheduler is unavailable; cannot schedule bounded cleanup-eligible apply chunks.', array( 'status' => 500 ) );
 		}
@@ -5364,7 +5364,7 @@ class Workspace {
 				'rows'        => array( $row ),
 				'force'       => $force,
 				'skip_github' => true,
-				'include_legacy_repaired' => $include_legacy_repaired,
+				'include_repaired_metadata' => $include_repaired_metadata,
 				'source'      => $source,
 			);
 		}
@@ -5993,18 +5993,18 @@ class Workspace {
 	 */
 	private function worktree_cleanup_skipped_next_commands( array $skipped_by_reason ): array {
 		$templates = array(
-			'missing_metadata_repaired'   => array(
-				'label'       => 'Review repaired legacy metadata with bounded safety probes',
-				'command'     => 'studio wp datamachine-code workspace cleanup run --mode=retention --older-than=7d',
-				'alternative' => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25 --older-than=7d',
-				'why'         => 'Queues task-backed retention cleanup so repaired rows get full safety checks before any deletion.',
+			'repaired_metadata'           => array(
+				'label'       => 'Review repaired metadata with bounded safety probes',
+				'command'     => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --include-repaired-metadata --limit=25 --older-than=7d',
+				'alternative' => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --include-repaired-metadata --limit=25 --older-than=7d',
+				'why'         => 'Runs bounded cleanup with fresh safety checks before any deletion.',
 				'destructive' => true,
 			),
 			'requires_full_scan'          => array(
 				'label'       => 'Repair missing lifecycle metadata in bounded batches',
-				'command'     => 'studio wp datamachine-code workspace worktree reconcile-metadata-batch --dry-run --limit=25 --format=json',
-				'alternative' => 'studio wp datamachine-code workspace worktree reconcile-metadata-batch --limit=25',
-				'why'         => 'Bounded reconciliation writes lifecycle metadata so future inventory cleanup no longer needs a full scan for those rows.',
+				'command'     => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
+				'alternative' => 'studio wp datamachine-code workspace worktree reconcile-metadata --apply-plan=<plan-id>',
+				'why'         => 'Reconciliation writes lifecycle metadata so future inventory cleanup no longer needs a full scan for those rows.',
 				'destructive' => false,
 			),
 			'no_inventory_cleanup_signal' => array(
