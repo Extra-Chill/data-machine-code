@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.28.4] - 2026-05-04
+
+### Fixed
+- rename repaired metadata cleanup surface
+
 ## [0.28.3] - 2026-05-04
 
 ### Fixed
