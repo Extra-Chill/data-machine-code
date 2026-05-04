@@ -253,11 +253,12 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## OPTIONS
 	 *
 	 * <operation>
-	 * : Cleanup operation. One of: <run|status|resume|cancel|evidence>.
+	 * : Cleanup operation. One of: <plan|apply|run|status|resume|cancel|evidence>.
+	 *   Existing task-backed controls remain: <run|status|resume|cancel|evidence>.
 	 *
 	 * [<run-id>]
-	 * : Run identifier returned by `run` (currently the Data Machine job ID, or
-	 *   cleanup-run-<job_id>).
+	 * : Run identifier returned by `plan` or `run`. DB-backed plan IDs look like
+	 *   cleanup-run-<timestamp>-<nonce>; job-backed run IDs may be cleanup-run-<job_id>.
 	 *
 	 * [--mode=<mode>]
 	 * : Cleanup mode for `run`.
@@ -313,6 +314,12 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * ## EXAMPLES
 	 *
+	 *     # Create a DB-backed cleanup plan for review
+	 *     wp datamachine-code workspace cleanup plan --mode=retention
+	 *
+	 *     # Apply a reviewed DB-backed run
+	 *     wp datamachine-code workspace cleanup apply cleanup-run-20260504120000-abc123
+	 *
 	 *     # Start task-backed retention cleanup and return immediately
 	 *     wp datamachine-code workspace cleanup run --mode=retention
 	 *
@@ -343,17 +350,29 @@ class WorkspaceCommand extends BaseCommand {
 	public function cleanup( array $args, array $assoc_args ): void {
 		$operation = (string) ( $args[0] ?? '' );
 		if ( '' === $operation ) {
-			WP_CLI::error( 'Usage: wp datamachine-code workspace cleanup <run|status|resume|cancel|evidence> [<run-id>] [--mode=<mode>]' );
+			WP_CLI::error( 'Usage: wp datamachine-code workspace cleanup <plan|apply|run|status|resume|cancel|evidence> [<run-id>] [--mode=<mode>]' );
 			return;
 		}
 
 		switch ( $operation ) {
+			case 'plan':
+				$this->run_cleanup_plan( $assoc_args );
+				return;
+
+			case 'apply':
+				$this->run_cleanup_control_ability( 'apply', (string) ( $args[1] ?? '' ), $assoc_args );
+				return;
+
 			case 'run':
 				$this->run_cleanup_task( $assoc_args );
 				return;
 
 			case 'status':
 			case 'evidence':
+				if ( ! $this->is_job_cleanup_run_id( (string) ( $args[1] ?? '' ) ) ) {
+					$this->run_cleanup_control_ability( $operation, (string) ( $args[1] ?? '' ), $assoc_args );
+					return;
+				}
 				$job_id = $this->cleanup_run_job_id( (string) ( $args[1] ?? '' ) );
 				if ( $job_id <= 0 ) {
 					WP_CLI::error( 'Usage: wp datamachine-code workspace cleanup ' . $operation . ' <run-id>' );
@@ -364,6 +383,10 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'resume':
 			case 'cancel':
+				if ( ! $this->is_job_cleanup_run_id( (string) ( $args[1] ?? '' ) ) ) {
+					$this->run_cleanup_control_ability( $operation, (string) ( $args[1] ?? '' ), $assoc_args );
+					return;
+				}
 				$job_id = $this->cleanup_run_job_id( (string) ( $args[1] ?? '' ) );
 				if ( $job_id <= 0 ) {
 					WP_CLI::error( 'Usage: wp datamachine-code workspace cleanup ' . $operation . ' <run-id>' );
@@ -419,6 +442,60 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		return $input;
+	}
+
+	private function run_cleanup_plan( array $assoc_args ): void {
+		$ability = wp_get_ability( 'datamachine/workspace-cleanup-plan' );
+		if ( ! $ability ) {
+			WP_CLI::error( 'Workspace cleanup plan ability not registered.' );
+			return;
+		}
+
+		$input = array(
+			'mode'              => strtolower( preg_replace( '/[^a-z0-9_\-]/', '', (string) ( $assoc_args['mode'] ?? 'retention' ) ) ),
+			'include_resolvers' => true,
+		);
+		if ( isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ) {
+			$input['worktree_older_than'] = trim( (string) $assoc_args['older-than'] );
+		}
+		if ( isset( $assoc_args['force'] ) ) {
+			$input['force_artifact_cleanup'] = (bool) $assoc_args['force'];
+		}
+
+		$result = $ability->execute( $input );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+
+		$this->render_cleanup_plan_result( $result, $assoc_args );
+	}
+
+	private function run_cleanup_control_ability( string $operation, string $run_id, array $assoc_args ): void {
+		$run_id = trim( $run_id );
+		if ( '' === $run_id ) {
+			WP_CLI::error( 'Usage: wp datamachine-code workspace cleanup ' . $operation . ' <run-id>' );
+			return;
+		}
+
+		$ability = wp_get_ability( 'datamachine/workspace-cleanup-' . $operation );
+		if ( ! $ability ) {
+			WP_CLI::error( sprintf( 'Workspace cleanup %s ability not registered.', $operation ) );
+			return;
+		}
+
+		$result = $ability->execute(
+			array(
+				'run_id' => $run_id,
+				'force'  => ! empty( $assoc_args['force'] ),
+			)
+		);
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+
+		$this->render_cleanup_control_result( $result, $assoc_args );
 	}
 
 	private function run_cleanup_review( array $assoc_args ): void {
@@ -961,6 +1038,22 @@ class WorkspaceCommand extends BaseCommand {
 		}
 	}
 
+	private function render_cleanup_plan_result( array $result, array $assoc_args ): void {
+		$format = (string) ( $assoc_args['format'] ?? 'table' );
+		if ( 'json' === $format ) {
+			WP_CLI::log( (string) wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
+			return;
+		}
+
+		$summary = (array) ( $result['summary'] ?? array() );
+		WP_CLI::success( sprintf( 'Cleanup plan stored as %s.', (string) ( $result['run_id'] ?? '' ) ) );
+		WP_CLI::log( sprintf( 'Run ID: %s', (string) ( $result['run_id'] ?? '' ) ) );
+		WP_CLI::log( sprintf( 'Plan ID: %s', (string) ( $result['plan_id'] ?? '' ) ) );
+		WP_CLI::log( sprintf( 'Rows:   %d', (int) ( $summary['total_rows'] ?? 0 ) ) );
+		WP_CLI::log( sprintf( 'Bytes:  %s', $this->format_bytes( $summary['total_size_bytes'] ?? 0 ) ) );
+		WP_CLI::log( sprintf( 'Apply:  wp datamachine-code workspace cleanup apply %s', (string) ( $result['run_id'] ?? '' ) ) );
+	}
+
 	private function cleanup_run_id( int $job_id ): string {
 		return 'cleanup-run-' . $job_id;
 	}
@@ -974,6 +1067,10 @@ class WorkspaceCommand extends BaseCommand {
 			return (int) $matches[1];
 		}
 		return 0;
+	}
+
+	private function is_job_cleanup_run_id( string $run_id ): bool {
+		return $this->cleanup_run_job_id( $run_id ) > 0;
 	}
 
 	private function cleanup_job_state( string $status ): string {
@@ -1988,25 +2085,24 @@ class WorkspaceCommand extends BaseCommand {
 	 *   alongside `--task-url` (applies to `add` only). Falls back to the
 	 *   `DATAMACHINE_TASK_REF` environment variable when omitted.
 	 *
-	 * [--force]
-	 * : For `add`, explicitly bypass the disk-budget refusal threshold. For
-	 *   `remove`, force-remove a worktree even if it is dirty. For `cleanup`,
-	 *   force dirty-worktree removal but not the unpushed-commits safety.
-	 *
-	 * [--pr=<url-or-number>]
-	 * : Attach pull request metadata when finalizing or marking a worktree
-	 *   cleanup-eligible.
-	 *
-	 * [--state=<state>]
-	 * : Lifecycle state to record when finalizing a worktree.
-	 *
-	 * [--dry-run]
-	 * : Preview cleanup candidates without removing anything (cleanup only).
-	 *
-	 * [--apply-plan=<file>]
-	 * : Apply a previously reviewed cleanup JSON report. The destructive pass
-	 *   revalidates every planned row and removes only exact current matches.
-	 *   For reconcile-metadata, applies a reviewed non-destructive metadata plan.
+		 * [--force]
+		 * : For `add`, explicitly bypass the disk-budget refusal threshold. For
+		 *   `remove`, force-remove a worktree even if it is dirty. For `cleanup`,
+		 *   force dirty-worktree removal but not the unpushed-commits safety.
+		 *
+     * [--pr=<url-or-number>]
+     * : Attach pull request metadata when finalizing or marking a worktree
+     *   cleanup-eligible.
+     *
+     * [--state=<state>]
+     * : Lifecycle state to record when finalizing a worktree.
+     *
+     * [--dry-run]
+     * : Preview cleanup candidates without removing anything (cleanup only).
+     *
+     * File cleanup plan imports are an emergency escape hatch only. The normal
+     * operator workflow is `workspace cleanup plan` then
+     * `workspace cleanup apply <run-id>`.
 	 *
 	 * [--skip-github]
 	 * : Skip the GitHub API lookup and rely only on the local `upstream-gone`
@@ -2128,20 +2224,12 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Preview worktrees that would be removed (upstream gone or PR merged)
 	 *     wp datamachine-code workspace worktree cleanup --dry-run
 	 *
-	 *     # Remove all merged worktrees
-	 *     wp datamachine-code workspace worktree cleanup
-	 *
-	 *     # Review a plan, then apply only those rows after revalidation
-	 *     wp datamachine-code workspace worktree cleanup --dry-run --format=json > cleanup-plan.json
-	 *     wp datamachine-code workspace worktree cleanup --apply-plan=cleanup-plan.json
-	 *
-	 *     # Review and apply artifact-only cleanup without removing worktrees
-	 *     wp datamachine-code workspace worktree cleanup-artifacts --dry-run --format=json > artifact-plan.json
-	 *     wp datamachine-code workspace worktree cleanup-artifacts --apply-plan=artifact-plan.json
-	 *
-	 *     # Emergency disk-pressure plan: cheap inventory first, artifacts before worktrees
-	 *     wp datamachine-code workspace worktree emergency-cleanup --format=json > emergency-plan.json
-	 *     wp datamachine-code workspace worktree emergency-cleanup --apply-plan=emergency-plan.json
+		 *     # Remove all merged worktrees
+		 *     wp datamachine-code workspace worktree cleanup
+		 *
+     *     # Review a DB-backed plan, then apply only those rows after revalidation
+     *     wp datamachine-code workspace cleanup plan --mode=retention
+     *     wp datamachine-code workspace cleanup apply cleanup-run-20260504120000-abc123
 	 *
 	 *     # Bounded apply restricted to explicit lifecycle cleanup_eligible worktrees
 	 *     # (cheap inventory only — no full git worktree scan, no GitHub lookup)

@@ -15,6 +15,7 @@
 namespace DataMachineCode\Abilities;
 
 use DataMachine\Abilities\PermissionHelper;
+use DataMachineCode\Workspace\CleanupRunService;
 use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorkspaceReader;
 use DataMachineCode\Workspace\WorkspaceWriter;
@@ -1588,8 +1589,8 @@ class WorkspaceAbilities {
 			wp_register_ability(
 				'datamachine/workspace-cleanup-plan',
 				array(
-					'label'               => 'Build Workspace Cleanup Plan Chunks',
-					'description'         => 'Freeze a non-destructive cleanup plan and optionally emit bounded chunks for artifact cleanup, worktree removal, and resolver rows.',
+					'label'               => 'Build DB-backed Workspace Cleanup Plan',
+					'description'         => 'Freeze a non-destructive cleanup plan into DMC cleanup run/item database rows and return a stable run_id. File plans are an escape hatch on lower-level commands only.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -1621,6 +1622,50 @@ class WorkspaceAbilities {
 					'meta'                => array( 'show_in_rest' => false ),
 				)
 			);
+
+			wp_register_ability(
+				'datamachine/workspace-cleanup-apply',
+				array(
+					'label'               => 'Apply Workspace Cleanup Run',
+					'description'         => 'Apply pending rows from a DB-backed cleanup run by run_id after current-state revalidation.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'run_id' ),
+						'properties' => array(
+							'run_id' => array( 'type' => 'string' ),
+							'force'  => array( 'type' => 'boolean' ),
+						),
+					),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'workspaceCleanupApply' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			foreach ( array( 'status', 'evidence', 'resume', 'cancel' ) as $cleanup_operation ) {
+				wp_register_ability(
+					'datamachine/workspace-cleanup-' . $cleanup_operation,
+					array(
+						'label'               => 'Workspace Cleanup ' . ucfirst( $cleanup_operation ),
+						'description'         => 'Operate on a DB-backed workspace cleanup run by run_id.',
+						'category'            => 'datamachine-code-workspace',
+						'input_schema'        => array(
+							'type'       => 'object',
+							'required'   => array( 'run_id' ),
+							'properties' => array(
+								'run_id' => array( 'type' => 'string' ),
+								'force'  => array( 'type' => 'boolean' ),
+							),
+						),
+						'output_schema'       => array( 'type' => 'object' ),
+						'execute_callback'    => array( self::class, 'workspaceCleanup' . ucfirst( $cleanup_operation ) ),
+						'permission_callback' => fn() => PermissionHelper::can_manage(),
+						'meta'                => array( 'show_in_rest' => false ),
+					)
+				);
+			}
 		};
 
 		if ( doing_action( 'wp_abilities_api_init' ) ) {
@@ -2266,10 +2311,10 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function workspaceCleanupPlan( array $input ): array|\WP_Error {
-		$workspace = new Workspace();
 		$opts      = array(
 			'force_artifact_cleanup' => ! empty( $input['force_artifact_cleanup'] ),
 			'include_resolvers'      => ! empty( $input['include_resolvers'] ),
+			'mode'                   => (string) ( $input['mode'] ?? 'cleanup_plan' ),
 		);
 		foreach ( array( 'include_artifacts', 'include_worktrees' ) as $key ) {
 			if ( array_key_exists( $key, $input ) ) {
@@ -2289,9 +2334,71 @@ class WorkspaceAbilities {
 			$opts['chunk_size'] = (int) $input['chunk_size'];
 		}
 
-		return ! empty( $input['emit_chunks'] )
-			? $workspace->workspace_cleanup_plan_chunks( $opts )
-			: $workspace->workspace_cleanup_plan( $opts );
+
+		$service = new CleanupRunService();
+		$plan    = $service->plan( $opts );
+		if ( $plan instanceof \WP_Error || empty( $input['emit_chunks'] ) ) {
+			return $plan;
+		}
+
+		$workspace = new Workspace();
+		$chunks    = $workspace->workspace_cleanup_plan_chunks( array_merge( $opts, array( 'plan' => $plan ) ) );
+		if ( $chunks instanceof \WP_Error ) {
+			return $chunks;
+		}
+		$chunks['run_id']          = $plan['run_id'] ?? null;
+		$chunks['cleanup_storage'] = $plan['cleanup_storage'] ?? array();
+		return $chunks;
+	}
+
+	/**
+	 * Apply a DB-backed cleanup run.
+	 *
+	 * @param array $input Input parameters.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function workspaceCleanupApply( array $input ): array|\WP_Error {
+		return ( new CleanupRunService() )->apply( (string) ( $input['run_id'] ?? '' ), array( 'force' => ! empty( $input['force'] ) ) );
+	}
+
+	/**
+	 * Return DB-backed cleanup run status.
+	 *
+	 * @param array $input Input parameters.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function workspaceCleanupStatus( array $input ): array|\WP_Error {
+		return ( new CleanupRunService() )->status( (string) ( $input['run_id'] ?? '' ) );
+	}
+
+	/**
+	 * Return DB-backed cleanup run evidence.
+	 *
+	 * @param array $input Input parameters.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function workspaceCleanupEvidence( array $input ): array|\WP_Error {
+		return ( new CleanupRunService() )->evidence( (string) ( $input['run_id'] ?? '' ) );
+	}
+
+	/**
+	 * Resume pending cleanup rows.
+	 *
+	 * @param array $input Input parameters.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function workspaceCleanupResume( array $input ): array|\WP_Error {
+		return ( new CleanupRunService() )->resume( (string) ( $input['run_id'] ?? '' ), array( 'force' => ! empty( $input['force'] ) ) );
+	}
+
+	/**
+	 * Cancel pending cleanup rows.
+	 *
+	 * @param array $input Input parameters.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function workspaceCleanupCancel( array $input ): array|\WP_Error {
+		return ( new CleanupRunService() )->cancel( (string) ( $input['run_id'] ?? '' ) );
 	}
 
 	/**

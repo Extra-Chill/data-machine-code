@@ -29,6 +29,9 @@ require_once __DIR__ . '/vendor/autoload.php';
  * Install DMC-owned database tables.
  */
 function datamachine_code_install_schema(): void {
+	if ( class_exists( '\DataMachineCode\Storage\CleanupSchema' ) ) {
+		\DataMachineCode\Storage\CleanupSchema::install();
+	}
 	if ( class_exists( '\DataMachineCode\Storage\WorktreeInventoryRepository' ) ) {
 		\DataMachineCode\Storage\WorktreeInventoryRepository::install_schema();
 	}
@@ -39,9 +42,15 @@ register_activation_hook( __FILE__, 'datamachine_code_install_schema' );
  * Keep schema current for already-active installs after deploy/update.
  */
 function datamachine_code_maybe_upgrade_schema(): void {
-	$installed = function_exists( 'get_option' ) ? (string) get_option( 'datamachine_code_worktrees_schema_version', '' ) : '';
-	if ( '1' !== $installed ) {
+	$worktrees_installed = function_exists( 'get_option' ) ? (string) get_option( 'datamachine_code_worktrees_schema_version', '' ) : '';
+	$cleanup_installed   = function_exists( 'get_option' ) ? (string) get_option( 'datamachine_code_cleanup_schema_version', '' ) : '';
+	$cleanup_version     = '20260504-cleanup-runs';
+
+	if ( '1' !== $worktrees_installed || $cleanup_version !== $cleanup_installed ) {
 		datamachine_code_install_schema();
+		if ( function_exists( 'update_option' ) ) {
+			update_option( 'datamachine_code_cleanup_schema_version', $cleanup_version, false );
+		}
 	}
 }
 add_action( 'plugins_loaded', 'datamachine_code_maybe_upgrade_schema', 5 );
