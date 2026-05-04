@@ -2,6 +2,13 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.28.3] - 2026-05-04
+
+### Fixed
+- add legacy repaired cleanup opt-in
+- remove legacy cleanup compatibility paths
+- surface actionable cleanup skip commands
+
 ## [0.28.2] - 2026-05-04
 
 ### Fixed
