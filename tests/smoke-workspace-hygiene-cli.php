@@ -151,7 +151,7 @@ namespace {
 	$GLOBALS['__cli_logs'] = array();
 	$command->hygiene( array(), array() );
 	datamachine_code_hygiene_assert( 'Workspace hygiene:' === ( $GLOBALS['__cli_logs'][0] ?? '' ), 'human output starts with report heading' );
-	datamachine_code_hygiene_assert( in_array( 'table:13:metric,value', $GLOBALS['__cli_logs'], true ), 'human output renders summary table' );
+	datamachine_code_hygiene_assert( in_array( 'table:18:metric,value', $GLOBALS['__cli_logs'], true ), 'human output renders summary table (now includes 4 liveness counts + duplicate_task_groups)' );
 	datamachine_code_hygiene_assert( in_array( 'Workspace size by kind:', $GLOBALS['__cli_logs'], true ), 'human output renders size kind grouping' );
 	datamachine_code_hygiene_assert( in_array( 'Top workspace entries by size:', $GLOBALS['__cli_logs'], true ), 'human output renders top offenders' );
 	datamachine_code_hygiene_assert( in_array( 'Top repos by size:', $GLOBALS['__cli_logs'], true ), 'human output renders size leaders' );

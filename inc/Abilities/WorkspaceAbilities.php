@@ -831,6 +831,14 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Explicitly bypass the disk-budget refusal threshold. The disk-budget report still appears in output so the override is visible.',
 							),
+							'task_url'       => array(
+								'type'        => 'string',
+								'description' => 'Optional task/issue URL (e.g. GitHub issue link) to record on the worktree for ownership/duplicate detection. Falls back to DATAMACHINE_TASK_URL env when omitted.',
+							),
+							'task_ref'       => array(
+								'type'        => 'string',
+								'description' => 'Optional short task/issue reference (e.g. `org/repo#123`) recorded alongside task_url. Falls back to DATAMACHINE_TASK_REF env when omitted.',
+							),
 						),
 						'required'   => array( 'repo', 'branch' ),
 					),
@@ -1145,6 +1153,42 @@ class WorkspaceAbilities {
 										'lifecycle_state' => array( 'type' => array( 'string', 'null' ) ),
 										'pr_url'          => array( 'type' => array( 'string', 'null' ) ),
 										'pr_number'       => array( 'type' => array( 'integer', 'null' ) ),
+										'last_seen_at'    => array( 'type' => array( 'string', 'null' ) ),
+										'liveness'        => array(
+											'type'        => 'string',
+											'description' => 'Owner/agent liveness: live, stopped, stale, or unknown. Distinct from lifecycle_state.',
+										),
+										'liveness_reason' => array(
+											'type'        => 'string',
+											'description' => 'Reason code for the liveness classification (e.g. heartbeat_fresh, heartbeat_stale, lifecycle_pr_opened, metadata_missing).',
+										),
+										'heartbeat_age_seconds' => array( 'type' => array( 'integer', 'null' ) ),
+										'owner'           => array(
+											'type'       => 'object',
+											'description' => 'Owner snapshot recorded at worktree creation. Unknown-safe defaults: site, agent, user default to the literal string "unknown".',
+											'properties' => array(
+												'site'     => array( 'type' => 'string' ),
+												'site_url' => array( 'type' => array( 'string', 'null' ) ),
+												'agent'    => array( 'type' => 'string' ),
+												'user'     => array( 'type' => 'string' ),
+											),
+										),
+										'session'         => array(
+											'type'       => 'object',
+											'description' => 'Captured session identifiers (kimaki/opencode). Fields default to null when the corresponding env was not present at worktree creation.',
+											'properties' => array(
+												'primary_id'         => array( 'type' => array( 'string', 'null' ) ),
+												'kimaki_session_id'  => array( 'type' => array( 'string', 'null' ) ),
+												'kimaki_thread_id'   => array( 'type' => array( 'string', 'null' ) ),
+												'kimaki_thread_url'  => array( 'type' => array( 'string', 'null' ) ),
+												'opencode_session_id' => array( 'type' => array( 'string', 'null' ) ),
+												'opencode_run_id'    => array( 'type' => array( 'string', 'null' ) ),
+											),
+										),
+										'task'            => array(
+											'type'       => array( 'object', 'null' ),
+											'description' => 'Optional task/issue reference recorded at creation, when supplied via input or DATAMACHINE_TASK_URL/DATAMACHINE_TASK_REF env.',
+										),
 										'last_touched_at' => array( 'type' => array( 'string', 'null' ) ),
 										'age_days'        => array( 'type' => array( 'integer', 'null' ) ),
 										'size_bytes'      => array( 'type' => array( 'integer', 'null' ) ),
@@ -1153,6 +1197,21 @@ class WorkspaceAbilities {
 										'stale_reason'    => array( 'type' => array( 'string', 'null' ) ),
 										'metadata'        => array( 'type' => array( 'object', 'null' ) ),
 										'fields_skipped'  => array(
+											'type'  => 'array',
+											'items' => array( 'type' => 'string' ),
+										),
+									),
+								),
+							),
+							'duplicates' => array(
+								'type'       => 'array',
+								'description' => 'Groups of worktrees sharing a task_url, task_ref, pr_url, or pr_repo#pr_number. Reported only — never used to drive deletions.',
+								'items'      => array(
+									'type'       => 'object',
+									'properties' => array(
+										'kind'    => array( 'type' => 'string' ),
+										'key'     => array( 'type' => 'string' ),
+										'handles' => array(
 											'type'  => 'array',
 											'items' => array( 'type' => 'string' ),
 										),
@@ -1795,6 +1854,13 @@ class WorkspaceAbilities {
 		// Default rebase_base=false; only true when explicitly requested.
 		$rebase_base = array_key_exists( 'rebase_base', $input ) ? (bool) $input['rebase_base'] : false;
 		$force       = ! empty( $input['force'] );
+		$task        = array();
+		if ( isset( $input['task_url'] ) && '' !== trim( (string) $input['task_url'] ) ) {
+			$task['task_url'] = (string) $input['task_url'];
+		}
+		if ( isset( $input['task_ref'] ) && '' !== trim( (string) $input['task_ref'] ) ) {
+			$task['task_ref'] = (string) $input['task_ref'];
+		}
 		return $workspace->worktree_add(
 			$input['repo'] ?? '',
 			$input['branch'] ?? '',
@@ -1803,7 +1869,8 @@ class WorkspaceAbilities {
 			$bootstrap,
 			$allow_stale,
 			$rebase_base,
-			$force
+			$force,
+			$task
 		);
 	}
 

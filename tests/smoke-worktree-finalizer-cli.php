@@ -138,8 +138,8 @@ namespace {
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'list' ), array( 'state' => 'cleanup_eligible' ) );
-	datamachine_code_finalizer_assert( array( 'state' => 'cleanup_eligible' ) === $list->last_input, 'list forwards lifecycle state filter' );
-	datamachine_code_finalizer_assert( in_array( 'table:1:handle,repo,kind,branch,head,dirty,state,created_at,pr,age_days,size,artifacts,stale,path', WP_CLI::$logs, true ), 'list human table exposes state and PR columns' );
+	datamachine_code_finalizer_assert( array( 'state' => 'cleanup_eligible', 'include_status' => false, 'include_disk' => false ) === $list->last_input, 'list forwards lifecycle state filter and the cheap-listing defaults from #217' );
+	datamachine_code_finalizer_assert( in_array( 'table:1:handle,repo,kind,branch,head,dirty,state,liveness,last_seen_at,owner,agent,session,task,pr,age_days,size,artifacts,stale,path', WP_CLI::$logs, true ), 'list human table exposes state, liveness, owner/session/task, and PR columns' );
 
 	echo "\nAll worktree finalizer CLI smoke tests passed.\n";
 }
