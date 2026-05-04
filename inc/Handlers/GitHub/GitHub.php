@@ -284,7 +284,7 @@ class GitHub extends FetchHandler {
 	}
 
 	/**
-	 * Fetch legacy commit statuses for one commit SHA or ref.
+	 * Fetch classic commit statuses for one commit SHA or ref.
 	 */
 	private function fetchCommitStatuses( array $config, ExecutionContext $context, string $repo ): array {
 		$sha = $this->resolveShaFromConfig( $config );

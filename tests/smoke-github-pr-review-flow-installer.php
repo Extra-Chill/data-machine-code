@@ -169,7 +169,7 @@ namespace {
 	$existing = PrReviewFlowInstaller::install( array( 'repo' => 'Extra-Chill/data-machine-code' ) );
 	$assert( is_wp_error( $existing ) && 'github_pr_review_flow_exists' === $existing->get_error_code(), 'existing repo install fails clearly' );
 	$workflow_not_blocked = PrReviewFlowInstaller::install( array( 'repo' => 'Extra-Chill/data-machine-code', 'trigger' => 'workflow_run' ) );
-	$assert( ! is_wp_error( $workflow_not_blocked ), 'legacy pull_request install marker does not block workflow_run install' );
+	$assert( ! is_wp_error( $workflow_not_blocked ), 'classic pull_request install marker does not block workflow_run install' );
 
 	$forced = PrReviewFlowInstaller::install( array( 'repo' => 'Extra-Chill/data-machine-code', 'force' => true ) );
 	$assert( ! is_wp_error( $forced ), '--force bypasses existing install guard' );

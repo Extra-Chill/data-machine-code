@@ -513,7 +513,7 @@ class GitHubAbilities {
 				'datamachine/get-github-commit-statuses',
 				array(
 					'label'               => 'Get GitHub Commit Statuses',
-					'description'         => 'Get legacy GitHub commit statuses for a commit SHA or ref',
+					'description'         => 'Get unmanaged GitHub commit statuses for a commit SHA or ref',
 					'category'            => 'datamachine-code-github',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -652,7 +652,7 @@ class GitHubAbilities {
 							),
 							'include_statuses'        => array(
 								'type'        => 'boolean',
-								'description' => 'Whether to include legacy commit statuses for the PR head SHA.',
+								'description' => 'Whether to include classic commit statuses for the PR head SHA.',
 							),
 							'max_check_runs'          => array(
 								'type'        => 'integer',
@@ -2528,7 +2528,7 @@ class GitHubAbilities {
 	}
 
 	/**
-	 * Get legacy commit statuses for one commit SHA or ref.
+	 * Get classic commit statuses for one commit SHA or ref.
 	 *
 	 * @param array $input Required: repo, sha.
 	 * @return array|\WP_Error
@@ -2762,7 +2762,7 @@ class GitHubAbilities {
 	}
 
 	/**
-	 * Summarize Homeboy review.json or legacy per-command artifacts.
+	 * Summarize Homeboy review.json or classic per-command artifacts.
 	 */
 	public static function summarizeHomeboyCiArtifact( array $files, array $context = array() ): array|\WP_Error {
 		$manifest = is_array( $files['manifest.json'] ?? null ) ? $files['manifest.json'] : array();
@@ -2790,12 +2790,12 @@ class GitHubAbilities {
 			foreach ( array( 'audit', 'lint', 'test' ) as $stage ) {
 				$file = $stage . '.json';
 				if ( isset( $files[ $file ] ) && is_array( $files[ $file ] ) ) {
-					$stages[ $stage ] = self::summarizeHomeboyLegacyStage( $stage, $files[ $file ] );
+					$stages[ $stage ] = self::summarizeHomeboyClassicStage( $stage, $files[ $file ] );
 				}
 			}
 
 			if ( empty( $stages ) ) {
-				return new \WP_Error( 'github_homeboy_ci_payload_not_found', 'Homeboy CI artifact did not contain review.json or legacy audit/lint/test JSON files.', array( 'status' => 422 ) );
+				return new \WP_Error( 'github_homeboy_ci_payload_not_found', 'Homeboy CI artifact did not contain review.json or classic audit/lint/test JSON files.', array( 'status' => 422 ) );
 			}
 
 			$summary = array(
@@ -2804,7 +2804,7 @@ class GitHubAbilities {
 			);
 			$passed  = (bool) $summary['passed'];
 			$state   = $passed ? 'success' : 'failure';
-			$mode    = 'legacy';
+			$mode    = 'classic';
 		}
 
 		$artifact = is_array( $context['artifact'] ?? null ) ? $context['artifact'] : array();
@@ -2853,7 +2853,7 @@ class GitHubAbilities {
 		);
 	}
 
-	private static function summarizeHomeboyLegacyStage( string $stage, array $payload ): array {
+	private static function summarizeHomeboyClassicStage( string $stage, array $payload ): array {
 		$data          = is_array( $payload['data'] ?? null ) ? $payload['data'] : array();
 		$finding_count = (int) ( $data['finding_count'] ?? $data['total_findings'] ?? $data['summary']['total_findings'] ?? count( $data['findings'] ?? array() ) );
 
@@ -3318,7 +3318,7 @@ class GitHubAbilities {
 	}
 
 	/**
-	 * Normalize one legacy commit status.
+	 * Normalize one unmanaged commit status.
 	 */
 	public static function normalizeCommitStatus( array $status ): array {
 		return array(
@@ -3368,7 +3368,7 @@ class GitHubAbilities {
 	}
 
 	/**
-	 * Summarize legacy commit statuses.
+	 * Summarize classic commit statuses.
 	 */
 	public static function summarizeCommitStatuses( array $statuses, string $combined_state = '' ): array {
 		$counts  = array(

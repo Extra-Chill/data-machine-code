@@ -97,10 +97,10 @@ namespace {
 	$raw_statuses = array(
 		array(
 			'id'          => 21,
-			'context'     => 'ci/legacy',
+			'context'     => 'ci/classic',
 			'state'       => 'error',
-			'description' => 'legacy CI errored',
-			'target_url'  => 'https://ci.test/legacy',
+			'description' => 'classic CI errored',
+			'target_url'  => 'https://ci.test/classic',
 		),
 		array(
 			'id'      => 22,
@@ -111,10 +111,10 @@ namespace {
 	$statuses       = array_map( array( \DataMachineCode\Abilities\GitHubAbilities::class, 'normalizeCommitStatus' ), $raw_statuses );
 	$status_summary = \DataMachineCode\Abilities\GitHubAbilities::summarizeCommitStatuses( $statuses, 'failure' );
 
-	$assert( 'ci/legacy' === $statuses[0]['context'], 'commit status keeps context' );
+	$assert( 'ci/classic' === $statuses[0]['context'], 'commit status keeps context' );
 	$assert( 'failure' === $status_summary['state'], 'commit status summary maps combined failure' );
 	$assert( 1 === $status_summary['counts']['failure'], 'commit status summary maps error to failure count' );
-	$assert( 'ci/legacy' === $status_summary['failing'][0]['name'], 'commit status summary lists failing context' );
+	$assert( 'ci/classic' === $status_summary['failing'][0]['name'], 'commit status summary lists failing context' );
 
 	$pull = array(
 		'number'    => 101,

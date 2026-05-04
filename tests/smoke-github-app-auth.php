@@ -105,7 +105,7 @@ namespace {
 	$reset( array( 'github_pat' => 'pat-token' ) );
 	$pat_credential = GitHubCredentialResolver::resolve();
 	$assert( 'PAT mode resolves configured PAT', ! is_wp_error( $pat_credential ) && 'pat-token' === $pat_credential['token'] );
-	$assert( 'PAT mode keeps legacy token authorization scheme', ! is_wp_error( $pat_credential ) && 'token pat-token' === $pat_credential['authorization'] );
+	$assert( 'PAT mode keeps unmanaged token authorization scheme', ! is_wp_error( $pat_credential ) && 'token pat-token' === $pat_credential['authorization'] );
 	$assert( 'PAT status defaults mode to pat', 'pat' === GitHubCredentialResolver::status()['mode'] );
 
 	$reset( array( 'github_auth_mode' => 'app' ) );

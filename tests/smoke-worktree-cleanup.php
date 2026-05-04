@@ -4,7 +4,7 @@
  *
  * Builds a real workspace in a tempdir with real git repos + real worktrees,
  * simulates various scenarios (merged branch, unmerged branch, dirty tree,
- * protected branch, legacy non-slug directory name), then runs cleanup and
+ * protected branch, unmanaged non-slug directory name), then runs cleanup and
  * asserts the correct worktrees got pruned.
  *
  * Run: php tests/smoke-worktree-cleanup.php
@@ -222,14 +222,14 @@ namespace {
 
 	// Create worktrees at various paths:
 	//   - canonical slug path (demo@merged-autodelete)
-	//   - legacy sibling path (demo-legacy-merged)
+	//   - unmanaged sibling path (demo-unmanaged-merged)
 	//   - canonical path for the unmerged one
 	//   - canonical path for dirty
 	$run( sprintf( 'git worktree add %s merged-autodelete', escapeshellarg( $tmp . '/demo@merged-autodelete' ) ), $primary );
 	$run( sprintf( 'git worktree add %s merged-stale-plan', escapeshellarg( $tmp . '/demo@merged-stale-plan' ) ), $primary );
 	$run( sprintf( 'git worktree add %s merged-recent', escapeshellarg( $tmp . '/demo@merged-recent' ) ), $primary );
 	$run( sprintf( 'git worktree add %s merged-unknown-age', escapeshellarg( $tmp . '/demo@merged-unknown-age' ) ), $primary );
-	$run( sprintf( 'git worktree add %s merged-live-remote', escapeshellarg( $tmp . '/demo-legacy-merged' ) ), $primary );
+	$run( sprintf( 'git worktree add %s merged-live-remote', escapeshellarg( $tmp . '/demo-unmanaged-merged' ) ), $primary );
 	$run( sprintf( 'git worktree add %s unmerged-feature', escapeshellarg( $tmp . '/demo@unmerged-feature' ) ), $primary );
 	$run( sprintf( 'git worktree add %s dirty-branch', escapeshellarg( $tmp . '/demo@dirty-branch' ) ), $primary );
 	mkdir( $tmp . '-external', 0755, true );

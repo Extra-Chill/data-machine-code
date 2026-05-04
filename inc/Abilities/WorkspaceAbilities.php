@@ -1327,9 +1327,9 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Optional cleanup candidate sort: size or age.',
 							),
-							'include_legacy_repaired' => array(
+							'include_repaired_metadata' => array(
 								'type'        => 'boolean',
-								'description' => 'If true, include conservatively repaired legacy metadata rows as operator-approved removal candidates after full safety revalidation.',
+								'description' => 'If true, include repaired metadata rows as operator-approved removal candidates after full safety revalidation.',
 							),
 						),
 					),
@@ -1491,7 +1491,7 @@ class WorkspaceAbilities {
 				'datamachine/workspace-worktree-bounded-cleanup-eligible-apply',
 				array(
 					'label'               => 'Bounded Cleanup Apply for Obvious Worktrees',
-					'description'         => 'Apply only worktrees with explicit lifecycle cleanup_eligible metadata in a bounded batch using cheap workspace inventory. Can explicitly include legacy repaired metadata rows for operator-approved cleanup. Revalidates dirty/unpushed/missing-metadata/external/primary safety gates immediately before each removal. Optionally schedules per-candidate chunk jobs for resumable async apply. Produces evidence with processed/removed/skipped/bytes_reclaimed/continuation.',
+					'description'         => 'Apply only worktrees with explicit lifecycle cleanup_eligible metadata in a bounded batch using cheap workspace inventory. Can explicitly include repaired metadata rows for operator-approved cleanup. Revalidates dirty/unpushed/missing-metadata/external/primary safety gates immediately before each removal. Optionally schedules per-candidate chunk jobs for resumable async apply. Produces evidence with processed/removed/skipped/bytes_reclaimed/continuation.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -1520,9 +1520,9 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Schedule each candidate as a single-row worktree_cleanup_chunk job for resumable async apply.',
 							),
-							'include_legacy_repaired' => array(
+							'include_repaired_metadata' => array(
 								'type'        => 'boolean',
-								'description' => 'Also include metadata_repaired legacy rows that inventory reports as missing_metadata_repaired. Requires explicit opt-in and still runs fresh safety probes before removal.',
+								'description' => 'Also include repaired metadata rows. Requires explicit opt-in and still runs fresh safety probes before removal.',
 							),
 							'source'     => array(
 								'type'        => 'string',
@@ -2097,7 +2097,7 @@ class WorkspaceAbilities {
 			'force'                   => ! empty( $input['force'] ),
 			'skip_github'             => ! empty( $input['skip_github'] ),
 			'inventory_only'          => ! empty( $input['inventory_only'] ),
-			'include_legacy_repaired' => ! empty( $input['include_legacy_repaired'] ),
+			'include_repaired_metadata' => ! empty( $input['include_repaired_metadata'] ),
 		);
 		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
 			$opts['apply_plan'] = $input['apply_plan'];
@@ -2177,7 +2177,7 @@ class WorkspaceAbilities {
 			'dry_run'                 => ! empty( $input['dry_run'] ),
 			'force'                   => ! empty( $input['force'] ),
 			'via_jobs'                => ! empty( $input['via_jobs'] ),
-			'include_legacy_repaired' => ! empty( $input['include_legacy_repaired'] ),
+			'include_repaired_metadata' => ! empty( $input['include_repaired_metadata'] ),
 		);
 		if ( isset( $input['limit'] ) ) {
 			$opts['limit'] = (int) $input['limit'];

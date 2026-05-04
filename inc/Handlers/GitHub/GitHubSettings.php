@@ -125,7 +125,7 @@ class GitHubSettings extends FetchHandlerSettings {
 			'include_statuses'        => array(
 				'type'        => 'checkbox',
 				'label'       => __( 'Include Commit Statuses', 'data-machine-code' ),
-				'description' => __( 'Include legacy commit statuses in PR review context.', 'data-machine-code' ),
+				'description' => __( 'Include classic commit statuses in PR review context.', 'data-machine-code' ),
 				'required'    => false,
 				'default'     => false,
 			),
