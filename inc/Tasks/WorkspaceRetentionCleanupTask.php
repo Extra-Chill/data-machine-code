@@ -237,10 +237,13 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 		);
 
 		if ( ! empty( $opts['artifact_cleanup'] ) ) {
+			// Retention chunking needs the full set of safe artifact rows, not
+			// just the bounded dry-run page CLI consumers see by default.
 			$artifact_plan = $workspace->worktree_cleanup_artifacts(
 				array(
-					'dry_run' => true,
-					'force'   => ! empty( $opts['force'] ),
+					'dry_run'    => true,
+					'force'      => ! empty( $opts['force'] ),
+					'exhaustive' => true,
 				)
 			);
 			if ( $artifact_plan instanceof \WP_Error ) {
