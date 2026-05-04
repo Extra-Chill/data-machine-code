@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.28.1] - 2026-05-04
+
+### Fixed
+- bound artifact cleanup apply revalidation
+
 ## [0.28.0] - 2026-05-04
 
 ### Added
