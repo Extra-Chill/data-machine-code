@@ -2,6 +2,18 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.27.0] - 2026-05-03
+
+### Added
+- provision agent maintenance flows
+- emit chunked workspace cleanup plans
+- register workspace maintenance pipeline templates
+
+### Fixed
+- trigger emergency cleanup on disk pressure
+- run cleanup chunks as jobs
+- add flow-backed cleanup CLI controls
+
 ## [0.26.0] - 2026-05-03
 
 ### Added
