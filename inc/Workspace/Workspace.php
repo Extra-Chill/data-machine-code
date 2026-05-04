@@ -4370,14 +4370,32 @@ class Workspace {
 			$handle  = (string) ( $plan_row['handle'] ?? '' );
 			$current = $current_by_handle[ $handle ] ?? null;
 			if ( null === $current ) {
-				$skip                   = $skipped_by_handle[ $handle ] ?? array(
+				$path      = (string) ( $plan_row['path'] ?? '' );
+				$artifacts = (array) ( $plan_row['artifacts'] ?? array() );
+				$complete  = '' !== $path;
+				foreach ( $artifacts as $artifact ) {
+					$relative = is_array( $artifact ) ? trim( (string) ( $artifact['path'] ?? '' ), '/' ) : '';
+					if ( '' !== $relative && is_dir( rtrim( $path, '/' ) . '/' . $relative ) ) {
+						$complete = false;
+						break;
+					}
+				}
+
+				$skip                   = $complete ? array(
 					'handle'      => $handle,
 					'repo'        => (string) ( $plan_row['repo'] ?? '' ),
 					'branch'      => (string) ( $plan_row['branch'] ?? '' ),
-					'path'        => (string) ( $plan_row['path'] ?? '' ),
+					'path'        => $path,
+					'reason_code' => 'artifact_already_removed',
+					'reason'      => 'planned artifact path is already absent; treating retry as complete',
+				) : ( $skipped_by_handle[ $handle ] ?? array(
+					'handle'      => $handle,
+					'repo'        => (string) ( $plan_row['repo'] ?? '' ),
+					'branch'      => (string) ( $plan_row['branch'] ?? '' ),
+					'path'        => $path,
 					'reason_code' => 'artifact_plan_not_current',
 					'reason'      => 'planned artifact cleanup row is no longer a current safe candidate',
-				);
+				) );
 				$skip['planned_artifacts'] = $plan_row['artifacts'] ?? array();
 				$scoped_skipped[]          = $skip;
 				continue;
