@@ -537,20 +537,25 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$engine_data = is_array( $job['engine_data'] ?? null ) ? $job['engine_data'] : array();
+		$child_jobs  = $this->get_cleanup_run_descendant_jobs( $job_id );
+		$children    = $this->cleanup_child_job_summary( $child_jobs );
+		$state       = $this->cleanup_run_state( (string) ( $job['status'] ?? '' ), $children );
 		$output      = array(
 			'success'     => true,
-			'state'       => $this->cleanup_job_state( (string) ( $job['status'] ?? '' ) ),
+			'state'       => $state,
 			'run_id'      => $this->cleanup_run_id( $job_id ),
 			'job_id'      => $job_id,
-			'status'      => $job['status'] ?? '',
+			'status'      => in_array( $state, array( 'children_processing', 'partial_failed' ), true ) ? $state : ( $job['status'] ?? '' ),
 			'created_at'  => $job['created_at'] ?? '',
 			'completed_at' => $job['completed_at'] ?? '',
+			'children'    => $children,
 		);
 
 		if ( $evidence ) {
 			$output['evidence'] = array(
 				'engine_data' => $engine_data,
 				'job'         => $job,
+				'child_jobs'  => $child_jobs,
 			);
 		} else {
 			$output['mode'] = $engine_data['cleanup_run']['mode'] ?? '';
@@ -601,6 +606,124 @@ class WorkspaceCommand extends BaseCommand {
 
 		$jobs = $result['jobs'] ?? array();
 		return is_array( $jobs ) && ! empty( $jobs[0] ) && is_array( $jobs[0] ) ? $jobs[0] : array();
+	}
+
+	/**
+	 * Return every job linked below a cleanup run job.
+	 *
+	 * @param int        $job_id Parent job ID.
+	 * @param array<int,bool> $seen Seen job IDs.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function get_cleanup_run_descendant_jobs( int $job_id, array &$seen = array() ): array {
+		$ability = wp_get_ability( 'datamachine/get-jobs' );
+		if ( ! $ability || isset( $seen[ $job_id ] ) ) {
+			return array();
+		}
+
+		$seen[ $job_id ] = true;
+		$children        = array();
+		$offset          = 0;
+		$per_page        = 100;
+
+		do {
+			$result = $ability->execute(
+				array(
+					'parent_job_id' => $job_id,
+					'per_page'      => $per_page,
+					'offset'        => $offset,
+					'orderby'       => 'j.job_id',
+					'order'         => 'ASC',
+				)
+			);
+			if ( ! ( $result['success'] ?? false ) ) {
+				break;
+			}
+
+			$page = is_array( $result['jobs'] ?? null ) ? $result['jobs'] : array();
+			foreach ( $page as $child ) {
+				if ( ! is_array( $child ) ) {
+					continue;
+				}
+				$child_id = (int) ( $child['job_id'] ?? 0 );
+				if ( $child_id <= 0 || isset( $seen[ $child_id ] ) ) {
+					continue;
+				}
+
+				$children[] = $child;
+				$children   = array_merge( $children, $this->get_cleanup_run_descendant_jobs( $child_id, $seen ) );
+			}
+
+			$offset += $per_page;
+			$total   = (int) ( $result['total'] ?? count( $page ) );
+		} while ( $offset < $total && ! empty( $page ) );
+
+		return $children;
+	}
+
+	/**
+	 * Summarize cleanup child job state for status/evidence output.
+	 *
+	 * @param array<int,array<string,mixed>> $jobs Descendant jobs.
+	 * @return array<string,mixed>
+	 */
+	private function cleanup_child_job_summary( array $jobs ): array {
+		$summary = array(
+			'total'         => count( $jobs ),
+			'running'       => 0,
+			'failed'        => 0,
+			'terminal'      => 0,
+			'by_status'     => array(),
+			'batch_job_ids' => array(),
+			'job_ids'       => array(),
+		);
+
+		foreach ( $jobs as $job ) {
+			$job_id = (int) ( $job['job_id'] ?? 0 );
+			$status = (string) ( $job['status'] ?? '' );
+			$source = (string) ( $job['source'] ?? '' );
+
+			if ( $job_id > 0 ) {
+				$summary['job_ids'][] = $job_id;
+				if ( 'batch' === $source ) {
+					$summary['batch_job_ids'][] = $job_id;
+				}
+			}
+
+			$summary['by_status'][ $status ] = (int) ( $summary['by_status'][ $status ] ?? 0 ) + 1;
+			if ( in_array( $status, array( 'pending', 'processing' ), true ) ) {
+				++$summary['running'];
+			} elseif ( str_starts_with( $status, 'failed' ) || 'cancelled' === $status ) {
+				++$summary['failed'];
+			} else {
+				++$summary['terminal'];
+			}
+		}
+
+		return $summary;
+	}
+
+	/**
+	 * Compute aggregate cleanup run state from parent and child jobs.
+	 *
+	 * @param string $status Parent job status.
+	 * @param array  $children Child summary.
+	 * @return string
+	 */
+	private function cleanup_run_state( string $status, array $children ): string {
+		$parent_state = $this->cleanup_job_state( $status );
+		if ( in_array( $parent_state, array( 'cancelled', 'partial_failure' ), true ) ) {
+			return $parent_state;
+		}
+
+		if ( (int) ( $children['failed'] ?? 0 ) > 0 ) {
+			return 'partial_failed';
+		}
+		if ( (int) ( $children['running'] ?? 0 ) > 0 ) {
+			return 'children_processing';
+		}
+
+		return $parent_state;
 	}
 
 	private function render_cleanup_control_result( array $result, array $assoc_args ): void {
