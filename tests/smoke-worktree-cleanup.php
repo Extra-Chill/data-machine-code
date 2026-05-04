@@ -416,6 +416,60 @@ namespace {
 		}
 	}
 
+	echo "\nCleanup plan chunk emission scenario\n";
+	$cleanup_plan = $ws->workspace_cleanup_plan( array( 'include_resolvers' => true ) );
+	$assert( true, ! is_wp_error( $cleanup_plan ) && ( $cleanup_plan['success'] ?? false ), 'cleanup plan freezes successfully' );
+	$cleanup_plan_again = $ws->workspace_cleanup_plan( array( 'include_resolvers' => true ) );
+	$assert( $cleanup_plan['plan_id'] ?? '', $cleanup_plan_again['plan_id'] ?? '', 'cleanup plan ID is stable for unchanged rows and inputs' );
+	$artifact_row = $cleanup_plan['rows']['artifact_cleanup'][0] ?? array();
+	$assert( true, str_starts_with( (string) ( $artifact_row['row_id'] ?? '' ), 'cleanup-row-' ), 'artifact cleanup row has stable row ID' );
+	$assert( true, isset( $cleanup_plan['rows']['metadata_repair'] ), 'cleanup plan includes metadata repair row bucket' );
+	$assert( true, isset( $cleanup_plan['rows']['worktree_removal'] ), 'cleanup plan includes worktree removal row bucket' );
+	$assert( true, isset( $cleanup_plan['rows']['resolver'] ), 'cleanup plan includes optional resolver row bucket' );
+	$chunk_report = $ws->workspace_cleanup_plan_chunks(
+		array(
+			'plan'       => $cleanup_plan,
+			'chunk_size' => 1,
+		)
+	);
+	$assert( true, ! is_wp_error( $chunk_report ) && ( $chunk_report['success'] ?? false ), 'cleanup chunks emit successfully from frozen plan' );
+	foreach ( $chunk_report['chunks'] ?? array() as $chunk ) {
+		$assert( true, (int) ( $chunk['chunk_size'] ?? 0 ) <= 1, 'chunk size respects configured bound' );
+		$assert( true, str_starts_with( (string) ( $chunk['chunk_id'] ?? '' ), 'cleanup-chunk-' ), 'chunk has stable chunk ID' );
+	}
+
+	$large_rows = array();
+	for ( $i = 0; $i < 123; ++$i ) {
+		$large_rows[] = array(
+			'row_id'       => 'cleanup-row-large-' . $i,
+			'row_type'     => 'artifact_cleanup',
+			'safety_class' => 'safe',
+			'handle'       => 'demo@large-' . $i,
+			'repo'         => 'demo',
+			'branch'       => 'large-' . $i,
+			'path'         => $tmp . '/demo@large-' . $i,
+			'artifacts'    => array( array( 'path' => 'target', 'size_bytes' => 1 ) ),
+		);
+	}
+	$large_report = $ws->workspace_cleanup_plan_chunks(
+		array(
+			'chunk_size' => 10,
+			'plan'       => array(
+				'plan_id'        => 'cleanup-plan-large',
+				'workspace_path' => $tmp,
+				'rows'           => array(
+					'artifact_cleanup' => $large_rows,
+					'metadata_repair'  => array(),
+					'worktree_removal' => array(),
+					'resolver'         => array(),
+				),
+				'summary'        => array(),
+			),
+		)
+	);
+	$assert( 13, count( $large_report['chunks'] ?? array() ), 'large cleanup plan is split into bounded chunks' );
+	$assert( 123, (int) ( $large_report['summary']['rows_by_type']['artifact_cleanup'] ?? 0 ), 'large cleanup chunk summary preserves row count' );
+
 	$size_plan = $ws->worktree_cleanup_merged(
 		array(
 			'dry_run'     => true,
