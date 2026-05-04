@@ -16,6 +16,7 @@ use DataMachine\Core\FilesRepository\FilesystemHelper;
 use DataMachineCode\Support\GitHubRemote;
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\PathSecurity;
+use DataMachineCode\Storage\WorktreeInventoryRepository;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -64,6 +65,17 @@ class Workspace {
 
 	public function __construct() {
 		$this->workspace_path = self::resolve_workspace_directory();
+	}
+
+	/**
+	 * Worktree inventory repository factory.
+	 */
+	private function worktree_inventory(): WorktreeInventoryRepository {
+		if ( ! class_exists( WorktreeInventoryRepository::class ) ) {
+			require_once dirname( __DIR__ ) . '/Storage/WorktreeInventoryRepository.php';
+		}
+
+		return new WorktreeInventoryRepository();
 	}
 
 	/**
@@ -626,6 +638,7 @@ class Workspace {
 					fn() => $this->run_git( $primary_path, 'worktree prune' )
 				);
 			}
+			$this->worktree_inventory()->delete( $parsed['dir_name'] );
 		}
 
 		return array(
@@ -1334,6 +1347,8 @@ class Workspace {
 			$response['bootstrap'] = WorktreeBootstrapper::bootstrap( $wt_path );
 		}
 
+		$this->worktree_inventory()->upsert( $this->build_worktree_inventory_row_from_handle( $wt_handle ) );
+
 		return $response;
 	}
 
@@ -1594,6 +1609,7 @@ class Workspace {
 		WorktreeContextInjector::store_lifecycle_metadata( $parsed['dir_name'], $metadata );
 
 		$stored = WorktreeContextInjector::get_metadata( $parsed['dir_name'] ) ?? array();
+		$this->worktree_inventory()->upsert( $this->build_worktree_inventory_row_from_handle( $parsed['dir_name'] ) );
 		return array(
 			'success'         => true,
 			'handle'          => $parsed['dir_name'],
@@ -1654,6 +1670,7 @@ class Workspace {
 		// refresh-context is a deliberate liveness signal: the originating site
 		// (and therefore some agent process there) just touched this worktree.
 		WorktreeContextInjector::record_heartbeat( $parsed['dir_name'] );
+		$this->worktree_inventory()->upsert( $this->build_worktree_inventory_row_from_handle( $parsed['dir_name'] ) );
 
 		return array(
 			'success'      => true,
@@ -1861,6 +1878,110 @@ class Workspace {
 	}
 
 	/**
+	 * Refresh the DB-backed worktree inventory from the current filesystem/git view.
+	 *
+	 * Current rows are upserted. Previously known rows missing from the current
+	 * scan are marked `missing_path` so operators can see drift explicitly.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function worktree_inventory_refresh(): array|\WP_Error {
+		$listing = $this->worktree_list(
+			null,
+			null,
+			array(
+				'include_status' => false,
+				'include_disk'   => false,
+			)
+		);
+		if ( $listing instanceof \WP_Error ) {
+			return $listing;
+		}
+
+		$repository      = $this->worktree_inventory();
+		$current_handles = array();
+		$upserted        = array();
+		$marked_missing  = array();
+
+		foreach ( (array) ( $listing['worktrees'] ?? array() ) as $row ) {
+			$handle = (string) ( $row['handle'] ?? '' );
+			if ( '' === $handle || ! empty( $row['external'] ) ) {
+				continue;
+			}
+
+			$current_handles[ $handle ] = true;
+			if ( $repository->upsert( $row ) ) {
+				$upserted[] = $handle;
+			}
+		}
+
+		foreach ( $repository->list() as $stored ) {
+			$handle = (string) ( $stored['handle'] ?? '' );
+			if ( '' === $handle || isset( $current_handles[ $handle ] ) ) {
+				continue;
+			}
+
+			if ( $repository->mark_missing( $handle ) ) {
+				$marked_missing[] = $handle;
+			}
+		}
+
+		return array(
+			'success'        => true,
+			'refreshed_at'   => gmdate( 'c' ),
+			'upserted'       => $upserted,
+			'marked_missing' => $marked_missing,
+			'summary'        => array(
+				'upserted'       => count( $upserted ),
+				'marked_missing' => count( $marked_missing ),
+			),
+		);
+	}
+
+	/**
+	 * Build a single inventory row for a known workspace handle.
+	 *
+	 * @param string $handle Workspace handle.
+	 * @return array<string,mixed>
+	 */
+	private function build_worktree_inventory_row_from_handle( string $handle ): array {
+		$parsed   = $this->parse_handle( $handle );
+		$path     = $this->workspace_path . '/' . $parsed['dir_name'];
+		$metadata = $parsed['is_worktree'] ? WorktreeContextInjector::get_metadata( $parsed['dir_name'] ) : null;
+		$metadata = is_array( $metadata ) ? $metadata : array();
+		$liveness = WorktreeContextInjector::classify_liveness( $metadata );
+		$owner    = WorktreeContextInjector::summarize_owner( $metadata );
+		$session  = WorktreeContextInjector::summarize_session( $metadata );
+		$task     = is_array( $metadata['origin_task'] ?? null ) ? (array) $metadata['origin_task'] : null;
+
+		return array(
+			'handle'                => $parsed['dir_name'],
+			'repo'                  => $parsed['repo'],
+			'is_worktree'           => $parsed['is_worktree'],
+			'is_primary'            => ! $parsed['is_worktree'],
+			'external'              => false,
+			'branch_slug'           => $parsed['branch_slug'],
+			'branch'                => $metadata['branch'] ?? $parsed['branch_slug'],
+			'path'                  => $path,
+			'primary_path'          => $this->get_primary_path( $parsed['repo'] ),
+			'dirty'                 => null,
+			'created_at'            => $metadata['created_at'] ?? null,
+			'lifecycle_state'       => $metadata['lifecycle_state'] ?? null,
+			'pr_url'                => $metadata['pr_url'] ?? null,
+			'pr_number'             => $metadata['pr_number'] ?? null,
+			'last_seen_at'          => $metadata['last_seen_at'] ?? null,
+			'liveness'              => $liveness['liveness'],
+			'liveness_reason'       => $liveness['reason'],
+			'heartbeat_age_seconds' => $liveness['heartbeat_age_seconds'],
+			'owner'                 => $owner,
+			'session'               => $session,
+			'task'                  => $task,
+			'missing_path'          => ! is_dir( $path ),
+			'metadata'              => $metadata,
+		);
+	}
+
+	/**
 	 * Build a non-destructive workspace hygiene report.
 	 *
 	 * The report intentionally defaults to local-only cleanup detection so an
@@ -1879,7 +2000,16 @@ class Workspace {
 		$include_cleanup         = array_key_exists( 'include_cleanup', $opts ) ? (bool) $opts['include_cleanup'] : true;
 		$include_sizes           = array_key_exists( 'include_sizes', $opts ) ? (bool) $opts['include_sizes'] : true;
 		$include_worktree_status = array_key_exists( 'include_worktree_status', $opts ) ? (bool) $opts['include_worktree_status'] : false;
+		$refresh_inventory       = ! empty( $opts['refresh_inventory'] );
 		$size_limit              = isset( $opts['size_limit'] ) ? max( 0, (int) $opts['size_limit'] ) : self::HYGIENE_DEFAULT_SIZE_LIMIT;
+
+		$inventory_refresh = null;
+		if ( $refresh_inventory ) {
+			$inventory_refresh = $this->worktree_inventory_refresh();
+			if ( $inventory_refresh instanceof \WP_Error ) {
+				return $inventory_refresh;
+			}
+		}
 
 		if ( $include_worktree_status ) {
 			$listing = $this->worktree_list();
@@ -1921,6 +2051,10 @@ class Workspace {
 			'destructive'               => false,
 			'size'                      => $size_report,
 			'disk'                      => $this->build_workspace_disk_report(),
+			'inventory'                 => array(
+				'freshness' => $this->worktree_inventory()->freshness(),
+				'refresh'   => $inventory_refresh,
+			),
 			'worktrees'                 => $this->summarize_workspace_worktrees( $worktrees, $cleanup ),
 			'worktree_status_mode'      => $worktree_status_mode,
 			'top_repos_by_worktrees'    => $this->top_repos_by_worktree_count( $worktrees, 10 ),
@@ -2714,6 +2848,7 @@ class Workspace {
 				}
 
 				WorktreeContextInjector::forget_metadata( $wt_handle );
+				$this->worktree_inventory()->delete( $wt_handle );
 				return $result;
 			}
 		);
@@ -2764,9 +2899,15 @@ class Workspace {
 			$pruned[] = $entry;
 		}
 
+		$refresh = $this->worktree_inventory_refresh();
+		if ( $refresh instanceof \WP_Error ) {
+			return $refresh;
+		}
+
 		return array(
 			'success' => true,
 			'pruned'  => $pruned,
+			'inventory' => $refresh,
 		);
 	}
 
@@ -6512,6 +6653,7 @@ class Workspace {
 		}
 
 		WorktreeContextInjector::forget_metadata( basename( $wt_path ) );
+		$this->worktree_inventory()->delete( basename( $wt_path ) );
 
 		return array(
 			'success' => true,
