@@ -1325,6 +1325,60 @@ class WorkspaceAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/workspace-worktree-reconcile-metadata-batch',
+				array(
+					'label'               => 'Reconcile Legacy Worktree Metadata (Batched)',
+					'description'         => 'Bounded, resumable lifecycle metadata backfill for legacy missing-metadata worktrees. Discovery uses a cheap inventory scan, per-row git probes are scoped to the worktree path, and ambiguous rows stay protected with explicit reason codes. Never marks worktrees cleanup_eligible.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'dry_run' => array(
+								'type'        => 'boolean',
+								'description' => 'If true, build the batch plan without writing metadata.',
+							),
+							'limit'   => array(
+								'type'        => 'integer',
+								'description' => 'Maximum candidates to process per batch. Default 25, capped at 200.',
+							),
+							'offset'  => array(
+								'type'        => 'integer',
+								'description' => 'Numeric offset into the deterministic candidate list.',
+							),
+							'cursor'  => array(
+								'type'        => 'string',
+								'description' => 'Resume after this handle. Takes precedence over offset.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'            => array( 'type' => 'boolean' ),
+							'mode'               => array( 'type' => 'string' ),
+							'dry_run'            => array( 'type' => 'boolean' ),
+							'applied'            => array( 'type' => 'boolean' ),
+							'candidate_total'    => array( 'type' => 'integer' ),
+							'processed'          => array( 'type' => 'integer' ),
+							'remaining'          => array( 'type' => 'integer' ),
+							'exhausted'          => array( 'type' => 'boolean' ),
+							'next_cursor'        => array( 'type' => array( 'string', 'null' ) ),
+							'next_offset'        => array( 'type' => array( 'integer', 'null' ) ),
+							'proposals'          => array( 'type' => 'array' ),
+							'written'            => array( 'type' => 'array' ),
+							'skipped'            => array( 'type' => 'array' ),
+							'still_unsafe'       => array( 'type' => 'array' ),
+							'external_worktrees' => array( 'type' => 'array' ),
+							'summary'            => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeReconcileMetadataBatch' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/workspace-worktree-cleanup-artifacts',
 				array(
 					'label'               => 'Cleanup Worktree Artifacts',
@@ -1988,6 +2042,30 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->worktree_reconcile_metadata( $opts );
+	}
+
+	/**
+	 * Bounded, batched metadata reconciliation for legacy worktrees.
+	 *
+	 * @param array $input Input parameters (dry_run, limit, offset, cursor).
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function worktreeReconcileMetadataBatch( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		$opts      = array(
+			'dry_run' => ! empty( $input['dry_run'] ),
+		);
+		if ( array_key_exists( 'limit', $input ) ) {
+			$opts['limit'] = (int) $input['limit'];
+		}
+		if ( array_key_exists( 'offset', $input ) ) {
+			$opts['offset'] = (int) $input['offset'];
+		}
+		if ( isset( $input['cursor'] ) && '' !== trim( (string) $input['cursor'] ) ) {
+			$opts['cursor'] = trim( (string) $input['cursor'] );
+		}
+
+		return $workspace->worktree_reconcile_metadata_batch( $opts );
 	}
 
 	/**
