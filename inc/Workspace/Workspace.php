@@ -1926,6 +1926,116 @@ class Workspace {
 	}
 
 	/**
+	 * Run disk-threshold-triggered emergency cleanup orchestration.
+	 *
+	 * This is the automation-safe layer: inspect cheap disk/worktree metrics,
+	 * build the inventory-only emergency plan, and apply only reconstructable
+	 * artifact chunks by default. Whole-worktree deletion requires an explicit
+	 * cleanup-eligible plan plus human-approved escalation.
+	 *
+	 * @param array $opts Emergency automation options.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function workspace_disk_emergency_cleanup( array $opts = array() ): array|\WP_Error {
+		$dry_run                  = ! empty( $opts['dry_run'] );
+		$artifact_chunk_size      = isset( $opts['artifact_chunk_size'] ) && is_numeric( $opts['artifact_chunk_size'] ) ? max( 1, (int) $opts['artifact_chunk_size'] ) : 10;
+		$allow_worktree_deletion  = ! empty( $opts['allow_worktree_deletion'] );
+		$human_approved_deletion  = ! empty( $opts['human_approved_worktree_deletion'] );
+		$force_worktree_deletion  = ! empty( $opts['force'] ) && $human_approved_deletion;
+		$thresholds               = isset( $opts['thresholds'] ) && is_array( $opts['thresholds'] ) ? $opts['thresholds'] : WorktreeDiskBudget::thresholds( 'workspace', 'emergency-cleanup' );
+		$budget                   = WorktreeDiskBudget::inspect( $this->workspace_path, $thresholds );
+
+		$plan = $this->worktree_emergency_cleanup( array( 'dry_run' => true ) );
+		if ( $plan instanceof \WP_Error ) {
+			return $plan;
+		}
+
+		$artifact_candidates             = (array) ( $plan['artifact_candidates'] ?? array() );
+		$worktree_candidates             = (array) ( $plan['worktree_candidates'] ?? array() );
+		$top_artifact_offenders          = $this->summarize_top_worktree_rows( $artifact_candidates, 'artifact_size_bytes' );
+		$budget['top_artifact_offenders'] = $top_artifact_offenders;
+
+		$triggered = ! empty( $budget['emergency_triggered'] );
+		if ( ! $triggered ) {
+			return array(
+				'success'             => true,
+				'triggered'           => false,
+				'skipped'             => true,
+				'reason'              => 'disk thresholds not crossed',
+				'dry_run'             => $dry_run,
+				'generated_at'        => gmdate( 'c' ),
+				'workspace_path'      => $this->workspace_path,
+				'disk_budget'         => $budget,
+				'emergency_plan'      => $plan,
+				'action_required'     => false,
+				'applied'             => null,
+			);
+		}
+
+		$selected_artifacts = array_slice( $artifact_candidates, 0, $artifact_chunk_size );
+		$blocked_reasons    = array();
+		$selected_worktrees = array();
+		if ( array() === $selected_artifacts && array() !== $worktree_candidates ) {
+			if ( $allow_worktree_deletion && $human_approved_deletion ) {
+				$selected_worktrees = $worktree_candidates;
+			} else {
+				$blocked_reasons[] = 'worktree_deletion_requires_human_approval';
+			}
+		}
+
+		$apply_plan = array_merge( $plan, array(
+			'artifact_candidates' => $selected_artifacts,
+			'worktree_candidates' => $selected_worktrees,
+		) );
+
+		$applied = null;
+		if ( ! $dry_run && ( array() !== $selected_artifacts || array() !== $selected_worktrees ) ) {
+			$applied = $this->worktree_emergency_cleanup(
+				array(
+					'apply_plan' => $apply_plan,
+					'force'      => $force_worktree_deletion,
+				)
+			);
+			if ( $applied instanceof \WP_Error ) {
+				return $applied;
+			}
+		}
+
+		$apply_skipped_by_reason = (array) ( $applied['summary']['skipped_by_reason'] ?? array() );
+		foreach ( array( 'dirty_worktree', 'unpushed_commits', 'emergency_lifecycle_not_current', 'emergency_worktree_plan_not_current' ) as $reason ) {
+			if ( ! empty( $apply_skipped_by_reason[ $reason ] ) ) {
+				$blocked_reasons[] = $reason;
+			}
+		}
+		$blocked_reasons = array_values( array_unique( $blocked_reasons ) );
+
+		return array(
+			'success'                 => true,
+			'triggered'               => true,
+			'skipped'                 => false,
+			'dry_run'                 => $dry_run,
+			'generated_at'            => gmdate( 'c' ),
+			'workspace_path'          => $this->workspace_path,
+			'disk_budget'             => $budget,
+			'emergency_plan'          => $plan,
+			'apply_plan'              => $apply_plan,
+			'applied'                 => $applied,
+			'artifact_chunk_size'     => $artifact_chunk_size,
+			'selected_artifact_count' => count( $selected_artifacts ),
+			'selected_worktree_count' => count( $selected_worktrees ),
+			'action_required'         => array() !== $blocked_reasons || ( array() === $selected_artifacts && array() !== $worktree_candidates && array() === $selected_worktrees ),
+			'action_required_reasons' => $blocked_reasons,
+			'policy'                  => array(
+				'artifact_first'                      => true,
+				'allow_worktree_deletion'             => $allow_worktree_deletion,
+				'human_approved_worktree_deletion'    => $human_approved_deletion,
+				'force_requires_human_approval'       => true,
+				'force_worktree_deletion_applied'     => $force_worktree_deletion,
+			),
+		);
+	}
+
+	/**
 	 * Build cheap workspace inventory rows from top-level directory names.
 	 *
 	 * This intentionally avoids `git worktree list` and per-worktree `git status`.

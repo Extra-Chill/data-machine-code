@@ -127,6 +127,15 @@ final class WorktreeDiskBudget {
 		}
 
 		$status = $refused ? 'refused' : ( empty( $warnings ) ? 'ok' : 'warning' );
+		$trigger_reasons = array();
+		if ( null !== $free_bytes && $free_bytes < $effective_refuse_bytes ) {
+			$trigger_reasons[] = 'free_space_refusal_threshold';
+		} elseif ( null !== $free_bytes && $free_bytes < $effective_warn_bytes ) {
+			$trigger_reasons[] = 'free_space_warning_threshold';
+		}
+		if ( $count > $thresholds['warn_worktree_count'] ) {
+			$trigger_reasons[] = 'worktree_count_warning_threshold';
+		}
 
 		return array(
 			'workspace_path'          => (string) ( $metrics['workspace_path'] ?? '' ),
@@ -146,14 +155,19 @@ final class WorktreeDiskBudget {
 			'refuse_free_percent'     => $thresholds['refuse_free_percent'],
 			'effective_refuse_bytes'  => $effective_refuse_bytes,
 			'effective_refuse_gib'    => round( self::bytes_to_gib( $effective_refuse_bytes ), 2 ),
+			'effective_warn_bytes'    => $effective_warn_bytes,
+			'effective_warn_gib'      => round( self::bytes_to_gib( $effective_warn_bytes ), 2 ),
 			'warn_worktree_count'     => $thresholds['warn_worktree_count'],
 			'forced'                  => $forced,
 			'status'                  => $status,
 			'warnings'                => $warnings,
-			'cleanup_dry_run_command'  => 'studio wp datamachine-code workspace worktree cleanup --dry-run',
-			'artifact_cleanup_command' => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run',
-			'force_override_required' => $refused,
-			'force_override_applied'  => $forced && ! empty( $warnings ),
+			'emergency_triggered'     => array() !== $trigger_reasons,
+			'trigger_reasons'         => $trigger_reasons,
+			'cleanup_dry_run_command'   => 'studio wp datamachine-code workspace worktree cleanup --dry-run',
+			'artifact_cleanup_command'  => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run',
+			'emergency_cleanup_command' => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
+			'force_override_required'   => $refused,
+			'force_override_applied'    => $forced && ! empty( $warnings ),
 		);
 	}
 
