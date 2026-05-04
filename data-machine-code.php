@@ -221,8 +221,42 @@ add_filter( 'datamachine_tasks', function ( array $tasks ): array {
 	$tasks['worktree_cleanup']            = \DataMachineCode\Tasks\WorktreeCleanupTask::class;
 	$tasks['workspace_retention_cleanup'] = \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask::class;
 	$tasks['workspace_hygiene_report']    = \DataMachineCode\Tasks\WorkspaceHygieneReportTask::class;
+	$tasks['workspace_inventory']         = \DataMachineCode\Tasks\WorkspaceInventoryTask::class;
+	$tasks['worktree_metadata_repair']    = \DataMachineCode\Tasks\WorktreeMetadataRepairTask::class;
+	$tasks['worktree_artifact_cleanup']   = \DataMachineCode\Tasks\WorktreeArtifactCleanupTask::class;
+	$tasks['worktree_emergency_cleanup']  = \DataMachineCode\Tasks\WorktreeEmergencyCleanupTask::class;
 	return $tasks;
 } );
+
+/**
+ * Provision DMC maintenance flows for newly created agents.
+ *
+ * wp-coding-agents setup creates the coding agent through Data Machine's agent
+ * surface. DMC treats that event as the setup-time hook for concrete,
+ * agent-owned workspace maintenance flow instances. Existing installs can run
+ * `wp datamachine-code workspace maintenance-flows provision --agent=<slug>`.
+ */
+add_action( 'datamachine_agent_created', function ( int $agent_id, string $slug ): void {
+	$enabled = apply_filters( 'datamachine_code_provision_agent_maintenance_flows_on_agent_created', true, $agent_id, $slug );
+	if ( ! $enabled ) {
+		return;
+	}
+
+	$result = ( new \DataMachineCode\Maintenance\MaintenanceFlowProvisioner() )->provision( array( 'agent_id' => $agent_id ) );
+	if ( $result instanceof \WP_Error ) {
+		do_action(
+			'datamachine_log',
+			'error',
+			'Failed to provision DMC agent maintenance flows',
+			array(
+				'agent_id' => $agent_id,
+				'slug'     => $slug,
+				'error'    => $result->get_error_message(),
+				'code'     => $result->get_error_code(),
+			)
+		);
+	}
+}, 10, 2 );
 
 /**
  * Register recurring schedules for DM-code system tasks.
@@ -237,7 +271,7 @@ add_filter( 'datamachine_tasks', function ( array $tasks ): array {
  * @see https://github.com/Extra-Chill/data-machine/pull/1117
  */
 add_filter( 'datamachine_recurring_schedules', function ( array $schedules ): array {
-	$schedules['worktree_cleanup']         = array(
+	$schedules['worktree_cleanup']            = array(
 		'task_type'       => 'worktree_cleanup',
 		'interval'        => 'daily',
 		'enabled_setting' => \DataMachineCode\Tasks\WorktreeCleanupTask::SETTING_KEY,
@@ -258,7 +292,7 @@ add_filter( 'datamachine_recurring_schedules', function ( array $schedules ): ar
 			'artifact_cleanup'    => true,
 		),
 	);
-	$schedules['workspace_hygiene_report'] = array(
+	$schedules['workspace_hygiene_report']    = array(
 		'task_type'       => 'workspace_hygiene_report',
 		'interval'        => 'weekly',
 		'enabled_setting' => \DataMachineCode\Tasks\WorkspaceHygieneReportTask::SETTING_KEY,

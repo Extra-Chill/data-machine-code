@@ -52,7 +52,8 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 	 * @return void
 	 */
 	public function executeTask( int $jobId, array $params ): void {
-		$enabled = (bool) PluginSettings::get( self::SETTING_KEY, false );
+		$flow_owned = 'agent_maintenance_flow' === (string) ( $params['source'] ?? '' );
+		$enabled    = $flow_owned || (bool) PluginSettings::get( self::SETTING_KEY, false );
 		if ( ! $enabled ) {
 			$this->completeJob(
 				$jobId,

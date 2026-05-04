@@ -17,6 +17,7 @@ namespace DataMachineCode\Cli\Commands;
 
 use WP_CLI;
 use DataMachine\Cli\BaseCommand;
+use DataMachineCode\Maintenance\MaintenanceFlowProvisioner;
 use DataMachineCode\Workspace\Workspace;
 
 defined( 'ABSPATH' ) || exit;
@@ -72,6 +73,82 @@ class WorkspaceCommand extends BaseCommand {
 		if ( empty( $result['exists'] ) && empty( $assoc_args['ensure'] ) ) {
 			WP_CLI::warning( 'Directory does not exist yet. Use --ensure to create it.' );
 		}
+	}
+
+	/**
+	 * Provision agent-owned workspace maintenance flows.
+	 *
+	 * Creates or updates the DMC maintenance pipeline/flow instances for a coding
+	 * agent: inventory, metadata repair, artifact cleanup, retention cleanup, and
+	 * emergency cleanup. The operation is idempotent and uses stable portable
+	 * slugs, so rerunning setup updates existing flows instead of duplicating them.
+	 *
+	 * ## OPTIONS
+	 *
+	 * provision
+	 * : Provision/update the maintenance flows.
+	 *
+	 * --agent=<agent>
+	 * : Agent slug or numeric agent ID that should own the flows.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 *   - csv
+	 *   - yaml
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code workspace maintenance-flows provision --agent=intelligence-chubes4
+	 *
+	 *     wp datamachine-code workspace maintenance-flows provision --agent=3 --format=json
+	 *
+	 * @subcommand maintenance-flows
+	 */
+	public function maintenance_flows( array $args, array $assoc_args ): void {
+		$action = (string) ( $args[0] ?? '' );
+		if ( 'provision' !== $action ) {
+			WP_CLI::error( 'Usage: wp datamachine-code workspace maintenance-flows provision --agent=<agent>' );
+			return;
+		}
+
+		$agent = (string) ( $assoc_args['agent'] ?? '' );
+		if ( '' === trim( $agent ) ) {
+			WP_CLI::error( '--agent=<slug|id> is required.' );
+			return;
+		}
+
+		$input  = ctype_digit( $agent ) ? array( 'agent_id' => (int) $agent ) : array( 'agent' => $agent );
+		$result = ( new MaintenanceFlowProvisioner() )->provision( $input );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+
+		if ( 'json' === ( $assoc_args['format'] ?? '' ) ) {
+			WP_CLI::line( wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
+			return;
+		}
+
+		WP_CLI::success( sprintf( 'Provisioned DMC maintenance flows for agent %s (ID %d).', (string) $result['agent_slug'], (int) $result['agent_id'] ) );
+		$items = array_map(
+			static function ( array $flow ): array {
+				return array(
+					'slug'     => $flow['slug'],
+					'status'   => $flow['status'],
+					'flow_id'  => $flow['flow_id'],
+					'interval' => $flow['interval'],
+					'name'     => $flow['flow_name'],
+				);
+			},
+			(array) ( $result['flows'] ?? array() )
+		);
+		$this->format_items( $items, array( 'slug', 'status', 'flow_id', 'interval', 'name' ), $assoc_args, 'slug' );
 	}
 
 	/**
@@ -2029,7 +2106,7 @@ class WorkspaceCommand extends BaseCommand {
 		$repaired           = (array) ( $result['repaired'] ?? array() );
 		$written            = (array) ( $result['written'] ?? array() );
 		$skipped            = (array) ( $result['skipped'] ?? array() );
-		$still_unsafe      = (array) ( $result['still_unsafe'] ?? array() );
+		$still_unsafe       = (array) ( $result['still_unsafe'] ?? array() );
 		$external_worktrees = (array) ( $result['external_worktrees'] ?? array() );
 		$verbose            = ! empty( $assoc_args['verbose'] );
 		$limit              = $verbose ? PHP_INT_MAX : 10;
