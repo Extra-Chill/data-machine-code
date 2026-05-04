@@ -2885,6 +2885,8 @@ class WorkspaceCommand extends BaseCommand {
 			WP_CLI::log( sprintf( 'Filter: %s', $only ) );
 		}
 
+		$this->render_worktree_cleanup_next_commands( (array) ( $summary['skipped_next_commands'] ?? array() ) );
+
 		if ( ! empty( $candidates ) && ( '' === $only || 'candidates' === $only ) ) {
 			WP_CLI::log( '' );
 			WP_CLI::log( $dry_run ? 'Would remove:' : 'Candidates:' );
@@ -2958,6 +2960,32 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 		WP_CLI::success( sprintf( 'Removed %d worktree(s); %d skipped.', count( $result['removed'] ?? array() ), count( $result['skipped'] ?? array() ) ) );
+	}
+
+	/**
+	 * Render compact actionable next commands for skipped cleanup buckets.
+	 *
+	 * @param array<int,array<string,mixed>> $commands Next command rows.
+	 * @return void
+	 */
+	private function render_worktree_cleanup_next_commands( array $commands ): void {
+		if ( empty( $commands ) ) {
+			return;
+		}
+
+		WP_CLI::log( '' );
+		WP_CLI::log( 'Next commands for skipped buckets:' );
+		$rows = array_map(
+			fn( $row ) => array(
+				'reason_code' => $row['reason_code'] ?? '',
+				'count'       => (int) ( $row['count'] ?? 0 ),
+				'command'     => $row['command'] ?? '',
+				'alternative' => $row['alternative'] ?? '',
+				'destructive' => ! empty( $row['destructive'] ) ? 'yes' : 'no',
+			),
+			$commands
+		);
+		$this->format_items( $rows, array( 'reason_code', 'count', 'destructive', 'command', 'alternative' ), array( 'format' => 'table' ), 'reason_code' );
 	}
 
 	/**

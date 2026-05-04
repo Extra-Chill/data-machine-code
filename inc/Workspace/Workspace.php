@@ -6297,6 +6297,7 @@ class Workspace {
 			'removed'               => count( $removed ),
 			'skipped'               => count( $skipped ),
 			'skipped_by_reason'     => $skipped_by_reason,
+			'skipped_next_commands' => $this->worktree_cleanup_skipped_next_commands( $skipped_by_reason ),
 			'candidates_by_signal'  => $candidates_by_signal,
 			'repair_status'         => $repair_status_counts,
 			'total_size_bytes'      => $total_size_bytes,
@@ -6313,6 +6314,55 @@ class Workspace {
 		}
 
 		return $summary;
+	}
+
+	/**
+	 * Build copy-pasteable next commands for skipped cleanup buckets.
+	 *
+	 * @param array<string,int> $skipped_by_reason Skipped reason counts.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function worktree_cleanup_skipped_next_commands( array $skipped_by_reason ): array {
+		$templates = array(
+			'missing_metadata_repaired'   => array(
+				'label'       => 'Review repaired legacy metadata with bounded safety probes',
+				'command'     => 'studio wp datamachine-code workspace cleanup run --mode=retention --older-than=7d',
+				'alternative' => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25 --older-than=7d',
+				'why'         => 'Queues task-backed retention cleanup so repaired rows get full safety checks before any deletion.',
+				'destructive' => true,
+			),
+			'requires_full_scan'          => array(
+				'label'       => 'Repair missing lifecycle metadata in bounded batches',
+				'command'     => 'studio wp datamachine-code workspace worktree reconcile-metadata-batch --dry-run --limit=25 --format=json',
+				'alternative' => 'studio wp datamachine-code workspace worktree reconcile-metadata-batch --limit=25',
+				'why'         => 'Bounded reconciliation writes lifecycle metadata so future inventory cleanup no longer needs a full scan for those rows.',
+				'destructive' => false,
+			),
+			'no_inventory_cleanup_signal' => array(
+				'label'       => 'Mark reviewed worktrees cleanup-eligible',
+				'command'     => 'studio wp datamachine-code workspace worktree finalize <handle> --pr=<pr-url>',
+				'alternative' => 'studio wp datamachine-code workspace worktree mark-cleanup-eligible <handle>',
+				'why'         => 'Records an explicit cleanup signal; then bounded cleanup-eligible apply can remove reviewed safe rows.',
+				'destructive' => false,
+			),
+		);
+
+		$commands = array();
+		foreach ( $templates as $reason => $template ) {
+			$count = (int) ( $skipped_by_reason[ $reason ] ?? 0 );
+			if ( $count <= 0 ) {
+				continue;
+			}
+			$commands[] = array_merge(
+				array(
+					'reason_code' => $reason,
+					'count'       => $count,
+				),
+				$template
+			);
+		}
+
+		return $commands;
 	}
 
 	/**
