@@ -2812,6 +2812,7 @@ class Workspace {
 		$force          = ! empty( $opts['force'] );
 		$skip_github    = ! empty( $opts['skip_github'] );
 		$inventory_only = ! empty( $opts['inventory_only'] );
+		$include_legacy_repaired = ! empty( $opts['include_legacy_repaired'] );
 		$apply_plan     = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
 		$older_than     = isset( $opts['older_than'] ) ? trim( (string) $opts['older_than'] ) : '';
 		$sort           = isset( $opts['sort'] ) ? trim( (string) $opts['sort'] ) : '';
@@ -2830,7 +2831,7 @@ class Workspace {
 				return new \WP_Error( 'inventory_cleanup_apply_plan_unsupported', 'Inventory-only cleanup cannot apply a plan because it intentionally skips full safety revalidation.', array( 'status' => 400 ) );
 			}
 
-			return $this->worktree_cleanup_inventory_only( $older_than, $sort );
+			return $this->worktree_cleanup_inventory_only( $older_than, $sort, $include_legacy_repaired );
 		}
 
 		$planned_candidates = null;
@@ -3037,6 +3038,11 @@ class Workspace {
 				if ( ! empty( $metadata['pr_url'] ) ) {
 					$signal['pr_url'] = (string) $metadata['pr_url'];
 				}
+			} elseif ( $include_legacy_repaired && is_array( $metadata ) && ! empty( $metadata['metadata_repaired'] ) ) {
+				$signal = array(
+					'signal' => 'missing_metadata_repaired',
+					'reason' => 'operator-approved cleanup of conservatively repaired legacy metadata',
+				);
 			} else {
 				$signal = $this->detect_merge_signal( $primary_path, $repo, $branch, $skip_github, $github_cache );
 			}
@@ -4322,7 +4328,11 @@ class Workspace {
 			'worktree_sort'          => isset( $opts['worktree_sort'] ) ? trim( (string) $opts['worktree_sort'] ) : '',
 		);
 
-		$artifact_plan = array( 'candidates' => array(), 'skipped' => array(), 'summary' => array() );
+		$artifact_plan = array(
+			'candidates' => array(),
+			'skipped'    => array(),
+			'summary'    => array(),
+		);
 		if ( $inputs['include_artifacts'] ) {
 			// Workspace cleanup plan is the source-of-truth orchestrator that
 			// later chunks/jobs consume — opt into the exhaustive scan so all
@@ -4339,7 +4349,11 @@ class Workspace {
 			}
 		}
 
-		$metadata_plan = array( 'proposals' => array(), 'skipped' => array(), 'summary' => array() );
+		$metadata_plan = array(
+			'proposals' => array(),
+			'skipped'   => array(),
+			'summary'   => array(),
+		);
 		if ( $inputs['include_metadata'] ) {
 			$metadata_plan = $this->worktree_reconcile_metadata( array( 'dry_run' => true ) );
 			if ( $metadata_plan instanceof \WP_Error ) {
@@ -4347,7 +4361,11 @@ class Workspace {
 			}
 		}
 
-		$worktree_plan = array( 'candidates' => array(), 'skipped' => array(), 'summary' => array() );
+		$worktree_plan = array(
+			'candidates' => array(),
+			'skipped'    => array(),
+			'summary'    => array(),
+		);
 		if ( $inputs['include_worktrees'] ) {
 			$worktree_plan = $this->worktree_cleanup_merged(
 				array(
@@ -4393,7 +4411,13 @@ class Workspace {
 			'rows'           => $rows,
 			'summary'        => $summary,
 		);
-		$plan['plan_id'] = $this->stable_cleanup_hash( array( 'inputs' => $inputs, 'rows' => $this->cleanup_row_ids( $rows ) ), 'cleanup-plan' );
+		$plan['plan_id'] = $this->stable_cleanup_hash(
+			array(
+				'inputs' => $inputs,
+				'rows'   => $this->cleanup_row_ids( $rows ),
+			),
+			'cleanup-plan'
+		);
 
 		return $plan;
 	}
@@ -4648,7 +4672,10 @@ class Workspace {
 	private function stable_cleanup_hash( mixed $value, string $prefix ): string {
 		$this->ksort_recursive( $value );
 		$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $value, JSON_UNESCAPED_SLASHES ) : json_encode( $value, JSON_UNESCAPED_SLASHES );
-		return $prefix . '-' . substr( hash( 'sha256', $encoded ?: serialize( $value ) ), 0, 24 );
+		if ( false === $encoded || '' === $encoded ) {
+			$encoded = serialize( $value );
+		}
+		return $prefix . '-' . substr( hash( 'sha256', $encoded ), 0, 24 );
 	}
 
 	/**
@@ -5074,7 +5101,7 @@ class Workspace {
 	 * @param string $sort       Optional candidate sort.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function worktree_cleanup_inventory_only( string $older_than, string $sort ): array|\WP_Error {
+	private function worktree_cleanup_inventory_only( string $older_than, string $sort, bool $include_legacy_repaired = false ): array|\WP_Error {
 		$age_filter = null;
 		if ( '' !== $older_than ) {
 			$duration_seconds = $this->parse_worktree_cleanup_duration( $older_than );
@@ -5128,6 +5155,57 @@ class Workspace {
 
 			if ( ! WorktreeContextInjector::has_cleanup_signal( $metadata ) ) {
 				$repaired = ! empty( $metadata['metadata_repaired'] );
+				if ( $include_legacy_repaired && $repaired ) {
+					$age_decision = null;
+					if ( null !== $age_filter ) {
+						$created_ts = is_string( $created_at ) && '' !== $created_at ? strtotime( $created_at ) : false;
+						if ( false === $created_ts ) {
+							++$age_filter['unknown_age'];
+							$skipped[] = array_merge( $base_row, array(
+								'reason_code' => 'unknown_age',
+								'reason'      => 'missing or invalid created_at metadata - age filter cannot decide safely',
+								'age_filter'  => array(
+									'type'       => 'older_than',
+									'older_than' => $age_filter['older_than'],
+									'threshold'  => $age_filter['threshold'],
+									'decision'   => 'unknown_age',
+								),
+							) );
+							continue;
+						}
+
+						$age_decision = array(
+							'type'        => 'older_than',
+							'older_than'  => $age_filter['older_than'],
+							'threshold'   => $age_filter['threshold'],
+							'created_at'  => $created_at,
+							'age_seconds' => time() - $created_ts,
+						);
+						if ( $created_ts > $age_filter['threshold_unix'] ) {
+							++$age_filter['excluded'];
+							$skipped[] = array_merge( $base_row, array(
+								'reason_code' => 'age_filter',
+								'reason'      => sprintf( 'created_at %s is newer than --older-than=%s threshold %s', $created_at, $age_filter['older_than'], $age_filter['threshold'] ),
+								'age_filter'  => array_merge( $age_decision, array( 'decision' => 'excluded' ) ),
+							) );
+							continue;
+						}
+						$age_decision['decision'] = 'included';
+					}
+
+					$candidate = array_merge( $base_row, array(
+						'dirty'         => 0,
+						'signal'        => 'missing_metadata_repaired',
+						'reason_code'   => 'missing_metadata_repaired',
+						'reason'        => 'operator-approved cleanup of conservatively repaired legacy metadata',
+						'repair_status' => 'missing_metadata_repaired',
+					) );
+					if ( null !== $age_decision ) {
+						$candidate['age_filter'] = $age_decision;
+					}
+					$candidates[] = $candidate;
+					continue;
+				}
 				$skipped[] = array_merge( $base_row, array(
 					'reason_code'   => $repaired ? 'missing_metadata_repaired' : 'no_inventory_cleanup_signal',
 					'reason'        => $repaired ? 'legacy metadata was repaired conservatively; no cleanup signal yet' : 'no explicit inventory cleanup signal — leaving in place',
@@ -5236,6 +5314,7 @@ class Workspace {
 		$dry_run    = ! empty( $opts['dry_run'] );
 		$force      = ! empty( $opts['force'] );
 		$via_jobs   = ! empty( $opts['via_jobs'] );
+		$include_legacy_repaired = ! empty( $opts['include_legacy_repaired'] );
 		$older_than = isset( $opts['older_than'] ) ? trim( (string) $opts['older_than'] ) : '';
 		$sort       = isset( $opts['sort'] ) ? trim( (string) $opts['sort'] ) : 'age';
 		$source     = isset( $opts['source'] ) ? trim( (string) $opts['source'] ) : 'workspace_bounded_cleanup_eligible_apply';
@@ -5261,7 +5340,7 @@ class Workspace {
 		// the bounded cleanup-eligible apply never triggers full worktree_list / fetch / GitHub
 		// API work just to plan. This intentionally does not honor `apply_plan`
 		// — bounded cleanup-eligible apply IS the apply path; no separate plan file is needed.
-		$inventory = $this->worktree_cleanup_inventory_only( $older_than, $sort );
+		$inventory = $this->worktree_cleanup_inventory_only( $older_than, $sort, $include_legacy_repaired );
 		if ( $inventory instanceof \WP_Error ) {
 			return $inventory;
 		}
@@ -5309,7 +5388,7 @@ class Workspace {
 		}
 
 		if ( $via_jobs ) {
-			return $this->schedule_bounded_cleanup_eligible_chunks( $batch, $deferred, $force, $source, $started_at, $continuation );
+			return $this->schedule_bounded_cleanup_eligible_chunks( $batch, $deferred, $force, $source, $started_at, $continuation, $include_legacy_repaired );
 		}
 
 		$processed       = 0;
@@ -5454,7 +5533,14 @@ class Workspace {
 		$wt_path = (string) ( $candidate['path'] ?? '' );
 
 		$missing_fields = array();
-		foreach ( array( 'handle' => $handle, 'repo' => $repo, 'branch' => $branch, 'path' => $wt_path ) as $field => $value ) {
+		foreach (
+			array(
+				'handle' => $handle,
+				'repo'   => $repo,
+				'branch' => $branch,
+				'path'   => $wt_path,
+			) as $field => $value
+		) {
 			if ( '' === $value ) {
 				$missing_fields[] = $field;
 			}
@@ -5633,7 +5719,7 @@ class Workspace {
 	 * @param array<string,mixed>             $continuation Continuation envelope.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function schedule_bounded_cleanup_eligible_chunks( array $batch, array $deferred, bool $force, string $source, float $started_at, array $continuation ): array|\WP_Error {
+	private function schedule_bounded_cleanup_eligible_chunks( array $batch, array $deferred, bool $force, string $source, float $started_at, array $continuation, bool $include_legacy_repaired = false ): array|\WP_Error {
 		if ( ! class_exists( '\DataMachine\Engine\Tasks\TaskScheduler' ) ) {
 			return new \WP_Error( 'task_scheduler_unavailable', 'Data Machine TaskScheduler is unavailable; cannot schedule bounded cleanup-eligible apply chunks.', array( 'status' => 500 ) );
 		}
@@ -5687,6 +5773,7 @@ class Workspace {
 				'rows'        => array( $row ),
 				'force'       => $force,
 				'skip_github' => true,
+				'include_legacy_repaired' => $include_legacy_repaired,
 				'source'      => $source,
 			);
 		}
@@ -5814,7 +5901,7 @@ class Workspace {
 			if ( $safety_probes ) {
 				$branch = (string) ( $wt['branch'] ?? '' );
 				if ( '' === $branch ) {
-					$resolved = $wt_path !== '' ? $this->resolve_worktree_branch_from_head_file( $wt_path ) : null;
+					$resolved = '' !== $wt_path ? $this->resolve_worktree_branch_from_head_file( $wt_path ) : null;
 					$branch   = (string) ( $resolved ?? $wt['branch_slug'] ?? '' );
 				}
 			} else {
@@ -5823,7 +5910,7 @@ class Workspace {
 				// real git branch from `worktree_list()` (e.g. `fix/foo`), so
 				// resolve it cheaply here from the per-worktree `.git/HEAD`
 				// pointer file. This is two file reads vs a `git` invocation.
-				$resolved = $wt_path !== '' ? $this->resolve_worktree_branch_from_head_file( $wt_path ) : null;
+				$resolved = '' !== $wt_path ? $this->resolve_worktree_branch_from_head_file( $wt_path ) : null;
 				$branch   = (string) ( $resolved ?? $wt['branch'] ?? $wt['branch_slug'] ?? '' );
 			}
 
@@ -5833,7 +5920,7 @@ class Workspace {
 			if ( $safety_probes && isset( $wt['artifacts'] ) ) {
 				$artifacts = array_values( array_filter( (array) ( $wt['artifacts'] ?? array() ), fn( $artifact ) => is_array( $artifact ) ) );
 			} else {
-				$artifacts = $wt_path !== '' ? $this->detect_worktree_artifacts( $repo, $wt_path ) : array();
+				$artifacts = '' !== $wt_path ? $this->detect_worktree_artifacts( $repo, $wt_path ) : array();
 			}
 
 			$base_row = array(

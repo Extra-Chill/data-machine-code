@@ -213,7 +213,7 @@ namespace {
 
 	// Real worktree-backed branches that simulate the canonical states the
 	// bounded cleanup-eligible apply must handle.
-	foreach ( array( 'eligible-clean', 'eligible-dirty', 'eligible-unpushed', 'eligible-bounded-extra-1', 'eligible-bounded-extra-2', 'eligible-bounded-extra-3' ) as $b ) {
+	foreach ( array( 'eligible-clean', 'eligible-dirty', 'eligible-unpushed', 'eligible-bounded-extra-1', 'eligible-bounded-extra-2', 'eligible-bounded-extra-3', 'legacy-repaired-clean', 'legacy-repaired-dirty', 'legacy-repaired-recent' ) as $b ) {
 		$make_branch( $b );
 	}
 
@@ -223,6 +223,9 @@ namespace {
 	$run( sprintf( 'git worktree add %s eligible-bounded-extra-1', escapeshellarg( $tmp . '/demo@eligible-bounded-extra-1' ) ), $primary );
 	$run( sprintf( 'git worktree add %s eligible-bounded-extra-2', escapeshellarg( $tmp . '/demo@eligible-bounded-extra-2' ) ), $primary );
 	$run( sprintf( 'git worktree add %s eligible-bounded-extra-3', escapeshellarg( $tmp . '/demo@eligible-bounded-extra-3' ) ), $primary );
+	$run( sprintf( 'git worktree add %s legacy-repaired-clean', escapeshellarg( $tmp . '/demo@legacy-repaired-clean' ) ), $primary );
+	$run( sprintf( 'git worktree add %s legacy-repaired-dirty', escapeshellarg( $tmp . '/demo@legacy-repaired-dirty' ) ), $primary );
+	$run( sprintf( 'git worktree add %s legacy-repaired-recent', escapeshellarg( $tmp . '/demo@legacy-repaired-recent' ) ), $primary );
 
 	// Mark cleanup-eligible lifecycle metadata so the cheap inventory picks
 	// these up.
@@ -249,12 +252,30 @@ namespace {
 
 	// Make eligible-dirty actually dirty so the revalidation gate kicks in.
 	file_put_contents( $tmp . '/demo@eligible-dirty/scratch.txt', 'dirty' );
+	file_put_contents( $tmp . '/demo@legacy-repaired-dirty/scratch.txt', 'dirty' );
 
 	// Make eligible-unpushed have an unpushed local commit (drop upstream so
 	// `count_unpushed_commits` reports >0 only when the branch is ahead of its
 	// upstream — easiest is one extra commit).
 	file_put_contents( $tmp . '/demo@eligible-unpushed/local-only.txt', 'local' );
 	$run( 'git add local-only.txt && git commit -m "unpushed change"', $tmp . '/demo@eligible-unpushed' );
+
+	foreach (
+		array(
+			'demo@legacy-repaired-clean'  => '2026-04-01T00:00:00+00:00',
+			'demo@legacy-repaired-dirty'  => '2026-04-01T00:00:00+00:00',
+			'demo@legacy-repaired-recent' => gmdate( 'c' ),
+		) as $handle => $created_at
+	) {
+		\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
+			$handle,
+			array(
+				'created_at'        => $created_at,
+				'lifecycle_state'   => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
+				'metadata_repaired' => true,
+			)
+		);
+	}
 
 	// Active inventory row (no cleanup signal) — must never be a candidate.
 	mkdir( $tmp . '/demo@active-row', 0755, true );
@@ -290,6 +311,14 @@ namespace {
 	$assert( 2, count( $dry['candidates'] ?? array() ), 'bounded limit caps dry-run candidates' );
 	$remaining = (int) ( $dry['continuation']['remaining_total'] ?? 0 );
 	$assert( true, $remaining >= 4, 'continuation reports remaining cleanup-eligible candidates' );
+	$assert_skipped( $dry['skipped'] ?? array(), 'demo@legacy-repaired-clean', 'missing_metadata_repaired', 'legacy repaired rows require explicit include flag' );
+
+	$legacy_dry = $ws->worktree_bounded_cleanup_eligible_apply( array( 'dry_run' => true, 'limit' => 20, 'include_legacy_repaired' => true, 'older_than' => '24h' ) );
+	$assert( true, ! is_wp_error( $legacy_dry ) && ( $legacy_dry['success'] ?? false ), 'legacy-repaired dry-run returns success' );
+	$assert_contains( $legacy_dry['candidates'] ?? array(), 'demo@legacy-repaired-clean', 'legacy repaired clean worktree is candidate with explicit flag' );
+	$assert_contains( $legacy_dry['candidates'] ?? array(), 'demo@legacy-repaired-dirty', 'legacy repaired dirty worktree is reviewed before apply' );
+	$legacy_recent = array_values( array_filter( $legacy_dry['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@legacy-repaired-recent' ) );
+	$assert( 'age_filter', $legacy_recent[0]['reason_code'] ?? '', 'legacy repaired rows honor older_than before apply' );
 
 	// Active and missing-metadata rows must never appear as candidates.
 	foreach ( $dry['candidates'] ?? array() as $cand ) {
@@ -320,6 +349,7 @@ namespace {
 	$assert_skipped( $apply['skipped'] ?? array(), 'demo@eligible-unpushed', 'unpushed_commits', 'unpushed worktree skipped on revalidation' );
 	$assert_skipped( $apply['skipped'] ?? array(), 'demo@no-metadata', 'requires_full_scan', 'missing-metadata row skipped via inventory gate' );
 	$assert_skipped( $apply['skipped'] ?? array(), 'demo@active-row', 'no_inventory_cleanup_signal', 'active row skipped via inventory gate' );
+	$assert_skipped( $apply['skipped'] ?? array(), 'demo@legacy-repaired-clean', 'missing_metadata_repaired', 'legacy repaired row skipped without explicit flag on apply' );
 
 	$assert( true, is_dir( $primary . '/.git' ), 'primary survives bounded cleanup-eligible apply' );
 	$assert( false, is_dir( $tmp . '/demo@eligible-clean' ), 'clean cleanup-eligible directory removed from disk' );
@@ -331,6 +361,14 @@ namespace {
 	$assert( true, (int) ( $summary['skipped'] ?? 0 ) >= 4, 'summary records skipped count' );
 	$assert( true, isset( $summary['bytes_reclaimed'] ), 'summary exposes bytes_reclaimed' );
 	$assert( true, isset( $apply['continuation']['remaining_total'] ), 'apply exposes continuation envelope' );
+
+	$legacy_apply = $ws->worktree_bounded_cleanup_eligible_apply( array( 'limit' => 20, 'include_legacy_repaired' => true, 'older_than' => '24h' ) );
+	$assert( true, ! is_wp_error( $legacy_apply ) && ( $legacy_apply['success'] ?? false ), 'legacy-repaired apply returns success' );
+	$assert_contains( $legacy_apply['removed'] ?? array(), 'demo@legacy-repaired-clean', 'legacy repaired clean worktree was removed after fresh probes' );
+	$assert_skipped( $legacy_apply['skipped'] ?? array(), 'demo@legacy-repaired-dirty', 'dirty_worktree', 'legacy repaired dirty worktree skipped on fresh probe' );
+	$assert_skipped( $legacy_apply['skipped'] ?? array(), 'demo@legacy-repaired-recent', 'age_filter', 'legacy repaired recent worktree skipped by age gate on apply' );
+	$assert( false, is_dir( $tmp . '/demo@legacy-repaired-clean' ), 'legacy repaired clean directory removed from disk' );
+	$assert( true, is_dir( $tmp . '/demo@legacy-repaired-dirty' ), 'legacy repaired dirty directory survives apply' );
 
 	echo "\nForce gate (dirty allowed, unpushed never allowed)\n";
 	$force_apply = $ws->worktree_bounded_cleanup_eligible_apply( array( 'limit' => 10, 'force' => true ) );
