@@ -133,15 +133,16 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 	 */
 	private function schedule_job_backed_cleanup( int $jobId, Workspace $workspace, array $opts, array $params ): array|\WP_Error {
 		$started_at       = microtime( true );
-		$chunk_rows       = $this->build_cleanup_chunk_rows( $workspace, $opts );
+		$chunk_rows       = $this->build_cleanup_chunk_rows( $workspace, $opts, $params );
 		if ( $chunk_rows instanceof \WP_Error ) {
 			return $chunk_rows;
 		}
 
 		$chunk_row_counts = array(
-			'artifacts' => count( $chunk_rows['artifacts'] ),
-			'metadata'  => count( $chunk_rows['metadata'] ),
-			'worktrees' => count( $chunk_rows['worktrees'] ),
+			'artifact_discovery' => count( $chunk_rows['artifact_discovery'] ),
+			'artifacts'          => count( $chunk_rows['artifacts'] ),
+			'metadata'           => count( $chunk_rows['metadata'] ),
+			'worktrees'          => count( $chunk_rows['worktrees'] ),
 		);
 		$item_params      = $this->build_cleanup_chunk_params( $chunk_rows, $opts, $params );
 
@@ -226,30 +227,38 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 	 * Build cleanup rows from reviewed dry-run plans.
 	 *
 	 * @param Workspace $workspace Workspace service.
-	 * @param array     $opts Normalized options.
-	 * @return array{artifacts:array<int,array>,metadata:array<int,array>,worktrees:array<int,array>}|\WP_Error
+	 * @param array     $opts   Normalized options.
+	 * @param array     $params Raw task params.
+	 * @return array{artifact_discovery:array<int,array>,artifacts:array<int,array>,metadata:array<int,array>,worktrees:array<int,array>}|\WP_Error
 	 */
-	private function build_cleanup_chunk_rows( Workspace $workspace, array $opts ): array|\WP_Error {
+	private function build_cleanup_chunk_rows( Workspace $workspace, array $opts, array $params ): array|\WP_Error {
 		$rows = array(
-			'artifacts' => array(),
-			'metadata'  => array(),
-			'worktrees' => array(),
+			'artifact_discovery' => array(),
+			'artifacts'          => array(),
+			'metadata'           => array(),
+			'worktrees'          => array(),
 		);
 
 		if ( ! empty( $opts['artifact_cleanup'] ) ) {
-			// Retention chunking needs the full set of safe artifact rows, not
-			// just the bounded dry-run page CLI consumers see by default.
-			$artifact_plan = $workspace->worktree_cleanup_artifacts(
+			$page_size     = max( 1, (int) ( $params['artifact_chunk_size'] ?? 10 ) );
+			$artifact_page = $workspace->worktree_cleanup_artifacts(
 				array(
-					'dry_run'    => true,
-					'force'      => ! empty( $opts['force'] ),
-					'exhaustive' => true,
+					'dry_run' => true,
+					'force'   => ! empty( $opts['force'] ),
+					'limit'   => 1,
+					'offset'  => 0,
 				)
 			);
-			if ( $artifact_plan instanceof \WP_Error ) {
-				return $artifact_plan;
+			if ( $artifact_page instanceof \WP_Error ) {
+				return $artifact_page;
 			}
-			$rows['artifacts'] = array_values( (array) ( $artifact_plan['candidates'] ?? array() ) );
+			$total = max( 0, (int) ( $artifact_page['pagination']['total'] ?? $artifact_page['summary']['pagination']['total'] ?? 0 ) );
+			for ( $offset = 0; $offset < $total; $offset += $page_size ) {
+				$rows['artifact_discovery'][] = array(
+					'offset' => $offset,
+					'limit'  => $page_size,
+				);
+			}
 		}
 
 		if ( ! empty( $opts['metadata_repair'] ) ) {
@@ -296,6 +305,17 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 			// keep git worktree metadata mutations conservative and lock-friendly.
 			'worktrees' => 1,
 		);
+
+		foreach ( (array) ( $chunk_rows['artifact_discovery'] ?? array() ) as $index => $page ) {
+			$item_params[] = array(
+				'chunk_type'  => 'artifact_discovery',
+				'chunk_index' => $index,
+				'limit'       => max( 1, (int) ( $page['limit'] ?? $sizes['artifacts'] ) ),
+				'offset'      => max( 0, (int) ( $page['offset'] ?? 0 ) ),
+				'force'       => ! empty( $opts['force'] ),
+				'skip_github' => ! empty( $opts['skip_github'] ),
+			);
+		}
 
 		foreach ( array( 'artifacts', 'metadata', 'worktrees' ) as $type ) {
 			foreach ( array_chunk( (array) ( $chunk_rows[ $type ] ?? array() ), $sizes[ $type ] ) as $index => $rows ) {

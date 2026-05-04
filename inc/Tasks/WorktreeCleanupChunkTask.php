@@ -50,6 +50,11 @@ class WorktreeCleanupChunkTask extends SystemTask {
 		$chunk_type = (string) ( $params['chunk_type'] ?? '' );
 		$rows       = is_array( $params['rows'] ?? null ) ? array_values( (array) $params['rows'] ) : array();
 
+		if ( 'artifact_discovery' === $chunk_type ) {
+			$this->execute_artifact_discovery_chunk( $jobId, $params, $started_at );
+			return;
+		}
+
 		if ( '' === $chunk_type || array() === $rows ) {
 			$this->completeJob(
 				$jobId,
@@ -73,6 +78,7 @@ class WorktreeCleanupChunkTask extends SystemTask {
 				array(
 					'apply_plan' => array( 'candidates' => $rows ),
 					'force'      => ! empty( $params['force'] ),
+					'limit'      => count( $rows ),
 				)
 			),
 			'metadata'  => $workspace->worktree_reconcile_metadata(
@@ -127,6 +133,128 @@ class WorktreeCleanupChunkTask extends SystemTask {
 				array(
 					'summary' => $result['summary'] ?? array(),
 					'result'  => $this->compact_evidence_result( $result ),
+				)
+			)
+		);
+	}
+
+	/**
+	 * Discover and apply one bounded artifact cleanup page.
+	 *
+	 * @param int   $jobId      Job ID.
+	 * @param array $params     Task params.
+	 * @param float $started_at Start timestamp.
+	 * @return void
+	 */
+	private function execute_artifact_discovery_chunk( int $jobId, array $params, float $started_at ): void {
+		$limit     = max( 1, (int) ( $params['limit'] ?? 10 ) );
+		$offset    = max( 0, (int) ( $params['offset'] ?? 0 ) );
+		$force     = ! empty( $params['force'] );
+		$workspace = new Workspace();
+
+		$plan = $workspace->worktree_cleanup_artifacts(
+			array(
+				'dry_run'       => true,
+				'force'         => $force,
+				'limit'         => $limit,
+				'offset'        => $offset,
+				'safety_probes' => true,
+			)
+		);
+
+		if ( $plan instanceof \WP_Error ) {
+			$this->completeJob(
+				$jobId,
+				$this->build_chunk_result(
+					'artifact_discovery',
+					array(),
+					array(),
+					array(),
+					array(
+						array(
+							'handle'      => '',
+							'reason_code' => $plan->get_error_code(),
+							'reason'      => $plan->get_error_message(),
+						)
+					),
+					0,
+					$started_at,
+					array(
+						'offset' => $offset,
+						'limit'  => $limit,
+					)
+				)
+			);
+			return;
+		}
+
+		$planned = array_values( (array) ( $plan['candidates'] ?? array() ) );
+		$skipped = array_values( (array) ( $plan['skipped'] ?? array() ) );
+		if ( array() === $planned ) {
+			$this->completeJob(
+				$jobId,
+				$this->build_chunk_result(
+					'artifact_discovery',
+					array(),
+					array(),
+					$skipped,
+					array(),
+					0,
+					$started_at,
+					array(
+						'pagination' => $plan['pagination'] ?? null,
+						'summary'    => $plan['summary'] ?? array(),
+					)
+				)
+			);
+			return;
+		}
+
+		$result = $workspace->worktree_cleanup_artifacts(
+			array(
+				'apply_plan' => array( 'candidates' => $planned ),
+				'force'      => $force,
+				'limit'      => count( $planned ),
+			)
+		);
+
+		if ( $result instanceof \WP_Error ) {
+			$this->completeJob(
+				$jobId,
+				$this->build_chunk_result(
+					'artifact_discovery',
+					$planned,
+					array(),
+					$skipped,
+					$this->rows_to_failed( $planned, $result->get_error_code(), $result->get_error_message() ),
+					0,
+					$started_at,
+					array(
+						'pagination' => $plan['pagination'] ?? null,
+						'summary'    => $plan['summary'] ?? array(),
+					)
+				)
+			);
+			return;
+		}
+
+		$applied = $this->extract_applied_rows( 'artifacts', $result );
+		$skipped = array_merge( $skipped, array_values( (array) ( $result['skipped'] ?? array() ) ) );
+
+		$this->completeJob(
+			$jobId,
+			$this->build_chunk_result(
+				'artifact_discovery',
+				$planned,
+				$applied,
+				$skipped,
+				array(),
+				$this->bytes_reclaimed( 'artifacts', $applied, $result ),
+				$started_at,
+				array(
+					'pagination' => $plan['pagination'] ?? null,
+					'summary'    => $result['summary'] ?? array(),
+					'result'     => $this->compact_evidence_result( $result ),
 				)
 			)
 		);
