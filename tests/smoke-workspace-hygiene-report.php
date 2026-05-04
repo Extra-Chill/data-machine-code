@@ -101,7 +101,7 @@ namespace {
 	class Hygiene_Report_Workspace extends \DataMachineCode\Workspace\Workspace {
 		public int $full_listing_calls = 0;
 
-		public function worktree_list( ?string $repo = null, ?string $state = null ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+		public function worktree_list( ?string $repo = null, ?string $state = null, array $opts = array() ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 			++$this->full_listing_calls;
 			return array(
 				'success'   => true,

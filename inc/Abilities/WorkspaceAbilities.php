@@ -1094,7 +1094,7 @@ class WorkspaceAbilities {
 				'datamachine/workspace-worktree-list',
 				array(
 					'label'               => 'List Workspace Worktrees',
-					'description'         => 'List all worktrees in the workspace (optionally filtered by repo and lifecycle state).',
+					'description'         => 'List all worktrees in the workspace (optionally filtered by repo and lifecycle state). Defaults to a fast cheap-inventory listing on large workspaces; opt in to per-worktree git status and disk probes via include_status / include_disk.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -1107,13 +1107,26 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Optional lifecycle state filter.',
 							),
+							'include_status' => array(
+								'type'        => 'boolean',
+								'description' => 'Run `git status --porcelain` per worktree to populate the dirty count. Default false (cheap listing). Expensive on large workspaces.',
+							),
+							'include_disk' => array(
+								'type'        => 'boolean',
+								'description' => 'Run size and artifact `du` probes per worktree. Default false (cheap listing). Expensive on large workspaces.',
+							),
 						),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success'   => array( 'type' => 'boolean' ),
-							'worktrees' => array(
+							'success'        => array( 'type' => 'boolean' ),
+							'fields_skipped' => array(
+								'type'        => 'array',
+								'description' => 'Probe groups skipped on this listing (e.g. "status", "disk"). Empty when full data is requested.',
+								'items'       => array( 'type' => 'string' ),
+							),
+							'worktrees'      => array(
 								'type'  => 'array',
 								'items' => array(
 									'type'       => 'object',
@@ -1127,7 +1140,7 @@ class WorkspaceAbilities {
 										'branch'          => array( 'type' => array( 'string', 'null' ) ),
 										'head'            => array( 'type' => 'string' ),
 										'path'            => array( 'type' => 'string' ),
-										'dirty'           => array( 'type' => 'integer' ),
+										'dirty'           => array( 'type' => array( 'integer', 'null' ) ),
 										'created_at'      => array( 'type' => array( 'string', 'null' ) ),
 										'lifecycle_state' => array( 'type' => array( 'string', 'null' ) ),
 										'pr_url'          => array( 'type' => array( 'string', 'null' ) ),
@@ -1139,6 +1152,10 @@ class WorkspaceAbilities {
 										'artifacts'       => array( 'type' => 'array' ),
 										'stale_reason'    => array( 'type' => array( 'string', 'null' ) ),
 										'metadata'        => array( 'type' => array( 'object', 'null' ) ),
+										'fields_skipped'  => array(
+											'type'  => 'array',
+											'items' => array( 'type' => 'string' ),
+										),
 									),
 								),
 							),
@@ -1759,7 +1776,16 @@ class WorkspaceAbilities {
 		$state     = isset( $input['state'] ) && '' !== trim( (string) $input['state'] )
 			? (string) $input['state']
 			: null;
-		return $workspace->worktree_list( $repo, $state );
+
+		// Default to the cheap listing on the ability surface so MCP/REST/CLI callers
+		// don't pay the per-worktree git status + du cost on huge workspaces.
+		// Internal PHP callers can still call worktree_list() directly with full probes.
+		$opts = array(
+			'include_status' => array_key_exists( 'include_status', $input ) ? (bool) $input['include_status'] : false,
+			'include_disk'   => array_key_exists( 'include_disk', $input ) ? (bool) $input['include_disk'] : false,
+		);
+
+		return $workspace->worktree_list( $repo, $state, $opts );
 	}
 
 	/**

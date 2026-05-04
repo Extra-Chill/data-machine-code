@@ -1654,10 +1654,34 @@ class Workspace {
 	/**
 	 * List worktrees in the workspace.
 	 *
-	 * @param string|null $repo Optional repo filter (only this primary's worktrees).
-	 * @return array{success: bool, worktrees: array}|\WP_Error
+	 * On large workspaces (hundreds of worktrees) the per-row `git status` and
+	 * `du` probes are the dominant cost. Callers that only need cheap inventory
+	 * (handle, repo, branch, head, lifecycle metadata) can opt out via
+	 * `$opts['include_status']` / `$opts['include_disk']`. Skipped fields are
+	 * returned as `null`/`0`/`array()` and the row's `fields_skipped` array
+	 * lists which probe groups were skipped, so consumers can tell the
+	 * difference between "absent" and "not measured".
+	 *
+	 * @param string|null $repo  Optional repo filter (only this primary's worktrees).
+	 * @param string|null $state Optional lifecycle state filter.
+	 * @param array       $opts {
+	 *     @type bool $include_status Whether to run `git status --porcelain` per worktree. Default true.
+	 *     @type bool $include_disk   Whether to run size/artifact `du` probes per worktree. Default true.
+	 * }
+	 * @return array{success: bool, worktrees: array, fields_skipped: array<int,string>}|\WP_Error
 	 */
-	public function worktree_list( ?string $repo = null, ?string $state = null ): array|\WP_Error {
+	public function worktree_list( ?string $repo = null, ?string $state = null, array $opts = array() ): array|\WP_Error {
+		$include_status = array_key_exists( 'include_status', $opts ) ? (bool) $opts['include_status'] : true;
+		$include_disk   = array_key_exists( 'include_disk', $opts ) ? (bool) $opts['include_disk'] : true;
+
+		$skipped_groups = array();
+		if ( ! $include_status ) {
+			$skipped_groups[] = 'status';
+		}
+		if ( ! $include_disk ) {
+			$skipped_groups[] = 'disk';
+		}
+
 		if ( null !== $state && '' !== trim( $state ) ) {
 			$state = WorktreeContextInjector::normalize_state( (string) $state );
 			if ( null === $state ) {
@@ -1668,8 +1692,9 @@ class Workspace {
 		}
 		if ( ! is_dir( $this->workspace_path ) ) {
 			return array(
-				'success'   => true,
-				'worktrees' => array(),
+				'success'        => true,
+				'worktrees'      => array(),
+				'fields_skipped' => $skipped_groups,
 			);
 		}
 
@@ -1723,46 +1748,85 @@ class Workspace {
 					$handle = $wt['path'];
 				}
 
-				$dirty_result = $this->run_git( $wt['path'], 'status --porcelain' );
-				$dirty_files  = is_wp_error( $dirty_result )
-					? 0
-					: count( array_filter( array_map( 'trim', explode( "\n", $dirty_result['output'] ?? '' ) ) ) );
-				$metadata     = ( ! $is_primary && $inside_ws ) ? WorktreeContextInjector::get_metadata( $relative ) : null;
-				$created_at   = is_array( $metadata ) ? ( $metadata['created_at'] ?? null ) : null;
-				$disk         = $this->build_worktree_disk_report( $primary, $wt['path'], ! $is_primary, $created_at, $metadata );
-				$stale_reason = $this->detect_worktree_stale_reason( ! $is_primary, $dirty_files, $disk['age_days'] ?? null, $created_at );
-				if ( null !== $stale_reason ) {
-					$disk['stale_reason'] = $stale_reason;
+				if ( $include_status ) {
+					$dirty_result = $this->run_git( $wt['path'], 'status --porcelain' );
+					$dirty_files  = is_wp_error( $dirty_result )
+						? 0
+						: count( array_filter( array_map( 'trim', explode( "\n", $dirty_result['output'] ?? '' ) ) ) );
+				} else {
+					$dirty_files = null;
 				}
 
+				$metadata        = ( ! $is_primary && $inside_ws ) ? WorktreeContextInjector::get_metadata( $relative ) : null;
+				$created_at      = is_array( $metadata ) ? ( $metadata['created_at'] ?? null ) : null;
 				$lifecycle_state = is_array( $metadata ) ? ( $metadata['lifecycle_state'] ?? null ) : null;
 				if ( null !== $state && $lifecycle_state !== $state ) {
 					continue;
 				}
 
-				$worktrees[] = array_merge( array(
-					'handle'      => $handle,
-					'repo'        => $primary,
-					'is_worktree' => ! $is_primary,
-					'is_primary'  => $is_primary,
-					'external'    => ! $is_primary && ! $inside_ws,
-					'branch_slug' => $is_primary ? null : ( $parsed['branch_slug'] ?? null ),
-					'branch'      => $wt['branch'],
-					'head'        => $wt['head'],
-					'path'        => $wt['path'],
-					'dirty'       => $dirty_files,
-					'created_at'  => $created_at,
-					'lifecycle_state' => $lifecycle_state,
-					'pr_url'      => is_array( $metadata ) ? ( $metadata['pr_url'] ?? null ) : null,
-					'pr_number'   => is_array( $metadata ) ? ( $metadata['pr_number'] ?? null ) : null,
-					'metadata'    => $metadata,
-				), $disk );
+				if ( $include_disk ) {
+					$disk = $this->build_worktree_disk_report( $primary, $wt['path'], ! $is_primary, $created_at, $metadata );
+				} else {
+					$disk = array(
+						'size_bytes'           => null,
+						'estimated_size_bytes' => null,
+						'last_touched_at'      => null,
+						'age_days'             => $this->calculate_age_days( $created_at ),
+						'artifacts'            => array(),
+						'artifact_size_bytes'  => 0,
+					);
+				}
+
+				// Stale-reason detection requires both signals to be reliable; only
+				// flag dirty/threshold reasons when the underlying probe ran. The
+				// metadata-only signal still works without disk/status probes.
+				$stale_reason = $this->detect_worktree_stale_reason(
+					! $is_primary,
+					(int) ( $dirty_files ?? 0 ),
+					$disk['age_days'] ?? null,
+					$created_at,
+					array(
+						'status_probed' => $include_status,
+						'disk_probed'   => $include_disk,
+					)
+				);
+				if ( null !== $stale_reason ) {
+					$disk['stale_reason'] = $stale_reason;
+				}
+
+				$row = array_merge(
+					array(
+						'handle'          => $handle,
+						'repo'            => $primary,
+						'is_worktree'     => ! $is_primary,
+						'is_primary'      => $is_primary,
+						'external'        => ! $is_primary && ! $inside_ws,
+						'branch_slug'     => $is_primary ? null : ( $parsed['branch_slug'] ?? null ),
+						'branch'          => $wt['branch'],
+						'head'            => $wt['head'],
+						'path'            => $wt['path'],
+						'dirty'           => $dirty_files,
+						'created_at'      => $created_at,
+						'lifecycle_state' => $lifecycle_state,
+						'pr_url'          => is_array( $metadata ) ? ( $metadata['pr_url'] ?? null ) : null,
+						'pr_number'       => is_array( $metadata ) ? ( $metadata['pr_number'] ?? null ) : null,
+						'metadata'        => $metadata,
+					),
+					$disk
+				);
+
+				if ( ! empty( $skipped_groups ) ) {
+					$row['fields_skipped'] = $skipped_groups;
+				}
+
+				$worktrees[] = $row;
 			}
 		}
 
 		return array(
-			'success'   => true,
-			'worktrees' => $worktrees,
+			'success'        => true,
+			'worktrees'      => $worktrees,
+			'fields_skipped' => $skipped_groups,
 		);
 	}
 
@@ -5094,12 +5158,14 @@ class Workspace {
 	 * @param string|null $created_at  Lifecycle timestamp.
 	 * @return string|null Stale reason code.
 	 */
-	private function detect_worktree_stale_reason( bool $is_worktree, int $dirty_files, ?int $age_days, ?string $created_at ): ?string {
+	private function detect_worktree_stale_reason( bool $is_worktree, int $dirty_files, ?int $age_days, ?string $created_at, array $probes = array() ): ?string {
 		if ( ! $is_worktree ) {
 			return null;
 		}
 
-		if ( $dirty_files > 0 ) {
+		$status_probed = array_key_exists( 'status_probed', $probes ) ? (bool) $probes['status_probed'] : true;
+
+		if ( $status_probed && $dirty_files > 0 ) {
 			return 'dirty';
 		}
 

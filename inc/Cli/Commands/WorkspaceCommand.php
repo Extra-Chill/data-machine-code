@@ -1584,6 +1584,19 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * [--stale]
 	 * : For list, show only worktrees with a stale_reason (old, dirty, or missing metadata).
+	 *   Implies `--with-status` (dirty detection requires running `git status`).
+	 *
+	 * [--with-status]
+	 * : For list, run `git status --porcelain` per worktree to populate the dirty count.
+	 *   Off by default — expensive on large workspaces (one fork+exec per worktree).
+	 *
+	 * [--with-size]
+	 * : For list, run size and artifact `du` probes per worktree. Off by default —
+	 *   expensive on large workspaces (multiple fork+exec calls per worktree).
+	 *
+	 * [--full]
+	 * : For list, shorthand for `--with-status --with-size`. Restores the pre-0.27
+	 *   behavior where every worktree is fully probed; only practical for small workspaces.
 	 *
 	 * [--verbose]
 	 * : Show every cleanup row instead of concise samples (cleanup only).
@@ -1615,11 +1628,20 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace worktree add data-machine feat/bar --from=origin/develop
 	 *     wp datamachine-code workspace worktree add data-machine feat/bar --base-branch=develop
 	 *
-	 *     # List all worktrees
+	 *     # List all worktrees (cheap inventory: no per-worktree git status / du probes)
 	 *     wp datamachine-code workspace worktree list
 	 *
 	 *     # List worktrees for one repo
 	 *     wp datamachine-code workspace worktree list data-machine
+	 *
+	 *     # Cheap JSON inventory for huge workspaces (~800 worktrees) — completes fast
+	 *     wp datamachine-code workspace worktree list --format=json
+	 *
+	 *     # Restore the pre-0.27 full probe behavior (slow on huge workspaces)
+	 *     wp datamachine-code workspace worktree list --full
+	 *
+	 *     # Just dirty detection, skip size scan
+	 *     wp datamachine-code workspace worktree list --with-status
 	 *
 	 *     # Remove a worktree
 	 *     wp datamachine-code workspace worktree remove data-machine fix/foo
@@ -1784,6 +1806,15 @@ class WorkspaceCommand extends BaseCommand {
 				if ( isset( $assoc_args['state'] ) && '' !== trim( (string) $assoc_args['state'] ) ) {
 					$input['state'] = (string) $assoc_args['state'];
 				}
+				// Cheap inventory by default — opt in to expensive probes via flags.
+				// `--full` is a shorthand for both, `--stale` requires status to detect dirty.
+				$want_status = ! empty( $assoc_args['with-status'] )
+					|| ! empty( $assoc_args['full'] )
+					|| ! empty( $assoc_args['stale'] );
+				$want_disk   = ! empty( $assoc_args['with-size'] )
+					|| ! empty( $assoc_args['full'] );
+				$input['include_status'] = $want_status;
+				$input['include_disk']   = $want_disk;
 				break;
 
 			case 'remove':
@@ -1880,31 +1911,44 @@ class WorkspaceCommand extends BaseCommand {
 					return;
 				}
 				$items  = array_map(
-					fn( $wt ) => array(
-						'handle'              => $wt['handle'] ?? '',
-						'repo'                => $wt['repo'] ?? '',
-						'kind'                => ! empty( $wt['is_primary'] ) ? 'primary' : 'worktree',
-						'branch'              => $wt['branch'] ?? '-',
-						'head'                => isset( $wt['head'] ) ? substr( (string) $wt['head'], 0, 7 ) : '-',
-						'dirty'               => (int) ( $wt['dirty'] ?? 0 ),
-						'created_at'          => $wt['created_at'] ?? null,
-						'state'               => $wt['lifecycle_state'] ?? null,
-						'pr'                  => $wt['pr_url'] ?? null,
-						'age_days'            => $wt['age_days'] ?? null,
-						'size_bytes'          => $wt['size_bytes'] ?? null,
-						'size'                => $this->format_bytes( $wt['size_bytes'] ?? null ),
-						'artifact_size_bytes' => $wt['artifact_size_bytes'] ?? 0,
-						'artifacts'           => $this->format_bytes( $wt['artifact_size_bytes'] ?? 0 ),
-						'artifact_paths'      => $wt['artifacts'] ?? array(),
-						'stale'               => $wt['stale_reason'] ?? '',
-						'metadata'            => $wt['metadata'] ?? null,
-						'path'                => $wt['path'] ?? '',
-					),
+					function ( $wt ) {
+						$skipped = (array) ( $wt['fields_skipped'] ?? array() );
+						$dirty   = $wt['dirty'] ?? null;
+						$size    = $wt['size_bytes'] ?? null;
+						return array(
+							'handle'              => $wt['handle'] ?? '',
+							'repo'                => $wt['repo'] ?? '',
+							'kind'                => ! empty( $wt['is_primary'] ) ? 'primary' : 'worktree',
+							'branch'              => $wt['branch'] ?? '-',
+							'head'                => isset( $wt['head'] ) ? substr( (string) $wt['head'], 0, 7 ) : '-',
+							'dirty'               => null === $dirty ? '-' : (int) $dirty,
+							'created_at'          => $wt['created_at'] ?? null,
+							'state'               => $wt['lifecycle_state'] ?? null,
+							'pr'                  => $wt['pr_url'] ?? null,
+							'age_days'            => $wt['age_days'] ?? null,
+							'size_bytes'          => $size,
+							'size'                => null === $size ? '-' : $this->format_bytes( $size ),
+							'artifact_size_bytes' => $wt['artifact_size_bytes'] ?? 0,
+							'artifacts'           => in_array( 'disk', $skipped, true ) ? '-' : $this->format_bytes( $wt['artifact_size_bytes'] ?? 0 ),
+							'artifact_paths'      => $wt['artifacts'] ?? array(),
+							'stale'               => $wt['stale_reason'] ?? '',
+							'fields_skipped'      => $skipped,
+							'metadata'            => $wt['metadata'] ?? null,
+							'path'                => $wt['path'] ?? '',
+						);
+					},
 					$worktrees
 				);
 				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'created_at', 'pr', 'age_days', 'size', 'artifacts', 'stale', 'path' );
 				if ( in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
-					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'created_at', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'metadata', 'path' );
+					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'created_at', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'fields_skipped', 'metadata', 'path' );
+				}
+				$skipped_global = (array) ( $result['fields_skipped'] ?? array() );
+				if ( ! empty( $skipped_global ) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true ) ) {
+					WP_CLI::log( sprintf(
+						'# Cheap listing — fields skipped: %s. Pass --with-status, --with-size, or --full to populate.',
+						implode( ', ', $skipped_global )
+					) );
 				}
 				$this->format_items( $items, $fields, $assoc_args, 'handle' );
 				return;
