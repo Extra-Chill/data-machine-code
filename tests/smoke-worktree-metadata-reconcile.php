@@ -1,6 +1,6 @@
 <?php
 /**
- * Smoke test for legacy worktree metadata reconciliation.
+ * Smoke test for unmanaged worktree metadata reconciliation.
  *
  * Run: php tests/smoke-worktree-metadata-reconcile.php
  */
@@ -261,9 +261,9 @@ namespace {
 	$apply = $ws->worktree_reconcile_metadata( array( 'apply_plan' => $plan ) );
 	$assert( true, ! is_wp_error( $apply ) && ( $apply['success'] ?? false ), 'apply succeeds' );
 	$assert( 4, (int) ( $apply['summary']['written'] ?? 0 ), 'apply writes exact current matches' );
-	$assert( 4, (int) ( $apply['summary']['repaired'] ?? 0 ), 'apply reports repaired metadata rows' );
+	$assert( 4, (int) ( $apply['summary']['written'] ?? 0 ), 'apply reports written metadata rows' );
 	$assert( 0, (int) ( $apply['summary']['skipped'] ?? 0 ), 'apply skips nothing for current plan' );
-	$assert( 4, count( $apply['repaired'] ?? array() ), 'apply exposes repaired rows distinctly' );
+	$assert( 4, count( $apply['written'] ?? array() ), 'apply exposes written rows distinctly' );
 	$stored = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@legacy-missing' );
 	$assert( 'demo@legacy-missing', $stored['handle'] ?? '', 'stored metadata includes handle' );
 	$assert( true, ! empty( $stored['observed_at'] ), 'stored metadata includes observed_at' );
@@ -272,8 +272,8 @@ namespace {
 
 	$inventory_after = $ws->worktree_cleanup_merged( array( 'dry_run' => true, 'inventory_only' => true, 'skip_github' => true ) );
 	$assert( 0, (int) ( $inventory_after['summary']['skipped_by_reason']['requires_full_scan'] ?? 0 ), 'inventory cleanup requires fewer full scans after apply' );
-	$assert( 4, (int) ( $inventory_after['summary']['skipped_by_reason']['missing_metadata_repaired'] ?? 0 ), 'inventory cleanup distinguishes repaired legacy metadata' );
-	$assert( 4, (int) ( $inventory_after['summary']['repair_status']['missing_metadata_repaired'] ?? 0 ), 'inventory cleanup summarizes repaired legacy metadata' );
+	$assert( 5, (int) ( $inventory_after['summary']['skipped_by_reason']['no_inventory_cleanup_signal'] ?? 0 ), 'inventory cleanup treats reconciled active metadata like current active metadata' );
+	$assert( false, isset( $inventory_after['summary']['repair_status'] ), 'inventory cleanup no longer exposes migration status' );
 
 	echo "\nSafety gates\n";
 	$stale_plan['proposals'][0]['branch'] = 'wrong-branch';

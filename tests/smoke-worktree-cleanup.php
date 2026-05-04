@@ -394,6 +394,10 @@ namespace {
 	$assert( 'no_inventory_cleanup_signal', $inventory_active['reason_code'] ?? '', 'inventory-only active metadata uses stable ambiguous reason' );
 	$inventory_missing = array_values( array_filter( $inventory_plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@inventory-missing-metadata' ) )[0] ?? array();
 	$assert( 'requires_full_scan', $inventory_missing['reason_code'] ?? '', 'inventory-only missing metadata requires full scan' );
+	$inventory_next_commands = (array) ( $inventory_plan['summary']['skipped_next_commands'] ?? array() );
+	$assert( true, count( $inventory_next_commands ) >= 2, 'inventory-only summary includes actionable skipped commands' );
+	$assert( true, in_array( 'requires_full_scan', array_column( $inventory_next_commands, 'reason_code' ), true ), 'inventory-only skipped commands include full-scan remediation' );
+	$assert( true, in_array( 'no_inventory_cleanup_signal', array_column( $inventory_next_commands, 'reason_code' ), true ), 'inventory-only skipped commands include explicit review remediation' );
 	$inventory_apply = $inventory_ws->worktree_cleanup_merged( array( 'inventory_only' => true ) );
 	$assert( true, is_wp_error( $inventory_apply ), 'inventory-only cleanup refuses non-dry-run apply path' );
 
@@ -423,7 +427,6 @@ namespace {
 	$assert( $cleanup_plan['plan_id'] ?? '', $cleanup_plan_again['plan_id'] ?? '', 'cleanup plan ID is stable for unchanged rows and inputs' );
 	$artifact_row = $cleanup_plan['rows']['artifact_cleanup'][0] ?? array();
 	$assert( true, str_starts_with( (string) ( $artifact_row['row_id'] ?? '' ), 'cleanup-row-' ), 'artifact cleanup row has stable row ID' );
-	$assert( true, isset( $cleanup_plan['rows']['metadata_repair'] ), 'cleanup plan includes metadata repair row bucket' );
 	$assert( true, isset( $cleanup_plan['rows']['worktree_removal'] ), 'cleanup plan includes worktree removal row bucket' );
 	$assert( true, isset( $cleanup_plan['rows']['resolver'] ), 'cleanup plan includes optional resolver row bucket' );
 	$chunk_report = $ws->workspace_cleanup_plan_chunks(
@@ -459,7 +462,6 @@ namespace {
 				'workspace_path' => $tmp,
 				'rows'           => array(
 					'artifact_cleanup' => $large_rows,
-					'metadata_repair'  => array(),
 					'worktree_removal' => array(),
 					'resolver'         => array(),
 				),
