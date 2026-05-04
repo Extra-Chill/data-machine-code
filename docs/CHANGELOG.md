@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.27.2] - 2026-05-03
+
+### Changed
+- Refactor workspace cleanup onto system tasks
+
 ## [0.27.1] - 2026-05-03
 
 ### Fixed
