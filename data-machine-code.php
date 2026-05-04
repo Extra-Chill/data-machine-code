@@ -224,7 +224,6 @@ add_filter( 'datamachine_tasks', function ( array $tasks ): array {
 	$tasks['workspace_disk_emergency_cleanup']   = \DataMachineCode\Tasks\WorkspaceDiskEmergencyCleanupTask::class;
 	$tasks['workspace_retention_cleanup']        = \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask::class;
 	$tasks['workspace_hygiene_report']           = \DataMachineCode\Tasks\WorkspaceHygieneReportTask::class;
-	$tasks['worktree_metadata_batch_reconcile']  = \DataMachineCode\Tasks\WorktreeMetadataBatchReconcileTask::class;
 	return $tasks;
 } );
 

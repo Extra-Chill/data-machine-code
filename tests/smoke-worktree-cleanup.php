@@ -427,7 +427,6 @@ namespace {
 	$assert( $cleanup_plan['plan_id'] ?? '', $cleanup_plan_again['plan_id'] ?? '', 'cleanup plan ID is stable for unchanged rows and inputs' );
 	$artifact_row = $cleanup_plan['rows']['artifact_cleanup'][0] ?? array();
 	$assert( true, str_starts_with( (string) ( $artifact_row['row_id'] ?? '' ), 'cleanup-row-' ), 'artifact cleanup row has stable row ID' );
-	$assert( true, isset( $cleanup_plan['rows']['metadata_repair'] ), 'cleanup plan includes metadata repair row bucket' );
 	$assert( true, isset( $cleanup_plan['rows']['worktree_removal'] ), 'cleanup plan includes worktree removal row bucket' );
 	$assert( true, isset( $cleanup_plan['rows']['resolver'] ), 'cleanup plan includes optional resolver row bucket' );
 	$chunk_report = $ws->workspace_cleanup_plan_chunks(
@@ -463,7 +462,6 @@ namespace {
 				'workspace_path' => $tmp,
 				'rows'           => array(
 					'artifact_cleanup' => $large_rows,
-					'metadata_repair'  => array(),
 					'worktree_removal' => array(),
 					'resolver'         => array(),
 				),

@@ -179,7 +179,6 @@ namespace {
 			'source'              => 'workspace_cleanup_cli',
 			'artifact_cleanup'    => true,
 			'worktree_cleanup'    => false,
-			'metadata_repair'     => false,
 			'artifact_chunk_size' => 10,
 		)
 	);

@@ -3292,7 +3292,7 @@ class Workspace {
 	}
 
 	/**
-	 * Reconcile lifecycle metadata for legacy worktrees without removing anything.
+	 * Reconcile lifecycle metadata for unmanaged worktrees without removing anything.
 	 *
 	 * Dry-runs build a reviewed plan from the current full git worktree listing.
 	 * Applying a plan revalidates handle/path/repo/branch before writing metadata.
@@ -3342,7 +3342,6 @@ class Workspace {
 			'generated_at'   => gmdate( 'c' ),
 			'workspace_path' => $this->workspace_path,
 			'proposals'      => $proposals,
-			'repaired'       => array(),
 			'written'        => array(),
 			'skipped'        => $skipped,
 			'still_unsafe'      => $classified_skips['still_unsafe'],
@@ -3467,8 +3466,6 @@ class Workspace {
 		} else {
 			$this->set_reconciled_metadata_field( $proposed, $source_map, 'lifecycle_state', WorktreeContextInjector::STATE_ACTIVE, 'operator_plan' );
 		}
-		$proposed['metadata_repaired'] = true;
-
 		$missing_after = array_values( array_filter( array(
 			empty( $proposed['created_at'] ) ? 'created_at' : '',
 			empty( $proposed['lifecycle_state'] ) ? 'lifecycle_state' : '',
@@ -3502,7 +3499,7 @@ class Workspace {
 				$base_row,
 				array(
 					'reason_code'       => 'metadata_backfill',
-					'reason'            => 'legacy worktree metadata can be backfilled without changing cleanup eligibility',
+					'reason'            => 'unmanaged worktree metadata can be reconciled without changing cleanup eligibility',
 					'dirty'             => (int) ( $wt['dirty'] ?? 0 ),
 					'unpushed'          => $this->count_unpushed_commits( $path ),
 					'missing_fields'    => $metadata_missing,
@@ -3624,7 +3621,6 @@ class Workspace {
 			'generated_at'   => gmdate( 'c' ),
 			'workspace_path' => $this->workspace_path,
 			'proposals'      => $planned,
-			'repaired'       => $written,
 			'written'        => $written,
 			'skipped'        => $skipped,
 			'still_unsafe'      => $classified_skips['still_unsafe'],
@@ -3708,382 +3704,6 @@ class Workspace {
 	}
 
 	/**
-	 * Bounded, batched metadata reconciliation for legacy worktrees.
-	 *
-	 * The full {@see self::worktree_reconcile_metadata()} entrypoint relies on
-	 * {@see self::worktree_list()}, which runs `git worktree list --porcelain`
-	 * on every primary plus a per-worktree `git status --porcelain`. On
-	 * workspaces with hundreds of legacy worktrees that is unreliable inside a
-	 * single CLI request.
-	 *
-	 * This entrypoint is the bounded counterpart:
-	 *
-	 *  - Discovery uses the cheap {@see self::build_workspace_inventory_rows()}
-	 *    directory scan (no git probes).
-	 *  - Candidates are filtered to worktrees that look like legacy
-	 *    missing-metadata or never-reconciled rows (no `metadata_repaired`
-	 *    marker yet). Already-reconciled rows are short-circuited.
-	 *  - The candidate list is sorted alphabetically by handle so chunked
-	 *    runs are deterministic across calls.
-	 *  - Only `limit` candidates from `offset` (or after `cursor` handle) are
-	 *    processed per call. Each row runs targeted `git rev-parse` and
-	 *    `git status --porcelain` probes against its own worktree path —
-	 *    never the whole workspace.
-	 *  - Safe rows are written inline. Ambiguous rows stay protected with
-	 *    explicit reason codes and never become `cleanup_eligible`.
-	 *  - The response includes `next_cursor` plus `remaining` so an outer
-	 *    loop (operator CLI, system task) can resume across runs.
-	 *
-	 * Cleanup eligibility is intentionally never inferred from a batch run.
-	 * The point of this surface is to repair lifecycle metadata so legacy
-	 * rows stop being reported as `requires_full_scan`, not to grow the
-	 * cleanup blast radius.
-	 *
-	 * @param array $opts {
-	 *     @type bool   $dry_run Build the batch plan without writing metadata.
-	 *     @type int    $limit   Maximum candidates to process. Default 25, capped at 200.
-	 *     @type int    $offset  Numeric offset into the deterministic candidate list. Default 0.
-	 *     @type string $cursor  Optional handle to start after; takes precedence over offset.
-	 * }
-	 * @return array<string,mixed>|\WP_Error
-	 */
-	public function worktree_reconcile_metadata_batch( array $opts = array() ): array|\WP_Error {
-		$dry_run = ! empty( $opts['dry_run'] );
-		$limit   = isset( $opts['limit'] ) ? (int) $opts['limit'] : 25;
-		if ( $limit <= 0 ) {
-			$limit = 25;
-		}
-		if ( $limit > 200 ) {
-			$limit = 200;
-		}
-		$offset = isset( $opts['offset'] ) ? max( 0, (int) $opts['offset'] ) : 0;
-		$cursor = isset( $opts['cursor'] ) ? trim( (string) $opts['cursor'] ) : '';
-
-		$inventory      = $this->build_workspace_inventory_rows();
-		$candidates     = array();
-		$seen_handles   = array();
-		foreach ( $inventory as $row ) {
-			if ( empty( $row['is_worktree'] ) ) {
-				continue;
-			}
-			if ( ! empty( $row['external'] ) ) {
-				continue;
-			}
-			$metadata = is_array( $row['metadata'] ?? null ) ? (array) $row['metadata'] : null;
-			if ( null !== $metadata && ! empty( $metadata['metadata_repaired'] ) ) {
-				continue;
-			}
-			$handle           = (string) ( $row['handle'] ?? '' );
-			if ( '' === $handle ) {
-				continue;
-			}
-			$seen_handles[ $handle ] = true;
-			$candidates[] = array(
-				'handle'   => $handle,
-				'repo'     => (string) ( $row['repo'] ?? '' ),
-				'path'     => (string) ( $row['path'] ?? '' ),
-				'metadata' => $metadata,
-			);
-		}
-
-		// Include stored-metadata-only rows whose on-disk path is gone so we
-		// can surface them with explicit reason codes (path_missing, etc.)
-		// instead of leaving them invisible to operators.
-		$all_metadata = function_exists( 'get_option' ) ? get_option( WorktreeContextInjector::METADATA_OPTION, array() ) : array();
-		if ( is_array( $all_metadata ) ) {
-			foreach ( $all_metadata as $stored_handle => $stored_metadata ) {
-				$stored_handle = (string) $stored_handle;
-				if ( '' === $stored_handle || isset( $seen_handles[ $stored_handle ] ) ) {
-					continue;
-				}
-				if ( is_array( $stored_metadata ) && ! empty( $stored_metadata['metadata_repaired'] ) ) {
-					continue;
-				}
-				$parsed = $this->parse_handle( $stored_handle );
-				if ( empty( $parsed['is_worktree'] ) ) {
-					continue;
-				}
-				$candidates[] = array(
-					'handle'   => $stored_handle,
-					'repo'     => (string) ( $parsed['repo'] ?? '' ),
-					'path'     => $this->workspace_path . '/' . $stored_handle,
-					'metadata' => is_array( $stored_metadata ) ? (array) $stored_metadata : null,
-				);
-				$seen_handles[ $stored_handle ] = true;
-			}
-		}
-
-		usort(
-			$candidates,
-			fn( $a, $b ) => strcmp( (string) ( $a['handle'] ?? '' ), (string) ( $b['handle'] ?? '' ) )
-		);
-
-		$total = count( $candidates );
-
-		if ( '' !== $cursor ) {
-			// The candidate list shrinks as rows are reconciled, so the cursor
-			// handle itself may already be gone. Treat the cursor as "start at
-			// the first handle strictly greater than cursor" so resume is
-			// stable across batches even after writes.
-			$offset = 0;
-			foreach ( $candidates as $index => $row ) {
-				if ( strcmp( (string) $row['handle'], $cursor ) > 0 ) {
-					$offset = (int) $index;
-					break;
-				}
-				$offset = (int) $index + 1;
-			}
-		}
-
-		$slice = array_slice( $candidates, $offset, $limit );
-
-		$proposals = array();
-		$written   = array();
-		$skipped   = array();
-		$last_handle = '';
-
-		foreach ( $slice as $candidate ) {
-			$handle      = (string) ( $candidate['handle'] ?? '' );
-			$last_handle = $handle;
-			$repo        = (string) ( $candidate['repo'] ?? '' );
-			$path        = (string) ( $candidate['path'] ?? '' );
-
-			$base_row = array(
-				'handle'   => $handle,
-				'repo'     => $repo,
-				'branch'   => '',
-				'path'     => $path,
-				'metadata' => $candidate['metadata'],
-			);
-
-			if ( '' === $handle || '' === $repo || '' === $path ) {
-				$skipped[] = array_merge(
-					$base_row,
-					array(
-						'reason_code' => 'missing_identity',
-						'reason'      => 'inventory row is missing handle, repo, or path',
-					)
-				);
-				continue;
-			}
-
-			$parsed = $this->parse_handle( $handle );
-			if ( empty( $parsed['is_worktree'] ) || $parsed['repo'] !== $repo ) {
-				$skipped[] = array_merge(
-					$base_row,
-					array(
-						'reason_code' => 'noncanonical_handle',
-						'reason'      => 'worktree is not represented by a canonical <repo>@<slug> workspace handle',
-					)
-				);
-				continue;
-			}
-
-			if ( ! is_dir( $path ) ) {
-				$skipped[] = array_merge(
-					$base_row,
-					array(
-						'reason_code' => 'path_missing',
-						'reason'      => 'worktree path is no longer present on disk',
-					)
-				);
-				continue;
-			}
-
-			$branch = $this->probe_worktree_current_branch( $path );
-			if ( '' === $branch ) {
-				$skipped[] = array_merge(
-					$base_row,
-					array(
-						'reason_code' => 'unresolved_branch',
-						'reason'      => 'could not resolve current branch via git rev-parse',
-					)
-				);
-				continue;
-			}
-			$base_row['branch'] = $branch;
-
-			$dirty = $this->probe_worktree_dirty_count( $path );
-			if ( $dirty instanceof \WP_Error ) {
-				$skipped[] = array_merge(
-					$base_row,
-					array(
-						'reason_code' => 'git_probe_failed',
-						'reason'      => sprintf( 'git status probe failed: %s', $dirty->get_error_message() ),
-					)
-				);
-				continue;
-			}
-
-			$wt = array(
-				'handle'   => $handle,
-				'repo'     => $repo,
-				'branch'   => $branch,
-				'path'     => $path,
-				'dirty'    => $dirty,
-				'external' => false,
-				'metadata' => $candidate['metadata'],
-			);
-
-			$built = $this->build_worktree_metadata_reconciliation_row( $wt );
-			if ( isset( $built['skip'] ) ) {
-				$skipped[] = $built['skip'];
-				continue;
-			}
-			if ( ! isset( $built['proposal'] ) ) {
-				// Already current — nothing to backfill, but mark as repaired so it stops being recounted.
-				$existing = is_array( $candidate['metadata'] ?? null ) ? (array) $candidate['metadata'] : array();
-				$existing['metadata_repaired'] = true;
-				$existing['observed_at']       = gmdate( 'c' );
-				if ( ! $dry_run ) {
-					WorktreeContextInjector::store_lifecycle_metadata( $handle, $existing );
-				}
-				$written[] = array(
-					'handle'   => $handle,
-					'repo'     => $repo,
-					'branch'   => $branch,
-					'path'     => $path,
-					'metadata' => WorktreeContextInjector::get_metadata( $handle ) ?? $existing,
-				);
-				continue;
-			}
-
-			$proposal    = $built['proposal'];
-			$proposals[] = $proposal;
-
-			if ( $dry_run ) {
-				continue;
-			}
-
-			$state = WorktreeContextInjector::normalize_state( (string) ( $proposal['proposed_metadata']['lifecycle_state'] ?? '' ) );
-			if ( null === $state ) {
-				$skipped[] = array(
-					'handle'      => $handle,
-					'repo'        => $repo,
-					'branch'      => $branch,
-					'path'        => $path,
-					'reason_code' => 'invalid_lifecycle_state',
-					'reason'      => 'proposed lifecycle_state is invalid',
-				);
-				continue;
-			}
-
-			if ( WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE === $state ) {
-				$unpushed = $this->count_unpushed_commits( $path );
-				if ( $unpushed instanceof \WP_Error || $dirty > 0 || (int) $unpushed > 0 ) {
-					$skipped[] = array(
-						'handle'      => $handle,
-						'repo'        => $repo,
-						'branch'      => $branch,
-						'path'        => $path,
-						'reason_code' => 'unsafe_cleanup_eligible_state',
-						'reason'      => 'refusing to mark dirty or unpushed worktree cleanup_eligible from a reconciliation batch',
-					);
-					continue;
-				}
-			}
-
-			$source_map = (array) ( $proposal['source_map'] ?? array() );
-			$missing_source = false;
-			foreach ( array( 'handle', 'repo', 'branch', 'path', 'created_at', 'observed_at', 'lifecycle_state' ) as $field ) {
-				if ( ! isset( $source_map[ $field ] ) || '' === (string) $source_map[ $field ] ) {
-					$missing_source = $field;
-					break;
-				}
-			}
-			if ( false !== $missing_source ) {
-				$skipped[] = array(
-					'handle'      => $handle,
-					'repo'        => $repo,
-					'branch'      => $branch,
-					'path'        => $path,
-					'reason_code' => 'missing_source_map',
-					'reason'      => sprintf( 'proposed field %s is missing a source', $missing_source ),
-				);
-				continue;
-			}
-
-			$metadata                       = (array) ( $proposal['proposed_metadata'] ?? array() );
-			$metadata['lifecycle_state']    = $state;
-			$metadata['reconciled_at']      = gmdate( 'c' );
-			$metadata['reconciled_sources'] = $source_map;
-			WorktreeContextInjector::store_lifecycle_metadata( $handle, $metadata );
-
-			$written[] = array(
-				'handle'   => $handle,
-				'repo'     => $repo,
-				'branch'   => $branch,
-				'path'     => $path,
-				'metadata' => WorktreeContextInjector::get_metadata( $handle ),
-			);
-		}
-
-		$processed   = count( $slice );
-		$next_offset = $offset + $processed;
-		$remaining   = max( 0, $total - $next_offset );
-		$next_cursor = $remaining > 0 && '' !== $last_handle ? $last_handle : null;
-
-		$summary                       = $this->build_worktree_metadata_reconciliation_summary( $processed, $proposals, $written, $skipped );
-		$summary['candidate_total']    = $total;
-		$summary['batch_offset']       = $offset;
-		$summary['batch_limit']        = $limit;
-		$summary['processed']          = $processed;
-		$summary['remaining']          = $remaining;
-		$summary['exhausted']          = 0 === $remaining;
-
-		$classified_skips = $this->classify_worktree_metadata_reconciliation_skips( $skipped );
-
-		return array(
-			'success'            => true,
-			'mode'               => 'batch',
-			'dry_run'            => $dry_run,
-			'applied'            => ! $dry_run && array() !== $written,
-			'generated_at'       => gmdate( 'c' ),
-			'workspace_path'     => $this->workspace_path,
-			'candidate_total'    => $total,
-			'processed'          => $processed,
-			'remaining'          => $remaining,
-			'exhausted'          => 0 === $remaining,
-			'batch_offset'       => $offset,
-			'batch_limit'        => $limit,
-			'next_cursor'        => $next_cursor,
-			'next_offset'        => $next_offset < $total ? $next_offset : null,
-			'last_handle'        => '' === $last_handle ? null : $last_handle,
-			'proposals'          => $proposals,
-			'written'            => $written,
-			'repaired'           => $written,
-			'skipped'            => $skipped,
-			'still_unsafe'       => $classified_skips['still_unsafe'],
-			'external_worktrees' => $classified_skips['external_worktrees'],
-			'summary'            => $summary,
-		);
-	}
-
-	/**
-	 * Probe the current branch for a single worktree path.
-	 *
-	 * Bounded git probe used by batched metadata reconciliation. Avoids the
-	 * full `git worktree list --porcelain` walk done by {@see self::worktree_list()}.
-	 *
-	 * @param string $path Worktree path.
-	 * @return string Branch name, or '' when the probe failed.
-	 */
-	private function probe_worktree_current_branch( string $path ): string {
-		if ( '' === $path || ! is_dir( $path ) ) {
-			return '';
-		}
-		$result = $this->run_git( $path, 'rev-parse --abbrev-ref HEAD' );
-		if ( is_wp_error( $result ) ) {
-			return '';
-		}
-		$branch = trim( (string) ( $result['output'] ?? '' ) );
-		if ( '' === $branch || 'HEAD' === $branch ) {
-			return '';
-		}
-		return $branch;
-	}
-
-	/**
 	 * Probe the dirty file count for a single worktree path.
 	 *
 	 * @param string $path Worktree path.
@@ -4125,18 +3745,10 @@ class Workspace {
 		}
 		ksort( $states );
 
-		$repaired_metadata = 0;
-		foreach ( $written as $row ) {
-			if ( ! empty( $row['metadata']['metadata_repaired'] ) ) {
-				++$repaired_metadata;
-			}
-		}
-
 		return array(
 			'inspected'         => $inspected,
 			'proposed'          => count( $proposals ),
 			'written'           => count( $written ),
-			'repaired'          => $repaired_metadata,
 			'skipped'           => count( $skipped ),
 			'skipped_by_reason' => $skipped_by_reason,
 			'proposed_by_state' => $states,
@@ -4315,7 +3927,6 @@ class Workspace {
 		$inputs = array(
 			'force_artifact_cleanup' => ! empty( $opts['force_artifact_cleanup'] ),
 			'include_artifacts'      => array_key_exists( 'include_artifacts', $opts ) ? (bool) $opts['include_artifacts'] : true,
-			'include_metadata'       => array_key_exists( 'include_metadata', $opts ) ? (bool) $opts['include_metadata'] : true,
 			'include_worktrees'      => array_key_exists( 'include_worktrees', $opts ) ? (bool) $opts['include_worktrees'] : true,
 			'include_resolvers'      => ! empty( $opts['include_resolvers'] ),
 			'worktree_older_than'    => isset( $opts['worktree_older_than'] ) ? trim( (string) $opts['worktree_older_than'] ) : '',
@@ -4339,14 +3950,6 @@ class Workspace {
 			}
 		}
 
-		$metadata_plan = array( 'proposals' => array(), 'skipped' => array(), 'summary' => array() );
-		if ( $inputs['include_metadata'] ) {
-			$metadata_plan = $this->worktree_reconcile_metadata( array( 'dry_run' => true ) );
-			if ( $metadata_plan instanceof \WP_Error ) {
-				return $metadata_plan;
-			}
-		}
-
 		$worktree_plan = array( 'candidates' => array(), 'skipped' => array(), 'summary' => array() );
 		if ( $inputs['include_worktrees'] ) {
 			$worktree_plan = $this->worktree_cleanup_merged(
@@ -4365,7 +3968,6 @@ class Workspace {
 
 		$rows = array(
 			'artifact_cleanup' => $this->prepare_cleanup_plan_rows( 'artifact_cleanup', (array) ( $artifact_plan['candidates'] ?? array() ), 'safe' ),
-			'metadata_repair'  => $this->prepare_cleanup_plan_rows( 'metadata_repair', (array) ( $metadata_plan['proposals'] ?? array() ), 'safe' ),
 			'worktree_removal' => $this->prepare_cleanup_plan_rows( 'worktree_removal', (array) ( $worktree_plan['candidates'] ?? array() ), 'reviewed_destructive' ),
 			'resolver'         => $inputs['include_resolvers'] ? $this->build_cleanup_plan_resolver_rows( (array) ( $worktree_plan['skipped'] ?? array() ) ) : array(),
 		);
@@ -4380,14 +3982,12 @@ class Workspace {
 			'safety_policy'  => array(
 				'applies_inline'               => false,
 				'artifact_cleanup'            => 'apply-plan must revalidate profile-derived artifact paths before deletion',
-				'metadata_repair'             => 'apply-plan must revalidate current handle, repo, branch, path, lifecycle state, and source map before writing metadata',
 				'worktree_removal'            => 'apply-plan must re-run dirty, unpushed, identity, lifecycle, containment, and primary protections before deletion',
 				'resolver'                    => 'resolver rows may gather merge signals but cannot delete worktrees',
 				'destructive_rows_need_review' => true,
 			),
 			'plans'          => array(
 				'artifact_cleanup' => $artifact_plan,
-				'metadata_repair'  => $metadata_plan,
 				'worktree_removal' => $worktree_plan,
 			),
 			'rows'           => $rows,
@@ -4506,7 +4106,7 @@ class Workspace {
 				continue;
 			}
 			$reason = (string) ( $row['reason_code'] ?? '' );
-			if ( ! in_array( $reason, array( 'requires_full_scan', 'no_inventory_cleanup_signal', 'missing_metadata_repaired' ), true ) ) {
+			if ( ! in_array( $reason, array( 'requires_full_scan', 'no_inventory_cleanup_signal' ), true ) ) {
 				continue;
 			}
 
@@ -5127,11 +4727,9 @@ class Workspace {
 			}
 
 			if ( ! WorktreeContextInjector::has_cleanup_signal( $metadata ) ) {
-				$repaired = ! empty( $metadata['metadata_repaired'] );
 				$skipped[] = array_merge( $base_row, array(
-					'reason_code'   => $repaired ? 'missing_metadata_repaired' : 'no_inventory_cleanup_signal',
-					'reason'        => $repaired ? 'legacy metadata was repaired conservatively; no cleanup signal yet' : 'no explicit inventory cleanup signal — leaving in place',
-					'repair_status' => $repaired ? 'missing_metadata_repaired' : null,
+					'reason_code'   => 'no_inventory_cleanup_signal',
+					'reason'        => 'no explicit inventory cleanup signal — leaving in place',
 					'hint'          => 'Mark the worktree cleanup-eligible after review, or run full cleanup to detect merge signals.',
 				) );
 				continue;
@@ -6249,7 +5847,6 @@ class Workspace {
 	private function build_worktree_cleanup_summary( array $candidates, array $removed, array $skipped, ?array $age_filter = null ): array {
 		$skipped_by_reason    = array();
 		$candidates_by_signal = array();
-		$repair_status_counts = array();
 		$size_by_repo         = array();
 		$artifact_by_repo     = array();
 		$total_size_bytes     = 0;
@@ -6270,12 +5867,6 @@ class Workspace {
 			$repo           = (string) ( $row['repo'] ?? 'unknown' );
 			$size_bytes     = isset( $row['size_bytes'] ) ? (int) $row['size_bytes'] : 0;
 			$artifact_bytes = isset( $row['artifact_size_bytes'] ) ? (int) $row['artifact_size_bytes'] : 0;
-			$repair_status  = (string) ( $row['repair_status'] ?? '' );
-
-			if ( '' !== $repair_status ) {
-				$repair_status_counts[ $repair_status ] = ( $repair_status_counts[ $repair_status ] ?? 0 ) + 1;
-			}
-
 			if ( $size_bytes > 0 ) {
 				$size_by_repo[ $repo ] = ( $size_by_repo[ $repo ] ?? 0 ) + $size_bytes;
 				$total_size_bytes     += $size_bytes;
@@ -6288,7 +5879,6 @@ class Workspace {
 
 		ksort( $skipped_by_reason );
 		ksort( $candidates_by_signal );
-		ksort( $repair_status_counts );
 		arsort( $size_by_repo );
 		arsort( $artifact_by_repo );
 
@@ -6299,7 +5889,6 @@ class Workspace {
 			'skipped_by_reason'     => $skipped_by_reason,
 			'skipped_next_commands' => $this->worktree_cleanup_skipped_next_commands( $skipped_by_reason ),
 			'candidates_by_signal'  => $candidates_by_signal,
-			'repair_status'         => $repair_status_counts,
 			'total_size_bytes'      => $total_size_bytes,
 			'artifact_size_bytes'   => $total_artifact_bytes,
 			'size_by_repo'          => $size_by_repo,
@@ -6770,8 +6359,7 @@ class Workspace {
 	 *
 	 * Path-aware counterpart to `worktree_remove()`, which reconstructs the
 	 * path from `<repo>@<slug>` convention. Cleanup code must use this so
-	 * legacy worktrees (created before the @-slug convention landed, or via
-	 * raw `git worktree add`) can still be removed.
+	 * reviewed inventory rows are removed by their safety-probed path.
 	 *
 	 * Hard safety rails applied here before any removal:
 	 *   1. Primary repo's `.git` must exist (we're about to invoke it)

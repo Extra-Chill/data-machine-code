@@ -387,22 +387,6 @@ namespace {
 		}
 	}
 
-	class FakeMetadataReconcileAbility {
-		public array $last_input = array();
-
-		public function execute( array $input ): array {
-			$this->last_input = $input;
-			return array(
-				'success'   => true,
-				'dry_run'   => ! empty( $input['dry_run'] ),
-				'proposals' => array(),
-				'written'   => array(),
-				'skipped'   => array(),
-				'summary'   => array( 'proposed' => 0 ),
-			);
-		}
-	}
-
 	class FakeGetJobsAbility {
 		public function execute( array $input ): array {
 			if ( isset( $input['parent_job_id'] ) ) {
@@ -554,14 +538,12 @@ namespace {
 	$list_ability = new FakeListAbility();
 	$cleanup_run_ability = new FakeCleanupRunAbility();
 	$hygiene_ability = new FakeHygieneAbility();
-	$metadata_ability = new FakeMetadataReconcileAbility();
 	$get_jobs_ability = new FakeGetJobsAbility();
 	$retry_job_ability = new FakeRetryJobAbility();
 	$fail_job_ability = new FakeFailJobAbility();
 	$GLOBALS['__abilities'] = array(
 		'datamachine/workspace-cleanup-run'                 => $cleanup_run_ability,
 		'datamachine/workspace-hygiene-report'              => $hygiene_ability,
-		'datamachine/workspace-worktree-reconcile-metadata' => $metadata_ability,
 		'datamachine/workspace-worktree-cleanup'           => $ability,
 		'datamachine/workspace-worktree-cleanup-artifacts' => $artifact_ability,
 		'datamachine/workspace-worktree-emergency-cleanup' => $emergency_ability,
