@@ -84,6 +84,13 @@ namespace {
 			'disk'                      => array(
 				'free_human' => '1.1 GiB',
 			),
+			'inventory'                 => array(
+				'freshness' => array(
+					'total_rows'    => 42,
+					'missing_paths' => 4,
+					'last_probe_at' => '2026-05-04 12:00:00',
+				),
+			),
 			'worktrees'                 => array(
 				'worktrees'          => 42,
 				'artifacts'          => 1,
@@ -123,18 +130,35 @@ namespace {
 		}
 	}
 
+	class FakeInventoryRefreshAbility {
+		public int $calls = 0;
+
+		public function execute( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+			++$this->calls;
+			return array(
+				'success' => true,
+				'summary' => array(
+					'upserted'       => 3,
+					'marked_missing' => 1,
+				),
+			);
+		}
+	}
+
 	echo "=== smoke-workspace-hygiene-cli ===\n";
 
 	$ability                 = new FakeHygieneAbility();
+	$inventory_ability       = new FakeInventoryRefreshAbility();
 	$GLOBALS['__abilities'] = array(
-		'datamachine/workspace-hygiene-report' => $ability,
+		'datamachine/workspace-hygiene-report'             => $ability,
+		'datamachine/workspace-worktree-inventory-refresh' => $inventory_ability,
 	);
 	$command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
 
 	echo "\n[1] JSON output is parseable and forwards bounded flags\n";
 	$GLOBALS['__cli_logs'] = array();
 	$command->hygiene( array(), array( 'format' => 'json', 'skip-cleanup' => true, 'skip-sizes' => true, 'size-limit' => '25' ) );
-	datamachine_code_hygiene_assert( array( 'include_cleanup' => false, 'include_sizes' => false, 'include_worktree_status' => false, 'size_limit' => 25 ) === $ability->last_input, 'CLI forwards skip flags, status mode, and size limit' );
+	datamachine_code_hygiene_assert( array( 'include_cleanup' => false, 'include_sizes' => false, 'include_worktree_status' => false, 'refresh_inventory' => false, 'size_limit' => 25 ) === $ability->last_input, 'CLI forwards skip flags, status mode, inventory mode, and size limit' );
 	datamachine_code_hygiene_assert( 1 === count( $GLOBALS['__cli_logs'] ), 'JSON path writes one stdout document' );
 	$decoded = json_decode( (string) $GLOBALS['__cli_logs'][0], true );
 	datamachine_code_hygiene_assert( JSON_ERROR_NONE === json_last_error(), 'JSON output parses cleanly' );
@@ -146,18 +170,26 @@ namespace {
 	$GLOBALS['__cli_logs'] = array();
 	$command->hygiene( array(), array( 'format' => 'json', 'include-worktree-status' => true ) );
 	datamachine_code_hygiene_assert( true === ( $ability->last_input['include_worktree_status'] ?? false ), 'CLI forwards explicit worktree status opt-in' );
+	$command->hygiene( array(), array( 'format' => 'json', 'refresh-inventory' => true ) );
+	datamachine_code_hygiene_assert( true === ( $ability->last_input['refresh_inventory'] ?? false ), 'CLI forwards explicit inventory refresh opt-in' );
 
 	echo "\n[3] Human output is summary-first and includes actionable sections\n";
 	$GLOBALS['__cli_logs'] = array();
 	$command->hygiene( array(), array() );
 	datamachine_code_hygiene_assert( 'Workspace hygiene:' === ( $GLOBALS['__cli_logs'][0] ?? '' ), 'human output starts with report heading' );
-	datamachine_code_hygiene_assert( in_array( 'table:18:metric,value', $GLOBALS['__cli_logs'], true ), 'human output renders summary table (now includes 4 liveness counts + duplicate_task_groups)' );
+	datamachine_code_hygiene_assert( in_array( 'table:21:metric,value', $GLOBALS['__cli_logs'], true ), 'human output renders summary table with inventory freshness metrics' );
 	datamachine_code_hygiene_assert( in_array( 'Workspace size by kind:', $GLOBALS['__cli_logs'], true ), 'human output renders size kind grouping' );
 	datamachine_code_hygiene_assert( in_array( 'Top workspace entries by size:', $GLOBALS['__cli_logs'], true ), 'human output renders top offenders' );
 	datamachine_code_hygiene_assert( in_array( 'Top repos by size:', $GLOBALS['__cli_logs'], true ), 'human output renders size leaders' );
 	datamachine_code_hygiene_assert( in_array( 'Top repos by worktree count:', $GLOBALS['__cli_logs'], true ), 'human output renders worktree-count leaders' );
 	datamachine_code_hygiene_assert( in_array( 'Cleanup candidates:', $GLOBALS['__cli_logs'], true ), 'human output renders cleanup candidates' );
 	datamachine_code_hygiene_assert( in_array( 'Suggested cleanup review:', $GLOBALS['__cli_logs'], true ), 'human output renders cleanup command' );
+
+	echo "\n[4] Inventory refresh CLI delegates to ability\n";
+	$GLOBALS['__cli_logs'] = array();
+	$command->inventory( array( 'refresh' ), array() );
+	datamachine_code_hygiene_assert( 1 === $inventory_ability->calls, 'inventory refresh CLI calls inventory ability' );
+	datamachine_code_hygiene_assert( in_array( 'success: Inventory refreshed: 3 upserted, 1 marked missing.', $GLOBALS['__cli_logs'], true ), 'inventory refresh CLI prints summary' );
 
 	echo "\nAll workspace hygiene CLI smoke tests passed.\n";
 }

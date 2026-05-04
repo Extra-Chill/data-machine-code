@@ -32,16 +32,28 @@ function datamachine_code_install_schema(): void {
 	if ( class_exists( '\DataMachineCode\Storage\CleanupSchema' ) ) {
 		\DataMachineCode\Storage\CleanupSchema::install();
 	}
+	if ( class_exists( '\DataMachineCode\Storage\WorktreeInventoryRepository' ) ) {
+		\DataMachineCode\Storage\WorktreeInventoryRepository::install_schema();
+	}
 }
 register_activation_hook( __FILE__, 'datamachine_code_install_schema' );
-add_action( 'plugins_loaded', function (): void {
-	$schema_version = '20260504-cleanup-runs';
-	if ( get_option( 'datamachine_code_cleanup_schema_version' ) === $schema_version ) {
-		return;
+
+/**
+ * Keep schema current for already-active installs after deploy/update.
+ */
+function datamachine_code_maybe_upgrade_schema(): void {
+	$worktrees_installed = function_exists( 'get_option' ) ? (string) get_option( 'datamachine_code_worktrees_schema_version', '' ) : '';
+	$cleanup_installed   = function_exists( 'get_option' ) ? (string) get_option( 'datamachine_code_cleanup_schema_version', '' ) : '';
+	$cleanup_version     = '20260504-cleanup-runs';
+
+	if ( '1' !== $worktrees_installed || $cleanup_version !== $cleanup_installed ) {
+		datamachine_code_install_schema();
+		if ( function_exists( 'update_option' ) ) {
+			update_option( 'datamachine_code_cleanup_schema_version', $cleanup_version, false );
+		}
 	}
-	datamachine_code_install_schema();
-	update_option( 'datamachine_code_cleanup_schema_version', $schema_version, false );
-}, 5 );
+}
+add_action( 'plugins_loaded', 'datamachine_code_maybe_upgrade_schema', 5 );
 
 /**
  * Bootstrap the plugin after all plugins are loaded.

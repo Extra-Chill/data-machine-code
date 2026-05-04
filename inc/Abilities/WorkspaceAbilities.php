@@ -1019,6 +1019,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Include full per-worktree git status. Default false for huge-workspace safety.',
 							),
+							'refresh_inventory' => array(
+								'type'        => 'boolean',
+								'description' => 'Refresh the DB-backed worktree inventory before reporting freshness. Default false.',
+							),
 							'size_limit'      => array(
 								'type'        => 'integer',
 								'description' => 'Maximum top-level workspace entries to size. Default 1000.',
@@ -1034,6 +1038,7 @@ class WorkspaceAbilities {
 							'destructive'               => array( 'type' => 'boolean' ),
 							'size'                      => array( 'type' => 'object' ),
 							'disk'                      => array( 'type' => 'object' ),
+							'inventory'                 => array( 'type' => 'object' ),
 							'worktrees'                 => array( 'type' => 'object' ),
 							'worktree_status_mode'      => array( 'type' => 'string' ),
 							'top_repos_by_worktrees'    => array( 'type' => 'array' ),
@@ -1044,6 +1049,32 @@ class WorkspaceAbilities {
 						),
 					),
 					'execute_callback'    => array( self::class, 'workspaceHygieneReport' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/workspace-worktree-inventory-refresh',
+				array(
+					'label'               => 'Refresh Worktree Inventory',
+					'description'         => 'Reconcile the DB-backed worktree inventory from the current filesystem/git worktree view. Current rows are upserted; stale known rows are marked missing_path.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'        => array( 'type' => 'boolean' ),
+							'refreshed_at'   => array( 'type' => 'string' ),
+							'upserted'       => array( 'type' => 'array' ),
+							'marked_missing' => array( 'type' => 'array' ),
+							'summary'        => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeInventoryRefresh' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
 				)
@@ -2005,11 +2036,25 @@ class WorkspaceAbilities {
 		if ( array_key_exists( 'include_worktree_status', $input ) ) {
 			$opts['include_worktree_status'] = (bool) $input['include_worktree_status'];
 		}
+		if ( array_key_exists( 'refresh_inventory', $input ) ) {
+			$opts['refresh_inventory'] = (bool) $input['refresh_inventory'];
+		}
 		if ( isset( $input['size_limit'] ) ) {
 			$opts['size_limit'] = (int) $input['size_limit'];
 		}
 
 		return $workspace->workspace_hygiene_report( $opts );
+	}
+
+	/**
+	 * Refresh DB-backed worktree inventory from the filesystem/git view.
+	 *
+	 * @param array $input Unused input.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function worktreeInventoryRefresh( array $input ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+		$workspace = new Workspace();
+		return $workspace->worktree_inventory_refresh();
 	}
 
 	/**
