@@ -1,0 +1,165 @@
+<?php
+/**
+ * Smoke test for DB-backed DMC worktree inventory lifecycle signals.
+ *
+ * Run: php tests/smoke-worktree-inventory-store.php
+ *
+ * @package DataMachineCode\Tests
+ */
+
+declare( strict_types=1 );
+
+namespace {
+	if ( ! defined( 'ABSPATH' ) ) {
+		define( 'ABSPATH', __DIR__ . '/' );
+	}
+
+	if ( ! defined( 'ARRAY_A' ) ) {
+		define( 'ARRAY_A', 'ARRAY_A' );
+	}
+
+	class Datamachine_Code_Test_Wpdb {
+		public string $prefix = 'wp_';
+
+		/** @var array<string,array<string,mixed>> */
+		public array $rows = array();
+
+		public function get_charset_collate(): string {
+			return 'DEFAULT CHARSET=utf8mb4';
+		}
+
+		public function prepare( string $query, ...$args ): string {
+			foreach ( $args as $arg ) {
+				$replacement = is_int( $arg ) ? (string) $arg : "'" . str_replace( "'", "''", (string) $arg ) . "'";
+				$query       = preg_replace( '/%[sd]/', $replacement, $query, 1 ) ?? $query;
+			}
+			return $query;
+		}
+
+		public function get_var( string $query ): ?string {
+			return str_contains( $query, 'wp_datamachine_code_worktrees' ) ? 'wp_datamachine_code_worktrees' : null;
+		}
+
+		/**
+		 * @param array<string,mixed> $data
+		 * @param array<int,string>   $format
+		 */
+		public function replace( string $table, array $data, array $format ) {
+			$this->rows[ (string) $data['handle'] ] = $data;
+			return 1;
+		}
+
+		public function get_row( string $query, string $output_type ) {
+			if ( ! preg_match( "/WHERE handle = '([^']+)'/", $query, $matches ) ) {
+				return null;
+			}
+			return $this->rows[ $matches[1] ] ?? null;
+		}
+
+		/**
+		 * @param array<string,mixed> $where
+		 * @param array<int,string>   $where_format
+		 */
+		public function delete( string $table, array $where, array $where_format ) {
+			unset( $this->rows[ (string) $where['handle'] ] );
+			return 1;
+		}
+	}
+
+	if ( ! function_exists( 'get_option' ) ) {
+		function get_option( string $name, $default = false ) {
+			global $datamachine_code_test_options;
+			return $datamachine_code_test_options[ $name ] ?? $default;
+		}
+	}
+
+	if ( ! function_exists( 'update_option' ) ) {
+		function update_option( string $name, $value, $autoload = null ): bool {
+			global $datamachine_code_test_options;
+			$datamachine_code_test_options[ $name ] = $value;
+			return true;
+		}
+	}
+
+	require __DIR__ . '/../inc/Workspace/WorktreeContextInjector.php';
+	require __DIR__ . '/../inc/Workspace/WorktreeInventoryStore.php';
+
+	$assertions = 0;
+	$failures   = 0;
+
+	$assert = function ( $expected, $actual, string $message ) use ( &$assertions, &$failures ): void {
+		++$assertions;
+		if ( $expected === $actual ) {
+			echo "  [PASS] {$message}\n";
+			return;
+		}
+
+		++$failures;
+		echo "  [FAIL] {$message}\n";
+		echo '         expected: ' . var_export( $expected, true ) . "\n";
+		echo '         actual:   ' . var_export( $actual, true ) . "\n";
+	};
+
+	echo "=== smoke-worktree-inventory-store ===\n";
+
+	$GLOBALS['wpdb']                          = new Datamachine_Code_Test_Wpdb();
+	$GLOBALS['datamachine_code_test_options'] = array();
+
+	$metadata = array(
+		'handle'          => 'demo@agent-session-lifecycle',
+		'repo'            => 'demo',
+		'branch'          => 'agent-session-lifecycle',
+		'path'            => '/workspace/demo@agent-session-lifecycle',
+		'lifecycle_state' => 'active',
+		'origin_site'     => 'Intelligence',
+		'origin_agent'    => 'franklin',
+		'origin_session'  => array(
+			'opencode_session_id' => 'ses_123',
+			'kimaki_thread_id'    => 'thread_456',
+		),
+		'origin_task'     => array(
+			'task_url' => 'https://github.com/Extra-Chill/data-machine-code/issues/221',
+			'task_ref' => 'Extra-Chill/data-machine-code#221',
+		),
+		'created_at'      => '2026-05-04T12:00:00Z',
+		'last_seen_at'    => '2026-05-04T12:05:00Z',
+	);
+
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata( 'demo@agent-session-lifecycle', $metadata );
+
+	$assert( true, isset( $GLOBALS['wpdb']->rows['demo@agent-session-lifecycle'] ), 'store_lifecycle_metadata mirrors row into DB inventory' );
+	$db_row = $GLOBALS['wpdb']->rows['demo@agent-session-lifecycle'];
+	$assert( 'demo', $db_row['repo'] ?? null, 'DB row stores repo column' );
+	$assert( 'active', $db_row['lifecycle_state'] ?? null, 'DB row stores lifecycle_state column' );
+	$assert( 'franklin', $db_row['origin_agent'] ?? null, 'DB row stores origin_agent column' );
+	$assert( 'https://github.com/Extra-Chill/data-machine-code/issues/221', $db_row['task_url'] ?? null, 'DB row stores task_url column' );
+	$assert( '2026-05-04 12:05:00', $db_row['last_seen_at'] ?? null, 'DB row normalizes last_seen_at for queryable TTL checks' );
+
+	// Prove get_metadata can be DB-backed by clearing the option fallback.
+	$GLOBALS['datamachine_code_test_options'] = array();
+	$loaded = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@agent-session-lifecycle' );
+	$assert( 'ses_123', $loaded['origin_session']['opencode_session_id'] ?? null, 'get_metadata reads origin session from DB inventory when option is absent' );
+	$assert( 'Extra-Chill/data-machine-code#221', $loaded['origin_task']['task_ref'] ?? null, 'get_metadata reads task ref from DB inventory when option is absent' );
+
+	\DataMachineCode\Workspace\WorktreeContextInjector::record_heartbeat( 'demo@agent-session-lifecycle', '2026-05-04T13:00:00Z' );
+	$assert( '2026-05-04 13:00:00', $GLOBALS['wpdb']->rows['demo@agent-session-lifecycle']['last_seen_at'] ?? null, 'record_heartbeat updates DB last_seen_at' );
+
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
+		'demo@agent-session-lifecycle',
+		array(
+			'lifecycle_state' => 'cleanup_eligible',
+			'pr_url'          => 'https://github.com/Extra-Chill/data-machine-code/pull/999',
+		)
+	);
+	$assert( 'cleanup_eligible', $GLOBALS['wpdb']->rows['demo@agent-session-lifecycle']['cleanup_signal'] ?? null, 'cleanup-eligible lifecycle writes queryable cleanup_signal' );
+
+	\DataMachineCode\Workspace\WorktreeContextInjector::forget_metadata( 'demo@agent-session-lifecycle' );
+	$assert( false, isset( $GLOBALS['wpdb']->rows['demo@agent-session-lifecycle'] ), 'forget_metadata deletes DB inventory row' );
+
+	if ( $failures > 0 ) {
+		echo "\n{$failures} failure(s) across {$assertions} assertion(s).\n";
+		exit( 1 );
+	}
+
+	echo "\nAll {$assertions} worktree inventory store assertions passed.\n";
+}

@@ -804,6 +804,10 @@ class WorktreeContextInjector {
 	 */
 	public static function store_lifecycle_metadata( string $handle, array $metadata ): void {
 		if ( ! function_exists( 'get_option' ) || ! function_exists( 'update_option' ) ) {
+			if ( class_exists( __NAMESPACE__ . '\\WorktreeInventoryStore' ) ) {
+				$existing = WorktreeInventoryStore::get_metadata( $handle ) ?? array();
+				WorktreeInventoryStore::upsert_metadata( $handle, array_merge( $existing, $metadata ) );
+			}
 			return;
 		}
 
@@ -813,9 +817,16 @@ class WorktreeContextInjector {
 		}
 
 		$existing       = isset( $all[ $handle ] ) && is_array( $all[ $handle ] ) ? $all[ $handle ] : array();
+		if ( empty( $existing ) && class_exists( __NAMESPACE__ . '\\WorktreeInventoryStore' ) ) {
+			$existing = WorktreeInventoryStore::get_metadata( $handle ) ?? array();
+		}
 		$all[ $handle ] = array_merge( $existing, $metadata );
 
 		update_option( self::METADATA_OPTION, $all, false );
+
+		if ( class_exists( __NAMESPACE__ . '\\WorktreeInventoryStore' ) ) {
+			WorktreeInventoryStore::upsert_metadata( $handle, $all[ $handle ] );
+		}
 	}
 
 	/**
@@ -991,6 +1002,13 @@ class WorktreeContextInjector {
 	 * @return array|null
 	 */
 	public static function get_metadata( string $handle ): ?array {
+		if ( class_exists( __NAMESPACE__ . '\\WorktreeInventoryStore' ) ) {
+			$db_metadata = WorktreeInventoryStore::get_metadata( $handle );
+			if ( null !== $db_metadata ) {
+				return $db_metadata;
+			}
+		}
+
 		if ( ! function_exists( 'get_option' ) ) {
 			return null;
 		}
@@ -1007,6 +1025,10 @@ class WorktreeContextInjector {
 	 * @param string $handle Workspace handle.
 	 */
 	public static function forget_metadata( string $handle ): void {
+		if ( class_exists( __NAMESPACE__ . '\\WorktreeInventoryStore' ) ) {
+			WorktreeInventoryStore::delete( $handle );
+		}
+
 		if ( ! function_exists( 'get_option' ) || ! function_exists( 'update_option' ) ) {
 			return;
 		}

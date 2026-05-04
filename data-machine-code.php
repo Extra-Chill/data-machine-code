@@ -25,6 +25,10 @@ define( 'DATAMACHINE_CODE_URL', plugin_dir_url( __FILE__ ) );
 // PSR-4 Autoloading.
 require_once __DIR__ . '/vendor/autoload.php';
 
+register_activation_hook( __FILE__, function (): void {
+	\DataMachineCode\Workspace\WorktreeInventoryStore::ensure_schema();
+} );
+
 /**
  * Install DMC-owned database tables.
  */
