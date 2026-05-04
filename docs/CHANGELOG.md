@@ -2,6 +2,17 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.29.0] - 2026-05-04
+
+### Added
+- persist worktree lifecycle inventory
+- persist cleanup runs in database
+- add DB-backed worktree inventory
+
+### Fixed
+- isolate cleanup evidence storage
+- expose workspace cleanup lock retention
+
 ## [0.28.4] - 2026-05-04
 
 ### Fixed
