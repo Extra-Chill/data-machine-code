@@ -16,7 +16,7 @@ defined( 'ABSPATH' ) || exit;
  */
 class WorkspaceMaintenancePipelineTemplates {
 
-	public const VERSION = '2026-05-03';
+	public const VERSION = '2026-05-04';
 	public const OPTION_NAME = 'datamachine_code_workspace_maintenance_pipeline_templates_version';
 
 	/**
@@ -92,7 +92,7 @@ class WorkspaceMaintenancePipelineTemplates {
 				'slug'        => 'dmc-workspace-metadata-repair',
 				'name'        => 'DMC Workspace Metadata Repair',
 				'description' => 'Review-first lifecycle metadata backfill for legacy worktrees.',
-				'inputs'      => array( 'workspace_root', 'dry_run', 'apply_plan' ),
+				'inputs'      => array( 'workspace_root', 'apply_plan' ),
 				'steps'       => array(
 					array(
 						'id'             => 'reconcile_metadata_plan',
@@ -107,7 +107,7 @@ class WorkspaceMaintenancePipelineTemplates {
 				'slug'        => 'dmc-workspace-artifact-cleanup',
 				'name'        => 'DMC Workspace Artifact Cleanup',
 				'description' => 'Remove safe generated artifacts before touching worktrees.',
-				'inputs'      => array( 'workspace_root', 'artifact_profiles', 'dry_run', 'apply_plan', 'force' ),
+				'inputs'      => array( 'workspace_root', 'artifact_profiles', 'apply_plan', 'force' ),
 				'steps'       => array(
 					array(
 						'id'             => 'artifact_cleanup_plan',
@@ -116,7 +116,7 @@ class WorkspaceMaintenancePipelineTemplates {
 						'handler_config' => array(
 							'task'   => 'workspace_retention_cleanup',
 							'params' => array(
-								'dry_run'          => true,
+								'dry_run'          => false,
 								'artifact_cleanup' => true,
 								'worktree_cleanup' => false,
 								'skip_github'      => true,
@@ -129,7 +129,7 @@ class WorkspaceMaintenancePipelineTemplates {
 				'slug'        => 'dmc-workspace-retention-cleanup',
 				'name'        => 'DMC Workspace Retention Cleanup',
 				'description' => 'Age-gated cleanup for finalized, merged, or stale worktrees after retention windows.',
-				'inputs'      => array( 'workspace_root', 'retention_windows', 'dry_run', 'apply_plan', 'force', 'skip_github' ),
+				'inputs'      => array( 'workspace_root', 'retention_windows', 'apply_plan', 'force', 'skip_github' ),
 				'steps'       => array(
 					array(
 						'id'             => 'retention_cleanup',
@@ -138,7 +138,7 @@ class WorkspaceMaintenancePipelineTemplates {
 						'handler_config' => array(
 							'task'   => 'workspace_retention_cleanup',
 							'params' => array(
-								'dry_run'              => true,
+								'dry_run'              => false,
 								'worktree_older_than'  => '14d',
 								'artifact_cleanup'     => true,
 								'worktree_cleanup'     => true,
@@ -152,7 +152,7 @@ class WorkspaceMaintenancePipelineTemplates {
 				'slug'        => 'dmc-workspace-emergency-cleanup',
 				'name'        => 'DMC Workspace Emergency Cleanup',
 				'description' => 'Disk-pressure recovery template: artifact-first, reviewable, escalating only after a plan is inspected.',
-				'inputs'      => array( 'workspace_root', 'disk_thresholds', 'dry_run', 'apply_plan', 'force' ),
+				'inputs'      => array( 'workspace_root', 'disk_thresholds', 'apply_plan', 'force' ),
 				'steps'       => array(
 					array(
 						'id'             => 'emergency_inventory',

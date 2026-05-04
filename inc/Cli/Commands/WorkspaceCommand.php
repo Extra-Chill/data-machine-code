@@ -28,19 +28,22 @@ class WorkspaceCommand extends BaseCommand {
 
 	private const CLEANUP_MODES = array(
 		'inventory' => array(
-			'task_type' => 'worktree_cleanup',
+			'task_type' => 'workspace_hygiene_report',
 			'params'    => array(
-				'dry_run'        => true,
-				'inventory_only' => true,
-				'skip_github'    => true,
+				'include_cleanup'         => true,
+				'include_sizes'           => true,
+				'include_worktree_status' => false,
+				'size_limit'              => 200,
 			),
 		),
 		'metadata'  => array(
-			'task_type' => 'worktree_cleanup',
+			'task_type' => 'workspace_retention_cleanup',
 			'params'    => array(
-				'dry_run'        => true,
-				'inventory_only' => true,
-				'skip_github'    => true,
+				'dry_run'          => false,
+				'artifact_cleanup' => false,
+				'worktree_cleanup' => false,
+				'metadata_repair'  => true,
+				'skip_github'      => true,
 			),
 		),
 		'artifacts' => array(
@@ -396,9 +399,6 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--flow=<flow_id>]
 	 * : Run an existing cleanup flow instead of creating a fresh one.
 	 *
-	 * [--dry-run]
-	 * : Request dry-run task params where the selected mode supports it.
-	 *
 	 * [--force]
 	 * : Pass force=true into the cleanup task params for modes that support it.
 	 *
@@ -473,6 +473,11 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	private function run_cleanup_flow( array $assoc_args ): void {
+		if ( isset( $assoc_args['dry-run'] ) ) {
+			WP_CLI::error( 'Flow-backed cleanup does not support --dry-run. Use workspace worktree cleanup* --dry-run for immediate review, then run/apply cleanup asynchronously.' );
+			return;
+		}
+
 		$mode = strtolower( preg_replace( '/[^a-z0-9_\-]/', '', (string) ( $assoc_args['mode'] ?? 'retention' ) ) );
 		if ( ! isset( self::CLEANUP_MODES[ $mode ] ) ) {
 			WP_CLI::error( sprintf( 'Unknown cleanup mode: %s. Expected one of: %s.', $mode, implode( ', ', array_keys( self::CLEANUP_MODES ) ) ) );
@@ -569,9 +574,6 @@ class WorkspaceCommand extends BaseCommand {
 		$params           = self::CLEANUP_MODES[ $mode ]['params'];
 		$params['source'] = self::CLEANUP_FLOW_SOURCE;
 
-		if ( isset( $assoc_args['dry-run'] ) ) {
-			$params['dry_run'] = (bool) $assoc_args['dry-run'];
-		}
 		if ( isset( $assoc_args['force'] ) ) {
 			$params['force'] = (bool) $assoc_args['force'];
 		}

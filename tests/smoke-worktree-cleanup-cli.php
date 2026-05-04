@@ -414,6 +414,7 @@ namespace {
 	datamachine_code_cleanup_assert( ! str_contains( $doc_comment, "\n\t\t * [--apply-plan=<file>]" ), 'cleanup flags are not hidden behind nested docblock indentation' );
 	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, 'Control flow-backed workspace cleanup runs.' ), 'workspace cleanup command documents flow-backed controller surface' );
 	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, '<run|status|resume|cancel|evidence>' ), 'workspace cleanup synopsis exposes run/status/resume/cancel/evidence' );
+	datamachine_code_cleanup_assert( ! str_contains( $cleanup_doc_comment, '[--dry-run]' ), 'flow-backed cleanup synopsis does not expose dry-run' );
 
 	echo "\n[0b] flow-backed workspace cleanup run/status/control output\n";
 	WP_CLI::$logs      = array();
@@ -425,7 +426,15 @@ namespace {
 	datamachine_code_cleanup_assert( 88 === (int) ( $run_json['flow_id'] ?? 0 ), 'cleanup run returns flow id' );
 	datamachine_code_cleanup_assert( 'workspace_retention_cleanup' === ( $create_pipeline_ability->last_input['workflow']['steps'][0]['handler_config']['task'] ?? '' ), 'retention mode creates a system-task cleanup flow' );
 	datamachine_code_cleanup_assert( 'workspace_cleanup_cli' === ( $create_pipeline_ability->last_input['workflow']['steps'][0]['handler_config']['params']['source'] ?? '' ), 'cleanup flow params identify explicit CLI source' );
+	datamachine_code_cleanup_assert( false === ( $create_pipeline_ability->last_input['workflow']['steps'][0]['handler_config']['params']['dry_run'] ?? true ), 'cleanup flow params are not dry-run' );
 	datamachine_code_cleanup_assert( 'retention' === ( $run_flow_ability->last_input['initial_data']['cleanup_run']['mode'] ?? '' ), 'run-flow receives cleanup run metadata' );
+
+	try {
+		$command->cleanup( array( 'run' ), array( 'mode' => 'artifacts', 'dry-run' => true ) );
+		datamachine_code_cleanup_assert( false, 'flow-backed cleanup rejects dry-run' );
+	} catch ( RuntimeException $e ) {
+		datamachine_code_cleanup_assert( str_contains( $e->getMessage(), 'Flow-backed cleanup does not support --dry-run' ), 'flow-backed cleanup rejects dry-run with direct review guidance' );
+	}
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
