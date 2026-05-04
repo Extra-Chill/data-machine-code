@@ -77,8 +77,11 @@ $budget = WorktreeDiskBudget::evaluate(
 );
 datamachine_code_budget_assert( 'refused' === $budget['status'], 'refused status below 10 GiB' );
 datamachine_code_budget_assert( true === $budget['force_override_required'], 'force required below refusal threshold' );
+datamachine_code_budget_assert( true === $budget['emergency_triggered'], 'refusal threshold triggers emergency cleanup' );
+datamachine_code_budget_assert( in_array( 'free_space_refusal_threshold', $budget['trigger_reasons'], true ), 'refusal trigger reason is stable' );
 datamachine_code_budget_assert( str_contains( $budget['cleanup_dry_run_command'], 'workspace worktree cleanup --dry-run' ), 'cleanup dry-run command is present' );
 datamachine_code_budget_assert( str_contains( $budget['artifact_cleanup_command'], 'workspace worktree cleanup-artifacts --dry-run' ), 'artifact cleanup dry-run command is present' );
+datamachine_code_budget_assert( str_contains( $budget['emergency_cleanup_command'], 'workspace worktree emergency-cleanup' ), 'emergency cleanup command is present' );
 
 echo "\n[4] force makes low-space override explicit\n";
 $budget = WorktreeDiskBudget::evaluate(
@@ -120,6 +123,7 @@ $budget = WorktreeDiskBudget::evaluate(
 	$thresholds
 );
 datamachine_code_budget_assert( 'warning' === $budget['status'], 'high worktree count warns' );
+datamachine_code_budget_assert( true === $budget['emergency_triggered'], 'worktree count warning triggers emergency cleanup' );
 datamachine_code_budget_assert( str_contains( $budget['warnings'][0], '101 worktree-like directories' ), 'worktree-count warning is descriptive' );
 
 echo "\n[7] inspect counts only worktree-like directories\n";
