@@ -1067,6 +1067,9 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--include-worktree-status]
 	 * : Include full per-worktree git status. This can be expensive on huge workspaces.
 	 *
+	 * [--refresh-inventory]
+	 * : Refresh the DB-backed worktree inventory before reporting freshness.
+	 *
 	 * [--size-limit=<count>]
 	 * : Maximum top-level workspace entries to size.
 	 * ---
@@ -1091,6 +1094,7 @@ class WorkspaceCommand extends BaseCommand {
 			'include_cleanup'         => empty( $assoc_args['skip-cleanup'] ),
 			'include_sizes'           => empty( $assoc_args['skip-sizes'] ),
 			'include_worktree_status' => ! empty( $assoc_args['include-worktree-status'] ),
+			'refresh_inventory'       => ! empty( $assoc_args['refresh-inventory'] ),
 		);
 		if ( isset( $assoc_args['size-limit'] ) ) {
 			$input['size_limit'] = (int) $assoc_args['size-limit'];
@@ -1103,6 +1107,58 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$this->render_workspace_hygiene_report( $result, $assoc_args );
+	}
+
+	/**
+	 * Manage the DB-backed workspace inventory.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <operation>
+	 * : Inventory operation. Currently: refresh.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code workspace inventory refresh --format=json
+	 *
+	 * @subcommand inventory
+	 */
+	public function inventory( array $args, array $assoc_args ): void {
+		$operation = $args[0] ?? '';
+		if ( 'refresh' !== $operation ) {
+			WP_CLI::error( 'Usage: wp datamachine-code workspace inventory refresh [--format=<format>]' );
+			return;
+		}
+
+		$ability = wp_get_ability( 'datamachine/workspace-worktree-inventory-refresh' );
+		if ( ! $ability ) {
+			WP_CLI::error( 'Workspace inventory refresh ability not available.' );
+			return;
+		}
+
+		$result = $ability->execute( array() );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+
+		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			$json = wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+			WP_CLI::log( false === $json ? '{}' : $json );
+			return;
+		}
+
+		$summary = (array) ( $result['summary'] ?? array() );
+		WP_CLI::success( sprintf( 'Inventory refreshed: %d upserted, %d marked missing.', (int) ( $summary['upserted'] ?? 0 ), (int) ( $summary['marked_missing'] ?? 0 ) ) );
 	}
 
 	/**
@@ -2566,12 +2622,25 @@ class WorkspaceCommand extends BaseCommand {
 		$size            = (array) ( $report['size'] ?? array() );
 		$disk            = (array) ( $report['disk'] ?? array() );
 		$worktrees       = (array) ( $report['worktrees'] ?? array() );
+		$inventory       = (array) ( $report['inventory']['freshness'] ?? array() );
 		$cleanup         = (array) ( $report['cleanup'] ?? array() );
 		$cleanup_summary = (array) ( $cleanup['summary'] ?? array() );
 
 		WP_CLI::log( 'Workspace hygiene:' );
 		$this->format_items(
 			array(
+				array(
+					'metric' => 'inventory_rows',
+					'value'  => (string) ( $inventory['total_rows'] ?? 0 ),
+				),
+				array(
+					'metric' => 'inventory_missing_paths',
+					'value'  => (string) ( $inventory['missing_paths'] ?? 0 ),
+				),
+				array(
+					'metric' => 'inventory_last_probe_at',
+					'value'  => (string) ( $inventory['last_probe_at'] ?? '-' ),
+				),
 				array(
 					'metric' => 'workspace_path',
 					'value'  => (string) ( $report['workspace_path'] ?? '' ),
