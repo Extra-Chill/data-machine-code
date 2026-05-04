@@ -1962,6 +1962,12 @@ class WorkspaceCommand extends BaseCommand {
 	 *   lifecycle cleanup signals only (cleanup only). Avoids full git worktree
 	 *   scans, per-worktree status checks, and GitHub lookups.
 	 *
+	 * [--include-legacy-repaired]
+	 * : With cleanup inventory or bounded-cleanup-eligible-apply, explicitly
+	 *   include conservatively repaired legacy metadata rows
+	 *   (`missing_metadata_repaired`) as operator-approved cleanup candidates.
+	 *   Apply still runs fresh dirty/unpushed/containment/primary safety probes.
+	 *
 	 * [--older-than=<duration>]
 	 * : Limit cleanup candidates to worktrees with lifecycle `created_at`
 	 *   metadata older than the compact duration (cleanup only, e.g. 7d, 24h).
@@ -2087,6 +2093,8 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25
 	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=25
 	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --via-jobs --limit=10 --older-than=7d
+	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --include-legacy-repaired --older-than=7d --limit=25
+	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --include-legacy-repaired --older-than=7d --limit=25
 	 *
 	 *     # Local-only detection (no GitHub API call)
 	 *     wp datamachine-code workspace worktree cleanup --skip-github
@@ -2262,6 +2270,7 @@ class WorkspaceCommand extends BaseCommand {
 				$input['force']          = ! empty( $assoc_args['force'] );
 				$input['skip_github']    = ! empty( $assoc_args['skip-github'] );
 				$input['inventory_only'] = ! empty( $assoc_args['inventory-only'] );
+				$input['include_legacy_repaired'] = ! empty( $assoc_args['include-legacy-repaired'] );
 				if ( ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
 					$input['progress_callback'] = function ( array $event ): void {
 						$this->render_worktree_cleanup_progress( $event );
@@ -2321,6 +2330,7 @@ class WorkspaceCommand extends BaseCommand {
 				$input['dry_run']  = ! empty( $assoc_args['dry-run'] );
 				$input['force']    = ! empty( $assoc_args['force'] );
 				$input['via_jobs'] = ! empty( $assoc_args['via-jobs'] );
+				$input['include_legacy_repaired'] = ! empty( $assoc_args['include-legacy-repaired'] );
 				$input['source']   = self::CLEANUP_CLI_SOURCE;
 				if ( isset( $assoc_args['limit'] ) ) {
 					$input['limit'] = (int) $assoc_args['limit'];

@@ -83,8 +83,9 @@ class WorktreeCleanupChunkTask extends SystemTask {
 			),
 			'worktrees' => $workspace->worktree_cleanup_merged(
 				array(
-					'apply_plan'  => array( 'candidates' => $rows ),
-					'skip_github' => array_key_exists( 'skip_github', $params ) ? (bool) $params['skip_github'] : true,
+					'apply_plan'              => array( 'candidates' => $rows ),
+					'skip_github'             => array_key_exists( 'skip_github', $params ) ? (bool) $params['skip_github'] : true,
+					'include_legacy_repaired' => ! empty( $params['include_legacy_repaired'] ),
 				)
 			),
 			default     => new \WP_Error( 'invalid_cleanup_chunk_type', sprintf( 'Unknown cleanup chunk type: %s', $chunk_type ), array( 'status' => 400 ) ),
@@ -170,7 +171,7 @@ class WorktreeCleanupChunkTask extends SystemTask {
 							'handle'      => '',
 							'reason_code' => $plan->get_error_code(),
 							'reason'      => $plan->get_error_message(),
-						)
+						),
 					),
 					0,
 					$started_at,

@@ -182,9 +182,23 @@ namespace {
 	$run( 'git add clean.txt && git commit -m clean', $primary );
 	$run( 'git push -u origin clean', $primary );
 	$run( 'git checkout main', $primary );
+	$run( 'git checkout -b legacy-repaired', $primary );
+	file_put_contents( $primary . '/legacy-repaired.txt', 'legacy' );
+	$run( 'git add legacy-repaired.txt && git commit -m legacy-repaired', $primary );
+	$run( 'git push -u origin legacy-repaired', $primary );
+	$run( 'git checkout main', $primary );
 	$run( sprintf( 'git worktree add %s clean', escapeshellarg( $tmp . '/demo@clean' ) ), $primary );
+	$run( sprintf( 'git worktree add %s legacy-repaired', escapeshellarg( $tmp . '/demo@legacy-repaired' ) ), $primary );
 	mkdir( $tmp . '/demo@clean/target', 0755, true );
 	file_put_contents( $tmp . '/demo@clean/target/artifact.bin', str_repeat( 'x', 2048 ) );
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
+		'demo@legacy-repaired',
+		array(
+			'created_at'        => '2026-04-01T00:00:00+00:00',
+			'lifecycle_state'   => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
+			'metadata_repaired' => true,
+		)
+	);
 
 	$workspace = new \DataMachineCode\Workspace\Workspace();
 	$plan      = $workspace->worktree_cleanup_artifacts( array( 'dry_run' => true ) );
@@ -223,6 +237,27 @@ namespace {
 	$assert( 1, (int) ( $discovery['applied_count'] ?? 0 ), 'artifact discovery chunk applies planned artifact rows' );
 	$assert( false, is_dir( $tmp . '/demo@clean/target' ), 'artifact discovery chunk removes artifact directory' );
 	$assert( 'bounded_inventory_safety', $discovery['evidence']['pagination']['mode'] ?? '', 'artifact discovery chunk uses bounded inventory pagination with safety probes' );
+
+	$legacy_row = array(
+		'handle'      => 'demo@legacy-repaired',
+		'repo'        => 'demo',
+		'branch'      => 'legacy-repaired',
+		'path'        => realpath( $tmp . '/demo@legacy-repaired' ) ?: $tmp . '/demo@legacy-repaired',
+		'signal'      => 'missing_metadata_repaired',
+		'reason_code' => 'missing_metadata_repaired',
+	);
+	$task->executeTask( 104, array( 'chunk_type' => 'worktrees', 'rows' => array( $legacy_row ), 'skip_github' => true ) );
+	$legacy_without_flag = $GLOBALS['datamachine_code_chunk_jobs'][104] ?? array();
+	$assert( true, (bool) ( $legacy_without_flag['success'] ?? false ), 'legacy repaired worktree chunk without flag succeeds safely' );
+	$assert( 0, (int) ( $legacy_without_flag['applied_count'] ?? -1 ), 'legacy repaired worktree chunk without flag does not remove row' );
+	$assert( 'no_merge_signal', $legacy_without_flag['skipped'][0]['reason_code'] ?? '', 'legacy repaired worktree chunk needs explicit include flag' );
+	$assert( true, is_dir( $tmp . '/demo@legacy-repaired' ), 'legacy repaired worktree survives chunk without flag' );
+
+	$task->executeTask( 105, array( 'chunk_type' => 'worktrees', 'rows' => array( $legacy_row ), 'skip_github' => true, 'include_legacy_repaired' => true ) );
+	$legacy_with_flag = $GLOBALS['datamachine_code_chunk_jobs'][105] ?? array();
+	$assert( true, (bool) ( $legacy_with_flag['success'] ?? false ), 'legacy repaired worktree chunk with flag succeeds' );
+	$assert( 1, (int) ( $legacy_with_flag['applied_count'] ?? 0 ), 'legacy repaired worktree chunk with flag removes row' );
+	$assert( false, is_dir( $tmp . '/demo@legacy-repaired' ), 'legacy repaired worktree removed by explicit chunk flag' );
 
 	if ( $failures > 0 ) {
 		echo "\nFAILURES: {$failures}/{$total}\n";
