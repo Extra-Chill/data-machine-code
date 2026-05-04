@@ -2,6 +2,13 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.28.2] - 2026-05-04
+
+### Fixed
+- fan out artifact cleanup discovery
+- aggregate cleanup chunk evidence
+- aggregate cleanup child job status
+
 ## [0.28.1] - 2026-05-04
 
 ### Fixed
