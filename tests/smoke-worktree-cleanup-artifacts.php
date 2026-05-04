@@ -182,42 +182,95 @@ namespace {
 
 	echo "=== smoke-worktree-cleanup-artifacts ===\n";
 
+	// Bounded default dry-run: cheap inventory + artifact detection, no
+	// per-worktree safety probes. Dirty/unpushed worktrees still surface as
+	// candidates with `safety_probes_deferred=true` so the apply path can
+	// revalidate them before deletion.
 	$plan = $workspace->worktree_cleanup_artifacts( array( 'dry_run' => true ) );
-	$assert( false, is_wp_error( $plan ), 'dry-run returns a plan' );
-	$assert( true, (bool) ( $plan['dry_run'] ?? false ), 'dry-run flag is true' );
-	$assert( 1, count( $plan['candidates'] ?? array() ), 'only clean non-active worktree is candidate by default' );
-	$assert( 'demo@clean', $plan['candidates'][0]['handle'] ?? '', 'clean worktree is candidate' );
-	$assert( 'target', $plan['candidates'][0]['artifacts'][0]['path'] ?? '', 'candidate artifact path comes from profile' );
-	$assert( true, is_dir( $tmp . '/demo@clean/target' ), 'dry-run does not delete target directory' );
+	$assert( false, is_wp_error( $plan ), 'bounded dry-run returns a plan' );
+	$assert( true, (bool) ( $plan['dry_run'] ?? false ), 'bounded dry-run flag is true' );
+	$assert( true, isset( $plan['pagination'] ), 'bounded dry-run includes pagination envelope' );
+	$assert( 'bounded_inventory', $plan['pagination']['mode'] ?? '', 'bounded dry-run advertises bounded_inventory mode' );
+	$assert( false, (bool) ( $plan['pagination']['safety_probes'] ?? true ), 'bounded dry-run reports safety_probes=false' );
+	$assert( true, (bool) ( $plan['pagination']['complete'] ?? false ), 'bounded dry-run completes when total <= limit' );
 
-	$skip_reasons = array_column( $plan['skipped'] ?? array(), 'reason_code', 'handle' );
-	$assert( 'dirty_worktree', $skip_reasons['demo@dirty'] ?? '', 'dirty worktree is protected' );
-	$assert( 'unpushed_commits', $skip_reasons['demo@unpushed'] ?? '', 'unpushed worktree is protected' );
-	$assert( 'active_symlink_target', $skip_reasons['demo@active'] ?? '', 'active plugin symlink target is protected' );
+	$bounded_skip_reasons = array_column( $plan['skipped'] ?? array(), 'reason_code', 'handle' );
+	$assert( 'active_symlink_target', $bounded_skip_reasons['demo@active'] ?? '', 'active plugin symlink target is protected even in bounded mode' );
+
+	$bounded_handles = array_column( $plan['candidates'] ?? array(), 'handle' );
+	$assert( true, in_array( 'demo@clean', $bounded_handles, true ), 'bounded dry-run surfaces clean worktree' );
+	$assert( true, in_array( 'demo@dirty', $bounded_handles, true ), 'bounded dry-run surfaces dirty worktree (deferred safety probes)' );
+	$assert( true, in_array( 'demo@unpushed', $bounded_handles, true ), 'bounded dry-run surfaces unpushed worktree (deferred safety probes)' );
+	foreach ( $plan['candidates'] ?? array() as $candidate ) {
+		$assert( true, (bool) ( $candidate['safety_probes_deferred'] ?? false ), 'bounded candidate ' . ( $candidate['handle'] ?? '?' ) . ' is flagged safety_probes_deferred' );
+	}
+	$assert( true, is_dir( $tmp . '/demo@clean/target' ), 'bounded dry-run does not delete target directory' );
+
+	// Exhaustive dry-run: full safety probes — restores the historical strict
+	// view where dirty/unpushed worktrees are skipped at dry-run time.
+	$exhaustive_plan = $workspace->worktree_cleanup_artifacts( array( 'dry_run' => true, 'exhaustive' => true ) );
+	$assert( false, is_wp_error( $exhaustive_plan ), 'exhaustive dry-run returns a plan' );
+	$assert( 'exhaustive', $exhaustive_plan['pagination']['mode'] ?? '', 'exhaustive dry-run advertises exhaustive mode' );
+	$assert( true, (bool) ( $exhaustive_plan['pagination']['safety_probes'] ?? false ), 'exhaustive dry-run reports safety_probes=true' );
+	$assert( 1, count( $exhaustive_plan['candidates'] ?? array() ), 'exhaustive dry-run skips dirty/unpushed worktrees' );
+	$assert( 'demo@clean', $exhaustive_plan['candidates'][0]['handle'] ?? '', 'exhaustive clean worktree is candidate' );
+	$assert( 'target', $exhaustive_plan['candidates'][0]['artifacts'][0]['path'] ?? '', 'exhaustive candidate artifact path comes from profile' );
+
+	$skip_reasons = array_column( $exhaustive_plan['skipped'] ?? array(), 'reason_code', 'handle' );
+	$assert( 'dirty_worktree', $skip_reasons['demo@dirty'] ?? '', 'exhaustive dirty worktree is protected' );
+	$assert( 'unpushed_commits', $skip_reasons['demo@unpushed'] ?? '', 'exhaustive unpushed worktree is protected' );
+	$assert( 'active_symlink_target', $skip_reasons['demo@active'] ?? '', 'exhaustive active plugin symlink target is protected' );
+
+	// Pagination smoke: limit=1 returns a partial scan with continuation.
+	$page_one = $workspace->worktree_cleanup_artifacts( array( 'dry_run' => true, 'limit' => 1, 'offset' => 0 ) );
+	$assert( false, is_wp_error( $page_one ), 'page-1 dry-run succeeds' );
+	$assert( 1, (int) ( $page_one['pagination']['scanned'] ?? 0 ), 'page-1 scanned exactly one worktree' );
+	$assert( true, (bool) ( $page_one['pagination']['partial'] ?? false ), 'page-1 reports partial=true' );
+	$assert( false, (bool) ( $page_one['pagination']['complete'] ?? true ), 'page-1 reports complete=false' );
+	$assert( 1, (int) ( $page_one['pagination']['next_offset'] ?? 0 ), 'page-1 next_offset advances by limit' );
+
+	$page_two = $workspace->worktree_cleanup_artifacts( array( 'dry_run' => true, 'limit' => 1, 'offset' => (int) $page_one['pagination']['next_offset'] ) );
+	$assert( 1, (int) ( $page_two['pagination']['offset'] ?? 0 ), 'page-2 offset honored' );
+	$assert( 1, (int) ( $page_two['pagination']['scanned'] ?? 0 ), 'page-2 scanned exactly one worktree' );
 
 	$direct_apply = $workspace->worktree_cleanup_artifacts( array() );
 	$assert( true, is_wp_error( $direct_apply ), 'direct apply without plan is rejected' );
 	$assert( 'artifact_cleanup_plan_required', $direct_apply->code ?? '', 'direct apply error is explicit' );
 
-	$source_plan = $plan;
+	// Build a stricter plan from the exhaustive scan for precise apply-shape
+	// assertions. This keeps the source-file-mismatch test deterministic
+	// (the bounded plan now contains dirty/unpushed rows that revalidation
+	// would skip first, before reaching the artifact mismatch row).
+	$strict_plan = $exhaustive_plan;
+	$source_plan = $strict_plan;
 	$source_plan['candidates'][0]['artifacts'] = array( array( 'path' => 'README.md', 'size_bytes' => 4 ) );
 	$source_apply = $workspace->worktree_cleanup_artifacts( array( 'apply_plan' => $source_plan ) );
 	$assert( false, is_wp_error( $source_apply ), 'source-file-shaped artifact plan returns a report, not deletion' );
-	$assert( 'artifact_plan_mismatch', $source_apply['skipped'][0]['reason_code'] ?? '', 'source-file path is rejected by profile revalidation' );
+	$source_apply_skip_reasons = array_column( $source_apply['skipped'] ?? array(), 'reason_code', 'handle' );
+	$assert( 'artifact_plan_mismatch', $source_apply_skip_reasons['demo@clean'] ?? '', 'source-file path is rejected by profile revalidation' );
 	$assert( true, is_file( $tmp . '/demo@clean/README.md' ), 'source file remains after mismatched plan' );
 	$assert( true, is_dir( $tmp . '/demo@clean/target' ), 'real artifact remains after mismatched plan' );
 
+	// Apply a bounded-mode plan: revalidation re-runs safety probes for the
+	// planned subset only, so dirty/unpushed candidates from the bounded view
+	// surface as proper skips (not silent removals).
 	$apply = $workspace->worktree_cleanup_artifacts( array( 'apply_plan' => $plan ) );
 	$assert( false, is_wp_error( $apply ), 'apply-plan returns report' );
 	$assert( false, (bool) ( $apply['dry_run'] ?? true ), 'apply-plan is destructive mode' );
-	$assert( 1, (int) ( $apply['summary']['removed_artifacts'] ?? 0 ), 'apply-plan reports removed artifact count' );
-	$assert( false, is_dir( $tmp . '/demo@clean/target' ), 'apply-plan removes artifact directory' );
+	$assert( 1, (int) ( $apply['summary']['removed_artifacts'] ?? 0 ), 'apply-plan from bounded plan only removes safe-revalidated rows' );
+	$assert( false, is_dir( $tmp . '/demo@clean/target' ), 'apply-plan removes clean artifact directory' );
+	$assert( true, is_dir( $tmp . '/demo@dirty/target' ), 'apply-plan revalidation skips dirty worktree even when bounded plan flagged it' );
+	$assert( true, is_dir( $tmp . '/demo@unpushed/target' ), 'apply-plan revalidation skips unpushed worktree even when bounded plan flagged it' );
 	$assert( true, is_dir( $tmp . '/demo@clean' ), 'apply-plan leaves worktree directory in place' );
 
-	$force_plan = $workspace->worktree_cleanup_artifacts( array( 'dry_run' => true, 'force' => true ) );
+	$apply_skip_reasons = array_column( $apply['skipped'] ?? array(), 'reason_code', 'handle' );
+	$assert( 'dirty_worktree', $apply_skip_reasons['demo@dirty'] ?? '', 'apply-plan revalidation skips dirty rows with explicit reason' );
+	$assert( 'unpushed_commits', $apply_skip_reasons['demo@unpushed'] ?? '', 'apply-plan revalidation skips unpushed rows with explicit reason' );
+
+	$force_plan = $workspace->worktree_cleanup_artifacts( array( 'dry_run' => true, 'exhaustive' => true, 'force' => true ) );
 	$force_handles = array_column( $force_plan['candidates'] ?? array(), 'handle' );
-	$assert( true, in_array( 'demo@dirty', $force_handles, true ), 'force permits dirty artifact candidate' );
-	$assert( true, in_array( 'demo@unpushed', $force_handles, true ), 'force permits unpushed artifact candidate' );
+	$assert( true, in_array( 'demo@dirty', $force_handles, true ), 'force permits dirty artifact candidate (exhaustive)' );
+	$assert( true, in_array( 'demo@unpushed', $force_handles, true ), 'force permits unpushed artifact candidate (exhaustive)' );
 	$force_skip_reasons = array_column( $force_plan['skipped'] ?? array(), 'reason_code', 'handle' );
 	$assert( 'active_symlink_target', $force_skip_reasons['demo@active'] ?? '', 'force still protects active symlink target' );
 

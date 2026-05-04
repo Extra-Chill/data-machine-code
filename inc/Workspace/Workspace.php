@@ -52,6 +52,12 @@ class Workspace {
 	private const HYGIENE_DEFAULT_SIZE_LIMIT = 1000;
 
 	/**
+	 * Default cap on worktrees scanned for an artifact cleanup dry-run when no
+	 * `limit` is provided. Keeps dry-run bounded and fast on huge workspaces.
+	 */
+	public const ARTIFACT_CLEANUP_DEFAULT_LIMIT = 100;
+
+	/**
 	 * @var string Resolved workspace path.
 	 */
 	private string $workspace_path;
@@ -1879,10 +1885,14 @@ class Workspace {
 		}
 
 		if ( $artifact_cleanup ) {
+			// Retention cleanup orchestrates the full sweep — opt into the
+			// exhaustive scan so the apply plan covers every safe worktree,
+			// not just the bounded dry-run page CLI consumers see by default.
 			$artifact_plan = $this->worktree_cleanup_artifacts(
 				array(
-					'dry_run' => true,
-					'force'   => $force,
+					'dry_run'    => true,
+					'force'      => $force,
+					'exhaustive' => true,
 				)
 			);
 			if ( $artifact_plan instanceof \WP_Error ) {
@@ -3628,13 +3638,38 @@ class Workspace {
 	 * plan-only so every destructive run revalidates the exact worktree and
 	 * profile-derived artifact paths from a reviewed dry-run.
 	 *
-	 * @param array $opts Cleanup options (dry_run, force, apply_plan).
+	 * Dry-run is bounded by default to keep huge workspaces (~hundreds of
+	 * worktrees) responsive: only the cheap top-level inventory is scanned for
+	 * artifact directories, per-worktree git status / unpushed-commit probes are
+	 * deferred unless `safety_probes` is requested, and the result is paginated
+	 * via `limit` + `offset`. Pass `exhaustive=true` to restore the full scan
+	 * (full git status + unpushed checks for every worktree).
+	 *
+	 * Apply paths revalidate the planned subset only — they pass `only_handles`
+	 * derived from the plan into the builder so safety probes run against the
+	 * planned worktrees rather than the entire workspace.
+	 *
+	 * @param array $opts Cleanup options (dry_run, force, apply_plan, limit,
+	 *                    offset, exhaustive, safety_probes).
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_cleanup_artifacts( array $opts = array() ): array|\WP_Error {
 		$dry_run    = ! empty( $opts['dry_run'] );
 		$force      = ! empty( $opts['force'] );
 		$apply_plan = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
+		$exhaustive = ! empty( $opts['exhaustive'] );
+		$limit      = isset( $opts['limit'] ) ? (int) $opts['limit'] : self::ARTIFACT_CLEANUP_DEFAULT_LIMIT;
+		$offset     = isset( $opts['offset'] ) ? max( 0, (int) $opts['offset'] ) : 0;
+		// Allow callers to opt out of bounded mode entirely.
+		if ( $exhaustive ) {
+			$limit = 0;
+		}
+		// Apply paths default to safety probing (small subset). Dry-run defaults
+		// to skipping the per-worktree git probes unless explicitly requested or
+		// the caller asked for exhaustive mode.
+		$safety_probes = array_key_exists( 'safety_probes', $opts )
+			? (bool) $opts['safety_probes']
+			: ( $exhaustive || null !== $apply_plan );
 
 		if ( null !== $apply_plan ) {
 			$dry_run = false;
@@ -3644,29 +3679,53 @@ class Workspace {
 			return new \WP_Error( 'artifact_cleanup_plan_required', 'Artifact cleanup requires --dry-run first and --apply-plan=<file> to delete.', array( 'status' => 400 ) );
 		}
 
-		$plan = $this->build_worktree_artifact_cleanup_plan( $force );
+		$only_handles = null;
+		$planned      = null;
+		if ( null !== $apply_plan ) {
+			$planned = $this->extract_worktree_artifact_cleanup_plan_candidates( $apply_plan );
+			if ( $planned instanceof \WP_Error ) {
+				return $planned;
+			}
+			$only_handles = array();
+			foreach ( $planned as $row ) {
+				$handle = (string) ( $row['handle'] ?? '' );
+				if ( '' !== $handle ) {
+					$only_handles[ $handle ] = true;
+				}
+			}
+			$only_handles = array_keys( $only_handles );
+		}
+
+		$plan = $this->build_worktree_artifact_cleanup_plan(
+			$force,
+			array(
+				'limit'         => $limit,
+				'offset'        => $offset,
+				'only_handles'  => $only_handles,
+				'safety_probes' => $safety_probes,
+			)
+		);
 		if ( $plan instanceof \WP_Error ) {
 			return $plan;
 		}
 
 		$candidates = $plan['candidates'];
 		$skipped    = $plan['skipped'];
+		$pagination = $plan['pagination'] ?? null;
 
-		if ( null !== $apply_plan ) {
-			$planned = $this->extract_worktree_artifact_cleanup_plan_candidates( $apply_plan );
-			if ( $planned instanceof \WP_Error ) {
-				return $planned;
-			}
-
+		if ( null !== $planned ) {
 			$scoped     = $this->scope_worktree_artifact_cleanup_to_plan( $planned, $candidates, $skipped );
 			$candidates = $scoped['candidates'];
 			$skipped    = $scoped['skipped'];
 		}
 
 		$summary = $this->build_worktree_artifact_cleanup_summary( $candidates, array(), $skipped );
+		if ( null !== $pagination ) {
+			$summary['pagination'] = $pagination;
+		}
 
 		if ( $dry_run ) {
-			return array(
+			$response = array(
 				'success'    => true,
 				'dry_run'    => true,
 				'candidates' => $candidates,
@@ -3674,6 +3733,10 @@ class Workspace {
 				'skipped'    => $skipped,
 				'summary'    => $summary,
 			);
+			if ( null !== $pagination ) {
+				$response['pagination'] = $pagination;
+			}
+			return $response;
 		}
 
 		$removed = array();
@@ -3707,14 +3770,22 @@ class Workspace {
 			$removed[] = array_merge( $candidate, array( 'artifacts' => $removed_artifacts ) );
 		}
 
-		return array(
+		$apply_summary = $this->build_worktree_artifact_cleanup_summary( $candidates, $removed, $skipped );
+		if ( null !== $pagination ) {
+			$apply_summary['pagination'] = $pagination;
+		}
+		$response = array(
 			'success'    => true,
 			'dry_run'    => false,
 			'candidates' => $candidates,
 			'removed'    => $removed,
 			'skipped'    => $skipped,
-			'summary'    => $this->build_worktree_artifact_cleanup_summary( $candidates, $removed, $skipped ),
+			'summary'    => $apply_summary,
 		);
+		if ( null !== $pagination ) {
+			$response['pagination'] = $pagination;
+		}
+		return $response;
 	}
 
 	/**
@@ -3740,10 +3811,14 @@ class Workspace {
 
 		$artifact_plan = array( 'candidates' => array(), 'skipped' => array(), 'summary' => array() );
 		if ( $inputs['include_artifacts'] ) {
+			// Workspace cleanup plan is the source-of-truth orchestrator that
+			// later chunks/jobs consume — opt into the exhaustive scan so all
+			// safe worktrees are reviewed, not just the bounded dry-run page.
 			$artifact_plan = $this->worktree_cleanup_artifacts(
 				array(
-					'dry_run' => true,
-					'force'   => $inputs['force_artifact_cleanup'],
+					'dry_run'    => true,
+					'force'      => $inputs['force_artifact_cleanup'],
+					'exhaustive' => true,
 				)
 			);
 			if ( $artifact_plan instanceof \WP_Error ) {
@@ -4620,29 +4695,105 @@ class Workspace {
 	/**
 	 * Build current artifact cleanup candidates and safety skips.
 	 *
-	 * @param bool $force Whether to allow dirty/unpushed worktrees.
-	 * @return array{candidates: array<int,array>, skipped: array<int,array>}|\WP_Error
+	 * Two modes are supported:
+	 * - **Bounded inventory mode** (default): scan the cheap top-level workspace
+	 *   inventory, detect profile-derived artifact directories with `is_dir` /
+	 *   per-artifact `du` only. Per-worktree git probes (`git status`,
+	 *   `count_unpushed_commits`) are skipped unless `safety_probes` is set.
+	 *   This keeps a dry-run on ~hundreds of worktrees responsive enough for a
+	 *   synchronous CLI / ability call.
+	 * - **Exhaustive mode** (`exhaustive=true` or `safety_probes=true`): use
+	 *   `worktree_list()` and run the full per-worktree dirty + unpushed probes.
+	 *   Slower but the historical, fully-validated behavior.
+	 *
+	 * Pagination via `limit` + `offset` always operates on the inventory ordering
+	 * after `only_handles` filtering. The returned plan includes a `pagination`
+	 * envelope describing total worktrees considered, the scanned slice, and
+	 * `next_offset` continuation when the scan is partial.
+	 *
+	 * @param bool  $force Whether to allow dirty/unpushed worktrees.
+	 * @param array $opts  Options: `limit` (0 = unbounded), `offset`,
+	 *                     `only_handles` (array<string>|null), `safety_probes`.
+	 * @return array{candidates: array<int,array>, skipped: array<int,array>, pagination: ?array<string,mixed>}|\WP_Error
 	 */
-	private function build_worktree_artifact_cleanup_plan( bool $force ): array|\WP_Error {
-		$listing = $this->worktree_list();
-		if ( $listing instanceof \WP_Error ) {
-			return $listing;
+	private function build_worktree_artifact_cleanup_plan( bool $force, array $opts = array() ): array|\WP_Error {
+		$limit         = isset( $opts['limit'] ) ? (int) $opts['limit'] : 0;
+		$offset        = isset( $opts['offset'] ) ? max( 0, (int) $opts['offset'] ) : 0;
+		$only_handles  = isset( $opts['only_handles'] ) && is_array( $opts['only_handles'] )
+			? array_values( array_filter( array_map( 'strval', $opts['only_handles'] ), fn( $h ) => '' !== $h ) )
+			: null;
+		$safety_probes = ! empty( $opts['safety_probes'] );
+
+		$only_index = null;
+		if ( null !== $only_handles ) {
+			$only_index = array();
+			foreach ( $only_handles as $handle ) {
+				$only_index[ $handle ] = true;
+			}
 		}
+
+		// When the caller wants per-worktree dirty + unpushed probes (apply
+		// path, exhaustive dry-run), use the full git-backed worktree listing.
+		// Otherwise scan the cheap top-level inventory directly to skip the
+		// per-worktree `git status` round and `count_unpushed_commits` calls
+		// that dominate runtime on huge workspaces.
+		if ( $safety_probes ) {
+			$listing = $this->worktree_list();
+			if ( $listing instanceof \WP_Error ) {
+				return $listing;
+			}
+			$rows = (array) ( $listing['worktrees'] ?? array() );
+			$rows = array_values( array_filter( $rows, fn( $wt ) => empty( $wt['is_primary'] ) ) );
+		} else {
+			$rows = array_values( array_filter(
+				$this->build_workspace_inventory_rows(),
+				fn( $wt ) => empty( $wt['is_primary'] ) && ! empty( $wt['is_worktree'] )
+			) );
+		}
+
+		// Stable ordering so `offset` is deterministic across calls and matches
+		// what the operator saw in the previous page.
+		usort( $rows, fn( $a, $b ) => strcmp( (string) ( $a['handle'] ?? '' ), (string) ( $b['handle'] ?? '' ) ) );
+
+		if ( null !== $only_index ) {
+			$rows = array_values( array_filter( $rows, fn( $wt ) => isset( $only_index[ (string) ( $wt['handle'] ?? '' ) ] ) ) );
+		}
+
+		$total       = count( $rows );
+		$bounded     = $limit > 0;
+		$slice_start = $bounded ? min( $offset, $total ) : 0;
+		$slice_end   = $bounded ? min( $slice_start + $limit, $total ) : $total;
+		$slice       = $bounded ? array_slice( $rows, $slice_start, $slice_end - $slice_start ) : $rows;
 
 		$candidates = array();
 		$skipped    = array();
 
-		foreach ( (array) ( $listing['worktrees'] ?? array() ) as $wt ) {
-			if ( ! empty( $wt['is_primary'] ) ) {
-				continue;
+		foreach ( $slice as $wt ) {
+			$handle  = (string) ( $wt['handle'] ?? '?' );
+			$repo    = (string) ( $wt['repo'] ?? '' );
+			$wt_path = (string) ( $wt['path'] ?? '' );
+			if ( $safety_probes ) {
+				$branch = (string) ( $wt['branch'] ?? '' );
+			} else {
+				// Inventory rows only carry `branch_slug` (the directory slug,
+				// e.g. `fix-foo`). The plan apply path revalidates against the
+				// real git branch from `worktree_list()` (e.g. `fix/foo`), so
+				// resolve it cheaply here from the per-worktree `.git/HEAD`
+				// pointer file. This is two file reads vs a `git` invocation.
+				$resolved = $wt_path !== '' ? $this->resolve_worktree_branch_from_head_file( $wt_path ) : null;
+				$branch   = (string) ( $resolved ?? $wt['branch'] ?? $wt['branch_slug'] ?? '' );
 			}
 
-			$handle      = (string) ( $wt['handle'] ?? '?' );
-			$repo        = (string) ( $wt['repo'] ?? '' );
-			$branch      = (string) ( $wt['branch'] ?? '' );
-			$wt_path     = (string) ( $wt['path'] ?? '' );
-			$artifacts   = array_values( array_filter( (array) ( $wt['artifacts'] ?? array() ), fn( $artifact ) => is_array( $artifact ) ) );
-			$base_row    = array(
+			// Inventory rows don't include detected artifacts; detect them on
+			// the fly so the bounded path stays focused on artifact-bearing
+			// worktrees only.
+			if ( $safety_probes ) {
+				$artifacts = array_values( array_filter( (array) ( $wt['artifacts'] ?? array() ), fn( $artifact ) => is_array( $artifact ) ) );
+			} else {
+				$artifacts = $wt_path !== '' ? $this->detect_worktree_artifacts( $repo, $wt_path ) : array();
+			}
+
+			$base_row = array(
 				'handle'     => $handle,
 				'repo'       => $repo,
 				'branch'     => $branch,
@@ -4681,48 +4832,71 @@ class Workspace {
 				continue;
 			}
 
-			$dirty_count = (int) ( $wt['dirty'] ?? 0 );
-			if ( $dirty_count > 0 && ! $force ) {
-				$skipped[] = array_merge( $base_row, array(
-					'reason_code' => 'dirty_worktree',
-					'reason'      => sprintf( 'working tree dirty (%d files) - pass force=true to override artifact cleanup only', $dirty_count ),
-					'dirty'       => $dirty_count,
-					'artifacts'   => $artifacts,
-				) );
-				continue;
+			if ( $safety_probes ) {
+				$dirty_count = (int) ( $wt['dirty'] ?? 0 );
+				if ( $dirty_count > 0 && ! $force ) {
+					$skipped[] = array_merge( $base_row, array(
+						'reason_code' => 'dirty_worktree',
+						'reason'      => sprintf( 'working tree dirty (%d files) - pass force=true to override artifact cleanup only', $dirty_count ),
+						'dirty'       => $dirty_count,
+						'artifacts'   => $artifacts,
+					) );
+					continue;
+				}
+
+				$unpushed = $this->count_unpushed_commits( $wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+				if ( is_wp_error( $unpushed ) ) {
+					$skipped[] = array_merge( $base_row, array(
+						'reason_code' => 'probe_timeout',
+						'reason'      => 'artifact cleanup safety probe timed out - leaving artifacts in place: ' . $unpushed->get_error_message(),
+						'artifacts'   => $artifacts,
+					) );
+					continue;
+				}
+				if ( $unpushed > 0 && ! $force ) {
+					$skipped[] = array_merge( $base_row, array(
+						'reason_code' => 'unpushed_commits',
+						'reason'      => sprintf( '%d unpushed commit(s) - pass force=true to override artifact cleanup only', $unpushed ),
+						'unpushed'    => $unpushed,
+						'artifacts'   => $artifacts,
+					) );
+					continue;
+				}
 			}
 
-			$unpushed = $this->count_unpushed_commits( $wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
-			if ( is_wp_error( $unpushed ) ) {
-				$skipped[] = array_merge( $base_row, array(
-					'reason_code' => 'probe_timeout',
-					'reason'      => 'artifact cleanup safety probe timed out - leaving artifacts in place: ' . $unpushed->get_error_message(),
-					'artifacts'   => $artifacts,
-				) );
-				continue;
-			}
-			if ( $unpushed > 0 && ! $force ) {
-				$skipped[] = array_merge( $base_row, array(
-					'reason_code' => 'unpushed_commits',
-					'reason'      => sprintf( '%d unpushed commit(s) - pass force=true to override artifact cleanup only', $unpushed ),
-					'unpushed'    => $unpushed,
-					'artifacts'   => $artifacts,
-				) );
-				continue;
-			}
-
-			$candidates[] = array_merge( $base_row, array(
+			$candidate = array_merge( $base_row, array(
 				'artifacts'           => $artifacts,
 				'artifact_count'      => count( $artifacts ),
 				'artifact_size_bytes' => array_sum( array_map( fn( $artifact ) => (int) ( $artifact['size_bytes'] ?? 0 ), $artifacts ) ),
 				'reason_code'         => 'profile_artifacts',
 				'reason'              => 'profile-derived reconstructable artifacts can be removed',
 			) );
+			if ( ! $safety_probes ) {
+				// Surface that bounded dry-run did not run per-worktree git
+				// safety probes. Apply paths revalidate with safety_probes=true
+				// before deletion, so the candidate is reviewable but not
+				// destructible from a bounded plan alone.
+				$candidate['safety_probes_deferred'] = true;
+			}
+			$candidates[] = $candidate;
 		}
+
+		$pagination = array(
+			'mode'         => $safety_probes ? 'exhaustive' : 'bounded_inventory',
+			'limit'        => $bounded ? $limit : 0,
+			'offset'       => $slice_start,
+			'scanned'      => count( $slice ),
+			'total'        => $total,
+			'complete'     => ! $bounded || $slice_end >= $total,
+			'partial'      => $bounded && $slice_end < $total,
+			'next_offset'  => ( $bounded && $slice_end < $total ) ? $slice_end : null,
+			'safety_probes' => $safety_probes,
+		);
 
 		return array(
 			'candidates' => $candidates,
 			'skipped'    => $skipped,
+			'pagination' => $pagination,
 		);
 	}
 
@@ -5983,6 +6157,65 @@ class Workspace {
 	 * @param string $block Newline-separated key/value lines.
 	 * @return array{path: string, head: string, branch: string|null}|null
 	 */
+	/**
+	 * Resolve a worktree's current branch by reading its private `.git`
+	 * pointer file and the linked `HEAD`. Cheap file I/O — no `git` process.
+	 *
+	 * Returns `null` for detached HEADs, missing pointer files, or any other
+	 * shape we can't parse. Callers should fall back to the inventory's
+	 * `branch_slug` so plan rows still carry an identifying value for review.
+	 *
+	 * @param string $wt_path Worktree directory.
+	 * @return string|null Branch name (e.g. `fix/foo`), or null when unknown.
+	 */
+	private function resolve_worktree_branch_from_head_file( string $wt_path ): ?string {
+		$git_pointer = rtrim( $wt_path, '/' ) . '/.git';
+		if ( ! is_file( $git_pointer ) && ! is_dir( $git_pointer ) ) {
+			return null;
+		}
+
+		$gitdir = null;
+		if ( is_file( $git_pointer ) ) {
+			$pointer = @file_get_contents( $git_pointer );
+			if ( false === $pointer ) {
+				return null;
+			}
+			if ( ! preg_match( '/^gitdir:\s*(.+)$/m', $pointer, $m ) ) {
+				return null;
+			}
+			$gitdir = trim( $m[1] );
+			// Pointer paths are typically absolute, but tolerate relative.
+			if ( '' !== $gitdir && '/' !== $gitdir[0] ) {
+				$gitdir = rtrim( $wt_path, '/' ) . '/' . $gitdir;
+			}
+		} else {
+			$gitdir = $git_pointer;
+		}
+
+		if ( null === $gitdir || '' === $gitdir ) {
+			return null;
+		}
+
+		$head_file = rtrim( $gitdir, '/' ) . '/HEAD';
+		if ( ! is_file( $head_file ) ) {
+			return null;
+		}
+
+		$head = @file_get_contents( $head_file );
+		if ( false === $head ) {
+			return null;
+		}
+
+		$head = trim( $head );
+		if ( str_starts_with( $head, 'ref:' ) ) {
+			$ref = trim( substr( $head, 4 ) );
+			return preg_replace( '#^refs/heads/#', '', $ref );
+		}
+
+		// Detached HEAD or other unrecognized shape — surface as unknown.
+		return null;
+	}
+
 	private function parse_worktree_block( string $block ): ?array {
 		$lines = array_filter( array_map( 'trim', explode( "\n", $block ) ) );
 		$out   = array(

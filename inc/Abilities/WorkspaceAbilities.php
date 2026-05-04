@@ -1311,7 +1311,7 @@ class WorkspaceAbilities {
 				'datamachine/workspace-worktree-cleanup-artifacts',
 				array(
 					'label'               => 'Cleanup Worktree Artifacts',
-					'description'         => 'Remove profile-derived, reconstructable artifact directories inside workspace worktrees. Requires a dry-run plan before deletion and revalidates exact paths before applying.',
+					'description'         => 'Remove profile-derived, reconstructable artifact directories inside workspace worktrees. Dry-run defaults to bounded inventory mode (limit=' . Workspace::ARTIFACT_CLEANUP_DEFAULT_LIMIT . ', cheap top-level scan, no per-worktree git probes) so huge workspaces stay responsive. Requires a dry-run plan before deletion and revalidates exact paths before applying.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -1328,6 +1328,22 @@ class WorkspaceAbilities {
 								'type'        => 'object',
 								'description' => 'Decoded artifact cleanup dry-run report to apply after revalidating every worktree and artifact path.',
 							),
+							'limit'      => array(
+								'type'        => 'integer',
+								'description' => 'Maximum worktrees to scan in a dry-run page. Defaults to ' . Workspace::ARTIFACT_CLEANUP_DEFAULT_LIMIT . '. Use 0 to disable the cap (still bounded by exhaustive=false unless you also pass exhaustive=true).',
+							),
+							'offset'     => array(
+								'type'        => 'integer',
+								'description' => 'Pagination offset (0-indexed) into the inventory ordering. Combine with the previous response\'s pagination.next_offset to walk huge workspaces in pages.',
+							),
+							'exhaustive' => array(
+								'type'        => 'boolean',
+								'description' => 'If true, scan every worktree (no limit) AND run per-worktree git status / unpushed-commit safety probes. Slow on huge workspaces; use for one-shot full audits.',
+							),
+							'safety_probes' => array(
+								'type'        => 'boolean',
+								'description' => 'If true, run per-worktree git status + unpushed-commit safety probes during the dry-run. Default false in bounded mode (apply paths revalidate planned rows). Implied by exhaustive=true and apply_plan.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -1339,6 +1355,7 @@ class WorkspaceAbilities {
 							'removed'    => array( 'type' => 'array' ),
 							'skipped'    => array( 'type' => 'array' ),
 							'summary'    => array( 'type' => 'object' ),
+							'pagination' => array( 'type' => 'object' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreeCleanupArtifacts' ),
@@ -1967,7 +1984,8 @@ class WorkspaceAbilities {
 	/**
 	 * Remove profile-derived artifacts inside workspace worktrees.
 	 *
-	 * @param array $input Input parameters (dry_run, force, apply_plan).
+	 * @param array $input Input parameters (dry_run, force, apply_plan, limit,
+	 *                     offset, exhaustive, safety_probes).
 	 * @return array
 	 */
 	public static function worktreeCleanupArtifacts( array $input ): array|\WP_Error {
@@ -1978,6 +1996,18 @@ class WorkspaceAbilities {
 		);
 		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
 			$opts['apply_plan'] = $input['apply_plan'];
+		}
+		if ( array_key_exists( 'limit', $input ) ) {
+			$opts['limit'] = (int) $input['limit'];
+		}
+		if ( array_key_exists( 'offset', $input ) ) {
+			$opts['offset'] = (int) $input['offset'];
+		}
+		if ( array_key_exists( 'exhaustive', $input ) ) {
+			$opts['exhaustive'] = (bool) $input['exhaustive'];
+		}
+		if ( array_key_exists( 'safety_probes', $input ) ) {
+			$opts['safety_probes'] = (bool) $input['safety_probes'];
 		}
 
 		return $workspace->worktree_cleanup_artifacts( $opts );

@@ -280,6 +280,27 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--older-than=<duration>]
 	 * : Pass an age gate such as 7d or 24h into cleanup task params.
 	 *
+	 * [--limit=<count>]
+	 * : Maximum worktrees to scan in a `--mode=artifacts --dry-run` page.
+	 *   Defaults to 100 — keeps dry-run bounded on workspaces with hundreds of
+	 *   worktrees. Use 0 to disable the cap (combine with --exhaustive for a
+	 *   full audit).
+	 *
+	 * [--offset=<count>]
+	 * : Pagination offset (0-indexed) for `--mode=artifacts --dry-run`. Walk
+	 *   huge workspaces by feeding the previous response's
+	 *   `pagination.next_offset` until `pagination.complete` is true.
+	 *
+	 * [--exhaustive]
+	 * : For `--mode=artifacts --dry-run`, scan every worktree AND run per-worktree
+	 *   git status / unpushed-commit safety probes. Slow on huge workspaces; use
+	 *   sparingly for full audits.
+	 *
+	 * [--safety-probes]
+	 * : For `--mode=artifacts --dry-run`, run the per-worktree git safety probes
+	 *   without disabling the bounded scan. Useful when you want a small slice
+	 *   audited with full safety information.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -295,8 +316,15 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Start task-backed retention cleanup and return immediately
 	 *     wp datamachine-code workspace cleanup run --mode=retention
 	 *
-	 *     # Review artifact cleanup synchronously
+	 *     # Review artifact cleanup synchronously (bounded; default limit=100)
 	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run
+	 *
+	 *     # Walk a huge workspace in 100-worktree pages
+	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --offset=0 --format=json
+	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --offset=100 --format=json
+	 *
+	 *     # Full audit (slow on huge workspaces)
+	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --exhaustive --format=json
 	 *
 	 *     # Inspect progress for a returned run
 	 *     wp datamachine-code workspace cleanup status cleanup-run-123
@@ -422,7 +450,23 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'artifacts':
 				$ability = wp_get_ability( 'datamachine/workspace-worktree-cleanup-artifacts' );
-				$result  = $ability ? $ability->execute( array( 'dry_run' => true, 'force' => ! empty( $assoc_args['force'] ) ) ) : new \WP_Error( 'artifact_cleanup_ability_missing', 'Artifact cleanup ability not registered.' );
+				$artifact_input = array(
+					'dry_run' => true,
+					'force'   => ! empty( $assoc_args['force'] ),
+				);
+				if ( isset( $assoc_args['limit'] ) ) {
+					$artifact_input['limit'] = (int) $assoc_args['limit'];
+				}
+				if ( isset( $assoc_args['offset'] ) ) {
+					$artifact_input['offset'] = (int) $assoc_args['offset'];
+				}
+				if ( ! empty( $assoc_args['exhaustive'] ) ) {
+					$artifact_input['exhaustive'] = true;
+				}
+				if ( ! empty( $assoc_args['safety-probes'] ) ) {
+					$artifact_input['safety_probes'] = true;
+				}
+				$result = $ability ? $ability->execute( $artifact_input ) : new \WP_Error( 'artifact_cleanup_ability_missing', 'Artifact cleanup ability not registered.' );
 				$this->render_worktree_artifact_cleanup_result_from_ability( $result, $assoc_args );
 				return;
 
@@ -1593,6 +1637,25 @@ class WorkspaceCommand extends BaseCommand {
 	 *   candidates, would-remove, would_remove, removed, no_merge_signal, dirty_worktree,
 	 *   unpushed_commits, missing_metadata, external_worktree, age_filter, unknown_age.
 	 *
+	 * [--limit=<count>]
+	 * : For `cleanup-artifacts --dry-run`, maximum worktrees to scan in this
+	 *   page. Defaults to 100 — keeps dry-run bounded on workspaces with
+	 *   hundreds of worktrees. Use 0 plus `--exhaustive` for a full audit.
+	 *
+	 * [--offset=<count>]
+	 * : For `cleanup-artifacts --dry-run`, pagination offset (0-indexed) into
+	 *   the inventory ordering. Walk pages by passing the previous response's
+	 *   `pagination.next_offset`.
+	 *
+	 * [--exhaustive]
+	 * : For `cleanup-artifacts --dry-run`, scan every worktree AND run per-worktree
+	 *   git safety probes. Slow on huge workspaces; use sparingly.
+	 *
+	 * [--safety-probes]
+	 * : For `cleanup-artifacts --dry-run`, run per-worktree git safety probes
+	 *   without disabling the bounded scan. Useful for auditing a small slice
+	 *   with full safety information.
+	 *
 	 * [--pr=<url-or-number>]
 	 * : Pull request URL or number for `finalize` or `mark-cleanup-eligible`
 	 *   metadata. Supplying `--pr` to `finalize` defaults the requested finalizer
@@ -1830,6 +1893,18 @@ class WorkspaceCommand extends BaseCommand {
 			case 'cleanup-artifacts':
 				$input['dry_run'] = ! empty( $assoc_args['dry-run'] );
 				$input['force']   = ! empty( $assoc_args['force'] );
+				if ( isset( $assoc_args['limit'] ) ) {
+					$input['limit'] = (int) $assoc_args['limit'];
+				}
+				if ( isset( $assoc_args['offset'] ) ) {
+					$input['offset'] = (int) $assoc_args['offset'];
+				}
+				if ( ! empty( $assoc_args['exhaustive'] ) ) {
+					$input['exhaustive'] = true;
+				}
+				if ( ! empty( $assoc_args['safety-probes'] ) ) {
+					$input['safety_probes'] = true;
+				}
 				if ( ! empty( $assoc_args['apply-plan'] ) ) {
 					$input['apply_plan'] = $this->read_worktree_cleanup_plan( (string) $assoc_args['apply-plan'] );
 				}
@@ -2614,6 +2689,26 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		WP_CLI::log( '' );
+
+		$pagination = $result['pagination'] ?? ( $summary['pagination'] ?? null );
+		if ( is_array( $pagination ) ) {
+			$mode_label = (string) ( $pagination['mode'] ?? 'bounded_inventory' );
+			WP_CLI::log( sprintf(
+				'Scan: mode=%s scanned=%d total=%d offset=%d limit=%d complete=%s safety_probes=%s',
+				$mode_label,
+				(int) ( $pagination['scanned'] ?? 0 ),
+				(int) ( $pagination['total'] ?? 0 ),
+				(int) ( $pagination['offset'] ?? 0 ),
+				(int) ( $pagination['limit'] ?? 0 ),
+				! empty( $pagination['complete'] ) ? 'yes' : 'no',
+				! empty( $pagination['safety_probes'] ) ? 'yes' : 'no'
+			) );
+			if ( ! empty( $pagination['partial'] ) && isset( $pagination['next_offset'] ) ) {
+				WP_CLI::log( sprintf( 'Partial scan — re-run with --offset=%d to continue, or pass --exhaustive for a full audit.', (int) $pagination['next_offset'] ) );
+			}
+			WP_CLI::log( '' );
+		}
+
 		if ( $dry_run ) {
 			WP_CLI::success( sprintf( '%d artifact(s) would be removed. Save JSON and re-run with --apply-plan=<file> to apply.', (int) ( $summary['would_remove_artifacts'] ?? 0 ) ) );
 			return;
