@@ -1339,6 +1339,44 @@ class WorkspaceAbilities {
 					'meta'                => array( 'show_in_rest' => false ),
 				)
 			);
+
+			wp_register_ability(
+				'datamachine/workspace-cleanup-plan',
+				array(
+					'label'               => 'Build Workspace Cleanup Plan Chunks',
+					'description'         => 'Freeze a non-destructive cleanup plan and optionally emit bounded chunks for artifact cleanup, metadata repair, worktree removal, and resolver rows.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'emit_chunks'            => array( 'type' => 'boolean' ),
+							'chunk_size'             => array( 'type' => 'integer' ),
+							'include_artifacts'      => array( 'type' => 'boolean' ),
+							'include_metadata'       => array( 'type' => 'boolean' ),
+							'include_worktrees'      => array( 'type' => 'boolean' ),
+							'include_resolvers'      => array( 'type' => 'boolean' ),
+							'force_artifact_cleanup' => array( 'type' => 'boolean' ),
+							'worktree_older_than'    => array( 'type' => 'string' ),
+							'worktree_sort'          => array( 'type' => 'string' ),
+							'plan'                   => array( 'type' => 'object' ),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'mode'    => array( 'type' => 'string' ),
+							'plan_id' => array( 'type' => 'string' ),
+							'rows'    => array( 'type' => 'object' ),
+							'chunks'  => array( 'type' => 'array' ),
+							'summary' => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'workspaceCleanupPlan' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
 		};
 
 		if ( doing_action( 'wp_abilities_api_init' ) ) {
@@ -1809,6 +1847,41 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->worktree_emergency_cleanup( $opts );
+	}
+
+	/**
+	 * Freeze a cleanup plan and optionally emit bounded chunks.
+	 *
+	 * @param array $input Input parameters (emit_chunks, chunk_size, include_*).
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function workspaceCleanupPlan( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		$opts      = array(
+			'force_artifact_cleanup' => ! empty( $input['force_artifact_cleanup'] ),
+			'include_resolvers'      => ! empty( $input['include_resolvers'] ),
+		);
+		foreach ( array( 'include_artifacts', 'include_metadata', 'include_worktrees' ) as $key ) {
+			if ( array_key_exists( $key, $input ) ) {
+				$opts[ $key ] = (bool) $input[ $key ];
+			}
+		}
+		if ( isset( $input['worktree_older_than'] ) && '' !== trim( (string) $input['worktree_older_than'] ) ) {
+			$opts['worktree_older_than'] = trim( (string) $input['worktree_older_than'] );
+		}
+		if ( isset( $input['worktree_sort'] ) && '' !== trim( (string) $input['worktree_sort'] ) ) {
+			$opts['worktree_sort'] = trim( (string) $input['worktree_sort'] );
+		}
+		if ( isset( $input['plan'] ) && is_array( $input['plan'] ) ) {
+			$opts['plan'] = $input['plan'];
+		}
+		if ( isset( $input['chunk_size'] ) ) {
+			$opts['chunk_size'] = (int) $input['chunk_size'];
+		}
+
+		return ! empty( $input['emit_chunks'] )
+			? $workspace->workspace_cleanup_plan_chunks( $opts )
+			: $workspace->workspace_cleanup_plan( $opts );
 	}
 
 	/**
