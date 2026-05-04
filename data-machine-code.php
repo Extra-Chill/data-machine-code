@@ -26,6 +26,24 @@ define( 'DATAMACHINE_CODE_URL', plugin_dir_url( __FILE__ ) );
 require_once __DIR__ . '/vendor/autoload.php';
 
 /**
+ * Install DMC-owned database tables.
+ */
+function datamachine_code_install_schema(): void {
+	if ( class_exists( '\DataMachineCode\Storage\CleanupSchema' ) ) {
+		\DataMachineCode\Storage\CleanupSchema::install();
+	}
+}
+register_activation_hook( __FILE__, 'datamachine_code_install_schema' );
+add_action( 'plugins_loaded', function (): void {
+	$schema_version = '20260504-cleanup-runs';
+	if ( get_option( 'datamachine_code_cleanup_schema_version' ) === $schema_version ) {
+		return;
+	}
+	datamachine_code_install_schema();
+	update_option( 'datamachine_code_cleanup_schema_version', $schema_version, false );
+}, 5 );
+
+/**
  * Bootstrap the plugin after all plugins are loaded.
  *
  * Data Machine core must be active — check at plugins_loaded time
