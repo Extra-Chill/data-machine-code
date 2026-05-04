@@ -2566,6 +2566,9 @@ class WorkspaceCommand extends BaseCommand {
 		$size            = (array) ( $report['size'] ?? array() );
 		$disk            = (array) ( $report['disk'] ?? array() );
 		$worktrees       = (array) ( $report['worktrees'] ?? array() );
+		$locks           = (array) ( $report['locks'] ?? array() );
+		$database_locks  = (array) ( $locks['database'] ?? array() );
+		$filesystem_locks = (array) ( $locks['filesystem'] ?? array() );
 		$cleanup         = (array) ( $report['cleanup'] ?? array() );
 		$cleanup_summary = (array) ( $cleanup['summary'] ?? array() );
 
@@ -2639,6 +2642,22 @@ class WorkspaceCommand extends BaseCommand {
 				array(
 					'metric' => 'duplicate_task_groups',
 					'value'  => (string) ( $worktrees['duplicate_task_groups'] ?? 0 ),
+				),
+				array(
+					'metric' => 'active_locks',
+					'value'  => (string) ( $locks['active'] ?? 0 ),
+				),
+				array(
+					'metric' => 'stale_locks',
+					'value'  => (string) ( $locks['stale'] ?? 0 ),
+				),
+				array(
+					'metric' => 'db_lock_rows',
+					'value'  => (string) ( $database_locks['total'] ?? 0 ),
+				),
+				array(
+					'metric' => 'filesystem_lock_files',
+					'value'  => (string) ( $filesystem_locks['total'] ?? 0 ),
 				),
 				array(
 					'metric' => 'cleanup_candidates',

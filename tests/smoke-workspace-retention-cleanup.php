@@ -40,6 +40,8 @@ namespace {
 		return $value instanceof \WP_Error;
 	}
 
+	require __DIR__ . '/../inc/Workspace/WorkspaceLockStore.php';
+	require __DIR__ . '/../inc/Workspace/WorkspaceMutationLock.php';
 	require __DIR__ . '/../inc/Workspace/Workspace.php';
 
 	function datamachine_code_retention_assert( bool $condition, string $message ): void {
