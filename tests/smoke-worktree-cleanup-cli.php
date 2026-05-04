@@ -57,6 +57,8 @@ namespace DataMachine\Cli {
 }
 
 namespace {
+	require_once dirname( __DIR__ ) . '/inc/Cleanup/CleanupRunEvidenceStoreInterface.php';
+	require_once dirname( __DIR__ ) . '/inc/Cleanup/DataMachineJobCleanupRunEvidenceStore.php';
 	require_once dirname( __DIR__ ) . '/inc/Cli/Commands/WorkspaceCommand.php';
 
 	function datamachine_code_cleanup_assert( bool $condition, string $message ): void {
@@ -598,6 +600,8 @@ namespace {
 	datamachine_code_cleanup_assert( ! isset( $status_json['flow_id'] ), 'cleanup status is not linked to a flow id' );
 	datamachine_code_cleanup_assert( 4 === (int) ( $status_json['artifact_cleanup']['planned_rows'] ?? 0 ), 'cleanup status aggregates artifact planned rows from child chunks' );
 	datamachine_code_cleanup_assert( 4096 === (int) ( $status_json['artifact_cleanup']['bytes_reclaimed'] ?? 0 ), 'cleanup status aggregates artifact bytes from child chunks' );
+	datamachine_code_cleanup_assert( 4 === (int) ( $status_json['cleanup_items']['planned_rows'] ?? 0 ), 'cleanup status aggregates planned rows from DB-backed cleanup item evidence' );
+	datamachine_code_cleanup_assert( 4096 === (int) ( $status_json['cleanup_items']['bytes_reclaimed'] ?? 0 ), 'cleanup status reconstructs reclaimed bytes from cleanup item evidence' );
 	datamachine_code_cleanup_assert( '4.0 KiB' === ( $status_json['system_task_result']['report']['freed_human'] ?? '' ), 'cleanup status replaces pending child job freed placeholder' );
 
 	WP_CLI::$logs      = array();
@@ -607,8 +611,11 @@ namespace {
 	datamachine_code_cleanup_assert( isset( $evidence_json['evidence']['engine_data'] ), 'cleanup evidence emits engine data' );
 	datamachine_code_cleanup_assert( array( 125 ) === ( $evidence_json['evidence']['children']['batch_job_ids'] ?? array() ), 'cleanup evidence lists child batch jobs' );
 	datamachine_code_cleanup_assert( array( 126, 127 ) === ( $evidence_json['evidence']['children']['chunk_job_ids'] ?? array() ), 'cleanup evidence lists child chunk jobs' );
+	datamachine_code_cleanup_assert( false === ( $evidence_json['evidence']['storage']['filesystem_plans'] ?? true ), 'cleanup evidence does not depend on filesystem plan JSON' );
+	datamachine_code_cleanup_assert( 'datamachine_jobs' === ( $evidence_json['evidence']['storage']['source'] ?? '' ), 'cleanup evidence declares Data Machine job DB source while cleanup tables are pending' );
 	datamachine_code_cleanup_assert( 1 === (int) ( $evidence_json['evidence']['artifact_cleanup']['skipped_by_reason']['dirty_worktree'] ?? 0 ), 'cleanup evidence aggregates skipped reasons' );
 	datamachine_code_cleanup_assert( 1 === (int) ( $evidence_json['evidence']['artifact_cleanup']['failed_by_reason']['apply_failed'] ?? 0 ), 'cleanup evidence aggregates failed reasons' );
+	datamachine_code_cleanup_assert( 1 === (int) ( $evidence_json['evidence']['cleanup_items']['failed_by_reason']['apply_failed'] ?? 0 ), 'cleanup evidence reconstructs failed cleanup item reasons from job rows' );
 	datamachine_code_cleanup_assert( 4 === count( $evidence_json['evidence']['child_jobs'] ?? array() ), 'cleanup evidence emits descendant child jobs' );
 
 	WP_CLI::$logs      = array();
