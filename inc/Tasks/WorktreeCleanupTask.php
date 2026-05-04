@@ -125,7 +125,8 @@ class WorktreeCleanupTask extends SystemTask {
 		// wouldn't fire when the setting is off, but manual runs via
 		// `wp datamachine system run worktree_cleanup` bypass the
 		// schedule layer, so the task itself has to self-police too.
-		$enabled = (bool) PluginSettings::get( self::SETTING_KEY, false );
+		$enabled = (bool) PluginSettings::get( self::SETTING_KEY, false )
+			|| 'workspace_cleanup_cli' === (string) ( $params['source'] ?? '' );
 		if ( ! $enabled ) {
 			$this->completeJob(
 				$jobId,
