@@ -3500,7 +3500,7 @@ class Workspace {
 		}
 
 		if ( ! $dry_run ) {
-			return new \WP_Error( 'metadata_reconcile_requires_review', 'Metadata reconciliation is dry-run-first. Pass --dry-run to write a review plan, then --apply-plan=<file> after review.', array( 'status' => 400 ) );
+			return new \WP_Error( 'metadata_reconcile_requires_review', 'Metadata reconciliation is dry-run-first. Pass --dry-run to review JSON output; --apply-plan=<file> remains a low-level escape hatch until DB-backed cleanup runs land.', array( 'status' => 400 ) );
 		}
 
 		$listing = $this->worktree_list();
@@ -3992,7 +3992,7 @@ class Workspace {
 		}
 
 		if ( ! $dry_run && null === $apply_plan ) {
-			return new \WP_Error( 'artifact_cleanup_plan_required', 'Artifact cleanup requires --dry-run first and --apply-plan=<file> to delete.', array( 'status' => 400 ) );
+			return new \WP_Error( 'artifact_cleanup_plan_required', 'Artifact cleanup applies through reviewed JSON only on this low-level command. Prefer workspace cleanup run --mode=artifacts for daily cleanup; use --dry-run first and --apply-plan=<file> only as an escape hatch.', array( 'status' => 400 ) );
 		}
 
 		$only_handles = null;
@@ -6188,7 +6188,7 @@ class Workspace {
 			'requires_full_scan'          => array(
 				'label'       => 'Repair missing lifecycle metadata in bounded batches',
 				'command'     => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
-				'alternative' => 'studio wp datamachine-code workspace worktree reconcile-metadata --apply-plan=<plan-id>',
+				'alternative' => 'Low-level apply still requires a reviewed --apply-plan=<file> until DB-backed cleanup runs land.',
 				'why'         => 'Reconciliation writes lifecycle metadata so future inventory cleanup no longer needs a full scan for those rows.',
 				'destructive' => false,
 			),

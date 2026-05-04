@@ -251,8 +251,10 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * This is the high-level operator surface for cleanup. Destructive runs are
 	 * scheduled through Data Machine's system-task scheduler and return immediately
-	 * with job identifiers. Dry-runs stay synchronous and delegate to the same
-	 * workspace abilities as the lower-level `workspace worktree cleanup*` commands.
+	 * with a run_id. Status, resume, cancel, and evidence commands take that run_id.
+	 * Dry-runs stay synchronous and delegate to the same workspace abilities as the
+	 * lower-level `workspace worktree cleanup*` commands until DB-backed cleanup
+	 * plans land.
 	 *
 	 * ## OPTIONS
 	 *
@@ -324,7 +326,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Apply a reviewed DB-backed run
 	 *     wp datamachine-code workspace cleanup apply cleanup-run-20260504120000-abc123
 	 *
-	 *     # Start task-backed retention cleanup and return immediately
+	 *     # Start task-backed retention cleanup and capture the returned run_id
 	 *     wp datamachine-code workspace cleanup run --mode=retention
 	 *
 	 *     # Review artifact cleanup synchronously (bounded; default limit=100)
@@ -1710,24 +1712,28 @@ class WorkspaceCommand extends BaseCommand {
 	 *   alongside `--task-url` (applies to `add` only). Falls back to the
 	 *   `DATAMACHINE_TASK_REF` environment variable when omitted.
 	 *
-		 * [--force]
-		 * : For `add`, explicitly bypass the disk-budget refusal threshold. For
-		 *   `remove`, force-remove a worktree even if it is dirty. For `cleanup`,
-		 *   force dirty-worktree removal but not the unpushed-commits safety.
-		 *
-     * [--pr=<url-or-number>]
-     * : Attach pull request metadata when finalizing or marking a worktree
-     *   cleanup-eligible.
-     *
-     * [--state=<state>]
-     * : Lifecycle state to record when finalizing a worktree.
-     *
-     * [--dry-run]
-     * : Preview cleanup candidates without removing anything (cleanup only).
-     *
-     * File cleanup plan imports are an emergency escape hatch only. The normal
-     * operator workflow is `workspace cleanup plan` then
-     * `workspace cleanup apply <run-id>`.
+	 * [--force]
+	 * : For `add`, explicitly bypass the disk-budget refusal threshold. For
+	 *   `remove`, force-remove a worktree even if it is dirty. For `cleanup`,
+	 *   force dirty-worktree removal but not the unpushed-commits safety.
+	 *
+	 * [--pr=<url-or-number>]
+	 * : Attach pull request metadata when finalizing or marking a worktree
+	 *   cleanup-eligible.
+	 *
+	 * [--state=<state>]
+	 * : Lifecycle state to record when finalizing a worktree.
+	 *
+	 * [--dry-run]
+	 * : Preview cleanup candidates without removing anything (cleanup only).
+	 *
+	 * [--apply-plan=<file>]
+	 * : Low-level escape hatch for applying a previously reviewed JSON report.
+	 *   Daily cleanup should use `workspace cleanup plan`, then
+	 *   `workspace cleanup apply <run-id>`.
+	 *   The destructive pass still revalidates every planned row and removes only
+	 *   exact current matches. For reconcile-metadata, applies a reviewed
+	 *   non-destructive metadata plan.
 	 *
 	 * [--skip-github]
 	 * : Skip the GitHub API lookup and rely only on the local `upstream-gone`
@@ -1849,12 +1855,22 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Preview worktrees that would be removed (upstream gone or PR merged)
 	 *     wp datamachine-code workspace worktree cleanup --dry-run
 	 *
-		 *     # Remove all merged worktrees
-		 *     wp datamachine-code workspace worktree cleanup
-		 *
-     *     # Review a DB-backed plan, then apply only those rows after revalidation
-     *     wp datamachine-code workspace cleanup plan --mode=retention
-     *     wp datamachine-code workspace cleanup apply cleanup-run-20260504120000-abc123
+	 *     # Remove all merged worktrees
+	 *     wp datamachine-code workspace worktree cleanup
+	 *
+	 *     # Daily cleanup path: DB-backed plan, then apply only those rows after revalidation
+	 *     wp datamachine-code workspace cleanup plan --mode=retention
+	 *     wp datamachine-code workspace cleanup apply cleanup-run-20260504120000-abc123
+	 *
+	 *     # Task-backed cleanup path, then inspect status/evidence by run_id
+	 *     wp datamachine-code workspace cleanup run --mode=retention
+	 *     wp datamachine-code workspace cleanup status cleanup-run-123
+	 *     wp datamachine-code workspace cleanup evidence cleanup-run-123 --format=json
+	 *
+	 *     # Low-level JSON previews are for diagnostics
+	 *     wp datamachine-code workspace worktree cleanup --dry-run --format=json
+	 *     wp datamachine-code workspace worktree cleanup-artifacts --dry-run --format=json
+	 *     wp datamachine-code workspace worktree emergency-cleanup --format=json
 	 *
 	 *     # Bounded apply restricted to explicit lifecycle cleanup_eligible worktrees
 	 *     # (cheap inventory only — no full git worktree scan, no GitHub lookup)
@@ -1871,8 +1887,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace worktree cleanup --dry-run --inventory-only --skip-github --format=json
 	 *
 	 *     # Adopt/reconcile unmanaged worktree metadata before cleanup
-	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json > reconcile-plan.json
-	 *     wp datamachine-code workspace worktree reconcile-metadata --apply-plan=reconcile-plan.json
+	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json
 	 *
 	 *     # Ignore dirty working-tree safety (caution)
 	 *     wp datamachine-code workspace worktree cleanup --force
@@ -2922,7 +2937,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		WP_CLI::log( '' );
 		if ( ! empty( $result['dry_run'] ) ) {
-			WP_CLI::success( sprintf( '%d metadata reconciliation proposal(s). Review JSON, then apply with --apply-plan.', count( $proposals ) ) );
+			WP_CLI::success( sprintf( '%d metadata reconciliation proposal(s). Review JSON output before applying; --apply-plan remains a low-level escape hatch until DB-backed cleanup runs land.', count( $proposals ) ) );
 			return;
 		}
 		WP_CLI::success( sprintf( 'Wrote metadata for %d worktree(s); %d skipped.', count( $written ), count( $skipped ) ) );
@@ -3030,7 +3045,7 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( $dry_run ) {
-			WP_CLI::success( sprintf( '%d artifact(s) would be removed. Save JSON and re-run with --apply-plan=<file> to apply.', (int) ( $summary['would_remove_artifacts'] ?? 0 ) ) );
+			WP_CLI::success( sprintf( '%d artifact(s) would be removed. Prefer `workspace cleanup run --mode=artifacts`; --apply-plan remains a low-level escape hatch until DB-backed cleanup runs land.', (int) ( $summary['would_remove_artifacts'] ?? 0 ) ) );
 			return;
 		}
 		WP_CLI::success( sprintf( 'Removed %d artifact(s); %d worktree(s) skipped.', (int) ( $summary['removed_artifacts'] ?? 0 ), count( $skipped ) ) );
@@ -3289,7 +3304,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		WP_CLI::log( '' );
 		if ( $dry_run ) {
-			WP_CLI::success( 'Emergency plan generated. Review JSON, then apply with --apply-plan=<file>.' );
+			WP_CLI::success( 'Emergency plan generated. Prefer `workspace cleanup run --mode=emergency`; --apply-plan remains a low-level escape hatch until DB-backed cleanup runs land.' );
 			return;
 		}
 		WP_CLI::success( sprintf( 'Emergency cleanup removed %d artifact group(s) and %d worktree(s); %d skipped.', count( $removed_artifacts ), count( $removed_worktrees ), count( $skipped ) ) );

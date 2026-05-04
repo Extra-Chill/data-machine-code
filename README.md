@@ -69,6 +69,11 @@ wp datamachine-code workspace worktree list
 wp datamachine-code workspace worktree remove repo-name fix/foo
 wp datamachine-code workspace worktree prune
 
+# Daily workspace cleanup — task-backed, inspectable by run_id
+wp datamachine-code workspace cleanup run --mode=retention
+wp datamachine-code workspace cleanup status cleanup-run-123
+wp datamachine-code workspace cleanup evidence cleanup-run-123 --format=json
+
 # All read/write/git ops accept either <repo> (primary) or <repo>@<branch-slug> (worktree)
 wp datamachine-code workspace read repo-name@fix-foo src/main.php
 wp datamachine-code workspace ls repo-name@fix-foo src/

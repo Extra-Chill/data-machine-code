@@ -563,8 +563,15 @@ namespace {
 	datamachine_code_cleanup_assert( str_contains( $doc_comment, "\n\t * [--include-repaired-metadata]" ), 'worktree synopsis declares --include-repaired-metadata at top level' );
 	datamachine_code_cleanup_assert( ! str_contains( $doc_comment, "\n\t\t * [--apply-plan=<file>]" ), 'cleanup flags are not hidden behind nested docblock indentation' );
 	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, 'Control task-backed workspace cleanup runs.' ), 'workspace cleanup command documents task-backed controller surface' );
-	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, '<run|status|resume|cancel|evidence>' ), 'workspace cleanup synopsis exposes run/status/resume/cancel/evidence' );
+	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, '<plan|apply|run|status|resume|cancel|evidence>' ), 'workspace cleanup synopsis exposes DB-backed and task-backed cleanup operations' );
 	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, '[--dry-run]' ), 'task-backed cleanup synopsis keeps synchronous dry-run review' );
+	datamachine_code_cleanup_assert( str_contains( $doc_comment, 'Daily cleanup path: DB-backed plan, then apply only those rows after revalidation' ), 'worktree examples point daily cleanup to DB-backed run_id controller path' );
+	datamachine_code_cleanup_assert( str_contains( $doc_comment, 'workspace cleanup plan --mode=retention' ), 'worktree examples include DB-backed cleanup plan' );
+	datamachine_code_cleanup_assert( str_contains( $doc_comment, 'workspace cleanup run --mode=retention' ), 'worktree examples include task-backed cleanup run' );
+	datamachine_code_cleanup_assert( ! str_contains( $doc_comment, '> cleanup-plan.json' ), 'worktree examples do not normalize cleanup-plan file redirection' );
+	datamachine_code_cleanup_assert( ! str_contains( $doc_comment, '> artifact-plan.json' ), 'worktree examples do not normalize artifact-plan file redirection' );
+	datamachine_code_cleanup_assert( ! str_contains( $doc_comment, '> emergency-plan.json' ), 'worktree examples do not normalize emergency-plan file redirection' );
+	datamachine_code_cleanup_assert( ! str_contains( $doc_comment, '> reconcile-plan.json' ), 'worktree examples do not normalize reconcile-plan file redirection' );
 
 	echo "\n[0b] task-backed workspace cleanup run/status/control output\n";
 	WP_CLI::$logs      = array();
@@ -741,7 +748,7 @@ namespace {
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'inventory-only' => true, 'include-repaired-metadata' => true, 'format' => 'json' ) );
 	datamachine_code_cleanup_assert( true === ( $ability->last_input['include_repaired_metadata'] ?? null ), '--include-repaired-metadata forwards to cleanup ability' );
 
-	echo "\n[8b] emergency-cleanup emits fast plan and apply-plan path\n";
+	echo "\n[8b] emergency-cleanup keeps apply-plan as low-level escape hatch\n";
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'emergency-cleanup' ), array( 'format' => 'json' ) );
@@ -768,6 +775,13 @@ namespace {
 	datamachine_code_cleanup_assert( array( 'dry_run' => true, 'force' => false ) === $artifact_ability->last_input, 'cleanup-artifacts dry-run flags forwarded to ability' );
 	$artifact_json = json_decode( WP_CLI::$logs[0] ?? '', true );
 	datamachine_code_cleanup_assert( 'target' === ( $artifact_json['candidates'][0]['artifacts'][0]['path'] ?? '' ), 'cleanup-artifacts JSON includes artifact paths' );
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree( array( 'cleanup-artifacts' ), array( 'dry-run' => true ) );
+	datamachine_code_cleanup_assert( str_contains( WP_CLI::$successes[0] ?? '', 'workspace cleanup run --mode=artifacts' ), 'cleanup-artifacts dry-run points daily apply path to task-backed cleanup' );
+	datamachine_code_cleanup_assert( str_contains( WP_CLI::$successes[0] ?? '', 'low-level escape hatch' ), 'cleanup-artifacts dry-run demotes apply-plan wording' );
+	datamachine_code_cleanup_assert( ! str_contains( WP_CLI::$successes[0] ?? '', 'Save JSON' ), 'cleanup-artifacts dry-run does not normalize saving plan files' );
 
 	$artifact_plan_file = sys_get_temp_dir() . '/dmc-artifact-cleanup-plan-' . bin2hex( random_bytes( 3 ) ) . '.json';
 	file_put_contents( $artifact_plan_file, wp_json_encode( $artifact_json ) );
