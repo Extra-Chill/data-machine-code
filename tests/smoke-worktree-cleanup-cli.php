@@ -371,6 +371,19 @@ namespace {
 		}
 	}
 
+	class FakeCleanupStatusAbility {
+		public array $last_input = array();
+
+		public function execute( array $input ): array {
+			$this->last_input = $input;
+			return array(
+				'success' => true,
+				'run_id'  => (string) ( $input['run_id'] ?? '' ),
+				'state'   => 'planned',
+			);
+		}
+	}
+
 	class FakeHygieneAbility {
 		public array $last_input = array();
 
@@ -539,12 +552,14 @@ namespace {
 	$emergency_ability = new FakeEmergencyCleanupAbility();
 	$list_ability = new FakeListAbility();
 	$cleanup_run_ability = new FakeCleanupRunAbility();
+	$cleanup_status_ability = new FakeCleanupStatusAbility();
 	$hygiene_ability = new FakeHygieneAbility();
 	$get_jobs_ability = new FakeGetJobsAbility();
 	$retry_job_ability = new FakeRetryJobAbility();
 	$fail_job_ability = new FakeFailJobAbility();
 	$GLOBALS['__abilities'] = array(
 		'datamachine/workspace-cleanup-run'                 => $cleanup_run_ability,
+		'datamachine/workspace-cleanup-status'              => $cleanup_status_ability,
 		'datamachine/workspace-hygiene-report'              => $hygiene_ability,
 		'datamachine/workspace-worktree-cleanup'           => $ability,
 		'datamachine/workspace-worktree-cleanup-artifacts' => $artifact_ability,
@@ -595,6 +610,13 @@ namespace {
 	$inventory_run_json = json_decode( WP_CLI::$logs[0] ?? '', true );
 	datamachine_code_cleanup_assert( 'jobs_queued' === ( $inventory_run_json['state'] ?? '' ), 'cleanup run queues inventory as a task' );
 	datamachine_code_cleanup_assert( 'inventory' === ( $cleanup_run_ability->last_input['mode'] ?? '' ), 'cleanup run can schedule inventory mode' );
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup( array( 'status', 'cleanup-run-20260504193024-abc123' ), array( 'format' => 'json' ) );
+	$db_status_json = json_decode( WP_CLI::$logs[0] ?? '', true );
+	datamachine_code_cleanup_assert( 'cleanup-run-20260504193024-abc123' === ( $cleanup_status_ability->last_input['run_id'] ?? '' ), 'DB cleanup run IDs are routed to cleanup status ability' );
+	datamachine_code_cleanup_assert( 'planned' === ( $db_status_json['state'] ?? '' ), 'DB cleanup run status does not route to job-backed status parser' );
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
