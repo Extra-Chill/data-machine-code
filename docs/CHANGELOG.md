@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.27.1] - 2026-05-03
+
+### Fixed
+- accept maintenance flow provision action
+
 ## [0.27.0] - 2026-05-03
 
 ### Added
