@@ -706,7 +706,7 @@ class WorkspaceCommand extends BaseCommand {
 		if ( is_numeric( $run_id ) ) {
 			return (int) $run_id;
 		}
-		if ( preg_match( '/cleanup-run-(\d+)/', $run_id, $matches ) ) {
+		if ( preg_match( '/^cleanup-run-(\d+)$/', $run_id, $matches ) ) {
 			return (int) $matches[1];
 		}
 		return 0;
