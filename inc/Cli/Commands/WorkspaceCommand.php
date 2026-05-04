@@ -133,8 +133,8 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * ## OPTIONS
 	 *
-	 * provision
-	 * : Provision/update the maintenance flows.
+	 * <action>
+	 * : Maintenance flow action. Supports: provision.
 	 *
 	 * --agent=<agent>
 	 * : Agent slug or numeric agent ID that should own the flows.
