@@ -1483,7 +1483,8 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * <operation>
 	 * : Worktree operation: add, list, remove, prune, cleanup, cleanup-artifacts,
-	 *   reconcile-metadata, refresh-context, finalize, mark-cleanup-eligible.
+	 *   reconcile-metadata, reconcile-metadata-batch, refresh-context, finalize,
+	 *   mark-cleanup-eligible.
 	 *
 	 * [<repo>]
 	 * : Primary repo name (required for add and remove). For refresh-context, finalize,
@@ -1656,6 +1657,12 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json > reconcile-plan.json
 	 *     wp datamachine-code workspace worktree reconcile-metadata --apply-plan=reconcile-plan.json
 	 *
+	 *     # Resumable batched reconciliation for huge legacy workspaces (~100s of missing-metadata rows).
+	 *     # Discovery uses a cheap inventory scan; per-row git probes are bounded to the worktree path.
+	 *     wp datamachine-code workspace worktree reconcile-metadata-batch --dry-run --limit=25 --format=json
+	 *     wp datamachine-code workspace worktree reconcile-metadata-batch --limit=25
+	 *     wp datamachine-code workspace worktree reconcile-metadata-batch --limit=25 --cursor=data-machine@feat-foo
+	 *
 	 *     # Ignore dirty working-tree safety (caution)
 	 *     wp datamachine-code workspace worktree cleanup --force
 	 *
@@ -1684,23 +1691,24 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <add|list|remove|prune|cleanup|cleanup-artifacts|emergency-cleanup|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
+			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <add|list|remove|prune|cleanup|cleanup-artifacts|emergency-cleanup|reconcile-metadata|reconcile-metadata-batch|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
 			return;
 		}
 
 		$ability_name = match ( $operation ) {
-			'add'                   => 'datamachine/workspace-worktree-add',
-			'list'                  => 'datamachine/workspace-worktree-list',
-			'remove'                => 'datamachine/workspace-worktree-remove',
-			'prune'                 => 'datamachine/workspace-worktree-prune',
-			'cleanup'               => 'datamachine/workspace-worktree-cleanup',
-			'cleanup-artifacts'     => 'datamachine/workspace-worktree-cleanup-artifacts',
-			'emergency-cleanup'     => 'datamachine/workspace-worktree-emergency-cleanup',
-			'reconcile-metadata'    => 'datamachine/workspace-worktree-reconcile-metadata',
-			'refresh-context'       => 'datamachine/workspace-worktree-refresh-context',
-			'finalize'              => 'datamachine/workspace-worktree-finalize',
-			'mark-cleanup-eligible' => 'datamachine/workspace-worktree-finalize',
-			default                 => '',
+			'add'                       => 'datamachine/workspace-worktree-add',
+			'list'                      => 'datamachine/workspace-worktree-list',
+			'remove'                    => 'datamachine/workspace-worktree-remove',
+			'prune'                     => 'datamachine/workspace-worktree-prune',
+			'cleanup'                   => 'datamachine/workspace-worktree-cleanup',
+			'cleanup-artifacts'         => 'datamachine/workspace-worktree-cleanup-artifacts',
+			'emergency-cleanup'         => 'datamachine/workspace-worktree-emergency-cleanup',
+			'reconcile-metadata'        => 'datamachine/workspace-worktree-reconcile-metadata',
+			'reconcile-metadata-batch'  => 'datamachine/workspace-worktree-reconcile-metadata-batch',
+			'refresh-context'           => 'datamachine/workspace-worktree-refresh-context',
+			'finalize'                  => 'datamachine/workspace-worktree-finalize',
+			'mark-cleanup-eligible'     => 'datamachine/workspace-worktree-finalize',
+			default                     => '',
 		};
 
 		if ( '' === $ability_name ) {
@@ -1827,6 +1835,19 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				break;
 
+			case 'reconcile-metadata-batch':
+				$input['dry_run'] = ! empty( $assoc_args['dry-run'] );
+				if ( isset( $assoc_args['limit'] ) && '' !== trim( (string) $assoc_args['limit'] ) ) {
+					$input['limit'] = (int) $assoc_args['limit'];
+				}
+				if ( isset( $assoc_args['offset'] ) && '' !== trim( (string) $assoc_args['offset'] ) ) {
+					$input['offset'] = (int) $assoc_args['offset'];
+				}
+				if ( isset( $assoc_args['cursor'] ) && '' !== trim( (string) $assoc_args['cursor'] ) ) {
+					$input['cursor'] = (string) $assoc_args['cursor'];
+				}
+				break;
+
 			case 'cleanup-artifacts':
 				$input['dry_run'] = ! empty( $assoc_args['dry-run'] );
 				$input['force']   = ! empty( $assoc_args['force'] );
@@ -1923,6 +1944,25 @@ class WorkspaceCommand extends BaseCommand {
 				return;
 			case 'reconcile-metadata':
 				$this->render_worktree_metadata_reconciliation_result( $result, $assoc_args );
+				return;
+
+			case 'reconcile-metadata-batch':
+				$this->render_worktree_metadata_reconciliation_result( $result, $assoc_args );
+				if ( ! empty( $result['next_cursor'] ) || null !== ( $result['next_offset'] ?? null ) ) {
+					WP_CLI::log( '' );
+					WP_CLI::log( sprintf(
+						'Resume next batch with: --cursor=%s   (remaining: %d, candidate_total: %d)',
+						(string) $result['next_cursor'],
+						(int) ( $result['remaining'] ?? 0 ),
+						(int) ( $result['candidate_total'] ?? 0 )
+					) );
+				} elseif ( ! empty( $result['exhausted'] ) ) {
+					WP_CLI::success( sprintf(
+						'Legacy missing-metadata candidates exhausted (%d processed in this run, total candidates seen: %d).',
+						(int) ( $result['processed'] ?? 0 ),
+						(int) ( $result['candidate_total'] ?? 0 )
+					) );
+				}
 				return;
 
 			case 'cleanup-artifacts':
