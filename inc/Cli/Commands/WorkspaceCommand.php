@@ -1527,8 +1527,8 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * <operation>
 	 * : Worktree operation: add, list, remove, prune, cleanup, cleanup-artifacts,
-	 *   reconcile-metadata, reconcile-metadata-batch, refresh-context, finalize,
-	 *   mark-cleanup-eligible.
+	 *   bounded-cleanup-eligible-apply, emergency-cleanup, reconcile-metadata,
+	 *   reconcile-metadata-batch, refresh-context, finalize, mark-cleanup-eligible.
 	 *
 	 * [<repo>]
 	 * : Primary repo name (required for add and remove). For refresh-context, finalize,
@@ -1734,6 +1734,12 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace worktree emergency-cleanup --format=json > emergency-plan.json
 	 *     wp datamachine-code workspace worktree emergency-cleanup --apply-plan=emergency-plan.json
 	 *
+	 *     # Bounded apply restricted to explicit lifecycle cleanup_eligible worktrees
+	 *     # (cheap inventory only — no full git worktree scan, no GitHub lookup)
+	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25
+	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=25
+	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --via-jobs --limit=10 --older-than=7d
+	 *
 	 *     # Local-only detection (no GitHub API call)
 	 *     wp datamachine-code workspace worktree cleanup --skip-github
 	 *
@@ -1776,24 +1782,25 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <add|list|remove|prune|cleanup|cleanup-artifacts|emergency-cleanup|reconcile-metadata|reconcile-metadata-batch|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
+			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <add|list|remove|prune|cleanup|cleanup-artifacts|bounded-cleanup-eligible-apply|emergency-cleanup|reconcile-metadata|reconcile-metadata-batch|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
 			return;
 		}
 
 		$ability_name = match ( $operation ) {
-			'add'                       => 'datamachine/workspace-worktree-add',
-			'list'                      => 'datamachine/workspace-worktree-list',
-			'remove'                    => 'datamachine/workspace-worktree-remove',
-			'prune'                     => 'datamachine/workspace-worktree-prune',
-			'cleanup'                   => 'datamachine/workspace-worktree-cleanup',
-			'cleanup-artifacts'         => 'datamachine/workspace-worktree-cleanup-artifacts',
-			'emergency-cleanup'         => 'datamachine/workspace-worktree-emergency-cleanup',
-			'reconcile-metadata'        => 'datamachine/workspace-worktree-reconcile-metadata',
-			'reconcile-metadata-batch'  => 'datamachine/workspace-worktree-reconcile-metadata-batch',
-			'refresh-context'           => 'datamachine/workspace-worktree-refresh-context',
-			'finalize'                  => 'datamachine/workspace-worktree-finalize',
-			'mark-cleanup-eligible'     => 'datamachine/workspace-worktree-finalize',
-			default                     => '',
+			'add'                            => 'datamachine/workspace-worktree-add',
+			'list'                           => 'datamachine/workspace-worktree-list',
+			'remove'                         => 'datamachine/workspace-worktree-remove',
+			'prune'                          => 'datamachine/workspace-worktree-prune',
+			'cleanup'                        => 'datamachine/workspace-worktree-cleanup',
+			'cleanup-artifacts'              => 'datamachine/workspace-worktree-cleanup-artifacts',
+			'bounded-cleanup-eligible-apply' => 'datamachine/workspace-worktree-bounded-cleanup-eligible-apply',
+			'emergency-cleanup'              => 'datamachine/workspace-worktree-emergency-cleanup',
+			'reconcile-metadata'             => 'datamachine/workspace-worktree-reconcile-metadata',
+			'reconcile-metadata-batch'       => 'datamachine/workspace-worktree-reconcile-metadata-batch',
+			'refresh-context'                => 'datamachine/workspace-worktree-refresh-context',
+			'finalize'                       => 'datamachine/workspace-worktree-finalize',
+			'mark-cleanup-eligible'          => 'datamachine/workspace-worktree-finalize',
+			default                          => '',
 		};
 
 		if ( '' === $ability_name ) {
@@ -1970,6 +1977,22 @@ class WorkspaceCommand extends BaseCommand {
 					$input['apply_plan'] = $this->read_worktree_json_plan( (string) $assoc_args['apply-plan'], 'emergency cleanup' );
 				}
 				break;
+
+			case 'bounded-cleanup-eligible-apply':
+				$input['dry_run']  = ! empty( $assoc_args['dry-run'] );
+				$input['force']    = ! empty( $assoc_args['force'] );
+				$input['via_jobs'] = ! empty( $assoc_args['via-jobs'] );
+				$input['source']   = self::CLEANUP_CLI_SOURCE;
+				if ( isset( $assoc_args['limit'] ) ) {
+					$input['limit'] = (int) $assoc_args['limit'];
+				}
+				if ( isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ) {
+					$input['older_than'] = trim( (string) $assoc_args['older-than'] );
+				}
+				if ( isset( $assoc_args['sort'] ) && '' !== trim( (string) $assoc_args['sort'] ) ) {
+					$input['sort'] = trim( (string) $assoc_args['sort'] );
+				}
+				break;
 		}
 
 		$result = $ability->execute( $input );
@@ -2086,6 +2109,10 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'cleanup-artifacts':
 				$this->render_worktree_artifact_cleanup_result( $result, $assoc_args );
+				return;
+
+			case 'bounded-cleanup-eligible-apply':
+				$this->render_worktree_bounded_cleanup_eligible_apply_result( $result, $assoc_args );
 				return;
 
 			case 'emergency-cleanup':
@@ -2834,6 +2861,125 @@ class WorkspaceCommand extends BaseCommand {
 	 * @param array $assoc_args CLI args.
 	 * @return void
 	 */
+	private function render_worktree_bounded_cleanup_eligible_apply_result( array $result, array $assoc_args ): void {
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
+		if ( 'json' === $format ) {
+			$json = wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+			WP_CLI::log( false === $json ? '{}' : $json );
+			return;
+		}
+
+		$summary      = (array) ( $result['summary'] ?? array() );
+		$candidates   = (array) ( $result['candidates'] ?? array() );
+		$removed      = (array) ( $result['removed'] ?? array() );
+		$skipped      = (array) ( $result['skipped'] ?? array() );
+		$continuation = (array) ( $result['continuation'] ?? array() );
+		$dry_run      = ! empty( $result['dry_run'] );
+		$job_backed   = ! empty( $result['job_backed'] );
+
+		WP_CLI::log( 'Bounded cleanup apply summary:' );
+		$summary_rows = array(
+			array(
+				'metric' => 'mode',
+				'value'  => $dry_run ? 'dry-run' : ( $job_backed ? 'job-backed apply' : 'synchronous apply' ),
+			),
+			array(
+				'metric' => 'processed',
+				'value'  => (int) ( $summary['processed'] ?? 0 ),
+			),
+			array(
+				'metric' => 'removed',
+				'value'  => (int) ( $summary['removed'] ?? 0 ),
+			),
+			array(
+				'metric' => 'skipped',
+				'value'  => (int) ( $summary['skipped'] ?? 0 ),
+			),
+			array(
+				'metric' => 'bytes_reclaimed',
+				'value'  => $this->format_bytes( $summary['bytes_reclaimed'] ?? 0 ),
+			),
+			array(
+				'metric' => 'limit',
+				'value'  => (int) ( $summary['limit'] ?? 0 ),
+			),
+		);
+		if ( $job_backed ) {
+			$summary_rows[] = array(
+				'metric' => 'scheduled_jobs',
+				'value'  => (int) ( $summary['scheduled_jobs'] ?? 0 ),
+			);
+		}
+		$this->format_items( $summary_rows, array( 'metric', 'value' ), array( 'format' => 'table' ), 'metric' );
+
+		if ( ! empty( $candidates ) && ( $dry_run || ! empty( $assoc_args['verbose'] ) ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Bounded cleanup-eligible apply candidates:' );
+			$rows = array_map(
+				fn( $row ) => array(
+					'handle'      => $row['handle'] ?? '',
+					'repo'        => $row['repo'] ?? '',
+					'branch'      => $row['branch'] ?? '',
+					'reason_code' => $row['reason_code'] ?? '',
+					'pr_url'      => $row['pr_url'] ?? '',
+					'created_at'  => $row['created_at'] ?? '',
+				),
+				$candidates
+			);
+			$this->format_items( $rows, array( 'handle', 'repo', 'branch', 'reason_code', 'pr_url', 'created_at' ), array( 'format' => 'table' ), 'handle' );
+		}
+
+		if ( ! empty( $removed ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Removed worktrees:' );
+			$rows = array_map(
+				fn( $row ) => array(
+					'handle' => $row['handle'] ?? '',
+					'repo'   => $row['repo'] ?? '',
+					'branch' => $row['branch'] ?? '',
+					'size'   => $this->format_bytes( $row['size_bytes'] ?? null ),
+					'path'   => $row['path'] ?? '',
+				),
+				$removed
+			);
+			$this->format_items( $rows, array( 'handle', 'repo', 'branch', 'size', 'path' ), array( 'format' => 'table' ), 'handle' );
+		}
+
+		if ( ! empty( $skipped ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Skipped:' );
+			$rows = array_map(
+				fn( $row ) => array(
+					'handle'      => $row['handle'] ?? '',
+					'reason_code' => $row['reason_code'] ?? '',
+					'reason'      => $this->shorten_cleanup_reason( (string) ( $row['reason'] ?? '' ) ),
+				),
+				$skipped
+			);
+			$this->format_items( $rows, array( 'handle', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle' );
+		}
+
+		WP_CLI::log( '' );
+		$remaining = (int) ( $continuation['remaining_total'] ?? 0 );
+		if ( $remaining > 0 ) {
+			WP_CLI::log( sprintf( 'Continuation: %d candidate(s) remaining outside this batch.', $remaining ) );
+			$hint = (string) ( $continuation['next_call_hint'] ?? '' );
+			if ( '' !== $hint ) {
+				WP_CLI::log( '  ' . $hint );
+			}
+		} else {
+			WP_CLI::log( 'Continuation: no candidates remaining outside this batch.' );
+		}
+
+		if ( $dry_run ) {
+			WP_CLI::success( 'Bounded cleanup-eligible apply dry-run complete.' );
+		} elseif ( $job_backed ) {
+			WP_CLI::success( sprintf( 'Bounded cleanup-eligible apply scheduled %d cleanup chunk job(s).', (int) ( $summary['scheduled_jobs'] ?? 0 ) ) );
+		} else {
+			WP_CLI::success( sprintf( 'Bounded cleanup-eligible apply removed %d worktree(s); reclaimed %s.', (int) ( $summary['removed'] ?? 0 ), $this->format_bytes( $summary['bytes_reclaimed'] ?? 0 ) ) );
+		}
+	}
+
 	private function render_worktree_emergency_cleanup_result( array $result, array $assoc_args ): void {
 		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {

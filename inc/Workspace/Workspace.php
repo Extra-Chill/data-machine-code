@@ -5151,6 +5151,533 @@ class Workspace {
 	}
 
 	/**
+	 * Operator-safe bounded cleanup apply restricted to explicit cleanup-eligible worktrees.
+	 *
+	 * Skips the slow paths (full git worktree discovery, GitHub lookups, full
+	 * status/upstream sweep) and works only off cheap workspace inventory rows
+	 * with explicit `cleanup_eligible` lifecycle metadata. Each candidate is
+	 * revalidated at apply time — dirty/unpushed/missing-metadata/external/
+	 * primary rows stay skipped even when the inventory said they were eligible.
+	 *
+	 * Bounds:
+	 *   - `limit` caps how many candidates this batch will attempt (default 25).
+	 *   - `older_than` optionally filters by lifecycle `created_at` age.
+	 *   - `via_jobs` schedules each candidate as its own `worktree_cleanup_chunk`
+	 *     job (single-row chunks) for resumable, async apply. Synchronous mode
+	 *     is the default so operators can apply now without an Action Scheduler
+	 *     run between batch and result.
+	 *
+	 * Evidence:
+	 *   - `processed`, `removed`, `skipped`, `bytes_reclaimed`.
+	 *   - `continuation` reports remaining cleanup-eligible handles not in this
+	 *     batch so the operator can keep going (next call without changes
+	 *     re-derives the same list cheaply).
+	 *
+	 * @param array $opts Options: dry_run, limit, older_than, sort, force, via_jobs, source.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function worktree_bounded_cleanup_eligible_apply( array $opts = array() ): array|\WP_Error {
+		$started_at = microtime( true );
+		$dry_run    = ! empty( $opts['dry_run'] );
+		$force      = ! empty( $opts['force'] );
+		$via_jobs   = ! empty( $opts['via_jobs'] );
+		$older_than = isset( $opts['older_than'] ) ? trim( (string) $opts['older_than'] ) : '';
+		$sort       = isset( $opts['sort'] ) ? trim( (string) $opts['sort'] ) : 'age';
+		$source     = isset( $opts['source'] ) ? trim( (string) $opts['source'] ) : 'workspace_bounded_cleanup_eligible_apply';
+
+		$limit = isset( $opts['limit'] ) ? (int) $opts['limit'] : 25;
+		if ( $limit < 1 ) {
+			return new \WP_Error( 'invalid_bounded_cleanup_eligible_limit', 'Bounded cleanup-eligible apply limit must be a positive integer.', array( 'status' => 400 ) );
+		}
+		// Hard ceiling keeps a single bounded batch genuinely bounded — operators
+		// who want more should run multiple batches or fall through to the full
+		// retention/job-backed path.
+		$limit = min( $limit, 200 );
+
+		if ( '' !== $sort && ! in_array( $sort, array( 'size', 'age' ), true ) ) {
+			return new \WP_Error( 'invalid_cleanup_sort', 'Invalid bounded cleanup-eligible apply sort. Use size or age.', array( 'status' => 400 ) );
+		}
+
+		if ( $via_jobs && $dry_run ) {
+			return new \WP_Error( 'bounded_cleanup_eligible_apply_via_jobs_no_dry_run', 'Job-backed bounded cleanup-eligible apply cannot run as dry-run; use the synchronous dry-run path to review candidates first.', array( 'status' => 400 ) );
+		}
+
+		// Reuse the cheap inventory_only review path for candidate discovery so
+		// the bounded cleanup-eligible apply never triggers full worktree_list / fetch / GitHub
+		// API work just to plan. This intentionally does not honor `apply_plan`
+		// — bounded cleanup-eligible apply IS the apply path; no separate plan file is needed.
+		$inventory = $this->worktree_cleanup_inventory_only( $older_than, $sort );
+		if ( $inventory instanceof \WP_Error ) {
+			return $inventory;
+		}
+
+		$all_candidates = array_values( (array) ( $inventory['candidates'] ?? array() ) );
+		$inventory_skipped = array_values( (array) ( $inventory['skipped'] ?? array() ) );
+
+		$batch     = array_slice( $all_candidates, 0, $limit );
+		$deferred  = array_slice( $all_candidates, $limit );
+
+		$continuation = array(
+			'remaining_total'      => count( $deferred ),
+			'remaining_handles'    => array_values( array_filter( array_map( fn( $row ) => is_array( $row ) ? (string) ( $row['handle'] ?? '' ) : '', $deferred ) ) ),
+			'next_call_hint'       => count( $deferred ) > 0 ? sprintf( 'Run the bounded cleanup-eligible apply again to drain the next %d candidate(s).', min( $limit, count( $deferred ) ) ) : null,
+			'inventory_skipped'    => count( $inventory_skipped ),
+			'limit_applied'        => $limit,
+		);
+
+		if ( $dry_run ) {
+			return array(
+				'success'         => true,
+				'mode'            => 'bounded_cleanup_eligible_apply',
+				'dry_run'         => true,
+				'destructive'     => false,
+				'workspace_path'  => $this->workspace_path,
+				'generated_at'    => gmdate( 'c' ),
+				'candidates'      => $batch,
+				'removed'         => array(),
+				'skipped'         => array_values( $inventory_skipped ),
+				'summary'         => array(
+					'processed'       => count( $batch ),
+					'removed'         => 0,
+					'skipped'         => count( $inventory_skipped ),
+					'bytes_reclaimed' => 0,
+					'limit'           => $limit,
+				),
+				'continuation'    => $continuation,
+				'evidence'        => array(
+					'elapsed_ms'        => (int) round( ( microtime( true ) - $started_at ) * 1000 ),
+					'inventory_total'   => count( $all_candidates ),
+					'planned_handles'   => array_values( array_filter( array_map( fn( $row ) => is_array( $row ) ? (string) ( $row['handle'] ?? '' ) : '', $batch ) ) ),
+					'source'            => $source,
+				),
+			);
+		}
+
+		if ( $via_jobs ) {
+			return $this->schedule_bounded_cleanup_eligible_chunks( $batch, $deferred, $force, $source, $started_at, $continuation );
+		}
+
+		$processed       = 0;
+		$removed         = array();
+		$skipped         = array_values( $inventory_skipped );
+		$bytes_reclaimed = 0;
+
+		foreach ( $batch as $candidate ) {
+			++$processed;
+			$revalidated = $this->revalidate_bounded_cleanup_eligible_candidate( $candidate, $force );
+			if ( is_array( $revalidated ) && isset( $revalidated['skipped'] ) ) {
+				$skipped[] = $revalidated['skipped'];
+				continue;
+			}
+			if ( $revalidated instanceof \WP_Error ) {
+				$skipped[] = array(
+					'handle'      => (string) ( $candidate['handle'] ?? '' ),
+					'repo'        => (string) ( $candidate['repo'] ?? '' ),
+					'branch'      => (string) ( $candidate['branch'] ?? '' ),
+					'path'        => (string) ( $candidate['path'] ?? '' ),
+					'reason_code' => $revalidated->get_error_code(),
+					'reason'      => $revalidated->get_error_message(),
+				);
+				continue;
+			}
+
+			$validated = $revalidated;
+			$repo      = (string) ( $validated['repo'] ?? '' );
+			$branch    = (string) ( $validated['branch'] ?? '' );
+			$wt_path   = (string) ( $validated['path'] ?? '' );
+			$size      = (int) ( $validated['size_bytes'] ?? 0 );
+			if ( $size <= 0 ) {
+				$measured = $this->estimate_path_size_bytes( $wt_path );
+				$size     = null === $measured ? 0 : (int) $measured;
+			}
+
+			$remove = WorkspaceMutationLock::with_repo(
+				$this->workspace_path,
+				$repo,
+				function () use ( $repo, $branch, $wt_path, $force ) {
+					$result = $this->remove_worktree_by_path( $repo, $branch, $wt_path, $force );
+					if ( is_wp_error( $result ) ) {
+						return $result;
+					}
+
+					$primary_path = $this->get_primary_path( $repo );
+					if ( '' !== $branch ) {
+						$delete = $this->run_git( $primary_path, sprintf( 'branch -D %s', escapeshellarg( $branch ) ) );
+						if ( is_wp_error( $delete ) ) {
+							// Branch deletion failure is non-fatal: the worktree is
+							// gone, the local branch may still be useful or may have
+							// already been pruned. Bubble up the original removal.
+							return $result;
+						}
+					}
+
+					return $result;
+				}
+			);
+
+			if ( is_wp_error( $remove ) ) {
+				$skipped[] = array(
+					'handle'      => (string) ( $candidate['handle'] ?? '' ),
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'remove_failed',
+					'reason'      => 'remove failed: ' . $remove->get_error_message(),
+				);
+				continue;
+			}
+
+			$removed[]        = array_merge(
+				array(
+					'handle'      => (string) ( $candidate['handle'] ?? '' ),
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'size_bytes'  => $size,
+					'reason_code' => 'cleanup_eligible',
+				),
+				is_array( $candidate['metadata'] ?? null ) ? array( 'metadata' => $candidate['metadata'] ) : array()
+			);
+			$bytes_reclaimed += max( 0, $size );
+		}
+
+		// Best-effort prune in case any registry rows are now stale.
+		$this->worktree_prune();
+
+		return array(
+			'success'         => true,
+			'mode'            => 'bounded_cleanup_eligible_apply',
+			'dry_run'         => false,
+			'destructive'     => true,
+			'workspace_path'  => $this->workspace_path,
+			'generated_at'    => gmdate( 'c' ),
+			'candidates'      => $batch,
+			'removed'         => $removed,
+			'skipped'         => $skipped,
+			'summary'         => array(
+				'processed'       => $processed,
+				'removed'         => count( $removed ),
+				'skipped'         => count( $skipped ),
+				'bytes_reclaimed' => $bytes_reclaimed,
+				'limit'           => $limit,
+			),
+			'continuation'    => $continuation,
+			'evidence'        => array(
+				'elapsed_ms'      => (int) round( ( microtime( true ) - $started_at ) * 1000 ),
+				'inventory_total' => count( $all_candidates ),
+				'removed_handles' => array_values( array_filter( array_map( fn( $row ) => is_array( $row ) ? (string) ( $row['handle'] ?? '' ) : '', $removed ) ) ),
+				'skipped_handles' => array_values( array_filter( array_map( fn( $row ) => is_array( $row ) ? (string) ( $row['handle'] ?? '' ) : '', $skipped ) ) ),
+				'source'          => $source,
+			),
+		);
+	}
+
+	/**
+	 * Re-run the bounded cleanup-eligible apply safety gates against the current state.
+	 *
+	 * Returns an enriched candidate row when the worktree is still safe to
+	 * remove, or an array with a `skipped` row when a gate fires. Errors
+	 * surface as WP_Error so callers can record a remove_failed-style row.
+	 *
+	 * Gates (cheap, in priority order):
+	 *   - missing repo/branch/path metadata
+	 *   - external worktree (path outside the workspace root)
+	 *   - missing/non-directory worktree path
+	 *   - .git marker is a directory (i.e. primary checkout — never remove)
+	 *   - dirty working tree (porcelain --short)
+	 *   - unpushed commits (count_unpushed_commits)
+	 *   - missing primary checkout
+	 *
+	 * @param array $candidate Inventory candidate row.
+	 * @param bool  $force     Allow dirty worktrees.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function revalidate_bounded_cleanup_eligible_candidate( array $candidate, bool $force ): array|\WP_Error {
+		$handle  = (string) ( $candidate['handle'] ?? '' );
+		$repo    = (string) ( $candidate['repo'] ?? '' );
+		$branch  = (string) ( $candidate['branch'] ?? '' );
+		$wt_path = (string) ( $candidate['path'] ?? '' );
+
+		$missing_fields = array();
+		foreach ( array( 'handle' => $handle, 'repo' => $repo, 'branch' => $branch, 'path' => $wt_path ) as $field => $value ) {
+			if ( '' === $value ) {
+				$missing_fields[] = $field;
+			}
+		}
+		if ( array() !== $missing_fields ) {
+			return array(
+				'skipped' => array(
+					'handle'         => $handle,
+					'repo'           => $repo,
+					'branch'         => $branch,
+					'path'           => $wt_path,
+					'reason_code'    => 'missing_metadata',
+					'reason'         => 'missing inventory metadata for bounded cleanup-eligible apply: ' . implode( ', ', $missing_fields ),
+					'missing_fields' => $missing_fields,
+				),
+			);
+		}
+
+		// Containment: path must be inside the workspace root and resolve as a
+		// real worktree marker, not a primary's `.git` directory.
+		$validation = $this->validate_containment( $wt_path, $this->workspace_path );
+		if ( ! $validation['valid'] ) {
+			return array(
+				'skipped' => array(
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'external_worktree',
+					'reason'      => 'inventory row is outside the workspace root and cannot be removed by bounded cleanup-eligible apply',
+				),
+			);
+		}
+
+		$real_path = (string) $validation['real_path'];
+		if ( '' === $real_path || ! is_dir( $real_path ) ) {
+			return array(
+				'skipped' => array(
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'path_missing',
+					'reason'      => 'worktree path no longer exists on disk',
+				),
+			);
+		}
+
+		$git_marker = rtrim( $real_path, '/' ) . '/.git';
+		if ( is_dir( $git_marker ) ) {
+			return array(
+				'skipped' => array(
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'primary_checkout',
+					'reason'      => 'refusing to remove a primary checkout via bounded cleanup-eligible apply',
+				),
+			);
+		}
+		if ( ! is_file( $git_marker ) ) {
+			return array(
+				'skipped' => array(
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'not_a_worktree',
+					'reason'      => 'worktree marker missing — refusing to apply bounded cleanup',
+				),
+			);
+		}
+
+		// Dirty gate: cheap porcelain call, bounded by the cleanup git timeout.
+		$dirty = $this->run_git( $real_path, 'status --porcelain --untracked-files=normal', self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( $this->is_git_timeout_error( $dirty ) ) {
+			return array(
+				'skipped' => array(
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'probe_timeout',
+					'reason'      => 'dirty-state probe timed out — refusing bounded cleanup-eligible apply: ' . $dirty->get_error_message(),
+				),
+			);
+		}
+		if ( is_wp_error( $dirty ) ) {
+			return array(
+				'skipped' => array(
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'probe_failed',
+					'reason'      => 'dirty-state probe failed — refusing bounded cleanup-eligible apply: ' . $dirty->get_error_message(),
+				),
+			);
+		}
+
+		$dirty_lines = trim( (string) ( $dirty['output'] ?? '' ) );
+		$dirty_count = '' === $dirty_lines ? 0 : substr_count( $dirty_lines, "\n" ) + 1;
+		if ( $dirty_count > 0 && ! $force ) {
+			return array(
+				'skipped' => array(
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'dirty_worktree',
+					'reason'      => sprintf( 'working tree dirty (%d entries) — bounded cleanup-eligible apply refuses to override; rerun with force=true after review', $dirty_count ),
+					'dirty'       => $dirty_count,
+				),
+			);
+		}
+
+		// Unpushed gate: hard stop even with force=true (data loss > dirty loss).
+		$unpushed = $this->count_unpushed_commits( $real_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( $unpushed instanceof \WP_Error ) {
+			return array(
+				'skipped' => array(
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'probe_timeout',
+					'reason'      => 'unpushed-commit probe timed out — refusing bounded cleanup-eligible apply: ' . $unpushed->get_error_message(),
+				),
+			);
+		}
+		if ( $unpushed > 0 ) {
+			return array(
+				'skipped' => array(
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'unpushed_commits',
+					'reason'      => sprintf( '%d unpushed commit(s) — bounded cleanup-eligible apply refuses to remove even with force=true', $unpushed ),
+					'unpushed'    => $unpushed,
+				),
+			);
+		}
+
+		// Primary must still exist or remove_worktree_by_path will fail noisily.
+		$primary_path = $this->get_primary_path( $repo );
+		if ( ! is_dir( $primary_path . '/.git' ) ) {
+			return array(
+				'skipped' => array(
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'primary_missing',
+					'reason'      => 'primary checkout missing — bounded cleanup-eligible apply cannot route git worktree remove',
+				),
+			);
+		}
+
+		return array_merge( $candidate, array( 'path' => $real_path ) );
+	}
+
+	/**
+	 * Schedule each bounded-cleanup-eligible-apply candidate as its own cleanup chunk job.
+	 *
+	 * Single-row chunks keep cleanup conservative and lock-friendly while the
+	 * existing `worktree_cleanup_chunk` task handles per-row revalidation,
+	 * removal, and evidence the same way as the retention path.
+	 *
+	 * @param array<int,array<string,mixed>> $batch         Candidate rows in this bounded batch.
+	 * @param array<int,array<string,mixed>> $deferred      Candidates not in this batch.
+	 * @param bool                            $force        Whether to forward force.
+	 * @param string                          $source       Caller marker.
+	 * @param float                           $started_at   Start timestamp.
+	 * @param array<string,mixed>             $continuation Continuation envelope.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function schedule_bounded_cleanup_eligible_chunks( array $batch, array $deferred, bool $force, string $source, float $started_at, array $continuation ): array|\WP_Error {
+		if ( ! class_exists( '\DataMachine\Engine\Tasks\TaskScheduler' ) ) {
+			return new \WP_Error( 'task_scheduler_unavailable', 'Data Machine TaskScheduler is unavailable; cannot schedule bounded cleanup-eligible apply chunks.', array( 'status' => 500 ) );
+		}
+
+		if ( array() === $batch ) {
+			return array(
+				'success'         => true,
+				'mode'            => 'bounded_cleanup_eligible_apply',
+				'dry_run'         => false,
+				'destructive'     => false,
+				'job_backed'      => true,
+				'workspace_path'  => $this->workspace_path,
+				'generated_at'    => gmdate( 'c' ),
+				'candidates'      => array(),
+				'removed'         => array(),
+				'skipped'         => array(),
+				'summary'         => array(
+					'processed'       => 0,
+					'removed'         => 0,
+					'skipped'         => 0,
+					'bytes_reclaimed' => 0,
+					'scheduled_jobs'  => 0,
+				),
+				'continuation'    => $continuation,
+				'evidence'        => array(
+					'elapsed_ms' => (int) round( ( microtime( true ) - $started_at ) * 1000 ),
+					'note'       => 'No bounded-cleanup-eligible-apply candidates eligible for scheduling.',
+					'source'     => $source,
+				),
+			);
+		}
+
+		$item_params = array();
+		foreach ( $batch as $candidate ) {
+			$row = array(
+				'handle' => (string) ( $candidate['handle'] ?? '' ),
+				'repo'   => (string) ( $candidate['repo'] ?? '' ),
+				'branch' => (string) ( $candidate['branch'] ?? '' ),
+				'path'   => (string) ( $candidate['path'] ?? '' ),
+				'signal' => (string) ( $candidate['signal'] ?? 'cleanup_eligible' ),
+			);
+			if ( isset( $candidate['size_bytes'] ) ) {
+				$row['size_bytes'] = (int) $candidate['size_bytes'];
+			}
+			if ( isset( $candidate['metadata'] ) ) {
+				$row['metadata'] = $candidate['metadata'];
+			}
+			$item_params[] = array(
+				'chunk_type'  => 'worktrees',
+				'chunk_index' => count( $item_params ),
+				'rows'        => array( $row ),
+				'force'       => $force,
+				'skip_github' => true,
+				'source'      => $source,
+			);
+		}
+
+		$batch_result = \DataMachine\Engine\Tasks\TaskScheduler::scheduleBatch(
+			'worktree_cleanup_chunk',
+			$item_params,
+			array(
+				'source' => $source,
+			)
+		);
+
+		if ( false === $batch_result ) {
+			return new \WP_Error( 'bounded_cleanup_eligible_apply_schedule_failed', 'Failed to schedule bounded cleanup-eligible apply chunk jobs.', array( 'status' => 500 ) );
+		}
+
+		return array(
+			'success'         => true,
+			'mode'            => 'bounded_cleanup_eligible_apply',
+			'dry_run'         => false,
+			'destructive'     => true,
+			'job_backed'      => true,
+			'workspace_path'  => $this->workspace_path,
+			'generated_at'    => gmdate( 'c' ),
+			'candidates'      => $batch,
+			'removed'         => array(),
+			'skipped'         => array(),
+			'summary'         => array(
+				'processed'       => count( $batch ),
+				'removed'         => 0,
+				'skipped'         => 0,
+				'bytes_reclaimed' => 0,
+				'scheduled_jobs'  => count( $item_params ),
+			),
+			'continuation'    => $continuation,
+			'evidence'        => array(
+				'elapsed_ms'      => (int) round( ( microtime( true ) - $started_at ) * 1000 ),
+				'planned_handles' => array_values( array_filter( array_map( fn( $row ) => is_array( $row ) ? (string) ( $row['handle'] ?? '' ) : '', $batch ) ) ),
+				'batch_job_id'    => (int) ( $batch_result['batch_job_id'] ?? 0 ),
+				'direct_job_ids'  => $batch_result['job_ids'] ?? array(),
+				'source'          => $source,
+			),
+		);
+	}
+
+	/**
 	 * Build current artifact cleanup candidates and safety skips.
 	 *
 	 * Two modes are supported:
