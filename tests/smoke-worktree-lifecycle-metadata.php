@@ -121,9 +121,19 @@ namespace {
 		/** @var array<string,array<string,mixed>> */
 		public array $rows = array();
 
+		public int $insert_id = 1;
+
+		public string $last_error = '';
+
 		/** @param array<string,mixed> $data */
 		public function replace( string $table, array $data ): int { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
 			$this->rows[ (string) $data['handle'] ] = $data;
+			return 1;
+		}
+
+		/** @param array<string,mixed> $data */
+		public function insert( string $table, array $data, ?array $format = null ): int { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
+			$this->insert_id++;
 			return 1;
 		}
 
@@ -135,6 +145,9 @@ namespace {
 
 		/** @param array<string,mixed> $data @param array<string,mixed> $where */
 		public function update( string $table, array $data, array $where ): int { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
+			if ( ! isset( $where['handle'] ) ) {
+				return 1;
+			}
 			$handle = (string) $where['handle'];
 			if ( ! isset( $this->rows[ $handle ] ) ) {
 				return 0;
@@ -148,7 +161,18 @@ namespace {
 			return array_values( $this->rows );
 		}
 
+		public function get_var( string $sql ): ?string {
+			if ( str_contains( $sql, 'datamachine_code_locks' ) ) {
+				return $this->prefix . 'datamachine_code_locks';
+			}
+			return null;
+		}
+
 		public function prepare( string $query, mixed ...$args ): string {
+			foreach ( $args as $arg ) {
+				$replacement = is_int( $arg ) ? (string) $arg : "'" . str_replace( "'", "''", (string) $arg ) . "'";
+				$query       = preg_replace( '/%[sd]/', $replacement, $query, 1 ) ?? $query;
+			}
 			return $query;
 		}
 	}
@@ -331,7 +355,7 @@ namespace {
 	$old_items = array_values( array_filter( $list_old['worktrees'] ?? array(), fn( $wt ) => ( $wt['handle'] ?? '' ) === 'demo@feature-old-record' ) );
 	$old_item  = $old_items[0] ?? array();
 	$assert( true, isset( $old_item['handle'] ), 'old worktree with missing metadata still lists' );
-	$assert( null, $old_item['metadata'] ?? null, 'old worktree missing metadata degrades to null' );
+	$assert( true, is_array( $old_item['metadata'] ?? null ), 'old worktree metadata is recovered from DB inventory when option row is absent' );
 
 	$plan = $ws->worktree_cleanup_merged(
 		array(
@@ -345,7 +369,7 @@ namespace {
 	$assert( 'cleanup_eligible', $eligible_candidates[0]['signal'] ?? null, 'cleanup_eligible candidate exposes stable signal' );
 	$feature_skip = array_values( array_filter( $plan['skipped'] ?? array(), fn( $skip ) => ( $skip['handle'] ?? '' ) === 'demo@feature-metadata' ) );
 	$old_skip = array_values( array_filter( $plan['skipped'] ?? array(), fn( $skip ) => ( $skip['handle'] ?? '' ) === 'demo@feature-old-record' ) );
-	$assert( null, $old_skip[0]['metadata'] ?? null, 'cleanup dry-run tolerates worktrees with missing metadata' );
+	$assert( true, is_array( $old_skip[0]['metadata'] ?? null ), 'cleanup dry-run uses DB-backed metadata when option row is absent' );
 
 	$removed_old = $ws->worktree_remove( 'demo', 'feature/old-record', true );
 	$assert( true, ! is_wp_error( $removed_old ) && ( $removed_old['success'] ?? false ), 'worktree_remove succeeds for old record' );

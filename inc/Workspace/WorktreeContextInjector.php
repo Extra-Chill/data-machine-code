@@ -804,10 +804,8 @@ class WorktreeContextInjector {
 	 */
 	public static function store_lifecycle_metadata( string $handle, array $metadata ): void {
 		if ( ! function_exists( 'get_option' ) || ! function_exists( 'update_option' ) ) {
-			if ( class_exists( __NAMESPACE__ . '\\WorktreeInventoryStore' ) ) {
-				$existing = WorktreeInventoryStore::get_metadata( $handle ) ?? array();
-				WorktreeInventoryStore::upsert_metadata( $handle, array_merge( $existing, $metadata ) );
-			}
+			$existing = self::get_inventory_metadata( $handle ) ?? array();
+			self::upsert_inventory_metadata( $handle, array_merge( $existing, $metadata ) );
 			return;
 		}
 
@@ -817,16 +815,13 @@ class WorktreeContextInjector {
 		}
 
 		$existing       = isset( $all[ $handle ] ) && is_array( $all[ $handle ] ) ? $all[ $handle ] : array();
-		if ( empty( $existing ) && class_exists( __NAMESPACE__ . '\\WorktreeInventoryStore' ) ) {
-			$existing = WorktreeInventoryStore::get_metadata( $handle ) ?? array();
+		if ( empty( $existing ) ) {
+			$existing = self::get_inventory_metadata( $handle ) ?? array();
 		}
 		$all[ $handle ] = array_merge( $existing, $metadata );
 
 		update_option( self::METADATA_OPTION, $all, false );
-
-		if ( class_exists( __NAMESPACE__ . '\\WorktreeInventoryStore' ) ) {
-			WorktreeInventoryStore::upsert_metadata( $handle, $all[ $handle ] );
-		}
+		self::upsert_inventory_metadata( $handle, $all[ $handle ] );
 	}
 
 	/**
@@ -1002,11 +997,9 @@ class WorktreeContextInjector {
 	 * @return array|null
 	 */
 	public static function get_metadata( string $handle ): ?array {
-		if ( class_exists( __NAMESPACE__ . '\\WorktreeInventoryStore' ) ) {
-			$db_metadata = WorktreeInventoryStore::get_metadata( $handle );
-			if ( null !== $db_metadata ) {
-				return $db_metadata;
-			}
+		$db_metadata = self::get_inventory_metadata( $handle );
+		if ( null !== $db_metadata ) {
+			return $db_metadata;
 		}
 
 		if ( ! function_exists( 'get_option' ) ) {
@@ -1025,9 +1018,7 @@ class WorktreeContextInjector {
 	 * @param string $handle Workspace handle.
 	 */
 	public static function forget_metadata( string $handle ): void {
-		if ( class_exists( __NAMESPACE__ . '\\WorktreeInventoryStore' ) ) {
-			WorktreeInventoryStore::delete( $handle );
-		}
+		self::delete_inventory_metadata( $handle );
 
 		if ( ! function_exists( 'get_option' ) || ! function_exists( 'update_option' ) ) {
 			return;
@@ -1038,6 +1029,90 @@ class WorktreeContextInjector {
 		}
 		unset( $all[ $handle ] );
 		update_option( self::METADATA_OPTION, $all, false );
+	}
+
+	/**
+	 * Persist lifecycle metadata into the DB-backed inventory repository.
+	 *
+	 * @param string              $handle   Workspace handle.
+	 * @param array<string,mixed> $metadata Lifecycle metadata.
+	 */
+	private static function upsert_inventory_metadata( string $handle, array $metadata ): void {
+		$repository = self::inventory_repository();
+		if ( null === $repository ) {
+			return;
+		}
+
+		$handle_parts = explode( '@', $handle, 2 );
+		$task         = is_array( $metadata['origin_task'] ?? null ) ? (array) $metadata['origin_task'] : array();
+		$session      = is_array( $metadata['origin_session'] ?? null ) ? self::summarize_session( $metadata ) : array();
+
+		$repository->upsert(
+			array(
+				'handle'          => $handle,
+				'repo'            => (string) ( $metadata['repo'] ?? $handle_parts[0] ),
+				'branch'          => $metadata['branch'] ?? ( $handle_parts[1] ?? null ),
+				'path'            => (string) ( $metadata['path'] ?? '' ),
+				'primary_path'    => $metadata['primary_path'] ?? null,
+				'is_primary'      => ! str_contains( $handle, '@' ),
+				'lifecycle_state' => $metadata['lifecycle_state'] ?? null,
+				'origin_site'     => $metadata['origin_site'] ?? null,
+				'origin_agent'    => $metadata['origin_agent'] ?? null,
+				'session'         => $session,
+				'task'            => $task,
+				'task_url'        => $task['task_url'] ?? null,
+				'task_ref'        => $task['task_ref'] ?? null,
+				'pr_url'          => $metadata['pr_url'] ?? null,
+				'pr_number'       => $metadata['pr_number'] ?? null,
+				'created_at'      => $metadata['created_at'] ?? null,
+				'last_seen_at'    => $metadata['last_seen_at'] ?? null,
+				'metadata'        => $metadata,
+			)
+		);
+	}
+
+	/**
+	 * Fetch metadata from the DB-backed inventory repository.
+	 *
+	 * @return array<string,mixed>|null
+	 */
+	private static function get_inventory_metadata( string $handle ): ?array {
+		$repository = self::inventory_repository();
+		if ( null === $repository ) {
+			return null;
+		}
+
+		foreach ( $repository->list() as $row ) {
+			if ( $handle === (string) ( $row['handle'] ?? '' ) && is_array( $row['metadata'] ?? null ) ) {
+				return (array) $row['metadata'];
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Delete metadata from the DB-backed inventory repository.
+	 */
+	private static function delete_inventory_metadata( string $handle ): void {
+		$repository = self::inventory_repository();
+		if ( null !== $repository ) {
+			$repository->delete( $handle );
+		}
+	}
+
+	/**
+	 * Resolve the DB-backed inventory repository if it is available.
+	 */
+	private static function inventory_repository(): ?\DataMachineCode\Storage\WorktreeInventoryRepository {
+		if ( ! class_exists( '\\DataMachineCode\\Storage\\WorktreeInventoryRepository' ) ) {
+			$path = dirname( __DIR__ ) . '/Storage/WorktreeInventoryRepository.php';
+			if ( is_file( $path ) ) {
+				require_once $path;
+			}
+		}
+
+		return class_exists( '\\DataMachineCode\\Storage\\WorktreeInventoryRepository' ) ? new \DataMachineCode\Storage\WorktreeInventoryRepository() : null;
 	}
 
 	/**

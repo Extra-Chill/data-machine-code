@@ -44,25 +44,35 @@ namespace {
 		 * @param array<string,mixed> $data
 		 * @param array<int,string>   $format
 		 */
-		public function replace( string $table, array $data, array $format ) {
+		public function replace( string $table, array $data, ?array $format = null ) {
 			$this->rows[ (string) $data['handle'] ] = $data;
 			return 1;
 		}
 
-		public function get_row( string $query, string $output_type ) {
-			if ( ! preg_match( "/WHERE handle = '([^']+)'/", $query, $matches ) ) {
-				return null;
-			}
-			return $this->rows[ $matches[1] ] ?? null;
+		/** @return array<int,array<string,mixed>> */
+		public function get_results( string $query, string $output_type ): array {
+			return array_values( $this->rows );
 		}
 
 		/**
 		 * @param array<string,mixed> $where
 		 * @param array<int,string>   $where_format
 		 */
-		public function delete( string $table, array $where, array $where_format ) {
+		public function delete( string $table, array $where, ?array $where_format = null ) {
 			unset( $this->rows[ (string) $where['handle'] ] );
 			return 1;
+		}
+	}
+
+	if ( ! function_exists( 'current_time' ) ) {
+		function current_time( string $type, bool $gmt = false ): string { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
+			return gmdate( 'Y-m-d H:i:s' );
+		}
+	}
+
+	if ( ! function_exists( 'wp_json_encode' ) ) {
+		function wp_json_encode( mixed $value, int $flags = 0, int $depth = 512 ): string|false {
+			return json_encode( $value, $flags, $depth );
 		}
 	}
 
@@ -82,7 +92,7 @@ namespace {
 	}
 
 	require __DIR__ . '/../inc/Workspace/WorktreeContextInjector.php';
-	require __DIR__ . '/../inc/Workspace/WorktreeInventoryStore.php';
+	require __DIR__ . '/../inc/Storage/WorktreeInventoryRepository.php';
 
 	$assertions = 0;
 	$failures   = 0;
