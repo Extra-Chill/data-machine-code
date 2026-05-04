@@ -109,14 +109,14 @@ namespace {
 	$first_log = $GLOBALS['__retention_task_logs'][0] ?? array();
 	datamachine_code_retention_task_assert( str_contains( (string) ( $first_log[1][1] ?? '' ), 'removed 2 item(s)' ), 'log summary includes removed count' );
 
-	echo "\n[3] Agent maintenance flow bypasses global disabled setting\n";
+	echo "\n[3] Explicit CLI run bypasses global disabled setting\n";
 	$GLOBALS['__retention_task_logs'] = array();
 	$settings_class::$$enabled_prop = false;
 	$task = new \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask();
-	$task->executeTask( 203, array( 'source' => 'agent_maintenance_flow', 'dry_run' => true ) );
+	$task->executeTask( 203, array( 'source' => 'workspace_cleanup_cli', 'dry_run' => true ) );
 	$completed = $task->{$completed_prop};
-	datamachine_code_retention_task_assert( empty( $completed[0][1]['skipped'] ), 'agent maintenance flow runs through its own flow schedule' );
-	datamachine_code_retention_task_assert( true === (bool) ( $completed[0][1]['dry_run'] ?? false ), 'agent maintenance flow forwards task params' );
+	datamachine_code_retention_task_assert( empty( $completed[0][1]['skipped'] ), 'explicit CLI run bypasses disabled recurring schedule' );
+	datamachine_code_retention_task_assert( true === (bool) ( $completed[0][1]['dry_run'] ?? false ), 'explicit CLI run forwards task params' );
 
 	echo "\nAll workspace retention task smoke tests passed.\n";
 }

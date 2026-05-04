@@ -53,7 +53,6 @@ function datamachine_code_bootstrap() {
 	// Load Handlers (they self-register).
 	new \DataMachineCode\Handlers\GitHub\GitHub();
 	new \DataMachineCode\Handlers\GitHub\GitHubUpsert();
-	new \DataMachineCode\Handlers\Workspace\CleanupPlan();
 
 	// Register ability categories on the correct hook (must happen during wp_abilities_api_categories_init).
 	add_action( 'wp_abilities_api_categories_init', 'datamachine_code_register_ability_categories' );
@@ -61,8 +60,6 @@ function datamachine_code_bootstrap() {
 	// Register GitHub issue creation ability via SystemAbilities hook.
 	add_action( 'wp_abilities_api_init', 'datamachine_code_register_system_abilities' );
 
-	// Register bundled Data Machine pipeline templates owned by DMC.
-	\DataMachineCode\Pipelines\WorkspaceMaintenancePipelineTemplates::register();
 }
 add_action( 'plugins_loaded', 'datamachine_code_bootstrap', 20 );
 
@@ -229,36 +226,6 @@ add_filter( 'datamachine_tasks', function ( array $tasks ): array {
 	$tasks['workspace_hygiene_report']         = \DataMachineCode\Tasks\WorkspaceHygieneReportTask::class;
 	return $tasks;
 } );
-
-/**
- * Provision DMC maintenance flows for newly created agents.
- *
- * wp-coding-agents setup creates the coding agent through Data Machine's agent
- * surface. DMC treats that event as the setup-time hook for concrete,
- * agent-owned workspace maintenance flow instances. Existing installs can run
- * `wp datamachine-code workspace maintenance-flows provision --agent=<slug>`.
- */
-add_action( 'datamachine_agent_created', function ( int $agent_id, string $slug ): void {
-	$enabled = apply_filters( 'datamachine_code_provision_agent_maintenance_flows_on_agent_created', true, $agent_id, $slug );
-	if ( ! $enabled ) {
-		return;
-	}
-
-	$result = ( new \DataMachineCode\Maintenance\MaintenanceFlowProvisioner() )->provision( array( 'agent_id' => $agent_id ) );
-	if ( $result instanceof \WP_Error ) {
-		do_action(
-			'datamachine_log',
-			'error',
-			'Failed to provision DMC agent maintenance flows',
-			array(
-				'agent_id' => $agent_id,
-				'slug'     => $slug,
-				'error'    => $result->get_error_message(),
-				'code'     => $result->get_error_code(),
-			)
-		);
-	}
-}, 10, 2 );
 
 /**
  * Register recurring schedules for DM-code system tasks.
