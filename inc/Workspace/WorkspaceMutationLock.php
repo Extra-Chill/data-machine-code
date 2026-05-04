@@ -12,6 +12,10 @@ namespace DataMachineCode\Workspace;
 
 defined( 'ABSPATH' ) || exit;
 
+if ( ! class_exists( WorkspaceLockStore::class ) ) {
+	require_once __DIR__ . '/WorkspaceLockStore.php';
+}
+
 final class WorkspaceMutationLock {
 
 	private const POLL_USEC = 100000;
@@ -19,8 +23,14 @@ final class WorkspaceMutationLock {
 	/** @var resource|null */
 	private $handle = null;
 
-	private function __construct( $handle ) {
-		$this->handle = $handle;
+	private int $lock_id = 0;
+
+	private string $lock_path = '';
+
+	private function __construct( $handle, int $lock_id = 0, string $lock_path = '' ) {
+		$this->handle    = $handle;
+		$this->lock_id   = $lock_id;
+		$this->lock_path = $lock_path;
 	}
 
 	/**
@@ -100,7 +110,24 @@ final class WorkspaceMutationLock {
 
 		do {
 			if ( flock( $handle, LOCK_EX | LOCK_NB ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
-				return new self( $handle );
+				$lock_id = WorkspaceLockStore::register_acquired(
+					array(
+						'lock_key' => 'worktree-' . $repo,
+						'purpose'  => 'workspace_repo_mutation',
+						'scope'    => $repo,
+						'metadata' => array(
+							'workspace_path' => $workspace_path,
+							'lock_path'      => $lock_path,
+						),
+					)
+				);
+				if ( is_wp_error( $lock_id ) ) {
+					flock( $handle, LOCK_UN ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+					fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+					return $lock_id;
+				}
+
+				return new self( $handle, (int) $lock_id, $lock_path );
 			}
 
 			if ( 0 === $timeout || ( microtime( true ) - $started ) >= $timeout ) {
@@ -129,9 +156,51 @@ final class WorkspaceMutationLock {
 			return;
 		}
 
+		WorkspaceLockStore::release( $this->lock_id );
 		flock( $this->handle, LOCK_UN ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
 		fclose( $this->handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-		$this->handle = null;
+		$this->handle    = null;
+		$this->lock_id   = 0;
+		$this->lock_path = '';
+	}
+
+	/**
+	 * Summarize DB-visible and filesystem lock state.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public static function status( string $workspace_path ): array {
+		$filesystem = self::filesystem_status( $workspace_path );
+		$database   = WorkspaceLockStore::status();
+
+		return array(
+			'database'          => $database,
+			'filesystem'        => $filesystem,
+			'active'            => (int) ( $database['active'] ?? 0 ) + (int) ( $filesystem['active'] ?? 0 ),
+			'stale'             => (int) ( $database['stale'] ?? 0 ) + (int) ( $filesystem['stale'] ?? 0 ),
+			'retention_enabled' => true,
+			'policy'            => self::retention_policy(),
+		);
+	}
+
+	/**
+	 * Safely prune stale lock rows and unlocked stale filesystem lock files.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public static function prune_stale( string $workspace_path, bool $dry_run = false ): array {
+		$before     = self::status( $workspace_path );
+		$db_pruned  = $dry_run ? array( 'dry_run' => true ) : WorkspaceLockStore::prune_expired();
+		$fs_pruned  = self::prune_stale_filesystem_locks( $workspace_path, $dry_run );
+		$after      = self::status( $workspace_path );
+
+		return array(
+			'dry_run'    => $dry_run,
+			'before'     => $before,
+			'database'   => $db_pruned,
+			'filesystem' => $fs_pruned,
+			'after'      => $after,
+		);
 	}
 
 	public function __destruct() {
@@ -141,5 +210,113 @@ final class WorkspaceMutationLock {
 	private static function sanitize_repo_key( string $repo ): string {
 		$repo = preg_replace( '/[^a-zA-Z0-9._-]/', '', $repo );
 		return trim( (string) $repo, '-.' );
+	}
+
+	/**
+	 * @return array<string,mixed>
+	 */
+	private static function filesystem_status( string $workspace_path ): array {
+		$lock_dir = rtrim( $workspace_path, '/' ) . '/.locks';
+		$files    = is_dir( $lock_dir ) ? glob( $lock_dir . '/*.lock' ) : array();
+		$files    = false === $files ? array() : $files;
+		$policy   = self::retention_policy();
+		$cutoff   = time() - (int) $policy['filesystem_stale_after_seconds'];
+		$active   = 0;
+		$stale    = 0;
+		$recent   = 0;
+
+		foreach ( $files as $file ) {
+			$handle = fopen( $file, 'c' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+			if ( false === $handle ) {
+				continue;
+			}
+
+			if ( ! flock( $handle, LOCK_EX | LOCK_NB ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+				$active++;
+				fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+				continue;
+			}
+
+			flock( $handle, LOCK_UN ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+			fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			$mtime = filemtime( $file );
+			if ( false !== $mtime && $mtime < $cutoff ) {
+				$stale++;
+			} else {
+				$recent++;
+			}
+		}
+
+		return array(
+			'lock_dir' => $lock_dir,
+			'total'    => count( $files ),
+			'active'   => $active,
+			'stale'    => $stale,
+			'recent'   => $recent,
+		);
+	}
+
+	/**
+	 * @return array<string,mixed>
+	 */
+	private static function prune_stale_filesystem_locks( string $workspace_path, bool $dry_run ): array {
+		$lock_dir = rtrim( $workspace_path, '/' ) . '/.locks';
+		$files    = is_dir( $lock_dir ) ? glob( $lock_dir . '/*.lock' ) : array();
+		$files    = false === $files ? array() : $files;
+		$policy   = self::retention_policy();
+		$cutoff   = time() - (int) $policy['filesystem_stale_after_seconds'];
+		$removed  = array();
+		$skipped  = array();
+
+		foreach ( $files as $file ) {
+			$mtime = filemtime( $file );
+			if ( false === $mtime || $mtime >= $cutoff ) {
+				$skipped[] = array( 'path' => $file, 'reason' => 'not_stale' );
+				continue;
+			}
+
+			$handle = fopen( $file, 'c' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+			if ( false === $handle ) {
+				$skipped[] = array( 'path' => $file, 'reason' => 'open_failed' );
+				continue;
+			}
+
+			if ( ! flock( $handle, LOCK_EX | LOCK_NB ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+				$skipped[] = array( 'path' => $file, 'reason' => 'active' );
+				fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+				continue;
+			}
+
+			if ( ! $dry_run ) {
+				unlink( $file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+			}
+			flock( $handle, LOCK_UN ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+			fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			$removed[] = $file;
+		}
+
+		return array(
+			'dry_run'       => $dry_run,
+			'removed_count' => count( $removed ),
+			'removed'       => $removed,
+			'skipped_count' => count( $skipped ),
+			'skipped'       => $skipped,
+		);
+	}
+
+	/**
+	 * @return array<string,int>
+	 */
+	private static function retention_policy(): array {
+		$policy = array(
+			'filesystem_stale_after_seconds' => 86400,
+		);
+		if ( function_exists( 'apply_filters' ) ) {
+			$policy = (array) apply_filters( 'datamachine_code_cleanup_lock_retention_policy', $policy );
+		}
+
+		return array(
+			'filesystem_stale_after_seconds' => max( 60, (int) ( $policy['filesystem_stale_after_seconds'] ?? 86400 ) ),
+		);
 	}
 }

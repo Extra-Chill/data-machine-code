@@ -51,6 +51,7 @@ namespace {
 		}
 	}
 
+	require __DIR__ . '/../inc/Workspace/WorkspaceLockStore.php';
 	require __DIR__ . '/../inc/Workspace/WorkspaceMutationLock.php';
 
 	$failures = 0;
@@ -81,6 +82,9 @@ namespace {
 	$first = \DataMachineCode\Workspace\WorkspaceMutationLock::acquire( $tmp, 'demo', 1 );
 	$assert( false, is_wp_error( $first ), 'first acquisition succeeds' );
 	$assert( true, is_file( $tmp . '/.locks/worktree-demo.lock' ), 'lock file is created under workspace .locks directory' );
+	$status = \DataMachineCode\Workspace\WorkspaceMutationLock::status( $tmp );
+	$assert( 1, (int) $status['active'], 'held filesystem lock is visible in aggregate active count' );
+	$assert( false, (bool) $status['database']['available'], 'DB lock store reports unavailable in pure-PHP smoke context' );
 
 	$busy = \DataMachineCode\Workspace\WorkspaceMutationLock::acquire( $tmp, 'demo', 0 );
 	$assert( true, is_wp_error( $busy ), 'same repo acquisition fails fast while held' );
@@ -96,6 +100,20 @@ namespace {
 	if ( ! is_wp_error( $first ) ) {
 		$first->release();
 	}
+	$status = \DataMachineCode\Workspace\WorkspaceMutationLock::status( $tmp );
+	$assert( 0, (int) $status['active'], 'released filesystem lock is no longer active' );
+	$assert( 2, (int) $status['filesystem']['recent'], 'released filesystem lock files are visible as recent retention residue' );
+
+	$stale_path = $tmp . '/.locks/worktree-stale.lock';
+	touch( $stale_path, time() - 172800 );
+	$stale_status = \DataMachineCode\Workspace\WorkspaceMutationLock::status( $tmp );
+	$assert( 1, (int) $stale_status['stale'], 'old unlocked filesystem lock is counted stale' );
+	$dry_prune = \DataMachineCode\Workspace\WorkspaceMutationLock::prune_stale( $tmp, true );
+	$assert( true, is_file( $stale_path ), 'dry-run stale lock prune does not remove file' );
+	$assert( 1, (int) $dry_prune['filesystem']['removed_count'], 'dry-run reports stale lock file candidate' );
+	$prune = \DataMachineCode\Workspace\WorkspaceMutationLock::prune_stale( $tmp, false );
+	$assert( false, is_file( $stale_path ), 'stale lock prune removes unlocked old file' );
+	$assert( 1, (int) $prune['filesystem']['removed_count'], 'stale lock prune reports removed file' );
 
 	$after_release = \DataMachineCode\Workspace\WorkspaceMutationLock::acquire( $tmp, 'demo', 0 );
 	$assert( false, is_wp_error( $after_release ), 'same repo acquisition succeeds after release' );

@@ -1043,6 +1043,7 @@ class WorkspaceAbilities {
 							'worktree_status_mode'      => array( 'type' => 'string' ),
 							'top_repos_by_worktrees'    => array( 'type' => 'array' ),
 							'top_repos_by_size'         => array( 'type' => 'array' ),
+							'locks'                     => array( 'type' => 'object' ),
 							'cleanup'                   => array( 'type' => 'object' ),
 							'suggested_cleanup_command' => array( 'type' => 'string' ),
 							'notes'                     => array( 'type' => 'array' ),

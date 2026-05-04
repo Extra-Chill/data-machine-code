@@ -2026,6 +2026,7 @@ class Workspace {
 		$size_report   = $include_sizes ? $this->build_workspace_size_report( $size_limit ) : $this->empty_workspace_size_report( $size_limit, false );
 		$cleanup       = null;
 		$cleanup_error = null;
+		$locks         = WorkspaceMutationLock::status( $this->workspace_path );
 
 		if ( $include_cleanup ) {
 			$cleanup = $this->worktree_cleanup_merged(
@@ -2059,6 +2060,7 @@ class Workspace {
 			'worktree_status_mode'      => $worktree_status_mode,
 			'top_repos_by_worktrees'    => $this->top_repos_by_worktree_count( $worktrees, 10 ),
 			'top_repos_by_size'         => $this->top_repos_by_size( (array) ( $size_report['entries'] ?? array() ), 10 ),
+			'locks'                     => $locks,
 			'cleanup'                   => $this->summarize_workspace_cleanup( $cleanup, $cleanup_error, (array) ( $size_report['entries'] ?? array() ) ),
 			'suggested_cleanup_command' => 'wp datamachine-code workspace worktree cleanup --dry-run --inventory-only --skip-github --format=json',
 			'notes'                     => array_values( array_filter( array(
@@ -2090,6 +2092,7 @@ class Workspace {
 
 		$worktree_result = null;
 		$artifact_result = null;
+		$lock_retention  = WorkspaceMutationLock::prune_stale( $this->workspace_path, $dry_run );
 
 		if ( $worktree_cleanup ) {
 			$worktree_result = $this->worktree_cleanup_merged(
@@ -2150,6 +2153,8 @@ class Workspace {
 				'skip_github'         => $skip_github,
 				'force'               => $force,
 			),
+			'lock_retention' => $lock_retention,
+			'storage'        => $this->cleanup_storage_status(),
 			'report'         => $report,
 			'worktrees'      => $worktree_result,
 			'artifacts'      => $artifact_result,
@@ -2587,6 +2592,45 @@ class Workspace {
 			'skipped_by_reason'    => $cleanup['summary']['skipped_by_reason'] ?? array(),
 			'candidates_by_signal' => $cleanup['summary']['candidates_by_signal'] ?? array(),
 		);
+	}
+
+	/**
+	 * Report whether DB cleanup storage tables are available for retention hooks.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function cleanup_storage_status(): array {
+		$status = array(
+			'cleanup_runs_available'  => false,
+			'cleanup_items_available' => false,
+			'locks_available'         => (bool) ( WorkspaceLockStore::status()['available'] ?? false ),
+			'policy_hooks'            => array(
+				'datamachine_code_lock_expires_seconds',
+				'datamachine_code_lock_released_ttl_seconds',
+				'datamachine_code_cleanup_lock_retention_policy',
+			),
+			'note'                    => 'Cleanup run/item table retention is inactive until those DB tables exist; lock storage is handled separately in datamachine_code_locks.',
+		);
+
+		global $wpdb;
+		if ( ! is_object( $wpdb ) || ! isset( $wpdb->prefix ) ) {
+			return $status;
+		}
+
+		$runs_table                         = $wpdb->prefix . 'datamachine_code_cleanup_runs';
+		$items_table                        = $wpdb->prefix . 'datamachine_code_cleanup_items';
+		$status['cleanup_runs_available']  = $this->database_table_exists( $runs_table );
+		$status['cleanup_items_available'] = $this->database_table_exists( $items_table );
+		if ( $status['cleanup_runs_available'] && $status['cleanup_items_available'] ) {
+			$status['note'] = 'Cleanup run/item tables are available; future retention can attach to the declared cleanup storage hooks without changing lock ownership.';
+		}
+
+		return $status;
+	}
+
+	private function database_table_exists( string $table ): bool {
+		global $wpdb;
+		return $table === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
 	}
 
 	/**
