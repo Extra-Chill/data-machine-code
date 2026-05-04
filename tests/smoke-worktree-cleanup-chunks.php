@@ -214,6 +214,16 @@ namespace {
 	$assert( 'artifact_already_removed', $retry['skipped'][0]['reason_code'] ?? '', 'missing artifact is treated as already complete' );
 	$assert( array( 'demo@clean' ), $retry['evidence']['skipped_handles'] ?? array(), 'retry evidence includes skipped handle' );
 
+	mkdir( $tmp . '/demo@clean/target', 0755, true );
+	file_put_contents( $tmp . '/demo@clean/target/artifact.bin', str_repeat( 'y', 1024 ) );
+	$task->executeTask( 103, array( 'chunk_type' => 'artifact_discovery', 'limit' => 10, 'offset' => 0 ) );
+	$discovery = $GLOBALS['datamachine_code_chunk_jobs'][103] ?? array();
+	$assert( true, (bool) ( $discovery['success'] ?? false ), 'artifact discovery chunk succeeds' );
+	$assert( 1, (int) ( $discovery['planned_count'] ?? 0 ), 'artifact discovery chunk plans bounded safe rows' );
+	$assert( 1, (int) ( $discovery['applied_count'] ?? 0 ), 'artifact discovery chunk applies planned artifact rows' );
+	$assert( false, is_dir( $tmp . '/demo@clean/target' ), 'artifact discovery chunk removes artifact directory' );
+	$assert( 'bounded_inventory_safety', $discovery['evidence']['pagination']['mode'] ?? '', 'artifact discovery chunk uses bounded inventory pagination with safety probes' );
+
 	if ( $failures > 0 ) {
 		echo "\nFAILURES: {$failures}/{$total}\n";
 		exit( 1 );

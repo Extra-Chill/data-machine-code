@@ -52,8 +52,33 @@ namespace DataMachine\Engine\AI\System\Tasks {
 	}
 }
 
+namespace DataMachine\Engine\Tasks {
+	class TaskScheduler {
+		public static array $batches = array();
+
+		public static function scheduleBatch( string $task_type, array $items, array $context = array() ) {
+			self::$batches[] = array(
+				'task_type' => $task_type,
+				'items'     => $items,
+				'context'   => $context,
+			);
+
+			return array(
+				'batch_job_id' => 301,
+				'job_ids'      => range( 401, 400 + count( $items ) ),
+			);
+		}
+	}
+}
+
 namespace DataMachineCode\Workspace {
 	class Workspace {
+		public static array $artifact_opts = array();
+
+		public function get_path(): string {
+			return '/tmp/dmc-retention-task-workspace';
+		}
+
 		public function workspace_retention_cleanup( array $opts = array() ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 			return array(
 				'success' => true,
@@ -65,6 +90,32 @@ namespace DataMachineCode\Workspace {
 					'remaining_disk_budget_human'  => '400.0 GiB',
 				),
 			);
+		}
+
+		public function worktree_cleanup_artifacts( array $opts = array() ): array {
+			self::$artifact_opts[] = $opts;
+			return array(
+				'success'    => true,
+				'dry_run'    => true,
+				'candidates' => array(),
+				'skipped'    => array(),
+				'summary'    => array(
+					'pagination' => array(
+						'total' => 25,
+					),
+				),
+				'pagination' => array(
+					'total' => 25,
+				),
+			);
+		}
+
+		public function worktree_reconcile_metadata( array $opts = array() ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+			return array( 'proposals' => array() );
+		}
+
+		public function worktree_cleanup_merged( array $opts = array() ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+			return array( 'candidates' => array() );
 		}
 	}
 }
@@ -117,6 +168,29 @@ namespace {
 	$completed = $task->{$completed_prop};
 	datamachine_code_retention_task_assert( empty( $completed[0][1]['skipped'] ), 'explicit CLI run bypasses disabled recurring schedule' );
 	datamachine_code_retention_task_assert( true === (bool) ( $completed[0][1]['dry_run'] ?? false ), 'explicit CLI run forwards task params' );
+
+	echo "\n[4] Artifact cleanup schedules bounded discovery chunks\n";
+	\DataMachine\Engine\Tasks\TaskScheduler::$batches = array();
+	\DataMachineCode\Workspace\Workspace::$artifact_opts = array();
+	$task = new \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask();
+	$task->executeTask(
+		204,
+		array(
+			'source'              => 'workspace_cleanup_cli',
+			'artifact_cleanup'    => true,
+			'worktree_cleanup'    => false,
+			'metadata_repair'     => false,
+			'artifact_chunk_size' => 10,
+		)
+	);
+	$completed = $task->{$completed_prop};
+	$batch     = \DataMachine\Engine\Tasks\TaskScheduler::$batches[0] ?? array();
+	datamachine_code_retention_task_assert( 'worktree_cleanup_chunk' === ( $batch['task_type'] ?? '' ), 'retention task schedules cleanup chunk batch' );
+	datamachine_code_retention_task_assert( 3 === count( $batch['items'] ?? array() ), 'artifact inventory total fans out into bounded discovery pages' );
+	datamachine_code_retention_task_assert( 'artifact_discovery' === ( $batch['items'][0]['chunk_type'] ?? '' ), 'artifact cleanup uses discovery chunks instead of prebuilt artifact rows' );
+	datamachine_code_retention_task_assert( array( 0, 10, 20 ) === array_column( $batch['items'], 'offset' ), 'discovery chunks carry stable offsets' );
+	datamachine_code_retention_task_assert( empty( \DataMachineCode\Workspace\Workspace::$artifact_opts[0]['exhaustive'] ), 'parent does not run exhaustive artifact dry-run' );
+	datamachine_code_retention_task_assert( 3 === (int) ( $completed[0][1]['chunk_row_counts']['artifact_discovery'] ?? 0 ), 'completion report exposes discovery chunk count' );
 
 	echo "\nAll workspace retention task smoke tests passed.\n";
 }

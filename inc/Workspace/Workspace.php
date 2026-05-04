@@ -5772,10 +5772,11 @@ class Workspace {
 			}
 		}
 
-		// Exhaustive dry-run still uses the full git-backed listing. Apply-plan
-		// calls provide `only_handles`; keep those bounded by starting from cheap
-		// inventory and probing only the planned rows below.
-		if ( $safety_probes && null === $only_handles ) {
+		// Exhaustive unbounded dry-runs still use the full git-backed listing.
+		// Bounded discovery/apply chunks start from cheap inventory and run probes
+		// only for the current page so task fanout is not blocked by full planning.
+		$uses_git_listing = $safety_probes && null === $only_handles && $limit <= 0;
+		if ( $uses_git_listing ) {
 			$listing = $this->worktree_list();
 			if ( $listing instanceof \WP_Error ) {
 				return $listing;
@@ -5937,14 +5938,14 @@ class Workspace {
 		}
 
 		$pagination = array(
-			'mode'         => $safety_probes ? 'exhaustive' : 'bounded_inventory',
-			'limit'        => $bounded ? $limit : 0,
-			'offset'       => $slice_start,
-			'scanned'      => count( $slice ),
-			'total'        => $total,
-			'complete'     => ! $bounded || $slice_end >= $total,
-			'partial'      => $bounded && $slice_end < $total,
-			'next_offset'  => ( $bounded && $slice_end < $total ) ? $slice_end : null,
+			'mode'          => $safety_probes ? ( $uses_git_listing ? 'exhaustive' : 'bounded_inventory_safety' ) : 'bounded_inventory',
+			'limit'         => $bounded ? $limit : 0,
+			'offset'        => $slice_start,
+			'scanned'       => count( $slice ),
+			'total'         => $total,
+			'complete'      => ! $bounded || $slice_end >= $total,
+			'partial'       => $bounded && $slice_end < $total,
+			'next_offset'   => ( $bounded && $slice_end < $total ) ? $slice_end : null,
 			'safety_probes' => $safety_probes,
 		);
 
