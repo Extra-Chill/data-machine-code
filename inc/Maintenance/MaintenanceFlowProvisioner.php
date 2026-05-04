@@ -7,6 +7,7 @@
 
 namespace DataMachineCode\Maintenance;
 
+use DataMachineCode\Pipelines\WorkspaceMaintenancePipelineTemplates;
 use DataMachineCode\Workspace\Workspace;
 
 defined( 'ABSPATH' ) || exit;
@@ -19,6 +20,7 @@ class MaintenanceFlowProvisioner {
 	private const PIPELINE_SLUG_PREFIX = 'dmc-maintenance-';
 	private const FLOW_SLUG_SUFFIX     = '-flow';
 	private const MARKER_KEY           = 'data_machine_code_agent_maintenance';
+	private const SCHEMA               = 'data-machine-code/agent-maintenance-flow/v1';
 
 	/**
 	 * Provision all maintenance flows for an agent.
@@ -32,7 +34,7 @@ class MaintenanceFlowProvisioner {
 			return $agent;
 		}
 
-		if ( ! class_exists( '\DataMachine\Core\Database\Pipelines\Pipelines' ) || ! class_exists( '\DataMachine\Core\Database\Flows\Flows' ) ) {
+		if ( ! class_exists( '\DataMachine\Core\Database\Pipelines\Pipelines' ) || ! class_exists( '\DataMachine\Core\Database\Flows\Flows' ) || ! class_exists( WorkspaceMaintenancePipelineTemplates::class ) ) {
 			return new \WP_Error( 'datamachine_repositories_missing', 'Data Machine pipeline/flow repositories are not available.' );
 		}
 
@@ -41,8 +43,8 @@ class MaintenanceFlowProvisioner {
 		$context   = $this->build_context( $agent, $args );
 
 		$results = array();
-		foreach ( MaintenanceFlowTemplates::all( $context ) as $slug => $definition ) {
-			$provisioned = $this->provision_one( $pipelines, $flows, (int) $agent['agent_id'], (string) $slug, $definition, $context );
+		foreach ( WorkspaceMaintenancePipelineTemplates::templates() as $template_key => $definition ) {
+			$provisioned = $this->provision_one( $pipelines, $flows, (int) $agent['agent_id'], (string) $template_key, $definition, $context );
 			if ( $provisioned instanceof \WP_Error ) {
 				return $provisioned;
 			}
@@ -65,8 +67,8 @@ class MaintenanceFlowProvisioner {
 	 * @param array<string,mixed> $context Provisioning context.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function provision_one( object $pipelines, object $flows, int $agent_id, string $slug, array $definition, array $context ): array|\WP_Error {
-		$pipeline_slug = self::PIPELINE_SLUG_PREFIX . $slug;
+	private function provision_one( object $pipelines, object $flows, int $agent_id, string $template_key, array $definition, array $context ): array|\WP_Error {
+		$pipeline_slug = (string) ( $definition['slug'] ?? self::PIPELINE_SLUG_PREFIX . $template_key );
 		$flow_slug     = $pipeline_slug . self::FLOW_SLUG_SUFFIX;
 		$name          = (string) $definition['name'];
 		$pipeline      = $pipelines->get_by_portable_slug( $agent_id, $pipeline_slug );
@@ -87,7 +89,7 @@ class MaintenanceFlowProvisioner {
 		}
 
 		$pipeline_id     = (int) $pipeline['pipeline_id'];
-		$pipeline_config = $this->build_pipeline_config( $pipeline_id, $slug, $definition );
+		$pipeline_config = $this->build_pipeline_config( $pipeline_id, $definition );
 		if ( (array) ( $pipeline['pipeline_config'] ?? array() ) !== $pipeline_config || (string) ( $pipeline['pipeline_name'] ?? '' ) !== $name ) {
 			$updated = $pipelines->update_pipeline( $pipeline_id, array(
 				'pipeline_name'   => $name,
@@ -101,7 +103,7 @@ class MaintenanceFlowProvisioner {
 		}
 
 		$flow       = $flows->get_by_portable_slug( $pipeline_id, $flow_slug );
-		$scheduling = $this->build_scheduling_config( $slug, $definition, $context );
+		$scheduling = $this->build_scheduling_config( $template_key, $definition, $context );
 		if ( ! $flow ) {
 			$flow_id = $flows->create_flow( array(
 				'pipeline_id'       => $pipeline_id,
@@ -119,7 +121,7 @@ class MaintenanceFlowProvisioner {
 		}
 
 		$flow_id     = (int) $flow['flow_id'];
-		$flow_config = $this->build_flow_config( $pipeline_id, $flow_id, $slug, $definition );
+		$flow_config = $this->build_flow_config( $pipeline_id, $flow_id, $definition, $context );
 		if ( (array) ( $flow['flow_config'] ?? array() ) !== $flow_config || (array) ( $flow['scheduling_config'] ?? array() ) !== $scheduling || (string) ( $flow['flow_name'] ?? '' ) !== $name ) {
 			$updated = $flows->update_flow( $flow_id, array(
 				'flow_name'         => $name,
@@ -135,7 +137,7 @@ class MaintenanceFlowProvisioner {
 		}
 
 		return array(
-			'slug'          => $slug,
+			'slug'          => $template_key,
 			'status'        => $status,
 			'pipeline_id'   => $pipeline_id,
 			'pipeline_slug' => $pipeline_slug,
@@ -149,52 +151,81 @@ class MaintenanceFlowProvisioner {
 	/**
 	 * @return array<string,array<string,mixed>>
 	 */
-	private function build_pipeline_config( int $pipeline_id, string $slug, array $definition ): array {
-		$step_id = $this->pipeline_step_id( $pipeline_id, $slug );
-		return array(
-			$step_id => array(
-				'pipeline_step_id' => $step_id,
-				'step_type'        => 'system_task',
-				'execution_order'  => 0,
-				'label'            => (string) $definition['name'],
-			),
-		);
+	private function build_pipeline_config( int $pipeline_id, array $definition ): array {
+		$config = array();
+		foreach ( array_values( (array) ( $definition['steps'] ?? array() ) ) as $index => $step ) {
+			$step_id            = $this->pipeline_step_id( $pipeline_id, $definition, (array) $step, $index );
+			$config[ $step_id ] = array_filter(
+				array(
+					'pipeline_step_id' => $step_id,
+					'step_type'        => (string) ( $step['type'] ?? '' ),
+					'execution_order'  => $index,
+					'label'            => (string) ( $step['label'] ?? ucfirst( str_replace( '_', ' ', (string) ( $step['type'] ?? '' ) ) ) ),
+					'system_prompt'    => $step['user_message'] ?? null,
+					'enabled_tools'    => $step['enabled_tools'] ?? null,
+					'template_meta'    => array(
+						'slug'        => (string) ( $definition['slug'] ?? '' ),
+						'description' => (string) ( $definition['description'] ?? '' ),
+						'inputs'      => (array) ( $definition['inputs'] ?? array() ),
+					),
+				),
+				fn( $value ) => null !== $value
+			);
+		}
+
+		return $config;
 	}
 
 	/**
 	 * @return array<string,array<string,mixed>>
 	 */
-	private function build_flow_config( int $pipeline_id, int $flow_id, string $slug, array $definition ): array {
-		$pipeline_step_id = $this->pipeline_step_id( $pipeline_id, $slug );
-		$flow_step_id     = $pipeline_step_id . '_' . $flow_id;
-
-		return array(
-			$flow_step_id => array(
-				'flow_step_id'     => $flow_step_id,
-				'pipeline_step_id' => $pipeline_step_id,
-				'step_type'        => 'system_task',
-				'execution_order'  => 0,
-				'queue_mode'       => 'static',
-				'pipeline_id'      => $pipeline_id,
-				'flow_id'          => $flow_id,
-				'handler_config'   => array(
-					'task'   => (string) $definition['task_type'],
-					'params' => (array) $definition['params'],
+	private function build_flow_config( int $pipeline_id, int $flow_id, array $definition, array $context ): array {
+		$config = array();
+		foreach ( array_values( (array) ( $definition['steps'] ?? array() ) ) as $index => $step ) {
+			$step             = (array) $step;
+			$pipeline_step_id = $this->pipeline_step_id( $pipeline_id, $definition, $step, $index );
+			$flow_step_id     = $pipeline_step_id . '_' . $flow_id;
+			$flow_step        = array_filter(
+				array(
+					'flow_step_id'     => $flow_step_id,
+					'pipeline_step_id' => $pipeline_step_id,
+					'step_type'        => (string) ( $step['type'] ?? '' ),
+					'execution_order'  => $index,
+					'queue_mode'       => 'static',
+					'pipeline_id'      => $pipeline_id,
+					'flow_id'          => $flow_id,
+					'enabled_tools'    => $step['enabled_tools'] ?? null,
+					'handler_config'   => $this->enrich_handler_config( (array) ( $step['handler_config'] ?? array() ), $context ),
 				),
-			),
-		);
+				fn( $value ) => null !== $value && array() !== $value
+			);
+
+			if ( isset( $step['user_message'] ) ) {
+				$flow_step['prompt_queue'] = array(
+					array(
+						'prompt'   => (string) $step['user_message'],
+						'added_at' => gmdate( 'c' ),
+					),
+				);
+			}
+
+			$config[ $flow_step_id ] = $flow_step;
+		}
+
+		return $config;
 	}
 
 	/**
 	 * @return array<string,mixed>
 	 */
-	private function build_scheduling_config( string $slug, array $definition, array $context ): array {
+	private function build_scheduling_config( string $template_key, array $definition, array $context ): array {
 		return array(
-			'interval'       => (string) ( $definition['interval'] ?? 'manual' ),
+			'interval'       => $this->interval_for_template( $template_key ),
 			self::MARKER_KEY => array(
-				'schema'         => MaintenanceFlowTemplates::SCHEMA,
-				'slug'           => $slug,
-				'task_type'      => (string) ( $definition['task_type'] ?? '' ),
+				'schema'         => self::SCHEMA,
+				'slug'           => (string) ( $definition['slug'] ?? '' ),
+				'template_key'   => $template_key,
+				'template_version' => WorkspaceMaintenancePipelineTemplates::VERSION,
 				'workspace_root' => (string) ( $context['workspace_root'] ?? '' ),
 				'agent_slug'     => (string) ( $context['agent_slug'] ?? '' ),
 				'site_identity'  => (array) ( $context['site_identity'] ?? array() ),
@@ -212,14 +243,51 @@ class MaintenanceFlowProvisioner {
 		);
 	}
 
+	/**
+	 * @return array<string,mixed>
+	 */
+	private function enrich_handler_config( array $handler_config, array $context ): array {
+		if ( empty( $handler_config['task'] ) ) {
+			return $handler_config;
+		}
+
+		$params = is_array( $handler_config['params'] ?? null ) ? $handler_config['params'] : array();
+		$params = array_merge(
+			array(
+				'source'         => 'agent_maintenance_flow',
+				'workspace_root' => (string) ( $context['workspace_root'] ?? '' ),
+				'site_identity'  => (array) ( $context['site_identity'] ?? array() ),
+				'agent_slug'     => (string) ( $context['agent_slug'] ?? '' ),
+			),
+			$params
+		);
+
+		$handler_config['params'] = $params;
+		return $handler_config;
+	}
+
+	private function interval_for_template( string $template_key ): string {
+		return match ( $template_key ) {
+			'workspace-inventory'         => 'hourly',
+			'workspace-artifact-cleanup'  => 'every_4_hours',
+			'workspace-metadata-repair',
+			'workspace-retention-cleanup' => 'daily',
+			default                       => 'manual',
+		};
+	}
+
 	private function sync_schedule( int $flow_id, array $scheduling ): void {
 		if ( class_exists( '\DataMachine\Api\Flows\FlowScheduling' ) ) {
 			\DataMachine\Api\Flows\FlowScheduling::handle_scheduling_update( $flow_id, $scheduling, true );
 		}
 	}
 
-	private function pipeline_step_id( int $pipeline_id, string $slug ): string {
-		return $pipeline_id . '_dmc_maintenance_' . str_replace( '-', '_', $slug );
+	private function pipeline_step_id( int $pipeline_id, array $definition, array $step, int $index ): string {
+		$slug = (string) ( $definition['slug'] ?? 'dmc-maintenance' );
+		$id   = (string) ( $step['id'] ?? 'step-' . $index );
+		$key  = $slug . '-' . $id;
+
+		return $pipeline_id . '_' . ( function_exists( 'sanitize_key' ) ? sanitize_key( $key ) : strtolower( preg_replace( '/[^a-z0-9_\-]/i', '', $key ) ) );
 	}
 
 	/**

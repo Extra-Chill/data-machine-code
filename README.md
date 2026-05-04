@@ -33,6 +33,7 @@ Sibling extensions like `data-machine-socials` and `data-machine-business` are *
 - Clone and manage git repositories in a secure workspace directory
 - Read, write, and edit files within workspace repos
 - List directory contents with file metadata
+- Bundled Data Machine pipeline templates for workspace inventory, metadata repair, artifact cleanup, retention cleanup, and emergency cleanup
 
 ### Git Operations
 - Status, log, diff (read-only)
@@ -151,6 +152,30 @@ array(
 ```
 
 Workspace git policies are configured via the `datamachine_workspace_git_policies` option for per-repo write/push controls.
+
+### Workspace maintenance pipelines
+
+DMC registers bundled, agent-generic Data Machine pipeline templates for recurring workspace maintenance. They are discoverable through the normal pipeline surface:
+
+```bash
+wp datamachine pipeline list --search="DMC Workspace"
+```
+
+Terminology:
+
+- **Pipeline**: reusable recipe/template, owned by DMC and safe to inspect without running anything.
+- **Flow**: agent/site-specific instance of a pipeline with scheduling and config such as workspace root, thresholds, retention windows, artifact profile, and dry-run/apply mode.
+- **Job**: one execution created when a flow runs.
+
+Bundled templates:
+
+- **DMC Workspace Inventory**: cheap disk/worktree inventory and top cleanup offenders.
+- **DMC Workspace Metadata Repair**: review-first lifecycle metadata reconciliation plan.
+- **DMC Workspace Artifact Cleanup**: artifact-first cleanup for reconstructable generated files.
+- **DMC Workspace Retention Cleanup**: age-gated cleanup for finalized, merged, or stale worktrees.
+- **DMC Workspace Emergency Cleanup**: disk-pressure recovery template that starts with inventory and escalates only after review.
+
+The bundled records do not provision flows or schedules. Create flows from these pipelines when an agent/site has explicit maintenance policy, thresholds, and dry-run/apply settings.
 
 ## Architecture
 

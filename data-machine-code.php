@@ -53,12 +53,16 @@ function datamachine_code_bootstrap() {
 	// Load Handlers (they self-register).
 	new \DataMachineCode\Handlers\GitHub\GitHub();
 	new \DataMachineCode\Handlers\GitHub\GitHubUpsert();
+	new \DataMachineCode\Handlers\Workspace\CleanupPlan();
 
 	// Register ability categories on the correct hook (must happen during wp_abilities_api_categories_init).
 	add_action( 'wp_abilities_api_categories_init', 'datamachine_code_register_ability_categories' );
 
 	// Register GitHub issue creation ability via SystemAbilities hook.
 	add_action( 'wp_abilities_api_init', 'datamachine_code_register_system_abilities' );
+
+	// Register bundled Data Machine pipeline templates owned by DMC.
+	\DataMachineCode\Pipelines\WorkspaceMaintenancePipelineTemplates::register();
 }
 add_action( 'plugins_loaded', 'datamachine_code_bootstrap', 20 );
 
@@ -218,13 +222,10 @@ add_action( 'plugins_loaded', 'datamachine_code_load_chat_tools', 25 );
  */
 add_filter( 'datamachine_tasks', function ( array $tasks ): array {
 	$tasks['github_create_issue']         = \DataMachineCode\Tasks\GitHubIssueTask::class;
+	$tasks['worktree_cleanup_chunk']      = \DataMachineCode\Tasks\WorktreeCleanupChunkTask::class;
 	$tasks['worktree_cleanup']            = \DataMachineCode\Tasks\WorktreeCleanupTask::class;
 	$tasks['workspace_retention_cleanup'] = \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask::class;
 	$tasks['workspace_hygiene_report']    = \DataMachineCode\Tasks\WorkspaceHygieneReportTask::class;
-	$tasks['workspace_inventory']         = \DataMachineCode\Tasks\WorkspaceInventoryTask::class;
-	$tasks['worktree_metadata_repair']    = \DataMachineCode\Tasks\WorktreeMetadataRepairTask::class;
-	$tasks['worktree_artifact_cleanup']   = \DataMachineCode\Tasks\WorktreeArtifactCleanupTask::class;
-	$tasks['worktree_emergency_cleanup']  = \DataMachineCode\Tasks\WorktreeEmergencyCleanupTask::class;
 	return $tasks;
 } );
 

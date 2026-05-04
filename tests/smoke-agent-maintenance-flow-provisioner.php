@@ -104,10 +104,11 @@ namespace {
 	}
 
 	function sanitize_title( $value ): string { return strtolower( preg_replace( '/[^a-z0-9_\-]/i', '-', trim( (string) $value ) ) ); }
+	function sanitize_key( $value ): string { return strtolower( preg_replace( '/[^a-z0-9_\-]/i', '', (string) $value ) ); }
 	function get_bloginfo( string $show ): string { return 'name' === $show ? 'Test Site' : ''; }
 	function home_url(): string { return 'https://example.test'; }
 
-	require __DIR__ . '/../inc/Maintenance/MaintenanceFlowTemplates.php';
+	require __DIR__ . '/../inc/Pipelines/WorkspaceMaintenancePipelineTemplates.php';
 	require __DIR__ . '/../inc/Maintenance/MaintenanceFlowProvisioner.php';
 
 	use DataMachine\Core\Database\Flows\Flows;
@@ -140,10 +141,11 @@ namespace {
 	$assert( 42 === (int) ( $flow['agent_id'] ?? 0 ), 'flow carries agent_id for agent-scoped listing' );
 	$assert( isset( $flow['scheduling_config']['data_machine_code_agent_maintenance'] ), 'scheduling config carries maintenance marker' );
 	$assert( '/tmp/dmc-workspace' === ( $flow['scheduling_config']['data_machine_code_agent_maintenance']['workspace_root'] ?? '' ), 'marker carries workspace root' );
+	$assert( '2026-05-03' === ( $flow['scheduling_config']['data_machine_code_agent_maintenance']['template_version'] ?? '' ), 'marker carries source template version' );
 
 	$artifact = null;
 	foreach ( Flows::$rows as $row ) {
-		if ( 'dmc-maintenance-artifact-cleanup-flow' === ( $row['portable_slug'] ?? '' ) ) {
+		if ( 'dmc-workspace-artifact-cleanup-flow' === ( $row['portable_slug'] ?? '' ) ) {
 			$artifact = $row;
 			break;
 		}
@@ -151,6 +153,7 @@ namespace {
 	$artifact_step = array_values( $artifact['flow_config'] ?? array() )[0] ?? array();
 	$assert( 'every_4_hours' === ( $artifact['scheduling_config']['interval'] ?? '' ), 'artifact cleanup defaults to frequent schedule' );
 	$assert( true === ( $artifact_step['handler_config']['params']['dry_run'] ?? false ), 'artifact cleanup defaults to dry-run' );
+	$assert( 'agent_maintenance_flow' === ( $artifact_step['handler_config']['params']['source'] ?? '' ), 'flow task params carry agent maintenance source' );
 
 	$second = $provisioner->provision( array( 'agent_id' => 42 ) );
 	$assert( ! $second instanceof WP_Error, 'provision succeeds for numeric agent id' );

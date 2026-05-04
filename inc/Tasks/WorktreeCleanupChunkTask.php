@@ -1,0 +1,267 @@
+<?php
+/**
+ * Worktree cleanup chunk system task.
+ *
+ * @package DataMachineCode\Tasks
+ */
+
+namespace DataMachineCode\Tasks;
+
+use DataMachine\Engine\AI\System\Tasks\SystemTask;
+use DataMachineCode\Workspace\Workspace;
+
+defined( 'ABSPATH' ) || exit;
+
+class WorktreeCleanupChunkTask extends SystemTask {
+
+	/**
+	 * Task type identifier.
+	 *
+	 * @return string
+	 */
+	public function getTaskType(): string {
+		return 'worktree_cleanup_chunk';
+	}
+
+	/**
+	 * Task metadata for Data Machine job surfaces.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public static function getTaskMeta(): array {
+		return array(
+			'label'           => 'Worktree Cleanup Chunk',
+			'description'     => 'Applies one reviewed cleanup chunk for artifacts, metadata repair, or worktree removal.',
+			'setting_key'     => null,
+			'default_enabled' => true,
+			'supports_run'    => false,
+		);
+	}
+
+	/**
+	 * Execute one cleanup chunk.
+	 *
+	 * @param int   $jobId  Job ID.
+	 * @param array $params Task params.
+	 * @return void
+	 */
+	public function executeTask( int $jobId, array $params ): void {
+		$started_at = microtime( true );
+		$chunk_type = (string) ( $params['chunk_type'] ?? '' );
+		$rows       = is_array( $params['rows'] ?? null ) ? array_values( (array) $params['rows'] ) : array();
+
+		if ( '' === $chunk_type || array() === $rows ) {
+			$this->completeJob(
+				$jobId,
+				$this->build_chunk_result(
+					$chunk_type,
+					$rows,
+					array(),
+					array(),
+					$this->rows_to_failed( $rows, 'invalid_chunk', 'chunk_type and rows are required' ),
+					0,
+					$started_at,
+					array( 'error' => 'chunk_type and rows are required' )
+				)
+			);
+			return;
+		}
+
+		$workspace = new Workspace();
+		$result    = match ( $chunk_type ) {
+			'artifacts' => $workspace->worktree_cleanup_artifacts(
+				array(
+					'apply_plan' => array( 'candidates' => $rows ),
+					'force'      => ! empty( $params['force'] ),
+				)
+			),
+			'metadata'  => $workspace->worktree_reconcile_metadata(
+				array(
+					'apply_plan' => array( 'proposals' => $rows ),
+				)
+			),
+			'worktrees' => $workspace->worktree_cleanup_merged(
+				array(
+					'apply_plan'  => array( 'candidates' => $rows ),
+					'skip_github' => array_key_exists( 'skip_github', $params ) ? (bool) $params['skip_github'] : true,
+				)
+			),
+			default     => new \WP_Error( 'invalid_cleanup_chunk_type', sprintf( 'Unknown cleanup chunk type: %s', $chunk_type ), array( 'status' => 400 ) ),
+		};
+
+		if ( $result instanceof \WP_Error ) {
+			$failed = $this->rows_to_failed( $rows, $result->get_error_code(), $result->get_error_message() );
+			$this->completeJob(
+				$jobId,
+				$this->build_chunk_result(
+					$chunk_type,
+					$rows,
+					array(),
+					array(),
+					$failed,
+					0,
+					$started_at,
+					array(
+						'error_code' => $result->get_error_code(),
+						'error'      => $result->get_error_message(),
+					)
+				)
+			);
+			return;
+		}
+
+		$applied         = $this->extract_applied_rows( $chunk_type, $result );
+		$skipped         = array_values( (array) ( $result['skipped'] ?? array() ) );
+		$bytes_reclaimed = $this->bytes_reclaimed( $chunk_type, $applied, $result );
+
+		$this->completeJob(
+			$jobId,
+			$this->build_chunk_result(
+				$chunk_type,
+				$rows,
+				$applied,
+				$skipped,
+				array(),
+				$bytes_reclaimed,
+				$started_at,
+				array(
+					'summary' => $result['summary'] ?? array(),
+					'result'  => $this->compact_evidence_result( $result ),
+				)
+			)
+		);
+	}
+
+	/**
+	 * Build the persisted chunk result.
+	 *
+	 * @param string $chunk_type Cleanup chunk type.
+	 * @param array  $planned Planned rows.
+	 * @param array  $applied Applied rows.
+	 * @param array  $skipped Skipped rows.
+	 * @param array  $failed Failed rows.
+	 * @param int    $bytes_reclaimed Bytes reclaimed.
+	 * @param float  $started_at Start timestamp.
+	 * @param array  $evidence Evidence payload.
+	 * @return array<string,mixed>
+	 */
+	private function build_chunk_result( string $chunk_type, array $planned, array $applied, array $skipped, array $failed, int $bytes_reclaimed, float $started_at, array $evidence ): array {
+		$elapsed_ms = (int) round( ( microtime( true ) - $started_at ) * 1000 );
+
+		return array(
+			'success'         => array() === $failed,
+			'chunk_type'      => $chunk_type,
+			'planned_count'   => count( $planned ),
+			'applied_count'   => count( $applied ),
+			'skipped_count'   => count( $skipped ),
+			'failed_count'    => count( $failed ),
+			'bytes_reclaimed' => $bytes_reclaimed,
+			'elapsed_ms'      => $elapsed_ms,
+			'applied'         => $applied,
+			'skipped'         => $skipped,
+			'failed'          => $failed,
+			'evidence'        => array_merge(
+				array(
+					'planned_handles' => $this->row_handles( $planned ),
+					'applied_handles' => $this->row_handles( $applied ),
+					'skipped_handles' => $this->row_handles( $skipped ),
+					'failed_handles'  => $this->row_handles( $failed ),
+				),
+				$evidence
+			),
+		);
+	}
+
+	/**
+	 * Extract applied rows from a workspace result.
+	 *
+	 * @param string $chunk_type Cleanup chunk type.
+	 * @param array  $result Workspace result.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function extract_applied_rows( string $chunk_type, array $result ): array {
+		return match ( $chunk_type ) {
+			'metadata'  => array_values( (array) ( $result['written'] ?? $result['repaired'] ?? array() ) ),
+			'worktrees' => array_values( (array) ( $result['removed'] ?? array() ) ),
+			default     => array_values( (array) ( $result['removed'] ?? array() ) ),
+		};
+	}
+
+	/**
+	 * Calculate reclaimed bytes for applied rows.
+	 *
+	 * @param string $chunk_type Cleanup chunk type.
+	 * @param array  $applied Applied rows.
+	 * @param array  $result Workspace result.
+	 * @return int
+	 */
+	private function bytes_reclaimed( string $chunk_type, array $applied, array $result ): int {
+		if ( 'artifacts' === $chunk_type ) {
+			return max( 0, (int) ( $result['summary']['removed_size_bytes'] ?? 0 ) );
+		}
+
+		if ( 'worktrees' !== $chunk_type ) {
+			return 0;
+		}
+
+		$total = 0;
+		foreach ( $applied as $row ) {
+			$total += max( 0, (int) ( is_array( $row ) ? ( $row['size_bytes'] ?? 0 ) : 0 ) );
+		}
+
+		return $total;
+	}
+
+	/**
+	 * Convert rows to failed row payloads.
+	 *
+	 * @param array  $rows Rows.
+	 * @param string $code Error code.
+	 * @param string $reason Error reason.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function rows_to_failed( array $rows, string $code, string $reason ): array {
+		$failed = array();
+		foreach ( $rows as $row ) {
+			$failed[] = array(
+				'handle'      => is_array( $row ) ? (string) ( $row['handle'] ?? '' ) : '',
+				'reason_code' => $code,
+				'reason'      => $reason,
+				'row'         => $row,
+			);
+		}
+
+		return $failed;
+	}
+
+	/**
+	 * Return stable row handles for summaries.
+	 *
+	 * @param array $rows Rows.
+	 * @return array<int,string>
+	 */
+	private function row_handles( array $rows ): array {
+		$handles = array();
+		foreach ( $rows as $row ) {
+			if ( is_array( $row ) && '' !== (string) ( $row['handle'] ?? '' ) ) {
+				$handles[] = (string) $row['handle'];
+			}
+		}
+
+		return array_values( array_unique( $handles ) );
+	}
+
+	/**
+	 * Keep evidence bounded while retaining operator-relevant summaries.
+	 *
+	 * @param array $result Workspace result.
+	 * @return array<string,mixed>
+	 */
+	private function compact_evidence_result( array $result ): array {
+		return array(
+			'success'      => (bool) ( $result['success'] ?? true ),
+			'dry_run'      => (bool) ( $result['dry_run'] ?? false ),
+			'generated_at' => $result['generated_at'] ?? null,
+		);
+	}
+}
