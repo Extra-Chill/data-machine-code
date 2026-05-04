@@ -280,6 +280,18 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--older-than=<duration>]
 	 * : Pass an age gate such as 7d or 24h into cleanup task params.
 	 *
+	 * [--limit=<n>]
+	 * : Maximum eligible worktrees to scan for `--mode=artifacts --dry-run`. Ignored
+	 *   without `--dry-run` and ignored when `--exhaustive` is set.
+	 *
+	 * [--offset=<n>]
+	 * : Number of eligible worktrees to skip for `--mode=artifacts --dry-run`. Use
+	 *   the `scan.next_offset` field from a previous run to continue review.
+	 *
+	 * [--exhaustive]
+	 * : Force the slow per-worktree `git worktree list` + `git status` + `du`
+	 *   scan for `--mode=artifacts --dry-run`. Use sparingly on large workspaces.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -422,7 +434,18 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'artifacts':
 				$ability = wp_get_ability( 'datamachine/workspace-worktree-cleanup-artifacts' );
-				$result  = $ability ? $ability->execute( array( 'dry_run' => true, 'force' => ! empty( $assoc_args['force'] ) ) ) : new \WP_Error( 'artifact_cleanup_ability_missing', 'Artifact cleanup ability not registered.' );
+				$input   = array(
+					'dry_run'    => true,
+					'force'      => ! empty( $assoc_args['force'] ),
+					'exhaustive' => ! empty( $assoc_args['exhaustive'] ),
+				);
+				if ( isset( $assoc_args['limit'] ) && '' !== trim( (string) $assoc_args['limit'] ) ) {
+					$input['limit'] = (int) $assoc_args['limit'];
+				}
+				if ( isset( $assoc_args['offset'] ) && '' !== trim( (string) $assoc_args['offset'] ) ) {
+					$input['offset'] = (int) $assoc_args['offset'];
+				}
+				$result = $ability ? $ability->execute( $input ) : new \WP_Error( 'artifact_cleanup_ability_missing', 'Artifact cleanup ability not registered.' );
 				$this->render_worktree_artifact_cleanup_result_from_ability( $result, $assoc_args );
 				return;
 
@@ -1582,6 +1605,18 @@ class WorkspaceCommand extends BaseCommand {
 	 *   - age
 	 * ---
 	 *
+	 * [--limit=<n>]
+	 * : Maximum eligible worktrees to scan for cleanup-artifacts dry-run. Ignored
+	 *   when --exhaustive is set or when applying a plan.
+	 *
+	 * [--offset=<n>]
+	 * : Number of eligible worktrees to skip for cleanup-artifacts dry-run. Use
+	 *   the `scan.next_offset` from a prior partial run to continue review.
+	 *
+	 * [--exhaustive]
+	 * : Force the slow per-worktree git worktree list + git status + du scan
+	 *   for cleanup-artifacts dry-run. Use sparingly on large workspaces.
+	 *
 	 * [--stale]
 	 * : For list, show only worktrees with a stale_reason (old, dirty, or missing metadata).
 	 *
@@ -1828,8 +1863,15 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 
 			case 'cleanup-artifacts':
-				$input['dry_run'] = ! empty( $assoc_args['dry-run'] );
-				$input['force']   = ! empty( $assoc_args['force'] );
+				$input['dry_run']    = ! empty( $assoc_args['dry-run'] );
+				$input['force']      = ! empty( $assoc_args['force'] );
+				$input['exhaustive'] = ! empty( $assoc_args['exhaustive'] );
+				if ( isset( $assoc_args['limit'] ) && '' !== trim( (string) $assoc_args['limit'] ) ) {
+					$input['limit'] = (int) $assoc_args['limit'];
+				}
+				if ( isset( $assoc_args['offset'] ) && '' !== trim( (string) $assoc_args['offset'] ) ) {
+					$input['offset'] = (int) $assoc_args['offset'];
+				}
 				if ( ! empty( $assoc_args['apply-plan'] ) ) {
 					$input['apply_plan'] = $this->read_worktree_cleanup_plan( (string) $assoc_args['apply-plan'] );
 				}
@@ -2615,6 +2657,25 @@ class WorkspaceCommand extends BaseCommand {
 
 		WP_CLI::log( '' );
 		if ( $dry_run ) {
+			$scan    = (array) ( $result['scan'] ?? array() );
+			$partial = ! empty( $result['partial'] );
+			if ( $partial || ( ! empty( $scan ) && 'fast' === ( $scan['mode'] ?? '' ) ) ) {
+				WP_CLI::log( sprintf(
+					'Scan: mode=%s, scanned=%d/%d worktrees, offset=%d, partial=%s.',
+					(string) ( $scan['mode'] ?? 'fast' ),
+					(int) ( $scan['scanned'] ?? 0 ),
+					(int) ( $scan['total_eligible_worktrees'] ?? 0 ),
+					(int) ( $scan['offset'] ?? 0 ),
+					$partial ? 'yes' : 'no'
+				) );
+				if ( $partial ) {
+					WP_CLI::log( sprintf(
+						'Continue review with --offset=%d, or rerun with --exhaustive to enumerate every worktree.',
+						(int) ( $scan['next_offset'] ?? 0 )
+					) );
+				}
+				WP_CLI::log( '' );
+			}
 			WP_CLI::success( sprintf( '%d artifact(s) would be removed. Save JSON and re-run with --apply-plan=<file> to apply.', (int) ( $summary['would_remove_artifacts'] ?? 0 ) ) );
 			return;
 		}

@@ -195,6 +195,60 @@ namespace {
 	$assert( 'unpushed_commits', $skip_reasons['demo@unpushed'] ?? '', 'unpushed worktree is protected' );
 	$assert( 'active_symlink_target', $skip_reasons['demo@active'] ?? '', 'active plugin symlink target is protected' );
 
+	// Default dry-run uses the bounded fast scan and reports scan metadata.
+	$assert( false, ! isset( $plan['scan'] ), 'dry-run reports scan metadata' );
+	$assert( 'fast', (string) ( $plan['scan']['mode'] ?? '' ), 'default dry-run uses the fast scan path' );
+	$assert( false, (bool) ( $plan['partial'] ?? true ), 'small workspace fits in default fast-scan limit' );
+	$assert( 4, (int) ( $plan['scan']['total_eligible_worktrees'] ?? 0 ), 'fast scan counts every eligible worktree' );
+	$assert( 4, (int) ( $plan['scan']['scanned'] ?? -1 ), 'fast scan reports actual scanned count' );
+	$assert( true, array_key_exists( 'next_offset', (array) ( $plan['scan'] ?? array() ) ) && null === $plan['scan']['next_offset'], 'complete fast scan exposes null next_offset' );
+
+	// Bounded scan: limit=2 must return partial=true with next_offset for continuation.
+	$bounded = $workspace->worktree_cleanup_artifacts( array( 'dry_run' => true, 'limit' => 2, 'offset' => 0 ) );
+	$assert( false, is_wp_error( $bounded ), 'bounded dry-run returns a plan' );
+	$assert( true, (bool) ( $bounded['partial'] ?? false ), 'bounded scan reports partial=true' );
+	$assert( 2, (int) ( $bounded['scan']['scanned'] ?? -1 ), 'bounded scan honors limit' );
+	$assert( 2, (int) ( $bounded['scan']['next_offset'] ?? -1 ), 'bounded scan exposes next_offset' );
+	$assert( 4, (int) ( $bounded['scan']['total_eligible_worktrees'] ?? 0 ), 'bounded scan reports total eligible' );
+
+	// Continuation scan: offset=2, limit=2 must cover the remainder and report partial=false.
+	$continuation = $workspace->worktree_cleanup_artifacts( array( 'dry_run' => true, 'limit' => 2, 'offset' => 2 ) );
+	$assert( false, is_wp_error( $continuation ), 'continuation dry-run returns a plan' );
+	$assert( false, (bool) ( $continuation['partial'] ?? true ), 'continuation scan reaches the end' );
+	$assert( 2, (int) ( $continuation['scan']['scanned'] ?? -1 ), 'continuation scan honors limit' );
+	$assert( true, array_key_exists( 'next_offset', (array) ( $continuation['scan'] ?? array() ) ) && null === $continuation['scan']['next_offset'], 'completed continuation has null next_offset' );
+
+	// Bounded + continuation should collectively cover the same handles as the default scan.
+	$default_handles      = array_merge(
+		array_column( $plan['candidates'] ?? array(), 'handle' ),
+		array_column( $plan['skipped'] ?? array(), 'handle' )
+	);
+	$paginated_handles    = array_merge(
+		array_column( $bounded['candidates'] ?? array(), 'handle' ),
+		array_column( $bounded['skipped'] ?? array(), 'handle' ),
+		array_column( $continuation['candidates'] ?? array(), 'handle' ),
+		array_column( $continuation['skipped'] ?? array(), 'handle' )
+	);
+	sort( $default_handles );
+	sort( $paginated_handles );
+	$assert( $default_handles, $paginated_handles, 'paginated bounded scans cover the same worktrees as default scan' );
+
+	// Exhaustive opt-in still works and reports scan.mode = exhaustive.
+	$exhaustive = $workspace->worktree_cleanup_artifacts( array( 'dry_run' => true, 'exhaustive' => true ) );
+	$assert( false, is_wp_error( $exhaustive ), 'exhaustive dry-run returns a plan' );
+	$assert( 'exhaustive', (string) ( $exhaustive['scan']['mode'] ?? '' ), 'exhaustive dry-run reports exhaustive scan mode' );
+	$assert( false, (bool) ( $exhaustive['partial'] ?? true ), 'exhaustive dry-run is never partial' );
+	$assert(
+		count( $plan['candidates'] ?? array() ),
+		count( $exhaustive['candidates'] ?? array() ),
+		'fast and exhaustive scans agree on candidate count for this workspace'
+	);
+
+	// Limit is clamped to the documented hard ceiling.
+	$clamped = $workspace->worktree_cleanup_artifacts( array( 'dry_run' => true, 'limit' => 1000000 ) );
+	$assert( false, is_wp_error( $clamped ), 'oversized limit is accepted' );
+	$assert( true, (int) ( $clamped['scan']['limit'] ?? 0 ) <= 1000, 'limit is clamped to ARTIFACT_DRY_RUN_MAX_LIMIT' );
+
 	$direct_apply = $workspace->worktree_cleanup_artifacts( array() );
 	$assert( true, is_wp_error( $direct_apply ), 'direct apply without plan is rejected' );
 	$assert( 'artifact_cleanup_plan_required', $direct_apply->code ?? '', 'direct apply error is explicit' );

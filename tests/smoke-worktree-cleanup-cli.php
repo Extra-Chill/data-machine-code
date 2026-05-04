@@ -615,9 +615,16 @@ namespace {
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup-artifacts' ), array( 'dry-run' => true, 'format' => 'json' ) );
-	datamachine_code_cleanup_assert( array( 'dry_run' => true, 'force' => false ) === $artifact_ability->last_input, 'cleanup-artifacts dry-run flags forwarded to ability' );
+	datamachine_code_cleanup_assert( array( 'dry_run' => true, 'force' => false, 'exhaustive' => false ) === $artifact_ability->last_input, 'cleanup-artifacts dry-run flags forwarded to ability' );
 	$artifact_json = json_decode( WP_CLI::$logs[0] ?? '', true );
 	datamachine_code_cleanup_assert( 'target' === ( $artifact_json['candidates'][0]['artifacts'][0]['path'] ?? '' ), 'cleanup-artifacts JSON includes artifact paths' );
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree( array( 'cleanup-artifacts' ), array( 'dry-run' => true, 'format' => 'json', 'limit' => 50, 'offset' => 25, 'exhaustive' => true ) );
+	datamachine_code_cleanup_assert( true === ( $artifact_ability->last_input['exhaustive'] ?? null ), 'cleanup-artifacts forwards --exhaustive opt-in' );
+	datamachine_code_cleanup_assert( 50 === ( $artifact_ability->last_input['limit'] ?? null ), 'cleanup-artifacts forwards --limit' );
+	datamachine_code_cleanup_assert( 25 === ( $artifact_ability->last_input['offset'] ?? null ), 'cleanup-artifacts forwards --offset' );
 
 	$artifact_plan_file = sys_get_temp_dir() . '/dmc-artifact-cleanup-plan-' . bin2hex( random_bytes( 3 ) ) . '.json';
 	file_put_contents( $artifact_plan_file, wp_json_encode( $artifact_json ) );

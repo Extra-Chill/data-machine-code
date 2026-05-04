@@ -1311,7 +1311,7 @@ class WorkspaceAbilities {
 				'datamachine/workspace-worktree-cleanup-artifacts',
 				array(
 					'label'               => 'Cleanup Worktree Artifacts',
-					'description'         => 'Remove profile-derived, reconstructable artifact directories inside workspace worktrees. Requires a dry-run plan before deletion and revalidates exact paths before applying.',
+					'description'         => 'Remove profile-derived, reconstructable artifact directories inside workspace worktrees. Requires a dry-run plan before deletion and revalidates exact paths before applying. Dry-run defaults to a bounded fast scan for huge workspaces; pass exhaustive=true to enumerate every worktree.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -1328,6 +1328,18 @@ class WorkspaceAbilities {
 								'type'        => 'object',
 								'description' => 'Decoded artifact cleanup dry-run report to apply after revalidating every worktree and artifact path.',
 							),
+							'limit'      => array(
+								'type'        => 'integer',
+								'description' => 'Maximum eligible worktrees to scan in the dry-run fast path. Ignored when exhaustive=true.',
+							),
+							'offset'     => array(
+								'type'        => 'integer',
+								'description' => 'Number of eligible worktrees to skip before scanning in the dry-run fast path. Use scan.next_offset to continue review.',
+							),
+							'exhaustive' => array(
+								'type'        => 'boolean',
+								'description' => 'If true, run the full per-worktree git worktree list + git status + du scan. Slow on huge workspaces; only opt in when fast-path coverage is insufficient.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -1339,6 +1351,8 @@ class WorkspaceAbilities {
 							'removed'    => array( 'type' => 'array' ),
 							'skipped'    => array( 'type' => 'array' ),
 							'summary'    => array( 'type' => 'object' ),
+							'partial'    => array( 'type' => 'boolean' ),
+							'scan'       => array( 'type' => 'object' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreeCleanupArtifacts' ),
@@ -1973,11 +1987,18 @@ class WorkspaceAbilities {
 	public static function worktreeCleanupArtifacts( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$opts      = array(
-			'dry_run' => ! empty( $input['dry_run'] ),
-			'force'   => ! empty( $input['force'] ),
+			'dry_run'    => ! empty( $input['dry_run'] ),
+			'force'      => ! empty( $input['force'] ),
+			'exhaustive' => ! empty( $input['exhaustive'] ),
 		);
 		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
 			$opts['apply_plan'] = $input['apply_plan'];
+		}
+		if ( isset( $input['limit'] ) && is_numeric( $input['limit'] ) ) {
+			$opts['limit'] = (int) $input['limit'];
+		}
+		if ( isset( $input['offset'] ) && is_numeric( $input['offset'] ) ) {
+			$opts['offset'] = (int) $input['offset'];
 		}
 
 		return $workspace->worktree_cleanup_artifacts( $opts );

@@ -52,6 +52,22 @@ class Workspace {
 	private const HYGIENE_DEFAULT_SIZE_LIMIT = 1000;
 
 	/**
+	 * Default upper bound on artifact dry-run scan size before partial-result handoff.
+	 *
+	 * Sized to keep `workspace cleanup run --mode=artifacts --dry-run` returning
+	 * within a practical CLI timeout even on workspaces with hundreds of worktrees.
+	 */
+	private const ARTIFACT_DRY_RUN_DEFAULT_LIMIT = 200;
+
+	/**
+	 * Hard ceiling on the artifact dry-run scan size.
+	 *
+	 * Larger reviews must opt in to the exhaustive code path, which uses the
+	 * full `git worktree list` + per-worktree `git status` + `du` machinery.
+	 */
+	private const ARTIFACT_DRY_RUN_MAX_LIMIT = 1000;
+
+	/**
 	 * @var string Resolved workspace path.
 	 */
 	private string $workspace_path;
@@ -1879,10 +1895,15 @@ class Workspace {
 		}
 
 		if ( $artifact_cleanup ) {
+			// Retention runs orchestrate worktree-level decisions and need a
+			// complete view of artifact candidates. The fast/paginated scan
+			// is for the user-facing dry-run review, not for internal
+			// orchestration, so request the exhaustive code path here.
 			$artifact_plan = $this->worktree_cleanup_artifacts(
 				array(
-					'dry_run' => true,
-					'force'   => $force,
+					'dry_run'    => true,
+					'force'      => $force,
+					'exhaustive' => true,
 				)
 			);
 			if ( $artifact_plan instanceof \WP_Error ) {
@@ -3635,6 +3656,11 @@ class Workspace {
 		$dry_run    = ! empty( $opts['dry_run'] );
 		$force      = ! empty( $opts['force'] );
 		$apply_plan = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
+		$exhaustive = ! empty( $opts['exhaustive'] );
+		$limit      = isset( $opts['limit'] ) && is_numeric( $opts['limit'] )
+			? max( 1, min( self::ARTIFACT_DRY_RUN_MAX_LIMIT, (int) $opts['limit'] ) )
+			: self::ARTIFACT_DRY_RUN_DEFAULT_LIMIT;
+		$offset     = isset( $opts['offset'] ) && is_numeric( $opts['offset'] ) ? max( 0, (int) $opts['offset'] ) : 0;
 
 		if ( null !== $apply_plan ) {
 			$dry_run = false;
@@ -3644,13 +3670,26 @@ class Workspace {
 			return new \WP_Error( 'artifact_cleanup_plan_required', 'Artifact cleanup requires --dry-run first and --apply-plan=<file> to delete.', array( 'status' => 400 ) );
 		}
 
-		$plan = $this->build_worktree_artifact_cleanup_plan( $force );
+		// Apply phase always revalidates against the slow exhaustive path so
+		// the planned subset is reconciled with the current authoritative
+		// `worktree list` view before deletion.
+		$use_fast_scan = $dry_run && null === $apply_plan && ! $exhaustive;
+
+		$scan_meta = null;
+		if ( $use_fast_scan ) {
+			$plan = $this->build_worktree_artifact_cleanup_plan_fast( $force, $limit, $offset );
+		} else {
+			$plan = $this->build_worktree_artifact_cleanup_plan( $force );
+		}
 		if ( $plan instanceof \WP_Error ) {
 			return $plan;
 		}
 
 		$candidates = $plan['candidates'];
 		$skipped    = $plan['skipped'];
+		if ( isset( $plan['scan'] ) && is_array( $plan['scan'] ) ) {
+			$scan_meta = $plan['scan'];
+		}
 
 		if ( null !== $apply_plan ) {
 			$planned = $this->extract_worktree_artifact_cleanup_plan_candidates( $apply_plan );
@@ -3666,7 +3705,7 @@ class Workspace {
 		$summary = $this->build_worktree_artifact_cleanup_summary( $candidates, array(), $skipped );
 
 		if ( $dry_run ) {
-			return array(
+			$result = array(
 				'success'    => true,
 				'dry_run'    => true,
 				'candidates' => $candidates,
@@ -3674,6 +3713,17 @@ class Workspace {
 				'skipped'    => $skipped,
 				'summary'    => $summary,
 			);
+			if ( null !== $scan_meta ) {
+				$result['partial'] = ! empty( $scan_meta['partial'] );
+				$result['scan']    = $scan_meta;
+			} else {
+				$result['partial'] = false;
+				$result['scan']    = array(
+					'mode'    => 'exhaustive',
+					'partial' => false,
+				);
+			}
+			return $result;
 		}
 
 		$removed = array();
@@ -3714,6 +3764,11 @@ class Workspace {
 			'removed'    => $removed,
 			'skipped'    => $skipped,
 			'summary'    => $this->build_worktree_artifact_cleanup_summary( $candidates, $removed, $skipped ),
+			'partial'    => false,
+			'scan'       => array(
+				'mode'    => 'exhaustive',
+				'partial' => false,
+			),
 		);
 	}
 
@@ -3740,10 +3795,15 @@ class Workspace {
 
 		$artifact_plan = array( 'candidates' => array(), 'skipped' => array(), 'summary' => array() );
 		if ( $inputs['include_artifacts'] ) {
+			// Frozen cleanup plans must enumerate every artifact-bearing worktree
+			// because chunked apply consumers index off the full candidate list.
+			// Use the exhaustive path; the fast/paginated scan is only for
+			// interactive dry-run review.
 			$artifact_plan = $this->worktree_cleanup_artifacts(
 				array(
-					'dry_run' => true,
-					'force'   => $inputs['force_artifact_cleanup'],
+					'dry_run'    => true,
+					'force'      => $inputs['force_artifact_cleanup'],
+					'exhaustive' => true,
 				)
 			);
 			if ( $artifact_plan instanceof \WP_Error ) {
@@ -4614,6 +4674,181 @@ class Workspace {
 			'removed'        => array(),
 			'skipped'        => $skipped,
 			'summary'        => $this->build_worktree_cleanup_summary( $candidates, array(), $skipped, $age_filter ),
+		);
+	}
+
+	/**
+	 * Build a bounded artifact cleanup dry-run plan from cheap top-level inventory.
+	 *
+	 * The fast path intentionally avoids `git worktree list --porcelain`,
+	 * per-worktree `git status`, and whole-worktree `du`. It walks the
+	 * workspace top level via `scandir`, classifies entries from their
+	 * filesystem handle, and only spends I/O on rows that actually have
+	 * profile-derived artifacts on disk:
+	 *
+	 *   1. Profile lookup is `is_file()` checks for known marker files
+	 *      (Cargo.toml, package.json, composer.json) on the worktree path.
+	 *   2. Each profile entry is probed with `is_dir()` to confirm the
+	 *      artifact directory actually exists.
+	 *   3. `du -sk` runs only on the artifact directories themselves, not
+	 *      on the entire worktree.
+	 *   4. Safety probes (`git status --porcelain`, `count_unpushed_commits`,
+	 *      symlink check) run only for rows that survive steps 1-3.
+	 *
+	 * On a workspace with hundreds of worktrees that mostly do not contain
+	 * artifact directories, this collapses an O(N) `git status`/`du` cost
+	 * into O(slice * profile_size) cheap stat calls, which keeps the dry-run
+	 * inside a normal CLI timeout.
+	 *
+	 * Results are paginated through `$offset` and `$limit`. The `scan`
+	 * metadata returned with the plan reports total worktrees, the slice
+	 * that was scanned, whether the result is partial, and a `next_offset`
+	 * the caller can pass back to continue review.
+	 *
+	 * @param bool $force  Whether to allow dirty/unpushed worktrees.
+	 * @param int  $limit  Maximum eligible worktrees to scan in this call.
+	 * @param int  $offset Number of eligible worktrees to skip before scanning.
+	 * @return array{candidates: array<int,array>, skipped: array<int,array>, scan: array<string,mixed>}|\WP_Error
+	 */
+	private function build_worktree_artifact_cleanup_plan_fast( bool $force, int $limit, int $offset ): array|\WP_Error {
+		$inventory = $this->build_workspace_inventory_rows();
+
+		// Eligible rows are non-primary worktrees inside the workspace.
+		// External worktrees can't be discovered cheaply without `git worktree
+		// list`, so the fast path simply skips them; the exhaustive path
+		// remains available for callers that need full coverage.
+		$eligible = array();
+		foreach ( $inventory as $row ) {
+			if ( empty( $row['is_worktree'] ) ) {
+				continue;
+			}
+			if ( ! empty( $row['is_primary'] ) ) {
+				continue;
+			}
+			$eligible[] = $row;
+		}
+
+		$total_eligible = count( $eligible );
+		$slice          = array_slice( $eligible, $offset, $limit );
+		$scanned        = count( $slice );
+		$next_offset    = $offset + $scanned;
+		$partial        = $next_offset < $total_eligible;
+
+		$candidates             = array();
+		$skipped                = array();
+		$without_artifact_count = 0;
+
+		foreach ( $slice as $row ) {
+			$handle  = (string) ( $row['handle'] ?? '?' );
+			$repo    = (string) ( $row['repo'] ?? '' );
+			$wt_path = (string) ( $row['path'] ?? '' );
+			// Branch is derived from the on-disk handle (`<repo>@<slug>`)
+			// instead of `git rev-parse` to keep this path stat-only. The
+			// slug is enough for review tables; apply-plan revalidates the
+			// real branch via the exhaustive path.
+			$branch  = (string) ( $row['branch_slug'] ?? '' );
+
+			$base_row = array(
+				'handle'     => $handle,
+				'repo'       => $repo,
+				'branch'     => $branch,
+				'path'       => $wt_path,
+				'created_at' => $row['created_at'] ?? null,
+			);
+
+			if ( '' === $repo || '' === $branch || '' === $wt_path || ! is_dir( $wt_path ) ) {
+				// Missing on-disk pieces are not interesting unless the
+				// worktree actually has artifacts on disk. Skip cheaply
+				// without listing them as full skip rows so the partial
+				// result stays focused on actionable review data.
+				++$without_artifact_count;
+				continue;
+			}
+
+			$artifacts = $this->detect_worktree_artifacts( $repo, $wt_path );
+			if ( empty( $artifacts ) ) {
+				++$without_artifact_count;
+				continue;
+			}
+
+			if ( $this->is_active_studio_symlink_target( $wt_path ) ) {
+				$skipped[] = array_merge( $base_row, array(
+					'reason_code' => 'active_symlink_target',
+					'reason'      => 'worktree is the target of a wp-content plugin/theme symlink - leaving artifacts in place',
+					'artifacts'   => $artifacts,
+				) );
+				continue;
+			}
+
+			$dirty_result = $this->run_git( $wt_path, 'status --porcelain', self::CLEANUP_GIT_PROBE_TIMEOUT );
+			if ( $this->is_git_timeout_error( $dirty_result ) ) {
+				$skipped[] = array_merge( $base_row, array(
+					'reason_code' => 'probe_timeout',
+					'reason'      => 'artifact cleanup dirty probe timed out - leaving artifacts in place: ' . $dirty_result->get_error_message(),
+					'artifacts'   => $artifacts,
+				) );
+				continue;
+			}
+			$dirty_count = is_wp_error( $dirty_result )
+				? 0
+				: count( array_filter( array_map( 'trim', explode( "\n", (string) ( $dirty_result['output'] ?? '' ) ) ) ) );
+			if ( $dirty_count > 0 && ! $force ) {
+				$skipped[] = array_merge( $base_row, array(
+					'reason_code' => 'dirty_worktree',
+					'reason'      => sprintf( 'working tree dirty (%d files) - pass force=true to override artifact cleanup only', $dirty_count ),
+					'dirty'       => $dirty_count,
+					'artifacts'   => $artifacts,
+				) );
+				continue;
+			}
+
+			$unpushed = $this->count_unpushed_commits( $wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+			if ( is_wp_error( $unpushed ) ) {
+				$skipped[] = array_merge( $base_row, array(
+					'reason_code' => 'probe_timeout',
+					'reason'      => 'artifact cleanup safety probe timed out - leaving artifacts in place: ' . $unpushed->get_error_message(),
+					'artifacts'   => $artifacts,
+				) );
+				continue;
+			}
+			if ( $unpushed > 0 && ! $force ) {
+				$skipped[] = array_merge( $base_row, array(
+					'reason_code' => 'unpushed_commits',
+					'reason'      => sprintf( '%d unpushed commit(s) - pass force=true to override artifact cleanup only', $unpushed ),
+					'unpushed'    => $unpushed,
+					'artifacts'   => $artifacts,
+				) );
+				continue;
+			}
+
+			$candidates[] = array_merge( $base_row, array(
+				'artifacts'           => $artifacts,
+				'artifact_count'      => count( $artifacts ),
+				'artifact_size_bytes' => array_sum( array_map( fn( $artifact ) => (int) ( $artifact['size_bytes'] ?? 0 ), $artifacts ) ),
+				'reason_code'         => 'profile_artifacts',
+				'reason'              => 'profile-derived reconstructable artifacts can be removed',
+			) );
+		}
+
+		$scan = array(
+			'mode'                          => 'fast',
+			'partial'                       => $partial,
+			'limit'                         => $limit,
+			'offset'                        => $offset,
+			'scanned'                       => $scanned,
+			'next_offset'                   => $partial ? $next_offset : null,
+			'total_eligible_worktrees'      => $total_eligible,
+			'remaining_worktrees'           => max( 0, $total_eligible - $next_offset ),
+			'worktrees_without_artifacts'   => $without_artifact_count,
+			'note'                          => $partial
+				? 'Bounded fast scan. Pass --offset to continue, or --exhaustive to enumerate every worktree (slow).'
+				: 'Bounded fast scan covered every eligible worktree.',
+		);
+
+		return array(
+			'candidates' => $candidates,
+			'skipped'    => $skipped,
+			'scan'       => $scan,
 		);
 	}
 
