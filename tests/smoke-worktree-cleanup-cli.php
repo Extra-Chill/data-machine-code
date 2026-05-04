@@ -354,6 +354,66 @@ namespace {
 
 	class FakeGetJobsAbility {
 		public function execute( array $input ): array {
+			if ( isset( $input['parent_job_id'] ) ) {
+				return array(
+					'success' => true,
+					'total'   => 3,
+					'jobs'    => array(
+						array(
+							'job_id'      => 124,
+							'source'      => 'batch',
+							'status'      => 'completed',
+							'engine_data' => array(
+								'batch_id'  => 'dm_batch_123',
+								'task_type' => 'worktree_cleanup_chunk',
+							),
+						),
+						array(
+							'job_id'      => 125,
+							'source'      => 'system',
+							'status'      => 'completed',
+							'engine_data' => array(
+								'task_type'          => 'worktree_cleanup_chunk',
+								'system_task_result' => array(
+									'success'         => true,
+									'chunk_type'      => 'artifacts',
+									'planned_count'   => 3,
+									'applied_count'   => 2,
+									'skipped_count'   => 1,
+									'failed_count'    => 0,
+									'bytes_reclaimed' => 4096,
+									'skipped'         => array(
+										array( 'handle' => 'repo@dirty', 'reason_code' => 'dirty_worktree' ),
+									),
+									'failed'          => array(),
+								),
+							),
+						),
+						array(
+							'job_id'      => 126,
+							'source'      => 'system',
+							'status'      => 'failed - apply_failed',
+							'engine_data' => array(
+								'task_type'          => 'worktree_cleanup_chunk',
+								'system_task_result' => array(
+									'success'         => false,
+									'chunk_type'      => 'artifacts',
+									'planned_count'   => 1,
+									'applied_count'   => 0,
+									'skipped_count'   => 0,
+									'failed_count'    => 1,
+									'bytes_reclaimed' => 0,
+									'skipped'         => array(),
+									'failed'          => array(
+										array( 'handle' => 'repo@failed', 'reason_code' => 'apply_failed' ),
+									),
+								),
+							),
+						),
+					),
+				);
+			}
+
 			return array(
 				'success' => true,
 				'jobs'    => array(
@@ -369,6 +429,14 @@ namespace {
 							'cleanup_run' => array(
 								'mode'   => 'retention',
 								'source' => 'workspace_cleanup_cli',
+							),
+							'system_task_result' => array(
+								'success'    => true,
+								'job_backed' => true,
+								'report'     => array(
+									'bytes_reclaimed' => 0,
+									'freed_human'     => 'pending child jobs',
+								),
 							),
 						),
 					),
@@ -469,12 +537,19 @@ namespace {
 	$status_json = json_decode( WP_CLI::$logs[0] ?? '', true );
 	datamachine_code_cleanup_assert( 'running' === ( $status_json['state'] ?? '' ), 'cleanup status maps processing job to running state' );
 	datamachine_code_cleanup_assert( ! isset( $status_json['flow_id'] ), 'cleanup status is not linked to a flow id' );
+	datamachine_code_cleanup_assert( 4 === (int) ( $status_json['artifact_cleanup']['planned_rows'] ?? 0 ), 'cleanup status aggregates artifact planned rows from child chunks' );
+	datamachine_code_cleanup_assert( 4096 === (int) ( $status_json['artifact_cleanup']['bytes_reclaimed'] ?? 0 ), 'cleanup status aggregates artifact bytes from child chunks' );
+	datamachine_code_cleanup_assert( '4.0 KiB' === ( $status_json['system_task_result']['report']['freed_human'] ?? '' ), 'cleanup status replaces pending child job freed placeholder' );
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->cleanup( array( 'evidence', '123' ), array( 'format' => 'json' ) );
 	$evidence_json = json_decode( WP_CLI::$logs[0] ?? '', true );
 	datamachine_code_cleanup_assert( isset( $evidence_json['evidence']['engine_data'] ), 'cleanup evidence emits engine data' );
+	datamachine_code_cleanup_assert( array( 124 ) === ( $evidence_json['evidence']['children']['batch_job_ids'] ?? array() ), 'cleanup evidence lists child batch jobs' );
+	datamachine_code_cleanup_assert( array( 125, 126 ) === ( $evidence_json['evidence']['children']['chunk_job_ids'] ?? array() ), 'cleanup evidence lists child chunk jobs' );
+	datamachine_code_cleanup_assert( 1 === (int) ( $evidence_json['evidence']['artifact_cleanup']['skipped_by_reason']['dirty_worktree'] ?? 0 ), 'cleanup evidence aggregates skipped reasons' );
+	datamachine_code_cleanup_assert( 1 === (int) ( $evidence_json['evidence']['artifact_cleanup']['failed_by_reason']['apply_failed'] ?? 0 ), 'cleanup evidence aggregates failed reasons' );
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();

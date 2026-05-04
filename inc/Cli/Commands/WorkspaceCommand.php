@@ -472,14 +472,23 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'emergency':
 				$ability = wp_get_ability( 'datamachine/workspace-worktree-emergency-cleanup' );
-				$result  = $ability ? $ability->execute( array( 'dry_run' => true, 'force' => ! empty( $assoc_args['force'] ) ) ) : new \WP_Error( 'emergency_cleanup_ability_missing', 'Emergency cleanup ability not registered.' );
+				$result  = $ability ? $ability->execute(
+					array(
+						'dry_run' => true,
+						'force'   => ! empty( $assoc_args['force'] ),
+					)
+				) : new \WP_Error( 'emergency_cleanup_ability_missing', 'Emergency cleanup ability not registered.' );
 				$this->render_worktree_emergency_cleanup_result_from_ability( $result, $assoc_args );
 				return;
 
 			case 'retention':
 			default:
 				$ability = wp_get_ability( 'datamachine/workspace-worktree-cleanup' );
-				$input   = array( 'dry_run' => true, 'force' => ! empty( $assoc_args['force'] ), 'skip_github' => true );
+				$input   = array(
+					'dry_run'     => true,
+					'force'       => ! empty( $assoc_args['force'] ),
+					'skip_github' => true,
+				);
 				if ( isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ) {
 					$input['older_than'] = trim( (string) $assoc_args['older-than'] );
 				}
@@ -536,21 +545,30 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$engine_data = is_array( $job['engine_data'] ?? null ) ? $job['engine_data'] : array();
+		$engine_data = $this->normalize_engine_data( $job['engine_data'] ?? array() );
+		$aggregate   = $this->aggregate_cleanup_child_jobs( $job_id );
 		$output      = array(
-			'success'     => true,
-			'state'       => $this->cleanup_job_state( (string) ( $job['status'] ?? '' ) ),
-			'run_id'      => $this->cleanup_run_id( $job_id ),
-			'job_id'      => $job_id,
-			'status'      => $job['status'] ?? '',
-			'created_at'  => $job['created_at'] ?? '',
-			'completed_at' => $job['completed_at'] ?? '',
+			'success'          => true,
+			'state'            => $this->cleanup_job_state( (string) ( $job['status'] ?? '' ) ),
+			'run_id'           => $this->cleanup_run_id( $job_id ),
+			'job_id'           => $job_id,
+			'status'           => $job['status'] ?? '',
+			'created_at'       => $job['created_at'] ?? '',
+			'completed_at'     => $job['completed_at'] ?? '',
+			'artifact_cleanup' => $aggregate['artifact_cleanup'],
+			'children'         => $aggregate['children'],
 		);
+
+		if ( isset( $engine_data['system_task_result'] ) && is_array( $engine_data['system_task_result'] ) ) {
+			$engine_data['system_task_result'] = $this->with_cleanup_aggregate_report( $engine_data['system_task_result'], $aggregate );
+		}
 
 		if ( $evidence ) {
 			$output['evidence'] = array(
-				'engine_data' => $engine_data,
-				'job'         => $job,
+				'artifact_cleanup' => $aggregate['artifact_cleanup'],
+				'children'         => $aggregate['children'],
+				'engine_data'      => $engine_data,
+				'job'              => $job,
 			);
 		} else {
 			$output['mode'] = $engine_data['cleanup_run']['mode'] ?? '';
@@ -560,6 +578,197 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$this->render_cleanup_control_result( $output, $assoc_args );
+	}
+
+	/**
+	 * Aggregate cleanup child job results for status/evidence output.
+	 *
+	 * @param int $parent_job_id Parent cleanup run job ID.
+	 * @return array{artifact_cleanup:array<string,mixed>,children:array<string,mixed>}
+	 */
+	private function aggregate_cleanup_child_jobs( int $parent_job_id ): array {
+		$summary = array(
+			'artifact_cleanup' => array(
+				'planned_rows'      => 0,
+				'applied_rows'      => 0,
+				'skipped_rows'      => 0,
+				'failed_rows'       => 0,
+				'bytes_reclaimed'   => 0,
+				'freed_human'       => $this->format_bytes( 0 ),
+				'skipped_by_reason' => array(),
+				'failed_by_reason'  => array(),
+			),
+			'children'         => array(
+				'batch_job_ids' => array(),
+				'chunk_job_ids' => array(),
+				'processing'    => 0,
+				'completed'     => 0,
+				'failed'        => 0,
+				'statuses'      => array(),
+			),
+		);
+
+		foreach ( $this->get_cleanup_child_jobs( $parent_job_id ) as $child ) {
+			$child_job_id = (int) ( $child['job_id'] ?? 0 );
+			$status       = (string) ( $child['status'] ?? '' );
+			$engine_data  = $this->normalize_engine_data( $child['engine_data'] ?? array() );
+			$result       = is_array( $engine_data['system_task_result'] ?? null ) ? $engine_data['system_task_result'] : array();
+
+			$this->count_cleanup_child_status( $summary['children'], $status );
+			if ( isset( $summary['children']['statuses'][ $status ] ) ) {
+				++$summary['children']['statuses'][ $status ];
+			} elseif ( '' !== $status ) {
+				$summary['children']['statuses'][ $status ] = 1;
+			}
+
+			if ( 'batch' === (string) ( $child['source'] ?? '' ) || isset( $engine_data['batch_id'] ) ) {
+				if ( $child_job_id > 0 ) {
+					$summary['children']['batch_job_ids'][] = $child_job_id;
+				}
+				continue;
+			}
+
+			if ( 'worktree_cleanup_chunk' !== (string) ( $engine_data['task_type'] ?? '' ) && ! isset( $result['chunk_type'] ) ) {
+				continue;
+			}
+
+			if ( $child_job_id > 0 ) {
+				$summary['children']['chunk_job_ids'][] = $child_job_id;
+			}
+
+			if ( 'artifacts' !== (string) ( $result['chunk_type'] ?? '' ) ) {
+				continue;
+			}
+
+			$summary['artifact_cleanup']['planned_rows']    += max( 0, (int) ( $result['planned_count'] ?? 0 ) );
+			$summary['artifact_cleanup']['applied_rows']    += max( 0, (int) ( $result['applied_count'] ?? 0 ) );
+			$summary['artifact_cleanup']['skipped_rows']    += max( 0, (int) ( $result['skipped_count'] ?? 0 ) );
+			$summary['artifact_cleanup']['failed_rows']     += max( 0, (int) ( $result['failed_count'] ?? 0 ) );
+			$summary['artifact_cleanup']['bytes_reclaimed'] += max( 0, (int) ( $result['bytes_reclaimed'] ?? 0 ) );
+
+			$this->merge_cleanup_reason_counts( $summary['artifact_cleanup']['skipped_by_reason'], (array) ( $result['skipped'] ?? array() ) );
+			$this->merge_cleanup_reason_counts( $summary['artifact_cleanup']['failed_by_reason'], (array) ( $result['failed'] ?? array() ) );
+		}
+
+		$summary['artifact_cleanup']['freed_human'] = $this->format_bytes( $summary['artifact_cleanup']['bytes_reclaimed'] );
+		$summary['children']['batch_job_ids']       = array_values( array_unique( $summary['children']['batch_job_ids'] ) );
+		$summary['children']['chunk_job_ids']       = array_values( array_unique( $summary['children']['chunk_job_ids'] ) );
+
+		return $summary;
+	}
+
+	/**
+	 * Replace placeholder parent report fields with child aggregate totals.
+	 *
+	 * @param array $result Parent system task result.
+	 * @param array $aggregate Child aggregate.
+	 * @return array<string,mixed>
+	 */
+	private function with_cleanup_aggregate_report( array $result, array $aggregate ): array {
+		$artifact_cleanup = (array) ( $aggregate['artifact_cleanup'] ?? array() );
+		if ( ! empty( $result['job_backed'] ) && isset( $result['report'] ) && is_array( $result['report'] ) ) {
+			$result['report']['bytes_reclaimed'] = (int) ( $artifact_cleanup['bytes_reclaimed'] ?? 0 );
+			$result['report']['freed_human']     = (string) ( $artifact_cleanup['freed_human'] ?? $this->format_bytes( 0 ) );
+		}
+
+		$result['artifact_cleanup'] = $artifact_cleanup;
+		$result['children']         = (array) ( $aggregate['children'] ?? array() );
+
+		return $result;
+	}
+
+	/**
+	 * Fetch all direct child jobs for a cleanup run.
+	 *
+	 * @param int $parent_job_id Parent cleanup run job ID.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function get_cleanup_child_jobs( int $parent_job_id ): array {
+		$ability = wp_get_ability( 'datamachine/get-jobs' );
+		if ( ! $ability ) {
+			return array();
+		}
+
+		$jobs   = array();
+		$offset = 0;
+		do {
+			$result = $ability->execute(
+				array(
+					'parent_job_id' => $parent_job_id,
+					'per_page'      => 100,
+					'offset'        => $offset,
+					'orderby'       => 'j.job_id',
+					'order'         => 'ASC',
+				)
+			);
+			if ( ! ( $result['success'] ?? false ) || ! is_array( $result['jobs'] ?? null ) ) {
+				break;
+			}
+
+			$page       = array_values( (array) $result['jobs'] );
+			$page_count = count( $page );
+			$jobs       = array_merge( $jobs, $page );
+			$offset += $page_count;
+			$total  = (int) ( $result['total'] ?? $offset );
+		} while ( $page_count > 0 && $offset < $total );
+
+		return $jobs;
+	}
+
+	/**
+	 * Normalize engine_data stored as either decoded array or JSON string.
+	 *
+	 * @param mixed $engine_data Engine data.
+	 * @return array<string,mixed>
+	 */
+	private function normalize_engine_data( mixed $engine_data ): array {
+		if ( is_array( $engine_data ) ) {
+			return $engine_data;
+		}
+		if ( is_string( $engine_data ) && '' !== trim( $engine_data ) ) {
+			$decoded = json_decode( $engine_data, true );
+			return is_array( $decoded ) ? $decoded : array();
+		}
+
+		return array();
+	}
+
+	/**
+	 * Count a child job status into stable status buckets.
+	 *
+	 * @param array  $children Child aggregate.
+	 * @param string $status Job status.
+	 * @return void
+	 */
+	private function count_cleanup_child_status( array &$children, string $status ): void {
+		if ( in_array( $status, array( 'pending', 'processing' ), true ) ) {
+			++$children['processing'];
+			return;
+		}
+		if ( str_starts_with( $status, 'failed' ) ) {
+			++$children['failed'];
+			return;
+		}
+		if ( str_starts_with( $status, 'completed' ) ) {
+			++$children['completed'];
+		}
+	}
+
+	/**
+	 * Merge skipped/failed reason counts from chunk rows.
+	 *
+	 * @param array $counts Reason counts.
+	 * @param array $rows Rows with reason_code/reason.
+	 * @return void
+	 */
+	private function merge_cleanup_reason_counts( array &$counts, array $rows ): void {
+		foreach ( $rows as $row ) {
+			$reason = is_array( $row ) ? (string) ( $row['reason_code'] ?? $row['reason'] ?? 'unknown' ) : 'unknown';
+			if ( '' === $reason ) {
+				$reason = 'unknown';
+			}
+			$counts[ $reason ] = (int) ( $counts[ $reason ] ?? 0 ) + 1;
+		}
 	}
 
 	private function control_cleanup_run_job( string $operation, int $job_id, array $assoc_args ): void {
