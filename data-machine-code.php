@@ -221,11 +221,12 @@ add_action( 'plugins_loaded', 'datamachine_code_load_chat_tools', 25 );
  * Register system tasks.
  */
 add_filter( 'datamachine_tasks', function ( array $tasks ): array {
-	$tasks['github_create_issue']         = \DataMachineCode\Tasks\GitHubIssueTask::class;
-	$tasks['worktree_cleanup_chunk']      = \DataMachineCode\Tasks\WorktreeCleanupChunkTask::class;
-	$tasks['worktree_cleanup']            = \DataMachineCode\Tasks\WorktreeCleanupTask::class;
-	$tasks['workspace_retention_cleanup'] = \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask::class;
-	$tasks['workspace_hygiene_report']    = \DataMachineCode\Tasks\WorkspaceHygieneReportTask::class;
+	$tasks['github_create_issue']              = \DataMachineCode\Tasks\GitHubIssueTask::class;
+	$tasks['worktree_cleanup_chunk']           = \DataMachineCode\Tasks\WorktreeCleanupChunkTask::class;
+	$tasks['worktree_cleanup']                 = \DataMachineCode\Tasks\WorktreeCleanupTask::class;
+	$tasks['workspace_disk_emergency_cleanup'] = \DataMachineCode\Tasks\WorkspaceDiskEmergencyCleanupTask::class;
+	$tasks['workspace_retention_cleanup']      = \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask::class;
+	$tasks['workspace_hygiene_report']         = \DataMachineCode\Tasks\WorkspaceHygieneReportTask::class;
 	return $tasks;
 } );
 
@@ -261,6 +262,17 @@ add_filter( 'datamachine_recurring_schedules', function ( array $schedules ): ar
 			'worktree_older_than' => '14d',
 			'skip_github'         => true,
 			'artifact_cleanup'    => true,
+		),
+	);
+	$schedules['workspace_disk_emergency_cleanup'] = array(
+		'task_type'       => 'workspace_disk_emergency_cleanup',
+		'interval'        => 'hourly',
+		'enabled_setting' => \DataMachineCode\Tasks\WorkspaceDiskEmergencyCleanupTask::SETTING_KEY,
+		'default_enabled' => true,
+		'label'           => 'Hourly — triggers artifact-first emergency cleanup under disk pressure',
+		'task_params'     => array(
+			'source'              => 'recurring_schedule',
+			'artifact_chunk_size' => 10,
 		),
 	);
 	$schedules['workspace_hygiene_report'] = array(
