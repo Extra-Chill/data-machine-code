@@ -490,7 +490,7 @@ namespace {
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'list' ), array( 'stale' => true ) );
-	datamachine_code_cleanup_assert( in_array( 'table:2:handle,repo,kind,branch,head,dirty,state,created_at,pr,age_days,size,artifacts,stale,path', WP_CLI::$logs, true ), 'worktree list --stale filters to stale rows and includes disk fields' );
+	datamachine_code_cleanup_assert( in_array( 'table:2:handle,repo,kind,branch,head,dirty,state,liveness,last_seen_at,owner,agent,session,task,pr,age_days,size,artifacts,stale,path', WP_CLI::$logs, true ), 'worktree list --stale filters to stale rows and includes disk + liveness fields' );
 
 	echo "\n[1] JSON output is one parseable document\n";
 	WP_CLI::$logs      = array();

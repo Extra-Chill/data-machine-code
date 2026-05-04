@@ -1252,7 +1252,7 @@ class Workspace {
 	 * @param bool        $force          Bypass the disk-budget refusal threshold (default false).
 	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
-	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false ): array|\WP_Error {
+	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array() ): array|\WP_Error {
 		$visible = $this->require_workspace_visible();
 		if ( null !== $visible ) {
 			return $visible;
@@ -1319,7 +1319,8 @@ class Workspace {
 				$slug,
 				$wt_handle,
 				$wt_path,
-				$primary_path
+				$primary_path,
+				$task
 			)
 		);
 
@@ -1361,7 +1362,8 @@ class Workspace {
 		string $slug,
 		string $wt_handle,
 		string $wt_path,
-		string $primary_path
+		string $primary_path,
+		array $task = array()
 	): array|\WP_Error {
 		if ( is_dir( $wt_path ) ) {
 			return new \WP_Error( 'worktree_exists', sprintf( 'Worktree handle "%s" already exists.', $wt_handle ), array( 'status' => 400 ) );
@@ -1518,6 +1520,8 @@ class Workspace {
 				'branch'      => $branch,
 				'base_ref'    => $created_branch ? $resolved_base : null,
 				'base_source' => $created_branch ? ( null !== $from && '' !== trim( $from ) ? 'requested_ref' : 'default_base' ) : 'existing_local_branch',
+				'task_url'    => isset( $task['task_url'] ) ? (string) $task['task_url'] : '',
+				'task_ref'    => isset( $task['task_ref'] ) ? (string) $task['task_ref'] : '',
 			)
 		);
 		WorktreeContextInjector::store_lifecycle_metadata( $wt_handle, $lifecycle_metadata );
@@ -1579,9 +1583,11 @@ class Workspace {
 		$metadata = WorktreeContextInjector::build_finalizer_metadata( $normalized_state, $pr );
 		$metadata = array_merge(
 			array(
-				'handle' => $parsed['dir_name'],
-				'path'   => $wt_path,
-				'repo'   => $parsed['repo'],
+				'handle'       => $parsed['dir_name'],
+				'path'         => $wt_path,
+				'repo'         => $parsed['repo'],
+				// Finalize is itself an explicit liveness signal from the owner.
+				'last_seen_at' => gmdate( 'c' ),
 			),
 			$metadata
 		);
@@ -1645,6 +1651,9 @@ class Workspace {
 		}
 
 		WorktreeContextInjector::store_metadata( $parsed['dir_name'], $payload );
+		// refresh-context is a deliberate liveness signal: the originating site
+		// (and therefore some agent process there) just touched this worktree.
+		WorktreeContextInjector::record_heartbeat( $parsed['dir_name'] );
 
 		return array(
 			'success'      => true,
@@ -1800,23 +1809,35 @@ class Workspace {
 					$disk['stale_reason'] = $stale_reason;
 				}
 
+				$liveness     = WorktreeContextInjector::classify_liveness( is_array( $metadata ) ? $metadata : null );
+				$owner        = WorktreeContextInjector::summarize_owner( is_array( $metadata ) ? $metadata : null );
+				$session_view = WorktreeContextInjector::summarize_session( is_array( $metadata ) ? $metadata : null );
+				$task_view    = is_array( $metadata ) && is_array( $metadata['origin_task'] ?? null ) ? $metadata['origin_task'] : null;
+
 				$row = array_merge(
 					array(
-						'handle'          => $handle,
-						'repo'            => $primary,
-						'is_worktree'     => ! $is_primary,
-						'is_primary'      => $is_primary,
-						'external'        => ! $is_primary && ! $inside_ws,
-						'branch_slug'     => $is_primary ? null : ( $parsed['branch_slug'] ?? null ),
-						'branch'          => $wt['branch'],
-						'head'            => $wt['head'],
-						'path'            => $wt['path'],
-						'dirty'           => $dirty_files,
-						'created_at'      => $created_at,
-						'lifecycle_state' => $lifecycle_state,
-						'pr_url'          => is_array( $metadata ) ? ( $metadata['pr_url'] ?? null ) : null,
-						'pr_number'       => is_array( $metadata ) ? ( $metadata['pr_number'] ?? null ) : null,
-						'metadata'        => $metadata,
+						'handle'                => $handle,
+						'repo'                  => $primary,
+						'is_worktree'           => ! $is_primary,
+						'is_primary'            => $is_primary,
+						'external'              => ! $is_primary && ! $inside_ws,
+						'branch_slug'           => $is_primary ? null : ( $parsed['branch_slug'] ?? null ),
+						'branch'                => $wt['branch'],
+						'head'                  => $wt['head'],
+						'path'                  => $wt['path'],
+						'dirty'                 => $dirty_files,
+						'created_at'            => $created_at,
+						'lifecycle_state'       => $lifecycle_state,
+						'pr_url'                => is_array( $metadata ) ? ( $metadata['pr_url'] ?? null ) : null,
+						'pr_number'             => is_array( $metadata ) ? ( $metadata['pr_number'] ?? null ) : null,
+						'last_seen_at'          => is_array( $metadata ) ? ( $metadata['last_seen_at'] ?? null ) : null,
+						'liveness'              => $liveness['liveness'],
+						'liveness_reason'       => $liveness['reason'],
+						'heartbeat_age_seconds' => $liveness['heartbeat_age_seconds'],
+						'owner'                 => $owner,
+						'session'               => $session_view,
+						'task'                  => $task_view,
+						'metadata'              => $metadata,
 					),
 					$disk
 				);
@@ -1829,9 +1850,12 @@ class Workspace {
 			}
 		}
 
+		$duplicates = WorktreeContextInjector::find_duplicate_task_ownership( $worktrees );
+
 		return array(
 			'success'        => true,
 			'worktrees'      => $worktrees,
+			'duplicates'     => $duplicates,
 			'fields_skipped' => $skipped_groups,
 		);
 	}
@@ -2144,6 +2168,11 @@ class Workspace {
 			$is_worktree = 'worktree' === $kind;
 			$metadata    = $is_worktree ? WorktreeContextInjector::get_metadata( $parsed['dir_name'] ) : null;
 
+			$liveness     = WorktreeContextInjector::classify_liveness( is_array( $metadata ) ? $metadata : null );
+			$owner        = WorktreeContextInjector::summarize_owner( is_array( $metadata ) ? $metadata : null );
+			$session_view = WorktreeContextInjector::summarize_session( is_array( $metadata ) ? $metadata : null );
+			$task_view    = is_array( $metadata ) && is_array( $metadata['origin_task'] ?? null ) ? $metadata['origin_task'] : null;
+
 			$rows[] = array(
 				'handle'           => $parsed['dir_name'],
 				'repo'             => $parsed['repo'],
@@ -2158,6 +2187,13 @@ class Workspace {
 				'lifecycle_state'  => is_array( $metadata ) ? ( $metadata['lifecycle_state'] ?? null ) : null,
 				'pr_url'           => is_array( $metadata ) ? ( $metadata['pr_url'] ?? null ) : null,
 				'pr_number'        => is_array( $metadata ) ? ( $metadata['pr_number'] ?? null ) : null,
+				'last_seen_at'     => is_array( $metadata ) ? ( $metadata['last_seen_at'] ?? null ) : null,
+				'liveness'         => $liveness['liveness'],
+				'liveness_reason'  => $liveness['reason'],
+				'heartbeat_age_seconds' => $liveness['heartbeat_age_seconds'],
+				'owner'            => $owner,
+				'session'          => $session_view,
+				'task'             => $task_view,
 				'missing_metadata' => $is_worktree && ! is_array( $metadata ),
 				'metadata'         => $metadata,
 			);
@@ -2318,6 +2354,13 @@ class Workspace {
 			'protected_dirty'    => 0,
 			'protected_unpushed' => 0,
 			'missing_metadata'   => 0,
+			'by_liveness'        => array(
+				WorktreeContextInjector::LIVENESS_LIVE    => 0,
+				WorktreeContextInjector::LIVENESS_STOPPED => 0,
+				WorktreeContextInjector::LIVENESS_STALE   => 0,
+				WorktreeContextInjector::LIVENESS_UNKNOWN => 0,
+			),
+			'duplicate_task_groups' => 0,
 		);
 
 		foreach ( $worktrees as $row ) {
@@ -2340,7 +2383,19 @@ class Workspace {
 			if ( ! empty( $row['missing_metadata'] ) ) {
 				++$summary['missing_metadata'];
 			}
+
+			if ( ! empty( $row['is_worktree'] ) ) {
+				$liveness = (string) ( $row['liveness'] ?? WorktreeContextInjector::LIVENESS_UNKNOWN );
+				if ( ! isset( $summary['by_liveness'][ $liveness ] ) ) {
+					$summary['by_liveness'][ $liveness ] = 0;
+				}
+				++$summary['by_liveness'][ $liveness ];
+			}
 		}
+
+		$duplicates = WorktreeContextInjector::find_duplicate_task_ownership( $worktrees );
+		$summary['duplicate_task_groups'] = count( $duplicates );
+		$summary['duplicates']            = $duplicates;
 
 		if ( null !== $cleanup ) {
 			$by_reason                     = (array) ( $cleanup['summary']['skipped_by_reason'] ?? array() );

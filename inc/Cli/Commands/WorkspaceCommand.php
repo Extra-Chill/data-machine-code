@@ -1584,6 +1584,18 @@ class WorkspaceCommand extends BaseCommand {
 	 *   `--allow-stale` bypass. The ability-level input is
 	 *   `rebase_base=true`.
 	 *
+	 * [--task-url=<url>]
+	 * : Optional task/issue URL recorded on the worktree at creation time
+	 *   for ownership/duplicate detection (applies to `add` only). Falls
+	 *   back to the `DATAMACHINE_TASK_URL` environment variable when
+	 *   omitted. Used by `worktree list` and the hygiene report to flag
+	 *   multiple worktrees pointing at the same task.
+	 *
+	 * [--task-ref=<ref>]
+	 * : Optional short task/issue reference (e.g. `org/repo#123`) recorded
+	 *   alongside `--task-url` (applies to `add` only). Falls back to the
+	 *   `DATAMACHINE_TASK_REF` environment variable when omitted.
+	 *
 	 * [--force]
 	 * : For `add`, explicitly bypass the disk-budget refusal threshold. For
 	 *   `remove`, force-remove a worktree even if it is dirty. For `cleanup`,
@@ -1770,6 +1782,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace worktree finalize data-machine@fix-foo --pr=https://github.com/org/repo/pull/123
 	 *     wp datamachine-code workspace worktree mark-cleanup-eligible data-machine@fix-foo
 	 *
+	 *     # Record a task/issue URL on a worktree for ownership tracking
+	 *     wp datamachine-code workspace worktree add data-machine fix/foo --task-url=https://github.com/org/repo/issues/42
+	 *
 	 * @subcommand worktree
 	 */
 	public function worktree( array $args, array $assoc_args ): void {
@@ -1836,6 +1851,12 @@ class WorkspaceCommand extends BaseCommand {
 				$input['rebase_base'] = ! empty( $assoc_args['rebase-base'] );
 				// --force is an explicit disk-budget override for add.
 				$input['force'] = ! empty( $assoc_args['force'] );
+				if ( isset( $assoc_args['task-url'] ) && '' !== trim( (string) $assoc_args['task-url'] ) ) {
+					$input['task_url'] = (string) $assoc_args['task-url'];
+				}
+				if ( isset( $assoc_args['task-ref'] ) && '' !== trim( (string) $assoc_args['task-ref'] ) ) {
+					$input['task_ref'] = (string) $assoc_args['task-ref'];
+				}
 				break;
 
 			case 'refresh-context':
@@ -2004,6 +2025,10 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				if ( empty( $worktrees ) ) {
 					WP_CLI::log( 'No worktrees found.' );
+					$duplicates = (array) ( $result['duplicates'] ?? array() );
+					if ( ! empty( $duplicates ) ) {
+						WP_CLI::log( sprintf( 'Duplicate task ownership groups: %d', count( $duplicates ) ) );
+					}
 					return;
 				}
 				$items  = array_map(
@@ -2020,6 +2045,14 @@ class WorkspaceCommand extends BaseCommand {
 							'dirty'               => null === $dirty ? '-' : (int) $dirty,
 							'created_at'          => $wt['created_at'] ?? null,
 							'state'               => $wt['lifecycle_state'] ?? null,
+							'liveness'            => $wt['liveness'] ?? 'unknown',
+							'liveness_reason'     => $wt['liveness_reason'] ?? '',
+							'last_seen_at'        => $wt['last_seen_at'] ?? null,
+							'owner'               => isset( $wt['owner']['user'] ) ? (string) $wt['owner']['user'] : 'unknown',
+							'agent'               => isset( $wt['owner']['agent'] ) ? (string) $wt['owner']['agent'] : 'unknown',
+							'site'                => isset( $wt['owner']['site'] ) ? (string) $wt['owner']['site'] : 'unknown',
+							'session'             => isset( $wt['session']['primary_id'] ) && null !== $wt['session']['primary_id'] ? (string) $wt['session']['primary_id'] : '',
+							'task'                => is_array( $wt['task'] ?? null ) ? (string) ( $wt['task']['task_url'] ?? $wt['task']['task_ref'] ?? '' ) : '',
 							'pr'                  => $wt['pr_url'] ?? null,
 							'age_days'            => $wt['age_days'] ?? null,
 							'size_bytes'          => $size,
@@ -2030,14 +2063,17 @@ class WorkspaceCommand extends BaseCommand {
 							'stale'               => $wt['stale_reason'] ?? '',
 							'fields_skipped'      => $skipped,
 							'metadata'            => $wt['metadata'] ?? null,
+							'session_full'        => $wt['session'] ?? null,
+							'owner_full'          => $wt['owner'] ?? null,
+							'task_full'           => $wt['task'] ?? null,
 							'path'                => $wt['path'] ?? '',
 						);
 					},
 					$worktrees
 				);
-				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'created_at', 'pr', 'age_days', 'size', 'artifacts', 'stale', 'path' );
+				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'liveness', 'last_seen_at', 'owner', 'agent', 'session', 'task', 'pr', 'age_days', 'size', 'artifacts', 'stale', 'path' );
 				if ( in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
-					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'created_at', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'fields_skipped', 'metadata', 'path' );
+					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'created_at', 'liveness', 'liveness_reason', 'last_seen_at', 'owner_full', 'session_full', 'task_full', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'fields_skipped', 'metadata', 'path' );
 				}
 				$skipped_global = (array) ( $result['fields_skipped'] ?? array() );
 				if ( ! empty( $skipped_global ) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true ) ) {
@@ -2047,6 +2083,13 @@ class WorkspaceCommand extends BaseCommand {
 					) );
 				}
 				$this->format_items( $items, $fields, $assoc_args, 'handle' );
+				$duplicates = (array) ( $result['duplicates'] ?? array() );
+				if ( ! empty( $duplicates ) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
+					WP_CLI::log( sprintf( 'Duplicate task ownership groups: %d', count( $duplicates ) ) );
+					foreach ( $duplicates as $group ) {
+						WP_CLI::log( sprintf( '  - [%s=%s] %s', (string) ( $group['kind'] ?? '' ), (string) ( $group['key'] ?? '' ), implode( ', ', (array) ( $group['handles'] ?? array() ) ) ) );
+					}
+				}
 				return;
 
 			case 'prune':
@@ -2243,6 +2286,26 @@ class WorkspaceCommand extends BaseCommand {
 					'value'  => (string) ( $worktrees['external'] ?? 0 ),
 				),
 				array(
+					'metric' => 'liveness_live',
+					'value'  => (string) ( $worktrees['by_liveness']['live'] ?? 0 ),
+				),
+				array(
+					'metric' => 'liveness_stopped',
+					'value'  => (string) ( $worktrees['by_liveness']['stopped'] ?? 0 ),
+				),
+				array(
+					'metric' => 'liveness_stale',
+					'value'  => (string) ( $worktrees['by_liveness']['stale'] ?? 0 ),
+				),
+				array(
+					'metric' => 'liveness_unknown',
+					'value'  => (string) ( $worktrees['by_liveness']['unknown'] ?? 0 ),
+				),
+				array(
+					'metric' => 'duplicate_task_groups',
+					'value'  => (string) ( $worktrees['duplicate_task_groups'] ?? 0 ),
+				),
+				array(
 					'metric' => 'cleanup_candidates',
 					'value'  => (string) ( $cleanup_summary['would_remove'] ?? 0 ),
 				),
@@ -2251,6 +2314,20 @@ class WorkspaceCommand extends BaseCommand {
 			array( 'format' => 'table' ),
 			'metric'
 		);
+
+		$duplicates = (array) ( $worktrees['duplicates'] ?? array() );
+		if ( array() !== $duplicates ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Duplicate task ownership groups (reported only — never auto-deleted):' );
+			foreach ( $duplicates as $group ) {
+				WP_CLI::log( sprintf(
+					'  - [%s=%s] %s',
+					(string) ( $group['kind'] ?? '' ),
+					(string) ( $group['key'] ?? '' ),
+					implode( ', ', (array) ( $group['handles'] ?? array() ) )
+				) );
+			}
+		}
 
 		$top_size = array_slice( (array) ( $report['top_repos_by_size'] ?? array() ), 0, 10 );
 		$by_kind  = array_slice( (array) ( $size['by_kind'] ?? array() ), 0, 10 );
