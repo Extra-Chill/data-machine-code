@@ -59,6 +59,9 @@ function datamachine_code_bootstrap() {
 
 	// Register GitHub issue creation ability via SystemAbilities hook.
 	add_action( 'wp_abilities_api_init', 'datamachine_code_register_system_abilities' );
+
+	// Register bundled Data Machine pipeline templates owned by DMC.
+	\DataMachineCode\Pipelines\WorkspaceMaintenancePipelineTemplates::register();
 }
 add_action( 'plugins_loaded', 'datamachine_code_bootstrap', 20 );
 
