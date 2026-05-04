@@ -31,7 +31,7 @@ class WorktreeCleanupChunkTask extends SystemTask {
 	public static function getTaskMeta(): array {
 		return array(
 			'label'           => 'Worktree Cleanup Chunk',
-			'description'     => 'Applies one reviewed cleanup chunk for artifacts, metadata repair, or worktree removal.',
+			'description'     => 'Applies one reviewed cleanup chunk for artifacts or worktree removal.',
 			'setting_key'     => null,
 			'default_enabled' => true,
 			'supports_run'    => false,
@@ -79,11 +79,6 @@ class WorktreeCleanupChunkTask extends SystemTask {
 					'apply_plan' => array( 'candidates' => $rows ),
 					'force'      => ! empty( $params['force'] ),
 					'limit'      => count( $rows ),
-				)
-			),
-			'metadata'  => $workspace->worktree_reconcile_metadata(
-				array(
-					'apply_plan' => array( 'proposals' => $rows ),
 				)
 			),
 			'worktrees' => $workspace->worktree_cleanup_merged(
@@ -309,7 +304,6 @@ class WorktreeCleanupChunkTask extends SystemTask {
 	 */
 	private function extract_applied_rows( string $chunk_type, array $result ): array {
 		return match ( $chunk_type ) {
-			'metadata'  => array_values( (array) ( $result['written'] ?? $result['repaired'] ?? array() ) ),
 			'worktrees' => array_values( (array) ( $result['removed'] ?? array() ) ),
 			default     => array_values( (array) ( $result['removed'] ?? array() ) ),
 		};

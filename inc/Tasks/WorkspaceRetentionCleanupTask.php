@@ -73,7 +73,6 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 			'skip_github'      => array_key_exists( 'skip_github', $params ) ? (bool) $params['skip_github'] : true,
 			'worktree_cleanup' => array_key_exists( 'worktree_cleanup', $params ) ? (bool) $params['worktree_cleanup'] : true,
 			'artifact_cleanup' => array_key_exists( 'artifact_cleanup', $params ) ? (bool) $params['artifact_cleanup'] : true,
-			'metadata_repair'  => array_key_exists( 'metadata_repair', $params ) ? (bool) $params['metadata_repair'] : true,
 		);
 		if ( isset( $params['worktree_older_than'] ) && '' !== trim( (string) $params['worktree_older_than'] ) ) {
 			$opts['worktree_older_than'] = trim( (string) $params['worktree_older_than'] );
@@ -141,7 +140,6 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 		$chunk_row_counts = array(
 			'artifact_discovery' => count( $chunk_rows['artifact_discovery'] ),
 			'artifacts'          => count( $chunk_rows['artifacts'] ),
-			'metadata'           => count( $chunk_rows['metadata'] ),
 			'worktrees'          => count( $chunk_rows['worktrees'] ),
 		);
 		$item_params      = $this->build_cleanup_chunk_params( $chunk_rows, $opts, $params );
@@ -199,7 +197,6 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 			'policy'            => array(
 				'worktree_cleanup'    => (bool) $opts['worktree_cleanup'],
 				'artifact_cleanup'    => (bool) $opts['artifact_cleanup'],
-				'metadata_repair'     => (bool) $opts['metadata_repair'],
 				'worktree_older_than' => (string) ( $opts['worktree_older_than'] ?? '14d' ),
 				'skip_github'         => (bool) $opts['skip_github'],
 				'force'               => (bool) $opts['force'],
@@ -229,13 +226,12 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 	 * @param Workspace $workspace Workspace service.
 	 * @param array     $opts   Normalized options.
 	 * @param array     $params Raw task params.
-	 * @return array{artifact_discovery:array<int,array>,artifacts:array<int,array>,metadata:array<int,array>,worktrees:array<int,array>}|\WP_Error
+	 * @return array{artifact_discovery:array<int,array>,artifacts:array<int,array>,worktrees:array<int,array>}|\WP_Error
 	 */
 	private function build_cleanup_chunk_rows( Workspace $workspace, array $opts, array $params ): array|\WP_Error {
 		$rows = array(
 			'artifact_discovery' => array(),
 			'artifacts'          => array(),
-			'metadata'           => array(),
 			'worktrees'          => array(),
 		);
 
@@ -259,14 +255,6 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 					'limit'  => $page_size,
 				);
 			}
-		}
-
-		if ( ! empty( $opts['metadata_repair'] ) ) {
-			$metadata_plan = $workspace->worktree_reconcile_metadata( array( 'dry_run' => true ) );
-			if ( $metadata_plan instanceof \WP_Error ) {
-				return $metadata_plan;
-			}
-			$rows['metadata'] = array_values( (array) ( $metadata_plan['proposals'] ?? array() ) );
 		}
 
 		if ( ! empty( $opts['worktree_cleanup'] ) ) {
