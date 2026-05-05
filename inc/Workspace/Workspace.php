@@ -4307,9 +4307,20 @@ class Workspace {
 				continue;
 			}
 			$reason = (string) ( $row['reason_code'] ?? '' );
-			if ( ! in_array( $reason, array( 'requires_full_scan', 'no_inventory_cleanup_signal' ), true ) ) {
+			if ( ! in_array( $reason, array( 'needs_metadata_reconcile', 'requires_full_scan', 'lifecycle_reconciliation_candidate', 'active_no_signal', 'no_inventory_cleanup_signal' ), true ) ) {
 				continue;
 			}
+
+			$resolver_type = match ( $reason ) {
+				'needs_metadata_reconcile', 'requires_full_scan' => 'metadata_reconciliation',
+				'lifecycle_reconciliation_candidate' => 'lifecycle_reconciliation',
+				default => 'merge_signal',
+			};
+			$next_action = match ( $resolver_type ) {
+				'metadata_reconciliation'  => 'workspace worktree reconcile-metadata --dry-run --format=json',
+				'lifecycle_reconciliation' => 'workspace worktree cleanup --dry-run --format=json',
+				default                    => 'workspace worktree cleanup --dry-run --skip-github --format=json',
+			};
 
 			$resolver = array(
 				'handle'       => (string) ( $row['handle'] ?? '' ),
@@ -4318,7 +4329,8 @@ class Workspace {
 				'path'         => (string) ( $row['path'] ?? '' ),
 				'created_at'   => $row['created_at'] ?? null,
 				'metadata'     => $row['metadata'] ?? null,
-				'resolver'     => 'merge_signal',
+				'resolver'     => $resolver_type,
+				'next_action'  => $next_action,
 				'reason_code'  => $reason,
 				'reason'       => 'resolve merge or lifecycle cleanup signal before any worktree removal chunk is emitted',
 				'row_type'     => 'resolver',
@@ -4923,9 +4935,9 @@ class Workspace {
 
 			if ( ! is_array( $metadata ) ) {
 				$skipped[] = array_merge( $base_row, array(
-					'reason_code' => 'requires_full_scan',
-					'reason'      => 'inventory row has no lifecycle metadata; cleanup safety requires a full scan',
-					'hint'        => 'Run workspace worktree cleanup --dry-run without --inventory-only when you are ready for full git safety probes.',
+					'reason_code' => 'needs_metadata_reconcile',
+					'reason'      => 'inventory row has no lifecycle metadata; metadata reconciliation is required before cleanup planning can classify it',
+					'hint'        => 'Run workspace worktree reconcile-metadata --dry-run --format=json to generate reviewed metadata reconciliation rows.',
 				) );
 				continue;
 			}
@@ -4983,11 +4995,7 @@ class Workspace {
 					$candidates[] = $candidate;
 					continue;
 				}
-				$skipped[] = array_merge( $base_row, array(
-					'reason_code'   => 'no_inventory_cleanup_signal',
-					'reason'        => 'no explicit inventory cleanup signal — leaving in place',
-					'hint'          => 'Mark the worktree cleanup-eligible after review, or run full cleanup to detect merge signals.',
-				) );
+				$skipped[] = $this->build_inventory_cleanup_no_signal_skip( $base_row, $wt, $metadata );
 				continue;
 			}
 
@@ -5057,6 +5065,45 @@ class Workspace {
 			'skipped'        => $skipped,
 			'summary'        => $this->build_worktree_cleanup_summary( $candidates, array(), $skipped, $age_filter ),
 		);
+	}
+
+	/**
+	 * Build an inventory-only skip row when lifecycle metadata has no cleanup signal.
+	 *
+	 * @param array<string,mixed> $base_row Base worktree row.
+	 * @param array<string,mixed> $wt       Inventory row.
+	 * @param array<string,mixed> $metadata Lifecycle metadata.
+	 * @return array<string,mixed>
+	 */
+	private function build_inventory_cleanup_no_signal_skip( array $base_row, array $wt, array $metadata ): array {
+		$liveness        = (string) ( $wt['liveness'] ?? WorktreeContextInjector::LIVENESS_UNKNOWN );
+		$liveness_reason = (string) ( $wt['liveness_reason'] ?? '' );
+		$state           = isset( $metadata['lifecycle_state'] ) ? WorktreeContextInjector::normalize_state( (string) $metadata['lifecycle_state'] ) : null;
+		$has_pr_context  = ! empty( $metadata['pr_url'] ) || ! empty( $metadata['pr_number'] ) || ! empty( $metadata['pr_ref'] );
+		$has_task_context = is_array( $metadata['origin_task'] ?? null ) && ! empty( $metadata['origin_task']['task_url'] );
+
+		if ( WorktreeContextInjector::LIVENESS_LIVE !== $liveness && ( $has_pr_context || $has_task_context ) ) {
+			return array_merge( $base_row, array(
+				'reason_code'     => 'lifecycle_reconciliation_candidate',
+				'reason'          => 'stale or PR/task-backed lifecycle metadata has no cleanup signal; reconcile lifecycle state before cleanup eligibility is decided',
+				'hint'            => 'Run workspace worktree cleanup --dry-run --format=json for merge/PR signal detection, then persist lifecycle state through DMC-owned finalization.',
+				'lifecycle_state' => $state,
+				'liveness'        => $liveness,
+				'liveness_reason' => $liveness_reason,
+				'pr_url'          => $metadata['pr_url'] ?? null,
+				'pr_number'       => $metadata['pr_number'] ?? null,
+				'origin_task'     => $metadata['origin_task'] ?? null,
+			) );
+		}
+
+		return array_merge( $base_row, array(
+			'reason_code'     => 'active_no_signal',
+			'reason'          => 'active lifecycle metadata has no cleanup signal; leaving in place',
+			'hint'            => 'No cleanup action is safe from inventory alone. Keep active, or run full cleanup when you need merge-signal detection.',
+			'lifecycle_state' => $state,
+			'liveness'        => $liveness,
+			'liveness_reason' => $liveness_reason,
+		) );
 	}
 
 	/**
@@ -6153,6 +6200,7 @@ class Workspace {
 			'skipped'               => count( $skipped ),
 			'skipped_by_reason'     => $skipped_by_reason,
 			'skipped_next_commands' => $this->worktree_cleanup_skipped_next_commands( $skipped_by_reason ),
+			'cleanup_buckets'       => $this->worktree_cleanup_buckets( $candidates_by_signal, $skipped_by_reason ),
 			'candidates_by_signal'  => $candidates_by_signal,
 			'total_size_bytes'      => $total_size_bytes,
 			'artifact_size_bytes'   => $total_artifact_bytes,
@@ -6171,6 +6219,26 @@ class Workspace {
 	}
 
 	/**
+	 * Build stable high-level cleanup buckets for plan/report consumers.
+	 *
+	 * @param array<string,int> $candidates_by_signal Candidate signal counts.
+	 * @param array<string,int> $skipped_by_reason    Skipped reason counts.
+	 * @return array<string,int>
+	 */
+	private function worktree_cleanup_buckets( array $candidates_by_signal, array $skipped_by_reason ): array {
+		$buckets = array(
+			'explicit_cleanup_candidates'         => (int) ( $candidates_by_signal['cleanup_eligible'] ?? 0 ),
+			'lifecycle_reconciliation_candidates' => (int) ( $skipped_by_reason['lifecycle_reconciliation_candidate'] ?? 0 ),
+			'metadata_reconciliation_candidates'  => (int) ( $skipped_by_reason['needs_metadata_reconcile'] ?? 0 ) + (int) ( $skipped_by_reason['requires_full_scan'] ?? 0 ) + (int) ( $skipped_by_reason['missing_metadata'] ?? 0 ),
+			'dirty_unpushed'                      => (int) ( $skipped_by_reason['dirty_worktree'] ?? 0 ) + (int) ( $skipped_by_reason['unpushed_commits'] ?? 0 ),
+			'active_no_signal'                    => (int) ( $skipped_by_reason['active_no_signal'] ?? 0 ) + (int) ( $skipped_by_reason['no_inventory_cleanup_signal'] ?? 0 ),
+		);
+
+		ksort( $buckets );
+		return $buckets;
+	}
+
+	/**
 	 * Build copy-pasteable next commands for skipped cleanup buckets.
 	 *
 	 * @param array<string,int> $skipped_by_reason Skipped reason counts.
@@ -6178,6 +6246,27 @@ class Workspace {
 	 */
 	private function worktree_cleanup_skipped_next_commands( array $skipped_by_reason ): array {
 		$templates = array(
+			'lifecycle_reconciliation_candidate' => array(
+				'label'       => 'Run DMC-owned lifecycle reconciliation before cleanup eligibility',
+				'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --format=json',
+				'alternative' => 'studio wp datamachine-code workspace cleanup plan --mode=retention --format=json',
+				'why'         => 'Runs full merge/PR signal detection so DMC can persist lifecycle state instead of relying on manual agent finalization.',
+				'destructive' => false,
+			),
+			'needs_metadata_reconcile' => array(
+				'label'       => 'Repair missing lifecycle metadata in bounded batches',
+				'command'     => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
+				'alternative' => 'Low-level apply still requires a reviewed --apply-plan=<file> until DB-backed cleanup runs land.',
+				'why'         => 'Reconciliation writes lifecycle metadata so future inventory cleanup can classify these rows without a full scan.',
+				'destructive' => false,
+			),
+			'active_no_signal' => array(
+				'label'       => 'Keep active rows or run full merge-signal review',
+				'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --skip-github --format=json',
+				'alternative' => 'No automatic cleanup action is safe from active inventory metadata alone.',
+				'why'         => 'Active rows without stale liveness or PR/task context are not cleanup candidates from inventory alone.',
+				'destructive' => false,
+			),
 			'repaired_metadata'           => array(
 				'label'       => 'Review repaired metadata with bounded safety probes',
 				'command'     => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --include-repaired-metadata --limit=25 --older-than=7d',

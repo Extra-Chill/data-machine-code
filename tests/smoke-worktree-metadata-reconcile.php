@@ -255,7 +255,7 @@ namespace {
 	$unsafe_plan = $plan;
 
 	$inventory_before = $ws->worktree_cleanup_merged( array( 'dry_run' => true, 'inventory_only' => true, 'skip_github' => true ) );
-	$assert( 2, (int) ( $inventory_before['summary']['skipped_by_reason']['requires_full_scan'] ?? 0 ), 'inventory cleanup sees missing metadata before apply' );
+	$assert( 2, (int) ( $inventory_before['summary']['skipped_by_reason']['needs_metadata_reconcile'] ?? 0 ), 'inventory cleanup sees missing metadata before apply' );
 
 	echo "\nApply reviewed plan\n";
 	$apply = $ws->worktree_reconcile_metadata( array( 'apply_plan' => $plan ) );
@@ -271,8 +271,8 @@ namespace {
 	$assert( 'operator_plan', $stored['reconciled_sources']['lifecycle_state'] ?? '', 'stored metadata keeps source map' );
 
 	$inventory_after = $ws->worktree_cleanup_merged( array( 'dry_run' => true, 'inventory_only' => true, 'skip_github' => true ) );
-	$assert( 0, (int) ( $inventory_after['summary']['skipped_by_reason']['requires_full_scan'] ?? 0 ), 'inventory cleanup requires fewer full scans after apply' );
-	$assert( 5, (int) ( $inventory_after['summary']['skipped_by_reason']['no_inventory_cleanup_signal'] ?? 0 ), 'inventory cleanup treats reconciled active metadata like current active metadata' );
+	$assert( 0, (int) ( $inventory_after['summary']['skipped_by_reason']['needs_metadata_reconcile'] ?? 0 ), 'inventory cleanup requires fewer metadata reconciliation passes after apply' );
+	$assert( 5, (int) ( $inventory_after['summary']['skipped_by_reason']['active_no_signal'] ?? 0 ), 'inventory cleanup treats reconciled active metadata like current active metadata' );
 	$assert( false, isset( $inventory_after['summary']['repair_status'] ), 'inventory cleanup no longer exposes migration status' );
 
 	echo "\nSafety gates\n";
