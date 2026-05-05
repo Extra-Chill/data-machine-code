@@ -87,9 +87,6 @@ function datamachine_code_bootstrap() {
 	// Register ability categories on the correct hook (must happen during wp_abilities_api_categories_init).
 	add_action( 'wp_abilities_api_categories_init', 'datamachine_code_register_ability_categories' );
 
-	// Register GitHub issue creation ability via SystemAbilities hook.
-	add_action( 'wp_abilities_api_init', 'datamachine_code_register_system_abilities' );
-
 }
 add_action( 'plugins_loaded', 'datamachine_code_bootstrap', 20 );
 
@@ -218,72 +215,6 @@ function datamachine_code_register_ability_categories() {
 }
 
 /**
- * Register system-level abilities (GitHub issue creation).
- */
-function datamachine_code_register_system_abilities() {
-	if ( ! function_exists( 'wp_register_ability' ) ) {
-		return;
-	}
-
-	wp_register_ability(
-		'datamachine/create-github-issue',
-		array(
-			'label'               => 'Create GitHub Issue',
-			'description'         => 'Create a new GitHub issue in a repository.',
-			'category'            => 'datamachine-code-github',
-			'input_schema'        => array(
-				'type'       => 'object',
-				'required'   => array( 'title' ),
-				'properties' => array(
-					'title'  => array(
-						'type'        => 'string',
-						'description' => 'Issue title.',
-					),
-					'repo'   => array(
-						'type'        => 'string',
-						'description' => 'Repository in owner/repo format.',
-					),
-					'body'   => array(
-						'type'        => 'string',
-						'description' => 'Issue body (supports GitHub Markdown).',
-					),
-					'labels' => array(
-						'type'        => 'array',
-						'description' => 'Labels to apply.',
-					),
-				),
-			),
-			'output_schema'       => array(
-				'type'       => 'object',
-				'properties' => array(
-					'success' => array( 'type' => 'boolean' ),
-					'job_id'  => array( 'type' => 'integer' ),
-					'error'   => array( 'type' => 'string' ),
-				),
-			),
-			'execute_callback'    => function ( array $input ) {
-				if ( ! class_exists( 'DataMachine\Engine\AI\System\TaskScheduler' ) ) {
-					return new \WP_Error( 'scheduler_unavailable', 'TaskScheduler not available.', array( 'status' => 500 ) );
-				}
-
-				$scheduler = new \DataMachine\Engine\AI\System\TaskScheduler();
-				$job_id    = $scheduler->schedule( 'github_create_issue', $input );
-
-				if ( is_wp_error( $job_id ) ) {
-					return $job_id;
-				}
-
-				return $job_id;
-			},
-			'permission_callback' => function () {
-				return \DataMachine\Abilities\PermissionHelper::can_manage();
-			},
-			'meta'                => array( 'show_in_rest' => false ),
-		)
-	);
-}
-
-/**
  * Register WP-CLI commands after core is loaded.
  */
 function datamachine_code_register_cli_commands() {
@@ -314,6 +245,7 @@ function datamachine_code_load_chat_tools() {
 	}
 
 	new \DataMachineCode\Tools\GitHubIssueTool();
+	new \DataMachineCode\Tools\GitHubPullRequestTool();
 	new \DataMachineCode\Tools\GitHubTools();
 	new \DataMachineCode\Tools\WorkspaceTools();
 }
