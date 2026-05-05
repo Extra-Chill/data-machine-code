@@ -52,7 +52,7 @@ class GitHubPullRequestPublish extends PublishHandler {
 			'class'       => self::class,
 			'method'      => 'handle_tool_call',
 			'handler'     => 'github_pull_request',
-			'description' => 'Open a GitHub pull request as the publish step for this pipeline item. Call exactly once after all files are committed to the head branch.',
+			'description' => 'Publish generated files to a GitHub branch and open a pull request as the publish step for this pipeline item. Call exactly once when the item is ready to publish.',
 			'parameters'  => array(
 				'type'       => 'object',
 				'required'   => array( 'title', 'head' ),
@@ -76,6 +76,32 @@ class GitHubPullRequestPublish extends PublishHandler {
 					'body'                  => array(
 						'type'        => 'string',
 						'description' => 'Pull request body in GitHub Markdown.',
+					),
+					'files'                 => array(
+						'type'        => 'array',
+						'description' => 'Optional files to commit to the head branch before opening the pull request.',
+						'items'       => array(
+							'type'       => 'object',
+							'required'   => array( 'file_path', 'content' ),
+							'properties' => array(
+								'file_path'      => array(
+									'type'        => 'string',
+									'description' => 'Path within the repository.',
+								),
+								'content'        => array(
+									'type'        => 'string',
+									'description' => 'File content to commit.',
+								),
+								'commit_message' => array(
+									'type'        => 'string',
+									'description' => 'Commit message for this file. Defaults to the publish commit_message or PR title.',
+								),
+							),
+						),
+					),
+					'commit_message'        => array(
+						'type'        => 'string',
+						'description' => 'Default commit message for files committed during publish.',
 					),
 					'draft'                 => array(
 						'type'        => 'boolean',
@@ -118,6 +144,40 @@ class GitHubPullRequestPublish extends PublishHandler {
 			'maintainer_can_modify' => $this->resolveBool( $parameters['maintainer_can_modify'] ?? null, $handler_config['maintainer_can_modify'] ?? true ),
 		);
 
+		$committed_files = array();
+		$files           = is_array( $parameters['files'] ?? null ) ? $parameters['files'] : array();
+		foreach ( $files as $file ) {
+			if ( ! is_array( $file ) ) {
+				return $this->errorResponse( 'GitHub Pull Request: each files item must be an object.', array( 'job_id' => $parameters['job_id'] ?? null ) );
+			}
+
+			$file_result = GitHubAbilities::createOrUpdateFile( array(
+				'repo'           => $repo,
+				'file_path'      => $file['file_path'] ?? '',
+				'content'        => $file['content'] ?? '',
+				'commit_message' => $file['commit_message'] ?? ( $parameters['commit_message'] ?? $input['title'] ),
+				'branch'         => $input['head'],
+			) );
+
+			if ( is_wp_error( $file_result ) ) {
+				return $this->errorResponse(
+					'GitHub Pull Request: failed to commit file before opening PR: ' . $file_result->get_error_message(),
+					array(
+						'job_id'    => $parameters['job_id'] ?? null,
+						'repo'      => $repo,
+						'head'      => $input['head'],
+						'file_path' => $file['file_path'] ?? '',
+					)
+				);
+			}
+
+			$committed_files[] = array(
+				'file_path'  => $file_result['content']['path'] ?? ( $file['file_path'] ?? '' ),
+				'commit_sha' => $file_result['commit']['sha'] ?? '',
+				'file_url'   => $file_result['content']['html_url'] ?? '',
+			);
+		}
+
 		$result = GitHubAbilities::createPullRequest( $input );
 		if ( is_wp_error( $result ) ) {
 			return $this->errorResponse(
@@ -138,6 +198,7 @@ class GitHubPullRequestPublish extends PublishHandler {
 				'title'       => $input['title'],
 				'head'        => $input['head'],
 				'base'        => $input['base'],
+				'files'       => $committed_files,
 			)
 		);
 	}

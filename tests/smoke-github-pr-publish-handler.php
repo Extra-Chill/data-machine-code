@@ -31,6 +31,10 @@ $assert( false !== strpos( $handler, "'handler'     => 'github_pull_request'" ),
 $assert( false !== strpos( $handler, "'github_pull_request_publish'" ), 'handler exposes github_pull_request_publish tool' );
 $assert( false !== strpos( $handler, "'required'   => array( 'title', 'head' )" ), 'PR publish requires title and head' );
 $assert( false !== strpos( $handler, 'GitHubAbilities::createPullRequest' ), 'handler delegates PR creation to GitHubAbilities' );
+$assert( false !== strpos( $handler, "'files'" ) && false !== strpos( $handler, "'items'" ), 'PR publish accepts a files array' );
+$assert( false !== strpos( $handler, 'GitHubAbilities::createOrUpdateFile' ), 'handler commits files before opening the PR' );
+$assert( false !== strpos( $handler, '\'branch\'         => $input[\'head\']' ), 'handler commits files to the PR head branch' );
+$assert( false !== strpos( $handler, '\'files\'       => $committed_files' ), 'handler returns committed file metadata' );
 $assert( false !== strpos( $settings, "'base'" ) && false !== strpos( $settings, "'draft'" ), 'settings expose base and draft defaults' );
 $assert( false !== strpos( $plugin, 'new \\DataMachineCode\\Handlers\\GitHub\\GitHubPullRequestPublish();' ), 'plugin bootstraps GitHub PR publish handler' );
 
