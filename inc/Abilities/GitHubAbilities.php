@@ -213,6 +213,110 @@ class GitHubAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/create-github-issue',
+				array(
+					'label'               => 'Create GitHub Issue',
+					'description'         => 'Create a new GitHub issue with optional labels, assignees, and milestone',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'title' ),
+						'properties' => array(
+							'repo'      => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'title'     => array(
+								'type'        => 'string',
+								'description' => 'Issue title (required).',
+							),
+							'body'      => array(
+								'type'        => 'string',
+								'description' => 'Issue body (supports GitHub Markdown).',
+							),
+							'labels'    => array(
+								'type'        => 'array',
+								'description' => 'Labels to attach to the issue.',
+							),
+							'assignees' => array(
+								'type'        => 'array',
+								'description' => 'GitHub usernames to assign to the issue.',
+							),
+							'milestone' => array(
+								'type'        => array( 'integer', 'null' ),
+								'description' => 'Milestone number to attach to the issue.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'issue'   => array( 'type' => 'object' ),
+							'error'   => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'createIssue' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/create-github-pull-request',
+				array(
+					'label'               => 'Create GitHub Pull Request',
+					'description'         => 'Open a new GitHub pull request from a head branch into a base branch',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'title', 'head' ),
+						'properties' => array(
+							'repo'                  => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'title'                 => array(
+								'type'        => 'string',
+								'description' => 'Pull request title (required).',
+							),
+							'head'                  => array(
+								'type'        => 'string',
+								'description' => 'Branch where changes are implemented (required). Use owner:branch for cross-fork PRs.',
+							),
+							'base'                  => array(
+								'type'        => 'string',
+								'description' => 'Branch to merge into. Defaults to the repository default branch.',
+							),
+							'body'                  => array(
+								'type'        => 'string',
+								'description' => 'Pull request description (supports GitHub Markdown).',
+							),
+							'draft'                 => array(
+								'type'        => 'boolean',
+								'description' => 'Whether to open the pull request as a draft. Default: false.',
+							),
+							'maintainer_can_modify' => array(
+								'type'        => 'boolean',
+								'description' => 'Whether maintainers can modify the pull request. Default: true.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'      => array( 'type' => 'boolean' ),
+							'pull_request' => array( 'type' => 'object' ),
+							'error'        => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'createPullRequest' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/comment-github-issue',
 				array(
 					'label'               => 'Comment on GitHub Issue',
@@ -1161,6 +1265,12 @@ class GitHubAbilities {
 		if ( ! empty( $input['assignees'] ) && is_array( $input['assignees'] ) ) {
 			$body['assignees'] = array_map( 'sanitize_text_field', $input['assignees'] );
 		}
+		if ( isset( $input['milestone'] ) && null !== $input['milestone'] && '' !== $input['milestone'] ) {
+			$milestone = (int) $input['milestone'];
+			if ( $milestone > 0 ) {
+				$body['milestone'] = $milestone;
+			}
+		}
 
 		$url      = sprintf( '%s/repos/%s/issues', self::API_BASE, $repo );
 		$response = self::apiRequest( 'POST', $url, $body, $pat );
@@ -1179,6 +1289,102 @@ class GitHubAbilities {
 			'html_url'     => $issue['html_url'] ?? '',
 			'message'      => sprintf( 'Issue #%d created in %s.', $issue['number'] ?? 0, $repo ),
 		);
+	}
+
+	/**
+	 * Create a new pull request.
+	 *
+	 * Calls `POST /repos/{owner}/{repo}/pulls`.
+	 *
+	 * @param array $input {
+	 *     Required: repo, title, head. Optional: base, body, draft, maintainer_can_modify.
+	 * }
+	 * @return array|\WP_Error { success: bool, pull_request: normalized, error: string|null } or error.
+	 */
+	public static function createPullRequest( array $input ): array|\WP_Error {
+		$repo = self::resolveRepo( sanitize_text_field( $input['repo'] ?? '' ) );
+		if ( empty( $repo ) ) {
+			return new \WP_Error( 'missing_repo', 'Repository (owner/repo) is required or configure a default repo.', array( 'status' => 400 ) );
+		}
+
+		$title = sanitize_text_field( $input['title'] ?? '' );
+		if ( empty( $title ) ) {
+			return new \WP_Error( 'missing_title', 'Pull request title is required.', array( 'status' => 400 ) );
+		}
+
+		$head = sanitize_text_field( $input['head'] ?? '' );
+		if ( empty( $head ) ) {
+			return new \WP_Error( 'missing_head', 'Pull request head branch is required.', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPat();
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$body = array(
+			'title' => $title,
+			'head'  => $head,
+		);
+
+		$base = sanitize_text_field( $input['base'] ?? '' );
+		if ( '' === $base ) {
+			$base = self::resolveDefaultBranch( $repo, $pat );
+			if ( is_wp_error( $base ) ) {
+				return $base;
+			}
+		}
+		$body['base'] = $base;
+
+		if ( isset( $input['body'] ) && '' !== $input['body'] ) {
+			$body['body'] = (string) $input['body'];
+		}
+		if ( array_key_exists( 'draft', $input ) ) {
+			$body['draft'] = (bool) $input['draft'];
+		}
+		if ( array_key_exists( 'maintainer_can_modify', $input ) ) {
+			$body['maintainer_can_modify'] = (bool) $input['maintainer_can_modify'];
+		} else {
+			$body['maintainer_can_modify'] = true;
+		}
+
+		$url      = sprintf( '%s/repos/%s/pulls', self::API_BASE, $repo );
+		$response = self::apiRequest( 'POST', $url, $body, $pat );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$pull = self::normalizePull( $response['data'] );
+
+		return array(
+			'success'      => true,
+			'pull_request' => $pull,
+			'pull_number'  => $pull['number'] ?? 0,
+			'html_url'     => $pull['html_url'] ?? '',
+			'message'      => sprintf( 'Pull request #%d opened in %s.', $pull['number'] ?? 0, $repo ),
+		);
+	}
+
+	/**
+	 * Resolve the default branch name for a repository.
+	 *
+	 * @param string $repo owner/repo identifier.
+	 * @param string $pat  GitHub credential token.
+	 * @return string|\WP_Error Default branch name or error.
+	 */
+	private static function resolveDefaultBranch( string $repo, string $pat ): string|\WP_Error {
+		$response = self::apiGet( sprintf( '%s/repos/%s', self::API_BASE, $repo ), array(), $pat );
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$default_branch = (string) ( $response['data']['default_branch'] ?? '' );
+		if ( '' === $default_branch ) {
+			return new \WP_Error( 'default_branch_missing', 'GitHub did not return a default branch for the repository.', array( 'status' => 500 ) );
+		}
+
+		return $default_branch;
 	}
 
 	public static function commentOnIssue( array $input ): array|\WP_Error {
