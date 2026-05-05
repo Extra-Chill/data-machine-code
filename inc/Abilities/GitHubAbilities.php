@@ -42,6 +42,17 @@ class GitHubAbilities {
 	private static ?\WP_Error $last_auth_error = null;
 
 	/**
+	 * Map of resolved tokens → auth mode ('pat' | 'app').
+	 *
+	 * Lets getHeaders() pick the right Authorization scheme without
+	 * re-resolving the credential. Populated by getPat() / getCredential()
+	 * each time a credential is resolved.
+	 *
+	 * @var array<string,string>
+	 */
+	private static array $token_modes = array();
+
+	/**
 	 * GitHub API base URL.
 	 */
 	const API_BASE = 'https://api.github.com';
@@ -1124,7 +1135,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_repo', 'Repository is required (owner/repo format).', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -1172,7 +1183,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and issue_number are required.', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -1198,7 +1209,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and issue_number are required.', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -1249,7 +1260,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_title', 'Issue title is required.', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -1396,7 +1407,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_params', 'Repository, issue_number, and body are required.', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -1450,7 +1461,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_head_sha', 'head_sha is required when mode is per_head_sha.', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -1622,7 +1633,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_repo', 'Repository is required (owner/repo format).', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -1665,7 +1676,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and pull_number are required.', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -1731,7 +1742,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_repo', 'Repository is required (owner/repo format).', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -1778,7 +1789,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and pull_number are required.', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -2630,7 +2641,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and pull_number are required.', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -2662,7 +2673,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and pull_number are required.', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -2702,7 +2713,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and sha are required.', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -2747,7 +2758,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and sha are required.', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -2794,7 +2805,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_params', 'Either head_sha or pull_number is required.', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -3103,7 +3114,8 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_owner', 'Owner (user or org) is required.', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		// listRepos lists by owner — no specific repo, so fall back to default profile.
+		$pat = self::getPatForRepo( '' );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -3172,7 +3184,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_commit_message', 'Commit message is required.', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -3247,7 +3259,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_repo', 'Repository is required (owner/repo format).', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -3307,7 +3319,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and file path are required.', array( 'status' => 400 ) );
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
 		}
@@ -3424,7 +3436,11 @@ class GitHubAbilities {
 	}
 
 	private static function getHeaders( string $pat ): array {
-		$authorization = 'app' === GitHubCredentialResolver::mode() ? 'Bearer ' . $pat : 'token ' . $pat;
+		// Prefer per-token mode tracked at resolution time so multi-profile
+		// callers get the right Authorization scheme regardless of which
+		// profile is the global default.
+		$mode          = self::$token_modes[ $pat ] ?? GitHubCredentialResolver::mode();
+		$authorization = 'app' === $mode ? 'Bearer ' . $pat : 'token ' . $pat;
 
 		return array(
 			'Authorization' => $authorization,
@@ -3819,15 +3835,42 @@ class GitHubAbilities {
 	// Utilities
 	// -------------------------------------------------------------------------
 
-	public static function getPat(): string {
-		$credential = GitHubCredentialResolver::resolve();
+	/**
+	 * Resolve a GitHub credential token.
+	 *
+	 * @param array<string,mixed>|null $selector Optional `profile_id` or `repo` selector. See GitHubCredentialResolver::resolve().
+	 * @return string Token string, or empty string when resolution fails (caller should call patError()).
+	 */
+	public static function getPat( ?array $selector = null ): string {
+		$credential = GitHubCredentialResolver::resolve( null, null, $selector );
 		if ( is_wp_error( $credential ) ) {
 			self::$last_auth_error = $credential;
 			return '';
 		}
 
-		self::$last_auth_error = null;
-		return (string) $credential['token'];
+		self::$last_auth_error       = null;
+		$token                       = (string) $credential['token'];
+		self::$token_modes[ $token ] = (string) ( $credential['mode'] ?? 'pat' );
+		return $token;
+	}
+
+	/**
+	 * Resolve a full credential array for callers that need both the token and its mode.
+	 *
+	 * @param array<string,mixed>|null $selector
+	 * @return array{mode:string,token:string,authorization:string,profile_id:string}|\WP_Error
+	 */
+	public static function getCredential( ?array $selector = null ): array|\WP_Error {
+		$credential = GitHubCredentialResolver::resolve( null, null, $selector );
+		if ( is_wp_error( $credential ) ) {
+			self::$last_auth_error = $credential;
+			return $credential;
+		}
+
+		$token                       = (string) $credential['token'];
+		self::$last_auth_error       = null;
+		self::$token_modes[ $token ] = (string) ( $credential['mode'] ?? 'pat' );
+		return $credential;
 	}
 
 	public static function isConfigured(): bool {
@@ -3892,6 +3935,17 @@ class GitHubAbilities {
 		}
 
 		return '';
+	}
+
+	/**
+	 * Resolve a PAT/installation token, scoped to the current repo when known.
+	 *
+	 * Internal sugar for ability methods that already have the repo in scope.
+	 * Pass the empty string to fall back to the default profile.
+	 */
+	private static function getPatForRepo( string $repo ): string {
+		$selector = '' !== trim( $repo ) ? array( 'repo' => $repo ) : null;
+		return self::getPat( $selector );
 	}
 
 	private static function patError(): \WP_Error {

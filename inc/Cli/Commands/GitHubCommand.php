@@ -510,6 +510,29 @@ class GitHubCommand extends BaseCommand {
 
 		$this->format_items( $items, array( 'setting', 'value' ), $assoc_args );
 
+		// Show configured credential profiles.
+		$profiles = $auth_status['profiles'] ?? array();
+		if ( ! empty( $profiles ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Configured credential profiles:' );
+			$profile_items = array();
+			foreach ( $profiles as $profile ) {
+				$profile_items[] = array(
+					'id'            => $profile['id'] ?? '',
+					'label'         => $profile['label'] ?? '',
+					'mode'          => $profile['mode'] ?? '',
+					'configured'    => ! empty( $profile['configured'] ) ? 'yes' : 'no',
+					'default_repo'  => $profile['default_repo'] ?? '',
+					'allowed_repos' => implode( ', ', $profile['allowed_repos'] ?? array() ),
+				);
+			}
+			$this->format_items( $profile_items, array( 'id', 'label', 'mode', 'configured', 'default_repo', 'allowed_repos' ), $assoc_args );
+			$default_id = $auth_status['default_profile_id'] ?? '';
+			if ( '' !== $default_id ) {
+				WP_CLI::log( sprintf( 'Default profile: %s', $default_id ) );
+			}
+		}
+
 		// Show registered repos from the filter.
 		$repos = GitHubAbilities::getRegisteredRepos();
 		if ( ! empty( $repos ) ) {
@@ -685,7 +708,7 @@ class GitHubCommand extends BaseCommand {
 	 */
 	private function requireConfig(): void {
 		if ( ! GitHubAbilities::isConfigured() ) {
-			WP_CLI::error( 'GitHub authentication is not configured. Set github_pat for PAT mode or GitHub App credentials for app mode.' );
+			WP_CLI::error( 'GitHub authentication is not configured. Configure a credential profile (github_credential_profiles) or set legacy github_pat / GitHub App credentials.' );
 		}
 	}
 

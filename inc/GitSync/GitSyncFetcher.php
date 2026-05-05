@@ -56,7 +56,9 @@ final class GitSyncFetcher {
 			return new \WP_Error( 'unparseable_remote', sprintf( 'Cannot parse GitHub owner/repo from %s.', $binding->remote_url ), array( 'status' => 400 ) );
 		}
 
-		$pat = (string) GitHubAbilities::getPat();
+		// Pass the repo through so credential profiles with `allowed_repos`
+		// can win over the global default profile.
+		$pat = (string) GitHubAbilities::getPat( array( 'repo' => $slug ) );
 		if ( '' === $pat ) {
 			return new \WP_Error( 'missing_github_auth', 'GitHub authentication is not configured.', array( 'status' => 500 ) );
 		}
