@@ -87,8 +87,10 @@ namespace {
 
 	require __DIR__ . '/../inc/Tools/GitHubIssueTool.php';
 	require __DIR__ . '/../inc/Tools/GitHubPullRequestTool.php';
+	require __DIR__ . '/../inc/Tools/GitHubTools.php';
 
 	use DataMachineCode\Tools\GitHubIssueTool;
+	use DataMachineCode\Tools\GitHubTools;
 	use DataMachineCode\Tools\GitHubPullRequestTool;
 
 	$failures = array();
@@ -101,11 +103,27 @@ namespace {
 		$failures[] = $label;
 		echo "  fail {$label}\n";
 	};
+	$assert_array_items = function ( array $schema, string $path ) use ( &$assert_array_items, $assert ): void {
+		if ( 'array' === ( $schema['type'] ?? null ) ) {
+			$assert( "{$path} array schema declares items", isset( $schema['items'] ) && is_array( $schema['items'] ) );
+		}
+
+		foreach ( $schema['properties'] ?? array() as $property => $property_schema ) {
+			if ( is_array( $property_schema ) ) {
+				$assert_array_items( $property_schema, "{$path}.properties.{$property}" );
+			}
+		}
+
+		if ( isset( $schema['items'] ) && is_array( $schema['items'] ) ) {
+			$assert_array_items( $schema['items'], "{$path}.items" );
+		}
+	};
 
 	echo "GitHub create tools - smoke\n";
 
 	$issue_tool = new GitHubIssueTool();
 	$pr_tool    = new GitHubPullRequestTool();
+	$github_tools = new GitHubTools();
 
 	$assert( 'create_github_issue tool is registered', isset( $issue_tool->registered['create_github_issue'] ) );
 	$assert( 'create_github_issue is available in chat', in_array( 'chat', $issue_tool->registered['create_github_issue']['contexts'] ?? array(), true ) );
@@ -157,6 +175,25 @@ namespace {
 	$pr_call = $GLOBALS['dmc_tool_ability_calls'][1] ?? array();
 	$assert( 'create_github_pull_request calls PR ability', 'datamachine/create-github-pull-request' === ( $pr_call['name'] ?? '' ) );
 	$assert( 'create_github_pull_request forwards maintainer_can_modify', false === ( $pr_call['input']['maintainer_can_modify'] ?? null ) );
+
+	$tool_definitions = array(
+		'create_github_issue'        => $issue_definition,
+		'create_github_pull_request' => $pr_definition,
+	);
+	foreach ( $github_tools->registered as $tool_name => $registration ) {
+		$callback = $registration['definition_callback'] ?? null;
+		if ( is_callable( $callback ) ) {
+			$tool_definitions[ $tool_name ] = $callback();
+		}
+	}
+
+	foreach ( $tool_definitions as $tool_name => $definition ) {
+		foreach ( $definition['parameters'] ?? array() as $parameter => $parameter_schema ) {
+			if ( is_array( $parameter_schema ) ) {
+				$assert_array_items( $parameter_schema, "{$tool_name}.parameters.{$parameter}" );
+			}
+		}
+	}
 
 	$plugin_source = file_get_contents( __DIR__ . '/../data-machine-code.php' );
 	$assert( 'legacy system ability function is removed', ! str_contains( $plugin_source, 'datamachine_code_register_system_abilities' ) );
