@@ -9,9 +9,12 @@
  *   wp datamachine system run worktree_cleanup
  *   wp datamachine system health --types=worktree_cleanup
  *
- * The task is disabled by default — cleanup is destructive (removes a
- * worktree directory and deletes the local branch) and agents should opt
- * in explicitly. Once enabled, it respects the usual safety rails:
+ * The standalone task is disabled by default — cleanup is destructive
+ * (removes a worktree directory and deletes the local branch) and operators
+ * should opt in explicitly. DMC-owned recurring cleanup runs through the
+ * safer WorkspaceRetentionCleanupTask path, which builds reviewed plans and
+ * schedules bounded child jobs. Once this task is enabled, it respects the
+ * usual safety rails:
  *
  *   - Protected branches (main, master, trunk, develop, HEAD) are never touched.
  *   - Worktrees outside the workspace path are skipped.
@@ -22,9 +25,9 @@
  *   - Only branches with a clear merge signal (upstream branch deleted on
  *     origin, or GitHub PR closed+merged) are candidates.
  *
- * Auto-scheduling via Action Scheduler is intentionally out of scope for
- * this task class — it just handles the execution contract. See the
- * follow-up issue for opt-in daily/weekly scheduling.
+ * Auto-scheduling is declared in data-machine-code.php via
+ * `datamachine_recurring_schedules`; this task class only handles the
+ * execution contract.
  *
  * @package DataMachineCode\Tasks
  * @since   0.7.0
@@ -87,7 +90,7 @@ class WorktreeCleanupTask extends SystemTask {
 			'label'           => 'Worktree Cleanup',
 			'description'     => 'Remove worktrees whose branches have been merged and deleted upstream. Destructive: removes worktree directories and deletes local branches. Runs daily when enabled.',
 			'setting_key'     => self::SETTING_KEY,
-			// Opt-in only — cleanup is destructive, agents should flip this
+			// Opt-in only — this direct task is destructive, operators should flip this
 			// on explicitly (via React UI, REST, or `wp datamachine settings
 			// set worktree_cleanup_enabled true`).
 			'default_enabled' => false,

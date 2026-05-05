@@ -2632,6 +2632,12 @@ class WorkspaceCommand extends BaseCommand {
 				'count'  => (int) $count,
 			);
 		}
+		foreach ( (array) ( $summary['cleanup_buckets'] ?? array() ) as $bucket => $count ) {
+			$summary_rows[] = array(
+				'metric' => 'bucket:' . $bucket,
+				'count'  => (int) $count,
+			);
+		}
 		if ( isset( $summary['age_filter'] ) && is_array( $summary['age_filter'] ) ) {
 			$summary_rows[] = array(
 				'metric' => 'age_filter:excluded',
@@ -3397,12 +3403,17 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function normalize_worktree_cleanup_only( string $only ): string {
 		$aliases = array(
-			'would-remove'     => 'candidates',
-			'would_remove'     => 'candidates',
-			'dirty'            => 'dirty_worktree',
-			'unpushed'         => 'unpushed_commits',
-			'missing-metadata' => 'missing_metadata',
-			'external'         => 'external_worktree',
+			'would-remove'       => 'candidates',
+			'would_remove'       => 'candidates',
+			'dirty'              => 'dirty_worktree',
+			'unpushed'           => 'unpushed_commits',
+			'missing-metadata'   => 'needs_metadata_reconcile',
+			'missing_metadata'   => 'needs_metadata_reconcile',
+			'requires-full-scan' => 'needs_metadata_reconcile',
+			'requires_full_scan' => 'needs_metadata_reconcile',
+			'no-signal'          => 'active_no_signal',
+			'no_signal'          => 'active_no_signal',
+			'external'           => 'external_worktree',
 		);
 
 		return $aliases[ $only ] ?? $only;

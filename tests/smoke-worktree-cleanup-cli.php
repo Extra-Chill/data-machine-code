@@ -91,10 +91,10 @@ namespace {
 			'repo'           => '',
 			'branch'         => '',
 			'path'           => '',
-			'reason_code'         => 'missing_metadata',
-			'reason'              => 'missing repo/branch/path',
+			'reason_code'         => 'needs_metadata_reconcile',
+			'reason'              => 'inventory row has no lifecycle metadata; metadata reconciliation is required before cleanup planning can classify it',
 			'missing_fields'      => array( 'repo', 'branch', 'path' ),
-			'hint'                => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
+			'hint'                => 'Run workspace worktree reconcile-metadata --dry-run --format=json to generate reviewed metadata reconciliation rows.',
 			'size_bytes'          => 0,
 			'artifact_size_bytes' => 0,
 		);
@@ -112,16 +112,24 @@ namespace {
 			'repo'        => 'repo',
 			'branch'      => 'needs-full-scan',
 			'path'        => '/workspace/repo@needs-full-scan',
-			'reason_code' => 'requires_full_scan',
-			'reason'      => 'inventory row has no lifecycle metadata; cleanup safety requires a full scan',
+			'reason_code' => 'needs_metadata_reconcile',
+			'reason'      => 'inventory row has no lifecycle metadata; metadata reconciliation is required before cleanup planning can classify it',
 		);
 		$skipped[] = array(
 			'handle'      => 'repo@needs-review',
 			'repo'        => 'repo',
 			'branch'      => 'needs-review',
 			'path'        => '/workspace/repo@needs-review',
-			'reason_code' => 'no_inventory_cleanup_signal',
-			'reason'      => 'no explicit inventory cleanup signal - leaving in place',
+			'reason_code' => 'active_no_signal',
+			'reason'      => 'active lifecycle metadata has no cleanup signal; leaving in place',
+		);
+		$skipped[] = array(
+			'handle'      => 'repo@needs-lifecycle-reconcile',
+			'repo'        => 'repo',
+			'branch'      => 'needs-lifecycle-reconcile',
+			'path'        => '/workspace/repo@needs-lifecycle-reconcile',
+			'reason_code' => 'lifecycle_reconciliation_candidate',
+			'reason'      => 'stale or PR/task-backed lifecycle metadata has no cleanup signal; reconcile lifecycle state before cleanup eligibility is decided',
 		);
 
 		return array(
@@ -148,34 +156,48 @@ namespace {
 				'removed'              => 0,
 				'skipped'              => count( $skipped ),
 				'skipped_by_reason'    => array(
-					'dirty_worktree'               => 1,
-					'missing_metadata'             => 1,
-					'repaired_metadata'    => 1,
-					'no_inventory_cleanup_signal'  => 1,
-					'no_merge_signal'              => 10,
-					'requires_full_scan'           => 1,
+					'active_no_signal'                    => 1,
+					'dirty_worktree'                       => 1,
+					'lifecycle_reconciliation_candidate'  => 1,
+					'needs_metadata_reconcile'             => 2,
+					'no_merge_signal'                      => 10,
+					'repaired_metadata'                    => 1,
+				),
+				'cleanup_buckets'       => array(
+					'active_no_signal'                    => 1,
+					'dirty_unpushed'                      => 1,
+					'explicit_cleanup_candidates'         => 0,
+					'lifecycle_reconciliation_candidates' => 1,
+					'metadata_reconciliation_candidates'  => 2,
 				),
 				'skipped_next_commands' => array(
+					array(
+						'reason_code' => 'lifecycle_reconciliation_candidate',
+						'count'       => 1,
+						'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --format=json',
+						'alternative' => 'studio wp datamachine-code workspace cleanup plan --mode=retention --format=json',
+						'destructive' => false,
+					),
+					array(
+						'reason_code' => 'needs_metadata_reconcile',
+						'count'       => 2,
+						'command'     => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
+						'alternative' => 'Low-level apply still requires a reviewed --apply-plan=<file> until DB-backed cleanup runs land.',
+						'destructive' => false,
+					),
+					array(
+						'reason_code' => 'active_no_signal',
+						'count'       => 1,
+						'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --skip-github --format=json',
+						'alternative' => 'No automatic cleanup action is safe from active inventory metadata alone.',
+						'destructive' => false,
+					),
 					array(
 						'reason_code' => 'repaired_metadata',
 						'count'       => 1,
 						'command'     => 'studio wp datamachine-code workspace cleanup run --mode=retention --older-than=7d',
 						'alternative' => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25 --older-than=7d',
 						'destructive' => true,
-					),
-					array(
-						'reason_code' => 'requires_full_scan',
-						'count'       => 1,
-						'command'     => 'studio wp datamachine-code workspace worktree reconcile-metadata-batch --dry-run --limit=25 --format=json',
-						'alternative' => 'studio wp datamachine-code workspace worktree reconcile-metadata-batch --limit=25',
-						'destructive' => false,
-					),
-					array(
-						'reason_code' => 'no_inventory_cleanup_signal',
-						'count'       => 1,
-						'command'     => 'studio wp datamachine-code workspace worktree finalize <handle> --pr=<pr-url>',
-						'alternative' => 'studio wp datamachine-code workspace worktree mark-cleanup-eligible <handle>',
-						'destructive' => false,
 					),
 				),
 				'candidates_by_signal' => array(
@@ -673,13 +695,16 @@ namespace {
 	$decoded = json_decode( WP_CLI::$logs[0], true );
 	datamachine_code_cleanup_assert( JSON_ERROR_NONE === json_last_error(), 'JSON output parses cleanly' );
 	datamachine_code_cleanup_assert( 'dirty_worktree' === ( $decoded['skipped'][0]['reason_code'] ?? '' ), 'JSON rows include stable reason code' );
-	datamachine_code_cleanup_assert( array( 'repo', 'branch', 'path' ) === ( $decoded['skipped'][11]['missing_fields'] ?? array() ), 'JSON missing_metadata includes missing fields' );
-	datamachine_code_cleanup_assert( str_contains( $decoded['skipped'][11]['hint'] ?? '', 'workspace worktree prune' ), 'JSON missing_metadata includes remediation hint' );
+	datamachine_code_cleanup_assert( array( 'repo', 'branch', 'path' ) === ( $decoded['skipped'][11]['missing_fields'] ?? array() ), 'JSON metadata reconciliation row includes missing fields' );
+	datamachine_code_cleanup_assert( 'needs_metadata_reconcile' === ( $decoded['skipped'][11]['reason_code'] ?? '' ), 'JSON missing metadata row uses metadata reconciliation reason' );
+	datamachine_code_cleanup_assert( str_contains( $decoded['skipped'][11]['hint'] ?? '', 'reconcile-metadata --dry-run' ), 'JSON metadata reconciliation row includes remediation hint' );
 	datamachine_code_cleanup_assert( 10 === (int) ( $decoded['summary']['skipped_by_reason']['no_merge_signal'] ?? 0 ), 'JSON summary includes reason counts' );
-	datamachine_code_cleanup_assert( 3 === count( $decoded['summary']['skipped_next_commands'] ?? array() ), 'JSON summary includes actionable skipped next commands' );
-	datamachine_code_cleanup_assert( str_contains( $decoded['summary']['skipped_next_commands'][0]['command'] ?? '', 'workspace cleanup run --mode=retention --older-than=7d' ), 'JSON repaired metadata command is task-backed retention cleanup' );
-	datamachine_code_cleanup_assert( str_contains( $decoded['summary']['skipped_next_commands'][1]['command'] ?? '', 'reconcile-metadata-batch --dry-run --limit=25' ), 'JSON full-scan command is bounded metadata reconciliation' );
-	datamachine_code_cleanup_assert( str_contains( $decoded['summary']['skipped_next_commands'][2]['command'] ?? '', 'finalize <handle> --pr=<pr-url>' ), 'JSON no-signal command records explicit review metadata' );
+	datamachine_code_cleanup_assert( 1 === (int) ( $decoded['summary']['cleanup_buckets']['lifecycle_reconciliation_candidates'] ?? 0 ), 'JSON summary includes lifecycle reconciliation bucket count' );
+	datamachine_code_cleanup_assert( 2 === (int) ( $decoded['summary']['cleanup_buckets']['metadata_reconciliation_candidates'] ?? 0 ), 'JSON summary includes metadata reconciliation bucket count' );
+	datamachine_code_cleanup_assert( 4 === count( $decoded['summary']['skipped_next_commands'] ?? array() ), 'JSON summary includes actionable skipped next commands' );
+	datamachine_code_cleanup_assert( str_contains( $decoded['summary']['skipped_next_commands'][0]['command'] ?? '', 'worktree cleanup --dry-run --format=json' ), 'JSON lifecycle command runs DMC-owned cleanup signal detection' );
+	datamachine_code_cleanup_assert( str_contains( $decoded['summary']['skipped_next_commands'][1]['command'] ?? '', 'reconcile-metadata --dry-run --format=json' ), 'JSON metadata command is metadata reconciliation' );
+	datamachine_code_cleanup_assert( str_contains( $decoded['summary']['skipped_next_commands'][2]['alternative'] ?? '', 'No automatic cleanup action is safe' ), 'JSON active/no-signal command explains no automatic cleanup action' );
 
 	echo "\n[1b] --apply-plan decodes JSON and forbids force\n";
 	$plan_file = sys_get_temp_dir() . '/dmc-cleanup-plan-' . bin2hex( random_bytes( 3 ) ) . '.json';
@@ -708,8 +733,8 @@ namespace {
 	datamachine_code_cleanup_assert( in_array( 'table:10:handle,reason_code,age_days,size,artifacts,reason', WP_CLI::$logs, true ), 'default skipped table omits path and hint fields but keeps disk fields' );
 	datamachine_code_cleanup_assert( in_array( 'Top repos by worktree size:', WP_CLI::$logs, true ), 'human output includes top repo size summary' );
 	datamachine_code_cleanup_assert( in_array( 'Next commands for skipped buckets:', WP_CLI::$logs, true ), 'human output includes actionable skipped command section' );
-	datamachine_code_cleanup_assert( in_array( 'table:3:reason_code,count,destructive,command,alternative', WP_CLI::$logs, true ), 'human output renders compact skipped command table' );
-	datamachine_code_cleanup_assert( in_array( 'Showing 10 of 15 skipped rows. Re-run with --verbose for all rows or --only=<reason_code> to filter.', WP_CLI::$logs, true ), 'human output truncates skipped rows with hint' );
+	datamachine_code_cleanup_assert( in_array( 'table:4:reason_code,count,destructive,command,alternative', WP_CLI::$logs, true ), 'human output renders compact skipped command table' );
+	datamachine_code_cleanup_assert( in_array( 'Showing 10 of 16 skipped rows. Re-run with --verbose for all rows or --only=<reason_code> to filter.', WP_CLI::$logs, true ), 'human output truncates skipped rows with hint' );
 	datamachine_code_cleanup_assert( 1 === count( WP_CLI::$successes ), 'human output keeps success suffix' );
 
 	echo "\n[3] verbose output keeps detailed human fields\n";
@@ -717,7 +742,7 @@ namespace {
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'verbose' => true ) );
 	datamachine_code_cleanup_assert( in_array( 'table:1:handle,branch,age_days,size,artifacts,signal,reason', WP_CLI::$logs, true ), 'verbose candidate table keeps full reason field' );
-	datamachine_code_cleanup_assert( in_array( 'table:15:handle,reason_code,reason,age_days,size,artifacts,repo,branch,path,primary_path,missing,hint', WP_CLI::$logs, true ), 'verbose skipped table keeps diagnostic fields' );
+	datamachine_code_cleanup_assert( in_array( 'table:16:handle,reason_code,reason,age_days,size,artifacts,repo,branch,path,primary_path,missing,hint', WP_CLI::$logs, true ), 'verbose skipped table keeps diagnostic fields' );
 
 	echo "\n[4] --only filters rows while keeping full summary\n";
 	WP_CLI::$logs      = array();
@@ -725,9 +750,9 @@ namespace {
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'only' => 'missing-metadata', 'format' => 'json' ) );
 	$filtered = json_decode( WP_CLI::$logs[0], true );
 	datamachine_code_cleanup_assert( array() === ( $filtered['candidates'] ?? null ), '--only reason hides candidates' );
-	datamachine_code_cleanup_assert( 1 === count( $filtered['skipped'] ?? array() ), '--only reason keeps matching skipped rows only' );
-	datamachine_code_cleanup_assert( 'missing_metadata' === ( $filtered['skipped'][0]['reason_code'] ?? '' ), '--only alias resolves to reason code' );
-	datamachine_code_cleanup_assert( 15 === (int) ( $filtered['summary']['skipped'] ?? 0 ), '--only leaves summary counts unfiltered' );
+	datamachine_code_cleanup_assert( 2 === count( $filtered['skipped'] ?? array() ), '--only reason keeps matching skipped rows only' );
+	datamachine_code_cleanup_assert( 'needs_metadata_reconcile' === ( $filtered['skipped'][0]['reason_code'] ?? '' ), '--only alias resolves to metadata reconciliation reason code' );
+	datamachine_code_cleanup_assert( 16 === (int) ( $filtered['summary']['skipped'] ?? 0 ), '--only leaves summary counts unfiltered' );
 
 	echo "\n[5] --only aliases resolve candidate section\n";
 	foreach ( array( 'candidates', 'would-remove', 'would_remove' ) as $alias ) {
@@ -747,7 +772,7 @@ namespace {
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'older-than' => '7d' ) );
 	datamachine_code_cleanup_assert( '7d' === ( $ability->last_input['older_than'] ?? null ), 'older-than forwards to cleanup ability as older_than' );
 	datamachine_code_cleanup_assert( is_callable( $ability->last_input['progress_callback'] ?? null ), 'human cleanup passes progress callback to ability' );
-	datamachine_code_cleanup_assert( in_array( 'table:13:metric,count', WP_CLI::$logs, true ), 'age filter and disk summary rows are rendered' );
+	datamachine_code_cleanup_assert( in_array( 'table:18:metric,count', WP_CLI::$logs, true ), 'age filter, cleanup buckets, and disk summary rows are rendered' );
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();

@@ -276,6 +276,7 @@ namespace {
 	mkdir( $tmp . '/demo@inventory-cleanup-eligible', 0755, true );
 	mkdir( $tmp . '/demo@inventory-finalized-pr', 0755, true );
 	mkdir( $tmp . '/demo@inventory-active', 0755, true );
+	mkdir( $tmp . '/demo@inventory-stale-lifecycle', 0755, true );
 	mkdir( $tmp . '/demo@inventory-missing-metadata', 0755, true );
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
 		'demo@inventory-cleanup-eligible',
@@ -300,7 +301,18 @@ namespace {
 		'demo@inventory-active',
 		array(
 			'created_at'      => '2026-04-01T00:00:00+00:00',
+			'last_seen_at'    => gmdate( 'c' ),
 			'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
+		)
+	);
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
+		'demo@inventory-stale-lifecycle',
+		array(
+			'created_at'      => '2026-04-01T00:00:00+00:00',
+			'last_seen_at'    => '2026-04-01T00:00:00+00:00',
+			'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
+			'pr_url'          => 'https://github.com/acme/demo/pull/44',
+			'pr_number'       => 44,
 		)
 	);
 
@@ -391,13 +403,21 @@ namespace {
 	$assert_contains( $inventory_plan['candidates'] ?? array(), 'demo@inventory-finalized-pr', 'inventory-only flags persisted PR-finalized worktree' );
 	$assert( 2, count( $inventory_plan['candidates'] ?? array() ), 'inventory-only only returns cheap cleanup signals as candidates' );
 	$inventory_active = array_values( array_filter( $inventory_plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@inventory-active' ) )[0] ?? array();
-	$assert( 'no_inventory_cleanup_signal', $inventory_active['reason_code'] ?? '', 'inventory-only active metadata uses stable ambiguous reason' );
+	$assert( 'active_no_signal', $inventory_active['reason_code'] ?? '', 'inventory-only active metadata uses stable active/no-signal reason' );
+	$inventory_stale = array_values( array_filter( $inventory_plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@inventory-stale-lifecycle' ) )[0] ?? array();
+	$assert( 'lifecycle_reconciliation_candidate', $inventory_stale['reason_code'] ?? '', 'inventory-only stale PR-backed metadata surfaces lifecycle reconciliation candidate' );
 	$inventory_missing = array_values( array_filter( $inventory_plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@inventory-missing-metadata' ) )[0] ?? array();
-	$assert( 'requires_full_scan', $inventory_missing['reason_code'] ?? '', 'inventory-only missing metadata requires full scan' );
+	$assert( 'needs_metadata_reconcile', $inventory_missing['reason_code'] ?? '', 'inventory-only missing metadata requires metadata reconciliation' );
+	$inventory_buckets = (array) ( $inventory_plan['summary']['cleanup_buckets'] ?? array() );
+	$assert( 2, (int) ( $inventory_buckets['explicit_cleanup_candidates'] ?? 0 ), 'inventory cleanup bucket counts explicit cleanup candidates' );
+	$assert( 1, (int) ( $inventory_buckets['lifecycle_reconciliation_candidates'] ?? 0 ), 'inventory cleanup bucket counts lifecycle reconciliation candidates' );
+	$assert( 4, (int) ( $inventory_buckets['metadata_reconciliation_candidates'] ?? 0 ), 'inventory cleanup bucket counts metadata reconciliation candidates' );
+	$assert( 4, (int) ( $inventory_buckets['active_no_signal'] ?? 0 ), 'inventory cleanup bucket counts active/no-signal rows' );
 	$inventory_next_commands = (array) ( $inventory_plan['summary']['skipped_next_commands'] ?? array() );
 	$assert( true, count( $inventory_next_commands ) >= 2, 'inventory-only summary includes actionable skipped commands' );
-	$assert( true, in_array( 'requires_full_scan', array_column( $inventory_next_commands, 'reason_code' ), true ), 'inventory-only skipped commands include full-scan remediation' );
-	$assert( true, in_array( 'no_inventory_cleanup_signal', array_column( $inventory_next_commands, 'reason_code' ), true ), 'inventory-only skipped commands include explicit review remediation' );
+	$assert( true, in_array( 'needs_metadata_reconcile', array_column( $inventory_next_commands, 'reason_code' ), true ), 'inventory-only skipped commands include metadata reconciliation remediation' );
+	$assert( true, in_array( 'lifecycle_reconciliation_candidate', array_column( $inventory_next_commands, 'reason_code' ), true ), 'inventory-only skipped commands include lifecycle reconciliation remediation' );
+	$assert( true, in_array( 'active_no_signal', array_column( $inventory_next_commands, 'reason_code' ), true ), 'inventory-only skipped commands include active/no-signal explanation' );
 	$inventory_apply = $inventory_ws->worktree_cleanup_merged( array( 'inventory_only' => true ) );
 	$assert( true, is_wp_error( $inventory_apply ), 'inventory-only cleanup refuses non-dry-run apply path' );
 
