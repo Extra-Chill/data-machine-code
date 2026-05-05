@@ -334,6 +334,7 @@ class GitHubTools extends BaseTool {
 				),
 				'labels'       => array(
 					'type'        => 'array',
+					'items'       => array( 'type' => 'string' ),
 					'required'    => false,
 					'description' => 'Labels to set (update action). Replaces existing labels.',
 				),
@@ -818,6 +819,7 @@ class GitHubTools extends BaseTool {
 				),
 				'context_paths'           => array(
 					'type'        => 'array',
+					'items'       => array( 'type' => 'string' ),
 					'required'    => false,
 					'description' => 'Additional repository paths to include from the PR head ref.',
 				),
@@ -1003,6 +1005,7 @@ class GitHubTools extends BaseTool {
 				),
 				'docs_paths'  => array(
 					'type'        => 'array',
+					'items'       => array( 'type' => 'string' ),
 					'required'    => false,
 					'description' => 'Optional documentation path allow-list used when suggesting likely stale docs.',
 				),
