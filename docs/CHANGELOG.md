@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.30.1] - 2026-05-05
+
+### Fixed
+- declare GitHub tool array item schemas
+- expose GitHub pull request creation tool
+
 ## [0.30.0] - 2026-05-05
 
 ### Added
