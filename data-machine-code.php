@@ -83,6 +83,7 @@ function datamachine_code_bootstrap() {
 	// Load Handlers (they self-register).
 	new \DataMachineCode\Handlers\GitHub\GitHub();
 	new \DataMachineCode\Handlers\GitHub\GitHubIssuePublish();
+	new \DataMachineCode\Handlers\GitHub\GitHubPullRequestPublish();
 	new \DataMachineCode\Handlers\GitHub\GitHubUpsert();
 
 	// Register ability categories on the correct hook (must happen during wp_abilities_api_categories_init).

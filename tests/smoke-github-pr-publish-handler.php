@@ -1,0 +1,44 @@
+<?php
+/**
+ * Smoke tests for GitHub pull request publish handler registration and schema.
+ *
+ * Run with: php tests/smoke-github-pr-publish-handler.php
+ *
+ * @package DataMachineCode\Tests
+ */
+
+declare(strict_types=1);
+
+$root     = dirname( __DIR__ );
+$handler  = file_get_contents( $root . '/inc/Handlers/GitHub/GitHubPullRequestPublish.php' );
+$settings = file_get_contents( $root . '/inc/Handlers/GitHub/GitHubPullRequestPublishSettings.php' );
+$plugin   = file_get_contents( $root . '/data-machine-code.php' );
+
+$failures = array();
+
+$assert = static function ( bool $condition, string $message ) use ( &$failures ): void {
+	if ( $condition ) {
+		echo "PASS: {$message}\n";
+		return;
+	}
+
+	echo "FAIL: {$message}\n";
+	$failures[] = $message;
+};
+
+$assert( false !== strpos( $handler, "registerHandler(\n\t\t\t'github_pull_request',\n\t\t\t'publish'" ), 'github_pull_request registers as a publish handler' );
+$assert( false !== strpos( $handler, "'handler'     => 'github_pull_request'" ), 'AI tool is marked as the github_pull_request handler tool' );
+$assert( false !== strpos( $handler, "'github_pull_request_publish'" ), 'handler exposes github_pull_request_publish tool' );
+$assert( false !== strpos( $handler, "'required'   => array( 'title', 'head' )" ), 'PR publish requires title and head' );
+$assert( false !== strpos( $handler, 'GitHubAbilities::createPullRequest' ), 'handler delegates PR creation to GitHubAbilities' );
+$assert( false !== strpos( $settings, "'base'" ) && false !== strpos( $settings, "'draft'" ), 'settings expose base and draft defaults' );
+$assert( false !== strpos( $plugin, 'new \\DataMachineCode\\Handlers\\GitHub\\GitHubPullRequestPublish();' ), 'plugin bootstraps GitHub PR publish handler' );
+
+echo "\n";
+if ( empty( $failures ) ) {
+	echo "OK: GitHub PR publish handler smoke assertions passed.\n";
+	exit( 0 );
+}
+
+echo sprintf( "FAILED: %d assertion(s) failed.\n", count( $failures ) );
+exit( 1 );
