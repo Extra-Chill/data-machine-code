@@ -353,6 +353,62 @@ namespace {
 	$assert( 'createPullRequest 422 carries github_api_error code', $result instanceof WP_Error && 'github_api_error' === $result->get_error_code() );
 	$assert( 'createPullRequest 422 message includes GitHub message', $result instanceof WP_Error && str_contains( $result->get_error_message(), 'already exists' ) );
 
+	// ---- createOrUpdateFile: creates a missing target branch from the default branch.
+	$reset_http();
+	$queue_response( 404, array( 'message' => 'Not Found' ) );
+	$queue_response( 200, array( 'default_branch' => 'main' ) );
+	$queue_response( 200, array( 'object' => array( 'sha' => 'base-sha' ) ) );
+	$queue_response( 201, array( 'ref' => 'refs/heads/store/new-doc' ) );
+	$queue_response( 404, array( 'message' => 'Not Found' ) );
+	$queue_response( 201, array(
+		'commit' => array(
+			'sha'      => 'commit-sha',
+			'html_url' => 'https://github.com/owner/repo/commit/commit-sha',
+			'message'  => 'docs: add generated file',
+		),
+		'content' => array(
+			'path'     => 'docs/generated.md',
+			'html_url' => 'https://github.com/owner/repo/blob/store/new-doc/docs/generated.md',
+		),
+	) );
+	$result = GitHubAbilities::createOrUpdateFile( array(
+		'repo'           => 'owner/repo',
+		'file_path'      => 'docs/generated.md',
+		'content'        => '# Generated',
+		'commit_message' => 'docs: add generated file',
+		'branch'         => 'store/new-doc',
+	) );
+	$assert( 'createOrUpdateFile missing branch returns success=true', is_array( $result ) && true === ( $result['success'] ?? false ) );
+	$assert( 'createOrUpdateFile checks target branch ref first', is_string( $GLOBALS['dmc_http_calls'][0]['url'] ?? null ) && str_ends_with( $GLOBALS['dmc_http_calls'][0]['url'], '/repos/owner/repo/git/ref/heads/store%2Fnew-doc' ) );
+	$assert( 'createOrUpdateFile resolves default branch for missing target branch', is_string( $GLOBALS['dmc_http_calls'][1]['url'] ?? null ) && str_ends_with( $GLOBALS['dmc_http_calls'][1]['url'], '/repos/owner/repo' ) );
+	$assert( 'createOrUpdateFile reads default branch ref', is_string( $GLOBALS['dmc_http_calls'][2]['url'] ?? null ) && str_ends_with( $GLOBALS['dmc_http_calls'][2]['url'], '/repos/owner/repo/git/ref/heads/main' ) );
+	$create_ref_call = $GLOBALS['dmc_http_calls'][3] ?? array();
+	$create_ref_body = is_string( $create_ref_call['args']['body'] ?? null ) ? json_decode( $create_ref_call['args']['body'], true ) : null;
+	$assert( 'createOrUpdateFile creates branch via git refs API', 'POST' === ( $create_ref_call['method'] ?? '' ) && is_string( $create_ref_call['url'] ?? null ) && str_ends_with( $create_ref_call['url'], '/repos/owner/repo/git/refs' ) );
+	$assert( 'createOrUpdateFile creates branch from default branch sha', is_array( $create_ref_body ) && 'refs/heads/store/new-doc' === ( $create_ref_body['ref'] ?? '' ) && 'base-sha' === ( $create_ref_body['sha'] ?? '' ) );
+	$put_call = $GLOBALS['dmc_http_calls'][5] ?? array();
+	$put_body = is_string( $put_call['args']['body'] ?? null ) ? json_decode( $put_call['args']['body'], true ) : null;
+	$assert( 'createOrUpdateFile PUTs generated file to requested branch', 'PUT' === ( $put_call['method'] ?? '' ) && is_array( $put_body ) && 'store/new-doc' === ( $put_body['branch'] ?? '' ) );
+
+	// ---- createOrUpdateFile: existing target branch does not trigger branch creation.
+	$reset_http();
+	$queue_response( 200, array( 'ref' => 'refs/heads/store/existing' ) );
+	$queue_response( 404, array( 'message' => 'Not Found' ) );
+	$queue_response( 201, array(
+		'commit' => array( 'sha' => 'commit-existing' ),
+		'content' => array( 'path' => 'docs/existing.md' ),
+	) );
+	$result = GitHubAbilities::createOrUpdateFile( array(
+		'repo'           => 'owner/repo',
+		'file_path'      => 'docs/existing.md',
+		'content'        => 'Existing branch',
+		'commit_message' => 'docs: update generated file',
+		'branch'         => 'store/existing',
+	) );
+	$assert( 'createOrUpdateFile existing branch returns success=true', is_array( $result ) && true === ( $result['success'] ?? false ) );
+	$assert( 'createOrUpdateFile existing branch only checks ref, contents, and PUTs', 3 === count( $GLOBALS['dmc_http_calls'] ) );
+	$assert( 'createOrUpdateFile existing branch does not create git ref', ! str_ends_with( (string) ( $GLOBALS['dmc_http_calls'][1]['url'] ?? '' ), '/git/refs' ) && ! str_ends_with( (string) ( $GLOBALS['dmc_http_calls'][2]['url'] ?? '' ), '/git/refs' ) );
+
 	if ( ! empty( $failures ) ) {
 		echo "\nFAIL: " . count( $failures ) . " assertion(s)\n";
 		foreach ( $failures as $failure ) {

@@ -3190,6 +3190,12 @@ class GitHubAbilities {
 		}
 
 		$branch = sanitize_text_field( $input['branch'] ?? '' );
+		if ( ! empty( $branch ) ) {
+			$branch_result = self::ensureBranchExists( $repo, $branch, $pat );
+			if ( is_wp_error( $branch_result ) ) {
+				return $branch_result;
+			}
+		}
 
 		// Check if the file already exists to get its SHA for update.
 		$get_url    = sprintf( '%s/repos/%s/contents/%s', self::API_BASE, $repo, $file_path );
@@ -3240,6 +3246,61 @@ class GitHubAbilities {
 				$repo
 			),
 		);
+	}
+
+	/**
+	 * Ensure a target branch exists before committing through the Contents API.
+	 *
+	 * @param string $repo   owner/repo identifier.
+	 * @param string $branch Target branch name.
+	 * @param string $pat    GitHub credential token.
+	 * @return true|\WP_Error True when the branch exists or was created.
+	 */
+	private static function ensureBranchExists( string $repo, string $branch, string $pat ): true|\WP_Error {
+		$branch_ref_url = sprintf( '%s/repos/%s/git/ref/heads/%s', self::API_BASE, $repo, rawurlencode( $branch ) );
+		$response       = self::apiGet( $branch_ref_url, array(), $pat );
+
+		if ( ! is_wp_error( $response ) ) {
+			return true;
+		}
+
+		$status = (int) ( $response->get_error_data()['status'] ?? 0 );
+		if ( 404 !== $status ) {
+			return $response;
+		}
+
+		$default_branch = self::resolveDefaultBranch( $repo, $pat );
+		if ( is_wp_error( $default_branch ) ) {
+			return $default_branch;
+		}
+
+		$default_ref_url = sprintf( '%s/repos/%s/git/ref/heads/%s', self::API_BASE, $repo, rawurlencode( $default_branch ) );
+		$default_ref     = self::apiGet( $default_ref_url, array(), $pat );
+		if ( is_wp_error( $default_ref ) ) {
+			return $default_ref;
+		}
+
+		$sha = (string) ( $default_ref['data']['object']['sha'] ?? '' );
+		if ( '' === $sha ) {
+			return new \WP_Error( 'github_default_branch_sha_missing', 'GitHub did not return a SHA for the repository default branch.', array( 'status' => 500 ) );
+		}
+
+		$create_ref_url = sprintf( '%s/repos/%s/git/refs', self::API_BASE, $repo );
+		$created        = self::apiRequest(
+			'POST',
+			$create_ref_url,
+			array(
+				'ref' => 'refs/heads/' . $branch,
+				'sha' => $sha,
+			),
+			$pat
+		);
+
+		if ( is_wp_error( $created ) ) {
+			return $created;
+		}
+
+		return true;
 	}
 
 	/**
