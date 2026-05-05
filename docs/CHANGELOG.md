@@ -2,6 +2,17 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.30.0] - 2026-05-05
+
+### Added
+- support multiple GitHub credential profiles per agent/repo
+- add datamachine/create-github-issue and create-github-pull-request abilities
+
+### Fixed
+- auto-finalize merged worktree metadata
+- enable safe workspace retention cleanup
+- surface cleanup lifecycle buckets
+
 ## [0.29.1] - 2026-05-04
 
 ### Fixed
