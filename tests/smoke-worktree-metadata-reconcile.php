@@ -21,9 +21,19 @@ namespace DataMachineCode\Abilities {
 	if ( ! class_exists( __NAMESPACE__ . '\GitHubAbilities' ) ) {
 		class GitHubAbilities {
 			public static function getPat(): string {
-				return '';
+				return 'test-token';
 			}
 			public static function apiGet( string $url, array $params, string $pat ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+				if ( str_ends_with( $url, '/pulls/101' ) ) {
+					return array(
+						'data' => array(
+							'number'    => 101,
+							'state'     => 'closed',
+							'merged_at' => '2026-04-03T00:00:00Z',
+							'html_url'  => 'https://github.com/acme/demo/pull/101',
+						),
+					);
+				}
 				return array( 'data' => array() );
 			}
 		}
@@ -181,6 +191,10 @@ namespace {
 	$make_branch( 'unmanaged-dirty' );
 	$make_branch( 'unmanaged-invalid' );
 	$make_branch( 'already-current' );
+	$make_branch( 'pr-merged' );
+	$make_branch( 'upstream-gone' );
+	$make_branch( 'dirty-merged' );
+	$make_branch( 'unpushed-merged' );
 	$make_branch( 'external-branch' );
 
 	$run( sprintf( 'git worktree add %s unmanaged-missing', escapeshellarg( $tmp . '/demo@unmanaged-missing' ) ), $primary );
@@ -188,9 +202,18 @@ namespace {
 	$run( sprintf( 'git worktree add %s unmanaged-dirty', escapeshellarg( $tmp . '/demo@unmanaged-dirty' ) ), $primary );
 	$run( sprintf( 'git worktree add %s unmanaged-invalid', escapeshellarg( $tmp . '/demo@unmanaged-invalid' ) ), $primary );
 	$run( sprintf( 'git worktree add %s already-current', escapeshellarg( $tmp . '/demo@already-current' ) ), $primary );
+	$run( sprintf( 'git worktree add %s pr-merged', escapeshellarg( $tmp . '/demo@pr-merged' ) ), $primary );
+	$run( sprintf( 'git worktree add %s upstream-gone', escapeshellarg( $tmp . '/demo@upstream-gone' ) ), $primary );
+	$run( sprintf( 'git worktree add %s dirty-merged', escapeshellarg( $tmp . '/demo@dirty-merged' ) ), $primary );
+	$run( sprintf( 'git worktree add %s unpushed-merged', escapeshellarg( $tmp . '/demo@unpushed-merged' ) ), $primary );
 	mkdir( $tmp . '-external', 0755, true );
 	$run( sprintf( 'git worktree add %s external-branch', escapeshellarg( $tmp . '-external/demo-external' ) ), $primary );
 	file_put_contents( $tmp . '/demo@unmanaged-dirty/scratch.txt', 'dirty' );
+	file_put_contents( $tmp . '/demo@dirty-merged/scratch.txt', 'dirty' );
+	file_put_contents( $tmp . '/demo@unpushed-merged/local.txt', 'local' );
+	$run( 'git add local.txt && git commit -m local-unpushed', $tmp . '/demo@unpushed-merged' );
+	$run( sprintf( 'git --git-dir=%s update-ref -d refs/heads/upstream-gone', escapeshellarg( $remote ) ) );
+	$run( sprintf( 'git --git-dir=%s update-ref -d refs/heads/dirty-merged', escapeshellarg( $remote ) ) );
 
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_metadata(
 		'demo@unmanaged-partial',
@@ -225,6 +248,36 @@ namespace {
 			'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
 		)
 	);
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
+		'demo@pr-merged',
+		array(
+			'handle'          => 'demo@pr-merged',
+			'repo'            => 'demo',
+			'branch'          => 'pr-merged',
+			'path'            => $tmp . '/demo@pr-merged',
+			'created_at'      => '2026-04-01T00:00:00+00:00',
+			'observed_at'     => '2026-04-01T00:00:00+00:00',
+			'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
+			'pr_url'          => 'https://github.com/acme/demo/pull/101',
+			'pr_number'       => 101,
+			'pr_repo'         => 'acme/demo',
+		)
+	);
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
+		'demo@unpushed-merged',
+		array(
+			'handle'          => 'demo@unpushed-merged',
+			'repo'            => 'demo',
+			'branch'          => 'unpushed-merged',
+			'path'            => $tmp . '/demo@unpushed-merged',
+			'created_at'      => '2026-04-01T00:00:00+00:00',
+			'observed_at'     => '2026-04-01T00:00:00+00:00',
+			'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
+			'pr_url'          => 'https://github.com/acme/demo/pull/101',
+			'pr_number'       => 101,
+			'pr_repo'         => 'acme/demo',
+		)
+	);
 
 	$ws = new \DataMachineCode\Workspace\Workspace();
 
@@ -232,9 +285,10 @@ namespace {
 	$plan = $ws->worktree_reconcile_metadata( array( 'dry_run' => true ) );
 	$assert( true, ! is_wp_error( $plan ) && ( $plan['success'] ?? false ), 'dry-run succeeds' );
 	$assert( true, $plan['dry_run'] ?? false, 'dry-run flag is true' );
-	$assert( 4, (int) ( $plan['summary']['proposed'] ?? 0 ), 'dry-run proposes only unmanaged rows' );
+	$assert( 6, (int) ( $plan['summary']['proposed'] ?? 0 ), 'dry-run proposes unmanaged rows and safe merged lifecycle finalizers' );
 	$assert( 0, (int) ( $plan['summary']['written'] ?? 0 ), 'dry-run writes nothing' );
 	$assert( 1, (int) ( $plan['summary']['skipped_by_reason']['external_worktree'] ?? 0 ), 'dry-run distinguishes external worktrees' );
+	$assert( 2, (int) ( $plan['summary']['skipped_by_reason']['unsafe_cleanup_eligible_state'] ?? 0 ), 'dry-run keeps dirty and unpushed merged worktrees out of auto-finalize proposals' );
 	$assert( 1, count( $plan['external_worktrees'] ?? array() ), 'dry-run exposes external worktree bucket' );
 
 	$by_handle = array();
@@ -251,28 +305,48 @@ namespace {
 	$assert( \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE, $by_handle['demo@unmanaged-invalid']['proposed_metadata']['lifecycle_state'] ?? '', 'invalid lifecycle state becomes conservative active proposal' );
 	$assert( 1, (int) ( $by_handle['demo@unmanaged-dirty']['dirty'] ?? 0 ), 'dirty row is visible but not cleanup-eligible' );
 	$assert( \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE, $by_handle['demo@unmanaged-dirty']['proposed_metadata']['lifecycle_state'] ?? '', 'dirty row proposal stays active' );
+	$assert( 'auto_finalize_merged', $by_handle['demo@pr-merged']['reason_code'] ?? '', 'merged stored PR is proposed for auto-finalization' );
+	$assert( 'pr-merged', $by_handle['demo@pr-merged']['signal'] ?? '', 'stored PR proposal records pr-merged signal' );
+	$assert( 'cleanup_eligible', $by_handle['demo@pr-merged']['proposed_metadata']['lifecycle_state'] ?? '', 'stored PR proposal becomes cleanup_eligible metadata' );
+	$assert( 'merged', $by_handle['demo@pr-merged']['proposed_metadata']['finalized_state'] ?? '', 'stored PR proposal preserves merged finalized state' );
+	$assert( 'auto_finalize_merged', $by_handle['demo@upstream-gone']['reason_code'] ?? '', 'upstream-gone branch is proposed for auto-finalization' );
+	$assert( 'upstream-gone', $by_handle['demo@upstream-gone']['signal'] ?? '', 'upstream-gone proposal records local merge signal' );
+	$unsafe_by_handle = array();
+	foreach ( $plan['skipped'] as $row ) {
+		$unsafe_by_handle[ $row['handle'] ?? '' ] = $row;
+	}
+	$assert( 'unsafe_cleanup_eligible_state', $unsafe_by_handle['demo@dirty-merged']['reason_code'] ?? '', 'dirty merged worktree is not auto-finalized' );
+	$assert( 'unsafe_cleanup_eligible_state', $unsafe_by_handle['demo@unpushed-merged']['reason_code'] ?? '', 'unpushed merged worktree is not auto-finalized' );
 	$stale_plan  = $plan;
 	$unsafe_plan = $plan;
 
 	$inventory_before = $ws->worktree_cleanup_merged( array( 'dry_run' => true, 'inventory_only' => true, 'skip_github' => true ) );
-	$assert( 2, (int) ( $inventory_before['summary']['skipped_by_reason']['requires_full_scan'] ?? 0 ), 'inventory cleanup sees missing metadata before apply' );
+	$assert( 4, (int) ( $inventory_before['summary']['skipped_by_reason']['requires_full_scan'] ?? 0 ), 'inventory cleanup sees missing metadata before apply' );
 
 	echo "\nApply reviewed plan\n";
 	$apply = $ws->worktree_reconcile_metadata( array( 'apply_plan' => $plan ) );
 	$assert( true, ! is_wp_error( $apply ) && ( $apply['success'] ?? false ), 'apply succeeds' );
-	$assert( 4, (int) ( $apply['summary']['written'] ?? 0 ), 'apply writes exact current matches' );
-	$assert( 4, (int) ( $apply['summary']['written'] ?? 0 ), 'apply reports written metadata rows' );
+	$assert( 6, (int) ( $apply['summary']['written'] ?? 0 ), 'apply writes exact current matches' );
+	$assert( 6, (int) ( $apply['summary']['written'] ?? 0 ), 'apply reports written metadata rows' );
 	$assert( 0, (int) ( $apply['summary']['skipped'] ?? 0 ), 'apply skips nothing for current plan' );
-	$assert( 4, count( $apply['written'] ?? array() ), 'apply exposes written rows distinctly' );
+	$assert( 6, count( $apply['written'] ?? array() ), 'apply exposes written rows distinctly' );
 	$stored = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@unmanaged-missing' );
 	$assert( 'demo@unmanaged-missing', $stored['handle'] ?? '', 'stored metadata includes handle' );
 	$assert( true, ! empty( $stored['observed_at'] ), 'stored metadata includes observed_at' );
 	$assert( 'Origin Test', $stored['origin_site'] ?? '', 'stored metadata includes origin site when available' );
 	$assert( 'operator_plan', $stored['reconciled_sources']['lifecycle_state'] ?? '', 'stored metadata keeps source map' );
+	$stored_pr = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@pr-merged' );
+	$assert( 'cleanup_eligible', $stored_pr['lifecycle_state'] ?? '', 'apply stores cleanup_eligible for merged PR worktree' );
+	$assert( 'merged', $stored_pr['finalized_state'] ?? '', 'apply stores merged finalizer state for merged PR worktree' );
+	$stored_gone = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@upstream-gone' );
+	$assert( 'cleanup_eligible', $stored_gone['lifecycle_state'] ?? '', 'apply stores cleanup_eligible for upstream-gone worktree' );
+
+	$auto_apply = $ws->worktree_reconcile_metadata( array( 'apply' => true ) );
+	$assert( true, ! is_wp_error( $auto_apply ) && ( $auto_apply['success'] ?? false ), 'DMC-owned reconciliation apply path runs without a manual plan' );
 
 	$inventory_after = $ws->worktree_cleanup_merged( array( 'dry_run' => true, 'inventory_only' => true, 'skip_github' => true ) );
-	$assert( 0, (int) ( $inventory_after['summary']['skipped_by_reason']['requires_full_scan'] ?? 0 ), 'inventory cleanup requires fewer full scans after apply' );
-	$assert( 5, (int) ( $inventory_after['summary']['skipped_by_reason']['no_inventory_cleanup_signal'] ?? 0 ), 'inventory cleanup treats reconciled active metadata like current active metadata' );
+	$assert( 1, (int) ( $inventory_after['summary']['skipped_by_reason']['requires_full_scan'] ?? 0 ), 'inventory cleanup requires fewer full scans after apply' );
+	$assert( 6, (int) ( $inventory_after['summary']['skipped_by_reason']['no_inventory_cleanup_signal'] ?? 0 ), 'inventory cleanup treats reconciled active metadata like current active metadata' );
 	$assert( false, isset( $inventory_after['summary']['repair_status'] ), 'inventory cleanup no longer exposes migration status' );
 
 	echo "\nSafety gates\n";

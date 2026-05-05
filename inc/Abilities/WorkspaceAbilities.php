@@ -2216,6 +2216,7 @@ class WorkspaceAbilities {
 		$workspace = new Workspace();
 		$opts      = array(
 			'dry_run' => ! empty( $input['dry_run'] ),
+			'apply'   => ! empty( $input['apply'] ),
 		);
 		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
 			$opts['apply_plan'] = $input['apply_plan'];

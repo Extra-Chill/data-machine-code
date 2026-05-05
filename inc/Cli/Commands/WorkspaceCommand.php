@@ -1888,6 +1888,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 *     # Adopt/reconcile unmanaged worktree metadata before cleanup
 	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json
+	 *     wp datamachine-code workspace worktree reconcile-metadata --apply --format=json
 	 *
 	 *     # Ignore dirty working-tree safety (caution)
 	 *     wp datamachine-code workspace worktree cleanup --force
@@ -2075,6 +2076,7 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 			case 'reconcile-metadata':
 				$input['dry_run'] = ! empty( $assoc_args['dry-run'] );
+				$input['apply']   = ! empty( $assoc_args['apply'] );
 				if ( ! empty( $assoc_args['apply-plan'] ) ) {
 					$input['apply_plan'] = $this->read_worktree_json_plan( (string) $assoc_args['apply-plan'], 'metadata reconciliation' );
 				}

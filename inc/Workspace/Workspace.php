@@ -3493,14 +3493,15 @@ class Workspace {
 	 */
 	public function worktree_reconcile_metadata( array $opts = array() ): array|\WP_Error {
 		$dry_run    = ! empty( $opts['dry_run'] );
+		$apply      = ! empty( $opts['apply'] );
 		$apply_plan = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
 
 		if ( null !== $apply_plan ) {
 			return $this->apply_worktree_metadata_reconciliation_plan( $apply_plan );
 		}
 
-		if ( ! $dry_run ) {
-			return new \WP_Error( 'metadata_reconcile_requires_review', 'Metadata reconciliation is dry-run-first. Pass --dry-run to review JSON output; --apply-plan=<file> remains a low-level escape hatch until DB-backed cleanup runs land.', array( 'status' => 400 ) );
+		if ( ! $dry_run && ! $apply ) {
+			return new \WP_Error( 'metadata_reconcile_requires_review', 'Metadata reconciliation is dry-run-first. Pass --dry-run to review JSON output, or pass apply=true for DMC-owned lifecycle reconciliation.', array( 'status' => 400 ) );
 		}
 
 		$listing = $this->worktree_list();
@@ -3508,15 +3509,17 @@ class Workspace {
 			return $listing;
 		}
 
-		$proposals = array();
-		$skipped   = array();
+		$proposals    = array();
+		$skipped      = array();
+		$github_cache = array();
+		$fetched      = array();
 
 		foreach ( (array) ( $listing['worktrees'] ?? array() ) as $wt ) {
 			if ( ! empty( $wt['is_primary'] ) ) {
 				continue;
 			}
 
-			$proposal = $this->build_worktree_metadata_reconciliation_row( $wt );
+			$proposal = $this->build_worktree_metadata_reconciliation_row( $wt, $github_cache, $fetched );
 			if ( isset( $proposal['proposal'] ) ) {
 				$proposals[] = $proposal['proposal'];
 			} elseif ( isset( $proposal['skip'] ) ) {
@@ -3526,9 +3529,9 @@ class Workspace {
 
 		$classified_skips = $this->classify_worktree_metadata_reconciliation_skips( $skipped );
 
-		return array(
+		$plan = array(
 			'success'        => true,
-			'dry_run'        => true,
+			'dry_run'        => $dry_run,
 			'applied'        => false,
 			'generated_at'   => gmdate( 'c' ),
 			'workspace_path' => $this->workspace_path,
@@ -3539,6 +3542,12 @@ class Workspace {
 			'external_worktrees' => $classified_skips['external_worktrees'],
 			'summary'        => $this->build_worktree_metadata_reconciliation_summary( count( (array) ( $listing['worktrees'] ?? array() ) ), $proposals, array(), $skipped ),
 		);
+
+		if ( $apply ) {
+			return $this->apply_worktree_metadata_reconciliation_plan( $plan );
+		}
+
+		return $plan;
 	}
 
 	/**
@@ -3547,7 +3556,7 @@ class Workspace {
 	 * @param array<string,mixed> $wt Worktree list row.
 	 * @return array{proposal?:array<string,mixed>,skip?:array<string,mixed>}
 	 */
-	private function build_worktree_metadata_reconciliation_row( array $wt ): array {
+	private function build_worktree_metadata_reconciliation_row( array $wt, array &$github_cache = array(), array &$fetched = array() ): array {
 		$handle   = (string) ( $wt['handle'] ?? '' );
 		$repo     = (string) ( $wt['repo'] ?? '' );
 		$branch   = (string) ( $wt['branch'] ?? '' );
@@ -3601,6 +3610,103 @@ class Workspace {
 					array(
 						'reason_code' => 'noncanonical_handle',
 						'reason'      => 'worktree is not represented by a canonical <repo>@<slug> workspace handle',
+					)
+				),
+			);
+		}
+
+		$dirty   = (int) ( $wt['dirty'] ?? 0 );
+		$unpushed = $this->count_unpushed_commits( $path );
+		if ( is_wp_error( $unpushed ) ) {
+			return array(
+				'skip' => array_merge(
+					$base_row,
+					array(
+						'reason_code' => 'probe_timeout',
+						'reason'      => 'cleanup safety probe failed - leaving lifecycle unchanged: ' . $unpushed->get_error_message(),
+					)
+				),
+			);
+		}
+
+		$finalizer_signal = $this->detect_worktree_lifecycle_finalizer_signal( $wt, $metadata, $github_cache, $fetched );
+		if ( null !== $finalizer_signal && 'probe-timeout' === ( $finalizer_signal['signal'] ?? '' ) ) {
+			return array(
+				'skip' => array_merge(
+					$base_row,
+					array(
+						'reason_code' => 'probe_timeout',
+						'reason'      => 'merge-signal probe timed out - leaving lifecycle unchanged: ' . $finalizer_signal['reason'],
+					)
+				),
+			);
+		}
+
+		if ( null !== $finalizer_signal && ! WorktreeContextInjector::has_cleanup_signal( $metadata ) ) {
+			if ( $dirty > 0 || $unpushed > 0 ) {
+				return array(
+					'skip' => array_merge(
+						$base_row,
+						array(
+							'reason_code' => 'unsafe_cleanup_eligible_state',
+							'reason'      => 'merged lifecycle signal found, but dirty or unpushed worktree is not auto-finalized',
+							'dirty'       => $dirty,
+							'unpushed'    => $unpushed,
+							'signal'      => $finalizer_signal['signal'],
+						)
+					),
+				);
+			}
+
+			$finalizer_metadata = WorktreeContextInjector::build_finalizer_metadata(
+				WorktreeContextInjector::STATE_MERGED,
+				isset( $finalizer_signal['pr_url'] ) ? (string) $finalizer_signal['pr_url'] : null
+			);
+			$proposed           = array_merge(
+				$metadata,
+				array(
+					'handle'       => $handle,
+					'repo'         => $repo,
+					'branch'       => $branch,
+					'path'         => $path,
+					'observed_at'  => gmdate( 'c' ),
+					'last_seen_at' => gmdate( 'c' ),
+				),
+				$finalizer_metadata,
+				array(
+					'auto_finalized_by'     => 'worktree_reconcile_metadata',
+					'auto_finalized_signal' => $finalizer_signal['signal'],
+					'auto_finalized_reason' => $finalizer_signal['reason'],
+				)
+			);
+
+			if ( empty( $proposed['created_at'] ) ) {
+				$created_at = file_exists( $path ) ? filemtime( $path ) : false;
+				if ( false !== $created_at ) {
+					$proposed['created_at'] = gmdate( 'c', (int) $created_at );
+				}
+			}
+
+			return array(
+				'proposal' => array_merge(
+					$base_row,
+					array(
+						'reason_code'       => 'auto_finalize_merged',
+						'reason'            => 'merged PR or branch state proves lifecycle can be finalized as cleanup_eligible',
+						'dirty'             => $dirty,
+						'unpushed'          => $unpushed,
+						'signal'            => $finalizer_signal['signal'],
+						'pr_url'            => $finalizer_signal['pr_url'] ?? null,
+						'proposed_metadata' => $proposed,
+						'source_map'        => array(
+							'handle'          => 'filesystem',
+							'repo'            => 'filesystem',
+							'branch'          => 'git',
+							'path'            => 'git',
+							'created_at'      => empty( $metadata['created_at'] ) ? 'filesystem' : 'metadata',
+							'observed_at'     => 'reconcile_run',
+							'lifecycle_state' => 'merge_signal',
+						)
 					)
 				),
 			);
@@ -3691,8 +3797,8 @@ class Workspace {
 				array(
 					'reason_code'       => 'metadata_backfill',
 					'reason'            => 'unmanaged worktree metadata can be reconciled without changing cleanup eligibility',
-					'dirty'             => (int) ( $wt['dirty'] ?? 0 ),
-					'unpushed'          => $this->count_unpushed_commits( $path ),
+					'dirty'             => $dirty,
+					'unpushed'          => $unpushed,
 					'missing_fields'    => $metadata_missing,
 					'invalid_fields'    => $invalid_fields,
 					'proposed_metadata' => $proposed,
@@ -3700,6 +3806,120 @@ class Workspace {
 				)
 			),
 		);
+	}
+
+	/**
+	 * Detect an unambiguous merge signal for lifecycle reconciliation.
+	 *
+	 * @param array<string,mixed> $wt           Current worktree listing row.
+	 * @param array<string,mixed> $metadata     Persisted lifecycle metadata.
+	 * @param array               $github_cache Run-local GitHub lookup cache.
+	 * @param array               $fetched      Run-local fetched repo cache.
+	 * @return array{signal:string,reason:string,pr_url?:string}|null
+	 */
+	private function detect_worktree_lifecycle_finalizer_signal( array $wt, array $metadata, array &$github_cache, array &$fetched ): ?array {
+		$repo         = (string) ( $wt['repo'] ?? '' );
+		$branch       = (string) ( $wt['branch'] ?? '' );
+		$primary_path = '' !== $repo ? $this->get_primary_path( $repo ) : '';
+		if ( '' === $repo || '' === $branch || ! is_dir( $primary_path . '/.git' ) ) {
+			return null;
+		}
+
+		if ( empty( $fetched[ $repo ] ) ) {
+			$fetch = $this->run_git( $primary_path, 'fetch --prune --quiet origin', self::CLEANUP_GIT_PROBE_TIMEOUT );
+			if ( $this->is_git_timeout_error( $fetch ) ) {
+				return array(
+					'signal' => 'probe-timeout',
+					'reason' => $fetch->get_error_message(),
+				);
+			}
+			$fetched[ $repo ] = true;
+		}
+
+		$pr_signal = $this->detect_stored_pr_merged_signal( $metadata, $github_cache );
+		if ( null !== $pr_signal ) {
+			return $pr_signal;
+		}
+
+		$signal = $this->detect_merge_signal( $primary_path, $repo, $branch, true, $github_cache );
+		if ( null === $signal ) {
+			return null;
+		}
+
+		if ( in_array( (string) ( $signal['signal'] ?? '' ), array( 'upstream-gone', 'local-merged' ), true ) ) {
+			return $signal;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check stored PR metadata for a merged PR signal.
+	 *
+	 * @param array<string,mixed> $metadata     Persisted lifecycle metadata.
+	 * @param array               $github_cache Run-local GitHub lookup cache.
+	 * @return array{signal:string,reason:string,pr_url?:string}|null
+	 */
+	private function detect_stored_pr_merged_signal( array $metadata, array &$github_cache ): ?array {
+		$pr_repo   = isset( $metadata['pr_repo'] ) ? (string) $metadata['pr_repo'] : '';
+		$pr_number = isset( $metadata['pr_number'] ) ? (int) $metadata['pr_number'] : 0;
+		$pr_url    = isset( $metadata['pr_url'] ) ? (string) $metadata['pr_url'] : '';
+
+		if ( ( '' === $pr_repo || $pr_number <= 0 ) && '' !== $pr_url && preg_match( '~^https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)(?:[/?#].*)?$~', $pr_url, $matches ) ) {
+			$pr_repo   = $matches[1] . '/' . $matches[2];
+			$pr_number = (int) $matches[3];
+		}
+
+		if ( '' === $pr_repo || $pr_number <= 0 ) {
+			return null;
+		}
+
+		$cache_key = $pr_repo . '#' . $pr_number;
+		if ( array_key_exists( $cache_key, $github_cache ) ) {
+			$pr = $github_cache[ $cache_key ];
+		} else {
+			$pr = $this->fetch_github_pull_request( $pr_repo, $pr_number );
+			$github_cache[ $cache_key ] = $pr;
+		}
+
+		if ( ! is_array( $pr ) || empty( $pr['merged_at'] ) ) {
+			return null;
+		}
+
+		return array(
+			'signal' => 'pr-merged',
+			'reason' => sprintf( 'stored PR #%d merged (%s)', $pr_number, (string) ( $pr['state'] ?? 'closed' ) ),
+			'pr_url' => (string) ( $pr['html_url'] ?? $pr_url ),
+		);
+	}
+
+	/**
+	 * Fetch one pull request from GitHub when API credentials are available.
+	 *
+	 * @return array<string,mixed>|null
+	 */
+	private function fetch_github_pull_request( string $slug, int $number ): ?array {
+		if ( ! class_exists( '\DataMachineCode\Abilities\GitHubAbilities' ) ) {
+			return null;
+		}
+
+		$pat = \DataMachineCode\Abilities\GitHubAbilities::getPat();
+		if ( empty( $pat ) ) {
+			return null;
+		}
+
+		$response = \DataMachineCode\Abilities\GitHubAbilities::apiGet(
+			GitHubRemote::apiUrl( $slug, 'pulls/' . $number ),
+			array(),
+			$pat,
+			self::CLEANUP_GITHUB_TIMEOUT
+		);
+		if ( is_wp_error( $response ) ) {
+			return null;
+		}
+
+		$data = $response['data'] ?? null;
+		return is_array( $data ) ? $data : null;
 	}
 
 	/**
