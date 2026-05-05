@@ -38,9 +38,9 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 	public static function getTaskMeta(): array {
 		return array(
 			'label'           => 'Workspace Retention Cleanup',
-			'description'     => 'Age-gated cleanup for stale DMC worktrees plus aggressive cleanup of reconstructable artifacts. Runs daily when enabled.',
+			'description'     => 'Age-gated cleanup for stale DMC worktrees plus bounded cleanup of reconstructable artifacts. Runs daily by default on local agent installs.',
 			'setting_key'     => self::SETTING_KEY,
-			'default_enabled' => false,
+			'default_enabled' => true,
 			'supports_run'    => true,
 		);
 	}
@@ -54,7 +54,7 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 	 */
 	public function executeTask( int $jobId, array $params ): void {
 		$source  = (string) ( $params['source'] ?? '' );
-		$enabled = (bool) PluginSettings::get( self::SETTING_KEY, false )
+		$enabled = (bool) PluginSettings::get( self::SETTING_KEY, true )
 			|| 'workspace_cleanup_cli' === $source;
 		if ( ! $enabled ) {
 			$this->completeJob(

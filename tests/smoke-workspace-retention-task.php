@@ -27,10 +27,10 @@ namespace {
 
 namespace DataMachine\Core {
 	class PluginSettings {
-		public static bool $enabled = false;
+		public static array $settings = array();
 
-		public static function get( string $key, $default = null ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
-			return self::$enabled;
+		public static function get( string $key, $default = null ) {
+			return array_key_exists( $key, self::$settings ) ? self::$settings[ $key ] : $default;
 		}
 	}
 }
@@ -134,23 +134,34 @@ namespace {
 
 	echo "=== smoke-workspace-retention-task ===\n";
 
-	echo "\n[1] Disabled task completes as skipped\n";
+	echo "\n[1] Default-enabled task runs without an explicit setting\n";
 	$settings_class = '\\DataMachine\\Core\\PluginSettings';
-	$enabled_prop   = 'enabled';
-	$settings_class::$$enabled_prop = false;
+	$settings_prop  = 'settings';
+	$settings_class::$$settings_prop = array();
 	$task = new \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask();
-	$task->executeTask( 201, array() );
+	$task->executeTask( 201, array( 'dry_run' => true ) );
 	$completed_prop = 'completed';
 	$failed_prop    = 'failed';
 	$completed      = $task->{$completed_prop};
 	$failed         = $task->{$failed_prop};
 	datamachine_code_retention_task_assert( 'workspace_retention_cleanup' === $task->getTaskType(), 'task type is stable' );
-	datamachine_code_retention_task_assert( true === ( $completed[0][1]['skipped'] ?? false ), 'disabled task reports skipped completion' );
-	datamachine_code_retention_task_assert( array() === $failed, 'disabled task does not fail the job' );
+	datamachine_code_retention_task_assert( true === (bool) ( $completed[0][1]['dry_run'] ?? false ), 'task runs with default PluginSettings fallback' );
+	datamachine_code_retention_task_assert( array() === $failed, 'default-enabled task does not fail the job' );
+	$meta = \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask::getTaskMeta();
+	datamachine_code_retention_task_assert( true === (bool) ( $meta['default_enabled'] ?? false ), 'task metadata defaults retention cleanup on' );
+
+	echo "\n[1b] Explicit disabled setting completes as skipped\n";
+	$settings_class::$$settings_prop = array( \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask::SETTING_KEY => false );
+	$task = new \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask();
+	$task->executeTask( 211, array() );
+	$completed = $task->{$completed_prop};
+	$failed    = $task->{$failed_prop};
+	datamachine_code_retention_task_assert( true === ( $completed[0][1]['skipped'] ?? false ), 'explicit disabled setting reports skipped completion' );
+	datamachine_code_retention_task_assert( array() === $failed, 'explicit disabled setting does not fail the job' );
 
 	echo "\n[2] Enabled task stores report and logs concise summary\n";
 	$GLOBALS['__retention_task_logs'] = array();
-	$settings_class::$$enabled_prop = true;
+	$settings_class::$$settings_prop = array( \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask::SETTING_KEY => true );
 	$task = new \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask();
 	$task->executeTask( 202, array( 'dry_run' => true ) );
 	$completed = $task->{$completed_prop};
@@ -162,7 +173,7 @@ namespace {
 
 	echo "\n[3] Explicit CLI run bypasses global disabled setting\n";
 	$GLOBALS['__retention_task_logs'] = array();
-	$settings_class::$$enabled_prop = false;
+	$settings_class::$$settings_prop = array( \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask::SETTING_KEY => false );
 	$task = new \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask();
 	$task->executeTask( 203, array( 'source' => 'workspace_cleanup_cli', 'dry_run' => true ) );
 	$completed = $task->{$completed_prop};
