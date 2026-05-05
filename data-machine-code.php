@@ -282,7 +282,7 @@ add_filter( 'datamachine_recurring_schedules', function ( array $schedules ): ar
 		'task_type'       => 'workspace_retention_cleanup',
 		'interval'        => 'daily',
 		'enabled_setting' => \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask::SETTING_KEY,
-		'default_enabled' => false,
+		'default_enabled' => true,
 		'label'           => 'Daily — applies workspace retention cleanup',
 		'task_params'     => array(
 			'source'              => 'recurring_schedule',
