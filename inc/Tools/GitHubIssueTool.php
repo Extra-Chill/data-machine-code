@@ -143,11 +143,13 @@ class GitHubIssueTool extends BaseTool {
 				),
 				'labels' => array(
 					'type'        => 'array',
+					'items'       => array( 'type' => 'string' ),
 					'required'    => false,
 					'description' => 'Labels to apply to the issue.',
 				),
 				'assignees' => array(
 					'type'        => 'array',
+					'items'       => array( 'type' => 'string' ),
 					'required'    => false,
 					'description' => 'GitHub usernames to assign to the issue.',
 				),
