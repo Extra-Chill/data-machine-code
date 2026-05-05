@@ -51,10 +51,12 @@ class GitHubIssueTool extends BaseTool {
 		}
 
 		$input = array(
-			'title'  => $parameters['title'] ?? '',
-			'repo'   => $parameters['repo'] ?? '',
-			'body'   => $parameters['body'] ?? '',
-			'labels' => $parameters['labels'] ?? array(),
+			'title'     => $parameters['title'] ?? '',
+			'repo'      => $parameters['repo'] ?? '',
+			'body'      => $parameters['body'] ?? '',
+			'labels'    => $parameters['labels'] ?? array(),
+			'assignees' => $parameters['assignees'] ?? array(),
+			'milestone' => $parameters['milestone'] ?? null,
 		);
 
 		$result = $ability->execute( $input );
@@ -74,6 +76,11 @@ class GitHubIssueTool extends BaseTool {
 				'message'   => sprintf( 'GitHub issue creation scheduled (Job #%d).', $result ),
 				'tool_name' => 'create_github_issue',
 			);
+		}
+
+		if ( is_array( $result ) && ! empty( $result['success'] ) ) {
+			$result['tool_name'] = 'create_github_issue';
+			return $result;
 		}
 
 		if ( is_array( $result ) && ! empty( $result['error'] ) ) {
@@ -138,6 +145,16 @@ class GitHubIssueTool extends BaseTool {
 					'type'        => 'array',
 					'required'    => false,
 					'description' => 'Labels to apply to the issue.',
+				),
+				'assignees' => array(
+					'type'        => 'array',
+					'required'    => false,
+					'description' => 'GitHub usernames to assign to the issue.',
+				),
+				'milestone' => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Milestone number to attach to the issue.',
 				),
 			),
 		);
