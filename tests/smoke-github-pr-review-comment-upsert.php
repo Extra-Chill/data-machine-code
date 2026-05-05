@@ -9,8 +9,8 @@ declare( strict_types=1 );
 
 namespace DataMachine\Core {
     class PluginSettings {
-        public static function get( string $key, string $default = '' ): string {
-            return 'github_pat' === $key ? 'test-token' : $default;
+        public static function get( string $key, mixed $default_value = null ): mixed {
+            return 'github_pat' === $key ? 'test-token' : $default_value;
         }
     }
 }

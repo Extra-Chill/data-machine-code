@@ -103,6 +103,81 @@ add_filter( 'datamachine_webhook_verifier_modes', function ( array $modes ): arr
 } );
 
 /**
+ * Register DMC-owned settings keys with the `datamachine/update-settings`
+ * ability so `wp datamachine settings set <key>` flows through the official
+ * ability path instead of requiring direct `wp option patch insert` writes.
+ *
+ * Handles both legacy single-credential keys (back-compat with installs
+ * that haven't migrated to profiles yet) and the new profile structure.
+ *
+ * Migration path:
+ *   - Existing installs continue to use github_pat / github_auth_mode /
+ *     github_app_*. The credential resolver synthesizes those into an
+ *     implicit "default" profile on read.
+ *   - New installs and operator-driven migrations populate
+ *     github_credential_profiles + github_default_profile_id directly.
+ *   - Both shapes coexist; the profile list wins when present.
+ *
+ * @since 0.30.0
+ */
+add_filter( 'datamachine_update_settings', function ( array $filtered, array $input ): array {
+	$settings     = $filtered['settings'] ?? array();
+	$handled_keys = $filtered['handled_keys'] ?? array();
+
+	if ( isset( $input['github_pat'] ) ) {
+		$settings['github_pat'] = sanitize_text_field( (string) $input['github_pat'] );
+		$handled_keys[]         = 'github_pat';
+	}
+
+	if ( isset( $input['github_auth_mode'] ) ) {
+		$mode = strtolower( sanitize_text_field( (string) $input['github_auth_mode'] ) );
+		if ( in_array( $mode, array( 'pat', 'app' ), true ) ) {
+			$settings['github_auth_mode'] = $mode;
+		}
+		$handled_keys[] = 'github_auth_mode';
+	}
+
+	if ( isset( $input['github_app_id'] ) ) {
+		$settings['github_app_id'] = sanitize_text_field( (string) $input['github_app_id'] );
+		$handled_keys[]            = 'github_app_id';
+	}
+
+	if ( isset( $input['github_app_installation_id'] ) ) {
+		$settings['github_app_installation_id'] = sanitize_text_field( (string) $input['github_app_installation_id'] );
+		$handled_keys[]                         = 'github_app_installation_id';
+	}
+
+	if ( isset( $input['github_app_private_key'] ) ) {
+		// Private keys are multiline PEM blobs — sanitize_text_field would strip newlines.
+		// Trim only; the resolver normalizes literal `\n` escapes back to real newlines.
+		$settings['github_app_private_key'] = trim( (string) $input['github_app_private_key'] );
+		$handled_keys[]                     = 'github_app_private_key';
+	}
+
+	if ( isset( $input['github_default_repo'] ) ) {
+		$settings['github_default_repo'] = sanitize_text_field( (string) $input['github_default_repo'] );
+		$handled_keys[]                  = 'github_default_repo';
+	}
+
+	if ( isset( $input['github_credential_profiles'] ) && is_array( $input['github_credential_profiles'] ) ) {
+		$settings['github_credential_profiles'] = \DataMachineCode\Support\GitHubProfileSanitizer::sanitize( $input['github_credential_profiles'] );
+		$handled_keys[]                         = 'github_credential_profiles';
+	}
+
+	if ( isset( $input['github_default_profile_id'] ) ) {
+		$settings['github_default_profile_id'] = sanitize_text_field( (string) $input['github_default_profile_id'] );
+		$handled_keys[]                        = 'github_default_profile_id';
+	}
+
+	return array(
+		'settings'     => $settings,
+		'handled_keys' => $handled_keys,
+	);
+}, 10, 2 );
+
+
+
+/**
  * Register ability categories for data-machine-code.
  *
  * Must be called on `wp_abilities_api_categories_init` — WordPress core

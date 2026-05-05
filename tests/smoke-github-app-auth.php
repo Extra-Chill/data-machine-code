@@ -9,8 +9,8 @@ declare( strict_types=1 );
 
 namespace DataMachine\Core {
 	class PluginSettings {
-		public static function get( string $key, string $default = '' ): string {
-			return $GLOBALS['dmc_settings'][ $key ] ?? $default;
+		public static function get( string $key, mixed $default_value = null ): mixed {
+			return $GLOBALS['dmc_settings'][ $key ] ?? $default_value;
 		}
 	}
 }

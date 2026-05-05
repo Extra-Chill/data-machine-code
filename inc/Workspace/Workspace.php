@@ -3903,7 +3903,9 @@ class Workspace {
 			return null;
 		}
 
-		$pat = \DataMachineCode\Abilities\GitHubAbilities::getPat();
+		// Pass the repo through so credential profiles with `allowed_repos`
+		// can win over the global default profile when fetching merge state.
+		$pat = \DataMachineCode\Abilities\GitHubAbilities::getPat( array( 'repo' => $slug ) );
 		if ( empty( $pat ) ) {
 			return null;
 		}
@@ -7222,7 +7224,9 @@ class Workspace {
 			return null;
 		}
 
-		$pat = \DataMachineCode\Abilities\GitHubAbilities::getPat();
+		// Pass the repo through so credential profiles with `allowed_repos`
+		// can win over the global default profile when scanning closed PRs.
+		$pat = \DataMachineCode\Abilities\GitHubAbilities::getPat( array( 'repo' => $slug ) );
 		if ( empty( $pat ) ) {
 			$github_cache[ $slug ] = null;
 			return null;
