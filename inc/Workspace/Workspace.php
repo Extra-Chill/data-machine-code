@@ -3010,7 +3010,7 @@ class Workspace {
 
 		if ( $inventory_only ) {
 			if ( ! $dry_run ) {
-				return new \WP_Error( 'inventory_cleanup_requires_dry_run', 'Inventory-only cleanup is review-only. Pass --dry-run, then run full cleanup to apply a reviewed plan.', array( 'status' => 400 ) );
+				return new \WP_Error( 'inventory_cleanup_requires_dry_run', 'Inventory-only cleanup is review-only. Run workspace worktree bounded-cleanup-eligible-apply to apply the same bounded cleanup-eligible class. Broader merge-signal cleanup is a separate, explicit review path.', array( 'status' => 400 ) );
 			}
 			if ( null !== $apply_plan ) {
 				return new \WP_Error( 'inventory_cleanup_apply_plan_unsupported', 'Inventory-only cleanup cannot apply a plan because it intentionally skips full safety revalidation.', array( 'status' => 400 ) );
@@ -3706,8 +3706,8 @@ class Workspace {
 							'created_at'      => empty( $metadata['created_at'] ) ? 'filesystem' : 'metadata',
 							'observed_at'     => 'reconcile_run',
 							'lifecycle_state' => 'merge_signal',
-						)
-					)
+						),
+					),
 				),
 			);
 		}
@@ -4367,7 +4367,11 @@ class Workspace {
 			}
 		}
 
-		$worktree_plan = array( 'candidates' => array(), 'skipped' => array(), 'summary' => array() );
+		$worktree_plan = array(
+			'candidates' => array(),
+			'skipped'    => array(),
+			'summary'    => array(),
+		);
 		if ( $inputs['include_worktrees'] ) {
 			$worktree_plan = $this->worktree_cleanup_merged(
 				array(
@@ -5278,6 +5282,12 @@ class Workspace {
 		}
 
 		$candidates = $this->sort_worktree_cleanup_rows( $candidates, $sort );
+		$summary    = $this->build_worktree_cleanup_summary( $candidates, array(), $skipped, $age_filter );
+		if ( ! empty( $candidates ) ) {
+			$summary['bounded_cleanup_eligible_apply'] = $this->build_bounded_cleanup_eligible_apply_hint( count( $candidates ), $older_than, $sort, $include_repaired_metadata );
+			$summary['apply_command']                  = $summary['bounded_cleanup_eligible_apply']['apply_command'];
+		}
+
 		return array(
 			'success'        => true,
 			'dry_run'        => true,
@@ -5285,7 +5295,39 @@ class Workspace {
 			'candidates'     => $candidates,
 			'removed'        => array(),
 			'skipped'        => $skipped,
-			'summary'        => $this->build_worktree_cleanup_summary( $candidates, array(), $skipped, $age_filter ),
+			'summary'        => $summary,
+		);
+	}
+
+	/**
+	 * Build copy-paste commands for applying a reviewed inventory-only candidate set.
+	 *
+	 * @param int    $limit                     Candidate count reviewed by inventory-only cleanup.
+	 * @param string $older_than                Optional age filter from the review.
+	 * @param string $sort                      Optional sort from the review.
+	 * @param bool   $include_repaired_metadata Whether repaired metadata rows were included.
+	 * @return array<string,mixed>
+	 */
+	private function build_bounded_cleanup_eligible_apply_hint( int $limit, string $older_than, string $sort, bool $include_repaired_metadata ): array {
+		$base = sprintf(
+			'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=%d',
+			max( 1, $limit )
+		);
+		if ( '' !== $older_than ) {
+			$base .= ' --older-than=' . escapeshellarg( $older_than );
+		}
+		if ( '' !== $sort ) {
+			$base .= ' --sort=' . escapeshellarg( $sort );
+		}
+		if ( $include_repaired_metadata ) {
+			$base .= ' --include-repaired-metadata';
+		}
+
+		return array(
+			'candidate_count' => max( 1, $limit ),
+			'review_command'  => $base . ' --dry-run',
+			'apply_command'   => $base,
+			'scope'           => 'Only inventory cleanup-eligible candidates from this bounded review; apply revalidates dirty state, unpushed commits, containment, and primary safety before deletion.',
 		);
 	}
 

@@ -231,6 +231,14 @@ namespace {
 				);
 			}
 			$report = datamachine_code_cleanup_report();
+			if ( ! empty( $input['inventory_only'] ) ) {
+				$report['inventory_only']              = true;
+				$report['summary']['apply_command']    = 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=1';
+				$report['summary']['bounded_cleanup_eligible_apply'] = array(
+					'review_command' => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=1 --dry-run',
+					'apply_command'  => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=1',
+				);
+			}
 			if ( isset( $input['older_than'] ) ) {
 				$report['summary']['age_filter'] = array(
 					'type'             => 'older_than',
@@ -792,6 +800,12 @@ namespace {
 	WP_CLI::$successes = array();
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'inventory-only' => true, 'skip-github' => true, 'format' => 'json' ) );
 	datamachine_code_cleanup_assert( true === ( $ability->last_input['inventory_only'] ?? null ), '--inventory-only forwards to cleanup ability' );
+	$inventory_json = json_decode( WP_CLI::$logs[0] ?? '', true );
+	datamachine_code_cleanup_assert( str_contains( $inventory_json['summary']['apply_command'] ?? '', 'bounded-cleanup-eligible-apply --limit=1' ), 'inventory-only JSON exposes bounded cleanup-eligible apply command' );
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'inventory-only' => true, 'skip-github' => true ) );
+	datamachine_code_cleanup_assert( str_contains( WP_CLI::$successes[0] ?? '', 'Apply this bounded reviewed class with: studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=1' ), 'inventory-only human output prints bounded apply command' );
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'inventory-only' => true, 'include-repaired-metadata' => true, 'format' => 'json' ) );
 	datamachine_code_cleanup_assert( true === ( $ability->last_input['include_repaired_metadata'] ?? null ), '--include-repaired-metadata forwards to cleanup ability' );
 
