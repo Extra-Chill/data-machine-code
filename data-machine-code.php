@@ -42,6 +42,10 @@ register_activation_hook( __FILE__, 'datamachine_code_install_schema' );
  * Keep schema current for already-active installs after deploy/update.
  */
 function datamachine_code_maybe_upgrade_schema(): void {
+	if ( function_exists( 'wp_installing' ) && wp_installing() ) {
+		return;
+	}
+
 	$worktrees_installed = function_exists( 'get_option' ) ? (string) get_option( 'datamachine_code_worktrees_schema_version', '' ) : '';
 	$cleanup_installed   = function_exists( 'get_option' ) ? (string) get_option( 'datamachine_code_cleanup_schema_version', '' ) : '';
 	$cleanup_version     = '20260504-cleanup-runs';
