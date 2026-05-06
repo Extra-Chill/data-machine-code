@@ -2746,6 +2746,10 @@ class WorkspaceCommand extends BaseCommand {
 
 		WP_CLI::log( '' );
 		if ( $dry_run ) {
+			if ( ! empty( $result['inventory_only'] ) && ! empty( $summary['apply_command'] ) ) {
+				WP_CLI::success( sprintf( '%d cleanup-eligible worktree(s) would be removed. Apply this bounded reviewed class with: %s', count( $result['candidates'] ?? array() ), (string) $summary['apply_command'] ) );
+				return;
+			}
 			WP_CLI::success( sprintf( '%d worktree(s) would be removed. Re-run without --dry-run to apply.', count( $result['candidates'] ?? array() ) ) );
 			return;
 		}

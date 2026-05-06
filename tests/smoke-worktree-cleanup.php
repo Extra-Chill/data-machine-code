@@ -413,6 +413,9 @@ namespace {
 	$assert( 1, (int) ( $inventory_buckets['lifecycle_reconciliation_candidates'] ?? 0 ), 'inventory cleanup bucket counts lifecycle reconciliation candidates' );
 	$assert( 4, (int) ( $inventory_buckets['metadata_reconciliation_candidates'] ?? 0 ), 'inventory cleanup bucket counts metadata reconciliation candidates' );
 	$assert( 4, (int) ( $inventory_buckets['active_no_signal'] ?? 0 ), 'inventory cleanup bucket counts active/no-signal rows' );
+	$inventory_apply_hint = (array) ( $inventory_plan['summary']['bounded_cleanup_eligible_apply'] ?? array() );
+	$assert( 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=2', $inventory_plan['summary']['apply_command'] ?? '', 'inventory-only dry-run exposes bounded cleanup-eligible apply command' );
+	$assert( 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=2 --dry-run', $inventory_apply_hint['review_command'] ?? '', 'inventory-only dry-run exposes symmetric bounded review command' );
 	$inventory_next_commands = (array) ( $inventory_plan['summary']['skipped_next_commands'] ?? array() );
 	$assert( true, count( $inventory_next_commands ) >= 2, 'inventory-only summary includes actionable skipped commands' );
 	$assert( true, in_array( 'needs_metadata_reconcile', array_column( $inventory_next_commands, 'reason_code' ), true ), 'inventory-only skipped commands include metadata reconciliation remediation' );
@@ -420,6 +423,8 @@ namespace {
 	$assert( true, in_array( 'active_no_signal', array_column( $inventory_next_commands, 'reason_code' ), true ), 'inventory-only skipped commands include active/no-signal explanation' );
 	$inventory_apply = $inventory_ws->worktree_cleanup_merged( array( 'inventory_only' => true ) );
 	$assert( true, is_wp_error( $inventory_apply ), 'inventory-only cleanup refuses non-dry-run apply path' );
+	$assert( true, str_contains( $inventory_apply->get_error_message(), 'bounded-cleanup-eligible-apply' ), 'inventory-only apply refusal points to bounded cleanup-eligible apply' );
+	$assert( false, str_contains( $inventory_apply->get_error_message(), 'run full cleanup' ), 'inventory-only apply refusal does not tell users to run full cleanup' );
 
 	echo "\nEmergency cleanup dry-run scenario\n";
 	$emergency_ws   = new Cleanup_Inventory_Workspace();

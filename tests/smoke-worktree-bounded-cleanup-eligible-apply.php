@@ -311,7 +311,7 @@ namespace {
 	$assert( 2, count( $dry['candidates'] ?? array() ), 'bounded limit caps dry-run candidates' );
 	$remaining = (int) ( $dry['continuation']['remaining_total'] ?? 0 );
 	$assert( true, $remaining >= 4, 'continuation reports remaining cleanup-eligible candidates' );
-	$assert_skipped( $dry['skipped'] ?? array(), 'demo@repaired-metadata-clean', 'no_inventory_cleanup_signal', 'repaired metadata rows require explicit include flag' );
+	$assert_skipped( $dry['skipped'] ?? array(), 'demo@repaired-metadata-clean', 'active_no_signal', 'repaired metadata rows require explicit include flag' );
 
 	$repaired_dry = $ws->worktree_bounded_cleanup_eligible_apply( array( 'dry_run' => true, 'limit' => 20, 'include_repaired_metadata' => true, 'older_than' => '24h' ) );
 	$assert( true, ! is_wp_error( $repaired_dry ) && ( $repaired_dry['success'] ?? false ), 'repaired-metadata dry-run returns success' );
@@ -347,9 +347,9 @@ namespace {
 
 	$assert_skipped( $apply['skipped'] ?? array(), 'demo@eligible-dirty', 'dirty_worktree', 'dirty worktree skipped on revalidation' );
 	$assert_skipped( $apply['skipped'] ?? array(), 'demo@eligible-unpushed', 'unpushed_commits', 'unpushed worktree skipped on revalidation' );
-	$assert_skipped( $apply['skipped'] ?? array(), 'demo@no-metadata', 'requires_full_scan', 'missing-metadata row skipped via inventory gate' );
-	$assert_skipped( $apply['skipped'] ?? array(), 'demo@active-row', 'no_inventory_cleanup_signal', 'active row skipped via inventory gate' );
-	$assert_skipped( $apply['skipped'] ?? array(), 'demo@repaired-metadata-clean', 'no_inventory_cleanup_signal', 'repaired metadata row skipped without explicit flag on apply' );
+	$assert_skipped( $apply['skipped'] ?? array(), 'demo@no-metadata', 'needs_metadata_reconcile', 'missing-metadata row skipped via inventory gate' );
+	$assert_skipped( $apply['skipped'] ?? array(), 'demo@active-row', 'active_no_signal', 'active row skipped via inventory gate' );
+	$assert_skipped( $apply['skipped'] ?? array(), 'demo@repaired-metadata-clean', 'active_no_signal', 'repaired metadata row skipped without explicit flag on apply' );
 
 	$assert( true, is_dir( $primary . '/.git' ), 'primary survives bounded cleanup-eligible apply' );
 	$assert( false, is_dir( $tmp . '/demo@eligible-clean' ), 'clean cleanup-eligible directory removed from disk' );
