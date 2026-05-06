@@ -397,12 +397,13 @@ add_action( 'plugins_loaded', function () {
 	}
 
 	\DataMachine\Engine\AI\MemoryFileRegistry::register( 'AGENTS.md', 5, array(
-		'layer'           => \DataMachine\Engine\AI\MemoryFileRegistry::LAYER_SHARED,
-		'protected'       => true,
-		'composable'      => true,
-		'convention_path' => 'AGENTS.md',
-		'label'           => 'Agent Instructions',
-		'description'     => 'Auto-generated from registered sections. Regenerate via: wp datamachine memory compose AGENTS.md',
+		'layer'            => \DataMachine\Engine\AI\MemoryFileRegistry::LAYER_SHARED,
+		'protected'        => true,
+		'composable'       => true,
+		'convention_path'  => 'AGENTS.md',
+		'retrieval_policy' => \WP_Agent_Context_Injection_Policy::NEVER,
+		'label'            => 'Agent Instructions',
+		'description'      => 'Auto-generated from registered sections. Regenerate via: wp datamachine memory compose AGENTS.md',
 	) );
 
 	if ( ! class_exists( '\DataMachine\Engine\AI\SectionRegistry' ) ) {
