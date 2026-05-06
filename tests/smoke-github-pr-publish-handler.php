@@ -34,8 +34,14 @@ $assert( false !== strpos( $handler, 'GitHubAbilities::createPullRequest' ), 'ha
 $assert( false !== strpos( $handler, "'files'" ) && false !== strpos( $handler, "'items'" ), 'PR publish accepts a files array' );
 $assert( false !== strpos( $handler, 'GitHubAbilities::createOrUpdateFile' ), 'handler commits files before opening the PR' );
 $assert( false !== strpos( $handler, '\'branch\'         => $input[\'head\']' ), 'handler commits files to the PR head branch' );
-$assert( false !== strpos( $handler, '\'files\'       => $committed_files' ), 'handler returns committed file metadata' );
+$assert( false !== strpos( $handler, '\'files\'          => $committed_files' ), 'handler returns committed file metadata' );
+$assert( false !== strpos( $handler, "'labels'                => array(" ), 'tool schema exposes labels parameter' );
+$assert( false !== strpos( $handler, 'GitHubAbilities::addLabels' ), 'handler applies labels via GitHubAbilities::addLabels' );
+$assert( false !== strpos( $handler, "'applied_labels' => \$applied_labels" ), 'handler returns applied_labels in result' );
+$assert( false !== strpos( $handler, 'resolveListParameter' ), 'handler resolves labels via shared helper' );
+$assert( false !== strpos( $handler, "'label_error'" ), 'handler reports label_error on partial failure' );
 $assert( false !== strpos( $settings, "'base'" ) && false !== strpos( $settings, "'draft'" ), 'settings expose base and draft defaults' );
+$assert( false !== strpos( $settings, "'labels'" ), 'settings expose labels default' );
 $assert( false !== strpos( $plugin, 'new \\DataMachineCode\\Handlers\\GitHub\\GitHubPullRequestPublish();' ), 'plugin bootstraps GitHub PR publish handler' );
 
 echo "\n";

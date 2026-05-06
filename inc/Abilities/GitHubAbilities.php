@@ -1378,6 +1378,76 @@ class GitHubAbilities {
 	}
 
 	/**
+	 * Add labels to an issue or pull request.
+	 *
+	 * GitHub treats pull requests as issues for labeling purposes, so this
+	 * single endpoint covers both. Calls
+	 * `POST /repos/{owner}/{repo}/issues/{number}/labels`, which is additive
+	 * (does not remove existing labels).
+	 *
+	 * @param array $input {
+	 *     Required: repo, issue_number (or pull_number), labels (array<string>).
+	 * }
+	 * @return array|\WP_Error { success: bool, applied_labels: string[] } or error.
+	 */
+	public static function addLabels( array $input ): array|\WP_Error {
+		$repo   = self::resolveRepo( sanitize_text_field( $input['repo'] ?? '' ) );
+		$number = (int) ( $input['issue_number'] ?? $input['pull_number'] ?? 0 );
+
+		if ( empty( $repo ) ) {
+			return new \WP_Error( 'missing_repo', 'Repository (owner/repo) is required or configure a default repo.', array( 'status' => 400 ) );
+		}
+		if ( $number <= 0 ) {
+			return new \WP_Error( 'missing_number', 'issue_number or pull_number is required.', array( 'status' => 400 ) );
+		}
+
+		$labels = array();
+		if ( isset( $input['labels'] ) && is_array( $input['labels'] ) ) {
+			$labels = array_values(
+				array_filter(
+					array_map(
+						static fn( $label ): string => sanitize_text_field( (string) $label ),
+						$input['labels']
+					),
+					static fn( string $label ): bool => '' !== $label
+				)
+			);
+		}
+
+		if ( empty( $labels ) ) {
+			return new \WP_Error( 'missing_labels', 'At least one label is required.', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPatForRepo( $repo );
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$url      = sprintf( '%s/repos/%s/issues/%d/labels', self::API_BASE, $repo, $number );
+		$response = self::apiRequest( 'POST', $url, array( 'labels' => $labels ), $pat );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$applied = array();
+		if ( is_array( $response['data'] ?? null ) ) {
+			foreach ( $response['data'] as $label ) {
+				$name = is_array( $label ) ? ( $label['name'] ?? '' ) : '';
+				if ( '' !== $name ) {
+					$applied[] = (string) $name;
+				}
+			}
+		}
+
+		return array(
+			'success'        => true,
+			'applied_labels' => $applied,
+			'message'        => sprintf( 'Applied %d label(s) to #%d in %s.', count( $applied ), $number, $repo ),
+		);
+	}
+
+	/**
 	 * Resolve the default branch name for a repository.
 	 *
 	 * @param string $repo owner/repo identifier.

@@ -103,6 +103,11 @@ class GitHubPullRequestPublish extends PublishHandler {
 						'type'        => 'string',
 						'description' => 'Default commit message for files committed during publish.',
 					),
+					'labels'                => array(
+						'type'        => 'array',
+						'items'       => array( 'type' => 'string' ),
+						'description' => 'Labels to apply to the pull request after it is opened. Overrides handler config when provided.',
+					),
 					'draft'                 => array(
 						'type'        => 'boolean',
 						'description' => 'Whether to open as draft. Defaults to false.',
@@ -190,15 +195,78 @@ class GitHubPullRequestPublish extends PublishHandler {
 			);
 		}
 
-		return $this->successResponse(
-			array(
+		$pull_number = (int) ( $result['pull_number'] ?? 0 );
+
+		$labels         = $this->resolveListParameter( $parameters['labels'] ?? null, $handler_config['labels'] ?? '' );
+		$applied_labels = array();
+		$label_error    = null;
+
+		if ( ! empty( $labels ) && $pull_number > 0 ) {
+			$label_result = GitHubAbilities::addLabels( array(
 				'repo'        => $repo,
-				'pull_number' => $result['pull_number'] ?? 0,
-				'html_url'    => $result['html_url'] ?? '',
-				'title'       => $input['title'],
-				'head'        => $input['head'],
-				'base'        => $input['base'],
-				'files'       => $committed_files,
+				'pull_number' => $pull_number,
+				'labels'      => $labels,
+			) );
+
+			if ( is_wp_error( $label_result ) ) {
+				$label_error = $label_result->get_error_message();
+				$this->log(
+					'warning',
+					'GitHub Pull Request opened but failed to apply labels: ' . $label_error,
+					array(
+						'job_id'      => $parameters['job_id'] ?? null,
+						'repo'        => $repo,
+						'pull_number' => $pull_number,
+						'labels'      => $labels,
+					)
+				);
+			} else {
+				$applied_labels = $label_result['applied_labels'] ?? array();
+			}
+		}
+
+		$response_data = array(
+			'repo'           => $repo,
+			'pull_number'    => $pull_number,
+			'html_url'       => $result['html_url'] ?? '',
+			'title'          => $input['title'],
+			'head'           => $input['head'],
+			'base'           => $input['base'],
+			'files'          => $committed_files,
+			'labels'         => $labels,
+			'applied_labels' => $applied_labels,
+		);
+
+		if ( null !== $label_error ) {
+			$response_data['label_error'] = $label_error;
+		}
+
+		return $this->successResponse( $response_data );
+	}
+
+	/**
+	 * Resolve a list supplied by tool parameters or comma-separated handler config.
+	 *
+	 * @param mixed  $parameter Tool parameter value.
+	 * @param string $fallback  Comma-separated handler config fallback.
+	 * @return array<int, string> Sanitized list.
+	 */
+	private function resolveListParameter( mixed $parameter, string $fallback ): array {
+		$items = array();
+		if ( is_array( $parameter ) ) {
+			$items = $parameter;
+		} elseif ( is_string( $parameter ) && '' !== $parameter ) {
+			$items = array_map( 'trim', explode( ',', $parameter ) );
+		}
+
+		if ( empty( $items ) && '' !== $fallback ) {
+			$items = array_map( 'trim', explode( ',', $fallback ) );
+		}
+
+		return array_values(
+			array_filter(
+				array_map( 'sanitize_text_field', $items ),
+				static fn( string $item ): bool => '' !== $item
 			)
 		);
 	}
