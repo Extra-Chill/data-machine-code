@@ -34,6 +34,12 @@ class GitHubPullRequestPublishSettings extends SettingsHandler {
 				'description' => __( 'Default base branch for pull requests. Leave blank for repository default.', 'data-machine-code' ),
 				'required'    => false,
 			),
+			'labels'                => array(
+				'type'        => 'text',
+				'label'       => __( 'Labels', 'data-machine-code' ),
+				'description' => __( 'Comma-separated labels to apply to opened pull requests by default. The AI step can override these.', 'data-machine-code' ),
+				'required'    => false,
+			),
 			'draft'                 => array(
 				'type'        => 'checkbox',
 				'label'       => __( 'Open as Draft', 'data-machine-code' ),
