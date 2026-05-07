@@ -493,6 +493,19 @@ MD;
 		'description' => 'Memory, automation, workspace, and system operations.',
 	) );
 
+	// Workspace Inventory — live snapshot of cloned repos + active worktrees.
+	// Sits between datamachine (10) and abilities (20) so the agent reads
+	// "what's in my workspace right now" immediately after the WP-CLI surface
+	// description. The section is regenerated whenever
+	// `datamachine_code_workspace_changed` fires (debounced by
+	// ComposableFileInvalidation's 60-second transient).
+	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'workspace-inventory', 15, function () use ( $wp ) {
+		return datamachine_code_render_workspace_inventory_section( $wp );
+	}, array(
+		'label'       => 'Workspace Inventory',
+		'description' => 'Live snapshot of cloned repos + active worktrees in the workspace.',
+	) );
+
 	// Abilities — WordPress Abilities API discovery.
 	\DataMachine\Engine\AI\SectionRegistry::register( 'AGENTS.md', 'abilities', 20, function () use ( $wp ) {
 		return <<<MD
@@ -639,4 +652,156 @@ function datamachine_code_resolve_workspace_path_for_agents_md(): string {
 	}
 
 	return 'unavailable; run datamachine-code workspace path to diagnose';
+}
+
+/**
+ * Hook the workspace-lifecycle action into the composable AGENTS.md
+ * regenerator so the inventory section refreshes whenever a clone, adopt,
+ * remove, or worktree add/remove lands. Regeneration is debounced by
+ * ComposableFileInvalidation's 60-second transient.
+ *
+ * @since 0.31.0
+ */
+add_filter( 'datamachine_composable_invalidation_hooks', function ( array $hooks ): array {
+	$hooks[] = 'datamachine_code_workspace_changed';
+	return $hooks;
+} );
+
+/**
+ * Render the workspace-inventory section for AGENTS.md.
+ *
+ * Pulls live state from `Workspace::list_repos()` — the same source the
+ * `wp datamachine-code workspace list` CLI uses — so the agent sees an
+ * accurate snapshot of cloned repos and active worktrees without probing.
+ *
+ * Render shape (compact, default):
+ *
+ *   - **<repo>** (`<branch>`) — N worktrees · <remote>
+ *
+ * Render shape (full, opt-in via filter):
+ *
+ *   - **<repo>** (`<branch>`) — <remote>
+ *     - `<branch-slug>` (`<branch>`)
+ *
+ * Returns an empty string when the Workspace class is missing or no git
+ * repos are cloned, which causes the composer to skip the section entirely
+ * (no stub heading).
+ *
+ * @since 0.31.0
+ *
+ * @param string $wp WP-CLI command prefix for the current environment.
+ * @return string Markdown for the section, or '' to skip.
+ */
+function datamachine_code_render_workspace_inventory_section( string $wp ): string {
+	if ( ! class_exists( '\DataMachineCode\Workspace\Workspace' ) ) {
+		return '';
+	}
+
+	$workspace = new \DataMachineCode\Workspace\Workspace();
+	$listing   = $workspace->list_repos();
+
+	if ( is_wp_error( $listing ) || empty( $listing['repos'] ) ) {
+		return '';
+	}
+
+	// Group entries by primary repo. Skip non-git directories (`.locks`,
+	// `_bench-evidence`, etc) — `list_repos()` exposes the `git` flag for
+	// exactly this distinction.
+	$by_repo = array();
+	foreach ( $listing['repos'] as $entry ) {
+		if ( empty( $entry['git'] ) ) {
+			continue;
+		}
+
+		$repo = $entry['repo'] ?? $entry['name'] ?? '';
+		if ( '' === $repo ) {
+			continue;
+		}
+
+		if ( ! isset( $by_repo[ $repo ] ) ) {
+			$by_repo[ $repo ] = array(
+				'primary'   => null,
+				'worktrees' => array(),
+			);
+		}
+
+		if ( ! empty( $entry['is_worktree'] ) ) {
+			$by_repo[ $repo ]['worktrees'][] = $entry;
+		} else {
+			$by_repo[ $repo ]['primary'] = $entry;
+		}
+	}
+
+	if ( empty( $by_repo ) ) {
+		return '';
+	}
+
+	ksort( $by_repo, SORT_NATURAL | SORT_FLAG_CASE );
+
+	$workspace_path = $listing['path'] ?? $workspace->get_path();
+
+	/**
+	 * Filter the workspace-inventory render mode.
+	 *
+	 * - `compact` (default): one bullet per repo with branch + worktree count + remote.
+	 * - `full`: also list each worktree's slug + branch beneath its primary.
+	 *
+	 * @since 0.31.0
+	 *
+	 * @param string $mode One of `compact`|`full`.
+	 */
+	$mode = apply_filters( 'datamachine_code_workspace_inventory_mode', 'compact' );
+	if ( ! in_array( $mode, array( 'compact', 'full' ), true ) ) {
+		$mode = 'compact';
+	}
+
+	$lines = array();
+	foreach ( $by_repo as $repo => $bucket ) {
+		$primary    = $bucket['primary'];
+		$worktrees  = $bucket['worktrees'];
+		$wt_count   = count( $worktrees );
+		$branch     = $primary['branch'] ?? null;
+		$remote     = $primary['remote'] ?? null;
+		$branch_str = ( null !== $branch && '' !== $branch ) ? sprintf( ' (`%s`)', $branch ) : '';
+
+		if ( 'compact' === $mode ) {
+			$suffix_parts = array();
+			$suffix_parts[] = sprintf( '%d %s', $wt_count, 1 === $wt_count ? 'worktree' : 'worktrees' );
+			if ( null !== $remote && '' !== $remote ) {
+				$suffix_parts[] = $remote;
+			}
+			$lines[] = sprintf( '- **%s**%s — %s', $repo, $branch_str, implode( ' · ', $suffix_parts ) );
+			continue;
+		}
+
+		// full mode.
+		$header = sprintf( '- **%s**%s', $repo, $branch_str );
+		if ( null !== $remote && '' !== $remote ) {
+			$header .= ' — ' . $remote;
+		}
+		$lines[] = $header;
+
+		usort( $worktrees, function ( $a, $b ) {
+			return strnatcasecmp( (string) ( $a['name'] ?? '' ), (string) ( $b['name'] ?? '' ) );
+		} );
+		foreach ( $worktrees as $wt ) {
+			$slug      = $wt['branch_slug'] ?? '';
+			$wt_branch = $wt['branch'] ?? null;
+			$wt_label  = '' !== $slug ? sprintf( '`%s`', $slug ) : sprintf( '`%s`', $wt['name'] ?? '?' );
+			if ( null !== $wt_branch && '' !== $wt_branch && $wt_branch !== $slug ) {
+				$wt_label .= sprintf( ' (`%s`)', $wt_branch );
+			}
+			$lines[] = '  - ' . $wt_label;
+		}
+	}
+
+	$body = implode( "\n", $lines );
+
+	return <<<MD
+## Workspace Inventory
+
+Live snapshot of cloned repos in `{$workspace_path}`. Run `{$wp} datamachine-code workspace list` to drill into worktrees.
+
+{$body}
+MD;
 }
