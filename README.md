@@ -158,6 +158,20 @@ array(
 
 Workspace git policies are configured via the `datamachine_workspace_git_policies` option for per-repo write/push controls.
 
+### GitHub fetch handler config
+
+The GitHub fetch handler (`data_source: issues` or `pulls`) supports both server-side and post-fetch label/keyword filters. Server-side `labels` is forwarded to GitHub's REST `list issues` / `list pulls` endpoints; the post-fetch filters run after the API call and trim the in-memory result set.
+
+| Field | Tier | Semantics |
+|---|---|---|
+| `labels` | server-side | Comma-separated label names. Forwarded to the GitHub REST endpoint. ANY-match include. |
+| `exclude_labels` | post-fetch | Comma-separated label names. ANY-match drop, case-insensitive. Empty/missing is a no-op. Applies to both `issues` and `pulls`. |
+| `exclude_keywords` | post-fetch | Comma-separated terms matched against title + body. ANY-match drop. |
+| `search` | post-fetch | Required-keyword filter against title + body. |
+| `timeframe_limit` | post-fetch | Bounds items by `created_at`. |
+
+GitHub's REST `list issues` endpoint does not support negative label syntax, so `exclude_labels` is implemented as a post-fetch array intersection — symmetric with `exclude_keywords` in the same handler. Combine `labels` (positive, server-side) with `exclude_labels` (negative, post-fetch) to express "match these AND NOT those" in flow JSON without an AI-step prompt guard. Dropped items are logged at `debug` with the offending label(s).
+
 ### Workspace maintenance pipelines
 
 DMC registers bundled, agent-generic Data Machine pipeline templates for recurring workspace maintenance. They are discoverable through the normal pipeline surface:

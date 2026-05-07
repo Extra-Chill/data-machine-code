@@ -58,7 +58,7 @@ class GitHubSettings extends FetchHandlerSettings {
 			'issue_number'            => array(
 				'type'        => 'number',
 				'label'       => __( 'Issue Number (Targeted Fetch)', 'data-machine-code' ),
-				'description' => __( 'Fetch one specific issue by number (data_source=issues). Mutually exclusive with Pull Request Number. Takes precedence over list filters (search, exclude_keywords, timeframe_limit, labels).', 'data-machine-code' ),
+				'description' => __( 'Fetch one specific issue by number (data_source=issues). Mutually exclusive with Pull Request Number. Takes precedence over list filters (search, exclude_keywords, exclude_labels, timeframe_limit, labels).', 'data-machine-code' ),
 				'required'    => false,
 				'min'         => 1,
 				'default'     => 0,
@@ -66,7 +66,7 @@ class GitHubSettings extends FetchHandlerSettings {
 			'pull_number'             => array(
 				'type'        => 'number',
 				'label'       => __( 'Pull Request Number', 'data-machine-code' ),
-				'description' => __( 'Pull request number. For data_source=pull_review_context this prepares review context; for data_source=pulls this performs a targeted single-PR fetch. Mutually exclusive with Issue Number. Takes precedence over list filters (search, exclude_keywords, timeframe_limit, labels).', 'data-machine-code' ),
+				'description' => __( 'Pull request number. For data_source=pull_review_context this prepares review context; for data_source=pulls this performs a targeted single-PR fetch. Mutually exclusive with Issue Number. Takes precedence over list filters (search, exclude_keywords, exclude_labels, timeframe_limit, labels).', 'data-machine-code' ),
 				'required'    => false,
 				'min'         => 1,
 				'default'     => 0,
@@ -202,6 +202,12 @@ class GitHubSettings extends FetchHandlerSettings {
 				'type'        => 'text',
 				'label'       => __( 'Label Filter', 'data-machine-code' ),
 				'description' => __( 'Comma-separated label names to filter by (issues only).', 'data-machine-code' ),
+				'required'    => false,
+			),
+			'exclude_labels'          => array(
+				'type'        => 'text',
+				'label'       => __( 'Exclude Labels', 'data-machine-code' ),
+				'description' => __( 'Comma-separated label names to exclude (post-fetch, ANY-match, case-insensitive). Applies to both issues and pulls. Empty/missing is a no-op. GitHub\'s list endpoints do not support negative labels server-side, so DMC filters after the fetch — symmetric with exclude_keywords.', 'data-machine-code' ),
 				'required'    => false,
 			),
 			'branch'                  => array(

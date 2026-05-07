@@ -532,10 +532,19 @@ class GitHub extends FetchHandler {
 
 		$context->log( 'info', sprintf( 'GitHub: Found %d %s.', count( $items ), $data_source ) );
 
-		$search           = $config['search'] ?? '';
-		$exclude_keywords = $config['exclude_keywords'] ?? '';
-		$timeframe_limit  = $config['timeframe_limit'] ?? 'all_time';
-		$eligible_items   = array();
+		$search              = $config['search'] ?? '';
+		$exclude_keywords    = $config['exclude_keywords'] ?? '';
+		$exclude_labels_raw  = $config['exclude_labels'] ?? '';
+		$timeframe_limit     = $config['timeframe_limit'] ?? 'all_time';
+		$eligible_items      = array();
+
+		$exclude_labels = array();
+		if ( ! empty( $exclude_labels_raw ) ) {
+			$exclude_labels = array_values( array_filter( array_map(
+				static fn( $label ) => strtolower( trim( (string) $label ) ),
+				explode( ',', (string) $exclude_labels_raw )
+			), static fn( $label ) => '' !== $label ) );
+		}
 
 		foreach ( $items as $item ) {
 			$guid = sprintf( 'github_%s_%s_%d', $repo, $data_source, $item['number'] );
@@ -548,6 +557,22 @@ class GitHub extends FetchHandler {
 
 			if ( ! empty( $exclude_keywords ) && ! $this->applyExcludeKeywords( $searchable_text, $exclude_keywords ) ) {
 				continue;
+			}
+
+			if ( ! empty( $exclude_labels ) && ! empty( $item['labels'] ) ) {
+				$item_labels_lower = array_map(
+					static fn( $label ) => strtolower( (string) $label ),
+					(array) $item['labels']
+				);
+				$hit = array_values( array_intersect( $item_labels_lower, $exclude_labels ) );
+				if ( ! empty( $hit ) ) {
+					$context->log( 'debug', sprintf(
+						'GitHub: skipping #%d — excluded by label(s): %s',
+						$item['number'] ?? 0,
+						implode( ', ', $hit )
+					) );
+					continue;
+				}
 			}
 
 			if ( 'all_time' !== $timeframe_limit && ! empty( $item['created_at'] ) ) {
@@ -601,8 +626,8 @@ class GitHub extends FetchHandler {
 	 * Fetch a single issue or pull request by number.
 	 *
 	 * Targeted-fetch branch of {@see self::fetchIssuesOrPulls()}. Bypasses
-	 * list filters (search, exclude_keywords, timeframe_limit, timeframe,
-	 * labels) and returns one normalized DataPacket matching the list-path
+	 * list filters (search, exclude_keywords, exclude_labels, timeframe_limit,
+	 * timeframe, labels) and returns one normalized DataPacket matching the list-path
 	 * shape (same `title`, `content`, `metadata`, and `dedup_key` of
 	 * `github_<repo>_<data_source>_<number>`).
 	 *
@@ -641,7 +666,7 @@ class GitHub extends FetchHandler {
 
 		// Warn on ignored list-narrowing config.
 		$ignored_fields = array();
-		foreach ( array( 'search', 'exclude_keywords', 'timeframe_limit', 'timeframe', 'labels' ) as $field ) {
+		foreach ( array( 'search', 'exclude_keywords', 'exclude_labels', 'timeframe_limit', 'timeframe', 'labels' ) as $field ) {
 			if ( ! empty( $config[ $field ] ) && 'all_time' !== $config[ $field ] ) {
 				$ignored_fields[] = $field;
 			}
