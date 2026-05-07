@@ -3144,6 +3144,46 @@ class Workspace {
 			}
 
 			if ( $dirty_count > 0 && ! $force ) {
+				// Before falling through to the generic dirty_worktree skip, try to
+				// classify whether this is the "merged PR + obsolete dirty edits"
+				// shape. That bucket is still skipped (force=false stays safe), but
+				// the distinct reason_code lets reviewers spot it as a safe
+				// force-cleanup candidate without manual archaeology.
+				$obsolete_dirty = $this->classify_dirty_obsolete_on_default_branch(
+					$repo,
+					$branch,
+					$wt_path,
+					$skip_github,
+					$github_cache,
+					$fetched,
+					$fetch_timeouts,
+					$metadata,
+					$include_repaired_metadata
+				);
+
+				if ( is_array( $obsolete_dirty ) ) {
+					$skipped[] = array_merge( array(
+						'handle'      => $handle,
+						'repo'        => $repo,
+						'branch'      => $branch,
+						'path'        => $wt_path,
+						'reason_code' => 'merged_pr_with_only_obsolete_dirty_changes',
+						'reason'      => sprintf(
+							'merged branch with %d dirty file(s); all dirty paths already absent on default branch — safe force-cleanup candidate (review then rerun with force=true)',
+							$dirty_count
+						),
+						'dirty'       => $dirty_count,
+						'dirty_obsolete_paths' => $obsolete_dirty['paths'],
+						'merge_signal' => $obsolete_dirty['merge_signal'],
+						'pr_url'      => $obsolete_dirty['pr_url'] ?? null,
+						'default_ref' => $obsolete_dirty['default_ref'] ?? null,
+						'hint'        => 'Dirty edits only touch paths the default branch no longer has. After review, rerun cleanup with force=true to remove this worktree.',
+						'created_at'  => $created_at,
+						'metadata'    => $metadata,
+					), $disk_fields );
+					continue;
+				}
+
 				$skipped[] = array_merge( array(
 					'handle'      => $handle,
 					'repo'        => $repo,
@@ -7057,6 +7097,194 @@ class Workspace {
 			'handle'  => basename( $wt_path ),
 			'message' => sprintf( 'Worktree at "%s" removed.', $wt_path ),
 			'branch'  => $branch,
+		);
+	}
+
+	/**
+	 * Classify a dirty worktree as "merged + only obsolete dirty changes".
+	 *
+	 * Returns the classification payload when:
+	 *   - The branch has a confirmed merge signal (upstream-gone, local-merged,
+	 *     pr-merged, or already cleanup-eligible per metadata).
+	 *   - All dirty paths reported by `git status --porcelain` are tracked
+	 *     paths whose entries are absent on the remote default branch tip
+	 *     (i.e. modifying or deleting files the default branch no longer has).
+	 *
+	 * Returns null in every other case so the caller falls back to the
+	 * generic `dirty_worktree` skip:
+	 *   - No merge signal, or signal cannot be confirmed.
+	 *   - Any dirty path is untracked (could be new content).
+	 *   - Any dirty path still exists on the default branch tip.
+	 *   - Default branch ref cannot be resolved.
+	 *   - Any git probe times out or fails.
+	 *
+	 * The classification keeps cleanup conservative: it never auto-removes
+	 * dirty worktrees, but the distinct reason code lets reviewers spot the
+	 * "safe to force" subset without manual archaeology.
+	 *
+	 * @param string                 $repo                       Repo directory name.
+	 * @param string                 $branch                     Branch name.
+	 * @param string                 $wt_path                    Worktree path.
+	 * @param bool                   $skip_github                Whether to skip GitHub API lookups.
+	 * @param array<string,mixed>    $github_cache               Run-local GitHub cache.
+	 * @param array<string,bool>     $fetched                    Per-repo fetch tracker.
+	 * @param array<string,\WP_Error>$fetch_timeouts             Per-repo fetch timeout tracker.
+	 * @param mixed                  $metadata                   Worktree metadata.
+	 * @param bool                   $include_repaired_metadata  Whether repaired metadata counts as a cleanup signal.
+	 * @return array{paths: array<string,string>, merge_signal: string, pr_url?: ?string, default_ref: string}|null
+	 */
+	private function classify_dirty_obsolete_on_default_branch(
+		string $repo,
+		string $branch,
+		string $wt_path,
+		bool $skip_github,
+		array &$github_cache,
+		array &$fetched,
+		array &$fetch_timeouts,
+		$metadata,
+		bool $include_repaired_metadata
+	): ?array {
+		if ( '' === $repo || '' === $branch || '' === $wt_path || ! is_dir( $wt_path ) ) {
+			return null;
+		}
+
+		$primary_path = $this->get_primary_path( $repo );
+		if ( ! is_dir( $primary_path . '/.git' ) ) {
+			return null;
+		}
+
+		// Refuse to classify if a previous worktree already saw this repo's
+		// fetch time out — the default-ref / merge-signal probes would race
+		// against stale data.
+		if ( isset( $fetch_timeouts[ $repo ] ) ) {
+			return null;
+		}
+
+		// Ensure remote refs are fresh once per repo per cleanup run. Reuses
+		// the caller's `$fetched` tracker so this never double-fetches.
+		if ( empty( $fetched[ $repo ] ) ) {
+			$fetch = $this->run_git( $primary_path, 'fetch --prune --quiet origin', self::CLEANUP_GIT_PROBE_TIMEOUT );
+			if ( $this->is_git_timeout_error( $fetch ) ) {
+				$fetch_timeouts[ $repo ] = $fetch;
+				return null;
+			}
+			$fetched[ $repo ] = true;
+		}
+
+		$default_ref = $this->resolve_remote_default_ref( $primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( $default_ref instanceof \WP_Error || null === $default_ref || '' === $default_ref ) {
+			return null;
+		}
+
+		// Confirm the default ref actually resolves to a commit. If it doesn't,
+		// every `cat-file -e <ref>:<path>` would fail and we'd mis-classify the
+		// whole worktree as obsolete-on-default.
+		$default_resolve = $this->run_git(
+			$primary_path,
+			sprintf( 'rev-parse --verify --quiet %s', escapeshellarg( $default_ref . '^{commit}' ) ),
+			self::CLEANUP_GIT_PROBE_TIMEOUT
+		);
+		if ( $this->is_git_timeout_error( $default_resolve ) || is_wp_error( $default_resolve ) ) {
+			return null;
+		}
+
+		$signal = null;
+		if ( is_array( $metadata ) && WorktreeContextInjector::has_cleanup_signal( $metadata ) ) {
+			$signal = array(
+				'signal' => 'cleanup_eligible',
+				'reason' => 'worktree finalized or explicitly marked cleanup_eligible',
+			);
+			if ( ! empty( $metadata['pr_url'] ) ) {
+				$signal['pr_url'] = (string) $metadata['pr_url'];
+			}
+		} elseif ( $include_repaired_metadata && is_array( $metadata ) && ! empty( $metadata['metadata_repaired'] ) ) {
+			$signal = array(
+				'signal' => 'repaired_metadata',
+				'reason' => 'operator-approved cleanup of repaired metadata',
+			);
+		} else {
+			$signal = $this->detect_merge_signal( $primary_path, $repo, $branch, $skip_github, $github_cache );
+		}
+
+		if ( ! is_array( $signal ) ) {
+			return null;
+		}
+		$signal_kind    = (string) ( $signal['signal'] ?? '' );
+		$merged_signals = array( 'upstream-gone', 'local-merged', 'pr-merged', 'cleanup_eligible', 'repaired_metadata' );
+		if ( ! in_array( $signal_kind, $merged_signals, true ) ) {
+			return null;
+		}
+
+		// Untracked files are never "obsolete on default" — they could be new
+		// content the operator wants to preserve. Bail at the first hint of
+		// untracked content so this classifier stays conservative.
+		$untracked = $this->run_git(
+			$wt_path,
+			'ls-files --others --exclude-standard',
+			self::CLEANUP_GIT_PROBE_TIMEOUT
+		);
+		if ( $this->is_git_timeout_error( $untracked ) ) {
+			return null;
+		}
+		if ( ! is_wp_error( $untracked ) && '' !== trim( (string) ( $untracked['output'] ?? '' ) ) ) {
+			return null;
+		}
+
+		// Modified/deleted/added tracked paths against the worktree's HEAD.
+		// `diff --name-only HEAD` covers staged and unstaged changes in one
+		// shot and avoids the porcelain status leading-whitespace quirk that
+		// `trim()`-on-output would corrupt.
+		$tracked = $this->run_git(
+			$wt_path,
+			'diff --name-only HEAD',
+			self::CLEANUP_GIT_PROBE_TIMEOUT
+		);
+		if ( $this->is_git_timeout_error( $tracked ) || is_wp_error( $tracked ) ) {
+			return null;
+		}
+
+		$paths = array_values(
+			array_filter(
+				array_map( 'trim', explode( "\n", (string) ( $tracked['output'] ?? '' ) ) ),
+				fn( $line ) => '' !== $line
+			)
+		);
+		if ( array() === $paths ) {
+			return null;
+		}
+
+		$obsolete_paths = array();
+		foreach ( $paths as $path ) {
+			// `cat-file -e <ref>:<path>` exits 0 when the path exists on the
+			// default branch tip. Non-zero (missing/ambiguous) means the path
+			// is absent there — exactly the case we want to classify as
+			// obsolete-on-default.
+			$probe = $this->run_git(
+				$primary_path,
+				sprintf( 'cat-file -e %s', escapeshellarg( $default_ref . ':' . $path ) ),
+				self::CLEANUP_GIT_PROBE_TIMEOUT
+			);
+			if ( $this->is_git_timeout_error( $probe ) ) {
+				return null;
+			}
+			if ( is_wp_error( $probe ) ) {
+				$obsolete_paths[ $path ] = 'absent_on_default';
+				continue;
+			}
+			// Path still exists on the default branch tip — dirty edit may
+			// still be relevant. Refuse to classify into the new bucket.
+			return null;
+		}
+
+		if ( array() === $obsolete_paths ) {
+			return null;
+		}
+
+		return array(
+			'paths'        => $obsolete_paths,
+			'merge_signal' => $signal_kind,
+			'pr_url'       => $signal['pr_url'] ?? null,
+			'default_ref'  => $default_ref,
 		);
 	}
 

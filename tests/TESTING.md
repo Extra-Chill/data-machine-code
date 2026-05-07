@@ -8,14 +8,14 @@ including safety-rail regressions) lives in `smoke-worktree-cleanup.php`.
 ## 0. Pre-flight — the automated smoke tests
 
 ```bash
-php tests/smoke-worktree-handles.php     # pure-unit, fast
-php tests/smoke-worktree-cleanup.php     # spawns a real git workspace
-php tests/smoke-worktree-bootstrap.php   # fixture + real git, no WP required
+php tests/smoke-worktree-handles.php                          # pure-unit, fast
+php tests/smoke-worktree-cleanup.php                          # spawns a real git workspace
+php tests/smoke-worktree-cleanup-merged-obsolete-dirty.php    # merged + obsolete-on-default classifier
+php tests/smoke-worktree-bootstrap.php                        # fixture + real git, no WP required
 ```
 
-Expected: `32/32 passed`, `18/18 passed`, and `30/30 passed` respectively.
-Skip `smoke-worktree-cleanup.php` and `smoke-worktree-bootstrap.php` if `git`
-is unavailable.
+Expected: `32/32 passed`, `131/131 passed`, `14/14 passed`, and `30/30 passed`
+respectively. Skip the cleanup/bootstrap tests if `git` is unavailable.
 
 Prereqs:
 - WordPress 6.9+ with Data Machine + data-machine-code activated.
