@@ -1,19 +1,37 @@
 # Data Machine Code
 
-The bridge between WordPress and an external coding-agent runtime (Claude Code, OpenCode, kimaki, etc.). Built on [Data Machine](https://github.com/Extra-Chill/data-machine).
+**Data Machine Code gives a WordPress site the ability to write and ship code** — clone repos, edit files in worktrees, commit, push, open issues and PRs, comment on reviews. Built on [Data Machine](https://github.com/Extra-Chill/data-machine), powered by the Abilities API.
+
+Who pulls the trigger is up to you. Same capability surface, three driver modes:
+
+- **An external coding-agent runtime** on your machine pointed at the site (Claude Code, OpenCode, kimaki, Studio Code) — interactive, human-in-the-loop.
+- **The site itself, via a Data Machine flow** — scheduled or webhook-triggered, no human and no external runtime. The site codes on its own behalf.
+- **An ephemeral CI job** that boots a WordPress instance with DMC loaded for a single check (Playground + GitHub Actions). The site exists for one job, codes for one PR, dies.
+
+On managed hosts (WordPress.com, VIP, sandboxed environments) DMC is **never installed by design**. Those sites cannot write code, and that's the point — DMC's presence is the switch between "this WordPress site can ship code" and "this one can't."
 
 ## What It Is
 
-Data Machine Code's activation is the declarative answer to **"is there a coding agent here?"** When DMC is loaded, the WordPress install is no longer just a site running an AI — it is the WordPress half of a coding-agent system. The other half is whatever runtime the user pointed at the install (Claude Code, OpenCode, kimaki, Studio Code, etc.).
+DMC's activation is the declarative answer to **"can this WordPress site code?"** When DMC is loaded, the install is no longer just a site running an AI — it has a worktree-native workspace, GitHub/git/workspace abilities, an `AGENTS.md` at the WP root for any runtime that asks, and a capability surface other plugins can read to gate disk-side behavior.
 
 That framing reshapes what every other plugin can assume:
 
-- **AGENTS.md is composed and written to the WP root**, where the runtime discovers it on session start. DMC owns the file, contributes core sections, and lets other plugins register more via Data Machine's `SectionRegistry`.
-- **The runtime gains GitHub, workspace, and git abilities** through the Abilities API — every ability is automatically callable from chat, MCP, REST, and WP-CLI.
-- **A worktree-native workspace area** at `~/.datamachine/workspace/` lets agents clone repos, edit files in isolated branches, and push changes — all gated by per-repo policies.
-- **`\DataMachineCode\Environment` is a capability surface** plugins can read to ask "is a coding agent here?", "can we shell out?", "is the filesystem writable outside `/uploads`?". Other DM plugins use it to gate disk-side hooks (e.g. Intelligence's `SKILL.md` sync).
+- **AGENTS.md is composed and written to the WP root** for external runtimes that discover it on session start. DMC owns the file, contributes core sections, and lets other plugins register more via Data Machine's `SectionRegistry`. In-process and CI drivers don't use AGENTS.md — they get context through Data Machine's normal channels (system prompts, memory files, flow user messages). AGENTS.md is a feature for one of the three drivers, not the universal interface.
+- **The site gains GitHub, workspace, and git abilities** through the Abilities API — every ability is automatically callable from chat, MCP, REST, WP-CLI, *and* directly from inside Data Machine flows running on the site.
+- **A worktree-native workspace area** at `~/.datamachine/workspace/` lets the site clone repos, edit files in isolated branches, and push changes — all gated by per-repo policies. Same workspace whether the editor is an external runtime, an in-process AI step, or a CI job.
+- **`\DataMachineCode\Environment` is a capability surface** plugins can read to ask "can this site code?", "can we shell out?", "is the filesystem writable outside `/uploads`?". Other DM plugins use it to gate disk-side hooks (e.g. Intelligence's `SKILL.md` sync).
 
-On managed hosts (WordPress.com, VIP, sandboxed environments) DMC is **never installed by design**. The class doesn't exist, AGENTS.md isn't composed, no shell capabilities are advertised. Site owners get a vanilla Data Machine install without any expectation of a coding agent running alongside it. That asymmetry is the whole point — DMC is the seam between "WordPress that knows about a coding agent" and "WordPress that doesn't."
+The asymmetry between self-hosted and managed is the whole product statement: self-hosted sites can install DMC and ship code; managed sites cannot. DMC is the seam.
+
+## Driver Modes
+
+| Mode | Driver | Lifetime | Example |
+|---|---|---|---|
+| **Co-located runtime** | External agent CLI on the host | Long-lived install | [`wp-coding-agents`](https://github.com/Extra-Chill/wp-coding-agents) on a VPS, a Studio site with kimaki |
+| **In-process flow** | DM AI step inside a flow | Long-lived install | An Intelligence wiki maintenance flow calling workspace abilities; a webhook-triggered PR review flow |
+| **Ephemeral CI** | DM flow inside Playground / GitHub Actions | One job | [`wc-site-generator`](https://github.com/chubes4/wc-site-generator) static-site validation; the Stage 5 Playground proof |
+
+The capability surface is identical in all three. The differences are who pulls the trigger and how long the site lives.
 
 ## How It Differs From Other Data Machine Extensions
 
@@ -43,7 +61,7 @@ Sibling extensions like `data-machine-socials` and `data-machine-business` are *
 ### AI Agent Tools
 - GitHub and workspace chat tools for read-only context gathering plus managed PR review comments
 - Async GitHub issue creation via system tasks
-- All tools register through Data Machine's tool system
+- All tools register through Data Machine's tool system, which means they're equally available to external runtimes (via MCP/REST/WP-CLI) and to in-process / CI drivers (via direct AI-step tool calls)
 
 ### WP-CLI
 ```bash
@@ -93,8 +111,8 @@ wp datamachine-code workspace git diff repo-name@fix-foo
 
 The workspace is **worktree-native**. Each branch lives in its own directory at
 `<workspace>/<repo>@<branch-slug>` (slashes in branch names become dashes). Multiple
-agent sessions can edit different branches of the same repo simultaneously without
-stepping on each other.
+agent sessions — or multiple flows, or multiple CI jobs — can edit different
+branches of the same repo simultaneously without stepping on each other.
 
 DMC discovers primary checkouts and worktrees by scanning the configured workspace
 root. Worktree lifecycle metadata supports cleanup and reconciliation; if that
@@ -117,7 +135,12 @@ on it are how parallel agents corrupt each other's work.
 - WordPress 6.9+
 - PHP 8.2+
 - [Data Machine](https://github.com/Extra-Chill/data-machine) plugin (core)
-- A coding-agent runtime on the same host (Claude Code, OpenCode, kimaki, etc.) — DMC is the WordPress half of that pairing. Without a runtime calling back, DMC's abilities still register but nothing exercises them.
+- A driver — at least one of:
+  - An external coding-agent runtime on the same host (Claude Code, OpenCode, kimaki, Studio Code, etc.); see [`wp-coding-agents`](https://github.com/Extra-Chill/wp-coding-agents) for an opinionated setup.
+  - A Data Machine flow on the site that calls DMC's tools / abilities (in-process driver).
+  - A CI workflow that boots WordPress with DMC loaded and runs a DM flow against it; see [`wc-site-generator`](https://github.com/chubes4/wc-site-generator) for the canonical Playground-based example.
+
+DMC's abilities still register without any of these — but nothing exercises them, and an idle workspace is just an empty directory.
 
 ## Installation
 
@@ -125,7 +148,10 @@ on it are how parallel agents corrupt each other's work.
 2. Clone this repo to `wp-content/plugins/data-machine-code`
 3. Run `composer install`
 4. Activate the plugin
-5. Point a coding-agent runtime at the install (out of scope for this README; see [`wp-coding-agents`](https://github.com/Extra-Chill/wp-coding-agents) for an opinionated setup)
+5. Wire up at least one driver:
+   - **Co-located runtime:** point a coding-agent runtime at the install. See [`wp-coding-agents`](https://github.com/Extra-Chill/wp-coding-agents).
+   - **In-process flow:** create a DM flow whose AI step calls workspace / GitHub abilities directly. PR review flows (`wp datamachine-code github review-flow create`) are the bundled example.
+   - **Ephemeral CI:** check DMC out into a CI job alongside Data Machine and run a flow inside Playground or a fresh WP install. See `wc-site-generator`'s `.github/workflows/playground-stage-5.yml` and `static-site-validation.yml` for working references.
 
 ## Configuration
 
@@ -200,12 +226,21 @@ The bundled records do not provision flows or schedules. Create flows from these
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│ Coding-agent runtime (Claude Code, OpenCode, kimaki, ...)        │
-│  - reads AGENTS.md on session start                              │
-│  - calls back into WP via WP-CLI, MCP, REST                      │
+│ Drivers — anything that pulls the trigger                        │
+│                                                                  │
+│  (a) External coding-agent runtime on the host                   │
+│      Claude Code, OpenCode, kimaki, Studio Code                  │
+│      → reads AGENTS.md, calls back via WP-CLI / MCP / REST       │
+│                                                                  │
+│  (b) In-process Data Machine flow on the site                    │
+│      AI step → tool call → DMC ability                           │
+│      → no external runtime, site codes on its own behalf         │
+│                                                                  │
+│  (c) Ephemeral CI job (Playground + Actions)                     │
+│      Boots WP with DMC + DM, runs a flow, posts to PR, dies      │
 └──────────────────────────────────────────────────────────────────┘
                               ▲
-                              │  bridge
+                              │  uses the same capability surface
                               ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │ data-machine-code (this plugin)                                  │
@@ -244,7 +279,7 @@ Other plugins gate disk-side or shell-using behavior on DMC's presence rather th
 
 ```php
 if ( class_exists( '\DataMachineCode\Environment' ) ) {
-    // Co-located coding-agent runtime exists — register disk hooks,
+    // This site can write code — register disk hooks,
     // sync SKILL.md to .opencode/skills/, write MEMORY.md, etc.
 }
 
@@ -252,7 +287,7 @@ if ( class_exists( '\DataMachineCode\Environment' ) ) {
 \DataMachineCode\Environment::has_writable_fs();  // can we write outside /uploads?
 ```
 
-This is intentionally simpler than detecting WP.com vs VIP vs self-hosted — those distinctions don't matter. What matters is "is a coding agent listening?" and that question has exactly one answer: "is DMC active?"
+This is intentionally simpler than detecting WP.com vs VIP vs self-hosted vs CI vs Studio — those distinctions don't matter. What matters is "can this WordPress site write code?" and that question has exactly one answer: "is DMC active?"
 
 ## Roadmap
 
