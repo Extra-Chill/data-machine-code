@@ -175,7 +175,9 @@ namespace {
 	$assert( 'create-github-issue uses createIssue execute_callback', array( GitHubAbilities::class, 'createIssue' ) === ( $issue_ability['execute_callback'] ?? null ) );
 	$assert( 'create-github-issue requires repo and title', array( 'repo', 'title' ) === ( $issue_ability['input_schema']['required'] ?? array() ) );
 	$assert( 'create-github-issue exposes labels', array_key_exists( 'labels', $issue_ability['input_schema']['properties'] ?? array() ) );
+	$assert( 'create-github-issue labels schema declares string items', array( 'type' => 'string' ) === ( $issue_ability['input_schema']['properties']['labels']['items'] ?? null ) );
 	$assert( 'create-github-issue exposes assignees', array_key_exists( 'assignees', $issue_ability['input_schema']['properties'] ?? array() ) );
+	$assert( 'create-github-issue assignees schema declares string items', array( 'type' => 'string' ) === ( $issue_ability['input_schema']['properties']['assignees']['items'] ?? null ) );
 	$assert( 'create-github-issue exposes milestone', array_key_exists( 'milestone', $issue_ability['input_schema']['properties'] ?? array() ) );
 	$assert( 'create-github-issue is hidden from REST', false === ( $issue_ability['meta']['show_in_rest'] ?? null ) );
 	$assert( 'create-github-issue category matches family', 'datamachine-code-github' === ( $issue_ability['category'] ?? '' ) );
