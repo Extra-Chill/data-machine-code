@@ -1883,6 +1883,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--only=<section>]
 	 * : Limit cleanup rows to one section or reason code. Supported values:
 	 *   candidates, would-remove, would_remove, removed, no_merge_signal, dirty_worktree,
+	 *   merged_pr_with_only_obsolete_dirty_changes (alias safe-force-cleanup),
 	 *   unpushed_commits, missing_metadata, external_worktree, age_filter, unknown_age.
 	 *
 	 * [--limit=<count>]
@@ -3505,17 +3506,21 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function normalize_worktree_cleanup_only( string $only ): string {
 		$aliases = array(
-			'would-remove'       => 'candidates',
-			'would_remove'       => 'candidates',
-			'dirty'              => 'dirty_worktree',
-			'unpushed'           => 'unpushed_commits',
-			'missing-metadata'   => 'needs_metadata_reconcile',
-			'missing_metadata'   => 'needs_metadata_reconcile',
-			'requires-full-scan' => 'needs_metadata_reconcile',
-			'requires_full_scan' => 'needs_metadata_reconcile',
-			'no-signal'          => 'active_no_signal',
-			'no_signal'          => 'active_no_signal',
-			'external'           => 'external_worktree',
+			'would-remove'          => 'candidates',
+			'would_remove'          => 'candidates',
+			'dirty'                 => 'dirty_worktree',
+			'merged-obsolete-dirty' => 'merged_pr_with_only_obsolete_dirty_changes',
+			'merged_obsolete_dirty' => 'merged_pr_with_only_obsolete_dirty_changes',
+			'safe-force-cleanup'    => 'merged_pr_with_only_obsolete_dirty_changes',
+			'safe_force_cleanup'    => 'merged_pr_with_only_obsolete_dirty_changes',
+			'unpushed'              => 'unpushed_commits',
+			'missing-metadata'      => 'needs_metadata_reconcile',
+			'missing_metadata'      => 'needs_metadata_reconcile',
+			'requires-full-scan'    => 'needs_metadata_reconcile',
+			'requires_full_scan'    => 'needs_metadata_reconcile',
+			'no-signal'             => 'active_no_signal',
+			'no_signal'             => 'active_no_signal',
+			'external'              => 'external_worktree',
 		);
 
 		return $aliases[ $only ] ?? $only;
