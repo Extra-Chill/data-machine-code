@@ -501,6 +501,8 @@ class Workspace {
 			return new \WP_Error( 'clone_failed', sprintf( 'Git clone failed (exit %d): %s', $exit_code, implode( "\n", $output ) ), array( 'status' => 500 ) );
 		}
 
+		$this->emit_workspace_changed( 'clone', $name, $name, $repo_path );
+
 		return array(
 			'success' => true,
 			'name'    => $name,
@@ -577,6 +579,8 @@ class Workspace {
 			return new \WP_Error( 'adopt_requires_workspace_path', sprintf( 'Adoption is non-destructive: %s must already be located at %s. Move or symlink operations are intentionally not performed by v1.', $real_path, $expected_path ), array( 'status' => 400 ) );
 		}
 
+		$this->emit_workspace_changed( 'adopt', $name, $name, $real_path );
+
 		return array(
 			'success'         => true,
 			'name'            => $name,
@@ -640,6 +644,13 @@ class Workspace {
 			}
 			$this->worktree_inventory()->delete( $parsed['dir_name'] );
 		}
+
+		$this->emit_workspace_changed(
+			$parsed['is_worktree'] ? 'worktree_remove' : 'remove',
+			$parsed['repo'],
+			$parsed['dir_name'],
+			$repo_path
+		);
 
 		return array(
 			'success' => true,
@@ -1348,6 +1359,8 @@ class Workspace {
 		}
 
 		$this->worktree_inventory()->upsert( $this->build_worktree_inventory_row_from_handle( $wt_handle ) );
+
+		$this->emit_workspace_changed( 'worktree_add', $repo, $wt_handle, $wt_path );
 
 		return $response;
 	}
@@ -2900,6 +2913,8 @@ class Workspace {
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
+
+		$this->emit_workspace_changed( 'worktree_remove', $repo, $wt_handle, $wt_path );
 
 		return array(
 			'success' => true,
@@ -8039,5 +8054,52 @@ class Workspace {
 		if ( ! file_exists( $index ) ) {
 			$fs->put_contents( $index, "<?php\n// Silence is golden.\n" );
 		}
+	}
+
+	/**
+	 * Fire the shared workspace-lifecycle action after a successful mutation.
+	 *
+	 * Listeners use this signal to refresh derived state (e.g. invalidating
+	 * the composable AGENTS.md so its workspace-inventory section reflects the
+	 * change). Only emitted on success, AFTER the on-disk change is durable.
+	 * The payload mirrors the workspace `name`/`repo` taxonomy used elsewhere
+	 * in this class:
+	 *
+	 *   - `op`:   one of `clone`, `adopt`, `remove`, `worktree_add`, `worktree_remove`.
+	 *   - `repo`: bare repository name (no `@<slug>` suffix).
+	 *   - `name`: workspace entry name on disk (`<repo>` for primaries,
+	 *             `<repo>@<slug>` for worktrees).
+	 *   - `path`: absolute path of the workspace entry that changed.
+	 *
+	 * @since 0.31.0
+	 *
+	 * @param string $op   Mutation kind.
+	 * @param string $repo Bare repo name.
+	 * @param string $name Workspace entry name (`<repo>` or `<repo>@<slug>`).
+	 * @param string $path Absolute path of the entry that changed.
+	 * @return void
+	 */
+	private function emit_workspace_changed( string $op, string $repo, string $name, string $path ): void {
+		/**
+		 * Fires after a successful Workspace mutation lands on disk.
+		 *
+		 * @since 0.31.0
+		 *
+		 * @param array{op: string, repo: string, name: string, path: string} $payload {
+		 *     @type string $op   One of clone|adopt|remove|worktree_add|worktree_remove.
+		 *     @type string $repo Bare repository name (no @-suffix).
+		 *     @type string $name Workspace entry name (<repo> or <repo>@<slug>).
+		 *     @type string $path Absolute path of the workspace entry.
+		 * }
+		 */
+		do_action(
+			'datamachine_code_workspace_changed',
+			array(
+				'op'   => $op,
+				'repo' => $repo,
+				'name' => $name,
+				'path' => $path,
+			)
+		);
 	}
 }
