@@ -1257,6 +1257,104 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	/**
+	 * Apply a unified diff to a workspace repo.
+	 *
+	 * The diff is validated with `git apply --check` before any mutation. On
+	 * success, the command returns changed files plus diff/status evidence for
+	 * the normal workspace git add/commit/push/PR flow.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <operation>
+	 * : Patch operation. Currently only: apply
+	 *
+	 * <repo>
+	 * : Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).
+	 *
+	 * [--patch=<patch>]
+	 * : Unified diff content. Prefix with @ to read from a local file. If omitted, reads from stdin.
+	 *
+	 * [--allow-primary-mutation]
+	 * : Permit mutation on the primary checkout (default off). Worktrees are always allowed.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     # Apply a reviewed patch file in a worktree
+	 *     wp datamachine-code workspace patch apply data-machine-code@fix-ci --patch=@/tmp/fix.diff
+	 *
+	 *     # Apply from stdin
+	 *     git diff | wp datamachine-code workspace patch apply data-machine-code@fix-ci
+	 *
+	 * @subcommand patch
+	 */
+	public function patch( array $args, array $assoc_args ): void {
+		$operation = (string) ( $args[0] ?? '' );
+		$repo      = (string) ( $args[1] ?? '' );
+
+		if ( 'apply' !== $operation || '' === $repo ) {
+			WP_CLI::error( 'Usage: wp datamachine-code workspace patch apply <repo> [--patch=<diff>] [--allow-primary-mutation]' );
+			return;
+		}
+
+		$ability = wp_get_ability( 'datamachine/workspace-apply-patch' );
+		if ( ! $ability ) {
+			WP_CLI::error( 'Workspace apply patch ability not available.' );
+			return;
+		}
+
+		$patch = $assoc_args['patch'] ?? null;
+		if ( null !== $patch ) {
+			$patch = $this->resolveAtFile( (string) $patch );
+		}
+
+		if ( null === $patch ) {
+			if ( function_exists( 'posix_isatty' ) && posix_isatty( STDIN ) ) {
+				WP_CLI::error( 'No patch provided. Use --patch=<diff>, --patch=@/tmp/fix.diff, or pipe a unified diff via stdin.' );
+				return;
+			}
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+			$patch = file_get_contents( 'php://stdin' );
+			if ( false === $patch ) {
+				WP_CLI::error( 'Failed to read patch from stdin.' );
+				return;
+			}
+		}
+
+		$result = $ability->execute(
+			array(
+				'repo'                   => $repo,
+				'patch'                 => $patch,
+				'allow_primary_mutation' => ! empty( $assoc_args['allow-primary-mutation'] ),
+			)
+		);
+
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+
+		if ( 'json' === (string) ( $assoc_args['format'] ?? 'table' ) ) {
+			WP_CLI::log( (string) wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
+			return;
+		}
+
+		$changed_files = is_array( $result['changed_files'] ?? null ) ? $result['changed_files'] : array();
+		WP_CLI::success( sprintf( 'Applied patch to %s (%d changed file%s).', $repo, count( $changed_files ), 1 === count( $changed_files ) ? '' : 's' ) );
+		foreach ( $changed_files as $file ) {
+			WP_CLI::log( '  - ' . $file );
+		}
+	}
+
+	/**
 	 * Delete a tracked or untracked path from a workspace repo.
 	 *
 	 * Tracked paths are removed via `git rm` (working tree + index in one

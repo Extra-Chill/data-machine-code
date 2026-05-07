@@ -439,6 +439,50 @@ class WorkspaceAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/workspace-apply-patch',
+				array(
+					'label'               => 'Apply Workspace Patch',
+					'description'         => 'Apply a unified diff to a workspace repository through git apply. Mutating ops on the primary checkout require allow_primary_mutation=true. The patch is checked before apply and fails closed on context mismatch.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'repo'                   => array(
+								'type'        => 'string',
+								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
+							),
+							'patch'                 => array(
+								'type'        => 'string',
+								'description' => 'Unified diff content to apply.',
+							),
+							'allow_primary_mutation' => array(
+								'type'        => 'boolean',
+								'description' => 'Permit mutation on the primary checkout (default false). Worktrees are always allowed.',
+							),
+						),
+						'required'   => array( 'repo', 'patch' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'       => array( 'type' => 'boolean' ),
+							'name'          => array( 'type' => 'string' ),
+							'path'          => array( 'type' => 'string' ),
+							'changed_files' => array(
+								'type'  => 'array',
+								'items' => array( 'type' => 'string' ),
+							),
+							'diff'          => array( 'type' => 'string' ),
+							'status'        => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'applyPatch' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/workspace-git-status',
 				array(
 					'label'               => 'Workspace Git Status',
@@ -1836,6 +1880,23 @@ class WorkspaceAbilities {
 			$input['old_string'] ?? '',
 			$input['new_string'] ?? '',
 			! empty( $input['replace_all'] )
+		);
+	}
+
+	/**
+	 * Apply a unified diff to a workspace repo.
+	 *
+	 * @param array $input Input parameters with 'repo', 'patch', optional 'allow_primary_mutation'.
+	 * @return array Result.
+	 */
+	public static function applyPatch( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		$writer    = new WorkspaceWriter( $workspace );
+
+		return $writer->apply_patch(
+			$input['repo'] ?? '',
+			$input['patch'] ?? '',
+			! empty( $input['allow_primary_mutation'] )
 		);
 	}
 
