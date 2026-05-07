@@ -2,6 +2,26 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.31.0] - 2026-05-07
+
+### Added
+- surface live workspace inventory in AGENTS.md
+- add exclude_labels post-fetch filter to GitHub fetch handler
+- support targeted github fetch by issue_number / pull_number
+- apply labels on github_pull_request publish
+
+### Changed
+- Add GitHub pull request publish handler
+- Add GitHub issue publish handler
+
+### Fixed
+- add workspace patch application
+- generalize GitHub Actions artifact retrieval
+- skip schema upgrade during wp install bootstrap
+- expose bounded cleanup-eligible apply path
+- commit files during GitHub PR publish
+- create missing GitHub upsert branches
+
 ## [0.30.1] - 2026-05-05
 
 ### Fixed
