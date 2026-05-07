@@ -536,7 +536,7 @@ MD;
 
 `homeboy` is a Rust CLI on this host. Every verb runs the same locally as in CI.
 
-**Quality:** `homeboy audit | lint | test | review | refactor`; use `homeboy review --changed-since --report=pr-comment` for PR-style review loops, and `--baseline` / `--ratchet` when a command supports observation baselines.
+**Quality:** `homeboy audit | lint | test | review | refactor`; use `homeboy review --changed-since --report=pr-comment` for PR-style review loops, and `--baseline` / `--ratchet` when a command supports observation baselines. For unregistered checkouts pass both `--path <repo>` and `--extension <id>` (e.g. `nodejs`) so resolution skips the missing-component error.
 
 **Git:** prefer `homeboy changes | status` and `homeboy git status|commit|push|pull|tag|rebase|cherry-pick|pr|issue` — structured output, component/worktree awareness, safer write verbs. Use `--path <checkout>` when operating outside a registered component or overriding component resolution. One-off reads (`git diff`, `git show`, `git blame`) stay on raw `git`.
 
