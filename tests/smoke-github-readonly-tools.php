@@ -117,6 +117,11 @@ namespace {
 						'statuses' => array(),
 						'count'    => 0,
 					),
+					'datamachine/get-github-actions-artifact' => array(
+						'success'    => true,
+						'artifact'   => array( 'name' => $parameters['artifact_name'] ?? '' ),
+						'json_files' => array( 'manifest.json' => array( 'schema' => 'example.v1' ) ),
+					),
 					'datamachine/get-github-homeboy-ci-results' => array(
 						'success' => true,
 						'results' => array( 'state' => 'success', 'mode' => 'review' ),
@@ -208,6 +213,14 @@ namespace {
 			'callback' => array( GitHubAbilities::class, 'getCommitStatuses' ),
 			'required' => array( 'repo', 'sha' ),
 			'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'sha' => 'abc123' ),
+		),
+		'get_github_actions_artifact'     => array(
+			'ability'  => 'datamachine/get-github-actions-artifact',
+			'method'   => 'handleActionsArtifact',
+			'callback' => array( GitHubAbilities::class, 'getActionsArtifact' ),
+			'required' => array( 'repo', 'artifact_name' ),
+			'optional' => array( 'head_sha', 'pull_number', 'max_artifact_bytes', 'include_json' ),
+			'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'head_sha' => 'abc123', 'artifact_name' => 'homeboy-ci-results' ),
 		),
 		'get_github_homeboy_ci_results'  => array(
 			'ability'  => 'datamachine/get-github-homeboy-ci-results',
