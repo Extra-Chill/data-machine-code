@@ -177,7 +177,24 @@ namespace {
 		return str_contains( $url, '/artifacts/44/zip' ) && $max_bytes > strlen( $zip_bytes ) ? $zip_bytes : new \WP_Error( 'bad_download', 'Unexpected download.' );
 	};
 
-	$result = \DataMachineCode\Abilities\GitHubAbilities::getHomeboyCiResults(
+	$generic = \DataMachineCode\Abilities\GitHubAbilities::getActionsArtifact(
+		array(
+			'repo'               => 'Extra-Chill/data-machine-code',
+			'pull_number'        => 106,
+			'artifact_name'      => 'homeboy-ci-results',
+			'max_artifact_bytes' => 2000000,
+		),
+		$api_get,
+		$download
+	);
+	$assert( ! is_wp_error( $generic ), 'generic artifact ability resolves PR head SHA, downloads artifact, and parses ZIP' );
+	$assert( 'abc123head' === ( $generic['head_sha'] ?? '' ), 'generic artifact ability returns resolved head SHA' );
+	$assert( 44 === (int) ( $generic['artifact']['id'] ?? 0 ), 'generic artifact ability returns normalized artifact metadata' );
+	$assert( isset( $generic['json_files']['review.json'], $generic['json_files']['manifest.json'] ), 'generic artifact ability returns parsed JSON files' );
+	$assert( ! isset( $generic['results'], $generic['state'], $generic['summary'], $generic['stages'] ), 'generic artifact ability does not interpret Homeboy result semantics' );
+
+	$api_calls = array();
+	$result    = \DataMachineCode\Abilities\GitHubAbilities::getHomeboyCiResults(
 		array(
 			'repo'               => 'Extra-Chill/data-machine-code',
 			'pull_number'        => 106,
@@ -216,6 +233,12 @@ namespace {
 		'abc123head'
 	);
 	$assert( is_wp_error( $expired ) && 'github_homeboy_ci_artifact_expired' === $expired->get_error_code(), 'expired artifact gets explicit error code' );
+	$generic_expired = \DataMachineCode\Abilities\GitHubAbilities::selectActionsArtifact(
+		array( array_merge( $artifact, array( 'expired' => true ) ) ),
+		'homeboy-ci-results',
+		'abc123head'
+	);
+	$assert( is_wp_error( $generic_expired ) && 'github_actions_artifact_expired' === $generic_expired->get_error_code(), 'generic expired artifact gets generic error code' );
 
 	$pending_api = function ( string $url, array $query ) use ( $artifact ): array|\WP_Error {
 		if ( str_contains( $url, '/actions/artifacts' ) ) {
@@ -235,6 +258,7 @@ namespace {
 	$tool_source     = file_get_contents( __DIR__ . '/../inc/Tools/GitHubTools.php' );
 	$scaffold_source = file_get_contents( __DIR__ . '/../inc/GitHub/PrReviewFlowScaffold.php' );
 
+	$assert( str_contains( $ability_source, "'datamachine/get-github-actions-artifact'" ), 'generic GitHub Actions artifact ability is registered' );
 	$assert( str_contains( $ability_source, "'datamachine/get-github-homeboy-ci-results'" ), 'Homeboy CI ability is registered' );
 	$assert( str_contains( $handler_source, "'homeboy_ci_results' === $" . 'data_source' ), 'GitHub fetch handler routes homeboy_ci_results data source' );
 	$assert( str_contains( $settings_source, "'homeboy_ci_results'" ), 'handler settings expose homeboy_ci_results data source' );

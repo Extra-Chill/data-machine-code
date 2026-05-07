@@ -49,6 +49,10 @@ class GitHubTools extends BaseTool {
 			'access_level' => 'editor',
 			'ability'      => 'datamachine/get-github-commit-statuses',
 		) );
+		$this->registerTool( 'get_github_actions_artifact', array( $this, 'getActionsArtifactDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine/get-github-actions-artifact',
+		) );
 		$this->registerTool( 'get_github_homeboy_ci_results', array( $this, 'getHomeboyCiResultsDefinition' ), $contexts, array(
 			'access_level' => 'editor',
 			'ability'      => 'datamachine/get-github-homeboy-ci-results',
@@ -114,6 +118,7 @@ class GitHubTools extends BaseTool {
 			'get_github_pull_files',
 			'get_github_check_runs',
 			'get_github_commit_statuses',
+			'get_github_actions_artifact',
 			'get_github_homeboy_ci_results',
 			'get_github_pull_review_context',
 			'github_repo_review_profile',
@@ -677,6 +682,16 @@ class GitHubTools extends BaseTool {
 	}
 
 	/**
+	 * Handle get_github_actions_artifact tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleActionsArtifact( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine/get-github-actions-artifact', 'get_github_actions_artifact', $parameters );
+	}
+
+	/**
 	 * Handle get_github_homeboy_ci_results tool call.
 	 *
 	 * @param array $parameters Tool parameters.
@@ -706,6 +721,51 @@ class GitHubTools extends BaseTool {
 					'type'        => 'string',
 					'required'    => true,
 					'description' => 'Commit SHA, branch, or tag ref.',
+				),
+			),
+		);
+	}
+
+	/**
+	 * Get tool definition for get_github_actions_artifact.
+	 *
+	 * @return array
+	 */
+	public function getActionsArtifactDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleActionsArtifact',
+			'description' => 'Download a GitHub Actions artifact by artifact name for a pull request or commit SHA and return generic artifact metadata plus parsed JSON files. Does not interpret producer-specific payload semantics.',
+			'parameters'  => array(
+				'repo'               => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'head_sha'           => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Commit SHA to match the artifact against.',
+				),
+				'pull_number'        => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Pull request number. Used to resolve head_sha when head_sha is omitted.',
+				),
+				'artifact_name'      => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'GitHub Actions artifact name.',
+				),
+				'max_artifact_bytes' => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Maximum artifact ZIP bytes to download. Default: 2000000.',
+				),
+				'include_json'       => array(
+					'type'        => 'boolean',
+					'required'    => false,
+					'description' => 'Parse and include JSON files from the artifact ZIP. Default: true.',
 				),
 			),
 		);

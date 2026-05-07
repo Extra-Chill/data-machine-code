@@ -662,10 +662,64 @@ class GitHubAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/get-github-actions-artifact',
+				array(
+					'label'               => 'Get GitHub Actions Artifact',
+					'description'         => 'Download a GitHub Actions artifact for a pull request or commit SHA and optionally parse JSON files from the ZIP',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'artifact_name' ),
+						'properties' => array(
+							'repo'               => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'head_sha'           => array(
+								'type'        => 'string',
+								'description' => 'Pull request head SHA or commit SHA to match artifacts against.',
+							),
+							'pull_number'        => array(
+								'type'        => 'integer',
+								'description' => 'Pull request number. Used to resolve head_sha when head_sha is omitted.',
+							),
+							'artifact_name'      => array(
+								'type'        => 'string',
+								'description' => 'GitHub Actions artifact name.',
+							),
+							'max_artifact_bytes' => array(
+								'type'        => 'integer',
+								'description' => 'Maximum artifact ZIP bytes to download. Default: 2000000.',
+							),
+							'include_json'       => array(
+								'type'        => 'boolean',
+								'description' => 'Parse and include JSON files from the artifact ZIP. Default: true.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'     => array( 'type' => 'boolean' ),
+							'repo'        => array( 'type' => 'string' ),
+							'head_sha'    => array( 'type' => 'string' ),
+							'pull_number' => array( 'type' => 'integer' ),
+							'artifact'    => array( 'type' => 'object' ),
+							'json_files'  => array( 'type' => 'object' ),
+							'error'       => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'getActionsArtifact' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/get-github-homeboy-ci-results',
 				array(
-					'label'               => 'Get GitHub Homeboy CI Results',
-					'description'         => 'Download and summarize the homeboy-ci-results artifact for a pull request or commit SHA',
+					'label'               => 'Get GitHub Homeboy CI Results (Deprecated)',
+					'description'         => 'Deprecated compatibility wrapper around datamachine/get-github-actions-artifact for existing Homeboy CI result consumers',
 					'category'            => 'datamachine-code-github',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -2852,7 +2906,7 @@ class GitHubAbilities {
 	}
 
 	/**
-	 * Download and summarize a Homeboy CI artifact for a pull request or head SHA.
+	 * Download and parse a generic GitHub Actions artifact for a pull request or head SHA.
 	 *
 	 * @param array         $input Required: repo plus head_sha or pull_number.
 	 * @param callable|null $api_get Test seam for JSON GitHub GET calls.
@@ -2860,15 +2914,19 @@ class GitHubAbilities {
 	 * @param callable|null $extract Test seam for ZIP extraction.
 	 * @return array|\WP_Error
 	 */
-	public static function getHomeboyCiResults( array $input, ?callable $api_get = null, ?callable $download = null, ?callable $extract = null ): array|\WP_Error {
+	public static function getActionsArtifact( array $input, ?callable $api_get = null, ?callable $download = null, ?callable $extract = null ): array|\WP_Error {
 		$repo          = sanitize_text_field( $input['repo'] ?? '' );
 		$head_sha      = sanitize_text_field( $input['head_sha'] ?? $input['sha'] ?? '' );
 		$pull_number   = (int) ( $input['pull_number'] ?? $input['pr_number'] ?? 0 );
-		$artifact_name = sanitize_text_field( $input['artifact_name'] ?? 'homeboy-ci-results' );
-		$include_raw   = ! empty( $input['include_raw'] );
+		$artifact_name = sanitize_text_field( $input['artifact_name'] ?? '' );
+		$include_json  = ! array_key_exists( 'include_json', $input ) || ! empty( $input['include_json'] );
 
 		if ( empty( $repo ) ) {
 			return new \WP_Error( 'missing_params', 'Repository (owner/repo) is required.', array( 'status' => 400 ) );
+		}
+
+		if ( '' === $artifact_name ) {
+			return new \WP_Error( 'missing_params', 'Artifact name is required.', array( 'status' => 400 ) );
 		}
 
 		if ( '' === $head_sha && $pull_number <= 0 ) {
@@ -2889,7 +2947,7 @@ class GitHubAbilities {
 
 			$head_sha = sanitize_text_field( $pull_response['data']['head']['sha'] ?? '' );
 			if ( '' === $head_sha ) {
-				return new \WP_Error( 'github_homeboy_ci_missing_head_sha', 'Pull request head SHA could not be resolved.', array( 'status' => 404 ) );
+				return new \WP_Error( 'github_actions_artifact_missing_head_sha', 'Pull request head SHA could not be resolved.', array( 'status' => 404 ) );
 			}
 		}
 
@@ -2905,9 +2963,81 @@ class GitHubAbilities {
 			return $artifacts_response;
 		}
 
-		$artifact_result = self::selectHomeboyArtifact( $artifacts_response['data']['artifacts'] ?? array(), $artifact_name, $head_sha );
+		$artifact_result = self::selectActionsArtifact( $artifacts_response['data']['artifacts'] ?? array(), $artifact_name, $head_sha );
 		if ( is_wp_error( $artifact_result ) ) {
-			$pending = self::detectPendingHomeboyChecks( $repo, $head_sha, $api_get );
+			return $artifact_result;
+		}
+
+		$artifact = $artifact_result;
+		$json     = array();
+
+		if ( $include_json ) {
+			$download = $download ?? static fn( string $url, int $max_bytes ) => self::apiRawGet( $url, $pat, $max_bytes );
+			$zip      = $download( (string) ( $artifact['archive_download_url'] ?? '' ), max( 1, (int) ( $input['max_artifact_bytes'] ?? 2000000 ) ) );
+			if ( is_wp_error( $zip ) ) {
+				return $zip;
+			}
+
+			$extract = $extract ?? array( self::class, 'extractZipJsonFiles' );
+			$json    = $extract( $zip );
+			if ( is_wp_error( $json ) ) {
+				return $json;
+			}
+		}
+
+		return array(
+			'success'     => true,
+			'repo'        => $repo,
+			'head_sha'    => $head_sha,
+			'pull_number' => $pull_number,
+			'artifact'    => self::normalizeActionsArtifact( $artifact ),
+			'json_files'  => $json,
+		);
+	}
+
+	/**
+	 * Download and summarize a Homeboy CI artifact for a pull request or head SHA.
+	 *
+	 * Deprecated compatibility wrapper around getActionsArtifact(). New callers
+	 * should use datamachine/get-github-actions-artifact for generic artifact data.
+	 *
+	 * @param array         $input Required: repo plus head_sha or pull_number.
+	 * @param callable|null $api_get Test seam for JSON GitHub GET calls.
+	 * @param callable|null $download Test seam for artifact ZIP download.
+	 * @param callable|null $extract Test seam for ZIP extraction.
+	 * @return array|\WP_Error
+	 */
+	public static function getHomeboyCiResults( array $input, ?callable $api_get = null, ?callable $download = null, ?callable $extract = null ): array|\WP_Error {
+		$repo          = sanitize_text_field( $input['repo'] ?? '' );
+		$head_sha      = sanitize_text_field( $input['head_sha'] ?? $input['sha'] ?? '' );
+		$pull_number   = (int) ( $input['pull_number'] ?? $input['pr_number'] ?? 0 );
+		$artifact_name = sanitize_text_field( $input['artifact_name'] ?? 'homeboy-ci-results' );
+		$include_raw   = ! empty( $input['include_raw'] );
+
+		$artifact_result = self::getActionsArtifact(
+			array_merge(
+				$input,
+				array(
+					'artifact_name' => '' !== $artifact_name ? $artifact_name : 'homeboy-ci-results',
+					'include_json'  => true,
+				)
+			),
+			$api_get,
+			$download,
+			$extract
+		);
+
+		if ( is_wp_error( $artifact_result ) ) {
+			$error_code          = $artifact_result->get_error_code();
+			$api_get_for_pending = $api_get;
+			if ( 'github_actions_artifact_not_found' === $error_code && null === $api_get_for_pending ) {
+				$pat = empty( $repo ) ? '' : self::getPatForRepo( $repo );
+				if ( ! empty( $pat ) ) {
+					$api_get_for_pending = static fn( string $url, array $query ) => self::apiGet( $url, $query, $pat );
+				}
+			}
+
+			$pending = 'github_actions_artifact_not_found' === $error_code && null !== $api_get_for_pending ? self::detectPendingHomeboyChecks( $repo, $head_sha, $api_get_for_pending ) : array();
 			if ( ! empty( $pending ) ) {
 				return new \WP_Error(
 					'github_homeboy_ci_pending',
@@ -2919,25 +3049,22 @@ class GitHubAbilities {
 				);
 			}
 
+			if ( 'github_actions_artifact_expired' === $error_code ) {
+				return new \WP_Error( 'github_homeboy_ci_artifact_expired', 'Homeboy CI artifact exists for this head SHA but has expired.', $artifact_result->get_error_data() );
+			}
+
+			if ( 'github_actions_artifact_not_found' === $error_code ) {
+				return new \WP_Error( 'github_homeboy_ci_artifact_not_found', 'No homeboy-ci-results artifact found for this head SHA.', $artifact_result->get_error_data() );
+			}
+
 			return $artifact_result;
 		}
 
-		$artifact = $artifact_result;
-		$download = $download ?? static fn( string $url, int $max_bytes ) => self::apiRawGet( $url, $pat, $max_bytes );
-		$zip      = $download( (string) ( $artifact['archive_download_url'] ?? '' ), max( 1, (int) ( $input['max_artifact_bytes'] ?? 2000000 ) ) );
-		if ( is_wp_error( $zip ) ) {
-			return $zip;
-		}
-
-		$extract = $extract ?? array( self::class, 'extractZipJsonFiles' );
-		$files   = $extract( $zip );
-		if ( is_wp_error( $files ) ) {
-			return $files;
-		}
-
-		$results = self::summarizeHomeboyCiArtifact( $files, array(
+		$artifact = is_array( $artifact_result['artifact'] ?? null ) ? $artifact_result['artifact'] : array();
+		$files    = is_array( $artifact_result['json_files'] ?? null ) ? $artifact_result['json_files'] : array();
+		$results  = self::summarizeHomeboyCiArtifact( $files, array(
 			'repo'          => $repo,
-			'head_sha'      => $head_sha,
+			'head_sha'      => (string) ( $artifact_result['head_sha'] ?? $head_sha ),
 			'pull_number'   => $pull_number,
 			'artifact'      => $artifact,
 			'artifact_name' => $artifact_name,
@@ -2955,9 +3082,9 @@ class GitHubAbilities {
 	}
 
 	/**
-	 * Pick the newest matching Homeboy artifact for a head SHA.
+	 * Pick the newest matching GitHub Actions artifact for a head SHA.
 	 */
-	public static function selectHomeboyArtifact( array $artifacts, string $artifact_name, string $head_sha ): array|\WP_Error {
+	public static function selectActionsArtifact( array $artifacts, string $artifact_name, string $head_sha ): array|\WP_Error {
 		$expired_match = null;
 		$matches       = array();
 
@@ -2981,10 +3108,10 @@ class GitHubAbilities {
 
 		if ( empty( $matches ) ) {
 			if ( null !== $expired_match ) {
-				return new \WP_Error( 'github_homeboy_ci_artifact_expired', 'Homeboy CI artifact exists for this head SHA but has expired.', array( 'status' => 410 ) );
+				return new \WP_Error( 'github_actions_artifact_expired', 'GitHub Actions artifact exists for this head SHA but has expired.', array( 'status' => 410 ) );
 			}
 
-			return new \WP_Error( 'github_homeboy_ci_artifact_not_found', 'No homeboy-ci-results artifact found for this head SHA.', array( 'status' => 404 ) );
+			return new \WP_Error( 'github_actions_artifact_not_found', 'No matching GitHub Actions artifact found for this head SHA.', array( 'status' => 404 ) );
 		}
 
 		usort( $matches, static fn( $a, $b ) => strcmp( (string) ( $b['updated_at'] ?? $b['created_at'] ?? '' ), (string) ( $a['updated_at'] ?? $a['created_at'] ?? '' ) ) );
@@ -2992,23 +3119,67 @@ class GitHubAbilities {
 	}
 
 	/**
-	 * Parse Homeboy JSON files from a GitHub artifact ZIP.
+	 * Deprecated Homeboy-specific artifact selector compatibility shim.
+	 */
+	public static function selectHomeboyArtifact( array $artifacts, string $artifact_name, string $head_sha ): array|\WP_Error {
+		$result = self::selectActionsArtifact( $artifacts, $artifact_name, $head_sha );
+		if ( ! is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		if ( 'github_actions_artifact_expired' === $result->get_error_code() ) {
+			return new \WP_Error( 'github_homeboy_ci_artifact_expired', 'Homeboy CI artifact exists for this head SHA but has expired.', $result->get_error_data() );
+		}
+
+		if ( 'github_actions_artifact_not_found' === $result->get_error_code() ) {
+			return new \WP_Error( 'github_homeboy_ci_artifact_not_found', 'No homeboy-ci-results artifact found for this head SHA.', $result->get_error_data() );
+		}
+
+		return $result;
+	}
+
+	private static function normalizeActionsArtifact( array $artifact ): array {
+		$workflow_run = is_array( $artifact['workflow_run'] ?? null ) ? $artifact['workflow_run'] : array();
+
+		return array(
+			'id'                   => (int) ( $artifact['id'] ?? 0 ),
+			'node_id'              => (string) ( $artifact['node_id'] ?? '' ),
+			'name'                 => (string) ( $artifact['name'] ?? '' ),
+			'size_in_bytes'        => (int) ( $artifact['size_in_bytes'] ?? 0 ),
+			'url'                  => (string) ( $artifact['url'] ?? '' ),
+			'archive_download_url' => (string) ( $artifact['archive_download_url'] ?? '' ),
+			'expired'              => ! empty( $artifact['expired'] ),
+			'created_at'           => (string) ( $artifact['created_at'] ?? '' ),
+			'updated_at'           => (string) ( $artifact['updated_at'] ?? '' ),
+			'expires_at'           => (string) ( $artifact['expires_at'] ?? '' ),
+			'workflow_run'         => array(
+				'id'          => (int) ( $workflow_run['id'] ?? 0 ),
+				'head_sha'    => (string) ( $workflow_run['head_sha'] ?? $artifact['head_sha'] ?? '' ),
+				'head_branch' => (string) ( $workflow_run['head_branch'] ?? '' ),
+				'event'       => (string) ( $workflow_run['event'] ?? '' ),
+				'html_url'    => (string) ( $workflow_run['html_url'] ?? '' ),
+			),
+		);
+	}
+
+	/**
+	 * Parse JSON files from a GitHub Actions artifact ZIP.
 	 */
 	public static function extractZipJsonFiles( string $zip_bytes ): array|\WP_Error {
 		if ( ! class_exists( '\ZipArchive' ) ) {
-			return new \WP_Error( 'github_homeboy_ci_zip_unavailable', 'ZipArchive is not available, so GitHub artifact ZIPs cannot be parsed.', array( 'status' => 500 ) );
+			return new \WP_Error( 'github_actions_artifact_zip_unavailable', 'ZipArchive is not available, so GitHub artifact ZIPs cannot be parsed.', array( 'status' => 500 ) );
 		}
 
-		$tmp = tempnam( sys_get_temp_dir(), 'dmc-homeboy-ci-' );
+		$tmp = tempnam( sys_get_temp_dir(), 'dmc-gh-artifact-' );
 		if ( false === $tmp ) {
-			return new \WP_Error( 'github_homeboy_ci_temp_failed', 'Could not allocate a temporary file for artifact parsing.', array( 'status' => 500 ) );
+			return new \WP_Error( 'github_actions_artifact_temp_failed', 'Could not allocate a temporary file for artifact parsing.', array( 'status' => 500 ) );
 		}
 
 		file_put_contents( $tmp, $zip_bytes ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Required for ZipArchive.
 		$zip = new \ZipArchive();
 		if ( true !== $zip->open( $tmp ) ) {
 			self::deleteTempFile( $tmp );
-			return new \WP_Error( 'github_homeboy_ci_zip_invalid', 'Homeboy CI artifact is not a valid ZIP archive.', array( 'status' => 422 ) );
+			return new \WP_Error( 'github_actions_artifact_zip_invalid', 'GitHub Actions artifact is not a valid ZIP archive.', array( 'status' => 422 ) );
 		}
 
 		$files = array();
@@ -3027,7 +3198,7 @@ class GitHubAbilities {
 			if ( ! is_array( $data ) ) {
 				$zip->close();
 				self::deleteTempFile( $tmp );
-				return new \WP_Error( 'github_homeboy_ci_malformed_json', sprintf( 'Homeboy CI artifact file %s is not valid JSON.', $name ), array( 'status' => 422 ) );
+				return new \WP_Error( 'github_actions_artifact_malformed_json', sprintf( 'GitHub Actions artifact file %s is not valid JSON.', $name ), array( 'status' => 422 ) );
 			}
 
 			$files[ basename( $name ) ] = $data;
@@ -3521,7 +3692,7 @@ class GitHubAbilities {
 
 	public static function apiRawGet( string $url, string $pat, int $max_bytes = 2000000 ): string|\WP_Error {
 		if ( '' === $url ) {
-			return new \WP_Error( 'github_homeboy_ci_download_missing', 'GitHub artifact download URL is missing.', array( 'status' => 404 ) );
+			return new \WP_Error( 'github_actions_artifact_download_missing', 'GitHub artifact download URL is missing.', array( 'status' => 404 ) );
 		}
 
 		$response = wp_remote_get( $url, array(
@@ -3540,7 +3711,7 @@ class GitHubAbilities {
 		}
 
 		if ( strlen( $body ) > $max_bytes ) {
-			return new \WP_Error( 'github_homeboy_ci_artifact_too_large', sprintf( 'Homeboy CI artifact exceeded the configured %d byte limit.', $max_bytes ), array( 'status' => 413 ) );
+			return new \WP_Error( 'github_actions_artifact_too_large', sprintf( 'GitHub Actions artifact exceeded the configured %d byte limit.', $max_bytes ), array( 'status' => 413 ) );
 		}
 
 		return $body;
