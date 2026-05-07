@@ -16,6 +16,7 @@
 namespace DataMachineCode\Workspace;
 
 use DataMachine\Core\FilesRepository\FilesystemHelper;
+use DataMachineCode\Support\GitRunner;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -192,6 +193,110 @@ class WorkspaceWriter {
 	}
 
 	/**
+	 * Apply a unified diff to a workspace repo using git's context checks.
+	 *
+	 * The patch is checked before it is applied, so stale context or mismatched
+	 * file contents fail closed without mutating the checkout.
+	 *
+	 * @param string $name                   Workspace handle.
+	 * @param string $patch                  Unified diff to apply.
+	 * @param bool   $allow_primary_mutation Permit mutation on a primary checkout.
+	 * @return array{success: bool, name: string, path: string, changed_files: string[], diff: string, status: string, check_output: string, apply_output: string}|\WP_Error
+	 */
+	public function apply_patch( string $name, string $patch, bool $allow_primary_mutation = false ): array|\WP_Error {
+		$repo_path = $this->workspace->get_repo_path( $name );
+		$parsed    = $this->workspace->parse_handle( $name );
+
+		if ( ! is_dir( $repo_path ) ) {
+			return new \WP_Error( 'repo_not_found', sprintf( 'Repository "%s" not found in workspace.', $name ), array( 'status' => 404 ) );
+		}
+
+		if ( empty( $parsed['is_worktree'] ) && ! $allow_primary_mutation ) {
+			return new \WP_Error(
+				'primary_mutation_blocked',
+				sprintf(
+					'Primary checkout "%s" is read-only by default. Pass allow_primary_mutation=true to operate on it, or use a worktree handle (e.g. %s@<branch-slug>).',
+					$parsed['repo'],
+					$parsed['repo']
+				),
+				array( 'status' => 403 )
+			);
+		}
+
+		$patch = str_replace( "\r\n", "\n", $patch );
+		if ( '' === trim( $patch ) ) {
+			return new \WP_Error( 'empty_patch', 'Patch content is required.', array( 'status' => 400 ) );
+		}
+
+		if ( false === strpos( $patch, '--- ' ) || false === strpos( $patch, '+++ ' ) || false === strpos( $patch, '@@' ) ) {
+			return new \WP_Error( 'invalid_patch', 'Patch must be a unified diff with file headers and at least one hunk.', array( 'status' => 400 ) );
+		}
+
+		$temp = function_exists( 'wp_tempnam' ) ? wp_tempnam( 'datamachine-code-patch-' ) : tempnam( sys_get_temp_dir(), 'datamachine-code-patch-' );
+		if ( ! is_string( $temp ) || '' === $temp ) {
+			return new \WP_Error( 'patch_tempfile_failed', 'Failed to create a temporary patch file.', array( 'status' => 500 ) );
+		}
+
+		try {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+			$bytes = file_put_contents( $temp, $patch );
+			if ( false === $bytes ) {
+				return new \WP_Error( 'patch_tempfile_failed', 'Failed to write the temporary patch file.', array( 'status' => 500 ) );
+			}
+
+			$patch_arg = escapeshellarg( $temp );
+			$check     = GitRunner::run( $repo_path, 'apply --check --whitespace=nowarn ' . $patch_arg );
+			if ( is_wp_error( $check ) ) {
+				return new \WP_Error(
+					'patch_check_failed',
+					'Patch did not apply cleanly: ' . $check->get_error_message(),
+					array(
+						'status' => 400,
+						'output' => $check->get_error_data()['output'] ?? '',
+					)
+				);
+			}
+
+			$apply = GitRunner::run( $repo_path, 'apply --whitespace=nowarn ' . $patch_arg );
+			if ( is_wp_error( $apply ) ) {
+				return new \WP_Error(
+					'patch_apply_failed',
+					'Patch check passed but apply failed: ' . $apply->get_error_message(),
+					array(
+						'status' => 500,
+						'output' => $apply->get_error_data()['output'] ?? '',
+					)
+				);
+			}
+
+			$diff    = GitRunner::run( $repo_path, 'diff --no-ext-diff --binary' );
+			$status  = GitRunner::run( $repo_path, 'status --porcelain --untracked-files=all' );
+			$changed = GitRunner::run( $repo_path, 'diff --name-only' );
+			$status_output = is_wp_error( $status ) ? '' : $status['output'];
+			$changed_files = array_unique( array_merge(
+				$this->split_git_lines( is_wp_error( $changed ) ? '' : $changed['output'] ),
+				$this->changed_files_from_status( $status_output )
+			) );
+
+			return array(
+				'success'       => true,
+				'name'          => $name,
+				'path'          => $repo_path,
+				'changed_files' => array_values( $changed_files ),
+				'diff'          => is_wp_error( $diff ) ? '' : $diff['output'],
+				'status'        => $status_output,
+				'check_output'  => $check['output'],
+				'apply_output'  => $apply['output'],
+			);
+		} finally {
+			if ( is_file( $temp ) ) {
+				// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+				unlink( $temp );
+			}
+		}
+	}
+
+	/**
 	 * Check if a relative path contains traversal components.
 	 *
 	 * @param string $path Relative path to check.
@@ -205,5 +310,50 @@ class WorkspaceWriter {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Split git command output into non-empty lines.
+	 *
+	 * @param string $output Git command output.
+	 * @return string[]
+	 */
+	private function split_git_lines( string $output ): array {
+		$lines = preg_split( '/\r?\n/', trim( $output ) );
+		if ( false === $lines ) {
+			return array();
+		}
+
+		return array_values( array_filter( array_map( 'trim', $lines ), static fn( string $line ): bool => '' !== $line ) );
+	}
+
+	/**
+	 * Extract changed paths from git status porcelain output, including untracked files.
+	 *
+	 * @param string $status Git status --porcelain output.
+	 * @return string[]
+	 */
+	private function changed_files_from_status( string $status ): array {
+		$files = array();
+		$lines = preg_split( '/\r?\n/', rtrim( $status ) );
+		if ( false === $lines ) {
+			return array();
+		}
+
+		foreach ( $lines as $line ) {
+			if ( strlen( $line ) < 4 ) {
+				continue;
+			}
+			$path = trim( substr( $line, 3 ) );
+			if ( str_contains( $path, ' -> ' ) ) {
+				$parts = explode( ' -> ', $path );
+				$path  = trim( (string) end( $parts ) );
+			}
+			if ( '' !== $path ) {
+				$files[] = $path;
+			}
+		}
+
+		return array_values( array_unique( $files ) );
 	}
 }
