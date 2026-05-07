@@ -492,8 +492,15 @@ class GitHub extends FetchHandler {
 	 * @return array DataPacket-compatible array or empty on no data.
 	 */
 	private function fetchIssuesOrPulls( array $config, ExecutionContext $context, string $repo, string $data_source ): array {
-		$state  = $config['state'] ?? 'open';
-		$labels = $config['labels'] ?? '';
+		$state         = $config['state'] ?? 'open';
+		$labels        = $config['labels'] ?? '';
+		$issue_number  = (int) ( $config['issue_number'] ?? 0 );
+		$pull_number   = (int) ( $config['pull_number'] ?? 0 );
+
+		// Targeted single-item fetch by issue_number / pull_number.
+		if ( $issue_number > 0 || $pull_number > 0 ) {
+			return $this->fetchSingleIssueOrPull( $config, $context, $repo, $data_source, $issue_number, $pull_number );
+		}
 
 		$input = array(
 			'repo'     => $repo,
@@ -588,6 +595,135 @@ class GitHub extends FetchHandler {
 
 		$context->log( 'info', sprintf( 'GitHub: Found %d eligible items.', count( $eligible_items ) ) );
 		return array( 'items' => $eligible_items );
+	}
+
+	/**
+	 * Fetch a single issue or pull request by number.
+	 *
+	 * Targeted-fetch branch of {@see self::fetchIssuesOrPulls()}. Bypasses
+	 * list filters (search, exclude_keywords, timeframe_limit, timeframe,
+	 * labels) and returns one normalized DataPacket matching the list-path
+	 * shape (same `title`, `content`, `metadata`, and `dedup_key` of
+	 * `github_<repo>_<data_source>_<number>`).
+	 *
+	 * @param array            $config       Handler configuration.
+	 * @param ExecutionContext $context      Execution context.
+	 * @param string           $repo         Repository in owner/repo format.
+	 * @param string           $data_source  'issues' or 'pulls'.
+	 * @param int              $issue_number Targeted issue number (0 if unused).
+	 * @param int              $pull_number  Targeted pull number (0 if unused).
+	 * @return array DataPacket-compatible array or empty on validation/state error.
+	 */
+	private function fetchSingleIssueOrPull(
+		array $config,
+		ExecutionContext $context,
+		string $repo,
+		string $data_source,
+		int $issue_number,
+		int $pull_number
+	): array {
+		// Mutual exclusion.
+		if ( $issue_number > 0 && $pull_number > 0 ) {
+			$context->log( 'error', 'GitHub: issue_number and pull_number are mutually exclusive — set one, not both.' );
+			return array();
+		}
+
+		// data_source alignment.
+		if ( $issue_number > 0 && 'issues' !== $data_source ) {
+			$context->log( 'error', sprintf( 'GitHub: issue_number requires data_source=issues (got %s).', $data_source ) );
+			return array();
+		}
+
+		if ( $pull_number > 0 && 'pulls' !== $data_source ) {
+			$context->log( 'error', sprintf( 'GitHub: pull_number requires data_source=pulls (got %s).', $data_source ) );
+			return array();
+		}
+
+		// Warn on ignored list-narrowing config.
+		$ignored_fields = array();
+		foreach ( array( 'search', 'exclude_keywords', 'timeframe_limit', 'timeframe', 'labels' ) as $field ) {
+			if ( ! empty( $config[ $field ] ) && 'all_time' !== $config[ $field ] ) {
+				$ignored_fields[] = $field;
+			}
+		}
+		if ( ! empty( $ignored_fields ) ) {
+			$context->log( 'info', 'GitHub: targeted fetch ignores list filters: ' . implode( ', ', $ignored_fields ) );
+		}
+
+		$number          = $issue_number > 0 ? $issue_number : $pull_number;
+		$expected_state  = $config['state'] ?? 'open';
+
+		if ( 'pulls' === $data_source ) {
+			$result = GitHubAbilities::getPull( array(
+				'repo'        => $repo,
+				'pull_number' => $number,
+			) );
+		} else {
+			$result = GitHubAbilities::getIssue( array(
+				'repo'         => $repo,
+				'issue_number' => $number,
+			) );
+		}
+
+		if ( is_wp_error( $result ) ) {
+			$context->log( 'error', 'GitHub: API error — ' . $result->get_error_message() );
+			return array();
+		}
+
+		$item = 'pulls' === $data_source ? ( $result['pull'] ?? array() ) : ( $result['issue'] ?? array() );
+
+		if ( empty( $item ) ) {
+			$context->log( 'info', sprintf( 'GitHub: No %s found for #%d.', $data_source, $number ) );
+			return array();
+		}
+
+		// State filter (mirrors list-path implicit filtering via API state param).
+		$item_state = (string) ( $item['state'] ?? '' );
+		if ( 'all' !== $expected_state && $item_state !== $expected_state ) {
+			$context->log( 'info', sprintf(
+				'GitHub: Targeted %s #%d state=%s does not match configured state=%s — dropping.',
+				$data_source,
+				$number,
+				$item_state,
+				$expected_state
+			) );
+			return array();
+		}
+
+		$context->log( 'info', sprintf( 'GitHub: Targeted fetch for %s #%d from %s', $data_source, $number, $repo ) );
+
+		$guid       = sprintf( 'github_%s_%s_%d', $repo, $data_source, $item['number'] );
+		$labels_str = ! empty( $item['labels'] ) ? implode( ', ', $item['labels'] ) : '';
+
+		if ( 'pulls' === $data_source ) {
+			$title   = sprintf( 'PR #%d: %s', $item['number'], $item['title'] );
+			$content = $this->buildPrContent( $item );
+		} else {
+			$title   = sprintf( 'Issue #%d: %s', $item['number'], $item['title'] );
+			$content = $this->buildIssueContent( $item );
+		}
+
+		$packet = array(
+			'title'    => $title,
+			'content'  => $content,
+			'metadata' => array(
+				'source_type'       => 'github',
+				'original_id'       => $guid,
+				'dedup_key'         => $guid,
+				'original_title'    => $item['title'] ?? '',
+				'original_date_gmt' => $item['created_at'] ?? '',
+				'github_repo'       => $repo,
+				'github_type'       => $data_source,
+				'github_number'     => $item['number'],
+				'github_state'      => $item['state'] ?? '',
+				'github_labels'     => $labels_str,
+				'github_user'       => $item['user'] ?? '',
+				'github_url'        => $item['html_url'] ?? '',
+				'source_url'        => $item['html_url'] ?? '',
+			),
+		);
+
+		return array( 'items' => array( $packet ) );
 	}
 
 	/**

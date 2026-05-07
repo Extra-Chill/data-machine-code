@@ -55,11 +55,21 @@ class GitHubSettings extends FetchHandlerSettings {
 				'description' => __( 'Commit SHA, branch, or tag ref for check runs and commit statuses. Falls back to Expected Head SHA.', 'data-machine-code' ),
 				'required'    => false,
 			),
+			'issue_number'            => array(
+				'type'        => 'number',
+				'label'       => __( 'Issue Number (Targeted Fetch)', 'data-machine-code' ),
+				'description' => __( 'Fetch one specific issue by number (data_source=issues). Mutually exclusive with Pull Request Number. Takes precedence over list filters (search, exclude_keywords, timeframe_limit, labels).', 'data-machine-code' ),
+				'required'    => false,
+				'min'         => 1,
+				'default'     => 0,
+			),
 			'pull_number'             => array(
 				'type'        => 'number',
 				'label'       => __( 'Pull Request Number', 'data-machine-code' ),
-				'description' => __( 'Pull request number to prepare for review context.', 'data-machine-code' ),
+				'description' => __( 'Pull request number. For data_source=pull_review_context this prepares review context; for data_source=pulls this performs a targeted single-PR fetch. Mutually exclusive with Issue Number. Takes precedence over list filters (search, exclude_keywords, timeframe_limit, labels).', 'data-machine-code' ),
 				'required'    => false,
+				'min'         => 1,
+				'default'     => 0,
 			),
 			'head_sha'                => array(
 				'type'        => 'text',
