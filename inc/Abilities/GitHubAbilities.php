@@ -247,10 +247,12 @@ class GitHubAbilities {
 							),
 							'labels'    => array(
 								'type'        => 'array',
+								'items'       => array( 'type' => 'string' ),
 								'description' => 'Labels to attach to the issue.',
 							),
 							'assignees' => array(
 								'type'        => 'array',
+								'items'       => array( 'type' => 'string' ),
 								'description' => 'GitHub usernames to assign to the issue.',
 							),
 							'milestone' => array(
