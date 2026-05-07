@@ -16,7 +16,7 @@ DMC's activation is the declarative answer to **"can this WordPress site code?"*
 
 That framing reshapes what every other plugin can assume:
 
-- **AGENTS.md is composed and written to the WP root**, where any external runtime discovers it on session start. DMC owns the file, contributes core sections, and lets other plugins register more via Data Machine's `SectionRegistry`. In-process and CI drivers consume the same composed context through normal DM channels.
+- **AGENTS.md is composed and written to the WP root** for external runtimes that discover it on session start. DMC owns the file, contributes core sections, and lets other plugins register more via Data Machine's `SectionRegistry`. In-process and CI drivers don't use AGENTS.md — they get context through Data Machine's normal channels (system prompts, memory files, flow user messages). AGENTS.md is a feature for one of the three drivers, not the universal interface.
 - **The site gains GitHub, workspace, and git abilities** through the Abilities API — every ability is automatically callable from chat, MCP, REST, WP-CLI, *and* directly from inside Data Machine flows running on the site.
 - **A worktree-native workspace area** at `~/.datamachine/workspace/` lets the site clone repos, edit files in isolated branches, and push changes — all gated by per-repo policies. Same workspace whether the editor is an external runtime, an in-process AI step, or a CI job.
 - **`\DataMachineCode\Environment` is a capability surface** plugins can read to ask "can this site code?", "can we shell out?", "is the filesystem writable outside `/uploads`?". Other DM plugins use it to gate disk-side hooks (e.g. Intelligence's `SKILL.md` sync).
