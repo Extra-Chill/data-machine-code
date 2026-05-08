@@ -511,6 +511,10 @@ class Workspace {
 			return $ensure;
 		}
 
+		if ( ! GitRunner::supports_streaming() ) {
+			return GitRunner::unavailable_error( 'Clone workspace repository', true );
+		}
+
 		$partial_clone     = ! (bool) ( $options['full'] ?? false ) && $this->should_use_partial_clone( $url );
 		$progress_callback = is_callable( $options['progress_callback'] ?? null ) ? $options['progress_callback'] : null;
 		$started_at        = microtime( true );

@@ -36,6 +36,7 @@ class WorkspaceTools extends BaseTool {
 	public function check_configuration( $configured, $tool_id ) {
 		$workspace_tools = array(
 			'workspace_path',
+			'workspace_capabilities',
 			'workspace_list',
 			'workspace_show',
 			'workspace_ls',
@@ -55,6 +56,7 @@ class WorkspaceTools extends BaseTool {
 	public function __construct() {
 		$contexts = array( 'chat', 'pipeline' );
 		$this->registerTool( 'workspace_path', array( $this, 'getPathDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-path' ) );
+		$this->registerTool( 'workspace_capabilities', array( $this, 'getCapabilitiesDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-capabilities' ) );
 		$this->registerTool( 'workspace_list', array( $this, 'getListDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-list' ) );
 		$this->registerTool( 'workspace_show', array( $this, 'getShowDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-show' ) );
 		$this->registerTool( 'workspace_ls', array( $this, 'getLsDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-ls' ) );
@@ -105,6 +107,31 @@ class WorkspaceTools extends BaseTool {
 			'success'   => true,
 			'data'      => $result,
 			'tool_name' => 'workspace_path',
+		);
+	}
+
+	/**
+	 * Handle workspace_capabilities tool call.
+	 *
+	 * @return array
+	 */
+	public function handleCapabilities(): array {
+		$ability = wp_get_ability( 'datamachine/workspace-capabilities' );
+
+		if ( ! $ability ) {
+			return $this->buildErrorResponse( 'Workspace capabilities ability not available.', 'workspace_capabilities' );
+		}
+
+		$result = $ability->execute( array() );
+
+		if ( is_wp_error( $result ) ) {
+			return $this->buildErrorResponse( $result->get_error_message(), 'workspace_capabilities' );
+		}
+
+		return array(
+			'success'   => true,
+			'data'      => $result,
+			'tool_name' => 'workspace_capabilities',
 		);
 	}
 
@@ -262,6 +289,23 @@ class WorkspaceTools extends BaseTool {
 					'required'    => false,
 					'description' => 'Create the workspace directory if it does not exist (default false).',
 				),
+			),
+		);
+	}
+
+	/**
+	 * Get workspace_capabilities tool definition.
+	 *
+	 * @return array Tool definition.
+	 */
+	public function getCapabilitiesDefinition(): array {
+		return array(
+			'class'       => self::class,
+			'method'      => 'handleCapabilities',
+			'description' => 'Inspect whether the current Data Machine Code workspace backend can run local git operations in this runtime.',
+			'parameters'  => array(
+				'type'       => 'object',
+				'properties' => array(),
 			),
 		);
 	}
