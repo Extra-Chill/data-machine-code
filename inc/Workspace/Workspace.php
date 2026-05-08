@@ -85,7 +85,8 @@ class Workspace {
 	 * 1. DATAMACHINE_WORKSPACE_PATH constant (if defined)
 	 * 2. /var/lib/datamachine/workspace (if writable — typical on VPS)
 	 * 3. $HOME/.datamachine/workspace (local/macOS fallback)
-	 * 4. Empty string (no workspace available)
+	 * 4. sys_get_temp_dir()/datamachine/workspace (ephemeral CI/Playground fallback)
+	 * 5. Empty string (no workspace available)
 	 *
 	 * @return string Workspace path or empty string if unavailable.
 	 */
@@ -127,6 +128,26 @@ class Workspace {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_writable
 			if ( ! file_exists( $home_base ) && is_writable( dirname( $home_base ) ) ) {
 				return $home_path;
+			}
+		}
+
+		$temp_path = rtrim( sys_get_temp_dir(), '/' ) . '/datamachine/workspace';
+		$temp_base = dirname( $temp_path );
+		$web_root  = defined( 'ABSPATH' ) ? realpath( ABSPATH ) : false;
+		$temp_root = realpath( sys_get_temp_dir() );
+
+		if (
+			false !== $temp_root &&
+			( false === $web_root || 0 !== strpos( $temp_root . '/', rtrim( $web_root, '/' ) . '/' ) )
+		) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_writable
+			if ( is_dir( $temp_base ) && is_writable( $temp_base ) ) {
+				return $temp_path;
+			}
+
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_writable
+			if ( ! file_exists( $temp_base ) && is_writable( dirname( $temp_base ) ) ) {
+				return $temp_path;
 			}
 		}
 
@@ -174,7 +195,7 @@ class Workspace {
 		if ( '' === $diagnostic['path'] ) {
 			return new \WP_Error(
 				'workspace_unavailable',
-				'Workspace unavailable: no writable path outside the web root. Define DATAMACHINE_WORKSPACE_PATH in wp-config.php, ensure /var/lib/datamachine/ is writable, or ensure $HOME is set.',
+				'Workspace unavailable: no writable path outside the web root. Define DATAMACHINE_WORKSPACE_PATH in wp-config.php, ensure /var/lib/datamachine/ is writable, ensure $HOME is set, or ensure the system temporary directory is writable.',
 				$this->workspace_visibility_error_data( $diagnostic )
 			);
 		}
