@@ -83,6 +83,7 @@ function datamachine_code_bootstrap() {
 	new \DataMachineCode\Abilities\WorkspaceAbilities();
 	new \DataMachineCode\Abilities\GitSyncAbilities();
 	new \DataMachineCode\Abilities\CodeTaskAbilities();
+	( new \DataMachineCode\Bundle\WorkspacePreloadArtifact() )->register();
 
 	// Load Handlers (they self-register).
 	new \DataMachineCode\Handlers\GitHub\GitHub();
