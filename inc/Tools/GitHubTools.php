@@ -85,6 +85,10 @@ class GitHubTools extends BaseTool {
 			'access_level' => 'editor',
 			'ability'      => 'datamachine/get-github-file',
 		) );
+		$this->registerTool( 'create_or_update_github_file', array( $this, 'getCreateOrUpdateFileDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine/create-or-update-github-file',
+		) );
 		$this->registerTool( 'list_github_repos', array( $this, 'getListReposDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 	}
 
@@ -131,6 +135,7 @@ class GitHubTools extends BaseTool {
 			'github_pr_documentation_impact',
 			'list_github_tree',
 			'get_github_file',
+			'create_or_update_github_file',
 			'list_github_repos',
 		);
 		if ( ! in_array( $tool_id, $github_tools, true ) ) {
@@ -1198,6 +1203,56 @@ class GitHubTools extends BaseTool {
 					'type'        => 'string',
 					'required'    => false,
 					'description' => 'Branch, tag, or commit SHA. Defaults to the repository default branch.',
+				),
+			),
+		);
+	}
+
+	/**
+	 * Handle create_or_update_github_file tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleCreateOrUpdateFile( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine/create-or-update-github-file', 'create_or_update_github_file', $parameters );
+	}
+
+	/**
+	 * Get tool definition for create_or_update_github_file.
+	 *
+	 * @return array
+	 */
+	public function getCreateOrUpdateFileDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleCreateOrUpdateFile',
+			'description' => 'Create or update a file in a GitHub repository using the Contents API. If branch is provided and does not exist, it is created from the repository default branch before committing.',
+			'parameters'  => array(
+				'repo'           => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'file_path'      => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Path within the repository.',
+				),
+				'content'        => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Full file content to write.',
+				),
+				'commit_message' => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Commit message for the file change.',
+				),
+				'branch'         => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Target branch. Defaults to the repository default branch. New branches are created from the default branch.',
 				),
 			),
 		);
