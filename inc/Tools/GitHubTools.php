@@ -32,6 +32,10 @@ class GitHubTools extends BaseTool {
 			'access_level' => 'editor',
 			'ability'      => 'datamachine/upsert-github-pull-review-comment',
 		) );
+		$this->registerTool( 'merge_github_pull_request', array( $this, 'getMergePullRequestDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine/merge-github-pull-request',
+		) );
 		$this->registerTool( 'list_github_pulls', array( $this, 'getListPullsDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'get_github_pull', array( $this, 'getGetPullDefinition' ), $contexts, array(
 			'access_level' => 'editor',
@@ -113,6 +117,7 @@ class GitHubTools extends BaseTool {
 			'manage_github_issue',
 			'comment_github_pull_request',
 			'upsert_github_pull_review_comment',
+			'merge_github_pull_request',
 			'list_github_pulls',
 			'get_github_pull',
 			'get_github_pull_files',
@@ -457,6 +462,51 @@ class GitHubTools extends BaseTool {
 					'type'        => 'string',
 					'required'    => false,
 					'description' => 'Comment policy: update_existing or per_head_sha. Default: update_existing.',
+				),
+			),
+		);
+	}
+
+	/**
+	 * Handle merge_github_pull_request tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleMergePullRequest( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine/merge-github-pull-request', 'merge_github_pull_request', $parameters );
+	}
+
+	/**
+	 * Get tool definition for merge_github_pull_request.
+	 *
+	 * @return array
+	 */
+	public function getMergePullRequestDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleMergePullRequest',
+			'description' => 'Merge an open GitHub pull request only when its current head SHA exactly matches expected_head_sha. Defaults to squash merge.',
+			'parameters'  => array(
+				'repo'              => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Repository in owner/repo format.',
+				),
+				'pull_number'       => array(
+					'type'        => 'integer',
+					'required'    => true,
+					'description' => 'Pull request number.',
+				),
+				'expected_head_sha' => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Exact head SHA expected immediately before merge.',
+				),
+				'merge_method'      => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'GitHub merge method: merge, squash, or rebase. Default: squash.',
 				),
 			),
 		);
