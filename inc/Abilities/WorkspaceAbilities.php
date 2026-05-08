@@ -19,6 +19,7 @@ use DataMachineCode\Workspace\CleanupRunService;
 use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorkspaceReader;
 use DataMachineCode\Workspace\WorkspaceWriter;
+use DataMachineCode\Support\GitRunner;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -108,6 +109,35 @@ class WorkspaceAbilities {
 						),
 					),
 					'execute_callback'    => array( self::class, 'listRepos' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/workspace-capabilities',
+				array(
+					'label'               => 'Inspect Workspace Capabilities',
+					'description'         => 'Inspect the current Data Machine Code workspace backend and whether local git operations can execute in this runtime.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'             => array( 'type' => 'boolean' ),
+							'backend'             => array( 'type' => 'string' ),
+							'workspace_path'      => array( 'type' => 'string' ),
+							'git_available'       => array( 'type' => 'boolean' ),
+							'exec_available'      => array( 'type' => 'boolean' ),
+							'proc_open_available' => array( 'type' => 'boolean' ),
+							'git_path'            => array( 'type' => 'string' ),
+							'remediation'         => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'getCapabilities' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => true ),
 				)
@@ -1764,6 +1794,27 @@ class WorkspaceAbilities {
 	public static function listRepos( array $input ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 		$workspace = new Workspace();
 		return $workspace->list_repos();
+	}
+
+	/**
+	 * Inspect workspace runtime capabilities.
+	 *
+	 * @param array $input Input parameters.
+	 * @return array<string,mixed>
+	 */
+	public static function getCapabilities( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+		$workspace   = new Workspace();
+		$diagnostic  = GitRunner::diagnose();
+		$remediation = 'Run workspace abilities in a host runtime with local git access, or provide a Data Machine Code workspace backend that executes these operations outside the constrained PHP sandbox.';
+
+		return array_merge(
+			array(
+				'success'        => true,
+				'workspace_path' => $workspace->get_path(),
+				'remediation'    => $remediation,
+			),
+			$diagnostic
+		);
 	}
 
 	/**
