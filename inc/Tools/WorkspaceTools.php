@@ -304,8 +304,11 @@ class WorkspaceTools extends BaseTool {
 			'method'      => 'handleCapabilities',
 			'description' => 'Inspect whether the current Data Machine Code workspace backend can run local git operations in this runtime.',
 			'parameters'  => array(
-				'type'       => 'object',
-				'properties' => array(),
+				'include_diagnostics' => array(
+					'type'        => 'boolean',
+					'required'    => false,
+					'description' => 'Include workspace backend diagnostics. Defaults to true.',
+				),
 			),
 		);
 	}

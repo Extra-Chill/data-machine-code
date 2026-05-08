@@ -16,6 +16,7 @@ namespace DataMachineCode\Abilities;
 
 use DataMachine\Abilities\PermissionHelper;
 use DataMachineCode\Workspace\CleanupRunService;
+use DataMachineCode\Workspace\RemoteWorkspaceBackend;
 use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorkspaceReader;
 use DataMachineCode\Workspace\WorkspaceWriter;
@@ -1805,15 +1806,18 @@ class WorkspaceAbilities {
 	public static function getCapabilities( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 		$workspace   = new Workspace();
 		$diagnostic  = GitRunner::diagnose();
+		$backend     = RemoteWorkspaceBackend::should_handle() ? 'github_api' : 'local_git';
 		$remediation = 'Run workspace abilities in a host runtime with local git access, or provide a Data Machine Code workspace backend that executes these operations outside the constrained PHP sandbox.';
 
 		return array_merge(
+			$diagnostic,
 			array(
 				'success'        => true,
+				'backend'        => $backend,
+				'local_backend'  => $diagnostic['backend'] ?? 'local_git',
 				'workspace_path' => $workspace->get_path(),
 				'remediation'    => $remediation,
-			),
-			$diagnostic
+			)
 		);
 	}
 
@@ -1835,6 +1839,16 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function readFile( array $input ): array|\WP_Error {
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			return ( new RemoteWorkspaceBackend() )->read_file(
+				$input['repo'] ?? '',
+				$input['path'] ?? '',
+				isset( $input['max_size'] ) ? (int) $input['max_size'] : Workspace::MAX_READ_SIZE,
+				isset( $input['offset'] ) ? (int) $input['offset'] : null,
+				isset( $input['limit'] ) ? (int) $input['limit'] : null
+			);
+		}
+
 		$workspace = new Workspace();
 		$reader    = new WorkspaceReader( $workspace );
 
@@ -1854,6 +1868,13 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function listDirectory( array $input ): array|\WP_Error {
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			return ( new RemoteWorkspaceBackend() )->list_directory(
+				$input['repo'] ?? '',
+				$input['path'] ?? null
+			);
+		}
+
 		$workspace = new Workspace();
 		$reader    = new WorkspaceReader( $workspace );
 
@@ -1870,6 +1891,13 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function cloneRepo( array $input ): array|\WP_Error {
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			return ( new RemoteWorkspaceBackend() )->clone_repo(
+				$input['url'] ?? '',
+				$input['name'] ?? null
+			);
+		}
+
 		$workspace = new Workspace();
 		return $workspace->clone_repo(
 			$input['url'] ?? '',
@@ -1910,6 +1938,14 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function writeFile( array $input ): array|\WP_Error {
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			return ( new RemoteWorkspaceBackend() )->write_file(
+				$input['repo'] ?? '',
+				$input['path'] ?? '',
+				$input['content'] ?? ''
+			);
+		}
+
 		$workspace = new Workspace();
 		$writer    = new WorkspaceWriter( $workspace );
 
@@ -1927,6 +1963,16 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function editFile( array $input ): array|\WP_Error {
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			return ( new RemoteWorkspaceBackend() )->edit_file(
+				$input['repo'] ?? '',
+				$input['path'] ?? '',
+				$input['old_string'] ?? '',
+				$input['new_string'] ?? '',
+				! empty( $input['replace_all'] )
+			);
+		}
+
 		$workspace = new Workspace();
 		$writer    = new WorkspaceWriter( $workspace );
 
@@ -1963,6 +2009,10 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function gitStatus( array $input ): array|\WP_Error {
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			return ( new RemoteWorkspaceBackend() )->git_status( $input['name'] ?? '' );
+		}
+
 		$workspace = new Workspace();
 		return $workspace->git_status( $input['name'] ?? '' );
 	}
@@ -1989,6 +2039,14 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function gitAdd( array $input ): array|\WP_Error {
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			$paths = $input['paths'] ?? array();
+			return ( new RemoteWorkspaceBackend() )->git_add(
+				$input['name'] ?? '',
+				is_array( $paths ) ? $paths : array()
+			);
+		}
+
 		$workspace = new Workspace();
 		$paths     = $input['paths'] ?? array();
 
@@ -2023,6 +2081,13 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function gitCommit( array $input ): array|\WP_Error {
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			return ( new RemoteWorkspaceBackend() )->git_commit(
+				$input['name'] ?? '',
+				$input['message'] ?? ''
+			);
+		}
+
 		$workspace = new Workspace();
 		return $workspace->git_commit(
 			$input['name'] ?? '',
@@ -2038,6 +2103,14 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function gitPush( array $input ): array|\WP_Error {
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			return ( new RemoteWorkspaceBackend() )->git_push(
+				$input['name'] ?? '',
+				$input['remote'] ?? 'origin',
+				$input['branch'] ?? null
+			);
+		}
+
 		$workspace = new Workspace();
 		return $workspace->git_push(
 			$input['name'] ?? '',
@@ -2054,6 +2127,14 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function worktreeAdd( array $input ): array|\WP_Error {
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			return ( new RemoteWorkspaceBackend() )->worktree_add(
+				$input['repo'] ?? '',
+				$input['branch'] ?? '',
+				$input['from'] ?? null
+			);
+		}
+
 		$workspace = new Workspace();
 		// Default inject_context=true; only false when explicitly provided.
 		$inject_context = array_key_exists( 'inject_context', $input ) ? (bool) $input['inject_context'] : true;

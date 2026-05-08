@@ -76,6 +76,7 @@ namespace {
 		function do_action( string $_hook, array $_payload ): void {}
 	}
 
+	require __DIR__ . '/../inc/Support/GitRunner.php';
 	require __DIR__ . '/../inc/Workspace/Workspace.php';
 
 	$failures = 0;
