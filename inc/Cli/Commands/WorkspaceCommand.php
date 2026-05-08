@@ -5,9 +5,9 @@
  * Provides CLI access to the agent workspace — a managed directory
  * for cloning repos and working with files outside the web root.
  *
- * All commands delegate to WordPress Abilities API primitives registered
- * in WorkspaceAbilities. The CLI layer handles argument parsing, confirmation
- * prompts, and output formatting only.
+ * Commands delegate to the same services as WordPress Abilities API primitives.
+ * The CLI layer handles argument parsing, confirmation prompts, and output
+ * formatting only.
  *
  * @package DataMachineCode\Cli\Commands
  * @since 0.1.0
@@ -162,6 +162,9 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--name=<name>]
 	 * : Directory name in workspace (derived from URL if omitted).
 	 *
+	 * [--full]
+	 * : Disable the default blobless partial clone (`--filter=blob:none`). Useful for servers that do not support partial clone or when all blobs are needed immediately.
+	 *
 	 * ## EXAMPLES
 	 *
 	 *     # Clone a repo
@@ -178,18 +181,18 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability = wp_get_ability( 'datamachine/workspace-clone' );
-		if ( ! $ability ) {
-			WP_CLI::error( 'Workspace clone ability not available.' );
-			return;
-		}
-
-		$input = array( 'url' => $args[0] );
-		if ( ! empty( $assoc_args['name'] ) ) {
-			$input['name'] = $assoc_args['name'];
-		}
-
-		$result = $ability->execute( $input );
+		$workspace = new Workspace();
+		$result    = $workspace->clone_repo(
+			$args[0],
+			$assoc_args['name'] ?? null,
+			array(
+				'full'              => isset( $assoc_args['full'] ),
+				'progress_callback' => static function ( array $event ): void {
+					$elapsed = number_format( (float) ( $event['elapsed'] ?? 0 ), 1 );
+					WP_CLI::log( sprintf( '[clone %ss] %s', $elapsed, (string) ( $event['message'] ?? '' ) ) );
+				},
+			)
+		);
 
 		if ( is_wp_error( $result ) ) {
 			WP_CLI::error( $result->get_error_message() );
