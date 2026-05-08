@@ -464,6 +464,54 @@ class GitHubAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/merge-github-pull-request',
+				array(
+					'label'               => 'Merge GitHub Pull Request',
+					'description'         => 'Merge an open GitHub pull request after verifying the expected head SHA',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'pull_number', 'expected_head_sha' ),
+						'properties' => array(
+							'repo'              => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'pull_number'       => array(
+								'type'        => 'integer',
+								'description' => 'Pull request number.',
+							),
+							'expected_head_sha' => array(
+								'type'        => 'string',
+								'description' => 'Exact pull request head SHA expected immediately before merge.',
+							),
+							'merge_method'      => array(
+								'type'        => 'string',
+								'enum'        => array( 'merge', 'squash', 'rebase' ),
+								'description' => 'GitHub merge method. Default: squash.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'     => array( 'type' => 'boolean' ),
+							'repo'        => array( 'type' => 'string' ),
+							'pull_number' => array( 'type' => 'integer' ),
+							'merged'      => array( 'type' => 'boolean' ),
+							'sha'         => array( 'type' => 'string' ),
+							'message'     => array( 'type' => 'string' ),
+							'html_url'    => array( 'type' => 'string' ),
+							'error'       => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'mergePullRequest' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/list-github-pulls',
 				array(
 					'label'               => 'List GitHub Pull Requests',
@@ -1560,6 +1608,76 @@ class GitHubAbilities {
 
 	public static function commentOnPullRequest( array $input ): array|\WP_Error {
 		return self::commentOnIssue( self::buildPullRequestCommentInput( $input ) );
+	}
+
+	/**
+	 * Merge an open pull request after re-checking the head SHA.
+	 *
+	 * Calls `GET /repos/{owner}/{repo}/pulls/{pull_number}` immediately before
+	 * `PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge`.
+	 *
+	 * @param array         $input       Required: repo, pull_number, expected_head_sha. Optional: merge_method.
+	 * @param callable|null $api_get     Optional test seam: fn(string $url, array $query, string $pat): array|WP_Error.
+	 * @param callable|null $api_request Optional test seam: fn(string $method, string $url, array $body, string $pat): array|WP_Error.
+	 * @return array|\WP_Error Success payload or error.
+	 */
+	public static function mergePullRequest( array $input, ?callable $api_get = null, ?callable $api_request = null ): array|\WP_Error {
+		$repo              = sanitize_text_field( $input['repo'] ?? '' );
+		$pull_number       = (int) ( $input['pull_number'] ?? 0 );
+		$expected_head_sha = sanitize_text_field( $input['expected_head_sha'] ?? '' );
+		$merge_method      = sanitize_text_field( $input['merge_method'] ?? 'squash' );
+
+		if ( empty( $repo ) || $pull_number <= 0 || '' === $expected_head_sha ) {
+			return new \WP_Error( 'missing_params', 'Repository, pull_number, and expected_head_sha are required.', array( 'status' => 400 ) );
+		}
+
+		if ( ! in_array( $merge_method, array( 'merge', 'squash', 'rebase' ), true ) ) {
+			return new \WP_Error( 'invalid_merge_method', 'merge_method must be merge, squash, or rebase.', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPatForRepo( $repo );
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$api_get     = $api_get ?? array( self::class, 'apiGet' );
+		$api_request = $api_request ?? array( self::class, 'apiRequest' );
+		$pull_url    = sprintf( '%s/repos/%s/pulls/%d', self::API_BASE, $repo, $pull_number );
+
+		$pull_response = $api_get( $pull_url, array(), $pat );
+		if ( is_wp_error( $pull_response ) ) {
+			return $pull_response;
+		}
+
+		$pull = is_array( $pull_response['data'] ?? null ) ? $pull_response['data'] : array();
+		if ( 'open' !== (string) ( $pull['state'] ?? '' ) ) {
+			return new \WP_Error( 'pull_request_not_open', 'Pull request must be open before merge.', array( 'status' => 409 ) );
+		}
+
+		$current_head_sha = sanitize_text_field( $pull['head']['sha'] ?? '' );
+		if ( '' === $current_head_sha || $current_head_sha !== $expected_head_sha ) {
+			return new \WP_Error( 'pull_request_head_sha_mismatch', 'Pull request head SHA does not match expected_head_sha.', array( 'status' => 409 ) );
+		}
+
+		$merge_url = sprintf( '%s/repos/%s/pulls/%d/merge', self::API_BASE, $repo, $pull_number );
+		$response  = $api_request( 'PUT', $merge_url, array( 'merge_method' => $merge_method ), $pat );
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$data = is_array( $response['data'] ?? null ) ? $response['data'] : array();
+
+		return array(
+			'success'          => true,
+			'repo'             => $repo,
+			'pull_number'      => $pull_number,
+			'merged'           => (bool) ( $data['merged'] ?? false ),
+			'sha'              => (string) ( $data['sha'] ?? '' ),
+			'message'          => (string) ( $data['message'] ?? '' ),
+			'html_url'         => (string) ( $pull['html_url'] ?? '' ),
+			'pull_request_url' => (string) ( $pull['html_url'] ?? '' ),
+			'merge_method'     => $merge_method,
+		);
 	}
 
 	/**
