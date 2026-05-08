@@ -270,6 +270,10 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Directory name override (derived from URL if omitted).',
 							),
+							'full' => array(
+								'type'        => 'boolean',
+								'description' => 'Disable the default blobless partial clone for remote repositories.',
+							),
 						),
 						'required'   => array( 'url' ),
 					),
@@ -1818,7 +1822,8 @@ class WorkspaceAbilities {
 		$workspace = new Workspace();
 		return $workspace->clone_repo(
 			$input['url'] ?? '',
-			$input['name'] ?? null
+			$input['name'] ?? null,
+			array( 'full' => (bool) ( $input['full'] ?? false ) )
 		);
 	}
 
@@ -2396,7 +2401,6 @@ class WorkspaceAbilities {
 		if ( isset( $input['chunk_size'] ) ) {
 			$opts['chunk_size'] = (int) $input['chunk_size'];
 		}
-
 
 		$service = new CleanupRunService();
 		$plan    = $service->plan( $opts );

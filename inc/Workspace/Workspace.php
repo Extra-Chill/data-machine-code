@@ -447,11 +447,12 @@ class Workspace {
 	/**
 	 * Clone a git repository into the workspace.
 	 *
-	 * @param string      $url  Git clone URL.
-	 * @param string|null $name Directory name override (derived from URL if null).
+	 * @param string      $url     Git clone URL.
+	 * @param string|null $name    Directory name override (derived from URL if null).
+	 * @param array       $options Optional clone options.
 	 * @return array{success: bool, name?: string, path?: string, message?: string}|\WP_Error
 	 */
-	public function clone_repo( string $url, ?string $name = null ): array|\WP_Error {
+	public function clone_repo( string $url, ?string $name = null, array $options = array() ): array|\WP_Error {
 		$visible = $this->require_workspace_visible();
 		if ( null !== $visible ) {
 			return $visible;
@@ -480,7 +481,7 @@ class Workspace {
 
 		// Check if already exists.
 		if ( is_dir( $repo_path ) ) {
-			return new \WP_Error( 'repo_exists', sprintf( 'Directory already exists: %s. Use "remove" first to re-clone.', $name ), array( 'status' => 400 ) );
+			return $this->clone_target_exists_error( $name, $repo_path );
 		}
 
 		// Ensure workspace exists.
@@ -489,16 +490,27 @@ class Workspace {
 			return $ensure;
 		}
 
-		// Clone.
-		$escaped_url  = escapeshellarg( $url );
-		$escaped_path = escapeshellarg( $repo_path );
-		$command      = sprintf( 'git clone %s %s 2>&1', $escaped_url, $escaped_path );
+		$partial_clone     = ! (bool) ( $options['full'] ?? false ) && $this->should_use_partial_clone( $url );
+		$progress_callback = is_callable( $options['progress_callback'] ?? null ) ? $options['progress_callback'] : null;
+		$started_at        = microtime( true );
 
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		exec( $command, $output, $exit_code );
+		$this->emit_clone_progress(
+			$progress_callback,
+			'start',
+			sprintf(
+				'Cloning %s into %s%s.',
+				$url,
+				$repo_path,
+				$partial_clone ? ' using partial clone (--filter=blob:none)' : ''
+			),
+			$started_at
+		);
 
-		if ( 0 !== $exit_code ) {
-			return new \WP_Error( 'clone_failed', sprintf( 'Git clone failed (exit %d): %s', $exit_code, implode( "\n", $output ) ), array( 'status' => 500 ) );
+		$command = $this->build_clone_command( $url, $repo_path, $partial_clone );
+		$result  = $this->run_clone_command( $command, $progress_callback, $started_at );
+
+		if ( is_wp_error( $result ) ) {
+			return $this->clone_failed_error( $result, $name, $repo_path, $url );
 		}
 
 		$this->emit_workspace_changed( 'clone', $name, $name, $repo_path );
@@ -508,6 +520,207 @@ class Workspace {
 			'name'    => $name,
 			'path'    => $repo_path,
 			'message' => sprintf( 'Cloned %s into workspace as "%s".', $url, $name ),
+		);
+	}
+
+	/**
+	 * Build a git clone command.
+	 *
+	 * @param string $url           Git clone URL.
+	 * @param string $repo_path     Destination path.
+	 * @param bool   $partial_clone Whether to request blobless partial clone.
+	 * @return string Shell command.
+	 */
+	private function build_clone_command( string $url, string $repo_path, bool $partial_clone ): string {
+		$args = array( 'clone', '--progress' );
+		if ( $partial_clone ) {
+			$args[] = '--filter=blob:none';
+		}
+
+		$args[] = escapeshellarg( $url );
+		$args[] = escapeshellarg( $repo_path );
+
+		return 'GIT_TERMINAL_PROMPT=0 git ' . implode( ' ', $args );
+	}
+
+	/**
+	 * Remote HTTP(S) and SSH hosts generally support safe blobless clones; local
+	 * paths and file URLs often do not, and are usually test fixtures anyway.
+	 *
+	 * @param string $url Git clone URL.
+	 * @return bool True when a partial clone should be attempted.
+	 */
+	private function should_use_partial_clone( string $url ): bool {
+		return (bool) preg_match( '#^(https?://|git@|ssh://)#', $url );
+	}
+
+	/**
+	 * Stream a clone command to an optional progress callback.
+	 *
+	 * @param string        $command           Shell command.
+	 * @param callable|null $progress_callback Optional progress callback.
+	 * @param float         $started_at        Clone start timestamp.
+	 * @return array{success: true, output: string}|\WP_Error
+	 */
+	private function run_clone_command( string $command, ?callable $progress_callback, float $started_at ): array|\WP_Error {
+		$descriptor_spec = array(
+			1 => array( 'pipe', 'w' ),
+			2 => array( 'pipe', 'w' ),
+		);
+
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_proc_open
+		$process = proc_open( $command, $descriptor_spec, $pipes );
+		if ( ! is_resource( $process ) ) {
+			return new \WP_Error( 'clone_failed', 'Git clone failed to start.', array( 'status' => 500 ) );
+		}
+
+		stream_set_blocking( $pipes[1], false );
+		stream_set_blocking( $pipes[2], false );
+
+		$output = '';
+		$exit_code = null;
+		while ( true ) {
+			$chunk = (string) stream_get_contents( $pipes[1] ) . (string) stream_get_contents( $pipes[2] );
+			if ( '' !== $chunk ) {
+				$output .= $chunk;
+				$this->emit_clone_output( $progress_callback, $chunk, $started_at );
+			}
+
+			$status = proc_get_status( $process );
+			if ( empty( $status['running'] ) ) {
+				$exit_code = isset( $status['exitcode'] ) ? (int) $status['exitcode'] : null;
+				break;
+			}
+
+			usleep( 100000 );
+		}
+
+		$output .= (string) stream_get_contents( $pipes[1] ) . (string) stream_get_contents( $pipes[2] );
+		foreach ( $pipes as $pipe ) {
+			fclose( $pipe );
+		}
+
+		$close_code = proc_close( $process );
+		if ( null === $exit_code ) {
+			$exit_code = $close_code;
+		}
+		$output    = trim( str_replace( "\r", "\n", $output ) );
+		if ( 0 !== $exit_code ) {
+			return new \WP_Error(
+				'clone_failed',
+				sprintf( 'Git clone failed (exit %d): %s', $exit_code, $output ),
+				array(
+					'status' => 500,
+					'output' => $output,
+				)
+			);
+		}
+
+		return array(
+			'success' => true,
+			'output'  => $output,
+		);
+	}
+
+	/**
+	 * Emit normalized clone output chunks.
+	 *
+	 * @param callable|null $progress_callback Optional progress callback.
+	 * @param string        $chunk             Raw process output chunk.
+	 * @param float         $started_at        Clone start timestamp.
+	 */
+	private function emit_clone_output( ?callable $progress_callback, string $chunk, float $started_at ): void {
+		$lines = preg_split( '/[\r\n]+/', $chunk );
+		if ( ! is_array( $lines ) ) {
+			return;
+		}
+
+		foreach ( $lines as $line ) {
+			$line = trim( $line );
+			if ( '' === $line ) {
+				continue;
+			}
+
+			$this->emit_clone_progress( $progress_callback, 'git', $line, $started_at );
+		}
+	}
+
+	/**
+	 * Emit one structured clone progress message.
+	 *
+	 * @param callable|null $progress_callback Optional progress callback.
+	 * @param string        $phase             Progress phase.
+	 * @param string        $message           Progress message.
+	 * @param float         $started_at        Clone start timestamp.
+	 */
+	private function emit_clone_progress( ?callable $progress_callback, string $phase, string $message, float $started_at ): void {
+		if ( null === $progress_callback ) {
+			return;
+		}
+
+		$progress_callback(
+			array(
+				'phase'   => $phase,
+				'elapsed' => max( 0.0, microtime( true ) - $started_at ),
+				'message' => $message,
+			)
+		);
+	}
+
+	/**
+	 * Build a recovery-focused error when a clone target exists already.
+	 *
+	 * @param string $name      Workspace repo name.
+	 * @param string $repo_path Target path.
+	 * @return \WP_Error Error with remediation data.
+	 */
+	private function clone_target_exists_error( string $name, string $repo_path ): \WP_Error {
+		$looks_like_git = is_dir( $repo_path . '/.git' );
+		$state          = $looks_like_git ? 'existing checkout' : 'partial or non-git directory';
+		$next_steps     = array(
+			sprintf( 'Inspect the target: %s', $repo_path ),
+			sprintf( 'If it is safe to discard, remove it explicitly: wp datamachine-code workspace remove %s', $name ),
+			'Then retry the clone command.',
+		);
+
+		return new \WP_Error(
+			'repo_exists',
+			sprintf( 'Clone target already exists as %s: %s. Next steps: %s', $state, $repo_path, implode( ' ', $next_steps ) ),
+			array(
+				'status'     => 400,
+				'path'       => $repo_path,
+				'state'      => $state,
+				'next_steps' => $next_steps,
+			)
+		);
+	}
+
+	/**
+	 * Add recovery guidance to git clone failures.
+	 *
+	 * @param \WP_Error $error     Clone process error.
+	 * @param string    $name      Workspace repo name.
+	 * @param string    $repo_path Target path.
+	 * @param string    $url       Git clone URL.
+	 * @return \WP_Error Error with remediation data.
+	 */
+	private function clone_failed_error( \WP_Error $error, string $name, string $repo_path, string $url ): \WP_Error {
+		$next_steps = array(
+			sprintf( 'Confirm the repository URL is reachable: %s', $url ),
+			sprintf( 'Inspect any partial target: %s', $repo_path ),
+			sprintf( 'If the target is safe to discard, remove it explicitly: wp datamachine-code workspace remove %s', $name ),
+			'Then retry the clone command.',
+		);
+
+		$data                 = (array) $error->get_error_data();
+		$data['path']         = $repo_path;
+		$data['next_steps']   = $next_steps;
+		$data['partial_path'] = is_dir( $repo_path ) ? $repo_path : null;
+
+		return new \WP_Error(
+			'clone_failed',
+			$error->get_error_message() . ' Next steps: ' . implode( ' ', $next_steps ),
+			$data
 		);
 	}
 
