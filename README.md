@@ -60,6 +60,7 @@ Sibling extensions like `data-machine-socials` and `data-machine-business` are *
 
 ### AI Agent Tools
 - GitHub and workspace chat tools for read-only context gathering plus managed PR review comments
+- WordPress runtime inspection tools for read-only perception of live versions, plugins/themes, drop-ins, and allowlisted source files
 - Async GitHub issue creation via system tasks
 - All tools register through Data Machine's tool system, which means they're equally available to external runtimes (via MCP/REST/WP-CLI) and to in-process / CI drivers (via direct AI-step tool calls)
 
