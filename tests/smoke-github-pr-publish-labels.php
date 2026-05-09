@@ -60,11 +60,25 @@ namespace DataMachine\Core\Steps\Publish\Handlers {
 	}
 }
 
+namespace DataMachine\Core {
+	class JobArtifacts {
+		public static array $artifacts = array();
+
+		public function get( int $job_id ): array {
+			return array(
+				'success'   => true,
+				'artifacts' => self::$artifacts,
+			);
+		}
+	}
+}
+
 namespace DataMachineCode\Abilities {
 	class GitHubAbilities {
 		public static array $createPullRequestCalls = array();
 		public static array $addLabelsCalls         = array();
 		public static array $createOrUpdateFileCalls = array();
+		public static array $upsertPullReviewCommentCalls = array();
 		/** @var callable|null */
 		public static $createPullRequestImpl = null;
 		/** @var callable|null */
@@ -76,6 +90,7 @@ namespace DataMachineCode\Abilities {
 			self::$createPullRequestCalls   = array();
 			self::$addLabelsCalls           = array();
 			self::$createOrUpdateFileCalls  = array();
+			self::$upsertPullReviewCommentCalls = array();
 			self::$createPullRequestImpl    = null;
 			self::$addLabelsImpl            = null;
 			self::$createOrUpdateFileImpl   = null;
@@ -124,6 +139,15 @@ namespace DataMachineCode\Abilities {
 				'commit'  => array( 'sha' => 'deadbeef' ),
 			);
 		}
+
+		public static function upsertPullReviewComment( array $input ): array|\WP_Error {
+			self::$upsertPullReviewCommentCalls[] = $input;
+			return array(
+				'action'     => 'created',
+				'comment_id' => 99,
+				'html_url'   => 'https://example.test/pull/4242#issuecomment-99',
+			);
+		}
 	}
 }
 
@@ -167,11 +191,21 @@ namespace {
 		}
 	}
 
+	require_once __DIR__ . '/../inc/Support/RunArtifactPrSectionRenderer.php';
 	require_once __DIR__ . '/../inc/Support/RunArtifactBundleFileWriter.php';
 	require_once __DIR__ . '/../inc/Handlers/GitHub/GitHubPullRequestPublish.php';
 
+	use DataMachine\Core\JobArtifacts;
 	use DataMachineCode\Abilities\GitHubAbilities;
 	use DataMachineCode\Handlers\GitHub\GitHubPullRequestPublish;
+
+	class TestEngineData {
+		public function __construct( private array $data ) {}
+
+		public function get( string $key, mixed $default = null ): mixed {
+			return array_key_exists( $key, $this->data ) ? $this->data[ $key ] : $default;
+		}
+	}
 
 	/**
 	 * Test subclass exposing executePublish for direct invocation.
@@ -322,7 +356,83 @@ namespace {
 		array( 'one', 'two', 'three' ) === ( GitHubAbilities::$addLabelsCalls[0]['labels'] ?? array() )
 	);
 
-	// --- Test 7: bundle-file run artifacts are committed to the PR head branch ---
+	// --- Test 7: Data Machine run artifacts attach to PR body when policy requests pr-body ---
+	GitHubAbilities::reset();
+	JobArtifacts::$artifacts = array(
+		'required_tool_names'    => array( 'agent_daily_memory', 'create_github_pull_request' ),
+		'satisfied_tool_names'   => array( 'agent_daily_memory' ),
+		'daily_memory_artifacts' => array(
+			array(
+				'type'    => 'agent_daily_memory',
+				'content' => 'Daily memory entry for the generated PR.',
+			),
+		),
+		'transcript'             => array(
+			'session_id'    => 'pipeline-abc',
+			'provider'      => 'openai',
+			'model'         => 'gpt-5.5',
+			'message_count' => 8,
+			'completed'     => true,
+		),
+	);
+	$handler = new TestablePullRequestPublish();
+
+	$result = $handler->callExecutePublish(
+		array(
+			'job_id' => 123,
+			'engine' => new TestEngineData(
+				array(
+					'run_artifact_egress_policy' => array(
+						'daily_memory'          => array( 'egress' => array( 'pr-body' ) ),
+						'completion_assertions' => array( 'egress' => array( 'pr-body' ) ),
+						'transcript_summary'    => array( 'egress' => array( 'pr-body' ) ),
+					),
+				)
+			),
+			'title'  => 'Artifact PR',
+			'head'   => 'agent/artifacts',
+			'body'   => 'Original body.',
+		),
+		array( 'repo' => 'Extra-Chill/data-machine-code' )
+	);
+
+	$body = GitHubAbilities::$createPullRequestCalls[0]['body'] ?? '';
+	$assert( 'run artifact PR publish succeeds', true === ( $result['success'] ?? false ) );
+	$assert( 'run artifact section appended to PR body', str_contains( $body, '## Agent Run Artifacts' ) && str_contains( $body, 'Daily memory entry for the generated PR.' ) );
+	$assert( 'completion assertions rendered from Data Machine artifact payload', str_contains( $body, '- `agent_daily_memory`: satisfied' ) );
+	$assert( 'current PR publish tool is marked satisfied in attached evidence', str_contains( $body, '- `create_github_pull_request`: satisfied' ) );
+	$assert( 'transcript metadata rendered when policy requests transcript_summary', str_contains( $body, 'session id: `pipeline-abc`' ) && str_contains( $body, 'model: `gpt-5.5`' ) );
+	$assert( 'body mode does not create a run artifact comment', 0 === count( GitHubAbilities::$upsertPullReviewCommentCalls ) );
+
+	// --- Test 8: handler config can route the managed artifact section to a PR comment ---
+	GitHubAbilities::reset();
+	$handler = new TestablePullRequestPublish();
+	$result  = $handler->callExecutePublish(
+		array(
+			'job_id' => 123,
+			'engine' => new TestEngineData(
+				array(
+					'run_artifact_egress_policy' => array(
+						'daily_memory' => array( 'egress' => array( 'pr-body' ) ),
+					),
+				)
+			),
+			'title'  => 'Artifact comment PR',
+			'head'   => 'agent/artifact-comment',
+			'body'   => 'Original body.',
+		),
+		array(
+			'repo'                         => 'Extra-Chill/data-machine-code',
+			'run_artifact_attachment_mode' => 'comment',
+		)
+	);
+
+	$assert( 'comment mode PR publish succeeds', true === ( $result['success'] ?? false ) );
+	$assert( 'comment mode preserves original PR body', 'Original body.' === ( GitHubAbilities::$createPullRequestCalls[0]['body'] ?? '' ) );
+	$assert( 'comment mode upserts one managed artifact comment', 1 === count( GitHubAbilities::$upsertPullReviewCommentCalls ) );
+	$assert( 'comment mode uses run artifact marker', 'datamachine-run-artifacts' === ( GitHubAbilities::$upsertPullReviewCommentCalls[0]['marker'] ?? '' ) );
+
+	// --- Test 9: bundle-file run artifacts are committed to the PR head branch ---
 	GitHubAbilities::reset();
 	$handler = new TestablePullRequestPublish();
 

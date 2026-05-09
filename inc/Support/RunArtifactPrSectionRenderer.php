@@ -14,8 +14,8 @@ defined( 'ABSPATH' ) || exit;
  */
 class RunArtifactPrSectionRenderer {
 
-	public const START_MARKER = '<!-- datamachine-run-artifacts:start -->';
-	public const END_MARKER   = '<!-- datamachine-run-artifacts:end -->';
+	public const START_MARKER      = '<!-- datamachine-run-artifacts:start -->';
+	public const END_MARKER        = '<!-- datamachine-run-artifacts:end -->';
 	public const MODE_BODY_SECTION = 'body-section';
 	public const MODE_COMMENT      = 'comment';
 
@@ -168,7 +168,16 @@ class RunArtifactPrSectionRenderer {
 	 * @return array<string, string>
 	 */
 	private static function collectCompletionEvidence( array $artifacts ): array {
-		$evidence = array();
+		$evidence  = array();
+		$required  = isset( $artifacts['required_tool_names'] ) && is_array( $artifacts['required_tool_names'] ) ? $artifacts['required_tool_names'] : array();
+		$satisfied = isset( $artifacts['satisfied_tool_names'] ) && is_array( $artifacts['satisfied_tool_names'] ) ? $artifacts['satisfied_tool_names'] : array();
+		foreach ( $required as $tool_name ) {
+			$tool_name = trim( (string) $tool_name );
+			if ( '' !== $tool_name ) {
+				$evidence[ $tool_name ] = in_array( $tool_name, $satisfied, true ) ? 'satisfied' : 'not satisfied';
+			}
+		}
+
 		self::walkArtifactRecords(
 			$artifacts,
 			static function ( array $record ) use ( &$evidence ): void {
@@ -252,6 +261,13 @@ class RunArtifactPrSectionRenderer {
 	 */
 	private static function collectTranscriptSummaries( array $artifacts ): array {
 		$summaries = array();
+		if ( isset( $artifacts['transcript'] ) && is_array( $artifacts['transcript'] ) ) {
+			$summary = self::transcriptMetadataSummary( $artifacts['transcript'] );
+			if ( '' !== $summary ) {
+				$summaries[] = $summary;
+			}
+		}
+
 		self::walkArtifactRecords(
 			$artifacts,
 			static function ( array $record ) use ( &$summaries ): void {
@@ -369,6 +385,36 @@ class RunArtifactPrSectionRenderer {
 	private static function plainText( string $value ): string {
 		$value = trim( preg_replace( '/\s+/', ' ', $value ) ?? $value );
 		return str_replace( array( "\r", "\n" ), ' ', $value );
+	}
+
+	/**
+	 * @param array<string, mixed> $transcript Data Machine transcript metadata.
+	 */
+	private static function transcriptMetadataSummary( array $transcript ): string {
+		if ( ! empty( $transcript['missing'] ) ) {
+			$session_id = self::firstString( $transcript, array( 'session_id' ) );
+			return '' === $session_id ? 'Transcript session was not found.' : sprintf( 'Transcript session `%s` was not found.', self::markdownInlineCode( $session_id ) );
+		}
+
+		$parts = array();
+		foreach ( array( 'session_id', 'provider', 'model', 'mode' ) as $key ) {
+			$value = self::firstString( $transcript, array( $key ) );
+			if ( '' !== $value ) {
+				$parts[] = sprintf( '%s: `%s`', str_replace( '_', ' ', $key ), self::markdownInlineCode( $value ) );
+			}
+		}
+
+		foreach ( array( 'message_count', 'turn_count' ) as $key ) {
+			if ( isset( $transcript[ $key ] ) && is_numeric( $transcript[ $key ] ) ) {
+				$parts[] = sprintf( '%s: %d', str_replace( '_', ' ', $key ), (int) $transcript[ $key ] );
+			}
+		}
+
+		if ( isset( $transcript['completed'] ) ) {
+			$parts[] = 'completed: ' . ( $transcript['completed'] ? 'yes' : 'no' );
+		}
+
+		return implode( "\n", array_map( static fn( string $part ): string => '- ' . $part, $parts ) );
 	}
 
 	/**
