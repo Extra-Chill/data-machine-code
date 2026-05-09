@@ -374,7 +374,11 @@ class WorkspaceTools extends BaseTool {
 			'class'       => __CLASS__,
 			'method'      => 'handleList',
 			'description' => 'List repositories currently present in the Data Machine workspace.',
-			'parameters'  => array(),
+			'parameters'  => array(
+				'type'       => 'object',
+				'properties' => array(),
+				'required'   => array(),
+			),
 		);
 	}
 

@@ -86,7 +86,11 @@ class WordPressRuntimeTools extends BaseTool {
 			'class'       => __CLASS__,
 			'method'      => 'handleInventory',
 			'description' => 'Inspect the live WordPress runtime inventory: WP/PHP versions, active theme, installed plugins/themes, mu-plugins, drop-ins, and safe source-root policy metadata.',
-			'parameters'  => array(),
+			'parameters'  => array(
+				'type'       => 'object',
+				'properties' => array(),
+				'required'   => array(),
+			),
 		);
 	}
 

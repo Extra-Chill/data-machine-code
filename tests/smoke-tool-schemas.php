@@ -91,11 +91,16 @@ namespace {
 
 		foreach ( $methods as $method ) {
 			$definition = $instance->{$method}();
-			if ( empty( $definition['parameters'] ) || ! is_array( $definition['parameters'] ) ) {
+			if ( ! array_key_exists( 'parameters', $definition ) ) {
 				continue;
 			}
 
 			$path = $class . '::' . $method . '.parameters';
+			$assert( is_array( $definition['parameters'] ), $path . ' is an array' );
+			if ( ! is_array( $definition['parameters'] ) ) {
+				continue;
+			}
+
 			$assert( 'object' === ( $definition['parameters']['type'] ?? null ), $path . ' uses canonical object schema' );
 			$assert( isset( $definition['parameters']['properties'] ) && is_array( $definition['parameters']['properties'] ), $path . ' declares properties' );
 			$assert_schema( $definition['parameters'], $path );
