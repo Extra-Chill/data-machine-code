@@ -20,6 +20,8 @@ use DataMachine\Core\PluginSettings;
 use DataMachineCode\GitHub\PrHomeboyReviewRunner;
 use DataMachineCode\GitHub\PrReviewEscalationPolicy;
 use DataMachineCode\Support\GitHubCredentialResolver;
+use DataMachineCode\Support\RunArtifactBundleFileWriter;
+use DataMachineCode\Support\RunArtifactPrSectionRenderer;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -33,6 +35,14 @@ if ( ! class_exists( PrReviewEscalationPolicy::class ) ) {
 
 if ( ! class_exists( PrHomeboyReviewRunner::class ) ) {
 	require_once dirname( __DIR__ ) . '/GitHub/PrHomeboyReviewRunner.php';
+}
+
+if ( ! class_exists( RunArtifactBundleFileWriter::class ) ) {
+	require_once dirname( __DIR__ ) . '/Support/RunArtifactBundleFileWriter.php';
+}
+
+if ( ! class_exists( RunArtifactPrSectionRenderer::class ) ) {
+	require_once dirname( __DIR__ ) . '/Support/RunArtifactPrSectionRenderer.php';
 }
 
 class GitHubAbilities {
@@ -1463,8 +1473,14 @@ class GitHubAbilities {
 		}
 		$body['base'] = $base;
 
-		if ( isset( $input['body'] ) && '' !== $input['body'] ) {
-			$body['body'] = (string) $input['body'];
+		$body_text = isset( $input['body'] ) ? (string) $input['body'] : '';
+		$artifacts = self::preparePullRequestRunArtifacts( $input, $repo, $head, $body_text );
+		if ( is_wp_error( $artifacts ) ) {
+			return $artifacts;
+		}
+
+		if ( '' !== $body_text ) {
+			$body['body'] = $body_text;
 		}
 		if ( array_key_exists( 'draft', $input ) ) {
 			$body['draft'] = (bool) $input['draft'];
@@ -1517,11 +1533,163 @@ class GitHubAbilities {
 			'message'      => sprintf( 'Pull request #%d opened in %s.', $pull['number'] ?? 0, $repo ),
 		);
 
+		if ( ! empty( $artifacts['files'] ) ) {
+			$result['run_artifact_files'] = $artifacts['files'];
+		}
+
 		if ( null !== $labeling ) {
 			$result['labeling'] = $labeling;
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Persist and render Data Machine run artifacts for direct PR creation.
+	 *
+	 * Direct `create_github_pull_request` calls bypass publish handlers, so the
+	 * ability must honor the same generic run artifact egress policy itself.
+	 *
+	 * @param array  $input     Ability input.
+	 * @param string $repo      Repository owner/name.
+	 * @param string $head      Pull request head branch.
+	 * @param string $body_text Pull request body, mutated when pr-body egress applies.
+	 * @return array{files: array<int,array<string,string>>}|\WP_Error
+	 */
+	private static function preparePullRequestRunArtifacts( array $input, string $repo, string $head, string &$body_text ): array|\WP_Error {
+		$artifacts = self::runArtifactsFromInput( $input );
+		if ( empty( $artifacts ) ) {
+			return array( 'files' => array() );
+		}
+
+		$policy = self::runArtifactEgressPolicyFromInput( $input, $artifacts );
+		if ( empty( $policy ) ) {
+			return array( 'files' => array() );
+		}
+
+		$committed_files = array();
+		$file_writes     = RunArtifactBundleFileWriter::fileWritesFromArtifacts( $artifacts, $policy, (string) ( $input['bundle_root'] ?? '' ) );
+		foreach ( $file_writes as $file ) {
+			$file_result = self::createOrUpdateFile( array(
+				'repo'           => $repo,
+				'file_path'      => $file['file_path'] ?? '',
+				'content'        => $file['content'] ?? '',
+				'commit_message' => $file['commit_message'] ?? 'chore: persist Data Machine run artifact',
+				'branch'         => $head,
+			) );
+
+			if ( is_wp_error( $file_result ) ) {
+				return $file_result;
+			}
+
+			$committed_files[] = array(
+				'file_path'  => (string) ( $file_result['content']['path'] ?? ( $file['file_path'] ?? '' ) ),
+				'commit_sha' => (string) ( $file_result['commit']['sha'] ?? '' ),
+				'file_url'   => (string) ( $file_result['content']['html_url'] ?? '' ),
+			);
+		}
+
+		$body_artifacts = self::filterRunArtifactsForEgressTarget( $artifacts, $policy, 'pr-body' );
+		if ( ! empty( $body_artifacts ) ) {
+			$body_text = RunArtifactPrSectionRenderer::renderForMode( RunArtifactPrSectionRenderer::MODE_BODY_SECTION, $body_artifacts, $body_text );
+		}
+
+		return array( 'files' => $committed_files );
+	}
+
+	/**
+	 * @return array<string,mixed>
+	 */
+	private static function runArtifactsFromInput( array $input ): array {
+		if ( is_array( $input['run_artifacts'] ?? null ) ) {
+			return $input['run_artifacts'];
+		}
+
+		$job_id = (int) ( $input['job_id'] ?? 0 );
+		if ( $job_id <= 0 || ! class_exists( '\\DataMachine\\Core\\JobArtifacts' ) ) {
+			return array();
+		}
+
+		$result = ( new \DataMachine\Core\JobArtifacts() )->get( $job_id );
+		if ( empty( $result['success'] ) || ! is_array( $result['artifacts'] ?? null ) ) {
+			return array();
+		}
+
+		return $result['artifacts'];
+	}
+
+	/**
+	 * @param array<string,mixed> $artifacts Run artifact payload.
+	 * @return array<string,mixed>
+	 */
+	private static function runArtifactEgressPolicyFromInput( array $input, array $artifacts ): array {
+		if ( is_array( $input['run_artifact_egress_policy'] ?? null ) ) {
+			return $input['run_artifact_egress_policy'];
+		}
+
+		$engine = $input['engine'] ?? null;
+		if ( is_object( $engine ) && method_exists( $engine, 'get' ) ) {
+			$policy = $engine->get( 'run_artifact_egress_policy', array() );
+			if ( is_array( $policy ) && ! empty( $policy ) ) {
+				return $policy;
+			}
+		}
+
+		$job_id = (int) ( $input['job_id'] ?? 0 );
+		if ( $job_id > 0 && class_exists( '\\DataMachine\\Core\\Database\\Jobs\\Jobs' ) ) {
+			$jobs = new \DataMachine\Core\Database\Jobs\Jobs();
+			if ( method_exists( $jobs, 'retrieve_engine_data' ) ) {
+				$engine_data = $jobs->retrieve_engine_data( $job_id );
+				if ( is_array( $engine_data['run_artifact_egress_policy'] ?? null ) ) {
+					return $engine_data['run_artifact_egress_policy'];
+				}
+			}
+		}
+
+		return is_array( $artifacts['run_artifact_egress_policy'] ?? null ) ? $artifacts['run_artifact_egress_policy'] : array();
+	}
+
+	/**
+	 * @param array<string,mixed> $artifacts Run artifact payload.
+	 * @param array<string,mixed> $policy    Egress policy.
+	 * @return array<string,mixed>
+	 */
+	private static function filterRunArtifactsForEgressTarget( array $artifacts, array $policy, string $target ): array {
+		$filtered = array();
+
+		if ( self::runArtifactPolicyAllowsTarget( $policy, 'daily_memory', $target ) && ! empty( $artifacts['daily_memory_artifacts'] ) ) {
+			$filtered['daily_memory_artifacts'] = $artifacts['daily_memory_artifacts'];
+		}
+
+		if ( self::runArtifactPolicyAllowsTarget( $policy, 'completion_assertions', $target ) ) {
+			foreach ( array( 'required_tool_names', 'satisfied_tool_names', 'successful_tool_calls' ) as $key ) {
+				if ( array_key_exists( $key, $artifacts ) ) {
+					$filtered[ $key ] = $artifacts[ $key ];
+				}
+			}
+
+			$satisfied = is_array( $filtered['satisfied_tool_names'] ?? null ) ? $filtered['satisfied_tool_names'] : array();
+			foreach ( array( 'create_github_pull_request', 'github_pull_request_publish' ) as $tool_name ) {
+				if ( ! in_array( $tool_name, $satisfied, true ) ) {
+					$satisfied[] = $tool_name;
+				}
+			}
+			$filtered['satisfied_tool_names'] = $satisfied;
+		}
+
+		if ( self::runArtifactPolicyAllowsTarget( $policy, 'transcript_summary', $target ) && ! empty( $artifacts['transcript'] ) ) {
+			$filtered['transcript'] = $artifacts['transcript'];
+		}
+
+		return $filtered;
+	}
+
+	/**
+	 * @param array<string,mixed> $policy Egress policy.
+	 */
+	private static function runArtifactPolicyAllowsTarget( array $policy, string $source, string $target ): bool {
+		$egress = $policy[ $source ]['egress'] ?? array();
+		return is_array( $egress ) && in_array( $target, $egress, true );
 	}
 
 	/**
