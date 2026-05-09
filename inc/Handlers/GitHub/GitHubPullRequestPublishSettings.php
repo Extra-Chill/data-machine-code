@@ -22,19 +22,19 @@ class GitHubPullRequestPublishSettings extends SettingsHandler {
 	 */
 	public static function get_fields(): array {
 		return array(
-			'repo'                  => array(
+			'repo'                         => array(
 				'type'        => 'text',
 				'label'       => __( 'Repository', 'data-machine-code' ),
 				'description' => __( 'GitHub repository in owner/repo format. Falls back to the default repo in settings.', 'data-machine-code' ),
 				'required'    => false,
 			),
-			'base'                  => array(
+			'base'                         => array(
 				'type'        => 'text',
 				'label'       => __( 'Base Branch', 'data-machine-code' ),
 				'description' => __( 'Default base branch for pull requests. Leave blank for repository default.', 'data-machine-code' ),
 				'required'    => false,
 			),
-			'labels'                => array(
+			'labels'                       => array(
 				'type'        => 'text',
 				'label'       => __( 'Labels', 'data-machine-code' ),
 				'description' => __( 'Comma-separated labels to apply to opened pull requests by default. The AI step can override these.', 'data-machine-code' ),
@@ -51,14 +51,14 @@ class GitHubPullRequestPublishSettings extends SettingsHandler {
 					'comment'      => __( 'Managed PR comment', 'data-machine-code' ),
 				),
 			),
-			'draft'                 => array(
+			'draft'                        => array(
 				'type'        => 'checkbox',
 				'label'       => __( 'Open as Draft', 'data-machine-code' ),
 				'description' => __( 'Open pull requests as drafts by default.', 'data-machine-code' ),
 				'required'    => false,
 				'default'     => false,
 			),
-			'maintainer_can_modify' => array(
+			'maintainer_can_modify'        => array(
 				'type'        => 'checkbox',
 				'label'       => __( 'Allow Maintainer Edits', 'data-machine-code' ),
 				'description' => __( 'Allow maintainers to modify the pull request branch.', 'data-machine-code' ),

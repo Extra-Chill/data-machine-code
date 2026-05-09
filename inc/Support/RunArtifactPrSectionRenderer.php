@@ -168,7 +168,7 @@ class RunArtifactPrSectionRenderer {
 	 * @return array<string, string>
 	 */
 	private static function collectCompletionEvidence( array $artifacts ): array {
-		$evidence = array();
+		$evidence  = array();
 		$required  = isset( $artifacts['required_tool_names'] ) && is_array( $artifacts['required_tool_names'] ) ? $artifacts['required_tool_names'] : array();
 		$satisfied = isset( $artifacts['satisfied_tool_names'] ) && is_array( $artifacts['satisfied_tool_names'] ) ? $artifacts['satisfied_tool_names'] : array();
 		foreach ( $required as $tool_name ) {
