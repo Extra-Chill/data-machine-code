@@ -35,6 +35,9 @@ $assert( false !== strpos( $handler, "'files'" ) && false !== strpos( $handler, 
 $assert( false !== strpos( $handler, 'GitHubAbilities::createOrUpdateFile' ), 'handler commits files before opening the PR' );
 $assert( false !== strpos( $handler, '\'branch\'         => $input[\'head\']' ), 'handler commits files to the PR head branch' );
 $assert( false !== strpos( $handler, '\'files\'          => $committed_files' ), 'handler returns committed file metadata' );
+$assert( false !== strpos( $handler, 'RunArtifactBundleFileWriter' ), 'handler prepares Data Machine run artifacts for bundle-file writes' );
+$assert( false !== strpos( $handler, 'run_artifact_egress_policy' ), 'handler honors run artifact egress policy' );
+$assert( false !== strpos( $settings, "'bundle_root'" ), 'settings expose bundle_root for repo bundle artifact placement' );
 $assert( false !== strpos( $handler, "'labels'                => array(" ), 'tool schema exposes labels parameter' );
 $assert( false !== strpos( $handler, 'GitHubAbilities::addLabels' ), 'handler applies labels via GitHubAbilities::addLabels' );
 $assert( false !== strpos( $handler, "'applied_labels' => \$applied_labels" ), 'handler returns applied_labels in result' );
