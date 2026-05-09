@@ -40,6 +40,17 @@ class GitHubPullRequestPublishSettings extends SettingsHandler {
 				'description' => __( 'Comma-separated labels to apply to opened pull requests by default. The AI step can override these.', 'data-machine-code' ),
 				'required'    => false,
 			),
+			'run_artifact_attachment_mode' => array(
+				'type'        => 'select',
+				'label'       => __( 'Run Artifact Attachment Mode', 'data-machine-code' ),
+				'description' => __( 'Where to attach Data Machine run artifacts when the bundle run artifact policy includes pr-body egress.', 'data-machine-code' ),
+				'required'    => false,
+				'default'     => 'body-section',
+				'options'     => array(
+					'body-section' => __( 'PR body section', 'data-machine-code' ),
+					'comment'      => __( 'Managed PR comment', 'data-machine-code' ),
+				),
+			),
 			'draft'                 => array(
 				'type'        => 'checkbox',
 				'label'       => __( 'Open as Draft', 'data-machine-code' ),

@@ -10,6 +10,7 @@ namespace DataMachineCode\Handlers\GitHub;
 use DataMachine\Core\Steps\HandlerRegistrationTrait;
 use DataMachine\Core\Steps\Publish\Handlers\PublishHandler;
 use DataMachineCode\Abilities\GitHubAbilities;
+use DataMachineCode\Support\RunArtifactPrSectionRenderer;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -149,6 +150,11 @@ class GitHubPullRequestPublish extends PublishHandler {
 			'maintainer_can_modify' => $this->resolveBool( $parameters['maintainer_can_modify'] ?? null, $handler_config['maintainer_can_modify'] ?? true ),
 		);
 
+		$run_artifact_attachment = $this->prepareRunArtifactAttachment( $parameters, $handler_config, $input['body'] );
+		if ( ! empty( $run_artifact_attachment['body'] ) ) {
+			$input['body'] = (string) $run_artifact_attachment['body'];
+		}
+
 		$committed_files = array();
 		$files           = is_array( $parameters['files'] ?? null ) ? $parameters['files'] : array();
 		foreach ( $files as $file ) {
@@ -241,7 +247,141 @@ class GitHubPullRequestPublish extends PublishHandler {
 			$response_data['label_error'] = $label_error;
 		}
 
+		if ( ! empty( $run_artifact_attachment['comment_body'] ) && $pull_number > 0 ) {
+			$comment_result = GitHubAbilities::upsertPullReviewComment( array(
+				'repo'        => $repo,
+				'pull_number' => $pull_number,
+				'body'        => $run_artifact_attachment['comment_body'],
+				'marker'      => 'datamachine-run-artifacts',
+			) );
+
+			if ( is_wp_error( $comment_result ) ) {
+				$response_data['run_artifact_comment_error'] = $comment_result->get_error_message();
+				$this->log(
+					'warning',
+					'GitHub Pull Request opened but failed to attach run artifact comment: ' . $comment_result->get_error_message(),
+					array(
+						'job_id'      => $parameters['job_id'] ?? null,
+						'repo'        => $repo,
+						'pull_number' => $pull_number,
+					)
+				);
+			} else {
+				$response_data['run_artifact_comment'] = array(
+					'action'     => $comment_result['action'] ?? '',
+					'comment_id' => $comment_result['comment_id'] ?? 0,
+					'html_url'   => $comment_result['html_url'] ?? '',
+				);
+			}
+		}
+
 		return $this->successResponse( $response_data );
+	}
+
+	/**
+	 * Prepare optional run artifact PR body/comment content from Data Machine policy.
+	 *
+	 * @param array  $parameters     Tool parameters.
+	 * @param array  $handler_config Handler configuration.
+	 * @param string $body           Existing PR body.
+	 * @return array{body?: string, comment_body?: string}
+	 */
+	private function prepareRunArtifactAttachment( array $parameters, array $handler_config, string $body ): array {
+		$job_id = (int) ( $parameters['job_id'] ?? 0 );
+		if ( $job_id <= 0 || ! class_exists( '\\DataMachine\\Core\\JobArtifacts' ) ) {
+			return array();
+		}
+
+		$policy = $this->resolveRunArtifactPolicy( $parameters );
+		if ( empty( $policy ) ) {
+			return array();
+		}
+
+		$artifacts_result = ( new \DataMachine\Core\JobArtifacts() )->get( $job_id );
+		if ( empty( $artifacts_result['success'] ) || ! is_array( $artifacts_result['artifacts'] ?? null ) ) {
+			return array();
+		}
+
+		$artifacts = $this->filterRunArtifactsForTarget( $artifacts_result['artifacts'], $policy, 'pr-body' );
+		if ( empty( $artifacts ) ) {
+			return array();
+		}
+
+		$mode = $this->resolveRunArtifactAttachmentMode( $handler_config );
+		if ( RunArtifactPrSectionRenderer::MODE_COMMENT === $mode ) {
+			return array( 'comment_body' => RunArtifactPrSectionRenderer::renderForMode( $mode, $artifacts ) );
+		}
+
+		return array( 'body' => RunArtifactPrSectionRenderer::renderForMode( RunArtifactPrSectionRenderer::MODE_BODY_SECTION, $artifacts, $body ) );
+	}
+
+	/**
+	 * @param array $parameters Tool parameters.
+	 * @return array<string, array<string, mixed>>
+	 */
+	private function resolveRunArtifactPolicy( array $parameters ): array {
+		$engine = $parameters['engine'] ?? null;
+		if ( is_object( $engine ) && method_exists( $engine, 'get' ) ) {
+			$policy = $engine->get( 'run_artifact_egress_policy', array() );
+			return is_array( $policy ) ? $policy : array();
+		}
+
+		return array();
+	}
+
+	/**
+	 * @param array<string, mixed>                 $artifacts Data Machine job artifact payload.
+	 * @param array<string, array<string, mixed>> $policy    Run artifact egress policy.
+	 * @return array<string, mixed>
+	 */
+	private function filterRunArtifactsForTarget( array $artifacts, array $policy, string $target ): array {
+		$filtered = array();
+
+		if ( $this->policyAllowsTarget( $policy, 'daily_memory', $target ) && ! empty( $artifacts['daily_memory_artifacts'] ) ) {
+			$filtered['daily_memory_artifacts'] = $artifacts['daily_memory_artifacts'];
+		}
+
+		if ( $this->policyAllowsTarget( $policy, 'completion_assertions', $target ) ) {
+			foreach ( array( 'required_tool_names', 'satisfied_tool_names', 'successful_tool_calls' ) as $key ) {
+				if ( array_key_exists( $key, $artifacts ) ) {
+					$filtered[ $key ] = $artifacts[ $key ];
+				}
+			}
+
+			$satisfied = is_array( $filtered['satisfied_tool_names'] ?? null ) ? $filtered['satisfied_tool_names'] : array();
+			foreach ( array( 'github_pull_request_publish', 'create_github_pull_request' ) as $tool_name ) {
+				if ( ! in_array( $tool_name, $satisfied, true ) ) {
+					$satisfied[] = $tool_name;
+				}
+			}
+			$filtered['satisfied_tool_names'] = $satisfied;
+		}
+
+		if ( $this->policyAllowsTarget( $policy, 'transcript_summary', $target ) && ! empty( $artifacts['transcript'] ) ) {
+			$filtered['transcript'] = $artifacts['transcript'];
+		}
+
+		return $filtered;
+	}
+
+	/**
+	 * @param array<string, array<string, mixed>> $policy Run artifact egress policy.
+	 */
+	private function policyAllowsTarget( array $policy, string $source, string $target ): bool {
+		$egress = $policy[ $source ]['egress'] ?? array();
+		return is_array( $egress ) && in_array( $target, $egress, true );
+	}
+
+	/**
+	 * Resolve PR artifact attachment mode. Body sections are the default for Data
+	 * Machine's generic `pr-body` egress target; handler config may route that
+	 * same managed section to a comment without changing bundle policy.
+	 */
+	private function resolveRunArtifactAttachmentMode( array $handler_config ): string {
+		$config = is_array( $handler_config['github_pr_artifacts'] ?? null ) ? $handler_config['github_pr_artifacts'] : array();
+		$mode   = sanitize_text_field( (string) ( $config['mode'] ?? $handler_config['run_artifact_attachment_mode'] ?? RunArtifactPrSectionRenderer::MODE_BODY_SECTION ) );
+
+		return RunArtifactPrSectionRenderer::MODE_COMMENT === $mode ? RunArtifactPrSectionRenderer::MODE_COMMENT : RunArtifactPrSectionRenderer::MODE_BODY_SECTION;
 	}
 
 	/**
