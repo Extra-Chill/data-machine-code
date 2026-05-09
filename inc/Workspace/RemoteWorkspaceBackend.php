@@ -13,7 +13,7 @@ defined( 'ABSPATH' ) || exit;
 
 class RemoteWorkspaceBackend {
 
-	private const OPTION = 'datamachine_code_remote_workspace_state';
+	private const OPTION        = 'datamachine_code_remote_workspace_state';
 	private const MAX_READ_SIZE = 1048576;
 
 	/**
@@ -268,7 +268,11 @@ class RemoteWorkspaceBackend {
 
 		foreach ( array_keys( (array) $context['pending_files'] ) as $pending_path ) {
 			if ( '' === $prefix || $pending_path === $prefix || str_starts_with( $pending_path, $prefix . '/' ) ) {
-				array_unshift( $files, array( 'path' => $pending_path, 'type' => 'file', 'size' => strlen( (string) $context['pending_files'][ $pending_path ] ) ) );
+				array_unshift( $files, array(
+					'path' => $pending_path,
+					'type' => 'file',
+					'size' => strlen( (string) $context['pending_files'][ $pending_path ] ),
+				) );
 			}
 		}
 
@@ -293,7 +297,7 @@ class RemoteWorkspaceBackend {
 				continue;
 			}
 
-			$file_matches = $this->grep_content( $content, $file_path, $regex, $context_lines, $max_results - count( $matches ) );
+			$file_matches = $this->grep_content( $content, $handle, $file_path, $regex, $context_lines, $max_results - count( $matches ) );
 			$matches      = array_merge( $matches, $file_matches );
 			if ( count( $matches ) >= $max_results ) {
 				break;
@@ -363,7 +367,11 @@ class RemoteWorkspaceBackend {
 		$content = (string) ( $current['content'] ?? '' );
 		$count   = substr_count( $content, $old_string );
 		if ( 0 === $count ) {
-			return new \WP_Error( 'string_not_found', 'old_string not found in file content.', array( 'status' => 400 ) );
+			return new \WP_Error( 'string_not_found', 'old_string not found in file content.', array(
+				'status'      => 400,
+				'path'        => (string) ( $current['path'] ?? $path ),
+				'suggestions' => $this->build_edit_suggestions( $content, $old_string ),
+			) );
 		}
 		if ( $count > 1 && ! $replace_all ) {
 			return new \WP_Error( 'multiple_matches', sprintf( 'Found %d matches for old_string.', $count ), array( 'status' => 400 ) );
@@ -652,6 +660,7 @@ class RemoteWorkspaceBackend {
 		}
 
 		$regex = '~' . str_replace( '~', '\\~', $pattern ) . '~u';
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_set_error_handler -- Validate user-supplied regex without surfacing PHP warnings.
 		$previous_handler = set_error_handler( fn() => true );
 		$is_valid         = false !== preg_match( $regex, '' );
 		restore_error_handler();
@@ -675,7 +684,7 @@ class RemoteWorkspaceBackend {
 	/**
 	 * @return array<int,array<string,mixed>>
 	 */
-	private function grep_content( string $content, string $path, string $regex, int $context_lines, int $limit ): array {
+	private function grep_content( string $content, string $repo, string $path, string $regex, int $context_lines, int $limit ): array {
 		$lines   = explode( "\n", $content );
 		$matches = array();
 		foreach ( $lines as $index => $line ) {
@@ -683,16 +692,26 @@ class RemoteWorkspaceBackend {
 				continue;
 			}
 
+			$start      = max( 0, $index - $context_lines );
+			$end        = min( count( $lines ) - 1, $index + $context_lines );
+			$read_limit = $end - $start + 1;
+
 			$match = array(
-				'path' => $path,
-				'line' => $index + 1,
-				'text' => $line,
+				'match_id'  => substr( hash( 'sha256', $path . ':' . ( $index + 1 ) . ':' . $line ), 0, 16 ),
+				'path'      => $path,
+				'line'      => $index + 1,
+				'text'      => $line,
+				'preview'   => $this->build_preview( $lines, $start, $end ),
+				'read_args' => array(
+					'repo'   => $repo,
+					'path'   => $path,
+					'offset' => $start + 1,
+					'limit'  => $read_limit,
+				),
 			);
 
 			if ( $context_lines > 0 ) {
-				$start             = max( 0, $index - $context_lines );
-				$end               = min( count( $lines ) - 1, $index + $context_lines );
-				$match['context']  = array();
+				$match['context'] = array();
 				for ( $context_index = $start; $context_index <= $end; ++$context_index ) {
 					$match['context'][] = array(
 						'line' => $context_index + 1,
@@ -708,6 +727,51 @@ class RemoteWorkspaceBackend {
 		}
 
 		return $matches;
+	}
+
+	private function build_preview( array $lines, int $start, int $end ): string {
+		$preview = array();
+		for ( $context_index = $start; $context_index <= $end; ++$context_index ) {
+			$preview[] = sprintf( '%d: %s', $context_index + 1, $lines[ $context_index ] );
+		}
+
+		return implode( "\n", $preview );
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function build_edit_suggestions( string $content, string $old_string ): array {
+		$candidates = array_values( array_filter( array_map( 'trim', explode( "\n", $old_string ) ), static fn( $line ) => strlen( $line ) >= 4 ) );
+		usort( $candidates, static fn( $a, $b ) => strlen( $b ) <=> strlen( $a ) );
+
+		$needle = $candidates[0] ?? trim( $old_string );
+		if ( '' === $needle ) {
+			return array();
+		}
+
+		$needle      = substr( $needle, 0, 120 );
+		$lines       = explode( "\n", $content );
+		$suggestions = array();
+		foreach ( $lines as $index => $line ) {
+			if ( false === strpos( $line, $needle ) ) {
+				continue;
+			}
+
+			$start         = max( 0, $index - 2 );
+			$end           = min( count( $lines ) - 1, $index + 2 );
+			$suggestions[] = array(
+				'line'    => $index + 1,
+				'text'    => $line,
+				'preview' => $this->build_preview( $lines, $start, $end ),
+			);
+
+			if ( count( $suggestions ) >= 3 ) {
+				break;
+			}
+		}
+
+		return $suggestions;
 	}
 
 	/**

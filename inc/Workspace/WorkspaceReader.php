@@ -251,7 +251,7 @@ class WorkspaceReader {
 				continue;
 			}
 
-			$file_matches = $this->grep_file( $file_path, $relative_path, $regex, $context_lines, $max_results - count( $matches ) );
+			$file_matches = $this->grep_file( $name, $file_path, $relative_path, $regex, $context_lines, $max_results - count( $matches ) );
 			if ( is_wp_error( $file_matches ) ) {
 				continue;
 			}
@@ -279,6 +279,7 @@ class WorkspaceReader {
 		}
 
 		$regex = '~' . str_replace( '~', '\\~', $pattern ) . '~u';
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_set_error_handler -- Validate user-supplied regex without surfacing PHP warnings.
 		$previous_handler = set_error_handler( fn() => true );
 		$is_valid         = false !== preg_match( $regex, '' );
 		restore_error_handler();
@@ -322,7 +323,7 @@ class WorkspaceReader {
 	/**
 	 * @return array<int,array<string,mixed>>|\WP_Error
 	 */
-	private function grep_file( string $file_path, string $relative_path, string $regex, int $context_lines, int $limit ): array|\WP_Error {
+	private function grep_file( string $repo, string $file_path, string $relative_path, string $regex, int $context_lines, int $limit ): array|\WP_Error {
 		$size = filesize( $file_path );
 		if ( false === $size || $size > Workspace::MAX_READ_SIZE ) {
 			return array();
@@ -334,13 +335,13 @@ class WorkspaceReader {
 			return array();
 		}
 
-		return $this->grep_content( $content, $relative_path, $regex, $context_lines, $limit );
+		return $this->grep_content( $content, $repo, $relative_path, $regex, $context_lines, $limit );
 	}
 
 	/**
 	 * @return array<int,array<string,mixed>>
 	 */
-	private function grep_content( string $content, string $path, string $regex, int $context_lines, int $limit ): array {
+	private function grep_content( string $content, string $repo, string $path, string $regex, int $context_lines, int $limit ): array {
 		$lines   = explode( "\n", $content );
 		$matches = array();
 		foreach ( $lines as $index => $line ) {
@@ -348,16 +349,26 @@ class WorkspaceReader {
 				continue;
 			}
 
+			$start      = max( 0, $index - $context_lines );
+			$end        = min( count( $lines ) - 1, $index + $context_lines );
+			$read_limit = $end - $start + 1;
+
 			$match = array(
-				'path' => $path,
-				'line' => $index + 1,
-				'text' => $line,
+				'match_id'  => substr( hash( 'sha256', $path . ':' . ( $index + 1 ) . ':' . $line ), 0, 16 ),
+				'path'      => $path,
+				'line'      => $index + 1,
+				'text'      => $line,
+				'preview'   => $this->build_preview( $lines, $start, $end ),
+				'read_args' => array(
+					'repo'   => $repo,
+					'path'   => $path,
+					'offset' => $start + 1,
+					'limit'  => $read_limit,
+				),
 			);
 
 			if ( $context_lines > 0 ) {
-				$start             = max( 0, $index - $context_lines );
-				$end               = min( count( $lines ) - 1, $index + $context_lines );
-				$match['context']  = array();
+				$match['context'] = array();
 				for ( $context_index = $start; $context_index <= $end; ++$context_index ) {
 					$match['context'][] = array(
 						'line' => $context_index + 1,
@@ -373,5 +384,14 @@ class WorkspaceReader {
 		}
 
 		return $matches;
+	}
+
+	private function build_preview( array $lines, int $start, int $end ): string {
+		$preview = array();
+		for ( $context_index = $start; $context_index <= $end; ++$context_index ) {
+			$preview[] = sprintf( '%d: %s', $context_index + 1, $lines[ $context_index ] );
+		}
+
+		return implode( "\n", $preview );
 	}
 }

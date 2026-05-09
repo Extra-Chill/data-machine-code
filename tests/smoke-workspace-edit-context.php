@@ -1,14 +1,14 @@
 <?php
 /**
- * Smoke test for local workspace grep.
+ * Smoke test for workspace edit failure context.
  *
- * Run: php tests/smoke-workspace-grep.php
+ * Run: php tests/smoke-workspace-edit-context.php
  */
 
 declare( strict_types=1 );
 
 namespace {
-	$workspace_root = sys_get_temp_dir() . '/dmc-workspace-grep';
+	$workspace_root = sys_get_temp_dir() . '/dmc-workspace-edit-context';
 	if ( ! defined( 'ABSPATH' ) ) {
 		define( 'ABSPATH', $workspace_root . '/site/' );
 	}
@@ -33,13 +33,22 @@ namespace {
 	if ( ! function_exists( 'size_format' ) ) {
 		function size_format( $bytes ): string { return (string) $bytes . ' B'; }
 	}
+}
 
+namespace DataMachine\Core\FilesRepository {
+	class FilesystemHelper {
+		public static function get(): self { return new self(); }
+		public function is_writable( string $path ): bool { return is_writable( $path ); }
+	}
+}
+
+namespace {
 	require __DIR__ . '/../inc/Support/PathSecurity.php';
 	require __DIR__ . '/../inc/Workspace/Workspace.php';
-	require __DIR__ . '/../inc/Workspace/WorkspaceReader.php';
+	require __DIR__ . '/../inc/Workspace/WorkspaceWriter.php';
 
 	use DataMachineCode\Workspace\Workspace;
-	use DataMachineCode\Workspace\WorkspaceReader;
+	use DataMachineCode\Workspace\WorkspaceWriter;
 
 	$failures = array();
 	$total    = 0;
@@ -53,21 +62,17 @@ namespace {
 		echo "  fail {$label}\n";
 	};
 
-	echo "Workspace grep - smoke\n";
+	echo "Workspace edit context - smoke\n";
 
 	@mkdir( DATAMACHINE_WORKSPACE_PATH . '/example/src', 0777, true );
-	file_put_contents( DATAMACHINE_WORKSPACE_PATH . '/example/src/example.php', "<?php\nfunction workspace_grep_anchor() {\n\treturn 'needle';\n}\n" );
-	file_put_contents( DATAMACHINE_WORKSPACE_PATH . '/example/src/skip.txt', "needle\n" );
+	file_put_contents( DATAMACHINE_WORKSPACE_PATH . '/example/src/example.php', "<?php\nfunction target() {\n\treturn 'needle';\n}\n" );
 
-	$reader = new WorkspaceReader( new Workspace() );
-	$grep   = $reader->grep( 'example', 'workspace_grep_anchor', 'src', '*.php', 10, 1 );
-	$assert( 'grep finds matching symbol in primary workspace', ! is_wp_error( $grep ) && 1 === $grep['count'] && 'src/example.php' === $grep['matches'][0]['path'] && 2 === $grep['matches'][0]['line'] );
-	$assert( 'grep includes requested context', ! is_wp_error( $grep ) && ! empty( $grep['matches'][0]['context'] ) );
-	$assert( 'grep includes stable match metadata', ! is_wp_error( $grep ) && ! empty( $grep['matches'][0]['match_id'] ) && ! empty( $grep['matches'][0]['preview'] ) );
-	$assert( 'grep includes read arguments anchored to context', ! is_wp_error( $grep ) && 'example' === $grep['matches'][0]['read_args']['repo'] && 'src/example.php' === $grep['matches'][0]['read_args']['path'] && 1 === $grep['matches'][0]['read_args']['offset'] );
+	$writer = new WorkspaceWriter( new Workspace() );
+	$edit   = $writer->edit_file( 'example', 'src/example.php', "function target() {\n\treturn 'missing';\n}", "function target() {\n\treturn 'replacement';\n}" );
+	$data   = is_wp_error( $edit ) ? $edit->get_error_data() : array();
 
-	$included = $reader->grep( 'example', 'needle', 'src', '*.php' );
-	$assert( 'include glob filters file paths', ! is_wp_error( $included ) && 1 === $included['count'] && 'src/example.php' === $included['matches'][0]['path'] );
+	$assert( 'edit fails when exact old_string is missing', is_wp_error( $edit ) && 'string_not_found' === $edit->get_error_code() );
+	$assert( 'edit failure includes path and suggestions', ! empty( $data['path'] ) && ! empty( $data['suggestions'][0]['preview'] ) );
 
 	if ( ! empty( $failures ) ) {
 		echo "\nFAIL: " . count( $failures ) . " assertion(s) failed out of {$total}\n";
