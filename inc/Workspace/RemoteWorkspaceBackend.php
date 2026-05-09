@@ -550,13 +550,20 @@ class RemoteWorkspaceBackend {
 		}
 
 		$push_branch = null !== $branch && '' !== $branch ? $branch : $context['branch'];
+		$branch_url  = '' !== $push_branch ? 'https://github.com/' . $context['repo'] . '/tree/' . rawurlencode( $push_branch ) : null;
 
 		return array(
 			'success'            => true,
+			'kind'               => 'branch_push',
 			'backend'            => 'github_api',
 			'name'               => $handle,
+			'repo'               => $context['repo'],
+			'workspace_repo'     => $context['repo_name'] ?? $handle,
+			'github_repo'        => $context['repo'],
 			'remote'             => $remote,
 			'branch'             => $push_branch,
+			'url'                => $branch_url,
+			'html_url'           => $branch_url,
 			'message'            => 'Remote workspace branch already updated via GitHub API.',
 			'conversation_state' => 'incomplete',
 			'next_required_tool' => 'create_github_pull_request',

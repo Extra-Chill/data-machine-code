@@ -62,13 +62,24 @@ namespace {
 			if ( 'datamachine/create-github-pull-request' === $this->name ) {
 				return array(
 					'success'      => true,
+					'kind'         => 'pull_request',
+					'repo'         => 'Extra-Chill/data-machine-code',
+					'number'       => 261,
+					'pull_number'  => 261,
+					'url'          => 'https://github.com/Extra-Chill/data-machine-code/pull/261',
+					'html_url'     => 'https://github.com/Extra-Chill/data-machine-code/pull/261',
 					'pull_request' => array( 'number' => 261 ),
 				);
 			}
 
 			return array(
 				'success'      => true,
+				'kind'         => 'issue',
+				'repo'         => 'Extra-Chill/data-machine-code',
+				'number'       => 262,
 				'issue_number' => 262,
+				'url'          => 'https://github.com/Extra-Chill/data-machine-code/issues/262',
+				'html_url'     => 'https://github.com/Extra-Chill/data-machine-code/issues/262',
 			);
 		}
 	}
@@ -159,6 +170,8 @@ namespace {
 	) );
 	$assert( 'create_github_issue returns direct ability success', true === ( $issue_result['success'] ?? false ) );
 	$assert( 'create_github_issue response names tool', 'create_github_issue' === ( $issue_result['tool_name'] ?? '' ) );
+	$assert( 'create_github_issue response identifies issue kind', 'issue' === ( $issue_result['kind'] ?? '' ) );
+	$assert( 'create_github_issue response exposes canonical issue URL', 'https://github.com/Extra-Chill/data-machine-code/issues/262' === ( $issue_result['url'] ?? '' ) );
 
 	$pr_result = $pr_tool->handle_tool_call( array(
 		'repo'                  => 'Extra-Chill/data-machine-code',
@@ -172,6 +185,9 @@ namespace {
 	) );
 	$assert( 'create_github_pull_request returns direct ability success', true === ( $pr_result['success'] ?? false ) );
 	$assert( 'create_github_pull_request response names tool', 'create_github_pull_request' === ( $pr_result['tool_name'] ?? '' ) );
+	$assert( 'create_github_pull_request response identifies PR kind', 'pull_request' === ( $pr_result['kind'] ?? '' ) );
+	$assert( 'create_github_pull_request response exposes canonical PR URL', 'https://github.com/Extra-Chill/data-machine-code/pull/261' === ( $pr_result['url'] ?? '' ) );
+	$assert( 'create_github_pull_request URL is distinguishable from branch URL', ! str_contains( $pr_result['url'] ?? '', '/tree/' ) );
 
 	$pr_call = $GLOBALS['dmc_tool_ability_calls'][1] ?? array();
 	$assert( 'create_github_pull_request calls PR ability', 'datamachine/create-github-pull-request' === ( $pr_call['name'] ?? '' ) );
