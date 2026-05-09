@@ -19,7 +19,7 @@ class WorkspaceDiff {
 	private Workspace $workspace;
 
 	public function __construct( ?Workspace $workspace = null ) {
-		$this->workspace = $workspace ?: new Workspace();
+		$this->workspace = null !== $workspace ? $workspace : new Workspace();
 	}
 
 	/**

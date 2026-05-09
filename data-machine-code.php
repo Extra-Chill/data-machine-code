@@ -95,7 +95,6 @@ function datamachine_code_bootstrap() {
 
 	// Register ability categories on the correct hook (must happen during wp_abilities_api_categories_init).
 	add_action( 'wp_abilities_api_categories_init', 'datamachine_code_register_ability_categories' );
-
 }
 add_action( 'plugins_loaded', 'datamachine_code_bootstrap', 20 );
 
@@ -275,11 +274,11 @@ add_action( 'plugins_loaded', 'datamachine_code_load_chat_tools', 25 );
  */
 add_filter( 'datamachine_tasks', function ( array $tasks ): array {
 	$tasks['github_create_issue']              = \DataMachineCode\Tasks\GitHubIssueTask::class;
-	$tasks['worktree_cleanup_chunk']             = \DataMachineCode\Tasks\WorktreeCleanupChunkTask::class;
-	$tasks['worktree_cleanup']                   = \DataMachineCode\Tasks\WorktreeCleanupTask::class;
-	$tasks['workspace_disk_emergency_cleanup']   = \DataMachineCode\Tasks\WorkspaceDiskEmergencyCleanupTask::class;
-	$tasks['workspace_retention_cleanup']        = \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask::class;
-	$tasks['workspace_hygiene_report']           = \DataMachineCode\Tasks\WorkspaceHygieneReportTask::class;
+	$tasks['worktree_cleanup_chunk']           = \DataMachineCode\Tasks\WorktreeCleanupChunkTask::class;
+	$tasks['worktree_cleanup']                 = \DataMachineCode\Tasks\WorktreeCleanupTask::class;
+	$tasks['workspace_disk_emergency_cleanup'] = \DataMachineCode\Tasks\WorkspaceDiskEmergencyCleanupTask::class;
+	$tasks['workspace_retention_cleanup']      = \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask::class;
+	$tasks['workspace_hygiene_report']         = \DataMachineCode\Tasks\WorkspaceHygieneReportTask::class;
 	return $tasks;
 } );
 
@@ -296,7 +295,7 @@ add_filter( 'datamachine_tasks', function ( array $tasks ): array {
  * @see https://github.com/Extra-Chill/data-machine/pull/1117
  */
 add_filter( 'datamachine_recurring_schedules', function ( array $schedules ): array {
-	$schedules['worktree_cleanup']            = array(
+	$schedules['worktree_cleanup']                 = array(
 		'task_type'       => 'worktree_cleanup',
 		'interval'        => 'daily',
 		'enabled_setting' => \DataMachineCode\Tasks\WorktreeCleanupTask::SETTING_KEY,
@@ -304,7 +303,7 @@ add_filter( 'datamachine_recurring_schedules', function ( array $schedules ): ar
 		'label'           => 'Daily — cleans up merged worktrees',
 		'task_params'     => array( 'source' => 'recurring_schedule' ),
 	);
-	$schedules['workspace_retention_cleanup'] = array(
+	$schedules['workspace_retention_cleanup']      = array(
 		'task_type'       => 'workspace_retention_cleanup',
 		'interval'        => 'daily',
 		'enabled_setting' => \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask::SETTING_KEY,
@@ -778,7 +777,7 @@ function datamachine_code_render_workspace_inventory_section( string $wp ): stri
 		$branch_str = ( null !== $branch && '' !== $branch ) ? sprintf( ' (`%s`)', $branch ) : '';
 
 		if ( 'compact' === $mode ) {
-			$suffix_parts = array();
+			$suffix_parts   = array();
 			$suffix_parts[] = sprintf( '%d %s', $wt_count, 1 === $wt_count ? 'worktree' : 'worktrees' );
 			if ( null !== $remote && '' !== $remote ) {
 				$suffix_parts[] = $remote;
