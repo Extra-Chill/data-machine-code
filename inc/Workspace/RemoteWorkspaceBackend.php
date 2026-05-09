@@ -357,14 +357,24 @@ class RemoteWorkspaceBackend {
 
 		$last_sha = '';
 		foreach ( $pending as $path => $content ) {
+			$current_sha = $this->file_sha_for_commit( $context, (string) $path );
+			if ( is_wp_error( $current_sha ) ) {
+				return $current_sha;
+			}
+
+			$input = array(
+				'repo'           => $context['repo'],
+				'file_path'      => $path,
+				'content'        => (string) $content,
+				'commit_message' => $message,
+				'branch'         => $context['branch'],
+			);
+			if ( '' !== $current_sha ) {
+				$input['sha'] = $current_sha;
+			}
+
 			$result = GitHubAbilities::createOrUpdateFile(
-				array(
-					'repo'           => $context['repo'],
-					'file_path'      => $path,
-					'content'        => (string) $content,
-					'commit_message' => $message,
-					'branch'         => $context['branch'],
-				)
+				$input
 			);
 			if ( is_wp_error( $result ) ) {
 				return $result;
@@ -387,6 +397,34 @@ class RemoteWorkspaceBackend {
 			'next_required_tool' => 'workspace_git_push',
 			'next_required_args' => array( 'name' => $handle, 'branch' => $context['branch'] ),
 		);
+	}
+
+	/**
+	 * Resolve the current file SHA for a Contents API update.
+	 *
+	 * @param array<string,mixed> $context Remote workspace context.
+	 */
+	private function file_sha_for_commit( array $context, string $path ): string|\WP_Error {
+		$file = GitHubAbilities::getFileContents(
+			array(
+				'repo' => $context['repo'],
+				'path' => $path,
+				'ref'  => $context['read_ref'],
+			)
+		);
+		if ( is_wp_error( $file ) && '' !== $context['read_ref'] ) {
+			$file = GitHubAbilities::getFileContents( array( 'repo' => $context['repo'], 'path' => $path ) );
+		}
+		if ( is_wp_error( $file ) ) {
+			$status = (int) ( $file->get_error_data()['status'] ?? 0 );
+			if ( 404 === $status ) {
+				return '';
+			}
+
+			return $file;
+		}
+
+		return (string) ( $file['file']['sha'] ?? '' );
 	}
 
 	/**
