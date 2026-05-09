@@ -61,6 +61,7 @@ namespace {
 	require __DIR__ . '/../inc/Support/GitRunner.php';
 	require __DIR__ . '/../inc/Support/PathSecurity.php';
 	require __DIR__ . '/../inc/Workspace/Workspace.php';
+	require __DIR__ . '/../inc/Workspace/WorkspaceDiff.php';
 
 	$failures = 0;
 	$total    = 0;
@@ -108,14 +109,14 @@ namespace {
 
 	echo "Workspace diff validation\n";
 
-	$workspace = new \DataMachineCode\Workspace\Workspace();
-	$summary   = $workspace->diff_summary( 'demo@diff-check' );
+	$diff    = new \DataMachineCode\Workspace\WorkspaceDiff();
+	$summary = $diff->summary( 'demo@diff-check' );
 	$assert( false, is_wp_error( $summary ), 'summary succeeds for local worktree handle' );
 	$assert( array( 'notes.txt', 'src/Foo.php', 'tests/FooTest.php' ), is_wp_error( $summary ) ? array() : ( $summary['changed_files'] ?? array() ), 'summary reports tracked and untracked changed files' );
 	$assert( true, is_wp_error( $summary ) ? false : (bool) ( $summary['totals']['tests_touched'] ?? false ), 'summary detects test changes' );
 	$assert( 3, is_wp_error( $summary ) ? 0 : (int) ( $summary['totals']['files'] ?? 0 ), 'summary counts changed files' );
 
-	$valid = $workspace->diff_validate(
+	$valid = $diff->validate(
 		'demo@diff-check',
 		array(
 			'allow'         => array( 'src/**', 'tests/**', 'notes.txt' ),
@@ -127,7 +128,7 @@ namespace {
 	$assert( false, is_wp_error( $valid ), 'validation succeeds' );
 	$assert( true, is_wp_error( $valid ) ? false : (bool) ( $valid['valid'] ?? false ), 'validation passes matching policy' );
 
-	$invalid = $workspace->diff_validate(
+	$invalid = $diff->validate(
 		'demo@diff-check',
 		array(
 			'require_changed_files' => array(

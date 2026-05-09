@@ -81,6 +81,7 @@ function datamachine_code_bootstrap() {
 	// Load Abilities (they self-register).
 	new \DataMachineCode\Abilities\GitHubAbilities();
 	new \DataMachineCode\Abilities\WorkspaceAbilities();
+	new \DataMachineCode\Abilities\WorkspaceDiffAbilities();
 	new \DataMachineCode\Abilities\GitSyncAbilities();
 	new \DataMachineCode\Abilities\CodeTaskAbilities();
 	new \DataMachineCode\Abilities\WordPressRuntimeAbilities();
@@ -264,6 +265,7 @@ function datamachine_code_load_chat_tools() {
 	new \DataMachineCode\Tools\GitHubPullRequestTool();
 	new \DataMachineCode\Tools\GitHubTools();
 	new \DataMachineCode\Tools\WorkspaceTools();
+	new \DataMachineCode\Tools\WorkspaceDiffTools();
 	new \DataMachineCode\Tools\WordPressRuntimeTools();
 }
 add_action( 'plugins_loaded', 'datamachine_code_load_chat_tools', 25 );
