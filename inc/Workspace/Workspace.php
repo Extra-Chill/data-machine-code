@@ -1355,13 +1355,27 @@ class Workspace {
 			return $result;
 		}
 
+		$github_repo = null;
+		$branch_url  = null;
+		$remote_url  = $this->git_get_remote( $repo_path, $remote );
+		if ( null !== $remote_url ) {
+			$github_repo = GitHubRemote::slug( $remote_url );
+			if ( null !== $github_repo ) {
+				$branch_url = 'https://github.com/' . $github_repo . '/tree/' . rawurlencode( $target_branch );
+			}
+		}
+
 		return array(
-			'success' => true,
-			'name'    => $parsed['dir_name'],
-			'repo'    => $repo_name,
-			'remote'  => $remote,
-			'branch'  => $target_branch,
-			'message' => trim( (string) $result['output'] ),
+			'success'     => true,
+			'kind'        => 'branch_push',
+			'name'        => $parsed['dir_name'],
+			'repo'        => $repo_name,
+			'github_repo' => $github_repo,
+			'remote'      => $remote,
+			'branch'      => $target_branch,
+			'url'         => $branch_url,
+			'html_url'    => $branch_url,
+			'message'     => trim( (string) $result['output'] ),
 		);
 	}
 
@@ -8386,10 +8400,14 @@ class Workspace {
 	 * @param string $repo_path Path to repo.
 	 * @return string|null Remote URL or null.
 	 */
-	private function git_get_remote( string $repo_path ): ?string {
+	private function git_get_remote( string $repo_path, string $remote_name = 'origin' ): ?string {
 		$escaped = escapeshellarg( $repo_path );
+		$remote_name = preg_replace( '/[^A-Za-z0-9._-]/', '', $remote_name );
+		if ( '' === $remote_name ) {
+			return null;
+		}
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		$remote = exec( sprintf( 'git -C %s config --get remote.origin.url 2>/dev/null', $escaped ) );
+		$remote = exec( sprintf( 'git -C %s config --get %s 2>/dev/null', $escaped, escapeshellarg( 'remote.' . $remote_name . '.url' ) ) );
 		return ( '' !== $remote ) ? $remote : null;
 	}
 

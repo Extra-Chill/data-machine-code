@@ -248,6 +248,10 @@ namespace {
 		'milestone' => 7,
 	) );
 	$assert( 'createIssue success path returns success=true', is_array( $result ) && true === ( $result['success'] ?? false ) );
+	$assert( 'createIssue result kind identifies issue', is_array( $result ) && 'issue' === ( $result['kind'] ?? '' ) );
+	$assert( 'createIssue result exposes repo', is_array( $result ) && 'owner/repo' === ( $result['repo'] ?? '' ) );
+	$assert( 'createIssue result exposes top-level number', is_array( $result ) && 42 === ( $result['number'] ?? 0 ) );
+	$assert( 'createIssue result exposes canonical URL', is_array( $result ) && 'https://github.com/owner/repo/issues/42' === ( $result['url'] ?? '' ) );
 	$assert( 'createIssue success path returns normalized issue', is_array( $result ) && 42 === ( $result['issue']['number'] ?? 0 ) );
 	$assert( 'createIssue success exposes issue_number', is_array( $result ) && 42 === ( $result['issue_number'] ?? 0 ) );
 	$call = $GLOBALS['dmc_http_calls'][0] ?? array();
@@ -331,6 +335,10 @@ namespace {
 		'body'  => 'Body',
 	) );
 	$assert( 'createPullRequest success returns success=true', is_array( $result ) && true === ( $result['success'] ?? false ) );
+	$assert( 'createPullRequest result kind identifies pull request', is_array( $result ) && 'pull_request' === ( $result['kind'] ?? '' ) );
+	$assert( 'createPullRequest result exposes repo', is_array( $result ) && 'owner/repo' === ( $result['repo'] ?? '' ) );
+	$assert( 'createPullRequest result exposes top-level number', is_array( $result ) && 88 === ( $result['number'] ?? 0 ) );
+	$assert( 'createPullRequest result exposes canonical PR URL', is_array( $result ) && 'https://github.com/owner/repo/pull/88' === ( $result['url'] ?? '' ) );
 	$assert( 'createPullRequest exposes pull_request key', is_array( $result ) && isset( $result['pull_request']['number'] ) && 88 === $result['pull_request']['number'] );
 	$assert( 'createPullRequest normalized head ref', is_array( $result ) && 'feature/x' === ( $result['pull_request']['head'] ?? '' ) );
 

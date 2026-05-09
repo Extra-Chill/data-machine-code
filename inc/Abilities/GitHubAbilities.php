@@ -1406,9 +1406,13 @@ class GitHubAbilities {
 
 		return array(
 			'success'      => true,
+			'kind'         => 'issue',
+			'repo'         => $repo,
+			'number'       => $issue['number'] ?? 0,
 			'issue'        => $issue,
-			'issue_url'    => $issue['url'] ?? '',
+			'issue_url'    => $issue['html_url'] ?? '',
 			'issue_number' => $issue['number'] ?? 0,
+			'url'          => $issue['html_url'] ?? '',
 			'html_url'     => $issue['html_url'] ?? '',
 			'message'      => sprintf( 'Issue #%d created in %s.', $issue['number'] ?? 0, $repo ),
 		);
@@ -1503,8 +1507,12 @@ class GitHubAbilities {
 
 		$result = array(
 			'success'      => true,
+			'kind'         => 'pull_request',
+			'repo'         => $repo,
+			'number'       => $pull['number'] ?? 0,
 			'pull_request' => $pull,
 			'pull_number'  => $pull['number'] ?? 0,
+			'url'          => $pull['html_url'] ?? '',
 			'html_url'     => $pull['html_url'] ?? '',
 			'message'      => sprintf( 'Pull request #%d opened in %s.', $pull['number'] ?? 0, $repo ),
 		);
