@@ -42,6 +42,8 @@ class WorkspaceTools extends BaseTool {
 			'workspace_ls',
 			'workspace_read',
 			'workspace_grep',
+			'workspace_diff_summary',
+			'workspace_diff_validate',
 		);
 
 		if ( ! in_array( $tool_id, $workspace_tools, true ) ) {
@@ -63,6 +65,8 @@ class WorkspaceTools extends BaseTool {
 		$this->registerTool( 'workspace_ls', array( $this, 'getLsDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-ls' ) );
 		$this->registerTool( 'workspace_read', array( $this, 'getReadDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-read' ) );
 		$this->registerTool( 'workspace_grep', array( $this, 'getGrepDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-grep' ) );
+		$this->registerTool( 'workspace_diff_summary', array( $this, 'getDiffSummaryDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-diff-summary' ) );
+		$this->registerTool( 'workspace_diff_validate', array( $this, 'getDiffValidateDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-diff-validate' ) );
 	}
 
 	/**
@@ -310,6 +314,64 @@ class WorkspaceTools extends BaseTool {
 	}
 
 	/**
+	 * Handle workspace_diff_summary tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleDiffSummary( array $parameters ): array {
+		return $this->executeDiffAbility( 'datamachine/workspace-diff-summary', 'workspace_diff_summary', $parameters );
+	}
+
+	/**
+	 * Handle workspace_diff_validate tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleDiffValidate( array $parameters ): array {
+		return $this->executeDiffAbility( 'datamachine/workspace-diff-validate', 'workspace_diff_validate', $parameters );
+	}
+
+	/**
+	 * Execute a workspace diff ability with common parameter passthrough.
+	 *
+	 * @param string $ability_name Ability name.
+	 * @param string $tool_name    Tool name.
+	 * @param array  $parameters   Tool parameters.
+	 * @return array
+	 */
+	private function executeDiffAbility( string $ability_name, string $tool_name, array $parameters ): array {
+		$ability = wp_get_ability( $ability_name );
+		if ( ! $ability ) {
+			return $this->buildErrorResponse( "{$tool_name} ability not available.", $tool_name );
+		}
+
+		$input = array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' );
+		foreach ( array( 'from', 'to', 'path', 'allow', 'deny', 'include_any', 'include_all', 'require_changed_files' ) as $key ) {
+			if ( array_key_exists( $key, $parameters ) ) {
+				$input[ $key ] = $parameters[ $key ];
+			}
+		}
+		foreach ( array( 'staged', 'require_tests' ) as $key ) {
+			if ( array_key_exists( $key, $parameters ) ) {
+				$input[ $key ] = (bool) $parameters[ $key ];
+			}
+		}
+
+		$result = $ability->execute( $input );
+		if ( is_wp_error( $result ) ) {
+			return $this->buildErrorResponse( $result->get_error_message(), $tool_name );
+		}
+
+		return array(
+			'success'   => true,
+			'data'      => $result,
+			'tool_name' => $tool_name,
+		);
+	}
+
+	/**
 	 * Primary tool definition for convention compatibility.
 	 *
 	 * @return array
@@ -498,6 +560,52 @@ class WorkspaceTools extends BaseTool {
 					'required'    => false,
 					'description' => 'Number of surrounding lines to include for each match (default 0, max 10).',
 				),
+			),
+		);
+	}
+
+	/**
+	 * Tool definition for workspace_diff_summary.
+	 *
+	 * @return array
+	 */
+	public function getDiffSummaryDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleDiffSummary',
+			'description' => 'Summarize changed files, additions/deletions, test-touch status, and compact git diff metadata for a workspace handle.',
+			'parameters'  => array(
+				'name'   => array( 'type' => 'string', 'required' => true, 'description' => 'Workspace repository directory name or worktree handle.' ),
+				'from'   => array( 'type' => 'string', 'required' => false, 'description' => 'Optional from git ref.' ),
+				'to'     => array( 'type' => 'string', 'required' => false, 'description' => 'Optional to git ref.' ),
+				'staged' => array( 'type' => 'boolean', 'required' => false, 'description' => 'Summarize staged changes only.' ),
+				'path'   => array( 'type' => 'string', 'required' => false, 'description' => 'Optional relative path filter.' ),
+			),
+		);
+	}
+
+	/**
+	 * Tool definition for workspace_diff_validate.
+	 *
+	 * @return array
+	 */
+	public function getDiffValidateDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleDiffValidate',
+			'description' => 'Validate workspace diff shape using allowed/denied path patterns and optional test-change requirements.',
+			'parameters'  => array(
+				'name'                  => array( 'type' => 'string', 'required' => true, 'description' => 'Workspace repository directory name or worktree handle.' ),
+				'allow'                 => array( 'type' => 'array', 'required' => false, 'description' => 'Optional path patterns every changed file must match.' ),
+				'deny'                  => array( 'type' => 'array', 'required' => false, 'description' => 'Optional path patterns that must not be changed.' ),
+				'include_any'           => array( 'type' => 'array', 'required' => false, 'description' => 'Optional path patterns where at least one changed file must match.' ),
+				'include_all'           => array( 'type' => 'array', 'required' => false, 'description' => 'Optional path patterns where each pattern must match at least one changed file.' ),
+				'require_tests'         => array( 'type' => 'boolean', 'required' => false, 'description' => 'Require at least one changed file that looks like test coverage.' ),
+				'require_changed_files' => array( 'type' => 'object', 'required' => false, 'description' => 'Compatibility object supporting allow, deny, include_any, and include_all.' ),
+				'from'                  => array( 'type' => 'string', 'required' => false, 'description' => 'Optional from git ref.' ),
+				'to'                    => array( 'type' => 'string', 'required' => false, 'description' => 'Optional to git ref.' ),
+				'staged'                => array( 'type' => 'boolean', 'required' => false, 'description' => 'Validate staged changes only.' ),
+				'path'                  => array( 'type' => 'string', 'required' => false, 'description' => 'Optional relative path filter.' ),
 			),
 		);
 	}
