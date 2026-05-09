@@ -1192,11 +1192,11 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$items = array_map(
-			function ( $match ) {
+			function ( $row ) {
 				return array(
-					'path' => $match['path'] ?? '',
-					'line' => $match['line'] ?? 0,
-					'text' => $match['text'] ?? '',
+					'path' => $row['path'] ?? '',
+					'line' => $row['line'] ?? 0,
+					'text' => $row['text'] ?? '',
 				);
 			},
 			$matches
