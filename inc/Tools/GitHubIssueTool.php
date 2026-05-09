@@ -126,38 +126,36 @@ class GitHubIssueTool extends BaseTool {
 			'method'      => 'handle_tool_call',
 			'description' => $description,
 			'parameters'  => array(
-				'title'  => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Issue title.',
+				'type'       => 'object',
+				'properties' => array(
+					'title'     => array(
+						'type'        => 'string',
+						'description' => 'Issue title.',
+					),
+					'repo'      => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format. Falls back to default repo, then first registered repo.',
+					),
+					'body'      => array(
+						'type'        => 'string',
+						'description' => 'Issue body content. Supports GitHub Markdown.',
+					),
+					'labels'    => array(
+						'type'        => 'array',
+						'items'       => array( 'type' => 'string' ),
+						'description' => 'Labels to apply to the issue.',
+					),
+					'assignees' => array(
+						'type'        => 'array',
+						'items'       => array( 'type' => 'string' ),
+						'description' => 'GitHub usernames to assign to the issue.',
+					),
+					'milestone' => array(
+						'type'        => 'integer',
+						'description' => 'Milestone number to attach to the issue.',
+					),
 				),
-				'repo'   => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Repository in owner/repo format. Falls back to default repo, then first registered repo.',
-				),
-				'body'   => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Issue body content. Supports GitHub Markdown.',
-				),
-				'labels' => array(
-					'type'        => 'array',
-					'items'       => array( 'type' => 'string' ),
-					'required'    => false,
-					'description' => 'Labels to apply to the issue.',
-				),
-				'assignees' => array(
-					'type'        => 'array',
-					'items'       => array( 'type' => 'string' ),
-					'required'    => false,
-					'description' => 'GitHub usernames to assign to the issue.',
-				),
-				'milestone' => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Milestone number to attach to the issue.',
-				),
+				'required'   => array( 'title' ),
 			),
 		);
 	}

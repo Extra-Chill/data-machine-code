@@ -86,12 +86,17 @@ namespace {
 	};
 
 	$assert_arrays_define_items = function ( array $schema, string $path ) use ( &$assert, &$assert_arrays_define_items ): void {
+		if ( array_key_exists( 'required', $schema ) ) {
+			$assert( true, is_array( $schema['required'] ), $path . ' required is an object-level array' );
+		}
+
 		if ( ( $schema['type'] ?? null ) === 'array' ) {
 			$assert( true, array_key_exists( 'items', $schema ), $path . ' array schema defines items' );
 		}
 
 		foreach ( $schema['properties'] ?? array() as $property => $property_schema ) {
 			if ( is_array( $property_schema ) ) {
+				$assert( false, array_key_exists( 'required', $property_schema ) && ! is_array( $property_schema['required'] ), $path . '.properties.' . $property . ' avoids property-level required flags' );
 				$assert_arrays_define_items( $property_schema, $path . '.properties.' . $property );
 			}
 		}
@@ -134,11 +139,9 @@ namespace {
 
 	require __DIR__ . '/../inc/Tools/WorkspaceDiffTools.php';
 	$tool_definition = ( new \DataMachineCode\Tools\WorkspaceDiffTools() )->getDiffValidateDefinition();
-	foreach ( $tool_definition['parameters'] ?? array() as $parameter => $parameter_schema ) {
-		if ( is_array( $parameter_schema ) ) {
-			$assert_arrays_define_items( $parameter_schema, 'workspace_diff_validate.parameters.' . $parameter );
-		}
-	}
+	$assert( 'object', $tool_definition['parameters']['type'] ?? null, 'workspace_diff_validate parameters use canonical object schema' );
+	$assert( array( 'name' ), $tool_definition['parameters']['required'] ?? null, 'workspace_diff_validate declares object-level required fields' );
+	$assert_arrays_define_items( $tool_definition['parameters'] ?? array(), 'workspace_diff_validate.parameters' );
 
 	$diff    = new \DataMachineCode\Workspace\WorkspaceDiff();
 	$summary = $diff->summary( 'demo@diff-check' );

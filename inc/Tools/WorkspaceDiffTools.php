@@ -64,11 +64,15 @@ class WorkspaceDiffTools extends BaseTool {
 			'method'      => 'handleDiffSummary',
 			'description' => 'Summarize changed files, additions/deletions, test-touch status, and compact git diff metadata for a workspace handle.',
 			'parameters'  => array(
-				'name'   => array( 'type' => 'string', 'required' => true, 'description' => 'Workspace repository directory name or worktree handle.' ),
-				'from'   => array( 'type' => 'string', 'required' => false, 'description' => 'Optional from git ref.' ),
-				'to'     => array( 'type' => 'string', 'required' => false, 'description' => 'Optional to git ref.' ),
-				'staged' => array( 'type' => 'boolean', 'required' => false, 'description' => 'Summarize staged changes only.' ),
-				'path'   => array( 'type' => 'string', 'required' => false, 'description' => 'Optional relative path filter.' ),
+				'type'       => 'object',
+				'properties' => array(
+					'name'   => array( 'type' => 'string', 'description' => 'Workspace repository directory name or worktree handle.' ),
+					'from'   => array( 'type' => 'string', 'description' => 'Optional from git ref.' ),
+					'to'     => array( 'type' => 'string', 'description' => 'Optional to git ref.' ),
+					'staged' => array( 'type' => 'boolean', 'description' => 'Summarize staged changes only.' ),
+					'path'   => array( 'type' => 'string', 'description' => 'Optional relative path filter.' ),
+				),
+				'required'   => array( 'name' ),
 			),
 		);
 	}
@@ -80,27 +84,30 @@ class WorkspaceDiffTools extends BaseTool {
 			'method'      => 'handleDiffValidate',
 			'description' => 'Validate workspace diff shape using allowed/denied path patterns and optional test-change requirements.',
 			'parameters'  => array(
-				'name'                  => array( 'type' => 'string', 'required' => true, 'description' => 'Workspace repository directory name or worktree handle.' ),
-				'allow'                 => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'required' => false, 'description' => 'Optional path patterns every changed file must match.' ),
-				'deny'                  => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'required' => false, 'description' => 'Optional path patterns that must not be changed.' ),
-				'include_any'           => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'required' => false, 'description' => 'Optional path patterns where at least one changed file must match.' ),
-				'include_all'           => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'required' => false, 'description' => 'Optional path patterns where each pattern must match at least one changed file.' ),
-				'require_tests'         => array( 'type' => 'boolean', 'required' => false, 'description' => 'Require at least one changed file that looks like test coverage.' ),
-				'require_changed_files' => array(
-					'type'        => 'object',
-					'required'    => false,
-					'description' => 'Compatibility object supporting allow, deny, include_any, and include_all.',
-					'properties'  => array(
-						'allow'       => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'required' => false, 'description' => 'Optional path patterns every changed file must match.' ),
-						'deny'        => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'required' => false, 'description' => 'Optional path patterns that must not be changed.' ),
-						'include_any' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'required' => false, 'description' => 'Optional path patterns where at least one changed file must match.' ),
-						'include_all' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'required' => false, 'description' => 'Optional path patterns where each pattern must match at least one changed file.' ),
+				'type'       => 'object',
+				'properties' => array(
+					'name'                  => array( 'type' => 'string', 'description' => 'Workspace repository directory name or worktree handle.' ),
+					'allow'                 => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Optional path patterns every changed file must match.' ),
+					'deny'                  => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Optional path patterns that must not be changed.' ),
+					'include_any'           => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Optional path patterns where at least one changed file must match.' ),
+					'include_all'           => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Optional path patterns where each pattern must match at least one changed file.' ),
+					'require_tests'         => array( 'type' => 'boolean', 'description' => 'Require at least one changed file that looks like test coverage.' ),
+					'require_changed_files' => array(
+						'type'        => 'object',
+						'description' => 'Compatibility object supporting allow, deny, include_any, and include_all.',
+						'properties'  => array(
+							'allow'       => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Optional path patterns every changed file must match.' ),
+							'deny'        => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Optional path patterns that must not be changed.' ),
+							'include_any' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Optional path patterns where at least one changed file must match.' ),
+							'include_all' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Optional path patterns where each pattern must match at least one changed file.' ),
+						),
 					),
+					'from'                  => array( 'type' => 'string', 'description' => 'Optional from git ref.' ),
+					'to'                    => array( 'type' => 'string', 'description' => 'Optional to git ref.' ),
+					'staged'                => array( 'type' => 'boolean', 'description' => 'Validate staged changes only.' ),
+					'path'                  => array( 'type' => 'string', 'description' => 'Optional relative path filter.' ),
 				),
-				'from'                  => array( 'type' => 'string', 'required' => false, 'description' => 'Optional from git ref.' ),
-				'to'                    => array( 'type' => 'string', 'required' => false, 'description' => 'Optional to git ref.' ),
-				'staged'                => array( 'type' => 'boolean', 'required' => false, 'description' => 'Validate staged changes only.' ),
-				'path'                  => array( 'type' => 'string', 'required' => false, 'description' => 'Optional relative path filter.' ),
+				'required'   => array( 'name' ),
 			),
 		);
 	}

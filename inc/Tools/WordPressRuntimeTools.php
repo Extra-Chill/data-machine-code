@@ -97,16 +97,18 @@ class WordPressRuntimeTools extends BaseTool {
 			'method'      => 'handleLs',
 			'description' => 'List files/directories under allowlisted WordPress runtime source roots only. Default path is wp-content/plugins.',
 			'parameters'  => array(
-				'path'        => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Runtime directory path relative to ABSPATH. Must be under wp-content/plugins, wp-content/themes, wp-includes, or wp-admin.',
+				'type'       => 'object',
+				'properties' => array(
+					'path'        => array(
+						'type'        => 'string',
+						'description' => 'Runtime directory path relative to ABSPATH. Must be under wp-content/plugins, wp-content/themes, wp-includes, or wp-admin.',
+					),
+					'max_entries' => array(
+						'type'        => 'integer',
+						'description' => 'Maximum entries to return (default 200, max 1000).',
+					),
 				),
-				'max_entries' => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum entries to return (default 200, max 1000).',
-				),
+				'required'   => array(),
 			),
 		);
 	}
@@ -118,26 +120,26 @@ class WordPressRuntimeTools extends BaseTool {
 			'method'      => 'handleRead',
 			'description' => 'Read a bounded text file under allowlisted WordPress runtime source roots only. Denies sensitive paths, traversal, oversized files, and binary files.',
 			'parameters'  => array(
-				'path'     => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Runtime file path relative to ABSPATH.',
+				'type'       => 'object',
+				'properties' => array(
+					'path'     => array(
+						'type'        => 'string',
+						'description' => 'Runtime file path relative to ABSPATH.',
+					),
+					'max_size' => array(
+						'type'        => 'integer',
+						'description' => 'Maximum file size in bytes (default/max 1MB).',
+					),
+					'offset'   => array(
+						'type'        => 'integer',
+						'description' => 'Line number to start reading from (1-indexed).',
+					),
+					'limit'    => array(
+						'type'        => 'integer',
+						'description' => 'Maximum number of lines to return (default 500, max 2000).',
+					),
 				),
-				'max_size' => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum file size in bytes (default/max 1MB).',
-				),
-				'offset'   => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Line number to start reading from (1-indexed).',
-				),
-				'limit'    => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum number of lines to return (default 500, max 2000).',
-				),
+				'required'   => array( 'path' ),
 			),
 		);
 	}
