@@ -1101,6 +1101,114 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	/**
+	 * Search files in a workspace repo.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <repo>
+	 * : Repository directory name or worktree handle.
+	 *
+	 * <pattern>
+	 * : Regular expression pattern to search for.
+	 *
+	 * [<path>]
+	 * : Relative file or directory path to search within.
+	 *
+	 * [--include=<glob>]
+	 * : Optional glob pattern to limit matching file paths.
+	 *
+	 * [--max-results=<count>]
+	 * : Maximum number of matches to return.
+	 * ---
+	 * default: 100
+	 * ---
+	 *
+	 * [--context-lines=<count>]
+	 * : Number of surrounding lines to include for each match.
+	 * ---
+	 * default: 0
+	 * ---
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 *   - csv
+	 *   - yaml
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code workspace grep homeboy "function_name" --include="*.php"
+	 *
+	 * @subcommand grep
+	 */
+	public function grep( array $args, array $assoc_args ): void {
+		if ( empty( $args[0] ) || ! isset( $args[1] ) ) {
+			WP_CLI::error( 'Usage: wp datamachine-code workspace grep <repo> <pattern> [<path>]' );
+			return;
+		}
+
+		$ability = wp_get_ability( 'datamachine/workspace-grep' );
+		if ( ! $ability ) {
+			WP_CLI::error( 'Workspace grep ability not available.' );
+			return;
+		}
+
+		$input = array(
+			'repo'    => $args[0],
+			'pattern' => $args[1],
+		);
+
+		if ( ! empty( $args[2] ) ) {
+			$input['path'] = $args[2];
+		}
+
+		if ( isset( $assoc_args['include'] ) ) {
+			$input['include'] = $assoc_args['include'];
+		}
+
+		if ( isset( $assoc_args['max-results'] ) ) {
+			$input['max_results'] = (int) $assoc_args['max-results'];
+		}
+
+		if ( isset( $assoc_args['context-lines'] ) ) {
+			$input['context_lines'] = (int) $assoc_args['context-lines'];
+		}
+
+		$result = $ability->execute( $input );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+
+		$matches = (array) ( $result['matches'] ?? array() );
+		if ( empty( $matches ) ) {
+			WP_CLI::log( 'No matches.' );
+			return;
+		}
+
+		$items = array_map(
+			function ( $match ) {
+				return array(
+					'path' => $match['path'] ?? '',
+					'line' => $match['line'] ?? 0,
+					'text' => $match['text'] ?? '',
+				);
+			},
+			$matches
+		);
+
+		$this->format_items( $items, array( 'path', 'line', 'text' ), $assoc_args, 'path' );
+		if ( ! empty( $result['truncated'] ) ) {
+			WP_CLI::warning( 'Results truncated. Increase --max-results for more matches.' );
+		}
+	}
+
+	/**
 	 * Write a file to a workspace repo.
 	 *
 	 * Creates or overwrites a file. Parent directories are created as needed.

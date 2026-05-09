@@ -41,6 +41,7 @@ class WorkspaceTools extends BaseTool {
 			'workspace_show',
 			'workspace_ls',
 			'workspace_read',
+			'workspace_grep',
 		);
 
 		if ( ! in_array( $tool_id, $workspace_tools, true ) ) {
@@ -61,6 +62,7 @@ class WorkspaceTools extends BaseTool {
 		$this->registerTool( 'workspace_show', array( $this, 'getShowDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-show' ) );
 		$this->registerTool( 'workspace_ls', array( $this, 'getLsDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-ls' ) );
 		$this->registerTool( 'workspace_read', array( $this, 'getReadDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-read' ) );
+		$this->registerTool( 'workspace_grep', array( $this, 'getGrepDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-grep' ) );
 	}
 
 	/**
@@ -265,6 +267,49 @@ class WorkspaceTools extends BaseTool {
 	}
 
 	/**
+	 * Handle workspace_grep tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleGrep( array $parameters ): array {
+		$ability = wp_get_ability( 'datamachine/workspace-grep' );
+
+		if ( ! $ability ) {
+			return $this->buildErrorResponse( 'Workspace grep ability not available.', 'workspace_grep' );
+		}
+
+		$input = array(
+			'repo'    => $parameters['repo'] ?? '',
+			'pattern' => $parameters['pattern'] ?? '',
+		);
+
+		foreach ( array( 'path', 'include' ) as $key ) {
+			if ( isset( $parameters[ $key ] ) ) {
+				$input[ $key ] = $parameters[ $key ];
+			}
+		}
+
+		foreach ( array( 'max_results', 'context_lines' ) as $key ) {
+			if ( isset( $parameters[ $key ] ) ) {
+				$input[ $key ] = (int) $parameters[ $key ];
+			}
+		}
+
+		$result = $ability->execute( $input );
+
+		if ( is_wp_error( $result ) ) {
+			return $this->buildErrorResponse( $result->get_error_message(), 'workspace_grep' );
+		}
+
+		return array(
+			'success'   => true,
+			'data'      => $result,
+			'tool_name' => 'workspace_grep',
+		);
+	}
+
+	/**
 	 * Primary tool definition for convention compatibility.
 	 *
 	 * @return array
@@ -407,6 +452,51 @@ class WorkspaceTools extends BaseTool {
 					'type'        => 'integer',
 					'required'    => false,
 					'description' => 'Maximum number of lines to return.',
+				),
+			),
+		);
+	}
+
+	/**
+	 * Tool definition for workspace_grep.
+	 *
+	 * @return array
+	 */
+	public function getGrepDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleGrep',
+			'description' => 'Search text files in a workspace repository using a regular expression pattern.',
+			'parameters'  => array(
+				'repo'          => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Workspace repository directory name or worktree handle.',
+				),
+				'pattern'       => array(
+					'type'        => 'string',
+					'required'    => true,
+					'description' => 'Regular expression pattern to search for.',
+				),
+				'path'          => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Optional relative file or directory path inside the repository.',
+				),
+				'include'       => array(
+					'type'        => 'string',
+					'required'    => false,
+					'description' => 'Optional glob pattern to limit matching file paths.',
+				),
+				'max_results'   => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Maximum number of matches to return (default 100, max 500).',
+				),
+				'context_lines' => array(
+					'type'        => 'integer',
+					'required'    => false,
+					'description' => 'Number of surrounding lines to include for each match (default 0, max 10).',
 				),
 			),
 		);
