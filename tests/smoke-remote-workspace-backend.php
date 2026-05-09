@@ -23,17 +23,33 @@ namespace DataMachineCode\Abilities {
 			$ref  = (string) ( $input['ref'] ?? 'main' );
 			$key  = $repo . ':' . $ref . ':' . $path;
 			if ( ! isset( self::$files[ $key ] ) ) {
-				return new \WP_Error( 'github_not_found', 'Not found.', array( 'status' => 404 ) );
+				return array(
+					'success' => false,
+					'files'   => array(),
+					'errors'  => array(
+						array(
+							'path'    => $path,
+							'code'    => 'github_not_found',
+							'message' => 'No commit found for the ref ' . $ref,
+							'status'  => 404,
+						),
+					),
+					'count'   => 0,
+				);
 			}
 			$file = self::$files[ $key ];
 			return array(
 				'success' => true,
-				'file'    => array(
-					'path'    => $path,
-					'size'    => strlen( $file['content'] ),
-					'sha'     => $file['sha'],
-					'content' => $file['content'],
+				'files'   => array(
+					array(
+						'path'    => $path,
+						'size'    => strlen( $file['content'] ),
+						'sha'     => $file['sha'],
+						'content' => $file['content'],
+					),
 				),
+				'errors'  => array(),
+				'count'   => 1,
 			);
 		}
 
