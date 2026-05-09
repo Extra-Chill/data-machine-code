@@ -162,6 +162,21 @@ namespace {
 		}
 	}
 
+	if ( ! function_exists( 'sanitize_key' ) ) {
+		function sanitize_key( $key ): string {
+			$key = strtolower( (string) $key );
+			return preg_replace( '/[^a-z0-9_\-]/', '', $key ) ?? '';
+		}
+	}
+
+	if ( ! function_exists( 'sanitize_title' ) ) {
+		function sanitize_title( $title ): string {
+			$title = strtolower( trim( (string) $title ) );
+			$title = preg_replace( '/[^a-z0-9]+/', '-', $title ) ?? '';
+			return trim( $title, '-' );
+		}
+	}
+
 	if ( ! function_exists( 'is_wp_error' ) ) {
 		function is_wp_error( $thing ): bool {
 			return $thing instanceof \WP_Error;
@@ -177,6 +192,7 @@ namespace {
 	}
 
 	require_once __DIR__ . '/../inc/Support/RunArtifactPrSectionRenderer.php';
+	require_once __DIR__ . '/../inc/Support/RunArtifactBundleFileWriter.php';
 	require_once __DIR__ . '/../inc/Handlers/GitHub/GitHubPullRequestPublish.php';
 
 	use DataMachine\Core\JobArtifacts;
@@ -415,6 +431,40 @@ namespace {
 	$assert( 'comment mode preserves original PR body', 'Original body.' === ( GitHubAbilities::$createPullRequestCalls[0]['body'] ?? '' ) );
 	$assert( 'comment mode upserts one managed artifact comment', 1 === count( GitHubAbilities::$upsertPullReviewCommentCalls ) );
 	$assert( 'comment mode uses run artifact marker', 'datamachine-run-artifacts' === ( GitHubAbilities::$upsertPullReviewCommentCalls[0]['marker'] ?? '' ) );
+
+	// --- Test 9: bundle-file run artifacts are committed to the PR head branch ---
+	GitHubAbilities::reset();
+	$handler = new TestablePullRequestPublish();
+
+	$result = $handler->callExecutePublish(
+		array(
+			'title'                      => 'Memory artifact PR',
+			'head'                       => 'agent/memory-artifact',
+			'run_artifacts'              => array(
+				'daily_memory_artifacts' => array(
+					array(
+						'type'                 => 'agent_daily_memory',
+						'agent_slug'           => 'world-creator',
+						'date'                 => '2026-05-09',
+						'bundle_relative_path' => 'memory/agent/daily/2026/05/09.md',
+						'content'              => "# 2026-05-09\n\n- Preserved memory.\n",
+					),
+				),
+			),
+			'run_artifact_egress_policy' => array(
+				'daily_memory' => array( 'egress' => array( 'bundle-file' ) ),
+			),
+		),
+		array(
+			'repo' => 'Extra-Chill/data-machine-code',
+		)
+	);
+
+	$assert( 'run artifact publish succeeds', true === ( $result['success'] ?? false ) );
+	$assert( 'bundle-file artifact creates one GitHub file write', 1 === count( GitHubAbilities::$createOrUpdateFileCalls ) );
+	$assert( 'artifact write targets PR head branch', 'agent/memory-artifact' === ( GitHubAbilities::$createOrUpdateFileCalls[0]['branch'] ?? '' ) );
+	$assert( 'artifact write uses bundle-relative path under default bundle root', 'bundles/world-creator/memory/agent/daily/2026/05/09.md' === ( GitHubAbilities::$createOrUpdateFileCalls[0]['file_path'] ?? '' ) );
+	$assert( 'artifact write is reported in response files', 'bundles/world-creator/memory/agent/daily/2026/05/09.md' === ( $result['data']['files'][0]['file_path'] ?? '' ) );
 
 	if ( ! empty( $failures ) ) {
 		echo "\nFAIL: " . count( $failures ) . " assertion(s)\n";

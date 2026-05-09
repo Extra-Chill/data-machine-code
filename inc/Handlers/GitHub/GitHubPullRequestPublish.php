@@ -10,6 +10,7 @@ namespace DataMachineCode\Handlers\GitHub;
 use DataMachine\Core\Steps\HandlerRegistrationTrait;
 use DataMachine\Core\Steps\Publish\Handlers\PublishHandler;
 use DataMachineCode\Abilities\GitHubAbilities;
+use DataMachineCode\Support\RunArtifactBundleFileWriter;
 use DataMachineCode\Support\RunArtifactPrSectionRenderer;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -80,7 +81,7 @@ class GitHubPullRequestPublish extends PublishHandler {
 					),
 					'files'                 => array(
 						'type'        => 'array',
-						'description' => 'Optional files to commit to the head branch before opening the pull request.',
+						'description' => 'Optional files to commit to the head branch before opening the pull request. Data Machine run artifacts with bundle-file egress are appended automatically when job_id is available.',
 						'items'       => array(
 							'type'       => 'object',
 							'required'   => array( 'file_path', 'content' ),
@@ -103,6 +104,14 @@ class GitHubPullRequestPublish extends PublishHandler {
 					'commit_message'        => array(
 						'type'        => 'string',
 						'description' => 'Default commit message for files committed during publish.',
+					),
+					'run_artifacts'         => array(
+						'type'        => 'object',
+						'description' => 'Optional Data Machine job artifact payload. Normally discovered from job_id; provided here for tests or external callers.',
+					),
+					'bundle_root'           => array(
+						'type'        => 'string',
+						'description' => 'Repository-relative bundle root for bundle-file artifacts. Defaults to bundles/{agent_slug}. Supports {agent_slug}, {bundle_slug}, and date placeholders.',
 					),
 					'labels'                => array(
 						'type'        => 'array',
@@ -157,6 +166,8 @@ class GitHubPullRequestPublish extends PublishHandler {
 
 		$committed_files = array();
 		$files           = is_array( $parameters['files'] ?? null ) ? $parameters['files'] : array();
+		$artifact_files  = $this->bundleFileArtifactsForPublish( $parameters, $handler_config );
+		$files           = array_merge( $files, $artifact_files );
 		foreach ( $files as $file ) {
 			if ( ! is_array( $file ) ) {
 				return $this->errorResponse( 'GitHub Pull Request: each files item must be an object.', array( 'job_id' => $parameters['job_id'] ?? null ) );
@@ -288,7 +299,7 @@ class GitHubPullRequestPublish extends PublishHandler {
 	 */
 	private function prepareRunArtifactAttachment( array $parameters, array $handler_config, string $body ): array {
 		$job_id = (int) ( $parameters['job_id'] ?? 0 );
-		if ( $job_id <= 0 || ! class_exists( '\\DataMachine\\Core\\JobArtifacts' ) ) {
+		if ( $job_id <= 0 ) {
 			return array();
 		}
 
@@ -297,12 +308,12 @@ class GitHubPullRequestPublish extends PublishHandler {
 			return array();
 		}
 
-		$artifacts_result = ( new \DataMachine\Core\JobArtifacts() )->get( $job_id );
-		if ( empty( $artifacts_result['success'] ) || ! is_array( $artifacts_result['artifacts'] ?? null ) ) {
+		$artifacts = $this->jobArtifactsForPublish( $job_id );
+		if ( empty( $artifacts ) ) {
 			return array();
 		}
 
-		$artifacts = $this->filterRunArtifactsForTarget( $artifacts_result['artifacts'], $policy, 'pr-body' );
+		$artifacts = $this->filterRunArtifactsForTarget( $artifacts, $policy, 'pr-body' );
 		if ( empty( $artifacts ) ) {
 			return array();
 		}
@@ -316,6 +327,29 @@ class GitHubPullRequestPublish extends PublishHandler {
 	}
 
 	/**
+	 * Resolve Data Machine run artifacts that should be written into the PR branch.
+	 *
+	 * @param array $parameters     Tool parameters.
+	 * @param array $handler_config Handler configuration.
+	 * @return array<int,array<string,mixed>> File records accepted by the normal files loop.
+	 */
+	private function bundleFileArtifactsForPublish( array $parameters, array $handler_config ): array {
+		$artifacts = is_array( $parameters['run_artifacts'] ?? null ) ? $parameters['run_artifacts'] : $this->jobArtifactsForPublish( (int) ( $parameters['job_id'] ?? 0 ) );
+		if ( empty( $artifacts ) ) {
+			return array();
+		}
+
+		$policy = is_array( $parameters['run_artifact_egress_policy'] ?? null ) ? $parameters['run_artifact_egress_policy'] : $this->resolveRunArtifactPolicy( $parameters );
+		if ( empty( $policy ) && is_array( $artifacts['run_artifact_egress_policy'] ?? null ) ) {
+			$policy = $artifacts['run_artifact_egress_policy'];
+		}
+
+		$bundle_root = (string) ( $parameters['bundle_root'] ?? $handler_config['bundle_root'] ?? '' );
+
+		return RunArtifactBundleFileWriter::fileWritesFromArtifacts( $artifacts, $policy, $bundle_root );
+	}
+
+	/**
 	 * @param array $parameters Tool parameters.
 	 * @return array<string, array<string, mixed>>
 	 */
@@ -323,10 +357,12 @@ class GitHubPullRequestPublish extends PublishHandler {
 		$engine = $parameters['engine'] ?? null;
 		if ( is_object( $engine ) && method_exists( $engine, 'get' ) ) {
 			$policy = $engine->get( 'run_artifact_egress_policy', array() );
-			return is_array( $policy ) ? $policy : array();
+			if ( is_array( $policy ) && ! empty( $policy ) ) {
+				return $policy;
+			}
 		}
 
-		return array();
+		return $this->jobRunArtifactEgressPolicy( (int) ( $parameters['job_id'] ?? 0 ) );
 	}
 
 	/**
@@ -382,6 +418,39 @@ class GitHubPullRequestPublish extends PublishHandler {
 		$mode   = sanitize_text_field( (string) ( $config['mode'] ?? $handler_config['run_artifact_attachment_mode'] ?? RunArtifactPrSectionRenderer::MODE_BODY_SECTION ) );
 
 		return RunArtifactPrSectionRenderer::MODE_COMMENT === $mode ? RunArtifactPrSectionRenderer::MODE_COMMENT : RunArtifactPrSectionRenderer::MODE_BODY_SECTION;
+	}
+
+	/**
+	 * @return array<string,mixed>
+	 */
+	private function jobArtifactsForPublish( int $job_id ): array {
+		if ( $job_id <= 0 || ! class_exists( '\\DataMachine\\Core\\JobArtifacts' ) ) {
+			return array();
+		}
+
+		$result = ( new \DataMachine\Core\JobArtifacts() )->get( $job_id );
+		if ( empty( $result['success'] ) || ! is_array( $result['artifacts'] ?? null ) ) {
+			return array();
+		}
+
+		return $result['artifacts'];
+	}
+
+	/**
+	 * @return array<string,mixed>
+	 */
+	private function jobRunArtifactEgressPolicy( int $job_id ): array {
+		if ( $job_id <= 0 || ! class_exists( '\\DataMachine\\Core\\Database\\Jobs\\Jobs' ) ) {
+			return array();
+		}
+
+		$jobs = new \DataMachine\Core\Database\Jobs\Jobs();
+		if ( ! method_exists( $jobs, 'retrieve_engine_data' ) ) {
+			return array();
+		}
+
+		$engine_data = $jobs->retrieve_engine_data( $job_id );
+		return is_array( $engine_data['run_artifact_egress_policy'] ?? null ) ? $engine_data['run_artifact_egress_policy'] : array();
 	}
 
 	/**
