@@ -134,8 +134,14 @@ namespace {
 	$read = $backend->read_file( 'example@fix-example', 'src/example.php', 1000000 );
 	$assert( 'read falls back to default branch content', ! is_wp_error( $read ) && str_contains( $read['content'], 'old' ) );
 
+	$primary_grep = $backend->grep( 'example', 'old', 'src', '*.php', 10, 1 );
+	$assert( 'grep searches registered primary before worktree edits', ! is_wp_error( $primary_grep ) && 1 === $primary_grep['count'] && 'src/example.php' === $primary_grep['matches'][0]['path'] && 2 === $primary_grep['matches'][0]['line'] && ! empty( $primary_grep['matches'][0]['context'] ) );
+
 	$edit = $backend->edit_file( 'example@fix-example', 'src/example.php', 'old', 'new' );
 	$assert( 'edit stages pending content', ! is_wp_error( $edit ) && 1 === $edit['replacements'] );
+
+	$worktree_grep = $backend->grep( 'example@fix-example', 'new', null, '*.php' );
+	$assert( 'grep searches pending worktree content', ! is_wp_error( $worktree_grep ) && 1 === $worktree_grep['count'] && str_contains( $worktree_grep['matches'][0]['text'], 'new' ) );
 
 	$status = $backend->git_status( 'example@fix-example' );
 	$assert( 'status reports pending file as dirty', ! is_wp_error( $status ) && 1 === $status['dirty'] && array( 'src/example.php' ) === $status['files'] );

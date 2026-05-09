@@ -280,6 +280,71 @@ class WorkspaceAbilities {
 				)
 			);
 
+			wp_register_ability(
+				'datamachine/workspace-grep',
+				array(
+					'label'               => 'Search Workspace Files',
+					'description'         => 'Search text files within a workspace repository using a regular expression pattern.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'repo'          => array(
+								'type'        => 'string',
+								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
+							),
+							'pattern'       => array(
+								'type'        => 'string',
+								'description' => 'Regular expression pattern to search for.',
+							),
+							'path'          => array(
+								'type'        => 'string',
+								'description' => 'Optional relative file or directory path to search within.',
+							),
+							'include'       => array(
+								'type'        => 'string',
+								'description' => 'Optional glob pattern to limit matching file paths.',
+							),
+							'max_results'   => array(
+								'type'        => 'integer',
+								'description' => 'Maximum number of matches to return (default 100, max 500).',
+							),
+							'context_lines' => array(
+								'type'        => 'integer',
+								'description' => 'Number of surrounding lines to include for each match (default 0, max 10).',
+							),
+						),
+						'required'   => array( 'repo', 'pattern' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'   => array( 'type' => 'boolean' ),
+							'repo'      => array( 'type' => 'string' ),
+							'path'      => array( 'type' => 'string' ),
+							'pattern'   => array( 'type' => 'string' ),
+							'count'     => array( 'type' => 'integer' ),
+							'truncated' => array( 'type' => 'boolean' ),
+							'matches'   => array(
+								'type'  => 'array',
+								'items' => array(
+									'type'       => 'object',
+									'properties' => array(
+										'path'    => array( 'type' => 'string' ),
+										'line'    => array( 'type' => 'integer' ),
+										'text'    => array( 'type' => 'string' ),
+										'context' => array( 'type' => 'array' ),
+									),
+								),
+							),
+						),
+					),
+					'execute_callback'    => array( self::class, 'grepFiles' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
 			// -----------------------------------------------------------------
 			// Mutating abilities (show_in_rest = false, CLI-only).
 			// -----------------------------------------------------------------
@@ -1881,6 +1946,37 @@ class WorkspaceAbilities {
 		return $reader->list_directory(
 			$input['repo'] ?? '',
 			$input['path'] ?? null
+		);
+	}
+
+	/**
+	 * Search workspace files.
+	 *
+	 * @param array $input Input parameters with 'repo', 'pattern', optional 'path', 'include', 'max_results', 'context_lines'.
+	 * @return array Result.
+	 */
+	public static function grepFiles( array $input ): array|\WP_Error {
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			return ( new RemoteWorkspaceBackend() )->grep(
+				$input['repo'] ?? '',
+				$input['pattern'] ?? '',
+				$input['path'] ?? null,
+				$input['include'] ?? null,
+				isset( $input['max_results'] ) ? (int) $input['max_results'] : 100,
+				isset( $input['context_lines'] ) ? (int) $input['context_lines'] : 0
+			);
+		}
+
+		$workspace = new Workspace();
+		$reader    = new WorkspaceReader( $workspace );
+
+		return $reader->grep(
+			$input['repo'] ?? '',
+			$input['pattern'] ?? '',
+			$input['path'] ?? null,
+			$input['include'] ?? null,
+			isset( $input['max_results'] ) ? (int) $input['max_results'] : 100,
+			isset( $input['context_lines'] ) ? (int) $input['context_lines'] : 0
 		);
 	}
 

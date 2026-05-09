@@ -195,4 +195,183 @@ class WorkspaceReader {
 			'entries' => $items,
 		);
 	}
+
+	/**
+	 * Search text files in a workspace repo.
+	 *
+	 * @param string      $name          Repository directory name.
+	 * @param string      $pattern       PCRE pattern body to search for.
+	 * @param string|null $path          Optional relative directory/file path to limit search.
+	 * @param string|null $include_pattern Optional glob pattern for file paths.
+	 * @param int         $max_results   Maximum number of matches to return.
+	 * @param int         $context_lines Number of surrounding lines to include.
+	 * @return array{success: bool, repo?: string, path?: string, pattern?: string, matches?: array, count?: int, truncated?: bool}|\WP_Error
+	 */
+	public function grep( string $name, string $pattern, ?string $path = null, ?string $include_pattern = null, int $max_results = 100, int $context_lines = 0 ): array|\WP_Error {
+		$repo_path = $this->workspace->get_repo_path( $name );
+		if ( ! is_dir( $repo_path ) ) {
+			return new \WP_Error( 'repo_not_found', sprintf( 'Repository "%s" not found in workspace.', $name ), array( 'status' => 404 ) );
+		}
+
+		$repo_real = realpath( $repo_path );
+		if ( false === $repo_real ) {
+			return new \WP_Error( 'repo_not_found', sprintf( 'Repository "%s" not found in workspace.', $name ), array( 'status' => 404 ) );
+		}
+
+		$target_path = $repo_real;
+		$search_path = '/';
+		if ( null !== $path && '' !== $path ) {
+			$path        = ltrim( $path, '/' );
+			$target_path = $repo_real . '/' . $path;
+			$validation  = $this->workspace->validate_containment( $target_path, $repo_real );
+			if ( ! $validation['valid'] ) {
+				return new \WP_Error( 'path_traversal', $validation['message'], array( 'status' => 403 ) );
+			}
+			$target_path = $validation['real_path'];
+			$search_path = $path;
+		}
+
+		if ( ! is_file( $target_path ) && ! is_dir( $target_path ) ) {
+			return new \WP_Error( 'path_not_found', sprintf( 'Path not found: %s', $path ?? '/' ), array( 'status' => 404 ) );
+		}
+
+		$regex = $this->compile_search_pattern( $pattern );
+		if ( is_wp_error( $regex ) ) {
+			return $regex;
+		}
+
+		$matches       = array();
+		$max_results   = max( 1, min( 500, $max_results ) );
+		$context_lines = max( 0, min( 10, $context_lines ) );
+		$files         = is_file( $target_path ) ? array( $target_path ) : $this->iterable_files( $target_path );
+
+		foreach ( $files as $file_path ) {
+			$relative_path = ltrim( substr( $file_path, strlen( $repo_real ) ), '/' );
+			if ( str_starts_with( $relative_path, '.git/' ) || ! $this->path_matches_include( $relative_path, $include_pattern ) ) {
+				continue;
+			}
+
+			$file_matches = $this->grep_file( $file_path, $relative_path, $regex, $context_lines, $max_results - count( $matches ) );
+			if ( is_wp_error( $file_matches ) ) {
+				continue;
+			}
+
+			$matches = array_merge( $matches, $file_matches );
+			if ( count( $matches ) >= $max_results ) {
+				break;
+			}
+		}
+
+		return array(
+			'success'   => true,
+			'repo'      => $name,
+			'path'      => $search_path,
+			'pattern'   => $pattern,
+			'matches'   => $matches,
+			'count'     => count( $matches ),
+			'truncated' => count( $matches ) >= $max_results,
+		);
+	}
+
+	private function compile_search_pattern( string $pattern ): string|\WP_Error {
+		if ( '' === $pattern ) {
+			return new \WP_Error( 'missing_pattern', 'Search pattern is required.', array( 'status' => 400 ) );
+		}
+
+		$regex = '~' . str_replace( '~', '\\~', $pattern ) . '~u';
+		$previous_handler = set_error_handler( fn() => true );
+		$is_valid         = false !== preg_match( $regex, '' );
+		restore_error_handler();
+		unset( $previous_handler );
+
+		if ( ! $is_valid ) {
+			return new \WP_Error( 'invalid_pattern', 'Search pattern is not a valid regular expression.', array( 'status' => 400 ) );
+		}
+
+		return $regex;
+	}
+
+	/**
+	 * @return iterable<string>
+	 */
+	private function iterable_files( string $path ): iterable {
+		$iterator = new \RecursiveIteratorIterator(
+			new \RecursiveCallbackFilterIterator(
+				new \RecursiveDirectoryIterator( $path, \FilesystemIterator::SKIP_DOTS ),
+				function ( \SplFileInfo $file ) {
+					return '.git' !== $file->getFilename();
+				}
+			)
+		);
+
+		foreach ( $iterator as $file ) {
+			if ( $file->isFile() && $file->isReadable() ) {
+				yield $file->getPathname();
+			}
+		}
+	}
+
+	private function path_matches_include( string $path, ?string $include_pattern ): bool {
+		if ( null === $include_pattern || '' === $include_pattern ) {
+			return true;
+		}
+
+		return fnmatch( $include_pattern, $path ) || fnmatch( $include_pattern, basename( $path ) );
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>|\WP_Error
+	 */
+	private function grep_file( string $file_path, string $relative_path, string $regex, int $context_lines, int $limit ): array|\WP_Error {
+		$size = filesize( $file_path );
+		if ( false === $size || $size > Workspace::MAX_READ_SIZE ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+		$content = file_get_contents( $file_path );
+		if ( false === $content || false !== strpos( substr( $content, 0, 8192 ), "\0" ) ) {
+			return array();
+		}
+
+		return $this->grep_content( $content, $relative_path, $regex, $context_lines, $limit );
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function grep_content( string $content, string $path, string $regex, int $context_lines, int $limit ): array {
+		$lines   = explode( "\n", $content );
+		$matches = array();
+		foreach ( $lines as $index => $line ) {
+			if ( ! preg_match( $regex, $line ) ) {
+				continue;
+			}
+
+			$match = array(
+				'path' => $path,
+				'line' => $index + 1,
+				'text' => $line,
+			);
+
+			if ( $context_lines > 0 ) {
+				$start             = max( 0, $index - $context_lines );
+				$end               = min( count( $lines ) - 1, $index + $context_lines );
+				$match['context']  = array();
+				for ( $context_index = $start; $context_index <= $end; ++$context_index ) {
+					$match['context'][] = array(
+						'line' => $context_index + 1,
+						'text' => $lines[ $context_index ],
+					);
+				}
+			}
+
+			$matches[] = $match;
+			if ( count( $matches ) >= $limit ) {
+				break;
+			}
+		}
+
+		return $matches;
+	}
 }

@@ -14,6 +14,7 @@ defined( 'ABSPATH' ) || exit;
 class RemoteWorkspaceBackend {
 
 	private const OPTION = 'datamachine_code_remote_workspace_state';
+	private const MAX_READ_SIZE = 1048576;
 
 	/**
 	 * Whether the remote backend should handle workspace operations.
@@ -123,13 +124,15 @@ class RemoteWorkspaceBackend {
 
 		$content = $context['pending_files'][ $path ] ?? null;
 		if ( null === $content ) {
-			$file = GitHubAbilities::getFileContents(
-				array(
-					'repo' => $context['repo'],
-					'path' => $path,
-					'ref'  => $context['read_ref'],
-				)
+			$file_input = array(
+				'repo' => $context['repo'],
+				'path' => $path,
 			);
+			if ( '' !== $context['read_ref'] ) {
+				$file_input['ref'] = $context['read_ref'];
+			}
+
+			$file = GitHubAbilities::getFileContents( $file_input );
 			if ( is_wp_error( $file ) && '' !== $context['read_ref'] ) {
 				$file = GitHubAbilities::getFileContents(
 					array(
@@ -216,6 +219,96 @@ class RemoteWorkspaceBackend {
 			'repo'    => $handle,
 			'path'    => '' === $prefix ? '/' : $prefix,
 			'entries' => $entries,
+		);
+	}
+
+	/**
+	 * Search text files through the GitHub-backed workspace backend.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function grep( string $handle, string $pattern, ?string $path = null, ?string $include_pattern = null, int $max_results = 100, int $context_lines = 0 ): array|\WP_Error {
+		$context = $this->resolve_handle( $handle );
+		if ( is_wp_error( $context ) ) {
+			return $context;
+		}
+
+		$prefix = null === $path ? '' : trim( ltrim( $path, '/' ), '/' );
+		if ( str_contains( $prefix, '..' ) ) {
+			return new \WP_Error( 'path_traversal', 'Path traversal detected. Access denied.', array( 'status' => 403 ) );
+		}
+
+		$regex = $this->compile_search_pattern( $pattern );
+		if ( is_wp_error( $regex ) ) {
+			return $regex;
+		}
+
+		$tree_input = array(
+			'repo' => $context['repo'],
+			'ref'  => $context['read_ref'],
+		);
+		if ( '' !== $prefix ) {
+			$tree_input['path'] = $prefix;
+		}
+
+		$tree = GitHubAbilities::getRepoTree( $tree_input );
+		if ( is_wp_error( $tree ) && '' !== $context['read_ref'] ) {
+			unset( $tree_input['ref'] );
+			$tree = GitHubAbilities::getRepoTree( $tree_input );
+		}
+		if ( is_wp_error( $tree ) ) {
+			return $tree;
+		}
+
+		$max_results   = max( 1, min( 500, $max_results ) );
+		$context_lines = max( 0, min( 10, $context_lines ) );
+		$matches       = array();
+		$seen          = array();
+		$files         = (array) ( $tree['files'] ?? array() );
+
+		foreach ( array_keys( (array) $context['pending_files'] ) as $pending_path ) {
+			if ( '' === $prefix || $pending_path === $prefix || str_starts_with( $pending_path, $prefix . '/' ) ) {
+				array_unshift( $files, array( 'path' => $pending_path, 'type' => 'file', 'size' => strlen( (string) $context['pending_files'][ $pending_path ] ) ) );
+			}
+		}
+
+		foreach ( $files as $file ) {
+			$file_path = (string) ( $file['path'] ?? '' );
+			if ( '' === $file_path || isset( $seen[ $file_path ] ) || ! $this->path_matches_include( $file_path, $include_pattern ) ) {
+				continue;
+			}
+			$seen[ $file_path ] = true;
+
+			if ( (int) ( $file['size'] ?? 0 ) > self::MAX_READ_SIZE ) {
+				continue;
+			}
+
+			$read = $this->read_file( $handle, $file_path, self::MAX_READ_SIZE );
+			if ( is_wp_error( $read ) ) {
+				continue;
+			}
+
+			$content = (string) ( $read['content'] ?? '' );
+			if ( false !== strpos( substr( $content, 0, 8192 ), "\0" ) ) {
+				continue;
+			}
+
+			$file_matches = $this->grep_content( $content, $file_path, $regex, $context_lines, $max_results - count( $matches ) );
+			$matches      = array_merge( $matches, $file_matches );
+			if ( count( $matches ) >= $max_results ) {
+				break;
+			}
+		}
+
+		return array(
+			'success'   => true,
+			'backend'   => 'github_api',
+			'repo'      => $handle,
+			'path'      => '' === $prefix ? '/' : $prefix,
+			'pattern'   => $pattern,
+			'matches'   => $matches,
+			'count'     => count( $matches ),
+			'truncated' => count( $matches ) >= $max_results,
 		);
 	}
 
@@ -544,6 +637,70 @@ class RemoteWorkspaceBackend {
 
 	private function branch_slug( string $branch ): string {
 		return trim( strtolower( preg_replace( '/[^a-zA-Z0-9._-]+/', '-', $branch ) ), '-' );
+	}
+
+	private function compile_search_pattern( string $pattern ): string|\WP_Error {
+		if ( '' === $pattern ) {
+			return new \WP_Error( 'missing_pattern', 'Search pattern is required.', array( 'status' => 400 ) );
+		}
+
+		$regex = '~' . str_replace( '~', '\\~', $pattern ) . '~u';
+		$previous_handler = set_error_handler( fn() => true );
+		$is_valid         = false !== preg_match( $regex, '' );
+		restore_error_handler();
+		unset( $previous_handler );
+
+		if ( ! $is_valid ) {
+			return new \WP_Error( 'invalid_pattern', 'Search pattern is not a valid regular expression.', array( 'status' => 400 ) );
+		}
+
+		return $regex;
+	}
+
+	private function path_matches_include( string $path, ?string $include_pattern ): bool {
+		if ( null === $include_pattern || '' === $include_pattern ) {
+			return true;
+		}
+
+		return fnmatch( $include_pattern, $path ) || fnmatch( $include_pattern, basename( $path ) );
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function grep_content( string $content, string $path, string $regex, int $context_lines, int $limit ): array {
+		$lines   = explode( "\n", $content );
+		$matches = array();
+		foreach ( $lines as $index => $line ) {
+			if ( ! preg_match( $regex, $line ) ) {
+				continue;
+			}
+
+			$match = array(
+				'path' => $path,
+				'line' => $index + 1,
+				'text' => $line,
+			);
+
+			if ( $context_lines > 0 ) {
+				$start             = max( 0, $index - $context_lines );
+				$end               = min( count( $lines ) - 1, $index + $context_lines );
+				$match['context']  = array();
+				for ( $context_index = $start; $context_index <= $end; ++$context_index ) {
+					$match['context'][] = array(
+						'line' => $context_index + 1,
+						'text' => $lines[ $context_index ],
+					);
+				}
+			}
+
+			$matches[] = $match;
+			if ( count( $matches ) >= $limit ) {
+				break;
+			}
+		}
+
+		return $matches;
 	}
 
 	/**
