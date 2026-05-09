@@ -3522,7 +3522,7 @@ class GitHubAbilities {
 	 *
 	 * @param array $input {
 	 *     Required: repo, file_path, content, commit_message.
-	 *     Optional: branch.
+	 *     Optional: branch, sha.
 	 * }
 	 * @return array|\WP_Error Success payload or error.
 	 */
@@ -3569,13 +3569,19 @@ class GitHubAbilities {
 
 		$existing = self::apiGet( $get_url, $get_params, $pat );
 
+		$current_sha = sanitize_text_field( $input['sha'] ?? '' );
+
 		$body = array(
 			'message' => $commit_message,
 			'content' => base64_encode( $content ), // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- Required by GitHub API.
 		);
 
+		if ( '' !== $current_sha ) {
+			$body['sha'] = $current_sha;
+		}
+
 		// If the file exists, include its SHA for the update.
-		if ( ! is_wp_error( $existing ) && ! empty( $existing['data']['sha'] ) ) {
+		if ( empty( $body['sha'] ) && ! is_wp_error( $existing ) && ! empty( $existing['data']['sha'] ) ) {
 			$body['sha'] = $existing['data']['sha'];
 		}
 

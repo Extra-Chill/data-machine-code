@@ -10,7 +10,10 @@ declare( strict_types=1 );
 namespace DataMachineCode\Abilities {
 	class GitHubAbilities {
 		public static array $files = array(
-			'chubes4/example:main:src/example.php' => "<?php\nreturn 'old';\n",
+			'chubes4/example:main:src/example.php' => array(
+				'content' => "<?php\nreturn 'old';\n",
+				'sha'     => 'file-sha-main-example',
+			),
 		);
 		public static array $commits = array();
 
@@ -22,12 +25,14 @@ namespace DataMachineCode\Abilities {
 			if ( ! isset( self::$files[ $key ] ) ) {
 				return new \WP_Error( 'github_not_found', 'Not found.', array( 'status' => 404 ) );
 			}
+			$file = self::$files[ $key ];
 			return array(
 				'success' => true,
 				'file'    => array(
 					'path'    => $path,
-					'size'    => strlen( self::$files[ $key ] ),
-					'content' => self::$files[ $key ],
+					'size'    => strlen( $file['content'] ),
+					'sha'     => $file['sha'],
+					'content' => $file['content'],
 				),
 			);
 		}
@@ -42,12 +47,21 @@ namespace DataMachineCode\Abilities {
 		}
 
 		public static function createOrUpdateFile( array $input ): array|\WP_Error {
-			$repo = (string) ( $input['repo'] ?? '' );
-			$path = (string) ( $input['file_path'] ?? '' );
+			$repo   = (string) ( $input['repo'] ?? '' );
+			$path   = (string) ( $input['file_path'] ?? '' );
 			$branch = (string) ( $input['branch'] ?? 'main' );
+			$key        = $repo . ':' . $branch . ':' . $path;
+			$source_key = $repo . ':main:' . $path;
+			$existing   = self::$files[ $key ] ?? self::$files[ $source_key ] ?? null;
+			if ( null !== $existing && (string) ( $input['sha'] ?? '' ) !== $existing['sha'] ) {
+				return new \WP_Error( 'github_sha_required', 'Invalid request. "sha" wasn\'t supplied.', array( 'status' => 422 ) );
+			}
 			$sha = 'commit-' . ( count( self::$commits ) + 1 );
-			self::$files[ $repo . ':' . $branch . ':' . $path ] = (string) ( $input['content'] ?? '' );
-			self::$commits[] = array( 'sha' => $sha, 'message' => (string) ( $input['commit_message'] ?? '' ) );
+			self::$files[ $key ] = array(
+				'content' => (string) ( $input['content'] ?? '' ),
+				'sha'     => 'file-sha-' . $sha,
+			);
+			self::$commits[] = array( 'sha' => $sha, 'message' => (string) ( $input['commit_message'] ?? '' ), 'input_sha' => (string) ( $input['sha'] ?? '' ) );
 			return array(
 				'success' => true,
 				'commit'  => array( 'sha' => $sha, 'html_url' => 'https://github.com/' . $repo . '/commit/' . $sha ),
@@ -78,8 +92,8 @@ namespace {
 
 	$GLOBALS['dmc_remote_workspace_options'] = array();
 	if ( ! function_exists( 'get_option' ) ) {
-		function get_option( string $key, mixed $default = false ): mixed {
-			return $GLOBALS['dmc_remote_workspace_options'][ $key ] ?? $default;
+		function get_option( string $key, mixed $default_value = false ): mixed {
+			return $GLOBALS['dmc_remote_workspace_options'][ $key ] ?? $default_value;
 		}
 	}
 	if ( ! function_exists( 'update_option' ) ) {
@@ -129,6 +143,7 @@ namespace {
 	$commit = $backend->git_commit( 'example@fix-example', 'fix: update example' );
 	$assert( 'commit writes via GitHub API', ! is_wp_error( $commit ) && 'commit-1' === $commit['commit'] );
 	$assert( 'commit uses requested message', 'fix: update example' === GitHubAbilities::$commits[0]['message'] );
+	$assert( 'commit supplies current file sha', 'file-sha-main-example' === GitHubAbilities::$commits[0]['input_sha'] );
 
 	$push = $backend->git_push( 'example@fix-example' );
 	$assert( 'push is successful compatibility no-op', ! is_wp_error( $push ) && 'fix/example' === $push['branch'] );
