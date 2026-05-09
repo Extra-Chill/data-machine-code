@@ -1589,7 +1589,7 @@ class Workspace {
 			'details' => array( 'count' => count( $paths ) ),
 		);
 
-		$denied = $this->paths_matching_any_pattern( $paths, $deny );
+		$denied   = $this->paths_matching_any_pattern( $paths, $deny );
 		$checks[] = array(
 			'name'    => 'denied_paths_absent',
 			'pass'    => empty( $denied ),
@@ -1600,7 +1600,7 @@ class Workspace {
 		);
 
 		$outside_allow = empty( $allow ) ? array() : array_values( array_filter( $paths, fn( string $changed_path ): bool => ! $this->path_matches_any_pattern( $changed_path, $allow ) ) );
-		$checks[] = array(
+		$checks[]      = array(
 			'name'    => 'changed_paths_allowed',
 			'pass'    => empty( $outside_allow ),
 			'details' => array(
@@ -1610,7 +1610,7 @@ class Workspace {
 		);
 
 		$include_any_matches = $this->paths_matching_any_pattern( $paths, $include_any );
-		$checks[] = array(
+		$checks[]             = array(
 			'name'    => 'include_any_matched',
 			'pass'    => empty( $include_any ) || ! empty( $include_any_matches ),
 			'details' => array(
@@ -1620,7 +1620,7 @@ class Workspace {
 		);
 
 		$missing_include_all = array_values( array_filter( $include_all, fn( string $pattern ): bool => empty( $this->paths_matching_any_pattern( $paths, array( $pattern ) ) ) ) );
-		$checks[] = array(
+		$checks[]            = array(
 			'name'    => 'include_all_matched',
 			'pass'    => empty( $missing_include_all ),
 			'details' => array(
