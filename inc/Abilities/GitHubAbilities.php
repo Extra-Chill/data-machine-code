@@ -1109,12 +1109,12 @@ class GitHubAbilities {
 			wp_register_ability(
 				'datamachine/get-github-file',
 				array(
-					'label'               => 'Get GitHub File',
-					'description'         => 'Get decoded content for a single file in a GitHub repository',
+					'label'               => 'Get GitHub Files',
+					'description'         => 'Get decoded content for one or more files in a GitHub repository',
 					'category'            => 'datamachine-code-github',
 					'input_schema'        => array(
 						'type'       => 'object',
-						'required'   => array( 'repo', 'path' ),
+						'required'   => array( 'repo' ),
 						'properties' => array(
 							'repo' => array(
 								'type'        => 'string',
@@ -1122,20 +1122,33 @@ class GitHubAbilities {
 							),
 							'path' => array(
 								'type'        => 'string',
-								'description' => 'File path within the repository.',
+								'description' => 'Single file path within the repository. Use paths for multiple files.',
+							),
+							'paths' => array(
+								'type'        => 'array',
+								'items'       => array( 'type' => 'string' ),
+								'description' => 'One or more file paths within the repository.',
 							),
 							'ref'  => array(
 								'type'        => 'string',
 								'description' => 'Branch, tag, or commit SHA. Defaults to the repository default branch.',
+							),
+							'max_total_size' => array(
+								'type'        => 'integer',
+								'description' => 'Maximum cumulative decoded bytes to return across files. Default: 500000.',
 							),
 						),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success' => array( 'type' => 'boolean' ),
-							'file'    => array( 'type' => 'object' ),
-							'error'   => array( 'type' => 'string' ),
+							'success'    => array( 'type' => 'boolean' ),
+							'files'      => array( 'type' => 'array' ),
+							'errors'     => array( 'type' => 'array' ),
+							'count'      => array( 'type' => 'integer' ),
+							'total_size' => array( 'type' => 'integer' ),
+							'truncated'  => array( 'type' => 'boolean' ),
+							'error'      => array( 'type' => 'string' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'getFileContents' ),
@@ -2519,7 +2532,7 @@ class GitHubAbilities {
 				continue;
 			}
 
-			$file                       = $file_result['file'] ?? $file_result;
+			$file                       = $file_result['files'][0] ?? $file_result;
 			$content                    = (string) ( $file['content'] ?? '' );
 			$entry                      = self::buildReviewProfileFileEntry( $file, $content, $limits['max_file_chars'], $remaining_chars );
 			$profile['profile_files'][] = $entry;
@@ -3171,7 +3184,7 @@ class GitHubAbilities {
 			);
 		}
 
-		$file     = $result['file'] ?? $result;
+		$file     = $result['files'][0] ?? $result;
 		$content  = (string) ( $file['content'] ?? '' );
 		$original = strlen( $content );
 		$limit    = min( $max_file_chars, $remaining_chars );
@@ -4079,22 +4092,22 @@ class GitHubAbilities {
 	}
 
 	/**
-	 * Get the decoded content of a single file from a repository.
+	 * Get decoded content for one or more files from a repository.
 	 *
 	 * Calls `GET /repos/{owner}/{repo}/contents/{path}`.
 	 * GitHub returns base64-encoded content for files ≤ 1 MB.
 	 *
 	 * @param array $input {
-	 *     Required: repo, path. Optional: branch.
+	 *     Required: repo and path or paths. Optional: ref, branch, max_total_size.
 	 * }
-	 * @return array|\WP_Error { success: bool, file: normalized } or error.
+	 * @return array|\WP_Error { success: bool, files: normalized[], errors: array[], count: int, total_size: int, truncated: bool } or error.
 	 */
 	public static function getFileContents( array $input ): array|\WP_Error {
-		$repo = sanitize_text_field( $input['repo'] ?? '' );
-		$path = sanitize_text_field( $input['path'] ?? '' );
+		$repo  = sanitize_text_field( $input['repo'] ?? '' );
+		$paths = self::normalizeFileContentPaths( $input );
 
-		if ( empty( $repo ) || empty( $path ) ) {
-			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and file path are required.', array( 'status' => 400 ) );
+		if ( empty( $repo ) || empty( $paths ) ) {
+			return new \WP_Error( 'missing_params', 'Repository (owner/repo) and at least one file path are required.', array( 'status' => 400 ) );
 		}
 
 		$pat = self::getPatForRepo( $repo );
@@ -4108,6 +4121,85 @@ class GitHubAbilities {
 			$query_params['ref'] = $branch;
 		}
 
+		$max_total_size = max( 1, (int) ( $input['max_total_size'] ?? 500000 ) );
+		$files          = array();
+		$errors         = array();
+		$total_size     = 0;
+		$truncated      = false;
+
+		foreach ( $paths as $path ) {
+			$file = self::getSingleFileContent( $repo, $path, $query_params, $pat );
+			if ( is_wp_error( $file ) ) {
+				$error_data = $file->get_error_data();
+				$errors[] = array(
+					'path'    => $path,
+					'code'    => $file->get_error_code(),
+					'message' => $file->get_error_message(),
+					'status'  => is_array( $error_data ) ? (int) ( $error_data['status'] ?? 0 ) : 0,
+				);
+				continue;
+			}
+
+			$size = (int) ( $file['size'] ?? strlen( (string) ( $file['content'] ?? '' ) ) );
+			if ( $total_size + $size > $max_total_size ) {
+				$truncated = true;
+				$errors[]  = array(
+					'path'    => $path,
+					'code'    => 'max_total_size_exceeded',
+					'message' => sprintf( 'Skipping file because it would exceed max_total_size (%d bytes).', $max_total_size ),
+				);
+				continue;
+			}
+
+			$files[]     = $file;
+			$total_size += $size;
+		}
+
+		return array(
+			'success'    => empty( $errors ),
+			'files'      => $files,
+			'errors'     => $errors,
+			'count'      => count( $files ),
+			'total_size' => $total_size,
+			'truncated'  => $truncated,
+		);
+	}
+
+	/**
+	 * Normalize the clean one-or-many file path contract.
+	 *
+	 * @param array $input Raw ability input.
+	 * @return string[] Ordered, unique sanitized paths.
+	 */
+	private static function normalizeFileContentPaths( array $input ): array {
+		$raw_paths = array();
+		if ( isset( $input['paths'] ) ) {
+			$raw_paths = is_array( $input['paths'] ) ? $input['paths'] : array( $input['paths'] );
+		} elseif ( isset( $input['path'] ) ) {
+			$raw_paths = array( $input['path'] );
+		}
+
+		$paths = array();
+		foreach ( $raw_paths as $path ) {
+			$path = ltrim( sanitize_text_field( (string) $path ), '/' );
+			if ( '' !== $path && ! in_array( $path, $paths, true ) ) {
+				$paths[] = $path;
+			}
+		}
+
+		return $paths;
+	}
+
+	/**
+	 * Fetch and decode a single file from GitHub.
+	 *
+	 * @param string $repo         Repository in owner/repo format.
+	 * @param string $path         Repository file path.
+	 * @param array  $query_params GitHub query params.
+	 * @param string $pat          Token to use.
+	 * @return array|\WP_Error Normalized file or error.
+	 */
+	private static function getSingleFileContent( string $repo, string $path, array $query_params, string $pat ): array|\WP_Error {
 		$url      = sprintf( '%s/repos/%s/contents/%s', self::API_BASE, $repo, ltrim( $path, '/' ) );
 		$response = self::apiGet( $url, $query_params, $pat );
 
@@ -4132,10 +4224,7 @@ class GitHubAbilities {
 			return new \WP_Error( 'decode_failed', 'Failed to decode file content.', array( 'status' => 500 ) );
 		}
 
-		return array(
-			'success' => true,
-			'file'    => self::normalizeFileContent( $data, $decoded ),
-		);
+		return self::normalizeFileContent( $data, $decoded );
 	}
 
 	// -------------------------------------------------------------------------

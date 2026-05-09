@@ -86,8 +86,12 @@ namespace {
 
 				return match ( $this->name ) {
 					'datamachine/get-github-file' => array(
-						'success' => true,
-						'file'    => array( 'path' => $parameters['path'] ?? '', 'content' => 'file body' ),
+						'success'    => true,
+						'files'      => array( array( 'path' => $parameters['path'] ?? ( $parameters['paths'][0] ?? '' ), 'content' => 'file body' ) ),
+						'errors'     => array(),
+						'count'      => 1,
+						'total_size' => 9,
+						'truncated'  => false,
 					),
 					'datamachine/list-github-tree' => array(
 						'success' => true,
@@ -164,6 +168,14 @@ namespace {
 		$failures[] = $label;
 		echo "  fail {$label}\n";
 	};
+	$param_exists = static function ( array $definition, string $param ): bool {
+		return array_key_exists( $param, $definition['parameters']['properties'] ?? array() )
+			|| array_key_exists( $param, $definition['parameters'] ?? array() );
+	};
+	$param_required = static function ( array $definition, string $param ) use ( $param_exists ): bool {
+		return in_array( $param, $definition['parameters']['required'] ?? array(), true )
+			|| true === ( $definition['parameters'][ $param ]['required'] ?? false );
+	};
 
 	echo "GitHub read-only tools - smoke\n";
 
@@ -175,8 +187,9 @@ namespace {
 			'ability'  => 'datamachine/get-github-file',
 			'method'   => 'handleGetFile',
 			'callback' => array( GitHubAbilities::class, 'getFileContents' ),
-			'required' => array( 'repo', 'path' ),
-			'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'path' => 'README.md', 'ref' => 'main' ),
+			'required' => array( 'repo' ),
+			'optional' => array( 'path', 'paths', 'ref', 'max_total_size' ),
+			'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'paths' => array( 'README.md', 'inc/Tools/GitHubTools.php' ), 'ref' => 'main', 'max_total_size' => 500000 ),
 		),
 		'list_github_tree'               => array(
 			'ability'  => 'datamachine/list-github-tree',
@@ -312,11 +325,11 @@ namespace {
 		$definition = call_user_func( $tool['definition_callback'] );
 		$assert( "{$tool_name} definition uses narrow handler", $spec['method'] === ( $definition['method'] ?? '' ) );
 		foreach ( $spec['required'] as $param ) {
-			$assert( "{$tool_name} requires {$param}", true === ( $definition['parameters'][ $param ]['required'] ?? false ) );
+			$assert( "{$tool_name} requires {$param}", $param_required( $definition, $param ) );
 		}
 		foreach ( $spec['optional'] ?? array() as $param ) {
-			$assert( "{$tool_name} exposes optional {$param}", array_key_exists( $param, $definition['parameters'] ?? array() ) );
-			$assert( "{$tool_name} does not require optional {$param}", false === ( $definition['parameters'][ $param ]['required'] ?? false ) );
+			$assert( "{$tool_name} exposes optional {$param}", $param_exists( $definition, $param ) );
+			$assert( "{$tool_name} does not require optional {$param}", ! $param_required( $definition, $param ) );
 			$assert( "{$tool_name} ability schema exposes optional {$param}", array_key_exists( $param, $GLOBALS['dmc_registered_abilities'][ $ability_name ]['input_schema']['properties'] ?? array() ) );
 		}
 
@@ -331,8 +344,11 @@ namespace {
 	$ability_source = file_get_contents( __DIR__ . '/../inc/Abilities/GitHubAbilities.php' );
 	$tool_source    = file_get_contents( __DIR__ . '/../inc/Tools/GitHubTools.php' );
 
-	$assert( 'read-only tools do not expose file writes', ! str_contains( $tool_source, "'commit_message'" ) );
-	$assert( 'get_github_file uses ref naming', str_contains( $ability_source, "'datamachine/get-github-file'" ) && str_contains( $tool_source, "'ref'" ) );
+	$get_file_definition = $tools->registered['get_github_file']['definition_callback'] ?? null;
+	$get_file_definition = $get_file_definition ? call_user_func( $get_file_definition ) : array();
+	$assert( 'get_github_file does not expose file writes', ! $param_exists( $get_file_definition, 'commit_message' ) );
+	$assert( 'get_github_file uses clean plural output', str_contains( $ability_source, "'datamachine/get-github-file'" ) && str_contains( $ability_source, "'files'" ) && str_contains( $ability_source, 'normalizeFileContentPaths' ) );
+	$assert( 'get_github_file supports path or paths', str_contains( $tool_source, "'paths'" ) && str_contains( $tool_source, "'path'" ) && str_contains( $tool_source, "'max_total_size'" ) );
 	$assert( 'list_github_tree supports optional path filtering', str_contains( $ability_source, '$path_prefix' ) );
 
 	if ( ! empty( $failures ) ) {
