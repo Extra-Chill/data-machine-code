@@ -83,6 +83,7 @@ function datamachine_code_bootstrap() {
 	new \DataMachineCode\Abilities\WorkspaceAbilities();
 	new \DataMachineCode\Abilities\GitSyncAbilities();
 	new \DataMachineCode\Abilities\CodeTaskAbilities();
+	new \DataMachineCode\Abilities\WordPressRuntimeAbilities();
 	( new \DataMachineCode\Bundle\WorkspacePreloadArtifact() )->register();
 
 	// Load Handlers (they self-register).
@@ -219,6 +220,14 @@ function datamachine_code_register_ability_categories() {
 			'description' => __( 'Create isolated coding tasks from structured source evidence packets.', 'data-machine-code' ),
 		)
 	);
+
+	wp_register_ability_category(
+		'datamachine-code-runtime',
+		array(
+			'label'       => __( 'WordPress Runtime', 'data-machine-code' ),
+			'description' => __( 'Read-only inspection of the live WordPress runtime and allowlisted source roots.', 'data-machine-code' ),
+		)
+	);
 }
 
 /**
@@ -255,6 +264,7 @@ function datamachine_code_load_chat_tools() {
 	new \DataMachineCode\Tools\GitHubPullRequestTool();
 	new \DataMachineCode\Tools\GitHubTools();
 	new \DataMachineCode\Tools\WorkspaceTools();
+	new \DataMachineCode\Tools\WordPressRuntimeTools();
 }
 add_action( 'plugins_loaded', 'datamachine_code_load_chat_tools', 25 );
 
