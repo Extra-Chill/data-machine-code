@@ -124,23 +124,7 @@ class RemoteWorkspaceBackend {
 
 		$content = $context['pending_files'][ $path ] ?? null;
 		if ( null === $content ) {
-			$file_input = array(
-				'repo' => $context['repo'],
-				'path' => $path,
-			);
-			if ( '' !== $context['read_ref'] ) {
-				$file_input['ref'] = $context['read_ref'];
-			}
-
-			$file = GitHubAbilities::getFileContents( $file_input );
-			if ( is_wp_error( $file ) && '' !== $context['read_ref'] ) {
-				$file = GitHubAbilities::getFileContents(
-					array(
-						'repo' => $context['repo'],
-						'path' => $path,
-					)
-				);
-			}
+			$file = $this->get_file_contents_with_fallback( $context, $path );
 			if ( is_wp_error( $file ) ) {
 				return $file;
 			}
@@ -523,21 +507,7 @@ class RemoteWorkspaceBackend {
 	 * @param array<string,mixed> $context Remote workspace context.
 	 */
 	private function file_sha_for_commit( array $context, string $path ): string|\WP_Error {
-		$file = GitHubAbilities::getFileContents(
-			array(
-				'repo' => $context['repo'],
-				'path' => $path,
-				'ref'  => $context['read_ref'],
-			)
-		);
-		if ( is_wp_error( $file ) && '' !== $context['read_ref'] ) {
-			$file = GitHubAbilities::getFileContents(
-				array(
-					'repo' => $context['repo'],
-					'path' => $path,
-				)
-			);
-		}
+		$file = $this->get_file_contents_with_fallback( $context, $path );
 		if ( is_wp_error( $file ) ) {
 			$status = (int) ( $file->get_error_data()['status'] ?? 0 );
 			if ( 404 === $status ) {
@@ -556,6 +526,57 @@ class RemoteWorkspaceBackend {
 		}
 
 		return (string) ( $file['files'][0]['sha'] ?? '' );
+	}
+
+	/**
+	 * Read GitHub contents for a worktree path, falling back to the default branch
+	 * when the remote worktree branch has not been materialized yet.
+	 *
+	 * @param array<string,mixed> $context Remote workspace context.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function get_file_contents_with_fallback( array $context, string $path ): array|\WP_Error {
+		$file_input = array(
+			'repo' => $context['repo'],
+			'path' => $path,
+		);
+		if ( '' !== $context['read_ref'] ) {
+			$file_input['ref'] = $context['read_ref'];
+		}
+
+		$file = GitHubAbilities::getFileContents( $file_input );
+		if ( '' === $context['read_ref'] || ! $this->should_retry_default_ref( $file ) ) {
+			return $file;
+		}
+
+		return GitHubAbilities::getFileContents(
+			array(
+				'repo' => $context['repo'],
+				'path' => $path,
+			)
+		);
+	}
+
+	/**
+	 * GitHub file reads can report missing refs either as a WP_Error or as a
+	 * normalized `{ success: false, files: [], errors: [...] }` payload.
+	 */
+	private function should_retry_default_ref( array|\WP_Error $file ): bool {
+		if ( is_wp_error( $file ) ) {
+			return 404 === (int) ( $file->get_error_data()['status'] ?? 0 );
+		}
+
+		if ( ! empty( $file['files'][0] ) ) {
+			return false;
+		}
+
+		foreach ( (array) ( $file['errors'] ?? array() ) as $error ) {
+			if ( 404 === (int) ( $error['status'] ?? 0 ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
