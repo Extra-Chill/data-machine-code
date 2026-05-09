@@ -51,6 +51,12 @@ class GitHubPullRequestTool extends BaseTool {
 			'maintainer_can_modify' => $parameters['maintainer_can_modify'] ?? true,
 		);
 
+		foreach ( array( 'job_id', 'engine', 'run_artifacts', 'run_artifact_egress_policy', 'bundle_root' ) as $context_key ) {
+			if ( array_key_exists( $context_key, $parameters ) ) {
+				$input[ $context_key ] = $parameters[ $context_key ];
+			}
+		}
+
 		$result = $ability->execute( $input );
 
 		if ( is_wp_error( $result ) ) {
