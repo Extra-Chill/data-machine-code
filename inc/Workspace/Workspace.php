@@ -1610,7 +1610,7 @@ class Workspace {
 		);
 
 		$include_any_matches = $this->paths_matching_any_pattern( $paths, $include_any );
-		$checks[]             = array(
+		$checks[]            = array(
 			'name'    => 'include_any_matched',
 			'pass'    => empty( $include_any ) || ! empty( $include_any_matches ),
 			'details' => array(
