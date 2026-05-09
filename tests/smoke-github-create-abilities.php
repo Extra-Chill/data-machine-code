@@ -107,6 +107,21 @@ namespace {
 		}
 	}
 
+	if ( ! function_exists( 'sanitize_key' ) ) {
+		function sanitize_key( $key ): string {
+			$key = strtolower( (string) $key );
+			return preg_replace( '/[^a-z0-9_\-]/', '', $key ) ?? '';
+		}
+	}
+
+	if ( ! function_exists( 'sanitize_title' ) ) {
+		function sanitize_title( $title ): string {
+			$title = strtolower( trim( (string) $title ) );
+			$title = preg_replace( '/[^a-z0-9]+/', '-', $title ) ?? '';
+			return trim( $title, '-' );
+		}
+	}
+
 	if ( ! function_exists( 'wp_json_encode' ) ) {
 		function wp_json_encode( $data ): string { return json_encode( $data ); }
 	}
@@ -378,9 +393,62 @@ namespace {
 	$assert( 'createPullRequest adds agent slug label during post-create labeling', is_array( $label_body ) && in_array( 'agent:code-reviewer', $label_body['labels'] ?? array(), true ) );
 	$assert( 'createPullRequest adds datamachine-agent during post-create labeling', is_array( $label_body ) && in_array( 'datamachine-agent', $label_body['labels'] ?? array(), true ) );
 	$assert( 'createPullRequest reports successful labeling metadata', is_array( $result ) && true === ( $result['labeling']['success'] ?? false ) && in_array( 'agent:code-reviewer', $result['labeling']['applied_labels'] ?? array(), true ) );
+	PermissionHelper::$acting_agent_slug = null;
+
+	// ---- createPullRequest: run artifacts are committed and rendered on direct ability calls
+	$reset_http();
+	$queue_response( 200, array( 'ref' => 'refs/heads/world-day/memory' ) );
+	$queue_response( 404, array( 'message' => 'Not Found' ) );
+	$queue_response( 201, array(
+		'commit' => array( 'sha' => 'memory-commit' ),
+		'content' => array(
+			'path'     => 'bundles/world-creator/memory/agent/daily/2026/05/09.md',
+			'html_url' => 'https://github.com/owner/repo/blob/world-day/memory/bundles/world-creator/memory/agent/daily/2026/05/09.md',
+		),
+	) );
+	$queue_response( 201, array(
+		'number'   => 93,
+		'html_url' => 'https://github.com/owner/repo/pull/93',
+		'head'     => array( 'ref' => 'world-day/memory' ),
+		'base'     => array( 'ref' => 'main' ),
+	) );
+	$result = GitHubAbilities::createPullRequest( array(
+		'repo'                       => 'owner/repo',
+		'title'                      => 'Memory PR',
+		'head'                       => 'world-day/memory',
+		'base'                       => 'main',
+		'body'                       => 'Original body.',
+		'run_artifacts'              => array(
+			'required_tool_names'    => array( 'agent_daily_memory', 'create_github_pull_request' ),
+			'satisfied_tool_names'   => array( 'agent_daily_memory' ),
+			'daily_memory_artifacts' => array(
+				array(
+					'type'                 => 'agent_daily_memory',
+					'agent_slug'           => 'world-creator',
+					'date'                 => '2026-05-09',
+					'bundle_relative_path' => 'memory/agent/daily/2026/05/09.md',
+					'content'              => "# Daily Memory: 2026-05-09\n\nThe journal survived.\n",
+				),
+			),
+		),
+		'run_artifact_egress_policy' => array(
+			'completion_assertions' => array( 'egress' => array( 'pr-body' ) ),
+			'daily_memory'          => array( 'egress' => array( 'bundle-file', 'pr-body' ) ),
+		),
+	) );
+	$artifact_put_call = $GLOBALS['dmc_http_calls'][2] ?? array();
+	$artifact_put_body = is_string( $artifact_put_call['args']['body'] ?? null ) ? json_decode( $artifact_put_call['args']['body'], true ) : null;
+	$pr_call           = $GLOBALS['dmc_http_calls'][3] ?? array();
+	$pr_body           = is_string( $pr_call['args']['body'] ?? null ) ? json_decode( $pr_call['args']['body'], true ) : null;
+	$assert( 'createPullRequest direct ability commits bundle-file artifact before PR creation', 'PUT' === ( $artifact_put_call['method'] ?? '' ) && str_contains( (string) ( $artifact_put_call['url'] ?? '' ), '/contents/bundles/world-creator/memory/agent/daily/2026/05/09.md' ) );
+	$assert( 'createPullRequest direct ability writes artifact to head branch', is_array( $artifact_put_body ) && 'world-day/memory' === ( $artifact_put_body['branch'] ?? '' ) );
+	$assert( 'createPullRequest direct ability appends artifact section to PR body', is_array( $pr_body ) && str_contains( (string) ( $pr_body['body'] ?? '' ), '## Agent Run Artifacts' ) && str_contains( (string) ( $pr_body['body'] ?? '' ), 'The journal survived.' ) );
+	$assert( 'createPullRequest direct ability marks current PR tool satisfied', is_array( $pr_body ) && str_contains( (string) ( $pr_body['body'] ?? '' ), '`create_github_pull_request`: satisfied' ) );
+	$assert( 'createPullRequest direct ability reports committed artifact file', is_array( $result ) && 'bundles/world-creator/memory/agent/daily/2026/05/09.md' === ( $result['run_artifact_files'][0]['file_path'] ?? '' ) );
 
 	// ---- createPullRequest: labeling failure does not mask PR creation success
 	$reset_http();
+	PermissionHelper::$acting_agent_slug = 'code-reviewer';
 	$queue_response( 201, array(
 		'number'   => 92,
 		'html_url' => 'https://github.com/owner/repo/pull/92',
@@ -396,7 +464,6 @@ namespace {
 	) );
 	$assert( 'createPullRequest keeps success=true when post-create labeling fails', is_array( $result ) && true === ( $result['success'] ?? false ) );
 	$assert( 'createPullRequest returns explicit label failure metadata', is_array( $result ) && false === ( $result['labeling']['success'] ?? null ) && 'github_api_error' === ( $result['labeling']['error_code'] ?? '' ) );
-	PermissionHelper::$acting_agent_slug = null;
 
 	// ---- createPullRequest: explicit draft and maintainer_can_modify=false
 	$reset_http();
