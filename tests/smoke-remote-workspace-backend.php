@@ -92,8 +92,8 @@ namespace {
 
 	$GLOBALS['dmc_remote_workspace_options'] = array();
 	if ( ! function_exists( 'get_option' ) ) {
-		function get_option( string $key, mixed $default = false ): mixed {
-			return $GLOBALS['dmc_remote_workspace_options'][ $key ] ?? $default;
+		function get_option( string $key, mixed $default_value = false ): mixed {
+			return $GLOBALS['dmc_remote_workspace_options'][ $key ] ?? $default_value;
 		}
 	}
 	if ( ! function_exists( 'update_option' ) ) {

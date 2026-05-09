@@ -35,13 +35,13 @@ class RemoteWorkspaceBackend {
 			return $repo;
 		}
 
-		$name = $this->sanitize_name( $name ?: basename( (string) $repo ) );
+		$name = $this->sanitize_name( null !== $name && '' !== $name ? $name : basename( (string) $repo ) );
 		if ( '' === $name ) {
 			return new \WP_Error( 'invalid_clone_name', 'Could not derive a workspace name for the remote repository.', array( 'status' => 400 ) );
 		}
 
-		$state                    = $this->state();
-		$state['repos'][ $name ]   = array(
+		$state                        = $this->state();
+		$state['repos'][ $name ]      = array(
 			'repo' => $repo,
 			'url'  => $url,
 		);
@@ -76,16 +76,16 @@ class RemoteWorkspaceBackend {
 			return new \WP_Error( 'missing_branch', 'Branch is required.', array( 'status' => 400 ) );
 		}
 
-		$slug   = $this->branch_slug( $branch );
-		$handle = $repo_name . '@' . $slug;
-		$state  = $this->state();
+		$slug                          = $this->branch_slug( $branch );
+		$handle                        = $repo_name . '@' . $slug;
+		$state                         = $this->state();
 		$state['worktrees'][ $handle ] = array(
-			'repo_name'      => $repo_name,
-			'repo'           => $repo,
-			'branch'         => $branch,
-			'base_ref'       => $from ?: '',
-			'pending_files'  => array(),
-			'changed_files'  => array(),
+			'repo_name'       => $repo_name,
+			'repo'            => $repo,
+			'branch'          => $branch,
+			'base_ref'        => null !== $from && '' !== $from ? $from : '',
+			'pending_files'   => array(),
+			'changed_files'   => array(),
 			'last_commit_sha' => '',
 		);
 		$this->save_state( $state );
@@ -130,8 +130,13 @@ class RemoteWorkspaceBackend {
 					'ref'  => $context['read_ref'],
 				)
 			);
-			if ( is_wp_error( $file ) && $context['read_ref'] !== '' ) {
-				$file = GitHubAbilities::getFileContents( array( 'repo' => $context['repo'], 'path' => $path ) );
+			if ( is_wp_error( $file ) && '' !== $context['read_ref'] ) {
+				$file = GitHubAbilities::getFileContents(
+					array(
+						'repo' => $context['repo'],
+						'path' => $path,
+					)
+				);
 			}
 			if ( is_wp_error( $file ) ) {
 				return $file;
@@ -173,8 +178,13 @@ class RemoteWorkspaceBackend {
 		}
 
 		$prefix = null === $path ? '' : trim( ltrim( $path, '/' ), '/' );
-		$tree   = GitHubAbilities::getRepoTree( array( 'repo' => $context['repo'], 'ref' => $context['read_ref'] ) );
-		if ( is_wp_error( $tree ) && $context['read_ref'] !== '' ) {
+		$tree   = GitHubAbilities::getRepoTree(
+			array(
+				'repo' => $context['repo'],
+				'ref'  => $context['read_ref'],
+			)
+		);
+		if ( is_wp_error( $tree ) && '' !== $context['read_ref'] ) {
 			$tree = GitHubAbilities::getRepoTree( array( 'repo' => $context['repo'] ) );
 		}
 		if ( is_wp_error( $tree ) ) {
@@ -307,7 +317,7 @@ class RemoteWorkspaceBackend {
 			'path'               => 'github://' . $context['repo'] . '#' . $context['branch'],
 			'branch'             => $context['branch'],
 			'remote'             => 'https://github.com/' . $context['repo'] . '.git',
-			'commit'             => $context['last_commit_sha'] ?: null,
+			'commit'             => '' !== $context['last_commit_sha'] ? $context['last_commit_sha'] : null,
 			'dirty'              => count( $files ),
 			'files'              => $files,
 			'conversation_state' => 'incomplete',
@@ -395,7 +405,10 @@ class RemoteWorkspaceBackend {
 			'message'            => sprintf( 'Committed remote workspace changes to %s.', $context['branch'] ),
 			'conversation_state' => 'incomplete',
 			'next_required_tool' => 'workspace_git_push',
-			'next_required_args' => array( 'name' => $handle, 'branch' => $context['branch'] ),
+			'next_required_args' => array(
+				'name'   => $handle,
+				'branch' => $context['branch'],
+			),
 		);
 	}
 
@@ -413,7 +426,12 @@ class RemoteWorkspaceBackend {
 			)
 		);
 		if ( is_wp_error( $file ) && '' !== $context['read_ref'] ) {
-			$file = GitHubAbilities::getFileContents( array( 'repo' => $context['repo'], 'path' => $path ) );
+			$file = GitHubAbilities::getFileContents(
+				array(
+					'repo' => $context['repo'],
+					'path' => $path,
+				)
+			);
 		}
 		if ( is_wp_error( $file ) ) {
 			$status = (int) ( $file->get_error_data()['status'] ?? 0 );
@@ -438,16 +456,21 @@ class RemoteWorkspaceBackend {
 			return $context;
 		}
 
+		$push_branch = null !== $branch && '' !== $branch ? $branch : $context['branch'];
+
 		return array(
 			'success'            => true,
 			'backend'            => 'github_api',
 			'name'               => $handle,
 			'remote'             => $remote,
-			'branch'             => $branch ?: $context['branch'],
+			'branch'             => $push_branch,
 			'message'            => 'Remote workspace branch already updated via GitHub API.',
 			'conversation_state' => 'incomplete',
 			'next_required_tool' => 'create_github_pull_request',
-			'next_required_args' => array( 'repo' => $context['repo'], 'head' => $branch ?: $context['branch'] ),
+			'next_required_args' => array(
+				'repo' => $context['repo'],
+				'head' => $push_branch,
+			),
 		);
 	}
 
@@ -457,7 +480,7 @@ class RemoteWorkspaceBackend {
 	private function resolve_handle( string $handle ): array|\WP_Error {
 		$state = $this->state();
 		if ( isset( $state['worktrees'][ $handle ] ) ) {
-			$worktree = (array) $state['worktrees'][ $handle ];
+			$worktree             = (array) $state['worktrees'][ $handle ];
 			$worktree['handle']   = $handle;
 			$worktree['read_ref'] = (string) ( $worktree['branch'] ?? '' );
 			return $worktree;
