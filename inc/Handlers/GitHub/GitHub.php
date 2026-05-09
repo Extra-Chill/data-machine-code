@@ -451,7 +451,11 @@ class GitHub extends FetchHandler {
 				continue;
 			}
 
-			$file_data = $file_result['file'];
+			$file_data = $file_result['files'][0] ?? array();
+			if ( empty( $file_data ) ) {
+				$context->log( 'debug', sprintf( 'GitHub: Skipped %s — no file content returned.', $file['path'] ) );
+				continue;
+			}
 			$guid      = sprintf( 'github_%s_files_%s', $repo, $file['sha'] );
 
 			$eligible_items[] = array(

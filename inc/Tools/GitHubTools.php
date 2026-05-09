@@ -1173,7 +1173,7 @@ class GitHubTools extends BaseTool {
 		return array(
 			'class'       => __CLASS__,
 			'method'      => 'handleGetFile',
-			'description' => 'Get decoded content for a single file from a GitHub repository.',
+			'description' => 'Get decoded content for one or more files from a GitHub repository. Accepts path for one file or paths for one-or-many; always returns files[].',
 			'parameters'  => array(
 				'type'       => 'object',
 				'properties' => array(
@@ -1183,14 +1183,23 @@ class GitHubTools extends BaseTool {
 					),
 					'path' => array(
 						'type'        => 'string',
-						'description' => 'File path within the repository.',
+						'description' => 'Single file path within the repository. Use paths for multiple files.',
+					),
+					'paths' => array(
+						'type'        => 'array',
+						'items'       => array( 'type' => 'string' ),
+						'description' => 'One or more file paths within the repository.',
 					),
 					'ref'  => array(
 						'type'        => 'string',
 						'description' => 'Branch, tag, or commit SHA. Defaults to the repository default branch.',
 					),
+					'max_total_size' => array(
+						'type'        => 'integer',
+						'description' => 'Maximum cumulative decoded bytes to return across files. Default: 500000.',
+					),
 				),
-				'required'   => array( 'repo', 'path' ),
+				'required'   => array( 'repo' ),
 			),
 		);
 	}

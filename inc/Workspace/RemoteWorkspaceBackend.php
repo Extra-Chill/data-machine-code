@@ -144,7 +144,11 @@ class RemoteWorkspaceBackend {
 			if ( is_wp_error( $file ) ) {
 				return $file;
 			}
-			$content = (string) ( $file['file']['content'] ?? '' );
+			if ( empty( $file['files'][0] ) ) {
+				$error = $file['errors'][0]['message'] ?? sprintf( 'File not found: %s.', $path );
+				return new \WP_Error( 'remote_workspace_file_unavailable', $error, array( 'status' => 404 ) );
+			}
+			$content = (string) ( $file['files'][0]['content'] ?? '' );
 		}
 
 		$size = strlen( $content );
@@ -542,8 +546,16 @@ class RemoteWorkspaceBackend {
 
 			return $file;
 		}
+		if ( empty( $file['files'][0] ) ) {
+			$status = (int) ( $file['errors'][0]['status'] ?? 0 );
+			if ( 404 === $status ) {
+				return '';
+			}
 
-		return (string) ( $file['file']['sha'] ?? '' );
+			return new \WP_Error( 'remote_workspace_file_unavailable', $file['errors'][0]['message'] ?? sprintf( 'File not found: %s.', $path ), array( 'status' => 404 ) );
+		}
+
+		return (string) ( $file['files'][0]['sha'] ?? '' );
 	}
 
 	/**
