@@ -46,6 +46,7 @@ class GitHubPullRequestTool extends BaseTool {
 			'head'                  => $parameters['head'] ?? '',
 			'base'                  => $parameters['base'] ?? '',
 			'body'                  => $parameters['body'] ?? '',
+			'labels'                => isset( $parameters['labels'] ) && is_array( $parameters['labels'] ) ? $parameters['labels'] : array(),
 			'draft'                 => $parameters['draft'] ?? false,
 			'maintainer_can_modify' => $parameters['maintainer_can_modify'] ?? true,
 		);
@@ -130,6 +131,12 @@ class GitHubPullRequestTool extends BaseTool {
 					'type'        => 'boolean',
 					'required'    => false,
 					'description' => 'Whether to open the pull request as a draft. Default: false.',
+				),
+				'labels'                => array(
+					'type'        => 'array',
+					'items'       => array( 'type' => 'string' ),
+					'required'    => false,
+					'description' => 'Labels to attach to the pull request after creation.',
 				),
 				'maintainer_can_modify' => array(
 					'type'        => 'boolean',

@@ -311,6 +311,11 @@ class GitHubAbilities {
 								'type'        => 'boolean',
 								'description' => 'Whether to open the pull request as a draft. Default: false.',
 							),
+							'labels'                => array(
+								'type'        => 'array',
+								'items'       => array( 'type' => 'string' ),
+								'description' => 'Labels to attach to the pull request after creation.',
+							),
 							'maintainer_can_modify' => array(
 								'type'        => 'boolean',
 								'description' => 'Whether maintainers can modify the pull request. Default: true.',
@@ -1376,8 +1381,9 @@ class GitHubAbilities {
 		if ( ! empty( $input['body'] ) ) {
 			$body['body'] = $input['body'];
 		}
-		if ( ! empty( $input['labels'] ) && is_array( $input['labels'] ) ) {
-			$body['labels'] = array_map( 'sanitize_text_field', $input['labels'] );
+		$labels = self::mergeProvenanceLabels( isset( $input['labels'] ) && is_array( $input['labels'] ) ? $input['labels'] : array() );
+		if ( ! empty( $labels ) ) {
+			$body['labels'] = $labels;
 		}
 		if ( ! empty( $input['assignees'] ) && is_array( $input['assignees'] ) ) {
 			$body['assignees'] = array_map( 'sanitize_text_field', $input['assignees'] );
@@ -1473,13 +1479,179 @@ class GitHubAbilities {
 		}
 
 		$pull = self::normalizePull( $response['data'] );
+		$labels = self::mergeProvenanceLabels( isset( $input['labels'] ) && is_array( $input['labels'] ) ? $input['labels'] : array() );
+		$labeling = null;
 
-		return array(
+		if ( ! empty( $labels ) && ! empty( $pull['number'] ) ) {
+			$label_response = self::applyLabelsToNumber( $repo, (int) $pull['number'], $labels, $pat );
+			if ( is_wp_error( $label_response ) ) {
+				$labeling = array(
+					'success'    => false,
+					'labels'     => $labels,
+					'error_code' => $label_response->get_error_code(),
+					'error'      => $label_response->get_error_message(),
+					'status'     => is_array( $label_response->get_error_data() ) ? ( $label_response->get_error_data()['status'] ?? null ) : null,
+				);
+			} else {
+				$labeling = array(
+					'success'        => true,
+					'labels'         => $labels,
+					'applied_labels' => $label_response['applied_labels'] ?? array(),
+				);
+			}
+		}
+
+		$result = array(
 			'success'      => true,
 			'pull_request' => $pull,
 			'pull_number'  => $pull['number'] ?? 0,
 			'html_url'     => $pull['html_url'] ?? '',
 			'message'      => sprintf( 'Pull request #%d opened in %s.', $pull['number'] ?? 0, $repo ),
+		);
+
+		if ( null !== $labeling ) {
+			$result['labeling'] = $labeling;
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Merge caller-provided labels with runtime agent provenance labels.
+	 *
+	 * @param array<int,mixed> $labels Caller-provided labels.
+	 * @return array<int,string>
+	 */
+	private static function mergeProvenanceLabels( array $labels ): array {
+		$merged = array();
+		foreach ( $labels as $label ) {
+			$label = sanitize_text_field( (string) $label );
+			if ( '' !== $label && ! in_array( $label, $merged, true ) ) {
+				$merged[] = $label;
+			}
+		}
+
+		$agent_slug = self::getCurrentAgentSlug();
+		if ( '' === $agent_slug ) {
+			return $merged;
+		}
+
+		foreach ( array( 'agent:' . $agent_slug, 'datamachine-agent' ) as $label ) {
+			if ( ! in_array( $label, $merged, true ) ) {
+				$merged[] = $label;
+			}
+		}
+
+		return $merged;
+	}
+
+	/**
+	 * Resolve the current Data Machine agent slug when running in agent context.
+	 */
+	private static function getCurrentAgentSlug(): string {
+		foreach ( array( 'get_runtime_context', 'runtime_context' ) as $method ) {
+			if ( method_exists( PermissionHelper::class, $method ) ) {
+				$agent_slug = self::agentSlugFromContext( call_user_func( array( PermissionHelper::class, $method ) ) );
+				if ( '' !== $agent_slug ) {
+					return $agent_slug;
+				}
+			}
+		}
+
+		if ( method_exists( PermissionHelper::class, 'get_execution_principal' ) ) {
+			$principal = PermissionHelper::get_execution_principal();
+			if ( is_object( $principal ) ) {
+				$agent_slug = self::agentSlugFromContext( method_exists( $principal, 'to_array' ) ? $principal->to_array() : get_object_vars( $principal ) );
+				if ( '' !== $agent_slug ) {
+					return $agent_slug;
+				}
+			}
+		}
+
+		if ( method_exists( PermissionHelper::class, 'get_acting_agent_slug' ) ) {
+			$agent_slug = PermissionHelper::get_acting_agent_slug();
+			if ( is_string( $agent_slug ) && '' !== trim( $agent_slug ) ) {
+				return sanitize_text_field( $agent_slug );
+			}
+		}
+
+		if ( ! method_exists( PermissionHelper::class, 'get_acting_agent_id' ) ) {
+			return '';
+		}
+
+		$agent_id = PermissionHelper::get_acting_agent_id();
+		if ( empty( $agent_id ) || ! class_exists( '\DataMachine\Core\Database\Agents\Agents' ) ) {
+			return '';
+		}
+
+		$agents_repo = new \DataMachine\Core\Database\Agents\Agents();
+		if ( ! method_exists( $agents_repo, 'get_agent' ) ) {
+			return '';
+		}
+
+		$agent = $agents_repo->get_agent( (int) $agent_id );
+		$agent_slug = is_array( $agent ) ? (string) ( $agent['agent_slug'] ?? '' ) : '';
+
+		return '' !== trim( $agent_slug ) ? sanitize_text_field( $agent_slug ) : '';
+	}
+
+	/**
+	 * Extract agent_slug from a runtime context-like shape.
+	 *
+	 * @param mixed $context Runtime context, principal array, or metadata.
+	 */
+	private static function agentSlugFromContext( mixed $context ): string {
+		if ( ! is_array( $context ) ) {
+			return '';
+		}
+
+		foreach ( array( 'agent_slug', 'current_agent_slug' ) as $key ) {
+			$agent_slug = $context[ $key ] ?? null;
+			if ( is_string( $agent_slug ) && '' !== trim( $agent_slug ) ) {
+				return sanitize_text_field( $agent_slug );
+			}
+		}
+
+		foreach ( array( 'runtime_context', 'request_metadata', 'metadata' ) as $key ) {
+			$agent_slug = self::agentSlugFromContext( $context[ $key ] ?? null );
+			if ( '' !== $agent_slug ) {
+				return $agent_slug;
+			}
+		}
+
+		return '';
+	}
+
+	/**
+	 * Apply labels to an issue or pull request number.
+	 *
+	 * @param string            $repo   owner/repo identifier.
+	 * @param int               $number Issue or pull request number.
+	 * @param array<int,string> $labels Labels to add.
+	 * @param string            $pat    GitHub token.
+	 * @return array|\WP_Error
+	 */
+	private static function applyLabelsToNumber( string $repo, int $number, array $labels, string $pat ): array|\WP_Error {
+		$url      = sprintf( '%s/repos/%s/issues/%d/labels', self::API_BASE, $repo, $number );
+		$response = self::apiRequest( 'POST', $url, array( 'labels' => $labels ), $pat );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$applied = array();
+		if ( is_array( $response['data'] ?? null ) ) {
+			foreach ( $response['data'] as $label ) {
+				$name = is_array( $label ) ? ( $label['name'] ?? '' ) : '';
+				if ( '' !== $name ) {
+					$applied[] = (string) $name;
+				}
+			}
+		}
+
+		return array(
+			'success'        => true,
+			'applied_labels' => $applied,
 		);
 	}
 

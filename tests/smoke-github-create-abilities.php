@@ -16,10 +16,25 @@ namespace DataMachine\Abilities {
 	class PermissionHelper {
 		public static int $can_manage_calls = 0;
 		public static bool $can_manage_result = true;
+		public static ?string $acting_agent_slug = null;
+		public static ?int $acting_agent_id = null;
+		public static array $runtime_context = array();
 
 		public static function can_manage(): bool {
 			++self::$can_manage_calls;
 			return self::$can_manage_result;
+		}
+
+		public static function get_acting_agent_slug(): ?string {
+			return self::$acting_agent_slug;
+		}
+
+		public static function get_acting_agent_id(): ?int {
+			return self::$acting_agent_id;
+		}
+
+		public static function get_runtime_context(): array {
+			return self::$runtime_context;
 		}
 	}
 }
@@ -187,6 +202,8 @@ namespace {
 	$assert( 'create-github-pull-request requires repo, title, head', array( 'repo', 'title', 'head' ) === ( $pr_ability['input_schema']['required'] ?? array() ) );
 	$assert( 'create-github-pull-request exposes base', array_key_exists( 'base', $pr_ability['input_schema']['properties'] ?? array() ) );
 	$assert( 'create-github-pull-request exposes draft', array_key_exists( 'draft', $pr_ability['input_schema']['properties'] ?? array() ) );
+	$assert( 'create-github-pull-request exposes labels', array_key_exists( 'labels', $pr_ability['input_schema']['properties'] ?? array() ) );
+	$assert( 'create-github-pull-request labels schema declares string items', array( 'type' => 'string' ) === ( $pr_ability['input_schema']['properties']['labels']['items'] ?? null ) );
 	$assert( 'create-github-pull-request exposes maintainer_can_modify', array_key_exists( 'maintainer_can_modify', $pr_ability['input_schema']['properties'] ?? array() ) );
 	$assert( 'create-github-pull-request is hidden from REST', false === ( $pr_ability['meta']['show_in_rest'] ?? null ) );
 
@@ -237,8 +254,29 @@ namespace {
 	$body = is_string( $call['args']['body'] ?? null ) ? json_decode( $call['args']['body'], true ) : null;
 	$assert( 'createIssue posts to /repos/owner/repo/issues', is_string( $call['url'] ?? null ) && str_ends_with( $call['url'], '/repos/owner/repo/issues' ) );
 	$assert( 'createIssue forwards labels', is_array( $body ) && array( 'bug' ) === ( $body['labels'] ?? array() ) );
+	$assert( 'createIssue does not add provenance labels without agent context', is_array( $body ) && array( 'bug' ) === ( $body['labels'] ?? array() ) );
 	$assert( 'createIssue forwards assignees', is_array( $body ) && array( 'octocat' ) === ( $body['assignees'] ?? array() ) );
 	$assert( 'createIssue forwards milestone as int', is_array( $body ) && 7 === ( $body['milestone'] ?? null ) );
+
+	// ---- createIssue: agent context merges provenance labels with caller labels
+	$reset_http();
+	PermissionHelper::$runtime_context = array( 'agent_slug' => 'code-reviewer' );
+	$queue_response( 201, array(
+		'number'   => 44,
+		'title'    => 'Agent issue',
+		'html_url' => 'https://github.com/owner/repo/issues/44',
+	) );
+	GitHubAbilities::createIssue( array(
+		'repo'   => 'owner/repo',
+		'title'  => 'Agent issue',
+		'labels' => array( 'bug' ),
+	) );
+	$call = $GLOBALS['dmc_http_calls'][0] ?? array();
+	$body = is_string( $call['args']['body'] ?? null ) ? json_decode( $call['args']['body'], true ) : null;
+	$assert( 'createIssue preserves caller labels when adding provenance', is_array( $body ) && in_array( 'bug', $body['labels'] ?? array(), true ) );
+	$assert( 'createIssue adds agent slug provenance label', is_array( $body ) && in_array( 'agent:code-reviewer', $body['labels'] ?? array(), true ) );
+	$assert( 'createIssue adds datamachine-agent label', is_array( $body ) && in_array( 'datamachine-agent', $body['labels'] ?? array(), true ) );
+	PermissionHelper::$runtime_context = array();
 
 	// ---- createIssue: ignores null milestone
 	$reset_http();
@@ -302,6 +340,55 @@ namespace {
 	$assert( 'createPullRequest forwards head and base', is_array( $body ) && 'feature/x' === ( $body['head'] ?? '' ) && 'main' === ( $body['base'] ?? '' ) );
 	$assert( 'createPullRequest defaults maintainer_can_modify=true', is_array( $body ) && true === ( $body['maintainer_can_modify'] ?? null ) );
 	$assert( 'createPullRequest does not set draft when omitted', is_array( $body ) && ! array_key_exists( 'draft', $body ) );
+	$assert( 'createPullRequest does not call labels endpoint without labels or agent context', 1 === count( $GLOBALS['dmc_http_calls'] ) );
+
+	// ---- createPullRequest: agent context applies caller and provenance labels after creation
+	$reset_http();
+	PermissionHelper::$acting_agent_slug = 'code-reviewer';
+	$queue_response( 201, array(
+		'number'   => 91,
+		'html_url' => 'https://github.com/owner/repo/pull/91',
+		'head'     => array( 'ref' => 'feat/labels' ),
+		'base'     => array( 'ref' => 'main' ),
+	) );
+	$queue_response( 200, array(
+		array( 'name' => 'needs-review' ),
+		array( 'name' => 'agent:code-reviewer' ),
+		array( 'name' => 'datamachine-agent' ),
+	) );
+	$result = GitHubAbilities::createPullRequest( array(
+		'repo'   => 'owner/repo',
+		'title'  => 'Label PR',
+		'head'   => 'feat/labels',
+		'base'   => 'main',
+		'labels' => array( 'needs-review' ),
+	) );
+	$label_call = $GLOBALS['dmc_http_calls'][1] ?? array();
+	$label_body = is_string( $label_call['args']['body'] ?? null ) ? json_decode( $label_call['args']['body'], true ) : null;
+	$assert( 'createPullRequest labels PR through issues labels endpoint', is_string( $label_call['url'] ?? null ) && str_ends_with( $label_call['url'], '/repos/owner/repo/issues/91/labels' ) );
+	$assert( 'createPullRequest preserves caller label during post-create labeling', is_array( $label_body ) && in_array( 'needs-review', $label_body['labels'] ?? array(), true ) );
+	$assert( 'createPullRequest adds agent slug label during post-create labeling', is_array( $label_body ) && in_array( 'agent:code-reviewer', $label_body['labels'] ?? array(), true ) );
+	$assert( 'createPullRequest adds datamachine-agent during post-create labeling', is_array( $label_body ) && in_array( 'datamachine-agent', $label_body['labels'] ?? array(), true ) );
+	$assert( 'createPullRequest reports successful labeling metadata', is_array( $result ) && true === ( $result['labeling']['success'] ?? false ) && in_array( 'agent:code-reviewer', $result['labeling']['applied_labels'] ?? array(), true ) );
+
+	// ---- createPullRequest: labeling failure does not mask PR creation success
+	$reset_http();
+	$queue_response( 201, array(
+		'number'   => 92,
+		'html_url' => 'https://github.com/owner/repo/pull/92',
+		'head'     => array( 'ref' => 'feat/missing-label' ),
+		'base'     => array( 'ref' => 'main' ),
+	) );
+	$queue_response( 422, array( 'message' => 'Validation Failed' ) );
+	$result = GitHubAbilities::createPullRequest( array(
+		'repo'  => 'owner/repo',
+		'title' => 'Label failure PR',
+		'head'  => 'feat/missing-label',
+		'base'  => 'main',
+	) );
+	$assert( 'createPullRequest keeps success=true when post-create labeling fails', is_array( $result ) && true === ( $result['success'] ?? false ) );
+	$assert( 'createPullRequest returns explicit label failure metadata', is_array( $result ) && false === ( $result['labeling']['success'] ?? null ) && 'github_api_error' === ( $result['labeling']['error_code'] ?? '' ) );
+	PermissionHelper::$acting_agent_slug = null;
 
 	// ---- createPullRequest: explicit draft and maintainer_can_modify=false
 	$reset_http();
