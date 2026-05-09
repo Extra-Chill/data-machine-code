@@ -182,6 +182,12 @@ namespace {
 		'labels'                => array( 'needs-review' ),
 		'draft'                 => true,
 		'maintainer_can_modify' => false,
+		'job_id'                     => 123,
+		'run_artifacts'              => array( 'required_tool_names' => array( 'agent_daily_memory' ) ),
+		'run_artifact_egress_policy' => array(
+			'daily_memory' => array( 'egress' => array( 'bundle-file', 'pr-body' ) ),
+		),
+		'bundle_root'                => 'bundles/world-creator',
 	) );
 	$assert( 'create_github_pull_request returns direct ability success', true === ( $pr_result['success'] ?? false ) );
 	$assert( 'create_github_pull_request response names tool', 'create_github_pull_request' === ( $pr_result['tool_name'] ?? '' ) );
@@ -193,6 +199,13 @@ namespace {
 	$assert( 'create_github_pull_request calls PR ability', 'datamachine/create-github-pull-request' === ( $pr_call['name'] ?? '' ) );
 	$assert( 'create_github_pull_request forwards labels', array( 'needs-review' ) === ( $pr_call['input']['labels'] ?? null ) );
 	$assert( 'create_github_pull_request forwards maintainer_can_modify', false === ( $pr_call['input']['maintainer_can_modify'] ?? null ) );
+	$assert( 'create_github_pull_request forwards job context', 123 === ( $pr_call['input']['job_id'] ?? null ) );
+	$assert( 'create_github_pull_request forwards run artifacts', array( 'required_tool_names' => array( 'agent_daily_memory' ) ) === ( $pr_call['input']['run_artifacts'] ?? null ) );
+	$assert(
+		'create_github_pull_request forwards run artifact policy',
+		array( 'daily_memory' => array( 'egress' => array( 'bundle-file', 'pr-body' ) ) ) === ( $pr_call['input']['run_artifact_egress_policy'] ?? null )
+	);
+	$assert( 'create_github_pull_request forwards bundle root', 'bundles/world-creator' === ( $pr_call['input']['bundle_root'] ?? null ) );
 
 	$tool_definitions = array(
 		'create_github_issue'        => $issue_definition,
