@@ -40,6 +40,12 @@ class GitHubPullRequestPublishSettings extends SettingsHandler {
 				'description' => __( 'Comma-separated labels to apply to opened pull requests by default. The AI step can override these.', 'data-machine-code' ),
 				'required'    => false,
 			),
+			'bundle_root'           => array(
+				'type'        => 'text',
+				'label'       => __( 'Bundle Root', 'data-machine-code' ),
+				'description' => __( 'Repository-relative bundle root for run artifacts with bundle-file egress. Defaults to bundles/{agent_slug}.', 'data-machine-code' ),
+				'required'    => false,
+			),
 			'draft'                 => array(
 				'type'        => 'checkbox',
 				'label'       => __( 'Open as Draft', 'data-machine-code' ),
