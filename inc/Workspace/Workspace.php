@@ -8341,7 +8341,7 @@ class Workspace {
 				continue;
 			}
 			$status = array_shift( $parts );
-			$path = (string) end( $parts );
+			$path   = (string) end( $parts );
 
 			$files[ $path ] = array(
 				'path'      => $path,
