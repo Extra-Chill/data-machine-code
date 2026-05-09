@@ -1593,34 +1593,49 @@ class Workspace {
 		$checks[] = array(
 			'name'    => 'denied_paths_absent',
 			'pass'    => empty( $denied ),
-			'details' => array( 'patterns' => $deny, 'matches' => $denied ),
+			'details' => array(
+				'patterns' => $deny,
+				'matches'  => $denied,
+			),
 		);
 
 		$outside_allow = empty( $allow ) ? array() : array_values( array_filter( $paths, fn( string $changed_path ): bool => ! $this->path_matches_any_pattern( $changed_path, $allow ) ) );
 		$checks[] = array(
 			'name'    => 'changed_paths_allowed',
 			'pass'    => empty( $outside_allow ),
-			'details' => array( 'patterns' => $allow, 'outside' => $outside_allow ),
+			'details' => array(
+				'patterns' => $allow,
+				'outside'  => $outside_allow,
+			),
 		);
 
 		$include_any_matches = $this->paths_matching_any_pattern( $paths, $include_any );
 		$checks[] = array(
 			'name'    => 'include_any_matched',
 			'pass'    => empty( $include_any ) || ! empty( $include_any_matches ),
-			'details' => array( 'patterns' => $include_any, 'matches' => $include_any_matches ),
+			'details' => array(
+				'patterns' => $include_any,
+				'matches'  => $include_any_matches,
+			),
 		);
 
 		$missing_include_all = array_values( array_filter( $include_all, fn( string $pattern ): bool => empty( $this->paths_matching_any_pattern( $paths, array( $pattern ) ) ) ) );
 		$checks[] = array(
 			'name'    => 'include_all_matched',
 			'pass'    => empty( $missing_include_all ),
-			'details' => array( 'patterns' => $include_all, 'missing' => $missing_include_all ),
+			'details' => array(
+				'patterns' => $include_all,
+				'missing'  => $missing_include_all,
+			),
 		);
 
 		$checks[] = array(
 			'name'    => 'tests_touched',
 			'pass'    => ! $require_tests || ! empty( $summary['totals']['tests_touched'] ),
-			'details' => array( 'required' => $require_tests, 'tests_touched' => (bool) ( $summary['totals']['tests_touched'] ?? false ) ),
+			'details' => array(
+				'required'      => $require_tests,
+				'tests_touched' => (bool) ( $summary['totals']['tests_touched'] ?? false ),
+			),
 		);
 
 		$valid = ! in_array( false, array_column( $checks, 'pass' ), true );
