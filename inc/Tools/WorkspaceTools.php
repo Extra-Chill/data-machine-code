@@ -329,11 +329,14 @@ class WorkspaceTools extends BaseTool {
 			'method'      => 'handlePath',
 			'description' => 'Get the Data Machine workspace path. Optionally ensure it exists.',
 			'parameters'  => array(
-				'ensure' => array(
-					'type'        => 'boolean',
-					'required'    => false,
-					'description' => 'Create the workspace directory if it does not exist (default false).',
+				'type'       => 'object',
+				'properties' => array(
+					'ensure' => array(
+						'type'        => 'boolean',
+						'description' => 'Create the workspace directory if it does not exist (default false).',
+					),
 				),
+				'required'   => array(),
 			),
 		);
 	}
@@ -349,11 +352,14 @@ class WorkspaceTools extends BaseTool {
 			'method'      => 'handleCapabilities',
 			'description' => 'Inspect whether the current Data Machine Code workspace backend can run local git operations in this runtime.',
 			'parameters'  => array(
-				'include_diagnostics' => array(
-					'type'        => 'boolean',
-					'required'    => false,
-					'description' => 'Include workspace backend diagnostics. Defaults to true.',
+				'type'       => 'object',
+				'properties' => array(
+					'include_diagnostics' => array(
+						'type'        => 'boolean',
+						'description' => 'Include workspace backend diagnostics. Defaults to true.',
+					),
 				),
+				'required'   => array(),
 			),
 		);
 	}
@@ -383,11 +389,14 @@ class WorkspaceTools extends BaseTool {
 			'method'      => 'handleShow',
 			'description' => 'Show detailed information about a workspace repository (branch, remote, latest commit, dirty count).',
 			'parameters'  => array(
-				'name' => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Workspace repository directory name.',
+				'type'       => 'object',
+				'properties' => array(
+					'name' => array(
+						'type'        => 'string',
+						'description' => 'Workspace repository directory name.',
+					),
 				),
+				'required'   => array( 'name' ),
 			),
 		);
 	}
@@ -403,16 +412,18 @@ class WorkspaceTools extends BaseTool {
 			'method'      => 'handleLs',
 			'description' => 'List directory contents within a workspace repository.',
 			'parameters'  => array(
-				'repo' => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Workspace repository directory name.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo' => array(
+						'type'        => 'string',
+						'description' => 'Workspace repository directory name.',
+					),
+					'path' => array(
+						'type'        => 'string',
+						'description' => 'Optional relative directory path inside the repo.',
+					),
 				),
-				'path' => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Optional relative directory path inside the repo.',
-				),
+				'required'   => array( 'repo' ),
 			),
 		);
 	}
@@ -428,31 +439,30 @@ class WorkspaceTools extends BaseTool {
 			'method'      => 'handleRead',
 			'description' => 'Read a text file from a workspace repository. Supports optional max_size, offset, and limit for large files.',
 			'parameters'  => array(
-				'repo'     => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Workspace repository directory name.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'     => array(
+						'type'        => 'string',
+						'description' => 'Workspace repository directory name.',
+					),
+					'path'     => array(
+						'type'        => 'string',
+						'description' => 'Relative file path inside the repository.',
+					),
+					'max_size' => array(
+						'type'        => 'integer',
+						'description' => 'Maximum readable size in bytes (default 1MB).',
+					),
+					'offset'   => array(
+						'type'        => 'integer',
+						'description' => 'Line offset to start reading from (1-indexed).',
+					),
+					'limit'    => array(
+						'type'        => 'integer',
+						'description' => 'Maximum number of lines to return.',
+					),
 				),
-				'path'     => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Relative file path inside the repository.',
-				),
-				'max_size' => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum readable size in bytes (default 1MB).',
-				),
-				'offset'   => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Line offset to start reading from (1-indexed).',
-				),
-				'limit'    => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum number of lines to return.',
-				),
+				'required'   => array( 'repo', 'path' ),
 			),
 		);
 	}
@@ -468,36 +478,34 @@ class WorkspaceTools extends BaseTool {
 			'method'      => 'handleGrep',
 			'description' => 'Search text files in a workspace repository using a regular expression pattern.',
 			'parameters'  => array(
-				'repo'          => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Workspace repository directory name or worktree handle.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'          => array(
+						'type'        => 'string',
+						'description' => 'Workspace repository directory name or worktree handle.',
+					),
+					'pattern'       => array(
+						'type'        => 'string',
+						'description' => 'Regular expression pattern to search for.',
+					),
+					'path'          => array(
+						'type'        => 'string',
+						'description' => 'Optional relative file or directory path inside the repository.',
+					),
+					'include'       => array(
+						'type'        => 'string',
+						'description' => 'Optional glob pattern to limit matching file paths.',
+					),
+					'max_results'   => array(
+						'type'        => 'integer',
+						'description' => 'Maximum number of matches to return (default 100, max 500).',
+					),
+					'context_lines' => array(
+						'type'        => 'integer',
+						'description' => 'Number of surrounding lines to include for each match (default 0, max 10).',
+					),
 				),
-				'pattern'       => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Regular expression pattern to search for.',
-				),
-				'path'          => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Optional relative file or directory path inside the repository.',
-				),
-				'include'       => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Optional glob pattern to limit matching file paths.',
-				),
-				'max_results'   => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum number of matches to return (default 100, max 500).',
-				),
-				'context_lines' => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Number of surrounding lines to include for each match (default 0, max 10).',
-				),
+				'required'   => array( 'repo', 'pattern' ),
 			),
 		);
 	}

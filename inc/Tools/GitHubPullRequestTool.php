@@ -108,47 +108,43 @@ class GitHubPullRequestTool extends BaseTool {
 			'method'      => 'handle_tool_call',
 			'description' => $description,
 			'parameters'  => array(
-				'repo'                  => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'                  => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'title'                 => array(
+						'type'        => 'string',
+						'description' => 'Pull request title.',
+					),
+					'head'                  => array(
+						'type'        => 'string',
+						'description' => 'Branch where changes are implemented. Use owner:branch for cross-fork PRs.',
+					),
+					'base'                  => array(
+						'type'        => 'string',
+						'description' => 'Branch to merge into. Defaults to the repository default branch.',
+					),
+					'body'                  => array(
+						'type'        => 'string',
+						'description' => 'Pull request description. Supports GitHub Markdown.',
+					),
+					'draft'                 => array(
+						'type'        => 'boolean',
+						'description' => 'Whether to open the pull request as a draft. Default: false.',
+					),
+					'labels'                => array(
+						'type'        => 'array',
+						'items'       => array( 'type' => 'string' ),
+						'description' => 'Labels to attach to the pull request after creation.',
+					),
+					'maintainer_can_modify' => array(
+						'type'        => 'boolean',
+						'description' => 'Whether maintainers can modify the pull request. Default: true.',
+					),
 				),
-				'title'                 => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Pull request title.',
-				),
-				'head'                  => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Branch where changes are implemented. Use owner:branch for cross-fork PRs.',
-				),
-				'base'                  => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Branch to merge into. Defaults to the repository default branch.',
-				),
-				'body'                  => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Pull request description. Supports GitHub Markdown.',
-				),
-				'draft'                 => array(
-					'type'        => 'boolean',
-					'required'    => false,
-					'description' => 'Whether to open the pull request as a draft. Default: false.',
-				),
-				'labels'                => array(
-					'type'        => 'array',
-					'items'       => array( 'type' => 'string' ),
-					'required'    => false,
-					'description' => 'Labels to attach to the pull request after creation.',
-				),
-				'maintainer_can_modify' => array(
-					'type'        => 'boolean',
-					'required'    => false,
-					'description' => 'Whether maintainers can modify the pull request. Default: true.',
-				),
+				'required'   => array( 'repo', 'title', 'head' ),
 			),
 		);
 	}

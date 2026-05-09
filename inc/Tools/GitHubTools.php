@@ -200,26 +200,26 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleListIssues',
 			'description' => 'List issues from a GitHub repository. Returns issue numbers, titles, states, labels, and assignees. Use to review open issues, track progress, or find specific issues by label.',
 			'parameters'  => array(
-				'repo'     => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format (e.g., Extra-Chill/data-machine).',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'     => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format (e.g., Extra-Chill/data-machine).',
+					),
+					'state'    => array(
+						'type'        => 'string',
+						'description' => 'Issue state: open, closed, or all. Default: open.',
+					),
+					'labels'   => array(
+						'type'        => 'string',
+						'description' => 'Comma-separated label names to filter by.',
+					),
+					'per_page' => array(
+						'type'        => 'integer',
+						'description' => 'Results per page (max: 100). Default: 30.',
+					),
 				),
-				'state'    => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Issue state: open, closed, or all. Default: open.',
-				),
-				'labels'   => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Comma-separated label names to filter by.',
-				),
-				'per_page' => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Results per page (max: 100). Default: 30.',
-				),
+				'required'   => array( 'repo' ),
 			),
 		);
 	}
@@ -260,16 +260,18 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleGetIssue',
 			'description' => 'Get a single GitHub issue with full details including body, labels, assignees, and comment count.',
 			'parameters'  => array(
-				'repo'         => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'         => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'issue_number' => array(
+						'type'        => 'integer',
+						'description' => 'Issue number.',
+					),
 				),
-				'issue_number' => array(
-					'type'        => 'integer',
-					'required'    => true,
-					'description' => 'Issue number.',
-				),
+				'required'   => array( 'repo', 'issue_number' ),
 			),
 		);
 	}
@@ -322,37 +324,35 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleManageIssue',
 			'description' => 'Update, close, or comment on a GitHub issue. Use action "update" to change title/body/labels, "close" to close the issue, or "comment" to add a comment.',
 			'parameters'  => array(
-				'repo'         => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'         => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'issue_number' => array(
+						'type'        => 'integer',
+						'description' => 'Issue number.',
+					),
+					'action'       => array(
+						'type'        => 'string',
+						'description' => 'Action: update, close, or comment.',
+					),
+					'title'        => array(
+						'type'        => 'string',
+						'description' => 'New issue title (update action).',
+					),
+					'body'         => array(
+						'type'        => 'string',
+						'description' => 'New issue body (update action) or comment text (comment action).',
+					),
+					'labels'       => array(
+						'type'        => 'array',
+						'items'       => array( 'type' => 'string' ),
+						'description' => 'Labels to set (update action). Replaces existing labels.',
+					),
 				),
-				'issue_number' => array(
-					'type'        => 'integer',
-					'required'    => true,
-					'description' => 'Issue number.',
-				),
-				'action'       => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Action: update, close, or comment.',
-				),
-				'title'        => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'New issue title (update action).',
-				),
-				'body'         => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'New issue body (update action) or comment text (comment action).',
-				),
-				'labels'       => array(
-					'type'        => 'array',
-					'items'       => array( 'type' => 'string' ),
-					'required'    => false,
-					'description' => 'Labels to set (update action). Replaces existing labels.',
-				),
+				'required'   => array( 'repo', 'issue_number', 'action' ),
 			),
 		);
 	}
@@ -393,26 +393,26 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleCommentPullRequest',
 			'description' => 'Comment on a GitHub pull request without granting broader issue update or close capabilities.',
 			'parameters'  => array(
-				'repo'        => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'        => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'pull_number' => array(
+						'type'        => 'integer',
+						'description' => 'Pull request number.',
+					),
+					'body'        => array(
+						'type'        => 'string',
+						'description' => 'Comment body (supports GitHub Markdown).',
+					),
+					'marker'      => array(
+						'type'        => 'string',
+						'description' => 'Optional stable marker appended as an HTML comment for future update-by-marker support.',
+					),
 				),
-				'pull_number' => array(
-					'type'        => 'integer',
-					'required'    => true,
-					'description' => 'Pull request number.',
-				),
-				'body'        => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Comment body (supports GitHub Markdown).',
-				),
-				'marker'      => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Optional stable marker appended as an HTML comment for future update-by-marker support.',
-				),
+				'required'   => array( 'repo', 'pull_number', 'body' ),
 			),
 		);
 	}
@@ -438,36 +438,34 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleUpsertPullReviewComment',
 			'description' => 'Create or update one managed bot-authored GitHub pull request review comment identified by a hidden marker.',
 			'parameters'  => array(
-				'repo'        => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'        => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'pull_number' => array(
+						'type'        => 'integer',
+						'description' => 'Pull request number.',
+					),
+					'body'        => array(
+						'type'        => 'string',
+						'description' => 'Review comment body (supports GitHub Markdown). Hidden marker text is appended automatically.',
+					),
+					'marker'      => array(
+						'type'        => 'string',
+						'description' => 'Hidden HTML comment marker used to find the managed comment. Default: <!-- datamachine-pr-review -->.',
+					),
+					'head_sha'    => array(
+						'type'        => 'string',
+						'description' => 'Optional pull request head SHA. Required to separate comments when mode is per_head_sha.',
+					),
+					'mode'        => array(
+						'type'        => 'string',
+						'description' => 'Comment policy: update_existing or per_head_sha. Default: update_existing.',
+					),
 				),
-				'pull_number' => array(
-					'type'        => 'integer',
-					'required'    => true,
-					'description' => 'Pull request number.',
-				),
-				'body'        => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Review comment body (supports GitHub Markdown). Hidden marker text is appended automatically.',
-				),
-				'marker'      => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Hidden HTML comment marker used to find the managed comment. Default: <!-- datamachine-pr-review -->.',
-				),
-				'head_sha'    => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Optional pull request head SHA. Required to separate comments when mode is per_head_sha.',
-				),
-				'mode'        => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Comment policy: update_existing or per_head_sha. Default: update_existing.',
-				),
+				'required'   => array( 'repo', 'pull_number', 'body' ),
 			),
 		);
 	}
@@ -493,26 +491,26 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleMergePullRequest',
 			'description' => 'Merge an open GitHub pull request only when its current head SHA exactly matches expected_head_sha. Defaults to squash merge.',
 			'parameters'  => array(
-				'repo'              => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'              => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'pull_number'       => array(
+						'type'        => 'integer',
+						'description' => 'Pull request number.',
+					),
+					'expected_head_sha' => array(
+						'type'        => 'string',
+						'description' => 'Exact head SHA expected immediately before merge.',
+					),
+					'merge_method'      => array(
+						'type'        => 'string',
+						'description' => 'GitHub merge method: merge, squash, or rebase. Default: squash.',
+					),
 				),
-				'pull_number'       => array(
-					'type'        => 'integer',
-					'required'    => true,
-					'description' => 'Pull request number.',
-				),
-				'expected_head_sha' => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Exact head SHA expected immediately before merge.',
-				),
-				'merge_method'      => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'GitHub merge method: merge, squash, or rebase. Default: squash.',
-				),
+				'required'   => array( 'repo', 'pull_number', 'expected_head_sha' ),
 			),
 		);
 	}
@@ -553,16 +551,18 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleListPulls',
 			'description' => 'List pull requests from a GitHub repository. Returns PR numbers, titles, states, branches, and merge status.',
 			'parameters'  => array(
-				'repo'  => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'  => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'state' => array(
+						'type'        => 'string',
+						'description' => 'PR state: open, closed, or all. Default: open.',
+					),
 				),
-				'state' => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'PR state: open, closed, or all. Default: open.',
-				),
+				'required'   => array( 'repo' ),
 			),
 		);
 	}
@@ -622,16 +622,18 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleGetPull',
 			'description' => 'Get one GitHub pull request with normalized title, body, branch, SHA, labels, and merge metadata.',
 			'parameters'  => array(
-				'repo'        => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'        => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'pull_number' => array(
+						'type'        => 'integer',
+						'description' => 'Pull request number.',
+					),
 				),
-				'pull_number' => array(
-					'type'        => 'integer',
-					'required'    => true,
-					'description' => 'Pull request number.',
-				),
+				'required'   => array( 'repo', 'pull_number' ),
 			),
 		);
 	}
@@ -657,26 +659,26 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handlePullFiles',
 			'description' => 'List files changed by a GitHub pull request, including filename, status, additions, deletions, and patch when available.',
 			'parameters'  => array(
-				'repo'        => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'        => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'pull_number' => array(
+						'type'        => 'integer',
+						'description' => 'Pull request number.',
+					),
+					'per_page'    => array(
+						'type'        => 'integer',
+						'description' => 'Results per page (max: 100). Default: 100.',
+					),
+					'page'        => array(
+						'type'        => 'integer',
+						'description' => 'Page number. Default: 1.',
+					),
 				),
-				'pull_number' => array(
-					'type'        => 'integer',
-					'required'    => true,
-					'description' => 'Pull request number.',
-				),
-				'per_page'    => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Results per page (max: 100). Default: 100.',
-				),
-				'page'        => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Page number. Default: 1.',
-				),
+				'required'   => array( 'repo', 'pull_number' ),
 			),
 		);
 	}
@@ -702,26 +704,26 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleCheckRuns',
 			'description' => 'Get GitHub check runs for a commit SHA or ref, including aggregate state and failing check names/URLs.',
 			'parameters'  => array(
-				'repo'                 => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'                 => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'sha'                  => array(
+						'type'        => 'string',
+						'description' => 'Commit SHA, branch, or tag ref.',
+					),
+					'per_page'             => array(
+						'type'        => 'integer',
+						'description' => 'Results per page (max: 100). Default: 30.',
+					),
+					'include_check_output' => array(
+						'type'        => 'boolean',
+						'description' => 'Include bounded check output summaries and text.',
+					),
 				),
-				'sha'                  => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Commit SHA, branch, or tag ref.',
-				),
-				'per_page'             => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Results per page (max: 100). Default: 30.',
-				),
-				'include_check_output' => array(
-					'type'        => 'boolean',
-					'required'    => false,
-					'description' => 'Include bounded check output summaries and text.',
-				),
+				'required'   => array( 'repo', 'sha' ),
 			),
 		);
 	}
@@ -767,16 +769,18 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleCommitStatuses',
 			'description' => 'Get unmanaged GitHub commit statuses for a commit SHA or ref, including aggregate state and failing contexts.',
 			'parameters'  => array(
-				'repo' => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo' => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'sha'  => array(
+						'type'        => 'string',
+						'description' => 'Commit SHA, branch, or tag ref.',
+					),
 				),
-				'sha'  => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Commit SHA, branch, or tag ref.',
-				),
+				'required'   => array( 'repo', 'sha' ),
 			),
 		);
 	}
@@ -792,36 +796,34 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleActionsArtifact',
 			'description' => 'Download a GitHub Actions artifact by artifact name for a pull request or commit SHA and return generic artifact metadata plus parsed JSON files. Does not interpret producer-specific payload semantics.',
 			'parameters'  => array(
-				'repo'               => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'               => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'head_sha'           => array(
+						'type'        => 'string',
+						'description' => 'Commit SHA to match the artifact against.',
+					),
+					'pull_number'        => array(
+						'type'        => 'integer',
+						'description' => 'Pull request number. Used to resolve head_sha when head_sha is omitted.',
+					),
+					'artifact_name'      => array(
+						'type'        => 'string',
+						'description' => 'GitHub Actions artifact name.',
+					),
+					'max_artifact_bytes' => array(
+						'type'        => 'integer',
+						'description' => 'Maximum artifact ZIP bytes to download. Default: 2000000.',
+					),
+					'include_json'       => array(
+						'type'        => 'boolean',
+						'description' => 'Parse and include JSON files from the artifact ZIP. Default: true.',
+					),
 				),
-				'head_sha'           => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Commit SHA to match the artifact against.',
-				),
-				'pull_number'        => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Pull request number. Used to resolve head_sha when head_sha is omitted.',
-				),
-				'artifact_name'      => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'GitHub Actions artifact name.',
-				),
-				'max_artifact_bytes' => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum artifact ZIP bytes to download. Default: 2000000.',
-				),
-				'include_json'       => array(
-					'type'        => 'boolean',
-					'required'    => false,
-					'description' => 'Parse and include JSON files from the artifact ZIP. Default: true.',
-				),
+				'required'   => array( 'repo', 'artifact_name' ),
 			),
 		);
 	}
@@ -837,36 +839,34 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleHomeboyCiResults',
 			'description' => 'Download and summarize the Homeboy CI results artifact for a pull request or commit SHA. Uses GitHub Actions artifacts, preferring review.json and falling back to audit/lint/test JSON files.',
 			'parameters'  => array(
-				'repo'               => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'               => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'head_sha'           => array(
+						'type'        => 'string',
+						'description' => 'Commit SHA to match the Homeboy artifact against.',
+					),
+					'pull_number'        => array(
+						'type'        => 'integer',
+						'description' => 'Pull request number. Used to resolve head_sha when head_sha is omitted.',
+					),
+					'artifact_name'      => array(
+						'type'        => 'string',
+						'description' => 'GitHub Actions artifact name. Default: homeboy-ci-results.',
+					),
+					'max_artifact_bytes' => array(
+						'type'        => 'integer',
+						'description' => 'Maximum artifact ZIP bytes to download. Default: 2000000.',
+					),
+					'include_raw'        => array(
+						'type'        => 'boolean',
+						'description' => 'Include bounded raw parsed JSON payloads.',
+					),
 				),
-				'head_sha'           => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Commit SHA to match the Homeboy artifact against.',
-				),
-				'pull_number'        => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Pull request number. Used to resolve head_sha when head_sha is omitted.',
-				),
-				'artifact_name'      => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'GitHub Actions artifact name. Default: homeboy-ci-results.',
-				),
-				'max_artifact_bytes' => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum artifact ZIP bytes to download. Default: 2000000.',
-				),
-				'include_raw'        => array(
-					'type'        => 'boolean',
-					'required'    => false,
-					'description' => 'Include bounded raw parsed JSON payloads.',
-				),
+				'required'   => array( 'repo' ),
 			),
 		);
 	}
@@ -902,87 +902,75 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handlePullReviewContext',
 			'description' => 'Build a review-ready context packet for a GitHub pull request, including normalized PR metadata and changed-file patches.',
 			'parameters'  => array(
-				'repo'                    => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'                    => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'pull_number'             => array(
+						'type'        => 'integer',
+						'description' => 'Pull request number.',
+					),
+					'head_sha'                => array(
+						'type'        => 'string',
+						'description' => 'Optional expected pull request head SHA. Returns an error if GitHub reports a different head SHA.',
+					),
+					'max_patch_chars'         => array(
+						'type'        => 'integer',
+						'description' => 'Maximum cumulative patch characters to include. Default: 200000.',
+					),
+					'include_file_contents'   => array(
+						'type'        => 'boolean',
+						'description' => 'Opt in to bounded full-file contents for changed files.',
+					),
+					'include_base_contents'   => array(
+						'type'        => 'boolean',
+						'description' => 'When changed file contents are enabled, also include bounded base-branch contents for comparison.',
+					),
+					'context_paths'           => array(
+						'type'        => 'array',
+						'items'       => array( 'type' => 'string' ),
+						'description' => 'Additional repository paths to include from the PR head ref.',
+					),
+					'max_file_content_chars'  => array(
+						'type'        => 'integer',
+						'description' => 'Maximum characters included per expanded file content block. Default: 20000.',
+					),
+					'max_context_files'       => array(
+						'type'        => 'integer',
+						'description' => 'Maximum number of files included in expanded PR review context. Default: 10.',
+					),
+					'max_total_context_chars' => array(
+						'type'        => 'integer',
+						'description' => 'Maximum cumulative characters included across expanded PR review context files. Default: 100000.',
+					),
+					'include_checks'          => array(
+						'type'        => 'boolean',
+						'description' => 'Include GitHub check runs for the PR head SHA.',
+					),
+					'include_statuses'        => array(
+						'type'        => 'boolean',
+						'description' => 'Include classic commit statuses for the PR head SHA.',
+					),
+					'max_check_runs'          => array(
+						'type'        => 'integer',
+						'description' => 'Maximum check runs to include. Default: 30.',
+					),
+					'include_check_output'    => array(
+						'type'        => 'boolean',
+						'description' => 'Include bounded check output summaries and text.',
+					),
+					'include_homeboy_ci'      => array(
+						'type'        => 'boolean',
+						'description' => 'Include parsed Homeboy CI result artifact data for the PR head SHA.',
+					),
+					'artifact_name'           => array(
+						'type'        => 'string',
+						'description' => 'GitHub Actions artifact name for Homeboy CI results. Default: homeboy-ci-results.',
+					),
 				),
-				'pull_number'             => array(
-					'type'        => 'integer',
-					'required'    => true,
-					'description' => 'Pull request number.',
-				),
-				'head_sha'                => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Optional expected pull request head SHA. Returns an error if GitHub reports a different head SHA.',
-				),
-				'max_patch_chars'         => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum cumulative patch characters to include. Default: 200000.',
-				),
-				'include_file_contents'   => array(
-					'type'        => 'boolean',
-					'required'    => false,
-					'description' => 'Opt in to bounded full-file contents for changed files.',
-				),
-				'include_base_contents'   => array(
-					'type'        => 'boolean',
-					'required'    => false,
-					'description' => 'When changed file contents are enabled, also include bounded base-branch contents for comparison.',
-				),
-				'context_paths'           => array(
-					'type'        => 'array',
-					'items'       => array( 'type' => 'string' ),
-					'required'    => false,
-					'description' => 'Additional repository paths to include from the PR head ref.',
-				),
-				'max_file_content_chars'  => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum characters included per expanded file content block. Default: 20000.',
-				),
-				'max_context_files'       => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum number of files included in expanded PR review context. Default: 10.',
-				),
-				'max_total_context_chars' => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum cumulative characters included across expanded PR review context files. Default: 100000.',
-				),
-				'include_checks'          => array(
-					'type'        => 'boolean',
-					'required'    => false,
-					'description' => 'Include GitHub check runs for the PR head SHA.',
-				),
-				'include_statuses'        => array(
-					'type'        => 'boolean',
-					'required'    => false,
-					'description' => 'Include classic commit statuses for the PR head SHA.',
-				),
-				'max_check_runs'          => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum check runs to include. Default: 30.',
-				),
-				'include_check_output'    => array(
-					'type'        => 'boolean',
-					'required'    => false,
-					'description' => 'Include bounded check output summaries and text.',
-				),
-				'include_homeboy_ci'      => array(
-					'type'        => 'boolean',
-					'required'    => false,
-					'description' => 'Include parsed Homeboy CI result artifact data for the PR head SHA.',
-				),
-				'artifact_name'           => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'GitHub Actions artifact name for Homeboy CI results. Default: homeboy-ci-results.',
-				),
+				'required'   => array( 'repo', 'pull_number' ),
 			),
 		);
 	}
@@ -1008,36 +996,34 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleRepoReviewProfile',
 			'description' => 'Build bounded repository-level review context from AGENTS.md, README, contributing docs, Homeboy config, and small architecture/development docs. Use before reviewing to learn repo-specific rules and conventions.',
 			'parameters'  => array(
-				'repo'                  => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'                  => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'ref'                   => array(
+						'type'        => 'string',
+						'description' => 'Branch, tag, or commit SHA. Defaults to HEAD.',
+					),
+					'max_profile_files'     => array(
+						'type'        => 'integer',
+						'description' => 'Maximum profile files to include. Default: 14.',
+					),
+					'max_file_chars'        => array(
+						'type'        => 'integer',
+						'description' => 'Maximum characters per profile file. Default: 12000.',
+					),
+					'max_total_chars'       => array(
+						'type'        => 'integer',
+						'description' => 'Maximum cumulative profile characters. Default: 60000.',
+					),
+					'max_architecture_docs' => array(
+						'type'        => 'integer',
+						'description' => 'Maximum docs/** architecture/development files to include. Default: 8.',
+					),
 				),
-				'ref'                   => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Branch, tag, or commit SHA. Defaults to HEAD.',
-				),
-				'max_profile_files'     => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum profile files to include. Default: 14.',
-				),
-				'max_file_chars'        => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum characters per profile file. Default: 12000.',
-				),
-				'max_total_chars'       => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum cumulative profile characters. Default: 60000.',
-				),
-				'max_architecture_docs' => array(
-					'type'        => 'integer',
-					'required'    => false,
-					'description' => 'Maximum docs/** architecture/development files to include. Default: 8.',
-				),
+				'required'   => array( 'repo' ),
 			),
 		);
 	}
@@ -1053,26 +1039,26 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleRunPrHomeboyReview',
 			'description' => 'Run checkout-backed Homeboy review checks for a pull request in an isolated DMC workspace worktree. Does not post comments or mutate the pull request.',
 			'parameters'  => array(
-				'repo'        => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'        => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'pull_number' => array(
+						'type'        => 'integer',
+						'description' => 'Pull request number.',
+					),
+					'head_sha'    => array(
+						'type'        => 'string',
+						'description' => 'Expected pull request head SHA. Execution fails closed if GitHub reports a different head.',
+					),
+					'base_ref'    => array(
+						'type'        => 'string',
+						'description' => 'Optional base ref. Defaults to the pull request base ref.',
+					),
 				),
-				'pull_number' => array(
-					'type'        => 'integer',
-					'required'    => true,
-					'description' => 'Pull request number.',
-				),
-				'head_sha'    => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Expected pull request head SHA. Execution fails closed if GitHub reports a different head.',
-				),
-				'base_ref'    => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Optional base ref. Defaults to the pull request base ref.',
-				),
+				'required'   => array( 'repo', 'pull_number', 'head_sha' ),
 			),
 		);
 	}
@@ -1098,32 +1084,31 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handlePullDocumentationImpact',
 			'description' => 'Build a heuristic documentation-impact packet for a GitHub pull request. Use this before documentation/content freshness workflows to identify changed command, ability/tool, REST/webhook, settings, and public PHP surfaces with evidence.',
 			'parameters'  => array(
-				'repo'        => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'        => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'pull_number' => array(
+						'type'        => 'integer',
+						'description' => 'Pull request number.',
+					),
+					'head_sha'    => array(
+						'type'        => 'string',
+						'description' => 'Optional expected pull request head SHA. Returns an error if GitHub reports a different head SHA.',
+					),
+					'base_ref'    => array(
+						'type'        => 'string',
+						'description' => 'Optional base ref used for docs tree lookup. Defaults to the PR base ref.',
+					),
+					'docs_paths'  => array(
+						'type'        => 'array',
+						'items'       => array( 'type' => 'string' ),
+						'description' => 'Optional documentation path allow-list used when suggesting likely stale docs.',
+					),
 				),
-				'pull_number' => array(
-					'type'        => 'integer',
-					'required'    => true,
-					'description' => 'Pull request number.',
-				),
-				'head_sha'    => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Optional expected pull request head SHA. Returns an error if GitHub reports a different head SHA.',
-				),
-				'base_ref'    => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Optional base ref used for docs tree lookup. Defaults to the PR base ref.',
-				),
-				'docs_paths'  => array(
-					'type'        => 'array',
-					'items'       => array( 'type' => 'string' ),
-					'required'    => false,
-					'description' => 'Optional documentation path allow-list used when suggesting likely stale docs.',
-				),
+				'required'   => array( 'repo', 'pull_number' ),
 			),
 		);
 	}
@@ -1149,21 +1134,22 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleListTree',
 			'description' => 'List files in a GitHub repository tree at a branch, tag, or commit SHA. Optionally filter to a path prefix.',
 			'parameters'  => array(
-				'repo' => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo' => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'ref'  => array(
+						'type'        => 'string',
+						'description' => 'Branch, tag, or commit SHA. Defaults to HEAD.',
+					),
+					'path' => array(
+						'type'        => 'string',
+						'description' => 'Optional path prefix to filter returned files.',
+					),
 				),
-				'ref'  => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Branch, tag, or commit SHA. Defaults to HEAD.',
-				),
-				'path' => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Optional path prefix to filter returned files.',
-				),
+				'required'   => array( 'repo' ),
 			),
 		);
 	}
@@ -1189,21 +1175,22 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleGetFile',
 			'description' => 'Get decoded content for a single file from a GitHub repository.',
 			'parameters'  => array(
-				'repo' => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo' => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'path' => array(
+						'type'        => 'string',
+						'description' => 'File path within the repository.',
+					),
+					'ref'  => array(
+						'type'        => 'string',
+						'description' => 'Branch, tag, or commit SHA. Defaults to the repository default branch.',
+					),
 				),
-				'path' => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'File path within the repository.',
-				),
-				'ref'  => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Branch, tag, or commit SHA. Defaults to the repository default branch.',
-				),
+				'required'   => array( 'repo', 'path' ),
 			),
 		);
 	}
@@ -1229,31 +1216,30 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleCreateOrUpdateFile',
 			'description' => 'Create or update a file in a GitHub repository using the Contents API. If branch is provided and does not exist, it is created from the repository default branch before committing.',
 			'parameters'  => array(
-				'repo'           => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Repository in owner/repo format.',
+				'type'       => 'object',
+				'properties' => array(
+					'repo'           => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'file_path'      => array(
+						'type'        => 'string',
+						'description' => 'Path within the repository.',
+					),
+					'content'        => array(
+						'type'        => 'string',
+						'description' => 'Full file content to write.',
+					),
+					'commit_message' => array(
+						'type'        => 'string',
+						'description' => 'Commit message for the file change.',
+					),
+					'branch'         => array(
+						'type'        => 'string',
+						'description' => 'Target branch. Defaults to the repository default branch. New branches are created from the default branch.',
+					),
 				),
-				'file_path'      => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Path within the repository.',
-				),
-				'content'        => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Full file content to write.',
-				),
-				'commit_message' => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'Commit message for the file change.',
-				),
-				'branch'         => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Target branch. Defaults to the repository default branch. New branches are created from the default branch.',
-				),
+				'required'   => array( 'repo', 'file_path', 'content', 'commit_message' ),
 			),
 		);
 	}
@@ -1294,16 +1280,18 @@ class GitHubTools extends BaseTool {
 			'method'      => 'handleListRepos',
 			'description' => 'List GitHub repositories for a user or organization. Shows repo names, languages, stars, open issues, and last push date.',
 			'parameters'  => array(
-				'owner' => array(
-					'type'        => 'string',
-					'required'    => true,
-					'description' => 'GitHub user or organization name.',
+				'type'       => 'object',
+				'properties' => array(
+					'owner' => array(
+						'type'        => 'string',
+						'description' => 'GitHub user or organization name.',
+					),
+					'sort'  => array(
+						'type'        => 'string',
+						'description' => 'Sort by: created, updated, pushed, full_name. Default: updated.',
+					),
 				),
-				'sort'  => array(
-					'type'        => 'string',
-					'required'    => false,
-					'description' => 'Sort by: created, updated, pushed, full_name. Default: updated.',
-				),
+				'required'   => array( 'owner' ),
 			),
 		);
 	}
