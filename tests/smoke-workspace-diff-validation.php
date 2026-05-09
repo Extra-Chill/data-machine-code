@@ -57,6 +57,13 @@ namespace DataMachine\Core\FilesRepository {
 	}
 }
 
+namespace DataMachine\Engine\AI\Tools {
+	class BaseTool {
+		/** @param array<int,string> $contexts Context names. @param array<string,mixed> $options Tool options. */
+		protected function registerTool( string $tool_id, callable $definition_callback, array $contexts = array(), array $options = array() ): void {}
+	}
+}
+
 namespace {
 	require __DIR__ . '/../inc/Support/GitRunner.php';
 	require __DIR__ . '/../inc/Support/PathSecurity.php';
@@ -76,6 +83,22 @@ namespace {
 		echo "  ✗ {$message}\n";
 		echo '    expected: ' . var_export( $expected, true ) . "\n";
 		echo '    actual:   ' . var_export( $actual, true ) . "\n";
+	};
+
+	$assert_arrays_define_items = function ( array $schema, string $path ) use ( &$assert, &$assert_arrays_define_items ): void {
+		if ( ( $schema['type'] ?? null ) === 'array' ) {
+			$assert( true, array_key_exists( 'items', $schema ), $path . ' array schema defines items' );
+		}
+
+		foreach ( $schema['properties'] ?? array() as $property => $property_schema ) {
+			if ( is_array( $property_schema ) ) {
+				$assert_arrays_define_items( $property_schema, $path . '.properties.' . $property );
+			}
+		}
+
+		if ( isset( $schema['items'] ) && is_array( $schema['items'] ) ) {
+			$assert_arrays_define_items( $schema['items'], $path . '.items' );
+		}
 	};
 
 	$run = function ( string $command, string $cwd ): void {
@@ -108,6 +131,14 @@ namespace {
 	file_put_contents( $repo . '/notes.txt', "untracked\n" );
 
 	echo "Workspace diff validation\n";
+
+	require __DIR__ . '/../inc/Tools/WorkspaceDiffTools.php';
+	$tool_definition = ( new \DataMachineCode\Tools\WorkspaceDiffTools() )->getDiffValidateDefinition();
+	foreach ( $tool_definition['parameters'] ?? array() as $parameter => $parameter_schema ) {
+		if ( is_array( $parameter_schema ) ) {
+			$assert_arrays_define_items( $parameter_schema, 'workspace_diff_validate.parameters.' . $parameter );
+		}
+	}
 
 	$diff    = new \DataMachineCode\Workspace\WorkspaceDiff();
 	$summary = $diff->summary( 'demo@diff-check' );
