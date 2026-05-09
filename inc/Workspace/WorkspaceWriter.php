@@ -160,7 +160,11 @@ class WorkspaceWriter {
 		$count = substr_count( $content, $old_string );
 
 		if ( 0 === $count ) {
-			return new \WP_Error( 'string_not_found', 'old_string not found in file content.', array( 'status' => 400 ) );
+			return new \WP_Error( 'string_not_found', 'old_string not found in file content.', array(
+				'status'      => 400,
+				'path'        => $path,
+				'suggestions' => $this->build_edit_suggestions( $content, $old_string ),
+			) );
 		}
 
 		if ( $count > 1 && ! $replace_all ) {
@@ -310,6 +314,51 @@ class WorkspaceWriter {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function build_edit_suggestions( string $content, string $old_string ): array {
+		$candidates = array_values( array_filter( array_map( 'trim', explode( "\n", $old_string ) ), static fn( $line ) => strlen( $line ) >= 4 ) );
+		usort( $candidates, static fn( $a, $b ) => strlen( $b ) <=> strlen( $a ) );
+
+		$needle = $candidates[0] ?? trim( $old_string );
+		if ( '' === $needle ) {
+			return array();
+		}
+
+		$needle      = substr( $needle, 0, 120 );
+		$lines       = explode( "\n", $content );
+		$suggestions = array();
+		foreach ( $lines as $index => $line ) {
+			if ( false === strpos( $line, $needle ) ) {
+				continue;
+			}
+
+			$start         = max( 0, $index - 2 );
+			$end           = min( count( $lines ) - 1, $index + 2 );
+			$suggestions[] = array(
+				'line'    => $index + 1,
+				'text'    => $line,
+				'preview' => $this->build_preview( $lines, $start, $end ),
+			);
+
+			if ( count( $suggestions ) >= 3 ) {
+				break;
+			}
+		}
+
+		return $suggestions;
+	}
+
+	private function build_preview( array $lines, int $start, int $end ): string {
+		$preview = array();
+		for ( $context_index = $start; $context_index <= $end; ++$context_index ) {
+			$preview[] = sprintf( '%d: %s', $context_index + 1, $lines[ $context_index ] );
+		}
+
+		return implode( "\n", $preview );
 	}
 
 	/**
