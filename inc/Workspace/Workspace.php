@@ -1366,16 +1366,22 @@ class Workspace {
 		}
 
 		return array(
-			'success'     => true,
-			'kind'        => 'branch_push',
-			'name'        => $parsed['dir_name'],
-			'repo'        => $repo_name,
-			'github_repo' => $github_repo,
-			'remote'      => $remote,
-			'branch'      => $target_branch,
-			'url'         => $branch_url,
-			'html_url'    => $branch_url,
-			'message'     => trim( (string) $result['output'] ),
+			'success'            => true,
+			'kind'               => 'branch_push',
+			'name'               => $parsed['dir_name'],
+			'repo'               => $github_repo ?? $repo_name,
+			'workspace_repo'     => $repo_name,
+			'github_repo'        => $github_repo,
+			'remote'             => $remote,
+			'branch'             => $target_branch,
+			'url'                => $branch_url,
+			'html_url'           => $branch_url,
+			'next_required_tool' => null !== $github_repo ? 'create_github_pull_request' : null,
+			'next_required_args' => null !== $github_repo ? array(
+				'repo' => $github_repo,
+				'head' => $target_branch,
+			) : null,
+			'message'            => trim( (string) $result['output'] ),
 		);
 	}
 

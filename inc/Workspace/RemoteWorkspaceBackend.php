@@ -558,6 +558,8 @@ class RemoteWorkspaceBackend {
 			'backend'            => 'github_api',
 			'name'               => $handle,
 			'repo'               => $context['repo'],
+			'workspace_repo'     => $context['repo_name'] ?? $handle,
+			'github_repo'        => $context['repo'],
 			'remote'             => $remote,
 			'branch'             => $push_branch,
 			'url'                => $branch_url,
