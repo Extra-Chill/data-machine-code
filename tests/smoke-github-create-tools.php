@@ -145,7 +145,7 @@ namespace {
 	$assert( 'create_github_pull_request requires repo', true === ( $pr_params['repo']['required'] ?? false ) );
 	$assert( 'create_github_pull_request requires title', true === ( $pr_params['title']['required'] ?? false ) );
 	$assert( 'create_github_pull_request requires head', true === ( $pr_params['head']['required'] ?? false ) );
-	foreach ( array( 'repo', 'title', 'head', 'base', 'body', 'draft', 'maintainer_can_modify' ) as $param ) {
+	foreach ( array( 'repo', 'title', 'head', 'base', 'body', 'draft', 'labels', 'maintainer_can_modify' ) as $param ) {
 		$assert( "create_github_pull_request exposes {$param}", array_key_exists( $param, $pr_params ) );
 	}
 
@@ -166,6 +166,7 @@ namespace {
 		'head'                  => 'fix/github-pr-tool',
 		'base'                  => 'main',
 		'body'                  => 'PR body',
+		'labels'                => array( 'needs-review' ),
 		'draft'                 => true,
 		'maintainer_can_modify' => false,
 	) );
@@ -174,6 +175,7 @@ namespace {
 
 	$pr_call = $GLOBALS['dmc_tool_ability_calls'][1] ?? array();
 	$assert( 'create_github_pull_request calls PR ability', 'datamachine/create-github-pull-request' === ( $pr_call['name'] ?? '' ) );
+	$assert( 'create_github_pull_request forwards labels', array( 'needs-review' ) === ( $pr_call['input']['labels'] ?? null ) );
 	$assert( 'create_github_pull_request forwards maintainer_can_modify', false === ( $pr_call['input']['maintainer_can_modify'] ?? null ) );
 
 	$tool_definitions = array(
