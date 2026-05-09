@@ -13,7 +13,7 @@ defined( 'ABSPATH' ) || exit;
 
 class RemoteWorkspaceBackend {
 
-	private const OPTION = 'datamachine_code_remote_workspace_state';
+	private const OPTION        = 'datamachine_code_remote_workspace_state';
 	private const MAX_READ_SIZE = 1048576;
 
 	/**
@@ -268,7 +268,11 @@ class RemoteWorkspaceBackend {
 
 		foreach ( array_keys( (array) $context['pending_files'] ) as $pending_path ) {
 			if ( '' === $prefix || $pending_path === $prefix || str_starts_with( $pending_path, $prefix . '/' ) ) {
-				array_unshift( $files, array( 'path' => $pending_path, 'type' => 'file', 'size' => strlen( (string) $context['pending_files'][ $pending_path ] ) ) );
+				array_unshift( $files, array(
+					'path' => $pending_path,
+					'type' => 'file',
+					'size' => strlen( (string) $context['pending_files'][ $pending_path ] ),
+				) );
 			}
 		}
 
@@ -656,6 +660,7 @@ class RemoteWorkspaceBackend {
 		}
 
 		$regex = '~' . str_replace( '~', '\\~', $pattern ) . '~u';
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_set_error_handler -- Validate user-supplied regex without surfacing PHP warnings.
 		$previous_handler = set_error_handler( fn() => true );
 		$is_valid         = false !== preg_match( $regex, '' );
 		restore_error_handler();

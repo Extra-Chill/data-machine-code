@@ -273,9 +273,9 @@ class WorkspaceWriter {
 				);
 			}
 
-			$diff    = GitRunner::run( $repo_path, 'diff --no-ext-diff --binary' );
-			$status  = GitRunner::run( $repo_path, 'status --porcelain --untracked-files=all' );
-			$changed = GitRunner::run( $repo_path, 'diff --name-only' );
+			$diff          = GitRunner::run( $repo_path, 'diff --no-ext-diff --binary' );
+			$status        = GitRunner::run( $repo_path, 'status --porcelain --untracked-files=all' );
+			$changed       = GitRunner::run( $repo_path, 'diff --name-only' );
 			$status_output = is_wp_error( $status ) ? '' : $status['output'];
 			$changed_files = array_unique( array_merge(
 				$this->split_git_lines( is_wp_error( $changed ) ? '' : $changed['output'] ),

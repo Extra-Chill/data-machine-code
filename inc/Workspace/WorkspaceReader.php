@@ -279,6 +279,7 @@ class WorkspaceReader {
 		}
 
 		$regex = '~' . str_replace( '~', '\\~', $pattern ) . '~u';
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_set_error_handler -- Validate user-supplied regex without surfacing PHP warnings.
 		$previous_handler = set_error_handler( fn() => true );
 		$is_valid         = false !== preg_match( $regex, '' );
 		restore_error_handler();
