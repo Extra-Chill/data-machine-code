@@ -470,6 +470,50 @@ namespace {
 	$assert( 'createPullRequest keeps success=true when post-create labeling fails', is_array( $result ) && true === ( $result['success'] ?? false ) );
 	$assert( 'createPullRequest returns explicit label failure metadata', is_array( $result ) && false === ( $result['labeling']['success'] ?? null ) && 'github_api_error' === ( $result['labeling']['error_code'] ?? '' ) );
 
+	// ---- removeLabel: surgical removal path URL-encodes the label segment and sends no request body.
+	$reset_http();
+	$queue_response( 200, array( array( 'name' => 'kept' ) ) );
+	$result = GitHubAbilities::removeLabel( array(
+		'repo'         => 'owner/repo',
+		'issue_number' => 42,
+		'label'        => 'status:idea ready',
+	) );
+	$call = $GLOBALS['dmc_http_calls'][0] ?? array();
+	$assert( 'removeLabel success path returns success=true', is_array( $result ) && true === ( $result['success'] ?? false ) );
+	$assert( 'removeLabel reports removed label', is_array( $result ) && 'status:idea ready' === ( $result['removed_label'] ?? '' ) );
+	$assert( 'removeLabel uses DELETE method', 'DELETE' === ( $call['method'] ?? '' ) );
+	$assert( 'removeLabel URL-encodes label path segment', is_string( $call['url'] ?? null ) && str_ends_with( $call['url'], '/repos/owner/repo/issues/42/labels/status%3Aidea%20ready' ) );
+	$assert( 'removeLabel does not send request body', ! array_key_exists( 'body', $call['args'] ?? array() ) );
+
+	// ---- removeLabel: missing label on GitHub is idempotent success.
+	$reset_http();
+	$queue_response( 404, array( 'message' => 'Label does not exist' ) );
+	$result = GitHubAbilities::removeLabel( array(
+		'repo'         => 'owner/repo',
+		'issue_number' => 42,
+		'label'        => 'status:idea-ready',
+	) );
+	$assert( 'removeLabel treats missing label as success', is_array( $result ) && true === ( $result['success'] ?? false ) );
+	$assert( 'removeLabel missing-label success preserves label name', is_array( $result ) && 'status:idea-ready' === ( $result['removed_label'] ?? '' ) );
+
+	// ---- removeLabel: required-field validation.
+	$reset_http();
+	$result = GitHubAbilities::removeLabel( array( 'repo' => 'owner/repo' ) );
+	$assert( 'removeLabel rejects missing issue or pull number', $result instanceof WP_Error && 'missing_number' === $result->get_error_code() );
+
+	$result = GitHubAbilities::removeLabel( array( 'repo' => 'owner/repo', 'issue_number' => 42 ) );
+	$assert( 'removeLabel rejects missing label', $result instanceof WP_Error && 'missing_label' === $result->get_error_code() );
+
+	$reset_http();
+	$queue_response( 200, array() );
+	$result = GitHubAbilities::removeLabel( array(
+		'repo'        => 'owner/repo',
+		'pull_number' => 77,
+		'label'       => 'status:idea-ready',
+	) );
+	$call = $GLOBALS['dmc_http_calls'][0] ?? array();
+	$assert( 'removeLabel accepts pull_number alias', is_array( $result ) && true === ( $result['success'] ?? false ) && is_string( $call['url'] ?? null ) && str_contains( $call['url'], '/issues/77/labels/' ) );
+
 	// ---- createPullRequest: explicit draft and maintainer_can_modify=false
 	$reset_http();
 	$queue_response( 201, array(

@@ -27,6 +27,8 @@ class GitHubTools extends BaseTool {
 		$this->registerTool( 'list_github_issues', array( $this, 'getListIssuesDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'get_github_issue', array( $this, 'getGetIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'manage_github_issue', array( $this, 'getManageIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
+		$this->registerTool( 'add_label_to_issue', array( $this, 'getAddLabelToIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
+		$this->registerTool( 'remove_label_from_issue', array( $this, 'getRemoveLabelFromIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'comment_github_pull_request', array( $this, 'getCommentPullRequestDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'upsert_github_pull_review_comment', array( $this, 'getUpsertPullReviewCommentDefinition' ), $contexts, array(
 			'access_level' => 'editor',
@@ -119,6 +121,8 @@ class GitHubTools extends BaseTool {
 			'list_github_issues',
 			'get_github_issue',
 			'manage_github_issue',
+			'add_label_to_issue',
+			'remove_label_from_issue',
 			'comment_github_pull_request',
 			'upsert_github_pull_review_comment',
 			'merge_github_pull_request',
@@ -322,7 +326,7 @@ class GitHubTools extends BaseTool {
 		return array(
 			'class'       => __CLASS__,
 			'method'      => 'handleManageIssue',
-			'description' => 'Update, close, or comment on a GitHub issue. Use action "update" to change title/body/labels, "close" to close the issue, or "comment" to add a comment.',
+			'description' => 'Update, close, or comment on a GitHub issue. Use action "update" to change title/body or replace the full labels set, "close" to close the issue, or "comment" to add a comment. For surgical label edits that preserve other labels, use add_label_to_issue or remove_label_from_issue instead - action=update replaces the full label set.',
 			'parameters'  => array(
 				'type'       => 'object',
 				'properties' => array(
@@ -349,10 +353,122 @@ class GitHubTools extends BaseTool {
 					'labels'       => array(
 						'type'        => 'array',
 						'items'       => array( 'type' => 'string' ),
-						'description' => 'Labels to set (update action). Replaces existing labels.',
+						'description' => 'Labels to set (update action). REPLACES the entire existing label set. For surgical add/remove that preserves other labels, use add_label_to_issue / remove_label_from_issue.',
 					),
 				),
 				'required'   => array( 'repo', 'issue_number', 'action' ),
+			),
+		);
+	}
+
+	// -------------------------------------------------------------------------
+	// Surgical Issue Labels
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Handle add_label_to_issue tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @param array $tool_def   Tool definition.
+	 * @return array
+	 */
+	public function handleAddLabelToIssue( array $parameters, array $tool_def = array() ): array {
+		$result = GitHubAbilities::addLabels( array(
+			'repo'         => $parameters['repo'] ?? '',
+			'issue_number' => $parameters['issue_number'] ?? 0,
+			'labels'       => array( $parameters['label'] ?? '' ),
+		) );
+
+		if ( is_wp_error( $result ) ) {
+			return $this->buildErrorResponse( $result->get_error_message(), 'add_label_to_issue' );
+		}
+
+		return array(
+			'success'   => true,
+			'data'      => $result,
+			'tool_name' => 'add_label_to_issue',
+		);
+	}
+
+	/**
+	 * Get tool definition for add_label_to_issue.
+	 *
+	 * @return array
+	 */
+	public function getAddLabelToIssueDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleAddLabelToIssue',
+			'description' => 'Add a single label to an existing GitHub issue or pull request without replacing the rest of the label set. Use for surgical lifecycle transitions where preserving existing labels matters.',
+			'parameters'  => array(
+				'type'       => 'object',
+				'properties' => array(
+					'repo'         => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'issue_number' => array(
+						'type'        => 'integer',
+						'description' => 'Issue or pull request number.',
+					),
+					'label'        => array(
+						'type'        => 'string',
+						'description' => 'Single label name to add. Existing labels are unchanged.',
+					),
+				),
+				'required'   => array( 'repo', 'issue_number', 'label' ),
+			),
+		);
+	}
+
+	/**
+	 * Handle remove_label_from_issue tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @param array $tool_def   Tool definition.
+	 * @return array
+	 */
+	public function handleRemoveLabelFromIssue( array $parameters, array $tool_def = array() ): array {
+		$result = GitHubAbilities::removeLabel( $parameters );
+
+		if ( is_wp_error( $result ) ) {
+			return $this->buildErrorResponse( $result->get_error_message(), 'remove_label_from_issue' );
+		}
+
+		return array(
+			'success'   => true,
+			'data'      => $result,
+			'tool_name' => 'remove_label_from_issue',
+		);
+	}
+
+	/**
+	 * Get tool definition for remove_label_from_issue.
+	 *
+	 * @return array
+	 */
+	public function getRemoveLabelFromIssueDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleRemoveLabelFromIssue',
+			'description' => 'Remove a single label from an existing GitHub issue or pull request without touching the rest of the label set. Use for surgical lifecycle transitions where preserving other labels matters. Returns success even if the label was already absent.',
+			'parameters'  => array(
+				'type'       => 'object',
+				'properties' => array(
+					'repo'         => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'issue_number' => array(
+						'type'        => 'integer',
+						'description' => 'Issue or pull request number.',
+					),
+					'label'        => array(
+						'type'        => 'string',
+						'description' => 'Single label name to remove. Other labels are unchanged.',
+					),
+				),
+				'required'   => array( 'repo', 'issue_number', 'label' ),
 			),
 		);
 	}
