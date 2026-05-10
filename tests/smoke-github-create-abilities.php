@@ -200,6 +200,7 @@ namespace {
 
 	$issue_ability = $GLOBALS['dmc_registered_abilities']['datamachine/create-github-issue'] ?? null;
 	$pr_ability    = $GLOBALS['dmc_registered_abilities']['datamachine/create-github-pull-request'] ?? null;
+	$file_ability  = $GLOBALS['dmc_registered_abilities']['datamachine/create-or-update-github-file'] ?? null;
 
 	$assert( 'create-github-issue ability is registered', null !== $issue_ability );
 	$assert( 'create-github-issue uses createIssue execute_callback', array( GitHubAbilities::class, 'createIssue' ) === ( $issue_ability['execute_callback'] ?? null ) );
@@ -221,6 +222,10 @@ namespace {
 	$assert( 'create-github-pull-request labels schema declares string items', array( 'type' => 'string' ) === ( $pr_ability['input_schema']['properties']['labels']['items'] ?? null ) );
 	$assert( 'create-github-pull-request exposes maintainer_can_modify', array_key_exists( 'maintainer_can_modify', $pr_ability['input_schema']['properties'] ?? array() ) );
 	$assert( 'create-github-pull-request is hidden from REST', false === ( $pr_ability['meta']['show_in_rest'] ?? null ) );
+
+	$assert( 'create-or-update-github-file ability is registered', null !== $file_ability );
+	$assert( 'create-or-update-github-file exposes allowed_file_paths', array_key_exists( 'allowed_file_paths', $file_ability['input_schema']['properties'] ?? array() ) );
+	$assert( 'create-or-update-github-file allowed_file_paths declares string items', array( 'type' => 'string' ) === ( $file_ability['input_schema']['properties']['allowed_file_paths']['items'] ?? null ) );
 
 	// Permission gating uses PermissionHelper::can_manage().
 	$issue_permission = $issue_ability['permission_callback'] ?? null;
@@ -517,6 +522,28 @@ namespace {
 	$assert( 'createPullRequest 422 carries github_api_error code', $result instanceof WP_Error && 'github_api_error' === $result->get_error_code() );
 	$assert( 'createPullRequest 422 message includes GitHub message', $result instanceof WP_Error && str_contains( $result->get_error_message(), 'already exists' ) );
 
+	// ---- createOrUpdateFile: optional write scope guardrails reject out-of-scope paths before GitHub calls.
+	$reset_http();
+	$result = GitHubAbilities::createOrUpdateFile( array(
+		'repo'               => 'owner/repo',
+		'file_path'          => 'src/generated.php',
+		'content'            => '<?php echo "nope";',
+		'commit_message'     => 'chore: attempt out of scope write',
+		'allowed_file_paths' => array( 'README.md', 'docs/**' ),
+	) );
+	$assert( 'createOrUpdateFile rejects out-of-scope file path', $result instanceof WP_Error && 'forbidden_file_path' === $result->get_error_code() );
+	$assert( 'createOrUpdateFile rejects out-of-scope path before HTTP calls', 0 === count( $GLOBALS['dmc_http_calls'] ) );
+
+	$reset_http();
+	$result = GitHubAbilities::createOrUpdateFile( array(
+		'repo'           => 'owner/repo',
+		'file_path'      => '../README.md',
+		'content'        => 'Bad path',
+		'commit_message' => 'docs: bad path',
+	) );
+	$assert( 'createOrUpdateFile rejects traversal file path', $result instanceof WP_Error && 'invalid_file_path' === $result->get_error_code() );
+	$assert( 'createOrUpdateFile rejects traversal before HTTP calls', 0 === count( $GLOBALS['dmc_http_calls'] ) );
+
 	// ---- createOrUpdateFile: creates a missing target branch from the default branch.
 	$reset_http();
 	$queue_response( 404, array( 'message' => 'Not Found' ) );
@@ -536,11 +563,12 @@ namespace {
 		),
 	) );
 	$result = GitHubAbilities::createOrUpdateFile( array(
-		'repo'           => 'owner/repo',
-		'file_path'      => 'docs/generated.md',
-		'content'        => '# Generated',
-		'commit_message' => 'docs: add generated file',
-		'branch'         => 'store/new-doc',
+		'repo'               => 'owner/repo',
+		'file_path'          => 'docs/generated.md',
+		'content'            => '# Generated',
+		'commit_message'     => 'docs: add generated file',
+		'branch'             => 'store/new-doc',
+		'allowed_file_paths' => array( 'README.md', 'docs/**' ),
 	) );
 	$assert( 'createOrUpdateFile missing branch returns success=true', is_array( $result ) && true === ( $result['success'] ?? false ) );
 	$assert( 'createOrUpdateFile checks target branch ref first', is_string( $GLOBALS['dmc_http_calls'][0]['url'] ?? null ) && str_ends_with( $GLOBALS['dmc_http_calls'][0]['url'], '/repos/owner/repo/git/ref/heads/store%2Fnew-doc' ) );

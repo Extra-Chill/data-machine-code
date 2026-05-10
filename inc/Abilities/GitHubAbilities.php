@@ -1167,25 +1167,30 @@ class GitHubAbilities {
 						'type'       => 'object',
 						'required'   => array( 'repo', 'file_path', 'content', 'commit_message' ),
 						'properties' => array(
-							'repo'           => array(
+							'repo'               => array(
 								'type'        => 'string',
 								'description' => 'Repository in owner/repo format.',
 							),
-							'file_path'      => array(
+							'file_path'          => array(
 								'type'        => 'string',
 								'description' => 'Path within the repository (e.g., docs/getting-started.md).',
 							),
-							'content'        => array(
+							'content'            => array(
 								'type'        => 'string',
 								'description' => 'File content (will be base64-encoded automatically).',
 							),
-							'commit_message' => array(
+							'commit_message'     => array(
 								'type'        => 'string',
 								'description' => 'Commit message for the change.',
 							),
-							'branch'         => array(
+							'branch'             => array(
 								'type'        => 'string',
 								'description' => 'Target branch. Defaults to the repository\'s default branch.',
+							),
+							'allowed_file_paths' => array(
+								'type'        => 'array',
+								'items'       => array( 'type' => 'string' ),
+								'description' => 'Optional allowlist of file paths or glob-like patterns this call may write, such as README.md or docs/**.',
 							),
 						),
 					),
@@ -3893,9 +3898,18 @@ class GitHubAbilities {
 			return new \WP_Error( 'missing_repo', 'Repository (owner/repo) is required or configure a default repo.', array( 'status' => 400 ) );
 		}
 
-		$file_path = sanitize_text_field( $input['file_path'] ?? '' );
+		$file_path = self::normalizeRepoWritePath( $input['file_path'] ?? '' );
+		if ( is_wp_error( $file_path ) ) {
+			return $file_path;
+		}
 		if ( empty( $file_path ) ) {
 			return new \WP_Error( 'missing_file_path', 'File path is required.', array( 'status' => 400 ) );
+		}
+
+		$allowed_file_paths = is_array( $input['allowed_file_paths'] ?? null ) ? $input['allowed_file_paths'] : array();
+		$scope_result       = self::validateAllowedFilePath( $file_path, $allowed_file_paths );
+		if ( is_wp_error( $scope_result ) ) {
+			return $scope_result;
 		}
 
 		$content = $input['content'] ?? '';
@@ -3976,6 +3990,82 @@ class GitHubAbilities {
 				$repo
 			),
 		);
+	}
+
+	/**
+	 * Normalize a repository write path without allowing traversal outside the repo.
+	 *
+	 * @param mixed $path Candidate repository-relative path.
+	 * @return string|\WP_Error Normalized path or validation error.
+	 */
+	private static function normalizeRepoWritePath( mixed $path ): string|\WP_Error {
+		$path = str_replace( '\\', '/', trim( is_scalar( $path ) ? (string) $path : '' ) );
+		$path = ltrim( $path, '/' );
+		if ( '' === $path ) {
+			return '';
+		}
+
+		$segments = explode( '/', $path );
+		foreach ( $segments as $segment ) {
+			if ( '' === $segment || '.' === $segment || '..' === $segment ) {
+				return new \WP_Error( 'invalid_file_path', 'File path must be repository-relative and must not contain traversal segments.', array( 'status' => 400 ) );
+			}
+		}
+
+		return implode( '/', array_map( 'sanitize_text_field', $segments ) );
+	}
+
+	/**
+	 * Validate a write path against caller-provided allowlist patterns.
+	 *
+	 * @param string $file_path          Repository-relative file path.
+	 * @param array  $allowed_file_paths Optional exact paths, directory prefixes, or glob-like patterns.
+	 * @return true|\WP_Error True when allowed, or an error when the path is outside scope.
+	 */
+	private static function validateAllowedFilePath( string $file_path, array $allowed_file_paths ): true|\WP_Error {
+		$patterns = array_values( array_filter( array_map( array( self::class, 'normalizeAllowedFilePathPattern' ), $allowed_file_paths ) ) );
+		if ( empty( $patterns ) ) {
+			return true;
+		}
+
+		foreach ( $patterns as $pattern ) {
+			if ( $file_path === $pattern || fnmatch( $pattern, $file_path ) ) {
+				return true;
+			}
+
+			$prefix = '';
+			if ( str_ends_with( $pattern, '/**' ) ) {
+				$prefix = substr( $pattern, 0, -2 );
+			} elseif ( str_ends_with( $pattern, '/' ) ) {
+				$prefix = $pattern;
+			}
+
+			if ( '' !== $prefix && str_starts_with( $file_path, $prefix ) ) {
+				return true;
+			}
+		}
+
+		return new \WP_Error(
+			'forbidden_file_path',
+			sprintf( 'File path %s is outside the allowed write scope.', $file_path ),
+			array( 'status' => 403, 'allowed_file_paths' => $patterns )
+		);
+	}
+
+	/**
+	 * Normalize an allowlist pattern for comparison against repository-relative paths.
+	 *
+	 * @param mixed $pattern Candidate allowlist pattern.
+	 * @return string Normalized pattern, or empty string when invalid.
+	 */
+	private static function normalizeAllowedFilePathPattern( mixed $pattern ): string {
+		$pattern = str_replace( '\\', '/', trim( is_scalar( $pattern ) ? (string) $pattern : '' ) );
+		$pattern = ltrim( $pattern, '/' );
+		if ( '' === $pattern || str_contains( $pattern, '../' ) || str_contains( $pattern, '/..' ) || '..' === $pattern ) {
+			return '';
+		}
+
+		return $pattern;
 	}
 
 	/**

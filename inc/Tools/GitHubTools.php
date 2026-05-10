@@ -1227,25 +1227,30 @@ class GitHubTools extends BaseTool {
 			'parameters'  => array(
 				'type'       => 'object',
 				'properties' => array(
-					'repo'           => array(
+					'repo'               => array(
 						'type'        => 'string',
 						'description' => 'Repository in owner/repo format.',
 					),
-					'file_path'      => array(
+					'file_path'          => array(
 						'type'        => 'string',
 						'description' => 'Path within the repository.',
 					),
-					'content'        => array(
+					'content'            => array(
 						'type'        => 'string',
 						'description' => 'Full file content to write.',
 					),
-					'commit_message' => array(
+					'commit_message'     => array(
 						'type'        => 'string',
 						'description' => 'Commit message for the file change.',
 					),
-					'branch'         => array(
+					'branch'             => array(
 						'type'        => 'string',
 						'description' => 'Target branch. Defaults to the repository default branch. New branches are created from the default branch.',
+					),
+					'allowed_file_paths' => array(
+						'type'        => 'array',
+						'items'       => array( 'type' => 'string' ),
+						'description' => 'Optional allowlist of writable file paths or glob-like patterns, such as README.md or docs/**.',
 					),
 				),
 				'required'   => array( 'repo', 'file_path', 'content', 'commit_message' ),
