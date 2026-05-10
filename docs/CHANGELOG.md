@@ -2,6 +2,52 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.32.0] - 2026-05-10
+
+### Added
+- add surgical GitHub label tools
+- attach run artifacts to agent pull requests
+- write run artifacts to PR branches
+- add workspace grep match anchors
+- render agent run artifact PR sections
+- add workspace diff validation tools
+- label GitHub artifacts with agent provenance
+- add WordPress runtime inspection tools
+- expose GitHub file upsert tool
+- add remote workspace backend
+- add guarded GitHub PR merge ability
+- classify merged dirty worktrees with only obsolete-on-default edits
+
+### Changed
+- isolate workspace diff tools
+- Add workspace grep tool
+
+### Fixed
+- guard GitHub file writes by path scope
+- fall back when remote workspace branch is absent
+- return github files as a batch
+- declare no-argument tool schemas
+- use canonical AI tool schemas
+- declare workspace diff array schema items
+- forward PR tool run artifact context
+- persist direct PR run artifacts
+- satisfy split diff lint
+- align run artifact attachment formatting
+- finish diff validation alignment
+- clean workspace anchor lint
+- align diff validation locals
+- satisfy diff validation lint
+- expose canonical repo for workspace pushes
+- align diff summary parsing locals
+- clean diff summary formatting
+- clarify AI tool result contracts
+- Fix remote workspace file updates
+- expose workspace git capability diagnostics
+- use temp workspace fallback in ephemeral runtimes
+- stream workspace clone progress
+- declare GitHub issue array schema items
+- complete issue array schemas
+
 ## [0.31.0] - 2026-05-07
 
 ### Added
