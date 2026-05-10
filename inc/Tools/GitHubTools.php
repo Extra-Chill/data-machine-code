@@ -355,6 +355,10 @@ class GitHubTools extends BaseTool {
 						'items'       => array( 'type' => 'string' ),
 						'description' => 'Labels to set (update action). REPLACES the entire existing label set. For surgical add/remove that preserves other labels, use add_label_to_issue / remove_label_from_issue.',
 					),
+					'allow_repeat_automation_comment' => array(
+						'type'        => 'boolean',
+						'description' => 'For comment action only: allow a repeated automation comment when the latest issue comment is already from this automation actor. Default: false.',
+					),
 				),
 				'required'   => array( 'repo', 'issue_number', 'action' ),
 			),

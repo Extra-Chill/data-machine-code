@@ -368,6 +368,10 @@ class GitHubAbilities {
 								'type'        => 'string',
 								'description' => 'Comment body (supports GitHub Markdown).',
 							),
+							'allow_repeat_automation_comment' => array(
+								'type'        => 'boolean',
+								'description' => 'Allow commenting when the latest issue comment is already from this automation actor. Default: false.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -2004,6 +2008,8 @@ class GitHubAbilities {
 		$repo         = sanitize_text_field( $input['repo'] ?? '' );
 		$issue_number = (int) ( $input['issue_number'] ?? 0 );
 		$body         = $input['body'] ?? '';
+		$skip_guard   = ! empty( $input['skip_automation_comment_guard'] );
+		$allow_repeat = ! empty( $input['allow_repeat_automation_comment'] );
 
 		if ( empty( $repo ) || $issue_number <= 0 || empty( $body ) ) {
 			return new \WP_Error( 'missing_params', 'Repository, issue_number, and body are required.', array( 'status' => 400 ) );
@@ -2012,6 +2018,13 @@ class GitHubAbilities {
 		$pat = self::getPatForRepo( $repo );
 		if ( empty( $pat ) ) {
 			return self::patError();
+		}
+
+		if ( ! $skip_guard && ! $allow_repeat ) {
+			$guard = self::checkIssueAutomationCommentTurn( $repo, $issue_number, $pat );
+			if ( is_wp_error( $guard ) ) {
+				return $guard;
+			}
 		}
 
 		$url      = sprintf( '%s/repos/%s/issues/%d/comments', self::API_BASE, $repo, $issue_number );
@@ -2030,6 +2043,92 @@ class GitHubAbilities {
 			),
 			'message' => sprintf( 'Comment added to issue #%d.', $issue_number ),
 		);
+	}
+
+	/**
+	 * Block repeated issue comments when this automation actor already owns the latest turn.
+	 *
+	 * @param string $repo         Repository in owner/repo format.
+	 * @param int    $issue_number Issue number.
+	 * @param string $pat          GitHub credential token.
+	 * @return true|\WP_Error True when a comment may be posted, or an error explaining why not.
+	 */
+	private static function checkIssueAutomationCommentTurn( string $repo, int $issue_number, string $pat ): true|\WP_Error {
+		$actor = self::getAuthenticatedGitHubLogin( $pat );
+		if ( is_wp_error( $actor ) ) {
+			return $actor;
+		}
+
+		$issue = self::apiGet( sprintf( '%s/repos/%s/issues/%d', self::API_BASE, $repo, $issue_number ), array(), $pat );
+		if ( is_wp_error( $issue ) ) {
+			return $issue;
+		}
+
+		$comment_count = max( 0, (int) ( $issue['data']['comments'] ?? 0 ) );
+		if ( 0 === $comment_count ) {
+			return true;
+		}
+
+		$comments = self::apiGet(
+			sprintf( '%s/repos/%s/issues/%d/comments', self::API_BASE, $repo, $issue_number ),
+			array(
+				'per_page' => self::MAX_PER_PAGE,
+				'page'     => (int) ceil( $comment_count / self::MAX_PER_PAGE ),
+			),
+			$pat
+		);
+
+		if ( is_wp_error( $comments ) ) {
+			return $comments;
+		}
+
+		$items = is_array( $comments['data'] ?? null ) ? $comments['data'] : array();
+		if ( empty( $items ) ) {
+			return true;
+		}
+
+		$latest = end( $items );
+		if ( ! is_array( $latest ) ) {
+			return true;
+		}
+
+		$latest_login = (string) ( $latest['user']['login'] ?? '' );
+		if ( '' !== $latest_login && strcasecmp( $latest_login, $actor ) === 0 ) {
+			return new \WP_Error(
+				'github_issue_automation_turn_closed',
+				'This issue already has the latest comment from the automation actor; wait for newer external activity or pass allow_repeat_automation_comment=true.',
+				array( 'status' => 409 )
+			);
+		}
+
+		return true;
+	}
+
+	/**
+	 * Get the GitHub login for the credential currently posting comments.
+	 *
+	 * @param string $pat GitHub credential token.
+	 * @return string|\WP_Error GitHub login or error.
+	 */
+	private static function getAuthenticatedGitHubLogin( string $pat ): string|\WP_Error {
+		static $cache = array();
+
+		if ( isset( $cache[ $pat ] ) ) {
+			return $cache[ $pat ];
+		}
+
+		$response = self::apiGet( self::API_BASE . '/user', array(), $pat );
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$login = (string) ( $response['data']['login'] ?? '' );
+		if ( '' === $login ) {
+			return new \WP_Error( 'github_actor_missing', 'GitHub did not return a login for the current credential.', array( 'status' => 500 ) );
+		}
+
+		$cache[ $pat ] = $login;
+		return $login;
 	}
 
 	public static function commentOnPullRequest( array $input ): array|\WP_Error {
@@ -2296,6 +2395,7 @@ class GitHubAbilities {
 			'repo'         => $input['repo'] ?? '',
 			'issue_number' => (int) ( $input['pull_number'] ?? 0 ),
 			'body'         => $body,
+			'skip_automation_comment_guard' => true,
 		);
 	}
 
