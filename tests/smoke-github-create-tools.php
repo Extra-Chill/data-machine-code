@@ -31,6 +31,9 @@ namespace DataMachine\Engine\AI\Tools {
 
 namespace DataMachineCode\Abilities {
 	class GitHubAbilities {
+		public static array $addLabelsCalls = array();
+		public static array $removeLabelCalls = array();
+
 		public static function getRegisteredRepos(): array {
 			return array(
 				array(
@@ -38,6 +41,34 @@ namespace DataMachineCode\Abilities {
 					'repo'  => 'data-machine-code',
 					'label' => 'Data Machine Code',
 				),
+			);
+		}
+
+		public static function addLabels( array $input ): array|\WP_Error {
+			self::$addLabelsCalls[] = $input;
+
+			$labels = $input['labels'] ?? array();
+			if ( ! is_array( $labels ) || '' === (string) ( $labels[0] ?? '' ) ) {
+				return new \WP_Error( 'missing_labels', 'At least one label is required.' );
+			}
+
+			return array(
+				'success'        => true,
+				'applied_labels' => $labels,
+			);
+		}
+
+		public static function removeLabel( array $input ): array|\WP_Error {
+			self::$removeLabelCalls[] = $input;
+
+			$label = (string) ( $input['label'] ?? '' );
+			if ( '' === $label ) {
+				return new \WP_Error( 'missing_label', 'A single label is required.' );
+			}
+
+			return array(
+				'success'       => true,
+				'removed_label' => $label,
 			);
 		}
 	}
@@ -92,8 +123,17 @@ namespace {
 		return null;
 	}
 
+	if ( ! class_exists( 'WP_Error' ) ) {
+		class WP_Error {
+			public function __construct( private string $code = '', private string $message = '', private mixed $data = null ) {}
+			public function get_error_message(): string { return $this->message; }
+			public function get_error_code(): string { return $this->code; }
+			public function get_error_data(): mixed { return $this->data; }
+		}
+	}
+
 	function is_wp_error( $thing ): bool {
-		return false;
+		return $thing instanceof WP_Error;
 	}
 
 	require __DIR__ . '/../inc/Tools/GitHubIssueTool.php';
@@ -146,16 +186,24 @@ namespace {
 	$assert( 'create_github_pull_request is available in pipeline', in_array( 'pipeline', $pr_tool->registered['create_github_pull_request']['contexts'] ?? array(), true ) );
 	$assert( 'create_github_pull_request links to create PR ability', 'datamachine/create-github-pull-request' === ( $pr_tool->registered['create_github_pull_request']['options']['ability'] ?? '' ) );
 
+	$assert( 'add_label_to_issue tool is registered', isset( $github_tools->registered['add_label_to_issue'] ) );
+	$assert( 'add_label_to_issue is available in chat', in_array( 'chat', $github_tools->registered['add_label_to_issue']['contexts'] ?? array(), true ) );
+	$assert( 'add_label_to_issue is available in pipeline', in_array( 'pipeline', $github_tools->registered['add_label_to_issue']['contexts'] ?? array(), true ) );
+	$assert( 'remove_label_from_issue tool is registered', isset( $github_tools->registered['remove_label_from_issue'] ) );
+	$assert( 'remove_label_from_issue is available in chat', in_array( 'chat', $github_tools->registered['remove_label_from_issue']['contexts'] ?? array(), true ) );
+	$assert( 'remove_label_from_issue is available in pipeline', in_array( 'pipeline', $github_tools->registered['remove_label_from_issue']['contexts'] ?? array(), true ) );
+
 	$issue_definition = $issue_tool->getToolDefinition();
-	$issue_params     = $issue_definition['parameters'] ?? array();
+	$issue_params     = $issue_definition['parameters']['properties'] ?? array();
 	$assert( 'create_github_issue exposes assignees from ability schema', array_key_exists( 'assignees', $issue_params ) );
 	$assert( 'create_github_issue exposes milestone from ability schema', array_key_exists( 'milestone', $issue_params ) );
 
 	$pr_definition = $pr_tool->getToolDefinition();
-	$pr_params     = $pr_definition['parameters'] ?? array();
-	$assert( 'create_github_pull_request requires repo', true === ( $pr_params['repo']['required'] ?? false ) );
-	$assert( 'create_github_pull_request requires title', true === ( $pr_params['title']['required'] ?? false ) );
-	$assert( 'create_github_pull_request requires head', true === ( $pr_params['head']['required'] ?? false ) );
+	$pr_params     = $pr_definition['parameters']['properties'] ?? array();
+	$pr_required   = $pr_definition['parameters']['required'] ?? array();
+	$assert( 'create_github_pull_request requires repo', in_array( 'repo', $pr_required, true ) );
+	$assert( 'create_github_pull_request requires title', in_array( 'title', $pr_required, true ) );
+	$assert( 'create_github_pull_request requires head', in_array( 'head', $pr_required, true ) );
 	foreach ( array( 'repo', 'title', 'head', 'base', 'body', 'draft', 'labels', 'maintainer_can_modify' ) as $param ) {
 		$assert( "create_github_pull_request exposes {$param}", array_key_exists( $param, $pr_params ) );
 	}
@@ -206,6 +254,44 @@ namespace {
 		array( 'daily_memory' => array( 'egress' => array( 'bundle-file', 'pr-body' ) ) ) === ( $pr_call['input']['run_artifact_egress_policy'] ?? null )
 	);
 	$assert( 'create_github_pull_request forwards bundle root', 'bundles/world-creator' === ( $pr_call['input']['bundle_root'] ?? null ) );
+
+	$add_label_definition    = $github_tools->getAddLabelToIssueDefinition();
+	$remove_label_definition = $github_tools->getRemoveLabelFromIssueDefinition();
+	$manage_issue_definition = $github_tools->getManageIssueDefinition();
+	$assert( 'add_label_to_issue requires repo issue_number label', array( 'repo', 'issue_number', 'label' ) === ( $add_label_definition['parameters']['required'] ?? array() ) );
+	$assert( 'remove_label_from_issue requires repo issue_number label', array( 'repo', 'issue_number', 'label' ) === ( $remove_label_definition['parameters']['required'] ?? array() ) );
+	$assert( 'manage_github_issue warns update labels replace full set', str_contains( $manage_issue_definition['parameters']['properties']['labels']['description'] ?? '', 'REPLACES the entire existing label set' ) );
+	$assert( 'manage_github_issue points to surgical label tools', str_contains( $manage_issue_definition['description'] ?? '', 'add_label_to_issue' ) && str_contains( $manage_issue_definition['description'] ?? '', 'remove_label_from_issue' ) );
+
+	$add_label_result = $github_tools->handleAddLabelToIssue( array(
+		'repo'         => 'Extra-Chill/data-machine-code',
+		'issue_number' => 328,
+		'label'        => 'status:idea-ready',
+	) );
+	$assert( 'add_label_to_issue returns standard success envelope', true === ( $add_label_result['success'] ?? false ) && 'add_label_to_issue' === ( $add_label_result['tool_name'] ?? '' ) );
+	$assert( 'add_label_to_issue dispatches to addLabels with single label array', array( 'status:idea-ready' ) === ( \DataMachineCode\Abilities\GitHubAbilities::$addLabelsCalls[0]['labels'] ?? null ) );
+	$assert( 'add_label_to_issue forwards issue_number', 328 === (int) ( \DataMachineCode\Abilities\GitHubAbilities::$addLabelsCalls[0]['issue_number'] ?? 0 ) );
+
+	$remove_label_result = $github_tools->handleRemoveLabelFromIssue( array(
+		'repo'         => 'Extra-Chill/data-machine-code',
+		'issue_number' => 328,
+		'label'        => 'status:idea-ready',
+	) );
+	$assert( 'remove_label_from_issue returns standard success envelope', true === ( $remove_label_result['success'] ?? false ) && 'remove_label_from_issue' === ( $remove_label_result['tool_name'] ?? '' ) );
+	$assert( 'remove_label_from_issue dispatches to removeLabel', 'status:idea-ready' === ( \DataMachineCode\Abilities\GitHubAbilities::$removeLabelCalls[0]['label'] ?? '' ) );
+	$assert( 'remove_label_from_issue forwards issue_number', 328 === (int) ( \DataMachineCode\Abilities\GitHubAbilities::$removeLabelCalls[0]['issue_number'] ?? 0 ) );
+
+	$missing_add_label_result = $github_tools->handleAddLabelToIssue( array(
+		'repo'         => 'Extra-Chill/data-machine-code',
+		'issue_number' => 328,
+	) );
+	$assert( 'add_label_to_issue validation errors use error envelope', false === ( $missing_add_label_result['success'] ?? true ) && 'add_label_to_issue' === ( $missing_add_label_result['tool_name'] ?? '' ) );
+
+	$missing_remove_label_result = $github_tools->handleRemoveLabelFromIssue( array(
+		'repo'         => 'Extra-Chill/data-machine-code',
+		'issue_number' => 328,
+	) );
+	$assert( 'remove_label_from_issue validation errors use error envelope', false === ( $missing_remove_label_result['success'] ?? true ) && 'remove_label_from_issue' === ( $missing_remove_label_result['tool_name'] ?? '' ) );
 
 	$tool_definitions = array(
 		'create_github_issue'        => $issue_definition,

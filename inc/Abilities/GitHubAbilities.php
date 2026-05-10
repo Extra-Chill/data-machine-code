@@ -1116,20 +1116,20 @@ class GitHubAbilities {
 						'type'       => 'object',
 						'required'   => array( 'repo' ),
 						'properties' => array(
-							'repo' => array(
+							'repo'           => array(
 								'type'        => 'string',
 								'description' => 'Repository in owner/repo format.',
 							),
-							'path' => array(
+							'path'           => array(
 								'type'        => 'string',
 								'description' => 'Single file path within the repository. Use paths for multiple files.',
 							),
-							'paths' => array(
+							'paths'          => array(
 								'type'        => 'array',
 								'items'       => array( 'type' => 'string' ),
 								'description' => 'One or more file paths within the repository.',
 							),
-							'ref'  => array(
+							'ref'            => array(
 								'type'        => 'string',
 								'description' => 'Branch, tag, or commit SHA. Defaults to the repository default branch.',
 							),
@@ -1516,8 +1516,8 @@ class GitHubAbilities {
 			return $response;
 		}
 
-		$pull = self::normalizePull( $response['data'] );
-		$labels = self::mergeProvenanceLabels( isset( $input['labels'] ) && is_array( $input['labels'] ) ? $input['labels'] : array() );
+		$pull     = self::normalizePull( $response['data'] );
+		$labels   = self::mergeProvenanceLabels( isset( $input['labels'] ) && is_array( $input['labels'] ) ? $input['labels'] : array() );
 		$labeling = null;
 
 		if ( ! empty( $labels ) && ! empty( $pull['number'] ) ) {
@@ -1783,7 +1783,7 @@ class GitHubAbilities {
 			return '';
 		}
 
-		$agent = $agents_repo->get_agent( (int) $agent_id );
+		$agent      = $agents_repo->get_agent( (int) $agent_id );
 		$agent_slug = is_array( $agent ) ? (string) ( $agent['agent_slug'] ?? '' ) : '';
 
 		return '' !== trim( $agent_slug ) ? sanitize_text_field( $agent_slug ) : '';
@@ -1916,6 +1916,66 @@ class GitHubAbilities {
 			'success'        => true,
 			'applied_labels' => $applied,
 			'message'        => sprintf( 'Applied %d label(s) to #%d in %s.', count( $applied ), $number, $repo ),
+		);
+	}
+
+	/**
+	 * Remove a single label from an issue or pull request.
+	 *
+	 * GitHub treats pull requests as issues for labeling purposes, so this
+	 * single endpoint covers both. Calls
+	 * `DELETE /repos/{owner}/{repo}/issues/{number}/labels/{name}`, which is
+	 * surgical (removes one label, leaves all others untouched). If GitHub
+	 * returns 404 because the label is already absent, the desired state is
+	 * already achieved and this returns success.
+	 *
+	 * @param array $input {
+	 *     Required: repo, issue_number (or pull_number), label.
+	 * }
+	 * @return array|\WP_Error { success: bool, removed_label: string } or error.
+	 */
+	public static function removeLabel( array $input ): array|\WP_Error {
+		$repo   = self::resolveRepo( sanitize_text_field( $input['repo'] ?? '' ) );
+		$number = (int) ( $input['issue_number'] ?? $input['pull_number'] ?? 0 );
+
+		if ( empty( $repo ) ) {
+			return new \WP_Error( 'missing_repo', 'Repository (owner/repo) is required or configure a default repo.', array( 'status' => 400 ) );
+		}
+		if ( $number <= 0 ) {
+			return new \WP_Error( 'missing_number', 'issue_number or pull_number is required.', array( 'status' => 400 ) );
+		}
+
+		$label = sanitize_text_field( (string) ( $input['label'] ?? '' ) );
+		if ( '' === $label ) {
+			return new \WP_Error( 'missing_label', 'A single label is required.', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPatForRepo( $repo );
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$url      = sprintf( '%s/repos/%s/issues/%d/labels/%s', self::API_BASE, $repo, $number, rawurlencode( $label ) );
+		$response = self::apiRequest( 'DELETE', $url, null, $pat );
+
+		if ( is_wp_error( $response ) ) {
+			$error_data = $response->get_error_data();
+			$status     = is_array( $error_data ) ? (int) ( $error_data['status'] ?? 0 ) : 0;
+			if ( 'github_not_found' === $response->get_error_code() || 404 === $status ) {
+				return array(
+					'success'       => true,
+					'removed_label' => $label,
+					'message'       => sprintf( 'Label %s was already absent from #%d in %s.', $label, $number, $repo ),
+				);
+			}
+
+			return $response;
+		}
+
+		return array(
+			'success'       => true,
+			'removed_label' => $label,
+			'message'       => sprintf( 'Removed label %s from #%d in %s.', $label, $number, $repo ),
 		);
 	}
 
@@ -4048,7 +4108,10 @@ class GitHubAbilities {
 		return new \WP_Error(
 			'forbidden_file_path',
 			sprintf( 'File path %s is outside the allowed write scope.', $file_path ),
-			array( 'status' => 403, 'allowed_file_paths' => $patterns )
+			array(
+				'status'             => 403,
+				'allowed_file_paths' => $patterns,
+			)
 		);
 	}
 
@@ -4221,7 +4284,7 @@ class GitHubAbilities {
 			$file = self::getSingleFileContent( $repo, $path, $query_params, $pat );
 			if ( is_wp_error( $file ) ) {
 				$error_data = $file->get_error_data();
-				$errors[] = array(
+				$errors[]   = array(
 					'path'    => $path,
 					'code'    => $file->get_error_code(),
 					'message' => $file->get_error_message(),
@@ -4334,13 +4397,18 @@ class GitHubAbilities {
 		return self::parseResponse( $response );
 	}
 
-	public static function apiRequest( string $method, string $url, array $body, string $pat ): array|\WP_Error {
-		$response = wp_remote_request( $url, array(
+	public static function apiRequest( string $method, string $url, ?array $body, string $pat ): array|\WP_Error {
+		$args = array(
 			'method'  => $method,
 			'headers' => self::getHeaders( $pat ),
-			'body'    => wp_json_encode( $body ),
 			'timeout' => 30,
-		) );
+		);
+
+		if ( null !== $body ) {
+			$args['body'] = wp_json_encode( $body );
+		}
+
+		$response = wp_remote_request( $url, $args );
 
 		return self::parseResponse( $response );
 	}
