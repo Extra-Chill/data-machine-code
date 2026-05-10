@@ -34,17 +34,18 @@ class RunArtifactPrSectionRenderer {
 		$journals   = self::collectJournalEntries( $sanitized );
 		$evidence   = self::collectCompletionEvidence( $sanitized );
 		$transcript = self::collectTranscriptSummaries( $sanitized );
+		if ( empty( $journals ) && empty( $evidence ) && empty( $transcript ) ) {
+			return '';
+		}
 
 		$lines = array(
 			self::START_MARKER,
 			'## Agent Run Artifacts',
-			'',
-			'### Agent Journal',
 		);
 
-		if ( empty( $journals ) ) {
-			$lines[] = '_No agent journal artifacts provided._';
-		} else {
+		if ( ! empty( $journals ) ) {
+			$lines[] = '';
+			$lines[] = '### Agent Journal';
 			foreach ( $journals as $index => $entry ) {
 				if ( $index > 0 ) {
 					$lines[] = '';
@@ -55,11 +56,9 @@ class RunArtifactPrSectionRenderer {
 			}
 		}
 
-		$lines[] = '';
-		$lines[] = '### Completion Evidence';
-		if ( empty( $evidence ) ) {
-			$lines[] = '_No completion evidence artifacts provided._';
-		} else {
+		if ( ! empty( $evidence ) ) {
+			$lines[] = '';
+			$lines[] = '### Completion Evidence';
 			foreach ( $evidence as $label => $status ) {
 				$lines[] = sprintf( '- `%s`: %s', self::markdownInlineCode( (string) $label ), self::plainText( (string) $status ) );
 			}
@@ -122,6 +121,10 @@ class RunArtifactPrSectionRenderer {
 	public static function replaceSection( string $body, array $artifacts ): string {
 		$section = self::render( $artifacts );
 		$pattern = '/' . preg_quote( self::START_MARKER, '/' ) . '.*?' . preg_quote( self::END_MARKER, '/' ) . '/s';
+		if ( '' === $section ) {
+			$body = preg_replace( $pattern, '', $body, 1 ) ?? $body;
+			return rtrim( $body );
+		}
 
 		if ( preg_match( $pattern, $body ) ) {
 			return preg_replace( $pattern, $section, $body, 1 ) ?? $body;
