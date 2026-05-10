@@ -109,6 +109,21 @@ $assert( 'body-section mode updates existing PR body', str_starts_with( $mode_bo
 $mode_comment = RunArtifactPrSectionRenderer::renderForMode( RunArtifactPrSectionRenderer::MODE_COMMENT, $artifacts, $body );
 $assert( 'comment mode returns only managed comment body', str_starts_with( $mode_comment, RunArtifactPrSectionRenderer::START_MARKER ) && ! str_starts_with( $mode_comment, $body ) );
 
+$empty_section = RunArtifactPrSectionRenderer::render( array() );
+$assert( 'empty artifacts render no managed section', '' === $empty_section );
+$assert( 'empty artifacts omit artifact heading', ! str_contains( $empty_section, '## Agent Run Artifacts' ) );
+$assert( 'empty artifacts omit journal placeholder', ! str_contains( $empty_section, '_No agent journal artifacts provided._' ) );
+$assert( 'empty artifacts omit completion placeholder', ! str_contains( $empty_section, '_No completion evidence artifacts provided._' ) );
+
+$removed_section = RunArtifactPrSectionRenderer::replaceSection( $updated, array() );
+$assert( 'empty replacement removes stale managed section', str_starts_with( $removed_section, $body ) && ! str_contains( $removed_section, RunArtifactPrSectionRenderer::START_MARKER ) );
+
+$empty_mode_body = RunArtifactPrSectionRenderer::renderForMode( RunArtifactPrSectionRenderer::MODE_BODY_SECTION, array(), $updated );
+$assert( 'body-section mode removes stale section for empty artifacts', str_starts_with( $empty_mode_body, $body ) && ! str_contains( $empty_mode_body, RunArtifactPrSectionRenderer::START_MARKER ) );
+
+$empty_mode_comment = RunArtifactPrSectionRenderer::renderForMode( RunArtifactPrSectionRenderer::MODE_COMMENT, array(), $body );
+$assert( 'comment mode renders nothing for empty artifacts', '' === $empty_mode_comment );
+
 if ( ! empty( $failures ) ) {
 	echo "\nFAIL: " . count( $failures ) . " assertion(s)\n";
 	foreach ( $failures as $failure ) {
