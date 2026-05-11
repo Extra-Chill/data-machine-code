@@ -82,7 +82,7 @@ class WordPressRuntimeTools extends BaseTool {
 
 	/** @return array<string,mixed> */
 	public function getInventoryDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleInventory',
 			'description' => 'Inspect the live WordPress runtime inventory: WP/PHP versions, active theme, installed plugins/themes, mu-plugins, drop-ins, and safe source-root policy metadata.',
@@ -91,12 +91,12 @@ class WordPressRuntimeTools extends BaseTool {
 				'properties' => array(),
 				'required'   => array(),
 			),
-		);
+		) );
 	}
 
 	/** @return array<string,mixed> */
 	public function getLsDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleLs',
 			'description' => 'List files/directories under allowlisted WordPress runtime source roots only. Default path is wp-content/plugins.',
@@ -114,12 +114,12 @@ class WordPressRuntimeTools extends BaseTool {
 				),
 				'required'   => array(),
 			),
-		);
+		) );
 	}
 
 	/** @return array<string,mixed> */
 	public function getReadDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleRead',
 			'description' => 'Read a bounded text file under allowlisted WordPress runtime source roots only. Denies sensitive paths, traversal, oversized files, and binary files.',
@@ -145,7 +145,13 @@ class WordPressRuntimeTools extends BaseTool {
 				),
 				'required'   => array( 'path' ),
 			),
-		);
+		) );
+	}
+
+	/** @param array<string,mixed> $definition Tool definition. @return array<string,mixed> */
+	private function repeatableDefinition( array $definition ): array {
+		$definition['runtime'] = array_merge( is_array( $definition['runtime'] ?? null ) ? $definition['runtime'] : array(), array( 'duplicate_policy' => 'repeatable' ) );
+		return $definition;
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
