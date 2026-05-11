@@ -1593,6 +1593,41 @@ class WorkspaceAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/workspace-worktree-active-no-signal-report',
+				array(
+					'label'               => 'Report Active Worktrees Without Cleanup Signal',
+					'description'         => 'Build a bounded, review-only evidence report for active_no_signal worktrees. Gathers PR, dirty, unpushed, remote tracking, and default-branch evidence without deleting worktrees or branches.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'limit'  => array(
+								'type'        => 'integer',
+								'description' => 'Maximum active_no_signal rows to inspect in this page. Defaults to 25.',
+							),
+							'offset' => array(
+								'type'        => 'integer',
+								'description' => 'Pagination offset into the active_no_signal inventory ordering.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'    => array( 'type' => 'boolean' ),
+							'review_only' => array( 'type' => 'boolean' ),
+							'rows'       => array( 'type' => 'array' ),
+							'summary'    => array( 'type' => 'object' ),
+							'pagination' => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeActiveNoSignalReport' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/workspace-worktree-cleanup-artifacts',
 				array(
 					'label'               => 'Cleanup Worktree Artifacts',
@@ -2562,6 +2597,25 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->worktree_reconcile_metadata( $opts );
+	}
+
+	/**
+	 * Build a bounded active/no-signal worktree evidence report.
+	 *
+	 * @param array $input Input parameters (limit, offset).
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function worktreeActiveNoSignalReport( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		$opts      = array();
+		if ( array_key_exists( 'limit', $input ) ) {
+			$opts['limit'] = (int) $input['limit'];
+		}
+		if ( array_key_exists( 'offset', $input ) ) {
+			$opts['offset'] = (int) $input['offset'];
+		}
+
+		return $workspace->worktree_active_no_signal_report( $opts );
 	}
 
 	/**

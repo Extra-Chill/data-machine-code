@@ -6317,6 +6317,222 @@ class Workspace {
 	}
 
 	/**
+	 * Build a bounded evidence report for active/no-signal worktrees.
+	 *
+	 * This is review-only. It never deletes worktrees or branches; it gathers the
+	 * facts needed to separate live work from abandoned branches before a later,
+	 * explicit cleanup action.
+	 *
+	 * @param array<string,mixed> $opts Report options.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function worktree_active_no_signal_report( array $opts = array() ): array|\WP_Error {
+		$limit  = array_key_exists( 'limit', $opts ) ? max( 1, (int) $opts['limit'] ) : 25;
+		$offset = array_key_exists( 'offset', $opts ) ? max( 0, (int) $opts['offset'] ) : 0;
+
+		$inventory = $this->worktree_cleanup_inventory_only( '', '', false );
+		if ( is_wp_error( $inventory ) ) {
+			return $inventory;
+		}
+
+		$active = array_values(
+			array_filter(
+				(array) ( $inventory['skipped'] ?? array() ),
+				fn( $row ) => is_array( $row ) && in_array( (string) ( $row['reason_code'] ?? '' ), array( 'active_no_signal', 'no_inventory_cleanup_signal' ), true )
+			)
+		);
+		$total  = count( $active );
+		$page   = array_slice( $active, $offset, $limit );
+
+		$github_cache = array();
+		$rows         = array();
+		$summary      = array(
+			'total_active_no_signal' => $total,
+			'inspected'              => 0,
+			'by_suggested_action'    => array(),
+			'dirty_or_unpushed'      => 0,
+			'with_pr'                => 0,
+			'without_pr'             => 0,
+		);
+
+		foreach ( $page as $row ) {
+			$evidence = $this->build_active_no_signal_evidence_row( $row, $github_cache );
+			$rows[]   = $evidence;
+			++$summary['inspected'];
+
+			$action = (string) ( $evidence['suggested_action'] ?? 'insufficient_signal' );
+			$summary['by_suggested_action'][ $action ] = (int) ( $summary['by_suggested_action'][ $action ] ?? 0 ) + 1;
+			if ( (int) ( $evidence['dirty'] ?? 0 ) > 0 || (int) ( $evidence['unpushed'] ?? 0 ) > 0 ) {
+				++$summary['dirty_or_unpushed'];
+			}
+			if ( ! empty( $evidence['pr']['number'] ) ) {
+				++$summary['with_pr'];
+			} else {
+				++$summary['without_pr'];
+			}
+		}
+
+		$next_offset = ( $offset + count( $page ) ) < $total ? $offset + count( $page ) : null;
+
+		return array(
+			'success'    => true,
+			'mode'       => 'active_no_signal_report',
+			'review_only' => true,
+			'generated_at' => gmdate( 'c' ),
+			'rows'       => $rows,
+			'summary'    => $summary,
+			'pagination' => array(
+				'total'        => $total,
+				'offset'       => $offset,
+				'limit'        => $limit,
+				'scanned'      => count( $page ),
+				'partial'      => null !== $next_offset,
+				'complete'     => null === $next_offset,
+				'next_offset'  => $next_offset,
+				'next_command' => null === $next_offset ? null : sprintf( 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=%d --offset=%d --format=json', $limit, $next_offset ),
+			),
+			'evidence'   => array(
+				'scope' => 'review-only active_no_signal worktree lifecycle evidence',
+				'safety' => 'No worktrees or remote branches are deleted. Dirty and unpushed probes are evidence only.',
+			),
+		);
+	}
+
+	/**
+	 * Build one active/no-signal evidence row.
+	 *
+	 * @param array<string,mixed> $row          Inventory skip row.
+	 * @param array<string,mixed> $github_cache Run-local GitHub cache.
+	 * @return array<string,mixed>
+	 */
+	private function build_active_no_signal_evidence_row( array $row, array &$github_cache ): array {
+		$handle       = (string) ( $row['handle'] ?? '' );
+		$repo         = (string) ( $row['repo'] ?? '' );
+		$branch       = (string) ( $row['branch'] ?? '' );
+		$path         = (string) ( $row['path'] ?? '' );
+		$primary_path = '' !== $repo ? $this->get_primary_path( $repo ) : '';
+		$metadata     = is_array( $row['metadata'] ?? null ) ? $row['metadata'] : array();
+
+		$out = array(
+			'handle'           => $handle,
+			'repo'             => $repo,
+			'branch'           => $branch,
+			'path'             => $path,
+			'created_at'       => $row['created_at'] ?? null,
+			'lifecycle_state'  => $metadata['lifecycle_state'] ?? null,
+			'last_seen_at'     => $metadata['last_seen_at'] ?? ( $metadata['observed_at'] ?? null ),
+			'dirty'            => null,
+			'unpushed'         => null,
+			'pr'               => null,
+			'remote_tracking'  => null,
+			'default_ref'      => null,
+			'commits_outside_default' => null,
+			'suggested_action' => 'insufficient_signal',
+			'reason'           => 'not enough evidence gathered',
+		);
+
+		if ( '' === $repo || '' === $branch || '' === $path || ! is_dir( $path ) || ! is_dir( $primary_path . '/.git' ) ) {
+			$out['suggested_action'] = 'insufficient_signal';
+			$out['reason']           = 'missing repo, branch, path, worktree, or primary checkout';
+			return $out;
+		}
+
+		$dirty = $this->probe_worktree_dirty_count( $path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( is_wp_error( $dirty ) ) {
+			$out['dirty_error'] = $dirty->get_error_message();
+		} else {
+			$out['dirty'] = (int) $dirty;
+		}
+
+		$unpushed = $this->count_unpushed_commits( $path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( is_wp_error( $unpushed ) ) {
+			$out['unpushed_error'] = $unpushed->get_error_message();
+		} else {
+			$out['unpushed'] = (int) $unpushed;
+		}
+
+		$remote_ref = 'refs/remotes/origin/' . $branch;
+		$remote     = $this->run_git( $primary_path, sprintf( 'rev-parse --verify --quiet %s', escapeshellarg( $remote_ref ) ), self::CLEANUP_GIT_PROBE_TIMEOUT );
+		$out['remote_tracking'] = ! is_wp_error( $remote ) && ! $this->is_git_timeout_error( $remote );
+
+		$default_ref = $this->resolve_remote_default_ref( $primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( is_string( $default_ref ) && '' !== $default_ref ) {
+			$out['default_ref'] = $default_ref;
+			$outside = $this->run_git(
+				$primary_path,
+				sprintf( 'rev-list --count %s..%s', escapeshellarg( $default_ref ), escapeshellarg( 'refs/heads/' . $branch ) ),
+				self::CLEANUP_GIT_PROBE_TIMEOUT
+			);
+			if ( ! is_wp_error( $outside ) && ! $this->is_git_timeout_error( $outside ) ) {
+				$out['commits_outside_default'] = (int) trim( (string) ( $outside['output'] ?? '' ) );
+			}
+		}
+
+		$slug = $this->resolve_github_slug( $primary_path );
+		if ( null !== $slug ) {
+			$pr = $this->find_pr_for_branch_direct( $slug, $branch, $github_cache, false );
+			if ( is_wp_error( $pr ) ) {
+				$out['pr_error'] = $pr->get_error_message();
+			} elseif ( is_array( $pr ) ) {
+				$out['pr'] = $pr;
+			}
+		}
+
+		$out['suggested_action'] = $this->suggest_active_no_signal_action( $out );
+		$out['reason']           = $this->describe_active_no_signal_action( $out );
+
+		return $out;
+	}
+
+	/**
+	 * Suggest a review action from active/no-signal evidence.
+	 *
+	 * @param array<string,mixed> $row Evidence row.
+	 * @return string
+	 */
+	private function suggest_active_no_signal_action( array $row ): string {
+		if ( (int) ( $row['dirty'] ?? 0 ) > 0 || (int) ( $row['unpushed'] ?? 0 ) > 0 ) {
+			return 'unsafe_dirty_or_unpushed';
+		}
+
+		$pr = is_array( $row['pr'] ?? null ) ? $row['pr'] : array();
+		if ( ! empty( $pr ) ) {
+			if ( 'closed' === (string) ( $pr['state'] ?? '' ) ) {
+				return ! empty( $pr['merged_at'] ) ? 'finalized_pr_reconcile' : 'closed_pr_reconcile';
+			}
+			return 'active_open_pr';
+		}
+
+		if ( 0 === (int) ( $row['commits_outside_default'] ?? -1 ) ) {
+			return 'merged_to_default';
+		}
+
+		if ( null === ( $row['pr'] ?? null ) && empty( $row['pr_error'] ) ) {
+			return 'no_pr_branch_review';
+		}
+
+		return 'insufficient_signal';
+	}
+
+	/**
+	 * Human-readable explanation for active/no-signal action suggestions.
+	 *
+	 * @param array<string,mixed> $row Evidence row.
+	 * @return string
+	 */
+	private function describe_active_no_signal_action( array $row ): string {
+		return match ( (string) ( $row['suggested_action'] ?? '' ) ) {
+			'unsafe_dirty_or_unpushed' => 'dirty files or unpushed commits require manual handling before cleanup',
+			'finalized_pr_reconcile'   => 'exact branch-head PR lookup found a merged PR; metadata reconciliation should be able to mark cleanup_eligible',
+			'closed_pr_reconcile'      => 'exact branch-head PR lookup found a closed PR; review before marking cleanup_eligible',
+			'active_open_pr'           => 'exact branch-head PR lookup found an open PR',
+			'merged_to_default'        => 'local branch has no commits outside the remote default ref',
+			'no_pr_branch_review'      => 'no exact branch-head PR was found; review age/task context before cleanup',
+			default                    => 'not enough evidence gathered',
+		};
+	}
+
+	/**
 	 * Re-run the bounded cleanup-eligible apply safety gates against the current state.
 	 *
 	 * Returns an enriched candidate row when the worktree is still safe to
@@ -8197,23 +8413,24 @@ class Workspace {
 			return $lookup[ $branch ];
 		}
 
-		return $this->find_finalized_pr_for_branch_direct( $slug, $branch, $github_cache );
+		return $this->find_pr_for_branch_direct( $slug, $branch, $github_cache, true );
 	}
 
 	/**
-	 * Look up a finalized PR for one branch directly via GitHub's head filter.
+	 * Look up a PR for one branch directly via GitHub's head filter.
 	 *
 	 * The repo-level closed-PR snapshot is intentionally bounded for cleanup runs,
 	 * so older PRs can be missed. This precise fallback keeps PR lifecycle as the
 	 * source of truth without treating remote branch existence as liveness.
 	 *
-	 * @param string $slug         owner/repo.
-	 * @param string $branch       Branch name.
-	 * @param array  $github_cache Run-local cache keyed by owner/repo and branch.
-	 * @return array|null|\WP_Error PR data, null when no finalized PR matched, or lookup failure.
+	 * @param string $slug           owner/repo.
+	 * @param string $branch         Branch name.
+	 * @param array  $github_cache   Run-local cache keyed by owner/repo and branch.
+	 * @param bool   $finalized_only If true, ignore open PRs.
+	 * @return array|null|\WP_Error PR data, null when no matching PR exists, or lookup failure.
 	 */
-	private function find_finalized_pr_for_branch_direct( string $slug, string $branch, array &$github_cache = array() ): array|\WP_Error|null {
-		$cache_key = $slug . '#head:' . $branch;
+	private function find_pr_for_branch_direct( string $slug, string $branch, array &$github_cache = array(), bool $finalized_only = true ): array|\WP_Error|null {
+		$cache_key = $slug . '#head:' . ( $finalized_only ? 'finalized:' : 'any:' ) . $branch;
 		if ( array_key_exists( $cache_key, $github_cache ) ) {
 			return $github_cache[ $cache_key ];
 		}
@@ -8268,7 +8485,10 @@ class Workspace {
 			$head_repo = is_array( $head['repo'] ?? null ) ? (string) ( $head['repo']['full_name'] ?? '' ) : '';
 			$head_ref  = (string) ( $head['ref'] ?? '' );
 			$state     = (string) ( $pr['state'] ?? '' );
-			if ( $head_repo !== $slug || $head_ref !== $branch || 'closed' !== $state ) {
+			if ( $head_repo !== $slug || $head_ref !== $branch ) {
+				continue;
+			}
+			if ( $finalized_only && 'closed' !== $state ) {
 				continue;
 			}
 

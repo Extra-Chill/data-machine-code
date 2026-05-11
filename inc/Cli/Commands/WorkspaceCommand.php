@@ -1853,7 +1853,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * <operation>
 	 * : Worktree operation: add, list, remove, prune, cleanup, cleanup-artifacts,
 	 *   bounded-cleanup-eligible-apply, emergency-cleanup, reconcile-metadata,
-	 *   refresh-context, finalize, mark-cleanup-eligible.
+	 *   active-no-signal-report, refresh-context, finalize, mark-cleanup-eligible.
 	 *
 	 * [<repo>]
 	 * : Primary repo name (required for add and remove). For refresh-context, finalize,
@@ -2007,13 +2007,15 @@ class WorkspaceCommand extends BaseCommand {
 	 *   unpushed_commits, missing_metadata, external_worktree, age_filter, unknown_age.
 	 *
 	 * [--limit=<count>]
-	 * : For `cleanup-artifacts --dry-run` and `reconcile-metadata`,
+	 * : For `cleanup-artifacts --dry-run`, `reconcile-metadata`, and
+	 *   `active-no-signal-report`,
 	 *   maximum worktrees to scan in this page. Artifact cleanup defaults to
 	 *   100; metadata reconciliation uses this only when pagination is requested.
 	 *   Use 0 plus `--exhaustive` for a full artifact audit.
 	 *
 	 * [--offset=<count>]
-	 * : For `cleanup-artifacts --dry-run` and `reconcile-metadata`,
+	 * : For `cleanup-artifacts --dry-run`, `reconcile-metadata`, and
+	 *   `active-no-signal-report`,
 	 *   pagination offset (0-indexed) into the inventory ordering. Walk pages by
 	 *   passing the previous response's `pagination.next_offset`.
 	 *
@@ -2116,6 +2118,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --format=json
 	 *     wp datamachine-code workspace worktree reconcile-metadata --apply --limit=25 --offset=0 --format=json
 	 *     wp datamachine-code workspace worktree reconcile-metadata --apply --limit=50 --until-budget=60s --format=json
+	 *     wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json
 	 *
 	 *     # Ignore dirty working-tree safety (caution)
 	 *     wp datamachine-code workspace worktree cleanup --force
@@ -2148,7 +2151,7 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <add|list|remove|prune|cleanup|cleanup-artifacts|bounded-cleanup-eligible-apply|emergency-cleanup|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
+			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <add|list|remove|prune|cleanup|cleanup-artifacts|bounded-cleanup-eligible-apply|emergency-cleanup|reconcile-metadata|active-no-signal-report|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
 			return;
 		}
 
@@ -2162,6 +2165,7 @@ class WorkspaceCommand extends BaseCommand {
 			'bounded-cleanup-eligible-apply' => 'datamachine/workspace-worktree-bounded-cleanup-eligible-apply',
 			'emergency-cleanup'              => 'datamachine/workspace-worktree-emergency-cleanup',
 			'reconcile-metadata'             => 'datamachine/workspace-worktree-reconcile-metadata',
+			'active-no-signal-report'        => 'datamachine/workspace-worktree-active-no-signal-report',
 			'refresh-context'                => 'datamachine/workspace-worktree-refresh-context',
 			'finalize'                       => 'datamachine/workspace-worktree-finalize',
 			'mark-cleanup-eligible'          => 'datamachine/workspace-worktree-finalize',
@@ -2317,6 +2321,15 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				if ( ! empty( $assoc_args['apply-plan'] ) ) {
 					$input['apply_plan'] = $this->read_worktree_json_plan( (string) $assoc_args['apply-plan'], 'metadata reconciliation' );
+				}
+				break;
+
+			case 'active-no-signal-report':
+				if ( isset( $assoc_args['limit'] ) ) {
+					$input['limit'] = (int) $assoc_args['limit'];
+				}
+				if ( isset( $assoc_args['offset'] ) ) {
+					$input['offset'] = (int) $assoc_args['offset'];
 				}
 				break;
 
@@ -2480,6 +2493,10 @@ class WorkspaceCommand extends BaseCommand {
 				return;
 			case 'reconcile-metadata':
 				$this->render_worktree_metadata_reconciliation_result( $result, $assoc_args );
+				return;
+
+			case 'active-no-signal-report':
+				$this->render_worktree_active_no_signal_report_result( $result, $assoc_args );
 				return;
 
 			case 'cleanup-artifacts':
@@ -3237,6 +3254,81 @@ class WorkspaceCommand extends BaseCommand {
 			}
 		}
 		WP_CLI::success( sprintf( 'Wrote metadata for %d worktree(s); %d skipped.', count( $written ), count( $skipped ) ) );
+	}
+
+	/**
+	 * Render active/no-signal evidence report output.
+	 *
+	 * @param array $result     Report result.
+	 * @param array $assoc_args CLI assoc args.
+	 * @return void
+	 */
+	private function render_worktree_active_no_signal_report_result( array $result, array $assoc_args ): void {
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
+		if ( 'json' === $format ) {
+			$json = wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+			WP_CLI::log( false === $json ? '{}' : $json );
+			return;
+		}
+
+		$summary    = (array) ( $result['summary'] ?? array() );
+		$pagination = (array) ( $result['pagination'] ?? array() );
+		$rows       = (array) ( $result['rows'] ?? array() );
+
+		WP_CLI::log( 'Summary:' );
+		$summary_rows = array(
+			array( 'metric' => 'total_active_no_signal', 'count' => (int) ( $summary['total_active_no_signal'] ?? 0 ) ),
+			array( 'metric' => 'inspected', 'count' => (int) ( $summary['inspected'] ?? 0 ) ),
+			array( 'metric' => 'with_pr', 'count' => (int) ( $summary['with_pr'] ?? 0 ) ),
+			array( 'metric' => 'without_pr', 'count' => (int) ( $summary['without_pr'] ?? 0 ) ),
+			array( 'metric' => 'dirty_or_unpushed', 'count' => (int) ( $summary['dirty_or_unpushed'] ?? 0 ) ),
+		);
+		foreach ( (array) ( $summary['by_suggested_action'] ?? array() ) as $action => $count ) {
+			$summary_rows[] = array( 'metric' => 'action:' . $action, 'count' => (int) $count );
+		}
+		$this->format_items( $summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric' );
+
+		if ( ! empty( $pagination ) ) {
+			WP_CLI::log( sprintf(
+				'Page: offset=%d limit=%d scanned=%d total=%d next_offset=%s complete=%s',
+				(int) ( $pagination['offset'] ?? 0 ),
+				(int) ( $pagination['limit'] ?? 0 ),
+				(int) ( $pagination['scanned'] ?? 0 ),
+				(int) ( $pagination['total'] ?? 0 ),
+				null === ( $pagination['next_offset'] ?? null ) ? '-' : (string) $pagination['next_offset'],
+				! empty( $pagination['complete'] ) ? 'yes' : 'no'
+			) );
+		}
+
+		if ( ! empty( $rows ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Evidence:' );
+			$items = array_map(
+				fn( $row ) => array(
+					'handle'          => $row['handle'] ?? '',
+					'branch'          => $row['branch'] ?? '',
+					'action'          => $row['suggested_action'] ?? '',
+					'dirty'           => null === ( $row['dirty'] ?? null ) ? '-' : (int) $row['dirty'],
+					'unpushed'        => null === ( $row['unpushed'] ?? null ) ? '-' : (int) $row['unpushed'],
+					'pr'              => is_array( $row['pr'] ?? null ) ? (string) ( $row['pr']['html_url'] ?? $row['pr']['number'] ?? '' ) : '',
+					'outside_default' => null === ( $row['commits_outside_default'] ?? null ) ? '-' : (int) $row['commits_outside_default'],
+					'remote_tracking' => null === ( $row['remote_tracking'] ?? null ) ? '-' : ( ! empty( $row['remote_tracking'] ) ? 'yes' : 'no' ),
+				),
+				$rows
+			);
+			$this->format_items( $items, array( 'handle', 'branch', 'action', 'dirty', 'unpushed', 'pr', 'outside_default', 'remote_tracking' ), array( 'format' => 'table' ), 'handle' );
+		}
+
+		if ( null !== ( $pagination['next_offset'] ?? null ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( sprintf(
+				'Next page: wp datamachine-code workspace worktree active-no-signal-report --limit=%d --offset=%d --format=json',
+				(int) ( $pagination['limit'] ?? 0 ),
+				(int) $pagination['next_offset']
+			) );
+		}
+
+		WP_CLI::success( sprintf( 'Inspected %d active/no-signal worktree(s). Review-only; no cleanup was applied.', count( $rows ) ) );
 	}
 
 	/**

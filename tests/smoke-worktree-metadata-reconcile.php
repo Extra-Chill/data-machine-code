@@ -60,6 +60,70 @@ namespace DataMachineCode\Abilities {
 						),
 					);
 				}
+				if ( str_ends_with( $url, '/pulls' ) && 'acme:pr-merged' === ( $params['head'] ?? '' ) ) {
+					return array(
+						'data' => array(
+							array(
+								'number'    => 101,
+								'state'     => 'closed',
+								'merged_at' => '2026-04-03T00:00:00Z',
+								'html_url'  => 'https://github.com/acme/demo/pull/101',
+								'head'      => array(
+									'ref'  => 'pr-merged',
+									'repo' => array( 'full_name' => 'acme/demo' ),
+								),
+							),
+						),
+					);
+				}
+				if ( str_ends_with( $url, '/pulls' ) && 'acme:head-merged' === ( $params['head'] ?? '' ) ) {
+					return array(
+						'data' => array(
+							array(
+								'number'    => 106,
+								'state'     => 'closed',
+								'merged_at' => '2026-04-05T00:00:00Z',
+								'html_url'  => 'https://github.com/acme/demo/pull/106',
+								'head'      => array(
+									'ref'  => 'head-merged',
+									'repo' => array( 'full_name' => 'acme/demo' ),
+								),
+							),
+						),
+					);
+				}
+				if ( str_ends_with( $url, '/pulls' ) && 'acme:pr-closed' === ( $params['head'] ?? '' ) ) {
+					return array(
+						'data' => array(
+							array(
+								'number'    => 102,
+								'state'     => 'closed',
+								'merged_at' => '',
+								'html_url'  => 'https://github.com/acme/demo/pull/102',
+								'head'      => array(
+									'ref'  => 'pr-closed',
+									'repo' => array( 'full_name' => 'acme/demo' ),
+								),
+							),
+						),
+					);
+				}
+				if ( str_ends_with( $url, '/pulls' ) && 'acme:already-current' === ( $params['head'] ?? '' ) ) {
+					return array(
+						'data' => array(
+							array(
+								'number'    => 105,
+								'state'     => 'open',
+								'merged_at' => '',
+								'html_url'  => 'https://github.com/acme/demo/pull/105',
+								'head'      => array(
+									'ref'  => 'already-current',
+									'repo' => array( 'full_name' => 'acme/demo' ),
+								),
+							),
+						),
+					);
+				}
 				if ( str_ends_with( $url, '/pulls' ) && 'acme:open-branch' === ( $params['head'] ?? '' ) ) {
 					return array(
 						'data' => array(
@@ -274,6 +338,7 @@ namespace {
 	$make_branch( 'unmanaged-dirty' );
 	$make_branch( 'unmanaged-invalid' );
 	$make_branch( 'already-current' );
+	$make_branch( 'head-merged' );
 	$make_branch( 'pr-merged' );
 	$make_branch( 'pr-closed' );
 	$make_branch( 'upstream-gone' );
@@ -286,6 +351,7 @@ namespace {
 	$run( sprintf( 'git worktree add %s unmanaged-dirty', escapeshellarg( $tmp . '/demo@unmanaged-dirty' ) ), $primary );
 	$run( sprintf( 'git worktree add %s unmanaged-invalid', escapeshellarg( $tmp . '/demo@unmanaged-invalid' ) ), $primary );
 	$run( sprintf( 'git worktree add %s already-current', escapeshellarg( $tmp . '/demo@already-current' ) ), $primary );
+	$run( sprintf( 'git worktree add %s head-merged', escapeshellarg( $tmp . '/demo@head-merged' ) ), $primary );
 	$run( sprintf( 'git worktree add %s pr-merged', escapeshellarg( $tmp . '/demo@pr-merged' ) ), $primary );
 	$run( sprintf( 'git worktree add %s pr-closed', escapeshellarg( $tmp . '/demo@pr-closed' ) ), $primary );
 	$run( sprintf( 'git worktree add %s upstream-gone', escapeshellarg( $tmp . '/demo@upstream-gone' ) ), $primary );
@@ -328,6 +394,18 @@ namespace {
 			'repo'            => 'demo',
 			'branch'          => 'already-current',
 			'path'            => $tmp . '/demo@already-current',
+			'created_at'      => '2026-04-01T00:00:00+00:00',
+			'observed_at'     => '2026-04-01T00:00:00+00:00',
+			'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
+		)
+	);
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
+		'demo@head-merged',
+		array(
+			'handle'          => 'demo@head-merged',
+			'repo'            => 'demo',
+			'branch'          => 'head-merged',
+			'path'            => $tmp . '/demo@head-merged',
 			'created_at'      => '2026-04-01T00:00:00+00:00',
 			'observed_at'     => '2026-04-01T00:00:00+00:00',
 			'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
@@ -385,6 +463,20 @@ namespace {
 	$open_pr      = $lookup_reflection->invokeArgs( $ws, array( 'acme/demo', 'open-branch', &$lookup_cache ) );
 	$assert( 103, (int) ( $old_pr['number'] ?? 0 ), 'direct branch PR lookup finds older merged PRs outside the bounded repo snapshot' );
 	$assert( null, $open_pr, 'direct branch PR lookup does not finalize open PR branches' );
+
+	$run( 'git remote set-url origin https://github.com/acme/demo.git', $primary );
+	$active_report = $ws->worktree_active_no_signal_report( array( 'limit' => 20, 'offset' => 0 ) );
+	$run( sprintf( 'git remote set-url origin %s', escapeshellarg( $remote ) ), $primary );
+	$assert( true, ! is_wp_error( $active_report ) && ( $active_report['success'] ?? false ), 'active/no-signal report succeeds' );
+	$assert( true, (bool) ( $active_report['review_only'] ?? false ), 'active/no-signal report is review-only' );
+	$assert( true, (int) ( $active_report['summary']['inspected'] ?? 0 ) > 0, 'active/no-signal report inspects rows' );
+	$active_rows = array();
+	foreach ( (array) ( $active_report['rows'] ?? array() ) as $row ) {
+		$active_rows[ $row['handle'] ?? '' ] = $row;
+	}
+	$assert( 'finalized_pr_reconcile', $active_rows['demo@head-merged']['suggested_action'] ?? '', 'active/no-signal report finds merged PRs by branch head' );
+	$assert( 'active_open_pr', $active_rows['demo@already-current']['suggested_action'] ?? '', 'active/no-signal report preserves open PRs as active' );
+	$assert( 106, (int) ( $active_rows['demo@head-merged']['pr']['number'] ?? 0 ), 'active/no-signal report includes PR evidence' );
 
 	echo "\nDry-run reconciliation\n";
 	$plan = $ws->worktree_reconcile_metadata( array( 'dry_run' => true ) );
@@ -497,7 +589,7 @@ namespace {
 
 	$inventory_after = $ws->worktree_cleanup_merged( array( 'dry_run' => true, 'inventory_only' => true, 'skip_github' => true ) );
 	$assert( 1, (int) ( $inventory_after['summary']['skipped_by_reason']['needs_metadata_reconcile'] ?? 0 ), 'inventory cleanup requires fewer metadata reconciliation passes after apply' );
-	$assert( 5, (int) ( $inventory_after['summary']['skipped_by_reason']['active_no_signal'] ?? 0 ), 'inventory cleanup treats reconciled active metadata like current active metadata' );
+	$assert( 6, (int) ( $inventory_after['summary']['skipped_by_reason']['active_no_signal'] ?? 0 ), 'inventory cleanup treats reconciled active metadata like current active metadata' );
 	$assert( false, isset( $inventory_after['summary']['repair_status'] ), 'inventory cleanup no longer exposes migration status' );
 
 	echo "\nSafety gates\n";
