@@ -55,6 +55,11 @@ class WorktreeCleanupChunkTask extends SystemTask {
 			return;
 		}
 
+		if ( 'metadata_reconciliation_page' === $chunk_type ) {
+			$this->execute_metadata_reconciliation_page( $jobId, $params, $started_at );
+			return;
+		}
+
 		if ( '' === $chunk_type || array() === $rows ) {
 			$this->completeJob(
 				$jobId,
@@ -249,6 +254,72 @@ class WorktreeCleanupChunkTask extends SystemTask {
 				$started_at,
 				array(
 					'pagination' => $plan['pagination'] ?? null,
+					'summary'    => $result['summary'] ?? array(),
+					'result'     => $this->compact_evidence_result( $result ),
+				)
+			)
+		);
+	}
+
+	/**
+	 * Apply one bounded metadata reconciliation page.
+	 *
+	 * @param int   $jobId      Job ID.
+	 * @param array $params     Task params.
+	 * @param float $started_at Start timestamp.
+	 * @return void
+	 */
+	private function execute_metadata_reconciliation_page( int $jobId, array $params, float $started_at ): void {
+		$limit     = max( 1, (int) ( $params['limit'] ?? 50 ) );
+		$offset    = max( 0, (int) ( $params['offset'] ?? 0 ) );
+		$workspace = new Workspace();
+
+		$result = $workspace->worktree_reconcile_metadata(
+			array(
+				'apply'  => true,
+				'limit'  => $limit,
+				'offset' => $offset,
+			)
+		);
+
+		if ( $result instanceof \WP_Error ) {
+			$this->completeJob(
+				$jobId,
+				$this->build_chunk_result(
+					'metadata_reconciliation_page',
+					array(),
+					array(),
+					array(),
+					array(
+						array(
+							'handle'      => '',
+							'reason_code' => $result->get_error_code(),
+							'reason'      => $result->get_error_message(),
+						),
+					),
+					0,
+					$started_at,
+					array(
+						'limit'  => $limit,
+						'offset' => $offset,
+					)
+				)
+			);
+			return;
+		}
+
+		$this->completeJob(
+			$jobId,
+			$this->build_chunk_result(
+				'metadata_reconciliation_page',
+				array_values( (array) ( $result['proposals'] ?? array() ) ),
+				array_values( (array) ( $result['written'] ?? array() ) ),
+				array_values( (array) ( $result['skipped'] ?? array() ) ),
+				array(),
+				0,
+				$started_at,
+				array(
+					'pagination' => $result['pagination'] ?? null,
 					'summary'    => $result['summary'] ?? array(),
 					'result'     => $this->compact_evidence_result( $result ),
 				)

@@ -3812,8 +3812,11 @@ class Workspace {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_reconcile_metadata( array $opts = array() ): array|\WP_Error {
+		$started_at = microtime( true );
 		$dry_run      = ! empty( $opts['dry_run'] );
 		$apply        = ! empty( $opts['apply'] );
+		$via_jobs     = ! empty( $opts['via_jobs'] );
+		$source       = isset( $opts['source'] ) ? trim( (string) $opts['source'] ) : 'workspace_metadata_reconcile';
 		$apply_plan   = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
 		$until_budget = isset( $opts['until_budget'] ) ? trim( (string) $opts['until_budget'] ) : '';
 		$paged        = array_key_exists( 'limit', $opts ) || array_key_exists( 'offset', $opts ) || '' !== $until_budget;
@@ -3826,6 +3829,12 @@ class Workspace {
 
 		if ( ! $dry_run && ! $apply ) {
 			return new \WP_Error( 'metadata_reconcile_requires_review', 'Metadata reconciliation is dry-run-first. Pass --dry-run to review JSON output, or pass apply=true for DMC-owned lifecycle reconciliation.', array( 'status' => 400 ) );
+		}
+		if ( $via_jobs && ( $dry_run || ! $apply || null !== $apply_plan ) ) {
+			return new \WP_Error( 'metadata_reconcile_via_jobs_requires_apply', 'Job-backed metadata reconciliation requires apply=true without dry_run or apply_plan.', array( 'status' => 400 ) );
+		}
+		if ( $via_jobs && '' !== $until_budget ) {
+			return new \WP_Error( 'metadata_reconcile_budget_via_jobs_unsupported', 'Metadata reconciliation --until-budget cannot be combined with --via-jobs.', array( 'status' => 400 ) );
 		}
 		if ( $paged && $limit <= 0 ) {
 			return new \WP_Error( 'invalid_metadata_reconcile_limit', 'Metadata reconciliation --limit must be greater than 0.', array( 'status' => 400 ) );
@@ -3841,6 +3850,11 @@ class Workspace {
 			}
 
 			return $this->drain_worktree_metadata_reconciliation_budget( $limit, $offset, $until_budget, $budget_seconds );
+		}
+		if ( $via_jobs && ! $paged ) {
+			$limit  = self::METADATA_RECONCILE_DEFAULT_LIMIT;
+			$offset = 0;
+			$paged  = true;
 		}
 
 		$listing = $this->worktree_list(
@@ -3902,6 +3916,9 @@ class Workspace {
 		}
 
 		if ( $apply ) {
+			if ( $via_jobs ) {
+				return $this->schedule_worktree_metadata_reconciliation_pages( $plan, $limit, $source, $started_at );
+			}
 			$plan['direct_apply'] = true;
 			return $this->apply_worktree_metadata_reconciliation_plan( $plan );
 		}
@@ -4004,16 +4021,117 @@ class Workspace {
 			'pagination'     => $pagination,
 			'evidence'       => array_filter(
 				array(
-					'scope'                  => 'time-budgeted metadata reconciliation direct apply',
-					'apply_source'           => 'direct_apply',
-					'budget'                 => $budget_label,
-					'budget_seconds'         => $budget_seconds,
-					'reserve_seconds'        => $reserve_seconds,
-					'elapsed_seconds'        => round( $elapsed, 3 ),
+					'scope'                   => 'time-budgeted metadata reconciliation direct apply',
+					'apply_source'            => 'direct_apply',
+					'budget'                  => $budget_label,
+					'budget_seconds'          => $budget_seconds,
+					'reserve_seconds'         => $reserve_seconds,
+					'elapsed_seconds'         => round( $elapsed, 3 ),
 					'budget_nearly_exhausted' => $partial,
-					'pages'                  => $pages,
-					'next_command'           => $next_command,
+					'pages'                   => $pages,
+					'next_command'            => $next_command,
 				)
+			),
+		);
+	}
+
+	/**
+	 * Schedule bounded metadata reconciliation apply pages as system jobs.
+	 *
+	 * @param array<string,mixed> $first_page First bounded dry-run page.
+	 * @param int                 $limit      Page size.
+	 * @param string              $source     Caller marker.
+	 * @param float               $started_at Start timestamp.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function schedule_worktree_metadata_reconciliation_pages( array $first_page, int $limit, string $source, float $started_at ): array|\WP_Error {
+		if ( ! class_exists( '\DataMachine\Engine\Tasks\TaskScheduler' ) ) {
+			return new \WP_Error( 'task_scheduler_unavailable', 'Data Machine TaskScheduler is unavailable; cannot schedule metadata reconciliation jobs.', array( 'status' => 500 ) );
+		}
+
+		$pagination = (array) ( $first_page['pagination'] ?? array() );
+		$total      = max( 0, (int) ( $pagination['total'] ?? $pagination['scanned'] ?? 0 ) );
+		$start      = max( 0, (int) ( $pagination['offset'] ?? 0 ) );
+		$limit      = max( 1, $limit );
+		$items      = array();
+		for ( $offset = $start; $offset < $total; $offset += $limit ) {
+			$items[] = array(
+				'chunk_type'  => 'metadata_reconciliation_page',
+				'chunk_index' => count( $items ),
+				'limit'       => $limit,
+				'offset'      => $offset,
+				'source'      => $source,
+			);
+		}
+
+		if ( array() === $items ) {
+			return array(
+				'success'        => true,
+				'dry_run'        => false,
+				'applied'        => false,
+				'job_backed'     => true,
+				'generated_at'   => gmdate( 'c' ),
+				'workspace_path' => $this->workspace_path,
+				'proposals'      => array(),
+				'written'        => array(),
+				'skipped'        => array(),
+				'still_unsafe'       => array(),
+				'external_worktrees' => array(),
+				'summary'            => array(
+					'inspected'      => 0,
+					'proposed'       => 0,
+					'written'        => 0,
+					'skipped'        => 0,
+					'scheduled_jobs' => 0,
+					'limit'          => $limit,
+				),
+				'pagination'     => $pagination,
+				'evidence'       => array(
+					'elapsed_ms' => (int) round( ( microtime( true ) - $started_at ) * 1000 ),
+					'note'       => 'No metadata reconciliation pages eligible for scheduling.',
+					'source'     => $source,
+				),
+			);
+		}
+
+		$batch_result = \DataMachine\Engine\Tasks\TaskScheduler::scheduleBatch(
+			'worktree_cleanup_chunk',
+			$items,
+			array( 'source' => $source )
+		);
+
+		if ( false === $batch_result ) {
+			return new \WP_Error( 'metadata_reconcile_schedule_failed', 'Failed to schedule metadata reconciliation page jobs.', array( 'status' => 500 ) );
+		}
+
+		return array(
+			'success'        => true,
+			'dry_run'        => false,
+			'applied'        => false,
+			'job_backed'     => true,
+			'generated_at'   => gmdate( 'c' ),
+			'workspace_path' => $this->workspace_path,
+			'proposals'      => array_values( (array) ( $first_page['proposals'] ?? array() ) ),
+			'written'        => array(),
+			'skipped'        => array(),
+			'still_unsafe'       => array_values( (array) ( $first_page['still_unsafe'] ?? array() ) ),
+			'external_worktrees' => array_values( (array) ( $first_page['external_worktrees'] ?? array() ) ),
+			'summary'            => array_merge(
+				(array) ( $first_page['summary'] ?? array() ),
+				array(
+					'written'        => 0,
+					'scheduled_jobs' => count( $items ),
+					'limit'          => $limit,
+				)
+			),
+			'pagination'     => $pagination,
+			'evidence'       => array(
+				'elapsed_ms'     => (int) round( ( microtime( true ) - $started_at ) * 1000 ),
+				'scope'          => 'job-backed metadata reconciliation apply',
+				'page_offsets'   => array_column( $items, 'offset' ),
+				'batch_job_id'   => (int) ( $batch_result['batch_job_id'] ?? 0 ),
+				'direct_job_ids' => $batch_result['job_ids'] ?? array(),
+				'source'         => $source,
 			),
 		);
 	}

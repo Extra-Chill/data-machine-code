@@ -1539,7 +1539,7 @@ class WorkspaceAbilities {
 				'datamachine/workspace-worktree-reconcile-metadata',
 				array(
 					'label'               => 'Reconcile Worktree Metadata',
-					'description'         => 'Build or apply a reviewed, non-destructive lifecycle metadata plan for unmanaged workspace worktrees. Never removes worktrees and never infers cleanup eligibility.',
+					'description'         => 'Build, apply, or schedule bounded apply jobs for lifecycle metadata reconciliation. Never removes worktrees; apply paths revalidate identity and cleanup-eligibility safety gates before writing.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -1554,15 +1554,19 @@ class WorkspaceAbilities {
 							),
 							'apply'        => array(
 								'type'        => 'boolean',
-								'description' => 'If true, build and apply bounded DMC-owned reconciliation pages directly.',
+								'description' => 'If true, run DMC-owned direct apply without a manual plan.',
+							),
+							'via_jobs'     => array(
+								'type'        => 'boolean',
+								'description' => 'With apply=true, schedule bounded metadata reconciliation page jobs instead of applying synchronously.',
 							),
 							'limit'        => array(
 								'type'        => 'integer',
-								'description' => 'Maximum worktrees to scan in each reconciliation page.',
+								'description' => 'Page size for bounded dry-run, direct apply, budgeted apply, or job-backed apply.',
 							),
 							'offset'       => array(
 								'type'        => 'integer',
-								'description' => 'Pagination offset into the worktree inventory ordering.',
+								'description' => 'Pagination offset for bounded dry-run, direct apply, or budgeted apply. Job-backed apply schedules from offset 0 across all pages.',
 							),
 							'until_budget' => array(
 								'type'        => 'string',
@@ -2533,8 +2537,9 @@ class WorkspaceAbilities {
 	public static function worktreeReconcileMetadata( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$opts      = array(
-			'dry_run' => ! empty( $input['dry_run'] ),
-			'apply'   => ! empty( $input['apply'] ),
+			'dry_run'  => ! empty( $input['dry_run'] ),
+			'apply'    => ! empty( $input['apply'] ),
+			'via_jobs' => ! empty( $input['via_jobs'] ),
 		);
 		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
 			$opts['apply_plan'] = $input['apply_plan'];
@@ -2547,6 +2552,9 @@ class WorkspaceAbilities {
 		}
 		if ( isset( $input['until_budget'] ) && '' !== trim( (string) $input['until_budget'] ) ) {
 			$opts['until_budget'] = trim( (string) $input['until_budget'] );
+		}
+		if ( isset( $input['source'] ) && '' !== trim( (string) $input['source'] ) ) {
+			$opts['source'] = trim( (string) $input['source'] );
 		}
 
 		return $workspace->worktree_reconcile_metadata( $opts );
