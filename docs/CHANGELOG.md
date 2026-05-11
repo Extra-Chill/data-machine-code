@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.34.3] - 2026-05-11
+
+### Fixed
+- reconcile active branches with github signals
+
 ## [0.34.2] - 2026-05-11
 
 ### Fixed
