@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.34.4] - 2026-05-11
+
+### Fixed
+- resolve finalized prs by branch head
+
 ## [0.34.3] - 2026-05-11
 
 ### Fixed
