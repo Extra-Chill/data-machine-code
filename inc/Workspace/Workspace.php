@@ -3808,16 +3808,17 @@ class Workspace {
 	 * only that page; omitting both preserves the historical full scan.
 	 * Applying a plan revalidates handle/path/repo/branch before writing metadata.
 	 *
-	 * @param array $opts Options: dry_run bool, apply_plan array, limit int, offset int.
+	 * @param array $opts Options: dry_run bool, apply_plan array, limit int, offset int, until_budget string.
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_reconcile_metadata( array $opts = array() ): array|\WP_Error {
-		$dry_run    = ! empty( $opts['dry_run'] );
-		$apply      = ! empty( $opts['apply'] );
-		$apply_plan = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
-		$paged      = array_key_exists( 'limit', $opts ) || array_key_exists( 'offset', $opts );
-		$limit      = $paged ? ( array_key_exists( 'limit', $opts ) ? (int) $opts['limit'] : self::METADATA_RECONCILE_DEFAULT_LIMIT ) : 0;
-		$offset     = $paged ? max( 0, (int) ( $opts['offset'] ?? 0 ) ) : 0;
+		$dry_run      = ! empty( $opts['dry_run'] );
+		$apply        = ! empty( $opts['apply'] );
+		$apply_plan   = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
+		$until_budget = isset( $opts['until_budget'] ) ? trim( (string) $opts['until_budget'] ) : '';
+		$paged        = array_key_exists( 'limit', $opts ) || array_key_exists( 'offset', $opts ) || '' !== $until_budget;
+		$limit        = $paged ? ( array_key_exists( 'limit', $opts ) ? (int) $opts['limit'] : self::METADATA_RECONCILE_DEFAULT_LIMIT ) : 0;
+		$offset       = $paged ? max( 0, (int) ( $opts['offset'] ?? 0 ) ) : 0;
 
 		if ( null !== $apply_plan ) {
 			return $this->apply_worktree_metadata_reconciliation_plan( $apply_plan );
@@ -3828,6 +3829,18 @@ class Workspace {
 		}
 		if ( $paged && $limit <= 0 ) {
 			return new \WP_Error( 'invalid_metadata_reconcile_limit', 'Metadata reconciliation --limit must be greater than 0.', array( 'status' => 400 ) );
+		}
+		if ( '' !== $until_budget ) {
+			if ( ! $apply || $dry_run ) {
+				return new \WP_Error( 'metadata_reconcile_budget_requires_apply', 'Metadata reconciliation --until-budget is only supported with direct --apply.', array( 'status' => 400 ) );
+			}
+
+			$budget_seconds = $this->parse_worktree_metadata_reconciliation_budget( $until_budget );
+			if ( is_wp_error( $budget_seconds ) ) {
+				return $budget_seconds;
+			}
+
+			return $this->drain_worktree_metadata_reconciliation_budget( $limit, $offset, $until_budget, $budget_seconds );
 		}
 
 		$listing = $this->worktree_list(
@@ -3894,6 +3907,140 @@ class Workspace {
 		}
 
 		return $plan;
+	}
+
+	/**
+	 * Drain paged direct metadata reconciliation until the time budget is nearly exhausted.
+	 *
+	 * @param int    $limit          Page size.
+	 * @param int    $offset         Starting offset.
+	 * @param string $budget_label   Original compact budget label.
+	 * @param int    $budget_seconds Parsed budget in seconds.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function drain_worktree_metadata_reconciliation_budget( int $limit, int $offset, string $budget_label, int $budget_seconds ): array|\WP_Error {
+		$started_at      = microtime( true );
+		$reserve_seconds = min( 5.0, max( 1.0, $budget_seconds * 0.1 ) );
+		$pages           = array();
+		$proposals       = array();
+		$written         = array();
+		$skipped         = array();
+		$scanned         = 0;
+		$next_offset     = $offset;
+		$last_pagination = null;
+
+		do {
+			$page = $this->worktree_reconcile_metadata(
+				array(
+					'apply'  => true,
+					'limit'  => $limit,
+					'offset' => $next_offset,
+				)
+			);
+			if ( is_wp_error( $page ) ) {
+				return $page;
+			}
+
+			$page_pagination = (array) ( $page['pagination'] ?? array() );
+			$page_scanned    = (int) ( $page_pagination['scanned'] ?? 0 );
+			$last_pagination = $page_pagination;
+			$scanned        += $page_scanned;
+			$proposals       = array_merge( $proposals, (array) ( $page['proposals'] ?? array() ) );
+			$written         = array_merge( $written, (array) ( $page['written'] ?? array() ) );
+			$skipped         = array_merge( $skipped, (array) ( $page['skipped'] ?? array() ) );
+			$pages[]         = array(
+				'offset'   => (int) ( $page_pagination['offset'] ?? $next_offset ),
+				'limit'    => (int) ( $page_pagination['limit'] ?? $limit ),
+				'scanned'  => $page_scanned,
+				'written'  => count( (array) ( $page['written'] ?? array() ) ),
+				'skipped'  => count( (array) ( $page['skipped'] ?? array() ) ),
+				'complete' => (bool) ( $page_pagination['complete'] ?? false ),
+			);
+
+			if ( ! empty( $page_pagination['complete'] ) || null === ( $page_pagination['next_offset'] ?? null ) || $page_scanned <= 0 ) {
+				break;
+			}
+
+			$next_offset = (int) $page_pagination['next_offset'];
+		} while ( ( $budget_seconds - ( microtime( true ) - $started_at ) ) > $reserve_seconds );
+
+		$elapsed      = microtime( true ) - $started_at;
+		$complete     = ! empty( $last_pagination['complete'] );
+		$partial      = ! $complete;
+		$next_command = $partial ? sprintf(
+			'studio wp datamachine-code workspace worktree reconcile-metadata --apply --limit=%d --offset=%d --until-budget=%s --format=json',
+			$limit,
+			(int) ( $last_pagination['next_offset'] ?? $next_offset ),
+			$budget_label
+		) : null;
+
+		$classified_skips = $this->classify_worktree_metadata_reconciliation_skips( $skipped );
+		$pagination       = array(
+			'total'       => (int) ( $last_pagination['total'] ?? 0 ),
+			'offset'      => $offset,
+			'limit'       => $limit,
+			'scanned'     => $scanned,
+			'partial'     => $partial,
+			'complete'    => $complete,
+			'next_offset' => $partial ? (int) ( $last_pagination['next_offset'] ?? $next_offset ) : null,
+		);
+		if ( null !== $next_command ) {
+			$pagination['next_command'] = $next_command;
+		}
+
+		return array(
+			'success'        => true,
+			'dry_run'        => false,
+			'applied'        => true,
+			'direct_apply'   => true,
+			'generated_at'   => gmdate( 'c' ),
+			'workspace_path' => $this->workspace_path,
+			'proposals'      => $proposals,
+			'written'        => $written,
+			'skipped'        => $skipped,
+			'still_unsafe'      => $classified_skips['still_unsafe'],
+			'external_worktrees' => $classified_skips['external_worktrees'],
+			'summary'        => $this->build_worktree_metadata_reconciliation_summary( $scanned, $proposals, $written, $skipped ),
+			'pagination'     => $pagination,
+			'evidence'       => array_filter(
+				array(
+					'scope'                  => 'time-budgeted metadata reconciliation direct apply',
+					'apply_source'           => 'direct_apply',
+					'budget'                 => $budget_label,
+					'budget_seconds'         => $budget_seconds,
+					'reserve_seconds'        => $reserve_seconds,
+					'elapsed_seconds'        => round( $elapsed, 3 ),
+					'budget_nearly_exhausted' => $partial,
+					'pages'                  => $pages,
+					'next_command'           => $next_command,
+				)
+			),
+		);
+	}
+
+	/**
+	 * Parse a compact metadata reconciliation time budget.
+	 *
+	 * @param string $duration Duration like 60s, 10m, or 1h.
+	 * @return int|\WP_Error Seconds on success.
+	 */
+	private function parse_worktree_metadata_reconciliation_budget( string $duration ): int|\WP_Error {
+		if ( ! preg_match( '/^(\d+)([smh])$/', trim( $duration ), $matches ) ) {
+			return new \WP_Error( 'invalid_metadata_reconcile_budget', 'Invalid --until-budget duration. Use a compact value like 60s, 10m, or 1h.', array( 'status' => 400 ) );
+		}
+
+		$value = (int) $matches[1];
+		if ( $value <= 0 ) {
+			return new \WP_Error( 'invalid_metadata_reconcile_budget', 'Invalid --until-budget duration. Duration must be greater than zero.', array( 'status' => 400 ) );
+		}
+
+		$unit_seconds = array(
+			's' => 1,
+			'm' => 60,
+			'h' => 3600,
+		);
+
+		return $value * $unit_seconds[ $matches[2] ];
 	}
 
 	/**

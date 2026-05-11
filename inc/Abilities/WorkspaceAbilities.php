@@ -1250,7 +1250,7 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Forward force=true to cleanup tasks that support it.',
 							),
-							'dry_run'    => array(
+							'dry_run'      => array(
 								'type'        => 'boolean',
 								'description' => 'Rejected for background cleanup scheduling; use review abilities for dry-runs.',
 							),
@@ -1548,9 +1548,25 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'If true, return a review plan without writing metadata.',
 							),
-							'apply_plan' => array(
+							'apply_plan'   => array(
 								'type'        => 'object',
 								'description' => 'Decoded dry-run plan to apply after exact handle/path/repo/branch revalidation.',
+							),
+							'apply'        => array(
+								'type'        => 'boolean',
+								'description' => 'If true, build and apply bounded DMC-owned reconciliation pages directly.',
+							),
+							'limit'        => array(
+								'type'        => 'integer',
+								'description' => 'Maximum worktrees to scan in each reconciliation page.',
+							),
+							'offset'       => array(
+								'type'        => 'integer',
+								'description' => 'Pagination offset into the worktree inventory ordering.',
+							),
+							'until_budget' => array(
+								'type'        => 'string',
+								'description' => 'Compact time budget for direct apply drain mode, such as 60s or 10m.',
 							),
 						),
 					),
@@ -2528,6 +2544,9 @@ class WorkspaceAbilities {
 		}
 		if ( array_key_exists( 'offset', $input ) ) {
 			$opts['offset'] = (int) $input['offset'];
+		}
+		if ( isset( $input['until_budget'] ) && '' !== trim( (string) $input['until_budget'] ) ) {
+			$opts['until_budget'] = trim( (string) $input['until_budget'] );
 		}
 
 		return $workspace->worktree_reconcile_metadata( $opts );
