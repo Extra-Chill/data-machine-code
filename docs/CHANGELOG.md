@@ -2,6 +2,17 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.34.0] - 2026-05-11
+
+### Added
+- expose worktree add tool
+- expose policy-gated workspace tools
+
+### Fixed
+- add budgeted metadata reconciliation drain
+- schedule metadata reconciliation jobs
+- support bounded reconciliation apply
+
 ## [0.33.0] - 2026-05-11
 
 ### Added
