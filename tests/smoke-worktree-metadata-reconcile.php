@@ -320,6 +320,16 @@ namespace {
 	$stale_plan  = $plan;
 	$unsafe_plan = $plan;
 
+	$page = $ws->worktree_reconcile_metadata( array( 'dry_run' => true, 'limit' => 2, 'offset' => 2 ) );
+	$assert( true, ! is_wp_error( $page ) && ( $page['success'] ?? false ), 'paginated dry-run succeeds' );
+	$assert( 2, (int) ( $page['pagination']['limit'] ?? 0 ), 'paginated dry-run reports limit' );
+	$assert( 2, (int) ( $page['pagination']['offset'] ?? 0 ), 'paginated dry-run reports offset' );
+	$assert( 2, (int) ( $page['pagination']['scanned'] ?? 0 ), 'paginated dry-run scans only requested page' );
+	$assert( true, (bool) ( $page['pagination']['partial'] ?? false ), 'paginated dry-run reports continuation' );
+	$assert( 4, (int) ( $page['pagination']['next_offset'] ?? 0 ), 'paginated dry-run advances next offset' );
+	$assert( 2, (int) ( $page['summary']['inspected'] ?? 0 ), 'paginated dry-run summary is page-scoped' );
+	$assert( true, isset( $page['evidence']['fields_skipped_by_listing'] ), 'paginated dry-run exposes listing evidence' );
+
 	$inventory_before = $ws->worktree_cleanup_merged( array( 'dry_run' => true, 'inventory_only' => true, 'skip_github' => true ) );
 	$assert( 4, (int) ( $inventory_before['summary']['skipped_by_reason']['needs_metadata_reconcile'] ?? 0 ), 'inventory cleanup sees missing metadata before apply' );
 
@@ -340,6 +350,12 @@ namespace {
 	$assert( 'merged', $stored_pr['finalized_state'] ?? '', 'apply stores merged finalizer state for merged PR worktree' );
 	$stored_gone = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@upstream-gone' );
 	$assert( 'cleanup_eligible', $stored_gone['lifecycle_state'] ?? '', 'apply stores cleanup_eligible for upstream-gone worktree' );
+
+	$all_metadata = get_option( \DataMachineCode\Workspace\WorktreeContextInjector::METADATA_OPTION, array() );
+	$all_metadata['demo@unmanaged-missing']['durability_marker'] = 'option-repair-wins';
+	update_option( \DataMachineCode\Workspace\WorktreeContextInjector::METADATA_OPTION, $all_metadata, false );
+	$durable = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@unmanaged-missing' );
+	$assert( 'option-repair-wins', $durable['durability_marker'] ?? '', 'option-backed metadata repair remains visible over DB fallback' );
 
 	$auto_apply = $ws->worktree_reconcile_metadata( array( 'apply' => true ) );
 	$assert( true, ! is_wp_error( $auto_apply ) && ( $auto_apply['success'] ?? false ), 'DMC-owned reconciliation apply path runs without a manual plan' );

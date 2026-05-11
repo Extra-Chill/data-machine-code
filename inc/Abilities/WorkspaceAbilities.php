@@ -2511,7 +2511,7 @@ class WorkspaceAbilities {
 	/**
 	 * Reconcile unmanaged worktree lifecycle metadata.
 	 *
-	 * @param array $input Input parameters (dry_run, apply_plan).
+	 * @param array $input Input parameters (dry_run, apply_plan, limit, offset).
 	 * @return array
 	 */
 	public static function worktreeReconcileMetadata( array $input ): array|\WP_Error {
@@ -2522,6 +2522,12 @@ class WorkspaceAbilities {
 		);
 		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
 			$opts['apply_plan'] = $input['apply_plan'];
+		}
+		if ( array_key_exists( 'limit', $input ) ) {
+			$opts['limit'] = (int) $input['limit'];
+		}
+		if ( array_key_exists( 'offset', $input ) ) {
+			$opts['offset'] = (int) $input['offset'];
 		}
 
 		return $workspace->worktree_reconcile_metadata( $opts );
