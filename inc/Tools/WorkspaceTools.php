@@ -50,6 +50,7 @@ class WorkspaceTools extends BaseTool {
 			'workspace_git_log',
 			'workspace_git_diff',
 			'workspace_git_pull',
+			'workspace_worktree_add',
 			'workspace_git_add',
 			'workspace_git_commit',
 			'workspace_git_push',
@@ -83,6 +84,7 @@ class WorkspaceTools extends BaseTool {
 		$this->registerTool( 'workspace_git_log', array( $this, 'getGitLogDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-log' ) );
 		$this->registerTool( 'workspace_git_diff', array( $this, 'getGitDiffDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-diff' ) );
 		$this->registerTool( 'workspace_git_pull', array( $this, 'getGitPullDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-pull' ) );
+		$this->registerTool( 'workspace_worktree_add', array( $this, 'getWorktreeAddDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-worktree-add' ) );
 		$this->registerTool( 'workspace_git_add', array( $this, 'getGitAddDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-add' ) );
 		$this->registerTool( 'workspace_git_commit', array( $this, 'getGitCommitDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-commit' ) );
 		$this->registerTool( 'workspace_git_push', array( $this, 'getGitPushDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-push' ) );
@@ -427,6 +429,28 @@ class WorkspaceTools extends BaseTool {
 		}
 
 		return $this->executeAbility( 'datamachine/workspace-git-pull', 'workspace_git_pull', $input );
+	}
+
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handleWorktreeAdd( array $parameters ): array {
+		$input = array(
+			'repo'   => $parameters['repo'] ?? '',
+			'branch' => $parameters['branch'] ?? '',
+		);
+
+		foreach ( array( 'from', 'task_url', 'task_ref' ) as $key ) {
+			if ( isset( $parameters[ $key ] ) ) {
+				$input[ $key ] = $parameters[ $key ];
+			}
+		}
+
+		foreach ( array( 'inject_context', 'bootstrap', 'allow_stale', 'rebase_base', 'force' ) as $key ) {
+			if ( array_key_exists( $key, $parameters ) ) {
+				$input[ $key ] = (bool) $parameters[ $key ];
+			}
+		}
+
+		return $this->executeAbility( 'datamachine/workspace-worktree-add', 'workspace_worktree_add', $input );
 	}
 
 	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
@@ -797,6 +821,31 @@ class WorkspaceTools extends BaseTool {
 			'allow_dirty'            => array( 'type' => 'boolean', 'description' => 'Allow pull when working tree is dirty. Default false.' ),
 			'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
 		) );
+	}
+
+	/** @return array<string,mixed> */
+	public function getWorktreeAddDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleWorktreeAdd',
+			'description' => 'Create a git worktree for a workspace repository branch. Policy-gated for pipeline use.',
+			'parameters'  => array(
+				'type'       => 'object',
+				'properties' => array(
+					'repo'           => array( 'type' => 'string', 'description' => 'Primary workspace repo name, without an @ worktree suffix.' ),
+					'branch'         => array( 'type' => 'string', 'description' => 'Branch to check out in the worktree, for example fix/foo-bar.' ),
+					'from'           => array( 'type' => 'string', 'description' => 'Base ref when creating the branch. Defaults to origin/HEAD.' ),
+					'inject_context' => array( 'type' => 'boolean', 'description' => 'Inject originating agent context into the worktree. Default true.' ),
+					'bootstrap'      => array( 'type' => 'boolean', 'description' => 'Run detected bootstrap steps after creation. Default true.' ),
+					'allow_stale'    => array( 'type' => 'boolean', 'description' => 'Bypass the staleness gate. Default false.' ),
+					'rebase_base'    => array( 'type' => 'boolean', 'description' => 'Rebase the worktree onto the upstream tip after creation. Default false.' ),
+					'force'          => array( 'type' => 'boolean', 'description' => 'Bypass disk-budget refusal threshold. Default false.' ),
+					'task_url'       => array( 'type' => 'string', 'description' => 'Optional task or issue URL to record on the worktree.' ),
+					'task_ref'       => array( 'type' => 'string', 'description' => 'Optional short task or issue reference to record on the worktree.' ),
+				),
+				'required'   => array( 'repo', 'branch' ),
+			),
+		);
 	}
 
 	/** @return array<string,mixed> */

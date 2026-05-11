@@ -97,6 +97,7 @@ namespace {
 		'workspace_git_log',
 		'workspace_git_diff',
 		'workspace_git_pull',
+		'workspace_worktree_add',
 		'workspace_git_add',
 		'workspace_git_commit',
 		'workspace_git_push',
