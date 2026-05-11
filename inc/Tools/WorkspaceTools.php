@@ -528,7 +528,7 @@ class WorkspaceTools extends BaseTool {
 	 * @return array
 	 */
 	public function getPathDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handlePath',
 			'description' => 'Get the Data Machine workspace path. Optionally ensure it exists.',
@@ -542,7 +542,7 @@ class WorkspaceTools extends BaseTool {
 				),
 				'required'   => array(),
 			),
-		);
+		) );
 	}
 
 	/**
@@ -551,7 +551,7 @@ class WorkspaceTools extends BaseTool {
 	 * @return array Tool definition.
 	 */
 	public function getCapabilitiesDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => self::class,
 			'method'      => 'handleCapabilities',
 			'description' => 'Inspect whether the current Data Machine Code workspace backend can run local git operations in this runtime.',
@@ -565,7 +565,7 @@ class WorkspaceTools extends BaseTool {
 				),
 				'required'   => array(),
 			),
-		);
+		) );
 	}
 
 	/**
@@ -574,7 +574,7 @@ class WorkspaceTools extends BaseTool {
 	 * @return array
 	 */
 	public function getListDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleList',
 			'description' => 'List repositories currently present in the Data Machine workspace.',
@@ -583,7 +583,7 @@ class WorkspaceTools extends BaseTool {
 				'properties' => array(),
 				'required'   => array(),
 			),
-		);
+		) );
 	}
 
 	/**
@@ -592,7 +592,7 @@ class WorkspaceTools extends BaseTool {
 	 * @return array
 	 */
 	public function getShowDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleShow',
 			'description' => 'Show detailed information about a workspace repository (branch, remote, latest commit, dirty count).',
@@ -606,7 +606,7 @@ class WorkspaceTools extends BaseTool {
 				),
 				'required'   => array( 'name' ),
 			),
-		);
+		) );
 	}
 
 	/**
@@ -615,7 +615,7 @@ class WorkspaceTools extends BaseTool {
 	 * @return array
 	 */
 	public function getLsDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleLs',
 			'description' => 'List directory contents within a workspace repository.',
@@ -633,7 +633,7 @@ class WorkspaceTools extends BaseTool {
 				),
 				'required'   => array( 'repo' ),
 			),
-		);
+		) );
 	}
 
 	/**
@@ -642,7 +642,7 @@ class WorkspaceTools extends BaseTool {
 	 * @return array
 	 */
 	public function getReadDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleRead',
 			'description' => 'Read a text file from a workspace repository. Supports optional max_size, offset, and limit for large files.',
@@ -672,7 +672,7 @@ class WorkspaceTools extends BaseTool {
 				),
 				'required'   => array( 'repo', 'path' ),
 			),
-		);
+		) );
 	}
 
 	/**
@@ -681,7 +681,7 @@ class WorkspaceTools extends BaseTool {
 	 * @return array
 	 */
 	public function getGrepDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleGrep',
 			'description' => 'Search text files in a workspace repository using a regular expression pattern.',
@@ -715,12 +715,12 @@ class WorkspaceTools extends BaseTool {
 				),
 				'required'   => array( 'repo', 'pattern' ),
 			),
-		);
+		) );
 	}
 
 	/** @return array<string,mixed> */
 	public function getWriteDefinition(): array {
-		return array(
+		return $this->progressDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleWrite',
 			'description' => 'Create or overwrite a file in a workspace repository. Policy-gated for pipeline use.',
@@ -733,12 +733,12 @@ class WorkspaceTools extends BaseTool {
 				),
 				'required'   => array( 'repo', 'path', 'content' ),
 			),
-		);
+		) );
 	}
 
 	/** @return array<string,mixed> */
 	public function getEditDefinition(): array {
-		return array(
+		return $this->progressDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleEdit',
 			'description' => 'Find-and-replace exact text in a workspace repository file. Policy-gated for pipeline use.',
@@ -753,12 +753,12 @@ class WorkspaceTools extends BaseTool {
 				),
 				'required'   => array( 'repo', 'path', 'old_string', 'new_string' ),
 			),
-		);
+		) );
 	}
 
 	/** @return array<string,mixed> */
 	public function getApplyPatchDefinition(): array {
-		return array(
+		return $this->progressDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleApplyPatch',
 			'description' => 'Apply a unified diff to a workspace repository using git apply checks. Policy-gated for pipeline use.',
@@ -771,12 +771,12 @@ class WorkspaceTools extends BaseTool {
 				),
 				'required'   => array( 'repo', 'patch' ),
 			),
-		);
+		) );
 	}
 
 	/** @return array<string,mixed> */
 	public function getDeleteDefinition(): array {
-		return array(
+		return $this->progressDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleDelete',
 			'description' => 'Delete a tracked or untracked path from a workspace repository. Policy-gated for pipeline use.',
@@ -790,19 +790,19 @@ class WorkspaceTools extends BaseTool {
 				),
 				'required'   => array( 'repo', 'path' ),
 			),
-		);
+		) );
 	}
 
 	/** @return array<string,mixed> */
 	public function getGitStatusDefinition(): array {
-		return $this->simpleGitDefinition( 'handleGitStatus', 'Get git status information for a workspace handle.', array() );
+		return $this->simpleGitDefinition( 'handleGitStatus', 'Get git status information for a workspace handle.', array(), array( 'name' ), array( 'duplicate_policy' => 'repeatable' ) );
 	}
 
 	/** @return array<string,mixed> */
 	public function getGitLogDefinition(): array {
 		return $this->simpleGitDefinition( 'handleGitLog', 'Read git log entries for a workspace handle.', array(
 			'limit' => array( 'type' => 'integer', 'description' => 'Maximum log entries to return.' ),
-		) );
+		), array( 'name' ), array( 'duplicate_policy' => 'repeatable' ) );
 	}
 
 	/** @return array<string,mixed> */
@@ -812,7 +812,7 @@ class WorkspaceTools extends BaseTool {
 			'to'     => array( 'type' => 'string', 'description' => 'Optional to git ref.' ),
 			'staged' => array( 'type' => 'boolean', 'description' => 'Read staged diff instead of working tree diff.' ),
 			'path'   => array( 'type' => 'string', 'description' => 'Optional relative path filter.' ),
-		) );
+		), array( 'name' ), array( 'duplicate_policy' => 'repeatable' ) );
 	}
 
 	/** @return array<string,mixed> */
@@ -820,12 +820,12 @@ class WorkspaceTools extends BaseTool {
 		return $this->simpleGitDefinition( 'handleGitPull', 'Run git pull --ff-only for a workspace handle. Policy-gated for pipeline use.', array(
 			'allow_dirty'            => array( 'type' => 'boolean', 'description' => 'Allow pull when working tree is dirty. Default false.' ),
 			'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
-		) );
+		), array( 'name' ), array( 'completion_signal' => 'progress' ) );
 	}
 
 	/** @return array<string,mixed> */
 	public function getWorktreeAddDefinition(): array {
-		return array(
+		return $this->progressDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleWorktreeAdd',
 			'description' => 'Create a git worktree for a workspace repository branch. Policy-gated for pipeline use.',
@@ -845,7 +845,7 @@ class WorkspaceTools extends BaseTool {
 				),
 				'required'   => array( 'repo', 'branch' ),
 			),
-		);
+		) );
 	}
 
 	/** @return array<string,mixed> */
@@ -853,7 +853,7 @@ class WorkspaceTools extends BaseTool {
 		return $this->simpleGitDefinition( 'handleGitAdd', 'Stage repository paths with git add. Policy-gated for pipeline use.', array(
 			'paths'                  => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Relative paths to stage.' ),
 			'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
-		), array( 'name', 'paths' ) );
+		), array( 'name', 'paths' ), array( 'completion_signal' => 'progress' ) );
 	}
 
 	/** @return array<string,mixed> */
@@ -861,7 +861,7 @@ class WorkspaceTools extends BaseTool {
 		return $this->simpleGitDefinition( 'handleGitCommit', 'Commit staged changes in a workspace handle. Policy-gated for pipeline use.', array(
 			'message'                => array( 'type' => 'string', 'description' => 'Commit message.' ),
 			'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
-		), array( 'name', 'message' ) );
+		), array( 'name', 'message' ), array( 'completion_signal' => 'progress' ) );
 	}
 
 	/** @return array<string,mixed> */
@@ -870,12 +870,12 @@ class WorkspaceTools extends BaseTool {
 			'remote'                 => array( 'type' => 'string', 'description' => 'Remote name. Default origin.' ),
 			'branch'                 => array( 'type' => 'string', 'description' => 'Branch override.' ),
 			'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
-		) );
+		), array( 'name' ), array( 'completion_signal' => 'progress' ) );
 	}
 
 	/** @param array<string,mixed> $extra_properties Extra parameters. @param string[] $required Required properties. @return array<string,mixed> */
-	private function simpleGitDefinition( string $method, string $description, array $extra_properties, array $required = array( 'name' ) ): array {
-		return array(
+	private function simpleGitDefinition( string $method, string $description, array $extra_properties, array $required = array( 'name' ), array $runtime = array() ): array {
+		return $this->withRuntime( array(
 			'class'       => __CLASS__,
 			'method'      => $method,
 			'description' => $description,
@@ -890,6 +890,26 @@ class WorkspaceTools extends BaseTool {
 				),
 				'required'   => $required,
 			),
-		);
+		), $runtime );
+	}
+
+	/** @param array<string,mixed> $definition Tool definition. @return array<string,mixed> */
+	private function repeatableDefinition( array $definition ): array {
+		return $this->withRuntime( $definition, array( 'duplicate_policy' => 'repeatable' ) );
+	}
+
+	/** @param array<string,mixed> $definition Tool definition. @return array<string,mixed> */
+	private function progressDefinition( array $definition ): array {
+		return $this->withRuntime( $definition, array( 'completion_signal' => 'progress' ) );
+	}
+
+	/** @param array<string,mixed> $definition Tool definition. @param array<string,mixed> $runtime Runtime metadata. @return array<string,mixed> */
+	private function withRuntime( array $definition, array $runtime ): array {
+		if ( empty( $runtime ) ) {
+			return $definition;
+		}
+
+		$definition['runtime'] = array_merge( is_array( $definition['runtime'] ?? null ) ? $definition['runtime'] : array(), $runtime );
+		return $definition;
 	}
 }

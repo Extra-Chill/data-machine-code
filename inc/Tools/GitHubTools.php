@@ -199,7 +199,7 @@ class GitHubTools extends BaseTool {
 	 * @return array
 	 */
 	public function getListIssuesDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleListIssues',
 			'description' => 'List issues from a GitHub repository. Returns issue numbers, titles, states, labels, assignees, comment counts, timestamps, and a generated_at timestamp. Use to review open issues, track progress, or find specific issues by label.',
@@ -225,7 +225,7 @@ class GitHubTools extends BaseTool {
 				),
 				'required'   => array( 'repo' ),
 			),
-		);
+		) );
 	}
 
 	// -------------------------------------------------------------------------
@@ -259,7 +259,7 @@ class GitHubTools extends BaseTool {
 	 * @return array
 	 */
 	public function getGetIssueDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleGetIssue',
 			'description' => 'Get a single GitHub issue with full details including body, labels, assignees, comment count, timestamps, generated_at, and latest comment metadata when comments exist.',
@@ -277,7 +277,7 @@ class GitHubTools extends BaseTool {
 				),
 				'required'   => array( 'repo', 'issue_number' ),
 			),
-		);
+		) );
 	}
 
 	// -------------------------------------------------------------------------
@@ -323,7 +323,7 @@ class GitHubTools extends BaseTool {
 	 * @return array
 	 */
 	public function getManageIssueDefinition(): array {
-		return array(
+		return $this->progressDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleManageIssue',
 			'description' => 'Update, close, or comment on a GitHub issue. Use action "update" to change title/body or replace the full labels set, "close" to close the issue, or "comment" to add a comment. For surgical label edits that preserve other labels, use add_label_to_issue or remove_label_from_issue instead - action=update replaces the full label set.',
@@ -362,7 +362,7 @@ class GitHubTools extends BaseTool {
 				),
 				'required'   => array( 'repo', 'issue_number', 'action' ),
 			),
-		);
+		) );
 	}
 
 	// -------------------------------------------------------------------------
@@ -508,7 +508,7 @@ class GitHubTools extends BaseTool {
 	 * @return array
 	 */
 	public function getCommentPullRequestDefinition(): array {
-		return array(
+		return $this->progressDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleCommentPullRequest',
 			'description' => 'Comment on a GitHub pull request without granting broader issue update or close capabilities.',
@@ -534,7 +534,7 @@ class GitHubTools extends BaseTool {
 				),
 				'required'   => array( 'repo', 'pull_number', 'body' ),
 			),
-		);
+		) );
 	}
 
 	/**
@@ -666,7 +666,7 @@ class GitHubTools extends BaseTool {
 	 * @return array
 	 */
 	public function getListPullsDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleListPulls',
 			'description' => 'List pull requests from a GitHub repository. Returns PR numbers, titles, states, branches, merge status, comment counts, change counts, timestamps, and generated_at.',
@@ -684,7 +684,7 @@ class GitHubTools extends BaseTool {
 				),
 				'required'   => array( 'repo' ),
 			),
-		);
+		) );
 	}
 
 	// -------------------------------------------------------------------------
@@ -737,7 +737,7 @@ class GitHubTools extends BaseTool {
 	 * @return array
 	 */
 	public function getGetPullDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleGetPull',
 			'description' => 'Get one GitHub pull request with normalized title, body, branch, SHA, labels, merge metadata, comment counts, change counts, timestamps, and generated_at.',
@@ -755,7 +755,7 @@ class GitHubTools extends BaseTool {
 				),
 				'required'   => array( 'repo', 'pull_number' ),
 			),
-		);
+		) );
 	}
 
 	/**
@@ -774,7 +774,7 @@ class GitHubTools extends BaseTool {
 	 * @return array
 	 */
 	public function getPullFilesDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handlePullFiles',
 			'description' => 'List files changed by a GitHub pull request, including filename, status, additions, deletions, and patch when available.',
@@ -800,7 +800,7 @@ class GitHubTools extends BaseTool {
 				),
 				'required'   => array( 'repo', 'pull_number' ),
 			),
-		);
+		) );
 	}
 
 	/**
@@ -1017,7 +1017,7 @@ class GitHubTools extends BaseTool {
 	 * @return array
 	 */
 	public function getPullReviewContextDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handlePullReviewContext',
 			'description' => 'Build a review-ready context packet for a GitHub pull request, including normalized PR metadata and changed-file patches.',
@@ -1092,7 +1092,7 @@ class GitHubTools extends BaseTool {
 				),
 				'required'   => array( 'repo', 'pull_number' ),
 			),
-		);
+		) );
 	}
 
 	/**
@@ -1249,7 +1249,7 @@ class GitHubTools extends BaseTool {
 	 * @return array
 	 */
 	public function getListTreeDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleListTree',
 			'description' => 'List files in a GitHub repository tree at a branch, tag, or commit SHA. Optionally filter to a path prefix.',
@@ -1271,7 +1271,7 @@ class GitHubTools extends BaseTool {
 				),
 				'required'   => array( 'repo' ),
 			),
-		);
+		) );
 	}
 
 	/**
@@ -1290,7 +1290,7 @@ class GitHubTools extends BaseTool {
 	 * @return array
 	 */
 	public function getGetFileDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleGetFile',
 			'description' => 'Get decoded content for one or more files from a GitHub repository. Accepts path for one file or paths for one-or-many; always returns files[].',
@@ -1321,7 +1321,7 @@ class GitHubTools extends BaseTool {
 				),
 				'required'   => array( 'repo' ),
 			),
-		);
+		) );
 	}
 
 	/**
@@ -1340,7 +1340,7 @@ class GitHubTools extends BaseTool {
 	 * @return array
 	 */
 	public function getCreateOrUpdateFileDefinition(): array {
-		return array(
+		return $this->progressDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleCreateOrUpdateFile',
 			'description' => 'Create or update a file in a GitHub repository using the Contents API. If branch is provided and does not exist, it is created from the repository default branch before committing.',
@@ -1375,7 +1375,7 @@ class GitHubTools extends BaseTool {
 				),
 				'required'   => array( 'repo', 'file_path', 'content', 'commit_message' ),
 			),
-		);
+		) );
 	}
 
 	// -------------------------------------------------------------------------
@@ -1409,7 +1409,7 @@ class GitHubTools extends BaseTool {
 	 * @return array
 	 */
 	public function getListReposDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleListRepos',
 			'description' => 'List GitHub repositories for a user or organization. Shows repo names, languages, stars, open issues, and last push date.',
@@ -1427,6 +1427,22 @@ class GitHubTools extends BaseTool {
 				),
 				'required'   => array( 'owner' ),
 			),
-		);
+		) );
+	}
+
+	/** @param array<string,mixed> $definition Tool definition. @return array<string,mixed> */
+	private function repeatableDefinition( array $definition ): array {
+		return $this->withRuntime( $definition, array( 'duplicate_policy' => 'repeatable' ) );
+	}
+
+	/** @param array<string,mixed> $definition Tool definition. @return array<string,mixed> */
+	private function progressDefinition( array $definition ): array {
+		return $this->withRuntime( $definition, array( 'completion_signal' => 'progress' ) );
+	}
+
+	/** @param array<string,mixed> $definition Tool definition. @param array<string,mixed> $runtime Runtime metadata. @return array<string,mixed> */
+	private function withRuntime( array $definition, array $runtime ): array {
+		$definition['runtime'] = array_merge( is_array( $definition['runtime'] ?? null ) ? $definition['runtime'] : array(), $runtime );
+		return $definition;
 	}
 }

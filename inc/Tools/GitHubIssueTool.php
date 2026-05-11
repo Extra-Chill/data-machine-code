@@ -125,6 +125,9 @@ class GitHubIssueTool extends BaseTool {
 			'class'       => __CLASS__,
 			'method'      => 'handle_tool_call',
 			'description' => $description,
+			'runtime'     => array(
+				'completion_signal' => 'progress',
+			),
 			'parameters'  => array(
 				'type'       => 'object',
 				'properties' => array(

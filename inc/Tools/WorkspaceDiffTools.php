@@ -59,7 +59,7 @@ class WorkspaceDiffTools extends BaseTool {
 
 	/** @return array<string,mixed> */
 	public function getDiffSummaryDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleDiffSummary',
 			'description' => 'Summarize changed files, additions/deletions, test-touch status, and compact git diff metadata for a workspace handle.',
@@ -74,12 +74,12 @@ class WorkspaceDiffTools extends BaseTool {
 				),
 				'required'   => array( 'name' ),
 			),
-		);
+		) );
 	}
 
 	/** @return array<string,mixed> */
 	public function getDiffValidateDefinition(): array {
-		return array(
+		return $this->repeatableDefinition( array(
 			'class'       => __CLASS__,
 			'method'      => 'handleDiffValidate',
 			'description' => 'Validate workspace diff shape using allowed/denied path patterns and optional test-change requirements.',
@@ -109,7 +109,13 @@ class WorkspaceDiffTools extends BaseTool {
 				),
 				'required'   => array( 'name' ),
 			),
-		);
+		) );
+	}
+
+	/** @param array<string,mixed> $definition Tool definition. @return array<string,mixed> */
+	private function repeatableDefinition( array $definition ): array {
+		$definition['runtime'] = array_merge( is_array( $definition['runtime'] ?? null ) ? $definition['runtime'] : array(), array( 'duplicate_policy' => 'repeatable' ) );
+		return $definition;
 	}
 
 	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
