@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.35.0] - 2026-05-11
+
+### Added
+- report active worktree cleanup evidence
+
+### Fixed
+- declare agent tool runtime metadata
+- support remote workspace show and diff
+
 ## [0.34.4] - 2026-05-11
 
 ### Fixed
