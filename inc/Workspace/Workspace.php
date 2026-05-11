@@ -3955,7 +3955,7 @@ class Workspace {
 			);
 		}
 
-		if ( null !== $finalizer_signal && ! WorktreeContextInjector::has_cleanup_signal( $metadata ) ) {
+		if ( null !== $finalizer_signal && ! $this->has_explicit_cleanup_eligible_state( $metadata ) ) {
 			if ( $dirty > 0 || $unpushed > 0 ) {
 				return array(
 					'skip' => array_merge(
@@ -3971,9 +3971,22 @@ class Workspace {
 				);
 			}
 
+			$finalized_state    = (string) ( $finalizer_signal['finalized_state'] ?? WorktreeContextInjector::STATE_MERGED );
 			$finalizer_metadata = WorktreeContextInjector::build_finalizer_metadata(
-				WorktreeContextInjector::STATE_MERGED,
+				$finalized_state,
 				isset( $finalizer_signal['pr_url'] ) ? (string) $finalizer_signal['pr_url'] : null
+			);
+			$evidence           = array_filter(
+				array(
+					'signal'          => $finalizer_signal['signal'],
+					'finalized_state' => $finalized_state,
+					'reason'          => $finalizer_signal['reason'],
+					'detected_at'     => gmdate( 'c' ),
+					'dirty'           => $dirty,
+					'unpushed'        => $unpushed,
+					'pr_url'          => $finalizer_signal['pr_url'] ?? null,
+				),
+				fn( $value ) => null !== $value && '' !== $value
 			);
 			$proposed           = array_merge(
 				$metadata,
@@ -3987,9 +4000,10 @@ class Workspace {
 				),
 				$finalizer_metadata,
 				array(
-					'auto_finalized_by'     => 'worktree_reconcile_metadata',
-					'auto_finalized_signal' => $finalizer_signal['signal'],
-					'auto_finalized_reason' => $finalizer_signal['reason'],
+					'auto_finalized_by'            => 'worktree_reconcile_metadata',
+					'auto_finalized_signal'        => $finalizer_signal['signal'],
+					'auto_finalized_reason'        => $finalizer_signal['reason'],
+					'cleanup_eligibility_evidence' => $evidence,
 				)
 			);
 
@@ -4012,13 +4026,15 @@ class Workspace {
 						'pr_url'            => $finalizer_signal['pr_url'] ?? null,
 						'proposed_metadata' => $proposed,
 						'source_map'        => array(
-							'handle'          => 'filesystem',
-							'repo'            => 'filesystem',
-							'branch'          => 'git',
-							'path'            => 'git',
-							'created_at'      => empty( $metadata['created_at'] ) ? 'filesystem' : 'metadata',
-							'observed_at'     => 'reconcile_run',
-							'lifecycle_state' => 'merge_signal',
+							'handle'                       => 'filesystem',
+							'repo'                         => 'filesystem',
+							'branch'                       => 'git',
+							'path'                         => 'git',
+							'created_at'                   => empty( $metadata['created_at'] ) ? 'filesystem' : 'metadata',
+							'observed_at'                  => 'reconcile_run',
+							'lifecycle_state'              => 'merge_signal',
+							'finalized_state'              => 'merge_signal',
+							'cleanup_eligibility_evidence' => 'merge_signal',
 						),
 					),
 				),
@@ -4122,13 +4138,28 @@ class Workspace {
 	}
 
 	/**
+	 * Check whether metadata already stores the current explicit cleanup state.
+	 *
+	 * Legacy finalized records are still cleanup signals, but reconciliation should
+	 * promote them to explicit cleanup_eligible metadata so later inventory-only
+	 * cleanup has durable evidence to inspect.
+	 *
+	 * @param array<string,mixed> $metadata Worktree metadata.
+	 * @return bool
+	 */
+	private function has_explicit_cleanup_eligible_state( array $metadata ): bool {
+		$state = isset( $metadata['lifecycle_state'] ) ? WorktreeContextInjector::normalize_state( (string) $metadata['lifecycle_state'] ) : null;
+		return WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE === $state;
+	}
+
+	/**
 	 * Detect an unambiguous merge signal for lifecycle reconciliation.
 	 *
 	 * @param array<string,mixed> $wt           Current worktree listing row.
 	 * @param array<string,mixed> $metadata     Persisted lifecycle metadata.
 	 * @param array               $github_cache Run-local GitHub lookup cache.
 	 * @param array               $fetched      Run-local fetched repo cache.
-	 * @return array{signal:string,reason:string,pr_url?:string}|null
+	 * @return array{signal:string,reason:string,finalized_state?:string,pr_url?:string}|null
 	 */
 	private function detect_worktree_lifecycle_finalizer_signal( array $wt, array $metadata, array &$github_cache, array &$fetched ): ?array {
 		$repo         = (string) ( $wt['repo'] ?? '' );
@@ -4171,7 +4202,7 @@ class Workspace {
 	 *
 	 * @param array<string,mixed> $metadata     Persisted lifecycle metadata.
 	 * @param array               $github_cache Run-local GitHub lookup cache.
-	 * @return array{signal:string,reason:string,pr_url?:string}|null
+	 * @return array{signal:string,reason:string,finalized_state?:string,pr_url?:string}|null
 	 */
 	private function detect_stored_pr_merged_signal( array $metadata, array &$github_cache ): ?array {
 		$pr_repo   = isset( $metadata['pr_repo'] ) ? (string) $metadata['pr_repo'] : '';
@@ -4195,14 +4226,22 @@ class Workspace {
 			$github_cache[ $cache_key ] = $pr;
 		}
 
-		if ( ! is_array( $pr ) || empty( $pr['merged_at'] ) ) {
+		if ( ! is_array( $pr ) ) {
 			return null;
 		}
 
+		$state = (string) ( $pr['state'] ?? '' );
+		if ( empty( $pr['merged_at'] ) && 'closed' !== $state ) {
+			return null;
+		}
+
+		$merged = ! empty( $pr['merged_at'] );
+
 		return array(
-			'signal' => 'pr-merged',
-			'reason' => sprintf( 'stored PR #%d merged (%s)', $pr_number, (string) ( $pr['state'] ?? 'closed' ) ),
-			'pr_url' => (string) ( $pr['html_url'] ?? $pr_url ),
+			'signal'          => $merged ? 'pr-merged' : 'pr-closed',
+			'reason'          => $merged ? sprintf( 'stored PR #%d merged (%s)', $pr_number, $state ) : sprintf( 'stored PR #%d closed without merge', $pr_number ),
+			'finalized_state' => $merged ? WorktreeContextInjector::STATE_MERGED : WorktreeContextInjector::STATE_CLOSED,
+			'pr_url'          => (string) ( $pr['html_url'] ?? $pr_url ),
 		);
 	}
 

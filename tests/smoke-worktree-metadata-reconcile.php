@@ -34,6 +34,16 @@ namespace DataMachineCode\Abilities {
 						),
 					);
 				}
+				if ( str_ends_with( $url, '/pulls/102' ) ) {
+					return array(
+						'data' => array(
+							'number'    => 102,
+							'state'     => 'closed',
+							'merged_at' => '',
+							'html_url'  => 'https://github.com/acme/demo/pull/102',
+						),
+					);
+				}
 				return array( 'data' => array() );
 			}
 		}
@@ -192,6 +202,7 @@ namespace {
 	$make_branch( 'unmanaged-invalid' );
 	$make_branch( 'already-current' );
 	$make_branch( 'pr-merged' );
+	$make_branch( 'pr-closed' );
 	$make_branch( 'upstream-gone' );
 	$make_branch( 'dirty-merged' );
 	$make_branch( 'unpushed-merged' );
@@ -203,6 +214,7 @@ namespace {
 	$run( sprintf( 'git worktree add %s unmanaged-invalid', escapeshellarg( $tmp . '/demo@unmanaged-invalid' ) ), $primary );
 	$run( sprintf( 'git worktree add %s already-current', escapeshellarg( $tmp . '/demo@already-current' ) ), $primary );
 	$run( sprintf( 'git worktree add %s pr-merged', escapeshellarg( $tmp . '/demo@pr-merged' ) ), $primary );
+	$run( sprintf( 'git worktree add %s pr-closed', escapeshellarg( $tmp . '/demo@pr-closed' ) ), $primary );
 	$run( sprintf( 'git worktree add %s upstream-gone', escapeshellarg( $tmp . '/demo@upstream-gone' ) ), $primary );
 	$run( sprintf( 'git worktree add %s dirty-merged', escapeshellarg( $tmp . '/demo@dirty-merged' ) ), $primary );
 	$run( sprintf( 'git worktree add %s unpushed-merged', escapeshellarg( $tmp . '/demo@unpushed-merged' ) ), $primary );
@@ -278,6 +290,21 @@ namespace {
 			'pr_repo'         => 'acme/demo',
 		)
 	);
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
+		'demo@pr-closed',
+		array(
+			'handle'          => 'demo@pr-closed',
+			'repo'            => 'demo',
+			'branch'          => 'pr-closed',
+			'path'            => $tmp . '/demo@pr-closed',
+			'created_at'      => '2026-04-01T00:00:00+00:00',
+			'observed_at'     => '2026-04-01T00:00:00+00:00',
+			'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
+			'pr_url'          => 'https://github.com/acme/demo/pull/102',
+			'pr_number'       => 102,
+			'pr_repo'         => 'acme/demo',
+		)
+	);
 
 	$ws = new \DataMachineCode\Workspace\Workspace();
 
@@ -285,7 +312,7 @@ namespace {
 	$plan = $ws->worktree_reconcile_metadata( array( 'dry_run' => true ) );
 	$assert( true, ! is_wp_error( $plan ) && ( $plan['success'] ?? false ), 'dry-run succeeds' );
 	$assert( true, $plan['dry_run'] ?? false, 'dry-run flag is true' );
-	$assert( 6, (int) ( $plan['summary']['proposed'] ?? 0 ), 'dry-run proposes unmanaged rows and safe merged lifecycle finalizers' );
+	$assert( 7, (int) ( $plan['summary']['proposed'] ?? 0 ), 'dry-run proposes unmanaged rows and safe merged lifecycle finalizers' );
 	$assert( 0, (int) ( $plan['summary']['written'] ?? 0 ), 'dry-run writes nothing' );
 	$assert( 1, (int) ( $plan['summary']['skipped_by_reason']['external_worktree'] ?? 0 ), 'dry-run distinguishes external worktrees' );
 	$assert( 2, (int) ( $plan['summary']['skipped_by_reason']['unsafe_cleanup_eligible_state'] ?? 0 ), 'dry-run keeps dirty and unpushed merged worktrees out of auto-finalize proposals' );
@@ -309,6 +336,10 @@ namespace {
 	$assert( 'pr-merged', $by_handle['demo@pr-merged']['signal'] ?? '', 'stored PR proposal records pr-merged signal' );
 	$assert( 'cleanup_eligible', $by_handle['demo@pr-merged']['proposed_metadata']['lifecycle_state'] ?? '', 'stored PR proposal becomes cleanup_eligible metadata' );
 	$assert( 'merged', $by_handle['demo@pr-merged']['proposed_metadata']['finalized_state'] ?? '', 'stored PR proposal preserves merged finalized state' );
+	$assert( 'auto_finalize_merged', $by_handle['demo@pr-closed']['reason_code'] ?? '', 'closed stored PR is proposed for auto-finalization' );
+	$assert( 'pr-closed', $by_handle['demo@pr-closed']['signal'] ?? '', 'closed stored PR proposal records pr-closed signal' );
+	$assert( 'closed', $by_handle['demo@pr-closed']['proposed_metadata']['finalized_state'] ?? '', 'closed stored PR preserves closed finalized state' );
+	$assert( 'pr-closed', $by_handle['demo@pr-closed']['proposed_metadata']['cleanup_eligibility_evidence']['signal'] ?? '', 'closed stored PR records cleanup eligibility evidence' );
 	$assert( 'auto_finalize_merged', $by_handle['demo@upstream-gone']['reason_code'] ?? '', 'upstream-gone branch is proposed for auto-finalization' );
 	$assert( 'upstream-gone', $by_handle['demo@upstream-gone']['signal'] ?? '', 'upstream-gone proposal records local merge signal' );
 	$unsafe_by_handle = array();
@@ -326,10 +357,10 @@ namespace {
 	echo "\nApply reviewed plan\n";
 	$apply = $ws->worktree_reconcile_metadata( array( 'apply_plan' => $plan ) );
 	$assert( true, ! is_wp_error( $apply ) && ( $apply['success'] ?? false ), 'apply succeeds' );
-	$assert( 6, (int) ( $apply['summary']['written'] ?? 0 ), 'apply writes exact current matches' );
-	$assert( 6, (int) ( $apply['summary']['written'] ?? 0 ), 'apply reports written metadata rows' );
+	$assert( 7, (int) ( $apply['summary']['written'] ?? 0 ), 'apply writes exact current matches' );
+	$assert( 7, (int) ( $apply['summary']['written'] ?? 0 ), 'apply reports written metadata rows' );
 	$assert( 0, (int) ( $apply['summary']['skipped'] ?? 0 ), 'apply skips nothing for current plan' );
-	$assert( 6, count( $apply['written'] ?? array() ), 'apply exposes written rows distinctly' );
+	$assert( 7, count( $apply['written'] ?? array() ), 'apply exposes written rows distinctly' );
 	$stored = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@unmanaged-missing' );
 	$assert( 'demo@unmanaged-missing', $stored['handle'] ?? '', 'stored metadata includes handle' );
 	$assert( true, ! empty( $stored['observed_at'] ), 'stored metadata includes observed_at' );
@@ -340,6 +371,10 @@ namespace {
 	$assert( 'merged', $stored_pr['finalized_state'] ?? '', 'apply stores merged finalizer state for merged PR worktree' );
 	$stored_gone = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@upstream-gone' );
 	$assert( 'cleanup_eligible', $stored_gone['lifecycle_state'] ?? '', 'apply stores cleanup_eligible for upstream-gone worktree' );
+	$assert( 'upstream-gone', $stored_gone['cleanup_eligibility_evidence']['signal'] ?? '', 'apply stores upstream-gone cleanup eligibility evidence' );
+	$stored_closed = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@pr-closed' );
+	$assert( 'cleanup_eligible', $stored_closed['lifecycle_state'] ?? '', 'apply stores cleanup_eligible for closed PR worktree' );
+	$assert( 'closed', $stored_closed['cleanup_eligibility_evidence']['finalized_state'] ?? '', 'apply stores closed PR cleanup eligibility evidence' );
 
 	$auto_apply = $ws->worktree_reconcile_metadata( array( 'apply' => true ) );
 	$assert( true, ! is_wp_error( $auto_apply ) && ( $auto_apply['success'] ?? false ), 'DMC-owned reconciliation apply path runs without a manual plan' );
