@@ -2,6 +2,18 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.33.0] - 2026-05-11
+
+### Added
+- enrich GitHub context metadata
+
+### Fixed
+- clarify worktree cleanup reporting
+- persist cleanup eligibility signals
+- bound worktree metadata reconciliation
+- guard repeated issue automation comments
+- omit empty run artifact sections
+
 ## [0.32.0] - 2026-05-10
 
 ### Added
