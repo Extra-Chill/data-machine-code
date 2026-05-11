@@ -4618,16 +4618,32 @@ class Workspace {
 			return $planned;
 		}
 
-		$listing = $this->worktree_list();
-		if ( $listing instanceof \WP_Error ) {
-			return $listing;
-		}
-
 		$current_by_handle = array();
-		foreach ( (array) ( $listing['worktrees'] ?? array() ) as $wt ) {
-			$handle = (string) ( $wt['handle'] ?? '' );
-			if ( '' !== $handle ) {
-				$current_by_handle[ $handle ] = $wt;
+		if ( ! empty( $plan['direct_apply'] ) ) {
+			foreach ( $planned as $row ) {
+				$handle = (string) ( $row['handle'] ?? '' );
+				if ( '' === $handle ) {
+					continue;
+				}
+				$current_by_handle[ $handle ] = array(
+					'handle' => $handle,
+					'repo'   => (string) ( $row['repo'] ?? '' ),
+					'branch' => (string) ( $row['branch'] ?? '' ),
+					'path'   => (string) ( $row['path'] ?? '' ),
+					'dirty'  => (int) ( $row['dirty'] ?? 0 ),
+				);
+			}
+		} else {
+			$listing = $this->worktree_list();
+			if ( $listing instanceof \WP_Error ) {
+				return $listing;
+			}
+
+			foreach ( (array) ( $listing['worktrees'] ?? array() ) as $wt ) {
+				$handle = (string) ( $wt['handle'] ?? '' );
+				if ( '' !== $handle ) {
+					$current_by_handle[ $handle ] = $wt;
+				}
 			}
 		}
 
@@ -4662,8 +4678,13 @@ class Workspace {
 			$metadata['lifecycle_state'] = $state;
 
 			if ( WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE === $state ) {
-				$dirty    = (int) ( $current['dirty'] ?? 0 );
-				$unpushed = $this->count_unpushed_commits( (string) ( $current['path'] ?? '' ) );
+				$path     = (string) ( $current['path'] ?? '' );
+				$dirty    = ! empty( $plan['direct_apply'] ) ? $this->probe_worktree_dirty_count( $path, self::CLEANUP_GIT_PROBE_TIMEOUT ) : (int) ( $current['dirty'] ?? 0 );
+				if ( is_wp_error( $dirty ) ) {
+					$skipped[] = $this->build_reconcile_apply_skip( $row, $current, 'probe_timeout', 'dirty-state probe failed - refusing cleanup_eligible metadata write: ' . $dirty->get_error_message() );
+					continue;
+				}
+				$unpushed = $this->count_unpushed_commits( $path );
 				if ( $dirty > 0 || $unpushed > 0 ) {
 					$skipped[] = $this->build_reconcile_apply_skip( $row, $current, 'unsafe_cleanup_eligible_state', 'refusing to mark dirty or unpushed worktree cleanup_eligible from a reconciliation plan' );
 					continue;
