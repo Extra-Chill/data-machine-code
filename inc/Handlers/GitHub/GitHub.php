@@ -96,6 +96,10 @@ class GitHub extends FetchHandler {
 			return $this->fetchHomeboyCiResults( $config, $context, $repo );
 		}
 
+		if ( 'actions_artifact_items' === $data_source ) {
+			return $this->fetchActionsArtifactItems( $config, $context, $repo );
+		}
+
 		if ( 'files' === $data_source ) {
 			return $this->fetchFiles( $config, $context, $repo );
 		}
@@ -352,6 +356,125 @@ class GitHub extends FetchHandler {
 
 		$context->log( 'info', sprintf( 'GitHub: Prepared Homeboy CI results for %s@%s.', $repo, $sha ) );
 		return array( 'items' => array( $packet ) );
+	}
+
+	/**
+	 * Fetch a JSON file from a GitHub Actions artifact and emit one item per array entry.
+	 */
+	private function fetchActionsArtifactItems( array $config, ExecutionContext $context, string $repo ): array {
+		$artifact_name = (string) ( $config['artifact_name'] ?? '' );
+		$json_file     = (string) ( $config['json_file'] ?? $config['artifact_json_file'] ?? '' );
+
+		if ( '' === $artifact_name ) {
+			$context->log( 'error', 'GitHub: artifact_name is required for actions_artifact_items.' );
+			return array();
+		}
+
+		$result = GitHubAbilities::getActionsArtifact( array(
+			'repo'               => $repo,
+			'pull_number'        => (int) ( $config['pull_number'] ?? $config['pr_number'] ?? 0 ),
+			'head_sha'           => $config['head_sha'] ?? $config['sha'] ?? '',
+			'artifact_name'      => $artifact_name,
+			'max_artifact_bytes' => $config['max_artifact_bytes'] ?? 2000000,
+			'include_json'       => true,
+		) );
+
+		if ( is_wp_error( $result ) ) {
+			$context->log( 'error', 'GitHub: Actions artifact error — ' . $result->get_error_message() );
+			return array();
+		}
+
+		$json_files = is_array( $result['json_files'] ?? null ) ? $result['json_files'] : array();
+		if ( '' === $json_file ) {
+			$json_file = 1 === count( $json_files ) ? (string) array_key_first( $json_files ) : '';
+		}
+
+		if ( '' === $json_file || ! isset( $json_files[ $json_file ] ) || ! is_array( $json_files[ $json_file ] ) ) {
+			$context->log( 'error', sprintf( 'GitHub: Artifact JSON file not found or not an array: %s.', $json_file ) );
+			return array();
+		}
+
+		$payload = $json_files[ $json_file ];
+		$items_payload = $this->selectArtifactItems( $payload, (string) ( $config['items_path'] ?? '' ) );
+		if ( empty( $items_payload ) ) {
+			$context->log( 'info', sprintf( 'GitHub: Artifact JSON file %s contained no items.', $json_file ) );
+			return array();
+		}
+
+		$head_sha = (string) ( $result['head_sha'] ?? $config['head_sha'] ?? '' );
+		$items    = array();
+		foreach ( $items_payload as $index => $item ) {
+			if ( ! is_array( $item ) ) {
+				continue;
+			}
+
+			$item_identifier = sprintf(
+				'github_actions_artifact:%s:%s:%s:%s:%s',
+				$repo,
+				$head_sha,
+				$artifact_name,
+				$json_file,
+				hash( 'sha256', wp_json_encode( $item, JSON_UNESCAPED_SLASHES ) ?: (string) $index )
+			);
+
+			$title = (string) ( $item['title'] ?? $item['selector'] ?? $item['kind'] ?? '' );
+			if ( '' === $title ) {
+				$title = sprintf( '%s item %d', $json_file, (int) $index + 1 );
+			}
+
+			$items[] = array(
+				'title'    => $title,
+				'content'  => wp_json_encode( $item, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ),
+				'metadata' => array(
+					'source_type'      => 'github_actions_artifact',
+					'item_identifier'  => $item_identifier,
+					'original_id'      => $item_identifier,
+					'dedup_key'        => $item_identifier,
+					'original_title'   => $title,
+					'github_repo'      => $repo,
+					'github_type'      => 'actions_artifact_items',
+					'github_head_sha'  => $head_sha,
+					'artifact_name'    => $artifact_name,
+					'artifact_json_file' => $json_file,
+					'artifact_item_index' => (int) $index,
+					'artifact_item'    => $item,
+				),
+			);
+		}
+
+		$context->log( 'info', sprintf( 'GitHub: Prepared %d artifact item packets from %s/%s.', count( $items ), $artifact_name, $json_file ) );
+		return array( 'items' => $items );
+	}
+
+	private function selectArtifactItems( array $payload, string $items_path ): array {
+		$value = $payload;
+		if ( '' !== $items_path ) {
+			foreach ( explode( '.', $items_path ) as $part ) {
+				if ( '' === $part ) {
+					continue;
+				}
+				if ( ! is_array( $value ) || ! array_key_exists( $part, $value ) ) {
+					return array();
+				}
+				$value = $value[ $part ];
+			}
+		}
+
+		if ( ! is_array( $value ) ) {
+			return array();
+		}
+
+		if ( array_is_list( $value ) ) {
+			return $value;
+		}
+
+		foreach ( array( 'items', 'packets', 'findings' ) as $key ) {
+			if ( isset( $value[ $key ] ) && is_array( $value[ $key ] ) ) {
+				return $value[ $key ];
+			}
+		}
+
+		return array();
 	}
 
 	private function resolveShaFromConfig( array $config ): string {

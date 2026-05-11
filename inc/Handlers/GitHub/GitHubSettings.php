@@ -46,6 +46,7 @@ class GitHubSettings extends FetchHandlerSettings {
 					'check_runs'                     => __( 'Check Runs', 'data-machine-code' ),
 					'commit_statuses'                => __( 'Commit Statuses', 'data-machine-code' ),
 					'homeboy_ci_results'             => __( 'Homeboy CI Results', 'data-machine-code' ),
+					'actions_artifact_items'         => __( 'GitHub Actions Artifact Items', 'data-machine-code' ),
 					'files'                          => __( 'Source Files', 'data-machine-code' ),
 				),
 			),
@@ -182,9 +183,21 @@ class GitHubSettings extends FetchHandlerSettings {
 			'max_artifact_bytes'      => array(
 				'type'        => 'number',
 				'label'       => __( 'Max Artifact Bytes', 'data-machine-code' ),
-				'description' => __( 'Maximum Homeboy CI artifact ZIP bytes to download.', 'data-machine-code' ),
+				'description' => __( 'Maximum GitHub Actions artifact ZIP bytes to download.', 'data-machine-code' ),
 				'required'    => false,
 				'default'     => 2000000,
+			),
+			'json_file'               => array(
+				'type'        => 'text',
+				'label'       => __( 'Artifact JSON File', 'data-machine-code' ),
+				'description' => __( 'JSON filename inside the artifact ZIP for actions_artifact_items. If omitted and the artifact has exactly one JSON file, that file is used.', 'data-machine-code' ),
+				'required'    => false,
+			),
+			'items_path'              => array(
+				'type'        => 'text',
+				'label'       => __( 'Artifact Items Path', 'data-machine-code' ),
+				'description' => __( 'Optional dot path to the item array inside the selected JSON file. Leave empty when the file root is the array.', 'data-machine-code' ),
+				'required'    => false,
 			),
 			'state'                   => array(
 				'type'        => 'select',
