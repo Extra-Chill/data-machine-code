@@ -394,6 +394,14 @@ namespace {
 
 	$auto_apply = $ws->worktree_reconcile_metadata( array( 'apply' => true ) );
 	$assert( true, ! is_wp_error( $auto_apply ) && ( $auto_apply['success'] ?? false ), 'DMC-owned reconciliation apply path runs without a manual plan' );
+	$bounded_auto_apply = $ws->worktree_reconcile_metadata( array( 'apply' => true, 'limit' => 2, 'offset' => 2 ) );
+	$assert( true, ! is_wp_error( $bounded_auto_apply ) && ( $bounded_auto_apply['success'] ?? false ), 'bounded direct reconciliation apply runs without a manual plan file' );
+	$assert( true, (bool) ( $bounded_auto_apply['direct_apply'] ?? false ), 'bounded direct apply identifies direct apply source' );
+	$assert( false, (bool) ( $bounded_auto_apply['dry_run'] ?? true ), 'bounded direct apply is not a dry-run' );
+	$assert( 2, (int) ( $bounded_auto_apply['summary']['inspected'] ?? 0 ), 'bounded direct apply summary stays page-scoped' );
+	$assert( 2, (int) ( $bounded_auto_apply['pagination']['limit'] ?? 0 ), 'bounded direct apply preserves pagination limit' );
+	$assert( 2, (int) ( $bounded_auto_apply['pagination']['offset'] ?? 0 ), 'bounded direct apply preserves pagination offset' );
+	$assert( 'direct_apply', $bounded_auto_apply['evidence']['apply_source'] ?? '', 'bounded direct apply exposes evidence source' );
 
 	$inventory_after = $ws->worktree_cleanup_merged( array( 'dry_run' => true, 'inventory_only' => true, 'skip_github' => true ) );
 	$assert( 1, (int) ( $inventory_after['summary']['skipped_by_reason']['needs_metadata_reconcile'] ?? 0 ), 'inventory cleanup requires fewer metadata reconciliation passes after apply' );
