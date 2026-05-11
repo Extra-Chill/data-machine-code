@@ -645,6 +645,59 @@ namespace {
 	$assert( 'createOrUpdateFile existing branch only checks ref, contents, and PUTs', 3 === count( $GLOBALS['dmc_http_calls'] ) );
 	$assert( 'createOrUpdateFile existing branch does not create git ref', ! str_ends_with( (string) ( $GLOBALS['dmc_http_calls'][1]['url'] ?? '' ), '/git/refs' ) && ! str_ends_with( (string) ( $GLOBALS['dmc_http_calls'][2]['url'] ?? '' ), '/git/refs' ) );
 
+	// ---- getIssue: metadata includes comment counts and the latest issue comment.
+	$reset_http();
+	$queue_response( 200, array(
+		'number'     => 123,
+		'title'      => 'Fresh context',
+		'body'       => 'Issue body',
+		'user'       => array( 'login' => 'reporter' ),
+		'labels'     => array( array( 'name' => 'context' ) ),
+		'assignees'  => array(),
+		'comments'   => 2,
+		'created_at' => '2026-05-10T00:00:00Z',
+		'updated_at' => '2026-05-10T02:00:00Z',
+	) );
+	$queue_response( 200, array(
+		array(
+			'id'         => 987,
+			'body'       => 'Latest external input',
+			'html_url'   => 'https://github.com/owner/repo/issues/123#issuecomment-987',
+			'user'       => array( 'login' => 'reviewer' ),
+			'created_at' => '2026-05-10T01:00:00Z',
+			'updated_at' => '2026-05-10T01:05:00Z',
+		),
+	) );
+	$result = GitHubAbilities::getIssue( array( 'repo' => 'owner/repo', 'issue_number' => 123 ) );
+	$issue  = is_array( $result ) ? ( $result['issue'] ?? array() ) : array();
+	$assert( 'getIssue returns generated_at', is_array( $result ) && ! empty( $result['generated_at'] ) );
+	$assert( 'getIssue preserves comments count', 2 === ( $issue['comments'] ?? null ) && 2 === ( $issue['comment_count'] ?? null ) );
+	$assert( 'getIssue fetches latest issue comment page', is_string( $GLOBALS['dmc_http_calls'][1]['url'] ?? null ) && str_contains( $GLOBALS['dmc_http_calls'][1]['url'], '/repos/owner/repo/issues/123/comments' ) && str_contains( $GLOBALS['dmc_http_calls'][1]['url'], 'per_page=1' ) && str_contains( $GLOBALS['dmc_http_calls'][1]['url'], 'page=2' ) );
+	$assert( 'getIssue includes latest comment metadata', 'reviewer' === ( $issue['latest_comment_author'] ?? '' ) && 'Latest external input' === ( $issue['latest_comment']['body'] ?? '' ) );
+
+	// ---- getPull: metadata includes PR comments, review comments, and change counts.
+	$reset_http();
+	$queue_response( 200, array(
+		'number'          => 55,
+		'title'           => 'Review context',
+		'body'            => 'PR body',
+		'user'            => array( 'login' => 'author' ),
+		'head'            => array( 'ref' => 'feature/context', 'sha' => 'head-sha' ),
+		'base'            => array( 'ref' => 'main', 'sha' => 'base-sha' ),
+		'comments'        => 3,
+		'review_comments' => 4,
+		'commits'         => 5,
+		'additions'       => 6,
+		'deletions'       => 7,
+		'changed_files'   => 8,
+	) );
+	$result = GitHubAbilities::getPull( array( 'repo' => 'owner/repo', 'pull_number' => 55 ) );
+	$pull   = is_array( $result ) ? ( $result['pull'] ?? array() ) : array();
+	$assert( 'getPull returns generated_at', is_array( $result ) && ! empty( $result['generated_at'] ) );
+	$assert( 'getPull includes issue comment counts', 3 === ( $pull['comments'] ?? null ) && 3 === ( $pull['comment_count'] ?? null ) && 3 === ( $pull['issue_comment_count'] ?? null ) );
+	$assert( 'getPull includes review comment counts', 4 === ( $pull['review_comments'] ?? null ) && 4 === ( $pull['review_comment_count'] ?? null ) );
+	$assert( 'getPull includes change counts', 5 === ( $pull['commits'] ?? null ) && 6 === ( $pull['additions'] ?? null ) && 7 === ( $pull['deletions'] ?? null ) && 8 === ( $pull['changed_files'] ?? null ) );
+
 	if ( ! empty( $failures ) ) {
 		echo "\nFAIL: " . count( $failures ) . " assertion(s)\n";
 		foreach ( $failures as $failure ) {

@@ -1312,9 +1312,10 @@ class GitHubAbilities {
 		$normalized = array_map( array( self::class, 'normalizeIssue' ), $issues );
 
 		return array(
-			'success' => true,
-			'issues'  => $normalized,
-			'count'   => count( $normalized ),
+			'success'      => true,
+			'issues'       => $normalized,
+			'count'        => count( $normalized ),
+			'generated_at' => gmdate( 'c' ),
 		);
 	}
 
@@ -1338,9 +1339,24 @@ class GitHubAbilities {
 			return $response;
 		}
 
+		$issue = self::normalizeIssue( $response['data'] );
+		if ( $issue['comment_count'] > 0 ) {
+			$latest_comment = self::getLatestIssueComment( $repo, $issue_number, $issue['comment_count'], $pat );
+			if ( is_wp_error( $latest_comment ) ) {
+				return $latest_comment;
+			}
+
+			if ( ! empty( $latest_comment ) ) {
+				$issue['latest_comment']        = $latest_comment;
+				$issue['latest_comment_at']     = $latest_comment['created_at'];
+				$issue['latest_comment_author'] = $latest_comment['user'];
+			}
+		}
+
 		return array(
-			'success' => true,
-			'issue'   => self::normalizeIssue( $response['data'] ),
+			'success'      => true,
+			'issue'        => $issue,
+			'generated_at' => gmdate( 'c' ),
 		);
 	}
 
@@ -2426,9 +2442,10 @@ class GitHubAbilities {
 		$normalized = array_map( array( self::class, 'normalizePull' ), $response['data'] );
 
 		return array(
-			'success' => true,
-			'pulls'   => $normalized,
-			'count'   => count( $normalized ),
+			'success'      => true,
+			'pulls'        => $normalized,
+			'count'        => count( $normalized ),
+			'generated_at' => gmdate( 'c' ),
 		);
 	}
 
@@ -3426,9 +3443,36 @@ class GitHubAbilities {
 		}
 
 		return array(
-			'success' => true,
-			'pull'    => self::normalizePull( $response['data'] ),
+			'success'      => true,
+			'pull'         => self::normalizePull( $response['data'] ),
+			'generated_at' => gmdate( 'c' ),
 		);
+	}
+
+	/**
+	 * Fetch the newest issue comment using GitHub's ascending issue comment order.
+	 *
+	 * @return array|\WP_Error|null Normalized latest comment, null when none exists, or error.
+	 */
+	private static function getLatestIssueComment( string $repo, int $issue_number, int $comment_count, string $pat ): array|\WP_Error|null {
+		$page = max( 1, $comment_count );
+		$url  = sprintf( '%s/repos/%s/issues/%d/comments', self::API_BASE, $repo, $issue_number );
+
+		$response = self::apiGet( $url, array(
+			'per_page' => 1,
+			'page'     => $page,
+		), $pat );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$comments = is_array( $response['data'] ?? null ) ? $response['data'] : array();
+		if ( empty( $comments ) || ! is_array( $comments[0] ?? null ) ) {
+			return null;
+		}
+
+		return self::normalizeIssueComment( $comments[0] );
 	}
 
 	/**
@@ -4580,43 +4624,69 @@ class GitHubAbilities {
 	// -------------------------------------------------------------------------
 
 	public static function normalizeIssue( array $issue ): array {
+		$comment_count = (int) ( $issue['comments'] ?? 0 );
+
 		return array(
-			'number'     => $issue['number'] ?? 0,
-			'title'      => $issue['title'] ?? '',
-			'state'      => $issue['state'] ?? '',
-			'body'       => $issue['body'] ?? '',
-			'html_url'   => $issue['html_url'] ?? '',
-			'user'       => $issue['user']['login'] ?? '',
-			'labels'     => array_map( fn( $label ) => $label['name'] ?? '', $issue['labels'] ?? array() ),
-			'assignees'  => array_map( fn( $a ) => $a['login'] ?? '', $issue['assignees'] ?? array() ),
-			'comments'   => $issue['comments'] ?? 0,
-			'created_at' => $issue['created_at'] ?? '',
-			'updated_at' => $issue['updated_at'] ?? '',
-			'closed_at'  => $issue['closed_at'] ?? '',
+			'number'        => (int) ( $issue['number'] ?? 0 ),
+			'title'         => $issue['title'] ?? '',
+			'state'         => $issue['state'] ?? '',
+			'body'          => $issue['body'] ?? '',
+			'html_url'      => $issue['html_url'] ?? '',
+			'user'          => $issue['user']['login'] ?? '',
+			'labels'        => array_map( fn( $label ) => $label['name'] ?? '', $issue['labels'] ?? array() ),
+			'assignees'     => array_map( fn( $a ) => $a['login'] ?? '', $issue['assignees'] ?? array() ),
+			'comments'      => $comment_count,
+			'comment_count' => $comment_count,
+			'created_at'    => $issue['created_at'] ?? '',
+			'updated_at'    => $issue['updated_at'] ?? '',
+			'closed_at'     => $issue['closed_at'] ?? '',
+		);
+	}
+
+	public static function normalizeIssueComment( array $comment ): array {
+		return array(
+			'id'         => (int) ( $comment['id'] ?? 0 ),
+			'body'       => $comment['body'] ?? '',
+			'html_url'   => $comment['html_url'] ?? '',
+			'user'       => $comment['user']['login'] ?? '',
+			'created_at' => $comment['created_at'] ?? '',
+			'updated_at' => $comment['updated_at'] ?? '',
 		);
 	}
 
 	public static function normalizePull( array $pr ): array {
+		$comment_count        = (int) ( $pr['comments'] ?? 0 );
+		$review_comment_count = (int) ( $pr['review_comments'] ?? 0 );
+
 		return array(
-			'number'     => $pr['number'] ?? 0,
-			'title'      => $pr['title'] ?? '',
-			'state'      => $pr['state'] ?? '',
-			'body'       => $pr['body'] ?? '',
-			'html_url'   => $pr['html_url'] ?? '',
-			'user'       => $pr['user']['login'] ?? '',
-			'head'       => $pr['head']['ref'] ?? '',
-			'head_ref'   => $pr['head']['ref'] ?? '',
-			'head_sha'   => $pr['head']['sha'] ?? '',
-			'base'       => $pr['base']['ref'] ?? '',
-			'base_ref'   => $pr['base']['ref'] ?? '',
-			'base_sha'   => $pr['base']['sha'] ?? '',
-			'draft'      => $pr['draft'] ?? false,
-			'merged'     => ! empty( $pr['merged_at'] ),
-			'labels'     => array_map( fn( $label ) => $label['name'] ?? '', $pr['labels'] ?? array() ),
-			'created_at' => $pr['created_at'] ?? '',
-			'updated_at' => $pr['updated_at'] ?? '',
-			'closed_at'  => $pr['closed_at'] ?? '',
-			'merged_at'  => $pr['merged_at'] ?? '',
+			'number'               => (int) ( $pr['number'] ?? 0 ),
+			'title'                => $pr['title'] ?? '',
+			'state'                => $pr['state'] ?? '',
+			'body'                 => $pr['body'] ?? '',
+			'html_url'             => $pr['html_url'] ?? '',
+			'user'                 => $pr['user']['login'] ?? '',
+			'head'                 => $pr['head']['ref'] ?? '',
+			'head_ref'             => $pr['head']['ref'] ?? '',
+			'head_sha'             => $pr['head']['sha'] ?? '',
+			'base'                 => $pr['base']['ref'] ?? '',
+			'base_ref'             => $pr['base']['ref'] ?? '',
+			'base_sha'             => $pr['base']['sha'] ?? '',
+			'draft'                => $pr['draft'] ?? false,
+			'merged'               => ! empty( $pr['merged_at'] ),
+			'labels'               => array_map( fn( $label ) => $label['name'] ?? '', $pr['labels'] ?? array() ),
+			'comments'             => $comment_count,
+			'comment_count'        => $comment_count,
+			'issue_comment_count'  => $comment_count,
+			'review_comments'      => $review_comment_count,
+			'review_comment_count' => $review_comment_count,
+			'commits'              => (int) ( $pr['commits'] ?? 0 ),
+			'additions'            => (int) ( $pr['additions'] ?? 0 ),
+			'deletions'            => (int) ( $pr['deletions'] ?? 0 ),
+			'changed_files'        => (int) ( $pr['changed_files'] ?? 0 ),
+			'created_at'           => $pr['created_at'] ?? '',
+			'updated_at'           => $pr['updated_at'] ?? '',
+			'closed_at'            => $pr['closed_at'] ?? '',
+			'merged_at'            => $pr['merged_at'] ?? '',
 		);
 	}
 
