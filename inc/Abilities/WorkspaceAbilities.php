@@ -1921,6 +1921,10 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function showRepo( array $input ): array|\WP_Error {
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			return ( new RemoteWorkspaceBackend() )->show( $input['name'] ?? '' );
+		}
+
 		$workspace = new Workspace();
 		return $workspace->show_repo( $input['name'] ?? '' );
 	}
@@ -2758,6 +2762,16 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function gitDiff( array $input ): array|\WP_Error {
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			return ( new RemoteWorkspaceBackend() )->git_diff(
+				$input['name'] ?? '',
+				$input['from'] ?? null,
+				$input['to'] ?? null,
+				! empty( $input['staged'] ),
+				$input['path'] ?? null
+			);
+		}
+
 		$workspace = new Workspace();
 		return $workspace->git_diff(
 			$input['name'] ?? '',

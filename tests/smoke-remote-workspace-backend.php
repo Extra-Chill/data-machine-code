@@ -156,6 +156,12 @@ namespace {
 	$edit = $backend->edit_file( 'example@fix-example', 'src/example.php', 'old', 'new' );
 	$assert( 'edit stages pending content', ! is_wp_error( $edit ) && 1 === $edit['replacements'] );
 
+	$show = $backend->show( 'example@fix-example' );
+	$assert( 'show supports remote worktree handles', ! is_wp_error( $show ) && 'github_api' === $show['backend'] && 1 === $show['dirty'] && 'fix/example' === $show['branch'] );
+
+	$diff = $backend->git_diff( 'example@fix-example', path: 'src/example.php' );
+	$assert( 'diff supports remote pending changes', ! is_wp_error( $diff ) && str_contains( $diff['diff'], '-return \'old\';' ) && str_contains( $diff['diff'], '+return \'new\';' ) );
+
 	$worktree_grep = $backend->grep( 'example@fix-example', 'new', null, '*.php' );
 	$assert( 'grep searches pending worktree content', ! is_wp_error( $worktree_grep ) && 1 === $worktree_grep['count'] && str_contains( $worktree_grep['matches'][0]['text'], 'new' ) );
 
