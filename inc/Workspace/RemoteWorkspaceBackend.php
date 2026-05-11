@@ -386,6 +386,87 @@ class RemoteWorkspaceBackend {
 	}
 
 	/**
+	 * Show remote workspace details.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function show( string $handle ): array|\WP_Error {
+		$context = $this->resolve_handle( $handle );
+		if ( is_wp_error( $context ) ) {
+			return $context;
+		}
+
+		$files = array_values( array_unique( array_values( (array) $context['changed_files'] ) ) );
+
+		return array(
+			'success'     => true,
+			'backend'     => 'github_api',
+			'name'        => $handle,
+			'repo'        => $context['repo_name'],
+			'is_worktree' => isset( $context['branch'] ) && '' !== (string) $context['branch'],
+			'path'        => 'github://' . $context['repo'] . ( '' !== (string) $context['branch']
+				? '#' . $context['branch']
+				: '' ),
+			'branch'      => '' !== (string) $context['branch'] ? (string) $context['branch'] : null,
+			'remote'      => 'https://github.com/' . $context['repo'] . '.git',
+			'commit'      => '' !== $context['last_commit_sha'] ? $context['last_commit_sha'] : null,
+			'dirty'       => count( $files ),
+			'files'       => $files,
+		);
+	}
+
+	/**
+	 * Return a diff of pending remote workspace changes.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function git_diff( string $handle, ?string $from = null, ?string $to = null, bool $staged = false, ?string $path = null ): array|\WP_Error {
+		unset( $staged );
+
+		$context = $this->resolve_handle( $handle );
+		if ( is_wp_error( $context ) ) {
+			return $context;
+		}
+
+		if ( ( null !== $from && '' !== trim( $from ) ) || ( null !== $to && '' !== trim( $to ) ) ) {
+			return new \WP_Error( 'remote_workspace_diff_refs_unsupported', 'Remote workspace diff currently supports pending workspace changes only; omit from/to refs.', array( 'status' => 400 ) );
+		}
+
+		$path_filter = null;
+		if ( null !== $path && '' !== trim( $path ) ) {
+			$normalized = $this->normalize_path( $path );
+			if ( is_wp_error( $normalized ) ) {
+				return $normalized;
+			}
+			$path_filter = $normalized;
+		}
+
+		$diff = '';
+		foreach ( (array) $context['pending_files'] as $changed_path => $new_content ) {
+			$changed_path = (string) $changed_path;
+			if ( null !== $path_filter && $changed_path !== $path_filter ) {
+				continue;
+			}
+
+			$old_content = '';
+			$current     = $this->get_file_contents_with_fallback( $context, $changed_path );
+			if ( ! is_wp_error( $current ) && ! empty( $current['files'][0] ) ) {
+				$old_content = (string) ( $current['files'][0]['content'] ?? '' );
+			}
+
+			$diff .= $this->build_full_file_diff( $changed_path, $old_content, (string) $new_content );
+		}
+
+		return array(
+			'success' => true,
+			'backend' => 'github_api',
+			'name'    => $handle,
+			'repo'    => $context['repo_name'],
+			'diff'    => $diff,
+		);
+	}
+
+	/**
 	 * Return pending remote workspace changes.
 	 *
 	 * @return array<string,mixed>|\WP_Error
@@ -577,6 +658,33 @@ class RemoteWorkspaceBackend {
 		}
 
 		return false;
+	}
+
+	private function build_full_file_diff( string $path, string $old_content, string $new_content ): string {
+		$old_lines = $this->diff_lines( $old_content );
+		$new_lines = $this->diff_lines( $new_content );
+
+		$diff  = 'diff --git a/' . $path . ' b/' . $path . "\n";
+		$diff .= '--- a/' . $path . "\n";
+		$diff .= '+++ b/' . $path . "\n";
+		$diff .= sprintf( '@@ -1,%d +1,%d @@', count( $old_lines ), count( $new_lines ) ) . "\n";
+		foreach ( $old_lines as $line ) {
+			$diff .= '-' . $line . "\n";
+		}
+		foreach ( $new_lines as $line ) {
+			$diff .= '+' . $line . "\n";
+		}
+
+		return $diff;
+	}
+
+	/** @return array<int,string> */
+	private function diff_lines( string $content ): array {
+		if ( '' === $content ) {
+			return array();
+		}
+
+		return explode( "\n", rtrim( $content, "\n" ) );
 	}
 
 	/**
