@@ -1998,15 +1998,20 @@ class WorkspaceCommand extends BaseCommand {
 	 *   unpushed_commits, missing_metadata, external_worktree, age_filter, unknown_age.
 	 *
 	 * [--limit=<count>]
-	 * : For `cleanup-artifacts --dry-run` and `reconcile-metadata --dry-run`,
+	 * : For `cleanup-artifacts --dry-run` and `reconcile-metadata`,
 	 *   maximum worktrees to scan in this page. Artifact cleanup defaults to
 	 *   100; metadata reconciliation uses this only when pagination is requested.
 	 *   Use 0 plus `--exhaustive` for a full artifact audit.
 	 *
 	 * [--offset=<count>]
-	 * : For `cleanup-artifacts --dry-run` and `reconcile-metadata --dry-run`,
+	 * : For `cleanup-artifacts --dry-run` and `reconcile-metadata`,
 	 *   pagination offset (0-indexed) into the inventory ordering. Walk pages by
 	 *   passing the previous response's `pagination.next_offset`.
+	 *
+	 * [--until-budget=<duration>]
+	 * : For `reconcile-metadata --apply`, drain bounded direct-apply pages until
+	 *   the compact time budget is nearly exhausted (e.g. 60s, 10m). Returns
+	 *   continuation evidence and a next command when more pages remain.
 	 *
 	 * [--exhaustive]
 	 * : For `cleanup-artifacts --dry-run`, scan every worktree AND run per-worktree
@@ -2101,6 +2106,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json
 	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --format=json
 	 *     wp datamachine-code workspace worktree reconcile-metadata --apply --limit=25 --offset=0 --format=json
+	 *     wp datamachine-code workspace worktree reconcile-metadata --apply --limit=50 --until-budget=60s --format=json
 	 *
 	 *     # Ignore dirty working-tree safety (caution)
 	 *     wp datamachine-code workspace worktree cleanup --force
@@ -2296,6 +2302,9 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				if ( isset( $assoc_args['offset'] ) ) {
 					$input['offset'] = (int) $assoc_args['offset'];
+				}
+				if ( isset( $assoc_args['until-budget'] ) && '' !== trim( (string) $assoc_args['until-budget'] ) ) {
+					$input['until_budget'] = trim( (string) $assoc_args['until-budget'] );
 				}
 				if ( ! empty( $assoc_args['apply-plan'] ) ) {
 					$input['apply_plan'] = $this->read_worktree_json_plan( (string) $assoc_args['apply-plan'], 'metadata reconciliation' );
@@ -3208,11 +3217,15 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 		if ( isset( $result['pagination']['next_offset'] ) ) {
-			WP_CLI::log( sprintf(
-				'Next page: wp datamachine-code workspace worktree reconcile-metadata --apply --limit=%d --offset=%d --format=json',
-				(int) ( $result['pagination']['limit'] ?? 0 ),
-				(int) $result['pagination']['next_offset']
-			) );
+			if ( ! empty( $result['pagination']['next_command'] ) ) {
+				WP_CLI::log( 'Next page: ' . (string) $result['pagination']['next_command'] );
+			} else {
+				WP_CLI::log( sprintf(
+					'Next page: wp datamachine-code workspace worktree reconcile-metadata --apply --limit=%d --offset=%d --format=json',
+					(int) ( $result['pagination']['limit'] ?? 0 ),
+					(int) $result['pagination']['next_offset']
+				) );
+			}
 		}
 		WP_CLI::success( sprintf( 'Wrote metadata for %d worktree(s); %d skipped.', count( $written ), count( $skipped ) ) );
 	}

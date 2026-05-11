@@ -1250,7 +1250,7 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Forward force=true to cleanup tasks that support it.',
 							),
-							'dry_run'    => array(
+							'dry_run'      => array(
 								'type'        => 'boolean',
 								'description' => 'Rejected for background cleanup scheduling; use review abilities for dry-runs.',
 							),
@@ -1548,25 +1548,29 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'If true, return a review plan without writing metadata.',
 							),
-							'apply_plan' => array(
+							'apply_plan'   => array(
 								'type'        => 'object',
 								'description' => 'Decoded dry-run plan to apply after exact handle/path/repo/branch revalidation.',
 							),
-							'apply'      => array(
+							'apply'        => array(
 								'type'        => 'boolean',
 								'description' => 'If true, run DMC-owned direct apply without a manual plan.',
 							),
-							'via_jobs'   => array(
+							'via_jobs'     => array(
 								'type'        => 'boolean',
 								'description' => 'With apply=true, schedule bounded metadata reconciliation page jobs instead of applying synchronously.',
 							),
-							'limit'      => array(
+							'limit'        => array(
 								'type'        => 'integer',
-								'description' => 'Page size for bounded dry-run, direct apply, or job-backed apply.',
+								'description' => 'Page size for bounded dry-run, direct apply, budgeted apply, or job-backed apply.',
 							),
-							'offset'     => array(
+							'offset'       => array(
 								'type'        => 'integer',
-								'description' => 'Pagination offset for bounded dry-run or direct apply. Job-backed apply schedules from offset 0 across all pages.',
+								'description' => 'Pagination offset for bounded dry-run, direct apply, or budgeted apply. Job-backed apply schedules from offset 0 across all pages.',
+							),
+							'until_budget' => array(
+								'type'        => 'string',
+								'description' => 'Compact time budget for direct apply drain mode, such as 60s or 10m.',
 							),
 						),
 					),
@@ -2545,6 +2549,9 @@ class WorkspaceAbilities {
 		}
 		if ( array_key_exists( 'offset', $input ) ) {
 			$opts['offset'] = (int) $input['offset'];
+		}
+		if ( isset( $input['until_budget'] ) && '' !== trim( (string) $input['until_budget'] ) ) {
+			$opts['until_budget'] = trim( (string) $input['until_budget'] );
 		}
 		if ( isset( $input['source'] ) && '' !== trim( (string) $input['source'] ) ) {
 			$opts['source'] = trim( (string) $input['source'] );

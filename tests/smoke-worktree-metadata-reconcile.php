@@ -477,6 +477,26 @@ namespace {
 	$assert( 'unsafe_cleanup_eligible_state', $unsafe_skips[0]['reason_code'] ?? '', 'dirty worktree cannot become cleanup_eligible through reconciliation plan' );
 	$assert( 1, count( $unsafe_apply['still_unsafe'] ?? array() ), 'apply exposes still-unsafe rows distinctly' );
 
+	\DataMachineCode\Workspace\WorktreeContextInjector::forget_metadata( 'demo@unmanaged-missing' );
+	$budget_offset = 0;
+	$budget_listing = $ws->worktree_list( null, null, array( 'include_status' => false, 'include_disk' => false ) );
+	foreach ( array_values( array_filter( (array) ( $budget_listing['worktrees'] ?? array() ), fn( $wt ) => empty( $wt['is_primary'] ) ) ) as $index => $wt ) {
+		if ( 'demo@unmanaged-missing' === ( $wt['handle'] ?? '' ) ) {
+			$budget_offset = (int) $index;
+			break;
+		}
+	}
+	$budgeted_apply = $ws->worktree_reconcile_metadata( array( 'apply' => true, 'limit' => 1, 'offset' => $budget_offset, 'until_budget' => '1s' ) );
+	$assert( true, ! is_wp_error( $budgeted_apply ) && ( $budgeted_apply['success'] ?? false ), 'time-budgeted direct apply succeeds' );
+	$assert( true, (bool) ( $budgeted_apply['direct_apply'] ?? false ), 'time-budgeted drain uses direct apply path' );
+	$assert( 1, (int) ( $budgeted_apply['pagination']['limit'] ?? 0 ), 'time-budgeted drain preserves page limit' );
+	$assert( 1, (int) ( $budgeted_apply['pagination']['scanned'] ?? 0 ), 'time-budgeted drain scans one page before honoring reserve' );
+	$assert( true, (bool) ( $budgeted_apply['pagination']['partial'] ?? false ), 'time-budgeted drain reports continuation' );
+	$assert( $budget_offset + 1, (int) ( $budgeted_apply['pagination']['next_offset'] ?? 0 ), 'time-budgeted drain reports next offset' );
+	$assert( 1, (int) ( $budgeted_apply['summary']['written'] ?? 0 ), 'time-budgeted drain writes first page metadata' );
+	$assert( 'time-budgeted metadata reconciliation direct apply', $budgeted_apply['evidence']['scope'] ?? '', 'time-budgeted drain exposes evidence scope' );
+	$assert( true, str_contains( $budgeted_apply['pagination']['next_command'] ?? '', '--until-budget=1s' ), 'time-budgeted drain exposes next command' );
+
 	$task = new \DataMachineCode\Tasks\WorktreeCleanupChunkTask();
 	$task->executeTask( 1201, array( 'chunk_type' => 'metadata_reconciliation_page', 'limit' => 2, 'offset' => 0 ) );
 	$job_result = $GLOBALS['datamachine_code_reconcile_chunk_jobs'][1201] ?? array();
