@@ -1944,6 +1944,15 @@ class WorkspaceCommand extends BaseCommand {
 	 *   exact current matches. For reconcile-metadata, applies a reviewed
 	 *   non-destructive metadata plan.
 	 *
+	 * [--apply]
+	 * : For `reconcile-metadata`, apply DMC-owned bounded metadata reconciliation
+	 *   directly without a JSON plan file. For cleanup subcommands, use the
+	 *   operation-specific apply path instead.
+	 *
+	 * [--via-jobs]
+	 * : For `reconcile-metadata --apply`, schedule bounded metadata
+	 *   reconciliation pages as jobs instead of applying synchronously.
+	 *
 	 * [--skip-github]
 	 * : Skip the GitHub API lookup and rely only on the local `upstream-gone`
 	 *   signal (cleanup only). Faster, but misses merged branches where the
