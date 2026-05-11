@@ -4498,7 +4498,7 @@ class Workspace {
 			return $pr_signal;
 		}
 
-		$signal = $this->detect_merge_signal( $primary_path, $repo, $branch, true, $github_cache );
+		$signal = $this->detect_merge_signal( $primary_path, $repo, $branch, false, $github_cache );
 		if ( null === $signal ) {
 			return null;
 		}
@@ -8077,16 +8077,18 @@ class Workspace {
 
 		if ( ! empty( $pr['merged_at'] ) ) {
 			return array(
-				'signal' => 'pr-merged',
-				'reason' => sprintf( 'PR #%d merged (%s)', $pr['number'], $pr['state'] ),
-				'pr_url' => $pr['html_url'] ?? null,
+				'signal'          => 'pr-merged',
+				'reason'          => sprintf( 'PR #%d merged (%s)', $pr['number'], $pr['state'] ),
+				'finalized_state' => WorktreeContextInjector::STATE_MERGED,
+				'pr_url'          => $pr['html_url'] ?? null,
 			);
 		}
 
 		return array(
-			'signal' => 'pr-closed',
-			'reason' => sprintf( 'PR #%d closed without merge', $pr['number'] ),
-			'pr_url' => $pr['html_url'] ?? null,
+			'signal'          => 'pr-closed',
+			'reason'          => sprintf( 'PR #%d closed without merge', $pr['number'] ),
+			'finalized_state' => WorktreeContextInjector::STATE_CLOSED,
+			'pr_url'          => $pr['html_url'] ?? null,
 		);
 	}
 

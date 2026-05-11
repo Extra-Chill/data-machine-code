@@ -343,7 +343,6 @@ namespace {
 			'pr_repo'         => 'acme/demo',
 		)
 	);
-
 	$ws = new \DataMachineCode\Workspace\Workspace();
 
 	echo "\nDry-run reconciliation\n";
