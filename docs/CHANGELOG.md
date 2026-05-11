@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.36.0] - 2026-05-11
+
+### Added
+- promote finalized worktree report evidence
+- fetch GitHub Actions artifact items
+
 ## [0.35.0] - 2026-05-11
 
 ### Added
