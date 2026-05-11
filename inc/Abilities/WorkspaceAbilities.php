@@ -1628,6 +1628,46 @@ class WorkspaceAbilities {
 			);
 
 			wp_register_ability(
+				'datamachine/workspace-worktree-active-no-signal-finalized-apply',
+				array(
+					'label'               => 'Promote Finalized Active Worktrees',
+					'description'         => 'Promote active_no_signal rows with merged PR evidence into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'dry_run' => array(
+								'type'        => 'boolean',
+								'description' => 'If true, preview metadata promotions without writing.',
+							),
+							'limit'   => array(
+								'type'        => 'integer',
+								'description' => 'Maximum active_no_signal rows to inspect in this page. Defaults to 25.',
+							),
+							'offset'  => array(
+								'type'        => 'integer',
+								'description' => 'Pagination offset into the active_no_signal inventory ordering.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'dry_run' => array( 'type' => 'boolean' ),
+							'planned' => array( 'type' => 'array' ),
+							'written' => array( 'type' => 'array' ),
+							'skipped' => array( 'type' => 'array' ),
+							'summary' => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeActiveNoSignalFinalizedApply' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
 				'datamachine/workspace-worktree-cleanup-artifacts',
 				array(
 					'label'               => 'Cleanup Worktree Artifacts',
@@ -2616,6 +2656,27 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->worktree_active_no_signal_report( $opts );
+	}
+
+	/**
+	 * Promote finalized active/no-signal evidence into cleanup metadata.
+	 *
+	 * @param array $input Input parameters (dry_run, limit, offset).
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function worktreeActiveNoSignalFinalizedApply( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		$opts      = array(
+			'dry_run' => ! empty( $input['dry_run'] ),
+		);
+		if ( array_key_exists( 'limit', $input ) ) {
+			$opts['limit'] = (int) $input['limit'];
+		}
+		if ( array_key_exists( 'offset', $input ) ) {
+			$opts['offset'] = (int) $input['offset'];
+		}
+
+		return $workspace->worktree_active_no_signal_finalized_apply( $opts );
 	}
 
 	/**
