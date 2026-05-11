@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.34.2] - 2026-05-11
+
+### Fixed
+- keep direct reconciliation apply bounded
+
 ## [0.34.1] - 2026-05-11
 
 ### Fixed
