@@ -3889,6 +3889,7 @@ class Workspace {
 		}
 
 		if ( $apply ) {
+			$plan['direct_apply'] = true;
 			return $this->apply_worktree_metadata_reconciliation_plan( $plan );
 		}
 
@@ -4426,10 +4427,12 @@ class Workspace {
 
 		$classified_skips = $this->classify_worktree_metadata_reconciliation_skips( $skipped );
 
-		return array(
+		$inspected = isset( $plan['summary']['inspected'] ) ? (int) $plan['summary']['inspected'] : count( (array) ( $listing['worktrees'] ?? array() ) );
+		$result    = array(
 			'success'        => true,
 			'dry_run'        => false,
 			'applied'        => true,
+			'direct_apply'   => ! empty( $plan['direct_apply'] ),
 			'generated_at'   => gmdate( 'c' ),
 			'workspace_path' => $this->workspace_path,
 			'proposals'      => $planned,
@@ -4437,8 +4440,23 @@ class Workspace {
 			'skipped'        => $skipped,
 			'still_unsafe'      => $classified_skips['still_unsafe'],
 			'external_worktrees' => $classified_skips['external_worktrees'],
-			'summary'        => $this->build_worktree_metadata_reconciliation_summary( count( (array) ( $listing['worktrees'] ?? array() ) ), $planned, $written, $skipped ),
+			'summary'        => $this->build_worktree_metadata_reconciliation_summary( $inspected, $planned, $written, $skipped ),
 		);
+
+		if ( isset( $plan['pagination'] ) && is_array( $plan['pagination'] ) ) {
+			$result['pagination'] = $plan['pagination'];
+		}
+		if ( isset( $plan['evidence'] ) && is_array( $plan['evidence'] ) ) {
+			$result['evidence'] = array_merge(
+				$plan['evidence'],
+				array(
+					'scope'        => ! empty( $plan['direct_apply'] ) ? 'paginated metadata reconciliation direct apply' : (string) ( $plan['evidence']['scope'] ?? 'paginated metadata reconciliation apply-plan' ),
+					'apply_source' => ! empty( $plan['direct_apply'] ) ? 'direct_apply' : 'apply_plan',
+				)
+			);
+		}
+
+		return $result;
 	}
 
 	/**

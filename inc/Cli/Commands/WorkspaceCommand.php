@@ -2100,7 +2100,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Adopt/reconcile unmanaged worktree metadata before cleanup
 	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json
 	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --format=json
-	 *     wp datamachine-code workspace worktree reconcile-metadata --apply --format=json
+	 *     wp datamachine-code workspace worktree reconcile-metadata --apply --limit=25 --offset=0 --format=json
 	 *
 	 *     # Ignore dirty working-tree safety (caution)
 	 *     wp datamachine-code workspace worktree cleanup --force
@@ -3200,6 +3200,13 @@ class WorkspaceCommand extends BaseCommand {
 			}
 			WP_CLI::success( sprintf( '%d metadata reconciliation proposal(s). Review JSON output before applying; --apply-plan remains a low-level escape hatch until DB-backed cleanup runs land.', count( $proposals ) ) );
 			return;
+		}
+		if ( isset( $result['pagination']['next_offset'] ) ) {
+			WP_CLI::log( sprintf(
+				'Next page: wp datamachine-code workspace worktree reconcile-metadata --apply --limit=%d --offset=%d --format=json',
+				(int) ( $result['pagination']['limit'] ?? 0 ),
+				(int) $result['pagination']['next_offset']
+			) );
 		}
 		WP_CLI::success( sprintf( 'Wrote metadata for %d worktree(s); %d skipped.', count( $written ), count( $skipped ) ) );
 	}
