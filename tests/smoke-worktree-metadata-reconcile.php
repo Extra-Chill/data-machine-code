@@ -23,7 +23,7 @@ namespace DataMachineCode\Abilities {
 			public static function getPat(): string {
 				return 'test-token';
 			}
-			public static function apiGet( string $url, array $params, string $pat ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+			public static function apiGet( string $url, array $params, string $pat, int $timeout = 0 ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 				if ( str_ends_with( $url, '/pulls/101' ) ) {
 					return array(
 						'data' => array(
@@ -41,6 +41,38 @@ namespace DataMachineCode\Abilities {
 							'state'     => 'closed',
 							'merged_at' => '',
 							'html_url'  => 'https://github.com/acme/demo/pull/102',
+						),
+					);
+				}
+				if ( str_ends_with( $url, '/pulls' ) && 'acme:old-merged-branch' === ( $params['head'] ?? '' ) ) {
+					return array(
+						'data' => array(
+							array(
+								'number'    => 103,
+								'state'     => 'closed',
+								'merged_at' => '2026-04-04T00:00:00Z',
+								'html_url'  => 'https://github.com/acme/demo/pull/103',
+								'head'      => array(
+									'ref'  => 'old-merged-branch',
+									'repo' => array( 'full_name' => 'acme/demo' ),
+								),
+							),
+						),
+					);
+				}
+				if ( str_ends_with( $url, '/pulls' ) && 'acme:open-branch' === ( $params['head'] ?? '' ) ) {
+					return array(
+						'data' => array(
+							array(
+								'number'    => 104,
+								'state'     => 'open',
+								'merged_at' => '',
+								'html_url'  => 'https://github.com/acme/demo/pull/104',
+								'head'      => array(
+									'ref'  => 'open-branch',
+									'repo' => array( 'full_name' => 'acme/demo' ),
+								),
+							),
 						),
 					);
 				}
@@ -106,6 +138,9 @@ namespace {
 			}
 			public function get_error_code(): string {
 				return $this->code;
+			}
+			public function get_error_data(): array {
+				return $this->data;
 			}
 		}
 	}
@@ -344,6 +379,12 @@ namespace {
 		)
 	);
 	$ws = new \DataMachineCode\Workspace\Workspace();
+	$lookup_reflection = new \ReflectionMethod( $ws, 'find_closed_pr_for_branch' );
+	$lookup_cache = array( 'acme/demo' => array() );
+	$old_pr       = $lookup_reflection->invokeArgs( $ws, array( 'acme/demo', 'old-merged-branch', &$lookup_cache ) );
+	$open_pr      = $lookup_reflection->invokeArgs( $ws, array( 'acme/demo', 'open-branch', &$lookup_cache ) );
+	$assert( 103, (int) ( $old_pr['number'] ?? 0 ), 'direct branch PR lookup finds older merged PRs outside the bounded repo snapshot' );
+	$assert( null, $open_pr, 'direct branch PR lookup does not finalize open PR branches' );
 
 	echo "\nDry-run reconciliation\n";
 	$plan = $ws->worktree_reconcile_metadata( array( 'dry_run' => true ) );
