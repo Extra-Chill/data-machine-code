@@ -50,6 +50,42 @@ namespace DataMachineCode\Abilities {
 	}
 }
 
+namespace DataMachine\Engine\AI\System\Tasks {
+	if ( ! class_exists( __NAMESPACE__ . '\\SystemTask' ) ) {
+		abstract class SystemTask {
+			abstract public function executeTask( int $jobId, array $params ): void;
+			abstract public function getTaskType(): string;
+			protected function completeJob( int $jobId, array $data ): void {
+				$GLOBALS['datamachine_code_reconcile_chunk_jobs'][ $jobId ] = $data;
+			}
+			protected function failJob( int $jobId, string $message ): void {
+				$GLOBALS['datamachine_code_reconcile_chunk_jobs'][ $jobId ] = array( 'error' => $message );
+			}
+		}
+	}
+}
+
+namespace DataMachine\Engine\Tasks {
+	if ( ! class_exists( __NAMESPACE__ . '\\TaskScheduler' ) ) {
+		class TaskScheduler {
+			public static array $batches = array();
+
+			public static function scheduleBatch( string $task_type, array $items, array $context = array() ) {
+				self::$batches[] = array(
+					'task_type' => $task_type,
+					'items'     => $items,
+					'context'   => $context,
+				);
+
+				return array(
+					'batch_job_id' => 901,
+					'job_ids'      => range( 1001, 1000 + count( $items ) ),
+				);
+			}
+		}
+	}
+}
+
 namespace {
 	if ( ! defined( 'ABSPATH' ) ) {
 		define( 'ABSPATH', __DIR__ . '/' );
@@ -132,6 +168,7 @@ namespace {
 	require __DIR__ . '/../inc/Workspace/WorktreeDiskBudget.php';
 	require __DIR__ . '/../inc/Workspace/WorktreeContextInjector.php';
 	require __DIR__ . '/../inc/Workspace/Workspace.php';
+	require __DIR__ . '/../inc/Tasks/WorktreeCleanupChunkTask.php';
 
 	exec( 'git --version 2>&1', $_gv, $gv_exit );
 	if ( 0 !== $gv_exit ) {
@@ -155,6 +192,7 @@ namespace {
 	$failures = 0;
 	$total    = 0;
 	$datamachine_code_test_options = array();
+	$GLOBALS['datamachine_code_reconcile_chunk_jobs'] = array();
 
 	$assert = function ( $expected, $actual, string $message ) use ( &$failures, &$total ): void {
 		$total++;
@@ -361,6 +399,20 @@ namespace {
 	$assert( 2, (int) ( $page['summary']['inspected'] ?? 0 ), 'paginated dry-run summary is page-scoped' );
 	$assert( true, isset( $page['evidence']['fields_skipped_by_listing'] ), 'paginated dry-run exposes listing evidence' );
 
+	\DataMachine\Engine\Tasks\TaskScheduler::$batches = array();
+	$job_backed = $ws->worktree_reconcile_metadata( array( 'apply' => true, 'via_jobs' => true, 'limit' => 3 ) );
+	$assert( true, ! is_wp_error( $job_backed ) && ( $job_backed['success'] ?? false ), 'job-backed reconciliation scheduling succeeds' );
+	$assert( true, (bool) ( $job_backed['job_backed'] ?? false ), 'job-backed reconciliation reports job_backed' );
+	$assert( false, (bool) ( $job_backed['applied'] ?? true ), 'job-backed parent does not write metadata synchronously' );
+	$assert( true, (int) ( $job_backed['summary']['scheduled_jobs'] ?? 0 ) >= 4, 'job-backed reconciliation schedules bounded page jobs' );
+	$scheduled_batch = \DataMachine\Engine\Tasks\TaskScheduler::$batches[0] ?? array();
+	$assert( 'worktree_cleanup_chunk', $scheduled_batch['task_type'] ?? '', 'job-backed reconciliation uses cleanup chunk task' );
+	$assert( 'metadata_reconciliation_page', $scheduled_batch['items'][0]['chunk_type'] ?? '', 'scheduled reconciliation job uses metadata page chunk type' );
+	$assert( array( 0, 3, 6, 9 ), array_slice( array_column( (array) ( $scheduled_batch['items'] ?? array() ), 'offset' ), 0, 4 ), 'scheduled reconciliation jobs carry bounded offsets' );
+	$assert( '', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@unmanaged-missing' )['handle'] ?? '', 'job-backed parent leaves metadata untouched until jobs run' );
+	$bad_job_backed = $ws->worktree_reconcile_metadata( array( 'dry_run' => true, 'via_jobs' => true, 'limit' => 3 ) );
+	$assert( true, is_wp_error( $bad_job_backed ), 'job-backed reconciliation rejects dry-run mode' );
+
 	$inventory_before = $ws->worktree_cleanup_merged( array( 'dry_run' => true, 'inventory_only' => true, 'skip_github' => true ) );
 	$assert( 4, (int) ( $inventory_before['summary']['skipped_by_reason']['needs_metadata_reconcile'] ?? 0 ), 'inventory cleanup sees missing metadata before apply' );
 
@@ -424,6 +476,13 @@ namespace {
 	$unsafe_skips = array_values( array_filter( $unsafe_apply['skipped'] ?? array(), fn( $row ) => 'demo@unmanaged-dirty' === ( $row['handle'] ?? '' ) ) );
 	$assert( 'unsafe_cleanup_eligible_state', $unsafe_skips[0]['reason_code'] ?? '', 'dirty worktree cannot become cleanup_eligible through reconciliation plan' );
 	$assert( 1, count( $unsafe_apply['still_unsafe'] ?? array() ), 'apply exposes still-unsafe rows distinctly' );
+
+	$task = new \DataMachineCode\Tasks\WorktreeCleanupChunkTask();
+	$task->executeTask( 1201, array( 'chunk_type' => 'metadata_reconciliation_page', 'limit' => 2, 'offset' => 0 ) );
+	$job_result = $GLOBALS['datamachine_code_reconcile_chunk_jobs'][1201] ?? array();
+	$assert( true, (bool) ( $job_result['success'] ?? false ), 'metadata reconciliation page job completes successfully' );
+	$assert( 'metadata_reconciliation_page', $job_result['chunk_type'] ?? '', 'metadata reconciliation page job records chunk type' );
+	$assert( true, isset( $job_result['evidence']['summary'] ), 'metadata reconciliation page job records summary evidence' );
 
 	if ( $failures > 0 ) {
 		echo "\n{$failures} / {$total} assertions failed.\n";
