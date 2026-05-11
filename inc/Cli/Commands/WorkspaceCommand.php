@@ -2289,6 +2289,8 @@ class WorkspaceCommand extends BaseCommand {
 			case 'reconcile-metadata':
 				$input['dry_run'] = ! empty( $assoc_args['dry-run'] );
 				$input['apply']   = ! empty( $assoc_args['apply'] );
+				$input['via_jobs'] = ! empty( $assoc_args['via-jobs'] );
+				$input['source']   = self::CLEANUP_CLI_SOURCE;
 				if ( isset( $assoc_args['limit'] ) ) {
 					$input['limit'] = (int) $assoc_args['limit'];
 				}
@@ -3199,6 +3201,10 @@ class WorkspaceCommand extends BaseCommand {
 				) );
 			}
 			WP_CLI::success( sprintf( '%d metadata reconciliation proposal(s). Review JSON output before applying; --apply-plan remains a low-level escape hatch until DB-backed cleanup runs land.', count( $proposals ) ) );
+			return;
+		}
+		if ( ! empty( $result['job_backed'] ) ) {
+			WP_CLI::success( sprintf( 'Scheduled %d metadata reconciliation page job(s).', (int) ( $summary['scheduled_jobs'] ?? 0 ) ) );
 			return;
 		}
 		if ( isset( $result['pagination']['next_offset'] ) ) {
