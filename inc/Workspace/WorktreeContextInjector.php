@@ -998,18 +998,16 @@ class WorktreeContextInjector {
 	 */
 	public static function get_metadata( string $handle ): ?array {
 		$db_metadata = self::get_inventory_metadata( $handle );
-		if ( null !== $db_metadata ) {
-			return $db_metadata;
-		}
 
 		if ( ! function_exists( 'get_option' ) ) {
-			return null;
+			return $db_metadata;
 		}
 		$all = get_option( self::METADATA_OPTION, array() );
 		if ( ! is_array( $all ) || empty( $all[ $handle ] ) || ! is_array( $all[ $handle ] ) ) {
-			return null;
+			return $db_metadata;
 		}
-		return $all[ $handle ];
+
+		return is_array( $db_metadata ) ? array_merge( $db_metadata, $all[ $handle ] ) : $all[ $handle ];
 	}
 
 	/**

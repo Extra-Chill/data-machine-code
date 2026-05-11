@@ -59,6 +59,11 @@ class Workspace {
 	public const ARTIFACT_CLEANUP_DEFAULT_LIMIT = 100;
 
 	/**
+	 * Default metadata reconciliation dry-run page size when pagination is used.
+	 */
+	private const METADATA_RECONCILE_DEFAULT_LIMIT = 100;
+
+	/**
 	 * @var string Resolved workspace path.
 	 */
 	private string $workspace_path;
@@ -3798,16 +3803,21 @@ class Workspace {
 	/**
 	 * Reconcile lifecycle metadata for unmanaged worktrees without removing anything.
 	 *
-	 * Dry-runs build a reviewed plan from the current full git worktree listing.
+	 * Dry-runs build a reviewed plan from the current git worktree listing.
+	 * Passing `limit` and/or `offset` bounds expensive per-worktree probes to
+	 * only that page; omitting both preserves the historical full scan.
 	 * Applying a plan revalidates handle/path/repo/branch before writing metadata.
 	 *
-	 * @param array $opts Options: dry_run bool, apply_plan array.
+	 * @param array $opts Options: dry_run bool, apply_plan array, limit int, offset int.
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_reconcile_metadata( array $opts = array() ): array|\WP_Error {
 		$dry_run    = ! empty( $opts['dry_run'] );
 		$apply      = ! empty( $opts['apply'] );
 		$apply_plan = isset( $opts['apply_plan'] ) && is_array( $opts['apply_plan'] ) ? $opts['apply_plan'] : null;
+		$paged      = array_key_exists( 'limit', $opts ) || array_key_exists( 'offset', $opts );
+		$limit      = $paged ? ( array_key_exists( 'limit', $opts ) ? (int) $opts['limit'] : self::METADATA_RECONCILE_DEFAULT_LIMIT ) : 0;
+		$offset     = $paged ? max( 0, (int) ( $opts['offset'] ?? 0 ) ) : 0;
 
 		if ( null !== $apply_plan ) {
 			return $this->apply_worktree_metadata_reconciliation_plan( $apply_plan );
@@ -3816,22 +3826,35 @@ class Workspace {
 		if ( ! $dry_run && ! $apply ) {
 			return new \WP_Error( 'metadata_reconcile_requires_review', 'Metadata reconciliation is dry-run-first. Pass --dry-run to review JSON output, or pass apply=true for DMC-owned lifecycle reconciliation.', array( 'status' => 400 ) );
 		}
+		if ( $paged && $limit <= 0 ) {
+			return new \WP_Error( 'invalid_metadata_reconcile_limit', 'Metadata reconciliation --limit must be greater than 0.', array( 'status' => 400 ) );
+		}
 
-		$listing = $this->worktree_list();
+		$listing = $this->worktree_list(
+			null,
+			null,
+			$paged ? array(
+				'include_status' => false,
+				'include_disk'   => false,
+			) : array()
+		);
 		if ( is_wp_error( $listing ) ) {
 			return $listing;
 		}
+
+		$all_worktrees = array_values( array_filter(
+			(array) ( $listing['worktrees'] ?? array() ),
+			fn( $wt ) => empty( $wt['is_primary'] )
+		) );
+		$total_worktrees = count( $all_worktrees );
+		$page_worktrees  = $paged ? array_slice( $all_worktrees, $offset, $limit ) : $all_worktrees;
 
 		$proposals    = array();
 		$skipped      = array();
 		$github_cache = array();
 		$fetched      = array();
 
-		foreach ( (array) ( $listing['worktrees'] ?? array() ) as $wt ) {
-			if ( ! empty( $wt['is_primary'] ) ) {
-				continue;
-			}
-
+		foreach ( $page_worktrees as $wt ) {
 			$proposal = $this->build_worktree_metadata_reconciliation_row( $wt, $github_cache, $fetched );
 			if ( isset( $proposal['proposal'] ) ) {
 				$proposals[] = $proposal['proposal'];
@@ -3841,6 +3864,7 @@ class Workspace {
 		}
 
 		$classified_skips = $this->classify_worktree_metadata_reconciliation_skips( $skipped );
+		$pagination       = $paged ? $this->build_worktree_metadata_reconciliation_pagination( $total_worktrees, count( $page_worktrees ), $limit, $offset ) : null;
 
 		$plan = array(
 			'success'        => true,
@@ -3853,8 +3877,16 @@ class Workspace {
 			'skipped'        => $skipped,
 			'still_unsafe'      => $classified_skips['still_unsafe'],
 			'external_worktrees' => $classified_skips['external_worktrees'],
-			'summary'        => $this->build_worktree_metadata_reconciliation_summary( count( (array) ( $listing['worktrees'] ?? array() ) ), $proposals, array(), $skipped ),
+			'summary'        => $this->build_worktree_metadata_reconciliation_summary( $paged ? count( $page_worktrees ) : count( (array) ( $listing['worktrees'] ?? array() ) ), $proposals, array(), $skipped ),
 		);
+		if ( null !== $pagination ) {
+			$plan['pagination'] = $pagination;
+			$plan['evidence']   = array(
+				'scope'  => 'paginated metadata reconciliation dry-run',
+				'note'   => 'Only this page ran per-worktree dirty, unpushed, merge-signal, and GitHub probes. Run the next_offset page until complete for full inventory review.',
+				'fields_skipped_by_listing' => (array) ( $listing['fields_skipped'] ?? array() ),
+			);
+		}
 
 		if ( $apply ) {
 			return $this->apply_worktree_metadata_reconciliation_plan( $plan );
@@ -3928,7 +3960,22 @@ class Workspace {
 			);
 		}
 
-		$dirty   = (int) ( $wt['dirty'] ?? 0 );
+		$dirty = $wt['dirty'] ?? null;
+		if ( null === $dirty ) {
+			$dirty = $this->probe_worktree_dirty_count( $path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+			if ( is_wp_error( $dirty ) ) {
+				return array(
+					'skip' => array_merge(
+						$base_row,
+						array(
+							'reason_code' => 'probe_timeout',
+							'reason'      => 'dirty-state probe failed - leaving lifecycle unchanged: ' . $dirty->get_error_message(),
+						)
+					),
+				);
+			}
+		}
+		$dirty   = (int) $dirty;
 		$unpushed = $this->count_unpushed_commits( $path );
 		if ( is_wp_error( $unpushed ) ) {
 			return array(
@@ -4426,6 +4473,26 @@ class Workspace {
 			'reason'      => $reason,
 			'planned'     => $planned,
 			'current'     => $current,
+		);
+	}
+
+	/**
+	 * Build metadata reconciliation pagination evidence.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function build_worktree_metadata_reconciliation_pagination( int $total, int $scanned, int $limit, int $offset ): array {
+		$next_offset = $offset + $scanned;
+		$complete    = $next_offset >= $total;
+
+		return array(
+			'total'       => $total,
+			'offset'      => $offset,
+			'limit'       => $limit,
+			'scanned'     => $scanned,
+			'partial'     => ! $complete,
+			'complete'    => $complete,
+			'next_offset' => $complete ? null : $next_offset,
 		);
 	}
 
