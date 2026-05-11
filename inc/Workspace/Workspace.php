@@ -6399,6 +6399,209 @@ class Workspace {
 	}
 
 	/**
+	 * Promote finalized PR evidence from the active/no-signal report into cleanup metadata.
+	 *
+	 * This writes lifecycle metadata only. It never removes worktrees; callers use
+	 * bounded cleanup-eligible apply after reviewing the written rows.
+	 *
+	 * @param array<string,mixed> $opts Apply options.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function worktree_active_no_signal_finalized_apply( array $opts = array() ): array|\WP_Error {
+		$dry_run = ! empty( $opts['dry_run'] );
+		$report  = $this->worktree_active_no_signal_report( $opts );
+		if ( is_wp_error( $report ) ) {
+			return $report;
+		}
+
+		$written = array();
+		$skipped = array();
+		$planned = array();
+
+		foreach ( (array) ( $report['rows'] ?? array() ) as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+
+			if ( 'finalized_pr_reconcile' !== (string) ( $row['suggested_action'] ?? '' ) ) {
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip( $row, 'not_finalized_pr', 'row is not a finalized merged PR candidate' );
+				continue;
+			}
+
+			$metadata = $this->build_active_no_signal_finalized_metadata( $row );
+			if ( is_wp_error( $metadata ) ) {
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip( $row, $metadata->get_error_code(), $metadata->get_error_message() );
+				continue;
+			}
+
+			$planned[] = array(
+				'handle'   => (string) ( $row['handle'] ?? '' ),
+				'repo'     => (string) ( $row['repo'] ?? '' ),
+				'branch'   => (string) ( $row['branch'] ?? '' ),
+				'path'     => (string) ( $row['path'] ?? '' ),
+				'pr'       => $row['pr'] ?? null,
+				'metadata' => $metadata,
+			);
+
+			if ( $dry_run ) {
+				continue;
+			}
+
+			$handle = (string) ( $row['handle'] ?? '' );
+			WorktreeContextInjector::store_lifecycle_metadata( $handle, $metadata );
+			$written[] = array(
+				'handle'   => $handle,
+				'repo'     => (string) ( $row['repo'] ?? '' ),
+				'branch'   => (string) ( $row['branch'] ?? '' ),
+				'path'     => (string) ( $row['path'] ?? '' ),
+				'metadata' => WorktreeContextInjector::get_metadata( $handle ),
+			);
+		}
+
+		$summary = array(
+			'inspected'           => (int) ( $report['summary']['inspected'] ?? 0 ),
+			'planned'             => count( $planned ),
+			'written'             => count( $written ),
+			'skipped'             => count( $skipped ),
+			'skipped_by_reason'   => array(),
+			'report_action_counts' => $report['summary']['by_suggested_action'] ?? array(),
+		);
+		foreach ( $skipped as $skip ) {
+			$reason = (string) ( $skip['reason_code'] ?? 'unknown' );
+			$summary['skipped_by_reason'][ $reason ] = (int) ( $summary['skipped_by_reason'][ $reason ] ?? 0 ) + 1;
+		}
+
+		return array(
+			'success'      => true,
+			'mode'         => 'active_no_signal_finalized_apply',
+			'dry_run'      => $dry_run,
+			'applied'      => ! $dry_run,
+			'destructive'  => false,
+			'generated_at' => gmdate( 'c' ),
+			'planned'      => $planned,
+			'written'      => $written,
+			'skipped'      => $skipped,
+			'summary'      => $summary,
+			'pagination'   => $report['pagination'] ?? array(),
+			'evidence'     => array(
+				'scope' => 'promote finalized active_no_signal PR evidence into cleanup_eligible metadata',
+				'safety' => 'Revalidates dirty, unpushed, identity, and closed+merged PR evidence before writing metadata. Does not delete worktrees.',
+			),
+		);
+	}
+
+	/**
+	 * Build cleanup metadata from one finalized active/no-signal evidence row.
+	 *
+	 * @param array<string,mixed> $row Evidence row.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function build_active_no_signal_finalized_metadata( array $row ): array|\WP_Error {
+		$handle = (string) ( $row['handle'] ?? '' );
+		$repo   = (string) ( $row['repo'] ?? '' );
+		$branch = (string) ( $row['branch'] ?? '' );
+		$path   = (string) ( $row['path'] ?? '' );
+		$pr     = is_array( $row['pr'] ?? null ) ? $row['pr'] : array();
+
+		foreach ( array( 'handle' => $handle, 'repo' => $repo, 'branch' => $branch, 'path' => $path ) as $field => $value ) {
+			if ( '' === $value ) {
+				return new \WP_Error( 'missing_identity', 'missing required identity field: ' . $field );
+			}
+		}
+		if ( ! is_dir( $path ) ) {
+			return new \WP_Error( 'missing_worktree', 'worktree path no longer exists' );
+		}
+
+		$primary_path = $this->get_primary_path( $repo );
+		if ( ! is_dir( $primary_path . '/.git' ) ) {
+			return new \WP_Error( 'missing_primary', 'primary checkout missing' );
+		}
+
+		$dirty = $this->probe_worktree_dirty_count( $path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( is_wp_error( $dirty ) ) {
+			return $dirty;
+		}
+		$unpushed = $this->count_unpushed_commits( $path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( is_wp_error( $unpushed ) ) {
+			return $unpushed;
+		}
+		if ( (int) $dirty > 0 || (int) $unpushed > 0 ) {
+			return new \WP_Error( 'unsafe_dirty_or_unpushed', 'refusing to mark dirty or unpushed worktree cleanup_eligible from active/no-signal evidence' );
+		}
+
+		$slug = $this->resolve_github_slug( $primary_path );
+		if ( null === $slug ) {
+			return new \WP_Error( 'missing_github_repo', 'primary checkout does not resolve to a GitHub repository' );
+		}
+
+		$github_cache = array();
+		$current_pr   = $this->find_pr_for_branch_direct( $slug, $branch, $github_cache, true );
+		if ( is_wp_error( $current_pr ) ) {
+			return $current_pr;
+		}
+		if ( ! is_array( $current_pr ) || empty( $current_pr['merged_at'] ) ) {
+			return new \WP_Error( 'missing_finalized_pr', 'exact branch-head PR is not currently closed and merged' );
+		}
+
+		$pr_url = (string) ( $current_pr['html_url'] ?? ( $pr['html_url'] ?? '' ) );
+		if ( '' === $pr_url ) {
+			return new \WP_Error( 'missing_pr_url', 'merged PR evidence is missing html_url' );
+		}
+
+		$base_metadata = is_array( $row['metadata'] ?? null ) ? $row['metadata'] : array();
+		$metadata      = array_merge(
+			$base_metadata,
+			array(
+				'handle'       => $handle,
+				'repo'         => $repo,
+				'branch'       => $branch,
+				'path'         => $path,
+				'observed_at'  => gmdate( 'c' ),
+				'last_seen_at' => gmdate( 'c' ),
+			),
+			WorktreeContextInjector::build_finalizer_metadata( WorktreeContextInjector::STATE_MERGED, $pr_url )
+		);
+		$metadata['auto_finalized_by']            = 'active_no_signal_finalized_apply';
+		$metadata['auto_finalized_signal']        = 'pr-merged';
+		$metadata['auto_finalized_reason']        = sprintf( 'active/no-signal report found merged PR #%d', (int) ( $current_pr['number'] ?? 0 ) );
+		$metadata['cleanup_eligibility_evidence'] = array_filter(
+			array(
+				'signal'          => 'pr-merged',
+				'finalized_state' => WorktreeContextInjector::STATE_MERGED,
+				'reason'          => 'exact branch-head PR is closed and merged',
+				'detected_at'     => gmdate( 'c' ),
+				'dirty'           => (int) $dirty,
+				'unpushed'        => (int) $unpushed,
+				'pr_url'          => $pr_url,
+				'pr_number'       => (int) ( $current_pr['number'] ?? 0 ),
+			),
+			fn( $value ) => null !== $value && '' !== $value
+		);
+
+		return $metadata;
+	}
+
+	/**
+	 * Build a skip row for finalized active/no-signal apply.
+	 *
+	 * @param array<string,mixed> $row         Evidence row.
+	 * @param string              $reason_code Stable reason code.
+	 * @param string              $reason      Human-readable reason.
+	 * @return array<string,mixed>
+	 */
+	private function build_active_no_signal_finalized_apply_skip( array $row, string $reason_code, string $reason ): array {
+		return array(
+			'handle'      => (string) ( $row['handle'] ?? '' ),
+			'repo'        => (string) ( $row['repo'] ?? '' ),
+			'branch'      => (string) ( $row['branch'] ?? '' ),
+			'path'        => (string) ( $row['path'] ?? '' ),
+			'reason_code' => $reason_code,
+			'reason'      => $reason,
+			'action'      => (string) ( $row['suggested_action'] ?? '' ),
+		);
+	}
+
+	/**
 	 * Build one active/no-signal evidence row.
 	 *
 	 * @param array<string,mixed> $row          Inventory skip row.
@@ -6420,6 +6623,7 @@ class Workspace {
 			'path'             => $path,
 			'created_at'       => $row['created_at'] ?? null,
 			'lifecycle_state'  => $metadata['lifecycle_state'] ?? null,
+			'metadata'         => $metadata,
 			'last_seen_at'     => $metadata['last_seen_at'] ?? ( $metadata['observed_at'] ?? null ),
 			'dirty'            => null,
 			'unpushed'         => null,

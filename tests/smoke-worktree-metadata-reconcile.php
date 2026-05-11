@@ -477,6 +477,13 @@ namespace {
 	$assert( 'finalized_pr_reconcile', $active_rows['demo@head-merged']['suggested_action'] ?? '', 'active/no-signal report finds merged PRs by branch head' );
 	$assert( 'active_open_pr', $active_rows['demo@already-current']['suggested_action'] ?? '', 'active/no-signal report preserves open PRs as active' );
 	$assert( 106, (int) ( $active_rows['demo@head-merged']['pr']['number'] ?? 0 ), 'active/no-signal report includes PR evidence' );
+	$run( 'git remote set-url origin https://github.com/acme/demo.git', $primary );
+	$finalized_dry_run = $ws->worktree_active_no_signal_finalized_apply( array( 'dry_run' => true, 'limit' => 20, 'offset' => 0 ) );
+	$run( sprintf( 'git remote set-url origin %s', escapeshellarg( $remote ) ), $primary );
+	$assert( true, ! is_wp_error( $finalized_dry_run ) && ( $finalized_dry_run['success'] ?? false ), 'finalized active/no-signal dry-run succeeds' );
+	$assert( true, (bool) ( $finalized_dry_run['dry_run'] ?? false ), 'finalized active/no-signal dry-run does not write' );
+	$assert( 1, (int) ( $finalized_dry_run['summary']['planned'] ?? 0 ), 'finalized active/no-signal dry-run plans merged PR rows only' );
+	$assert( '', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@head-merged' )['cleanup_eligible_at'] ?? '', 'finalized active/no-signal dry-run leaves metadata unchanged' );
 
 	echo "\nDry-run reconciliation\n";
 	$plan = $ws->worktree_reconcile_metadata( array( 'dry_run' => true ) );
@@ -591,6 +598,15 @@ namespace {
 	$assert( 1, (int) ( $inventory_after['summary']['skipped_by_reason']['needs_metadata_reconcile'] ?? 0 ), 'inventory cleanup requires fewer metadata reconciliation passes after apply' );
 	$assert( 6, (int) ( $inventory_after['summary']['skipped_by_reason']['active_no_signal'] ?? 0 ), 'inventory cleanup treats reconciled active metadata like current active metadata' );
 	$assert( false, isset( $inventory_after['summary']['repair_status'] ), 'inventory cleanup no longer exposes migration status' );
+
+	$run( 'git remote set-url origin https://github.com/acme/demo.git', $primary );
+	$finalized_apply = $ws->worktree_active_no_signal_finalized_apply( array( 'limit' => 20, 'offset' => 0 ) );
+	$run( sprintf( 'git remote set-url origin %s', escapeshellarg( $remote ) ), $primary );
+	$assert( true, ! is_wp_error( $finalized_apply ) && ( $finalized_apply['success'] ?? false ), 'finalized active/no-signal apply succeeds' );
+	$assert( 1, (int) ( $finalized_apply['summary']['written'] ?? 0 ), 'finalized active/no-signal apply writes merged PR metadata' );
+	$stored_head_merged = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@head-merged' );
+	$assert( 'cleanup_eligible', $stored_head_merged['lifecycle_state'] ?? '', 'finalized active/no-signal apply stores cleanup_eligible state' );
+	$assert( 'pr-merged', $stored_head_merged['cleanup_eligibility_evidence']['signal'] ?? '', 'finalized active/no-signal apply stores PR merge evidence' );
 
 	echo "\nSafety gates\n";
 	$stale_plan['proposals'][0]['branch'] = 'wrong-branch';
