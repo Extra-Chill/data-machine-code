@@ -42,6 +42,17 @@ class WorkspaceTools extends BaseTool {
 			'workspace_ls',
 			'workspace_read',
 			'workspace_grep',
+			'workspace_write',
+			'workspace_edit',
+			'workspace_apply_patch',
+			'workspace_delete',
+			'workspace_git_status',
+			'workspace_git_log',
+			'workspace_git_diff',
+			'workspace_git_pull',
+			'workspace_git_add',
+			'workspace_git_commit',
+			'workspace_git_push',
 		);
 
 		if ( ! in_array( $tool_id, $workspace_tools, true ) ) {
@@ -52,10 +63,11 @@ class WorkspaceTools extends BaseTool {
 	}
 
 	/**
-	 * Constructor — register all workspace read tools as global tools.
+	 * Constructor — register workspace tools as global tools.
 	 */
 	public function __construct() {
-		$contexts = array( 'chat', 'pipeline' );
+		$contexts        = array( 'chat', 'pipeline' );
+		$policy_contexts = array( 'chat', 'pipeline_policy' );
 		$this->registerTool( 'workspace_path', array( $this, 'getPathDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-path' ) );
 		$this->registerTool( 'workspace_capabilities', array( $this, 'getCapabilitiesDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-capabilities' ) );
 		$this->registerTool( 'workspace_list', array( $this, 'getListDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-list' ) );
@@ -63,6 +75,17 @@ class WorkspaceTools extends BaseTool {
 		$this->registerTool( 'workspace_ls', array( $this, 'getLsDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-ls' ) );
 		$this->registerTool( 'workspace_read', array( $this, 'getReadDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-read' ) );
 		$this->registerTool( 'workspace_grep', array( $this, 'getGrepDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-grep' ) );
+		$this->registerTool( 'workspace_write', array( $this, 'getWriteDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-write' ) );
+		$this->registerTool( 'workspace_edit', array( $this, 'getEditDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-edit' ) );
+		$this->registerTool( 'workspace_apply_patch', array( $this, 'getApplyPatchDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-apply-patch' ) );
+		$this->registerTool( 'workspace_delete', array( $this, 'getDeleteDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-delete' ) );
+		$this->registerTool( 'workspace_git_status', array( $this, 'getGitStatusDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-status' ) );
+		$this->registerTool( 'workspace_git_log', array( $this, 'getGitLogDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-log' ) );
+		$this->registerTool( 'workspace_git_diff', array( $this, 'getGitDiffDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-diff' ) );
+		$this->registerTool( 'workspace_git_pull', array( $this, 'getGitPullDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-pull' ) );
+		$this->registerTool( 'workspace_git_add', array( $this, 'getGitAddDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-add' ) );
+		$this->registerTool( 'workspace_git_commit', array( $this, 'getGitCommitDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-commit' ) );
+		$this->registerTool( 'workspace_git_push', array( $this, 'getGitPushDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-push' ) );
 	}
 
 	/**
@@ -309,6 +332,163 @@ class WorkspaceTools extends BaseTool {
 		);
 	}
 
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handleWrite( array $parameters ): array {
+		return $this->executeAbility( 'datamachine/workspace-write', 'workspace_write', array(
+			'repo'    => $parameters['repo'] ?? '',
+			'path'    => $parameters['path'] ?? '',
+			'content' => $parameters['content'] ?? '',
+		) );
+	}
+
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handleEdit( array $parameters ): array {
+		$input = array(
+			'repo'       => $parameters['repo'] ?? '',
+			'path'       => $parameters['path'] ?? '',
+			'old_string' => $parameters['old_string'] ?? '',
+			'new_string' => $parameters['new_string'] ?? '',
+		);
+
+		if ( array_key_exists( 'replace_all', $parameters ) ) {
+			$input['replace_all'] = (bool) $parameters['replace_all'];
+		}
+
+		return $this->executeAbility( 'datamachine/workspace-edit', 'workspace_edit', $input );
+	}
+
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handleApplyPatch( array $parameters ): array {
+		$input = array(
+			'repo'  => $parameters['repo'] ?? '',
+			'patch' => $parameters['patch'] ?? '',
+		);
+
+		if ( array_key_exists( 'allow_primary_mutation', $parameters ) ) {
+			$input['allow_primary_mutation'] = (bool) $parameters['allow_primary_mutation'];
+		}
+
+		return $this->executeAbility( 'datamachine/workspace-apply-patch', 'workspace_apply_patch', $input );
+	}
+
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handleDelete( array $parameters ): array {
+		$input = array(
+			'repo' => $parameters['repo'] ?? '',
+			'path' => $parameters['path'] ?? '',
+		);
+
+		foreach ( array( 'recursive', 'allow_primary_mutation' ) as $key ) {
+			if ( array_key_exists( $key, $parameters ) ) {
+				$input[ $key ] = (bool) $parameters[ $key ];
+			}
+		}
+
+		return $this->executeAbility( 'datamachine/workspace-delete', 'workspace_delete', $input );
+	}
+
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handleGitStatus( array $parameters ): array {
+		return $this->executeAbility( 'datamachine/workspace-git-status', 'workspace_git_status', array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' ) );
+	}
+
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handleGitLog( array $parameters ): array {
+		$input = array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' );
+		if ( isset( $parameters['limit'] ) ) {
+			$input['limit'] = (int) $parameters['limit'];
+		}
+
+		return $this->executeAbility( 'datamachine/workspace-git-log', 'workspace_git_log', $input );
+	}
+
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handleGitDiff( array $parameters ): array {
+		$input = array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' );
+		foreach ( array( 'from', 'to', 'path' ) as $key ) {
+			if ( isset( $parameters[ $key ] ) ) {
+				$input[ $key ] = $parameters[ $key ];
+			}
+		}
+		if ( array_key_exists( 'staged', $parameters ) ) {
+			$input['staged'] = (bool) $parameters['staged'];
+		}
+
+		return $this->executeAbility( 'datamachine/workspace-git-diff', 'workspace_git_diff', $input );
+	}
+
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handleGitPull( array $parameters ): array {
+		$input = array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' );
+		foreach ( array( 'allow_dirty', 'allow_primary_mutation' ) as $key ) {
+			if ( array_key_exists( $key, $parameters ) ) {
+				$input[ $key ] = (bool) $parameters[ $key ];
+			}
+		}
+
+		return $this->executeAbility( 'datamachine/workspace-git-pull', 'workspace_git_pull', $input );
+	}
+
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handleGitAdd( array $parameters ): array {
+		$input = array(
+			'name'  => $parameters['name'] ?? $parameters['repo'] ?? '',
+			'paths' => isset( $parameters['paths'] ) && is_array( $parameters['paths'] ) ? $parameters['paths'] : array(),
+		);
+		if ( array_key_exists( 'allow_primary_mutation', $parameters ) ) {
+			$input['allow_primary_mutation'] = (bool) $parameters['allow_primary_mutation'];
+		}
+
+		return $this->executeAbility( 'datamachine/workspace-git-add', 'workspace_git_add', $input );
+	}
+
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handleGitCommit( array $parameters ): array {
+		$input = array(
+			'name'    => $parameters['name'] ?? $parameters['repo'] ?? '',
+			'message' => $parameters['message'] ?? '',
+		);
+		if ( array_key_exists( 'allow_primary_mutation', $parameters ) ) {
+			$input['allow_primary_mutation'] = (bool) $parameters['allow_primary_mutation'];
+		}
+
+		return $this->executeAbility( 'datamachine/workspace-git-commit', 'workspace_git_commit', $input );
+	}
+
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handleGitPush( array $parameters ): array {
+		$input = array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' );
+		foreach ( array( 'remote', 'branch' ) as $key ) {
+			if ( isset( $parameters[ $key ] ) ) {
+				$input[ $key ] = $parameters[ $key ];
+			}
+		}
+		if ( array_key_exists( 'allow_primary_mutation', $parameters ) ) {
+			$input['allow_primary_mutation'] = (bool) $parameters['allow_primary_mutation'];
+		}
+
+		return $this->executeAbility( 'datamachine/workspace-git-push', 'workspace_git_push', $input );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
+	private function executeAbility( string $ability_name, string $tool_name, array $input ): array {
+		$ability = wp_get_ability( $ability_name );
+		if ( ! $ability ) {
+			return $this->buildErrorResponse( "{$tool_name} ability not available.", $tool_name );
+		}
+
+		$result = $ability->execute( $input );
+		if ( is_wp_error( $result ) ) {
+			return $this->buildErrorResponse( $result->get_error_message(), $tool_name );
+		}
+
+		return array(
+			'success'   => true,
+			'data'      => $result,
+			'tool_name' => $tool_name,
+		);
+	}
+
 	/**
 	 * Primary tool definition for convention compatibility.
 	 *
@@ -510,6 +690,156 @@ class WorkspaceTools extends BaseTool {
 					),
 				),
 				'required'   => array( 'repo', 'pattern' ),
+			),
+		);
+	}
+
+	/** @return array<string,mixed> */
+	public function getWriteDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleWrite',
+			'description' => 'Create or overwrite a file in a workspace repository. Policy-gated for pipeline use.',
+			'parameters'  => array(
+				'type'       => 'object',
+				'properties' => array(
+					'repo'    => array( 'type' => 'string', 'description' => 'Workspace handle: <repo> or <repo>@<branch-slug>.' ),
+					'path'    => array( 'type' => 'string', 'description' => 'Relative file path within the repo.' ),
+					'content' => array( 'type' => 'string', 'description' => 'File content to write.' ),
+				),
+				'required'   => array( 'repo', 'path', 'content' ),
+			),
+		);
+	}
+
+	/** @return array<string,mixed> */
+	public function getEditDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleEdit',
+			'description' => 'Find-and-replace exact text in a workspace repository file. Policy-gated for pipeline use.',
+			'parameters'  => array(
+				'type'       => 'object',
+				'properties' => array(
+					'repo'        => array( 'type' => 'string', 'description' => 'Workspace handle: <repo> or <repo>@<branch-slug>.' ),
+					'path'        => array( 'type' => 'string', 'description' => 'Relative file path within the repo.' ),
+					'old_string'  => array( 'type' => 'string', 'description' => 'Exact text to find.' ),
+					'new_string'  => array( 'type' => 'string', 'description' => 'Replacement text.' ),
+					'replace_all' => array( 'type' => 'boolean', 'description' => 'Replace all occurrences. Default false.' ),
+				),
+				'required'   => array( 'repo', 'path', 'old_string', 'new_string' ),
+			),
+		);
+	}
+
+	/** @return array<string,mixed> */
+	public function getApplyPatchDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleApplyPatch',
+			'description' => 'Apply a unified diff to a workspace repository using git apply checks. Policy-gated for pipeline use.',
+			'parameters'  => array(
+				'type'       => 'object',
+				'properties' => array(
+					'repo'                   => array( 'type' => 'string', 'description' => 'Workspace handle: <repo> or <repo>@<branch-slug>.' ),
+					'patch'                 => array( 'type' => 'string', 'description' => 'Unified diff content to apply.' ),
+					'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
+				),
+				'required'   => array( 'repo', 'patch' ),
+			),
+		);
+	}
+
+	/** @return array<string,mixed> */
+	public function getDeleteDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleDelete',
+			'description' => 'Delete a tracked or untracked path from a workspace repository. Policy-gated for pipeline use.',
+			'parameters'  => array(
+				'type'       => 'object',
+				'properties' => array(
+					'repo'                   => array( 'type' => 'string', 'description' => 'Workspace handle: <repo> or <repo>@<branch-slug>.' ),
+					'path'                   => array( 'type' => 'string', 'description' => 'Relative path within the repo.' ),
+					'recursive'              => array( 'type' => 'boolean', 'description' => 'Required when target is a directory. Default false.' ),
+					'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
+				),
+				'required'   => array( 'repo', 'path' ),
+			),
+		);
+	}
+
+	/** @return array<string,mixed> */
+	public function getGitStatusDefinition(): array {
+		return $this->simpleGitDefinition( 'handleGitStatus', 'Get git status information for a workspace handle.', array() );
+	}
+
+	/** @return array<string,mixed> */
+	public function getGitLogDefinition(): array {
+		return $this->simpleGitDefinition( 'handleGitLog', 'Read git log entries for a workspace handle.', array(
+			'limit' => array( 'type' => 'integer', 'description' => 'Maximum log entries to return.' ),
+		) );
+	}
+
+	/** @return array<string,mixed> */
+	public function getGitDiffDefinition(): array {
+		return $this->simpleGitDefinition( 'handleGitDiff', 'Read git diff output for a workspace handle.', array(
+			'from'   => array( 'type' => 'string', 'description' => 'Optional from git ref.' ),
+			'to'     => array( 'type' => 'string', 'description' => 'Optional to git ref.' ),
+			'staged' => array( 'type' => 'boolean', 'description' => 'Read staged diff instead of working tree diff.' ),
+			'path'   => array( 'type' => 'string', 'description' => 'Optional relative path filter.' ),
+		) );
+	}
+
+	/** @return array<string,mixed> */
+	public function getGitPullDefinition(): array {
+		return $this->simpleGitDefinition( 'handleGitPull', 'Run git pull --ff-only for a workspace handle. Policy-gated for pipeline use.', array(
+			'allow_dirty'            => array( 'type' => 'boolean', 'description' => 'Allow pull when working tree is dirty. Default false.' ),
+			'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
+		) );
+	}
+
+	/** @return array<string,mixed> */
+	public function getGitAddDefinition(): array {
+		return $this->simpleGitDefinition( 'handleGitAdd', 'Stage repository paths with git add. Policy-gated for pipeline use.', array(
+			'paths'                  => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Relative paths to stage.' ),
+			'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
+		), array( 'name', 'paths' ) );
+	}
+
+	/** @return array<string,mixed> */
+	public function getGitCommitDefinition(): array {
+		return $this->simpleGitDefinition( 'handleGitCommit', 'Commit staged changes in a workspace handle. Policy-gated for pipeline use.', array(
+			'message'                => array( 'type' => 'string', 'description' => 'Commit message.' ),
+			'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
+		), array( 'name', 'message' ) );
+	}
+
+	/** @return array<string,mixed> */
+	public function getGitPushDefinition(): array {
+		return $this->simpleGitDefinition( 'handleGitPush', 'Push commits for a workspace handle. Policy-gated for pipeline use.', array(
+			'remote'                 => array( 'type' => 'string', 'description' => 'Remote name. Default origin.' ),
+			'branch'                 => array( 'type' => 'string', 'description' => 'Branch override.' ),
+			'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
+		) );
+	}
+
+	/** @param array<string,mixed> $extra_properties Extra parameters. @param string[] $required Required properties. @return array<string,mixed> */
+	private function simpleGitDefinition( string $method, string $description, array $extra_properties, array $required = array( 'name' ) ): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => $method,
+			'description' => $description,
+			'parameters'  => array(
+				'type'       => 'object',
+				'properties' => array_merge(
+					array(
+						'name' => array( 'type' => 'string', 'description' => 'Workspace handle: <repo> or <repo>@<branch-slug>.' ),
+						'repo' => array( 'type' => 'string', 'description' => 'Alias for name.' ),
+					),
+					$extra_properties
+				),
+				'required'   => $required,
 			),
 		);
 	}
