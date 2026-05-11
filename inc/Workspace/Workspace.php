@@ -8193,11 +8193,97 @@ class Workspace {
 			return $lookup;
 		}
 
-		if ( null === $lookup ) {
+		if ( null !== $lookup && isset( $lookup[ $branch ] ) ) {
+			return $lookup[ $branch ];
+		}
+
+		return $this->find_finalized_pr_for_branch_direct( $slug, $branch, $github_cache );
+	}
+
+	/**
+	 * Look up a finalized PR for one branch directly via GitHub's head filter.
+	 *
+	 * The repo-level closed-PR snapshot is intentionally bounded for cleanup runs,
+	 * so older PRs can be missed. This precise fallback keeps PR lifecycle as the
+	 * source of truth without treating remote branch existence as liveness.
+	 *
+	 * @param string $slug         owner/repo.
+	 * @param string $branch       Branch name.
+	 * @param array  $github_cache Run-local cache keyed by owner/repo and branch.
+	 * @return array|null|\WP_Error PR data, null when no finalized PR matched, or lookup failure.
+	 */
+	private function find_finalized_pr_for_branch_direct( string $slug, string $branch, array &$github_cache = array() ): array|\WP_Error|null {
+		$cache_key = $slug . '#head:' . $branch;
+		if ( array_key_exists( $cache_key, $github_cache ) ) {
+			return $github_cache[ $cache_key ];
+		}
+
+		if ( ! class_exists( '\DataMachineCode\Abilities\GitHubAbilities' ) ) {
+			$github_cache[ $cache_key ] = null;
 			return null;
 		}
 
-		return $lookup[ $branch ] ?? null;
+		$parts = explode( '/', $slug, 2 );
+		$owner = $parts[0] ?? '';
+		if ( '' === $owner || empty( $parts[1] ) ) {
+			$github_cache[ $cache_key ] = null;
+			return null;
+		}
+
+		$pat = \DataMachineCode\Abilities\GitHubAbilities::getPat( array( 'repo' => $slug ) );
+		if ( empty( $pat ) ) {
+			$github_cache[ $cache_key ] = null;
+			return null;
+		}
+
+		$response = \DataMachineCode\Abilities\GitHubAbilities::apiGet(
+			GitHubRemote::apiUrl( $slug, 'pulls' ),
+			array(
+				'head'      => $owner . ':' . $branch,
+				'sort'      => 'updated',
+				'direction' => 'desc',
+				'state'     => 'all',
+				'per_page'  => 5,
+			),
+			$pat,
+			self::CLEANUP_GITHUB_TIMEOUT
+		);
+
+		if ( is_wp_error( $response ) ) {
+			$error = new \WP_Error(
+				'github_cleanup_branch_lookup_failed',
+				sprintf( 'GitHub cleanup branch lookup failed for %s:%s: %s', $slug, $branch, $response->get_error_message() ),
+				$response->get_error_data()
+			);
+			$github_cache[ $cache_key ] = $error;
+			return $error;
+		}
+
+		foreach ( (array) ( $response['data'] ?? array() ) as $pr ) {
+			if ( ! is_array( $pr ) ) {
+				continue;
+			}
+
+			$head      = is_array( $pr['head'] ?? null ) ? $pr['head'] : array();
+			$head_repo = is_array( $head['repo'] ?? null ) ? (string) ( $head['repo']['full_name'] ?? '' ) : '';
+			$head_ref  = (string) ( $head['ref'] ?? '' );
+			$state     = (string) ( $pr['state'] ?? '' );
+			if ( $head_repo !== $slug || $head_ref !== $branch || 'closed' !== $state ) {
+				continue;
+			}
+
+			$github_cache[ $cache_key ] = array(
+				'number'    => (int) ( $pr['number'] ?? 0 ),
+				'state'     => $state,
+				'merged_at' => (string) ( $pr['merged_at'] ?? '' ),
+				'html_url'  => (string) ( $pr['html_url'] ?? '' ),
+			);
+
+			return $github_cache[ $cache_key ];
+		}
+
+		$github_cache[ $cache_key ] = null;
+		return null;
 	}
 
 	/**
