@@ -202,7 +202,7 @@ class GitHubTools extends BaseTool {
 		return array(
 			'class'       => __CLASS__,
 			'method'      => 'handleListIssues',
-			'description' => 'List issues from a GitHub repository. Returns issue numbers, titles, states, labels, and assignees. Use to review open issues, track progress, or find specific issues by label.',
+			'description' => 'List issues from a GitHub repository. Returns issue numbers, titles, states, labels, assignees, comment counts, timestamps, and a generated_at timestamp. Use to review open issues, track progress, or find specific issues by label.',
 			'parameters'  => array(
 				'type'       => 'object',
 				'properties' => array(
@@ -262,7 +262,7 @@ class GitHubTools extends BaseTool {
 		return array(
 			'class'       => __CLASS__,
 			'method'      => 'handleGetIssue',
-			'description' => 'Get a single GitHub issue with full details including body, labels, assignees, and comment count.',
+			'description' => 'Get a single GitHub issue with full details including body, labels, assignees, comment count, timestamps, generated_at, and latest comment metadata when comments exist.',
 			'parameters'  => array(
 				'type'       => 'object',
 				'properties' => array(
@@ -669,7 +669,7 @@ class GitHubTools extends BaseTool {
 		return array(
 			'class'       => __CLASS__,
 			'method'      => 'handleListPulls',
-			'description' => 'List pull requests from a GitHub repository. Returns PR numbers, titles, states, branches, and merge status.',
+			'description' => 'List pull requests from a GitHub repository. Returns PR numbers, titles, states, branches, merge status, comment counts, change counts, timestamps, and generated_at.',
 			'parameters'  => array(
 				'type'       => 'object',
 				'properties' => array(
@@ -740,7 +740,7 @@ class GitHubTools extends BaseTool {
 		return array(
 			'class'       => __CLASS__,
 			'method'      => 'handleGetPull',
-			'description' => 'Get one GitHub pull request with normalized title, body, branch, SHA, labels, and merge metadata.',
+			'description' => 'Get one GitHub pull request with normalized title, body, branch, SHA, labels, merge metadata, comment counts, change counts, timestamps, and generated_at.',
 			'parameters'  => array(
 				'type'       => 'object',
 				'properties' => array(
