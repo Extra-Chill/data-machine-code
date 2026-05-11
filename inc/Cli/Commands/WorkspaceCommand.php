@@ -2848,6 +2848,18 @@ class WorkspaceCommand extends BaseCommand {
 				'count'  => (int) $count,
 			);
 		}
+		foreach ( (array) ( $summary['stale_reasons'] ?? array() ) as $reason => $count ) {
+			$summary_rows[] = array(
+				'metric' => 'stale:' . $reason,
+				'count'  => (int) $count,
+			);
+		}
+		foreach ( (array) ( $summary['liveness'] ?? array() ) as $state => $count ) {
+			$summary_rows[] = array(
+				'metric' => 'liveness:' . $state,
+				'count'  => (int) $count,
+			);
+		}
 		if ( isset( $summary['age_filter'] ) && is_array( $summary['age_filter'] ) ) {
 			$summary_rows[] = array(
 				'metric' => 'age_filter:excluded',

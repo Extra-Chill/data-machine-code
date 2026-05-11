@@ -409,6 +409,10 @@ namespace {
 	$inventory_missing = array_values( array_filter( $inventory_plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@inventory-missing-metadata' ) )[0] ?? array();
 	$assert( 'needs_metadata_reconcile', $inventory_missing['reason_code'] ?? '', 'inventory-only missing metadata requires metadata reconciliation' );
 	$inventory_buckets = (array) ( $inventory_plan['summary']['cleanup_buckets'] ?? array() );
+	$assert( 2, (int) ( $inventory_buckets['safe_to_remove_now'] ?? 0 ), 'inventory cleanup bucket counts safe-to-remove candidates' );
+	$assert( 5, (int) ( $inventory_buckets['needs_reconciliation'] ?? 0 ), 'inventory cleanup bucket counts reconciliation candidates separately' );
+	$assert( 4, (int) ( $inventory_buckets['needs_full_review'] ?? 0 ), 'inventory cleanup bucket counts full-review rows separately' );
+	$assert( 0, (int) ( $inventory_buckets['blocked_by_dirty_or_unpushed'] ?? -1 ), 'inventory cleanup bucket keeps dirty/unpushed blockers separate' );
 	$assert( 2, (int) ( $inventory_buckets['explicit_cleanup_candidates'] ?? 0 ), 'inventory cleanup bucket counts explicit cleanup candidates' );
 	$assert( 1, (int) ( $inventory_buckets['lifecycle_reconciliation_candidates'] ?? 0 ), 'inventory cleanup bucket counts lifecycle reconciliation candidates' );
 	$assert( 4, (int) ( $inventory_buckets['metadata_reconciliation_candidates'] ?? 0 ), 'inventory cleanup bucket counts metadata reconciliation candidates' );

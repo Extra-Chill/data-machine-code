@@ -164,11 +164,21 @@ namespace {
 					'repaired_metadata'                    => 1,
 				),
 				'cleanup_buckets'       => array(
+					'blocked_by_dirty_or_unpushed'       => 1,
+					'needs_full_review'                  => 11,
+					'needs_reconciliation'               => 3,
+					'safe_to_remove_now'                 => 1,
 					'active_no_signal'                    => 1,
 					'dirty_unpushed'                      => 1,
 					'explicit_cleanup_candidates'         => 0,
 					'lifecycle_reconciliation_candidates' => 1,
 					'metadata_reconciliation_candidates'  => 2,
+				),
+				'stale_reasons'        => array(
+					'dirty' => 1,
+				),
+				'liveness'             => array(
+					'stale' => 1,
 				),
 				'skipped_next_commands' => array(
 					array(
@@ -707,8 +717,14 @@ namespace {
 	datamachine_code_cleanup_assert( 'needs_metadata_reconcile' === ( $decoded['skipped'][11]['reason_code'] ?? '' ), 'JSON missing metadata row uses metadata reconciliation reason' );
 	datamachine_code_cleanup_assert( str_contains( $decoded['skipped'][11]['hint'] ?? '', 'reconcile-metadata --dry-run' ), 'JSON metadata reconciliation row includes remediation hint' );
 	datamachine_code_cleanup_assert( 10 === (int) ( $decoded['summary']['skipped_by_reason']['no_merge_signal'] ?? 0 ), 'JSON summary includes reason counts' );
+	datamachine_code_cleanup_assert( 1 === (int) ( $decoded['summary']['cleanup_buckets']['safe_to_remove_now'] ?? 0 ), 'JSON summary includes safe-to-remove bucket count' );
+	datamachine_code_cleanup_assert( 3 === (int) ( $decoded['summary']['cleanup_buckets']['needs_reconciliation'] ?? 0 ), 'JSON summary includes combined reconciliation bucket count' );
+	datamachine_code_cleanup_assert( 11 === (int) ( $decoded['summary']['cleanup_buckets']['needs_full_review'] ?? 0 ), 'JSON summary includes full-review bucket count' );
+	datamachine_code_cleanup_assert( 1 === (int) ( $decoded['summary']['cleanup_buckets']['blocked_by_dirty_or_unpushed'] ?? 0 ), 'JSON summary includes dirty/unpushed blocker bucket count' );
 	datamachine_code_cleanup_assert( 1 === (int) ( $decoded['summary']['cleanup_buckets']['lifecycle_reconciliation_candidates'] ?? 0 ), 'JSON summary includes lifecycle reconciliation bucket count' );
 	datamachine_code_cleanup_assert( 2 === (int) ( $decoded['summary']['cleanup_buckets']['metadata_reconciliation_candidates'] ?? 0 ), 'JSON summary includes metadata reconciliation bucket count' );
+	datamachine_code_cleanup_assert( 1 === (int) ( $decoded['summary']['stale_reasons']['dirty'] ?? 0 ), 'JSON summary includes stale reason metadata counts' );
+	datamachine_code_cleanup_assert( 1 === (int) ( $decoded['summary']['liveness']['stale'] ?? 0 ), 'JSON summary includes liveness metadata counts' );
 	datamachine_code_cleanup_assert( 4 === count( $decoded['summary']['skipped_next_commands'] ?? array() ), 'JSON summary includes actionable skipped next commands' );
 	datamachine_code_cleanup_assert( str_contains( $decoded['summary']['skipped_next_commands'][0]['command'] ?? '', 'worktree cleanup --dry-run --format=json' ), 'JSON lifecycle command runs DMC-owned cleanup signal detection' );
 	datamachine_code_cleanup_assert( str_contains( $decoded['summary']['skipped_next_commands'][1]['command'] ?? '', 'reconcile-metadata --dry-run --format=json' ), 'JSON metadata command is metadata reconciliation' );
@@ -780,7 +796,7 @@ namespace {
 	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'older-than' => '7d' ) );
 	datamachine_code_cleanup_assert( '7d' === ( $ability->last_input['older_than'] ?? null ), 'older-than forwards to cleanup ability as older_than' );
 	datamachine_code_cleanup_assert( is_callable( $ability->last_input['progress_callback'] ?? null ), 'human cleanup passes progress callback to ability' );
-	datamachine_code_cleanup_assert( in_array( 'table:18:metric,count', WP_CLI::$logs, true ), 'age filter, cleanup buckets, and disk summary rows are rendered' );
+	datamachine_code_cleanup_assert( in_array( 'table:24:metric,count', WP_CLI::$logs, true ), 'age filter, cleanup buckets, stale/liveness, and disk summary rows are rendered' );
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
