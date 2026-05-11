@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.34.1] - 2026-05-11
+
+### Fixed
+- expose reconciliation apply cli flags
+
 ## [0.34.0] - 2026-05-11
 
 ### Added
