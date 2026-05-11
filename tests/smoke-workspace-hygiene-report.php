@@ -175,6 +175,9 @@ namespace {
 		datamachine_code_hygiene_report_assert( 1 === (int) ( $with_cleanup['cleanup']['summary']['would_remove'] ?? 0 ), 'inventory cleanup counts explicit cleanup signal' );
 		datamachine_code_hygiene_report_assert( 1 === (int) ( $with_cleanup['cleanup']['summary']['skipped_by_reason']['lifecycle_reconciliation_candidate'] ?? 0 ), 'inventory cleanup surfaces stale PR-backed metadata as lifecycle reconciliation candidate' );
 		datamachine_code_hygiene_report_assert( 1 === (int) ( $with_cleanup['cleanup']['summary']['skipped_by_reason']['needs_metadata_reconcile'] ?? 0 ), 'inventory cleanup skips missing metadata with metadata reconciliation reason' );
+		datamachine_code_hygiene_report_assert( 1 === (int) ( $with_cleanup['cleanup']['summary']['cleanup_buckets']['safe_to_remove_now'] ?? 0 ), 'inventory cleanup buckets count safe-to-remove candidates' );
+		datamachine_code_hygiene_report_assert( 2 === (int) ( $with_cleanup['cleanup']['summary']['cleanup_buckets']['needs_reconciliation'] ?? 0 ), 'inventory cleanup buckets count reconciliation candidates' );
+		datamachine_code_hygiene_report_assert( 0 === (int) ( $with_cleanup['cleanup']['summary']['cleanup_buckets']['needs_full_review'] ?? -1 ), 'inventory cleanup buckets count full-review rows' );
 		datamachine_code_hygiene_report_assert( 1 === (int) ( $with_cleanup['cleanup']['summary']['cleanup_buckets']['metadata_reconciliation_candidates'] ?? 0 ), 'inventory cleanup buckets count metadata reconciliation candidates' );
 
 		echo "\n[2] Full report remains explicitly available\n";

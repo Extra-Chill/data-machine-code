@@ -6842,6 +6842,8 @@ class Workspace {
 	private function build_worktree_cleanup_summary( array $candidates, array $removed, array $skipped, ?array $age_filter = null ): array {
 		$skipped_by_reason    = array();
 		$candidates_by_signal = array();
+		$stale_reasons        = array();
+		$liveness             = array();
 		$size_by_repo         = array();
 		$artifact_by_repo     = array();
 		$total_size_bytes     = 0;
@@ -6862,6 +6864,14 @@ class Workspace {
 			$repo           = (string) ( $row['repo'] ?? 'unknown' );
 			$size_bytes     = isset( $row['size_bytes'] ) ? (int) $row['size_bytes'] : 0;
 			$artifact_bytes = isset( $row['artifact_size_bytes'] ) ? (int) $row['artifact_size_bytes'] : 0;
+			$stale_reason   = (string) ( $row['stale_reason'] ?? '' );
+			$liveness_state = (string) ( $row['liveness'] ?? '' );
+			if ( '' !== $stale_reason ) {
+				$stale_reasons[ $stale_reason ] = ( $stale_reasons[ $stale_reason ] ?? 0 ) + 1;
+			}
+			if ( '' !== $liveness_state ) {
+				$liveness[ $liveness_state ] = ( $liveness[ $liveness_state ] ?? 0 ) + 1;
+			}
 			if ( $size_bytes > 0 ) {
 				$size_by_repo[ $repo ] = ( $size_by_repo[ $repo ] ?? 0 ) + $size_bytes;
 				$total_size_bytes     += $size_bytes;
@@ -6874,6 +6884,8 @@ class Workspace {
 
 		ksort( $skipped_by_reason );
 		ksort( $candidates_by_signal );
+		ksort( $stale_reasons );
+		ksort( $liveness );
 		arsort( $size_by_repo );
 		arsort( $artifact_by_repo );
 
@@ -6883,8 +6895,10 @@ class Workspace {
 			'skipped'               => count( $skipped ),
 			'skipped_by_reason'     => $skipped_by_reason,
 			'skipped_next_commands' => $this->worktree_cleanup_skipped_next_commands( $skipped_by_reason ),
-			'cleanup_buckets'       => $this->worktree_cleanup_buckets( $candidates_by_signal, $skipped_by_reason ),
+			'cleanup_buckets'       => $this->worktree_cleanup_buckets( count( $candidates ), $candidates_by_signal, $skipped_by_reason ),
 			'candidates_by_signal'  => $candidates_by_signal,
+			'stale_reasons'         => $stale_reasons,
+			'liveness'              => $liveness,
 			'total_size_bytes'      => $total_size_bytes,
 			'artifact_size_bytes'   => $total_artifact_bytes,
 			'size_by_repo'          => $size_by_repo,
@@ -6904,16 +6918,40 @@ class Workspace {
 	/**
 	 * Build stable high-level cleanup buckets for plan/report consumers.
 	 *
+	 * @param int               $candidate_count      Candidate row count.
 	 * @param array<string,int> $candidates_by_signal Candidate signal counts.
 	 * @param array<string,int> $skipped_by_reason    Skipped reason counts.
 	 * @return array<string,int>
 	 */
-	private function worktree_cleanup_buckets( array $candidates_by_signal, array $skipped_by_reason ): array {
+	private function worktree_cleanup_buckets( int $candidate_count, array $candidates_by_signal, array $skipped_by_reason ): array {
+		$needs_reconciliation = (int) ( $skipped_by_reason['needs_metadata_reconcile'] ?? 0 )
+			+ (int) ( $skipped_by_reason['requires_full_scan'] ?? 0 )
+			+ (int) ( $skipped_by_reason['missing_metadata'] ?? 0 )
+			+ (int) ( $skipped_by_reason['lifecycle_reconciliation_candidate'] ?? 0 );
+		$needs_full_review = (int) ( $skipped_by_reason['active_no_signal'] ?? 0 )
+			+ (int) ( $skipped_by_reason['no_inventory_cleanup_signal'] ?? 0 )
+			+ (int) ( $skipped_by_reason['no_merge_signal'] ?? 0 )
+			+ (int) ( $skipped_by_reason['github_unknown'] ?? 0 )
+			+ (int) ( $skipped_by_reason['external_worktree'] ?? 0 )
+			+ (int) ( $skipped_by_reason['protected_branch'] ?? 0 )
+			+ (int) ( $skipped_by_reason['probe_timeout'] ?? 0 )
+			+ (int) ( $skipped_by_reason['unknown_age'] ?? 0 );
+		$blocked_by_dirty_or_unpushed = (int) ( $skipped_by_reason['dirty_worktree'] ?? 0 )
+			+ (int) ( $skipped_by_reason['merged_pr_with_only_obsolete_dirty_changes'] ?? 0 )
+			+ (int) ( $skipped_by_reason['unpushed_commits'] ?? 0 );
+
 		$buckets = array(
+			'blocked_by_dirty_or_unpushed'       => $blocked_by_dirty_or_unpushed,
+			'needs_full_review'                  => $needs_full_review,
+			'needs_reconciliation'               => $needs_reconciliation,
+			'safe_to_remove_now'                 => $candidate_count,
+
+			// Legacy aliases retained for existing automation while callers migrate
+			// to the explicit safety buckets above.
 			'explicit_cleanup_candidates'         => (int) ( $candidates_by_signal['cleanup_eligible'] ?? 0 ),
 			'lifecycle_reconciliation_candidates' => (int) ( $skipped_by_reason['lifecycle_reconciliation_candidate'] ?? 0 ),
 			'metadata_reconciliation_candidates'  => (int) ( $skipped_by_reason['needs_metadata_reconcile'] ?? 0 ) + (int) ( $skipped_by_reason['requires_full_scan'] ?? 0 ) + (int) ( $skipped_by_reason['missing_metadata'] ?? 0 ),
-			'dirty_unpushed'                      => (int) ( $skipped_by_reason['dirty_worktree'] ?? 0 ) + (int) ( $skipped_by_reason['unpushed_commits'] ?? 0 ),
+			'dirty_unpushed'                      => $blocked_by_dirty_or_unpushed,
 			'active_no_signal'                    => (int) ( $skipped_by_reason['active_no_signal'] ?? 0 ) + (int) ( $skipped_by_reason['no_inventory_cleanup_signal'] ?? 0 ),
 		);
 
