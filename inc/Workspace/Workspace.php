@@ -6631,6 +6631,7 @@ class Workspace {
 			'remote_tracking'  => null,
 			'default_ref'      => null,
 			'commits_outside_default' => null,
+			'upstream_equivalence' => null,
 			'suggested_action' => 'insufficient_signal',
 			'reason'           => 'not enough evidence gathered',
 		);
@@ -6670,6 +6671,10 @@ class Workspace {
 			if ( ! is_wp_error( $outside ) && ! $this->is_git_timeout_error( $outside ) ) {
 				$out['commits_outside_default'] = (int) trim( (string) ( $outside['output'] ?? '' ) );
 			}
+
+			if ( (int) ( $out['dirty'] ?? 0 ) > 0 || (int) ( $out['unpushed'] ?? 0 ) > 0 ) {
+				$out['upstream_equivalence'] = $this->build_dirty_unpushed_upstream_equivalence_evidence( $primary_path, $path, $default_ref );
+			}
 		}
 
 		$slug = $this->resolve_github_slug( $primary_path );
@@ -6686,6 +6691,135 @@ class Workspace {
 		$out['reason']           = $this->describe_active_no_signal_action( $out );
 
 		return $out;
+	}
+
+	/**
+	 * Build diagnostic evidence for dirty/unpushed worktrees against remote default.
+	 *
+	 * This is intentionally evidence-only. Cleanup still treats dirty files and
+	 * unpushed commits as hard blockers until a separate reviewed apply path proves
+	 * a safe subset.
+	 *
+	 * @param string $primary_path Primary checkout path.
+	 * @param string $wt_path      Worktree path.
+	 * @param string $default_ref  Remote default ref.
+	 * @return array<string,mixed>
+	 */
+	private function build_dirty_unpushed_upstream_equivalence_evidence( string $primary_path, string $wt_path, string $default_ref ): array {
+		$evidence = array(
+			'default_ref' => $default_ref,
+			'unpushed_patch_equivalent' => null,
+			'unpushed_cherry' => array(
+				'equivalent' => 0,
+				'unmatched'  => 0,
+				'unknown'    => 0,
+			),
+			'dirty_paths' => array(
+				'total'                => 0,
+				'identical_to_default' => 0,
+				'different_from_default' => 0,
+				'absent_on_default'    => 0,
+				'untracked'            => 0,
+				'unknown'              => 0,
+				'samples'              => array(),
+			),
+		);
+
+		$cherry = $this->run_git( $wt_path, sprintf( 'cherry %s HEAD', escapeshellarg( $default_ref ) ), self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( ! is_wp_error( $cherry ) && ! $this->is_git_timeout_error( $cherry ) ) {
+			$lines = array_values( array_filter( array_map( 'trim', explode( "\n", (string) ( $cherry['output'] ?? '' ) ) ) ) );
+			foreach ( $lines as $line ) {
+				if ( str_starts_with( $line, '-' ) ) {
+					++$evidence['unpushed_cherry']['equivalent'];
+				} elseif ( str_starts_with( $line, '+' ) ) {
+					++$evidence['unpushed_cherry']['unmatched'];
+				} else {
+					++$evidence['unpushed_cherry']['unknown'];
+				}
+			}
+			if ( count( $lines ) > 0 ) {
+				$evidence['unpushed_patch_equivalent'] = 0 === (int) $evidence['unpushed_cherry']['unmatched'] && 0 === (int) $evidence['unpushed_cherry']['unknown'];
+			}
+		}
+
+		$tracked = $this->run_git( $wt_path, 'diff --name-only HEAD', self::CLEANUP_GIT_PROBE_TIMEOUT );
+		$paths   = array();
+		if ( ! is_wp_error( $tracked ) && ! $this->is_git_timeout_error( $tracked ) ) {
+			$paths = array_merge( $paths, array_values( array_filter( array_map( 'trim', explode( "\n", (string) ( $tracked['output'] ?? '' ) ) ) ) ) );
+		}
+
+		$untracked = $this->run_git( $wt_path, 'ls-files --others --exclude-standard', self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( ! is_wp_error( $untracked ) && ! $this->is_git_timeout_error( $untracked ) ) {
+			foreach ( array_values( array_filter( array_map( 'trim', explode( "\n", (string) ( $untracked['output'] ?? '' ) ) ) ) ) as $path ) {
+				$paths[] = $path;
+				++$evidence['dirty_paths']['untracked'];
+			}
+		}
+
+		$paths = array_values( array_unique( array_filter( $paths, fn( $path ) => '' !== (string) $path ) ) );
+		$evidence['dirty_paths']['total'] = count( $paths );
+
+		foreach ( $paths as $path ) {
+			$classification = $this->classify_dirty_path_against_default( $primary_path, $wt_path, $default_ref, $path );
+			$bucket = $classification['bucket'];
+			if ( isset( $evidence['dirty_paths'][ $bucket ] ) ) {
+				++$evidence['dirty_paths'][ $bucket ];
+			} else {
+				++$evidence['dirty_paths']['unknown'];
+			}
+			if ( count( $evidence['dirty_paths']['samples'] ) < 10 ) {
+				$evidence['dirty_paths']['samples'][] = $classification;
+			}
+		}
+
+		return $evidence;
+	}
+
+	/**
+	 * Classify one dirty path against the remote default branch.
+	 *
+	 * @param string $primary_path Primary checkout path.
+	 * @param string $wt_path      Worktree path.
+	 * @param string $default_ref  Remote default ref.
+	 * @param string $path         Repository-relative path.
+	 * @return array<string,string>
+	 */
+	private function classify_dirty_path_against_default( string $primary_path, string $wt_path, string $default_ref, string $path ): array {
+		$exists = $this->run_git( $primary_path, sprintf( 'cat-file -e %s', escapeshellarg( $default_ref . ':' . $path ) ), self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( $this->is_git_timeout_error( $exists ) ) {
+			return array(
+				'path'   => $path,
+				'bucket' => 'unknown',
+				'reason' => $exists->get_error_message(),
+			);
+		}
+		if ( is_wp_error( $exists ) ) {
+			return array(
+				'path'   => $path,
+				'bucket' => 'absent_on_default',
+			);
+		}
+
+		$diff = $this->run_git( $wt_path, sprintf( 'diff --name-only %s -- %s', escapeshellarg( $default_ref ), escapeshellarg( $path ) ), self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( $this->is_git_timeout_error( $diff ) ) {
+			return array(
+				'path'   => $path,
+				'bucket' => 'unknown',
+				'reason' => $diff->get_error_message(),
+			);
+		}
+		if ( is_wp_error( $diff ) ) {
+			return array(
+				'path'   => $path,
+				'bucket' => 'unknown',
+				'reason' => $diff->get_error_message(),
+			);
+		}
+
+		return array(
+			'path'   => $path,
+			'bucket' => '' === trim( (string) ( $diff['output'] ?? '' ) ) ? 'identical_to_default' : 'different_from_default',
+		);
 	}
 
 	/**

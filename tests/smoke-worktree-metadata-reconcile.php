@@ -325,6 +325,7 @@ namespace {
 	$run( 'git add README.md && git commit -m init', $primary );
 	$run( 'git branch -M main', $primary );
 	$run( 'git push -u origin main', $primary );
+	$run( 'git remote set-head origin main', $primary );
 
 	$make_branch = function ( string $branch ) use ( $primary, $run ): void {
 		$run( sprintf( 'git checkout -b %s', escapeshellarg( $branch ) ), $primary );
@@ -338,6 +339,7 @@ namespace {
 	$make_branch( 'unmanaged-dirty' );
 	$make_branch( 'unmanaged-invalid' );
 	$make_branch( 'already-current' );
+	$make_branch( 'dirty-active' );
 	$make_branch( 'head-merged' );
 	$make_branch( 'pr-merged' );
 	$make_branch( 'pr-closed' );
@@ -351,6 +353,7 @@ namespace {
 	$run( sprintf( 'git worktree add %s unmanaged-dirty', escapeshellarg( $tmp . '/demo@unmanaged-dirty' ) ), $primary );
 	$run( sprintf( 'git worktree add %s unmanaged-invalid', escapeshellarg( $tmp . '/demo@unmanaged-invalid' ) ), $primary );
 	$run( sprintf( 'git worktree add %s already-current', escapeshellarg( $tmp . '/demo@already-current' ) ), $primary );
+	$run( sprintf( 'git worktree add %s dirty-active', escapeshellarg( $tmp . '/demo@dirty-active' ) ), $primary );
 	$run( sprintf( 'git worktree add %s head-merged', escapeshellarg( $tmp . '/demo@head-merged' ) ), $primary );
 	$run( sprintf( 'git worktree add %s pr-merged', escapeshellarg( $tmp . '/demo@pr-merged' ) ), $primary );
 	$run( sprintf( 'git worktree add %s pr-closed', escapeshellarg( $tmp . '/demo@pr-closed' ) ), $primary );
@@ -360,6 +363,7 @@ namespace {
 	mkdir( $tmp . '-external', 0755, true );
 	$run( sprintf( 'git worktree add %s external-branch', escapeshellarg( $tmp . '-external/demo-external' ) ), $primary );
 	file_put_contents( $tmp . '/demo@unmanaged-dirty/scratch.txt', 'dirty' );
+	file_put_contents( $tmp . '/demo@dirty-active/scratch.txt', 'dirty' );
 	file_put_contents( $tmp . '/demo@dirty-merged/scratch.txt', 'dirty' );
 	file_put_contents( $tmp . '/demo@unpushed-merged/local.txt', 'local' );
 	$run( 'git add local.txt && git commit -m local-unpushed', $tmp . '/demo@unpushed-merged' );
@@ -394,6 +398,18 @@ namespace {
 			'repo'            => 'demo',
 			'branch'          => 'already-current',
 			'path'            => $tmp . '/demo@already-current',
+			'created_at'      => '2026-04-01T00:00:00+00:00',
+			'observed_at'     => '2026-04-01T00:00:00+00:00',
+			'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
+		)
+	);
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
+		'demo@dirty-active',
+		array(
+			'handle'          => 'demo@dirty-active',
+			'repo'            => 'demo',
+			'branch'          => 'dirty-active',
+			'path'            => $tmp . '/demo@dirty-active',
 			'created_at'      => '2026-04-01T00:00:00+00:00',
 			'observed_at'     => '2026-04-01T00:00:00+00:00',
 			'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
@@ -477,6 +493,9 @@ namespace {
 	$assert( 'finalized_pr_reconcile', $active_rows['demo@head-merged']['suggested_action'] ?? '', 'active/no-signal report finds merged PRs by branch head' );
 	$assert( 'active_open_pr', $active_rows['demo@already-current']['suggested_action'] ?? '', 'active/no-signal report preserves open PRs as active' );
 	$assert( 106, (int) ( $active_rows['demo@head-merged']['pr']['number'] ?? 0 ), 'active/no-signal report includes PR evidence' );
+	$assert( 'unsafe_dirty_or_unpushed', $active_rows['demo@dirty-active']['suggested_action'] ?? '', 'active/no-signal report keeps dirty rows unsafe' );
+	$assert( true, is_array( $active_rows['demo@dirty-active']['upstream_equivalence'] ?? null ), 'active/no-signal report includes upstream equivalence diagnostics for dirty rows' );
+	$assert( true, (int) ( $active_rows['demo@dirty-active']['upstream_equivalence']['dirty_paths']['absent_on_default'] ?? 0 ) >= 1, 'dirty diagnostics classify paths absent on default' );
 	$run( 'git remote set-url origin https://github.com/acme/demo.git', $primary );
 	$finalized_dry_run = $ws->worktree_active_no_signal_finalized_apply( array( 'dry_run' => true, 'limit' => 20, 'offset' => 0 ) );
 	$run( sprintf( 'git remote set-url origin %s', escapeshellarg( $remote ) ), $primary );
@@ -596,7 +615,7 @@ namespace {
 
 	$inventory_after = $ws->worktree_cleanup_merged( array( 'dry_run' => true, 'inventory_only' => true, 'skip_github' => true ) );
 	$assert( 1, (int) ( $inventory_after['summary']['skipped_by_reason']['needs_metadata_reconcile'] ?? 0 ), 'inventory cleanup requires fewer metadata reconciliation passes after apply' );
-	$assert( 6, (int) ( $inventory_after['summary']['skipped_by_reason']['active_no_signal'] ?? 0 ), 'inventory cleanup treats reconciled active metadata like current active metadata' );
+	$assert( 7, (int) ( $inventory_after['summary']['skipped_by_reason']['active_no_signal'] ?? 0 ), 'inventory cleanup treats reconciled active metadata like current active metadata' );
 	$assert( false, isset( $inventory_after['summary']['repair_status'] ), 'inventory cleanup no longer exposes migration status' );
 
 	$run( 'git remote set-url origin https://github.com/acme/demo.git', $primary );
