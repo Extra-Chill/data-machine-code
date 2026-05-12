@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.39.1] - 2026-05-12
+
+### Fixed
+- make worktree reconciliation budget-aware
+
 ## [0.39.0] - 2026-05-11
 
 ### Added
