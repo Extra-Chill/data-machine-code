@@ -496,6 +496,9 @@ namespace {
 	$assert( 'unsafe_dirty_or_unpushed', $active_rows['demo@dirty-active']['suggested_action'] ?? '', 'active/no-signal report keeps dirty rows unsafe' );
 	$assert( true, is_array( $active_rows['demo@dirty-active']['upstream_equivalence'] ?? null ), 'active/no-signal report includes upstream equivalence diagnostics for dirty rows' );
 	$assert( true, (int) ( $active_rows['demo@dirty-active']['upstream_equivalence']['dirty_paths']['absent_on_default'] ?? 0 ) >= 1, 'dirty diagnostics classify paths absent on default' );
+	$assert( true, isset( $active_rows['demo@dirty-active']['upstream_equivalence']['effective_status'] ), 'dirty diagnostics include effective status' );
+	$assert( 250, (int) ( $active_rows['demo@dirty-active']['upstream_equivalence']['path_inspection_limit'] ?? 0 ), 'dirty diagnostics expose path inspection cap' );
+	$assert( true, isset( $active_rows['demo@dirty-active']['upstream_equivalence']['dirty_paths']['generated_or_artifact'] ), 'dirty diagnostics count generated/artifact paths' );
 	$run( 'git remote set-url origin https://github.com/acme/demo.git', $primary );
 	$finalized_dry_run = $ws->worktree_active_no_signal_finalized_apply( array( 'dry_run' => true, 'limit' => 20, 'offset' => 0 ) );
 	$run( sprintf( 'git remote set-url origin %s', escapeshellarg( $remote ) ), $primary );
