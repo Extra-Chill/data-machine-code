@@ -509,6 +509,10 @@ class GitHubAbilities {
 								'enum'        => array( 'merge', 'squash', 'rebase' ),
 								'description' => 'GitHub merge method. Default: squash.',
 							),
+							'delete_branch'     => array(
+								'type'        => 'boolean',
+								'description' => 'Delete the pull request head branch through the GitHub API after a successful merge when the branch is in the same repository.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -525,6 +529,50 @@ class GitHubAbilities {
 						),
 					),
 					'execute_callback'    => array( self::class, 'mergePullRequest' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/cleanup-github-pull-request',
+				array(
+					'label'               => 'Cleanup GitHub Pull Request',
+					'description'         => 'Delete a merged pull request head branch through the GitHub API without checking out local branches',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'pull_number' ),
+						'properties' => array(
+							'repo'        => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'pull_number' => array(
+								'type'        => 'integer',
+								'description' => 'Pull request number.',
+							),
+							'dry_run'     => array(
+								'type'        => 'boolean',
+								'description' => 'Preview the cleanup decision without deleting the branch.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'                => array( 'type' => 'boolean' ),
+							'repo'                   => array( 'type' => 'string' ),
+							'pull_number'            => array( 'type' => 'integer' ),
+							'head_branch'            => array( 'type' => 'string' ),
+							'branch_deleted'         => array( 'type' => 'boolean' ),
+							'branch_already_deleted' => array( 'type' => 'boolean' ),
+							'dry_run'                => array( 'type' => 'boolean' ),
+							'message'                => array( 'type' => 'string' ),
+							'error'                  => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'cleanupPullRequest' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
 				)
@@ -2157,7 +2205,7 @@ class GitHubAbilities {
 	 * Calls `GET /repos/{owner}/{repo}/pulls/{pull_number}` immediately before
 	 * `PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge`.
 	 *
-	 * @param array         $input       Required: repo, pull_number, expected_head_sha. Optional: merge_method.
+	 * @param array         $input       Required: repo, pull_number, expected_head_sha. Optional: merge_method, delete_branch.
 	 * @param callable|null $api_get     Optional test seam: fn(string $url, array $query, string $pat): array|WP_Error.
 	 * @param callable|null $api_request Optional test seam: fn(string $method, string $url, array $body, string $pat): array|WP_Error.
 	 * @return array|\WP_Error Success payload or error.
@@ -2167,6 +2215,7 @@ class GitHubAbilities {
 		$pull_number       = (int) ( $input['pull_number'] ?? 0 );
 		$expected_head_sha = sanitize_text_field( $input['expected_head_sha'] ?? '' );
 		$merge_method      = sanitize_text_field( $input['merge_method'] ?? 'squash' );
+		$delete_branch     = ! empty( $input['delete_branch'] );
 
 		if ( empty( $repo ) || $pull_number <= 0 || '' === $expected_head_sha ) {
 			return new \WP_Error( 'missing_params', 'Repository, pull_number, and expected_head_sha are required.', array( 'status' => 400 ) );
@@ -2208,7 +2257,7 @@ class GitHubAbilities {
 
 		$data = is_array( $response['data'] ?? null ) ? $response['data'] : array();
 
-		return array(
+		$result = array(
 			'success'          => true,
 			'repo'             => $repo,
 			'pull_number'      => $pull_number,
@@ -2219,6 +2268,111 @@ class GitHubAbilities {
 			'pull_request_url' => (string) ( $pull['html_url'] ?? '' ),
 			'merge_method'     => $merge_method,
 		);
+
+		if ( $delete_branch && ! empty( $result['merged'] ) ) {
+			$result['cleanup'] = self::cleanupPullRequest(
+				array(
+					'repo'        => $repo,
+					'pull_number' => $pull_number,
+				),
+				static fn( string $url, array $query, string $credential ): array|\WP_Error => $api_get( $url, $query, $credential ),
+				static fn( string $method, string $url, ?array $body, string $credential ): array|\WP_Error => $api_request( $method, $url, $body, $credential )
+			);
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Delete a merged pull request head branch through the GitHub API.
+	 *
+	 * This intentionally does not use local git or `gh`, so it is safe to call
+	 * from a linked worktree where the base branch is already checked out in the
+	 * primary checkout.
+	 *
+	 * @param array         $input       Required: repo, pull_number. Optional: dry_run.
+	 * @param callable|null $api_get     Optional test seam: fn(string $url, array $query, string $pat): array|WP_Error.
+	 * @param callable|null $api_request Optional test seam: fn(string $method, string $url, ?array $body, string $pat): array|WP_Error.
+	 * @return array|\WP_Error Success payload or error.
+	 */
+	public static function cleanupPullRequest( array $input, ?callable $api_get = null, ?callable $api_request = null ): array|\WP_Error {
+		$repo        = sanitize_text_field( $input['repo'] ?? '' );
+		$pull_number = (int) ( $input['pull_number'] ?? 0 );
+		$dry_run     = ! empty( $input['dry_run'] );
+
+		if ( empty( $repo ) || $pull_number <= 0 ) {
+			return new \WP_Error( 'missing_params', 'Repository and pull_number are required.', array( 'status' => 400 ) );
+		}
+
+		$pat = self::getPatForRepo( $repo );
+		if ( empty( $pat ) ) {
+			return self::patError();
+		}
+
+		$api_get     = $api_get ?? array( self::class, 'apiGet' );
+		$api_request = $api_request ?? array( self::class, 'apiRequest' );
+		$pull_url    = sprintf( '%s/repos/%s/pulls/%d', self::API_BASE, $repo, $pull_number );
+
+		$pull_response = $api_get( $pull_url, array(), $pat );
+		if ( is_wp_error( $pull_response ) ) {
+			return $pull_response;
+		}
+
+		$pull        = is_array( $pull_response['data'] ?? null ) ? $pull_response['data'] : array();
+		$head_branch = sanitize_text_field( $pull['head']['ref'] ?? '' );
+		$head_repo   = sanitize_text_field( $pull['head']['repo']['full_name'] ?? '' );
+		$merged      = ! empty( $pull['merged_at'] );
+
+		if ( ! $merged ) {
+			return new \WP_Error( 'pull_request_not_merged', 'Pull request head branch cleanup requires a merged pull request.', array( 'status' => 409 ) );
+		}
+
+		if ( '' === $head_branch ) {
+			return new \WP_Error( 'pull_request_head_branch_missing', 'GitHub did not return a pull request head branch.', array( 'status' => 500 ) );
+		}
+
+		if ( '' !== $head_repo && $head_repo !== $repo ) {
+			return new \WP_Error( 'pull_request_head_repo_mismatch', 'Refusing to delete a pull request branch from a different repository.', array( 'status' => 409 ) );
+		}
+
+		if ( in_array( $head_branch, array( 'main', 'master', 'trunk', 'develop', 'HEAD' ), true ) ) {
+			return new \WP_Error( 'protected_head_branch', sprintf( 'Refusing to delete protected branch %s.', $head_branch ), array( 'status' => 409 ) );
+		}
+
+		$result = array(
+			'success'                => true,
+			'repo'                   => $repo,
+			'pull_number'            => $pull_number,
+			'head_branch'            => $head_branch,
+			'head_repo'              => '' !== $head_repo ? $head_repo : $repo,
+			'branch_deleted'         => false,
+			'branch_already_deleted' => false,
+			'dry_run'                => $dry_run,
+			'pull_request_url'       => (string) ( $pull['html_url'] ?? '' ),
+		);
+
+		if ( $dry_run ) {
+			$result['message'] = sprintf( 'Would delete branch %s from %s.', $head_branch, $repo );
+			return $result;
+		}
+
+		$encoded_head_branch = implode( '/', array_map( 'rawurlencode', explode( '/', $head_branch ) ) );
+		$delete_url          = sprintf( '%s/repos/%s/git/refs/heads/%s', self::API_BASE, $repo, $encoded_head_branch );
+		$deleted    = $api_request( 'DELETE', $delete_url, null, $pat );
+		if ( is_wp_error( $deleted ) ) {
+			$status = is_array( $deleted->get_error_data() ) ? (int) ( $deleted->get_error_data()['status'] ?? 0 ) : 0;
+			if ( 404 !== $status ) {
+				return $deleted;
+			}
+
+			$result['branch_already_deleted'] = true;
+			$result['message']                = sprintf( 'Branch %s was already deleted from %s.', $head_branch, $repo );
+			return $result;
+		}
+
+		$result['branch_deleted'] = true;
+		$result['message']        = sprintf( 'Deleted branch %s from %s.', $head_branch, $repo );
+		return $result;
 	}
 
 	/**
