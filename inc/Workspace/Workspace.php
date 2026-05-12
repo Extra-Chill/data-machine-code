@@ -6951,6 +6951,7 @@ class Workspace {
 			'default_ref'      => null,
 			'commits_outside_default' => null,
 			'upstream_equivalence' => null,
+			'probe_timings_ms' => array(),
 			'suggested_action' => 'insufficient_signal',
 			'reason'           => 'not enough evidence gathered',
 		);
@@ -6961,14 +6962,14 @@ class Workspace {
 			return $out;
 		}
 
-		$dirty = $this->probe_worktree_dirty_count( $path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		$dirty = $this->time_worktree_probe( $out['probe_timings_ms'], 'dirty_count', fn() => $this->probe_worktree_dirty_count( $path, self::CLEANUP_GIT_PROBE_TIMEOUT ) );
 		if ( is_wp_error( $dirty ) ) {
 			$out['dirty_error'] = $dirty->get_error_message();
 		} else {
 			$out['dirty'] = (int) $dirty;
 		}
 
-		$unpushed = $this->count_unpushed_commits( $path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		$unpushed = $this->time_worktree_probe( $out['probe_timings_ms'], 'unpushed_count', fn() => $this->count_unpushed_commits( $path, self::CLEANUP_GIT_PROBE_TIMEOUT ) );
 		if ( is_wp_error( $unpushed ) ) {
 			$out['unpushed_error'] = $unpushed->get_error_message();
 		} else {
@@ -6976,29 +6977,29 @@ class Workspace {
 		}
 
 		$remote_ref = 'refs/remotes/origin/' . $branch;
-		$remote     = $this->run_git( $primary_path, sprintf( 'rev-parse --verify --quiet %s', escapeshellarg( $remote_ref ) ), self::CLEANUP_GIT_PROBE_TIMEOUT );
+		$remote     = $this->time_worktree_probe( $out['probe_timings_ms'], 'remote_tracking', fn() => $this->run_git( $primary_path, sprintf( 'rev-parse --verify --quiet %s', escapeshellarg( $remote_ref ) ), self::CLEANUP_GIT_PROBE_TIMEOUT ) );
 		$out['remote_tracking'] = ! is_wp_error( $remote ) && ! $this->is_git_timeout_error( $remote );
 
-		$default_ref = $this->resolve_remote_default_ref( $primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		$default_ref = $this->time_worktree_probe( $out['probe_timings_ms'], 'default_ref', fn() => $this->resolve_remote_default_ref( $primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT ) );
 		if ( is_string( $default_ref ) && '' !== $default_ref ) {
 			$out['default_ref'] = $default_ref;
-			$outside = $this->run_git(
+			$outside = $this->time_worktree_probe( $out['probe_timings_ms'], 'commits_outside_default', fn() => $this->run_git(
 				$primary_path,
 				sprintf( 'rev-list --count %s..%s', escapeshellarg( $default_ref ), escapeshellarg( 'refs/heads/' . $branch ) ),
 				self::CLEANUP_GIT_PROBE_TIMEOUT
-			);
+			) );
 			if ( ! is_wp_error( $outside ) && ! $this->is_git_timeout_error( $outside ) ) {
 				$out['commits_outside_default'] = (int) trim( (string) ( $outside['output'] ?? '' ) );
 			}
 
 			if ( (int) ( $out['dirty'] ?? 0 ) > 0 || (int) ( $out['unpushed'] ?? 0 ) > 0 ) {
-				$out['upstream_equivalence'] = $this->build_dirty_unpushed_upstream_equivalence_evidence( $primary_path, $path, $default_ref );
+				$out['upstream_equivalence'] = $this->time_worktree_probe( $out['probe_timings_ms'], 'upstream_equivalence', fn() => $this->build_dirty_unpushed_upstream_equivalence_evidence( $primary_path, $path, $default_ref ) );
 			}
 		}
 
-		$slug = $this->resolve_github_slug( $primary_path );
+		$slug = $this->time_worktree_probe( $out['probe_timings_ms'], 'github_slug', fn() => $this->resolve_github_slug( $primary_path ) );
 		if ( null !== $slug ) {
-			$pr = $this->find_pr_for_branch_direct( $slug, $branch, $github_cache, false );
+			$pr = $this->time_worktree_probe( $out['probe_timings_ms'], 'github_pr_lookup', fn() => $this->find_pr_for_branch_direct( $slug, $branch, $github_cache, false ) );
 			if ( is_wp_error( $pr ) ) {
 				$out['pr_error'] = $pr->get_error_message();
 			} elseif ( is_array( $pr ) ) {
@@ -7010,6 +7011,21 @@ class Workspace {
 		$out['reason']           = $this->describe_active_no_signal_action( $out );
 
 		return $out;
+	}
+
+	/**
+	 * Time one worktree probe and record elapsed milliseconds by label.
+	 *
+	 * @param array<string,int> $timings Timing accumulator.
+	 * @param string            $label   Probe label.
+	 * @param callable          $callback Probe callback.
+	 * @return mixed
+	 */
+	private function time_worktree_probe( array &$timings, string $label, callable $callback ): mixed {
+		$started = microtime( true );
+		$result  = $callback();
+		$timings[ $label ] = (int) round( ( microtime( true ) - $started ) * 1000 );
+		return $result;
 	}
 
 	/**
@@ -7049,9 +7065,10 @@ class Workspace {
 				'unknown'              => 0,
 				'samples'              => array(),
 			),
+			'probe_timings_ms' => array(),
 		);
 
-		$cherry = $this->run_git( $wt_path, sprintf( 'cherry %s HEAD', escapeshellarg( $default_ref ) ), self::CLEANUP_GIT_PROBE_TIMEOUT );
+		$cherry = $this->time_worktree_probe( $evidence['probe_timings_ms'], 'git_cherry', fn() => $this->run_git( $wt_path, sprintf( 'cherry %s HEAD', escapeshellarg( $default_ref ) ), self::CLEANUP_GIT_PROBE_TIMEOUT ) );
 		if ( ! is_wp_error( $cherry ) && ! $this->is_git_timeout_error( $cherry ) ) {
 			$lines = array_values( array_filter( array_map( 'trim', explode( "\n", (string) ( $cherry['output'] ?? '' ) ) ) ) );
 			foreach ( $lines as $line ) {
@@ -7066,13 +7083,13 @@ class Workspace {
 			$evidence['unpushed_patch_equivalent'] = 0 === (int) $evidence['unpushed_cherry']['unmatched'] && 0 === (int) $evidence['unpushed_cherry']['unknown'];
 		}
 
-		$tracked = $this->run_git( $wt_path, 'diff --name-only HEAD', self::CLEANUP_GIT_PROBE_TIMEOUT );
+		$tracked = $this->time_worktree_probe( $evidence['probe_timings_ms'], 'tracked_dirty_paths', fn() => $this->run_git( $wt_path, 'diff --name-only HEAD', self::CLEANUP_GIT_PROBE_TIMEOUT ) );
 		$paths   = array();
 		if ( ! is_wp_error( $tracked ) && ! $this->is_git_timeout_error( $tracked ) ) {
 			$paths = array_merge( $paths, array_values( array_filter( array_map( 'trim', explode( "\n", (string) ( $tracked['output'] ?? '' ) ) ) ) ) );
 		}
 
-		$untracked = $this->run_git( $wt_path, 'ls-files --others --exclude-standard', self::CLEANUP_GIT_PROBE_TIMEOUT );
+		$untracked = $this->time_worktree_probe( $evidence['probe_timings_ms'], 'untracked_paths', fn() => $this->run_git( $wt_path, 'ls-files --others --exclude-standard', self::CLEANUP_GIT_PROBE_TIMEOUT ) );
 		if ( ! is_wp_error( $untracked ) && ! $this->is_git_timeout_error( $untracked ) ) {
 			foreach ( array_values( array_filter( array_map( 'trim', explode( "\n", (string) ( $untracked['output'] ?? '' ) ) ) ) ) as $path ) {
 				$paths[] = $path;
@@ -7086,6 +7103,7 @@ class Workspace {
 		$evidence['dirty_paths']['inspected'] = count( $inspect_paths );
 		$evidence['path_inspection_truncated'] = count( $paths ) > count( $inspect_paths );
 
+		$classification_started = microtime( true );
 		foreach ( $inspect_paths as $path ) {
 			$classification = $this->classify_dirty_path_against_default( $primary_path, $wt_path, $default_ref, $path );
 			$bucket = $classification['bucket'];
@@ -7104,6 +7122,7 @@ class Workspace {
 				$evidence['dirty_paths']['samples'][] = $classification;
 			}
 		}
+		$evidence['probe_timings_ms']['dirty_path_classification'] = (int) round( ( microtime( true ) - $classification_started ) * 1000 );
 
 		$evidence['effective_status'] = $this->classify_dirty_unpushed_effective_status( $evidence );
 
