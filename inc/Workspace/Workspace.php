@@ -2499,7 +2499,14 @@ class Workspace {
 			);
 		}
 
-		$listing = $this->worktree_list();
+		$listing = $this->worktree_list(
+			null,
+			null,
+			array(
+				'include_status' => false,
+				'include_disk'   => false,
+			)
+		);
 		if ( $listing instanceof \WP_Error ) {
 			return $listing;
 		}
@@ -2517,7 +2524,8 @@ class Workspace {
 
 		$this->emit_worktree_cleanup_progress( $progress, 'start', '', $checked, $total_worktrees, $candidates, $skipped, $removed_count, $started_at );
 
-		// Fetch + prune each primary once up-front so upstream-gone signals are fresh.
+		// Fetch + prune each primary once per repo, but keep status/disk probes inside
+		// the row loop so budgeted dry-runs can return partial evidence promptly.
 		$fetched = array();
 		$fetch_timeouts = array();
 
@@ -2553,8 +2561,6 @@ class Workspace {
 				), $disk_fields );
 				continue;
 			}
-
-			$dirty_count = (int) ( $wt['dirty'] ?? 0 );
 
 			++$checked;
 			$this->emit_worktree_cleanup_progress( $progress, 'checking', (string) $handle, $checked, $total_worktrees, $candidates, $skipped, $removed_count, $started_at );
@@ -2600,6 +2606,13 @@ class Workspace {
 				), $disk_fields );
 				continue;
 			}
+
+			$dirty_probe = $this->probe_worktree_dirty_count( $wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+			if ( is_wp_error( $dirty_probe ) ) {
+				$skipped[] = $this->build_worktree_probe_timeout_skip( $handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $dirty_probe );
+				continue;
+			}
+			$dirty_count = (int) $dirty_probe;
 
 			if ( $dirty_count > 0 && ! $force ) {
 				// Before falling through to the generic dirty_worktree skip, try to
