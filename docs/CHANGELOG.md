@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.37.0] - 2026-05-11
+
+### Added
+- diagnose dirty worktree upstream equivalence
+
 ## [0.36.0] - 2026-05-11
 
 ### Added
