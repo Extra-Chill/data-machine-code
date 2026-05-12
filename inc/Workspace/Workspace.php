@@ -408,14 +408,17 @@ class Workspace {
 	/**
 	 * List repositories in the workspace.
 	 *
+	 * @param string|null $repo Optional primary repository name to include.
 	 * @return array{success: bool, repos: array, path: string}|\WP_Error
 	 */
-	public function list_repos(): array|\WP_Error {
+	public function list_repos( ?string $repo = null ): array|\WP_Error {
 		$path    = $this->workspace_path;
 		$visible = $this->require_workspace_visible();
 		if ( null !== $visible ) {
 			return $visible;
 		}
+
+		$repo_filter = null !== $repo && '' !== trim( $repo ) ? $this->parse_handle( $repo )['repo'] : null;
 
 		if ( ! is_dir( $path ) ) {
 			return array(
@@ -442,6 +445,10 @@ class Workspace {
 			$is_git   = is_dir( $git_path ) || is_file( $git_path );
 			$is_wt    = is_file( $git_path );
 			$parsed   = $this->parse_handle( $entry );
+
+			if ( null !== $repo_filter && $parsed['repo'] !== $repo_filter ) {
+				continue;
+			}
 
 			$repo_info = array(
 				'name'        => $entry,

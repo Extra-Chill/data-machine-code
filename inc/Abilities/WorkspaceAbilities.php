@@ -86,7 +86,12 @@ class WorkspaceAbilities {
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
-						'properties' => array(),
+						'properties' => array(
+							'repo' => array(
+								'type'        => 'string',
+								'description' => 'Optional primary repository name to filter by. Includes the primary checkout and its worktrees.',
+							),
+						),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -2004,9 +2009,10 @@ class WorkspaceAbilities {
 	 * @param array $input Input parameters.
 	 * @return array Result.
 	 */
-	public static function listRepos( array $input ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+	public static function listRepos( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
-		return $workspace->list_repos();
+		$repo      = isset( $input['repo'] ) ? (string) $input['repo'] : null;
+		return $workspace->list_repos( $repo );
 	}
 
 	/**

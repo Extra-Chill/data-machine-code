@@ -87,6 +87,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * ## OPTIONS
 	 *
+	 * [--repo=<repo>]
+	 * : Filter by primary repository name. Includes the primary checkout and its worktrees.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -106,6 +109,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # List as JSON
 	 *     wp datamachine-code workspace list --format=json
 	 *
+	 *     # List one primary checkout and its worktrees
+	 *     wp datamachine-code workspace list --repo=homeboy
+	 *
 	 * @subcommand list
 	 */
 	public function list_repos( array $args, array $assoc_args ): void {
@@ -115,7 +121,12 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$result = $ability->execute( array() );
+		$input = array();
+		if ( isset( $assoc_args['repo'] ) ) {
+			$input['repo'] = (string) $assoc_args['repo'];
+		}
+
+		$result = $ability->execute( $input );
 
 		if ( is_wp_error( $result ) ) {
 			WP_CLI::error( $result->get_error_message() );
@@ -123,6 +134,11 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( empty( $result['repos'] ) ) {
+			if ( isset( $assoc_args['repo'] ) ) {
+				WP_CLI::log( sprintf( 'No repos matching "%s" in workspace (%s).', (string) $assoc_args['repo'], $result['path'] ?? '' ) );
+				return;
+			}
+
 			WP_CLI::log( sprintf( 'No repos in workspace (%s).', $result['path'] ?? '' ) );
 			WP_CLI::log( 'Clone one with: wp datamachine-code workspace clone <url>' );
 			return;
