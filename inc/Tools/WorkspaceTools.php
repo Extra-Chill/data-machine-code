@@ -167,14 +167,19 @@ class WorkspaceTools extends BaseTool {
 	 *
 	 * @return array
 	 */
-	public function handleList(): array {
+	public function handleList( array $parameters = array() ): array {
 		$ability = wp_get_ability( 'datamachine/workspace-list' );
 
 		if ( ! $ability ) {
 			return $this->buildErrorResponse( 'Workspace list ability not available.', 'workspace_list' );
 		}
 
-		$result = $ability->execute( array() );
+		$input = array();
+		if ( isset( $parameters['repo'] ) ) {
+			$input['repo'] = (string) $parameters['repo'];
+		}
+
+		$result = $ability->execute( $input );
 
 		if ( is_wp_error( $result ) ) {
 			return $this->buildErrorResponse( $result->get_error_message(), 'workspace_list' );
@@ -580,7 +585,12 @@ class WorkspaceTools extends BaseTool {
 			'description' => 'List repositories currently present in the Data Machine workspace.',
 			'parameters'  => array(
 				'type'       => 'object',
-				'properties' => array(),
+				'properties' => array(
+					'repo' => array(
+						'type'        => 'string',
+						'description' => 'Optional primary repository name to filter by. Includes the primary checkout and its worktrees.',
+					),
+				),
 				'required'   => array(),
 			),
 		) );
