@@ -6950,8 +6950,9 @@ class Workspace {
 		$evidence['path_inspection_truncated'] = count( $paths ) > count( $inspect_paths );
 
 		$classification_started = microtime( true );
+		$classifications = $this->classify_dirty_paths_against_default( $primary_path, $wt_path, $default_ref, $inspect_paths );
 		foreach ( $inspect_paths as $path ) {
-			$classification = $this->classify_dirty_path_against_default( $primary_path, $wt_path, $default_ref, $path );
+			$classification = $classifications[ $path ] ?? $this->classify_dirty_path_against_default( $primary_path, $wt_path, $default_ref, $path );
 			$bucket = $classification['bucket'];
 			if ( isset( $evidence['dirty_paths'][ $bucket ] ) ) {
 				++$evidence['dirty_paths'][ $bucket ];
@@ -6973,6 +6974,52 @@ class Workspace {
 		$evidence['effective_status'] = $this->classify_dirty_unpushed_effective_status( $evidence );
 
 		return $evidence;
+	}
+
+	/**
+	 * Classify dirty paths against the remote default branch with batched git probes.
+	 *
+	 * @param string            $primary_path Primary checkout path.
+	 * @param string            $wt_path      Worktree path.
+	 * @param string            $default_ref  Remote default ref.
+	 * @param array<int,string> $paths        Repository-relative paths.
+	 * @return array<string,array<string,string>> Classifications keyed by path.
+	 */
+	private function classify_dirty_paths_against_default( string $primary_path, string $wt_path, string $default_ref, array $paths ): array {
+		$paths = array_values( array_unique( array_filter( array_map( 'strval', $paths ), fn( $path ) => '' !== $path ) ) );
+		if ( array() === $paths ) {
+			return array();
+		}
+
+		$path_args = implode( ' ', array_map( 'escapeshellarg', $paths ) );
+		$existing = $this->run_git( $primary_path, sprintf( 'ls-tree -r --name-only %s -- %s', escapeshellarg( $default_ref ), $path_args ), self::CLEANUP_GIT_PROBE_TIMEOUT );
+		$changed  = $this->run_git( $wt_path, sprintf( 'diff --name-only %s -- %s', escapeshellarg( $default_ref ), $path_args ), self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( is_wp_error( $existing ) || is_wp_error( $changed ) || $this->is_git_timeout_error( $existing ) || $this->is_git_timeout_error( $changed ) ) {
+			return array();
+		}
+
+		$existing_set = array_fill_keys( array_values( array_filter( array_map( 'trim', explode( "\n", (string) ( $existing['output'] ?? '' ) ) ) ) ), true );
+		$changed_set  = array_fill_keys( array_values( array_filter( array_map( 'trim', explode( "\n", (string) ( $changed['output'] ?? '' ) ) ) ) ), true );
+		$out          = array();
+		foreach ( $paths as $path ) {
+			$kind = $this->is_generated_or_artifact_path( $path ) ? 'generated_or_artifact' : 'source_like';
+			if ( ! isset( $existing_set[ $path ] ) ) {
+				$out[ $path ] = array(
+					'path'   => $path,
+					'bucket' => 'absent_on_default',
+					'kind'   => $kind,
+				);
+				continue;
+			}
+
+			$out[ $path ] = array(
+				'path'   => $path,
+				'bucket' => isset( $changed_set[ $path ] ) ? 'different_from_default' : 'identical_to_default',
+				'kind'   => $kind,
+			);
+		}
+
+		return $out;
 	}
 
 	/**
