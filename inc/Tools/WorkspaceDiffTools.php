@@ -8,6 +8,7 @@
 namespace DataMachineCode\Tools;
 
 use DataMachine\Engine\AI\Tools\BaseTool;
+use DataMachineCode\Workspace\WorkspaceAliasResolver;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -132,6 +133,13 @@ class WorkspaceDiffTools extends BaseTool {
 			}
 		}
 
+		if ( is_string( $input['name'] ) && WorkspaceAliasResolver::has_alias( $input['name'] ) ) {
+			$alias                    = $input['name'];
+			$input['name']            = WorkspaceAliasResolver::resolve( $alias );
+			$input['_workspace_alias'] = $alias;
+			$input['_workspace_handle'] = $input['name'];
+		}
+
 		return $input;
 	}
 
@@ -142,9 +150,16 @@ class WorkspaceDiffTools extends BaseTool {
 			return $this->buildErrorResponse( "{$tool_name} ability not available.", $tool_name );
 		}
 
-		$result = $ability->execute( $this->normalizeInput( $parameters ) );
+		$input  = $this->normalizeInput( $parameters );
+		$result = $ability->execute( $input );
 		if ( is_wp_error( $result ) ) {
 			return $this->buildErrorResponse( $result->get_error_message(), $tool_name );
+		}
+
+		$alias  = isset( $input['_workspace_alias'] ) ? (string) $input['_workspace_alias'] : '';
+		$handle = isset( $input['_workspace_handle'] ) ? (string) $input['_workspace_handle'] : '';
+		if ( '' !== $alias && '' !== $handle ) {
+			$result = WorkspaceAliasResolver::sanitize_result( $result, $alias, $handle );
 		}
 
 		return array(
