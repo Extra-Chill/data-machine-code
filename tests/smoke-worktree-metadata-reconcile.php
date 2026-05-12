@@ -524,6 +524,8 @@ namespace {
 	$assert( true, isset( $active_report['summary']['slow_rows'][0]['elapsed_ms'] ), 'active/no-signal summary includes slow row timing samples' );
 	$assert( true, isset( $active_rows['demo@dirty-active']['probe_timings_ms']['dirty_count'] ), 'active/no-signal rows include dirty probe timing' );
 	$assert( true, isset( $active_rows['demo@dirty-active']['probe_timings_ms']['upstream_equivalence'] ), 'active/no-signal rows include upstream equivalence probe timing' );
+	$assert( 'dirty_or_unpushed_rows_are_always_manual_review', $active_rows['demo@dirty-active']['pr_lookup_skipped'] ?? '', 'dirty active/no-signal rows skip GitHub PR lookup' );
+	$assert( false, isset( $active_rows['demo@dirty-active']['probe_timings_ms']['github_pr_lookup'] ), 'dirty active/no-signal rows do not spend time on GitHub PR lookup' );
 	$assert( true, isset( $active_rows['demo@dirty-active']['upstream_equivalence']['probe_timings_ms']['git_cherry'] ), 'upstream equivalence includes git cherry probe timing' );
 	$assert( true, isset( $active_rows['demo@dirty-active']['upstream_equivalence']['probe_timings_ms']['dirty_path_classification'] ), 'upstream equivalence includes dirty path classification timing' );
 	$assert( true, (int) ( $active_rows['demo@dirty-active']['upstream_equivalence']['dirty_paths']['inspected'] ?? 0 ) >= 1, 'batched dirty path classification preserves inspected path count' );

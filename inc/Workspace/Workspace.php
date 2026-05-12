@@ -5647,13 +5647,17 @@ class Workspace {
 			}
 		}
 
-		$slug = $this->time_worktree_probe( $out['probe_timings_ms'], 'github_slug', fn() => $this->resolve_github_slug( $primary_path ) );
-		if ( null !== $slug ) {
-			$pr = $this->time_worktree_probe( $out['probe_timings_ms'], 'github_pr_lookup', fn() => $this->find_pr_for_branch_direct( $slug, $branch, $github_cache, false ) );
-			if ( is_wp_error( $pr ) ) {
-				$out['pr_error'] = $pr->get_error_message();
-			} elseif ( is_array( $pr ) ) {
-				$out['pr'] = $pr;
+		if ( (int) ( $out['dirty'] ?? 0 ) > 0 || (int) ( $out['unpushed'] ?? 0 ) > 0 ) {
+			$out['pr_lookup_skipped'] = 'dirty_or_unpushed_rows_are_always_manual_review';
+		} else {
+			$slug = $this->time_worktree_probe( $out['probe_timings_ms'], 'github_slug', fn() => $this->resolve_github_slug( $primary_path ) );
+			if ( null !== $slug ) {
+				$pr = $this->time_worktree_probe( $out['probe_timings_ms'], 'github_pr_lookup', fn() => $this->find_pr_for_branch_direct( $slug, $branch, $github_cache, false ) );
+				if ( is_wp_error( $pr ) ) {
+					$out['pr_error'] = $pr->get_error_message();
+				} elseif ( is_array( $pr ) ) {
+					$out['pr'] = $pr;
+				}
 			}
 		}
 
