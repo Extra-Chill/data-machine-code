@@ -213,13 +213,34 @@ namespace {
 
 	// Real worktree-backed branches that simulate the canonical states the
 	// bounded cleanup-eligible apply must handle.
-	foreach ( array( 'eligible-clean', 'eligible-dirty', 'eligible-unpushed', 'eligible-bounded-extra-1', 'eligible-bounded-extra-2', 'eligible-bounded-extra-3', 'repaired-metadata-clean', 'repaired-metadata-dirty', 'repaired-metadata-recent' ) as $b ) {
+	foreach (
+		array(
+			'eligible-clean',
+			'eligible-dirty',
+			'eligible-unpushed',
+			'eligible-submodule',
+			'eligible-bounded-extra-1',
+			'eligible-bounded-extra-2',
+			'eligible-bounded-extra-3',
+			'repaired-metadata-clean',
+			'repaired-metadata-dirty',
+			'repaired-metadata-recent',
+		) as $b
+	) {
 		$make_branch( $b );
 	}
+	$run( 'git checkout eligible-submodule', $primary );
+	file_put_contents(
+		$primary . '/.gitmodules',
+		"[submodule \"fixture\"]\n\tpath = fixture\n\turl = https://example.com/fixture.git\n"
+	);
+	$run( 'git add .gitmodules && git commit -m "add submodule declaration" && git push', $primary );
+	$run( 'git checkout main', $primary );
 
 	$run( sprintf( 'git worktree add %s eligible-clean', escapeshellarg( $tmp . '/demo@eligible-clean' ) ), $primary );
 	$run( sprintf( 'git worktree add %s eligible-dirty', escapeshellarg( $tmp . '/demo@eligible-dirty' ) ), $primary );
 	$run( sprintf( 'git worktree add %s eligible-unpushed', escapeshellarg( $tmp . '/demo@eligible-unpushed' ) ), $primary );
+	$run( sprintf( 'git worktree add %s eligible-submodule', escapeshellarg( $tmp . '/demo@eligible-submodule' ) ), $primary );
 	$run( sprintf( 'git worktree add %s eligible-bounded-extra-1', escapeshellarg( $tmp . '/demo@eligible-bounded-extra-1' ) ), $primary );
 	$run( sprintf( 'git worktree add %s eligible-bounded-extra-2', escapeshellarg( $tmp . '/demo@eligible-bounded-extra-2' ) ), $primary );
 	$run( sprintf( 'git worktree add %s eligible-bounded-extra-3', escapeshellarg( $tmp . '/demo@eligible-bounded-extra-3' ) ), $primary );
@@ -234,6 +255,7 @@ namespace {
 			'demo@eligible-clean',
 			'demo@eligible-dirty',
 			'demo@eligible-unpushed',
+			'demo@eligible-submodule',
 			'demo@eligible-bounded-extra-1',
 			'demo@eligible-bounded-extra-2',
 			'demo@eligible-bounded-extra-3',
@@ -312,6 +334,7 @@ namespace {
 	$remaining = (int) ( $dry['continuation']['remaining_total'] ?? 0 );
 	$assert( true, $remaining >= 4, 'continuation reports remaining cleanup-eligible candidates' );
 	$assert_skipped( $dry['skipped'] ?? array(), 'demo@repaired-metadata-clean', 'active_no_signal', 'repaired metadata rows require explicit include flag' );
+	$assert_skipped( $dry['skipped'] ?? array(), 'demo@eligible-submodule', 'submodule_worktree', 'submodule worktree is skipped before planning removal' );
 
 	$repaired_dry = $ws->worktree_bounded_cleanup_eligible_apply( array( 'dry_run' => true, 'limit' => 20, 'include_repaired_metadata' => true, 'older_than' => '24h' ) );
 	$assert( true, ! is_wp_error( $repaired_dry ) && ( $repaired_dry['success'] ?? false ), 'repaired-metadata dry-run returns success' );
@@ -347,6 +370,7 @@ namespace {
 
 	$assert_skipped( $apply['skipped'] ?? array(), 'demo@eligible-dirty', 'dirty_worktree', 'dirty worktree skipped on revalidation' );
 	$assert_skipped( $apply['skipped'] ?? array(), 'demo@eligible-unpushed', 'unpushed_commits', 'unpushed worktree skipped on revalidation' );
+	$assert_skipped( $apply['skipped'] ?? array(), 'demo@eligible-submodule', 'submodule_worktree', 'submodule worktree skipped with stable reason on apply' );
 	$assert_skipped( $apply['skipped'] ?? array(), 'demo@no-metadata', 'needs_metadata_reconcile', 'missing-metadata row skipped via inventory gate' );
 	$assert_skipped( $apply['skipped'] ?? array(), 'demo@active-row', 'active_no_signal', 'active row skipped via inventory gate' );
 	$assert_skipped( $apply['skipped'] ?? array(), 'demo@repaired-metadata-clean', 'active_no_signal', 'repaired metadata row skipped without explicit flag on apply' );
@@ -355,6 +379,7 @@ namespace {
 	$assert( false, is_dir( $tmp . '/demo@eligible-clean' ), 'clean cleanup-eligible directory removed from disk' );
 	$assert( true, is_dir( $tmp . '/demo@eligible-dirty' ), 'dirty cleanup-eligible directory survives bounded cleanup-eligible apply' );
 	$assert( true, is_dir( $tmp . '/demo@eligible-unpushed' ), 'unpushed cleanup-eligible directory survives bounded cleanup-eligible apply' );
+	$assert( true, is_dir( $tmp . '/demo@eligible-submodule' ), 'submodule cleanup-eligible directory survives bounded cleanup-eligible apply' );
 
 	$summary = (array) ( $apply['summary'] ?? array() );
 	$assert( true, (int) ( $summary['removed'] ?? 0 ) >= 4, 'summary records removed count' );
