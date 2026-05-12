@@ -347,6 +347,9 @@ namespace {
 	$make_branch( 'dirty-merged' );
 	$make_branch( 'unpushed-merged' );
 	$make_branch( 'external-branch' );
+	$run( 'git checkout -b equivalent-clean', $primary );
+	$run( 'git push -u origin equivalent-clean', $primary );
+	$run( 'git checkout main', $primary );
 
 	$run( sprintf( 'git worktree add %s unmanaged-missing', escapeshellarg( $tmp . '/demo@unmanaged-missing' ) ), $primary );
 	$run( sprintf( 'git worktree add %s unmanaged-partial', escapeshellarg( $tmp . '/demo@unmanaged-partial' ) ), $primary );
@@ -360,6 +363,7 @@ namespace {
 	$run( sprintf( 'git worktree add %s upstream-gone', escapeshellarg( $tmp . '/demo@upstream-gone' ) ), $primary );
 	$run( sprintf( 'git worktree add %s dirty-merged', escapeshellarg( $tmp . '/demo@dirty-merged' ) ), $primary );
 	$run( sprintf( 'git worktree add %s unpushed-merged', escapeshellarg( $tmp . '/demo@unpushed-merged' ) ), $primary );
+	$run( sprintf( 'git worktree add %s equivalent-clean', escapeshellarg( $tmp . '/demo@equivalent-clean' ) ), $primary );
 	mkdir( $tmp . '-external', 0755, true );
 	$run( sprintf( 'git worktree add %s external-branch', escapeshellarg( $tmp . '-external/demo-external' ) ), $primary );
 	file_put_contents( $tmp . '/demo@unmanaged-dirty/scratch.txt', 'dirty' );
@@ -367,6 +371,10 @@ namespace {
 	file_put_contents( $tmp . '/demo@dirty-merged/scratch.txt', 'dirty' );
 	file_put_contents( $tmp . '/demo@unpushed-merged/local.txt', 'local' );
 	$run( 'git add local.txt && git commit -m local-unpushed', $tmp . '/demo@unpushed-merged' );
+	file_put_contents( $tmp . '/demo@equivalent-clean/equivalent.txt', 'equivalent' );
+	$run( 'git add equivalent.txt && git commit -m equivalent-local', $tmp . '/demo@equivalent-clean' );
+	file_put_contents( $primary . '/equivalent.txt', 'equivalent' );
+	$run( 'git add equivalent.txt && git commit -m equivalent-local && git push origin main', $primary );
 	$run( sprintf( 'git --git-dir=%s update-ref -d refs/heads/upstream-gone', escapeshellarg( $remote ) ) );
 	$run( sprintf( 'git --git-dir=%s update-ref -d refs/heads/dirty-merged', escapeshellarg( $remote ) ) );
 
@@ -472,6 +480,18 @@ namespace {
 			'pr_repo'         => 'acme/demo',
 		)
 	);
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
+		'demo@equivalent-clean',
+		array(
+			'handle'          => 'demo@equivalent-clean',
+			'repo'            => 'demo',
+			'branch'          => 'equivalent-clean',
+			'path'            => $tmp . '/demo@equivalent-clean',
+			'created_at'      => '2026-04-01T00:00:00+00:00',
+			'observed_at'     => '2026-04-01T00:00:00+00:00',
+			'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
+		)
+	);
 	$ws = new \DataMachineCode\Workspace\Workspace();
 	$lookup_reflection = new \ReflectionMethod( $ws, 'find_closed_pr_for_branch' );
 	$lookup_cache = array( 'acme/demo' => array() );
@@ -481,7 +501,7 @@ namespace {
 	$assert( null, $open_pr, 'direct branch PR lookup does not finalize open PR branches' );
 
 	$run( 'git remote set-url origin https://github.com/acme/demo.git', $primary );
-	$active_report = $ws->worktree_active_no_signal_report( array( 'limit' => 20, 'offset' => 0 ) );
+	$active_report = $ws->worktree_active_no_signal_report( array( 'limit' => 50, 'offset' => 0 ) );
 	$run( sprintf( 'git remote set-url origin %s', escapeshellarg( $remote ) ), $primary );
 	$assert( true, ! is_wp_error( $active_report ) && ( $active_report['success'] ?? false ), 'active/no-signal report succeeds' );
 	$assert( true, (bool) ( $active_report['review_only'] ?? false ), 'active/no-signal report is review-only' );
@@ -499,8 +519,9 @@ namespace {
 	$assert( true, isset( $active_rows['demo@dirty-active']['upstream_equivalence']['effective_status'] ), 'dirty diagnostics include effective status' );
 	$assert( 250, (int) ( $active_rows['demo@dirty-active']['upstream_equivalence']['path_inspection_limit'] ?? 0 ), 'dirty diagnostics expose path inspection cap' );
 	$assert( true, isset( $active_rows['demo@dirty-active']['upstream_equivalence']['dirty_paths']['generated_or_artifact'] ), 'dirty diagnostics count generated/artifact paths' );
+	$assert( 'equivalent_clean', $active_rows['demo@equivalent-clean']['upstream_equivalence']['effective_status'] ?? '', 'dirty diagnostics classify patch-equivalent clean rows' );
 	$run( 'git remote set-url origin https://github.com/acme/demo.git', $primary );
-	$finalized_dry_run = $ws->worktree_active_no_signal_finalized_apply( array( 'dry_run' => true, 'limit' => 20, 'offset' => 0 ) );
+	$finalized_dry_run = $ws->worktree_active_no_signal_finalized_apply( array( 'dry_run' => true, 'limit' => 50, 'offset' => 0 ) );
 	$run( sprintf( 'git remote set-url origin %s', escapeshellarg( $remote ) ), $primary );
 	$assert( true, ! is_wp_error( $finalized_dry_run ) && ( $finalized_dry_run['success'] ?? false ), 'finalized active/no-signal dry-run succeeds' );
 	$assert( true, (bool) ( $finalized_dry_run['dry_run'] ?? false ), 'finalized active/no-signal dry-run does not write' );
@@ -514,7 +535,7 @@ namespace {
 	$assert( 7, (int) ( $plan['summary']['proposed'] ?? 0 ), 'dry-run proposes unmanaged rows and safe merged lifecycle finalizers' );
 	$assert( 0, (int) ( $plan['summary']['written'] ?? 0 ), 'dry-run writes nothing' );
 	$assert( 1, (int) ( $plan['summary']['skipped_by_reason']['external_worktree'] ?? 0 ), 'dry-run distinguishes external worktrees' );
-	$assert( 2, (int) ( $plan['summary']['skipped_by_reason']['unsafe_cleanup_eligible_state'] ?? 0 ), 'dry-run keeps dirty and unpushed merged worktrees out of auto-finalize proposals' );
+	$assert( 3, (int) ( $plan['summary']['skipped_by_reason']['unsafe_cleanup_eligible_state'] ?? 0 ), 'dry-run keeps dirty and unpushed merged worktrees out of auto-finalize proposals' );
 	$assert( 1, count( $plan['external_worktrees'] ?? array() ), 'dry-run exposes external worktree bucket' );
 
 	$by_handle = array();
@@ -618,17 +639,28 @@ namespace {
 
 	$inventory_after = $ws->worktree_cleanup_merged( array( 'dry_run' => true, 'inventory_only' => true, 'skip_github' => true ) );
 	$assert( 1, (int) ( $inventory_after['summary']['skipped_by_reason']['needs_metadata_reconcile'] ?? 0 ), 'inventory cleanup requires fewer metadata reconciliation passes after apply' );
-	$assert( 7, (int) ( $inventory_after['summary']['skipped_by_reason']['active_no_signal'] ?? 0 ), 'inventory cleanup treats reconciled active metadata like current active metadata' );
+	$assert( 8, (int) ( $inventory_after['summary']['skipped_by_reason']['active_no_signal'] ?? 0 ), 'inventory cleanup treats reconciled active metadata like current active metadata' );
 	$assert( false, isset( $inventory_after['summary']['repair_status'] ), 'inventory cleanup no longer exposes migration status' );
 
 	$run( 'git remote set-url origin https://github.com/acme/demo.git', $primary );
-	$finalized_apply = $ws->worktree_active_no_signal_finalized_apply( array( 'limit' => 20, 'offset' => 0 ) );
+	$finalized_apply = $ws->worktree_active_no_signal_finalized_apply( array( 'limit' => 50, 'offset' => 0 ) );
 	$run( sprintf( 'git remote set-url origin %s', escapeshellarg( $remote ) ), $primary );
 	$assert( true, ! is_wp_error( $finalized_apply ) && ( $finalized_apply['success'] ?? false ), 'finalized active/no-signal apply succeeds' );
 	$assert( 1, (int) ( $finalized_apply['summary']['written'] ?? 0 ), 'finalized active/no-signal apply writes merged PR metadata' );
 	$stored_head_merged = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@head-merged' );
 	$assert( 'cleanup_eligible', $stored_head_merged['lifecycle_state'] ?? '', 'finalized active/no-signal apply stores cleanup_eligible state' );
 	$assert( 'pr-merged', $stored_head_merged['cleanup_eligibility_evidence']['signal'] ?? '', 'finalized active/no-signal apply stores PR merge evidence' );
+
+	$equivalent_clean_dry_run = $ws->worktree_active_no_signal_equivalent_clean_apply( array( 'dry_run' => true, 'limit' => 50, 'offset' => 0 ) );
+	$assert( true, ! is_wp_error( $equivalent_clean_dry_run ) && ( $equivalent_clean_dry_run['success'] ?? false ), 'equivalent-clean active/no-signal dry-run succeeds' );
+	$assert( 1, (int) ( $equivalent_clean_dry_run['summary']['planned'] ?? 0 ), 'equivalent-clean dry-run plans only equivalent clean rows' );
+	$assert( '', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@equivalent-clean' )['cleanup_eligible_at'] ?? '', 'equivalent-clean dry-run leaves metadata unchanged' );
+	$equivalent_clean_apply = $ws->worktree_active_no_signal_equivalent_clean_apply( array( 'limit' => 50, 'offset' => 0 ) );
+	$assert( true, ! is_wp_error( $equivalent_clean_apply ) && ( $equivalent_clean_apply['success'] ?? false ), 'equivalent-clean active/no-signal apply succeeds' );
+	$assert( 1, (int) ( $equivalent_clean_apply['summary']['written'] ?? 0 ), 'equivalent-clean active/no-signal apply writes metadata' );
+	$stored_equivalent_clean = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@equivalent-clean' );
+	$assert( 'cleanup_eligible', $stored_equivalent_clean['lifecycle_state'] ?? '', 'equivalent-clean apply stores cleanup_eligible state' );
+	$assert( 'upstream-equivalent-clean', $stored_equivalent_clean['cleanup_eligibility_evidence']['signal'] ?? '', 'equivalent-clean apply stores upstream equivalence evidence' );
 
 	echo "\nSafety gates\n";
 	$stale_plan['proposals'][0]['branch'] = 'wrong-branch';

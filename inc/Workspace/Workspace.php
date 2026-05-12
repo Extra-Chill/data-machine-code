@@ -6491,6 +6491,99 @@ class Workspace {
 	}
 
 	/**
+	 * Promote effectively clean upstream-equivalent active/no-signal rows into cleanup metadata.
+	 *
+	 * This writes lifecycle metadata only. It never removes worktrees; callers use
+	 * bounded cleanup-eligible apply after reviewing the written rows.
+	 *
+	 * @param array<string,mixed> $opts Apply options.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function worktree_active_no_signal_equivalent_clean_apply( array $opts = array() ): array|\WP_Error {
+		$dry_run = ! empty( $opts['dry_run'] );
+		$report  = $this->worktree_active_no_signal_report( $opts );
+		if ( is_wp_error( $report ) ) {
+			return $report;
+		}
+
+		$written = array();
+		$skipped = array();
+		$planned = array();
+
+		foreach ( (array) ( $report['rows'] ?? array() ) as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+
+			$effective_status = (string) ( $row['upstream_equivalence']['effective_status'] ?? '' );
+			if ( 'equivalent_clean' !== $effective_status ) {
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip( $row, 'not_equivalent_clean', 'row is not effectively clean upstream-equivalent work' );
+				continue;
+			}
+
+			$metadata = $this->build_active_no_signal_equivalent_clean_metadata( $row );
+			if ( is_wp_error( $metadata ) ) {
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip( $row, $metadata->get_error_code(), $metadata->get_error_message() );
+				continue;
+			}
+
+			$planned[] = array(
+				'handle'               => (string) ( $row['handle'] ?? '' ),
+				'repo'                 => (string) ( $row['repo'] ?? '' ),
+				'branch'               => (string) ( $row['branch'] ?? '' ),
+				'path'                 => (string) ( $row['path'] ?? '' ),
+				'upstream_equivalence' => $metadata['cleanup_eligibility_evidence']['upstream_equivalence'] ?? null,
+				'metadata'             => $metadata,
+			);
+
+			if ( $dry_run ) {
+				continue;
+			}
+
+			$handle = (string) ( $row['handle'] ?? '' );
+			WorktreeContextInjector::store_lifecycle_metadata( $handle, $metadata );
+			$written[] = array(
+				'handle'   => $handle,
+				'repo'     => (string) ( $row['repo'] ?? '' ),
+				'branch'   => (string) ( $row['branch'] ?? '' ),
+				'path'     => (string) ( $row['path'] ?? '' ),
+				'metadata' => WorktreeContextInjector::get_metadata( $handle ),
+			);
+		}
+
+		$summary = array(
+			'inspected'            => (int) ( $report['summary']['inspected'] ?? 0 ),
+			'planned'              => count( $planned ),
+			'written'              => count( $written ),
+			'skipped'              => count( $skipped ),
+			'skipped_by_reason'    => array(),
+			'report_action_counts' => $report['summary']['by_suggested_action'] ?? array(),
+		);
+		foreach ( $skipped as $skip ) {
+			$reason = (string) ( $skip['reason_code'] ?? 'unknown' );
+			$summary['skipped_by_reason'][ $reason ] = (int) ( $summary['skipped_by_reason'][ $reason ] ?? 0 ) + 1;
+		}
+
+		return array(
+			'success'      => true,
+			'mode'         => 'active_no_signal_equivalent_clean_apply',
+			'dry_run'      => $dry_run,
+			'applied'      => ! $dry_run,
+			'destructive'  => false,
+			'generated_at' => gmdate( 'c' ),
+			'planned'      => $planned,
+			'written'      => $written,
+			'skipped'      => $skipped,
+			'summary'      => $summary,
+			'pagination'   => $report['pagination'] ?? array(),
+			'evidence'     => array(
+				'scope' => 'promote effectively clean upstream-equivalent active_no_signal rows into cleanup_eligible metadata',
+				'safety' => 'Revalidates upstream-equivalence evidence before writing metadata. Does not delete worktrees.',
+			),
+		);
+	}
+
+	/**
 	 * Build cleanup metadata from one finalized active/no-signal evidence row.
 	 *
 	 * @param array<string,mixed> $row Evidence row.
@@ -6579,6 +6672,103 @@ class Workspace {
 		);
 
 		return $metadata;
+	}
+
+	/**
+	 * Build cleanup metadata from one effectively clean upstream-equivalent row.
+	 *
+	 * @param array<string,mixed> $row Evidence row.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function build_active_no_signal_equivalent_clean_metadata( array $row ): array|\WP_Error {
+		$handle = (string) ( $row['handle'] ?? '' );
+		$repo   = (string) ( $row['repo'] ?? '' );
+		$branch = (string) ( $row['branch'] ?? '' );
+		$path   = (string) ( $row['path'] ?? '' );
+
+		foreach ( array( 'handle' => $handle, 'repo' => $repo, 'branch' => $branch, 'path' => $path ) as $field => $value ) {
+			if ( '' === $value ) {
+				return new \WP_Error( 'missing_identity', 'missing required identity field: ' . $field );
+			}
+		}
+		if ( ! is_dir( $path ) ) {
+			return new \WP_Error( 'missing_worktree', 'worktree path no longer exists' );
+		}
+
+		$equivalence = $this->build_current_effective_clean_cleanup_evidence( $repo, $path );
+		if ( is_wp_error( $equivalence ) ) {
+			return $equivalence;
+		}
+
+		$base_metadata = is_array( $row['metadata'] ?? null ) ? $row['metadata'] : array();
+		$metadata      = array_merge(
+			$base_metadata,
+			array(
+				'handle'       => $handle,
+				'repo'         => $repo,
+				'branch'       => $branch,
+				'path'         => $path,
+				'observed_at'  => gmdate( 'c' ),
+				'last_seen_at' => gmdate( 'c' ),
+			),
+			WorktreeContextInjector::build_finalizer_metadata( WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE )
+		);
+		$metadata['auto_finalized_by']            = 'active_no_signal_equivalent_clean_apply';
+		$metadata['auto_finalized_signal']        = 'upstream-equivalent-clean';
+		$metadata['auto_finalized_reason']        = 'active/no-signal report found patch-equivalent upstream work with no source-like dirty paths';
+		$metadata['cleanup_eligibility_evidence'] = array(
+			'signal'               => 'upstream-equivalent-clean',
+			'finalized_state'      => WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE,
+			'reason'               => 'unpushed commits are patch-equivalent to default and dirty paths are clean against default',
+			'detected_at'          => gmdate( 'c' ),
+			'dirty'                => (int) ( $equivalence['dirty'] ?? 0 ),
+			'unpushed'             => (int) ( $equivalence['unpushed'] ?? 0 ),
+			'upstream_equivalence' => $equivalence['upstream_equivalence'] ?? array(),
+		);
+
+		return $metadata;
+	}
+
+	/**
+	 * Recompute effective-clean evidence for the current worktree state.
+	 *
+	 * @param string $repo    Repository name.
+	 * @param string $wt_path Worktree path.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function build_current_effective_clean_cleanup_evidence( string $repo, string $wt_path ): array|\WP_Error {
+		$primary_path = $this->get_primary_path( $repo );
+		if ( ! is_dir( $primary_path . '/.git' ) ) {
+			return new \WP_Error( 'missing_primary', 'primary checkout missing' );
+		}
+
+		$dirty = $this->probe_worktree_dirty_count( $wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( is_wp_error( $dirty ) ) {
+			return $dirty;
+		}
+		$unpushed = $this->count_unpushed_commits( $wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( is_wp_error( $unpushed ) ) {
+			return $unpushed;
+		}
+		if ( 0 === (int) $dirty && 0 === (int) $unpushed ) {
+			return new \WP_Error( 'no_dirty_or_unpushed_signal', 'worktree no longer has dirty or unpushed evidence requiring upstream-equivalent cleanup handling' );
+		}
+
+		$default_ref = $this->resolve_remote_default_ref( $primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( ! is_string( $default_ref ) || '' === $default_ref ) {
+			return new \WP_Error( 'missing_default_ref', 'primary checkout default ref could not be resolved' );
+		}
+
+		$upstream_equivalence = $this->build_dirty_unpushed_upstream_equivalence_evidence( $primary_path, $wt_path, $default_ref );
+		if ( 'equivalent_clean' !== (string) ( $upstream_equivalence['effective_status'] ?? '' ) ) {
+			return new \WP_Error( 'not_equivalent_clean', 'current worktree evidence is not effectively clean upstream-equivalent' );
+		}
+
+		return array(
+			'dirty'                => (int) $dirty,
+			'unpushed'             => (int) $unpushed,
+			'upstream_equivalence' => $upstream_equivalence,
+		);
 	}
 
 	/**
@@ -6744,9 +6934,7 @@ class Workspace {
 					++$evidence['unpushed_cherry']['unknown'];
 				}
 			}
-			if ( count( $lines ) > 0 ) {
-				$evidence['unpushed_patch_equivalent'] = 0 === (int) $evidence['unpushed_cherry']['unmatched'] && 0 === (int) $evidence['unpushed_cherry']['unknown'];
-			}
+			$evidence['unpushed_patch_equivalent'] = 0 === (int) $evidence['unpushed_cherry']['unmatched'] && 0 === (int) $evidence['unpushed_cherry']['unknown'];
 		}
 
 		$tracked = $this->run_git( $wt_path, 'diff --name-only HEAD', self::CLEANUP_GIT_PROBE_TIMEOUT );
@@ -7065,6 +7253,20 @@ class Workspace {
 			);
 		}
 
+		$primary_path = $this->get_primary_path( $repo );
+		if ( ! is_dir( $primary_path . '/.git' ) ) {
+			return array(
+				'skipped' => array(
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'primary_missing',
+					'reason'      => 'primary checkout missing — bounded cleanup-eligible apply cannot route git worktree remove',
+				),
+			);
+		}
+
 		// Dirty gate: cheap porcelain call, bounded by the cleanup git timeout.
 		$dirty = $this->run_git( $real_path, 'status --porcelain --untracked-files=normal', self::CLEANUP_GIT_PROBE_TIMEOUT );
 		if ( $this->is_git_timeout_error( $dirty ) ) {
@@ -7094,21 +7296,8 @@ class Workspace {
 
 		$dirty_lines = trim( (string) ( $dirty['output'] ?? '' ) );
 		$dirty_count = '' === $dirty_lines ? 0 : substr_count( $dirty_lines, "\n" ) + 1;
-		if ( $dirty_count > 0 && ! $force ) {
-			return array(
-				'skipped' => array(
-					'handle'      => $handle,
-					'repo'        => $repo,
-					'branch'      => $branch,
-					'path'        => $wt_path,
-					'reason_code' => 'dirty_worktree',
-					'reason'      => sprintf( 'working tree dirty (%d entries) — bounded cleanup-eligible apply refuses to override; rerun with force=true after review', $dirty_count ),
-					'dirty'       => $dirty_count,
-				),
-			);
-		}
-
-		// Unpushed gate: hard stop even with force=true (data loss > dirty loss).
+		// Unpushed gate: hard stop unless metadata was promoted by the reviewed
+		// upstream-equivalent apply path and the same evidence still holds now.
 		$unpushed = $this->count_unpushed_commits( $real_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
 		if ( $unpushed instanceof \WP_Error ) {
 			return array(
@@ -7122,7 +7311,30 @@ class Workspace {
 				),
 			);
 		}
-		if ( $unpushed > 0 ) {
+
+		$metadata         = is_array( $candidate['metadata'] ?? null ) ? $candidate['metadata'] : array();
+		$cleanup_evidence = is_array( $metadata['cleanup_eligibility_evidence'] ?? null ) ? $metadata['cleanup_eligibility_evidence'] : array();
+		$allow_effective_clean_removal = false;
+		if ( ( $dirty_count > 0 || $unpushed > 0 ) && 'upstream-equivalent-clean' === (string) ( $cleanup_evidence['signal'] ?? '' ) ) {
+			$current_equivalence = $this->build_current_effective_clean_cleanup_evidence( $repo, $real_path );
+			$allow_effective_clean_removal = ! is_wp_error( $current_equivalence );
+		}
+
+		if ( $dirty_count > 0 && ! $force && ! $allow_effective_clean_removal ) {
+			return array(
+				'skipped' => array(
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'dirty_worktree',
+					'reason'      => sprintf( 'working tree dirty (%d entries) — bounded cleanup-eligible apply refuses to override; rerun with force=true after review', $dirty_count ),
+					'dirty'       => $dirty_count,
+				),
+			);
+		}
+
+		if ( $unpushed > 0 && ! $allow_effective_clean_removal ) {
 			return array(
 				'skipped' => array(
 					'handle'      => $handle,
@@ -7132,21 +7344,6 @@ class Workspace {
 					'reason_code' => 'unpushed_commits',
 					'reason'      => sprintf( '%d unpushed commit(s) — bounded cleanup-eligible apply refuses to remove even with force=true', $unpushed ),
 					'unpushed'    => $unpushed,
-				),
-			);
-		}
-
-		// Primary must still exist or remove_worktree_by_path will fail noisily.
-		$primary_path = $this->get_primary_path( $repo );
-		if ( ! is_dir( $primary_path . '/.git' ) ) {
-			return array(
-				'skipped' => array(
-					'handle'      => $handle,
-					'repo'        => $repo,
-					'branch'      => $branch,
-					'path'        => $wt_path,
-					'reason_code' => 'primary_missing',
-					'reason'      => 'primary checkout missing — bounded cleanup-eligible apply cannot route git worktree remove',
 				),
 			);
 		}
