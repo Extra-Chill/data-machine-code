@@ -6706,8 +6706,12 @@ class Workspace {
 	 * @return array<string,mixed>
 	 */
 	private function build_dirty_unpushed_upstream_equivalence_evidence( string $primary_path, string $wt_path, string $default_ref ): array {
+		$path_inspection_limit = 250;
 		$evidence = array(
 			'default_ref' => $default_ref,
+			'effective_status' => 'unknown',
+			'path_inspection_limit' => $path_inspection_limit,
+			'path_inspection_truncated' => false,
 			'unpushed_patch_equivalent' => null,
 			'unpushed_cherry' => array(
 				'equivalent' => 0,
@@ -6716,9 +6720,12 @@ class Workspace {
 			),
 			'dirty_paths' => array(
 				'total'                => 0,
+				'inspected'            => 0,
 				'identical_to_default' => 0,
 				'different_from_default' => 0,
 				'absent_on_default'    => 0,
+				'generated_or_artifact' => 0,
+				'source_like'          => 0,
 				'untracked'            => 0,
 				'unknown'              => 0,
 				'samples'              => array(),
@@ -6758,8 +6765,11 @@ class Workspace {
 
 		$paths = array_values( array_unique( array_filter( $paths, fn( $path ) => '' !== (string) $path ) ) );
 		$evidence['dirty_paths']['total'] = count( $paths );
+		$inspect_paths = array_slice( $paths, 0, $path_inspection_limit );
+		$evidence['dirty_paths']['inspected'] = count( $inspect_paths );
+		$evidence['path_inspection_truncated'] = count( $paths ) > count( $inspect_paths );
 
-		foreach ( $paths as $path ) {
+		foreach ( $inspect_paths as $path ) {
 			$classification = $this->classify_dirty_path_against_default( $primary_path, $wt_path, $default_ref, $path );
 			$bucket = $classification['bucket'];
 			if ( isset( $evidence['dirty_paths'][ $bucket ] ) ) {
@@ -6767,12 +6777,49 @@ class Workspace {
 			} else {
 				++$evidence['dirty_paths']['unknown'];
 			}
+			$kind = (string) ( $classification['kind'] ?? 'source_like' );
+			if ( 'generated_or_artifact' === $kind ) {
+				++$evidence['dirty_paths']['generated_or_artifact'];
+			} else {
+				++$evidence['dirty_paths']['source_like'];
+			}
 			if ( count( $evidence['dirty_paths']['samples'] ) < 10 ) {
 				$evidence['dirty_paths']['samples'][] = $classification;
 			}
 		}
 
+		$evidence['effective_status'] = $this->classify_dirty_unpushed_effective_status( $evidence );
+
 		return $evidence;
+	}
+
+	/**
+	 * Derive an operator-facing effective status for dirty/unpushed evidence.
+	 *
+	 * @param array<string,mixed> $evidence Upstream equivalence evidence.
+	 * @return string
+	 */
+	private function classify_dirty_unpushed_effective_status( array $evidence ): string {
+		if ( true !== ( $evidence['unpushed_patch_equivalent'] ?? null ) ) {
+			return false === ( $evidence['unpushed_patch_equivalent'] ?? null ) ? 'not_equivalent' : 'unknown';
+		}
+
+		$dirty = (array) ( $evidence['dirty_paths'] ?? array() );
+		if ( ! empty( $evidence['path_inspection_truncated'] ) || (int) ( $dirty['unknown'] ?? 0 ) > 0 ) {
+			return 'unknown';
+		}
+		if ( 0 === (int) ( $dirty['total'] ?? 0 ) || (int) ( $dirty['total'] ?? 0 ) === (int) ( $dirty['identical_to_default'] ?? 0 ) ) {
+			return 'equivalent_clean';
+		}
+		$meaningful = (int) ( $dirty['different_from_default'] ?? 0 ) + (int) ( $dirty['absent_on_default'] ?? 0 ) + (int) ( $dirty['untracked'] ?? 0 );
+		if ( $meaningful > 0 && $meaningful === (int) ( $dirty['generated_or_artifact'] ?? 0 ) ) {
+			return 'equivalent_generated_dirty';
+		}
+		if ( $meaningful > 0 && $meaningful === (int) ( $dirty['absent_on_default'] ?? 0 ) ) {
+			return 'equivalent_obsolete_dirty';
+		}
+
+		return 'equivalent_but_dirty';
 	}
 
 	/**
@@ -6785,11 +6832,13 @@ class Workspace {
 	 * @return array<string,string>
 	 */
 	private function classify_dirty_path_against_default( string $primary_path, string $wt_path, string $default_ref, string $path ): array {
+		$kind = $this->is_generated_or_artifact_path( $path ) ? 'generated_or_artifact' : 'source_like';
 		$exists = $this->run_git( $primary_path, sprintf( 'cat-file -e %s', escapeshellarg( $default_ref . ':' . $path ) ), self::CLEANUP_GIT_PROBE_TIMEOUT );
 		if ( $this->is_git_timeout_error( $exists ) ) {
 			return array(
 				'path'   => $path,
 				'bucket' => 'unknown',
+				'kind'   => $kind,
 				'reason' => $exists->get_error_message(),
 			);
 		}
@@ -6797,6 +6846,7 @@ class Workspace {
 			return array(
 				'path'   => $path,
 				'bucket' => 'absent_on_default',
+				'kind'   => $kind,
 			);
 		}
 
@@ -6805,6 +6855,7 @@ class Workspace {
 			return array(
 				'path'   => $path,
 				'bucket' => 'unknown',
+				'kind'   => $kind,
 				'reason' => $diff->get_error_message(),
 			);
 		}
@@ -6812,6 +6863,7 @@ class Workspace {
 			return array(
 				'path'   => $path,
 				'bucket' => 'unknown',
+				'kind'   => $kind,
 				'reason' => $diff->get_error_message(),
 			);
 		}
@@ -6819,7 +6871,41 @@ class Workspace {
 		return array(
 			'path'   => $path,
 			'bucket' => '' === trim( (string) ( $diff['output'] ?? '' ) ) ? 'identical_to_default' : 'different_from_default',
+			'kind'   => $kind,
 		);
+	}
+
+	/**
+	 * Check whether a path is a known generated, cache, dependency, or build artifact.
+	 *
+	 * @param string $path Repository-relative path.
+	 * @return bool
+	 */
+	private function is_generated_or_artifact_path( string $path ): bool {
+		$normalized = ltrim( str_replace( '\\', '/', $path ), '/' );
+		$patterns = array(
+			'#(^|/)node_modules/#',
+			'#(^|/)vendor/#',
+			'#(^|/)\.cache/#',
+			'#(^|/)\.turbo/#',
+			'#(^|/)\.next/#',
+			'#(^|/)dist/#',
+			'#(^|/)build/#',
+			'#(^|/)coverage/#',
+			'#(^|/)tmp/#',
+			'#(^|/)temp/#',
+			'#(^|/)logs?/#',
+			'#(^|/)\.pytest_cache/#',
+			'#(^|/)__pycache__/#',
+			'#(^|/)\.DS_Store$#',
+			'#\.(log|cache|tmp|map|min\.js|min\.css)$#',
+		);
+		foreach ( $patterns as $pattern ) {
+			if ( preg_match( $pattern, $normalized ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
