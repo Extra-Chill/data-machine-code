@@ -520,6 +520,8 @@ namespace {
 	$assert( 250, (int) ( $active_rows['demo@dirty-active']['upstream_equivalence']['path_inspection_limit'] ?? 0 ), 'dirty diagnostics expose path inspection cap' );
 	$assert( true, isset( $active_rows['demo@dirty-active']['upstream_equivalence']['dirty_paths']['generated_or_artifact'] ), 'dirty diagnostics count generated/artifact paths' );
 	$assert( 'equivalent_clean', $active_rows['demo@equivalent-clean']['upstream_equivalence']['effective_status'] ?? '', 'dirty diagnostics classify patch-equivalent clean rows' );
+	$assert( true, isset( $active_rows['demo@dirty-active']['elapsed_ms'] ), 'active/no-signal rows include elapsed timing' );
+	$assert( true, isset( $active_report['summary']['slow_rows'][0]['elapsed_ms'] ), 'active/no-signal summary includes slow row timing samples' );
 	$budgeted_active_report = $ws->worktree_active_no_signal_report( array( 'limit' => 20, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 1, 'internal_budget_started' => microtime( true ) - 1 ) );
 	$assert( true, ! is_wp_error( $budgeted_active_report ) && ( $budgeted_active_report['success'] ?? false ), 'budgeted active/no-signal report succeeds' );
 	$assert( true, (bool) ( $budgeted_active_report['pagination']['partial'] ?? false ), 'budgeted active/no-signal report returns partial pagination' );
@@ -550,6 +552,8 @@ namespace {
 	$assert( 'filesystem', $by_handle['demo@unmanaged-missing']['source_map']['created_at'] ?? '', 'missing metadata created_at source is filesystem' );
 	$assert( 'reconcile_run', $by_handle['demo@unmanaged-missing']['source_map']['observed_at'] ?? '', 'missing metadata observed_at source is reconcile run' );
 	$assert( 'current_site', $by_handle['demo@unmanaged-missing']['source_map']['origin_site'] ?? '', 'missing metadata origin site is inferred from current site' );
+	$assert( true, isset( $by_handle['demo@unmanaged-missing']['elapsed_ms'] ), 'metadata reconciliation proposal rows include elapsed timing' );
+	$assert( true, isset( $plan['summary']['slow_rows'][0]['elapsed_ms'] ), 'metadata reconciliation summary includes slow row timing samples' );
 	$assert( 'metadata', $by_handle['demo@unmanaged-partial']['source_map']['created_at'] ?? '', 'partial metadata preserves created_at source' );
 	$assert( 'git', $by_handle['demo@unmanaged-partial']['source_map']['branch'] ?? '', 'branch source is git' );
 	$assert( array( 'lifecycle_state' ), $by_handle['demo@unmanaged-invalid']['invalid_fields'] ?? array(), 'invalid lifecycle state is planned for repair' );

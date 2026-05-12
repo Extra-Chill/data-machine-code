@@ -3887,10 +3887,14 @@ class Workspace {
 				$page_worktrees = array_slice( $page_worktrees, 0, $index );
 				break;
 			}
+			$row_started = microtime( true );
 			$proposal = $this->build_worktree_metadata_reconciliation_row( $wt, $github_cache, $fetched );
+			$elapsed_ms = (int) round( ( microtime( true ) - $row_started ) * 1000 );
 			if ( isset( $proposal['proposal'] ) ) {
+				$proposal['proposal']['elapsed_ms'] = $elapsed_ms;
 				$proposals[] = $proposal['proposal'];
 			} elseif ( isset( $proposal['skip'] ) ) {
+				$proposal['skip']['elapsed_ms'] = $elapsed_ms;
 				$skipped[] = $proposal['skip'];
 			}
 		}
@@ -4964,6 +4968,33 @@ class Workspace {
 			'skipped'           => count( $skipped ),
 			'skipped_by_reason' => $skipped_by_reason,
 			'proposed_by_state' => $states,
+			'slow_rows'         => $this->summarize_slow_worktree_rows( array_merge( $proposals, $skipped ) ),
+		);
+	}
+
+	/**
+	 * Summarize the slowest worktree rows from an expensive report page.
+	 *
+	 * @param array<int,array<string,mixed>> $rows Timed rows.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function summarize_slow_worktree_rows( array $rows ): array {
+		$timed = array_values( array_filter( $rows, fn( $row ) => is_array( $row ) && isset( $row['elapsed_ms'] ) ) );
+		usort( $timed, fn( $a, $b ) => (int) ( $b['elapsed_ms'] ?? 0 ) <=> (int) ( $a['elapsed_ms'] ?? 0 ) );
+
+		return array_map(
+			fn( $row ) => array_filter(
+				array(
+					'handle'      => (string) ( $row['handle'] ?? '' ),
+					'repo'        => (string) ( $row['repo'] ?? '' ),
+					'branch'      => (string) ( $row['branch'] ?? '' ),
+					'elapsed_ms'  => (int) ( $row['elapsed_ms'] ?? 0 ),
+					'action'      => (string) ( $row['suggested_action'] ?? '' ),
+					'reason_code' => (string) ( $row['reason_code'] ?? '' ),
+				),
+				fn( $value ) => '' !== $value
+			),
+			array_slice( $timed, 0, 10 )
 		);
 	}
 
@@ -6446,7 +6477,9 @@ class Workspace {
 				$page = array_slice( $page, 0, $index );
 				break;
 			}
+			$row_started = microtime( true );
 			$evidence = $this->build_active_no_signal_evidence_row( $row, $github_cache );
+			$evidence['elapsed_ms'] = (int) round( ( microtime( true ) - $row_started ) * 1000 );
 			$rows[]   = $evidence;
 			++$summary['inspected'];
 
@@ -6484,7 +6517,7 @@ class Workspace {
 			'review_only' => true,
 			'generated_at' => gmdate( 'c' ),
 			'rows'       => $rows,
-			'summary'    => $summary,
+			'summary'    => array_merge( $summary, array( 'slow_rows' => $this->summarize_slow_worktree_rows( $rows ) ) ),
 			'pagination' => $pagination,
 			'evidence'   => array(
 				'scope' => 'review-only active_no_signal worktree lifecycle evidence',
