@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.41.4] - 2026-05-12
+
+### Fixed
+- budget cleanup preflight probes
+
 ## [0.41.3] - 2026-05-12
 
 ### Changed
