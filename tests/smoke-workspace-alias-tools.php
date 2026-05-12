@@ -74,11 +74,13 @@ namespace {
 				'success'            => true,
 				'name'               => 'wp-rl@agent-runs-modern-api-openai-gpt-5-5',
 				'repo'               => 'wp-rl',
-				'path'               => '/Users/example/wp-rl@agent-runs-modern-api-openai-gpt-5-5/plugins/demo.php',
+				'path'               => '.agent-workspace/current-project/plugins/demo.php',
+				'files'              => array( '.agent-workspace/current-project/plugins/demo.php' ),
+				'diff'               => "diff --git a/.agent-workspace/current-project/plugins/demo.php b/.agent-workspace/current-project/plugins/demo.php\n--- a/.agent-workspace/current-project/plugins/demo.php\n+++ b/.agent-workspace/current-project/plugins/demo.php\n",
 				'branch'             => 'agent-runs-modern-api-openai-gpt-5-5',
 				'conversation_state' => 'incomplete',
 				'next_required_args' => array( 'name' => 'wp-rl@agent-runs-modern-api-openai-gpt-5-5' ),
-				'content'            => 'The real handle wp-rl@agent-runs-modern-api-openai-gpt-5-5 may appear in file content and must not be rewritten.',
+				'content'            => 'The real handle wp-rl@agent-runs-modern-api-openai-gpt-5-5 and .agent-workspace/current-project may appear in file content and must not be rewritten.',
 			);
 		}
 	}
@@ -102,7 +104,12 @@ namespace {
 		'datamachine_code_workspace_aliases',
 		fn( array $aliases ): array => array_merge(
 			$aliases,
-			array( 'current-project' => 'wp-rl@agent-runs-modern-api-openai-gpt-5-5' )
+			array(
+				'current-project' => array(
+					'target' => 'wp-rl@agent-runs-modern-api-openai-gpt-5-5',
+					'root'   => '.agent-workspace/current-project',
+				),
+			)
 		)
 	);
 
@@ -115,14 +122,40 @@ namespace {
 	$assert( 'alias resolves before ability execution', 'wp-rl@agent-runs-modern-api-openai-gpt-5-5' === ( $ability->last_input['name'] ?? '' ) );
 	$assert( 'agent-facing name is sanitized', 'current-project' === ( $data['name'] ?? '' ) );
 	$assert( 'agent-facing repo is sanitized', 'current-project' === ( $data['repo'] ?? '' ) );
-	$assert( 'agent-facing paths are sanitized', is_string( $data['path'] ?? null ) && ! str_contains( $data['path'], 'wp-rl@agent-runs' ) );
+	$assert( 'agent-facing paths are sanitized', 'plugins/demo.php' === ( $data['path'] ?? '' ) );
+	$assert( 'agent-facing file lists strip scoped root', array( 'plugins/demo.php' ) === ( $data['files'] ?? array() ) );
+	$assert( 'agent-facing diffs strip scoped root', is_string( $data['diff'] ?? null ) && str_contains( $data['diff'], 'a/plugins/demo.php' ) && ! str_contains( $data['diff'], '.agent-workspace' ) );
 	$assert( 'nested required args are sanitized', 'current-project' === ( $data['next_required_args']['name'] ?? '' ) );
-	$assert( 'file content is not rewritten', is_string( $data['content'] ?? null ) && str_contains( $data['content'], 'wp-rl@agent-runs-modern-api-openai-gpt-5-5' ) );
+	$assert( 'file content is not rewritten', is_string( $data['content'] ?? null ) && str_contains( $data['content'], 'wp-rl@agent-runs-modern-api-openai-gpt-5-5' ) && str_contains( $data['content'], '.agent-workspace/current-project' ) );
 
 	$diff_tools = new \DataMachineCode\Tools\WorkspaceDiffTools();
 	$diff       = $diff_tools->handleDiffSummary( array( 'name' => 'current-project' ) );
 	$assert( 'diff tools resolve aliases before ability execution', 'wp-rl@agent-runs-modern-api-openai-gpt-5-5' === ( $ability->last_input['name'] ?? '' ) );
+	$assert( 'diff tools scope empty path to alias root', '.agent-workspace/current-project' === ( $ability->last_input['path'] ?? '' ) );
 	$assert( 'diff tool result is sanitized', 'current-project' === ( $diff['data']['name'] ?? '' ) );
+
+	add_filter(
+		'datamachine_code_workspace_aliases',
+		fn( array $aliases ): array => array_merge(
+			$aliases,
+			array(
+				'scoped-project' => array(
+					'target' => 'wp-rl@agent-runs-modern-api-openai-gpt-5-5',
+					'root'   => '.agent-workspace/current-project',
+				),
+			)
+		)
+	);
+
+	$write = $tools->handleWrite( array( 'repo' => 'scoped-project', 'path' => 'plugins/demo.php', 'content' => '<?php' ) );
+	$assert( 'scoped write succeeds', true === ( $write['success'] ?? false ) );
+	$assert( 'scoped write prefixes virtual path before ability execution', '.agent-workspace/current-project/plugins/demo.php' === ( $ability->last_input['path'] ?? '' ) );
+
+	$grep = $tools->handleGrep( array( 'repo' => 'scoped-project', 'pattern' => 'Plugin Name' ) );
+	$assert( 'scoped grep defaults to alias root', '.agent-workspace/current-project' === ( $ability->last_input['path'] ?? '' ) );
+
+	$escape = $tools->handleRead( array( 'repo' => 'scoped-project', 'path' => '../README.md' ) );
+	$assert( 'scoped read rejects path escape', false === ( $escape['success'] ?? true ) );
 
 	if ( $failures ) {
 		echo "\nFAIL: " . count( $failures ) . " assertion(s) failed\n";
