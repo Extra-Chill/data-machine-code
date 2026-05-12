@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.40.0] - 2026-05-12
+
+### Added
+- expose slow worktree row timing
+
 ## [0.39.1] - 2026-05-12
 
 ### Fixed
