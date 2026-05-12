@@ -2432,6 +2432,26 @@ class Workspace {
 		$sort           = isset( $opts['sort'] ) ? trim( (string) $opts['sort'] ) : '';
 		$progress       = isset( $opts['progress_callback'] ) && is_callable( $opts['progress_callback'] ) ? $opts['progress_callback'] : null;
 		$started_at     = microtime( true );
+		$limit          = array_key_exists( 'limit', $opts ) ? max( 1, (int) $opts['limit'] ) : null;
+		$offset         = array_key_exists( 'offset', $opts ) ? max( 0, (int) $opts['offset'] ) : 0;
+		$budget_context = null;
+		$budget_stopped = false;
+
+		if ( isset( $opts['until_budget'] ) && '' !== trim( (string) $opts['until_budget'] ) ) {
+			if ( ! $dry_run ) {
+				return new \WP_Error( 'cleanup_budget_requires_dry_run', 'Budgeted cleanup is review-only. Use --dry-run with --until-budget, then apply a reviewed cleanup path.', array( 'status' => 400 ) );
+			}
+
+			$budget_seconds = $this->parse_worktree_metadata_reconciliation_budget( trim( (string) $opts['until_budget'] ) );
+			if ( is_wp_error( $budget_seconds ) ) {
+				return $budget_seconds;
+			}
+			$budget_context = $this->build_worktree_loop_budget_context( $opts, $started_at );
+		}
+
+		if ( ( null !== $limit || $offset > 0 ) && ! $dry_run ) {
+			return new \WP_Error( 'cleanup_pagination_requires_dry_run', 'Paginated cleanup is review-only. Use --dry-run with --limit/--offset, then apply a reviewed cleanup path.', array( 'status' => 400 ) );
+		}
 
 		if ( '' !== $sort && ! in_array( $sort, array( 'size', 'age' ), true ) ) {
 			return new \WP_Error( 'invalid_cleanup_sort', 'Invalid cleanup sort. Use size or age.', array( 'status' => 400 ) );
@@ -2488,17 +2508,26 @@ class Workspace {
 		$candidates         = array();
 		$skipped            = array();
 		$github_cache       = array();
-		$worktrees          = array_values( array_filter( (array) $listing['worktrees'], fn( $wt ) => empty( $wt['is_primary'] ) ) );
+		$all_worktrees      = array_values( array_filter( (array) $listing['worktrees'], fn( $wt ) => empty( $wt['is_primary'] ) ) );
+		$total_worktrees    = count( $all_worktrees );
+		$worktrees          = array_slice( $all_worktrees, $offset, $limit );
 		$checked            = 0;
+		$processed          = 0;
 		$removed_count      = 0;
 
-		$this->emit_worktree_cleanup_progress( $progress, 'start', '', $checked, count( $worktrees ), $candidates, $skipped, $removed_count, $started_at );
+		$this->emit_worktree_cleanup_progress( $progress, 'start', '', $checked, $total_worktrees, $candidates, $skipped, $removed_count, $started_at );
 
 		// Fetch + prune each primary once up-front so upstream-gone signals are fresh.
 		$fetched = array();
 		$fetch_timeouts = array();
 
 		foreach ( $worktrees as $wt ) {
+			if ( null !== $budget_context && $this->is_worktree_loop_budget_exhausted( $budget_context ) ) {
+				$budget_stopped = true;
+				break;
+			}
+
+			++$processed;
 			$handle       = $wt['handle'] ?? '?';
 			$repo         = $wt['repo'] ?? '';
 			$branch       = $wt['branch'] ?? '';
@@ -2528,7 +2557,7 @@ class Workspace {
 			$dirty_count = (int) ( $wt['dirty'] ?? 0 );
 
 			++$checked;
-			$this->emit_worktree_cleanup_progress( $progress, 'checking', (string) $handle, $checked, count( $worktrees ), $candidates, $skipped, $removed_count, $started_at );
+			$this->emit_worktree_cleanup_progress( $progress, 'checking', (string) $handle, $checked, $total_worktrees, $candidates, $skipped, $removed_count, $started_at );
 
 			if ( '' === $repo || '' === $branch || '' === $wt_path ) {
 				$missing_fields = array();
@@ -2822,11 +2851,15 @@ class Workspace {
 		}
 
 		$summary = $this->build_worktree_cleanup_summary( $candidates, array(), $skipped, $age_filter );
+		$pagination = $this->build_worktree_cleanup_pagination( $offset, $limit, $processed, $total_worktrees, $budget_stopped, $budget_context );
+		if ( null !== $pagination ) {
+			$summary['pagination'] = $pagination;
+		}
 
 		if ( $dry_run ) {
-			$this->emit_worktree_cleanup_progress( $progress, 'done', '', $checked, count( $worktrees ), $candidates, $skipped, $removed_count, $started_at );
+			$this->emit_worktree_cleanup_progress( $progress, 'done', '', $checked, $total_worktrees, $candidates, $skipped, $removed_count, $started_at );
 
-			return array(
+			$result = array(
 				'success'    => true,
 				'dry_run'    => true,
 				'candidates' => $candidates,
@@ -2834,6 +2867,17 @@ class Workspace {
 				'skipped'    => $skipped,
 				'summary'    => $summary,
 			);
+			if ( null !== $pagination ) {
+				$result['pagination'] = $pagination;
+			}
+			if ( null !== $budget_context ) {
+				$result['evidence'] = array(
+					'elapsed_ms' => (int) round( ( microtime( true ) - $started_at ) * 1000 ),
+					'budget'     => $this->summarize_worktree_loop_budget_context( $budget_context, $budget_stopped ),
+				);
+			}
+
+			return $result;
 		}
 
 		$removed = array();
@@ -2877,7 +2921,7 @@ class Workspace {
 		// Final sweep to drop any remaining registry entries.
 		$this->worktree_prune();
 
-		$this->emit_worktree_cleanup_progress( $progress, 'done', '', $checked, count( $worktrees ), $candidates, $skipped, $removed_count, $started_at );
+		$this->emit_worktree_cleanup_progress( $progress, 'done', '', $checked, $total_worktrees, $candidates, $skipped, $removed_count, $started_at );
 
 		return array(
 			'success'    => true,
@@ -2886,6 +2930,48 @@ class Workspace {
 			'removed'    => $removed,
 			'skipped'    => $skipped,
 			'summary'    => $this->build_worktree_cleanup_summary( $candidates, $removed, $skipped, $age_filter ),
+		);
+	}
+
+	/**
+	 * Build pagination evidence for bounded full cleanup dry-runs.
+	 *
+	 * @param int        $offset         Inventory offset for this page.
+	 * @param int|null   $limit          Optional page size.
+	 * @param int        $processed      Rows consumed from this page.
+	 * @param int        $total          Total non-primary worktrees.
+	 * @param bool       $budget_stopped Whether the budget stopped the scan early.
+	 * @param array|null $budget_context Optional budget context.
+	 * @return array<string,mixed>|null
+	 */
+	private function build_worktree_cleanup_pagination( int $offset, ?int $limit, int $processed, int $total, bool $budget_stopped, ?array $budget_context ): ?array {
+		if ( 0 === $offset && null === $limit && null === $budget_context ) {
+			return null;
+		}
+
+		$next_offset = ( $offset + $processed ) < $total ? $offset + $processed : null;
+		$command     = null;
+		if ( null !== $next_offset ) {
+			$parts = array(
+				'studio wp datamachine-code workspace worktree cleanup --dry-run',
+				null === $limit ? null : '--limit=' . $limit,
+				'--offset=' . $next_offset,
+				null === $budget_context ? null : '--until-budget=' . (string) ( $budget_context['label'] ?? '' ),
+				'--format=json',
+			);
+			$command = implode( ' ', array_values( array_filter( $parts, fn( $part ) => null !== $part && '' !== $part ) ) );
+		}
+
+		return array(
+			'total'          => $total,
+			'offset'         => $offset,
+			'limit'          => $limit,
+			'scanned'        => $processed,
+			'partial'        => null !== $next_offset,
+			'complete'       => null === $next_offset,
+			'next_offset'    => $next_offset,
+			'next_command'   => $command,
+			'budget_stopped' => $budget_stopped,
 		);
 	}
 
@@ -4135,7 +4221,14 @@ class Workspace {
 		$path   = (string) ( $row['path'] ?? '' );
 		$pr     = is_array( $row['pr'] ?? null ) ? $row['pr'] : array();
 
-		foreach ( array( 'handle' => $handle, 'repo' => $repo, 'branch' => $branch, 'path' => $path ) as $field => $value ) {
+		foreach (
+			array(
+				'handle' => $handle,
+				'repo'   => $repo,
+				'branch' => $branch,
+				'path'   => $path,
+			) as $field => $value
+		) {
 			if ( '' === $value ) {
 				return new \WP_Error( 'missing_identity', 'missing required identity field: ' . $field );
 			}
@@ -4225,7 +4318,14 @@ class Workspace {
 		$branch = (string) ( $row['branch'] ?? '' );
 		$path   = (string) ( $row['path'] ?? '' );
 
-		foreach ( array( 'handle' => $handle, 'repo' => $repo, 'branch' => $branch, 'path' => $path ) as $field => $value ) {
+		foreach (
+			array(
+				'handle' => $handle,
+				'repo'   => $repo,
+				'branch' => $branch,
+				'path'   => $path,
+			) as $field => $value
+		) {
 			if ( '' === $value ) {
 				return new \WP_Error( 'missing_identity', 'missing required identity field: ' . $field );
 			}
@@ -4609,10 +4709,10 @@ class Workspace {
 			return 'equivalent_clean';
 		}
 		$meaningful = (int) ( $dirty['different_from_default'] ?? 0 ) + (int) ( $dirty['absent_on_default'] ?? 0 ) + (int) ( $dirty['untracked'] ?? 0 );
-		if ( $meaningful > 0 && $meaningful === (int) ( $dirty['generated_or_artifact'] ?? 0 ) ) {
+		if ( 0 < $meaningful && (int) ( $dirty['generated_or_artifact'] ?? 0 ) === $meaningful ) {
 			return 'equivalent_generated_dirty';
 		}
-		if ( $meaningful > 0 && $meaningful === (int) ( $dirty['absent_on_default'] ?? 0 ) ) {
+		if ( 0 < $meaningful && (int) ( $dirty['absent_on_default'] ?? 0 ) === $meaningful ) {
 			return 'equivalent_obsolete_dirty';
 		}
 

@@ -2025,23 +2025,23 @@ class WorkspaceCommand extends BaseCommand {
 	 *   unpushed_commits, missing_metadata, external_worktree, age_filter, unknown_age.
 	 *
 	 * [--limit=<count>]
-	 * : For `cleanup-artifacts --dry-run`, `reconcile-metadata`, and
-	 *   `active-no-signal-report`,
+	 * : For `cleanup --dry-run`, `cleanup-artifacts --dry-run`,
+	 *   `reconcile-metadata`, and `active-no-signal-report`,
 	 *   maximum worktrees to scan in this page. Artifact cleanup defaults to
 	 *   100; metadata reconciliation uses this only when pagination is requested.
 	 *   Use 0 plus `--exhaustive` for a full artifact audit.
 	 *
 	 * [--offset=<count>]
-	 * : For `cleanup-artifacts --dry-run`, `reconcile-metadata`, and
-	 *   `active-no-signal-report`,
+	 * : For `cleanup --dry-run`, `cleanup-artifacts --dry-run`,
+	 *   `reconcile-metadata`, and `active-no-signal-report`,
 	 *   pagination offset (0-indexed) into the inventory ordering. Walk pages by
 	 *   passing the previous response's `pagination.next_offset`.
 	 *
 	 * [--until-budget=<duration>]
-	 * : For `reconcile-metadata`, enforce a compact wall-clock budget for dry-run
-	 *   pages or direct-apply drains (e.g. 60s, 10m). Also supported by
-	 *   `active-no-signal-report`. Returns continuation evidence and a next command
-	 *   when more rows remain.
+	 * : For `cleanup --dry-run` and `reconcile-metadata`, enforce a compact
+	 *   wall-clock budget for dry-run pages or direct-apply drains (e.g. 60s,
+	 *   10m). Also supported by `active-no-signal-report`. Returns continuation
+	 *   evidence and a next command when more rows remain.
 	 *
 	 * [--exhaustive]
 	 * : For `cleanup-artifacts --dry-run`, scan every worktree AND run per-worktree
@@ -2311,6 +2311,15 @@ class WorkspaceCommand extends BaseCommand {
 				$input['skip_github']    = ! empty( $assoc_args['skip-github'] );
 				$input['inventory_only'] = ! empty( $assoc_args['inventory-only'] );
 				$input['include_repaired_metadata'] = ! empty( $assoc_args['include-repaired-metadata'] );
+				if ( isset( $assoc_args['limit'] ) ) {
+					$input['limit'] = (int) $assoc_args['limit'];
+				}
+				if ( isset( $assoc_args['offset'] ) ) {
+					$input['offset'] = (int) $assoc_args['offset'];
+				}
+				if ( isset( $assoc_args['until-budget'] ) && '' !== trim( (string) $assoc_args['until-budget'] ) ) {
+					$input['until_budget'] = trim( (string) $assoc_args['until-budget'] );
+				}
 				if ( ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
 					$input['progress_callback'] = function ( array $event ): void {
 						$this->render_worktree_cleanup_progress( $event );
@@ -3318,14 +3327,32 @@ class WorkspaceCommand extends BaseCommand {
 
 		WP_CLI::log( 'Summary:' );
 		$summary_rows = array(
-			array( 'metric' => 'total_active_no_signal', 'count' => (int) ( $summary['total_active_no_signal'] ?? 0 ) ),
-			array( 'metric' => 'inspected', 'count' => (int) ( $summary['inspected'] ?? 0 ) ),
-			array( 'metric' => 'with_pr', 'count' => (int) ( $summary['with_pr'] ?? 0 ) ),
-			array( 'metric' => 'without_pr', 'count' => (int) ( $summary['without_pr'] ?? 0 ) ),
-			array( 'metric' => 'dirty_or_unpushed', 'count' => (int) ( $summary['dirty_or_unpushed'] ?? 0 ) ),
+			array(
+				'metric' => 'total_active_no_signal',
+				'count'  => (int) ( $summary['total_active_no_signal'] ?? 0 ),
+			),
+			array(
+				'metric' => 'inspected',
+				'count'  => (int) ( $summary['inspected'] ?? 0 ),
+			),
+			array(
+				'metric' => 'with_pr',
+				'count'  => (int) ( $summary['with_pr'] ?? 0 ),
+			),
+			array(
+				'metric' => 'without_pr',
+				'count'  => (int) ( $summary['without_pr'] ?? 0 ),
+			),
+			array(
+				'metric' => 'dirty_or_unpushed',
+				'count'  => (int) ( $summary['dirty_or_unpushed'] ?? 0 ),
+			),
 		);
 		foreach ( (array) ( $summary['by_suggested_action'] ?? array() ) as $action => $count ) {
-			$summary_rows[] = array( 'metric' => 'action:' . $action, 'count' => (int) $count );
+			$summary_rows[] = array(
+				'metric' => 'action:' . $action,
+				'count'  => (int) $count,
+			);
 		}
 		$this->format_items( $summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric' );
 
@@ -3395,13 +3422,28 @@ class WorkspaceCommand extends BaseCommand {
 
 		WP_CLI::log( 'Finalized active/no-signal apply summary:' );
 		$summary_rows = array(
-			array( 'metric' => 'inspected', 'count' => (int) ( $summary['inspected'] ?? 0 ) ),
-			array( 'metric' => 'planned', 'count' => (int) ( $summary['planned'] ?? count( $planned ) ) ),
-			array( 'metric' => 'written', 'count' => (int) ( $summary['written'] ?? count( $written ) ) ),
-			array( 'metric' => 'skipped', 'count' => (int) ( $summary['skipped'] ?? count( $skipped ) ) ),
+			array(
+				'metric' => 'inspected',
+				'count'  => (int) ( $summary['inspected'] ?? 0 ),
+			),
+			array(
+				'metric' => 'planned',
+				'count'  => (int) ( $summary['planned'] ?? count( $planned ) ),
+			),
+			array(
+				'metric' => 'written',
+				'count'  => (int) ( $summary['written'] ?? count( $written ) ),
+			),
+			array(
+				'metric' => 'skipped',
+				'count'  => (int) ( $summary['skipped'] ?? count( $skipped ) ),
+			),
 		);
 		foreach ( (array) ( $summary['skipped_by_reason'] ?? array() ) as $reason => $count ) {
-			$summary_rows[] = array( 'metric' => 'skipped:' . $reason, 'count' => (int) $count );
+			$summary_rows[] = array(
+				'metric' => 'skipped:' . $reason,
+				'count'  => (int) $count,
+			);
 		}
 		$this->format_items( $summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric' );
 
@@ -3475,13 +3517,28 @@ class WorkspaceCommand extends BaseCommand {
 
 		WP_CLI::log( 'Equivalent-clean active/no-signal apply summary:' );
 		$summary_rows = array(
-			array( 'metric' => 'inspected', 'count' => (int) ( $summary['inspected'] ?? 0 ) ),
-			array( 'metric' => 'planned', 'count' => (int) ( $summary['planned'] ?? count( $planned ) ) ),
-			array( 'metric' => 'written', 'count' => (int) ( $summary['written'] ?? count( $written ) ) ),
-			array( 'metric' => 'skipped', 'count' => (int) ( $summary['skipped'] ?? count( $skipped ) ) ),
+			array(
+				'metric' => 'inspected',
+				'count'  => (int) ( $summary['inspected'] ?? 0 ),
+			),
+			array(
+				'metric' => 'planned',
+				'count'  => (int) ( $summary['planned'] ?? count( $planned ) ),
+			),
+			array(
+				'metric' => 'written',
+				'count'  => (int) ( $summary['written'] ?? count( $written ) ),
+			),
+			array(
+				'metric' => 'skipped',
+				'count'  => (int) ( $summary['skipped'] ?? count( $skipped ) ),
+			),
 		);
 		foreach ( (array) ( $summary['skipped_by_reason'] ?? array() ) as $reason => $count ) {
-			$summary_rows[] = array( 'metric' => 'skipped:' . $reason, 'count' => (int) $count );
+			$summary_rows[] = array(
+				'metric' => 'skipped:' . $reason,
+				'count'  => (int) $count,
+			);
 		}
 		$this->format_items( $summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric' );
 

@@ -732,6 +732,13 @@ namespace {
 	datamachine_code_cleanup_assert( str_contains( $decoded['summary']['skipped_next_commands'][1]['command'] ?? '', 'reconcile-metadata --dry-run --format=json' ), 'JSON metadata command is metadata reconciliation' );
 	datamachine_code_cleanup_assert( str_contains( $decoded['summary']['skipped_next_commands'][2]['alternative'] ?? '', 'No automatic cleanup action is safe' ), 'JSON active/no-signal command explains no automatic cleanup action' );
 
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree( array( 'cleanup' ), array( 'dry-run' => true, 'limit' => 5, 'offset' => 10, 'until-budget' => '30s', 'format' => 'json' ) );
+	datamachine_code_cleanup_assert( 5 === (int) ( $ability->last_input['limit'] ?? 0 ), 'cleanup forwards dry-run limit' );
+	datamachine_code_cleanup_assert( 10 === (int) ( $ability->last_input['offset'] ?? 0 ), 'cleanup forwards dry-run offset' );
+	datamachine_code_cleanup_assert( '30s' === ( $ability->last_input['until_budget'] ?? '' ), 'cleanup forwards dry-run time budget' );
+
 	echo "\n[1b] --apply-plan decodes JSON and forbids force\n";
 	$plan_file = sys_get_temp_dir() . '/dmc-cleanup-plan-' . bin2hex( random_bytes( 3 ) ) . '.json';
 	file_put_contents( $plan_file, wp_json_encode( datamachine_code_cleanup_report() ) );

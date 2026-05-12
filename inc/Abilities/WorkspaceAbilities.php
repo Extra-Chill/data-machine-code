@@ -1513,13 +1513,25 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Optional candidate age filter such as 7d, 24h, 30m, or 60s. Uses lifecycle created_at metadata only.',
 							),
-							'sort'        => array(
+							'sort'                      => array(
 								'type'        => 'string',
 								'description' => 'Optional cleanup candidate sort: size or age.',
 							),
 							'include_repaired_metadata' => array(
 								'type'        => 'boolean',
 								'description' => 'If true, include repaired metadata rows as operator-approved removal candidates after full safety revalidation.',
+							),
+							'limit'                     => array(
+								'type'        => 'integer',
+								'description' => 'For dry-run cleanup, maximum worktrees to inspect in this page.',
+							),
+							'offset'                    => array(
+								'type'        => 'integer',
+								'description' => 'For dry-run cleanup, pagination offset into the worktree inventory.',
+							),
+							'until_budget'              => array(
+								'type'        => 'string',
+								'description' => 'For dry-run cleanup, compact wall-clock budget such as 60s or 10m. Returns continuation evidence when more rows remain.',
 							),
 						),
 					),
@@ -2635,10 +2647,10 @@ class WorkspaceAbilities {
 	public static function worktreeCleanup( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$opts      = array(
-			'dry_run'                 => ! empty( $input['dry_run'] ),
-			'force'                   => ! empty( $input['force'] ),
-			'skip_github'             => ! empty( $input['skip_github'] ),
-			'inventory_only'          => ! empty( $input['inventory_only'] ),
+			'dry_run'                   => ! empty( $input['dry_run'] ),
+			'force'                     => ! empty( $input['force'] ),
+			'skip_github'               => ! empty( $input['skip_github'] ),
+			'inventory_only'            => ! empty( $input['inventory_only'] ),
 			'include_repaired_metadata' => ! empty( $input['include_repaired_metadata'] ),
 		);
 		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
@@ -2649,6 +2661,15 @@ class WorkspaceAbilities {
 		}
 		if ( isset( $input['sort'] ) && '' !== trim( (string) $input['sort'] ) ) {
 			$opts['sort'] = trim( (string) $input['sort'] );
+		}
+		if ( array_key_exists( 'limit', $input ) ) {
+			$opts['limit'] = (int) $input['limit'];
+		}
+		if ( array_key_exists( 'offset', $input ) ) {
+			$opts['offset'] = (int) $input['offset'];
+		}
+		if ( isset( $input['until_budget'] ) && '' !== trim( (string) $input['until_budget'] ) ) {
+			$opts['until_budget'] = trim( (string) $input['until_budget'] );
 		}
 		if ( isset( $input['progress_callback'] ) && is_callable( $input['progress_callback'] ) ) {
 			$opts['progress_callback'] = $input['progress_callback'];
