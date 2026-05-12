@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.41.3] - 2026-05-12
+
+### Changed
+- extract workspace hygiene reporting
+- extract workspace cleanup planning
+
+### Fixed
+- budget full worktree cleanup dry-runs
+- filter workspace list by repo
+
 ## [0.41.2] - 2026-05-12
 
 ### Changed
