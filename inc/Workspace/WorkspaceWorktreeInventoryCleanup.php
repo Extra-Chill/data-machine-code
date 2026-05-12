@@ -132,6 +132,12 @@ trait WorkspaceWorktreeInventoryCleanup {
 				continue;
 			}
 
+			$submodule_skip = $this->build_submodule_worktree_cleanup_skip( $base_row );
+			if ( null !== $submodule_skip ) {
+				$skipped[] = $submodule_skip;
+				continue;
+			}
+
 			if ( null !== $age_filter ) {
 				$created_ts = is_string( $created_at ) && '' !== $created_at ? strtotime( $created_at ) : false;
 				if ( false === $created_ts ) {

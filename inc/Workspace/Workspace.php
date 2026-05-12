@@ -2367,6 +2367,11 @@ class Workspace {
 			);
 		}
 
+		$submodule_skip = $this->build_submodule_worktree_cleanup_skip( $candidate, $real_path );
+		if ( null !== $submodule_skip ) {
+			return array( 'skipped' => $submodule_skip );
+		}
+
 		// Dirty gate: cheap porcelain call, bounded by the cleanup git timeout.
 		$dirty = $this->run_git( $real_path, 'status --porcelain --untracked-files=normal', self::CLEANUP_GIT_PROBE_TIMEOUT );
 		if ( $this->is_git_timeout_error( $dirty ) ) {
@@ -2651,6 +2656,54 @@ class Workspace {
 	}
 
 	/**
+	 * Build a conservative skip row for worktrees that declare submodules.
+	 *
+	 * @param array<string,mixed> $row       Candidate row.
+	 * @param string              $real_path Optional resolved worktree path.
+	 * @return array<string,mixed>|null
+	 */
+	private function build_submodule_worktree_cleanup_skip( array $row, string $real_path = '' ): ?array {
+		$path = '' !== $real_path ? $real_path : (string) ( $row['path'] ?? '' );
+		if ( ! $this->worktree_declares_submodules( $path ) ) {
+			return null;
+		}
+
+		$handle       = (string) ( $row['handle'] ?? '' );
+		$review       = sprintf( 'git -C %s submodule status --recursive', escapeshellarg( $path ) );
+		$remediate    = '' !== $handle
+			? sprintf(
+				'git -C %s submodule deinit --all --force && studio wp datamachine-code workspace worktree remove %s --force',
+				escapeshellarg( $path ),
+				escapeshellarg( $handle )
+			)
+			: '';
+
+		return array_merge( $row, array(
+			'path'                => $path,
+			'reason_code'         => 'submodule_worktree',
+			'reason'              => 'worktree declares submodules; bounded cleanup leaves it in place because git cannot remove submodule-containing worktrees through the normal cleanup path',
+			'hint'                => '' !== $remediate ? 'Review submodules first, then deinitialize them if appropriate and run the remediation command.' : 'Review submodules before attempting manual worktree removal.',
+			'review_command'      => $review,
+			'remediation_command' => $remediate,
+		) );
+	}
+
+	/**
+	 * Detect submodule declarations without mutating the worktree.
+	 *
+	 * @param string $path Worktree path.
+	 * @return bool
+	 */
+	private function worktree_declares_submodules( string $path ): bool {
+		if ( '' === $path || ! is_dir( $path ) ) {
+			return false;
+		}
+
+		$gitmodules = rtrim( $path, '/' ) . '/.gitmodules';
+		return is_file( $gitmodules ) && filesize( $gitmodules ) > 0;
+	}
+
+	/**
 	 * Build stable high-level cleanup buckets for plan/report consumers.
 	 *
 	 * @param int               $candidate_count      Candidate row count.
@@ -2669,6 +2722,7 @@ class Workspace {
 			+ (int) ( $skipped_by_reason['github_unknown'] ?? 0 )
 			+ (int) ( $skipped_by_reason['external_worktree'] ?? 0 )
 			+ (int) ( $skipped_by_reason['protected_branch'] ?? 0 )
+			+ (int) ( $skipped_by_reason['submodule_worktree'] ?? 0 )
 			+ (int) ( $skipped_by_reason['probe_timeout'] ?? 0 )
 			+ (int) ( $skipped_by_reason['unknown_age'] ?? 0 );
 		$blocked_by_dirty_or_unpushed = (int) ( $skipped_by_reason['dirty_worktree'] ?? 0 )
@@ -2721,6 +2775,13 @@ class Workspace {
 				'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --skip-github --format=json',
 				'alternative' => 'No automatic cleanup action is safe from active inventory metadata alone.',
 				'why'         => 'Active rows without stale liveness or PR/task context are not cleanup candidates from inventory alone.',
+				'destructive' => false,
+			),
+			'submodule_worktree' => array(
+				'label'       => 'Review submodules before removing the worktree',
+				'command'     => 'git -C <worktree-path> submodule status --recursive',
+				'alternative' => 'After review, deinitialize submodules and rerun the DMC cleanup apply, or remove the worktree with an explicit git worktree remove command.',
+				'why'         => 'Git refuses to remove worktrees containing submodules through the normal cleanup path; DMC leaves them in place until submodule state is explicitly reviewed.',
 				'destructive' => false,
 			),
 			'repaired_metadata'           => array(
