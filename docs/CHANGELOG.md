@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.41.1] - 2026-05-12
+
+### Changed
+- extract workspace artifact cleanup
+
+### Fixed
+- batch dirty path classification
+
 ## [0.41.0] - 2026-05-12
 
 ### Added
