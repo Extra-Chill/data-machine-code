@@ -520,6 +520,10 @@ namespace {
 	$assert( 250, (int) ( $active_rows['demo@dirty-active']['upstream_equivalence']['path_inspection_limit'] ?? 0 ), 'dirty diagnostics expose path inspection cap' );
 	$assert( true, isset( $active_rows['demo@dirty-active']['upstream_equivalence']['dirty_paths']['generated_or_artifact'] ), 'dirty diagnostics count generated/artifact paths' );
 	$assert( 'equivalent_clean', $active_rows['demo@equivalent-clean']['upstream_equivalence']['effective_status'] ?? '', 'dirty diagnostics classify patch-equivalent clean rows' );
+	$budgeted_active_report = $ws->worktree_active_no_signal_report( array( 'limit' => 20, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 1, 'internal_budget_started' => microtime( true ) - 1 ) );
+	$assert( true, ! is_wp_error( $budgeted_active_report ) && ( $budgeted_active_report['success'] ?? false ), 'budgeted active/no-signal report succeeds' );
+	$assert( true, (bool) ( $budgeted_active_report['pagination']['partial'] ?? false ), 'budgeted active/no-signal report returns partial pagination' );
+	$assert( true, isset( $budgeted_active_report['evidence']['budget']['budget_exhausted'] ), 'budgeted active/no-signal report exposes budget evidence' );
 	$run( 'git remote set-url origin https://github.com/acme/demo.git', $primary );
 	$finalized_dry_run = $ws->worktree_active_no_signal_finalized_apply( array( 'dry_run' => true, 'limit' => 50, 'offset' => 0 ) );
 	$run( sprintf( 'git remote set-url origin %s', escapeshellarg( $remote ) ), $primary );
@@ -580,6 +584,10 @@ namespace {
 	$assert( 4, (int) ( $page['pagination']['next_offset'] ?? 0 ), 'paginated dry-run advances next offset' );
 	$assert( 2, (int) ( $page['summary']['inspected'] ?? 0 ), 'paginated dry-run summary is page-scoped' );
 	$assert( true, isset( $page['evidence']['fields_skipped_by_listing'] ), 'paginated dry-run exposes listing evidence' );
+	$budgeted_page = $ws->worktree_reconcile_metadata( array( 'dry_run' => true, 'limit' => 20, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 1, 'internal_budget_started' => microtime( true ) - 1 ) );
+	$assert( true, ! is_wp_error( $budgeted_page ) && ( $budgeted_page['success'] ?? false ), 'budgeted metadata reconciliation dry-run succeeds' );
+	$assert( true, (bool) ( $budgeted_page['pagination']['partial'] ?? false ), 'budgeted metadata reconciliation dry-run returns partial pagination' );
+	$assert( true, isset( $budgeted_page['evidence']['budget']['budget_exhausted'] ), 'budgeted metadata reconciliation dry-run exposes budget evidence' );
 
 	\DataMachine\Engine\Tasks\TaskScheduler::$batches = array();
 	$job_backed = $ws->worktree_reconcile_metadata( array( 'apply' => true, 'via_jobs' => true, 'limit' => 3 ) );

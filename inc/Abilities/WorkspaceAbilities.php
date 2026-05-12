@@ -1570,7 +1570,7 @@ class WorkspaceAbilities {
 							),
 							'until_budget' => array(
 								'type'        => 'string',
-								'description' => 'Compact time budget for direct apply drain mode, such as 60s or 10m.',
+								'description' => 'Compact time budget for direct apply drain mode or bounded dry-run pages, such as 60s or 10m.',
 							),
 						),
 					),
@@ -1608,6 +1608,10 @@ class WorkspaceAbilities {
 							'offset' => array(
 								'type'        => 'integer',
 								'description' => 'Pagination offset into the active_no_signal inventory ordering.',
+							),
+							'until_budget' => array(
+								'type'        => 'string',
+								'description' => 'Compact time budget for this report page, such as 60s or 10m.',
 							),
 						),
 					),
@@ -2693,6 +2697,9 @@ class WorkspaceAbilities {
 		}
 		if ( array_key_exists( 'offset', $input ) ) {
 			$opts['offset'] = (int) $input['offset'];
+		}
+		if ( isset( $input['until_budget'] ) && '' !== trim( (string) $input['until_budget'] ) ) {
+			$opts['until_budget'] = trim( (string) $input['until_budget'] );
 		}
 
 		return $workspace->worktree_active_no_signal_report( $opts );

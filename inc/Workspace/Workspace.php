@@ -3840,16 +3840,14 @@ class Workspace {
 			return new \WP_Error( 'invalid_metadata_reconcile_limit', 'Metadata reconciliation --limit must be greater than 0.', array( 'status' => 400 ) );
 		}
 		if ( '' !== $until_budget ) {
-			if ( ! $apply || $dry_run ) {
-				return new \WP_Error( 'metadata_reconcile_budget_requires_apply', 'Metadata reconciliation --until-budget is only supported with direct --apply.', array( 'status' => 400 ) );
-			}
-
 			$budget_seconds = $this->parse_worktree_metadata_reconciliation_budget( $until_budget );
 			if ( is_wp_error( $budget_seconds ) ) {
 				return $budget_seconds;
 			}
 
-			return $this->drain_worktree_metadata_reconciliation_budget( $limit, $offset, $until_budget, $budget_seconds );
+			if ( $apply && ! $dry_run ) {
+				return $this->drain_worktree_metadata_reconciliation_budget( $limit, $offset, $until_budget, $budget_seconds );
+			}
 		}
 		if ( $via_jobs && ! $paged ) {
 			$limit  = self::METADATA_RECONCILE_DEFAULT_LIMIT;
@@ -3881,7 +3879,14 @@ class Workspace {
 		$github_cache = array();
 		$fetched      = array();
 
-		foreach ( $page_worktrees as $wt ) {
+		$budget_context = $this->build_worktree_loop_budget_context( $opts, $started_at );
+		$budget_stopped = false;
+		foreach ( $page_worktrees as $index => $wt ) {
+			if ( null !== $budget_context && $this->is_worktree_loop_budget_exhausted( $budget_context ) ) {
+				$budget_stopped = true;
+				$page_worktrees = array_slice( $page_worktrees, 0, $index );
+				break;
+			}
 			$proposal = $this->build_worktree_metadata_reconciliation_row( $wt, $github_cache, $fetched );
 			if ( isset( $proposal['proposal'] ) ) {
 				$proposals[] = $proposal['proposal'];
@@ -3892,6 +3897,12 @@ class Workspace {
 
 		$classified_skips = $this->classify_worktree_metadata_reconciliation_skips( $skipped );
 		$pagination       = $paged ? $this->build_worktree_metadata_reconciliation_pagination( $total_worktrees, count( $page_worktrees ), $limit, $offset ) : null;
+		if ( null !== $pagination && $budget_stopped ) {
+			$pagination['partial']      = true;
+			$pagination['complete']     = false;
+			$pagination['next_offset']  = $offset + count( $page_worktrees );
+			$pagination['next_command'] = sprintf( 'studio wp datamachine-code workspace worktree reconcile-metadata --%s --limit=%d --offset=%d%s --format=json', $apply ? 'apply' : 'dry-run', $limit, (int) $pagination['next_offset'], null !== $budget_context ? ' --until-budget=' . (string) $budget_context['label'] : '' );
+		}
 
 		$plan = array(
 			'success'        => true,
@@ -3913,6 +3924,9 @@ class Workspace {
 				'note'   => 'Only this page ran per-worktree dirty, unpushed, merge-signal, and GitHub probes. Run the next_offset page until complete for full inventory review.',
 				'fields_skipped_by_listing' => (array) ( $listing['fields_skipped'] ?? array() ),
 			);
+			if ( null !== $budget_context ) {
+				$plan['evidence']['budget'] = $this->summarize_worktree_loop_budget_context( $budget_context, $budget_stopped );
+			}
 		}
 
 		if ( $apply ) {
@@ -3949,9 +3963,12 @@ class Workspace {
 		do {
 			$page = $this->worktree_reconcile_metadata(
 				array(
-					'apply'  => true,
-					'limit'  => $limit,
-					'offset' => $next_offset,
+					'apply'                   => true,
+					'limit'                   => $limit,
+					'offset'                  => $next_offset,
+					'internal_budget_label'   => $budget_label,
+					'internal_budget_seconds' => $budget_seconds,
+					'internal_budget_started' => $started_at,
 				)
 			);
 			if ( is_wp_error( $page ) ) {
@@ -4159,6 +4176,65 @@ class Workspace {
 		);
 
 		return $value * $unit_seconds[ $matches[2] ];
+	}
+
+	/**
+	 * Build a shared wall-clock budget context for expensive worktree loops.
+	 *
+	 * @param array<string,mixed> $opts       Operation options.
+	 * @param float               $started_at Operation start timestamp.
+	 * @return array<string,mixed>|null
+	 */
+	private function build_worktree_loop_budget_context( array $opts, float $started_at ): ?array {
+		$label = isset( $opts['internal_budget_label'] ) ? trim( (string) $opts['internal_budget_label'] ) : ( isset( $opts['until_budget'] ) ? trim( (string) $opts['until_budget'] ) : '' );
+		if ( '' === $label && ! isset( $opts['internal_budget_seconds'] ) ) {
+			return null;
+		}
+
+		$seconds = isset( $opts['internal_budget_seconds'] ) ? (int) $opts['internal_budget_seconds'] : $this->parse_worktree_metadata_reconciliation_budget( $label );
+		if ( is_wp_error( $seconds ) || $seconds <= 0 ) {
+			return null;
+		}
+
+		$started = isset( $opts['internal_budget_started'] ) ? (float) $opts['internal_budget_started'] : $started_at;
+		$reserve = min( 5.0, max( 0.1, $seconds * 0.1 ) );
+
+		return array(
+			'label'           => '' === $label ? $seconds . 's' : $label,
+			'seconds'         => $seconds,
+			'started_at'      => $started,
+			'reserve_seconds' => $reserve,
+		);
+	}
+
+	/**
+	 * Determine whether an expensive loop should stop before another row starts.
+	 *
+	 * @param array<string,mixed> $context Budget context.
+	 * @return bool
+	 */
+	private function is_worktree_loop_budget_exhausted( array $context ): bool {
+		$remaining = (float) ( $context['seconds'] ?? 0 ) - ( microtime( true ) - (float) ( $context['started_at'] ?? microtime( true ) ) );
+		return $remaining <= (float) ( $context['reserve_seconds'] ?? 1.0 );
+	}
+
+	/**
+	 * Summarize budget evidence for JSON responses.
+	 *
+	 * @param array<string,mixed> $context   Budget context.
+	 * @param bool                $exhausted Whether the loop stopped for budget.
+	 * @return array<string,mixed>
+	 */
+	private function summarize_worktree_loop_budget_context( array $context, bool $exhausted ): array {
+		$elapsed = max( 0.0, microtime( true ) - (float) ( $context['started_at'] ?? microtime( true ) ) );
+		return array(
+			'label'             => (string) ( $context['label'] ?? '' ),
+			'budget_seconds'    => (int) ( $context['seconds'] ?? 0 ),
+			'reserve_seconds'   => (float) ( $context['reserve_seconds'] ?? 0 ),
+			'elapsed_seconds'   => round( $elapsed, 3 ),
+			'budget_exhausted'  => $exhausted,
+			'remaining_seconds' => round( max( 0.0, (float) ( $context['seconds'] ?? 0 ) - $elapsed ), 3 ),
+		);
 	}
 
 	/**
@@ -6327,8 +6403,15 @@ class Workspace {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_active_no_signal_report( array $opts = array() ): array|\WP_Error {
+		$started_at = microtime( true );
 		$limit  = array_key_exists( 'limit', $opts ) ? max( 1, (int) $opts['limit'] ) : 25;
 		$offset = array_key_exists( 'offset', $opts ) ? max( 0, (int) $opts['offset'] ) : 0;
+		if ( isset( $opts['until_budget'] ) && '' !== trim( (string) $opts['until_budget'] ) ) {
+			$budget_seconds = $this->parse_worktree_metadata_reconciliation_budget( trim( (string) $opts['until_budget'] ) );
+			if ( is_wp_error( $budget_seconds ) ) {
+				return $budget_seconds;
+			}
+		}
 
 		$inventory = $this->worktree_cleanup_inventory_only( '', '', false );
 		if ( is_wp_error( $inventory ) ) {
@@ -6355,7 +6438,14 @@ class Workspace {
 			'without_pr'             => 0,
 		);
 
-		foreach ( $page as $row ) {
+		$budget_context = $this->build_worktree_loop_budget_context( $opts, $started_at );
+		$budget_stopped = false;
+		foreach ( $page as $index => $row ) {
+			if ( null !== $budget_context && $this->is_worktree_loop_budget_exhausted( $budget_context ) ) {
+				$budget_stopped = true;
+				$page = array_slice( $page, 0, $index );
+				break;
+			}
 			$evidence = $this->build_active_no_signal_evidence_row( $row, $github_cache );
 			$rows[]   = $evidence;
 			++$summary['inspected'];
@@ -6373,6 +6463,20 @@ class Workspace {
 		}
 
 		$next_offset = ( $offset + count( $page ) ) < $total ? $offset + count( $page ) : null;
+		$pagination  = array(
+			'total'        => $total,
+			'offset'       => $offset,
+			'limit'        => $limit,
+			'scanned'      => count( $page ),
+			'partial'      => null !== $next_offset,
+			'complete'     => null === $next_offset,
+			'next_offset'  => $next_offset,
+			'next_command' => null === $next_offset ? null : sprintf( 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=%d --offset=%d%s --format=json', $limit, $next_offset, null !== $budget_context ? ' --until-budget=' . (string) $budget_context['label'] : '' ),
+		);
+		if ( $budget_stopped ) {
+			$pagination['partial']  = true;
+			$pagination['complete'] = false;
+		}
 
 		return array(
 			'success'    => true,
@@ -6381,19 +6485,11 @@ class Workspace {
 			'generated_at' => gmdate( 'c' ),
 			'rows'       => $rows,
 			'summary'    => $summary,
-			'pagination' => array(
-				'total'        => $total,
-				'offset'       => $offset,
-				'limit'        => $limit,
-				'scanned'      => count( $page ),
-				'partial'      => null !== $next_offset,
-				'complete'     => null === $next_offset,
-				'next_offset'  => $next_offset,
-				'next_command' => null === $next_offset ? null : sprintf( 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=%d --offset=%d --format=json', $limit, $next_offset ),
-			),
+			'pagination' => $pagination,
 			'evidence'   => array(
 				'scope' => 'review-only active_no_signal worktree lifecycle evidence',
 				'safety' => 'No worktrees or remote branches are deleted. Dirty and unpushed probes are evidence only.',
+				'budget' => null === $budget_context ? null : $this->summarize_worktree_loop_budget_context( $budget_context, $budget_stopped ),
 			),
 		);
 	}
