@@ -522,6 +522,10 @@ namespace {
 	$assert( 'equivalent_clean', $active_rows['demo@equivalent-clean']['upstream_equivalence']['effective_status'] ?? '', 'dirty diagnostics classify patch-equivalent clean rows' );
 	$assert( true, isset( $active_rows['demo@dirty-active']['elapsed_ms'] ), 'active/no-signal rows include elapsed timing' );
 	$assert( true, isset( $active_report['summary']['slow_rows'][0]['elapsed_ms'] ), 'active/no-signal summary includes slow row timing samples' );
+	$assert( true, isset( $active_rows['demo@dirty-active']['probe_timings_ms']['dirty_count'] ), 'active/no-signal rows include dirty probe timing' );
+	$assert( true, isset( $active_rows['demo@dirty-active']['probe_timings_ms']['upstream_equivalence'] ), 'active/no-signal rows include upstream equivalence probe timing' );
+	$assert( true, isset( $active_rows['demo@dirty-active']['upstream_equivalence']['probe_timings_ms']['git_cherry'] ), 'upstream equivalence includes git cherry probe timing' );
+	$assert( true, isset( $active_rows['demo@dirty-active']['upstream_equivalence']['probe_timings_ms']['dirty_path_classification'] ), 'upstream equivalence includes dirty path classification timing' );
 	$budgeted_active_report = $ws->worktree_active_no_signal_report( array( 'limit' => 20, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 1, 'internal_budget_started' => microtime( true ) - 1 ) );
 	$assert( true, ! is_wp_error( $budgeted_active_report ) && ( $budgeted_active_report['success'] ?? false ), 'budgeted active/no-signal report succeeds' );
 	$assert( true, (bool) ( $budgeted_active_report['pagination']['partial'] ?? false ), 'budgeted active/no-signal report returns partial pagination' );
