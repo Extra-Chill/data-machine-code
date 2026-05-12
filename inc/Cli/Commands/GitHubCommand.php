@@ -376,6 +376,124 @@ class GitHubCommand extends BaseCommand {
 	}
 
 	/**
+	 * Merge a GitHub pull request through the GitHub API.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <pull_number>
+	 * : Pull request number to merge.
+	 *
+	 * [--repo=<repo>]
+	 * : Repository in owner/repo format.
+	 *
+	 * --expected-head-sha=<sha>
+	 * : Exact pull request head SHA expected immediately before merge.
+	 *
+	 * [--method=<method>]
+	 * : GitHub merge method.
+	 * ---
+	 * default: squash
+	 * options:
+	 *   - merge
+	 *   - squash
+	 *   - rebase
+	 * ---
+	 *
+	 * [--delete-branch]
+	 * : Delete the pull request head branch through the GitHub API after merge.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code github merge 383 --repo=Extra-Chill/data-machine-code --expected-head-sha=abc123 --delete-branch
+	 *
+	 * @subcommand merge
+	 */
+	public function merge_pull( array $args, array $assoc_args ): void {
+		$this->requireConfig();
+
+		$pull_number = \absint( $args[0] ?? 0 );
+		if ( $pull_number <= 0 ) {
+			WP_CLI::error( 'Please provide a valid pull request number.' );
+			return;
+		}
+
+		$expected_head_sha = trim( (string) ( $assoc_args['expected-head-sha'] ?? '' ) );
+		if ( '' === $expected_head_sha ) {
+			WP_CLI::error( 'Required: --expected-head-sha=<sha>' );
+			return;
+		}
+
+		$input = $this->resolveRepo( array(
+			'repo'              => $assoc_args['repo'] ?? '',
+			'pull_number'       => $pull_number,
+			'expected_head_sha' => $expected_head_sha,
+			'merge_method'      => $assoc_args['method'] ?? 'squash',
+			'delete_branch'     => ! empty( $assoc_args['delete-branch'] ),
+		) );
+
+		$result = GitHubAbilities::mergePullRequest( $input );
+		$this->render_pull_mutation_result( $result, $assoc_args, 'Pull request merged.' );
+	}
+
+	/**
+	 * Cleanup a merged GitHub pull request through the GitHub API.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <pull_number>
+	 * : Pull request number to cleanup.
+	 *
+	 * [--repo=<repo>]
+	 * : Repository in owner/repo format.
+	 *
+	 * [--dry-run]
+	 * : Preview the cleanup decision without deleting the branch.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code github cleanup-pr 383 --repo=Extra-Chill/data-machine-code --dry-run
+	 *     wp datamachine-code github cleanup-pr 383 --repo=Extra-Chill/data-machine-code
+	 *
+	 * @subcommand cleanup-pr
+	 */
+	public function cleanup_pull( array $args, array $assoc_args ): void {
+		$this->requireConfig();
+
+		$pull_number = \absint( $args[0] ?? 0 );
+		if ( $pull_number <= 0 ) {
+			WP_CLI::error( 'Please provide a valid pull request number.' );
+			return;
+		}
+
+		$input = $this->resolveRepo( array(
+			'repo'        => $assoc_args['repo'] ?? '',
+			'pull_number' => $pull_number,
+			'dry_run'     => ! empty( $assoc_args['dry-run'] ),
+		) );
+
+		$result = GitHubAbilities::cleanupPullRequest( $input );
+		$this->render_pull_mutation_result( $result, $assoc_args, 'Pull request cleanup complete.' );
+	}
+
+	/**
 	 * List repositories for a user or organization.
 	 *
 	 * ## OPTIONS
@@ -741,6 +859,36 @@ class GitHubCommand extends BaseCommand {
 			}
 		}
 		return $input;
+	}
+
+	/**
+	 * Render a PR mutation result.
+	 */
+	private function render_pull_mutation_result( array|\WP_Error $result, array $assoc_args, string $fallback_message ): void {
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+
+		if ( 'json' === ( $assoc_args['format'] ?? 'table' ) ) {
+			WP_CLI::line( \wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
+			return;
+		}
+
+		$items = array();
+		foreach ( $result as $key => $value ) {
+			if ( is_array( $value ) || is_object( $value ) ) {
+				continue;
+			}
+
+			$items[] = array(
+				'field' => (string) $key,
+				'value' => is_bool( $value ) ? ( $value ? 'yes' : 'no' ) : (string) $value,
+			);
+		}
+
+		$this->format_items( $items, array( 'field', 'value' ), $assoc_args );
+		WP_CLI::success( (string) ( $result['message'] ?? $fallback_message ) );
 	}
 
 	/**

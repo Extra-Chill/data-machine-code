@@ -158,7 +158,7 @@ namespace {
 	}
 
 	function wp_get_ability( string $name ): ?DMC_Test_Ability {
-		if ( 'datamachine/merge-github-pull-request' === $name ) {
+		if ( in_array( $name, array( 'datamachine/merge-github-pull-request', 'datamachine/cleanup-github-pull-request' ), true ) ) {
 			return new DMC_Test_Ability( $name );
 		}
 
@@ -191,7 +191,27 @@ namespace {
 				'number'   => 42,
 				'state'    => 'open',
 				'html_url' => 'https://github.com/owner/repo/pull/42',
-				'head'     => array( 'sha' => $sha ),
+				'head'     => array(
+					'ref'  => 'feature/test',
+					'sha'  => $sha,
+					'repo' => array( 'full_name' => 'owner/repo' ),
+				),
+			),
+		);
+	};
+
+	$merged_pull = static function ( string $head_repo = 'owner/repo', string $head_ref = 'feature/test' ): array {
+		return array(
+			'success' => true,
+			'data'    => array(
+				'number'    => 42,
+				'state'     => 'closed',
+				'merged_at' => '2026-05-12T15:14:37Z',
+				'html_url'  => 'https://github.com/owner/repo/pull/42',
+				'head'      => array(
+					'ref'  => $head_ref,
+					'repo' => array( 'full_name' => $head_repo ),
+				),
 			),
 		);
 	};
@@ -213,6 +233,10 @@ namespace {
 	$assert( 'merge ability uses mergePullRequest execute_callback', array( GitHubAbilities::class, 'mergePullRequest' ) === ( $ability['execute_callback'] ?? null ) );
 	$assert( 'merge ability requires repo, pull_number, expected_head_sha', array( 'repo', 'pull_number', 'expected_head_sha' ) === ( $ability['input_schema']['required'] ?? array() ) );
 	$assert( 'merge ability limits merge_method enum', array( 'merge', 'squash', 'rebase' ) === ( $ability['input_schema']['properties']['merge_method']['enum'] ?? array() ) );
+	$assert( 'merge ability exposes delete_branch', isset( $ability['input_schema']['properties']['delete_branch'] ) );
+	$cleanup_ability = $GLOBALS['dmc_registered_abilities']['datamachine/cleanup-github-pull-request'] ?? null;
+	$assert( 'cleanup ability is registered', null !== $cleanup_ability );
+	$assert( 'cleanup ability uses cleanupPullRequest execute_callback', array( GitHubAbilities::class, 'cleanupPullRequest' ) === ( $cleanup_ability['execute_callback'] ?? null ) );
 
 	$permission = $ability['permission_callback'] ?? null;
 	PermissionHelper::$can_manage_result = false;
@@ -297,12 +321,71 @@ namespace {
 	$assert( 'mergePullRequest rejects head SHA mismatch', $result instanceof WP_Error && 'pull_request_head_sha_mismatch' === $result->get_error_code() );
 	$assert( 'mergePullRequest does not merge after SHA mismatch', false === $merge_called );
 
+	$calls = array();
+	$result = GitHubAbilities::cleanupPullRequest(
+		array(
+			'repo'        => 'owner/repo',
+			'pull_number' => 42,
+			'dry_run'     => true,
+		),
+		static function ( string $url, array $query, string $pat ) use ( &$calls, $merged_pull ): array {
+			$calls[] = array( 'method' => 'GET', 'url' => $url, 'query' => $query, 'pat' => $pat );
+			return $merged_pull();
+		},
+		static function ( string $method, string $url, ?array $body, string $pat ) use ( &$calls ): array {
+			$calls[] = compact( 'method', 'url', 'body', 'pat' );
+			return array( 'success' => true, 'data' => null );
+		}
+	);
+	$assert( 'cleanupPullRequest dry-run succeeds', is_array( $result ) && true === ( $result['dry_run'] ?? false ) );
+	$assert( 'cleanupPullRequest dry-run does not delete branch', 1 === count( $calls ) );
+
+	$calls = array();
+	$result = GitHubAbilities::cleanupPullRequest(
+		array(
+			'repo'        => 'owner/repo',
+			'pull_number' => 42,
+		),
+		static function ( string $url, array $query, string $pat ) use ( &$calls, $merged_pull ): array {
+			$calls[] = array( 'method' => 'GET', 'url' => $url, 'query' => $query, 'pat' => $pat );
+			return $merged_pull();
+		},
+		static function ( string $method, string $url, ?array $body, string $pat ) use ( &$calls ): array {
+			$calls[] = compact( 'method', 'url', 'body', 'pat' );
+			return array( 'success' => true, 'data' => null );
+		}
+	);
+	$assert( 'cleanupPullRequest deletes merged same-repo branch', is_array( $result ) && true === ( $result['branch_deleted'] ?? false ) );
+	$assert( 'cleanupPullRequest calls GitHub refs delete endpoint', 'DELETE' === ( $calls[1]['method'] ?? '' ) && str_contains( $calls[1]['url'] ?? '', '/repos/owner/repo/git/refs/heads/' ) );
+
+	$result = GitHubAbilities::cleanupPullRequest(
+		array(
+			'repo'        => 'owner/repo',
+			'pull_number' => 42,
+		),
+		static fn(): array => $open_pull(),
+		static fn(): array => array( 'success' => true, 'data' => null )
+	);
+	$assert( 'cleanupPullRequest rejects unmerged PR', $result instanceof WP_Error && 'pull_request_not_merged' === $result->get_error_code() );
+
+	$result = GitHubAbilities::cleanupPullRequest(
+		array(
+			'repo'        => 'owner/repo',
+			'pull_number' => 42,
+		),
+		static fn(): array => $merged_pull( 'fork/repo' ),
+		static fn(): array => array( 'success' => true, 'data' => null )
+	);
+	$assert( 'cleanupPullRequest rejects fork head repo', $result instanceof WP_Error && 'pull_request_head_repo_mismatch' === $result->get_error_code() );
+
 	$tools = new GitHubTools();
 	$assert( 'merge_github_pull_request tool is registered', isset( $tools->registered['merge_github_pull_request'] ) );
+	$assert( 'cleanup_github_pull_request tool is registered', isset( $tools->registered['cleanup_github_pull_request'] ) );
 	$assert( 'merge tool links to merge ability', 'datamachine/merge-github-pull-request' === ( $tools->registered['merge_github_pull_request']['options']['ability'] ?? '' ) );
+	$assert( 'cleanup tool links to cleanup ability', 'datamachine/cleanup-github-pull-request' === ( $tools->registered['cleanup_github_pull_request']['options']['ability'] ?? '' ) );
 	$definition = $tools->getMergePullRequestDefinition();
 	$params     = $definition['parameters'] ?? array();
-	$assert( 'merge tool requires expected_head_sha', true === ( $params['expected_head_sha']['required'] ?? false ) );
+	$assert( 'merge tool requires expected_head_sha', in_array( 'expected_head_sha', $params['required'] ?? array(), true ) );
 	$tool_result = $tools->handle_tool_call(
 		array(
 			'repo'              => 'owner/repo',
@@ -315,6 +398,17 @@ namespace {
 	$assert( 'merge tool response names tool', 'merge_github_pull_request' === ( $tool_result['tool_name'] ?? '' ) );
 	$tool_call = $GLOBALS['dmc_tool_ability_calls'][0] ?? array();
 	$assert( 'merge tool calls merge ability', 'datamachine/merge-github-pull-request' === ( $tool_call['name'] ?? '' ) );
+	$cleanup_definition = $tools->getCleanupPullRequestDefinition();
+	$cleanup_result     = $tools->handle_tool_call(
+		array(
+			'repo'        => 'owner/repo',
+			'pull_number' => 42,
+			'dry_run'     => true,
+		),
+		$cleanup_definition
+	);
+	$assert( 'cleanup tool returns direct ability success', true === ( $cleanup_result['success'] ?? false ) );
+	$assert( 'cleanup tool response names tool', 'cleanup_github_pull_request' === ( $cleanup_result['tool_name'] ?? '' ) );
 
 	$scaffold_source = file_get_contents( __DIR__ . '/../inc/GitHub/PrReviewFlowScaffold.php' );
 	$assert( 'PR review scaffold does not enable merge tool', ! str_contains( $scaffold_source, 'merge_github_pull_request' ) );

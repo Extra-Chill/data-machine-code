@@ -38,6 +38,10 @@ class GitHubTools extends BaseTool {
 			'access_level' => 'editor',
 			'ability'      => 'datamachine/merge-github-pull-request',
 		) );
+		$this->registerTool( 'cleanup_github_pull_request', array( $this, 'getCleanupPullRequestDefinition' ), $contexts, array(
+			'access_level' => 'editor',
+			'ability'      => 'datamachine/cleanup-github-pull-request',
+		) );
 		$this->registerTool( 'list_github_pulls', array( $this, 'getListPullsDefinition' ), $contexts, array( 'access_level' => 'editor' ) );
 		$this->registerTool( 'get_github_pull', array( $this, 'getGetPullDefinition' ), $contexts, array(
 			'access_level' => 'editor',
@@ -126,6 +130,7 @@ class GitHubTools extends BaseTool {
 			'comment_github_pull_request',
 			'upsert_github_pull_review_comment',
 			'merge_github_pull_request',
+			'cleanup_github_pull_request',
 			'list_github_pulls',
 			'get_github_pull',
 			'get_github_pull_files',
@@ -601,6 +606,16 @@ class GitHubTools extends BaseTool {
 	}
 
 	/**
+	 * Handle cleanup_github_pull_request tool call.
+	 *
+	 * @param array $parameters Tool parameters.
+	 * @return array
+	 */
+	public function handleCleanupPullRequest( array $parameters ): array {
+		return $this->executeGitHubAbility( 'datamachine/cleanup-github-pull-request', 'cleanup_github_pull_request', $parameters );
+	}
+
+	/**
 	 * Get tool definition for merge_github_pull_request.
 	 *
 	 * @return array
@@ -629,8 +644,43 @@ class GitHubTools extends BaseTool {
 						'type'        => 'string',
 						'description' => 'GitHub merge method: merge, squash, or rebase. Default: squash.',
 					),
+					'delete_branch'     => array(
+						'type'        => 'boolean',
+						'description' => 'Delete the pull request head branch through the GitHub API after merge when the branch is in the same repository.',
+					),
 				),
 				'required'   => array( 'repo', 'pull_number', 'expected_head_sha' ),
+			),
+		);
+	}
+
+	/**
+	 * Get tool definition for cleanup_github_pull_request.
+	 *
+	 * @return array
+	 */
+	public function getCleanupPullRequestDefinition(): array {
+		return array(
+			'class'       => __CLASS__,
+			'method'      => 'handleCleanupPullRequest',
+			'description' => 'Delete a merged pull request head branch through the GitHub API without checking out or switching local branches. Supports dry_run previews.',
+			'parameters'  => array(
+				'type'       => 'object',
+				'properties' => array(
+					'repo'        => array(
+						'type'        => 'string',
+						'description' => 'Repository in owner/repo format.',
+					),
+					'pull_number' => array(
+						'type'        => 'integer',
+						'description' => 'Pull request number.',
+					),
+					'dry_run'     => array(
+						'type'        => 'boolean',
+						'description' => 'Preview the cleanup decision without deleting the branch.',
+					),
+				),
+				'required'   => array( 'repo', 'pull_number' ),
 			),
 		);
 	}
