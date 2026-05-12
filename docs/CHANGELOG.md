@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.41.0] - 2026-05-12
+
+### Added
+- expose active no-signal probe timing
+
 ## [0.40.0] - 2026-05-12
 
 ### Added
