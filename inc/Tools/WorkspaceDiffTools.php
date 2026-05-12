@@ -134,10 +134,23 @@ class WorkspaceDiffTools extends BaseTool {
 		}
 
 		if ( is_string( $input['name'] ) && WorkspaceAliasResolver::has_alias( $input['name'] ) ) {
-			$alias                    = $input['name'];
-			$input['name']            = WorkspaceAliasResolver::resolve( $alias );
-			$input['_workspace_alias'] = $alias;
-			$input['_workspace_handle'] = $input['name'];
+			$alias = $input['name'];
+			$spec  = WorkspaceAliasResolver::spec( $alias );
+			if ( null !== $spec ) {
+				$input['name']              = $spec['target'];
+				$input['_workspace_alias']  = $alias;
+				$input['_workspace_handle'] = $input['name'];
+				$input['_workspace_root']   = $spec['root'];
+
+				if ( '' !== $spec['root'] ) {
+					$scoped_path = WorkspaceAliasResolver::scope_path( (string) ( $input['path'] ?? '' ), $spec['root'] );
+					if ( false === $scoped_path ) {
+						$input['_workspace_alias_error'] = 'Path is outside the scoped workspace.';
+					} else {
+						$input['path'] = $scoped_path;
+					}
+				}
+			}
 		}
 
 		return $input;
@@ -151,6 +164,9 @@ class WorkspaceDiffTools extends BaseTool {
 		}
 
 		$input  = $this->normalizeInput( $parameters );
+		if ( isset( $input['_workspace_alias_error'] ) ) {
+			return $this->buildErrorResponse( (string) $input['_workspace_alias_error'], $tool_name );
+		}
 		$result = $ability->execute( $input );
 		if ( is_wp_error( $result ) ) {
 			return $this->buildErrorResponse( $result->get_error_message(), $tool_name );
@@ -158,8 +174,9 @@ class WorkspaceDiffTools extends BaseTool {
 
 		$alias  = isset( $input['_workspace_alias'] ) ? (string) $input['_workspace_alias'] : '';
 		$handle = isset( $input['_workspace_handle'] ) ? (string) $input['_workspace_handle'] : '';
+		$root   = isset( $input['_workspace_root'] ) ? (string) $input['_workspace_root'] : '';
 		if ( '' !== $alias && '' !== $handle ) {
-			$result = WorkspaceAliasResolver::sanitize_result( $result, $alias, $handle );
+			$result = WorkspaceAliasResolver::sanitize_result( $result, $alias, $handle, $root );
 		}
 
 		return array(

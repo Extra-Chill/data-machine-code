@@ -241,6 +241,9 @@ class WorkspaceTools extends BaseTool {
 			),
 			array( 'repo' )
 		);
+		if ( isset( $input['_workspace_alias_error'] ) ) {
+			return $this->buildErrorResponse( (string) $input['_workspace_alias_error'], 'workspace_ls' );
+		}
 		$result = $ability->execute( $input );
 
 		if ( is_wp_error( $result ) ) {
@@ -272,6 +275,9 @@ class WorkspaceTools extends BaseTool {
 			'path' => $parameters['path'] ?? '',
 		);
 		$input = $this->resolveWorkspaceInputAliases( $input, array( 'repo' ) );
+		if ( isset( $input['_workspace_alias_error'] ) ) {
+			return $this->buildErrorResponse( (string) $input['_workspace_alias_error'], 'workspace_read' );
+		}
 
 		if ( isset( $parameters['max_size'] ) ) {
 			$input['max_size'] = (int) $parameters['max_size'];
@@ -315,12 +321,15 @@ class WorkspaceTools extends BaseTool {
 			'repo'    => $parameters['repo'] ?? '',
 			'pattern' => $parameters['pattern'] ?? '',
 		);
-		$input = $this->resolveWorkspaceInputAliases( $input, array( 'repo' ) );
 
 		foreach ( array( 'path', 'include' ) as $key ) {
 			if ( isset( $parameters[ $key ] ) ) {
 				$input[ $key ] = $parameters[ $key ];
 			}
+		}
+		$input = $this->resolveWorkspaceInputAliases( $input, array( 'repo' ) );
+		if ( isset( $input['_workspace_alias_error'] ) ) {
+			return $this->buildErrorResponse( (string) $input['_workspace_alias_error'], 'workspace_grep' );
 		}
 
 		foreach ( array( 'max_results', 'context_lines' ) as $key ) {
@@ -510,6 +519,9 @@ class WorkspaceTools extends BaseTool {
 		}
 
 		$input = $this->resolveWorkspaceInputAliases( $input, $handle_keys );
+		if ( isset( $input['_workspace_alias_error'] ) ) {
+			return $this->buildErrorResponse( (string) $input['_workspace_alias_error'], $tool_name );
+		}
 
 		$result = $ability->execute( $input );
 		if ( is_wp_error( $result ) ) {
@@ -531,14 +543,24 @@ class WorkspaceTools extends BaseTool {
 			}
 
 			$alias = $input[ $key ];
-			$real  = WorkspaceAliasResolver::resolve( $alias );
-			if ( $real === $alias ) {
+			$spec  = WorkspaceAliasResolver::spec( $alias );
+			if ( null === $spec ) {
 				continue;
 			}
 
+			$real                      = $spec['target'];
+			$root                      = $spec['root'];
 			$input[ $key ]             = $real;
 			$input['_workspace_alias'] = $alias;
 			$input['_workspace_handle'] = $real;
+			$input['_workspace_root']   = $root;
+
+			$scoped = $this->scopeWorkspacePaths( $input, $root );
+			if ( is_string( $scoped ) ) {
+				$input['_workspace_alias_error'] = $scoped;
+			} else {
+				$input = $scoped;
+			}
 		}
 
 		return $input;
@@ -548,11 +570,81 @@ class WorkspaceTools extends BaseTool {
 	private function sanitizeWorkspaceResult( mixed $result, array $input ): mixed {
 		$alias  = isset( $input['_workspace_alias'] ) ? (string) $input['_workspace_alias'] : '';
 		$handle = isset( $input['_workspace_handle'] ) ? (string) $input['_workspace_handle'] : '';
+		$root   = isset( $input['_workspace_root'] ) ? (string) $input['_workspace_root'] : '';
 		if ( '' === $alias || '' === $handle ) {
 			return $result;
 		}
 
-		return WorkspaceAliasResolver::sanitize_result( $result, $alias, $handle );
+		return WorkspaceAliasResolver::sanitize_result( $result, $alias, $handle, $root );
+	}
+
+	/** @param array<string,mixed> $input Resolved ability input. @return array<string,mixed>|string */
+	private function scopeWorkspacePaths( array $input, string $root ): array|string {
+		if ( '' === $root ) {
+			return $input;
+		}
+
+		if ( array_key_exists( 'pattern', $input ) && ! array_key_exists( 'path', $input ) ) {
+			$input['path'] = '';
+		}
+
+		foreach ( array( 'path' ) as $key ) {
+			if ( array_key_exists( $key, $input ) ) {
+				$scoped = WorkspaceAliasResolver::scope_path( (string) $input[ $key ], $root );
+				if ( false === $scoped ) {
+					return 'Path is outside the scoped workspace.';
+				}
+				$input[ $key ] = $scoped;
+			}
+		}
+
+		if ( array_key_exists( 'paths', $input ) && is_array( $input['paths'] ) ) {
+			$paths = array();
+			foreach ( $input['paths'] as $path ) {
+				$scoped = WorkspaceAliasResolver::scope_path( (string) $path, $root );
+				if ( false === $scoped ) {
+					return 'Path is outside the scoped workspace.';
+				}
+				$paths[] = $scoped;
+			}
+			$input['paths'] = $paths;
+		}
+
+		if ( isset( $input['patch'] ) && is_string( $input['patch'] ) ) {
+			$patch = $this->scopeWorkspacePatch( $input['patch'], $root );
+			if ( false === $patch ) {
+				return 'Patch contains a path outside the scoped workspace.';
+			}
+			$input['patch'] = $patch;
+		}
+
+		return $input;
+	}
+
+	private function scopeWorkspacePatch( string $patch, string $root ): string|false {
+		$lines = explode( "\n", $patch );
+		foreach ( $lines as &$line ) {
+			if ( preg_match( '/^(diff --git) a\/(.+) b\/(.+)$/', $line, $matches ) ) {
+				$from = WorkspaceAliasResolver::scope_path( $matches[2], $root );
+				$to   = WorkspaceAliasResolver::scope_path( $matches[3], $root );
+				if ( false === $from || false === $to ) {
+					return false;
+				}
+				$line = $matches[1] . ' a/' . $from . ' b/' . $to;
+				continue;
+			}
+
+			if ( preg_match( '/^(---|\+\+\+) ([ab])\/(.+)$/', $line, $matches ) ) {
+				$path = WorkspaceAliasResolver::scope_path( $matches[3], $root );
+				if ( false === $path ) {
+					return false;
+				}
+				$line = $matches[1] . ' ' . $matches[2] . '/' . $path;
+			}
+		}
+		unset( $line );
+
+		return implode( "\n", $lines );
 	}
 
 	/**
