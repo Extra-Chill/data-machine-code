@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.41.2] - 2026-05-12
+
+### Changed
+- extract workspace metadata reconciliation
+
+### Fixed
+- skip PR lookup for unsafe active rows
+
 ## [0.41.1] - 2026-05-12
 
 ### Changed
