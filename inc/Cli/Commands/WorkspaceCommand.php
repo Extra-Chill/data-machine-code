@@ -2022,9 +2022,10 @@ class WorkspaceCommand extends BaseCommand {
 	 *   passing the previous response's `pagination.next_offset`.
 	 *
 	 * [--until-budget=<duration>]
-	 * : For `reconcile-metadata --apply`, drain bounded direct-apply pages until
-	 *   the compact time budget is nearly exhausted (e.g. 60s, 10m). Returns
-	 *   continuation evidence and a next command when more pages remain.
+	 * : For `reconcile-metadata`, enforce a compact wall-clock budget for dry-run
+	 *   pages or direct-apply drains (e.g. 60s, 10m). Also supported by
+	 *   `active-no-signal-report`. Returns continuation evidence and a next command
+	 *   when more rows remain.
 	 *
 	 * [--exhaustive]
 	 * : For `cleanup-artifacts --dry-run`, scan every worktree AND run per-worktree
@@ -2343,6 +2344,9 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				if ( isset( $assoc_args['offset'] ) ) {
 					$input['offset'] = (int) $assoc_args['offset'];
+				}
+				if ( 'active-no-signal-report' === $operation && isset( $assoc_args['until-budget'] ) && '' !== trim( (string) $assoc_args['until-budget'] ) ) {
+					$input['until_budget'] = trim( (string) $assoc_args['until-budget'] );
 				}
 				break;
 
