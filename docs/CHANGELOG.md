@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.39.0] - 2026-05-11
+
+### Added
+- promote equivalent clean worktrees
+
 ## [0.38.0] - 2026-05-11
 
 ### Added
