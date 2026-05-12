@@ -12,6 +12,7 @@
 namespace DataMachineCode\Tools;
 
 use DataMachine\Engine\AI\Tools\BaseTool;
+use DataMachineCode\Workspace\WorkspaceAliasResolver;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -205,11 +206,9 @@ class WorkspaceTools extends BaseTool {
 			return $this->buildErrorResponse( 'Workspace show ability not available.', 'workspace_show' );
 		}
 
-		$result = $ability->execute(
-			array(
-				'name' => $parameters['name'] ?? '',
-			)
-		);
+		$input = array( 'name' => $parameters['name'] ?? '' );
+		$input = $this->resolveWorkspaceInputAliases( $input, array( 'name' ) );
+		$result = $ability->execute( $input );
 
 		if ( is_wp_error( $result ) ) {
 			return $this->buildErrorResponse( $result->get_error_message(), 'workspace_show' );
@@ -217,7 +216,7 @@ class WorkspaceTools extends BaseTool {
 
 		return array(
 			'success'   => true,
-			'data'      => $result,
+			'data'      => $this->sanitizeWorkspaceResult( $result, $input ),
 			'tool_name' => 'workspace_show',
 		);
 	}
@@ -235,12 +234,14 @@ class WorkspaceTools extends BaseTool {
 			return $this->buildErrorResponse( 'Workspace ls ability not available.', 'workspace_ls' );
 		}
 
-		$result = $ability->execute(
+		$input = $this->resolveWorkspaceInputAliases(
 			array(
 				'repo' => $parameters['repo'] ?? '',
 				'path' => $parameters['path'] ?? '',
-			)
+			),
+			array( 'repo' )
 		);
+		$result = $ability->execute( $input );
 
 		if ( is_wp_error( $result ) ) {
 			return $this->buildErrorResponse( $result->get_error_message(), 'workspace_ls' );
@@ -248,7 +249,7 @@ class WorkspaceTools extends BaseTool {
 
 		return array(
 			'success'   => true,
-			'data'      => $result,
+			'data'      => $this->sanitizeWorkspaceResult( $result, $input ),
 			'tool_name' => 'workspace_ls',
 		);
 	}
@@ -270,6 +271,7 @@ class WorkspaceTools extends BaseTool {
 			'repo' => $parameters['repo'] ?? '',
 			'path' => $parameters['path'] ?? '',
 		);
+		$input = $this->resolveWorkspaceInputAliases( $input, array( 'repo' ) );
 
 		if ( isset( $parameters['max_size'] ) ) {
 			$input['max_size'] = (int) $parameters['max_size'];
@@ -291,7 +293,7 @@ class WorkspaceTools extends BaseTool {
 
 		return array(
 			'success'   => true,
-			'data'      => $result,
+			'data'      => $this->sanitizeWorkspaceResult( $result, $input ),
 			'tool_name' => 'workspace_read',
 		);
 	}
@@ -313,6 +315,7 @@ class WorkspaceTools extends BaseTool {
 			'repo'    => $parameters['repo'] ?? '',
 			'pattern' => $parameters['pattern'] ?? '',
 		);
+		$input = $this->resolveWorkspaceInputAliases( $input, array( 'repo' ) );
 
 		foreach ( array( 'path', 'include' ) as $key ) {
 			if ( isset( $parameters[ $key ] ) ) {
@@ -334,7 +337,7 @@ class WorkspaceTools extends BaseTool {
 
 		return array(
 			'success'   => true,
-			'data'      => $result,
+			'data'      => $this->sanitizeWorkspaceResult( $result, $input ),
 			'tool_name' => 'workspace_grep',
 		);
 	}
@@ -345,7 +348,7 @@ class WorkspaceTools extends BaseTool {
 			'repo'    => $parameters['repo'] ?? '',
 			'path'    => $parameters['path'] ?? '',
 			'content' => $parameters['content'] ?? '',
-		) );
+		), array( 'repo' ) );
 	}
 
 	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
@@ -361,7 +364,7 @@ class WorkspaceTools extends BaseTool {
 			$input['replace_all'] = (bool) $parameters['replace_all'];
 		}
 
-		return $this->executeAbility( 'datamachine/workspace-edit', 'workspace_edit', $input );
+		return $this->executeAbility( 'datamachine/workspace-edit', 'workspace_edit', $input, array( 'repo' ) );
 	}
 
 	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
@@ -375,7 +378,7 @@ class WorkspaceTools extends BaseTool {
 			$input['allow_primary_mutation'] = (bool) $parameters['allow_primary_mutation'];
 		}
 
-		return $this->executeAbility( 'datamachine/workspace-apply-patch', 'workspace_apply_patch', $input );
+		return $this->executeAbility( 'datamachine/workspace-apply-patch', 'workspace_apply_patch', $input, array( 'repo' ) );
 	}
 
 	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
@@ -391,12 +394,12 @@ class WorkspaceTools extends BaseTool {
 			}
 		}
 
-		return $this->executeAbility( 'datamachine/workspace-delete', 'workspace_delete', $input );
+		return $this->executeAbility( 'datamachine/workspace-delete', 'workspace_delete', $input, array( 'repo' ) );
 	}
 
 	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
 	public function handleGitStatus( array $parameters ): array {
-		return $this->executeAbility( 'datamachine/workspace-git-status', 'workspace_git_status', array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' ) );
+		return $this->executeAbility( 'datamachine/workspace-git-status', 'workspace_git_status', array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' ), array( 'name' ) );
 	}
 
 	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
@@ -406,7 +409,7 @@ class WorkspaceTools extends BaseTool {
 			$input['limit'] = (int) $parameters['limit'];
 		}
 
-		return $this->executeAbility( 'datamachine/workspace-git-log', 'workspace_git_log', $input );
+		return $this->executeAbility( 'datamachine/workspace-git-log', 'workspace_git_log', $input, array( 'name' ) );
 	}
 
 	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
@@ -421,7 +424,7 @@ class WorkspaceTools extends BaseTool {
 			$input['staged'] = (bool) $parameters['staged'];
 		}
 
-		return $this->executeAbility( 'datamachine/workspace-git-diff', 'workspace_git_diff', $input );
+		return $this->executeAbility( 'datamachine/workspace-git-diff', 'workspace_git_diff', $input, array( 'name' ) );
 	}
 
 	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
@@ -433,7 +436,7 @@ class WorkspaceTools extends BaseTool {
 			}
 		}
 
-		return $this->executeAbility( 'datamachine/workspace-git-pull', 'workspace_git_pull', $input );
+		return $this->executeAbility( 'datamachine/workspace-git-pull', 'workspace_git_pull', $input, array( 'name' ) );
 	}
 
 	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
@@ -455,7 +458,7 @@ class WorkspaceTools extends BaseTool {
 			}
 		}
 
-		return $this->executeAbility( 'datamachine/workspace-worktree-add', 'workspace_worktree_add', $input );
+		return $this->executeAbility( 'datamachine/workspace-worktree-add', 'workspace_worktree_add', $input, array( 'repo' ) );
 	}
 
 	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
@@ -468,7 +471,7 @@ class WorkspaceTools extends BaseTool {
 			$input['allow_primary_mutation'] = (bool) $parameters['allow_primary_mutation'];
 		}
 
-		return $this->executeAbility( 'datamachine/workspace-git-add', 'workspace_git_add', $input );
+		return $this->executeAbility( 'datamachine/workspace-git-add', 'workspace_git_add', $input, array( 'name' ) );
 	}
 
 	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
@@ -481,7 +484,7 @@ class WorkspaceTools extends BaseTool {
 			$input['allow_primary_mutation'] = (bool) $parameters['allow_primary_mutation'];
 		}
 
-		return $this->executeAbility( 'datamachine/workspace-git-commit', 'workspace_git_commit', $input );
+		return $this->executeAbility( 'datamachine/workspace-git-commit', 'workspace_git_commit', $input, array( 'name' ) );
 	}
 
 	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
@@ -496,15 +499,17 @@ class WorkspaceTools extends BaseTool {
 			$input['allow_primary_mutation'] = (bool) $parameters['allow_primary_mutation'];
 		}
 
-		return $this->executeAbility( 'datamachine/workspace-git-push', 'workspace_git_push', $input );
+		return $this->executeAbility( 'datamachine/workspace-git-push', 'workspace_git_push', $input, array( 'name' ) );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
-	private function executeAbility( string $ability_name, string $tool_name, array $input ): array {
+	private function executeAbility( string $ability_name, string $tool_name, array $input, array $handle_keys = array() ): array {
 		$ability = wp_get_ability( $ability_name );
 		if ( ! $ability ) {
 			return $this->buildErrorResponse( "{$tool_name} ability not available.", $tool_name );
 		}
+
+		$input = $this->resolveWorkspaceInputAliases( $input, $handle_keys );
 
 		$result = $ability->execute( $input );
 		if ( is_wp_error( $result ) ) {
@@ -513,9 +518,41 @@ class WorkspaceTools extends BaseTool {
 
 		return array(
 			'success'   => true,
-			'data'      => $result,
+			'data'      => $this->sanitizeWorkspaceResult( $result, $input ),
 			'tool_name' => $tool_name,
 		);
+	}
+
+	/** @param array<string,mixed> $input Tool input. @param string[] $handle_keys Keys that hold workspace handles. @return array<string,mixed> */
+	private function resolveWorkspaceInputAliases( array $input, array $handle_keys ): array {
+		foreach ( $handle_keys as $key ) {
+			if ( ! isset( $input[ $key ] ) || ! is_string( $input[ $key ] ) ) {
+				continue;
+			}
+
+			$alias = $input[ $key ];
+			$real  = WorkspaceAliasResolver::resolve( $alias );
+			if ( $real === $alias ) {
+				continue;
+			}
+
+			$input[ $key ]             = $real;
+			$input['_workspace_alias'] = $alias;
+			$input['_workspace_handle'] = $real;
+		}
+
+		return $input;
+	}
+
+	/** @param mixed $result Ability result. @param array<string,mixed> $input Resolved ability input. @return mixed */
+	private function sanitizeWorkspaceResult( mixed $result, array $input ): mixed {
+		$alias  = isset( $input['_workspace_alias'] ) ? (string) $input['_workspace_alias'] : '';
+		$handle = isset( $input['_workspace_handle'] ) ? (string) $input['_workspace_handle'] : '';
+		if ( '' === $alias || '' === $handle ) {
+			return $result;
+		}
+
+		return WorkspaceAliasResolver::sanitize_result( $result, $alias, $handle );
 	}
 
 	/**
