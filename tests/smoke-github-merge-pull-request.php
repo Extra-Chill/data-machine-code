@@ -80,6 +80,21 @@ namespace DataMachineCode\Support {
 	}
 }
 
+namespace DataMachineCode\Workspace {
+	class Workspace {
+		public static array $cleanup_calls = array();
+
+		public function cleanup_merged_pr_worktree( string $repo, string $branch, ?string $pr_url = null ): array {
+			self::$cleanup_calls[] = compact( 'repo', 'branch', 'pr_url' );
+			return array(
+				'success' => true,
+				'found'   => true,
+				'handle'  => 'repo@feature-test',
+			);
+		}
+	}
+}
+
 namespace DataMachineCode\GitHub {
 	class PrReviewEscalationPolicy {}
 	class PrHomeboyReviewRunner {}
@@ -172,6 +187,7 @@ namespace {
 	use DataMachineCode\Abilities\GitHubAbilities;
 	use DataMachineCode\Support\GitHubCredentialResolver;
 	use DataMachineCode\Tools\GitHubTools;
+	use DataMachineCode\Workspace\Workspace;
 
 	$failures = array();
 	$assert   = function ( string $label, bool $cond ) use ( &$failures ): void {
@@ -322,6 +338,7 @@ namespace {
 	$assert( 'mergePullRequest does not merge after SHA mismatch', false === $merge_called );
 
 	$calls = array();
+	Workspace::$cleanup_calls = array();
 	$result = GitHubAbilities::cleanupPullRequest(
 		array(
 			'repo'        => 'owner/repo',
@@ -357,6 +374,8 @@ namespace {
 	);
 	$assert( 'cleanupPullRequest deletes merged same-repo branch', is_array( $result ) && true === ( $result['branch_deleted'] ?? false ) );
 	$assert( 'cleanupPullRequest calls GitHub refs delete endpoint', 'DELETE' === ( $calls[1]['method'] ?? '' ) && str_contains( $calls[1]['url'] ?? '', '/repos/owner/repo/git/refs/heads/' ) );
+	$assert( 'cleanupPullRequest removes matching DMC worktree before remote branch delete', array( 'repo' => 'owner/repo', 'branch' => 'feature/test', 'pr_url' => 'https://github.com/owner/repo/pull/42' ) === ( Workspace::$cleanup_calls[0] ?? array() ) );
+	$assert( 'cleanupPullRequest returns local worktree cleanup evidence', true === ( $result['local_worktree_cleanup']['found'] ?? false ) );
 
 	$result = GitHubAbilities::cleanupPullRequest(
 		array(
