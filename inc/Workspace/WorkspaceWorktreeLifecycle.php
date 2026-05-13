@@ -416,6 +416,157 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/**
+	 * Finalize and remove the local DMC worktree for a merged PR head branch.
+	 *
+	 * This is the targeted post-merge path used before remote branch deletion.
+	 * It only touches workspace worktrees whose primary origin matches the exact
+	 * GitHub `owner/repo` slug and whose checked-out branch matches the PR head.
+	 *
+	 * @param string      $github_repo GitHub repository slug (`owner/repo`).
+	 * @param string      $branch      Pull request head branch.
+	 * @param string|null $pr_url      Optional pull request URL for lifecycle metadata.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function cleanup_merged_pr_worktree( string $github_repo, string $branch, ?string $pr_url = null ): array|\WP_Error {
+		$github_repo = trim( $github_repo );
+		$branch      = trim( $branch );
+
+		if ( '' === $github_repo || '' === $branch ) {
+			return new \WP_Error( 'missing_pr_worktree_cleanup_params', 'GitHub repo and branch are required for merged PR worktree cleanup.', array( 'status' => 400 ) );
+		}
+
+		if ( in_array( $branch, array( 'main', 'master', 'trunk', 'develop', 'HEAD' ), true ) ) {
+			return new \WP_Error( 'protected_head_branch', sprintf( 'Refusing to clean up protected branch %s.', $branch ), array( 'status' => 409 ) );
+		}
+
+		$listing = $this->worktree_list(
+			null,
+			null,
+			array(
+				'include_status' => false,
+				'include_disk'   => false,
+			)
+		);
+		if ( $listing instanceof \WP_Error ) {
+			return $listing;
+		}
+
+		$matches = array();
+		foreach ( (array) ( $listing['worktrees'] ?? array() ) as $wt ) {
+			if ( ! empty( $wt['is_primary'] ) || ! empty( $wt['external'] ) ) {
+				continue;
+			}
+
+			$repo         = (string) ( $wt['repo'] ?? '' );
+			$primary_path = '' !== $repo ? $this->get_primary_path( $repo ) : '';
+			if ( '' === $primary_path || ! is_dir( $primary_path . '/.git' ) ) {
+				continue;
+			}
+
+			if ( $github_repo !== (string) $this->resolve_github_slug( $primary_path ) ) {
+				continue;
+			}
+
+			if ( $branch !== (string) ( $wt['branch'] ?? '' ) ) {
+				continue;
+			}
+
+			$matches[] = $wt;
+		}
+
+		if ( empty( $matches ) ) {
+			return array(
+				'success' => true,
+				'found'   => false,
+				'repo'    => $github_repo,
+				'branch'  => $branch,
+				'message' => sprintf( 'No DMC worktree found for %s:%s.', $github_repo, $branch ),
+			);
+		}
+
+		if ( count( $matches ) > 1 ) {
+			return new \WP_Error(
+				'ambiguous_pr_worktree_cleanup',
+				sprintf( 'Refusing merged PR worktree cleanup because %d worktrees match %s:%s.', count( $matches ), $github_repo, $branch ),
+				array(
+					'status'  => 409,
+					'matches' => array_map( static fn( array $wt ): string => (string) ( $wt['handle'] ?? '' ), $matches ),
+				)
+			);
+		}
+
+		$wt      = $matches[0];
+		$repo    = (string) ( $wt['repo'] ?? '' );
+		$handle  = (string) ( $wt['handle'] ?? '' );
+		$wt_path = (string) ( $wt['path'] ?? '' );
+
+		if ( '' === $repo || '' === $handle || '' === $wt_path ) {
+			return new \WP_Error( 'invalid_pr_worktree_match', 'Matched worktree is missing repo, handle, or path metadata.', array( 'status' => 500 ) );
+		}
+
+		$dirty = $this->probe_worktree_dirty_count( $wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( $dirty instanceof \WP_Error ) {
+			return $dirty;
+		}
+		if ( (int) $dirty > 0 ) {
+			return new \WP_Error( 'dirty_worktree', sprintf( 'Refusing merged PR cleanup for %s because the worktree has %d dirty file(s).', $handle, (int) $dirty ), array( 'status' => 409 ) );
+		}
+
+		$unpushed = $this->count_unpushed_commits( $wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT );
+		if ( $unpushed instanceof \WP_Error ) {
+			return $unpushed;
+		}
+		if ( (int) $unpushed > 0 ) {
+			return new \WP_Error( 'unpushed_commits', sprintf( 'Refusing merged PR cleanup for %s because it has %d unpushed commit(s).', $handle, (int) $unpushed ), array( 'status' => 409 ) );
+		}
+
+		$finalized = $this->worktree_finalize( $handle, WorktreeContextInjector::STATE_MERGED, $pr_url );
+		if ( $finalized instanceof \WP_Error ) {
+			return $finalized;
+		}
+
+		$removed = WorkspaceMutationLock::with_repo(
+			$this->workspace_path,
+			$repo,
+			function () use ( $repo, $branch, $wt_path ) {
+				$remove = $this->remove_worktree_by_path( $repo, $branch, $wt_path, false );
+				if ( $remove instanceof \WP_Error ) {
+					return $remove;
+				}
+
+				$primary_path = $this->get_primary_path( $repo );
+				$delete       = $this->run_git( $primary_path, sprintf( 'branch -D %s', escapeshellarg( $branch ) ) );
+				if ( $delete instanceof \WP_Error ) {
+					$remove['local_branch_deleted'] = false;
+					$remove['local_branch_error']   = $delete->get_error_message();
+					return $remove;
+				}
+
+				$remove['local_branch_deleted'] = true;
+				return $remove;
+			}
+		);
+
+		if ( $removed instanceof \WP_Error ) {
+			return $removed;
+		}
+
+		$this->worktree_prune();
+
+		return array(
+			'success'   => true,
+			'found'     => true,
+			'repo'      => $github_repo,
+			'branch'    => $branch,
+			'handle'    => $handle,
+			'path'      => $wt_path,
+			'finalized' => $finalized,
+			'removed'   => $removed,
+			'message'   => sprintf( 'Cleaned up merged PR worktree %s before branch deletion.', $handle ),
+		);
+	}
+
+	/**
 	 * Rewrite a worktree's injected context files from the originating site's
 	 * current memory state.
 	 *

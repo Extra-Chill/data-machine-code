@@ -22,6 +22,7 @@ use DataMachineCode\GitHub\PrReviewEscalationPolicy;
 use DataMachineCode\Support\GitHubCredentialResolver;
 use DataMachineCode\Support\RunArtifactBundleFileWriter;
 use DataMachineCode\Support\RunArtifactPrSectionRenderer;
+use DataMachineCode\Workspace\Workspace;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -43,6 +44,10 @@ if ( ! class_exists( RunArtifactBundleFileWriter::class ) ) {
 
 if ( ! class_exists( RunArtifactPrSectionRenderer::class ) ) {
 	require_once dirname( __DIR__ ) . '/Support/RunArtifactPrSectionRenderer.php';
+}
+
+if ( ! class_exists( Workspace::class ) ) {
+	require_once dirname( __DIR__ ) . '/Workspace/Workspace.php';
 }
 
 class GitHubAbilities {
@@ -525,6 +530,7 @@ class GitHubAbilities {
 							'sha'         => array( 'type' => 'string' ),
 							'message'     => array( 'type' => 'string' ),
 							'html_url'    => array( 'type' => 'string' ),
+							'local_worktree_cleanup' => array( 'type' => 'object' ),
 							'error'       => array( 'type' => 'string' ),
 						),
 					),
@@ -569,6 +575,7 @@ class GitHubAbilities {
 							'branch_already_deleted' => array( 'type' => 'boolean' ),
 							'dry_run'                => array( 'type' => 'boolean' ),
 							'message'                => array( 'type' => 'string' ),
+							'local_worktree_cleanup' => array( 'type' => 'object' ),
 							'error'                  => array( 'type' => 'string' ),
 						),
 					),
@@ -2356,6 +2363,17 @@ class GitHubAbilities {
 			return $result;
 		}
 
+		$local_cleanup = self::cleanupMergedPullRequestWorktree( $repo, $head_branch, (string) ( $pull['html_url'] ?? '' ) );
+		if ( $local_cleanup instanceof \WP_Error ) {
+			$result['local_worktree_cleanup'] = array(
+				'success' => false,
+				'code'    => $local_cleanup->get_error_code(),
+				'message' => $local_cleanup->get_error_message(),
+			);
+		} else {
+			$result['local_worktree_cleanup'] = $local_cleanup;
+		}
+
 		$encoded_head_branch = implode( '/', array_map( 'rawurlencode', explode( '/', $head_branch ) ) );
 		$delete_url          = sprintf( '%s/repos/%s/git/refs/heads/%s', self::API_BASE, $repo, $encoded_head_branch );
 		$deleted    = $api_request( 'DELETE', $delete_url, null, $pat );
@@ -2373,6 +2391,35 @@ class GitHubAbilities {
 		$result['branch_deleted'] = true;
 		$result['message']        = sprintf( 'Deleted branch %s from %s.', $head_branch, $repo );
 		return $result;
+	}
+
+	/**
+	 * Best-effort local DMC worktree cleanup for a merged pull request branch.
+	 *
+	 * @param string $repo        GitHub repository slug (`owner/repo`).
+	 * @param string $head_branch Pull request head branch.
+	 * @param string $pr_url      Pull request URL.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private static function cleanupMergedPullRequestWorktree( string $repo, string $head_branch, string $pr_url ): array|\WP_Error {
+		if ( ! class_exists( Workspace::class ) ) {
+			return array(
+				'success' => true,
+				'skipped' => true,
+				'reason'  => 'workspace_unavailable',
+			);
+		}
+
+		$workspace = new Workspace();
+		if ( ! method_exists( $workspace, 'cleanup_merged_pr_worktree' ) ) {
+			return array(
+				'success' => true,
+				'skipped' => true,
+				'reason'  => 'workspace_cleanup_unsupported',
+			);
+		}
+
+		return $workspace->cleanup_merged_pr_worktree( $repo, $head_branch, '' !== $pr_url ? $pr_url : null );
 	}
 
 	/**

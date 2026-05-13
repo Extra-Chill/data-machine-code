@@ -275,6 +275,7 @@ namespace {
 	file_put_contents( $primary . '/README.md', "# Demo\n" );
 	$run( 'git add README.md', $primary );
 	$run( 'git commit -m initial', $primary );
+	$run( 'git remote add origin https://github.com/acme/demo.git', $primary );
 	putenv( 'OPENCODE_RUN_ID=smoke-run-123' );
 	putenv( 'OPENCODE_PID=12345' );
 
@@ -370,6 +371,15 @@ namespace {
 	$feature_skip = array_values( array_filter( $plan['skipped'] ?? array(), fn( $skip ) => ( $skip['handle'] ?? '' ) === 'demo@feature-metadata' ) );
 	$old_skip = array_values( array_filter( $plan['skipped'] ?? array(), fn( $skip ) => ( $skip['handle'] ?? '' ) === 'demo@feature-old-record' ) );
 	$assert( true, is_array( $old_skip[0]['metadata'] ?? null ), 'cleanup dry-run uses DB-backed metadata when option row is absent' );
+
+	$pr_cleanup_worktree = $ws->worktree_add( 'demo', 'feature/pr-cleanup', 'HEAD', false, false, true, false );
+	$assert( true, ! is_wp_error( $pr_cleanup_worktree ) && ( $pr_cleanup_worktree['success'] ?? false ), 'PR cleanup worktree fixture is created' );
+	$pr_cleanup = $ws->cleanup_merged_pr_worktree( 'acme/demo', 'feature/pr-cleanup', 'https://github.com/acme/demo/pull/456' );
+	$assert( true, ! is_wp_error( $pr_cleanup ) && ( $pr_cleanup['success'] ?? false ), 'merged PR worktree cleanup succeeds' );
+	$assert( true, (bool) ( $pr_cleanup['found'] ?? false ), 'merged PR worktree cleanup finds exact GitHub repo and branch match' );
+	$assert( false, is_dir( DATAMACHINE_WORKSPACE_PATH . '/demo@feature-pr-cleanup' ), 'merged PR worktree cleanup removes the attached worktree directory' );
+	$branch_check = trim( $run( 'git branch --list feature/pr-cleanup', $primary ) );
+	$assert( '', $branch_check, 'merged PR worktree cleanup deletes the local checked-out branch after removal' );
 
 	$removed_old = $ws->worktree_remove( 'demo', 'feature/old-record', true );
 	$assert( true, ! is_wp_error( $removed_old ) && ( $removed_old['success'] ?? false ), 'worktree_remove succeeds for old record' );
