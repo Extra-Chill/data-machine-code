@@ -3,12 +3,14 @@
  * Worktree Context Injector
  *
  * When a worktree is created from a WordPress site with an active Data Machine
- * agent, snapshot that agent's persistent context (MEMORY.md, USER.md, RULES.md)
- * into the new worktree as runtime-agnostic local-only files.
+ * agent, expose the originating site's AGENTS.md and snapshot that agent's
+ * persistent context (MEMORY.md, USER.md, RULES.md) into the new worktree as
+ * runtime-agnostic local-only files.
  *
  * Written files:
- *   <worktree>/.claude/CLAUDE.local.md  — Claude Code convention
- *   <worktree>/.opencode/AGENTS.local.md — OpenCode convention
+ *   <worktree>/AGENTS.md                 — symlink to site-root AGENTS.md when absent
+ *   <worktree>/.opencode/opencode.json   — adds site AGENTS.md when repo AGENTS.md exists
+ *   <worktree>/.claude/CLAUDE.local.md   — Claude Code convention
  *
  * Both files receive the same payload. They are ignored per-checkout via the
  * worktree's `info/exclude` file, so the tracked `.gitignore` is never touched
@@ -88,8 +90,36 @@ class WorktreeContextInjector {
 	 */
 	public const INJECTED_PATHS = array(
 		'.claude/CLAUDE.local.md',
+	);
+
+	/**
+	 * Previously injected path from an assumed OpenCode convention. OpenCode does
+	 * not auto-load this file; keep it here only so uninject/refresh can clean up
+	 * stale projections from older DMC versions.
+	 */
+	private const LEGACY_INJECTED_PATHS = array(
 		'.opencode/AGENTS.local.md',
 	);
+
+	/**
+	 * Root-level instruction file discovered natively by OpenCode.
+	 */
+	private const PROJECTED_AGENTS_PATH = 'AGENTS.md';
+
+	/**
+	 * Marker proving the root AGENTS.md symlink was created by this injector.
+	 */
+	private const PROJECTED_AGENTS_MARKER_PATH = '.datamachine/AGENTS.md.source';
+
+	/**
+	 * Local OpenCode config used when repo-owned AGENTS.md must remain in place.
+	 */
+	private const PROJECTED_OPENCODE_CONFIG_PATH = '.opencode/opencode.json';
+
+	/**
+	 * Marker storing the previous local OpenCode config so uninject can restore it.
+	 */
+	private const PROJECTED_OPENCODE_CONFIG_MARKER_PATH = '.datamachine/opencode-config.json.previous';
 
 	/**
 	 * Memory files snapshotted into the payload, in render order.
@@ -569,6 +599,7 @@ class WorktreeContextInjector {
 	 *     agent_slug: string,
 	 *     abspath: string,
 	 *     files: array<string, string>,
+	 *     agents_md_path?: string,
 	 *     timestamp: string,
 	 * }|null
 	 */
@@ -593,14 +624,22 @@ class WorktreeContextInjector {
 			}
 		}
 
-		return array(
+		$abspath = defined( 'ABSPATH' ) ? rtrim( ABSPATH, '/' ) : '';
+		$payload = array(
 			'site_url'   => function_exists( 'home_url' ) ? (string) home_url() : '',
 			'site_name'  => function_exists( 'get_bloginfo' ) ? (string) get_bloginfo( 'name' ) : '',
 			'agent_slug' => $agent_slug,
-			'abspath'    => defined( 'ABSPATH' ) ? rtrim( ABSPATH, '/' ) : '',
+			'abspath'    => $abspath,
 			'files'      => $files,
 			'timestamp'  => gmdate( 'c' ),
 		);
+
+		$agents_md_path = '' !== $abspath ? $abspath . '/AGENTS.md' : '';
+		if ( '' !== $agents_md_path && is_file( $agents_md_path ) ) {
+			$payload['agents_md_path'] = $agents_md_path;
+		}
+
+		return $payload;
 	}
 
 	/**
@@ -761,13 +800,170 @@ class WorktreeContextInjector {
 			$written[] = $abs;
 		}
 
-		$exclude_path = self::append_exclude_entries( $worktree_path, self::INJECTED_PATHS );
+		$agents_projection = self::project_site_agents_md( $worktree_path, $payload );
+		if ( is_wp_error( $agents_projection ) ) {
+			return $agents_projection;
+		}
+		if ( is_array( $agents_projection ) ) {
+			$written = array_merge( $written, $agents_projection );
+		}
+
+		$exclude_entries = self::INJECTED_PATHS;
+		if ( is_array( $agents_projection ) && ! empty( $agents_projection ) ) {
+			$exclude_entries[] = self::PROJECTED_AGENTS_PATH;
+			$exclude_entries[] = self::PROJECTED_AGENTS_MARKER_PATH;
+			$exclude_entries[] = self::PROJECTED_OPENCODE_CONFIG_PATH;
+			$exclude_entries[] = self::PROJECTED_OPENCODE_CONFIG_MARKER_PATH;
+		}
+
+		$exclude_path = self::append_exclude_entries( $worktree_path, $exclude_entries );
 
 		return array(
 			'success'      => true,
 			'written'      => $written,
 			'exclude_path' => $exclude_path,
 		);
+	}
+
+	/**
+	 * Project the originating site's composed AGENTS.md into OpenCode discovery.
+	 *
+	 * OpenCode discovers root AGENTS.md natively from the session cwd. When the
+	 * checkout already owns AGENTS.md, keep it intact and add the site AGENTS.md
+	 * via local OpenCode `instructions` instead, so both sources load.
+	 *
+	 * Existing AGENTS.md files are left untouched because they may be repo-owned.
+	 *
+	 * @param string $worktree_path Absolute path to the worktree directory.
+	 * @param array  $payload       Payload from {@see self::build_payload()}.
+	 * @return string[]|\WP_Error Absolute projected paths, or WP_Error on failure.
+	 */
+	private static function project_site_agents_md( string $worktree_path, array $payload ): array|\WP_Error {
+		$source = isset( $payload['agents_md_path'] ) ? (string) $payload['agents_md_path'] : '';
+		if ( '' === $source || ! is_file( $source ) ) {
+			return array();
+		}
+
+		$target = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_PATH;
+		if ( file_exists( $target ) || is_link( $target ) ) {
+			return self::project_site_agents_md_via_opencode_config( $worktree_path, $source );
+		}
+
+		$marker = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_MARKER_PATH;
+		$marker_dir = dirname( $marker );
+		if ( ! is_dir( $marker_dir ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir
+			if ( ! wp_mkdir_p( $marker_dir ) ) {
+				return new \WP_Error(
+					'agents_md_projection_marker_failed',
+					sprintf( 'Failed to create AGENTS.md projection marker directory: %s', $marker_dir ),
+					array( 'status' => 500 )
+				);
+			}
+		}
+
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.symlink_symlink -- Local checkout projection to a DMC-owned generated file.
+		if ( ! symlink( $source, $target ) ) {
+			return new \WP_Error(
+				'agents_md_projection_failed',
+				sprintf( 'Failed to symlink site AGENTS.md into worktree: %s', $target ),
+				array( 'status' => 500 )
+			);
+		}
+
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+		if ( false === file_put_contents( $marker, $source . "\n" ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Roll back the symlink if the ownership marker cannot be written.
+			unlink( $target );
+			return new \WP_Error(
+				'agents_md_projection_marker_failed',
+				sprintf( 'Failed to write AGENTS.md projection marker: %s', $marker ),
+				array( 'status' => 500 )
+			);
+		}
+
+		return array( $target, $marker );
+	}
+
+	/**
+	 * Add the site AGENTS.md to a local OpenCode instructions array.
+	 *
+	 * @param string $worktree_path Absolute path to the worktree directory.
+	 * @param string $source        Absolute site-root AGENTS.md path.
+	 * @return string[]|\WP_Error Absolute written paths, or WP_Error on failure.
+	 */
+	private static function project_site_agents_md_via_opencode_config( string $worktree_path, string $source ): array|\WP_Error {
+		$config = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_OPENCODE_CONFIG_PATH;
+		$marker = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_OPENCODE_CONFIG_MARKER_PATH;
+		$written = array();
+
+		$config_exists = is_file( $config );
+		$previous = $config_exists ? (string) file_get_contents( $config ) : '';
+		$data = array(
+			'$schema'      => 'https://opencode.ai/config.json',
+			'instructions' => array(),
+		);
+
+		if ( $config_exists && '' !== trim( $previous ) ) {
+			$decoded = json_decode( $previous, true );
+			if ( ! is_array( $decoded ) ) {
+				return new \WP_Error(
+					'opencode_config_invalid',
+					sprintf( 'Cannot add site AGENTS.md to invalid OpenCode config: %s', $config ),
+					array( 'status' => 500 )
+				);
+			}
+			$data = $decoded;
+		}
+
+		$instructions = isset( $data['instructions'] ) && is_array( $data['instructions'] ) ? $data['instructions'] : array();
+		if ( ! in_array( $source, $instructions, true ) ) {
+			$instructions[] = $source;
+		}
+		$data['instructions'] = array_values( $instructions );
+
+		foreach ( array( dirname( $config ), dirname( $marker ) ) as $dir ) {
+			if ( ! is_dir( $dir ) ) {
+				// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir
+				if ( ! wp_mkdir_p( $dir ) ) {
+					return new \WP_Error(
+						'opencode_config_projection_failed',
+						sprintf( 'Failed to create OpenCode projection directory: %s', $dir ),
+						array( 'status' => 500 )
+					);
+				}
+			}
+		}
+
+		$marker_payload = wp_json_encode(
+			array(
+				'existed' => $config_exists,
+				'content' => $previous,
+			),
+			JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
+		);
+		if ( false === $marker_payload ) {
+			return new \WP_Error( 'opencode_config_projection_failed', 'Failed to encode OpenCode projection marker.', array( 'status' => 500 ) );
+		}
+
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+		if ( false === file_put_contents( $marker, $marker_payload . "\n" ) ) {
+			return new \WP_Error( 'opencode_config_projection_failed', sprintf( 'Failed to write OpenCode projection marker: %s', $marker ), array( 'status' => 500 ) );
+		}
+		$written[] = $marker;
+
+		$config_payload = wp_json_encode( $data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+		if ( false === $config_payload ) {
+			return new \WP_Error( 'opencode_config_projection_failed', 'Failed to encode OpenCode projection config.', array( 'status' => 500 ) );
+		}
+
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+		if ( false === file_put_contents( $config, $config_payload . "\n" ) ) {
+			return new \WP_Error( 'opencode_config_projection_failed', sprintf( 'Failed to write OpenCode projection config: %s', $config ), array( 'status' => 500 ) );
+		}
+		$written[] = $config;
+
+		return $written;
 	}
 
 	/**
@@ -780,8 +976,42 @@ class WorktreeContextInjector {
 	 */
 	public static function uninject( string $worktree_path ): array {
 		$removed = array();
+		$projected_agents = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_PATH;
+		$projection_marker = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_MARKER_PATH;
+		$marked_source = is_file( $projection_marker ) ? trim( (string) file_get_contents( $projection_marker ) ) : '';
+		if (
+			is_link( $projected_agents ) &&
+			'' !== $marked_source &&
+			readlink( $projected_agents ) === $marked_source
+		) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes DMC-injected local-only context symlink from a worktree.
+			unlink( $projected_agents );
+			$removed[] = $projected_agents;
+		}
+		if ( is_file( $projection_marker ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes DMC-injected local-only projection marker from a worktree.
+			unlink( $projection_marker );
+			$removed[] = $projection_marker;
+		}
 
-		foreach ( self::INJECTED_PATHS as $relative ) {
+		$opencode_config = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_OPENCODE_CONFIG_PATH;
+		$opencode_marker = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_OPENCODE_CONFIG_MARKER_PATH;
+		if ( is_file( $opencode_marker ) ) {
+			$marker = json_decode( (string) file_get_contents( $opencode_marker ), true );
+			if ( is_array( $marker ) && ! empty( $marker['existed'] ) ) {
+				// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+				file_put_contents( $opencode_config, (string) ( $marker['content'] ?? '' ) );
+			} elseif ( is_file( $opencode_config ) ) {
+				// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes DMC-created local OpenCode projection config.
+				unlink( $opencode_config );
+				$removed[] = $opencode_config;
+			}
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes DMC-injected local-only OpenCode projection marker.
+			unlink( $opencode_marker );
+			$removed[] = $opencode_marker;
+		}
+
+		foreach ( array_merge( self::INJECTED_PATHS, self::LEGACY_INJECTED_PATHS ) as $relative ) {
 			$abs = rtrim( $worktree_path, '/' ) . '/' . $relative;
 			if ( is_file( $abs ) ) {
 				// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes DMC-injected local-only context files from a worktree.
@@ -1125,11 +1355,10 @@ class WorktreeContextInjector {
 	 * never reads it. See `man git-config` under GIT_COMMON_DIR.
 	 *
 	 * Consequence: the injected exclude entries are technically visible to
-	 * every worktree + the primary checkout. In practice this is harmless —
-	 * the patterns (`.claude/CLAUDE.local.md`, `.opencode/AGENTS.local.md`)
-	 * only match files we deliberately create in worktrees via injection.
-	 * No injected files exist in non-injected checkouts, so there is no
-	 * behavior change there.
+	 * every worktree + the primary checkout. In practice this is harmless for
+	 * the local snapshot files; AGENTS.md is only excluded when this injector
+	 * created a root projection, and tracked repo-owned AGENTS.md files remain
+	 * tracked regardless of exclude rules.
 	 *
 	 * @param string $worktree_path Worktree directory.
 	 * @return string|null Info directory path, or null if the common git dir
