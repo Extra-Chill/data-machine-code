@@ -19,11 +19,11 @@ trait WorkspaceWorktreeLifecycle {
 	 * exist locally, it is created from `<from>` (default `origin/HEAD`).
 	 *
 	 * When `$inject_context` is true (default) and Data Machine's agent memory
-	 * layer is available, the originating site's MEMORY.md / USER.md / RULES.md
-	 * are snapshotted into the new worktree as runtime-agnostic local-only
-	 * files (`.claude/CLAUDE.local.md`, `.opencode/AGENTS.local.md`) and added
-	 * to the worktree's per-checkout `info/exclude`. When the memory layer is
-	 * absent the worktree is still created successfully; injection silently
+	 * layer is available, the originating site's AGENTS.md is projected into the
+	 * worktree root when no repo-owned AGENTS.md exists, and MEMORY.md / USER.md /
+	 * RULES.md are snapshotted into `.claude/CLAUDE.local.md`. Injected paths are
+	 * added to the worktree's per-checkout `info/exclude`. When the memory layer
+	 * is absent the worktree is still created successfully; injection silently
 	 * skips.
 	 *
 	 * When `$bootstrap` is true (default), a bootstrap pass runs after the

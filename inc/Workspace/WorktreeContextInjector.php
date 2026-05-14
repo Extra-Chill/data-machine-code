@@ -3,12 +3,13 @@
  * Worktree Context Injector
  *
  * When a worktree is created from a WordPress site with an active Data Machine
- * agent, snapshot that agent's persistent context (MEMORY.md, USER.md, RULES.md)
- * into the new worktree as runtime-agnostic local-only files.
+ * agent, expose the originating site's AGENTS.md and snapshot that agent's
+ * persistent context (MEMORY.md, USER.md, RULES.md) into the new worktree as
+ * runtime-agnostic local-only files.
  *
  * Written files:
- *   <worktree>/.claude/CLAUDE.local.md  — Claude Code convention
- *   <worktree>/.opencode/AGENTS.local.md — OpenCode convention
+ *   <worktree>/AGENTS.md                 — symlink to site-root AGENTS.md when absent
+ *   <worktree>/.claude/CLAUDE.local.md   — Claude Code convention
  *
  * Both files receive the same payload. They are ignored per-checkout via the
  * worktree's `info/exclude` file, so the tracked `.gitignore` is never touched
@@ -88,8 +89,26 @@ class WorktreeContextInjector {
 	 */
 	public const INJECTED_PATHS = array(
 		'.claude/CLAUDE.local.md',
+	);
+
+	/**
+	 * Previously injected path from an assumed OpenCode convention. OpenCode does
+	 * not auto-load this file; keep it here only so uninject/refresh can clean up
+	 * stale projections from older DMC versions.
+	 */
+	private const LEGACY_INJECTED_PATHS = array(
 		'.opencode/AGENTS.local.md',
 	);
+
+	/**
+	 * Root-level instruction file discovered natively by OpenCode.
+	 */
+	private const PROJECTED_AGENTS_PATH = 'AGENTS.md';
+
+	/**
+	 * Marker proving the root AGENTS.md symlink was created by this injector.
+	 */
+	private const PROJECTED_AGENTS_MARKER_PATH = '.datamachine/AGENTS.md.source';
 
 	/**
 	 * Memory files snapshotted into the payload, in render order.
@@ -569,6 +588,7 @@ class WorktreeContextInjector {
 	 *     agent_slug: string,
 	 *     abspath: string,
 	 *     files: array<string, string>,
+	 *     agents_md_path?: string,
 	 *     timestamp: string,
 	 * }|null
 	 */
@@ -593,14 +613,22 @@ class WorktreeContextInjector {
 			}
 		}
 
-		return array(
+		$abspath = defined( 'ABSPATH' ) ? rtrim( ABSPATH, '/' ) : '';
+		$payload = array(
 			'site_url'   => function_exists( 'home_url' ) ? (string) home_url() : '',
 			'site_name'  => function_exists( 'get_bloginfo' ) ? (string) get_bloginfo( 'name' ) : '',
 			'agent_slug' => $agent_slug,
-			'abspath'    => defined( 'ABSPATH' ) ? rtrim( ABSPATH, '/' ) : '',
+			'abspath'    => $abspath,
 			'files'      => $files,
 			'timestamp'  => gmdate( 'c' ),
 		);
+
+		$agents_md_path = '' !== $abspath ? $abspath . '/AGENTS.md' : '';
+		if ( '' !== $agents_md_path && is_file( $agents_md_path ) ) {
+			$payload['agents_md_path'] = $agents_md_path;
+		}
+
+		return $payload;
 	}
 
 	/**
@@ -761,13 +789,88 @@ class WorktreeContextInjector {
 			$written[] = $abs;
 		}
 
-		$exclude_path = self::append_exclude_entries( $worktree_path, self::INJECTED_PATHS );
+		$agents_projection = self::project_site_agents_md( $worktree_path, $payload );
+		if ( is_wp_error( $agents_projection ) ) {
+			return $agents_projection;
+		}
+		if ( is_string( $agents_projection ) && '' !== $agents_projection ) {
+			$written[] = $agents_projection;
+		}
+
+		$exclude_entries = self::INJECTED_PATHS;
+		if ( is_string( $agents_projection ) && '' !== $agents_projection ) {
+			$exclude_entries[] = self::PROJECTED_AGENTS_PATH;
+			$exclude_entries[] = self::PROJECTED_AGENTS_MARKER_PATH;
+		}
+
+		$exclude_path = self::append_exclude_entries( $worktree_path, $exclude_entries );
 
 		return array(
 			'success'      => true,
 			'written'      => $written,
 			'exclude_path' => $exclude_path,
 		);
+	}
+
+	/**
+	 * Link the worktree root AGENTS.md to the originating site's composed file.
+	 *
+	 * OpenCode discovers AGENTS.md natively from the session cwd. This root
+	 * projection is what lets Kimaki project-directory sessions see the same
+	 * DMC-owned instructions as the site-root controller session.
+	 *
+	 * Existing AGENTS.md files are left untouched because they may be repo-owned.
+	 *
+	 * @param string $worktree_path Absolute path to the worktree directory.
+	 * @param array  $payload       Payload from {@see self::build_payload()}.
+	 * @return string|null|\WP_Error Absolute projected path, null when skipped,
+	 *                              or WP_Error on failure.
+	 */
+	private static function project_site_agents_md( string $worktree_path, array $payload ): string|null|\WP_Error {
+		$source = isset( $payload['agents_md_path'] ) ? (string) $payload['agents_md_path'] : '';
+		if ( '' === $source || ! is_file( $source ) ) {
+			return null;
+		}
+
+		$target = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_PATH;
+		if ( file_exists( $target ) || is_link( $target ) ) {
+			return null;
+		}
+
+		$marker = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_MARKER_PATH;
+		$marker_dir = dirname( $marker );
+		if ( ! is_dir( $marker_dir ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir
+			if ( ! wp_mkdir_p( $marker_dir ) ) {
+				return new \WP_Error(
+					'agents_md_projection_marker_failed',
+					sprintf( 'Failed to create AGENTS.md projection marker directory: %s', $marker_dir ),
+					array( 'status' => 500 )
+				);
+			}
+		}
+
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.symlink_symlink -- Local checkout projection to a DMC-owned generated file.
+		if ( ! symlink( $source, $target ) ) {
+			return new \WP_Error(
+				'agents_md_projection_failed',
+				sprintf( 'Failed to symlink site AGENTS.md into worktree: %s', $target ),
+				array( 'status' => 500 )
+			);
+		}
+
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+		if ( false === file_put_contents( $marker, $source . "\n" ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Roll back the symlink if the ownership marker cannot be written.
+			unlink( $target );
+			return new \WP_Error(
+				'agents_md_projection_marker_failed',
+				sprintf( 'Failed to write AGENTS.md projection marker: %s', $marker ),
+				array( 'status' => 500 )
+			);
+		}
+
+		return $target;
 	}
 
 	/**
@@ -780,8 +883,25 @@ class WorktreeContextInjector {
 	 */
 	public static function uninject( string $worktree_path ): array {
 		$removed = array();
+		$projected_agents = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_PATH;
+		$projection_marker = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_MARKER_PATH;
+		$marked_source = is_file( $projection_marker ) ? trim( (string) file_get_contents( $projection_marker ) ) : '';
+		if (
+			is_link( $projected_agents ) &&
+			'' !== $marked_source &&
+			readlink( $projected_agents ) === $marked_source
+		) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes DMC-injected local-only context symlink from a worktree.
+			unlink( $projected_agents );
+			$removed[] = $projected_agents;
+		}
+		if ( is_file( $projection_marker ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes DMC-injected local-only projection marker from a worktree.
+			unlink( $projection_marker );
+			$removed[] = $projection_marker;
+		}
 
-		foreach ( self::INJECTED_PATHS as $relative ) {
+		foreach ( array_merge( self::INJECTED_PATHS, self::LEGACY_INJECTED_PATHS ) as $relative ) {
 			$abs = rtrim( $worktree_path, '/' ) . '/' . $relative;
 			if ( is_file( $abs ) ) {
 				// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes DMC-injected local-only context files from a worktree.
@@ -1125,11 +1245,10 @@ class WorktreeContextInjector {
 	 * never reads it. See `man git-config` under GIT_COMMON_DIR.
 	 *
 	 * Consequence: the injected exclude entries are technically visible to
-	 * every worktree + the primary checkout. In practice this is harmless —
-	 * the patterns (`.claude/CLAUDE.local.md`, `.opencode/AGENTS.local.md`)
-	 * only match files we deliberately create in worktrees via injection.
-	 * No injected files exist in non-injected checkouts, so there is no
-	 * behavior change there.
+	 * every worktree + the primary checkout. In practice this is harmless for
+	 * the local snapshot files; AGENTS.md is only excluded when this injector
+	 * created a root projection, and tracked repo-owned AGENTS.md files remain
+	 * tracked regardless of exclude rules.
 	 *
 	 * @param string $worktree_path Worktree directory.
 	 * @return string|null Info directory path, or null if the common git dir
