@@ -1890,11 +1890,12 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * [--skip-context-injection]
 	 * : Skip injecting the originating site's agent context into a new
-	 *   worktree (applies to `add` only). Default behavior is to symlink the
-	 *   site's composed AGENTS.md into the worktree root when no repo-owned
-	 *   AGENTS.md exists, write `.claude/CLAUDE.local.md` containing the site's
-	 *   MEMORY.md / USER.md / RULES.md snapshot, and add injected paths to the
-	 *   repository's `info/exclude`. The ability-level input
+	 *   worktree (applies to `add` only). Default behavior is to make the site's
+	 *   composed AGENTS.md visible to OpenCode: symlink it into the worktree root
+	 *   when no repo-owned AGENTS.md exists, otherwise add it via local OpenCode
+	 *   instructions so both files load. Also writes `.claude/CLAUDE.local.md`
+	 *   containing the site's MEMORY.md / USER.md / RULES.md snapshot, and adds
+	 *   injected paths to the repository's `info/exclude`. The ability-level input
 	 *   is `inject_context=false`; this flag is the CLI shorthand.
 	 *
 	 * [--skip-bootstrap]

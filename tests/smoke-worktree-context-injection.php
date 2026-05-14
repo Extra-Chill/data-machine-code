@@ -31,6 +31,12 @@ if ( ! function_exists( 'wp_mkdir_p' ) ) {
 	}
 }
 
+if ( ! function_exists( 'wp_json_encode' ) ) {
+	function wp_json_encode( $data, int $flags = 0 ) {
+		return json_encode( $data, $flags );
+	}
+}
+
 require_once __DIR__ . '/../inc/Workspace/WorktreeContextInjector.php';
 
 function datamachine_code_context_assert( bool $condition, string $message ): void {
@@ -150,13 +156,18 @@ $existing_injection = \DataMachineCode\Workspace\WorktreeContextInjector::inject
 );
 datamachine_code_context_assert( ! is_wp_error( $existing_injection ), 'context injection skips existing root AGENTS.md without error' );
 datamachine_code_context_assert( '# Repo AGENTS' === trim( file_get_contents( $existing_root . '/AGENTS.md' ) ), 'repo-owned AGENTS.md is preserved' );
+$existing_config = json_decode( (string) file_get_contents( $existing_root . '/.opencode/opencode.json' ), true );
+datamachine_code_context_assert( is_array( $existing_config ), 'local OpenCode config is written when repo AGENTS.md exists' );
+datamachine_code_context_assert( in_array( $source_agents, $existing_config['instructions'] ?? array(), true ), 'site AGENTS.md is added as an OpenCode instruction' );
 
 $removed = \DataMachineCode\Workspace\WorktreeContextInjector::uninject( $worktree_root );
 datamachine_code_context_assert( in_array( $worktree_agents, $removed['removed'], true ), 'uninject removes projected AGENTS.md symlink' );
 datamachine_code_context_assert( ! file_exists( $worktree_agents ) && ! is_link( $worktree_agents ), 'projected AGENTS.md is gone after uninject' );
 datamachine_code_context_assert( ! file_exists( $worktree_root . '/.datamachine/AGENTS.md.source' ), 'projection marker is gone after uninject' );
 datamachine_code_context_assert( ! file_exists( $worktree_root . '/.opencode/AGENTS.local.md' ), 'uninject removes legacy fake OpenCode local snapshot' );
-\DataMachineCode\Workspace\WorktreeContextInjector::uninject( $existing_root );
+$existing_removed = \DataMachineCode\Workspace\WorktreeContextInjector::uninject( $existing_root );
+datamachine_code_context_assert( ! file_exists( $existing_root . '/.opencode/opencode.json' ), 'uninject removes DMC-created OpenCode projection config' );
+datamachine_code_context_assert( in_array( $existing_root . '/.opencode/opencode.json', $existing_removed['removed'], true ), 'removed OpenCode projection config is reported' );
 
 array_map( 'unlink', glob( $worktree_root . '/.claude/*' ) ?: array() );
 array_map( 'unlink', glob( $worktree_root . '/.opencode/*' ) ?: array() );
@@ -170,6 +181,8 @@ rmdir( $worktree_root . '/.claude' );
 rmdir( $worktree_root . '/.opencode' );
 rmdir( $worktree_root . '/.datamachine' );
 rmdir( $existing_root . '/.claude' );
+rmdir( $existing_root . '/.opencode' );
+rmdir( $existing_root . '/.datamachine' );
 rmdir( $worktree_root );
 rmdir( $existing_root );
 rmdir( $site_root );
