@@ -69,7 +69,8 @@ class WorkspaceTools extends BaseTool {
 	 */
 	public function __construct() {
 		$contexts        = array( 'chat', 'pipeline' );
-		$policy_contexts = array( 'chat', 'pipeline_policy' );
+		$policy_contexts = array( 'chat', 'pipeline' );
+		$policy_meta     = array( 'requires_opt_in' => true );
 		$this->registerTool( 'workspace_path', array( $this, 'getPathDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-path' ) );
 		$this->registerTool( 'workspace_capabilities', array( $this, 'getCapabilitiesDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-capabilities' ) );
 		$this->registerTool( 'workspace_list', array( $this, 'getListDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-list' ) );
@@ -77,18 +78,18 @@ class WorkspaceTools extends BaseTool {
 		$this->registerTool( 'workspace_ls', array( $this, 'getLsDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-ls' ) );
 		$this->registerTool( 'workspace_read', array( $this, 'getReadDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-read' ) );
 		$this->registerTool( 'workspace_grep', array( $this, 'getGrepDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-grep' ) );
-		$this->registerTool( 'workspace_write', array( $this, 'getWriteDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-write' ) );
-		$this->registerTool( 'workspace_edit', array( $this, 'getEditDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-edit' ) );
-		$this->registerTool( 'workspace_apply_patch', array( $this, 'getApplyPatchDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-apply-patch' ) );
-		$this->registerTool( 'workspace_delete', array( $this, 'getDeleteDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-delete' ) );
-		$this->registerTool( 'workspace_git_status', array( $this, 'getGitStatusDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-status' ) );
-		$this->registerTool( 'workspace_git_log', array( $this, 'getGitLogDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-log' ) );
-		$this->registerTool( 'workspace_git_diff', array( $this, 'getGitDiffDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-diff' ) );
-		$this->registerTool( 'workspace_git_pull', array( $this, 'getGitPullDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-pull' ) );
-		$this->registerTool( 'workspace_worktree_add', array( $this, 'getWorktreeAddDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-worktree-add' ) );
-		$this->registerTool( 'workspace_git_add', array( $this, 'getGitAddDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-add' ) );
-		$this->registerTool( 'workspace_git_commit', array( $this, 'getGitCommitDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-commit' ) );
-		$this->registerTool( 'workspace_git_push', array( $this, 'getGitPushDefinition' ), $policy_contexts, array( 'ability' => 'datamachine/workspace-git-push' ) );
+		$this->registerTool( 'workspace_write', array( $this, 'getWriteDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-write' ) );
+		$this->registerTool( 'workspace_edit', array( $this, 'getEditDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-edit' ) );
+		$this->registerTool( 'workspace_apply_patch', array( $this, 'getApplyPatchDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-apply-patch' ) );
+		$this->registerTool( 'workspace_delete', array( $this, 'getDeleteDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-delete' ) );
+		$this->registerTool( 'workspace_git_status', array( $this, 'getGitStatusDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-status' ) );
+		$this->registerTool( 'workspace_git_log', array( $this, 'getGitLogDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-log' ) );
+		$this->registerTool( 'workspace_git_diff', array( $this, 'getGitDiffDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-diff' ) );
+		$this->registerTool( 'workspace_git_pull', array( $this, 'getGitPullDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-pull' ) );
+		$this->registerTool( 'workspace_worktree_add', array( $this, 'getWorktreeAddDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-worktree-add' ) );
+		$this->registerTool( 'workspace_git_add', array( $this, 'getGitAddDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-add' ) );
+		$this->registerTool( 'workspace_git_commit', array( $this, 'getGitCommitDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-commit' ) );
+		$this->registerTool( 'workspace_git_push', array( $this, 'getGitPushDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-push' ) );
 	}
 
 	/**

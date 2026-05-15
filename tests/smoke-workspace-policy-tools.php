@@ -104,7 +104,8 @@ namespace {
 	);
 
 	foreach ( $policy_tools as $tool ) {
-		$assert( "{$tool} is policy-gated for pipeline use", array( 'chat', 'pipeline_policy' ) === ( $tools[ $tool ]['modes'] ?? null ) );
+		$assert( "{$tool} is available in real chat and pipeline modes", array( 'chat', 'pipeline' ) === ( $tools[ $tool ]['modes'] ?? null ) );
+		$assert( "{$tool} requires explicit opt-in for pipeline use", true === ( $tools[ $tool ]['requires_opt_in'] ?? null ) );
 	}
 
 	if ( $failures ) {
