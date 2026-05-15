@@ -807,6 +807,11 @@ trait WorkspaceWorktreeLifecycle {
 					$disk
 				);
 
+				$base_branch_warning = $this->base_branch_worktree_warning( $row );
+				if ( null !== $base_branch_warning ) {
+					$row['base_branch_warning'] = $base_branch_warning;
+				}
+
 				if ( ! empty( $skipped_groups ) ) {
 					$row['fields_skipped'] = $skipped_groups;
 				}
@@ -815,14 +820,58 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		}
 
-		$duplicates = WorktreeContextInjector::find_duplicate_task_ownership( $worktrees );
+		$duplicates             = WorktreeContextInjector::find_duplicate_task_ownership( $worktrees );
+		$base_branch_worktrees  = array_values( array_filter( array_map(
+			fn( $row ) => $row['base_branch_warning'] ?? null,
+			$worktrees
+		) ) );
 
 		return array(
-			'success'        => true,
-			'worktrees'      => $worktrees,
-			'duplicates'     => $duplicates,
-			'fields_skipped' => $skipped_groups,
+			'success'                   => true,
+			'worktrees'                 => $worktrees,
+			'duplicates'                => $duplicates,
+			'base_branch_worktrees'     => $base_branch_worktrees,
+			'fields_skipped'            => $skipped_groups,
 		);
+	}
+
+	/**
+	 * Return warning metadata when a non-primary worktree holds a base branch.
+	 *
+	 * GitHub CLI merge flows may try to check out or delete the PR base branch
+	 * during local cleanup. If another worktree has that branch checked out, the
+	 * remote merge can succeed while local cleanup reports a fatal git error.
+	 *
+	 * @param array<string,mixed> $row Worktree listing row.
+	 * @return array<string,string>|null
+	 */
+	private function base_branch_worktree_warning( array $row ): ?array {
+		if ( empty( $row['is_worktree'] ) || ! empty( $row['is_primary'] ) || ! empty( $row['external'] ) ) {
+			return null;
+		}
+
+		$branch = (string) ( $row['branch'] ?? '' );
+		if ( '' === $branch || ! in_array( $branch, $this->protected_base_branch_names(), true ) ) {
+			return null;
+		}
+
+		return array(
+			'handle'       => (string) ( $row['handle'] ?? '' ),
+			'repo'         => (string) ( $row['repo'] ?? '' ),
+			'branch'       => $branch,
+			'path'         => (string) ( $row['path'] ?? '' ),
+			'reason_code'  => 'base_branch_checked_out_in_worktree',
+			'message'      => sprintf( 'Worktree %s has base branch %s checked out; gh pr merge --delete-branch may merge remotely but fail local cleanup.', (string) ( $row['handle'] ?? '' ), $branch ),
+		);
+	}
+
+	/**
+	 * Branch names that should normally be held by primaries, not feature worktrees.
+	 *
+	 * @return array<int,string>
+	 */
+	private function protected_base_branch_names(): array {
+		return array( 'main', 'master', 'trunk', 'develop' );
 	}
 
 	/**

@@ -2515,10 +2515,17 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				$this->format_items( $items, $fields, $assoc_args, 'handle' );
 				$duplicates = (array) ( $result['duplicates'] ?? array() );
+				$base_branch_worktrees = (array) ( $result['base_branch_worktrees'] ?? array() );
 				if ( ! empty( $duplicates ) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
 					WP_CLI::log( sprintf( 'Duplicate task ownership groups: %d', count( $duplicates ) ) );
 					foreach ( $duplicates as $group ) {
 						WP_CLI::log( sprintf( '  - [%s=%s] %s', (string) ( $group['kind'] ?? '' ), (string) ( $group['key'] ?? '' ), implode( ', ', (array) ( $group['handles'] ?? array() ) ) ) );
+					}
+				}
+				if ( ! empty( $base_branch_worktrees ) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
+					WP_CLI::warning( sprintf( 'Base branch checked out in %d non-primary worktree%s; gh pr merge --delete-branch can merge remotely but fail local cleanup.', count( $base_branch_worktrees ), 1 === count( $base_branch_worktrees ) ? '' : 's' ) );
+					foreach ( $base_branch_worktrees as $warning ) {
+						WP_CLI::log( sprintf( '  - %s (%s) at %s', (string) ( $warning['handle'] ?? '' ), (string) ( $warning['branch'] ?? '' ), (string) ( $warning['path'] ?? '' ) ) );
 					}
 				}
 				return;

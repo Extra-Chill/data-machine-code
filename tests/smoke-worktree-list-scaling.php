@@ -188,6 +188,8 @@ namespace {
 	$run( sprintf( 'git worktree add %s feat-one', escapeshellarg( $tmp . '/demo@feat-one' ) ), $primary );
 	$run( sprintf( 'git worktree add %s feat-two', escapeshellarg( $tmp . '/demo@feat-two' ) ), $primary );
 	$run( sprintf( 'git worktree add %s feat-three', escapeshellarg( $tmp . '/demo@feat-three' ) ), $primary );
+	$run( 'git checkout -b local-maintenance', $primary );
+	$run( sprintf( 'git worktree add %s main', escapeshellarg( $tmp . '/demo@main' ) ), $primary );
 
 	// Dirty one of them so the status probe has something to count.
 	file_put_contents( $tmp . '/demo@feat-two/scratch.txt', 'dirty' );
@@ -232,7 +234,7 @@ namespace {
 	$assert( true, ! is_wp_error( $cheap_res ) && ( $cheap_res['success'] ?? false ), 'cheap listing returns success' );
 	$assert( array( 'status', 'disk' ), $cheap_res['fields_skipped'] ?? null, 'cheap listing reports both probe groups skipped' );
 	$cheap_rows = $cheap_res['worktrees'] ?? array();
-	$assert( 4, count( $cheap_rows ), 'cheap listing still enumerates every worktree' );
+	$assert( 5, count( $cheap_rows ), 'cheap listing still enumerates every worktree' );
 	$cheap_two  = array_values( array_filter( $cheap_rows, fn( $r ) => ( $r['handle'] ?? '' ) === 'demo@feat-two' ) )[0] ?? array();
 	// dirty=null is the structural signal that the per-row git status probe was skipped.
 	$assert( true, array_key_exists( 'dirty', $cheap_two ) && null === $cheap_two['dirty'], 'cheap listing leaves dirty as null (status probe skipped)' );
@@ -245,6 +247,14 @@ namespace {
 	$assert( 'demo', $cheap_two['repo'] ?? '', 'cheap row carries repo' );
 	$assert( 'feat-two', $cheap_two['branch'] ?? '', 'cheap row carries branch' );
 	$assert( true, ! empty( $cheap_two['head'] ), 'cheap row carries head' );
+	$cheap_main = array_values( array_filter( $cheap_rows, fn( $r ) => ( $r['handle'] ?? '' ) === 'demo@main' ) )[0] ?? array();
+	$assert( 'base_branch_checked_out_in_worktree', $cheap_main['base_branch_warning']['reason_code'] ?? '', 'cheap listing flags non-primary worktree checked out on main' );
+	$assert( 1, count( $cheap_res['base_branch_worktrees'] ?? array() ), 'cheap listing exposes base branch worktree warnings at top level' );
+	$hygiene_res = $ws->workspace_hygiene_report( array(
+		'include_cleanup' => false,
+		'include_sizes'   => false,
+	) );
+	$assert( 1, (int) ( $hygiene_res['worktrees']['base_branch_worktree_count'] ?? 0 ), 'hygiene report summarizes base branch worktree warnings' );
 
 	// Lifecycle / metadata-driven stale_reason still works without probes.
 	// feat-two has NO lifecycle metadata → missing_metadata still fires.
