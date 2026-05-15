@@ -22,6 +22,7 @@ trait WorkspaceGitOperations {
 	 */
 	public function git_status( string $handle ): array|\WP_Error {
 		$parsed    = $this->parse_handle( $handle );
+		$repo_name = $parsed['repo'];
 		$repo_path = $this->resolve_repo_path( $handle );
 		if ( is_wp_error( $repo_path ) ) {
 			return $repo_path;
@@ -32,13 +33,18 @@ trait WorkspaceGitOperations {
 			return $status_result;
 		}
 
+		$policy_attestation = $this->build_workspace_policy_attestation( $repo_name, $repo_path );
+		if ( is_wp_error( $policy_attestation ) ) {
+			return $policy_attestation;
+		}
+
 		$branch_result = $this->run_git( $repo_path, 'rev-parse --abbrev-ref HEAD' );
 		$remote_result = $this->run_git( $repo_path, 'config --get remote.origin.url' );
 		$latest_result = $this->run_git( $repo_path, 'log -1 --format="%h %s"' );
 
 		$files = array_filter( array_map( 'trim', explode( "\n", $status_result['output'] ?? '' ) ) );
 
-		return array(
+		$response = array(
 			'success'     => true,
 			'name'        => $parsed['dir_name'],
 			'repo'        => $parsed['repo'],
@@ -50,6 +56,12 @@ trait WorkspaceGitOperations {
 			'dirty'       => count( $files ),
 			'files'       => array_values( $files ),
 		);
+
+		if ( null !== $policy_attestation ) {
+			$response['workspace_policy'] = $policy_attestation;
+		}
+
+		return $response;
 	}
 
 	/**
@@ -127,11 +139,7 @@ trait WorkspaceGitOperations {
 			return new \WP_Error( 'missing_paths', 'At least one path is required for git add.', array( 'status' => 400 ) );
 		}
 
-		// Allowed paths are opt-in: when configured, they restrict which relative
-		// paths may be staged; when absent, any path within the repo is allowed.
-		// This mirrors ensure_git_mutation_allowed's permissive-by-default model.
-		// Sensitive-path + traversal checks still apply unconditionally.
-		$allowed_roots = $this->get_repo_allowed_paths( $repo_name );
+		$writable_roots = $this->get_repo_writable_roots( $repo_name );
 
 		$clean_paths = array();
 		foreach ( $paths as $path ) {
@@ -148,9 +156,8 @@ trait WorkspaceGitOperations {
 				return new \WP_Error( 'sensitive_path', sprintf( 'Refusing to stage sensitive path: %s', $relative ), array( 'status' => 403 ) );
 			}
 
-			// Only enforce the allowlist when one has been configured.
-			if ( ! empty( $allowed_roots ) && ! $this->is_path_allowed( $relative, $allowed_roots ) ) {
-				return new \WP_Error( 'path_not_allowed', sprintf( 'Path "%s" is outside configured allowlist.', $relative ), array( 'status' => 403 ) );
+			if ( ! empty( $writable_roots ) && ! $this->is_path_allowed( $relative, $writable_roots ) ) {
+				return new \WP_Error( 'path_not_allowed', sprintf( 'Path "%s" is outside configured writable_roots.', $relative ), array( 'status' => 403 ) );
 			}
 
 			$clean_paths[] = $relative;
@@ -160,6 +167,11 @@ trait WorkspaceGitOperations {
 			return new \WP_Error( 'no_valid_paths', 'No valid paths provided for git add.', array( 'status' => 400 ) );
 		}
 
+		$preflight = $this->enforce_workspace_policy( $repo_name, $repo_path, $clean_paths );
+		if ( is_wp_error( $preflight ) ) {
+			return $preflight;
+		}
+
 		$escaped_paths = array_map( 'escapeshellarg', $clean_paths );
 		$result        = $this->run_git( $repo_path, 'add -- ' . implode( ' ', $escaped_paths ) );
 
@@ -167,13 +179,24 @@ trait WorkspaceGitOperations {
 			return $result;
 		}
 
-		return array(
+		$attestation = $this->enforce_workspace_policy( $repo_name, $repo_path );
+		if ( is_wp_error( $attestation ) ) {
+			return $attestation;
+		}
+
+		$response = array(
 			'success' => true,
 			'name'    => $parsed['dir_name'],
 			'repo'    => $repo_name,
 			'paths'   => $clean_paths,
 			'message' => 'Paths staged successfully.',
 		);
+
+		if ( null !== $attestation ) {
+			$response['workspace_policy'] = $attestation;
+		}
+
+		return $response;
 	}
 
 	/**
@@ -222,9 +245,14 @@ trait WorkspaceGitOperations {
 			return new \WP_Error( 'sensitive_path', sprintf( 'Refusing to delete sensitive path: %s', $relative ), array( 'status' => 403 ) );
 		}
 
-		$allowed_roots = $this->get_repo_allowed_paths( $repo_name );
-		if ( ! empty( $allowed_roots ) && ! $this->is_path_allowed( $relative, $allowed_roots ) ) {
-			return new \WP_Error( 'path_not_allowed', sprintf( 'Path "%s" is outside configured allowlist.', $relative ), array( 'status' => 403 ) );
+		$writable_roots = $this->get_repo_writable_roots( $repo_name );
+		if ( ! empty( $writable_roots ) && ! $this->is_path_allowed( $relative, $writable_roots ) ) {
+			return new \WP_Error( 'path_not_allowed', sprintf( 'Path "%s" is outside configured writable_roots.', $relative ), array( 'status' => 403 ) );
+		}
+
+		$preflight = $this->enforce_workspace_policy( $repo_name, $repo_path, array( $relative ) );
+		if ( is_wp_error( $preflight ) ) {
+			return $preflight;
 		}
 
 		$absolute = $repo_path . '/' . $relative;
@@ -370,18 +398,29 @@ trait WorkspaceGitOperations {
 			return new \WP_Error( 'nothing_staged', 'No staged changes to commit.', array( 'status' => 400 ) );
 		}
 
+		$attestation = $this->enforce_workspace_policy( $repo_name, $repo_path );
+		if ( is_wp_error( $attestation ) ) {
+			return $attestation;
+		}
+
 		$commit = $this->run_git( $repo_path, 'commit -m ' . escapeshellarg( $message ) );
 		if ( is_wp_error( $commit ) ) {
 			return $commit;
 		}
 
-		return array(
+		$response = array(
 			'success' => true,
 			'name'    => $parsed['dir_name'],
 			'repo'    => $repo_name,
 			'commit'  => trim( (string) $commit['output'] ),
 			'message' => 'Commit created successfully.',
 		);
+
+		if ( null !== $attestation ) {
+			$response['workspace_policy'] = $attestation;
+		}
+
+		return $response;
 	}
 
 	/**
@@ -421,6 +460,15 @@ trait WorkspaceGitOperations {
 
 		$current_branch = trim( (string) $current_branch_result['output'] );
 		$target_branch  = $branch ? trim( $branch ) : $current_branch;
+		$publish_files  = $this->get_workspace_policy_publish_files( $repo_path, $current_branch );
+		if ( is_wp_error( $publish_files ) ) {
+			return $publish_files;
+		}
+
+		$attestation = $this->enforce_workspace_policy( $repo_name, $repo_path, $publish_files );
+		if ( is_wp_error( $attestation ) ) {
+			return $attestation;
+		}
 
 		// fixed_branch only constrains the primary checkout.
 		if ( ! $parsed['is_worktree'] ) {
@@ -447,7 +495,7 @@ trait WorkspaceGitOperations {
 			}
 		}
 
-		return array(
+		$response = array(
 			'success'            => true,
 			'kind'               => 'branch_push',
 			'name'               => $parsed['dir_name'],
@@ -465,6 +513,12 @@ trait WorkspaceGitOperations {
 			) : null,
 			'message'            => trim( (string) $result['output'] ),
 		);
+
+		if ( null !== $attestation ) {
+			$response['workspace_policy'] = $attestation;
+		}
+
+		return $response;
 	}
 
 	/**
@@ -701,6 +755,46 @@ trait WorkspaceGitOperations {
 		$repo     = $policies['repos'][ $repo_name ] ?? array();
 
 		$paths = $repo['allowed_paths'] ?? array();
+		return $this->normalize_policy_paths( $paths );
+	}
+
+	/**
+	 * Get writable relative roots for runner/workspace policy enforcement.
+	 *
+	 * `writable_roots` is the runner-facing contract. `allowed_paths` remains
+	 * supported as the existing workspace git policy name and fallback.
+	 *
+	 * @param string $repo_name Repository name.
+	 * @return array<int,string>
+	 */
+	private function get_repo_writable_roots( string $repo_name ): array {
+		$policies = $this->get_workspace_git_policies();
+		$repo     = $policies['repos'][ $repo_name ] ?? array();
+		$paths    = $repo['writable_roots'] ?? $repo['allowed_paths'] ?? array();
+
+		return $this->normalize_policy_paths( $paths );
+	}
+
+	/**
+	 * Get hidden relative paths for runner/workspace policy enforcement.
+	 *
+	 * @param string $repo_name Repository name.
+	 * @return array<int,string>
+	 */
+	private function get_repo_hidden_paths( string $repo_name ): array {
+		$policies = $this->get_workspace_git_policies();
+		$repo     = $policies['repos'][ $repo_name ] ?? array();
+
+		return $this->normalize_policy_paths( $repo['hidden_paths'] ?? array() );
+	}
+
+	/**
+	 * Normalize policy path lists.
+	 *
+	 * @param mixed $paths Raw policy value.
+	 * @return array<int,string>
+	 */
+	private function normalize_policy_paths( mixed $paths ): array {
 		if ( ! is_array( $paths ) ) {
 			return array();
 		}
@@ -718,6 +812,269 @@ trait WorkspaceGitOperations {
 		}
 
 		return array_values( array_unique( $clean ) );
+	}
+
+	/**
+	 * Enforce the configured workspace policy and return its attestation.
+	 *
+	 * @param string              $repo_name Repository name.
+	 * @param string              $repo_path Repository path.
+	 * @param array<int,string>|null $paths Optional paths to check instead of all changed files.
+	 * @return array<string,mixed>|null|\WP_Error
+	 */
+	private function enforce_workspace_policy( string $repo_name, string $repo_path, ?array $paths = null ): array|null|\WP_Error {
+		$attestation = $this->build_workspace_policy_attestation( $repo_name, $repo_path, $paths );
+		if ( is_wp_error( $attestation ) ) {
+			return $attestation;
+		}
+
+		if ( null !== $attestation && ! empty( $attestation['violations'] ) ) {
+			return new \WP_Error(
+				'workspace_policy_violation',
+				sprintf( 'Workspace policy violation: %d violation(s) found.', count( $attestation['violations'] ) ),
+				array(
+					'status'               => 403,
+					'workspace_policy'     => $attestation,
+					'policy_hash'          => $attestation['policy_hash'],
+					'workspace_violations' => $attestation['violations'],
+				)
+			);
+		}
+
+		return $attestation;
+	}
+
+	/**
+	 * Build a machine-readable workspace policy attestation.
+	 *
+	 * @param string                   $repo_name Repository name.
+	 * @param string                   $repo_path Repository path.
+	 * @param array<int,string>|null   $paths Optional paths to check instead of all changed files.
+	 * @return array<string,mixed>|null|\WP_Error
+	 */
+	private function build_workspace_policy_attestation( string $repo_name, string $repo_path, ?array $paths = null ): array|null|\WP_Error {
+		$writable_roots = $this->get_repo_writable_roots( $repo_name );
+		$hidden_paths   = $this->get_repo_hidden_paths( $repo_name );
+
+		if ( empty( $writable_roots ) && empty( $hidden_paths ) ) {
+			return null;
+		}
+
+		$changed_files = null === $paths ? $this->get_workspace_policy_changed_files( $repo_path ) : $this->normalize_policy_paths( $paths );
+		if ( is_wp_error( $changed_files ) ) {
+			return $changed_files;
+		}
+
+		$ignored_files = $this->get_workspace_policy_ignored_files( $repo_path );
+		if ( is_wp_error( $ignored_files ) ) {
+			return $ignored_files;
+		}
+
+		$changed_files = array_values( array_unique( array_merge( $changed_files, $ignored_files ) ) );
+		sort( $changed_files );
+
+		$policy = array(
+			'writable_roots' => $writable_roots,
+			'hidden_paths'   => $hidden_paths,
+		);
+
+		$real_repo = realpath( $repo_path );
+		if ( false === $real_repo ) {
+			return new \WP_Error( 'repo_path_unavailable', 'Repository path cannot be resolved for workspace policy attestation.', array( 'status' => 500 ) );
+		}
+
+		$violations = array();
+		foreach ( $changed_files as $path ) {
+			$violations = array_merge( $violations, $this->workspace_policy_path_violations( $repo_path, $real_repo, $path, $writable_roots, $hidden_paths, $ignored_files ) );
+		}
+
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode -- fallback for standalone smoke tests outside WordPress.
+		$policy_json = function_exists( 'wp_json_encode' ) ? wp_json_encode( $policy ) : json_encode( $policy );
+
+		return array(
+			'policy_hash'      => hash( 'sha256', (string) $policy_json ),
+			'checked_roots'    => array(
+				'repository'     => $real_repo,
+				'writable_roots' => $writable_roots,
+				'hidden_paths'   => $hidden_paths,
+			),
+			'changed_files'    => $changed_files,
+			'violations'       => $violations,
+			'supported_checks' => array(
+				'writable_roots',
+				'hidden_paths',
+				'symlink',
+				'gitlink',
+				'nested_git',
+				'non_regular',
+				'outside_realpath',
+				'ignored',
+				'hardlink',
+			),
+		);
+	}
+
+	/**
+	 * Return changed files visible to a workspace policy check.
+	 *
+	 * @param string $repo_path Repository path.
+	 * @return array<int,string>|\WP_Error
+	 */
+	private function get_workspace_policy_changed_files( string $repo_path ): array|\WP_Error {
+		$commands = array(
+			'diff --name-only',
+			'diff --cached --name-only',
+			'ls-files --others --exclude-standard',
+		);
+
+		$files = array();
+		foreach ( $commands as $command ) {
+			$result = $this->run_git( $repo_path, $command );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+			$files = array_merge( $files, $this->normalize_policy_paths( explode( "\n", (string) ( $result['output'] ?? '' ) ) ) );
+		}
+
+		return array_values( array_unique( $files ) );
+	}
+
+	/**
+	 * Return ignored workspace files so policy reports can flag them explicitly.
+	 *
+	 * @param string $repo_path Repository path.
+	 * @return array<int,string>|\WP_Error
+	 */
+	private function get_workspace_policy_ignored_files( string $repo_path ): array|\WP_Error {
+		$result = $this->run_git( $repo_path, 'ls-files --others --ignored --exclude-standard' );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return $this->normalize_policy_paths( explode( "\n", (string) ( $result['output'] ?? '' ) ) );
+	}
+
+	/**
+	 * Return files that a push could publish, plus dirty policy-visible files.
+	 *
+	 * @param string $repo_path Repository path.
+	 * @param string $current_branch Current branch name.
+	 * @return array<int,string>|\WP_Error
+	 */
+	private function get_workspace_policy_publish_files( string $repo_path, string $current_branch ): array|\WP_Error {
+		$files = $this->get_workspace_policy_changed_files( $repo_path );
+		if ( is_wp_error( $files ) ) {
+			return $files;
+		}
+
+		$base_refs = array();
+		$upstream  = $this->run_git( $repo_path, 'rev-parse --abbrev-ref --symbolic-full-name @{upstream}' );
+		if ( ! is_wp_error( $upstream ) && '' !== trim( (string) ( $upstream['output'] ?? '' ) ) ) {
+			$base_refs[] = trim( (string) $upstream['output'] );
+		}
+
+		$origin_head = $this->run_git( $repo_path, 'symbolic-ref refs/remotes/origin/HEAD' );
+		if ( ! is_wp_error( $origin_head ) && '' !== trim( (string) ( $origin_head['output'] ?? '' ) ) ) {
+			$base_refs[] = preg_replace( '#^refs/remotes/#', '', trim( (string) $origin_head['output'] ) );
+		}
+
+		$base_refs[] = 'origin/main';
+		$base_refs[] = 'origin/master';
+
+		foreach ( array_values( array_unique( array_filter( $base_refs ) ) ) as $base_ref ) {
+			$diff = $this->run_git( $repo_path, 'diff --name-only ' . escapeshellarg( $base_ref . '...' . $current_branch ) );
+			if ( is_wp_error( $diff ) ) {
+				continue;
+			}
+
+			$files = array_merge( $files, $this->normalize_policy_paths( explode( "\n", (string) ( $diff['output'] ?? '' ) ) ) );
+			break;
+		}
+
+		return array_values( array_unique( $files ) );
+	}
+
+	/**
+	 * Build all policy violations for a single relative path.
+	 *
+	 * @param string            $repo_path Repository path.
+	 * @param string            $real_repo Real repository path.
+	 * @param string            $path Relative path.
+	 * @param array<int,string> $writable_roots Writable roots.
+	 * @param array<int,string> $hidden_paths Hidden paths.
+	 * @param array<int,string> $ignored_files Ignored files.
+	 * @return array<int,array<string,string>>
+	 */
+	private function workspace_policy_path_violations( string $repo_path, string $real_repo, string $path, array $writable_roots, array $hidden_paths, array $ignored_files ): array {
+		$violations = array();
+		$path       = ltrim( str_replace( '\\', '/', $path ), '/' );
+		$absolute   = $repo_path . '/' . $path;
+
+		$add_violation = static function ( string $reason, string $detail = '' ) use ( &$violations, $path ): void {
+			$violation = array(
+				'path'   => $path,
+				'reason' => $reason,
+			);
+			if ( '' !== $detail ) {
+				$violation['detail'] = $detail;
+			}
+			$violations[] = $violation;
+		};
+
+		if ( ! empty( $writable_roots ) && ! $this->is_path_allowed( $path, $writable_roots ) ) {
+			$add_violation( 'outside_writable_roots', 'Changed path is outside configured writable_roots.' );
+		}
+
+		if ( ! empty( $hidden_paths ) && $this->is_path_allowed( $path, $hidden_paths ) ) {
+			$add_violation( 'hidden_path', 'Changed path is under configured hidden_paths.' );
+		}
+
+		if ( '.git' === $path || str_starts_with( $path, '.git/' ) || str_contains( $path, '/.git/' ) || str_ends_with( $path, '/.git' ) ) {
+			$add_violation( 'nested_git', 'Changed path includes a .git directory or file.' );
+		}
+
+		if ( in_array( $path, $ignored_files, true ) ) {
+			$add_violation( 'ignored', 'Changed path is ignored by git exclude rules.' );
+		}
+
+		if ( is_link( $absolute ) ) {
+			$add_violation( 'symlink', 'Changed path is a symlink.' );
+			$target = readlink( $absolute );
+			if ( false !== $target ) {
+				$target_path = str_starts_with( $target, '/' ) ? $target : dirname( $absolute ) . '/' . $target;
+				$real_target = realpath( $target_path );
+				if ( false === $real_target || ( $real_target !== $real_repo && ! str_starts_with( $real_target, $real_repo . '/' ) ) ) {
+					$add_violation( 'outside_realpath', 'Symlink target resolves outside the repository.' );
+				}
+				foreach ( $hidden_paths as $hidden_path ) {
+					$hidden_real = realpath( $repo_path . '/' . $hidden_path );
+					if ( false !== $hidden_real && false !== $real_target && ( $real_target === $hidden_real || str_starts_with( $real_target, $hidden_real . '/' ) ) ) {
+						$add_violation( 'hidden_path_exposure', 'Symlink target resolves under hidden_paths.' );
+					}
+				}
+			}
+		} elseif ( file_exists( $absolute ) ) {
+			$real_path = realpath( $absolute );
+			if ( false === $real_path || ( $real_path !== $real_repo && ! str_starts_with( $real_path, $real_repo . '/' ) ) ) {
+				$add_violation( 'outside_realpath', 'Changed path resolves outside the repository.' );
+			}
+
+			if ( ! is_file( $absolute ) && ! is_dir( $absolute ) ) {
+				$add_violation( 'non_regular', 'Changed path is neither a regular file nor a directory.' );
+			}
+
+			$stat = @lstat( $absolute ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			if ( is_array( $stat ) && is_file( $absolute ) && (int) ( $stat['nlink'] ?? 1 ) > 1 ) {
+				$add_violation( 'hardlink', 'Changed file has more than one hardlink.' );
+			}
+		}
+
+		$stage = $this->run_git( $repo_path, 'ls-files --stage -- ' . escapeshellarg( $path ) );
+		if ( ! is_wp_error( $stage ) && preg_match( '/^160000\s/', (string) ( $stage['output'] ?? '' ) ) ) {
+			$add_violation( 'gitlink', 'Changed path is a gitlink/submodule entry.' );
+		}
+
+		return $violations;
 	}
 
 	/**
@@ -839,7 +1196,7 @@ trait WorkspaceGitOperations {
 	 * @return string|null Remote URL or null.
 	 */
 	private function git_get_remote( string $repo_path, string $remote_name = 'origin' ): ?string {
-		$escaped = escapeshellarg( $repo_path );
+		$escaped     = escapeshellarg( $repo_path );
 		$remote_name = preg_replace( '/[^A-Za-z0-9._-]/', '', $remote_name );
 		if ( '' === $remote_name ) {
 			return null;
@@ -861,5 +1218,4 @@ trait WorkspaceGitOperations {
 		$branch = exec( sprintf( 'git -C %s rev-parse --abbrev-ref HEAD 2>/dev/null', $escaped ) );
 		return ( '' !== $branch ) ? $branch : null;
 	}
-
 }
