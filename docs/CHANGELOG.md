@@ -2,6 +2,28 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.42.0] - 2026-05-15
+
+### Added
+- enforce workspace git policies
+- support scoped workspace aliases
+- add opaque workspace aliases
+- add GitHub PR merge cleanup commands
+
+### Changed
+- extract workspace inventory cleanup
+- extract workspace emergency cleanup
+- extract workspace worktree lifecycle
+- extract workspace repository lifecycle
+- extract workspace git operations
+
+### Fixed
+- warn on base branch worktrees
+- load site agents alongside repo instructions
+- project site agents into worktrees
+- clean up merged PR worktrees before branch deletion
+- skip submodule worktrees during cleanup apply
+
 ## [0.41.4] - 2026-05-12
 
 ### Fixed
