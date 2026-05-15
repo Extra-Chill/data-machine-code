@@ -75,6 +75,8 @@ trait WorkspaceHygieneReport {
 				$cleanup       = null;
 			}
 		}
+		$worktree_summary = $this->summarize_workspace_worktrees( $worktrees, $cleanup );
+
 		return array(
 			'success'                   => true,
 			'generated_at'              => gmdate( 'c' ),
@@ -86,7 +88,7 @@ trait WorkspaceHygieneReport {
 				'freshness' => $this->worktree_inventory()->freshness(),
 				'refresh'   => $inventory_refresh,
 			),
-			'worktrees'                 => $this->summarize_workspace_worktrees( $worktrees, $cleanup ),
+			'worktrees'                 => $worktree_summary,
 			'worktree_status_mode'      => $worktree_status_mode,
 			'top_repos_by_worktrees'    => $this->top_repos_by_worktree_count( $worktrees, 10 ),
 			'top_repos_by_size'         => $this->top_repos_by_size( (array) ( $size_report['entries'] ?? array() ), 10 ),
@@ -97,6 +99,7 @@ trait WorkspaceHygieneReport {
 				$include_sizes ? (string) ( $size_report['mode_note'] ?? '' ) : 'Size scan disabled by request.',
 				$include_worktree_status ? 'Full worktree status enabled; this may run git status across every worktree.' : 'Worktree status uses cheap top-level inventory; pass --include-worktree-status for full git status.',
 				$include_cleanup ? 'Cleanup summary uses inventory-only dry-run detection (--inventory-only --skip-github); no per-worktree git probes or GitHub API lookups are required.' : 'Cleanup dry-run disabled by request.',
+				! empty( $worktree_summary['base_branch_worktree_count'] ) ? 'One or more non-primary worktrees have a base branch checked out; gh pr merge --delete-branch can merge remotely but fail local cleanup.' : '',
 			) ) ),
 		);
 	}
@@ -342,7 +345,7 @@ trait WorkspaceHygieneReport {
 			$session_view = WorktreeContextInjector::summarize_session( is_array( $metadata ) ? $metadata : null );
 			$task_view    = is_array( $metadata ) && is_array( $metadata['origin_task'] ?? null ) ? $metadata['origin_task'] : null;
 
-			$rows[] = array(
+			$row = array(
 				'handle'           => $parsed['dir_name'],
 				'repo'             => $parsed['repo'],
 				'kind'             => $kind,
@@ -350,6 +353,7 @@ trait WorkspaceHygieneReport {
 				'is_primary'       => 'primary' === $kind,
 				'external'         => false,
 				'branch_slug'      => $parsed['branch_slug'],
+				'branch'           => is_array( $metadata ) && ! empty( $metadata['branch'] ) ? (string) $metadata['branch'] : (string) ( $parsed['branch_slug'] ?? '' ),
 				'path'             => $path,
 				'dirty'            => 0,
 				'created_at'       => is_array( $metadata ) ? ( $metadata['created_at'] ?? null ) : null,
@@ -366,6 +370,13 @@ trait WorkspaceHygieneReport {
 				'missing_metadata' => $is_worktree && ! is_array( $metadata ),
 				'metadata'         => $metadata,
 			);
+
+			$base_branch_warning = $this->base_branch_worktree_warning( $row );
+			if ( null !== $base_branch_warning ) {
+				$row['base_branch_warning'] = $base_branch_warning;
+			}
+
+			$rows[] = $row;
 		}
 
 		return $rows;
@@ -523,6 +534,8 @@ trait WorkspaceHygieneReport {
 			'protected_dirty'    => 0,
 			'protected_unpushed' => 0,
 			'missing_metadata'   => 0,
+			'base_branch_worktree_count' => 0,
+			'base_branch_worktrees' => array(),
 			'by_liveness'        => array(
 				WorktreeContextInjector::LIVENESS_LIVE    => 0,
 				WorktreeContextInjector::LIVENESS_STOPPED => 0,
@@ -551,6 +564,11 @@ trait WorkspaceHygieneReport {
 
 			if ( ! empty( $row['missing_metadata'] ) ) {
 				++$summary['missing_metadata'];
+			}
+
+			if ( ! empty( $row['base_branch_warning'] ) && is_array( $row['base_branch_warning'] ) ) {
+				++$summary['base_branch_worktree_count'];
+				$summary['base_branch_worktrees'][] = $row['base_branch_warning'];
 			}
 
 			if ( ! empty( $row['is_worktree'] ) ) {
