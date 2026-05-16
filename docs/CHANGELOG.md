@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.43.0] - 2026-05-16
+
+### Changed
+- Add workspace PR rebase abilities
+- move release-asset build to release.published trigger
+- add homeboy release asset workflow
+
+### Fixed
+- require opt-in for pipeline workspace tools
+
 ## [0.42.0] - 2026-05-15
 
 ### Added
