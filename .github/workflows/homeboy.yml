@@ -1,0 +1,75 @@
+name: Homeboy
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: homeboy-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  homeboy:
+    uses: Extra-Chill/homeboy-action/.github/workflows/ci.yml@v2
+    with:
+      commands: audit,lint,test
+      expected-commands: audit,lint,test
+      autofix: 'false'
+    secrets: inherit
+
+  build-release-asset:
+    if: needs.homeboy.outputs.released == 'true'
+    needs: [homeboy]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.homeboy.outputs.release-tag }}
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          tools: composer:v2
+
+      - run: composer install --no-dev --optimize-autoloader --prefer-dist --no-interaction
+
+      - name: Build plugin ZIP
+        run: |
+          mkdir -p dist/data-machine-code
+          rsync -a ./ dist/data-machine-code/ \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.claude' \
+            --exclude='.datamachine' \
+            --exclude='AGENTS.md' \
+            --exclude='dist' \
+            --exclude='docs' \
+            --exclude='node_modules' \
+            --exclude='tests' \
+            --exclude='*.zip' \
+            --exclude='*.tar.gz' \
+            --exclude='*.log' \
+            --exclude='*.tmp' \
+            --exclude='*.temp' \
+            --exclude='*.cache' \
+            --exclude='*.bak' \
+            --exclude='*.backup' \
+            --exclude='phpstan-baseline.neon' \
+            --exclude='phpunit.xml*'
+          cd dist
+          zip -r data-machine-code.zip data-machine-code
+
+      - run: gh release upload "${{ needs.homeboy.outputs.release-tag }}" dist/data-machine-code.zip --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
