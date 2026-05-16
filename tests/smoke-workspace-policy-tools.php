@@ -101,6 +101,10 @@ namespace {
 		'workspace_git_add',
 		'workspace_git_commit',
 		'workspace_git_push',
+		'workspace_git_rebase',
+		'workspace_git_reset',
+		'workspace_pr_status',
+		'workspace_pr_rebase',
 	);
 
 	foreach ( $policy_tools as $tool ) {
