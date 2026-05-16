@@ -556,7 +556,7 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
-							'patch'                 => array(
+							'patch'                  => array(
 								'type'        => 'string',
 								'description' => 'Unified diff content to apply.',
 							),
@@ -917,6 +917,14 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Permit pushing from the primary checkout (default false). Worktrees are always allowed.',
 							),
+							'force_with_lease'       => array(
+								'type'        => 'boolean',
+								'description' => 'Use git push --force-with-lease. Refuses protected base/fixed branches.',
+							),
+							'expected_sha'           => array(
+								'type'        => 'string',
+								'description' => 'Optional expected remote branch SHA for --force-with-lease.',
+							),
 						),
 						'required'   => array( 'name' ),
 					),
@@ -931,6 +939,8 @@ class WorkspaceAbilities {
 							'github_repo'        => array( 'type' => array( 'string', 'null' ) ),
 							'remote'             => array( 'type' => 'string' ),
 							'branch'             => array( 'type' => 'string' ),
+							'force_with_lease'   => array( 'type' => 'boolean' ),
+							'expected_sha'       => array( 'type' => array( 'string', 'null' ) ),
 							'url'                => array( 'type' => array( 'string', 'null' ) ),
 							'html_url'           => array( 'type' => array( 'string', 'null' ) ),
 							'next_required_tool' => array( 'type' => array( 'string', 'null' ) ),
@@ -939,6 +949,175 @@ class WorkspaceAbilities {
 						),
 					),
 					'execute_callback'    => array( self::class, 'gitPush' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/workspace-git-rebase',
+				array(
+					'label'               => 'Workspace Git Rebase',
+					'description'         => 'Fetch and rebase a workspace handle, returning structured conflict information without auto-resolving conflicts.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'name'                   => array(
+								'type'        => 'string',
+								'description' => 'Workspace handle: `<repo>` or `<repo>@<branch-slug>`.',
+							),
+							'onto'                   => array(
+								'type'        => 'string',
+								'description' => 'Base ref to rebase onto. Defaults to origin/HEAD or origin/<branch>.',
+							),
+							'interactive'            => array(
+								'type'        => 'boolean',
+								'description' => 'Reserved; interactive rebases are not supported.',
+							),
+							'strategy_option'        => array(
+								'type'        => 'string',
+								'description' => 'Optional git strategy option such as theirs or ours.',
+							),
+							'continue'               => array(
+								'type'        => 'boolean',
+								'description' => 'Continue an in-progress rebase after conflicts were resolved and staged.',
+							),
+							'allow_primary_mutation' => array(
+								'type'        => 'boolean',
+								'description' => 'Permit mutation on a primary checkout. Default false.',
+							),
+						),
+						'required'   => array( 'name' ),
+					),
+					'output_schema'       => self::gitRebaseOutputSchema(),
+					'execute_callback'    => array( self::class, 'gitRebase' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/workspace-git-reset',
+				array(
+					'label'               => 'Workspace Git Reset',
+					'description'         => 'Run git reset --soft/--mixed/--hard for a workspace handle. Hard reset requires allow_destructive=true.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'name'                   => array(
+								'type'        => 'string',
+								'description' => 'Workspace handle: `<repo>` or `<repo>@<branch-slug>`.',
+							),
+							'mode'                   => array(
+								'type'        => 'string',
+								'enum'        => array( 'soft', 'mixed', 'hard' ),
+								'description' => 'Reset mode. Default mixed.',
+							),
+							'target'                 => array(
+								'type'        => 'string',
+								'description' => 'Target ref or commit. Defaults to origin/HEAD or origin/<branch>.',
+							),
+							'allow_destructive'      => array(
+								'type'        => 'boolean',
+								'description' => 'Required for hard reset.',
+							),
+							'allow_primary_mutation' => array(
+								'type'        => 'boolean',
+								'description' => 'Permit mutation on a primary checkout. Default false.',
+							),
+						),
+						'required'   => array( 'name' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'        => array( 'type' => 'boolean' ),
+							'mode'           => array( 'type' => 'string' ),
+							'previous_head'  => array( 'type' => 'string' ),
+							'new_head'       => array( 'type' => 'string' ),
+							'paths_affected' => array( 'type' => 'integer' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'gitReset' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/workspace-pr-status',
+				array(
+					'label'               => 'Workspace Pull Request Status',
+					'description'         => 'Resolve a workspace pull request and return mergeability/freshness state from GitHub.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'name'   => array(
+								'type'        => 'string',
+								'description' => 'Workspace handle.',
+							),
+							'pr'     => array(
+								'type'        => array( 'string', 'integer' ),
+								'description' => 'PR number or URL. Defaults to the current branch PR.',
+							),
+							'branch' => array(
+								'type'        => 'string',
+								'description' => 'Branch to resolve when pr is omitted.',
+							),
+						),
+						'required'   => array( 'name' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array( 'success' => array( 'type' => 'boolean' ) ),
+					),
+					'execute_callback'    => array( self::class, 'prStatus' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			wp_register_ability(
+				'datamachine/workspace-pr-rebase',
+				array(
+					'label'               => 'Workspace Pull Request Rebase',
+					'description'         => 'Bring a workspace pull request branch up to date with its base branch, optionally dropping configured conflict paths, squashing, and force-with-lease pushing.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'name'                   => array(
+								'type'        => 'string',
+								'description' => 'Workspace handle.',
+							),
+							'pr'                     => array(
+								'type'        => array( 'string', 'integer' ),
+								'description' => 'PR number or URL. Defaults to the current branch PR.',
+							),
+							'squash'                 => array(
+								'type'        => 'boolean',
+								'description' => 'Squash rebased commits into one PR-title commit before pushing.',
+							),
+							'drop_paths'             => array(
+								'type'        => 'array',
+								'items'       => array( 'type' => 'string' ),
+								'description' => 'Glob patterns to resolve by taking the base version during rebase conflicts.',
+							),
+							'allow_primary_mutation' => array(
+								'type'        => 'boolean',
+								'description' => 'Permit mutation on a primary checkout. Default false.',
+							),
+						),
+						'required'   => array( 'name' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array( 'success' => array( 'type' => 'boolean' ) ),
+					),
+					'execute_callback'    => array( self::class, 'prRebase' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
 				)
@@ -1164,11 +1343,11 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'include_cleanup' => array(
+							'include_cleanup'         => array(
 								'type'        => 'boolean',
 								'description' => 'Include a local-only worktree cleanup dry-run summary. Default true.',
 							),
-							'include_sizes'   => array(
+							'include_sizes'           => array(
 								'type'        => 'boolean',
 								'description' => 'Include best-effort top-level workspace size data. Default true.',
 							),
@@ -1176,11 +1355,11 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Include full per-worktree git status. Default false for huge-workspace safety.',
 							),
-							'refresh_inventory' => array(
+							'refresh_inventory'       => array(
 								'type'        => 'boolean',
 								'description' => 'Refresh the DB-backed worktree inventory before reporting freshness. Default false.',
 							),
-							'size_limit'      => array(
+							'size_limit'              => array(
 								'type'        => 'integer',
 								'description' => 'Maximum top-level workspace entries to size. Default 1000.',
 							),
@@ -1255,7 +1434,7 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Forward force=true to cleanup tasks that support it.',
 							),
-							'dry_run'      => array(
+							'dry_run'    => array(
 								'type'        => 'boolean',
 								'description' => 'Rejected for background cleanup scheduling; use review abilities for dry-runs.',
 							),
@@ -1297,11 +1476,11 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'repo' => array(
+							'repo'           => array(
 								'type'        => 'string',
 								'description' => 'Optional repo name to limit the list.',
 							),
-							'state' => array(
+							'state'          => array(
 								'type'        => 'string',
 								'description' => 'Optional lifecycle state filter.',
 							),
@@ -1309,7 +1488,7 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Run `git status --porcelain` per worktree to populate the dirty count. Default false (cheap listing). Expensive on large workspaces.',
 							),
-							'include_disk' => array(
+							'include_disk'   => array(
 								'type'        => 'boolean',
 								'description' => 'Run size and artifact `du` probes per worktree. Default false (cheap listing). Expensive on large workspaces.',
 							),
@@ -1354,9 +1533,9 @@ class WorkspaceAbilities {
 										),
 										'heartbeat_age_seconds' => array( 'type' => array( 'integer', 'null' ) ),
 										'owner'           => array(
-											'type'       => 'object',
+											'type'        => 'object',
 											'description' => 'Owner snapshot recorded at worktree creation. Unknown-safe defaults: site, agent, user default to the literal string "unknown".',
-											'properties' => array(
+											'properties'  => array(
 												'site'     => array( 'type' => 'string' ),
 												'site_url' => array( 'type' => array( 'string', 'null' ) ),
 												'agent'    => array( 'type' => 'string' ),
@@ -1364,9 +1543,9 @@ class WorkspaceAbilities {
 											),
 										),
 										'session'         => array(
-											'type'       => 'object',
+											'type'        => 'object',
 											'description' => 'Captured session identifiers (kimaki/opencode). Fields default to null when the corresponding env was not present at worktree creation.',
-											'properties' => array(
+											'properties'  => array(
 												'primary_id'         => array( 'type' => array( 'string', 'null' ) ),
 												'kimaki_session_id'  => array( 'type' => array( 'string', 'null' ) ),
 												'kimaki_thread_id'   => array( 'type' => array( 'string', 'null' ) ),
@@ -1376,7 +1555,7 @@ class WorkspaceAbilities {
 											),
 										),
 										'task'            => array(
-											'type'       => array( 'object', 'null' ),
+											'type'        => array( 'object', 'null' ),
 											'description' => 'Optional task/issue reference recorded at creation, when supplied via input or DATAMACHINE_TASK_URL/DATAMACHINE_TASK_REF env.',
 										),
 										'last_touched_at' => array( 'type' => array( 'string', 'null' ) ),
@@ -1393,10 +1572,10 @@ class WorkspaceAbilities {
 									),
 								),
 							),
-							'duplicates' => array(
-								'type'       => 'array',
+							'duplicates'     => array(
+								'type'        => 'array',
 								'description' => 'Groups of worktrees sharing a task_url, task_ref, pr_url, or pr_repo#pr_number. Reported only — never used to drive deletions.',
-								'items'      => array(
+								'items'       => array(
 									'type'       => 'object',
 									'properties' => array(
 										'kind'    => array( 'type' => 'string' ),
@@ -1489,27 +1668,27 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'dry_run'     => array(
+							'dry_run'                   => array(
 								'type'        => 'boolean',
 								'description' => 'If true, return the plan without removing anything.',
 							),
-							'force'       => array(
+							'force'                     => array(
 								'type'        => 'boolean',
 								'description' => 'If true, ignore dirty working-tree safety check.',
 							),
-							'skip_github' => array(
+							'skip_github'               => array(
 								'type'        => 'boolean',
 								'description' => 'If true, rely solely on the local upstream-gone signal and skip GitHub API lookup.',
 							),
-							'inventory_only' => array(
+							'inventory_only'            => array(
 								'type'        => 'boolean',
 								'description' => 'If true, build a dry-run review from cheap top-level inventory and explicit lifecycle cleanup signals only. Avoids full git worktree/status scans and GitHub lookups.',
 							),
-							'apply_plan'  => array(
+							'apply_plan'                => array(
 								'type'        => 'object',
 								'description' => 'Decoded cleanup dry-run report to apply after revalidating every candidate.',
 							),
-							'older_than'  => array(
+							'older_than'                => array(
 								'type'        => 'string',
 								'description' => 'Optional candidate age filter such as 7d, 24h, 30m, or 60s. Uses lifecycle created_at metadata only.',
 							),
@@ -1561,7 +1740,7 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'dry_run'    => array(
+							'dry_run'      => array(
 								'type'        => 'boolean',
 								'description' => 'If true, return a review plan without writing metadata.',
 							),
@@ -1618,11 +1797,11 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'limit'  => array(
+							'limit'        => array(
 								'type'        => 'integer',
 								'description' => 'Maximum active_no_signal rows to inspect in this page. Defaults to 25.',
 							),
-							'offset' => array(
+							'offset'       => array(
 								'type'        => 'integer',
 								'description' => 'Pagination offset into the active_no_signal inventory ordering.',
 							),
@@ -1635,11 +1814,11 @@ class WorkspaceAbilities {
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success'    => array( 'type' => 'boolean' ),
+							'success'     => array( 'type' => 'boolean' ),
 							'review_only' => array( 'type' => 'boolean' ),
-							'rows'       => array( 'type' => 'array' ),
-							'summary'    => array( 'type' => 'object' ),
-							'pagination' => array( 'type' => 'object' ),
+							'rows'        => array( 'type' => 'array' ),
+							'summary'     => array( 'type' => 'object' ),
+							'pagination'  => array( 'type' => 'object' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreeActiveNoSignalReport' ),
@@ -1737,27 +1916,27 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'dry_run'    => array(
+							'dry_run'       => array(
 								'type'        => 'boolean',
 								'description' => 'If true, return the artifact cleanup plan without deleting anything.',
 							),
-							'force'      => array(
+							'force'         => array(
 								'type'        => 'boolean',
 								'description' => 'If true, allow artifact cleanup in dirty or unpushed worktrees. Active plugin/theme symlink targets remain protected.',
 							),
-							'apply_plan' => array(
+							'apply_plan'    => array(
 								'type'        => 'object',
 								'description' => 'Decoded artifact cleanup dry-run report to apply after revalidating every worktree and artifact path.',
 							),
-							'limit'      => array(
+							'limit'         => array(
 								'type'        => 'integer',
 								'description' => 'Maximum worktrees to scan in a dry-run page. Defaults to ' . Workspace::ARTIFACT_CLEANUP_DEFAULT_LIMIT . '. Use 0 to disable the cap (still bounded by exhaustive=false unless you also pass exhaustive=true).',
 							),
-							'offset'     => array(
+							'offset'        => array(
 								'type'        => 'integer',
 								'description' => 'Pagination offset (0-indexed) into the inventory ordering. Combine with the previous response\'s pagination.next_offset to walk huge workspaces in pages.',
 							),
-							'exhaustive' => array(
+							'exhaustive'    => array(
 								'type'        => 'boolean',
 								'description' => 'If true, scan every worktree (no limit) AND run per-worktree git status / unpushed-commit safety probes. Slow on huge workspaces; use for one-shot full audits.',
 							),
@@ -1837,27 +2016,27 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'dry_run'    => array(
+							'dry_run'                   => array(
 								'type'        => 'boolean',
 								'description' => 'Preview the bounded batch without removing anything.',
 							),
-							'limit'      => array(
+							'limit'                     => array(
 								'type'        => 'integer',
 								'description' => 'Maximum candidates to attempt this call (default 25, hard ceiling 200).',
 							),
-							'older_than' => array(
+							'older_than'                => array(
 								'type'        => 'string',
 								'description' => 'Restrict candidates to lifecycle created_at older than the duration (e.g. 7d, 24h).',
 							),
-							'sort'       => array(
+							'sort'                      => array(
 								'type'        => 'string',
 								'description' => 'Candidate ordering before bounding: size or age (default age).',
 							),
-							'force'      => array(
+							'force'                     => array(
 								'type'        => 'boolean',
 								'description' => 'Allow apply on dirty worktrees. Unpushed-commit gate is never overridden.',
 							),
-							'via_jobs'   => array(
+							'via_jobs'                  => array(
 								'type'        => 'boolean',
 								'description' => 'Schedule each candidate as a single-row worktree_cleanup_chunk job for resumable async apply.',
 							),
@@ -1865,7 +2044,7 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Also include repaired metadata rows. Requires explicit opt-in and still runs fresh safety probes before removal.',
 							),
-							'source'     => array(
+							'source'                    => array(
 								'type'        => 'string',
 								'description' => 'Caller source marker recorded in evidence.',
 							),
@@ -1874,19 +2053,19 @@ class WorkspaceAbilities {
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success'         => array( 'type' => 'boolean' ),
-							'mode'            => array( 'type' => 'string' ),
-							'dry_run'         => array( 'type' => 'boolean' ),
-							'destructive'     => array( 'type' => 'boolean' ),
-							'job_backed'      => array( 'type' => 'boolean' ),
-							'workspace_path'  => array( 'type' => 'string' ),
-							'generated_at'    => array( 'type' => 'string' ),
-							'candidates'      => array( 'type' => 'array' ),
-							'removed'         => array( 'type' => 'array' ),
-							'skipped'         => array( 'type' => 'array' ),
-							'summary'         => array( 'type' => 'object' ),
-							'continuation'    => array( 'type' => 'object' ),
-							'evidence'        => array( 'type' => 'object' ),
+							'success'        => array( 'type' => 'boolean' ),
+							'mode'           => array( 'type' => 'string' ),
+							'dry_run'        => array( 'type' => 'boolean' ),
+							'destructive'    => array( 'type' => 'boolean' ),
+							'job_backed'     => array( 'type' => 'boolean' ),
+							'workspace_path' => array( 'type' => 'string' ),
+							'generated_at'   => array( 'type' => 'string' ),
+							'candidates'     => array( 'type' => 'array' ),
+							'removed'        => array( 'type' => 'array' ),
+							'skipped'        => array( 'type' => 'array' ),
+							'summary'        => array( 'type' => 'object' ),
+							'continuation'   => array( 'type' => 'object' ),
+							'evidence'       => array( 'type' => 'object' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreeBoundedCleanupEligibleApply' ),
@@ -2267,6 +2446,34 @@ class WorkspaceAbilities {
 		);
 	}
 
+	/** @return array<string,mixed> */
+	private static function gitRebaseOutputSchema(): array {
+		return array(
+			'type'       => 'object',
+			'properties' => array(
+				'success'   => array( 'type' => 'boolean' ),
+				'state'     => array(
+					'type' => 'string',
+					'enum' => array( 'clean', 'conflicting' ),
+				),
+				'conflicts' => array(
+					'type'  => 'array',
+					'items' => array(
+						'type'       => 'object',
+						'properties' => array(
+							'path'                 => array( 'type' => 'string' ),
+							'conflict_markers'     => array( 'type' => 'integer' ),
+							'has_conflict_markers' => array( 'type' => 'boolean' ),
+						),
+					),
+				),
+				'applied'   => array( 'type' => 'integer' ),
+				'pending'   => array( 'type' => 'integer' ),
+				'head_sha'  => array( 'type' => 'string' ),
+			),
+		);
+	}
+
 	/**
 	 * Get git status details for a workspace repository.
 	 *
@@ -2381,6 +2588,79 @@ class WorkspaceAbilities {
 			$input['name'] ?? '',
 			$input['remote'] ?? 'origin',
 			$input['branch'] ?? null,
+			! empty( $input['allow_primary_mutation'] ),
+			! empty( $input['force_with_lease'] ),
+			$input['expected_sha'] ?? null
+		);
+	}
+
+	/**
+	 * Rebase a workspace repository.
+	 *
+	 * @param array $input Input parameters.
+	 * @return array|\WP_Error
+	 */
+	public static function gitRebase( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		return $workspace->git_rebase(
+			$input['name'] ?? '',
+			$input['onto'] ?? null,
+			$input['strategy_option'] ?? null,
+			! empty( $input['continue'] ),
+			! empty( $input['allow_primary_mutation'] )
+		);
+	}
+
+	/**
+	 * Reset a workspace repository.
+	 *
+	 * @param array $input Input parameters.
+	 * @return array|\WP_Error
+	 */
+	public static function gitReset( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		return $workspace->git_reset(
+			$input['name'] ?? '',
+			$input['mode'] ?? 'mixed',
+			$input['target'] ?? null,
+			! empty( $input['allow_destructive'] ),
+			! empty( $input['allow_primary_mutation'] )
+		);
+	}
+
+	/**
+	 * Return pull request freshness state.
+	 *
+	 * @param array $input Input parameters.
+	 * @return array|\WP_Error
+	 */
+	public static function prStatus( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		return $workspace->pr_status(
+			$input['name'] ?? '',
+			$input['pr'] ?? null,
+			$input['branch'] ?? null
+		);
+	}
+
+	/**
+	 * Bring a pull request branch up to date.
+	 *
+	 * @param array $input Input parameters.
+	 * @return array|\WP_Error
+	 */
+	public static function prRebase( array $input ): array|\WP_Error {
+		$workspace  = new Workspace();
+		$drop_paths = $input['drop_paths'] ?? array();
+		if ( ! is_array( $drop_paths ) ) {
+			$drop_paths = array();
+		}
+
+		return $workspace->pr_rebase(
+			$input['name'] ?? '',
+			$input['pr'] ?? null,
+			! empty( $input['squash'] ),
+			$drop_paths,
 			! empty( $input['allow_primary_mutation'] )
 		);
 	}
@@ -2555,11 +2835,11 @@ class WorkspaceAbilities {
 			'retention' => array(
 				'task_type' => 'workspace_retention_cleanup',
 				'params'    => array(
-					'dry_run'              => false,
-					'artifact_cleanup'     => true,
-					'worktree_cleanup'     => true,
-					'skip_github'          => true,
-					'worktree_older_than'  => '14d',
+					'dry_run'             => false,
+					'artifact_cleanup'    => true,
+					'worktree_cleanup'    => true,
+					'skip_github'         => true,
+					'worktree_older_than' => '14d',
 				),
 			),
 			'emergency' => array(
@@ -2578,8 +2858,8 @@ class WorkspaceAbilities {
 			return new \WP_Error( 'task_scheduler_unavailable', 'Data Machine TaskScheduler is unavailable.', array( 'status' => 500 ) );
 		}
 
-		$task_type = (string) $map[ $mode ]['task_type'];
-		$params    = (array) $map[ $mode ]['params'];
+		$task_type        = (string) $map[ $mode ]['task_type'];
+		$params           = (array) $map[ $mode ]['params'];
 		$params['source'] = (string) ( $input['source'] ?? 'workspace_cleanup_ability' );
 
 		if ( isset( $input['force'] ) ) {
@@ -2815,9 +3095,9 @@ class WorkspaceAbilities {
 	public static function worktreeBoundedCleanupEligibleApply( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$opts      = array(
-			'dry_run'                 => ! empty( $input['dry_run'] ),
-			'force'                   => ! empty( $input['force'] ),
-			'via_jobs'                => ! empty( $input['via_jobs'] ),
+			'dry_run'                   => ! empty( $input['dry_run'] ),
+			'force'                     => ! empty( $input['force'] ),
+			'via_jobs'                  => ! empty( $input['via_jobs'] ),
 			'include_repaired_metadata' => ! empty( $input['include_repaired_metadata'] ),
 		);
 		if ( isset( $input['limit'] ) ) {
@@ -2862,7 +3142,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function workspaceCleanupPlan( array $input ): array|\WP_Error {
-		$opts      = array(
+		$opts = array(
 			'force_artifact_cleanup' => ! empty( $input['force_artifact_cleanup'] ),
 			'include_resolvers'      => ! empty( $input['include_resolvers'] ),
 			'mode'                   => (string) ( $input['mode'] ?? 'cleanup_plan' ),

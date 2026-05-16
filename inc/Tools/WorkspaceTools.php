@@ -55,6 +55,10 @@ class WorkspaceTools extends BaseTool {
 			'workspace_git_add',
 			'workspace_git_commit',
 			'workspace_git_push',
+			'workspace_git_rebase',
+			'workspace_git_reset',
+			'workspace_pr_status',
+			'workspace_pr_rebase',
 		);
 
 		if ( ! in_array( $tool_id, $workspace_tools, true ) ) {
@@ -90,6 +94,10 @@ class WorkspaceTools extends BaseTool {
 		$this->registerTool( 'workspace_git_add', array( $this, 'getGitAddDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-add' ) );
 		$this->registerTool( 'workspace_git_commit', array( $this, 'getGitCommitDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-commit' ) );
 		$this->registerTool( 'workspace_git_push', array( $this, 'getGitPushDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-push' ) );
+		$this->registerTool( 'workspace_git_rebase', array( $this, 'getGitRebaseDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-rebase' ) );
+		$this->registerTool( 'workspace_git_reset', array( $this, 'getGitResetDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-reset' ) );
+		$this->registerTool( 'workspace_pr_status', array( $this, 'getPrStatusDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-pr-status' ) );
+		$this->registerTool( 'workspace_pr_rebase', array( $this, 'getPrRebaseDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-pr-rebase' ) );
 	}
 
 	/**
@@ -500,16 +508,82 @@ class WorkspaceTools extends BaseTool {
 	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
 	public function handleGitPush( array $parameters ): array {
 		$input = array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' );
-		foreach ( array( 'remote', 'branch' ) as $key ) {
+		foreach ( array( 'remote', 'branch', 'expected_sha' ) as $key ) {
 			if ( isset( $parameters[ $key ] ) ) {
 				$input[ $key ] = $parameters[ $key ];
 			}
 		}
-		if ( array_key_exists( 'allow_primary_mutation', $parameters ) ) {
-			$input['allow_primary_mutation'] = (bool) $parameters['allow_primary_mutation'];
+		foreach ( array( 'allow_primary_mutation', 'force_with_lease' ) as $key ) {
+			if ( array_key_exists( $key, $parameters ) ) {
+				$input[ $key ] = (bool) $parameters[ $key ];
+			}
 		}
 
 		return $this->executeAbility( 'datamachine/workspace-git-push', 'workspace_git_push', $input, array( 'name' ) );
+	}
+
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handleGitRebase( array $parameters ): array {
+		$input = array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' );
+		foreach ( array( 'onto', 'strategy_option' ) as $key ) {
+			if ( isset( $parameters[ $key ] ) ) {
+				$input[ $key ] = $parameters[ $key ];
+			}
+		}
+		foreach ( array( 'continue', 'allow_primary_mutation' ) as $key ) {
+			if ( array_key_exists( $key, $parameters ) ) {
+				$input[ $key ] = (bool) $parameters[ $key ];
+			}
+		}
+
+		return $this->executeAbility( 'datamachine/workspace-git-rebase', 'workspace_git_rebase', $input, array( 'name' ) );
+	}
+
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handleGitReset( array $parameters ): array {
+		$input = array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' );
+		foreach ( array( 'mode', 'target' ) as $key ) {
+			if ( isset( $parameters[ $key ] ) ) {
+				$input[ $key ] = $parameters[ $key ];
+			}
+		}
+		foreach ( array( 'allow_destructive', 'allow_primary_mutation' ) as $key ) {
+			if ( array_key_exists( $key, $parameters ) ) {
+				$input[ $key ] = (bool) $parameters[ $key ];
+			}
+		}
+
+		return $this->executeAbility( 'datamachine/workspace-git-reset', 'workspace_git_reset', $input, array( 'name' ) );
+	}
+
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handlePrStatus( array $parameters ): array {
+		$input = array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' );
+		foreach ( array( 'pr', 'branch' ) as $key ) {
+			if ( isset( $parameters[ $key ] ) ) {
+				$input[ $key ] = $parameters[ $key ];
+			}
+		}
+
+		return $this->executeAbility( 'datamachine/workspace-pr-status', 'workspace_pr_status', $input, array( 'name' ) );
+	}
+
+	/** @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> */
+	public function handlePrRebase( array $parameters ): array {
+		$input = array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' );
+		if ( isset( $parameters['pr'] ) ) {
+			$input['pr'] = $parameters['pr'];
+		}
+		if ( isset( $parameters['drop_paths'] ) && is_array( $parameters['drop_paths'] ) ) {
+			$input['drop_paths'] = $parameters['drop_paths'];
+		}
+		foreach ( array( 'squash', 'allow_primary_mutation' ) as $key ) {
+			if ( array_key_exists( $key, $parameters ) ) {
+				$input[ $key ] = (bool) $parameters[ $key ];
+			}
+		}
+
+		return $this->executeAbility( 'datamachine/workspace-pr-rebase', 'workspace_pr_rebase', $input, array( 'name' ) );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
@@ -1009,6 +1083,46 @@ class WorkspaceTools extends BaseTool {
 		return $this->simpleGitDefinition( 'handleGitPush', 'Push commits for a workspace handle. Policy-gated for pipeline use.', array(
 			'remote'                 => array( 'type' => 'string', 'description' => 'Remote name. Default origin.' ),
 			'branch'                 => array( 'type' => 'string', 'description' => 'Branch override.' ),
+			'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
+			'force_with_lease'       => array( 'type' => 'boolean', 'description' => 'Use --force-with-lease. Refuses protected base/fixed branches.' ),
+			'expected_sha'            => array( 'type' => 'string', 'description' => 'Optional expected remote branch SHA.' ),
+		), array( 'name' ), array( 'completion_signal' => 'progress' ) );
+	}
+
+	/** @return array<string,mixed> */
+	public function getGitRebaseDefinition(): array {
+		return $this->simpleGitDefinition( 'handleGitRebase', 'Fetch and rebase a workspace handle, returning structured conflicts without auto-resolving.', array(
+			'onto'                   => array( 'type' => 'string', 'description' => 'Base ref to rebase onto.' ),
+			'strategy_option'        => array( 'type' => 'string', 'description' => 'Optional strategy option, such as theirs or ours.' ),
+			'continue'               => array( 'type' => 'boolean', 'description' => 'Continue an in-progress rebase.' ),
+			'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
+		), array( 'name' ), array( 'completion_signal' => 'progress' ) );
+	}
+
+	/** @return array<string,mixed> */
+	public function getGitResetDefinition(): array {
+		return $this->simpleGitDefinition( 'handleGitReset', 'Reset a workspace handle. Hard reset requires allow_destructive=true.', array(
+			'mode'                   => array( 'type' => 'string', 'enum' => array( 'soft', 'mixed', 'hard' ), 'description' => 'Reset mode.' ),
+			'target'                 => array( 'type' => 'string', 'description' => 'Target ref or commit.' ),
+			'allow_destructive'      => array( 'type' => 'boolean', 'description' => 'Required for hard reset.' ),
+			'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
+		), array( 'name' ), array( 'completion_signal' => 'progress' ) );
+	}
+
+	/** @return array<string,mixed> */
+	public function getPrStatusDefinition(): array {
+		return $this->simpleGitDefinition( 'handlePrStatus', 'Return GitHub pull request mergeability/freshness state for a workspace handle.', array(
+			'pr'     => array( 'type' => array( 'string', 'integer' ), 'description' => 'PR number or URL.' ),
+			'branch' => array( 'type' => 'string', 'description' => 'Branch to resolve when PR is omitted.' ),
+		), array( 'name' ), array( 'duplicate_policy' => 'repeatable' ) );
+	}
+
+	/** @return array<string,mixed> */
+	public function getPrRebaseDefinition(): array {
+		return $this->simpleGitDefinition( 'handlePrRebase', 'Bring a pull request branch up to date, optionally dropping path conflicts, squashing, and force-with-lease pushing.', array(
+			'pr'                     => array( 'type' => array( 'string', 'integer' ), 'description' => 'PR number or URL.' ),
+			'squash'                 => array( 'type' => 'boolean', 'description' => 'Squash rebased commits into one PR-title commit.' ),
+			'drop_paths'             => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Conflict path globs to resolve by taking the base version.' ),
 			'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
 		), array( 'name' ), array( 'completion_signal' => 'progress' ) );
 	}

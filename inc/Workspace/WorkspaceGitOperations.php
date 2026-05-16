@@ -435,7 +435,7 @@ trait WorkspaceGitOperations {
 	 * @param bool        $allow_primary_mutation Whether the primary may be pushed.
 	 * @return array
 	 */
-	public function git_push( string $handle, string $remote = 'origin', ?string $branch = null, bool $allow_primary_mutation = false ): array|\WP_Error {
+	public function git_push( string $handle, string $remote = 'origin', ?string $branch = null, bool $allow_primary_mutation = false, bool $force_with_lease = false, ?string $expected_sha = null ): array|\WP_Error {
 		$parsed    = $this->parse_handle( $handle );
 		$repo_name = $parsed['repo'];
 		$repo_path = $this->resolve_repo_path( $handle );
@@ -460,7 +460,18 @@ trait WorkspaceGitOperations {
 
 		$current_branch = trim( (string) $current_branch_result['output'] );
 		$target_branch  = $branch ? trim( $branch ) : $current_branch;
-		$publish_files  = $this->get_workspace_policy_publish_files( $repo_path, $current_branch );
+		if ( '' === $target_branch || 'HEAD' === $target_branch ) {
+			return new \WP_Error( 'invalid_branch', 'Cannot push from a detached HEAD without an explicit branch.', array( 'status' => 400 ) );
+		}
+
+		if ( $force_with_lease ) {
+			$force_guard = $this->ensure_force_push_branch_allowed( $repo_name, $target_branch );
+			if ( is_wp_error( $force_guard ) ) {
+				return $force_guard;
+			}
+		}
+
+		$publish_files = $this->get_workspace_policy_publish_files( $repo_path, $current_branch );
 		if ( is_wp_error( $publish_files ) ) {
 			return $publish_files;
 		}
@@ -478,8 +489,18 @@ trait WorkspaceGitOperations {
 			}
 		}
 
-		$cmd    = sprintf( 'push %s %s', escapeshellarg( $remote ), escapeshellarg( $target_branch ) );
-		$result = $this->run_git( $repo_path, $cmd );
+		$lease_flag = '';
+		if ( $force_with_lease ) {
+			$expected_sha = $expected_sha ? trim( $expected_sha ) : $this->git_remote_branch_sha( $repo_path, $remote, $target_branch );
+			$lease_ref    = 'refs/heads/' . $target_branch;
+			$lease_flag   = '' !== (string) $expected_sha
+				? sprintf( ' --force-with-lease=%s:%s', escapeshellarg( $lease_ref ), escapeshellarg( (string) $expected_sha ) )
+				: sprintf( ' --force-with-lease=%s', escapeshellarg( $lease_ref ) );
+		}
+
+		$refspec = $force_with_lease ? 'HEAD:refs/heads/' . $target_branch : $target_branch;
+		$cmd     = sprintf( 'push%s %s %s', $lease_flag, escapeshellarg( $remote ), escapeshellarg( $refspec ) );
+		$result  = $this->run_git( $repo_path, $cmd );
 
 		if ( is_wp_error( $result ) ) {
 			return $result;
@@ -504,6 +525,8 @@ trait WorkspaceGitOperations {
 			'github_repo'        => $github_repo,
 			'remote'             => $remote,
 			'branch'             => $target_branch,
+			'force_with_lease'   => $force_with_lease,
+			'expected_sha'       => $expected_sha,
 			'url'                => $branch_url,
 			'html_url'           => $branch_url,
 			'next_required_tool' => null !== $github_repo ? 'create_github_pull_request' : null,
@@ -519,6 +542,312 @@ trait WorkspaceGitOperations {
 		}
 
 		return $response;
+	}
+
+	/**
+	 * Rebase a workspace checkout and report conflicts without resolving them.
+	 *
+	 * @param string      $handle Workspace handle.
+	 * @param string|null $onto Base ref to rebase onto.
+	 * @param string|null $strategy_option Optional git rebase strategy option.
+	 * @param bool        $continue_rebase Continue an in-progress rebase.
+	 * @param bool        $allow_primary_mutation Whether the primary checkout may be mutated.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function git_rebase( string $handle, ?string $onto = null, ?string $strategy_option = null, bool $continue_rebase = false, bool $allow_primary_mutation = false ): array|\WP_Error {
+		$parsed    = $this->parse_handle( $handle );
+		$repo_name = $parsed['repo'];
+		$repo_path = $this->resolve_repo_path( $handle );
+		if ( is_wp_error( $repo_path ) ) {
+			return $repo_path;
+		}
+
+		$policy_check = $this->ensure_git_mutation_allowed( $repo_name );
+		if ( is_wp_error( $policy_check ) ) {
+			return $policy_check;
+		}
+
+		$primary_check = $this->ensure_primary_mutation_allowed( $parsed, $allow_primary_mutation );
+		if ( is_wp_error( $primary_check ) ) {
+			return $primary_check;
+		}
+
+		if ( $continue_rebase ) {
+			$result = $this->run_git( $repo_path, '-c core.editor=true rebase --continue' );
+			if ( is_wp_error( $result ) ) {
+				$conflicts = $this->git_conflicts( $repo_path );
+				if ( ! empty( $conflicts ) ) {
+					return $this->git_rebase_result( $parsed, $repo_path, 'conflicting', $conflicts );
+				}
+				$output = (string) ( $result->get_error_data()['output'] ?? $result->get_error_message() );
+				if ( str_contains( $output, 'No changes' ) || str_contains( $output, 'patch contents already upstream' ) ) {
+					$skip = $this->run_git( $repo_path, 'rebase --skip' );
+					if ( is_wp_error( $skip ) ) {
+						return $skip;
+					}
+
+					return $this->git_rebase_result( $parsed, $repo_path, 'clean', array(), $onto );
+				}
+				return $result;
+			}
+
+			return $this->git_rebase_result( $parsed, $repo_path, 'clean', array(), $onto );
+		}
+
+		$onto  = $onto && '' !== trim( $onto ) ? trim( $onto ) : $this->default_rebase_onto( $repo_path );
+		$fetch = $this->run_git( $repo_path, 'fetch origin' );
+		if ( is_wp_error( $fetch ) ) {
+			return $fetch;
+		}
+
+		$args = array( 'rebase' );
+		if ( null !== $strategy_option && '' !== trim( $strategy_option ) ) {
+			$args[] = '-X';
+			$args[] = escapeshellarg( trim( $strategy_option ) );
+		}
+		$args[] = escapeshellarg( $onto );
+
+		$result = $this->run_git( $repo_path, implode( ' ', $args ) );
+		if ( is_wp_error( $result ) ) {
+			$conflicts = $this->git_conflicts( $repo_path );
+			if ( ! empty( $conflicts ) ) {
+				return $this->git_rebase_result( $parsed, $repo_path, 'conflicting', $conflicts, $onto );
+			}
+			return $result;
+		}
+
+		return $this->git_rebase_result( $parsed, $repo_path, 'clean', array(), $onto );
+	}
+
+	/**
+	 * Reset a workspace checkout.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function git_reset( string $handle, string $mode = 'mixed', ?string $target = null, bool $allow_destructive = false, bool $allow_primary_mutation = false ): array|\WP_Error {
+		$parsed    = $this->parse_handle( $handle );
+		$repo_name = $parsed['repo'];
+		$repo_path = $this->resolve_repo_path( $handle );
+		if ( is_wp_error( $repo_path ) ) {
+			return $repo_path;
+		}
+
+		$policy_check = $this->ensure_git_mutation_allowed( $repo_name );
+		if ( is_wp_error( $policy_check ) ) {
+			return $policy_check;
+		}
+
+		$primary_check = $this->ensure_primary_mutation_allowed( $parsed, $allow_primary_mutation );
+		if ( is_wp_error( $primary_check ) ) {
+			return $primary_check;
+		}
+
+		$mode = trim( $mode );
+		if ( ! in_array( $mode, array( 'soft', 'mixed', 'hard' ), true ) ) {
+			return new \WP_Error( 'invalid_reset_mode', 'Reset mode must be one of: soft, mixed, hard.', array( 'status' => 400 ) );
+		}
+
+		if ( 'hard' === $mode && ! $allow_destructive ) {
+			return new \WP_Error( 'destructive_reset_blocked', 'Hard reset requires allow_destructive=true.', array( 'status' => 403 ) );
+		}
+
+		$target = $target && '' !== trim( $target ) ? trim( $target ) : $this->default_rebase_onto( $repo_path );
+		$before = $this->run_git( $repo_path, 'rev-parse HEAD' );
+		if ( is_wp_error( $before ) ) {
+			return $before;
+		}
+		$affected = $this->run_git( $repo_path, 'diff --name-only ' . escapeshellarg( trim( (string) $before['output'] ) ) . ' ' . escapeshellarg( $target ) );
+
+		$result = $this->run_git( $repo_path, sprintf( 'reset --%s %s', $mode, escapeshellarg( $target ) ) );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		$after = $this->run_git( $repo_path, 'rev-parse HEAD' );
+		if ( is_wp_error( $after ) ) {
+			return $after;
+		}
+
+		$paths = is_wp_error( $affected ) ? array() : array_filter( array_map( 'trim', explode( "\n", (string) ( $affected['output'] ?? '' ) ) ) );
+		return array(
+			'success'        => true,
+			'name'           => $parsed['dir_name'],
+			'repo'           => $repo_name,
+			'mode'           => $mode,
+			'previous_head'  => trim( (string) $before['output'] ),
+			'new_head'       => trim( (string) $after['output'] ),
+			'paths_affected' => count( $paths ),
+		);
+	}
+
+	/**
+	 * Return PR freshness details from GitHub.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function pr_status( string $handle, string|int|null $pr = null, ?string $branch = null ): array|\WP_Error {
+		$repo_path = $this->resolve_repo_path( $handle );
+		if ( is_wp_error( $repo_path ) ) {
+			return $repo_path;
+		}
+
+		$resolved = $this->resolve_pull_request( $repo_path, $pr, $branch );
+		if ( is_wp_error( $resolved ) ) {
+			return $resolved;
+		}
+
+		$base = (array) ( $resolved['base'] ?? array() );
+		$head = (array) ( $resolved['head'] ?? array() );
+
+		return array(
+			'success'     => true,
+			'pr'          => (int) ( $resolved['number'] ?? 0 ),
+			'pr_url'      => (string) ( $resolved['html_url'] ?? '' ),
+			'title'       => (string) ( $resolved['title'] ?? '' ),
+			'base_branch' => (string) ( $base['ref'] ?? '' ),
+			'head_branch' => (string) ( $head['ref'] ?? '' ),
+			'mergeable'   => $resolved['mergeable'] ?? null,
+			'merge_state' => $resolved['mergeable_state'] ?? null,
+			'behind'      => 'behind' === ( $resolved['mergeable_state'] ?? '' ),
+			'ahead'       => 'behind' !== ( $resolved['mergeable_state'] ?? '' ),
+			'conflicting' => false === ( $resolved['mergeable'] ?? null ) || 'dirty' === ( $resolved['mergeable_state'] ?? '' ),
+			'head_sha'    => (string) ( $head['sha'] ?? '' ),
+			'base_sha'    => (string) ( $base['sha'] ?? '' ),
+		);
+	}
+
+	/**
+	 * Bring a pull request branch up to date with its base branch.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function pr_rebase( string $handle, string|int|null $pr = null, bool $squash = false, array $drop_paths = array(), bool $allow_primary_mutation = false ): array|\WP_Error {
+		$parsed    = $this->parse_handle( $handle );
+		$repo_name = $parsed['repo'];
+		$repo_path = $this->resolve_repo_path( $handle );
+		if ( is_wp_error( $repo_path ) ) {
+			return $repo_path;
+		}
+
+		$policy_check = $this->ensure_git_mutation_allowed( $repo_name, true );
+		if ( is_wp_error( $policy_check ) ) {
+			return $policy_check;
+		}
+
+		$primary_check = $this->ensure_primary_mutation_allowed( $parsed, $allow_primary_mutation );
+		if ( is_wp_error( $primary_check ) ) {
+			return $primary_check;
+		}
+
+		$resolved = $this->resolve_pull_request( $repo_path, $pr, null );
+		if ( is_wp_error( $resolved ) ) {
+			return $resolved;
+		}
+
+		$base_branch = (string) ( $resolved['base']['ref'] ?? '' );
+		if ( '' === $base_branch ) {
+			return new \WP_Error( 'missing_pr_base', 'Pull request base branch could not be resolved.', array( 'status' => 400 ) );
+		}
+
+		$fetch = $this->run_git( $repo_path, 'fetch origin ' . escapeshellarg( $base_branch ) );
+		if ( is_wp_error( $fetch ) ) {
+			return $fetch;
+		}
+
+		$onto   = 'origin/' . $base_branch;
+		$rebase = $this->git_rebase( $handle, $onto, null, false, $allow_primary_mutation );
+		if ( is_wp_error( $rebase ) ) {
+			return $rebase;
+		}
+
+		$dropped = array();
+		if ( 'conflicting' === ( $rebase['state'] ?? '' ) && ! empty( $drop_paths ) ) {
+			foreach ( $rebase['conflicts'] as $conflict ) {
+				$path = (string) ( $conflict['path'] ?? '' );
+				if ( '' === $path || ! $this->path_matches_any_glob( $path, $drop_paths ) ) {
+					continue;
+				}
+				$checkout = $this->run_git( $repo_path, 'checkout --ours -- ' . escapeshellarg( $path ) );
+				if ( is_wp_error( $checkout ) ) {
+					return $checkout;
+				}
+				$add = $this->run_git( $repo_path, 'add -- ' . escapeshellarg( $path ) );
+				if ( is_wp_error( $add ) ) {
+					return $add;
+				}
+				$dropped[] = $path;
+			}
+
+			$remaining = $this->git_conflicts( $repo_path );
+			if ( ! empty( $remaining ) ) {
+				return array(
+					'success'              => false,
+					'state'                => 'conflicting',
+					'dropped_paths'        => count( $dropped ),
+					'unresolved_conflicts' => $remaining,
+					'squashed'             => false,
+					'pushed'               => false,
+					'head_sha'             => $this->git_head_sha( $repo_path ),
+					'pr_url'               => (string) ( $resolved['html_url'] ?? '' ),
+				);
+			}
+
+			$continue = $this->git_rebase( $handle, $onto, null, true, $allow_primary_mutation );
+			if ( is_wp_error( $continue ) ) {
+				return $continue;
+			}
+			if ( 'conflicting' === ( $continue['state'] ?? '' ) ) {
+				return array(
+					'success'              => false,
+					'state'                => 'conflicting',
+					'dropped_paths'        => count( $dropped ),
+					'unresolved_conflicts' => $continue['conflicts'] ?? array(),
+					'squashed'             => false,
+					'pushed'               => false,
+					'head_sha'             => $this->git_head_sha( $repo_path ),
+					'pr_url'               => (string) ( $resolved['html_url'] ?? '' ),
+				);
+			}
+		}
+
+		$squashed = false;
+		if ( $squash ) {
+			$reset = $this->run_git( $repo_path, 'reset --soft ' . escapeshellarg( $onto ) );
+			if ( is_wp_error( $reset ) ) {
+				return $reset;
+			}
+			$title = trim( (string) ( $resolved['title'] ?? '' ) );
+			if ( '' === $title ) {
+				$title = 'Update pull request branch';
+			}
+			$body       = trim( (string) ( $resolved['body'] ?? '' ) );
+			$commit_cmd = 'commit -m ' . escapeshellarg( $title );
+			if ( '' !== $body ) {
+				$commit_cmd .= ' -m ' . escapeshellarg( $body );
+			}
+			$commit = $this->run_git( $repo_path, $commit_cmd );
+			if ( is_wp_error( $commit ) ) {
+				return $commit;
+			}
+			$squashed = true;
+		}
+
+		$head_branch = (string) ( $resolved['head']['ref'] ?? '' );
+		$push        = $this->git_push( $handle, 'origin', $head_branch, $allow_primary_mutation, true );
+		if ( is_wp_error( $push ) ) {
+			return $push;
+		}
+
+		return array(
+			'success'              => true,
+			'state'                => 'clean',
+			'dropped_paths'        => count( $dropped ),
+			'unresolved_conflicts' => array(),
+			'squashed'             => $squashed,
+			'pushed'               => true,
+			'head_sha'             => $this->git_head_sha( $repo_path ),
+			'pr_url'               => (string) ( $resolved['html_url'] ?? '' ),
+		);
 	}
 
 	/**
@@ -1089,6 +1418,198 @@ trait WorkspaceGitOperations {
 		$branch   = trim( (string) ( $repo['fixed_branch'] ?? '' ) );
 
 		return '' === $branch ? null : $branch;
+	}
+
+	/**
+	 * Refuse force-with-lease pushes to base/fixed branches.
+	 *
+	 * @return true|\WP_Error
+	 */
+	private function ensure_force_push_branch_allowed( string $repo_name, string $target_branch ): true|\WP_Error {
+		$fixed_branch  = $this->get_repo_fixed_branch( $repo_name );
+		$base_branches = array_filter( array_unique( array(
+			$fixed_branch,
+			'main',
+			'master',
+			'trunk',
+			'develop',
+			'dev',
+		) ) );
+
+		if ( in_array( $target_branch, $base_branches, true ) ) {
+			return new \WP_Error(
+				'force_push_base_branch_blocked',
+				sprintf( 'Force-with-lease push blocked for protected/base branch "%s".', $target_branch ),
+				array( 'status' => 403 )
+			);
+		}
+
+		return true;
+	}
+
+	/** @return array<int,array<string,mixed>> */
+	private function git_conflicts( string $repo_path ): array {
+		$result = $this->run_git( $repo_path, 'diff --name-only --diff-filter=U' );
+		if ( is_wp_error( $result ) ) {
+			return array();
+		}
+
+		$paths     = array_filter( array_map( 'trim', explode( "\n", (string) ( $result['output'] ?? '' ) ) ) );
+		$conflicts = array();
+		foreach ( $paths as $path ) {
+			$absolute = $repo_path . '/' . $path;
+			$content  = '';
+			if ( is_file( $absolute ) ) {
+				// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Local workspace file read for conflict-marker counting.
+				$content = (string) file_get_contents( $absolute );
+			}
+			$conflicts[] = array(
+				'path'                 => $path,
+				'conflict_markers'     => substr_count( $content, '<<<<<<< ' ),
+				'has_conflict_markers' => str_contains( $content, '<<<<<<< ' ),
+			);
+		}
+
+		return $conflicts;
+	}
+
+	/** @param array<string,mixed> $parsed @param array<int,array<string,mixed>> $conflicts @return array<string,mixed> */
+	private function git_rebase_result( array $parsed, string $repo_path, string $state, array $conflicts, ?string $onto = null ): array {
+		return array(
+			'success'   => 'clean' === $state,
+			'state'     => $state,
+			'name'      => $parsed['dir_name'],
+			'repo'      => $parsed['repo'],
+			'onto'      => $onto,
+			'conflicts' => $conflicts,
+			'applied'   => $this->git_rebase_count( $repo_path, 'done' ),
+			'pending'   => $this->git_rebase_count( $repo_path, 'git-rebase-todo' ),
+			'head_sha'  => $this->git_head_sha( $repo_path ),
+		);
+	}
+
+	private function git_rebase_count( string $repo_path, string $file ): int {
+		$path = $this->run_git( $repo_path, 'rev-parse --git-path rebase-merge/' . escapeshellarg( $file ) );
+		if ( is_wp_error( $path ) ) {
+			return 0;
+		}
+
+		$file_path = trim( (string) ( $path['output'] ?? '' ) );
+		if ( '' !== $file_path && ! str_starts_with( $file_path, '/' ) ) {
+			$file_path = $repo_path . '/' . $file_path;
+		}
+		if ( '' === $file_path || ! is_file( $file_path ) ) {
+			return 0;
+		}
+
+		$lines = file( $file_path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES );
+		return is_array( $lines ) ? count( $lines ) : 0;
+	}
+
+	private function default_rebase_onto( string $repo_path ): string {
+		$origin_head = $this->run_git( $repo_path, 'symbolic-ref --short refs/remotes/origin/HEAD' );
+		if ( ! is_wp_error( $origin_head ) ) {
+			$ref = trim( (string) ( $origin_head['output'] ?? '' ) );
+			if ( '' !== $ref ) {
+				return $ref;
+			}
+		}
+
+		$branch = $this->git_get_branch( $repo_path );
+		return $branch ? 'origin/' . $branch : 'origin/main';
+	}
+
+	private function git_head_sha( string $repo_path ): string {
+		$result = $this->run_git( $repo_path, 'rev-parse HEAD' );
+		return is_wp_error( $result ) ? '' : trim( (string) ( $result['output'] ?? '' ) );
+	}
+
+	private function git_remote_branch_sha( string $repo_path, string $remote, string $branch ): ?string {
+		$result = $this->run_git( $repo_path, 'ls-remote --heads ' . escapeshellarg( $remote ) . ' ' . escapeshellarg( $branch ) );
+		if ( is_wp_error( $result ) ) {
+			return null;
+		}
+
+		$line = trim( (string) ( $result['output'] ?? '' ) );
+		if ( preg_match( '/^([a-f0-9]{40})\s+refs\/heads\//', $line, $matches ) ) {
+			return $matches[1];
+		}
+
+		return null;
+	}
+
+	/** @return array<string,mixed>|\WP_Error */
+	private function resolve_pull_request( string $repo_path, string|int|null $pr = null, ?string $branch = null ): array|\WP_Error {
+		$remote_url = $this->git_get_remote( $repo_path );
+		$slug       = $remote_url ? GitHubRemote::slug( $remote_url ) : null;
+
+		if ( is_string( $pr ) && preg_match( '#github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)#', $pr, $matches ) ) {
+			$slug = $matches[1];
+			$pr   = (int) $matches[2];
+		}
+
+		if ( null === $slug ) {
+			return new \WP_Error( 'missing_github_repo', 'Workspace remote does not resolve to a GitHub repository.', array( 'status' => 400 ) );
+		}
+
+		if ( ! class_exists( '\DataMachineCode\Abilities\GitHubAbilities' ) ) {
+			return new \WP_Error( 'github_abilities_unavailable', 'GitHubAbilities class is not loaded.', array( 'status' => 500 ) );
+		}
+
+		$pat = \DataMachineCode\Abilities\GitHubAbilities::getPat( array( 'repo' => $slug ) );
+		if ( empty( $pat ) ) {
+			return new \WP_Error( 'missing_github_token', sprintf( 'No GitHub token is configured for %s.', $slug ), array( 'status' => 403 ) );
+		}
+
+		if ( null !== $pr && '' !== (string) $pr ) {
+			$response = \DataMachineCode\Abilities\GitHubAbilities::apiGet( GitHubRemote::apiUrl( $slug, 'pulls/' . (int) $pr ), array(), $pat );
+			if ( is_wp_error( $response ) ) {
+				return $response;
+			}
+			$data = $response['data'] ?? null;
+			return is_array( $data ) ? $data : new \WP_Error( 'invalid_github_response', 'GitHub PR response was not an object.', array( 'status' => 502 ) );
+		}
+
+		$branch = $branch && '' !== trim( $branch ) ? trim( $branch ) : (string) $this->git_get_branch( $repo_path );
+		if ( '' === $branch ) {
+			return new \WP_Error( 'missing_branch', 'Cannot resolve a pull request without a branch.', array( 'status' => 400 ) );
+		}
+
+		$owner    = explode( '/', $slug, 2 )[0];
+		$response = \DataMachineCode\Abilities\GitHubAbilities::apiGet(
+			GitHubRemote::apiUrl( $slug, 'pulls' ),
+			array(
+				'head'  => $owner . ':' . $branch,
+				'state' => 'open',
+			),
+			$pat
+		);
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$data = $response['data'] ?? null;
+		if ( ! is_array( $data ) || empty( $data[0] ) || ! is_array( $data[0] ) ) {
+			return new \WP_Error( 'pr_not_found', sprintf( 'No open pull request found for %s:%s.', $owner, $branch ), array( 'status' => 404 ) );
+		}
+
+		return $data[0];
+	}
+
+	/** @param array<int,string> $patterns */
+	private function path_matches_any_glob( string $path, array $patterns ): bool {
+		foreach ( $patterns as $pattern ) {
+			$pattern = trim( (string) $pattern );
+			if ( '' === $pattern ) {
+				continue;
+			}
+			$regex = '#^' . str_replace( '\*\*', '.*', str_replace( '\*', '[^/]*', preg_quote( $pattern, '#' ) ) ) . '$#';
+			if ( preg_match( $regex, $path ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
