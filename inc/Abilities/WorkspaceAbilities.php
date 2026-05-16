@@ -2187,7 +2187,6 @@ class WorkspaceAbilities {
 				'path'    => $workspace->get_path(),
 				'exists'  => $result['success'],
 				'created' => $result['created'] ?? false,
-				'message' => $result['message'] ?? null,
 			);
 		}
 
