@@ -118,6 +118,21 @@ class WorkspaceTools extends BaseTool {
 	}
 
 	/**
+	 * Build a standard workspace tool error response.
+	 *
+	 * @param string $message   Error message.
+	 * @param string $tool_name Tool name.
+	 * @return array<string,mixed>
+	 */
+	protected function buildErrorResponse( string $message, string $tool_name ): array {
+		return array(
+			'success'   => false,
+			'error'     => $message,
+			'tool_name' => $tool_name,
+		);
+	}
+
+	/**
 	 * Handle workspace_path tool call.
 	 *
 	 * @param array $parameters Tool parameters.

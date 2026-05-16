@@ -215,8 +215,8 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		WP_CLI::success( $result['message'] );
-		WP_CLI::log( sprintf( 'Path: %s', $result['path'] ) );
+		WP_CLI::success( (string) ( $result['message'] ?? 'Repository cloned.' ) );
+		WP_CLI::log( sprintf( 'Path: %s', (string) ( $result['path'] ?? '' ) ) );
 	}
 
 	/**
@@ -610,14 +610,6 @@ class WorkspaceCommand extends BaseCommand {
 		$this->render_worktree_cleanup_result( $result, $assoc_args );
 	}
 
-	private function render_worktree_metadata_reconciliation_result_from_ability( array|\WP_Error $result, array $assoc_args ): void {
-		if ( is_wp_error( $result ) ) {
-			WP_CLI::error( $result->get_error_message() );
-			return;
-		}
-		$this->render_worktree_metadata_reconciliation_result( $result, $assoc_args );
-	}
-
 	private function render_worktree_artifact_cleanup_result_from_ability( array|\WP_Error $result, array $assoc_args ): void {
 		if ( is_wp_error( $result ) ) {
 			WP_CLI::error( $result->get_error_message() );
@@ -685,7 +677,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 		if ( 'yaml' === $format && class_exists( 'Spyc' ) ) {
-			WP_CLI::log( (string) call_user_func( array( 'Spyc', 'YAMLDump' ), $result, false, false, true ) );
+			WP_CLI::log( (string) \Spyc::YAMLDump( $result, false, false, true ) );
 			return;
 		}
 
@@ -1631,6 +1623,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( false === $content ) {
 			WP_CLI::error( sprintf( 'Failed to read file: %s', $file_path ) );
+			return '';
 		}
 
 		return $content;
@@ -2536,7 +2529,7 @@ class WorkspaceCommand extends BaseCommand {
 							'owner'               => isset( $wt['owner']['user'] ) ? (string) $wt['owner']['user'] : 'unknown',
 							'agent'               => isset( $wt['owner']['agent'] ) ? (string) $wt['owner']['agent'] : 'unknown',
 							'site'                => isset( $wt['owner']['site'] ) ? (string) $wt['owner']['site'] : 'unknown',
-							'session'             => isset( $wt['session']['primary_id'] ) && null !== $wt['session']['primary_id'] ? (string) $wt['session']['primary_id'] : '',
+							'session'             => isset( $wt['session']['primary_id'] ) ? (string) $wt['session']['primary_id'] : '',
 							'task'                => is_array( $wt['task'] ?? null ) ? (string) ( $wt['task']['task_url'] ?? $wt['task']['task_ref'] ?? '' ) : '',
 							'pr'                  => $wt['pr_url'] ?? null,
 							'age_days'            => $wt['age_days'] ?? null,

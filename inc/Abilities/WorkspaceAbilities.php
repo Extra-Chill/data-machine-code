@@ -2178,6 +2178,10 @@ class WorkspaceAbilities {
 
 		if ( ! empty( $input['ensure'] ) ) {
 			$result = $workspace->ensure_exists();
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+
 			return array(
 				'success' => $result['success'],
 				'path'    => $workspace->get_path(),
@@ -2877,10 +2881,17 @@ class WorkspaceAbilities {
 			$context['agent_id'] = (int) $input['agent_id'];
 		}
 
-		$job_id = \DataMachine\Engine\Tasks\TaskScheduler::schedule( $task_type, $params, $context );
-		if ( false === $job_id ) {
+		$batch_result = \DataMachine\Engine\Tasks\TaskScheduler::scheduleBatch(
+			$task_type,
+			array( $params ),
+			$context
+		);
+		if ( false === $batch_result ) {
 			return new \WP_Error( 'workspace_cleanup_schedule_failed', 'Failed to schedule workspace cleanup task.', array( 'status' => 500 ) );
 		}
+
+		$job_ids = is_array( $batch_result['job_ids'] ?? null ) ? $batch_result['job_ids'] : array();
+		$job_id  = (int) ( $job_ids[0] ?? 0 );
 
 		return array(
 			'success'   => true,
