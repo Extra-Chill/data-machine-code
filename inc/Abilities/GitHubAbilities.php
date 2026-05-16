@@ -1566,6 +1566,55 @@ class GitHubAbilities {
 		}
 		$body['base'] = $base;
 
+		$existing_pull = self::findExistingOpenPullRequest( $repo, $head, $base, $pat );
+		if ( is_wp_error( $existing_pull ) ) {
+			return $existing_pull;
+		}
+
+		if ( null !== $existing_pull ) {
+			$pull     = self::normalizePull( $existing_pull );
+			$labels   = self::mergeProvenanceLabels( isset( $input['labels'] ) && is_array( $input['labels'] ) ? $input['labels'] : array() );
+			$labeling = null;
+
+			if ( ! empty( $labels ) && ! empty( $pull['number'] ) ) {
+				$label_response = self::applyLabelsToNumber( $repo, (int) $pull['number'], $labels, $pat );
+				if ( is_wp_error( $label_response ) ) {
+					$labeling = array(
+						'success'    => false,
+						'labels'     => $labels,
+						'error_code' => $label_response->get_error_code(),
+						'error'      => $label_response->get_error_message(),
+						'status'     => is_array( $label_response->get_error_data() ) ? ( $label_response->get_error_data()['status'] ?? null ) : null,
+					);
+				} else {
+					$labeling = array(
+						'success'        => true,
+						'labels'         => $labels,
+						'applied_labels' => $label_response['applied_labels'] ?? array(),
+					);
+				}
+			}
+
+			$result = array(
+				'success'      => true,
+				'kind'         => 'pull_request',
+				'repo'         => $repo,
+				'number'       => $pull['number'] ?? 0,
+				'pull_request' => $pull,
+				'pull_number'  => $pull['number'] ?? 0,
+				'url'          => $pull['html_url'] ?? '',
+				'html_url'     => $pull['html_url'] ?? '',
+				'reused'       => true,
+				'message'      => sprintf( 'Pull request #%d already exists in %s.', $pull['number'] ?? 0, $repo ),
+			);
+
+			if ( null !== $labeling ) {
+				$result['labeling'] = $labeling;
+			}
+
+			return $result;
+		}
+
 		$body_text = isset( $input['body'] ) ? (string) $input['body'] : '';
 		$artifacts = self::preparePullRequestRunArtifacts( $input, $repo, $head, $body_text );
 		if ( is_wp_error( $artifacts ) ) {
@@ -1635,6 +1684,50 @@ class GitHubAbilities {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Find an open pull request for the exact head/base pair before creating one.
+	 *
+	 * @param string $repo Repository owner/name.
+	 * @param string $head Pull request head branch or owner:branch.
+	 * @param string $base Pull request base branch.
+	 * @param string $pat  GitHub token.
+	 * @return array<string,mixed>|null|\WP_Error
+	 */
+	private static function findExistingOpenPullRequest( string $repo, string $head, string $base, string $pat ): array|null|\WP_Error {
+		$repo_owner = strtok( $repo, '/' );
+		$head_query = str_contains( $head, ':' ) ? $head : sprintf( '%s:%s', $repo_owner, $head );
+		$head_ref   = str_contains( $head, ':' ) ? substr( $head, (int) strpos( $head, ':' ) + 1 ) : $head;
+
+		$url      = sprintf( '%s/repos/%s/pulls', self::API_BASE, $repo );
+		$response = self::apiGet(
+			$url,
+			array(
+				'state'    => 'open',
+				'head'     => $head_query,
+				'base'     => $base,
+				'per_page' => 10,
+			),
+			$pat
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		foreach ( $response['data'] ?? array() as $pull ) {
+			if ( ! is_array( $pull ) ) {
+				continue;
+			}
+
+			$normalized = self::normalizePull( $pull );
+			if ( $head_ref === $normalized['head_ref'] && $base === $normalized['base_ref'] ) {
+				return $pull;
+			}
+		}
+
+		return null;
 	}
 
 	/**

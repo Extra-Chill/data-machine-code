@@ -338,6 +338,7 @@ namespace {
 
 	// ---- createPullRequest: success path with explicit base, draft default false
 	$reset_http();
+	$queue_response( 200, array() );
 	$queue_response( 201, array(
 		'number'   => 88,
 		'title'    => 'Open PR',
@@ -362,17 +363,41 @@ namespace {
 	$assert( 'createPullRequest exposes pull_request key', is_array( $result ) && isset( $result['pull_request']['number'] ) && 88 === $result['pull_request']['number'] );
 	$assert( 'createPullRequest normalized head ref', is_array( $result ) && 'feature/x' === ( $result['pull_request']['head'] ?? '' ) );
 
-	$call = $GLOBALS['dmc_http_calls'][0] ?? array();
+	$call = $GLOBALS['dmc_http_calls'][1] ?? array();
 	$body = is_string( $call['args']['body'] ?? null ) ? json_decode( $call['args']['body'], true ) : null;
+	$preflight_call = $GLOBALS['dmc_http_calls'][0] ?? array();
+	$assert( 'createPullRequest preflights open PRs for same head/base', is_string( $preflight_call['url'] ?? null ) && str_contains( $preflight_call['url'], '/repos/owner/repo/pulls' ) && str_contains( $preflight_call['url'], 'head=owner%3Afeature%2Fx' ) && str_contains( $preflight_call['url'], 'base=main' ) );
 	$assert( 'createPullRequest posts to /repos/owner/repo/pulls', is_string( $call['url'] ?? null ) && str_ends_with( $call['url'], '/repos/owner/repo/pulls' ) );
 	$assert( 'createPullRequest forwards head and base', is_array( $body ) && 'feature/x' === ( $body['head'] ?? '' ) && 'main' === ( $body['base'] ?? '' ) );
 	$assert( 'createPullRequest defaults maintainer_can_modify=true', is_array( $body ) && true === ( $body['maintainer_can_modify'] ?? null ) );
 	$assert( 'createPullRequest does not set draft when omitted', is_array( $body ) && ! array_key_exists( 'draft', $body ) );
-	$assert( 'createPullRequest does not call labels endpoint without labels or agent context', 1 === count( $GLOBALS['dmc_http_calls'] ) );
+	$assert( 'createPullRequest does not call labels endpoint without labels or agent context', 2 === count( $GLOBALS['dmc_http_calls'] ) );
+
+	// ---- createPullRequest: existing open PR is reused instead of POSTing a duplicate
+	$reset_http();
+	$queue_response( 200, array(
+		array(
+			'number'   => 188,
+			'title'    => 'Existing PR',
+			'state'    => 'open',
+			'html_url' => 'https://github.com/owner/repo/pull/188',
+			'head'     => array( 'ref' => 'feature/x', 'sha' => 'ccc' ),
+			'base'     => array( 'ref' => 'main', 'sha' => 'ddd' ),
+		),
+	) );
+	$result = GitHubAbilities::createPullRequest( array(
+		'repo'  => 'owner/repo',
+		'title' => 'Duplicate PR',
+		'head'  => 'feature/x',
+		'base'  => 'main',
+	) );
+	$assert( 'createPullRequest reuses existing open PR', is_array( $result ) && true === ( $result['reused'] ?? false ) && 188 === ( $result['number'] ?? 0 ) );
+	$assert( 'createPullRequest skips POST when existing PR is reused', 1 === count( $GLOBALS['dmc_http_calls'] ) && 'GET' === ( $GLOBALS['dmc_http_calls'][0]['method'] ?? '' ) );
 
 	// ---- createPullRequest: agent context applies caller and provenance labels after creation
 	$reset_http();
 	PermissionHelper::$acting_agent_slug = 'code-reviewer';
+	$queue_response( 200, array() );
 	$queue_response( 201, array(
 		'number'   => 91,
 		'html_url' => 'https://github.com/owner/repo/pull/91',
@@ -391,7 +416,7 @@ namespace {
 		'base'   => 'main',
 		'labels' => array( 'needs-review' ),
 	) );
-	$label_call = $GLOBALS['dmc_http_calls'][1] ?? array();
+	$label_call = $GLOBALS['dmc_http_calls'][2] ?? array();
 	$label_body = is_string( $label_call['args']['body'] ?? null ) ? json_decode( $label_call['args']['body'], true ) : null;
 	$assert( 'createPullRequest labels PR through issues labels endpoint', is_string( $label_call['url'] ?? null ) && str_ends_with( $label_call['url'], '/repos/owner/repo/issues/91/labels' ) );
 	$assert( 'createPullRequest preserves caller label during post-create labeling', is_array( $label_body ) && in_array( 'needs-review', $label_body['labels'] ?? array(), true ) );
@@ -402,6 +427,7 @@ namespace {
 
 	// ---- createPullRequest: run artifacts are committed and rendered on direct ability calls
 	$reset_http();
+	$queue_response( 200, array() );
 	$queue_response( 200, array( 'ref' => 'refs/heads/world-day/memory' ) );
 	$queue_response( 404, array( 'message' => 'Not Found' ) );
 	$queue_response( 201, array(
@@ -441,9 +467,9 @@ namespace {
 			'daily_memory'          => array( 'egress' => array( 'bundle-file', 'pr-body' ) ),
 		),
 	) );
-	$artifact_put_call = $GLOBALS['dmc_http_calls'][2] ?? array();
+	$artifact_put_call = $GLOBALS['dmc_http_calls'][3] ?? array();
 	$artifact_put_body = is_string( $artifact_put_call['args']['body'] ?? null ) ? json_decode( $artifact_put_call['args']['body'], true ) : null;
-	$pr_call           = $GLOBALS['dmc_http_calls'][3] ?? array();
+	$pr_call           = $GLOBALS['dmc_http_calls'][4] ?? array();
 	$pr_body           = is_string( $pr_call['args']['body'] ?? null ) ? json_decode( $pr_call['args']['body'], true ) : null;
 	$assert( 'createPullRequest direct ability commits bundle-file artifact before PR creation', 'PUT' === ( $artifact_put_call['method'] ?? '' ) && str_contains( (string) ( $artifact_put_call['url'] ?? '' ), '/contents/bundles/world-creator/memory/agent/daily/2026/05/09.md' ) );
 	$assert( 'createPullRequest direct ability writes artifact to head branch', is_array( $artifact_put_body ) && 'world-day/memory' === ( $artifact_put_body['branch'] ?? '' ) );
@@ -454,6 +480,7 @@ namespace {
 	// ---- createPullRequest: labeling failure does not mask PR creation success
 	$reset_http();
 	PermissionHelper::$acting_agent_slug = 'code-reviewer';
+	$queue_response( 200, array() );
 	$queue_response( 201, array(
 		'number'   => 92,
 		'html_url' => 'https://github.com/owner/repo/pull/92',
@@ -516,6 +543,7 @@ namespace {
 
 	// ---- createPullRequest: explicit draft and maintainer_can_modify=false
 	$reset_http();
+	$queue_response( 200, array() );
 	$queue_response( 201, array(
 		'number' => 89,
 		'head'   => array( 'ref' => 'feat/y' ),
@@ -529,7 +557,7 @@ namespace {
 		'draft'                 => true,
 		'maintainer_can_modify' => false,
 	) );
-	$call = $GLOBALS['dmc_http_calls'][0] ?? array();
+	$call = $GLOBALS['dmc_http_calls'][1] ?? array();
 	$body = is_string( $call['args']['body'] ?? null ) ? json_decode( $call['args']['body'], true ) : null;
 	$assert( 'createPullRequest forwards draft=true', is_array( $body ) && true === ( $body['draft'] ?? null ) );
 	$assert( 'createPullRequest forwards maintainer_can_modify=false', is_array( $body ) && false === ( $body['maintainer_can_modify'] ?? null ) );
@@ -537,6 +565,7 @@ namespace {
 	// ---- createPullRequest: missing base falls back to default branch via GET /repos
 	$reset_http();
 	$queue_response( 200, array( 'default_branch' => 'trunk' ) );
+	$queue_response( 200, array() );
 	$queue_response( 201, array(
 		'number' => 90,
 		'head'   => array( 'ref' => 'feat/z' ),
@@ -549,12 +578,13 @@ namespace {
 	) );
 	$assert( 'createPullRequest fallback resolves default branch', is_array( $result ) && true === ( $result['success'] ?? false ) );
 	$assert( 'createPullRequest fallback issued GET /repos/owner/repo first', is_string( $GLOBALS['dmc_http_calls'][0]['url'] ?? null ) && str_contains( $GLOBALS['dmc_http_calls'][0]['url'], '/repos/owner/repo' ) && 'GET' === ( $GLOBALS['dmc_http_calls'][0]['method'] ?? '' ) );
-	$pr_call = $GLOBALS['dmc_http_calls'][1] ?? array();
+	$pr_call = $GLOBALS['dmc_http_calls'][2] ?? array();
 	$pr_body = is_string( $pr_call['args']['body'] ?? null ) ? json_decode( $pr_call['args']['body'], true ) : null;
 	$assert( 'createPullRequest sends fallback default base', is_array( $pr_body ) && 'trunk' === ( $pr_body['base'] ?? '' ) );
 
 	// ---- createPullRequest: GitHub validation error surfaces as WP_Error
 	$reset_http();
+	$queue_response( 200, array() );
 	$queue_response( 422, array( 'message' => 'A pull request already exists for owner:feat/x.' ) );
 	$result = GitHubAbilities::createPullRequest( array(
 		'repo'  => 'owner/repo',
