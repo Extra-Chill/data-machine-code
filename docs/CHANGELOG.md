@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.44.0] - 2026-05-16
+
+### Added
+- generic CLI transport runtime for agents/dispatch-message
+
+### Fixed
+- reuse existing pull requests
+
 ## [0.43.0] - 2026-05-16
 
 ### Changed
