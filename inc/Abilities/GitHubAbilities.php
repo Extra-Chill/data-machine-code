@@ -1499,7 +1499,7 @@ class GitHubAbilities {
 		if ( ! empty( $input['assignees'] ) && is_array( $input['assignees'] ) ) {
 			$body['assignees'] = array_map( 'sanitize_text_field', $input['assignees'] );
 		}
-		if ( isset( $input['milestone'] ) && null !== $input['milestone'] && '' !== $input['milestone'] ) {
+		if ( isset( $input['milestone'] ) && '' !== $input['milestone'] ) {
 			$milestone = (int) $input['milestone'];
 			if ( $milestone > 0 ) {
 				$body['milestone'] = $milestone;
@@ -1766,9 +1766,9 @@ class GitHubAbilities {
 		foreach ( $file_writes as $file ) {
 			$file_result = self::createOrUpdateFile( array(
 				'repo'           => $repo,
-				'file_path'      => $file['file_path'] ?? '',
-				'content'        => $file['content'] ?? '',
-				'commit_message' => $file['commit_message'] ?? 'chore: persist Data Machine run artifact',
+				'file_path'      => $file['file_path'],
+				'content'        => $file['content'],
+				'commit_message' => $file['commit_message'],
 				'branch'         => $head,
 			) );
 
@@ -1777,7 +1777,7 @@ class GitHubAbilities {
 			}
 
 			$committed_files[] = array(
-				'file_path'  => (string) ( $file_result['content']['path'] ?? ( $file['file_path'] ?? '' ) ),
+				'file_path'  => (string) ( $file_result['content']['path'] ?? $file['file_path'] ),
 				'commit_sha' => (string) ( $file_result['commit']['sha'] ?? '' ),
 				'file_url'   => (string) ( $file_result['content']['html_url'] ?? '' ),
 			);
@@ -1831,12 +1831,10 @@ class GitHubAbilities {
 
 		$job_id = (int) ( $input['job_id'] ?? 0 );
 		if ( $job_id > 0 && class_exists( '\\DataMachine\\Core\\Database\\Jobs\\Jobs' ) ) {
-			$jobs = new \DataMachine\Core\Database\Jobs\Jobs();
-			if ( method_exists( $jobs, 'retrieve_engine_data' ) ) {
-				$engine_data = $jobs->retrieve_engine_data( $job_id );
-				if ( is_array( $engine_data['run_artifact_egress_policy'] ?? null ) ) {
-					return $engine_data['run_artifact_egress_policy'];
-				}
+			$jobs        = new \DataMachine\Core\Database\Jobs\Jobs();
+			$engine_data = $jobs->retrieve_engine_data( $job_id );
+			if ( is_array( $engine_data['run_artifact_egress_policy'] ?? null ) ) {
+				return $engine_data['run_artifact_egress_policy'];
 			}
 		}
 
@@ -1919,12 +1917,10 @@ class GitHubAbilities {
 	 * Resolve the current Data Machine agent slug when running in agent context.
 	 */
 	private static function getCurrentAgentSlug(): string {
-		foreach ( array( 'get_runtime_context', 'runtime_context' ) as $method ) {
-			if ( method_exists( PermissionHelper::class, $method ) ) {
-				$agent_slug = self::agentSlugFromContext( call_user_func( array( PermissionHelper::class, $method ) ) );
-				if ( '' !== $agent_slug ) {
-					return $agent_slug;
-				}
+		if ( method_exists( PermissionHelper::class, 'get_runtime_context' ) ) {
+			$agent_slug = self::agentSlugFromContext( PermissionHelper::get_runtime_context() );
+			if ( '' !== $agent_slug ) {
+				return $agent_slug;
 			}
 		}
 
@@ -1955,12 +1951,8 @@ class GitHubAbilities {
 		}
 
 		$agents_repo = new \DataMachine\Core\Database\Agents\Agents();
-		if ( ! method_exists( $agents_repo, 'get_agent' ) ) {
-			return '';
-		}
-
-		$agent      = $agents_repo->get_agent( (int) $agent_id );
-		$agent_slug = is_array( $agent ) ? (string) ( $agent['agent_slug'] ?? '' ) : '';
+		$agent       = $agents_repo->get_agent( (int) $agent_id );
+		$agent_slug  = is_array( $agent ) ? (string) ( $agent['agent_slug'] ?? '' ) : '';
 
 		return '' !== trim( $agent_slug ) ? sanitize_text_field( $agent_slug ) : '';
 	}
@@ -2512,14 +2504,6 @@ class GitHubAbilities {
 		}
 
 		$workspace = new Workspace();
-		if ( ! method_exists( $workspace, 'cleanup_merged_pr_worktree' ) ) {
-			return array(
-				'success' => true,
-				'skipped' => true,
-				'reason'  => 'workspace_cleanup_unsupported',
-			);
-		}
-
 		return $workspace->cleanup_merged_pr_worktree( $repo, $head_branch, '' !== $pr_url ? $pr_url : null );
 	}
 
@@ -2951,8 +2935,8 @@ class GitHubAbilities {
 		$max_docs  = max( 0, (int) ( $options['max_architecture_docs'] ?? 8 ) );
 		$limits    = array(
 			'max_profile_files'     => $max_files,
-			'max_file_chars'        => max( 1, (int) ( $options['max_file_chars'] ?? 12000 ) ),
-			'max_total_chars'       => max( 1, (int) ( $options['max_total_chars'] ?? 60000 ) ),
+			'max_file_chars'        => (int) max( 1, (int) ( $options['max_file_chars'] ?? 12000 ) ),
+			'max_total_chars'       => (int) max( 1, (int) ( $options['max_total_chars'] ?? 60000 ) ),
 			'max_architecture_docs' => $max_docs,
 		);
 
@@ -3572,7 +3556,7 @@ class GitHubAbilities {
 		}
 
 		foreach ( $wanted as &$entry ) {
-			$entry['reasons'] = array_values( array_unique( $entry['reasons'] ?? array() ) );
+			$entry['reasons'] = array_values( array_unique( $entry['reasons'] ) );
 		}
 
 		return array_values( $wanted );
@@ -4851,7 +4835,8 @@ class GitHubAbilities {
 		);
 
 		if ( null !== $body ) {
-			$args['body'] = wp_json_encode( $body );
+			$encoded_body = wp_json_encode( $body );
+			$args['body'] = false === $encoded_body ? '' : $encoded_body;
 		}
 
 		$response = wp_remote_request( $url, $args );
@@ -5258,7 +5243,7 @@ class GitHubAbilities {
 				$repo,
 				$pull,
 				$changed_files,
-				isset( $context['checks'] ) && is_array( $context['checks'] ) ? $context['checks'] : array(),
+				$context['checks'] ?? array(),
 				isset( $options['escalation_policy'] ) && is_array( $options['escalation_policy'] ) ? $options['escalation_policy'] : array()
 			);
 		}
