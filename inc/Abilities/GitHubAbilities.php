@@ -341,7 +341,15 @@ class GitHubAbilities {
 						'type'       => 'object',
 						'properties' => array(
 							'success'      => array( 'type' => 'boolean' ),
+							'kind'         => array( 'type' => 'string' ),
+							'repo'         => array( 'type' => 'string' ),
+							'number'       => array( 'type' => 'integer' ),
+							'pull_number'  => array( 'type' => 'integer' ),
+							'url'          => array( 'type' => 'string' ),
+							'html_url'     => array( 'type' => 'string' ),
+							'reused'       => array( 'type' => 'boolean' ),
 							'pull_request' => array( 'type' => 'object' ),
+							'labeling'     => array( 'type' => 'object' ),
 							'error'        => array( 'type' => 'string' ),
 						),
 					),
@@ -523,15 +531,15 @@ class GitHubAbilities {
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success'     => array( 'type' => 'boolean' ),
-							'repo'        => array( 'type' => 'string' ),
-							'pull_number' => array( 'type' => 'integer' ),
-							'merged'      => array( 'type' => 'boolean' ),
-							'sha'         => array( 'type' => 'string' ),
-							'message'     => array( 'type' => 'string' ),
-							'html_url'    => array( 'type' => 'string' ),
+							'success'                => array( 'type' => 'boolean' ),
+							'repo'                   => array( 'type' => 'string' ),
+							'pull_number'            => array( 'type' => 'integer' ),
+							'merged'                 => array( 'type' => 'boolean' ),
+							'sha'                    => array( 'type' => 'string' ),
+							'message'                => array( 'type' => 'string' ),
+							'html_url'               => array( 'type' => 'string' ),
 							'local_worktree_cleanup' => array( 'type' => 'object' ),
-							'error'       => array( 'type' => 'string' ),
+							'error'                  => array( 'type' => 'string' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'mergePullRequest' ),
@@ -1491,7 +1499,7 @@ class GitHubAbilities {
 		if ( ! empty( $input['assignees'] ) && is_array( $input['assignees'] ) ) {
 			$body['assignees'] = array_map( 'sanitize_text_field', $input['assignees'] );
 		}
-		if ( isset( $input['milestone'] ) && null !== $input['milestone'] && '' !== $input['milestone'] ) {
+		if ( isset( $input['milestone'] ) && '' !== $input['milestone'] ) {
 			$milestone = (int) $input['milestone'];
 			if ( $milestone > 0 ) {
 				$body['milestone'] = $milestone;
@@ -1758,9 +1766,9 @@ class GitHubAbilities {
 		foreach ( $file_writes as $file ) {
 			$file_result = self::createOrUpdateFile( array(
 				'repo'           => $repo,
-				'file_path'      => $file['file_path'] ?? '',
-				'content'        => $file['content'] ?? '',
-				'commit_message' => $file['commit_message'] ?? 'chore: persist Data Machine run artifact',
+				'file_path'      => $file['file_path'],
+				'content'        => $file['content'],
+				'commit_message' => $file['commit_message'],
 				'branch'         => $head,
 			) );
 
@@ -1769,7 +1777,7 @@ class GitHubAbilities {
 			}
 
 			$committed_files[] = array(
-				'file_path'  => (string) ( $file_result['content']['path'] ?? ( $file['file_path'] ?? '' ) ),
+				'file_path'  => (string) ( $file_result['content']['path'] ?? $file['file_path'] ),
 				'commit_sha' => (string) ( $file_result['commit']['sha'] ?? '' ),
 				'file_url'   => (string) ( $file_result['content']['html_url'] ?? '' ),
 			);
@@ -1818,17 +1826,6 @@ class GitHubAbilities {
 			$policy = $engine->get( 'run_artifact_egress_policy', array() );
 			if ( is_array( $policy ) && ! empty( $policy ) ) {
 				return $policy;
-			}
-		}
-
-		$job_id = (int) ( $input['job_id'] ?? 0 );
-		if ( $job_id > 0 && class_exists( '\\DataMachine\\Core\\Database\\Jobs\\Jobs' ) ) {
-			$jobs = new \DataMachine\Core\Database\Jobs\Jobs();
-			if ( method_exists( $jobs, 'retrieve_engine_data' ) ) {
-				$engine_data = $jobs->retrieve_engine_data( $job_id );
-				if ( is_array( $engine_data['run_artifact_egress_policy'] ?? null ) ) {
-					return $engine_data['run_artifact_egress_policy'];
-				}
 			}
 		}
 
@@ -1911,12 +1908,10 @@ class GitHubAbilities {
 	 * Resolve the current Data Machine agent slug when running in agent context.
 	 */
 	private static function getCurrentAgentSlug(): string {
-		foreach ( array( 'get_runtime_context', 'runtime_context' ) as $method ) {
-			if ( method_exists( PermissionHelper::class, $method ) ) {
-				$agent_slug = self::agentSlugFromContext( call_user_func( array( PermissionHelper::class, $method ) ) );
-				if ( '' !== $agent_slug ) {
-					return $agent_slug;
-				}
+		if ( method_exists( PermissionHelper::class, 'get_runtime_context' ) ) {
+			$agent_slug = self::agentSlugFromContext( PermissionHelper::get_runtime_context() );
+			if ( '' !== $agent_slug ) {
+				return $agent_slug;
 			}
 		}
 
@@ -1937,24 +1932,7 @@ class GitHubAbilities {
 			}
 		}
 
-		if ( ! method_exists( PermissionHelper::class, 'get_acting_agent_id' ) ) {
-			return '';
-		}
-
-		$agent_id = PermissionHelper::get_acting_agent_id();
-		if ( empty( $agent_id ) || ! class_exists( '\DataMachine\Core\Database\Agents\Agents' ) ) {
-			return '';
-		}
-
-		$agents_repo = new \DataMachine\Core\Database\Agents\Agents();
-		if ( ! method_exists( $agents_repo, 'get_agent' ) ) {
-			return '';
-		}
-
-		$agent      = $agents_repo->get_agent( (int) $agent_id );
-		$agent_slug = is_array( $agent ) ? (string) ( $agent['agent_slug'] ?? '' ) : '';
-
-		return '' !== trim( $agent_slug ) ? sanitize_text_field( $agent_slug ) : '';
+		return '';
 	}
 
 	/**
@@ -2469,7 +2447,7 @@ class GitHubAbilities {
 
 		$encoded_head_branch = implode( '/', array_map( 'rawurlencode', explode( '/', $head_branch ) ) );
 		$delete_url          = sprintf( '%s/repos/%s/git/refs/heads/%s', self::API_BASE, $repo, $encoded_head_branch );
-		$deleted    = $api_request( 'DELETE', $delete_url, null, $pat );
+		$deleted             = $api_request( 'DELETE', $delete_url, null, $pat );
 		if ( is_wp_error( $deleted ) ) {
 			$status = is_array( $deleted->get_error_data() ) ? (int) ( $deleted->get_error_data()['status'] ?? 0 ) : 0;
 			if ( 404 !== $status ) {
@@ -2504,14 +2482,6 @@ class GitHubAbilities {
 		}
 
 		$workspace = new Workspace();
-		if ( ! method_exists( $workspace, 'cleanup_merged_pr_worktree' ) ) {
-			return array(
-				'success' => true,
-				'skipped' => true,
-				'reason'  => 'workspace_cleanup_unsupported',
-			);
-		}
-
 		return $workspace->cleanup_merged_pr_worktree( $repo, $head_branch, '' !== $pr_url ? $pr_url : null );
 	}
 
@@ -2702,9 +2672,9 @@ class GitHubAbilities {
 		}
 
 		return array(
-			'repo'         => $input['repo'] ?? '',
-			'issue_number' => (int) ( $input['pull_number'] ?? 0 ),
-			'body'         => $body,
+			'repo'                          => $input['repo'] ?? '',
+			'issue_number'                  => (int) ( $input['pull_number'] ?? 0 ),
+			'body'                          => $body,
 			'skip_automation_comment_guard' => true,
 		);
 	}
@@ -2943,8 +2913,8 @@ class GitHubAbilities {
 		$max_docs  = max( 0, (int) ( $options['max_architecture_docs'] ?? 8 ) );
 		$limits    = array(
 			'max_profile_files'     => $max_files,
-			'max_file_chars'        => max( 1, (int) ( $options['max_file_chars'] ?? 12000 ) ),
-			'max_total_chars'       => max( 1, (int) ( $options['max_total_chars'] ?? 60000 ) ),
+			'max_file_chars'        => (int) max( 1, (int) ( $options['max_file_chars'] ?? 12000 ) ),
+			'max_total_chars'       => (int) max( 1, (int) ( $options['max_total_chars'] ?? 60000 ) ),
 			'max_architecture_docs' => $max_docs,
 		);
 
@@ -2991,7 +2961,7 @@ class GitHubAbilities {
 		}
 
 		$paths           = array_values( array_unique( $paths ) );
-		$remaining_chars = $limits['max_total_chars'];
+		$remaining_chars = (int) $limits['max_total_chars'];
 
 		foreach ( $paths as $path ) {
 			if ( $profile['truncation']['included_files'] >= $limits['max_profile_files'] || $remaining_chars <= 0 ) {
@@ -3015,7 +2985,7 @@ class GitHubAbilities {
 
 			++$profile['truncation']['included_files'];
 			$profile['truncation']['included_chars'] += $entry['included_chars'];
-			$remaining_chars                          = max( 0, $remaining_chars - $entry['included_chars'] );
+			$remaining_chars                          = (int) max( 0, $remaining_chars - $entry['included_chars'] );
 
 			if ( ! empty( $entry['truncated'] ) ) {
 				++$profile['truncation']['truncated_files'];
@@ -3564,7 +3534,7 @@ class GitHubAbilities {
 		}
 
 		foreach ( $wanted as &$entry ) {
-			$entry['reasons'] = array_values( array_unique( $entry['reasons'] ?? array() ) );
+			$entry['reasons'] = array_values( array_unique( $entry['reasons'] ) );
 		}
 
 		return array_values( $wanted );
@@ -4843,7 +4813,8 @@ class GitHubAbilities {
 		);
 
 		if ( null !== $body ) {
-			$args['body'] = wp_json_encode( $body );
+			$encoded_body = wp_json_encode( $body );
+			$args['body'] = false === $encoded_body ? '' : $encoded_body;
 		}
 
 		$response = wp_remote_request( $url, $args );
@@ -5250,7 +5221,7 @@ class GitHubAbilities {
 				$repo,
 				$pull,
 				$changed_files,
-				isset( $context['checks'] ) && is_array( $context['checks'] ) ? $context['checks'] : array(),
+				$context['checks'] ?? array(),
 				isset( $options['escalation_policy'] ) && is_array( $options['escalation_policy'] ) ? $options['escalation_policy'] : array()
 			);
 		}
@@ -5339,7 +5310,7 @@ class GitHubAbilities {
 
 		self::$last_auth_error       = null;
 		$token                       = (string) $credential['token'];
-		self::$token_modes[ $token ] = (string) ( $credential['mode'] ?? 'pat' );
+		self::$token_modes[ $token ] = (string) $credential['mode'];
 		return $token;
 	}
 
@@ -5358,7 +5329,7 @@ class GitHubAbilities {
 
 		$token                       = (string) $credential['token'];
 		self::$last_auth_error       = null;
-		self::$token_modes[ $token ] = (string) ( $credential['mode'] ?? 'pat' );
+		self::$token_modes[ $token ] = (string) $credential['mode'];
 		return $credential;
 	}
 
