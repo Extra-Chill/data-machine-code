@@ -587,13 +587,16 @@ class WorktreeContextInjector {
 
 		// legacy migration only: split top-level `<runtime>_<subkey>` keys into
 		// the runtime-keyed envelope. Skip canonical envelope keys.
-		$canonical_top_level = array( 'primary_id' => true, 'ids' => true );
+		$canonical_top_level = array(
+			'primary_id' => true,
+			'ids'        => true,
+		);
 		foreach ( $session as $key => $value ) {
 			if ( ! is_string( $key ) || isset( $canonical_top_level[ $key ] ) ) {
 				continue;
 			}
 			$underscore = strpos( $key, '_' );
-			if ( false === $underscore || 0 === $underscore || $underscore === strlen( $key ) - 1 ) {
+			if ( false === $underscore || 0 === $underscore || strlen( $key ) - 1 === $underscore ) {
 				continue;
 			}
 			$runtime_id = substr( $key, 0, $underscore );
@@ -1554,7 +1557,7 @@ class WorktreeContextInjector {
 		}
 
 		foreach ( $repository->list() as $row ) {
-			if ( $handle === (string) ( $row['handle'] ?? '' ) && is_array( $row['metadata'] ?? null ) ) {
+			if ( (string) ( $row['handle'] ?? '' ) === $handle && is_array( $row['metadata'] ?? null ) ) {
 				return (array) $row['metadata'];
 			}
 		}
