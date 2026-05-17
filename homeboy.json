@@ -2,7 +2,9 @@
   "auto_cleanup": false,
   "changelog_target": "docs/CHANGELOG.md",
   "extensions": {
-    "wordpress": {}
+    "wordpress": {
+      "release_latest_branch": "release-latest"
+    }
   },
   "id": "data-machine-code",
   "remote_path": "wp-content/plugins/data-machine-code",
