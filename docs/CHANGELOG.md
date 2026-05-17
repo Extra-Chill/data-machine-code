@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.45.2] - 2026-05-17
+
+### Changed
+- Expose pull request URLs in create PR schema
+
 ## [0.45.1] - 2026-05-17
 
 ### Changed
