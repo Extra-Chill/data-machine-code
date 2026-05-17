@@ -3,7 +3,10 @@
   "changelog_target": "docs/CHANGELOG.md",
   "extensions": {
     "wordpress": {
-      "release_latest_branch": "release-latest"
+      "release_latest_branch": "release-latest",
+      "settings": {
+        "validation_dependencies": "[\"agents-api\",\"data-machine\"]"
+      }
     }
   },
   "id": "data-machine-code",

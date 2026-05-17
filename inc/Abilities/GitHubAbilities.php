@@ -5347,7 +5347,7 @@ class GitHubAbilities {
 
 		self::$last_auth_error       = null;
 		$token                       = (string) $credential['token'];
-		self::$token_modes[ $token ] = (string) ( $credential['mode'] ?? 'pat' );
+		self::$token_modes[ $token ] = (string) $credential['mode'];
 		return $token;
 	}
 
