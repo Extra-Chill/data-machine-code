@@ -1829,15 +1829,6 @@ class GitHubAbilities {
 			}
 		}
 
-		$job_id = (int) ( $input['job_id'] ?? 0 );
-		if ( $job_id > 0 && class_exists( '\\DataMachine\\Core\\Database\\Jobs\\Jobs' ) ) {
-			$jobs        = new \DataMachine\Core\Database\Jobs\Jobs();
-			$engine_data = $jobs->retrieve_engine_data( $job_id );
-			if ( is_array( $engine_data['run_artifact_egress_policy'] ?? null ) ) {
-				return $engine_data['run_artifact_egress_policy'];
-			}
-		}
-
 		return is_array( $artifacts['run_artifact_egress_policy'] ?? null ) ? $artifacts['run_artifact_egress_policy'] : array();
 	}
 
@@ -1941,20 +1932,7 @@ class GitHubAbilities {
 			}
 		}
 
-		if ( ! method_exists( PermissionHelper::class, 'get_acting_agent_id' ) ) {
-			return '';
-		}
-
-		$agent_id = PermissionHelper::get_acting_agent_id();
-		if ( empty( $agent_id ) || ! class_exists( '\DataMachine\Core\Database\Agents\Agents' ) ) {
-			return '';
-		}
-
-		$agents_repo = new \DataMachine\Core\Database\Agents\Agents();
-		$agent       = $agents_repo->get_agent( (int) $agent_id );
-		$agent_slug  = is_array( $agent ) ? (string) ( $agent['agent_slug'] ?? '' ) : '';
-
-		return '' !== trim( $agent_slug ) ? sanitize_text_field( $agent_slug ) : '';
+		return '';
 	}
 
 	/**
@@ -2983,7 +2961,7 @@ class GitHubAbilities {
 		}
 
 		$paths           = array_values( array_unique( $paths ) );
-		$remaining_chars = $limits['max_total_chars'];
+		$remaining_chars = (int) $limits['max_total_chars'];
 
 		foreach ( $paths as $path ) {
 			if ( $profile['truncation']['included_files'] >= $limits['max_profile_files'] || $remaining_chars <= 0 ) {
@@ -3007,7 +2985,7 @@ class GitHubAbilities {
 
 			++$profile['truncation']['included_files'];
 			$profile['truncation']['included_chars'] += $entry['included_chars'];
-			$remaining_chars                          = max( 0, $remaining_chars - $entry['included_chars'] );
+			$remaining_chars                          = (int) max( 0, $remaining_chars - $entry['included_chars'] );
 
 			if ( ! empty( $entry['truncated'] ) ) {
 				++$profile['truncation']['truncated_files'];
