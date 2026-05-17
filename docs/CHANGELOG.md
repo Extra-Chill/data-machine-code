@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.45.0] - 2026-05-17
+
+### Added
+- switch release pipeline to homeboy-native release workflow
+
 ## [0.44.0] - 2026-05-16
 
 ### Added
