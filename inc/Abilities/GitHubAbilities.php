@@ -531,15 +531,15 @@ class GitHubAbilities {
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success'     => array( 'type' => 'boolean' ),
-							'repo'        => array( 'type' => 'string' ),
-							'pull_number' => array( 'type' => 'integer' ),
-							'merged'      => array( 'type' => 'boolean' ),
-							'sha'         => array( 'type' => 'string' ),
-							'message'     => array( 'type' => 'string' ),
-							'html_url'    => array( 'type' => 'string' ),
+							'success'                => array( 'type' => 'boolean' ),
+							'repo'                   => array( 'type' => 'string' ),
+							'pull_number'            => array( 'type' => 'integer' ),
+							'merged'                 => array( 'type' => 'boolean' ),
+							'sha'                    => array( 'type' => 'string' ),
+							'message'                => array( 'type' => 'string' ),
+							'html_url'               => array( 'type' => 'string' ),
 							'local_worktree_cleanup' => array( 'type' => 'object' ),
-							'error'       => array( 'type' => 'string' ),
+							'error'                  => array( 'type' => 'string' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'mergePullRequest' ),
@@ -2477,7 +2477,7 @@ class GitHubAbilities {
 
 		$encoded_head_branch = implode( '/', array_map( 'rawurlencode', explode( '/', $head_branch ) ) );
 		$delete_url          = sprintf( '%s/repos/%s/git/refs/heads/%s', self::API_BASE, $repo, $encoded_head_branch );
-		$deleted    = $api_request( 'DELETE', $delete_url, null, $pat );
+		$deleted             = $api_request( 'DELETE', $delete_url, null, $pat );
 		if ( is_wp_error( $deleted ) ) {
 			$status = is_array( $deleted->get_error_data() ) ? (int) ( $deleted->get_error_data()['status'] ?? 0 ) : 0;
 			if ( 404 !== $status ) {
@@ -2710,9 +2710,9 @@ class GitHubAbilities {
 		}
 
 		return array(
-			'repo'         => $input['repo'] ?? '',
-			'issue_number' => (int) ( $input['pull_number'] ?? 0 ),
-			'body'         => $body,
+			'repo'                          => $input['repo'] ?? '',
+			'issue_number'                  => (int) ( $input['pull_number'] ?? 0 ),
+			'body'                          => $body,
 			'skip_automation_comment_guard' => true,
 		);
 	}
@@ -5366,7 +5366,7 @@ class GitHubAbilities {
 
 		$token                       = (string) $credential['token'];
 		self::$last_auth_error       = null;
-		self::$token_modes[ $token ] = (string) ( $credential['mode'] ?? 'pat' );
+		self::$token_modes[ $token ] = (string) $credential['mode'];
 		return $credential;
 	}
 

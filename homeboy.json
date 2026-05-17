@@ -5,7 +5,7 @@
     "wordpress": {
       "release_latest_branch": "release-latest",
       "settings": {
-        "validation_dependencies": "[\"agents-api\",\"data-machine\"]"
+        "test_backend": "host-smoke"
       }
     }
   },
