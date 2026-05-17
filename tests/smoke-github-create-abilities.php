@@ -221,6 +221,11 @@ namespace {
 	$assert( 'create-github-pull-request exposes labels', array_key_exists( 'labels', $pr_ability['input_schema']['properties'] ?? array() ) );
 	$assert( 'create-github-pull-request labels schema declares string items', array( 'type' => 'string' ) === ( $pr_ability['input_schema']['properties']['labels']['items'] ?? null ) );
 	$assert( 'create-github-pull-request exposes maintainer_can_modify', array_key_exists( 'maintainer_can_modify', $pr_ability['input_schema']['properties'] ?? array() ) );
+	$pr_output_properties = $pr_ability['output_schema']['properties'] ?? array();
+	$assert( 'create-github-pull-request output exposes top-level url', array_key_exists( 'url', $pr_output_properties ) );
+	$assert( 'create-github-pull-request output exposes top-level html_url', array_key_exists( 'html_url', $pr_output_properties ) );
+	$assert( 'create-github-pull-request output exposes top-level pull_number', array_key_exists( 'pull_number', $pr_output_properties ) );
+	$assert( 'create-github-pull-request output exposes top-level reused', array_key_exists( 'reused', $pr_output_properties ) );
 	$assert( 'create-github-pull-request is hidden from REST', false === ( $pr_ability['meta']['show_in_rest'] ?? null ) );
 
 	$assert( 'create-or-update-github-file ability is registered', null !== $file_ability );
