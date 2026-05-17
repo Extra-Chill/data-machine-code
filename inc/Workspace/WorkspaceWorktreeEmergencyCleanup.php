@@ -390,18 +390,17 @@ trait WorkspaceWorktreeEmergencyCleanup {
 		ksort( $skipped_by_reason );
 
 		return array(
-			'would_remove_artifacts'  => $artifact_count,
-			'would_remove_worktrees'  => count( $worktree_candidates ),
-			'removed_artifacts'       => $removed_count,
-			'removed_worktrees'       => count( $removed_worktrees ),
-			'skipped'                 => count( $skipped ),
-			'skipped_by_reason'       => $skipped_by_reason,
-			'artifact_size_bytes'     => 0 === $removed_count ? $artifact_bytes : $removed_bytes,
-			'removed_artifact_bytes'  => $removed_bytes,
-			'worktree_size_bytes'     => array_sum( array_map( fn( $row ) => max( 0, (int) ( $row['size_bytes'] ?? 0 ) ), $worktree_candidates ) ),
-			'top_artifacts_by_size'   => $this->summarize_top_worktree_rows( $artifact_candidates, 'artifact_size_bytes' ),
-			'top_worktrees_by_age'    => $this->summarize_top_worktree_rows( $worktree_candidates, 'age_days' ),
+			'would_remove_artifacts' => $artifact_count,
+			'would_remove_worktrees' => count( $worktree_candidates ),
+			'removed_artifacts'      => $removed_count,
+			'removed_worktrees'      => count( $removed_worktrees ),
+			'skipped'                => count( $skipped ),
+			'skipped_by_reason'      => $skipped_by_reason,
+			'artifact_size_bytes'    => 0 === $removed_count ? $artifact_bytes : $removed_bytes,
+			'removed_artifact_bytes' => $removed_bytes,
+			'worktree_size_bytes'    => array_sum( array_map( fn( $row ) => max( 0, (int) ( $row['size_bytes'] ?? 0 ) ), $worktree_candidates ) ),
+			'top_artifacts_by_size'  => $this->summarize_top_worktree_rows( $artifact_candidates, 'artifact_size_bytes' ),
+			'top_worktrees_by_age'   => $this->summarize_top_worktree_rows( $worktree_candidates, 'age_days' ),
 		);
 	}
-
 }

@@ -78,8 +78,8 @@ trait WorkspaceCleanupPlan {
 			'resolver'         => $inputs['include_resolvers'] ? $this->build_cleanup_plan_resolver_rows( (array) ( $worktree_plan['skipped'] ?? array() ) ) : array(),
 		);
 
-		$summary = $this->build_cleanup_plan_summary( $rows );
-		$plan    = array(
+		$summary         = $this->build_cleanup_plan_summary( $rows );
+		$plan            = array(
 			'success'        => true,
 			'mode'           => 'cleanup_plan',
 			'generated_at'   => gmdate( 'c' ),
@@ -87,9 +87,9 @@ trait WorkspaceCleanupPlan {
 			'inputs'         => $inputs,
 			'safety_policy'  => array(
 				'applies_inline'               => false,
-				'artifact_cleanup'            => 'apply-plan must revalidate profile-derived artifact paths before deletion',
-				'worktree_removal'            => 'apply-plan must re-run dirty, unpushed, identity, lifecycle, containment, and primary protections before deletion',
-				'resolver'                    => 'resolver rows may gather merge signals but cannot delete worktrees',
+				'artifact_cleanup'             => 'apply-plan must revalidate profile-derived artifact paths before deletion',
+				'worktree_removal'             => 'apply-plan must re-run dirty, unpushed, identity, lifecycle, containment, and primary protections before deletion',
+				'resolver'                     => 'resolver rows may gather merge signals but cannot delete worktrees',
 				'destructive_rows_need_review' => true,
 			),
 			'plans'          => array(
@@ -126,7 +126,7 @@ trait WorkspaceCleanupPlan {
 
 		$plan_id = (string) ( $plan['plan_id'] ?? '' );
 		if ( '' === $plan_id ) {
-			$plan_id = $this->stable_cleanup_hash( array( 'rows' => $this->cleanup_row_ids( (array) ( $plan['rows'] ?? array() ) ) ), 'cleanup-plan' );
+			$plan_id         = $this->stable_cleanup_hash( array( 'rows' => $this->cleanup_row_ids( (array) ( $plan['rows'] ?? array() ) ) ), 'cleanup-plan' );
 			$plan['plan_id'] = $plan_id;
 		}
 
@@ -152,17 +152,17 @@ trait WorkspaceCleanupPlan {
 					++$index;
 					$row_ids  = array_map( fn( $row ) => (string) ( $row['row_id'] ?? '' ), $chunk_rows );
 					$chunks[] = array(
-						'chunk_id'      => $this->stable_cleanup_hash( array( $plan_id, $type, $safety_class, $index, $row_ids ), 'cleanup-chunk' ),
-						'plan_id'       => $plan_id,
-						'type'          => (string) $type,
-						'safety_class'  => $safety_class,
-						'index'         => $index,
-						'chunk_size'    => count( $chunk_rows ),
-						'max_rows'      => $chunk_size,
-						'row_ids'       => $row_ids,
-						'rows'          => $chunk_rows,
-						'idempotency'   => array(
-							'key'                 => $this->stable_cleanup_hash( array( $plan_id, $row_ids ), 'cleanup-idempotency' ),
+						'chunk_id'       => $this->stable_cleanup_hash( array( $plan_id, $type, $safety_class, $index, $row_ids ), 'cleanup-chunk' ),
+						'plan_id'        => $plan_id,
+						'type'           => (string) $type,
+						'safety_class'   => $safety_class,
+						'index'          => $index,
+						'chunk_size'     => count( $chunk_rows ),
+						'max_rows'       => $chunk_size,
+						'row_ids'        => $row_ids,
+						'rows'           => $chunk_rows,
+						'idempotency'    => array(
+							'key'                     => $this->stable_cleanup_hash( array( $plan_id, $row_ids ), 'cleanup-idempotency' ),
 							'revalidate_before_apply' => true,
 						),
 						'workspace_path' => $plan['workspace_path'] ?? $this->workspace_path,
@@ -233,7 +233,7 @@ trait WorkspaceCleanupPlan {
 				default                    => 'workspace worktree cleanup --dry-run --skip-github --format=json',
 			};
 
-			$resolver = array(
+			$resolver           = array(
 				'handle'       => (string) ( $row['handle'] ?? '' ),
 				'repo'         => (string) ( $row['repo'] ?? '' ),
 				'branch'       => (string) ( $row['branch'] ?? '' ),
@@ -270,7 +270,7 @@ trait WorkspaceCleanupPlan {
 			$byte_totals[ $type ] = 0;
 			$total_rows          += $counts[ $type ];
 			foreach ( (array) $typed_rows as $row ) {
-				$bytes = max( 0, (int) ( $row['artifact_size_bytes'] ?? $row['size_bytes'] ?? 0 ) );
+				$bytes                 = max( 0, (int) ( $row['artifact_size_bytes'] ?? $row['size_bytes'] ?? 0 ) );
 				$byte_totals[ $type ] += $bytes;
 				$total_bytes          += $bytes;
 			}
@@ -298,11 +298,11 @@ trait WorkspaceCleanupPlan {
 		$chunks_by_safety = array();
 		$rows_by_type     = array();
 		foreach ( $chunks as $chunk ) {
-			$type                         = (string) ( $chunk['type'] ?? 'unknown' );
-			$class                        = (string) ( $chunk['safety_class'] ?? 'unknown' );
-			$chunks_by_type[ $type ]       = ( $chunks_by_type[ $type ] ?? 0 ) + 1;
-			$chunks_by_safety[ $class ]    = ( $chunks_by_safety[ $class ] ?? 0 ) + 1;
-			$rows_by_type[ $type ]         = ( $rows_by_type[ $type ] ?? 0 ) + (int) ( $chunk['chunk_size'] ?? 0 );
+			$type                       = (string) ( $chunk['type'] ?? 'unknown' );
+			$class                      = (string) ( $chunk['safety_class'] ?? 'unknown' );
+			$chunks_by_type[ $type ]    = ( $chunks_by_type[ $type ] ?? 0 ) + 1;
+			$chunks_by_safety[ $class ] = ( $chunks_by_safety[ $class ] ?? 0 ) + 1;
+			$rows_by_type[ $type ]      = ( $rows_by_type[ $type ] ?? 0 ) + (int) ( $chunk['chunk_size'] ?? 0 );
 		}
 		ksort( $chunks_by_type );
 		ksort( $chunks_by_safety );
@@ -395,5 +395,4 @@ trait WorkspaceCleanupPlan {
 			ksort( $value );
 		}
 	}
-
 }

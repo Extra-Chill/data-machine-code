@@ -135,10 +135,14 @@ final class WordPressRuntimeInspector {
 
 		$size = (int) filesize( $resolved['real_path'] );
 		if ( $size > $max_size ) {
-			return new \WP_Error( 'datamachine_runtime_file_too_large', 'File exceeds the requested max_size.', array( 'path' => $resolved['relative_path'], 'size' => $size, 'max_size' => $max_size ) );
+			return new \WP_Error( 'datamachine_runtime_file_too_large', 'File exceeds the requested max_size.', array(
+				'path'     => $resolved['relative_path'],
+				'size'     => $size,
+				'max_size' => $max_size,
+			) );
 		}
 
-		$sample = @file_get_contents( $resolved['real_path'], false, null, 0, min( $size, 8192 ) );
+		$sample = @file_get_contents( $resolved['real_path'], false, null, 0, min( $size, 8192 ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents,WordPress.PHP.NoSilencedErrors.Discouraged -- Path is validated by resolveReadablePath().
 		if ( false === $sample ) {
 			return new \WP_Error( 'datamachine_runtime_unreadable', 'File is not readable.' );
 		}
@@ -147,7 +151,7 @@ final class WordPressRuntimeInspector {
 			return new \WP_Error( 'datamachine_runtime_binary_file', 'Binary file reading is denied.', array( 'path' => $resolved['relative_path'] ) );
 		}
 
-		$lines = @file( $resolved['real_path'], FILE_IGNORE_NEW_LINES );
+		$lines = @file( $resolved['real_path'], FILE_IGNORE_NEW_LINES ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file,WordPress.PHP.NoSilencedErrors.Discouraged -- Path is validated by resolveReadablePath().
 		if ( false === $lines ) {
 			return new \WP_Error( 'datamachine_runtime_unreadable', 'File is not readable.' );
 		}

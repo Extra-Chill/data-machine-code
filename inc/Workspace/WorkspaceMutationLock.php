@@ -189,10 +189,10 @@ final class WorkspaceMutationLock {
 	 * @return array<string,mixed>
 	 */
 	public static function prune_stale( string $workspace_path, bool $dry_run = false ): array {
-		$before     = self::status( $workspace_path );
-		$db_pruned  = $dry_run ? array( 'dry_run' => true ) : WorkspaceLockStore::prune_expired();
-		$fs_pruned  = self::prune_stale_filesystem_locks( $workspace_path, $dry_run );
-		$after      = self::status( $workspace_path );
+		$before    = self::status( $workspace_path );
+		$db_pruned = $dry_run ? array( 'dry_run' => true ) : WorkspaceLockStore::prune_expired();
+		$fs_pruned = self::prune_stale_filesystem_locks( $workspace_path, $dry_run );
+		$after     = self::status( $workspace_path );
 
 		return array(
 			'dry_run'    => $dry_run,
@@ -232,7 +232,7 @@ final class WorkspaceMutationLock {
 			}
 
 			if ( ! flock( $handle, LOCK_EX | LOCK_NB ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
-				$active++;
+				++$active;
 				fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 				continue;
 			}
@@ -241,9 +241,9 @@ final class WorkspaceMutationLock {
 			fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 			$mtime = filemtime( $file );
 			if ( false !== $mtime && $mtime < $cutoff ) {
-				$stale++;
+				++$stale;
 			} else {
-				$recent++;
+				++$recent;
 			}
 		}
 
@@ -271,18 +271,27 @@ final class WorkspaceMutationLock {
 		foreach ( $files as $file ) {
 			$mtime = filemtime( $file );
 			if ( false === $mtime || $mtime >= $cutoff ) {
-				$skipped[] = array( 'path' => $file, 'reason' => 'not_stale' );
+				$skipped[] = array(
+					'path'   => $file,
+					'reason' => 'not_stale',
+				);
 				continue;
 			}
 
 			$handle = fopen( $file, 'c' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
 			if ( false === $handle ) {
-				$skipped[] = array( 'path' => $file, 'reason' => 'open_failed' );
+				$skipped[] = array(
+					'path'   => $file,
+					'reason' => 'open_failed',
+				);
 				continue;
 			}
 
 			if ( ! flock( $handle, LOCK_EX | LOCK_NB ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
-				$skipped[] = array( 'path' => $file, 'reason' => 'active' );
+				$skipped[] = array(
+					'path'   => $file,
+					'reason' => 'active',
+				);
 				fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 				continue;
 			}

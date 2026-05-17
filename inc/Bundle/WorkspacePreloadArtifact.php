@@ -174,7 +174,7 @@ final class WorkspacePreloadArtifact {
 			$input['full'] = $repository['full'];
 		}
 
-		$callback = $this->clone_callback ?: array( WorkspaceAbilities::class, 'cloneRepo' );
+		$callback = $this->clone_callback ? $this->clone_callback : array( WorkspaceAbilities::class, 'cloneRepo' );
 		$result   = call_user_func( $callback, $input );
 
 		if ( is_wp_error( $result ) && 'repo_exists' === $result->get_error_code() ) {

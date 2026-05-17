@@ -76,11 +76,11 @@ class WorktreeContextInjector {
 	/**
 	 * Lifecycle states stored on worktree metadata records.
 	 */
-	public const STATE_ACTIVE = 'active';
-	public const STATE_PR_OPENED = 'pr_opened';
-	public const STATE_MERGED = 'merged';
-	public const STATE_CLOSED = 'closed';
-	public const STATE_ABANDONED = 'abandoned';
+	public const STATE_ACTIVE           = 'active';
+	public const STATE_PR_OPENED        = 'pr_opened';
+	public const STATE_MERGED           = 'merged';
+	public const STATE_CLOSED           = 'closed';
+	public const STATE_ABANDONED        = 'abandoned';
 	public const STATE_CLEANUP_ELIGIBLE = 'cleanup_eligible';
 
 	/**
@@ -102,9 +102,9 @@ class WorktreeContextInjector {
 	 * from {@see self::VALID_STATES} so a worktree can be in `active` lifecycle
 	 * but `stale` liveness when its session heartbeat has lapsed.
 	 */
-	public const LIVENESS_LIVE = 'live';
+	public const LIVENESS_LIVE    = 'live';
 	public const LIVENESS_STOPPED = 'stopped';
-	public const LIVENESS_STALE = 'stale';
+	public const LIVENESS_STALE   = 'stale';
 	public const LIVENESS_UNKNOWN = 'unknown';
 
 	/**
@@ -360,9 +360,9 @@ class WorktreeContextInjector {
 
 			$keys = self::extract_task_keys( $row, $metadata );
 			foreach ( $keys as $kind => $key ) {
-				$bucket_key                       = $kind . '|' . $key;
-				$buckets[ $bucket_key ]['kind']   = $kind;
-				$buckets[ $bucket_key ]['key']    = $key;
+				$bucket_key                          = $kind . '|' . $key;
+				$buckets[ $bucket_key ]['kind']      = $kind;
+				$buckets[ $bucket_key ]['key']       = $key;
 				$buckets[ $bucket_key ]['handles'][] = $handle;
 			}
 		}
@@ -660,7 +660,7 @@ class WorktreeContextInjector {
 	private static function extract_task_keys( array $row, array $metadata ): array {
 		$keys = array();
 
-		$task = is_array( $metadata['origin_task'] ?? null ) ? $metadata['origin_task'] : array();
+		$task     = is_array( $metadata['origin_task'] ?? null ) ? $metadata['origin_task'] : array();
 		$task_url = trim( (string) ( $task['task_url'] ?? '' ) );
 		if ( '' !== $task_url ) {
 			$keys['task_url'] = strtolower( $task_url );
@@ -1074,7 +1074,7 @@ class WorktreeContextInjector {
 			return self::project_site_agents_md_via_opencode_config( $worktree_path, $source );
 		}
 
-		$marker = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_MARKER_PATH;
+		$marker     = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_MARKER_PATH;
 		$marker_dir = dirname( $marker );
 		if ( ! is_dir( $marker_dir ) ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir
@@ -1118,13 +1118,14 @@ class WorktreeContextInjector {
 	 * @return string[]|\WP_Error Absolute written paths, or WP_Error on failure.
 	 */
 	private static function project_site_agents_md_via_opencode_config( string $worktree_path, string $source ): array|\WP_Error {
-		$config = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_OPENCODE_CONFIG_PATH;
-		$marker = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_OPENCODE_CONFIG_MARKER_PATH;
+		$config  = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_OPENCODE_CONFIG_PATH;
+		$marker  = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_OPENCODE_CONFIG_MARKER_PATH;
 		$written = array();
 
 		$config_exists = is_file( $config );
-		$previous = $config_exists ? (string) file_get_contents( $config ) : '';
-		$data = array(
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Path is a marker file within a controlled worktree.
+		$previous      = $config_exists ? (string) file_get_contents( $config ) : '';
+		$data          = array(
 			'$schema'      => 'https://opencode.ai/config.json',
 			'instructions' => array(),
 		);
@@ -1200,10 +1201,11 @@ class WorktreeContextInjector {
 	 * @return array{success: bool, removed: string[]}
 	 */
 	public static function uninject( string $worktree_path ): array {
-		$removed = array();
-		$projected_agents = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_PATH;
+		$removed           = array();
+		$projected_agents  = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_PATH;
 		$projection_marker = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_MARKER_PATH;
-		$marked_source = is_file( $projection_marker ) ? trim( (string) file_get_contents( $projection_marker ) ) : '';
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Path is a marker file within a controlled worktree.
+		$marked_source     = is_file( $projection_marker ) ? trim( (string) file_get_contents( $projection_marker ) ) : '';
 		if (
 			is_link( $projected_agents ) &&
 			'' !== $marked_source &&
@@ -1222,6 +1224,7 @@ class WorktreeContextInjector {
 		$opencode_config = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_OPENCODE_CONFIG_PATH;
 		$opencode_marker = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_OPENCODE_CONFIG_MARKER_PATH;
 		if ( is_file( $opencode_marker ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Path is a marker file within a controlled worktree.
 			$marker = json_decode( (string) file_get_contents( $opencode_marker ), true );
 			if ( is_array( $marker ) && ! empty( $marker['existed'] ) ) {
 				// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
@@ -1269,7 +1272,7 @@ class WorktreeContextInjector {
 			$all = array();
 		}
 
-		$existing       = isset( $all[ $handle ] ) && is_array( $all[ $handle ] ) ? $all[ $handle ] : array();
+		$existing = isset( $all[ $handle ] ) && is_array( $all[ $handle ] ) ? $all[ $handle ] : array();
 		if ( empty( $existing ) ) {
 			$existing = self::get_inventory_metadata( $handle ) ?? array();
 		}
@@ -1408,7 +1411,7 @@ class WorktreeContextInjector {
 			return null;
 		}
 
-		$session = array(
+		$session               = array(
 			'primary_id' => null,
 			'ids'        => $ids,
 		);

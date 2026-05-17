@@ -25,7 +25,7 @@ trait WorkspaceMetadataReconciliation {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_reconcile_metadata( array $opts = array() ): array|\WP_Error {
-		$started_at = microtime( true );
+		$started_at   = microtime( true );
 		$dry_run      = ! empty( $opts['dry_run'] );
 		$apply        = ! empty( $opts['apply'] );
 		$via_jobs     = ! empty( $opts['via_jobs'] );
@@ -80,7 +80,7 @@ trait WorkspaceMetadataReconciliation {
 			return $listing;
 		}
 
-		$all_worktrees = array_values( array_filter(
+		$all_worktrees   = array_values( array_filter(
 			(array) ( $listing['worktrees'] ?? array() ),
 			fn( $wt ) => empty( $wt['is_primary'] )
 		) );
@@ -101,14 +101,14 @@ trait WorkspaceMetadataReconciliation {
 				break;
 			}
 			$row_started = microtime( true );
-			$proposal = $this->build_worktree_metadata_reconciliation_row( $wt, $github_cache, $fetched );
-			$elapsed_ms = (int) round( ( microtime( true ) - $row_started ) * 1000 );
+			$proposal    = $this->build_worktree_metadata_reconciliation_row( $wt, $github_cache, $fetched );
+			$elapsed_ms  = (int) round( ( microtime( true ) - $row_started ) * 1000 );
 			if ( isset( $proposal['proposal'] ) ) {
 				$proposal['proposal']['elapsed_ms'] = $elapsed_ms;
-				$proposals[] = $proposal['proposal'];
+				$proposals[]                        = $proposal['proposal'];
 			} elseif ( isset( $proposal['skip'] ) ) {
 				$proposal['skip']['elapsed_ms'] = $elapsed_ms;
-				$skipped[] = $proposal['skip'];
+				$skipped[]                      = $proposal['skip'];
 			}
 		}
 
@@ -122,23 +122,23 @@ trait WorkspaceMetadataReconciliation {
 		}
 
 		$plan = array(
-			'success'        => true,
-			'dry_run'        => $dry_run,
-			'applied'        => false,
-			'generated_at'   => gmdate( 'c' ),
-			'workspace_path' => $this->workspace_path,
-			'proposals'      => $proposals,
-			'written'        => array(),
-			'skipped'        => $skipped,
-			'still_unsafe'      => $classified_skips['still_unsafe'],
+			'success'            => true,
+			'dry_run'            => $dry_run,
+			'applied'            => false,
+			'generated_at'       => gmdate( 'c' ),
+			'workspace_path'     => $this->workspace_path,
+			'proposals'          => $proposals,
+			'written'            => array(),
+			'skipped'            => $skipped,
+			'still_unsafe'       => $classified_skips['still_unsafe'],
 			'external_worktrees' => $classified_skips['external_worktrees'],
-			'summary'        => $this->build_worktree_metadata_reconciliation_summary( $paged ? count( $page_worktrees ) : count( (array) ( $listing['worktrees'] ?? array() ) ), $proposals, array(), $skipped ),
+			'summary'            => $this->build_worktree_metadata_reconciliation_summary( $paged ? count( $page_worktrees ) : count( (array) ( $listing['worktrees'] ?? array() ) ), $proposals, array(), $skipped ),
 		);
 		if ( null !== $pagination ) {
 			$plan['pagination'] = $pagination;
 			$plan['evidence']   = array(
-				'scope'  => 'paginated metadata reconciliation dry-run',
-				'note'   => 'Only this page ran per-worktree dirty, unpushed, merge-signal, and GitHub probes. Run the next_offset page until complete for full inventory review.',
+				'scope'                     => 'paginated metadata reconciliation dry-run',
+				'note'                      => 'Only this page ran per-worktree dirty, unpushed, merge-signal, and GitHub probes. Run the next_offset page until complete for full inventory review.',
 				'fields_skipped_by_listing' => (array) ( $listing['fields_skipped'] ?? array() ),
 			);
 			if ( null !== $budget_context ) {
@@ -240,20 +240,20 @@ trait WorkspaceMetadataReconciliation {
 		}
 
 		return array(
-			'success'        => true,
-			'dry_run'        => false,
-			'applied'        => true,
-			'direct_apply'   => true,
-			'generated_at'   => gmdate( 'c' ),
-			'workspace_path' => $this->workspace_path,
-			'proposals'      => $proposals,
-			'written'        => $written,
-			'skipped'        => $skipped,
-			'still_unsafe'      => $classified_skips['still_unsafe'],
+			'success'            => true,
+			'dry_run'            => false,
+			'applied'            => true,
+			'direct_apply'       => true,
+			'generated_at'       => gmdate( 'c' ),
+			'workspace_path'     => $this->workspace_path,
+			'proposals'          => $proposals,
+			'written'            => $written,
+			'skipped'            => $skipped,
+			'still_unsafe'       => $classified_skips['still_unsafe'],
 			'external_worktrees' => $classified_skips['external_worktrees'],
-			'summary'        => $this->build_worktree_metadata_reconciliation_summary( $scanned, $proposals, $written, $skipped ),
-			'pagination'     => $pagination,
-			'evidence'       => array_filter(
+			'summary'            => $this->build_worktree_metadata_reconciliation_summary( $scanned, $proposals, $written, $skipped ),
+			'pagination'         => $pagination,
+			'evidence'           => array_filter(
 				array(
 					'scope'                   => 'time-budgeted metadata reconciliation direct apply',
 					'apply_source'            => 'direct_apply',
@@ -300,15 +300,15 @@ trait WorkspaceMetadataReconciliation {
 
 		if ( array() === $items ) {
 			return array(
-				'success'        => true,
-				'dry_run'        => false,
-				'applied'        => false,
-				'job_backed'     => true,
-				'generated_at'   => gmdate( 'c' ),
-				'workspace_path' => $this->workspace_path,
-				'proposals'      => array(),
-				'written'        => array(),
-				'skipped'        => array(),
+				'success'            => true,
+				'dry_run'            => false,
+				'applied'            => false,
+				'job_backed'         => true,
+				'generated_at'       => gmdate( 'c' ),
+				'workspace_path'     => $this->workspace_path,
+				'proposals'          => array(),
+				'written'            => array(),
+				'skipped'            => array(),
 				'still_unsafe'       => array(),
 				'external_worktrees' => array(),
 				'summary'            => array(
@@ -319,8 +319,8 @@ trait WorkspaceMetadataReconciliation {
 					'scheduled_jobs' => 0,
 					'limit'          => $limit,
 				),
-				'pagination'     => $pagination,
-				'evidence'       => array(
+				'pagination'         => $pagination,
+				'evidence'           => array(
 					'elapsed_ms' => (int) round( ( microtime( true ) - $started_at ) * 1000 ),
 					'note'       => 'No metadata reconciliation pages eligible for scheduling.',
 					'source'     => $source,
@@ -339,15 +339,15 @@ trait WorkspaceMetadataReconciliation {
 		}
 
 		return array(
-			'success'        => true,
-			'dry_run'        => false,
-			'applied'        => false,
-			'job_backed'     => true,
-			'generated_at'   => gmdate( 'c' ),
-			'workspace_path' => $this->workspace_path,
-			'proposals'      => array_values( (array) ( $first_page['proposals'] ?? array() ) ),
-			'written'        => array(),
-			'skipped'        => array(),
+			'success'            => true,
+			'dry_run'            => false,
+			'applied'            => false,
+			'job_backed'         => true,
+			'generated_at'       => gmdate( 'c' ),
+			'workspace_path'     => $this->workspace_path,
+			'proposals'          => array_values( (array) ( $first_page['proposals'] ?? array() ) ),
+			'written'            => array(),
+			'skipped'            => array(),
 			'still_unsafe'       => array_values( (array) ( $first_page['still_unsafe'] ?? array() ) ),
 			'external_worktrees' => array_values( (array) ( $first_page['external_worktrees'] ?? array() ) ),
 			'summary'            => array_merge(
@@ -358,8 +358,8 @@ trait WorkspaceMetadataReconciliation {
 					'limit'          => $limit,
 				)
 			),
-			'pagination'     => $pagination,
-			'evidence'       => array(
+			'pagination'         => $pagination,
+			'evidence'           => array(
 				'elapsed_ms'     => (int) round( ( microtime( true ) - $started_at ) * 1000 ),
 				'scope'          => 'job-backed metadata reconciliation apply',
 				'page_offsets'   => array_column( $items, 'offset' ),
@@ -534,7 +534,7 @@ trait WorkspaceMetadataReconciliation {
 				);
 			}
 		}
-		$dirty   = (int) $dirty;
+		$dirty    = (int) $dirty;
 		$unpushed = $this->count_unpushed_commits( $path );
 		if ( is_wp_error( $unpushed ) ) {
 			return array(
@@ -828,7 +828,7 @@ trait WorkspaceMetadataReconciliation {
 		if ( array_key_exists( $cache_key, $github_cache ) ) {
 			$pr = $github_cache[ $cache_key ];
 		} else {
-			$pr = $this->fetch_github_pull_request( $pr_repo, $pr_number );
+			$pr                         = $this->fetch_github_pull_request( $pr_repo, $pr_number );
 			$github_cache[ $cache_key ] = $pr;
 		}
 
@@ -895,8 +895,8 @@ trait WorkspaceMetadataReconciliation {
 		if ( null === $value || '' === (string) $value ) {
 			return;
 		}
-		$metadata[ $field ]    = $value;
-		$source_map[ $field ]  = $source;
+		$metadata[ $field ]   = $value;
+		$source_map[ $field ] = $source;
 	}
 
 	/**
@@ -971,8 +971,8 @@ trait WorkspaceMetadataReconciliation {
 			$metadata['lifecycle_state'] = $state;
 
 			if ( WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE === $state ) {
-				$path     = (string) ( $current['path'] ?? '' );
-				$dirty    = ! empty( $plan['direct_apply'] ) ? $this->probe_worktree_dirty_count( $path, self::CLEANUP_GIT_PROBE_TIMEOUT ) : (int) ( $current['dirty'] ?? 0 );
+				$path  = (string) ( $current['path'] ?? '' );
+				$dirty = ! empty( $plan['direct_apply'] ) ? $this->probe_worktree_dirty_count( $path, self::CLEANUP_GIT_PROBE_TIMEOUT ) : (int) ( $current['dirty'] ?? 0 );
 				if ( is_wp_error( $dirty ) ) {
 					$skipped[] = $this->build_reconcile_apply_skip( $row, $current, 'probe_timeout', 'dirty-state probe failed - refusing cleanup_eligible metadata write: ' . $dirty->get_error_message() );
 					continue;
@@ -1008,18 +1008,18 @@ trait WorkspaceMetadataReconciliation {
 
 		$inspected = isset( $plan['summary']['inspected'] ) ? (int) $plan['summary']['inspected'] : count( (array) ( $listing['worktrees'] ?? array() ) );
 		$result    = array(
-			'success'        => true,
-			'dry_run'        => false,
-			'applied'        => true,
-			'direct_apply'   => ! empty( $plan['direct_apply'] ),
-			'generated_at'   => gmdate( 'c' ),
-			'workspace_path' => $this->workspace_path,
-			'proposals'      => $planned,
-			'written'        => $written,
-			'skipped'        => $skipped,
-			'still_unsafe'      => $classified_skips['still_unsafe'],
+			'success'            => true,
+			'dry_run'            => false,
+			'applied'            => true,
+			'direct_apply'       => ! empty( $plan['direct_apply'] ),
+			'generated_at'       => gmdate( 'c' ),
+			'workspace_path'     => $this->workspace_path,
+			'proposals'          => $planned,
+			'written'            => $written,
+			'skipped'            => $skipped,
+			'still_unsafe'       => $classified_skips['still_unsafe'],
 			'external_worktrees' => $classified_skips['external_worktrees'],
-			'summary'        => $this->build_worktree_metadata_reconciliation_summary( $inspected, $planned, $written, $skipped ),
+			'summary'            => $this->build_worktree_metadata_reconciliation_summary( $inspected, $planned, $written, $skipped ),
 		);
 
 		if ( isset( $plan['pagination'] ) && is_array( $plan['pagination'] ) ) {
@@ -1059,7 +1059,7 @@ trait WorkspaceMetadataReconciliation {
 		}
 
 		return array(
-			'still_unsafe'      => $still_unsafe,
+			'still_unsafe'       => $still_unsafe,
 			'external_worktrees' => $external_worktrees,
 		);
 	}
@@ -1210,5 +1210,4 @@ trait WorkspaceMetadataReconciliation {
 			array_slice( $timed, 0, 10 )
 		);
 	}
-
 }

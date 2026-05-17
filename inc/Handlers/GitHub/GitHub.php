@@ -394,7 +394,7 @@ class GitHub extends FetchHandler {
 			return array();
 		}
 
-		$payload = $json_files[ $json_file ];
+		$payload       = $json_files[ $json_file ];
 		$items_payload = $this->selectArtifactItems( $payload, (string) ( $config['items_path'] ?? '' ) );
 		if ( empty( $items_payload ) ) {
 			$context->log( 'info', sprintf( 'GitHub: Artifact JSON file %s contained no items.', $json_file ) );
@@ -414,7 +414,7 @@ class GitHub extends FetchHandler {
 				$head_sha,
 				$artifact_name,
 				$json_file,
-				hash( 'sha256', wp_json_encode( $item, JSON_UNESCAPED_SLASHES ) ?: (string) $index )
+				hash( 'sha256', wp_json_encode( $item, JSON_UNESCAPED_SLASHES ) ?: (string) $index ) // phpcs:ignore Universal.Operators.DisallowShortTernary.Found -- Avoids double-encoding side effect.
 			);
 
 			$title = (string) ( $item['title'] ?? $item['selector'] ?? $item['kind'] ?? '' );
@@ -426,18 +426,18 @@ class GitHub extends FetchHandler {
 				'title'    => $title,
 				'content'  => wp_json_encode( $item, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ),
 				'metadata' => array(
-					'source_type'      => 'github_actions_artifact',
-					'item_identifier'  => $item_identifier,
-					'original_id'      => $item_identifier,
-					'dedup_key'        => $item_identifier,
-					'original_title'   => $title,
-					'github_repo'      => $repo,
-					'github_type'      => 'actions_artifact_items',
-					'github_head_sha'  => $head_sha,
-					'artifact_name'    => $artifact_name,
-					'artifact_json_file' => $json_file,
+					'source_type'         => 'github_actions_artifact',
+					'item_identifier'     => $item_identifier,
+					'original_id'         => $item_identifier,
+					'dedup_key'           => $item_identifier,
+					'original_title'      => $title,
+					'github_repo'         => $repo,
+					'github_type'         => 'actions_artifact_items',
+					'github_head_sha'     => $head_sha,
+					'artifact_name'       => $artifact_name,
+					'artifact_json_file'  => $json_file,
 					'artifact_item_index' => (int) $index,
-					'artifact_item'    => $item,
+					'artifact_item'       => $item,
 				),
 			);
 		}
@@ -579,7 +579,7 @@ class GitHub extends FetchHandler {
 				$context->log( 'debug', sprintf( 'GitHub: Skipped %s — no file content returned.', $file['path'] ) );
 				continue;
 			}
-			$guid      = sprintf( 'github_%s_files_%s', $repo, $file['sha'] );
+			$guid = sprintf( 'github_%s_files_%s', $repo, $file['sha'] );
 
 			$eligible_items[] = array(
 				'title'    => $file_data['path'],
@@ -619,10 +619,10 @@ class GitHub extends FetchHandler {
 	 * @return array DataPacket-compatible array or empty on no data.
 	 */
 	private function fetchIssuesOrPulls( array $config, ExecutionContext $context, string $repo, string $data_source ): array {
-		$state         = $config['state'] ?? 'open';
-		$labels        = $config['labels'] ?? '';
-		$issue_number  = (int) ( $config['issue_number'] ?? 0 );
-		$pull_number   = (int) ( $config['pull_number'] ?? 0 );
+		$state        = $config['state'] ?? 'open';
+		$labels       = $config['labels'] ?? '';
+		$issue_number = (int) ( $config['issue_number'] ?? 0 );
+		$pull_number  = (int) ( $config['pull_number'] ?? 0 );
 
 		// Targeted single-item fetch by issue_number / pull_number.
 		if ( $issue_number > 0 || $pull_number > 0 ) {
@@ -659,11 +659,11 @@ class GitHub extends FetchHandler {
 
 		$context->log( 'info', sprintf( 'GitHub: Found %d %s.', count( $items ), $data_source ) );
 
-		$search              = $config['search'] ?? '';
-		$exclude_keywords    = $config['exclude_keywords'] ?? '';
-		$exclude_labels_raw  = $config['exclude_labels'] ?? '';
-		$timeframe_limit     = $config['timeframe_limit'] ?? 'all_time';
-		$eligible_items      = array();
+		$search             = $config['search'] ?? '';
+		$exclude_keywords   = $config['exclude_keywords'] ?? '';
+		$exclude_labels_raw = $config['exclude_labels'] ?? '';
+		$timeframe_limit    = $config['timeframe_limit'] ?? 'all_time';
+		$eligible_items     = array();
 
 		$exclude_labels = array();
 		if ( ! empty( $exclude_labels_raw ) ) {
@@ -691,7 +691,7 @@ class GitHub extends FetchHandler {
 					static fn( $label ) => strtolower( (string) $label ),
 					(array) $item['labels']
 				);
-				$hit = array_values( array_intersect( $item_labels_lower, $exclude_labels ) );
+				$hit               = array_values( array_intersect( $item_labels_lower, $exclude_labels ) );
 				if ( ! empty( $hit ) ) {
 					$context->log( 'debug', sprintf(
 						'GitHub: skipping #%d — excluded by label(s): %s',
@@ -802,8 +802,8 @@ class GitHub extends FetchHandler {
 			$context->log( 'info', 'GitHub: targeted fetch ignores list filters: ' . implode( ', ', $ignored_fields ) );
 		}
 
-		$number          = $issue_number > 0 ? $issue_number : $pull_number;
-		$expected_state  = $config['state'] ?? 'open';
+		$number         = $issue_number > 0 ? $issue_number : $pull_number;
+		$expected_state = $config['state'] ?? 'open';
 
 		if ( 'pulls' === $data_source ) {
 			$result = GitHubAbilities::getPull( array(

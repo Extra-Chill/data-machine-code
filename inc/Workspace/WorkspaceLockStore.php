@@ -66,7 +66,10 @@ final class WorkspaceLockStore {
 			return new \WP_Error(
 				'workspace_lock_db_insert_failed',
 				'Failed to record workspace lock ownership in the database.',
-				array( 'status' => 500, 'wpdb_error' => (string) $wpdb->last_error )
+				array(
+					'status'     => 500,
+					'wpdb_error' => (string) $wpdb->last_error,
+				)
 			);
 		}
 
@@ -128,6 +131,7 @@ final class WorkspaceLockStore {
 		$table = self::table_name();
 		$now   = gmdate( 'Y-m-d H:i:s' );
 
+		// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from $wpdb->prefix, not user input.
 		return array(
 			'available' => true,
 			'table'     => $table,
@@ -136,6 +140,7 @@ final class WorkspaceLockStore {
 			'released'  => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE status = %s", 'released' ) ),
 			'total'     => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" ),
 		);
+		// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 	}
 
 	/**
@@ -147,31 +152,33 @@ final class WorkspaceLockStore {
 		$status = self::status();
 		if ( empty( $status['available'] ) ) {
 			return array(
-				'available'          => false,
+				'available'           => false,
 				'active_marked_stale' => 0,
-				'released_deleted'   => 0,
-				'before'             => $status,
-				'after'              => $status,
+				'released_deleted'    => 0,
+				'before'              => $status,
+				'after'               => $status,
 			);
 		}
 
 		global $wpdb;
-		$table          = self::table_name();
-		$now            = gmdate( 'Y-m-d H:i:s' );
+		$table           = self::table_name();
+		$now             = gmdate( 'Y-m-d H:i:s' );
 		$released_cutoff = gmdate( 'Y-m-d H:i:s', time() - self::released_ttl_seconds() );
 
+		// phpcs:disable WordPress.DB.PreparedSQL -- Table name from $wpdb->prefix, not user input.
 		$wpdb->query( $wpdb->prepare( "UPDATE {$table} SET status = %s WHERE status = %s AND expires_at < %s", 'stale', 'active', $now ) );
 		$marked = (int) $wpdb->rows_affected;
 
 		$wpdb->query( $wpdb->prepare( "DELETE FROM {$table} WHERE status IN (%s, %s) AND COALESCE(released_at, expires_at) < %s", 'released', 'stale', $released_cutoff ) );
+		// phpcs:enable WordPress.DB.PreparedSQL
 		$deleted = (int) $wpdb->rows_affected;
 
 		return array(
-			'available'          => true,
+			'available'           => true,
 			'active_marked_stale' => $marked,
-			'released_deleted'   => $deleted,
-			'before'             => $status,
-			'after'              => self::status(),
+			'released_deleted'    => $deleted,
+			'before'              => $status,
+			'after'               => self::status(),
 		);
 	}
 

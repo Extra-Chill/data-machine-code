@@ -230,7 +230,7 @@ trait WorkspaceRepositoryLifecycle {
 		stream_set_blocking( $pipes[1], false );
 		stream_set_blocking( $pipes[2], false );
 
-		$output = '';
+		$output    = '';
 		$exit_code = null;
 		while ( true ) {
 			$chunk = (string) stream_get_contents( $pipes[1] ) . (string) stream_get_contents( $pipes[2] );
@@ -257,7 +257,7 @@ trait WorkspaceRepositoryLifecycle {
 		if ( null === $exit_code ) {
 			$exit_code = $close_code;
 		}
-		$output    = trim( str_replace( "\r", "\n", $output ) );
+		$output = trim( str_replace( "\r", "\n", $output ) );
 		if ( 0 !== $exit_code ) {
 			return new \WP_Error(
 				'clone_failed',
@@ -559,5 +559,4 @@ trait WorkspaceRepositoryLifecycle {
 			'dirty'       => (int) $status,
 		);
 	}
-
 }

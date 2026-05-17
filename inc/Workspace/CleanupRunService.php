@@ -18,7 +18,7 @@ class CleanupRunService {
 		private ?Workspace $workspace = null
 	) {
 		$this->repository ??= new CleanupRunRepository();
-		$this->workspace   ??= new Workspace();
+		$this->workspace  ??= new Workspace();
 	}
 
 	/**
@@ -55,9 +55,9 @@ class CleanupRunService {
 
 		$plan['run_id']          = $run_id;
 		$plan['cleanup_storage'] = array(
-			'type'        => 'database',
-			'item_count'  => $inserted,
-			'plan_id'     => $plan['plan_id'] ?? null,
+			'type'         => 'database',
+			'item_count'   => $inserted,
+			'plan_id'      => $plan['plan_id'] ?? null,
 			'escape_hatch' => 'filesystem apply-plan import remains available on lower-level worktree commands only',
 		);
 
@@ -77,7 +77,10 @@ class CleanupRunService {
 			return new \WP_Error( 'cleanup_run_not_found', sprintf( 'Cleanup run not found: %s', $run_id ), array( 'status' => 404 ) );
 		}
 
-		$this->repository->update_run( $run_id, array( 'status' => 'applying', 'started_at' => gmdate( 'Y-m-d H:i:s' ) ) );
+		$this->repository->update_run( $run_id, array(
+			'status'     => 'applying',
+			'started_at' => gmdate( 'Y-m-d H:i:s' ),
+		) );
 
 		$items         = $this->repository->get_items( $run_id );
 		$artifact_rows = $this->pending_rows_of_type( $items, 'artifact_cleanup' );
@@ -105,7 +108,11 @@ class CleanupRunService {
 			$this->record_apply_result( $worktree_rows, $results['worktree_removal'], 'removed' );
 		}
 
-		$this->repository->update_run( $run_id, array( 'status' => 'completed', 'completed_at' => gmdate( 'Y-m-d H:i:s' ), 'summary' => $this->status( $run_id )['summary'] ?? array() ) );
+		$this->repository->update_run( $run_id, array(
+			'status'       => 'completed',
+			'completed_at' => gmdate( 'Y-m-d H:i:s' ),
+			'summary'      => $this->status( $run_id )['summary'] ?? array(),
+		) );
 
 		return array(
 			'success' => true,
@@ -138,8 +145,8 @@ class CleanupRunService {
 			'pending_or_failed' => 0,
 		);
 		foreach ( $items as $item ) {
-			$status = (string) ( $item['status'] ?? 'unknown' );
-			$type   = (string) ( $item['item_type'] ?? 'unknown' );
+			$status                                = (string) ( $item['status'] ?? 'unknown' );
+			$type                                  = (string) ( $item['item_type'] ?? 'unknown' );
 			$summary['items_by_status'][ $status ] = ( $summary['items_by_status'][ $status ] ?? 0 ) + 1;
 			$summary['items_by_type'][ $type ]     = ( $summary['items_by_type'][ $type ] ?? 0 ) + 1;
 			$summary['bytes_reclaimed']           += max( 0, (int) ( $item['bytes_reclaimed'] ?? 0 ) );
@@ -190,7 +197,10 @@ class CleanupRunService {
 				$this->repository->update_item( (int) $item['id'], array( 'status' => 'cancelled' ) );
 			}
 		}
-		$this->repository->update_run( $run_id, array( 'status' => 'cancelled', 'completed_at' => gmdate( 'Y-m-d H:i:s' ) ) );
+		$this->repository->update_run( $run_id, array(
+			'status'       => 'cancelled',
+			'completed_at' => gmdate( 'Y-m-d H:i:s' ),
+		) );
 		return $this->status( $run_id );
 	}
 
@@ -227,13 +237,17 @@ class CleanupRunService {
 	}
 
 	private function pending_rows_of_type( array $items, string $type ): array {
-		return array_values( array_filter( $items, fn( $item ) => $type === (string) ( $item['item_type'] ?? '' ) && in_array( (string) ( $item['status'] ?? '' ), array( 'pending', 'failed' ), true ) ) );
+		return array_values( array_filter( $items, fn( $item ) => (string) ( $item['item_type'] ?? '' ) === $type && in_array( (string) ( $item['status'] ?? '' ), array( 'pending', 'failed' ), true ) ) );
 	}
 
 	private function record_apply_result( array $items, mixed $result, string $applied_key ): void {
 		if ( $result instanceof \WP_Error ) {
 			foreach ( $items as $item ) {
-				$this->repository->update_item( (int) $item['id'], array( 'status' => 'failed', 'reason_code' => $result->get_error_code(), 'reason' => $result->get_error_message() ) );
+				$this->repository->update_item( (int) $item['id'], array(
+					'status'      => 'failed',
+					'reason_code' => $result->get_error_code(),
+					'reason'      => $result->get_error_message(),
+				) );
 			}
 			return;
 		}

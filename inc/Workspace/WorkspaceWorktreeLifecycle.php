@@ -469,7 +469,7 @@ trait WorkspaceWorktreeLifecycle {
 				continue;
 			}
 
-			if ( $branch !== (string) ( $wt['branch'] ?? '' ) ) {
+			if ( (string) ( $wt['branch'] ?? '' ) !== $branch ) {
 				continue;
 			}
 
@@ -820,18 +820,18 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		}
 
-		$duplicates             = WorktreeContextInjector::find_duplicate_task_ownership( $worktrees );
-		$base_branch_worktrees  = array_values( array_filter( array_map(
+		$duplicates            = WorktreeContextInjector::find_duplicate_task_ownership( $worktrees );
+		$base_branch_worktrees = array_values( array_filter( array_map(
 			fn( $row ) => $row['base_branch_warning'] ?? null,
 			$worktrees
 		) ) );
 
 		return array(
-			'success'                   => true,
-			'worktrees'                 => $worktrees,
-			'duplicates'                => $duplicates,
-			'base_branch_worktrees'     => $base_branch_worktrees,
-			'fields_skipped'            => $skipped_groups,
+			'success'               => true,
+			'worktrees'             => $worktrees,
+			'duplicates'            => $duplicates,
+			'base_branch_worktrees' => $base_branch_worktrees,
+			'fields_skipped'        => $skipped_groups,
 		);
 	}
 
@@ -856,12 +856,12 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		return array(
-			'handle'       => (string) ( $row['handle'] ?? '' ),
-			'repo'         => (string) ( $row['repo'] ?? '' ),
-			'branch'       => $branch,
-			'path'         => (string) ( $row['path'] ?? '' ),
-			'reason_code'  => 'base_branch_checked_out_in_worktree',
-			'message'      => sprintf( 'Worktree %s has base branch %s checked out; gh pr merge --delete-branch may merge remotely but fail local cleanup.', (string) ( $row['handle'] ?? '' ), $branch ),
+			'handle'      => (string) ( $row['handle'] ?? '' ),
+			'repo'        => (string) ( $row['repo'] ?? '' ),
+			'branch'      => $branch,
+			'path'        => (string) ( $row['path'] ?? '' ),
+			'reason_code' => 'base_branch_checked_out_in_worktree',
+			'message'     => sprintf( 'Worktree %s has base branch %s checked out; gh pr merge --delete-branch may merge remotely but fail local cleanup.', (string) ( $row['handle'] ?? '' ), $branch ),
 		);
 	}
 
@@ -1082,8 +1082,8 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		return array(
-			'success' => true,
-			'pruned'  => $pruned,
+			'success'   => true,
+			'pruned'    => $pruned,
 			'inventory' => $refresh,
 		);
 	}
@@ -1248,7 +1248,8 @@ trait WorkspaceWorktreeLifecycle {
 
 		$gitdir = null;
 		if ( is_file( $git_pointer ) ) {
-			$pointer = @file_get_contents( $git_pointer );
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reading .git pointer file in a controlled worktree.
+			$pointer = @file_get_contents( $git_pointer ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 			if ( false === $pointer ) {
 				return null;
 			}
@@ -1273,7 +1274,8 @@ trait WorkspaceWorktreeLifecycle {
 			return null;
 		}
 
-		$head = @file_get_contents( $head_file );
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reading .git HEAD file in a controlled worktree.
+		$head = @file_get_contents( $head_file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 		if ( false === $head ) {
 			return null;
 		}
@@ -1309,5 +1311,4 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		return ( '' === $out['path'] ) ? null : $out;
 	}
-
 }
