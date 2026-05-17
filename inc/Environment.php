@@ -4,10 +4,10 @@
  *
  * Public signal that a co-located coding agent runtime exists on this host.
  *
- * Data Machine Code is the bridge between WordPress and an external coding
- * agent runtime (Claude Code, OpenCode, kimaki, etc.). Its mere activation
- * is the declarative answer to "is there a coding agent here?" — there is
- * no separate marker file or constant to declare.
+ * Data Machine Code is the bridge between WordPress and an external
+ * coding-agent runtime. Its mere activation is the declarative answer to
+ * "is there a coding agent here?" — there is no separate marker file or
+ * constant to declare.
  *
  * Other plugins that ship disk-side artifacts for a coding agent (e.g.
  * Intelligence's SKILL.md sync, MEMORY.md disk writes, MCP bridges) should

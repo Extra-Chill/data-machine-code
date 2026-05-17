@@ -1544,14 +1544,17 @@ class WorkspaceAbilities {
 										),
 										'session'         => array(
 											'type'        => 'object',
-											'description' => 'Captured session identifiers (kimaki/opencode). Fields default to null when the corresponding env was not present at worktree creation.',
+											'description' => 'Captured session identifiers in a runtime-agnostic envelope. `primary_id` is the single renderer-friendly identifier downstream surfaces display. `ids` is a free-form map keyed by runtime ID (a string the integration layer chooses, e.g. via the `datamachine_code_worktree_runtime_signatures` filter); each entry is a string-map of subkeys (e.g. session_id, thread_id, thread_url, run_id) the integration chose to capture. DMC enumerates no runtime IDs and no subkeys.',
 											'properties'  => array(
-												'primary_id'         => array( 'type' => array( 'string', 'null' ) ),
-												'kimaki_session_id'  => array( 'type' => array( 'string', 'null' ) ),
-												'kimaki_thread_id'   => array( 'type' => array( 'string', 'null' ) ),
-												'kimaki_thread_url'  => array( 'type' => array( 'string', 'null' ) ),
-												'opencode_session_id' => array( 'type' => array( 'string', 'null' ) ),
-												'opencode_run_id'    => array( 'type' => array( 'string', 'null' ) ),
+												'primary_id' => array( 'type' => array( 'string', 'null' ) ),
+												'ids'        => array(
+													'type'                 => 'object',
+													'description'          => 'Map of runtime-id => { subkey => string|null }. Keys are opaque; DMC does not validate against a closed set.',
+													'additionalProperties' => array(
+														'type'                 => 'object',
+														'additionalProperties' => array( 'type' => array( 'string', 'null' ) ),
+													),
+												),
 											),
 										),
 										'task'            => array(

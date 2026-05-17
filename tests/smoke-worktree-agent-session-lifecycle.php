@@ -88,6 +88,10 @@ namespace {
 
 	if ( ! function_exists( 'apply_filters' ) ) {
 		function apply_filters( string $hook_name, $value, ...$args ) {
+			global $datamachine_code_test_filters;
+			if ( isset( $datamachine_code_test_filters[ $hook_name ] ) && is_callable( $datamachine_code_test_filters[ $hook_name ] ) ) {
+				return $datamachine_code_test_filters[ $hook_name ]( $value, ...$args );
+			}
 			return $value;
 		}
 	}
@@ -144,16 +148,32 @@ namespace {
 
 	echo "=== smoke-worktree-agent-session-lifecycle ===\n";
 
-	// Reset option state for this run.
+	// Reset option + filter state for this run.
 	$GLOBALS['datamachine_code_test_options'] = array();
+	$GLOBALS['datamachine_code_test_filters'] = array();
+
+	// Register two synthetic test runtimes via the public filter contract.
+	// DMC has zero knowledge of these IDs or env-var names — the integration
+	// layer (here, the test) owns both.
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_worktree_runtime_signatures'] = function ( array $signatures ): array {
+		$signatures['alpha-runtime'] = array(
+			'session_id' => 'DMC_SMOKE_ALPHA_SESSION_ID',
+			'thread_id'  => 'DMC_SMOKE_ALPHA_THREAD_ID',
+			'thread_url' => 'DMC_SMOKE_ALPHA_THREAD_URL',
+		);
+		$signatures['beta-runtime'] = array(
+			'session_id' => 'DMC_SMOKE_BETA_SESSION_ID',
+			'run_id'     => 'DMC_SMOKE_BETA_RUN_ID',
+		);
+		return $signatures;
+	};
 
 	// --- 1) build_lifecycle_metadata captures env-driven session + task fields ---
-	putenv( 'OPENCODE_SESSION_ID=ses_smoke_42' );
-	putenv( 'OPENCODE_RUN_ID=run-smoke-1' );
-	putenv( 'KIMAKI_SESSION_ID=kim-ses-99' );
-	putenv( 'KIMAKI_THREAD_ID=thr_111' );
-	putenv( 'KIMAKI_CHANNEL_ID=chan_222' );
-	putenv( 'KIMAKI_THREAD_URL=https://discord.com/channels/1/2/3' );
+	putenv( 'DMC_SMOKE_BETA_SESSION_ID=ses_smoke_42' );
+	putenv( 'DMC_SMOKE_BETA_RUN_ID=run-smoke-1' );
+	putenv( 'DMC_SMOKE_ALPHA_SESSION_ID=alpha-ses-99' );
+	putenv( 'DMC_SMOKE_ALPHA_THREAD_ID=thr_111' );
+	putenv( 'DMC_SMOKE_ALPHA_THREAD_URL=https://example.test/threads/1/2/3' );
 	putenv( 'DATAMACHINE_TASK_URL=https://github.com/Extra-Chill/data-machine-code/issues/221' );
 	putenv( 'DATAMACHINE_TASK_REF=Extra-Chill/data-machine-code#221' );
 
@@ -171,12 +191,25 @@ namespace {
 	$assert( 'Intelligence', $built['origin_site'] ?? null, 'origin site name recorded' );
 	$assert( 'https://intelligence.example.test', $built['origin_site_url'] ?? null, 'origin site URL recorded' );
 	$assert( 'chris', $built['origin_user']['login'] ?? null, 'origin user login recorded' );
-	$assert( 'ses_smoke_42', $built['origin_session']['opencode_session_id'] ?? null, 'opencode session id captured' );
-	$assert( 'kim-ses-99', $built['origin_session']['kimaki_session_id'] ?? null, 'kimaki session id captured' );
-	$assert( 'chan_222', $built['origin_session']['kimaki_channel_id'] ?? null, 'kimaki channel id captured' );
-	$assert( 'https://discord.com/channels/1/2/3', $built['origin_session']['kimaki_thread_url'] ?? null, 'kimaki thread URL captured' );
+	$assert( 'ses_smoke_42', $built['origin_session']['ids']['beta-runtime']['session_id'] ?? null, 'beta runtime session id captured under ids envelope' );
+	$assert( 'run-smoke-1', $built['origin_session']['ids']['beta-runtime']['run_id'] ?? null, 'beta runtime run id captured under ids envelope' );
+	$assert( 'alpha-ses-99', $built['origin_session']['ids']['alpha-runtime']['session_id'] ?? null, 'alpha runtime session id captured under ids envelope' );
+	$assert( 'thr_111', $built['origin_session']['ids']['alpha-runtime']['thread_id'] ?? null, 'alpha runtime thread id captured under ids envelope' );
+	$assert( 'https://example.test/threads/1/2/3', $built['origin_session']['ids']['alpha-runtime']['thread_url'] ?? null, 'alpha runtime thread URL captured under ids envelope' );
+	$assert( 'alpha-ses-99', $built['origin_session']['primary_id'] ?? null, 'primary_id resolves to first registered runtime session_id' );
 	$assert( 'https://github.com/Extra-Chill/data-machine-code/issues/221', $built['origin_task']['task_url'] ?? null, 'task URL captured from env' );
 	$assert( 'Extra-Chill/data-machine-code#221', $built['origin_task']['task_ref'] ?? null, 'task ref captured from env' );
+
+	// URL-suffixed subkeys must look like http(s) URLs to be captured.
+	putenv( 'DMC_SMOKE_ALPHA_THREAD_URL=not-a-url' );
+	$built_bad_url = \DataMachineCode\Workspace\WorktreeContextInjector::build_lifecycle_metadata( array(
+		'handle' => 'demo@bad-url',
+		'path'   => '/tmp/demo@bad-url',
+		'repo'   => 'demo',
+		'branch' => 'bad/url',
+	) );
+	$assert( null, $built_bad_url['origin_session']['ids']['alpha-runtime']['thread_url'] ?? null, 'non-URL value for *_url subkey is dropped' );
+	putenv( 'DMC_SMOKE_ALPHA_THREAD_URL=https://example.test/threads/1/2/3' );
 
 	// Caller-supplied task_url/task_ref override env.
 	putenv( 'DATAMACHINE_TASK_URL=https://github.com/some/other/issues/9999' );
@@ -189,12 +222,11 @@ namespace {
 	$assert( 'EC/dmc#221', $built_explicit['origin_task']['task_ref'] ?? null, 'explicit task_ref wins over env' );
 
 	// Clear env so subsequent assertions get unknown-safe defaults.
-	putenv( 'OPENCODE_SESSION_ID' );
-	putenv( 'OPENCODE_RUN_ID' );
-	putenv( 'KIMAKI_SESSION_ID' );
-	putenv( 'KIMAKI_THREAD_ID' );
-	putenv( 'KIMAKI_CHANNEL_ID' );
-	putenv( 'KIMAKI_THREAD_URL' );
+	putenv( 'DMC_SMOKE_BETA_SESSION_ID' );
+	putenv( 'DMC_SMOKE_BETA_RUN_ID' );
+	putenv( 'DMC_SMOKE_ALPHA_SESSION_ID' );
+	putenv( 'DMC_SMOKE_ALPHA_THREAD_ID' );
+	putenv( 'DMC_SMOKE_ALPHA_THREAD_URL' );
 	putenv( 'DATAMACHINE_TASK_URL' );
 	putenv( 'DATAMACHINE_TASK_REF' );
 
@@ -289,11 +321,40 @@ namespace {
 
 	$session_unknown = \DataMachineCode\Workspace\WorktreeContextInjector::summarize_session( null );
 	$assert( null, $session_unknown['primary_id'], 'summarize_session primary_id null on missing metadata' );
-	$assert( null, $session_unknown['kimaki_session_id'], 'summarize_session kimaki id null on missing metadata' );
+	$assert( array(), $session_unknown['ids'], 'summarize_session ids is empty map on missing metadata' );
 
 	$session_filled = \DataMachineCode\Workspace\WorktreeContextInjector::summarize_session( $built );
-	$assert( 'kim-ses-99', $session_filled['primary_id'], 'summarize_session prefers kimaki session id as primary' );
-	$assert( 'ses_smoke_42', $session_filled['opencode_session_id'], 'summarize_session exposes opencode session id' );
+	$assert( 'alpha-ses-99', $session_filled['primary_id'], 'summarize_session primary_id follows registered runtime order' );
+	$assert( 'ses_smoke_42', $session_filled['ids']['beta-runtime']['session_id'] ?? null, 'summarize_session exposes beta runtime session id under ids envelope' );
+	$assert( 'alpha-ses-99', $session_filled['ids']['alpha-runtime']['session_id'] ?? null, 'summarize_session exposes alpha runtime session id under ids envelope' );
+
+	// --- 4b) Legacy-shape migration (pre-#416 stored rows). ---
+	// Stored rows that persisted vendor-specific top-level keys must normalize
+	// transparently into the generic envelope without losing data.
+	$legacy_metadata = array(
+		'origin_session' => array(
+			'alpha-runtime_session_id' => 'legacy-alpha-ses',
+			'alpha-runtime_thread_id'  => 'legacy-alpha-thr',
+			'beta-runtime_run_id'      => 'legacy-beta-run',
+		),
+	);
+	$legacy_view = \DataMachineCode\Workspace\WorktreeContextInjector::summarize_session( $legacy_metadata );
+	$assert( 'legacy-alpha-ses', $legacy_view['ids']['alpha-runtime']['session_id'] ?? null, 'legacy migration projects <runtime>_session_id into ids envelope' );
+	$assert( 'legacy-alpha-thr', $legacy_view['ids']['alpha-runtime']['thread_id'] ?? null, 'legacy migration projects <runtime>_thread_id into ids envelope' );
+	$assert( 'legacy-beta-run', $legacy_view['ids']['beta-runtime']['run_id'] ?? null, 'legacy migration projects <runtime>_run_id into ids envelope' );
+	$assert( 'legacy-alpha-ses', $legacy_view['primary_id'], 'legacy-migrated rows still resolve a primary_id via runtime precedence' );
+
+	// Mixed envelope: explicit primary_id wins over runtime-derived precedence.
+	$mixed_view = \DataMachineCode\Workspace\WorktreeContextInjector::summarize_session( array(
+		'origin_session' => array(
+			'primary_id' => 'explicit-primary',
+			'ids'        => array(
+				'alpha-runtime' => array( 'session_id' => 'alpha-ses' ),
+				'beta-runtime'  => array( 'session_id' => 'beta-ses' ),
+			),
+		),
+	) );
+	$assert( 'explicit-primary', $mixed_view['primary_id'], 'explicit primary_id on stored envelope overrides runtime scan' );
 
 	// --- 5) Duplicate task ownership detection ---
 	$rows = array(
