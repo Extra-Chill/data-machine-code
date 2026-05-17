@@ -25,6 +25,44 @@
  * (plugin removed, agent layer absent), injection and refresh become
  * graceful no-ops.
  *
+ * == Session-attribution layering ==
+ *
+ * Captured session identifiers live in a runtime-agnostic envelope:
+ *
+ *   array(
+ *       'primary_id' => '<opaque or null>',
+ *       'ids'        => array(
+ *           '<runtime-id>' => array(
+ *               'session_id' => '<opaque or null>',
+ *               'thread_id'  => '<opaque or null>',
+ *               'thread_url' => '<opaque or null>',
+ *               'run_id'     => '<opaque or null>',
+ *               // ...integration-defined subkeys
+ *           ),
+ *       ),
+ *   )
+ *
+ * DMC does NOT enumerate runtime IDs and does NOT hardcode any vendor-specific
+ * field names. Integration layers (e.g. wp-coding-agents) describe which env
+ * vars to sniff and how to project them into the envelope through the
+ * `datamachine_code_worktree_runtime_signatures` filter:
+ *
+ *   add_filter( 'datamachine_code_worktree_runtime_signatures', function ( array $signatures ): array {
+ *       $signatures['<runtime-id>'] = array(
+ *           'session_id' => '<ENV_VAR_NAME>',
+ *           'thread_id'  => '<ENV_VAR_NAME>',
+ *           'thread_url' => '<ENV_VAR_NAME>',
+ *           'run_id'     => '<ENV_VAR_NAME>',
+ *           // ...integration-defined subkey => env var
+ *       );
+ *       return $signatures;
+ *   } );
+ *
+ * `primary_id` resolution scans registered runtimes in registration order and
+ * picks the first non-empty `session_id`, falling back to the first non-empty
+ * value of any subkey within each runtime. The integration layer therefore
+ * controls precedence by registration order.
+ *
  * @package DataMachineCode\Workspace
  * @since 0.8.0
  */
@@ -397,32 +435,216 @@ class WorktreeContextInjector {
 	/**
 	 * Summarize the session side of persisted metadata for listing surfaces.
 	 *
-	 * Returns the recorded runtime IDs along with a single stable
-	 * `primary_id` field renderers can show in narrow tables.
+	 * Returns the runtime-agnostic envelope (`primary_id` + `ids`) described
+	 * in this file's header. `primary_id` resolution:
+	 *
+	 *   1. If `origin_session.primary_id` is already set, use it.
+	 *   2. Otherwise, scan registered runtimes (in registration order via the
+	 *      `datamachine_code_worktree_runtime_signatures` filter) and pick the
+	 *      first non-empty `session_id` for any registered runtime.
+	 *   3. If no runtime declares `session_id`, fall back to the first
+	 *      non-empty subkey of the first registered runtime that has data.
+	 *
+	 * Legacy rows stored under brand-named top-level keys (pre-#416) are
+	 * transparently normalized into the new envelope on read via
+	 * {@see self::migrate_legacy_origin_session()}.
 	 *
 	 * @param array<string,mixed>|null $metadata Persisted metadata.
-	 * @return array{primary_id:?string,kimaki_session_id:?string,kimaki_thread_id:?string,kimaki_thread_url:?string,opencode_session_id:?string,opencode_run_id:?string}
+	 * @return array{primary_id:?string,ids:array<string,array<string,?string>>}
 	 */
 	public static function summarize_session( ?array $metadata ): array {
-		$session = is_array( $metadata['origin_session'] ?? null ) ? $metadata['origin_session'] : array();
+		$session = is_array( $metadata['origin_session'] ?? null ) ? (array) $metadata['origin_session'] : array();
+		$session = self::migrate_legacy_origin_session( $session );
 
-		$kimaki_session_id   = isset( $session['kimaki_session_id'] ) ? (string) $session['kimaki_session_id'] : null;
-		$kimaki_thread_id    = isset( $session['kimaki_thread_id'] ) ? (string) $session['kimaki_thread_id'] : null;
-		$kimaki_thread_url   = isset( $session['kimaki_thread_url'] ) ? (string) $session['kimaki_thread_url'] : null;
-		$opencode_session_id = isset( $session['opencode_session_id'] ) ? (string) $session['opencode_session_id'] : null;
-		$opencode_run_id     = isset( $session['opencode_run_id'] ) ? (string) $session['opencode_run_id'] : null;
+		$ids = array();
+		if ( isset( $session['ids'] ) && is_array( $session['ids'] ) ) {
+			foreach ( $session['ids'] as $runtime_id => $entry ) {
+				if ( ! is_string( $runtime_id ) || '' === $runtime_id || ! is_array( $entry ) ) {
+					continue;
+				}
+				$normalized = array();
+				foreach ( $entry as $subkey => $value ) {
+					if ( ! is_string( $subkey ) || '' === $subkey ) {
+						continue;
+					}
+					$normalized[ $subkey ] = self::normalize_session_value( $value );
+				}
+				if ( ! empty( $normalized ) ) {
+					$ids[ $runtime_id ] = $normalized;
+				}
+			}
+		}
 
-		// Pick the most descriptive identifier as the renderer-friendly primary.
-		$primary = $kimaki_session_id ?? $opencode_session_id ?? $opencode_run_id ?? $kimaki_thread_id;
+		$primary = self::resolve_primary_id( $session, $ids );
 
 		return array(
-			'primary_id'         => '' === $primary ? null : $primary,
-			'kimaki_session_id'  => '' === $kimaki_session_id ? null : $kimaki_session_id,
-			'kimaki_thread_id'   => '' === $kimaki_thread_id ? null : $kimaki_thread_id,
-			'kimaki_thread_url'  => '' === $kimaki_thread_url ? null : $kimaki_thread_url,
-			'opencode_session_id' => '' === $opencode_session_id ? null : $opencode_session_id,
-			'opencode_run_id'    => '' === $opencode_run_id ? null : $opencode_run_id,
+			'primary_id' => $primary,
+			'ids'        => $ids,
 		);
+	}
+
+	/**
+	 * Resolve the renderer-friendly primary identifier from a normalized
+	 * session envelope.
+	 *
+	 * Precedence:
+	 *  1. Explicit `primary_id` on the stored envelope (already chosen by a
+	 *     caller or persisted from an earlier resolution).
+	 *  2. First non-empty `session_id` across registered runtimes, in the
+	 *     order returned by the `datamachine_code_worktree_runtime_signatures`
+	 *     filter.
+	 *  3. First non-empty value of any subkey across registered runtimes, in
+	 *     registration order, in array iteration order within a runtime.
+	 *  4. Null when nothing resolves.
+	 *
+	 * @param array<string,mixed>                     $session Raw envelope (may contain `primary_id`).
+	 * @param array<string,array<string,?string>>     $ids     Normalized ids map.
+	 */
+	private static function resolve_primary_id( array $session, array $ids ): ?string {
+		$explicit = isset( $session['primary_id'] ) ? self::normalize_session_value( $session['primary_id'] ) : null;
+		if ( null !== $explicit ) {
+			return $explicit;
+		}
+
+		$signatures = self::runtime_signatures();
+
+		// Pass 1: session_id across registered runtimes, in registration order.
+		foreach ( array_keys( $signatures ) as $runtime_id ) {
+			if ( isset( $ids[ $runtime_id ]['session_id'] ) && null !== $ids[ $runtime_id ]['session_id'] ) {
+				return $ids[ $runtime_id ]['session_id'];
+			}
+		}
+
+		// Pass 2: any subkey across registered runtimes, in registration order.
+		foreach ( array_keys( $signatures ) as $runtime_id ) {
+			if ( ! isset( $ids[ $runtime_id ] ) || ! is_array( $ids[ $runtime_id ] ) ) {
+				continue;
+			}
+			foreach ( $ids[ $runtime_id ] as $value ) {
+				if ( null !== $value ) {
+					return $value;
+				}
+			}
+		}
+
+		// Pass 3: no registered runtimes — fall back to any captured runtime.
+		foreach ( $ids as $entry ) {
+			foreach ( $entry as $value ) {
+				if ( null !== $value ) {
+					return $value;
+				}
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Normalize a captured session value: strings are trimmed, empty values
+	 * become null, non-strings are coerced via string cast then re-checked.
+	 *
+	 * @param mixed $value Raw value.
+	 */
+	private static function normalize_session_value( $value ): ?string {
+		if ( null === $value ) {
+			return null;
+		}
+		if ( is_string( $value ) ) {
+			$trimmed = trim( $value );
+			return '' === $trimmed ? null : $trimmed;
+		}
+		if ( is_scalar( $value ) ) {
+			$str = trim( (string) $value );
+			return '' === $str ? null : $str;
+		}
+		return null;
+	}
+
+	/**
+	 * Migrate legacy brand-named top-level keys into the generic envelope.
+	 *
+	 * Legacy migration only — pre-#416 rows persisted vendor-specific fields
+	 * (`<runtime>_<subkey>`) directly on `origin_session`. We infer the runtime
+	 * ID from the prefix and the subkey from the suffix so existing inventory
+	 * rows keep rendering correctly after the schema generalization.
+	 *
+	 * This helper is the single approved location where legacy brand-shaped
+	 * keys are referenced. The mapping is structural (prefix/suffix split on
+	 * the first underscore), not an enumerated allowlist, so adding a new
+	 * runtime never requires touching this code. The block can be deleted in
+	 * a follow-up once all known stores are confirmed migrated; gate the
+	 * deletion on the `datamachine_code_worktree_attribution_legacy_migrated_v2`
+	 * site option (set true once a backfill task completes).
+	 *
+	 * @param array<string,mixed> $session Raw stored envelope (may be legacy shape).
+	 * @return array<string,mixed> Envelope guaranteed to expose `primary_id` and `ids`.
+	 */
+	private static function migrate_legacy_origin_session( array $session ): array {
+		$ids = array();
+		if ( isset( $session['ids'] ) && is_array( $session['ids'] ) ) {
+			$ids = (array) $session['ids'];
+		}
+
+		// legacy migration only: split top-level `<runtime>_<subkey>` keys into
+		// the runtime-keyed envelope. Skip canonical envelope keys.
+		$canonical_top_level = array( 'primary_id' => true, 'ids' => true );
+		foreach ( $session as $key => $value ) {
+			if ( ! is_string( $key ) || isset( $canonical_top_level[ $key ] ) ) {
+				continue;
+			}
+			$underscore = strpos( $key, '_' );
+			if ( false === $underscore || 0 === $underscore || $underscore === strlen( $key ) - 1 ) {
+				continue;
+			}
+			$runtime_id = substr( $key, 0, $underscore );
+			$subkey     = substr( $key, $underscore + 1 );
+			if ( '' === $runtime_id || '' === $subkey ) {
+				continue;
+			}
+			if ( ! isset( $ids[ $runtime_id ] ) || ! is_array( $ids[ $runtime_id ] ) ) {
+				$ids[ $runtime_id ] = array();
+			}
+			// Don't overwrite a value already present in the canonical envelope.
+			if ( ! array_key_exists( $subkey, $ids[ $runtime_id ] ) ) {
+				$ids[ $runtime_id ][ $subkey ] = $value;
+			}
+		}
+
+		$session['ids'] = $ids;
+		return $session;
+	}
+
+	/**
+	 * Resolve the registered runtime signatures.
+	 *
+	 * @return array<string,array<string,string>> Map of runtime-id => { subkey => env-var-name }.
+	 */
+	private static function runtime_signatures(): array {
+		if ( ! function_exists( 'apply_filters' ) ) {
+			return array();
+		}
+		$signatures = apply_filters( 'datamachine_code_worktree_runtime_signatures', array() );
+		if ( ! is_array( $signatures ) ) {
+			return array();
+		}
+
+		$out = array();
+		foreach ( $signatures as $runtime_id => $entry ) {
+			if ( ! is_string( $runtime_id ) || '' === $runtime_id || ! is_array( $entry ) ) {
+				continue;
+			}
+			$subkeys = array();
+			foreach ( $entry as $subkey => $env_var ) {
+				if ( ! is_string( $subkey ) || '' === $subkey || ! is_string( $env_var ) || '' === $env_var ) {
+					continue;
+				}
+				$subkeys[ $subkey ] = $env_var;
+			}
+			if ( ! empty( $subkeys ) ) {
+				$out[ $runtime_id ] = $subkeys;
+			}
+		}
+		return $out;
 	}
 
 	/**
@@ -1126,57 +1348,78 @@ class WorktreeContextInjector {
 	/**
 	 * Resolve non-sensitive runtime/session hints from the creating process.
 	 *
-	 * Reads identifiers exposed by the surrounding agent runtime (OpenCode,
-	 * Kimaki/Discord) and the originating site URL. Cross-machine federation
-	 * is intentionally out of scope: only the env that the creator process
-	 * exposes is captured. Missing fields stay missing — never invent IDs.
+	 * Reads identifiers exposed by the surrounding agent runtime via the
+	 * `datamachine_code_worktree_runtime_signatures` filter (see this file's
+	 * header for the contract). DMC enumerates no runtime IDs and no env-var
+	 * names; integration layers (e.g. wp-coding-agents) declare both.
+	 *
+	 * Cross-machine federation is intentionally out of scope: only env vars
+	 * the creator process exposes are captured. Missing fields stay missing
+	 * — never invent IDs.
+	 *
+	 * The resulting envelope:
+	 *
+	 *   array(
+	 *       'primary_id' => '<opaque or null>',
+	 *       'ids'        => array(
+	 *           '<runtime-id>' => array( '<subkey>' => '<opaque or null>', ... ),
+	 *       ),
+	 *   )
+	 *
+	 * Subkeys named `thread_url` (or any subkey ending in `_url`) are
+	 * validated as `http(s)://...` URLs; non-conforming values are dropped.
+	 * No other subkey-specific validation is performed.
 	 *
 	 * @return array<string,mixed>|null
 	 */
 	private static function resolve_origin_session(): ?array {
-		$session = array();
-
-		$opencode_run_id = getenv( 'OPENCODE_RUN_ID' );
-		if ( is_string( $opencode_run_id ) && '' !== trim( $opencode_run_id ) ) {
-			$session['opencode_run_id'] = trim( $opencode_run_id );
+		$signatures = self::runtime_signatures();
+		if ( empty( $signatures ) ) {
+			return null;
 		}
 
-		$opencode_session_id = getenv( 'OPENCODE_SESSION_ID' );
-		if ( is_string( $opencode_session_id ) && '' !== trim( $opencode_session_id ) ) {
-			$session['opencode_session_id'] = trim( $opencode_session_id );
+		$ids = array();
+		foreach ( $signatures as $runtime_id => $subkeys ) {
+			$entry = array();
+			foreach ( $subkeys as $subkey => $env_var ) {
+				$raw = getenv( $env_var );
+				if ( ! is_string( $raw ) ) {
+					continue;
+				}
+				$trimmed = trim( $raw );
+				if ( '' === $trimmed ) {
+					continue;
+				}
+				// Generic URL-shape validation for url-suffixed subkeys.
+				if ( self::is_url_subkey( $subkey ) && ! preg_match( '#^https?://#i', $trimmed ) ) {
+					continue;
+				}
+				$entry[ $subkey ] = $trimmed;
+			}
+			if ( ! empty( $entry ) ) {
+				$ids[ $runtime_id ] = $entry;
+			}
 		}
 
-		$opencode_pid = getenv( 'OPENCODE_PID' );
-		if ( is_string( $opencode_pid ) && ctype_digit( $opencode_pid ) ) {
-			$session['opencode_pid'] = (int) $opencode_pid;
+		if ( empty( $ids ) ) {
+			return null;
 		}
 
-		$kimaki_session_id = getenv( 'KIMAKI_SESSION_ID' );
-		if ( is_string( $kimaki_session_id ) && '' !== trim( $kimaki_session_id ) ) {
-			$session['kimaki_session_id'] = trim( $kimaki_session_id );
-		}
+		$session = array(
+			'primary_id' => null,
+			'ids'        => $ids,
+		);
+		$session['primary_id'] = self::resolve_primary_id( $session, $ids );
 
-		$kimaki_thread_id = getenv( 'KIMAKI_THREAD_ID' );
-		if ( is_string( $kimaki_thread_id ) && '' !== trim( $kimaki_thread_id ) ) {
-			$session['kimaki_thread_id'] = trim( $kimaki_thread_id );
-		}
+		return $session;
+	}
 
-		$kimaki_channel_id = getenv( 'KIMAKI_CHANNEL_ID' );
-		if ( is_string( $kimaki_channel_id ) && '' !== trim( $kimaki_channel_id ) ) {
-			$session['kimaki_channel_id'] = trim( $kimaki_channel_id );
-		}
-
-		$kimaki_guild_id = getenv( 'KIMAKI_GUILD_ID' );
-		if ( is_string( $kimaki_guild_id ) && '' !== trim( $kimaki_guild_id ) ) {
-			$session['kimaki_guild_id'] = trim( $kimaki_guild_id );
-		}
-
-		$kimaki_thread_url = getenv( 'KIMAKI_THREAD_URL' );
-		if ( is_string( $kimaki_thread_url ) && preg_match( '#^https?://#', (string) $kimaki_thread_url ) ) {
-			$session['kimaki_thread_url'] = trim( $kimaki_thread_url );
-		}
-
-		return empty( $session ) ? null : $session;
+	/**
+	 * Whether the given subkey conventionally holds a URL. Generic suffix check
+	 * — does not enumerate runtimes.
+	 */
+	private static function is_url_subkey( string $subkey ): bool {
+		return str_ends_with( $subkey, '_url' ) || 'url' === $subkey;
 	}
 
 	/**
