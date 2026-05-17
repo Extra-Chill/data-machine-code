@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.45.1] - 2026-05-17
+
+### Changed
+- generalize worktree session-attribution schema (#416)
+
 ## [0.45.0] - 2026-05-17
 
 ### Added
