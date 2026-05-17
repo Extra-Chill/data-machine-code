@@ -207,38 +207,38 @@ trait WorkspaceHygieneReport {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function workspace_disk_emergency_cleanup( array $opts = array() ): array|\WP_Error {
-		$dry_run                  = ! empty( $opts['dry_run'] );
-		$artifact_chunk_size      = isset( $opts['artifact_chunk_size'] ) && is_numeric( $opts['artifact_chunk_size'] ) ? max( 1, (int) $opts['artifact_chunk_size'] ) : 10;
-		$allow_worktree_deletion  = ! empty( $opts['allow_worktree_deletion'] );
-		$human_approved_deletion  = ! empty( $opts['human_approved_worktree_deletion'] );
-		$force_worktree_deletion  = ! empty( $opts['force'] ) && $human_approved_deletion;
-		$thresholds               = isset( $opts['thresholds'] ) && is_array( $opts['thresholds'] ) ? $opts['thresholds'] : WorktreeDiskBudget::thresholds( 'workspace', 'emergency-cleanup' );
-		$budget                   = WorktreeDiskBudget::inspect( $this->workspace_path, $thresholds );
+		$dry_run                 = ! empty( $opts['dry_run'] );
+		$artifact_chunk_size     = isset( $opts['artifact_chunk_size'] ) && is_numeric( $opts['artifact_chunk_size'] ) ? max( 1, (int) $opts['artifact_chunk_size'] ) : 10;
+		$allow_worktree_deletion = ! empty( $opts['allow_worktree_deletion'] );
+		$human_approved_deletion = ! empty( $opts['human_approved_worktree_deletion'] );
+		$force_worktree_deletion = ! empty( $opts['force'] ) && $human_approved_deletion;
+		$thresholds              = isset( $opts['thresholds'] ) && is_array( $opts['thresholds'] ) ? $opts['thresholds'] : WorktreeDiskBudget::thresholds( 'workspace', 'emergency-cleanup' );
+		$budget                  = WorktreeDiskBudget::inspect( $this->workspace_path, $thresholds );
 
 		$plan = $this->worktree_emergency_cleanup( array( 'dry_run' => true ) );
 		if ( $plan instanceof \WP_Error ) {
 			return $plan;
 		}
 
-		$artifact_candidates             = (array) ( $plan['artifact_candidates'] ?? array() );
-		$worktree_candidates             = (array) ( $plan['worktree_candidates'] ?? array() );
-		$top_artifact_offenders          = $this->summarize_top_worktree_rows( $artifact_candidates, 'artifact_size_bytes' );
+		$artifact_candidates              = (array) ( $plan['artifact_candidates'] ?? array() );
+		$worktree_candidates              = (array) ( $plan['worktree_candidates'] ?? array() );
+		$top_artifact_offenders           = $this->summarize_top_worktree_rows( $artifact_candidates, 'artifact_size_bytes' );
 		$budget['top_artifact_offenders'] = $top_artifact_offenders;
 
 		$triggered = ! empty( $budget['emergency_triggered'] );
 		if ( ! $triggered ) {
 			return array(
-				'success'             => true,
-				'triggered'           => false,
-				'skipped'             => true,
-				'reason'              => 'disk thresholds not crossed',
-				'dry_run'             => $dry_run,
-				'generated_at'        => gmdate( 'c' ),
-				'workspace_path'      => $this->workspace_path,
-				'disk_budget'         => $budget,
-				'emergency_plan'      => $plan,
-				'action_required'     => false,
-				'applied'             => null,
+				'success'         => true,
+				'triggered'       => false,
+				'skipped'         => true,
+				'reason'          => 'disk thresholds not crossed',
+				'dry_run'         => $dry_run,
+				'generated_at'    => gmdate( 'c' ),
+				'workspace_path'  => $this->workspace_path,
+				'disk_budget'     => $budget,
+				'emergency_plan'  => $plan,
+				'action_required' => false,
+				'applied'         => null,
 			);
 		}
 
@@ -296,11 +296,11 @@ trait WorkspaceHygieneReport {
 			'action_required'         => array() !== $blocked_reasons || ( array() === $selected_artifacts && array() !== $worktree_candidates && array() === $selected_worktrees ),
 			'action_required_reasons' => $blocked_reasons,
 			'policy'                  => array(
-				'artifact_first'                      => true,
-				'allow_worktree_deletion'             => $allow_worktree_deletion,
-				'human_approved_worktree_deletion'    => $human_approved_deletion,
-				'force_requires_human_approval'       => true,
-				'force_worktree_deletion_applied'     => $force_worktree_deletion,
+				'artifact_first'                   => true,
+				'allow_worktree_deletion'          => $allow_worktree_deletion,
+				'human_approved_worktree_deletion' => $human_approved_deletion,
+				'force_requires_human_approval'    => true,
+				'force_worktree_deletion_applied'  => $force_worktree_deletion,
 			),
 		);
 	}
@@ -346,29 +346,29 @@ trait WorkspaceHygieneReport {
 			$task_view    = is_array( $metadata ) && is_array( $metadata['origin_task'] ?? null ) ? $metadata['origin_task'] : null;
 
 			$row = array(
-				'handle'           => $parsed['dir_name'],
-				'repo'             => $parsed['repo'],
-				'kind'             => $kind,
-				'is_worktree'      => $is_worktree,
-				'is_primary'       => 'primary' === $kind,
-				'external'         => false,
-				'branch_slug'      => $parsed['branch_slug'],
-				'branch'           => is_array( $metadata ) && ! empty( $metadata['branch'] ) ? (string) $metadata['branch'] : (string) ( $parsed['branch_slug'] ?? '' ),
-				'path'             => $path,
-				'dirty'            => 0,
-				'created_at'       => is_array( $metadata ) ? ( $metadata['created_at'] ?? null ) : null,
-				'lifecycle_state'  => is_array( $metadata ) ? ( $metadata['lifecycle_state'] ?? null ) : null,
-				'pr_url'           => is_array( $metadata ) ? ( $metadata['pr_url'] ?? null ) : null,
-				'pr_number'        => is_array( $metadata ) ? ( $metadata['pr_number'] ?? null ) : null,
-				'last_seen_at'     => is_array( $metadata ) ? ( $metadata['last_seen_at'] ?? null ) : null,
-				'liveness'         => $liveness['liveness'],
-				'liveness_reason'  => $liveness['reason'],
+				'handle'                => $parsed['dir_name'],
+				'repo'                  => $parsed['repo'],
+				'kind'                  => $kind,
+				'is_worktree'           => $is_worktree,
+				'is_primary'            => 'primary' === $kind,
+				'external'              => false,
+				'branch_slug'           => $parsed['branch_slug'],
+				'branch'                => is_array( $metadata ) && ! empty( $metadata['branch'] ) ? (string) $metadata['branch'] : (string) ( $parsed['branch_slug'] ?? '' ),
+				'path'                  => $path,
+				'dirty'                 => 0,
+				'created_at'            => is_array( $metadata ) ? ( $metadata['created_at'] ?? null ) : null,
+				'lifecycle_state'       => is_array( $metadata ) ? ( $metadata['lifecycle_state'] ?? null ) : null,
+				'pr_url'                => is_array( $metadata ) ? ( $metadata['pr_url'] ?? null ) : null,
+				'pr_number'             => is_array( $metadata ) ? ( $metadata['pr_number'] ?? null ) : null,
+				'last_seen_at'          => is_array( $metadata ) ? ( $metadata['last_seen_at'] ?? null ) : null,
+				'liveness'              => $liveness['liveness'],
+				'liveness_reason'       => $liveness['reason'],
 				'heartbeat_age_seconds' => $liveness['heartbeat_age_seconds'],
-				'owner'            => $owner,
-				'session'          => $session_view,
-				'task'             => $task_view,
-				'missing_metadata' => $is_worktree && ! is_array( $metadata ),
-				'metadata'         => $metadata,
+				'owner'                 => $owner,
+				'session'               => $session_view,
+				'task'                  => $task_view,
+				'missing_metadata'      => $is_worktree && ! is_array( $metadata ),
+				'metadata'              => $metadata,
 			);
 
 			$base_branch_warning = $this->base_branch_worktree_warning( $row );
@@ -525,24 +525,24 @@ trait WorkspaceHygieneReport {
 	 */
 	private function summarize_workspace_worktrees( array $worktrees, ?array $cleanup ): array {
 		$summary = array(
-			'total'              => count( $worktrees ),
-			'primaries'          => 0,
-			'worktrees'          => 0,
-			'artifacts'          => 0,
-			'external'           => 0,
-			'dirty'              => 0,
-			'protected_dirty'    => 0,
-			'protected_unpushed' => 0,
-			'missing_metadata'   => 0,
+			'total'                      => count( $worktrees ),
+			'primaries'                  => 0,
+			'worktrees'                  => 0,
+			'artifacts'                  => 0,
+			'external'                   => 0,
+			'dirty'                      => 0,
+			'protected_dirty'            => 0,
+			'protected_unpushed'         => 0,
+			'missing_metadata'           => 0,
 			'base_branch_worktree_count' => 0,
-			'base_branch_worktrees' => array(),
-			'by_liveness'        => array(
+			'base_branch_worktrees'      => array(),
+			'by_liveness'                => array(
 				WorktreeContextInjector::LIVENESS_LIVE    => 0,
 				WorktreeContextInjector::LIVENESS_STOPPED => 0,
 				WorktreeContextInjector::LIVENESS_STALE   => 0,
 				WorktreeContextInjector::LIVENESS_UNKNOWN => 0,
 			),
-			'duplicate_task_groups' => 0,
+			'duplicate_task_groups'      => 0,
 		);
 
 		foreach ( $worktrees as $row ) {
@@ -580,7 +580,7 @@ trait WorkspaceHygieneReport {
 			}
 		}
 
-		$duplicates = WorktreeContextInjector::find_duplicate_task_ownership( $worktrees );
+		$duplicates                       = WorktreeContextInjector::find_duplicate_task_ownership( $worktrees );
 		$summary['duplicate_task_groups'] = count( $duplicates );
 		$summary['duplicates']            = $duplicates;
 
@@ -665,8 +665,8 @@ trait WorkspaceHygieneReport {
 			return $status;
 		}
 
-		$runs_table                         = $wpdb->prefix . 'datamachine_code_cleanup_runs';
-		$items_table                        = $wpdb->prefix . 'datamachine_code_cleanup_items';
+		$runs_table                        = $wpdb->prefix . 'datamachine_code_cleanup_runs';
+		$items_table                       = $wpdb->prefix . 'datamachine_code_cleanup_items';
 		$status['cleanup_runs_available']  = $this->database_table_exists( $runs_table );
 		$status['cleanup_items_available'] = $this->database_table_exists( $items_table );
 		if ( $status['cleanup_runs_available'] && $status['cleanup_items_available'] ) {
@@ -894,5 +894,4 @@ trait WorkspaceHygieneReport {
 
 		return sprintf( $index > 0 ? '%.1f %s' : '%.0f %s', $value, $units[ $index ] );
 	}
-
 }

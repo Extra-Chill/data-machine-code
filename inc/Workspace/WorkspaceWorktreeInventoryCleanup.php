@@ -51,13 +51,13 @@ trait WorkspaceWorktreeInventoryCleanup {
 				continue;
 			}
 
-			$handle       = (string) ( $wt['handle'] ?? '?' );
-			$repo         = (string) ( $wt['repo'] ?? '' );
-			$branch       = (string) ( $wt['branch_slug'] ?? '' );
-			$path         = (string) ( $wt['path'] ?? '' );
-			$metadata     = $wt['metadata'] ?? null;
-			$created_at   = $wt['created_at'] ?? null;
-			$base_row     = array(
+			$handle     = (string) ( $wt['handle'] ?? '?' );
+			$repo       = (string) ( $wt['repo'] ?? '' );
+			$branch     = (string) ( $wt['branch_slug'] ?? '' );
+			$path       = (string) ( $wt['path'] ?? '' );
+			$metadata   = $wt['metadata'] ?? null;
+			$created_at = $wt['created_at'] ?? null;
+			$base_row   = array(
 				'handle'     => $handle,
 				'repo'       => $repo,
 				'branch'     => $branch,
@@ -253,10 +253,10 @@ trait WorkspaceWorktreeInventoryCleanup {
 	 * @return array<string,mixed>
 	 */
 	private function build_inventory_cleanup_no_signal_skip( array $base_row, array $wt, array $metadata ): array {
-		$liveness        = (string) ( $wt['liveness'] ?? WorktreeContextInjector::LIVENESS_UNKNOWN );
-		$liveness_reason = (string) ( $wt['liveness_reason'] ?? '' );
-		$state           = isset( $metadata['lifecycle_state'] ) ? WorktreeContextInjector::normalize_state( (string) $metadata['lifecycle_state'] ) : null;
-		$has_pr_context  = ! empty( $metadata['pr_url'] ) || ! empty( $metadata['pr_number'] ) || ! empty( $metadata['pr_ref'] );
+		$liveness         = (string) ( $wt['liveness'] ?? WorktreeContextInjector::LIVENESS_UNKNOWN );
+		$liveness_reason  = (string) ( $wt['liveness_reason'] ?? '' );
+		$state            = isset( $metadata['lifecycle_state'] ) ? WorktreeContextInjector::normalize_state( (string) $metadata['lifecycle_state'] ) : null;
+		$has_pr_context   = ! empty( $metadata['pr_url'] ) || ! empty( $metadata['pr_number'] ) || ! empty( $metadata['pr_ref'] );
 		$has_task_context = is_array( $metadata['origin_task'] ?? null ) && ! empty( $metadata['origin_task']['task_url'] );
 
 		if ( WorktreeContextInjector::LIVENESS_LIVE !== $liveness && ( $has_pr_context || $has_task_context ) ) {
@@ -282,5 +282,4 @@ trait WorkspaceWorktreeInventoryCleanup {
 			'liveness_reason' => $liveness_reason,
 		) );
 	}
-
 }

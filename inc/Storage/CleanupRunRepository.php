@@ -104,7 +104,9 @@ class CleanupRunRepository {
 	public function get_run( string $run_id ): ?array {
 		global $wpdb;
 
+		// phpcs:disable WordPress.DB.PreparedSQL -- Table name from $wpdb->prefix, not user input.
 		$row = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . CleanupSchema::runs_table() . ' WHERE run_id = %s', $run_id ), ARRAY_A );
+		// phpcs:enable WordPress.DB.PreparedSQL
 		return is_array( $row ) ? $this->decode_run( $row ) : null;
 	}
 
@@ -117,7 +119,9 @@ class CleanupRunRepository {
 	public function get_items( string $run_id ): array {
 		global $wpdb;
 
+		// phpcs:disable WordPress.DB.PreparedSQL -- Table name from $wpdb->prefix, not user input.
 		$rows = $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM ' . CleanupSchema::items_table() . ' WHERE run_id = %s ORDER BY id ASC', $run_id ), ARRAY_A );
+		// phpcs:enable WordPress.DB.PreparedSQL
 		return array_map( fn( $row ) => $this->decode_item( (array) $row ), is_array( $rows ) ? $rows : array() );
 	}
 

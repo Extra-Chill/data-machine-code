@@ -158,10 +158,10 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 
 		$summary['artifact_cleanup']['freed_human'] = $this->format_bytes( $summary['artifact_cleanup']['bytes_reclaimed'] );
 		$summary['cleanup_items']['freed_human']    = $this->format_bytes( $summary['cleanup_items']['bytes_reclaimed'] );
-		$summary['children']['batch_job_ids']        = array_values( array_unique( $summary['children']['batch_job_ids'] ) );
-		$summary['children']['chunk_job_ids']        = array_values( array_unique( $summary['children']['chunk_job_ids'] ) );
-		$summary['children']['job_ids']              = array_values( array_unique( $summary['children']['job_ids'] ) );
-		$summary['children']['running']              = (int) $summary['children']['processing'];
+		$summary['children']['batch_job_ids']       = array_values( array_unique( $summary['children']['batch_job_ids'] ) );
+		$summary['children']['chunk_job_ids']       = array_values( array_unique( $summary['children']['chunk_job_ids'] ) );
+		$summary['children']['job_ids']             = array_values( array_unique( $summary['children']['job_ids'] ) );
+		$summary['children']['running']             = (int) $summary['children']['processing'];
 
 		return $summary;
 	}
@@ -440,11 +440,12 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 	 * @return string
 	 */
 	private function format_bytes( int $bytes ): string {
-		$bytes = max( 0, $bytes );
-		$units = array( 'B', 'KiB', 'MiB', 'GiB', 'TiB' );
-		$value = (float) $bytes;
-		$unit  = 0;
-		while ( $value >= 1024 && $unit < count( $units ) - 1 ) {
+		$bytes     = max( 0, $bytes );
+		$units     = array( 'B', 'KiB', 'MiB', 'GiB', 'TiB' );
+		$max_unit  = count( $units ) - 1;
+		$value     = (float) $bytes;
+		$unit      = 0;
+		while ( $value >= 1024 && $unit < $max_unit ) {
 			$value /= 1024;
 			++$unit;
 		}

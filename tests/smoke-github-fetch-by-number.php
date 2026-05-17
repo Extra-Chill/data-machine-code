@@ -26,8 +26,8 @@ $assert = static function ( bool $condition, string $message ) use ( &$failures 
 };
 
 // Handler config reads.
-$assert( false !== strpos( $handler, "\$issue_number  = (int) ( \$config['issue_number'] ?? 0 )" ), 'handler reads issue_number from config' );
-$assert( false !== strpos( $handler, "\$pull_number   = (int) ( \$config['pull_number'] ?? 0 )" ), 'handler reads pull_number from config' );
+$assert( false !== strpos( $handler, "\$issue_number = (int) ( \$config['issue_number'] ?? 0 )" ), 'handler reads issue_number from config' );
+$assert( false !== strpos( $handler, "\$pull_number  = (int) ( \$config['pull_number'] ?? 0 )" ), 'handler reads pull_number from config' );
 
 // Targeted-fetch dispatch.
 $assert( false !== strpos( $handler, 'fetchSingleIssueOrPull' ), 'handler dispatches to fetchSingleIssueOrPull when a number is set' );

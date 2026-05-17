@@ -166,7 +166,9 @@ class WorktreeInventoryRepository {
 
 		$table = self::table_name();
 		if ( null !== $repo && '' !== trim( $repo ) && method_exists( $wpdb, 'prepare' ) ) {
+			// phpcs:disable WordPress.DB.PreparedSQL -- Table name from $wpdb->prefix, not user input.
 			$sql = $wpdb->prepare( "SELECT * FROM {$table} WHERE repo = %s ORDER BY handle ASC", $repo );
+			// phpcs:enable WordPress.DB.PreparedSQL
 		} else {
 			$sql = "SELECT * FROM {$table} ORDER BY handle ASC";
 		}
@@ -253,7 +255,7 @@ class WorktreeInventoryRepository {
 	 * @return array<string,mixed>
 	 */
 	private function decode_row( array $row ): array {
-		$decoded = isset( $row['metadata'] ) && is_string( $row['metadata'] ) ? json_decode( $row['metadata'], true ) : null;
+		$decoded         = isset( $row['metadata'] ) && is_string( $row['metadata'] ) ? json_decode( $row['metadata'], true ) : null;
 		$row['metadata'] = is_array( $decoded ) ? $decoded : null;
 		foreach ( array( 'id', 'is_primary', 'dirty_count', 'unpushed_count', 'artifact_count', 'artifact_size_bytes', 'size_bytes', 'missing_path' ) as $key ) {
 			if ( isset( $row[ $key ] ) ) {

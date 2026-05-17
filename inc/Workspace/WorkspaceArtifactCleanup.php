@@ -137,7 +137,7 @@ trait WorkspaceArtifactCleanup {
 						'reason'      => sprintf( 'failed to remove artifact %s: %s', (string) ( $artifact['path'] ?? '' ), $remove->get_error_message() ),
 						'artifacts'   => array( $artifact ),
 					);
-					$failed = true;
+					$failed    = true;
 					break;
 				}
 
@@ -417,7 +417,7 @@ trait WorkspaceArtifactCleanup {
 		foreach ( $candidates as $row ) {
 			$repo = (string) ( $row['repo'] ?? 'unknown' );
 			foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
-				$bytes = (int) ( is_array( $artifact ) ? ( $artifact['size_bytes'] ?? 0 ) : 0 );
+				$bytes        = (int) ( is_array( $artifact ) ? ( $artifact['size_bytes'] ?? 0 ) : 0 );
 				$would_bytes += max( 0, $bytes );
 				++$would_count;
 				$artifact_by_repo[ $repo ] = ( $artifact_by_repo[ $repo ] ?? 0 ) + max( 0, $bytes );
@@ -522,7 +522,7 @@ trait WorkspaceArtifactCleanup {
 					}
 				}
 
-				$skip                   = $complete ? array(
+				$skip                      = $complete ? array(
 					'handle'      => $handle,
 					'repo'        => (string) ( $plan_row['repo'] ?? '' ),
 					'branch'      => (string) ( $plan_row['branch'] ?? '' ),
@@ -674,5 +674,4 @@ trait WorkspaceArtifactCleanup {
 
 		return false;
 	}
-
 }
