@@ -91,6 +91,16 @@ namespace {
 		}
 	}
 
+	if ( ! function_exists( 'apply_filters' ) ) {
+		function apply_filters( string $hook_name, $value, ...$args ) {
+			global $datamachine_code_test_filters;
+			if ( isset( $datamachine_code_test_filters[ $hook_name ] ) && is_callable( $datamachine_code_test_filters[ $hook_name ] ) ) {
+				return $datamachine_code_test_filters[ $hook_name ]( $value, ...$args );
+			}
+			return $value;
+		}
+	}
+
 	require __DIR__ . '/../inc/Workspace/WorktreeContextInjector.php';
 	require __DIR__ . '/../inc/Storage/WorktreeInventoryRepository.php';
 
@@ -114,6 +124,17 @@ namespace {
 
 	$GLOBALS['wpdb']                          = new Datamachine_Code_Test_Wpdb();
 	$GLOBALS['datamachine_code_test_options'] = array();
+	$GLOBALS['datamachine_code_test_filters'] = array();
+
+	// Register a synthetic test runtime so primary_id resolution has a
+	// registered runtime to scan. DMC enumerates no runtime IDs itself.
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_worktree_runtime_signatures'] = function ( array $signatures ): array {
+		$signatures['test-runtime'] = array(
+			'session_id' => 'DMC_SMOKE_TEST_SESSION_ID',
+			'thread_id'  => 'DMC_SMOKE_TEST_THREAD_ID',
+		);
+		return $signatures;
+	};
 
 	$metadata = array(
 		'handle'          => 'demo@agent-session-lifecycle',
@@ -124,8 +145,13 @@ namespace {
 		'origin_site'     => 'Intelligence',
 		'origin_agent'    => 'franklin',
 		'origin_session'  => array(
-			'opencode_session_id' => 'ses_123',
-			'kimaki_thread_id'    => 'thread_456',
+			'primary_id' => 'ses_123',
+			'ids'        => array(
+				'test-runtime' => array(
+					'session_id' => 'ses_123',
+					'thread_id'  => 'thread_456',
+				),
+			),
 		),
 		'origin_task'     => array(
 			'task_url' => 'https://github.com/Extra-Chill/data-machine-code/issues/221',
@@ -148,7 +174,8 @@ namespace {
 	// Prove get_metadata can be DB-backed by clearing the option fallback.
 	$GLOBALS['datamachine_code_test_options'] = array();
 	$loaded = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata( 'demo@agent-session-lifecycle' );
-	$assert( 'ses_123', $loaded['origin_session']['opencode_session_id'] ?? null, 'get_metadata reads origin session from DB inventory when option is absent' );
+	$assert( 'ses_123', $loaded['origin_session']['ids']['test-runtime']['session_id'] ?? null, 'get_metadata reads origin session ids envelope from DB inventory when option is absent' );
+	$assert( 'thread_456', $loaded['origin_session']['ids']['test-runtime']['thread_id'] ?? null, 'get_metadata exposes ids subkeys from DB inventory' );
 	$assert( 'Extra-Chill/data-machine-code#221', $loaded['origin_task']['task_ref'] ?? null, 'get_metadata reads task ref from DB inventory when option is absent' );
 
 	\DataMachineCode\Workspace\WorktreeContextInjector::record_heartbeat( 'demo@agent-session-lifecycle', '2026-05-04T13:00:00Z' );

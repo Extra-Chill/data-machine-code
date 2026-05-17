@@ -276,8 +276,16 @@ namespace {
 	$run( 'git add README.md', $primary );
 	$run( 'git commit -m initial', $primary );
 	$run( 'git remote add origin https://github.com/acme/demo.git', $primary );
-	putenv( 'OPENCODE_RUN_ID=smoke-run-123' );
-	putenv( 'OPENCODE_PID=12345' );
+	// Synthetic runtime registration so the env-driven session capture has a
+	// runtime to scan. DMC enumerates no runtime IDs itself — the integration
+	// layer (here, the test) declares them via the public filter.
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_worktree_runtime_signatures'] = function ( array $signatures ): array {
+		$signatures['smoke-runtime'] = array(
+			'run_id' => 'DMC_SMOKE_LIFECYCLE_RUN_ID',
+		);
+		return $signatures;
+	};
+	putenv( 'DMC_SMOKE_LIFECYCLE_RUN_ID=smoke-run-123' );
 
 	$ws = new \DataMachineCode\Workspace\Workspace();
 	$GLOBALS['wpdb'] = new DatamachineCodeLifecycleInventoryWpdb();
