@@ -87,6 +87,11 @@ function datamachine_code_bootstrap() {
 	new \DataMachineCode\Abilities\WordPressRuntimeAbilities();
 	( new \DataMachineCode\Bundle\WorkspacePreloadArtifact() )->register();
 
+	// Project active workspace identity into Data Machine's engine_data
+	// snapshot at job init. Requires DM's datamachine_engine_snapshot
+	// filter (added in data-machine v0.10.3); no-op on older DM versions.
+	\DataMachineCode\Runtime\ActiveWorkspaceProjector::register();
+
 	// Load Handlers (they self-register).
 	new \DataMachineCode\Handlers\GitHub\GitHub();
 	new \DataMachineCode\Handlers\GitHub\GitHubIssuePublish();
