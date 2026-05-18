@@ -161,6 +161,8 @@ namespace {
 
 	$diff = $backend->git_diff( 'example@fix-example', path: 'src/example.php' );
 	$assert( 'diff supports remote pending changes', ! is_wp_error( $diff ) && str_contains( $diff['diff'], '-return \'old\';' ) && str_contains( $diff['diff'], '+return \'new\';' ) );
+	$assert( 'diff emits real unified hunk header', ! is_wp_error( $diff ) && str_contains( $diff['diff'], '@@ -1,2 +1,2 @@' ) );
+	$assert( 'diff includes unchanged lines as context, not as -/+ pairs', ! is_wp_error( $diff ) && str_contains( $diff['diff'], "\n <?php\n" ) && ! str_contains( $diff['diff'], "-<?php" ) );
 
 	$worktree_grep = $backend->grep( 'example@fix-example', 'new', null, '*.php' );
 	$assert( 'grep searches pending worktree content', ! is_wp_error( $worktree_grep ) && 1 === $worktree_grep['count'] && str_contains( $worktree_grep['matches'][0]['text'], 'new' ) );
