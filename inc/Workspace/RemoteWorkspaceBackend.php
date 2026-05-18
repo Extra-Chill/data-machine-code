@@ -454,7 +454,7 @@ class RemoteWorkspaceBackend {
 				$old_content = (string) ( $current['files'][0]['content'] ?? '' );
 			}
 
-			$diff .= $this->build_full_file_diff( $changed_path, $old_content, (string) $new_content );
+			$diff .= $this->build_unified_file_diff( $changed_path, $old_content, (string) $new_content );
 		}
 
 		return array(
@@ -660,22 +660,58 @@ class RemoteWorkspaceBackend {
 		return false;
 	}
 
-	private function build_full_file_diff( string $path, string $old_content, string $new_content ): string {
+	/**
+	 * Build a unified diff for a single file's pending change.
+	 *
+	 * Uses Myers' algorithm to find a minimal edit script, then groups adjacent
+	 * edits into hunks with surrounding context (default 3 lines). Output matches
+	 * the format produced by `git diff --no-color`, so consumers that scan the
+	 * diff for `-foo` / `+bar` lines see actual changed lines rather than a fake
+	 * whole-file replace.
+	 *
+	 * Previously this method emitted every old line as `-` followed by every new
+	 * line as `+`, regardless of how small the actual change was. That misled
+	 * agents into thinking surgical edits had rewritten the entire file.
+	 *
+	 * @see https://github.com/Extra-Chill/data-machine-code/issues/429
+	 */
+	private function build_unified_file_diff( string $path, string $old_content, string $new_content, int $context_lines = 3 ): string {
+		$header  = 'diff --git a/' . $path . ' b/' . $path . "\n";
+		$header .= '--- a/' . $path . "\n";
+		$header .= '+++ b/' . $path . "\n";
+
+		if ( $old_content === $new_content ) {
+			return $header;
+		}
+
 		$old_lines = $this->diff_lines( $old_content );
 		$new_lines = $this->diff_lines( $new_content );
 
-		$diff  = 'diff --git a/' . $path . ' b/' . $path . "\n";
-		$diff .= '--- a/' . $path . "\n";
-		$diff .= '+++ b/' . $path . "\n";
-		$diff .= sprintf( '@@ -1,%d +1,%d @@', count( $old_lines ), count( $new_lines ) ) . "\n";
-		foreach ( $old_lines as $line ) {
-			$diff .= '-' . $line . "\n";
-		}
-		foreach ( $new_lines as $line ) {
-			$diff .= '+' . $line . "\n";
+		$ops = $this->myers_diff( $old_lines, $new_lines );
+		if ( empty( $ops ) ) {
+			return $header;
 		}
 
-		return $diff;
+		$hunks = $this->group_diff_hunks( $ops, $context_lines );
+		if ( empty( $hunks ) ) {
+			return $header;
+		}
+
+		$body = '';
+		foreach ( $hunks as $hunk ) {
+			$body .= sprintf(
+				"@@ -%d,%d +%d,%d @@\n",
+				$hunk['old_start'],
+				$hunk['old_count'],
+				$hunk['new_start'],
+				$hunk['new_count']
+			);
+			foreach ( $hunk['lines'] as $line ) {
+				$body .= $line . "\n";
+			}
+		}
+
+		return $header . $body;
 	}
 
 	/** @return array<int,string> */
@@ -685,6 +721,294 @@ class RemoteWorkspaceBackend {
 		}
 
 		return explode( "\n", rtrim( $content, "\n" ) );
+	}
+
+	/**
+	 * Myers' diff algorithm producing an edit script over two arrays of lines.
+	 *
+	 * Returns an ordered list of operations:
+	 *   ['op' => '=', 'line' => string]  (unchanged)
+	 *   ['op' => '-', 'line' => string]  (removed from old)
+	 *   ['op' => '+', 'line' => string]  (added in new)
+	 *
+	 * Trims common prefix/suffix first so the O(ND) core only runs on the
+	 * actually-different middle window — typical "surgical edit in large file"
+	 * cases finish in O(N) instead of O(N^2).
+	 *
+	 * @param  array<int,string> $a Old lines.
+	 * @param  array<int,string> $b New lines.
+	 * @return array<int,array{op:string,line:string}>
+	 */
+	private function myers_diff( array $a, array $b ): array {
+		$ops = array();
+
+		$prefix = 0;
+		$a_len  = count( $a );
+		$b_len  = count( $b );
+		$min    = min( $a_len, $b_len );
+		while ( $prefix < $min && $a[ $prefix ] === $b[ $prefix ] ) {
+			$ops[] = array(
+				'op'   => '=',
+				'line' => $a[ $prefix ],
+			);
+			++$prefix;
+		}
+
+		$suffix     = 0;
+		$max_suffix = $min - $prefix;
+		while ( $suffix < $max_suffix && $a[ $a_len - 1 - $suffix ] === $b[ $b_len - 1 - $suffix ] ) {
+			++$suffix;
+		}
+
+		$middle_a = array_slice( $a, $prefix, $a_len - $prefix - $suffix );
+		$middle_b = array_slice( $b, $prefix, $b_len - $prefix - $suffix );
+
+		foreach ( $this->myers_middle_diff( $middle_a, $middle_b ) as $op ) {
+			$ops[] = $op;
+		}
+
+		for ( $i = $a_len - $suffix; $i < $a_len; $i++ ) {
+			$ops[] = array(
+				'op'   => '=',
+				'line' => $a[ $i ],
+			);
+		}
+
+		return $ops;
+	}
+
+	/**
+	 * Core Myers algorithm over a (presumably small) middle window.
+	 *
+	 * Implements Eugene Myers' O(ND) algorithm, recording trace V-arrays at each
+	 * D-step and walking back to reconstruct the edit script. Falls back to a
+	 * simple "remove-all then add-all" emission if the middle is degenerate
+	 * (one side empty), which is both faster and produces the same result.
+	 *
+	 * @param  array<int,string> $a
+	 * @param  array<int,string> $b
+	 * @return array<int,array{op:string,line:string}>
+	 */
+	private function myers_middle_diff( array $a, array $b ): array {
+		$n = count( $a );
+		$m = count( $b );
+
+		if ( 0 === $n && 0 === $m ) {
+			return array();
+		}
+		if ( 0 === $n ) {
+			$ops = array();
+			foreach ( $b as $line ) {
+				$ops[] = array(
+					'op'   => '+',
+					'line' => $line,
+				);
+			}
+			return $ops;
+		}
+		if ( 0 === $m ) {
+			$ops = array();
+			foreach ( $a as $line ) {
+				$ops[] = array(
+					'op'   => '-',
+					'line' => $line,
+				);
+			}
+			return $ops;
+		}
+
+		$max    = $n + $m;
+		$offset = $max;
+		$trace  = array();
+		$v      = array_fill( 0, 2 * $max + 1, 0 );
+
+		for ( $d = 0; $d <= $max; $d++ ) {
+			for ( $k = -$d; $k <= $d; $k += 2 ) {
+				if ( -$d === $k || ( $d !== $k && $v[ $k - 1 + $offset ] < $v[ $k + 1 + $offset ] ) ) {
+					$x = $v[ $k + 1 + $offset ];
+				} else {
+					$x = $v[ $k - 1 + $offset ] + 1;
+				}
+				$y = $x - $k;
+				while ( $x < $n && $y < $m && $a[ $x ] === $b[ $y ] ) {
+					++$x;
+					++$y;
+				}
+				$v[ $k + $offset ] = $x;
+				if ( $x >= $n && $y >= $m ) {
+					$trace[] = $v;
+					return $this->myers_backtrack( $trace, $a, $b, $d, $offset );
+				}
+			}
+			$trace[] = $v;
+		}
+
+		return array();
+	}
+
+	/**
+	 * Walk the recorded Myers trace backwards to build the ordered edit script.
+	 *
+	 * @param  array<int,array<int,int>>      $trace
+	 * @param  array<int,string>              $a
+	 * @param  array<int,string>              $b
+	 * @return array<int,array{op:string,line:string}>
+	 */
+	private function myers_backtrack( array $trace, array $a, array $b, int $d, int $offset ): array {
+		$ops = array();
+		$x   = count( $a );
+		$y   = count( $b );
+
+		for ( ; $d > 0; $d-- ) {
+			$v = $trace[ $d - 1 ];
+			$k = $x - $y;
+			if ( -$d === $k || ( $d !== $k && $v[ $k - 1 + $offset ] < $v[ $k + 1 + $offset ] ) ) {
+				$prev_k = $k + 1;
+			} else {
+				$prev_k = $k - 1;
+			}
+			$prev_x = $v[ $prev_k + $offset ];
+			$prev_y = $prev_x - $prev_k;
+
+			while ( $x > $prev_x && $y > $prev_y ) {
+				$ops[] = array(
+					'op'   => '=',
+					'line' => $a[ $x - 1 ],
+				);
+				--$x;
+				--$y;
+			}
+			if ( $x === $prev_x ) {
+				$ops[] = array(
+					'op'   => '+',
+					'line' => $b[ $y - 1 ],
+				);
+			} else {
+				$ops[] = array(
+					'op'   => '-',
+					'line' => $a[ $x - 1 ],
+				);
+			}
+			$x = $prev_x;
+			$y = $prev_y;
+		}
+		while ( $x > 0 && $y > 0 ) {
+			$ops[] = array(
+				'op'   => '=',
+				'line' => $a[ $x - 1 ],
+			);
+			--$x;
+			--$y;
+		}
+		while ( $x > 0 ) {
+			$ops[] = array(
+				'op'   => '-',
+				'line' => $a[ $x - 1 ],
+			);
+			--$x;
+		}
+		while ( $y > 0 ) {
+			$ops[] = array(
+				'op'   => '+',
+				'line' => $b[ $y - 1 ],
+			);
+			--$y;
+		}
+
+		return array_reverse( $ops );
+	}
+
+	/**
+	 * Group consecutive non-context edit operations into unified-diff hunks.
+	 *
+	 * Each hunk has up to `$context_lines` of unchanged context on each side.
+	 * Returns one entry per hunk with `old_start`, `old_count`, `new_start`,
+	 * `new_count`, and a list of `+line` / `-line` / ` line` strings ready to
+	 * emit between `@@` markers.
+	 *
+	 * @param  array<int,array{op:string,line:string}> $ops
+	 * @return array<int,array{old_start:int,old_count:int,new_start:int,new_count:int,lines:array<int,string>}>
+	 */
+	private function group_diff_hunks( array $ops, int $context_lines ): array {
+		$hunks = array();
+		$count = count( $ops );
+
+		$old_line = 1;
+		$new_line = 1;
+		$i        = 0;
+
+		while ( $i < $count ) {
+			if ( '=' === $ops[ $i ]['op'] ) {
+				++$old_line;
+				++$new_line;
+				++$i;
+				continue;
+			}
+
+			$context_before = min( $context_lines, $i );
+			$hunk_start_i   = $i - $context_before;
+			$hunk_old_start = $old_line - $context_before;
+			$hunk_new_start = $new_line - $context_before;
+
+			$lines     = array();
+			$old_count = 0;
+			$new_count = 0;
+			for ( $j = $hunk_start_i; $j < $i; $j++ ) {
+				$lines[] = ' ' . $ops[ $j ]['line'];
+				++$old_count;
+				++$new_count;
+			}
+
+			$tail_eq = 0;
+			while ( $i < $count ) {
+				$op = $ops[ $i ]['op'];
+				if ( '=' === $op ) {
+					++$tail_eq;
+					if ( $tail_eq > 2 * $context_lines ) {
+						--$tail_eq;
+						break;
+					}
+					$lines[] = ' ' . $ops[ $i ]['line'];
+					++$old_count;
+					++$new_count;
+					++$old_line;
+					++$new_line;
+					++$i;
+					continue;
+				}
+				$tail_eq = 0;
+				if ( '-' === $op ) {
+					$lines[] = '-' . $ops[ $i ]['line'];
+					++$old_count;
+					++$old_line;
+				} else {
+					$lines[] = '+' . $ops[ $i ]['line'];
+					++$new_count;
+					++$new_line;
+				}
+				++$i;
+			}
+
+			$keep_tail = min( $context_lines, $tail_eq );
+			$drop_tail = $tail_eq - $keep_tail;
+			if ( $drop_tail > 0 ) {
+				$lines      = array_slice( $lines, 0, count( $lines ) - $drop_tail );
+				$old_count -= $drop_tail;
+				$new_count -= $drop_tail;
+				$old_line  -= $drop_tail;
+				$new_line  -= $drop_tail;
+			}
+
+			$hunks[] = array(
+				'old_start' => 0 === $old_count ? max( 0, $hunk_old_start - 1 ) : $hunk_old_start,
+				'old_count' => $old_count,
+				'new_start' => 0 === $new_count ? max( 0, $hunk_new_start - 1 ) : $hunk_new_start,
+				'new_count' => $new_count,
+				'lines'     => $lines,
+			);
+		}
+
+		return $hunks;
 	}
 
 	/**
