@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.2] - 2026-05-18
+
+### Fixed
+- emit real unified diff for remote workspace pending changes (#429)
+
 ## [0.46.1] - 2026-05-18
 
 ### Fixed
