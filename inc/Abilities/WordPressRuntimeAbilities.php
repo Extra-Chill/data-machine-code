@@ -8,7 +8,7 @@
 namespace DataMachineCode\Abilities;
 
 use DataMachine\Abilities\PermissionHelper;
-use DataMachineCode\Runtime\SandboxRuntimeAgentProbeRunner;
+use DataMachineCode\Runtime\SandboxRuntimeAgentSandboxRunner;
 use DataMachineCode\Runtime\WordPressRuntimeInspector;
 
 defined( 'ABSPATH' ) || exit;
@@ -148,15 +148,19 @@ class WordPressRuntimeAbilities {
 			);
 
 			wp_register_ability(
-				'datamachine-code/sandbox-runtime-agent-probe',
+				'datamachine-code/run-agent-sandbox',
 				array(
-					'label'               => 'Probe Sandbox Runtime Agent Stack',
-					'description'         => 'Run a WordPress Playground sandbox through the Sandbox Runtime CLI and verify the Agents API, Data Machine, Data Machine Code, and OpenAI provider stack activates cleanly.',
+					'label'               => 'Run Agent Sandbox',
+					'description'         => 'Run a task inside an isolated WordPress Playground sandbox with Agents API, Data Machine, Data Machine Code, and the OpenAI provider mounted.',
 					'category'            => 'datamachine-code-runtime',
 					'input_schema'        => array(
 						'type'       => 'object',
-						'required'   => array( 'agents_api_path', 'data_machine_path', 'openai_provider_path' ),
+						'required'   => array( 'task', 'agents_api_path', 'data_machine_path', 'openai_provider_path' ),
 						'properties' => array(
+							'task'                   => array(
+								'type'        => 'string',
+								'description' => 'Task description to run inside the isolated sandbox.',
+							),
 							'agents_api_path'        => array(
 								'type'        => 'string',
 								'description' => 'Local checkout path for the Agents API plugin.',
@@ -185,6 +189,14 @@ class WordPressRuntimeAbilities {
 								'type'        => 'string',
 								'description' => 'Directory where Sandbox Runtime should write artifact bundles.',
 							),
+							'code'                   => array(
+								'type'        => 'string',
+								'description' => 'Optional PHP code body to execute inside the sandbox after the agent stack boots.',
+							),
+							'code_file'              => array(
+								'type'        => 'string',
+								'description' => 'Optional PHP file to execute inside the sandbox after the agent stack boots.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -193,14 +205,15 @@ class WordPressRuntimeAbilities {
 							'success'   => array( 'type' => 'boolean' ),
 							'schema'    => array( 'type' => 'string' ),
 							'command'   => array( 'type' => 'string' ),
+							'task'      => array( 'type' => 'string' ),
 							'wp'        => array( 'type' => 'string' ),
 							'paths'     => array( 'type' => 'object' ),
 							'artifacts' => array( 'type' => 'string' ),
 							'exit_code' => array( 'type' => 'integer' ),
-							'probe'     => array( 'type' => 'object' ),
+							'run'       => array( 'type' => 'object' ),
 						),
 					),
-					'execute_callback'    => array( self::class, 'sandboxRuntimeAgentProbe' ),
+					'execute_callback'    => array( self::class, 'runAgentSandbox' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => true ),
 				)
@@ -231,7 +244,7 @@ class WordPressRuntimeAbilities {
 	}
 
 	/** @param array<string,mixed> $input Input parameters. @return array<string,mixed>|\WP_Error */
-	public static function sandboxRuntimeAgentProbe( array $input ): array|\WP_Error {
-		return ( new SandboxRuntimeAgentProbeRunner() )->run( $input );
+	public static function runAgentSandbox( array $input ): array|\WP_Error {
+		return ( new SandboxRuntimeAgentSandboxRunner() )->run( $input );
 	}
 }

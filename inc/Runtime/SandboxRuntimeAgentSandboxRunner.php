@@ -1,6 +1,6 @@
 <?php
 /**
- * Sandbox Runtime agent stack probe runner.
+ * Sandbox Runtime agent sandbox runner.
  *
  * @package DataMachineCode\Runtime
  */
@@ -11,9 +11,9 @@ use DataMachineCode\Environment;
 
 defined( 'ABSPATH' ) || exit;
 
-final class SandboxRuntimeAgentProbeRunner {
+final class SandboxRuntimeAgentSandboxRunner {
 
-	private const SCHEMA = 'data-machine-code/sandbox-runtime-agent-probe/v1';
+	private const SCHEMA = 'data-machine-code/run-agent-sandbox/v1';
 
 	/** @var array<string, callable> */
 	private array $callbacks;
@@ -26,9 +26,9 @@ final class SandboxRuntimeAgentProbeRunner {
 	}
 
 	/**
-	 * Run the Sandbox Runtime WordPress agent stack probe.
+	 * Run a task inside an isolated Sandbox Runtime WordPress agent stack.
 	 *
-	 * @param array<string,mixed> $input Probe input.
+	 * @param array<string,mixed> $input Sandbox run input.
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function run( array $input ): array|\WP_Error {
@@ -45,8 +45,19 @@ final class SandboxRuntimeAgentProbeRunner {
 
 		foreach ( $paths as $key => $path ) {
 			if ( '' === $path || ! is_dir( $path ) ) {
-				return new \WP_Error( 'datamachine_code_probe_path_missing', sprintf( 'Sandbox Runtime probe path %s is missing or not a directory.', $key ), array( 'status' => 400 ) );
+				return new \WP_Error( 'datamachine_code_sandbox_path_missing', sprintf( 'Sandbox Runtime path %s is missing or not a directory.', $key ), array( 'status' => 400 ) );
 			}
+		}
+
+		$task = trim( (string) ( $input['task'] ?? '' ) );
+		if ( '' === $task ) {
+			return new \WP_Error( 'datamachine_code_sandbox_task_missing', 'task is required for Sandbox Runtime agent sandbox runs.', array( 'status' => 400 ) );
+		}
+
+		$code      = trim( (string) ( $input['code'] ?? '' ) );
+		$code_file = $this->clean_path( (string) ( $input['code_file'] ?? '' ) );
+		if ( '' !== $code && '' !== $code_file ) {
+			return new \WP_Error( 'datamachine_code_sandbox_code_conflict', 'Use either code or code_file, not both.', array( 'status' => 400 ) );
 		}
 
 		$artifacts = $this->clean_path( (string) ( $input['artifacts_path'] ?? '' ) );
@@ -61,20 +72,27 @@ final class SandboxRuntimeAgentProbeRunner {
 
 		$bin = trim( (string) ( $input['sandbox_runtime_bin'] ?? 'sandbox-runtime' ) );
 		if ( '' === $bin || ! preg_match( '#^[A-Za-z0-9_./:@+-]+$#', $bin ) ) {
-			return new \WP_Error( 'datamachine_code_probe_bin_invalid', 'sandbox_runtime_bin must be a command name or path without shell metacharacters.', array( 'status' => 400 ) );
+			return new \WP_Error( 'datamachine_code_sandbox_bin_invalid', 'sandbox_runtime_bin must be a command name or path without shell metacharacters.', array( 'status' => 400 ) );
 		}
 		$command_prefix = $this->command_prefix( $bin );
 
 		$command = sprintf(
-			'%s agent-runtime-probe --agents-api %s --data-machine %s --data-machine-code %s --openai-provider %s --wp %s --artifacts %s --json',
+			'%s agent-sandbox-run --agents-api %s --data-machine %s --data-machine-code %s --openai-provider %s --task %s --wp %s --artifacts %s --json',
 			$command_prefix,
 			escapeshellarg( $paths['agents_api'] ),
 			escapeshellarg( $paths['data_machine'] ),
 			escapeshellarg( $paths['data_machine_code'] ),
 			escapeshellarg( $paths['openai_provider'] ),
+			escapeshellarg( $task ),
 			escapeshellarg( $wp_version ),
 			escapeshellarg( $artifacts )
 		);
+		if ( '' !== $code ) {
+			$command .= ' --code ' . escapeshellarg( $code );
+		}
+		if ( '' !== $code_file ) {
+			$command .= ' --code-file ' . escapeshellarg( $code_file );
+		}
 
 		$result    = $this->run_command( $command );
 		$exit_code = (int) ( $result['exit_code'] ?? 1 );
@@ -83,8 +101,8 @@ final class SandboxRuntimeAgentProbeRunner {
 
 		if ( is_wp_error( $decoded ) ) {
 			return new \WP_Error(
-				'datamachine_code_probe_json_invalid',
-				'Sandbox Runtime probe did not return valid JSON: ' . $decoded->get_error_message(),
+				'datamachine_code_sandbox_json_invalid',
+				'Sandbox Runtime did not return valid JSON: ' . $decoded->get_error_message(),
 				array(
 					'status'    => 500,
 					'exit_code' => $exit_code,
@@ -95,13 +113,13 @@ final class SandboxRuntimeAgentProbeRunner {
 
 		if ( 0 !== $exit_code ) {
 			return new \WP_Error(
-				'datamachine_code_probe_failed',
-				'Sandbox Runtime probe failed.',
+				'datamachine_code_sandbox_failed',
+				'Sandbox Runtime agent sandbox run failed.',
 				array(
 					'status'    => 500,
 					'exit_code' => $exit_code,
 					'output'    => $this->bound_output( $output ),
-					'probe'     => $decoded,
+					'run'       => $decoded,
 				)
 			);
 		}
@@ -110,11 +128,12 @@ final class SandboxRuntimeAgentProbeRunner {
 			'success'   => true,
 			'schema'    => self::SCHEMA,
 			'command'   => $command,
+			'task'      => $task,
 			'wp'        => $wp_version,
 			'paths'     => $paths,
 			'artifacts' => $artifacts,
 			'exit_code' => $exit_code,
-			'probe'     => $decoded,
+			'run'       => $decoded,
 		);
 	}
 
