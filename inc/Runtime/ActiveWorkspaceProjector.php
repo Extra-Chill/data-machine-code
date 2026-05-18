@@ -109,7 +109,7 @@ class ActiveWorkspaceProjector {
 	 * @param array $pipeline Pipeline row.
 	 * @return array Modified snapshot.
 	 */
-	public static function project_into_snapshot( array $snapshot, int $job_id, array $flow, array $pipeline ): array {
+	public static function project_into_snapshot( array $snapshot, int $job_id, array $flow, array $pipeline ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
 		$explicit = is_array( $snapshot['active_workspace'] ?? null )
 			? (array) $snapshot['active_workspace']
 			: array();
