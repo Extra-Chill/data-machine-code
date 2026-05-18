@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.0] - 2026-05-18
+
+### Added
+- project active workspace identity into Data Machine engine_data
+
 ## [0.45.2] - 2026-05-17
 
 ### Changed
