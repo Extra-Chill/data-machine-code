@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.1] - 2026-05-18
+
+### Fixed
+- keep artifact cleanup branch identity stable
+
 ## [0.46.0] - 2026-05-18
 
 ### Added
