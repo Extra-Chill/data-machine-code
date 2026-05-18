@@ -365,9 +365,15 @@ class RemoteWorkspaceBackend {
 			return new \WP_Error( 'multiple_matches', sprintf( 'Found %d matches for old_string.', $count ), array( 'status' => 400 ) );
 		}
 
-		$new_content = $replace_all
-			? str_replace( $old_string, $new_string, $content )
-			: substr_replace( $content, $new_string, strpos( $content, $old_string ), strlen( $old_string ) );
+		if ( $replace_all ) {
+			$new_content = str_replace( $old_string, $new_string, $content );
+		} else {
+			$offset = strpos( $content, $old_string );
+			// $count > 0 above guarantees strpos cannot return false here.
+			$new_content = false === $offset
+				? $content
+				: substr_replace( $content, $new_string, $offset, strlen( $old_string ) );
+		}
 
 		$write = $this->write_file( $handle, $path, $new_content );
 		if ( is_wp_error( $write ) ) {
