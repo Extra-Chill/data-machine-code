@@ -192,13 +192,15 @@ namespace {
 	$run( 'git branch -M main', $primary );
 	$run( 'git push -u origin main', $primary );
 
-	// One real worktree with an artifact directory.
-	$run( 'git checkout -b feature-real', $primary );
+	// One real worktree with an artifact directory. Use a slashed branch so
+	// bounded inventory's directory slug (`feature-real`) differs from HEAD's
+	// branch identity (`feature/real`).
+	$run( 'git checkout -b feature/real', $primary );
 	file_put_contents( $primary . '/feature-real.txt', 'real' );
 	$run( 'git add . && git commit -m feature', $primary );
-	$run( 'git push -u origin feature-real', $primary );
+	$run( 'git push -u origin feature/real', $primary );
 	$run( 'git checkout main', $primary );
-	$run( sprintf( 'git worktree add %s feature-real', escapeshellarg( $tmp . '/demo@feature-real' ) ), $primary );
+	$run( sprintf( 'git worktree add %s feature/real', escapeshellarg( $tmp . '/demo@feature-real' ) ), $primary );
 	mkdir( $tmp . '/demo@feature-real/target', 0755, true );
 	file_put_contents( $tmp . '/demo@feature-real/target/artifact.bin', str_repeat( 'x', 1024 ) );
 
@@ -249,6 +251,7 @@ namespace {
 		fn( $row ) => 'demo@feature-real' === ( $row['handle'] ?? '' )
 	) ) );
 	$assert( 1, count( $apply_plan['candidates'] ), 'extracted exactly one planned candidate' );
+	$assert( 'feature/real', $apply_plan['candidates'][0]['branch'] ?? '', 'bounded dry-run records HEAD branch instead of directory slug' );
 
 	$workspace->full_listing_calls = 0;
 	$start   = microtime( true );
@@ -257,6 +260,7 @@ namespace {
 	$assert( false, is_wp_error( $apply ), 'apply_plan revalidation succeeds on huge workspace' );
 	$assert( 0, $workspace->full_listing_calls, 'apply_plan revalidation does not call full worktree_list' );
 	$assert( true, (bool) ( $apply['pagination']['safety_probes'] ?? false ), 'apply_plan revalidation still runs safety probes' );
+	$assert( array(), (array) ( $apply['summary']['skipped_by_reason'] ?? array() ), 'apply_plan does not reject slashed branches as branch mismatches' );
 	$assert( 1, (int) ( $apply['summary']['removed_artifacts'] ?? 0 ), 'apply_plan removes the planned artifact' );
 	$assert( false, is_dir( $tmp . '/demo@feature-real/target' ), 'apply_plan revalidation removes the target directory' );
 	$assert_lt( 5.0, $elapsed, 'apply_plan revalidation stays fast because only_handles narrows the scan (' . number_format( $elapsed, 3 ) . 's)' );

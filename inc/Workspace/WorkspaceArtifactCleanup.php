@@ -245,23 +245,19 @@ trait WorkspaceArtifactCleanup {
 		$skipped    = array();
 
 		foreach ( $slice as $wt ) {
-			$handle  = (string) ( $wt['handle'] ?? '?' );
-			$repo    = (string) ( $wt['repo'] ?? '' );
-			$wt_path = (string) ( $wt['path'] ?? '' );
+			$handle          = (string) ( $wt['handle'] ?? '?' );
+			$repo            = (string) ( $wt['repo'] ?? '' );
+			$wt_path         = (string) ( $wt['path'] ?? '' );
+			$resolved_branch = '' !== $wt_path ? $this->resolve_worktree_branch_from_head_file( $wt_path ) : null;
 			if ( $safety_probes ) {
-				$branch = (string) ( $wt['branch'] ?? '' );
-				if ( '' === $branch ) {
-					$resolved = '' !== $wt_path ? $this->resolve_worktree_branch_from_head_file( $wt_path ) : null;
-					$branch   = (string) ( $resolved ?? $wt['branch_slug'] ?? '' );
-				}
+				$branch = (string) ( $resolved_branch ?? $wt['branch'] ?? $wt['branch_slug'] ?? '' );
 			} else {
 				// Inventory rows only carry `branch_slug` (the directory slug,
 				// e.g. `fix-foo`). The plan apply path revalidates against the
 				// real git branch from `worktree_list()` (e.g. `fix/foo`), so
 				// resolve it cheaply here from the per-worktree `.git/HEAD`
 				// pointer file. This is two file reads vs a `git` invocation.
-				$resolved = '' !== $wt_path ? $this->resolve_worktree_branch_from_head_file( $wt_path ) : null;
-				$branch   = (string) ( $resolved ?? $wt['branch'] ?? $wt['branch_slug'] ?? '' );
+				$branch = (string) ( $resolved_branch ?? $wt['branch'] ?? $wt['branch_slug'] ?? '' );
 			}
 
 			// Inventory rows don't include detected artifacts; detect them on
