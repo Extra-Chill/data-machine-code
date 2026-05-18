@@ -8,6 +8,7 @@
 namespace DataMachineCode\Abilities;
 
 use DataMachine\Abilities\PermissionHelper;
+use DataMachineCode\Runtime\SandboxRuntimeAgentProbeRunner;
 use DataMachineCode\Runtime\WordPressRuntimeInspector;
 
 defined( 'ABSPATH' ) || exit;
@@ -145,6 +146,65 @@ class WordPressRuntimeAbilities {
 					'meta'                => array( 'show_in_rest' => true ),
 				)
 			);
+
+			wp_register_ability(
+				'datamachine-code/sandbox-runtime-agent-probe',
+				array(
+					'label'               => 'Probe Sandbox Runtime Agent Stack',
+					'description'         => 'Run a WordPress Playground sandbox through the Sandbox Runtime CLI and verify the Agents API, Data Machine, Data Machine Code, and OpenAI provider stack activates cleanly.',
+					'category'            => 'datamachine-code-runtime',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'agents_api_path', 'data_machine_path', 'openai_provider_path' ),
+						'properties' => array(
+							'agents_api_path'        => array(
+								'type'        => 'string',
+								'description' => 'Local checkout path for the Agents API plugin.',
+							),
+							'data_machine_path'      => array(
+								'type'        => 'string',
+								'description' => 'Local checkout path for the Data Machine plugin.',
+							),
+							'data_machine_code_path' => array(
+								'type'        => 'string',
+								'description' => 'Local checkout path for Data Machine Code. Defaults to the active plugin path.',
+							),
+							'openai_provider_path'   => array(
+								'type'        => 'string',
+								'description' => 'Local checkout path for the AI Provider for OpenAI plugin.',
+							),
+							'sandbox_runtime_bin'    => array(
+								'type'        => 'string',
+								'description' => 'Sandbox Runtime CLI binary or path. JS dist files are run through node. Defaults to sandbox-runtime.',
+							),
+							'wp'                     => array(
+								'type'        => 'string',
+								'description' => 'WordPress version passed to Playground. Defaults to trunk.',
+							),
+							'artifacts_path'         => array(
+								'type'        => 'string',
+								'description' => 'Directory where Sandbox Runtime should write artifact bundles.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'   => array( 'type' => 'boolean' ),
+							'schema'    => array( 'type' => 'string' ),
+							'command'   => array( 'type' => 'string' ),
+							'wp'        => array( 'type' => 'string' ),
+							'paths'     => array( 'type' => 'object' ),
+							'artifacts' => array( 'type' => 'string' ),
+							'exit_code' => array( 'type' => 'integer' ),
+							'probe'     => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'sandboxRuntimeAgentProbe' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
 		};
 
 		if ( function_exists( 'doing_action' ) && doing_action( 'wp_abilities_api_init' ) ) {
@@ -168,5 +228,10 @@ class WordPressRuntimeAbilities {
 	/** @param array<string,mixed> $input Input parameters. @return array<string,mixed>|\WP_Error */
 	public static function read( array $input ): array|\WP_Error {
 		return ( new WordPressRuntimeInspector() )->read( $input );
+	}
+
+	/** @param array<string,mixed> $input Input parameters. @return array<string,mixed>|\WP_Error */
+	public static function sandboxRuntimeAgentProbe( array $input ): array|\WP_Error {
+		return ( new SandboxRuntimeAgentProbeRunner() )->run( $input );
 	}
 }
