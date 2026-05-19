@@ -131,8 +131,8 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private function schedule_job_backed_cleanup( int $jobId, Workspace $workspace, array $opts, array $params ): array|\WP_Error {
-		$started_at       = microtime( true );
-		$chunk_rows       = $this->build_cleanup_chunk_rows( $workspace, $opts, $params );
+		$started_at = microtime( true );
+		$chunk_rows = $this->build_cleanup_chunk_rows( $workspace, $opts, $params );
 		if ( $chunk_rows instanceof \WP_Error ) {
 			return $chunk_rows;
 		}
@@ -146,22 +146,22 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 
 		if ( array() === $item_params ) {
 			return array(
-				'success'           => true,
-				'dry_run'           => false,
-				'destructive'       => false,
-				'job_backed'        => true,
-				'generated_at'      => gmdate( 'c' ),
-				'workspace_path'    => $workspace->get_path(),
-				'chunk_row_counts'  => $chunk_row_counts,
-				'chunks'            => array(),
-				'report'            => array(
-					'removed_count'                   => 0,
-					'bytes_reclaimed'                 => 0,
-					'freed_human'                     => '0 B',
-					'skipped_dirty_unpushed_count'    => 0,
-					'remaining_disk_budget_human'     => 'unknown disk',
+				'success'          => true,
+				'dry_run'          => false,
+				'destructive'      => false,
+				'job_backed'       => true,
+				'generated_at'     => gmdate( 'c' ),
+				'workspace_path'   => $workspace->get_path(),
+				'chunk_row_counts' => $chunk_row_counts,
+				'chunks'           => array(),
+				'report'           => array(
+					'removed_count'                => 0,
+					'bytes_reclaimed'              => 0,
+					'freed_human'                  => '0 B',
+					'skipped_dirty_unpushed_count' => 0,
+					'remaining_disk_budget_human'  => 'unknown disk',
 				),
-				'evidence'          => array(
+				'evidence'         => array(
 					'elapsed_ms' => (int) round( ( microtime( true ) - $started_at ) * 1000 ),
 					'note'       => 'No cleanup chunks were eligible after plan generation.',
 				),
@@ -188,34 +188,34 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 		}
 
 		return array(
-			'success'           => true,
-			'dry_run'           => false,
-			'destructive'       => true,
-			'job_backed'        => true,
-			'generated_at'      => gmdate( 'c' ),
-			'workspace_path'    => $workspace->get_path(),
-			'policy'            => array(
+			'success'          => true,
+			'dry_run'          => false,
+			'destructive'      => true,
+			'job_backed'       => true,
+			'generated_at'     => gmdate( 'c' ),
+			'workspace_path'   => $workspace->get_path(),
+			'policy'           => array(
 				'worktree_cleanup'    => (bool) $opts['worktree_cleanup'],
 				'artifact_cleanup'    => (bool) $opts['artifact_cleanup'],
 				'worktree_older_than' => (string) ( $opts['worktree_older_than'] ?? '14d' ),
 				'skip_github'         => (bool) $opts['skip_github'],
 				'force'               => (bool) $opts['force'],
 			),
-			'chunk_row_counts'  => $chunk_row_counts,
-			'chunks'            => $batch,
-			'report'            => array(
+			'chunk_row_counts' => $chunk_row_counts,
+			'chunks'           => $batch,
+			'report'           => array(
 				'removed_count'                => 0,
 				'bytes_reclaimed'              => 0,
 				'freed_human'                  => 'pending child jobs',
 				'skipped_dirty_unpushed_count' => 0,
 				'remaining_disk_budget_human'  => 'pending child jobs',
 			),
-			'evidence'          => array(
-				'elapsed_ms'       => (int) round( ( microtime( true ) - $started_at ) * 1000 ),
-				'planned_chunks'   => count( $item_params ),
-				'planned_handles'  => $this->cleanup_chunk_handles( $chunk_rows ),
-				'batch_job_id'     => (int) ( $batch['batch_job_id'] ?? 0 ),
-				'direct_job_ids'   => $batch['job_ids'] ?? array(),
+			'evidence'         => array(
+				'elapsed_ms'      => (int) round( ( microtime( true ) - $started_at ) * 1000 ),
+				'planned_chunks'  => count( $item_params ),
+				'planned_handles' => $this->cleanup_chunk_handles( $chunk_rows ),
+				'batch_job_id'    => (int) ( $batch['batch_job_id'] ?? 0 ),
+				'direct_job_ids'  => $batch['job_ids'] ?? array(),
 			),
 		);
 	}
@@ -250,7 +250,7 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 			if ( $artifact_page instanceof \WP_Error ) {
 				return $artifact_page;
 			}
-			$rows['artifacts'] = array_values( (array) ( $artifact_page['candidates'] ?? array() ) );
+			$rows['artifacts'] = array_values( (array) $artifact_page['candidates'] );
 		}
 
 		if ( ! empty( $opts['worktree_cleanup'] ) ) {
@@ -266,7 +266,7 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 			if ( $worktree_plan instanceof \WP_Error ) {
 				return $worktree_plan;
 			}
-			$rows['worktrees'] = array_values( (array) ( $worktree_plan['candidates'] ?? array() ) );
+			$rows['worktrees'] = array_values( (array) $worktree_plan['candidates'] );
 		}
 
 		return $rows;
