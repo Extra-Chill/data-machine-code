@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.4] - 2026-05-19
+
+### Changed
+- Bound artifact cleanup apply scheduling
+
+### Fixed
+- aggregate cleanup chunk evidence from job data
+
 ## [0.46.3] - 2026-05-19
 
 ### Fixed
