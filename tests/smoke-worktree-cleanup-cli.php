@@ -622,6 +622,7 @@ namespace {
 	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, 'Control task-backed workspace cleanup runs.' ), 'workspace cleanup command documents task-backed controller surface' );
 	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, '<plan|apply|run|status|resume|cancel|evidence>' ), 'workspace cleanup synopsis exposes DB-backed and task-backed cleanup operations' );
 	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, '[--dry-run]' ), 'task-backed cleanup synopsis keeps synchronous dry-run review' );
+	datamachine_code_cleanup_assert( str_contains( $cleanup_doc_comment, 'apply runs freeze eligible candidates' ), 'workspace cleanup limit help clarifies artifact apply scoping' );
 	datamachine_code_cleanup_assert( str_contains( $doc_comment, 'Daily cleanup path: DB-backed plan, then apply only those rows after revalidation' ), 'worktree examples point daily cleanup to DB-backed run_id controller path' );
 	datamachine_code_cleanup_assert( str_contains( $doc_comment, 'workspace cleanup plan --mode=retention' ), 'worktree examples include DB-backed cleanup plan' );
 	datamachine_code_cleanup_assert( str_contains( $doc_comment, 'workspace cleanup run --mode=retention' ), 'worktree examples include task-backed cleanup run' );
@@ -642,9 +643,17 @@ namespace {
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
+	$command->cleanup( array( 'run' ), array( 'mode' => 'artifacts', 'limit' => 25, 'offset' => 50, 'format' => 'json' ) );
+	datamachine_code_cleanup_assert( 'artifacts' === ( $cleanup_run_ability->last_input['mode'] ?? '' ), 'cleanup run can schedule artifact mode' );
+	datamachine_code_cleanup_assert( 25 === (int) ( $cleanup_run_ability->last_input['limit'] ?? 0 ), 'cleanup run forwards artifact apply limit' );
+	datamachine_code_cleanup_assert( 50 === (int) ( $cleanup_run_ability->last_input['offset'] ?? 0 ), 'cleanup run forwards artifact apply offset' );
+	$last_scheduled_cleanup_run = $cleanup_run_ability->last_input;
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
 	$command->cleanup( array( 'run' ), array( 'mode' => 'artifacts', 'dry-run' => true, 'format' => 'json' ) );
 	datamachine_code_cleanup_assert( true === ( $artifact_ability->last_input['dry_run'] ?? false ), 'cleanup run --dry-run uses artifact cleanup ability directly' );
-	datamachine_code_cleanup_assert( 'retention' === ( $cleanup_run_ability->last_input['mode'] ?? '' ), 'cleanup run --dry-run does not schedule cleanup run ability' );
+	datamachine_code_cleanup_assert( $last_scheduled_cleanup_run === $cleanup_run_ability->last_input, 'cleanup run --dry-run does not schedule cleanup run ability' );
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();

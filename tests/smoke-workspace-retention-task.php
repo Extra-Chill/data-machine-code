@@ -97,7 +97,15 @@ namespace DataMachineCode\Workspace {
 			return array(
 				'success'    => true,
 				'dry_run'    => true,
-				'candidates' => array(),
+				'candidates' => array(
+					array(
+						'handle'    => 'repo@active',
+						'repo'      => 'repo',
+						'branch'    => 'active',
+						'path'      => '/tmp/dmc-retention-task-workspace/repo@active',
+						'artifacts' => array( array( 'path' => 'vendor', 'size_bytes' => 1024 ) ),
+					),
+				),
 				'skipped'    => array(),
 				'summary'    => array(
 					'pagination' => array(
@@ -180,7 +188,7 @@ namespace {
 	datamachine_code_retention_task_assert( empty( $completed[0][1]['skipped'] ), 'explicit CLI run bypasses disabled recurring schedule' );
 	datamachine_code_retention_task_assert( true === (bool) ( $completed[0][1]['dry_run'] ?? false ), 'explicit CLI run forwards task params' );
 
-	echo "\n[4] Artifact cleanup schedules bounded discovery chunks\n";
+	echo "\n[4] Artifact cleanup freezes bounded candidates before scheduling chunks\n";
 	\DataMachine\Engine\Tasks\TaskScheduler::$batches = array();
 	\DataMachineCode\Workspace\Workspace::$artifact_opts = array();
 	$task = new \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask();
@@ -191,16 +199,19 @@ namespace {
 			'artifact_cleanup'    => true,
 			'worktree_cleanup'    => false,
 			'artifact_chunk_size' => 10,
+			'limit'               => 100,
 		)
 	);
 	$completed = $task->{$completed_prop};
 	$batch     = \DataMachine\Engine\Tasks\TaskScheduler::$batches[0] ?? array();
 	datamachine_code_retention_task_assert( 'worktree_cleanup_chunk' === ( $batch['task_type'] ?? '' ), 'retention task schedules cleanup chunk batch' );
-	datamachine_code_retention_task_assert( 3 === count( $batch['items'] ?? array() ), 'artifact inventory total fans out into bounded discovery pages' );
-	datamachine_code_retention_task_assert( 'artifact_discovery' === ( $batch['items'][0]['chunk_type'] ?? '' ), 'artifact cleanup uses discovery chunks instead of prebuilt artifact rows' );
-	datamachine_code_retention_task_assert( array( 0, 10, 20 ) === array_column( $batch['items'], 'offset' ), 'discovery chunks carry stable offsets' );
-	datamachine_code_retention_task_assert( empty( \DataMachineCode\Workspace\Workspace::$artifact_opts[0]['exhaustive'] ), 'parent does not run exhaustive artifact dry-run' );
-	datamachine_code_retention_task_assert( 3 === (int) ( $completed[0][1]['chunk_row_counts']['artifact_discovery'] ?? 0 ), 'completion report exposes discovery chunk count' );
+	datamachine_code_retention_task_assert( 1 === count( $batch['items'] ?? array() ), 'artifact candidates fan out proportionally to eligible rows' );
+	datamachine_code_retention_task_assert( 'artifacts' === ( $batch['items'][0]['chunk_type'] ?? '' ), 'artifact cleanup uses frozen candidate chunks instead of discovery pages' );
+	datamachine_code_retention_task_assert( 'repo@active' === ( $batch['items'][0]['rows'][0]['handle'] ?? '' ), 'artifact chunk carries reviewed candidate rows' );
+	datamachine_code_retention_task_assert( 100 === (int) ( \DataMachineCode\Workspace\Workspace::$artifact_opts[0]['limit'] ?? 0 ), 'parent forwards artifact scan limit' );
+	datamachine_code_retention_task_assert( true === ( \DataMachineCode\Workspace\Workspace::$artifact_opts[0]['safety_probes'] ?? false ), 'parent runs safety probes before scheduling artifact apply chunks' );
+	datamachine_code_retention_task_assert( 0 === (int) ( $completed[0][1]['chunk_row_counts']['artifact_discovery'] ?? -1 ), 'completion report shows no discovery chunks' );
+	datamachine_code_retention_task_assert( 1 === (int) ( $completed[0][1]['chunk_row_counts']['artifacts'] ?? 0 ), 'completion report exposes artifact candidate chunk count' );
 
 	echo "\nAll workspace retention task smoke tests passed.\n";
 }

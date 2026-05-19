@@ -307,14 +307,14 @@ class WorkspaceCommand extends BaseCommand {
 	 * : Pass an age gate such as 7d or 24h into cleanup task params.
 	 *
 	 * [--limit=<count>]
-	 * : Maximum worktrees to scan in a `--mode=artifacts --dry-run` page.
-	 *   Defaults to 100 — keeps dry-run bounded on workspaces with hundreds of
-	 *   worktrees. Use 0 to disable the cap (combine with --exhaustive for a
-	 *   full audit).
+	 * : Maximum worktrees to scan in a `--mode=artifacts` page. Dry-run reviews
+	 *   scan this bounded page synchronously; apply runs freeze eligible candidates
+	 *   from the same bounded page and schedule only those candidates. Defaults to
+	 *   100. Use 0 to disable the cap (combine with --exhaustive for a full audit).
 	 *
 	 * [--offset=<count>]
-	 * : Pagination offset (0-indexed) for `--mode=artifacts --dry-run`. Walk
-	 *   huge workspaces by feeding the previous response's
+	 * : Pagination offset (0-indexed) for `--mode=artifacts` dry-run and apply
+	 *   pages. Walk huge workspaces by feeding the previous response's
 	 *   `pagination.next_offset` until `pagination.complete` is true.
 	 *
 	 * [--exhaustive]
@@ -467,6 +467,17 @@ class WorkspaceCommand extends BaseCommand {
 		}
 		if ( isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ) {
 			$input['older_than'] = trim( (string) $assoc_args['older-than'] );
+		}
+		if ( 'artifacts' === $mode ) {
+			if ( isset( $assoc_args['limit'] ) ) {
+				$input['limit'] = (int) $assoc_args['limit'];
+			}
+			if ( isset( $assoc_args['offset'] ) ) {
+				$input['offset'] = (int) $assoc_args['offset'];
+			}
+			if ( ! empty( $assoc_args['exhaustive'] ) ) {
+				$input['exhaustive'] = true;
+			}
 		}
 
 		return $input;
