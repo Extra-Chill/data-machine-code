@@ -30,11 +30,12 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 			return new \WP_Error( 'cleanup_run_not_found', sprintf( 'Cleanup run not found: %s', $this->cleanup_run_id( $job_id ) ), array( 'status' => 404 ) );
 		}
 
-		$engine_data = $this->normalize_engine_data( $job['engine_data'] ?? array() );
-		$child_jobs  = $this->get_cleanup_run_descendant_jobs( $job_id );
-		$aggregate   = $this->aggregate_cleanup_child_jobs( $child_jobs );
-		$children    = $aggregate['children'];
-		$state       = $this->cleanup_run_state( (string) ( $job['status'] ?? '' ), $children );
+		$engine_data   = $this->normalize_engine_data( $job['engine_data'] ?? array() );
+		$parent_result = $this->extract_system_task_result( $engine_data );
+		$child_jobs    = $this->get_cleanup_run_descendant_jobs( $job_id );
+		$aggregate     = $this->aggregate_cleanup_child_jobs( $child_jobs );
+		$children      = $aggregate['children'];
+		$state         = $this->cleanup_run_state( (string) ( $job['status'] ?? '' ), $children );
 
 		$children_for_output = ( $include_evidence || $include_details ) ? $children : $this->summarize_cleanup_children( $children );
 		$output              = array(
@@ -53,8 +54,8 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 		$output_aggregate             = $aggregate;
 		$output_aggregate['children'] = $children_for_output;
 
-		if ( isset( $engine_data['system_task_result'] ) && is_array( $engine_data['system_task_result'] ) ) {
-			$engine_data['system_task_result'] = $this->with_cleanup_aggregate_report( $engine_data['system_task_result'], $output_aggregate );
+		if ( array() !== $parent_result ) {
+			$engine_data['system_task_result'] = $this->with_cleanup_aggregate_report( $parent_result, $output_aggregate );
 		}
 
 		if ( $include_evidence ) {
@@ -130,7 +131,7 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 			$child_job_id = (int) ( $child['job_id'] ?? 0 );
 			$status       = (string) ( $child['status'] ?? '' );
 			$engine_data  = $this->normalize_engine_data( $child['engine_data'] ?? array() );
-			$result       = is_array( $engine_data['system_task_result'] ?? null ) ? $engine_data['system_task_result'] : array();
+			$result       = $this->extract_system_task_result( $engine_data );
 
 			++$summary['children']['total'];
 			if ( $child_job_id > 0 ) {
@@ -161,13 +162,16 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 			if ( 'worktree_cleanup_chunk' !== (string) ( $engine_data['task_type'] ?? '' ) && ! isset( $result['chunk_type'] ) ) {
 				continue;
 			}
+			if ( array() === $result ) {
+				continue;
+			}
 
 			if ( $child_job_id > 0 ) {
 				$summary['children']['chunk_job_ids'][] = $child_job_id;
 			}
 
 			$this->merge_cleanup_item_result( $summary['cleanup_items'], $result );
-			if ( 'artifacts' === (string) ( $result['chunk_type'] ?? '' ) ) {
+			if ( in_array( (string) ( $result['chunk_type'] ?? '' ), array( 'artifacts', 'artifact_discovery' ), true ) ) {
 				$this->merge_cleanup_item_result( $summary['artifact_cleanup'], $result );
 			}
 		}
@@ -368,6 +372,26 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 		if ( is_string( $engine_data ) && '' !== trim( $engine_data ) ) {
 			$decoded = json_decode( $engine_data, true );
 			return is_array( $decoded ) ? $decoded : array();
+		}
+
+		return array();
+	}
+
+	/**
+	 * Extract a task result from either nested packets or direct task engine data.
+	 *
+	 * @param array $engine_data Job engine data.
+	 * @return array<string,mixed>
+	 */
+	private function extract_system_task_result( array $engine_data ): array {
+		if ( isset( $engine_data['system_task_result'] ) && is_array( $engine_data['system_task_result'] ) ) {
+			return $engine_data['system_task_result'];
+		}
+
+		foreach ( array( 'chunk_type', 'planned_count', 'applied_count', 'skipped_count', 'failed_count', 'bytes_reclaimed', 'report', 'job_backed' ) as $key ) {
+			if ( array_key_exists( $key, $engine_data ) ) {
+				return $engine_data;
+			}
 		}
 
 		return array();

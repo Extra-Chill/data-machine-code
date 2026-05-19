@@ -472,20 +472,18 @@ namespace {
 							'source'        => 'system',
 							'status'        => 'completed',
 							'engine_data'   => array(
-								'task_type'          => 'worktree_cleanup_chunk',
-								'system_task_result' => array(
-									'success'         => true,
-									'chunk_type'      => 'artifacts',
-									'planned_count'   => 3,
-									'applied_count'   => 2,
-									'skipped_count'   => 1,
-									'failed_count'    => 0,
-									'bytes_reclaimed' => 4096,
-									'skipped'         => array(
-										array( 'handle' => 'repo@dirty', 'reason_code' => 'dirty_worktree' ),
-									),
-									'failed'          => array(),
+								'task_type'        => 'worktree_cleanup_chunk',
+								'success'          => true,
+								'chunk_type'       => 'artifact_discovery',
+								'planned_count'    => 3,
+								'applied_count'    => 2,
+								'skipped_count'    => 1,
+								'failed_count'     => 0,
+								'bytes_reclaimed'  => 4096,
+								'skipped'          => array(
+									array( 'handle' => 'repo@dirty', 'reason_code' => 'dirty_worktree' ),
 								),
+								'failed'           => array(),
 							),
 						),
 						array(
@@ -494,19 +492,17 @@ namespace {
 							'source'        => 'system',
 							'status'        => 'failed - apply_failed',
 							'engine_data'   => array(
-								'task_type'          => 'worktree_cleanup_chunk',
-								'system_task_result' => array(
-									'success'         => false,
-									'chunk_type'      => 'artifacts',
-									'planned_count'   => 1,
-									'applied_count'   => 0,
-									'skipped_count'   => 0,
-									'failed_count'    => 1,
-									'bytes_reclaimed' => 0,
-									'skipped'         => array(),
-									'failed'          => array(
-										array( 'handle' => 'repo@failed', 'reason_code' => 'apply_failed' ),
-									),
+								'task_type'        => 'worktree_cleanup_chunk',
+								'success'          => false,
+								'chunk_type'       => 'artifacts',
+								'planned_count'    => 1,
+								'applied_count'    => 0,
+								'skipped_count'    => 0,
+								'failed_count'     => 1,
+								'bytes_reclaimed'  => 0,
+								'skipped'          => array(),
+								'failed'           => array(
+									array( 'handle' => 'repo@failed', 'reason_code' => 'apply_failed' ),
 								),
 							),
 						),
@@ -542,13 +538,11 @@ namespace {
 								'mode'   => 'retention',
 								'source' => 'workspace_cleanup_cli',
 							),
-							'system_task_result' => array(
-								'success'    => true,
-								'job_backed' => true,
-								'report'     => array(
-									'bytes_reclaimed' => 0,
-									'freed_human'     => 'pending child jobs',
-								),
+							'success'     => true,
+							'job_backed'  => true,
+							'report'      => array(
+								'bytes_reclaimed' => 0,
+								'freed_human'     => 'pending child jobs',
 							),
 						),
 					),
@@ -680,6 +674,9 @@ namespace {
 	datamachine_code_cleanup_assert( 4096 === (int) ( $status_json['artifact_cleanup']['bytes_reclaimed'] ?? 0 ), 'cleanup status aggregates artifact bytes from child chunks' );
 	datamachine_code_cleanup_assert( 4 === (int) ( $status_json['cleanup_items']['planned_rows'] ?? 0 ), 'cleanup status aggregates planned rows from DB-backed cleanup item evidence' );
 	datamachine_code_cleanup_assert( 4096 === (int) ( $status_json['cleanup_items']['bytes_reclaimed'] ?? 0 ), 'cleanup status reconstructs reclaimed bytes from cleanup item evidence' );
+	datamachine_code_cleanup_assert( 3 === (int) ( $status_json['cleanup_items']['by_type']['artifact_discovery']['planned_rows'] ?? 0 ), 'cleanup status preserves artifact discovery chunk type aggregation' );
+	datamachine_code_cleanup_assert( 1 === (int) ( $status_json['cleanup_items']['by_type']['artifacts']['planned_rows'] ?? 0 ), 'cleanup status preserves artifact apply chunk type aggregation' );
+	datamachine_code_cleanup_assert( ! isset( $status_json['cleanup_items']['by_type']['unknown'] ), 'cleanup status does not aggregate completed chunks under unknown type' );
 	datamachine_code_cleanup_assert( '4.0 KiB' === ( $status_json['system_task_result']['report']['freed_human'] ?? '' ), 'cleanup status replaces pending child job freed placeholder' );
 	datamachine_code_cleanup_assert( ! isset( $status_json['system_task_result']['children']['job_ids'] ), 'cleanup status system task result omits full child job ids by default' );
 
