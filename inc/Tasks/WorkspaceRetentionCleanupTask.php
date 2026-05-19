@@ -236,25 +236,21 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 		);
 
 		if ( ! empty( $opts['artifact_cleanup'] ) ) {
-			$page_size     = max( 1, (int) ( $params['artifact_chunk_size'] ?? 10 ) );
-			$artifact_page = $workspace->worktree_cleanup_artifacts(
+			$artifact_limit = isset( $params['limit'] ) ? max( 0, (int) $params['limit'] ) : 100;
+			$artifact_page  = $workspace->worktree_cleanup_artifacts(
 				array(
-					'dry_run' => true,
-					'force'   => ! empty( $opts['force'] ),
-					'limit'   => 1,
-					'offset'  => 0,
+					'dry_run'       => true,
+					'force'         => ! empty( $opts['force'] ),
+					'limit'         => $artifact_limit,
+					'offset'        => isset( $params['offset'] ) ? max( 0, (int) $params['offset'] ) : 0,
+					'exhaustive'    => ! empty( $params['exhaustive'] ),
+					'safety_probes' => true,
 				)
 			);
 			if ( $artifact_page instanceof \WP_Error ) {
 				return $artifact_page;
 			}
-			$total = max( 0, (int) ( $artifact_page['pagination']['total'] ?? $artifact_page['summary']['pagination']['total'] ?? 0 ) );
-			for ( $offset = 0; $offset < $total; $offset += $page_size ) {
-				$rows['artifact_discovery'][] = array(
-					'offset' => $offset,
-					'limit'  => $page_size,
-				);
-			}
+			$rows['artifacts'] = array_values( (array) ( $artifact_page['candidates'] ?? array() ) );
 		}
 
 		if ( ! empty( $opts['worktree_cleanup'] ) ) {
