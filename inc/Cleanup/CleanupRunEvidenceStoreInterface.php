@@ -21,7 +21,8 @@ interface CleanupRunEvidenceStoreInterface {
 	 *
 	 * @param string $run_id           Stable cleanup run identifier.
 	 * @param bool   $include_evidence Whether to include raw evidence records.
+	 * @param bool   $include_details  Whether to include verbose diagnostic details.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	public function read( string $run_id, bool $include_evidence = false ): array|\WP_Error;
+	public function read( string $run_id, bool $include_evidence = false, bool $include_details = false ): array|\WP_Error;
 }
