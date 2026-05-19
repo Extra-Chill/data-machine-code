@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.3] - 2026-05-19
+
+### Fixed
+- quiet cleanup status child output
+
 ## [0.46.2] - 2026-05-18
 
 ### Fixed
