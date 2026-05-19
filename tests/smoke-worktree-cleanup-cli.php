@@ -666,7 +666,14 @@ namespace {
 	$status_json = json_decode( WP_CLI::$logs[0] ?? '', true );
 	datamachine_code_cleanup_assert( 'children_processing' === ( $status_json['state'] ?? '' ), 'cleanup status stays active while child batch is processing' );
 	datamachine_code_cleanup_assert( 'children_processing' === ( $status_json['status'] ?? '' ), 'cleanup status does not report parent completed while children run' );
-	datamachine_code_cleanup_assert( array( 125 ) === ( $status_json['children']['batch_job_ids'] ?? array() ), 'cleanup status reports child batch job ids' );
+	datamachine_code_cleanup_assert( '2026-05-03 00:10:00' === ( $status_json['parent_completed_at'] ?? '' ), 'cleanup status labels parent scheduler completion separately' );
+	datamachine_code_cleanup_assert( ! isset( $status_json['completed_at'] ), 'cleanup status does not expose parent completion as run completion' );
+	datamachine_code_cleanup_assert( ! isset( $status_json['children']['job_ids'] ), 'cleanup status omits full child job ids by default' );
+	datamachine_code_cleanup_assert( ! isset( $status_json['children']['chunk_job_ids'] ), 'cleanup status omits full child chunk job ids by default' );
+	datamachine_code_cleanup_assert( 1 === (int) ( $status_json['children']['batch_total'] ?? 0 ), 'cleanup status reports child batch totals by default' );
+	datamachine_code_cleanup_assert( 2 === (int) ( $status_json['children']['chunk_total'] ?? 0 ), 'cleanup status reports child chunk totals by default' );
+	datamachine_code_cleanup_assert( array( 125 ) === ( $status_json['children']['processing_job_ids'] ?? array() ), 'cleanup status reports bounded processing job ids by default' );
+	datamachine_code_cleanup_assert( array( 127 ) === ( $status_json['children']['failed_job_ids'] ?? array() ), 'cleanup status reports failed job ids by default' );
 	datamachine_code_cleanup_assert( 1 === (int) ( $status_json['children']['running'] ?? 0 ), 'cleanup status summarizes running child jobs' );
 	datamachine_code_cleanup_assert( ! isset( $status_json['flow_id'] ), 'cleanup status is not linked to a flow id' );
 	datamachine_code_cleanup_assert( 4 === (int) ( $status_json['artifact_cleanup']['planned_rows'] ?? 0 ), 'cleanup status aggregates artifact planned rows from child chunks' );
@@ -674,6 +681,15 @@ namespace {
 	datamachine_code_cleanup_assert( 4 === (int) ( $status_json['cleanup_items']['planned_rows'] ?? 0 ), 'cleanup status aggregates planned rows from DB-backed cleanup item evidence' );
 	datamachine_code_cleanup_assert( 4096 === (int) ( $status_json['cleanup_items']['bytes_reclaimed'] ?? 0 ), 'cleanup status reconstructs reclaimed bytes from cleanup item evidence' );
 	datamachine_code_cleanup_assert( '4.0 KiB' === ( $status_json['system_task_result']['report']['freed_human'] ?? '' ), 'cleanup status replaces pending child job freed placeholder' );
+	datamachine_code_cleanup_assert( ! isset( $status_json['system_task_result']['children']['job_ids'] ), 'cleanup status system task result omits full child job ids by default' );
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup( array( 'status', 'cleanup-run-123' ), array( 'format' => 'json', 'verbose' => true ) );
+	$verbose_status_json = json_decode( WP_CLI::$logs[0] ?? '', true );
+	datamachine_code_cleanup_assert( array( 124, 125, 126, 127 ) === ( $verbose_status_json['children']['job_ids'] ?? array() ), 'cleanup status --verbose exposes full child job ids' );
+	datamachine_code_cleanup_assert( array( 125 ) === ( $verbose_status_json['children']['batch_job_ids'] ?? array() ), 'cleanup status --verbose exposes child batch job ids' );
+	datamachine_code_cleanup_assert( array( 126, 127 ) === ( $verbose_status_json['children']['chunk_job_ids'] ?? array() ), 'cleanup status --verbose exposes child chunk job ids' );
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();

@@ -16,9 +16,10 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 	 *
 	 * @param string $run_id           Stable cleanup run identifier.
 	 * @param bool   $include_evidence Whether to include raw evidence records.
+	 * @param bool   $include_details  Whether to include verbose diagnostic details.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	public function read( string $run_id, bool $include_evidence = false ): array|\WP_Error {
+	public function read( string $run_id, bool $include_evidence = false, bool $include_details = false ): array|\WP_Error {
 		$job_id = $this->cleanup_run_job_id( $run_id );
 		if ( $job_id <= 0 ) {
 			return new \WP_Error( 'invalid_cleanup_run_id', 'Cleanup run id must be a numeric job id or cleanup-run-<job_id>.', array( 'status' => 400 ) );
@@ -34,21 +35,26 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 		$aggregate   = $this->aggregate_cleanup_child_jobs( $child_jobs );
 		$children    = $aggregate['children'];
 		$state       = $this->cleanup_run_state( (string) ( $job['status'] ?? '' ), $children );
-		$output      = array(
-			'success'          => true,
-			'state'            => $state,
-			'run_id'           => $this->cleanup_run_id( $job_id ),
-			'job_id'           => $job_id,
-			'status'           => in_array( $state, array( 'children_processing', 'partial_failed' ), true ) ? $state : ( $job['status'] ?? '' ),
-			'created_at'       => $job['created_at'] ?? '',
-			'completed_at'     => $job['completed_at'] ?? '',
-			'artifact_cleanup' => $aggregate['artifact_cleanup'],
-			'cleanup_items'    => $aggregate['cleanup_items'],
-			'children'         => $children,
+
+		$children_for_output = ( $include_evidence || $include_details ) ? $children : $this->summarize_cleanup_children( $children );
+		$output              = array(
+			'success'             => true,
+			'state'               => $state,
+			'run_id'              => $this->cleanup_run_id( $job_id ),
+			'job_id'              => $job_id,
+			'status'              => in_array( $state, array( 'children_processing', 'partial_failed' ), true ) ? $state : ( $job['status'] ?? '' ),
+			'created_at'          => $job['created_at'] ?? '',
+			'parent_completed_at' => $job['completed_at'] ?? '',
+			'artifact_cleanup'    => $aggregate['artifact_cleanup'],
+			'cleanup_items'       => $aggregate['cleanup_items'],
+			'children'            => $children_for_output,
 		);
 
+		$output_aggregate             = $aggregate;
+		$output_aggregate['children'] = $children_for_output;
+
 		if ( isset( $engine_data['system_task_result'] ) && is_array( $engine_data['system_task_result'] ) ) {
-			$engine_data['system_task_result'] = $this->with_cleanup_aggregate_report( $engine_data['system_task_result'], $aggregate );
+			$engine_data['system_task_result'] = $this->with_cleanup_aggregate_report( $engine_data['system_task_result'], $output_aggregate );
 		}
 
 		if ( $include_evidence ) {
@@ -105,15 +111,18 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 				'failed_by_reason'  => array(),
 			),
 			'children'         => array(
-				'batch_job_ids' => array(),
-				'chunk_job_ids' => array(),
-				'processing'    => 0,
-				'completed'     => 0,
-				'failed'        => 0,
-				'running'       => 0,
-				'total'         => 0,
-				'statuses'      => array(),
-				'job_ids'       => array(),
+				'batch_job_ids'      => array(),
+				'chunk_job_ids'      => array(),
+				'pending_job_ids'    => array(),
+				'processing_job_ids' => array(),
+				'failed_job_ids'     => array(),
+				'processing'         => 0,
+				'completed'          => 0,
+				'failed'             => 0,
+				'running'            => 0,
+				'total'              => 0,
+				'statuses'           => array(),
+				'job_ids'            => array(),
 			),
 		);
 
@@ -126,6 +135,13 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 			++$summary['children']['total'];
 			if ( $child_job_id > 0 ) {
 				$summary['children']['job_ids'][] = $child_job_id;
+				if ( 'pending' === $status ) {
+					$summary['children']['pending_job_ids'][] = $child_job_id;
+				} elseif ( 'processing' === $status ) {
+					$summary['children']['processing_job_ids'][] = $child_job_id;
+				} elseif ( str_starts_with( $status, 'failed' ) ) {
+					$summary['children']['failed_job_ids'][] = $child_job_id;
+				}
 			}
 
 			$this->count_cleanup_child_status( $summary['children'], $status );
@@ -160,10 +176,44 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 		$summary['cleanup_items']['freed_human']    = $this->format_bytes( $summary['cleanup_items']['bytes_reclaimed'] );
 		$summary['children']['batch_job_ids']       = array_values( array_unique( $summary['children']['batch_job_ids'] ) );
 		$summary['children']['chunk_job_ids']       = array_values( array_unique( $summary['children']['chunk_job_ids'] ) );
+		$summary['children']['pending_job_ids']     = array_values( array_unique( $summary['children']['pending_job_ids'] ) );
+		$summary['children']['processing_job_ids']  = array_values( array_unique( $summary['children']['processing_job_ids'] ) );
+		$summary['children']['failed_job_ids']      = array_values( array_unique( $summary['children']['failed_job_ids'] ) );
 		$summary['children']['job_ids']             = array_values( array_unique( $summary['children']['job_ids'] ) );
 		$summary['children']['running']             = (int) $summary['children']['processing'];
 
 		return $summary;
+	}
+
+	/**
+	 * Return operator-focused child status without unbounded diagnostic ID lists.
+	 *
+	 * @param array<string,mixed> $children Full child aggregate.
+	 * @return array<string,mixed>
+	 */
+	private function summarize_cleanup_children( array $children ): array {
+		$limit      = 10;
+		$batch_ids  = (array) ( $children['batch_job_ids'] ?? array() );
+		$chunk_ids  = (array) ( $children['chunk_job_ids'] ?? array() );
+		$pending    = (array) ( $children['pending_job_ids'] ?? array() );
+		$processing = (array) ( $children['processing_job_ids'] ?? array() );
+
+		return array(
+			'processing'              => (int) ( $children['processing'] ?? 0 ),
+			'completed'               => (int) ( $children['completed'] ?? 0 ),
+			'failed'                  => (int) ( $children['failed'] ?? 0 ),
+			'running'                 => (int) ( $children['running'] ?? 0 ),
+			'total'                   => (int) ( $children['total'] ?? 0 ),
+			'statuses'                => (array) ( $children['statuses'] ?? array() ),
+			'batch_total'             => count( $batch_ids ),
+			'chunk_total'             => count( $chunk_ids ),
+			'failed_job_ids'          => (array) ( $children['failed_job_ids'] ?? array() ),
+			'pending_job_ids'         => array_slice( $pending, 0, $limit ),
+			'processing_job_ids'      => array_slice( $processing, 0, $limit ),
+			'pending_truncated'       => count( $pending ) > $limit,
+			'processing_truncated'    => count( $processing ) > $limit,
+			'diagnostic_job_id_lists' => 'Re-run status with --verbose or use cleanup evidence for full child job IDs.',
+		);
 	}
 
 	/**
@@ -440,11 +490,11 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 	 * @return string
 	 */
 	private function format_bytes( int $bytes ): string {
-		$bytes     = max( 0, $bytes );
-		$units     = array( 'B', 'KiB', 'MiB', 'GiB', 'TiB' );
-		$max_unit  = count( $units ) - 1;
-		$value     = (float) $bytes;
-		$unit      = 0;
+		$bytes    = max( 0, $bytes );
+		$units    = array( 'B', 'KiB', 'MiB', 'GiB', 'TiB' );
+		$max_unit = count( $units ) - 1;
+		$value    = (float) $bytes;
+		$unit     = 0;
 		while ( $value >= 1024 && $unit < $max_unit ) {
 			$value /= 1024;
 			++$unit;

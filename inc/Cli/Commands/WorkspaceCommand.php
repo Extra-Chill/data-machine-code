@@ -327,6 +327,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *   without disabling the bounded scan. Useful when you want a small slice
 	 *   audited with full safety information.
 	 *
+	 * [--verbose]
+	 * : Include full diagnostic child job ID lists in task-backed cleanup status output.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -627,7 +630,7 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	private function render_cleanup_run_status( int $job_id, array $assoc_args, bool $evidence ): void {
-		$output = $this->cleanup_run_evidence_store()->read( $this->cleanup_run_id( $job_id ), $evidence );
+		$output = $this->cleanup_run_evidence_store()->read( $this->cleanup_run_id( $job_id ), $evidence, ! empty( $assoc_args['verbose'] ) );
 		if ( $output instanceof \WP_Error ) {
 			WP_CLI::error( $output->get_error_message() );
 			return;
