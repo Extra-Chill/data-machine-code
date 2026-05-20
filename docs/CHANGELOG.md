@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.9] - 2026-05-20
+
+### Fixed
+- support token-authenticated workspace clones
+
 ## [0.46.8] - 2026-05-20
 
 ### Changed
