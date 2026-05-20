@@ -2,24 +2,27 @@
 /**
  * Data Machine Code Environment
  *
- * Public signal that a co-located coding agent runtime exists on this host.
+ * Public signal that Data Machine Code is active on this host.
  *
- * Data Machine Code is the bridge between WordPress and an external
- * coding-agent runtime. Its mere activation is the declarative answer to
- * "is there a coding agent here?" — there is no separate marker file or
- * constant to declare.
+ * Data Machine Code exposes code-adjacent GitHub, GitSync, workspace, and
+ * runtime capabilities. Its activation means those DMC surfaces are available
+ * to inspect and call, but callers must still check narrower capabilities
+ * before assuming shell execution or broad filesystem writes.
  *
  * Other plugins that ship disk-side artifacts for a coding agent (e.g.
  * Intelligence's SKILL.md sync, MEMORY.md disk writes, MCP bridges) should
- * gate their disk hooks on the presence of this class:
+ * gate their DMC integrations on the presence of this class, then gate
+ * shell/filesystem work on the explicit helpers below:
  *
  *     if ( class_exists( '\DataMachineCode\Environment' ) ) {
- *         // co-located coding agent runtime exists — register disk hooks
+ *         // DMC is active; now check has_shell() or has_writable_fs()
+ *         // before registering shell-backed or disk-projection hooks.
  *     }
  *
- * On managed hosts (WordPress.com, VIP, sandboxed environments) Data Machine
- * Code is never installed by design. The class does not exist and disk
- * artifacts are correctly skipped without any platform sniffing.
+ * Managed hosts may support API-first DMC subsystems such as GitHub abilities
+ * and GitSync while still denying shell execution or writes outside approved
+ * site-owned paths. Capability checks are intentionally narrower than host
+ * detection.
  *
  * @package DataMachineCode
  * @since   0.6.0
@@ -41,12 +44,14 @@ class Environment {
 	private static $shell_diagnostic_cache = null;
 
 	/**
-	 * Is the coding agent runtime bridge available on this install?
+	 * Is Data Machine Code available on this install?
 	 *
 	 * Returns true whenever this class is loaded, which is equivalent to
-	 * "Data Machine Code is active." Provided as an explicit method so
-	 * callers can write capability-style code rather than relying on the
-	 * `class_exists()` idiom.
+	 * "Data Machine Code is active." This does not imply shell execution,
+	 * local git, or writable plugin/theme filesystems; callers that need those
+	 * must also check has_shell() and has_writable_fs(). Provided as an explicit
+	 * method so callers can write capability-style code rather than relying on
+	 * the `class_exists()` idiom.
 	 *
 	 * @since 0.6.0
 	 *
