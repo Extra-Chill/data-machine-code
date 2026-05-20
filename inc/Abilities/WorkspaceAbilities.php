@@ -33,9 +33,9 @@ class WorkspaceAbilities {
 			return;
 		}
 
-		if ( ! class_exists( 'WP_Ability' ) ) {
+		if ( ! function_exists( 'wp_register_ability' ) ) {
 			add_action( 'wp_abilities_api_init', function (): void {
-				if ( self::$registered || ! class_exists( 'WP_Ability' ) ) {
+				if ( self::$registered || ! function_exists( 'wp_register_ability' ) ) {
 					return;
 				}
 
@@ -2167,7 +2167,7 @@ class WorkspaceAbilities {
 			}
 		};
 
-		if ( doing_action( 'wp_abilities_api_init' ) || did_action( 'wp_abilities_api_init' ) ) {
+		if ( doing_action( 'wp_abilities_api_init' ) ) {
 			$register_callback();
 		} else {
 			add_action( 'wp_abilities_api_init', $register_callback );

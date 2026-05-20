@@ -22,9 +22,9 @@ class CodeTaskAbilities {
 			return;
 		}
 
-		if ( ! class_exists( 'WP_Ability' ) ) {
+		if ( ! function_exists( 'wp_register_ability' ) ) {
 			add_action( 'wp_abilities_api_init', function (): void {
-				if ( self::$registered || ! class_exists( 'WP_Ability' ) ) {
+				if ( self::$registered || ! function_exists( 'wp_register_ability' ) ) {
 					return;
 				}
 
@@ -34,7 +34,7 @@ class CodeTaskAbilities {
 			return;
 		}
 
-		if ( function_exists( 'doing_action' ) && ( doing_action( 'wp_abilities_api_init' ) || did_action( 'wp_abilities_api_init' ) ) ) {
+		if ( function_exists( 'doing_action' ) && doing_action( 'wp_abilities_api_init' ) ) {
 			$this->register();
 		} else {
 			add_action( 'wp_abilities_api_init', array( $this, 'register' ) );
