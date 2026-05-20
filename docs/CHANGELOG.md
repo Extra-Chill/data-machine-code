@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.8] - 2026-05-20
+
+### Changed
+- Preserve local PR cleanup results
+
 ## [0.46.7] - 2026-05-20
 
 ### Fixed
