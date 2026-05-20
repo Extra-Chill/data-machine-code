@@ -114,6 +114,21 @@ class GitHubTools extends BaseTool {
 	}
 
 	/**
+	 * Build a standard GitHub tool error response.
+	 *
+	 * @param string $message   Error message.
+	 * @param string $tool_name Tool name.
+	 * @return array<string,mixed>
+	 */
+	protected function buildErrorResponse( string $message, string $tool_name ): array {
+		return array(
+			'success'   => false,
+			'error'     => $message,
+			'tool_name' => $tool_name,
+		);
+	}
+
+	/**
 	 * Check if GitHub tools are properly configured.
 	 *
 	 * @param bool   $configured Current configuration status.
