@@ -159,8 +159,13 @@ trait WorkspaceRepositoryLifecycle {
 			$started_at
 		);
 
+		$env = $this->build_clone_environment( $url, $options );
+		if ( is_wp_error( $env ) ) {
+			return $env;
+		}
+
 		$command = $this->build_clone_command( $url, $repo_path, $partial_clone );
-		$result  = $this->run_clone_command( $command, $progress_callback, $started_at );
+		$result  = $this->run_clone_command( $command, $progress_callback, $started_at, $env );
 
 		if ( is_wp_error( $result ) ) {
 			return $this->clone_failed_error( $result, $name, $repo_path, $url );
@@ -197,6 +202,46 @@ trait WorkspaceRepositoryLifecycle {
 	}
 
 	/**
+	 * Build additional environment values for git clone.
+	 *
+	 * @param string $url     Git clone URL.
+	 * @param array  $options Optional clone options.
+	 * @return array<string,string>|null|\WP_Error Extra environment values, null for default environment, or error.
+	 */
+	private function build_clone_environment( string $url, array $options ): array|null|\WP_Error {
+		$auth_token_env = isset( $options['auth_token_env'] ) && is_scalar( $options['auth_token_env'] ) ? trim( (string) $options['auth_token_env'] ) : '';
+		if ( '' === $auth_token_env ) {
+			return null;
+		}
+
+		if ( ! preg_match( '/^[A-Za-z_][A-Za-z0-9_]*$/', $auth_token_env ) ) {
+			return new \WP_Error( 'invalid_auth_token_env', 'Clone auth token environment variable name is invalid.', array( 'status' => 400 ) );
+		}
+
+		$token = trim( (string) getenv( $auth_token_env ) );
+		if ( '' === $token ) {
+			return new \WP_Error( 'missing_auth_token_env', sprintf( 'Clone auth token environment variable %s is empty or unavailable.', $auth_token_env ), array( 'status' => 400 ) );
+		}
+
+		$parts = wp_parse_url( $url );
+		$host  = is_array( $parts ) && isset( $parts['host'] ) ? strtolower( (string) $parts['host'] ) : '';
+		if ( '' === $host ) {
+			return new \WP_Error( 'unsupported_auth_token_url', 'Clone auth token support requires an HTTPS repository URL.', array( 'status' => 400 ) );
+		}
+
+		$env = getenv();
+		if ( ! is_array( $env ) ) {
+			$env = array();
+		}
+
+		$env['GIT_CONFIG_COUNT']   = '1';
+		$env['GIT_CONFIG_KEY_0']   = sprintf( 'http.https://%s/.extraheader', $host );
+		$env['GIT_CONFIG_VALUE_0'] = 'AUTHORIZATION: bearer ' . $token;
+
+		return $env;
+	}
+
+	/**
 	 * Remote HTTP(S) and SSH hosts generally support safe blobless clones; local
 	 * paths and file URLs often do not, and are usually test fixtures anyway.
 	 *
@@ -215,14 +260,14 @@ trait WorkspaceRepositoryLifecycle {
 	 * @param float         $started_at        Clone start timestamp.
 	 * @return array{success: true, output: string}|\WP_Error
 	 */
-	private function run_clone_command( string $command, ?callable $progress_callback, float $started_at ): array|\WP_Error {
+	private function run_clone_command( string $command, ?callable $progress_callback, float $started_at, ?array $env = null ): array|\WP_Error {
 		$descriptor_spec = array(
 			1 => array( 'pipe', 'w' ),
 			2 => array( 'pipe', 'w' ),
 		);
 
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_proc_open
-		$process = proc_open( $command, $descriptor_spec, $pipes );
+		$process = proc_open( $command, $descriptor_spec, $pipes, null, $env );
 		if ( ! is_resource( $process ) ) {
 			return new \WP_Error( 'clone_failed', 'Git clone failed to start.', array( 'status' => 500 ) );
 		}

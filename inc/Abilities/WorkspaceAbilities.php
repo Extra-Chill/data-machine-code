@@ -383,6 +383,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Disable the default blobless partial clone for remote repositories.',
 							),
+							'auth_token_env' => array(
+								'type'        => 'string',
+								'description' => 'Optional environment variable name containing a bearer token for HTTPS clone authentication.',
+							),
 						),
 						'required'   => array( 'url' ),
 					),
@@ -2360,7 +2364,10 @@ class WorkspaceAbilities {
 		return $workspace->clone_repo(
 			$input['url'] ?? '',
 			$input['name'] ?? null,
-			array( 'full' => (bool) ( $input['full'] ?? false ) )
+			array(
+				'full'           => (bool) ( $input['full'] ?? false ),
+				'auth_token_env' => $input['auth_token_env'] ?? '',
+			)
 		);
 	}
 
