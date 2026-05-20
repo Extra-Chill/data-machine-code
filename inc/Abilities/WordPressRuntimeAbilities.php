@@ -147,7 +147,7 @@ class WordPressRuntimeAbilities {
 			);
 		};
 
-		if ( function_exists( 'doing_action' ) && doing_action( 'wp_abilities_api_init' ) ) {
+		if ( function_exists( 'doing_action' ) && ( doing_action( 'wp_abilities_api_init' ) || did_action( 'wp_abilities_api_init' ) ) ) {
 			$register_callback();
 			return;
 		}

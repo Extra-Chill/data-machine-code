@@ -22,7 +22,11 @@ class CodeTaskAbilities {
 			return;
 		}
 
-		add_action( 'wp_abilities_api_init', array( $this, 'register' ) );
+		if ( function_exists( 'doing_action' ) && ( doing_action( 'wp_abilities_api_init' ) || did_action( 'wp_abilities_api_init' ) ) ) {
+			$this->register();
+		} else {
+			add_action( 'wp_abilities_api_init', array( $this, 'register' ) );
+		}
 		self::$registered = true;
 	}
 
