@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.5] - 2026-05-20
+
+### Fixed
+- register code abilities after init
+
 ## [0.46.4] - 2026-05-19
 
 ### Changed
