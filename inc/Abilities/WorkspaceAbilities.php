@@ -29,11 +29,19 @@ class WorkspaceAbilities {
 	private static bool $registered = false;
 
 	public function __construct() {
-		if ( ! class_exists( 'WP_Ability' ) ) {
+		if ( self::$registered ) {
 			return;
 		}
 
-		if ( self::$registered ) {
+		if ( ! class_exists( 'WP_Ability' ) ) {
+			add_action( 'wp_abilities_api_init', function (): void {
+				if ( self::$registered || ! class_exists( 'WP_Ability' ) ) {
+					return;
+				}
+
+				$this->registerAbilities();
+				self::$registered = true;
+			} );
 			return;
 		}
 
