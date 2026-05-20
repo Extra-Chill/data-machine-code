@@ -458,6 +458,9 @@ class GitHubCommand extends BaseCommand {
 	 * [--dry-run]
 	 * : Preview the cleanup decision without deleting the branch.
 	 *
+	 * [--local-only]
+	 * : Finalize and remove the matching local DMC worktree without deleting the remote branch.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -487,6 +490,7 @@ class GitHubCommand extends BaseCommand {
 			'repo'        => $assoc_args['repo'] ?? '',
 			'pull_number' => $pull_number,
 			'dry_run'     => ! empty( $assoc_args['dry-run'] ),
+			'local_only'  => ! empty( $assoc_args['local-only'] ),
 		) );
 
 		$result = GitHubAbilities::cleanupPullRequest( $input );

@@ -253,6 +253,7 @@ namespace {
 	$cleanup_ability = $GLOBALS['dmc_registered_abilities']['datamachine/cleanup-github-pull-request'] ?? null;
 	$assert( 'cleanup ability is registered', null !== $cleanup_ability );
 	$assert( 'cleanup ability uses cleanupPullRequest execute_callback', array( GitHubAbilities::class, 'cleanupPullRequest' ) === ( $cleanup_ability['execute_callback'] ?? null ) );
+	$assert( 'cleanup ability exposes local_only', isset( $cleanup_ability['input_schema']['properties']['local_only'] ) );
 
 	$permission = $ability['permission_callback'] ?? null;
 	PermissionHelper::$can_manage_result = false;
@@ -377,6 +378,46 @@ namespace {
 	$assert( 'cleanupPullRequest removes matching DMC worktree before remote branch delete', array( 'repo' => 'owner/repo', 'branch' => 'feature/test', 'pr_url' => 'https://github.com/owner/repo/pull/42' ) === ( Workspace::$cleanup_calls[0] ?? array() ) );
 	$assert( 'cleanupPullRequest returns local worktree cleanup evidence', true === ( $result['local_worktree_cleanup']['found'] ?? false ) );
 
+	$calls = array();
+	Workspace::$cleanup_calls = array();
+	$result = GitHubAbilities::cleanupPullRequest(
+		array(
+			'repo'        => 'owner/repo',
+			'pull_number' => 42,
+			'local_only'  => true,
+		),
+		static function ( string $url, array $query, string $pat ) use ( &$calls, $merged_pull ): array {
+			$calls[] = array( 'method' => 'GET', 'url' => $url, 'query' => $query, 'pat' => $pat );
+			return $merged_pull();
+		},
+		static function ( string $method, string $url, ?array $body, string $pat ) use ( &$calls ): array {
+			$calls[] = compact( 'method', 'url', 'body', 'pat' );
+			return array( 'success' => true, 'data' => null );
+		}
+	);
+	$assert( 'cleanupPullRequest local_only succeeds', is_array( $result ) && true === ( $result['local_only'] ?? false ) );
+	$assert( 'cleanupPullRequest local_only skips remote branch delete', 1 === count( $calls ) );
+	$assert( 'cleanupPullRequest local_only returns local cleanup evidence', true === ( $result['local_worktree_cleanup']['found'] ?? false ) );
+
+	$calls = array();
+	Workspace::$cleanup_calls = array();
+	$result = GitHubAbilities::cleanupPullRequest(
+		array(
+			'repo'        => 'owner/repo',
+			'pull_number' => 42,
+		),
+		static function ( string $url, array $query, string $pat ) use ( &$calls, $merged_pull ): array {
+			$calls[] = array( 'method' => 'GET', 'url' => $url, 'query' => $query, 'pat' => $pat );
+			return $merged_pull();
+		},
+		static function ( string $method, string $url, ?array $body, string $pat ) use ( &$calls ): WP_Error {
+			$calls[] = compact( 'method', 'url', 'body', 'pat' );
+			return new WP_Error( 'github_api_error', 'GitHub API error (403): Resource not accessible by integration', array( 'status' => 403 ) );
+		}
+	);
+	$assert( 'cleanupPullRequest preserves local cleanup on remote delete failure', is_array( $result ) && true === ( $result['partial_success'] ?? false ) );
+	$assert( 'cleanupPullRequest reports remote delete error without losing local evidence', 403 === ( $result['branch_delete_error']['status'] ?? 0 ) && true === ( $result['local_worktree_cleanup']['found'] ?? false ) );
+
 	$result = GitHubAbilities::cleanupPullRequest(
 		array(
 			'repo'        => 'owner/repo',
@@ -418,6 +459,7 @@ namespace {
 	$tool_call = $GLOBALS['dmc_tool_ability_calls'][0] ?? array();
 	$assert( 'merge tool calls merge ability', 'datamachine/merge-github-pull-request' === ( $tool_call['name'] ?? '' ) );
 	$cleanup_definition = $tools->getCleanupPullRequestDefinition();
+	$assert( 'cleanup tool exposes local_only', isset( $cleanup_definition['parameters']['properties']['local_only'] ) );
 	$cleanup_result     = $tools->handle_tool_call(
 		array(
 			'repo'        => 'owner/repo',

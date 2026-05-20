@@ -578,6 +578,10 @@ class GitHubAbilities {
 								'type'        => 'boolean',
 								'description' => 'Preview the cleanup decision without deleting the branch.',
 							),
+							'local_only'  => array(
+								'type'        => 'boolean',
+								'description' => 'Finalize and remove the matching local DMC worktree without deleting the remote branch.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -2376,7 +2380,7 @@ class GitHubAbilities {
 	 * from a linked worktree where the base branch is already checked out in the
 	 * primary checkout.
 	 *
-	 * @param array         $input       Required: repo, pull_number. Optional: dry_run.
+	 * @param array         $input       Required: repo, pull_number. Optional: dry_run, local_only.
 	 * @param callable|null $api_get     Optional test seam: fn(string $url, array $query, string $pat): array|WP_Error.
 	 * @param callable|null $api_request Optional test seam: fn(string $method, string $url, ?array $body, string $pat): array|WP_Error.
 	 * @return array|\WP_Error Success payload or error.
@@ -2385,6 +2389,7 @@ class GitHubAbilities {
 		$repo        = sanitize_text_field( $input['repo'] ?? '' );
 		$pull_number = (int) ( $input['pull_number'] ?? 0 );
 		$dry_run     = ! empty( $input['dry_run'] );
+		$local_only  = ! empty( $input['local_only'] );
 
 		if ( empty( $repo ) || $pull_number <= 0 ) {
 			return new \WP_Error( 'missing_params', 'Repository and pull_number are required.', array( 'status' => 400 ) );
@@ -2434,6 +2439,8 @@ class GitHubAbilities {
 			'branch_deleted'         => false,
 			'branch_already_deleted' => false,
 			'dry_run'                => $dry_run,
+			'local_only'             => $local_only,
+			'partial_success'        => false,
 			'pull_request_url'       => (string) ( $pull['html_url'] ?? '' ),
 		);
 
@@ -2453,12 +2460,28 @@ class GitHubAbilities {
 			$result['local_worktree_cleanup'] = $local_cleanup;
 		}
 
+		if ( $local_only ) {
+			$result['message'] = sprintf( 'Cleaned up local DMC worktree for %s without deleting remote branch %s.', $repo, $head_branch );
+			return $result;
+		}
+
 		$encoded_head_branch = implode( '/', array_map( 'rawurlencode', explode( '/', $head_branch ) ) );
 		$delete_url          = sprintf( '%s/repos/%s/git/refs/heads/%s', self::API_BASE, $repo, $encoded_head_branch );
 		$deleted             = $api_request( 'DELETE', $delete_url, null, $pat );
 		if ( is_wp_error( $deleted ) ) {
 			$status = is_array( $deleted->get_error_data() ) ? (int) ( $deleted->get_error_data()['status'] ?? 0 ) : 0;
 			if ( 404 !== $status ) {
+				if ( true === ( $result['local_worktree_cleanup']['success'] ?? false ) ) {
+					$result['partial_success']     = true;
+					$result['branch_delete_error'] = array(
+						'code'    => $deleted->get_error_code(),
+						'message' => $deleted->get_error_message(),
+						'status'  => $status,
+					);
+					$result['message']             = sprintf( 'Cleaned up local DMC worktree for %s, but could not delete remote branch %s: %s', $repo, $head_branch, $deleted->get_error_message() );
+					return $result;
+				}
+
 				return $deleted;
 			}
 
