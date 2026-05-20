@@ -114,6 +114,21 @@ class GitHubTools extends BaseTool {
 	}
 
 	/**
+	 * Build a standard GitHub tool error response.
+	 *
+	 * @param string $message   Error message.
+	 * @param string $tool_name Tool name.
+	 * @return array<string,mixed>
+	 */
+	protected function buildErrorResponse( string $message, string $tool_name ): array {
+		return array(
+			'success'   => false,
+			'error'     => $message,
+			'tool_name' => $tool_name,
+		);
+	}
+
+	/**
 	 * Check if GitHub tools are properly configured.
 	 *
 	 * @param bool   $configured Current configuration status.
@@ -663,7 +678,7 @@ class GitHubTools extends BaseTool {
 		return array(
 			'class'       => __CLASS__,
 			'method'      => 'handleCleanupPullRequest',
-			'description' => 'Delete a merged pull request head branch through the GitHub API without checking out or switching local branches. Supports dry_run previews.',
+			'description' => 'Cleanup a merged pull request by finalizing the matching local DMC worktree before optional remote branch deletion. Supports dry_run previews and local_only cleanup.',
 			'parameters'  => array(
 				'type'       => 'object',
 				'properties' => array(
@@ -678,6 +693,10 @@ class GitHubTools extends BaseTool {
 					'dry_run'     => array(
 						'type'        => 'boolean',
 						'description' => 'Preview the cleanup decision without deleting the branch.',
+					),
+					'local_only'  => array(
+						'type'        => 'boolean',
+						'description' => 'Finalize and remove the matching local DMC worktree without deleting the remote branch.',
 					),
 				),
 				'required'   => array( 'repo', 'pull_number' ),
