@@ -38,7 +38,7 @@ namespace {
 	}
 
 	function doing_action( string $hook ): bool {
-		return false;
+		return 'wp_abilities_api_init' === $hook;
 	}
 
 	function did_action( string $hook ): int {

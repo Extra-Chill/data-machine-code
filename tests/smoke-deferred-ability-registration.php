@@ -29,10 +29,6 @@ namespace {
 	$GLOBALS['datamachine_code_registered_abilities'] = array();
 	$GLOBALS['datamachine_code_added_actions']        = array();
 
-	function wp_register_ability( string $name, array $definition ): void {
-		$GLOBALS['datamachine_code_registered_abilities'][ $name ] = $definition;
-	}
-
 	function doing_action( string $hook ): bool {
 		return false;
 	}
@@ -67,7 +63,9 @@ namespace {
 	$assert( 'constructors defer when WP_Ability is unavailable', 2 === count( $GLOBALS['datamachine_code_added_actions'] ) );
 	$assert( 'constructors do not register before WP_Ability is available', array() === $GLOBALS['datamachine_code_registered_abilities'] );
 
-	class WP_Ability {}
+	function wp_register_ability( string $name, array $definition ): void {
+		$GLOBALS['datamachine_code_registered_abilities'][ $name ] = $definition;
+	}
 
 	foreach ( $GLOBALS['datamachine_code_added_actions'] as $action ) {
 		if ( 'wp_abilities_api_init' === $action['hook'] ) {

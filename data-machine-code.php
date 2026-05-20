@@ -67,7 +67,16 @@ add_action( 'plugins_loaded', 'datamachine_code_maybe_upgrade_schema', 5 );
  * data-machine-code loads before data-machine).
  */
 function datamachine_code_bootstrap() {
+	static $bootstrapped = false;
+
+	if ( $bootstrapped ) {
+		return;
+	}
+
 	if ( ! class_exists( 'DataMachine\Abilities\PermissionHelper' ) ) {
+		add_action( 'init', 'datamachine_code_bootstrap', 1 );
+		add_action( 'wp_abilities_api_init', 'datamachine_code_bootstrap', 1 );
+
 		add_action( 'admin_notices', function () {
 			?>
 			<div class="notice notice-error">
@@ -77,6 +86,8 @@ function datamachine_code_bootstrap() {
 		} );
 		return;
 	}
+
+	$bootstrapped = true;
 
 	// Load Abilities (they self-register).
 	new \DataMachineCode\Abilities\GitHubAbilities();
