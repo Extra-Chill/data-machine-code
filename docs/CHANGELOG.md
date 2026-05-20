@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.7] - 2026-05-20
+
+### Fixed
+- register code abilities during api hook replay
+
 ## [0.46.6] - 2026-05-20
 
 ### Fixed
