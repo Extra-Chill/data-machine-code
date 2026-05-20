@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.6] - 2026-05-20
+
+### Fixed
+- defer code ability registration until api loads
+
 ## [0.46.5] - 2026-05-20
 
 ### Fixed
