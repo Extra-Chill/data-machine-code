@@ -18,7 +18,19 @@ class CodeTaskAbilities {
 	private static bool $registered = false;
 
 	public function __construct() {
-		if ( ! class_exists( 'WP_Ability' ) || self::$registered ) {
+		if ( self::$registered ) {
+			return;
+		}
+
+		if ( ! class_exists( 'WP_Ability' ) ) {
+			add_action( 'wp_abilities_api_init', function (): void {
+				if ( self::$registered || ! class_exists( 'WP_Ability' ) ) {
+					return;
+				}
+
+				$this->register();
+				self::$registered = true;
+			} );
 			return;
 		}
 
