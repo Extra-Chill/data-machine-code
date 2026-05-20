@@ -92,6 +92,20 @@ wp datamachine-code gitsync unbind intelligence-wiki
 wp datamachine-code gitsync unbind intelligence-wiki --purge --yes
 ```
 
+## System task
+
+GitSync pull is also available as a Data Machine system task for flows that need
+to refresh a binding after a schedule or webhook trigger without shelling out to
+WP-CLI:
+
+```bash
+wp datamachine system run gitsync_pull --param=slug:intelligence-wiki
+wp datamachine system run gitsync_pull --param=slug:intelligence-wiki --param=allow_dirty:1
+```
+
+The task delegates to the same API-first `GitSync::pull()` path as the CLI and
+therefore does not require a local git binary, `.git` directory, or shell access.
+
 ## Abilities
 
 Every CLI subcommand is a thin shell over the matching ability. Consumers should call abilities directly, not the service class.
