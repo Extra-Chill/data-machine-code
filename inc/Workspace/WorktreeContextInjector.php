@@ -349,9 +349,6 @@ class WorktreeContextInjector {
 		$buckets = array();
 
 		foreach ( $worktrees as $row ) {
-			if ( ! is_array( $row ) ) {
-				continue;
-			}
 			$handle = (string) ( $row['handle'] ?? '' );
 			if ( '' === $handle ) {
 				continue;
@@ -369,7 +366,7 @@ class WorktreeContextInjector {
 
 		$duplicates = array();
 		foreach ( $buckets as $bucket ) {
-			$handles = array_values( array_unique( (array) ( $bucket['handles'] ?? array() ) ) );
+			$handles = array_values( array_unique( $bucket['handles'] ) );
 			if ( count( $handles ) < 2 ) {
 				continue;
 			}
@@ -510,14 +507,14 @@ class WorktreeContextInjector {
 
 		// Pass 1: session_id across registered runtimes, in registration order.
 		foreach ( array_keys( $signatures ) as $runtime_id ) {
-			if ( isset( $ids[ $runtime_id ]['session_id'] ) && null !== $ids[ $runtime_id ]['session_id'] ) {
+			if ( isset( $ids[ $runtime_id ]['session_id'] ) ) {
 				return $ids[ $runtime_id ]['session_id'];
 			}
 		}
 
 		// Pass 2: any subkey across registered runtimes, in registration order.
 		foreach ( array_keys( $signatures ) as $runtime_id ) {
-			if ( ! isset( $ids[ $runtime_id ] ) || ! is_array( $ids[ $runtime_id ] ) ) {
+			if ( ! isset( $ids[ $runtime_id ] ) ) {
 				continue;
 			}
 			foreach ( $ids[ $runtime_id ] as $value ) {
@@ -592,7 +589,7 @@ class WorktreeContextInjector {
 			'ids'        => true,
 		);
 		foreach ( $session as $key => $value ) {
-			if ( ! is_string( $key ) || isset( $canonical_top_level[ $key ] ) ) {
+			if ( isset( $canonical_top_level[ $key ] ) ) {
 				continue;
 			}
 			$underscore = strpos( $key, '_' );
@@ -601,9 +598,6 @@ class WorktreeContextInjector {
 			}
 			$runtime_id = substr( $key, 0, $underscore );
 			$subkey     = substr( $key, $underscore + 1 );
-			if ( '' === $runtime_id || '' === $subkey ) {
-				continue;
-			}
 			if ( ! isset( $ids[ $runtime_id ] ) || ! is_array( $ids[ $runtime_id ] ) ) {
 				$ids[ $runtime_id ] = array();
 			}
@@ -843,6 +837,9 @@ class WorktreeContextInjector {
 		$files = array();
 		foreach ( self::MEMORY_FILES as $filename ) {
 			$memory = new \DataMachine\Core\FilesRepository\AgentMemory( $user_id, 0, $filename );
+			if ( ! method_exists( $memory, 'get_all' ) ) {
+				continue;
+			}
 			$result = $memory->get_all();
 			if ( ! empty( $result['success'] ) && is_string( $result['content'] ?? null ) && '' !== trim( $result['content'] ) ) {
 				$files[ $filename ] = $result['content'];
@@ -1029,12 +1026,10 @@ class WorktreeContextInjector {
 		if ( is_wp_error( $agents_projection ) ) {
 			return $agents_projection;
 		}
-		if ( is_array( $agents_projection ) ) {
-			$written = array_merge( $written, $agents_projection );
-		}
+		$written = array_merge( $written, $agents_projection );
 
 		$exclude_entries = self::INJECTED_PATHS;
-		if ( is_array( $agents_projection ) && ! empty( $agents_projection ) ) {
+		if ( ! empty( $agents_projection ) ) {
 			$exclude_entries[] = self::PROJECTED_AGENTS_PATH;
 			$exclude_entries[] = self::PROJECTED_AGENTS_MARKER_PATH;
 			$exclude_entries[] = self::PROJECTED_OPENCODE_CONFIG_PATH;
@@ -1382,8 +1377,8 @@ class WorktreeContextInjector {
 
 		try {
 			$dm         = new \DataMachine\Core\FilesRepository\DirectoryManager();
-			$user_id    = method_exists( $dm, 'get_effective_user_id' ) ? $dm->get_effective_user_id( 0 ) : 0;
-			$agent_slug = method_exists( $dm, 'resolve_agent_slug' ) ? $dm->resolve_agent_slug( array( 'user_id' => $user_id ) ) : '';
+			$user_id    = $dm->get_effective_user_id( 0 );
+			$agent_slug = $dm->resolve_agent_slug( array( 'user_id' => $user_id ) );
 			return '' !== (string) $agent_slug ? (string) $agent_slug : null;
 		} catch ( \Throwable $e ) {
 			return null;
