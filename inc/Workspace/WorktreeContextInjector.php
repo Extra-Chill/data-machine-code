@@ -1065,7 +1065,7 @@ class WorktreeContextInjector {
 	 */
 	private static function project_site_agents_md( string $worktree_path, array $payload ): array|\WP_Error {
 		$source = isset( $payload['agents_md_path'] ) ? (string) $payload['agents_md_path'] : '';
-		if ( '' === $source || ! is_file( $source ) ) {
+		if ( '' === $source || ( ! is_file( $source ) && self::can_symlink_site_agents_md( $source ) ) ) {
 			return array();
 		}
 
@@ -1087,17 +1087,30 @@ class WorktreeContextInjector {
 			}
 		}
 
-		// phpcs:ignore WordPress.WP.AlternativeFunctions.symlink_symlink -- Local checkout projection to a DMC-owned generated file.
-		if ( ! symlink( $source, $target ) ) {
-			return new \WP_Error(
-				'agents_md_projection_failed',
-				sprintf( 'Failed to symlink site AGENTS.md into worktree: %s', $target ),
-				array( 'status' => 500 )
-			);
+		$projection_kind = 'symlink';
+		if ( self::can_symlink_site_agents_md( $source ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.symlink_symlink -- Local checkout projection to a DMC-owned generated file.
+			if ( ! symlink( $source, $target ) ) {
+				return new \WP_Error(
+					'agents_md_projection_failed',
+					sprintf( 'Failed to symlink site AGENTS.md into worktree: %s', $target ),
+					array( 'status' => 500 )
+				);
+			}
+		} else {
+			$projection_kind = 'inline';
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+			if ( false === file_put_contents( $target, self::render( $payload ) ) ) {
+				return new \WP_Error(
+					'agents_md_projection_failed',
+					sprintf( 'Failed to write inline site AGENTS.md into worktree: %s', $target ),
+					array( 'status' => 500 )
+				);
+			}
 		}
 
 		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-		if ( false === file_put_contents( $marker, $source . "\n" ) ) {
+		if ( false === file_put_contents( $marker, $projection_kind . "\n" . $source . "\n" ) ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Roll back the symlink if the ownership marker cannot be written.
 			unlink( $target );
 			return new \WP_Error(
@@ -1108,6 +1121,20 @@ class WorktreeContextInjector {
 		}
 
 		return array( $target, $marker );
+	}
+
+	/**
+	 * Determine whether the site AGENTS.md path can safely be symlinked into a host checkout.
+	 *
+	 * Studio's WP-CLI runtime exposes the mounted WordPress tree as `/wordpress` inside
+	 * PHP-WASM. Symlinking that virtual path into `/Users/.../Developer` creates a
+	 * broken host symlink and can crash the Studio CLI while syncing filesystem state.
+	 *
+	 * @param string $source Absolute AGENTS.md source path as seen by PHP.
+	 * @return bool Whether a host-visible symlink should be used.
+	 */
+	private static function can_symlink_site_agents_md( string $source ): bool {
+		return ! str_starts_with( $source, '/wordpress/' );
 	}
 
 	/**
@@ -1205,13 +1232,25 @@ class WorktreeContextInjector {
 		$projected_agents  = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_PATH;
 		$projection_marker = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_MARKER_PATH;
 		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Path is a marker file within a controlled worktree.
-		$marked_source     = is_file( $projection_marker ) ? trim( (string) file_get_contents( $projection_marker ) ) : '';
+		$marked_source     = '';
+		$projection_kind   = 'symlink';
+		if ( is_file( $projection_marker ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Path is a marker file within a controlled worktree.
+			$marker_lines    = preg_split( '/\r\n|\r|\n/', trim( (string) file_get_contents( $projection_marker ) ) );
+			$marker_lines    = false === $marker_lines ? array() : $marker_lines;
+			$projection_kind = in_array( $marker_lines[0] ?? '', array( 'symlink', 'inline' ), true ) ? (string) $marker_lines[0] : 'symlink';
+			$marked_source   = 'symlink' === $projection_kind && isset( $marker_lines[1] ) ? (string) $marker_lines[1] : (string) ( $marker_lines[0] ?? '' );
+		}
 		if (
 			is_link( $projected_agents ) &&
 			'' !== $marked_source &&
 			readlink( $projected_agents ) === $marked_source
 		) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes DMC-injected local-only context symlink from a worktree.
+			unlink( $projected_agents );
+			$removed[] = $projected_agents;
+		} elseif ( 'inline' === $projection_kind && is_file( $projected_agents ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes DMC-injected local-only inline context from a worktree.
 			unlink( $projected_agents );
 			$removed[] = $projected_agents;
 		}
