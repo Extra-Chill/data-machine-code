@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.10] - 2026-05-21
+
+### Fixed
+- avoid virtual AGENTS symlinks in worktrees
+
 ## [0.46.9] - 2026-05-20
 
 ### Fixed
