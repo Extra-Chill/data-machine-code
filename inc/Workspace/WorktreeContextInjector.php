@@ -834,15 +834,23 @@ class WorktreeContextInjector {
 		$user_id    = $dm->get_effective_user_id( 0 );
 		$agent_slug = $dm->resolve_agent_slug( array( 'user_id' => $user_id ) );
 
-		$files = array();
+		$files        = array();
+		$memory_class = '\\DataMachine\\Core\\FilesRepository\\AgentMemory';
 		foreach ( self::MEMORY_FILES as $filename ) {
-			$memory    = new \DataMachine\Core\FilesRepository\AgentMemory( $user_id, 0, $filename );
-			$file_path = $memory->get_file_path();
-			if ( is_readable( $file_path ) ) {
-				$content = file_get_contents( $file_path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- AgentMemory returns a validated local file path, not a remote URL.
-				if ( is_string( $content ) && '' !== trim( $content ) ) {
-					$files[ $filename ] = $content;
+			$memory  = new $memory_class( $user_id, 0, $filename );
+			$content = null;
+			if ( is_callable( array( $memory, 'get_all' ) ) ) {
+				$result  = call_user_func( array( $memory, 'get_all' ) );
+				$content = is_array( $result ) && ! empty( $result['success'] ) && is_string( $result['content'] ?? null ) ? $result['content'] : null;
+			} elseif ( is_callable( array( $memory, 'get_file_path' ) ) ) {
+				$file_path = call_user_func( array( $memory, 'get_file_path' ) );
+				if ( is_string( $file_path ) && is_readable( $file_path ) ) {
+					$content = file_get_contents( $file_path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- AgentMemory returns a validated local file path, not a remote URL.
 				}
+			}
+
+			if ( is_string( $content ) && '' !== trim( $content ) ) {
+				$files[ $filename ] = $content;
 			}
 		}
 
