@@ -1151,8 +1151,8 @@ class WorktreeContextInjector {
 
 		$config_exists = is_file( $config );
 		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Path is a marker file within a controlled worktree.
-		$previous      = $config_exists ? (string) file_get_contents( $config ) : '';
-		$data          = array(
+		$previous = $config_exists ? (string) file_get_contents( $config ) : '';
+		$data     = array(
 			'$schema'      => 'https://opencode.ai/config.json',
 			'instructions' => array(),
 		);
@@ -1232,8 +1232,8 @@ class WorktreeContextInjector {
 		$projected_agents  = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_PATH;
 		$projection_marker = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_MARKER_PATH;
 		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Path is a marker file within a controlled worktree.
-		$marked_source     = '';
-		$projection_kind   = 'symlink';
+		$marked_source   = '';
+		$projection_kind = 'symlink';
 		if ( is_file( $projection_marker ) ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Path is a marker file within a controlled worktree.
 			$marker_lines    = preg_split( '/\r\n|\r|\n/', trim( (string) file_get_contents( $projection_marker ) ) );
