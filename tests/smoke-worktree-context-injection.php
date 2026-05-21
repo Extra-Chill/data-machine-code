@@ -117,12 +117,15 @@ $tmp_root        = sys_get_temp_dir() . '/dmc-context-injection-' . uniqid( '', 
 $site_root       = $tmp_root . '/site';
 $worktree_root   = $tmp_root . '/worktree';
 $existing_root   = $tmp_root . '/existing-worktree';
+$virtual_root    = $tmp_root . '/virtual-worktree';
 $source_agents   = $site_root . '/AGENTS.md';
 $worktree_agents = $worktree_root . '/AGENTS.md';
+$virtual_agents  = $virtual_root . '/AGENTS.md';
 
 mkdir( $site_root, 0777, true );
 mkdir( $worktree_root, 0777, true );
 mkdir( $existing_root, 0777, true );
+mkdir( $virtual_root, 0777, true );
 file_put_contents( $source_agents, "# Site AGENTS\n" );
 file_put_contents( $existing_root . '/AGENTS.md', "# Repo AGENTS\n" );
 
@@ -141,10 +144,26 @@ datamachine_code_context_assert( ! is_wp_error( $injection ), 'context injection
 datamachine_code_context_assert( is_link( $worktree_agents ), 'root AGENTS.md projection is a symlink' );
 datamachine_code_context_assert( readlink( $worktree_agents ) === $source_agents, 'root AGENTS.md points at site AGENTS.md' );
 datamachine_code_context_assert( in_array( $worktree_agents, $injection['written'], true ), 'projected AGENTS.md is reported as written' );
-datamachine_code_context_assert( trim( file_get_contents( $worktree_root . '/.datamachine/AGENTS.md.source' ) ) === $source_agents, 'projection marker records site AGENTS.md source' );
+datamachine_code_context_assert( trim( file_get_contents( $worktree_root . '/.datamachine/AGENTS.md.source' ) ) === "symlink\n" . $source_agents, 'projection marker records symlink source' );
 datamachine_code_context_assert( ! file_exists( $worktree_root . '/.opencode/AGENTS.local.md' ), 'fake OpenCode local snapshot is not written' );
 mkdir( $worktree_root . '/.opencode', 0777, true );
 file_put_contents( $worktree_root . '/.opencode/AGENTS.local.md', "# Legacy\n" );
+
+$virtual_injection = \DataMachineCode\Workspace\WorktreeContextInjector::inject(
+	$virtual_root,
+	array(
+		'site_name'      => 'Virtual Site',
+		'agents_md_path' => '/wordpress/AGENTS.md',
+		'files'          => array(
+			'MEMORY.md' => "# Virtual Memory\n",
+		),
+	)
+);
+datamachine_code_context_assert( ! is_wp_error( $virtual_injection ), 'virtual context injection succeeds' );
+datamachine_code_context_assert( ! is_link( $virtual_agents ), 'virtual AGENTS.md projection is not a host symlink' );
+datamachine_code_context_assert( is_file( $virtual_agents ), 'virtual AGENTS.md projection is written inline' );
+datamachine_code_context_assert( str_contains( (string) file_get_contents( $virtual_agents ), '# Virtual Memory' ), 'inline virtual projection contains rendered context' );
+datamachine_code_context_assert( trim( file_get_contents( $virtual_root . '/.datamachine/AGENTS.md.source' ) ) === "inline\n/wordpress/AGENTS.md", 'virtual projection marker records inline source' );
 
 $existing_injection = \DataMachineCode\Workspace\WorktreeContextInjector::inject(
 	$existing_root,
@@ -165,6 +184,9 @@ datamachine_code_context_assert( in_array( $worktree_agents, $removed['removed']
 datamachine_code_context_assert( ! file_exists( $worktree_agents ) && ! is_link( $worktree_agents ), 'projected AGENTS.md is gone after uninject' );
 datamachine_code_context_assert( ! file_exists( $worktree_root . '/.datamachine/AGENTS.md.source' ), 'projection marker is gone after uninject' );
 datamachine_code_context_assert( ! file_exists( $worktree_root . '/.opencode/AGENTS.local.md' ), 'uninject removes legacy fake OpenCode local snapshot' );
+$virtual_removed = \DataMachineCode\Workspace\WorktreeContextInjector::uninject( $virtual_root );
+datamachine_code_context_assert( in_array( $virtual_agents, $virtual_removed['removed'], true ), 'uninject removes inline virtual AGENTS.md projection' );
+datamachine_code_context_assert( ! file_exists( $virtual_agents ), 'inline virtual projection is gone after uninject' );
 $existing_removed = \DataMachineCode\Workspace\WorktreeContextInjector::uninject( $existing_root );
 datamachine_code_context_assert( ! file_exists( $existing_root . '/.opencode/opencode.json' ), 'uninject removes DMC-created OpenCode projection config' );
 datamachine_code_context_assert( in_array( $existing_root . '/.opencode/opencode.json', $existing_removed['removed'], true ), 'removed OpenCode projection config is reported' );
@@ -173,8 +195,10 @@ array_map( 'unlink', glob( $worktree_root . '/.claude/*' ) ?: array() );
 array_map( 'unlink', glob( $worktree_root . '/.opencode/*' ) ?: array() );
 array_map( 'unlink', glob( $existing_root . '/.claude/*' ) ?: array() );
 array_map( 'unlink', glob( $existing_root . '/.opencode/*' ) ?: array() );
+array_map( 'unlink', glob( $virtual_root . '/.claude/*' ) ?: array() );
 array_map( 'rmdir', array_filter( glob( $worktree_root . '/*' ) ?: array(), 'is_dir' ) );
 array_map( 'rmdir', array_filter( glob( $existing_root . '/*' ) ?: array(), 'is_dir' ) );
+array_map( 'rmdir', array_filter( glob( $virtual_root . '/*' ) ?: array(), 'is_dir' ) );
 unlink( $source_agents );
 unlink( $existing_root . '/AGENTS.md' );
 rmdir( $worktree_root . '/.claude' );
@@ -183,8 +207,11 @@ rmdir( $worktree_root . '/.datamachine' );
 rmdir( $existing_root . '/.claude' );
 rmdir( $existing_root . '/.opencode' );
 rmdir( $existing_root . '/.datamachine' );
+rmdir( $virtual_root . '/.claude' );
+rmdir( $virtual_root . '/.datamachine' );
 rmdir( $worktree_root );
 rmdir( $existing_root );
+rmdir( $virtual_root );
 rmdir( $site_root );
 rmdir( $tmp_root );
 

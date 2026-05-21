@@ -349,9 +349,6 @@ class WorktreeContextInjector {
 		$buckets = array();
 
 		foreach ( $worktrees as $row ) {
-			if ( ! is_array( $row ) ) {
-				continue;
-			}
 			$handle = (string) ( $row['handle'] ?? '' );
 			if ( '' === $handle ) {
 				continue;
@@ -369,7 +366,7 @@ class WorktreeContextInjector {
 
 		$duplicates = array();
 		foreach ( $buckets as $bucket ) {
-			$handles = array_values( array_unique( (array) ( $bucket['handles'] ?? array() ) ) );
+			$handles = array_values( array_unique( $bucket['handles'] ) );
 			if ( count( $handles ) < 2 ) {
 				continue;
 			}
@@ -510,14 +507,14 @@ class WorktreeContextInjector {
 
 		// Pass 1: session_id across registered runtimes, in registration order.
 		foreach ( array_keys( $signatures ) as $runtime_id ) {
-			if ( isset( $ids[ $runtime_id ]['session_id'] ) && null !== $ids[ $runtime_id ]['session_id'] ) {
+			if ( isset( $ids[ $runtime_id ]['session_id'] ) ) {
 				return $ids[ $runtime_id ]['session_id'];
 			}
 		}
 
 		// Pass 2: any subkey across registered runtimes, in registration order.
 		foreach ( array_keys( $signatures ) as $runtime_id ) {
-			if ( ! isset( $ids[ $runtime_id ] ) || ! is_array( $ids[ $runtime_id ] ) ) {
+			if ( ! isset( $ids[ $runtime_id ] ) ) {
 				continue;
 			}
 			foreach ( $ids[ $runtime_id ] as $value ) {
@@ -592,7 +589,7 @@ class WorktreeContextInjector {
 			'ids'        => true,
 		);
 		foreach ( $session as $key => $value ) {
-			if ( ! is_string( $key ) || isset( $canonical_top_level[ $key ] ) ) {
+			if ( isset( $canonical_top_level[ $key ] ) ) {
 				continue;
 			}
 			$underscore = strpos( $key, '_' );
@@ -601,9 +598,6 @@ class WorktreeContextInjector {
 			}
 			$runtime_id = substr( $key, 0, $underscore );
 			$subkey     = substr( $key, $underscore + 1 );
-			if ( '' === $runtime_id || '' === $subkey ) {
-				continue;
-			}
 			if ( ! isset( $ids[ $runtime_id ] ) || ! is_array( $ids[ $runtime_id ] ) ) {
 				$ids[ $runtime_id ] = array();
 			}
@@ -840,12 +834,23 @@ class WorktreeContextInjector {
 		$user_id    = $dm->get_effective_user_id( 0 );
 		$agent_slug = $dm->resolve_agent_slug( array( 'user_id' => $user_id ) );
 
-		$files = array();
+		$files        = array();
+		$memory_class = '\\DataMachine\\Core\\FilesRepository\\AgentMemory';
 		foreach ( self::MEMORY_FILES as $filename ) {
-			$memory = new \DataMachine\Core\FilesRepository\AgentMemory( $user_id, 0, $filename );
-			$result = $memory->get_all();
-			if ( ! empty( $result['success'] ) && is_string( $result['content'] ?? null ) && '' !== trim( $result['content'] ) ) {
-				$files[ $filename ] = $result['content'];
+			$memory  = new $memory_class( $user_id, 0, $filename );
+			$content = null;
+			if ( is_callable( array( $memory, 'get_all' ) ) ) {
+				$result  = call_user_func( array( $memory, 'get_all' ) );
+				$content = is_array( $result ) && ! empty( $result['success'] ) && is_string( $result['content'] ?? null ) ? $result['content'] : null;
+			} elseif ( is_callable( array( $memory, 'get_file_path' ) ) ) {
+				$file_path = call_user_func( array( $memory, 'get_file_path' ) );
+				if ( is_string( $file_path ) && is_readable( $file_path ) ) {
+					$content = file_get_contents( $file_path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- AgentMemory returns a validated local file path, not a remote URL.
+				}
+			}
+
+			if ( is_string( $content ) && '' !== trim( $content ) ) {
+				$files[ $filename ] = $content;
 			}
 		}
 
@@ -1029,12 +1034,10 @@ class WorktreeContextInjector {
 		if ( is_wp_error( $agents_projection ) ) {
 			return $agents_projection;
 		}
-		if ( is_array( $agents_projection ) ) {
-			$written = array_merge( $written, $agents_projection );
-		}
+		$written = array_merge( $written, $agents_projection );
 
 		$exclude_entries = self::INJECTED_PATHS;
-		if ( is_array( $agents_projection ) && ! empty( $agents_projection ) ) {
+		if ( ! empty( $agents_projection ) ) {
 			$exclude_entries[] = self::PROJECTED_AGENTS_PATH;
 			$exclude_entries[] = self::PROJECTED_AGENTS_MARKER_PATH;
 			$exclude_entries[] = self::PROJECTED_OPENCODE_CONFIG_PATH;
@@ -1065,7 +1068,7 @@ class WorktreeContextInjector {
 	 */
 	private static function project_site_agents_md( string $worktree_path, array $payload ): array|\WP_Error {
 		$source = isset( $payload['agents_md_path'] ) ? (string) $payload['agents_md_path'] : '';
-		if ( '' === $source || ! is_file( $source ) ) {
+		if ( '' === $source || ( ! is_file( $source ) && self::can_symlink_site_agents_md( $source ) ) ) {
 			return array();
 		}
 
@@ -1087,17 +1090,30 @@ class WorktreeContextInjector {
 			}
 		}
 
-		// phpcs:ignore WordPress.WP.AlternativeFunctions.symlink_symlink -- Local checkout projection to a DMC-owned generated file.
-		if ( ! symlink( $source, $target ) ) {
-			return new \WP_Error(
-				'agents_md_projection_failed',
-				sprintf( 'Failed to symlink site AGENTS.md into worktree: %s', $target ),
-				array( 'status' => 500 )
-			);
+		$projection_kind = 'symlink';
+		if ( self::can_symlink_site_agents_md( $source ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.symlink_symlink -- Local checkout projection to a DMC-owned generated file.
+			if ( ! symlink( $source, $target ) ) {
+				return new \WP_Error(
+					'agents_md_projection_failed',
+					sprintf( 'Failed to symlink site AGENTS.md into worktree: %s', $target ),
+					array( 'status' => 500 )
+				);
+			}
+		} else {
+			$projection_kind = 'inline';
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+			if ( false === file_put_contents( $target, self::render( $payload ) ) ) {
+				return new \WP_Error(
+					'agents_md_projection_failed',
+					sprintf( 'Failed to write inline site AGENTS.md into worktree: %s', $target ),
+					array( 'status' => 500 )
+				);
+			}
 		}
 
 		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-		if ( false === file_put_contents( $marker, $source . "\n" ) ) {
+		if ( false === file_put_contents( $marker, $projection_kind . "\n" . $source . "\n" ) ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Roll back the symlink if the ownership marker cannot be written.
 			unlink( $target );
 			return new \WP_Error(
@@ -1108,6 +1124,20 @@ class WorktreeContextInjector {
 		}
 
 		return array( $target, $marker );
+	}
+
+	/**
+	 * Determine whether the site AGENTS.md path can safely be symlinked into a host checkout.
+	 *
+	 * Studio's WP-CLI runtime exposes the mounted WordPress tree as `/wordpress` inside
+	 * PHP-WASM. Symlinking that virtual path into `/Users/.../Developer` creates a
+	 * broken host symlink and can crash the Studio CLI while syncing filesystem state.
+	 *
+	 * @param string $source Absolute AGENTS.md source path as seen by PHP.
+	 * @return bool Whether a host-visible symlink should be used.
+	 */
+	private static function can_symlink_site_agents_md( string $source ): bool {
+		return ! str_starts_with( $source, '/wordpress/' );
 	}
 
 	/**
@@ -1124,8 +1154,8 @@ class WorktreeContextInjector {
 
 		$config_exists = is_file( $config );
 		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Path is a marker file within a controlled worktree.
-		$previous      = $config_exists ? (string) file_get_contents( $config ) : '';
-		$data          = array(
+		$previous = $config_exists ? (string) file_get_contents( $config ) : '';
+		$data     = array(
 			'$schema'      => 'https://opencode.ai/config.json',
 			'instructions' => array(),
 		);
@@ -1205,13 +1235,25 @@ class WorktreeContextInjector {
 		$projected_agents  = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_PATH;
 		$projection_marker = rtrim( $worktree_path, '/' ) . '/' . self::PROJECTED_AGENTS_MARKER_PATH;
 		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Path is a marker file within a controlled worktree.
-		$marked_source     = is_file( $projection_marker ) ? trim( (string) file_get_contents( $projection_marker ) ) : '';
+		$marked_source   = '';
+		$projection_kind = 'symlink';
+		if ( is_file( $projection_marker ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Path is a marker file within a controlled worktree.
+			$marker_lines    = preg_split( '/\r\n|\r|\n/', trim( (string) file_get_contents( $projection_marker ) ) );
+			$marker_lines    = false === $marker_lines ? array() : $marker_lines;
+			$projection_kind = in_array( $marker_lines[0] ?? '', array( 'symlink', 'inline' ), true ) ? (string) $marker_lines[0] : 'symlink';
+			$marked_source   = 'symlink' === $projection_kind && isset( $marker_lines[1] ) ? (string) $marker_lines[1] : (string) ( $marker_lines[0] ?? '' );
+		}
 		if (
 			is_link( $projected_agents ) &&
 			'' !== $marked_source &&
 			readlink( $projected_agents ) === $marked_source
 		) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes DMC-injected local-only context symlink from a worktree.
+			unlink( $projected_agents );
+			$removed[] = $projected_agents;
+		} elseif ( 'inline' === $projection_kind && is_file( $projected_agents ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes DMC-injected local-only inline context from a worktree.
 			unlink( $projected_agents );
 			$removed[] = $projected_agents;
 		}
@@ -1343,8 +1385,8 @@ class WorktreeContextInjector {
 
 		try {
 			$dm         = new \DataMachine\Core\FilesRepository\DirectoryManager();
-			$user_id    = method_exists( $dm, 'get_effective_user_id' ) ? $dm->get_effective_user_id( 0 ) : 0;
-			$agent_slug = method_exists( $dm, 'resolve_agent_slug' ) ? $dm->resolve_agent_slug( array( 'user_id' => $user_id ) ) : '';
+			$user_id    = $dm->get_effective_user_id( 0 );
+			$agent_slug = $dm->resolve_agent_slug( array( 'user_id' => $user_id ) );
 			return '' !== (string) $agent_slug ? (string) $agent_slug : null;
 		} catch ( \Throwable $e ) {
 			return null;
