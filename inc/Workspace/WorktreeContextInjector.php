@@ -836,10 +836,13 @@ class WorktreeContextInjector {
 
 		$files = array();
 		foreach ( self::MEMORY_FILES as $filename ) {
-			$memory = new \DataMachine\Core\FilesRepository\AgentMemory( $user_id, 0, $filename );
-			$result = $memory->get_all();
-			if ( ! empty( $result['success'] ) && is_string( $result['content'] ?? null ) && '' !== trim( $result['content'] ) ) {
-				$files[ $filename ] = $result['content'];
+			$memory    = new \DataMachine\Core\FilesRepository\AgentMemory( $user_id, 0, $filename );
+			$file_path = $memory->get_file_path();
+			if ( is_readable( $file_path ) ) {
+				$content = file_get_contents( $file_path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- AgentMemory returns a validated local file path, not a remote URL.
+				if ( is_string( $content ) && '' !== trim( $content ) ) {
+					$files[ $filename ] = $content;
+				}
 			}
 		}
 
