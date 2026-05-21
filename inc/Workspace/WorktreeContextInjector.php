@@ -837,9 +837,6 @@ class WorktreeContextInjector {
 		$files = array();
 		foreach ( self::MEMORY_FILES as $filename ) {
 			$memory = new \DataMachine\Core\FilesRepository\AgentMemory( $user_id, 0, $filename );
-			if ( ! method_exists( $memory, 'get_all' ) ) {
-				continue;
-			}
 			$result = $memory->get_all();
 			if ( ! empty( $result['success'] ) && is_string( $result['content'] ?? null ) && '' !== trim( $result['content'] ) ) {
 				$files[ $filename ] = $result['content'];
