@@ -18,9 +18,9 @@ if ( ! defined('WPINC') ) {
 	die;
 }
 
-define('DATAMACHINE_CODE_VERSION', '0.46.11');
-define('DATAMACHINE_CODE_PATH', plugin_dir_path(__FILE__));
-define('DATAMACHINE_CODE_URL', plugin_dir_url(__FILE__));
+define( 'DATAMACHINE_CODE_VERSION', '0.46.11' );
+define( 'DATAMACHINE_CODE_PATH', plugin_dir_path( __FILE__ ) );
+define( 'DATAMACHINE_CODE_URL', plugin_dir_url( __FILE__ ) );
 
 // PSR-4 Autoloading.
 require_once __DIR__ . '/vendor/autoload.php';
