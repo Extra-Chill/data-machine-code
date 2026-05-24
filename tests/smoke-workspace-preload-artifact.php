@@ -10,138 +10,154 @@
 declare( strict_types=1 );
 
 namespace {
-	if ( ! defined( 'ABSPATH' ) ) {
-		define( 'ABSPATH', __DIR__ . '/' );
-	}
+    if (! defined('ABSPATH') ) {
+        define('ABSPATH', __DIR__ . '/');
+    }
 
-	if ( ! class_exists( 'WP_Error' ) ) {
-		class WP_Error {
-			public function __construct( private string $code, private string $message, private mixed $data = array() ) {}
+    if (! class_exists('WP_Error') ) {
+        class WP_Error
+        {
+            public function __construct( private string $code, private string $message, private mixed $data = array() )
+            {
+            }
 
-			public function get_error_code(): string { return $this->code; }
-			public function get_error_message(): string { return $this->message; }
-			public function get_error_data(): mixed { return $this->data; }
-		}
-	}
+            public function get_error_code(): string
+            {
+                return $this->code; 
+            }
+            public function get_error_message(): string
+            {
+                return $this->message; 
+            }
+            public function get_error_data(): mixed
+            {
+                return $this->data; 
+            }
+        }
+    }
 
-	if ( ! function_exists( 'is_wp_error' ) ) {
-		function is_wp_error( mixed $value ): bool { return $value instanceof WP_Error; }
-	}
+    if (! function_exists('is_wp_error') ) {
+        function is_wp_error( mixed $value ): bool
+        {
+            return $value instanceof WP_Error; 
+        }
+    }
 
-	if ( ! function_exists( 'wp_parse_url' ) ) {
-		function wp_parse_url( string $url, int $component = -1 ): mixed {
-			return -1 === $component ? parse_url( $url ) : parse_url( $url, $component );
-		}
-	}
+    if (! function_exists('wp_parse_url') ) {
+        function wp_parse_url( string $url, int $component = -1 ): mixed
+        {
+            return -1 === $component ? parse_url($url) : parse_url($url, $component);
+        }
+    }
 
-	require __DIR__ . '/../inc/Bundle/WorkspacePreloadArtifact.php';
+    include __DIR__ . '/../inc/Bundle/WorkspacePreloadArtifact.php';
 
-	use DataMachineCode\Bundle\WorkspacePreloadArtifact;
+    use DataMachineCode\Bundle\WorkspacePreloadArtifact;
 
-	$failures = array();
-	$total    = 0;
-	$assert   = function ( string $label, bool $condition ) use ( &$failures, &$total ): void {
-		++$total;
-		if ( $condition ) {
-			echo "  ok {$label}\n";
-			return;
-		}
+    $failures = array();
+    $total    = 0;
+    $assert   = function ( string $label, bool $condition ) use ( &$failures, &$total ): void {
+        ++$total;
+        if ($condition ) {
+            echo "  ok {$label}\n";
+            return;
+        }
 
-		$failures[] = $label;
-		echo "  fail {$label}\n";
-	};
+        $failures[] = $label;
+        echo "  fail {$label}\n";
+    };
 
-	echo "Workspace preload artifact - smoke\n";
+    echo "Workspace preload artifact - smoke\n";
 
-	$clones   = array();
-	$artifact = new WorkspacePreloadArtifact(
-		static function ( array $input ) use ( &$clones ): array {
-			$clones[] = $input;
-			return array(
-				'success' => true,
-				'name'    => $input['name'] ?? basename( (string) $input['url'], '.git' ),
-				'path'    => '/workspace/' . ( $input['name'] ?? basename( (string) $input['url'], '.git' ) ),
-			);
-		}
-	);
+    $clones   = array();
+    $artifact = new WorkspacePreloadArtifact(
+        static function ( array $input ) use ( &$clones ): array {
+            $clones[] = $input;
+            return array(
+            'success' => true,
+            'name'    => $input['name'] ?? basename((string) $input['url'], '.git'),
+            'path'    => '/workspace/' . ( $input['name'] ?? basename((string) $input['url'], '.git') ),
+            );
+        }
+    );
 
-	$types = $artifact->register_artifact_type( array( 'agent' ) );
-	$assert( 'registers DMC workspace preload artifact type', in_array( WorkspacePreloadArtifact::ARTIFACT_TYPE, $types, true ) );
+    $types = $artifact->register_artifact_type(array( 'agent' ));
+    $assert('registers DMC workspace preload artifact type', in_array(WorkspacePreloadArtifact::ARTIFACT_TYPE, $types, true));
 
-	$ignored = $artifact->apply_artifact( null, array( 'artifact_type' => 'other/plugin', 'artifact_id' => 'noop' ) );
-	$assert( 'ignores other artifact types', null === $ignored );
+    $ignored = $artifact->apply_artifact(null, array( 'artifact_type' => 'other/plugin', 'artifact_id' => 'noop' ));
+    $assert('ignores other artifact types', null === $ignored);
 
-	$invalid = $artifact->apply_artifact(
-		null,
-		array(
-			'artifact_type' => WorkspacePreloadArtifact::ARTIFACT_TYPE,
-			'artifact_id'   => 'bad',
-			'payload'       => array( 'repositories' => array() ),
-		)
-	);
-	$assert( 'rejects empty repositories list', is_wp_error( $invalid ) && 'datamachine_code_workspace_preload_invalid_payload' === $invalid->get_error_code() );
+    $invalid = $artifact->apply_artifact(
+        null,
+        array(
+        'artifact_type' => WorkspacePreloadArtifact::ARTIFACT_TYPE,
+        'artifact_id'   => 'bad',
+        'payload'       => array( 'repositories' => array() ),
+        )
+    );
+    $assert('rejects empty repositories list', is_wp_error($invalid) && 'datamachine_code_workspace_preload_invalid_payload' === $invalid->get_error_code());
 
-	$applied = $artifact->apply_artifact(
-		null,
-		array(
-			'artifact_type' => WorkspacePreloadArtifact::ARTIFACT_TYPE,
-			'artifact_id'   => 'transformer-repos',
-			'payload'       => array(
-				'repositories' => array(
-					array(
-						'name' => 'static-site-importer',
-						'url'  => 'https://github.com/chubes4/static-site-importer.git',
-					),
-					array(
-						'name' => 'block-format-bridge',
-						'url'  => 'git@github.com:chubes4/block-format-bridge.git',
-						'full' => true,
-					),
-				),
-			),
-		)
-	);
-	$assert( 'applies valid preload artifact', ! is_wp_error( $applied ) && true === ( $applied['success'] ?? false ) );
-	$assert( 'calls clone path for each repository', 2 === count( $clones ) );
-	$assert( 'passes name and full option to clone path', true === ( $clones[1]['full'] ?? false ) && 'block-format-bridge' === ( $clones[1]['name'] ?? '' ) );
-	$assert( 'returns per-repo results', ! is_wp_error( $applied ) && 2 === count( $applied['repositories'] ?? array() ) );
+    $applied = $artifact->apply_artifact(
+        null,
+        array(
+        'artifact_type' => WorkspacePreloadArtifact::ARTIFACT_TYPE,
+        'artifact_id'   => 'transformer-repos',
+        'payload'       => array(
+                'repositories' => array(
+                    array(
+                        'name' => 'static-site-importer',
+                        'url'  => 'https://github.com/chubes4/static-site-importer.git',
+                    ),
+                    array(
+                        'name' => 'block-format-bridge',
+                        'url'  => 'git@github.com:chubes4/block-format-bridge.git',
+                        'full' => true,
+                    ),
+                ),
+        ),
+        )
+    );
+    $assert('applies valid preload artifact', ! is_wp_error($applied) && true === ( $applied['success'] ?? false ));
+    $assert('calls clone path for each repository', 2 === count($clones));
+    $assert('passes name and full option to clone path', true === ( $clones[1]['full'] ?? false ) && 'block-format-bridge' === ( $clones[1]['name'] ?? '' ));
+    $assert('returns per-repo results', ! is_wp_error($applied) && 2 === count($applied['repositories'] ?? array()));
 
-	$exists_artifact = new WorkspacePreloadArtifact(
-		static function ( array $input ): WP_Error {
-			return new WP_Error(
-				'repo_exists',
-				'Clone target already exists.',
-				array(
-					'state' => 'existing checkout',
-					'path'  => '/workspace/' . ( $input['name'] ?? 'repo' ),
-				)
-			);
-		}
-	);
-	$exists = $exists_artifact->apply_artifact(
-		null,
-		array(
-			'artifact_type' => WorkspacePreloadArtifact::ARTIFACT_TYPE,
-			'artifact_id'   => 'existing',
-			'payload'       => array(
-				'repositories' => array(
-					array(
-						'name' => 'static-site-importer',
-						'url'  => 'https://github.com/chubes4/static-site-importer.git',
-					),
-				),
-			),
-		)
-	);
-	$assert( 'treats existing checkout as idempotent success', ! is_wp_error( $exists ) && true === ( $exists['repositories'][0]['already_exists'] ?? false ) );
+    $exists_artifact = new WorkspacePreloadArtifact(
+        static function ( array $input ): WP_Error {
+            return new WP_Error(
+                'repo_exists',
+                'Clone target already exists.',
+                array(
+                'state' => 'existing checkout',
+                'path'  => '/workspace/' . ( $input['name'] ?? 'repo' ),
+                )
+            );
+        }
+    );
+    $exists = $exists_artifact->apply_artifact(
+        null,
+        array(
+        'artifact_type' => WorkspacePreloadArtifact::ARTIFACT_TYPE,
+        'artifact_id'   => 'existing',
+        'payload'       => array(
+                'repositories' => array(
+                    array(
+                        'name' => 'static-site-importer',
+                        'url'  => 'https://github.com/chubes4/static-site-importer.git',
+                    ),
+                ),
+        ),
+        )
+    );
+    $assert('treats existing checkout as idempotent success', ! is_wp_error($exists) && true === ( $exists['repositories'][0]['already_exists'] ?? false ));
 
-	if ( array() !== $failures ) {
-		echo "\nFailures:\n";
-		foreach ( $failures as $failure ) {
-			echo " - {$failure}\n";
-		}
-	}
+    if (array() !== $failures ) {
+        echo "\nFailures:\n";
+        foreach ( $failures as $failure ) {
+            echo " - {$failure}\n";
+        }
+    }
 
-	echo "\nResult: " . ( $total - count( $failures ) ) . "/{$total} passed\n";
-	exit( array() === $failures ? 0 : 1 );
+    echo "\nResult: " . ( $total - count($failures) ) . "/{$total} passed\n";
+    exit(array() === $failures ? 0 : 1);
 }

@@ -74,143 +74,147 @@ namespace DataMachineCode\Runtime;
 
 use DataMachineCode\Workspace\WorktreeContextInjector;
 
-defined( 'ABSPATH' ) || exit;
+defined('ABSPATH') || exit;
 
-class ActiveWorkspaceProjector {
+class ActiveWorkspaceProjector
+{
 
-	/**
-	 * Bootstrap: register the engine_snapshot filter.
-	 *
-	 * @since 0.46.0
-	 * @return void
-	 */
-	public static function register(): void {
-		add_filter(
-			'datamachine_engine_snapshot',
-			array( self::class, 'project_into_snapshot' ),
-			20,
-			4
-		);
-	}
+    /**
+     * Bootstrap: register the engine_snapshot filter.
+     *
+     * @since  0.46.0
+     * @return void
+     */
+    public static function register(): void
+    {
+        add_filter(
+            'datamachine_engine_snapshot',
+            array( self::class, 'project_into_snapshot' ),
+            20,
+            4
+        );
+    }
 
-	/**
-	 * Filter callback — enrich the engine snapshot with active_workspace.
-	 *
-	 * Reads explicit active_workspace input that the caller passed via
-	 * initial_data on run-flow. Looks up the worktree metadata to fill
-	 * in fields the caller did not supply. No-op when no handle was
-	 * passed.
-	 *
-	 * @since 0.46.0
-	 *
-	 * @param array $snapshot Engine snapshot about to be persisted.
-	 * @param int   $job_id   Job being initialized.
-	 * @param array $flow     Flow row.
-	 * @param array $pipeline Pipeline row.
-	 * @return array Modified snapshot.
-	 */
-	public static function project_into_snapshot( array $snapshot, int $job_id, array $flow, array $pipeline ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
-		$explicit = is_array( $snapshot['active_workspace'] ?? null )
-			? (array) $snapshot['active_workspace']
-			: array();
+    /**
+     * Filter callback — enrich the engine snapshot with active_workspace.
+     *
+     * Reads explicit active_workspace input that the caller passed via
+     * initial_data on run-flow. Looks up the worktree metadata to fill
+     * in fields the caller did not supply. No-op when no handle was
+     * passed.
+     *
+     * @since 0.46.0
+     *
+     * @param  array $snapshot Engine snapshot about to be persisted.
+     * @param  int   $job_id   Job being initialized.
+     * @param  array $flow     Flow row.
+     * @param  array $pipeline Pipeline row.
+     * @return array Modified snapshot.
+     */
+    public static function project_into_snapshot( array $snapshot, int $job_id, array $flow, array $pipeline ): array  // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
+    {
+        $explicit = is_array($snapshot['active_workspace'] ?? null)
+        ? (array) $snapshot['active_workspace']
+        : array();
 
-		$handle = (string) ( $explicit['handle'] ?? '' );
-		if ( '' === $handle ) {
-			// No handle — preserve any pre-existing entry (e.g. hand-set
-			// by tests) and exit.
-			return $snapshot;
-		}
+        $handle = (string) ( $explicit['handle'] ?? '' );
+        if ('' === $handle ) {
+            // No handle — preserve any pre-existing entry (e.g. hand-set
+            // by tests) and exit.
+            return $snapshot;
+        }
 
-		$entry = self::build_entry( $handle, $explicit );
-		if ( empty( $entry ) ) {
-			return $snapshot;
-		}
+        $entry = self::build_entry($handle, $explicit);
+        if (empty($entry) ) {
+            return $snapshot;
+        }
 
-		$snapshot['active_workspace'] = $entry;
+        $snapshot['active_workspace'] = $entry;
 
-		return $snapshot;
-	}
+        return $snapshot;
+    }
 
-	/**
-	 * Build the active_workspace entry from a handle and optional caller overrides.
-	 *
-	 * @since 0.46.0
-	 *
-	 * @param string               $handle    Workspace handle.
-	 * @param array<string,mixed>  $overrides Caller-provided fields to preserve.
-	 * @return array<string,mixed>
-	 */
-	private static function build_entry( string $handle, array $overrides ): array {
-		$metadata   = WorktreeContextInjector::get_metadata( $handle );
-		$is_primary = ! str_contains( $handle, '@' );
+    /**
+     * Build the active_workspace entry from a handle and optional caller overrides.
+     *
+     * @since 0.46.0
+     *
+     * @param  string              $handle    Workspace handle.
+     * @param  array<string,mixed> $overrides Caller-provided fields to preserve.
+     * @return array<string,mixed>
+     */
+    private static function build_entry( string $handle, array $overrides ): array
+    {
+        $metadata   = WorktreeContextInjector::get_metadata($handle);
+        $is_primary = ! str_contains($handle, '@');
 
-		$entry = array(
-			'handle'  => $handle,
-			'primary' => $is_primary,
-		);
+        $entry = array(
+        'handle'  => $handle,
+        'primary' => $is_primary,
+        );
 
-		// Derive repo + branch from handle.
-		$handle_parts = explode( '@', $handle, 2 );
-		$repo_slug    = $handle_parts[0] ?? '';
-		if ( '' !== $repo_slug ) {
-			$entry['repo'] = $repo_slug;
-		}
-		if ( ! $is_primary && isset( $handle_parts[1] ) && '' !== $handle_parts[1] ) {
-			$entry['branch'] = $handle_parts[1];
-		}
+        // Derive repo + branch from handle.
+        $handle_parts = explode('@', $handle, 2);
+        $repo_slug    = $handle_parts[0] ?? '';
+        if ('' !== $repo_slug ) {
+            $entry['repo'] = $repo_slug;
+        }
+        if (! $is_primary && isset($handle_parts[1]) && '' !== $handle_parts[1] ) {
+            $entry['branch'] = $handle_parts[1];
+        }
 
-		// Enrich from persisted metadata.
-		if ( is_array( $metadata ) ) {
-			foreach ( array( 'repo', 'branch', 'path', 'origin_site', 'origin_agent', 'pr_url' ) as $field ) {
-				if ( isset( $metadata[ $field ] ) && '' !== (string) $metadata[ $field ] ) {
-					$entry[ $field ] = (string) $metadata[ $field ];
-				}
-			}
+        // Enrich from persisted metadata.
+        if (is_array($metadata) ) {
+            foreach ( array( 'repo', 'branch', 'path', 'origin_site', 'origin_agent', 'pr_url' ) as $field ) {
+                if (isset($metadata[ $field ]) && '' !== (string) $metadata[ $field ] ) {
+                    $entry[ $field ] = (string) $metadata[ $field ];
+                }
+            }
 
-			$task = is_array( $metadata['origin_task'] ?? null ) ? $metadata['origin_task'] : array();
-			if ( isset( $task['task_url'] ) && '' !== (string) $task['task_url'] ) {
-				$entry['task_url'] = (string) $task['task_url'];
-			}
-		}
+            $task = is_array($metadata['origin_task'] ?? null) ? $metadata['origin_task'] : array();
+            if (isset($task['task_url']) && '' !== (string) $task['task_url'] ) {
+                $entry['task_url'] = (string) $task['task_url'];
+            }
+        }
 
-		// If repo looks like "owner/repo" (common when callers pass full_name
-		// or when the handle is "owner/repo"), split it into owner + repo.
-		$repo_value = (string) ( $entry['repo'] ?? '' );
-		if ( str_contains( $repo_value, '/' ) ) {
-			$parts              = explode( '/', $repo_value, 2 );
-			$entry['owner']     = $parts[0];
-			$entry['repo']      = $parts[1];
-			$entry['full_name'] = $repo_value;
-		}
+        // If repo looks like "owner/repo" (common when callers pass full_name
+        // or when the handle is "owner/repo"), split it into owner + repo.
+        $repo_value = (string) ( $entry['repo'] ?? '' );
+        if (str_contains($repo_value, '/') ) {
+            $parts              = explode('/', $repo_value, 2);
+            $entry['owner']     = $parts[0];
+            $entry['repo']      = $parts[1];
+            $entry['full_name'] = $repo_value;
+        }
 
-		// Caller overrides win for scalar fields (preserve explicit input).
-		foreach ( $overrides as $key => $value ) {
-			if ( is_string( $key ) && '' !== $key && ! is_array( $value ) ) {
-				$entry[ $key ] = $value;
-			}
-		}
+        // Caller overrides win for scalar fields (preserve explicit input).
+        foreach ( $overrides as $key => $value ) {
+            if (is_string($key) && '' !== $key && ! is_array($value) ) {
+                $entry[ $key ] = $value;
+            }
+        }
 
-		// Synthesize full_name from owner + repo when both present.
-		if ( empty( $entry['full_name'] ) && ! empty( $entry['owner'] ) && ! empty( $entry['repo'] ) ) {
-			$entry['full_name'] = $entry['owner'] . '/' . $entry['repo'];
-		}
+        // Synthesize full_name from owner + repo when both present.
+        if (empty($entry['full_name']) && ! empty($entry['owner']) && ! empty($entry['repo']) ) {
+            $entry['full_name'] = $entry['owner'] . '/' . $entry['repo'];
+        }
 
-		/**
-		 * Filter the projected active_workspace entry before it lands in engine_data.
-		 *
-		 * Lets extensions enrich or override fields. Returning a non-array
-		 * silently preserves the projector's own value.
-		 *
-		 * @since 0.46.0
-		 *
-		 * @param array<string,mixed> $entry  Projected entry.
-		 * @param string              $handle Source handle.
-		 */
-		$filtered = apply_filters( 'datamachine_code_active_workspace', $entry, $handle );
-		if ( is_array( $filtered ) ) {
-			$entry = $filtered;
-		}
+        /**
+         * Filter the projected active_workspace entry before it lands in engine_data.
+         *
+         * Lets extensions enrich or override fields. Returning a non-array
+         * silently preserves the projector's own value.
+         *
+         * @since 0.46.0
+         *
+         * @param array<string,mixed> $entry  Projected entry.
+         * @param string              $handle Source handle.
+         */
+        $filtered = apply_filters('datamachine_code_active_workspace', $entry, $handle);
+        if (is_array($filtered) ) {
+            $entry = $filtered;
+        }
 
-		return $entry;
-	}
+        return $entry;
+    }
 }

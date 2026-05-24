@@ -40,7 +40,7 @@ use DataMachine\Core\PluginSettings;
 use DataMachine\Engine\AI\System\Tasks\SystemTask;
 use DataMachineCode\Workspace\Workspace;
 
-defined( 'ABSPATH' ) || exit;
+defined('ABSPATH') || exit;
 
 /**
  * PluginSettings key that gates both manual and scheduled runs.
@@ -52,157 +52,161 @@ defined( 'ABSPATH' ) || exit;
  * $default_enabled )`.
  */
 
-class WorktreeCleanupTask extends SystemTask {
+class WorktreeCleanupTask extends SystemTask
+{
 
-	/**
-	 * PluginSettings key that gates both manual and scheduled runs.
-	 *
-	 * Toggled by the React admin UI via `TaskRegistry::getRegistry()`.
-	 */
-	public const SETTING_KEY = 'worktree_cleanup_enabled';
+    /**
+     * PluginSettings key that gates both manual and scheduled runs.
+     *
+     * Toggled by the React admin UI via `TaskRegistry::getRegistry()`.
+     */
+    public const SETTING_KEY = 'worktree_cleanup_enabled';
 
-	/**
-	 * Task type identifier.
-	 *
-	 * @return string
-	 */
-	public function getTaskType(): string {
-		return 'worktree_cleanup';
-	}
+    /**
+     * Task type identifier.
+     *
+     * @return string
+     */
+    public function getTaskType(): string
+    {
+        return 'worktree_cleanup';
+    }
 
-	/**
-	 * Task metadata for the Data Machine system surface.
-	 *
-	 * `setting_key` wires this task into the standard DM settings plumbing:
-	 * the React admin UI renders an enable/disable toggle, the TaskRegistry
-	 * resolves live state from `PluginSettings::get()`, and the recurring
-	 * schedule registration (see `data-machine-code.php`'s
-	 * `datamachine_recurring_schedules` filter) reads the same key to
-	 * schedule or unschedule its daily tick.
-	 *
-	 * The `trigger` / `trigger_type` fields are intentionally omitted — DM
-	 * core's `TaskRegistry::getRegistry()` resolves them from the bound
-	 * schedule in `RecurringScheduleRegistry`. A task is a pure handler
-	 * (what runs); a schedule is a binding (when it runs).
-	 */
-	public static function getTaskMeta(): array {
-		return array(
-			'label'           => 'Worktree Cleanup',
-			'description'     => 'Remove worktrees whose branches have been merged and deleted upstream. Destructive: removes worktree directories and deletes local branches. Runs daily when enabled.',
-			'setting_key'     => self::SETTING_KEY,
-			// Opt-in only — this direct task is destructive, operators should flip this
-			// on explicitly (via React UI, REST, or `wp datamachine settings
-			// set worktree_cleanup_enabled true`).
-			'default_enabled' => false,
-			'supports_run'    => true,
-		);
-	}
+    /**
+     * Task metadata for the Data Machine system surface.
+     *
+     * `setting_key` wires this task into the standard DM settings plumbing:
+     * the React admin UI renders an enable/disable toggle, the TaskRegistry
+     * resolves live state from `PluginSettings::get()`, and the recurring
+     * schedule registration (see `data-machine-code.php`'s
+     * `datamachine_recurring_schedules` filter) reads the same key to
+     * schedule or unschedule its daily tick.
+     *
+     * The `trigger` / `trigger_type` fields are intentionally omitted — DM
+     * core's `TaskRegistry::getRegistry()` resolves them from the bound
+     * schedule in `RecurringScheduleRegistry`. A task is a pure handler
+     * (what runs); a schedule is a binding (when it runs).
+     */
+    public static function getTaskMeta(): array
+    {
+        return array(
+        'label'           => 'Worktree Cleanup',
+        'description'     => 'Remove worktrees whose branches have been merged and deleted upstream. Destructive: removes worktree directories and deletes local branches. Runs daily when enabled.',
+        'setting_key'     => self::SETTING_KEY,
+        // Opt-in only — this direct task is destructive, operators should flip this
+        // on explicitly (via React UI, REST, or `wp datamachine settings
+        // set worktree_cleanup_enabled true`).
+        'default_enabled' => false,
+        'supports_run'    => true,
+        );
+    }
 
-	/**
-	 * Execute cleanup for a job.
-	 *
-	 * Params (all optional):
-	 *   - `dry_run` (bool)      — plan without removing anything. Default: false.
-	 *   - `force` (bool)        — override dirty-worktree safety. Default: false.
-	 *                             Does NOT override the unpushed-commits safety.
-	 *   - `skip_github` (bool)  — only use local `upstream-gone` signal. Default: false.
-	 *   - `older_than` (string) — optional age filter such as 7d or 24h. Uses
-	 *                             lifecycle created_at metadata only.
-	 *
-	 * Opt-out:
-	 *   Apply the `datamachine_code_worktree_cleanup_enabled` filter with
-	 *   a falsy return to disable the task entirely. A disabled task
-	 *   reports `completeJob` with `skipped=true` so schedulers don't
-	 *   interpret it as a failure.
-	 *
-	 * Audit logging: every removal, skip, and the final summary go through
-	 * the standard `datamachine_log` action so the DM log surface picks
-	 * them up — the same pipe used by every other system task.
-	 *
-	 * @param int   $jobId  Job ID from DM Jobs table.
-	 * @param array $params Task parameters from engine_data.
-	 */
-	public function executeTask( int $jobId, array $params ): void {
-		// Gate on the same PluginSetting the React UI toggles and the
-		// recurring schedule reads. Defensive — scheduled runs already
-		// wouldn't fire when the setting is off, but manual runs via
-		// `wp datamachine system run worktree_cleanup` bypass the
-		// schedule layer, so the task itself has to self-police too.
-		$enabled = (bool) PluginSettings::get( self::SETTING_KEY, false )
-			|| 'workspace_cleanup_cli' === (string) ( $params['source'] ?? '' );
-		if ( ! $enabled ) {
-			$this->completeJob(
-				$jobId,
-				array(
-					'skipped' => true,
-					'reason'  => sprintf( 'Worktree cleanup disabled (PluginSettings: %s=false).', self::SETTING_KEY ),
-				)
-			);
-			return;
-		}
+    /**
+     * Execute cleanup for a job.
+     *
+     * Params (all optional):
+     *   - `dry_run` (bool)      — plan without removing anything. Default: false.
+     *   - `force` (bool)        — override dirty-worktree safety. Default: false.
+     *                             Does NOT override the unpushed-commits safety.
+     *   - `skip_github` (bool)  — only use local `upstream-gone` signal. Default: false.
+     *   - `older_than` (string) — optional age filter such as 7d or 24h. Uses
+     *                             lifecycle created_at metadata only.
+     *
+     * Opt-out:
+     *   Apply the `datamachine_code_worktree_cleanup_enabled` filter with
+     *   a falsy return to disable the task entirely. A disabled task
+     *   reports `completeJob` with `skipped=true` so schedulers don't
+     *   interpret it as a failure.
+     *
+     * Audit logging: every removal, skip, and the final summary go through
+     * the standard `datamachine_log` action so the DM log surface picks
+     * them up — the same pipe used by every other system task.
+     *
+     * @param int   $jobId  Job ID from DM Jobs table.
+     * @param array $params Task parameters from engine_data.
+     */
+    public function executeTask( int $jobId, array $params ): void
+    {
+        // Gate on the same PluginSetting the React UI toggles and the
+        // recurring schedule reads. Defensive — scheduled runs already
+        // wouldn't fire when the setting is off, but manual runs via
+        // `wp datamachine system run worktree_cleanup` bypass the
+        // schedule layer, so the task itself has to self-police too.
+        $enabled = (bool) PluginSettings::get(self::SETTING_KEY, false)
+        || 'workspace_cleanup_cli' === (string) ( $params['source'] ?? '' );
+        if (! $enabled ) {
+            $this->completeJob(
+                $jobId,
+                array(
+                'skipped' => true,
+                'reason'  => sprintf('Worktree cleanup disabled (PluginSettings: %s=false).', self::SETTING_KEY),
+                )
+            );
+            return;
+        }
 
-		$opts = array(
-			'dry_run'                 => ! empty( $params['dry_run'] ),
-			'force'                   => ! empty( $params['force'] ),
-			'skip_github'             => ! empty( $params['skip_github'] ),
-			'include_repaired_metadata' => ! empty( $params['include_repaired_metadata'] ),
-		);
-		if ( isset( $params['older_than'] ) && '' !== trim( (string) $params['older_than'] ) ) {
-			$opts['older_than'] = trim( (string) $params['older_than'] );
-		}
+        $opts = array(
+        'dry_run'                   => ! empty($params['dry_run']),
+        'force'                     => ! empty($params['force']),
+        'skip_github'               => ! empty($params['skip_github']),
+        'include_repaired_metadata' => ! empty($params['include_repaired_metadata']),
+        );
+        if (isset($params['older_than']) && '' !== trim((string) $params['older_than']) ) {
+            $opts['older_than'] = trim((string) $params['older_than']);
+        }
 
-		$workspace = new Workspace();
-		$result    = $workspace->worktree_cleanup_merged( $opts );
+        $workspace = new Workspace();
+        $result    = $workspace->worktree_cleanup_merged($opts);
 
-		if ( is_wp_error( $result ) ) {
-			do_action(
-				'datamachine_log',
-				'error',
-				'Worktree cleanup task failed',
-				array(
-					'task'  => $this->getTaskType(),
-					'jobId' => $jobId,
-					'error' => $result->get_error_message(),
-					'code'  => $result->get_error_code(),
-				)
-			);
-			$this->failJob( $jobId, $result->get_error_message() );
-			return;
-		}
+        if (is_wp_error($result) ) {
+            do_action(
+                'datamachine_log',
+                'error',
+                'Worktree cleanup task failed',
+                array(
+                'task'  => $this->getTaskType(),
+                'jobId' => $jobId,
+                'error' => $result->get_error_message(),
+                'code'  => $result->get_error_code(),
+                )
+            );
+            $this->failJob($jobId, $result->get_error_message());
+            return;
+        }
 
-		$removed_count   = count( $result['removed'] );
-		$skipped_count   = count( $result['skipped'] );
-		$candidate_count = count( $result['candidates'] );
+        $removed_count   = count($result['removed']);
+        $skipped_count   = count($result['skipped']);
+        $candidate_count = count($result['candidates']);
 
-		do_action(
-			'datamachine_log',
-			'info',
-			sprintf(
-				'Worktree cleanup %s: %d candidate(s), %d removed, %d skipped.',
-				$opts['dry_run'] ? 'dry-run' : 'executed',
-				$candidate_count,
-				$removed_count,
-				$skipped_count
-			),
-			array(
-				'task'    => $this->getTaskType(),
-				'jobId'   => $jobId,
-				'dry_run' => $opts['dry_run'],
-				'removed' => $result['removed'],
-				'skipped' => $result['skipped'],
-			)
-		);
+        do_action(
+            'datamachine_log',
+            'info',
+            sprintf(
+                'Worktree cleanup %s: %d candidate(s), %d removed, %d skipped.',
+                $opts['dry_run'] ? 'dry-run' : 'executed',
+                $candidate_count,
+                $removed_count,
+                $skipped_count
+            ),
+            array(
+            'task'    => $this->getTaskType(),
+            'jobId'   => $jobId,
+            'dry_run' => $opts['dry_run'],
+            'removed' => $result['removed'],
+            'skipped' => $result['skipped'],
+            )
+        );
 
-		$this->completeJob(
-			$jobId,
-			array(
-				'dry_run'       => $opts['dry_run'],
-				'candidates'    => $candidate_count,
-				'removed_count' => $removed_count,
-				'skipped_count' => $skipped_count,
-				'removed'       => $result['removed'],
-				'skipped'       => $result['skipped'],
-			)
-		);
-	}
+        $this->completeJob(
+            $jobId,
+            array(
+            'dry_run'       => $opts['dry_run'],
+            'candidates'    => $candidate_count,
+            'removed_count' => $removed_count,
+            'skipped_count' => $skipped_count,
+            'removed'       => $result['removed'],
+            'skipped'       => $result['skipped'],
+            )
+        );
+    }
 }
