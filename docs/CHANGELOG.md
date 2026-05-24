@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.11] - 2026-05-24
+
+### Fixed
+- control active cleanup child jobs
+
 ## [0.46.10] - 2026-05-21
 
 ### Fixed
