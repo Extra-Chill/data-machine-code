@@ -666,22 +666,59 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$input = array( 'job_id' => $job_id );
+		$target_job_ids = $this->cleanup_run_control_job_ids( $operation, $job_id );
+		$results        = array();
+		foreach ( $target_job_ids as $target_job_id ) {
+			$input = array( 'job_id' => $target_job_id );
+			if ( 'resume' === $operation ) {
+				$input['force'] = ! empty( $assoc_args['force'] );
+			} else {
+				$input['reason'] = 'cleanup_cancelled';
+			}
+
+			$result = $ability->execute( $input );
+			if ( ! ( $result['success'] ?? false ) ) {
+				WP_CLI::error( (string) ( $result['error'] ?? 'Cleanup run control failed.' ) );
+				return;
+			}
+			$results[] = $result;
+		}
+
+		$output                       = $results[0] ?? array(
+			'success' => true,
+			'job_id'  => $job_id,
+		);
+		$output['run_id']             = $this->cleanup_run_id( $job_id );
+		$output['state']              = 'resume' === $operation ? 'running' : 'cancelled';
+		$output['controlled_job_ids'] = $target_job_ids;
+		$output['results']            = $results;
+		$this->render_cleanup_control_result( $output, $assoc_args );
+	}
+
+	/**
+	 * Resolve which Data Machine jobs should be controlled for a job-backed cleanup run.
+	 *
+	 * @param string $operation Cleanup control operation.
+	 * @param int    $job_id    Cleanup parent job ID.
+	 * @return array<int,int>
+	 */
+	private function cleanup_run_control_job_ids( string $operation, int $job_id ): array {
+		$output = $this->cleanup_run_evidence_store()->read( $this->cleanup_run_id( $job_id ), true, true );
+		if ( $output instanceof \WP_Error ) {
+			return array( $job_id );
+		}
+
+		$children       = (array) ( $output['evidence']['children'] ?? array() );
+		$processing_ids = array_map( 'intval', (array) ( $children['processing_job_ids'] ?? array() ) );
+		$failed_ids     = array_map( 'intval', (array) ( $children['failed_job_ids'] ?? array() ) );
+		$pending_ids    = array_map( 'intval', (array) ( $children['pending_job_ids'] ?? array() ) );
+
 		if ( 'resume' === $operation ) {
-			$input['force'] = ! empty( $assoc_args['force'] );
-		} else {
-			$input['reason'] = 'cleanup_cancelled';
+			$child_targets = array_values( array_unique( array_filter( array_merge( $processing_ids, $failed_ids ) ) ) );
+			return array() !== $child_targets ? $child_targets : array( $job_id );
 		}
 
-		$result = $ability->execute( $input );
-		if ( ! ( $result['success'] ?? false ) ) {
-			WP_CLI::error( (string) ( $result['error'] ?? 'Cleanup run control failed.' ) );
-			return;
-		}
-
-		$result['run_id'] = $this->cleanup_run_id( $job_id );
-		$result['state']  = 'resume' === $operation ? 'running' : 'cancelled';
-		$this->render_cleanup_control_result( $result, $assoc_args );
+		return array_values( array_unique( array_filter( array_merge( array( $job_id ), $pending_ids, $processing_ids ) ) ) );
 	}
 
 	private function render_cleanup_control_result( array $result, array $assoc_args ): void {
