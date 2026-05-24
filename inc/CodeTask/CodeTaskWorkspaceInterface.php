@@ -11,21 +11,22 @@ use DataMachineCode\Workspace\Workspace;
 
 defined('ABSPATH') || exit;
 
-interface CodeTaskWorkspaceInterface
-{
-    public function workspace(): Workspace;
+interface CodeTaskWorkspaceInterface {
 
-    public function get_primary_path( string $repo ): string;
 
-    /**
-     * @return array<string,mixed>|\WP_Error
-     */
-    public function clone_repo( string $url, string $name ): array|\WP_Error;
+	public function workspace(): Workspace;
 
-    /**
-     * @return array<string,mixed>|\WP_Error
-     */
-    public function worktree_add( string $repo, string $branch, ?string $from, bool $inject_context, bool $bootstrap, bool $allow_stale, bool $rebase_base, bool $force ): array|\WP_Error;
+	public function get_primary_path( string $repo ): string;
 
-    public function get_repo_path( string $handle ): string;
+	/**
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function clone_repo( string $url, string $name ): array|\WP_Error;
+
+	/**
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function worktree_add( string $repo, string $branch, ?string $from, bool $inject_context, bool $bootstrap, bool $allow_stale, bool $rebase_base, bool $force ): array|\WP_Error;
+
+	public function get_repo_path( string $handle ): string;
 }

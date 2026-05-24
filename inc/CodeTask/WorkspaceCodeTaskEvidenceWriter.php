@@ -11,14 +11,13 @@ use DataMachineCode\Workspace\WorkspaceWriter;
 
 defined('ABSPATH') || exit;
 
-class WorkspaceCodeTaskEvidenceWriter implements CodeTaskEvidenceWriterInterface
-{
-    public function __construct( private WorkspaceWriter $writer )
-    {
-    }
+class WorkspaceCodeTaskEvidenceWriter implements CodeTaskEvidenceWriterInterface {
 
-    public function write_file( string $handle, string $path, string $content ): array|\WP_Error
-    {
-        return $this->writer->write_file($handle, $path, $content);
-    }
+
+	public function __construct( private WorkspaceWriter $writer ) {
+	}
+
+	public function write_file( string $handle, string $path, string $content ): array|\WP_Error {
+		return $this->writer->write_file($handle, $path, $content);
+	}
 }

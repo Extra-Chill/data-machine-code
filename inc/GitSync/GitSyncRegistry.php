@@ -31,76 +31,71 @@ namespace DataMachineCode\GitSync;
 
 defined('ABSPATH') || exit;
 
-final class GitSyncRegistry
-{
+final class GitSyncRegistry {
 
-    public const OPTION_KEY = 'datamachine_gitsync_bindings';
 
-    /**
-     * Load all bindings keyed by slug.
-     *
-     * @return array<string, GitSyncBinding>
-     */
-    public function all(): array
-    {
-        $raw = get_option(self::OPTION_KEY, array());
-        if (! is_array($raw) ) {
-            return array();
-        }
 
-        $out = array();
-        foreach ( $raw as $slug => $data ) {
-            if (! is_array($data) ) {
-                continue;
-            }
-            // Tolerate missing slug key by falling back to the array key.
-            if (empty($data['slug']) ) {
-                $data['slug'] = (string) $slug;
-            }
-            $out[ (string) $slug ] = GitSyncBinding::fromArray($data);
-        }
+	public const OPTION_KEY = 'datamachine_gitsync_bindings';
 
-        return $out;
-    }
+	/**
+	 * Load all bindings keyed by slug.
+	 *
+	 * @return array<string, GitSyncBinding>
+	 */
+	public function all(): array {
+		$raw = get_option(self::OPTION_KEY, array());
+		if ( ! is_array($raw) ) {
+			return array();
+		}
 
-    public function get( string $slug ): ?GitSyncBinding
-    {
-        $all = $this->all();
-        return $all[ $slug ] ?? null;
-    }
+		$out = array();
+		foreach ( $raw as $slug => $data ) {
+			if ( ! is_array($data) ) {
+				continue;
+			}
+			// Tolerate missing slug key by falling back to the array key.
+			if ( empty($data['slug']) ) {
+				$data['slug'] = (string) $slug;
+			}
+			$out[ (string) $slug ] = GitSyncBinding::fromArray($data);
+		}
 
-    public function exists( string $slug ): bool
-    {
-        return null !== $this->get($slug);
-    }
+		return $out;
+	}
 
-    /**
-     * Persist a binding (insert or update).
-     */
-    public function save( GitSyncBinding $binding ): void
-    {
-        $all                   = $this->loadRawArray();
-        $all[ $binding->slug ] = $binding->toArray();
-        update_option(self::OPTION_KEY, $all, false);
-    }
+	public function get( string $slug ): ?GitSyncBinding {
+		$all = $this->all();
+		return $all[ $slug ] ?? null;
+	}
 
-    public function delete( string $slug ): bool
-    {
-        $all = $this->loadRawArray();
-        if (! array_key_exists($slug, $all) ) {
-            return false;
-        }
-        unset($all[ $slug ]);
-        update_option(self::OPTION_KEY, $all, false);
-        return true;
-    }
+	public function exists( string $slug ): bool {
+		return null !== $this->get($slug);
+	}
 
-    /**
-     * @return array<string, array<string, mixed>>
-     */
-    private function loadRawArray(): array
-    {
-        $raw = get_option(self::OPTION_KEY, array());
-        return is_array($raw) ? $raw : array();
-    }
+	/**
+	 * Persist a binding (insert or update).
+	 */
+	public function save( GitSyncBinding $binding ): void {
+		$all                   = $this->loadRawArray();
+		$all[ $binding->slug ] = $binding->toArray();
+		update_option(self::OPTION_KEY, $all, false);
+	}
+
+	public function delete( string $slug ): bool {
+		$all = $this->loadRawArray();
+		if ( ! array_key_exists($slug, $all) ) {
+			return false;
+		}
+		unset($all[ $slug ]);
+		update_option(self::OPTION_KEY, $all, false);
+		return true;
+	}
+
+	/**
+	 * @return array<string, array<string, mixed>>
+	 */
+	private function loadRawArray(): array {
+		$raw = get_option(self::OPTION_KEY, array());
+		return is_array($raw) ? $raw : array();
+	}
 }

@@ -33,433 +33,428 @@ use WP_Error;
 
 defined('ABSPATH') || exit;
 
-class CliChannelTransport
-{
+class CliChannelTransport {
 
-    /**
-     * Default synchronous timeout, in seconds, when a config entry omits
-     * `timeout`. Matched by {@see CliChannelRegistry::normalize_entry()}.
-     *
-     * @var int
-     */
-    private const DEFAULT_TIMEOUT_SECONDS = 30;
 
-    /**
-     * Register the transport against the agents-api dispatch filter.
-     *
-     * The handler is attached to `wp_agent_dispatch_message_handler` at
-     * priority 20, which leaves room for higher-precedence runtimes to win
-     * the filter first.
-     *
-     * Registration is idempotent.
-     *
-     * @since 0.43.0
-     */
-    public static function register(): void
-    {
-        static $registered = false;
-        if ($registered ) {
-            return;
-        }
-        $registered = true;
 
-        if (! function_exists('add_filter') ) {
-            return;
-        }
+	/**
+	 * Default synchronous timeout, in seconds, when a config entry omits
+	 * `timeout`. Matched by {@see CliChannelRegistry::normalize_entry()}.
+	 *
+	 * @var int
+	 */
+	private const DEFAULT_TIMEOUT_SECONDS = 30;
 
-        add_filter(
-            'wp_agent_dispatch_message_handler',
-            array( self::class, 'maybe_claim' ),
-            20,
-            2
-        );
-    }
+	/**
+	 * Register the transport against the agents-api dispatch filter.
+	 *
+	 * The handler is attached to `wp_agent_dispatch_message_handler` at
+	 * priority 20, which leaves room for higher-precedence runtimes to win
+	 * the filter first.
+	 *
+	 * Registration is idempotent.
+	 *
+	 * @since 0.43.0
+	 */
+	public static function register(): void {
+		static $registered = false;
+		if ( $registered ) {
+			return;
+		}
+		$registered = true;
 
-    /**
-     * Filter callback. Decide whether this runtime claims the dispatch.
-     *
-     * Decline (i.e. return `$existing`) when:
-     *  - a prior handler already claimed the filter,
-     *  - the host cannot run subprocesses,
-     *  - the requested channel is not registered.
-     *
-     * Claim by returning `[ self::class, 'execute' ]` — the substrate will
-     * then invoke `execute()` with the canonical input.
-     *
-     * @since 0.43.0
-     *
-     * @param  callable|null        $existing Currently registered handler.
-     * @param  array<string, mixed> $input    Canonical dispatch-message input.
-     * @return callable|null
-     */
-    public static function maybe_claim( $existing, $input )
-    {
-        if (null !== $existing && is_callable($existing) ) {
-            return $existing;
-        }
+		if ( ! function_exists('add_filter') ) {
+			return;
+		}
 
-        if (! is_array($input) ) {
-            return $existing;
-        }
+		add_filter(
+			'wp_agent_dispatch_message_handler',
+			array( self::class, 'maybe_claim' ),
+			20,
+			2
+		);
+	}
 
-        if (! Environment::has_shell() ) {
-            self::log_debug('cli_transport_declined', array( 'reason' => 'no_shell' ));
-            return $existing;
-        }
+	/**
+	 * Filter callback. Decide whether this runtime claims the dispatch.
+	 *
+	 * Decline (i.e. return `$existing`) when:
+	 *  - a prior handler already claimed the filter,
+	 *  - the host cannot run subprocesses,
+	 *  - the requested channel is not registered.
+	 *
+	 * Claim by returning `[ self::class, 'execute' ]` — the substrate will
+	 * then invoke `execute()` with the canonical input.
+	 *
+	 * @since 0.43.0
+	 *
+	 * @param  callable|null        $existing Currently registered handler.
+	 * @param  array<string, mixed> $input    Canonical dispatch-message input.
+	 * @return callable|null
+	 */
+	public static function maybe_claim( $existing, $input ) {
+		if ( null !== $existing && is_callable($existing) ) {
+			return $existing;
+		}
 
-        $channel = isset($input['channel']) && is_string($input['channel']) ? $input['channel'] : '';
-        if ('' === $channel ) {
-            return $existing;
-        }
+		if ( ! is_array($input) ) {
+			return $existing;
+		}
 
-        $config = CliChannelRegistry::lookup($channel);
-        if (null === $config ) {
-            self::log_debug(
-                'cli_transport_declined',
-                array(
-                'reason'  => 'unknown_channel',
-                'channel' => $channel,
-                )
-            );
-            return $existing;
-        }
+		if ( ! Environment::has_shell() ) {
+			self::log_debug('cli_transport_declined', array( 'reason' => 'no_shell' ));
+			return $existing;
+		}
 
-        return array( self::class, 'execute' );
-    }
+		$channel = isset($input['channel']) && is_string($input['channel']) ? $input['channel'] : '';
+		if ( '' === $channel ) {
+			return $existing;
+		}
 
-    /**
-     * Execute a registered CLI dispatch.
-     *
-     * Returns the canonical output shape on success, or `WP_Error` on
-     * failure. The substrate fires `agents_dispatch_message_failed` for
-     * the latter.
-     *
-     * @since 0.43.0
-     *
-     * @param  array<string, mixed> $input Canonical dispatch-message input.
-     * @return array<string, mixed>|WP_Error
-     */
-    public static function execute( array $input )
-    {
-        $channel = isset($input['channel']) && is_string($input['channel']) ? $input['channel'] : '';
-        if ('' === $channel ) {
-            return new WP_Error(
-                'datamachine_code_cli_dispatch_invalid_input',
-                'agents/dispatch-message input is missing a channel identifier.'
-            );
-        }
+		$config = CliChannelRegistry::lookup($channel);
+		if ( null === $config ) {
+			self::log_debug(
+				'cli_transport_declined',
+				array(
+					'reason'  => 'unknown_channel',
+					'channel' => $channel,
+				)
+			);
+			return $existing;
+		}
 
-        $config = CliChannelRegistry::lookup($channel);
-        if (null === $config ) {
-            return new WP_Error(
-                'datamachine_code_cli_dispatch_unknown_channel',
-                sprintf('No CLI channel registered for "%s".', $channel)
-            );
-        }
+		return array( self::class, 'execute' );
+	}
 
-        $recipient = isset($input['recipient']) && is_scalar($input['recipient']) ? (string) $input['recipient'] : '';
+	/**
+	 * Execute a registered CLI dispatch.
+	 *
+	 * Returns the canonical output shape on success, or `WP_Error` on
+	 * failure. The substrate fires `agents_dispatch_message_failed` for
+	 * the latter.
+	 *
+	 * @since 0.43.0
+	 *
+	 * @param  array<string, mixed> $input Canonical dispatch-message input.
+	 * @return array<string, mixed>|WP_Error
+	 */
+	public static function execute( array $input ) {
+		$channel = isset($input['channel']) && is_string($input['channel']) ? $input['channel'] : '';
+		if ( '' === $channel ) {
+			return new WP_Error(
+				'datamachine_code_cli_dispatch_invalid_input',
+				'agents/dispatch-message input is missing a channel identifier.'
+			);
+		}
 
-        $command_args = CliChannelRegistry::substitute_tokens($config['args'], $input);
-        array_unshift($command_args, $config['command']);
+		$config = CliChannelRegistry::lookup($channel);
+		if ( null === $config ) {
+			return new WP_Error(
+				'datamachine_code_cli_dispatch_unknown_channel',
+				sprintf('No CLI channel registered for "%s".', $channel)
+			);
+		}
 
-        $detach  = (bool) ( $config['detach'] ?? true );
-        $timeout = isset($config['timeout']) && is_int($config['timeout']) ? $config['timeout'] : self::DEFAULT_TIMEOUT_SECONDS;
-        $cwd     = isset($config['cwd']) && is_string($config['cwd']) && '' !== $config['cwd'] ? $config['cwd'] : null;
-        $env     = self::build_env_map(isset($config['env']) && is_array($config['env']) ? $config['env'] : array());
+		$recipient = isset($input['recipient']) && is_scalar($input['recipient']) ? (string) $input['recipient'] : '';
 
-        if ($detach ) {
-            return self::dispatch_detached($channel, $recipient, $command_args, $cwd, $env);
-        }
+		$command_args = CliChannelRegistry::substitute_tokens($config['args'], $input);
+		array_unshift($command_args, $config['command']);
 
-        return self::dispatch_sync($channel, $recipient, $command_args, $cwd, $env, $timeout);
-    }
+		$detach  = (bool) ( $config['detach'] ?? true );
+		$timeout = isset($config['timeout']) && is_int($config['timeout']) ? $config['timeout'] : self::DEFAULT_TIMEOUT_SECONDS;
+		$cwd     = isset($config['cwd']) && is_string($config['cwd']) && '' !== $config['cwd'] ? $config['cwd'] : null;
+		$env     = self::build_env_map(isset($config['env']) && is_array($config['env']) ? $config['env'] : array());
 
-    /**
-     * Fire-and-forget dispatch.
-     *
-     * @param  string                     $channel   Channel id.
-     * @param  string                     $recipient Recipient id.
-     * @param  array<int, string>         $argv      Command + args.
-     * @param  string|null                $cwd       Working directory.
-     * @param  array<string, string>|null $env       Environment map.
-     * @return array<string, mixed>|WP_Error
-     */
-    private static function dispatch_detached( string $channel, string $recipient, array $argv, ?string $cwd, ?array $env )
-    {
-        $descriptors = array(
-        0 => array( 'file', '/dev/null', 'r' ),
-        1 => array( 'file', '/dev/null', 'w' ),
-        2 => array( 'file', '/dev/null', 'w' ),
-        );
+		if ( $detach ) {
+			return self::dispatch_detached($channel, $recipient, $command_args, $cwd, $env);
+		}
 
-        $started_at = microtime(true);
+		return self::dispatch_sync($channel, $recipient, $command_args, $cwd, $env, $timeout);
+	}
 
-        $process = self::open_process($argv, $descriptors, $cwd, $env, true);
-        if ($process instanceof WP_Error ) {
-            return $process;
-        }
+	/**
+	 * Fire-and-forget dispatch.
+	 *
+	 * @param  string                     $channel   Channel id.
+	 * @param  string                     $recipient Recipient id.
+	 * @param  array<int, string>         $argv      Command + args.
+	 * @param  string|null                $cwd       Working directory.
+	 * @param  array<string, string>|null $env       Environment map.
+	 * @return array<string, mixed>|WP_Error
+	 */
+	private static function dispatch_detached( string $channel, string $recipient, array $argv, ?string $cwd, ?array $env ) {
+		$descriptors = array(
+			0 => array( 'file', '/dev/null', 'r' ),
+			1 => array( 'file', '/dev/null', 'w' ),
+			2 => array( 'file', '/dev/null', 'w' ),
+		);
 
-        $pid    = null;
-        $status = proc_get_status($process);
-        if (is_array($status) && isset($status['pid']) ) {
-            $pid = (int) $status['pid'];
-        }
+		$started_at = microtime(true);
 
-        // Release the handle without waiting. The child keeps running in
-        // its own session because proc_open was given start_new_session.
-        proc_close($process);
+		$process = self::open_process($argv, $descriptors, $cwd, $env, true);
+		if ( $process instanceof WP_Error ) {
+			return $process;
+		}
 
-        $duration_ms = (int) round(( microtime(true) - $started_at ) * 1000);
+		$pid    = null;
+		$status = proc_get_status($process);
+		if ( is_array($status) && isset($status['pid']) ) {
+			$pid = (int) $status['pid'];
+		}
 
-        return array(
-        'sent'       => true,
-        'channel'    => $channel,
-        'recipient'  => $recipient,
-        'message_id' => null !== $pid ? (string) $pid : null,
-        'metadata'   => array(
-        'mode'        => 'detached',
-        'pid'         => $pid,
-        'duration_ms' => $duration_ms,
-        ),
-        );
-    }
+		// Release the handle without waiting. The child keeps running in
+		// its own session because proc_open was given start_new_session.
+		proc_close($process);
 
-    /**
-     * Synchronous dispatch with stdout/stderr capture and timeout.
-     *
-     * @param  string                     $channel   Channel id.
-     * @param  string                     $recipient Recipient id.
-     * @param  array<int, string>         $argv      Command + args.
-     * @param  string|null                $cwd       Working directory.
-     * @param  array<string, string>|null $env       Environment map.
-     * @param  int                        $timeout   Timeout in seconds.
-     * @return array<string, mixed>|WP_Error
-     */
-    private static function dispatch_sync( string $channel, string $recipient, array $argv, ?string $cwd, ?array $env, int $timeout )
-    {
-        $descriptors = array(
-        0 => array( 'pipe', 'r' ),
-        1 => array( 'pipe', 'w' ),
-        2 => array( 'pipe', 'w' ),
-        );
+		$duration_ms = (int) round(( microtime(true) - $started_at ) * 1000);
 
-        $pipes      = array();
-        $started_at = microtime(true);
+		return array(
+			'sent'       => true,
+			'channel'    => $channel,
+			'recipient'  => $recipient,
+			'message_id' => null !== $pid ? (string) $pid : null,
+			'metadata'   => array(
+				'mode'        => 'detached',
+				'pid'         => $pid,
+				'duration_ms' => $duration_ms,
+			),
+		);
+	}
 
-        $process = self::open_process($argv, $descriptors, $cwd, $env, false, $pipes);
-        if ($process instanceof WP_Error ) {
-            return $process;
-        }
+	/**
+	 * Synchronous dispatch with stdout/stderr capture and timeout.
+	 *
+	 * @param  string                     $channel   Channel id.
+	 * @param  string                     $recipient Recipient id.
+	 * @param  array<int, string>         $argv      Command + args.
+	 * @param  string|null                $cwd       Working directory.
+	 * @param  array<string, string>|null $env       Environment map.
+	 * @param  int                        $timeout   Timeout in seconds.
+	 * @return array<string, mixed>|WP_Error
+	 */
+	private static function dispatch_sync( string $channel, string $recipient, array $argv, ?string $cwd, ?array $env, int $timeout ) {
+		$descriptors = array(
+			0 => array( 'pipe', 'r' ),
+			1 => array( 'pipe', 'w' ),
+			2 => array( 'pipe', 'w' ),
+		);
 
-        // Close stdin so the child doesn't block on read.
-        if (isset($pipes[0]) && is_resource($pipes[0]) ) {
-            fclose($pipes[0]);
-        }
+		$pipes      = array();
+		$started_at = microtime(true);
 
-        // Non-blocking reads on stdout/stderr so we can enforce the timeout.
-        if (isset($pipes[1]) && is_resource($pipes[1]) ) {
-            stream_set_blocking($pipes[1], false);
-        }
-        if (isset($pipes[2]) && is_resource($pipes[2]) ) {
-            stream_set_blocking($pipes[2], false);
-        }
+		$process = self::open_process($argv, $descriptors, $cwd, $env, false, $pipes);
+		if ( $process instanceof WP_Error ) {
+			return $process;
+		}
 
-        $stdout    = '';
-        $stderr    = '';
-        $timed_out = false;
-        $deadline  = $started_at + max(1, $timeout);
+		// Close stdin so the child doesn't block on read.
+		if ( isset($pipes[0]) && is_resource($pipes[0]) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- Process pipes are not WordPress filesystem paths.
+			fclose($pipes[0]);
+		}
 
-        while ( true ) {
-            $status = proc_get_status($process);
+		// Non-blocking reads on stdout/stderr so we can enforce the timeout.
+		if ( isset($pipes[1]) && is_resource($pipes[1]) ) {
+			stream_set_blocking($pipes[1], false);
+		}
+		if ( isset($pipes[2]) && is_resource($pipes[2]) ) {
+			stream_set_blocking($pipes[2], false);
+		}
 
-            if (isset($pipes[1]) && is_resource($pipes[1]) ) {
-                $chunk = stream_get_contents($pipes[1]);
-                if (is_string($chunk) && '' !== $chunk ) {
-                    $stdout .= $chunk;
-                }
-            }
-            if (isset($pipes[2]) && is_resource($pipes[2]) ) {
-                $chunk = stream_get_contents($pipes[2]);
-                if (is_string($chunk) && '' !== $chunk ) {
-                    $stderr .= $chunk;
-                }
-            }
+		$stdout    = '';
+		$stderr    = '';
+		$timed_out = false;
+		$deadline  = $started_at + max(1, $timeout);
 
-            if (! is_array($status) || false === $status['running'] ) {
-                break;
-            }
+		while ( true ) {
+			$status = proc_get_status($process);
 
-            if (microtime(true) >= $deadline ) {
-                $timed_out = true;
-                proc_terminate($process, 15); // SIGTERM
-                // Give the child a brief grace window to flush.
-                usleep(100000);
-                $status = proc_get_status($process);
-                if (is_array($status) && true === $status['running'] ) {
-                    proc_terminate($process, 9); // SIGKILL
-                }
-                break;
-            }
+			if ( isset($pipes[1]) && is_resource($pipes[1]) ) {
+				$chunk = stream_get_contents($pipes[1]);
+				if ( is_string($chunk) && '' !== $chunk ) {
+					$stdout .= $chunk;
+				}
+			}
+			if ( isset($pipes[2]) && is_resource($pipes[2]) ) {
+				$chunk = stream_get_contents($pipes[2]);
+				if ( is_string($chunk) && '' !== $chunk ) {
+					$stderr .= $chunk;
+				}
+			}
 
-            usleep(20000);
-        }
+			if ( ! is_array($status) || false === $status['running'] ) {
+				break;
+			}
 
-        // Drain any remaining output.
-        foreach ( array( 1, 2 ) as $fd ) {
-            if (! isset($pipes[ $fd ]) || ! is_resource($pipes[ $fd ]) ) {
-                continue;
-            }
-            $chunk = stream_get_contents($pipes[ $fd ]);
-            if (is_string($chunk) && '' !== $chunk ) {
-                if (1 === $fd ) {
-                    $stdout .= $chunk;
-                } else {
-                    $stderr .= $chunk;
-                }
-            }
-            fclose($pipes[ $fd ]);
-        }
+			if ( microtime(true) >= $deadline ) {
+				$timed_out = true;
+				proc_terminate($process, 15); // SIGTERM
+				// Give the child a brief grace window to flush.
+				usleep(100000);
+				$status = proc_get_status($process);
+				if ( is_array($status) && true === $status['running'] ) {
+					proc_terminate($process, 9); // SIGKILL
+				}
+				break;
+			}
 
-        $exit_code   = proc_close($process);
-        $duration_ms = (int) round(( microtime(true) - $started_at ) * 1000);
+			usleep(20000);
+		}
 
-        if ($timed_out ) {
-            return new WP_Error(
-                'datamachine_code_cli_dispatch_timeout',
-                sprintf('CLI channel "%s" exceeded the %d second timeout.', $channel, $timeout),
-                array(
-                'channel'     => $channel,
-                'recipient'   => $recipient,
-                'stdout'      => self::truncate_output($stdout),
-                'stderr'      => self::truncate_output($stderr),
-                'duration_ms' => $duration_ms,
-                )
-            );
-        }
+		// Drain any remaining output.
+		foreach ( array( 1, 2 ) as $fd ) {
+			if ( ! isset($pipes[ $fd ]) || ! is_resource($pipes[ $fd ]) ) {
+				continue;
+			}
+			$chunk = stream_get_contents($pipes[ $fd ]);
+			if ( is_string($chunk) && '' !== $chunk ) {
+				if ( 1 === $fd ) {
+					$stdout .= $chunk;
+				} else {
+					$stderr .= $chunk;
+				}
+			}
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- Process pipes are not WordPress filesystem paths.
+			fclose($pipes[ $fd ]);
+		}
 
-        if (0 !== $exit_code ) {
-            return new WP_Error(
-                'datamachine_code_cli_dispatch_nonzero_exit',
-                sprintf('CLI channel "%s" exited with code %d.', $channel, $exit_code),
-                array(
-                'channel'     => $channel,
-                'recipient'   => $recipient,
-                'exit_code'   => $exit_code,
-                'stdout'      => self::truncate_output($stdout),
-                'stderr'      => self::truncate_output($stderr),
-                'duration_ms' => $duration_ms,
-                )
-            );
-        }
+		$exit_code   = proc_close($process);
+		$duration_ms = (int) round(( microtime(true) - $started_at ) * 1000);
 
-        return array(
-        'sent'       => true,
-        'channel'    => $channel,
-        'recipient'  => $recipient,
-        'message_id' => null,
-        'metadata'   => array(
-        'mode'        => 'sync',
-        'exit_code'   => $exit_code,
-        'duration_ms' => $duration_ms,
-        'stdout'      => self::truncate_output($stdout),
-        'stderr'      => self::truncate_output($stderr),
-        ),
-        );
-    }
+		if ( $timed_out ) {
+			return new WP_Error(
+				'datamachine_code_cli_dispatch_timeout',
+				sprintf('CLI channel "%s" exceeded the %d second timeout.', $channel, $timeout),
+				array(
+					'channel'     => $channel,
+					'recipient'   => $recipient,
+					'stdout'      => self::truncate_output($stdout),
+					'stderr'      => self::truncate_output($stderr),
+					'duration_ms' => $duration_ms,
+				)
+			);
+		}
 
-    /**
-     * Open a child process. Wraps `proc_open` to handle the array-argv vs
-     * string-command preference and detached-session option, and to
-     * surface a typed failure.
-     *
-     * @param  array<int, string>         $argv        Command argv (index 0 is the program).
-     * @param  array<int, mixed>          $descriptors Descriptor spec for proc_open.
-     * @param  string|null                $cwd         Working directory.
-     * @param  array<string, string>|null $env         Environment map (null inherits parent).
-     * @param  bool                       $detached    Whether to start a new session.
-     * @param  array<int, resource>       $pipes       Output pipes (by reference).
-     * @return resource|WP_Error
-     */
-    private static function open_process( array $argv, array $descriptors, ?string $cwd, ?array $env, bool $detached, array &$pipes = array() )
-    {
-        if (! function_exists('proc_open') ) {
-            return new WP_Error(
-                'datamachine_code_cli_dispatch_no_proc_open',
-                'proc_open is not available on this host.'
-            );
-        }
+		if ( 0 !== $exit_code ) {
+			return new WP_Error(
+				'datamachine_code_cli_dispatch_nonzero_exit',
+				sprintf('CLI channel "%s" exited with code %d.', $channel, $exit_code),
+				array(
+					'channel'     => $channel,
+					'recipient'   => $recipient,
+					'exit_code'   => $exit_code,
+					'stdout'      => self::truncate_output($stdout),
+					'stderr'      => self::truncate_output($stderr),
+					'duration_ms' => $duration_ms,
+				)
+			);
+		}
 
-        $options = array();
-        if ($detached ) {
-            // `start_new_session` detaches the child into its own process
-            // group so it survives PHP request teardown.
-            $options['start_new_session'] = true;
-        }
+		return array(
+			'sent'       => true,
+			'channel'    => $channel,
+			'recipient'  => $recipient,
+			'message_id' => null,
+			'metadata'   => array(
+				'mode'        => 'sync',
+				'exit_code'   => $exit_code,
+				'duration_ms' => $duration_ms,
+				'stdout'      => self::truncate_output($stdout),
+				'stderr'      => self::truncate_output($stderr),
+			),
+		);
+	}
 
-        // Hand argv to proc_open as an array so PHP bypasses the shell.
-        $process = @proc_open($argv, $descriptors, $pipes, $cwd, $env, $options);
+	/**
+	 * Open a child process. Wraps `proc_open` to handle the array-argv vs
+	 * string-command preference and detached-session option, and to
+	 * surface a typed failure.
+	 *
+	 * @param  array<int, string>         $argv        Command argv (index 0 is the program).
+	 * @param  array<int, mixed>          $descriptors Descriptor spec for proc_open.
+	 * @param  string|null                $cwd         Working directory.
+	 * @param  array<string, string>|null $env         Environment map (null inherits parent).
+	 * @param  bool                       $detached    Whether to start a new session.
+	 * @param  array<int, resource>       $pipes       Output pipes (by reference).
+	 * @return resource|WP_Error
+	 */
+	private static function open_process( array $argv, array $descriptors, ?string $cwd, ?array $env, bool $detached, array &$pipes = array() ) {
+		if ( ! function_exists('proc_open') ) {
+			return new WP_Error(
+				'datamachine_code_cli_dispatch_no_proc_open',
+				'proc_open is not available on this host.'
+			);
+		}
 
-        if (! is_resource($process) ) {
-            return new WP_Error(
-                'datamachine_code_cli_dispatch_spawn_failed',
-                sprintf('Failed to spawn CLI process "%s".', $argv[0] ?? '')
-            );
-        }
+		$options = array();
+		if ( $detached ) {
+			// `start_new_session` detaches the child into its own process
+			// group so it survives PHP request teardown.
+			$options['start_new_session'] = true;
+		}
 
-        return $process;
-    }
+		// Hand argv to proc_open as an array so PHP bypasses the shell.
+		// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged,WordPress.PHP.DiscouragedPHPFunctions.system_calls_proc_open -- CLI dispatch must spawn a local agent process and converts spawn failure to WP_Error.
+		$process = @proc_open($argv, $descriptors, $pipes, $cwd, $env, $options);
 
-    /**
-     * Build the environment map passed to the child process.
-     *
-     * The parent's PATH is forwarded so PATH-relative commands resolve,
-     * but no other inherited variables leak. Configured `env` overrides
-     * the inherited PATH if it provides one.
-     *
-     * @param  array<string, string> $configured Configured env map.
-     * @return array<string, string>
-     */
-    private static function build_env_map( array $configured ): array
-    {
-        $env = array();
+		if ( ! is_resource($process) ) {
+			return new WP_Error(
+				'datamachine_code_cli_dispatch_spawn_failed',
+				sprintf('Failed to spawn CLI process "%s".', $argv[0] ?? '')
+			);
+		}
 
-        $parent_path = getenv('PATH');
-        if (is_string($parent_path) && '' !== $parent_path ) {
-            $env['PATH'] = $parent_path;
-        }
+		return $process;
+	}
 
-        foreach ( $configured as $key => $value ) {
-            $env[ $key ] = $value;
-        }
+	/**
+	 * Build the environment map passed to the child process.
+	 *
+	 * The parent's PATH is forwarded so PATH-relative commands resolve,
+	 * but no other inherited variables leak. Configured `env` overrides
+	 * the inherited PATH if it provides one.
+	 *
+	 * @param  array<string, string> $configured Configured env map.
+	 * @return array<string, string>
+	 */
+	private static function build_env_map( array $configured ): array {
+		$env = array();
 
-        return $env;
-    }
+		$parent_path = getenv('PATH');
+		if ( is_string($parent_path) && '' !== $parent_path ) {
+			$env['PATH'] = $parent_path;
+		}
 
-    /**
-     * Cap captured output so a runaway child cannot blow up the response.
-     *
-     * @param  string $output Captured output.
-     * @return string Truncated output.
-     */
-    private static function truncate_output( string $output ): string
-    {
-        $limit = 8192;
-        if (strlen($output) <= $limit ) {
-            return $output;
-        }
-        return substr($output, 0, $limit) . "\n[...truncated]";
-    }
+		foreach ( $configured as $key => $value ) {
+			$env[ $key ] = $value;
+		}
 
-    /**
-     * Emit a debug-level log entry, if the host has logging hooks wired.
-     *
-     * @param string               $event   Event slug.
-     * @param array<string, mixed> $context Structured context.
-     */
-    private static function log_debug( string $event, array $context ): void
-    {
-        if (function_exists('do_action') ) {
-            do_action('datamachine_code_cli_transport_debug', $event, $context);
-        }
-    }
+		return $env;
+	}
+
+	/**
+	 * Cap captured output so a runaway child cannot blow up the response.
+	 *
+	 * @param  string $output Captured output.
+	 * @return string Truncated output.
+	 */
+	private static function truncate_output( string $output ): string {
+		$limit = 8192;
+		if ( strlen($output) <= $limit ) {
+			return $output;
+		}
+		return substr($output, 0, $limit) . "\n[...truncated]";
+	}
+
+	/**
+	 * Emit a debug-level log entry, if the host has logging hooks wired.
+	 *
+	 * @param string               $event   Event slug.
+	 * @param array<string, mixed> $context Structured context.
+	 */
+	private static function log_debug( string $event, array $context ): void {
+		if ( function_exists('do_action') ) {
+			do_action('datamachine_code_cli_transport_debug', $event, $context);
+		}
+	}
 }
