@@ -553,9 +553,11 @@ namespace {
 
 	class FakeRetryJobAbility {
 		public array $last_input = array();
+		public array $inputs = array();
 
 		public function execute( array $input ): array {
 			$this->last_input = $input;
+			$this->inputs[]   = $input;
 			return array(
 				'success'         => true,
 				'job_id'          => (int) $input['job_id'],
@@ -567,9 +569,11 @@ namespace {
 
 	class FakeFailJobAbility {
 		public array $last_input = array();
+		public array $inputs = array();
 
 		public function execute( array $input ): array {
 			$this->last_input = $input;
+			$this->inputs[]   = $input;
 			return array(
 				'success'         => true,
 				'job_id'          => (int) $input['job_id'],
@@ -714,11 +718,16 @@ namespace {
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->cleanup( array( 'resume', 'cleanup-run-123' ), array( 'force' => true, 'format' => 'json' ) );
+	$resume_json = json_decode( WP_CLI::$logs[0] ?? '', true );
+	datamachine_code_cleanup_assert( array( 125, 127 ) === ( $resume_json['controlled_job_ids'] ?? array() ), 'cleanup resume controls active child jobs before the parent' );
 	datamachine_code_cleanup_assert( true === ( $retry_job_ability->last_input['force'] ?? null ), 'cleanup resume forwards force retry flag' );
+	datamachine_code_cleanup_assert( array( 125, 127 ) === array_map( fn( $input ) => (int) ( $input['job_id'] ?? 0 ), $retry_job_ability->inputs ), 'cleanup resume retries processing and failed child jobs' );
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->cleanup( array( 'cancel', 'cleanup-run-123' ), array( 'format' => 'json' ) );
+	$cancel_json = json_decode( WP_CLI::$logs[0] ?? '', true );
+	datamachine_code_cleanup_assert( array( 123, 125 ) === ( $cancel_json['controlled_job_ids'] ?? array() ), 'cleanup cancel controls parent and active child jobs' );
 	datamachine_code_cleanup_assert( 'cleanup_cancelled' === ( $fail_job_ability->last_input['reason'] ?? '' ), 'cleanup cancel fails job with cleanup cancellation reason' );
 
 	echo "\n[0] list stale output exposes disk fields\n";
