@@ -684,7 +684,10 @@ class WorkspaceCommand extends BaseCommand {
 			$results[] = $result;
 		}
 
-		$output = $results[0] ?? array( 'success' => true, 'job_id' => $job_id );
+		$output = $results[0] ?? array(
+			'success' => true,
+			'job_id'  => $job_id,
+		);
 		$output['run_id']             = $this->cleanup_run_id( $job_id );
 		$output['state']              = 'resume' === $operation ? 'running' : 'cancelled';
 		$output['controlled_job_ids'] = $target_job_ids;
