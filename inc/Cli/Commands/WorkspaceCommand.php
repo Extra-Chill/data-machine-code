@@ -684,7 +684,7 @@ class WorkspaceCommand extends BaseCommand {
 			$results[] = $result;
 		}
 
-		$output = $results[0] ?? array(
+		$output                       = $results[0] ?? array(
 			'success' => true,
 			'job_id'  => $job_id,
 		);
