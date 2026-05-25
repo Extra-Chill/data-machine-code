@@ -1247,7 +1247,6 @@ trait WorkspaceWorktreeLifecycle {
 	 * @return string|null Branch name (e.g. `fix/foo`), or null when unknown.
 	 */
 	private function resolve_worktree_branch_from_head_file( string $wt_path ): ?string {
-		global $wp_filesystem;
 		$git_pointer = rtrim($wt_path, '/') . '/.git';
 		if ( ! is_file($git_pointer) && ! is_dir($git_pointer) ) {
 			return null;
@@ -1255,12 +1254,8 @@ trait WorkspaceWorktreeLifecycle {
 
 		$gitdir = null;
 		if ( is_file($git_pointer) ) {
-            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reading .git pointer file in a controlled worktree.
-			if ( is_readable($git_pointer) ) {
-				$pointer = $wp_filesystem->get_contents($git_pointer);
-			} else {
-				$pointer = false;
-			}
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents,WordPress.PHP.NoSilencedErrors.Discouraged -- Reading .git pointer file in a controlled worktree.
+			$pointer = @file_get_contents($git_pointer);
 			if ( false === $pointer ) {
 				return null;
 			}
@@ -1285,12 +1280,8 @@ trait WorkspaceWorktreeLifecycle {
 			return null;
 		}
 
-     // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reading .git HEAD file in a controlled worktree.
-		if ( is_readable($head_file) ) {
-			$head = $wp_filesystem->get_contents($head_file);
-		} else {
-			$head = false;
-		}
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents,WordPress.PHP.NoSilencedErrors.Discouraged -- Reading .git HEAD file in a controlled worktree.
+		$head = @file_get_contents($head_file);
 		if ( false === $head ) {
 			return null;
 		}
