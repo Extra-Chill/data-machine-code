@@ -76,7 +76,7 @@ final class GitSyncFetcher {
 		if ( ! $containment['valid'] ) {
 			return new \WP_Error('path_outside_binding_root', $containment['message'] ?? 'containment failed', array( 'status' => 403 ));
 		}
-		$absolute = $containment['real_path'];
+		$absolute = (string) ( $containment['real_path'] ?? $absolute );
 
 		$tree = GitHubRemote::fetchTree($slug, $binding->branch, $pat);
 		if ( is_wp_error($tree) ) {

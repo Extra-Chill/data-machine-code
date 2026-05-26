@@ -118,7 +118,7 @@ final class GitSync {
 			// Native PHP recursion so this works on managed hosts where
 			// exec() is disabled. RecursiveIteratorIterator with
 			// CHILD_FIRST lets unlink/rmdir happen depth-first.
-			$purge_err = $this->removeTree($validation['real_path']);
+			$purge_err = $this->removeTree((string) ( $validation['real_path'] ?? $absolute ));
 			if ( is_wp_error($purge_err) ) {
 				return $purge_err;
 			}
