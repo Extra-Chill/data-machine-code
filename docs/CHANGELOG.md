@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.15] - 2026-05-26
+
+### Changed
+- enable homeboy lint autofix
+
 ## [0.46.14] - 2026-05-26
 
 ### Fixed
