@@ -105,11 +105,11 @@ final class GitSync {
 		$purged   = false;
 
 		if ( $purge && is_dir($absolute) ) {
-			$abspath    = rtrim(ABSPATH, '/');
-			$validation = PathSecurity::validateContainment($absolute, $abspath);
+			$root       = $binding->resolveContainmentRoot();
+			$validation = PathSecurity::validateContainment($absolute, $root);
 			if ( ! $validation['valid'] ) {
 				return new \WP_Error(
-					'path_outside_abspath',
+					'path_outside_binding_root',
 					sprintf('Refusing to purge "%s": %s', $absolute, $validation['message'] ?? 'containment failed'),
 					array( 'status' => 403 )
 				);
@@ -118,7 +118,7 @@ final class GitSync {
 			// Native PHP recursion so this works on managed hosts where
 			// exec() is disabled. RecursiveIteratorIterator with
 			// CHILD_FIRST lets unlink/rmdir happen depth-first.
-			$purge_err = $this->removeTree($validation['real_path']);
+			$purge_err = $this->removeTree( (string) ( $validation['real_path'] ?? $absolute ) );
 			if ( is_wp_error($purge_err) ) {
 				return $purge_err;
 			}
@@ -255,9 +255,9 @@ final class GitSync {
 	 * be leading-slash, no traversal, not sensitive.
 	 */
 	private function validateLocalPath( GitSyncBinding $binding ): true|\WP_Error {
-		$relative = ltrim(str_replace('\\', '/', $binding->local_path), '/');
+		$relative = GitSyncBinding::normalizeRelativePath($binding->local_path);
 		if ( '' === $relative ) {
-			return new \WP_Error('invalid_local_path', 'local_path cannot resolve to ABSPATH itself.', array( 'status' => 400 ));
+			return new \WP_Error('invalid_local_path', 'local_path cannot resolve to the binding root itself.', array( 'status' => 400 ));
 		}
 		if ( PathSecurity::hasTraversal($relative) ) {
 			return new \WP_Error('path_traversal', 'local_path contains traversal segments (`.`, `..`).', array( 'status' => 400 ));
@@ -267,12 +267,12 @@ final class GitSync {
 		}
 
 		// If the target already exists, run the symlink-safe check too.
-		$abspath  = rtrim(ABSPATH, '/');
-		$absolute = $abspath . '/' . rtrim($relative, '/');
+		$root     = $binding->resolveContainmentRoot();
+		$absolute = $binding->resolveAbsolutePath();
 		if ( is_dir($absolute) ) {
-			$containment = PathSecurity::validateContainment($absolute, $abspath);
+			$containment = PathSecurity::validateContainment($absolute, $root);
 			if ( ! $containment['valid'] ) {
-				return new \WP_Error('path_outside_abspath', sprintf('local_path resolves outside ABSPATH: %s', $containment['message'] ?? ''), array( 'status' => 403 ));
+				return new \WP_Error('path_outside_binding_root', sprintf('local_path resolves outside its binding root: %s', $containment['message'] ?? ''), array( 'status' => 403 ));
 			}
 		}
 

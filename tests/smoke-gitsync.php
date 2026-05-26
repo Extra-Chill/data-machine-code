@@ -21,6 +21,10 @@ namespace {
         define('ABSPATH', $scratch . '/');
     }
 
+    if (! defined('WP_CONTENT_DIR') ) {
+        define('WP_CONTENT_DIR', rtrim($scratch, '/') . '-content');
+    }
+
     $GLOBALS['__dmc_options']      = array();
     $GLOBALS['__dmc_http_mock']    = array();
     $GLOBALS['__dmc_http_capture'] = array();
@@ -238,6 +242,22 @@ namespace {
     );
     $assert(! is_wp_error($bound), 'bind succeeded');
     $assert(false === is_dir(ABSPATH . 'content/wiki/'), 'bind did not create directory');
+
+    $content_bound = $gs->bind(
+        array(
+        'slug'       => 'wp-content-binding',
+        'local_path' => '/wp-content/uploads/wiki/',
+        'remote_url' => 'https://github.com/Automattic/a8c-wiki-woocommerce',
+        )
+    );
+    $assert(! is_wp_error($content_bound), 'wp-content bind succeeded');
+    $content_binding = ( new \DataMachineCode\GitSync\GitSyncRegistry() )->get('wp-content-binding');
+    $assert($content_binding instanceof \DataMachineCode\GitSync\GitSyncBinding, 'wp-content binding stored');
+    $assert(
+        rtrim(WP_CONTENT_DIR, '/') . '/uploads/wiki' === $content_binding->resolveAbsolutePath(),
+        'wp-content binding resolves through WP_CONTENT_DIR'
+    );
+    $gs->unbind('wp-content-binding');
 
     $dup = $gs->bind(array( 'slug' => 'wiki', 'local_path' => '/x/', 'remote_url' => 'https://github.com/a/b' ));
     $assert(is_wp_error($dup) && 'binding_exists' === $dup->get_error_code(), 'refuses duplicate slug');

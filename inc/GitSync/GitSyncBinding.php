@@ -3,7 +3,7 @@
  * GitSync Binding
  *
  * Value object for a single binding between a site-owned local directory
- * (relative to ABSPATH) and a GitHub repository.
+ * and a GitHub repository.
  *
  * Storage: serialized inside the `datamachine_gitsync_bindings` option.
  * Validation lives here so the shape has one authoritative definition.
@@ -212,18 +212,44 @@ final class GitSyncBinding {
 	}
 
 	/**
-	 * Resolve `local_path` to an absolute filesystem path under ABSPATH.
+	 * Resolve `local_path` to an absolute filesystem path.
 	 *
 	 * `local_path` is stored leading-slash (e.g. `/wp-content/uploads/wiki/`)
-	 * and interpreted relative to ABSPATH. Keeping the stored form portable
-	 * lets a binding move between installs with different ABSPATHs without
-	 * a migration step.
+	 * and interpreted relative to the portable WordPress install shape. Paths
+	 * under `/wp-content/` resolve through WP_CONTENT_DIR so managed hosts whose
+	 * writable content directory lives outside ABSPATH still work.
 	 *
 	 * @return string Absolute path with no trailing slash.
 	 */
 	public function resolveAbsolutePath(): string {
-		$relative = ltrim(str_replace('\\', '/', $this->local_path), '/');
-		$abspath  = rtrim(ABSPATH, '/');
-		return $abspath . '/' . rtrim($relative, '/');
+		$relative = self::normalizeRelativePath($this->local_path);
+		if ( self::isWpContentPath($relative) ) {
+			$remainder = substr($relative, strlen('wp-content'));
+			return rtrim(WP_CONTENT_DIR, '/') . rtrim($remainder, '/');
+		}
+
+		return rtrim(ABSPATH, '/') . '/' . rtrim($relative, '/');
+	}
+
+	/**
+	 * Resolve the filesystem root this binding must remain inside.
+	 *
+	 * @return string Absolute root path with no trailing slash.
+	 */
+	public function resolveContainmentRoot(): string {
+		$relative = self::normalizeRelativePath($this->local_path);
+		if ( self::isWpContentPath($relative) ) {
+			return rtrim(WP_CONTENT_DIR, '/');
+		}
+
+		return rtrim(ABSPATH, '/');
+	}
+
+	public static function normalizeRelativePath( string $path ): string {
+		return ltrim(str_replace('\\', '/', $path), '/');
+	}
+
+	private static function isWpContentPath( string $relative ): bool {
+		return 'wp-content' === $relative || str_starts_with($relative, 'wp-content/');
 	}
 }

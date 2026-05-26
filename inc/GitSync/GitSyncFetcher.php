@@ -71,13 +71,12 @@ final class GitSyncFetcher {
 		}
 
 		// Containment belt-and-suspenders: once the dir exists, re-validate
-		// that it really lives under ABSPATH (symlink-safe).
-		$abspath_root = rtrim(ABSPATH, '/');
-		$containment  = PathSecurity::validateContainment($absolute, $abspath_root);
+		// that it really lives under its binding root (symlink-safe).
+		$containment = PathSecurity::validateContainment($absolute, $binding->resolveContainmentRoot());
 		if ( ! $containment['valid'] ) {
-			return new \WP_Error('path_outside_abspath', $containment['message'] ?? 'containment failed', array( 'status' => 403 ));
+			return new \WP_Error('path_outside_binding_root', $containment['message'] ?? 'containment failed', array( 'status' => 403 ));
 		}
-		$absolute = $containment['real_path'];
+		$absolute = (string) ( $containment['real_path'] ?? $absolute );
 
 		$tree = GitHubRemote::fetchTree($slug, $binding->branch, $pat);
 		if ( is_wp_error($tree) ) {
