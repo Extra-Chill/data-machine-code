@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.14] - 2026-05-26
+
+### Fixed
+- resolve GitSync wp-content paths via WP_CONTENT_DIR
+
 ## [0.46.13] - 2026-05-26
 
 ### Fixed
