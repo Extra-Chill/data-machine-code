@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.13] - 2026-05-26
+
+### Fixed
+- avoid filesystem null reads
+
 ## [0.46.12] - 2026-05-24
 
 ### Changed
