@@ -218,7 +218,7 @@ class GitSyncAbilities {
 				'datamachine/gitsync-submit',
 				array(
 					'label'               => 'Submit GitSync Binding as Pull Request',
-					'description'         => 'Upload changed local files to the sticky proposal branch (gitsync/<slug>) by default, or to a keyed proposal branch (gitsync/<slug>/<proposal-slug>) when proposal is provided, and open or update a PR against the pinned branch.',
+					'description'         => 'Upload changed local files to the sticky proposal branch (gitsync/<slug>) by default, or to a keyed proposal branch (gitsync/<slug>-<proposal-slug>) when proposal is provided, and open or update a PR against the pinned branch.',
 					'category'            => 'datamachine-code-gitsync',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -235,7 +235,7 @@ class GitSyncAbilities {
 							'body'     => array( 'type' => 'string' ),
 							'proposal' => array(
 								'type'        => 'string',
-								'description' => 'Optional proposal key. Omit to reuse gitsync/<slug>; pass a key to use gitsync/<slug>/<proposal-slug>.',
+								'description' => 'Optional proposal key. Omit to reuse gitsync/<slug>; pass a key to use gitsync/<slug>-<proposal-slug>.',
 							),
 						),
 					),
