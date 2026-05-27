@@ -224,9 +224,9 @@ class GitSyncAbilities {
 						'type'       => 'object',
 						'required'   => array( 'slug', 'message' ),
 						'properties' => array(
-							'slug'    => array( 'type' => 'string' ),
-							'message' => array( 'type' => 'string' ),
-							'paths'   => array(
+							'slug'     => array( 'type' => 'string' ),
+							'message'  => array( 'type' => 'string' ),
+							'paths'    => array(
 								'type'        => 'array',
 								'items'       => array( 'type' => 'string' ),
 								'description' => 'Optional explicit list of relative paths. If omitted, every file with a SHA mismatch against upstream (filtered by allowed_paths) is submitted.',

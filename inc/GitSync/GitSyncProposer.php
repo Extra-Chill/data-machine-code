@@ -93,7 +93,7 @@ final class GitSyncProposer {
 			);
 		}
 
-		$proposal       = $this->normalizeProposalKey( (string) ( $args['proposal'] ?? '' ));
+		$proposal = $this->normalizeProposalKey( (string) ( $args['proposal'] ?? '' ));
 		if ( is_wp_error($proposal) ) {
 			return $proposal;
 		}
