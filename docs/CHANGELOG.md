@@ -2,6 +2,13 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.16] - 2026-05-27
+
+### Fixed
+- align gitsync proposal lint
+- avoid nested gitsync proposal refs
+- support keyed gitsync proposal branches
+
 ## [0.46.15] - 2026-05-26
 
 ### Changed
