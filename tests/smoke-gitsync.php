@@ -458,9 +458,26 @@ namespace {
     // =========================================================================
     echo "\nSubmit (keyed proposal branch)\n";
     $GLOBALS['__dmc_http_mock']['GET https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/git/ref/heads/gitsync%2Fwiki%2Fscript-modules'] = array(
+    'response' => array( 'code' => 500 ),
+    'body'     => json_encode(array( 'message' => 'Nested proposal ref must not be used' )),
+    );
+    $GLOBALS['__dmc_http_mock']['GET https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/git/ref/heads/gitsync%2Fwiki-script-modules'] = array(
     'response' => array( 'code' => 404 ),
     'body'     => json_encode(array( 'message' => 'Not Found' )),
     );
+    $GLOBALS['__dmc_http_mock']['POST https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/git/refs'] = static function ( string $url, array $args ): array {
+        $body = json_decode((string) ( $args['body'] ?? '' ), true);
+        if ( ! is_array($body) || 'refs/heads/gitsync/wiki-script-modules' !== ( $body['ref'] ?? null ) ) {
+            return array(
+            'response' => array( 'code' => 500 ),
+            'body'     => json_encode(array( 'message' => 'Unexpected proposal ref' )),
+            );
+        }
+        return array(
+        'response' => array( 'code' => 201 ),
+        'body'     => json_encode(array( 'ref' => 'refs/heads/gitsync/wiki-script-modules', 'object' => array( 'sha' => 'base-sha-1' ) )),
+        );
+    };
     $GLOBALS['__dmc_http_mock']['GET https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/pulls'] = array(
     'response' => array( 'code' => 200 ),
     'body'     => '[]',
@@ -474,7 +491,7 @@ namespace {
     $keyed = $gs->submit('wiki', array( 'message' => 'script modules update', 'proposal' => 'Script Modules' ));
     $assert(! is_wp_error($keyed), 'keyed submit succeeded — ' . ( is_wp_error($keyed) ? $keyed->get_error_message() : '' ));
     $assert('script-modules' === ( $keyed['proposal'] ?? null ), 'proposal key normalized to script-modules');
-    $assert('gitsync/wiki/script-modules' === ( $keyed['branch'] ?? null ), 'keyed feature branch includes proposal slug');
+    $assert('gitsync/wiki-script-modules' === ( $keyed['branch'] ?? null ), 'keyed feature branch uses sibling proposal slug');
     $assert(8 === ( $keyed['pr']['number'] ?? null ), 'keyed proposal opened separate PR');
     $keyed_requests = array_slice($GLOBALS['__dmc_http_capture'], $capture_before_keyed);
     $keyed_pr_body  = null;
@@ -483,7 +500,45 @@ namespace {
             $keyed_pr_body = json_decode((string) $request['body'], true);
         }
     }
-    $assert('gitsync/wiki/script-modules' === ( $keyed_pr_body['head'] ?? null ), 'keyed PR uses keyed branch head');
+    $assert('gitsync/wiki-script-modules' === ( $keyed_pr_body['head'] ?? null ), 'keyed PR uses keyed branch head');
+    $used_nested_keyed_ref = false;
+    foreach ( $keyed_requests as $request ) {
+        $used_nested_keyed_ref = $used_nested_keyed_ref || str_contains((string) $request['url'], 'gitsync%2Fwiki%2Fscript-modules');
+    }
+    $assert(! $used_nested_keyed_ref, 'keyed submit avoids nested proposal ref URLs');
+
+    $GLOBALS['__dmc_http_mock']['GET https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/git/ref/heads/gitsync%2Fwiki-script-modules'] = array(
+    'response' => array( 'code' => 200 ),
+    'body'     => json_encode(array( 'object' => array( 'sha' => 'keyed-feature-old-sha' ) )),
+    );
+    $GLOBALS['__dmc_http_mock']['PATCH https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/git/refs/heads/gitsync%2Fwiki-script-modules'] = array(
+    'response' => array( 'code' => 200 ),
+    'body'     => json_encode(array( 'object' => array( 'sha' => 'base-sha-1' ) )),
+    );
+    $GLOBALS['__dmc_http_mock']['GET https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/pulls'] = array(
+    'response' => array( 'code' => 200 ),
+    'body'     => json_encode(
+        array(
+        array( 'number' => 8, 'html_url' => 'https://github.com/a/b/pull/8', 'state' => 'open' ),
+        )
+    ),
+    );
+    $GLOBALS['__dmc_http_mock']['PATCH https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/pulls/8'] = array(
+    'response' => array( 'code' => 200 ),
+    'body'     => json_encode(array( 'number' => 8, 'html_url' => 'https://github.com/a/b/pull/8', 'state' => 'open' )),
+    );
+    file_put_contents(ABSPATH . 'content/wiki/articles/a.md', "article a script modules proposal v2\n");
+    $capture_before_keyed_reuse = count($GLOBALS['__dmc_http_capture']);
+    $keyed_reuse                = $gs->submit('wiki', array( 'message' => 'script modules follow-up', 'proposal' => 'Script Modules' ));
+    $assert(! is_wp_error($keyed_reuse), 'keyed submit reuses sibling branch — ' . ( is_wp_error($keyed_reuse) ? $keyed_reuse->get_error_message() : '' ));
+    $assert('gitsync/wiki-script-modules' === ( $keyed_reuse['branch'] ?? null ), 'keyed branch reuse keeps sibling branch shape');
+    $assert('updated' === ( $keyed_reuse['pr']['action'] ?? null ), 'keyed proposal PR reported as updated');
+    $keyed_reuse_requests = array_slice($GLOBALS['__dmc_http_capture'], $capture_before_keyed_reuse);
+    $used_nested_keyed_ref = false;
+    foreach ( $keyed_reuse_requests as $request ) {
+        $used_nested_keyed_ref = $used_nested_keyed_ref || str_contains((string) $request['url'], 'gitsync%2Fwiki%2Fscript-modules');
+    }
+    $assert(! $used_nested_keyed_ref, 'keyed branch reuse avoids nested proposal ref URLs');
 
     // =========================================================================
     // 10. Submit with nothing changed → nothing_to_submit.

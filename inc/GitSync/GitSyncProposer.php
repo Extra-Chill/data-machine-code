@@ -60,7 +60,7 @@ final class GitSyncProposer {
 	 * @type   string   $title   PR title. Defaults to $message.
 	 * @type   string   $body    PR body. Defaults to an auto-summary.
 	 * @type   string   $proposal Optional proposal key. When present,
-	 *                             submits to gitsync/<slug>/<proposal-slug>.
+	 *                             submits to gitsync/<slug>-<proposal-slug>.
 	 * }
 	 * @return array<string, mixed>|\WP_Error
 	 */
@@ -93,13 +93,13 @@ final class GitSyncProposer {
 			);
 		}
 
-		$proposal       = $this->normalizeProposalKey( (string) ( $args['proposal'] ?? '' ));
+		$proposal = $this->normalizeProposalKey( (string) ( $args['proposal'] ?? '' ));
 		if ( is_wp_error($proposal) ) {
 			return $proposal;
 		}
 		$feature_branch = self::BRANCH_PREFIX . $binding->slug;
 		if ( null !== $proposal ) {
-			$feature_branch .= '/' . $proposal;
+			$feature_branch .= '-' . $proposal;
 		}
 
 		// Ensure the feature branch exists and points at the current
