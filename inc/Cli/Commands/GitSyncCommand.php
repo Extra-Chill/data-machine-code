@@ -323,7 +323,8 @@ class GitSyncCommand extends BaseCommand {
 	 * Submit local edits as a pull request.
 	 *
 	 * Uploads changed files to the sticky proposal branch (gitsync/<slug>)
-	 * and opens or updates a PR against the pinned branch.
+	 * by default, or to an isolated keyed proposal branch when --proposal is
+	 * provided, and opens or updates a PR against the pinned branch.
 	 *
 	 * ## OPTIONS
 	 *
@@ -336,6 +337,10 @@ class GitSyncCommand extends BaseCommand {
 	 * [--paths=<paths>]
 	 * : Comma-separated list of relative paths to submit. If omitted,
 	 *   every changed file under allowed_paths is included.
+	 *
+	 * [--proposal=<proposal>]
+	 * : Optional proposal key. Omit to reuse the sticky branch gitsync/<slug>;
+	 *   pass a key to use an isolated branch gitsync/<slug>/<proposal-slug>.
 	 *
 	 * [--title=<title>]
 	 * : PR title. Defaults to --message.
@@ -366,6 +371,9 @@ class GitSyncCommand extends BaseCommand {
 		);
 		if ( isset($assoc_args['paths']) && '' !== $assoc_args['paths'] ) {
 			$input['paths'] = array_values(array_filter(array_map('trim', explode(',', (string) $assoc_args['paths']))));
+		}
+		if ( isset($assoc_args['proposal']) ) {
+			$input['proposal'] = (string) $assoc_args['proposal'];
 		}
 		if ( isset($assoc_args['title']) ) {
 			$input['title'] = (string) $assoc_args['title'];
