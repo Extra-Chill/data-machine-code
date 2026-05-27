@@ -98,6 +98,7 @@ function datamachine_code_bootstrap() {
 	new \DataMachineCode\Abilities\GitSyncAbilities();
 	new \DataMachineCode\Abilities\CodeTaskAbilities();
 	new \DataMachineCode\Abilities\WordPressRuntimeAbilities();
+	\DataMachineCode\SourceInventory\WorkspaceSourceInventory::register();
 	( new \DataMachineCode\Bundle\WorkspacePreloadArtifact() )->register();
 
 	// Project active workspace identity into Data Machine's engine_data
