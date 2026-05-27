@@ -396,7 +396,7 @@ namespace {
     // Tree for submit's context — same as last pull.
     // (Already mocked above.)
     // Feature branch doesn't exist yet → 404
-    $GLOBALS['__dmc_http_mock']['GET https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/git/ref/heads/gitsync/wiki'] = array(
+    $GLOBALS['__dmc_http_mock']['GET https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/git/ref/heads/gitsync%2Fwiki'] = array(
     'response' => array( 'code' => 404 ),
     'body'     => json_encode(array( 'message' => 'Not Found' )),
     );
@@ -420,6 +420,7 @@ namespace {
     $submit = $gs->submit('wiki', array( 'message' => 'update article a content' ));
     $assert(! is_wp_error($submit), 'submit succeeded — ' . ( is_wp_error($submit) ? $submit->get_error_message() : '' ));
     $assert('gitsync/wiki' === ( $submit['branch'] ?? null ), 'feature branch is gitsync/wiki');
+    $assert(null === ( $submit['proposal'] ?? null ), 'default submit has no proposal key');
     $assert(7 === ( $submit['pr']['number'] ?? null ), 'PR #7 opened');
     $assert('opened' === ( $submit['pr']['action'] ?? null ), 'PR reported as opened');
 
@@ -427,11 +428,11 @@ namespace {
     // 8. Submit again — existing branch + PR is updated in place.
     // =========================================================================
     echo "\nSubmit (update existing PR)\n";
-    $GLOBALS['__dmc_http_mock']['GET https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/git/ref/heads/gitsync/wiki'] = array(
+    $GLOBALS['__dmc_http_mock']['GET https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/git/ref/heads/gitsync%2Fwiki'] = array(
     'response' => array( 'code' => 200 ),
     'body'     => json_encode(array( 'object' => array( 'sha' => 'feature-old-sha' ) )),
     );
-    $GLOBALS['__dmc_http_mock']['PATCH https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/git/refs/heads/gitsync/wiki'] = array(
+    $GLOBALS['__dmc_http_mock']['PATCH https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/git/refs/heads/gitsync%2Fwiki'] = array(
     'response' => array( 'code' => 200 ),
     'body'     => json_encode(array( 'object' => array( 'sha' => 'base-sha-1' ) )),
     );
@@ -453,7 +454,39 @@ namespace {
     $assert('updated' === ( $submit2['pr']['action'] ?? null ), 'PR reported as updated');
 
     // =========================================================================
-    // 9. Submit with nothing changed → nothing_to_submit.
+    // 9. Submit with a proposal key — isolated branch and PR lookup.
+    // =========================================================================
+    echo "\nSubmit (keyed proposal branch)\n";
+    $GLOBALS['__dmc_http_mock']['GET https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/git/ref/heads/gitsync%2Fwiki%2Fscript-modules'] = array(
+    'response' => array( 'code' => 404 ),
+    'body'     => json_encode(array( 'message' => 'Not Found' )),
+    );
+    $GLOBALS['__dmc_http_mock']['GET https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/pulls'] = array(
+    'response' => array( 'code' => 200 ),
+    'body'     => '[]',
+    );
+    $GLOBALS['__dmc_http_mock']['POST https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/pulls'] = array(
+    'response' => array( 'code' => 201 ),
+    'body'     => json_encode(array( 'number' => 8, 'html_url' => 'https://github.com/a/b/pull/8', 'state' => 'open' )),
+    );
+    file_put_contents(ABSPATH . 'content/wiki/articles/a.md', "article a script modules proposal\n");
+    $capture_before_keyed = count($GLOBALS['__dmc_http_capture']);
+    $keyed = $gs->submit('wiki', array( 'message' => 'script modules update', 'proposal' => 'Script Modules' ));
+    $assert(! is_wp_error($keyed), 'keyed submit succeeded — ' . ( is_wp_error($keyed) ? $keyed->get_error_message() : '' ));
+    $assert('script-modules' === ( $keyed['proposal'] ?? null ), 'proposal key normalized to script-modules');
+    $assert('gitsync/wiki/script-modules' === ( $keyed['branch'] ?? null ), 'keyed feature branch includes proposal slug');
+    $assert(8 === ( $keyed['pr']['number'] ?? null ), 'keyed proposal opened separate PR');
+    $keyed_requests = array_slice($GLOBALS['__dmc_http_capture'], $capture_before_keyed);
+    $keyed_pr_body  = null;
+    foreach ( $keyed_requests as $request ) {
+        if ( 'POST' === $request['method'] && str_ends_with($request['url'], '/pulls') ) {
+            $keyed_pr_body = json_decode((string) $request['body'], true);
+        }
+    }
+    $assert('gitsync/wiki/script-modules' === ( $keyed_pr_body['head'] ?? null ), 'keyed PR uses keyed branch head');
+
+    // =========================================================================
+    // 10. Submit with nothing changed → nothing_to_submit.
     // =========================================================================
     echo "\nSubmit (nothing to propose)\n";
     // File's current SHA must match upstream tree's reported SHA.
@@ -473,7 +506,7 @@ namespace {
     $assert(is_wp_error($nothing) && 'nothing_to_submit' === $nothing->get_error_code(), 'submit refuses when nothing changed');
 
     // =========================================================================
-    // 10. Direct push — two-key auth.
+    // 11. Direct push — two-key auth.
     // =========================================================================
     echo "\nPush (two-key auth)\n";
     file_put_contents(ABSPATH . 'content/wiki/articles/a.md', "article a v5 direct\n");
@@ -503,7 +536,7 @@ namespace {
     $assert(1 === count((array) ( $push['commits'] ?? array() )), 'push recorded 1 commit');
 
     // =========================================================================
-    // 11. Status + list + unbind round-trip.
+    // 12. Status + list + unbind round-trip.
     // =========================================================================
     echo "\nStatus + list + unbind\n";
     $st = $gs->status('wiki');
@@ -524,7 +557,7 @@ namespace {
     $assert(! is_dir(ABSPATH . 'content/wiki/'), 'directory removed by purge');
 
     // =========================================================================
-    // 12. Policy validation.
+    // 13. Policy validation.
     // =========================================================================
     echo "\nPolicy validation\n";
     $gs->bind(array( 'slug' => 'p', 'local_path' => '/content/p/', 'remote_url' => 'https://github.com/Automattic/a8c-wiki-woocommerce' ));

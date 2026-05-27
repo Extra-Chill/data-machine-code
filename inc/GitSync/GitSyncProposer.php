@@ -48,7 +48,8 @@ final class GitSyncProposer {
 	}
 
 	/**
-	 * Submit local edits as a PR on the sticky proposal branch.
+	 * Submit local edits as a PR on the sticky proposal branch, or an
+	 * isolated keyed proposal branch when args.proposal is provided.
 	 *
 	 * @param  GitSyncBinding       $binding
 	 * @param  array<string, mixed> $args    {
@@ -58,6 +59,8 @@ final class GitSyncProposer {
 	 *                             is included.
 	 * @type   string   $title   PR title. Defaults to $message.
 	 * @type   string   $body    PR body. Defaults to an auto-summary.
+	 * @type   string   $proposal Optional proposal key. When present,
+	 *                             submits to gitsync/<slug>/<proposal-slug>.
 	 * }
 	 * @return array<string, mixed>|\WP_Error
 	 */
@@ -90,7 +93,14 @@ final class GitSyncProposer {
 			);
 		}
 
+		$proposal       = $this->normalizeProposalKey( (string) ( $args['proposal'] ?? '' ));
+		if ( is_wp_error($proposal) ) {
+			return $proposal;
+		}
 		$feature_branch = self::BRANCH_PREFIX . $binding->slug;
+		if ( null !== $proposal ) {
+			$feature_branch .= '/' . $proposal;
+		}
 
 		// Ensure the feature branch exists and points at the current
 		// pinned-branch HEAD. If it already existed (previous submit),
@@ -150,12 +160,13 @@ final class GitSyncProposer {
 		$this->registry->save($binding);
 
 		return array(
-			'success' => true,
-			'slug'    => $binding->slug,
-			'branch'  => $feature_branch,
-			'commits' => $commits,
-			'pr'      => $pr,
-			'message' => sprintf('Proposed %d file(s) on "%s" via PR #%d.', count($commits), $binding->slug, (int) ( $pr['number'] ?? 0 )),
+			'success'  => true,
+			'slug'     => $binding->slug,
+			'proposal' => $proposal,
+			'branch'   => $feature_branch,
+			'commits'  => $commits,
+			'pr'       => $pr,
+			'message'  => sprintf('Proposed %d file(s) on "%s" via PR #%d.', count($commits), $binding->slug, (int) ( $pr['number'] ?? 0 )),
 		);
 	}
 
@@ -290,6 +301,23 @@ final class GitSyncProposer {
 			return new \WP_Error('message_too_long', 'Message must be 200 characters or fewer.', array( 'status' => 400 ));
 		}
 		return true;
+	}
+
+	private function normalizeProposalKey( string $proposal ): string|null|\WP_Error {
+		$proposal = trim($proposal);
+		if ( '' === $proposal ) {
+			return null;
+		}
+
+		$normalized = strtolower($proposal);
+		$normalized = preg_replace('/[^a-z0-9]+/', '-', $normalized);
+		$normalized = null === $normalized ? '' : trim($normalized, '-');
+
+		if ( '' === $normalized ) {
+			return new \WP_Error('invalid_proposal', 'Proposal key must contain at least one letter or number.', array( 'status' => 400 ));
+		}
+
+		return $normalized;
 	}
 
 	/**
