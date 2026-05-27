@@ -22,7 +22,10 @@ class RemoteWorkspaceBackend {
 	 * Whether the remote backend should handle workspace operations.
 	 */
 	public static function should_handle(): bool {
-		return ! \DataMachineCode\Support\GitRunner::is_available();
+		$should_handle = ! \DataMachineCode\Support\GitRunner::is_available();
+		return function_exists('apply_filters')
+			? (bool) apply_filters('datamachine_code_remote_workspace_backend_should_handle', $should_handle)
+			: $should_handle;
 	}
 
 	/**
