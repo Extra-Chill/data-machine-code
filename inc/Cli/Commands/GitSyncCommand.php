@@ -340,7 +340,7 @@ class GitSyncCommand extends BaseCommand {
 	 *
 	 * [--proposal=<proposal>]
 	 * : Optional proposal key. Omit to reuse the sticky branch gitsync/<slug>;
-	 *   pass a key to use an isolated branch gitsync/<slug>/<proposal-slug>.
+	 *   pass a key to use an isolated branch gitsync/<slug>-<proposal-slug>.
 	 *
 	 * [--title=<title>]
 	 * : PR title. Defaults to --message.

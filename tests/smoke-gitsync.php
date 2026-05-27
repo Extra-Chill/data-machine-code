@@ -457,7 +457,9 @@ namespace {
     // 9. Submit with a proposal key — isolated branch and PR lookup.
     // =========================================================================
     echo "\nSubmit (keyed proposal branch)\n";
-    $GLOBALS['__dmc_http_mock']['GET https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/git/ref/heads/gitsync%2Fwiki%2Fscript-modules'] = array(
+    // Sticky branch gitsync/wiki already exists from the default submit flow;
+    // keyed proposals must use a sibling ref so both branches can coexist.
+    $GLOBALS['__dmc_http_mock']['GET https://api.github.com/repos/Automattic/a8c-wiki-woocommerce/git/ref/heads/gitsync%2Fwiki-script-modules'] = array(
     'response' => array( 'code' => 404 ),
     'body'     => json_encode(array( 'message' => 'Not Found' )),
     );
@@ -474,16 +476,26 @@ namespace {
     $keyed = $gs->submit('wiki', array( 'message' => 'script modules update', 'proposal' => 'Script Modules' ));
     $assert(! is_wp_error($keyed), 'keyed submit succeeded — ' . ( is_wp_error($keyed) ? $keyed->get_error_message() : '' ));
     $assert('script-modules' === ( $keyed['proposal'] ?? null ), 'proposal key normalized to script-modules');
-    $assert('gitsync/wiki/script-modules' === ( $keyed['branch'] ?? null ), 'keyed feature branch includes proposal slug');
+    $assert('gitsync/wiki-script-modules' === ( $keyed['branch'] ?? null ), 'keyed feature branch is sibling of sticky branch');
     $assert(8 === ( $keyed['pr']['number'] ?? null ), 'keyed proposal opened separate PR');
-    $keyed_requests = array_slice($GLOBALS['__dmc_http_capture'], $capture_before_keyed);
-    $keyed_pr_body  = null;
+    $keyed_requests       = array_slice($GLOBALS['__dmc_http_capture'], $capture_before_keyed);
+    $keyed_pr_body        = null;
+    $keyed_ref_body       = null;
+    $saw_nested_keyed_ref = false;
     foreach ( $keyed_requests as $request ) {
         if ( 'POST' === $request['method'] && str_ends_with($request['url'], '/pulls') ) {
             $keyed_pr_body = json_decode((string) $request['body'], true);
         }
+        if ( 'POST' === $request['method'] && str_ends_with($request['url'], '/git/refs') ) {
+            $keyed_ref_body = json_decode((string) $request['body'], true);
+        }
+        if ( str_contains($request['url'], 'gitsync%2Fwiki%2Fscript-modules') ) {
+            $saw_nested_keyed_ref = true;
+        }
     }
-    $assert('gitsync/wiki/script-modules' === ( $keyed_pr_body['head'] ?? null ), 'keyed PR uses keyed branch head');
+    $assert('refs/heads/gitsync/wiki-script-modules' === ( $keyed_ref_body['ref'] ?? null ), 'keyed branch ref coexists with sticky branch namespace');
+    $assert('gitsync/wiki-script-modules' === ( $keyed_pr_body['head'] ?? null ), 'keyed PR uses keyed branch head');
+    $assert(false === $saw_nested_keyed_ref, 'keyed submit does not request nested sticky-branch ref');
 
     // =========================================================================
     // 10. Submit with nothing changed → nothing_to_submit.
