@@ -575,8 +575,8 @@ MD;
 
 		// Abilities — WordPress Abilities API discovery.
 		\DataMachine\Engine\AI\SectionRegistry::register(
-			'AGENTS.md', 'abilities', 20, function () use ( $wp ) {
-				return <<<MD
+			'AGENTS.md', 'abilities', 20, function () {
+				return <<<'MD'
 ## Abilities
 
 WordPress Abilities are the universal tool surface. Plugins register abilities that are automatically available via REST API, MCP, and chat.
@@ -898,7 +898,7 @@ function datamachine_code_render_workspace_inventory_section( string $wp ): stri
 		}
 	}
 
-	$body = implode("\n", $lines);
+	$body         = implode("\n", $lines);
 	$generated_at = gmdate('c');
 	$agent_slug   = datamachine_code_resolve_agent_slug_for_agents_md();
 	$agent_suffix = '' !== $agent_slug ? ' --agent=' . $agent_slug : '';
