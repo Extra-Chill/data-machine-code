@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.1] - 2026-05-28
+
+### Changed
+- Revert "Merge pull request #459 from Extra-Chill/fix/workspace-tools-sandbox-mode"
+
 ## [0.47.0] - 2026-05-28
 
 ### Added
