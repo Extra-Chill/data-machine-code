@@ -1143,7 +1143,7 @@ class WorkspaceTools extends BaseTool
      */
     public function getGitStatusDefinition(): array
     {
-        return $this->simpleGitDefinition('handleGitStatus', 'Get git status information for a workspace handle.', array(), array( 'name' ), array( 'duplicate_policy' => 'repeatable' ));
+        return $this->simpleGitDefinition('handleGitStatus', 'Get git status information for a workspace handle. Use once to inspect cleanliness, then move to a concrete edit, commit, or completion outcome.', array());
     }
 
     /**
