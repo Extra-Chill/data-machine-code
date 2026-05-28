@@ -911,12 +911,12 @@ class WorktreeContextInjector {
 			$out .= "## {$filename}\n\n{$body}\n\n";
 		}
 
-		$out       .= "## Fetching fresher context\n\n";
-		$out       .= "The source site has `studio wp` available. Run:\n\n";
+		$out      .= "## Fetching fresher context\n\n";
+		$out      .= "The source site has `studio wp` available. Run:\n\n";
 		$agent_arg = '' !== $agent_slug ? ' --agent=' . $agent_slug : '';
-		$out       .= "    studio wp datamachine memory read MEMORY.md{$agent_arg}\n";
-		$out       .= "    studio wp datamachine memory search <term>{$agent_arg}\n\n";
-		$out       .= "to pull updates that accumulated after this worktree was created.\n";
+		$out      .= "    studio wp datamachine memory read MEMORY.md{$agent_arg}\n";
+		$out      .= "    studio wp datamachine memory search <term>{$agent_arg}\n\n";
+		$out      .= "to pull updates that accumulated after this worktree was created.\n";
 		if ( '' === $agent_slug ) {
 			$out .= "On multi-agent sites, add `--agent=<slug>` to avoid ambiguous memory resolution.\n";
 		}
