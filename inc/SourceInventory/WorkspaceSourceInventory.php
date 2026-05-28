@@ -47,6 +47,8 @@ class WorkspaceSourceInventory {
 	 * @param array<string,mixed> $input Ability input.
 	 */
 	public static function page_callback( $callback, array $source, array $_input ): ?callable {
+		unset( $_input );
+
 		if ( is_callable( $callback ) || self::KIND !== ( $source['kind'] ?? '' ) ) {
 			return $callback;
 		}
