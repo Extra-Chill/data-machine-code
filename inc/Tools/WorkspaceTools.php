@@ -76,8 +76,8 @@ class WorkspaceTools extends BaseTool
      */
     public function __construct()
     {
-        $contexts        = array( 'chat', 'pipeline' );
-        $policy_contexts = array( 'chat', 'pipeline' );
+        $contexts        = array( 'chat', 'pipeline', 'sandbox' );
+        $policy_contexts = array( 'chat', 'pipeline', 'sandbox' );
         $policy_meta     = array( 'requires_opt_in' => true );
         $this->registerTool('workspace_path', array( $this, 'getPathDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-path' ));
         $this->registerTool('workspace_capabilities', array( $this, 'getCapabilitiesDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-capabilities' ));
