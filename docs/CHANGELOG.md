@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.17] - 2026-05-28
+
+### Changed
+- Prevent repeated workspace show loops
+
 ## [0.46.16] - 2026-05-27
 
 ### Fixed
