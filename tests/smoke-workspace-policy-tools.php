@@ -91,7 +91,7 @@ namespace {
     );
 
     foreach ( $default_pipeline_tools as $tool ) {
-        $assert("{$tool} remains default pipeline-visible and sandbox-visible", array( 'chat', 'pipeline', 'sandbox' ) === ( $tools[ $tool ]['modes'] ?? null ));
+        $assert("{$tool} remains default pipeline-visible", array( 'chat', 'pipeline' ) === ( $tools[ $tool ]['modes'] ?? null ));
     }
 
     $show_definition = $workspace_tools->getShowDefinition();
@@ -123,7 +123,7 @@ namespace {
     );
 
     foreach ( $policy_tools as $tool ) {
-        $assert("{$tool} is available in real chat, pipeline, and sandbox modes", array( 'chat', 'pipeline', 'sandbox' ) === ( $tools[ $tool ]['modes'] ?? null ));
+        $assert("{$tool} is available in real chat and pipeline modes", array( 'chat', 'pipeline' ) === ( $tools[ $tool ]['modes'] ?? null ));
         $assert("{$tool} requires explicit opt-in for pipeline use", true === ( $tools[ $tool ]['requires_opt_in'] ?? null ));
     }
 
