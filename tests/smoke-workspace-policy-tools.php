@@ -77,7 +77,7 @@ namespace {
 
     echo "Workspace policy tools - smoke\n";
 
-    new \DataMachineCode\Tools\WorkspaceTools();
+    $workspace_tools = new \DataMachineCode\Tools\WorkspaceTools();
     $tools = apply_filters('datamachine_tools', array());
 
     $default_pipeline_tools = array(
@@ -93,6 +93,12 @@ namespace {
     foreach ( $default_pipeline_tools as $tool ) {
         $assert("{$tool} remains default pipeline-visible", array( 'chat', 'pipeline' ) === ( $tools[ $tool ]['modes'] ?? null ));
     }
+
+    $show_definition = $workspace_tools->getShowDefinition();
+    $assert('workspace_show does not allow duplicate repeat calls', 'repeatable' !== ( $show_definition['runtime']['duplicate_policy'] ?? null ));
+
+    $ls_definition = $workspace_tools->getLsDefinition();
+    $assert('workspace_ls still allows intentional repeat calls', 'repeatable' === ( $ls_definition['runtime']['duplicate_policy'] ?? null ));
 
     $policy_tools = array(
     'workspace_write',
