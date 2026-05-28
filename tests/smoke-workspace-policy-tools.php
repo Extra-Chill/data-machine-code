@@ -97,6 +97,9 @@ namespace {
     $show_definition = $workspace_tools->getShowDefinition();
     $assert('workspace_show does not allow duplicate repeat calls', 'repeatable' !== ( $show_definition['runtime']['duplicate_policy'] ?? null ));
 
+    $git_status_definition = $workspace_tools->getGitStatusDefinition();
+    $assert('workspace_git_status does not allow duplicate repeat calls', 'repeatable' !== ( $git_status_definition['runtime']['duplicate_policy'] ?? null ));
+
     $ls_definition = $workspace_tools->getLsDefinition();
     $assert('workspace_ls still allows intentional repeat calls', 'repeatable' === ( $ls_definition['runtime']['duplicate_policy'] ?? null ));
 
