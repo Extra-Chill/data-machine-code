@@ -265,7 +265,7 @@ function datamachine_code_register_ability_categories() {
  * Register WP-CLI commands after core is loaded.
  */
 function datamachine_code_register_cli_commands() {
-	if ( ! defined('WP_CLI') || ! WP_CLI ) {
+	if ( ! class_exists('\WP_CLI') ) {
 		return;
 	}
 
@@ -452,9 +452,14 @@ add_action(
 			return;
 		}
 
-		\DataMachine\Engine\AI\MemoryFileRegistry::register(
+		$registry_class = '\DataMachine\Engine\AI\MemoryFileRegistry';
+		if ( ! method_exists( $registry_class, 'register' ) ) {
+			return;
+		}
+
+		$registry_class::register(
 			'AGENTS.md', 5, array(
-				'layer'           => \DataMachine\Engine\AI\MemoryFileRegistry::LAYER_SHARED,
+				'layer'           => defined( $registry_class . '::LAYER_SHARED' ) ? constant( $registry_class . '::LAYER_SHARED' ) : 'shared',
 				'protected'       => true,
 				'composable'      => true,
 				'convention_path' => 'AGENTS.md',
@@ -809,7 +814,7 @@ function datamachine_code_render_workspace_inventory_section( string $wp ): stri
 
 	ksort($by_repo, SORT_NATURAL | SORT_FLAG_CASE);
 
-	$workspace_path = $listing['path'] ?? $workspace->get_path();
+	$workspace_path = $listing['path'];
 
 	/**
 	 * Filter the workspace-inventory render mode.
