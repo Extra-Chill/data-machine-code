@@ -913,9 +913,13 @@ class WorktreeContextInjector {
 
 		$out .= "## Fetching fresher context\n\n";
 		$out .= "The source site has `studio wp` available. Run:\n\n";
-		$out .= "    studio wp datamachine agent read MEMORY.md\n";
-		$out .= "    studio wp datamachine agent search <term>\n\n";
+		$agent_arg = '' !== $agent_slug ? ' --agent=' . $agent_slug : '';
+		$out .= "    studio wp datamachine memory read MEMORY.md{$agent_arg}\n";
+		$out .= "    studio wp datamachine memory search <term>{$agent_arg}\n\n";
 		$out .= "to pull updates that accumulated after this worktree was created.\n";
+		if ( '' === $agent_slug ) {
+			$out .= "On multi-agent sites, add `--agent=<slug>` to avoid ambiguous memory resolution.\n";
+		}
 		$out .= "You can also rewrite these injected files in-place via:\n\n";
 		$out .= "    studio wp datamachine-code workspace worktree refresh-context <handle>\n\n";
 

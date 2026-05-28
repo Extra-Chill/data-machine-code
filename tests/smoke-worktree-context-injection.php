@@ -100,6 +100,10 @@ datamachine_code_context_assert($priority_pos < $memory_pos, 'priority rules app
 datamachine_code_context_assert($memory_pos < $rules_pos, 'full snapshot order stays unchanged');
 datamachine_code_context_assert(str_contains($rendered, '## Minion Session Routing'), 'minion routing heading is visible');
 datamachine_code_context_assert(str_contains($rendered, 'canonical agent channel'), 'site-provided routing text is preserved');
+datamachine_code_context_assert(str_contains($rendered, 'studio wp datamachine memory read MEMORY.md --agent=agent-one'), 'fresh memory read uses current memory command and source agent');
+datamachine_code_context_assert(str_contains($rendered, 'studio wp datamachine memory search <term> --agent=agent-one'), 'fresh memory search uses current memory command and source agent');
+datamachine_code_context_assert(! str_contains($rendered, 'datamachine agent read MEMORY.md'), 'removed agent read command is absent');
+datamachine_code_context_assert(! str_contains($rendered, 'datamachine agent search <term>'), 'removed agent search command is absent');
 $priority_excerpt = substr($rendered, $priority_pos, $memory_pos - $priority_pos);
 datamachine_code_context_assert(
     ! str_contains($priority_excerpt, '## Pull Requests'),
@@ -118,6 +122,10 @@ $without_routing = \DataMachineCode\Workspace\WorktreeContextInjector::render(
 datamachine_code_context_assert(
     ! str_contains($without_routing, '## Priority rules from RULES.md'),
     'priority section is omitted when source rules do not define routing'
+);
+datamachine_code_context_assert(
+    str_contains($without_routing, 'On multi-agent sites, add `--agent=<slug>`'),
+    'unresolved source agent warns about multi-agent memory ambiguity'
 );
 
 $tmp_root        = sys_get_temp_dir() . '/dmc-context-injection-' . uniqid('', true);
