@@ -2,6 +2,20 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.0] - 2026-05-28
+
+### Added
+- expose workspace files to source inventory
+
+### Fixed
+- satisfy context injector alignment lint
+- align generated context formatting
+- update generated agent context guidance
+- mark source inventory callback input used
+- align workspace source inventory lint
+- allow overriding remote workspace backend
+- expose workspace tools in sandbox mode
+
 ## [0.46.18] - 2026-05-28
 
 ### Changed
