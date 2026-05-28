@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.46.18] - 2026-05-28
+
+### Changed
+- Prevent repeated workspace git status loops
+
 ## [0.46.17] - 2026-05-28
 
 ### Changed
