@@ -908,8 +908,7 @@ class WorkspaceTools extends BaseTool
      */
     public function getShowDefinition(): array
     {
-        return $this->repeatableDefinition(
-            array(
+        return array(
             'class'       => __CLASS__,
             'method'      => 'handleShow',
             'description' => 'Show detailed information about a workspace repository (branch, remote, latest commit, dirty count).',
@@ -923,7 +922,6 @@ class WorkspaceTools extends BaseTool
             ),
             'required'   => array( 'name' ),
             ),
-            ) 
         );
     }
 
