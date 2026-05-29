@@ -142,6 +142,7 @@ namespace {
     }
 
     include __DIR__ . '/../inc/Support/GitRunner.php';
+    include __DIR__ . '/../inc/Workspace/WorkspaceAliasResolver.php';
     include __DIR__ . '/../inc/Workspace/RemoteWorkspaceBackend.php';
 
     use DataMachineCode\Abilities\GitHubAbilities;
@@ -168,8 +169,21 @@ namespace {
     $worktree = $backend->worktree_add('example', 'fix/example');
     $assert('worktree add returns DMC handle', ! is_wp_error($worktree) && 'example@fix-example' === $worktree['handle']);
 
+    update_option(
+        'datamachine_code_workspace_aliases',
+        array(
+            'current-project' => array(
+                'target' => 'example@fix-example',
+                'root'   => '.agent-workspace/current-project',
+            ),
+        )
+    );
+
     $read = $backend->read_file('example@fix-example', 'src/example.php', 1000000);
     $assert('read falls back to default branch content', ! is_wp_error($read) && str_contains($read['content'], 'old'));
+
+    $alias_read = $backend->read_file('current-project', 'src/example.php', 1000000);
+    $assert('read resolves current-project alias to remote worktree', ! is_wp_error($alias_read) && str_contains($alias_read['content'], 'old'));
 
     $primary_grep = $backend->grep('example', 'old', 'src', '*.php', 10, 1);
     $assert('grep searches registered primary before worktree edits', ! is_wp_error($primary_grep) && 1 === $primary_grep['count'] && 'src/example.php' === $primary_grep['matches'][0]['path'] && 2 === $primary_grep['matches'][0]['line'] && ! empty($primary_grep['matches'][0]['context']));
@@ -190,6 +204,9 @@ namespace {
 
     $status = $backend->git_status('example@fix-example');
     $assert('status reports pending file as dirty', ! is_wp_error($status) && 1 === $status['dirty'] && array( 'src/example.php' ) === $status['files']);
+
+    $alias_status = $backend->git_status('current-project');
+    $assert('status resolves current-project alias to remote worktree', ! is_wp_error($alias_status) && 1 === $alias_status['dirty'] && array( 'src/example.php' ) === $alias_status['files']);
 
     $commit = $backend->git_commit('example@fix-example', 'fix: update example');
     $assert('commit writes via GitHub API', ! is_wp_error($commit) && 'commit-1' === $commit['commit']);
