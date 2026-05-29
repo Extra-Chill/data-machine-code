@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.3] - 2026-05-29
+
+### Fixed
+- resolve aliases in remote workspace backend
+
 ## [0.47.2] - 2026-05-29
 
 ### Fixed
