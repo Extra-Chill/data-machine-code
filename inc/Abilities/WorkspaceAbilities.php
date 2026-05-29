@@ -2918,7 +2918,7 @@ class WorkspaceAbilities {
 		if ( isset($input['agent_slug']) && '' !== trim( (string) $input['agent_slug']) ) {
 			$context['agent_slug'] = sanitize_key( (string) $input['agent_slug']);
 		} elseif ( empty($context['agent_id']) ) {
-			$agent_slug = self::resolveCleanupAgentSlug((int) ( $context['user_id'] ?? 0 ));
+			$agent_slug = self::resolveCleanupAgentSlug( (int) ( $context['user_id'] ?? 0 ) );
 			if ( '' !== $agent_slug ) {
 				$context['agent_slug'] = $agent_slug;
 			}
