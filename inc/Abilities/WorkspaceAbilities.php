@@ -1464,6 +1464,7 @@ class WorkspaceAbilities {
 							),
 							'user_id'    => array( 'type' => 'integer' ),
 							'agent_id'   => array( 'type' => 'integer' ),
+							'agent_slug' => array( 'type' => 'string' ),
 						),
 					),
 					'output_schema'       => array(
@@ -2914,6 +2915,14 @@ class WorkspaceAbilities {
 		if ( isset($input['agent_id']) ) {
 			$context['agent_id'] = (int) $input['agent_id'];
 		}
+		if ( isset($input['agent_slug']) && '' !== trim( (string) $input['agent_slug']) ) {
+			$context['agent_slug'] = sanitize_key( (string) $input['agent_slug']);
+		} elseif ( empty($context['agent_id']) ) {
+			$agent_slug = self::resolveCleanupAgentSlug((int) ( $context['user_id'] ?? 0 ));
+			if ( '' !== $agent_slug ) {
+				$context['agent_slug'] = $agent_slug;
+			}
+		}
 
 		$batch_result = \DataMachine\Engine\Tasks\TaskScheduler::scheduleBatch(
 			$task_type,
@@ -2925,7 +2934,10 @@ class WorkspaceAbilities {
 		}
 
 		$job_ids = is_array($batch_result['job_ids'] ?? null) ? $batch_result['job_ids'] : array();
-		$job_id  = (int) ( $job_ids[0] ?? 0 );
+		$job_id  = (int) ( $job_ids[0] ?? ( $batch_result['batch_job_id'] ?? 0 ) );
+		if ( $job_id <= 0 ) {
+			return new \WP_Error('workspace_cleanup_schedule_empty', 'Workspace cleanup scheduling returned no job id. Check Data Machine logs for the rejected task reason.', array( 'status' => 500 ));
+		}
 
 		return array(
 			'success'   => true,
@@ -2935,6 +2947,27 @@ class WorkspaceAbilities {
 			'mode'      => $mode,
 			'task_type' => $task_type,
 		);
+	}
+
+	/**
+	 * Resolve the active Data Machine agent slug for CLI-scheduled cleanup jobs.
+	 *
+	 * @param int $user_id Optional user id from the caller context.
+	 * @return string
+	 */
+	private static function resolveCleanupAgentSlug( int $user_id = 0 ): string {
+		if ( ! class_exists('\\DataMachine\\Core\\FilesRepository\\DirectoryManager') ) {
+			return '';
+		}
+
+		try {
+			$manager        = new \DataMachine\Core\FilesRepository\DirectoryManager();
+			$effective_user = $manager->get_effective_user_id($user_id);
+			$agent_slug     = $manager->resolve_agent_slug(array( 'user_id' => $effective_user ));
+			return '' !== trim( (string) $agent_slug) ? sanitize_key( (string) $agent_slug) : '';
+		} catch ( \Throwable $e ) {
+			return '';
+		}
 	}
 
 	/**
