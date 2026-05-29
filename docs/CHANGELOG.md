@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.4] - 2026-05-29
+
+### Fixed
+- align remote workspace alias assignments
+
 ## [0.47.3] - 2026-05-29
 
 ### Fixed
