@@ -1065,6 +1065,7 @@ class RemoteWorkspaceBackend {
 	 * @return array<string,mixed>
 	 */
 	private function resolve_handle( string $handle ): array|\WP_Error {
+		$handle = $this->resolve_alias($handle);
 		$state = $this->state();
 		if ( isset($state['worktrees'][ $handle ]) ) {
 			$worktree             = (array) $state['worktrees'][ $handle ];
@@ -1091,6 +1092,7 @@ class RemoteWorkspaceBackend {
 	}
 
 	private function resolve_repo( string $repo_name ): string|\WP_Error {
+		$repo_name = $this->resolve_alias($repo_name);
 		$state = $this->state();
 		if ( isset($state['repos'][ $repo_name ]['repo']) ) {
 			return (string) $state['repos'][ $repo_name ]['repo'];
@@ -1101,6 +1103,14 @@ class RemoteWorkspaceBackend {
 		}
 
 		return new \WP_Error('remote_workspace_repo_not_found', sprintf('Remote workspace repository "%s" is not registered. Call workspace_clone first.', $repo_name), array( 'status' => 404 ));
+	}
+
+	private function resolve_alias( string $handle ): string {
+		if ( class_exists(WorkspaceAliasResolver::class) ) {
+			return WorkspaceAliasResolver::resolve($handle);
+		}
+
+		return $handle;
 	}
 
 	private function repo_from_url( string $url ): string|\WP_Error {
