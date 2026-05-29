@@ -1066,7 +1066,7 @@ class RemoteWorkspaceBackend {
 	 */
 	private function resolve_handle( string $handle ): array|\WP_Error {
 		$handle = $this->resolve_alias($handle);
-		$state = $this->state();
+		$state  = $this->state();
 		if ( isset($state['worktrees'][ $handle ]) ) {
 			$worktree             = (array) $state['worktrees'][ $handle ];
 			$worktree['handle']   = $handle;
@@ -1093,7 +1093,7 @@ class RemoteWorkspaceBackend {
 
 	private function resolve_repo( string $repo_name ): string|\WP_Error {
 		$repo_name = $this->resolve_alias($repo_name);
-		$state = $this->state();
+		$state     = $this->state();
 		if ( isset($state['repos'][ $repo_name ]['repo']) ) {
 			return (string) $state['repos'][ $repo_name ]['repo'];
 		}
