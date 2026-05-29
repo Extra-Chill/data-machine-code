@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.2] - 2026-05-29
+
+### Fixed
+- fix cleanup run cast spacing
+- fix cleanup run scheduling context
+
 ## [0.47.1] - 2026-05-28
 
 ### Changed
