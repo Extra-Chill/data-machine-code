@@ -135,12 +135,14 @@ final class WorkspaceLockStore {
 
      // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from $wpdb->prefix, not user input.
 		return array(
-			'available' => true,
-			'table'     => $table,
-			'active'    => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s AND expires_at >= %s", 'active', $now)),
-			'stale'     => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s AND expires_at < %s", 'active', $now)),
-			'released'  => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s", 'released')),
-			'total'     => (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table}"),
+			'available'   => true,
+			'table'       => $table,
+			'active'      => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s AND expires_at >= %s", 'active', $now)),
+			'active_keys' => self::lock_keys_for_status('active', false),
+			'stale'       => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s AND expires_at < %s", 'active', $now)),
+			'stale_keys'  => self::lock_keys_for_status('active', true),
+			'released'    => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s", 'released')),
+			'total'       => (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table}"),
 		);
      // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 	}
@@ -229,6 +231,36 @@ final class WorkspaceLockStore {
 	private static function table_name(): string {
 		global $wpdb;
 		return $wpdb->prefix . 'datamachine_code_locks';
+	}
+
+	/**
+	 * Return distinct lock keys for active or expired active DB rows.
+	 *
+	 * @return array<int,string>
+	 */
+	private static function lock_keys_for_status( string $status, bool $expired ): array {
+		global $wpdb;
+		if ( ! is_object($wpdb) || ! is_callable(array( $wpdb, 'prepare' )) || ! is_callable(array( $wpdb, 'get_col' )) ) {
+			return array();
+		}
+
+		$table    = self::table_name();
+		$now      = gmdate('Y-m-d H:i:s');
+		$operator = $expired ? '<' : '>=';
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from $wpdb->prefix, operator is constant-selected above.
+		$query = call_user_func(array( $wpdb, 'prepare' ), "SELECT DISTINCT lock_key FROM {$table} WHERE status = %s AND expires_at {$operator} %s", $status, $now);
+		$keys  = call_user_func(array( $wpdb, 'get_col' ), $query);
+		if ( ! is_array($keys) ) {
+			return array();
+		}
+
+		return array_values(
+			array_filter(
+				array_map('strval', $keys),
+				static fn( string $key ): bool => '' !== $key
+			)
+		);
 	}
 
 	private static function expires_seconds(): int {
