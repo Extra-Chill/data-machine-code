@@ -4,7 +4,7 @@
 
 Who pulls the trigger is up to you. DMC has three driver modes, and each mode uses only the capabilities the host actually supports:
 
-- **An external coding-agent runtime** on your machine pointed at the site (Claude Code, OpenCode, kimaki, Studio Code) — interactive, human-in-the-loop; requires shell/git/workspace access.
+- **An external coding-agent runtime** on your machine pointed at the site — interactive, human-in-the-loop; requires shell/git/workspace access.
 - **The site itself, via a Data Machine flow** — scheduled or webhook-triggered; can use API-first GitHub/GitSync abilities without a shell, or workspace abilities when the host supports them.
 - **An ephemeral CI job** that boots a WordPress instance with DMC loaded for a single check (Playground + GitHub Actions). The site exists for one job, codes for one PR, dies.
 
@@ -28,7 +28,7 @@ The important seam is not self-hosted versus managed; it is API-first versus she
 
 | Mode | Driver | Lifetime | Example |
 |---|---|---|---|
-| **Co-located runtime** | External agent CLI on the host | Long-lived install | [`wp-coding-agents`](https://github.com/Extra-Chill/wp-coding-agents) on a VPS, a Studio site with kimaki |
+| **Co-located runtime** | External agent CLI on the host | Long-lived install | [`wp-coding-agents`](https://github.com/Extra-Chill/wp-coding-agents) on a VPS, a Studio site with a co-located coding agent |
 | **In-process flow** | DM AI step inside a flow | Long-lived install | An Intelligence wiki maintenance flow calling workspace abilities; a webhook-triggered PR review flow |
 | **Ephemeral CI** | DM flow inside Playground / GitHub Actions | One job | [`wc-site-generator`](https://github.com/chubes4/wc-site-generator) static-site validation; the Stage 5 Playground proof |
 
@@ -157,7 +157,7 @@ on it are how parallel agents corrupt each other's work.
 - PHP 8.2+
 - [Data Machine](https://github.com/Extra-Chill/data-machine) plugin (core)
 - A driver for the abilities you plan to use — at least one of:
-  - An external coding-agent runtime on the same host (Claude Code, OpenCode, kimaki, Studio Code, etc.); see [`wp-coding-agents`](https://github.com/Extra-Chill/wp-coding-agents) for an opinionated setup.
+  - An external coding-agent runtime on the same host; see [`wp-coding-agents`](https://github.com/Extra-Chill/wp-coding-agents) for an opinionated setup.
   - A Data Machine flow on the site that calls DMC's tools / abilities (in-process driver).
   - A CI workflow that boots WordPress with DMC loaded and runs a DM flow against it; see [`wc-site-generator`](https://github.com/chubes4/wc-site-generator) for the canonical Playground-based example.
 - Shell-backed workspace/git features require `exec()`, a local `git` binary, and a visible writable workspace path.
@@ -252,7 +252,7 @@ The bundled records do not provision flows or schedules. Create flows from these
 │ Drivers — anything that pulls the trigger                        │
 │                                                                  │
 │  (a) External coding-agent runtime on the host                   │
-│      Claude Code, OpenCode, kimaki, Studio Code                  │
+│      any external coding agent CLI                                │
 │      → reads AGENTS.md, calls back via WP-CLI / MCP / REST       │
 │                                                                  │
 │  (b) In-process Data Machine flow on the site                    │

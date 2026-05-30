@@ -24,7 +24,7 @@ DMC should not decide what `MEMORY.md`, `SOUL.md`, `USER.md`, or guideline recor
 - `wp_guideline` is optional. It is not guaranteed in WordPress core today.
 - Guideline-backed projection must feature-detect `post_type_exists( 'wp_guideline' )` and `taxonomy_exists( 'wp_guideline_type' )`, or rely on an explicit producer contract/polyfill.
 - Disk projection is one-way until a separate sync-back design exists.
-- Data Machine core should not learn about OpenCode, Claude Code, or Kimaki.
+- Data Machine core should not learn about specific external coding-agent runtimes.
 - DMC should not subscribe to inferred low-level writes. It should consume explicit Data Machine memory/guideline events.
 
 ## Current Safe Slice
