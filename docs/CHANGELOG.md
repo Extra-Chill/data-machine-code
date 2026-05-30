@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.6] - 2026-05-30
+
+### Fixed
+- deduplicate workspace hygiene lock counts
+
 ## [0.47.5] - 2026-05-30
 
 ### Changed
