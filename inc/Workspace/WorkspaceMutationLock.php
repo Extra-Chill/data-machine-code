@@ -176,8 +176,8 @@ final class WorkspaceMutationLock {
 		return array(
 			'database'          => $database,
 			'filesystem'        => $filesystem,
-			'active'            => (int) ( $database['active'] ?? 0 ) + (int) ( $filesystem['active'] ?? 0 ),
-			'stale'             => (int) ( $database['stale'] ?? 0 ) + (int) ( $filesystem['stale'] ?? 0 ),
+			'active'            => self::logical_lock_count($database, $filesystem, 'active'),
+			'stale'             => self::logical_lock_count($database, $filesystem, 'stale'),
 			'retention_enabled' => true,
 			'policy'            => self::retention_policy(),
 		);
@@ -210,6 +210,47 @@ final class WorkspaceMutationLock {
 	private static function sanitize_repo_key( string $repo ): string {
 		$repo = preg_replace('/[^a-zA-Z0-9._-]/', '', $repo);
 		return trim( (string) $repo, '-.');
+	}
+
+	/**
+	 * Count logical locks once when DB rows and flock files describe the same key.
+	 *
+	 * @param array<string,mixed> $database   DB lock status.
+	 * @param array<string,mixed> $filesystem Filesystem lock status.
+	 */
+	private static function logical_lock_count( array $database, array $filesystem, string $state ): int {
+		$database_count   = (int) ( $database[ $state ] ?? 0 );
+		$filesystem_count = (int) ( $filesystem[ $state ] ?? 0 );
+		$database_keys    = self::lock_status_keys($database, $state);
+		$filesystem_keys  = self::lock_status_keys($filesystem, $state);
+
+		if ( array() === $database_keys && array() === $filesystem_keys ) {
+			return $database_count + $filesystem_count;
+		}
+
+		$known_count = count(array_unique(array_merge($database_keys, $filesystem_keys)));
+		$unknown_db  = max(0, $database_count - count($database_keys));
+		$unknown_fs  = max(0, $filesystem_count - count($filesystem_keys));
+
+		return $known_count + $unknown_db + $unknown_fs;
+	}
+
+	/**
+	 * @param array<string,mixed> $status Lock status.
+	 * @return array<int,string>
+	 */
+	private static function lock_status_keys( array $status, string $state ): array {
+		$keys = $status[ $state . '_keys' ] ?? array();
+		if ( ! is_array($keys) ) {
+			return array();
+		}
+
+		return array_values(
+			array_filter(
+				array_map('strval', $keys),
+				static fn( string $key ): bool => '' !== $key
+			)
+		);
 	}
 
 	/**
@@ -246,14 +287,16 @@ final class WorkspaceMutationLock {
 	 * @return array<string,mixed>
 	 */
 	private static function filesystem_status( string $workspace_path ): array {
-		$lock_dir = rtrim($workspace_path, '/') . '/.locks';
-		$files    = is_dir($lock_dir) ? glob($lock_dir . '/*.lock') : array();
-		$files    = false === $files ? array() : $files;
-		$policy   = self::retention_policy();
-		$cutoff   = time() - (int) $policy['filesystem_stale_after_seconds'];
-		$active   = 0;
-		$stale    = 0;
-		$recent   = 0;
+		$lock_dir    = rtrim($workspace_path, '/') . '/.locks';
+		$files       = is_dir($lock_dir) ? glob($lock_dir . '/*.lock') : array();
+		$files       = false === $files ? array() : $files;
+		$policy      = self::retention_policy();
+		$cutoff      = time() - (int) $policy['filesystem_stale_after_seconds'];
+		$active      = 0;
+		$stale       = 0;
+		$recent      = 0;
+		$active_keys = array();
+		$stale_keys  = array();
 
 		foreach ( $files as $file ) {
 			$handle = fopen($file, 'c'); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
@@ -263,6 +306,7 @@ final class WorkspaceMutationLock {
 
 			if ( ! flock($handle, LOCK_EX | LOCK_NB) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
 				++$active;
+				$active_keys[] = self::lock_key_from_path($file);
 				fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 				continue;
 			}
@@ -272,18 +316,26 @@ final class WorkspaceMutationLock {
 			$mtime = filemtime($file);
 			if ( false !== $mtime && $mtime < $cutoff ) {
 				++$stale;
+				$stale_keys[] = self::lock_key_from_path($file);
 			} else {
 				++$recent;
 			}
 		}
 
 		return array(
-			'lock_dir' => $lock_dir,
-			'total'    => count($files),
-			'active'   => $active,
-			'stale'    => $stale,
-			'recent'   => $recent,
+			'lock_dir'    => $lock_dir,
+			'total'       => count($files),
+			'active'      => $active,
+			'active_keys' => array_values(array_filter($active_keys)),
+			'stale'       => $stale,
+			'stale_keys'  => array_values(array_filter($stale_keys)),
+			'recent'      => $recent,
 		);
+	}
+
+	private static function lock_key_from_path( string $path ): string {
+		$filename = basename($path);
+		return str_ends_with($filename, '.lock') ? substr($filename, 0, -5) : $filename;
 	}
 
 	/**
