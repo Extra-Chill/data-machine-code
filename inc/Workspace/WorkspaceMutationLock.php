@@ -122,6 +122,7 @@ final class WorkspaceMutationLock {
 						'metadata' => array(
 							'workspace_path' => $workspace_path,
 							'lock_path'      => $lock_path,
+							'owner_context'  => WorkspaceLockStore::default_owner_context(),
 						),
 					)
 				);
@@ -142,12 +143,7 @@ final class WorkspaceMutationLock {
 						'Workspace repo "%s" is busy with another worktree lifecycle mutation. Retry after the current add/remove/cleanup/prune operation completes.',
 						$repo
 					),
-					array(
-						'status'    => 423,
-						'retryable' => true,
-						'repo'      => $repo,
-						'lock_path' => $lock_path,
-					)
+					self::busy_error_data($repo, $lock_path)
 				);
 			}
 
@@ -260,12 +256,42 @@ final class WorkspaceMutationLock {
 	/**
 	 * @return array<string,mixed>
 	 */
+	private static function busy_error_data( string $repo, string $lock_path ): array {
+		$lock_key = 'worktree-' . $repo;
+		$data     = array(
+			'status'    => 423,
+			'retryable' => true,
+			'repo'      => $repo,
+			'scope'     => $repo,
+			'lock_key'  => $lock_key,
+			'lock_path' => $lock_path,
+		);
+
+		$active_lock = WorkspaceLockStore::active_lock($lock_key, $repo);
+		if ( is_array($active_lock) ) {
+			$data['active_lock'] = $active_lock;
+			if ( isset($active_lock['retry_after_seconds']) ) {
+				$data['retry_after_seconds'] = (int) $active_lock['retry_after_seconds'];
+			}
+			if ( isset($active_lock['age_seconds']) ) {
+				$data['age_seconds'] = (int) $active_lock['age_seconds'];
+			}
+		} elseif ( is_wp_error($active_lock) ) {
+			$data['lock_store_error'] = $active_lock->get_error_message();
+		}
+
+		return $data;
+	}
+
+	/**
+	 * @return array<string,mixed>
+	 */
 	private static function filesystem_status( string $workspace_path ): array {
-		$lock_dir = rtrim($workspace_path, '/') . '/.locks';
-		$files    = is_dir($lock_dir) ? glob($lock_dir . '/*.lock') : array();
-		$files    = false === $files ? array() : $files;
-		$policy   = self::retention_policy();
-		$cutoff   = time() - (int) $policy['filesystem_stale_after_seconds'];
+		$lock_dir    = rtrim($workspace_path, '/') . '/.locks';
+		$files       = is_dir($lock_dir) ? glob($lock_dir . '/*.lock') : array();
+		$files       = false === $files ? array() : $files;
+		$policy      = self::retention_policy();
+		$cutoff      = time() - (int) $policy['filesystem_stale_after_seconds'];
 		$active      = 0;
 		$stale       = 0;
 		$recent      = 0;

@@ -148,6 +148,65 @@ final class WorkspaceLockStore {
 	}
 
 	/**
+	 * Return the active DB-visible lock row for a specific lock target.
+	 *
+	 * @return array<string,mixed>|null|\WP_Error
+	 */
+	public static function active_lock( string $lock_key, string $scope ): array|null|\WP_Error {
+		if ( ! self::is_available() ) {
+			return null;
+		}
+
+		$ensured = self::ensure_table();
+		if ( $ensured instanceof \WP_Error ) {
+			return $ensured;
+		}
+
+		global $wpdb;
+		$table = self::table_name();
+		$now   = gmdate('Y-m-d H:i:s');
+
+     // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from $wpdb->prefix, not user input.
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT id, lock_key, purpose, scope, owner, run_id, job_id, status, acquired_at, heartbeat_at, expires_at, released_at, metadata_json FROM {$table} WHERE lock_key = %s AND scope = %s AND status = %s AND expires_at >= %s ORDER BY acquired_at DESC, id DESC LIMIT 1",
+				$lock_key,
+				$scope,
+				'active',
+				$now
+			),
+			ARRAY_A
+		);
+     // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+
+		if ( empty($row) || ! is_array($row) ) {
+			return null;
+		}
+
+		$row['id']       = (int) ( $row['id'] ?? 0 );
+		$row['job_id']   = isset($row['job_id']) ? (int) $row['job_id'] : null;
+		$row['metadata'] = self::decode_metadata( (string) ( $row['metadata_json'] ?? '' ) );
+		unset($row['metadata_json']);
+
+		$acquired  = self::timestamp_seconds( (string) ( $row['acquired_at'] ?? '' ) );
+		$heartbeat = self::timestamp_seconds( (string) ( $row['heartbeat_at'] ?? '' ) );
+		$expires   = self::timestamp_seconds( (string) ( $row['expires_at'] ?? '' ) );
+		$time      = time();
+		if ( null !== $acquired ) {
+			$row['age_seconds'] = max(0, $time - $acquired);
+		}
+		if ( null !== $heartbeat ) {
+			$row['heartbeat_age_seconds'] = max(0, $time - $heartbeat);
+		}
+		if ( null !== $expires ) {
+			$row['expires_in_seconds']  = max(0, $expires - $time);
+			$row['retry_after_seconds'] = max(0, $expires - $time);
+		}
+
+		return $row;
+	}
+
+	/**
 	 * Prune expired DB lock rows according to retention policy.
 	 *
 	 * @return array<string,mixed>
@@ -279,9 +338,37 @@ final class WorkspaceLockStore {
 		return max(3600, $seconds);
 	}
 
+	public static function default_owner_context(): array {
+		$context = array(
+			'host' => function_exists('gethostname') ? (string) gethostname() : 'unknown-host',
+			'pid'  => function_exists('getmypid') ? (string) getmypid() : 'unknown-pid',
+		);
+		$env_map = array(
+			'kimaki_session_id'      => 'KIMAKI_SESSION_ID',
+			'opencode_session_id'    => 'OPENCODE_SESSION_ID',
+			'datamachine_task_url'   => 'DATAMACHINE_TASK_URL',
+			'datamachine_task_ref'   => 'DATAMACHINE_TASK_REF',
+			'datamachine_agent'      => 'DATAMACHINE_AGENT',
+			'datamachine_agent_name' => 'DATAMACHINE_AGENT_NAME',
+		);
+		foreach ( $env_map as $key => $env ) {
+			$value = getenv($env);
+			if ( false !== $value && '' !== trim( (string) $value) ) {
+				$context[ $key ] = self::bounded_string( (string) $value, 300);
+			}
+		}
+
+		if ( isset($_SERVER['argv']) && is_array($_SERVER['argv']) ) {
+			$context['wp_cli_args'] = self::bounded_string(self::redact_secret_values(implode(' ', array_map('strval', $_SERVER['argv']))), 1000);
+		}
+
+		return $context;
+	}
+
 	private static function default_owner(): string {
-		$host = function_exists('gethostname') ? (string) gethostname() : 'unknown-host';
-		$pid  = function_exists('getmypid') ? (string) getmypid() : 'unknown-pid';
+		$context = self::default_owner_context();
+		$host    = (string) ( $context['host'] ?? 'unknown-host' );
+		$pid     = function_exists('getmypid') ? (string) getmypid() : 'unknown-pid';
 		return $host . ':' . $pid;
 	}
 
@@ -308,5 +395,26 @@ final class WorkspaceLockStore {
 		$json     = wp_json_encode($metadata);
 		$json     = false === $json ? '{}' : (string) $json;
 		return substr($json, 0, 8192);
+	}
+
+	/**
+	 * @return array<string,mixed>
+	 */
+	private static function decode_metadata( string $json ): array {
+		$decoded = json_decode($json, true);
+		return is_array($decoded) ? $decoded : array();
+	}
+
+	private static function timestamp_seconds( string $timestamp ): ?int {
+		if ( '' === trim($timestamp) ) {
+			return null;
+		}
+
+		$seconds = strtotime($timestamp . ' UTC');
+		return false === $seconds ? null : (int) $seconds;
+	}
+
+	private static function redact_secret_values( string $value ): string {
+		return (string) preg_replace('/(--(?:password|token|key|secret|authorization)(?:=|\s+))\S+/i', '$1[redacted]', $value);
 	}
 }
