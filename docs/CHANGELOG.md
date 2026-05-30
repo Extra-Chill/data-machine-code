@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.5] - 2026-05-30
+
+### Changed
+- remove vendor brand names from generic-layer description and docblock
+
 ## [0.47.4] - 2026-05-29
 
 ### Fixed
