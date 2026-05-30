@@ -133,7 +133,7 @@ class WorkspaceCommand extends BaseCommand {
 		$result = $ability->execute($input);
 
 		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+			$this->render_workspace_error($result);
 			return;
 		}
 
@@ -2756,6 +2756,37 @@ class WorkspaceCommand extends BaseCommand {
 				WP_CLI::success($result['message'] ?? 'Worktree operation complete.');
 				return;
 		}
+	}
+
+	private function render_workspace_error( \WP_Error $error ): void {
+		$data = (array) $error->get_error_data();
+		if ( 'workspace_repo_busy' !== $error->get_error_code() ) {
+			WP_CLI::error($error->get_error_message());
+			return;
+		}
+
+		$lock = is_array($data['active_lock'] ?? null) ? (array) $data['active_lock'] : array();
+		if ( ! empty($lock) ) {
+			WP_CLI::warning(sprintf('Lock owner: %s', (string) ( $lock['owner'] ?? 'unknown' )));
+			WP_CLI::log(sprintf('Lock key:   %s', (string) ( $lock['lock_key'] ?? $data['lock_key'] ?? '-' )));
+			WP_CLI::log(sprintf('Scope:      %s', (string) ( $lock['scope'] ?? $data['scope'] ?? $data['repo'] ?? '-' )));
+			WP_CLI::log(sprintf('Path:       %s', (string) ( $lock['metadata']['lock_path'] ?? $data['lock_path'] ?? '-' )));
+			WP_CLI::log(sprintf('Acquired:   %s', (string) ( $lock['acquired_at'] ?? '-' )));
+			WP_CLI::log(sprintf('Heartbeat:  %s', (string) ( $lock['heartbeat_at'] ?? '-' )));
+			WP_CLI::log(sprintf('Expires:    %s', (string) ( $lock['expires_at'] ?? '-' )));
+			if ( isset($lock['age_seconds']) || isset($lock['retry_after_seconds']) ) {
+				WP_CLI::log(sprintf('Age/retry:  %ss old; retry after up to %ss', (string) ( $lock['age_seconds'] ?? '-' ), (string) ( $lock['retry_after_seconds'] ?? '-' )));
+			}
+			$owner_context = (array) ( $lock['metadata']['owner_context'] ?? array() );
+			if ( ! empty($owner_context['wp_cli_args']) ) {
+				WP_CLI::log(sprintf('Command:    %s', (string) $owner_context['wp_cli_args']));
+			}
+			if ( ! empty($owner_context['kimaki_session_id']) || ! empty($owner_context['opencode_session_id']) ) {
+				WP_CLI::log(sprintf('Session:    %s', (string) ( $owner_context['kimaki_session_id'] ?? $owner_context['opencode_session_id'] ?? '' )));
+			}
+		}
+
+		WP_CLI::error($error->get_error_message());
 	}
 
 	/**
