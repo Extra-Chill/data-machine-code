@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.7] - 2026-05-30
+
+### Fixed
+- include lock owner diagnostics on busy workspace errors
+
 ## [0.47.6] - 2026-05-30
 
 ### Fixed
