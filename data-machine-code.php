@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Data Machine Code
  * Plugin URI: https://github.com/Extra-Chill/data-machine-code
- * Description: Bridge between WordPress and an external coding-agent runtime (Claude Code, OpenCode, kimaki, etc.). Owns AGENTS.md, the workspace area, and the GitHub / workspace / git abilities the runtime calls back into. Activation is the declarative "a coding agent lives here" signal.
+ * Description: Bridge between WordPress and an external coding-agent runtime. Owns AGENTS.md, the workspace area, and the GitHub / workspace / git abilities the runtime calls back into. Activation is the declarative "a coding agent lives here" signal.
  * Version: 0.47.4
  * Requires at least: 6.9
  * Requires PHP: 8.2
@@ -439,8 +439,8 @@ add_filter(
 | contributed by DM core, this plugin, and other extensions (mattic, etc.)
 | via SectionRegistry.
 |
-| Convention copy at ABSPATH/AGENTS.md ensures coding agents (Claude Code,
-| OpenCode, etc.) discover it at the expected location.
+| Convention copy at ABSPATH/AGENTS.md ensures coding agents discover it at
+| the expected location.
 |
 | Registered at plugins_loaded priority 22 (after DM core bootstrap at 20)
 | to ensure MemoryFileRegistry and SectionRegistry are available.
