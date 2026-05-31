@@ -95,6 +95,7 @@ namespace {
     }
 
     include __DIR__ . '/../inc/Environment.php';
+    include __DIR__ . '/../inc/Support/SecretRedactor.php';
     include __DIR__ . '/../inc/Channels/CliChannelRegistry.php';
     include __DIR__ . '/../inc/Channels/CliChannelTransport.php';
 
@@ -112,13 +113,22 @@ namespace {
 
     // Resolve standard stub binaries. Bail with a clear diagnostic if
     // the host is missing them — the runtime needs real subprocess capability.
-    $echo_bin  = '/bin/echo';
-    $true_bin  = '/bin/true';
-    $false_bin = '/bin/false';
-    $sleep_bin = '/bin/sleep';
-    foreach ( array( $echo_bin, $true_bin, $false_bin, $sleep_bin ) as $candidate ) {
-        if (! is_executable($candidate) ) {
-            echo "  [SKIP] stub binary {$candidate} not present; smoke cannot run on this host\n";
+    $resolve_bin = static function ( array $candidates ): ?string {
+        foreach ( $candidates as $candidate ) {
+            if (is_executable($candidate) ) {
+                return $candidate;
+            }
+        }
+        return null;
+    };
+    $echo_bin  = $resolve_bin(array( '/bin/echo', '/usr/bin/echo' ));
+    $true_bin  = $resolve_bin(array( '/bin/true', '/usr/bin/true' ));
+    $false_bin = $resolve_bin(array( '/bin/false', '/usr/bin/false' ));
+    $sleep_bin = $resolve_bin(array( '/bin/sleep', '/usr/bin/sleep' ));
+    $php_bin = PHP_BINARY;
+    foreach ( array( $echo_bin, $true_bin, $false_bin, $sleep_bin, $php_bin ) as $candidate ) {
+        if (! is_string($candidate) || ! is_executable($candidate) ) {
+            echo "  [SKIP] required stub binary not present; smoke cannot run on this host\n";
             exit(0);
         }
     }
@@ -379,6 +389,72 @@ namespace {
         $metadata = $detached['metadata'] ?? array();
         $assert('detached metadata mode=detached', 'detached' === ( $metadata['mode'] ?? null ));
     }
+
+    // ---------------------------------------------------------------
+    // WP AI Gateway env contract: gateway mode maps to OpenAI-compatible
+    // child env, strips upstream secrets, and redacts captured output.
+    // ---------------------------------------------------------------
+
+    putenv('WP_AI_GATEWAY_BASE_URL=https://gateway.example/v1');
+    putenv('WP_AI_GATEWAY_TOKEN=gateway-token-1234567890');
+    $datamachine_code_test_options['datamachine_code_cli_channels'] = array(
+    'gateway-env'     => array(
+    'command' => $php_bin,
+    'args'    => array(
+    '-r',
+    '$ok = getenv("OPENAI_BASE_URL") === "https://gateway.example/v1" && getenv("OPENAI_API_KEY") === "gateway-token-1234567890" && false === getenv("CODEX_REFRESH_TOKEN") && false === getenv("CODEX_ACCESS_TOKEN") && false === getenv("OPENCODE_GO_KEY") && false === getenv("WP_AUTH_COOKIE") && false === getenv("WP_NONCE") && false === getenv("WP_AI_GATEWAY_TOKEN"); echo "OPENAI_BASE_URL=" . getenv("OPENAI_BASE_URL") . "\n"; echo "OPENAI_API_KEY=" . getenv("OPENAI_API_KEY") . "\n"; exit($ok ? 0 : 7);',
+    ),
+    'detach'  => false,
+    'timeout' => 5,
+    'env'     => array(
+    'OPENAI_BASE_URL'     => 'https://raw-openai.example/v1',
+    'OPENAI_API_KEY'      => 'raw-openai-key',
+    'CODEX_REFRESH_TOKEN' => 'codex-refresh-token',
+    'CODEX_ACCESS_TOKEN'  => 'codex-access-token',
+    'OPENCODE_GO_KEY'     => 'opencode-go-key',
+    'WP_AUTH_COOKIE'      => 'wordpress-cookie',
+    'WP_NONCE'            => 'wordpress-nonce',
+    'WP_AI_GATEWAY_TOKEN' => 'configured-gateway-token',
+    ),
+    ),
+    'nongateway-env'  => array(
+    'command' => $php_bin,
+    'args'    => array(
+    '-r',
+    'exit(getenv("OPENAI_API_KEY") === "raw-openai-key" ? 0 : 9);',
+    ),
+    'detach'  => false,
+    'timeout' => 5,
+    'env'     => array(
+    'OPENAI_API_KEY' => 'raw-openai-key',
+    ),
+    ),
+    );
+
+    $gateway = \DataMachineCode\Channels\CliChannelTransport::execute(
+        array(
+        'channel'   => 'gateway-env',
+        'recipient' => 'r',
+        'message'   => 'm',
+        )
+    );
+    $assert('gateway env dispatch succeeds', is_array($gateway) && true === ( $gateway['sent'] ?? false ));
+    if (is_array($gateway) ) {
+        $stdout = (string) ( $gateway['metadata']['stdout'] ?? '' );
+        $assert('gateway base URL is passed as OPENAI_BASE_URL', str_contains($stdout, 'OPENAI_BASE_URL=https://gateway.example/v1'));
+        $assert('gateway token is redacted from captured stdout', str_contains($stdout, 'OPENAI_API_KEY: [redacted]') && ! str_contains($stdout, 'gateway-token-1234567890'));
+    }
+
+    putenv('WP_AI_GATEWAY_BASE_URL');
+    putenv('WP_AI_GATEWAY_TOKEN');
+    $nongateway = \DataMachineCode\Channels\CliChannelTransport::execute(
+        array(
+        'channel'   => 'nongateway-env',
+        'recipient' => 'r',
+        'message'   => 'm',
+        )
+    );
+    $assert('non-gateway configured env continues to work', is_array($nongateway) && true === ( $nongateway['sent'] ?? false ));
 
     // ---------------------------------------------------------------
     // Summary

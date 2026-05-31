@@ -29,6 +29,7 @@
 namespace DataMachineCode\Channels;
 
 use DataMachineCode\Environment;
+use DataMachineCode\Support\SecretRedactor;
 use WP_Error;
 
 defined('ABSPATH') || exit;
@@ -429,6 +430,44 @@ class CliChannelTransport {
 			$env[ $key ] = $value;
 		}
 
+		$gateway_base_url = self::parent_env('WP_AI_GATEWAY_BASE_URL');
+		$gateway_token    = self::parent_env('WP_AI_GATEWAY_TOKEN');
+		if ( '' !== $gateway_base_url && '' !== $gateway_token ) {
+			$env                    = self::without_gateway_forbidden_env($env);
+			$env['OPENAI_BASE_URL'] = $gateway_base_url;
+			$env['OPENAI_API_KEY']  = $gateway_token;
+		}
+
+		return $env;
+	}
+
+	/**
+	 * Read a trimmed parent environment variable.
+	 */
+	private static function parent_env( string $name ): string {
+		$value = getenv($name);
+		return is_string($value) ? trim($value) : '';
+	}
+
+	/**
+	 * Remove parent/upstream secrets before applying the gateway OpenAI shim.
+	 *
+	 * @param  array<string,string> $env Environment map.
+	 * @return array<string,string>
+	 */
+	private static function without_gateway_forbidden_env( array $env ): array {
+		foreach ( array_keys($env) as $key ) {
+			$key_upper = strtoupper( (string) $key );
+			if ( in_array($key_upper, array( 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'WP_AI_GATEWAY_TOKEN' ), true)
+				|| str_contains($key_upper, 'CODEX')
+				|| str_contains($key_upper, 'OPENCODE_GO')
+				|| str_contains($key_upper, 'COOKIE')
+				|| str_contains($key_upper, 'NONCE')
+			) {
+				unset($env[ $key ]);
+			}
+		}
+
 		return $env;
 	}
 
@@ -439,7 +478,8 @@ class CliChannelTransport {
 	 * @return string Truncated output.
 	 */
 	private static function truncate_output( string $output ): string {
-		$limit = 8192;
+		$output = SecretRedactor::redact($output);
+		$limit  = 8192;
 		if ( strlen($output) <= $limit ) {
 			return $output;
 		}
