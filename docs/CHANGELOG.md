@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.13] - 2026-05-31
+
+### Fixed
+- skip actor lookup for fresh issue comments
+
 ## [0.47.12] - 2026-05-31
 
 ### Fixed
