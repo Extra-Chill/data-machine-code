@@ -2219,11 +2219,6 @@ class GitHubAbilities {
 	 * @return true|\WP_Error True when a comment may be posted, or an error explaining why not.
 	 */
 	private static function checkIssueAutomationCommentTurn( string $repo, int $issue_number, string $pat ): true|\WP_Error {
-		$actor = self::getAuthenticatedGitHubLogin($pat);
-		if ( is_wp_error($actor) ) {
-			return $actor;
-		}
-
 		$issue = self::apiGet(sprintf('%s/repos/%s/issues/%d', self::API_BASE, $repo, $issue_number), array(), $pat);
 		if ( is_wp_error($issue) ) {
 			return $issue;
@@ -2232,6 +2227,11 @@ class GitHubAbilities {
 		$comment_count = max(0, (int) ( $issue['data']['comments'] ?? 0 ));
 		if ( 0 === $comment_count ) {
 			return true;
+		}
+
+		$actor = self::getAuthenticatedGitHubLogin($pat);
+		if ( is_wp_error($actor) ) {
+			return $actor;
 		}
 
 		$comments = self::apiGet(
