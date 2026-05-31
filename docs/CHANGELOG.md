@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.9] - 2026-05-31
+
+### Fixed
+- register bundle artifact hooks early
+
 ## [0.47.8] - 2026-05-31
 
 ### Changed
