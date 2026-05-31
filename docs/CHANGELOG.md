@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.8] - 2026-05-31
+
+### Changed
+- route lock owner-context runtime IDs through signatures registry
+
+### Fixed
+- accept worktree base alias
+
 ## [0.47.7] - 2026-05-30
 
 ### Fixed
