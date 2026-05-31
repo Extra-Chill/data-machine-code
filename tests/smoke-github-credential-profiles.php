@@ -223,6 +223,31 @@ namespace {
     $by_default_repo = GitHubCredentialResolver::resolve(null, null, array( 'repo' => 'team/project-b' ));
     $assert('repo selector falls back to default_repo match', ! is_wp_error($by_default_repo) && 'project-b-token' === $by_default_repo['token']);
 
+    $reset(
+        array(
+        'github_credential_profiles' => array(
+        array(
+                'id'            => 'repo-token',
+                'mode'          => 'pat',
+                'pat'           => 'repo-token-value',
+                'allowed_repos' => array( 'owner/repo' ),
+        ),
+        array(
+                'id'            => 'app-token',
+                'mode'          => 'pat',
+                'pat'           => 'app-token-value',
+                'allowed_repos' => array( 'owner/repo' ),
+                'capabilities'  => array( 'pull_request_create' ),
+        ),
+        ),
+        'github_default_profile_id'  => 'repo-token',
+        )
+    );
+    $repo_default = GitHubCredentialResolver::resolve(null, null, array( 'repo' => 'owner/repo' ));
+    $assert('repo selector without capability keeps first matching profile', ! is_wp_error($repo_default) && 'repo-token-value' === $repo_default['token']);
+    $pr_credential = GitHubCredentialResolver::resolve(null, null, array( 'repo' => 'owner/repo', 'capability' => 'pull_request_create' ));
+    $assert('repo selector with capability prefers matching operation profile', ! is_wp_error($pr_credential) && 'app-token-value' === $pr_credential['token']);
+
     // 7. Profile with empty PAT fails closed (does not silently use default).
     $reset(
         array(
@@ -254,6 +279,7 @@ namespace {
                 'mode'          => 'pat',
                 'pat'           => 'p1-secret',
                 'allowed_repos' => array( 'a/b' ),
+                'capabilities'  => array( 'pull_request_create' ),
         ),
         array(
                 'id'    => 'p2',
@@ -270,6 +296,7 @@ namespace {
     $assert('status default_profile_id matches setting', 'p1' === $status['default_profile_id']);
     $assert('status profile entry hides PAT body', ! str_contains(wp_json_encode($status), 'p1-secret'));
     $assert('status profile reports configured booleans', $status['profiles'][0]['pat_configured'] && ! $status['profiles'][1]['pat_configured']);
+    $assert('status profile reports non-secret capabilities', array( 'pull_request_create' ) === $status['profiles'][0]['capabilities']);
 
     // 9. Migration shape: legacy single-cred install still resolves.
     $reset(
@@ -292,6 +319,7 @@ namespace {
     'pat'           => 'marketing-secret',
     'default_repo'  => 'team/marketing',
     'allowed_repos' => array( 'team/marketing', '   team/sub  ' ),
+    'capabilities'  => array( 'PULL_REQUEST_CREATE', 'issues_write' ),
     ),
     array(
     // Missing id → must be dropped.
@@ -305,6 +333,7 @@ namespace {
     $assert('sanitizer normalizes id via sanitize_key', 'marketing' === $sanitized[0]['id']);
     $assert('sanitizer preserves PAT', 'marketing-secret' === $sanitized[0]['pat']);
     $assert('sanitizer trims allowed_repos entries', $sanitized[0]['allowed_repos'] === array( 'team/marketing', 'team/sub' ));
+    $assert('sanitizer normalizes capabilities', $sanitized[0]['capabilities'] === array( 'pull_request_create', 'issues_write' ));
 
     if ($failures ) {
         echo "\nFailures:\n";

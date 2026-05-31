@@ -52,6 +52,16 @@ final class GitHubProfileSanitizer {
 				}
 			}
 
+			$capabilities = array();
+			if ( isset($entry['capabilities']) && is_array($entry['capabilities']) ) {
+				foreach ( $entry['capabilities'] as $capability ) {
+					$capability = sanitize_key( (string) $capability);
+					if ( '' !== $capability ) {
+						$capabilities[] = $capability;
+					}
+				}
+			}
+
 			$mode = strtolower(sanitize_text_field( (string) ( $entry['mode'] ?? 'pat' )));
 			if ( ! in_array($mode, array( 'pat', 'app' ), true) ) {
 				$mode = 'pat';
@@ -67,6 +77,7 @@ final class GitHubProfileSanitizer {
 				'app_private_key'     => trim( (string) ( $entry['app_private_key'] ?? '' )),
 				'default_repo'        => sanitize_text_field( (string) ( $entry['default_repo'] ?? '' )),
 				'allowed_repos'       => $allowed,
+				'capabilities'        => array_values(array_unique($capabilities)),
 			);
 		}
 		return $sanitized;

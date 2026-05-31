@@ -332,6 +332,8 @@ final class GitHubCredentialResolver {
 	 * - `repo` selects the profile whose `allowed_repos` contains the
 	 *   repo, falling back to the profile whose `default_repo` matches,
 	 *   then to the default profile.
+	 * - Pass `capability` with `repo` to prefer a matching profile whose
+	 *   `capabilities` list includes that operation before normal repo matching.
 	 * - No selector → default profile.
 	 *
 	 * @param  array<string,mixed>|null $selector
@@ -355,21 +357,26 @@ final class GitHubCredentialResolver {
 				);
 			}
 
-			$repo = isset($selector['repo']) ? strtolower(trim( (string) $selector['repo'])) : '';
+			$repo       = isset($selector['repo']) ? strtolower(trim( (string) $selector['repo'])) : '';
+			$capability = isset($selector['capability']) ? strtolower(trim( (string) $selector['capability'])) : '';
 			if ( '' !== $repo ) {
+				if ( '' !== $capability ) {
+					foreach ( $profiles as $profile ) {
+						if ( self::profileMatchesRepo($profile, $repo) && self::profileSupportsCapability($profile, $capability) ) {
+							return $profile;
+						}
+					}
+				}
+
 				// Prefer profiles that explicitly list the repo in allowed_repos.
 				foreach ( $profiles as $profile ) {
-					$allowed = isset($profile['allowed_repos']) && is_array($profile['allowed_repos'])
-					? array_map('strtolower', array_map('strval', $profile['allowed_repos']))
-					: array();
-					if ( in_array($repo, $allowed, true) ) {
+					if ( self::profileAllowedForRepo($profile, $repo) ) {
 						return $profile;
 					}
 				}
 				// Fall back to a profile whose default_repo matches.
 				foreach ( $profiles as $profile ) {
-					$default_repo = strtolower(trim( (string) ( $profile['default_repo'] ?? '' )));
-					if ( '' !== $default_repo && $default_repo === $repo ) {
+					if ( self::profileDefaultRepoMatches($profile, $repo) ) {
 						return $profile;
 					}
 				}
@@ -409,6 +416,7 @@ final class GitHubCredentialResolver {
 				'app_private_key'     => $app_private_key,
 				'default_repo'        => $default_repo,
 				'allowed_repos'       => array(),
+				'capabilities'        => array(),
 			),
 		);
 	}
@@ -435,6 +443,16 @@ final class GitHubCredentialResolver {
 			}
 		}
 
+		$capabilities = array();
+		if ( isset($entry['capabilities']) && is_array($entry['capabilities']) ) {
+			foreach ( $entry['capabilities'] as $capability ) {
+				$capability = strtolower(trim( (string) $capability));
+				if ( '' !== $capability ) {
+					$capabilities[] = $capability;
+				}
+			}
+		}
+
 		return array(
 			'id'                  => $id,
 			'label'               => (string) ( $entry['label'] ?? $id ),
@@ -445,6 +463,7 @@ final class GitHubCredentialResolver {
 			'app_private_key'     => (string) ( $entry['app_private_key'] ?? '' ),
 			'default_repo'        => (string) ( $entry['default_repo'] ?? '' ),
 			'allowed_repos'       => $allowed,
+			'capabilities'        => array_values(array_unique($capabilities)),
 		);
 	}
 
@@ -459,7 +478,33 @@ final class GitHubCredentialResolver {
 			'app_private_key'     => '',
 			'default_repo'        => '',
 			'allowed_repos'       => array(),
+			'capabilities'        => array(),
 		);
+	}
+
+	private static function profileMatchesRepo( array $profile, string $repo ): bool {
+		return self::profileAllowedForRepo($profile, $repo) || self::profileDefaultRepoMatches($profile, $repo);
+	}
+
+	private static function profileAllowedForRepo( array $profile, string $repo ): bool {
+		$allowed = isset($profile['allowed_repos']) && is_array($profile['allowed_repos'])
+		? array_map('strtolower', array_map('strval', $profile['allowed_repos']))
+		: array();
+
+		return in_array($repo, $allowed, true);
+	}
+
+	private static function profileDefaultRepoMatches( array $profile, string $repo ): bool {
+		$default_repo = strtolower(trim( (string) ( $profile['default_repo'] ?? '' )));
+		return '' !== $default_repo && $default_repo === $repo;
+	}
+
+	private static function profileSupportsCapability( array $profile, string $capability ): bool {
+		$capabilities = isset($profile['capabilities']) && is_array($profile['capabilities'])
+		? array_map('strtolower', array_map('strval', $profile['capabilities']))
+		: array();
+
+		return in_array($capability, $capabilities, true);
 	}
 
 	private static function profileIsConfigured( array $profile ): bool {
@@ -487,6 +532,9 @@ final class GitHubCredentialResolver {
 			'default_repo'                => (string) ( $profile['default_repo'] ?? '' ),
 			'allowed_repos'               => isset($profile['allowed_repos']) && is_array($profile['allowed_repos'])
 			? array_values(array_map('strval', $profile['allowed_repos']))
+			: array(),
+			'capabilities'                => isset($profile['capabilities']) && is_array($profile['capabilities'])
+			? array_values(array_map('strval', $profile['capabilities']))
 			: array(),
 			'configured'                  => self::profileIsConfigured($profile),
 		);

@@ -59,9 +59,11 @@ namespace DataMachineCode\Support {
     {
         public static string $mode = 'pat';
         public static $resolution = null;
+        public static array $selectors = array();
 
-        public static function resolve()
+        public static function resolve( ?callable $http_request = null, ?int $now = null, ?array $selector = null )
         {
+            self::$selectors[] = $selector;
             if (null === self::$resolution ) {
                 return array( 'token' => 'test-token', 'mode' => self::$mode );
             }
@@ -410,6 +412,7 @@ namespace {
 
     // ---- createPullRequest: success path with explicit base, draft default false
     $reset_http();
+    \DataMachineCode\Support\GitHubCredentialResolver::$selectors = array();
     $queue_response(200, array());
     $queue_response(
         201, array(
@@ -432,6 +435,7 @@ namespace {
         ) 
     );
     $assert('createPullRequest success returns success=true', is_array($result) && true === ( $result['success'] ?? false ));
+    $assert('createPullRequest selects pull_request_create credential by repo', array( 'repo' => 'owner/repo', 'capability' => 'pull_request_create' ) === ( \DataMachineCode\Support\GitHubCredentialResolver::$selectors[0] ?? null ));
     $assert('createPullRequest result kind identifies pull request', is_array($result) && 'pull_request' === ( $result['kind'] ?? '' ));
     $assert('createPullRequest result exposes repo', is_array($result) && 'owner/repo' === ( $result['repo'] ?? '' ));
     $assert('createPullRequest result exposes top-level number', is_array($result) && 88 === ( $result['number'] ?? 0 ));
