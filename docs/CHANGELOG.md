@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.10] - 2026-05-31
+
+### Fixed
+- include issue comments in GitHub fetch content
+
 ## [0.47.9] - 2026-05-31
 
 ### Fixed
