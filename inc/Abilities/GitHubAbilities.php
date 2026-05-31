@@ -1571,7 +1571,12 @@ class GitHubAbilities {
 			return new \WP_Error('missing_head', 'Pull request head branch is required.', array( 'status' => 400 ));
 		}
 
-		$pat = self::getPat();
+		$pat = self::getPat(
+			array(
+				'repo'       => $repo,
+				'capability' => 'pull_request_create',
+			)
+		);
 		if ( empty($pat) ) {
 			return self::patError();
 		}
