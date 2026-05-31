@@ -1,6 +1,6 @@
 <?php
 /**
- * Smoke test for the workspace worktree --base-branch CLI alias.
+ * Smoke test for workspace worktree base-ref CLI aliases.
  *
  *   php tests/smoke-worktree-base-branch-cli.php
  *
@@ -144,18 +144,36 @@ namespace {
     );
     datamachine_code_assert('upstream/develop' === $ability->last_input['from'], 'remote ref preserved');
 
-    echo "\n[4] --from wins by rejecting ambiguous input\n";
+    echo "\n[4] --base aliases exact --from refs\n";
+    $command->worktree(
+        array( 'add', 'data-machine', 'feat/test' ),
+        array( 'base' => 'origin/main' )
+    );
+    datamachine_code_assert('origin/main' === $ability->last_input['from'], '--base forwards exact refs as from');
+
+    echo "\n[5] --from and --base reject ambiguous exact-base input\n";
     try {
         $command->worktree(
             array( 'add', 'data-machine', 'feat/test' ),
-            array( 'from' => 'origin/main', 'base-branch' => 'develop' )
+            array( 'from' => 'origin/main', 'base' => 'upstream/develop' )
+        );
+        datamachine_code_assert(false, 'ambiguous exact-base flags should throw');
+    } catch ( RuntimeException $e ) {
+        datamachine_code_assert(str_contains($e->getMessage(), 'not both'), 'ambiguous exact-base flags fail clearly');
+    }
+
+    echo "\n[6] exact base flags reject ambiguous base-branch input\n";
+    try {
+        $command->worktree(
+            array( 'add', 'data-machine', 'feat/test' ),
+            array( 'base' => 'origin/main', 'base-branch' => 'develop' )
         );
         datamachine_code_assert(false, 'ambiguous flags should throw');
     } catch ( RuntimeException $e ) {
         datamachine_code_assert(str_contains($e->getMessage(), 'not both'), 'ambiguous flags fail clearly');
     }
 
-    echo "\n[5] --force is forwarded for add and JSON output keeps disk budget\n";
+    echo "\n[7] --force is forwarded for add and JSON output keeps disk budget\n";
     \WP_CLI::reset_logs();
     $command->worktree(
         array( 'add', 'data-machine', 'feat/test' ),
