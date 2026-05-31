@@ -31,6 +31,7 @@ defined('ABSPATH') || exit;
  *     detach?: bool,
  *     timeout?: int,
  *     env?: array<string, string>,
+ *     env_from?: array<string, string>,
  *     cwd?: string|null,
  * }
  */
@@ -188,18 +189,35 @@ class CliChannelRegistry {
 			$normalized_env[ $env_key ] = (string) $env_value;
 		}
 
+		$env_from = $config['env_from'] ?? array();
+		if ( ! is_array($env_from) ) {
+			$env_from = array();
+		}
+		$normalized_env_from = array();
+		foreach ( $env_from as $env_key => $source_env_key ) {
+			if ( ! is_string($env_key) || '' === $env_key || ! is_scalar($source_env_key) ) {
+				continue;
+			}
+
+			$source_env_key = trim( (string) $source_env_key );
+			if ( '' !== $source_env_key ) {
+				$normalized_env_from[ $env_key ] = $source_env_key;
+			}
+		}
+
 		$cwd = $config['cwd'] ?? null;
 		if ( null !== $cwd && ( ! is_string($cwd) || '' === $cwd ) ) {
 			$cwd = null;
 		}
 
 		return array(
-			'command' => $command,
-			'args'    => $normalized_args,
-			'detach'  => $detach,
-			'timeout' => $timeout,
-			'env'     => $normalized_env,
-			'cwd'     => $cwd,
+			'command'  => $command,
+			'args'     => $normalized_args,
+			'detach'   => $detach,
+			'timeout'  => $timeout,
+			'env'      => $normalized_env,
+			'env_from' => $normalized_env_from,
+			'cwd'      => $cwd,
 		);
 	}
 

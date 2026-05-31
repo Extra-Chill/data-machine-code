@@ -53,13 +53,11 @@ $artifacts = array(
     array(
         'name' => 'transcript_summary',
         'data' => array(
-            'summary'     => 'Ran smoke tests and PHP syntax checks. gateway used Bearer gateway-token-1234567890.',
+            'summary'     => 'Ran smoke tests and PHP syntax checks. runtime used Bearer caller-secret-token-1234567890.',
             'private_key' => '-----BEGIN PRIVATE KEY-----',
         ),
     ),
 );
-
-putenv('WP_AI_GATEWAY_TOKEN=gateway-token-1234567890');
 
 echo "Run artifact PR section renderer - smoke\n";
 
@@ -77,7 +75,7 @@ $assert('renders transcript summary when provided', str_contains($section, 'Ran 
 $assert('omits secret-like keys', ! str_contains($section, 'never-render-me') && ! str_contains($section, 'BEGIN PRIVATE KEY'));
 $assert('redacts secret-like strings', str_contains($section, 'token: [redacted]') && ! str_contains($section, 'ghp_abcdefghijklmnopqrstuvwxyz123456'));
 $assert('does not leak api key values', ! str_contains($section, 'sk-test-secret-value'));
-$assert('redacts current gateway token values', ! str_contains($section, 'gateway-token-1234567890') && str_contains($section, 'Bearer [redacted]'));
+$assert('redacts bearer token values', ! str_contains($section, 'caller-secret-token-1234567890') && str_contains($section, 'Bearer [redacted]'));
 
 $body    = "# Existing PR\n\nHuman-authored description.";
 $updated = RunArtifactPrSectionRenderer::replaceSection($body, $artifacts);
@@ -127,8 +125,6 @@ $assert('body-section mode removes stale section for empty artifacts', str_start
 
 $empty_mode_comment = RunArtifactPrSectionRenderer::renderForMode(RunArtifactPrSectionRenderer::MODE_COMMENT, array(), $body);
 $assert('comment mode renders nothing for empty artifacts', '' === $empty_mode_comment);
-
-putenv('WP_AI_GATEWAY_TOKEN');
 
 if (! empty($failures) ) {
     echo "\nFAIL: " . count($failures) . " assertion(s)\n";

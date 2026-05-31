@@ -14,8 +14,8 @@ class SecretRedactor {
 	/**
 	 * Redact secret-looking values from arbitrary text.
 	 */
-	public static function redact( string $value ): string {
-		foreach ( self::runtime_secret_values() as $secret ) {
+	public static function redact( string $value, array $secrets = array() ): string {
+		foreach ( self::normalize_secrets($secrets) as $secret ) {
 			$value = str_replace($secret, '[redacted]', $value);
 		}
 
@@ -24,19 +24,19 @@ class SecretRedactor {
 		$value = preg_replace('/\b(xox[baprs]-[A-Za-z0-9-]{12,})\b/', '[redacted]', $value) ?? $value;
 		$value = preg_replace('/\b(Bearer)\s+[A-Za-z0-9._~+\/-]{8,}/i', '$1 [redacted]', $value) ?? $value;
 
-		return preg_replace('/\b(authorization|token|password|secret|api[_-]?key|wp_ai_gateway_token|openai_api_key)\s*[:=]\s*\S+/i', '$1: [redacted]', $value) ?? $value;
+		return preg_replace('/\b(authorization|token|password|secret|api[_-]?key)\s*[:=]\s*\S+/i', '$1: [redacted]', $value) ?? $value;
 	}
 
 	/**
-	 * Runtime secret values that must be redacted when present in process env.
+	 * Normalize explicit secret values that must be redacted.
 	 *
+	 * @param  array<int,string> $secrets Secret values.
 	 * @return string[]
 	 */
-	private static function runtime_secret_values(): array {
+	private static function normalize_secrets( array $secrets ): array {
 		$values = array();
-		foreach ( array( 'WP_AI_GATEWAY_TOKEN', 'OPENAI_API_KEY' ) as $name ) {
-			$value = getenv($name);
-			if ( is_string($value) && strlen(trim($value)) >= 8 ) {
+		foreach ( $secrets as $value ) {
+			if ( strlen(trim($value)) >= 8 ) {
 				$values[] = trim($value);
 			}
 		}

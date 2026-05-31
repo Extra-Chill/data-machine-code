@@ -146,12 +146,14 @@ namespace {
     'args'    => array( '--', '{recipient}', '{message}' ),
     'detach'  => false,
     'timeout' => 5,
+    'env_from' => array( 'CHILD_SECRET_TOKEN' => 'PARENT_SECRET_TOKEN' ),
     );
     $normalized  = \DataMachineCode\Channels\CliChannelRegistry::normalize_entry($valid_entry);
     $assert('valid entry normalizes', is_array($normalized) && $normalized['command'] === $echo_bin);
     $assert('normalized entry has args array', is_array($normalized['args'] ?? null) && count($normalized['args']) === 3);
     $assert('normalized entry preserves detach false', false === ( $normalized['detach'] ?? null ));
     $assert('normalized entry preserves timeout', 5 === ( $normalized['timeout'] ?? null ));
+    $assert('normalized entry preserves generic env_from references', array( 'CHILD_SECRET_TOKEN' => 'PARENT_SECRET_TOKEN' ) === ( $normalized['env_from'] ?? null ));
 
     $bad_no_command = \DataMachineCode\Channels\CliChannelRegistry::normalize_entry(array( 'args' => array() ));
     $assert('missing command is rejected', null === $bad_no_command);
@@ -391,70 +393,67 @@ namespace {
     }
 
     // ---------------------------------------------------------------
-    // WP AI Gateway env contract: gateway mode maps to OpenAI-compatible
-    // child env, strips upstream secrets, and redacts captured output.
+    // Generic env projection: caller-provided parent env references are
+    // projected into child env and secret-like values are redacted.
     // ---------------------------------------------------------------
 
-    putenv('WP_AI_GATEWAY_BASE_URL=https://gateway.example/v1');
-    putenv('WP_AI_GATEWAY_TOKEN=gateway-token-1234567890');
+    putenv('DMC_TEST_PARENT_BASE_URL=https://runtime.example/v1');
+    putenv('DMC_TEST_PARENT_SECRET_TOKEN=caller-secret-token-1234567890');
     $datamachine_code_test_options['datamachine_code_cli_channels'] = array(
-    'gateway-env'     => array(
+    'projected-env'   => array(
     'command' => $php_bin,
     'args'    => array(
     '-r',
-    '$ok = getenv("OPENAI_BASE_URL") === "https://gateway.example/v1" && getenv("OPENAI_API_KEY") === "gateway-token-1234567890" && false === getenv("CODEX_REFRESH_TOKEN") && false === getenv("CODEX_ACCESS_TOKEN") && false === getenv("OPENCODE_GO_KEY") && false === getenv("WP_AUTH_COOKIE") && false === getenv("WP_NONCE") && false === getenv("WP_AI_GATEWAY_TOKEN"); echo "OPENAI_BASE_URL=" . getenv("OPENAI_BASE_URL") . "\n"; echo "OPENAI_API_KEY=" . getenv("OPENAI_API_KEY") . "\n"; exit($ok ? 0 : 7);',
+    '$ok = getenv("CHILD_BASE_URL") === "https://runtime.example/v1" && getenv("CHILD_API_TOKEN") === "caller-secret-token-1234567890"; echo "CHILD_BASE_URL=" . getenv("CHILD_BASE_URL") . "\n"; echo "CHILD_API_TOKEN=" . getenv("CHILD_API_TOKEN") . "\n"; exit($ok ? 0 : 7);',
     ),
     'detach'  => false,
     'timeout' => 5,
     'env'     => array(
-    'OPENAI_BASE_URL'     => 'https://raw-openai.example/v1',
-    'OPENAI_API_KEY'      => 'raw-openai-key',
-    'CODEX_REFRESH_TOKEN' => 'codex-refresh-token',
-    'CODEX_ACCESS_TOKEN'  => 'codex-access-token',
-    'OPENCODE_GO_KEY'     => 'opencode-go-key',
-    'WP_AUTH_COOKIE'      => 'wordpress-cookie',
-    'WP_NONCE'            => 'wordpress-nonce',
-    'WP_AI_GATEWAY_TOKEN' => 'configured-gateway-token',
+    'STATIC_ENV' => 'static-value',
+    ),
+    'env_from' => array(
+    'CHILD_BASE_URL'   => 'DMC_TEST_PARENT_BASE_URL',
+    'CHILD_API_TOKEN' => 'DMC_TEST_PARENT_SECRET_TOKEN',
     ),
     ),
-    'nongateway-env'  => array(
+    'static-env'      => array(
     'command' => $php_bin,
     'args'    => array(
     '-r',
-    'exit(getenv("OPENAI_API_KEY") === "raw-openai-key" ? 0 : 9);',
+    'exit(getenv("STATIC_SECRET_TOKEN") === "static-secret-value" ? 0 : 9);',
     ),
     'detach'  => false,
     'timeout' => 5,
     'env'     => array(
-    'OPENAI_API_KEY' => 'raw-openai-key',
+    'STATIC_SECRET_TOKEN' => 'static-secret-value',
     ),
     ),
     );
 
-    $gateway = \DataMachineCode\Channels\CliChannelTransport::execute(
+    $projected = \DataMachineCode\Channels\CliChannelTransport::execute(
         array(
-        'channel'   => 'gateway-env',
+        'channel'   => 'projected-env',
         'recipient' => 'r',
         'message'   => 'm',
         )
     );
-    $assert('gateway env dispatch succeeds', is_array($gateway) && true === ( $gateway['sent'] ?? false ));
-    if (is_array($gateway) ) {
-        $stdout = (string) ( $gateway['metadata']['stdout'] ?? '' );
-        $assert('gateway base URL is passed as OPENAI_BASE_URL', str_contains($stdout, 'OPENAI_BASE_URL=https://gateway.example/v1'));
-        $assert('gateway token is redacted from captured stdout', str_contains($stdout, 'OPENAI_API_KEY: [redacted]') && ! str_contains($stdout, 'gateway-token-1234567890'));
+    $assert('projected env dispatch succeeds', is_array($projected) && true === ( $projected['sent'] ?? false ));
+    if (is_array($projected) ) {
+        $stdout = (string) ( $projected['metadata']['stdout'] ?? '' );
+        $assert('caller-provided base URL reference is projected', str_contains($stdout, 'CHILD_BASE_URL=https://runtime.example/v1'));
+        $assert('projected secret value is redacted from captured stdout', str_contains($stdout, '[redacted]') && ! str_contains($stdout, 'caller-secret-token-1234567890'));
     }
 
-    putenv('WP_AI_GATEWAY_BASE_URL');
-    putenv('WP_AI_GATEWAY_TOKEN');
-    $nongateway = \DataMachineCode\Channels\CliChannelTransport::execute(
+    putenv('DMC_TEST_PARENT_BASE_URL');
+    putenv('DMC_TEST_PARENT_SECRET_TOKEN');
+    $static_env = \DataMachineCode\Channels\CliChannelTransport::execute(
         array(
-        'channel'   => 'nongateway-env',
+        'channel'   => 'static-env',
         'recipient' => 'r',
         'message'   => 'm',
         )
     );
-    $assert('non-gateway configured env continues to work', is_array($nongateway) && true === ( $nongateway['sent'] ?? false ));
+    $assert('static configured env continues to work', is_array($static_env) && true === ( $static_env['sent'] ?? false ));
 
     // ---------------------------------------------------------------
     // Summary
