@@ -25,6 +25,10 @@ define( 'DATAMACHINE_CODE_URL', plugin_dir_url( __FILE__ ) );
 // PSR-4 Autoloading.
 require_once __DIR__ . '/vendor/autoload.php';
 
+// Bundle artifact types must be registered as soon as the plugin is loaded so
+// Data Machine can validate DMC-owned artifacts during early import paths.
+( new \DataMachineCode\Bundle\WorkspacePreloadArtifact() )->register();
+
 /**
  * Install DMC-owned database tables.
  */
@@ -99,7 +103,6 @@ function datamachine_code_bootstrap() {
 	new \DataMachineCode\Abilities\CodeTaskAbilities();
 	new \DataMachineCode\Abilities\WordPressRuntimeAbilities();
 	\DataMachineCode\SourceInventory\WorkspaceSourceInventory::register();
-	( new \DataMachineCode\Bundle\WorkspacePreloadArtifact() )->register();
 
 	// Project active workspace identity into Data Machine's engine_data
 	// snapshot at job init. Requires DM's datamachine_engine_snapshot
