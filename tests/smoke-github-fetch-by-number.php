@@ -51,9 +51,10 @@ $assert(false !== strpos($handler, 'targeted fetch ignores list filters'), 'hand
 $assert(false !== strpos($handler, 'does not match configured state'), 'handler drops items whose state does not match configured state');
 
 // DataPacket shape parity (same dedup_key format as list path).
-$assert(false !== strpos($handler, "sprintf( 'github_%s_%s_%d', \$repo, \$data_source, \$item['number'] )"), 'targeted packet uses the same dedup_key shape as the list path');
+$assert(false !== strpos($handler, "sprintf('github_%s_%s_%d', \$repo, \$data_source, \$item['number'])"), 'targeted packet uses the same dedup_key shape as the list path');
 $assert(false !== strpos($handler, "'source_type'       => 'github'"), 'targeted packet metadata uses source_type=github');
 $assert(false !== strpos($handler, 'buildIssueContent') && false !== strpos($handler, 'buildPrContent'), 'targeted path reuses buildIssueContent / buildPrContent for parity');
+$assert(false !== strpos($handler, '**Latest Comment:**') && false !== strpos($handler, "\$issue['latest_comment']"), 'issue content includes latest comment body when available');
 
 // Settings schema fields.
 $assert(false !== strpos($settings, "'issue_number'"), 'settings expose issue_number field');

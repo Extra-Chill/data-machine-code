@@ -956,6 +956,13 @@ class GitHub extends FetchHandler {
 			$parts[] = sprintf('**Assignees:** %s', implode(', ', $issue['assignees']));
 		}
 		$parts[] = sprintf('**Comments:** %d', $issue['comments'] ?? 0);
+		if ( ! empty($issue['latest_comment']) && is_array($issue['latest_comment']) ) {
+			$latest_comment = $issue['latest_comment'];
+			$parts[]        = sprintf('**Latest Comment Author:** %s', $latest_comment['user'] ?? 'unknown');
+			$parts[]        = sprintf('**Latest Comment Created:** %s', $latest_comment['created_at'] ?? '');
+			$parts[]        = '**Latest Comment:**';
+			$parts[]        = (string) ( $latest_comment['body'] ?? '' );
+		}
 		$parts[] = sprintf('**Created:** %s', $issue['created_at'] ?? '');
 		$parts[] = sprintf('**URL:** %s', $issue['html_url'] ?? '');
 		$parts[] = '';
