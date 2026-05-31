@@ -2781,12 +2781,48 @@ class WorkspaceCommand extends BaseCommand {
 			if ( ! empty($owner_context['wp_cli_args']) ) {
 				WP_CLI::log(sprintf('Command:    %s', (string) $owner_context['wp_cli_args']));
 			}
-			if ( ! empty($owner_context['kimaki_session_id']) || ! empty($owner_context['opencode_session_id']) ) {
-				WP_CLI::log(sprintf('Session:    %s', (string) ( $owner_context['kimaki_session_id'] ?? $owner_context['opencode_session_id'] ?? '' )));
+			$session_id = $this->resolve_owner_context_session_id($owner_context);
+			if ( '' !== $session_id ) {
+				WP_CLI::log(sprintf('Session:    %s', $session_id));
 			}
 		}
 
 		WP_CLI::error($error->get_error_message());
+	}
+
+	/**
+	 * Resolve a displayable runtime session identifier from a lock owner context.
+	 *
+	 * Runtime-specific session IDs live under the generic `runtime_ids` envelope
+	 * (runtime-id => { subkey => value }) populated by WorkspaceLockStore from the
+	 * `datamachine_code_worktree_runtime_signatures` registry. DMC names no
+	 * runtimes here: it prefers a `session_id` subkey, then falls back to the
+	 * first available subkey value, scanning runtimes in registration order.
+	 *
+	 * @param  array $owner_context Decoded lock owner context.
+	 * @return string Session identifier, or '' when none is available.
+	 */
+	private function resolve_owner_context_session_id( array $owner_context ): string {
+		$runtime_ids = (array) ( $owner_context['runtime_ids'] ?? array() );
+
+		foreach ( $runtime_ids as $entry ) {
+			if ( is_array($entry) && '' !== trim( (string) ( $entry['session_id'] ?? '' )) ) {
+				return (string) $entry['session_id'];
+			}
+		}
+
+		foreach ( $runtime_ids as $entry ) {
+			if ( ! is_array($entry) ) {
+				continue;
+			}
+			foreach ( $entry as $value ) {
+				if ( '' !== trim( (string) $value) ) {
+					return (string) $value;
+				}
+			}
+		}
+
+		return '';
 	}
 
 	/**
