@@ -803,6 +803,21 @@ namespace {
     $assert('createOrUpdateFile existing branch only checks ref, contents, and PUTs', 3 === count($GLOBALS['dmc_http_calls']));
     $assert('createOrUpdateFile existing branch does not create git ref', ! str_ends_with((string) ( $GLOBALS['dmc_http_calls'][1]['url'] ?? '' ), '/git/refs') && ! str_ends_with((string) ( $GLOBALS['dmc_http_calls'][2]['url'] ?? '' ), '/git/refs'));
 
+    // ---- commentOnIssue: fresh issues do not need authenticated actor lookup.
+    $reset_http();
+    $queue_response(200, array( 'comments' => 0 ));
+    $queue_response(
+        201, array(
+        'id'         => 321,
+        'html_url'   => 'https://github.com/owner/repo/issues/123#issuecomment-321',
+        'created_at' => '2026-05-10T00:00:00Z',
+        )
+    );
+    $result = GitHubAbilities::commentOnIssue(array( 'repo' => 'owner/repo', 'issue_number' => 123, 'body' => 'Fresh design direction' ));
+    $assert('commentOnIssue succeeds for issue with no comments', is_array($result) && true === ( $result['success'] ?? false ));
+    $assert('commentOnIssue checks issue comment count before posting', 2 === count($GLOBALS['dmc_http_calls']) && str_contains((string) ( $GLOBALS['dmc_http_calls'][0]['url'] ?? '' ), '/repos/owner/repo/issues/123'));
+    $assert('commentOnIssue skips GET /user for issue with no comments', ! str_contains((string) ( $GLOBALS['dmc_http_calls'][0]['url'] ?? '' ), '/user') && ! str_contains((string) ( $GLOBALS['dmc_http_calls'][1]['url'] ?? '' ), '/user'));
+
     // ---- getIssue: metadata includes comment counts and the latest issue comment.
     $reset_http();
     $queue_response(
