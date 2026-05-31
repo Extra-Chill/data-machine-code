@@ -1447,7 +1447,7 @@ class GitHubAbilities {
 			return new \WP_Error('missing_params', 'Repository (owner/repo) and issue_number are required.', array( 'status' => 400 ));
 		}
 
-		$pat = self::getPatForRepo($repo);
+		$pat = self::getPatForRepoCapability($repo, 'issues_write');
 		if ( empty($pat) ) {
 			return self::patError();
 		}
@@ -1498,7 +1498,7 @@ class GitHubAbilities {
 			return new \WP_Error('missing_title', 'Issue title is required.', array( 'status' => 400 ));
 		}
 
-		$pat = self::getPatForRepo($repo);
+		$pat = self::getPatForRepoCapability($repo, 'issues_write');
 		if ( empty($pat) ) {
 			return self::patError();
 		}
@@ -2059,7 +2059,7 @@ class GitHubAbilities {
 			return new \WP_Error('missing_labels', 'At least one label is required.', array( 'status' => 400 ));
 		}
 
-		$pat = self::getPatForRepo($repo);
+		$pat = self::getPatForRepoCapability($repo, 'issues_write');
 		if ( empty($pat) ) {
 			return self::patError();
 		}
@@ -2119,7 +2119,7 @@ class GitHubAbilities {
 			return new \WP_Error('missing_label', 'A single label is required.', array( 'status' => 400 ));
 		}
 
-		$pat = self::getPatForRepo($repo);
+		$pat = self::getPatForRepoCapability($repo, 'issues_write');
 		if ( empty($pat) ) {
 			return self::patError();
 		}
@@ -2180,7 +2180,7 @@ class GitHubAbilities {
 			return new \WP_Error('missing_params', 'Repository, issue_number, and body are required.', array( 'status' => 400 ));
 		}
 
-		$pat = self::getPatForRepo($repo);
+		$pat = self::getPatForRepoCapability($repo, 'issues_write');
 		if ( empty($pat) ) {
 			return self::patError();
 		}
@@ -5463,6 +5463,16 @@ class GitHubAbilities {
 	 */
 	private static function getPatForRepo( string $repo ): string {
 		$selector = '' !== trim($repo) ? array( 'repo' => $repo ) : null;
+		return self::getPat($selector);
+	}
+
+	private static function getPatForRepoCapability( string $repo, string $capability ): string {
+		$selector = '' !== trim($repo)
+		? array(
+			'repo'       => $repo,
+			'capability' => $capability,
+		)
+		: null;
 		return self::getPat($selector);
 	}
 
