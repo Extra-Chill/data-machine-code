@@ -343,9 +343,8 @@ final class WorkspaceLockStore {
 			'host' => function_exists('gethostname') ? (string) gethostname() : 'unknown-host',
 			'pid'  => function_exists('getmypid') ? (string) getmypid() : 'unknown-pid',
 		);
+		// DMC's own namespace — these are not vendor leaks.
 		$env_map = array(
-			'kimaki_session_id'      => 'KIMAKI_SESSION_ID',
-			'opencode_session_id'    => 'OPENCODE_SESSION_ID',
 			'datamachine_task_url'   => 'DATAMACHINE_TASK_URL',
 			'datamachine_task_ref'   => 'DATAMACHINE_TASK_REF',
 			'datamachine_agent'      => 'DATAMACHINE_AGENT',
@@ -358,11 +357,72 @@ final class WorkspaceLockStore {
 			}
 		}
 
+		// Runtime-specific session identifiers are NOT hardcoded here. Integration
+		// layers (e.g. wp-coding-agents) declare which env vars to sniff and how to
+		// project them into a runtime-keyed envelope via the
+		// `datamachine_code_worktree_runtime_signatures` filter — the same registry
+		// WorktreeContextInjector reads. DMC enumerates no runtime IDs and no
+		// vendor-specific env-var names.
+		$runtime_ids = self::resolve_runtime_ids();
+		if ( ! empty($runtime_ids) ) {
+			$context['runtime_ids'] = $runtime_ids;
+		}
+
 		if ( isset($_SERVER['argv']) && is_array($_SERVER['argv']) ) {
 			$context['wp_cli_args'] = self::bounded_string(self::redact_secret_values(implode(' ', array_map('strval', $_SERVER['argv']))), 1000);
 		}
 
 		return $context;
+	}
+
+	/**
+	 * Resolve runtime-specific session identifiers from registered signatures.
+	 *
+	 * Reads the `datamachine_code_worktree_runtime_signatures` filter (the same
+	 * public contract WorktreeContextInjector consumes) and projects any env
+	 * vars the surrounding runtime exposes into a runtime-keyed envelope:
+	 *
+	 *   array(
+	 *       '<runtime-id>' => array( '<subkey>' => '<value>', ... ),
+	 *   )
+	 *
+	 * DMC enumerates no runtime IDs and no vendor-specific env-var names; the
+	 * integration layer declares both. Missing fields stay missing.
+	 *
+	 * @return array<string,array<string,string>>
+	 */
+	private static function resolve_runtime_ids(): array {
+		if ( ! function_exists('apply_filters') ) {
+			return array();
+		}
+
+		$signatures = apply_filters('datamachine_code_worktree_runtime_signatures', array());
+		if ( ! is_array($signatures) ) {
+			return array();
+		}
+
+		$runtime_ids = array();
+		foreach ( $signatures as $runtime_id => $entry ) {
+			if ( ! is_string($runtime_id) || '' === $runtime_id || ! is_array($entry) ) {
+				continue;
+			}
+			$resolved = array();
+			foreach ( $entry as $subkey => $env_var ) {
+				if ( ! is_string($subkey) || '' === $subkey || ! is_string($env_var) || '' === $env_var ) {
+					continue;
+				}
+				$value = getenv($env_var);
+				if ( false === $value || '' === trim( (string) $value) ) {
+					continue;
+				}
+				$resolved[ $subkey ] = self::bounded_string( (string) $value, 300);
+			}
+			if ( ! empty($resolved) ) {
+				$runtime_ids[ $runtime_id ] = $resolved;
+			}
+		}
+
+		return $runtime_ids;
 	}
 
 	private static function default_owner(): string {
