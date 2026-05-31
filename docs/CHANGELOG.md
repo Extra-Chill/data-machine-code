@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.11] - 2026-05-31
+
+### Fixed
+- select GitHub credentials by operation
+
 ## [0.47.10] - 2026-05-31
 
 ### Fixed
