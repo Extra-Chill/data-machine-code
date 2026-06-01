@@ -29,12 +29,9 @@ final class WorkspaceMutationLock {
 
 	private int $lock_id = 0;
 
-	private string $lock_path = '';
-
-	private function __construct( $handle, int $lock_id = 0, string $lock_path = '' ) {
-		$this->handle    = $handle;
-		$this->lock_id   = $lock_id;
-		$this->lock_path = $lock_path;
+	private function __construct( $handle, int $lock_id = 0 ) {
+		$this->handle  = $handle;
+		$this->lock_id = $lock_id;
 	}
 
 	/**
@@ -132,7 +129,7 @@ final class WorkspaceMutationLock {
 						return $lock_id;
 				}
 
-				return new self($handle, (int) $lock_id, $lock_path);
+				return new self($handle, (int) $lock_id);
 			}
 
 			if ( 0 === $timeout || ( microtime(true) - $started ) >= $timeout ) {
@@ -162,9 +159,8 @@ final class WorkspaceMutationLock {
 		WorkspaceLockStore::release($this->lock_id);
 		flock($this->handle, LOCK_UN); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
 		fclose($this->handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-		$this->handle    = null;
-		$this->lock_id   = 0;
-		$this->lock_path = '';
+		$this->handle  = null;
+		$this->lock_id = 0;
 	}
 
 	/**
@@ -304,11 +300,11 @@ final class WorkspaceMutationLock {
 	 */
 	private static function recovery_guidance(): array {
 		return array(
-			'status_command'      => 'wp datamachine-code workspace worktree locks --format=json',
-			'dry_run_command'     => 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json',
-			'apply_command'       => 'wp datamachine-code workspace worktree locks --prune-stale --format=json',
-			'safety'              => 'Only expired DB rows and old unlocked filesystem lock files are pruned. Active filesystem flocks are never removed by this command.',
-			'active_lock_note'    => 'If a filesystem lock is active without DB owner evidence, another process still holds the OS file descriptor or crashed without releasing an operator-visible DB row. Inspect running DMC/WP-CLI processes before retrying.',
+			'status_command'   => 'wp datamachine-code workspace worktree locks --format=json',
+			'dry_run_command'  => 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json',
+			'apply_command'    => 'wp datamachine-code workspace worktree locks --prune-stale --format=json',
+			'safety'           => 'Only expired DB rows and old unlocked filesystem lock files are pruned. Active filesystem flocks are never removed by this command.',
+			'active_lock_note' => 'If a filesystem lock is active without DB owner evidence, another process still holds the OS file descriptor or crashed without releasing an operator-visible DB row. Inspect running DMC/WP-CLI processes before retrying.',
 		);
 	}
 
@@ -386,22 +382,22 @@ final class WorkspaceMutationLock {
 		}
 
 		if ( ! flock($handle, LOCK_EX | LOCK_NB) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
-			$entry['state']               = 'active';
-			$entry['reason']              = 'filesystem_flock_held';
-			$entry['owner_evidence']      = self::owner_evidence_for_lock($lock_key, $scope);
-			$entry['recovery_command']    = 'wp datamachine-code workspace worktree locks --format=json';
-			$entry['safe_to_prune']       = false;
-			$entry['operator_guidance']   = 'An active OS flock cannot be safely pruned. Inspect the owner evidence or running DMC/WP-CLI processes and retry after the holder exits.';
+			$entry['state']             = 'active';
+			$entry['reason']            = 'filesystem_flock_held';
+			$entry['owner_evidence']    = self::owner_evidence_for_lock($lock_key, $scope);
+			$entry['recovery_command']  = 'wp datamachine-code workspace worktree locks --format=json';
+			$entry['safe_to_prune']     = false;
+			$entry['operator_guidance'] = 'An active OS flock cannot be safely pruned. Inspect the owner evidence or running DMC/WP-CLI processes and retry after the holder exits.';
 			fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 			return $entry;
 		}
 
 		flock($handle, LOCK_UN); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
 		fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-		$stale                    = false !== $mtime && $mtime < $cutoff;
-		$entry['state']           = $stale ? 'stale' : 'recent';
-		$entry['reason']          = $stale ? 'unlocked_stale_file' : 'unlocked_recent_file';
-		$entry['safe_to_prune']   = $stale;
+		$stale                     = false !== $mtime && $mtime < $cutoff;
+		$entry['state']            = $stale ? 'stale' : 'recent';
+		$entry['reason']           = $stale ? 'unlocked_stale_file' : 'unlocked_recent_file';
+		$entry['safe_to_prune']    = $stale;
 		$entry['recovery_command'] = $stale
 			? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json'
 			: 'wp datamachine-code workspace worktree locks --format=json';

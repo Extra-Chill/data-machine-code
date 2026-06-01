@@ -2302,10 +2302,12 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( 'locks' === $operation ) {
-			$dry_run = ! empty($assoc_args['dry-run']) || empty($assoc_args['prune-stale']);
-			$result  = ! empty($assoc_args['prune-stale'])
-				? WorkspaceMutationLock::prune_stale($this->workspace_path, $dry_run)
-				: WorkspaceMutationLock::status($this->workspace_path);
+			$workspace      = new Workspace();
+			$workspace_path = $workspace->get_path();
+			$dry_run        = ! empty($assoc_args['dry-run']) || empty($assoc_args['prune-stale']);
+			$result         = ! empty($assoc_args['prune-stale'])
+				? WorkspaceMutationLock::prune_stale($workspace_path, $dry_run)
+				: WorkspaceMutationLock::status($workspace_path);
 			$this->render_workspace_lock_result($result, $assoc_args, ! empty($assoc_args['prune-stale']));
 			return;
 		}
@@ -2838,7 +2840,7 @@ class WorkspaceCommand extends BaseCommand {
 		if ( ! empty($guidance) ) {
 			WP_CLI::log(sprintf('Status: %s', (string) ( $guidance['status_command'] ?? 'wp datamachine-code workspace worktree locks --format=json' )));
 			WP_CLI::log(sprintf('Prune:  %s', (string) ( $guidance['dry_run_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' )));
-			WP_CLI::log((string) ( $guidance['safety'] ?? 'Active filesystem flocks are not pruned.' ));
+			WP_CLI::log( (string) ( $guidance['safety'] ?? 'Active filesystem flocks are not pruned.' ) );
 		}
 	}
 
