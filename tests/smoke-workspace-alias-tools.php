@@ -17,6 +17,8 @@ namespace {
 
     $GLOBALS['dmc_workspace_alias_filters'] = array();
     $GLOBALS['dmc_workspace_alias_ability'] = null;
+    $GLOBALS['dmc_workspace_alias_registered_abilities'] = array();
+    $GLOBALS['dmc_workspace_alias_remote_edit_input'] = array();
 
     function add_filter( string $tag, callable $callback, int $priority = 10, int $accepted_args = 1 ): void
     {
@@ -49,9 +51,82 @@ namespace {
         return $GLOBALS['dmc_workspace_alias_ability'];
     }
 
+    function wp_register_ability( string $name, array $definition ): void
+    {
+        $GLOBALS['dmc_workspace_alias_registered_abilities'][ $name ] = $definition;
+    }
+
+    function add_action( string $hook, callable $callback, int $priority = 10 ): void
+    {
+    }
+
+    function doing_action( string $hook ): bool
+    {
+        return 'wp_abilities_api_init' === $hook;
+    }
+
     function is_wp_error( $value ): bool
     {
-        return false;
+        return $value instanceof WP_Error;
+    }
+
+    class WP_Error
+    {
+        private string $code;
+        private string $message;
+
+        public function __construct( string $code, string $message, array $data = array() )
+        {
+            $this->code    = $code;
+            $this->message = $message;
+        }
+
+        public function get_error_code(): string
+        {
+            return $this->code;
+        }
+
+        public function get_error_message(): string
+        {
+            return $this->message;
+        }
+    }
+}
+
+namespace DataMachine\Abilities {
+    class PermissionHelper
+    {
+        public static function can_manage(): bool
+        {
+            return true;
+        }
+    }
+}
+
+namespace DataMachineCode\Workspace {
+    class Workspace
+    {
+        public const ARTIFACT_CLEANUP_DEFAULT_LIMIT = 100;
+        public const MAX_READ_SIZE = 1048576;
+    }
+
+    class RemoteWorkspaceBackend
+    {
+        public static function should_handle(): bool
+        {
+            return true;
+        }
+
+        public function edit_file( string $handle, string $path, string $old_string, string $new_string, bool $replace_all = false ): array
+        {
+            $GLOBALS['dmc_workspace_alias_remote_edit_input'] = compact('handle', 'path', 'old_string', 'new_string', 'replace_all');
+            return array(
+            'success'      => true,
+            'name'         => $handle,
+            'path'         => $path,
+            'replacements' => 1,
+            );
+        }
     }
 }
 
@@ -74,6 +149,7 @@ namespace DataMachine\Engine\AI\Tools {
 
 namespace {
     include __DIR__ . '/../inc/Workspace/WorkspaceAliasResolver.php';
+    include __DIR__ . '/../inc/Abilities/WorkspaceAbilities.php';
     include __DIR__ . '/../inc/Tools/WorkspaceTools.php';
     include __DIR__ . '/../inc/Tools/WorkspaceDiffTools.php';
 
@@ -130,12 +206,22 @@ namespace {
     $ability                                  = new DataMachineCodeWorkspaceAliasFakeAbility();
     $GLOBALS['dmc_workspace_alias_ability'] = $ability;
     $tools                                    = new \DataMachineCode\Tools\WorkspaceTools();
+    new \DataMachineCode\Abilities\WorkspaceAbilities();
     $read_definition                          = $tools->getReadDefinition();
     $grep_definition                          = $tools->getGrepDefinition();
+    $edit_definition                          = $tools->getEditDefinition();
     $git_diff_definition                      = $tools->getGitDiffDefinition();
+    $ability_edit_schema                       = $GLOBALS['dmc_workspace_alias_registered_abilities']['datamachine/workspace-edit']['input_schema'] ?? array();
     $assert('workspace_read schema allows path-only mounted workspace calls', array( 'path' ) === ( $read_definition['parameters']['required'] ?? null ));
     $assert('workspace_grep schema allows path-only mounted workspace calls', array( 'pattern' ) === ( $grep_definition['parameters']['required'] ?? null ));
     $assert('workspace_git_diff schema allows path-only mounted workspace calls', array() === ( $git_diff_definition['parameters']['required'] ?? null ));
+    $assert('workspace_edit wrapper schema keeps edit text optional for aliases', array( 'path' ) === ( $edit_definition['parameters']['required'] ?? null ));
+    $assert('workspace_edit ability schema keeps edit text optional for aliases', array( 'path' ) === ( $ability_edit_schema['required'] ?? null ));
+    foreach ( array( 'old_string', 'new_string', 'search', 'replace', 'old', 'new' ) as $property ) {
+        $assert("workspace_edit wrapper schema exposes {$property}", isset($edit_definition['parameters']['properties'][ $property ]));
+        $assert("workspace_edit ability schema exposes {$property}", isset($ability_edit_schema['properties'][ $property ]));
+    }
+    $assert('workspace_edit schema does not expose broad find alias', ! isset($edit_definition['parameters']['properties']['find']) && ! isset($ability_edit_schema['properties']['find']));
 
     $absolute_read                           = $tools->handleRead(array( 'path' => '/workspace/homeboy-extensions/wordpress/scripts/build/build.sh' ));
     $assert('absolute workspace path read succeeds', true === ( $absolute_read['success'] ?? false ));
@@ -173,6 +259,30 @@ namespace {
 	$assert('workspace_edit accepts old/new aliases', true === ( $edit_short_alias['success'] ?? false ));
 	$assert('workspace_edit maps old to old_string', 'npm install --silent' === ( $ability->last_input['old_string'] ?? '' ));
 	$assert('workspace_edit maps new to new_string', 'npm install --legacy-peer-deps' === ( $ability->last_input['new_string'] ?? '' ));
+
+    $ability_mounted_edit = \DataMachineCode\Abilities\WorkspaceAbilities::editFile(
+        array(
+            'path'    => '/workspace/homeboy-extensions/wordpress/scripts/build/build.sh',
+            'old'     => 'npm install --silent',
+            'new'     => 'npm install --legacy-peer-deps',
+        )
+    );
+    $assert('workspace_edit ability accepts mounted absolute path', ! is_wp_error($ability_mounted_edit) && true === ( $ability_mounted_edit['success'] ?? false ));
+    $assert('workspace_edit ability infers repo from mounted path', 'homeboy-extensions' === ( $GLOBALS['dmc_workspace_alias_remote_edit_input']['handle'] ?? '' ));
+    $assert('workspace_edit ability converts mounted path to relative path', 'wordpress/scripts/build/build.sh' === ( $GLOBALS['dmc_workspace_alias_remote_edit_input']['path'] ?? '' ));
+    $assert('workspace_edit ability maps old alias to old_string', 'npm install --silent' === ( $GLOBALS['dmc_workspace_alias_remote_edit_input']['old_string'] ?? '' ));
+    $assert('workspace_edit ability maps new alias to new_string', 'npm install --legacy-peer-deps' === ( $GLOBALS['dmc_workspace_alias_remote_edit_input']['new_string'] ?? '' ));
+
+    $unsupported_alias = \DataMachineCode\Abilities\WorkspaceAbilities::editFile(
+        array(
+            'repo'    => 'homeboy-extensions',
+            'path'    => 'wordpress/scripts/build/build.sh',
+            'find'    => 'npm install --silent',
+            'replace' => 'npm install --legacy-peer-deps',
+        )
+    );
+    $assert('unsupported edit aliases fail at ability layer', is_wp_error($unsupported_alias));
+    $assert('unsupported edit alias error is actionable', is_wp_error($unsupported_alias) && 'old_string is required.' === $unsupported_alias->get_error_message());
 
 	$result                                   = $tools->handleGitStatus(array( 'name' => 'current-project' ));
     $data                                     = $result['data'] ?? array();
