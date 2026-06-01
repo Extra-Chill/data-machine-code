@@ -407,12 +407,12 @@ class WorkspaceTools extends BaseTool
      */
     public function handleEdit( array $parameters ): array
     {
-        $input = array(
-        'repo'       => $parameters['repo'] ?? '',
-        'path'       => $parameters['path'] ?? '',
-        'old_string' => $parameters['old_string'] ?? '',
-        'new_string' => $parameters['new_string'] ?? '',
-        );
+		$input = array(
+		'repo'       => $parameters['repo'] ?? '',
+		'path'       => $parameters['path'] ?? '',
+		'old_string' => $parameters['old_string'] ?? $parameters['search'] ?? $parameters['old'] ?? '',
+		'new_string' => $parameters['new_string'] ?? $parameters['replace'] ?? $parameters['new'] ?? '',
+		);
 
         if (array_key_exists('replace_all', $parameters) ) {
             $input['replace_all'] = (bool) $parameters['replace_all'];
@@ -696,6 +696,11 @@ class WorkspaceTools extends BaseTool
      */
     private function resolveWorkspaceInputAliases( array $input, array $handle_keys ): array
     {
+        $input = $this->normalizeWorkspaceRootPathInput($input, $handle_keys);
+        if (isset($input['_workspace_alias_error']) ) {
+            return $input;
+        }
+
         foreach ( $handle_keys as $key ) {
             if (! isset($input[ $key ]) || ! is_string($input[ $key ]) ) {
                 continue;
@@ -723,6 +728,115 @@ class WorkspaceTools extends BaseTool
         }
 
         return $input;
+    }
+
+    /**
+     * Normalize mounted workspace absolute paths into repo handles and relative paths.
+     *
+     * Runners can expose repositories under DATAMACHINE_WORKSPACE_PATH. Models then
+     * naturally use paths like /workspace/example/README.md even though the
+     * canonical workspace tools accept repo=example and path=README.md.
+     *
+     * @param array<string,mixed> $input Tool input.
+     * @param string[]            $handle_keys Keys that hold workspace handles.
+     * @return array<string,mixed>
+     */
+    private function normalizeWorkspaceRootPathInput( array $input, array $handle_keys ): array
+    {
+        $workspace_root = defined('DATAMACHINE_WORKSPACE_PATH') ? (string) DATAMACHINE_WORKSPACE_PATH : '';
+        $workspace_root = $this->normalizeWorkspaceRoot($workspace_root);
+        if ('' === $workspace_root ) {
+            return $input;
+        }
+
+        foreach ( $handle_keys as $key ) {
+            if (isset($input[ $key ]) && is_string($input[ $key ]) && $this->isAbsolutePath($input[ $key ]) ) {
+                $parts = $this->splitWorkspaceRootPath($input[ $key ], $workspace_root);
+                if (null === $parts ) {
+                    $input['_workspace_alias_error'] = 'Workspace path is outside the configured workspace root.';
+                    return $input;
+                }
+
+                $input[ $key ] = $parts['repo'];
+                if ('' !== $parts['path'] ) {
+                    $existing_path = isset($input['path']) && is_string($input['path']) ? trim($input['path'], '/') : '';
+                    $input['path'] = '' === $existing_path ? $parts['path'] : $parts['path'] . '/' . $existing_path;
+                }
+            }
+        }
+
+        if (isset($input['path']) && is_string($input['path']) && $this->isAbsolutePath($input['path']) ) {
+            $parts = $this->splitWorkspaceRootPath($input['path'], $workspace_root);
+            if (null === $parts ) {
+                $input['_workspace_alias_error'] = 'Workspace path is outside the configured workspace root.';
+                return $input;
+            }
+
+            $current_handle = '';
+            foreach ( $handle_keys as $key ) {
+                if (isset($input[ $key ]) && is_string($input[ $key ]) && '' !== trim($input[ $key ]) ) {
+                    $current_handle = trim($input[ $key ]);
+                    break;
+                }
+            }
+
+            if ('' !== $current_handle && $current_handle !== $parts['repo'] ) {
+                $input['_workspace_alias_error'] = 'Workspace path belongs to a different workspace repository.';
+                return $input;
+            }
+
+            if ('' === $current_handle && ! empty($handle_keys) ) {
+                $input[ $handle_keys[0] ] = $parts['repo'];
+            }
+            $input['path'] = $parts['path'];
+        }
+
+        return $input;
+    }
+
+    private function normalizeWorkspaceRoot( string $root ): string
+    {
+        $root = str_replace('\\', '/', trim($root));
+        $root = trim($root, '/');
+        return '' === $root ? '' : '/' . $root;
+    }
+
+    private function isAbsolutePath( string $path ): bool
+    {
+        $path = str_replace('\\', '/', trim($path));
+        return str_starts_with($path, '/') || preg_match('#^[a-zA-Z][a-zA-Z0-9+.-]*://#', $path);
+    }
+
+    /**
+     * @return array{repo:string,path:string}|null
+     */
+    private function splitWorkspaceRootPath( string $path, string $workspace_root ): ?array
+    {
+        $path = str_replace('\\', '/', trim($path));
+        if (preg_match('#^[a-zA-Z][a-zA-Z0-9+.-]*://#', $path) ) {
+            return null;
+        }
+
+        $root = rtrim($workspace_root, '/');
+        if ($path !== $root && ! str_starts_with($path, $root . '/') ) {
+            return null;
+        }
+
+        $relative = ltrim(substr($path, strlen($root)), '/');
+        if ('' === $relative ) {
+            return null;
+        }
+
+        $segments = array_values(array_filter(explode('/', $relative), static fn( string $segment ): bool => '' !== $segment && '.' !== $segment));
+        if (empty($segments) || in_array('..', $segments, true) ) {
+            return null;
+        }
+
+        $repo = array_shift($segments);
+        return array(
+            'repo' => $repo,
+            'path' => implode('/', $segments),
+        );
     }
 
     /**
@@ -949,7 +1063,7 @@ class WorkspaceTools extends BaseTool
                         'description' => 'Optional relative directory path inside the repo.',
                     ),
             ),
-            'required'   => array( 'repo' ),
+            'required'   => array(),
             ),
             ) 
         );
@@ -991,7 +1105,7 @@ class WorkspaceTools extends BaseTool
                         'description' => 'Maximum number of lines to return.',
                     ),
             ),
-            'required'   => array( 'repo', 'path' ),
+            'required'   => array( 'path' ),
             ),
             ) 
         );
@@ -1037,7 +1151,7 @@ class WorkspaceTools extends BaseTool
                         'description' => 'Number of surrounding lines to include for each match (default 0, max 10).',
                     ),
             ),
-            'required'   => array( 'repo', 'pattern' ),
+            'required'   => array( 'pattern' ),
             ),
             ) 
         );
@@ -1060,7 +1174,7 @@ class WorkspaceTools extends BaseTool
             'path'    => array( 'type' => 'string', 'description' => 'Relative file path within the repo.' ),
             'content' => array( 'type' => 'string', 'description' => 'File content to write.' ),
             ),
-            'required'   => array( 'repo', 'path', 'content' ),
+            'required'   => array( 'path', 'content' ),
             ),
             ) 
         );
@@ -1081,12 +1195,16 @@ class WorkspaceTools extends BaseTool
             'properties' => array(
             'repo'        => array( 'type' => 'string', 'description' => 'Workspace handle: <repo> or <repo>@<branch-slug>.' ),
             'path'        => array( 'type' => 'string', 'description' => 'Relative file path within the repo.' ),
-            'old_string'  => array( 'type' => 'string', 'description' => 'Exact text to find.' ),
-            'new_string'  => array( 'type' => 'string', 'description' => 'Replacement text.' ),
-            'replace_all' => array( 'type' => 'boolean', 'description' => 'Replace all occurrences. Default false.' ),
-            ),
-            'required'   => array( 'repo', 'path', 'old_string', 'new_string' ),
-            ),
+			'old_string'  => array( 'type' => 'string', 'description' => 'Exact text to find.' ),
+			'new_string'  => array( 'type' => 'string', 'description' => 'Replacement text.' ),
+			'search'      => array( 'type' => 'string', 'description' => 'Alias for old_string.' ),
+			'replace'     => array( 'type' => 'string', 'description' => 'Alias for new_string.' ),
+			'old'         => array( 'type' => 'string', 'description' => 'Alias for old_string.' ),
+			'new'         => array( 'type' => 'string', 'description' => 'Alias for new_string.' ),
+			'replace_all' => array( 'type' => 'boolean', 'description' => 'Replace all occurrences. Default false.' ),
+			),
+			'required'   => array( 'path' ),
+			),
             ) 
         );
     }
@@ -1132,7 +1250,7 @@ class WorkspaceTools extends BaseTool
             'recursive'              => array( 'type' => 'boolean', 'description' => 'Required when target is a directory. Default false.' ),
             'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
             ),
-            'required'   => array( 'repo', 'path' ),
+            'required'   => array( 'path' ),
             ),
             ) 
         );
@@ -1169,7 +1287,7 @@ class WorkspaceTools extends BaseTool
             'to'     => array( 'type' => 'string', 'description' => 'Optional to git ref.' ),
             'staged' => array( 'type' => 'boolean', 'description' => 'Read staged diff instead of working tree diff.' ),
             'path'   => array( 'type' => 'string', 'description' => 'Optional relative path filter.' ),
-            ), array( 'name' ), array( 'duplicate_policy' => 'repeatable' ) 
+            ), array(), array( 'duplicate_policy' => 'repeatable' )
         );
     }
 

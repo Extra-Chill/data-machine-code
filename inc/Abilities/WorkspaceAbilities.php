@@ -233,7 +233,7 @@ class WorkspaceAbilities {
 								'description' => 'Maximum number of lines to return.',
 							),
 						),
-						'required'   => array( 'repo', 'path' ),
+						'required'   => array( 'path' ),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -270,7 +270,7 @@ class WorkspaceAbilities {
 								'description' => 'Relative directory path within the repo (omit for root).',
 							),
 						),
-						'required'   => array( 'repo' ),
+						'required'   => array(),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -331,7 +331,7 @@ class WorkspaceAbilities {
 								'description' => 'Number of surrounding lines to include for each match (default 0, max 10).',
 							),
 						),
-						'required'   => array( 'repo', 'pattern' ),
+						'required'   => array( 'pattern' ),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -496,7 +496,7 @@ class WorkspaceAbilities {
 								'description' => 'File content to write.',
 							),
 						),
-						'required'   => array( 'repo', 'path', 'content' ),
+						'required'   => array( 'path', 'content' ),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -538,12 +538,28 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Replacement text.',
 							),
+							'search'      => array(
+								'type'        => 'string',
+								'description' => 'Alias for old_string.',
+							),
+							'replace'     => array(
+								'type'        => 'string',
+								'description' => 'Alias for new_string.',
+							),
+							'old'         => array(
+								'type'        => 'string',
+								'description' => 'Alias for old_string.',
+							),
+							'new'         => array(
+								'type'        => 'string',
+								'description' => 'Alias for new_string.',
+							),
 							'replace_all' => array(
 								'type'        => 'boolean',
 								'description' => 'Replace all occurrences (default false).',
 							),
 						),
-						'required'   => array( 'repo', 'path', 'old_string', 'new_string' ),
+						'required'   => array( 'path' ),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -617,7 +633,7 @@ class WorkspaceAbilities {
 								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
 						),
-						'required'   => array( 'name' ),
+						'required'   => array(),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -843,7 +859,7 @@ class WorkspaceAbilities {
 								'description' => 'Permit mutation on the primary checkout (default false). Worktrees are always allowed.',
 							),
 						),
-						'required'   => array( 'repo', 'path' ),
+						'required'   => array( 'path' ),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -2275,6 +2291,7 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function readFile( array $input ): array|\WP_Error {
+		$input = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			return ( new RemoteWorkspaceBackend() )->read_file(
 				$input['repo'] ?? '',
@@ -2304,6 +2321,7 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function listDirectory( array $input ): array|\WP_Error {
+		$input = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			return ( new RemoteWorkspaceBackend() )->list_directory(
 				$input['repo'] ?? '',
@@ -2327,6 +2345,7 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function grepFiles( array $input ): array|\WP_Error {
+		$input = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			return ( new RemoteWorkspaceBackend() )->grep(
 				$input['repo'] ?? '',
@@ -2433,12 +2452,24 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function editFile( array $input ): array|\WP_Error {
+		$input      = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$old_string = (string) ( $input['old_string'] ?? $input['search'] ?? $input['old'] ?? '' );
+		$new_string = (string) ( $input['new_string'] ?? $input['replace'] ?? $input['new'] ?? '' );
+
+		if ( '' === $old_string ) {
+			return new \WP_Error('missing_old_string', 'old_string is required.', array( 'status' => 400 ));
+		}
+
+		if ( ! array_key_exists('new_string', $input) && ! array_key_exists('replace', $input) && ! array_key_exists('new', $input) ) {
+			return new \WP_Error('missing_new_string', 'new_string is required.', array( 'status' => 400 ));
+		}
+
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			return ( new RemoteWorkspaceBackend() )->edit_file(
 				$input['repo'] ?? '',
 				$input['path'] ?? '',
-				$input['old_string'] ?? '',
-				$input['new_string'] ?? '',
+				$old_string,
+				$new_string,
 				! empty($input['replace_all'])
 			);
 		}
@@ -2449,8 +2480,8 @@ class WorkspaceAbilities {
 		return $writer->edit_file(
 			$input['repo'] ?? '',
 			$input['path'] ?? '',
-			$input['old_string'] ?? '',
-			$input['new_string'] ?? '',
+			$old_string,
+			$new_string,
 			! empty($input['replace_all'])
 		);
 	}
@@ -3310,6 +3341,100 @@ class WorkspaceAbilities {
 	}
 
 	/**
+	 * Normalize mounted workspace absolute paths into ability-native inputs.
+	 *
+	 * @param  array<string,mixed> $input       Ability input.
+	 * @param  string[]            $handle_keys Keys that can hold workspace handles.
+	 * @return array<string,mixed>
+	 */
+	private static function normalize_mounted_workspace_path_input( array $input, array $handle_keys ): array {
+		$workspace_root = defined('DATAMACHINE_WORKSPACE_PATH') ? self::normalize_workspace_root( (string) DATAMACHINE_WORKSPACE_PATH ) : '';
+		if ( '' === $workspace_root ) {
+			return $input;
+		}
+
+		foreach ( $handle_keys as $key ) {
+			if ( isset($input[ $key ]) && is_string($input[ $key ]) && self::is_absolute_path($input[ $key ]) ) {
+				$parts = self::split_workspace_root_path($input[ $key ], $workspace_root);
+				if ( null === $parts ) {
+					return $input;
+				}
+
+				$input[ $key ] = $parts['repo'];
+				if ( '' !== $parts['path'] ) {
+					$existing_path = isset($input['path']) && is_string($input['path']) ? trim($input['path'], '/') : '';
+					$input['path'] = '' === $existing_path ? $parts['path'] : $parts['path'] . '/' . $existing_path;
+				}
+			}
+		}
+
+		if ( isset($input['path']) && is_string($input['path']) && self::is_absolute_path($input['path']) ) {
+			$parts = self::split_workspace_root_path($input['path'], $workspace_root);
+			if ( null === $parts ) {
+				return $input;
+			}
+
+			$current_handle = '';
+			foreach ( $handle_keys as $key ) {
+				if ( isset($input[ $key ]) && is_string($input[ $key ]) && '' !== trim($input[ $key ]) ) {
+					$current_handle = trim($input[ $key ]);
+					break;
+				}
+			}
+
+			if ( '' === $current_handle && ! empty($handle_keys) ) {
+				$input[ $handle_keys[0] ] = $parts['repo'];
+			}
+			if ( '' === $current_handle || $current_handle === $parts['repo'] ) {
+				$input['path'] = $parts['path'];
+			}
+		}
+
+		return $input;
+	}
+
+	private static function normalize_workspace_root( string $root ): string {
+		$root = trim(str_replace('\\', '/', trim($root)), '/');
+		return '' === $root ? '' : '/' . $root;
+	}
+
+	private static function is_absolute_path( string $path ): bool {
+		$path = str_replace('\\', '/', trim($path));
+		return str_starts_with($path, '/') || (bool) preg_match('#^[a-zA-Z][a-zA-Z0-9+.-]*://#', $path);
+	}
+
+	/**
+	 * @return array{repo:string,path:string}|null
+	 */
+	private static function split_workspace_root_path( string $path, string $workspace_root ): ?array {
+		$path = str_replace('\\', '/', trim($path));
+		if ( preg_match('#^[a-zA-Z][a-zA-Z0-9+.-]*://#', $path) ) {
+			return null;
+		}
+
+		$root = rtrim($workspace_root, '/');
+		if ( $path !== $root && ! str_starts_with($path, $root . '/') ) {
+			return null;
+		}
+
+		$relative = ltrim(substr($path, strlen($root)), '/');
+		if ( '' === $relative ) {
+			return null;
+		}
+
+		$segments = array_values(array_filter(explode('/', $relative), static fn( string $segment ): bool => '' !== $segment && '.' !== $segment));
+		if ( empty($segments) || in_array('..', $segments, true) ) {
+			return null;
+		}
+
+		$repo = array_shift($segments);
+		return array(
+			'repo' => $repo,
+			'path' => implode('/', $segments),
+		);
+	}
+
+	/**
 	 * Read git log entries for a workspace repository.
 	 *
 	 * @param  array $input Input parameters with 'name', optional 'limit'.
@@ -3330,6 +3455,7 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function gitDiff( array $input ): array|\WP_Error {
+		$input = self::normalize_mounted_workspace_path_input($input, array( 'name' ));
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			return ( new RemoteWorkspaceBackend() )->git_diff(
 				$input['name'] ?? '',
