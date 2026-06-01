@@ -737,6 +737,11 @@ class WorkspaceTools extends BaseTool
      * naturally use paths like /workspace/example/README.md even though the
      * canonical workspace tools accept repo=example and path=README.md.
      *
+     * This is the model-facing compatibility boundary for workspace file tools:
+     * DMC accepts mounted absolute paths under DATAMACHINE_WORKSPACE_PATH and
+     * the documented workspace_edit aliases search/replace and old/new. It does
+     * not infer unrelated required inputs from ambient context.
+     *
      * @param array<string,mixed> $input Tool input.
      * @param string[]            $handle_keys Keys that hold workspace handles.
      * @return array<string,mixed>
