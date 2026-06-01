@@ -1357,7 +1357,7 @@ class GitHubAbilities {
 			return new \WP_Error('missing_repo', 'Repository is required (owner/repo format).', array( 'status' => 400 ));
 		}
 
-		$pat = self::getPatForRepo($repo);
+		$pat = self::getPatForRepoCapability($repo, 'issues_read');
 		if ( empty($pat) ) {
 			return self::patError();
 		}
@@ -1406,7 +1406,7 @@ class GitHubAbilities {
 			return new \WP_Error('missing_params', 'Repository (owner/repo) and issue_number are required.', array( 'status' => 400 ));
 		}
 
-		$pat = self::getPatForRepo($repo);
+		$pat = self::getPatForRepoCapability($repo, 'issues_read');
 		if ( empty($pat) ) {
 			return self::patError();
 		}

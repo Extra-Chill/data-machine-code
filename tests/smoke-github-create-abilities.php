@@ -845,8 +845,10 @@ namespace {
         ),
         ) 
     );
+    \DataMachineCode\Support\GitHubCredentialResolver::$selectors = array();
     $result = GitHubAbilities::getIssue(array( 'repo' => 'owner/repo', 'issue_number' => 123 ));
     $issue  = is_array($result) ? ( $result['issue'] ?? array() ) : array();
+    $assert('getIssue selects issues_read credential by repo', array( 'repo' => 'owner/repo', 'capability' => 'issues_read' ) === ( \DataMachineCode\Support\GitHubCredentialResolver::$selectors[0] ?? null ));
     $assert('getIssue returns generated_at', is_array($result) && ! empty($result['generated_at']));
     $assert('getIssue preserves comments count', 2 === ( $issue['comments'] ?? null ) && 2 === ( $issue['comment_count'] ?? null ));
     $assert('getIssue fetches latest issue comment page', is_string($GLOBALS['dmc_http_calls'][1]['url'] ?? null) && str_contains($GLOBALS['dmc_http_calls'][1]['url'], '/repos/owner/repo/issues/123/comments') && str_contains($GLOBALS['dmc_http_calls'][1]['url'], 'per_page=1') && str_contains($GLOBALS['dmc_http_calls'][1]['url'], 'page=2'));
