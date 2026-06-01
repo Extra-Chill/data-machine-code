@@ -538,12 +538,20 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Replacement text.',
 							),
+							'search'      => array(
+								'type'        => 'string',
+								'description' => 'Alias for old_string.',
+							),
+							'replace'     => array(
+								'type'        => 'string',
+								'description' => 'Alias for new_string.',
+							),
 							'replace_all' => array(
 								'type'        => 'boolean',
 								'description' => 'Replace all occurrences (default false).',
 							),
 						),
-						'required'   => array( 'path', 'old_string', 'new_string' ),
+						'required'   => array( 'path' ),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -2436,12 +2444,23 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function editFile( array $input ): array|\WP_Error {
+		$old_string = (string) ( $input['old_string'] ?? $input['search'] ?? '' );
+		$new_string = (string) ( $input['new_string'] ?? $input['replace'] ?? '' );
+
+		if ( '' === $old_string ) {
+			return new \WP_Error('missing_old_string', 'old_string is required.', array( 'status' => 400 ));
+		}
+
+		if ( ! array_key_exists('new_string', $input) && ! array_key_exists('replace', $input) ) {
+			return new \WP_Error('missing_new_string', 'new_string is required.', array( 'status' => 400 ));
+		}
+
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			return ( new RemoteWorkspaceBackend() )->edit_file(
 				$input['repo'] ?? '',
 				$input['path'] ?? '',
-				$input['old_string'] ?? '',
-				$input['new_string'] ?? '',
+				$old_string,
+				$new_string,
 				! empty($input['replace_all'])
 			);
 		}
@@ -2452,8 +2471,8 @@ class WorkspaceAbilities {
 		return $writer->edit_file(
 			$input['repo'] ?? '',
 			$input['path'] ?? '',
-			$input['old_string'] ?? '',
-			$input['new_string'] ?? '',
+			$old_string,
+			$new_string,
 			! empty($input['replace_all'])
 		);
 	}

@@ -407,12 +407,12 @@ class WorkspaceTools extends BaseTool
      */
     public function handleEdit( array $parameters ): array
     {
-        $input = array(
-        'repo'       => $parameters['repo'] ?? '',
-        'path'       => $parameters['path'] ?? '',
-        'old_string' => $parameters['old_string'] ?? '',
-        'new_string' => $parameters['new_string'] ?? '',
-        );
+		$input = array(
+		'repo'       => $parameters['repo'] ?? '',
+		'path'       => $parameters['path'] ?? '',
+		'old_string' => $parameters['old_string'] ?? $parameters['search'] ?? '',
+		'new_string' => $parameters['new_string'] ?? $parameters['replace'] ?? '',
+		);
 
         if (array_key_exists('replace_all', $parameters) ) {
             $input['replace_all'] = (bool) $parameters['replace_all'];
@@ -1195,12 +1195,14 @@ class WorkspaceTools extends BaseTool
             'properties' => array(
             'repo'        => array( 'type' => 'string', 'description' => 'Workspace handle: <repo> or <repo>@<branch-slug>.' ),
             'path'        => array( 'type' => 'string', 'description' => 'Relative file path within the repo.' ),
-            'old_string'  => array( 'type' => 'string', 'description' => 'Exact text to find.' ),
-            'new_string'  => array( 'type' => 'string', 'description' => 'Replacement text.' ),
-            'replace_all' => array( 'type' => 'boolean', 'description' => 'Replace all occurrences. Default false.' ),
-            ),
-            'required'   => array( 'path', 'old_string', 'new_string' ),
-            ),
+			'old_string'  => array( 'type' => 'string', 'description' => 'Exact text to find.' ),
+			'new_string'  => array( 'type' => 'string', 'description' => 'Replacement text.' ),
+			'search'      => array( 'type' => 'string', 'description' => 'Alias for old_string.' ),
+			'replace'     => array( 'type' => 'string', 'description' => 'Alias for new_string.' ),
+			'replace_all' => array( 'type' => 'boolean', 'description' => 'Replace all occurrences. Default false.' ),
+			),
+			'required'   => array( 'path' ),
+			),
             ) 
         );
     }

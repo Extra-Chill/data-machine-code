@@ -147,10 +147,22 @@ namespace {
     $assert('absolute workspace repo normalizes to handle', 'homeboy-extensions' === ( $ability->last_input['repo'] ?? '' ));
     $assert('absolute workspace repo preserves relative path', 'wordpress/scripts/build/build.sh' === ( $ability->last_input['path'] ?? '' ));
 
-    $absolute_escape = $tools->handleRead(array( 'path' => '/tmp/homeboy-extensions/README.md' ));
-    $assert('absolute path outside workspace root is rejected', false === ( $absolute_escape['success'] ?? true ));
+	$absolute_escape = $tools->handleRead(array( 'path' => '/tmp/homeboy-extensions/README.md' ));
+	$assert('absolute path outside workspace root is rejected', false === ( $absolute_escape['success'] ?? true ));
 
-    $result                                   = $tools->handleGitStatus(array( 'name' => 'current-project' ));
+	$edit_alias = $tools->handleEdit(
+		array(
+			'repo'    => 'homeboy-extensions',
+			'path'    => 'wordpress/scripts/build/build.sh',
+			'search'  => 'npm install --silent',
+			'replace' => 'npm install --legacy-peer-deps',
+		)
+	);
+	$assert('workspace_edit accepts search/replace aliases', true === ( $edit_alias['success'] ?? false ));
+	$assert('workspace_edit maps search to old_string', 'npm install --silent' === ( $ability->last_input['old_string'] ?? '' ));
+	$assert('workspace_edit maps replace to new_string', 'npm install --legacy-peer-deps' === ( $ability->last_input['new_string'] ?? '' ));
+
+	$result                                   = $tools->handleGitStatus(array( 'name' => 'current-project' ));
     $data                                     = $result['data'] ?? array();
 
     $assert('alias resolves before ability execution', 'wp-rl@agent-runs-modern-api-openai-gpt-5-5' === ( $ability->last_input['name'] ?? '' ));
