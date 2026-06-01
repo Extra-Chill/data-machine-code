@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.17] - 2026-06-01
+
+### Fixed
+- Fix workspace lock lint findings
+- Fix workspace mutation lock recovery evidence
+
 ## [0.47.16] - 2026-06-01
 
 ### Fixed
