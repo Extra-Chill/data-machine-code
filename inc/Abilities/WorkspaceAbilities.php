@@ -1948,6 +1948,46 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
+				'datamachine/workspace-worktree-active-no-signal-merged-apply',
+				array(
+					'label'               => 'Promote Merged Active Worktrees',
+					'description'         => 'Promote clean active_no_signal rows with suggested_action=merged_to_default into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'dry_run' => array(
+								'type'        => 'boolean',
+								'description' => 'If true, preview metadata promotions without writing.',
+							),
+							'limit'   => array(
+								'type'        => 'integer',
+								'description' => 'Maximum active_no_signal rows to inspect in this page. Defaults to 25.',
+							),
+							'offset'  => array(
+								'type'        => 'integer',
+								'description' => 'Pagination offset into the active_no_signal inventory ordering.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'dry_run' => array( 'type' => 'boolean' ),
+							'planned' => array( 'type' => 'array' ),
+							'written' => array( 'type' => 'array' ),
+							'skipped' => array( 'type' => 'array' ),
+							'summary' => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeActiveNoSignalMergedApply' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-cleanup-artifacts',
 				array(
 					'label'               => 'Cleanup Worktree Artifacts',
@@ -3257,6 +3297,27 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->worktree_active_no_signal_equivalent_clean_apply($opts);
+	}
+
+	/**
+	 * Promote merged-to-default active/no-signal evidence into cleanup metadata.
+	 *
+	 * @param  array $input Input parameters (dry_run, limit, offset).
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function worktreeActiveNoSignalMergedApply( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		$opts      = array(
+			'dry_run' => ! empty($input['dry_run']),
+		);
+		if ( array_key_exists('limit', $input) ) {
+			$opts['limit'] = (int) $input['limit'];
+		}
+		if ( array_key_exists('offset', $input) ) {
+			$opts['offset'] = (int) $input['offset'];
+		}
+
+		return $workspace->worktree_active_no_signal_merged_apply($opts);
 	}
 
 	/**
