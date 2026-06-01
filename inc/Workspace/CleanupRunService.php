@@ -7,6 +7,7 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Cleanup\CleanupRemainingWorkSummary;
 use DataMachineCode\Storage\CleanupRunRepository;
 
 defined('ABSPATH') || exit;
@@ -164,13 +165,14 @@ class CleanupRunService {
 		ksort($summary['items_by_type']);
 
 		return array(
-			'success' => true,
-			'state'   => (string) ( $run['status'] ?? 'unknown' ),
-			'run_id'  => $run_id,
-			'status'  => $run['status'] ?? 'unknown',
-			'mode'    => $run['mode'] ?? '',
-			'run'     => $run,
-			'summary' => $summary,
+			'success'                => true,
+			'state'                  => (string) ( $run['status'] ?? 'unknown' ),
+			'run_id'                 => $run_id,
+			'status'                 => $run['status'] ?? 'unknown',
+			'mode'                   => $run['mode'] ?? '',
+			'run'                    => $run,
+			'summary'                => $summary,
+			'remaining_work_summary' => CleanupRemainingWorkSummary::from_items($items),
 		);
 	}
 
