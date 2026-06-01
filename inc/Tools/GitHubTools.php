@@ -260,8 +260,7 @@ class GitHubTools extends BaseTool
      */
     public function getListIssuesDefinition(): array
     {
-        return $this->repeatableDefinition(
-            array(
+        return array(
             'class'       => __CLASS__,
             'method'      => 'handleListIssues',
             'description' => 'List issues from a GitHub repository. Returns issue numbers, titles, states, labels, assignees, comment counts, timestamps, and a generated_at timestamp. Use to review open issues, track progress, or find specific issues by label.',
@@ -287,7 +286,6 @@ class GitHubTools extends BaseTool
             ),
             'required'   => array( 'repo' ),
             ),
-            ) 
         );
     }
 

@@ -218,6 +218,9 @@ namespace {
     $assert('remove_label_from_issue is available in chat', in_array('chat', $github_tools->registered['remove_label_from_issue']['contexts'] ?? array(), true));
     $assert('remove_label_from_issue is available in pipeline', in_array('pipeline', $github_tools->registered['remove_label_from_issue']['contexts'] ?? array(), true));
 
+    $list_issues_definition = $github_tools->getListIssuesDefinition();
+    $assert('list_github_issues uses default duplicate guard', 'repeatable' !== ( $list_issues_definition['runtime']['duplicate_policy'] ?? '' ));
+
     $issue_definition = $issue_tool->getToolDefinition();
     $issue_params     = $issue_definition['parameters']['properties'] ?? array();
     $assert('create_github_issue exposes assignees from ability schema', array_key_exists('assignees', $issue_params));
