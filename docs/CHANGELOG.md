@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.16] - 2026-06-01
+
+### Fixed
+- Fix Studio worktree context projection crash
+
 ## [0.47.15] - 2026-05-31
 
 ### Fixed
