@@ -130,6 +130,13 @@ namespace {
     $ability                                  = new DataMachineCodeWorkspaceAliasFakeAbility();
     $GLOBALS['dmc_workspace_alias_ability'] = $ability;
     $tools                                    = new \DataMachineCode\Tools\WorkspaceTools();
+    $read_definition                          = $tools->getReadDefinition();
+    $grep_definition                          = $tools->getGrepDefinition();
+    $git_diff_definition                      = $tools->getGitDiffDefinition();
+    $assert('workspace_read schema allows path-only mounted workspace calls', array( 'path' ) === ( $read_definition['parameters']['required'] ?? null ));
+    $assert('workspace_grep schema allows path-only mounted workspace calls', array( 'pattern' ) === ( $grep_definition['parameters']['required'] ?? null ));
+    $assert('workspace_git_diff schema allows path-only mounted workspace calls', array() === ( $git_diff_definition['parameters']['required'] ?? null ));
+
     $absolute_read                           = $tools->handleRead(array( 'path' => '/workspace/homeboy-extensions/wordpress/scripts/build/build.sh' ));
     $assert('absolute workspace path read succeeds', true === ( $absolute_read['success'] ?? false ));
     $assert('absolute workspace path infers repo', 'homeboy-extensions' === ( $ability->last_input['repo'] ?? '' ));

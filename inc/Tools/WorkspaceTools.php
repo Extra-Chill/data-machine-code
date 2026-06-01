@@ -1063,7 +1063,7 @@ class WorkspaceTools extends BaseTool
                         'description' => 'Optional relative directory path inside the repo.',
                     ),
             ),
-            'required'   => array( 'repo' ),
+            'required'   => array(),
             ),
             ) 
         );
@@ -1105,7 +1105,7 @@ class WorkspaceTools extends BaseTool
                         'description' => 'Maximum number of lines to return.',
                     ),
             ),
-            'required'   => array( 'repo', 'path' ),
+            'required'   => array( 'path' ),
             ),
             ) 
         );
@@ -1151,7 +1151,7 @@ class WorkspaceTools extends BaseTool
                         'description' => 'Number of surrounding lines to include for each match (default 0, max 10).',
                     ),
             ),
-            'required'   => array( 'repo', 'pattern' ),
+            'required'   => array( 'pattern' ),
             ),
             ) 
         );
@@ -1174,7 +1174,7 @@ class WorkspaceTools extends BaseTool
             'path'    => array( 'type' => 'string', 'description' => 'Relative file path within the repo.' ),
             'content' => array( 'type' => 'string', 'description' => 'File content to write.' ),
             ),
-            'required'   => array( 'repo', 'path', 'content' ),
+            'required'   => array( 'path', 'content' ),
             ),
             ) 
         );
@@ -1199,7 +1199,7 @@ class WorkspaceTools extends BaseTool
             'new_string'  => array( 'type' => 'string', 'description' => 'Replacement text.' ),
             'replace_all' => array( 'type' => 'boolean', 'description' => 'Replace all occurrences. Default false.' ),
             ),
-            'required'   => array( 'repo', 'path', 'old_string', 'new_string' ),
+            'required'   => array( 'path', 'old_string', 'new_string' ),
             ),
             ) 
         );
@@ -1246,7 +1246,7 @@ class WorkspaceTools extends BaseTool
             'recursive'              => array( 'type' => 'boolean', 'description' => 'Required when target is a directory. Default false.' ),
             'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
             ),
-            'required'   => array( 'repo', 'path' ),
+            'required'   => array( 'path' ),
             ),
             ) 
         );
@@ -1283,7 +1283,7 @@ class WorkspaceTools extends BaseTool
             'to'     => array( 'type' => 'string', 'description' => 'Optional to git ref.' ),
             'staged' => array( 'type' => 'boolean', 'description' => 'Read staged diff instead of working tree diff.' ),
             'path'   => array( 'type' => 'string', 'description' => 'Optional relative path filter.' ),
-            ), array( 'name' ), array( 'duplicate_policy' => 'repeatable' ) 
+            ), array(), array( 'duplicate_policy' => 'repeatable' )
         );
     }
 
