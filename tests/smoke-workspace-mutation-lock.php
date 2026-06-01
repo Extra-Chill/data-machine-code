@@ -221,6 +221,18 @@ namespace {
 	$assert('workspace_repo_busy', is_wp_error($busy) ? $busy->get_error_code() : '', 'busy failure uses DMC-shaped retryable code');
 	$assert(true, is_wp_error($busy) ? (bool) ( $busy->get_error_data()['retryable'] ?? false ) : false, 'busy failure is marked retryable');
 	$assert('worktree-demo', is_wp_error($busy) ? (string) ( $busy->get_error_data()['lock_key'] ?? '' ) : '', 'busy failure includes lock key');
+	$busy_data = is_wp_error($busy) ? $busy->get_error_data() : array();
+	$assert('active', (string) ( $busy_data['filesystem_lock']['state'] ?? '' ), 'busy failure includes active filesystem lock state');
+	$assert('filesystem_only', (string) ( $busy_data['filesystem_lock']['owner_evidence']['source'] ?? '' ), 'busy failure explains filesystem-only owner evidence when DB row is unavailable');
+	$assert(true, isset($busy_data['filesystem_lock']['age_seconds']), 'busy failure includes filesystem lock age');
+	$assert(true, isset($busy_data['status_command']), 'busy failure includes lock status command');
+	$assert(true, isset($busy_data['stale_prune_command']), 'busy failure includes stale prune command');
+	$assert(true, isset($busy_data['recovery_guidance']['safety']), 'busy failure includes recovery safety guidance');
+	$filesystem_locks = (array) ( $status['filesystem']['locks'] ?? array() );
+	$assert(1, count($filesystem_locks), 'status includes per-filesystem-lock detail rows');
+	$assert('active', (string) ( $filesystem_locks[0]['state'] ?? '' ), 'status lock detail records active state');
+	$assert('filesystem_flock_held', (string) ( $filesystem_locks[0]['reason'] ?? '' ), 'status lock detail records active flock reason');
+	$assert(false, (bool) ( $filesystem_locks[0]['safe_to_prune'] ?? true ), 'active filesystem lock is not safe to prune');
 
     $other = \DataMachineCode\Workspace\WorkspaceMutationLock::acquire($tmp, 'other', 0);
     $assert(false, is_wp_error($other), 'different repo acquisition is independent');
@@ -249,9 +261,14 @@ namespace {
 
 	$stale_path = $tmp . '/.locks/worktree-stale.lock';
     touch($stale_path, time() - 172800);
-    $stale_status = \DataMachineCode\Workspace\WorkspaceMutationLock::status($tmp);
-    $assert(1, (int) $stale_status['stale'], 'old unlocked filesystem lock is counted stale');
-    $dry_prune = \DataMachineCode\Workspace\WorkspaceMutationLock::prune_stale($tmp, true);
+	$stale_status = \DataMachineCode\Workspace\WorkspaceMutationLock::status($tmp);
+	$assert(1, (int) $stale_status['stale'], 'old unlocked filesystem lock is counted stale');
+	$stale_locks = array_values(array_filter((array) ( $stale_status['filesystem']['locks'] ?? array() ), static fn( array $lock ): bool => 'worktree-stale' === (string) ( $lock['lock_key'] ?? '' )));
+	$assert(1, count($stale_locks), 'stale filesystem lock appears in detail rows');
+	$assert('stale', (string) ( $stale_locks[0]['state'] ?? '' ), 'stale lock detail records stale state');
+	$assert(true, (bool) ( $stale_locks[0]['safe_to_prune'] ?? false ), 'stale unlocked filesystem lock is safe to prune');
+	$assert('wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json', (string) ( $stale_locks[0]['recovery_command'] ?? '' ), 'stale lock detail points at dry-run prune command');
+	$dry_prune = \DataMachineCode\Workspace\WorkspaceMutationLock::prune_stale($tmp, true);
     $assert(true, is_file($stale_path), 'dry-run stale lock prune does not remove file');
     $assert(1, (int) $dry_prune['filesystem']['removed_count'], 'dry-run reports stale lock file candidate');
     $prune = \DataMachineCode\Workspace\WorkspaceMutationLock::prune_stale($tmp, false);
