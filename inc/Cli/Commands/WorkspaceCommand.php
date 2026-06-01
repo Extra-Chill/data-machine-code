@@ -2140,9 +2140,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--limit=<count>]
 	 * : For `cleanup --dry-run`, `cleanup-artifacts --dry-run`,
 	 *   `reconcile-metadata`, and `active-no-signal-report`,
-	 *   maximum worktrees to scan in this page. Artifact cleanup defaults to
-	 *   100; metadata reconciliation uses this only when pagination is requested.
-	 *   Use 0 plus `--exhaustive` for a full artifact audit.
+	 *   positive maximum worktrees to scan in this page. Artifact cleanup defaults
+	 *   to 100; metadata reconciliation uses this only when pagination is
+	 *   requested. Use `--exhaustive` instead of `--limit=0` for a full artifact
+	 *   audit.
 	 *
 	 * [--offset=<count>]
 	 * : For `cleanup --dry-run`, `cleanup-artifacts --dry-run`,
@@ -2158,7 +2159,8 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * [--exhaustive]
 	 * : For `cleanup-artifacts --dry-run`, scan every worktree AND run per-worktree
-	 *   git safety probes. Slow on huge workspaces; use sparingly.
+	 *   git safety probes. This is the explicit unbounded artifact audit mode;
+	 *   slow on huge workspaces, so use sparingly.
 	 *
 	 * [--safety-probes]
 	 * : For `cleanup-artifacts --dry-run`, run per-worktree git safety probes

@@ -558,6 +558,13 @@ namespace {
     $assert(true, ! is_wp_error($budgeted_active_report) && ( $budgeted_active_report['success'] ?? false ), 'budgeted active/no-signal report succeeds');
     $assert(true, (bool) ( $budgeted_active_report['pagination']['partial'] ?? false ), 'budgeted active/no-signal report returns partial pagination');
     $assert(true, isset($budgeted_active_report['evidence']['budget']['budget_exhausted']), 'budgeted active/no-signal report exposes budget evidence');
+    $bad_active_zero = $ws->worktree_active_no_signal_report(array( 'limit' => 0, 'offset' => 0 ));
+    $assert(true, is_wp_error($bad_active_zero), 'active/no-signal report rejects limit=0');
+    $assert('invalid_active_no_signal_limit', $bad_active_zero->code ?? '', 'active/no-signal limit=0 rejection uses explicit error code');
+    $bad_active_negative = $ws->worktree_active_no_signal_report(array( 'limit' => -1, 'offset' => 0 ));
+    $assert(true, is_wp_error($bad_active_negative), 'active/no-signal report rejects negative limits');
+    $bad_active_budget = $ws->worktree_active_no_signal_report(array( 'limit' => 0, 'until_budget' => '1s' ));
+    $assert(true, is_wp_error($bad_active_budget), 'budgeted active/no-signal report still requires a positive page size');
     $run('git remote set-url origin https://github.com/acme/demo.git', $primary);
     $finalized_dry_run = $ws->worktree_active_no_signal_finalized_apply(array( 'dry_run' => true, 'limit' => 50, 'offset' => 0 ));
     $run(sprintf('git remote set-url origin %s', escapeshellarg($remote)), $primary);
@@ -624,6 +631,14 @@ namespace {
     $assert(true, ! is_wp_error($budgeted_page) && ( $budgeted_page['success'] ?? false ), 'budgeted metadata reconciliation dry-run succeeds');
     $assert(true, (bool) ( $budgeted_page['pagination']['partial'] ?? false ), 'budgeted metadata reconciliation dry-run returns partial pagination');
     $assert(true, isset($budgeted_page['evidence']['budget']['budget_exhausted']), 'budgeted metadata reconciliation dry-run exposes budget evidence');
+
+    $bad_reconcile_zero = $ws->worktree_reconcile_metadata(array( 'dry_run' => true, 'limit' => 0, 'offset' => 0 ));
+    $assert(true, is_wp_error($bad_reconcile_zero), 'metadata reconciliation rejects limit=0 when pagination is requested');
+    $assert('invalid_metadata_reconcile_limit', $bad_reconcile_zero->code ?? '', 'metadata reconciliation limit=0 rejection keeps explicit error code');
+    $bad_reconcile_negative = $ws->worktree_reconcile_metadata(array( 'dry_run' => true, 'limit' => -1, 'offset' => 0 ));
+    $assert(true, is_wp_error($bad_reconcile_negative), 'metadata reconciliation rejects negative limits');
+    $bad_reconcile_budget = $ws->worktree_reconcile_metadata(array( 'apply' => true, 'limit' => 0, 'until_budget' => '1s' ));
+    $assert(true, is_wp_error($bad_reconcile_budget), 'budgeted metadata reconciliation direct apply requires a positive page size');
 
     \DataMachine\Engine\Tasks\TaskScheduler::$batches = array();
     $job_backed = $ws->worktree_reconcile_metadata(array( 'apply' => true, 'via_jobs' => true, 'limit' => 3 ));

@@ -236,6 +236,18 @@ namespace {
     $assert('unpushed_commits', $skip_reasons['demo@unpushed'] ?? '', 'exhaustive unpushed worktree is protected');
     $assert('active_symlink_target', $skip_reasons['demo@active'] ?? '', 'exhaustive active plugin symlink target is protected');
 
+    $exhaustive_limit_zero = $workspace->worktree_cleanup_artifacts(array( 'dry_run' => true, 'limit' => 0, 'exhaustive' => true ));
+    $assert(false, is_wp_error($exhaustive_limit_zero), 'limit=0 is accepted only with exhaustive artifact cleanup');
+    $assert('exhaustive', $exhaustive_limit_zero['pagination']['mode'] ?? '', 'limit=0 plus exhaustive reports exhaustive mode');
+
+    $limit_zero = $workspace->worktree_cleanup_artifacts(array( 'dry_run' => true, 'limit' => 0 ));
+    $assert(true, is_wp_error($limit_zero), 'limit=0 without exhaustive is rejected');
+    $assert('invalid_artifact_cleanup_limit', $limit_zero->code ?? '', 'limit=0 rejection uses explicit artifact cleanup error');
+    $negative_limit = $workspace->worktree_cleanup_artifacts(array( 'dry_run' => true, 'limit' => -1 ));
+    $assert(true, is_wp_error($negative_limit), 'negative artifact cleanup limit is rejected');
+    $negative_exhaustive_limit = $workspace->worktree_cleanup_artifacts(array( 'dry_run' => true, 'limit' => -1, 'exhaustive' => true ));
+    $assert(true, is_wp_error($negative_exhaustive_limit), 'negative artifact cleanup limit is rejected even with exhaustive');
+
     // Pagination smoke: limit=1 returns a partial scan with continuation.
     $page_one = $workspace->worktree_cleanup_artifacts(array( 'dry_run' => true, 'limit' => 1, 'offset' => 0 ));
     $assert(false, is_wp_error($page_one), 'page-1 dry-run succeeds');
