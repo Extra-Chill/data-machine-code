@@ -11,6 +11,9 @@ namespace {
     if (! defined('ABSPATH') ) {
         define('ABSPATH', __DIR__ . '/');
     }
+    if (! defined('DATAMACHINE_WORKSPACE_PATH') ) {
+        define('DATAMACHINE_WORKSPACE_PATH', '/workspace');
+    }
 
     $GLOBALS['dmc_workspace_alias_filters'] = array();
     $GLOBALS['dmc_workspace_alias_ability'] = null;
@@ -127,6 +130,19 @@ namespace {
     $ability                                  = new DataMachineCodeWorkspaceAliasFakeAbility();
     $GLOBALS['dmc_workspace_alias_ability'] = $ability;
     $tools                                    = new \DataMachineCode\Tools\WorkspaceTools();
+    $absolute_read                           = $tools->handleRead(array( 'path' => '/workspace/homeboy-extensions/wordpress/scripts/build/build.sh' ));
+    $assert('absolute workspace path read succeeds', true === ( $absolute_read['success'] ?? false ));
+    $assert('absolute workspace path infers repo', 'homeboy-extensions' === ( $ability->last_input['repo'] ?? '' ));
+    $assert('absolute workspace path becomes relative path', 'wordpress/scripts/build/build.sh' === ( $ability->last_input['path'] ?? '' ));
+
+    $absolute_repo_read = $tools->handleRead(array( 'repo' => '/workspace/homeboy-extensions', 'path' => 'wordpress/scripts/build/build.sh' ));
+    $assert('absolute workspace repo read succeeds', true === ( $absolute_repo_read['success'] ?? false ));
+    $assert('absolute workspace repo normalizes to handle', 'homeboy-extensions' === ( $ability->last_input['repo'] ?? '' ));
+    $assert('absolute workspace repo preserves relative path', 'wordpress/scripts/build/build.sh' === ( $ability->last_input['path'] ?? '' ));
+
+    $absolute_escape = $tools->handleRead(array( 'path' => '/tmp/homeboy-extensions/README.md' ));
+    $assert('absolute path outside workspace root is rejected', false === ( $absolute_escape['success'] ?? true ));
+
     $result                                   = $tools->handleGitStatus(array( 'name' => 'current-project' ));
     $data                                     = $result['data'] ?? array();
 
