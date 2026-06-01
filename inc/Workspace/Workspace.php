@@ -3228,6 +3228,13 @@ class Workspace {
 			foreach ( array( 'repo', 'branch', 'path', 'signal' ) as $field ) {
 				$planned = (string) ( $plan_row[ $field ] ?? '' );
 				$actual  = (string) ( $current[ $field ] ?? '' );
+				if ( 'branch' === $field ) {
+					$planned_slug = $this->slugify_branch($planned);
+					$actual_slug  = $this->slugify_branch($actual);
+					if ( '' !== $planned_slug && $planned_slug === $actual_slug ) {
+						continue;
+					}
+				}
 				if ( $planned !== $actual ) {
 					$mismatches[] = sprintf('%s planned=%s current=%s', $field, $planned, $actual);
 				}
