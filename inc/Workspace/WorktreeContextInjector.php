@@ -1078,6 +1078,10 @@ class WorktreeContextInjector {
 			return array();
 		}
 
+		if ( ! self::can_symlink_site_agents_md($source) ) {
+			return self::project_virtual_site_agents_md_via_opencode_config($worktree_path);
+		}
+
 		$target = rtrim($worktree_path, '/') . '/' . self::PROJECTED_AGENTS_PATH;
 		if ( file_exists($target) || is_link($target) ) {
 			return self::project_site_agents_md_via_opencode_config($worktree_path, $source);
@@ -1097,25 +1101,13 @@ class WorktreeContextInjector {
 		}
 
 		$projection_kind = 'symlink';
-		if ( self::can_symlink_site_agents_md($source) ) {
-            // phpcs:ignore WordPress.WP.AlternativeFunctions.symlink_symlink -- Local checkout projection to a DMC-owned generated file.
-			if ( ! symlink($source, $target) ) {
-				return new \WP_Error(
-					'agents_md_projection_failed',
-					sprintf('Failed to symlink site AGENTS.md into worktree: %s', $target),
-					array( 'status' => 500 )
-				);
-			}
-		} else {
-			$projection_kind = 'inline';
-            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-			if ( false === file_put_contents($target, self::render($payload)) ) {
-				return new \WP_Error(
-					'agents_md_projection_failed',
-					sprintf('Failed to write inline site AGENTS.md into worktree: %s', $target),
-					array( 'status' => 500 )
-				);
-			}
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.symlink_symlink -- Local checkout projection to a DMC-owned generated file.
+		if ( ! symlink($source, $target) ) {
+			return new \WP_Error(
+				'agents_md_projection_failed',
+				sprintf('Failed to symlink site AGENTS.md into worktree: %s', $target),
+				array( 'status' => 500 )
+			);
 		}
 
      // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
@@ -1144,6 +1136,27 @@ class WorktreeContextInjector {
 	 */
 	private static function can_symlink_site_agents_md( string $source ): bool {
 		return ! str_starts_with($source, '/wordpress/');
+	}
+
+	/**
+	 * Project Studio PHP-WASM site context through host-visible local files only.
+	 *
+	 * Root-level inline AGENTS.md projections for `/wordpress/...` sources can
+	 * crash Studio's PHP-WASM filesystem sync after WP-CLI exits. The rendered
+	 * `.claude/CLAUDE.local.md` snapshot was already written by `inject()`, so
+	 * point OpenCode at that host-visible file instead of creating a root
+	 * projection from the virtual source path.
+	 *
+	 * @param  string $worktree_path Absolute path to the worktree directory.
+	 * @return string[]|\WP_Error Absolute written paths, or WP_Error on failure.
+	 */
+	private static function project_virtual_site_agents_md_via_opencode_config( string $worktree_path ): array|\WP_Error {
+		$local_context = rtrim($worktree_path, '/') . '/' . self::INJECTED_PATHS[0];
+		if ( ! is_file($local_context) ) {
+			return array();
+		}
+
+		return self::project_site_agents_md_via_opencode_config($worktree_path, $local_context);
 	}
 
 	/**

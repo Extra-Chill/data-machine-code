@@ -175,10 +175,11 @@ $virtual_injection = \DataMachineCode\Workspace\WorktreeContextInjector::inject(
     )
 );
 datamachine_code_context_assert(! is_wp_error($virtual_injection), 'virtual context injection succeeds');
-datamachine_code_context_assert(! is_link($virtual_agents), 'virtual AGENTS.md projection is not a host symlink');
-datamachine_code_context_assert(is_file($virtual_agents), 'virtual AGENTS.md projection is written inline');
-datamachine_code_context_assert(str_contains((string) file_get_contents($virtual_agents), '# Virtual Memory'), 'inline virtual projection contains rendered context');
-datamachine_code_context_assert(trim(file_get_contents($virtual_root . '/.datamachine/AGENTS.md.source')) === "inline\n/wordpress/AGENTS.md", 'virtual projection marker records inline source');
+datamachine_code_context_assert(! file_exists($virtual_agents) && ! is_link($virtual_agents), 'virtual AGENTS.md projection is not written at the worktree root');
+$virtual_config = json_decode((string) file_get_contents($virtual_root . '/.opencode/opencode.json'), true);
+datamachine_code_context_assert(is_array($virtual_config), 'virtual context writes local OpenCode config');
+datamachine_code_context_assert(in_array($virtual_root . '/.claude/CLAUDE.local.md', $virtual_config['instructions'] ?? array(), true), 'virtual context points OpenCode at host-visible local snapshot');
+datamachine_code_context_assert(! file_exists($virtual_root . '/.datamachine/AGENTS.md.source'), 'virtual context does not write root projection marker');
 
 $existing_injection = \DataMachineCode\Workspace\WorktreeContextInjector::inject(
     $existing_root,
@@ -200,8 +201,8 @@ datamachine_code_context_assert(! file_exists($worktree_agents) && ! is_link($wo
 datamachine_code_context_assert(! file_exists($worktree_root . '/.datamachine/AGENTS.md.source'), 'projection marker is gone after uninject');
 datamachine_code_context_assert(! file_exists($worktree_root . '/.opencode/AGENTS.local.md'), 'uninject removes legacy fake OpenCode local snapshot');
 $virtual_removed = \DataMachineCode\Workspace\WorktreeContextInjector::uninject($virtual_root);
-datamachine_code_context_assert(in_array($virtual_agents, $virtual_removed['removed'], true), 'uninject removes inline virtual AGENTS.md projection');
-datamachine_code_context_assert(! file_exists($virtual_agents), 'inline virtual projection is gone after uninject');
+datamachine_code_context_assert(in_array($virtual_root . '/.opencode/opencode.json', $virtual_removed['removed'], true), 'uninject removes virtual OpenCode projection config');
+datamachine_code_context_assert(! file_exists($virtual_root . '/.opencode/opencode.json'), 'virtual OpenCode projection config is gone after uninject');
 $existing_removed = \DataMachineCode\Workspace\WorktreeContextInjector::uninject($existing_root);
 datamachine_code_context_assert(! file_exists($existing_root . '/.opencode/opencode.json'), 'uninject removes DMC-created OpenCode projection config');
 datamachine_code_context_assert(in_array($existing_root . '/.opencode/opencode.json', $existing_removed['removed'], true), 'removed OpenCode projection config is reported');
@@ -211,6 +212,7 @@ array_map('unlink', glob($worktree_root . '/.opencode/*') ?: array());
 array_map('unlink', glob($existing_root . '/.claude/*') ?: array());
 array_map('unlink', glob($existing_root . '/.opencode/*') ?: array());
 array_map('unlink', glob($virtual_root . '/.claude/*') ?: array());
+array_map('unlink', glob($virtual_root . '/.opencode/*') ?: array());
 array_map('rmdir', array_filter(glob($worktree_root . '/*') ?: array(), 'is_dir'));
 array_map('rmdir', array_filter(glob($existing_root . '/*') ?: array(), 'is_dir'));
 array_map('rmdir', array_filter(glob($virtual_root . '/*') ?: array(), 'is_dir'));
@@ -223,6 +225,7 @@ rmdir($existing_root . '/.claude');
 rmdir($existing_root . '/.opencode');
 rmdir($existing_root . '/.datamachine');
 rmdir($virtual_root . '/.claude');
+rmdir($virtual_root . '/.opencode');
 rmdir($virtual_root . '/.datamachine');
 rmdir($worktree_root);
 rmdir($existing_root);
