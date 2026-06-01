@@ -2444,6 +2444,7 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function editFile( array $input ): array|\WP_Error {
+		$input      = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
 		$old_string = (string) ( $input['old_string'] ?? $input['search'] ?? '' );
 		$new_string = (string) ( $input['new_string'] ?? $input['replace'] ?? '' );
 
