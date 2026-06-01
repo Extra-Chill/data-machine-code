@@ -20,6 +20,7 @@ use DataMachine\Cli\BaseCommand;
 use DataMachineCode\Cleanup\CleanupRunEvidenceStoreInterface;
 use DataMachineCode\Cleanup\DataMachineJobCleanupRunEvidenceStore;
 use DataMachineCode\Workspace\Workspace;
+use DataMachineCode\Workspace\WorkspaceMutationLock;
 
 defined('ABSPATH') || exit;
 
@@ -133,7 +134,7 @@ class WorkspaceCommand extends BaseCommand {
 		$result = $ability->execute($input);
 
 		if ( is_wp_error($result) ) {
-			$this->render_workspace_error($result);
+			WP_CLI::error($result->get_error_message());
 			return;
 		}
 
@@ -1975,7 +1976,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## OPTIONS
 	 *
 	 * <operation>
-	 * : Worktree operation: add, list, remove, prune, cleanup, cleanup-artifacts,
+	 * : Worktree operation: add, list, remove, prune, locks, cleanup, cleanup-artifacts,
 	 *   bounded-cleanup-eligible-apply, emergency-cleanup, reconcile-metadata,
 	 *   active-no-signal-report, active-no-signal-finalized-apply,
 	 *   active-no-signal-equivalent-clean-apply,
@@ -2065,7 +2066,11 @@ class WorkspaceCommand extends BaseCommand {
 	 * : Lifecycle state to record when finalizing a worktree.
 	 *
 	 * [--dry-run]
-	 * : Preview cleanup candidates without removing anything (cleanup only).
+	 * : Preview cleanup candidates without removing anything (cleanup and locks only).
+	 *
+	 * [--prune-stale]
+	 * : For `locks`, prune expired DB lock rows and old unlocked filesystem lock
+	 *   files. Active filesystem flocks are reported but never removed.
 	 *
 	 * [--apply-plan=<file>]
 	 * : Low-level escape hatch for applying a previously reviewed JSON report.
@@ -2211,6 +2216,11 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Prune stale worktree registry entries across all primaries
 	 *     wp datamachine-code workspace worktree prune
 	 *
+	 *     # Inspect and safely prune stale workspace mutation locks
+	 *     wp datamachine-code workspace worktree locks --format=json
+	 *     wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json
+	 *     wp datamachine-code workspace worktree locks --prune-stale --format=json
+	 *
 	 *     # Preview worktrees that would be removed (upstream gone or PR merged)
 	 *     wp datamachine-code workspace worktree cleanup --dry-run
 	 *
@@ -2287,7 +2297,16 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|list|remove|prune|cleanup|cleanup-artifacts|bounded-cleanup-eligible-apply|emergency-cleanup|reconcile-metadata|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
+			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|list|remove|prune|locks|cleanup|cleanup-artifacts|bounded-cleanup-eligible-apply|emergency-cleanup|reconcile-metadata|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
+			return;
+		}
+
+		if ( 'locks' === $operation ) {
+			$dry_run = ! empty($assoc_args['dry-run']) || empty($assoc_args['prune-stale']);
+			$result  = ! empty($assoc_args['prune-stale'])
+				? WorkspaceMutationLock::prune_stale($this->workspace_path, $dry_run)
+				: WorkspaceMutationLock::status($this->workspace_path);
+			$this->render_workspace_lock_result($result, $assoc_args, ! empty($assoc_args['prune-stale']));
 			return;
 		}
 
@@ -2543,7 +2562,7 @@ class WorkspaceCommand extends BaseCommand {
 		$result = $ability->execute($input);
 
 		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+			$this->render_workspace_error($result);
 			return;
 		}
 
@@ -2766,6 +2785,63 @@ class WorkspaceCommand extends BaseCommand {
 		}
 	}
 
+	/**
+	 * Render workspace mutation lock status or prune results.
+	 *
+	 * @param array<string,mixed> $result Lock status or prune result.
+	 */
+	private function render_workspace_lock_result( array $result, array $assoc_args, bool $prune ): void {
+		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+			WP_CLI::log(false === $json ? '{}' : $json);
+			return;
+		}
+
+		$status = $prune ? (array) ( $result['after'] ?? array() ) : $result;
+		$fs     = (array) ( $status['filesystem'] ?? array() );
+		$db     = (array) ( $status['database'] ?? array() );
+
+		WP_CLI::log($prune ? 'Workspace mutation locks: stale prune complete' : 'Workspace mutation locks:');
+		WP_CLI::log(sprintf('Active: %d  Stale: %d', (int) ( $status['active'] ?? 0 ), (int) ( $status['stale'] ?? 0 )));
+		WP_CLI::log(sprintf('Database: %s active, %s stale, available=%s', (string) ( $db['active'] ?? 0 ), (string) ( $db['stale'] ?? 0 ), ! empty($db['available']) ? 'yes' : 'no'));
+		WP_CLI::log(sprintf('Filesystem: %s active, %s stale, %s recent', (string) ( $fs['active'] ?? 0 ), (string) ( $fs['stale'] ?? 0 ), (string) ( $fs['recent'] ?? 0 )));
+
+		if ( $prune ) {
+			$filesystem = (array) ( $result['filesystem'] ?? array() );
+			WP_CLI::log(sprintf('Filesystem removed: %d; skipped: %d', (int) ( $filesystem['removed_count'] ?? 0 ), (int) ( $filesystem['skipped_count'] ?? 0 )));
+			if ( ! empty($result['dry_run']) ) {
+				WP_CLI::log('Dry-run only. Re-run without --dry-run to remove stale unlocked lock files.');
+			}
+		}
+
+		$locks = (array) ( $fs['locks'] ?? array() );
+		if ( ! empty($locks) ) {
+			$items = array_map(
+				static function ( array $lock ): array {
+					$owner = (array) ( $lock['owner_evidence'] ?? array() );
+					return array(
+						'lock_key'      => (string) ( $lock['lock_key'] ?? '' ),
+						'scope'         => (string) ( $lock['scope'] ?? '' ),
+						'state'         => (string) ( $lock['state'] ?? '' ),
+						'age_seconds'   => $lock['age_seconds'] ?? null,
+						'safe_to_prune' => ! empty($lock['safe_to_prune']) ? 'yes' : 'no',
+						'owner_source'  => (string) ( $owner['source'] ?? '' ),
+						'path'          => (string) ( $lock['path'] ?? '' ),
+					);
+				},
+				$locks
+			);
+			$this->format_items($items, array( 'lock_key', 'scope', 'state', 'age_seconds', 'safe_to_prune', 'owner_source', 'path' ), $assoc_args, 'lock_key');
+		}
+
+		$guidance = (array) ( $fs['guidance'] ?? $status['recovery_guidance'] ?? array() );
+		if ( ! empty($guidance) ) {
+			WP_CLI::log(sprintf('Status: %s', (string) ( $guidance['status_command'] ?? 'wp datamachine-code workspace worktree locks --format=json' )));
+			WP_CLI::log(sprintf('Prune:  %s', (string) ( $guidance['dry_run_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' )));
+			WP_CLI::log((string) ( $guidance['safety'] ?? 'Active filesystem flocks are not pruned.' ));
+		}
+	}
+
 	private function render_workspace_error( \WP_Error $error ): void {
 		$data = (array) $error->get_error_data();
 		if ( 'workspace_repo_busy' !== $error->get_error_code() ) {
@@ -2793,6 +2869,30 @@ class WorkspaceCommand extends BaseCommand {
 			if ( '' !== $session_id ) {
 				WP_CLI::log(sprintf('Session:    %s', $session_id));
 			}
+		}
+
+		$filesystem_lock = is_array($data['filesystem_lock'] ?? null) ? (array) $data['filesystem_lock'] : array();
+		if ( ! empty($filesystem_lock) ) {
+			WP_CLI::warning(sprintf('Filesystem lock: %s (%s)', (string) ( $filesystem_lock['lock_key'] ?? $data['lock_key'] ?? '-' ), (string) ( $filesystem_lock['state'] ?? 'unknown' )));
+			WP_CLI::log(sprintf('Path:       %s', (string) ( $filesystem_lock['path'] ?? $data['lock_path'] ?? '-' )));
+			WP_CLI::log(sprintf('Age:        %ss', (string) ( $filesystem_lock['age_seconds'] ?? '-' )));
+			$owner_evidence = (array) ( $filesystem_lock['owner_evidence'] ?? array() );
+			if ( ! empty($owner_evidence['source']) ) {
+				WP_CLI::log(sprintf('Owner src:  %s', (string) $owner_evidence['source']));
+			}
+			if ( ! empty($owner_evidence['message']) ) {
+				WP_CLI::log(sprintf('Owner note: %s', (string) $owner_evidence['message']));
+			}
+			if ( ! empty($filesystem_lock['operator_guidance']) ) {
+				WP_CLI::log(sprintf('Guidance:   %s', (string) $filesystem_lock['operator_guidance']));
+			}
+		}
+
+		if ( ! empty($data['status_command']) ) {
+			WP_CLI::log(sprintf('Inspect:    %s', (string) $data['status_command']));
+		}
+		if ( ! empty($data['stale_prune_command']) ) {
+			WP_CLI::log(sprintf('Recover:    %s', (string) $data['stale_prune_command']));
 		}
 
 		WP_CLI::error($error->get_error_message());

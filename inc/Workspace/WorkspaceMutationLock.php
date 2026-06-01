@@ -137,13 +137,16 @@ final class WorkspaceMutationLock {
 
 			if ( 0 === $timeout || ( microtime(true) - $started ) >= $timeout ) {
 				fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+				$error_data = self::busy_error_data($repo, $lock_path);
 				return new \WP_Error(
 					'workspace_repo_busy',
 					sprintf(
-						'Workspace repo "%s" is busy with another worktree lifecycle mutation. Retry after the current add/remove/cleanup/prune operation completes.',
-						$repo
+						'Workspace repo "%s" is busy with another worktree lifecycle mutation. Retry after the current add/remove/cleanup/prune operation completes. Inspect lock status with `%s`; prune stale/orphaned locks with `%s` after confirming no active holder remains.',
+						$repo,
+						(string) ( $error_data['status_command'] ?? 'wp datamachine-code workspace worktree locks --format=json' ),
+						(string) ( $error_data['stale_prune_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' )
 					),
-					self::busy_error_data($repo, $lock_path)
+					$error_data
 				);
 			}
 
@@ -259,13 +262,24 @@ final class WorkspaceMutationLock {
 	private static function busy_error_data( string $repo, string $lock_path ): array {
 		$lock_key = 'worktree-' . $repo;
 		$data     = array(
-			'status'    => 423,
-			'retryable' => true,
-			'repo'      => $repo,
-			'scope'     => $repo,
-			'lock_key'  => $lock_key,
-			'lock_path' => $lock_path,
+			'status'              => 423,
+			'retryable'           => true,
+			'repo'                => $repo,
+			'scope'               => $repo,
+			'lock_key'            => $lock_key,
+			'lock_path'           => $lock_path,
+			'status_command'      => 'wp datamachine-code workspace worktree locks --format=json',
+			'stale_prune_command' => 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json',
+			'recovery_guidance'   => self::recovery_guidance(),
 		);
+
+		$filesystem_lock = self::filesystem_lock_entry($lock_path);
+		if ( ! empty($filesystem_lock) ) {
+			$data['filesystem_lock'] = $filesystem_lock;
+			if ( isset($filesystem_lock['age_seconds']) ) {
+				$data['filesystem_age_seconds'] = (int) $filesystem_lock['age_seconds'];
+			}
+		}
 
 		$active_lock = WorkspaceLockStore::active_lock($lock_key, $repo);
 		if ( is_array($active_lock) ) {
@@ -284,39 +298,48 @@ final class WorkspaceMutationLock {
 	}
 
 	/**
+	 * Operator guidance shared by busy errors and status commands.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private static function recovery_guidance(): array {
+		return array(
+			'status_command'      => 'wp datamachine-code workspace worktree locks --format=json',
+			'dry_run_command'     => 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json',
+			'apply_command'       => 'wp datamachine-code workspace worktree locks --prune-stale --format=json',
+			'safety'              => 'Only expired DB rows and old unlocked filesystem lock files are pruned. Active filesystem flocks are never removed by this command.',
+			'active_lock_note'    => 'If a filesystem lock is active without DB owner evidence, another process still holds the OS file descriptor or crashed without releasing an operator-visible DB row. Inspect running DMC/WP-CLI processes before retrying.',
+		);
+	}
+
+	/**
 	 * @return array<string,mixed>
 	 */
 	private static function filesystem_status( string $workspace_path ): array {
 		$lock_dir    = rtrim($workspace_path, '/') . '/.locks';
 		$files       = is_dir($lock_dir) ? glob($lock_dir . '/*.lock') : array();
 		$files       = false === $files ? array() : $files;
-		$policy      = self::retention_policy();
-		$cutoff      = time() - (int) $policy['filesystem_stale_after_seconds'];
 		$active      = 0;
 		$stale       = 0;
 		$recent      = 0;
 		$active_keys = array();
 		$stale_keys  = array();
+		$locks       = array();
 
 		foreach ( $files as $file ) {
-			$handle = fopen($file, 'c'); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
-			if ( false === $handle ) {
+			$entry = self::filesystem_lock_entry($file);
+			if ( empty($entry) ) {
 				continue;
 			}
-
-			if ( ! flock($handle, LOCK_EX | LOCK_NB) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+			$locks[] = $entry;
+			if ( 'active' === (string) ( $entry['state'] ?? '' ) ) {
 				++$active;
-				$active_keys[] = self::lock_key_from_path($file);
-				fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+				$active_keys[] = (string) ( $entry['lock_key'] ?? '' );
 				continue;
 			}
-
-			flock($handle, LOCK_UN); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
-			fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-			$mtime = filemtime($file);
-			if ( false !== $mtime && $mtime < $cutoff ) {
+			if ( 'stale' === (string) ( $entry['state'] ?? '' ) ) {
 				++$stale;
-				$stale_keys[] = self::lock_key_from_path($file);
+				$stale_keys[] = (string) ( $entry['lock_key'] ?? '' );
 			} else {
 				++$recent;
 			}
@@ -330,6 +353,83 @@ final class WorkspaceMutationLock {
 			'stale'       => $stale,
 			'stale_keys'  => array_values(array_filter($stale_keys)),
 			'recent'      => $recent,
+			'locks'       => $locks,
+			'guidance'    => self::recovery_guidance(),
+		);
+	}
+
+	/**
+	 * Inspect one filesystem lock file without mutating it.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private static function filesystem_lock_entry( string $file ): array {
+		$policy   = self::retention_policy();
+		$cutoff   = time() - (int) $policy['filesystem_stale_after_seconds'];
+		$lock_key = self::lock_key_from_path($file);
+		$scope    = str_starts_with($lock_key, 'worktree-') ? substr($lock_key, strlen('worktree-')) : $lock_key;
+		$mtime    = filemtime($file);
+		$entry    = array(
+			'lock_key'            => $lock_key,
+			'scope'               => $scope,
+			'path'                => $file,
+			'mtime'               => false === $mtime ? null : gmdate('c', $mtime),
+			'age_seconds'         => false === $mtime ? null : max(0, time() - $mtime),
+			'stale_after_seconds' => (int) $policy['filesystem_stale_after_seconds'],
+		);
+
+		$handle = fopen($file, 'c'); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+		if ( false === $handle ) {
+			$entry['state']  = 'unknown';
+			$entry['reason'] = 'open_failed';
+			return $entry;
+		}
+
+		if ( ! flock($handle, LOCK_EX | LOCK_NB) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+			$entry['state']               = 'active';
+			$entry['reason']              = 'filesystem_flock_held';
+			$entry['owner_evidence']      = self::owner_evidence_for_lock($lock_key, $scope);
+			$entry['recovery_command']    = 'wp datamachine-code workspace worktree locks --format=json';
+			$entry['safe_to_prune']       = false;
+			$entry['operator_guidance']   = 'An active OS flock cannot be safely pruned. Inspect the owner evidence or running DMC/WP-CLI processes and retry after the holder exits.';
+			fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			return $entry;
+		}
+
+		flock($handle, LOCK_UN); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+		fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+		$stale                    = false !== $mtime && $mtime < $cutoff;
+		$entry['state']           = $stale ? 'stale' : 'recent';
+		$entry['reason']          = $stale ? 'unlocked_stale_file' : 'unlocked_recent_file';
+		$entry['safe_to_prune']   = $stale;
+		$entry['recovery_command'] = $stale
+			? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json'
+			: 'wp datamachine-code workspace worktree locks --format=json';
+
+		return $entry;
+	}
+
+	/**
+	 * @return array<string,mixed>
+	 */
+	private static function owner_evidence_for_lock( string $lock_key, string $scope ): array {
+		$active_lock = WorkspaceLockStore::active_lock($lock_key, $scope);
+		if ( is_array($active_lock) ) {
+			return array(
+				'source' => 'database',
+				'lock'   => $active_lock,
+			);
+		}
+		if ( is_wp_error($active_lock) ) {
+			return array(
+				'source'  => 'database_error',
+				'message' => $active_lock->get_error_message(),
+			);
+		}
+
+		return array(
+			'source'  => 'filesystem_only',
+			'message' => 'No active DB lock row is visible for this held filesystem flock.',
 		);
 	}
 
