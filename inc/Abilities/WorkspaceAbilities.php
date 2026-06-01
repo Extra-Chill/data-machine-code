@@ -546,6 +546,14 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Alias for new_string.',
 							),
+							'old'         => array(
+								'type'        => 'string',
+								'description' => 'Alias for old_string.',
+							),
+							'new'         => array(
+								'type'        => 'string',
+								'description' => 'Alias for new_string.',
+							),
 							'replace_all' => array(
 								'type'        => 'boolean',
 								'description' => 'Replace all occurrences (default false).',
@@ -2445,14 +2453,14 @@ class WorkspaceAbilities {
 	 */
 	public static function editFile( array $input ): array|\WP_Error {
 		$input      = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
-		$old_string = (string) ( $input['old_string'] ?? $input['search'] ?? '' );
-		$new_string = (string) ( $input['new_string'] ?? $input['replace'] ?? '' );
+		$old_string = (string) ( $input['old_string'] ?? $input['search'] ?? $input['old'] ?? '' );
+		$new_string = (string) ( $input['new_string'] ?? $input['replace'] ?? $input['new'] ?? '' );
 
 		if ( '' === $old_string ) {
 			return new \WP_Error('missing_old_string', 'old_string is required.', array( 'status' => 400 ));
 		}
 
-		if ( ! array_key_exists('new_string', $input) && ! array_key_exists('replace', $input) ) {
+		if ( ! array_key_exists('new_string', $input) && ! array_key_exists('replace', $input) && ! array_key_exists('new', $input) ) {
 			return new \WP_Error('missing_new_string', 'new_string is required.', array( 'status' => 400 ));
 		}
 

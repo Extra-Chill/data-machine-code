@@ -410,8 +410,8 @@ class WorkspaceTools extends BaseTool
 		$input = array(
 		'repo'       => $parameters['repo'] ?? '',
 		'path'       => $parameters['path'] ?? '',
-		'old_string' => $parameters['old_string'] ?? $parameters['search'] ?? '',
-		'new_string' => $parameters['new_string'] ?? $parameters['replace'] ?? '',
+		'old_string' => $parameters['old_string'] ?? $parameters['search'] ?? $parameters['old'] ?? '',
+		'new_string' => $parameters['new_string'] ?? $parameters['replace'] ?? $parameters['new'] ?? '',
 		);
 
         if (array_key_exists('replace_all', $parameters) ) {
@@ -1199,6 +1199,8 @@ class WorkspaceTools extends BaseTool
 			'new_string'  => array( 'type' => 'string', 'description' => 'Replacement text.' ),
 			'search'      => array( 'type' => 'string', 'description' => 'Alias for old_string.' ),
 			'replace'     => array( 'type' => 'string', 'description' => 'Alias for new_string.' ),
+			'old'         => array( 'type' => 'string', 'description' => 'Alias for old_string.' ),
+			'new'         => array( 'type' => 'string', 'description' => 'Alias for new_string.' ),
 			'replace_all' => array( 'type' => 'boolean', 'description' => 'Replace all occurrences. Default false.' ),
 			),
 			'required'   => array( 'path' ),

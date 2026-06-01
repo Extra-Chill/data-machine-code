@@ -162,6 +162,18 @@ namespace {
 	$assert('workspace_edit maps search to old_string', 'npm install --silent' === ( $ability->last_input['old_string'] ?? '' ));
 	$assert('workspace_edit maps replace to new_string', 'npm install --legacy-peer-deps' === ( $ability->last_input['new_string'] ?? '' ));
 
+	$edit_short_alias = $tools->handleEdit(
+		array(
+			'repo' => 'homeboy-extensions',
+			'path' => 'wordpress/scripts/build/build.sh',
+			'old'  => 'npm install --silent',
+			'new'  => 'npm install --legacy-peer-deps',
+		)
+	);
+	$assert('workspace_edit accepts old/new aliases', true === ( $edit_short_alias['success'] ?? false ));
+	$assert('workspace_edit maps old to old_string', 'npm install --silent' === ( $ability->last_input['old_string'] ?? '' ));
+	$assert('workspace_edit maps new to new_string', 'npm install --legacy-peer-deps' === ( $ability->last_input['new_string'] ?? '' ));
+
 	$result                                   = $tools->handleGitStatus(array( 'name' => 'current-project' ));
     $data                                     = $result['data'] ?? array();
 
