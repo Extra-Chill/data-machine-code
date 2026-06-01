@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.18] - 2026-06-01
+
+### Changed
+- Normalize mounted workspace paths in workspace tools
+
 ## [0.47.17] - 2026-06-01
 
 ### Fixed
