@@ -791,6 +791,14 @@ namespace {
     file_put_contents($primary . '/patch-equivalent-default.txt', 'patch-equivalent-default');
     $run('git add patch-equivalent-default.txt && git commit -m patch-equivalent-default-main', $primary);
     $run('git push origin main', $primary);
+    $run('git checkout -b detached-equivalent', $primary);
+    file_put_contents($primary . '/detached-equivalent.txt', 'detached-equivalent');
+    $run('git add detached-equivalent.txt && git commit -m detached-equivalent', $primary);
+    $run('git push -u origin detached-equivalent', $primary);
+    $run('git checkout main', $primary);
+    file_put_contents($primary . '/detached-equivalent.txt', 'detached-equivalent');
+    $run('git add detached-equivalent.txt && git commit -m detached-equivalent-main', $primary);
+    $run('git push origin main', $primary);
     $run('git checkout -b non-default-contained', $primary);
     file_put_contents($primary . '/non-default-contained.txt', 'non-default-contained');
     $run('git add non-default-contained.txt && git commit -m non-default-contained', $primary);
@@ -811,12 +819,16 @@ namespace {
         'demo@ambiguous-default'       => array( 'branch' => 'ambiguous-default', 'metadata_branch' => 'ambiguous-default' ),
         'demo@fix-foo'                 => array( 'branch' => 'fix/foo', 'metadata_branch' => 'fix-foo' ),
         'demo@patch-equivalent-default' => array( 'branch' => 'patch-equivalent-default', 'metadata_branch' => 'patch-equivalent-default' ),
+        'demo@detached-equivalent'     => array( 'branch' => 'detached-equivalent', 'metadata_branch' => 'detached-equivalent', 'detach' => true ),
         'demo@non-default-contained'   => array( 'branch' => 'non-default-contained', 'metadata_branch' => 'non-default-contained' ),
     );
     foreach ($merged_branch_worktrees as $handle => $branch_row ) {
         $branch_name     = $branch_row['branch'];
         $metadata_branch = $branch_row['metadata_branch'];
         $run(sprintf('git worktree add %s %s', escapeshellarg($tmp . '/' . $handle), escapeshellarg($branch_name)), $primary);
+        if ( ! empty($branch_row['detach']) ) {
+            $run('git checkout --detach', $tmp . '/' . $handle);
+        }
         \DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
             $handle,
             array(
@@ -847,6 +859,7 @@ namespace {
     $assert('merged_to_default', $merged_rows['demo@fix-foo']['suggested_action'] ?? '', 'clean contained slash branch is classified merged_to_default');
     $assert('patch_equivalent_default', $merged_rows['demo@patch-equivalent-default']['suggested_action'] ?? '', 'clean patch-equivalent branch is classified patch_equivalent_default');
     $assert('equivalent_clean', $merged_rows['demo@patch-equivalent-default']['upstream_equivalence']['effective_status'] ?? '', 'clean patch-equivalent branch exposes equivalent_clean evidence');
+    $assert('patch_equivalent_default', $merged_rows['demo@detached-equivalent']['suggested_action'] ?? '', 'detached clean patch-equivalent row is classified before apply revalidation');
     $assert('contained_non_default_remote', $merged_rows['demo@non-default-contained']['suggested_action'] ?? '', 'clean non-default-contained branch is classified contained_non_default_remote');
     $assert('contained_non_default_remote', $merged_rows['demo@non-default-contained']['upstream_equivalence']['effective_status'] ?? '', 'clean non-default-contained branch exposes containment evidence');
     $assert('unsafe_dirty_or_unpushed', $merged_rows['demo@dirty-default-merged']['suggested_action'] ?? '', 'dirty contained branch remains unsafe');
@@ -873,6 +886,7 @@ namespace {
     $clean_equivalent_dry_run = $ws->worktree_active_no_signal_equivalent_clean_apply(array( 'dry_run' => true, 'limit' => 100, 'offset' => 0 ));
     $assert(true, ! is_wp_error($clean_equivalent_dry_run) && ( $clean_equivalent_dry_run['success'] ?? false ), 'clean equivalent active/no-signal dry-run succeeds');
     $assert(2, (int) ( $clean_equivalent_dry_run['summary']['planned'] ?? 0 ), 'clean equivalent dry-run plans patch-equivalent and non-default-contained rows');
+    $assert(1, (int) ( $clean_equivalent_dry_run['summary']['skipped_by_reason']['missing_branch_identity'] ?? 0 ), 'clean equivalent dry-run skips detached rows without fataling');
     $clean_equivalent_apply = $ws->worktree_active_no_signal_equivalent_clean_apply(array( 'limit' => 100, 'offset' => 0 ));
     $assert(true, ! is_wp_error($clean_equivalent_apply) && ( $clean_equivalent_apply['success'] ?? false ), 'clean equivalent active/no-signal apply succeeds');
     $assert(2, (int) ( $clean_equivalent_apply['summary']['written'] ?? 0 ), 'clean equivalent apply writes patch-equivalent and non-default-contained metadata');

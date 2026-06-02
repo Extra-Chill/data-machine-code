@@ -1969,7 +1969,7 @@ class Workspace {
 			return new \WP_Error('missing_default_ref', 'primary checkout default ref could not be resolved');
 		}
 
-		$branch = $this->resolve_worktree_branch_from_head_file($real_path);
+		$branch = (string) $this->resolve_worktree_branch_from_head_file($real_path);
 		if ( '' === $branch ) {
 			return new \WP_Error('missing_branch_identity', 'worktree branch identity could not be resolved');
 		}
