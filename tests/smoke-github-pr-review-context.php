@@ -165,8 +165,8 @@ namespace {
     $assert(true === $content['truncation']['truncated'], 'truncation boolean is true when a patch is omitted');
     $assert(isset($content['escalation_policy']), 'review context carries escalation_policy by default');
     $assert('data-machine-code/pr-review-escalation/v1' === $content['escalation_policy']['schema'], 'escalation policy schema is versioned');
-    $assert(true === $content['escalation_policy']['should_escalate'], 'missing Homeboy context recommends escalation');
-    $assert(in_array('missing_homeboy_artifact', $content['escalation_policy']['reasons'], true), 'missing Homeboy context reason is explicit');
+	$assert(true === $content['escalation_policy']['should_escalate'], 'risk paths recommend escalation');
+	$assert(in_array('touches_docs_user_facing_content', $content['escalation_policy']['reasons'], true), 'user-facing docs path reason is explicit');
     $assert(! isset($content['expanded_context']), 'default output omits expanded_context');
     $assert($content === $packet['metadata']['review_context'], 'metadata carries same review context for downstream consumers');
 
@@ -184,16 +184,14 @@ namespace {
             return new \WP_Error('github_not_found', 'Fixture not found.');
         }
 
-        return array(
-        'file' => array(
-        'path'     => $path,
-        'sha'      => substr(sha1($key), 0, 12),
-        'size'     => strlen($fixtures[ $key ]),
-        'content'  => $fixtures[ $key ],
-        'html_url' => 'https://github.test/' . $path,
-        ),
-        );
-    };
+		return array(
+		'path'     => $path,
+		'sha'      => substr(sha1($key), 0, 12),
+		'size'     => strlen($fixtures[ $key ]),
+		'content'  => $fixtures[ $key ],
+		'html_url' => 'https://github.test/' . $path,
+		);
+	};
 
     $expanded = \DataMachineCode\Abilities\GitHubAbilities::buildPullReviewExpandedContext(
         'Extra-Chill/data-machine-code',
@@ -280,15 +278,14 @@ namespace {
         ),
         ),
         array(
-        'checks' => array(
-                'homeboy_ci_results' => array( 'workflow' => array( 'head_sha' => 'abc123head' ) ),
-                'check_runs'         => array( 'summary' => array( 'state' => 'success' ) ),
-                'commit_statuses'    => array( 'summary' => array( 'state' => 'success' ) ),
-        ),
-        )
-    );
-    $checked_content = json_decode($packet_with_checks['content'], true);
-    $assert(false === $checked_content['escalation_policy']['should_escalate'], 'passing checks and fresh Homeboy artifact avoid escalation');
+		'checks' => array(
+				'check_runs'      => array( 'summary' => array( 'state' => 'success' ) ),
+				'commit_statuses' => array( 'summary' => array( 'state' => 'success' ) ),
+		),
+		)
+	);
+	$checked_content = json_decode($packet_with_checks['content'], true);
+	$assert(false === $checked_content['escalation_policy']['should_escalate'], 'passing checks avoid escalation when no risk paths are present');
 
     $mismatch = \DataMachineCode\Abilities\GitHubAbilities::normalizePullReviewContext(
         'Extra-Chill/data-machine-code',

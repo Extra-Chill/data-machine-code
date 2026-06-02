@@ -140,7 +140,7 @@ namespace {
     };
 
     echo "Setting up workspace at {$tmp}\n";
-    $primary        = $make_repo('homeboy');
+	$primary        = $make_repo('my-plugin');
     $explicit       = $make_repo('explicit-name');
     $collision      = $make_repo('collision');
     $collision_path = $make_repo('collision-path');
@@ -148,7 +148,7 @@ namespace {
     mkdir($non_git, 0755, true);
 
     $run('git branch linked', $primary);
-    $linked = $tmp . '/homeboy@linked';
+	$linked = $tmp . '/my-plugin@linked';
     $run(sprintf('git worktree add %s linked', escapeshellarg($linked)), $primary);
     $outside = sys_get_temp_dir() . '/dmc-adopt-outside-' . bin2hex(random_bytes(4));
     mkdir($outside, 0755, true);
@@ -170,7 +170,7 @@ namespace {
     echo "\nAdopt existing primary\n";
     $result = $adopt($primary);
     $assert(true, ! is_wp_error($result) && ( $result['success'] ?? false ), 'existing primary under workspace adopts');
-    $assert('homeboy', is_wp_error($result) ? '' : $result['name'], 'omitted name derives path basename');
+	$assert('my-plugin', is_wp_error($result) ? '' : $result['name'], 'omitted name derives path basename');
     $assert(realpath($primary), is_wp_error($result) ? '' : $result['path'], 'adopted path is real primary path');
     $assert(true, is_wp_error($result) ? false : $result['already_adopted'], 'adoption reports already_adopted');
 

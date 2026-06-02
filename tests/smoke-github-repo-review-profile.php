@@ -58,9 +58,8 @@ namespace {
     $fixtures = array(
     'AGENTS.md'                   => "# Agents\n- Never edit CHANGELOG.md\n- No version bumps\n",
     'README.md'                   => "# Data Machine Code\nBridge between WordPress and coding agents.\n",
-    'homeboy.json'                => '{"id":"data-machine-code","audit":{"changed_since":"origin/main"},"test":{"commands":["php tests/smoke.php"]}}',
-    'docs/review-context.md'      => "# Review Context\nFocus on repository conventions.\n",
-    '.dmc/review-profile.json'    => '{"review_rules":["Prefer bounded GitHub reads."],"public_surfaces":["inc/Abilities"],"docs_surfaces":["docs/review-context.md"],"commands":{"review":"homeboy review"}}',
+	'docs/review-context.md'      => "# Review Context\nFocus on repository conventions.\n",
+	'.dmc/review-profile.json'    => '{"review_rules":["Prefer bounded GitHub reads."],"public_surfaces":["inc/Abilities"],"docs_surfaces":["docs/review-context.md"],"commands":{"review":"php tests/smoke-review.php"}}',
     'docs/architecture.md'        => "# Architecture\nDMC owns the bridge.\n",
     'docs/development-guide.md'   => str_repeat('Development rules. ', 10),
     'docs/nested/development.md'  => "# Nested Development\nUse smoke tests.\n",
@@ -71,16 +70,14 @@ namespace {
             return new WP_Error('github_not_found', 'Not found.');
         }
 
-        return array(
-        'file' => array(
-        'path'     => $path,
-        'sha'      => substr(sha1($path), 0, 12),
-        'size'     => strlen($fixtures[ $path ]),
-        'html_url' => 'https://github.test/' . $path,
-        'content'  => $fixtures[ $path ],
-        ),
-        );
-    };
+		return array(
+		'path'     => $path,
+		'sha'      => substr(sha1($path), 0, 12),
+		'size'     => strlen($fixtures[ $path ]),
+		'html_url' => 'https://github.test/' . $path,
+		'content'  => $fixtures[ $path ],
+		);
+	};
 
     $tree_fetcher = function ( string $path ): array {
         return array(
@@ -114,15 +111,13 @@ namespace {
     $assert('Extra-Chill/data-machine-code' === $profile['repo'], 'repo is carried through');
     $assert(in_array('AGENTS.md', $paths, true), 'AGENTS.md is included when present');
     $assert(in_array('README.md', $paths, true), 'README.md is included when present');
-    $assert(in_array('homeboy.json', $paths, true), 'homeboy.json is included when present');
-    $assert(in_array('.dmc/review-profile.json', $paths, true), 'explicit review profile is included when present');
+	$assert(in_array('.dmc/review-profile.json', $paths, true), 'explicit review profile is included when present');
     $assert(in_array('docs/architecture.md', $paths, true), 'architecture docs are selected from docs tree');
     $assert(in_array('docs/development-guide.md', $paths, true), 'development docs are selected from docs tree');
     $assert(in_array('docs/nested/development.md', $paths, true), 'nested development docs are selected from docs tree');
     $assert(! in_array('docs/random.md', $paths, true), 'unmatched docs are not included');
     $assert(! in_array('src/development.md', $paths, true), 'docs selection is scoped under docs/');
-    $assert(isset($profile['commands']['audit']) && isset($profile['commands']['test']), 'homeboy commands are extracted');
-    $assert('homeboy review' === $profile['commands']['review'], 'review-profile commands merge in');
+	$assert('php tests/smoke-review.php' === $profile['commands']['review'], 'review-profile commands merge in');
     $assert(in_array('Prefer bounded GitHub reads.', $profile['review_rules'], true), 'review rules merge in');
     $assert(in_array('inc/Abilities', $profile['public_surfaces'], true), 'public surfaces merge in');
     $assert(in_array('docs/review-context.md', $profile['docs_surfaces'], true), 'docs surfaces include explicit review-context doc');

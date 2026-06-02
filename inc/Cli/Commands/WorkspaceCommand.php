@@ -116,7 +116,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace list --format=json
 	 *
 	 *     # List one primary checkout and its worktrees
-	 *     wp datamachine-code workspace list --repo=homeboy
+	 *     wp datamachine-code workspace list --repo=my-plugin
 	 *
 	 * @subcommand list
 	 */
@@ -190,10 +190,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Clone a repo
-	 *     wp datamachine-code workspace clone https://github.com/Extra-Chill/homeboy.git
+	 *     wp datamachine-code workspace clone https://github.com/example/my-plugin.git
 	 *
 	 *     # Clone with custom name
-	 *     wp datamachine-code workspace clone https://github.com/Extra-Chill/homeboy.git --name=homeboy-dev
+	 *     wp datamachine-code workspace clone https://github.com/example/my-plugin.git --name=my-plugin-dev
 	 *
 	 * @subcommand clone
 	 */
@@ -238,7 +238,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * ## EXAMPLES
 	 *
-	 *     wp datamachine-code workspace adopt /Users/chubes/Developer/homeboy --name=homeboy
+	 *     wp datamachine-code workspace adopt /Users/chubes/Developer/my-plugin --name=my-plugin
 	 *
 	 * @subcommand adopt
 	 */
@@ -882,10 +882,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Remove a repo (with confirmation)
-	 *     wp datamachine-code workspace remove homeboy
+	 *     wp datamachine-code workspace remove my-plugin
 	 *
 	 *     # Remove without confirmation
-	 *     wp datamachine-code workspace remove homeboy --yes
+	 *     wp datamachine-code workspace remove my-plugin --yes
 	 *
 	 * @subcommand remove
 	 */
@@ -1048,7 +1048,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Show repo info
-	 *     wp datamachine-code workspace show homeboy
+	 *     wp datamachine-code workspace show my-plugin
 	 *
 	 * @subcommand show
 	 */
@@ -1112,10 +1112,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Read a file
-	 *     wp datamachine-code workspace read homeboy src/main.rs
+	 *     wp datamachine-code workspace read my-plugin src/main.php
 	 *
 	 *     # Read with custom size limit
-	 *     wp datamachine-code workspace read homeboy Cargo.toml --max-size=2097152
+	 *     wp datamachine-code workspace read my-plugin composer.json --max-size=2097152
 	 *
 	 *     # Read lines 100-130 from a file
 	 *     wp datamachine-code workspace read extrachill style.css --offset=100 --limit=30
@@ -1190,13 +1190,13 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # List repo root
-	 *     wp datamachine-code workspace ls homeboy
+	 *     wp datamachine-code workspace ls my-plugin
 	 *
 	 *     # List subdirectory
-	 *     wp datamachine-code workspace ls homeboy src/commands
+	 *     wp datamachine-code workspace ls my-plugin src
 	 *
 	 *     # List as JSON
-	 *     wp datamachine-code workspace ls homeboy --format=json
+	 *     wp datamachine-code workspace ls my-plugin --format=json
 	 *
 	 * @subcommand ls
 	 */
@@ -1291,7 +1291,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * ## EXAMPLES
 	 *
-	 *     wp datamachine-code workspace grep homeboy "function_name" --include="*.php"
+	 *     wp datamachine-code workspace grep my-plugin "function_name" --include="*.php"
 	 *
 	 * @subcommand grep
 	 */
@@ -1378,13 +1378,13 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Write with content flag
-	 *     wp datamachine-code workspace write homeboy src/new.rs --content="fn main() {}"
+	 *     wp datamachine-code workspace write my-plugin src/new.php --content="<?php"
 	 *
 	 *     # Write from a local file (@ syntax)
-	 *     wp datamachine-code workspace write homeboy src/main.rs --content=@/tmp/staged-code.rs
+	 *     wp datamachine-code workspace write my-plugin src/main.php --content=@/tmp/staged-code.php
 	 *
 	 *     # Write from stdin
-	 *     cat local-file.rs | wp datamachine-code workspace write homeboy src/main.rs
+	 *     cat local-file.php | wp datamachine-code workspace write my-plugin src/main.php
 	 *
 	 * @subcommand write
 	 */
@@ -1464,13 +1464,13 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Replace a single occurrence
-	 *     wp datamachine-code workspace edit homeboy src/main.rs --old="old_func" --new="new_func"
+	 *     wp datamachine-code workspace edit my-plugin src/main.php --old="old_func" --new="new_func"
 	 *
 	 *     # Replace using @ file syntax
-	 *     wp datamachine-code workspace edit homeboy src/main.rs --old=@/tmp/old.txt --new=@/tmp/new.txt
+	 *     wp datamachine-code workspace edit my-plugin src/main.php --old=@/tmp/old.txt --new=@/tmp/new.txt
 	 *
 	 *     # Replace all occurrences
-	 *     wp datamachine-code workspace edit homeboy src/main.rs --old="v1" --new="v2" --replace-all
+	 *     wp datamachine-code workspace edit my-plugin src/main.php --old="v1" --new="v2" --replace-all
 	 *
 	 * @subcommand edit
 	 */
@@ -1643,13 +1643,13 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Delete a tracked file (staged via git rm)
-	 *     wp datamachine-code workspace delete homeboy@my-branch src/old_module.rs
+	 *     wp datamachine-code workspace delete my-plugin@my-branch src/old_module.php
 	 *
 	 *     # Delete an entire directory tree
-	 *     wp datamachine-code workspace delete homeboy@my-branch src/classic --recursive
+	 *     wp datamachine-code workspace delete my-plugin@my-branch src/classic --recursive
 	 *
 	 *     # Delete on the primary checkout (rare, gated)
-	 *     wp datamachine-code workspace delete homeboy notes.md --allow-primary-mutation
+	 *     wp datamachine-code workspace delete my-plugin notes.md --allow-primary-mutation
 	 *
 	 * @subcommand delete
 	 */

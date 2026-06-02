@@ -802,10 +802,10 @@ class GitHubCommand extends BaseCommand {
 	 * ---
 	 *
 	 * [--workflow-names=<names>]
-	 * : Comma-separated workflow_run.name allow-list, for example Homeboy CI.
+	 * : Comma-separated workflow_run.name allow-list, for example Plugin CI.
 	 *
 	 * [--workflow-paths=<paths>]
-	 * : Comma-separated workflow_run.path allow-list, for example .github/workflows/homeboy.yml.
+	 * : Comma-separated workflow_run.path allow-list, for example .github/workflows/ci.yml.
 	 *
 	 * [--mode=<mode>]
 	 * : create action mode. `scaffold` preserves the historical JSON-only output; `install` creates the Data Machine pipeline/flow.

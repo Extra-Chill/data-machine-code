@@ -91,9 +91,6 @@ namespace DataMachineCode\GitHub {
     class PrReviewEscalationPolicy
     {
     }
-    class PrHomeboyReviewRunner
-    {
-    }
 }
 
 namespace {

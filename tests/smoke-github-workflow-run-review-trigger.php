@@ -80,8 +80,8 @@ namespace {
     'repository'   => array( 'full_name' => 'Extra-Chill/data-machine-code' ),
     'workflow_run' => array(
     'id'            => 987654,
-    'name'          => 'Homeboy CI',
-    'path'          => '.github/workflows/homeboy.yml',
+	'name'          => 'Plugin CI',
+	'path'          => '.github/workflows/ci.yml',
     'head_sha'      => 'abc123def456',
     'conclusion'    => 'success',
     'display_title' => 'PR checks',
@@ -102,8 +102,8 @@ namespace {
         array(
         'mode'           => 'github_workflow_run',
         'repo'           => 'Extra-Chill/data-machine-code',
-        'workflow_names' => array( 'Homeboy CI' ),
-        'workflow_paths' => array( '.github/workflows/homeboy.yml' ),
+		'workflow_names' => array( 'Plugin CI' ),
+		'workflow_paths' => array( '.github/workflows/ci.yml' ),
         )
     );
     $verify  = function ( array $request_payload, array $override = array(), string $event = 'workflow_run' ) use ( $config, $headers ) {
@@ -152,8 +152,8 @@ namespace {
         array(
         'repo'           => 'Extra-Chill/data-machine-code',
         'trigger'        => 'workflow_run',
-        'workflow_names' => 'Homeboy CI',
-        'workflow_paths' => '.github/workflows/homeboy.yml',
+		'workflow_names' => 'Plugin CI',
+		'workflow_paths' => '.github/workflows/ci.yml',
         )
     );
     $webhook = $definition['webhook'];
@@ -169,7 +169,7 @@ namespace {
     $assert('scaffold maps workflow run id metadata path', 'workflow_run.id' === $webhook['payload_paths']['workflow_run_id']);
     $assert('scaffold maps workflow name metadata path', 'workflow_run.name' === $webhook['payload_paths']['workflow_name']);
     $assert('scaffold maps conclusion metadata path', 'workflow_run.conclusion' === $webhook['payload_paths']['conclusion']);
-    $assert('scaffold records workflow filters', array( 'Homeboy CI' ) === $webhook['workflow_filters']['names'] && array( '.github/workflows/homeboy.yml' ) === $webhook['workflow_filters']['paths']);
+	$assert('scaffold records workflow filters', array( 'Plugin CI' ) === $webhook['workflow_filters']['names'] && array( '.github/workflows/ci.yml' ) === $webhook['workflow_filters']['paths']);
     $assert('webhook payload source type is workflow_run specific', 'github_workflow_run_webhook' === $payload_config['source_type']);
     $assert('webhook payload metadata mirrors workflow_run payload paths', $webhook['payload_paths'] === $payload_config['metadata']);
     $assert('pull review context still uses existing webhook-derived placeholders', '{{metadata.pull_number}}' === $review_config['pull_number'] && '{{metadata.head_sha}}' === $review_config['head_sha']);
