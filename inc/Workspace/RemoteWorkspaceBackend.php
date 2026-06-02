@@ -55,14 +55,11 @@ class RemoteWorkspaceBackend {
 		$this->save_state($state);
 
 		return array(
-			'success'            => true,
-			'backend'            => 'github_api',
-			'name'               => $name,
-			'path'               => 'github://' . $repo,
-			'message'            => sprintf('Registered %s as remote workspace "%s".', $repo, $name),
-			'conversation_state' => 'incomplete',
-			'next_required_tool' => 'workspace_worktree_add',
-			'next_required_args' => array( 'repo' => $name ),
+			'success' => true,
+			'backend' => 'github_api',
+			'name'    => $name,
+			'path'    => 'github://' . $repo,
+			'message' => sprintf('Registered %s as remote workspace "%s".', $repo, $name),
 		);
 	}
 
@@ -97,17 +94,14 @@ class RemoteWorkspaceBackend {
 		$this->save_state($state);
 
 		return array(
-			'success'            => true,
-			'backend'            => 'github_api',
-			'handle'             => $handle,
-			'path'               => 'github://' . $repo . '#' . $branch,
-			'branch'             => $branch,
-			'slug'               => $slug,
-			'created_branch'     => true,
-			'message'            => sprintf('Registered remote workspace %s for %s.', $handle, $repo),
-			'conversation_state' => 'incomplete',
-			'next_required_tool' => 'workspace_read or workspace_edit or workspace_write',
-			'next_required_args' => array( 'repo' => $handle ),
+			'success'        => true,
+			'backend'        => 'github_api',
+			'handle'         => $handle,
+			'path'           => 'github://' . $repo . '#' . $branch,
+			'branch'         => $branch,
+			'slug'           => $slug,
+			'created_branch' => true,
+			'message'        => sprintf('Registered remote workspace %s for %s.', $handle, $repo),
 		);
 	}
 
@@ -332,14 +326,12 @@ class RemoteWorkspaceBackend {
 		$this->save_state($state);
 
 		return array(
-			'success'            => true,
-			'backend'            => 'github_api',
-			'path'               => $path,
-			'size'               => strlen($content),
-			'created'            => true,
-			'conversation_state' => 'incomplete',
-			'next_required_tool' => 'workspace_git_status',
-			'next_required_args' => array( 'name' => $context['handle'] ),
+			'success' => true,
+			'backend' => 'github_api',
+			'name'    => $context['handle'],
+			'path'    => $path,
+			'size'    => strlen($content),
+			'created' => true,
 		);
 	}
 
@@ -390,13 +382,11 @@ class RemoteWorkspaceBackend {
 		}
 
 		return array(
-			'success'            => true,
-			'backend'            => 'github_api',
-			'path'               => $write['path'],
-			'replacements'       => $replace_all ? $count : 1,
-			'conversation_state' => 'incomplete',
-			'next_required_tool' => 'workspace_git_status',
-			'next_required_args' => array( 'name' => $context['handle'] ),
+			'success'      => true,
+			'backend'      => 'github_api',
+			'name'         => $context['handle'],
+			'path'         => $write['path'],
+			'replacements' => $replace_all ? $count : 1,
 		);
 	}
 
@@ -494,20 +484,17 @@ class RemoteWorkspaceBackend {
 
 		$files = array_values(array_unique(array_values( (array) $context['changed_files'])));
 		return array(
-			'success'            => true,
-			'backend'            => 'github_api',
-			'name'               => $handle,
-			'repo'               => $context['repo_name'],
-			'is_worktree'        => true,
-			'path'               => 'github://' . $context['repo'] . '#' . $context['branch'],
-			'branch'             => $context['branch'],
-			'remote'             => 'https://github.com/' . $context['repo'] . '.git',
-			'commit'             => '' !== $context['last_commit_sha'] ? $context['last_commit_sha'] : null,
-			'dirty'              => count($files),
-			'files'              => $files,
-			'conversation_state' => 'incomplete',
-			'next_required_tool' => count($files) > 0 ? 'workspace_git_commit' : 'workspace_edit or workspace_write',
-			'next_required_args' => array( 'name' => $handle ),
+			'success'     => true,
+			'backend'     => 'github_api',
+			'name'        => $handle,
+			'repo'        => $context['repo_name'],
+			'is_worktree' => true,
+			'path'        => 'github://' . $context['repo'] . '#' . $context['branch'],
+			'branch'      => $context['branch'],
+			'remote'      => 'https://github.com/' . $context['repo'] . '.git',
+			'commit'      => '' !== $context['last_commit_sha'] ? $context['last_commit_sha'] : null,
+			'dirty'       => count($files),
+			'files'       => $files,
 		);
 	}
 
@@ -583,17 +570,12 @@ class RemoteWorkspaceBackend {
 		$this->save_state($state);
 
 		return array(
-			'success'            => true,
-			'backend'            => 'github_api',
-			'name'               => $handle,
-			'commit'             => $last_sha,
-			'message'            => sprintf('Committed remote workspace changes to %s.', $context['branch']),
-			'conversation_state' => 'incomplete',
-			'next_required_tool' => 'workspace_git_push',
-			'next_required_args' => array(
-				'name'   => $handle,
-				'branch' => $context['branch'],
-			),
+			'success' => true,
+			'backend' => 'github_api',
+			'name'    => $handle,
+			'branch'  => $context['branch'],
+			'commit'  => $last_sha,
+			'message' => sprintf('Committed remote workspace changes to %s.', $context['branch']),
 		);
 	}
 
@@ -1043,24 +1025,18 @@ class RemoteWorkspaceBackend {
 		$branch_url  = '' !== $push_branch ? 'https://github.com/' . $context['repo'] . '/tree/' . rawurlencode($push_branch) : null;
 
 		return array(
-			'success'            => true,
-			'kind'               => 'branch_push',
-			'backend'            => 'github_api',
-			'name'               => $handle,
-			'repo'               => $context['repo'],
-			'workspace_repo'     => $context['repo_name'] ?? $handle,
-			'github_repo'        => $context['repo'],
-			'remote'             => $remote,
-			'branch'             => $push_branch,
-			'url'                => $branch_url,
-			'html_url'           => $branch_url,
-			'message'            => 'Remote workspace branch already updated via GitHub API.',
-			'conversation_state' => 'incomplete',
-			'next_required_tool' => 'create_github_pull_request',
-			'next_required_args' => array(
-				'repo' => $context['repo'],
-				'head' => $push_branch,
-			),
+			'success'        => true,
+			'kind'           => 'branch_push',
+			'backend'        => 'github_api',
+			'name'           => $handle,
+			'repo'           => $context['repo'],
+			'workspace_repo' => $context['repo_name'] ?? $handle,
+			'github_repo'    => $context['repo'],
+			'remote'         => $remote,
+			'branch'         => $push_branch,
+			'url'            => $branch_url,
+			'html_url'       => $branch_url,
+			'message'        => 'Remote workspace branch already updated via GitHub API.',
 		);
 	}
 

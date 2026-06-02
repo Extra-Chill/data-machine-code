@@ -2375,6 +2375,91 @@ class WorkspaceAbilities {
 	}
 
 	/**
+	 * Add model-facing next-tool guidance to remote workspace ability results.
+	 *
+	 * RemoteWorkspaceBackend returns domain state only; this adapter is the
+	 * explicitly agent-facing layer that preserves CLI/tool loop guidance.
+	 *
+	 * @param string                 $operation Remote backend operation name.
+	 * @param array<string,mixed>|\WP_Error $result Backend result.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private static function decorate_remote_workspace_result( string $operation, array|\WP_Error $result ): array|\WP_Error {
+		if ( is_wp_error($result) ) {
+			return $result;
+		}
+
+		$guidance = self::remote_workspace_guidance($operation, $result);
+		if ( empty($guidance) ) {
+			return $result;
+		}
+
+		return array_merge($result, $guidance);
+	}
+
+	/**
+	 * @param array<string,mixed> $result Backend result.
+	 * @return array<string,mixed>
+	 */
+	private static function remote_workspace_guidance( string $operation, array $result ): array {
+		$name   = (string) ( $result['name'] ?? '' );
+		$handle = (string) ( $result['handle'] ?? $name );
+
+		switch ( $operation ) {
+			case 'clone_repo':
+				return array(
+					'conversation_state' => 'incomplete',
+					'next_required_tool' => 'workspace_worktree_add',
+					'next_required_args' => array( 'repo' => $name ),
+				);
+
+			case 'worktree_add':
+				return array(
+					'conversation_state' => 'incomplete',
+					'next_required_tool' => 'workspace_read or workspace_edit or workspace_write',
+					'next_required_args' => array( 'repo' => $handle ),
+				);
+
+			case 'write_file':
+			case 'edit_file':
+				return array(
+					'conversation_state' => 'incomplete',
+					'next_required_tool' => 'workspace_git_status',
+					'next_required_args' => array( 'name' => $name ),
+				);
+
+			case 'git_status':
+				return array(
+					'conversation_state' => 'incomplete',
+					'next_required_tool' => (int) ( $result['dirty'] ?? 0 ) > 0 ? 'workspace_git_commit' : 'workspace_edit or workspace_write',
+					'next_required_args' => array( 'name' => $name ),
+				);
+
+			case 'git_commit':
+				return array(
+					'conversation_state' => 'incomplete',
+					'next_required_tool' => 'workspace_git_push',
+					'next_required_args' => array(
+						'name'   => $name,
+						'branch' => (string) ( $result['branch'] ?? '' ),
+					),
+				);
+
+			case 'git_push':
+				return array(
+					'conversation_state' => 'incomplete',
+					'next_required_tool' => 'create_github_pull_request',
+					'next_required_args' => array(
+						'repo' => (string) ( $result['repo'] ?? $result['github_repo'] ?? '' ),
+						'head' => (string) ( $result['branch'] ?? '' ),
+					),
+				);
+		}
+
+		return array();
+	}
+
+	/**
 	 * Clone a git repository into the workspace.
 	 *
 	 * @param  array $input Input parameters with 'url', optional 'name'.
@@ -2382,10 +2467,11 @@ class WorkspaceAbilities {
 	 */
 	public static function cloneRepo( array $input ): array|\WP_Error {
 		if ( RemoteWorkspaceBackend::should_handle() ) {
-			return ( new RemoteWorkspaceBackend() )->clone_repo(
+			$result = ( new RemoteWorkspaceBackend() )->clone_repo(
 				$input['url'] ?? '',
 				$input['name'] ?? null
 			);
+			return self::decorate_remote_workspace_result('clone_repo', $result);
 		}
 
 		$workspace = new Workspace();
@@ -2432,11 +2518,12 @@ class WorkspaceAbilities {
 	 */
 	public static function writeFile( array $input ): array|\WP_Error {
 		if ( RemoteWorkspaceBackend::should_handle() ) {
-			return ( new RemoteWorkspaceBackend() )->write_file(
+			$result = ( new RemoteWorkspaceBackend() )->write_file(
 				$input['repo'] ?? '',
 				$input['path'] ?? '',
 				$input['content'] ?? ''
 			);
+			return self::decorate_remote_workspace_result('write_file', $result);
 		}
 
 		$workspace = new Workspace();
@@ -2469,13 +2556,14 @@ class WorkspaceAbilities {
 		}
 
 		if ( RemoteWorkspaceBackend::should_handle() ) {
-			return ( new RemoteWorkspaceBackend() )->edit_file(
+			$result = ( new RemoteWorkspaceBackend() )->edit_file(
 				$input['repo'] ?? '',
 				$input['path'] ?? '',
 				$old_string,
 				$new_string,
 				! empty($input['replace_all'])
 			);
+			return self::decorate_remote_workspace_result('edit_file', $result);
 		}
 
 		$workspace = new Workspace();
@@ -2545,7 +2633,8 @@ class WorkspaceAbilities {
 	 */
 	public static function gitStatus( array $input ): array|\WP_Error {
 		if ( RemoteWorkspaceBackend::should_handle() ) {
-			return ( new RemoteWorkspaceBackend() )->git_status($input['name'] ?? '');
+			$result = ( new RemoteWorkspaceBackend() )->git_status($input['name'] ?? '');
+			return self::decorate_remote_workspace_result('git_status', $result);
 		}
 
 		$workspace = new Workspace();
@@ -2617,10 +2706,11 @@ class WorkspaceAbilities {
 	 */
 	public static function gitCommit( array $input ): array|\WP_Error {
 		if ( RemoteWorkspaceBackend::should_handle() ) {
-			return ( new RemoteWorkspaceBackend() )->git_commit(
+			$result = ( new RemoteWorkspaceBackend() )->git_commit(
 				$input['name'] ?? '',
 				$input['message'] ?? ''
 			);
+			return self::decorate_remote_workspace_result('git_commit', $result);
 		}
 
 		$workspace = new Workspace();
@@ -2639,11 +2729,12 @@ class WorkspaceAbilities {
 	 */
 	public static function gitPush( array $input ): array|\WP_Error {
 		if ( RemoteWorkspaceBackend::should_handle() ) {
-			return ( new RemoteWorkspaceBackend() )->git_push(
+			$result = ( new RemoteWorkspaceBackend() )->git_push(
 				$input['name'] ?? '',
 				$input['remote'] ?? 'origin',
 				$input['branch'] ?? null
 			);
+			return self::decorate_remote_workspace_result('git_push', $result);
 		}
 
 		$workspace = new Workspace();
@@ -2736,11 +2827,12 @@ class WorkspaceAbilities {
 	 */
 	public static function worktreeAdd( array $input ): array|\WP_Error {
 		if ( RemoteWorkspaceBackend::should_handle() ) {
-			return ( new RemoteWorkspaceBackend() )->worktree_add(
+			$result = ( new RemoteWorkspaceBackend() )->worktree_add(
 				$input['repo'] ?? '',
 				$input['branch'] ?? '',
 				$input['from'] ?? null
 			);
+			return self::decorate_remote_workspace_result('worktree_add', $result);
 		}
 
 		$workspace = new Workspace();

@@ -77,7 +77,7 @@ $assert('workspace_git_push identifies branch pushes', is_array($push) && 'branc
 $assert('workspace_git_push exposes repo slug', is_array($push) && 'Extra-Chill/data-machine-code' === ( $push['repo'] ?? '' ));
 $assert('workspace_git_push exposes branch URL', is_array($push) && 'https://github.com/Extra-Chill/data-machine-code/tree/fix%2Ftool-result-contracts' === ( $push['url'] ?? '' ));
 $assert('workspace_git_push URL is distinguishable from PR URL', is_array($push) && str_contains($push['url'] ?? '', '/tree/') && ! str_contains($push['url'] ?? '', '/pull/'));
-$assert('workspace_git_push next args point to PR creation', is_array($push) && 'create_github_pull_request' === ( $push['next_required_tool'] ?? '' ));
+$assert('remote backend push omits model-facing next-tool hints', is_array($push) && ! array_key_exists('next_required_tool', $push) && ! array_key_exists('next_required_args', $push));
 
 if (! empty($failures) ) {
     echo "\nFAIL: " . count($failures) . " assertion(s)\n";
