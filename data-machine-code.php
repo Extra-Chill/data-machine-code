@@ -115,14 +115,6 @@ function datamachine_code_bootstrap() {
 	new \DataMachineCode\Handlers\GitHub\GitHubPullRequestPublish();
 	new \DataMachineCode\Handlers\GitHub\GitHubUpsert();
 
-	// Register the generic CLI transport runtime for agents/dispatch-message.
-	// Only wires up when the agents-api substrate is loaded — its
-	// register_dispatch_message_handler() helper is the canonical signal
-	// that the dispatch filter contract is present on this install.
-	if ( function_exists('AgentsAPI\\AI\\Channels\\register_dispatch_message_handler') ) {
-		\DataMachineCode\Channels\CliChannelTransport::register();
-	}
-
 	// Register ability categories on the correct hook (must happen during wp_abilities_api_categories_init).
 	add_action('wp_abilities_api_categories_init', 'datamachine_code_register_ability_categories');
 }
