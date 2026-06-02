@@ -1351,6 +1351,10 @@ class Workspace {
 		$started_at = microtime(true);
 		$limit      = array_key_exists('limit', $opts) ? (int) $opts['limit'] : 25;
 		$offset     = array_key_exists('offset', $opts) ? max(0, (int) $opts['offset']) : 0;
+		$next_operation = isset($opts['next_command_operation']) && is_string($opts['next_command_operation']) && preg_match('/^active-no-signal-[a-z-]+$/', $opts['next_command_operation'])
+			? $opts['next_command_operation']
+			: 'active-no-signal-report';
+		$next_dry_run = 'active-no-signal-report' !== $next_operation && ! empty($opts['dry_run']);
 		if ( $limit <= 0 ) {
 			return new \WP_Error('invalid_active_no_signal_limit', 'Active/no-signal report --limit must be greater than 0.', array( 'status' => 400 ));
 		}
@@ -1421,7 +1425,7 @@ class Workspace {
 			'partial'      => null !== $next_offset,
 			'complete'     => null === $next_offset,
 			'next_offset'  => $next_offset,
-			'next_command' => null === $next_offset ? null : sprintf('studio wp datamachine-code workspace worktree active-no-signal-report --limit=%d --offset=%d%s --format=json', $limit, $next_offset, null !== $budget_context ? ' --until-budget=' . (string) $budget_context['label'] : ''),
+			'next_command' => null === $next_offset ? null : sprintf('studio wp datamachine-code workspace worktree %s%s --limit=%d --offset=%d%s --format=json', $next_operation, $next_dry_run ? ' --dry-run' : '', $limit, $next_offset, null !== $budget_context ? ' --until-budget=' . (string) $budget_context['label'] : ''),
 		);
 		if ( $budget_stopped ) {
 			$pagination['partial']  = true;
@@ -1455,7 +1459,7 @@ class Workspace {
 	 */
 	public function worktree_active_no_signal_finalized_apply( array $opts = array() ): array|\WP_Error {
 		$dry_run = ! empty($opts['dry_run']);
-		$report  = $this->worktree_active_no_signal_report($opts);
+		$report  = $this->worktree_active_no_signal_report(array_merge($opts, array( 'next_command_operation' => 'active-no-signal-finalized-apply' )));
 		if ( is_wp_error($report) ) {
 			return $report;
 		}
@@ -1547,7 +1551,7 @@ class Workspace {
 	 */
 	public function worktree_active_no_signal_equivalent_clean_apply( array $opts = array() ): array|\WP_Error {
 		$dry_run = ! empty($opts['dry_run']);
-		$report  = $this->worktree_active_no_signal_report($opts);
+		$report  = $this->worktree_active_no_signal_report(array_merge($opts, array( 'next_command_operation' => 'active-no-signal-equivalent-clean-apply' )));
 		if ( is_wp_error($report) ) {
 			return $report;
 		}
@@ -1640,7 +1644,7 @@ class Workspace {
 	 */
 	public function worktree_active_no_signal_merged_apply( array $opts = array() ): array|\WP_Error {
 		$dry_run = ! empty($opts['dry_run']);
-		$report  = $this->worktree_active_no_signal_report($opts);
+		$report  = $this->worktree_active_no_signal_report(array_merge($opts, array( 'next_command_operation' => 'active-no-signal-merged-apply' )));
 		if ( is_wp_error($report) ) {
 			return $report;
 		}
