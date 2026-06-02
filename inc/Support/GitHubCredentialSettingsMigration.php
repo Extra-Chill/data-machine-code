@@ -122,7 +122,7 @@ final class GitHubCredentialSettingsMigration {
 	 * @return array<string,mixed>
 	 */
 	private static function legacy_profile(): array {
-		$mode = strtolower(trim((string) PluginSettings::get('github_auth_mode', '')));
+		$mode = strtolower(trim( (string) PluginSettings::get('github_auth_mode', '') ));
 		if ( ! in_array($mode, array( 'pat', 'app' ), true) ) {
 			$mode = 'pat';
 		}
@@ -138,7 +138,7 @@ final class GitHubCredentialSettingsMigration {
 					'app_installation_id' => (string) PluginSettings::get('github_app_installation_id', ''),
 					'app_private_key'     => (string) PluginSettings::get('github_app_private_key', ''),
 					'default_repo'        => (string) PluginSettings::get('github_default_repo', ''),
-				)
+				),
 			)
 		)[0];
 	}
@@ -148,8 +148,8 @@ final class GitHubCredentialSettingsMigration {
 	 * @return array<string,mixed>
 	 */
 	private static function redact_profile( array $profile ): array {
-		$profile['pat_configured']             = '' !== trim((string) ( $profile['pat'] ?? '' ));
-		$profile['app_private_key_configured'] = '' !== trim((string) ( $profile['app_private_key'] ?? '' ));
+		$profile['pat_configured']             = '' !== trim( (string) ( $profile['pat'] ?? '' ) );
+		$profile['app_private_key_configured'] = '' !== trim( (string) ( $profile['app_private_key'] ?? '' ) );
 		unset($profile['pat'], $profile['app_private_key']);
 		return $profile;
 	}

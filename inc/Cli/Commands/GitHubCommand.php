@@ -715,18 +715,30 @@ class GitHubCommand extends BaseCommand {
 	 * @subcommand migrate-credentials
 	 */
 	public function migrate_credentials( array $args, array $assoc_args ): void {
-		$result = GitHubCredentialSettingsMigration::migrate(! empty($assoc_args['apply']), ! empty($assoc_args['force']));
+		$result = GitHubCredentialSettingsMigration::migrate( ! empty($assoc_args['apply']), ! empty($assoc_args['force']) );
 
 		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-			WP_CLI::line((string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			WP_CLI::line( (string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) );
 			return;
 		}
 
 		$items = array(
-			array( 'field' => 'Applied', 'value' => ! empty($result['applied']) ? 'yes' : 'no' ),
-			array( 'field' => 'Legacy keys present', 'value' => ! empty($result['legacy_keys_present']) ? 'yes' : 'no' ),
-			array( 'field' => 'Profiles present', 'value' => ! empty($result['profiles_present']) ? 'yes' : 'no' ),
-			array( 'field' => 'Message', 'value' => (string) ( $result['message'] ?? '' ) ),
+			array(
+				'field' => 'Applied',
+				'value' => ! empty($result['applied']) ? 'yes' : 'no',
+			),
+			array(
+				'field' => 'Legacy keys present',
+				'value' => ! empty($result['legacy_keys_present']) ? 'yes' : 'no',
+			),
+			array(
+				'field' => 'Profiles present',
+				'value' => ! empty($result['profiles_present']) ? 'yes' : 'no',
+			),
+			array(
+				'field' => 'Message',
+				'value' => (string) ( $result['message'] ?? '' ),
+			),
 		);
 		$this->format_items($items, array( 'field', 'value' ), $assoc_args);
 
