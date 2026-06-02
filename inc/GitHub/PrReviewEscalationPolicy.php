@@ -76,7 +76,7 @@ class PrReviewEscalationPolicy {
 			$reasons[] = 'change_count_threshold';
 		}
 
-		$reasons = array_merge($reasons, self::checkReasons($checks, $head_sha));
+		$reasons = array_merge($reasons, self::checkReasons($checks));
 		$reasons = array_values(array_unique(array_filter($reasons)));
 
 		$metrics['touched_groups'] = array_keys($metrics['touched_groups']);
@@ -135,7 +135,7 @@ class PrReviewEscalationPolicy {
 	 *
 	 * @return string[]
 	 */
-	private static function checkReasons( array $checks, string $head_sha ): array {
+	private static function checkReasons( array $checks ): array {
 		$reasons = array();
 
 		foreach ( array( 'check_runs', 'commit_statuses' ) as $key ) {
