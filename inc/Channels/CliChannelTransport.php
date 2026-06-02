@@ -29,6 +29,7 @@
 namespace DataMachineCode\Channels;
 
 use DataMachineCode\Environment;
+use DataMachineCode\Support\SecretRedactor;
 use WP_Error;
 
 defined('ABSPATH') || exit;
@@ -163,13 +164,16 @@ class CliChannelTransport {
 		$detach  = (bool) ( $config['detach'] ?? true );
 		$timeout = isset($config['timeout']) && is_int($config['timeout']) ? $config['timeout'] : self::DEFAULT_TIMEOUT_SECONDS;
 		$cwd     = isset($config['cwd']) && is_string($config['cwd']) && '' !== $config['cwd'] ? $config['cwd'] : null;
-		$env     = self::build_env_map(isset($config['env']) && is_array($config['env']) ? $config['env'] : array());
+		$env     = self::build_env_map(
+			isset($config['env']) && is_array($config['env']) ? $config['env'] : array(),
+			isset($config['env_from']) && is_array($config['env_from']) ? $config['env_from'] : array()
+		);
 
 		if ( $detach ) {
-			return self::dispatch_detached($channel, $recipient, $command_args, $cwd, $env);
+			return self::dispatch_detached($channel, $recipient, $command_args, $cwd, $env['values']);
 		}
 
-		return self::dispatch_sync($channel, $recipient, $command_args, $cwd, $env, $timeout);
+		return self::dispatch_sync($channel, $recipient, $command_args, $cwd, $env['values'], $env['secrets'], $timeout);
 	}
 
 	/**
@@ -232,7 +236,7 @@ class CliChannelTransport {
 	 * @param  int                        $timeout   Timeout in seconds.
 	 * @return array<string, mixed>|WP_Error
 	 */
-	private static function dispatch_sync( string $channel, string $recipient, array $argv, ?string $cwd, ?array $env, int $timeout ) {
+	private static function dispatch_sync( string $channel, string $recipient, array $argv, ?string $cwd, ?array $env, array $secrets, int $timeout ) {
 		$descriptors = array(
 			0 => array( 'pipe', 'r' ),
 			1 => array( 'pipe', 'w' ),
@@ -328,8 +332,8 @@ class CliChannelTransport {
 				array(
 					'channel'     => $channel,
 					'recipient'   => $recipient,
-					'stdout'      => self::truncate_output($stdout),
-					'stderr'      => self::truncate_output($stderr),
+					'stdout'      => self::truncate_output($stdout, $secrets),
+					'stderr'      => self::truncate_output($stderr, $secrets),
 					'duration_ms' => $duration_ms,
 				)
 			);
@@ -343,8 +347,8 @@ class CliChannelTransport {
 					'channel'     => $channel,
 					'recipient'   => $recipient,
 					'exit_code'   => $exit_code,
-					'stdout'      => self::truncate_output($stdout),
-					'stderr'      => self::truncate_output($stderr),
+					'stdout'      => self::truncate_output($stdout, $secrets),
+					'stderr'      => self::truncate_output($stderr, $secrets),
 					'duration_ms' => $duration_ms,
 				)
 			);
@@ -359,8 +363,8 @@ class CliChannelTransport {
 				'mode'        => 'sync',
 				'exit_code'   => $exit_code,
 				'duration_ms' => $duration_ms,
-				'stdout'      => self::truncate_output($stdout),
-				'stderr'      => self::truncate_output($stderr),
+				'stdout'      => self::truncate_output($stdout, $secrets),
+				'stderr'      => self::truncate_output($stderr, $secrets),
 			),
 		);
 	}
@@ -415,10 +419,12 @@ class CliChannelTransport {
 	 * the inherited PATH if it provides one.
 	 *
 	 * @param  array<string, string> $configured Configured env map.
-	 * @return array<string, string>
+	 * @param  array<string, string> $env_from   Child env name => parent env name.
+	 * @return array{values:array<string,string>,secrets:string[]}
 	 */
-	private static function build_env_map( array $configured ): array {
-		$env = array();
+	private static function build_env_map( array $configured, array $env_from ): array {
+		$env     = array();
+		$secrets = array();
 
 		$parent_path = getenv('PATH');
 		if ( is_string($parent_path) && '' !== $parent_path ) {
@@ -427,9 +433,42 @@ class CliChannelTransport {
 
 		foreach ( $configured as $key => $value ) {
 			$env[ $key ] = $value;
+			if ( self::is_secret_like_env_key( (string) $key ) ) {
+				$secrets[] = $value;
+			}
 		}
 
-		return $env;
+		foreach ( $env_from as $target_key => $source_key ) {
+			$value = self::parent_env( (string) $source_key );
+			if ( '' === $value ) {
+				continue;
+			}
+
+			$env[ $target_key ] = $value;
+			if ( self::is_secret_like_env_key( (string) $target_key ) || self::is_secret_like_env_key( (string) $source_key ) ) {
+				$secrets[] = $value;
+			}
+		}
+
+		return array(
+			'values'  => $env,
+			'secrets' => array_values(array_unique(array_filter($secrets, static fn( string $secret ): bool => strlen(trim($secret)) >= 8))),
+		);
+	}
+
+	/**
+	 * Read a trimmed parent environment variable.
+	 */
+	private static function parent_env( string $name ): string {
+		$value = getenv($name);
+		return is_string($value) ? trim($value) : '';
+	}
+
+	/**
+	 * Determine whether an environment key conventionally carries a secret.
+	 */
+	private static function is_secret_like_env_key( string $key ): bool {
+		return 1 === preg_match('/(?:^|_)(TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE_KEY|API_KEY|ACCESS_KEY|AUTH|COOKIE|NONCE)(?:_|$)/i', $key);
 	}
 
 	/**
@@ -438,8 +477,9 @@ class CliChannelTransport {
 	 * @param  string $output Captured output.
 	 * @return string Truncated output.
 	 */
-	private static function truncate_output( string $output ): string {
-		$limit = 8192;
+	private static function truncate_output( string $output, array $secrets = array() ): string {
+		$output = SecretRedactor::redact($output, $secrets);
+		$limit  = 8192;
 		if ( strlen($output) <= $limit ) {
 			return $output;
 		}

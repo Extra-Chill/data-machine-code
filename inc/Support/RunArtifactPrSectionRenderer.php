@@ -344,7 +344,7 @@ class RunArtifactPrSectionRenderer {
 		}
 
 		if ( is_string($value) ) {
-			return self::redactSecretLikeString($value);
+			return SecretRedactor::redact($value);
 		}
 
 		return $value;
@@ -352,14 +352,6 @@ class RunArtifactPrSectionRenderer {
 
 	private static function isSecretLikeKey( string $key ): bool {
 		return 1 === preg_match('/(authorization|credential|secret|token|password|passwd|private[_-]?key|api[_-]?key|github[_-]?pat|bearer)/i', $key);
-	}
-
-	private static function redactSecretLikeString( string $value ): string {
-		$value = preg_replace('/\b(gh[pousr]_[A-Za-z0-9_]{12,})\b/', '[redacted]', $value) ?? $value;
-		$value = preg_replace('/\b(sk-[A-Za-z0-9_-]{12,})\b/', '[redacted]', $value) ?? $value;
-		$value = preg_replace('/\b(xox[baprs]-[A-Za-z0-9-]{12,})\b/', '[redacted]', $value) ?? $value;
-
-		return preg_replace('/\b(authorization|token|password|secret|api[_-]?key)\s*[:=]\s*\S+/i', '$1: [redacted]', $value) ?? $value;
 	}
 
 	/**

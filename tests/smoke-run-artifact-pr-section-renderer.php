@@ -11,6 +11,7 @@ if (! defined('ABSPATH') ) {
     define('ABSPATH', __DIR__ . '/');
 }
 
+require __DIR__ . '/../inc/Support/SecretRedactor.php';
 require __DIR__ . '/../inc/Support/RunArtifactPrSectionRenderer.php';
 
 use DataMachineCode\Support\RunArtifactPrSectionRenderer;
@@ -52,7 +53,7 @@ $artifacts = array(
     array(
         'name' => 'transcript_summary',
         'data' => array(
-            'summary'     => 'Ran smoke tests and PHP syntax checks.',
+            'summary'     => 'Ran smoke tests and PHP syntax checks. runtime used Bearer caller-secret-token-1234567890.',
             'private_key' => '-----BEGIN PRIVATE KEY-----',
         ),
     ),
@@ -74,6 +75,7 @@ $assert('renders transcript summary when provided', str_contains($section, 'Ran 
 $assert('omits secret-like keys', ! str_contains($section, 'never-render-me') && ! str_contains($section, 'BEGIN PRIVATE KEY'));
 $assert('redacts secret-like strings', str_contains($section, 'token: [redacted]') && ! str_contains($section, 'ghp_abcdefghijklmnopqrstuvwxyz123456'));
 $assert('does not leak api key values', ! str_contains($section, 'sk-test-secret-value'));
+$assert('redacts bearer token values', ! str_contains($section, 'caller-secret-token-1234567890') && str_contains($section, 'Bearer [redacted]'));
 
 $body    = "# Existing PR\n\nHuman-authored description.";
 $updated = RunArtifactPrSectionRenderer::replaceSection($body, $artifacts);
