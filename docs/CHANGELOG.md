@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.22] - 2026-06-01
+
+### Changed
+- Auto-finalize active worktrees merged to default
+- Remove generic CLI channel runtime
+
 ## [0.47.21] - 2026-06-02
 
 ### Changed
