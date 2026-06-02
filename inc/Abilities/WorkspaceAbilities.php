@@ -1884,9 +1884,13 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'Positive maximum active_no_signal rows to inspect in this page. Defaults to 25.',
 							),
-							'offset'  => array(
+							'offset'       => array(
 								'type'        => 'integer',
 								'description' => 'Pagination offset into the active_no_signal inventory ordering.',
+							),
+							'until_budget' => array(
+								'type'        => 'string',
+								'description' => 'Compact time budget for the underlying active_no_signal report page, such as 60s or 10m.',
 							),
 						),
 					),
@@ -1924,9 +1928,13 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'Positive maximum active_no_signal rows to inspect in this page. Defaults to 25.',
 							),
-							'offset'  => array(
+							'offset'       => array(
 								'type'        => 'integer',
 								'description' => 'Pagination offset into the active_no_signal inventory ordering.',
+							),
+							'until_budget' => array(
+								'type'        => 'string',
+								'description' => 'Compact time budget for the underlying active_no_signal report page, such as 60s or 10m.',
 							),
 						),
 					),
@@ -1964,9 +1972,13 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'Maximum active_no_signal rows to inspect in this page. Defaults to 25.',
 							),
-							'offset'  => array(
+							'offset'       => array(
 								'type'        => 'integer',
 								'description' => 'Pagination offset into the active_no_signal inventory ordering.',
+							),
+							'until_budget' => array(
+								'type'        => 'string',
+								'description' => 'Compact time budget for the underlying active_no_signal report page, such as 60s or 10m.',
 							),
 						),
 					),
@@ -3274,6 +3286,9 @@ class WorkspaceAbilities {
 		if ( array_key_exists('offset', $input) ) {
 			$opts['offset'] = (int) $input['offset'];
 		}
+		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
+			$opts['until_budget'] = trim( (string) $input['until_budget']);
+		}
 
 		return $workspace->worktree_active_no_signal_finalized_apply($opts);
 	}
@@ -3295,6 +3310,9 @@ class WorkspaceAbilities {
 		if ( array_key_exists('offset', $input) ) {
 			$opts['offset'] = (int) $input['offset'];
 		}
+		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
+			$opts['until_budget'] = trim( (string) $input['until_budget']);
+		}
 
 		return $workspace->worktree_active_no_signal_equivalent_clean_apply($opts);
 	}
@@ -3315,6 +3333,9 @@ class WorkspaceAbilities {
 		}
 		if ( array_key_exists('offset', $input) ) {
 			$opts['offset'] = (int) $input['offset'];
+		}
+		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
+			$opts['until_budget'] = trim( (string) $input['until_budget']);
 		}
 
 		return $workspace->worktree_active_no_signal_merged_apply($opts);

@@ -2245,7 +2245,8 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--until-budget=<duration>]
 	 * : For `cleanup --dry-run` and `reconcile-metadata`, enforce a compact
 	 *   wall-clock budget for dry-run pages or direct-apply drains (e.g. 60s,
-	 *   10m). Also supported by `active-no-signal-report`. Returns continuation
+	 *   10m). Also supported by `active-no-signal-report` and the active/no-signal
+	 *   apply flows. Returns continuation
 	 *   evidence and a next command when more rows remain.
 	 *
 	 * [--exhaustive]
@@ -2635,7 +2636,7 @@ class WorkspaceCommand extends BaseCommand {
 				if ( isset($assoc_args['offset']) ) {
 					$input['offset'] = (int) $assoc_args['offset'];
 				}
-				if ( 'active-no-signal-report' === $operation && isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
+				if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
 					$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
 				}
 				break;
@@ -3823,15 +3824,9 @@ class WorkspaceCommand extends BaseCommand {
 			$this->format_items($items, array( 'handle', 'branch', 'action', 'dirty', 'unpushed', 'pr', 'outside_default', 'remote_tracking' ), array( 'format' => 'table' ), 'handle');
 		}
 
-		if ( null !== ( $pagination['next_offset'] ?? null ) ) {
+		if ( ! empty($pagination['next_command']) ) {
 			WP_CLI::log('');
-			WP_CLI::log(
-				sprintf(
-					'Next page: wp datamachine-code workspace worktree active-no-signal-report --limit=%d --offset=%d --format=json',
-					(int) ( $pagination['limit'] ?? 0 ),
-					(int) $pagination['next_offset']
-				)
-			);
+			WP_CLI::log('Next page: ' . (string) $pagination['next_command']);
 		}
 
 		WP_CLI::success(sprintf('Inspected %d active/no-signal worktree(s). Review-only; no cleanup was applied.', count($rows)));
@@ -3916,15 +3911,9 @@ class WorkspaceCommand extends BaseCommand {
 			$this->format_items($items, array( 'handle', 'action', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
 		}
 
-		if ( isset($result['pagination']['next_offset']) ) {
+		if ( ! empty($result['pagination']['next_command']) ) {
 			WP_CLI::log('');
-			WP_CLI::log(
-				sprintf(
-					'Next page: wp datamachine-code workspace worktree active-no-signal-finalized-apply --limit=%d --offset=%d --format=json',
-					(int) ( $result['pagination']['limit'] ?? 0 ),
-					(int) $result['pagination']['next_offset']
-				)
-			);
+			WP_CLI::log('Next page: ' . (string) $result['pagination']['next_command']);
 		}
 
 		if ( $dry_run ) {
@@ -4013,15 +4002,9 @@ class WorkspaceCommand extends BaseCommand {
 			$this->format_items($items, array( 'handle', 'action', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
 		}
 
-		if ( isset($result['pagination']['next_offset']) ) {
+		if ( ! empty($result['pagination']['next_command']) ) {
 			WP_CLI::log('');
-			WP_CLI::log(
-				sprintf(
-					'Next page: wp datamachine-code workspace worktree active-no-signal-equivalent-clean-apply --limit=%d --offset=%d --format=json',
-					(int) ( $result['pagination']['limit'] ?? 0 ),
-					(int) $result['pagination']['next_offset']
-				)
-			);
+			WP_CLI::log('Next page: ' . (string) $result['pagination']['next_command']);
 		}
 
 		if ( $dry_run ) {
@@ -4110,15 +4093,9 @@ class WorkspaceCommand extends BaseCommand {
 			$this->format_items($items, array( 'handle', 'action', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
 		}
 
-		if ( isset($result['pagination']['next_offset']) ) {
+		if ( ! empty($result['pagination']['next_command']) ) {
 			WP_CLI::log('');
-			WP_CLI::log(
-				sprintf(
-					'Next page: wp datamachine-code workspace worktree active-no-signal-merged-apply --limit=%d --offset=%d --format=json',
-					(int) ( $result['pagination']['limit'] ?? 0 ),
-					(int) $result['pagination']['next_offset']
-				)
-			);
+			WP_CLI::log('Next page: ' . (string) $result['pagination']['next_command']);
 		}
 
 		if ( $dry_run ) {
