@@ -9,7 +9,7 @@
  *
  * == How identity arrives ==
  *
- * Callers (e.g. homeboy-extensions's CI workload) pass workspace
+	 * Callers pass workspace
  * identity via `initial_data.active_workspace` on the
  * datamachine/run-flow ability call. The filter callback below reads
  * that input, looks up the matching worktree metadata via

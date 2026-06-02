@@ -180,8 +180,8 @@ namespace {
         array(
         'repo'           => 'Extra-Chill/data-machine-code',
         'trigger'        => 'workflow_run',
-        'workflow_names' => 'Homeboy CI',
-        'workflow_paths' => '.github/workflows/homeboy.yml',
+		'workflow_names' => 'Plugin CI',
+		'workflow_paths' => '.github/workflows/ci.yml',
         ) 
     );
     $workflow_create_input  = $GLOBALS['dmc_test_create_pipeline']->last_input;
@@ -193,8 +193,8 @@ namespace {
     $assert('workflow_run' === ( $workflow_create_input['flow_config']['scheduling_config']['data_machine_code_github_pr_review']['trigger'] ?? '' ), 'workflow_run marker records trigger');
     $assert('github_workflow_run' === ( $workflow_webhook_input['template']['mode'] ?? '' ), 'workflow_run webhook template uses workflow_run verifier mode');
     $assert(array( 'completed' ) === ( $workflow_webhook_input['template']['allowed_actions'] ?? array() ), 'workflow_run verifier scopes completed action');
-    $assert(array( 'Homeboy CI' ) === ( $workflow_webhook_input['template']['workflow_names'] ?? array() ), 'workflow_run verifier carries workflow name filter');
-    $assert(array( '.github/workflows/homeboy.yml' ) === ( $workflow_webhook_input['template']['workflow_paths'] ?? array() ), 'workflow_run verifier carries workflow path filter');
+	$assert(array( 'Plugin CI' ) === ( $workflow_webhook_input['template']['workflow_names'] ?? array() ), 'workflow_run verifier carries workflow name filter');
+	$assert(array( '.github/workflows/ci.yml' ) === ( $workflow_webhook_input['template']['workflow_paths'] ?? array() ), 'workflow_run verifier carries workflow path filter');
 
     Flows::$summary_rows = array(
     array(

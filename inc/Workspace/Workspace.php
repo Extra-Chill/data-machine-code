@@ -3427,7 +3427,7 @@ class Workspace {
 	private function get_worktree_artifact_profile( string $repo, string $path ): array {
 		$profile = array();
 
-		if ( is_file(rtrim($path, '/') . '/Cargo.toml') || 'homeboy' === $repo ) {
+		if ( is_file(rtrim($path, '/') . '/Cargo.toml') ) {
 			$profile['target'] = 'Rust build artifacts';
 		}
 

@@ -109,19 +109,19 @@ namespace {
 
     echo "=== smoke-workspace-list-repo-filter ===\n";
 
-    mkdir($workspace_path . '/homeboy', 0755, true);
-    mkdir($workspace_path . '/homeboy@feature-one', 0755, true);
+	mkdir($workspace_path . '/my-plugin', 0755, true);
+	mkdir($workspace_path . '/my-plugin@feature-one', 0755, true);
     mkdir($workspace_path . '/data-machine-code', 0755, true);
 
     $workspace = new \DataMachineCode\Workspace\Workspace();
 
     echo "\n[1] Unfiltered list includes every workspace directory\n";
     $all = $workspace->list_repos();
-    $assert_same(array( 'data-machine-code', 'homeboy', 'homeboy@feature-one' ), $repo_names($all), 'unfiltered list includes all repos');
+	$assert_same(array( 'data-machine-code', 'my-plugin', 'my-plugin@feature-one' ), $repo_names($all), 'unfiltered list includes all repos');
 
     echo "\n[2] Repo filter includes primary checkout and worktrees\n";
-    $filtered = $workspace->list_repos('homeboy');
-    $assert_same(array( 'homeboy', 'homeboy@feature-one' ), $repo_names($filtered), 'repo filter includes matching primary and worktree handles');
+	$filtered = $workspace->list_repos('my-plugin');
+	$assert_same(array( 'my-plugin', 'my-plugin@feature-one' ), $repo_names($filtered), 'repo filter includes matching primary and worktree handles');
 
     echo "\n[3] Missing repo filter returns an empty list\n";
     $missing = $workspace->list_repos('missing');

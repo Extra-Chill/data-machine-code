@@ -82,12 +82,6 @@ class GitHubTools extends BaseTool
             ) 
         );
         $this->registerTool(
-            'get_github_homeboy_ci_results', array( $this, 'getHomeboyCiResultsDefinition' ), $contexts, array(
-            'access_level' => 'editor',
-            'ability'      => 'datamachine-code/get-github-homeboy-ci-results',
-            ) 
-        );
-        $this->registerTool(
             'get_github_pull_review_context', array( $this, 'getPullReviewContextDefinition' ), $contexts, array(
             'access_level' => 'editor',
             'ability'      => 'datamachine-code/get-github-pull-review-context',
@@ -97,12 +91,6 @@ class GitHubTools extends BaseTool
             'github_repo_review_profile', array( $this, 'getRepoReviewProfileDefinition' ), $contexts, array(
             'access_level' => 'editor',
             'ability'      => 'datamachine-code/get-github-repo-review-profile',
-            ) 
-        );
-        $this->registerTool(
-            'run_pr_homeboy_review', array( $this, 'getRunPrHomeboyReviewDefinition' ), $contexts, array(
-            'access_level' => 'editor',
-            'ability'      => 'datamachine-code/run-pr-homeboy-review',
             ) 
         );
         $this->registerTool(
@@ -189,10 +177,8 @@ class GitHubTools extends BaseTool
         'get_github_check_runs',
         'get_github_commit_statuses',
         'get_github_actions_artifact',
-        'get_github_homeboy_ci_results',
         'get_github_pull_review_context',
         'github_repo_review_profile',
-        'run_pr_homeboy_review',
         'github_pr_documentation_impact',
         'list_github_tree',
         'get_github_file',
@@ -949,19 +935,8 @@ class GitHubTools extends BaseTool
         return $this->executeGitHubAbility('datamachine-code/get-github-actions-artifact', 'get_github_actions_artifact', $parameters);
     }
 
-    /**
-     * Handle get_github_homeboy_ci_results tool call.
-     *
-     * @param  array $parameters Tool parameters.
-     * @return array
-     */
-    public function handleHomeboyCiResults( array $parameters ): array
-    {
-        return $this->executeGitHubAbility('datamachine-code/get-github-homeboy-ci-results', 'get_github_homeboy_ci_results', $parameters);
-    }
-
-    /**
-     * Get tool definition for get_github_commit_statuses.
+	/**
+	 * Get tool definition for get_github_commit_statuses.
      *
      * @return array
      */
@@ -1033,50 +1008,6 @@ class GitHubTools extends BaseTool
     }
 
     /**
-     * Get tool definition for get_github_homeboy_ci_results.
-     *
-     * @return array
-     */
-    public function getHomeboyCiResultsDefinition(): array
-    {
-        return array(
-        'class'       => __CLASS__,
-        'method'      => 'handleHomeboyCiResults',
-        'description' => 'Download and summarize the Homeboy CI results artifact for a pull request or commit SHA. Uses GitHub Actions artifacts, preferring review.json and falling back to audit/lint/test JSON files.',
-        'parameters'  => array(
-        'type'       => 'object',
-        'properties' => array(
-        'repo'               => array(
-         'type'        => 'string',
-         'description' => 'Repository in owner/repo format.',
-                    ),
-                    'head_sha'           => array(
-                        'type'        => 'string',
-                        'description' => 'Commit SHA to match the Homeboy artifact against.',
-                    ),
-                    'pull_number'        => array(
-                        'type'        => 'integer',
-                        'description' => 'Pull request number. Used to resolve head_sha when head_sha is omitted.',
-                    ),
-                    'artifact_name'      => array(
-                        'type'        => 'string',
-                        'description' => 'GitHub Actions artifact name. Default: homeboy-ci-results.',
-                    ),
-                    'max_artifact_bytes' => array(
-                        'type'        => 'integer',
-                        'description' => 'Maximum artifact ZIP bytes to download. Default: 2000000.',
-                    ),
-                    'include_raw'        => array(
-                        'type'        => 'boolean',
-                        'description' => 'Include bounded raw parsed JSON payloads.',
-                    ),
-        ),
-        'required'   => array( 'repo' ),
-        ),
-        );
-    }
-
-    /**
      * Handle get_github_pull_review_context tool call.
      *
      * @param  array $parameters Tool parameters.
@@ -1085,17 +1016,6 @@ class GitHubTools extends BaseTool
     public function handlePullReviewContext( array $parameters ): array
     {
         return $this->executeGitHubAbility('datamachine-code/get-github-pull-review-context', 'get_github_pull_review_context', $parameters);
-    }
-
-    /**
-     * Handle run_pr_homeboy_review tool call.
-     *
-     * @param  array $parameters Tool parameters.
-     * @return array
-     */
-    public function handleRunPrHomeboyReview( array $parameters ): array
-    {
-        return $this->executeGitHubAbility('datamachine-code/run-pr-homeboy-review', 'run_pr_homeboy_review', $parameters);
     }
 
     /**
@@ -1170,13 +1090,9 @@ class GitHubTools extends BaseTool
                         'type'        => 'boolean',
                         'description' => 'Include bounded check output summaries and text.',
                     ),
-                    'include_homeboy_ci'      => array(
-                        'type'        => 'boolean',
-                        'description' => 'Include parsed Homeboy CI result artifact data for the PR head SHA.',
-                    ),
                     'artifact_name'           => array(
                         'type'        => 'string',
-                        'description' => 'GitHub Actions artifact name for Homeboy CI results. Default: homeboy-ci-results.',
+                        'description' => 'Optional GitHub Actions artifact name to include through generic artifact consumers.',
                     ),
             ),
             'required'   => array( 'repo', 'pull_number' ),
@@ -1206,7 +1122,7 @@ class GitHubTools extends BaseTool
         return array(
         'class'       => __CLASS__,
         'method'      => 'handleRepoReviewProfile',
-        'description' => 'Build bounded repository-level review context from AGENTS.md, README, contributing docs, Homeboy config, and small architecture/development docs. Use before reviewing to learn repo-specific rules and conventions.',
+        'description' => 'Build bounded repository-level review context from AGENTS.md, README, contributing docs, and small architecture/development docs. Use before reviewing to learn repo-specific rules and conventions.',
         'parameters'  => array(
         'type'       => 'object',
         'properties' => array(
@@ -1236,42 +1152,6 @@ class GitHubTools extends BaseTool
                     ),
         ),
         'required'   => array( 'repo' ),
-        ),
-        );
-    }
-
-    /**
-     * Get tool definition for run_pr_homeboy_review.
-     *
-     * @return array
-     */
-    public function getRunPrHomeboyReviewDefinition(): array
-    {
-        return array(
-        'class'       => __CLASS__,
-        'method'      => 'handleRunPrHomeboyReview',
-        'description' => 'Run checkout-backed Homeboy review checks for a pull request in an isolated DMC workspace worktree. Does not post comments or mutate the pull request.',
-        'parameters'  => array(
-        'type'       => 'object',
-        'properties' => array(
-        'repo'        => array(
-         'type'        => 'string',
-         'description' => 'Repository in owner/repo format.',
-                    ),
-                    'pull_number' => array(
-                        'type'        => 'integer',
-                        'description' => 'Pull request number.',
-                    ),
-                    'head_sha'    => array(
-                        'type'        => 'string',
-                        'description' => 'Expected pull request head SHA. Execution fails closed if GitHub reports a different head.',
-                    ),
-                    'base_ref'    => array(
-                        'type'        => 'string',
-                        'description' => 'Optional base ref. Defaults to the pull request base ref.',
-                    ),
-        ),
-        'required'   => array( 'repo', 'pull_number', 'head_sha' ),
         ),
         );
     }
