@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.23] - 2026-06-02
+
+### Fixed
+- Fix active cleanup branch identity
+
 ## [0.47.22] - 2026-06-01
 
 ### Changed
