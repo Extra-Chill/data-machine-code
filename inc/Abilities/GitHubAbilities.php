@@ -1445,6 +1445,8 @@ class GitHubAbilities {
 	// -------------------------------------------------------------------------
 
 	public static function githubStatus( array $input ): array {
+		unset($input);
+
 		$auth_status = self::getAuthStatus();
 
 		return array(
