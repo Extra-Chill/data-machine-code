@@ -88,8 +88,8 @@ trait WorkspaceMetadataReconciliation {
 				fn( $wt ) => empty($wt['is_primary'])
 			)
 		);
-		$prefilter      = $this->prefilter_worktree_metadata_reconciliation_rows($all_worktrees);
-		$page_scope     = $prefilter['candidates'];
+		$prefilter       = $this->prefilter_worktree_metadata_reconciliation_rows($all_worktrees);
+		$page_scope      = $prefilter['candidates'];
 		$total_worktrees = count($page_scope);
 		$page_worktrees  = $paged ? array_slice($page_scope, $offset, $limit) : $page_scope;
 
@@ -127,7 +127,7 @@ trait WorkspaceMetadataReconciliation {
 			$pagination['next_command'] = sprintf('studio wp datamachine-code workspace worktree reconcile-metadata --%s --limit=%d --offset=%d%s --format=json', $apply ? 'apply' : 'dry-run', $limit, (int) $pagination['next_offset'], null !== $budget_context ? ' --until-budget=' . (string) $budget_context['label'] : '');
 		}
 
-		$plan = array(
+		$plan                           = array(
 			'success'            => true,
 			'dry_run'            => $dry_run,
 			'applied'            => false,
@@ -476,7 +476,7 @@ trait WorkspaceMetadataReconciliation {
 		foreach ( $worktrees as $wt ) {
 			$reason = $this->worktree_metadata_reconciliation_candidate_reason($wt);
 			if ( null !== $reason ) {
-				$candidates[] = $wt;
+				$candidates[]       = $wt;
 				$reasons[ $reason ] = (int) ( $reasons[ $reason ] ?? 0 ) + 1;
 				continue;
 			}
