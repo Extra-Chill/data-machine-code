@@ -43,7 +43,14 @@ trait WorkspaceArtifactCleanup {
 		$exhaustive = ! empty($opts['exhaustive']);
 		$limit      = isset($opts['limit']) ? (int) $opts['limit'] : self::ARTIFACT_CLEANUP_DEFAULT_LIMIT;
 		$offset     = isset($opts['offset']) ? max(0, (int) $opts['offset']) : 0;
-		// Allow callers to opt out of bounded mode entirely.
+		if ( $limit < 0 ) {
+			return new \WP_Error('invalid_artifact_cleanup_limit', 'Artifact cleanup --limit must be greater than 0. Use --exhaustive for an unbounded full artifact audit.', array( 'status' => 400 ));
+		}
+		if ( ! $exhaustive && $limit <= 0 ) {
+			return new \WP_Error('invalid_artifact_cleanup_limit', 'Artifact cleanup --limit must be greater than 0. Use --exhaustive for an unbounded full artifact audit.', array( 'status' => 400 ));
+		}
+		// Allow callers to opt out of bounded mode entirely only through the
+		// explicit exhaustive path, which also enables safety probes.
 		if ( $exhaustive ) {
 			$limit = 0;
 		}
@@ -191,7 +198,7 @@ trait WorkspaceArtifactCleanup {
 	 * `next_offset` continuation when the scan is partial.
 	 *
 	 * @param  bool  $force Whether to allow dirty/unpushed worktrees.
-	 * @param  array $opts  Options: `limit` (0 = unbounded), `offset`,
+	 * @param  array $opts  Options: `limit` (0 = unbounded internal exhaustive mode), `offset`,
 	 *                      `only_handles` (array<string>|null), `safety_probes`.
 	 * @return array{candidates: array<int,array>, skipped: array<int,array>, pagination: ?array<string,mixed>}|\WP_Error
 	 */

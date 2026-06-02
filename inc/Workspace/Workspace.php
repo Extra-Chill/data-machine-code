@@ -1349,8 +1349,11 @@ class Workspace {
 	 */
 	public function worktree_active_no_signal_report( array $opts = array() ): array|\WP_Error {
 		$started_at = microtime(true);
-		$limit      = array_key_exists('limit', $opts) ? max(1, (int) $opts['limit']) : 25;
+		$limit      = array_key_exists('limit', $opts) ? (int) $opts['limit'] : 25;
 		$offset     = array_key_exists('offset', $opts) ? max(0, (int) $opts['offset']) : 0;
+		if ( $limit <= 0 ) {
+			return new \WP_Error('invalid_active_no_signal_limit', 'Active/no-signal report --limit must be greater than 0.', array( 'status' => 400 ));
+		}
 		if ( isset($opts['until_budget']) && '' !== trim( (string) $opts['until_budget']) ) {
 			$budget_seconds = $this->parse_worktree_metadata_reconciliation_budget(trim( (string) $opts['until_budget']));
 			if ( is_wp_error($budget_seconds) ) {

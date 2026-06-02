@@ -1794,7 +1794,7 @@ class WorkspaceAbilities {
 							),
 							'limit'        => array(
 								'type'        => 'integer',
-								'description' => 'Page size for bounded dry-run, direct apply, budgeted apply, or job-backed apply.',
+								'description' => 'Positive page size for bounded dry-run, direct apply, budgeted apply, or job-backed apply.',
 							),
 							'offset'       => array(
 								'type'        => 'integer',
@@ -1835,7 +1835,7 @@ class WorkspaceAbilities {
 						'properties' => array(
 							'limit'        => array(
 								'type'        => 'integer',
-								'description' => 'Maximum active_no_signal rows to inspect in this page. Defaults to 25.',
+								'description' => 'Positive maximum active_no_signal rows to inspect in this page. Defaults to 25.',
 							),
 							'offset'       => array(
 								'type'        => 'integer',
@@ -1878,7 +1878,7 @@ class WorkspaceAbilities {
 							),
 							'limit'   => array(
 								'type'        => 'integer',
-								'description' => 'Maximum active_no_signal rows to inspect in this page. Defaults to 25.',
+								'description' => 'Positive maximum active_no_signal rows to inspect in this page. Defaults to 25.',
 							),
 							'offset'  => array(
 								'type'        => 'integer',
@@ -1918,7 +1918,7 @@ class WorkspaceAbilities {
 							),
 							'limit'   => array(
 								'type'        => 'integer',
-								'description' => 'Maximum active_no_signal rows to inspect in this page. Defaults to 25.',
+								'description' => 'Positive maximum active_no_signal rows to inspect in this page. Defaults to 25.',
 							),
 							'offset'  => array(
 								'type'        => 'integer',
@@ -1966,7 +1966,7 @@ class WorkspaceAbilities {
 							),
 							'limit'         => array(
 								'type'        => 'integer',
-								'description' => 'Maximum worktrees to scan in a dry-run page. Defaults to ' . Workspace::ARTIFACT_CLEANUP_DEFAULT_LIMIT . '. Use 0 to disable the cap (still bounded by exhaustive=false unless you also pass exhaustive=true).',
+								'description' => 'Positive maximum worktrees to scan in a dry-run page. Defaults to ' . Workspace::ARTIFACT_CLEANUP_DEFAULT_LIMIT . '. Use exhaustive=true for the explicit unbounded full audit mode.',
 							),
 							'offset'        => array(
 								'type'        => 'integer',
