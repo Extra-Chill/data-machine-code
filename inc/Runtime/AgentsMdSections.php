@@ -7,7 +7,6 @@
 
 namespace DataMachineCode\Runtime;
 
-use DataMachineCode\Homeboy;
 use DataMachineCode\Workspace\Workspace;
 
 defined('ABSPATH') || exit;
@@ -49,7 +48,6 @@ final class AgentsMdSections {
 		self::register_workspace_inventory_section($wp);
 		self::register_abilities_section();
 		self::register_wordpress_source_section();
-		self::register_homeboy_section();
 		self::register_multisite_section($wp);
 	}
 
@@ -187,43 +185,6 @@ MD;
 			}, array(
 				'label'       => 'WordPress Source',
 				'description' => 'Pointers to WordPress source directories.',
-			)
-		);
-	}
-
-	private static function register_homeboy_section(): void {
-		if ( ! Homeboy::is_available() ) {
-			return;
-		}
-
-		\DataMachine\Engine\AI\SectionRegistry::register(
-			'AGENTS.md', 'homeboy', 35, function () {
-				return <<<'MD'
-## Homeboy
-
-`homeboy` is a Rust CLI on this host. Every verb runs the same locally as in CI.
-
-**Quality:** `homeboy audit | lint | test | review | refactor`; use `homeboy review --changed-since --report=pr-comment` for PR-style review loops, and `--baseline` / `--ratchet` when a command supports observation baselines. For unregistered checkouts pass both `--path <repo>` and `--extension <id>` (e.g. `nodejs`) so resolution skips the missing-component error.
-
-**Git:** prefer `homeboy changes | status` and `homeboy git status|commit|push|pull|tag|rebase|cherry-pick|pr|issue` — structured output, component/worktree awareness, safer write verbs. Use `--path <checkout>` when operating outside a registered component or overriding component resolution. One-off reads (`git diff`, `git show`, `git blame`) stay on raw `git`.
-
-**Perf + envs:** `homeboy bench` for pinned iterations/runs/concurrency, baselines, rig/profile comparisons; `homeboy trace` and `homeboy observe` for behavioral evidence; `homeboy rig install|update|up|check|down|repair|status` for reproducible multi-component dev environments.
-
-**Reports + observations:** `homeboy triage` surfaces issue/PR/check attention; `homeboy report` renders structured Homeboy output artifacts; `homeboy runs list|show|artifacts|findings|export|import|reconcile` inspects persisted observation runs before rerunning expensive bench/trace/rig checks.
-
-**Stacks:** `homeboy stack list|show|apply|rebase|status|sync|push|diff|inspect` for combined-fixes branches built from upstream PRs.
-
-**Deps:** `homeboy deps` for dependency update workflows when a component declares them.
-
-**Repo rules** (when `homeboy.json` is present):
-- **NEVER edit `CHANGELOG.md`** — generated from conventional commits at release time.
-- **NEVER hand-bump version strings** — `feat:`/`fix:`/`BREAKING CHANGE` drive semver; Homeboy rewrites version targets in `homeboy.json`.
-
-Run `homeboy --help` for the full verb list. Operator verbs (`release`, `deploy`, `fleet`, `ssh`) only on explicit ask.
-MD;
-			}, array(
-				'label'       => 'Homeboy',
-				'description' => 'Homeboy CLI — verbs agents reach for + repo rules.',
 			)
 		);
 	}

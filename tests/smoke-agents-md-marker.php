@@ -48,11 +48,8 @@ $stale_agent_cli            = 'datamachine agents list|create|access|tokens';
 $expected_workspace_cli     = 'datamachine-code workspace adopt|clone|list|show|path|hygiene|remove|worktree';
 $expected_worktree_cli      = 'datamachine-code workspace worktree add|list|remove|prune|cleanup|cleanup-artifacts|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible';
 $expected_gitsync_cli       = 'gitsync bind|list|status|pull|submit|push|policy|unbind';
-$expected_homeboy_git       = 'homeboy changes | status';
-$expected_homeboy_path      = '--path <checkout>';
-$expected_homeboy_trace     = 'homeboy trace';
-$expected_homeboy_review    = 'homeboy review --changed-since --report=pr-comment';
-$stale_homeboy_git          = 'homeboy git changes';
+$stale_homeboy_section      = "## Homeboy\n";
+$stale_homeboy_review       = 'homeboy review --changed-since --report=pr-comment';
 $expected_inventory_time    = 'Generated {$generated_at} from cloned repos';
 $expected_inventory_truth   = 'workspace list` is the source of truth';
 $expected_inventory_refresh = 'datamachine memory compose AGENTS.md{$agent_suffix}';
@@ -116,24 +113,8 @@ $assert(
     str_contains($source, $expected_gitsync_cli)
 );
 $assert(
-    'Homeboy guidance uses top-level changes command',
-    str_contains($source, $expected_homeboy_git)
-);
-$assert(
-    'Homeboy guidance covers --path checkout override',
-    str_contains($source, $expected_homeboy_path)
-);
-$assert(
-    'Homeboy guidance includes trace surface',
-    str_contains($source, $expected_homeboy_trace)
-);
-$assert(
-    'Homeboy guidance includes PR-style review loop',
-    str_contains($source, $expected_homeboy_review)
-);
-$assert(
-    'stale Homeboy git changes command is absent',
-    ! str_contains($source, $stale_homeboy_git)
+    'Homeboy AGENTS.md guidance is owned outside DMC',
+    ! str_contains($source, $stale_homeboy_section) && ! str_contains($source, $stale_homeboy_review)
 );
 $assert(
     'plugin entrypoint delegates AGENTS.md section registration',
@@ -141,7 +122,7 @@ $assert(
 );
 $assert(
     'plugin entrypoint no longer contains AGENTS.md heredoc sections',
-    ! str_contains($entrypoint, $expected_agent_cli) && ! str_contains($entrypoint, $expected_homeboy_review)
+    ! str_contains($entrypoint, $expected_agent_cli) && ! str_contains($entrypoint, $stale_homeboy_review)
 );
 
 if (! empty($failures) ) {
