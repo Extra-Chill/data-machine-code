@@ -2635,7 +2635,7 @@ class WorkspaceCommand extends BaseCommand {
 				if ( isset($assoc_args['offset']) ) {
 					$input['offset'] = (int) $assoc_args['offset'];
 				}
-				if ( 'active-no-signal-report' === $operation && isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
+				if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
 					$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
 				}
 				break;
