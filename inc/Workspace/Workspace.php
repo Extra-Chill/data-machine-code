@@ -1562,7 +1562,7 @@ class Workspace {
 			}
 
 			$effective_status = (string) ( $row['upstream_equivalence']['effective_status'] ?? '' );
-			if ( 'equivalent_clean' !== $effective_status ) {
+			if ( ! in_array($effective_status, array( 'equivalent_clean', 'contained_non_default_remote' ), true) ) {
 				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, 'not_equivalent_clean', 'row is not effectively clean upstream-equivalent work');
 				continue;
 			}
@@ -1866,13 +1866,18 @@ class Workspace {
 			),
 			WorktreeContextInjector::build_finalizer_metadata(WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE)
 		);
+		$effective_status                         = (string) ( $equivalence['upstream_equivalence']['effective_status'] ?? '' );
+		$signal                                   = 'contained_non_default_remote' === $effective_status ? 'contained-non-default-remote' : 'upstream-equivalent-clean';
+		$reason                                   = 'contained_non_default_remote' === $effective_status
+			? 'active/no-signal report found clean work contained in a non-default remote branch'
+			: 'active/no-signal report found patch-equivalent upstream work with no source-like dirty paths';
 		$metadata['auto_finalized_by']            = 'active_no_signal_equivalent_clean_apply';
-		$metadata['auto_finalized_signal']        = 'upstream-equivalent-clean';
-		$metadata['auto_finalized_reason']        = 'active/no-signal report found patch-equivalent upstream work with no source-like dirty paths';
+		$metadata['auto_finalized_signal']        = $signal;
+		$metadata['auto_finalized_reason']        = $reason;
 		$metadata['cleanup_eligibility_evidence'] = array(
-			'signal'               => 'upstream-equivalent-clean',
+			'signal'               => $signal,
 			'finalized_state'      => WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE,
-			'reason'               => 'unpushed commits are patch-equivalent to default and dirty paths are clean against default',
+			'reason'               => $reason,
 			'detected_at'          => gmdate('c'),
 			'dirty'                => (int) ( $equivalence['dirty'] ?? 0 ),
 			'unpushed'             => (int) ( $equivalence['unpushed'] ?? 0 ),
@@ -1928,30 +1933,54 @@ class Workspace {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private function build_current_effective_clean_cleanup_evidence( string $repo, string $wt_path ): array|\WP_Error {
+		$validation = $this->validate_containment($wt_path, $this->workspace_path);
+		if ( ! $validation['valid'] ) {
+			return new \WP_Error('external_worktree', 'worktree path is outside the workspace root');
+		}
+
+		$real_path = (string) ( $validation['real_path'] ?? '' );
+		if ( '' === $real_path || ! is_dir($real_path) ) {
+			return new \WP_Error('missing_worktree', 'worktree path no longer exists');
+		}
+
+		$git_marker = rtrim($real_path, '/') . '/.git';
+		if ( is_dir($git_marker) ) {
+			return new \WP_Error('primary_checkout', 'refusing to mark a primary checkout cleanup_eligible');
+		}
+		if ( ! is_file($git_marker) ) {
+			return new \WP_Error('not_a_worktree', 'worktree marker missing');
+		}
+
 		$primary_path = $this->get_primary_path($repo);
 		if ( ! is_dir($primary_path . '/.git') ) {
 			return new \WP_Error('missing_primary', 'primary checkout missing');
 		}
 
-		$dirty = $this->probe_worktree_dirty_count($wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$dirty = $this->probe_worktree_dirty_count($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 		if ( is_wp_error($dirty) ) {
 			return $dirty;
 		}
-		$unpushed = $this->count_unpushed_commits($wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$unpushed = $this->count_unpushed_commits($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 		if ( is_wp_error($unpushed) ) {
 			return $unpushed;
 		}
-		if ( 0 === (int) $dirty && 0 === (int) $unpushed ) {
-			return new \WP_Error('no_dirty_or_unpushed_signal', 'worktree no longer has dirty or unpushed evidence requiring upstream-equivalent cleanup handling');
-		}
-
 		$default_ref = $this->resolve_remote_default_ref($primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 		if ( ! is_string($default_ref) || '' === $default_ref ) {
 			return new \WP_Error('missing_default_ref', 'primary checkout default ref could not be resolved');
 		}
 
-		$upstream_equivalence = $this->build_dirty_unpushed_upstream_equivalence_evidence($primary_path, $wt_path, $default_ref);
-		if ( 'equivalent_clean' !== (string) ( $upstream_equivalence['effective_status'] ?? '' ) ) {
+		$branch = $this->resolve_worktree_branch_from_head_file($real_path);
+		if ( '' === $branch ) {
+			return new \WP_Error('missing_branch_identity', 'worktree branch identity could not be resolved');
+		}
+		if ( in_array($branch, $this->protected_base_branch_names(), true) ) {
+			return new \WP_Error('primary_protected_branch', 'refusing to auto-finalize a protected primary branch worktree');
+		}
+
+		$upstream_equivalence = ( 0 === (int) $dirty && 0 === (int) $unpushed )
+			? $this->build_clean_upstream_equivalence_evidence($primary_path, $real_path, $default_ref, $branch)
+			: $this->build_dirty_unpushed_upstream_equivalence_evidence($primary_path, $real_path, $default_ref);
+		if ( ! in_array( (string) ( $upstream_equivalence['effective_status'] ?? '' ), array( 'equivalent_clean', 'contained_non_default_remote' ), true) ) {
 			return new \WP_Error('not_equivalent_clean', 'current worktree evidence is not effectively clean upstream-equivalent');
 		}
 
@@ -2202,6 +2231,8 @@ class Workspace {
 
 			if ( (int) ( $out['dirty'] ?? 0 ) > 0 || (int) ( $out['unpushed'] ?? 0 ) > 0 ) {
 				$out['upstream_equivalence'] = $this->time_worktree_probe($out['probe_timings_ms'], 'upstream_equivalence', fn() => $this->build_dirty_unpushed_upstream_equivalence_evidence($primary_path, $path, $default_ref));
+			} else {
+				$out['upstream_equivalence'] = $this->time_worktree_probe($out['probe_timings_ms'], 'clean_upstream_equivalence', fn() => $this->build_clean_upstream_equivalence_evidence($primary_path, $path, $default_ref, $branch));
 			}
 		}
 
@@ -2223,6 +2254,79 @@ class Workspace {
 		$out['reason']           = $this->describe_active_no_signal_action($out);
 
 		return $out;
+	}
+
+	/**
+	 * Build patch-equivalence evidence for clean active/no-signal worktrees.
+	 *
+	 * @param  string $primary_path Primary checkout path.
+	 * @param  string $wt_path      Worktree path.
+	 * @param  string $default_ref  Remote default ref.
+	 * @param  string $branch       Current worktree branch.
+	 * @return array<string,mixed>
+	 */
+	private function build_clean_upstream_equivalence_evidence( string $primary_path, string $wt_path, string $default_ref, string $branch ): array {
+		$evidence = array(
+			'default_ref'                     => $default_ref,
+			'effective_status'                => 'unknown',
+			'git_cherry'                      => array(
+				'equivalent' => 0,
+				'unmatched'  => 0,
+				'unknown'    => 0,
+			),
+			'contained_by_non_default_remote' => array(),
+		);
+
+		$cherry = $this->run_git($wt_path, sprintf('cherry %s HEAD', escapeshellarg($default_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( ! is_wp_error($cherry) && ! $this->is_git_timeout_error($cherry) ) {
+			$lines = array_values(array_filter(array_map('trim', explode("\n", (string) ( $cherry['output'] ?? '' )))));
+			foreach ( $lines as $line ) {
+				if ( str_starts_with($line, '-') ) {
+					++$evidence['git_cherry']['equivalent'];
+				} elseif ( str_starts_with($line, '+') ) {
+					++$evidence['git_cherry']['unmatched'];
+				} else {
+					++$evidence['git_cherry']['unknown'];
+				}
+			}
+			$evidence['git_cherry']['total'] = count($lines);
+			if ( 0 < count($lines) && 0 === (int) $evidence['git_cherry']['unmatched'] && 0 === (int) $evidence['git_cherry']['unknown'] ) {
+				$evidence['effective_status'] = 'equivalent_clean';
+				return $evidence;
+			}
+		}
+
+		$head = $this->run_git($wt_path, 'rev-parse --verify HEAD', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($head) || $this->is_git_timeout_error($head) ) {
+			return $evidence;
+		}
+
+		$default_short = '';
+		if ( str_starts_with($default_ref, 'refs/remotes/origin/') ) {
+			$default_short = substr($default_ref, strlen('refs/remotes/origin/'));
+		}
+
+		$contains = $this->run_git($primary_path, sprintf('branch -r --contains %s', escapeshellarg(trim( (string) ( $head['output'] ?? '' )))), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($contains) || $this->is_git_timeout_error($contains) ) {
+			return $evidence;
+		}
+
+		$remote_branches = array_values(array_filter(array_map('trim', explode("\n", (string) ( $contains['output'] ?? '' )))));
+		foreach ( $remote_branches as $remote_branch ) {
+			$normalized_remote_branch = preg_replace('/^origin\//', '', $remote_branch);
+			$remote_branch            = '' === $normalized_remote_branch || null === $normalized_remote_branch ? $remote_branch : $normalized_remote_branch;
+			if ( '' === $remote_branch || str_starts_with($remote_branch, 'HEAD -> ') || $remote_branch === $default_short || $remote_branch === $branch ) {
+				continue;
+			}
+			$evidence['contained_by_non_default_remote'][] = $remote_branch;
+		}
+
+		$evidence['contained_by_non_default_remote'] = array_values(array_unique($evidence['contained_by_non_default_remote']));
+		if ( array() !== $evidence['contained_by_non_default_remote'] ) {
+			$evidence['effective_status'] = 'contained_non_default_remote';
+		}
+
+		return $evidence;
 	}
 
 	/**
@@ -2526,6 +2630,14 @@ class Workspace {
 			return 'merged_to_default';
 		}
 
+		$effective_status = (string) ( $row['upstream_equivalence']['effective_status'] ?? '' );
+		if ( 'equivalent_clean' === $effective_status ) {
+			return 'patch_equivalent_default';
+		}
+		if ( 'contained_non_default_remote' === $effective_status ) {
+			return 'contained_non_default_remote';
+		}
+
 		if ( null === ( $row['pr'] ?? null ) && empty($row['pr_error']) ) {
 			return 'no_pr_branch_review';
 		}
@@ -2546,6 +2658,8 @@ class Workspace {
 			'closed_pr_reconcile'      => 'exact branch-head PR lookup found a closed PR; review before marking cleanup_eligible',
 			'active_open_pr'           => 'exact branch-head PR lookup found an open PR',
 			'merged_to_default'        => 'local branch has no commits outside the remote default ref',
+			'patch_equivalent_default' => 'local commits are patch-equivalent to the remote default ref',
+			'contained_non_default_remote' => 'worktree HEAD is contained in a non-default remote branch',
 			'no_pr_branch_review'      => 'no exact branch-head PR was found; review age/task context before cleanup',
 			default                    => 'not enough evidence gathered',
 		};

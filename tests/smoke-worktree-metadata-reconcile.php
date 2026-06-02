@@ -783,6 +783,21 @@ namespace {
     $make_branch('unpushed-default-merged');
     $make_branch('ambiguous-default');
     $make_branch('fix/foo');
+    $run('git checkout -b patch-equivalent-default', $primary);
+    file_put_contents($primary . '/patch-equivalent-default.txt', 'patch-equivalent-default');
+    $run('git add patch-equivalent-default.txt && git commit -m patch-equivalent-default', $primary);
+    $run('git push -u origin patch-equivalent-default', $primary);
+    $run('git checkout main', $primary);
+    file_put_contents($primary . '/patch-equivalent-default.txt', 'patch-equivalent-default');
+    $run('git add patch-equivalent-default.txt && git commit -m patch-equivalent-default-main', $primary);
+    $run('git push origin main', $primary);
+    $run('git checkout -b non-default-contained', $primary);
+    file_put_contents($primary . '/non-default-contained.txt', 'non-default-contained');
+    $run('git add non-default-contained.txt && git commit -m non-default-contained', $primary);
+    $run('git push -u origin non-default-contained', $primary);
+    $run('git checkout -b integration-branch', $primary);
+    $run('git push -u origin integration-branch', $primary);
+    $run('git checkout main', $primary);
     foreach (array( 'default-merged', 'dirty-default-merged', 'unpushed-default-merged', 'fix/foo' ) as $merged_branch ) {
         $run('git checkout main', $primary);
         $run(sprintf('git merge --no-ff %s -m %s', escapeshellarg($merged_branch), escapeshellarg('merge ' . $merged_branch)), $primary);
@@ -795,6 +810,8 @@ namespace {
         'demo@unpushed-default-merged' => array( 'branch' => 'unpushed-default-merged', 'metadata_branch' => 'unpushed-default-merged' ),
         'demo@ambiguous-default'       => array( 'branch' => 'ambiguous-default', 'metadata_branch' => 'ambiguous-default' ),
         'demo@fix-foo'                 => array( 'branch' => 'fix/foo', 'metadata_branch' => 'fix-foo' ),
+        'demo@patch-equivalent-default' => array( 'branch' => 'patch-equivalent-default', 'metadata_branch' => 'patch-equivalent-default' ),
+        'demo@non-default-contained'   => array( 'branch' => 'non-default-contained', 'metadata_branch' => 'non-default-contained' ),
     );
     foreach ($merged_branch_worktrees as $handle => $branch_row ) {
         $branch_name     = $branch_row['branch'];
@@ -828,6 +845,10 @@ namespace {
     $assert('fix-foo', $merged_rows['demo@fix-foo']['branch_slug'] ?? '', 'active/no-signal report preserves handle branch slug');
     $assert(true, (bool) ( $merged_rows['demo@fix-foo']['branch_identity']['mismatch'] ?? false ), 'active/no-signal report surfaces metadata branch mismatch');
     $assert('merged_to_default', $merged_rows['demo@fix-foo']['suggested_action'] ?? '', 'clean contained slash branch is classified merged_to_default');
+    $assert('patch_equivalent_default', $merged_rows['demo@patch-equivalent-default']['suggested_action'] ?? '', 'clean patch-equivalent branch is classified patch_equivalent_default');
+    $assert('equivalent_clean', $merged_rows['demo@patch-equivalent-default']['upstream_equivalence']['effective_status'] ?? '', 'clean patch-equivalent branch exposes equivalent_clean evidence');
+    $assert('contained_non_default_remote', $merged_rows['demo@non-default-contained']['suggested_action'] ?? '', 'clean non-default-contained branch is classified contained_non_default_remote');
+    $assert('contained_non_default_remote', $merged_rows['demo@non-default-contained']['upstream_equivalence']['effective_status'] ?? '', 'clean non-default-contained branch exposes containment evidence');
     $assert('unsafe_dirty_or_unpushed', $merged_rows['demo@dirty-default-merged']['suggested_action'] ?? '', 'dirty contained branch remains unsafe');
     $assert('unsafe_dirty_or_unpushed', $merged_rows['demo@unpushed-default-merged']['suggested_action'] ?? '', 'unpushed contained branch remains unsafe');
     $assert('no_pr_branch_review', $merged_rows['demo@ambiguous-default']['suggested_action'] ?? '', 'ambiguous unmerged branch remains manual review');
@@ -849,6 +870,18 @@ namespace {
     $stored_fix_foo = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@fix-foo');
     $assert('cleanup_eligible', $stored_fix_foo['lifecycle_state'] ?? '', 'merged-to-default apply stores cleanup_eligible state for slash branch');
     $assert('fix/foo', $stored_fix_foo['branch'] ?? '', 'merged-to-default apply stores actual slash branch');
+    $clean_equivalent_dry_run = $ws->worktree_active_no_signal_equivalent_clean_apply(array( 'dry_run' => true, 'limit' => 100, 'offset' => 0 ));
+    $assert(true, ! is_wp_error($clean_equivalent_dry_run) && ( $clean_equivalent_dry_run['success'] ?? false ), 'clean equivalent active/no-signal dry-run succeeds');
+    $assert(2, (int) ( $clean_equivalent_dry_run['summary']['planned'] ?? 0 ), 'clean equivalent dry-run plans patch-equivalent and non-default-contained rows');
+    $clean_equivalent_apply = $ws->worktree_active_no_signal_equivalent_clean_apply(array( 'limit' => 100, 'offset' => 0 ));
+    $assert(true, ! is_wp_error($clean_equivalent_apply) && ( $clean_equivalent_apply['success'] ?? false ), 'clean equivalent active/no-signal apply succeeds');
+    $assert(2, (int) ( $clean_equivalent_apply['summary']['written'] ?? 0 ), 'clean equivalent apply writes patch-equivalent and non-default-contained metadata');
+    $stored_patch_equivalent = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@patch-equivalent-default');
+    $assert('cleanup_eligible', $stored_patch_equivalent['lifecycle_state'] ?? '', 'patch-equivalent apply stores cleanup_eligible state');
+    $assert('upstream-equivalent-clean', $stored_patch_equivalent['cleanup_eligibility_evidence']['signal'] ?? '', 'patch-equivalent apply records upstream-equivalent signal');
+    $stored_non_default = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@non-default-contained');
+    $assert('cleanup_eligible', $stored_non_default['lifecycle_state'] ?? '', 'non-default containment apply stores cleanup_eligible state');
+    $assert('contained-non-default-remote', $stored_non_default['cleanup_eligibility_evidence']['signal'] ?? '', 'non-default containment apply records containment signal');
     $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@dirty-default-merged')['cleanup_eligible_at'] ?? '', 'dirty merged-to-default row remains active');
     $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@unpushed-default-merged')['cleanup_eligible_at'] ?? '', 'unpushed merged-to-default row remains active');
     $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@ambiguous-default')['cleanup_eligible_at'] ?? '', 'ambiguous row remains active');
