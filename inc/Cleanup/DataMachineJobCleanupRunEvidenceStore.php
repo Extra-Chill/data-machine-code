@@ -41,16 +41,17 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 
 		$children_for_output = ( $include_evidence || $include_details ) ? $children : $this->summarize_cleanup_children($children);
 		$output              = array(
-			'success'             => true,
-			'state'               => $state,
-			'run_id'              => $this->cleanup_run_id($job_id),
-			'job_id'              => $job_id,
-			'status'              => in_array($state, array( 'children_processing', 'partial_failed' ), true) ? $state : ( $job['status'] ?? '' ),
-			'created_at'          => $job['created_at'] ?? '',
-			'parent_completed_at' => $job['completed_at'] ?? '',
-			'artifact_cleanup'    => $aggregate['artifact_cleanup'],
-			'cleanup_items'       => $aggregate['cleanup_items'],
-			'children'            => $children_for_output,
+			'success'                => true,
+			'state'                  => $state,
+			'run_id'                 => $this->cleanup_run_id($job_id),
+			'job_id'                 => $job_id,
+			'status'                 => in_array($state, array( 'children_processing', 'partial_failed' ), true) ? $state : ( $job['status'] ?? '' ),
+			'created_at'             => $job['created_at'] ?? '',
+			'parent_completed_at'    => $job['completed_at'] ?? '',
+			'artifact_cleanup'       => $aggregate['artifact_cleanup'],
+			'cleanup_items'          => $aggregate['cleanup_items'],
+			'remaining_work_summary' => CleanupRemainingWorkSummary::from_job_aggregate($aggregate),
+			'children'               => $children_for_output,
 		);
 
 		$output_aggregate             = $aggregate;
@@ -93,25 +94,33 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 	private function aggregate_cleanup_child_jobs( array $child_jobs ): array {
 		$summary = array(
 			'artifact_cleanup' => array(
-				'planned_rows'      => 0,
-				'applied_rows'      => 0,
-				'skipped_rows'      => 0,
-				'failed_rows'       => 0,
-				'bytes_reclaimed'   => 0,
-				'freed_human'       => $this->format_bytes(0),
-				'skipped_by_reason' => array(),
-				'failed_by_reason'  => array(),
+				'planned_rows'                         => 0,
+				'applied_rows'                         => 0,
+				'skipped_rows'                         => 0,
+				'failed_rows'                          => 0,
+				'bytes_reclaimed'                      => 0,
+				'freed_human'                          => $this->format_bytes(0),
+				'skipped_by_reason'                    => array(),
+				'failed_by_reason'                     => array(),
+				'skipped_examples_by_reason'           => array(),
+				'failed_examples_by_reason'            => array(),
+				'remaining_reclaimable_artifact_bytes' => 0,
+				'remaining_safely_removable_worktrees' => 0,
 			),
 			'cleanup_items'    => array(
-				'planned_rows'      => 0,
-				'applied_rows'      => 0,
-				'skipped_rows'      => 0,
-				'failed_rows'       => 0,
-				'bytes_reclaimed'   => 0,
-				'freed_human'       => $this->format_bytes(0),
-				'by_type'           => array(),
-				'skipped_by_reason' => array(),
-				'failed_by_reason'  => array(),
+				'planned_rows'                         => 0,
+				'applied_rows'                         => 0,
+				'skipped_rows'                         => 0,
+				'failed_rows'                          => 0,
+				'bytes_reclaimed'                      => 0,
+				'freed_human'                          => $this->format_bytes(0),
+				'by_type'                              => array(),
+				'skipped_by_reason'                    => array(),
+				'failed_by_reason'                     => array(),
+				'skipped_examples_by_reason'           => array(),
+				'failed_examples_by_reason'            => array(),
+				'remaining_reclaimable_artifact_bytes' => 0,
+				'remaining_safely_removable_worktrees' => 0,
 			),
 			'children'         => array(
 				'batch_job_ids'      => array(),
@@ -262,8 +271,19 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 		$summary['by_type'][ $chunk_type ]['failed_rows']     += $failed;
 		$summary['by_type'][ $chunk_type ]['bytes_reclaimed'] += $bytes_reclaimed;
 
-		$this->merge_cleanup_reason_counts($summary['skipped_by_reason'], (array) ( $result['skipped'] ?? array() ));
-		$this->merge_cleanup_reason_counts($summary['failed_by_reason'], (array) ( $result['failed'] ?? array() ));
+		$skipped_rows = (array) ( $result['skipped'] ?? array() );
+		$failed_rows  = (array) ( $result['failed'] ?? array() );
+		$this->merge_cleanup_reason_counts($summary['skipped_by_reason'], $skipped_rows);
+		$this->merge_cleanup_reason_counts($summary['failed_by_reason'], $failed_rows);
+		$this->merge_cleanup_reason_examples($summary['skipped_examples_by_reason'], $skipped_rows);
+		$this->merge_cleanup_reason_examples($summary['failed_examples_by_reason'], $failed_rows);
+
+		if ( in_array($chunk_type, array( 'artifacts', 'artifact_discovery' ), true) ) {
+			$summary['remaining_reclaimable_artifact_bytes'] += $this->sum_cleanup_rows_bytes(array_merge($skipped_rows, $failed_rows), array( 'artifact_size_bytes', 'size_bytes' ));
+		}
+		if ( 'worktrees' === $chunk_type ) {
+			$summary['remaining_safely_removable_worktrees'] += $failed;
+		}
 	}
 
 	/**
@@ -435,6 +455,73 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 			}
 			$counts[ $reason ] = (int) ( $counts[ $reason ] ?? 0 ) + 1;
 		}
+	}
+
+	/**
+	 * Merge bounded examples by cleanup reason.
+	 *
+	 * @param  array $examples Reason examples.
+	 * @param  array $rows     Rows with reason_code/reason.
+	 * @return void
+	 */
+	private function merge_cleanup_reason_examples( array &$examples, array $rows ): void {
+		$limit = 3;
+		foreach ( $rows as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$reason = (string) ( $row['reason_code'] ?? $row['reason'] ?? 'unknown' );
+			if ( '' === $reason ) {
+				$reason = 'unknown';
+			}
+			$examples[ $reason ] ??= array(
+				'count'    => 0,
+				'examples' => array(),
+			);
+			++$examples[ $reason ]['count'];
+			if ( count($examples[ $reason ]['examples']) >= $limit ) {
+				continue;
+			}
+			$examples[ $reason ]['examples'][] = array_filter(
+				array(
+					'handle' => (string) ( $row['handle'] ?? '' ),
+					'repo'   => (string) ( $row['repo'] ?? '' ),
+					'branch' => (string) ( $row['branch'] ?? '' ),
+					'reason' => (string) ( $row['reason'] ?? '' ),
+				)
+			);
+		}
+	}
+
+	/**
+	 * Sum byte fields across cleanup rows.
+	 *
+	 * @param  array<int,array<string,mixed>> $rows   Rows.
+	 * @param  array<int,string>              $fields Byte field preference order.
+	 * @return int
+	 */
+	private function sum_cleanup_rows_bytes( array $rows, array $fields ): int {
+		$total = 0;
+		foreach ( $rows as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$found = false;
+			foreach ( $fields as $field ) {
+				if ( isset($row[ $field ]) ) {
+					$total += max(0, (int) $row[ $field ]);
+					$found  = true;
+					break;
+				}
+			}
+			if ( $found ) {
+				continue;
+			}
+			foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
+				$total += max(0, (int) ( is_array($artifact) ? ( $artifact['size_bytes'] ?? 0 ) : 0 ));
+			}
+		}
+		return $total;
 	}
 
 	/**

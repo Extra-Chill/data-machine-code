@@ -138,22 +138,37 @@ class DataMachineCodeCleanupRunFakeWorkspace extends \DataMachineCode\Workspace\
         'rows'          => array(
         'artifact_cleanup' => array(
         array( 'handle' => 'demo@old', 'row_type' => 'artifact_cleanup', 'reason_code' => 'profile_artifact', 'artifact_size_bytes' => 15 ),
+        array( 'handle' => 'demo@stale-artifact', 'row_type' => 'artifact_cleanup', 'reason_code' => 'profile_artifact', 'artifact_size_bytes' => 9 ),
         ),
         'worktree_removal' => array(
                     array( 'handle' => 'demo@merged', 'repo' => 'demo', 'branch' => 'merged', 'path' => '/tmp/demo@merged', 'row_type' => 'worktree_removal', 'reason_code' => 'cleanup_eligible', 'size_bytes' => 20 ),
+                    array( 'handle' => 'demo@dirty', 'repo' => 'demo', 'branch' => 'dirty', 'path' => '/tmp/demo@dirty', 'row_type' => 'worktree_removal', 'reason_code' => 'cleanup_eligible', 'size_bytes' => 30 ),
         ),
-        'resolver' => array(),
+        'resolver' => array(
+        array( 'handle' => 'demo@needs-metadata-1', 'row_type' => 'resolver', 'reason_code' => 'needs_metadata_reconcile', 'reason' => 'missing metadata' ),
+        array( 'handle' => 'demo@needs-metadata-2', 'row_type' => 'resolver', 'reason_code' => 'needs_metadata_reconcile', 'reason' => 'missing metadata' ),
+        array( 'handle' => 'demo@needs-metadata-3', 'row_type' => 'resolver', 'reason_code' => 'needs_metadata_reconcile', 'reason' => 'missing metadata' ),
+        array( 'handle' => 'demo@needs-metadata-4', 'row_type' => 'resolver', 'reason_code' => 'needs_metadata_reconcile', 'reason' => 'missing metadata' ),
         ),
-        'summary'       => array( 'total_rows' => 2, 'total_size_bytes' => 35 ),
+        ),
+        'summary'       => array( 'total_rows' => 8, 'total_size_bytes' => 74 ),
         );
     }
     public function worktree_cleanup_artifacts( array $opts = array() ): array|WP_Error
     {
-        return array( 'removed' => array( array( 'handle' => 'demo@old' ) ), 'skipped' => array(), 'summary' => array() );
+        return array(
+        'removed' => array( array( 'handle' => 'demo@old', 'artifact_size_bytes' => 15 ) ),
+        'skipped' => array( array( 'handle' => 'demo@stale-artifact', 'reason_code' => 'plan_mismatch', 'reason' => 'artifact plan no longer matches', 'artifact_size_bytes' => 9 ) ),
+        'summary' => array(),
+        );
     }
     public function worktree_cleanup_merged( array $opts = array() ): array|WP_Error
     {
-        return array( 'removed' => array( array( 'handle' => 'demo@merged' ) ), 'skipped' => array(), 'summary' => array() );
+        return array(
+        'removed' => array( array( 'handle' => 'demo@merged', 'size_bytes' => 20 ) ),
+        'skipped' => array( array( 'handle' => 'demo@dirty', 'reason_code' => 'dirty_worktree', 'reason' => 'working tree is dirty' ) ),
+        'summary' => array(),
+        );
     }
 }
 
@@ -173,17 +188,28 @@ $service = new \DataMachineCode\Workspace\CleanupRunService($repo, new DataMachi
 $plan = $service->plan(array( 'mode' => 'retention' ));
 datamachine_code_cleanup_run_assert(! is_wp_error($plan), 'plan succeeds');
 datamachine_code_cleanup_run_assert(isset($plan['run_id']), 'plan returns run_id');
-datamachine_code_cleanup_run_assert(2 === (int) ( $plan['cleanup_storage']['item_count'] ?? 0 ), 'plan persists cleanup items');
+datamachine_code_cleanup_run_assert(8 === (int) ( $plan['cleanup_storage']['item_count'] ?? 0 ), 'plan persists cleanup items');
 
 $status = $service->status($plan['run_id']);
-datamachine_code_cleanup_run_assert(2 === (int) ( $status['summary']['total_items'] ?? 0 ), 'status aggregates items');
-datamachine_code_cleanup_run_assert(2 === (int) ( $status['summary']['items_by_status']['pending'] ?? 0 ), 'status tracks pending items');
+datamachine_code_cleanup_run_assert(8 === (int) ( $status['summary']['total_items'] ?? 0 ), 'status aggregates items');
+datamachine_code_cleanup_run_assert(4 === (int) ( $status['summary']['items_by_status']['pending'] ?? 0 ), 'status tracks pending items');
+datamachine_code_cleanup_run_assert(4 === (int) ( $status['remaining_work_summary']['blocked_resolvers_by_reason']['needs_metadata_reconcile']['count'] ?? 0 ), 'status groups blocked resolver rows by reason');
+datamachine_code_cleanup_run_assert(3 === count($status['remaining_work_summary']['blocked_resolvers_by_reason']['needs_metadata_reconcile']['examples'] ?? array()), 'blocked resolver examples are truncated');
+datamachine_code_cleanup_run_assert(24 === (int) ( $status['remaining_work_summary']['remaining_reclaimable_artifact_bytes'] ?? 0 ), 'status reports remaining reclaimable artifact bytes');
+datamachine_code_cleanup_run_assert(2 === (int) ( $status['remaining_work_summary']['remaining_safely_removable_worktrees'] ?? 0 ), 'status reports remaining safely removable worktrees');
 
 $apply = $service->apply($plan['run_id']);
 datamachine_code_cleanup_run_assert(! is_wp_error($apply), 'apply succeeds');
 
 $evidence = $service->evidence($plan['run_id']);
 datamachine_code_cleanup_run_assert(2 === (int) ( $evidence['summary']['items_by_status']['applied'] ?? 0 ), 'evidence reflects applied rows');
+datamachine_code_cleanup_run_assert(2 === (int) ( $evidence['summary']['items_by_status']['skipped'] ?? 0 ), 'evidence reflects skipped rows');
 datamachine_code_cleanup_run_assert(35 === (int) ( $evidence['summary']['bytes_reclaimed'] ?? 0 ), 'evidence aggregates reclaimed bytes');
+datamachine_code_cleanup_run_assert(1 === (int) ( $evidence['remaining_work_summary']['applied_by_type']['artifact_cleanup']['count'] ?? 0 ), 'evidence groups applied artifact rows');
+datamachine_code_cleanup_run_assert(15 === (int) ( $evidence['remaining_work_summary']['applied_by_type']['artifact_cleanup']['bytes_reclaimed'] ?? 0 ), 'evidence reports artifact bytes reclaimed');
+datamachine_code_cleanup_run_assert(1 === (int) ( $evidence['remaining_work_summary']['skipped_by_reason']['plan_mismatch']['count'] ?? 0 ), 'evidence groups skipped plan mismatches');
+datamachine_code_cleanup_run_assert('demo@stale-artifact' === (string) ( $evidence['remaining_work_summary']['skipped_by_reason']['plan_mismatch']['examples'][0]['handle'] ?? '' ), 'skipped examples include representative handle');
+datamachine_code_cleanup_run_assert(4 === (int) ( $evidence['remaining_work_summary']['blocked_resolvers_by_reason']['needs_metadata_reconcile']['count'] ?? 0 ), 'evidence keeps blocked resolver bucket');
+datamachine_code_cleanup_run_assert(str_contains((string) wp_json_encode($evidence['remaining_work_summary']['recommended_commands']), 'workspace worktree reconcile-metadata'), 'summary recommends next DMC commands');
 
 echo "DB-backed cleanup run storage smoke passed.\n";

@@ -743,9 +743,93 @@ class WorkspaceCommand extends BaseCommand {
 				WP_CLI::log(sprintf('%s: %s', ucfirst(str_replace('_', ' ', $key)), (string) $result[ $key ]));
 			}
 		}
+		if ( ! empty($result['remaining_work_summary']) && is_array($result['remaining_work_summary']) ) {
+			$this->render_cleanup_remaining_work_summary( (array) $result['remaining_work_summary']);
+		}
 		if ( ! empty($result['evidence']) ) {
 			WP_CLI::log( (string) wp_json_encode($result['evidence'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 		}
+	}
+
+	/**
+	 * Render compact cleanup remaining-work summary.
+	 *
+	 * @param  array<string,mixed> $summary Remaining-work summary.
+	 * @return void
+	 */
+	private function render_cleanup_remaining_work_summary( array $summary ): void {
+		WP_CLI::log('');
+		WP_CLI::log('Remaining work summary:');
+		$this->format_items(
+			array(
+				array(
+					'metric' => 'remaining_reclaimable_artifact_bytes',
+					'value'  => $this->format_bytes($summary['remaining_reclaimable_artifact_bytes'] ?? 0),
+				),
+				array(
+					'metric' => 'remaining_safely_removable_worktrees',
+					'value'  => (int) ( $summary['remaining_safely_removable_worktrees'] ?? 0 ),
+				),
+			),
+			array( 'metric', 'value' ),
+			array( 'format' => 'table' ),
+			'metric'
+		);
+
+		$this->render_cleanup_summary_type_rows('Applied rows by type:', (array) ( $summary['applied_by_type'] ?? array() ));
+		$this->render_cleanup_summary_reason_rows('Skipped rows by reason:', (array) ( $summary['skipped_by_reason'] ?? array() ));
+		$this->render_cleanup_summary_reason_rows('Blocked resolver rows by reason:', (array) ( $summary['blocked_resolvers_by_reason'] ?? array() ));
+
+		$commands = (array) ( $summary['recommended_commands'] ?? array() );
+		if ( array() !== $commands ) {
+			WP_CLI::log('');
+			WP_CLI::log('Recommended next commands:');
+			$rows = array_map(
+				fn( $row ) => array(
+					'bucket'  => is_array($row) ? (string) ( $row['bucket'] ?? '' ) : '',
+					'command' => is_array($row) ? (string) ( $row['command'] ?? '' ) : '',
+				),
+				array_slice($commands, 0, 10)
+			);
+			$this->format_items($rows, array( 'bucket', 'command' ), array( 'format' => 'table' ), 'bucket');
+		}
+	}
+
+	private function render_cleanup_summary_type_rows( string $label, array $types ): void {
+		if ( array() === $types ) {
+			return;
+		}
+		WP_CLI::log('');
+		WP_CLI::log($label);
+		$rows = array();
+		foreach ( $types as $type => $bucket ) {
+			$bucket = (array) $bucket;
+			$rows[] = array(
+				'type'            => (string) $type,
+				'count'           => (int) ( $bucket['count'] ?? 0 ),
+				'bytes_reclaimed' => $this->format_bytes($bucket['bytes_reclaimed'] ?? 0),
+			);
+		}
+		$this->format_items($rows, array( 'type', 'count', 'bytes_reclaimed' ), array( 'format' => 'table' ), 'type');
+	}
+
+	private function render_cleanup_summary_reason_rows( string $label, array $reasons ): void {
+		if ( array() === $reasons ) {
+			return;
+		}
+		WP_CLI::log('');
+		WP_CLI::log($label);
+		$rows = array();
+		foreach ( $reasons as $reason => $bucket ) {
+			$bucket   = (array) $bucket;
+			$examples = array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : (string) $row, (array) ( $bucket['examples'] ?? array() ));
+			$rows[]   = array(
+				'reason'   => (string) $reason,
+				'count'    => (int) ( $bucket['count'] ?? 0 ),
+				'examples' => implode(', ', array_filter($examples)),
+			);
+		}
+		$this->format_items($rows, array( 'reason', 'count', 'examples' ), array( 'format' => 'table' ), 'reason');
 	}
 
 	private function render_cleanup_plan_result( array $result, array $assoc_args ): void {

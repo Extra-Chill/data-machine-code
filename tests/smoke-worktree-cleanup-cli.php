@@ -68,6 +68,7 @@ namespace DataMachine\Cli {
 
 namespace {
     include_once dirname(__DIR__) . '/inc/Cleanup/CleanupRunEvidenceStoreInterface.php';
+    include_once dirname(__DIR__) . '/inc/Cleanup/CleanupRemainingWorkSummary.php';
     include_once dirname(__DIR__) . '/inc/Cleanup/DataMachineJobCleanupRunEvidenceStore.php';
     include_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
 
@@ -509,7 +510,7 @@ namespace {
                  'failed_count'     => 0,
                  'bytes_reclaimed'  => 4096,
                  'skipped'          => array(
-                  array( 'handle' => 'repo@dirty', 'reason_code' => 'dirty_worktree' ),
+                  array( 'handle' => 'repo@dirty', 'reason_code' => 'dirty_worktree', 'artifact_size_bytes' => 8192 ),
                  ),
                  'failed'           => array(),
                    ),
@@ -530,7 +531,7 @@ namespace {
                  'bytes_reclaimed'  => 0,
                  'skipped'          => array(),
                  'failed'           => array(
-                  array( 'handle' => 'repo@failed', 'reason_code' => 'apply_failed' ),
+                   array( 'handle' => 'repo@failed', 'reason_code' => 'apply_failed', 'artifact_size_bytes' => 2048 ),
                  ),
                    ),
                   ),
@@ -725,8 +726,22 @@ namespace {
     datamachine_code_cleanup_assert(3 === (int) ( $status_json['cleanup_items']['by_type']['artifact_discovery']['planned_rows'] ?? 0 ), 'cleanup status preserves artifact discovery chunk type aggregation');
     datamachine_code_cleanup_assert(1 === (int) ( $status_json['cleanup_items']['by_type']['artifacts']['planned_rows'] ?? 0 ), 'cleanup status preserves artifact apply chunk type aggregation');
     datamachine_code_cleanup_assert(! isset($status_json['cleanup_items']['by_type']['unknown']), 'cleanup status does not aggregate completed chunks under unknown type');
+    datamachine_code_cleanup_assert(2 === (int) ( $status_json['remaining_work_summary']['applied_by_type']['artifact_discovery']['count'] ?? 0 ), 'cleanup status groups applied rows by type in remaining-work summary');
+    datamachine_code_cleanup_assert(4096 === (int) ( $status_json['remaining_work_summary']['applied_by_type']['artifact_discovery']['bytes_reclaimed'] ?? 0 ), 'cleanup status reports reclaimed bytes by applied type');
+    datamachine_code_cleanup_assert(1 === (int) ( $status_json['remaining_work_summary']['skipped_by_reason']['dirty_worktree']['count'] ?? 0 ), 'cleanup status groups skipped rows by reason in remaining-work summary');
+    datamachine_code_cleanup_assert('repo@dirty' === (string) ( $status_json['remaining_work_summary']['skipped_by_reason']['dirty_worktree']['examples'][0]['handle'] ?? '' ), 'cleanup status includes skipped examples');
+    datamachine_code_cleanup_assert(10240 === (int) ( $status_json['remaining_work_summary']['remaining_reclaimable_artifact_bytes'] ?? 0 ), 'cleanup status reports remaining reclaimable artifact bytes');
+    datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($status_json['remaining_work_summary']['recommended_commands'] ?? array()), 'workspace cleanup run --mode=artifacts'), 'cleanup status recommends next DMC commands per bucket');
     datamachine_code_cleanup_assert('4.0 KiB' === ( $status_json['system_task_result']['report']['freed_human'] ?? '' ), 'cleanup status replaces pending child job freed placeholder');
     datamachine_code_cleanup_assert(! isset($status_json['system_task_result']['children']['job_ids']), 'cleanup status system task result omits full child job ids by default');
+
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->cleanup(array( 'status', 'cleanup-run-123' ), array());
+    datamachine_code_cleanup_assert(in_array('Remaining work summary:', WP_CLI::$logs, true), 'human cleanup status renders compact remaining-work summary');
+    datamachine_code_cleanup_assert(in_array('Applied rows by type:', WP_CLI::$logs, true), 'human cleanup status renders applied grouped section');
+    datamachine_code_cleanup_assert(in_array('Skipped rows by reason:', WP_CLI::$logs, true), 'human cleanup status renders skipped grouped section');
+    datamachine_code_cleanup_assert(in_array('Recommended next commands:', WP_CLI::$logs, true), 'human cleanup status renders next command section');
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
