@@ -2,6 +2,18 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.20] - 2026-06-02
+
+### Changed
+- Prefilter metadata reconciliation candidates
+- Support generic fan-out env projection
+
+### Fixed
+- Fix DMC ability routing contracts
+- summarize cleanup remaining work
+- reject zero cleanup report limits
+- accept branch slugs in cleanup plan revalidation
+
 ## [0.47.19] - 2026-06-01
 
 ### Fixed
