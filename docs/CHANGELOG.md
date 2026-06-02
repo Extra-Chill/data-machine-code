@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.25] - 2026-06-02
+
+### Changed
+- Guard clean cleanup branch identity
+
 ## [0.47.24] - 2026-06-02
 
 ### Changed
