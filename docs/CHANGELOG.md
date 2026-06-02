@@ -2,6 +2,13 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.27] - 2026-06-02
+
+### Fixed
+- remove unused escalation policy parameter
+- remove Homeboy runtime integration
+- remove Homeboy AGENTS guidance
+
 ## [0.47.26] - 2026-06-02
 
 ### Fixed
