@@ -1630,6 +1630,99 @@ class Workspace {
 	}
 
 	/**
+	 * Promote clean active/no-signal rows already merged to default into cleanup metadata.
+	 *
+	 * This writes lifecycle metadata only. It never removes worktrees; callers use
+	 * bounded cleanup-eligible apply after reviewing the written rows.
+	 *
+	 * @param  array<string,mixed> $opts Apply options.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function worktree_active_no_signal_merged_apply( array $opts = array() ): array|\WP_Error {
+		$dry_run = ! empty($opts['dry_run']);
+		$report  = $this->worktree_active_no_signal_report($opts);
+		if ( is_wp_error($report) ) {
+			return $report;
+		}
+
+		$written = array();
+		$skipped = array();
+		$planned = array();
+
+		foreach ( (array) ( $report['rows'] ?? array() ) as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+
+			if ( 'merged_to_default' !== (string) ( $row['suggested_action'] ?? '' ) ) {
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, 'not_merged_to_default', 'row is not a clean merged-to-default candidate');
+				continue;
+			}
+
+			$metadata = $this->build_active_no_signal_merged_to_default_metadata($row);
+			if ( is_wp_error($metadata) ) {
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, $metadata->get_error_code(), $metadata->get_error_message());
+				continue;
+			}
+
+			$planned[] = array(
+				'handle'   => (string) ( $row['handle'] ?? '' ),
+				'repo'     => (string) ( $row['repo'] ?? '' ),
+				'branch'   => (string) ( $row['branch'] ?? '' ),
+				'path'     => (string) ( $row['path'] ?? '' ),
+				'evidence' => $metadata['cleanup_eligibility_evidence'] ?? null,
+				'metadata' => $metadata,
+			);
+
+			if ( $dry_run ) {
+				continue;
+			}
+
+			$handle = (string) ( $row['handle'] ?? '' );
+			WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
+			$this->worktree_inventory()->upsert($this->build_worktree_inventory_row_from_handle($handle));
+			$written[] = array(
+				'handle'   => $handle,
+				'repo'     => (string) ( $row['repo'] ?? '' ),
+				'branch'   => (string) ( $row['branch'] ?? '' ),
+				'path'     => (string) ( $row['path'] ?? '' ),
+				'metadata' => WorktreeContextInjector::get_metadata($handle),
+			);
+		}
+
+		$summary = array(
+			'inspected'            => (int) ( $report['summary']['inspected'] ?? 0 ),
+			'planned'              => count($planned),
+			'written'              => count($written),
+			'skipped'              => count($skipped),
+			'skipped_by_reason'    => array(),
+			'report_action_counts' => $report['summary']['by_suggested_action'] ?? array(),
+		);
+		foreach ( $skipped as $skip ) {
+			$reason                                  = (string) ( $skip['reason_code'] ?? 'unknown' );
+			$summary['skipped_by_reason'][ $reason ] = (int) ( $summary['skipped_by_reason'][ $reason ] ?? 0 ) + 1;
+		}
+
+		return array(
+			'success'      => true,
+			'mode'         => 'active_no_signal_merged_apply',
+			'dry_run'      => $dry_run,
+			'applied'      => ! $dry_run,
+			'destructive'  => false,
+			'generated_at' => gmdate('c'),
+			'planned'      => $planned,
+			'written'      => $written,
+			'skipped'      => $skipped,
+			'summary'      => $summary,
+			'pagination'   => $report['pagination'] ?? array(),
+			'evidence'     => array(
+				'scope'  => 'promote clean active_no_signal rows contained in remote default into cleanup_eligible metadata',
+				'safety' => 'Revalidates clean worktree, no unpushed commits, containment, primary protection, branch identity, and merged-to-default evidence before writing metadata. Does not delete worktrees.',
+			),
+		);
+	}
+
+	/**
 	 * Build cleanup metadata from one finalized active/no-signal evidence row.
 	 *
 	 * @param  array<string,mixed> $row Evidence row.
@@ -1790,6 +1883,44 @@ class Workspace {
 	}
 
 	/**
+	 * Build cleanup metadata from one clean merged-to-default evidence row.
+	 *
+	 * @param  array<string,mixed> $row Evidence row.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function build_active_no_signal_merged_to_default_metadata( array $row ): array|\WP_Error {
+		$handle = (string) ( $row['handle'] ?? '' );
+		$repo   = (string) ( $row['repo'] ?? '' );
+		$branch = (string) ( $row['branch'] ?? '' );
+		$path   = (string) ( $row['path'] ?? '' );
+
+		$evidence = $this->build_current_merged_to_default_cleanup_evidence($handle, $repo, $branch, $path);
+		if ( is_wp_error($evidence) ) {
+			return $evidence;
+		}
+
+		$base_metadata                            = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
+		$metadata                                 = array_merge(
+			$base_metadata,
+			array(
+				'handle'       => $handle,
+				'repo'         => $repo,
+				'branch'       => $branch,
+				'path'         => (string) ( $evidence['path'] ?? $path ),
+				'observed_at'  => gmdate('c'),
+				'last_seen_at' => gmdate('c'),
+			),
+			WorktreeContextInjector::build_finalizer_metadata(WorktreeContextInjector::STATE_MERGED)
+		);
+		$metadata['auto_finalized_by']            = 'active_no_signal_merged_apply';
+		$metadata['auto_finalized_signal']        = 'merged-to-default';
+		$metadata['auto_finalized_reason']        = sprintf('active/no-signal report found branch contained in %s', (string) ( $evidence['default_ref'] ?? 'remote default' ));
+		$metadata['cleanup_eligibility_evidence'] = $evidence;
+
+		return $metadata;
+	}
+
+	/**
 	 * Recompute effective-clean evidence for the current worktree state.
 	 *
 	 * @param  string $repo    Repository name.
@@ -1828,6 +1959,125 @@ class Workspace {
 			'dirty'                => (int) $dirty,
 			'unpushed'             => (int) $unpushed,
 			'upstream_equivalence' => $upstream_equivalence,
+		);
+	}
+
+	/**
+	 * Recompute merged-to-default evidence for the current worktree state.
+	 *
+	 * @param  string $handle Workspace handle.
+	 * @param  string $repo   Repository name.
+	 * @param  string $branch Branch name.
+	 * @param  string $path   Worktree path.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function build_current_merged_to_default_cleanup_evidence( string $handle, string $repo, string $branch, string $path ): array|\WP_Error {
+		foreach (
+		array(
+			'handle' => $handle,
+			'repo'   => $repo,
+			'branch' => $branch,
+			'path'   => $path,
+		) as $field => $value
+		) {
+			if ( '' === $value ) {
+				return new \WP_Error('missing_identity', 'missing required identity field: ' . $field);
+			}
+		}
+
+		if ( in_array($branch, $this->protected_base_branch_names(), true) ) {
+			return new \WP_Error('primary_protected_branch', 'refusing to auto-finalize a protected primary branch worktree');
+		}
+
+		$validation = $this->validate_containment($path, $this->workspace_path);
+		if ( ! $validation['valid'] ) {
+			return new \WP_Error('external_worktree', 'worktree path is outside the workspace root');
+		}
+
+		$real_path = (string) ( $validation['real_path'] ?? '' );
+		if ( '' === $real_path || ! is_dir($real_path) ) {
+			return new \WP_Error('missing_worktree', 'worktree path no longer exists');
+		}
+
+		$git_marker = rtrim($real_path, '/') . '/.git';
+		if ( is_dir($git_marker) ) {
+			return new \WP_Error('primary_checkout', 'refusing to mark a primary checkout cleanup_eligible');
+		}
+		if ( ! is_file($git_marker) ) {
+			return new \WP_Error('not_a_worktree', 'worktree marker missing');
+		}
+
+		$current_branch = $this->resolve_worktree_branch_from_head_file($real_path);
+		if ( $branch !== $current_branch ) {
+			return new \WP_Error('branch_identity_mismatch', 'worktree branch identity changed before apply');
+		}
+
+		$primary_path = $this->get_primary_path($repo);
+		if ( ! is_dir($primary_path . '/.git') ) {
+			return new \WP_Error('missing_primary', 'primary checkout missing');
+		}
+
+		$dirty = $this->probe_worktree_dirty_count($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($dirty) ) {
+			return $dirty;
+		}
+		if ( (int) $dirty > 0 ) {
+			return new \WP_Error('dirty_worktree', 'refusing to mark dirty worktree cleanup_eligible from merged-to-default evidence');
+		}
+
+		$unpushed = $this->count_unpushed_commits($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($unpushed) ) {
+			return $unpushed;
+		}
+		if ( (int) $unpushed > 0 ) {
+			return new \WP_Error('unpushed_commits', 'refusing to mark worktree with unpushed commits cleanup_eligible from merged-to-default evidence');
+		}
+
+		$default_ref = $this->resolve_remote_default_ref($primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( ! is_string($default_ref) || '' === $default_ref ) {
+			return new \WP_Error('missing_default_ref', 'primary checkout default ref could not be resolved');
+		}
+
+		$branch_ref = 'refs/heads/' . $branch;
+		$outside    = $this->run_git(
+			$primary_path,
+			sprintf('rev-list --count %s..%s', escapeshellarg($default_ref), escapeshellarg($branch_ref)),
+			self::CLEANUP_GIT_PROBE_TIMEOUT
+		);
+		if ( is_wp_error($outside) ) {
+			return $outside;
+		}
+
+		$commits_outside_default = (int) trim( (string) ( $outside['output'] ?? '' ));
+		if ( 0 !== $commits_outside_default ) {
+			return new \WP_Error('not_merged_to_default', 'current branch still has commits outside remote default');
+		}
+
+		$branch_head = $this->run_git($primary_path, sprintf('rev-parse --verify %s', escapeshellarg($branch_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($branch_head) ) {
+			return $branch_head;
+		}
+		$default_head = $this->run_git($primary_path, sprintf('rev-parse --verify %s', escapeshellarg($default_ref . '^{commit}')), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($default_head) ) {
+			return $default_head;
+		}
+
+		return array(
+			'signal'                  => 'merged-to-default',
+			'finalized_state'         => WorktreeContextInjector::STATE_MERGED,
+			'reason'                  => 'branch has no commits outside the remote default ref',
+			'detected_at'             => gmdate('c'),
+			'handle'                  => $handle,
+			'repo'                    => $repo,
+			'branch'                  => $branch,
+			'path'                    => $real_path,
+			'default_ref'             => $default_ref,
+			'branch_ref'              => $branch_ref,
+			'branch_head'             => trim( (string) ( $branch_head['output'] ?? '' )),
+			'default_head'            => trim( (string) ( $default_head['output'] ?? '' )),
+			'commits_outside_default' => $commits_outside_default,
+			'dirty'                   => (int) $dirty,
+			'unpushed'                => (int) $unpushed,
 		);
 	}
 
