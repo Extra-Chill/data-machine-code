@@ -79,7 +79,7 @@ namespace {
     'status'    => 'modified',
     'additions' => 80,
     'deletions' => 0,
-    'patch'     => "+\t\t\twp_register_ability(\n+\t\t\t\t'datamachine/get-github-pr-documentation-impact',\n+\t\t\t\tarray( 'input_schema' => array(), 'output_schema' => array() )\n+\t\t\t);\n+\t\t\t\$key = PluginSettings::get( 'github_default_repo', '' );\n+\t\t\tpublic const PACKET_SCHEMA = 'data-machine-code/pr-documentation-impact/v1';\n",
+    'patch'     => "+\t\t\twp_register_ability(\n+\t\t\t\t'datamachine-code/get-github-pr-documentation-impact',\n+\t\t\t\tarray( 'input_schema' => array(), 'output_schema' => array() )\n+\t\t\t);\n+\t\t\t\$key = PluginSettings::get( 'github_default_repo', '' );\n+\t\t\tpublic const PACKET_SCHEMA = 'data-machine-code/pr-documentation-impact/v1';\n",
     ),
     array(
     'filename'  => 'inc/Support/GitHubWebhookValidator.php',

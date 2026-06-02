@@ -229,7 +229,7 @@ namespace {
 
     function wp_get_ability( string $name ): ?DMC_Test_Ability
     {
-        if (in_array($name, array( 'datamachine/merge-github-pull-request', 'datamachine/cleanup-github-pull-request' ), true) ) {
+        if (in_array($name, array( 'datamachine-code/merge-github-pull-request', 'datamachine-code/cleanup-github-pull-request' ), true) ) {
             return new DMC_Test_Ability($name);
         }
 
@@ -300,13 +300,13 @@ namespace {
     echo "GitHub merge pull request - smoke\n";
 
     new GitHubAbilities();
-    $ability = $GLOBALS['dmc_registered_abilities']['datamachine/merge-github-pull-request'] ?? null;
+    $ability = $GLOBALS['dmc_registered_abilities']['datamachine-code/merge-github-pull-request'] ?? null;
     $assert('merge ability is registered', null !== $ability);
     $assert('merge ability uses mergePullRequest execute_callback', array( GitHubAbilities::class, 'mergePullRequest' ) === ( $ability['execute_callback'] ?? null ));
     $assert('merge ability requires repo, pull_number, expected_head_sha', array( 'repo', 'pull_number', 'expected_head_sha' ) === ( $ability['input_schema']['required'] ?? array() ));
     $assert('merge ability limits merge_method enum', array( 'merge', 'squash', 'rebase' ) === ( $ability['input_schema']['properties']['merge_method']['enum'] ?? array() ));
     $assert('merge ability exposes delete_branch', isset($ability['input_schema']['properties']['delete_branch']));
-    $cleanup_ability = $GLOBALS['dmc_registered_abilities']['datamachine/cleanup-github-pull-request'] ?? null;
+    $cleanup_ability = $GLOBALS['dmc_registered_abilities']['datamachine-code/cleanup-github-pull-request'] ?? null;
     $assert('cleanup ability is registered', null !== $cleanup_ability);
     $assert('cleanup ability uses cleanupPullRequest execute_callback', array( GitHubAbilities::class, 'cleanupPullRequest' ) === ( $cleanup_ability['execute_callback'] ?? null ));
     $assert('cleanup ability exposes local_only', isset($cleanup_ability['input_schema']['properties']['local_only']));
@@ -499,8 +499,8 @@ namespace {
     $tools = new GitHubTools();
     $assert('merge_github_pull_request tool is registered', isset($tools->registered['merge_github_pull_request']));
     $assert('cleanup_github_pull_request tool is registered', isset($tools->registered['cleanup_github_pull_request']));
-    $assert('merge tool links to merge ability', 'datamachine/merge-github-pull-request' === ( $tools->registered['merge_github_pull_request']['options']['ability'] ?? '' ));
-    $assert('cleanup tool links to cleanup ability', 'datamachine/cleanup-github-pull-request' === ( $tools->registered['cleanup_github_pull_request']['options']['ability'] ?? '' ));
+    $assert('merge tool links to merge ability', 'datamachine-code/merge-github-pull-request' === ( $tools->registered['merge_github_pull_request']['options']['ability'] ?? '' ));
+    $assert('cleanup tool links to cleanup ability', 'datamachine-code/cleanup-github-pull-request' === ( $tools->registered['cleanup_github_pull_request']['options']['ability'] ?? '' ));
     $definition = $tools->getMergePullRequestDefinition();
     $params     = $definition['parameters'] ?? array();
     $assert('merge tool requires expected_head_sha', in_array('expected_head_sha', $params['required'] ?? array(), true));
@@ -515,7 +515,7 @@ namespace {
     $assert('merge tool returns direct ability success', true === ( $tool_result['success'] ?? false ));
     $assert('merge tool response names tool', 'merge_github_pull_request' === ( $tool_result['tool_name'] ?? '' ));
     $tool_call = $GLOBALS['dmc_tool_ability_calls'][0] ?? array();
-    $assert('merge tool calls merge ability', 'datamachine/merge-github-pull-request' === ( $tool_call['name'] ?? '' ));
+    $assert('merge tool calls merge ability', 'datamachine-code/merge-github-pull-request' === ( $tool_call['name'] ?? '' ));
     $cleanup_definition = $tools->getCleanupPullRequestDefinition();
     $assert('cleanup tool exposes local_only', isset($cleanup_definition['parameters']['properties']['local_only']));
     $cleanup_result     = $tools->handle_tool_call(

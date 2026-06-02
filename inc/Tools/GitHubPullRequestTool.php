@@ -22,7 +22,7 @@ class GitHubPullRequestTool extends BaseTool
      */
     public function __construct()
     {
-        $this->registerTool('create_github_pull_request', array( $this, 'getToolDefinition' ), array( 'chat', 'pipeline' ), array( 'ability' => 'datamachine/create-github-pull-request' ));
+        $this->registerTool('create_github_pull_request', array( $this, 'getToolDefinition' ), array( 'chat', 'pipeline' ), array( 'ability' => 'datamachine-code/create-github-pull-request' ));
     }
 
     /**
@@ -34,7 +34,7 @@ class GitHubPullRequestTool extends BaseTool
      */
     public function handle_tool_call( array $parameters, array $tool_def = array() ): array
     {
-        $ability = wp_get_ability('datamachine/create-github-pull-request');
+        $ability = wp_get_ability('datamachine-code/create-github-pull-request');
 
         if (! $ability ) {
             return $this->buildErrorResponse(

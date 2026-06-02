@@ -80,9 +80,9 @@ namespace {
         }
     }
 
-    $assert('workspace-show registers on deferred wp_abilities_api_init', isset($GLOBALS['datamachine_code_registered_abilities']['datamachine/workspace-show']));
-    $assert('workspace-worktree-add registers on deferred wp_abilities_api_init', isset($GLOBALS['datamachine_code_registered_abilities']['datamachine/workspace-worktree-add']));
-    $assert('create-code-task registers on deferred wp_abilities_api_init', isset($GLOBALS['datamachine_code_registered_abilities']['datamachine/create-code-task']));
+    $assert('workspace-show registers on deferred wp_abilities_api_init', isset($GLOBALS['datamachine_code_registered_abilities']['datamachine-code/workspace-show']));
+    $assert('workspace-worktree-add registers on deferred wp_abilities_api_init', isset($GLOBALS['datamachine_code_registered_abilities']['datamachine-code/workspace-worktree-add']));
+    $assert('create-code-task registers on deferred wp_abilities_api_init', isset($GLOBALS['datamachine_code_registered_abilities']['datamachine-code/create-code-task']));
 
     if (! empty($failures) ) {
         echo "\nFAIL: " . count($failures) . " assertion(s) failed\n";

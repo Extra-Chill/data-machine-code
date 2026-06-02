@@ -13,13 +13,17 @@ use DataMachineCode\Workspace\WorkspaceDiff;
 
 defined('ABSPATH') || exit;
 
+if ( ! class_exists(AbilityRegistry::class) ) {
+	require_once __DIR__ . '/AbilityRegistry.php';
+}
+
 class WorkspaceDiffAbilities {
 
 
 
 	public function __construct() {
 		$register_callback = function () {
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-diff-summary',
 				array(
 					'label'               => 'Workspace Diff Summary',
@@ -58,7 +62,7 @@ class WorkspaceDiffAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-diff-validate',
 				array(
 					'label'               => 'Validate Workspace Diff',

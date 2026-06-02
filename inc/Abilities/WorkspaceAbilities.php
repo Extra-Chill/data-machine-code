@@ -24,6 +24,10 @@ use DataMachineCode\Support\GitRunner;
 
 defined('ABSPATH') || exit;
 
+if ( ! class_exists(AbilityRegistry::class) ) {
+	require_once __DIR__ . '/AbilityRegistry.php';
+}
+
 class WorkspaceAbilities {
 
 
@@ -60,7 +64,7 @@ class WorkspaceAbilities {
 			// Read-only discovery abilities (show_in_rest = true).
 			// -----------------------------------------------------------------
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-path',
 				array(
 					'label'               => 'Get Workspace Path',
@@ -90,7 +94,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-list',
 				array(
 					'label'               => 'List Workspace Repos',
@@ -132,7 +136,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-capabilities',
 				array(
 					'label'               => 'Inspect Workspace Capabilities',
@@ -161,7 +165,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-show',
 				array(
 					'label'               => 'Show Workspace Repo',
@@ -203,7 +207,7 @@ class WorkspaceAbilities {
 			// File reading abilities (show_in_rest = true).
 			// -----------------------------------------------------------------
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-read',
 				array(
 					'label'               => 'Read Workspace File',
@@ -252,7 +256,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-ls',
 				array(
 					'label'               => 'List Workspace Directory',
@@ -297,7 +301,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-grep',
 				array(
 					'label'               => 'Search Workspace Files',
@@ -366,7 +370,7 @@ class WorkspaceAbilities {
 			// Mutating abilities (show_in_rest = false, CLI-only).
 			// -----------------------------------------------------------------
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-clone',
 				array(
 					'label'               => 'Clone Workspace Repo',
@@ -409,7 +413,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-adopt',
 				array(
 					'label'               => 'Adopt Workspace Repo',
@@ -445,7 +449,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-remove',
 				array(
 					'label'               => 'Remove Workspace Repo',
@@ -474,7 +478,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-write',
 				array(
 					'label'               => 'Write Workspace File',
@@ -513,7 +517,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-edit',
 				array(
 					'label'               => 'Edit Workspace File',
@@ -575,7 +579,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-apply-patch',
 				array(
 					'label'               => 'Apply Workspace Patch',
@@ -619,7 +623,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-git-status',
 				array(
 					'label'               => 'Workspace Git Status',
@@ -661,7 +665,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-git-log',
 				array(
 					'label'               => 'Workspace Git Log',
@@ -706,7 +710,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-git-diff',
 				array(
 					'label'               => 'Workspace Git Diff',
@@ -752,7 +756,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-git-pull',
 				array(
 					'label'               => 'Workspace Git Pull',
@@ -790,7 +794,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-git-add',
 				array(
 					'label'               => 'Workspace Git Add',
@@ -833,7 +837,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-delete',
 				array(
 					'label'               => 'Delete Workspace Path',
@@ -885,7 +889,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-git-commit',
 				array(
 					'label'               => 'Workspace Git Commit',
@@ -924,7 +928,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-git-push',
 				array(
 					'label'               => 'Workspace Git Push',
@@ -986,7 +990,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-git-rebase',
 				array(
 					'label'               => 'Workspace Git Rebase',
@@ -1029,7 +1033,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-git-reset',
 				array(
 					'label'               => 'Workspace Git Reset',
@@ -1078,7 +1082,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-pr-status',
 				array(
 					'label'               => 'Workspace Pull Request Status',
@@ -1112,7 +1116,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-pr-rebase',
 				array(
 					'label'               => 'Workspace Pull Request Rebase',
@@ -1159,7 +1163,7 @@ class WorkspaceAbilities {
 			// Worktree abilities (mutating, CLI-only by default).
 			// -----------------------------------------------------------------
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-add',
 				array(
 					'label'               => 'Add Workspace Worktree',
@@ -1288,7 +1292,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-refresh-context',
 				array(
 					'label'               => 'Refresh Worktree Context',
@@ -1325,7 +1329,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-finalize',
 				array(
 					'label'               => 'Finalize Workspace Worktree',
@@ -1366,7 +1370,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-hygiene-report',
 				array(
 					'label'               => 'Workspace Hygiene Report',
@@ -1423,7 +1427,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-inventory-refresh',
 				array(
 					'label'               => 'Refresh Worktree Inventory',
@@ -1449,7 +1453,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-cleanup-run',
 				array(
 					'label'               => 'Schedule Workspace Cleanup Run',
@@ -1500,7 +1504,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-list',
 				array(
 					'label'               => 'List Workspace Worktrees',
@@ -1631,7 +1635,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-remove',
 				array(
 					'label'               => 'Remove Workspace Worktree',
@@ -1669,7 +1673,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-prune',
 				array(
 					'label'               => 'Prune Workspace Worktrees',
@@ -1695,7 +1699,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-cleanup',
 				array(
 					'label'               => 'Cleanup Merged Worktrees',
@@ -1767,7 +1771,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-reconcile-metadata',
 				array(
 					'label'               => 'Reconcile Worktree Metadata',
@@ -1824,7 +1828,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-active-no-signal-report',
 				array(
 					'label'               => 'Report Active Worktrees Without Cleanup Signal',
@@ -1863,7 +1867,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-active-no-signal-finalized-apply',
 				array(
 					'label'               => 'Promote Finalized Active Worktrees',
@@ -1903,7 +1907,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-active-no-signal-equivalent-clean-apply',
 				array(
 					'label'               => 'Promote Equivalent Clean Active Worktrees',
@@ -1943,7 +1947,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-cleanup-artifacts',
 				array(
 					'label'               => 'Cleanup Worktree Artifacts',
@@ -2000,7 +2004,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-emergency-cleanup',
 				array(
 					'label'               => 'Emergency Cleanup Worktrees',
@@ -2043,7 +2047,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-worktree-bounded-cleanup-eligible-apply',
 				array(
 					'label'               => 'Bounded Cleanup Apply for Obvious Worktrees',
@@ -2110,7 +2114,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-cleanup-plan',
 				array(
 					'label'               => 'Build DB-backed Workspace Cleanup Plan',
@@ -2147,7 +2151,7 @@ class WorkspaceAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/workspace-cleanup-apply',
 				array(
 					'label'               => 'Apply Workspace Cleanup Run',
@@ -2169,7 +2173,7 @@ class WorkspaceAbilities {
 			);
 
 			foreach ( array( 'status', 'evidence', 'resume', 'cancel' ) as $cleanup_operation ) {
-				wp_register_ability(
+				AbilityRegistry::register(
 					'datamachine/workspace-cleanup-' . $cleanup_operation,
 					array(
 						'label'               => 'Workspace Cleanup ' . ucfirst($cleanup_operation),

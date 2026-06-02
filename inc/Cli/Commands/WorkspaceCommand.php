@@ -40,7 +40,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * Displays the resolved workspace path. The path is determined by:
 	 * 1. DATAMACHINE_WORKSPACE_PATH constant (if defined)
 	 * 2. /var/lib/datamachine/workspace (if writable — VPS)
-	 * 3. $HOME/.datamachine/workspace (local/macOS)
+	 * 3. $HOME/.datamachine-code/workspace (local/macOS)
 	 *
 	 * ## OPTIONS
 	 *
@@ -58,7 +58,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand path
 	 */
 	public function path( array $args, array $assoc_args ): void {
-		$ability = wp_get_ability('datamachine/workspace-path');
+		$ability = wp_get_ability('datamachine-code/workspace-path');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace path ability not available.');
 			return;
@@ -120,7 +120,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand list
 	 */
 	public function list_repos( array $args, array $assoc_args ): void {
-		$ability = wp_get_ability('datamachine/workspace-list');
+		$ability = wp_get_ability('datamachine-code/workspace-list');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace list ability not available.');
 			return;
@@ -247,7 +247,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine/workspace-adopt');
+		$ability = wp_get_ability('datamachine-code/workspace-adopt');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace adopt ability not available.');
 			return;
@@ -446,7 +446,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine/workspace-cleanup-run');
+		$ability = wp_get_ability('datamachine-code/workspace-cleanup-run');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace cleanup run ability not registered.');
 			return;
@@ -489,7 +489,7 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	private function run_cleanup_plan( array $assoc_args ): void {
-		$ability = wp_get_ability('datamachine/workspace-cleanup-plan');
+		$ability = wp_get_ability('datamachine-code/workspace-cleanup-plan');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace cleanup plan ability not registered.');
 			return;
@@ -522,7 +522,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine/workspace-cleanup-' . $operation);
+		$ability = wp_get_ability('datamachine-code/workspace-cleanup-' . $operation);
 		if ( ! $ability ) {
 			WP_CLI::error(sprintf('Workspace cleanup %s ability not registered.', $operation));
 			return;
@@ -551,7 +551,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		switch ( $mode ) {
 			case 'inventory':
-				$ability = wp_get_ability('datamachine/workspace-hygiene-report');
+				$ability = wp_get_ability('datamachine-code/workspace-hygiene-report');
 				$result  = $ability ? $ability->execute(
 				array(
 					'include_cleanup'         => true,
@@ -564,7 +564,7 @@ class WorkspaceCommand extends BaseCommand {
 				return;
 
 			case 'artifacts':
-				$ability        = wp_get_ability('datamachine/workspace-worktree-cleanup-artifacts');
+				$ability        = wp_get_ability('datamachine-code/workspace-worktree-cleanup-artifacts');
 				$artifact_input = array(
 					'dry_run' => true,
 					'force'   => ! empty($assoc_args['force']),
@@ -586,7 +586,7 @@ class WorkspaceCommand extends BaseCommand {
 				return;
 
 			case 'emergency':
-				$ability = wp_get_ability('datamachine/workspace-worktree-emergency-cleanup');
+				$ability = wp_get_ability('datamachine-code/workspace-worktree-emergency-cleanup');
 				$result  = $ability ? $ability->execute(
 				array(
 					'dry_run' => true,
@@ -598,7 +598,7 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'retention':
 			default:
-				$ability = wp_get_ability('datamachine/workspace-worktree-cleanup');
+				$ability = wp_get_ability('datamachine-code/workspace-worktree-cleanup');
 				$input   = array(
 					'dry_run'     => true,
 					'force'       => ! empty($assoc_args['force']),
@@ -664,7 +664,7 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	private function control_cleanup_run_job( string $operation, int $job_id, array $assoc_args ): void {
-		$ability_name = 'resume' === $operation ? 'datamachine/retry-job' : 'datamachine/fail-job';
+		$ability_name = 'resume' === $operation ? 'datamachine-code/retry-job' : 'datamachine-code/fail-job';
 		$ability      = wp_get_ability($ability_name);
 		if ( ! $ability ) {
 			WP_CLI::error(sprintf('Job control ability not registered: %s', $ability_name));
@@ -819,7 +819,7 @@ class WorkspaceCommand extends BaseCommand {
 			WP_CLI::confirm(sprintf('Remove "%s" from workspace? This deletes %s', $name, $repo_path));
 		}
 
-		$ability = wp_get_ability('datamachine/workspace-remove');
+		$ability = wp_get_ability('datamachine-code/workspace-remove');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace remove ability not available.');
 			return;
@@ -875,7 +875,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand hygiene
 	 */
 	public function hygiene( array $args, array $assoc_args ): void {   // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
-		$ability = wp_get_ability('datamachine/workspace-hygiene-report');
+		$ability = wp_get_ability('datamachine-code/workspace-hygiene-report');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace hygiene ability not available.');
 			return;
@@ -930,7 +930,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine/workspace-worktree-inventory-refresh');
+		$ability = wp_get_ability('datamachine-code/workspace-worktree-inventory-refresh');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace inventory refresh ability not available.');
 			return;
@@ -973,7 +973,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine/workspace-show');
+		$ability = wp_get_ability('datamachine-code/workspace-show');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace show ability not available.');
 			return;
@@ -1043,7 +1043,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine/workspace-read');
+		$ability = wp_get_ability('datamachine-code/workspace-read');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace read ability not available.');
 			return;
@@ -1121,7 +1121,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine/workspace-ls');
+		$ability = wp_get_ability('datamachine-code/workspace-ls');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace ls ability not available.');
 			return;
@@ -1216,7 +1216,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine/workspace-grep');
+		$ability = wp_get_ability('datamachine-code/workspace-grep');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace grep ability not available.');
 			return;
@@ -1309,7 +1309,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine/workspace-write');
+		$ability = wp_get_ability('datamachine-code/workspace-write');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace write ability not available.');
 			return;
@@ -1400,7 +1400,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine/workspace-edit');
+		$ability = wp_get_ability('datamachine-code/workspace-edit');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace edit ability not available.');
 			return;
@@ -1484,7 +1484,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine/workspace-apply-patch');
+		$ability = wp_get_ability('datamachine-code/workspace-apply-patch');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace apply patch ability not available.');
 			return;
@@ -1574,7 +1574,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine/workspace-delete');
+		$ability = wp_get_ability('datamachine-code/workspace-delete');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace delete ability not available.');
 			return;
@@ -1768,17 +1768,17 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$ability_name = match ( $operation ) {
-			'status'    => 'datamachine/workspace-git-status',
-			'pull'      => 'datamachine/workspace-git-pull',
-			'add'       => 'datamachine/workspace-git-add',
-			'commit'    => 'datamachine/workspace-git-commit',
-			'push'      => 'datamachine/workspace-git-push',
-			'rebase'    => 'datamachine/workspace-git-rebase',
-			'reset'     => 'datamachine/workspace-git-reset',
-			'pr-status' => 'datamachine/workspace-pr-status',
-			'pr-rebase' => 'datamachine/workspace-pr-rebase',
-			'log'       => 'datamachine/workspace-git-log',
-			'diff'      => 'datamachine/workspace-git-diff',
+			'status'    => 'datamachine-code/workspace-git-status',
+			'pull'      => 'datamachine-code/workspace-git-pull',
+			'add'       => 'datamachine-code/workspace-git-add',
+			'commit'    => 'datamachine-code/workspace-git-commit',
+			'push'      => 'datamachine-code/workspace-git-push',
+			'rebase'    => 'datamachine-code/workspace-git-rebase',
+			'reset'     => 'datamachine-code/workspace-git-reset',
+			'pr-status' => 'datamachine-code/workspace-pr-status',
+			'pr-rebase' => 'datamachine-code/workspace-pr-rebase',
+			'log'       => 'datamachine-code/workspace-git-log',
+			'diff'      => 'datamachine-code/workspace-git-diff',
 			default  => '',
 		};
 
@@ -2313,21 +2313,21 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$ability_name = match ( $operation ) {
-			'add'                            => 'datamachine/workspace-worktree-add',
-			'list'                           => 'datamachine/workspace-worktree-list',
-			'remove'                         => 'datamachine/workspace-worktree-remove',
-			'prune'                          => 'datamachine/workspace-worktree-prune',
-			'cleanup'                        => 'datamachine/workspace-worktree-cleanup',
-			'cleanup-artifacts'              => 'datamachine/workspace-worktree-cleanup-artifacts',
-			'bounded-cleanup-eligible-apply' => 'datamachine/workspace-worktree-bounded-cleanup-eligible-apply',
-			'emergency-cleanup'              => 'datamachine/workspace-worktree-emergency-cleanup',
-			'reconcile-metadata'             => 'datamachine/workspace-worktree-reconcile-metadata',
-			'active-no-signal-report'        => 'datamachine/workspace-worktree-active-no-signal-report',
-			'active-no-signal-finalized-apply' => 'datamachine/workspace-worktree-active-no-signal-finalized-apply',
-			'active-no-signal-equivalent-clean-apply' => 'datamachine/workspace-worktree-active-no-signal-equivalent-clean-apply',
-			'refresh-context'                => 'datamachine/workspace-worktree-refresh-context',
-			'finalize'                       => 'datamachine/workspace-worktree-finalize',
-			'mark-cleanup-eligible'          => 'datamachine/workspace-worktree-finalize',
+			'add'                            => 'datamachine-code/workspace-worktree-add',
+			'list'                           => 'datamachine-code/workspace-worktree-list',
+			'remove'                         => 'datamachine-code/workspace-worktree-remove',
+			'prune'                          => 'datamachine-code/workspace-worktree-prune',
+			'cleanup'                        => 'datamachine-code/workspace-worktree-cleanup',
+			'cleanup-artifacts'              => 'datamachine-code/workspace-worktree-cleanup-artifacts',
+			'bounded-cleanup-eligible-apply' => 'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply',
+			'emergency-cleanup'              => 'datamachine-code/workspace-worktree-emergency-cleanup',
+			'reconcile-metadata'             => 'datamachine-code/workspace-worktree-reconcile-metadata',
+			'active-no-signal-report'        => 'datamachine-code/workspace-worktree-active-no-signal-report',
+			'active-no-signal-finalized-apply' => 'datamachine-code/workspace-worktree-active-no-signal-finalized-apply',
+			'active-no-signal-equivalent-clean-apply' => 'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply',
+			'refresh-context'                => 'datamachine-code/workspace-worktree-refresh-context',
+			'finalize'                       => 'datamachine-code/workspace-worktree-finalize',
+			'mark-cleanup-eligible'          => 'datamachine-code/workspace-worktree-finalize',
 			default                          => '',
 		};
 

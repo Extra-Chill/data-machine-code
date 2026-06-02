@@ -116,7 +116,7 @@ namespace {
 
     $ability = new FakeWorktreeAddAbility();
     $GLOBALS['__abilities'] = array(
-    'datamachine/workspace-worktree-add' => $ability,
+    'datamachine-code/workspace-worktree-add' => $ability,
     );
     $command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
 

@@ -77,9 +77,9 @@ namespace {
 
     echo "Data Machine Code late ability registration - smoke\n";
 
-    $assert('workspace-show registers after wp_abilities_api_init fired', isset($GLOBALS['datamachine_code_registered_abilities']['datamachine/workspace-show']));
-    $assert('workspace-worktree-add registers after wp_abilities_api_init fired', isset($GLOBALS['datamachine_code_registered_abilities']['datamachine/workspace-worktree-add']));
-    $assert('create-code-task registers after wp_abilities_api_init fired', isset($GLOBALS['datamachine_code_registered_abilities']['datamachine/create-code-task']));
+    $assert('workspace-show registers after wp_abilities_api_init fired', isset($GLOBALS['datamachine_code_registered_abilities']['datamachine-code/workspace-show']));
+    $assert('workspace-worktree-add registers after wp_abilities_api_init fired', isset($GLOBALS['datamachine_code_registered_abilities']['datamachine-code/workspace-worktree-add']));
+    $assert('create-code-task registers after wp_abilities_api_init fired', isset($GLOBALS['datamachine_code_registered_abilities']['datamachine-code/create-code-task']));
     $assert('late constructors do not add inert wp_abilities_api_init callbacks', array() === $GLOBALS['datamachine_code_added_actions']);
 
     if (! empty($failures) ) {

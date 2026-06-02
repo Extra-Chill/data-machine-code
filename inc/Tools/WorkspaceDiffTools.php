@@ -18,13 +18,13 @@ class WorkspaceDiffTools extends BaseTool
     public function __construct()
     {
         $contexts = array( 'chat', 'pipeline' );
-        $this->registerTool('workspace_diff_summary', array( $this, 'getDiffSummaryDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-diff-summary' ));
-        $this->registerTool('workspace_diff_validate', array( $this, 'getDiffValidateDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-diff-validate' ));
+        $this->registerTool('workspace_diff_summary', array( $this, 'getDiffSummaryDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-diff-summary' ));
+        $this->registerTool('workspace_diff_validate', array( $this, 'getDiffValidateDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-diff-validate' ));
     }
 
     public static function is_configured(): bool
     {
-        return (bool) wp_get_ability('datamachine/workspace-diff-summary');
+        return (bool) wp_get_ability('datamachine-code/workspace-diff-summary');
     }
 
     public function check_configuration( $configured, $tool_id )
@@ -55,7 +55,7 @@ class WorkspaceDiffTools extends BaseTool
      */
     public function handleDiffSummary( array $parameters ): array
     {
-        return $this->executeDiffAbility('datamachine/workspace-diff-summary', 'workspace_diff_summary', $parameters);
+        return $this->executeDiffAbility('datamachine-code/workspace-diff-summary', 'workspace_diff_summary', $parameters);
     }
 
     /**
@@ -63,7 +63,7 @@ class WorkspaceDiffTools extends BaseTool
      */
     public function handleDiffValidate( array $parameters ): array
     {
-        return $this->executeDiffAbility('datamachine/workspace-diff-validate', 'workspace_diff_validate', $parameters);
+        return $this->executeDiffAbility('datamachine-code/workspace-diff-validate', 'workspace_diff_validate', $parameters);
     }
 
     /**
