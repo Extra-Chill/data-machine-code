@@ -1348,13 +1348,13 @@ class Workspace {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_active_no_signal_report( array $opts = array() ): array|\WP_Error {
-		$started_at = microtime(true);
-		$limit      = array_key_exists('limit', $opts) ? (int) $opts['limit'] : 25;
-		$offset     = array_key_exists('offset', $opts) ? max(0, (int) $opts['offset']) : 0;
+		$started_at     = microtime(true);
+		$limit          = array_key_exists('limit', $opts) ? (int) $opts['limit'] : 25;
+		$offset         = array_key_exists('offset', $opts) ? max(0, (int) $opts['offset']) : 0;
 		$next_operation = isset($opts['next_command_operation']) && is_string($opts['next_command_operation']) && preg_match('/^active-no-signal-[a-z-]+$/', $opts['next_command_operation'])
 			? $opts['next_command_operation']
 			: 'active-no-signal-report';
-		$next_dry_run = 'active-no-signal-report' !== $next_operation && ! empty($opts['dry_run']);
+		$next_dry_run   = 'active-no-signal-report' !== $next_operation && ! empty($opts['dry_run']);
 		if ( $limit <= 0 ) {
 			return new \WP_Error('invalid_active_no_signal_limit', 'Active/no-signal report --limit must be greater than 0.', array( 'status' => 400 ));
 		}
