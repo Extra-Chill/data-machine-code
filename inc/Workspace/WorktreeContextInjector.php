@@ -125,6 +125,8 @@ class WorktreeContextInjector {
 	 */
 	public const METADATA_OPTION = 'datamachine_worktree_metadata';
 
+	public const ORIGIN_SESSION_LEGACY_MIGRATED_OPTION = 'datamachine_code_worktree_attribution_legacy_migrated_v2';
+
 	/**
 	 * Files injected into the worktree, relative to the worktree root.
 	 */
@@ -483,6 +485,62 @@ class WorktreeContextInjector {
 	}
 
 	/**
+	 * Backfill legacy origin_session metadata into the canonical ids envelope.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public static function backfill_legacy_origin_sessions( bool $apply = false ): array {
+		if ( ! function_exists('get_option') ) {
+			return array(
+				'success' => false,
+				'applied' => false,
+				'message' => 'Options API is unavailable; cannot backfill worktree metadata.',
+			);
+		}
+
+		$all = get_option(self::METADATA_OPTION, array());
+		if ( ! is_array($all) ) {
+			$all = array();
+		}
+
+		$planned = array();
+		foreach ( $all as $handle => $metadata ) {
+			if ( ! is_string($handle) || ! is_array($metadata) || ! is_array($metadata['origin_session'] ?? null) ) {
+				continue;
+			}
+			$session = (array) $metadata['origin_session'];
+			if ( ! self::origin_session_has_legacy_keys($session) ) {
+				continue;
+			}
+
+			$canonical = self::summarize_session($metadata);
+			$planned[] = array(
+				'handle'         => $handle,
+				'primary_id'     => $canonical['primary_id'],
+				'runtime_ids'    => array_keys($canonical['ids']),
+				'origin_session' => $canonical,
+			);
+
+			if ( $apply ) {
+				self::store_lifecycle_metadata($handle, array( 'origin_session' => $canonical ));
+			}
+		}
+
+		if ( $apply && function_exists('update_option') ) {
+			update_option(self::ORIGIN_SESSION_LEGACY_MIGRATED_OPTION, true, false);
+		}
+
+		return array(
+			'success'       => true,
+			'applied'       => $apply,
+			'planned_count' => count($planned),
+			'planned'       => $planned,
+			'migrated'      => $apply ? (bool) get_option(self::ORIGIN_SESSION_LEGACY_MIGRATED_OPTION, false) : (bool) get_option(self::ORIGIN_SESSION_LEGACY_MIGRATED_OPTION, false),
+			'message'       => $apply ? 'Backfilled legacy worktree origin_session metadata.' : 'Dry run only; pass apply to rewrite worktree metadata.',
+		);
+	}
+
+	/**
 	 * Resolve the renderer-friendly primary identifier from a normalized
 	 * session envelope.
 	 *
@@ -611,6 +669,25 @@ class WorktreeContextInjector {
 
 		$session['ids'] = $ids;
 		return $session;
+	}
+
+	private static function origin_session_has_legacy_keys( array $session ): bool {
+		$canonical_top_level = array(
+			'primary_id' => true,
+			'ids'        => true,
+		);
+		foreach ( $session as $key => $value ) {
+			unset($value);
+			if ( ! is_string($key) || isset($canonical_top_level[ $key ]) ) {
+				continue;
+			}
+			$underscore = strpos($key, '_');
+			if ( false !== $underscore && 0 !== $underscore && strlen($key) - 1 !== $underscore ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

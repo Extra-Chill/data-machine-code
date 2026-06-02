@@ -368,6 +368,24 @@ namespace {
     $assert('legacy-beta-run', $legacy_view['ids']['beta-runtime']['run_id'] ?? null, 'legacy migration projects <runtime>_run_id into ids envelope');
     $assert('legacy-alpha-ses', $legacy_view['primary_id'], 'legacy-migrated rows still resolve a primary_id via runtime precedence');
 
+    $GLOBALS['datamachine_code_test_options'][\DataMachineCode\Workspace\WorktreeContextInjector::METADATA_OPTION] = array(
+    'demo@legacy-session' => array(
+    'origin_session' => array(
+    'alpha-runtime_session_id' => 'legacy-alpha-ses',
+    'alpha-runtime_thread_id'  => 'legacy-alpha-thr',
+    ),
+    ),
+    );
+    $backfill_dry_run = \DataMachineCode\Workspace\WorktreeContextInjector::backfill_legacy_origin_sessions(false);
+    $assert(1, $backfill_dry_run['planned_count'] ?? null, 'legacy origin_session backfill dry run plans legacy row');
+    $assert(false, $GLOBALS['datamachine_code_test_options'][\DataMachineCode\Workspace\WorktreeContextInjector::ORIGIN_SESSION_LEGACY_MIGRATED_OPTION] ?? false, 'dry run does not set migrated option');
+    $backfill_apply = \DataMachineCode\Workspace\WorktreeContextInjector::backfill_legacy_origin_sessions(true);
+    $rewritten = $GLOBALS['datamachine_code_test_options'][\DataMachineCode\Workspace\WorktreeContextInjector::METADATA_OPTION]['demo@legacy-session']['origin_session'] ?? array();
+    $assert(true, $backfill_apply['applied'] ?? false, 'legacy origin_session backfill apply reports applied');
+    $assert('legacy-alpha-ses', $rewritten['ids']['alpha-runtime']['session_id'] ?? null, 'legacy origin_session backfill rewrites ids envelope');
+    $assert(false, array_key_exists('alpha-runtime_session_id', $rewritten), 'legacy origin_session backfill removes top-level legacy key');
+    $assert(true, $GLOBALS['datamachine_code_test_options'][\DataMachineCode\Workspace\WorktreeContextInjector::ORIGIN_SESSION_LEGACY_MIGRATED_OPTION] ?? false, 'backfill apply sets migrated option');
+
     // Mixed envelope: explicit primary_id wins over runtime-derived precedence.
     $mixed_view = \DataMachineCode\Workspace\WorktreeContextInjector::summarize_session(
         array(
