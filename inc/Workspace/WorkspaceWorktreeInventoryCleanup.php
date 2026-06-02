@@ -53,22 +53,27 @@ trait WorkspaceWorktreeInventoryCleanup {
 				continue;
 			}
 
-			$handle     = (string) ( $wt['handle'] ?? '?' );
-			$repo       = (string) ( $wt['repo'] ?? '' );
-			$branch     = (string) ( $wt['branch_slug'] ?? '' );
+			$handle      = (string) ( $wt['handle'] ?? '?' );
+			$repo        = (string) ( $wt['repo'] ?? '' );
+			$branch_slug = (string) ( $wt['branch_slug'] ?? '' );
+			$metadata    = $wt['metadata'] ?? null;
+			$branch      = (string) ( $wt['branch'] ?? ( is_array($metadata) ? ( $metadata['branch'] ?? '' ) : '' ) );
+			if ( '' === $branch ) {
+				$branch = $branch_slug;
+			}
 			$path       = (string) ( $wt['path'] ?? '' );
-			$metadata   = $wt['metadata'] ?? null;
 			$created_at = $wt['created_at'] ?? null;
 			$base_row   = array(
-				'handle'     => $handle,
-				'repo'       => $repo,
-				'branch'     => $branch,
-				'path'       => $path,
-				'created_at' => $created_at,
-				'metadata'   => $metadata,
+				'handle'      => $handle,
+				'repo'        => $repo,
+				'branch'      => $branch,
+				'branch_slug' => $branch_slug,
+				'path'        => $path,
+				'created_at'  => $created_at,
+				'metadata'    => $metadata,
 			);
 
-			if ( ! is_array($metadata) ) {
+			if ( ! is_array($metadata) || array() === $metadata ) {
 				$skipped[] = array_merge(
 					$base_row, array(
 						'reason_code' => 'needs_metadata_reconcile',

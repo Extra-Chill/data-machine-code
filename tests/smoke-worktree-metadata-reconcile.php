@@ -782,21 +782,31 @@ namespace {
     $make_branch('dirty-default-merged');
     $make_branch('unpushed-default-merged');
     $make_branch('ambiguous-default');
-    foreach (array( 'default-merged', 'dirty-default-merged', 'unpushed-default-merged' ) as $merged_branch ) {
+    $make_branch('fix/foo');
+    foreach (array( 'default-merged', 'dirty-default-merged', 'unpushed-default-merged', 'fix/foo' ) as $merged_branch ) {
         $run('git checkout main', $primary);
         $run(sprintf('git merge --no-ff %s -m %s', escapeshellarg($merged_branch), escapeshellarg('merge ' . $merged_branch)), $primary);
         $run('git push origin main', $primary);
     }
     $run('git checkout main', $primary);
-    foreach (array( 'default-merged', 'dirty-default-merged', 'unpushed-default-merged', 'ambiguous-default' ) as $branch_name ) {
-        $run(sprintf('git worktree add %s %s', escapeshellarg($tmp . '/demo@' . $branch_name), escapeshellarg($branch_name)), $primary);
+    $merged_branch_worktrees = array(
+        'demo@default-merged'          => array( 'branch' => 'default-merged', 'metadata_branch' => 'default-merged' ),
+        'demo@dirty-default-merged'    => array( 'branch' => 'dirty-default-merged', 'metadata_branch' => 'dirty-default-merged' ),
+        'demo@unpushed-default-merged' => array( 'branch' => 'unpushed-default-merged', 'metadata_branch' => 'unpushed-default-merged' ),
+        'demo@ambiguous-default'       => array( 'branch' => 'ambiguous-default', 'metadata_branch' => 'ambiguous-default' ),
+        'demo@fix-foo'                 => array( 'branch' => 'fix/foo', 'metadata_branch' => 'fix-foo' ),
+    );
+    foreach ($merged_branch_worktrees as $handle => $branch_row ) {
+        $branch_name     = $branch_row['branch'];
+        $metadata_branch = $branch_row['metadata_branch'];
+        $run(sprintf('git worktree add %s %s', escapeshellarg($tmp . '/' . $handle), escapeshellarg($branch_name)), $primary);
         \DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
-            'demo@' . $branch_name,
+            $handle,
             array(
-            'handle'          => 'demo@' . $branch_name,
+            'handle'          => $handle,
             'repo'            => 'demo',
-            'branch'          => $branch_name,
-            'path'            => $tmp . '/demo@' . $branch_name,
+            'branch'          => $metadata_branch,
+            'path'            => $tmp . '/' . $handle,
             'created_at'      => '2026-04-06T00:00:00+00:00',
             'observed_at'     => '2026-04-06T00:00:00+00:00',
             'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
@@ -814,6 +824,10 @@ namespace {
         $merged_rows[ $row['handle'] ?? '' ] = $row;
     }
     $assert('merged_to_default', $merged_rows['demo@default-merged']['suggested_action'] ?? '', 'clean contained branch is classified merged_to_default');
+    $assert('fix/foo', $merged_rows['demo@fix-foo']['branch'] ?? '', 'active/no-signal report uses actual checked-out branch with slashes');
+    $assert('fix-foo', $merged_rows['demo@fix-foo']['branch_slug'] ?? '', 'active/no-signal report preserves handle branch slug');
+    $assert(true, (bool) ( $merged_rows['demo@fix-foo']['branch_identity']['mismatch'] ?? false ), 'active/no-signal report surfaces metadata branch mismatch');
+    $assert('merged_to_default', $merged_rows['demo@fix-foo']['suggested_action'] ?? '', 'clean contained slash branch is classified merged_to_default');
     $assert('unsafe_dirty_or_unpushed', $merged_rows['demo@dirty-default-merged']['suggested_action'] ?? '', 'dirty contained branch remains unsafe');
     $assert('unsafe_dirty_or_unpushed', $merged_rows['demo@unpushed-default-merged']['suggested_action'] ?? '', 'unpushed contained branch remains unsafe');
     $assert('no_pr_branch_review', $merged_rows['demo@ambiguous-default']['suggested_action'] ?? '', 'ambiguous unmerged branch remains manual review');
@@ -821,17 +835,20 @@ namespace {
     $merged_dry_run = $ws->worktree_active_no_signal_merged_apply(array( 'dry_run' => true, 'limit' => 100, 'offset' => 0 ));
     $assert(true, ! is_wp_error($merged_dry_run) && ( $merged_dry_run['success'] ?? false ), 'merged-to-default active/no-signal dry-run succeeds');
     $assert(true, (bool) ( $merged_dry_run['dry_run'] ?? false ), 'merged-to-default dry-run does not write');
-    $assert(1, (int) ( $merged_dry_run['summary']['planned'] ?? 0 ), 'merged-to-default dry-run plans only safe merged rows');
+    $assert(2, (int) ( $merged_dry_run['summary']['planned'] ?? 0 ), 'merged-to-default dry-run plans only safe merged rows');
     $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@default-merged')['cleanup_eligible_at'] ?? '', 'merged-to-default dry-run leaves metadata unchanged');
 
     $merged_apply = $ws->worktree_active_no_signal_merged_apply(array( 'limit' => 100, 'offset' => 0 ));
     $assert(true, ! is_wp_error($merged_apply) && ( $merged_apply['success'] ?? false ), 'merged-to-default active/no-signal apply succeeds');
-    $assert(1, (int) ( $merged_apply['summary']['written'] ?? 0 ), 'merged-to-default apply writes only safe merged row metadata');
+    $assert(2, (int) ( $merged_apply['summary']['written'] ?? 0 ), 'merged-to-default apply writes only safe merged row metadata');
     $stored_default_merged = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@default-merged');
     $assert('cleanup_eligible', $stored_default_merged['lifecycle_state'] ?? '', 'merged-to-default apply stores cleanup_eligible state');
     $assert('merged', $stored_default_merged['finalized_state'] ?? '', 'merged-to-default apply records merged finalizer state');
     $assert('merged-to-default', $stored_default_merged['cleanup_eligibility_evidence']['signal'] ?? '', 'merged-to-default apply records merge evidence signal');
     $assert(0, (int) ( $stored_default_merged['cleanup_eligibility_evidence']['commits_outside_default'] ?? -1 ), 'merged-to-default evidence records containment count');
+    $stored_fix_foo = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@fix-foo');
+    $assert('cleanup_eligible', $stored_fix_foo['lifecycle_state'] ?? '', 'merged-to-default apply stores cleanup_eligible state for slash branch');
+    $assert('fix/foo', $stored_fix_foo['branch'] ?? '', 'merged-to-default apply stores actual slash branch');
     $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@dirty-default-merged')['cleanup_eligible_at'] ?? '', 'dirty merged-to-default row remains active');
     $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@unpushed-default-merged')['cleanup_eligible_at'] ?? '', 'unpushed merged-to-default row remains active');
     $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@ambiguous-default')['cleanup_eligible_at'] ?? '', 'ambiguous row remains active');
