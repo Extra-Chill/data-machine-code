@@ -113,6 +113,13 @@ namespace {
         }
     }
 
+    if (! function_exists('wp_json_encode') ) {
+        function wp_json_encode( $value, int $flags = 0, int $depth = 512 ): string|false
+        {
+            return json_encode($value, $flags, $depth);
+        }
+    }
+
     include __DIR__ . '/../inc/Support/GitHubRemote.php';
     include __DIR__ . '/../inc/Support/GitRunner.php';
     include __DIR__ . '/../inc/Support/PathSecurity.php';
@@ -606,6 +613,31 @@ namespace {
     );
     $assert(0, count($scoped_mismatch['candidates'] ?? array()), 'plan mismatch does not leave a removable candidate');
     $assert('plan_mismatch', $scoped_mismatch['skipped'][0]['reason_code'] ?? '', 'plan mismatch reports a stable reason code');
+
+    $scoped_slug_branch = $scope_reflection->invoke(
+        $ws,
+        array(
+        array(
+                'handle' => 'demo@fix-foo',
+                'repo'   => 'demo',
+                'branch' => 'fix-foo',
+                'path'   => $tmp . '/demo@fix-foo',
+                'signal' => 'pr-merged',
+        ),
+        ),
+        array(
+        array(
+                'handle' => 'demo@fix-foo',
+                'repo'   => 'demo',
+                'branch' => 'fix/foo',
+                'path'   => $tmp . '/demo@fix-foo',
+                'signal' => 'pr-merged',
+        ),
+        ),
+        array()
+    );
+    $assert(1, count($scoped_slug_branch['candidates'] ?? array()), 'plan revalidation accepts slugged branch matching slash branch');
+    $assert(array(), $scoped_slug_branch['skipped'] ?? array(), 'slugged branch match is not reported as plan_mismatch');
 
     // External worktrees are reported with routing metadata, but never owned by cleanup.
     $external_skips = array_filter($plan['skipped'] ?? array(), fn( $s ) => ( $s['path'] ?? '' ) === $external_real);
