@@ -2112,14 +2112,36 @@ class Workspace {
 		$handle       = (string) ( $row['handle'] ?? '' );
 		$repo         = (string) ( $row['repo'] ?? '' );
 		$branch       = (string) ( $row['branch'] ?? '' );
+		$branch_slug  = (string) ( $row['branch_slug'] ?? '' );
 		$path         = (string) ( $row['path'] ?? '' );
 		$primary_path = '' !== $repo ? $this->get_primary_path($repo) : '';
 		$metadata     = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
+		$branch_probe = null;
+		if ( '' !== $path && is_dir($path) ) {
+			$branch_probe = $this->run_git($path, 'branch --show-current', self::CLEANUP_GIT_PROBE_TIMEOUT);
+			if ( ! is_wp_error($branch_probe) && ! $this->is_git_timeout_error($branch_probe) ) {
+				$actual_branch = trim( (string) ( $branch_probe['output'] ?? '' ) );
+				if ( '' !== $actual_branch ) {
+					$branch = $actual_branch;
+				}
+			}
+		}
+		$metadata_branch = is_string($metadata['branch'] ?? null) ? (string) $metadata['branch'] : '';
+		$branch_identity = array(
+			'actual_branch'                 => $branch,
+			'branch_slug'                   => $branch_slug,
+			'metadata_branch'               => '' !== $metadata_branch ? $metadata_branch : null,
+			'branch_slug_matches_actual'    => '' === $branch_slug || $this->slugify_branch($branch) === $branch_slug,
+			'metadata_branch_matches_actual' => '' === $metadata_branch || $metadata_branch === $branch,
+		);
+		$branch_identity['mismatch'] = ! $branch_identity['branch_slug_matches_actual'] || ! $branch_identity['metadata_branch_matches_actual'];
 
 		$out = array(
 			'handle'                  => $handle,
 			'repo'                    => $repo,
 			'branch'                  => $branch,
+			'branch_slug'             => $branch_slug,
+			'branch_identity'         => $branch_identity,
 			'path'                    => $path,
 			'created_at'              => $row['created_at'] ?? null,
 			'lifecycle_state'         => $metadata['lifecycle_state'] ?? null,
@@ -2136,6 +2158,9 @@ class Workspace {
 			'suggested_action'        => 'insufficient_signal',
 			'reason'                  => 'not enough evidence gathered',
 		);
+		if ( is_wp_error($branch_probe) ) {
+			$out['branch_probe_error'] = $branch_probe->get_error_message();
+		}
 
 		if ( '' === $repo || '' === $branch || '' === $path || ! is_dir($path) || ! is_dir($primary_path . '/.git') ) {
 			$out['suggested_action'] = 'insufficient_signal';

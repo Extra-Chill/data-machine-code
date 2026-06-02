@@ -375,7 +375,7 @@ trait WorkspaceHygieneReport {
 				'owner'                 => $owner,
 				'session'               => $session_view,
 				'task'                  => $task_view,
-				'missing_metadata'      => $is_worktree && ! is_array($metadata),
+				'missing_metadata'      => $is_worktree && ( ! is_array($metadata) || array() === $metadata ),
 				'metadata'              => $metadata,
 			);
 
