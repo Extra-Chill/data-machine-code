@@ -128,8 +128,8 @@ namespace {
     $finalize = new FakeWorktreeFinalizeAbility();
     $list     = new FakeWorktreeListAbility();
     $GLOBALS['__abilities'] = array(
-    'datamachine/workspace-worktree-finalize' => $finalize,
-    'datamachine/workspace-worktree-list'     => $list,
+    'datamachine-code/workspace-worktree-finalize' => $finalize,
+    'datamachine-code/workspace-worktree-list'     => $list,
     );
     $command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
     $worktree_method = new ReflectionMethod($command, 'worktree');

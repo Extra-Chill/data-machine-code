@@ -283,8 +283,8 @@ namespace {
     $tool_source     = file_get_contents(__DIR__ . '/../inc/Tools/GitHubTools.php');
     $scaffold_source = file_get_contents(__DIR__ . '/../inc/GitHub/PrReviewFlowScaffold.php');
 
-    $assert(str_contains($ability_source, "'datamachine/get-github-actions-artifact'"), 'generic GitHub Actions artifact ability is registered');
-    $assert(str_contains($ability_source, "'datamachine/get-github-homeboy-ci-results'"), 'Homeboy CI ability is registered');
+	$assert(str_contains($ability_source, "'datamachine/get-github-actions-artifact'"), 'generic GitHub Actions artifact ability is registered');
+	$assert(str_contains($ability_source, "'datamachine/get-github-homeboy-ci-results'"), 'Homeboy CI ability is registered');
     $assert(str_contains($handler_source, "'homeboy_ci_results' === $" . 'data_source'), 'GitHub fetch handler routes homeboy_ci_results data source');
     $assert(str_contains($settings_source, "'homeboy_ci_results'"), 'handler settings expose homeboy_ci_results data source');
     $assert(str_contains($tool_source, "'get_github_homeboy_ci_results'"), 'read-only Homeboy CI tool is registered');

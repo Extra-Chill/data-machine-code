@@ -26,77 +26,77 @@ class GitHubTools extends BaseTool
     public function __construct()
     {
         $contexts = array( 'chat', 'pipeline' );
-        $this->registerTool('list_github_issues', array( $this, 'getListIssuesDefinition' ), $contexts, array( 'access_level' => 'editor' ));
-        $this->registerTool('get_github_issue', array( $this, 'getGetIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ));
-        $this->registerTool('manage_github_issue', array( $this, 'getManageIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ));
-        $this->registerTool('add_label_to_issue', array( $this, 'getAddLabelToIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ));
-        $this->registerTool('remove_label_from_issue', array( $this, 'getRemoveLabelFromIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ));
-        $this->registerTool('comment_github_pull_request', array( $this, 'getCommentPullRequestDefinition' ), $contexts, array( 'access_level' => 'editor' ));
+        $this->registerTool('list_github_issues', array( $this, 'getListIssuesDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/list-github-issues' ));
+        $this->registerTool('get_github_issue', array( $this, 'getGetIssueDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/get-github-issue' ));
+        $this->registerTool('manage_github_issue', array( $this, 'getManageIssueDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/update-github-issue' ));
+        $this->registerTool('add_label_to_issue', array( $this, 'getAddLabelToIssueDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/add-github-labels' ));
+        $this->registerTool('remove_label_from_issue', array( $this, 'getRemoveLabelFromIssueDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/remove-github-label' ));
+        $this->registerTool('comment_github_pull_request', array( $this, 'getCommentPullRequestDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/comment-github-pull-request' ));
         $this->registerTool(
             'upsert_github_pull_review_comment', array( $this, 'getUpsertPullReviewCommentDefinition' ), $contexts, array(
             'access_level' => 'editor',
-            'ability'      => 'datamachine/upsert-github-pull-review-comment',
+            'ability'      => 'datamachine-code/upsert-github-pull-review-comment',
             ) 
         );
         $this->registerTool(
             'merge_github_pull_request', array( $this, 'getMergePullRequestDefinition' ), $contexts, array(
             'access_level' => 'editor',
-            'ability'      => 'datamachine/merge-github-pull-request',
+            'ability'      => 'datamachine-code/merge-github-pull-request',
             ) 
         );
         $this->registerTool(
             'cleanup_github_pull_request', array( $this, 'getCleanupPullRequestDefinition' ), $contexts, array(
             'access_level' => 'editor',
-            'ability'      => 'datamachine/cleanup-github-pull-request',
+            'ability'      => 'datamachine-code/cleanup-github-pull-request',
             ) 
         );
-        $this->registerTool('list_github_pulls', array( $this, 'getListPullsDefinition' ), $contexts, array( 'access_level' => 'editor' ));
+        $this->registerTool('list_github_pulls', array( $this, 'getListPullsDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/list-github-pulls' ));
         $this->registerTool(
             'get_github_pull', array( $this, 'getGetPullDefinition' ), $contexts, array(
             'access_level' => 'editor',
-            'ability'      => 'datamachine/get-github-pull',
+            'ability'      => 'datamachine-code/get-github-pull',
             ) 
         );
         $this->registerTool(
             'get_github_pull_files', array( $this, 'getPullFilesDefinition' ), $contexts, array(
             'access_level' => 'editor',
-            'ability'      => 'datamachine/list-github-pull-files',
+            'ability'      => 'datamachine-code/list-github-pull-files',
             ) 
         );
         $this->registerTool(
             'get_github_check_runs', array( $this, 'getCheckRunsDefinition' ), $contexts, array(
             'access_level' => 'editor',
-            'ability'      => 'datamachine/get-github-check-runs',
+            'ability'      => 'datamachine-code/get-github-check-runs',
             ) 
         );
         $this->registerTool(
             'get_github_commit_statuses', array( $this, 'getCommitStatusesDefinition' ), $contexts, array(
             'access_level' => 'editor',
-            'ability'      => 'datamachine/get-github-commit-statuses',
+            'ability'      => 'datamachine-code/get-github-commit-statuses',
             ) 
         );
         $this->registerTool(
             'get_github_actions_artifact', array( $this, 'getActionsArtifactDefinition' ), $contexts, array(
             'access_level' => 'editor',
-            'ability'      => 'datamachine/get-github-actions-artifact',
+            'ability'      => 'datamachine-code/get-github-actions-artifact',
             ) 
         );
         $this->registerTool(
             'get_github_homeboy_ci_results', array( $this, 'getHomeboyCiResultsDefinition' ), $contexts, array(
             'access_level' => 'editor',
-            'ability'      => 'datamachine/get-github-homeboy-ci-results',
+            'ability'      => 'datamachine-code/get-github-homeboy-ci-results',
             ) 
         );
         $this->registerTool(
             'get_github_pull_review_context', array( $this, 'getPullReviewContextDefinition' ), $contexts, array(
             'access_level' => 'editor',
-            'ability'      => 'datamachine/get-github-pull-review-context',
+            'ability'      => 'datamachine-code/get-github-pull-review-context',
             ) 
         );
         $this->registerTool(
             'github_repo_review_profile', array( $this, 'getRepoReviewProfileDefinition' ), $contexts, array(
             'access_level' => 'editor',
-            'ability'      => 'datamachine/get-github-repo-review-profile',
+            'ability'      => 'datamachine-code/get-github-repo-review-profile',
             ) 
         );
         $this->registerTool(
@@ -108,28 +108,28 @@ class GitHubTools extends BaseTool
         $this->registerTool(
             'github_pr_documentation_impact', array( $this, 'getPullDocumentationImpactDefinition' ), $contexts, array(
             'access_level' => 'editor',
-            'ability'      => 'datamachine/get-github-pr-documentation-impact',
+            'ability'      => 'datamachine-code/get-github-pr-documentation-impact',
             ) 
         );
         $this->registerTool(
             'list_github_tree', array( $this, 'getListTreeDefinition' ), $contexts, array(
             'access_level' => 'editor',
-            'ability'      => 'datamachine/list-github-tree',
+            'ability'      => 'datamachine-code/list-github-tree',
             ) 
         );
         $this->registerTool(
             'get_github_file', array( $this, 'getGetFileDefinition' ), $contexts, array(
             'access_level' => 'editor',
-            'ability'      => 'datamachine/get-github-file',
+            'ability'      => 'datamachine-code/get-github-file',
             ) 
         );
         $this->registerTool(
             'create_or_update_github_file', array( $this, 'getCreateOrUpdateFileDefinition' ), $contexts, array(
             'access_level' => 'editor',
-            'ability'      => 'datamachine/create-or-update-github-file',
+            'ability'      => 'datamachine-code/create-or-update-github-file',
             ) 
         );
-        $this->registerTool('list_github_repos', array( $this, 'getListReposDefinition' ), $contexts, array( 'access_level' => 'editor' ));
+        $this->registerTool('list_github_repos', array( $this, 'getListReposDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/list-github-repos' ));
     }
 
     /**
@@ -238,20 +238,10 @@ class GitHubTools extends BaseTool
      * @param  array $tool_def   Tool definition.
      * @return array
      */
-    public function handleListIssues( array $parameters, array $tool_def = array() ): array
-    {
-        $result = GitHubAbilities::listIssues($parameters);
-
-        if (is_wp_error($result) ) {
-            return $this->buildErrorResponse($result->get_error_message(), 'list_github_issues');
-        }
-
-        return array(
-        'success'   => true,
-        'data'      => $result,
-        'tool_name' => 'list_github_issues',
-        );
-    }
+	public function handleListIssues( array $parameters, array $tool_def = array() ): array
+	{
+		return $this->executeGitHubAbility('datamachine-code/list-github-issues', 'list_github_issues', $parameters);
+	}
 
     /**
      * Get tool definition for list_github_issues.
@@ -300,20 +290,10 @@ class GitHubTools extends BaseTool
      * @param  array $tool_def   Tool definition.
      * @return array
      */
-    public function handleGetIssue( array $parameters, array $tool_def = array() ): array
-    {
-        $result = GitHubAbilities::getIssue($parameters);
-
-        if (is_wp_error($result) ) {
-            return $this->buildErrorResponse($result->get_error_message(), 'get_github_issue');
-        }
-
-        return array(
-        'success'   => true,
-        'data'      => $result,
-        'tool_name' => 'get_github_issue',
-        );
-    }
+	public function handleGetIssue( array $parameters, array $tool_def = array() ): array
+	{
+		return $this->executeGitHubAbility('datamachine-code/get-github-issue', 'get_github_issue', $parameters);
+	}
 
     /**
      * Get tool definition for get_github_issue.
@@ -360,28 +340,16 @@ class GitHubTools extends BaseTool
      */
     public function handleManageIssue( array $parameters, array $tool_def = array() ): array
     {
-        $action = $parameters['action'] ?? '';
+		$action = $parameters['action'] ?? '';
 
-        if ('comment' === $action ) {
-            $result = GitHubAbilities::commentOnIssue($parameters);
-        } elseif ('close' === $action ) {
-            $parameters['state'] = 'closed';
-            $result              = GitHubAbilities::updateIssue($parameters);
-        } else {
-            // Default: update.
-            $result = GitHubAbilities::updateIssue($parameters);
-        }
+		if ('comment' === $action ) {
+			return $this->executeGitHubAbility('datamachine-code/comment-github-issue', 'manage_github_issue', $parameters);
+		} elseif ('close' === $action ) {
+			$parameters['state'] = 'closed';
+		}
 
-        if (is_wp_error($result) ) {
-            return $this->buildErrorResponse($result->get_error_message(), 'manage_github_issue');
-        }
-
-        return array(
-        'success'   => true,
-        'data'      => $result,
-        'tool_name' => 'manage_github_issue',
-        );
-    }
+		return $this->executeGitHubAbility('datamachine-code/update-github-issue', 'manage_github_issue', $parameters);
+	}
 
     /**
      * Get tool definition for manage_github_issue.
@@ -447,24 +415,16 @@ class GitHubTools extends BaseTool
      */
     public function handleAddLabelToIssue( array $parameters, array $tool_def = array() ): array
     {
-        $result = GitHubAbilities::addLabels(
-            array(
-            'repo'         => $parameters['repo'] ?? '',
-            'issue_number' => $parameters['issue_number'] ?? 0,
-            'labels'       => array( $parameters['label'] ?? '' ),
-            ) 
-        );
-
-        if (is_wp_error($result) ) {
-            return $this->buildErrorResponse($result->get_error_message(), 'add_label_to_issue');
-        }
-
-        return array(
-        'success'   => true,
-        'data'      => $result,
-        'tool_name' => 'add_label_to_issue',
-        );
-    }
+		return $this->executeGitHubAbility(
+			'datamachine-code/add-github-labels',
+			'add_label_to_issue',
+			array(
+				'repo'         => $parameters['repo'] ?? '',
+				'issue_number' => $parameters['issue_number'] ?? 0,
+				'labels'       => array( $parameters['label'] ?? '' ),
+			)
+		);
+	}
 
     /**
      * Get tool definition for add_label_to_issue.
@@ -505,20 +465,10 @@ class GitHubTools extends BaseTool
      * @param  array $tool_def   Tool definition.
      * @return array
      */
-    public function handleRemoveLabelFromIssue( array $parameters, array $tool_def = array() ): array
-    {
-        $result = GitHubAbilities::removeLabel($parameters);
-
-        if (is_wp_error($result) ) {
-            return $this->buildErrorResponse($result->get_error_message(), 'remove_label_from_issue');
-        }
-
-        return array(
-        'success'   => true,
-        'data'      => $result,
-        'tool_name' => 'remove_label_from_issue',
-        );
-    }
+	public function handleRemoveLabelFromIssue( array $parameters, array $tool_def = array() ): array
+	{
+		return $this->executeGitHubAbility('datamachine-code/remove-github-label', 'remove_label_from_issue', $parameters);
+	}
 
     /**
      * Get tool definition for remove_label_from_issue.
@@ -563,20 +513,10 @@ class GitHubTools extends BaseTool
      * @param  array $tool_def   Tool definition.
      * @return array
      */
-    public function handleCommentPullRequest( array $parameters, array $tool_def = array() ): array
-    {
-        $result = GitHubAbilities::commentOnPullRequest($parameters);
-
-        if (is_wp_error($result) ) {
-            return $this->buildErrorResponse($result->get_error_message(), 'comment_github_pull_request');
-        }
-
-        return array(
-        'success'   => true,
-        'data'      => $result,
-        'tool_name' => 'comment_github_pull_request',
-        );
-    }
+	public function handleCommentPullRequest( array $parameters, array $tool_def = array() ): array
+	{
+		return $this->executeGitHubAbility('datamachine-code/comment-github-pull-request', 'comment_github_pull_request', $parameters);
+	}
 
     /**
      * Get tool definition for comment_github_pull_request.
@@ -624,7 +564,7 @@ class GitHubTools extends BaseTool
      */
     public function handleUpsertPullReviewComment( array $parameters ): array
     {
-        return $this->executeGitHubAbility('datamachine/upsert-github-pull-review-comment', 'upsert_github_pull_review_comment', $parameters);
+        return $this->executeGitHubAbility('datamachine-code/upsert-github-pull-review-comment', 'upsert_github_pull_review_comment', $parameters);
     }
 
     /**
@@ -679,7 +619,7 @@ class GitHubTools extends BaseTool
      */
     public function handleMergePullRequest( array $parameters ): array
     {
-        return $this->executeGitHubAbility('datamachine/merge-github-pull-request', 'merge_github_pull_request', $parameters);
+        return $this->executeGitHubAbility('datamachine-code/merge-github-pull-request', 'merge_github_pull_request', $parameters);
     }
 
     /**
@@ -690,7 +630,7 @@ class GitHubTools extends BaseTool
      */
     public function handleCleanupPullRequest( array $parameters ): array
     {
-        return $this->executeGitHubAbility('datamachine/cleanup-github-pull-request', 'cleanup_github_pull_request', $parameters);
+        return $this->executeGitHubAbility('datamachine-code/cleanup-github-pull-request', 'cleanup_github_pull_request', $parameters);
     }
 
     /**
@@ -780,20 +720,10 @@ class GitHubTools extends BaseTool
      * @param  array $tool_def   Tool definition.
      * @return array
      */
-    public function handleListPulls( array $parameters, array $tool_def = array() ): array
-    {
-        $result = GitHubAbilities::listPulls($parameters);
-
-        if (is_wp_error($result) ) {
-            return $this->buildErrorResponse($result->get_error_message(), 'list_github_pulls');
-        }
-
-        return array(
-        'success'   => true,
-        'data'      => $result,
-        'tool_name' => 'list_github_pulls',
-        );
-    }
+	public function handleListPulls( array $parameters, array $tool_def = array() ): array
+	{
+		return $this->executeGitHubAbility('datamachine-code/list-github-pulls', 'list_github_pulls', $parameters);
+	}
 
     /**
      * Get tool definition for list_github_pulls.
@@ -868,7 +798,7 @@ class GitHubTools extends BaseTool
      */
     public function handleGetPull( array $parameters ): array
     {
-        return $this->executeGitHubAbility('datamachine/get-github-pull', 'get_github_pull', $parameters);
+        return $this->executeGitHubAbility('datamachine-code/get-github-pull', 'get_github_pull', $parameters);
     }
 
     /**
@@ -909,7 +839,7 @@ class GitHubTools extends BaseTool
      */
     public function handlePullFiles( array $parameters ): array
     {
-        return $this->executeGitHubAbility('datamachine/list-github-pull-files', 'get_github_pull_files', $parameters);
+        return $this->executeGitHubAbility('datamachine-code/list-github-pull-files', 'get_github_pull_files', $parameters);
     }
 
     /**
@@ -958,7 +888,7 @@ class GitHubTools extends BaseTool
      */
     public function handleCheckRuns( array $parameters ): array
     {
-        return $this->executeGitHubAbility('datamachine/get-github-check-runs', 'get_github_check_runs', $parameters);
+        return $this->executeGitHubAbility('datamachine-code/get-github-check-runs', 'get_github_check_runs', $parameters);
     }
 
     /**
@@ -1005,7 +935,7 @@ class GitHubTools extends BaseTool
      */
     public function handleCommitStatuses( array $parameters ): array
     {
-        return $this->executeGitHubAbility('datamachine/get-github-commit-statuses', 'get_github_commit_statuses', $parameters);
+        return $this->executeGitHubAbility('datamachine-code/get-github-commit-statuses', 'get_github_commit_statuses', $parameters);
     }
 
     /**
@@ -1016,7 +946,7 @@ class GitHubTools extends BaseTool
      */
     public function handleActionsArtifact( array $parameters ): array
     {
-        return $this->executeGitHubAbility('datamachine/get-github-actions-artifact', 'get_github_actions_artifact', $parameters);
+        return $this->executeGitHubAbility('datamachine-code/get-github-actions-artifact', 'get_github_actions_artifact', $parameters);
     }
 
     /**
@@ -1027,7 +957,7 @@ class GitHubTools extends BaseTool
      */
     public function handleHomeboyCiResults( array $parameters ): array
     {
-        return $this->executeGitHubAbility('datamachine/get-github-homeboy-ci-results', 'get_github_homeboy_ci_results', $parameters);
+        return $this->executeGitHubAbility('datamachine-code/get-github-homeboy-ci-results', 'get_github_homeboy_ci_results', $parameters);
     }
 
     /**
@@ -1154,7 +1084,7 @@ class GitHubTools extends BaseTool
      */
     public function handlePullReviewContext( array $parameters ): array
     {
-        return $this->executeGitHubAbility('datamachine/get-github-pull-review-context', 'get_github_pull_review_context', $parameters);
+        return $this->executeGitHubAbility('datamachine-code/get-github-pull-review-context', 'get_github_pull_review_context', $parameters);
     }
 
     /**
@@ -1263,7 +1193,7 @@ class GitHubTools extends BaseTool
      */
     public function handleRepoReviewProfile( array $parameters ): array
     {
-        return $this->executeGitHubAbility('datamachine/get-github-repo-review-profile', 'github_repo_review_profile', $parameters);
+        return $this->executeGitHubAbility('datamachine-code/get-github-repo-review-profile', 'github_repo_review_profile', $parameters);
     }
 
     /**
@@ -1354,7 +1284,7 @@ class GitHubTools extends BaseTool
      */
     public function handlePullDocumentationImpact( array $parameters ): array
     {
-        return $this->executeGitHubAbility('datamachine/get-github-pr-documentation-impact', 'github_pr_documentation_impact', $parameters);
+        return $this->executeGitHubAbility('datamachine-code/get-github-pr-documentation-impact', 'github_pr_documentation_impact', $parameters);
     }
 
     /**
@@ -1406,7 +1336,7 @@ class GitHubTools extends BaseTool
      */
     public function handleListTree( array $parameters ): array
     {
-        return $this->executeGitHubAbility('datamachine/list-github-tree', 'list_github_tree', $parameters);
+        return $this->executeGitHubAbility('datamachine-code/list-github-tree', 'list_github_tree', $parameters);
     }
 
     /**
@@ -1451,7 +1381,7 @@ class GitHubTools extends BaseTool
      */
     public function handleGetFile( array $parameters ): array
     {
-        return $this->executeGitHubAbility('datamachine/get-github-file', 'get_github_file', $parameters);
+        return $this->executeGitHubAbility('datamachine-code/get-github-file', 'get_github_file', $parameters);
     }
 
     /**
@@ -1505,7 +1435,7 @@ class GitHubTools extends BaseTool
      */
     public function handleCreateOrUpdateFile( array $parameters ): array
     {
-        return $this->executeGitHubAbility('datamachine/create-or-update-github-file', 'create_or_update_github_file', $parameters);
+        return $this->executeGitHubAbility('datamachine-code/create-or-update-github-file', 'create_or_update_github_file', $parameters);
     }
 
     /**
@@ -1566,20 +1496,10 @@ class GitHubTools extends BaseTool
      * @param  array $tool_def   Tool definition.
      * @return array
      */
-    public function handleListRepos( array $parameters, array $tool_def = array() ): array
-    {
-        $result = GitHubAbilities::listRepos($parameters);
-
-        if (is_wp_error($result) ) {
-            return $this->buildErrorResponse($result->get_error_message(), 'list_github_repos');
-        }
-
-        return array(
-        'success'   => true,
-        'data'      => $result,
-        'tool_name' => 'list_github_repos',
-        );
-    }
+	public function handleListRepos( array $parameters, array $tool_def = array() ): array
+	{
+		return $this->executeGitHubAbility('datamachine-code/list-github-repos', 'list_github_repos', $parameters);
+	}
 
     /**
      * Get tool definition for list_github_repos.

@@ -13,6 +13,10 @@ use DataMachineCode\CodeTask\EvidencePacket;
 
 defined('ABSPATH') || exit;
 
+if ( ! class_exists(AbilityRegistry::class) ) {
+	require_once __DIR__ . '/AbilityRegistry.php';
+}
+
 class CodeTaskAbilities {
 
 
@@ -47,7 +51,7 @@ class CodeTaskAbilities {
 	}
 
 	public function register(): void {
-		wp_register_ability(
+		AbilityRegistry::register(
 			'datamachine/create-code-task',
 			array(
 				'label'               => 'Create Code Task',

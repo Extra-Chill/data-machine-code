@@ -26,7 +26,7 @@ class WorkspaceTools extends BaseTool
      */
     public static function is_configured(): bool
     {
-        return (bool) wp_get_ability('datamachine/workspace-path');
+        return (bool) wp_get_ability('datamachine-code/workspace-path');
     }
 
     /**
@@ -79,29 +79,29 @@ class WorkspaceTools extends BaseTool
         $contexts        = array( 'chat', 'pipeline' );
         $policy_contexts = array( 'chat', 'pipeline' );
         $policy_meta     = array( 'requires_opt_in' => true );
-        $this->registerTool('workspace_path', array( $this, 'getPathDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-path' ));
-        $this->registerTool('workspace_capabilities', array( $this, 'getCapabilitiesDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-capabilities' ));
-        $this->registerTool('workspace_list', array( $this, 'getListDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-list' ));
-        $this->registerTool('workspace_show', array( $this, 'getShowDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-show' ));
-        $this->registerTool('workspace_ls', array( $this, 'getLsDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-ls' ));
-        $this->registerTool('workspace_read', array( $this, 'getReadDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-read' ));
-        $this->registerTool('workspace_grep', array( $this, 'getGrepDefinition' ), $contexts, array( 'ability' => 'datamachine/workspace-grep' ));
-        $this->registerTool('workspace_write', array( $this, 'getWriteDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-write' ));
-        $this->registerTool('workspace_edit', array( $this, 'getEditDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-edit' ));
-        $this->registerTool('workspace_apply_patch', array( $this, 'getApplyPatchDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-apply-patch' ));
-        $this->registerTool('workspace_delete', array( $this, 'getDeleteDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-delete' ));
-        $this->registerTool('workspace_git_status', array( $this, 'getGitStatusDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-status' ));
-        $this->registerTool('workspace_git_log', array( $this, 'getGitLogDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-log' ));
-        $this->registerTool('workspace_git_diff', array( $this, 'getGitDiffDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-diff' ));
-        $this->registerTool('workspace_git_pull', array( $this, 'getGitPullDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-pull' ));
-        $this->registerTool('workspace_worktree_add', array( $this, 'getWorktreeAddDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-worktree-add' ));
-        $this->registerTool('workspace_git_add', array( $this, 'getGitAddDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-add' ));
-        $this->registerTool('workspace_git_commit', array( $this, 'getGitCommitDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-commit' ));
-        $this->registerTool('workspace_git_push', array( $this, 'getGitPushDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-push' ));
-        $this->registerTool('workspace_git_rebase', array( $this, 'getGitRebaseDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-rebase' ));
-        $this->registerTool('workspace_git_reset', array( $this, 'getGitResetDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-git-reset' ));
-        $this->registerTool('workspace_pr_status', array( $this, 'getPrStatusDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-pr-status' ));
-        $this->registerTool('workspace_pr_rebase', array( $this, 'getPrRebaseDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine/workspace-pr-rebase' ));
+        $this->registerTool('workspace_path', array( $this, 'getPathDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-path' ));
+        $this->registerTool('workspace_capabilities', array( $this, 'getCapabilitiesDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-capabilities' ));
+        $this->registerTool('workspace_list', array( $this, 'getListDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-list' ));
+        $this->registerTool('workspace_show', array( $this, 'getShowDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-show' ));
+        $this->registerTool('workspace_ls', array( $this, 'getLsDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-ls' ));
+        $this->registerTool('workspace_read', array( $this, 'getReadDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-read' ));
+        $this->registerTool('workspace_grep', array( $this, 'getGrepDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-grep' ));
+        $this->registerTool('workspace_write', array( $this, 'getWriteDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-write' ));
+        $this->registerTool('workspace_edit', array( $this, 'getEditDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-edit' ));
+        $this->registerTool('workspace_apply_patch', array( $this, 'getApplyPatchDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-apply-patch' ));
+        $this->registerTool('workspace_delete', array( $this, 'getDeleteDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-delete' ));
+        $this->registerTool('workspace_git_status', array( $this, 'getGitStatusDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-status' ));
+        $this->registerTool('workspace_git_log', array( $this, 'getGitLogDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-log' ));
+        $this->registerTool('workspace_git_diff', array( $this, 'getGitDiffDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-diff' ));
+        $this->registerTool('workspace_git_pull', array( $this, 'getGitPullDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-pull' ));
+        $this->registerTool('workspace_worktree_add', array( $this, 'getWorktreeAddDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-worktree-add' ));
+        $this->registerTool('workspace_git_add', array( $this, 'getGitAddDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-add' ));
+        $this->registerTool('workspace_git_commit', array( $this, 'getGitCommitDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-commit' ));
+        $this->registerTool('workspace_git_push', array( $this, 'getGitPushDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-push' ));
+        $this->registerTool('workspace_git_rebase', array( $this, 'getGitRebaseDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-rebase' ));
+        $this->registerTool('workspace_git_reset', array( $this, 'getGitResetDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-reset' ));
+        $this->registerTool('workspace_pr_status', array( $this, 'getPrStatusDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-pr-status' ));
+        $this->registerTool('workspace_pr_rebase', array( $this, 'getPrRebaseDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-pr-rebase' ));
     }
 
     /**
@@ -146,7 +146,7 @@ class WorkspaceTools extends BaseTool
      */
     public function handlePath( array $parameters ): array
     {
-        $ability = wp_get_ability('datamachine/workspace-path');
+        $ability = wp_get_ability('datamachine-code/workspace-path');
 
         if (! $ability ) {
             return $this->buildErrorResponse('Workspace path ability not available.', 'workspace_path');
@@ -176,7 +176,7 @@ class WorkspaceTools extends BaseTool
      */
     public function handleCapabilities(): array
     {
-        $ability = wp_get_ability('datamachine/workspace-capabilities');
+        $ability = wp_get_ability('datamachine-code/workspace-capabilities');
 
         if (! $ability ) {
             return $this->buildErrorResponse('Workspace capabilities ability not available.', 'workspace_capabilities');
@@ -202,7 +202,7 @@ class WorkspaceTools extends BaseTool
      */
     public function handleList( array $parameters = array() ): array
     {
-        $ability = wp_get_ability('datamachine/workspace-list');
+        $ability = wp_get_ability('datamachine-code/workspace-list');
 
         if (! $ability ) {
             return $this->buildErrorResponse('Workspace list ability not available.', 'workspace_list');
@@ -234,7 +234,7 @@ class WorkspaceTools extends BaseTool
      */
     public function handleShow( array $parameters ): array
     {
-        $ability = wp_get_ability('datamachine/workspace-show');
+        $ability = wp_get_ability('datamachine-code/workspace-show');
 
         if (! $ability ) {
             return $this->buildErrorResponse('Workspace show ability not available.', 'workspace_show');
@@ -263,7 +263,7 @@ class WorkspaceTools extends BaseTool
      */
     public function handleLs( array $parameters ): array
     {
-        $ability = wp_get_ability('datamachine/workspace-ls');
+        $ability = wp_get_ability('datamachine-code/workspace-ls');
 
         if (! $ability ) {
             return $this->buildErrorResponse('Workspace ls ability not available.', 'workspace_ls');
@@ -300,7 +300,7 @@ class WorkspaceTools extends BaseTool
      */
     public function handleRead( array $parameters ): array
     {
-        $ability = wp_get_ability('datamachine/workspace-read');
+        $ability = wp_get_ability('datamachine-code/workspace-read');
 
         if (! $ability ) {
             return $this->buildErrorResponse('Workspace read ability not available.', 'workspace_read');
@@ -348,7 +348,7 @@ class WorkspaceTools extends BaseTool
      */
     public function handleGrep( array $parameters ): array
     {
-        $ability = wp_get_ability('datamachine/workspace-grep');
+        $ability = wp_get_ability('datamachine-code/workspace-grep');
 
         if (! $ability ) {
             return $this->buildErrorResponse('Workspace grep ability not available.', 'workspace_grep');
@@ -394,7 +394,7 @@ class WorkspaceTools extends BaseTool
     public function handleWrite( array $parameters ): array
     {
         return $this->executeAbility(
-            'datamachine/workspace-write', 'workspace_write', array(
+            'datamachine-code/workspace-write', 'workspace_write', array(
             'repo'    => $parameters['repo'] ?? '',
             'path'    => $parameters['path'] ?? '',
             'content' => $parameters['content'] ?? '',
@@ -418,7 +418,7 @@ class WorkspaceTools extends BaseTool
             $input['replace_all'] = (bool) $parameters['replace_all'];
         }
 
-        return $this->executeAbility('datamachine/workspace-edit', 'workspace_edit', $input, array( 'repo' ));
+        return $this->executeAbility('datamachine-code/workspace-edit', 'workspace_edit', $input, array( 'repo' ));
     }
 
     /**
@@ -435,7 +435,7 @@ class WorkspaceTools extends BaseTool
             $input['allow_primary_mutation'] = (bool) $parameters['allow_primary_mutation'];
         }
 
-        return $this->executeAbility('datamachine/workspace-apply-patch', 'workspace_apply_patch', $input, array( 'repo' ));
+        return $this->executeAbility('datamachine-code/workspace-apply-patch', 'workspace_apply_patch', $input, array( 'repo' ));
     }
 
     /**
@@ -454,7 +454,7 @@ class WorkspaceTools extends BaseTool
             }
         }
 
-        return $this->executeAbility('datamachine/workspace-delete', 'workspace_delete', $input, array( 'repo' ));
+        return $this->executeAbility('datamachine-code/workspace-delete', 'workspace_delete', $input, array( 'repo' ));
     }
 
     /**
@@ -462,7 +462,7 @@ class WorkspaceTools extends BaseTool
      */
     public function handleGitStatus( array $parameters ): array
     {
-        return $this->executeAbility('datamachine/workspace-git-status', 'workspace_git_status', array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' ), array( 'name' ));
+        return $this->executeAbility('datamachine-code/workspace-git-status', 'workspace_git_status', array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' ), array( 'name' ));
     }
 
     /**
@@ -475,7 +475,7 @@ class WorkspaceTools extends BaseTool
             $input['limit'] = (int) $parameters['limit'];
         }
 
-        return $this->executeAbility('datamachine/workspace-git-log', 'workspace_git_log', $input, array( 'name' ));
+        return $this->executeAbility('datamachine-code/workspace-git-log', 'workspace_git_log', $input, array( 'name' ));
     }
 
     /**
@@ -493,7 +493,7 @@ class WorkspaceTools extends BaseTool
             $input['staged'] = (bool) $parameters['staged'];
         }
 
-        return $this->executeAbility('datamachine/workspace-git-diff', 'workspace_git_diff', $input, array( 'name' ));
+        return $this->executeAbility('datamachine-code/workspace-git-diff', 'workspace_git_diff', $input, array( 'name' ));
     }
 
     /**
@@ -508,7 +508,7 @@ class WorkspaceTools extends BaseTool
             }
         }
 
-        return $this->executeAbility('datamachine/workspace-git-pull', 'workspace_git_pull', $input, array( 'name' ));
+        return $this->executeAbility('datamachine-code/workspace-git-pull', 'workspace_git_pull', $input, array( 'name' ));
     }
 
     /**
@@ -533,7 +533,7 @@ class WorkspaceTools extends BaseTool
             }
         }
 
-        return $this->executeAbility('datamachine/workspace-worktree-add', 'workspace_worktree_add', $input, array( 'repo' ));
+        return $this->executeAbility('datamachine-code/workspace-worktree-add', 'workspace_worktree_add', $input, array( 'repo' ));
     }
 
     /**
@@ -549,7 +549,7 @@ class WorkspaceTools extends BaseTool
             $input['allow_primary_mutation'] = (bool) $parameters['allow_primary_mutation'];
         }
 
-        return $this->executeAbility('datamachine/workspace-git-add', 'workspace_git_add', $input, array( 'name' ));
+        return $this->executeAbility('datamachine-code/workspace-git-add', 'workspace_git_add', $input, array( 'name' ));
     }
 
     /**
@@ -565,7 +565,7 @@ class WorkspaceTools extends BaseTool
             $input['allow_primary_mutation'] = (bool) $parameters['allow_primary_mutation'];
         }
 
-        return $this->executeAbility('datamachine/workspace-git-commit', 'workspace_git_commit', $input, array( 'name' ));
+        return $this->executeAbility('datamachine-code/workspace-git-commit', 'workspace_git_commit', $input, array( 'name' ));
     }
 
     /**
@@ -585,7 +585,7 @@ class WorkspaceTools extends BaseTool
             }
         }
 
-        return $this->executeAbility('datamachine/workspace-git-push', 'workspace_git_push', $input, array( 'name' ));
+        return $this->executeAbility('datamachine-code/workspace-git-push', 'workspace_git_push', $input, array( 'name' ));
     }
 
     /**
@@ -605,7 +605,7 @@ class WorkspaceTools extends BaseTool
             }
         }
 
-        return $this->executeAbility('datamachine/workspace-git-rebase', 'workspace_git_rebase', $input, array( 'name' ));
+        return $this->executeAbility('datamachine-code/workspace-git-rebase', 'workspace_git_rebase', $input, array( 'name' ));
     }
 
     /**
@@ -625,7 +625,7 @@ class WorkspaceTools extends BaseTool
             }
         }
 
-        return $this->executeAbility('datamachine/workspace-git-reset', 'workspace_git_reset', $input, array( 'name' ));
+        return $this->executeAbility('datamachine-code/workspace-git-reset', 'workspace_git_reset', $input, array( 'name' ));
     }
 
     /**
@@ -640,7 +640,7 @@ class WorkspaceTools extends BaseTool
             }
         }
 
-        return $this->executeAbility('datamachine/workspace-pr-status', 'workspace_pr_status', $input, array( 'name' ));
+        return $this->executeAbility('datamachine-code/workspace-pr-status', 'workspace_pr_status', $input, array( 'name' ));
     }
 
     /**
@@ -661,7 +661,7 @@ class WorkspaceTools extends BaseTool
             }
         }
 
-        return $this->executeAbility('datamachine/workspace-pr-rebase', 'workspace_pr_rebase', $input, array( 'name' ));
+        return $this->executeAbility('datamachine-code/workspace-pr-rebase', 'workspace_pr_rebase', $input, array( 'name' ));
     }
 
     /**

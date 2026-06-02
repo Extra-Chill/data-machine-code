@@ -22,6 +22,10 @@ use DataMachineCode\GitSync\GitSync;
 
 defined('ABSPATH') || exit;
 
+if ( ! class_exists(AbilityRegistry::class) ) {
+	require_once __DIR__ . '/AbilityRegistry.php';
+}
+
 class GitSyncAbilities {
 
 
@@ -56,7 +60,7 @@ class GitSyncAbilities {
 			// Read-only (show_in_rest = true).
 			// -----------------------------------------------------------------
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/gitsync-list',
 				array(
 					'label'               => 'List GitSync Bindings',
@@ -79,7 +83,7 @@ class GitSyncAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/gitsync-status',
 				array(
 					'label'               => 'GitSync Binding Status',
@@ -117,7 +121,7 @@ class GitSyncAbilities {
 			// Mutating (show_in_rest = false).
 			// -----------------------------------------------------------------
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/gitsync-bind',
 				array(
 					'label'               => 'Bind GitSync Path',
@@ -148,7 +152,7 @@ class GitSyncAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/gitsync-unbind',
 				array(
 					'label'               => 'Unbind GitSync Path',
@@ -177,7 +181,7 @@ class GitSyncAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/gitsync-pull',
 				array(
 					'label'               => 'Pull GitSync Binding',
@@ -214,7 +218,7 @@ class GitSyncAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/gitsync-submit',
 				array(
 					'label'               => 'Submit GitSync Binding as Pull Request',
@@ -257,7 +261,7 @@ class GitSyncAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/gitsync-push',
 				array(
 					'label'               => 'Push GitSync Binding Directly',
@@ -291,7 +295,7 @@ class GitSyncAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/gitsync-policy-update',
 				array(
 					'label'               => 'Update GitSync Binding Policy',

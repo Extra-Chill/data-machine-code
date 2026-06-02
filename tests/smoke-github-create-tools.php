@@ -94,14 +94,22 @@ namespace {
         {
         }
 
-        public function execute( array $input ): array
-        {
-            $GLOBALS['dmc_tool_ability_calls'][] = array(
-            'name'  => $this->name,
-            'input' => $input,
-            );
+		public function execute( array $input ): array|WP_Error
+		{
+			$GLOBALS['dmc_tool_ability_calls'][] = array(
+			'name'  => $this->name,
+			'input' => $input,
+			);
 
-            if ('datamachine/create-github-pull-request' === $this->name ) {
+			if ('datamachine-code/add-github-labels' === $this->name ) {
+				return \DataMachineCode\Abilities\GitHubAbilities::addLabels($input);
+			}
+
+			if ('datamachine-code/remove-github-label' === $this->name ) {
+				return \DataMachineCode\Abilities\GitHubAbilities::removeLabel($input);
+			}
+
+			if ('datamachine-code/create-github-pull-request' === $this->name ) {
                 return array(
                 'success'      => true,
                 'kind'         => 'pull_request',
@@ -128,7 +136,7 @@ namespace {
 
     function wp_get_ability( string $name ): ?DMC_Test_Ability
     {
-        if (in_array($name, array( 'datamachine/create-github-issue', 'datamachine/create-github-pull-request' ), true) ) {
+		if (in_array($name, array( 'datamachine-code/create-github-issue', 'datamachine-code/create-github-pull-request', 'datamachine-code/add-github-labels', 'datamachine-code/remove-github-label' ), true) ) {
             return new DMC_Test_Ability($name);
         }
 
@@ -204,12 +212,12 @@ namespace {
     $assert('create_github_issue tool is registered', isset($issue_tool->registered['create_github_issue']));
     $assert('create_github_issue is available in chat', in_array('chat', $issue_tool->registered['create_github_issue']['contexts'] ?? array(), true));
     $assert('create_github_issue is available in pipeline', in_array('pipeline', $issue_tool->registered['create_github_issue']['contexts'] ?? array(), true));
-    $assert('create_github_issue links to create issue ability', 'datamachine/create-github-issue' === ( $issue_tool->registered['create_github_issue']['options']['ability'] ?? '' ));
+    $assert('create_github_issue links to create issue ability', 'datamachine-code/create-github-issue' === ( $issue_tool->registered['create_github_issue']['options']['ability'] ?? '' ));
 
     $assert('create_github_pull_request tool is registered', isset($pr_tool->registered['create_github_pull_request']));
     $assert('create_github_pull_request is available in chat', in_array('chat', $pr_tool->registered['create_github_pull_request']['contexts'] ?? array(), true));
     $assert('create_github_pull_request is available in pipeline', in_array('pipeline', $pr_tool->registered['create_github_pull_request']['contexts'] ?? array(), true));
-    $assert('create_github_pull_request links to create PR ability', 'datamachine/create-github-pull-request' === ( $pr_tool->registered['create_github_pull_request']['options']['ability'] ?? '' ));
+    $assert('create_github_pull_request links to create PR ability', 'datamachine-code/create-github-pull-request' === ( $pr_tool->registered['create_github_pull_request']['options']['ability'] ?? '' ));
 
     $assert('add_label_to_issue tool is registered', isset($github_tools->registered['add_label_to_issue']));
     $assert('add_label_to_issue is available in chat', in_array('chat', $github_tools->registered['add_label_to_issue']['contexts'] ?? array(), true));
@@ -276,7 +284,7 @@ namespace {
     $assert('create_github_pull_request URL is distinguishable from branch URL', ! str_contains($pr_result['url'] ?? '', '/tree/'));
 
     $pr_call = $GLOBALS['dmc_tool_ability_calls'][1] ?? array();
-    $assert('create_github_pull_request calls PR ability', 'datamachine/create-github-pull-request' === ( $pr_call['name'] ?? '' ));
+    $assert('create_github_pull_request calls PR ability', 'datamachine-code/create-github-pull-request' === ( $pr_call['name'] ?? '' ));
     $assert('create_github_pull_request forwards labels', array( 'needs-review' ) === ( $pr_call['input']['labels'] ?? null ));
     $assert('create_github_pull_request forwards maintainer_can_modify', false === ( $pr_call['input']['maintainer_can_modify'] ?? null ));
     $assert('create_github_pull_request forwards job context', 123 === ( $pr_call['input']['job_id'] ?? null ));
@@ -354,7 +362,7 @@ namespace {
 
     $plugin_source = file_get_contents(__DIR__ . '/../data-machine-code.php');
     $assert('legacy system ability function is removed', ! str_contains($plugin_source, 'datamachine_code_register_system_abilities'));
-    $assert('legacy create-github-issue registration is removed from plugin bootstrap', ! str_contains($plugin_source, "wp_register_ability(\n\t\t'datamachine/create-github-issue'"));
+    $assert('legacy create-github-issue registration is removed from plugin bootstrap', ! str_contains($plugin_source, "wp_register_ability(\n\t\t'datamachine-code/create-github-issue'"));
     $assert('plugin instantiates PR create tool', str_contains($plugin_source, 'new \\DataMachineCode\\Tools\\GitHubPullRequestTool();'));
 
     if (! empty($failures) ) {

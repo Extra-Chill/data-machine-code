@@ -26,6 +26,10 @@ use DataMachineCode\Workspace\Workspace;
 
 defined('ABSPATH') || exit;
 
+if ( ! class_exists(AbilityRegistry::class) ) {
+	require_once __DIR__ . '/AbilityRegistry.php';
+}
+
 if ( ! class_exists(GitHubCredentialResolver::class) ) {
 	include_once dirname(__DIR__) . '/Support/GitHubCredentialResolver.php';
 }
@@ -107,7 +111,7 @@ class GitHubAbilities {
 
 	private function registerAbilities(): void {
 		$register_callback = function () {
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/list-github-issues',
 				array(
 					'label'               => 'List GitHub Issues',
@@ -162,7 +166,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/get-github-issue',
 				array(
 					'label'               => 'Get GitHub Issue',
@@ -196,7 +200,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/update-github-issue',
 				array(
 					'label'               => 'Update GitHub Issue',
@@ -252,7 +256,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/create-github-issue',
 				array(
 					'label'               => 'Create GitHub Issue',
@@ -304,7 +308,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/create-github-pull-request',
 				array(
 					'label'               => 'Create GitHub Pull Request',
@@ -371,7 +375,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/comment-github-issue',
 				array(
 					'label'               => 'Comment on GitHub Issue',
@@ -413,7 +417,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/comment-github-pull-request',
 				array(
 					'label'               => 'Comment on GitHub Pull Request',
@@ -455,7 +459,70 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
+				'datamachine/add-github-labels',
+				array(
+					'label'               => 'Add GitHub Labels',
+					'description'         => 'Add one or more labels to a GitHub issue or pull request without replacing existing labels.',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'issue_number', 'labels' ),
+						'properties' => array(
+							'repo'         => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'issue_number' => array(
+								'type'        => 'integer',
+								'description' => 'Issue or pull request number.',
+							),
+							'labels'       => array(
+								'type'        => 'array',
+								'items'       => array( 'type' => 'string' ),
+								'description' => 'Labels to add.',
+							),
+						),
+					),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'addLabels' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine/remove-github-label',
+				array(
+					'label'               => 'Remove GitHub Label',
+					'description'         => 'Remove a single label from a GitHub issue or pull request without touching other labels.',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'repo', 'issue_number', 'label' ),
+						'properties' => array(
+							'repo'         => array(
+								'type'        => 'string',
+								'description' => 'Repository in owner/repo format.',
+							),
+							'issue_number' => array(
+								'type'        => 'integer',
+								'description' => 'Issue or pull request number.',
+							),
+							'label'        => array(
+								'type'        => 'string',
+								'description' => 'Label to remove.',
+							),
+						),
+					),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'removeLabel' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
 				'datamachine/upsert-github-pull-review-comment',
 				array(
 					'label'               => 'Upsert GitHub Pull Request Review Comment',
@@ -507,7 +574,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/merge-github-pull-request',
 				array(
 					'label'               => 'Merge GitHub Pull Request',
@@ -560,7 +627,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/cleanup-github-pull-request',
 				array(
 					'label'               => 'Cleanup GitHub Pull Request',
@@ -609,7 +676,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/list-github-pulls',
 				array(
 					'label'               => 'List GitHub Pull Requests',
@@ -652,7 +719,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/get-github-pull',
 				array(
 					'label'               => 'Get GitHub Pull Request',
@@ -686,7 +753,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/list-github-pull-files',
 				array(
 					'label'               => 'List GitHub Pull Request Files',
@@ -729,7 +796,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/get-github-check-runs',
 				array(
 					'label'               => 'Get GitHub Check Runs',
@@ -774,7 +841,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/get-github-commit-statuses',
 				array(
 					'label'               => 'Get GitHub Commit Statuses',
@@ -811,7 +878,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/get-github-actions-artifact',
 				array(
 					'label'               => 'Get GitHub Actions Artifact',
@@ -865,7 +932,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/get-github-homeboy-ci-results',
 				array(
 					'label'               => 'Get GitHub Homeboy CI Results (Deprecated)',
@@ -915,7 +982,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/get-github-pull-review-context',
 				array(
 					'label'               => 'Get GitHub Pull Request Review Context',
@@ -1005,7 +1072,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/get-github-repo-review-profile',
 				array(
 					'label'               => 'Get GitHub Repository Review Profile',
@@ -1055,7 +1122,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine-code/run-pr-homeboy-review',
 				array(
 					'label'               => 'Run PR Homeboy Review',
@@ -1104,7 +1171,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/get-github-pr-documentation-impact',
 				array(
 					'label'               => 'Get GitHub PR Documentation Impact',
@@ -1150,7 +1217,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/list-github-tree',
 				array(
 					'label'               => 'List GitHub Repository Tree',
@@ -1189,7 +1256,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/get-github-file',
 				array(
 					'label'               => 'Get GitHub Files',
@@ -1240,7 +1307,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/create-or-update-github-file',
 				array(
 					'label'               => 'Create or Update GitHub File',
@@ -1292,7 +1359,7 @@ class GitHubAbilities {
 				)
 			);
 
-			wp_register_ability(
+			AbilityRegistry::register(
 				'datamachine/list-github-repos',
 				array(
 					'label'               => 'List GitHub Repositories',
@@ -1338,6 +1405,32 @@ class GitHubAbilities {
 					'meta'                => array( 'show_in_rest' => false ),
 				)
 			);
+
+			AbilityRegistry::register(
+				'datamachine/github-status',
+				array(
+					'label'               => 'Get GitHub Integration Status',
+					'description'         => 'Inspect GitHub authentication, default repository, and registered repository status.',
+					'category'            => 'datamachine-code-github',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'          => array( 'type' => 'boolean' ),
+							'auth_status'      => array( 'type' => 'object' ),
+							'configured'       => array( 'type' => 'boolean' ),
+							'default_repo'     => array( 'type' => 'string' ),
+							'registered_repos' => array( 'type' => 'array' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'githubStatus' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
 		};
 
 		if ( doing_action('wp_abilities_api_init') ) {
@@ -1350,6 +1443,20 @@ class GitHubAbilities {
 	// -------------------------------------------------------------------------
 	// Ability Callbacks
 	// -------------------------------------------------------------------------
+
+	public static function githubStatus( array $input ): array {
+		unset($input);
+
+		$auth_status = self::getAuthStatus();
+
+		return array(
+			'success'          => true,
+			'auth_status'      => $auth_status,
+			'configured'       => ! empty($auth_status['configured']),
+			'default_repo'     => self::getDefaultRepo(),
+			'registered_repos' => self::getRegisteredRepos(),
+		);
+	}
 
 	public static function listIssues( array $input ): array|\WP_Error {
 		$repo = sanitize_text_field($input['repo'] ?? '');

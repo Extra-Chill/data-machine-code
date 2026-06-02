@@ -68,7 +68,7 @@ class CodeTaskCommand extends BaseCommand {
 		$input['allow_stale'] = ! empty($assoc_args['allow-stale']);
 		$input['force']       = ! empty($assoc_args['force']);
 
-		$ability = wp_get_ability('datamachine/create-code-task');
+		$ability = wp_get_ability('datamachine-code/create-code-task');
 		if ( ! $ability ) {
 			WP_CLI::error('Code-task ability not available.');
 			return;

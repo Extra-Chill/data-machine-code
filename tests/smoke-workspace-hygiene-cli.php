@@ -171,8 +171,8 @@ namespace {
     $ability                 = new FakeHygieneAbility();
     $inventory_ability       = new FakeInventoryRefreshAbility();
     $GLOBALS['__abilities'] = array(
-    'datamachine/workspace-hygiene-report'             => $ability,
-    'datamachine/workspace-worktree-inventory-refresh' => $inventory_ability,
+    'datamachine-code/workspace-hygiene-report'             => $ability,
+    'datamachine-code/workspace-worktree-inventory-refresh' => $inventory_ability,
     );
     $command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
 

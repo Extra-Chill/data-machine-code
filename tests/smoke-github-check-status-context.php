@@ -174,8 +174,8 @@ namespace {
     $settings_source = file_get_contents(__DIR__ . '/../inc/Handlers/GitHub/GitHubSettings.php');
     $tool_source     = file_get_contents(__DIR__ . '/../inc/Tools/GitHubTools.php');
 
-    $assert(str_contains($ability_source, "'datamachine/get-github-check-runs'"), 'check-runs ability is registered');
-    $assert(str_contains($ability_source, "'datamachine/get-github-commit-statuses'"), 'commit-statuses ability is registered');
+	$assert(str_contains($ability_source, "'datamachine/get-github-check-runs'"), 'check-runs ability is registered');
+	$assert(str_contains($ability_source, "'datamachine/get-github-commit-statuses'"), 'commit-statuses ability is registered');
     $assert(str_contains($handler_source, "'check_runs' === $" . 'data_source'), 'fetch handler routes check_runs data source');
     $assert(str_contains($handler_source, "'commit_statuses' === $" . 'data_source'), 'fetch handler routes commit_statuses data source');
     $assert(str_contains($settings_source, "'include_checks'"), 'handler settings expose include_checks');

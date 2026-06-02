@@ -211,7 +211,7 @@ namespace {
     $grep_definition                          = $tools->getGrepDefinition();
     $edit_definition                          = $tools->getEditDefinition();
     $git_diff_definition                      = $tools->getGitDiffDefinition();
-    $ability_edit_schema                       = $GLOBALS['dmc_workspace_alias_registered_abilities']['datamachine/workspace-edit']['input_schema'] ?? array();
+    $ability_edit_schema                       = $GLOBALS['dmc_workspace_alias_registered_abilities']['datamachine-code/workspace-edit']['input_schema'] ?? array();
     $assert('workspace_read schema allows path-only mounted workspace calls', array( 'path' ) === ( $read_definition['parameters']['required'] ?? null ));
     $assert('workspace_grep schema allows path-only mounted workspace calls', array( 'pattern' ) === ( $grep_definition['parameters']['required'] ?? null ));
     $assert('workspace_git_diff schema allows path-only mounted workspace calls', array() === ( $git_diff_definition['parameters']['required'] ?? null ));

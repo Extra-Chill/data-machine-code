@@ -2,7 +2,7 @@
 /**
  * WP-CLI GitSync Command
  *
- * Thin shell over the `datamachine/gitsync-*` abilities. Every subcommand
+ * Thin shell over the `datamachine-code/gitsync-*` abilities. Every subcommand
  * resolves the matching ability via `wp_get_ability()`, maps CLI args
  * into the ability's input schema, and formats the response — no
  * business logic in the CLI layer.
@@ -45,7 +45,7 @@ class GitSyncCommand extends BaseCommand {
 	 * @subcommand list
 	 */
 	public function list_bindings( array $args, array $assoc_args ): void {   // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
-		$result = $this->execute_ability('datamachine/gitsync-list', array());
+		$result = $this->execute_ability('datamachine-code/gitsync-list', array());
 
 		if ( empty($result['bindings']) ) {
 			WP_CLI::log('No GitSync bindings registered.');
@@ -140,7 +140,7 @@ class GitSyncCommand extends BaseCommand {
 			$input['policy'] = array( 'conflict' => (string) $assoc_args['conflict'] );
 		}
 
-		$result = $this->execute_ability('datamachine/gitsync-bind', $input);
+		$result = $this->execute_ability('datamachine-code/gitsync-bind', $input);
 
 		WP_CLI::success( (string) ( $result['message'] ?? 'Bound.' ));
 	}
@@ -177,7 +177,7 @@ class GitSyncCommand extends BaseCommand {
 		}
 
 		$result = $this->execute_ability(
-			'datamachine/gitsync-unbind',
+			'datamachine-code/gitsync-unbind',
 			array(
 				'slug'  => $slug,
 				'purge' => $purge,
@@ -215,7 +215,7 @@ class GitSyncCommand extends BaseCommand {
 		}
 
 		$result = $this->execute_ability(
-			'datamachine/gitsync-pull',
+			'datamachine-code/gitsync-pull',
 			array(
 				'slug'        => $slug,
 				'allow_dirty' => ! empty($assoc_args['allow-dirty']),
@@ -274,7 +274,7 @@ class GitSyncCommand extends BaseCommand {
 		if ( '' === $slug ) {
 			WP_CLI::error('Binding slug is required.');
 		}
-		$result = $this->execute_ability('datamachine/gitsync-status', array( 'slug' => $slug ));
+		$result = $this->execute_ability('datamachine-code/gitsync-status', array( 'slug' => $slug ));
 
 		$format = $assoc_args['format'] ?? 'table';
 		if ( 'json' === $format ) {
@@ -382,7 +382,7 @@ class GitSyncCommand extends BaseCommand {
 			$input['body'] = (string) $assoc_args['body'];
 		}
 
-		$result = $this->execute_ability('datamachine/gitsync-submit', $input);
+		$result = $this->execute_ability('datamachine-code/gitsync-submit', $input);
 
 		$pr = $result['pr'] ?? array();
 		WP_CLI::success(
@@ -439,7 +439,7 @@ class GitSyncCommand extends BaseCommand {
 			$input['paths'] = array_values(array_filter(array_map('trim', explode(',', (string) $assoc_args['paths']))));
 		}
 
-		$result = $this->execute_ability('datamachine/gitsync-push', $input);
+		$result = $this->execute_ability('datamachine-code/gitsync-push', $input);
 
 		WP_CLI::success(sprintf('Pushed %d file(s) to %s on "%s"', count( (array) ( $result['commits'] ?? array() )), $result['branch'] ?? '', $slug));
 	}
@@ -521,7 +521,7 @@ class GitSyncCommand extends BaseCommand {
 		}
 
 		$result = $this->execute_ability(
-			'datamachine/gitsync-policy-update',
+			'datamachine-code/gitsync-policy-update',
 			array(
 				'slug'   => $slug,
 				'policy' => $patch,

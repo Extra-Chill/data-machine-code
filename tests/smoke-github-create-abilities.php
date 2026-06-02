@@ -4,8 +4,8 @@
  *
  * Run: php tests/smoke-github-create-abilities.php
  *
- * Verifies that `datamachine/create-github-issue` and
- * `datamachine/create-github-pull-request` are registered with the right
+ * Verifies that `datamachine-code/create-github-issue` and
+ * `datamachine-code/create-github-pull-request` are registered with the right
  * shape, validate required fields, surface GitHub errors via the `error`
  * field, and fall through to `PermissionHelper::can_manage()`.
  */
@@ -255,9 +255,10 @@ namespace {
 
     new GitHubAbilities();
 
-    $issue_ability = $GLOBALS['dmc_registered_abilities']['datamachine/create-github-issue'] ?? null;
-    $pr_ability    = $GLOBALS['dmc_registered_abilities']['datamachine/create-github-pull-request'] ?? null;
-    $file_ability  = $GLOBALS['dmc_registered_abilities']['datamachine/create-or-update-github-file'] ?? null;
+    $issue_ability = $GLOBALS['dmc_registered_abilities']['datamachine-code/create-github-issue'] ?? null;
+    $pr_ability    = $GLOBALS['dmc_registered_abilities']['datamachine-code/create-github-pull-request'] ?? null;
+	$file_ability  = $GLOBALS['dmc_registered_abilities']['datamachine-code/create-or-update-github-file'] ?? null;
+	$issue_alias   = $GLOBALS['dmc_registered_abilities']['datamachine/create-github-issue'] ?? null;
 
     $assert('create-github-issue ability is registered', null !== $issue_ability);
     $assert('create-github-issue uses createIssue execute_callback', array( GitHubAbilities::class, 'createIssue' ) === ( $issue_ability['execute_callback'] ?? null ));
@@ -268,7 +269,10 @@ namespace {
     $assert('create-github-issue assignees schema declares string items', array( 'type' => 'string' ) === ( $issue_ability['input_schema']['properties']['assignees']['items'] ?? null ));
     $assert('create-github-issue exposes milestone', array_key_exists('milestone', $issue_ability['input_schema']['properties'] ?? array()));
     $assert('create-github-issue is hidden from REST', false === ( $issue_ability['meta']['show_in_rest'] ?? null ));
-    $assert('create-github-issue category matches family', 'datamachine-code-github' === ( $issue_ability['category'] ?? '' ));
+	$assert('create-github-issue category matches family', 'datamachine-code-github' === ( $issue_ability['category'] ?? '' ));
+	$assert('legacy create-github-issue alias is registered', null !== $issue_alias);
+	$assert('legacy create-github-issue alias is deprecated', true === ( $issue_alias['meta']['deprecated'] ?? false ));
+	$assert('legacy create-github-issue alias points to canonical slug', 'datamachine-code/create-github-issue' === ( $issue_alias['meta']['replacement'] ?? '' ));
 
     $assert('create-github-pull-request ability is registered', null !== $pr_ability);
     $assert('create-github-pull-request uses createPullRequest execute_callback', array( GitHubAbilities::class, 'createPullRequest' ) === ( $pr_ability['execute_callback'] ?? null ));

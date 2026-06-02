@@ -30,7 +30,7 @@ class GitHubIssueTool extends BaseTool
      */
     public function __construct()
     {
-        $this->registerTool('create_github_issue', array( $this, 'getToolDefinition' ), array( 'chat', 'pipeline' ), array( 'ability' => 'datamachine/create-github-issue' ));
+        $this->registerTool('create_github_issue', array( $this, 'getToolDefinition' ), array( 'chat', 'pipeline' ), array( 'ability' => 'datamachine-code/create-github-issue' ));
     }
 
     /**
@@ -44,7 +44,7 @@ class GitHubIssueTool extends BaseTool
      */
     public function handle_tool_call( array $parameters, array $tool_def = array() ): array
     {
-        $ability = wp_get_ability('datamachine/create-github-issue');
+        $ability = wp_get_ability('datamachine-code/create-github-issue');
 
         if (! $ability ) {
             return $this->buildErrorResponse(

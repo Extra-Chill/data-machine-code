@@ -90,23 +90,25 @@ namespace {
     $assert('comment_github_pull_request tool is registered', isset($tools->registered['comment_github_pull_request']));
     $assert('tool is available in pipeline context', in_array('pipeline', $tools->registered['comment_github_pull_request']['contexts'] ?? array(), true));
 
-    $definition = $tools->getCommentPullRequestDefinition();
-    $params     = $definition['parameters'] ?? array();
+	$definition = $tools->getCommentPullRequestDefinition();
+	$params     = $definition['parameters'] ?? array();
+	$required   = $params['required'] ?? array();
+	$properties = $params['properties'] ?? array();
 
-    $assert('tool delegates to narrow PR comment handler', 'handleCommentPullRequest' === ( $definition['method'] ?? '' ));
-    $assert('tool requires repo', true === ( $params['repo']['required'] ?? false ));
-    $assert('tool requires pull_number', true === ( $params['pull_number']['required'] ?? false ));
-    $assert('tool requires body', true === ( $params['body']['required'] ?? false ));
-    $assert('tool accepts optional marker', false === ( $params['marker']['required'] ?? true ));
-    $assert('tool does not expose broad issue action parameter', ! array_key_exists('action', $params));
-    $assert('tool does not expose issue close state parameter', ! array_key_exists('state', $params));
-    $assert('tool does not expose issue update title parameter', ! array_key_exists('title', $params));
-    $assert('tool does not expose issue labels update parameter', ! array_key_exists('labels', $params));
+	$assert('tool delegates to narrow PR comment handler', 'handleCommentPullRequest' === ( $definition['method'] ?? '' ));
+	$assert('tool requires repo', in_array('repo', $required, true));
+	$assert('tool requires pull_number', in_array('pull_number', $required, true));
+	$assert('tool requires body', in_array('body', $required, true));
+	$assert('tool accepts optional marker', array_key_exists('marker', $properties) && ! in_array('marker', $required, true));
+	$assert('tool does not expose broad issue action parameter', ! array_key_exists('action', $properties));
+	$assert('tool does not expose issue close state parameter', ! array_key_exists('state', $properties));
+	$assert('tool does not expose issue update title parameter', ! array_key_exists('title', $properties));
+	$assert('tool does not expose issue labels update parameter', ! array_key_exists('labels', $properties));
 
     $ability_source = file_get_contents(__DIR__ . '/../inc/Abilities/GitHubAbilities.php');
     $tool_source    = file_get_contents(__DIR__ . '/../inc/Tools/GitHubTools.php');
 
-    $assert('PR comment ability is registered', str_contains($ability_source, 'datamachine/comment-github-pull-request'));
+	$assert('PR comment ability is registered', str_contains($ability_source, 'datamachine/comment-github-pull-request'));
     $assert('ability executes commentOnPullRequest', str_contains($ability_source, "'execute_callback'    => array( self::class, 'commentOnPullRequest' )"));
     $assert('tool is included in configuration checks', str_contains($tool_source, "'comment_github_pull_request'"));
 

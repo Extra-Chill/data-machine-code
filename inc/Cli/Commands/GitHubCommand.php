@@ -75,7 +75,7 @@ class GitHubCommand extends BaseCommand {
 		$input = $this->buildInput($assoc_args, array( 'repo', 'state', 'labels', 'assignee', 'per_page', 'page' ));
 		$input = $this->resolveRepo($input);
 
-		$result = GitHubAbilities::listIssues($input);
+		$result = $this->execute_ability('datamachine-code/list-github-issues', $input);
 
 		if ( is_wp_error($result) ) {
 			WP_CLI::error($result->get_error_message());
@@ -152,7 +152,7 @@ class GitHubCommand extends BaseCommand {
 		$input['repo'] = $assoc_args['repo'] ?? '';
 		$input         = $this->resolveRepo($input);
 
-		$result = GitHubAbilities::getIssue($input);
+		$result = $this->execute_ability('datamachine-code/get-github-issue', $input);
 
 		if ( is_wp_error($result) ) {
 			WP_CLI::error($result->get_error_message());
@@ -227,7 +227,8 @@ class GitHubCommand extends BaseCommand {
 
 		// Add comment first if provided.
 		if ( ! empty($assoc_args['comment']) ) {
-			$comment_result = GitHubAbilities::commentOnIssue(
+			$comment_result = $this->execute_ability(
+				'datamachine-code/comment-github-issue',
 				array(
 					'repo'         => $input['repo'],
 					'issue_number' => $issue_number,
@@ -241,7 +242,7 @@ class GitHubCommand extends BaseCommand {
 		}
 
 		$input['state'] = 'closed';
-		$result         = GitHubAbilities::updateIssue($input);
+		$result         = $this->execute_ability('datamachine-code/update-github-issue', $input);
 
 		if ( is_wp_error($result) ) {
 			WP_CLI::error($result->get_error_message());
@@ -290,7 +291,7 @@ class GitHubCommand extends BaseCommand {
 			)
 		);
 
-		$result = GitHubAbilities::commentOnIssue($input);
+		$result = $this->execute_ability('datamachine-code/comment-github-issue', $input);
 
 		if ( is_wp_error($result) ) {
 			WP_CLI::error($result->get_error_message());
@@ -339,7 +340,7 @@ class GitHubCommand extends BaseCommand {
 		$input = $this->buildInput($assoc_args, array( 'repo', 'state', 'per_page', 'page' ));
 		$input = $this->resolveRepo($input);
 
-		$result = GitHubAbilities::listPulls($input);
+		$result = $this->execute_ability('datamachine-code/list-github-pulls', $input);
 
 		if ( is_wp_error($result) ) {
 			WP_CLI::error($result->get_error_message());
@@ -450,7 +451,7 @@ class GitHubCommand extends BaseCommand {
 			)
 		);
 
-		$result = GitHubAbilities::mergePullRequest($input);
+		$result = $this->execute_ability('datamachine-code/merge-github-pull-request', $input);
 		$this->render_pull_mutation_result($result, $assoc_args, 'Pull request merged.');
 	}
 
@@ -505,7 +506,7 @@ class GitHubCommand extends BaseCommand {
 			)
 		);
 
-		$result = GitHubAbilities::cleanupPullRequest($input);
+		$result = $this->execute_ability('datamachine-code/cleanup-github-pull-request', $input);
 		$this->render_pull_mutation_result($result, $assoc_args, 'Pull request cleanup complete.');
 	}
 
@@ -556,7 +557,7 @@ class GitHubCommand extends BaseCommand {
 		$input          = $this->buildInput($assoc_args, array( 'sort', 'per_page', 'page' ));
 		$input['owner'] = $owner;
 
-		$result = GitHubAbilities::listRepos($input);
+		$result = $this->execute_ability('datamachine-code/list-github-repos', $input);
 
 		if ( is_wp_error($result) ) {
 			WP_CLI::error($result->get_error_message());
@@ -603,9 +604,15 @@ class GitHubCommand extends BaseCommand {
 	 * @subcommand status
 	 */
 	public function status( array $args, array $assoc_args ): void {
-		$auth_status  = GitHubAbilities::getAuthStatus();
-		$configured   = ! empty($auth_status['configured']);
-		$default_repo = GitHubAbilities::getDefaultRepo();
+		$result = $this->execute_ability('datamachine-code/github-status', array());
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		$auth_status  = $result['auth_status'] ?? array();
+		$configured   = ! empty($result['configured']);
+		$default_repo = $result['default_repo'] ?? '';
 
 		$items = array(
 			array(
@@ -668,7 +675,7 @@ class GitHubCommand extends BaseCommand {
 		}
 
 		// Show registered repos from the filter.
-		$repos = GitHubAbilities::getRegisteredRepos();
+		$repos = $result['registered_repos'] ?? array();
 		if ( ! empty($repos) ) {
 			WP_CLI::log('');
 			WP_CLI::log('Registered repos for issue creation:');
@@ -841,7 +848,12 @@ class GitHubCommand extends BaseCommand {
 	 * Require GitHub to be configured.
 	 */
 	private function requireConfig(): void {
-		if ( ! GitHubAbilities::isConfigured() ) {
+		$status = $this->execute_ability('datamachine-code/github-status', array());
+		if ( is_wp_error($status) ) {
+			WP_CLI::error($status->get_error_message());
+		}
+
+		if ( empty($status['configured']) ) {
 			WP_CLI::error('GitHub authentication is not configured. Configure a credential profile (github_credential_profiles) or set legacy github_pat / GitHub App credentials.');
 		}
 	}
@@ -875,6 +887,19 @@ class GitHubCommand extends BaseCommand {
 			}
 		}
 		return $input;
+	}
+
+	private function execute_ability( string $ability_name, array $input ): array|\WP_Error {
+		if ( ! function_exists('wp_get_ability') ) {
+			return new \WP_Error('abilities_api_unavailable', 'WordPress Abilities API is not available.');
+		}
+
+		$ability = wp_get_ability($ability_name);
+		if ( ! $ability ) {
+			return new \WP_Error('ability_not_found', sprintf('Ability not found: %s', $ability_name));
+		}
+
+		return $ability->execute($input);
 	}
 
 	/**

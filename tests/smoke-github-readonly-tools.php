@@ -113,7 +113,7 @@ namespace {
                 $GLOBALS['dmc_executed_abilities'][ $this->name ] = $parameters;
 
                 return match ( $this->name ) {
-                       'datamachine/get-github-file' => array(
+                       'datamachine-code/get-github-file' => array(
                     'success'    => true,
                     'files'      => array( array( 'path' => $parameters['path'] ?? ( $parameters['paths'][0] ?? '' ), 'content' => 'file body' ) ),
                     'errors'     => array(),
@@ -121,48 +121,48 @@ namespace {
                     'total_size' => 9,
                     'truncated'  => false,
                        ),
-                       'datamachine/list-github-tree' => array(
+                       'datamachine-code/list-github-tree' => array(
                        'success' => true,
                        'files'   => array( array( 'path' => 'inc/Foo.php' ) ),
                        'count'   => 1,
                        ),
-                       'datamachine/get-github-pull' => array(
+                       'datamachine-code/get-github-pull' => array(
                         'success' => true,
                         'pull'    => array( 'number' => $parameters['pull_number'] ?? 0 ),
                        ),
-                       'datamachine/list-github-pull-files' => array(
+                       'datamachine-code/list-github-pull-files' => array(
                         'success' => true,
                         'files'   => array( array( 'filename' => 'README.md' ) ),
                         'count'   => 1,
                        ),
-                       'datamachine/get-github-check-runs' => array(
+                       'datamachine-code/get-github-check-runs' => array(
                         'success'    => true,
                         'sha'        => $parameters['sha'] ?? '',
                         'summary'    => array( 'state' => 'success' ),
                         'check_runs' => array(),
                         'count'      => 0,
                        ),
-                       'datamachine/get-github-commit-statuses' => array(
+                       'datamachine-code/get-github-commit-statuses' => array(
                         'success'  => true,
                         'sha'      => $parameters['sha'] ?? '',
                         'summary'  => array( 'state' => 'success' ),
                         'statuses' => array(),
                         'count'    => 0,
                        ),
-                       'datamachine/get-github-actions-artifact' => array(
+                       'datamachine-code/get-github-actions-artifact' => array(
                         'success'    => true,
                         'artifact'   => array( 'name' => $parameters['artifact_name'] ?? '' ),
                         'json_files' => array( 'manifest.json' => array( 'schema' => 'example.v1' ) ),
                        ),
-                       'datamachine/get-github-homeboy-ci-results' => array(
+                       'datamachine-code/get-github-homeboy-ci-results' => array(
                         'success' => true,
                         'results' => array( 'state' => 'success', 'mode' => 'review' ),
                        ),
-                       'datamachine/get-github-pull-review-context' => array(
+                       'datamachine-code/get-github-pull-review-context' => array(
                         'success' => true,
                         'context' => array( 'metadata' => array( 'github_type' => 'pull_review_context' ) ),
                        ),
-                       'datamachine/get-github-repo-review-profile' => array(
+                       'datamachine-code/get-github-repo-review-profile' => array(
                         'success' => true,
                         'profile' => array( 'schema' => 'data-machine-code/repo-review-profile/v1' ),
                        ),
@@ -171,7 +171,7 @@ namespace {
                         'schema'  => 'data-machine-code/pr-homeboy-review/v1',
                         'status'  => 'passed',
                        ),
-                       'datamachine/get-github-pr-documentation-impact' => array(
+                       'datamachine-code/get-github-pr-documentation-impact' => array(
                         'success' => true,
                         'packet'  => array( 'schema' => 'data-machine-code/pr-documentation-impact/v1' ),
                        ),
@@ -212,7 +212,7 @@ namespace {
 
     $expected = array(
     'get_github_file'                => array(
-    'ability'  => 'datamachine/get-github-file',
+    'ability'  => 'datamachine-code/get-github-file',
     'method'   => 'handleGetFile',
     'callback' => array( GitHubAbilities::class, 'getFileContents' ),
     'required' => array( 'repo' ),
@@ -220,28 +220,28 @@ namespace {
     'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'paths' => array( 'README.md', 'inc/Tools/GitHubTools.php' ), 'ref' => 'main', 'max_total_size' => 500000 ),
     ),
     'list_github_tree'               => array(
-    'ability'  => 'datamachine/list-github-tree',
+    'ability'  => 'datamachine-code/list-github-tree',
     'method'   => 'handleListTree',
     'callback' => array( GitHubAbilities::class, 'getRepoTree' ),
     'required' => array( 'repo' ),
     'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'ref' => 'main', 'path' => 'inc' ),
     ),
     'get_github_pull'                => array(
-    'ability'  => 'datamachine/get-github-pull',
+    'ability'  => 'datamachine-code/get-github-pull',
     'method'   => 'handleGetPull',
     'callback' => array( GitHubAbilities::class, 'getPull' ),
     'required' => array( 'repo', 'pull_number' ),
     'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'pull_number' => 89 ),
     ),
     'get_github_pull_files'          => array(
-    'ability'  => 'datamachine/list-github-pull-files',
+    'ability'  => 'datamachine-code/list-github-pull-files',
     'method'   => 'handlePullFiles',
     'callback' => array( GitHubAbilities::class, 'listPullFiles' ),
     'required' => array( 'repo', 'pull_number' ),
     'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'pull_number' => 89, 'per_page' => 10 ),
     ),
     'get_github_check_runs'          => array(
-    'ability'  => 'datamachine/get-github-check-runs',
+    'ability'  => 'datamachine-code/get-github-check-runs',
     'method'   => 'handleCheckRuns',
     'callback' => array( GitHubAbilities::class, 'getCheckRuns' ),
     'required' => array( 'repo', 'sha' ),
@@ -249,14 +249,14 @@ namespace {
     'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'sha' => 'abc123', 'include_check_output' => true ),
     ),
     'get_github_commit_statuses'     => array(
-    'ability'  => 'datamachine/get-github-commit-statuses',
+    'ability'  => 'datamachine-code/get-github-commit-statuses',
     'method'   => 'handleCommitStatuses',
     'callback' => array( GitHubAbilities::class, 'getCommitStatuses' ),
     'required' => array( 'repo', 'sha' ),
     'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'sha' => 'abc123' ),
     ),
     'get_github_actions_artifact'     => array(
-    'ability'  => 'datamachine/get-github-actions-artifact',
+    'ability'  => 'datamachine-code/get-github-actions-artifact',
     'method'   => 'handleActionsArtifact',
     'callback' => array( GitHubAbilities::class, 'getActionsArtifact' ),
     'required' => array( 'repo', 'artifact_name' ),
@@ -264,7 +264,7 @@ namespace {
     'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'head_sha' => 'abc123', 'artifact_name' => 'homeboy-ci-results' ),
     ),
     'get_github_homeboy_ci_results'  => array(
-    'ability'  => 'datamachine/get-github-homeboy-ci-results',
+    'ability'  => 'datamachine-code/get-github-homeboy-ci-results',
     'method'   => 'handleHomeboyCiResults',
     'callback' => array( GitHubAbilities::class, 'getHomeboyCiResults' ),
     'required' => array( 'repo' ),
@@ -272,7 +272,7 @@ namespace {
     'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'head_sha' => 'abc123', 'artifact_name' => 'homeboy-ci-results' ),
     ),
     'get_github_pull_review_context' => array(
-    'ability'  => 'datamachine/get-github-pull-review-context',
+    'ability'  => 'datamachine-code/get-github-pull-review-context',
     'method'   => 'handlePullReviewContext',
     'callback' => array( GitHubAbilities::class, 'getPullReviewContext' ),
     'required' => array( 'repo', 'pull_number' ),
@@ -296,7 +296,7 @@ namespace {
     ),
     ),
     'github_repo_review_profile'     => array(
-    'ability'  => 'datamachine/get-github-repo-review-profile',
+    'ability'  => 'datamachine-code/get-github-repo-review-profile',
     'method'   => 'handleRepoReviewProfile',
     'callback' => array( GitHubAbilities::class, 'getRepoReviewProfile' ),
     'required' => array( 'repo' ),
@@ -324,7 +324,7 @@ namespace {
     ),
     ),
     'github_pr_documentation_impact' => array(
-    'ability'  => 'datamachine/get-github-pr-documentation-impact',
+    'ability'  => 'datamachine-code/get-github-pr-documentation-impact',
     'method'   => 'handlePullDocumentationImpact',
     'callback' => array( GitHubAbilities::class, 'getPullDocumentationImpact' ),
     'required' => array( 'repo', 'pull_number' ),
@@ -375,7 +375,7 @@ namespace {
     $get_file_definition = $tools->registered['get_github_file']['definition_callback'] ?? null;
     $get_file_definition = $get_file_definition ? call_user_func($get_file_definition) : array();
     $assert('get_github_file does not expose file writes', ! $param_exists($get_file_definition, 'commit_message'));
-    $assert('get_github_file uses clean plural output', str_contains($ability_source, "'datamachine/get-github-file'") && str_contains($ability_source, "'files'") && str_contains($ability_source, 'normalizeFileContentPaths'));
+	$assert('get_github_file uses clean plural output', str_contains($ability_source, "'datamachine/get-github-file'") && str_contains($ability_source, "'files'") && str_contains($ability_source, 'normalizeFileContentPaths'));
     $assert('get_github_file supports path or paths', str_contains($tool_source, "'paths'") && str_contains($tool_source, "'path'") && str_contains($tool_source, "'max_total_size'"));
     $assert('list_github_tree supports optional path filtering', str_contains($ability_source, '$path_prefix'));
 
