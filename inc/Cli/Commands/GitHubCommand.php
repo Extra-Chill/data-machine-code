@@ -16,6 +16,7 @@ use DataMachine\Cli\BaseCommand;
 use DataMachineCode\Abilities\GitHubAbilities;
 use DataMachineCode\GitHub\PrReviewFlowInstaller;
 use DataMachineCode\GitHub\PrReviewFlowScaffold;
+use DataMachineCode\Support\GitHubCredentialSettingsMigration;
 
 defined('ABSPATH') || exit;
 
@@ -682,6 +683,57 @@ class GitHubCommand extends BaseCommand {
 			}
 
 			$this->format_items($repo_items, array( 'repo', 'label' ), $assoc_args);
+		}
+
+		$legacy = $auth_status['legacy_migration'] ?? array();
+		if ( ! empty($legacy['legacy_keys_present']) ) {
+			WP_CLI::log('');
+			WP_CLI::warning('Legacy GitHub credential settings are still present. Run `wp datamachine-code github migrate-credentials --apply` after reviewing the dry run.');
+		}
+	}
+
+	/**
+	 * Migrate legacy single GitHub credential settings into profiles.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--apply]
+	 * : Write github_credential_profiles and github_default_profile_id. Omit for dry run.
+	 *
+	 * [--force]
+	 * : Overwrite existing profile settings from legacy settings.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 * ---
+	 *
+	 * @subcommand migrate-credentials
+	 */
+	public function migrate_credentials( array $args, array $assoc_args ): void {
+		$result = GitHubCredentialSettingsMigration::migrate(! empty($assoc_args['apply']), ! empty($assoc_args['force']));
+
+		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			WP_CLI::line((string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			return;
+		}
+
+		$items = array(
+			array( 'field' => 'Applied', 'value' => ! empty($result['applied']) ? 'yes' : 'no' ),
+			array( 'field' => 'Legacy keys present', 'value' => ! empty($result['legacy_keys_present']) ? 'yes' : 'no' ),
+			array( 'field' => 'Profiles present', 'value' => ! empty($result['profiles_present']) ? 'yes' : 'no' ),
+			array( 'field' => 'Message', 'value' => (string) ( $result['message'] ?? '' ) ),
+		);
+		$this->format_items($items, array( 'field', 'value' ), $assoc_args);
+
+		if ( ! empty($result['applied']) ) {
+			WP_CLI::success('GitHub credential profiles migrated.');
+		} else {
+			WP_CLI::log('Dry run complete; pass --apply to write changes.');
 		}
 	}
 
