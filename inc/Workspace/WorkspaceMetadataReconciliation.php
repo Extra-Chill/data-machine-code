@@ -88,8 +88,10 @@ trait WorkspaceMetadataReconciliation {
 				fn( $wt ) => empty($wt['is_primary'])
 			)
 		);
-		$total_worktrees = count($all_worktrees);
-		$page_worktrees  = $paged ? array_slice($all_worktrees, $offset, $limit) : $all_worktrees;
+		$prefilter       = $this->prefilter_worktree_metadata_reconciliation_rows($all_worktrees);
+		$page_scope      = $prefilter['candidates'];
+		$total_worktrees = count($page_scope);
+		$page_worktrees  = $paged ? array_slice($page_scope, $offset, $limit) : $page_scope;
 
 		$proposals    = array();
 		$skipped      = array();
@@ -125,7 +127,7 @@ trait WorkspaceMetadataReconciliation {
 			$pagination['next_command'] = sprintf('studio wp datamachine-code workspace worktree reconcile-metadata --%s --limit=%d --offset=%d%s --format=json', $apply ? 'apply' : 'dry-run', $limit, (int) $pagination['next_offset'], null !== $budget_context ? ' --until-budget=' . (string) $budget_context['label'] : '');
 		}
 
-		$plan = array(
+		$plan                           = array(
 			'success'            => true,
 			'dry_run'            => $dry_run,
 			'applied'            => false,
@@ -136,14 +138,16 @@ trait WorkspaceMetadataReconciliation {
 			'skipped'            => $skipped,
 			'still_unsafe'       => $classified_skips['still_unsafe'],
 			'external_worktrees' => $classified_skips['external_worktrees'],
-			'summary'            => $this->build_worktree_metadata_reconciliation_summary($paged ? count($page_worktrees) : count( (array) ( $listing['worktrees'] ?? array() )), $proposals, array(), $skipped),
+			'summary'            => $this->build_worktree_metadata_reconciliation_summary($paged ? count($page_worktrees) : count($page_scope), $proposals, array(), $skipped),
 		);
+		$plan['summary']['prefiltered'] = $prefilter['summary'];
 		if ( null !== $pagination ) {
 			$plan['pagination'] = $pagination;
 			$plan['evidence']   = array(
 				'scope'                     => 'paginated metadata reconciliation dry-run',
-				'note'                      => 'Only this page ran per-worktree dirty, unpushed, merge-signal, and GitHub probes. Run the next_offset page until complete for full inventory review.',
+				'note'                      => 'Only candidate rows with missing, incomplete, invalid, or finalizable metadata ran per-worktree dirty, unpushed, merge-signal, and GitHub probes. Run the next_offset page until complete for full inventory review.',
 				'fields_skipped_by_listing' => (array) ( $listing['fields_skipped'] ?? array() ),
+				'prefilter'                 => $prefilter['summary'],
 			);
 			if ( null !== $budget_context ) {
 				$plan['evidence']['budget'] = $this->summarize_worktree_loop_budget_context($budget_context, $budget_stopped);
@@ -456,6 +460,74 @@ trait WorkspaceMetadataReconciliation {
 			'budget_exhausted'  => $exhausted,
 			'remaining_seconds' => round(max(0.0, (float) ( $context['seconds'] ?? 0 ) - $elapsed), 3),
 		);
+	}
+
+	/**
+	 * Keep expensive reconciliation probes focused on rows that can change.
+	 *
+	 * @param  array<int,array<string,mixed>> $worktrees Non-primary worktree rows.
+	 * @return array{candidates:array<int,array<string,mixed>>,summary:array<string,mixed>}
+	 */
+	private function prefilter_worktree_metadata_reconciliation_rows( array $worktrees ): array {
+		$candidates = array();
+		$skipped    = 0;
+		$reasons    = array();
+
+		foreach ( $worktrees as $wt ) {
+			$reason = $this->worktree_metadata_reconciliation_candidate_reason($wt);
+			if ( null !== $reason ) {
+				$candidates[]       = $wt;
+				$reasons[ $reason ] = (int) ( $reasons[ $reason ] ?? 0 ) + 1;
+				continue;
+			}
+
+			++$skipped;
+			$reasons['complete_metadata'] = (int) ( $reasons['complete_metadata'] ?? 0 ) + 1;
+		}
+
+		return array(
+			'candidates' => array_values($candidates),
+			'summary'    => array(
+				'input_rows'      => count($worktrees),
+				'candidate_rows'  => count($candidates),
+				'skipped_rows'    => $skipped,
+				'reasons'         => $reasons,
+				'candidate_scope' => 'missing_or_incomplete_metadata_and_stored_finalizer_signals',
+			),
+		);
+	}
+
+	/**
+	 * Return a cheap candidate reason when reconciliation may write metadata.
+	 *
+	 * @param  array<string,mixed> $wt Worktree list row.
+	 */
+	private function worktree_metadata_reconciliation_candidate_reason( array $wt ): ?string {
+		if ( ! empty($wt['external']) ) {
+			return 'external_worktree';
+		}
+
+		$metadata = is_array($wt['metadata'] ?? null) ? (array) $wt['metadata'] : null;
+		if ( null === $metadata || array() === $metadata ) {
+			return 'missing_metadata';
+		}
+
+		foreach ( array( 'handle', 'repo', 'branch', 'path', 'created_at', 'observed_at', 'lifecycle_state' ) as $field ) {
+			if ( ! array_key_exists($field, $metadata) || '' === trim( (string) $metadata[ $field ] ) ) {
+				return 'incomplete_metadata';
+			}
+		}
+
+		$state = WorktreeContextInjector::normalize_state( (string) $metadata['lifecycle_state'] );
+		if ( null === $state ) {
+			return 'invalid_lifecycle_state';
+		}
+
+		if ( WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE !== $state && ( ! empty($metadata['pr_url']) || ! empty($metadata['pr_number']) ) ) {
+			return 'stored_pr_signal';
+		}
+
+		return null;
 	}
 
 	/**

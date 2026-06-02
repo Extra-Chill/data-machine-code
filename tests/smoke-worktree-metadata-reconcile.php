@@ -360,6 +360,7 @@ namespace {
         $run('git checkout main', $primary);
     };
     $make_branch('unmanaged-missing');
+    $make_branch('unmanaged-empty');
     $make_branch('unmanaged-partial');
     $make_branch('unmanaged-dirty');
     $make_branch('unmanaged-invalid');
@@ -377,6 +378,7 @@ namespace {
     $run('git checkout main', $primary);
 
     $run(sprintf('git worktree add %s unmanaged-missing', escapeshellarg($tmp . '/demo@unmanaged-missing')), $primary);
+    $run(sprintf('git worktree add %s unmanaged-empty', escapeshellarg($tmp . '/demo@unmanaged-empty')), $primary);
     $run(sprintf('git worktree add %s unmanaged-partial', escapeshellarg($tmp . '/demo@unmanaged-partial')), $primary);
     $run(sprintf('git worktree add %s unmanaged-dirty', escapeshellarg($tmp . '/demo@unmanaged-dirty')), $primary);
     $run(sprintf('git worktree add %s unmanaged-invalid', escapeshellarg($tmp . '/demo@unmanaged-invalid')), $primary);
@@ -403,6 +405,10 @@ namespace {
     $run(sprintf('git --git-dir=%s update-ref -d refs/heads/upstream-gone', escapeshellarg($remote)));
     $run(sprintf('git --git-dir=%s update-ref -d refs/heads/dirty-merged', escapeshellarg($remote)));
 
+    \DataMachineCode\Workspace\WorktreeContextInjector::store_metadata(
+        'demo@unmanaged-empty',
+        array()
+    );
     \DataMachineCode\Workspace\WorktreeContextInjector::store_metadata(
         'demo@unmanaged-partial',
         array(
@@ -577,10 +583,10 @@ namespace {
     $plan = $ws->worktree_reconcile_metadata(array( 'dry_run' => true ));
     $assert(true, ! is_wp_error($plan) && ( $plan['success'] ?? false ), 'dry-run succeeds');
     $assert(true, $plan['dry_run'] ?? false, 'dry-run flag is true');
-    $assert(7, (int) ( $plan['summary']['proposed'] ?? 0 ), 'dry-run proposes unmanaged rows and safe merged lifecycle finalizers');
+    $assert(8, (int) ( $plan['summary']['proposed'] ?? 0 ), 'dry-run proposes unmanaged rows and safe merged lifecycle finalizers');
     $assert(0, (int) ( $plan['summary']['written'] ?? 0 ), 'dry-run writes nothing');
     $assert(1, (int) ( $plan['summary']['skipped_by_reason']['external_worktree'] ?? 0 ), 'dry-run distinguishes external worktrees');
-    $assert(3, (int) ( $plan['summary']['skipped_by_reason']['unsafe_cleanup_eligible_state'] ?? 0 ), 'dry-run keeps dirty and unpushed merged worktrees out of auto-finalize proposals');
+    $assert(2, (int) ( $plan['summary']['skipped_by_reason']['unsafe_cleanup_eligible_state'] ?? 0 ), 'dry-run keeps dirty and unpushed merged worktrees out of auto-finalize proposals');
     $assert(1, count($plan['external_worktrees'] ?? array()), 'dry-run exposes external worktree bucket');
 
     $by_handle = array();
@@ -592,7 +598,11 @@ namespace {
     $assert('reconcile_run', $by_handle['demo@unmanaged-missing']['source_map']['observed_at'] ?? '', 'missing metadata observed_at source is reconcile run');
     $assert('current_site', $by_handle['demo@unmanaged-missing']['source_map']['origin_site'] ?? '', 'missing metadata origin site is inferred from current site');
     $assert(true, isset($by_handle['demo@unmanaged-missing']['elapsed_ms']), 'metadata reconciliation proposal rows include elapsed timing');
+    $assert('operator_plan', $by_handle['demo@unmanaged-empty']['source_map']['lifecycle_state'] ?? '', 'empty-array metadata lifecycle source is operator_plan');
     $assert(true, isset($plan['summary']['slow_rows'][0]['elapsed_ms']), 'metadata reconciliation summary includes slow row timing samples');
+    $assert(true, (int) ( $plan['summary']['prefiltered']['skipped_rows'] ?? 0 ) > 0, 'metadata reconciliation prefilter skips valid complete metadata rows before expensive probes');
+    $assert(true, (int) ( $plan['summary']['prefiltered']['reasons']['missing_metadata'] ?? 0 ) >= 2, 'metadata reconciliation prefilter includes null and empty-array metadata rows');
+    $assert(true, (int) ( $plan['summary']['prefiltered']['reasons']['stored_pr_signal'] ?? 0 ) >= 2, 'metadata reconciliation prefilter keeps stored PR finalizer signals');
     $assert('metadata', $by_handle['demo@unmanaged-partial']['source_map']['created_at'] ?? '', 'partial metadata preserves created_at source');
     $assert('git', $by_handle['demo@unmanaged-partial']['source_map']['branch'] ?? '', 'branch source is git');
     $assert(array( 'lifecycle_state' ), $by_handle['demo@unmanaged-invalid']['invalid_fields'] ?? array(), 'invalid lifecycle state is planned for repair');
@@ -660,10 +670,10 @@ namespace {
     echo "\nApply reviewed plan\n";
     $apply = $ws->worktree_reconcile_metadata(array( 'apply_plan' => $plan ));
     $assert(true, ! is_wp_error($apply) && ( $apply['success'] ?? false ), 'apply succeeds');
-    $assert(7, (int) ( $apply['summary']['written'] ?? 0 ), 'apply writes exact current matches');
-    $assert(7, (int) ( $apply['summary']['written'] ?? 0 ), 'apply reports written metadata rows');
+    $assert(8, (int) ( $apply['summary']['written'] ?? 0 ), 'apply writes exact current matches');
+    $assert(8, (int) ( $apply['summary']['written'] ?? 0 ), 'apply reports written metadata rows');
     $assert(0, (int) ( $apply['summary']['skipped'] ?? 0 ), 'apply skips nothing for current plan');
-    $assert(7, count($apply['written'] ?? array()), 'apply exposes written rows distinctly');
+    $assert(8, count($apply['written'] ?? array()), 'apply exposes written rows distinctly');
     $stored = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@unmanaged-missing');
     $assert('demo@unmanaged-missing', $stored['handle'] ?? '', 'stored metadata includes handle');
     $assert(true, ! empty($stored['observed_at']), 'stored metadata includes observed_at');
@@ -691,14 +701,14 @@ namespace {
     $assert(true, ! is_wp_error($bounded_auto_apply) && ( $bounded_auto_apply['success'] ?? false ), 'bounded direct reconciliation apply runs without a manual plan file');
     $assert(true, (bool) ( $bounded_auto_apply['direct_apply'] ?? false ), 'bounded direct apply identifies direct apply source');
     $assert(false, (bool) ( $bounded_auto_apply['dry_run'] ?? true ), 'bounded direct apply is not a dry-run');
-    $assert(2, (int) ( $bounded_auto_apply['summary']['inspected'] ?? 0 ), 'bounded direct apply summary stays page-scoped');
+    $assert(1, (int) ( $bounded_auto_apply['summary']['inspected'] ?? 0 ), 'bounded direct apply summary stays candidate-page scoped');
     $assert(2, (int) ( $bounded_auto_apply['pagination']['limit'] ?? 0 ), 'bounded direct apply preserves pagination limit');
     $assert(2, (int) ( $bounded_auto_apply['pagination']['offset'] ?? 0 ), 'bounded direct apply preserves pagination offset');
     $assert('direct_apply', $bounded_auto_apply['evidence']['apply_source'] ?? '', 'bounded direct apply exposes evidence source');
 
     $inventory_after = $ws->worktree_cleanup_merged(array( 'dry_run' => true, 'inventory_only' => true, 'skip_github' => true ));
     $assert(1, (int) ( $inventory_after['summary']['skipped_by_reason']['needs_metadata_reconcile'] ?? 0 ), 'inventory cleanup requires fewer metadata reconciliation passes after apply');
-    $assert(8, (int) ( $inventory_after['summary']['skipped_by_reason']['active_no_signal'] ?? 0 ), 'inventory cleanup treats reconciled active metadata like current active metadata');
+    $assert(9, (int) ( $inventory_after['summary']['skipped_by_reason']['active_no_signal'] ?? 0 ), 'inventory cleanup treats reconciled active metadata like current active metadata');
     $assert(false, isset($inventory_after['summary']['repair_status']), 'inventory cleanup no longer exposes migration status');
 
     $run('git remote set-url origin https://github.com/acme/demo.git', $primary);
@@ -740,10 +750,11 @@ namespace {
 
     \DataMachineCode\Workspace\WorktreeContextInjector::forget_metadata('demo@unmanaged-missing');
     $budget_offset = 0;
-    $budget_listing = $ws->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false ));
-    foreach ( array_values(array_filter((array) ( $budget_listing['worktrees'] ?? array() ), fn( $wt ) => empty($wt['is_primary']))) as $index => $wt ) {
-        if ('demo@unmanaged-missing' === ( $wt['handle'] ?? '' ) ) {
-            $budget_offset = (int) $index;
+    for ( $probe_offset = 0; $probe_offset < 20; ++$probe_offset ) {
+        $budget_probe = $ws->worktree_reconcile_metadata(array( 'dry_run' => true, 'limit' => 1, 'offset' => $probe_offset ));
+        $proposal = $budget_probe['proposals'][0] ?? array();
+        if ('demo@unmanaged-missing' === ( $proposal['handle'] ?? '' ) ) {
+            $budget_offset = $probe_offset;
             break;
         }
     }
