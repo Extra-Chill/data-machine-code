@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.21] - 2026-06-02
+
+### Changed
+- Separate remote workspace backend guidance
+- Extract AGENTS.md section registration
+- Add worktree origin session backfill
+- Add GitHub credential profile migration
+
 ## [0.47.20] - 2026-06-02
 
 ### Changed
