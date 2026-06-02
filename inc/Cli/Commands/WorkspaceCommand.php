@@ -2314,17 +2314,29 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( 'backfill-origin-session' === $operation ) {
-			$result = WorktreeContextInjector::backfill_legacy_origin_sessions(! empty($assoc_args['apply']));
+			$result = WorktreeContextInjector::backfill_legacy_origin_sessions( ! empty($assoc_args['apply']) );
 			if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-				WP_CLI::line((string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+				WP_CLI::line( (string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) );
 				return;
 			}
 
 			$items = array(
-				array( 'field' => 'Applied', 'value' => ! empty($result['applied']) ? 'yes' : 'no' ),
-				array( 'field' => 'Planned', 'value' => (string) ( $result['planned_count'] ?? 0 ) ),
-				array( 'field' => 'Migrated option', 'value' => ! empty($result['migrated']) ? 'yes' : 'no' ),
-				array( 'field' => 'Message', 'value' => (string) ( $result['message'] ?? '' ) ),
+				array(
+					'field' => 'Applied',
+					'value' => ! empty($result['applied']) ? 'yes' : 'no',
+				),
+				array(
+					'field' => 'Planned',
+					'value' => (string) ( $result['planned_count'] ?? 0 ),
+				),
+				array(
+					'field' => 'Migrated option',
+					'value' => ! empty($result['migrated']) ? 'yes' : 'no',
+				),
+				array(
+					'field' => 'Message',
+					'value' => (string) ( $result['message'] ?? '' ),
+				),
 			);
 			$this->format_items($items, array( 'field', 'value' ), $assoc_args);
 			if ( ! empty($result['applied']) ) {
