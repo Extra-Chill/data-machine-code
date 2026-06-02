@@ -1876,11 +1876,11 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'dry_run' => array(
+							'dry_run'      => array(
 								'type'        => 'boolean',
 								'description' => 'If true, preview metadata promotions without writing.',
 							),
-							'limit'   => array(
+							'limit'        => array(
 								'type'        => 'integer',
 								'description' => 'Positive maximum active_no_signal rows to inspect in this page. Defaults to 25.',
 							),
@@ -1920,11 +1920,11 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'dry_run' => array(
+							'dry_run'      => array(
 								'type'        => 'boolean',
 								'description' => 'If true, preview metadata promotions without writing.',
 							),
-							'limit'   => array(
+							'limit'        => array(
 								'type'        => 'integer',
 								'description' => 'Positive maximum active_no_signal rows to inspect in this page. Defaults to 25.',
 							),
@@ -1964,11 +1964,11 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'dry_run' => array(
+							'dry_run'      => array(
 								'type'        => 'boolean',
 								'description' => 'If true, preview metadata promotions without writing.',
 							),
-							'limit'   => array(
+							'limit'        => array(
 								'type'        => 'integer',
 								'description' => 'Maximum active_no_signal rows to inspect in this page. Defaults to 25.',
 							),
