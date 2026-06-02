@@ -106,7 +106,7 @@ final class GitHubCredentialResolver {
 			$profile_summaries[] = self::summarizeProfile($profile);
 		}
 
-		return array(
+		$status = array(
 			// Top-level fields preserve the historical surface for back-compat with existing CLI/status callers.
 			'mode'                        => $mode,
 			'pat_configured'              => '' !== trim( (string) ( $default['pat'] ?? '' )),
@@ -121,6 +121,12 @@ final class GitHubCredentialResolver {
 			'default_profile_id'          => (string) $default['id'],
 			'profiles'                    => $profile_summaries,
 		);
+
+		if ( class_exists(GitHubCredentialSettingsMigration::class) ) {
+			$status['legacy_migration'] = GitHubCredentialSettingsMigration::status();
+		}
+
+		return $status;
 	}
 
 	public static function isConfigured(): bool {

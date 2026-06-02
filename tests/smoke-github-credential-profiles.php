@@ -81,6 +81,24 @@ namespace {
         return true;
     }
 
+    function get_option( string $key, $default = false )
+    {
+        if ('datamachine_settings' === $key ) {
+            return $GLOBALS['dmc_settings'] ?? $default;
+        }
+        return $GLOBALS['dmc_options'][ $key ] ?? $default;
+    }
+
+    function update_option( string $key, $value, $autoload = null ): bool
+    {
+        if ('datamachine_settings' === $key ) {
+            $GLOBALS['dmc_settings'] = $value;
+            return true;
+        }
+        $GLOBALS['dmc_options'][ $key ] = $value;
+        return true;
+    }
+
     function wp_remote_retrieve_response_code( $response ): int
     {
         return (int) ( $response['response']['code'] ?? 0 );
@@ -108,8 +126,10 @@ namespace {
 
     include __DIR__ . '/../inc/Support/GitHubCredentialResolver.php';
     include __DIR__ . '/../inc/Support/GitHubProfileSanitizer.php';
+    include __DIR__ . '/../inc/Support/GitHubCredentialSettingsMigration.php';
 
     use DataMachineCode\Support\GitHubCredentialResolver;
+    use DataMachineCode\Support\GitHubCredentialSettingsMigration;
     use DataMachineCode\Support\GitHubProfileSanitizer;
 
     $failures = array();
@@ -125,6 +145,7 @@ namespace {
     $reset = function ( array $settings = array() ): void {
         $GLOBALS['dmc_settings']   = $settings;
         $GLOBALS['dmc_transients'] = array();
+        $GLOBALS['dmc_options']    = array();
     };
 
     echo "GitHub credential profiles — smoke\n";
@@ -334,6 +355,25 @@ namespace {
     $assert('sanitizer preserves PAT', 'marketing-secret' === $sanitized[0]['pat']);
     $assert('sanitizer trims allowed_repos entries', $sanitized[0]['allowed_repos'] === array( 'team/marketing', 'team/sub' ));
     $assert('sanitizer normalizes capabilities', $sanitized[0]['capabilities'] === array( 'pull_request_create', 'issues_write' ));
+
+    // 11. Legacy settings migration dry-runs without leaking secrets, then applies profiles.
+    $reset(
+        array(
+        'github_pat'         => 'legacy-secret-token',
+        'github_default_repo' => 'team/legacy',
+        )
+    );
+    $migration_status = GitHubCredentialSettingsMigration::status();
+    $assert('migration status detects legacy keys', true === $migration_status['legacy_keys_present'] && in_array('github_pat', $migration_status['legacy_keys'], true));
+    $dry_run = GitHubCredentialSettingsMigration::migrate(false);
+    $dry_json = wp_json_encode($dry_run);
+    $assert('migration dry run does not expose PAT body', is_string($dry_json) && ! str_contains($dry_json, 'legacy-secret-token'));
+    $assert('migration dry run reports redacted PAT configured flag', true === ( $dry_run['profile']['pat_configured'] ?? false ));
+    $applied = GitHubCredentialSettingsMigration::migrate(true);
+    $assert('migration apply writes profiles', true === ( $applied['applied'] ?? false ) && isset($GLOBALS['dmc_settings']['github_credential_profiles'][0]));
+    $migrated = GitHubCredentialResolver::resolve();
+    $assert('resolver uses migrated profile after apply', ! is_wp_error($migrated) && 'legacy-secret-token' === $migrated['token']);
+    $assert('migration apply marks migrated option', true === ( $GLOBALS['dmc_options'][GitHubCredentialSettingsMigration::MIGRATED_OPTION] ?? false ));
 
     if ($failures ) {
         echo "\nFailures:\n";
