@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.24] - 2026-06-02
+
+### Changed
+- Classify clean active worktree equivalence
+
 ## [0.47.23] - 2026-06-02
 
 ### Fixed
