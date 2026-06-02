@@ -373,7 +373,7 @@ MD;
 
 			usort(
 				$worktrees, function ( $a, $b ) {
-					return strnatcasecmp((string) ( $a['name'] ?? '' ), (string) ( $b['name'] ?? '' ));
+					return strnatcasecmp( (string) ( $a['name'] ?? '' ), (string) ( $b['name'] ?? '' ) );
 				}
 			);
 			foreach ( $worktrees as $wt ) {
