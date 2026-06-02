@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.26] - 2026-06-02
+
+### Fixed
+- keep active cleanup apply pagination symmetric
+
 ## [0.47.25] - 2026-06-02
 
 ### Changed
