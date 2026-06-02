@@ -165,9 +165,11 @@ namespace {
     $backend = new RemoteWorkspaceBackend();
     $clone = $backend->clone_repo('https://github.com/chubes4/example.git');
     $assert('clone registers remote repo', ! is_wp_error($clone) && 'example' === $clone['name'] && 'github_api' === $clone['backend']);
+    $assert('clone backend result omits model-facing guidance', ! is_wp_error($clone) && ! array_key_exists('next_required_tool', $clone) && ! array_key_exists('next_required_args', $clone));
 
     $worktree = $backend->worktree_add('example', 'fix/example');
     $assert('worktree add returns DMC handle', ! is_wp_error($worktree) && 'example@fix-example' === $worktree['handle']);
+    $assert('worktree add backend result omits model-facing guidance', ! is_wp_error($worktree) && ! array_key_exists('next_required_tool', $worktree) && ! array_key_exists('next_required_args', $worktree));
 
     update_option(
         'datamachine_code_workspace_aliases',
@@ -190,6 +192,7 @@ namespace {
 
     $edit = $backend->edit_file('example@fix-example', 'src/example.php', 'old', 'new');
     $assert('edit stages pending content', ! is_wp_error($edit) && 1 === $edit['replacements']);
+    $assert('edit backend result omits model-facing guidance', ! is_wp_error($edit) && ! array_key_exists('next_required_tool', $edit) && ! array_key_exists('next_required_args', $edit));
 
     $show = $backend->show('example@fix-example');
     $assert('show supports remote worktree handles', ! is_wp_error($show) && 'github_api' === $show['backend'] && 1 === $show['dirty'] && 'fix/example' === $show['branch']);
@@ -204,17 +207,20 @@ namespace {
 
     $status = $backend->git_status('example@fix-example');
     $assert('status reports pending file as dirty', ! is_wp_error($status) && 1 === $status['dirty'] && array( 'src/example.php' ) === $status['files']);
+    $assert('status backend result omits model-facing guidance', ! is_wp_error($status) && ! array_key_exists('next_required_tool', $status) && ! array_key_exists('next_required_args', $status));
 
     $alias_status = $backend->git_status('current-project');
     $assert('status resolves current-project alias to remote worktree', ! is_wp_error($alias_status) && 1 === $alias_status['dirty'] && array( 'src/example.php' ) === $alias_status['files']);
 
     $commit = $backend->git_commit('example@fix-example', 'fix: update example');
     $assert('commit writes via GitHub API', ! is_wp_error($commit) && 'commit-1' === $commit['commit']);
+    $assert('commit backend result omits model-facing guidance', ! is_wp_error($commit) && ! array_key_exists('next_required_tool', $commit) && ! array_key_exists('next_required_args', $commit));
     $assert('commit uses requested message', 'fix: update example' === GitHubAbilities::$commits[0]['message']);
     $assert('commit supplies current file sha', 'file-sha-main-example' === GitHubAbilities::$commits[0]['input_sha']);
 
     $push = $backend->git_push('example@fix-example');
     $assert('push is successful compatibility no-op', ! is_wp_error($push) && 'fix/example' === $push['branch']);
+    $assert('push backend result omits model-facing guidance', ! is_wp_error($push) && ! array_key_exists('next_required_tool', $push) && ! array_key_exists('next_required_args', $push));
 
     if (! empty($failures) ) {
         echo "\nFAIL: " . count($failures) . " assertion(s) failed out of {$total}\n";
