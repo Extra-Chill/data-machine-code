@@ -2126,12 +2126,12 @@ class Workspace {
 				}
 			}
 		}
-		$metadata_branch = is_string($metadata['branch'] ?? null) ? (string) $metadata['branch'] : '';
-		$branch_identity = array(
-			'actual_branch'                 => $branch,
-			'branch_slug'                   => $branch_slug,
-			'metadata_branch'               => '' !== $metadata_branch ? $metadata_branch : null,
-			'branch_slug_matches_actual'    => '' === $branch_slug || $this->slugify_branch($branch) === $branch_slug,
+		$metadata_branch             = is_string($metadata['branch'] ?? null) ? (string) $metadata['branch'] : '';
+		$branch_identity             = array(
+			'actual_branch'                  => $branch,
+			'branch_slug'                    => $branch_slug,
+			'metadata_branch'                => '' !== $metadata_branch ? $metadata_branch : null,
+			'branch_slug_matches_actual'     => '' === $branch_slug || $this->slugify_branch($branch) === $branch_slug,
 			'metadata_branch_matches_actual' => '' === $metadata_branch || $metadata_branch === $branch,
 		);
 		$branch_identity['mismatch'] = ! $branch_identity['branch_slug_matches_actual'] || ! $branch_identity['metadata_branch_matches_actual'];
