@@ -4054,13 +4054,28 @@ class WorkspaceCommand extends BaseCommand {
 
 		WP_CLI::log('Merged-to-default active/no-signal apply summary:');
 		$summary_rows = array(
-			array( 'metric' => 'inspected', 'count' => (int) ( $summary['inspected'] ?? 0 ) ),
-			array( 'metric' => 'planned', 'count' => (int) ( $summary['planned'] ?? count($planned) ) ),
-			array( 'metric' => 'written', 'count' => (int) ( $summary['written'] ?? count($written) ) ),
-			array( 'metric' => 'skipped', 'count' => (int) ( $summary['skipped'] ?? count($skipped) ) ),
+			array(
+				'metric' => 'inspected',
+				'count'  => (int) ( $summary['inspected'] ?? 0 ),
+			),
+			array(
+				'metric' => 'planned',
+				'count'  => (int) ( $summary['planned'] ?? count($planned) ),
+			),
+			array(
+				'metric' => 'written',
+				'count'  => (int) ( $summary['written'] ?? count($written) ),
+			),
+			array(
+				'metric' => 'skipped',
+				'count'  => (int) ( $summary['skipped'] ?? count($skipped) ),
+			),
 		);
 		foreach ( (array) ( $summary['skipped_by_reason'] ?? array() ) as $reason => $count ) {
-			$summary_rows[] = array( 'metric' => 'skipped:' . $reason, 'count' => (int) $count );
+			$summary_rows[] = array(
+				'metric' => 'skipped:' . $reason,
+				'count'  => (int) $count,
+			);
 		}
 		$this->format_items($summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric');
 
