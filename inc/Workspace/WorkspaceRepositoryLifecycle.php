@@ -19,9 +19,10 @@ trait WorkspaceRepositoryLifecycle {
 	 * List repositories in the workspace.
 	 *
 	 * @param  string|null $repo Optional primary repository name to include.
+	 * @param  string|null $type Optional checkout type filter: primary or worktree.
 	 * @return array{success: bool, repos: array, path: string}|\WP_Error
 	 */
-	public function list_repos( ?string $repo = null ): array|\WP_Error {
+	public function list_repos( ?string $repo = null, ?string $type = null ): array|\WP_Error {
 		$path    = $this->workspace_path;
 		$visible = $this->require_workspace_visible();
 		if ( null !== $visible ) {
@@ -29,6 +30,10 @@ trait WorkspaceRepositoryLifecycle {
 		}
 
 		$repo_filter = null !== $repo && '' !== trim($repo) ? $this->parse_handle($repo)['repo'] : null;
+		$type_filter = null !== $type && '' !== trim($type) ? strtolower(trim($type)) : null;
+		if ( null !== $type_filter && ! in_array($type_filter, array( 'primary', 'worktree' ), true) ) {
+			return new \WP_Error('invalid_workspace_type', 'Workspace list type must be "primary" or "worktree".', array( 'status' => 400 ));
+		}
 
 		if ( ! is_dir($path) ) {
 			return array(
@@ -60,11 +65,19 @@ trait WorkspaceRepositoryLifecycle {
 				continue;
 			}
 
+			$is_worktree = $is_wt || $parsed['is_worktree'];
+			if ( 'primary' === $type_filter && $is_worktree ) {
+				continue;
+			}
+			if ( 'worktree' === $type_filter && ! $is_worktree ) {
+				continue;
+			}
+
 			$repo_info = array(
 				'name'        => $entry,
 				'path'        => $entry_path,
 				'git'         => $is_git,
-				'is_worktree' => $is_wt || $parsed['is_worktree'],
+				'is_worktree' => $is_worktree,
 				'repo'        => $parsed['repo'],
 			);
 

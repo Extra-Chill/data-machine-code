@@ -96,6 +96,14 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--repo=<repo>]
 	 * : Filter by primary repository name. Includes the primary checkout and its worktrees.
 	 *
+	 * [--type=<type>]
+	 * : Filter by checkout type.
+	 * ---
+	 * options:
+	 *   - primary
+	 *   - worktree
+	 * ---
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -118,6 +126,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # List one primary checkout and its worktrees
 	 *     wp datamachine-code workspace list --repo=my-plugin
 	 *
+	 *     # List only worktrees for one primary checkout
+	 *     wp datamachine-code workspace list --repo=my-plugin --type=worktree --format=json
+	 *
 	 * @subcommand list
 	 */
 	public function list_repos( array $args, array $assoc_args ): void {
@@ -130,6 +141,9 @@ class WorkspaceCommand extends BaseCommand {
 		$input = array();
 		if ( isset($assoc_args['repo']) ) {
 			$input['repo'] = (string) $assoc_args['repo'];
+		}
+		if ( isset($assoc_args['type']) ) {
+			$input['type'] = (string) $assoc_args['type'];
 		}
 
 		$result = $ability->execute($input);

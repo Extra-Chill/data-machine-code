@@ -127,6 +127,23 @@ namespace {
     $missing = $workspace->list_repos('missing');
     $assert_same(array(), $repo_names($missing), 'missing repo filter returns no repos');
 
+    echo "\n[4] Type filter can return only primary checkouts\n";
+    $primaries = $workspace->list_repos(null, 'primary');
+	$assert_same(array( 'data-machine-code', 'my-plugin' ), $repo_names($primaries), 'primary type filter excludes worktree handles');
+
+    echo "\n[5] Type filter can return only worktrees\n";
+    $worktrees = $workspace->list_repos(null, 'worktree');
+	$assert_same(array( 'my-plugin@feature-one' ), $repo_names($worktrees), 'worktree type filter excludes primary handles');
+
+    echo "\n[6] Repo and type filters compose\n";
+	$plugin_worktrees = $workspace->list_repos('my-plugin', 'worktree');
+	$assert_same(array( 'my-plugin@feature-one' ), $repo_names($plugin_worktrees), 'repo plus worktree filter returns matching worktrees only');
+
+    echo "\n[7] Invalid type filter returns a structured error\n";
+    $invalid = $workspace->list_repos(null, 'dirty');
+    $assert_same(true, is_wp_error($invalid), 'invalid type returns WP_Error');
+    $assert_same('invalid_workspace_type', is_wp_error($invalid) ? $invalid->get_error_code() : '', 'invalid type error code is stable');
+
     echo "\nResult: " . ( $total - $failures ) . "/{$total} passed\n";
     exit($failures > 0 ? 1 : 0);
 }

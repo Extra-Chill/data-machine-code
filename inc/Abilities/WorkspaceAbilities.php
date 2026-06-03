@@ -107,6 +107,11 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Optional primary repository name to filter by. Includes the primary checkout and its worktrees.',
 							),
+							'type' => array(
+								'type'        => 'string',
+								'enum'        => array( 'primary', 'worktree' ),
+								'description' => 'Optional checkout type filter. Use "primary" for base checkouts or "worktree" for branch worktrees.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -2306,7 +2311,8 @@ class WorkspaceAbilities {
 	public static function listRepos( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$repo      = isset($input['repo']) ? (string) $input['repo'] : null;
-		return $workspace->list_repos($repo);
+		$type      = isset($input['type']) ? (string) $input['type'] : null;
+		return $workspace->list_repos($repo, $type);
 	}
 
 	/**
