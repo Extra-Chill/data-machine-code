@@ -220,9 +220,10 @@ namespace {
     $run('git config user.name test', $primary);
     file_put_contents($primary . '/README.md', "demo\n");
     file_put_contents($primary . '/Cargo.toml', "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n");
+    file_put_contents($primary . '/package.json', "{\"scripts\":{\"build\":\"echo build\"}}\n");
     file_put_contents($primary . '/.gitignore', "target/\n");
     $run('git add README.md && git commit -m init', $primary);
-    $run('git add Cargo.toml .gitignore && git commit -m tooling', $primary);
+    $run('git add Cargo.toml package.json .gitignore && git commit -m tooling', $primary);
     $run('git branch -M main', $primary);
     $run('git push -u origin main', $primary);
 
@@ -243,6 +244,8 @@ namespace {
     $make_branch('merged-live-remote', 'd');  // → simulate via PR-merged (stubbed → none)
     $make_branch('unmerged-feature', 'e');    // still active
     $make_branch('dirty-branch', 'f');        // will be dirty in worktree
+    $make_branch('artifact-only-dirty', 'f2'); // will be dirty only from build/
+    $make_branch('mixed-artifact-dirty', 'f3'); // will have build/ plus a source edit
     $make_branch('external-branch', 'g');     // outside workspace, should never be removed
 
     // Create worktrees at various paths:
@@ -257,12 +260,19 @@ namespace {
     $run(sprintf('git worktree add %s merged-live-remote', escapeshellarg($tmp . '/demo-unmanaged-merged')), $primary);
     $run(sprintf('git worktree add %s unmerged-feature', escapeshellarg($tmp . '/demo@unmerged-feature')), $primary);
     $run(sprintf('git worktree add %s dirty-branch', escapeshellarg($tmp . '/demo@dirty-branch')), $primary);
+    $run(sprintf('git worktree add %s artifact-only-dirty', escapeshellarg($tmp . '/demo@artifact-only-dirty')), $primary);
+    $run(sprintf('git worktree add %s mixed-artifact-dirty', escapeshellarg($tmp . '/demo@mixed-artifact-dirty')), $primary);
     mkdir($tmp . '-external', 0755, true);
     $run(sprintf('git worktree add %s external-branch', escapeshellarg($tmp . '-external/demo-external')), $primary);
     $external_real = realpath($tmp . '-external/demo-external') ? realpath($tmp . '-external/demo-external') : $tmp . '-external/demo-external';
 
     // Dirty the dirty worktree.
     file_put_contents($tmp . '/demo@dirty-branch/scratch.txt', 'dirty');
+    mkdir($tmp . '/demo@artifact-only-dirty/build', 0755, true);
+    file_put_contents($tmp . '/demo@artifact-only-dirty/build/output.js', 'artifact');
+    mkdir($tmp . '/demo@mixed-artifact-dirty/build', 0755, true);
+    file_put_contents($tmp . '/demo@mixed-artifact-dirty/build/output.js', 'artifact');
+    file_put_contents($tmp . '/demo@mixed-artifact-dirty/README.md', "source edit\n");
     mkdir($tmp . '/demo@merged-autodelete/target', 0755, true);
     file_put_contents($tmp . '/demo@merged-autodelete/target/artifact.bin', str_repeat('x', 4096));
 
@@ -352,6 +362,8 @@ namespace {
     $run(sprintf('git --git-dir=%s update-ref -d refs/heads/merged-stale-plan', escapeshellarg($remote)));
     $run(sprintf('git --git-dir=%s update-ref -d refs/heads/merged-recent', escapeshellarg($remote)));
     $run(sprintf('git --git-dir=%s update-ref -d refs/heads/merged-unknown-age', escapeshellarg($remote)));
+    $run(sprintf('git --git-dir=%s update-ref -d refs/heads/artifact-only-dirty', escapeshellarg($remote)));
+    $run(sprintf('git --git-dir=%s update-ref -d refs/heads/mixed-artifact-dirty', escapeshellarg($remote)));
 
     // -------------------------------------------------------------------------
     // Dry-run assertions
@@ -394,6 +406,19 @@ namespace {
     $assert(true, str_contains($dirty_reason, 'dirty'), 'dirty skip reason mentions dirty');
     $assert('dirty_worktree', $dirty_row['reason_code'] ?? '', 'dirty skip exposes stable reason code');
 
+    $artifact_dirty_skips = array_filter($plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@artifact-only-dirty');
+    $assert(1, count($artifact_dirty_skips), 'artifact-only dirty worktree skipped with exactly one entry');
+    $artifact_dirty_row = array_values($artifact_dirty_skips)[0] ?? array();
+    $assert('artifact_only_dirty_worktree', $artifact_dirty_row['reason_code'] ?? '', 'artifact-only dirt exposes stable reason code');
+    $assert(array( 'build' ), $artifact_dirty_row['artifact_dirty_paths'] ?? array(), 'artifact-only dirty row reports dirty artifact path');
+    $assert('build', $artifact_dirty_row['artifacts'][0]['path'] ?? '', 'artifact-only dirty row reports matching artifact profile path');
+    $assert(true, str_contains($artifact_dirty_row['hint'] ?? '', 'cleanup-artifacts --dry-run'), 'artifact-only dirty row points to artifact cleanup lane');
+
+    $mixed_dirty_skips = array_filter($plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@mixed-artifact-dirty');
+    $assert(1, count($mixed_dirty_skips), 'mixed source/artifact dirty worktree skipped with exactly one entry');
+    $mixed_dirty_row = array_values($mixed_dirty_skips)[0] ?? array();
+    $assert('dirty_worktree', $mixed_dirty_row['reason_code'] ?? '', 'mixed source/artifact dirt stays protected as generic dirty worktree');
+
     // unmerged-feature should be skipped (no merge signal)
     $unmerged = array_filter($plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@unmerged-feature');
     $assert(1, count($unmerged), 'unmerged worktree skipped with exactly one entry');
@@ -410,7 +435,10 @@ namespace {
     $assert(true, str_contains($external_row['hint'] ?? '', 'outside the DMC workspace'), 'external worktree includes remediation hint');
 
     $assert(4, (int) ( $plan['summary']['would_remove'] ?? 0 ), 'summary counts cleanup candidates');
-    $assert(1, (int) ( $plan['summary']['skipped_by_reason']['dirty_worktree'] ?? 0 ), 'summary counts dirty skips by reason');
+    $assert(2, (int) ( $plan['summary']['skipped_by_reason']['dirty_worktree'] ?? 0 ), 'summary counts dirty skips by reason');
+    $assert(1, (int) ( $plan['summary']['skipped_by_reason']['artifact_only_dirty_worktree'] ?? 0 ), 'summary counts artifact-only dirty skips separately');
+    $assert(1, (int) ( $plan['summary']['cleanup_buckets']['artifact_only_dirty_worktree'] ?? 0 ), 'cleanup buckets expose artifact-only dirty count');
+    $assert(true, in_array('artifact_only_dirty_worktree', array_column($plan['summary']['skipped_next_commands'] ?? array(), 'reason_code'), true), 'summary exposes artifact-only dirty next command');
     $assert(true, isset($plan['summary']['skipped_by_reason']['no_merge_signal']), 'summary includes no_merge_signal bucket');
     $next_commands = (array) ( $plan['summary']['skipped_next_commands'] ?? array() );
     $assert(true, in_array('no_merge_signal', array_column($next_commands, 'reason_code'), true), 'summary includes no_merge_signal next command');
@@ -444,12 +472,12 @@ namespace {
     $assert('needs_metadata_reconcile', $inventory_missing['reason_code'] ?? '', 'inventory-only missing metadata requires metadata reconciliation');
     $inventory_buckets = (array) ( $inventory_plan['summary']['cleanup_buckets'] ?? array() );
     $assert(2, (int) ( $inventory_buckets['safe_to_remove_now'] ?? 0 ), 'inventory cleanup bucket counts safe-to-remove candidates');
-    $assert(5, (int) ( $inventory_buckets['needs_reconciliation'] ?? 0 ), 'inventory cleanup bucket counts reconciliation candidates separately');
+    $assert(7, (int) ( $inventory_buckets['needs_reconciliation'] ?? 0 ), 'inventory cleanup bucket counts reconciliation candidates separately');
     $assert(4, (int) ( $inventory_buckets['needs_full_review'] ?? 0 ), 'inventory cleanup bucket counts full-review rows separately');
     $assert(0, (int) ( $inventory_buckets['blocked_by_dirty_or_unpushed'] ?? -1 ), 'inventory cleanup bucket keeps dirty/unpushed blockers separate');
     $assert(2, (int) ( $inventory_buckets['explicit_cleanup_candidates'] ?? 0 ), 'inventory cleanup bucket counts explicit cleanup candidates');
     $assert(1, (int) ( $inventory_buckets['lifecycle_reconciliation_candidates'] ?? 0 ), 'inventory cleanup bucket counts lifecycle reconciliation candidates');
-    $assert(4, (int) ( $inventory_buckets['metadata_reconciliation_candidates'] ?? 0 ), 'inventory cleanup bucket counts metadata reconciliation candidates');
+    $assert(6, (int) ( $inventory_buckets['metadata_reconciliation_candidates'] ?? 0 ), 'inventory cleanup bucket counts metadata reconciliation candidates');
     $assert(4, (int) ( $inventory_buckets['active_no_signal'] ?? 0 ), 'inventory cleanup bucket counts active/no-signal rows');
     $inventory_apply_hint = (array) ( $inventory_plan['summary']['bounded_cleanup_eligible_apply'] ?? array() );
     $assert('studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=2', $inventory_plan['summary']['apply_command'] ?? '', 'inventory-only dry-run exposes bounded cleanup-eligible apply command');

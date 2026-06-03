@@ -659,6 +659,31 @@ class Workspace {
 			$dirty_count = (int) $dirty_probe;
 
 			if ( $dirty_count > 0 && ! $force ) {
+				$artifact_dirty = $this->classify_artifact_only_dirty_worktree($repo, $wt_path);
+				if ( is_array($artifact_dirty) ) {
+					$skipped[] = array_merge(
+						array(
+							'handle'      => $handle,
+							'repo'        => $repo,
+							'branch'      => $branch,
+							'path'        => $wt_path,
+							'reason_code' => 'artifact_only_dirty_worktree',
+							'reason'      => sprintf('working tree dirty only from declared/generated artifact paths (%d files) - run artifact cleanup instead of force-removing the worktree', $dirty_count),
+							'dirty'       => $dirty_count,
+							'hint'        => 'Run studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run to review reconstructable artifact cleanup; source edits are still protected by dirty_worktree.',
+							'created_at'  => $created_at,
+							'metadata'    => $metadata,
+						), $disk_fields, array(
+							'artifact_dirty_paths' => $artifact_dirty['paths'],
+							'artifacts'            => $artifact_dirty['artifacts'],
+							'artifact_size_bytes'  => $artifact_dirty['artifact_size_bytes'],
+							'size_bytes'           => max( (int) ( $disk_fields['size_bytes'] ?? 0 ), (int) $artifact_dirty['artifact_size_bytes'] ),
+							'estimated_size_bytes' => max( (int) ( $disk_fields['estimated_size_bytes'] ?? 0 ), (int) $artifact_dirty['artifact_size_bytes'] ),
+						)
+					);
+					continue;
+				}
+
 				// Before falling through to the generic dirty_worktree skip, try to
 				// classify whether this is the "merged PR + obsolete dirty edits"
 				// shape. That bucket is still skipped (force=false stays safe), but
@@ -3206,6 +3231,7 @@ class Workspace {
 		+ (int) ( $skipped_by_reason['unpushed_commits'] ?? 0 );
 
 		$buckets = array(
+			'artifact_only_dirty_worktree'        => (int) ( $skipped_by_reason['artifact_only_dirty_worktree'] ?? 0 ),
 			'blocked_by_dirty_or_unpushed'        => $blocked_by_dirty_or_unpushed,
 			'needs_full_review'                   => $needs_full_review,
 			'needs_reconciliation'                => $needs_reconciliation,
@@ -3306,6 +3332,13 @@ class Workspace {
 	private function worktree_cleanup_skipped_next_commands( array $skipped_by_reason ): array {
 		$active_no_signal_commands = $this->build_active_no_signal_next_commands(25, 0);
 		$templates                 = array(
+			'artifact_only_dirty_worktree'       => array(
+				'label'       => 'Review generated artifact cleanup separately',
+				'command'     => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --format=json',
+				'alternative' => 'studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run',
+				'why'         => 'Dirty paths are limited to declared reconstructable artifact directories, so artifact cleanup can shed them without force-removing source worktrees.',
+				'destructive' => false,
+			),
 			'lifecycle_reconciliation_candidate' => array(
 				'label'       => 'Run DMC-owned lifecycle reconciliation before cleanup eligibility',
 				'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --format=json',
@@ -3528,6 +3561,71 @@ class Workspace {
 	}
 
 	/**
+	 * Classify dirty worktrees whose dirty paths are only generated artifacts.
+	 *
+	 * @param  string $repo Repo name.
+	 * @param  string $path Worktree path.
+	 * @return array{paths: array<int,string>, artifacts: array<int,array<string,mixed>>, artifact_size_bytes: int}|null Artifact-only classification.
+	 */
+	private function classify_artifact_only_dirty_worktree( string $repo, string $path ): ?array {
+		if ( '' === $repo || '' === $path || ! is_dir($path) ) {
+			return null;
+		}
+
+		$artifacts = $this->detect_worktree_artifacts($repo, $path);
+		if ( array() === $artifacts ) {
+			return null;
+		}
+
+		$status = $this->run_git($path, 'status --porcelain', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($status) ) {
+			return null;
+		}
+
+		$dirty_paths = array();
+		foreach ( explode("\n", (string) ( $status['output'] ?? '' )) as $line ) {
+			$line = rtrim($line, "\r");
+			if ( '' === $line ) {
+				continue;
+			}
+
+			$path_part = trim(substr($line, 3));
+			if ( str_contains($path_part, ' -> ') ) {
+				$path_part = trim( (string) substr(strrchr($path_part, '>'), 1));
+			}
+			$path_part = trim($path_part, ' /');
+			if ( '' === $path_part ) {
+				return null;
+			}
+			$dirty_paths[] = $path_part;
+		}
+
+		if ( array() === $dirty_paths ) {
+			return null;
+		}
+
+		$artifact_paths = array_map(fn( $artifact ) => trim( (string) ( $artifact['path'] ?? '' ), '/'), $artifacts);
+		foreach ( $dirty_paths as $dirty_path ) {
+			$matched = false;
+			foreach ( $artifact_paths as $artifact_path ) {
+				if ( '' !== $artifact_path && ( $dirty_path === $artifact_path || str_starts_with($dirty_path, $artifact_path . '/') ) ) {
+					$matched = true;
+					break;
+				}
+			}
+			if ( ! $matched ) {
+				return null;
+			}
+		}
+
+		return array(
+			'paths'               => $dirty_paths,
+			'artifacts'           => $artifacts,
+			'artifact_size_bytes' => array_sum(array_map(fn( $artifact ) => (int) ( $artifact['size_bytes'] ?? 0 ), $artifacts)),
+		);
+	}
+
+	/**
 	 * Resolve repo-specific artifact profile paths.
 	 *
 	 * @param  string $repo Repo name.
@@ -3543,6 +3641,7 @@ class Workspace {
 
 		if ( is_file(rtrim($path, '/') . '/package.json') ) {
 			$profile['node_modules'] = 'Node dependencies';
+			$profile['build']        = 'JavaScript build output';
 			$profile['.next']        = 'Next.js build cache';
 			$profile['dist']         = 'JavaScript build output';
 			$profile['coverage']     = 'test coverage output';
