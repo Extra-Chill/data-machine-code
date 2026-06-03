@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.37] - 2026-06-03
+
+### Fixed
+- Fix lint formatting
+- Fix cleanup metadata identity recovery
+
 ## [0.47.36] - 2026-06-03
 
 ### Changed
