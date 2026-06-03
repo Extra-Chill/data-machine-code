@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.34] - 2026-06-03
+
+### Fixed
+- Fix lint formatting
+- make no-merge cleanup rows actionable
+
 ## [0.47.33] - 2026-06-03
 
 ### Changed
