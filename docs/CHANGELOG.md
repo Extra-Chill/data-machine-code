@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.28] - 2026-06-03
+
+### Fixed
+- align worktree guard assignments
+- refuse worktrees behind default branch
+
 ## [0.47.27] - 2026-06-02
 
 ### Fixed
