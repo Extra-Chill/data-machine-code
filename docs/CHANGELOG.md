@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.31] - 2026-06-03
+
+### Changed
+- Preserve active cleanup scan budgets
+
 ## [0.47.30] - 2026-06-03
 
 ### Changed
