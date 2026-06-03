@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.35] - 2026-06-03
+
+### Changed
+- Classify artifact-only dirty worktrees
+
+### Fixed
+- Fix lint formatting
+
 ## [0.47.34] - 2026-06-03
 
 ### Fixed
