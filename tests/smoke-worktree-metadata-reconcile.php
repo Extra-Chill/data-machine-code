@@ -560,6 +560,46 @@ namespace {
     $assert(true, isset($active_rows['demo@dirty-active']['upstream_equivalence']['probe_timings_ms']['git_cherry']), 'upstream equivalence includes git cherry probe timing');
     $assert(true, isset($active_rows['demo@dirty-active']['upstream_equivalence']['probe_timings_ms']['dirty_path_classification']), 'upstream equivalence includes dirty path classification timing');
     $assert(true, (int) ( $active_rows['demo@dirty-active']['upstream_equivalence']['dirty_paths']['inspected'] ?? 0 ) >= 1, 'batched dirty path classification preserves inspected path count');
+
+    class Inconsistent_Identity_Metadata_Workspace extends \DataMachineCode\Workspace\Workspace
+    {
+        private string $tmp;
+
+        public function __construct( string $tmp )
+        {
+            $this->tmp = $tmp;
+            parent::__construct();
+        }
+
+        public function worktree_list( ?string $repo = null, ?string $state = null, array $opts = array() ): array|\WP_Error  // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+        {
+            return array(
+            'success'   => true,
+            'worktrees' => array(
+            array(
+            'handle'   => 'demo@feature-foo',
+            'repo'     => 'demo',
+            'branch'   => '',
+            'path'     => $this->tmp . '/demo@unmanaged-missing',
+            'metadata' => array(
+            'handle'          => 'demo@feature-foo',
+            'repo'            => 'demo',
+            'branch'          => 'feature/bar',
+            'path'            => $this->tmp . '/demo@unmanaged-missing',
+            'created_at'      => '2026-04-01T00:00:00+00:00',
+            'observed_at'     => '2026-04-01T00:00:00+00:00',
+            'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
+            ),
+            ),
+            ),
+            );
+        }
+    }
+
+    $identity_plan = ( new Inconsistent_Identity_Metadata_Workspace($tmp) )->worktree_reconcile_metadata(array( 'dry_run' => true ));
+    $identity_skip = $identity_plan['skipped'][0] ?? array();
+    $assert('inconsistent_identity_metadata', $identity_skip['reason_code'] ?? '', 'metadata reconciliation blocks inconsistent stored identity metadata explicitly');
+    $assert(true, isset($identity_skip['identity_conflicts']['branch']), 'inconsistent identity skip includes branch mismatch diagnostics');
     $active_report_page = $ws->worktree_active_no_signal_report(array( 'limit' => 1, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 60, 'internal_budget_started' => microtime(true) ));
     $assert(true, ! is_wp_error($active_report_page) && ( $active_report_page['success'] ?? false ), 'paginated active/no-signal report succeeds');
     $assert(true, str_contains($active_report_page['pagination']['next_command'] ?? '', 'active-no-signal-report --limit=1 --offset=1 --until-budget=1s --format=json'), 'active/no-signal report continuation preserves report operation');

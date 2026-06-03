@@ -507,6 +507,14 @@ trait WorkspaceMetadataReconciliation {
 			return 'external_worktree';
 		}
 
+		$identity = $this->recover_worktree_identity_from_metadata($wt);
+		if ( array() !== (array) $identity['conflicts'] ) {
+			return 'inconsistent_identity_metadata';
+		}
+		if ( array() !== (array) $identity['hydrated_fields'] ) {
+			return 'recovered_identity_metadata';
+		}
+
 		$metadata = is_array($wt['metadata'] ?? null) ? (array) $wt['metadata'] : null;
 		if ( null === $metadata || array() === $metadata ) {
 			return 'missing_metadata';
@@ -538,17 +546,20 @@ trait WorkspaceMetadataReconciliation {
 	 */
 	private function build_worktree_metadata_reconciliation_row( array $wt, array &$github_cache = array(), array &$fetched = array() ): array {
 		$handle   = (string) ( $wt['handle'] ?? '' );
-		$repo     = (string) ( $wt['repo'] ?? '' );
-		$branch   = (string) ( $wt['branch'] ?? '' );
-		$path     = (string) ( $wt['path'] ?? '' );
+		$identity = $this->recover_worktree_identity_from_metadata($wt);
+		$repo     = (string) $identity['repo'];
+		$branch   = (string) $identity['branch'];
+		$path     = (string) $identity['path'];
 		$metadata = is_array($wt['metadata'] ?? null) ? (array) $wt['metadata'] : array();
 
 		$base_row = array(
-			'handle'   => $handle,
-			'repo'     => $repo,
-			'branch'   => $branch,
-			'path'     => $path,
-			'metadata' => array() === $metadata ? null : $metadata,
+			'handle'          => $handle,
+			'repo'            => $repo,
+			'branch'          => $branch,
+			'path'            => $path,
+			'hydrated_fields' => $identity['hydrated_fields'],
+			'stored_identity' => $identity['stored_identity'],
+			'metadata'        => array() === $metadata ? null : $metadata,
 		);
 
 		if ( ! empty($wt['external']) ) {
@@ -558,6 +569,19 @@ trait WorkspaceMetadataReconciliation {
 					array(
 						'reason_code' => 'external_worktree',
 						'reason'      => 'external worktree outside the DMC workspace',
+					)
+				),
+			);
+		}
+
+		if ( array() !== (array) $identity['conflicts'] ) {
+			return array(
+				'skip' => array_merge(
+					$base_row,
+					array(
+						'reason_code'        => 'inconsistent_identity_metadata',
+						'reason'             => 'stored worktree identity metadata does not match the handle/path row',
+						'identity_conflicts' => $identity['conflicts'],
 					)
 				),
 			);
@@ -594,6 +618,20 @@ trait WorkspaceMetadataReconciliation {
 					array(
 						'reason_code' => 'noncanonical_handle',
 						'reason'      => 'worktree is not represented by a canonical <repo>@<slug> workspace handle',
+					)
+				),
+			);
+		}
+
+		if ( ! empty($identity['detached_branch']) ) {
+			return array(
+				'skip' => array_merge(
+					$base_row,
+					array(
+						'reason_code'   => 'detached_worktree',
+						'reason'        => sprintf('git reports detached HEAD; stored metadata identifies branch %s', $branch),
+						'actual_branch' => '',
+						'hint'          => 'Reattach the worktree to the stored branch before applying metadata reconciliation, or remove it manually after review.',
 					)
 				),
 			);

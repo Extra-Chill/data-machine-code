@@ -350,6 +350,116 @@ class Workspace {
 	}
 
 	/**
+	 * Recover blank worktree identity fields from trusted stored metadata.
+	 *
+	 * @param  array<string,mixed> $wt Worktree row.
+	 * @return array<string,mixed>
+	 */
+	private function recover_worktree_identity_from_metadata( array $wt ): array {
+		$handle   = (string) ( $wt['handle'] ?? '' );
+		$repo     = (string) ( $wt['repo'] ?? '' );
+		$branch   = (string) ( $wt['branch'] ?? '' );
+		$path     = (string) ( $wt['path'] ?? '' );
+		$metadata = is_array($wt['metadata'] ?? null) ? (array) $wt['metadata'] : array();
+		$parsed   = '' !== $handle ? $this->parse_handle($handle) : array(
+			'repo'        => '',
+			'branch_slug' => null,
+			'is_worktree' => false,
+		);
+
+		$stored    = array(
+			'repo'   => isset($metadata['repo']) ? trim( (string) $metadata['repo'] ) : '',
+			'branch' => isset($metadata['branch']) ? trim( (string) $metadata['branch'] ) : '',
+			'path'   => isset($metadata['path']) ? rtrim(trim( (string) $metadata['path'] ), '/') : '',
+		);
+		$conflicts = array();
+		$hydrated  = array();
+
+		if ( '' === $repo && '' !== $stored['repo'] ) {
+			if ( (string) ( $parsed['repo'] ?? '' ) === $stored['repo'] ) {
+				$repo       = $stored['repo'];
+				$hydrated[] = 'repo';
+			} else {
+				$conflicts['repo'] = array(
+					'reason'      => 'metadata_repo_does_not_match_handle',
+					'handle_repo' => (string) ( $parsed['repo'] ?? '' ),
+					'metadata'    => $stored['repo'],
+				);
+			}
+		} elseif ( '' !== $repo && '' !== $stored['repo'] && $repo !== $stored['repo'] ) {
+			$conflicts['repo'] = array(
+				'reason'   => 'metadata_repo_does_not_match_row',
+				'row'      => $repo,
+				'metadata' => $stored['repo'],
+			);
+		}
+
+		if ( '' === $branch && '' !== $stored['branch'] ) {
+			$branch_slug = (string) ( $parsed['branch_slug'] ?? '' );
+			if ( '' !== $branch_slug && $this->slugify_branch($stored['branch']) === $branch_slug ) {
+				$branch     = $stored['branch'];
+				$hydrated[] = 'branch';
+			} else {
+				$conflicts['branch'] = array(
+					'reason'        => 'metadata_branch_does_not_match_handle_slug',
+					'handle_slug'   => $branch_slug,
+					'metadata'      => $stored['branch'],
+					'metadata_slug' => $this->slugify_branch($stored['branch']),
+				);
+			}
+		} elseif ( '' !== $branch && '' !== $stored['branch'] && $branch !== $stored['branch'] ) {
+			$conflicts['branch'] = array(
+				'reason'   => 'metadata_branch_does_not_match_row',
+				'row'      => $branch,
+				'metadata' => $stored['branch'],
+			);
+		}
+
+		if ( '' === $path && '' !== $stored['path'] ) {
+			$stored_basename = basename($stored['path']);
+			$stored_real     = realpath($stored['path']);
+			$stored_real     = false !== $stored_real ? $stored_real : $stored['path'];
+			$workspace_real  = realpath($this->workspace_path);
+			$workspace_real  = false !== $workspace_real ? $workspace_real : $this->workspace_path;
+			if ( $stored_basename === $handle && str_starts_with(rtrim($stored_real, '/'), rtrim($workspace_real, '/') . '/') ) {
+				$path       = $stored['path'];
+				$hydrated[] = 'path';
+			} else {
+				$conflicts['path'] = array(
+					'reason'            => 'metadata_path_does_not_match_workspace_handle',
+					'handle'            => $handle,
+					'metadata'          => $stored['path'],
+					'metadata_basename' => $stored_basename,
+				);
+			}
+		} elseif ( '' !== $path && '' !== $stored['path'] ) {
+			$row_path      = rtrim($path, '/');
+			$metadata_path = rtrim($stored['path'], '/');
+			$row_real      = realpath($row_path);
+			$row_real      = false !== $row_real ? $row_real : $row_path;
+			$metadata_real = realpath($metadata_path);
+			$metadata_real = false !== $metadata_real ? $metadata_real : $metadata_path;
+			if ( rtrim($row_real, '/') !== rtrim($metadata_real, '/') ) {
+				$conflicts['path'] = array(
+					'reason'   => 'metadata_path_does_not_match_row',
+					'row'      => $row_path,
+					'metadata' => $metadata_path,
+				);
+			}
+		}
+
+		return array(
+			'repo'            => $repo,
+			'branch'          => $branch,
+			'path'            => $path,
+			'hydrated_fields' => $hydrated,
+			'conflicts'       => $conflicts,
+			'stored_identity' => array_filter($stored, fn( $value ) => '' !== $value),
+			'detached_branch' => '' === (string) ( $wt['branch'] ?? '' ) && in_array('branch', $hydrated, true),
+		);
+	}
+
+	/**
 	 * Sanitize a branch slug. Allows alphanumerics, dots, dashes, underscores.
 	 *
 	 * @param  string $slug Raw slug.
@@ -581,6 +691,10 @@ class Workspace {
 			$metadata     = $wt['metadata'] ?? null;
 			$created_at   = $wt['created_at'] ?? null;
 			$disk_fields  = $this->extract_worktree_disk_fields($wt);
+			$identity     = $this->recover_worktree_identity_from_metadata($wt);
+			$repo         = (string) $identity['repo'];
+			$branch       = (string) $identity['branch'];
+			$wt_path      = (string) $identity['path'];
 			$primary_path = '' !== $repo ? $this->get_primary_path($repo) : '';
 
 			if ( ! empty($wt['external']) ) {
@@ -620,16 +734,40 @@ class Workspace {
 				}
 				$skipped[] = array_merge(
 					array(
-						'handle'         => $handle,
-						'repo'           => $repo,
-						'branch'         => $branch,
-						'path'           => $wt_path,
-						'reason_code'    => 'missing_metadata',
-						'reason'         => 'missing repo/branch/path',
-						'missing_fields' => $missing_fields,
-						'hint'           => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
-						'created_at'     => $created_at,
-						'metadata'       => $metadata,
+						'handle'             => $handle,
+						'repo'               => $repo,
+						'branch'             => $branch,
+						'path'               => $wt_path,
+						'reason_code'        => 'missing_metadata',
+						'reason'             => 'missing repo/branch/path',
+						'missing_fields'     => $missing_fields,
+						'hydrated_fields'    => $identity['hydrated_fields'],
+						'identity_conflicts' => $identity['conflicts'],
+						'stored_identity'    => $identity['stored_identity'],
+						'hint'               => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
+						'created_at'         => $created_at,
+						'metadata'           => $metadata,
+					), $disk_fields
+				);
+				continue;
+			}
+
+			if ( ! empty($identity['detached_branch']) ) {
+				$detached_reason = in_array($branch, $protected_branches, true) ? 'detached_protected_branch' : 'detached_worktree';
+				$skipped[]       = array_merge(
+					array(
+						'handle'          => $handle,
+						'repo'            => $repo,
+						'branch'          => $branch,
+						'path'            => $wt_path,
+						'reason_code'     => $detached_reason,
+						'reason'          => sprintf('git reports detached HEAD; stored metadata identifies branch %s', $branch),
+						'actual_branch'   => '',
+						'hydrated_fields' => $identity['hydrated_fields'],
+						'stored_identity' => $identity['stored_identity'],
+						'hint'            => 'Inspect the detached worktree and either reattach it to the stored branch, finalize lifecycle metadata, or remove it manually after review.',
+						'created_at'      => $created_at,
+						'metadata'        => $metadata,
 					), $disk_fields
 				);
 				continue;
@@ -642,8 +780,9 @@ class Workspace {
 						'repo'        => $repo,
 						'branch'      => $branch,
 						'path'        => $wt_path,
-						'reason_code' => 'protected_branch',
-						'reason'      => sprintf('protected branch (%s)', $branch),
+						'reason_code' => 'protected_base_branch_worktree',
+						'reason'      => sprintf('worktree has protected/base branch %s checked out', $branch),
+						'hint'        => 'Protected/base branches should live in primary checkouts. Inspect this worktree, move any needed changes, then remove it explicitly if safe.',
 						'created_at'  => $created_at,
 						'metadata'    => $metadata,
 					), $disk_fields
@@ -3315,6 +3454,9 @@ class Workspace {
 		+ (int) ( $skipped_by_reason['github_unknown'] ?? 0 )
 		+ (int) ( $skipped_by_reason['external_worktree'] ?? 0 )
 		+ (int) ( $skipped_by_reason['protected_branch'] ?? 0 )
+		+ (int) ( $skipped_by_reason['protected_base_branch_worktree'] ?? 0 )
+		+ (int) ( $skipped_by_reason['detached_worktree'] ?? 0 )
+		+ (int) ( $skipped_by_reason['detached_protected_branch'] ?? 0 )
 		+ (int) ( $skipped_by_reason['submodule_worktree'] ?? 0 )
 		+ (int) ( $skipped_by_reason['probe_timeout'] ?? 0 )
 		+ (int) ( $skipped_by_reason['unknown_age'] ?? 0 );
@@ -3474,6 +3616,27 @@ class Workspace {
 				'command'     => 'git -C <worktree-path> submodule status --recursive',
 				'alternative' => 'After review, deinitialize submodules and rerun the DMC cleanup apply, or remove the worktree with an explicit git worktree remove command.',
 				'why'         => 'Git refuses to remove worktrees containing submodules through the normal cleanup path; DMC leaves them in place until submodule state is explicitly reviewed.',
+				'destructive' => false,
+			),
+			'detached_worktree'                  => array(
+				'label'       => 'Review detached worktrees with stored branch metadata',
+				'command'     => 'git -C <worktree-path> status --short --branch',
+				'alternative' => 'Reattach the worktree to the stored branch or remove it manually after review.',
+				'why'         => 'Git reports detached HEAD, so DMC will not treat stored branch metadata as a deletion target without explicit operator review.',
+				'destructive' => false,
+			),
+			'detached_protected_branch'          => array(
+				'label'       => 'Review detached protected-branch worktrees',
+				'command'     => 'git -C <worktree-path> status --short --branch',
+				'alternative' => 'Move any required state to the primary checkout, then remove the worktree manually if safe.',
+				'why'         => 'Stored metadata points at a protected branch while Git reports detached HEAD; automatic cleanup would be ambiguous.',
+				'destructive' => false,
+			),
+			'protected_base_branch_worktree'     => array(
+				'label'       => 'Review protected/base branch worktrees',
+				'command'     => 'git -C <worktree-path> status --short --branch',
+				'alternative' => 'Move work back to the primary checkout or remove the worktree manually after review.',
+				'why'         => 'Protected/base branches should be represented by primary checkouts, not removable feature worktrees.',
 				'destructive' => false,
 			),
 			'repaired_metadata'                  => array(
