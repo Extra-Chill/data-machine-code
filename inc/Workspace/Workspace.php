@@ -3279,10 +3279,10 @@ class Workspace {
 				self::CLEANUP_GIT_PROBE_TIMEOUT
 			);
 			if ( ! is_wp_error($outside) && ! $this->is_git_timeout_error($outside) ) {
-				$outside_count                         = (int) trim( (string) ( $outside['output'] ?? '' ));
-				$evidence['commits_outside_default']   = $outside_count;
-				$evidence['local_default_relation']    = 0 === $outside_count ? 'default_contained' : 'has_unique_commits';
-				$evidence['classification']            = 0 === $outside_count ? 'local_equivalent_default_contained' : $evidence['classification'];
+				$outside_count                       = (int) trim( (string) ( $outside['output'] ?? '' ));
+				$evidence['commits_outside_default'] = $outside_count;
+				$evidence['local_default_relation']  = 0 === $outside_count ? 'default_contained' : 'has_unique_commits';
+				$evidence['classification']          = 0 === $outside_count ? 'local_equivalent_default_contained' : $evidence['classification'];
 			} elseif ( $this->is_git_timeout_error($outside) ) {
 				$evidence['local_default_relation'] = 'probe_timeout';
 				$evidence['local_default_error']    = $outside->get_error_message();
@@ -3305,7 +3305,7 @@ class Workspace {
 	 */
 	private function worktree_cleanup_skipped_next_commands( array $skipped_by_reason ): array {
 		$active_no_signal_commands = $this->build_active_no_signal_next_commands(25, 0);
-		$templates = array(
+		$templates                 = array(
 			'lifecycle_reconciliation_candidate' => array(
 				'label'       => 'Run DMC-owned lifecycle reconciliation before cleanup eligibility',
 				'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --format=json',
@@ -3336,7 +3336,7 @@ class Workspace {
 				'why'         => 'Cleanup keeps these rows by default. The active/no-signal report gathers bounded evidence and routes finalized PR, merged-to-default, and patch-equivalent rows to reviewed metadata-promotion apply commands.',
 				'destructive' => false,
 			),
-			'github_unknown'                      => array(
+			'github_unknown'                     => array(
 				'label'       => 'Retry cleanup or review active rows when GitHub signal was unavailable',
 				'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --format=json',
 				'alternative' => $active_no_signal_commands['review_command'],
