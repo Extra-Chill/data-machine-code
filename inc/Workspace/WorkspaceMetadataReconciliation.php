@@ -603,13 +603,11 @@ trait WorkspaceMetadataReconciliation {
 		if ( null === $dirty ) {
 			$dirty = $this->probe_worktree_dirty_count($path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 			if ( is_wp_error($dirty) ) {
+				$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $path, $dirty, 'dirty-state probe', 'leaving lifecycle unchanged');
 				return array(
 					'skip' => array_merge(
 						$base_row,
-						array(
-							'reason_code' => 'probe_timeout',
-							'reason'      => 'dirty-state probe failed - leaving lifecycle unchanged: ' . $dirty->get_error_message(),
-						)
+						$diagnostic
 					),
 				);
 			}
@@ -617,13 +615,11 @@ trait WorkspaceMetadataReconciliation {
 		$dirty    = (int) $dirty;
 		$unpushed = $this->count_unpushed_commits($path);
 		if ( is_wp_error($unpushed) ) {
+			$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $path, $unpushed, 'cleanup safety probe', 'leaving lifecycle unchanged');
 			return array(
 				'skip' => array_merge(
 					$base_row,
-					array(
-						'reason_code' => 'probe_timeout',
-						'reason'      => 'cleanup safety probe failed - leaving lifecycle unchanged: ' . $unpushed->get_error_message(),
-					)
+					$diagnostic
 				),
 			);
 		}
@@ -1058,10 +1054,22 @@ trait WorkspaceMetadataReconciliation {
 				$path  = (string) ( $current['path'] ?? '' );
 				$dirty = ! empty($plan['direct_apply']) ? $this->probe_worktree_dirty_count($path, self::CLEANUP_GIT_PROBE_TIMEOUT) : (int) ( $current['dirty'] ?? 0 );
 				if ( is_wp_error($dirty) ) {
-					$skipped[] = $this->build_reconcile_apply_skip($row, $current, 'probe_timeout', 'dirty-state probe failed - refusing cleanup_eligible metadata write: ' . $dirty->get_error_message());
+					$diagnostic = $this->classify_worktree_git_probe_failure($handle, (string) ( $current['repo'] ?? $row['repo'] ?? '' ), $path, $dirty, 'dirty-state probe', 'refusing cleanup_eligible metadata write');
+					$skipped[]  = array_merge(
+						$this->build_reconcile_apply_skip($row, $current, (string) $diagnostic['reason_code'], (string) $diagnostic['reason']),
+						$diagnostic
+					);
 					continue;
 				}
 				$unpushed = $this->count_unpushed_commits($path);
+				if ( is_wp_error($unpushed) ) {
+					$diagnostic = $this->classify_worktree_git_probe_failure($handle, (string) ( $current['repo'] ?? $row['repo'] ?? '' ), $path, $unpushed, 'cleanup safety probe', 'refusing cleanup_eligible metadata write');
+					$skipped[]  = array_merge(
+						$this->build_reconcile_apply_skip($row, $current, (string) $diagnostic['reason_code'], (string) $diagnostic['reason']),
+						$diagnostic
+					);
+					continue;
+				}
 				if ( $dirty > 0 || $unpushed > 0 ) {
 					$skipped[] = $this->build_reconcile_apply_skip($row, $current, 'unsafe_cleanup_eligible_state', 'refusing to mark dirty or unpushed worktree cleanup_eligible from a reconciliation plan');
 					continue;

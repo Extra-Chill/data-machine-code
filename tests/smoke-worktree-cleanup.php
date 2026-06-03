@@ -193,6 +193,20 @@ namespace {
         }
     }
 
+    class Cleanup_Probe_Diagnostic_Workspace extends \DataMachineCode\Workspace\Workspace
+    {
+        /** @var array<int,array<string,mixed>> */
+        public array $rows = array();
+
+        public function worktree_list( ?string $repo = null, ?string $state = null, array $opts = array() ): array|\WP_Error  // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+        {
+            return array(
+                'success'   => true,
+                'worktrees' => $this->rows,
+            );
+        }
+    }
+
     $run = function ( string $cmd, string $cwd = '' ) {
         $full = '' === $cwd ? $cmd : sprintf('cd %s && %s', escapeshellarg($cwd), $cmd);
         exec($full . ' 2>&1', $out, $rc);
@@ -440,14 +454,17 @@ namespace {
     $assert(1, (int) ( $plan['summary']['cleanup_buckets']['artifact_only_dirty_worktree'] ?? 0 ), 'cleanup buckets expose artifact-only dirty count');
     $assert(true, in_array('artifact_only_dirty_worktree', array_column($plan['summary']['skipped_next_commands'] ?? array(), 'reason_code'), true), 'summary exposes artifact-only dirty next command');
     $assert(true, isset($plan['summary']['skipped_by_reason']['no_merge_signal']), 'summary includes no_merge_signal bucket');
-    $next_commands = (array) ( $plan['summary']['skipped_next_commands'] ?? array() );
-    $assert(true, in_array('no_merge_signal', array_column($next_commands, 'reason_code'), true), 'summary includes no_merge_signal next command');
-    $no_merge_commands = array_values(array_filter($next_commands, fn( $row ) => ( $row['reason_code'] ?? '' ) === 'no_merge_signal'))[0] ?? array();
-    $assert(true, str_contains($no_merge_commands['command'] ?? '', 'active-no-signal-report'), 'no_merge_signal next command routes to active/no-signal evidence report');
-    $assert(true, str_contains($no_merge_commands['commands']['equivalent_clean_apply_dry_run'] ?? '', 'active-no-signal-equivalent-clean-apply --dry-run'), 'no_merge_signal next commands include equivalent-clean dry-run apply');
-    $assert(true, array_key_exists('total_size_bytes', $plan['summary'] ?? array()), 'summary exposes total worktree size bytes field');
-    $assert(true, array_key_exists('artifact_size_bytes', $plan['summary'] ?? array()), 'summary exposes artifact size bytes field');
-    $assert(true, array_key_exists('top_by_size', $plan['summary'] ?? array()), 'summary exposes top worktrees by size field');
+	$assert(0, (int) ( $plan['summary']['total_size_bytes'] ?? -1 ), 'cheap cleanup summary does not run size probes');
+	$assert(0, (int) ( $plan['summary']['artifact_size_bytes'] ?? -1 ), 'cheap cleanup summary does not run artifact size probes');
+	$assert(array(), $plan['summary']['top_by_size'] ?? null, 'cheap cleanup summary omits top-by-size rows without disk probes');
+	$next_commands = (array) ( $plan['summary']['skipped_next_commands'] ?? array() );
+	$assert(true, in_array('no_merge_signal', array_column($next_commands, 'reason_code'), true), 'summary includes no_merge_signal next command');
+	$no_merge_commands = array_values(array_filter($next_commands, fn( $row ) => ( $row['reason_code'] ?? '' ) === 'no_merge_signal'))[0] ?? array();
+	$assert(true, str_contains($no_merge_commands['command'] ?? '', 'active-no-signal-report'), 'no_merge_signal next command routes to active/no-signal evidence report');
+	$assert(true, str_contains($no_merge_commands['commands']['equivalent_clean_apply_dry_run'] ?? '', 'active-no-signal-equivalent-clean-apply --dry-run'), 'no_merge_signal next commands include equivalent-clean dry-run apply');
+	$assert(true, array_key_exists('total_size_bytes', $plan['summary'] ?? array()), 'summary exposes total worktree size bytes field');
+	$assert(true, array_key_exists('artifact_size_bytes', $plan['summary'] ?? array()), 'summary exposes artifact size bytes field');
+	$assert(true, array_key_exists('top_by_size', $plan['summary'] ?? array()), 'summary exposes top worktrees by size field');
 
     echo "\nInventory-only dry-run scenario\n";
     $inventory_ws   = new Cleanup_Inventory_Workspace();
@@ -491,6 +508,52 @@ namespace {
     $assert(true, is_wp_error($inventory_apply), 'inventory-only cleanup refuses non-dry-run apply path');
     $assert(true, str_contains($inventory_apply->get_error_message(), 'bounded-cleanup-eligible-apply'), 'inventory-only apply refusal points to bounded cleanup-eligible apply');
     $assert(false, str_contains($inventory_apply->get_error_message(), 'run full cleanup'), 'inventory-only apply refusal does not tell users to run full cleanup');
+
+    echo "\nProbe diagnostic classification scenario\n";
+    $diagnostic_ws = new Cleanup_Probe_Diagnostic_Workspace();
+    $classifier    = new \ReflectionMethod(\DataMachineCode\Workspace\Workspace::class, 'classify_worktree_git_probe_failure');
+    $timeout_diag = $classifier->invoke(
+        $diagnostic_ws,
+        'demo@timeout',
+        'demo',
+        $tmp . '/demo@timeout',
+        new WP_Error('git_command_timeout', 'Git command timed out after 5 second(s).', array( 'timeout' => 5 )),
+        'cleanup safety probe',
+        'leaving in place'
+    );
+    $assert('probe_timeout', $timeout_diag['reason_code'] ?? '', 'actual git command timeout remains probe_timeout');
+
+    mkdir($tmp . '/demo@broken-marker', 0755, true);
+    file_put_contents($tmp . '/demo@broken-marker/.git', 'gitdir: ' . $primary . '/.git/worktrees/demo@broken-marker' . "\n");
+    mkdir($tmp . '/sandbox-runtime@agent-runtime-command', 0755, true);
+    $diagnostic_ws->rows = array(
+        array(
+            'handle'     => 'demo@broken-marker',
+            'repo'       => 'demo',
+            'branch'     => 'feature/broken-marker',
+            'path'       => $tmp . '/demo@broken-marker',
+            'is_primary' => false,
+        ),
+        array(
+            'handle'     => 'sandbox-runtime@agent-runtime-command',
+            'repo'       => 'demo',
+            'branch'     => 'feature/repo-mismatch',
+            'path'       => $tmp . '/sandbox-runtime@agent-runtime-command',
+            'is_primary' => false,
+        ),
+    );
+    $diagnostic_plan = $diagnostic_ws->worktree_cleanup_merged(array( 'dry_run' => true, 'skip_github' => true ));
+    $assert(true, ! is_wp_error($diagnostic_plan) && ( $diagnostic_plan['success'] ?? false ), 'probe diagnostic cleanup dry-run succeeds');
+    $broken_marker = array_values(array_filter($diagnostic_plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@broken-marker'))[0] ?? array();
+    $assert('stale_worktree_marker', $broken_marker['reason_code'] ?? '', 'missing .git/worktrees marker is not reported as probe_timeout');
+    $assert(true, str_contains($broken_marker['hint'] ?? '', 'git worktree prune'), 'stale marker diagnostic includes actionable git prune hint');
+    $mismatch = array_values(array_filter($diagnostic_plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'sandbox-runtime@agent-runtime-command'))[0] ?? array();
+    $assert('owner_repo_mismatch', $mismatch['reason_code'] ?? '', 'handle/repo mismatch reports owner_repo_mismatch');
+    $assert('sandbox-runtime', $mismatch['handle_repo'] ?? '', 'owner mismatch exposes handle-derived repo');
+    $assert('demo', $mismatch['inventory_repo'] ?? '', 'owner mismatch exposes inventory repo');
+    $assert(0, (int) ( $diagnostic_plan['summary']['skipped_by_reason']['probe_timeout'] ?? 0 ), 'broken metadata rows do not inflate probe_timeout summary bucket');
+    $assert(1, (int) ( $diagnostic_plan['summary']['skipped_by_reason']['stale_worktree_marker'] ?? 0 ), 'summary counts stale worktree marker bucket');
+    $assert(1, (int) ( $diagnostic_plan['summary']['skipped_by_reason']['owner_repo_mismatch'] ?? 0 ), 'summary counts owner/repo mismatch bucket');
 
     echo "\nEmergency cleanup dry-run scenario\n";
     $emergency_ws   = new Cleanup_Inventory_Workspace();
