@@ -127,14 +127,14 @@ namespace {
     $assert(str_contains($list->get_error_message(), 'Studio/local host path'), 'list_repos error includes Studio/PHP mount hint');
 
     echo "\n[3] Clone preflights workspace before git clone\n";
-    $clone = $workspace->clone_repo('https://github.com/Extra-Chill/homeboy.git');
+	$clone = $workspace->clone_repo('https://github.com/example/my-plugin.git');
     $assert(is_wp_error($clone), 'clone_repo returns WP_Error');
     $assert_same('workspace_path_invisible', $clone->get_error_code(), 'clone_repo surfaces workspace visibility error');
     $clone_data = $clone->get_error_data();
     $assert_same(DATAMACHINE_WORKSPACE_PATH, $clone_data['workspace']['path'] ?? null, 'clone_repo error data includes configured path');
 
     echo "\n[4] Worktree add preflights workspace before primary checkout check\n";
-    $worktree = $workspace->worktree_add('homeboy', 'fix/example', null, false, false);
+	$worktree = $workspace->worktree_add('my-plugin', 'fix/example', null, false, false);
     $assert(is_wp_error($worktree), 'worktree_add returns WP_Error');
     $assert_same('workspace_path_invisible', $worktree->get_error_code(), 'worktree_add surfaces workspace visibility error');
     $assert(! str_contains($worktree->get_error_message(), 'Primary checkout'), 'worktree_add does not claim primary checkout is missing');

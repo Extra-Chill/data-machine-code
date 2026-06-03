@@ -729,6 +729,8 @@ namespace {
     'datamachine/get-jobs'                             => $get_jobs_ability,
     'datamachine-code/retry-job'                       => $retry_job_ability,
     'datamachine-code/fail-job'                        => $fail_job_ability,
+    'datamachine/retry-job'                            => $retry_job_ability,
+    'datamachine/fail-job'                             => $fail_job_ability,
     );
     $command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
     $doc_comment = ( new ReflectionMethod($command, 'worktree') )->getDocComment() ?: '';
@@ -1034,6 +1036,18 @@ namespace {
     datamachine_code_cleanup_assert(str_contains(WP_CLI::$successes[0] ?? '', 'Apply this bounded reviewed class with: studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=1'), 'inventory-only human output prints bounded apply command');
     $command->worktree(array( 'cleanup' ), array( 'dry-run' => true, 'inventory-only' => true, 'include-repaired-metadata' => true, 'format' => 'json' ));
     datamachine_code_cleanup_assert(true === ( $ability->last_input['include_repaired_metadata'] ?? null ), '--include-repaired-metadata forwards to cleanup ability');
+
+    echo "\n[8a] active/no-signal apply forwards bounded continuation flags\n";
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->worktree(
+        array( 'active-no-signal-finalized-apply' ),
+        array( 'dry-run' => true, 'limit' => 5, 'offset' => 10, 'until-budget' => '60s', 'format' => 'json' )
+    );
+    datamachine_code_cleanup_assert(true === ( $active_finalized_ability->last_input['dry_run'] ?? null ), 'active/no-signal apply forwards dry-run flag');
+    datamachine_code_cleanup_assert(5 === (int) ( $active_finalized_ability->last_input['limit'] ?? 0 ), 'active/no-signal apply forwards limit');
+    datamachine_code_cleanup_assert(10 === (int) ( $active_finalized_ability->last_input['offset'] ?? 0 ), 'active/no-signal apply forwards offset');
+    datamachine_code_cleanup_assert('60s' === ( $active_finalized_ability->last_input['until_budget'] ?? '' ), 'active/no-signal apply forwards until-budget continuation');
 
     echo "\n[8b] emergency-cleanup keeps apply-plan as low-level escape hatch\n";
     WP_CLI::$logs      = array();

@@ -45,13 +45,12 @@ namespace {
                 'changes'     => 10,
                 'patch_bytes' => 300,
         ),
-        ),
-        array(
-        'check_runs'         => array( 'summary' => array( 'state' => 'success' ) ),
-        'commit_statuses'    => array( 'summary' => array( 'state' => 'success' ) ),
-        'homeboy_ci_results' => array( 'workflow' => array( 'head_sha' => 'abc123head' ) ),
-        )
-    );
+		),
+		array(
+		'check_runs'      => array( 'summary' => array( 'state' => 'success' ) ),
+		'commit_statuses' => array( 'summary' => array( 'state' => 'success' ) ),
+		)
+	);
     $assert('data-machine-code/pr-review-escalation/v1' === $clean['schema'], 'schema is versioned');
     $assert('v1' === $clean['policy_version'], 'policy_version is v1');
     $assert(false === $clean['should_escalate'], 'clean PR does not escalate');
@@ -67,38 +66,25 @@ namespace {
         array( 'filename' => 'inc/migrations/github-webhook-auth.php', 'changes' => 40, 'patch_bytes' => 1000 ),
         array( 'filename' => 'docs/github-review-flow.md', 'changes' => 8, 'patch_bytes' => 500 ),
         ),
-        array(
-        'errors'      => array( 'homeboy_ci_results' => 'No artifact found.' ),
-        'error_codes' => array( 'homeboy_ci_results' => 'github_homeboy_ci_artifact_not_found' ),
-        )
-    );
-    $assert(true === $risky['should_escalate'], 'risk-path PR escalates');
-    $assert($has_reason($risky, 'missing_homeboy_artifact'), 'missing Homeboy artifact escalates');
-    $assert($has_reason($risky, 'touches_webhook_auth'), 'webhook/auth path escalates');
+		array()
+	);
+	$assert(true === $risky['should_escalate'], 'risk-path PR escalates');
+	$assert($has_reason($risky, 'touches_webhook_auth'), 'webhook/auth path escalates');
     $assert($has_reason($risky, 'touches_public_api_surface'), 'ability/tool/CLI public surface escalates');
     $assert($has_reason($risky, 'touches_migrations_jobs_queues'), 'migration/jobs/queue path escalates');
     $assert($has_reason($risky, 'touches_docs_user_facing_content'), 'docs/user-facing path escalates');
     $assert('run_checkout_backed_validation_when_available' === $risky['action_recommendation'], 'risky PR recommends checkout-backed validation');
     $assert('not_run_issue_111_pending' === $risky['execution_result_source'], 'policy names placeholder execution source while issue 111 is unavailable');
 
-    $stale = \DataMachineCode\GitHub\PrReviewEscalationPolicy::evaluate(
+	$failing = \DataMachineCode\GitHub\PrReviewEscalationPolicy::evaluate(
         'Extra-Chill/data-machine-code',
         $pull,
-        array( array( 'filename' => 'README.md', 'changes' => 1, 'patch_bytes' => 50 ) ),
-        array( 'homeboy_ci_results' => array( 'workflow' => array( 'head_sha' => 'oldsha' ) ) )
-    );
-    $assert($has_reason($stale, 'stale_homeboy_artifact'), 'stale Homeboy artifact head SHA escalates');
-
-    $failing = \DataMachineCode\GitHub\PrReviewEscalationPolicy::evaluate(
-        'Extra-Chill/data-machine-code',
-        $pull,
-        array( array( 'filename' => 'inc/GitHub/PrReviewFlowScaffold.php', 'changes' => 1, 'patch_bytes' => 50 ) ),
-        array(
-        'homeboy_ci_results' => array( 'workflow' => array( 'head_sha' => 'abc123head' ) ),
-        'check_runs'         => array( 'summary' => array( 'state' => 'pending' ) ),
-        'commit_statuses'    => array( 'summary' => array( 'state' => 'failure' ) ),
-        )
-    );
+		array( array( 'filename' => 'inc/GitHub/PrReviewFlowScaffold.php', 'changes' => 1, 'patch_bytes' => 50 ) ),
+		array(
+		'check_runs'      => array( 'summary' => array( 'state' => 'pending' ) ),
+		'commit_statuses' => array( 'summary' => array( 'state' => 'failure' ) ),
+		)
+	);
     $assert($has_reason($failing, 'failing_or_unknown_checks'), 'failing or pending checks/statuses escalate');
     $assert(1 === count(array_keys($failing['reasons'], 'failing_or_unknown_checks', true)), 'check/status reason is de-duplicated');
 
@@ -110,8 +96,8 @@ namespace {
         array( 'filename' => 'src/b.php', 'changes' => 60, 'patch_bytes' => 600 ),
         array( 'filename' => 'src/c.php', 'changes' => 60, 'patch_bytes' => 600 ),
         ),
-        array( 'homeboy_ci_results' => array( 'workflow' => array( 'head_sha' => 'abc123head' ) ) ),
-        array( 'max_files' => 2, 'max_patch_bytes' => 1000, 'max_total_changes' => 100 )
+		array(),
+		array( 'max_files' => 2, 'max_patch_bytes' => 1000, 'max_total_changes' => 100 )
     );
     $assert($has_reason($threshold, 'file_count_threshold'), 'file count threshold escalates');
     $assert($has_reason($threshold, 'patch_size_threshold'), 'patch size threshold escalates');

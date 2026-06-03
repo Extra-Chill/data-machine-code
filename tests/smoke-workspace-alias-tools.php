@@ -223,22 +223,22 @@ namespace {
     }
     $assert('workspace_edit schema does not expose broad find alias', ! isset($edit_definition['parameters']['properties']['find']) && ! isset($ability_edit_schema['properties']['find']));
 
-    $absolute_read                           = $tools->handleRead(array( 'path' => '/workspace/homeboy-extensions/wordpress/scripts/build/build.sh' ));
-    $assert('absolute workspace path read succeeds', true === ( $absolute_read['success'] ?? false ));
-    $assert('absolute workspace path infers repo', 'homeboy-extensions' === ( $ability->last_input['repo'] ?? '' ));
+	$absolute_read                           = $tools->handleRead(array( 'path' => '/workspace/example-plugin/wordpress/scripts/build/build.sh' ));
+	$assert('absolute workspace path read succeeds', true === ( $absolute_read['success'] ?? false ));
+	$assert('absolute workspace path infers repo', 'example-plugin' === ( $ability->last_input['repo'] ?? '' ));
     $assert('absolute workspace path becomes relative path', 'wordpress/scripts/build/build.sh' === ( $ability->last_input['path'] ?? '' ));
 
-    $absolute_repo_read = $tools->handleRead(array( 'repo' => '/workspace/homeboy-extensions', 'path' => 'wordpress/scripts/build/build.sh' ));
-    $assert('absolute workspace repo read succeeds', true === ( $absolute_repo_read['success'] ?? false ));
-    $assert('absolute workspace repo normalizes to handle', 'homeboy-extensions' === ( $ability->last_input['repo'] ?? '' ));
+	$absolute_repo_read = $tools->handleRead(array( 'repo' => '/workspace/example-plugin', 'path' => 'wordpress/scripts/build/build.sh' ));
+	$assert('absolute workspace repo read succeeds', true === ( $absolute_repo_read['success'] ?? false ));
+	$assert('absolute workspace repo normalizes to handle', 'example-plugin' === ( $ability->last_input['repo'] ?? '' ));
     $assert('absolute workspace repo preserves relative path', 'wordpress/scripts/build/build.sh' === ( $ability->last_input['path'] ?? '' ));
 
-	$absolute_escape = $tools->handleRead(array( 'path' => '/tmp/homeboy-extensions/README.md' ));
+	$absolute_escape = $tools->handleRead(array( 'path' => '/tmp/example-plugin/README.md' ));
 	$assert('absolute path outside workspace root is rejected', false === ( $absolute_escape['success'] ?? true ));
 
 	$edit_alias = $tools->handleEdit(
 		array(
-			'repo'    => 'homeboy-extensions',
+			'repo'    => 'example-plugin',
 			'path'    => 'wordpress/scripts/build/build.sh',
 			'search'  => 'npm install --silent',
 			'replace' => 'npm install --legacy-peer-deps',
@@ -250,7 +250,7 @@ namespace {
 
 	$edit_short_alias = $tools->handleEdit(
 		array(
-			'repo' => 'homeboy-extensions',
+			'repo' => 'example-plugin',
 			'path' => 'wordpress/scripts/build/build.sh',
 			'old'  => 'npm install --silent',
 			'new'  => 'npm install --legacy-peer-deps',
@@ -262,20 +262,20 @@ namespace {
 
     $ability_mounted_edit = \DataMachineCode\Abilities\WorkspaceAbilities::editFile(
         array(
-            'path'    => '/workspace/homeboy-extensions/wordpress/scripts/build/build.sh',
+			'path'    => '/workspace/example-plugin/wordpress/scripts/build/build.sh',
             'old'     => 'npm install --silent',
             'new'     => 'npm install --legacy-peer-deps',
         )
     );
     $assert('workspace_edit ability accepts mounted absolute path', ! is_wp_error($ability_mounted_edit) && true === ( $ability_mounted_edit['success'] ?? false ));
-    $assert('workspace_edit ability infers repo from mounted path', 'homeboy-extensions' === ( $GLOBALS['dmc_workspace_alias_remote_edit_input']['handle'] ?? '' ));
+	$assert('workspace_edit ability infers repo from mounted path', 'example-plugin' === ( $GLOBALS['dmc_workspace_alias_remote_edit_input']['handle'] ?? '' ));
     $assert('workspace_edit ability converts mounted path to relative path', 'wordpress/scripts/build/build.sh' === ( $GLOBALS['dmc_workspace_alias_remote_edit_input']['path'] ?? '' ));
     $assert('workspace_edit ability maps old alias to old_string', 'npm install --silent' === ( $GLOBALS['dmc_workspace_alias_remote_edit_input']['old_string'] ?? '' ));
     $assert('workspace_edit ability maps new alias to new_string', 'npm install --legacy-peer-deps' === ( $GLOBALS['dmc_workspace_alias_remote_edit_input']['new_string'] ?? '' ));
 
     $unsupported_alias = \DataMachineCode\Abilities\WorkspaceAbilities::editFile(
         array(
-            'repo'    => 'homeboy-extensions',
+			'repo'    => 'example-plugin',
             'path'    => 'wordpress/scripts/build/build.sh',
             'find'    => 'npm install --silent',
             'replace' => 'npm install --legacy-peer-deps',

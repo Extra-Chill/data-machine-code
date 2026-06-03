@@ -29,7 +29,7 @@ class PrReviewEscalationPolicy {
 	 * @param  string $repo    Repository in owner/repo format.
 	 * @param  array  $pull    Normalized pull request payload.
 	 * @param  array  $files   Normalized review-context changed files.
-	 * @param  array  $checks  Optional check/Homeboy context.
+	 * @param  array  $checks  Optional check and status context.
 	 * @param  array  $options Optional thresholds.
 	 * @return array<string,mixed>
 	 */
@@ -76,7 +76,7 @@ class PrReviewEscalationPolicy {
 			$reasons[] = 'change_count_threshold';
 		}
 
-		$reasons = array_merge($reasons, self::checkReasons($checks, $head_sha));
+		$reasons = array_merge($reasons, self::checkReasons($checks));
 		$reasons = array_values(array_unique(array_filter($reasons)));
 
 		$metrics['touched_groups'] = array_keys($metrics['touched_groups']);
@@ -131,23 +131,12 @@ class PrReviewEscalationPolicy {
 	}
 
 	/**
-	 * Convert check/Homeboy context into escalation reasons.
+	 * Convert check context into escalation reasons.
 	 *
 	 * @return string[]
 	 */
-	private static function checkReasons( array $checks, string $head_sha ): array {
+	private static function checkReasons( array $checks ): array {
 		$reasons = array();
-
-		$homeboy = $checks['homeboy_ci_results'] ?? null;
-		if ( is_array($homeboy) && ! empty($homeboy) ) {
-			$artifact_sha = (string) ( $homeboy['workflow']['head_sha'] ?? $homeboy['head_sha'] ?? '' );
-			if ( '' !== $head_sha && '' !== $artifact_sha && $head_sha !== $artifact_sha ) {
-				$reasons[] = 'stale_homeboy_artifact';
-			}
-		} else {
-			$homeboy_error = (string) ( $checks['error_codes']['homeboy_ci_results'] ?? '' );
-			$reasons[]     = str_contains($homeboy_error, 'expired') || str_contains($homeboy_error, 'stale') ? 'stale_homeboy_artifact' : 'missing_homeboy_artifact';
-		}
 
 		foreach ( array( 'check_runs', 'commit_statuses' ) as $key ) {
 			$state = (string) ( $checks[ $key ]['summary']['state'] ?? '' );

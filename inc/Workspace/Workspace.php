@@ -1348,9 +1348,13 @@ class Workspace {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_active_no_signal_report( array $opts = array() ): array|\WP_Error {
-		$started_at = microtime(true);
-		$limit      = array_key_exists('limit', $opts) ? (int) $opts['limit'] : 25;
-		$offset     = array_key_exists('offset', $opts) ? max(0, (int) $opts['offset']) : 0;
+		$started_at     = microtime(true);
+		$limit          = array_key_exists('limit', $opts) ? (int) $opts['limit'] : 25;
+		$offset         = array_key_exists('offset', $opts) ? max(0, (int) $opts['offset']) : 0;
+		$next_operation = isset($opts['next_command_operation']) && is_string($opts['next_command_operation']) && preg_match('/^active-no-signal-[a-z-]+$/', $opts['next_command_operation'])
+			? $opts['next_command_operation']
+			: 'active-no-signal-report';
+		$next_dry_run   = 'active-no-signal-report' !== $next_operation && ! empty($opts['dry_run']);
 		if ( $limit <= 0 ) {
 			return new \WP_Error('invalid_active_no_signal_limit', 'Active/no-signal report --limit must be greater than 0.', array( 'status' => 400 ));
 		}
@@ -1421,7 +1425,7 @@ class Workspace {
 			'partial'      => null !== $next_offset,
 			'complete'     => null === $next_offset,
 			'next_offset'  => $next_offset,
-			'next_command' => null === $next_offset ? null : sprintf('studio wp datamachine-code workspace worktree active-no-signal-report --limit=%d --offset=%d%s --format=json', $limit, $next_offset, null !== $budget_context ? ' --until-budget=' . (string) $budget_context['label'] : ''),
+			'next_command' => null === $next_offset ? null : sprintf('studio wp datamachine-code workspace worktree %s%s --limit=%d --offset=%d%s --format=json', $next_operation, $next_dry_run ? ' --dry-run' : '', $limit, $next_offset, null !== $budget_context ? ' --until-budget=' . (string) $budget_context['label'] : ''),
 		);
 		if ( $budget_stopped ) {
 			$pagination['partial']  = true;
@@ -1455,7 +1459,7 @@ class Workspace {
 	 */
 	public function worktree_active_no_signal_finalized_apply( array $opts = array() ): array|\WP_Error {
 		$dry_run = ! empty($opts['dry_run']);
-		$report  = $this->worktree_active_no_signal_report($opts);
+		$report  = $this->worktree_active_no_signal_report(array_merge($opts, array( 'next_command_operation' => 'active-no-signal-finalized-apply' )));
 		if ( is_wp_error($report) ) {
 			return $report;
 		}
@@ -1528,7 +1532,7 @@ class Workspace {
 			'written'      => $written,
 			'skipped'      => $skipped,
 			'summary'      => $summary,
-			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-finalized-apply', $dry_run, $opts),
+			'pagination'   => $this->build_active_no_signal_apply_pagination((array) ( $report['pagination'] ?? array() ), 'active-no-signal-finalized-apply', $dry_run, $opts),
 			'evidence'     => array(
 				'scope'  => 'promote finalized active_no_signal PR evidence into cleanup_eligible metadata',
 				'safety' => 'Revalidates dirty, unpushed, identity, and closed+merged PR evidence before writing metadata. Does not delete worktrees.',
@@ -1547,7 +1551,7 @@ class Workspace {
 	 */
 	public function worktree_active_no_signal_equivalent_clean_apply( array $opts = array() ): array|\WP_Error {
 		$dry_run = ! empty($opts['dry_run']);
-		$report  = $this->worktree_active_no_signal_report($opts);
+		$report  = $this->worktree_active_no_signal_report(array_merge($opts, array( 'next_command_operation' => 'active-no-signal-equivalent-clean-apply' )));
 		if ( is_wp_error($report) ) {
 			return $report;
 		}
@@ -1621,7 +1625,7 @@ class Workspace {
 			'written'      => $written,
 			'skipped'      => $skipped,
 			'summary'      => $summary,
-			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-equivalent-clean-apply', $dry_run, $opts),
+			'pagination'   => $this->build_active_no_signal_apply_pagination((array) ( $report['pagination'] ?? array() ), 'active-no-signal-equivalent-clean-apply', $dry_run, $opts),
 			'evidence'     => array(
 				'scope'  => 'promote effectively clean upstream-equivalent active_no_signal rows into cleanup_eligible metadata',
 				'safety' => 'Revalidates upstream-equivalence evidence before writing metadata. Does not delete worktrees.',
@@ -1640,7 +1644,7 @@ class Workspace {
 	 */
 	public function worktree_active_no_signal_merged_apply( array $opts = array() ): array|\WP_Error {
 		$dry_run = ! empty($opts['dry_run']);
-		$report  = $this->worktree_active_no_signal_report($opts);
+		$report  = $this->worktree_active_no_signal_report(array_merge($opts, array( 'next_command_operation' => 'active-no-signal-merged-apply' )));
 		if ( is_wp_error($report) ) {
 			return $report;
 		}
@@ -1714,7 +1718,7 @@ class Workspace {
 			'written'      => $written,
 			'skipped'      => $skipped,
 			'summary'      => $summary,
-			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-merged-apply', $dry_run, $opts),
+			'pagination'   => $this->build_active_no_signal_apply_pagination((array) ( $report['pagination'] ?? array() ), 'active-no-signal-merged-apply', $dry_run, $opts),
 			'evidence'     => array(
 				'scope'  => 'promote clean active_no_signal rows contained in remote default into cleanup_eligible metadata',
 				'safety' => 'Revalidates clean worktree, no unpushed commits, containment, primary protection, branch identity, and merged-to-default evidence before writing metadata. Does not delete worktrees.',
@@ -1725,29 +1729,37 @@ class Workspace {
 	/**
 	 * Build apply-specific pagination from the underlying active/no-signal report.
 	 *
-	 * @param  array<string,mixed> $pagination Report pagination.
-	 * @param  string              $operation  Apply operation name.
-	 * @param  bool                $dry_run    Whether to preserve dry-run mode.
+	 * @param  array<string,mixed> $pagination Report pagination payload.
+	 * @param  string              $operation  Active/no-signal apply operation.
+	 * @param  bool                $dry_run    Whether the current apply is a dry-run.
 	 * @param  array<string,mixed> $opts       Original operation options.
 	 * @return array<string,mixed>
 	 */
 	private function build_active_no_signal_apply_pagination( array $pagination, string $operation, bool $dry_run, array $opts ): array {
 		if ( null === ( $pagination['next_offset'] ?? null ) ) {
+			$pagination['next_command'] = null;
 			return $pagination;
 		}
 
-		$budget_label = isset($opts['internal_budget_label']) ? trim( (string) $opts['internal_budget_label']) : ( isset($opts['until_budget']) ? trim( (string) $opts['until_budget']) : '' );
-		$budget       = '' !== $budget_label
-			? ' --until-budget=' . $budget_label
-			: '';
+		$budget_label = isset($opts['internal_budget_label'])
+			? trim((string) $opts['internal_budget_label'])
+			: ( isset($opts['until_budget']) ? trim((string) $opts['until_budget']) : '' );
+		if ( '' === $budget_label && is_string($pagination['next_command'] ?? null) && preg_match('/ --until-budget=([^ ]+)/', (string) $pagination['next_command'], $matches) ) {
+			$budget_label = $matches[1];
+		}
+
+		$budget_arg  = '' !== $budget_label ? ' --until-budget=' . $budget_label : '';
+		$dry_run_arg = $dry_run ? ' --dry-run' : '';
+		$limit       = (int) ( $pagination['limit'] ?? 25 );
+		$next_offset = (int) $pagination['next_offset'];
 
 		$pagination['next_command'] = sprintf(
 			'studio wp datamachine-code workspace worktree %s%s --limit=%d --offset=%d%s --format=json',
 			$operation,
-			$dry_run ? ' --dry-run' : '',
-			(int) ( $pagination['limit'] ?? 25 ),
-			(int) $pagination['next_offset'],
-			$budget
+			$dry_run_arg,
+			$limit,
+			$next_offset,
+			$budget_arg
 		);
 
 		return $pagination;
@@ -3424,7 +3436,7 @@ class Workspace {
 	private function get_worktree_artifact_profile( string $repo, string $path ): array {
 		$profile = array();
 
-		if ( is_file(rtrim($path, '/') . '/Cargo.toml') || 'homeboy' === $repo ) {
+		if ( is_file(rtrim($path, '/') . '/Cargo.toml') ) {
 			$profile['target'] = 'Rust build artifacts';
 		}
 

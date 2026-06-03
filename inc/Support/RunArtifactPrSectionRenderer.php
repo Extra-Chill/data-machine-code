@@ -9,6 +9,10 @@ namespace DataMachineCode\Support;
 
 defined('ABSPATH') || exit;
 
+if ( ! class_exists(SecretRedactor::class) ) {
+	require_once __DIR__ . '/SecretRedactor.php';
+}
+
 /**
  * Converts artifact-like arrays into idempotent PR body/comment sections.
  */

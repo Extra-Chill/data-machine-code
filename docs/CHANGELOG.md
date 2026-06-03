@@ -2,6 +2,29 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.29] - 2026-06-03
+
+### Changed
+- cover workspace tool transcript payloads
+
+## [0.47.28] - 2026-06-03
+
+### Fixed
+- align worktree guard assignments
+- refuse worktrees behind default branch
+
+## [0.47.27] - 2026-06-02
+
+### Fixed
+- remove unused escalation policy parameter
+- remove Homeboy runtime integration
+- remove Homeboy AGENTS guidance
+
+## [0.47.26] - 2026-06-02
+
+### Fixed
+- keep active cleanup apply pagination symmetric
+
 ## [0.47.25] - 2026-06-02
 
 ### Changed

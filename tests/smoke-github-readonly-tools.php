@@ -154,24 +154,15 @@ namespace {
                         'artifact'   => array( 'name' => $parameters['artifact_name'] ?? '' ),
                         'json_files' => array( 'manifest.json' => array( 'schema' => 'example.v1' ) ),
                        ),
-                       'datamachine-code/get-github-homeboy-ci-results' => array(
-                        'success' => true,
-                        'results' => array( 'state' => 'success', 'mode' => 'review' ),
-                       ),
-                       'datamachine-code/get-github-pull-review-context' => array(
-                        'success' => true,
-                        'context' => array( 'metadata' => array( 'github_type' => 'pull_review_context' ) ),
+					   'datamachine-code/get-github-pull-review-context' => array(
+						'success' => true,
+						'context' => array( 'metadata' => array( 'github_type' => 'pull_review_context' ) ),
                        ),
                        'datamachine-code/get-github-repo-review-profile' => array(
                         'success' => true,
                         'profile' => array( 'schema' => 'data-machine-code/repo-review-profile/v1' ),
                        ),
-                       'datamachine-code/run-pr-homeboy-review' => array(
-                        'success' => true,
-                        'schema'  => 'data-machine-code/pr-homeboy-review/v1',
-                        'status'  => 'passed',
-                       ),
-                       'datamachine-code/get-github-pr-documentation-impact' => array(
+					   'datamachine-code/get-github-pr-documentation-impact' => array(
                         'success' => true,
                         'packet'  => array( 'schema' => 'data-machine-code/pr-documentation-impact/v1' ),
                        ),
@@ -255,28 +246,20 @@ namespace {
     'required' => array( 'repo', 'sha' ),
     'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'sha' => 'abc123' ),
     ),
-    'get_github_actions_artifact'     => array(
-    'ability'  => 'datamachine-code/get-github-actions-artifact',
-    'method'   => 'handleActionsArtifact',
-    'callback' => array( GitHubAbilities::class, 'getActionsArtifact' ),
-    'required' => array( 'repo', 'artifact_name' ),
-    'optional' => array( 'head_sha', 'pull_number', 'max_artifact_bytes', 'include_json' ),
-    'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'head_sha' => 'abc123', 'artifact_name' => 'homeboy-ci-results' ),
-    ),
-    'get_github_homeboy_ci_results'  => array(
-    'ability'  => 'datamachine-code/get-github-homeboy-ci-results',
-    'method'   => 'handleHomeboyCiResults',
-    'callback' => array( GitHubAbilities::class, 'getHomeboyCiResults' ),
-    'required' => array( 'repo' ),
-    'optional' => array( 'head_sha', 'pull_number', 'artifact_name', 'max_artifact_bytes', 'include_raw' ),
-    'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'head_sha' => 'abc123', 'artifact_name' => 'homeboy-ci-results' ),
-    ),
+	'get_github_actions_artifact'    => array(
+	'ability'  => 'datamachine-code/get-github-actions-artifact',
+	'method'   => 'handleActionsArtifact',
+	'callback' => array( GitHubAbilities::class, 'getActionsArtifact' ),
+	'required' => array( 'repo', 'artifact_name' ),
+	'optional' => array( 'head_sha', 'pull_number', 'max_artifact_bytes', 'include_json' ),
+	'params'   => array( 'repo' => 'Extra-Chill/data-machine-code', 'head_sha' => 'abc123', 'artifact_name' => 'ci-results' ),
+	),
     'get_github_pull_review_context' => array(
     'ability'  => 'datamachine-code/get-github-pull-review-context',
     'method'   => 'handlePullReviewContext',
     'callback' => array( GitHubAbilities::class, 'getPullReviewContext' ),
     'required' => array( 'repo', 'pull_number' ),
-    'optional' => array( 'head_sha', 'max_patch_chars', 'include_file_contents', 'include_base_contents', 'context_paths', 'max_file_content_chars', 'max_context_files', 'max_total_context_chars', 'include_checks', 'include_statuses', 'max_check_runs', 'include_check_output', 'include_homeboy_ci', 'artifact_name' ),
+	'optional' => array( 'head_sha', 'max_patch_chars', 'include_file_contents', 'include_base_contents', 'context_paths', 'max_file_content_chars', 'max_context_files', 'max_total_context_chars', 'include_checks', 'include_statuses', 'max_check_runs', 'include_check_output' ),
     'params'   => array(
                 'repo'                    => 'Extra-Chill/data-machine-code',
                 'pull_number'             => 89,
@@ -291,10 +274,8 @@ namespace {
                 'include_statuses'        => true,
                 'max_check_runs'          => 30,
                 'include_check_output'    => false,
-                'include_homeboy_ci'      => true,
-                'artifact_name'           => 'homeboy-ci-results',
-    ),
-    ),
+	),
+	),
     'github_repo_review_profile'     => array(
     'ability'  => 'datamachine-code/get-github-repo-review-profile',
     'method'   => 'handleRepoReviewProfile',
@@ -310,20 +291,7 @@ namespace {
                 'max_architecture_docs' => 4,
     ),
     ),
-    'run_pr_homeboy_review'          => array(
-    'ability'  => 'datamachine-code/run-pr-homeboy-review',
-    'method'   => 'handleRunPrHomeboyReview',
-    'callback' => array( GitHubAbilities::class, 'runPrHomeboyReview' ),
-    'required' => array( 'repo', 'pull_number', 'head_sha' ),
-    'optional' => array( 'base_ref' ),
-    'params'   => array(
-                'repo'        => 'Extra-Chill/data-machine-code',
-                'pull_number' => 111,
-                'head_sha'    => 'abc123',
-                'base_ref'    => 'main',
-    ),
-    ),
-    'github_pr_documentation_impact' => array(
+	'github_pr_documentation_impact' => array(
     'ability'  => 'datamachine-code/get-github-pr-documentation-impact',
     'method'   => 'handlePullDocumentationImpact',
     'callback' => array( GitHubAbilities::class, 'getPullDocumentationImpact' ),

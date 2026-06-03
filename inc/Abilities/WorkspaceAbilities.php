@@ -1194,7 +1194,7 @@ class WorkspaceAbilities {
 							),
 							'allow_stale'    => array(
 								'type'        => 'boolean',
-								'description' => 'Bypass the staleness gate. When false (default) and the new worktree would be more than `datamachine_worktree_stale_threshold` commits behind upstream, worktree creation is rolled back and a `worktree_stale` error is returned. Set true to opt in to a known-stale checkout.',
+								'description' => 'Bypass the staleness gate. When false (default), any branch/base behind the remote default branch is refused, and a new worktree more than `datamachine_worktree_stale_threshold` commits behind upstream is rolled back with a staleness error. Set true to opt in to a known-stale checkout.',
 							),
 							'rebase_base'    => array(
 								'type'        => 'boolean',
@@ -1259,6 +1259,14 @@ class WorkspaceAbilities {
 							'base_upstream'             => array(
 								'type'        => 'string',
 								'description' => 'Paired with base_stale_commits_behind: the origin ref the local base was compared against (e.g. `origin/main`).',
+							),
+							'default_branch_commits_behind' => array(
+								'type'        => 'integer',
+								'description' => 'How many commits the requested branch/base is behind the remote default branch. Any value greater than 0 is refused unless allow_stale=true.',
+							),
+							'default_branch_ref'        => array(
+								'type'        => 'string',
+								'description' => 'Remote default branch ref used for default-branch freshness checks (e.g. `refs/remotes/origin/main`).',
 							),
 							'gate_threshold'            => array(
 								'type'        => 'integer',

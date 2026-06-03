@@ -96,12 +96,10 @@ namespace {
     $assert('review context expansion is conservative by default', false === $review_config['include_file_contents'] && false === $review_config['include_base_contents']);
     $assert('review context includes check runs by default', true === $review_config['include_checks']);
     $assert('review context includes commit statuses by default', true === $review_config['include_statuses']);
-    $assert('review context includes Homeboy CI by default', true === $review_config['include_homeboy_ci']);
-    $assert('review context includes escalation policy by default', true === $review_config['include_escalation_policy']);
-    $assert('review context bounds check runs', 30 === $review_config['max_check_runs']);
-    $assert('review context omits check output by default', false === $review_config['include_check_output']);
-    $assert('review context names Homeboy artifact', 'homeboy-ci-results' === $review_config['artifact_name']);
-    $assert('review context carries escalation thresholds', 20 === $review_config['escalation_policy']['max_files'] && 100000 === $review_config['escalation_policy']['max_patch_bytes']);
+	$assert('review context includes escalation policy by default', true === $review_config['include_escalation_policy']);
+	$assert('review context bounds check runs', 30 === $review_config['max_check_runs']);
+	$assert('review context omits check output by default', false === $review_config['include_check_output']);
+	$assert('review context carries escalation thresholds', 20 === $review_config['escalation_policy']['max_files'] && 100000 === $review_config['escalation_policy']['max_patch_bytes']);
 
     $ai_step = $steps[2];
     $prompt  = $ai_step['user_message'];
@@ -121,8 +119,7 @@ namespace {
     $assert('read-only get_github_pull_review_context tool enabled', in_array('get_github_pull_review_context', $tools, true));
     $assert('read-only get_github_check_runs tool enabled', in_array('get_github_check_runs', $tools, true));
     $assert('read-only get_github_commit_statuses tool enabled', in_array('get_github_commit_statuses', $tools, true));
-    $assert('read-only get_github_homeboy_ci_results tool enabled', in_array('get_github_homeboy_ci_results', $tools, true));
-    $assert('read-only github_repo_review_profile tool enabled', in_array('github_repo_review_profile', $tools, true));
+	$assert('read-only github_repo_review_profile tool enabled', in_array('github_repo_review_profile', $tools, true));
     $assert('read-only get_github_file tool enabled', in_array('get_github_file', $tools, true));
     $assert('read-only list_github_tree tool enabled', in_array('list_github_tree', $tools, true));
     $assert('plain PR comment tool is not enabled', ! in_array('comment_github_pull_request', $tools, true));

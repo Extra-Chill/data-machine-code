@@ -56,7 +56,7 @@ class PrReviewFlowScaffold {
 			'notes'        => array(
 				'This scaffold is intentionally a normal Data Machine workflow definition, not runtime magic.',
 				'Import/create the pipeline and flow through Data Machine, then inspect and edit the generated steps normally.',
-				'The GitHub pull_review_context step uses webhook-derived placeholders for the PR number and head SHA, including Homeboy CI artifacts when available.',
+				'The GitHub pull_review_context step uses webhook-derived placeholders for the PR number and head SHA, including check and status context when available.',
 				'The AI review step can call github_repo_review_profile once for bounded repository rules and architecture context before making findings.',
 			),
 			'webhook'      => array(
@@ -165,11 +165,9 @@ class PrReviewFlowScaffold {
 				'max_total_context_chars'   => 100000,
 				'include_checks'            => true,
 				'include_statuses'          => true,
-				'include_homeboy_ci'        => true,
 				'include_escalation_policy' => true,
 				'max_check_runs'            => 30,
 				'include_check_output'      => false,
-				'artifact_name'             => 'homeboy-ci-results',
 				'escalation_policy'         => array(
 					'max_files'         => 20,
 					'max_patch_bytes'   => 100000,
@@ -197,7 +195,6 @@ class PrReviewFlowScaffold {
 				'get_github_pull_review_context',
 				'get_github_check_runs',
 				'get_github_commit_statuses',
-				'get_github_homeboy_ci_results',
 				'github_repo_review_profile',
 				'get_github_file',
 				'list_github_tree',
