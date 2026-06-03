@@ -33,6 +33,8 @@ $assert(false !== strpos($handler, "'items'       => array( 'type' => 'string' )
 $assert(false !== strpos($handler, 'GitHubAbilities::createIssue'), 'handler delegates issue creation to GitHubAbilities');
 $assert(false !== strpos($settings, "'labels'") && false !== strpos($settings, "'assignees'"), 'settings expose labels and assignees defaults');
 $assert(false !== strpos($plugin, 'new \\DataMachineCode\\Handlers\\GitHub\\GitHubIssuePublish();'), 'plugin bootstraps GitHub issue publish handler');
+$assert(false !== strpos($plugin, "did_action('plugins_loaded')") && false !== strpos($plugin, 'datamachine_code_bootstrap();'), 'plugin bootstraps immediately when loaded after plugins_loaded');
+$assert(false !== strpos($plugin, "'activated_plugin'") && false !== strpos($plugin, 'datamachine_code_bootstrap();'), 'plugin retries bootstrap after late activation completes');
 
 echo "\n";
 if (empty($failures) ) {
