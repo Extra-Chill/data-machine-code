@@ -332,7 +332,7 @@ trait WorkspaceArtifactCleanup {
 					$dirty_probe = $this->probe_worktree_dirty_count($wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 					if ( is_wp_error($dirty_probe) ) {
 						$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $wt_path, $dirty_probe, 'artifact cleanup dirty-state probe', 'leaving artifacts in place');
-						$skipped[] = array_merge(
+						$skipped[]  = array_merge(
 							$base_row,
 							$diagnostic,
 							array( 'artifacts' => $artifacts )
@@ -356,7 +356,7 @@ trait WorkspaceArtifactCleanup {
 				$unpushed = $this->count_unpushed_commits($wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 				if ( is_wp_error($unpushed) ) {
 					$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $wt_path, $unpushed, 'artifact cleanup safety probe', 'leaving artifacts in place');
-					$skipped[] = array_merge(
+					$skipped[]  = array_merge(
 						$base_row,
 						$diagnostic,
 						array( 'artifacts' => $artifacts )

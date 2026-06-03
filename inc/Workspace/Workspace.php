@@ -1103,12 +1103,12 @@ class Workspace {
 
 		return array_merge(
 			array(
-				'handle'      => $handle,
-				'repo'        => $repo,
-				'branch'      => $branch,
-				'path'        => $path,
-				'created_at'  => $created_at,
-				'metadata'    => $metadata,
+				'handle'     => $handle,
+				'repo'       => $repo,
+				'branch'     => $branch,
+				'path'       => $path,
+				'created_at' => $created_at,
+				'metadata'   => $metadata,
 			),
 			$diagnostic,
 			$disk_fields
@@ -1145,12 +1145,12 @@ class Workspace {
 		$parsed = $this->parse_handle($handle);
 		if ( ! empty($parsed['is_worktree']) && '' !== $repo && (string) ( $parsed['repo'] ?? '' ) !== $repo ) {
 			return array(
-				'reason_code'          => 'owner_repo_mismatch',
-				'reason'               => sprintf('worktree handle repo (%s) does not match inventory repo (%s) - %s: %s', (string) ( $parsed['repo'] ?? '' ), $repo, $safety_outcome, $message),
-				'hint'                 => 'Run workspace worktree reconcile-metadata --dry-run to review stale registry ownership, then prune or repair the mismatched row.',
-				'handle_repo'          => (string) ( $parsed['repo'] ?? '' ),
-				'inventory_repo'       => $repo,
-				'git_error_code'       => $error_code,
+				'reason_code'    => 'owner_repo_mismatch',
+				'reason'         => sprintf('worktree handle repo (%s) does not match inventory repo (%s) - %s: %s', (string) ( $parsed['repo'] ?? '' ), $repo, $safety_outcome, $message),
+				'hint'           => 'Run workspace worktree reconcile-metadata --dry-run to review stale registry ownership, then prune or repair the mismatched row.',
+				'handle_repo'    => (string) ( $parsed['repo'] ?? '' ),
+				'inventory_repo' => $repo,
+				'git_error_code' => $error_code,
 			);
 		}
 
