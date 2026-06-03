@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.30] - 2026-06-03
+
+### Changed
+- Preserve active/no-signal apply pagination
+
 ## [0.47.29] - 2026-06-03
 
 ### Changed
