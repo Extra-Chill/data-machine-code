@@ -366,6 +366,88 @@ namespace {
         }
     }
 
+    class FakeActiveNoSignalAbility
+    {
+        public array $last_input = array();
+        private string $mode;
+
+        public function __construct( string $mode )
+        {
+            $this->mode = $mode;
+        }
+
+        public function execute( array $input ): array
+        {
+            $this->last_input = $input;
+            $limit = (int) ( $input['limit'] ?? 25 );
+            $offset = (int) ( $input['offset'] ?? 0 );
+            $budget = isset($input['until_budget']) && '' !== trim((string) $input['until_budget']) ? ' --until-budget=' . trim((string) $input['until_budget']) : '';
+            $dry_run = 'report' !== $this->mode && ! empty($input['dry_run']) ? ' --dry-run' : '';
+            $next_command = sprintf('studio wp datamachine-code workspace worktree active-no-signal-%s%s --limit=%d --offset=%d%s --format=json', $this->mode, $dry_run, $limit, $offset + $limit, $budget);
+
+            if ( 'report' === $this->mode ) {
+                return array(
+                'success'      => true,
+                'mode'         => 'active_no_signal_report',
+                'review_only'  => true,
+                'rows'         => array(
+                array(
+                'handle'          => 'repo@needs-review',
+                'branch'          => 'needs-review',
+                'suggested_action'=> 'manual_review',
+                'dirty'           => 0,
+                'unpushed'        => 0,
+                'pr'              => null,
+                'remote_tracking' => false,
+                ),
+                ),
+                'summary'      => array( 'inspected' => 1, 'by_suggested_action' => array( 'manual_review' => 1 ) ),
+                'pagination'   => array(
+                'total'        => 2,
+                'offset'       => $offset,
+                'limit'        => $limit,
+                'scanned'      => 1,
+                'partial'      => true,
+                'complete'     => false,
+                'next_offset'  => $offset + $limit,
+                'next_command' => $next_command,
+                ),
+                );
+            }
+
+            return array(
+            'success'     => true,
+            'mode'        => 'active_no_signal_' . str_replace('-', '_', $this->mode),
+            'dry_run'     => ! empty($input['dry_run']),
+            'applied'     => empty($input['dry_run']),
+            'destructive' => false,
+            'planned'     => array(
+            array(
+            'handle'   => 'repo@needs-review',
+            'branch'   => 'needs-review',
+            'metadata' => array(
+            'lifecycle_state' => 'cleanup_eligible',
+            'cleanup_eligibility_evidence' => array( 'signal' => 'test' ),
+            ),
+            ),
+            ),
+            'written'     => array(),
+            'skipped'     => array(),
+            'summary'     => array( 'inspected' => 1, 'planned' => 1, 'written' => 0, 'skipped' => 0 ),
+            'pagination'  => array(
+            'total'        => 2,
+            'offset'       => $offset,
+            'limit'        => $limit,
+            'scanned'      => 1,
+            'partial'      => true,
+            'complete'     => false,
+            'next_offset'  => $offset + $limit,
+            'next_command' => $next_command,
+            ),
+            );
+        }
+    }
+
     class FakeListAbility
     {
         public function execute( array $input ): array  // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
@@ -621,6 +703,10 @@ namespace {
     $ability = new FakeCleanupAbility();
     $artifact_ability = new FakeArtifactCleanupAbility();
     $emergency_ability = new FakeEmergencyCleanupAbility();
+    $active_report_ability = new FakeActiveNoSignalAbility('report');
+    $active_finalized_ability = new FakeActiveNoSignalAbility('finalized-apply');
+    $active_equivalent_clean_ability = new FakeActiveNoSignalAbility('equivalent-clean-apply');
+    $active_merged_ability = new FakeActiveNoSignalAbility('merged-apply');
     $list_ability = new FakeListAbility();
     $cleanup_run_ability = new FakeCleanupRunAbility();
     $cleanup_status_ability = new FakeCleanupStatusAbility();
@@ -635,13 +721,11 @@ namespace {
     'datamachine-code/workspace-worktree-cleanup'           => $ability,
     'datamachine-code/workspace-worktree-cleanup-artifacts' => $artifact_ability,
     'datamachine-code/workspace-worktree-emergency-cleanup' => $emergency_ability,
+    'datamachine-code/workspace-worktree-active-no-signal-report' => $active_report_ability,
+    'datamachine-code/workspace-worktree-active-no-signal-finalized-apply' => $active_finalized_ability,
+    'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply' => $active_equivalent_clean_ability,
+    'datamachine-code/workspace-worktree-active-no-signal-merged-apply' => $active_merged_ability,
     'datamachine-code/workspace-worktree-list'              => $list_ability,
-    'datamachine-code/workspace-worktree-active-no-signal-finalized-apply' =>
-        $ability,
-    'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply' =>
-        $ability,
-    'datamachine-code/workspace-worktree-active-no-signal-merged-apply' =>
-        $ability,
     'datamachine/get-jobs'                             => $get_jobs_ability,
     'datamachine-code/retry-job'                       => $retry_job_ability,
     'datamachine-code/fail-job'                        => $fail_job_ability,
@@ -828,6 +912,36 @@ namespace {
     datamachine_code_cleanup_assert(10 === (int) ( $ability->last_input['offset'] ?? 0 ), 'cleanup forwards dry-run offset');
     datamachine_code_cleanup_assert('30s' === ( $ability->last_input['until_budget'] ?? '' ), 'cleanup forwards dry-run time budget');
 
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->worktree(array( 'active-no-signal-report' ), array( 'limit' => 5, 'offset' => 10, 'until-budget' => '30s', 'format' => 'json' ));
+    datamachine_code_cleanup_assert('30s' === ( $active_report_ability->last_input['until_budget'] ?? '' ), 'active/no-signal report forwards time budget');
+    $active_report_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    datamachine_code_cleanup_assert(str_contains($active_report_json['pagination']['next_command'] ?? '', '--until-budget=30s'), 'active/no-signal report JSON continuation keeps time budget');
+
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->worktree(array( 'active-no-signal-finalized-apply' ), array( 'dry-run' => true, 'limit' => 5, 'offset' => 10, 'until-budget' => '30s', 'format' => 'json' ));
+    datamachine_code_cleanup_assert('30s' === ( $active_finalized_ability->last_input['until_budget'] ?? '' ), 'finalized active/no-signal apply forwards time budget');
+    $active_finalized_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    datamachine_code_cleanup_assert(str_contains($active_finalized_json['pagination']['next_command'] ?? '', 'active-no-signal-finalized-apply --dry-run'), 'finalized active/no-signal JSON continuation stays on dry-run apply');
+    datamachine_code_cleanup_assert(str_contains($active_finalized_json['pagination']['next_command'] ?? '', '--until-budget=30s'), 'finalized active/no-signal JSON continuation keeps time budget');
+
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->worktree(array( 'active-no-signal-equivalent-clean-apply' ), array( 'dry-run' => true, 'limit' => 5, 'offset' => 10, 'until-budget' => '30s', 'format' => 'json' ));
+    datamachine_code_cleanup_assert('30s' === ( $active_equivalent_clean_ability->last_input['until_budget'] ?? '' ), 'equivalent-clean active/no-signal apply forwards time budget');
+
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->worktree(array( 'active-no-signal-merged-apply' ), array( 'dry-run' => true, 'limit' => 5, 'offset' => 10, 'until-budget' => '30s', 'format' => 'json' ));
+    datamachine_code_cleanup_assert('30s' === ( $active_merged_ability->last_input['until_budget'] ?? '' ), 'merged active/no-signal apply forwards time budget');
+
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->worktree(array( 'active-no-signal-finalized-apply' ), array( 'dry-run' => true, 'limit' => 5, 'offset' => 10, 'until-budget' => '30s' ));
+    datamachine_code_cleanup_assert(in_array('Next page: studio wp datamachine-code workspace worktree active-no-signal-finalized-apply --dry-run --limit=5 --offset=15 --until-budget=30s --format=json', WP_CLI::$logs, true), 'human active/no-signal apply continuation keeps dry-run and time budget');
+
     echo "\n[1b] --apply-plan decodes JSON and forbids force\n";
     $plan_file = sys_get_temp_dir() . '/dmc-cleanup-plan-' . bin2hex(random_bytes(3)) . '.json';
     file_put_contents($plan_file, wp_json_encode(datamachine_code_cleanup_report()));
@@ -930,10 +1044,10 @@ namespace {
         array( 'active-no-signal-finalized-apply' ),
         array( 'dry-run' => true, 'limit' => 5, 'offset' => 10, 'until-budget' => '60s', 'format' => 'json' )
     );
-    datamachine_code_cleanup_assert(true === ( $ability->last_input['dry_run'] ?? null ), 'active/no-signal apply forwards dry-run flag');
-    datamachine_code_cleanup_assert(5 === (int) ( $ability->last_input['limit'] ?? 0 ), 'active/no-signal apply forwards limit');
-    datamachine_code_cleanup_assert(10 === (int) ( $ability->last_input['offset'] ?? 0 ), 'active/no-signal apply forwards offset');
-    datamachine_code_cleanup_assert('60s' === ( $ability->last_input['until_budget'] ?? '' ), 'active/no-signal apply forwards until-budget continuation');
+    datamachine_code_cleanup_assert(true === ( $active_finalized_ability->last_input['dry_run'] ?? null ), 'active/no-signal apply forwards dry-run flag');
+    datamachine_code_cleanup_assert(5 === (int) ( $active_finalized_ability->last_input['limit'] ?? 0 ), 'active/no-signal apply forwards limit');
+    datamachine_code_cleanup_assert(10 === (int) ( $active_finalized_ability->last_input['offset'] ?? 0 ), 'active/no-signal apply forwards offset');
+    datamachine_code_cleanup_assert('60s' === ( $active_finalized_ability->last_input['until_budget'] ?? '' ), 'active/no-signal apply forwards until-budget continuation');
 
     echo "\n[8b] emergency-cleanup keeps apply-plan as low-level escape hatch\n";
     WP_CLI::$logs      = array();

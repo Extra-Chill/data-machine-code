@@ -582,6 +582,12 @@ namespace {
     $assert(1, (int) ( $finalized_dry_run['summary']['planned'] ?? 0 ), 'finalized active/no-signal dry-run plans merged PR rows only');
     $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@head-merged')['cleanup_eligible_at'] ?? '', 'finalized active/no-signal dry-run leaves metadata unchanged');
     $run('git remote set-url origin https://github.com/acme/demo.git', $primary);
+    $budgeted_finalized_dry_run = $ws->worktree_active_no_signal_finalized_apply(array( 'dry_run' => true, 'limit' => 20, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 1, 'internal_budget_started' => microtime(true) - 1 ));
+    $run(sprintf('git remote set-url origin %s', escapeshellarg($remote)), $primary);
+    $assert(true, ! is_wp_error($budgeted_finalized_dry_run) && ( $budgeted_finalized_dry_run['success'] ?? false ), 'budgeted finalized active/no-signal dry-run succeeds');
+    $assert(true, str_contains($budgeted_finalized_dry_run['pagination']['next_command'] ?? '', 'active-no-signal-finalized-apply --dry-run'), 'budgeted finalized active/no-signal continuation stays on apply dry-run');
+    $assert(true, str_contains($budgeted_finalized_dry_run['pagination']['next_command'] ?? '', '--until-budget=1s'), 'budgeted finalized active/no-signal continuation keeps time budget');
+    $run('git remote set-url origin https://github.com/acme/demo.git', $primary);
     $finalized_page_dry_run = $ws->worktree_active_no_signal_finalized_apply(array( 'dry_run' => true, 'limit' => 1, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 60, 'internal_budget_started' => microtime(true) ));
     $run(sprintf('git remote set-url origin %s', escapeshellarg($remote)), $primary);
     $assert(true, str_contains($finalized_page_dry_run['pagination']['next_command'] ?? '', 'active-no-signal-finalized-apply --dry-run --limit=1 --offset=1 --until-budget=1s --format=json'), 'finalized active/no-signal dry-run continuation stays on finalized apply command');

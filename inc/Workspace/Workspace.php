@@ -1532,7 +1532,7 @@ class Workspace {
 			'written'      => $written,
 			'skipped'      => $skipped,
 			'summary'      => $summary,
-			'pagination'   => $this->retarget_active_no_signal_pagination($report['pagination'] ?? array(), 'active-no-signal-finalized-apply', $dry_run),
+			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-finalized-apply', $dry_run, $opts),
 			'evidence'     => array(
 				'scope'  => 'promote finalized active_no_signal PR evidence into cleanup_eligible metadata',
 				'safety' => 'Revalidates dirty, unpushed, identity, and closed+merged PR evidence before writing metadata. Does not delete worktrees.',
@@ -1625,7 +1625,7 @@ class Workspace {
 			'written'      => $written,
 			'skipped'      => $skipped,
 			'summary'      => $summary,
-			'pagination'   => $this->retarget_active_no_signal_pagination($report['pagination'] ?? array(), 'active-no-signal-equivalent-clean-apply', $dry_run),
+			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-equivalent-clean-apply', $dry_run, $opts),
 			'evidence'     => array(
 				'scope'  => 'promote effectively clean upstream-equivalent active_no_signal rows into cleanup_eligible metadata',
 				'safety' => 'Revalidates upstream-equivalence evidence before writing metadata. Does not delete worktrees.',
@@ -1718,7 +1718,7 @@ class Workspace {
 			'written'      => $written,
 			'skipped'      => $skipped,
 			'summary'      => $summary,
-			'pagination'   => $this->retarget_active_no_signal_pagination($report['pagination'] ?? array(), 'active-no-signal-merged-apply', $dry_run),
+			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-merged-apply', $dry_run, $opts),
 			'evidence'     => array(
 				'scope'  => 'promote clean active_no_signal rows contained in remote default into cleanup_eligible metadata',
 				'safety' => 'Revalidates clean worktree, no unpushed commits, containment, primary protection, branch identity, and merged-to-default evidence before writing metadata. Does not delete worktrees.',
@@ -1727,26 +1727,31 @@ class Workspace {
 	}
 
 	/**
-	 * Retarget active/no-signal report pagination to the apply command in use.
+	 * Build apply-specific pagination from the underlying active/no-signal report.
 	 *
 	 * @param  array<string,mixed> $pagination Report pagination payload.
 	 * @param  string              $operation  Active/no-signal apply operation.
 	 * @param  bool                $dry_run    Whether the current apply is a dry-run.
+	 * @param  array<string,mixed> $opts       Original operation options.
 	 * @return array<string,mixed>
 	 */
-	private function retarget_active_no_signal_pagination( array $pagination, string $operation, bool $dry_run ): array {
+	private function build_active_no_signal_apply_pagination( array $pagination, string $operation, bool $dry_run, array $opts ): array {
 		if ( null === ( $pagination['next_offset'] ?? null ) ) {
 			$pagination['next_command'] = null;
 			return $pagination;
 		}
 
+		$budget_label = isset($opts['internal_budget_label'])
+			? trim( (string) $opts['internal_budget_label'] )
+			: ( isset($opts['until_budget']) ? trim( (string) $opts['until_budget'] ) : '' );
+		if ( '' === $budget_label && is_string($pagination['next_command'] ?? null) && preg_match('/ --until-budget=([^ ]+)/', (string) $pagination['next_command'], $matches) ) {
+			$budget_label = $matches[1];
+		}
+
+		$budget_arg  = '' !== $budget_label ? ' --until-budget=' . $budget_label : '';
+		$dry_run_arg = $dry_run ? ' --dry-run' : '';
 		$limit       = (int) ( $pagination['limit'] ?? 25 );
 		$next_offset = (int) $pagination['next_offset'];
-		$dry_run_arg = $dry_run ? ' --dry-run' : '';
-		$budget_arg  = '';
-		if ( is_string($pagination['next_command'] ?? null) && preg_match('/ --until-budget=([^ ]+)/', (string) $pagination['next_command'], $matches) ) {
-			$budget_arg = ' --until-budget=' . $matches[1];
-		}
 
 		$pagination['next_command'] = sprintf(
 			'studio wp datamachine-code workspace worktree %s%s --limit=%d --offset=%d%s --format=json',
