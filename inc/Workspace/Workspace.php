@@ -792,12 +792,37 @@ class Workspace {
 
 			$dirty_probe = $this->probe_worktree_dirty_count($wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 			if ( is_wp_error($dirty_probe) ) {
-				$skipped[] = $this->build_worktree_probe_timeout_skip($handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $dirty_probe);
+				$skipped[] = $this->build_worktree_probe_failure_skip($handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $dirty_probe);
 				continue;
 			}
 			$dirty_count = (int) $dirty_probe;
 
 			if ( $dirty_count > 0 && ! $force ) {
+				$artifact_dirty = $this->classify_artifact_only_dirty_worktree($repo, $wt_path);
+				if ( is_array($artifact_dirty) ) {
+					$skipped[] = array_merge(
+						array(
+							'handle'      => $handle,
+							'repo'        => $repo,
+							'branch'      => $branch,
+							'path'        => $wt_path,
+							'reason_code' => 'artifact_only_dirty_worktree',
+							'reason'      => sprintf('working tree dirty only from declared/generated artifact paths (%d files) - run artifact cleanup instead of force-removing the worktree', $dirty_count),
+							'dirty'       => $dirty_count,
+							'hint'        => 'Run studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run to review reconstructable artifact cleanup; source edits are still protected by dirty_worktree.',
+							'created_at'  => $created_at,
+							'metadata'    => $metadata,
+						), $disk_fields, array(
+							'artifact_dirty_paths' => $artifact_dirty['paths'],
+							'artifacts'            => $artifact_dirty['artifacts'],
+							'artifact_size_bytes'  => $artifact_dirty['artifact_size_bytes'],
+							'size_bytes'           => max( (int) ( $disk_fields['size_bytes'] ?? 0 ), (int) $artifact_dirty['artifact_size_bytes'] ),
+							'estimated_size_bytes' => max( (int) ( $disk_fields['estimated_size_bytes'] ?? 0 ), (int) $artifact_dirty['artifact_size_bytes'] ),
+						)
+					);
+					continue;
+				}
+
 				// Before falling through to the generic dirty_worktree skip, try to
 				// classify whether this is the "merged PR + obsolete dirty edits"
 				// shape. That bucket is still skipped (force=false stays safe), but
@@ -863,7 +888,7 @@ class Workspace {
 			// harder problem than dirty-file loss, and this guard is cheap.
 			$unpushed = $this->count_unpushed_commits($wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 			if ( is_wp_error($unpushed) ) {
-				$skipped[] = $this->build_worktree_probe_timeout_skip($handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $unpushed);
+				$skipped[] = $this->build_worktree_probe_failure_skip($handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $unpushed);
 				continue;
 			}
 			if ( $unpushed > 0 ) {
@@ -902,7 +927,7 @@ class Workspace {
 			}
 
 			if ( isset($fetch_timeouts[ $repo ]) ) {
-				$skipped[] = $this->build_worktree_probe_timeout_skip($handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $fetch_timeouts[ $repo ]);
+				$skipped[] = $this->build_worktree_probe_failure_skip($handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $fetch_timeouts[ $repo ]);
 				continue;
 			}
 
@@ -910,7 +935,7 @@ class Workspace {
 				$fetch = $this->run_git($primary_path, 'fetch --prune --quiet origin', self::CLEANUP_GIT_PROBE_TIMEOUT);
 				if ( $this->is_git_timeout_error($fetch) ) {
 					$fetch_timeouts[ $repo ] = $fetch;
-					$skipped[]               = $this->build_worktree_probe_timeout_skip($handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $fetch);
+					$skipped[]               = $this->build_worktree_probe_failure_skip($handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $fetch);
 					continue;
 				}
 				$fetched[ $repo ] = true;
@@ -936,14 +961,17 @@ class Workspace {
 			if ( null === $signal ) {
 				$skipped[] = array_merge(
 					array(
-						'handle'      => $handle,
-						'repo'        => $repo,
-						'branch'      => $branch,
-						'path'        => $wt_path,
-						'reason_code' => 'no_merge_signal',
-						'reason'      => 'no merge signal — leaving in place',
-						'created_at'  => $created_at,
-						'metadata'    => $metadata,
+						'handle'                 => $handle,
+						'repo'                   => $repo,
+						'branch'                 => $branch,
+						'path'                   => $wt_path,
+						'reason_code'            => 'no_merge_signal',
+						'reason'                 => 'no merge signal — leaving in place',
+						'merge_signal_evidence'  => $this->build_no_merge_signal_evidence($primary_path, $branch, $skip_github),
+						'active_review_command'  => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json',
+						'active_review_commands' => $this->build_active_no_signal_next_commands(25, 0),
+						'created_at'             => $created_at,
+						'metadata'               => $metadata,
 					), $disk_fields
 				);
 				continue;
@@ -968,14 +996,21 @@ class Workspace {
 			if ( 'github-unknown' === ( $signal['signal'] ?? '' ) ) {
 				$skipped[] = array_merge(
 					array(
-						'handle'      => $handle,
-						'repo'        => $repo,
-						'branch'      => $branch,
-						'path'        => $wt_path,
-						'reason_code' => 'github_unknown',
-						'reason'      => $signal['reason'],
-						'created_at'  => $created_at,
-						'metadata'    => $metadata,
+						'handle'                 => $handle,
+						'repo'                   => $repo,
+						'branch'                 => $branch,
+						'path'                   => $wt_path,
+						'reason_code'            => 'github_unknown',
+						'reason'                 => $signal['reason'],
+						'merge_signal_evidence'  => array(
+							'classification' => 'github_signal_unavailable',
+							'github_signal'  => 'unavailable',
+							'reason'         => $signal['reason'],
+						),
+						'active_review_command'  => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json',
+						'active_review_commands' => $this->build_active_no_signal_next_commands(25, 0),
+						'created_at'             => $created_at,
+						'metadata'               => $metadata,
 					), $disk_fields
 				);
 				continue;
@@ -1225,7 +1260,7 @@ class Workspace {
 	}
 
 	/**
-	 * Build a standard cleanup skip row for timed-out safety probes.
+	 * Build a standard cleanup skip row for failed safety probes.
 	 *
 	 * @param  string    $handle      Worktree handle.
 	 * @param  string    $repo        Repo name.
@@ -1237,20 +1272,120 @@ class Workspace {
 	 * @param  \WP_Error $error       Probe error.
 	 * @return array<string,mixed>
 	 */
-	private function build_worktree_probe_timeout_skip( string $handle, string $repo, string $branch, string $path, mixed $created_at, mixed $metadata, array $disk_fields, \WP_Error $error ): array {
+	private function build_worktree_probe_failure_skip( string $handle, string $repo, string $branch, string $path, mixed $created_at, mixed $metadata, array $disk_fields, \WP_Error $error ): array {
+		$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $path, $error, 'cleanup safety probe', 'leaving in place');
+
 		return array_merge(
 			array(
-				'handle'      => $handle,
-				'repo'        => $repo,
-				'branch'      => $branch,
-				'path'        => $path,
-				'reason_code' => 'probe_timeout',
-				'reason'      => 'cleanup safety probe timed out - leaving in place: ' . $error->get_error_message(),
-				'created_at'  => $created_at,
-				'metadata'    => $metadata,
+				'handle'     => $handle,
+				'repo'       => $repo,
+				'branch'     => $branch,
+				'path'       => $path,
+				'created_at' => $created_at,
+				'metadata'   => $metadata,
 			),
+			$diagnostic,
 			$disk_fields
 		);
+	}
+
+	/**
+	 * Classify a failed git safety probe without weakening cleanup safety.
+	 *
+	 * @param  string    $handle          Worktree handle.
+	 * @param  string    $repo            Repo name from the inventory row.
+	 * @param  string    $path            Worktree path.
+	 * @param  \WP_Error $error           Probe error.
+	 * @param  string    $probe_label     Human-readable probe label.
+	 * @param  string    $safety_outcome  Human-readable safety outcome.
+	 * @return array<string,mixed>
+	 */
+	private function classify_worktree_git_probe_failure( string $handle, string $repo, string $path, \WP_Error $error, string $probe_label, string $safety_outcome ): array {
+		$message    = $error->get_error_message();
+		$error_code = $this->get_wp_error_code($error);
+		$error_data = $this->get_wp_error_data($error);
+		$output     = is_array($error_data) ? (string) ( $error_data['output'] ?? '' ) : '';
+		$haystack   = strtolower($message . "\n" . $output);
+
+		if ( $this->is_git_timeout_error($error) ) {
+			return array(
+				'reason_code'    => 'probe_timeout',
+				'reason'         => sprintf('%s timed out - %s: %s', $probe_label, $safety_outcome, $message),
+				'hint'           => 'Retry after reducing cleanup scope or increasing the git probe timeout budget.',
+				'git_error_code' => $error_code,
+			);
+		}
+
+		$parsed = $this->parse_handle($handle);
+		if ( ! empty($parsed['is_worktree']) && '' !== $repo && (string) ( $parsed['repo'] ?? '' ) !== $repo ) {
+			return array(
+				'reason_code'    => 'owner_repo_mismatch',
+				'reason'         => sprintf('worktree handle repo (%s) does not match inventory repo (%s) - %s: %s', (string) ( $parsed['repo'] ?? '' ), $repo, $safety_outcome, $message),
+				'hint'           => 'Run workspace worktree reconcile-metadata --dry-run to review stale registry ownership, then prune or repair the mismatched row.',
+				'handle_repo'    => (string) ( $parsed['repo'] ?? '' ),
+				'inventory_repo' => $repo,
+				'git_error_code' => $error_code,
+			);
+		}
+
+		if ( str_contains($haystack, '/.git/worktrees/') || str_contains($haystack, '\\.git\\worktrees\\') ) {
+			return array(
+				'reason_code'    => 'stale_worktree_marker',
+				'reason'         => sprintf('git worktree metadata marker is stale or missing - %s: %s', $safety_outcome, $message),
+				'hint'           => 'Inspect the worktree gitfile/common-dir and run git worktree prune or workspace worktree prune after confirming the row is stale.',
+				'git_error_code' => $error_code,
+			);
+		}
+
+		if (
+			str_contains($haystack, 'not a git repository')
+			|| str_contains($haystack, 'not a git worktree')
+			|| str_contains($haystack, 'invalid gitfile format')
+			|| str_contains($haystack, 'unable to read')
+			|| ( str_contains($haystack, 'no such file or directory') && str_contains($haystack, '.git') )
+		) {
+			return array(
+				'reason_code'    => 'broken_worktree_metadata',
+				'reason'         => sprintf('git worktree metadata is broken - %s: %s', $safety_outcome, $message),
+				'hint'           => 'Inspect the worktree path and git metadata, then repair metadata or prune the stale registry entry before rerunning cleanup.',
+				'git_error_code' => $error_code,
+			);
+		}
+
+		return array(
+			'reason_code'    => 'git_probe_failed',
+			'reason'         => sprintf('%s failed - %s: %s', $probe_label, $safety_outcome, $message),
+			'hint'           => 'Inspect the git probe error before rerunning cleanup; this was not an execution timeout.',
+			'git_error_code' => $error_code,
+		);
+	}
+
+	/**
+	 * Get a WP_Error code across real WordPress and smoke-test stubs.
+	 *
+	 * @param  \WP_Error $error Error object.
+	 * @return string
+	 */
+	private function get_wp_error_code( \WP_Error $error ): string {
+		if ( method_exists($error, 'get_error_code') ) {
+			return (string) $error->get_error_code();
+		}
+
+		return isset($error->code) ? (string) $error->code : '';
+	}
+
+	/**
+	 * Get WP_Error data across real WordPress and smoke-test stubs.
+	 *
+	 * @param  \WP_Error $error Error object.
+	 * @return mixed
+	 */
+	private function get_wp_error_data( \WP_Error $error ): mixed {
+		if ( method_exists($error, 'get_error_data') ) {
+			return $error->get_error_data();
+		}
+
+		return $error->data ?? null;
 	}
 
 	/**
@@ -2977,27 +3112,17 @@ class Workspace {
 
 		// Dirty gate: cheap porcelain call, bounded by the cleanup git timeout.
 		$dirty = $this->run_git($real_path, 'status --porcelain --untracked-files=normal', self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( $this->is_git_timeout_error($dirty) ) {
-			return array(
-				'skipped' => array(
-					'handle'      => $handle,
-					'repo'        => $repo,
-					'branch'      => $branch,
-					'path'        => $wt_path,
-					'reason_code' => 'probe_timeout',
-					'reason'      => 'dirty-state probe timed out — refusing bounded cleanup-eligible apply: ' . $dirty->get_error_message(),
-				),
-			);
-		}
 		if ( is_wp_error($dirty) ) {
+			$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $real_path, $dirty, 'dirty-state probe', 'refusing bounded cleanup-eligible apply');
 			return array(
-				'skipped' => array(
-					'handle'      => $handle,
-					'repo'        => $repo,
-					'branch'      => $branch,
-					'path'        => $wt_path,
-					'reason_code' => 'probe_failed',
-					'reason'      => 'dirty-state probe failed — refusing bounded cleanup-eligible apply: ' . $dirty->get_error_message(),
+				'skipped' => array_merge(
+					array(
+						'handle' => $handle,
+						'repo'   => $repo,
+						'branch' => $branch,
+						'path'   => $wt_path,
+					),
+					$diagnostic
 				),
 			);
 		}
@@ -3008,14 +3133,16 @@ class Workspace {
 		// upstream-equivalent apply path and the same evidence still holds now.
 		$unpushed = $this->count_unpushed_commits($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 		if ( $unpushed instanceof \WP_Error ) {
+			$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $real_path, $unpushed, 'unpushed-commit probe', 'refusing bounded cleanup-eligible apply');
 			return array(
-				'skipped' => array(
-					'handle'      => $handle,
-					'repo'        => $repo,
-					'branch'      => $branch,
-					'path'        => $wt_path,
-					'reason_code' => 'probe_timeout',
-					'reason'      => 'unpushed-commit probe timed out — refusing bounded cleanup-eligible apply: ' . $unpushed->get_error_message(),
+				'skipped' => array_merge(
+					array(
+						'handle' => $handle,
+						'repo'   => $repo,
+						'branch' => $branch,
+						'path'   => $wt_path,
+					),
+					$diagnostic
 				),
 			);
 		}
@@ -3338,6 +3465,7 @@ class Workspace {
 		+ (int) ( $skipped_by_reason['unpushed_commits'] ?? 0 );
 
 		$buckets = array(
+			'artifact_only_dirty_worktree'        => (int) ( $skipped_by_reason['artifact_only_dirty_worktree'] ?? 0 ),
 			'blocked_by_dirty_or_unpushed'        => $blocked_by_dirty_or_unpushed,
 			'needs_full_review'                   => $needs_full_review,
 			'needs_reconciliation'                => $needs_reconciliation,
@@ -3357,13 +3485,94 @@ class Workspace {
 	}
 
 	/**
+	 * Build the review/apply command set for stale active/no-merge-signal rows.
+	 *
+	 * @param  int $limit  Review page size.
+	 * @param  int $offset Review page offset.
+	 * @return array<string,string>
+	 */
+	private function build_active_no_signal_next_commands( int $limit, int $offset ): array {
+		$base = sprintf('--limit=%d --offset=%d --format=json', max(1, $limit), max(0, $offset));
+
+		return array(
+			'review_command'                 => 'studio wp datamachine-code workspace worktree active-no-signal-report ' . $base,
+			'finalized_apply_dry_run'        => 'studio wp datamachine-code workspace worktree active-no-signal-finalized-apply --dry-run ' . $base,
+			'equivalent_clean_apply_dry_run' => 'studio wp datamachine-code workspace worktree active-no-signal-equivalent-clean-apply --dry-run ' . $base,
+			'merged_apply_dry_run'           => 'studio wp datamachine-code workspace worktree active-no-signal-merged-apply --dry-run ' . $base,
+		);
+	}
+
+	/**
+	 * Build lightweight evidence explaining why cleanup produced no merge signal.
+	 *
+	 * @param  string $primary_path Path to the primary checkout.
+	 * @param  string $branch       Worktree branch.
+	 * @param  bool   $skip_github  Whether GitHub PR lookup was skipped.
+	 * @return array<string,mixed>
+	 */
+	private function build_no_merge_signal_evidence( string $primary_path, string $branch, bool $skip_github ): array {
+		$evidence = array(
+			'classification'         => 'no_cleanup_signal',
+			'remote_branch'          => 'unknown',
+			'local_default_relation' => 'unknown',
+			'github_signal'          => $skip_github ? 'skipped' : 'not_found',
+		);
+
+		$remote_ref = 'refs/remotes/origin/' . $branch;
+		$remote     = $this->run_git($primary_path, sprintf('rev-parse --verify --quiet %s', escapeshellarg($remote_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( ! is_wp_error($remote) && ! $this->is_git_timeout_error($remote) ) {
+			$evidence['remote_branch']  = 'still_exists';
+			$evidence['classification'] = 'remote_branch_still_exists';
+		} elseif ( $this->is_git_timeout_error($remote) ) {
+			$evidence['remote_branch'] = 'probe_timeout';
+			$evidence['remote_error']  = $remote->get_error_message();
+		} else {
+			$evidence['remote_branch'] = 'missing_or_untracked';
+		}
+
+		$default_ref = $this->resolve_remote_default_ref($primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_string($default_ref) && '' !== $default_ref ) {
+			$evidence['default_ref'] = $default_ref;
+			$outside                 = $this->run_git(
+				$primary_path,
+				sprintf('rev-list --count %s..%s', escapeshellarg($default_ref), escapeshellarg('refs/heads/' . $branch)),
+				self::CLEANUP_GIT_PROBE_TIMEOUT
+			);
+			if ( ! is_wp_error($outside) && ! $this->is_git_timeout_error($outside) ) {
+				$outside_count                       = (int) trim( (string) ( $outside['output'] ?? '' ));
+				$evidence['commits_outside_default'] = $outside_count;
+				$evidence['local_default_relation']  = 0 === $outside_count ? 'default_contained' : 'has_unique_commits';
+				$evidence['classification']          = 0 === $outside_count ? 'local_equivalent_default_contained' : $evidence['classification'];
+			} elseif ( $this->is_git_timeout_error($outside) ) {
+				$evidence['local_default_relation'] = 'probe_timeout';
+				$evidence['local_default_error']    = $outside->get_error_message();
+			}
+		} elseif ( is_wp_error($default_ref) ) {
+			$evidence['local_default_relation'] = 'probe_timeout';
+			$evidence['local_default_error']    = $default_ref->get_error_message();
+		} else {
+			$evidence['local_default_relation'] = 'default_ref_unavailable';
+		}
+
+		return $evidence;
+	}
+
+	/**
 	 * Build copy-pasteable next commands for skipped cleanup buckets.
 	 *
 	 * @param  array<string,int> $skipped_by_reason Skipped reason counts.
 	 * @return array<int,array<string,mixed>>
 	 */
 	private function worktree_cleanup_skipped_next_commands( array $skipped_by_reason ): array {
-		$templates = array(
+		$active_no_signal_commands = $this->build_active_no_signal_next_commands(25, 0);
+		$templates                 = array(
+			'artifact_only_dirty_worktree'       => array(
+				'label'       => 'Review generated artifact cleanup separately',
+				'command'     => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --format=json',
+				'alternative' => 'studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run',
+				'why'         => 'Dirty paths are limited to declared reconstructable artifact directories, so artifact cleanup can shed them without force-removing source worktrees.',
+				'destructive' => false,
+			),
 			'lifecycle_reconciliation_candidate' => array(
 				'label'       => 'Run DMC-owned lifecycle reconciliation before cleanup eligibility',
 				'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --format=json',
@@ -3379,10 +3588,27 @@ class Workspace {
 				'destructive' => false,
 			),
 			'active_no_signal'                   => array(
-				'label'       => 'Keep active rows or run full merge-signal review',
-				'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --skip-github --format=json',
-				'alternative' => 'No automatic cleanup action is safe from active inventory metadata alone.',
-				'why'         => 'Active rows without stale liveness or PR/task context are not cleanup candidates from inventory alone.',
+				'label'       => 'Batch-review active rows with no cleanup signal',
+				'command'     => $active_no_signal_commands['review_command'],
+				'alternative' => $active_no_signal_commands['merged_apply_dry_run'],
+				'commands'    => $active_no_signal_commands,
+				'why'         => 'Review-only evidence distinguishes active remote branches, merged/closed PRs, local default containment, patch-equivalence, and unavailable GitHub signal before any metadata is promoted.',
+				'destructive' => false,
+			),
+			'no_merge_signal'                    => array(
+				'label'       => 'Batch-review stale active rows with no merge signal',
+				'command'     => $active_no_signal_commands['review_command'],
+				'alternative' => $active_no_signal_commands['finalized_apply_dry_run'],
+				'commands'    => $active_no_signal_commands,
+				'why'         => 'Cleanup keeps these rows by default. The active/no-signal report gathers bounded evidence and routes finalized PR, merged-to-default, and patch-equivalent rows to reviewed metadata-promotion apply commands.',
+				'destructive' => false,
+			),
+			'github_unknown'                     => array(
+				'label'       => 'Retry cleanup or review active rows when GitHub signal was unavailable',
+				'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --format=json',
+				'alternative' => $active_no_signal_commands['review_command'],
+				'commands'    => $active_no_signal_commands,
+				'why'         => 'GitHub PR state could not be checked, so cleanup leaves the worktree in place until PR state is available or the active/no-signal review produces local evidence.',
 				'destructive' => false,
 			),
 			'submodule_worktree'                 => array(
@@ -3590,6 +3816,71 @@ class Workspace {
 	}
 
 	/**
+	 * Classify dirty worktrees whose dirty paths are only generated artifacts.
+	 *
+	 * @param  string $repo Repo name.
+	 * @param  string $path Worktree path.
+	 * @return array{paths: array<int,string>, artifacts: array<int,array<string,mixed>>, artifact_size_bytes: int}|null Artifact-only classification.
+	 */
+	private function classify_artifact_only_dirty_worktree( string $repo, string $path ): ?array {
+		if ( '' === $repo || '' === $path || ! is_dir($path) ) {
+			return null;
+		}
+
+		$artifacts = $this->detect_worktree_artifacts($repo, $path);
+		if ( array() === $artifacts ) {
+			return null;
+		}
+
+		$status = $this->run_git($path, 'status --porcelain', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($status) ) {
+			return null;
+		}
+
+		$dirty_paths = array();
+		foreach ( explode("\n", (string) ( $status['output'] ?? '' )) as $line ) {
+			$line = rtrim($line, "\r");
+			if ( '' === $line ) {
+				continue;
+			}
+
+			$path_part = trim(substr($line, 3));
+			if ( str_contains($path_part, ' -> ') ) {
+				$path_part = trim( (string) substr(strrchr($path_part, '>'), 1));
+			}
+			$path_part = trim($path_part, ' /');
+			if ( '' === $path_part ) {
+				return null;
+			}
+			$dirty_paths[] = $path_part;
+		}
+
+		if ( array() === $dirty_paths ) {
+			return null;
+		}
+
+		$artifact_paths = array_map(fn( $artifact ) => trim( (string) ( $artifact['path'] ?? '' ), '/'), $artifacts);
+		foreach ( $dirty_paths as $dirty_path ) {
+			$matched = false;
+			foreach ( $artifact_paths as $artifact_path ) {
+				if ( '' !== $artifact_path && ( $dirty_path === $artifact_path || str_starts_with($dirty_path, $artifact_path . '/') ) ) {
+					$matched = true;
+					break;
+				}
+			}
+			if ( ! $matched ) {
+				return null;
+			}
+		}
+
+		return array(
+			'paths'               => $dirty_paths,
+			'artifacts'           => $artifacts,
+			'artifact_size_bytes' => array_sum(array_map(fn( $artifact ) => (int) ( $artifact['size_bytes'] ?? 0 ), $artifacts)),
+		);
+	}
+
+	/**
 	 * Resolve repo-specific artifact profile paths.
 	 *
 	 * @param  string $repo Repo name.
@@ -3605,6 +3896,7 @@ class Workspace {
 
 		if ( is_file(rtrim($path, '/') . '/package.json') ) {
 			$profile['node_modules'] = 'Node dependencies';
+			$profile['build']        = 'JavaScript build output';
 			$profile['.next']        = 'Next.js build cache';
 			$profile['dist']         = 'JavaScript build output';
 			$profile['coverage']     = 'test coverage output';
