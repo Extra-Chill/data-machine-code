@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.29] - 2026-06-03
+
+### Changed
+- cover workspace tool transcript payloads
+
 ## [0.47.28] - 2026-06-03
 
 ### Fixed
