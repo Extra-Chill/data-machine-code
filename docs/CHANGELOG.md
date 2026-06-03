@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.33] - 2026-06-03
+
+### Changed
+- Use ability-native projections for DMC tools
+
 ## [0.47.32] - 2026-06-03
 
 ### Fixed
