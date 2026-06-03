@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.38] - 2026-06-03
+
+### Changed
+- Add AGENTS.md section provenance metadata
+
 ## [0.47.37] - 2026-06-03
 
 ### Fixed
