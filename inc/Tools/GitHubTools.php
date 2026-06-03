@@ -26,8 +26,8 @@ class GitHubTools extends BaseTool
     public function __construct()
     {
         $contexts = array( 'chat', 'pipeline' );
-        $this->registerTool('list_github_issues', array( $this, 'getListIssuesDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/list-github-issues' ));
-        $this->registerTool('get_github_issue', array( $this, 'getGetIssueDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/get-github-issue' ));
+        $this->registerProjectedToolFallback('list_github_issues', array( $this, 'getListIssuesDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/list-github-issues' ));
+        $this->registerProjectedToolFallback('get_github_issue', array( $this, 'getGetIssueDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/get-github-issue' ));
         $this->registerTool('manage_github_issue', array( $this, 'getManageIssueDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/update-github-issue' ));
         $this->registerTool('add_label_to_issue', array( $this, 'getAddLabelToIssueDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/add-github-labels' ));
         $this->registerTool('remove_label_from_issue', array( $this, 'getRemoveLabelFromIssueDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/remove-github-label' ));
@@ -50,62 +50,62 @@ class GitHubTools extends BaseTool
             'ability'      => 'datamachine-code/cleanup-github-pull-request',
             ) 
         );
-        $this->registerTool('list_github_pulls', array( $this, 'getListPullsDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/list-github-pulls' ));
-        $this->registerTool(
+        $this->registerProjectedToolFallback('list_github_pulls', array( $this, 'getListPullsDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/list-github-pulls' ));
+        $this->registerProjectedToolFallback(
             'get_github_pull', array( $this, 'getGetPullDefinition' ), $contexts, array(
             'access_level' => 'editor',
             'ability'      => 'datamachine-code/get-github-pull',
             ) 
         );
-        $this->registerTool(
+        $this->registerProjectedToolFallback(
             'get_github_pull_files', array( $this, 'getPullFilesDefinition' ), $contexts, array(
             'access_level' => 'editor',
             'ability'      => 'datamachine-code/list-github-pull-files',
             ) 
         );
-        $this->registerTool(
+        $this->registerProjectedToolFallback(
             'get_github_check_runs', array( $this, 'getCheckRunsDefinition' ), $contexts, array(
             'access_level' => 'editor',
             'ability'      => 'datamachine-code/get-github-check-runs',
             ) 
         );
-        $this->registerTool(
+        $this->registerProjectedToolFallback(
             'get_github_commit_statuses', array( $this, 'getCommitStatusesDefinition' ), $contexts, array(
             'access_level' => 'editor',
             'ability'      => 'datamachine-code/get-github-commit-statuses',
             ) 
         );
-        $this->registerTool(
+        $this->registerProjectedToolFallback(
             'get_github_actions_artifact', array( $this, 'getActionsArtifactDefinition' ), $contexts, array(
             'access_level' => 'editor',
             'ability'      => 'datamachine-code/get-github-actions-artifact',
             ) 
         );
-        $this->registerTool(
+        $this->registerProjectedToolFallback(
             'get_github_pull_review_context', array( $this, 'getPullReviewContextDefinition' ), $contexts, array(
             'access_level' => 'editor',
             'ability'      => 'datamachine-code/get-github-pull-review-context',
             ) 
         );
-        $this->registerTool(
+        $this->registerProjectedToolFallback(
             'github_repo_review_profile', array( $this, 'getRepoReviewProfileDefinition' ), $contexts, array(
             'access_level' => 'editor',
             'ability'      => 'datamachine-code/get-github-repo-review-profile',
             ) 
         );
-        $this->registerTool(
+        $this->registerProjectedToolFallback(
             'github_pr_documentation_impact', array( $this, 'getPullDocumentationImpactDefinition' ), $contexts, array(
             'access_level' => 'editor',
             'ability'      => 'datamachine-code/get-github-pr-documentation-impact',
             ) 
         );
-        $this->registerTool(
+        $this->registerProjectedToolFallback(
             'list_github_tree', array( $this, 'getListTreeDefinition' ), $contexts, array(
             'access_level' => 'editor',
             'ability'      => 'datamachine-code/list-github-tree',
             ) 
         );
-        $this->registerTool(
+        $this->registerProjectedToolFallback(
             'get_github_file', array( $this, 'getGetFileDefinition' ), $contexts, array(
             'access_level' => 'editor',
             'ability'      => 'datamachine-code/get-github-file',
@@ -117,7 +117,24 @@ class GitHubTools extends BaseTool
             'ability'      => 'datamachine-code/create-or-update-github-file',
             ) 
         );
-        $this->registerTool('list_github_repos', array( $this, 'getListReposDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/list-github-repos' ));
+        $this->registerProjectedToolFallback('list_github_repos', array( $this, 'getListReposDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/list-github-repos' ));
+    }
+
+    /**
+     * Register a legacy wrapper only when Data Machine cannot project the ability directly.
+     *
+     * @param string   $tool_id             Model-facing tool name.
+     * @param callable $definition_callback Definition callback.
+     * @param array    $contexts            Tool contexts.
+     * @param array    $options             Tool metadata.
+     */
+    private function registerProjectedToolFallback( string $tool_id, callable $definition_callback, array $contexts, array $options ): void
+    {
+        if ( class_exists(AbilityToolProjections::class) && AbilityToolProjections::is_projected($tool_id) ) {
+            return;
+        }
+
+        $this->registerTool($tool_id, $definition_callback, $contexts, $options);
     }
 
     /**
