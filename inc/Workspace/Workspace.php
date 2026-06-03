@@ -361,12 +361,16 @@ class Workspace {
 		$branch   = (string) ( $wt['branch'] ?? '' );
 		$path     = (string) ( $wt['path'] ?? '' );
 		$metadata = is_array($wt['metadata'] ?? null) ? (array) $wt['metadata'] : array();
-		$parsed   = '' !== $handle ? $this->parse_handle($handle) : array( 'repo' => '', 'branch_slug' => null, 'is_worktree' => false );
+		$parsed   = '' !== $handle ? $this->parse_handle($handle) : array(
+			'repo'        => '',
+			'branch_slug' => null,
+			'is_worktree' => false,
+		);
 
-		$stored = array(
-			'repo'   => isset($metadata['repo']) ? trim( (string) $metadata['repo']) : '',
-			'branch' => isset($metadata['branch']) ? trim( (string) $metadata['branch']) : '',
-			'path'   => isset($metadata['path']) ? rtrim(trim( (string) $metadata['path']), '/') : '',
+		$stored    = array(
+			'repo'   => isset($metadata['repo']) ? trim( (string) $metadata['repo'] ) : '',
+			'branch' => isset($metadata['branch']) ? trim( (string) $metadata['branch'] ) : '',
+			'path'   => isset($metadata['path']) ? rtrim(trim( (string) $metadata['path'] ), '/') : '',
 		);
 		$conflicts = array();
 		$hydrated  = array();
@@ -397,10 +401,10 @@ class Workspace {
 				$hydrated[] = 'branch';
 			} else {
 				$conflicts['branch'] = array(
-					'reason'          => 'metadata_branch_does_not_match_handle_slug',
-					'handle_slug'     => $branch_slug,
-					'metadata'        => $stored['branch'],
-					'metadata_slug'   => $this->slugify_branch($stored['branch']),
+					'reason'        => 'metadata_branch_does_not_match_handle_slug',
+					'handle_slug'   => $branch_slug,
+					'metadata'      => $stored['branch'],
+					'metadata_slug' => $this->slugify_branch($stored['branch']),
 				);
 			}
 		} elseif ( '' !== $branch && '' !== $stored['branch'] && $branch !== $stored['branch'] ) {
@@ -413,8 +417,10 @@ class Workspace {
 
 		if ( '' === $path && '' !== $stored['path'] ) {
 			$stored_basename = basename($stored['path']);
-			$stored_real     = realpath($stored['path']) ?: $stored['path'];
-			$workspace_real  = realpath($this->workspace_path) ?: $this->workspace_path;
+			$stored_real     = realpath($stored['path']);
+			$stored_real     = false !== $stored_real ? $stored_real : $stored['path'];
+			$workspace_real  = realpath($this->workspace_path);
+			$workspace_real  = false !== $workspace_real ? $workspace_real : $this->workspace_path;
 			if ( $stored_basename === $handle && str_starts_with(rtrim($stored_real, '/'), rtrim($workspace_real, '/') . '/') ) {
 				$path       = $stored['path'];
 				$hydrated[] = 'path';
@@ -429,8 +435,10 @@ class Workspace {
 		} elseif ( '' !== $path && '' !== $stored['path'] ) {
 			$row_path      = rtrim($path, '/');
 			$metadata_path = rtrim($stored['path'], '/');
-			$row_real      = realpath($row_path) ?: $row_path;
-			$metadata_real = realpath($metadata_path) ?: $metadata_path;
+			$row_real      = realpath($row_path);
+			$row_real      = false !== $row_real ? $row_real : $row_path;
+			$metadata_real = realpath($metadata_path);
+			$metadata_real = false !== $metadata_real ? $metadata_real : $metadata_path;
 			if ( rtrim($row_real, '/') !== rtrim($metadata_real, '/') ) {
 				$conflicts['path'] = array(
 					'reason'   => 'metadata_path_does_not_match_row',
@@ -441,13 +449,13 @@ class Workspace {
 		}
 
 		return array(
-			'repo'             => $repo,
-			'branch'           => $branch,
-			'path'             => $path,
-			'hydrated_fields'  => $hydrated,
-			'conflicts'        => $conflicts,
-			'stored_identity'  => array_filter($stored, fn( $value ) => '' !== $value),
-			'detached_branch'  => '' === (string) ( $wt['branch'] ?? '' ) && in_array('branch', $hydrated, true),
+			'repo'            => $repo,
+			'branch'          => $branch,
+			'path'            => $path,
+			'hydrated_fields' => $hydrated,
+			'conflicts'       => $conflicts,
+			'stored_identity' => array_filter($stored, fn( $value ) => '' !== $value),
+			'detached_branch' => '' === (string) ( $wt['branch'] ?? '' ) && in_array('branch', $hydrated, true),
 		);
 	}
 
@@ -726,19 +734,19 @@ class Workspace {
 				}
 				$skipped[] = array_merge(
 					array(
-						'handle'         => $handle,
-						'repo'           => $repo,
-						'branch'         => $branch,
-						'path'           => $wt_path,
-						'reason_code'    => 'missing_metadata',
-						'reason'         => 'missing repo/branch/path',
-						'missing_fields' => $missing_fields,
-						'hydrated_fields'   => $identity['hydrated_fields'],
+						'handle'             => $handle,
+						'repo'               => $repo,
+						'branch'             => $branch,
+						'path'               => $wt_path,
+						'reason_code'        => 'missing_metadata',
+						'reason'             => 'missing repo/branch/path',
+						'missing_fields'     => $missing_fields,
+						'hydrated_fields'    => $identity['hydrated_fields'],
 						'identity_conflicts' => $identity['conflicts'],
-						'stored_identity'   => $identity['stored_identity'],
-						'hint'              => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
-						'created_at'        => $created_at,
-						'metadata'          => $metadata,
+						'stored_identity'    => $identity['stored_identity'],
+						'hint'               => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
+						'created_at'         => $created_at,
+						'metadata'           => $metadata,
 					), $disk_fields
 				);
 				continue;
