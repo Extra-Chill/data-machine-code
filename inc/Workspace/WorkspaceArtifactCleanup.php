@@ -331,12 +331,11 @@ trait WorkspaceArtifactCleanup {
 				} else {
 					$dirty_probe = $this->probe_worktree_dirty_count($wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 					if ( is_wp_error($dirty_probe) ) {
+						$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $wt_path, $dirty_probe, 'artifact cleanup dirty-state probe', 'leaving artifacts in place');
 						$skipped[] = array_merge(
-							$base_row, array(
-								'reason_code' => 'probe_timeout',
-								'reason'      => 'artifact cleanup dirty-state probe failed - leaving artifacts in place: ' . $dirty_probe->get_error_message(),
-								'artifacts'   => $artifacts,
-							)
+							$base_row,
+							$diagnostic,
+							array( 'artifacts' => $artifacts )
 						);
 						continue;
 					}
@@ -356,12 +355,11 @@ trait WorkspaceArtifactCleanup {
 
 				$unpushed = $this->count_unpushed_commits($wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 				if ( is_wp_error($unpushed) ) {
+					$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $wt_path, $unpushed, 'artifact cleanup safety probe', 'leaving artifacts in place');
 					$skipped[] = array_merge(
-						$base_row, array(
-							'reason_code' => 'probe_timeout',
-							'reason'      => 'artifact cleanup safety probe timed out - leaving artifacts in place: ' . $unpushed->get_error_message(),
-							'artifacts'   => $artifacts,
-						)
+						$base_row,
+						$diagnostic,
+						array( 'artifacts' => $artifacts )
 					);
 					continue;
 				}
