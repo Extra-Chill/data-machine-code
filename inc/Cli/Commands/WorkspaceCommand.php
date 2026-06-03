@@ -2111,11 +2111,15 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * [--allow-stale]
 	 * : Bypass the staleness gate (applies to `add` only). By default,
-	 *   `worktree add` refuses to return a worktree that would be more than
+	 *   `worktree add` refuses any branch/base that is behind the remote
+	 *   default branch after fetch, and refuses to return a worktree that
+	 *   would be more than
 	 *   `datamachine_worktree_stale_threshold` commits (default 50) behind
 	 *   upstream — the stale checkout is torn down and a `worktree_stale`
 	 *   error is returned with remediation options. Pass `--allow-stale` to
-	 *   opt in to a known-stale checkout. The ability-level input is
+	 *   opt in to a known-stale checkout. Default-branch freshness is
+	 *   zero-tolerance: one missing default-branch commit is stale. The
+	 *   ability-level input is
 	 *   `allow_stale=true`.
 	 *
 	 * [--rebase-base]
@@ -2365,7 +2369,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Create a bare worktree (skip the default bootstrap pass)
 	 *     wp datamachine-code workspace worktree add data-machine fix/foo --skip-bootstrap
 	 *
-	 *     # Proceed with a known-stale base (bypass the staleness gate)
+	 *     # Proceed with a known-stale base/branch (bypass the staleness gate)
 	 *     wp datamachine-code workspace worktree add data-machine fix/foo --allow-stale
 	 *
 	 *     # Auto-rebase onto upstream after creation

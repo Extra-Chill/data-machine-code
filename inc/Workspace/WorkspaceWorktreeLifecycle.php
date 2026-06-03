@@ -41,6 +41,11 @@ trait WorkspaceWorktreeLifecycle {
 	 * Pass `$bootstrap = false` (or `--no-bootstrap` on the CLI) for a bare
 	 * checkout when you only need to read code on that branch.
 	 *
+	 * When the branch/base is behind the remote default branch, worktree
+	 * creation is refused unless `$allow_stale` is set. This check is
+	 * zero-tolerance: any default-branch commits missing from the requested
+	 * branch/base mean the worktree would start stale.
+	 *
 	 * When the materialized branch (or its local base) is more than
 	 * `datamachine_worktree_stale_threshold` commits behind upstream and
 	 * neither `$allow_stale` nor `$rebase_base` is set, the worktree is
@@ -59,7 +64,7 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  bool        $allow_stale    Bypass the staleness gate (default false).
 	 * @param  bool        $rebase_base    Rebase onto upstream after creation (default false).
 	 * @param  bool        $force          Bypass the disk-budget refusal threshold (default false).
-	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
+	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
 	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array() ): array|\WP_Error {
 		$visible = $this->require_workspace_visible();
@@ -197,10 +202,22 @@ trait WorkspaceWorktreeLifecycle {
 		$resolved_base  = null;
 
 		if ( 0 === $exists_local ) {
+			if ( ! $allow_stale && ! $rebase_base && ! $fetch_failed ) {
+				$default_guard = $this->assert_ref_current_with_default_branch($primary_path, $branch, $repo, $branch, 'branch');
+				if ( is_wp_error($default_guard) ) {
+					return $default_guard;
+				}
+			}
 			$cmd = sprintf('worktree add %s %s', escapeshellarg($wt_path), escapeshellarg($branch));
 		} else {
-			$base           = $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path);
-			$resolved_base  = $base;
+			$base          = $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path);
+			$resolved_base = $base;
+			if ( ! $allow_stale && ! $rebase_base && ! $fetch_failed ) {
+				$default_guard = $this->assert_ref_current_with_default_branch($primary_path, $resolved_base, $repo, $branch, 'base');
+				if ( is_wp_error($default_guard) ) {
+					return $default_guard;
+				}
+			}
 			$cmd            = sprintf('worktree add -b %s %s %s', escapeshellarg($branch), escapeshellarg($wt_path), escapeshellarg($base));
 			$created_branch = true;
 		}
@@ -274,10 +291,26 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		}
 
+		if ( ! $fetch_failed ) {
+			$this->populate_default_branch_behind_count($primary_path, $branch, $response);
+		}
+
 		// Staleness gate. Threshold filterable per-site / per-repo. Only fires
 		// when fetch succeeded (otherwise behind-counts are unreliable) and
 		// rebase didn't already zero out the staleness.
 		if ( ! $allow_stale && ! $fetch_failed ) {
+			if ( isset($response['default_branch_commits_behind']) && (int) $response['default_branch_commits_behind'] > 0 ) {
+				$this->run_git($primary_path, sprintf('worktree remove --force %s', escapeshellarg($wt_path)));
+
+				return $this->worktree_behind_default_branch_error(
+					(int) $response['default_branch_commits_behind'],
+					(string) ( $response['default_branch_ref'] ?? 'origin/HEAD' ),
+					$repo,
+					$branch,
+					'branch'
+				);
+			}
+
 			/**
 			 * Filters the staleness threshold above which `worktree_add` refuses
 			 * to return a stale worktree without explicit `--allow-stale` opt-in.
@@ -1113,6 +1146,102 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		}
 		return 'HEAD';
+	}
+
+	/**
+	 * Resolve the fetched remote default branch ref, if one is configured.
+	 *
+	 * @param  string $repo_path Primary repo path.
+	 * @return string|null Fully-qualified remote default ref, or null when absent.
+	 */
+	private function resolve_remote_default_ref( string $repo_path ): ?string {
+		$result = $this->run_git($repo_path, 'symbolic-ref --quiet refs/remotes/origin/HEAD');
+		if ( is_wp_error($result) ) {
+			return null;
+		}
+
+		$ref = trim( (string) ( $result['output'] ?? '' ));
+		return '' !== $ref ? $ref : null;
+	}
+
+	/**
+	 * Refuse a branch/base that is behind the remote default branch.
+	 *
+	 * This is intentionally zero-tolerance. The older upstream staleness gate has
+	 * a threshold for large-drift cleanup, but default-branch freshness protects
+	 * the starting point for new agent work and should not silently allow lag.
+	 *
+	 * @param  string $primary_path Primary repo path.
+	 * @param  string $ref          Branch or base ref to compare.
+	 * @param  string $repo         Repository name.
+	 * @param  string $branch       Requested worktree branch.
+	 * @param  string $ref_role     Human-readable role: branch or base.
+	 * @return true|\WP_Error True when current/unknown, WP_Error when behind.
+	 */
+	private function assert_ref_current_with_default_branch( string $primary_path, string $ref, string $repo, string $branch, string $ref_role ): true|\WP_Error {
+		$default_ref = $this->resolve_remote_default_ref($primary_path);
+		if ( null === $default_ref ) {
+			return true;
+		}
+
+		$behind = WorktreeStalenessProbe::behind_count($primary_path, $ref, $default_ref);
+		if ( ! is_int($behind) || 0 === $behind ) {
+			return true;
+		}
+
+		return $this->worktree_behind_default_branch_error($behind, $default_ref, $repo, $branch, $ref_role);
+	}
+
+	/**
+	 * Add default-branch freshness fields for the materialized branch.
+	 *
+	 * @param  string $primary_path Primary repo path.
+	 * @param  string $branch       Requested worktree branch.
+	 * @param  array  $response     Worktree response payload, mutated in place.
+	 */
+	private function populate_default_branch_behind_count( string $primary_path, string $branch, array &$response ): void {
+		$default_ref = $this->resolve_remote_default_ref($primary_path);
+		if ( null === $default_ref ) {
+			return;
+		}
+
+		$behind = WorktreeStalenessProbe::behind_count($primary_path, $branch, $default_ref);
+		if ( is_int($behind) ) {
+			$response['default_branch_commits_behind'] = $behind;
+			$response['default_branch_ref']            = $default_ref;
+		}
+	}
+
+	/**
+	 * Build the default-branch staleness error used by preflight and rollback gates.
+	 *
+	 * @param  int    $behind     Commits behind the remote default branch.
+	 * @param  string $default_ref Remote default branch ref.
+	 * @param  string $repo       Repository name.
+	 * @param  string $branch     Requested worktree branch.
+	 * @param  string $ref_role   Human-readable role: branch or base.
+	 * @return \WP_Error
+	 */
+	private function worktree_behind_default_branch_error( int $behind, string $default_ref, string $repo, string $branch, string $ref_role ): \WP_Error {
+		return new \WP_Error(
+			'worktree_behind_default_branch',
+			sprintf(
+				'Worktree %s for branch "%s" is %d commits behind the remote default branch %s. Refusing to create a stale worktree. Refresh or rebase the branch first, create from the remote default ref directly, or pass --allow-stale to explicitly opt in to a known-stale checkout.',
+				$ref_role,
+				$branch,
+				$behind,
+				$default_ref
+			),
+			array(
+				'status'                        => 409,
+				'default_branch_commits_behind' => $behind,
+				'default_branch_ref'            => $default_ref,
+				'repo'                          => $repo,
+				'branch'                        => $branch,
+				'ref_role'                      => $ref_role,
+				'allow_stale'                   => false,
+			)
+		);
 	}
 
 	/**
