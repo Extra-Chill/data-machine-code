@@ -119,6 +119,13 @@ function datamachine_code_bootstrap() {
 	add_action('wp_abilities_api_categories_init', 'datamachine_code_register_ability_categories');
 }
 add_action('plugins_loaded', 'datamachine_code_bootstrap', 20);
+add_action(
+	'activated_plugin',
+	static function (): void {
+		datamachine_code_bootstrap();
+	},
+	20
+);
 if ( function_exists('did_action') && did_action('plugins_loaded') ) {
 	datamachine_code_bootstrap();
 }
