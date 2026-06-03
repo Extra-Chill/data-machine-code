@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.32] - 2026-06-03
+
+### Fixed
+- filter workspace list by checkout type
+
 ## [0.47.31] - 2026-06-03
 
 ### Changed
