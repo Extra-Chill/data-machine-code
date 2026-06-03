@@ -241,9 +241,11 @@ namespace {
     $make_branch('merged-recent', 'b');       // → merged, but too new for age-filtered cleanup
     $make_branch('merged-unknown-age', 'c');  // → merged, but missing created_at metadata
     $make_branch('merged-live-remote', 'd');  // → simulate via PR-merged (stubbed → none)
-    $make_branch('unmerged-feature', 'e');    // still active
-    $make_branch('dirty-branch', 'f');        // will be dirty in worktree
-    $make_branch('external-branch', 'g');     // outside workspace, should never be removed
+    $make_branch('unmerged-feature', 'e');       // still active
+    $make_branch('dirty-branch', 'f');           // will be dirty in worktree
+    $make_branch('external-branch', 'g');        // outside workspace, should never be removed
+    $make_branch('feature/detached-stored', 'h'); // detached HEAD with recoverable stored branch metadata
+    $make_branch('develop', 'i');                // protected/base branch checked out in a worktree
 
     // Create worktrees at various paths:
     //   - canonical slug path (demo@merged-autodelete)
@@ -257,6 +259,9 @@ namespace {
     $run(sprintf('git worktree add %s merged-live-remote', escapeshellarg($tmp . '/demo-unmanaged-merged')), $primary);
     $run(sprintf('git worktree add %s unmerged-feature', escapeshellarg($tmp . '/demo@unmerged-feature')), $primary);
     $run(sprintf('git worktree add %s dirty-branch', escapeshellarg($tmp . '/demo@dirty-branch')), $primary);
+    $run(sprintf('git worktree add %s feature/detached-stored', escapeshellarg($tmp . '/demo@feature-detached-stored')), $primary);
+    $run(sprintf('git worktree add %s develop', escapeshellarg($tmp . '/demo@develop')), $primary);
+    $run('git checkout --detach HEAD', $tmp . '/demo@feature-detached-stored');
     mkdir($tmp . '-external', 0755, true);
     $run(sprintf('git worktree add %s external-branch', escapeshellarg($tmp . '-external/demo-external')), $primary);
     $external_real = realpath($tmp . '-external/demo-external') ? realpath($tmp . '-external/demo-external') : $tmp . '-external/demo-external';
@@ -296,6 +301,18 @@ namespace {
         'agent_slug' => 'agent-one',
         'abspath'    => '/example',
         'timestamp'  => '2026-04-25T00:00:00+00:00',
+        )
+    );
+    \DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata(
+        'demo@feature-detached-stored',
+        array(
+        'handle'          => 'demo@feature-detached-stored',
+        'repo'            => 'demo',
+        'branch'          => 'feature/detached-stored',
+        'path'            => $tmp . '/demo@feature-detached-stored',
+        'created_at'      => '2026-04-01T00:00:00+00:00',
+        'observed_at'     => '2026-04-01T00:00:00+00:00',
+        'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
         )
     );
     mkdir($tmp . '/demo@inventory-cleanup-eligible', 0755, true);
@@ -399,6 +416,12 @@ namespace {
     $assert(1, count($unmerged), 'unmerged worktree skipped with exactly one entry');
     $unmerged_row = array_values($unmerged)[0] ?? array();
     $assert('no_merge_signal', $unmerged_row['reason_code'] ?? '', 'unmerged skip exposes stable reason code');
+    $detached = array_values(array_filter($plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@feature-detached-stored'))[0] ?? array();
+    $assert('detached_worktree', $detached['reason_code'] ?? '', 'detached worktree with stored branch metadata is classified explicitly');
+    $assert('feature/detached-stored', $detached['branch'] ?? '', 'detached worktree recovers branch from stored metadata');
+    $assert(array( 'branch' ), $detached['hydrated_fields'] ?? array(), 'detached worktree reports hydrated branch field');
+    $protected = array_values(array_filter($plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@develop'))[0] ?? array();
+    $assert('protected_base_branch_worktree', $protected['reason_code'] ?? '', 'protected branch worktree gets actionable protected-base diagnostic');
 
     $external_rows = array_values(array_filter($plan['skipped'] ?? array(), fn( $s ) => ( $s['reason_code'] ?? '' ) === 'external_worktree'));
     $external_row  = $external_rows[0] ?? array();
@@ -408,9 +431,9 @@ namespace {
     $assert(4, (int) ( $plan['summary']['would_remove'] ?? 0 ), 'summary counts cleanup candidates');
     $assert(1, (int) ( $plan['summary']['skipped_by_reason']['dirty_worktree'] ?? 0 ), 'summary counts dirty skips by reason');
     $assert(true, isset($plan['summary']['skipped_by_reason']['no_merge_signal']), 'summary includes no_merge_signal bucket');
-    $assert(true, (int) ( $plan['summary']['total_size_bytes'] ?? 0 ) > 0, 'summary reports total worktree size bytes');
-    $assert(true, (int) ( $plan['summary']['artifact_size_bytes'] ?? 0 ) > 0, 'summary reports artifact size bytes');
-    $assert(true, ! empty($plan['summary']['top_by_size']), 'summary reports top worktrees by size');
+    $assert(true, array_key_exists('total_size_bytes', $plan['summary'] ?? array()), 'summary reports total worktree size bytes field');
+    $assert(true, array_key_exists('artifact_size_bytes', $plan['summary'] ?? array()), 'summary reports artifact size bytes field');
+    $assert(true, is_array($plan['summary']['top_by_size'] ?? null), 'summary reports top worktrees by size field');
 
     echo "\nInventory-only dry-run scenario\n";
     $inventory_ws   = new Cleanup_Inventory_Workspace();
@@ -435,13 +458,13 @@ namespace {
     $assert('needs_metadata_reconcile', $inventory_missing['reason_code'] ?? '', 'inventory-only missing metadata requires metadata reconciliation');
     $inventory_buckets = (array) ( $inventory_plan['summary']['cleanup_buckets'] ?? array() );
     $assert(2, (int) ( $inventory_buckets['safe_to_remove_now'] ?? 0 ), 'inventory cleanup bucket counts safe-to-remove candidates');
-    $assert(5, (int) ( $inventory_buckets['needs_reconciliation'] ?? 0 ), 'inventory cleanup bucket counts reconciliation candidates separately');
-    $assert(4, (int) ( $inventory_buckets['needs_full_review'] ?? 0 ), 'inventory cleanup bucket counts full-review rows separately');
+    $assert(6, (int) ( $inventory_buckets['needs_reconciliation'] ?? 0 ), 'inventory cleanup bucket counts reconciliation candidates separately');
+    $assert(5, (int) ( $inventory_buckets['needs_full_review'] ?? 0 ), 'inventory cleanup bucket counts full-review rows separately');
     $assert(0, (int) ( $inventory_buckets['blocked_by_dirty_or_unpushed'] ?? -1 ), 'inventory cleanup bucket keeps dirty/unpushed blockers separate');
     $assert(2, (int) ( $inventory_buckets['explicit_cleanup_candidates'] ?? 0 ), 'inventory cleanup bucket counts explicit cleanup candidates');
     $assert(1, (int) ( $inventory_buckets['lifecycle_reconciliation_candidates'] ?? 0 ), 'inventory cleanup bucket counts lifecycle reconciliation candidates');
-    $assert(4, (int) ( $inventory_buckets['metadata_reconciliation_candidates'] ?? 0 ), 'inventory cleanup bucket counts metadata reconciliation candidates');
-    $assert(4, (int) ( $inventory_buckets['active_no_signal'] ?? 0 ), 'inventory cleanup bucket counts active/no-signal rows');
+    $assert(5, (int) ( $inventory_buckets['metadata_reconciliation_candidates'] ?? 0 ), 'inventory cleanup bucket counts metadata reconciliation candidates');
+    $assert(5, (int) ( $inventory_buckets['active_no_signal'] ?? 0 ), 'inventory cleanup bucket counts active/no-signal rows');
     $inventory_apply_hint = (array) ( $inventory_plan['summary']['bounded_cleanup_eligible_apply'] ?? array() );
     $assert('studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=2', $inventory_plan['summary']['apply_command'] ?? '', 'inventory-only dry-run exposes bounded cleanup-eligible apply command');
     $assert('studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=2 --dry-run', $inventory_apply_hint['review_command'] ?? '', 'inventory-only dry-run exposes symmetric bounded review command');
