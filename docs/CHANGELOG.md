@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.39] - 2026-06-03
+
+### Fixed
+- retry bootstrap after plugin activation
+- bootstrap after late plugin activation
+
 ## [0.47.38] - 2026-06-03
 
 ### Changed
