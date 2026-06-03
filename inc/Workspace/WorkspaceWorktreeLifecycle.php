@@ -210,8 +210,8 @@ trait WorkspaceWorktreeLifecycle {
 			}
 			$cmd = sprintf('worktree add %s %s', escapeshellarg($wt_path), escapeshellarg($branch));
 		} else {
-			$base           = $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path);
-			$resolved_base  = $base;
+			$base          = $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path);
+			$resolved_base = $base;
 			if ( ! $allow_stale && ! $rebase_base && ! $fetch_failed ) {
 				$default_guard = $this->assert_ref_current_with_default_branch($primary_path, $resolved_base, $repo, $branch, 'base');
 				if ( is_wp_error($default_guard) ) {
