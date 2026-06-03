@@ -663,22 +663,22 @@ class Workspace {
 				if ( is_array($artifact_dirty) ) {
 					$skipped[] = array_merge(
 						array(
-							'handle'               => $handle,
-							'repo'                 => $repo,
-							'branch'               => $branch,
-							'path'                 => $wt_path,
-							'reason_code'          => 'artifact_only_dirty_worktree',
-							'reason'               => sprintf('working tree dirty only from declared/generated artifact paths (%d files) - run artifact cleanup instead of force-removing the worktree', $dirty_count),
-							'dirty'                => $dirty_count,
-							'hint'                 => 'Run studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run to review reconstructable artifact cleanup; source edits are still protected by dirty_worktree.',
-							'created_at'           => $created_at,
-							'metadata'             => $metadata,
+							'handle'      => $handle,
+							'repo'        => $repo,
+							'branch'      => $branch,
+							'path'        => $wt_path,
+							'reason_code' => 'artifact_only_dirty_worktree',
+							'reason'      => sprintf('working tree dirty only from declared/generated artifact paths (%d files) - run artifact cleanup instead of force-removing the worktree', $dirty_count),
+							'dirty'       => $dirty_count,
+							'hint'        => 'Run studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run to review reconstructable artifact cleanup; source edits are still protected by dirty_worktree.',
+							'created_at'  => $created_at,
+							'metadata'    => $metadata,
 						), $disk_fields, array(
 							'artifact_dirty_paths' => $artifact_dirty['paths'],
 							'artifacts'            => $artifact_dirty['artifacts'],
 							'artifact_size_bytes'  => $artifact_dirty['artifact_size_bytes'],
-							'size_bytes'           => max((int) ( $disk_fields['size_bytes'] ?? 0 ), (int) $artifact_dirty['artifact_size_bytes']),
-							'estimated_size_bytes' => max((int) ( $disk_fields['estimated_size_bytes'] ?? 0 ), (int) $artifact_dirty['artifact_size_bytes']),
+							'size_bytes'           => max( (int) ( $disk_fields['size_bytes'] ?? 0 ), (int) $artifact_dirty['artifact_size_bytes'] ),
+							'estimated_size_bytes' => max( (int) ( $disk_fields['estimated_size_bytes'] ?? 0 ), (int) $artifact_dirty['artifact_size_bytes'] ),
 						)
 					);
 					continue;
@@ -3221,7 +3221,7 @@ class Workspace {
 		+ (int) ( $skipped_by_reason['unpushed_commits'] ?? 0 );
 
 		$buckets = array(
-			'artifact_only_dirty_worktree'       => (int) ( $skipped_by_reason['artifact_only_dirty_worktree'] ?? 0 ),
+			'artifact_only_dirty_worktree'        => (int) ( $skipped_by_reason['artifact_only_dirty_worktree'] ?? 0 ),
 			'blocked_by_dirty_or_unpushed'        => $blocked_by_dirty_or_unpushed,
 			'needs_full_review'                   => $needs_full_review,
 			'needs_reconciliation'                => $needs_reconciliation,
@@ -3490,7 +3490,7 @@ class Workspace {
 
 			$path_part = trim(substr($line, 3));
 			if ( str_contains($path_part, ' -> ') ) {
-				$path_part = trim((string) substr(strrchr($path_part, '>'), 1));
+				$path_part = trim( (string) substr(strrchr($path_part, '>'), 1));
 			}
 			$path_part = trim($path_part, ' /');
 			if ( '' === $path_part ) {
