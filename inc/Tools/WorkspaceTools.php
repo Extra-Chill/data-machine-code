@@ -212,6 +212,9 @@ class WorkspaceTools extends BaseTool
         if (isset($parameters['repo']) ) {
             $input['repo'] = (string) $parameters['repo'];
         }
+        if (isset($parameters['type']) ) {
+            $input['type'] = (string) $parameters['type'];
+        }
 
         $result = $ability->execute($input);
 
@@ -1012,6 +1015,11 @@ class WorkspaceTools extends BaseTool
             'repo' => array(
             'type'        => 'string',
             'description' => 'Optional primary repository name to filter by. Includes the primary checkout and its worktrees.',
+                    ),
+                    'type' => array(
+                        'type'        => 'string',
+                        'enum'        => array( 'primary', 'worktree' ),
+                        'description' => 'Optional checkout type filter. Use "primary" for base checkouts or "worktree" for branch worktrees.',
                     ),
             ),
             'required'   => array(),
