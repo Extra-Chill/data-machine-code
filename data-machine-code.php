@@ -286,6 +286,8 @@ function datamachine_code_load_chat_tools() {
 		return;
 	}
 
+	\DataMachineCode\Tools\AbilityToolProjections::register();
+
 	new \DataMachineCode\Tools\GitHubIssueTool();
 	new \DataMachineCode\Tools\GitHubPullRequestTool();
 	new \DataMachineCode\Tools\GitHubTools();

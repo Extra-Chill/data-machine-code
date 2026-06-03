@@ -79,13 +79,13 @@ class WorkspaceTools extends BaseTool
         $contexts        = array( 'chat', 'pipeline' );
         $policy_contexts = array( 'chat', 'pipeline' );
         $policy_meta     = array( 'requires_opt_in' => true );
-        $this->registerTool('workspace_path', array( $this, 'getPathDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-path' ));
-        $this->registerTool('workspace_capabilities', array( $this, 'getCapabilitiesDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-capabilities' ));
-        $this->registerTool('workspace_list', array( $this, 'getListDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-list' ));
-        $this->registerTool('workspace_show', array( $this, 'getShowDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-show' ));
-        $this->registerTool('workspace_ls', array( $this, 'getLsDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-ls' ));
-        $this->registerTool('workspace_read', array( $this, 'getReadDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-read' ));
-        $this->registerTool('workspace_grep', array( $this, 'getGrepDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-grep' ));
+        $this->registerProjectedToolFallback('workspace_path', array( $this, 'getPathDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-path' ));
+        $this->registerProjectedToolFallback('workspace_capabilities', array( $this, 'getCapabilitiesDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-capabilities' ));
+        $this->registerProjectedToolFallback('workspace_list', array( $this, 'getListDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-list' ));
+        $this->registerProjectedToolFallback('workspace_show', array( $this, 'getShowDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-show' ));
+        $this->registerProjectedToolFallback('workspace_ls', array( $this, 'getLsDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-ls' ));
+        $this->registerProjectedToolFallback('workspace_read', array( $this, 'getReadDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-read' ));
+        $this->registerProjectedToolFallback('workspace_grep', array( $this, 'getGrepDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-grep' ));
         $this->registerTool('workspace_write', array( $this, 'getWriteDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-write' ));
         $this->registerTool('workspace_edit', array( $this, 'getEditDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-edit' ));
         $this->registerTool('workspace_apply_patch', array( $this, 'getApplyPatchDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-apply-patch' ));
@@ -102,6 +102,23 @@ class WorkspaceTools extends BaseTool
         $this->registerTool('workspace_git_reset', array( $this, 'getGitResetDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-reset' ));
         $this->registerTool('workspace_pr_status', array( $this, 'getPrStatusDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-pr-status' ));
         $this->registerTool('workspace_pr_rebase', array( $this, 'getPrRebaseDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-pr-rebase' ));
+    }
+
+    /**
+     * Register a legacy wrapper only when Data Machine cannot project the ability directly.
+     *
+     * @param string   $tool_id             Model-facing tool name.
+     * @param callable $definition_callback Definition callback.
+     * @param array    $contexts            Tool contexts.
+     * @param array    $options             Tool metadata.
+     */
+    private function registerProjectedToolFallback( string $tool_id, callable $definition_callback, array $contexts, array $options ): void
+    {
+        if ( class_exists(AbilityToolProjections::class) && AbilityToolProjections::is_projected($tool_id) ) {
+            return;
+        }
+
+        $this->registerTool($tool_id, $definition_callback, $contexts, $options);
     }
 
     /**
