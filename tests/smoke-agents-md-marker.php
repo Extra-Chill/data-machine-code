@@ -53,6 +53,11 @@ $expected_inventory_truth   = 'workspace list` is the source of truth';
 $expected_inventory_refresh = 'datamachine memory compose AGENTS.md{$agent_suffix}';
 $expected_abilities_note    = 'does not currently register a WP-CLI abilities discovery command';
 $stale_abilities_cli        = 'help abilities';
+$expected_section_owner     = "'owner'       => 'data-machine-code'";
+$expected_snapshot_fresh    = "'freshness'   => 'snapshot'";
+$expected_static_fresh      = "'freshness'   => 'static'";
+$expected_generated_fresh   = "'freshness'   => 'generated'";
+$expected_multisite_cond    = "'conditions'  => 'Only registered on multisite installs.'";
 
 $assert(
     'auto-generated marker uses memory compose command',
@@ -109,6 +114,26 @@ $assert(
 $assert(
     'GitSync guidance distinguishes compact sync family',
     str_contains($source, $expected_gitsync_cli)
+);
+$assert(
+    'AGENTS.md sections declare Data Machine Code ownership',
+    6 === substr_count($source, $expected_section_owner)
+);
+$assert(
+    'AGENTS.md sections declare generated freshness for compose marker',
+    str_contains($source, $expected_generated_fresh)
+);
+$assert(
+    'AGENTS.md sections declare snapshot freshness for dynamic workspace guidance',
+    2 === substr_count($source, $expected_snapshot_fresh)
+);
+$assert(
+    'AGENTS.md sections declare static freshness for stable guidance',
+    3 === substr_count($source, $expected_static_fresh)
+);
+$assert(
+    'multisite section documents its registration condition',
+    str_contains($source, $expected_multisite_cond)
 );
 $assert(
     'plugin entrypoint delegates AGENTS.md section registration',

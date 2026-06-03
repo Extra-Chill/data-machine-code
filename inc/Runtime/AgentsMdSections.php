@@ -71,6 +71,9 @@ MD;
 			}, array(
 				'label'       => 'Auto-generated marker',
 				'description' => 'HTML-comment header signalling that AGENTS.md is composed from registered sections.',
+				'owner'       => 'data-machine-code',
+				'freshness'   => 'generated',
+				'conditions'  => 'Always registered when Data Machine Code and composable memory section registration are available.',
 			)
 		);
 	}
@@ -138,6 +141,9 @@ MD;
 			}, array(
 				'label'       => 'Data Machine',
 				'description' => 'Memory, automation, workspace, and system operations.',
+				'owner'       => 'data-machine-code',
+				'freshness'   => 'snapshot',
+				'conditions'  => 'Always registered when Data Machine Code and composable memory section registration are available.',
 			)
 		);
 	}
@@ -149,6 +155,9 @@ MD;
 			}, array(
 				'label'       => 'Workspace Inventory',
 				'description' => 'Live snapshot of cloned repos + active worktrees in the workspace.',
+				'owner'       => 'data-machine-code',
+				'freshness'   => 'snapshot',
+				'conditions'  => 'Registered when Data Machine Code is active; content is omitted when no workspace inventory is available.',
 			)
 		);
 	}
@@ -166,6 +175,9 @@ MD;
 			}, array(
 				'label'       => 'Abilities',
 				'description' => 'WordPress Abilities API discovery.',
+				'owner'       => 'data-machine-code',
+				'freshness'   => 'static',
+				'conditions'  => 'Always registered when Data Machine Code and composable memory section registration are available.',
 			)
 		);
 	}
@@ -185,6 +197,9 @@ MD;
 			}, array(
 				'label'       => 'WordPress Source',
 				'description' => 'Pointers to WordPress source directories.',
+				'owner'       => 'data-machine-code',
+				'freshness'   => 'static',
+				'conditions'  => 'Always registered when Data Machine Code and composable memory section registration are available.',
 			)
 		);
 	}
@@ -208,6 +223,9 @@ MD;
 			}, array(
 				'label'       => 'Multisite',
 				'description' => 'Multisite-specific WP-CLI guidance.',
+				'owner'       => 'data-machine-code',
+				'freshness'   => 'static',
+				'conditions'  => 'Only registered on multisite installs.',
 			)
 		);
 	}
