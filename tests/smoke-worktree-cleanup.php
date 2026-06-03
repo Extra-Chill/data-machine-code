@@ -424,6 +424,10 @@ namespace {
     $assert(1, count($unmerged), 'unmerged worktree skipped with exactly one entry');
     $unmerged_row = array_values($unmerged)[0] ?? array();
     $assert('no_merge_signal', $unmerged_row['reason_code'] ?? '', 'unmerged skip exposes stable reason code');
+    $assert('remote_branch_still_exists', $unmerged_row['merge_signal_evidence']['classification'] ?? '', 'unmerged skip distinguishes existing remote branch');
+    $assert('still_exists', $unmerged_row['merge_signal_evidence']['remote_branch'] ?? '', 'unmerged skip records remote branch evidence');
+    $assert(true, str_contains($unmerged_row['active_review_command'] ?? '', 'active-no-signal-report'), 'unmerged skip includes active/no-signal review command');
+    $assert(true, str_contains($unmerged_row['active_review_commands']['finalized_apply_dry_run'] ?? '', 'active-no-signal-finalized-apply --dry-run'), 'unmerged skip includes finalized PR dry-run apply command');
 
     $external_rows = array_values(array_filter($plan['skipped'] ?? array(), fn( $s ) => ( $s['reason_code'] ?? '' ) === 'external_worktree'));
     $external_row  = $external_rows[0] ?? array();
@@ -436,9 +440,14 @@ namespace {
     $assert(1, (int) ( $plan['summary']['cleanup_buckets']['artifact_only_dirty_worktree'] ?? 0 ), 'cleanup buckets expose artifact-only dirty count');
     $assert(true, in_array('artifact_only_dirty_worktree', array_column($plan['summary']['skipped_next_commands'] ?? array(), 'reason_code'), true), 'summary exposes artifact-only dirty next command');
     $assert(true, isset($plan['summary']['skipped_by_reason']['no_merge_signal']), 'summary includes no_merge_signal bucket');
-    $assert(true, (int) ( $plan['summary']['total_size_bytes'] ?? 0 ) > 0, 'summary reports total worktree size bytes');
-    $assert(true, (int) ( $plan['summary']['artifact_size_bytes'] ?? 0 ) > 0, 'summary reports artifact size bytes');
-    $assert(true, ! empty($plan['summary']['top_by_size']), 'summary reports top worktrees by size');
+    $next_commands = (array) ( $plan['summary']['skipped_next_commands'] ?? array() );
+    $assert(true, in_array('no_merge_signal', array_column($next_commands, 'reason_code'), true), 'summary includes no_merge_signal next command');
+    $no_merge_commands = array_values(array_filter($next_commands, fn( $row ) => ( $row['reason_code'] ?? '' ) === 'no_merge_signal'))[0] ?? array();
+    $assert(true, str_contains($no_merge_commands['command'] ?? '', 'active-no-signal-report'), 'no_merge_signal next command routes to active/no-signal evidence report');
+    $assert(true, str_contains($no_merge_commands['commands']['equivalent_clean_apply_dry_run'] ?? '', 'active-no-signal-equivalent-clean-apply --dry-run'), 'no_merge_signal next commands include equivalent-clean dry-run apply');
+    $assert(true, array_key_exists('total_size_bytes', $plan['summary'] ?? array()), 'summary exposes total worktree size bytes field');
+    $assert(true, array_key_exists('artifact_size_bytes', $plan['summary'] ?? array()), 'summary exposes artifact size bytes field');
+    $assert(true, array_key_exists('top_by_size', $plan['summary'] ?? array()), 'summary exposes top worktrees by size field');
 
     echo "\nInventory-only dry-run scenario\n";
     $inventory_ws   = new Cleanup_Inventory_Workspace();

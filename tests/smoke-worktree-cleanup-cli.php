@@ -211,8 +211,15 @@ namespace {
         array(
          'reason_code' => 'active_no_signal',
          'count'       => 1,
-         'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --skip-github --format=json',
-         'alternative' => 'No automatic cleanup action is safe from active inventory metadata alone.',
+         'command'     => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json',
+         'alternative' => 'studio wp datamachine-code workspace worktree active-no-signal-merged-apply --dry-run --limit=25 --offset=0 --format=json',
+         'destructive' => false,
+        ),
+        array(
+         'reason_code' => 'no_merge_signal',
+         'count'       => 10,
+         'command'     => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json',
+         'alternative' => 'studio wp datamachine-code workspace worktree active-no-signal-finalized-apply --dry-run --limit=25 --offset=0 --format=json',
          'destructive' => false,
         ),
         array(
@@ -900,10 +907,11 @@ namespace {
     datamachine_code_cleanup_assert(2 === (int) ( $decoded['summary']['cleanup_buckets']['metadata_reconciliation_candidates'] ?? 0 ), 'JSON summary includes metadata reconciliation bucket count');
     datamachine_code_cleanup_assert(1 === (int) ( $decoded['summary']['stale_reasons']['dirty'] ?? 0 ), 'JSON summary includes stale reason metadata counts');
     datamachine_code_cleanup_assert(1 === (int) ( $decoded['summary']['liveness']['stale'] ?? 0 ), 'JSON summary includes liveness metadata counts');
-    datamachine_code_cleanup_assert(4 === count($decoded['summary']['skipped_next_commands'] ?? array()), 'JSON summary includes actionable skipped next commands');
+    datamachine_code_cleanup_assert(5 === count($decoded['summary']['skipped_next_commands'] ?? array()), 'JSON summary includes actionable skipped next commands');
     datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][0]['command'] ?? '', 'worktree cleanup --dry-run --format=json'), 'JSON lifecycle command runs DMC-owned cleanup signal detection');
     datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][1]['command'] ?? '', 'reconcile-metadata --dry-run --format=json'), 'JSON metadata command is metadata reconciliation');
-    datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][2]['alternative'] ?? '', 'No automatic cleanup action is safe'), 'JSON active/no-signal command explains no automatic cleanup action');
+    datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][2]['command'] ?? '', 'active-no-signal-report'), 'JSON active/no-signal command routes to evidence report');
+    datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][3]['alternative'] ?? '', 'active-no-signal-finalized-apply --dry-run'), 'JSON no-merge command routes finalized PR rows to dry-run apply');
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
@@ -969,7 +977,7 @@ namespace {
     datamachine_code_cleanup_assert(in_array('table:10:handle,reason_code,age_days,size,artifacts,reason', WP_CLI::$logs, true), 'default skipped table omits path and hint fields but keeps disk fields');
     datamachine_code_cleanup_assert(in_array('Top repos by worktree size:', WP_CLI::$logs, true), 'human output includes top repo size summary');
     datamachine_code_cleanup_assert(in_array('Next commands for skipped buckets:', WP_CLI::$logs, true), 'human output includes actionable skipped command section');
-    datamachine_code_cleanup_assert(in_array('table:4:reason_code,count,destructive,command,alternative', WP_CLI::$logs, true), 'human output renders compact skipped command table');
+    datamachine_code_cleanup_assert(in_array('table:5:reason_code,count,destructive,command,alternative', WP_CLI::$logs, true), 'human output renders compact skipped command table');
     datamachine_code_cleanup_assert(in_array('Showing 10 of 16 skipped rows. Re-run with --verbose for all rows or --only=<reason_code> to filter.', WP_CLI::$logs, true), 'human output truncates skipped rows with hint');
     datamachine_code_cleanup_assert(1 === count(WP_CLI::$successes), 'human output keeps success suffix');
 
