@@ -560,6 +560,9 @@ namespace {
     $assert(true, isset($active_rows['demo@dirty-active']['upstream_equivalence']['probe_timings_ms']['git_cherry']), 'upstream equivalence includes git cherry probe timing');
     $assert(true, isset($active_rows['demo@dirty-active']['upstream_equivalence']['probe_timings_ms']['dirty_path_classification']), 'upstream equivalence includes dirty path classification timing');
     $assert(true, (int) ( $active_rows['demo@dirty-active']['upstream_equivalence']['dirty_paths']['inspected'] ?? 0 ) >= 1, 'batched dirty path classification preserves inspected path count');
+    $active_report_page = $ws->worktree_active_no_signal_report(array( 'limit' => 1, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 60, 'internal_budget_started' => microtime(true) ));
+    $assert(true, ! is_wp_error($active_report_page) && ( $active_report_page['success'] ?? false ), 'paginated active/no-signal report succeeds');
+    $assert(true, str_contains($active_report_page['pagination']['next_command'] ?? '', 'active-no-signal-report --limit=1 --offset=1 --until-budget=1s --format=json'), 'active/no-signal report continuation preserves report operation');
     $budgeted_active_report = $ws->worktree_active_no_signal_report(array( 'limit' => 20, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 1, 'internal_budget_started' => microtime(true) - 1 ));
     $assert(true, ! is_wp_error($budgeted_active_report) && ( $budgeted_active_report['success'] ?? false ), 'budgeted active/no-signal report succeeds');
     $assert(true, (bool) ( $budgeted_active_report['pagination']['partial'] ?? false ), 'budgeted active/no-signal report returns partial pagination');
@@ -579,9 +582,9 @@ namespace {
     $assert(1, (int) ( $finalized_dry_run['summary']['planned'] ?? 0 ), 'finalized active/no-signal dry-run plans merged PR rows only');
     $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@head-merged')['cleanup_eligible_at'] ?? '', 'finalized active/no-signal dry-run leaves metadata unchanged');
     $run('git remote set-url origin https://github.com/acme/demo.git', $primary);
-    $finalized_page_dry_run = $ws->worktree_active_no_signal_finalized_apply(array( 'dry_run' => true, 'limit' => 1, 'offset' => 0 ));
+    $finalized_page_dry_run = $ws->worktree_active_no_signal_finalized_apply(array( 'dry_run' => true, 'limit' => 1, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 60, 'internal_budget_started' => microtime(true) ));
     $run(sprintf('git remote set-url origin %s', escapeshellarg($remote)), $primary);
-    $assert(true, str_contains($finalized_page_dry_run['pagination']['next_command'] ?? '', 'active-no-signal-finalized-apply --dry-run --limit=1 --offset=1'), 'finalized active/no-signal dry-run continuation stays on finalized apply command');
+    $assert(true, str_contains($finalized_page_dry_run['pagination']['next_command'] ?? '', 'active-no-signal-finalized-apply --dry-run --limit=1 --offset=1 --until-budget=1s --format=json'), 'finalized active/no-signal dry-run continuation stays on finalized apply command');
     $assert(false, str_contains($finalized_page_dry_run['pagination']['next_command'] ?? '', 'active-no-signal-report'), 'finalized active/no-signal dry-run continuation does not fall back to report command');
 
     echo "\nDry-run reconciliation\n";
@@ -729,8 +732,8 @@ namespace {
     $assert(true, ! is_wp_error($equivalent_clean_dry_run) && ( $equivalent_clean_dry_run['success'] ?? false ), 'equivalent-clean active/no-signal dry-run succeeds');
     $assert(1, (int) ( $equivalent_clean_dry_run['summary']['planned'] ?? 0 ), 'equivalent-clean dry-run plans only equivalent clean rows');
     $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@equivalent-clean')['cleanup_eligible_at'] ?? '', 'equivalent-clean dry-run leaves metadata unchanged');
-    $equivalent_clean_page = $ws->worktree_active_no_signal_equivalent_clean_apply(array( 'dry_run' => true, 'limit' => 1, 'offset' => 0 ));
-    $assert(true, str_contains($equivalent_clean_page['pagination']['next_command'] ?? '', 'active-no-signal-equivalent-clean-apply --dry-run --limit=1 --offset=1'), 'equivalent-clean dry-run continuation stays on equivalent-clean apply command');
+    $equivalent_clean_page = $ws->worktree_active_no_signal_equivalent_clean_apply(array( 'dry_run' => true, 'limit' => 1, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 60, 'internal_budget_started' => microtime(true) ));
+    $assert(true, str_contains($equivalent_clean_page['pagination']['next_command'] ?? '', 'active-no-signal-equivalent-clean-apply --dry-run --limit=1 --offset=1 --until-budget=1s --format=json'), 'equivalent-clean dry-run continuation stays on equivalent-clean apply command');
     $equivalent_clean_apply = $ws->worktree_active_no_signal_equivalent_clean_apply(array( 'limit' => 50, 'offset' => 0 ));
     $assert(true, ! is_wp_error($equivalent_clean_apply) && ( $equivalent_clean_apply['success'] ?? false ), 'equivalent-clean active/no-signal apply succeeds');
     $assert(1, (int) ( $equivalent_clean_apply['summary']['written'] ?? 0 ), 'equivalent-clean active/no-signal apply writes metadata');
@@ -878,8 +881,8 @@ namespace {
     $assert(true, (bool) ( $merged_dry_run['dry_run'] ?? false ), 'merged-to-default dry-run does not write');
     $assert(2, (int) ( $merged_dry_run['summary']['planned'] ?? 0 ), 'merged-to-default dry-run plans only safe merged rows');
     $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@default-merged')['cleanup_eligible_at'] ?? '', 'merged-to-default dry-run leaves metadata unchanged');
-    $merged_page_dry_run = $ws->worktree_active_no_signal_merged_apply(array( 'dry_run' => true, 'limit' => 1, 'offset' => 0 ));
-    $assert(true, str_contains($merged_page_dry_run['pagination']['next_command'] ?? '', 'active-no-signal-merged-apply --dry-run --limit=1 --offset=1'), 'merged-to-default dry-run continuation stays on merged apply command');
+    $merged_page_dry_run = $ws->worktree_active_no_signal_merged_apply(array( 'dry_run' => true, 'limit' => 1, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 60, 'internal_budget_started' => microtime(true) ));
+    $assert(true, str_contains($merged_page_dry_run['pagination']['next_command'] ?? '', 'active-no-signal-merged-apply --dry-run --limit=1 --offset=1 --until-budget=1s --format=json'), 'merged-to-default dry-run continuation stays on merged apply command');
 
     $merged_apply = $ws->worktree_active_no_signal_merged_apply(array( 'limit' => 100, 'offset' => 0 ));
     $assert(true, ! is_wp_error($merged_apply) && ( $merged_apply['success'] ?? false ), 'merged-to-default active/no-signal apply succeeds');
