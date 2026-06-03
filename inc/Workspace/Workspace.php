@@ -797,14 +797,17 @@ class Workspace {
 			if ( null === $signal ) {
 				$skipped[] = array_merge(
 					array(
-						'handle'      => $handle,
-						'repo'        => $repo,
-						'branch'      => $branch,
-						'path'        => $wt_path,
-						'reason_code' => 'no_merge_signal',
-						'reason'      => 'no merge signal — leaving in place',
-						'created_at'  => $created_at,
-						'metadata'    => $metadata,
+						'handle'                 => $handle,
+						'repo'                   => $repo,
+						'branch'                 => $branch,
+						'path'                   => $wt_path,
+						'reason_code'            => 'no_merge_signal',
+						'reason'                 => 'no merge signal — leaving in place',
+						'merge_signal_evidence'  => $this->build_no_merge_signal_evidence($primary_path, $branch, $skip_github),
+						'active_review_command'  => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json',
+						'active_review_commands' => $this->build_active_no_signal_next_commands(25, 0),
+						'created_at'             => $created_at,
+						'metadata'               => $metadata,
 					), $disk_fields
 				);
 				continue;
@@ -829,14 +832,21 @@ class Workspace {
 			if ( 'github-unknown' === ( $signal['signal'] ?? '' ) ) {
 				$skipped[] = array_merge(
 					array(
-						'handle'      => $handle,
-						'repo'        => $repo,
-						'branch'      => $branch,
-						'path'        => $wt_path,
-						'reason_code' => 'github_unknown',
-						'reason'      => $signal['reason'],
-						'created_at'  => $created_at,
-						'metadata'    => $metadata,
+						'handle'                 => $handle,
+						'repo'                   => $repo,
+						'branch'                 => $branch,
+						'path'                   => $wt_path,
+						'reason_code'            => 'github_unknown',
+						'reason'                 => $signal['reason'],
+						'merge_signal_evidence'  => array(
+							'classification' => 'github_signal_unavailable',
+							'github_signal'  => 'unavailable',
+							'reason'         => $signal['reason'],
+						),
+						'active_review_command'  => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json',
+						'active_review_commands' => $this->build_active_no_signal_next_commands(25, 0),
+						'created_at'             => $created_at,
+						'metadata'               => $metadata,
 					), $disk_fields
 				);
 				continue;
@@ -3215,12 +3225,86 @@ class Workspace {
 	}
 
 	/**
+	 * Build the review/apply command set for stale active/no-merge-signal rows.
+	 *
+	 * @param  int $limit  Review page size.
+	 * @param  int $offset Review page offset.
+	 * @return array<string,string>
+	 */
+	private function build_active_no_signal_next_commands( int $limit, int $offset ): array {
+		$base = sprintf('--limit=%d --offset=%d --format=json', max(1, $limit), max(0, $offset));
+
+		return array(
+			'review_command'                 => 'studio wp datamachine-code workspace worktree active-no-signal-report ' . $base,
+			'finalized_apply_dry_run'        => 'studio wp datamachine-code workspace worktree active-no-signal-finalized-apply --dry-run ' . $base,
+			'equivalent_clean_apply_dry_run' => 'studio wp datamachine-code workspace worktree active-no-signal-equivalent-clean-apply --dry-run ' . $base,
+			'merged_apply_dry_run'           => 'studio wp datamachine-code workspace worktree active-no-signal-merged-apply --dry-run ' . $base,
+		);
+	}
+
+	/**
+	 * Build lightweight evidence explaining why cleanup produced no merge signal.
+	 *
+	 * @param  string $primary_path Path to the primary checkout.
+	 * @param  string $branch       Worktree branch.
+	 * @param  bool   $skip_github  Whether GitHub PR lookup was skipped.
+	 * @return array<string,mixed>
+	 */
+	private function build_no_merge_signal_evidence( string $primary_path, string $branch, bool $skip_github ): array {
+		$evidence = array(
+			'classification'         => 'no_cleanup_signal',
+			'remote_branch'          => 'unknown',
+			'local_default_relation' => 'unknown',
+			'github_signal'          => $skip_github ? 'skipped' : 'not_found',
+		);
+
+		$remote_ref = 'refs/remotes/origin/' . $branch;
+		$remote     = $this->run_git($primary_path, sprintf('rev-parse --verify --quiet %s', escapeshellarg($remote_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( ! is_wp_error($remote) && ! $this->is_git_timeout_error($remote) ) {
+			$evidence['remote_branch']  = 'still_exists';
+			$evidence['classification'] = 'remote_branch_still_exists';
+		} elseif ( $this->is_git_timeout_error($remote) ) {
+			$evidence['remote_branch'] = 'probe_timeout';
+			$evidence['remote_error']  = $remote->get_error_message();
+		} else {
+			$evidence['remote_branch'] = 'missing_or_untracked';
+		}
+
+		$default_ref = $this->resolve_remote_default_ref($primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_string($default_ref) && '' !== $default_ref ) {
+			$evidence['default_ref'] = $default_ref;
+			$outside                 = $this->run_git(
+				$primary_path,
+				sprintf('rev-list --count %s..%s', escapeshellarg($default_ref), escapeshellarg('refs/heads/' . $branch)),
+				self::CLEANUP_GIT_PROBE_TIMEOUT
+			);
+			if ( ! is_wp_error($outside) && ! $this->is_git_timeout_error($outside) ) {
+				$outside_count                         = (int) trim( (string) ( $outside['output'] ?? '' ));
+				$evidence['commits_outside_default']   = $outside_count;
+				$evidence['local_default_relation']    = 0 === $outside_count ? 'default_contained' : 'has_unique_commits';
+				$evidence['classification']            = 0 === $outside_count ? 'local_equivalent_default_contained' : $evidence['classification'];
+			} elseif ( $this->is_git_timeout_error($outside) ) {
+				$evidence['local_default_relation'] = 'probe_timeout';
+				$evidence['local_default_error']    = $outside->get_error_message();
+			}
+		} elseif ( is_wp_error($default_ref) ) {
+			$evidence['local_default_relation'] = 'probe_timeout';
+			$evidence['local_default_error']    = $default_ref->get_error_message();
+		} else {
+			$evidence['local_default_relation'] = 'default_ref_unavailable';
+		}
+
+		return $evidence;
+	}
+
+	/**
 	 * Build copy-pasteable next commands for skipped cleanup buckets.
 	 *
 	 * @param  array<string,int> $skipped_by_reason Skipped reason counts.
 	 * @return array<int,array<string,mixed>>
 	 */
 	private function worktree_cleanup_skipped_next_commands( array $skipped_by_reason ): array {
+		$active_no_signal_commands = $this->build_active_no_signal_next_commands(25, 0);
 		$templates = array(
 			'lifecycle_reconciliation_candidate' => array(
 				'label'       => 'Run DMC-owned lifecycle reconciliation before cleanup eligibility',
@@ -3237,10 +3321,27 @@ class Workspace {
 				'destructive' => false,
 			),
 			'active_no_signal'                   => array(
-				'label'       => 'Keep active rows or run full merge-signal review',
-				'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --skip-github --format=json',
-				'alternative' => 'No automatic cleanup action is safe from active inventory metadata alone.',
-				'why'         => 'Active rows without stale liveness or PR/task context are not cleanup candidates from inventory alone.',
+				'label'       => 'Batch-review active rows with no cleanup signal',
+				'command'     => $active_no_signal_commands['review_command'],
+				'alternative' => $active_no_signal_commands['merged_apply_dry_run'],
+				'commands'    => $active_no_signal_commands,
+				'why'         => 'Review-only evidence distinguishes active remote branches, merged/closed PRs, local default containment, patch-equivalence, and unavailable GitHub signal before any metadata is promoted.',
+				'destructive' => false,
+			),
+			'no_merge_signal'                    => array(
+				'label'       => 'Batch-review stale active rows with no merge signal',
+				'command'     => $active_no_signal_commands['review_command'],
+				'alternative' => $active_no_signal_commands['finalized_apply_dry_run'],
+				'commands'    => $active_no_signal_commands,
+				'why'         => 'Cleanup keeps these rows by default. The active/no-signal report gathers bounded evidence and routes finalized PR, merged-to-default, and patch-equivalent rows to reviewed metadata-promotion apply commands.',
+				'destructive' => false,
+			),
+			'github_unknown'                      => array(
+				'label'       => 'Retry cleanup or review active rows when GitHub signal was unavailable',
+				'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --format=json',
+				'alternative' => $active_no_signal_commands['review_command'],
+				'commands'    => $active_no_signal_commands,
+				'why'         => 'GitHub PR state could not be checked, so cleanup leaves the worktree in place until PR state is available or the active/no-signal review produces local evidence.',
 				'destructive' => false,
 			),
 			'submodule_worktree'                 => array(
