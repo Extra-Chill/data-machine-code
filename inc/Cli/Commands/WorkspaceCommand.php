@@ -327,10 +327,12 @@ class WorkspaceCommand extends BaseCommand {
 	 * : Pass an age gate such as 7d or 24h into cleanup task params.
 	 *
 	 * [--limit=<count>]
-	 * : Maximum worktrees to scan in a `--mode=artifacts` page. Dry-run reviews
-	 *   scan this bounded page synchronously; apply runs freeze eligible candidates
-	 *   from the same bounded page and schedule only those candidates. Defaults to
-	 *   100. Use 0 to disable the cap (combine with --exhaustive for a full audit).
+	 * : For DB-backed `apply` / `resume`, maximum pending rows to process in this
+	 *   invocation (default 25, max 100). For `--mode=artifacts` pages, maximum
+	 *   worktrees to scan; dry-run reviews scan this bounded page synchronously,
+	 *   and apply runs freeze eligible candidates from the same bounded page.
+	 *   Artifact page scans default to 100. Use 0 to disable the artifact scan cap
+	 *   (combine with --exhaustive for a full audit).
 	 *
 	 * [--offset=<count>]
 	 * : Pagination offset (0-indexed) for `--mode=artifacts` dry-run and apply
@@ -547,7 +549,7 @@ class WorkspaceCommand extends BaseCommand {
 			array(
 				'run_id' => $run_id,
 				'force'  => ! empty($assoc_args['force']),
-			)
+			) + ( isset($assoc_args['limit']) ? array( 'limit' => (int) $assoc_args['limit'] ) : array() )
 		);
 		if ( is_wp_error($result) ) {
 			WP_CLI::error($result->get_error_message());

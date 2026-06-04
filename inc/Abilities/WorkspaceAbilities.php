@@ -2228,6 +2228,7 @@ class WorkspaceAbilities {
 						'properties' => array(
 							'run_id' => array( 'type' => 'string' ),
 							'force'  => array( 'type' => 'boolean' ),
+							'limit'  => array( 'type' => 'integer' ),
 						),
 					),
 					'output_schema'       => array( 'type' => 'object' ),
@@ -2250,6 +2251,7 @@ class WorkspaceAbilities {
 							'properties' => array(
 								'run_id' => array( 'type' => 'string' ),
 								'force'  => array( 'type' => 'boolean' ),
+								'limit'  => array( 'type' => 'integer' ),
 							),
 						),
 						'output_schema'       => array( 'type' => 'object' ),
@@ -3489,7 +3491,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function workspaceCleanupApply( array $input ): array|\WP_Error {
-		return ( new CleanupRunService() )->apply( (string) ( $input['run_id'] ?? '' ), array( 'force' => ! empty($input['force']) ));
+		return ( new CleanupRunService() )->apply( (string) ( $input['run_id'] ?? '' ), self::cleanupRunApplyOptions($input));
 	}
 
 	/**
@@ -3519,7 +3521,21 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function workspaceCleanupResume( array $input ): array|\WP_Error {
-		return ( new CleanupRunService() )->resume( (string) ( $input['run_id'] ?? '' ), array( 'force' => ! empty($input['force']) ));
+		return ( new CleanupRunService() )->resume( (string) ( $input['run_id'] ?? '' ), self::cleanupRunApplyOptions($input));
+	}
+
+	/**
+	 * Normalize bounded cleanup apply/resume options.
+	 *
+	 * @param  array<string,mixed> $input Ability input.
+	 * @return array<string,mixed>
+	 */
+	private static function cleanupRunApplyOptions( array $input ): array {
+		$options = array( 'force' => ! empty($input['force']) );
+		if ( isset($input['limit']) ) {
+			$options['limit'] = (int) $input['limit'];
+		}
+		return $options;
 	}
 
 	/**
