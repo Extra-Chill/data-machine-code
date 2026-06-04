@@ -101,9 +101,9 @@ class CleanupRunService {
 		$results        = array();
 
 		if ( array() !== $artifact_rows ) {
-			$artifact_batch = array_slice($artifact_rows, 0, $limit);
-			$processed_rows += count($artifact_batch);
-			$batch_type      = 'artifact_cleanup';
+			$artifact_batch              = array_slice($artifact_rows, 0, $limit);
+			$processed_rows             += count($artifact_batch);
+			$batch_type                  = 'artifact_cleanup';
 			$results['artifact_cleanup'] = $this->workspace->worktree_cleanup_artifacts(
 				array(
 					'apply_plan' => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $artifact_batch) ),
@@ -116,9 +116,9 @@ class CleanupRunService {
 
 		$remaining_capacity = max(0, $limit - $processed_rows);
 		if ( $remaining_capacity > 0 && array() !== $worktree_rows ) {
-			$worktree_batch = array_slice($worktree_rows, 0, $remaining_capacity);
-			$processed_rows += count($worktree_batch);
-			$batch_type      = '' === $batch_type ? 'worktree_removal' : 'mixed';
+			$worktree_batch              = array_slice($worktree_rows, 0, $remaining_capacity);
+			$processed_rows             += count($worktree_batch);
+			$batch_type                  = '' === $batch_type ? 'worktree_removal' : 'mixed';
 			$results['worktree_removal'] = $this->workspace->worktree_cleanup_merged(
 				array(
 					'apply_plan'  => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $worktree_batch) ),
@@ -148,11 +148,11 @@ class CleanupRunService {
 		}
 
 		return array(
-			'success' => true,
-			'state'   => $next_status,
-			'run_id'  => $run_id,
-			'status'  => $next_status,
-			'batch'   => array(
+			'success'                => true,
+			'state'                  => $next_status,
+			'run_id'                 => $run_id,
+			'status'                 => $next_status,
+			'batch'                  => array(
 				'type'             => $batch_type,
 				'limit'            => $limit,
 				'processed_rows'   => $processed_rows,
