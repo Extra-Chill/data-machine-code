@@ -723,7 +723,9 @@ namespace {
     $fail_job_ability = new FakeFailJobAbility();
     $GLOBALS['__abilities'] = array(
     'datamachine-code/workspace-cleanup-run'                 => $cleanup_run_ability,
+    'datamachine-code/workspace-cleanup-apply'               => $cleanup_status_ability,
     'datamachine-code/workspace-cleanup-status'              => $cleanup_status_ability,
+    'datamachine-code/workspace-cleanup-resume'              => $cleanup_status_ability,
     'datamachine-code/workspace-hygiene-report'              => $hygiene_ability,
     'datamachine-code/workspace-worktree-cleanup'           => $ability,
     'datamachine-code/workspace-worktree-cleanup-artifacts' => $artifact_ability,
@@ -801,6 +803,16 @@ namespace {
     $db_status_json = json_decode(WP_CLI::$logs[0] ?? '', true);
     datamachine_code_cleanup_assert('cleanup-run-20260504193024-abc123' === ( $cleanup_status_ability->last_input['run_id'] ?? '' ), 'DB cleanup run IDs are routed to cleanup status ability');
     datamachine_code_cleanup_assert('planned' === ( $db_status_json['state'] ?? '' ), 'DB cleanup run status does not route to job-backed status parser');
+
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->cleanup(array( 'apply', 'cleanup-run-20260504193024-abc123' ), array( 'limit' => 7, 'format' => 'json' ));
+    datamachine_code_cleanup_assert(7 === (int) ( $cleanup_status_ability->last_input['limit'] ?? 0 ), 'DB cleanup apply forwards bounded limit');
+
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->cleanup(array( 'resume', 'cleanup-run-20260504193024-abc123' ), array( 'limit' => 9, 'format' => 'json' ));
+    datamachine_code_cleanup_assert(9 === (int) ( $cleanup_status_ability->last_input['limit'] ?? 0 ), 'DB cleanup resume forwards bounded limit');
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();

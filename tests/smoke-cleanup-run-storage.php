@@ -50,7 +50,9 @@ if (! function_exists('wp_json_encode') ) {
 if (! function_exists('wp_generate_password') ) {
     function wp_generate_password( int $length = 12 ): string
     {
-        return substr(str_repeat('a', $length), 0, $length); 
+        static $counter = 0;
+        ++$counter;
+        return substr(str_repeat((string) $counter, $length), 0, $length);
     }
 }
 
@@ -125,6 +127,9 @@ class DataMachineCodeCleanupRunFakeWpdb
 
 class DataMachineCodeCleanupRunFakeWorkspace extends \DataMachineCode\Workspace\Workspace
 {
+    public array $artifact_calls = array();
+    public array $worktree_calls = array();
+
     public function __construct()
     {
     }
@@ -156,17 +161,41 @@ class DataMachineCodeCleanupRunFakeWorkspace extends \DataMachineCode\Workspace\
     }
     public function worktree_cleanup_artifacts( array $opts = array() ): array|WP_Error
     {
+        $this->artifact_calls[] = $opts;
+        $candidates = (array) ( $opts['apply_plan']['candidates'] ?? array() );
+        $removed = array();
+        $skipped = array();
+        foreach ( $candidates as $candidate ) {
+            $handle = (string) ( is_array($candidate) ? ( $candidate['handle'] ?? '' ) : '' );
+            if ('demo@old' === $handle ) {
+                $removed[] = array( 'handle' => 'demo@old', 'artifact_size_bytes' => 15 );
+            } elseif ('demo@stale-artifact' === $handle ) {
+                $skipped[] = array( 'handle' => 'demo@stale-artifact', 'reason_code' => 'plan_mismatch', 'reason' => 'artifact plan no longer matches', 'artifact_size_bytes' => 9 );
+            }
+        }
         return array(
-        'removed' => array( array( 'handle' => 'demo@old', 'artifact_size_bytes' => 15 ) ),
-        'skipped' => array( array( 'handle' => 'demo@stale-artifact', 'reason_code' => 'plan_mismatch', 'reason' => 'artifact plan no longer matches', 'artifact_size_bytes' => 9 ) ),
+        'removed' => $removed,
+        'skipped' => $skipped,
         'summary' => array(),
         );
     }
     public function worktree_cleanup_merged( array $opts = array() ): array|WP_Error
     {
+        $this->worktree_calls[] = $opts;
+        $candidates = (array) ( $opts['apply_plan']['candidates'] ?? array() );
+        $removed = array();
+        $skipped = array();
+        foreach ( $candidates as $candidate ) {
+            $handle = (string) ( is_array($candidate) ? ( $candidate['handle'] ?? '' ) : '' );
+            if ('demo@merged' === $handle ) {
+                $removed[] = array( 'handle' => 'demo@merged', 'size_bytes' => 20 );
+            } elseif ('demo@dirty' === $handle ) {
+                $skipped[] = array( 'handle' => 'demo@dirty', 'reason_code' => 'dirty_worktree', 'reason' => 'working tree is dirty' );
+            }
+        }
         return array(
-        'removed' => array( array( 'handle' => 'demo@merged', 'size_bytes' => 20 ) ),
-        'skipped' => array( array( 'handle' => 'demo@dirty', 'reason_code' => 'dirty_worktree', 'reason' => 'working tree is dirty' ) ),
+        'removed' => $removed,
+        'skipped' => $skipped,
         'summary' => array(),
         );
     }
@@ -211,5 +240,24 @@ datamachine_code_cleanup_run_assert(1 === (int) ( $evidence['remaining_work_summ
 datamachine_code_cleanup_run_assert('demo@stale-artifact' === (string) ( $evidence['remaining_work_summary']['skipped_by_reason']['plan_mismatch']['examples'][0]['handle'] ?? '' ), 'skipped examples include representative handle');
 datamachine_code_cleanup_run_assert(4 === (int) ( $evidence['remaining_work_summary']['blocked_resolvers_by_reason']['needs_metadata_reconcile']['count'] ?? 0 ), 'evidence keeps blocked resolver bucket');
 datamachine_code_cleanup_run_assert(str_contains((string) wp_json_encode($evidence['remaining_work_summary']['recommended_commands']), 'workspace worktree reconcile-metadata'), 'summary recommends next DMC commands');
+
+$bounded_workspace = new DataMachineCodeCleanupRunFakeWorkspace();
+$bounded_service = new \DataMachineCode\Workspace\CleanupRunService($repo, $bounded_workspace);
+$bounded_plan = $bounded_service->plan(array( 'mode' => 'retention' ));
+datamachine_code_cleanup_run_assert(! is_wp_error($bounded_plan), 'bounded plan succeeds');
+
+$bounded_apply = $bounded_service->apply($bounded_plan['run_id'], array( 'limit' => 1 ));
+datamachine_code_cleanup_run_assert('needs_resume' === (string) ( $bounded_apply['status'] ?? '' ), 'bounded apply pauses when rows remain');
+datamachine_code_cleanup_run_assert(1 === (int) ( $bounded_apply['batch']['processed_rows'] ?? 0 ), 'bounded apply processes one row');
+datamachine_code_cleanup_run_assert(str_contains((string) ( $bounded_apply['next']['resume_command'] ?? '' ), 'workspace cleanup resume'), 'bounded apply returns resume command');
+datamachine_code_cleanup_run_assert(1 === count($bounded_workspace->artifact_calls), 'bounded apply only runs artifact cleanup first');
+datamachine_code_cleanup_run_assert(0 === count($bounded_workspace->worktree_calls), 'bounded apply defers worktree cleanup until artifacts drain');
+
+$bounded_service->resume($bounded_plan['run_id'], array( 'limit' => 1 ));
+$bounded_service->resume($bounded_plan['run_id'], array( 'limit' => 1 ));
+$bounded_done = $bounded_service->resume($bounded_plan['run_id'], array( 'limit' => 1 ));
+datamachine_code_cleanup_run_assert('completed' === (string) ( $bounded_done['status'] ?? '' ), 'bounded resume completes final batch');
+datamachine_code_cleanup_run_assert(2 === count($bounded_workspace->artifact_calls), 'bounded resume drains artifact batches before worktrees');
+datamachine_code_cleanup_run_assert(2 === count($bounded_workspace->worktree_calls), 'bounded resume drains worktree batches after artifacts');
 
 echo "DB-backed cleanup run storage smoke passed.\n";

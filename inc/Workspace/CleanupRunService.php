@@ -14,6 +14,9 @@ defined('ABSPATH') || exit;
 
 class CleanupRunService {
 
+	private const DEFAULT_APPLY_LIMIT = 25;
+	private const MAX_APPLY_LIMIT     = 100;
+
 
 
 	public function __construct(
@@ -80,6 +83,8 @@ class CleanupRunService {
 			return new \WP_Error('cleanup_run_not_found', sprintf('Cleanup run not found: %s', $run_id), array( 'status' => 404 ));
 		}
 
+		$limit = $this->apply_limit($opts);
+
 		$this->repository->update_run(
 			$run_id, array(
 				'status'     => 'applying',
@@ -87,47 +92,80 @@ class CleanupRunService {
 			)
 		);
 
-		$items         = $this->repository->get_items($run_id);
-		$artifact_rows = $this->pending_rows_of_type($items, 'artifact_cleanup');
-		$worktree_rows = $this->pending_rows_of_type($items, 'worktree_removal');
-		$results       = array();
+		$items          = $this->repository->get_items($run_id);
+		$artifact_rows  = $this->pending_rows_of_type($items, 'artifact_cleanup');
+		$worktree_rows  = $this->pending_rows_of_type($items, 'worktree_removal');
+		$batch_type     = '';
+		$processed_rows = 0;
+		$remaining_rows = max(0, count($artifact_rows) + count($worktree_rows));
+		$results        = array();
 
 		if ( array() !== $artifact_rows ) {
+			$artifact_batch = array_slice($artifact_rows, 0, $limit);
+			$processed_rows += count($artifact_batch);
+			$batch_type      = 'artifact_cleanup';
 			$results['artifact_cleanup'] = $this->workspace->worktree_cleanup_artifacts(
 				array(
-					'apply_plan' => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $artifact_rows) ),
+					'apply_plan' => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $artifact_batch) ),
 					'force'      => ! empty($opts['force']),
-					'limit'      => count($artifact_rows),
+					'limit'      => count($artifact_batch),
 				)
 			);
-			$this->record_apply_result($artifact_rows, $results['artifact_cleanup'], 'removed');
+			$this->record_apply_result($artifact_batch, $results['artifact_cleanup'], 'removed');
 		}
 
-		if ( array() !== $worktree_rows ) {
+		$remaining_capacity = max(0, $limit - $processed_rows);
+		if ( $remaining_capacity > 0 && array() !== $worktree_rows ) {
+			$worktree_batch = array_slice($worktree_rows, 0, $remaining_capacity);
+			$processed_rows += count($worktree_batch);
+			$batch_type      = '' === $batch_type ? 'worktree_removal' : 'mixed';
 			$results['worktree_removal'] = $this->workspace->worktree_cleanup_merged(
 				array(
-					'apply_plan'  => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $worktree_rows) ),
+					'apply_plan'  => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $worktree_batch) ),
 					'skip_github' => true,
 				)
 			);
-			$this->record_apply_result($worktree_rows, $results['worktree_removal'], 'removed');
+			$this->record_apply_result($worktree_batch, $results['worktree_removal'], 'removed');
 		}
+
+		$status          = $this->status($run_id);
+		$summary         = $status instanceof \WP_Error ? array() : ( $status['summary'] ?? array() );
+		$pending_or_fail = (int) ( $summary['pending_or_failed'] ?? 0 );
+		$next_status     = $pending_or_fail > 0 ? 'needs_resume' : 'completed';
+		$completed_at    = 'completed' === $next_status ? gmdate('Y-m-d H:i:s') : null;
 
 		$this->repository->update_run(
 			$run_id, array(
-				'status'       => 'completed',
-				'completed_at' => gmdate('Y-m-d H:i:s'),
-				'summary'      => $this->status($run_id)['summary'] ?? array(),
+				'status'       => $next_status,
+				'completed_at' => $completed_at,
+				'summary'      => $summary,
 			)
 		);
 
+		$status = $this->status($run_id);
+		if ( $status instanceof \WP_Error ) {
+			return $status;
+		}
+
 		return array(
 			'success' => true,
-			'state'   => 'completed',
+			'state'   => $next_status,
 			'run_id'  => $run_id,
-			'status'  => 'completed',
-			'results' => $results,
-			'summary' => $this->status($run_id)['summary'] ?? array(),
+			'status'  => $next_status,
+			'batch'   => array(
+				'type'             => $batch_type,
+				'limit'            => $limit,
+				'processed_rows'   => $processed_rows,
+				'remaining_before' => $remaining_rows,
+				'remaining_after'  => $pending_or_fail,
+			),
+			'results'                => $results,
+			'summary'                => $status['summary'] ?? array(),
+			'remaining_work_summary' => $status['remaining_work_summary'] ?? array(),
+			'next'                   => $pending_or_fail > 0 ? array(
+				'resume_command' => sprintf('studio wp datamachine-code workspace cleanup resume %s --limit=%d', $run_id, $limit),
+				'pending_rows'   => $pending_or_fail,
+			) : null,
 		);
 	}
 
@@ -248,6 +286,11 @@ class CleanupRunService {
 
 	private function pending_rows_of_type( array $items, string $type ): array {
 		return array_values(array_filter($items, fn( $item ) => (string) ( $item['item_type'] ?? '' ) === $type && in_array( (string) ( $item['status'] ?? '' ), array( 'pending', 'failed' ), true)));
+	}
+
+	private function apply_limit( array $opts ): int {
+		$limit = isset($opts['limit']) ? (int) $opts['limit'] : self::DEFAULT_APPLY_LIMIT;
+		return max(1, min(self::MAX_APPLY_LIMIT, $limit));
 	}
 
 	private function record_apply_result( array $items, mixed $result, string $applied_key ): void {
