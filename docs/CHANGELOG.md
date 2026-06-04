@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.40] - 2026-06-04
+
+### Fixed
+- bound cleanup run apply batches
+
 ## [0.47.39] - 2026-06-03
 
 ### Fixed
