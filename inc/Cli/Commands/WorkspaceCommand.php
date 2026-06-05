@@ -2098,9 +2098,13 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--base=<ref>]
 	 * : Alias for `--from=<ref>`.
 	 *
+	 * [--base-ref=<ref>]
+	 * : Alias for `--from=<ref>`.
+	 *
 	 * [--base-branch=<branch>]
 	 * : Convenience alias for branch-shaped bases. `--base-branch=main`
-	 *   maps to `--from=origin/main`. Use `--from` or `--base` for exact refs.
+	 *   maps to `--from=origin/main`. Use `--from`, `--base`, or `--base-ref`
+	 *   for exact refs.
 	 *
 	 * [--skip-context-injection]
 	 * : Skip injecting the originating site's agent context into a new
@@ -2493,18 +2497,25 @@ class WorkspaceCommand extends BaseCommand {
 		switch ( $operation ) {
 			case 'add':
 				if ( empty($args[1]) || empty($args[2]) ) {
-					WP_CLI::error('Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--rebase-base] [--force]');
+					WP_CLI::error('Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-ref=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--rebase-base] [--force]');
 					return;
 				}
 				$input['repo']   = $args[1];
 				$input['branch'] = $args[2];
-				$exact_base      = $assoc_args['from'] ?? $assoc_args['base'] ?? '';
-				if ( ! empty($assoc_args['from']) && ! empty($assoc_args['base']) ) {
-					WP_CLI::error('Use either --from=<ref> or --base=<ref>, not both.');
+				$exact_base       = $assoc_args['from'] ?? $assoc_args['base'] ?? $assoc_args['base-ref'] ?? '';
+				$exact_base_flags = array_filter(
+					array(
+						'from'     => $assoc_args['from'] ?? '',
+						'base'     => $assoc_args['base'] ?? '',
+						'base-ref' => $assoc_args['base-ref'] ?? '',
+					)
+				);
+				if ( count($exact_base_flags) > 1 ) {
+					WP_CLI::error('Use only one of --from=<ref>, --base=<ref>, or --base-ref=<ref>.');
 					return;
 				}
 				if ( ! empty($exact_base) && ! empty($assoc_args['base-branch']) ) {
-					WP_CLI::error('Use either --from=<ref>/--base=<ref> or --base-branch=<branch>, not both.');
+					WP_CLI::error('Use either --from=<ref>/--base=<ref>/--base-ref=<ref> or --base-branch=<branch>, not both.');
 					return;
 				}
 				if ( ! empty($exact_base) ) {

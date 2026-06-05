@@ -159,21 +159,39 @@ namespace {
         );
         datamachine_code_assert(false, 'ambiguous exact-base flags should throw');
     } catch ( RuntimeException $e ) {
-        datamachine_code_assert(str_contains($e->getMessage(), 'not both'), 'ambiguous exact-base flags fail clearly');
+        datamachine_code_assert(str_contains($e->getMessage(), 'only one'), 'ambiguous exact-base flags fail clearly');
     }
 
-    echo "\n[6] exact base flags reject ambiguous base-branch input\n";
+    echo "\n[6] --base-ref aliases exact --from refs\n";
+    $command->worktree(
+        array( 'add', 'data-machine', 'feat/test' ),
+        array( 'base-ref' => 'origin/trunk' )
+    );
+    datamachine_code_assert('origin/trunk' === $ability->last_input['from'], '--base-ref forwards exact refs as from');
+
+    echo "\n[7] --base-ref rejects other exact-base aliases\n";
     try {
         $command->worktree(
             array( 'add', 'data-machine', 'feat/test' ),
-            array( 'base' => 'origin/main', 'base-branch' => 'develop' )
+            array( 'base' => 'origin/main', 'base-ref' => 'upstream/develop' )
+        );
+        datamachine_code_assert(false, 'ambiguous base-ref flags should throw');
+    } catch ( RuntimeException $e ) {
+        datamachine_code_assert(str_contains($e->getMessage(), 'only one'), 'ambiguous base-ref flags fail clearly');
+    }
+
+    echo "\n[8] exact base flags reject ambiguous base-branch input\n";
+    try {
+        $command->worktree(
+            array( 'add', 'data-machine', 'feat/test' ),
+            array( 'base-ref' => 'origin/main', 'base-branch' => 'develop' )
         );
         datamachine_code_assert(false, 'ambiguous flags should throw');
     } catch ( RuntimeException $e ) {
         datamachine_code_assert(str_contains($e->getMessage(), 'not both'), 'ambiguous flags fail clearly');
     }
 
-    echo "\n[7] --force is forwarded for add and JSON output keeps disk budget\n";
+    echo "\n[9] --force is forwarded for add and JSON output keeps disk budget\n";
     \WP_CLI::reset_logs();
     $command->worktree(
         array( 'add', 'data-machine', 'feat/test' ),
