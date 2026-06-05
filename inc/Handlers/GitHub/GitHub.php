@@ -63,8 +63,9 @@ class GitHub extends FetchHandler {
 			throw new \RuntimeException('GitHub: No repository configured and no default repo set.');
 		}
 
-		if ( ! GitHubAbilities::isConfigured() ) {
-			throw new \RuntimeException('GitHub: Authentication is not configured.');
+		$credential = GitHubAbilities::getCredential(array( 'repo' => $repo ));
+		if ( is_wp_error($credential) ) {
+			throw new \RuntimeException('GitHub: Authentication is not configured — ' . $credential->get_error_message());
 		}
 
 		$context->log(
