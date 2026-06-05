@@ -2500,8 +2500,8 @@ class WorkspaceCommand extends BaseCommand {
 					WP_CLI::error('Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-ref=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--rebase-base] [--force]');
 					return;
 				}
-				$input['repo']   = $args[1];
-				$input['branch'] = $args[2];
+				$input['repo']    = $args[1];
+				$input['branch']  = $args[2];
 				$exact_base       = $assoc_args['from'] ?? $assoc_args['base'] ?? $assoc_args['base-ref'] ?? '';
 				$exact_base_flags = array_filter(
 					array(
