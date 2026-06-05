@@ -24,7 +24,8 @@ $assert = static function ( bool $condition, string $message ) use ( &$failures 
     $failures[] = $message;
 };
 
-$assert(false !== strpos($handler, "throw new \\RuntimeException('GitHub: Authentication is not configured.')"), 'missing GitHub auth throws');
+$assert(false !== strpos($handler, "GitHubAbilities::getCredential(array( 'repo' => \$repo ))"), 'GitHub fetch resolves credentials for the requested repo');
+$assert(false !== strpos($handler, "throw new \\RuntimeException('GitHub: Authentication is not configured — ' . esc_html(\$credential->get_error_message()))"), 'missing GitHub auth throws with resolver error');
 $assert(false !== strpos($handler, "throw new \\RuntimeException('GitHub: API error — ' . esc_html(\$result->get_error_message()))"), 'issues and pulls API errors throw');
 $assert(false !== strpos($handler, "throw new \\RuntimeException('GitHub: Tree API error — ' . esc_html(\$result->get_error_message()))"), 'file tree API errors throw');
 $assert(false !== strpos($handler, 'GitHub: No items found.') && false !== strpos($handler, 'return array();'), 'true empty issue/pull lists remain no-item results');
