@@ -25,8 +25,8 @@ $assert = static function ( bool $condition, string $message ) use ( &$failures 
 };
 
 $assert(false !== strpos($handler, "throw new \\RuntimeException('GitHub: Authentication is not configured.')"), 'missing GitHub auth throws');
-$assert(false !== strpos($handler, "throw new \\RuntimeException('GitHub: API error — ' . \$result->get_error_message())"), 'issues and pulls API errors throw');
-$assert(false !== strpos($handler, "throw new \\RuntimeException('GitHub: Tree API error — ' . \$result->get_error_message())"), 'file tree API errors throw');
+$assert(false !== strpos($handler, "throw new \\RuntimeException('GitHub: API error — ' . esc_html(\$result->get_error_message()))"), 'issues and pulls API errors throw');
+$assert(false !== strpos($handler, "throw new \\RuntimeException('GitHub: Tree API error — ' . esc_html(\$result->get_error_message()))"), 'file tree API errors throw');
 $assert(false !== strpos($handler, 'GitHub: No items found.') && false !== strpos($handler, 'return array();'), 'true empty issue/pull lists remain no-item results');
 
 echo "\n";
