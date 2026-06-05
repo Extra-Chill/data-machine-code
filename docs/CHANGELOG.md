@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.48] - 2026-06-05
+
+### Changed
+- Use wrapper for GitHub add-label tool
+
 ## [0.47.47] - 2026-06-05
 
 ### Fixed
