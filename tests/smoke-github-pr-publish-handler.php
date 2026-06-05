@@ -27,8 +27,9 @@ $assert = static function ( bool $condition, string $message ) use ( &$failures 
 };
 
 $assert(false !== strpos($handler, "registerHandler(\n\t\t\t'github_pull_request',\n\t\t\t'publish'"), 'github_pull_request registers as a publish handler');
-$assert(false !== strpos($handler, "'handler'     => 'github_pull_request'"), 'AI tool is marked as the github_pull_request handler tool');
+$assert(false !== strpos($handler, "'handler'                 => 'github_pull_request'"), 'AI tool is marked as the github_pull_request handler tool');
 $assert(false !== strpos($handler, "'github_pull_request_publish'"), 'handler exposes github_pull_request_publish tool');
+$assert(false !== strpos($handler, "'client_context_bindings' => array( 'job_id' )"), 'PR publish tool binds job_id from runtime context');
 $assert(false !== strpos($handler, "'required'   => array( 'title', 'head' )"), 'PR publish requires title and head');
 $assert(false !== strpos($handler, 'GitHubAbilities::createPullRequest'), 'handler delegates PR creation to GitHubAbilities');
 $assert(false !== strpos($handler, "'files'") && false !== strpos($handler, "'items'"), 'PR publish accepts a files array');

@@ -53,11 +53,12 @@ class GitHubPullRequestPublish extends PublishHandler {
 		}
 
 		$tools['github_pull_request_publish'] = array(
-			'class'       => self::class,
-			'method'      => 'handle_tool_call',
-			'handler'     => 'github_pull_request',
-			'description' => 'Publish generated files to a GitHub branch and open a pull request as the publish step for this pipeline item. Call exactly once when the item is ready to publish.',
-			'parameters'  => array(
+			'class'                   => self::class,
+			'client_context_bindings' => array( 'job_id' ),
+			'method'                  => 'handle_tool_call',
+			'handler'                 => 'github_pull_request',
+			'description'             => 'Publish generated files to a GitHub branch and open a pull request as the publish step for this pipeline item. Call exactly once when the item is ready to publish.',
+			'parameters'              => array(
 				'type'       => 'object',
 				'required'   => array( 'title', 'head' ),
 				'properties' => array(
