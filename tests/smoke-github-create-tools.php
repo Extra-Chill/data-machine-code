@@ -222,6 +222,7 @@ namespace {
     $assert('add_label_to_issue tool is registered', isset($github_tools->registered['add_label_to_issue']));
     $assert('add_label_to_issue is available in chat', in_array('chat', $github_tools->registered['add_label_to_issue']['contexts'] ?? array(), true));
     $assert('add_label_to_issue is available in pipeline', in_array('pipeline', $github_tools->registered['add_label_to_issue']['contexts'] ?? array(), true));
+    $assert('add_label_to_issue uses wrapper input normalization instead of direct ability projection', ! isset($github_tools->registered['add_label_to_issue']['options']['ability']));
     $assert('remove_label_from_issue tool is registered', isset($github_tools->registered['remove_label_from_issue']));
     $assert('remove_label_from_issue is available in chat', in_array('chat', $github_tools->registered['remove_label_from_issue']['contexts'] ?? array(), true));
     $assert('remove_label_from_issue is available in pipeline', in_array('pipeline', $github_tools->registered['remove_label_from_issue']['contexts'] ?? array(), true));
