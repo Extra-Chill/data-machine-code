@@ -65,6 +65,11 @@ final class GitHubCredentialResolver {
 		if ( 'pat' === $mode ) {
 			$pat = trim( (string) ( $profile['pat'] ?? '' ));
 			if ( '' === $pat ) {
+				$env_credential = self::resolveEnvironmentToken($selector, $profile_id);
+				if ( null !== $env_credential ) {
+					return $env_credential;
+				}
+
 				return new \WP_Error(
 					'github_pat_not_configured',
 					sprintf('GitHub Personal Access Token not configured for profile "%s".', $profile_id),
@@ -89,6 +94,40 @@ final class GitHubCredentialResolver {
 		}
 
 		return self::resolveApp($profile, $http_request, $now);
+	}
+
+	/**
+	 * Resolve an ephemeral GitHub token from the runtime environment.
+	 *
+	 * This is intentionally scoped to the default profile path so explicit
+	 * profile selections still fail closed when their configured secret is empty.
+	 *
+	 * @param  array<string,mixed>|null $selector
+	 * @param  string                   $profile_id Selected profile id.
+	 * @return array{mode:string,token:string,authorization:string,profile_id:string,source:string}|null
+	 */
+	private static function resolveEnvironmentToken( ?array $selector, string $profile_id ): ?array {
+		$explicit_profile_id = is_array($selector) && '' !== trim( (string) ( $selector['profile_id'] ?? '' ));
+		if ( $explicit_profile_id || self::DEFAULT_PROFILE_ID !== $profile_id ) {
+			return null;
+		}
+
+		foreach ( array( 'GITHUB_TOKEN', 'GH_TOKEN' ) as $env_var ) {
+			$token = trim( (string) getenv($env_var));
+			if ( '' === $token ) {
+				continue;
+			}
+
+			return array(
+				'mode'          => 'pat',
+				'token'         => $token,
+				'authorization' => 'token ' . $token,
+				'profile_id'    => 'env:' . $env_var,
+				'source'        => 'environment',
+			);
+		}
+
+		return null;
 	}
 
 	/**

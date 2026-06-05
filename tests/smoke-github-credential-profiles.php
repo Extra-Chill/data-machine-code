@@ -290,7 +290,23 @@ namespace {
     $empty_explicit = GitHubCredentialResolver::resolve(null, null, array( 'profile_id' => 'empty' ));
     $assert('explicit empty profile fails closed (no fallback to default)', is_wp_error($empty_explicit) && 'github_pat_not_configured' === $empty_explicit->get_error_code());
 
-    // 8. Status surface exposes profile summaries without leaking secrets.
+    // 8. Empty default profile can use a deliberate GitHub Actions/runtime env token.
+    $old_github_token = getenv('GITHUB_TOKEN');
+    $old_gh_token     = getenv('GH_TOKEN');
+    putenv('GITHUB_TOKEN=runtime-token');
+    putenv('GH_TOKEN');
+    $reset(array());
+    $env_credential = GitHubCredentialResolver::resolve(null, null, array( 'repo' => 'owner/repo' ));
+    $assert('empty default profile falls back to GITHUB_TOKEN', ! is_wp_error($env_credential) && 'runtime-token' === $env_credential['token']);
+    $assert('environment credential reports non-secret source profile', ! is_wp_error($env_credential) && 'env:GITHUB_TOKEN' === $env_credential['profile_id']);
+
+    $explicit_default = GitHubCredentialResolver::resolve(null, null, array( 'profile_id' => 'default' ));
+    $assert('explicit default profile still fails closed with env token present', is_wp_error($explicit_default) && 'github_pat_not_configured' === $explicit_default->get_error_code());
+
+    false === $old_github_token ? putenv('GITHUB_TOKEN') : putenv('GITHUB_TOKEN=' . $old_github_token);
+    false === $old_gh_token ? putenv('GH_TOKEN') : putenv('GH_TOKEN=' . $old_gh_token);
+
+    // 9. Status surface exposes profile summaries without leaking secrets.
     $reset(
         array(
         'github_credential_profiles' => array(
@@ -319,7 +335,7 @@ namespace {
     $assert('status profile reports configured booleans', $status['profiles'][0]['pat_configured'] && ! $status['profiles'][1]['pat_configured']);
     $assert('status profile reports non-secret capabilities', array( 'pull_request_create' ) === $status['profiles'][0]['capabilities']);
 
-    // 9. Migration shape: legacy single-cred install still resolves.
+    // 10. Migration shape: legacy single-cred install still resolves.
     $reset(
         array(
         'github_pat'         => 'legacy-only',
@@ -331,7 +347,7 @@ namespace {
     $legacy_status = GitHubCredentialResolver::status();
     $assert('legacy status surface still reports pat_configured at top-level', true === $legacy_status['pat_configured']);
 
-    // 10. DM update-settings filter wiring — round-trip through GitHubProfileSanitizer.
+    // 11. DM update-settings filter wiring — round-trip through GitHubProfileSanitizer.
     $raw_input = array(
     array(
     'id'            => 'Marketing',
@@ -356,7 +372,7 @@ namespace {
     $assert('sanitizer trims allowed_repos entries', $sanitized[0]['allowed_repos'] === array( 'team/marketing', 'team/sub' ));
     $assert('sanitizer normalizes capabilities', $sanitized[0]['capabilities'] === array( 'pull_request_create', 'issues_write' ));
 
-    // 11. Legacy settings migration dry-runs without leaking secrets, then applies profiles.
+    // 12. Legacy settings migration dry-runs without leaking secrets, then applies profiles.
     $reset(
         array(
         'github_pat'         => 'legacy-secret-token',
