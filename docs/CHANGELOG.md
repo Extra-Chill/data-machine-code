@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.42] - 2026-06-05
+
+### Fixed
+- fix github issue publish job context
+
 ## [0.47.41] - 2026-06-04
 
 ### Fixed
