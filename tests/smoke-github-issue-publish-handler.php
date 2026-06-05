@@ -27,8 +27,9 @@ $assert = static function ( bool $condition, string $message ) use ( &$failures 
 };
 
 $assert(false !== strpos($handler, "registerHandler(\n\t\t\t'github_issue',\n\t\t\t'publish'"), 'github_issue registers as a publish handler');
-$assert(false !== strpos($handler, "'handler'     => 'github_issue'"), 'AI tool is marked as the github_issue handler tool');
+$assert(false !== strpos($handler, "'handler'                 => 'github_issue'"), 'AI tool is marked as the github_issue handler tool');
 $assert(false !== strpos($handler, "'github_issue_publish'"), 'handler exposes github_issue_publish tool');
+$assert(false !== strpos($handler, "'client_context_bindings' => array( 'job_id' )"), 'publish tool binds job_id from runtime context');
 $assert(false !== strpos($handler, "'items'       => array( 'type' => 'string' )"), 'array parameters include item schemas');
 $assert(false !== strpos($handler, 'GitHubAbilities::createIssue'), 'handler delegates issue creation to GitHubAbilities');
 $assert(false !== strpos($settings, "'labels'") && false !== strpos($settings, "'assignees'"), 'settings expose labels and assignees defaults');

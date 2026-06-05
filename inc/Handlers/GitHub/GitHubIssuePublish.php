@@ -51,11 +51,12 @@ class GitHubIssuePublish extends PublishHandler {
 		}
 
 		$tools['github_issue_publish'] = array(
-			'class'       => self::class,
-			'method'      => 'handle_tool_call',
-			'handler'     => 'github_issue',
-			'description' => 'Create a GitHub issue as the publish step for this pipeline item. Call exactly once with the final issue title and body.',
-			'parameters'  => array(
+			'class'                   => self::class,
+			'method'                  => 'handle_tool_call',
+			'handler'                 => 'github_issue',
+			'client_context_bindings' => array( 'job_id' ),
+			'description'             => 'Create a GitHub issue as the publish step for this pipeline item. Call exactly once with the final issue title and body.',
+			'parameters'              => array(
 				'type'       => 'object',
 				'required'   => array( 'title', 'body' ),
 				'properties' => array(
