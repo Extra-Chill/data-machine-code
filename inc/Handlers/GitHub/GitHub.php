@@ -65,7 +65,7 @@ class GitHub extends FetchHandler {
 
 		$credential = GitHubAbilities::getCredential(array( 'repo' => $repo ));
 		if ( is_wp_error($credential) ) {
-			throw new \RuntimeException('GitHub: Authentication is not configured — ' . $credential->get_error_message());
+			throw new \RuntimeException('GitHub: Authentication is not configured — ' . esc_html($credential->get_error_message()));
 		}
 
 		$context->log(
