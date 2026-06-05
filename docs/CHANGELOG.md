@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.44] - 2026-06-05
+
+### Fixed
+- fix worktree alias lint
+- fix worktree base-ref alias
+
 ## [0.47.43] - 2026-06-05
 
 ### Fixed
