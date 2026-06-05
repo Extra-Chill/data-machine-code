@@ -60,13 +60,11 @@ class GitHub extends FetchHandler {
 		}
 
 		if ( empty($repo) ) {
-			$context->log('error', 'GitHub: No repository configured and no default repo set.');
-			return array();
+			throw new \RuntimeException('GitHub: No repository configured and no default repo set.');
 		}
 
 		if ( ! GitHubAbilities::isConfigured() ) {
-			$context->log('error', 'GitHub: Personal Access Token not configured.');
-			return array();
+			throw new \RuntimeException('GitHub: Authentication is not configured.');
 		}
 
 		$context->log(
@@ -144,8 +142,7 @@ class GitHub extends FetchHandler {
 		);
 
 		if ( is_wp_error($result) ) {
-			$context->log('error', 'GitHub: PR review context error — ' . $result->get_error_message());
-			return array();
+			throw new \RuntimeException('GitHub: PR review context error — ' . esc_html($result->get_error_message()));
 		}
 
 		$packet = $result['context'] ?? array();
@@ -179,8 +176,7 @@ class GitHub extends FetchHandler {
 		);
 
 		if ( is_wp_error($result) ) {
-			$context->log('error', 'GitHub: Repo review profile error — ' . $result->get_error_message());
-			return array();
+			throw new \RuntimeException('GitHub: Repo review profile error — ' . esc_html($result->get_error_message()));
 		}
 
 		$profile = $result['profile'] ?? array();
@@ -235,8 +231,7 @@ class GitHub extends FetchHandler {
 		);
 
 		if ( is_wp_error($result) ) {
-			$context->log('error', 'GitHub: PR documentation impact error — ' . $result->get_error_message());
-			return array();
+			throw new \RuntimeException('GitHub: PR documentation impact error — ' . esc_html($result->get_error_message()));
 		}
 
 		$packet = $result['packet'] ?? array();
@@ -286,8 +281,7 @@ class GitHub extends FetchHandler {
 		);
 
 		if ( is_wp_error($result) ) {
-			$context->log('error', 'GitHub: Check runs error — ' . $result->get_error_message());
-			return array();
+			throw new \RuntimeException('GitHub: Check runs error — ' . esc_html($result->get_error_message()));
 		}
 
 		return array( 'items' => array( $this->buildStatusPacket($repo, $sha, 'check_runs', $result) ) );
@@ -311,8 +305,7 @@ class GitHub extends FetchHandler {
 		);
 
 		if ( is_wp_error($result) ) {
-			$context->log('error', 'GitHub: Commit statuses error — ' . $result->get_error_message());
-			return array();
+			throw new \RuntimeException('GitHub: Commit statuses error — ' . esc_html($result->get_error_message()));
 		}
 
 		return array( 'items' => array( $this->buildStatusPacket($repo, $sha, 'commit_statuses', $result) ) );
@@ -342,8 +335,7 @@ class GitHub extends FetchHandler {
 		);
 
 		if ( is_wp_error($result) ) {
-			$context->log('error', 'GitHub: Actions artifact error — ' . $result->get_error_message());
-			return array();
+			throw new \RuntimeException('GitHub: Actions artifact error — ' . esc_html($result->get_error_message()));
 		}
 
 		$json_files = is_array($result['json_files'] ?? null) ? $result['json_files'] : array();
@@ -489,8 +481,7 @@ class GitHub extends FetchHandler {
 		);
 
 		if ( is_wp_error($result) ) {
-			$context->log('error', 'GitHub: Tree API error — ' . $result->get_error_message());
-			return array();
+			throw new \RuntimeException('GitHub: Tree API error — ' . esc_html($result->get_error_message()));
 		}
 
 		$files = $result['files'] ?? array();
@@ -614,8 +605,7 @@ class GitHub extends FetchHandler {
 		}
 
 		if ( is_wp_error($result) ) {
-			$context->log('error', 'GitHub: API error — ' . $result->get_error_message());
-			return array();
+			throw new \RuntimeException('GitHub: API error — ' . esc_html($result->get_error_message()));
 		}
 
 		if ( empty($items) ) {
@@ -794,8 +784,7 @@ class GitHub extends FetchHandler {
 		}
 
 		if ( is_wp_error($result) ) {
-			$context->log('error', 'GitHub: API error — ' . $result->get_error_message());
-			return array();
+			throw new \RuntimeException('GitHub: API error — ' . esc_html($result->get_error_message()));
 		}
 
 		$item = 'pulls' === $data_source ? ( $result['pull'] ?? array() ) : ( $result['issue'] ?? array() );
