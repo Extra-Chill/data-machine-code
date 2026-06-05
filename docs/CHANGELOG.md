@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.45] - 2026-06-05
+
+### Changed
+- Escape GitHub fetch error messages
+- Fail GitHub fetches on API errors
+
 ## [0.47.44] - 2026-06-05
 
 ### Fixed
