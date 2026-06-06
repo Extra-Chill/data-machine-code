@@ -73,6 +73,21 @@ class WorktreeCleanupTask extends SystemTask {
 	}
 
 	/**
+	 * Pure workspace/git maintenance — runs without agent ownership context.
+	 *
+	 * This task removes merged worktrees via the Workspace service (git/disk ops
+	 * gated by PluginSettings). It never acts as an agent or invokes an
+	 * agent-scoped ability. It is registered as an agent-less recurring schedule,
+	 * so it must opt out of the SystemTask agent-context gate or
+	 * TaskScheduler::schedule() rejects it before it runs.
+	 *
+	 * @return bool
+	 */
+	public function requiresAgentContext(): bool {
+		return false;
+	}
+
+	/**
 	 * Task metadata for the Data Machine system surface.
 	 *
 	 * `setting_key` wires this task into the standard DM settings plumbing:
