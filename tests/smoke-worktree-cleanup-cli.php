@@ -376,6 +376,7 @@ namespace {
     class FakeActiveNoSignalAbility
     {
         public array $last_input = array();
+        public array $inputs = array();
         private string $mode;
 
         public function __construct( string $mode )
@@ -386,6 +387,7 @@ namespace {
         public function execute( array $input ): array
         {
             $this->last_input = $input;
+            $this->inputs[]   = $input;
             $limit = (int) ( $input['limit'] ?? 25 );
             $offset = (int) ( $input['offset'] ?? 0 );
             $budget = isset($input['until_budget']) && '' !== trim((string) $input['until_budget']) ? ' --until-budget=' . trim((string) $input['until_budget']) : '';
@@ -458,18 +460,31 @@ namespace {
     class FakeReconcileMetadataAbility
     {
         public array $last_input = array();
+        public array $inputs = array();
 
         public function execute( array $input ): array
         {
             $this->last_input = $input;
+            $this->inputs[]   = $input;
+            $limit            = (int) ( $input['limit'] ?? 25 );
+            $offset           = (int) ( $input['offset'] ?? 0 );
             return array(
             'success' => true,
             'mode'    => 'metadata_reconcile',
             'dry_run' => ! empty($input['dry_run']),
             'summary' => array(
-            'inspected' => 2,
-            'proposed'  => 2,
-            'written'   => empty($input['dry_run']) ? 2 : 0,
+            'inspected' => 1,
+            'proposed'  => 1,
+            'written'   => empty($input['dry_run']) ? 1 : 0,
+            ),
+            'pagination' => array(
+            'total'       => 2,
+            'offset'      => $offset,
+            'limit'       => $limit,
+            'scanned'     => 1,
+            'partial'     => $offset + $limit < 2,
+            'complete'    => $offset + $limit >= 2,
+            'next_offset' => $offset + $limit,
             ),
             );
         }
@@ -1055,14 +1070,16 @@ namespace {
     echo "\n[1a] abandoned cleanup orchestrates safe DMC abilities\n";
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
-    $command->worktree(array( 'abandoned' ), array( 'apply' => true, 'force' => true, 'limit' => 5, 'passes' => 1, 'until-budget' => '30s', 'format' => 'json' ));
+    $command->worktree(array( 'abandoned' ), array( 'apply' => true, 'force' => true, 'limit' => 1, 'passes' => 1, 'until-budget' => '30s', 'format' => 'json' ));
     $abandoned_json = json_decode(WP_CLI::$logs[0] ?? '', true);
     datamachine_code_cleanup_assert(JSON_ERROR_NONE === json_last_error(), 'abandoned JSON output parses cleanly');
     datamachine_code_cleanup_assert(true === ( $abandoned_json['applied'] ?? null ), 'abandoned apply mode is explicit in JSON');
     datamachine_code_cleanup_assert(true === ( $abandoned_json['force'] ?? null ), 'abandoned force mode is explicit in JSON');
-    datamachine_code_cleanup_assert(5 === (int) ( $reconcile_metadata_ability->last_input['limit'] ?? 0 ), 'abandoned forwards limit to metadata reconciliation');
+    datamachine_code_cleanup_assert(1 === (int) ( $reconcile_metadata_ability->last_input['limit'] ?? 0 ), 'abandoned forwards limit to metadata reconciliation');
     datamachine_code_cleanup_assert(false === ( $reconcile_metadata_ability->last_input['dry_run'] ?? null ), 'abandoned --apply applies metadata reconciliation');
+    datamachine_code_cleanup_assert(array( 0, 1 ) === array_map(fn( $input ) => (int) ( $input['offset'] ?? 0 ), array_slice($reconcile_metadata_ability->inputs, -2)), 'abandoned drains metadata reconciliation pages in apply mode');
     datamachine_code_cleanup_assert('30s' === ( $active_finalized_ability->last_input['until_budget'] ?? '' ), 'abandoned forwards time budget to active/no-signal marking');
+    datamachine_code_cleanup_assert(array( 0, 1 ) === array_map(fn( $input ) => (int) ( $input['offset'] ?? 0 ), array_slice($active_finalized_ability->inputs, -2)), 'abandoned drains active/no-signal classifier pages in apply mode');
     datamachine_code_cleanup_assert(true === ( $bounded_apply_ability->last_input['force'] ?? null ), 'abandoned forwards force only to bounded cleanup removal');
     datamachine_code_cleanup_assert(false === ( $bounded_apply_ability->last_input['dry_run'] ?? null ), 'abandoned --apply removes eligible rows');
     datamachine_code_cleanup_assert(1 === $prune_ability->calls, 'abandoned prunes stale git metadata after cleanup pass');
