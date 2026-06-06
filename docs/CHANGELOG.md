@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.57] - 2026-06-06
+
+### Changed
+- Make Data Machine optional for DMC core
+
 ## [0.47.56] - 2026-06-06
 
 ### Fixed
