@@ -2764,6 +2764,14 @@ class WorkspaceCommand extends BaseCommand {
 		$limit        = isset($assoc_args['limit']) ? max(1, min(100, (int) $assoc_args['limit'])) : 100;
 		$passes       = isset($assoc_args['passes']) ? max(1, min(25, (int) $assoc_args['passes'])) : 5;
 		$until_budget = isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ? trim( (string) $assoc_args['until-budget']) : '';
+		$deadline     = null;
+		if ( '' !== $until_budget ) {
+			$budget_seconds = $this->parse_worktree_abandoned_budget($until_budget);
+			if ( is_wp_error($budget_seconds) ) {
+				return $budget_seconds;
+			}
+			$deadline = microtime(true) + $budget_seconds;
+		}
 
 		$required = array(
 			'reconcile_metadata' => 'datamachine-code/workspace-worktree-reconcile-metadata',
@@ -2818,9 +2826,6 @@ class WorkspaceCommand extends BaseCommand {
 			'limit'  => $limit,
 			'source' => self::CLEANUP_CLI_SOURCE,
 		);
-		if ( '' !== $until_budget ) {
-			$common_page['until_budget'] = $until_budget;
-		}
 
 		$reconcile_input = array_merge(
 			$common_page,
@@ -2829,7 +2834,7 @@ class WorkspaceCommand extends BaseCommand {
 				'apply'   => $apply,
 			)
 		);
-		$reconcile       = $this->drain_worktree_abandoned_pages($abilities['reconcile_metadata'], $reconcile_input, $apply);
+		$reconcile       = $this->drain_worktree_abandoned_pages($abilities['reconcile_metadata'], $reconcile_input, $apply, $deadline);
 		if ( is_wp_error($reconcile) ) {
 			return $reconcile;
 		}
@@ -2848,6 +2853,11 @@ class WorkspaceCommand extends BaseCommand {
 			$result['executed_passes'] = $pass;
 			$pass_marked               = 0;
 			foreach ( $mark_steps as $key => $ability ) {
+				if ( $this->worktree_abandoned_budget_expired($deadline) ) {
+					$result['evidence']['budget_exhausted'] = true;
+					break 2;
+				}
+
 				$step_input = array_merge(
 					$common_page,
 					array(
@@ -2855,7 +2865,7 @@ class WorkspaceCommand extends BaseCommand {
 						'offset'  => 0,
 					)
 				);
-				$step       = $this->drain_worktree_abandoned_pages($ability, $step_input, $apply);
+				$step       = $this->drain_worktree_abandoned_pages($ability, $step_input, $apply, $deadline);
 				if ( is_wp_error($step) ) {
 					return $step;
 				}
@@ -2940,7 +2950,12 @@ class WorkspaceCommand extends BaseCommand {
 	 * @param  bool                $apply      Whether the orchestration is applying changes.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function drain_worktree_abandoned_pages( object $ability, array $base_input, bool $apply ): array|\WP_Error {
+	private function drain_worktree_abandoned_pages( object $ability, array $base_input, bool $apply, ?float $deadline = null ): array|\WP_Error {
+		$execute = array( $ability, 'execute' );
+		if ( ! is_callable($execute) ) {
+			return new \WP_Error('worktree_abandoned_ability_invalid', 'Worktree abandoned cleanup ability is not executable.', array( 'status' => 500 ));
+		}
+
 		$pages       = array();
 		$summary     = array();
 		$pagination  = array();
@@ -2949,12 +2964,17 @@ class WorkspaceCommand extends BaseCommand {
 		$last_result = array();
 
 		for ( $page = 1; $page <= $max_pages; ++$page ) {
+			if ( null !== $deadline && $this->worktree_abandoned_budget_expired($deadline) ) {
+				break;
+			}
+
 			$input = $base_input;
 			if ( isset($base_input['offset']) || $page > 1 ) {
 				$input['offset'] = $offset;
 			}
+			$this->apply_worktree_abandoned_remaining_budget($input, $deadline);
 
-			$result = $ability->execute($input);
+			$result = $execute($input);
 			if ( is_wp_error($result) ) {
 				return $result;
 			}
@@ -2986,12 +3006,70 @@ class WorkspaceCommand extends BaseCommand {
 			$offset = $next_offset;
 		}
 
+		if ( array() === $last_result ) {
+			$last_result = array(
+				'success'          => true,
+				'mode'             => 'abandoned_budget_exhausted',
+				'dry_run'          => ! empty($base_input['dry_run']),
+				'applied'          => $apply,
+				'budget_exhausted' => true,
+			);
+		}
+
 		$last_result['summary']    = $summary;
 		$last_result['pagination'] = $pagination;
 		$last_result['pages']      = $pages;
 		$last_result['page_count'] = count($pages);
 
 		return $last_result;
+	}
+
+	/**
+	 * Parse abandoned-cleanup wall-clock budget.
+	 *
+	 * @param  string $duration Duration like 60s, 10m, or 1h.
+	 * @return int|\WP_Error
+	 */
+	private function parse_worktree_abandoned_budget( string $duration ): int|\WP_Error {
+		if ( ! preg_match('/^(\d+)([smh])$/', trim($duration), $matches) ) {
+			return new \WP_Error('invalid_worktree_abandoned_budget', 'Invalid --until-budget duration. Use a compact value like 60s, 10m, or 1h.', array( 'status' => 400 ));
+		}
+
+		$value = (int) $matches[1];
+		if ( $value < 1 ) {
+			return new \WP_Error('invalid_worktree_abandoned_budget', 'Invalid --until-budget duration. Duration must be greater than zero.', array( 'status' => 400 ));
+		}
+
+		return match ( $matches[2] ) {
+			'h' => $value * HOUR_IN_SECONDS,
+			'm' => $value * MINUTE_IN_SECONDS,
+			default => $value,
+		};
+	}
+
+	/**
+	 * Forward only the remaining abandoned-cleanup budget to one ability call.
+	 *
+	 * @param array<string,mixed> $input    Ability input.
+	 * @param float|null          $deadline Shared wall-clock deadline.
+	 */
+	private function apply_worktree_abandoned_remaining_budget( array &$input, ?float $deadline ): void {
+		if ( null === $deadline ) {
+			return;
+		}
+
+		$remaining             = max(1, (int) floor($deadline - microtime(true)));
+		$input['until_budget'] = $remaining . 's';
+	}
+
+	/**
+	 * Check whether the abandoned-cleanup shared deadline has expired.
+	 *
+	 * @param float|null $deadline Shared wall-clock deadline.
+	 * @return bool
+	 */
+	private function worktree_abandoned_budget_expired( ?float $deadline ): bool {
+		return null !== $deadline && microtime(true) >= $deadline;
 	}
 
 	/**
@@ -3020,17 +3098,15 @@ class WorkspaceCommand extends BaseCommand {
 	/**
 	 * Merge blocked rows by handle so repeated passes do not duplicate output.
 	 *
-	 * @param  array<int,array<string,mixed>> $existing Existing blocked rows.
-	 * @param  array<int,mixed>               $incoming Incoming skipped rows.
+	 * @param  array<int|string,array<string,mixed>> $existing Existing blocked rows.
+	 * @param  array<int,mixed>                      $incoming Incoming skipped rows.
 	 * @return array<string,array<string,mixed>>
 	 */
 	private function merge_worktree_abandoned_blockers( array $existing, array $incoming ): array {
 		$merged = array();
 		foreach ( $existing as $row ) {
-			if ( is_array($row) ) {
-				$handle            = (string) ( $row['handle'] ?? count($merged) );
-				$merged[ $handle ] = $row;
-			}
+			$handle            = (string) ( $row['handle'] ?? count($merged) );
+			$merged[ $handle ] = $row;
 		}
 
 		foreach ( $incoming as $row ) {
