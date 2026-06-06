@@ -29,6 +29,7 @@ require_once __DIR__ . '/WorkspaceRepositoryLifecycle.php';
 require_once __DIR__ . '/WorkspaceWorktreeLifecycle.php';
 require_once __DIR__ . '/WorkspaceWorktreeInventoryCleanup.php';
 require_once __DIR__ . '/WorkspaceWorktreeEmergencyCleanup.php';
+require_once __DIR__ . '/WorktreeCleanupClassifier.php';
 
 class Workspace {
 
@@ -3444,44 +3445,7 @@ class Workspace {
 	 * @return array<string,int>
 	 */
 	private function worktree_cleanup_buckets( int $candidate_count, array $candidates_by_signal, array $skipped_by_reason ): array {
-		$needs_reconciliation         = (int) ( $skipped_by_reason['needs_metadata_reconcile'] ?? 0 )
-		+ (int) ( $skipped_by_reason['requires_full_scan'] ?? 0 )
-		+ (int) ( $skipped_by_reason['missing_metadata'] ?? 0 )
-		+ (int) ( $skipped_by_reason['lifecycle_reconciliation_candidate'] ?? 0 );
-		$needs_full_review            = (int) ( $skipped_by_reason['active_no_signal'] ?? 0 )
-		+ (int) ( $skipped_by_reason['no_inventory_cleanup_signal'] ?? 0 )
-		+ (int) ( $skipped_by_reason['no_merge_signal'] ?? 0 )
-		+ (int) ( $skipped_by_reason['github_unknown'] ?? 0 )
-		+ (int) ( $skipped_by_reason['external_worktree'] ?? 0 )
-		+ (int) ( $skipped_by_reason['protected_branch'] ?? 0 )
-		+ (int) ( $skipped_by_reason['protected_base_branch_worktree'] ?? 0 )
-		+ (int) ( $skipped_by_reason['detached_worktree'] ?? 0 )
-		+ (int) ( $skipped_by_reason['detached_protected_branch'] ?? 0 )
-		+ (int) ( $skipped_by_reason['submodule_worktree'] ?? 0 )
-		+ (int) ( $skipped_by_reason['probe_timeout'] ?? 0 )
-		+ (int) ( $skipped_by_reason['unknown_age'] ?? 0 );
-		$blocked_by_dirty_or_unpushed = (int) ( $skipped_by_reason['dirty_worktree'] ?? 0 )
-		+ (int) ( $skipped_by_reason['merged_pr_with_only_obsolete_dirty_changes'] ?? 0 )
-		+ (int) ( $skipped_by_reason['unpushed_commits'] ?? 0 );
-
-		$buckets = array(
-			'artifact_only_dirty_worktree'        => (int) ( $skipped_by_reason['artifact_only_dirty_worktree'] ?? 0 ),
-			'blocked_by_dirty_or_unpushed'        => $blocked_by_dirty_or_unpushed,
-			'needs_full_review'                   => $needs_full_review,
-			'needs_reconciliation'                => $needs_reconciliation,
-			'safe_to_remove_now'                  => $candidate_count,
-
-			// Legacy aliases retained for existing automation while callers migrate
-			// to the explicit safety buckets above.
-			'explicit_cleanup_candidates'         => (int) ( $candidates_by_signal['cleanup_eligible'] ?? 0 ),
-			'lifecycle_reconciliation_candidates' => (int) ( $skipped_by_reason['lifecycle_reconciliation_candidate'] ?? 0 ),
-			'metadata_reconciliation_candidates'  => (int) ( $skipped_by_reason['needs_metadata_reconcile'] ?? 0 ) + (int) ( $skipped_by_reason['requires_full_scan'] ?? 0 ) + (int) ( $skipped_by_reason['missing_metadata'] ?? 0 ),
-			'dirty_unpushed'                      => $blocked_by_dirty_or_unpushed,
-			'active_no_signal'                    => (int) ( $skipped_by_reason['active_no_signal'] ?? 0 ) + (int) ( $skipped_by_reason['no_inventory_cleanup_signal'] ?? 0 ),
-		);
-
-		ksort($buckets);
-		return $buckets;
+		return WorktreeCleanupClassifier::buckets($candidate_count, $candidates_by_signal, $skipped_by_reason);
 	}
 
 	/**
