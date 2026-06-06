@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.58] - 2026-06-06
+
+### Fixed
+- bound abandoned cleanup budget
+
 ## [0.47.57] - 2026-06-06
 
 ### Changed
