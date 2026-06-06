@@ -461,6 +461,7 @@ namespace {
     {
         public array $last_input = array();
         public array $inputs = array();
+        public ?int $stall_at_offset = null;
 
         public function execute( array $input ): array
         {
@@ -468,6 +469,27 @@ namespace {
             $this->inputs[]   = $input;
             $limit            = (int) ( $input['limit'] ?? 25 );
             $offset           = (int) ( $input['offset'] ?? 0 );
+            if ( null !== $this->stall_at_offset && $offset === $this->stall_at_offset ) {
+                return array(
+                'success' => true,
+                'mode'    => 'metadata_reconcile',
+                'dry_run' => ! empty($input['dry_run']),
+                'summary' => array(
+                'inspected' => 0,
+                'proposed'  => 0,
+                'written'   => 0,
+                ),
+                'pagination' => array(
+                'total'       => $offset + $limit,
+                'offset'      => $offset,
+                'limit'       => $limit,
+                'scanned'     => 0,
+                'partial'     => true,
+                'complete'    => false,
+                'next_offset' => $offset,
+                ),
+                );
+            }
             return array(
             'success' => true,
             'mode'    => 'metadata_reconcile',
@@ -1099,6 +1121,17 @@ namespace {
     datamachine_code_cleanup_assert(7 === (int) ( $abandoned_resume_json['offset'] ?? 0 ), 'abandoned resume reports requested offset');
     datamachine_code_cleanup_assert($reconcile_call_count === count($reconcile_metadata_ability->inputs), 'abandoned resume skips completed reconciliation stage');
     datamachine_code_cleanup_assert(7 === (int) ( $active_finalized_ability->last_input['offset'] ?? -1 ), 'abandoned resume forwards offset to requested classifier stage');
+
+    $reconcile_metadata_ability->stall_at_offset = 90;
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->worktree(array( 'abandoned' ), array( 'apply' => true, 'stage' => 'reconcile', 'offset' => 90, 'limit' => 10, 'passes' => 1, 'until-budget' => '30s', 'format' => 'json' ));
+    $abandoned_reconcile_resume_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    datamachine_code_cleanup_assert(JSON_ERROR_NONE === json_last_error(), 'abandoned same-offset reconcile continuation JSON output parses cleanly');
+    datamachine_code_cleanup_assert('reconcile' === ( $abandoned_reconcile_resume_json['continuation']['stage'] ?? '' ), 'abandoned same-offset reconcile continuation keeps reconcile stage');
+    datamachine_code_cleanup_assert(90 === (int) ( $abandoned_reconcile_resume_json['continuation']['offset'] ?? -1 ), 'abandoned same-offset reconcile continuation keeps current offset');
+    datamachine_code_cleanup_assert(str_contains($abandoned_reconcile_resume_json['continuation']['next_command'] ?? '', '--stage=reconcile --offset=90'), 'abandoned same-offset reconcile continuation emits resumed command');
+    $reconcile_metadata_ability->stall_at_offset = null;
 
     $prune_calls_before_preview = $prune_ability->calls;
     WP_CLI::$logs      = array();
