@@ -43,7 +43,13 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Support\ProcessRunner;
+
 defined('ABSPATH') || exit;
+
+if ( ! class_exists(ProcessRunner::class) ) {
+	require_once dirname(__DIR__) . '/Support/ProcessRunner.php';
+}
 
 final class WorktreeBootstrapper {
 
@@ -494,25 +500,26 @@ final class WorktreeBootstrapper {
 	 * invocations, not user input. The `cd` target is escaped.
 	 */
 	private static function run_command( string $step, string $worktree_path, string $command, string $relative = '.' ): array {
-		$cd        = escapeshellarg($worktree_path);
-		$shell_cmd = sprintf('cd %s && %s%s 2>&1', $cd, self::shell_env_prefix(), $command);
+		$result = ProcessRunner::run(
+			sprintf('%s%s 2>&1', self::shell_env_prefix(), $command),
+			array(
+				'cwd'              => $worktree_path,
+				'output_cap_bytes' => self::OUTPUT_CAP_BYTES,
+				'error_as_result'  => true,
+			)
+		);
 
-        // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		exec($shell_cmd, $output, $exit_code);
-
-		$joined = implode("\n", $output);
-		if ( strlen($joined) > self::OUTPUT_CAP_BYTES ) {
-			$joined = '...' . substr($joined, -1 * self::OUTPUT_CAP_BYTES);
-		}
-
-		if ( 0 !== $exit_code ) {
+		if ( $result instanceof \WP_Error || empty($result['success']) ) {
+			$data    = $result instanceof \WP_Error ? $result->get_error_data() : $result;
+			$data    = is_array($data) ? $data : array();
+			$message = $result instanceof \WP_Error ? $result->get_error_message() : 'Process command failed.';
 			return array(
 				'step'        => $step,
 				'status'      => self::STATUS_FAILED,
 				'relative'    => $relative,
 				'command'     => $command,
-				'exit_code'   => $exit_code,
-				'output_tail' => $joined,
+				'exit_code'   => (int) ( $data['exit_code'] ?? 1 ),
+				'output_tail' => (string) ( $data['output'] ?? $message ),
 			);
 		}
 
@@ -522,7 +529,7 @@ final class WorktreeBootstrapper {
 			'relative'    => $relative,
 			'command'     => $command,
 			'exit_code'   => 0,
-			'output_tail' => $joined,
+			'output_tail' => $result['output'],
 		);
 	}
 }
