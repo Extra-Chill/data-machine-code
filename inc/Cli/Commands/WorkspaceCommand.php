@@ -3022,6 +3022,9 @@ class WorkspaceCommand extends BaseCommand {
 		$next_offset = (int) $pagination['next_offset'];
 		$current     = (int) ( $pagination['offset'] ?? 0 );
 		$total       = isset($pagination['total']) ? (int) $pagination['total'] : null;
+		if ( $next_offset === $current && ! empty($pagination['partial']) ) {
+			return true;
+		}
 		if ( null !== $total && $next_offset >= $total ) {
 			return false;
 		}
