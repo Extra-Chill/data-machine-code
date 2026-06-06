@@ -16,10 +16,10 @@ defined('ABSPATH') || exit;
 final class WorktreeCleanupClassifier {
 
 	public const BUCKET_SAFE_TO_REMOVE_NOW           = 'safe_to_remove_now';
-	public const BUCKET_NEEDS_RECONCILIATION        = 'needs_reconciliation';
-	public const BUCKET_NEEDS_FULL_REVIEW           = 'needs_full_review';
+	public const BUCKET_NEEDS_RECONCILIATION         = 'needs_reconciliation';
+	public const BUCKET_NEEDS_FULL_REVIEW            = 'needs_full_review';
 	public const BUCKET_BLOCKED_BY_DIRTY_OR_UNPUSHED = 'blocked_by_dirty_or_unpushed';
-	public const BUCKET_ARTIFACT_ONLY_DIRTY         = 'artifact_only_dirty_worktree';
+	public const BUCKET_ARTIFACT_ONLY_DIRTY          = 'artifact_only_dirty_worktree';
 
 	/**
 	 * Reason codes that indicate metadata/lifecycle reconciliation should run
@@ -119,14 +119,14 @@ final class WorktreeCleanupClassifier {
 		);
 
 		foreach ( $skipped_by_reason as $reason_code => $count ) {
-			$bucket             = self::bucket_for_reason((string) $reason_code);
+			$bucket             = self::bucket_for_reason( (string) $reason_code );
 			$buckets[ $bucket ] = ( $buckets[ $bucket ] ?? 0 ) + (int) $count;
 		}
 
 		$buckets['explicit_cleanup_candidates']         = (int) ( $candidates_by_signal['cleanup_eligible'] ?? 0 );
 		$buckets['lifecycle_reconciliation_candidates'] = (int) ( $skipped_by_reason['lifecycle_reconciliation_candidate'] ?? 0 );
 		$buckets['metadata_reconciliation_candidates']  = (int) ( $skipped_by_reason['needs_metadata_reconcile'] ?? 0 ) + (int) ( $skipped_by_reason['requires_full_scan'] ?? 0 ) + (int) ( $skipped_by_reason['missing_metadata'] ?? 0 );
-		$buckets['dirty_unpushed']                      = $buckets[self::BUCKET_BLOCKED_BY_DIRTY_OR_UNPUSHED];
+		$buckets['dirty_unpushed']                      = $buckets[ self::BUCKET_BLOCKED_BY_DIRTY_OR_UNPUSHED ];
 		$buckets['active_no_signal']                    = (int) ( $skipped_by_reason['active_no_signal'] ?? 0 ) + (int) ( $skipped_by_reason['no_inventory_cleanup_signal'] ?? 0 );
 
 		ksort($buckets);
