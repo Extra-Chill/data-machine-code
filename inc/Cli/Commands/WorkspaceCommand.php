@@ -2846,7 +2846,7 @@ class WorkspaceCommand extends BaseCommand {
 		$effective_passes = $apply ? $passes : 1;
 		for ( $pass = 1; $pass <= $effective_passes; ++$pass ) {
 			$result['executed_passes'] = $pass;
-			$pass_marked = 0;
+			$pass_marked               = 0;
 			foreach ( $mark_steps as $key => $ability ) {
 				$step_input = array_merge(
 					$common_page,
@@ -2860,11 +2860,11 @@ class WorkspaceCommand extends BaseCommand {
 					return $step;
 				}
 
-				$step_key                    = sprintf('%s_pass_%d', $key, $pass);
-				$result['steps'][ $step_key ] = $this->summarize_worktree_abandoned_step($step);
-				$written                     = (int) ( $step['summary']['written'] ?? 0 );
-				$planned                     = (int) ( $step['summary']['planned'] ?? 0 );
-				$pass_marked                += $apply ? $written : $planned;
+				$step_key                                      = sprintf('%s_pass_%d', $key, $pass);
+				$result['steps'][ $step_key ]                  = $this->summarize_worktree_abandoned_step($step);
+				$written                                       = (int) ( $step['summary']['written'] ?? 0 );
+				$planned                                       = (int) ( $step['summary']['planned'] ?? 0 );
+				$pass_marked                                  += $apply ? $written : $planned;
 				$result['summary']['marked_cleanup_eligible'] += $written;
 				$result['summary']['would_mark_cleanup_eligible'] += $planned;
 			}
@@ -2881,10 +2881,12 @@ class WorkspaceCommand extends BaseCommand {
 			}
 
 			$result['steps'][ sprintf('bounded_apply_pass_%d', $pass) ] = $this->summarize_worktree_abandoned_step($bounded);
+
 			$result['summary']['removed']         += (int) ( $bounded['summary']['removed'] ?? 0 );
 			$result['summary']['would_remove']    += (int) ( $bounded['summary']['would_remove'] ?? 0 );
 			$result['summary']['bytes_reclaimed'] += (int) ( $bounded['summary']['bytes_reclaimed'] ?? 0 );
-			$result['blocked']                     = $this->merge_worktree_abandoned_blockers($result['blocked'], (array) ( $bounded['skipped'] ?? array() ));
+
+			$result['blocked'] = $this->merge_worktree_abandoned_blockers($result['blocked'], (array) ( $bounded['skipped'] ?? array() ));
 
 			$removed_or_would = (int) ( $bounded['summary']['removed'] ?? 0 ) + (int) ( $bounded['summary']['would_remove'] ?? 0 );
 			if ( 0 === $pass_marked && 0 === $removed_or_would ) {
@@ -2906,10 +2908,11 @@ class WorkspaceCommand extends BaseCommand {
 			);
 		}
 
-		$result['blocked']           = array_values($result['blocked']);
+		$result['blocked']            = array_values($result['blocked']);
 		$result['summary']['blocked'] = count($result['blocked']);
 		foreach ( $result['blocked'] as $row ) {
-			$reason                                           = (string) ( $row['reason_code'] ?? 'unknown' );
+			$reason = (string) ( $row['reason_code'] ?? 'unknown' );
+
 			$result['summary']['blocked_by_reason'][ $reason ] = (int) ( $result['summary']['blocked_by_reason'][ $reason ] ?? 0 ) + 1;
 		}
 
@@ -2934,16 +2937,16 @@ class WorkspaceCommand extends BaseCommand {
 	private function summarize_worktree_abandoned_step( array $step ): array {
 		$summary = (array) ( $step['summary'] ?? array() );
 		return array(
-			'mode'             => (string) ( $step['mode'] ?? '' ),
-			'dry_run'          => ! empty($step['dry_run']),
-			'applied'          => ! empty($step['applied']) || ! empty($step['destructive']),
-			'inspected'        => (int) ( $summary['inspected'] ?? $summary['processed'] ?? 0 ),
-			'planned'          => (int) ( $summary['planned'] ?? $summary['would_remove'] ?? $summary['proposed'] ?? 0 ),
-			'written'          => (int) ( $summary['written'] ?? 0 ),
-			'removed'          => (int) ( $summary['removed'] ?? 0 ),
-			'skipped'          => (int) ( $summary['skipped'] ?? 0 ),
-			'bytes_reclaimed'  => (int) ( $summary['bytes_reclaimed'] ?? 0 ),
-			'pagination'       => (array) ( $step['pagination'] ?? $step['continuation'] ?? array() ),
+			'mode'            => (string) ( $step['mode'] ?? '' ),
+			'dry_run'         => ! empty($step['dry_run']),
+			'applied'         => ! empty($step['applied']) || ! empty($step['destructive']),
+			'inspected'       => (int) ( $summary['inspected'] ?? $summary['processed'] ?? 0 ),
+			'planned'         => (int) ( $summary['planned'] ?? $summary['would_remove'] ?? $summary['proposed'] ?? 0 ),
+			'written'         => (int) ( $summary['written'] ?? 0 ),
+			'removed'         => (int) ( $summary['removed'] ?? 0 ),
+			'skipped'         => (int) ( $summary['skipped'] ?? 0 ),
+			'bytes_reclaimed' => (int) ( $summary['bytes_reclaimed'] ?? 0 ),
+			'pagination'      => (array) ( $step['pagination'] ?? $step['continuation'] ?? array() ),
 		);
 	}
 
@@ -3008,14 +3011,38 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log('Abandoned worktree cleanup:');
 		$this->format_items(
 			array(
-				array( 'metric' => 'applied', 'value' => ! empty($result['applied']) ? 'yes' : 'no' ),
-				array( 'metric' => 'reconciled', 'value' => (string) ( $summary['reconciled'] ?? 0 ) ),
-				array( 'metric' => 'marked_cleanup_eligible', 'value' => (string) ( $summary['marked_cleanup_eligible'] ?? 0 ) ),
-				array( 'metric' => 'would_mark_cleanup_eligible', 'value' => (string) ( $summary['would_mark_cleanup_eligible'] ?? 0 ) ),
-				array( 'metric' => 'removed', 'value' => (string) ( $summary['removed'] ?? 0 ) ),
-				array( 'metric' => 'would_remove', 'value' => (string) ( $summary['would_remove'] ?? 0 ) ),
-				array( 'metric' => 'bytes_reclaimed', 'value' => $this->format_bytes((int) ( $summary['bytes_reclaimed'] ?? 0 )) ),
-				array( 'metric' => 'blocked', 'value' => (string) ( $summary['blocked'] ?? 0 ) ),
+				array(
+					'metric' => 'applied',
+					'value'  => ! empty($result['applied']) ? 'yes' : 'no',
+				),
+				array(
+					'metric' => 'reconciled',
+					'value'  => (string) ( $summary['reconciled'] ?? 0 ),
+				),
+				array(
+					'metric' => 'marked_cleanup_eligible',
+					'value'  => (string) ( $summary['marked_cleanup_eligible'] ?? 0 ),
+				),
+				array(
+					'metric' => 'would_mark_cleanup_eligible',
+					'value'  => (string) ( $summary['would_mark_cleanup_eligible'] ?? 0 ),
+				),
+				array(
+					'metric' => 'removed',
+					'value'  => (string) ( $summary['removed'] ?? 0 ),
+				),
+				array(
+					'metric' => 'would_remove',
+					'value'  => (string) ( $summary['would_remove'] ?? 0 ),
+				),
+				array(
+					'metric' => 'bytes_reclaimed',
+					'value'  => $this->format_bytes( (int) ( $summary['bytes_reclaimed'] ?? 0 ) ),
+				),
+				array(
+					'metric' => 'blocked',
+					'value'  => (string) ( $summary['blocked'] ?? 0 ),
+				),
 			),
 			array( 'metric', 'value' ),
 			array( 'format' => 'table' ),
@@ -3027,7 +3054,10 @@ class WorkspaceCommand extends BaseCommand {
 			WP_CLI::log('Blocked rows by reason:');
 			$items = array();
 			foreach ( $blocked_by_reason as $reason => $count ) {
-				$items[] = array( 'reason' => (string) $reason, 'count' => (int) $count );
+				$items[] = array(
+					'reason' => (string) $reason,
+					'count'  => (int) $count,
+				);
 			}
 			$this->format_items($items, array( 'reason', 'count' ), array( 'format' => 'table' ), 'reason');
 		}
