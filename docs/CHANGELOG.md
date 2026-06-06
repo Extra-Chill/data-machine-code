@@ -2,6 +2,13 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.53] - 2026-06-06
+
+### Fixed
+- add abandoned worktree cleanup command
+- opt workspace-maintenance tasks out of the agent-context gate
+- route manage issue comments through wrapper
+
 ## [0.47.52] - 2026-06-06
 
 ### Changed
