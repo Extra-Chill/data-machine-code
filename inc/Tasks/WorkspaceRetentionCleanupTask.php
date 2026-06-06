@@ -8,13 +8,12 @@
 namespace DataMachineCode\Tasks;
 
 use DataMachine\Core\PluginSettings;
-use DataMachine\Engine\AI\System\Tasks\SystemTask;
 use DataMachine\Engine\Tasks\TaskScheduler;
 use DataMachineCode\Workspace\Workspace;
 
 defined('ABSPATH') || exit;
 
-class WorkspaceRetentionCleanupTask extends SystemTask {
+class WorkspaceRetentionCleanupTask extends MaintenanceTask {
 
 
 
@@ -30,23 +29,6 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 	 */
 	public function getTaskType(): string {
 		return 'workspace_retention_cleanup';
-	}
-
-	/**
-	 * Pure workspace/disk maintenance — runs without agent ownership context.
-	 *
-	 * This task applies age-gated worktree and reconstructable-artifact cleanup
-	 * via the Workspace service (disk/file/git ops gated by PluginSettings). It
-	 * never acts as an agent or invokes an agent-scoped ability; the only agent_id
-	 * it touches is read from task params (defaulting to 0) to forward into child
-	 * cleanup chunk jobs. It is registered as an agent-less daily recurring
-	 * schedule, so it must opt out of the SystemTask agent-context gate or
-	 * TaskScheduler::schedule() rejects it before it runs.
-	 *
-	 * @return bool
-	 */
-	public function requiresAgentContext(): bool {
-		return false;
 	}
 
 	/**
