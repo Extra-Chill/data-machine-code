@@ -17,7 +17,7 @@
 
 namespace DataMachineCode\Abilities;
 
-use DataMachine\Abilities\PermissionHelper;
+use DataMachineCode\Support\PermissionHelper;
 use DataMachineCode\GitSync\GitSync;
 
 defined('ABSPATH') || exit;

@@ -15,8 +15,8 @@
 
 namespace DataMachineCode\Abilities;
 
-use DataMachine\Abilities\PermissionHelper;
-use DataMachine\Core\PluginSettings;
+use DataMachineCode\Support\PermissionHelper;
+use DataMachineCode\Support\PluginSettings;
 use DataMachineCode\GitHub\PrReviewEscalationPolicy;
 use DataMachineCode\Support\GitHubCredentialResolver;
 use DataMachineCode\Support\RunArtifactBundleFileWriter;
@@ -1930,28 +1930,22 @@ class GitHubAbilities {
 	 * Resolve the current Data Machine agent slug when running in agent context.
 	 */
 	private static function getCurrentAgentSlug(): string {
-		if ( method_exists(PermissionHelper::class, 'get_runtime_context') ) {
-			$agent_slug = self::agentSlugFromContext(PermissionHelper::get_runtime_context());
+		$agent_slug = self::agentSlugFromContext(PermissionHelper::get_runtime_context());
+		if ( '' !== $agent_slug ) {
+			return $agent_slug;
+		}
+
+		$principal = PermissionHelper::get_execution_principal();
+		if ( is_object($principal) ) {
+			$agent_slug = self::agentSlugFromContext(method_exists($principal, 'to_array') ? $principal->to_array() : get_object_vars($principal));
 			if ( '' !== $agent_slug ) {
 				return $agent_slug;
 			}
 		}
 
-		if ( method_exists(PermissionHelper::class, 'get_execution_principal') ) {
-			$principal = PermissionHelper::get_execution_principal();
-			if ( is_object($principal) ) {
-				$agent_slug = self::agentSlugFromContext(method_exists($principal, 'to_array') ? $principal->to_array() : get_object_vars($principal));
-				if ( '' !== $agent_slug ) {
-					return $agent_slug;
-				}
-			}
-		}
-
-		if ( method_exists(PermissionHelper::class, 'get_acting_agent_slug') ) {
-			$agent_slug = PermissionHelper::get_acting_agent_slug();
-			if ( is_string($agent_slug) && '' !== trim($agent_slug) ) {
-				return sanitize_text_field($agent_slug);
-			}
+		$agent_slug = PermissionHelper::get_acting_agent_slug();
+		if ( '' !== trim($agent_slug) ) {
+			return sanitize_text_field($agent_slug);
 		}
 
 		return '';

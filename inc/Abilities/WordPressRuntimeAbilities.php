@@ -7,7 +7,7 @@
 
 namespace DataMachineCode\Abilities;
 
-use DataMachine\Abilities\PermissionHelper;
+use DataMachineCode\Support\PermissionHelper;
 use DataMachineCode\Runtime\WordPressRuntimeInspector;
 
 defined('ABSPATH') || exit;

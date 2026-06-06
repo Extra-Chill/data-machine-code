@@ -14,7 +14,7 @@
 
 namespace DataMachineCode\Abilities;
 
-use DataMachine\Abilities\PermissionHelper;
+use DataMachineCode\Support\PermissionHelper;
 use DataMachineCode\Workspace\CleanupRunService;
 use DataMachineCode\Workspace\RemoteWorkspaceBackend;
 use DataMachineCode\Workspace\Workspace;

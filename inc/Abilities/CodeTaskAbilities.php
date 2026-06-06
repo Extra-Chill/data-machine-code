@@ -7,7 +7,7 @@
 
 namespace DataMachineCode\Abilities;
 
-use DataMachine\Abilities\PermissionHelper;
+use DataMachineCode\Support\PermissionHelper;
 use DataMachineCode\CodeTask\CodeTaskCreator;
 use DataMachineCode\CodeTask\EvidencePacket;
 

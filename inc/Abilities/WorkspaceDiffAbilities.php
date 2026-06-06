@@ -7,7 +7,7 @@
 
 namespace DataMachineCode\Abilities;
 
-use DataMachine\Abilities\PermissionHelper;
+use DataMachineCode\Support\PermissionHelper;
 use DataMachineCode\Workspace\RemoteWorkspaceBackend;
 use DataMachineCode\Workspace\WorkspaceDiff;
 

@@ -32,7 +32,7 @@
 
 namespace DataMachineCode\Support;
 
-use DataMachine\Core\PluginSettings;
+use DataMachineCode\Support\PluginSettings;
 
 defined('ABSPATH') || exit;
 
@@ -197,7 +197,13 @@ final class GitHubCredentialResolver {
 			'iss' => $app_id,
 		);
 
-		$unsigned  = self::base64UrlEncode(wp_json_encode($header)) . '.' . self::base64UrlEncode(wp_json_encode($payload));
+		$header_json  = wp_json_encode($header);
+		$payload_json = wp_json_encode($payload);
+		if ( ! is_string($header_json) || ! is_string($payload_json) ) {
+			return new \WP_Error('github_app_jwt_encode_failed', 'GitHub App JWT payload could not be encoded.', array( 'status' => 500 ));
+		}
+
+		$unsigned  = self::base64UrlEncode($header_json) . '.' . self::base64UrlEncode($payload_json);
 		$signature = '';
      // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- openssl_sign emits warnings for invalid keys; callers receive a WP_Error below.
 		$ok = @openssl_sign($unsigned, $signature, $private_key, OPENSSL_ALGO_SHA256);

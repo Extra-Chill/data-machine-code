@@ -7,7 +7,7 @@
 
 namespace DataMachineCode\Support;
 
-use DataMachine\Core\PluginSettings;
+use DataMachineCode\Support\PluginSettings;
 
 defined('ABSPATH') || exit;
 
