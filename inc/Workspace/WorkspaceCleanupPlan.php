@@ -9,6 +9,10 @@ namespace DataMachineCode\Workspace;
 
 defined('ABSPATH') || exit;
 
+if ( ! class_exists(WorktreeCleanupClassifier::class) ) {
+	require_once __DIR__ . '/WorktreeCleanupClassifier.php';
+}
+
 trait WorkspaceCleanupPlan {
 
 
@@ -220,15 +224,11 @@ trait WorkspaceCleanupPlan {
 				continue;
 			}
 			$reason = (string) ( $row['reason_code'] ?? '' );
-			if ( ! in_array($reason, array( 'needs_metadata_reconcile', 'requires_full_scan', 'lifecycle_reconciliation_candidate', 'active_no_signal', 'no_inventory_cleanup_signal' ), true) ) {
+			if ( ! WorktreeCleanupClassifier::is_resolver_reason($reason) ) {
 				continue;
 			}
 
-			$resolver_type = match ( $reason ) {
-				'needs_metadata_reconcile', 'requires_full_scan' => 'metadata_reconciliation',
-				'lifecycle_reconciliation_candidate' => 'lifecycle_reconciliation',
-				default => 'merge_signal',
-			};
+			$resolver_type = WorktreeCleanupClassifier::resolver_type($reason);
 			$next_action = match ( $resolver_type ) {
 				'metadata_reconciliation'  => 'workspace worktree reconcile-metadata --dry-run --format=json',
 				'lifecycle_reconciliation' => 'workspace worktree cleanup --dry-run --format=json',

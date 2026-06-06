@@ -121,7 +121,7 @@ final class GitRunner {
 		);
 
 		if ( is_wp_error($result) ) {
-			$data = $result->get_error_data();
+			$data = method_exists($result, 'get_error_data') ? $result->get_error_data() : array();
 			$data = is_array($data) ? $data : array();
 			if ( $timeout_seconds > 0 && isset($data['timeout']) ) {
 				return new \WP_Error('git_command_timeout', $result->get_error_message(), $data);
