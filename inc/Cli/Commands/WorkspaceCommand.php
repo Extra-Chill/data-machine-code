@@ -2254,11 +2254,15 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * [--limit=<count>]
 	 * : For `cleanup --dry-run`, `cleanup-artifacts --dry-run`,
-	 *   `reconcile-metadata`, and `active-no-signal-report`,
+	 *   `abandoned`, `reconcile-metadata`, and `active-no-signal-report`,
 	 *   positive maximum worktrees to scan in this page. Artifact cleanup defaults
 	 *   to 100; metadata reconciliation uses this only when pagination is
 	 *   requested. Use `--exhaustive` instead of `--limit=0` for a full artifact
 	 *   audit.
+	 *
+	 * [--passes=<count>]
+	 * : For `abandoned`, maximum apply passes to run after marking eligible rows.
+	 *   Preview mode always runs a single non-destructive classification pass.
 	 *
 	 * [--offset=<count>]
 	 * : For `cleanup --dry-run`, `cleanup-artifacts --dry-run`,
