@@ -18,6 +18,10 @@ namespace DataMachineCode\Support;
 
 defined('ABSPATH') || exit;
 
+if ( ! class_exists(ProcessRunner::class) ) {
+	require_once __DIR__ . '/ProcessRunner.php';
+}
+
 final class GitRunner {
 
 
@@ -137,119 +141,27 @@ final class GitRunner {
 		$escaped = escapeshellarg($path);
 		$command = sprintf('git -C %s %s 2>&1', $escaped, $args);
 
-		if ( $timeout_seconds > 0 ) {
-			return self::run_with_timeout($command, $timeout_seconds);
-		}
+		$result = ProcessRunner::run(
+			$command,
+			array(
+				'timeout_seconds' => $timeout_seconds,
+				'error_code'      => 'git_command_failed',
+			)
+		);
 
-     // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		exec($command, $output, $exit_code);
+		if ( is_wp_error($result) ) {
+			$data = $result->get_error_data();
+			$data = is_array($data) ? $data : array();
+			if ( $timeout_seconds > 0 && isset($data['timeout']) ) {
+				return new \WP_Error('git_command_timeout', $result->get_error_message(), $data);
+			}
 
-		if ( 0 !== $exit_code ) {
-			return new \WP_Error(
-				'git_command_failed',
-				sprintf('Git command failed (exit %d): %s', $exit_code, implode("\n", $output)),
-				array(
-					'status' => 500,
-					'output' => implode("\n", $output),
-				)
-			);
+			return new \WP_Error('git_command_failed', str_replace('Process command', 'Git command', $result->get_error_message()), $data);
 		}
 
 		return array(
 			'success' => true,
-			'output'  => implode("\n", $output),
-		);
-	}
-
-	/**
-	 * Run a command with a wall-clock timeout.
-	 *
-	 * @param  string $command         Shell command.
-	 * @param  int    $timeout_seconds Timeout in seconds.
-	 * @return array{success: true, output: string}|\WP_Error
-	 */
-	private static function run_with_timeout( string $command, int $timeout_seconds ): array|\WP_Error {
-		$descriptor_spec = array(
-			1 => array( 'pipe', 'w' ),
-			2 => array( 'pipe', 'w' ),
-		);
-
-     // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_proc_open
-		$process = proc_open($command, $descriptor_spec, $pipes);
-		if ( ! is_resource($process) ) {
-			return new \WP_Error('git_command_failed', 'Git command failed to start.', array( 'status' => 500 ));
-		}
-
-		stream_set_blocking($pipes[1], false);
-		stream_set_blocking($pipes[2], false);
-		$output    = '';
-		$deadline  = microtime(true) + $timeout_seconds;
-		$exit_code = null;
-
-		while ( true ) {
-			$output .= (string) stream_get_contents($pipes[1]);
-			$output .= (string) stream_get_contents($pipes[2]);
-
-			$status = proc_get_status($process);
-			if ( empty($status['running']) ) {
-				$exit_code = isset($status['exitcode']) ? (int) $status['exitcode'] : null;
-				break;
-			}
-
-			if ( microtime(true) >= $deadline ) {
-				proc_terminate($process);
-				usleep(100000);
-				$status = proc_get_status($process);
-				if ( ! empty($status['running']) ) {
-					proc_terminate($process, 9);
-				}
-
-				foreach ( $pipes as $pipe ) {
-					// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- Process pipes are not WordPress filesystem paths.
-					fclose($pipe);
-				}
-				proc_close($process);
-
-				return new \WP_Error(
-					'git_command_timeout',
-					sprintf('Git command timed out after %d second(s).', $timeout_seconds),
-					array(
-						'status'  => 500,
-						'timeout' => $timeout_seconds,
-						'output'  => trim($output),
-					)
-				);
-			}
-
-			usleep(50000);
-		}
-
-		$output .= (string) stream_get_contents($pipes[1]);
-		$output .= (string) stream_get_contents($pipes[2]);
-		foreach ( $pipes as $pipe ) {
-			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- Process pipes are not WordPress filesystem paths.
-			fclose($pipe);
-		}
-
-		$close_code = proc_close($process);
-		if ( null === $exit_code ) {
-			$exit_code = $close_code;
-		}
-		$output = trim($output);
-		if ( 0 !== $exit_code ) {
-			return new \WP_Error(
-				'git_command_failed',
-				sprintf('Git command failed (exit %d): %s', $exit_code, $output),
-				array(
-					'status' => 500,
-					'output' => $output,
-				)
-			);
-		}
-
-		return array(
-			'success' => true,
-			'output'  => $output,
+			'output'  => $result['output'],
 		);
 	}
 }

@@ -99,6 +99,9 @@ namespace {
     $assert('edit fails when exact old_string is missing', is_wp_error($edit) && 'string_not_found' === $edit->get_error_code());
     $assert('edit failure includes path and suggestions', ! empty($data['path']) && ! empty($data['suggestions'][0]['preview']));
 
+    $traversal = $writer->write_file('example', '..\\escaped.txt', 'nope');
+    $assert('write rejects backslash traversal components', is_wp_error($traversal) && 'path_traversal' === $traversal->get_error_code());
+
     if (! empty($failures) ) {
         echo "\nFAIL: " . count($failures) . " assertion(s) failed out of {$total}\n";
         foreach ( $failures as $failure ) {

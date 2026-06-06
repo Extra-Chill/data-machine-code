@@ -17,6 +17,7 @@ namespace DataMachineCode\Workspace;
 
 use DataMachine\Core\FilesRepository\FilesystemHelper;
 use DataMachineCode\Support\GitRunner;
+use DataMachineCode\Support\PathSecurity;
 
 defined('ABSPATH') || exit;
 
@@ -61,7 +62,7 @@ class WorkspaceWriter {
 		}
 
 		// Reject path traversal components.
-		if ( $this->has_traversal($path) ) {
+		if ( PathSecurity::hasTraversal($path) ) {
 			return new \WP_Error('path_traversal', 'Path traversal detected. Access denied.', array( 'status' => 403 ));
 		}
 
@@ -306,22 +307,6 @@ class WorkspaceWriter {
 				unlink($temp);
 			}
 		}
-	}
-
-	/**
-	 * Check if a relative path contains traversal components.
-	 *
-	 * @param  string $path Relative path to check.
-	 * @return bool True if path contains ".." or "." components.
-	 */
-	private function has_traversal( string $path ): bool {
-		$parts = explode('/', $path);
-		foreach ( $parts as $part ) {
-			if ( '..' === $part || '.' === $part ) {
-				return true;
-			}
-		}
-		return false;
 	}
 
 	/**

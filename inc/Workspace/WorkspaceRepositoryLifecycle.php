@@ -8,8 +8,13 @@
 namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Support\GitRunner;
+use DataMachineCode\Support\ProcessRunner;
 
 defined('ABSPATH') || exit;
+
+if ( ! class_exists(ProcessRunner::class) ) {
+	require_once dirname(__DIR__) . '/Support/ProcessRunner.php';
+}
 
 trait WorkspaceRepositoryLifecycle {
 
@@ -276,50 +281,22 @@ trait WorkspaceRepositoryLifecycle {
 	 * @return array{success: true, output: string}|\WP_Error
 	 */
 	private function run_clone_command( string $command, ?callable $progress_callback, float $started_at, ?array $env = null ): array|\WP_Error {
-		$descriptor_spec = array(
-			1 => array( 'pipe', 'w' ),
-			2 => array( 'pipe', 'w' ),
+		$result = ProcessRunner::run(
+			$command,
+			array(
+				'env'                        => $env,
+				'error_code'                 => 'clone_failed',
+				'poll_interval_microseconds' => 100000,
+				'on_output'                  => function ( string $chunk ) use ( $progress_callback, $started_at ): void {
+					$this->emit_clone_output($progress_callback, $chunk, $started_at);
+				},
+			)
 		);
 
-     // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_proc_open
-		$process = proc_open($command, $descriptor_spec, $pipes, null, $env);
-		if ( ! is_resource($process) ) {
-			return new \WP_Error('clone_failed', 'Git clone failed to start.', array( 'status' => 500 ));
-		}
-
-		stream_set_blocking($pipes[1], false);
-		stream_set_blocking($pipes[2], false);
-
-		$output    = '';
-		$exit_code = null;
-		while ( true ) {
-			$chunk = (string) stream_get_contents($pipes[1]) . (string) stream_get_contents($pipes[2]);
-			if ( '' !== $chunk ) {
-				$output .= $chunk;
-				$this->emit_clone_output($progress_callback, $chunk, $started_at);
-			}
-
-			$status = proc_get_status($process);
-			if ( empty($status['running']) ) {
-				$exit_code = isset($status['exitcode']) ? (int) $status['exitcode'] : null;
-				break;
-			}
-
-			usleep(100000);
-		}
-
-		$output .= (string) stream_get_contents($pipes[1]) . (string) stream_get_contents($pipes[2]);
-		foreach ( $pipes as $pipe ) {
-			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- Process pipes are not WordPress filesystem paths.
-			fclose($pipe);
-		}
-
-		$close_code = proc_close($process);
-		if ( null === $exit_code ) {
-			$exit_code = $close_code;
-		}
-		$output = trim(str_replace("\r", "\n", $output));
-		if ( 0 !== $exit_code ) {
+		if ( is_wp_error($result) ) {
+			$data      = $result->get_error_data();
+			$exit_code = is_array($data) ? (int) ( $data['exit_code'] ?? 1 ) : 1;
+			$output    = is_array($data) ? (string) ( $data['output'] ?? $result->get_error_message() ) : $result->get_error_message();
 			return new \WP_Error(
 				'clone_failed',
 				sprintf('Git clone failed (exit %d): %s', $exit_code, $output),
@@ -332,7 +309,7 @@ trait WorkspaceRepositoryLifecycle {
 
 		return array(
 			'success' => true,
-			'output'  => $output,
+			'output'  => $result['output'],
 		);
 	}
 
