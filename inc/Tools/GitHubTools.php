@@ -28,7 +28,7 @@ class GitHubTools extends BaseTool
         $contexts = array( 'chat', 'pipeline' );
         $this->registerProjectedToolFallback('list_github_issues', array( $this, 'getListIssuesDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/list-github-issues' ));
         $this->registerProjectedToolFallback('get_github_issue', array( $this, 'getGetIssueDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/get-github-issue' ));
-        $this->registerTool('manage_github_issue', array( $this, 'getManageIssueDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/update-github-issue' ));
+        $this->registerTool('manage_github_issue', array( $this, 'getManageIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ));
         $this->registerTool('add_label_to_issue', array( $this, 'getAddLabelToIssueDefinition' ), $contexts, array( 'access_level' => 'editor' ));
         $this->registerTool('remove_label_from_issue', array( $this, 'getRemoveLabelFromIssueDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/remove-github-label' ));
         $this->registerTool('comment_github_pull_request', array( $this, 'getCommentPullRequestDefinition' ), $contexts, array( 'access_level' => 'editor', 'ability' => 'datamachine-code/comment-github-pull-request' ));
@@ -346,7 +346,17 @@ class GitHubTools extends BaseTool
 		$action = $parameters['action'] ?? '';
 
 		if ('comment' === $action ) {
-			return $this->executeGitHubAbility('datamachine-code/comment-github-issue', 'manage_github_issue', $parameters);
+			$comment_parameters = array(
+				'repo'         => $parameters['repo'] ?? '',
+				'issue_number' => $parameters['issue_number'] ?? 0,
+				'body'         => $parameters['body'] ?? '',
+			);
+
+			if (array_key_exists('allow_repeat_automation_comment', $parameters) ) {
+				$comment_parameters['allow_repeat_automation_comment'] = $parameters['allow_repeat_automation_comment'];
+			}
+
+			return $this->executeGitHubAbility('datamachine-code/comment-github-issue', 'manage_github_issue', $comment_parameters);
 		} elseif ('close' === $action ) {
 			$parameters['state'] = 'closed';
 		}

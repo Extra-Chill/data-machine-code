@@ -101,6 +101,16 @@ namespace {
 			'input' => $input,
 			);
 
+			if ('datamachine-code/comment-github-issue' === $this->name ) {
+				return array(
+				'success' => true,
+				'comment' => array(
+				'id'   => 562,
+				'body' => $input['body'] ?? '',
+				),
+				);
+			}
+
 			if ('datamachine-code/add-github-labels' === $this->name ) {
 				return \DataMachineCode\Abilities\GitHubAbilities::addLabels($input);
 			}
@@ -136,7 +146,7 @@ namespace {
 
     function wp_get_ability( string $name ): ?DMC_Test_Ability
     {
-		if (in_array($name, array( 'datamachine-code/create-github-issue', 'datamachine-code/create-github-pull-request', 'datamachine-code/add-github-labels', 'datamachine-code/remove-github-label' ), true) ) {
+		if (in_array($name, array( 'datamachine-code/create-github-issue', 'datamachine-code/create-github-pull-request', 'datamachine-code/comment-github-issue', 'datamachine-code/update-github-issue', 'datamachine-code/add-github-labels', 'datamachine-code/remove-github-label' ), true) ) {
             return new DMC_Test_Ability($name);
         }
 
@@ -223,6 +233,7 @@ namespace {
     $assert('add_label_to_issue is available in chat', in_array('chat', $github_tools->registered['add_label_to_issue']['contexts'] ?? array(), true));
     $assert('add_label_to_issue is available in pipeline', in_array('pipeline', $github_tools->registered['add_label_to_issue']['contexts'] ?? array(), true));
     $assert('add_label_to_issue uses wrapper input normalization instead of direct ability projection', ! isset($github_tools->registered['add_label_to_issue']['options']['ability']));
+    $assert('manage_github_issue uses wrapper routing instead of direct ability projection', ! isset($github_tools->registered['manage_github_issue']['options']['ability']));
     $assert('remove_label_from_issue tool is registered', isset($github_tools->registered['remove_label_from_issue']));
     $assert('remove_label_from_issue is available in chat', in_array('chat', $github_tools->registered['remove_label_from_issue']['contexts'] ?? array(), true));
     $assert('remove_label_from_issue is available in pipeline', in_array('pipeline', $github_tools->registered['remove_label_from_issue']['contexts'] ?? array(), true));
@@ -303,6 +314,27 @@ namespace {
     $assert('remove_label_from_issue requires repo issue_number label', array( 'repo', 'issue_number', 'label' ) === ( $remove_label_definition['parameters']['required'] ?? array() ));
     $assert('manage_github_issue warns update labels replace full set', str_contains($manage_issue_definition['parameters']['properties']['labels']['description'] ?? '', 'REPLACES the entire existing label set'));
     $assert('manage_github_issue points to surgical label tools', str_contains($manage_issue_definition['description'] ?? '', 'add_label_to_issue') && str_contains($manage_issue_definition['description'] ?? '', 'remove_label_from_issue'));
+
+    $manage_comment_result = $github_tools->handleManageIssue(
+        array(
+        'repo'                            => 'Extra-Chill/data-machine-code',
+        'issue_number'                    => 562,
+        'action'                          => 'comment',
+        'title'                           => 'Must not update title',
+        'body'                            => 'Comment body',
+        'labels'                          => array( 'must-not-replace-labels' ),
+        'allow_repeat_automation_comment' => true,
+        )
+    );
+    $manage_comment_call = $GLOBALS['dmc_tool_ability_calls'][2] ?? array();
+    $assert('manage_github_issue comment returns standard success envelope', true === ( $manage_comment_result['success'] ?? false ) && 'manage_github_issue' === ( $manage_comment_result['tool_name'] ?? '' ));
+    $assert('manage_github_issue comment dispatches to comment ability', 'datamachine-code/comment-github-issue' === ( $manage_comment_call['name'] ?? '' ));
+    $assert('manage_github_issue comment does not dispatch to update ability', 'datamachine-code/update-github-issue' !== ( $manage_comment_call['name'] ?? '' ));
+    $assert('manage_github_issue comment forwards comment body', 'Comment body' === ( $manage_comment_call['input']['body'] ?? '' ));
+    $assert('manage_github_issue comment forwards repeat guard opt-in', true === ( $manage_comment_call['input']['allow_repeat_automation_comment'] ?? null ));
+    $assert('manage_github_issue comment strips update title', ! array_key_exists('title', $manage_comment_call['input'] ?? array() ));
+    $assert('manage_github_issue comment strips update labels', ! array_key_exists('labels', $manage_comment_call['input'] ?? array() ));
+    $assert('manage_github_issue comment strips action before ability execution', ! array_key_exists('action', $manage_comment_call['input'] ?? array() ));
 
     $add_label_result = $github_tools->handleAddLabelToIssue(
         array(
