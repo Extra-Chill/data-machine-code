@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.54] - 2026-06-06
+
+### Changed
+- Declare abandoned cleanup passes flag
+
 ## [0.47.53] - 2026-06-06
 
 ### Fixed
