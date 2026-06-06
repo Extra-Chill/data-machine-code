@@ -131,7 +131,7 @@ final class ProcessRunner {
 				);
 			}
 
-			usleep((int) ( $options['poll_interval_microseconds'] ?? 50000 ));
+			usleep( (int) ( $options['poll_interval_microseconds'] ?? 50000 ) );
 		}
 
 		$output .= (string) stream_get_contents($pipes[1]) . (string) stream_get_contents($pipes[2]);
@@ -217,4 +217,4 @@ final class ProcessRunner {
 			)
 		);
 	}
-	}
+}
