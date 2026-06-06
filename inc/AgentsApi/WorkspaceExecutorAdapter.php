@@ -174,7 +174,9 @@ class WorkspaceExecutorAdapter {
 	 * @return array<string,callable>
 	 */
 	public static function register_tool_source( array $sources, array $context = array(), $registry = null ): array {
-		$existing = $sources[ self::SOURCE_SLUG ] ?? null;
+		unset( $context, $registry );
+
+		$existing                     = $sources[ self::SOURCE_SLUG ] ?? null;
 		$sources[ self::SOURCE_SLUG ] = static function ( array $source_context = array(), $source_registry = null ) use ( $existing ): array {
 			$tools = is_callable($existing) ? call_user_func($existing, $source_context, $source_registry) : array();
 			if ( ! is_array($tools) ) {
@@ -200,6 +202,8 @@ class WorkspaceExecutorAdapter {
 	 * @return array<string,mixed>
 	 */
 	public static function register_executor_target( array $targets, array $context = array() ): array {
+		unset( $context );
+
 		$targets[ self::TARGET_ID ] = self::target_metadata();
 		return $targets;
 	}
@@ -236,6 +240,8 @@ class WorkspaceExecutorAdapter {
 	 * @return array<string,array<string,mixed>>
 	 */
 	public static function tool_declarations( array $context = array(), $registry = null ): array {
+		unset( $context, $registry );
+
 		$tools = array();
 		foreach ( self::TOOL_MAP as $tool_name => $config ) {
 			$tools[ $tool_name ] = array(
@@ -265,10 +271,10 @@ class WorkspaceExecutorAdapter {
 	 */
 	public static function target_metadata(): array {
 		return array(
-			'id'                   => self::TARGET_ID,
-			'label'                => 'Data Machine Code blessed workspace',
-			'description'          => 'Optional DMC-backed workspace executor target. Filesystem, Git, and GitHub side effects remain inside Data Machine Code abilities and services.',
-			'resource_class'       => 'workspace',
+			'id'                    => self::TARGET_ID,
+			'label'                 => 'Data Machine Code blessed workspace',
+			'description'           => 'Optional DMC-backed workspace executor target. Filesystem, Git, and GitHub side effects remain inside Data Machine Code abilities and services.',
+			'resource_class'        => 'workspace',
 			'required_capabilities' => array_values(
 				array_unique(
 					array_map(
@@ -277,8 +283,8 @@ class WorkspaceExecutorAdapter {
 					)
 				)
 			),
-			'side_effect_boundary' => 'data-machine-code',
-			'side_effects'         => array(
+			'side_effect_boundary'  => 'data-machine-code',
+			'side_effects'          => array(
 				'filesystem.write',
 				'git.commit',
 				'github.pull_request.create',
@@ -295,6 +301,8 @@ class WorkspaceExecutorAdapter {
 	 * @return array<string,mixed>
 	 */
 	public function executeWP_Agent_Tool_Call( array $tool_call, array $tool_definition, array $context = array() ): array {
+		unset( $context );
+
 		$tool_name = (string) ( $tool_call['tool_name'] ?? $tool_definition['name'] ?? '' );
 		$config    = self::TOOL_MAP[ $tool_name ] ?? null;
 		if ( null === $config ) {
@@ -305,7 +313,7 @@ class WorkspaceExecutorAdapter {
 			return self::error_result($tool_name, 'WordPress Abilities API is not available.', 'abilities_api_unavailable');
 		}
 
-		$ability = wp_get_ability((string) $config['ability']);
+		$ability = wp_get_ability( (string) $config['ability'] );
 		if ( ! is_object($ability) || ! method_exists($ability, 'execute') ) {
 			return self::error_result($tool_name, 'Mapped DMC ability is not registered.', 'ability_unavailable');
 		}
