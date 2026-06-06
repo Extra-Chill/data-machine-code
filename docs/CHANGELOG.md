@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.52] - 2026-06-06
+
+### Changed
+- centralize runtime capability probes
+
+### Fixed
+- align runtime capability lint
+
 ## [0.47.51] - 2026-06-06
 
 ### Changed
