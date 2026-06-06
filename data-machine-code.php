@@ -103,6 +103,7 @@ function datamachine_code_bootstrap() {
 	new \DataMachineCode\Abilities\CodeTaskAbilities();
 	new \DataMachineCode\Abilities\WordPressRuntimeAbilities();
 	\DataMachineCode\SourceInventory\WorkspaceSourceInventory::register();
+	\DataMachineCode\AgentsApi\WorkspaceExecutorAdapter::register();
 
 	// Project active workspace identity into Data Machine's engine_data
 	// snapshot at job init. Requires DM's datamachine_engine_snapshot
