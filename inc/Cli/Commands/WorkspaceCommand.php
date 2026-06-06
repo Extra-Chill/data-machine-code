@@ -2264,9 +2264,13 @@ class WorkspaceCommand extends BaseCommand {
 	 * : For `abandoned`, maximum apply passes to run after marking eligible rows.
 	 *   Preview mode always runs a single non-destructive classification pass.
 	 *
+	 * [--stage=<stage>]
+	 * : For `abandoned`, resume from a specific orchestration stage. Supported
+	 *   values: reconcile, finalized, equivalent-clean, merged, bounded.
+	 *
 	 * [--offset=<count>]
 	 * : For `cleanup --dry-run`, `cleanup-artifacts --dry-run`,
-	 *   `reconcile-metadata`, and `active-no-signal-report`,
+	 *   `abandoned`, `reconcile-metadata`, and `active-no-signal-report`,
 	 *   pagination offset (0-indexed) into the inventory ordering. Walk pages by
 	 *   passing the previous response's `pagination.next_offset`.
 	 *
@@ -2763,8 +2767,21 @@ class WorkspaceCommand extends BaseCommand {
 		$force        = ! empty($assoc_args['force']);
 		$limit        = isset($assoc_args['limit']) ? max(1, min(100, (int) $assoc_args['limit'])) : 100;
 		$passes       = isset($assoc_args['passes']) ? max(1, min(25, (int) $assoc_args['passes'])) : 5;
+		$offset       = isset($assoc_args['offset']) ? max(0, (int) $assoc_args['offset']) : 0;
+		$stage        = isset($assoc_args['stage']) ? strtolower( (string) preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $assoc_args['stage']) ) : 'reconcile';
+		$stage        = str_replace('_', '-', $stage);
 		$until_budget = isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ? trim( (string) $assoc_args['until-budget']) : '';
 		$deadline     = null;
+		$stage_order  = array(
+			'reconcile'        => 0,
+			'finalized'        => 1,
+			'equivalent-clean' => 2,
+			'merged'           => 3,
+			'bounded'          => 4,
+		);
+		if ( ! isset($stage_order[ $stage ]) ) {
+			return new \WP_Error('invalid_worktree_abandoned_stage', 'Invalid --stage value. Use reconcile, finalized, equivalent-clean, merged, or bounded.', array( 'status' => 400 ));
+		}
 		if ( '' !== $until_budget ) {
 			$budget_seconds = $this->parse_worktree_abandoned_budget($until_budget);
 			if ( is_wp_error($budget_seconds) ) {
@@ -2799,6 +2816,8 @@ class WorkspaceCommand extends BaseCommand {
 			'destructive'     => $apply,
 			'force'           => $force,
 			'limit'           => $limit,
+			'stage'           => $stage,
+			'offset'          => $offset,
 			'passes'          => $passes,
 			'executed_passes' => 0,
 			'generated_at'    => gmdate('c'),
@@ -2827,32 +2846,56 @@ class WorkspaceCommand extends BaseCommand {
 			'source' => self::CLEANUP_CLI_SOURCE,
 		);
 
-		$reconcile_input = array_merge(
-			$common_page,
-			array(
-				'dry_run' => ! $apply,
-				'apply'   => $apply,
-			)
-		);
-		$reconcile       = $this->drain_worktree_abandoned_pages($abilities['reconcile_metadata'], $reconcile_input, $apply, $deadline);
-		if ( is_wp_error($reconcile) ) {
-			return $reconcile;
+		if ( $stage_order[ $stage ] <= $stage_order['reconcile'] ) {
+			$reconcile_input = array_merge(
+				$common_page,
+				array(
+					'dry_run' => ! $apply,
+					'apply'   => $apply,
+					'offset'  => 'reconcile' === $stage ? $offset : 0,
+				)
+			);
+			$reconcile       = $this->drain_worktree_abandoned_pages($abilities['reconcile_metadata'], $reconcile_input, $apply, $deadline);
+			if ( is_wp_error($reconcile) ) {
+				return $reconcile;
+			}
+			$result['steps']['reconcile_metadata'] = $this->summarize_worktree_abandoned_step($reconcile);
+			$result['summary']['reconciled']       = (int) ( $reconcile['summary']['written'] ?? 0 );
+			$result['summary']['would_reconcile']  = (int) ( $reconcile['summary']['proposed'] ?? 0 );
+
+			if ( $this->worktree_abandoned_stage_incomplete($reconcile) ) {
+				$result['evidence']['budget_exhausted'] = $this->worktree_abandoned_budget_expired($deadline);
+				$result['continuation']                 = $this->build_worktree_abandoned_continuation('reconcile', $reconcile, $limit, $passes, $force, $until_budget);
+				$result['next_commands'][]              = (string) $result['continuation']['next_command'];
+				return $this->finalize_worktree_abandoned_result($result, $apply, $force, $limit, $passes, $until_budget, $started_at);
+			}
 		}
-		$result['steps']['reconcile_metadata'] = $this->summarize_worktree_abandoned_step($reconcile);
-		$result['summary']['reconciled']       = (int) ( $reconcile['summary']['written'] ?? 0 );
-		$result['summary']['would_reconcile']  = (int) ( $reconcile['summary']['proposed'] ?? 0 );
 
 		$mark_steps = array(
-			'finalized'        => $abilities['finalized'],
-			'equivalent_clean' => $abilities['equivalent_clean'],
-			'merged'           => $abilities['merged'],
+			'finalized'        => array(
+				'stage'   => 'finalized',
+				'ability' => $abilities['finalized'],
+			),
+			'equivalent_clean' => array(
+				'stage'   => 'equivalent-clean',
+				'ability' => $abilities['equivalent_clean'],
+			),
+			'merged'           => array(
+				'stage'   => 'merged',
+				'ability' => $abilities['merged'],
+			),
 		);
 
 		$effective_passes = $apply ? $passes : 1;
 		for ( $pass = 1; $pass <= $effective_passes; ++$pass ) {
 			$result['executed_passes'] = $pass;
 			$pass_marked               = 0;
-			foreach ( $mark_steps as $key => $ability ) {
+			foreach ( $mark_steps as $key => $step_config ) {
+				$step_stage = (string) $step_config['stage'];
+				if ( $stage_order[ $step_stage ] < $stage_order[ $stage ] ) {
+					continue;
+				}
+
 				if ( $this->worktree_abandoned_budget_expired($deadline) ) {
 					$result['evidence']['budget_exhausted'] = true;
 					break 2;
@@ -2862,10 +2905,10 @@ class WorkspaceCommand extends BaseCommand {
 					$common_page,
 					array(
 						'dry_run' => ! $apply,
-						'offset'  => 0,
+						'offset'  => $step_stage === $stage ? $offset : 0,
 					)
 				);
-				$step       = $this->drain_worktree_abandoned_pages($ability, $step_input, $apply, $deadline);
+				$step       = $this->drain_worktree_abandoned_pages($step_config['ability'], $step_input, $apply, $deadline);
 				if ( is_wp_error($step) ) {
 					return $step;
 				}
@@ -2877,6 +2920,13 @@ class WorkspaceCommand extends BaseCommand {
 				$pass_marked                                  += $apply ? $written : $planned;
 				$result['summary']['marked_cleanup_eligible'] += $written;
 				$result['summary']['would_mark_cleanup_eligible'] += $planned;
+
+				if ( $this->worktree_abandoned_stage_incomplete($step) ) {
+					$result['evidence']['budget_exhausted'] = $this->worktree_abandoned_budget_expired($deadline);
+					$result['continuation']                 = $this->build_worktree_abandoned_continuation($step_stage, $step, $limit, $passes, $force, $until_budget);
+					$result['next_commands'][]              = (string) $result['continuation']['next_command'];
+					break 2;
+				}
 			}
 
 			$bounded_input = array(
@@ -2918,24 +2968,89 @@ class WorkspaceCommand extends BaseCommand {
 			);
 		}
 
-		$result['blocked']            = array_values($result['blocked']);
+		return $this->finalize_worktree_abandoned_result($result, $apply, $force, $limit, $passes, $until_budget, $started_at);
+	}
+
+	/**
+	 * Finalize abandoned cleanup output.
+	 *
+	 * @param  array<string,mixed> $result       Partial result.
+	 * @param  bool                $apply        Whether apply mode is active.
+	 * @param  bool                $force        Whether force mode is active.
+	 * @param  int                 $limit        Page size.
+	 * @param  int                 $passes       Apply passes.
+	 * @param  string              $until_budget Original budget argument.
+	 * @param  float               $started_at   Start time.
+	 * @return array<string,mixed>
+	 */
+	private function finalize_worktree_abandoned_result( array $result, bool $apply, bool $force, int $limit, int $passes, string $until_budget, float $started_at ): array {
+		$result['blocked']            = array_values( (array) ( $result['blocked'] ?? array() ) );
 		$result['summary']['blocked'] = count($result['blocked']);
 		foreach ( $result['blocked'] as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
 			$reason = (string) ( $row['reason_code'] ?? 'unknown' );
 
 			$result['summary']['blocked_by_reason'][ $reason ] = (int) ( $result['summary']['blocked_by_reason'][ $reason ] ?? 0 ) + 1;
 		}
 
-		if ( ! $apply ) {
+		if ( empty($result['continuation']) && ! $apply ) {
 			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree abandoned --apply%s --limit=%d --passes=%d%s --format=json', $force ? ' --force' : '', $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
 		}
-		if ( ! $force ) {
+		if ( empty($result['continuation']) && ! $force ) {
 			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree abandoned --apply --force --limit=%d --passes=%d%s --format=json', $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
 		}
 
 		$result['evidence']['elapsed_ms'] = (int) round(( microtime(true) - $started_at ) * 1000);
 
 		return $result;
+	}
+
+	/**
+	 * Determine whether a paged abandoned-cleanup stage still has remaining rows.
+	 *
+	 * @param  array<string,mixed> $step Stage result.
+	 * @return bool
+	 */
+	private function worktree_abandoned_stage_incomplete( array $step ): bool {
+		$pagination = (array) ( $step['pagination'] ?? $step['continuation'] ?? array() );
+		if ( empty($pagination) || ! empty($pagination['complete']) || ! isset($pagination['next_offset']) ) {
+			return false;
+		}
+
+		$next_offset = (int) $pagination['next_offset'];
+		$current     = (int) ( $pagination['offset'] ?? 0 );
+		$total       = isset($pagination['total']) ? (int) $pagination['total'] : null;
+		if ( null !== $total && $next_offset >= $total ) {
+			return false;
+		}
+
+		return $next_offset > $current;
+	}
+
+	/**
+	 * Build continuation evidence for a partially drained abandoned-cleanup stage.
+	 *
+	 * @param  string              $stage        Stage name.
+	 * @param  array<string,mixed> $step         Stage result.
+	 * @param  int                 $limit        Page size.
+	 * @param  int                 $passes       Apply passes.
+	 * @param  bool                $force        Whether force mode is active.
+	 * @param  string              $until_budget Original budget argument.
+	 * @return array<string,mixed>
+	 */
+	private function build_worktree_abandoned_continuation( string $stage, array $step, int $limit, int $passes, bool $force, string $until_budget ): array {
+		$pagination  = (array) ( $step['pagination'] ?? $step['continuation'] ?? array() );
+		$next_offset = isset($pagination['next_offset']) ? max(0, (int) $pagination['next_offset']) : 0;
+		$command     = sprintf('studio wp datamachine-code workspace worktree abandoned --apply%s --stage=%s --offset=%d --limit=%d --passes=%d%s --format=json', $force ? ' --force' : '', $stage, $next_offset, $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
+
+		return array(
+			'stage'        => $stage,
+			'offset'       => $next_offset,
+			'next_command' => $command,
+			'pagination'   => $pagination,
+		);
 	}
 
 	/**

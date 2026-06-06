@@ -855,6 +855,7 @@ namespace {
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--apply]"), 'worktree synopsis declares --apply at top level');
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--via-jobs]"), 'worktree synopsis declares --via-jobs at top level');
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--passes=<count>]"), 'worktree synopsis declares abandoned --passes at top level');
+    datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--stage=<stage>]"), 'worktree synopsis declares abandoned --stage at top level');
     datamachine_code_cleanup_assert(! str_contains($doc_comment, "\n\t\t * [--apply-plan=<file>]"), 'cleanup flags are not hidden behind nested docblock indentation');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, 'Control task-backed workspace cleanup runs.'), 'workspace cleanup command documents task-backed controller surface');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '<plan|apply|run|status|resume|cancel|evidence>'), 'workspace cleanup synopsis exposes DB-backed and task-backed cleanup operations');
@@ -1088,13 +1089,25 @@ namespace {
     datamachine_code_cleanup_assert(2 === (int) ( $abandoned_json['summary']['blocked'] ?? 0 ), 'abandoned summary reports blocked rows');
     datamachine_code_cleanup_assert(1 === (int) ( $abandoned_json['summary']['blocked_by_reason']['unpushed_commits'] ?? 0 ), 'abandoned preserves unpushed-commit blocker evidence');
 
+    $reconcile_call_count = count($reconcile_metadata_ability->inputs);
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->worktree(array( 'abandoned' ), array( 'apply' => true, 'stage' => 'finalized', 'offset' => 7, 'limit' => 1, 'passes' => 1, 'format' => 'json' ));
+    $abandoned_resume_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    datamachine_code_cleanup_assert(JSON_ERROR_NONE === json_last_error(), 'abandoned resume JSON output parses cleanly');
+    datamachine_code_cleanup_assert('finalized' === ( $abandoned_resume_json['stage'] ?? '' ), 'abandoned resume reports requested stage');
+    datamachine_code_cleanup_assert(7 === (int) ( $abandoned_resume_json['offset'] ?? 0 ), 'abandoned resume reports requested offset');
+    datamachine_code_cleanup_assert($reconcile_call_count === count($reconcile_metadata_ability->inputs), 'abandoned resume skips completed reconciliation stage');
+    datamachine_code_cleanup_assert(7 === (int) ( $active_finalized_ability->last_input['offset'] ?? -1 ), 'abandoned resume forwards offset to requested classifier stage');
+
+    $prune_calls_before_preview = $prune_ability->calls;
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
     $command->worktree(array( 'abandoned' ), array( 'limit' => 5, 'passes' => 3, 'format' => 'json' ));
     $abandoned_preview_json = json_decode(WP_CLI::$logs[0] ?? '', true);
     datamachine_code_cleanup_assert(false === ( $abandoned_preview_json['applied'] ?? null ), 'abandoned preview leaves apply mode false');
     datamachine_code_cleanup_assert(1 === (int) ( $abandoned_preview_json['executed_passes'] ?? 0 ), 'abandoned preview runs one classification pass even when more passes are requested');
-    datamachine_code_cleanup_assert(1 === $prune_ability->calls, 'abandoned preview does not prune git metadata');
+    datamachine_code_cleanup_assert($prune_calls_before_preview === $prune_ability->calls, 'abandoned preview does not prune git metadata');
     datamachine_code_cleanup_assert(true === ( $abandoned_preview_json['steps']['prune']['skipped'] ?? false ), 'abandoned preview explains skipped prune step');
 
     echo "\n[1b] --apply-plan decodes JSON and forbids force\n";
