@@ -34,6 +34,10 @@ namespace {
 		return $value instanceof WP_Error;
 	}
 
+	function wp_json_encode( $value ) {
+		return json_encode($value);
+	}
+
 	class WP_Error {
 		public function __construct( private string $code, private string $message ) {}
 
@@ -55,11 +59,24 @@ namespace {
 				'input' => $input,
 			);
 
-			return array(
+			$result = array(
 				'success' => true,
 				'ability' => $this->name,
 				'input'   => $input,
 			);
+
+			if ( 'datamachine-code/workspace-write' === $this->name ) {
+				$result['artifacts'] = array(
+					array(
+						'path'          => $input['path'] ?? 'artifact.txt',
+						'size_bytes'    => 12345,
+						'raw_artifact'  => str_repeat('artifact-payload-', 512),
+						'secret_marker' => $input['content'] ?? '',
+					),
+				);
+			}
+
+			return $result;
 		}
 	}
 
@@ -151,6 +168,31 @@ namespace {
 	$assert('executor delegates to DMC workspace-read ability', 'datamachine-code/workspace-read' === ( $GLOBALS['dmc_agents_api_executed_ability']['name'] ?? '' ));
 	$assert('executor passes parameters through unchanged', 'README.md' === ( $GLOBALS['dmc_agents_api_executed_ability']['input']['path'] ?? '' ));
 	$assert('executor result preserves runtime target metadata', 'data-machine-code/blessed-workspace' === ( $result['runtime']['executor_target'] ?? '' ));
+	$assert('executor emits execution metrics', isset($result['execution_metrics']['wall_time_ms']));
+	$assert('executor metrics count the DMC ability call', 1 === (int) ( $result['execution_metrics']['ability_call_count'] ?? 0 ));
+	$assert('executor metrics include per-ability timing', 'datamachine-code/workspace-read' === ( $result['execution_metrics']['ability_timings_ms'][0]['ability'] ?? '' ));
+	$assert('executor metrics count payload bytes without replacing result semantics', (int) ( $result['execution_metrics']['payload_bytes']['input'] ?? 0 ) > 0);
+	$assert('read metrics report no mutating side-effect classes', array() === ( $result['execution_metrics']['side_effect_classes'] ?? null ));
+
+	$secret_content = 'super-secret-token-value-' . str_repeat('x', 1024);
+	$write_result   = $executor->executeWP_Agent_Tool_Call(
+		array(
+			'tool_name'  => 'client/filesystem_write',
+			'parameters' => array(
+				'repo'    => 'demo@branch',
+				'path'    => 'build/output.txt',
+				'content' => $secret_content,
+			),
+		),
+		$tools['client/filesystem_write'],
+		array()
+	);
+	$write_metrics = $write_result['execution_metrics'] ?? array();
+	$metrics_json  = json_encode($write_metrics);
+	$assert('write metrics report filesystem side-effect class', array( 'filesystem' ) === ( $write_metrics['side_effect_classes'] ?? null ));
+	$assert('write metrics count artifact references by bytes', 1 === (int) ( $write_metrics['artifacts']['count'] ?? 0 ) && 12345 === (int) ( $write_metrics['artifacts']['bytes'] ?? 0 ));
+	$assert('write metrics do not copy secret input values', false !== $metrics_json && ! str_contains($metrics_json, 'super-secret-token-value'));
+	$assert('write metrics do not copy oversized raw artifact payloads', false !== $metrics_json && ! str_contains($metrics_json, 'artifact-payload-'));
 
 	$unsupported = $executor->executeWP_Agent_Tool_Call(
 		array(
@@ -161,6 +203,7 @@ namespace {
 		array()
 	);
 	$assert('unsupported tools fail without side effects', false === ( $unsupported['success'] ?? true ) && 'unsupported_tool' === ( $unsupported['error_type'] ?? '' ));
+	$assert('failure metrics expose normalized failure class', 'unsupported_tool' === ( $unsupported['execution_metrics']['failure_class'] ?? '' ));
 
 	if ( ! empty($failures) ) {
 		echo "\nFAIL: " . count($failures) . " assertion(s) failed\n";

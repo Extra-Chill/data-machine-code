@@ -303,35 +303,46 @@ class WorkspaceExecutorAdapter {
 	public function executeWP_Agent_Tool_Call( array $tool_call, array $tool_definition, array $context = array() ): array {
 		unset( $context );
 
+		$started_at  = microtime(true);
+		$input_bytes = self::payload_bytes(is_array($tool_call['parameters'] ?? null) ? $tool_call['parameters'] : array());
+
 		$tool_name = (string) ( $tool_call['tool_name'] ?? $tool_definition['name'] ?? '' );
 		$config    = self::TOOL_MAP[ $tool_name ] ?? null;
 		if ( null === $config ) {
-			return self::error_result($tool_name, 'DMC workspace executor does not provide this tool.', 'unsupported_tool');
+			return self::error_result($tool_name, 'DMC workspace executor does not provide this tool.', 'unsupported_tool', null, $input_bytes, null, $started_at);
 		}
 
 		if ( ! function_exists('wp_get_ability') ) {
-			return self::error_result($tool_name, 'WordPress Abilities API is not available.', 'abilities_api_unavailable');
+			return self::error_result($tool_name, 'WordPress Abilities API is not available.', 'abilities_api_unavailable', $config, $input_bytes, null, $started_at);
 		}
 
 		$ability = wp_get_ability( (string) $config['ability'] );
 		if ( ! is_object($ability) || ! method_exists($ability, 'execute') ) {
-			return self::error_result($tool_name, 'Mapped DMC ability is not registered.', 'ability_unavailable');
+			return self::error_result($tool_name, 'Mapped DMC ability is not registered.', 'ability_unavailable', $config, $input_bytes, null, $started_at);
 		}
 
-		$result = $ability->execute(is_array($tool_call['parameters'] ?? null) ? $tool_call['parameters'] : array());
+		$ability_started_at = microtime(true);
+		$result             = $ability->execute(is_array($tool_call['parameters'] ?? null) ? $tool_call['parameters'] : array());
+		$ability_timing_ms  = self::elapsed_ms($ability_started_at);
 		if ( function_exists('is_wp_error') && is_wp_error($result) ) {
 			return self::error_result(
 				$tool_name,
 				method_exists($result, 'get_error_message') ? $result->get_error_message() : 'DMC ability failed.',
-				method_exists($result, 'get_error_code') ? $result->get_error_code() : 'ability_error'
+				method_exists($result, 'get_error_code') ? $result->get_error_code() : 'ability_error',
+				$config,
+				$input_bytes,
+				null,
+				$started_at,
+				$ability_timing_ms
 			);
 		}
 
 		return array(
-			'success'   => true,
-			'tool_name' => $tool_name,
-			'result'    => $result,
-			'runtime'   => self::runtime_metadata($config),
+			'success'           => true,
+			'tool_name'         => $tool_name,
+			'result'            => $result,
+			'runtime'           => self::runtime_metadata($config),
+			'execution_metrics' => self::execution_metrics($tool_name, $config, $input_bytes, $result, $started_at, null, $ability_timing_ms),
 		);
 	}
 
@@ -352,16 +363,145 @@ class WorkspaceExecutorAdapter {
 	/**
 	 * @return array<string,mixed>
 	 */
-	private static function error_result( string $tool_name, string $message, string $error_type ): array {
-		return array(
-			'success'    => false,
-			'tool_name'  => $tool_name,
-			'error'      => $message,
-			'error_type' => $error_type,
-			'runtime'    => array(
-				'executor_target'      => self::TARGET_ID,
-				'side_effect_boundary' => 'data-machine-code',
-			),
+	private static function error_result(
+		string $tool_name,
+		string $message,
+		string $error_type,
+		?array $config = null,
+		int $input_bytes = 0,
+		$output = null,
+		?float $started_at = null,
+		?float $ability_timing_ms = null
+	): array {
+		$runtime = array(
+			'executor_target'      => self::TARGET_ID,
+			'side_effect_boundary' => 'data-machine-code',
 		);
+		if ( null !== $config ) {
+			$runtime = self::runtime_metadata($config);
+		}
+
+		return array(
+			'success'           => false,
+			'tool_name'         => $tool_name,
+			'error'             => $message,
+			'error_type'        => $error_type,
+			'runtime'           => $runtime,
+			'execution_metrics' => self::execution_metrics($tool_name, $config, $input_bytes, $output, $started_at ?? microtime(true), $error_type, $ability_timing_ms),
+		);
+	}
+
+	/**
+	 * Build numeric/classification-only executor metrics for placement policy.
+	 *
+	 * @param array<string,mixed>|null $config Tool map config.
+	 * @param mixed                    $output Raw ability output.
+	 * @return array<string,mixed>
+	 */
+	private static function execution_metrics( string $tool_name, ?array $config, int $input_bytes, $output, float $started_at, ?string $failure_class, ?float $ability_timing_ms ): array {
+		$output_bytes = null === $output ? 0 : self::payload_bytes($output);
+		$ability_name = null === $config ? '' : (string) $config['ability'];
+
+		$metrics = array(
+			'executor_target'      => self::TARGET_ID,
+			'tool_name'            => $tool_name,
+			'wall_time_ms'         => self::elapsed_ms($started_at),
+			'ability_call_count'   => '' === $ability_name || null === $ability_timing_ms ? 0 : 1,
+			'ability_timings_ms'   => array(),
+			'payload_bytes'        => array(
+				'input'  => $input_bytes,
+				'output' => $output_bytes,
+			),
+			'artifacts'            => self::artifact_metrics($output),
+			'side_effect_classes'  => null === $config ? array() : self::side_effect_classes($config),
+			'side_effect_boundary' => 'data-machine-code',
+			'failure_class'        => $failure_class,
+		);
+
+		if ( '' !== $ability_name && null !== $ability_timing_ms ) {
+			$metrics['ability_timings_ms'][] = array(
+				'ability' => $ability_name,
+				'ms'      => $ability_timing_ms,
+			);
+		}
+
+		return $metrics;
+	}
+
+	private static function elapsed_ms( float $started_at ): float {
+		return round(max(0, microtime(true) - $started_at) * 1000, 3);
+	}
+
+	/**
+	 * @param mixed $payload Payload to count without retaining raw contents.
+	 */
+	private static function payload_bytes( $payload ): int {
+		$encoded = wp_json_encode($payload);
+		if ( false === $encoded ) {
+			return 0;
+		}
+
+		return strlen($encoded);
+	}
+
+	/**
+	 * @param array<string,mixed> $config Tool map config.
+	 * @return list<string>
+	 */
+	private static function side_effect_classes( array $config ): array {
+		$classes = array();
+		foreach ( $config['side_effects'] as $side_effect ) {
+			$parts = explode('.', (string) $side_effect, 2);
+			if ( '' !== $parts[0] ) {
+				$classes[] = $parts[0];
+			}
+		}
+
+		return array_values(array_unique($classes));
+	}
+
+	/**
+	 * @param mixed $payload Raw ability output.
+	 * @return array{count:int,bytes:int}
+	 */
+	private static function artifact_metrics( $payload ): array {
+		$metrics = array(
+			'count' => 0,
+			'bytes' => 0,
+		);
+		self::accumulate_artifact_metrics($payload, $metrics);
+
+		return $metrics;
+	}
+
+	/**
+	 * @param mixed                      $payload Raw ability output.
+	 * @param array{count:int,bytes:int} $metrics Running metrics.
+	 */
+	private static function accumulate_artifact_metrics( $payload, array &$metrics ): void {
+		if ( ! is_array($payload) ) {
+			return;
+		}
+
+		if ( isset($payload['artifact_size_bytes']) && is_numeric($payload['artifact_size_bytes']) ) {
+			++$metrics['count'];
+			$metrics['bytes'] += max(0, (int) $payload['artifact_size_bytes']);
+		} elseif ( isset($payload['size_bytes']) && is_numeric($payload['size_bytes']) && self::looks_like_artifact_row($payload) ) {
+			++$metrics['count'];
+			$metrics['bytes'] += max(0, (int) $payload['size_bytes']);
+		}
+
+		foreach ( $payload as $value ) {
+			self::accumulate_artifact_metrics($value, $metrics);
+		}
+	}
+
+	/**
+	 * @param array<mixed> $row Candidate artifact row.
+	 */
+	private static function looks_like_artifact_row( array $row ): bool {
+		return isset($row['artifact'], $row['size_bytes'])
+			|| isset($row['artifact_path'], $row['size_bytes'])
+			|| isset($row['path'], $row['size_bytes']);
 	}
 }
