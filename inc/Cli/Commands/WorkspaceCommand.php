@@ -2368,6 +2368,10 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Cheap inventory review on huge workspaces (no per-worktree git probes)
 	 *     wp datamachine-code workspace worktree cleanup --dry-run --inventory-only --skip-github --format=json
 	 *
+	 *     # One operator pass for abandoned worktrees: reconcile, mark safe rows, remove eligible rows, and report blockers
+	 *     wp datamachine-code workspace worktree abandoned --format=json
+	 *     wp datamachine-code workspace worktree abandoned --apply --force --limit=100 --passes=5 --until-budget=120s --format=json
+	 *
 	 *     # Adopt/reconcile unmanaged worktree metadata before cleanup
 	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json
 	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --format=json
@@ -2412,7 +2416,17 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|list|remove|prune|locks|cleanup|cleanup-artifacts|bounded-cleanup-eligible-apply|emergency-cleanup|reconcile-metadata|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
+			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|emergency-cleanup|reconcile-metadata|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
+			return;
+		}
+
+		if ( 'abandoned' === $operation ) {
+			$result = $this->run_worktree_abandoned_orchestration($assoc_args);
+			if ( is_wp_error($result) ) {
+				$this->render_workspace_error($result);
+				return;
+			}
+			$this->render_worktree_abandoned_result($result, $assoc_args);
 			return;
 		}
 
@@ -2727,6 +2741,300 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$this->renderWorktreeResult($operation, $result, $assoc_args);
+	}
+
+	/**
+	 * Run the operator-facing abandoned-worktree cleanup workflow.
+	 *
+	 * This intentionally composes existing reviewed abilities instead of adding a
+	 * second cleanup classifier. The destructive step is gated behind --apply; the
+	 * default mode reports what would be marked/removed and which rows remain
+	 * blocked by dirty work, unpushed commits, missing primaries, or weak signals.
+	 *
+	 * @param  array<string,mixed> $assoc_args CLI args.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function run_worktree_abandoned_orchestration( array $assoc_args ): array|\WP_Error {
+		$apply        = ! empty($assoc_args['apply']);
+		$force        = ! empty($assoc_args['force']);
+		$limit        = isset($assoc_args['limit']) ? max(1, min(100, (int) $assoc_args['limit'])) : 100;
+		$passes       = isset($assoc_args['passes']) ? max(1, min(25, (int) $assoc_args['passes'])) : 5;
+		$until_budget = isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ? trim( (string) $assoc_args['until-budget']) : '';
+
+		$required = array(
+			'reconcile_metadata' => 'datamachine-code/workspace-worktree-reconcile-metadata',
+			'finalized'          => 'datamachine-code/workspace-worktree-active-no-signal-finalized-apply',
+			'equivalent_clean'   => 'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply',
+			'merged'             => 'datamachine-code/workspace-worktree-active-no-signal-merged-apply',
+			'bounded_apply'      => 'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply',
+			'prune'              => 'datamachine-code/workspace-worktree-prune',
+		);
+
+		$abilities = array();
+		foreach ( $required as $key => $ability_name ) {
+			$ability = wp_get_ability($ability_name);
+			if ( ! $ability ) {
+				return new \WP_Error('worktree_abandoned_ability_missing', sprintf('Worktree abandoned cleanup ability not available: %s', $ability_name), array( 'status' => 500 ));
+			}
+			$abilities[ $key ] = $ability;
+		}
+
+		$started_at = microtime(true);
+		$result     = array(
+			'success'         => true,
+			'mode'            => 'abandoned_worktree_cleanup',
+			'applied'         => $apply,
+			'destructive'     => $apply,
+			'force'           => $force,
+			'limit'           => $limit,
+			'passes'          => $passes,
+			'executed_passes' => 0,
+			'generated_at'    => gmdate('c'),
+			'steps'           => array(),
+			'blocked'         => array(),
+			'summary'         => array(
+				'reconciled'                  => 0,
+				'marked_cleanup_eligible'     => 0,
+				'would_mark_cleanup_eligible' => 0,
+				'removed'                     => 0,
+				'would_remove'                => 0,
+				'bytes_reclaimed'             => 0,
+				'blocked'                     => 0,
+				'blocked_by_reason'           => array(),
+			),
+			'next_commands'   => array(),
+			'evidence'        => array(
+				'safety' => $apply
+					? 'Applies only rows proven by existing DMC cleanup abilities; unpushed commits remain protected even with --force.'
+					: 'Preview only. Re-run with --apply to write cleanup metadata and remove eligible worktrees.',
+			),
+		);
+
+		$common_page = array(
+			'limit'  => $limit,
+			'source' => self::CLEANUP_CLI_SOURCE,
+		);
+		if ( '' !== $until_budget ) {
+			$common_page['until_budget'] = $until_budget;
+		}
+
+		$reconcile_input = array_merge(
+			$common_page,
+			array(
+				'dry_run' => ! $apply,
+				'apply'   => $apply,
+			)
+		);
+		$reconcile       = $abilities['reconcile_metadata']->execute($reconcile_input);
+		if ( is_wp_error($reconcile) ) {
+			return $reconcile;
+		}
+		$result['steps']['reconcile_metadata'] = $this->summarize_worktree_abandoned_step($reconcile);
+		$result['summary']['reconciled']       = (int) ( $reconcile['summary']['written'] ?? 0 );
+		$result['summary']['would_reconcile']  = (int) ( $reconcile['summary']['proposed'] ?? 0 );
+
+		$mark_steps = array(
+			'finalized'        => $abilities['finalized'],
+			'equivalent_clean' => $abilities['equivalent_clean'],
+			'merged'           => $abilities['merged'],
+		);
+
+		$effective_passes = $apply ? $passes : 1;
+		for ( $pass = 1; $pass <= $effective_passes; ++$pass ) {
+			$result['executed_passes'] = $pass;
+			$pass_marked = 0;
+			foreach ( $mark_steps as $key => $ability ) {
+				$step_input = array_merge(
+					$common_page,
+					array(
+						'dry_run' => ! $apply,
+						'offset'  => 0,
+					)
+				);
+				$step       = $ability->execute($step_input);
+				if ( is_wp_error($step) ) {
+					return $step;
+				}
+
+				$step_key                    = sprintf('%s_pass_%d', $key, $pass);
+				$result['steps'][ $step_key ] = $this->summarize_worktree_abandoned_step($step);
+				$written                     = (int) ( $step['summary']['written'] ?? 0 );
+				$planned                     = (int) ( $step['summary']['planned'] ?? 0 );
+				$pass_marked                += $apply ? $written : $planned;
+				$result['summary']['marked_cleanup_eligible'] += $written;
+				$result['summary']['would_mark_cleanup_eligible'] += $planned;
+			}
+
+			$bounded_input = array(
+				'dry_run' => ! $apply,
+				'force'   => $force,
+				'limit'   => $limit,
+				'source'  => self::CLEANUP_CLI_SOURCE,
+			);
+			$bounded       = $abilities['bounded_apply']->execute($bounded_input);
+			if ( is_wp_error($bounded) ) {
+				return $bounded;
+			}
+
+			$result['steps'][ sprintf('bounded_apply_pass_%d', $pass) ] = $this->summarize_worktree_abandoned_step($bounded);
+			$result['summary']['removed']         += (int) ( $bounded['summary']['removed'] ?? 0 );
+			$result['summary']['would_remove']    += (int) ( $bounded['summary']['would_remove'] ?? 0 );
+			$result['summary']['bytes_reclaimed'] += (int) ( $bounded['summary']['bytes_reclaimed'] ?? 0 );
+			$result['blocked']                     = $this->merge_worktree_abandoned_blockers($result['blocked'], (array) ( $bounded['skipped'] ?? array() ));
+
+			$removed_or_would = (int) ( $bounded['summary']['removed'] ?? 0 ) + (int) ( $bounded['summary']['would_remove'] ?? 0 );
+			if ( 0 === $pass_marked && 0 === $removed_or_would ) {
+				break;
+			}
+		}
+
+		if ( $apply ) {
+			$prune = $abilities['prune']->execute(array());
+			if ( is_wp_error($prune) ) {
+				return $prune;
+			}
+			$result['steps']['prune'] = $this->summarize_worktree_abandoned_step($prune);
+		} else {
+			$result['steps']['prune'] = array(
+				'mode'    => 'prune',
+				'skipped' => true,
+				'reason'  => 'preview mode does not prune git worktree metadata; re-run with --apply to prune after removal.',
+			);
+		}
+
+		$result['blocked']           = array_values($result['blocked']);
+		$result['summary']['blocked'] = count($result['blocked']);
+		foreach ( $result['blocked'] as $row ) {
+			$reason                                           = (string) ( $row['reason_code'] ?? 'unknown' );
+			$result['summary']['blocked_by_reason'][ $reason ] = (int) ( $result['summary']['blocked_by_reason'][ $reason ] ?? 0 ) + 1;
+		}
+
+		if ( ! $apply ) {
+			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree abandoned --apply%s --limit=%d --passes=%d%s --format=json', $force ? ' --force' : '', $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
+		}
+		if ( ! $force ) {
+			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree abandoned --apply --force --limit=%d --passes=%d%s --format=json', $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
+		}
+
+		$result['evidence']['elapsed_ms'] = (int) round(( microtime(true) - $started_at ) * 1000);
+
+		return $result;
+	}
+
+	/**
+	 * Build a compact step summary for abandoned cleanup output.
+	 *
+	 * @param  array<string,mixed> $step Step result.
+	 * @return array<string,mixed>
+	 */
+	private function summarize_worktree_abandoned_step( array $step ): array {
+		$summary = (array) ( $step['summary'] ?? array() );
+		return array(
+			'mode'             => (string) ( $step['mode'] ?? '' ),
+			'dry_run'          => ! empty($step['dry_run']),
+			'applied'          => ! empty($step['applied']) || ! empty($step['destructive']),
+			'inspected'        => (int) ( $summary['inspected'] ?? $summary['processed'] ?? 0 ),
+			'planned'          => (int) ( $summary['planned'] ?? $summary['would_remove'] ?? $summary['proposed'] ?? 0 ),
+			'written'          => (int) ( $summary['written'] ?? 0 ),
+			'removed'          => (int) ( $summary['removed'] ?? 0 ),
+			'skipped'          => (int) ( $summary['skipped'] ?? 0 ),
+			'bytes_reclaimed'  => (int) ( $summary['bytes_reclaimed'] ?? 0 ),
+			'pagination'       => (array) ( $step['pagination'] ?? $step['continuation'] ?? array() ),
+		);
+	}
+
+	/**
+	 * Merge blocked rows by handle so repeated passes do not duplicate output.
+	 *
+	 * @param  array<int,array<string,mixed>> $existing Existing blocked rows.
+	 * @param  array<int,mixed>               $incoming Incoming skipped rows.
+	 * @return array<string,array<string,mixed>>
+	 */
+	private function merge_worktree_abandoned_blockers( array $existing, array $incoming ): array {
+		$merged = array();
+		foreach ( $existing as $row ) {
+			if ( is_array($row) ) {
+				$handle            = (string) ( $row['handle'] ?? count($merged) );
+				$merged[ $handle ] = $row;
+			}
+		}
+
+		foreach ( $incoming as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$handle = (string) ( $row['handle'] ?? '' );
+			if ( '' === $handle ) {
+				$handle = 'row_' . count($merged);
+			}
+			$merged[ $handle ] = array(
+				'handle'      => $handle,
+				'repo'        => (string) ( $row['repo'] ?? '' ),
+				'branch'      => (string) ( $row['branch'] ?? '' ),
+				'path'        => (string) ( $row['path'] ?? '' ),
+				'reason_code' => (string) ( $row['reason_code'] ?? 'unknown' ),
+				'reason'      => (string) ( $row['reason'] ?? '' ),
+				'dirty'       => isset($row['dirty']) ? (int) $row['dirty'] : null,
+				'unpushed'    => isset($row['unpushed']) ? (int) $row['unpushed'] : null,
+			);
+		}
+
+		return $merged;
+	}
+
+	/**
+	 * Render abandoned worktree cleanup result.
+	 *
+	 * @param array<string,mixed> $result     Orchestration result.
+	 * @param array<string,mixed> $assoc_args CLI args.
+	 */
+	private function render_worktree_abandoned_result( array $result, array $assoc_args ): void {
+		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+			WP_CLI::log(false === $json ? '{}' : $json);
+			return;
+		}
+
+		if ( 'yaml' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			$this->format_items(array( $result ), array_keys($result), $assoc_args);
+			return;
+		}
+
+		$summary = (array) ( $result['summary'] ?? array() );
+		WP_CLI::log('Abandoned worktree cleanup:');
+		$this->format_items(
+			array(
+				array( 'metric' => 'applied', 'value' => ! empty($result['applied']) ? 'yes' : 'no' ),
+				array( 'metric' => 'reconciled', 'value' => (string) ( $summary['reconciled'] ?? 0 ) ),
+				array( 'metric' => 'marked_cleanup_eligible', 'value' => (string) ( $summary['marked_cleanup_eligible'] ?? 0 ) ),
+				array( 'metric' => 'would_mark_cleanup_eligible', 'value' => (string) ( $summary['would_mark_cleanup_eligible'] ?? 0 ) ),
+				array( 'metric' => 'removed', 'value' => (string) ( $summary['removed'] ?? 0 ) ),
+				array( 'metric' => 'would_remove', 'value' => (string) ( $summary['would_remove'] ?? 0 ) ),
+				array( 'metric' => 'bytes_reclaimed', 'value' => $this->format_bytes((int) ( $summary['bytes_reclaimed'] ?? 0 )) ),
+				array( 'metric' => 'blocked', 'value' => (string) ( $summary['blocked'] ?? 0 ) ),
+			),
+			array( 'metric', 'value' ),
+			array( 'format' => 'table' ),
+			'metric'
+		);
+
+		$blocked_by_reason = (array) ( $summary['blocked_by_reason'] ?? array() );
+		if ( array() !== $blocked_by_reason ) {
+			WP_CLI::log('Blocked rows by reason:');
+			$items = array();
+			foreach ( $blocked_by_reason as $reason => $count ) {
+				$items[] = array( 'reason' => (string) $reason, 'count' => (int) $count );
+			}
+			$this->format_items($items, array( 'reason', 'count' ), array( 'format' => 'table' ), 'reason');
+		}
+
+		$next_commands = (array) ( $result['next_commands'] ?? array() );
+		if ( array() !== $next_commands ) {
+			WP_CLI::log('Next commands:');
+			foreach ( $next_commands as $command ) {
+				WP_CLI::log('  - ' . (string) $command);
+			}
+		}
 	}
 
 	/**

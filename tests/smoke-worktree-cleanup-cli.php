@@ -455,6 +455,89 @@ namespace {
         }
     }
 
+    class FakeReconcileMetadataAbility
+    {
+        public array $last_input = array();
+
+        public function execute( array $input ): array
+        {
+            $this->last_input = $input;
+            return array(
+            'success' => true,
+            'mode'    => 'metadata_reconcile',
+            'dry_run' => ! empty($input['dry_run']),
+            'summary' => array(
+            'inspected' => 2,
+            'proposed'  => 2,
+            'written'   => empty($input['dry_run']) ? 2 : 0,
+            ),
+            );
+        }
+    }
+
+    class FakeBoundedCleanupEligibleApplyAbility
+    {
+        public array $last_input = array();
+        public array $inputs = array();
+
+        public function execute( array $input ): array
+        {
+            $this->last_input = $input;
+            $this->inputs[]   = $input;
+            return array(
+            'success' => true,
+            'mode'    => 'bounded_cleanup_eligible_apply',
+            'dry_run' => ! empty($input['dry_run']),
+            'summary' => array(
+            'inspected'        => 3,
+            'would_remove'     => ! empty($input['dry_run']) ? 1 : 0,
+            'removed'          => empty($input['dry_run']) ? 1 : 0,
+            'skipped'          => 2,
+            'bytes_reclaimed'  => empty($input['dry_run']) ? 4096 : 0,
+            ),
+            'skipped' => array(
+            array(
+            'handle'      => 'repo@dirty',
+            'repo'        => 'repo',
+            'branch'      => 'dirty',
+            'path'        => '/workspace/repo@dirty',
+            'reason_code' => 'dirty_worktree',
+            'reason'      => 'working tree dirty',
+            'dirty'       => 1,
+            'unpushed'    => 0,
+            ),
+            array(
+            'handle'      => 'repo@unpushed',
+            'repo'        => 'repo',
+            'branch'      => 'unpushed',
+            'path'        => '/workspace/repo@unpushed',
+            'reason_code' => 'unpushed_commits',
+            'reason'      => 'unpushed commits remain protected',
+            'dirty'       => 0,
+            'unpushed'    => 2,
+            ),
+            ),
+            );
+        }
+    }
+
+    class FakePruneAbility
+    {
+        public int $calls = 0;
+
+        public function execute( array $input ): array  // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+        {
+            ++$this->calls;
+            return array(
+            'success' => true,
+            'mode'    => 'prune',
+            'summary' => array(
+            'processed' => 1,
+            ),
+            );
+        }
+    }
+
     class FakeListAbility
     {
         public function execute( array $input ): array  // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
@@ -714,6 +797,9 @@ namespace {
     $active_finalized_ability = new FakeActiveNoSignalAbility('finalized-apply');
     $active_equivalent_clean_ability = new FakeActiveNoSignalAbility('equivalent-clean-apply');
     $active_merged_ability = new FakeActiveNoSignalAbility('merged-apply');
+    $reconcile_metadata_ability = new FakeReconcileMetadataAbility();
+    $bounded_apply_ability = new FakeBoundedCleanupEligibleApplyAbility();
+    $prune_ability = new FakePruneAbility();
     $list_ability = new FakeListAbility();
     $cleanup_run_ability = new FakeCleanupRunAbility();
     $cleanup_status_ability = new FakeCleanupStatusAbility();
@@ -734,6 +820,9 @@ namespace {
     'datamachine-code/workspace-worktree-active-no-signal-finalized-apply' => $active_finalized_ability,
     'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply' => $active_equivalent_clean_ability,
     'datamachine-code/workspace-worktree-active-no-signal-merged-apply' => $active_merged_ability,
+    'datamachine-code/workspace-worktree-reconcile-metadata' => $reconcile_metadata_ability,
+    'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => $bounded_apply_ability,
+    'datamachine-code/workspace-worktree-prune'              => $prune_ability,
     'datamachine-code/workspace-worktree-list'              => $list_ability,
     'datamachine/get-jobs'                             => $get_jobs_ability,
     'datamachine-code/retry-job'                       => $retry_job_ability,
@@ -961,6 +1050,33 @@ namespace {
     WP_CLI::$successes = array();
     $command->worktree(array( 'active-no-signal-finalized-apply' ), array( 'dry-run' => true, 'limit' => 5, 'offset' => 10, 'until-budget' => '30s' ));
     datamachine_code_cleanup_assert(in_array('Next page: studio wp datamachine-code workspace worktree active-no-signal-finalized-apply --dry-run --limit=5 --offset=15 --until-budget=30s --format=json', WP_CLI::$logs, true), 'human active/no-signal apply continuation keeps dry-run and time budget');
+
+    echo "\n[1a] abandoned cleanup orchestrates safe DMC abilities\n";
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->worktree(array( 'abandoned' ), array( 'apply' => true, 'force' => true, 'limit' => 5, 'passes' => 1, 'until-budget' => '30s', 'format' => 'json' ));
+    $abandoned_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    datamachine_code_cleanup_assert(JSON_ERROR_NONE === json_last_error(), 'abandoned JSON output parses cleanly');
+    datamachine_code_cleanup_assert(true === ( $abandoned_json['applied'] ?? null ), 'abandoned apply mode is explicit in JSON');
+    datamachine_code_cleanup_assert(true === ( $abandoned_json['force'] ?? null ), 'abandoned force mode is explicit in JSON');
+    datamachine_code_cleanup_assert(5 === (int) ( $reconcile_metadata_ability->last_input['limit'] ?? 0 ), 'abandoned forwards limit to metadata reconciliation');
+    datamachine_code_cleanup_assert(false === ( $reconcile_metadata_ability->last_input['dry_run'] ?? null ), 'abandoned --apply applies metadata reconciliation');
+    datamachine_code_cleanup_assert('30s' === ( $active_finalized_ability->last_input['until_budget'] ?? '' ), 'abandoned forwards time budget to active/no-signal marking');
+    datamachine_code_cleanup_assert(true === ( $bounded_apply_ability->last_input['force'] ?? null ), 'abandoned forwards force only to bounded cleanup removal');
+    datamachine_code_cleanup_assert(false === ( $bounded_apply_ability->last_input['dry_run'] ?? null ), 'abandoned --apply removes eligible rows');
+    datamachine_code_cleanup_assert(1 === $prune_ability->calls, 'abandoned prunes stale git metadata after cleanup pass');
+    datamachine_code_cleanup_assert(1 === (int) ( $abandoned_json['summary']['removed'] ?? 0 ), 'abandoned summary reports removed rows');
+    datamachine_code_cleanup_assert(2 === (int) ( $abandoned_json['summary']['blocked'] ?? 0 ), 'abandoned summary reports blocked rows');
+    datamachine_code_cleanup_assert(1 === (int) ( $abandoned_json['summary']['blocked_by_reason']['unpushed_commits'] ?? 0 ), 'abandoned preserves unpushed-commit blocker evidence');
+
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->worktree(array( 'abandoned' ), array( 'limit' => 5, 'passes' => 3, 'format' => 'json' ));
+    $abandoned_preview_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    datamachine_code_cleanup_assert(false === ( $abandoned_preview_json['applied'] ?? null ), 'abandoned preview leaves apply mode false');
+    datamachine_code_cleanup_assert(1 === (int) ( $abandoned_preview_json['executed_passes'] ?? 0 ), 'abandoned preview runs one classification pass even when more passes are requested');
+    datamachine_code_cleanup_assert(1 === $prune_ability->calls, 'abandoned preview does not prune git metadata');
+    datamachine_code_cleanup_assert(true === ( $abandoned_preview_json['steps']['prune']['skipped'] ?? false ), 'abandoned preview explains skipped prune step');
 
     echo "\n[1b] --apply-plan decodes JSON and forbids force\n";
     $plan_file = sys_get_temp_dir() . '/dmc-cleanup-plan-' . bin2hex(random_bytes(3)) . '.json';
