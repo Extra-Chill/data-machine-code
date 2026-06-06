@@ -6,7 +6,6 @@
  * Version: 0.47.56
  * Requires at least: 6.9
  * Requires PHP: 8.2
- * Requires Plugins: data-machine
  * Author: Chris Huber, extrachill
  * Author URI: https://chubes.net
  * License: GPL v2 or later
@@ -24,10 +23,6 @@ define( 'DATAMACHINE_CODE_URL', plugin_dir_url( __FILE__ ) );
 
 // PSR-4 Autoloading.
 require_once __DIR__ . '/vendor/autoload.php';
-
-// Bundle artifact types must be registered as soon as the plugin is loaded so
-// Data Machine can validate DMC-owned artifacts during early import paths.
-( new \DataMachineCode\Bundle\WorkspacePreloadArtifact() )->register();
 
 /**
  * Install DMC-owned database tables.
@@ -64,32 +59,50 @@ function datamachine_code_maybe_upgrade_schema(): void {
 add_action('plugins_loaded', 'datamachine_code_maybe_upgrade_schema', 5);
 
 /**
+ * Whether Data Machine-specific integration surfaces are available.
+ */
+function datamachine_code_has_datamachine_integration(): bool {
+	return class_exists('DataMachine\Abilities\PermissionHelper');
+}
+
+/**
+ * Register optional Data Machine integrations.
+ */
+function datamachine_code_register_datamachine_integrations(): void {
+	static $registered = false;
+
+	if ( $registered || ! datamachine_code_has_datamachine_integration() ) {
+		return;
+	}
+
+	$registered = true;
+
+	// Bundle artifact types are Data Machine-specific and are only registered
+	// when the bundle importer substrate is present.
+	( new \DataMachineCode\Bundle\WorkspacePreloadArtifact() )->register();
+
+	// Project active workspace identity into Data Machine's engine_data snapshot.
+	\DataMachineCode\Runtime\ActiveWorkspaceProjector::register();
+
+	if ( class_exists('DataMachine\Core\Steps\HandlerRegistrationTrait') ) {
+		new \DataMachineCode\Handlers\GitHub\GitHub();
+		new \DataMachineCode\Handlers\GitHub\GitHubIssuePublish();
+		new \DataMachineCode\Handlers\GitHub\GitHubPullRequestPublish();
+		new \DataMachineCode\Handlers\GitHub\GitHubUpsert();
+	}
+}
+
+/**
  * Bootstrap the plugin after all plugins are loaded.
  *
- * Data Machine core must be active — check at plugins_loaded time
- * (not at plugin load time, since load order is alphabetical and
- * data-machine-code loads before data-machine).
+ * Core workspace/GitHub/Agents API surfaces do not require Data Machine.
+ * Data Machine-specific handlers and memory/runtime hooks register through
+ * datamachine_code_register_datamachine_integrations() when available.
  */
 function datamachine_code_bootstrap() {
 	static $bootstrapped = false;
 
 	if ( $bootstrapped ) {
-		return;
-	}
-
-	if ( ! class_exists('DataMachine\Abilities\PermissionHelper') ) {
-		add_action('init', 'datamachine_code_bootstrap', 1);
-		add_action('wp_abilities_api_init', 'datamachine_code_bootstrap', 1);
-
-		add_action(
-			'admin_notices', function () {
-				?>
-			<div class="notice notice-error">
-				<p><?php esc_html_e('Data Machine Code requires Data Machine core plugin to be installed and activated.', 'data-machine-code'); ?></p>
-			</div>
-				<?php
-			}
-		);
 		return;
 	}
 
@@ -104,17 +117,7 @@ function datamachine_code_bootstrap() {
 	new \DataMachineCode\Abilities\WordPressRuntimeAbilities();
 	\DataMachineCode\SourceInventory\WorkspaceSourceInventory::register();
 	\DataMachineCode\AgentsApi\WorkspaceExecutorAdapter::register();
-
-	// Project active workspace identity into Data Machine's engine_data
-	// snapshot at job init. Requires DM's datamachine_engine_snapshot
-	// filter (added in data-machine v0.10.3); no-op on older DM versions.
-	\DataMachineCode\Runtime\ActiveWorkspaceProjector::register();
-
-	// Load Handlers (they self-register).
-	new \DataMachineCode\Handlers\GitHub\GitHub();
-	new \DataMachineCode\Handlers\GitHub\GitHubIssuePublish();
-	new \DataMachineCode\Handlers\GitHub\GitHubPullRequestPublish();
-	new \DataMachineCode\Handlers\GitHub\GitHubUpsert();
+	datamachine_code_register_datamachine_integrations();
 
 	// Register ability categories on the correct hook (must happen during wp_abilities_api_categories_init).
 	add_action('wp_abilities_api_categories_init', 'datamachine_code_register_ability_categories');
