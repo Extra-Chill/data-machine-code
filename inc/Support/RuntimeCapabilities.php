@@ -68,10 +68,10 @@ final class RuntimeCapabilities {
 	 * @return array{ok: bool, reason: string, exec_available: bool, shell_exec_available: bool, proc_open_available: bool, output?: string, exit_code?: int|null}
 	 */
 	public static function evaluate_shell_capability( callable $function_exists, string $disabled_functions, callable $command_runner ): array {
-		$disabled            = array_filter(array_map('trim', explode(',', $disabled_functions)));
-		$exec_available      = self::function_available('exec', $function_exists, $disabled);
+		$disabled             = array_filter(array_map('trim', explode(',', $disabled_functions)));
+		$exec_available       = self::function_available('exec', $function_exists, $disabled);
 		$shell_exec_available = self::function_available('shell_exec', $function_exists, $disabled);
-		$proc_open_available = self::function_available('proc_open', $function_exists, $disabled);
+		$proc_open_available  = self::function_available('proc_open', $function_exists, $disabled);
 
 		$base = array(
 			'exec_available'       => $exec_available,
@@ -81,12 +81,24 @@ final class RuntimeCapabilities {
 
 		if ( ! $exec_available ) {
 			$reason = $function_exists('exec') ? 'exec_disabled' : 'exec_missing';
-			return array_merge($base, array( 'ok' => false, 'reason' => $reason ));
+			return array_merge(
+				$base,
+				array(
+					'ok'     => false,
+					'reason' => $reason,
+				)
+			);
 		}
 
 		if ( ! $shell_exec_available ) {
 			$reason = $function_exists('shell_exec') ? 'shell_exec_disabled' : 'shell_exec_missing';
-			return array_merge($base, array( 'ok' => false, 'reason' => $reason ));
+			return array_merge(
+				$base,
+				array(
+					'ok'     => false,
+					'reason' => $reason,
+				)
+			);
 		}
 
 		$marker = '__datamachine_code_shell_ok__';
@@ -158,7 +170,7 @@ final class RuntimeCapabilities {
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Runtime capability probe.
 		exec(sprintf('%scommand -v %s 2>/dev/null', $prefix, escapeshellarg($binary)), $output, $exit);
 
-		$binary_path = trim((string) ( $output[0] ?? '' ));
+		$binary_path = trim( (string) ( $output[0] ?? '' ) );
 		$diagnostic  = array(
 			'binary'         => $binary,
 			'available'      => 0 === $exit && '' !== $binary_path,

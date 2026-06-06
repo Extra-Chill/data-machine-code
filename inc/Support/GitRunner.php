@@ -63,7 +63,7 @@ final class GitRunner {
 	 */
 	public static function unavailable_error( string $operation = 'Git workspace operation', bool $requires_streaming = false ): \WP_Error {
 		$diagnostic = self::diagnose();
-		$reason = empty($diagnostic['exec_available'])
+		$reason     = empty($diagnostic['exec_available'])
 		? 'PHP exec() is unavailable.'
 		: 'The git binary is unavailable to the PHP runtime.';
 
