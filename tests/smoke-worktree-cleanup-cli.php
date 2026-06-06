@@ -839,6 +839,7 @@ namespace {
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--include-repaired-metadata]"), 'worktree synopsis declares --include-repaired-metadata at top level');
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--apply]"), 'worktree synopsis declares --apply at top level');
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--via-jobs]"), 'worktree synopsis declares --via-jobs at top level');
+    datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--passes=<count>]"), 'worktree synopsis declares abandoned --passes at top level');
     datamachine_code_cleanup_assert(! str_contains($doc_comment, "\n\t\t * [--apply-plan=<file>]"), 'cleanup flags are not hidden behind nested docblock indentation');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, 'Control task-backed workspace cleanup runs.'), 'workspace cleanup command documents task-backed controller surface');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '<plan|apply|run|status|resume|cancel|evidence>'), 'workspace cleanup synopsis exposes DB-backed and task-backed cleanup operations');
