@@ -33,6 +33,23 @@ class WorkspaceDiskEmergencyCleanupTask extends SystemTask {
 	}
 
 	/**
+	 * Pure workspace/disk maintenance — runs without agent ownership context.
+	 *
+	 * This task cleans disk under pressure via the Workspace service (disk/file/
+	 * git ops gated by PluginSettings). It never acts as an agent or invokes an
+	 * agent-scoped ability; the only agent_id it touches is read from task params
+	 * (defaulting to 0) to forward into child cleanup chunk jobs. It is registered
+	 * as an agent-less hourly recurring schedule, so it must opt out of the
+	 * SystemTask agent-context gate or TaskScheduler::schedule() rejects it before
+	 * it runs.
+	 *
+	 * @return bool
+	 */
+	public function requiresAgentContext(): bool {
+		return false;
+	}
+
+	/**
 	 * Task metadata for Data Machine system-task surfaces.
 	 *
 	 * @return array<string,mixed>
