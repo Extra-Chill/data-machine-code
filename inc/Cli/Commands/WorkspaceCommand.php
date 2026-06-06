@@ -2829,7 +2829,7 @@ class WorkspaceCommand extends BaseCommand {
 				'apply'   => $apply,
 			)
 		);
-		$reconcile       = $abilities['reconcile_metadata']->execute($reconcile_input);
+		$reconcile       = $this->drain_worktree_abandoned_pages($abilities['reconcile_metadata'], $reconcile_input, $apply);
 		if ( is_wp_error($reconcile) ) {
 			return $reconcile;
 		}
@@ -2855,7 +2855,7 @@ class WorkspaceCommand extends BaseCommand {
 						'offset'  => 0,
 					)
 				);
-				$step       = $ability->execute($step_input);
+				$step       = $this->drain_worktree_abandoned_pages($ability, $step_input, $apply);
 				if ( is_wp_error($step) ) {
 					return $step;
 				}
@@ -2929,6 +2929,72 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	/**
+	 * Drain paginated abandoned-cleanup classifier pages.
+	 *
+	 * Preview intentionally stays bounded to one page. Apply mode follows
+	 * pagination.next_offset so stale rows beyond page zero can be reconciled or
+	 * marked cleanup-eligible before bounded removal runs.
+	 *
+	 * @param  object              $ability    Ability object with execute().
+	 * @param  array<string,mixed> $base_input Base ability input.
+	 * @param  bool                $apply      Whether the orchestration is applying changes.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function drain_worktree_abandoned_pages( object $ability, array $base_input, bool $apply ): array|\WP_Error {
+		$pages       = array();
+		$summary     = array();
+		$pagination  = array();
+		$offset      = isset($base_input['offset']) ? max(0, (int) $base_input['offset']) : 0;
+		$max_pages   = $apply ? 100 : 1;
+		$last_result = array();
+
+		for ( $page = 1; $page <= $max_pages; ++$page ) {
+			$input = $base_input;
+			if ( isset($base_input['offset']) || $page > 1 ) {
+				$input['offset'] = $offset;
+			}
+
+			$result = $ability->execute($input);
+			if ( is_wp_error($result) ) {
+				return $result;
+			}
+
+			$last_result = $result;
+			$pages[]     = $this->summarize_worktree_abandoned_step($result);
+
+			foreach ( (array) ( $result['summary'] ?? array() ) as $key => $value ) {
+				if ( is_numeric($value) ) {
+					$summary[ $key ] = (int) ( $summary[ $key ] ?? 0 ) + (int) $value;
+				}
+			}
+
+			$pagination = (array) ( $result['pagination'] ?? $result['continuation'] ?? array() );
+			if ( ! $apply || empty($pagination) || ! empty($pagination['complete']) ) {
+				break;
+			}
+
+			$next_offset = isset($pagination['next_offset']) ? (int) $pagination['next_offset'] : null;
+			if ( null === $next_offset || $next_offset <= $offset ) {
+				break;
+			}
+
+			$total = isset($pagination['total']) ? (int) $pagination['total'] : null;
+			if ( null !== $total && $next_offset >= $total ) {
+				break;
+			}
+
+			$offset = $next_offset;
+		}
+
+		$last_result['summary']    = $summary;
+		$last_result['pagination'] = $pagination;
+		$last_result['pages']      = $pages;
+		$last_result['page_count'] = count($pages);
+
+		return $last_result;
+	}
+
+	/**
 	 * Build a compact step summary for abandoned cleanup output.
 	 *
 	 * @param  array<string,mixed> $step Step result.
@@ -2938,6 +3004,7 @@ class WorkspaceCommand extends BaseCommand {
 		$summary = (array) ( $step['summary'] ?? array() );
 		return array(
 			'mode'            => (string) ( $step['mode'] ?? '' ),
+			'page_count'      => (int) ( $step['page_count'] ?? 1 ),
 			'dry_run'         => ! empty($step['dry_run']),
 			'applied'         => ! empty($step['applied']) || ! empty($step['destructive']),
 			'inspected'       => (int) ( $summary['inspected'] ?? $summary['processed'] ?? 0 ),
