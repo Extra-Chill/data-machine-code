@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.49] - 2026-06-06
+
+### Changed
+- Add Agents API workspace executor adapter
+
+### Fixed
+- Fix workspace executor lint
+
 ## [0.47.48] - 2026-06-05
 
 ### Changed
