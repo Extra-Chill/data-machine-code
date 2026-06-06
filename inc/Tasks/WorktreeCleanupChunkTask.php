@@ -7,12 +7,11 @@
 
 namespace DataMachineCode\Tasks;
 
-use DataMachine\Engine\AI\System\Tasks\SystemTask;
 use DataMachineCode\Workspace\Workspace;
 
 defined('ABSPATH') || exit;
 
-class WorktreeCleanupChunkTask extends SystemTask {
+class WorktreeCleanupChunkTask extends MaintenanceTask {
 
 
 
@@ -23,23 +22,6 @@ class WorktreeCleanupChunkTask extends SystemTask {
 	 */
 	public function getTaskType(): string {
 		return 'worktree_cleanup_chunk';
-	}
-
-	/**
-	 * Pure workspace/disk maintenance — runs without agent ownership context.
-	 *
-	 * This task applies one reviewed cleanup chunk (artifact deletion or worktree
-	 * removal) via the Workspace service. It is fanned out by the recurring
-	 * workspace-maintenance parent tasks, which forward agent_id from their own
-	 * params (0 under an agent-less recurring schedule). Without opting out, every
-	 * child chunk scheduled by an agent-less parent would be rejected by the
-	 * SystemTask agent-context gate in TaskScheduler::schedule(), so the actual
-	 * destructive cleanup would never run even after the parents are fixed.
-	 *
-	 * @return bool
-	 */
-	public function requiresAgentContext(): bool {
-		return false;
 	}
 
 	/**

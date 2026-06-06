@@ -12,12 +12,11 @@
 namespace DataMachineCode\Tasks;
 
 use DataMachine\Core\PluginSettings;
-use DataMachine\Engine\AI\System\Tasks\SystemTask;
 use DataMachineCode\Workspace\Workspace;
 
 defined('ABSPATH') || exit;
 
-class WorkspaceHygieneReportTask extends SystemTask {
+class WorkspaceHygieneReportTask extends MaintenanceTask {
 
 
 
@@ -33,21 +32,6 @@ class WorkspaceHygieneReportTask extends SystemTask {
 	 */
 	public function getTaskType(): string {
 		return 'workspace_hygiene_report';
-	}
-
-	/**
-	 * Pure workspace/disk maintenance — runs without agent ownership context.
-	 *
-	 * This task produces a non-destructive disk/worktree hygiene report via the
-	 * Workspace service. It never acts as an agent or invokes an agent-scoped
-	 * ability. It is registered as an agent-less weekly recurring schedule, so it
-	 * must opt out of the SystemTask agent-context gate or
-	 * TaskScheduler::schedule() rejects it before it runs.
-	 *
-	 * @return bool
-	 */
-	public function requiresAgentContext(): bool {
-		return false;
 	}
 
 	/**

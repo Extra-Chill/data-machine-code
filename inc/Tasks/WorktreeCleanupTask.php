@@ -37,7 +37,6 @@
 namespace DataMachineCode\Tasks;
 
 use DataMachine\Core\PluginSettings;
-use DataMachine\Engine\AI\System\Tasks\SystemTask;
 use DataMachineCode\Workspace\Workspace;
 
 defined('ABSPATH') || exit;
@@ -52,7 +51,7 @@ defined('ABSPATH') || exit;
  * $default_enabled )`.
  */
 
-class WorktreeCleanupTask extends SystemTask {
+class WorktreeCleanupTask extends MaintenanceTask {
 
 
 
@@ -70,21 +69,6 @@ class WorktreeCleanupTask extends SystemTask {
 	 */
 	public function getTaskType(): string {
 		return 'worktree_cleanup';
-	}
-
-	/**
-	 * Pure workspace/git maintenance — runs without agent ownership context.
-	 *
-	 * This task removes merged worktrees via the Workspace service (git/disk ops
-	 * gated by PluginSettings). It never acts as an agent or invokes an
-	 * agent-scoped ability. It is registered as an agent-less recurring schedule,
-	 * so it must opt out of the SystemTask agent-context gate or
-	 * TaskScheduler::schedule() rejects it before it runs.
-	 *
-	 * @return bool
-	 */
-	public function requiresAgentContext(): bool {
-		return false;
 	}
 
 	/**
