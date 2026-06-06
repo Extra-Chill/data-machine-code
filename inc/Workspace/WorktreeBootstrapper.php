@@ -44,11 +44,15 @@
 namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Support\ProcessRunner;
+use DataMachineCode\Support\RuntimeCapabilities;
 
 defined('ABSPATH') || exit;
 
 if ( ! class_exists(ProcessRunner::class) ) {
 	require_once dirname(__DIR__) . '/Support/ProcessRunner.php';
+}
+if ( ! class_exists(RuntimeCapabilities::class) ) {
+	require_once dirname(__DIR__) . '/Support/RuntimeCapabilities.php';
 }
 
 final class WorktreeBootstrapper {
@@ -419,13 +423,7 @@ final class WorktreeBootstrapper {
 	 * bash/zsh/dash — `which` is not POSIX.
 	 */
 	private static function binary_available( string $binary ): bool {
-		if ( '' === $binary || ! preg_match('/^[a-zA-Z0-9_.\-]+$/', $binary) ) {
-			return false;
-		}
-		$env = self::shell_env_prefix();
-     // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		exec(sprintf('%scommand -v %s 2>/dev/null', $env, escapeshellarg($binary)), $_unused, $exit);
-		return 0 === $exit;
+		return RuntimeCapabilities::binary_available($binary, self::augmented_path());
 	}
 
 	/**

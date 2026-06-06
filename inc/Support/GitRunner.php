@@ -21,17 +21,13 @@ defined('ABSPATH') || exit;
 if ( ! class_exists(ProcessRunner::class) ) {
 	require_once __DIR__ . '/ProcessRunner.php';
 }
+if ( ! class_exists(RuntimeCapabilities::class) ) {
+	require_once __DIR__ . '/RuntimeCapabilities.php';
+}
 
 final class GitRunner {
 
 
-
-	/**
-	 * Cached runtime capability probe.
-	 *
-	 * @var array<string,mixed>|null
-	 */
-	private static ?array $diagnostic = null;
 
 	/**
 	 * Inspect whether the current PHP runtime can execute local git commands.
@@ -39,32 +35,7 @@ final class GitRunner {
 	 * @return array<string,mixed>
 	 */
 	public static function diagnose(): array {
-		if ( null !== self::$diagnostic ) {
-			return self::$diagnostic;
-		}
-
-		$exec_available      = function_exists('exec');
-		$proc_open_available = function_exists('proc_open');
-		$output              = array();
-		$exit_code           = 127;
-		$git_path            = '';
-
-		if ( $exec_available ) {
-            // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-			exec('command -v git 2>/dev/null', $output, $exit_code);
-			$git_path = trim( (string) ( $output[0] ?? '' ));
-		}
-
-		self::$diagnostic = array(
-			'backend'             => 'local_git',
-			'exec_available'      => $exec_available,
-			'proc_open_available' => $proc_open_available,
-			'git_available'       => 0 === $exit_code && '' !== $git_path,
-			'git_path'            => $git_path,
-			'probe_exit_code'     => $exit_code,
-		);
-
-		return self::$diagnostic;
+		return RuntimeCapabilities::git_diagnostic();
 	}
 
 	/**
@@ -100,7 +71,7 @@ final class GitRunner {
 			$reason = 'PHP proc_open() is unavailable for streaming git operations.';
 		}
 
-		$remediation = 'Run workspace abilities in a host runtime with local git access, or provide a Data Machine Code workspace backend that executes these operations outside the constrained PHP sandbox.';
+		$remediation = RuntimeCapabilities::workspace_remediation();
 
 		return new \WP_Error(
 			'datamachine_workspace_git_unavailable',
