@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.51] - 2026-06-06
+
+### Changed
+- centralize process execution plumbing
+
+### Fixed
+- align process runner lint
+
 ## [0.47.50] - 2026-06-06
 
 ### Changed
