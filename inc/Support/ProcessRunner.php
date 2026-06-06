@@ -13,6 +13,10 @@ namespace DataMachineCode\Support;
 
 defined('ABSPATH') || exit;
 
+if ( ! class_exists(RuntimeCapabilities::class) ) {
+	require_once __DIR__ . '/RuntimeCapabilities.php';
+}
+
 final class ProcessRunner {
 
 
@@ -35,13 +39,12 @@ final class ProcessRunner {
 			return self::run_via_exec($command, $options, $output_cap);
 		}
 
-		if ( ! function_exists('proc_open') ) {
+		$shell = RuntimeCapabilities::shell_diagnostic();
+		if ( empty($shell['proc_open_available']) ) {
 			return self::error(
 				$options,
 				0 === $timeout_seconds ? 'Process command failed to start.' : sprintf('Process command timed out after %d second(s).', $timeout_seconds),
-				array(
-					'proc_open_available' => false,
-				)
+				$shell
 			);
 		}
 
@@ -53,8 +56,9 @@ final class ProcessRunner {
 	 * @return array{success: bool, output: string, exit_code: int}|\WP_Error
 	 */
 	private static function run_via_exec( string $command, array $options, int $output_cap ): array|\WP_Error {
-		if ( ! function_exists('exec') ) {
-			return self::error($options, 'Process command failed to start.', array( 'exec_available' => false ));
+		$shell = RuntimeCapabilities::shell_diagnostic();
+		if ( empty($shell['exec_available']) ) {
+			return self::error($options, 'Process command failed to start.', $shell);
 		}
 
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec

@@ -21,11 +21,15 @@ use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorkspaceReader;
 use DataMachineCode\Workspace\WorkspaceWriter;
 use DataMachineCode\Support\GitRunner;
+use DataMachineCode\Support\RuntimeCapabilities;
 
 defined('ABSPATH') || exit;
 
 if ( ! class_exists(AbilityRegistry::class) ) {
 	require_once __DIR__ . '/AbilityRegistry.php';
+}
+if ( ! class_exists(RuntimeCapabilities::class) ) {
+	require_once dirname(__DIR__) . '/Support/RuntimeCapabilities.php';
 }
 
 class WorkspaceAbilities {
@@ -2327,7 +2331,7 @@ class WorkspaceAbilities {
 		$workspace   = new Workspace();
 		$diagnostic  = GitRunner::diagnose();
 		$backend     = RemoteWorkspaceBackend::should_handle() ? 'github_api' : 'local_git';
-		$remediation = 'Run workspace abilities in a host runtime with local git access, or provide a Data Machine Code workspace backend that executes these operations outside the constrained PHP sandbox.';
+		$remediation = RuntimeCapabilities::workspace_remediation();
 
 		return array_merge(
 			$diagnostic,
