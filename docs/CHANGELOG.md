@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.50] - 2026-06-06
+
+### Changed
+- Emit workspace executor metrics
+
 ## [0.47.49] - 2026-06-06
 
 ### Changed
