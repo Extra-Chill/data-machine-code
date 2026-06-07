@@ -1807,7 +1807,7 @@ class Workspace {
 			'written'      => $written,
 			'skipped'      => $skipped,
 			'summary'      => $summary,
-			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-finalized-apply', $dry_run, $opts),
+			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-finalized-apply', $dry_run, $opts, count( $written ) ),
 			'evidence'     => array(
 				'scope'  => 'promote finalized active_no_signal PR evidence into cleanup_eligible metadata',
 				'safety' => 'Revalidates dirty, unpushed, identity, and closed+merged PR evidence before writing metadata. Does not delete worktrees.',
@@ -1900,7 +1900,7 @@ class Workspace {
 			'written'      => $written,
 			'skipped'      => $skipped,
 			'summary'      => $summary,
-			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-equivalent-clean-apply', $dry_run, $opts),
+			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-equivalent-clean-apply', $dry_run, $opts, count( $written ) ),
 			'evidence'     => array(
 				'scope'  => 'promote effectively clean upstream-equivalent active_no_signal rows into cleanup_eligible metadata',
 				'safety' => 'Revalidates upstream-equivalence evidence before writing metadata. Does not delete worktrees.',
@@ -1993,7 +1993,7 @@ class Workspace {
 			'written'      => $written,
 			'skipped'      => $skipped,
 			'summary'      => $summary,
-			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-merged-apply', $dry_run, $opts),
+			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-merged-apply', $dry_run, $opts, count( $written ) ),
 			'evidence'     => array(
 				'scope'  => 'promote clean active_no_signal rows contained in remote default into cleanup_eligible metadata',
 				'safety' => 'Revalidates clean worktree, no unpushed commits, containment, primary protection, branch identity, and merged-to-default evidence before writing metadata. Does not delete worktrees.',
@@ -2010,7 +2010,7 @@ class Workspace {
 	 * @param  array<string,mixed> $opts       Original operation options.
 	 * @return array<string,mixed>
 	 */
-	private function build_active_no_signal_apply_pagination( array $pagination, string $operation, bool $dry_run, array $opts ): array {
+	private function build_active_no_signal_apply_pagination( array $pagination, string $operation, bool $dry_run, array $opts, int $written_count = 0 ): array {
 		if ( null === ( $pagination['next_offset'] ?? null ) ) {
 			$pagination['next_command'] = null;
 			return $pagination;
@@ -2027,6 +2027,11 @@ class Workspace {
 		$dry_run_arg = $dry_run ? ' --dry-run' : '';
 		$limit       = (int) ( $pagination['limit'] ?? 25 );
 		$next_offset = (int) $pagination['next_offset'];
+		if ( ! $dry_run && $written_count > 0 ) {
+			$current     = (int) ( $pagination['offset'] ?? 0 );
+			$next_offset = max( $current, $next_offset - $written_count );
+			$pagination['next_offset'] = $next_offset;
+		}
 
 		$pagination['next_command'] = sprintf(
 			'studio wp datamachine-code workspace worktree %s%s --limit=%d --offset=%d%s --format=json',

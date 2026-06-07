@@ -905,8 +905,12 @@ namespace {
     $merged_report = $ws->worktree_active_no_signal_report(array( 'limit' => 100, 'offset' => 0 ));
     $assert(true, ! is_wp_error($merged_report) && ( $merged_report['success'] ?? false ), 'merged-to-default active/no-signal report succeeds');
     $merged_rows = array();
+    $first_merged_offset = null;
     foreach ((array) ( $merged_report['rows'] ?? array() ) as $row ) {
         $merged_rows[ $row['handle'] ?? '' ] = $row;
+        if ( null === $first_merged_offset && 'merged_to_default' === (string) ( $row['suggested_action'] ?? '' ) ) {
+            $first_merged_offset = count($merged_rows) - 1;
+        }
     }
     $assert('merged_to_default', $merged_rows['demo@default-merged']['suggested_action'] ?? '', 'clean contained branch is classified merged_to_default');
     $assert('fix/foo', $merged_rows['demo@fix-foo']['branch'] ?? '', 'active/no-signal report uses actual checked-out branch with slashes');
@@ -929,10 +933,14 @@ namespace {
     $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@default-merged')['cleanup_eligible_at'] ?? '', 'merged-to-default dry-run leaves metadata unchanged');
     $merged_page_dry_run = $ws->worktree_active_no_signal_merged_apply(array( 'dry_run' => true, 'limit' => 1, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 60, 'internal_budget_started' => microtime(true) ));
     $assert(true, str_contains($merged_page_dry_run['pagination']['next_command'] ?? '', 'active-no-signal-merged-apply --dry-run --limit=1 --offset=1 --until-budget=1s --format=json'), 'merged-to-default dry-run continuation stays on merged apply command');
+    $assert(true, null !== $first_merged_offset, 'merged-to-default report exposes at least one merged candidate offset');
+    $merged_page_apply = $ws->worktree_active_no_signal_merged_apply(array( 'limit' => 1, 'offset' => (int) $first_merged_offset, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 60, 'internal_budget_started' => microtime(true) ));
+    $assert(1, (int) ( $merged_page_apply['summary']['written'] ?? 0 ), 'merged-to-default page apply writes one row');
+    $assert(true, str_contains($merged_page_apply['pagination']['next_command'] ?? '', 'active-no-signal-merged-apply --limit=1 --offset=' . (int) $first_merged_offset . ' --until-budget=1s --format=json'), 'merged-to-default apply continuation accounts for rows removed from active/no-signal page');
 
     $merged_apply = $ws->worktree_active_no_signal_merged_apply(array( 'limit' => 100, 'offset' => 0 ));
     $assert(true, ! is_wp_error($merged_apply) && ( $merged_apply['success'] ?? false ), 'merged-to-default active/no-signal apply succeeds');
-    $assert(2, (int) ( $merged_apply['summary']['written'] ?? 0 ), 'merged-to-default apply writes only safe merged row metadata');
+    $assert(1, (int) ( $merged_apply['summary']['written'] ?? 0 ), 'merged-to-default apply writes remaining safe merged row metadata');
     $stored_default_merged = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@default-merged');
     $assert('cleanup_eligible', $stored_default_merged['lifecycle_state'] ?? '', 'merged-to-default apply stores cleanup_eligible state');
     $assert('merged', $stored_default_merged['finalized_state'] ?? '', 'merged-to-default apply records merged finalizer state');
