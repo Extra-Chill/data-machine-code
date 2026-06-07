@@ -1130,6 +1130,7 @@ namespace {
     datamachine_code_cleanup_assert(JSON_ERROR_NONE === json_last_error(), 'abandoned JSON output parses cleanly');
     datamachine_code_cleanup_assert(true === ( $abandoned_json['applied'] ?? null ), 'abandoned apply mode is explicit in JSON');
     datamachine_code_cleanup_assert(true === ( $abandoned_json['force'] ?? null ), 'abandoned force mode is explicit in JSON');
+    datamachine_code_cleanup_assert('bounded_apply_initial' === array_key_first($abandoned_json['steps'] ?? array()), 'abandoned apply drains already-marked rows before slow classifiers');
     datamachine_code_cleanup_assert(1 === (int) ( $reconcile_metadata_ability->last_input['limit'] ?? 0 ), 'abandoned forwards limit to metadata reconciliation');
     datamachine_code_cleanup_assert(false === ( $reconcile_metadata_ability->last_input['dry_run'] ?? null ), 'abandoned --apply applies metadata reconciliation');
     datamachine_code_cleanup_assert(array( 0, 1 ) === array_map(fn( $input ) => (int) ( $input['offset'] ?? 0 ), array_slice($reconcile_metadata_ability->inputs, -2)), 'abandoned drains metadata reconciliation pages in apply mode');
@@ -1140,7 +1141,7 @@ namespace {
     datamachine_code_cleanup_assert(true === ( $bounded_apply_ability->last_input['force'] ?? null ), 'abandoned forwards force only to bounded cleanup removal');
     datamachine_code_cleanup_assert(false === ( $bounded_apply_ability->last_input['dry_run'] ?? null ), 'abandoned --apply removes eligible rows');
     datamachine_code_cleanup_assert(1 === $prune_ability->calls, 'abandoned prunes stale git metadata after cleanup pass');
-    datamachine_code_cleanup_assert(1 === (int) ( $abandoned_json['summary']['removed'] ?? 0 ), 'abandoned summary reports removed rows');
+    datamachine_code_cleanup_assert(2 === (int) ( $abandoned_json['summary']['removed'] ?? 0 ), 'abandoned summary reports removed rows from initial and post-classifier drains');
     datamachine_code_cleanup_assert(2 === (int) ( $abandoned_json['summary']['blocked'] ?? 0 ), 'abandoned summary reports blocked rows');
     datamachine_code_cleanup_assert(1 === (int) ( $abandoned_json['summary']['blocked_by_reason']['unpushed_commits'] ?? 0 ), 'abandoned preserves unpushed-commit blocker evidence');
 
@@ -1172,9 +1173,10 @@ namespace {
     datamachine_code_cleanup_assert(JSON_ERROR_NONE === json_last_error(), 'abandoned stalled remote-clean JSON output parses cleanly');
     datamachine_code_cleanup_assert('remote-clean' === ( $abandoned_remote_clean_stalled_json['continuation']['stage'] ?? '' ), 'abandoned stalled remote-clean emits remote-clean continuation');
     datamachine_code_cleanup_assert(42 === (int) ( $abandoned_remote_clean_stalled_json['continuation']['offset'] ?? -1 ), 'abandoned stalled remote-clean keeps current offset continuation');
-    datamachine_code_cleanup_assert(count($bounded_apply_ability->inputs) === $bounded_call_count_before_stalled_classifier + 1, 'abandoned drains bounded cleanup before returning stalled classifier continuation');
+    datamachine_code_cleanup_assert(count($bounded_apply_ability->inputs) === $bounded_call_count_before_stalled_classifier + 2, 'abandoned drains bounded cleanup before and after stalled classifier continuation');
+    datamachine_code_cleanup_assert('bounded_apply_initial' === array_key_first($abandoned_remote_clean_stalled_json['steps'] ?? array()), 'abandoned stalled classifier run starts with bounded cleanup');
     datamachine_code_cleanup_assert(isset($abandoned_remote_clean_stalled_json['steps']['bounded_apply_remote-clean']), 'abandoned stalled classifier output includes bounded cleanup step');
-    datamachine_code_cleanup_assert(1 === (int) ( $abandoned_remote_clean_stalled_json['summary']['removed'] ?? 0 ), 'abandoned stalled classifier summary includes bounded removals');
+    datamachine_code_cleanup_assert(2 === (int) ( $abandoned_remote_clean_stalled_json['summary']['removed'] ?? 0 ), 'abandoned stalled classifier summary includes bounded removals');
     $active_remote_clean_ability->stall_at_offset = null;
 
     $reconcile_metadata_ability->stall_at_offset = 90;

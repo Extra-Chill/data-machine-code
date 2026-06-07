@@ -2850,6 +2850,23 @@ class WorkspaceCommand extends BaseCommand {
 			'source' => self::CLEANUP_CLI_SOURCE,
 		);
 
+		if ( $apply ) {
+			$bounded = $this->run_worktree_abandoned_bounded_apply($abilities['bounded_apply'], $result, true, $force, $limit, 'initial');
+			if ( is_wp_error($bounded) ) {
+				return $bounded;
+			}
+
+			if ( 'bounded' === $stage ) {
+				$prune = $abilities['prune']->execute(array());
+				if ( is_wp_error($prune) ) {
+					return $prune;
+				}
+				$result['steps']['prune'] = $this->summarize_worktree_abandoned_step($prune);
+
+				return $this->finalize_worktree_abandoned_result($result, $apply, $force, $limit, $passes, $until_budget, $started_at);
+			}
+		}
+
 		if ( $stage_order[ $stage ] <= $stage_order['reconcile'] ) {
 			$reconcile_input = array_merge(
 				$common_page,
