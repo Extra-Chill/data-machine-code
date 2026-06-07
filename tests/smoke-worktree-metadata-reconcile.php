@@ -924,7 +924,7 @@ namespace {
     $assert('contained_non_default_remote', $merged_rows['demo@non-default-contained']['upstream_equivalence']['effective_status'] ?? '', 'clean non-default-contained branch exposes containment evidence');
     $assert('unsafe_dirty_or_unpushed', $merged_rows['demo@dirty-default-merged']['suggested_action'] ?? '', 'dirty contained branch remains unsafe');
     $assert('unsafe_dirty_or_unpushed', $merged_rows['demo@unpushed-default-merged']['suggested_action'] ?? '', 'unpushed contained branch remains unsafe');
-    $assert('no_pr_branch_review', $merged_rows['demo@ambiguous-default']['suggested_action'] ?? '', 'ambiguous unmerged branch remains manual review');
+    $assert('remote_tracking_clean', $merged_rows['demo@ambiguous-default']['suggested_action'] ?? '', 'clean remote-tracking branch is classified as cleanup-safe local-only checkout');
 
     $merged_dry_run = $ws->worktree_active_no_signal_merged_apply(array( 'dry_run' => true, 'limit' => 100, 'offset' => 0 ));
     $assert(true, ! is_wp_error($merged_dry_run) && ( $merged_dry_run['success'] ?? false ), 'merged-to-default active/no-signal dry-run succeeds');
@@ -964,7 +964,21 @@ namespace {
     $assert('contained-non-default-remote', $stored_non_default['cleanup_eligibility_evidence']['signal'] ?? '', 'non-default containment apply records containment signal');
     $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@dirty-default-merged')['cleanup_eligible_at'] ?? '', 'dirty merged-to-default row remains active');
     $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@unpushed-default-merged')['cleanup_eligible_at'] ?? '', 'unpushed merged-to-default row remains active');
-    $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@ambiguous-default')['cleanup_eligible_at'] ?? '', 'ambiguous row remains active');
+    $remote_clean_dry_run = $ws->worktree_active_no_signal_remote_clean_apply(array( 'dry_run' => true, 'limit' => 100, 'offset' => 0 ));
+    $assert(true, ! is_wp_error($remote_clean_dry_run) && ( $remote_clean_dry_run['success'] ?? false ), 'remote-clean active/no-signal dry-run succeeds');
+    $assert(true, 1 <= (int) ( $remote_clean_dry_run['summary']['planned'] ?? 0 ), 'remote-clean dry-run plans clean remote-tracking local checkouts');
+    $assert(true, in_array('demo@ambiguous-default', array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), (array) ( $remote_clean_dry_run['planned'] ?? array() )), true), 'remote-clean dry-run includes clean remote-tracking target row');
+    $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@ambiguous-default')['cleanup_eligible_at'] ?? '', 'remote-clean dry-run leaves metadata unchanged');
+    $remote_clean_apply = $ws->worktree_active_no_signal_remote_clean_apply(array( 'limit' => 100, 'offset' => 0 ));
+    $assert(true, ! is_wp_error($remote_clean_apply) && ( $remote_clean_apply['success'] ?? false ), 'remote-clean active/no-signal apply succeeds');
+    $assert(true, 1 <= (int) ( $remote_clean_apply['summary']['written'] ?? 0 ), 'remote-clean apply writes clean remote-tracking metadata');
+    $assert(true, in_array('demo@ambiguous-default', array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), (array) ( $remote_clean_apply['written'] ?? array() )), true), 'remote-clean apply writes target clean remote-tracking metadata');
+    $stored_ambiguous = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@ambiguous-default');
+    $assert('cleanup_eligible', $stored_ambiguous['lifecycle_state'] ?? '', 'remote-clean apply stores cleanup_eligible state');
+    $assert('remote-tracking-clean', $stored_ambiguous['cleanup_eligibility_evidence']['signal'] ?? '', 'remote-clean apply records remote tracking evidence signal');
+    $assert('refs/remotes/origin/ambiguous-default', $stored_ambiguous['cleanup_eligibility_evidence']['remote_ref'] ?? '', 'remote-clean apply records preserving remote ref');
+    $assert('merged-to-default', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@default-merged')['cleanup_eligibility_evidence']['signal'] ?? '', 'remote-clean apply does not overwrite merged-to-default evidence');
+    $assert('upstream-equivalent-clean', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@patch-equivalent-default')['cleanup_eligibility_evidence']['signal'] ?? '', 'remote-clean apply does not overwrite upstream-equivalent evidence');
 
     if ($failures > 0 ) {
         echo "\n{$failures} / {$total} assertions failed.\n";

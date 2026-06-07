@@ -61,7 +61,7 @@ class GitSyncAbilities {
 			// -----------------------------------------------------------------
 
 			AbilityRegistry::register(
-				'datamachine/gitsync-list',
+				'datamachine-code/gitsync-list',
 				array(
 					'label'               => 'List GitSync Bindings',
 					'description'         => 'List every registered GitSync binding with a lightweight summary.',
@@ -84,7 +84,7 @@ class GitSyncAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/gitsync-status',
+				'datamachine-code/gitsync-status',
 				array(
 					'label'               => 'GitSync Binding Status',
 					'description'         => 'Report on-disk + upstream status for a single GitSync binding.',
@@ -122,7 +122,7 @@ class GitSyncAbilities {
 			// -----------------------------------------------------------------
 
 			AbilityRegistry::register(
-				'datamachine/gitsync-bind',
+				'datamachine-code/gitsync-bind',
 				array(
 					'label'               => 'Bind GitSync Path',
 					'description'         => 'Register a binding between a site-owned local directory (relative to ABSPATH) and a GitHub repository. First pull materializes files.',
@@ -153,7 +153,7 @@ class GitSyncAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/gitsync-unbind',
+				'datamachine-code/gitsync-unbind',
 				array(
 					'label'               => 'Unbind GitSync Path',
 					'description'         => 'Remove a binding. Directory preserved by default; pass purge=true to delete it.',
@@ -182,7 +182,7 @@ class GitSyncAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/gitsync-pull',
+				'datamachine-code/gitsync-pull',
 				array(
 					'label'               => 'Pull GitSync Binding',
 					'description'         => 'Download all files from the pinned branch to the local directory. Uses GitHub Contents API — no git binary required.',
@@ -219,7 +219,7 @@ class GitSyncAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/gitsync-submit',
+				'datamachine-code/gitsync-submit',
 				array(
 					'label'               => 'Submit GitSync Binding as Pull Request',
 					'description'         => 'Upload changed local files to the sticky proposal branch (gitsync/<slug>) by default, or to a keyed proposal branch (gitsync/<slug>-<proposal-slug>) when proposal is provided, and open or update a PR against the pinned branch.',
@@ -262,7 +262,7 @@ class GitSyncAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/gitsync-push',
+				'datamachine-code/gitsync-push',
 				array(
 					'label'               => 'Push GitSync Binding Directly',
 					'description'         => 'Commit changed local files directly to the pinned branch — no PR. Requires policy.write_enabled=true AND policy.safe_direct_push=true (two-key authorization).',
@@ -296,7 +296,7 @@ class GitSyncAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/gitsync-policy-update',
+				'datamachine-code/gitsync-policy-update',
 				array(
 					'label'               => 'Update GitSync Binding Policy',
 					'description'         => 'Update one or more policy fields on an existing binding (write_enabled, safe_direct_push, allowed_paths, conflict, auto_pull, pull_interval).',

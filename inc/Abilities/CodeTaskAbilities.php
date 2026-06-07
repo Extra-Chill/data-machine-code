@@ -52,7 +52,7 @@ class CodeTaskAbilities {
 
 	public function register(): void {
 		AbilityRegistry::register(
-			'datamachine/create-code-task',
+			'datamachine-code/create-code-task',
 			array(
 				'label'               => 'Create Code Task',
 				'description'         => 'Create an isolated workspace worktree from a structured evidence packet.',

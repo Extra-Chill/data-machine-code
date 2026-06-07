@@ -69,7 +69,7 @@ class WorkspaceAbilities {
 			// -----------------------------------------------------------------
 
 			AbilityRegistry::register(
-				'datamachine/workspace-path',
+				'datamachine-code/workspace-path',
 				array(
 					'label'               => 'Get Workspace Path',
 					'description'         => 'Get the agent workspace directory path. Optionally create the directory.',
@@ -99,7 +99,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-list',
+				'datamachine-code/workspace-list',
 				array(
 					'label'               => 'List Workspace Repos',
 					'description'         => 'List repositories in the agent workspace.',
@@ -146,7 +146,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-capabilities',
+				'datamachine-code/workspace-capabilities',
 				array(
 					'label'               => 'Inspect Workspace Capabilities',
 					'description'         => 'Inspect the current Data Machine Code workspace backend and whether local git operations can execute in this runtime.',
@@ -175,7 +175,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-show',
+				'datamachine-code/workspace-show',
 				array(
 					'label'               => 'Show Workspace Repo',
 					'description'         => 'Show detailed info about a workspace repository (branch, remote, latest commit, dirty status).',
@@ -217,7 +217,7 @@ class WorkspaceAbilities {
 			// -----------------------------------------------------------------
 
 			AbilityRegistry::register(
-				'datamachine/workspace-read',
+				'datamachine-code/workspace-read',
 				array(
 					'label'               => 'Read Workspace File',
 					'description'         => 'Read the contents of a text file from a workspace repository.',
@@ -266,7 +266,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-ls',
+				'datamachine-code/workspace-ls',
 				array(
 					'label'               => 'List Workspace Directory',
 					'description'         => 'List directory contents within a workspace repository.',
@@ -311,7 +311,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-grep',
+				'datamachine-code/workspace-grep',
 				array(
 					'label'               => 'Search Workspace Files',
 					'description'         => 'Search text files within a workspace repository using a regular expression pattern.',
@@ -380,7 +380,7 @@ class WorkspaceAbilities {
 			// -----------------------------------------------------------------
 
 			AbilityRegistry::register(
-				'datamachine/workspace-clone',
+				'datamachine-code/workspace-clone',
 				array(
 					'label'               => 'Clone Workspace Repo',
 					'description'         => 'Clone a git repository into the workspace as a primary checkout. Worktrees are created separately via `workspace-worktree-add`.',
@@ -423,7 +423,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-adopt',
+				'datamachine-code/workspace-adopt',
 				array(
 					'label'               => 'Adopt Workspace Repo',
 					'description'         => 'Validate an existing git primary checkout already located under the workspace root so it can be managed by workspace commands.',
@@ -459,7 +459,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-remove',
+				'datamachine-code/workspace-remove',
 				array(
 					'label'               => 'Remove Workspace Repo',
 					'description'         => 'Remove a workspace handle. Refuses to remove a primary that has linked worktrees.',
@@ -488,7 +488,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-write',
+				'datamachine-code/workspace-write',
 				array(
 					'label'               => 'Write Workspace File',
 					'description'         => 'Create or overwrite a file in a workspace repository.',
@@ -527,7 +527,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-edit',
+				'datamachine-code/workspace-edit',
 				array(
 					'label'               => 'Edit Workspace File',
 					'description'         => 'Find-and-replace text in a workspace repository file.',
@@ -589,7 +589,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-apply-patch',
+				'datamachine-code/workspace-apply-patch',
 				array(
 					'label'               => 'Apply Workspace Patch',
 					'description'         => 'Apply a unified diff to a workspace repository through git apply. Mutating ops on the primary checkout require allow_primary_mutation=true. The patch is checked before apply and fails closed on context mismatch.',
@@ -633,7 +633,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-git-status',
+				'datamachine-code/workspace-git-status',
 				array(
 					'label'               => 'Workspace Git Status',
 					'description'         => 'Get git status information for a workspace handle (primary or worktree).',
@@ -675,7 +675,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-git-log',
+				'datamachine-code/workspace-git-log',
 				array(
 					'label'               => 'Workspace Git Log',
 					'description'         => 'Read git log entries for a workspace handle.',
@@ -720,7 +720,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-git-diff',
+				'datamachine-code/workspace-git-diff',
 				array(
 					'label'               => 'Workspace Git Diff',
 					'description'         => 'Read git diff output for a workspace handle.',
@@ -766,7 +766,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-git-pull',
+				'datamachine-code/workspace-git-pull',
 				array(
 					'label'               => 'Workspace Git Pull',
 					'description'         => 'Run git pull --ff-only for a workspace handle. Mutating ops on the primary checkout require allow_primary_mutation=true.',
@@ -804,7 +804,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-git-add',
+				'datamachine-code/workspace-git-add',
 				array(
 					'label'               => 'Workspace Git Add',
 					'description'         => 'Stage repository paths with git add. Mutating ops on the primary checkout require allow_primary_mutation=true.',
@@ -847,7 +847,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-delete',
+				'datamachine-code/workspace-delete',
 				array(
 					'label'               => 'Delete Workspace Path',
 					'description'         => 'Delete a tracked or untracked file or directory from a workspace repository. Tracked paths are removed via git rm; untracked paths are unlinked from disk. Mutating ops on the primary checkout require allow_primary_mutation=true.',
@@ -899,7 +899,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-git-commit',
+				'datamachine-code/workspace-git-commit',
 				array(
 					'label'               => 'Workspace Git Commit',
 					'description'         => 'Commit staged changes in a workspace handle. Mutating ops on the primary checkout require allow_primary_mutation=true.',
@@ -938,7 +938,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-git-push',
+				'datamachine-code/workspace-git-push',
 				array(
 					'label'               => 'Workspace Git Push',
 					'description'         => 'Push commits for a workspace handle. `fixed_branch` policy applies only to the primary checkout; worktrees may push any branch.',
@@ -1000,7 +1000,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-git-rebase',
+				'datamachine-code/workspace-git-rebase',
 				array(
 					'label'               => 'Workspace Git Rebase',
 					'description'         => 'Fetch and rebase a workspace handle, returning structured conflict information without auto-resolving conflicts.',
@@ -1043,7 +1043,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-git-reset',
+				'datamachine-code/workspace-git-reset',
 				array(
 					'label'               => 'Workspace Git Reset',
 					'description'         => 'Run git reset --soft/--mixed/--hard for a workspace handle. Hard reset requires allow_destructive=true.',
@@ -1092,7 +1092,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-pr-status',
+				'datamachine-code/workspace-pr-status',
 				array(
 					'label'               => 'Workspace Pull Request Status',
 					'description'         => 'Resolve a workspace pull request and return mergeability/freshness state from GitHub.',
@@ -1126,7 +1126,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-pr-rebase',
+				'datamachine-code/workspace-pr-rebase',
 				array(
 					'label'               => 'Workspace Pull Request Rebase',
 					'description'         => 'Bring a workspace pull request branch up to date with its base branch, optionally dropping configured conflict paths, squashing, and force-with-lease pushing.',
@@ -1173,7 +1173,7 @@ class WorkspaceAbilities {
 			// -----------------------------------------------------------------
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-add',
+				'datamachine-code/workspace-worktree-add',
 				array(
 					'label'               => 'Add Workspace Worktree',
 					'description'         => 'Create a git worktree for a branch under `<repo>@<branch-slug>`. Branches are created off the supplied `from` ref (default `origin/HEAD`) when they do not yet exist locally. When `inject_context` is true (default), the originating site\'s composed AGENTS.md is made visible to OpenCode: symlinked into the worktree root when no repo-owned AGENTS.md exists, otherwise added via local OpenCode instructions so both files load. Site agent memory is snapshotted into `.claude/CLAUDE.local.md`, and injected paths are added to the worktree\'s per-checkout `info/exclude`. When `bootstrap` is true (default), submodule init plus root or one-level nested package-manager/composer installs run after creation so the worktree is immediately test/build-ready; set false to create a bare checkout.',
@@ -1310,7 +1310,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-refresh-context',
+				'datamachine-code/workspace-worktree-refresh-context',
 				array(
 					'label'               => 'Refresh Worktree Context',
 					'description'         => 'Re-read the originating site\'s agent memory, refresh the site AGENTS.md projection when possible, and rewrite the injected context file (`.claude/CLAUDE.local.md`) in an existing worktree. Must be run from the site that created the worktree — cross-machine refresh is not supported.',
@@ -1347,7 +1347,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-finalize',
+				'datamachine-code/workspace-worktree-finalize',
 				array(
 					'label'               => 'Finalize Workspace Worktree',
 					'description'         => 'Attach lifecycle metadata to a worktree after a coding-agent session opens a PR, completes, or marks the worktree cleanup-eligible. This metadata is a cleanup signal only; dirty/unpushed safety gates still apply.',
@@ -1388,7 +1388,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-hygiene-report',
+				'datamachine-code/workspace-hygiene-report',
 				array(
 					'label'               => 'Workspace Hygiene Report',
 					'description'         => 'Build a non-destructive workspace hygiene report with disk, size, worktree, and local cleanup dry-run summaries.',
@@ -1445,7 +1445,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-inventory-refresh',
+				'datamachine-code/workspace-worktree-inventory-refresh',
 				array(
 					'label'               => 'Refresh Worktree Inventory',
 					'description'         => 'Reconcile the DB-backed worktree inventory from the current filesystem/git worktree view. Current rows are upserted; stale known rows are marked missing_path.',
@@ -1471,7 +1471,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-cleanup-run',
+				'datamachine-code/workspace-cleanup-run',
 				array(
 					'label'               => 'Schedule Workspace Cleanup Run',
 					'description'         => 'Schedule a background workspace cleanup system task. Review/dry-run commands are separate synchronous abilities.',
@@ -1522,7 +1522,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-list',
+				'datamachine-code/workspace-worktree-list',
 				array(
 					'label'               => 'List Workspace Worktrees',
 					'description'         => 'List all worktrees in the workspace (optionally filtered by repo and lifecycle state). Defaults to a fast cheap-inventory listing on large workspaces; opt in to per-worktree git status and disk probes via include_status / include_disk.',
@@ -1653,7 +1653,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-remove',
+				'datamachine-code/workspace-worktree-remove',
 				array(
 					'label'               => 'Remove Workspace Worktree',
 					'description'         => 'Remove a worktree by repo and branch (or branch slug). Refuses if the worktree has uncommitted changes unless `force` is true.',
@@ -1691,7 +1691,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-prune',
+				'datamachine-code/workspace-worktree-prune',
 				array(
 					'label'               => 'Prune Workspace Worktrees',
 					'description'         => 'Run git worktree prune across all primary checkouts to drop stale registry entries.',
@@ -1717,7 +1717,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-cleanup',
+				'datamachine-code/workspace-worktree-cleanup',
 				array(
 					'label'               => 'Cleanup Merged Worktrees',
 					'description'         => 'Remove worktrees whose branch is merged to the remote default branch. Detects merge via `upstream: gone` (remote branch deleted, e.g. by GitHub auto-delete on PR merge) or closed+merged PR via the GitHub API. Deletes the local branch and prunes the git registry after removal. Dry-run supported.',
@@ -1789,7 +1789,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-reconcile-metadata',
+				'datamachine-code/workspace-worktree-reconcile-metadata',
 				array(
 					'label'               => 'Reconcile Worktree Metadata',
 					'description'         => 'Build, apply, or schedule bounded apply jobs for lifecycle metadata reconciliation. Never removes worktrees; apply paths revalidate identity and cleanup-eligibility safety gates before writing.',
@@ -1846,7 +1846,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-active-no-signal-report',
+				'datamachine-code/workspace-worktree-active-no-signal-report',
 				array(
 					'label'               => 'Report Active Worktrees Without Cleanup Signal',
 					'description'         => 'Build a bounded, review-only evidence report for active_no_signal worktrees. Gathers PR, dirty, unpushed, remote tracking, and default-branch evidence without deleting worktrees or branches.',
@@ -1885,7 +1885,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-active-no-signal-finalized-apply',
+				'datamachine-code/workspace-worktree-active-no-signal-finalized-apply',
 				array(
 					'label'               => 'Promote Finalized Active Worktrees',
 					'description'         => 'Promote active_no_signal rows with merged PR evidence into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees.',
@@ -1929,7 +1929,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-active-no-signal-equivalent-clean-apply',
+				'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply',
 				array(
 					'label'               => 'Promote Equivalent Clean Active Worktrees',
 					'description'         => 'Promote active_no_signal rows with effective_status=equivalent_clean into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees.',
@@ -1973,7 +1973,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-active-no-signal-merged-apply',
+				'datamachine-code/workspace-worktree-active-no-signal-merged-apply',
 				array(
 					'label'               => 'Promote Merged Active Worktrees',
 					'description'         => 'Promote clean active_no_signal rows with suggested_action=merged_to_default into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees.',
@@ -2017,7 +2017,51 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-cleanup-artifacts',
+				'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply',
+				array(
+					'label'               => 'Promote Clean Remote Active Worktrees',
+					'description'         => 'Promote clean active_no_signal rows with suggested_action=remote_tracking_clean into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees or remote branches.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'dry_run'      => array(
+								'type'        => 'boolean',
+								'description' => 'If true, preview metadata promotions without writing.',
+							),
+							'limit'        => array(
+								'type'        => 'integer',
+								'description' => 'Maximum active_no_signal rows to inspect in this page. Defaults to 25.',
+							),
+							'offset'       => array(
+								'type'        => 'integer',
+								'description' => 'Pagination offset into the active_no_signal inventory ordering.',
+							),
+							'until_budget' => array(
+								'type'        => 'string',
+								'description' => 'Compact time budget for the underlying active_no_signal report page, such as 60s or 10m.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'dry_run' => array( 'type' => 'boolean' ),
+							'planned' => array( 'type' => 'array' ),
+							'written' => array( 'type' => 'array' ),
+							'skipped' => array( 'type' => 'array' ),
+							'summary' => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeActiveNoSignalRemoteCleanApply' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-cleanup-artifacts',
 				array(
 					'label'               => 'Cleanup Worktree Artifacts',
 					'description'         => 'Remove profile-derived, reconstructable artifact directories inside workspace worktrees. Dry-run defaults to bounded inventory mode (limit=' . Workspace::ARTIFACT_CLEANUP_DEFAULT_LIMIT . ', cheap top-level scan, no per-worktree git probes) so huge workspaces stay responsive. Requires a dry-run plan before deletion and revalidates exact paths before applying.',
@@ -2074,7 +2118,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-emergency-cleanup',
+				'datamachine-code/workspace-worktree-emergency-cleanup',
 				array(
 					'label'               => 'Emergency Cleanup Worktrees',
 					'description'         => 'Build or apply a disk-pressure emergency cleanup plan using cheap workspace inventory first. The plan prioritizes artifact/cache deletion and oldest finalized or cleanup-eligible worktrees without running full git status or GitHub checks before initial output.',
@@ -2117,7 +2161,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-worktree-bounded-cleanup-eligible-apply',
+				'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply',
 				array(
 					'label'               => 'Bounded Cleanup Apply for Obvious Worktrees',
 					'description'         => 'Apply only worktrees with explicit lifecycle cleanup_eligible metadata in a bounded batch using cheap workspace inventory. Can explicitly include repaired metadata rows for operator-approved cleanup. Revalidates dirty/unpushed/missing-metadata/external/primary safety gates immediately before each removal. Optionally schedules per-candidate chunk jobs for resumable async apply. Produces evidence with processed/removed/skipped/bytes_reclaimed/continuation.',
@@ -2184,7 +2228,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-cleanup-plan',
+				'datamachine-code/workspace-cleanup-plan',
 				array(
 					'label'               => 'Build DB-backed Workspace Cleanup Plan',
 					'description'         => 'Freeze a non-destructive cleanup plan into DMC cleanup run/item database rows and return a stable run_id. File plans are an escape hatch on lower-level commands only.',
@@ -2221,7 +2265,7 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-cleanup-apply',
+				'datamachine-code/workspace-cleanup-apply',
 				array(
 					'label'               => 'Apply Workspace Cleanup Run',
 					'description'         => 'Apply pending rows from a DB-backed cleanup run by run_id after current-state revalidation.',
@@ -2244,7 +2288,7 @@ class WorkspaceAbilities {
 
 			foreach ( array( 'status', 'evidence', 'resume', 'cancel' ) as $cleanup_operation ) {
 				AbilityRegistry::register(
-					'datamachine/workspace-cleanup-' . $cleanup_operation,
+					'datamachine-code/workspace-cleanup-' . $cleanup_operation,
 					array(
 						'label'               => 'Workspace Cleanup ' . ucfirst($cleanup_operation),
 						'description'         => 'Operate on a DB-backed workspace cleanup run by run_id.',
@@ -3359,6 +3403,30 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->worktree_active_no_signal_merged_apply($opts);
+	}
+
+	/**
+	 * Promote clean remote-tracking active/no-signal evidence into cleanup metadata.
+	 *
+	 * @param  array $input Input parameters (dry_run, limit, offset).
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function worktreeActiveNoSignalRemoteCleanApply( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		$opts      = array(
+			'dry_run' => ! empty($input['dry_run']),
+		);
+		if ( array_key_exists('limit', $input) ) {
+			$opts['limit'] = (int) $input['limit'];
+		}
+		if ( array_key_exists('offset', $input) ) {
+			$opts['offset'] = (int) $input['offset'];
+		}
+		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
+			$opts['until_budget'] = trim( (string) $input['until_budget']);
+		}
+
+		return $workspace->worktree_active_no_signal_remote_clean_apply($opts);
 	}
 
 	/**

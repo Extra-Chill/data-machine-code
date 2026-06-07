@@ -108,7 +108,7 @@ namespace {
     $ability_source = file_get_contents(__DIR__ . '/../inc/Abilities/GitHubAbilities.php');
     $tool_source    = file_get_contents(__DIR__ . '/../inc/Tools/GitHubTools.php');
 
-	$assert('PR comment ability is registered', str_contains($ability_source, 'datamachine/comment-github-pull-request'));
+	$assert('PR comment ability is registered', str_contains($ability_source, 'datamachine-code/comment-github-pull-request'));
     $assert('ability executes commentOnPullRequest', str_contains($ability_source, "'execute_callback'    => array( self::class, 'commentOnPullRequest' )"));
     $assert('tool is included in configuration checks', str_contains($tool_source, "'comment_github_pull_request'"));
 
