@@ -450,42 +450,35 @@ namespace {
     $mixed_dirty_row = array_values($mixed_dirty_skips)[0] ?? array();
     $assert('dirty_worktree', $mixed_dirty_row['reason_code'] ?? '', 'mixed source/artifact dirt stays protected as generic dirty worktree');
 
-    // unmerged-feature should be skipped (no merge signal)
-    $unmerged = array_filter($plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@unmerged-feature');
-    $assert(1, count($unmerged), 'unmerged worktree skipped with exactly one entry');
-    $unmerged_row = array_values($unmerged)[0] ?? array();
-    $assert('no_merge_signal', $unmerged_row['reason_code'] ?? '', 'unmerged skip exposes stable reason code');
+    $assert_contains($plan['candidates'] ?? array(), 'demo@unmerged-feature', 'clean remote-backed unmerged worktree flagged as local-only cleanup candidate');
+    $unmerged_candidate = array_values(array_filter($plan['candidates'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@unmerged-feature'))[0] ?? array();
+    $assert('remote-tracking-clean', $unmerged_candidate['reason_code'] ?? '', 'unmerged remote-backed candidate exposes stable reason code');
+    $assert('remote-tracking-clean', $unmerged_candidate['signal'] ?? '', 'unmerged remote-backed candidate records cleanup signal');
     $detached = array_values(array_filter($plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@feature-detached-stored'))[0] ?? array();
     $assert('detached_worktree', $detached['reason_code'] ?? '', 'detached worktree with stored branch metadata is classified explicitly');
     $assert('feature/detached-stored', $detached['branch'] ?? '', 'detached worktree recovers branch from stored metadata');
     $assert(array( 'branch' ), $detached['hydrated_fields'] ?? array(), 'detached worktree reports hydrated branch field');
     $protected = array_values(array_filter($plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@develop'))[0] ?? array();
     $assert('protected_base_branch_worktree', $protected['reason_code'] ?? '', 'protected branch worktree gets actionable protected-base diagnostic');
-    $assert('remote_branch_still_exists', $unmerged_row['merge_signal_evidence']['classification'] ?? '', 'unmerged skip distinguishes existing remote branch');
-    $assert('still_exists', $unmerged_row['merge_signal_evidence']['remote_branch'] ?? '', 'unmerged skip records remote branch evidence');
-    $assert(true, str_contains($unmerged_row['active_review_command'] ?? '', 'active-no-signal-report'), 'unmerged skip includes active/no-signal review command');
-    $assert(true, str_contains($unmerged_row['active_review_commands']['finalized_apply_dry_run'] ?? '', 'active-no-signal-finalized-apply --dry-run'), 'unmerged skip includes finalized PR dry-run apply command');
+    $assert(true, str_contains($unmerged_candidate['reason'] ?? '', 'origin'), 'unmerged remote-backed candidate explains remote preservation');
 
     $external_rows = array_values(array_filter($plan['skipped'] ?? array(), fn( $s ) => ( $s['reason_code'] ?? '' ) === 'external_worktree'));
     $external_row  = $external_rows[0] ?? array();
     $assert('external_worktree', $external_row['reason_code'] ?? '', 'external worktree exposes stable reason code');
     $assert(true, str_contains($external_row['hint'] ?? '', 'outside the DMC workspace'), 'external worktree includes remediation hint');
 
-    $assert(4, (int) ( $plan['summary']['would_remove'] ?? 0 ), 'summary counts cleanup candidates');
+    $assert(6, (int) ( $plan['summary']['would_remove'] ?? 0 ), 'summary counts cleanup candidates');
     $assert(2, (int) ( $plan['summary']['skipped_by_reason']['dirty_worktree'] ?? 0 ), 'summary counts dirty skips by reason');
     $assert(1, (int) ( $plan['summary']['skipped_by_reason']['artifact_only_dirty_worktree'] ?? 0 ), 'summary counts artifact-only dirty skips separately');
     $assert(1, (int) ( $plan['summary']['cleanup_buckets']['artifact_only_dirty_worktree'] ?? 0 ), 'cleanup buckets expose artifact-only dirty count');
     $assert(true, in_array('artifact_only_dirty_worktree', array_column($plan['summary']['skipped_next_commands'] ?? array(), 'reason_code'), true), 'summary exposes artifact-only dirty next command');
-    $assert(true, isset($plan['summary']['skipped_by_reason']['no_merge_signal']), 'summary includes no_merge_signal bucket');
+    $assert(false, isset($plan['summary']['skipped_by_reason']['no_merge_signal']), 'summary has no no_merge_signal bucket when clean remote-backed worktrees are removable');
 	$assert(4096, (int) ( $plan['summary']['total_size_bytes'] ?? -1 ), 'summary counts artifact-only dirty worktree size bytes');
 	$assert(4096, (int) ( $plan['summary']['artifact_size_bytes'] ?? -1 ), 'summary counts artifact-only dirty artifact size bytes');
 	$top_by_size = (array) ( $plan['summary']['top_by_size'] ?? array() );
 	$assert('demo@artifact-only-dirty', $top_by_size[0]['handle'] ?? '', 'summary top-by-size includes artifact-only dirty worktree');
 	$next_commands = (array) ( $plan['summary']['skipped_next_commands'] ?? array() );
-	$assert(true, in_array('no_merge_signal', array_column($next_commands, 'reason_code'), true), 'summary includes no_merge_signal next command');
-	$no_merge_commands = array_values(array_filter($next_commands, fn( $row ) => ( $row['reason_code'] ?? '' ) === 'no_merge_signal'))[0] ?? array();
-	$assert(true, str_contains($no_merge_commands['command'] ?? '', 'active-no-signal-report'), 'no_merge_signal next command routes to active/no-signal evidence report');
-	$assert(true, str_contains($no_merge_commands['commands']['equivalent_clean_apply_dry_run'] ?? '', 'active-no-signal-equivalent-clean-apply --dry-run'), 'no_merge_signal next commands include equivalent-clean dry-run apply');
+	$assert(false, in_array('no_merge_signal', array_column($next_commands, 'reason_code'), true), 'summary omits no_merge_signal next command when no rows need active/no-signal review');
 	$assert(true, array_key_exists('total_size_bytes', $plan['summary'] ?? array()), 'summary exposes total worktree size bytes field');
 	$assert(true, array_key_exists('artifact_size_bytes', $plan['summary'] ?? array()), 'summary exposes artifact size bytes field');
 	$assert(true, array_key_exists('top_by_size', $plan['summary'] ?? array()), 'summary exposes top worktrees by size field');
@@ -670,10 +663,11 @@ namespace {
         )
     );
     $assert(true, ! is_wp_error($age_plan) && ( $age_plan['success'] ?? false ), 'age-filtered dry_run returns success');
-    $assert(1, (int) ( $age_plan['summary']['would_remove'] ?? 0 ), 'older_than keeps only old cleanup candidate');
+    $assert(2, (int) ( $age_plan['summary']['would_remove'] ?? 0 ), 'older_than keeps old merged and remote-backed cleanup candidates');
     $assert(1, (int) ( $age_plan['summary']['age_filter']['excluded'] ?? 0 ), 'age filter summary counts newer candidate exclusion');
-    $assert(2, (int) ( $age_plan['summary']['age_filter']['unknown_age'] ?? 0 ), 'age filter summary counts unknown-age candidate exclusions');
+    $assert(3, (int) ( $age_plan['summary']['age_filter']['unknown_age'] ?? 0 ), 'age filter summary counts unknown-age candidate exclusions');
     $assert_contains($age_plan['candidates'] ?? array(), 'demo@merged-autodelete', 'older_than keeps old merged worktree');
+    $assert_contains($age_plan['candidates'] ?? array(), 'demo@unmerged-feature', 'older_than keeps old clean remote-backed worktree');
     $recent_age_rows = array_values(array_filter($age_plan['skipped'] ?? array(), fn( $s ) => ( $s['handle'] ?? '' ) === 'demo@merged-recent'));
     $assert('age_filter', $recent_age_rows[0]['reason_code'] ?? '', 'newer merged worktree is skipped by age_filter');
     $assert('excluded', $recent_age_rows[0]['age_filter']['decision'] ?? '', 'age-filter skip row exposes excluded decision');
@@ -820,8 +814,8 @@ namespace {
     // Primary survives.
     $assert(true, is_dir($primary . '/.git'), 'primary .git survives cleanup');
 
-    // Protected branches: unmerged/dirty worktrees survive.
-    $assert(true, is_dir($tmp . '/demo@unmerged-feature'), 'unmerged worktree survives cleanup');
+    // Dirty/external worktrees survive; clean remote-backed worktrees are local-only cleanup candidates.
+    $assert(false, is_dir($tmp . '/demo@unmerged-feature'), 'clean remote-backed unmerged worktree is removed locally');
     $assert(true, is_dir($tmp . '/demo@dirty-branch'), 'dirty worktree survives cleanup');
     $assert(true, is_dir($tmp . '/demo@merged-stale-plan'), 'dirty stale-plan worktree survives cleanup');
     $assert(true, is_dir($tmp . '-external/demo-external'), 'external worktree survives cleanup');

@@ -989,7 +989,7 @@ trait WorkspaceActiveNoSignalCleanup {
 		}
 
 		$current_branch = (string) $this->resolve_worktree_branch_from_head_file($real_path);
-		if ( null !== $expected_branch && $expected_branch !== $current_branch ) {
+		if ( null !== $expected_branch && ! $this->cleanup_branch_identity_matches($expected_branch, $current_branch) ) {
 			return new \WP_Error('branch_identity_mismatch', 'worktree branch identity changed before apply');
 		}
 		if ( null === $expected_branch && '' === $current_branch ) {
@@ -1027,10 +1027,29 @@ trait WorkspaceActiveNoSignalCleanup {
 		return array(
 			'real_path'    => $real_path,
 			'primary_path' => $primary_path,
-			'branch'       => null !== $expected_branch ? $expected_branch : $current_branch,
+			'branch'       => '' !== $current_branch ? $current_branch : (string) $expected_branch,
 			'dirty'        => (int) $dirty,
 			'unpushed'     => (int) $unpushed,
 		);
+	}
+
+	/**
+	 * Compare a report branch identity against the live worktree branch.
+	 *
+	 * Active/no-signal rows may originate from stale metadata or handle slugs where
+	 * `fix/foo` is represented as `fix-foo`. Treat that as the same branch while
+	 * still rejecting detached/missing heads and unrelated branch changes.
+	 *
+	 * @param  string $expected_branch Branch carried by the report row.
+	 * @param  string $current_branch  Branch resolved from the live worktree HEAD.
+	 * @return bool Whether the identities are compatible.
+	 */
+	private function cleanup_branch_identity_matches( string $expected_branch, string $current_branch ): bool {
+		if ( '' === $expected_branch || '' === $current_branch ) {
+			return false;
+		}
+
+		return $expected_branch === $current_branch || $expected_branch === $this->slugify_branch($current_branch);
 	}
 
 	/**

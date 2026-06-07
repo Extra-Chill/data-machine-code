@@ -25,14 +25,17 @@ trait WorkspaceWorktreeCleanupEngine {
 	 *   - It is not the primary checkout
 	 *   - Its branch is not main/master/trunk/develop/HEAD
 	 *   - It has no uncommitted changes (unless $force)
-	 *   - At least one merge signal is present:
+	 *   - At least one cleanup signal is present:
 	 *       a) `git for-each-ref` reports upstream status "gone" (branch
 	 *          was deleted on the remote — typical after GitHub
 	 *          "auto-delete head branches" fires on PR merge), OR
 	 *       b) GitHub API reports a closed+merged PR whose head
-	 *          branch matches this worktree's branch.
+	 *          branch matches this worktree's branch, OR
+	 *       c) the clean local worktree has no unpushed commits and is backed
+	 *          by an existing remote branch, so removing the local checkout does
+	 *          not delete recoverable Git state.
 	 *
-	 * Signal (a) is local and fast; signal (b) requires a PAT + network
+	 * Signals (a) and (c) are local and fast; signal (b) requires a PAT + network
 	 * but catches the case where the remote branch still exists (e.g.
 	 * manual merge without branch deletion).
 	 *
@@ -848,7 +851,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @return string
 	 */
 	private function get_wp_error_code( \WP_Error $error ): string {
-		return (string) $error->get_error_code();
+		return method_exists($error, 'get_error_code') ? (string) $error->get_error_code() : (string) ( $error->code ?? '' );
 	}
 
 	/**
@@ -858,7 +861,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @return mixed
 	 */
 	private function get_wp_error_data( \WP_Error $error ): mixed {
-		return $error->get_error_data();
+		return method_exists($error, 'get_error_data') ? $error->get_error_data() : ( $error->data ?? null );
 	}
 
 	/**
@@ -2500,7 +2503,12 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * Signal priority:
 	 *   1. `upstream-gone` — local branch's upstream tracking ref is gone.
 	 *      Typical after GitHub auto-deletes the head branch on PR merge.
-	 *   2. `pr-merged` — GitHub API reports a closed+merged PR for this
+	 *   2. `local-merged` — branch has no commits outside remote default.
+	 *   3. `remote-tracking-clean` — branch still exists on origin, while the
+	 *      local worktree is clean and has no unpushed commits. Age gates are
+	 *      enforced by the caller before removal when retention cleanup passes
+	 *      `older_than`.
+	 *   4. `pr-merged` — GitHub API reports a closed+merged PR for this
 	 *      branch. Requires $skip_github = false and a configured PAT.
 	 *
 	 * @param  string $primary_path Path to the primary git checkout.
@@ -2535,6 +2543,11 @@ trait WorkspaceWorktreeCleanupEngine {
 		$local_merged = $this->detect_local_merged_signal($primary_path, $branch);
 		if ( null !== $local_merged ) {
 			return $local_merged;
+		}
+
+		$remote_tracking_clean = $this->detect_remote_tracking_clean_signal($primary_path, $branch);
+		if ( null !== $remote_tracking_clean ) {
+			return $remote_tracking_clean;
 		}
 
 		if ( $skip_github ) {
@@ -2621,6 +2634,33 @@ trait WorkspaceWorktreeCleanupEngine {
 		return array(
 			'signal' => 'local-merged',
 			'reason' => sprintf('branch has no commits outside remote default (%s)', $default_ref),
+		);
+	}
+
+	/**
+	 * Detect clean local-only checkouts whose work is preserved by a remote branch.
+	 *
+	 * This is intentionally less strict than a merge signal: the remote branch may
+	 * still be open or unmerged, but the local checkout is only a disposable copy
+	 * when it is clean, has no unpushed commits, and `origin/<branch>` exists.
+	 * Removing the local worktree and local branch does not delete the remote
+	 * branch or close any PR, so the work can be picked up from Git later.
+	 *
+	 * @param  string $primary_path Path to the primary git checkout.
+	 * @param  string $branch       Branch name.
+	 * @return array{signal: string, reason: string, remote_ref: string}|null
+	 */
+	private function detect_remote_tracking_clean_signal( string $primary_path, string $branch ): ?array {
+		$remote_ref = 'refs/remotes/origin/' . $branch;
+		$result     = $this->run_git($primary_path, sprintf('rev-parse --verify --quiet %s', escapeshellarg($remote_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($result) ) {
+			return null;
+		}
+
+		return array(
+			'signal'     => 'remote-tracking-clean',
+			'reason'     => 'clean local worktree has no unpushed commits and the branch exists on origin; removing the local checkout preserves remote Git state',
+			'remote_ref' => $remote_ref,
 		);
 	}
 
