@@ -1726,5 +1726,4 @@ trait WorkspaceActiveNoSignalCleanup {
 			default                    => 'not enough evidence gathered',
 		};
 	}
-
 }
