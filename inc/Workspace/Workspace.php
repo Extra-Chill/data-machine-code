@@ -2348,9 +2348,9 @@ class Workspace {
 			$path,
 			$branch,
 			array(
-				'require_clean'         => true,
-				'missing_primary_code'  => 'primary_missing',
-				'dirty_error_message'   => 'worktree is dirty',
+				'require_clean'          => true,
+				'missing_primary_code'   => 'primary_missing',
+				'dirty_error_message'    => 'worktree is dirty',
 				'unpushed_error_message' => 'worktree has unpushed commits',
 			)
 		);
@@ -2449,8 +2449,8 @@ class Workspace {
 			$path,
 			$branch,
 			array(
-				'require_clean'         => true,
-				'dirty_error_message'   => 'refusing to mark dirty worktree cleanup_eligible from merged-to-default evidence',
+				'require_clean'          => true,
+				'dirty_error_message'    => 'refusing to mark dirty worktree cleanup_eligible from merged-to-default evidence',
 				'unpushed_error_message' => 'refusing to mark worktree with unpushed commits cleanup_eligible from merged-to-default evidence',
 			)
 		);
