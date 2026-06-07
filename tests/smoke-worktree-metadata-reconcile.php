@@ -552,7 +552,7 @@ namespace {
     $assert(true, ! is_wp_error($active_report) && ( $active_report['success'] ?? false ), 'active/no-signal report succeeds');
     $assert(true, (bool) ( $active_report['review_only'] ?? false ), 'active/no-signal report is review-only');
     $assert(true, (int) ( $active_report['summary']['inspected'] ?? 0 ) > 0, 'active/no-signal report inspects rows');
-    $assert(true, isset($active_report['evidence']['probe_cache']['default_ref']['misses']), 'active/no-signal report exposes probe cache stats');
+    $assert(true, (int) ( $active_report['evidence']['probe_cache']['default_ref']['misses'] ?? 0 ) > 0, 'active/no-signal report records default ref cache misses');
     $active_rows = array();
     foreach ( (array) ( $active_report['rows'] ?? array() ) as $row ) {
         $active_rows[ $row['handle'] ?? '' ] = $row;

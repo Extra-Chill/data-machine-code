@@ -2780,16 +2780,30 @@ class Workspace {
 		}
 
 		$remote_ref             = 'refs/remotes/origin/' . $branch;
-		$remote                 = $this->time_worktree_probe($out['probe_timings_ms'], 'remote_tracking', fn() => $this->cached_active_no_signal_remote_tracking_probe($primary_path, $remote_ref, $probe_cache));
+		$remote                 = $this->time_worktree_probe(
+			$out['probe_timings_ms'],
+			'remote_tracking',
+			function () use ( $primary_path, $remote_ref, &$probe_cache ) {
+				return $this->cached_active_no_signal_remote_tracking_probe($primary_path, $remote_ref, $probe_cache);
+			}
+		);
 		$out['remote_tracking'] = ! is_wp_error($remote) && ! $this->is_git_timeout_error($remote);
 
-		$default_ref = $this->time_worktree_probe($out['probe_timings_ms'], 'default_ref', fn() => $this->cached_active_no_signal_default_ref_probe($primary_path, $probe_cache));
+		$default_ref = $this->time_worktree_probe(
+			$out['probe_timings_ms'],
+			'default_ref',
+			function () use ( $primary_path, &$probe_cache ) {
+				return $this->cached_active_no_signal_default_ref_probe($primary_path, $probe_cache);
+			}
+		);
 		if ( is_string($default_ref) && '' !== $default_ref ) {
 			$out['default_ref'] = $default_ref;
 			$outside            = $this->time_worktree_probe(
 				$out['probe_timings_ms'],
 				'commits_outside_default',
-				fn() => $this->cached_active_no_signal_commits_outside_default_probe($primary_path, $default_ref, $branch, $probe_cache)
+				function () use ( $primary_path, $default_ref, $branch, &$probe_cache ) {
+					return $this->cached_active_no_signal_commits_outside_default_probe($primary_path, $default_ref, $branch, $probe_cache);
+				}
 			);
 			if ( ! is_wp_error($outside) && ! $this->is_git_timeout_error($outside) ) {
 				$out['commits_outside_default'] = (int) trim( (string) ( $outside['output'] ?? '' ));
@@ -2805,7 +2819,13 @@ class Workspace {
 		if ( (int) ( $out['dirty'] ?? 0 ) > 0 || (int) ( $out['unpushed'] ?? 0 ) > 0 ) {
 			$out['pr_lookup_skipped'] = 'dirty_or_unpushed_rows_are_always_manual_review';
 		} else {
-			$slug = $this->time_worktree_probe($out['probe_timings_ms'], 'github_slug', fn() => $this->cached_active_no_signal_github_slug_probe($primary_path, $probe_cache));
+			$slug = $this->time_worktree_probe(
+				$out['probe_timings_ms'],
+				'github_slug',
+				function () use ( $primary_path, &$probe_cache ) {
+					return $this->cached_active_no_signal_github_slug_probe($primary_path, $probe_cache);
+				}
+			);
 			if ( null !== $slug ) {
 				$pr = $this->time_worktree_probe($out['probe_timings_ms'], 'github_pr_lookup', fn() => $this->find_pr_for_branch_direct($slug, $branch, $github_cache, false));
 				if ( is_wp_error($pr) ) {
