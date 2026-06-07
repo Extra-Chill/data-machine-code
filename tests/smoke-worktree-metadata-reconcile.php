@@ -524,6 +524,18 @@ namespace {
         )
     );
     $ws = new \DataMachineCode\Workspace\Workspace();
+    $default_ref_cache_reflection = new \ReflectionMethod($ws, 'cached_active_no_signal_default_ref_probe');
+    $default_ref_probe_cache      = array(
+        'default_ref' => array(),
+        'stats'       => array(
+            'default_ref' => array( 'hits' => 0, 'misses' => 0 ),
+        ),
+    );
+    $first_default_ref            = $default_ref_cache_reflection->invokeArgs($ws, array( $primary, &$default_ref_probe_cache ));
+    $second_default_ref           = $default_ref_cache_reflection->invokeArgs($ws, array( $primary, &$default_ref_probe_cache ));
+    $assert($first_default_ref, $second_default_ref, 'active/no-signal default ref cache returns stable cached values');
+    $assert(1, (int) ( $default_ref_probe_cache['stats']['default_ref']['hits'] ?? 0 ), 'active/no-signal default ref cache records one hit after reuse');
+    $assert(1, (int) ( $default_ref_probe_cache['stats']['default_ref']['misses'] ?? 0 ), 'active/no-signal default ref cache records one miss before reuse');
     $lookup_reflection = new \ReflectionMethod($ws, 'find_closed_pr_for_branch');
     $lookup_cache = array( 'acme/demo' => array() );
     $old_pr       = $lookup_reflection->invokeArgs($ws, array( 'acme/demo', 'old-merged-branch', &$lookup_cache ));
@@ -537,6 +549,7 @@ namespace {
     $assert(true, ! is_wp_error($active_report) && ( $active_report['success'] ?? false ), 'active/no-signal report succeeds');
     $assert(true, (bool) ( $active_report['review_only'] ?? false ), 'active/no-signal report is review-only');
     $assert(true, (int) ( $active_report['summary']['inspected'] ?? 0 ) > 0, 'active/no-signal report inspects rows');
+    $assert(true, isset($active_report['evidence']['probe_cache']['default_ref']['misses']), 'active/no-signal report exposes probe cache stats');
     $active_rows = array();
     foreach ( (array) ( $active_report['rows'] ?? array() ) as $row ) {
         $active_rows[ $row['handle'] ?? '' ] = $row;
