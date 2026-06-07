@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.76] - 2026-06-07
+
+### Changed
+- extract active cleanup trait
+
+### Fixed
+- align active cleanup trait formatting
+
 ## [0.47.75] - 2026-06-07
 
 ### Changed
