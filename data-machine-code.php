@@ -84,7 +84,7 @@ function datamachine_code_register_datamachine_integrations(): void {
 	// Project active workspace identity into Data Machine's engine_data snapshot.
 	\DataMachineCode\Runtime\ActiveWorkspaceProjector::register();
 
-	if ( class_exists('DataMachine\Core\Steps\HandlerRegistrationTrait') ) {
+	if ( trait_exists('DataMachine\Core\Steps\HandlerRegistrationTrait') ) {
 		new \DataMachineCode\Handlers\GitHub\GitHub();
 		new \DataMachineCode\Handlers\GitHub\GitHubIssuePublish();
 		new \DataMachineCode\Handlers\GitHub\GitHubPullRequestPublish();
