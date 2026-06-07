@@ -2868,6 +2868,10 @@ class WorkspaceCommand extends BaseCommand {
 			$result['summary']['would_reconcile']  = (int) ( $reconcile['summary']['proposed'] ?? 0 );
 
 			if ( $this->worktree_abandoned_stage_incomplete($reconcile) ) {
+				$bounded = $this->run_worktree_abandoned_bounded_apply($abilities['bounded_apply'], $result, $apply, $force, $limit, 'reconcile');
+				if ( is_wp_error($bounded) ) {
+					return $bounded;
+				}
 				$result['evidence']['budget_exhausted'] = $this->worktree_abandoned_budget_expired($deadline);
 				$result['continuation']                 = $this->build_worktree_abandoned_continuation('reconcile', $reconcile, $limit, $passes, $force, $until_budget);
 				$result['next_commands'][]              = (string) $result['continuation']['next_command'];
@@ -2930,6 +2934,10 @@ class WorkspaceCommand extends BaseCommand {
 				$result['summary']['would_mark_cleanup_eligible'] += $planned;
 
 				if ( $this->worktree_abandoned_stage_incomplete($step) ) {
+					$bounded = $this->run_worktree_abandoned_bounded_apply($abilities['bounded_apply'], $result, $apply, $force, $limit, $step_stage);
+					if ( is_wp_error($bounded) ) {
+						return $bounded;
+					}
 					$result['evidence']['budget_exhausted'] = $this->worktree_abandoned_budget_expired($deadline);
 					$result['continuation']                 = $this->build_worktree_abandoned_continuation($step_stage, $step, $limit, $passes, $force, $until_budget);
 					$result['next_commands'][]              = (string) $result['continuation']['next_command'];
@@ -2937,24 +2945,10 @@ class WorkspaceCommand extends BaseCommand {
 				}
 			}
 
-			$bounded_input = array(
-				'dry_run' => ! $apply,
-				'force'   => $force,
-				'limit'   => $limit,
-				'source'  => self::CLEANUP_CLI_SOURCE,
-			);
-			$bounded       = $abilities['bounded_apply']->execute($bounded_input);
+			$bounded = $this->run_worktree_abandoned_bounded_apply($abilities['bounded_apply'], $result, $apply, $force, $limit, sprintf('pass_%d', $pass));
 			if ( is_wp_error($bounded) ) {
 				return $bounded;
 			}
-
-			$result['steps'][ sprintf('bounded_apply_pass_%d', $pass) ] = $this->summarize_worktree_abandoned_step($bounded);
-
-			$result['summary']['removed']         += (int) ( $bounded['summary']['removed'] ?? 0 );
-			$result['summary']['would_remove']    += (int) ( $bounded['summary']['would_remove'] ?? 0 );
-			$result['summary']['bytes_reclaimed'] += (int) ( $bounded['summary']['bytes_reclaimed'] ?? 0 );
-
-			$result['blocked'] = $this->merge_worktree_abandoned_blockers($result['blocked'], (array) ( $bounded['skipped'] ?? array() ));
 
 			$removed_or_would = (int) ( $bounded['summary']['removed'] ?? 0 ) + (int) ( $bounded['summary']['would_remove'] ?? 0 );
 			if ( 0 === $pass_marked && 0 === $removed_or_would ) {
@@ -3038,6 +3032,45 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		return $next_offset > $current;
+	}
+
+	/**
+	 * Run bounded cleanup removal and merge its accounting into the abandoned result.
+	 *
+	 * @param  object              $ability    Bounded cleanup ability.
+	 * @param  array<string,mixed> $result     Abandoned cleanup result accumulator.
+	 * @param  bool                $apply      Whether apply mode is active.
+	 * @param  bool                $force      Whether force mode is active.
+	 * @param  int                 $limit      Removal page size.
+	 * @param  string              $step_label Step label suffix.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function run_worktree_abandoned_bounded_apply( object $ability, array &$result, bool $apply, bool $force, int $limit, string $step_label ): array|\WP_Error {
+		$execute = array( $ability, 'execute' );
+		if ( ! is_callable($execute) ) {
+			return new \WP_Error('worktree_abandoned_ability_invalid', 'Worktree abandoned cleanup ability is not executable.', array( 'status' => 500 ));
+		}
+
+		$bounded = $execute(
+			array(
+				'dry_run' => ! $apply,
+				'force'   => $force,
+				'limit'   => $limit,
+				'source'  => self::CLEANUP_CLI_SOURCE,
+			)
+		);
+		if ( is_wp_error($bounded) ) {
+			return $bounded;
+		}
+
+		$result['steps'][ sprintf('bounded_apply_%s', $step_label) ] = $this->summarize_worktree_abandoned_step($bounded);
+
+		$result['summary']['removed']         += (int) ( $bounded['summary']['removed'] ?? 0 );
+		$result['summary']['would_remove']    += (int) ( $bounded['summary']['would_remove'] ?? 0 );
+		$result['summary']['bytes_reclaimed'] += (int) ( $bounded['summary']['bytes_reclaimed'] ?? 0 );
+		$result['blocked']                     = $this->merge_worktree_abandoned_blockers($result['blocked'], (array) ( $bounded['skipped'] ?? array() ));
+
+		return $bounded;
 	}
 
 	/**

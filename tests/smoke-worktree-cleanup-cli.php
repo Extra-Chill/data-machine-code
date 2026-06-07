@@ -377,6 +377,7 @@ namespace {
     {
         public array $last_input = array();
         public array $inputs = array();
+        public ?int $stall_at_offset = null;
         private string $mode;
 
         public function __construct( string $mode )
@@ -393,6 +394,28 @@ namespace {
             $budget = isset($input['until_budget']) && '' !== trim((string) $input['until_budget']) ? ' --until-budget=' . trim((string) $input['until_budget']) : '';
             $dry_run = 'report' !== $this->mode && ! empty($input['dry_run']) ? ' --dry-run' : '';
             $next_command = sprintf('studio wp datamachine-code workspace worktree active-no-signal-%s%s --limit=%d --offset=%d%s --format=json', $this->mode, $dry_run, $limit, $offset + $limit, $budget);
+            if ( null !== $this->stall_at_offset && $offset === $this->stall_at_offset ) {
+                return array(
+                'success' => true,
+                'mode'    => 'active_no_signal_' . str_replace('-', '_', $this->mode),
+                'dry_run' => ! empty($input['dry_run']),
+                'summary' => array(
+                'inspected' => 0,
+                'planned'   => 0,
+                'written'   => 0,
+                'skipped'   => 0,
+                ),
+                'pagination' => array(
+                'total'       => $offset + $limit,
+                'offset'      => $offset,
+                'limit'       => $limit,
+                'scanned'     => 0,
+                'partial'     => true,
+                'complete'    => false,
+                'next_offset' => $offset,
+                ),
+                );
+            }
 
             if ( 'report' === $this->mode ) {
                 return array(
@@ -1139,6 +1162,20 @@ namespace {
     datamachine_code_cleanup_assert(JSON_ERROR_NONE === json_last_error(), 'abandoned remote-clean resume JSON output parses cleanly');
     datamachine_code_cleanup_assert('remote-clean' === ( $abandoned_remote_clean_resume_json['stage'] ?? '' ), 'abandoned remote-clean resume reports requested stage');
     datamachine_code_cleanup_assert(11 === (int) ( $active_remote_clean_ability->last_input['offset'] ?? -1 ), 'abandoned resume forwards offset to remote-clean stage');
+
+    $bounded_call_count_before_stalled_classifier = count($bounded_apply_ability->inputs);
+    $active_remote_clean_ability->stall_at_offset = 42;
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->worktree(array( 'abandoned' ), array( 'apply' => true, 'force' => true, 'stage' => 'remote-clean', 'offset' => 42, 'limit' => 10, 'passes' => 1, 'until-budget' => '30s', 'format' => 'json' ));
+    $abandoned_remote_clean_stalled_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    datamachine_code_cleanup_assert(JSON_ERROR_NONE === json_last_error(), 'abandoned stalled remote-clean JSON output parses cleanly');
+    datamachine_code_cleanup_assert('remote-clean' === ( $abandoned_remote_clean_stalled_json['continuation']['stage'] ?? '' ), 'abandoned stalled remote-clean emits remote-clean continuation');
+    datamachine_code_cleanup_assert(42 === (int) ( $abandoned_remote_clean_stalled_json['continuation']['offset'] ?? -1 ), 'abandoned stalled remote-clean keeps current offset continuation');
+    datamachine_code_cleanup_assert(count($bounded_apply_ability->inputs) === $bounded_call_count_before_stalled_classifier + 1, 'abandoned drains bounded cleanup before returning stalled classifier continuation');
+    datamachine_code_cleanup_assert(isset($abandoned_remote_clean_stalled_json['steps']['bounded_apply_remote-clean']), 'abandoned stalled classifier output includes bounded cleanup step');
+    datamachine_code_cleanup_assert(1 === (int) ( $abandoned_remote_clean_stalled_json['summary']['removed'] ?? 0 ), 'abandoned stalled classifier summary includes bounded removals');
+    $active_remote_clean_ability->stall_at_offset = null;
 
     $reconcile_metadata_ability->stall_at_offset = 90;
     WP_CLI::$logs      = array();
