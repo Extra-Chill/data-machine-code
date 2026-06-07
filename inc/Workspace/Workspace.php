@@ -2343,53 +2343,24 @@ class Workspace {
 			}
 		}
 
-		if ( in_array($branch, $this->protected_base_branch_names(), true) ) {
-			return new \WP_Error('primary_protected_branch', 'refusing to auto-finalize a protected primary branch worktree');
+		$facts = $this->validate_current_cleanup_worktree(
+			$repo,
+			$path,
+			$branch,
+			array(
+				'require_clean'         => true,
+				'missing_primary_code'  => 'primary_missing',
+				'dirty_error_message'   => 'worktree is dirty',
+				'unpushed_error_message' => 'worktree has unpushed commits',
+			)
+		);
+		if ( is_wp_error($facts) ) {
+			return $facts;
 		}
 
-		$validation = $this->validate_containment($path, $this->workspace_path);
-		if ( ! $validation['valid'] ) {
-			return new \WP_Error('external_worktree', 'worktree path is outside the workspace root');
-		}
-
-		$real_path = (string) ( $validation['real_path'] ?? '' );
-		if ( '' === $real_path || ! is_dir($real_path) ) {
-			return new \WP_Error('missing_worktree', 'worktree path no longer exists');
-		}
-
-		$git_marker = rtrim($real_path, '/') . '/.git';
-		if ( is_dir($git_marker) ) {
-			return new \WP_Error('primary_checkout', 'refusing to mark a primary checkout cleanup_eligible');
-		}
-		if ( ! is_file($git_marker) ) {
-			return new \WP_Error('not_a_worktree', 'worktree marker missing');
-		}
-
-		$current_branch = $this->resolve_worktree_branch_from_head_file($real_path);
-		if ( $branch !== $current_branch ) {
-			return new \WP_Error('branch_identity_mismatch', 'worktree branch identity changed before apply');
-		}
-
-		$dirty = $this->probe_worktree_dirty_count($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( is_wp_error($dirty) ) {
-			return $dirty;
-		}
-		if ( 0 !== (int) $dirty ) {
-			return new \WP_Error('dirty_worktree', 'worktree is dirty');
-		}
-
-		$unpushed = $this->count_unpushed_commits($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( is_wp_error($unpushed) ) {
-			return $unpushed;
-		}
-		if ( 0 !== (int) $unpushed ) {
-			return new \WP_Error('unpushed_commits', 'worktree has unpushed commits');
-		}
-
-		$primary_path = $this->get_primary_path($repo);
-		if ( '' === $primary_path || ! is_dir($primary_path . '/.git') ) {
-			return new \WP_Error('primary_missing', 'primary checkout missing');
-		}
+		$dirty        = (int) $facts['dirty'];
+		$unpushed     = (int) $facts['unpushed'];
+		$primary_path = (string) $facts['primary_path'];
 
 		$remote_ref = 'refs/remotes/origin/' . $branch;
 		$remote     = $this->run_git($primary_path, sprintf('rev-parse --verify --quiet %s', escapeshellarg($remote_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
@@ -2420,48 +2391,20 @@ class Workspace {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private function build_current_effective_clean_cleanup_evidence( string $repo, string $wt_path ): array|\WP_Error {
-		$validation = $this->validate_containment($wt_path, $this->workspace_path);
-		if ( ! $validation['valid'] ) {
-			return new \WP_Error('external_worktree', 'worktree path is outside the workspace root');
+		$facts = $this->validate_current_cleanup_worktree($repo, $wt_path);
+		if ( is_wp_error($facts) ) {
+			return $facts;
 		}
 
-		$real_path = (string) ( $validation['real_path'] ?? '' );
-		if ( '' === $real_path || ! is_dir($real_path) ) {
-			return new \WP_Error('missing_worktree', 'worktree path no longer exists');
-		}
+		$real_path    = (string) $facts['real_path'];
+		$primary_path = (string) $facts['primary_path'];
+		$dirty        = (int) $facts['dirty'];
+		$unpushed     = (int) $facts['unpushed'];
+		$branch       = (string) $facts['branch'];
 
-		$git_marker = rtrim($real_path, '/') . '/.git';
-		if ( is_dir($git_marker) ) {
-			return new \WP_Error('primary_checkout', 'refusing to mark a primary checkout cleanup_eligible');
-		}
-		if ( ! is_file($git_marker) ) {
-			return new \WP_Error('not_a_worktree', 'worktree marker missing');
-		}
-
-		$primary_path = $this->get_primary_path($repo);
-		if ( ! is_dir($primary_path . '/.git') ) {
-			return new \WP_Error('missing_primary', 'primary checkout missing');
-		}
-
-		$dirty = $this->probe_worktree_dirty_count($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( is_wp_error($dirty) ) {
-			return $dirty;
-		}
-		$unpushed = $this->count_unpushed_commits($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( is_wp_error($unpushed) ) {
-			return $unpushed;
-		}
 		$default_ref = $this->resolve_remote_default_ref($primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 		if ( ! is_string($default_ref) || '' === $default_ref ) {
 			return new \WP_Error('missing_default_ref', 'primary checkout default ref could not be resolved');
-		}
-
-		$branch = (string) $this->resolve_worktree_branch_from_head_file($real_path);
-		if ( '' === $branch ) {
-			return new \WP_Error('missing_branch_identity', 'worktree branch identity could not be resolved');
-		}
-		if ( in_array($branch, $this->protected_base_branch_names(), true) ) {
-			return new \WP_Error('primary_protected_branch', 'refusing to auto-finalize a protected primary branch worktree');
 		}
 
 		$upstream_equivalence = ( 0 === (int) $dirty && 0 === (int) $unpushed )
@@ -2501,53 +2444,24 @@ class Workspace {
 			}
 		}
 
-		if ( in_array($branch, $this->protected_base_branch_names(), true) ) {
-			return new \WP_Error('primary_protected_branch', 'refusing to auto-finalize a protected primary branch worktree');
+		$facts = $this->validate_current_cleanup_worktree(
+			$repo,
+			$path,
+			$branch,
+			array(
+				'require_clean'         => true,
+				'dirty_error_message'   => 'refusing to mark dirty worktree cleanup_eligible from merged-to-default evidence',
+				'unpushed_error_message' => 'refusing to mark worktree with unpushed commits cleanup_eligible from merged-to-default evidence',
+			)
+		);
+		if ( is_wp_error($facts) ) {
+			return $facts;
 		}
 
-		$validation = $this->validate_containment($path, $this->workspace_path);
-		if ( ! $validation['valid'] ) {
-			return new \WP_Error('external_worktree', 'worktree path is outside the workspace root');
-		}
-
-		$real_path = (string) ( $validation['real_path'] ?? '' );
-		if ( '' === $real_path || ! is_dir($real_path) ) {
-			return new \WP_Error('missing_worktree', 'worktree path no longer exists');
-		}
-
-		$git_marker = rtrim($real_path, '/') . '/.git';
-		if ( is_dir($git_marker) ) {
-			return new \WP_Error('primary_checkout', 'refusing to mark a primary checkout cleanup_eligible');
-		}
-		if ( ! is_file($git_marker) ) {
-			return new \WP_Error('not_a_worktree', 'worktree marker missing');
-		}
-
-		$current_branch = $this->resolve_worktree_branch_from_head_file($real_path);
-		if ( $branch !== $current_branch ) {
-			return new \WP_Error('branch_identity_mismatch', 'worktree branch identity changed before apply');
-		}
-
-		$primary_path = $this->get_primary_path($repo);
-		if ( ! is_dir($primary_path . '/.git') ) {
-			return new \WP_Error('missing_primary', 'primary checkout missing');
-		}
-
-		$dirty = $this->probe_worktree_dirty_count($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( is_wp_error($dirty) ) {
-			return $dirty;
-		}
-		if ( (int) $dirty > 0 ) {
-			return new \WP_Error('dirty_worktree', 'refusing to mark dirty worktree cleanup_eligible from merged-to-default evidence');
-		}
-
-		$unpushed = $this->count_unpushed_commits($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( is_wp_error($unpushed) ) {
-			return $unpushed;
-		}
-		if ( (int) $unpushed > 0 ) {
-			return new \WP_Error('unpushed_commits', 'refusing to mark worktree with unpushed commits cleanup_eligible from merged-to-default evidence');
-		}
+		$real_path    = (string) $facts['real_path'];
+		$primary_path = (string) $facts['primary_path'];
+		$dirty        = (int) $facts['dirty'];
+		$unpushed     = (int) $facts['unpushed'];
 
 		$default_ref = $this->resolve_remote_default_ref($primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 		if ( ! is_string($default_ref) || '' === $default_ref ) {
@@ -2594,6 +2508,83 @@ class Workspace {
 			'commits_outside_default' => $commits_outside_default,
 			'dirty'                   => (int) $dirty,
 			'unpushed'                => (int) $unpushed,
+		);
+	}
+
+	/**
+	 * Revalidate the current worktree state before writing cleanup metadata.
+	 *
+	 * @param  string              $repo            Repository name.
+	 * @param  string              $path            Worktree path.
+	 * @param  string|null         $expected_branch Expected branch, or null to resolve it from the worktree.
+	 * @param  array<string,mixed> $opts            Validation options.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function validate_current_cleanup_worktree( string $repo, string $path, ?string $expected_branch = null, array $opts = array() ): array|\WP_Error {
+		if ( null !== $expected_branch && in_array($expected_branch, $this->protected_base_branch_names(), true) ) {
+			return new \WP_Error('primary_protected_branch', 'refusing to auto-finalize a protected primary branch worktree');
+		}
+
+		$validation = $this->validate_containment($path, $this->workspace_path);
+		if ( ! $validation['valid'] ) {
+			return new \WP_Error('external_worktree', 'worktree path is outside the workspace root');
+		}
+
+		$real_path = (string) ( $validation['real_path'] ?? '' );
+		if ( '' === $real_path || ! is_dir($real_path) ) {
+			return new \WP_Error('missing_worktree', 'worktree path no longer exists');
+		}
+
+		$git_marker = rtrim($real_path, '/') . '/.git';
+		if ( is_dir($git_marker) ) {
+			return new \WP_Error('primary_checkout', 'refusing to mark a primary checkout cleanup_eligible');
+		}
+		if ( ! is_file($git_marker) ) {
+			return new \WP_Error('not_a_worktree', 'worktree marker missing');
+		}
+
+		$current_branch = (string) $this->resolve_worktree_branch_from_head_file($real_path);
+		if ( null !== $expected_branch && $expected_branch !== $current_branch ) {
+			return new \WP_Error('branch_identity_mismatch', 'worktree branch identity changed before apply');
+		}
+		if ( null === $expected_branch && '' === $current_branch ) {
+			return new \WP_Error('missing_branch_identity', 'worktree branch identity could not be resolved');
+		}
+		if ( null === $expected_branch && in_array($current_branch, $this->protected_base_branch_names(), true) ) {
+			return new \WP_Error('primary_protected_branch', 'refusing to auto-finalize a protected primary branch worktree');
+		}
+
+		$primary_path         = $this->get_primary_path($repo);
+		$missing_primary_code = (string) ( $opts['missing_primary_code'] ?? 'missing_primary' );
+		if ( '' === $primary_path || ! is_dir($primary_path . '/.git') ) {
+			return new \WP_Error($missing_primary_code, 'primary checkout missing');
+		}
+
+		$dirty = $this->probe_worktree_dirty_count($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($dirty) ) {
+			return $dirty;
+		}
+
+		$unpushed = $this->count_unpushed_commits($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($unpushed) ) {
+			return $unpushed;
+		}
+
+		if ( ! empty($opts['require_clean']) ) {
+			if ( 0 !== (int) $dirty ) {
+				return new \WP_Error('dirty_worktree', (string) ( $opts['dirty_error_message'] ?? 'worktree is dirty' ));
+			}
+			if ( 0 !== (int) $unpushed ) {
+				return new \WP_Error('unpushed_commits', (string) ( $opts['unpushed_error_message'] ?? 'worktree has unpushed commits' ));
+			}
+		}
+
+		return array(
+			'real_path'    => $real_path,
+			'primary_path' => $primary_path,
+			'branch'       => null !== $expected_branch ? $expected_branch : $current_branch,
+			'dirty'        => (int) $dirty,
+			'unpushed'     => (int) $unpushed,
 		);
 	}
 
