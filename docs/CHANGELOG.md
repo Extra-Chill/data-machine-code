@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.71] - 2026-06-07
+
+### Changed
+- share active worktree metadata apply loop
+
+### Fixed
+- satisfy active apply lint
+
 ## [0.47.70] - 2026-06-07
 
 ### Fixed
