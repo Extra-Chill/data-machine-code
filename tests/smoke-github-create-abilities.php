@@ -55,6 +55,42 @@ namespace DataMachine\Core {
 }
 
 namespace DataMachineCode\Support {
+    class PermissionHelper
+    {
+        public static function can_manage(): bool
+        {
+            return \DataMachine\Abilities\PermissionHelper::can_manage();
+        }
+
+        public static function get_acting_agent_slug(): ?string
+        {
+            return \DataMachine\Abilities\PermissionHelper::get_acting_agent_slug();
+        }
+
+        public static function get_acting_agent_id(): ?int
+        {
+            return \DataMachine\Abilities\PermissionHelper::get_acting_agent_id();
+        }
+
+        public static function get_runtime_context(): array
+        {
+            return \DataMachine\Abilities\PermissionHelper::get_runtime_context();
+        }
+
+        public static function get_execution_principal(): mixed
+        {
+            return null;
+        }
+    }
+
+    class PluginSettings
+    {
+        public static function get( string $key, string $default_value = '' ): string
+        {
+            return \DataMachine\Core\PluginSettings::get($key, $default_value);
+        }
+    }
+
     class GitHubCredentialResolver
     {
         public static string $mode = 'pat';
