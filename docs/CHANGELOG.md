@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.68] - 2026-06-07
+
+### Fixed
+- persist active probe cache state
+
 ## [0.47.67] - 2026-06-07
 
 ### Fixed
