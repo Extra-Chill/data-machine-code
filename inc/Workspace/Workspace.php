@@ -1661,10 +1661,22 @@ class Workspace {
 			'remote_tracking'         => array(),
 			'commits_outside_default' => array(),
 			'stats'                   => array(
-				'default_ref'             => array( 'hits' => 0, 'misses' => 0 ),
-				'github_slug'             => array( 'hits' => 0, 'misses' => 0 ),
-				'remote_tracking'         => array( 'hits' => 0, 'misses' => 0 ),
-				'commits_outside_default' => array( 'hits' => 0, 'misses' => 0 ),
+				'default_ref'             => array(
+					'hits'   => 0,
+					'misses' => 0,
+				),
+				'github_slug'             => array(
+					'hits'   => 0,
+					'misses' => 0,
+				),
+				'remote_tracking'         => array(
+					'hits'   => 0,
+					'misses' => 0,
+				),
+				'commits_outside_default' => array(
+					'hits'   => 0,
+					'misses' => 0,
+				),
 			),
 		);
 		$rows         = array();
@@ -2826,7 +2838,7 @@ class Workspace {
 		}
 
 		$this->record_active_no_signal_probe_cache_stat($probe_cache, 'remote_tracking', false);
-		$result                                  = $this->run_git($primary_path, sprintf('rev-parse --verify --quiet %s', escapeshellarg($remote_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$result                                 = $this->run_git($primary_path, sprintf('rev-parse --verify --quiet %s', escapeshellarg($remote_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
 		$probe_cache['remote_tracking'][ $key ] = $result;
 		return $result;
 	}
@@ -2867,7 +2879,7 @@ class Workspace {
 		}
 
 		$this->record_active_no_signal_probe_cache_stat($probe_cache, 'commits_outside_default', false);
-		$result                                           = $this->run_git(
+		$result = $this->run_git(
 			$primary_path,
 			sprintf('rev-list --count %s..%s', escapeshellarg($default_ref), escapeshellarg('refs/heads/' . $branch)),
 			self::CLEANUP_GIT_PROBE_TIMEOUT
@@ -2890,7 +2902,7 @@ class Workspace {
 		}
 
 		$this->record_active_no_signal_probe_cache_stat($probe_cache, 'github_slug', false);
-		$result                                     = $this->resolve_github_slug($primary_path);
+		$result                                      = $this->resolve_github_slug($primary_path);
 		$probe_cache['github_slug'][ $primary_path ] = $result;
 		return $result;
 	}

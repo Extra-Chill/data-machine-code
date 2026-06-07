@@ -528,7 +528,10 @@ namespace {
     $default_ref_probe_cache      = array(
         'default_ref' => array(),
         'stats'       => array(
-            'default_ref' => array( 'hits' => 0, 'misses' => 0 ),
+            'default_ref' => array(
+                'hits'   => 0,
+                'misses' => 0,
+            ),
         ),
     );
     $first_default_ref            = $default_ref_cache_reflection->invokeArgs($ws, array( $primary, &$default_ref_probe_cache ));
