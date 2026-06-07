@@ -3400,6 +3400,8 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array<string,mixed>
 	 */
 	private function compact_worktree_abandoned_result( array $result ): array {
+		$result['steps'] = $this->compact_worktree_abandoned_steps( (array) ( $result['steps'] ?? array() ) );
+
 		$blocked = (array) ( $result['blocked'] ?? array() );
 		if ( count($blocked) <= 25 ) {
 			return $result;
@@ -3433,6 +3435,38 @@ class WorkspaceCommand extends BaseCommand {
 		$result['blocked']                       = array();
 
 		return $result;
+	}
+
+	/**
+	 * Compact large nested step pagination handle lists.
+	 *
+	 * @param  array<string,mixed> $steps Abandoned cleanup step summaries.
+	 * @return array<string,mixed>
+	 */
+	private function compact_worktree_abandoned_steps( array $steps ): array {
+		foreach ( $steps as $step_key => $step ) {
+			if ( ! is_array($step) ) {
+				continue;
+			}
+
+			$pagination = (array) ( $step['pagination'] ?? array() );
+			foreach ( array( 'remaining_handles', 'handles' ) as $field ) {
+				$handles = (array) ( $pagination[ $field ] ?? array() );
+				if ( count($handles) <= 25 ) {
+					continue;
+				}
+
+				$pagination[ $field . '_examples' ]  = array_slice(array_values($handles), 0, 25);
+				$pagination[ $field . '_truncated' ] = true;
+				$pagination[ $field . '_count' ]     = count($handles);
+				unset($pagination[ $field ]);
+			}
+
+			$step['pagination']  = $pagination;
+			$steps[ $step_key ] = $step;
+		}
+
+		return $steps;
 	}
 
 	/**
