@@ -124,7 +124,7 @@ class GitHubIssueLabelsTask extends SystemTask {
 				$this->failJob($jobId, $result->get_error_message());
 				return;
 			}
-			$added = $add_labels;
+			$added     = $add_labels;
 			$results[] = array(
 				'action' => 'add',
 				'labels' => $add_labels,
