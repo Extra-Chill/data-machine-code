@@ -519,7 +519,8 @@ trait WorkspaceCoreUtilities {
 			return false;
 		}
 
-		return 'git_command_timeout' === $result->get_error_code();
+		$code = method_exists($result, 'get_error_code') ? $result->get_error_code() : ( $result->code ?? '' );
+		return 'git_command_timeout' === $code;
 	}
 
 	/**
