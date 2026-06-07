@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.72] - 2026-06-07
+
+### Fixed
+- align label task assignments
+- add deterministic GitHub label task
+
 ## [0.47.71] - 2026-06-07
 
 ### Changed
