@@ -1731,85 +1731,38 @@ class Workspace {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_active_no_signal_finalized_apply( array $opts = array() ): array|\WP_Error {
-		$dry_run = ! empty($opts['dry_run']);
-		$report  = $this->worktree_active_no_signal_report(array_merge($opts, array( 'next_command_operation' => 'active-no-signal-finalized-apply' )));
-		if ( is_wp_error($report) ) {
-			return $report;
-		}
+		return $this->apply_active_no_signal_metadata(
+			$opts,
+			array(
+				'operation'      => 'active-no-signal-finalized-apply',
+				'mode'           => 'active_no_signal_finalized_apply',
+				'destructive'    => false,
+				'summary_extra'  => static function ( array $report ): array {
+					return array( 'report_action_counts' => $report['summary']['by_suggested_action'] ?? array() );
+				},
+				'prepare_row'    => function ( array $row ): array|\WP_Error {
+					if ( 'finalized_pr_reconcile' !== (string) ( $row['suggested_action'] ?? '' ) ) {
+						return new \WP_Error('not_finalized_pr', 'row is not a finalized merged PR candidate');
+					}
 
-		$written = array();
-		$skipped = array();
-		$planned = array();
-
-		foreach ( (array) ( $report['rows'] ?? array() ) as $row ) {
-			if ( ! is_array($row) ) {
-				continue;
-			}
-
-			if ( 'finalized_pr_reconcile' !== (string) ( $row['suggested_action'] ?? '' ) ) {
-				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, 'not_finalized_pr', 'row is not a finalized merged PR candidate');
-				continue;
-			}
-
-			$metadata = $this->build_active_no_signal_finalized_metadata($row);
-			if ( is_wp_error($metadata) ) {
-				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, (string) $metadata->get_error_code(), $metadata->get_error_message());
-				continue;
-			}
-
-			$planned[] = array(
-				'handle'   => (string) ( $row['handle'] ?? '' ),
-				'repo'     => (string) ( $row['repo'] ?? '' ),
-				'branch'   => (string) ( $row['branch'] ?? '' ),
-				'path'     => (string) ( $row['path'] ?? '' ),
-				'pr'       => $row['pr'] ?? null,
-				'metadata' => $metadata,
-			);
-
-			if ( $dry_run ) {
-				continue;
-			}
-
-			$handle = (string) ( $row['handle'] ?? '' );
-			WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
-			$written[] = array(
-				'handle'   => $handle,
-				'repo'     => (string) ( $row['repo'] ?? '' ),
-				'branch'   => (string) ( $row['branch'] ?? '' ),
-				'path'     => (string) ( $row['path'] ?? '' ),
-				'metadata' => WorktreeContextInjector::get_metadata($handle),
-			);
-		}
-
-		$summary = array(
-			'inspected'            => (int) ( $report['summary']['inspected'] ?? 0 ),
-			'planned'              => count($planned),
-			'written'              => count($written),
-			'skipped'              => count($skipped),
-			'skipped_by_reason'    => array(),
-			'report_action_counts' => $report['summary']['by_suggested_action'] ?? array(),
-		);
-		foreach ( $skipped as $skip ) {
-			$reason                                  = (string) ( $skip['reason_code'] ?? 'unknown' );
-			$summary['skipped_by_reason'][ $reason ] = (int) ( $summary['skipped_by_reason'][ $reason ] ?? 0 ) + 1;
-		}
-
-		return array(
-			'success'      => true,
-			'mode'         => 'active_no_signal_finalized_apply',
-			'dry_run'      => $dry_run,
-			'applied'      => ! $dry_run,
-			'destructive'  => false,
-			'generated_at' => gmdate('c'),
-			'planned'      => $planned,
-			'written'      => $written,
-			'skipped'      => $skipped,
-			'summary'      => $summary,
-			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-finalized-apply', $dry_run, $opts, count( $written ) ),
-			'evidence'     => array(
-				'scope'  => 'promote finalized active_no_signal PR evidence into cleanup_eligible metadata',
-				'safety' => 'Revalidates dirty, unpushed, identity, and closed+merged PR evidence before writing metadata. Does not delete worktrees.',
-			),
+					return $row;
+				},
+				'build_metadata' => fn( array $row ): array|\WP_Error => $this->build_active_no_signal_finalized_metadata($row),
+				'build_planned'  => static function ( array $row, array $metadata ): array {
+					return array(
+						'handle'   => (string) ( $row['handle'] ?? '' ),
+						'repo'     => (string) ( $row['repo'] ?? '' ),
+						'branch'   => (string) ( $row['branch'] ?? '' ),
+						'path'     => (string) ( $row['path'] ?? '' ),
+						'pr'       => $row['pr'] ?? null,
+						'metadata' => $metadata,
+					);
+				},
+				'evidence'       => array(
+					'scope'  => 'promote finalized active_no_signal PR evidence into cleanup_eligible metadata',
+					'safety' => 'Revalidates dirty, unpushed, identity, and closed+merged PR evidence before writing metadata. Does not delete worktrees.',
+				),
+			)
 		);
 	}
 
@@ -1823,86 +1776,39 @@ class Workspace {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_active_no_signal_equivalent_clean_apply( array $opts = array() ): array|\WP_Error {
-		$dry_run = ! empty($opts['dry_run']);
-		$report  = $this->worktree_active_no_signal_report(array_merge($opts, array( 'next_command_operation' => 'active-no-signal-equivalent-clean-apply' )));
-		if ( is_wp_error($report) ) {
-			return $report;
-		}
+		return $this->apply_active_no_signal_metadata(
+			$opts,
+			array(
+				'operation'      => 'active-no-signal-equivalent-clean-apply',
+				'mode'           => 'active_no_signal_equivalent_clean_apply',
+				'destructive'    => false,
+				'summary_extra'  => static function ( array $report ): array {
+					return array( 'report_action_counts' => $report['summary']['by_suggested_action'] ?? array() );
+				},
+				'prepare_row'    => function ( array $row ): array|\WP_Error {
+					$effective_status = (string) ( $row['upstream_equivalence']['effective_status'] ?? '' );
+					if ( ! in_array($effective_status, array( 'equivalent_clean', 'contained_non_default_remote' ), true) ) {
+						return new \WP_Error('not_equivalent_clean', 'row is not effectively clean upstream-equivalent work');
+					}
 
-		$written = array();
-		$skipped = array();
-		$planned = array();
-
-		foreach ( (array) ( $report['rows'] ?? array() ) as $row ) {
-			if ( ! is_array($row) ) {
-				continue;
-			}
-
-			$effective_status = (string) ( $row['upstream_equivalence']['effective_status'] ?? '' );
-			if ( ! in_array($effective_status, array( 'equivalent_clean', 'contained_non_default_remote' ), true) ) {
-				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, 'not_equivalent_clean', 'row is not effectively clean upstream-equivalent work');
-				continue;
-			}
-
-			$metadata = $this->build_active_no_signal_equivalent_clean_metadata($row);
-			if ( is_wp_error($metadata) ) {
-				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, (string) $metadata->get_error_code(), $metadata->get_error_message());
-				continue;
-			}
-
-			$planned[] = array(
-				'handle'               => (string) ( $row['handle'] ?? '' ),
-				'repo'                 => (string) ( $row['repo'] ?? '' ),
-				'branch'               => (string) ( $row['branch'] ?? '' ),
-				'path'                 => (string) ( $row['path'] ?? '' ),
-				'upstream_equivalence' => $metadata['cleanup_eligibility_evidence']['upstream_equivalence'] ?? null,
-				'metadata'             => $metadata,
-			);
-
-			if ( $dry_run ) {
-				continue;
-			}
-
-			$handle = (string) ( $row['handle'] ?? '' );
-			WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
-			$written[] = array(
-				'handle'   => $handle,
-				'repo'     => (string) ( $row['repo'] ?? '' ),
-				'branch'   => (string) ( $row['branch'] ?? '' ),
-				'path'     => (string) ( $row['path'] ?? '' ),
-				'metadata' => WorktreeContextInjector::get_metadata($handle),
-			);
-		}
-
-		$summary = array(
-			'inspected'            => (int) ( $report['summary']['inspected'] ?? 0 ),
-			'planned'              => count($planned),
-			'written'              => count($written),
-			'skipped'              => count($skipped),
-			'skipped_by_reason'    => array(),
-			'report_action_counts' => $report['summary']['by_suggested_action'] ?? array(),
-		);
-		foreach ( $skipped as $skip ) {
-			$reason                                  = (string) ( $skip['reason_code'] ?? 'unknown' );
-			$summary['skipped_by_reason'][ $reason ] = (int) ( $summary['skipped_by_reason'][ $reason ] ?? 0 ) + 1;
-		}
-
-		return array(
-			'success'      => true,
-			'mode'         => 'active_no_signal_equivalent_clean_apply',
-			'dry_run'      => $dry_run,
-			'applied'      => ! $dry_run,
-			'destructive'  => false,
-			'generated_at' => gmdate('c'),
-			'planned'      => $planned,
-			'written'      => $written,
-			'skipped'      => $skipped,
-			'summary'      => $summary,
-			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-equivalent-clean-apply', $dry_run, $opts, count( $written ) ),
-			'evidence'     => array(
-				'scope'  => 'promote effectively clean upstream-equivalent active_no_signal rows into cleanup_eligible metadata',
-				'safety' => 'Revalidates upstream-equivalence evidence before writing metadata. Does not delete worktrees.',
-			),
+					return $row;
+				},
+				'build_metadata' => fn( array $row ): array|\WP_Error => $this->build_active_no_signal_equivalent_clean_metadata($row),
+				'build_planned'  => static function ( array $row, array $metadata ): array {
+					return array(
+						'handle'               => (string) ( $row['handle'] ?? '' ),
+						'repo'                 => (string) ( $row['repo'] ?? '' ),
+						'branch'               => (string) ( $row['branch'] ?? '' ),
+						'path'                 => (string) ( $row['path'] ?? '' ),
+						'upstream_equivalence' => $metadata['cleanup_eligibility_evidence']['upstream_equivalence'] ?? null,
+						'metadata'             => $metadata,
+					);
+				},
+				'evidence'       => array(
+					'scope'  => 'promote effectively clean upstream-equivalent active_no_signal rows into cleanup_eligible metadata',
+					'safety' => 'Revalidates upstream-equivalence evidence before writing metadata. Does not delete worktrees.',
+				),
+			)
 		);
 	}
 
@@ -1916,86 +1822,39 @@ class Workspace {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_active_no_signal_merged_apply( array $opts = array() ): array|\WP_Error {
-		$dry_run = ! empty($opts['dry_run']);
-		$report  = $this->worktree_active_no_signal_report(array_merge($opts, array( 'next_command_operation' => 'active-no-signal-merged-apply' )));
-		if ( is_wp_error($report) ) {
-			return $report;
-		}
+		return $this->apply_active_no_signal_metadata(
+			$opts,
+			array(
+				'operation'        => 'active-no-signal-merged-apply',
+				'mode'             => 'active_no_signal_merged_apply',
+				'destructive'      => false,
+				'upsert_inventory' => true,
+				'summary_extra'    => static function ( array $report ): array {
+					return array( 'report_action_counts' => $report['summary']['by_suggested_action'] ?? array() );
+				},
+				'prepare_row'      => function ( array $row ): array|\WP_Error {
+					if ( 'merged_to_default' !== (string) ( $row['suggested_action'] ?? '' ) ) {
+						return new \WP_Error('not_merged_to_default', 'row is not a clean merged-to-default candidate');
+					}
 
-		$written = array();
-		$skipped = array();
-		$planned = array();
-
-		foreach ( (array) ( $report['rows'] ?? array() ) as $row ) {
-			if ( ! is_array($row) ) {
-				continue;
-			}
-
-			if ( 'merged_to_default' !== (string) ( $row['suggested_action'] ?? '' ) ) {
-				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, 'not_merged_to_default', 'row is not a clean merged-to-default candidate');
-				continue;
-			}
-
-			$metadata = $this->build_active_no_signal_merged_to_default_metadata($row);
-			if ( is_wp_error($metadata) ) {
-				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, (string) $metadata->get_error_code(), $metadata->get_error_message());
-				continue;
-			}
-
-			$planned[] = array(
-				'handle'   => (string) ( $row['handle'] ?? '' ),
-				'repo'     => (string) ( $row['repo'] ?? '' ),
-				'branch'   => (string) ( $row['branch'] ?? '' ),
-				'path'     => (string) ( $row['path'] ?? '' ),
-				'evidence' => $metadata['cleanup_eligibility_evidence'] ?? null,
-				'metadata' => $metadata,
-			);
-
-			if ( $dry_run ) {
-				continue;
-			}
-
-			$handle = (string) ( $row['handle'] ?? '' );
-			WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
-			$this->worktree_inventory()->upsert($this->build_worktree_inventory_row_from_handle($handle));
-			$written[] = array(
-				'handle'   => $handle,
-				'repo'     => (string) ( $row['repo'] ?? '' ),
-				'branch'   => (string) ( $row['branch'] ?? '' ),
-				'path'     => (string) ( $row['path'] ?? '' ),
-				'metadata' => WorktreeContextInjector::get_metadata($handle),
-			);
-		}
-
-		$summary = array(
-			'inspected'            => (int) ( $report['summary']['inspected'] ?? 0 ),
-			'planned'              => count($planned),
-			'written'              => count($written),
-			'skipped'              => count($skipped),
-			'skipped_by_reason'    => array(),
-			'report_action_counts' => $report['summary']['by_suggested_action'] ?? array(),
-		);
-		foreach ( $skipped as $skip ) {
-			$reason                                  = (string) ( $skip['reason_code'] ?? 'unknown' );
-			$summary['skipped_by_reason'][ $reason ] = (int) ( $summary['skipped_by_reason'][ $reason ] ?? 0 ) + 1;
-		}
-
-		return array(
-			'success'      => true,
-			'mode'         => 'active_no_signal_merged_apply',
-			'dry_run'      => $dry_run,
-			'applied'      => ! $dry_run,
-			'destructive'  => false,
-			'generated_at' => gmdate('c'),
-			'planned'      => $planned,
-			'written'      => $written,
-			'skipped'      => $skipped,
-			'summary'      => $summary,
-			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-merged-apply', $dry_run, $opts, count( $written ) ),
-			'evidence'     => array(
-				'scope'  => 'promote clean active_no_signal rows contained in remote default into cleanup_eligible metadata',
-				'safety' => 'Revalidates clean worktree, no unpushed commits, containment, primary protection, branch identity, and merged-to-default evidence before writing metadata. Does not delete worktrees.',
-			),
+					return $row;
+				},
+				'build_metadata'   => fn( array $row ): array|\WP_Error => $this->build_active_no_signal_merged_to_default_metadata($row),
+				'build_planned'    => static function ( array $row, array $metadata ): array {
+					return array(
+						'handle'   => (string) ( $row['handle'] ?? '' ),
+						'repo'     => (string) ( $row['repo'] ?? '' ),
+						'branch'   => (string) ( $row['branch'] ?? '' ),
+						'path'     => (string) ( $row['path'] ?? '' ),
+						'evidence' => $metadata['cleanup_eligibility_evidence'] ?? null,
+						'metadata' => $metadata,
+					);
+				},
+				'evidence'         => array(
+					'scope'  => 'promote clean active_no_signal rows contained in remote default into cleanup_eligible metadata',
+					'safety' => 'Revalidates clean worktree, no unpushed commits, containment, primary protection, branch identity, and merged-to-default evidence before writing metadata. Does not delete worktrees.',
+				),
+			)
 		);
 	}
 
@@ -2006,81 +1865,174 @@ class Workspace {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_active_no_signal_remote_clean_apply( array $opts = array() ): array|\WP_Error {
+		return $this->apply_active_no_signal_metadata(
+			$opts,
+			array(
+				'operation'          => 'active-no-signal-remote-clean-apply',
+				'mode'               => 'active_no_signal_remote_clean_apply',
+				'review_only'        => false,
+				'written_as_planned' => true,
+				'inspected_fallback' => 'rows',
+				'summary_extra'      => static function (): array {
+					return array(
+						'candidate_action'   => 'remote_tracking_clean',
+						'candidate_evidence' => 'clean worktree with no unpushed commits and an existing remote tracking branch',
+					);
+				},
+				'prepare_row'        => function ( array $row ): array|\WP_Error {
+					if ( 'remote_tracking_clean' !== (string) ( $row['suggested_action'] ?? '' ) ) {
+						return new \WP_Error('not_remote_tracking_clean', 'row is not a clean remote-tracking candidate');
+					}
+
+					$handle           = (string) ( $row['handle'] ?? '' );
+					$current_metadata = '' !== $handle ? WorktreeContextInjector::get_metadata($handle) : array();
+					if ( WorktreeContextInjector::STATE_ACTIVE !== (string) ( $current_metadata['lifecycle_state'] ?? '' ) ) {
+						return new \WP_Error('not_active_lifecycle_state', 'row is no longer active lifecycle metadata');
+					}
+
+					$row['metadata'] = $current_metadata;
+					return $row;
+				},
+				'build_metadata'     => fn( array $row ): array|\WP_Error => $this->build_active_no_signal_remote_clean_metadata($row),
+				'build_planned'      => static function ( array $row, array $metadata ): array {
+					return array(
+						'handle'   => (string) ( $row['handle'] ?? '' ),
+						'repo'     => (string) ( $row['repo'] ?? '' ),
+						'branch'   => (string) ( $row['branch'] ?? '' ),
+						'path'     => (string) ( $row['path'] ?? '' ),
+						'metadata' => $metadata,
+					);
+				},
+				'evidence'           => array(
+					'scope'  => 'promote clean remote-tracking active_no_signal rows into cleanup_eligible metadata',
+					'safety' => 'Revalidates clean worktree, no unpushed commits, remote branch existence, primary protection, and branch identity before writing metadata. Does not delete worktrees or remote branches.',
+				),
+			)
+		);
+	}
+
+	/**
+	 * Apply active/no-signal report rows into cleanup metadata for one signal type.
+	 *
+	 * @param  array<string,mixed> $opts   Apply options.
+	 * @param  array<string,mixed> $config Apply behavior callbacks and output labels.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function apply_active_no_signal_metadata( array $opts, array $config ): array|\WP_Error {
 		$dry_run = ! empty($opts['dry_run']);
-		$report  = $this->worktree_active_no_signal_report(array_merge($opts, array( 'next_command_operation' => 'active-no-signal-remote-clean-apply' )));
+		$report  = $this->worktree_active_no_signal_report(array_merge($opts, array( 'next_command_operation' => (string) $config['operation'] )));
 		if ( is_wp_error($report) ) {
 			return $report;
+		}
+
+		$prepare_row    = $config['prepare_row'] ?? null;
+		$build_metadata = $config['build_metadata'] ?? null;
+		$build_planned  = $config['build_planned'] ?? null;
+		if ( ! is_callable($prepare_row) || ! is_callable($build_metadata) || ! is_callable($build_planned) ) {
+			return new \WP_Error('invalid_active_no_signal_apply_config', 'Active/no-signal apply config is missing required callbacks.');
 		}
 
 		$planned = array();
 		$written = array();
 		$skipped = array();
 		foreach ( (array) ( $report['rows'] ?? array() ) as $row ) {
-			if ( 'remote_tracking_clean' !== (string) ( $row['suggested_action'] ?? '' ) ) {
-				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, 'not_remote_tracking_clean', 'row is not a clean remote-tracking candidate');
+			if ( ! is_array($row) ) {
 				continue;
 			}
-			$handle           = (string) ( $row['handle'] ?? '' );
-			$current_metadata = '' !== $handle ? WorktreeContextInjector::get_metadata($handle) : array();
-			if ( WorktreeContextInjector::STATE_ACTIVE !== (string) ( $current_metadata['lifecycle_state'] ?? '' ) ) {
-				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, 'not_active_lifecycle_state', 'row is no longer active lifecycle metadata');
-				continue;
-			}
-			$row['metadata'] = $current_metadata;
 
-			$metadata = $this->build_active_no_signal_remote_clean_metadata($row);
+			$prepared_row = $prepare_row($row);
+			if ( is_wp_error($prepared_row) ) {
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, (string) $prepared_row->get_error_code(), $prepared_row->get_error_message());
+				continue;
+			}
+			if ( ! is_array($prepared_row) ) {
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, 'invalid_prepared_row', 'active/no-signal apply prepared an invalid row');
+				continue;
+			}
+
+			$metadata = $build_metadata($prepared_row);
 			if ( is_wp_error($metadata) ) {
-				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, (string) $metadata->get_error_code(), $metadata->get_error_message());
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($prepared_row, (string) $metadata->get_error_code(), $metadata->get_error_message());
+				continue;
+			}
+			if ( ! is_array($metadata) ) {
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($prepared_row, 'invalid_metadata', 'active/no-signal apply built invalid metadata');
 				continue;
 			}
 
-			$planned[] = array(
-				'handle'   => (string) ( $row['handle'] ?? '' ),
-				'repo'     => (string) ( $row['repo'] ?? '' ),
-				'branch'   => (string) ( $row['branch'] ?? '' ),
-				'path'     => (string) ( $row['path'] ?? '' ),
-				'metadata' => $metadata,
-			);
+			$planned_row = $build_planned($prepared_row, $metadata);
+			if ( ! is_array($planned_row) ) {
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($prepared_row, 'invalid_planned_row', 'active/no-signal apply built an invalid planned row');
+				continue;
+			}
+			$planned[] = $planned_row;
 
 			if ( $dry_run ) {
 				continue;
 			}
 
-			WorktreeContextInjector::store_lifecycle_metadata( (string) ( $row['handle'] ?? '' ), $metadata );
-			$written[] = end($planned);
+			$handle = (string) ( $prepared_row['handle'] ?? '' );
+			WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
+			if ( ! empty($config['upsert_inventory']) ) {
+				$this->worktree_inventory()->upsert($this->build_worktree_inventory_row_from_handle($handle));
+			}
+
+			$written[] = ! empty($config['written_as_planned'])
+				? $planned_row
+				: array(
+					'handle'   => $handle,
+					'repo'     => (string) ( $prepared_row['repo'] ?? '' ),
+					'branch'   => (string) ( $prepared_row['branch'] ?? '' ),
+					'path'     => (string) ( $prepared_row['path'] ?? '' ),
+					'metadata' => WorktreeContextInjector::get_metadata($handle),
+				);
+		}
+
+		$summary_inspected = (int) ( $report['summary']['inspected'] ?? 0 );
+		if ( 'rows' === (string) ( $config['inspected_fallback'] ?? '' ) && ! isset($report['summary']['inspected']) ) {
+			$summary_inspected = count( (array) ( $report['rows'] ?? array() ) );
 		}
 
 		$summary = array(
-			'inspected'          => (int) ( $report['summary']['inspected'] ?? count( (array) ( $report['rows'] ?? array() ) ) ),
-			'planned'            => count($planned),
-			'written'            => count($written),
-			'skipped'            => count($skipped),
-			'skipped_by_reason'  => array(),
-			'candidate_action'   => 'remote_tracking_clean',
-			'candidate_evidence' => 'clean worktree with no unpushed commits and an existing remote tracking branch',
+			'inspected'         => $summary_inspected,
+			'planned'           => count($planned),
+			'written'           => count($written),
+			'skipped'           => count($skipped),
+			'skipped_by_reason' => array(),
 		);
 		foreach ( $skipped as $skip ) {
 			$reason                                  = (string) ( $skip['reason_code'] ?? 'unknown' );
 			$summary['skipped_by_reason'][ $reason ] = (int) ( $summary['skipped_by_reason'][ $reason ] ?? 0 ) + 1;
 		}
+		$summary_extra = $config['summary_extra'] ?? null;
+		if ( is_callable($summary_extra) ) {
+			$extra = $summary_extra($report);
+			if ( is_array($extra) ) {
+				$summary = array_merge($summary, $extra);
+			}
+		}
 
-		return array(
+		$result = array(
 			'success'      => true,
-			'mode'         => 'active_no_signal_remote_clean_apply',
+			'mode'         => (string) $config['mode'],
 			'dry_run'      => $dry_run,
 			'applied'      => ! $dry_run,
-			'review_only'  => false,
+			'generated_at' => gmdate('c'),
 			'planned'      => $planned,
 			'written'      => $written,
 			'skipped'      => $skipped,
 			'summary'      => $summary,
-			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-remote-clean-apply', $dry_run, $opts, count( $written ) ),
-			'evidence'     => array(
-				'scope'  => 'promote clean remote-tracking active_no_signal rows into cleanup_eligible metadata',
-				'safety' => 'Revalidates clean worktree, no unpushed commits, remote branch existence, primary protection, and branch identity before writing metadata. Does not delete worktrees or remote branches.',
-			),
-			'generated_at' => gmdate('c'),
+			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), (string) $config['operation'], $dry_run, $opts, count( $written ) ),
+			'evidence'     => (array) $config['evidence'],
 		);
+		if ( array_key_exists('review_only', $config) ) {
+			$result['review_only'] = (bool) $config['review_only'];
+		}
+		if ( array_key_exists('destructive', $config) ) {
+			$result['destructive'] = (bool) $config['destructive'];
+		}
+
+		return $result;
 	}
 
 	/**
