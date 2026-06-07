@@ -2,6 +2,13 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.69] - 2026-06-07
+
+### Fixed
+- satisfy workspace lint narrowings
+- narrow workspace lint cleanup
+- clear workspace phpstan baseline
+
 ## [0.47.68] - 2026-06-07
 
 ### Fixed
