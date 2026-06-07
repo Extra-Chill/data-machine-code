@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.79] - 2026-06-07
+
+### Changed
+- extract workspace core utilities
+
+### Fixed
+- expose shared workspace cleanup helpers
+
 ## [0.47.78] - 2026-06-07
 
 ### Changed
