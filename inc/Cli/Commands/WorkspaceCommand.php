@@ -3316,6 +3316,9 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function render_worktree_abandoned_result( array $result, array $assoc_args ): void {
 		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result = $this->compact_worktree_abandoned_result($result);
+			}
 			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 			WP_CLI::log(false === $json ? '{}' : $json);
 			return;
@@ -3388,6 +3391,48 @@ class WorkspaceCommand extends BaseCommand {
 				WP_CLI::log('  - ' . (string) $command);
 			}
 		}
+	}
+
+	/**
+	 * Trim large abandoned cleanup JSON output while preserving summary counts.
+	 *
+	 * @param  array<string,mixed> $result Abandoned cleanup result.
+	 * @return array<string,mixed>
+	 */
+	private function compact_worktree_abandoned_result( array $result ): array {
+		$blocked = (array) ( $result['blocked'] ?? array() );
+		if ( count($blocked) <= 25 ) {
+			return $result;
+		}
+
+		$examples_by_reason = array();
+		foreach ( $blocked as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+
+			$reason = (string) ( $row['reason_code'] ?? 'unknown' );
+			if ( count($examples_by_reason[ $reason ] ?? array()) >= 3 ) {
+				continue;
+			}
+
+			$examples_by_reason[ $reason ][] = array(
+				'handle'      => (string) ( $row['handle'] ?? '' ),
+				'repo'        => (string) ( $row['repo'] ?? '' ),
+				'branch'      => (string) ( $row['branch'] ?? '' ),
+				'reason_code' => $reason,
+				'reason'      => (string) ( $row['reason'] ?? '' ),
+				'unpushed'    => isset($row['unpushed']) ? (int) $row['unpushed'] : null,
+			);
+		}
+
+		$result['blocked_examples']              = $examples_by_reason;
+		$result['evidence']['blocked_truncated'] = true;
+		$result['evidence']['blocked_full_rows'] = count($blocked);
+		$result['evidence']['blocked_full_hint'] = 'Re-run with --verbose --format=json to include full blocked rows.';
+		$result['blocked']                       = array();
+
+		return $result;
 	}
 
 	/**

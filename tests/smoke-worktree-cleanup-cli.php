@@ -539,23 +539,13 @@ namespace {
     {
         public array $last_input = array();
         public array $inputs = array();
+        public int $extra_skipped = 0;
 
         public function execute( array $input ): array
         {
             $this->last_input = $input;
             $this->inputs[]   = $input;
-            return array(
-            'success' => true,
-            'mode'    => 'bounded_cleanup_eligible_apply',
-            'dry_run' => ! empty($input['dry_run']),
-            'summary' => array(
-            'inspected'        => 3,
-            'would_remove'     => ! empty($input['dry_run']) ? 1 : 0,
-            'removed'          => empty($input['dry_run']) ? 1 : 0,
-            'skipped'          => 2,
-            'bytes_reclaimed'  => empty($input['dry_run']) ? 4096 : 0,
-            ),
-            'skipped' => array(
+            $skipped = array(
             array(
             'handle'      => 'repo@dirty',
             'repo'        => 'repo',
@@ -576,7 +566,30 @@ namespace {
             'dirty'       => 0,
             'unpushed'    => 2,
             ),
+            );
+            for ( $i = 0; $i < $this->extra_skipped; ++$i ) {
+                $skipped[] = array(
+                'handle'      => 'repo@blocked-' . $i,
+                'repo'        => 'repo',
+                'branch'      => 'blocked-' . $i,
+                'path'        => '/workspace/repo@blocked-' . $i,
+                'reason_code' => 0 === $i % 2 ? 'active_no_signal' : 'needs_metadata_reconcile',
+                'reason'      => 'large blocked output fixture',
+                );
+            }
+
+            return array(
+            'success' => true,
+            'mode'    => 'bounded_cleanup_eligible_apply',
+            'dry_run' => ! empty($input['dry_run']),
+            'summary' => array(
+            'inspected'        => 3,
+            'would_remove'     => ! empty($input['dry_run']) ? 1 : 0,
+            'removed'          => empty($input['dry_run']) ? 1 : 0,
+            'skipped'          => 2,
+            'bytes_reclaimed'  => empty($input['dry_run']) ? 4096 : 0,
             ),
+            'skipped' => $skipped,
             );
         }
     }
@@ -1144,6 +1157,26 @@ namespace {
     datamachine_code_cleanup_assert(2 === (int) ( $abandoned_json['summary']['removed'] ?? 0 ), 'abandoned summary reports removed rows from initial and post-classifier drains');
     datamachine_code_cleanup_assert(2 === (int) ( $abandoned_json['summary']['blocked'] ?? 0 ), 'abandoned summary reports blocked rows');
     datamachine_code_cleanup_assert(1 === (int) ( $abandoned_json['summary']['blocked_by_reason']['unpushed_commits'] ?? 0 ), 'abandoned preserves unpushed-commit blocker evidence');
+
+    $bounded_apply_ability->extra_skipped = 30;
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->worktree(array( 'abandoned' ), array( 'apply' => true, 'force' => true, 'stage' => 'bounded', 'limit' => 10, 'passes' => 1, 'format' => 'json' ));
+    $abandoned_compact_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    datamachine_code_cleanup_assert(JSON_ERROR_NONE === json_last_error(), 'abandoned compact JSON output parses cleanly');
+    datamachine_code_cleanup_assert(32 === (int) ( $abandoned_compact_json['summary']['blocked'] ?? 0 ), 'abandoned compact JSON keeps blocked summary count');
+    datamachine_code_cleanup_assert(array() === ( $abandoned_compact_json['blocked'] ?? null ), 'abandoned compact JSON omits full blocked rows');
+    datamachine_code_cleanup_assert(true === ( $abandoned_compact_json['evidence']['blocked_truncated'] ?? false ), 'abandoned compact JSON records blocked truncation evidence');
+    datamachine_code_cleanup_assert(isset($abandoned_compact_json['blocked_examples']['active_no_signal'][0]['handle']), 'abandoned compact JSON includes grouped blocked examples');
+
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->worktree(array( 'abandoned' ), array( 'apply' => true, 'force' => true, 'stage' => 'bounded', 'limit' => 10, 'passes' => 1, 'verbose' => true, 'format' => 'json' ));
+    $abandoned_verbose_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    datamachine_code_cleanup_assert(JSON_ERROR_NONE === json_last_error(), 'abandoned verbose JSON output parses cleanly');
+    datamachine_code_cleanup_assert(32 === count($abandoned_verbose_json['blocked'] ?? array()), 'abandoned verbose JSON keeps full blocked rows');
+    datamachine_code_cleanup_assert(! isset($abandoned_verbose_json['evidence']['blocked_truncated']), 'abandoned verbose JSON does not report truncation');
+    $bounded_apply_ability->extra_skipped = 0;
 
     $reconcile_call_count = count($reconcile_metadata_ability->inputs);
     WP_CLI::$logs      = array();
