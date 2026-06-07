@@ -2002,6 +2002,90 @@ class Workspace {
 	}
 
 	/**
+	 * Promote clean remote-tracking active/no-signal rows into cleanup metadata.
+	 *
+	 * @param  array<string,mixed> $opts Options.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function worktree_active_no_signal_remote_clean_apply( array $opts = array() ): array|\WP_Error {
+		$dry_run = ! empty($opts['dry_run']);
+		$report  = $this->worktree_active_no_signal_report(array_merge($opts, array( 'next_command_operation' => 'active-no-signal-remote-clean-apply' )));
+		if ( is_wp_error($report) ) {
+			return $report;
+		}
+
+		$planned = array();
+		$written = array();
+		$skipped = array();
+		foreach ( (array) ( $report['rows'] ?? array() ) as $row ) {
+			if ( 'remote_tracking_clean' !== (string) ( $row['suggested_action'] ?? '' ) ) {
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, 'not_remote_tracking_clean', 'row is not a clean remote-tracking candidate');
+				continue;
+			}
+			$handle           = (string) ( $row['handle'] ?? '' );
+			$current_metadata = '' !== $handle ? WorktreeContextInjector::get_metadata($handle) : array();
+			if ( WorktreeContextInjector::STATE_ACTIVE !== (string) ( $current_metadata['lifecycle_state'] ?? '' ) ) {
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, 'not_active_lifecycle_state', 'row is no longer active lifecycle metadata');
+				continue;
+			}
+			$row['metadata'] = $current_metadata;
+
+			$metadata = $this->build_active_no_signal_remote_clean_metadata($row);
+			if ( is_wp_error($metadata) ) {
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, $metadata->get_error_code(), $metadata->get_error_message());
+				continue;
+			}
+
+			$planned[] = array(
+				'handle'   => (string) ( $row['handle'] ?? '' ),
+				'repo'     => (string) ( $row['repo'] ?? '' ),
+				'branch'   => (string) ( $row['branch'] ?? '' ),
+				'path'     => (string) ( $row['path'] ?? '' ),
+				'metadata' => $metadata,
+			);
+
+			if ( $dry_run ) {
+				continue;
+			}
+
+			WorktreeContextInjector::store_lifecycle_metadata((string) ( $row['handle'] ?? '' ), $metadata);
+			$written[] = end($planned);
+		}
+
+		$summary = array(
+			'inspected'          => (int) ( $report['summary']['inspected'] ?? count((array) ( $report['rows'] ?? array() )) ),
+			'planned'            => count($planned),
+			'written'            => count($written),
+			'skipped'            => count($skipped),
+			'skipped_by_reason'  => array(),
+			'candidate_action'   => 'remote_tracking_clean',
+			'candidate_evidence' => 'clean worktree with no unpushed commits and an existing remote tracking branch',
+		);
+		foreach ( $skipped as $skip ) {
+			$reason                                  = (string) ( $skip['reason_code'] ?? 'unknown' );
+			$summary['skipped_by_reason'][ $reason ] = (int) ( $summary['skipped_by_reason'][ $reason ] ?? 0 ) + 1;
+		}
+
+		return array(
+			'success'      => true,
+			'mode'         => 'active_no_signal_remote_clean_apply',
+			'dry_run'      => $dry_run,
+			'applied'      => ! $dry_run,
+			'review_only'  => false,
+			'planned'      => $planned,
+			'written'      => $written,
+			'skipped'      => $skipped,
+			'summary'      => $summary,
+			'pagination'   => $this->build_active_no_signal_apply_pagination( (array) ( $report['pagination'] ?? array() ), 'active-no-signal-remote-clean-apply', $dry_run, $opts, count( $written ) ),
+			'evidence'     => array(
+				'scope'  => 'promote clean remote-tracking active_no_signal rows into cleanup_eligible metadata',
+				'safety' => 'Revalidates clean worktree, no unpushed commits, remote branch existence, primary protection, and branch identity before writing metadata. Does not delete worktrees or remote branches.',
+			),
+			'generated_at' => gmdate('c'),
+		);
+	}
+
+	/**
 	 * Build apply-specific pagination from the underlying active/no-signal report.
 	 *
 	 * @param  array<string,mixed> $pagination Report pagination payload.
@@ -2246,6 +2330,136 @@ class Workspace {
 		$metadata['cleanup_eligibility_evidence'] = $evidence;
 
 		return $metadata;
+	}
+
+	/**
+	 * Build cleanup metadata from one clean remote-tracking evidence row.
+	 *
+	 * @param  array<string,mixed> $row Evidence row.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function build_active_no_signal_remote_clean_metadata( array $row ): array|\WP_Error {
+		$handle = (string) ( $row['handle'] ?? '' );
+		$repo   = (string) ( $row['repo'] ?? '' );
+		$branch = (string) ( $row['branch'] ?? '' );
+		$path   = (string) ( $row['path'] ?? '' );
+
+		$evidence = $this->build_current_remote_tracking_clean_cleanup_evidence($handle, $repo, $branch, $path);
+		if ( is_wp_error($evidence) ) {
+			return $evidence;
+		}
+
+		$base_metadata                            = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
+		$metadata                                 = array_merge(
+			$base_metadata,
+			array(
+				'handle'       => $handle,
+				'repo'         => $repo,
+				'branch'       => $branch,
+				'path'         => (string) ( $evidence['path'] ?? $path ),
+				'observed_at'  => gmdate('c'),
+				'last_seen_at' => gmdate('c'),
+			),
+			WorktreeContextInjector::build_finalizer_metadata(WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE)
+		);
+		$metadata['auto_finalized_by']            = 'active_no_signal_remote_clean_apply';
+		$metadata['auto_finalized_signal']        = 'remote-tracking-clean';
+		$metadata['auto_finalized_reason']        = 'active/no-signal report found a clean local worktree whose work is preserved by its remote branch';
+		$metadata['cleanup_eligibility_evidence'] = $evidence;
+
+		return $metadata;
+	}
+
+	/**
+	 * Recompute clean remote-tracking evidence for the current worktree state.
+	 *
+	 * @param  string $handle Worktree handle.
+	 * @param  string $repo   Repository name.
+	 * @param  string $branch Branch name.
+	 * @param  string $path   Worktree path.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function build_current_remote_tracking_clean_cleanup_evidence( string $handle, string $repo, string $branch, string $path ): array|\WP_Error {
+		foreach (
+		array(
+			'handle' => $handle,
+			'repo'   => $repo,
+			'branch' => $branch,
+			'path'   => $path,
+		) as $field => $value
+		) {
+			if ( '' === $value ) {
+				return new \WP_Error('missing_identity', 'missing required identity field: ' . $field);
+			}
+		}
+
+		if ( in_array($branch, $this->protected_base_branch_names(), true) ) {
+			return new \WP_Error('primary_protected_branch', 'refusing to auto-finalize a protected primary branch worktree');
+		}
+
+		$validation = $this->validate_containment($path, $this->workspace_path);
+		if ( ! $validation['valid'] ) {
+			return new \WP_Error('external_worktree', 'worktree path is outside the workspace root');
+		}
+
+		$real_path = (string) ( $validation['real_path'] ?? '' );
+		if ( '' === $real_path || ! is_dir($real_path) ) {
+			return new \WP_Error('missing_worktree', 'worktree path no longer exists');
+		}
+
+		$git_marker = rtrim($real_path, '/') . '/.git';
+		if ( is_dir($git_marker) ) {
+			return new \WP_Error('primary_checkout', 'refusing to mark a primary checkout cleanup_eligible');
+		}
+		if ( ! is_file($git_marker) ) {
+			return new \WP_Error('not_a_worktree', 'worktree marker missing');
+		}
+
+		$current_branch = $this->resolve_worktree_branch_from_head_file($real_path);
+		if ( $branch !== $current_branch ) {
+			return new \WP_Error('branch_identity_mismatch', 'worktree branch identity changed before apply');
+		}
+
+		$dirty = $this->probe_worktree_dirty_count($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($dirty) ) {
+			return $dirty;
+		}
+		if ( 0 !== (int) $dirty ) {
+			return new \WP_Error('dirty_worktree', 'worktree is dirty');
+		}
+
+		$unpushed = $this->count_unpushed_commits($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($unpushed) ) {
+			return $unpushed;
+		}
+		if ( 0 !== (int) $unpushed ) {
+			return new \WP_Error('unpushed_commits', 'worktree has unpushed commits');
+		}
+
+		$primary_path = $this->get_primary_path($repo);
+		if ( '' === $primary_path || ! is_dir($primary_path . '/.git') ) {
+			return new \WP_Error('primary_missing', 'primary checkout missing');
+		}
+
+		$remote_ref = 'refs/remotes/origin/' . $branch;
+		$remote     = $this->run_git($primary_path, sprintf('rev-parse --verify --quiet %s', escapeshellarg($remote_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($remote) || $this->is_git_timeout_error($remote) ) {
+			return new \WP_Error('remote_tracking_missing', 'remote tracking branch no longer exists');
+		}
+
+		$evidence                   = array();
+		$evidence['signal']          = 'remote-tracking-clean';
+		$evidence['handle']          = $handle;
+		$evidence['repo']            = $repo;
+		$evidence['branch']          = $branch;
+		$evidence['dirty']           = (int) $dirty;
+		$evidence['unpushed']        = (int) $unpushed;
+		$evidence['remote_ref']      = $remote_ref;
+		$evidence['remote_tracking'] = true;
+		$evidence['reason']          = 'clean local worktree has no unpushed commits and the branch exists on origin; removing the local checkout does not delete the remote branch';
+		$evidence['detected_at']     = gmdate('c');
+
+		return $evidence;
 	}
 
 	/**
@@ -2961,6 +3175,10 @@ class Workspace {
 			return 'contained_non_default_remote';
 		}
 
+		if ( true === ( $row['remote_tracking'] ?? null ) ) {
+			return 'remote_tracking_clean';
+		}
+
 		if ( null === ( $row['pr'] ?? null ) && empty($row['pr_error']) ) {
 			return 'no_pr_branch_review';
 		}
@@ -2983,6 +3201,7 @@ class Workspace {
 			'merged_to_default'        => 'local branch has no commits outside the remote default ref',
 			'patch_equivalent_default' => 'local commits are patch-equivalent to the remote default ref',
 			'contained_non_default_remote' => 'worktree HEAD is contained in a non-default remote branch',
+			'remote_tracking_clean'    => 'clean local worktree has no unpushed commits and the branch exists on origin',
 			'no_pr_branch_review'      => 'no exact branch-head PR was found; review age/task context before cleanup',
 			default                    => 'not enough evidence gathered',
 		};

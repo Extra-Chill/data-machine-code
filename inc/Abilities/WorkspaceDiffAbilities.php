@@ -24,7 +24,7 @@ class WorkspaceDiffAbilities {
 	public function __construct() {
 		$register_callback = function () {
 			AbilityRegistry::register(
-				'datamachine/workspace-diff-summary',
+				'datamachine-code/workspace-diff-summary',
 				array(
 					'label'               => 'Workspace Diff Summary',
 					'description'         => 'Summarize changed files and compact diff metadata for a workspace handle.',
@@ -63,7 +63,7 @@ class WorkspaceDiffAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/workspace-diff-validate',
+				'datamachine-code/workspace-diff-validate',
 				array(
 					'label'               => 'Validate Workspace Diff',
 					'description'         => 'Validate workspace diff shape using allowed/denied path patterns and optional test-change requirements.',

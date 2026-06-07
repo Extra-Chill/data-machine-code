@@ -834,6 +834,7 @@ namespace {
     $active_finalized_ability = new FakeActiveNoSignalAbility('finalized-apply');
     $active_equivalent_clean_ability = new FakeActiveNoSignalAbility('equivalent-clean-apply');
     $active_merged_ability = new FakeActiveNoSignalAbility('merged-apply');
+    $active_remote_clean_ability = new FakeActiveNoSignalAbility('remote-clean-apply');
     $reconcile_metadata_ability = new FakeReconcileMetadataAbility();
     $bounded_apply_ability = new FakeBoundedCleanupEligibleApplyAbility();
     $prune_ability = new FakePruneAbility();
@@ -857,6 +858,7 @@ namespace {
     'datamachine-code/workspace-worktree-active-no-signal-finalized-apply' => $active_finalized_ability,
     'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply' => $active_equivalent_clean_ability,
     'datamachine-code/workspace-worktree-active-no-signal-merged-apply' => $active_merged_ability,
+    'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply' => $active_remote_clean_ability,
     'datamachine-code/workspace-worktree-reconcile-metadata' => $reconcile_metadata_ability,
     'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => $bounded_apply_ability,
     'datamachine-code/workspace-worktree-prune'              => $prune_ability,
@@ -1087,6 +1089,13 @@ namespace {
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
+    $command->worktree(array( 'active-no-signal-remote-clean-apply' ), array( 'dry-run' => true, 'limit' => 5, 'offset' => 10, 'until-budget' => '30s', 'format' => 'json' ));
+    datamachine_code_cleanup_assert('30s' === ( $active_remote_clean_ability->last_input['until_budget'] ?? '' ), 'remote-clean active/no-signal apply forwards time budget');
+    $active_remote_clean_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    datamachine_code_cleanup_assert(str_contains($active_remote_clean_json['pagination']['next_command'] ?? '', 'active-no-signal-remote-clean-apply --dry-run'), 'remote-clean active/no-signal JSON continuation stays on dry-run apply');
+
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
     $command->worktree(array( 'active-no-signal-finalized-apply' ), array( 'dry-run' => true, 'limit' => 5, 'offset' => 10, 'until-budget' => '30s' ));
     datamachine_code_cleanup_assert(in_array('Next page: studio wp datamachine-code workspace worktree active-no-signal-finalized-apply --dry-run --limit=5 --offset=15 --until-budget=30s --format=json', WP_CLI::$logs, true), 'human active/no-signal apply continuation keeps dry-run and time budget');
 
@@ -1104,6 +1113,7 @@ namespace {
     $abandoned_forwarded_budget = (string) ( $active_finalized_ability->last_input['until_budget'] ?? '' );
     datamachine_code_cleanup_assert(1 === preg_match('/^\d+s$/', $abandoned_forwarded_budget) && (int) $abandoned_forwarded_budget <= 30, 'abandoned forwards remaining time budget to active/no-signal marking');
     datamachine_code_cleanup_assert(array( 0, 1 ) === array_map(fn( $input ) => (int) ( $input['offset'] ?? 0 ), array_slice($active_finalized_ability->inputs, -2)), 'abandoned drains active/no-signal classifier pages in apply mode');
+    datamachine_code_cleanup_assert(array( 0, 1 ) === array_map(fn( $input ) => (int) ( $input['offset'] ?? 0 ), array_slice($active_remote_clean_ability->inputs, -2)), 'abandoned drains remote-clean active/no-signal classifier pages before bounded cleanup');
     datamachine_code_cleanup_assert(true === ( $bounded_apply_ability->last_input['force'] ?? null ), 'abandoned forwards force only to bounded cleanup removal');
     datamachine_code_cleanup_assert(false === ( $bounded_apply_ability->last_input['dry_run'] ?? null ), 'abandoned --apply removes eligible rows');
     datamachine_code_cleanup_assert(1 === $prune_ability->calls, 'abandoned prunes stale git metadata after cleanup pass');
@@ -1121,6 +1131,14 @@ namespace {
     datamachine_code_cleanup_assert(7 === (int) ( $abandoned_resume_json['offset'] ?? 0 ), 'abandoned resume reports requested offset');
     datamachine_code_cleanup_assert($reconcile_call_count === count($reconcile_metadata_ability->inputs), 'abandoned resume skips completed reconciliation stage');
     datamachine_code_cleanup_assert(7 === (int) ( $active_finalized_ability->last_input['offset'] ?? -1 ), 'abandoned resume forwards offset to requested classifier stage');
+
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->worktree(array( 'abandoned' ), array( 'apply' => true, 'stage' => 'remote-clean', 'offset' => 11, 'limit' => 1, 'passes' => 1, 'format' => 'json' ));
+    $abandoned_remote_clean_resume_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    datamachine_code_cleanup_assert(JSON_ERROR_NONE === json_last_error(), 'abandoned remote-clean resume JSON output parses cleanly');
+    datamachine_code_cleanup_assert('remote-clean' === ( $abandoned_remote_clean_resume_json['stage'] ?? '' ), 'abandoned remote-clean resume reports requested stage');
+    datamachine_code_cleanup_assert(11 === (int) ( $active_remote_clean_ability->last_input['offset'] ?? -1 ), 'abandoned resume forwards offset to remote-clean stage');
 
     $reconcile_metadata_ability->stall_at_offset = 90;
     WP_CLI::$logs      = array();

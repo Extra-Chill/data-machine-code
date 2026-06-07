@@ -343,7 +343,7 @@ namespace {
     $get_file_definition = $tools->registered['get_github_file']['definition_callback'] ?? null;
     $get_file_definition = $get_file_definition ? call_user_func($get_file_definition) : array();
     $assert('get_github_file does not expose file writes', ! $param_exists($get_file_definition, 'commit_message'));
-	$assert('get_github_file uses clean plural output', str_contains($ability_source, "'datamachine/get-github-file'") && str_contains($ability_source, "'files'") && str_contains($ability_source, 'normalizeFileContentPaths'));
+	$assert('get_github_file uses clean plural output', str_contains($ability_source, "'datamachine-code/get-github-file'") && str_contains($ability_source, "'files'") && str_contains($ability_source, 'normalizeFileContentPaths'));
     $assert('get_github_file supports path or paths', str_contains($tool_source, "'paths'") && str_contains($tool_source, "'path'") && str_contains($tool_source, "'max_total_size'"));
     $assert('list_github_tree supports optional path filtering', str_contains($ability_source, '$path_prefix'));
 

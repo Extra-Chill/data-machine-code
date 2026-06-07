@@ -107,7 +107,7 @@ class GitHubAbilities {
 	private function registerAbilities(): void {
 		$register_callback = function () {
 			AbilityRegistry::register(
-				'datamachine/list-github-issues',
+				'datamachine-code/list-github-issues',
 				array(
 					'label'               => 'List GitHub Issues',
 					'description'         => 'List issues from a GitHub repository with optional filters',
@@ -162,7 +162,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/get-github-issue',
+				'datamachine-code/get-github-issue',
 				array(
 					'label'               => 'Get GitHub Issue',
 					'description'         => 'Get a single GitHub issue with full details',
@@ -196,7 +196,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/update-github-issue',
+				'datamachine-code/update-github-issue',
 				array(
 					'label'               => 'Update GitHub Issue',
 					'description'         => 'Update a GitHub issue (title, body, labels, assignees, state)',
@@ -252,7 +252,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/create-github-issue',
+				'datamachine-code/create-github-issue',
 				array(
 					'label'               => 'Create GitHub Issue',
 					'description'         => 'Create a new GitHub issue with optional labels, assignees, and milestone',
@@ -304,7 +304,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/create-github-pull-request',
+				'datamachine-code/create-github-pull-request',
 				array(
 					'label'               => 'Create GitHub Pull Request',
 					'description'         => 'Open a new GitHub pull request from a head branch into a base branch',
@@ -371,7 +371,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/comment-github-issue',
+				'datamachine-code/comment-github-issue',
 				array(
 					'label'               => 'Comment on GitHub Issue',
 					'description'         => 'Add a comment to a GitHub issue',
@@ -413,7 +413,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/comment-github-pull-request',
+				'datamachine-code/comment-github-pull-request',
 				array(
 					'label'               => 'Comment on GitHub Pull Request',
 					'description'         => 'Add a comment to a GitHub pull request without broader issue-management permissions',
@@ -455,7 +455,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/add-github-labels',
+				'datamachine-code/add-github-labels',
 				array(
 					'label'               => 'Add GitHub Labels',
 					'description'         => 'Add one or more labels to a GitHub issue or pull request without replacing existing labels.',
@@ -487,7 +487,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/remove-github-label',
+				'datamachine-code/remove-github-label',
 				array(
 					'label'               => 'Remove GitHub Label',
 					'description'         => 'Remove a single label from a GitHub issue or pull request without touching other labels.',
@@ -518,7 +518,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/upsert-github-pull-review-comment',
+				'datamachine-code/upsert-github-pull-review-comment',
 				array(
 					'label'               => 'Upsert GitHub Pull Request Review Comment',
 					'description'         => 'Create or update one managed bot-authored GitHub pull request review comment identified by a hidden marker',
@@ -570,7 +570,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/merge-github-pull-request',
+				'datamachine-code/merge-github-pull-request',
 				array(
 					'label'               => 'Merge GitHub Pull Request',
 					'description'         => 'Merge an open GitHub pull request after verifying the expected head SHA',
@@ -623,7 +623,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/cleanup-github-pull-request',
+				'datamachine-code/cleanup-github-pull-request',
 				array(
 					'label'               => 'Cleanup GitHub Pull Request',
 					'description'         => 'Delete a merged pull request head branch through the GitHub API without checking out local branches',
@@ -672,7 +672,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/list-github-pulls',
+				'datamachine-code/list-github-pulls',
 				array(
 					'label'               => 'List GitHub Pull Requests',
 					'description'         => 'List pull requests from a GitHub repository',
@@ -715,7 +715,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/get-github-pull',
+				'datamachine-code/get-github-pull',
 				array(
 					'label'               => 'Get GitHub Pull Request',
 					'description'         => 'Get a single GitHub pull request with normalized metadata',
@@ -749,7 +749,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/list-github-pull-files',
+				'datamachine-code/list-github-pull-files',
 				array(
 					'label'               => 'List GitHub Pull Request Files',
 					'description'         => 'List changed files for a GitHub pull request',
@@ -792,7 +792,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/get-github-check-runs',
+				'datamachine-code/get-github-check-runs',
 				array(
 					'label'               => 'Get GitHub Check Runs',
 					'description'         => 'Get GitHub check runs for a commit SHA or ref with an overall summary',
@@ -837,7 +837,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/get-github-commit-statuses',
+				'datamachine-code/get-github-commit-statuses',
 				array(
 					'label'               => 'Get GitHub Commit Statuses',
 					'description'         => 'Get unmanaged GitHub commit statuses for a commit SHA or ref',
@@ -874,7 +874,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/get-github-actions-artifact',
+				'datamachine-code/get-github-actions-artifact',
 				array(
 					'label'               => 'Get GitHub Actions Artifact',
 					'description'         => 'Download a GitHub Actions artifact for a pull request or commit SHA and optionally parse JSON files from the ZIP',
@@ -928,7 +928,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/get-github-pull-review-context',
+				'datamachine-code/get-github-pull-review-context',
 				array(
 					'label'               => 'Get GitHub Pull Request Review Context',
 					'description'         => 'Get a review-ready payload for a GitHub pull request and its changed files',
@@ -1014,7 +1014,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/get-github-repo-review-profile',
+				'datamachine-code/get-github-repo-review-profile',
 				array(
 					'label'               => 'Get GitHub Repository Review Profile',
 					'description'         => 'Get bounded repository-level review context for a GitHub repository',
@@ -1064,7 +1064,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/get-github-pr-documentation-impact',
+				'datamachine-code/get-github-pr-documentation-impact',
 				array(
 					'label'               => 'Get GitHub PR Documentation Impact',
 					'description'         => 'Build a heuristic documentation-impact packet for a GitHub pull request',
@@ -1110,7 +1110,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/list-github-tree',
+				'datamachine-code/list-github-tree',
 				array(
 					'label'               => 'List GitHub Repository Tree',
 					'description'         => 'List files in a GitHub repository tree at a branch or ref',
@@ -1149,7 +1149,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/get-github-file',
+				'datamachine-code/get-github-file',
 				array(
 					'label'               => 'Get GitHub Files',
 					'description'         => 'Get decoded content for one or more files in a GitHub repository',
@@ -1200,7 +1200,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/create-or-update-github-file',
+				'datamachine-code/create-or-update-github-file',
 				array(
 					'label'               => 'Create or Update GitHub File',
 					'description'         => 'Create or update a file in a GitHub repository via the Contents API (upsert). If the file exists, it is updated; if not, it is created.',
@@ -1252,7 +1252,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/list-github-repos',
+				'datamachine-code/list-github-repos',
 				array(
 					'label'               => 'List GitHub Repositories',
 					'description'         => 'List repositories for a user or organization',
@@ -1299,7 +1299,7 @@ class GitHubAbilities {
 			);
 
 			AbilityRegistry::register(
-				'datamachine/github-status',
+				'datamachine-code/github-status',
 				array(
 					'label'               => 'Get GitHub Integration Status',
 					'description'         => 'Inspect GitHub authentication, default repository, and registered repository status.',

@@ -2081,7 +2081,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *   bounded-cleanup-eligible-apply, emergency-cleanup, reconcile-metadata,
 	 *   active-no-signal-report, active-no-signal-finalized-apply,
 	 *   active-no-signal-equivalent-clean-apply,
-	 *   active-no-signal-merged-apply,
+	 *   active-no-signal-merged-apply, active-no-signal-remote-clean-apply,
 	 *   refresh-context, finalize, mark-cleanup-eligible.
 	 *
 	 * [<repo>]
@@ -2266,7 +2266,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * [--stage=<stage>]
 	 * : For `abandoned`, resume from a specific orchestration stage. Supported
-	 *   values: reconcile, finalized, equivalent-clean, merged, bounded.
+	 *   values: reconcile, finalized, equivalent-clean, merged, remote-clean, bounded.
 	 *
 	 * [--offset=<count>]
 	 * : For `cleanup --dry-run`, `cleanup-artifacts --dry-run`,
@@ -2424,7 +2424,7 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|emergency-cleanup|reconcile-metadata|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
+			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|emergency-cleanup|reconcile-metadata|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
 			return;
 		}
 
@@ -2497,6 +2497,7 @@ class WorkspaceCommand extends BaseCommand {
 			'active-no-signal-finalized-apply' => 'datamachine-code/workspace-worktree-active-no-signal-finalized-apply',
 			'active-no-signal-equivalent-clean-apply' => 'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply',
 			'active-no-signal-merged-apply'   => 'datamachine-code/workspace-worktree-active-no-signal-merged-apply',
+			'active-no-signal-remote-clean-apply' => 'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply',
 			'refresh-context'                => 'datamachine-code/workspace-worktree-refresh-context',
 			'finalize'                       => 'datamachine-code/workspace-worktree-finalize',
 			'mark-cleanup-eligible'          => 'datamachine-code/workspace-worktree-finalize',
@@ -2680,7 +2681,8 @@ class WorkspaceCommand extends BaseCommand {
 			case 'active-no-signal-finalized-apply':
 			case 'active-no-signal-equivalent-clean-apply':
 			case 'active-no-signal-merged-apply':
-				if ( in_array($operation, array( 'active-no-signal-finalized-apply', 'active-no-signal-equivalent-clean-apply', 'active-no-signal-merged-apply' ), true) ) {
+			case 'active-no-signal-remote-clean-apply':
+				if ( in_array($operation, array( 'active-no-signal-finalized-apply', 'active-no-signal-equivalent-clean-apply', 'active-no-signal-merged-apply', 'active-no-signal-remote-clean-apply' ), true) ) {
 					$input['dry_run'] = ! empty($assoc_args['dry-run']);
 				}
 				if ( isset($assoc_args['limit']) ) {
@@ -2777,10 +2779,11 @@ class WorkspaceCommand extends BaseCommand {
 			'finalized'        => 1,
 			'equivalent-clean' => 2,
 			'merged'           => 3,
-			'bounded'          => 4,
+			'remote-clean'     => 4,
+			'bounded'          => 5,
 		);
 		if ( ! isset($stage_order[ $stage ]) ) {
-			return new \WP_Error('invalid_worktree_abandoned_stage', 'Invalid --stage value. Use reconcile, finalized, equivalent-clean, merged, or bounded.', array( 'status' => 400 ));
+			return new \WP_Error('invalid_worktree_abandoned_stage', 'Invalid --stage value. Use reconcile, finalized, equivalent-clean, merged, remote-clean, or bounded.', array( 'status' => 400 ));
 		}
 		if ( '' !== $until_budget ) {
 			$budget_seconds = $this->parse_worktree_abandoned_budget($until_budget);
@@ -2795,6 +2798,7 @@ class WorkspaceCommand extends BaseCommand {
 			'finalized'          => 'datamachine-code/workspace-worktree-active-no-signal-finalized-apply',
 			'equivalent_clean'   => 'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply',
 			'merged'             => 'datamachine-code/workspace-worktree-active-no-signal-merged-apply',
+			'remote_clean'       => 'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply',
 			'bounded_apply'      => 'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply',
 			'prune'              => 'datamachine-code/workspace-worktree-prune',
 		);
@@ -2883,6 +2887,10 @@ class WorkspaceCommand extends BaseCommand {
 			'merged'           => array(
 				'stage'   => 'merged',
 				'ability' => $abilities['merged'],
+			),
+			'remote_clean'     => array(
+				'stage'   => 'remote-clean',
+				'ability' => $abilities['remote_clean'],
 			),
 		);
 
@@ -3460,6 +3468,10 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'active-no-signal-merged-apply':
 				$this->render_worktree_active_no_signal_merged_apply_result($result, $assoc_args);
+				return;
+
+			case 'active-no-signal-remote-clean-apply':
+				$this->render_worktree_active_no_signal_remote_clean_apply_result($result, $assoc_args);
 				return;
 
 			case 'cleanup-artifacts':
@@ -4737,6 +4749,97 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 		WP_CLI::success(sprintf('Promoted %d merged-to-default worktree(s) to cleanup_eligible metadata.', count($written)));
+	}
+
+	/**
+	 * Render remote-clean active/no-signal metadata apply output.
+	 *
+	 * @param  array $result     Apply result.
+	 * @param  array $assoc_args CLI assoc args.
+	 * @return void
+	 */
+	private function render_worktree_active_no_signal_remote_clean_apply_result( array $result, array $assoc_args ): void {
+		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
+		if ( 'json' === $format ) {
+			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+			WP_CLI::log(false === $json ? '{}' : $json);
+			return;
+		}
+
+		$summary = (array) ( $result['summary'] ?? array() );
+		$planned = (array) ( $result['planned'] ?? array() );
+		$written = (array) ( $result['written'] ?? array() );
+		$skipped = (array) ( $result['skipped'] ?? array() );
+		$dry_run = ! empty($result['dry_run']);
+
+		WP_CLI::log('Remote-clean active/no-signal apply summary:');
+		$summary_rows = array(
+			array(
+				'metric' => 'inspected',
+				'count'  => (int) ( $summary['inspected'] ?? 0 ),
+			),
+			array(
+				'metric' => 'planned',
+				'count'  => (int) ( $summary['planned'] ?? count($planned) ),
+			),
+			array(
+				'metric' => 'written',
+				'count'  => (int) ( $summary['written'] ?? count($written) ),
+			),
+			array(
+				'metric' => 'skipped',
+				'count'  => (int) ( $summary['skipped'] ?? count($skipped) ),
+			),
+		);
+		foreach ( (array) ( $summary['skipped_by_reason'] ?? array() ) as $reason => $count ) {
+			$summary_rows[] = array(
+				'metric' => 'skipped:' . $reason,
+				'count'  => (int) $count,
+			);
+		}
+		$this->format_items($summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric');
+
+		$rows = $dry_run ? $planned : $written;
+		if ( ! empty($rows) ) {
+			WP_CLI::log('');
+			WP_CLI::log($dry_run ? 'Would promote:' : 'Promoted:');
+			$items = array_map(
+				fn( $row ) => array(
+					'handle'     => $row['handle'] ?? '',
+					'branch'     => $row['branch'] ?? '',
+					'remote_ref' => $row['metadata']['cleanup_eligibility_evidence']['remote_ref'] ?? '',
+					'state'      => $row['metadata']['lifecycle_state'] ?? '',
+				),
+				$rows
+			);
+			$this->format_items($items, array( 'handle', 'branch', 'remote_ref', 'state' ), array( 'format' => 'table' ), 'handle');
+		}
+
+		if ( ! empty($skipped) ) {
+			WP_CLI::log('');
+			WP_CLI::log('Skipped:');
+			$items = array_map(
+				fn( $row ) => array(
+					'handle'      => $row['handle'] ?? '',
+					'action'      => $row['action'] ?? '',
+					'reason_code' => $row['reason_code'] ?? '',
+					'reason'      => $row['reason'] ?? '',
+				),
+				array_slice($skipped, 0, 10)
+			);
+			$this->format_items($items, array( 'handle', 'action', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
+		}
+
+		if ( ! empty($result['pagination']['next_command']) ) {
+			WP_CLI::log('');
+			WP_CLI::log('Next page: ' . (string) $result['pagination']['next_command']);
+		}
+
+		if ( $dry_run ) {
+			WP_CLI::success(sprintf('%d remote-clean worktree(s) would be promoted to cleanup_eligible metadata.', count($planned)));
+			return;
+		}
+		WP_CLI::success(sprintf('Promoted %d remote-clean worktree(s) to cleanup_eligible metadata.', count($written)));
 	}
 
 	/**
