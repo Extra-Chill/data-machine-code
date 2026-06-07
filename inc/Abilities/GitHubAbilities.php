@@ -1943,7 +1943,7 @@ class GitHubAbilities {
 			}
 		}
 
-		$agent_slug = PermissionHelper::get_acting_agent_slug();
+		$agent_slug = (string) PermissionHelper::get_acting_agent_slug();
 		if ( '' !== trim($agent_slug) ) {
 			return sanitize_text_field($agent_slug);
 		}
