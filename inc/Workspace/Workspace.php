@@ -2447,7 +2447,7 @@ class Workspace {
 			return new \WP_Error('remote_tracking_missing', 'remote tracking branch no longer exists');
 		}
 
-		$evidence                   = array();
+		$evidence                    = array();
 		$evidence['signal']          = 'remote-tracking-clean';
 		$evidence['handle']          = $handle;
 		$evidence['repo']            = $repo;
