@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.62] - 2026-06-07
+
+### Fixed
+- clean remote-tracking active worktrees
+
 ## [0.47.61] - 2026-06-07
 
 ### Fixed
