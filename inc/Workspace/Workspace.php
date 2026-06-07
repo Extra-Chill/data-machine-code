@@ -2048,12 +2048,12 @@ class Workspace {
 				continue;
 			}
 
-			WorktreeContextInjector::store_lifecycle_metadata((string) ( $row['handle'] ?? '' ), $metadata);
+			WorktreeContextInjector::store_lifecycle_metadata( (string) ( $row['handle'] ?? '' ), $metadata );
 			$written[] = end($planned);
 		}
 
 		$summary = array(
-			'inspected'          => (int) ( $report['summary']['inspected'] ?? count((array) ( $report['rows'] ?? array() )) ),
+			'inspected'          => (int) ( $report['summary']['inspected'] ?? count( (array) ( $report['rows'] ?? array() ) ) ),
 			'planned'            => count($planned),
 			'written'            => count($written),
 			'skipped'            => count($skipped),
