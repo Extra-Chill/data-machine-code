@@ -577,6 +577,7 @@ namespace {
                 'reason'      => 'large blocked output fixture',
                 );
             }
+            $remaining_handles = array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $skipped);
 
             return array(
             'success' => true,
@@ -590,6 +591,10 @@ namespace {
             'bytes_reclaimed'  => empty($input['dry_run']) ? 4096 : 0,
             ),
             'skipped' => $skipped,
+            'pagination' => array(
+            'remaining_total'   => count($remaining_handles),
+            'remaining_handles' => $remaining_handles,
+            ),
             );
         }
     }
@@ -1168,6 +1173,9 @@ namespace {
     datamachine_code_cleanup_assert(array() === ( $abandoned_compact_json['blocked'] ?? null ), 'abandoned compact JSON omits full blocked rows');
     datamachine_code_cleanup_assert(true === ( $abandoned_compact_json['evidence']['blocked_truncated'] ?? false ), 'abandoned compact JSON records blocked truncation evidence');
     datamachine_code_cleanup_assert(isset($abandoned_compact_json['blocked_examples']['active_no_signal'][0]['handle']), 'abandoned compact JSON includes grouped blocked examples');
+    datamachine_code_cleanup_assert(! isset($abandoned_compact_json['steps']['bounded_apply_initial']['pagination']['remaining_handles']), 'abandoned compact JSON omits full nested remaining handles');
+    datamachine_code_cleanup_assert(32 === (int) ( $abandoned_compact_json['steps']['bounded_apply_initial']['pagination']['remaining_handles_count'] ?? 0 ), 'abandoned compact JSON keeps nested remaining handle count');
+    datamachine_code_cleanup_assert(25 === count($abandoned_compact_json['steps']['bounded_apply_initial']['pagination']['remaining_handles_examples'] ?? array()), 'abandoned compact JSON keeps bounded nested handle examples');
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
@@ -1175,6 +1183,7 @@ namespace {
     $abandoned_verbose_json = json_decode(WP_CLI::$logs[0] ?? '', true);
     datamachine_code_cleanup_assert(JSON_ERROR_NONE === json_last_error(), 'abandoned verbose JSON output parses cleanly');
     datamachine_code_cleanup_assert(32 === count($abandoned_verbose_json['blocked'] ?? array()), 'abandoned verbose JSON keeps full blocked rows');
+    datamachine_code_cleanup_assert(32 === count($abandoned_verbose_json['steps']['bounded_apply_initial']['pagination']['remaining_handles'] ?? array()), 'abandoned verbose JSON keeps full nested remaining handles');
     datamachine_code_cleanup_assert(! isset($abandoned_verbose_json['evidence']['blocked_truncated']), 'abandoned verbose JSON does not report truncation');
     $bounded_apply_ability->extra_skipped = 0;
 
