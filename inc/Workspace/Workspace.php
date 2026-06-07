@@ -2028,8 +2028,8 @@ class Workspace {
 		$limit       = (int) ( $pagination['limit'] ?? 25 );
 		$next_offset = (int) $pagination['next_offset'];
 		if ( ! $dry_run && $written_count > 0 ) {
-			$current     = (int) ( $pagination['offset'] ?? 0 );
-			$next_offset = max( $current, $next_offset - $written_count );
+			$current                   = (int) ( $pagination['offset'] ?? 0 );
+			$next_offset               = max( $current, $next_offset - $written_count );
 			$pagination['next_offset'] = $next_offset;
 		}
 
