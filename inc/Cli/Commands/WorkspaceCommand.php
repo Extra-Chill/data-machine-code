@@ -3462,7 +3462,7 @@ class WorkspaceCommand extends BaseCommand {
 				unset($pagination[ $field ]);
 			}
 
-			$step['pagination']  = $pagination;
+			$step['pagination'] = $pagination;
 			$steps[ $step_key ] = $step;
 		}
 
