@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.63] - 2026-06-07
+
+### Fixed
+- drain marked worktrees during abandoned cleanup
+
 ## [0.47.62] - 2026-06-07
 
 ### Fixed
