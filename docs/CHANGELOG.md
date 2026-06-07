@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.73] - 2026-06-07
+
+### Changed
+- share active cleanup revalidation
+
+### Fixed
+- align active cleanup options
+
 ## [0.47.72] - 2026-06-07
 
 ### Fixed
