@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.75] - 2026-06-07
+
+### Changed
+- share git cherry count parsing
+
 ## [0.47.74] - 2026-06-07
 
 ### Changed
