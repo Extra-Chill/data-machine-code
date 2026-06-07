@@ -2144,18 +2144,14 @@ class Workspace {
 			return new \WP_Error('missing_pr_url', 'merged PR evidence is missing html_url');
 		}
 
-		$base_metadata                            = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
-		$metadata                                 = array_merge(
-			$base_metadata,
-			array(
-				'handle'       => $handle,
-				'repo'         => $repo,
-				'branch'       => $branch,
-				'path'         => $path,
-				'observed_at'  => gmdate('c'),
-				'last_seen_at' => gmdate('c'),
-			),
-			WorktreeContextInjector::build_finalizer_metadata(WorktreeContextInjector::STATE_MERGED, $pr_url)
+		$metadata                                 = $this->build_active_no_signal_cleanup_metadata(
+			$row,
+			$handle,
+			$repo,
+			$branch,
+			$path,
+			WorktreeContextInjector::STATE_MERGED,
+			$pr_url
 		);
 		$metadata['auto_finalized_by']            = 'active_no_signal_finalized_apply';
 		$metadata['auto_finalized_signal']        = 'pr-merged';
@@ -2210,18 +2206,13 @@ class Workspace {
 			return $equivalence;
 		}
 
-		$base_metadata                            = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
-		$metadata                                 = array_merge(
-			$base_metadata,
-			array(
-				'handle'       => $handle,
-				'repo'         => $repo,
-				'branch'       => $branch,
-				'path'         => $path,
-				'observed_at'  => gmdate('c'),
-				'last_seen_at' => gmdate('c'),
-			),
-			WorktreeContextInjector::build_finalizer_metadata(WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE)
+		$metadata                                 = $this->build_active_no_signal_cleanup_metadata(
+			$row,
+			$handle,
+			$repo,
+			$branch,
+			$path,
+			WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE
 		);
 		$effective_status                         = (string) ( $equivalence['upstream_equivalence']['effective_status'] ?? '' );
 		$signal                                   = 'contained_non_default_remote' === $effective_status ? 'contained-non-default-remote' : 'upstream-equivalent-clean';
@@ -2261,18 +2252,13 @@ class Workspace {
 			return $evidence;
 		}
 
-		$base_metadata                            = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
-		$metadata                                 = array_merge(
-			$base_metadata,
-			array(
-				'handle'       => $handle,
-				'repo'         => $repo,
-				'branch'       => $branch,
-				'path'         => (string) ( $evidence['path'] ?? $path ),
-				'observed_at'  => gmdate('c'),
-				'last_seen_at' => gmdate('c'),
-			),
-			WorktreeContextInjector::build_finalizer_metadata(WorktreeContextInjector::STATE_MERGED)
+		$metadata                                 = $this->build_active_no_signal_cleanup_metadata(
+			$row,
+			$handle,
+			$repo,
+			$branch,
+			(string) ( $evidence['path'] ?? $path ),
+			WorktreeContextInjector::STATE_MERGED
 		);
 		$metadata['auto_finalized_by']            = 'active_no_signal_merged_apply';
 		$metadata['auto_finalized_signal']        = 'merged-to-default';
@@ -2299,18 +2285,13 @@ class Workspace {
 			return $evidence;
 		}
 
-		$base_metadata                            = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
-		$metadata                                 = array_merge(
-			$base_metadata,
-			array(
-				'handle'       => $handle,
-				'repo'         => $repo,
-				'branch'       => $branch,
-				'path'         => (string) ( $evidence['path'] ?? $path ),
-				'observed_at'  => gmdate('c'),
-				'last_seen_at' => gmdate('c'),
-			),
-			WorktreeContextInjector::build_finalizer_metadata(WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE)
+		$metadata                                 = $this->build_active_no_signal_cleanup_metadata(
+			$row,
+			$handle,
+			$repo,
+			$branch,
+			(string) ( $evidence['path'] ?? $path ),
+			WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE
 		);
 		$metadata['auto_finalized_by']            = 'active_no_signal_remote_clean_apply';
 		$metadata['auto_finalized_signal']        = 'remote-tracking-clean';
@@ -2318,6 +2299,43 @@ class Workspace {
 		$metadata['cleanup_eligibility_evidence'] = $evidence;
 
 		return $metadata;
+	}
+
+	/**
+	 * Build the common cleanup metadata envelope for active/no-signal apply paths.
+	 *
+	 * @param  array<string,mixed> $row             Evidence row.
+	 * @param  string              $handle          Worktree handle.
+	 * @param  string              $repo            Repository name.
+	 * @param  string              $branch          Branch name.
+	 * @param  string              $path            Canonical worktree path to store.
+	 * @param  string              $finalizer_state Lifecycle finalizer state.
+	 * @param  string|null         $finalizer_url   Optional finalizer URL.
+	 * @return array<string,mixed>
+	 */
+	private function build_active_no_signal_cleanup_metadata(
+		array $row,
+		string $handle,
+		string $repo,
+		string $branch,
+		string $path,
+		string $finalizer_state,
+		?string $finalizer_url = null
+	): array {
+		$base_metadata = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
+
+		return array_merge(
+			$base_metadata,
+			array(
+				'handle'       => $handle,
+				'repo'         => $repo,
+				'branch'       => $branch,
+				'path'         => $path,
+				'observed_at'  => gmdate('c'),
+				'last_seen_at' => gmdate('c'),
+			),
+			WorktreeContextInjector::build_finalizer_metadata($finalizer_state, $finalizer_url)
+		);
 	}
 
 	/**
