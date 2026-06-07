@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.70] - 2026-06-07
+
+### Fixed
+- register handlers behind trait gate
+
 ## [0.47.69] - 2026-06-07
 
 ### Fixed
