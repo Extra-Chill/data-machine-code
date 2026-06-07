@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.77] - 2026-06-07
+
+### Changed
+- extract worktree cleanup engine
+
 ## [0.47.76] - 2026-06-07
 
 ### Changed
