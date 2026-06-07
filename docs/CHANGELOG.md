@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.80] - 2026-06-07
+
+### Fixed
+- clean stale remote-backed worktrees
+
 ## [0.47.79] - 2026-06-07
 
 ### Changed
