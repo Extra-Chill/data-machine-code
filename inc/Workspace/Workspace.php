@@ -646,23 +646,26 @@ class Workspace {
 		}
 
 		$protected_branches = array( 'main', 'master', 'trunk', 'develop', 'HEAD' );
-		$candidates         = array();
-		$skipped            = array();
+		$candidates = array();
+		$skipped = array();
+
 		/** @var array<string,mixed> $github_cache */
-		$github_cache       = array();
-		$all_worktrees      = array_values(array_filter( (array) $listing['worktrees'], fn( $wt ) => empty($wt['is_primary'])));
-		$total_worktrees    = count($all_worktrees);
-		$worktrees          = array_slice($all_worktrees, $offset, $limit);
-		$checked            = 0;
-		$processed          = 0;
-		$removed_count      = 0;
+		$github_cache = array();
+
+		$all_worktrees = array_values(array_filter( (array) $listing['worktrees'], fn( $wt ) => empty($wt['is_primary'])));
+		$total_worktrees = count($all_worktrees);
+		$worktrees = array_slice($all_worktrees, $offset, $limit);
+		$checked = 0;
+		$processed = 0;
+		$removed_count = 0;
 
 		$this->emit_worktree_cleanup_progress($progress, 'start', '', $checked, $total_worktrees, $candidates, $skipped, $removed_count, $started_at);
 
 		// Fetch + prune each primary once per repo, but keep status/disk probes inside
 		// the row loop so budgeted dry-runs can return partial evidence promptly.
 		/** @var array<string,bool> $fetched */
-		$fetched        = array();
+		$fetched = array();
+
 		/** @var array<string,\WP_Error> $fetch_timeouts */
 		$fetch_timeouts = array();
 
@@ -915,14 +918,14 @@ class Workspace {
 				continue;
 			}
 
-			if ( isset($fetch_timeouts[ $repo ]) && is_wp_error($fetch_timeouts[ $repo ]) ) {
+		if ( isset($fetch_timeouts[ $repo ]) ) {
 				$skipped[] = $this->build_worktree_probe_failure_skip($handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $fetch_timeouts[ $repo ]);
 				continue;
 			}
 
 			if ( empty($fetched[ $repo ]) ) {
 				$fetch = $this->run_git($primary_path, 'fetch --prune --quiet origin', self::CLEANUP_GIT_PROBE_TIMEOUT);
-				if ( is_wp_error($fetch) && $this->is_git_timeout_error($fetch) ) {
+				if ( $this->is_git_timeout_error($fetch) ) {
 					$fetch_timeouts[ $repo ] = $fetch;
 					$skipped[]               = $this->build_worktree_probe_failure_skip($handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $fetch);
 					continue;
@@ -1585,7 +1588,7 @@ class Workspace {
 			'evidence'       => array(
 				'elapsed_ms'      => (int) round(( microtime(true) - $started_at ) * 1000),
 				'inventory_total' => count($all_candidates),
-				'removed_handles' => array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $removed))),
+				'removed_handles' => array_values(array_filter(array_map(fn( $row ) => (string) $row['handle'], $removed))),
 				'skipped_handles' => array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $skipped))),
 				'source'          => $source,
 			),
@@ -2449,7 +2452,7 @@ class Workspace {
 
 		$remote_ref = 'refs/remotes/origin/' . $branch;
 		$remote     = $this->run_git($primary_path, sprintf('rev-parse --verify --quiet %s', escapeshellarg($remote_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( is_wp_error($remote) || $this->is_git_timeout_error($remote) ) {
+		if ( is_wp_error($remote) ) {
 			return new \WP_Error('remote_tracking_missing', 'remote tracking branch no longer exists');
 		}
 
@@ -2696,7 +2699,7 @@ class Workspace {
 				$branch = $head_branch;
 			} else {
 				$branch_probe = $this->run_git($path, 'branch --show-current', self::CLEANUP_GIT_PROBE_TIMEOUT);
-				if ( ! is_wp_error($branch_probe) && ! $this->is_git_timeout_error($branch_probe) ) {
+		if ( ! is_wp_error($branch_probe) ) {
 					$actual_branch = trim( (string) ( $branch_probe['output'] ?? '' ) );
 					if ( '' !== $actual_branch ) {
 						$branch = $actual_branch;
@@ -2768,7 +2771,7 @@ class Workspace {
 				return $this->cached_active_no_signal_remote_tracking_probe($primary_path, $remote_ref, $probe_cache);
 			}
 		);
-		$out['remote_tracking'] = ! is_wp_error($remote) && ! $this->is_git_timeout_error($remote);
+		$out['remote_tracking'] = ! is_wp_error($remote);
 
 		$default_ref = $this->time_worktree_probe(
 			$out['probe_timings_ms'],
@@ -2786,7 +2789,7 @@ class Workspace {
 					return $this->cached_active_no_signal_commits_outside_default_probe($primary_path, $default_ref, $branch, $probe_cache);
 				}
 			);
-			if ( ! is_wp_error($outside) && ! $this->is_git_timeout_error($outside) ) {
+			if ( ! is_wp_error($outside) ) {
 				$out['commits_outside_default'] = (int) trim( (string) ( $outside['output'] ?? '' ));
 			}
 
@@ -2945,7 +2948,7 @@ class Workspace {
 		);
 
 		$cherry = $this->run_git($wt_path, sprintf('cherry %s HEAD', escapeshellarg($default_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( ! is_wp_error($cherry) && ! $this->is_git_timeout_error($cherry) ) {
+		if ( ! is_wp_error($cherry) ) {
 			$lines = array_values(array_filter(array_map('trim', explode("\n", (string) ( $cherry['output'] ?? '' )))));
 			foreach ( $lines as $line ) {
 				if ( str_starts_with($line, '-') ) {
@@ -2964,7 +2967,7 @@ class Workspace {
 		}
 
 		$head = $this->run_git($wt_path, 'rev-parse --verify HEAD', self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( is_wp_error($head) || $this->is_git_timeout_error($head) ) {
+		if ( is_wp_error($head) ) {
 			return $evidence;
 		}
 
@@ -2974,7 +2977,7 @@ class Workspace {
 		}
 
 		$contains = $this->run_git($primary_path, sprintf('branch -r --contains %s', escapeshellarg(trim( (string) ( $head['output'] ?? '' )))), self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( is_wp_error($contains) || $this->is_git_timeout_error($contains) ) {
+		if ( is_wp_error($contains) ) {
 			return $evidence;
 		}
 
@@ -3052,7 +3055,7 @@ class Workspace {
 		);
 
 		$cherry = $this->time_worktree_probe($evidence['probe_timings_ms'], 'git_cherry', fn() => $this->run_git($wt_path, sprintf('cherry %s HEAD', escapeshellarg($default_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT));
-		if ( ! is_wp_error($cherry) && ! $this->is_git_timeout_error($cherry) ) {
+		if ( ! is_wp_error($cherry) ) {
 			$lines = array_values(array_filter(array_map('trim', explode("\n", (string) ( $cherry['output'] ?? '' )))));
 			foreach ( $lines as $line ) {
 				if ( str_starts_with($line, '-') ) {
@@ -3068,19 +3071,19 @@ class Workspace {
 
 		$tracked = $this->time_worktree_probe($evidence['probe_timings_ms'], 'tracked_dirty_paths', fn() => $this->run_git($wt_path, 'diff --name-only HEAD', self::CLEANUP_GIT_PROBE_TIMEOUT));
 		$paths   = array();
-		if ( ! is_wp_error($tracked) && ! $this->is_git_timeout_error($tracked) ) {
+		if ( ! is_wp_error($tracked) ) {
 			$paths = array_merge($paths, array_values(array_filter(array_map('trim', explode("\n", (string) ( $tracked['output'] ?? '' ))))));
 		}
 
 		$untracked = $this->time_worktree_probe($evidence['probe_timings_ms'], 'untracked_paths', fn() => $this->run_git($wt_path, 'ls-files --others --exclude-standard', self::CLEANUP_GIT_PROBE_TIMEOUT));
-		if ( ! is_wp_error($untracked) && ! $this->is_git_timeout_error($untracked) ) {
+		if ( ! is_wp_error($untracked) ) {
 			foreach ( array_values(array_filter(array_map('trim', explode("\n", (string) ( $untracked['output'] ?? '' ))))) as $path ) {
 				$paths[] = $path;
 				++$evidence['dirty_paths']['untracked'];
 			}
 		}
 
-		$paths                                 = array_values(array_unique(array_filter($paths, fn( $path ) => '' !== (string) $path)));
+		$paths                                 = array_values(array_unique(array_filter($paths)));
 		$evidence['dirty_paths']['total']      = count($paths);
 		$inspect_paths                         = array_slice($paths, 0, $path_inspection_limit);
 		$evidence['dirty_paths']['inspected']  = count($inspect_paths);
@@ -3131,7 +3134,7 @@ class Workspace {
 		$path_args = implode(' ', array_map('escapeshellarg', $paths));
 		$existing  = $this->run_git($primary_path, sprintf('ls-tree -r --name-only %s -- %s', escapeshellarg($default_ref), $path_args), self::CLEANUP_GIT_PROBE_TIMEOUT);
 		$changed   = $this->run_git($wt_path, sprintf('diff --name-only %s -- %s', escapeshellarg($default_ref), $path_args), self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( is_wp_error($existing) || is_wp_error($changed) || $this->is_git_timeout_error($existing) || $this->is_git_timeout_error($changed) ) {
+		if ( is_wp_error($existing) || is_wp_error($changed) ) {
 			return array();
 		}
 
@@ -3200,7 +3203,7 @@ class Workspace {
 	private function classify_dirty_path_against_default( string $primary_path, string $wt_path, string $default_ref, string $path ): array {
 		$kind   = $this->is_generated_or_artifact_path($path) ? 'generated_or_artifact' : 'source_like';
 		$exists = $this->run_git($primary_path, sprintf('cat-file -e %s', escapeshellarg($default_ref . ':' . $path)), self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( $this->is_git_timeout_error($exists) ) {
+		if ( is_wp_error($exists) && $this->is_git_timeout_error($exists) ) {
 			return array(
 				'path'   => $path,
 				'bucket' => 'unknown',
@@ -3217,7 +3220,7 @@ class Workspace {
 		}
 
 		$diff = $this->run_git($wt_path, sprintf('diff --name-only %s -- %s', escapeshellarg($default_ref), escapeshellarg($path)), self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( $this->is_git_timeout_error($diff) ) {
+		if ( is_wp_error($diff) && $this->is_git_timeout_error($diff) ) {
 			return array(
 				'path'   => $path,
 				'bucket' => 'unknown',
@@ -3355,9 +3358,9 @@ class Workspace {
 	 *
 	 * @param  array $candidate Inventory candidate row.
 	 * @param  bool  $force     Allow dirty worktrees.
-	 * @return array<string,mixed>|\WP_Error
-	 */
-	private function revalidate_bounded_cleanup_eligible_candidate( array $candidate, bool $force ): array|\WP_Error {
+		 * @return array<string,mixed>
+		 */
+	private function revalidate_bounded_cleanup_eligible_candidate( array $candidate, bool $force ): array {
 		$handle  = (string) ( $candidate['handle'] ?? '' );
 		$repo    = (string) ( $candidate['repo'] ?? '' );
 		$branch  = (string) ( $candidate['branch'] ?? '' );
@@ -3838,7 +3841,7 @@ class Workspace {
 
 		$remote_ref = 'refs/remotes/origin/' . $branch;
 		$remote     = $this->run_git($primary_path, sprintf('rev-parse --verify --quiet %s', escapeshellarg($remote_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( ! is_wp_error($remote) && ! $this->is_git_timeout_error($remote) ) {
+		if ( ! is_wp_error($remote) ) {
 			$evidence['remote_branch']  = 'still_exists';
 			$evidence['classification'] = 'remote_branch_still_exists';
 		} elseif ( $this->is_git_timeout_error($remote) ) {
@@ -3856,7 +3859,7 @@ class Workspace {
 				sprintf('rev-list --count %s..%s', escapeshellarg($default_ref), escapeshellarg('refs/heads/' . $branch)),
 				self::CLEANUP_GIT_PROBE_TIMEOUT
 			);
-			if ( ! is_wp_error($outside) && ! $this->is_git_timeout_error($outside) ) {
+			if ( ! is_wp_error($outside) ) {
 				$outside_count                       = (int) trim( (string) ( $outside['output'] ?? '' ));
 				$evidence['commits_outside_default'] = $outside_count;
 				$evidence['local_default_relation']  = 0 === $outside_count ? 'default_contained' : 'has_unique_commits';
@@ -4164,7 +4167,8 @@ class Workspace {
 
 			$path_part = trim(substr($line, 3));
 			if ( str_contains($path_part, ' -> ') ) {
-				$path_part = trim( (string) substr(strrchr($path_part, '>'), 1));
+				$rename_target = strrchr($path_part, '>');
+				$path_part     = false === $rename_target ? '' : trim(substr($rename_target, 1));
 			}
 			$path_part = trim($path_part, ' /');
 			if ( '' === $path_part ) {
@@ -4234,8 +4238,7 @@ class Workspace {
 		 * @param string               $repo    Repo name.
 		 * @param string               $path    Worktree path.
 		 */
-		$filtered = apply_filters('datamachine_code_worktree_artifact_profile', $profile, $repo, $path);
-		return is_array($filtered) ? $filtered : $profile;
+		return apply_filters('datamachine_code_worktree_artifact_profile', $profile, $repo, $path);
 	}
 
 	/**
@@ -4310,7 +4313,7 @@ class Workspace {
 	 * @return array<int,array<string,mixed>>
 	 */
 	private function summarize_top_worktree_rows( array $rows, string $field ): array {
-		$rows = array_values(array_filter($rows, fn( $row ) => isset($row[ $field ]) && null !== $row[ $field ] && (int) $row[ $field ] > 0));
+		$rows = array_values(array_filter($rows, fn( $row ) => isset($row[ $field ]) && (int) $row[ $field ] > 0));
 		usort($rows, fn( $a, $b ) => (int) ( $b[ $field ] ?? 0 ) <=> (int) ( $a[ $field ] ?? 0 ));
 
 		return array_map(
@@ -4631,7 +4634,7 @@ class Workspace {
 		// the caller's `$fetched` tracker so this never double-fetches.
 		if ( empty($fetched[ $repo ]) ) {
 			$fetch = $this->run_git($primary_path, 'fetch --prune --quiet origin', self::CLEANUP_GIT_PROBE_TIMEOUT);
-			if ( is_wp_error($fetch) && $this->is_git_timeout_error($fetch) ) {
+			if ( $this->is_git_timeout_error($fetch) ) {
 				$fetch_timeouts[ $repo ] = $fetch;
 				return null;
 			}
@@ -4651,7 +4654,7 @@ class Workspace {
 			sprintf('rev-parse --verify --quiet %s', escapeshellarg($default_ref . '^{commit}')),
 			self::CLEANUP_GIT_PROBE_TIMEOUT
 		);
-		if ( $this->is_git_timeout_error($default_resolve) || is_wp_error($default_resolve) ) {
+		if ( is_wp_error($default_resolve) ) {
 			return null;
 		}
 
@@ -4706,7 +4709,7 @@ class Workspace {
 			'diff --name-only HEAD',
 			self::CLEANUP_GIT_PROBE_TIMEOUT
 		);
-		if ( $this->is_git_timeout_error($tracked) || is_wp_error($tracked) ) {
+		if ( is_wp_error($tracked) ) {
 			return null;
 		}
 
@@ -4731,7 +4734,7 @@ class Workspace {
 				sprintf('cat-file -e %s', escapeshellarg($default_ref . ':' . $path)),
 				self::CLEANUP_GIT_PROBE_TIMEOUT
 			);
-			if ( $this->is_git_timeout_error($probe) ) {
+		if ( is_wp_error($probe) && $this->is_git_timeout_error($probe) ) {
 				return null;
 			}
 			if ( is_wp_error($probe) ) {
@@ -4971,7 +4974,7 @@ class Workspace {
 		}
 
 		$parts = explode('/', $slug, 2);
-		$owner = $parts[0] ?? '';
+		$owner = $parts[0];
 		if ( '' === $owner || empty($parts[1]) ) {
 			$github_cache[ $cache_key ] = null;
 			return null;
@@ -5062,7 +5065,7 @@ class Workspace {
 		}
 
 		$parts = explode('/', $slug, 2);
-		$owner = $parts[0] ?? '';
+		$owner = $parts[0];
 		if ( '' === $owner || empty($parts[1]) ) {
 			$github_cache[ $slug ] = null;
 			return null;
@@ -5185,9 +5188,8 @@ class Workspace {
 	 * Determine whether a git result is a timeout error.
 	 *
 	 * @param  mixed $result Git result.
-	 * @return bool
-	 * @phpstan-assert-if-true \WP_Error $result
-	 */
+		 * @return bool
+		 */
 	private function is_git_timeout_error( mixed $result ): bool {
 		if ( ! is_wp_error($result) ) {
 			return false;
