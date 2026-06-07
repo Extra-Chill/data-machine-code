@@ -50,22 +50,22 @@ class Workspace {
 	/**
 	 * Bound GitHub cleanup checks so one slow repo cannot stall cleanup.
 	 */
-	private const CLEANUP_GITHUB_TIMEOUT = 5;
+	protected const CLEANUP_GITHUB_TIMEOUT = 5;
 
 	/**
 	 * Bound per-worktree git cleanup probes so one wedged checkout cannot stall cleanup.
 	 */
-	private const CLEANUP_GIT_PROBE_TIMEOUT = 5;
+	protected const CLEANUP_GIT_PROBE_TIMEOUT = 5;
 
 	/**
 	 * Closed PR pages to inspect per repo during cleanup.
 	 */
-	private const CLEANUP_GITHUB_MAX_PAGES = 3;
+	protected const CLEANUP_GITHUB_MAX_PAGES = 3;
 
 	/**
 	 * Number of largest/oldest rows to expose in cleanup summaries.
 	 */
-	private const CLEANUP_SUMMARY_TOP_LIMIT = 10;
+	protected const CLEANUP_SUMMARY_TOP_LIMIT = 10;
 
 	/**
 	 * Default cap on worktrees scanned for an artifact cleanup dry-run when no
@@ -89,7 +89,7 @@ class Workspace {
 	 * @param  int    $timeout_seconds Optional timeout in seconds.
 	 * @return string|\WP_Error|null Fully-qualified remote default ref, timeout error, or null when unavailable.
 	 */
-	private function resolve_remote_default_ref( string $primary_path, int $timeout_seconds = 0 ): string|\WP_Error|null {
+	protected function resolve_remote_default_ref( string $primary_path, int $timeout_seconds = 0 ): string|\WP_Error|null {
 		$result = $this->run_git($primary_path, 'symbolic-ref --quiet refs/remotes/origin/HEAD', $timeout_seconds);
 		if ( is_wp_error($result) ) {
 			return $this->is_git_timeout_error($result) ? $result : null;
