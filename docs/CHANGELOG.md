@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.66] - 2026-06-07
+
+### Fixed
+- compact abandoned cleanup pagination handles
+
 ## [0.47.65] - 2026-06-07
 
 ### Fixed
