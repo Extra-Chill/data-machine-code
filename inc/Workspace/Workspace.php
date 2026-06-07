@@ -1873,7 +1873,7 @@ class Workspace {
 				'review_only'        => false,
 				'written_as_planned' => true,
 				'inspected_fallback' => 'rows',
-				'summary_extra'      => static function ( array $report ): array {
+				'summary_extra'      => static function (): array {
 					return array(
 						'candidate_action'   => 'remote_tracking_clean',
 						'candidate_evidence' => 'clean worktree with no unpushed commits and an existing remote tracking branch',
@@ -1965,7 +1965,7 @@ class Workspace {
 				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($prepared_row, 'invalid_planned_row', 'active/no-signal apply built an invalid planned row');
 				continue;
 			}
-			$planned[]   = $planned_row;
+			$planned[] = $planned_row;
 
 			if ( $dry_run ) {
 				continue;
