@@ -71,20 +71,10 @@ class Workspace {
 	private const CLEANUP_SUMMARY_TOP_LIMIT = 10;
 
 	/**
-	 * Default number of workspace entries to size in hygiene reports.
-	 */
-	private const HYGIENE_DEFAULT_SIZE_LIMIT = 1000;
-
-	/**
 	 * Default cap on worktrees scanned for an artifact cleanup dry-run when no
 	 * `limit` is provided. Keeps dry-run bounded and fast on huge workspaces.
 	 */
 	public const ARTIFACT_CLEANUP_DEFAULT_LIMIT = 100;
-
-	/**
-	 * Default metadata reconciliation dry-run page size when pagination is used.
-	 */
-	private const METADATA_RECONCILE_DEFAULT_LIMIT = 100;
 
 	/**
 	 * @var string Resolved workspace path.
@@ -366,6 +356,7 @@ class Workspace {
 			'repo'        => '',
 			'branch_slug' => null,
 			'is_worktree' => false,
+			'dir_name'    => '',
 		);
 
 		$stored    = array(
@@ -377,13 +368,13 @@ class Workspace {
 		$hydrated  = array();
 
 		if ( '' === $repo && '' !== $stored['repo'] ) {
-			if ( (string) ( $parsed['repo'] ?? '' ) === $stored['repo'] ) {
+			if ( $parsed['repo'] === $stored['repo'] ) {
 				$repo       = $stored['repo'];
 				$hydrated[] = 'repo';
 			} else {
 				$conflicts['repo'] = array(
 					'reason'      => 'metadata_repo_does_not_match_handle',
-					'handle_repo' => (string) ( $parsed['repo'] ?? '' ),
+					'handle_repo' => $parsed['repo'],
 					'metadata'    => $stored['repo'],
 				);
 			}
@@ -562,13 +553,7 @@ class Workspace {
 	 * @type   bool $skip_github If true, only use upstream-gone signal (no API calls).
 	 * @type   string $older_than Optional duration such as 7d, 24h, or 30m. Candidates newer than this are skipped.
 	 * }
-	 * @return array{
-	 *     success: bool,
-	 *     dry_run: bool,
-	 *     candidates: array<int,array>,
-	 *     removed: array<int,array>,
-	 *     skipped: array<int,array>,
-	 * }|\WP_Error
+	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_cleanup_merged( array $opts = array() ): array|\WP_Error {
 		$dry_run                   = ! empty($opts['dry_run']);
@@ -663,6 +648,7 @@ class Workspace {
 		$protected_branches = array( 'main', 'master', 'trunk', 'develop', 'HEAD' );
 		$candidates         = array();
 		$skipped            = array();
+		/** @var array<string,mixed> $github_cache */
 		$github_cache       = array();
 		$all_worktrees      = array_values(array_filter( (array) $listing['worktrees'], fn( $wt ) => empty($wt['is_primary'])));
 		$total_worktrees    = count($all_worktrees);
@@ -675,7 +661,9 @@ class Workspace {
 
 		// Fetch + prune each primary once per repo, but keep status/disk probes inside
 		// the row loop so budgeted dry-runs can return partial evidence promptly.
+		/** @var array<string,bool> $fetched */
 		$fetched        = array();
+		/** @var array<string,\WP_Error> $fetch_timeouts */
 		$fetch_timeouts = array();
 
 		foreach ( $worktrees as $wt ) {
@@ -857,7 +845,7 @@ class Workspace {
 							'dirty_obsolete_paths' => $obsolete_dirty['paths'],
 							'merge_signal'         => $obsolete_dirty['merge_signal'],
 							'pr_url'               => $obsolete_dirty['pr_url'] ?? null,
-							'default_ref'          => $obsolete_dirty['default_ref'] ?? null,
+							'default_ref'          => $obsolete_dirty['default_ref'],
 							'hint'                 => 'Dirty edits only touch paths the default branch no longer has. After review, rerun cleanup with force=true to remove this worktree.',
 							'created_at'           => $created_at,
 							'metadata'             => $metadata,
@@ -927,14 +915,14 @@ class Workspace {
 				continue;
 			}
 
-			if ( isset($fetch_timeouts[ $repo ]) ) {
+			if ( isset($fetch_timeouts[ $repo ]) && is_wp_error($fetch_timeouts[ $repo ]) ) {
 				$skipped[] = $this->build_worktree_probe_failure_skip($handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $fetch_timeouts[ $repo ]);
 				continue;
 			}
 
 			if ( empty($fetched[ $repo ]) ) {
 				$fetch = $this->run_git($primary_path, 'fetch --prune --quiet origin', self::CLEANUP_GIT_PROBE_TIMEOUT);
-				if ( $this->is_git_timeout_error($fetch) ) {
+				if ( is_wp_error($fetch) && $this->is_git_timeout_error($fetch) ) {
 					$fetch_timeouts[ $repo ] = $fetch;
 					$skipped[]               = $this->build_worktree_probe_failure_skip($handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $fetch);
 					continue;
@@ -978,7 +966,7 @@ class Workspace {
 				continue;
 			}
 
-			if ( 'probe-timeout' === ( $signal['signal'] ?? '' ) ) {
+			if ( 'probe-timeout' === $signal['signal'] ) {
 				$skipped[] = array_merge(
 					array(
 						'handle'      => $handle,
@@ -994,7 +982,7 @@ class Workspace {
 				continue;
 			}
 
-			if ( 'github-unknown' === ( $signal['signal'] ?? '' ) ) {
+			if ( 'github-unknown' === $signal['signal'] ) {
 				$skipped[] = array_merge(
 					array(
 						'handle'                 => $handle,
@@ -1211,7 +1199,7 @@ class Workspace {
 				null === $budget_context ? null : '--until-budget=' . (string) ( $budget_context['label'] ?? '' ),
 				'--format=json',
 			);
-			$command = implode(' ', array_values(array_filter($parts, fn( $part ) => null !== $part && '' !== $part)));
+			$command = implode(' ', array_values(array_filter($parts, fn( $part ) => null !== $part)));
 		}
 
 		return array(
@@ -1318,12 +1306,12 @@ class Workspace {
 		}
 
 		$parsed = $this->parse_handle($handle);
-		if ( ! empty($parsed['is_worktree']) && '' !== $repo && (string) ( $parsed['repo'] ?? '' ) !== $repo ) {
+		if ( ! empty($parsed['is_worktree']) && '' !== $repo && $parsed['repo'] !== $repo ) {
 			return array(
 				'reason_code'    => 'owner_repo_mismatch',
-				'reason'         => sprintf('worktree handle repo (%s) does not match inventory repo (%s) - %s: %s', (string) ( $parsed['repo'] ?? '' ), $repo, $safety_outcome, $message),
+				'reason'         => sprintf('worktree handle repo (%s) does not match inventory repo (%s) - %s: %s', $parsed['repo'], $repo, $safety_outcome, $message),
 				'hint'           => 'Run workspace worktree reconcile-metadata --dry-run to review stale registry ownership, then prune or repair the mismatched row.',
-				'handle_repo'    => (string) ( $parsed['repo'] ?? '' ),
+				'handle_repo'    => $parsed['repo'],
 				'inventory_repo' => $repo,
 				'git_error_code' => $error_code,
 			);
@@ -1368,11 +1356,7 @@ class Workspace {
 	 * @return string
 	 */
 	private function get_wp_error_code( \WP_Error $error ): string {
-		if ( method_exists($error, 'get_error_code') ) {
-			return (string) $error->get_error_code();
-		}
-
-		return isset($error->code) ? (string) $error->code : '';
+		return (string) $error->get_error_code();
 	}
 
 	/**
@@ -1382,11 +1366,7 @@ class Workspace {
 	 * @return mixed
 	 */
 	private function get_wp_error_data( \WP_Error $error ): mixed {
-		if ( method_exists($error, 'get_error_data') ) {
-			return $error->get_error_data();
-		}
-
-		return $error->data ?? null;
+		return $error->get_error_data();
 	}
 
 	/**
@@ -1475,7 +1455,7 @@ class Workspace {
 				'generated_at'   => gmdate('c'),
 				'candidates'     => $batch,
 				'removed'        => array(),
-				'skipped'        => array_values($inventory_skipped),
+				'skipped'        => $inventory_skipped,
 				'summary'        => array(
 					'processed'       => count($batch),
 					'removed'         => 0,
@@ -1499,7 +1479,7 @@ class Workspace {
 
 		$processed       = 0;
 		$removed         = array();
-		$skipped         = array_values($inventory_skipped);
+		$skipped         = $inventory_skipped;
 		$bytes_reclaimed = 0;
 
 		foreach ( $batch as $candidate ) {
@@ -1605,8 +1585,8 @@ class Workspace {
 			'evidence'       => array(
 				'elapsed_ms'      => (int) round(( microtime(true) - $started_at ) * 1000),
 				'inventory_total' => count($all_candidates),
-				'removed_handles' => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', $removed))),
-				'skipped_handles' => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', $skipped))),
+				'removed_handles' => array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $removed))),
+				'skipped_handles' => array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $skipped))),
 				'source'          => $source,
 			),
 		);
@@ -1654,6 +1634,7 @@ class Workspace {
 		$total  = count($active);
 		$page   = array_slice($active, $offset, $limit);
 
+		/** @var array<string,mixed> $github_cache */
 		$github_cache = array();
 		$probe_cache  = array(
 			'default_ref'             => array(),
@@ -1780,7 +1761,7 @@ class Workspace {
 
 			$metadata = $this->build_active_no_signal_finalized_metadata($row);
 			if ( is_wp_error($metadata) ) {
-				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, $metadata->get_error_code(), $metadata->get_error_message());
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, (string) $metadata->get_error_code(), $metadata->get_error_message());
 				continue;
 			}
 
@@ -1873,7 +1854,7 @@ class Workspace {
 
 			$metadata = $this->build_active_no_signal_equivalent_clean_metadata($row);
 			if ( is_wp_error($metadata) ) {
-				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, $metadata->get_error_code(), $metadata->get_error_message());
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, (string) $metadata->get_error_code(), $metadata->get_error_message());
 				continue;
 			}
 
@@ -1965,7 +1946,7 @@ class Workspace {
 
 			$metadata = $this->build_active_no_signal_merged_to_default_metadata($row);
 			if ( is_wp_error($metadata) ) {
-				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, $metadata->get_error_code(), $metadata->get_error_message());
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, (string) $metadata->get_error_code(), $metadata->get_error_message());
 				continue;
 			}
 
@@ -2057,7 +2038,7 @@ class Workspace {
 
 			$metadata = $this->build_active_no_signal_remote_clean_metadata($row);
 			if ( is_wp_error($metadata) ) {
-				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, $metadata->get_error_code(), $metadata->get_error_message());
+				$skipped[] = $this->build_active_no_signal_finalized_apply_skip($row, (string) $metadata->get_error_code(), $metadata->get_error_message());
 				continue;
 			}
 
@@ -2246,7 +2227,7 @@ class Workspace {
 				'pr_url'          => $pr_url,
 				'pr_number'       => (int) ( $current_pr['number'] ?? 0 ),
 			),
-			fn( $value ) => null !== $value && '' !== $value
+			fn( $value ) => '' !== $value
 		);
 
 		return $metadata;
@@ -3000,7 +2981,7 @@ class Workspace {
 		$remote_branches = array_values(array_filter(array_map('trim', explode("\n", (string) ( $contains['output'] ?? '' )))));
 		foreach ( $remote_branches as $remote_branch ) {
 			$normalized_remote_branch = preg_replace('/^origin\//', '', $remote_branch);
-			$remote_branch            = '' === $normalized_remote_branch || null === $normalized_remote_branch ? $remote_branch : $normalized_remote_branch;
+			$remote_branch            = null === $normalized_remote_branch ? $remote_branch : $normalized_remote_branch;
 			if ( '' === $remote_branch || str_starts_with($remote_branch, 'HEAD -> ') || $remote_branch === $default_short || $remote_branch === $branch ) {
 				continue;
 			}
@@ -3425,7 +3406,7 @@ class Workspace {
 			);
 		}
 
-		$real_path = (string) $validation['real_path'];
+		$real_path = (string) ( $validation['real_path'] ?? '' );
 		if ( '' === $real_path || ! is_dir($real_path) ) {
 			return array(
 				'skipped' => array(
@@ -3667,7 +3648,7 @@ class Workspace {
 			'continuation'   => $continuation,
 			'evidence'       => array(
 				'elapsed_ms'      => (int) round(( microtime(true) - $started_at ) * 1000),
-				'planned_handles' => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', $batch))),
+				'planned_handles' => array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $batch))),
 				'batch_job_id'    => (int) ( $batch_result['batch_job_id'] ?? 0 ),
 				'direct_job_ids'  => $batch_result['job_ids'] ?? array(),
 				'source'          => $source,
@@ -4026,7 +4007,7 @@ class Workspace {
 	 * @param  string|null $created_at  Lifecycle timestamp.
 	 * @return string|null Stale reason code.
 	 */
-	private function detect_worktree_stale_reason( bool $is_worktree, int $dirty_files, ?int $age_days, ?string $created_at, array $probes = array() ): ?string {
+	protected function detect_worktree_stale_reason( bool $is_worktree, int $dirty_files, ?int $age_days, ?string $created_at, array $probes = array() ): ?string {
 		if ( ! $is_worktree ) {
 			return null;
 		}
@@ -4059,7 +4040,7 @@ class Workspace {
 	 * @param  array|null  $metadata    Stored lifecycle/context metadata.
 	 * @return array<string,mixed>
 	 */
-	private function build_worktree_disk_report( string $repo, string $path, bool $is_worktree, ?string $created_at, ?array $metadata ): array {
+	protected function build_worktree_disk_report( string $repo, string $path, bool $is_worktree, ?string $created_at, ?array $metadata ): array {
 		$size_bytes      = $this->estimate_path_size_bytes($path);
 		$last_touched_at = $this->detect_worktree_last_touched_at($path, $metadata, $created_at);
 		$age_days        = $this->calculate_age_days($created_at);
@@ -4542,7 +4523,15 @@ class Workspace {
 		// A worktree's .git is a FILE pointing at the primary's .git dir.
 		// A directory .git means we're looking at a primary checkout — never
 		// touch those.
-		$git_marker = rtrim($validation['real_path'], '/') . '/.git';
+		$real_path  = (string) ( $validation['real_path'] ?? '' );
+		$git_marker = rtrim($real_path, '/') . '/.git';
+		if ( '' === $real_path ) {
+			return new \WP_Error(
+				'path_outside_workspace',
+				sprintf('Refusing to remove "%s": path did not resolve inside workspace.', $wt_path),
+				array( 'status' => 403 )
+			);
+		}
 		if ( ! is_file($git_marker) ) {
 			return new \WP_Error(
 				'not_a_worktree',
@@ -4551,7 +4540,7 @@ class Workspace {
 			);
 		}
 
-		$cmd    = sprintf('worktree remove %s%s', $force ? '--force ' : '', escapeshellarg($validation['real_path']));
+		$cmd    = sprintf('worktree remove %s%s', $force ? '--force ' : '', escapeshellarg($real_path));
 		$result = $this->run_git($primary_path, $cmd);
 
 		if ( is_wp_error($result) ) {
@@ -4561,8 +4550,8 @@ class Workspace {
 		// If the directory survived `git worktree remove` (can happen for
 		// locked worktrees, or when the worktree was already detached), prune
 		// the directory manually so cleanup is effective.
-		if ( is_dir($validation['real_path']) ) {
-			$escaped = escapeshellarg($validation['real_path']);
+		if ( is_dir($real_path) ) {
+			$escaped = escapeshellarg($real_path);
             // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
 			exec(sprintf('rm -rf %s 2>&1', $escaped));
 		}
@@ -4642,7 +4631,7 @@ class Workspace {
 		// the caller's `$fetched` tracker so this never double-fetches.
 		if ( empty($fetched[ $repo ]) ) {
 			$fetch = $this->run_git($primary_path, 'fetch --prune --quiet origin', self::CLEANUP_GIT_PROBE_TIMEOUT);
-			if ( $this->is_git_timeout_error($fetch) ) {
+			if ( is_wp_error($fetch) && $this->is_git_timeout_error($fetch) ) {
 				$fetch_timeouts[ $repo ] = $fetch;
 				return null;
 			}
@@ -4687,7 +4676,7 @@ class Workspace {
 		if ( ! is_array($signal) ) {
 			return null;
 		}
-		$signal_kind    = (string) ( $signal['signal'] ?? '' );
+		$signal_kind    = (string) $signal['signal'];
 		$merged_signals = array( 'upstream-gone', 'local-merged', 'pr-merged', 'cleanup_eligible', 'repaired_metadata' );
 		if ( ! in_array($signal_kind, $merged_signals, true) ) {
 			return null;
@@ -5161,7 +5150,7 @@ class Workspace {
 	 * @param  string $url Git URL.
 	 * @return string|null Derived name or null.
 	 */
-	private function derive_repo_name( string $url ): ?string {
+	protected function derive_repo_name( string $url ): ?string {
 		// Handle https://github.com/org/repo.git and git@github.com:org/repo.git
 		$name = basename($url);
 		$name = preg_replace('/\.git$/', '', $name);
@@ -5186,7 +5175,7 @@ class Workspace {
 	 * @param  string $repo_path       Resolved repository path.
 	 * @param  string $git_args        Git arguments (without leading "git").
 	 * @param  int    $timeout_seconds Optional timeout in seconds.
-	 * @return array
+	 * @return array<string,mixed>|\WP_Error
 	 */
 	private function run_git( string $repo_path, string $git_args, int $timeout_seconds = 0 ): array|\WP_Error {
 		return GitRunner::run($repo_path, $git_args, $timeout_seconds);
@@ -5197,17 +5186,14 @@ class Workspace {
 	 *
 	 * @param  mixed $result Git result.
 	 * @return bool
+	 * @phpstan-assert-if-true \WP_Error $result
 	 */
 	private function is_git_timeout_error( mixed $result ): bool {
 		if ( ! is_wp_error($result) ) {
 			return false;
 		}
 
-		if ( method_exists($result, 'get_error_code') ) {
-			return 'git_command_timeout' === $result->get_error_code();
-		}
-
-		return isset($result->code) && 'git_command_timeout' === $result->code;
+		return 'git_command_timeout' === $result->get_error_code();
 	}
 
 	/**
@@ -5283,6 +5269,7 @@ class Workspace {
 		foreach ( $groups as $group ) {
             // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
 			$exists = exec(sprintf('getent group %s >/dev/null 2>&1 && echo 1 || echo 0', escapeshellarg($group)));
+			$exists = false === $exists ? '' : $exists;
 			if ( '1' === trim($exists) ) {
 				$web_group = $group;
 				break;
@@ -5349,7 +5336,7 @@ class Workspace {
 	 * @param  string $path Absolute path of the entry that changed.
 	 * @return void
 	 */
-	private function emit_workspace_changed( string $op, string $repo, string $name, string $path ): void {
+	protected function emit_workspace_changed( string $op, string $repo, string $name, string $path ): void {
 		/**
 		 * Fires after a successful Workspace mutation lands on disk.
 		 *
