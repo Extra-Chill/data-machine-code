@@ -1655,6 +1655,30 @@ class Workspace {
 		$page   = array_slice($active, $offset, $limit);
 
 		$github_cache = array();
+		$probe_cache  = array(
+			'default_ref'             => array(),
+			'github_slug'             => array(),
+			'remote_tracking'         => array(),
+			'commits_outside_default' => array(),
+			'stats'                   => array(
+				'default_ref'             => array(
+					'hits'   => 0,
+					'misses' => 0,
+				),
+				'github_slug'             => array(
+					'hits'   => 0,
+					'misses' => 0,
+				),
+				'remote_tracking'         => array(
+					'hits'   => 0,
+					'misses' => 0,
+				),
+				'commits_outside_default' => array(
+					'hits'   => 0,
+					'misses' => 0,
+				),
+			),
+		);
 		$rows         = array();
 		$summary      = array(
 			'total_active_no_signal' => $total,
@@ -1674,7 +1698,7 @@ class Workspace {
 				break;
 			}
 			$row_started            = microtime(true);
-			$evidence               = $this->build_active_no_signal_evidence_row($row, $github_cache);
+			$evidence               = $this->build_active_no_signal_evidence_row($row, $github_cache, $probe_cache);
 			$evidence['elapsed_ms'] = (int) round(( microtime(true) - $row_started ) * 1000);
 			$rows[]                 = $evidence;
 			++$summary['inspected'];
@@ -1716,9 +1740,10 @@ class Workspace {
 			'summary'      => array_merge($summary, array( 'slow_rows' => $this->summarize_slow_worktree_rows($rows) )),
 			'pagination'   => $pagination,
 			'evidence'     => array(
-				'scope'  => 'review-only active_no_signal worktree lifecycle evidence',
-				'safety' => 'No worktrees or remote branches are deleted. Dirty and unpushed probes are evidence only.',
-				'budget' => null === $budget_context ? null : $this->summarize_worktree_loop_budget_context($budget_context, $budget_stopped),
+				'scope'       => 'review-only active_no_signal worktree lifecycle evidence',
+				'safety'      => 'No worktrees or remote branches are deleted. Dirty and unpushed probes are evidence only.',
+				'budget'      => null === $budget_context ? null : $this->summarize_worktree_loop_budget_context($budget_context, $budget_stopped),
+				'probe_cache' => $probe_cache['stats'],
 			),
 		);
 	}
@@ -2672,9 +2697,10 @@ class Workspace {
 	 *
 	 * @param  array<string,mixed> $row          Inventory skip row.
 	 * @param  array<string,mixed> $github_cache Run-local GitHub cache.
+	 * @param  array<string,mixed> $probe_cache  Run-local git probe cache.
 	 * @return array<string,mixed>
 	 */
-	private function build_active_no_signal_evidence_row( array $row, array &$github_cache ): array {
+	private function build_active_no_signal_evidence_row( array $row, array &$github_cache, array &$probe_cache ): array {
 		$handle       = (string) ( $row['handle'] ?? '' );
 		$repo         = (string) ( $row['repo'] ?? '' );
 		$branch       = (string) ( $row['branch'] ?? '' );
@@ -2684,11 +2710,16 @@ class Workspace {
 		$metadata     = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
 		$branch_probe = null;
 		if ( '' !== $path && is_dir($path) ) {
-			$branch_probe = $this->run_git($path, 'branch --show-current', self::CLEANUP_GIT_PROBE_TIMEOUT);
-			if ( ! is_wp_error($branch_probe) && ! $this->is_git_timeout_error($branch_probe) ) {
-				$actual_branch = trim( (string) ( $branch_probe['output'] ?? '' ) );
-				if ( '' !== $actual_branch ) {
-					$branch = $actual_branch;
+			$head_branch = $this->resolve_worktree_branch_from_head_file($path);
+			if ( null !== $head_branch && '' !== $head_branch ) {
+				$branch = $head_branch;
+			} else {
+				$branch_probe = $this->run_git($path, 'branch --show-current', self::CLEANUP_GIT_PROBE_TIMEOUT);
+				if ( ! is_wp_error($branch_probe) && ! $this->is_git_timeout_error($branch_probe) ) {
+					$actual_branch = trim( (string) ( $branch_probe['output'] ?? '' ) );
+					if ( '' !== $actual_branch ) {
+						$branch = $actual_branch;
+					}
 				}
 			}
 		}
@@ -2749,18 +2780,16 @@ class Workspace {
 		}
 
 		$remote_ref             = 'refs/remotes/origin/' . $branch;
-		$remote                 = $this->time_worktree_probe($out['probe_timings_ms'], 'remote_tracking', fn() => $this->run_git($primary_path, sprintf('rev-parse --verify --quiet %s', escapeshellarg($remote_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT));
+		$remote                 = $this->time_worktree_probe($out['probe_timings_ms'], 'remote_tracking', fn() => $this->cached_active_no_signal_remote_tracking_probe($primary_path, $remote_ref, $probe_cache));
 		$out['remote_tracking'] = ! is_wp_error($remote) && ! $this->is_git_timeout_error($remote);
 
-		$default_ref = $this->time_worktree_probe($out['probe_timings_ms'], 'default_ref', fn() => $this->resolve_remote_default_ref($primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT));
+		$default_ref = $this->time_worktree_probe($out['probe_timings_ms'], 'default_ref', fn() => $this->cached_active_no_signal_default_ref_probe($primary_path, $probe_cache));
 		if ( is_string($default_ref) && '' !== $default_ref ) {
 			$out['default_ref'] = $default_ref;
 			$outside            = $this->time_worktree_probe(
-				$out['probe_timings_ms'], 'commits_outside_default', fn() => $this->run_git(
-					$primary_path,
-					sprintf('rev-list --count %s..%s', escapeshellarg($default_ref), escapeshellarg('refs/heads/' . $branch)),
-					self::CLEANUP_GIT_PROBE_TIMEOUT
-				)
+				$out['probe_timings_ms'],
+				'commits_outside_default',
+				fn() => $this->cached_active_no_signal_commits_outside_default_probe($primary_path, $default_ref, $branch, $probe_cache)
 			);
 			if ( ! is_wp_error($outside) && ! $this->is_git_timeout_error($outside) ) {
 				$out['commits_outside_default'] = (int) trim( (string) ( $outside['output'] ?? '' ));
@@ -2776,7 +2805,7 @@ class Workspace {
 		if ( (int) ( $out['dirty'] ?? 0 ) > 0 || (int) ( $out['unpushed'] ?? 0 ) > 0 ) {
 			$out['pr_lookup_skipped'] = 'dirty_or_unpushed_rows_are_always_manual_review';
 		} else {
-			$slug = $this->time_worktree_probe($out['probe_timings_ms'], 'github_slug', fn() => $this->resolve_github_slug($primary_path));
+			$slug = $this->time_worktree_probe($out['probe_timings_ms'], 'github_slug', fn() => $this->cached_active_no_signal_github_slug_probe($primary_path, $probe_cache));
 			if ( null !== $slug ) {
 				$pr = $this->time_worktree_probe($out['probe_timings_ms'], 'github_pr_lookup', fn() => $this->find_pr_for_branch_direct($slug, $branch, $github_cache, false));
 				if ( is_wp_error($pr) ) {
@@ -2791,6 +2820,106 @@ class Workspace {
 		$out['reason']           = $this->describe_active_no_signal_action($out);
 
 		return $out;
+	}
+
+	/**
+	 * Cache a remote-tracking ref existence probe for an active/no-signal report run.
+	 *
+	 * @param  string              $primary_path Primary checkout path.
+	 * @param  string              $remote_ref   Fully-qualified remote-tracking ref.
+	 * @param  array<string,mixed> $probe_cache  Run-local git probe cache.
+	 * @return array<string,mixed>|\WP_Error Git result or timeout/error.
+	 */
+	private function cached_active_no_signal_remote_tracking_probe( string $primary_path, string $remote_ref, array &$probe_cache ): array|\WP_Error {
+		$key = $primary_path . '#' . $remote_ref;
+		if ( array_key_exists($key, $probe_cache['remote_tracking'] ?? array()) ) {
+			$this->record_active_no_signal_probe_cache_stat($probe_cache, 'remote_tracking', true);
+			return $probe_cache['remote_tracking'][ $key ];
+		}
+
+		$this->record_active_no_signal_probe_cache_stat($probe_cache, 'remote_tracking', false);
+		$result                                 = $this->run_git($primary_path, sprintf('rev-parse --verify --quiet %s', escapeshellarg($remote_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$probe_cache['remote_tracking'][ $key ] = $result;
+		return $result;
+	}
+
+	/**
+	 * Cache the remote default ref for an active/no-signal report run.
+	 *
+	 * @param  string              $primary_path Primary checkout path.
+	 * @param  array<string,mixed> $probe_cache  Run-local git probe cache.
+	 * @return string|\WP_Error|null Fully-qualified remote default ref, timeout/error, or null.
+	 */
+	private function cached_active_no_signal_default_ref_probe( string $primary_path, array &$probe_cache ): string|\WP_Error|null {
+		if ( array_key_exists($primary_path, $probe_cache['default_ref'] ?? array()) ) {
+			$this->record_active_no_signal_probe_cache_stat($probe_cache, 'default_ref', true);
+			return $probe_cache['default_ref'][ $primary_path ];
+		}
+
+		$this->record_active_no_signal_probe_cache_stat($probe_cache, 'default_ref', false);
+		$result                                      = $this->resolve_remote_default_ref($primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$probe_cache['default_ref'][ $primary_path ] = $result;
+		return $result;
+	}
+
+	/**
+	 * Cache commits-outside-default probes for an active/no-signal report run.
+	 *
+	 * @param  string              $primary_path Primary checkout path.
+	 * @param  string              $default_ref  Fully-qualified remote default ref.
+	 * @param  string              $branch       Local branch name.
+	 * @param  array<string,mixed> $probe_cache  Run-local git probe cache.
+	 * @return array<string,mixed>|\WP_Error Git result or timeout/error.
+	 */
+	private function cached_active_no_signal_commits_outside_default_probe( string $primary_path, string $default_ref, string $branch, array &$probe_cache ): array|\WP_Error {
+		$key = $primary_path . '#' . $default_ref . '#' . $branch;
+		if ( array_key_exists($key, $probe_cache['commits_outside_default'] ?? array()) ) {
+			$this->record_active_no_signal_probe_cache_stat($probe_cache, 'commits_outside_default', true);
+			return $probe_cache['commits_outside_default'][ $key ];
+		}
+
+		$this->record_active_no_signal_probe_cache_stat($probe_cache, 'commits_outside_default', false);
+		$result = $this->run_git(
+			$primary_path,
+			sprintf('rev-list --count %s..%s', escapeshellarg($default_ref), escapeshellarg('refs/heads/' . $branch)),
+			self::CLEANUP_GIT_PROBE_TIMEOUT
+		);
+		$probe_cache['commits_outside_default'][ $key ] = $result;
+		return $result;
+	}
+
+	/**
+	 * Cache the GitHub slug for an active/no-signal report run.
+	 *
+	 * @param  string              $primary_path Primary checkout path.
+	 * @param  array<string,mixed> $probe_cache  Run-local git probe cache.
+	 * @return string|null owner/repo or null when origin is not GitHub.
+	 */
+	private function cached_active_no_signal_github_slug_probe( string $primary_path, array &$probe_cache ): ?string {
+		if ( array_key_exists($primary_path, $probe_cache['github_slug'] ?? array()) ) {
+			$this->record_active_no_signal_probe_cache_stat($probe_cache, 'github_slug', true);
+			return $probe_cache['github_slug'][ $primary_path ];
+		}
+
+		$this->record_active_no_signal_probe_cache_stat($probe_cache, 'github_slug', false);
+		$result                                      = $this->resolve_github_slug($primary_path);
+		$probe_cache['github_slug'][ $primary_path ] = $result;
+		return $result;
+	}
+
+	/**
+	 * Record active/no-signal probe cache hit/miss counts.
+	 *
+	 * @param array<string,mixed> $probe_cache Run-local git probe cache.
+	 * @param string              $bucket      Probe cache bucket.
+	 * @param bool                $hit         Whether the lookup was a cache hit.
+	 */
+	private function record_active_no_signal_probe_cache_stat( array &$probe_cache, string $bucket, bool $hit ): void {
+		$field = $hit ? 'hits' : 'misses';
+		if ( ! isset($probe_cache['stats'][ $bucket ][ $field ]) ) {
+			$probe_cache['stats'][ $bucket ][ $field ] = 0;
+		}
+		++$probe_cache['stats'][ $bucket ][ $field ];
 	}
 
 	/**
