@@ -2899,18 +2899,8 @@ class Workspace {
 
 		$cherry = $this->run_git($wt_path, sprintf('cherry %s HEAD', escapeshellarg($default_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
 		if ( ! is_wp_error($cherry) ) {
-			$lines = array_values(array_filter(array_map('trim', explode("\n", (string) ( $cherry['output'] ?? '' )))));
-			foreach ( $lines as $line ) {
-				if ( str_starts_with($line, '-') ) {
-					++$evidence['git_cherry']['equivalent'];
-				} elseif ( str_starts_with($line, '+') ) {
-					++$evidence['git_cherry']['unmatched'];
-				} else {
-					++$evidence['git_cherry']['unknown'];
-				}
-			}
-			$evidence['git_cherry']['total'] = count($lines);
-			if ( 0 < count($lines) && 0 === (int) $evidence['git_cherry']['unmatched'] && 0 === (int) $evidence['git_cherry']['unknown'] ) {
+			$evidence['git_cherry'] = $this->parse_git_cherry_counts( (string) ( $cherry['output'] ?? '' ) );
+			if ( 0 < (int) $evidence['git_cherry']['total'] && 0 === (int) $evidence['git_cherry']['unmatched'] && 0 === (int) $evidence['git_cherry']['unknown'] ) {
 				$evidence['effective_status'] = 'equivalent_clean';
 				return $evidence;
 			}
@@ -3006,16 +2996,7 @@ class Workspace {
 
 		$cherry = $this->time_worktree_probe($evidence['probe_timings_ms'], 'git_cherry', fn() => $this->run_git($wt_path, sprintf('cherry %s HEAD', escapeshellarg($default_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT));
 		if ( ! is_wp_error($cherry) ) {
-			$lines = array_values(array_filter(array_map('trim', explode("\n", (string) ( $cherry['output'] ?? '' )))));
-			foreach ( $lines as $line ) {
-				if ( str_starts_with($line, '-') ) {
-					++$evidence['unpushed_cherry']['equivalent'];
-				} elseif ( str_starts_with($line, '+') ) {
-					++$evidence['unpushed_cherry']['unmatched'];
-				} else {
-					++$evidence['unpushed_cherry']['unknown'];
-				}
-			}
+			$evidence['unpushed_cherry']           = $this->parse_git_cherry_counts( (string) ( $cherry['output'] ?? '' ) );
 			$evidence['unpushed_patch_equivalent'] = 0 === (int) $evidence['unpushed_cherry']['unmatched'] && 0 === (int) $evidence['unpushed_cherry']['unknown'];
 		}
 
@@ -3064,6 +3045,35 @@ class Workspace {
 		$evidence['effective_status'] = $this->classify_dirty_unpushed_effective_status($evidence);
 
 		return $evidence;
+	}
+
+	/**
+	 * Parse `git cherry` output into equivalent/unmatched/unknown counters.
+	 *
+	 * @param  string $output Raw `git cherry` output.
+	 * @return array<string,int>
+	 */
+	private function parse_git_cherry_counts( string $output ): array {
+		$counts = array(
+			'equivalent' => 0,
+			'unmatched'  => 0,
+			'unknown'    => 0,
+			'total'      => 0,
+		);
+
+		$lines = array_values(array_filter(array_map('trim', explode("\n", $output))));
+		foreach ( $lines as $line ) {
+			if ( str_starts_with($line, '-') ) {
+				++$counts['equivalent'];
+			} elseif ( str_starts_with($line, '+') ) {
+				++$counts['unmatched'];
+			} else {
+				++$counts['unknown'];
+			}
+		}
+		$counts['total'] = count($lines);
+
+		return $counts;
 	}
 
 	/**
