@@ -163,6 +163,10 @@ namespace {
     echo "Remote workspace backend - smoke\n";
 
     $backend = new RemoteWorkspaceBackend();
+    $assert('remote backend handles missing git runtime', RemoteWorkspaceBackend::should_handle_for_local_capabilities(false, false));
+    $assert('remote backend handles non-streaming git runtime', RemoteWorkspaceBackend::should_handle_for_local_capabilities(true, false));
+    $assert('remote backend leaves full local git runtime alone', ! RemoteWorkspaceBackend::should_handle_for_local_capabilities(true, true));
+
     $clone = $backend->clone_repo('https://github.com/chubes4/example.git');
     $assert('clone registers remote repo', ! is_wp_error($clone) && 'example' === $clone['name'] && 'github_api' === $clone['backend']);
     $assert('clone backend result omits model-facing guidance', ! is_wp_error($clone) && ! array_key_exists('next_required_tool', $clone) && ! array_key_exists('next_required_args', $clone));
