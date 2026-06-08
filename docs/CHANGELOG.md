@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.83] - 2026-06-08
+
+### Fixed
+- use remote workspace backend without streaming git
+
 ## [0.47.82] - 2026-06-08
 
 ### Fixed
