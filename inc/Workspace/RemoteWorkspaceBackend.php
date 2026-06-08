@@ -22,6 +22,10 @@ class RemoteWorkspaceBackend {
 	 * Whether the remote backend should handle workspace operations.
 	 */
 	public static function should_handle(): bool {
+		if ( self::has_registered_state() ) {
+			return true;
+		}
+
 		$diagnostic = \DataMachineCode\Support\GitRunner::diagnose();
 		$default    = self::should_handle_for_local_capabilities(
 			! empty($diagnostic['git_available']),
@@ -39,6 +43,18 @@ class RemoteWorkspaceBackend {
 	 */
 	public static function should_handle_for_local_capabilities( bool $git_available, bool $streaming_available ): bool {
 		return ! ( $git_available && $streaming_available );
+	}
+
+	/**
+	 * Whether remote workspace state already exists for this runtime.
+	 */
+	public static function has_registered_state(): bool {
+		$state = function_exists('get_option') ? get_option(self::OPTION, array()) : array();
+		if ( ! is_array($state) ) {
+			return false;
+		}
+
+		return ! empty($state['repos']) || ! empty($state['worktrees']);
 	}
 
 	/**
