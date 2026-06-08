@@ -168,15 +168,18 @@ class WorkspaceReader {
 
 			$entry_path = $target_path . '/' . $entry;
 			$is_dir     = is_dir($entry_path);
+			$size       = 0;
+
+			if ( ! $is_dir && is_file($entry_path) ) {
+				$file_size = filesize($entry_path);
+				$size      = false === $file_size ? 0 : (int) $file_size;
+			}
 
 			$item = array(
 				'name' => $entry,
 				'type' => $is_dir ? 'directory' : 'file',
+				'size' => $size,
 			);
-
-			if ( ! $is_dir ) {
-				$item['size'] = filesize($entry_path);
-			}
 
 			$items[] = $item;
 		}
