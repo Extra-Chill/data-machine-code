@@ -101,6 +101,10 @@ trait WorkspaceRepositoryLifecycle {
 				if ( null !== $branch ) {
 					$repo_info['branch'] = $branch;
 				}
+
+				if ( ! $is_worktree ) {
+					$repo_info['primary_freshness'] = $this->build_primary_freshness_report($entry_path, $entry);
+				}
 			}
 
 			$repos[] = $repo_info;
@@ -147,9 +151,22 @@ trait WorkspaceRepositoryLifecycle {
 
 		$name      = $this->sanitize_name($name);
 		$repo_path = $this->workspace_path . '/' . $name;
+		$allow_duplicate_remote = ! empty($options['allow_duplicate_remote']);
 
 		// Check if already exists.
 		if ( is_dir($repo_path) ) {
+			$existing_remote = file_exists($repo_path . '/.git') ? $this->git_get_remote($repo_path) : null;
+			if ( null !== $existing_remote && ! $allow_duplicate_remote && $this->normalize_git_remote_url($url) === $this->normalize_git_remote_url($existing_remote) ) {
+				return $this->clone_remote_exists_error(
+					$url,
+					$name,
+					array(
+						'name'   => $name,
+						'path'   => $repo_path,
+						'remote' => $existing_remote,
+					)
+				);
+			}
 			return $this->clone_target_exists_error($name, $repo_path);
 		}
 
@@ -157,6 +174,11 @@ trait WorkspaceRepositoryLifecycle {
 		$ensure = $this->ensure_exists();
 		if ( is_wp_error($ensure) ) {
 			return $ensure;
+		}
+
+		$existing_primary = $this->find_primary_by_remote($url, $name);
+		if ( null !== $existing_primary && ! $allow_duplicate_remote ) {
+			return $this->clone_remote_exists_error($url, $name, $existing_primary);
 		}
 
 		if ( ! GitRunner::supports_streaming() ) {
@@ -387,6 +409,35 @@ trait WorkspaceRepositoryLifecycle {
 	}
 
 	/**
+	 * Add recovery guidance when the same remote already has a primary checkout.
+	 *
+	 * @param  string              $url      Requested clone URL.
+	 * @param  string              $name     Requested workspace name.
+	 * @param  array<string,mixed> $existing Existing primary checkout summary.
+	 * @return \WP_Error Error with remediation data.
+	 */
+	private function clone_remote_exists_error( string $url, string $name, array $existing ): \WP_Error {
+		$existing_name = (string) ( $existing['name'] ?? '' );
+		$next_steps    = array(
+			sprintf('Reuse existing primary checkout: %s', $existing_name),
+			sprintf('Refresh it when needed: %s', $this->primary_refresh_command($existing_name)),
+			sprintf('Then create an isolated branch: wp datamachine-code workspace worktree add %s <branch>', $existing_name),
+		);
+
+		return new \WP_Error(
+			'repo_remote_exists',
+			sprintf('A primary checkout for %s already exists as "%s" at %s. Do not clone the same remote as "%s"; refresh/reuse the existing primary instead. Next steps: %s', $url, $existing_name, (string) ( $existing['path'] ?? '' ), $name, implode(' ', $next_steps)),
+			array(
+				'status'   => 409,
+				'url'      => $url,
+				'name'     => $name,
+				'existing' => $existing,
+				'next_steps' => $next_steps,
+			)
+		);
+	}
+
+	/**
 	 * Add recovery guidance to git clone failures.
 	 *
 	 * @param  \WP_Error $error     Clone process error.
@@ -595,6 +646,7 @@ trait WorkspaceRepositoryLifecycle {
 			'remote'      => $remote ? $remote : null,
 			'commit'      => $commit ? $commit : null,
 			'dirty'       => (int) $status,
+			'primary_freshness' => ! $parsed['is_worktree'] ? $this->build_primary_freshness_report($repo_path, $parsed['dir_name']) : null,
 		);
 	}
 }
