@@ -201,6 +201,12 @@ namespace {
         )
     );
     $assert('falls back to remote backend when local git clone is unavailable', ! is_wp_error($remote_fallback) && 'github_api' === ( $remote_fallback['repositories'][0]['result']['backend'] ?? '' ));
+    $assert(
+        'remote preload state keeps remote backend active for later tools',
+        \DataMachineCode\Workspace\RemoteWorkspaceBackend::has_registered_state()
+        && false === \DataMachineCode\Workspace\RemoteWorkspaceBackend::should_handle_for_local_capabilities(true, true)
+        && \DataMachineCode\Workspace\RemoteWorkspaceBackend::should_handle()
+    );
 
     if (array() !== $failures ) {
         echo "\nFailures:\n";
