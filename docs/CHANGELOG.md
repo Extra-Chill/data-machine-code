@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.87] - 2026-06-08
+
+### Fixed
+- guard workspace primary freshness
+
 ## [0.47.86] - 2026-06-08
 
 ### Fixed
