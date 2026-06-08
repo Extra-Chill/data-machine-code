@@ -22,10 +22,23 @@ class RemoteWorkspaceBackend {
 	 * Whether the remote backend should handle workspace operations.
 	 */
 	public static function should_handle(): bool {
+		$diagnostic = \DataMachineCode\Support\GitRunner::diagnose();
+		$default    = self::should_handle_for_local_capabilities(
+			! empty($diagnostic['git_available']),
+			! empty($diagnostic['git_available']) && ! empty($diagnostic['proc_open_available'])
+		);
+
 		return (bool) apply_filters(
 			'datamachine_code_remote_workspace_backend_should_handle',
-			! \DataMachineCode\Support\GitRunner::is_available()
+			$default
 		);
+	}
+
+	/**
+	 * Decide whether constrained runtimes need the GitHub-backed backend.
+	 */
+	public static function should_handle_for_local_capabilities( bool $git_available, bool $streaming_available ): bool {
+		return ! ( $git_available && $streaming_available );
 	}
 
 	/**
