@@ -133,6 +133,27 @@ namespace {
 		$assert("{$tool_name} does not duplicate parameter schema", ! array_key_exists('parameters', $declaration));
 	}
 
+	// Write/git workspace tools must be projected so coding agents can mutate
+	// files, but gated behind explicit opt-in so read-only tasks never receive
+	// file-mutating tools by default.
+	$expected_write = array(
+		'workspace_write'       => 'datamachine-code/workspace-write',
+		'workspace_edit'        => 'datamachine-code/workspace-edit',
+		'workspace_apply_patch' => 'datamachine-code/workspace-apply-patch',
+		'workspace_delete'      => 'datamachine-code/workspace-delete',
+		'workspace_git_add'     => 'datamachine-code/workspace-git-add',
+		'workspace_git_commit'  => 'datamachine-code/workspace-git-commit',
+		'workspace_git_push'    => 'datamachine-code/workspace-git-push',
+	);
+
+	foreach ( $expected_write as $tool_name => $ability_slug ) {
+		$declaration = $tools[ $tool_name ] ?? array();
+		$assert("{$tool_name} is projected", isset($tools[ $tool_name ]));
+		$assert("{$tool_name} points at canonical ability", $ability_slug === ( $declaration['ability'] ?? '' ));
+		$assert("{$tool_name} is available to chat", in_array('chat', $declaration['modes'] ?? array(), true));
+		$assert("{$tool_name} requires opt-in", true === ( $declaration['requires_opt_in'] ?? false ));
+	}
+
 	$workspace_result = dmc_projection_normalize_tool_result(
 		array(
 			'success' => true,
