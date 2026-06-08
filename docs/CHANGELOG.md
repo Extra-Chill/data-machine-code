@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.88] - 2026-06-08
+
+### Changed
+- Drop vestigial test_backend setting
+
+### Fixed
+- keep workspace ls sizes schema-safe
+
 ## [0.47.87] - 2026-06-08
 
 ### Fixed
