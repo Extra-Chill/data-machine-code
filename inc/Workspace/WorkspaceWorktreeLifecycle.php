@@ -720,7 +720,7 @@ trait WorkspaceWorktreeLifecycle {
 				continue;
 			}
 			$entry_path = $this->workspace_path . '/' . $entry;
-			if ( ! is_dir($entry_path . '/.git') ) {
+			if ( ! file_exists($entry_path . '/.git') ) {
 				continue;
 			}
 			$primaries[] = $entry;
