@@ -3,10 +3,7 @@
   "changelog_target": "docs/CHANGELOG.md",
   "extensions": {
     "wordpress": {
-      "release_latest_branch": "release-latest",
-      "settings": {
-        "test_backend": "host-smoke"
-      }
+      "release_latest_branch": "release-latest"
     }
   },
   "id": "data-machine-code",
