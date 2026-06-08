@@ -3752,6 +3752,20 @@ class WorkspaceCommand extends BaseCommand {
 
 	private function render_workspace_error( \WP_Error $error ): void {
 		$data = (array) $error->get_error_data();
+		if ( 'workspace_repo_busy' !== $error->get_error_code() && ! empty($data['next_commands']) && is_array($data['next_commands']) ) {
+			WP_CLI::warning($error->get_error_message());
+			WP_CLI::log('Next commands:');
+			foreach ( $data['next_commands'] as $command ) {
+				if ( is_scalar($command) && '' !== trim( (string) $command) ) {
+					WP_CLI::log('  ' . (string) $command);
+				}
+			}
+			if ( ! empty($data['hint']) ) {
+				WP_CLI::log('Hint: ' . (string) $data['hint']);
+			}
+			WP_CLI::error($error->get_error_message());
+			return;
+		}
 		if ( 'workspace_repo_busy' !== $error->get_error_code() ) {
 			WP_CLI::error($error->get_error_message());
 			return;
