@@ -321,6 +321,9 @@ namespace {
     $run('git add README.md', $primary);
     $run('git commit -m initial', $primary);
     $run('git remote add origin https://github.com/acme/demo.git', $primary);
+    $linked_primary = DATAMACHINE_WORKSPACE_PATH . '/linked-primary';
+    $run('git worktree add ../linked-primary -b linked-primary HEAD', $primary);
+    $assert(true, is_file($linked_primary . '/.git'), 'linked primary fixture uses a .git file');
     // Synthetic runtime registration so the env-driven session capture has a
     // runtime to scan. DMC enumerates no runtime IDs itself — the integration
     // layer (here, the test) declares them via the public filter.
@@ -334,6 +337,9 @@ namespace {
 
     $ws = new \DataMachineCode\Workspace\Workspace();
     $GLOBALS['wpdb'] = new DatamachineCodeLifecycleInventoryWpdb();
+    $linked_list = $ws->worktree_list('linked-primary', null, array( 'include_status' => false, 'include_disk' => false ));
+    $linked_items = array_values(array_filter($linked_list['worktrees'] ?? array(), fn( $wt ) => ( $wt['handle'] ?? '' ) === 'linked-primary'));
+    $assert(1, count($linked_items), 'worktree_list discovers primary checkouts whose .git is a file');
 
     $GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds'] = function ( array $thresholds ): array {
         $thresholds['refuse_free_bytes'] = PHP_INT_MAX;
