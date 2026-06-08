@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.82] - 2026-06-08
+
+### Fixed
+- discover worktree-backed workspace primaries
+
 ## [0.47.81] - 2026-06-08
 
 ### Fixed
