@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.86] - 2026-06-08
+
+### Fixed
+- handle no-git worktree cleanup
+
 ## [0.47.85] - 2026-06-08
 
 ### Fixed
