@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.81] - 2026-06-08
+
+### Fixed
+- register workspace preload artifacts early
+
 ## [0.47.80] - 2026-06-07
 
 ### Fixed
