@@ -196,6 +196,34 @@ namespace {
         $assert_same('start', $events[0]['phase'] ?? null, 'first progress event has start phase');
         $assert(str_contains($events[0]['message'] ?? '', 'Cloning'), 'start progress includes clone context');
 
+        echo "\n[3a] Duplicate same-remote primary is refused with reuse guidance\n";
+        $duplicate = $workspace_object->clone_repo($upstream, 'fixture-clone-copy');
+        $assert(is_wp_error($duplicate), 'same remote clone reports an error');
+        $assert_same('repo_remote_exists', $duplicate->get_error_code(), 'same remote clone uses repo_remote_exists code');
+        $assert(str_contains($duplicate->get_error_message(), 'fixture-clone'), 'same remote clone names the existing primary');
+        $assert(str_contains($duplicate->get_error_message(), 'workspace git pull fixture-clone --allow-primary-mutation'), 'same remote clone includes refresh command');
+        $assert(str_contains($duplicate->get_error_message(), 'workspace worktree add fixture-clone <branch>'), 'same remote clone includes worktree command');
+        $exact_duplicate = $workspace_object->clone_repo($upstream);
+        $assert(is_wp_error($exact_duplicate), 'exact same remote clone reports an error');
+        $assert_same('repo_remote_exists', $exact_duplicate->get_error_code(), 'exact same remote clone uses repo_remote_exists code');
+        $exact_duplicate_opt_in = $workspace_object->clone_repo($upstream, 'fixture-clone', array( 'allow_duplicate_remote' => true ));
+        $assert(is_wp_error($exact_duplicate_opt_in), 'duplicate-remote opt-in does not overwrite an existing target');
+        $assert_same('repo_exists', $exact_duplicate_opt_in->get_error_code(), 'duplicate-remote opt-in preserves target-exists error for exact path');
+        $intentional_duplicate = $workspace_object->clone_repo($upstream, 'fixture-release-copy', array( 'allow_duplicate_remote' => true ));
+        $assert(! is_wp_error($intentional_duplicate), 'explicit duplicate-remote opt-in permits custom primary clone');
+        $assert(is_dir($workspace . '/fixture-release-copy/.git'), 'explicit duplicate-remote clone creates custom primary');
+
+        echo "\n[3b] Primary freshness reports stale local remote refs\n";
+        file_put_contents($upstream . '/README.md', "# fixture\n\nupdated\n");
+        $run('git -C ' . escapeshellarg($upstream) . ' add README.md');
+        $run('git -C ' . escapeshellarg($upstream) . ' -c user.name=Test -c user.email=test@example.com commit -q -m update');
+        $run('git -C ' . escapeshellarg($workspace . '/fixture-clone') . ' fetch -q origin');
+        $show = $workspace_object->show_repo('fixture-clone');
+        $assert(! is_wp_error($show), 'show_repo succeeds for primary');
+        $assert_same('stale', $show['primary_freshness']['status'] ?? null, 'primary freshness reports stale status');
+        $assert_same(1, $show['primary_freshness']['behind'] ?? null, 'primary freshness reports behind count');
+        $assert(str_contains($show['primary_freshness']['suggested_command'] ?? '', 'workspace git pull fixture-clone --allow-primary-mutation'), 'primary freshness includes refresh command');
+
         $remote_url = getenv('REMOTE_CLONE_URL');
         if (is_string($remote_url) && '' !== trim($remote_url) ) {
             echo "\n[4] Remote clone smoke\n";

@@ -102,7 +102,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-list',
 				array(
 					'label'               => 'List Workspace Repos',
-					'description'         => 'List repositories in the agent workspace.',
+					'description'         => 'List repositories in the agent workspace. Primary rows include local-ref freshness metadata; refresh stale primaries before using them for verification.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -134,6 +134,7 @@ class WorkspaceAbilities {
 										// Local-only repos have no remote; detached HEAD has no branch.
 										'remote' => array( 'type' => array( 'string', 'null' ) ),
 										'branch' => array( 'type' => array( 'string', 'null' ) ),
+										'primary_freshness' => self::primaryFreshnessSchema(),
 									),
 								),
 							),
@@ -178,7 +179,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-show',
 				array(
 					'label'               => 'Show Workspace Repo',
-					'description'         => 'Show detailed info about a workspace repository (branch, remote, latest commit, dirty status).',
+					'description'         => 'Show detailed info about a workspace repository (branch, remote, latest commit, dirty status, and primary freshness).',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -204,6 +205,7 @@ class WorkspaceAbilities {
 							'remote'      => array( 'type' => array( 'string', 'null' ) ),
 							'commit'      => array( 'type' => array( 'string', 'null' ) ),
 							'dirty'       => array( 'type' => 'integer' ),
+							'primary_freshness' => self::primaryFreshnessSchema(),
 						),
 					),
 					'execute_callback'    => array( self::class, 'showRepo' ),
@@ -383,7 +385,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-clone',
 				array(
 					'label'               => 'Clone Workspace Repo',
-					'description'         => 'Clone a git repository into the workspace as a primary checkout. Worktrees are created separately via `workspace-worktree-add`.',
+					'description'         => 'Clone a git repository into the workspace as a primary checkout only when no primary for that remote already exists. If the remote exists, refresh/reuse that primary and create a worktree via `workspace-worktree-add`.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -403,6 +405,10 @@ class WorkspaceAbilities {
 							'auth_token_env' => array(
 								'type'        => 'string',
 								'description' => 'Optional environment variable name containing a bearer token for HTTPS clone authentication.',
+							),
+							'allow_duplicate_remote' => array(
+								'type'        => 'boolean',
+								'description' => 'Explicitly allow cloning a second top-level primary for a remote already present in the workspace. Default false; use only for deliberate release/proof checkouts.',
 							),
 						),
 						'required'   => array( 'url' ),
@@ -2576,6 +2582,31 @@ class WorkspaceAbilities {
 	}
 
 	/**
+	 * Shared schema for primary checkout freshness metadata.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private static function primaryFreshnessSchema(): array {
+		return array(
+			'type'       => array( 'object', 'null' ),
+			'properties' => array(
+				'status'            => array(
+					'type'        => 'string',
+					'description' => 'One of current, stale, diverged, ahead, detached, no_upstream, or unknown.',
+				),
+				'branch'            => array( 'type' => array( 'string', 'null' ) ),
+				'upstream'          => array( 'type' => array( 'string', 'null' ) ),
+				'behind'            => array( 'type' => array( 'integer', 'null' ) ),
+				'ahead'             => array( 'type' => array( 'integer', 'null' ) ),
+				'detached'          => array( 'type' => 'boolean' ),
+				'local_refs'        => array( 'type' => 'boolean' ),
+				'fetch_checked'     => array( 'type' => 'boolean' ),
+				'suggested_command' => array( 'type' => array( 'string', 'null' ) ),
+			),
+		);
+	}
+
+	/**
 	 * Clone a git repository into the workspace.
 	 *
 	 * @param  array $input Input parameters with 'url', optional 'name'.
@@ -2595,8 +2626,9 @@ class WorkspaceAbilities {
 			$input['url'] ?? '',
 			$input['name'] ?? null,
 			array(
-				'full'           => (bool) ( $input['full'] ?? false ),
-				'auth_token_env' => $input['auth_token_env'] ?? '',
+				'full'                   => (bool) ( $input['full'] ?? false ),
+				'auth_token_env'         => $input['auth_token_env'] ?? '',
+				'allow_duplicate_remote' => ! empty($input['allow_duplicate_remote']),
 			)
 		);
 	}

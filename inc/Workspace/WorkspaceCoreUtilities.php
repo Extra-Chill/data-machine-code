@@ -406,6 +406,187 @@ trait WorkspaceCoreUtilities {
 	}
 
 	/**
+	 * Normalize a git remote URL for same-repository comparisons.
+	 *
+	 * @param  string $url Git remote URL.
+	 * @return string Normalized URL-ish key.
+	 */
+	private function normalize_git_remote_url( string $url ): string {
+		$url = trim($url);
+		$url = rtrim($url, '/');
+		$url = preg_replace('/\.git$/', '', $url) ?? $url;
+
+		if ( preg_match('/^([^@\s]+)@([^:\s]+):(.+)$/', $url, $matches) ) {
+			$url = 'ssh://' . $matches[2] . '/' . $matches[3];
+		}
+
+		$parts = function_exists('wp_parse_url') ? wp_parse_url($url) : parse_url($url);
+		if ( is_array($parts) && ! empty($parts['host']) ) {
+			$host = strtolower( (string) $parts['host']);
+			$path = trim( (string) ( $parts['path'] ?? '' ), '/');
+			$path = preg_replace('/\.git$/', '', $path) ?? $path;
+			return strtolower($host . '/' . $path);
+		}
+
+		return strtolower($url);
+	}
+
+	/**
+	 * Find an existing primary checkout whose origin remote matches the URL.
+	 *
+	 * @param  string $url          Git remote URL to match.
+	 * @param  string $exclude_name Optional primary name to ignore.
+	 * @return array{name: string, path: string, remote: string}|null
+	 */
+	private function find_primary_by_remote( string $url, string $exclude_name = '' ): ?array {
+		$needle = $this->normalize_git_remote_url($url);
+		if ( '' === $needle || ! is_dir($this->workspace_path) ) {
+			return null;
+		}
+
+		$entries = scandir($this->workspace_path);
+		if ( ! is_array($entries) ) {
+			return null;
+		}
+
+		foreach ( $entries as $entry ) {
+			if ( '.' === $entry || '..' === $entry || str_contains($entry, '@') || $entry === $exclude_name ) {
+				continue;
+			}
+
+			$path = $this->workspace_path . '/' . $entry;
+			if ( ! is_dir($path) || ! file_exists($path . '/.git') ) {
+				continue;
+			}
+
+			$remote = $this->git_get_remote($path);
+			if ( null !== $remote && $needle === $this->normalize_git_remote_url($remote) ) {
+				return array(
+					'name'   => $entry,
+					'path'   => $path,
+					'remote' => $remote,
+				);
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Build local-ref freshness metadata for a primary checkout.
+	 *
+	 * This intentionally does not fetch. Read-only status/list/hygiene calls should
+	 * reveal stale local remote refs without mutating repo state or requiring auth.
+	 *
+	 * @param  string $repo_path Primary checkout path.
+	 * @param  string $handle    Workspace primary handle.
+	 * @return array<string,mixed>|null
+	 */
+	private function build_primary_freshness_report( string $repo_path, string $handle ): ?array {
+		if ( ! file_exists($repo_path . '/.git') ) {
+			return null;
+		}
+
+		$status_result = $this->run_git($repo_path, 'status --porcelain=v1 --branch --untracked-files=no');
+		if ( is_wp_error($status_result) ) {
+			return array(
+				'status'        => 'unknown',
+				'branch'        => null,
+				'upstream'      => null,
+				'behind'        => null,
+				'ahead'         => null,
+				'detached'      => false,
+				'local_refs'    => true,
+				'fetch_checked' => false,
+			);
+		}
+
+		$header   = strtok((string) ( $status_result['output'] ?? '' ), "\n");
+		$header   = false === $header ? '' : trim($header);
+		$branch   = null;
+		$detached = false;
+		$upstream      = null;
+		$behind   = 0;
+		$ahead    = 0;
+		$status   = 'unknown';
+
+		if ( preg_match('/^## HEAD \(no branch\)/', $header) ) {
+			$detached = true;
+			$status = 'detached';
+		} elseif ( preg_match('/^## (.+?)(?:\.\.\.([^\s\[]+))?(?: \[(.+)\])?$/', $header, $matches) ) {
+			$branch   = trim((string) $matches[1]);
+			$upstream = isset($matches[2]) && '' !== $matches[2] ? trim((string) $matches[2]) : null;
+			$divergence = isset($matches[3]) ? (string) $matches[3] : '';
+
+			if ( preg_match('/behind (\d+)/', $divergence, $behind_match) ) {
+				$behind = (int) $behind_match[1];
+			}
+			if ( preg_match('/ahead (\d+)/', $divergence, $ahead_match) ) {
+				$ahead = (int) $ahead_match[1];
+			}
+
+			if ( null === $upstream ) {
+				$status = 'no_upstream';
+			} elseif ( $behind > 0 && $ahead > 0 ) {
+				$status = 'diverged';
+			} elseif ( $behind > 0 ) {
+				$status = 'stale';
+			} elseif ( $ahead > 0 ) {
+				$status = 'ahead';
+			} else {
+				$status = 'current';
+			}
+		}
+
+		$report = array(
+			'status'        => $status,
+			'branch'        => $branch,
+			'upstream'      => $upstream,
+			'behind'        => null === $upstream ? null : $behind,
+			'ahead'         => null === $upstream ? null : $ahead,
+			'detached'      => $detached,
+			'local_refs'    => true,
+			'fetch_checked' => false,
+		);
+
+		if ( $this->primary_freshness_needs_refresh($status) ) {
+			$report['suggested_command'] = $this->primary_refresh_command($handle);
+		}
+
+		return $report;
+	}
+
+	/**
+	 * Build the canonical command for refreshing a primary checkout.
+	 *
+	 * @param  string $handle Primary workspace handle.
+	 * @return string WP-CLI command.
+	 */
+	private function primary_refresh_command( string $handle ): string {
+		return sprintf('wp datamachine-code workspace git pull %s --allow-primary-mutation', $handle);
+	}
+
+	/**
+	 * Whether a primary freshness status needs a pull/reconciliation refresh.
+	 *
+	 * @param  string $status Freshness status.
+	 * @return bool True when refresh guidance should be shown.
+	 */
+	private function primary_freshness_needs_refresh( string $status ): bool {
+		return in_array($status, array( 'stale', 'diverged' ), true);
+	}
+
+	/**
+	 * Whether a primary freshness status should be surfaced in hygiene attention.
+	 *
+	 * @param  string $status Freshness status.
+	 * @return bool True when attention should be shown.
+	 */
+	private function primary_freshness_needs_attention( string $status ): bool {
+		return in_array($status, array( 'stale', 'diverged', 'detached', 'no_upstream', 'unknown' ), true);
+	}
+
+	/**
 	 * Ensure the workspace directory exists with correct permissions.
 	 *
 	 * @return array{success: bool, path: string, created?: bool}|\WP_Error

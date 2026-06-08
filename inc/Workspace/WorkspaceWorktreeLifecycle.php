@@ -842,6 +842,10 @@ trait WorkspaceWorktreeLifecycle {
 					$disk
 				);
 
+				if ( $is_primary ) {
+					$row['primary_freshness'] = $this->build_primary_freshness_report($wt['path'], $handle);
+				}
+
 				$base_branch_warning = $this->base_branch_worktree_warning($row);
 				if ( null !== $base_branch_warning ) {
 						$row['base_branch_warning'] = $base_branch_warning;
@@ -1287,6 +1291,22 @@ trait WorkspaceWorktreeLifecycle {
 				'allow_stale'                   => false,
 			)
 		);
+	}
+
+	/**
+	 * Remove a worktree rejected after creation and delete its new local branch.
+	 *
+	 * @param string $primary_path   Primary checkout path.
+	 * @param string $wt_path        Worktree path.
+	 * @param string $branch         Branch checked out in the worktree.
+	 * @param bool   $created_branch Whether the branch was created by this call.
+	 * @return void
+	 */
+	private function rollback_rejected_worktree( string $primary_path, string $wt_path, string $branch, bool $created_branch ): void {
+		$this->run_git($primary_path, sprintf('worktree remove --force %s', escapeshellarg($wt_path)));
+		if ( $created_branch ) {
+			$this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)));
+		}
 	}
 
 	/**

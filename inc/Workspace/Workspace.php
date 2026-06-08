@@ -74,6 +74,11 @@ class Workspace {
 	public const ARTIFACT_CLEANUP_DEFAULT_LIMIT = 100;
 
 	/**
+	 * Default cap on top-level workspace entries sized by hygiene reports.
+	 */
+	public const HYGIENE_DEFAULT_SIZE_LIMIT = 1000;
+
+	/**
 	 * @var string Resolved workspace path.
 	 */
 	private string $workspace_path;

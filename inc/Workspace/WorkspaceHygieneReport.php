@@ -103,6 +103,7 @@ trait WorkspaceHygieneReport {
 						$include_sizes ? (string) ( $size_report['mode_note'] ?? '' ) : 'Size scan disabled by request.',
 						$include_worktree_status ? 'Full worktree status enabled; this may run git status across every worktree.' : 'Worktree status uses cheap top-level inventory; pass --include-worktree-status for full git status.',
 						$include_cleanup ? 'Cleanup summary uses inventory-only dry-run detection (--inventory-only --skip-github); no per-worktree git probes or GitHub API lookups are required.' : 'Cleanup dry-run disabled by request.',
+						! empty($worktree_summary['stale_primaries']) ? 'One or more primary checkouts are behind their configured upstream according to local remote refs; refresh before using a primary for verification.' : '',
 						! empty($worktree_summary['base_branch_worktree_count']) ? 'One or more non-primary worktrees have a base branch checked out; gh pr merge --delete-branch can merge remotely but fail local cleanup.' : '',
 					)
 				)
@@ -379,6 +380,10 @@ trait WorkspaceHygieneReport {
 				'metadata'              => $metadata,
 			);
 
+			if ( 'primary' === $kind ) {
+				$row['primary_freshness'] = $this->build_primary_freshness_report($path, $parsed['dir_name']);
+			}
+
 			$base_branch_warning = $this->base_branch_worktree_warning($row);
 			if ( null !== $base_branch_warning ) {
 				$row['base_branch_warning'] = $base_branch_warning;
@@ -544,6 +549,9 @@ trait WorkspaceHygieneReport {
 			'protected_dirty'            => 0,
 			'protected_unpushed'         => 0,
 			'missing_metadata'           => 0,
+			'stale_primaries'            => 0,
+			'primary_freshness_by_status' => array(),
+			'primary_freshness_attention' => array(),
 			'base_branch_worktree_count' => 0,
 			'base_branch_worktrees'      => array(),
 			'by_liveness'                => array(
@@ -558,6 +566,23 @@ trait WorkspaceHygieneReport {
 		foreach ( $worktrees as $row ) {
 			if ( ! empty($row['is_primary']) ) {
 				++$summary['primaries'];
+				$freshness = is_array($row['primary_freshness'] ?? null) ? $row['primary_freshness'] : null;
+				$status    = is_array($freshness) ? (string) ( $freshness['status'] ?? 'unknown' ) : 'unknown';
+				$summary['primary_freshness_by_status'][ $status ] = (int) ( $summary['primary_freshness_by_status'][ $status ] ?? 0 ) + 1;
+				if ( $this->primary_freshness_needs_attention($status) ) {
+					if ( $this->primary_freshness_needs_refresh($status) ) {
+						++$summary['stale_primaries'];
+					}
+					$summary['primary_freshness_attention'][] = array(
+						'handle'            => (string) ( $row['handle'] ?? '' ),
+						'status'            => $status,
+						'branch'            => is_array($freshness) ? ( $freshness['branch'] ?? null ) : null,
+						'upstream'          => is_array($freshness) ? ( $freshness['upstream'] ?? null ) : null,
+						'behind'            => is_array($freshness) ? ( $freshness['behind'] ?? null ) : null,
+						'ahead'             => is_array($freshness) ? ( $freshness['ahead'] ?? null ) : null,
+						'suggested_command' => is_array($freshness) ? ( $freshness['suggested_command'] ?? null ) : null,
+					);
+				}
 			} elseif ( ! empty($row['is_worktree']) ) {
 				++$summary['worktrees'];
 			} elseif ( 'artifact' === (string) ( $row['kind'] ?? '' ) ) {

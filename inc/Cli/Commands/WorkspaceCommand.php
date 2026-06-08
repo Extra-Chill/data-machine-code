@@ -166,14 +166,17 @@ class WorkspaceCommand extends BaseCommand {
 
 		$items = array_map(
 			function ( $repo ) {
+				$freshness = is_array($repo['primary_freshness'] ?? null) ? $repo['primary_freshness'] : null;
 				return array(
-					'name'   => $repo['name'],
-					'kind'   => ! empty($repo['is_worktree']) ? 'worktree' : 'primary',
-					'repo'   => $repo['repo'] ?? $repo['name'],
-					'branch' => $repo['branch'] ?? '-',
-					'remote' => $repo['remote'] ?? '-',
-					'git'    => $repo['git'] ? 'yes' : 'no',
-					'path'   => $repo['path'],
+					'name'             => $repo['name'],
+					'kind'             => ! empty($repo['is_worktree']) ? 'worktree' : 'primary',
+					'repo'             => $repo['repo'] ?? $repo['name'],
+					'branch'           => $repo['branch'] ?? '-',
+					'freshness'        => is_array($freshness) ? (string) ( $freshness['status'] ?? '-' ) : '-',
+					'behind'           => is_array($freshness) && null !== ( $freshness['behind'] ?? null ) ? (string) $freshness['behind'] : '-',
+					'remote'           => $repo['remote'] ?? '-',
+					'git'              => $repo['git'] ? 'yes' : 'no',
+					'path'             => $repo['path'],
 				);
 			},
 			$result['repos']
@@ -181,7 +184,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$this->format_items(
 			$items,
-			array( 'name', 'kind', 'repo', 'branch', 'remote', 'git' ),
+			array( 'name', 'kind', 'repo', 'branch', 'freshness', 'behind', 'remote', 'git' ),
 			$assoc_args,
 			'name'
 		);
@@ -200,6 +203,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * [--full]
 	 * : Disable the default blobless partial clone (`--filter=blob:none`). Useful for servers that do not support partial clone or when all blobs are needed immediately.
+	 *
+	 * [--allow-duplicate-remote]
+	 * : Explicitly allow cloning a second top-level primary for a remote already present in the workspace. Use only for deliberate release/proof checkouts.
 	 *
 	 * ## EXAMPLES
 	 *
@@ -222,7 +228,8 @@ class WorkspaceCommand extends BaseCommand {
 			$args[0],
 			$assoc_args['name'] ?? null,
 			array(
-				'full'              => isset($assoc_args['full']),
+				'full'                   => isset($assoc_args['full']),
+				'allow_duplicate_remote' => isset($assoc_args['allow-duplicate-remote']),
 				'progress_callback' => static function ( array $event ): void {
 					$elapsed = number_format( (float) ( $event['elapsed'] ?? 0 ), 1);
 					WP_CLI::log(sprintf('[clone %ss] %s', $elapsed, (string) ( $event['message'] ?? '' )));
@@ -1092,6 +1099,16 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log(sprintf('Branch:   %s', $result['branch'] ?? '-'));
 		WP_CLI::log(sprintf('Remote:   %s', $result['remote'] ?? '-'));
 		WP_CLI::log(sprintf('Latest:   %s', $result['commit'] ?? '-'));
+		if ( empty($result['is_worktree']) && is_array($result['primary_freshness'] ?? null) ) {
+			$freshness = $result['primary_freshness'];
+			WP_CLI::log(sprintf('Freshness: %s', (string) ( $freshness['status'] ?? 'unknown' )));
+			WP_CLI::log(sprintf('Upstream: %s', (string) ( $freshness['upstream'] ?? '-' )));
+			WP_CLI::log(sprintf('Behind:   %s', null === ( $freshness['behind'] ?? null ) ? '-' : (string) $freshness['behind']));
+			WP_CLI::log(sprintf('Ahead:    %s', null === ( $freshness['ahead'] ?? null ) ? '-' : (string) $freshness['ahead']));
+			if ( ! empty($freshness['suggested_command']) ) {
+				WP_CLI::log(sprintf('Refresh:  %s', (string) $freshness['suggested_command']));
+			}
+		}
 
 		$dirty = $result['dirty'] ?? 0;
 		WP_CLI::log(sprintf('Dirty:    %s', ( 0 === $dirty ) ? 'no' : "yes ({$dirty} files)"));
