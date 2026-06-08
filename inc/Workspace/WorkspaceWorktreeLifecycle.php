@@ -1058,7 +1058,13 @@ trait WorkspaceWorktreeLifecycle {
 				$result = $this->run_git($primary_path, $cmd);
 
 				if ( is_wp_error($result) ) {
-					return $result;
+					return $this->worktree_git_unavailable_with_host_commands(
+						$result,
+						'Remove workspace worktree',
+						array(
+							sprintf('git -C %s %s', escapeshellarg($primary_path), $cmd),
+						)
+					);
 				}
 
 				WorktreeContextInjector::forget_metadata($wt_handle);
@@ -1083,10 +1089,12 @@ trait WorkspaceWorktreeLifecycle {
 	/**
 	 * Prune stale worktree registry entries across all primaries.
 	 *
-	 * @return array{success: bool, pruned: array}|\WP_Error
+	 * @return array{success: bool, pruned: array, skipped?: array, next_commands?: array, inventory?: array}|\WP_Error
 	 */
 	public function worktree_prune(): array|\WP_Error {
-		$pruned = array();
+		$pruned        = array();
+		$skipped       = array();
+		$next_commands = array();
 
 		if ( ! is_dir($this->workspace_path) ) {
 			return array(
@@ -1110,6 +1118,15 @@ trait WorkspaceWorktreeLifecycle {
 				fn() => $this->run_git($primary_path, 'worktree prune -v')
 			);
 			if ( is_wp_error($result) ) {
+				if ( 'datamachine_workspace_git_unavailable' === $result->get_error_code() ) {
+					$skipped[]       = array(
+						'repo'         => $entry,
+						'primary_path' => $primary_path,
+						'reason'       => $result->get_error_message(),
+					);
+					$next_commands[] = sprintf('git -C %s worktree prune -v', escapeshellarg($primary_path));
+					continue;
+				}
 				return $result;
 			}
 			$pruned[] = $entry;
@@ -1121,10 +1138,38 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		return array(
-			'success'   => true,
-			'pruned'    => $pruned,
-			'inventory' => $refresh,
+			'success'       => true,
+			'pruned'        => $pruned,
+			'skipped'       => $skipped,
+			'next_commands' => array_values(array_unique($next_commands)),
+			'inventory'     => $refresh,
 		);
+	}
+
+	/**
+	 * Attach host-shell remediation commands to local-git-unavailable worktree errors.
+	 *
+	 * @param \WP_Error         $error         Original git error.
+	 * @param string            $operation     Human-readable operation.
+	 * @param array<int,string> $next_commands Exact commands to run in a host shell.
+	 * @return \WP_Error
+	 */
+	private function worktree_git_unavailable_with_host_commands( \WP_Error $error, string $operation, array $next_commands ): \WP_Error {
+		if ( 'datamachine_workspace_git_unavailable' !== $error->get_error_code() ) {
+			return $error;
+		}
+
+		$data                  = (array) $error->get_error_data();
+		$data['operation']     = $operation;
+		$data['next_commands'] = array_values(array_filter(array_map('strval', $next_commands)));
+		$data['hint']          = 'Run the listed command from a host shell with local git access, then rerun workspace worktree prune to refresh DMC inventory.';
+
+		$message = $error->get_error_message();
+		if ( ! empty($data['next_commands'][0]) ) {
+			$message .= ' Host command: ' . $data['next_commands'][0];
+		}
+
+		return new \WP_Error($error->get_error_code(), $message, $data);
 	}
 
 

@@ -135,6 +135,64 @@ class RemoteWorkspaceBackend {
 	}
 
 	/**
+	 * Remove a registered remote worktree branch from local remote-workspace state.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function worktree_remove( string $repo_name, string $branch ): array|\WP_Error {
+		$repo_name = $this->resolve_alias($repo_name);
+		$branch    = trim($branch);
+		if ( '' === $repo_name || '' === $branch ) {
+			return new \WP_Error('remote_workspace_worktree_remove_missing_args', 'Repository and branch are required.', array( 'status' => 400 ));
+		}
+
+		$handle = $repo_name . '@' . $this->branch_slug($branch);
+		$state  = $this->state();
+		if ( ! isset($state['worktrees'][ $handle ]) ) {
+			return new \WP_Error('remote_workspace_worktree_not_found', sprintf('Remote workspace worktree "%s" is not registered.', $handle), array( 'status' => 404 ));
+		}
+
+		unset($state['worktrees'][ $handle ]);
+		$this->save_state($state);
+
+		return array(
+			'success' => true,
+			'backend' => 'github_api',
+			'handle'  => $handle,
+			'message' => sprintf('Remote workspace worktree "%s" removed from runtime state.', $handle),
+		);
+	}
+
+	/**
+	 * Prune remote worktree state whose primary repo registration disappeared.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public function worktree_prune(): array {
+		$state  = $this->state();
+		$pruned = array();
+		foreach ( $state['worktrees'] as $handle => $worktree ) {
+			$repo_name = is_array($worktree) ? (string) ( $worktree['repo_name'] ?? '' ) : '';
+			if ( '' !== $repo_name && isset($state['repos'][ $repo_name ]) ) {
+				continue;
+			}
+
+			unset($state['worktrees'][ $handle ]);
+			$pruned[] = (string) $handle;
+		}
+
+		if ( array() !== $pruned ) {
+			$this->save_state($state);
+		}
+
+		return array(
+			'success' => true,
+			'backend' => 'github_api',
+			'pruned'  => $pruned,
+		);
+	}
+
+	/**
 	 * Read a file from GitHub or pending remote workspace state.
 	 *
 	 * @return array<string,mixed>|\WP_Error

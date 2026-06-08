@@ -3220,6 +3220,14 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function worktreeRemove( array $input ): array|\WP_Error {
+		if ( RemoteWorkspaceBackend::has_registered_state() && RemoteWorkspaceBackend::should_handle() ) {
+			$result = ( new RemoteWorkspaceBackend() )->worktree_remove(
+				$input['repo'] ?? '',
+				$input['branch'] ?? ''
+			);
+			return self::decorate_remote_workspace_result('worktree_remove', $result);
+		}
+
 		$workspace = new Workspace();
 		return $workspace->worktree_remove(
 			$input['repo'] ?? '',
@@ -3235,6 +3243,11 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function worktreePrune( array $input ): array|\WP_Error {   // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+		if ( RemoteWorkspaceBackend::has_registered_state() && RemoteWorkspaceBackend::should_handle() ) {
+			$result = ( new RemoteWorkspaceBackend() )->worktree_prune();
+			return self::decorate_remote_workspace_result('worktree_prune', $result);
+		}
+
 		$workspace = new Workspace();
 		return $workspace->worktree_prune();
 	}

@@ -12,6 +12,14 @@ namespace DataMachineCode\Support {
 	{
 		public static bool $available = true;
 
+		public static function diagnose(): array
+		{
+			return array(
+				'git_available'       => self::$available,
+				'proc_open_available' => self::$available,
+			);
+		}
+
 		public static function is_available(): bool
 		{
 			return self::$available;

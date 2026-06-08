@@ -226,6 +226,24 @@ namespace {
     $assert('push is successful compatibility no-op', ! is_wp_error($push) && 'fix/example' === $push['branch']);
     $assert('push backend result omits model-facing guidance', ! is_wp_error($push) && ! array_key_exists('next_required_tool', $push) && ! array_key_exists('next_required_args', $push));
 
+    $second_worktree = $backend->worktree_add('example', 'fix/remove-me');
+    $assert('second worktree add succeeds', ! is_wp_error($second_worktree) && 'example@fix-remove-me' === $second_worktree['handle']);
+
+    $remove = $backend->worktree_remove('example', 'fix/remove-me');
+    $assert('worktree remove clears remote runtime state', ! is_wp_error($remove) && 'example@fix-remove-me' === $remove['handle']);
+    $removed_status = $backend->git_status('example@fix-remove-me');
+    $assert('removed worktree no longer resolves', is_wp_error($removed_status) && 'remote_workspace_repo_not_found' === $removed_status->get_error_code());
+
+    $state = $GLOBALS['dmc_remote_workspace_options']['datamachine_code_remote_workspace_state'];
+    $state['worktrees']['missing@stale'] = array(
+        'repo_name' => 'missing',
+        'repo'      => 'chubes4/missing',
+        'branch'    => 'stale',
+    );
+    $GLOBALS['dmc_remote_workspace_options']['datamachine_code_remote_workspace_state'] = $state;
+    $prune = $backend->worktree_prune();
+    $assert('worktree prune removes remote rows without primary repo state', ! is_wp_error($prune) && array( 'missing@stale' ) === $prune['pruned']);
+
     if (! empty($failures) ) {
         echo "\nFAIL: " . count($failures) . " assertion(s) failed out of {$total}\n";
         foreach ( $failures as $failure ) {
