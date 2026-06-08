@@ -66,6 +66,25 @@ function datamachine_code_has_datamachine_integration(): bool {
 }
 
 /**
+ * Register DMC-owned bundle artifact hooks.
+ *
+ * Bundle artifact type discovery can run before the rest of DMC's Data Machine
+ * integrations are available. Keep these hooks registered independently so
+ * imported agent bundles can materialize DMC-owned artifacts during install.
+ */
+function datamachine_code_register_bundle_artifacts(): void {
+	static $registered = false;
+
+	if ( $registered ) {
+		return;
+	}
+
+	$registered = true;
+	( new \DataMachineCode\Bundle\WorkspacePreloadArtifact() )->register();
+}
+datamachine_code_register_bundle_artifacts();
+
+/**
  * Register optional Data Machine integrations.
  */
 function datamachine_code_register_datamachine_integrations(): void {
@@ -76,10 +95,6 @@ function datamachine_code_register_datamachine_integrations(): void {
 	}
 
 	$registered = true;
-
-	// Bundle artifact types are Data Machine-specific and are only registered
-	// when the bundle importer substrate is present.
-	( new \DataMachineCode\Bundle\WorkspacePreloadArtifact() )->register();
 
 	// Project active workspace identity into Data Machine's engine_data snapshot.
 	\DataMachineCode\Runtime\ActiveWorkspaceProjector::register();
