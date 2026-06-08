@@ -51,6 +51,23 @@ class AbilityToolProjections {
 			'workspace_read'                       => self::workspace('datamachine-code/workspace-read'),
 			'workspace_grep'                       => self::workspace('datamachine-code/workspace-grep'),
 
+			'workspace_write'                      => self::workspace_write('datamachine-code/workspace-write'),
+			'workspace_edit'                       => self::workspace_write('datamachine-code/workspace-edit'),
+			'workspace_apply_patch'                => self::workspace_write('datamachine-code/workspace-apply-patch'),
+			'workspace_delete'                     => self::workspace_write('datamachine-code/workspace-delete'),
+			'workspace_git_status'                 => self::workspace_write('datamachine-code/workspace-git-status'),
+			'workspace_git_log'                    => self::workspace_write('datamachine-code/workspace-git-log'),
+			'workspace_git_diff'                   => self::workspace_write('datamachine-code/workspace-git-diff'),
+			'workspace_git_pull'                   => self::workspace_write('datamachine-code/workspace-git-pull'),
+			'workspace_git_add'                    => self::workspace_write('datamachine-code/workspace-git-add'),
+			'workspace_git_commit'                 => self::workspace_write('datamachine-code/workspace-git-commit'),
+			'workspace_git_push'                   => self::workspace_write('datamachine-code/workspace-git-push'),
+			'workspace_git_rebase'                 => self::workspace_write('datamachine-code/workspace-git-rebase'),
+			'workspace_git_reset'                  => self::workspace_write('datamachine-code/workspace-git-reset'),
+			'workspace_worktree_add'               => self::workspace_write('datamachine-code/workspace-worktree-add'),
+			'workspace_pr_status'                  => self::workspace_write('datamachine-code/workspace-pr-status'),
+			'workspace_pr_rebase'                  => self::workspace_write('datamachine-code/workspace-pr-rebase'),
+
 			'list_github_issues'                   => self::github('datamachine-code/list-github-issues'),
 			'get_github_issue'                     => self::github('datamachine-code/get-github-issue'),
 			'list_github_pulls'                    => self::github('datamachine-code/list-github-pulls'),
@@ -77,6 +94,23 @@ class AbilityToolProjections {
 		return array(
 			'ability' => $ability,
 			'modes'   => array( 'chat', 'pipeline' ),
+		);
+	}
+
+	/**
+	 * Build a mutating workspace projection declaration.
+	 *
+	 * Write/git workspace tools require explicit opt-in (via `allow_only` or an
+	 * allow-mode tool policy) before they are exposed to a model request, so a
+	 * read-only inspection task never receives file-mutating tools by default.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private static function workspace_write( string $ability ): array {
+		return array(
+			'ability'         => $ability,
+			'modes'           => array( 'chat', 'pipeline' ),
+			'requires_opt_in' => true,
 		);
 	}
 
