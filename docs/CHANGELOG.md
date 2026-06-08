@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.84] - 2026-06-08
+
+### Changed
+- Project write and git workspace tools for coding agents
+
 ## [0.47.83] - 2026-06-08
 
 ### Fixed
