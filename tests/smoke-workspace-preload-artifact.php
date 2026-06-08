@@ -9,6 +9,12 @@
 
 declare( strict_types=1 );
 
+namespace DataMachineCode\Abilities {
+    class GitHubAbilities
+    {
+    }
+}
+
 namespace {
     if (! defined('ABSPATH') ) {
         define('ABSPATH', __DIR__ . '/');
@@ -50,6 +56,25 @@ namespace {
         }
     }
 
+    $GLOBALS['dmc_remote_workspace_options'] = array();
+
+    if (! function_exists('get_option') ) {
+        function get_option( string $key, mixed $default_value = false ): mixed
+        {
+            return $GLOBALS['dmc_remote_workspace_options'][ $key ] ?? $default_value;
+        }
+    }
+
+    if (! function_exists('update_option') ) {
+        function update_option( string $key, mixed $value, bool $autoload = true ): bool
+        {
+            unset($autoload);
+            $GLOBALS['dmc_remote_workspace_options'][ $key ] = $value;
+            return true;
+        }
+    }
+
+    include __DIR__ . '/../inc/Workspace/RemoteWorkspaceBackend.php';
     include __DIR__ . '/../inc/Bundle/WorkspacePreloadArtifact.php';
 
     use DataMachineCode\Bundle\WorkspacePreloadArtifact;
@@ -150,6 +175,32 @@ namespace {
         )
     );
     $assert('treats existing checkout as idempotent success', ! is_wp_error($exists) && true === ( $exists['repositories'][0]['already_exists'] ?? false ));
+
+    $remote_fallback_artifact = new WorkspacePreloadArtifact(
+        static function (): WP_Error {
+            return new WP_Error(
+                'datamachine_workspace_git_unavailable',
+                'Clone workspace repository cannot run with the current workspace backend.',
+                array( 'status' => 500 )
+            );
+        }
+    );
+    $remote_fallback = $remote_fallback_artifact->apply_artifact(
+        null,
+        array(
+        'artifact_type' => WorkspacePreloadArtifact::ARTIFACT_TYPE,
+        'artifact_id'   => 'remote-fallback',
+        'payload'       => array(
+                'repositories' => array(
+                    array(
+                        'name' => 'static-site-importer',
+                        'url'  => 'https://github.com/chubes4/static-site-importer.git',
+                    ),
+                ),
+        ),
+        )
+    );
+    $assert('falls back to remote backend when local git clone is unavailable', ! is_wp_error($remote_fallback) && 'github_api' === ( $remote_fallback['repositories'][0]['result']['backend'] ?? '' ));
 
     if (array() !== $failures ) {
         echo "\nFailures:\n";

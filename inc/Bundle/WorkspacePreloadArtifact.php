@@ -8,6 +8,7 @@
 namespace DataMachineCode\Bundle;
 
 use DataMachineCode\Abilities\WorkspaceAbilities;
+use DataMachineCode\Workspace\RemoteWorkspaceBackend;
 
 defined('ABSPATH') || exit;
 
@@ -178,6 +179,16 @@ final class WorkspacePreloadArtifact {
 
 		$callback = $this->clone_callback ? $this->clone_callback : array( WorkspaceAbilities::class, 'cloneRepo' );
 		$result   = call_user_func($callback, $input);
+
+		if ( is_wp_error($result) && 'datamachine_workspace_git_unavailable' === $result->get_error_code() && class_exists(RemoteWorkspaceBackend::class) ) {
+			$remote_result = ( new RemoteWorkspaceBackend() )->clone_repo(
+				$input['url'],
+				$input['name'] ?? null
+			);
+			if ( ! is_wp_error($remote_result) ) {
+				return $remote_result;
+			}
+		}
 
 		if ( is_wp_error($result) && 'repo_exists' === $result->get_error_code() ) {
 			$data = (array) $result->get_error_data();
