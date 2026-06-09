@@ -19,6 +19,7 @@ namespace {
     $GLOBALS['dmc_workspace_alias_ability'] = null;
     $GLOBALS['dmc_workspace_alias_registered_abilities'] = array();
     $GLOBALS['dmc_workspace_alias_remote_edit_input'] = array();
+    $GLOBALS['dmc_workspace_alias_remote_write_input'] = array();
 
     function add_filter( string $tag, callable $callback, int $priority = 10, int $accepted_args = 1 ): void
     {
@@ -125,6 +126,16 @@ namespace DataMachineCode\Workspace {
             'name'         => $handle,
             'path'         => $path,
             'replacements' => 1,
+            );
+        }
+
+        public function write_file( string $handle, string $path, string $content ): array
+        {
+            $GLOBALS['dmc_workspace_alias_remote_write_input'] = compact('handle', 'path', 'content');
+            return array(
+            'success' => true,
+            'name'    => $handle,
+            'path'    => $path,
             );
         }
     }
@@ -272,6 +283,17 @@ namespace {
     $assert('workspace_edit ability converts mounted path to relative path', 'wordpress/scripts/build/build.sh' === ( $GLOBALS['dmc_workspace_alias_remote_edit_input']['path'] ?? '' ));
     $assert('workspace_edit ability maps old alias to old_string', 'npm install --silent' === ( $GLOBALS['dmc_workspace_alias_remote_edit_input']['old_string'] ?? '' ));
     $assert('workspace_edit ability maps new alias to new_string', 'npm install --legacy-peer-deps' === ( $GLOBALS['dmc_workspace_alias_remote_edit_input']['new_string'] ?? '' ));
+
+	$ability_mounted_write = \DataMachineCode\Abilities\WorkspaceAbilities::writeFile(
+		array(
+			'path'    => '/workspace/example-plugin/wordpress/scripts/build/generated.sh',
+			'content' => '#!/bin/sh',
+		)
+	);
+	$assert('workspace_write ability accepts mounted absolute path', ! is_wp_error($ability_mounted_write) && true === ( $ability_mounted_write['success'] ?? false ));
+	$assert('workspace_write ability infers repo from mounted path', 'example-plugin' === ( $GLOBALS['dmc_workspace_alias_remote_write_input']['handle'] ?? '' ));
+	$assert('workspace_write ability converts mounted path to relative path', 'wordpress/scripts/build/generated.sh' === ( $GLOBALS['dmc_workspace_alias_remote_write_input']['path'] ?? '' ));
+	$assert('workspace_write ability preserves content', '#!/bin/sh' === ( $GLOBALS['dmc_workspace_alias_remote_write_input']['content'] ?? '' ));
 
     $unsupported_alias = \DataMachineCode\Abilities\WorkspaceAbilities::editFile(
         array(
