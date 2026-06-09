@@ -194,17 +194,17 @@ class WorkspaceAbilities {
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success'     => array( 'type' => 'boolean' ),
-							'name'        => array( 'type' => 'string' ),
-							'repo'        => array( 'type' => 'string' ),
-							'is_worktree' => array( 'type' => 'boolean' ),
-							'path'        => array( 'type' => 'string' ),
+							'success'           => array( 'type' => 'boolean' ),
+							'name'              => array( 'type' => 'string' ),
+							'repo'              => array( 'type' => 'string' ),
+							'is_worktree'       => array( 'type' => 'boolean' ),
+							'path'              => array( 'type' => 'string' ),
 							// Nullable: detached HEAD has no branch; local-only repos
 							// have no remote; freshly-init'd repos have no commit yet.
-							'branch'      => array( 'type' => array( 'string', 'null' ) ),
-							'remote'      => array( 'type' => array( 'string', 'null' ) ),
-							'commit'      => array( 'type' => array( 'string', 'null' ) ),
-							'dirty'       => array( 'type' => 'integer' ),
+							'branch'            => array( 'type' => array( 'string', 'null' ) ),
+							'remote'            => array( 'type' => array( 'string', 'null' ) ),
+							'commit'            => array( 'type' => array( 'string', 'null' ) ),
+							'dirty'             => array( 'type' => 'integer' ),
 							'primary_freshness' => self::primaryFreshnessSchema(),
 						),
 					),
@@ -390,19 +390,19 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'url'            => array(
+							'url'                    => array(
 								'type'        => 'string',
 								'description' => 'Git repository URL to clone.',
 							),
-							'name'           => array(
+							'name'                   => array(
 								'type'        => 'string',
 								'description' => 'Directory name override (derived from URL if omitted).',
 							),
-							'full'           => array(
+							'full'                   => array(
 								'type'        => 'boolean',
 								'description' => 'Disable the default blobless partial clone for remote repositories.',
 							),
-							'auth_token_env' => array(
+							'auth_token_env'         => array(
 								'type'        => 'string',
 								'description' => 'Optional environment variable name containing a bearer token for HTTPS clone authentication.',
 							),
