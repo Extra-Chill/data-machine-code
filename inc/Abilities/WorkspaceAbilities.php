@@ -2665,6 +2665,7 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function writeFile( array $input ): array|\WP_Error {
+		$input = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			$result = ( new RemoteWorkspaceBackend() )->write_file(
 				$input['repo'] ?? '',
