@@ -292,10 +292,19 @@ namespace {
         public function execute( array $input ): array
         {
             $this->last_input = $input;
+            $apply_command = 'studio wp datamachine-code workspace cleanup run --mode=artifacts';
+            if ( ! empty($input['exhaustive']) ) {
+                $apply_command .= ' --exhaustive';
+            } else {
+                $apply_command .= ' --limit=' . (int) ( $input['limit'] ?? 100 );
+                $apply_command .= ' --offset=' . (int) ( $input['offset'] ?? 0 );
+            }
+            $apply_command .= ' --format=json';
             return array(
-            'success'    => true,
-            'dry_run'    => ! empty($input['dry_run']),
-            'candidates' => array(
+            'success'       => true,
+            'dry_run'       => ! empty($input['dry_run']),
+            'apply_command' => $apply_command,
+            'candidates'    => array(
             array(
             'handle'    => 'repo@old',
             'repo'      => 'repo',
@@ -316,6 +325,7 @@ namespace {
             ),
             ),
             'summary'    => array(
+            'apply_command'          => $apply_command,
             'would_remove_artifacts' => 1,
             'removed_artifacts'      => 0,
             'skipped'                => 1,
@@ -1376,11 +1386,13 @@ namespace {
     datamachine_code_cleanup_assert(array( 'dry_run' => true, 'force' => false ) === $artifact_ability->last_input, 'cleanup-artifacts dry-run flags forwarded to ability');
     $artifact_json = json_decode(WP_CLI::$logs[0] ?? '', true);
     datamachine_code_cleanup_assert('target' === ( $artifact_json['candidates'][0]['artifacts'][0]['path'] ?? '' ), 'cleanup-artifacts JSON includes artifact paths');
+    datamachine_code_cleanup_assert('studio wp datamachine-code workspace cleanup run --mode=artifacts --limit=100 --offset=0 --format=json' === ( $artifact_json['apply_command'] ?? '' ), 'cleanup-artifacts JSON includes matching high-level apply command');
+    datamachine_code_cleanup_assert(( $artifact_json['apply_command'] ?? '' ) === ( $artifact_json['summary']['apply_command'] ?? null ), 'cleanup-artifacts summary repeats matching apply command');
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
     $command->worktree(array( 'cleanup-artifacts' ), array( 'dry-run' => true ));
-    datamachine_code_cleanup_assert(str_contains(WP_CLI::$successes[0] ?? '', 'workspace cleanup run --mode=artifacts'), 'cleanup-artifacts dry-run points daily apply path to task-backed cleanup');
+    datamachine_code_cleanup_assert(str_contains(WP_CLI::$successes[0] ?? '', 'workspace cleanup run --mode=artifacts --limit=100 --offset=0 --format=json'), 'cleanup-artifacts dry-run points daily apply path to same task-backed page');
     datamachine_code_cleanup_assert(str_contains(WP_CLI::$successes[0] ?? '', 'low-level escape hatch'), 'cleanup-artifacts dry-run demotes apply-plan wording');
     datamachine_code_cleanup_assert(! str_contains(WP_CLI::$successes[0] ?? '', 'Save JSON'), 'cleanup-artifacts dry-run does not normalize saving plan files');
 

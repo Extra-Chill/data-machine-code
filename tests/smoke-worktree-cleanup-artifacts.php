@@ -208,6 +208,8 @@ namespace {
     $assert('bounded_inventory', $plan['pagination']['mode'] ?? '', 'bounded dry-run advertises bounded_inventory mode');
     $assert(false, (bool) ( $plan['pagination']['safety_probes'] ?? true ), 'bounded dry-run reports safety_probes=false');
     $assert(true, (bool) ( $plan['pagination']['complete'] ?? false ), 'bounded dry-run completes when total <= limit');
+    $assert('studio wp datamachine-code workspace cleanup run --mode=artifacts --limit=100 --offset=0 --format=json', $plan['apply_command'] ?? '', 'bounded dry-run exposes matching high-level apply command');
+    $assert($plan['apply_command'] ?? '', $plan['summary']['apply_command'] ?? '', 'bounded dry-run summary repeats apply command');
 
     $bounded_skip_reasons = array_column($plan['skipped'] ?? array(), 'reason_code', 'handle');
     $assert('active_symlink_target', $bounded_skip_reasons['demo@active'] ?? '', 'active plugin symlink target is protected even in bounded mode');
@@ -230,6 +232,7 @@ namespace {
     $assert(1, count($exhaustive_plan['candidates'] ?? array()), 'exhaustive dry-run skips dirty/unpushed worktrees');
     $assert('demo@clean', $exhaustive_plan['candidates'][0]['handle'] ?? '', 'exhaustive clean worktree is candidate');
     $assert('target', $exhaustive_plan['candidates'][0]['artifacts'][0]['path'] ?? '', 'exhaustive candidate artifact path comes from profile');
+    $assert('studio wp datamachine-code workspace cleanup run --mode=artifacts --exhaustive --format=json', $exhaustive_plan['apply_command'] ?? '', 'exhaustive dry-run exposes matching high-level apply command');
 
     $skip_reasons = array_column($exhaustive_plan['skipped'] ?? array(), 'reason_code', 'handle');
     $assert('dirty_worktree', $skip_reasons['demo@dirty'] ?? '', 'exhaustive dirty worktree is protected');
@@ -252,6 +255,7 @@ namespace {
     $page_one = $workspace->worktree_cleanup_artifacts(array( 'dry_run' => true, 'limit' => 1, 'offset' => 0 ));
     $assert(false, is_wp_error($page_one), 'page-1 dry-run succeeds');
     $assert(1, (int) ( $page_one['pagination']['scanned'] ?? 0 ), 'page-1 scanned exactly one worktree');
+    $assert('studio wp datamachine-code workspace cleanup run --mode=artifacts --limit=1 --offset=0 --format=json', $page_one['apply_command'] ?? '', 'page-1 dry-run apply command preserves page scope');
     $assert(true, (bool) ( $page_one['pagination']['partial'] ?? false ), 'page-1 reports partial=true');
     $assert(false, (bool) ( $page_one['pagination']['complete'] ?? true ), 'page-1 reports complete=false');
     $assert(1, (int) ( $page_one['pagination']['next_offset'] ?? 0 ), 'page-1 next_offset advances by limit');
@@ -263,6 +267,7 @@ namespace {
     $direct_apply = $workspace->worktree_cleanup_artifacts(array());
     $assert(true, is_wp_error($direct_apply), 'direct apply without plan is rejected');
     $assert('artifact_cleanup_plan_required', $direct_apply->code ?? '', 'direct apply error is explicit');
+    $assert(true, str_contains($direct_apply->get_error_message(), 'workspace cleanup run --mode=artifacts --limit=100 --offset=0 --format=json'), 'direct apply error points to matching high-level apply command');
 
     // Build a stricter plan from the exhaustive scan for precise apply-shape
     // assertions. This keeps the source-file-mismatch test deterministic
