@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.89] - 2026-06-09
+
+### Fixed
+- normalize mounted workspace writes
+
 ## [0.47.88] - 2026-06-08
 
 ### Changed
