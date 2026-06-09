@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.90] - 2026-06-09
+
+### Fixed
+- expose scoped artifact cleanup apply command
+
 ## [0.47.89] - 2026-06-09
 
 ### Fixed
