@@ -168,15 +168,15 @@ class WorkspaceCommand extends BaseCommand {
 			function ( $repo ) {
 				$freshness = is_array($repo['primary_freshness'] ?? null) ? $repo['primary_freshness'] : null;
 				return array(
-					'name'             => $repo['name'],
-					'kind'             => ! empty($repo['is_worktree']) ? 'worktree' : 'primary',
-					'repo'             => $repo['repo'] ?? $repo['name'],
-					'branch'           => $repo['branch'] ?? '-',
-					'freshness'        => is_array($freshness) ? (string) ( $freshness['status'] ?? '-' ) : '-',
-					'behind'           => is_array($freshness) && null !== ( $freshness['behind'] ?? null ) ? (string) $freshness['behind'] : '-',
-					'remote'           => $repo['remote'] ?? '-',
-					'git'              => $repo['git'] ? 'yes' : 'no',
-					'path'             => $repo['path'],
+					'name'      => $repo['name'],
+					'kind'      => ! empty($repo['is_worktree']) ? 'worktree' : 'primary',
+					'repo'      => $repo['repo'] ?? $repo['name'],
+					'branch'    => $repo['branch'] ?? '-',
+					'freshness' => is_array($freshness) ? (string) ( $freshness['status'] ?? '-' ) : '-',
+					'behind'    => is_array($freshness) && null !== ( $freshness['behind'] ?? null ) ? (string) $freshness['behind'] : '-',
+					'remote'    => $repo['remote'] ?? '-',
+					'git'       => $repo['git'] ? 'yes' : 'no',
+					'path'      => $repo['path'],
 				);
 			},
 			$result['repos']
@@ -230,7 +230,7 @@ class WorkspaceCommand extends BaseCommand {
 			array(
 				'full'                   => isset($assoc_args['full']),
 				'allow_duplicate_remote' => isset($assoc_args['allow-duplicate-remote']),
-				'progress_callback' => static function ( array $event ): void {
+				'progress_callback'      => static function ( array $event ): void {
 					$elapsed = number_format( (float) ( $event['elapsed'] ?? 0 ), 1);
 					WP_CLI::log(sprintf('[clone %ss] %s', $elapsed, (string) ( $event['message'] ?? '' )));
 				},
