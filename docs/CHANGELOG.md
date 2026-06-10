@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.95] - 2026-06-10
+
+### Changed
+- add workspace context repositories ability
+
 ## [0.47.94] - 2026-06-10
 
 ### Fixed
