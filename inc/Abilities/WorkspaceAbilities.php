@@ -2622,7 +2622,7 @@ class WorkspaceAbilities {
 		}
 
 		$workspace = new Workspace();
-		return $workspace->clone_repo(
+		$result    = $workspace->clone_repo(
 			$input['url'] ?? '',
 			$input['name'] ?? null,
 			array(
@@ -2631,6 +2631,16 @@ class WorkspaceAbilities {
 				'allow_duplicate_remote' => ! empty($input['allow_duplicate_remote']),
 			)
 		);
+
+		if ( is_wp_error($result) && 'datamachine_workspace_git_unavailable' === $result->get_error_code() ) {
+			$remote_result = ( new RemoteWorkspaceBackend() )->clone_repo(
+				$input['url'] ?? '',
+				$input['name'] ?? null
+			);
+			return self::decorate_remote_workspace_result('clone_repo', $remote_result);
+		}
+
+		return $result;
 	}
 
 	/**
