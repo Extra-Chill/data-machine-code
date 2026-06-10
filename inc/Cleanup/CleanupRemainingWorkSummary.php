@@ -50,7 +50,7 @@ class CleanupRemainingWorkSummary {
 			if ( 'artifact_cleanup' === $type && 'applied' !== $status ) {
 				$summary['remaining_reclaimable_artifact_bytes'] += self::row_bytes($row, array( 'artifact_size_bytes', 'size_bytes' ));
 			}
-			if ( 'worktree_removal' === $type && in_array($status, array( 'pending', 'failed' ), true) ) {
+			if ( 'worktree_removal' === $type && in_array($status, array( 'pending', 'failed', 'applying' ), true) ) {
 				++$summary['remaining_safely_removable_worktrees'];
 			}
 		}
@@ -181,18 +181,22 @@ class CleanupRemainingWorkSummary {
 		$commands = array();
 		if ( (int) $summary['remaining_reclaimable_artifact_bytes'] > 0 ) {
 			$commands[] = array(
-				'bucket'      => 'remaining_artifacts',
-				'command'     => 'studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json',
-				'apply'       => 'studio wp datamachine-code workspace cleanup run --mode=artifacts',
-				'destructive' => false,
+				'bucket'            => 'remaining_artifacts',
+				'command'           => 'studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json',
+				'apply'             => 'studio wp datamachine-code workspace cleanup run --mode=artifacts',
+				'destructive'       => false,
+				'apply_destructive' => true,
+				'why'               => 'Preview remaining artifact cleanup first; the apply command removes revalidated artifacts.',
 			);
 		}
 		if ( (int) $summary['remaining_safely_removable_worktrees'] > 0 ) {
 			$commands[] = array(
-				'bucket'      => 'remaining_worktrees',
-				'command'     => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25',
-				'apply'       => 'studio wp datamachine-code workspace cleanup run --mode=retention',
-				'destructive' => false,
+				'bucket'            => 'remaining_worktrees',
+				'command'           => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25',
+				'apply'             => 'studio wp datamachine-code workspace cleanup run --mode=retention',
+				'destructive'       => false,
+				'apply_destructive' => true,
+				'why'               => 'Preview cleanup-eligible worktrees first; the apply command removes revalidated worktrees.',
 			);
 		}
 		foreach ( array_keys( (array) $summary['skipped_by_reason'] ) as $reason ) {
@@ -225,9 +229,24 @@ class CleanupRemainingWorkSummary {
 		};
 
 		return array(
-			'bucket'      => $bucket . ':' . $reason,
-			'command'     => $command,
-			'destructive' => false,
+			'bucket'            => $bucket . ':' . $reason,
+			'command'           => $command,
+			'destructive'       => false,
+			'apply_destructive' => false,
+			'why'               => self::reason_remediation($reason),
 		);
+	}
+
+	private static function reason_remediation( string $reason ): string {
+		return match ( $reason ) {
+			'dirty_worktree' => 'Inspect dirty files before applying cleanup; artifact-only dirt may be removable through artifact cleanup, source dirt needs review.',
+			'artifact_plan_mismatch', 'plan_mismatch' => 'Regenerate a fresh plan because the saved row no longer matches current filesystem or branch state.',
+			'artifact_plan_not_current', 'artifact_already_removed' => 'Regenerate artifact cleanup evidence; the saved artifact row is no longer a current candidate.',
+			'needs_metadata_reconcile' => 'Run metadata reconciliation so DMC can classify the worktree without a full cleanup scan.',
+			'lifecycle_reconciliation_candidate' => 'Run lifecycle reconciliation to collect PR/merge signals before emitting removal rows.',
+			'unpushed_commits' => 'Push, merge, or intentionally abandon commits before retrying cleanup.',
+			'probe_timeout' => 'Retry the review path with a smaller bounded page or investigate the git probe timeout.',
+			default => 'Run the review command to refresh evidence before applying cleanup.',
+		};
 	}
 }
