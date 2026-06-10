@@ -429,6 +429,44 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
+				'datamachine-code/workspace-context-repositories',
+				array(
+					'label'               => 'Register Workspace Context Repositories',
+					'description'         => 'Register read-only context repositories for the current workspace run. Context repositories are exposed through workspace read/list/grep tools with path allowlists and are rejected by mutating workspace operations.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'target_repo'      => array( 'type' => 'string' ),
+							'target_workspace' => array( 'type' => 'string' ),
+							'access'           => array(
+								'type'        => 'string',
+								'enum'        => array( 'readonly', 'read_only' ),
+								'description' => 'Context repositories are currently read-only.',
+							),
+							'repositories'     => array(
+								'type'        => 'array',
+								'description' => 'Read-only context repository specs. Each entry is { repo, ref, alias, paths }.',
+							),
+						),
+						'required'   => array( 'repositories' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'      => array( 'type' => 'boolean' ),
+							'access'       => array( 'type' => 'string' ),
+							'count'        => array( 'type' => 'integer' ),
+							'repositories' => array( 'type' => 'array' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'registerContextRepositories' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
 				'datamachine-code/workspace-adopt',
 				array(
 					'label'               => 'Adopt Workspace Repo',
@@ -2641,6 +2679,79 @@ class WorkspaceAbilities {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Register read-only context repositories for workspace tools.
+	 *
+	 * @param  array $input Input parameters with repositories list.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function registerContextRepositories( array $input ): array|\WP_Error {
+		$repositories = self::normalizeContextRepositories($input['repositories'] ?? array());
+		if ( is_wp_error($repositories) ) {
+			return $repositories;
+		}
+
+		if ( ! function_exists('update_option') ) {
+			return new \WP_Error('context_repositories_storage_unavailable', 'Context repositories cannot be registered because option storage is unavailable.', array( 'status' => 500 ));
+		}
+
+		update_option('datamachine_code_context_repositories', $repositories, false);
+
+		return array(
+			'success'      => true,
+			'access'       => 'readonly',
+			'count'        => count($repositories),
+			'repositories' => array_values($repositories),
+		);
+	}
+
+	/**
+	 * @param mixed $repositories Raw repository specs.
+	 * @return array<string,array<string,mixed>>|\WP_Error
+	 */
+	private static function normalizeContextRepositories( mixed $repositories ): array|\WP_Error {
+		if ( ! is_array($repositories) ) {
+			return new \WP_Error('invalid_context_repositories', 'repositories must be an array.', array( 'status' => 400 ));
+		}
+
+		$normalized = array();
+		foreach ( $repositories as $repository ) {
+			if ( ! is_array($repository) ) {
+				continue;
+			}
+
+			$repo = trim( (string) ( $repository['repo'] ?? '' ));
+			if ( '' === $repo ) {
+				return new \WP_Error('invalid_context_repository', 'Each context repository requires a repo value.', array( 'status' => 400 ));
+			}
+
+			$alias = sanitize_key( (string) ( $repository['alias'] ?? basename($repo) ) );
+			if ( '' === $alias ) {
+				return new \WP_Error('invalid_context_repository_alias', sprintf('Could not derive a context repository alias for %s.', $repo), array( 'status' => 400 ));
+			}
+
+			$paths = array();
+			if ( is_array($repository['paths'] ?? null) ) {
+				foreach ( $repository['paths'] as $path ) {
+					$path = trim( (string) $path );
+					if ( '' !== $path ) {
+						$paths[] = $path;
+					}
+				}
+			}
+
+			$normalized[ $alias ] = array(
+				'alias'  => $alias,
+				'repo'   => $repo,
+				'ref'    => trim( (string) ( $repository['ref'] ?? '' )),
+				'target' => $alias,
+				'paths'  => array_values(array_unique($paths)),
+			);
+		}
+
+		return $normalized;
 	}
 
 	/**
