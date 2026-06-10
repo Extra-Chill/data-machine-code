@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.91] - 2026-06-10
+
+### Fixed
+- harden cleanup apply resumability
+
 ## [0.47.90] - 2026-06-09
 
 ### Fixed
