@@ -223,17 +223,18 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$workspace = new Workspace();
-		$result    = $workspace->clone_repo(
-			$args[0],
-			$assoc_args['name'] ?? null,
+		$ability = wp_get_ability('datamachine-code/workspace-clone');
+		if ( ! $ability ) {
+			WP_CLI::error('Workspace clone ability not available.');
+			return;
+		}
+
+		$result = $ability->execute(
 			array(
+				'url'                    => $args[0],
+				'name'                   => $assoc_args['name'] ?? null,
 				'full'                   => isset($assoc_args['full']),
 				'allow_duplicate_remote' => isset($assoc_args['allow-duplicate-remote']),
-				'progress_callback'      => static function ( array $event ): void {
-					$elapsed = number_format( (float) ( $event['elapsed'] ?? 0 ), 1);
-					WP_CLI::log(sprintf('[clone %ss] %s', $elapsed, (string) ( $event['message'] ?? '' )));
-				},
 			)
 		);
 
