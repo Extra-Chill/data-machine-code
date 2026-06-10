@@ -62,6 +62,9 @@ trait WorkspaceGitOperations {
 		if ( null !== $policy_attestation ) {
 			$response['workspace_policy'] = $policy_attestation;
 		}
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			$response['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
+		}
 
 		return $response;
 	}
@@ -74,6 +77,10 @@ trait WorkspaceGitOperations {
 	 * @return array
 	 */
 	public function git_pull( string $handle, bool $allow_dirty = false, bool $allow_primary_mutation = false ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			return WorkspaceAliasResolver::mutation_error($handle, 'git pull');
+		}
+
 		$parsed    = $this->parse_handle($handle);
 		$repo_path = $this->resolve_repo_path($handle);
 		if ( is_wp_error($repo_path) ) {
@@ -120,6 +127,10 @@ trait WorkspaceGitOperations {
 	 * @return array
 	 */
 	public function git_add( string $handle, array $paths, bool $allow_primary_mutation = false ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			return WorkspaceAliasResolver::mutation_error($handle, 'git add');
+		}
+
 		$parsed    = $this->parse_handle($handle);
 		$repo_name = $parsed['repo'];
 		$repo_path = $this->resolve_repo_path($handle);
@@ -217,6 +228,10 @@ trait WorkspaceGitOperations {
 	 * @return array{success: bool, name: string, repo: string, path: string, deleted: array<int,string>, was_tracked: bool}|\WP_Error
 	 */
 	public function delete_path( string $handle, string $path, bool $recursive = false, bool $allow_primary_mutation = false ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			return WorkspaceAliasResolver::mutation_error($handle, 'delete');
+		}
+
 		$parsed    = $this->parse_handle($handle);
 		$repo_name = $parsed['repo'];
 		$repo_path = $this->resolve_repo_path($handle);
@@ -360,6 +375,10 @@ trait WorkspaceGitOperations {
 	 * @return array
 	 */
 	public function git_commit( string $handle, string $message, bool $allow_primary_mutation = false ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			return WorkspaceAliasResolver::mutation_error($handle, 'git commit');
+		}
+
 		$parsed    = $this->parse_handle($handle);
 		$repo_name = $parsed['repo'];
 		$repo_path = $this->resolve_repo_path($handle);
@@ -438,6 +457,10 @@ trait WorkspaceGitOperations {
 	 * @return array
 	 */
 	public function git_push( string $handle, string $remote = 'origin', ?string $branch = null, bool $allow_primary_mutation = false, bool $force_with_lease = false, ?string $expected_sha = null ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			return WorkspaceAliasResolver::mutation_error($handle, 'git push');
+		}
+
 		$parsed    = $this->parse_handle($handle);
 		$repo_name = $parsed['repo'];
 		$repo_path = $this->resolve_repo_path($handle);
@@ -557,6 +580,10 @@ trait WorkspaceGitOperations {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function git_rebase( string $handle, ?string $onto = null, ?string $strategy_option = null, bool $continue_rebase = false, bool $allow_primary_mutation = false ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			return WorkspaceAliasResolver::mutation_error($handle, 'git rebase');
+		}
+
 		$parsed    = $this->parse_handle($handle);
 		$repo_name = $parsed['repo'];
 		$repo_path = $this->resolve_repo_path($handle);
@@ -627,6 +654,10 @@ trait WorkspaceGitOperations {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function git_reset( string $handle, string $mode = 'mixed', ?string $target = null, bool $allow_destructive = false, bool $allow_primary_mutation = false ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			return WorkspaceAliasResolver::mutation_error($handle, 'git reset');
+		}
+
 		$parsed    = $this->parse_handle($handle);
 		$repo_name = $parsed['repo'];
 		$repo_path = $this->resolve_repo_path($handle);
@@ -890,12 +921,17 @@ trait WorkspaceGitOperations {
 		}
 
 		$parsed = $this->parse_handle($name);
-		return array(
+		$result = array(
 			'success' => true,
 			'name'    => $parsed['dir_name'],
 			'repo'    => $parsed['repo'],
 			'entries' => $entries,
 		);
+		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($name);
+		}
+
+		return $result;
 	}
 
 	/**
@@ -909,6 +945,11 @@ trait WorkspaceGitOperations {
 	 * @return array
 	 */
 	public function git_diff( string $name, ?string $from = null, ?string $to = null, bool $staged = false, ?string $path = null ): array|\WP_Error {
+		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($name, $path ?? '');
+		if ( null !== $policy_error ) {
+			return $policy_error;
+		}
+
 		$repo_path = $this->resolve_repo_path($name);
 		if ( is_wp_error($repo_path) ) {
 			return $repo_path;
@@ -943,12 +984,17 @@ trait WorkspaceGitOperations {
 		}
 
 		$parsed = $this->parse_handle($name);
-		return array(
+		$result = array(
 			'success' => true,
 			'name'    => $parsed['dir_name'],
 			'repo'    => $parsed['repo'],
 			'diff'    => $diff['output'] ?? '',
 		);
+		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($name);
+		}
+
+		return $result;
 	}
 
 	/**

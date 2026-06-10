@@ -40,6 +40,11 @@ class WorkspaceReader {
 	 * @return array{success: bool, content?: string, path?: string, size?: int, lines_read?: int, offset?: int}|\WP_Error
 	 */
 	public function read_file( string $name, string $path, int $max_size = Workspace::MAX_READ_SIZE, ?int $offset = null, ?int $limit = null ): array|\WP_Error {
+		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($name, $path);
+		if ( null !== $policy_error ) {
+			return $policy_error;
+		}
+
 		$repo_path = $this->workspace->get_repo_path($name);
 		$path      = ltrim($path, '/');
 
@@ -117,6 +122,10 @@ class WorkspaceReader {
 			'size'    => $size,
 		);
 
+		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($name);
+		}
+
 		if ( null !== $offset || null !== $limit ) {
 			$result['lines_read'] = $lines_read;
 			$result['offset']     = $start_line;
@@ -133,6 +142,11 @@ class WorkspaceReader {
 	 * @return array{success: bool, repo?: string, path?: string, entries?: array}|\WP_Error
 	 */
 	public function list_directory( string $name, ?string $path = null ): array|\WP_Error {
+		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($name, $path ?? '');
+		if ( null !== $policy_error ) {
+			return $policy_error;
+		}
+
 		$repo_path = $this->workspace->get_repo_path($name);
 
 		if ( ! is_dir($repo_path) ) {
@@ -195,12 +209,20 @@ class WorkspaceReader {
 			}
 		);
 
-		return array(
+		$items = WorkspaceAliasResolver::filter_context_entries($name, $path ?? '/', $items);
+
+		$result = array(
 			'success' => true,
 			'repo'    => $name,
 			'path'    => $path ?? '/',
 			'entries' => $items,
 		);
+
+		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($name);
+		}
+
+		return $result;
 	}
 
 	/**
@@ -215,6 +237,11 @@ class WorkspaceReader {
 	 * @return array{success: bool, repo?: string, path?: string, pattern?: string, matches?: array, count?: int, truncated?: bool}|\WP_Error
 	 */
 	public function grep( string $name, string $pattern, ?string $path = null, ?string $include_pattern = null, int $max_results = 100, int $context_lines = 0 ): array|\WP_Error {
+		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($name, $path ?? '');
+		if ( null !== $policy_error ) {
+			return $policy_error;
+		}
+
 		$repo_path = $this->workspace->get_repo_path($name);
 		if ( ! is_dir($repo_path) ) {
 			return new \WP_Error('repo_not_found', sprintf('Repository "%s" not found in workspace.', $name), array( 'status' => 404 ));
@@ -254,6 +281,10 @@ class WorkspaceReader {
 
 		foreach ( $files as $file_path ) {
 			$relative_path = ltrim(substr($file_path, strlen($repo_real)), '/');
+			$context_policy = WorkspaceAliasResolver::context_policy_for($name);
+			if ( null !== $context_policy && ! WorkspaceAliasResolver::path_allowed_by_policy($relative_path, $context_policy) ) {
+				continue;
+			}
 			if ( str_starts_with($relative_path, '.git/') || ! $this->path_matches_include($relative_path, $include_pattern) ) {
 				continue;
 			}
@@ -269,7 +300,7 @@ class WorkspaceReader {
 			}
 		}
 
-		return array(
+		$result = array(
 			'success'   => true,
 			'repo'      => $name,
 			'path'      => $search_path,
@@ -278,6 +309,12 @@ class WorkspaceReader {
 			'count'     => count($matches),
 			'truncated' => count($matches) >= $max_results,
 		);
+
+		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($name);
+		}
+
+		return $result;
 	}
 
 	private function compile_search_pattern( string $pattern ): string|\WP_Error {

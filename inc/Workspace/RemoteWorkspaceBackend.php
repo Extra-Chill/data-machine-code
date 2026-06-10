@@ -198,6 +198,11 @@ class RemoteWorkspaceBackend {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function read_file( string $handle, string $path, int $max_size, ?int $offset = null, ?int $limit = null ): array|\WP_Error {
+		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($handle, $path);
+		if ( null !== $policy_error ) {
+			return $policy_error;
+		}
+
 		$context = $this->resolve_handle($handle);
 		if ( is_wp_error($context) ) {
 			return $context;
@@ -234,13 +239,18 @@ class RemoteWorkspaceBackend {
 			$result_content = implode("\n", $lines);
 		}
 
-		return array(
+		$result = array(
 			'success' => true,
 			'backend' => 'github_api',
 			'content' => $result_content,
 			'path'    => $path,
 			'size'    => $size,
 		);
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
+		}
+
+		return $result;
 	}
 
 	/**
@@ -249,6 +259,11 @@ class RemoteWorkspaceBackend {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function list_directory( string $handle, ?string $path = null ): array|\WP_Error {
+		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($handle, $path ?? '');
+		if ( null !== $policy_error ) {
+			return $policy_error;
+		}
+
 		$context = $this->resolve_handle($handle);
 		if ( is_wp_error($context) ) {
 			return $context;
@@ -287,13 +302,20 @@ class RemoteWorkspaceBackend {
 			);
 		}
 
-		return array(
+		$entries = WorkspaceAliasResolver::filter_context_entries($handle, '' === $prefix ? '/' : $prefix, $entries);
+
+		$result = array(
 			'success' => true,
 			'backend' => 'github_api',
 			'repo'    => $handle,
 			'path'    => '' === $prefix ? '/' : $prefix,
 			'entries' => $entries,
 		);
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
+		}
+
+		return $result;
 	}
 
 	/**
@@ -302,6 +324,11 @@ class RemoteWorkspaceBackend {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function grep( string $handle, string $pattern, ?string $path = null, ?string $include_pattern = null, int $max_results = 100, int $context_lines = 0 ): array|\WP_Error {
+		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($handle, $path ?? '');
+		if ( null !== $policy_error ) {
+			return $policy_error;
+		}
+
 		$context = $this->resolve_handle($handle);
 		if ( is_wp_error($context) ) {
 			return $context;
@@ -354,6 +381,10 @@ class RemoteWorkspaceBackend {
 
 		foreach ( $files as $file ) {
 			$file_path = (string) ( $file['path'] ?? '' );
+			$context_policy = WorkspaceAliasResolver::context_policy_for($handle);
+			if ( null !== $context_policy && ! WorkspaceAliasResolver::path_allowed_by_policy($file_path, $context_policy) ) {
+				continue;
+			}
 			if ( '' === $file_path || isset($seen[ $file_path ]) || ! $this->path_matches_include($file_path, $include_pattern) ) {
 				continue;
 			}
@@ -380,7 +411,7 @@ class RemoteWorkspaceBackend {
 			}
 		}
 
-		return array(
+		$result = array(
 			'success'   => true,
 			'backend'   => 'github_api',
 			'repo'      => $handle,
@@ -390,6 +421,11 @@ class RemoteWorkspaceBackend {
 			'count'     => count($matches),
 			'truncated' => count($matches) >= $max_results,
 		);
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
+		}
+
+		return $result;
 	}
 
 	/**
@@ -398,6 +434,10 @@ class RemoteWorkspaceBackend {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function write_file( string $handle, string $path, string $content ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			return WorkspaceAliasResolver::mutation_error($handle, 'write');
+		}
+
 		$context = $this->resolve_handle($handle);
 		if ( is_wp_error($context) ) {
 			return $context;
@@ -428,6 +468,10 @@ class RemoteWorkspaceBackend {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function edit_file( string $handle, string $path, string $old_string, string $new_string, bool $replace_all = false ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			return WorkspaceAliasResolver::mutation_error($handle, 'edit');
+		}
+
 		$context = $this->resolve_handle($handle);
 		if ( is_wp_error($context) ) {
 			return $context;
@@ -490,12 +534,13 @@ class RemoteWorkspaceBackend {
 
 		$files = array_values(array_unique(array_values( (array) $context['changed_files'])));
 
-		return array(
+		$result = array(
 			'success'     => true,
 			'backend'     => 'github_api',
 			'name'        => $handle,
 			'repo'        => $context['repo_name'],
-			'is_worktree' => isset($context['branch']) && '' !== (string) $context['branch'],
+			'is_worktree' => empty($context['read_only_context']) && isset($context['branch']) && '' !== (string) $context['branch'],
+			'is_context'  => ! empty($context['read_only_context']),
 			'path'        => 'github://' . $context['repo'] . ( '' !== (string) $context['branch']
 			? '#' . $context['branch']
 			: '' ),
@@ -505,6 +550,11 @@ class RemoteWorkspaceBackend {
 			'dirty'       => count($files),
 			'files'       => $files,
 		);
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
+		}
+
+		return $result;
 	}
 
 	/**
@@ -514,6 +564,10 @@ class RemoteWorkspaceBackend {
 	 */
 	public function git_diff( string $handle, ?string $from = null, ?string $to = null, bool $staged = false, ?string $path = null ): array|\WP_Error {
 		unset($staged);
+		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($handle, $path ?? '');
+		if ( null !== $policy_error ) {
+			return $policy_error;
+		}
 
 		$context = $this->resolve_handle($handle);
 		if ( is_wp_error($context) ) {
@@ -549,13 +603,18 @@ class RemoteWorkspaceBackend {
 			$diff .= $this->build_unified_file_diff($changed_path, $old_content, (string) $new_content);
 		}
 
-		return array(
+		$result = array(
 			'success' => true,
 			'backend' => 'github_api',
 			'name'    => $handle,
 			'repo'    => $context['repo_name'],
 			'diff'    => $diff,
 		);
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
+		}
+
+		return $result;
 	}
 
 	/**
@@ -570,12 +629,13 @@ class RemoteWorkspaceBackend {
 		}
 
 		$files = array_values(array_unique(array_values( (array) $context['changed_files'])));
-		return array(
+		$result = array(
 			'success'     => true,
 			'backend'     => 'github_api',
 			'name'        => $handle,
 			'repo'        => $context['repo_name'],
-			'is_worktree' => true,
+			'is_worktree' => empty($context['read_only_context']),
+			'is_context'  => ! empty($context['read_only_context']),
 			'path'        => 'github://' . $context['repo'] . '#' . $context['branch'],
 			'branch'      => $context['branch'],
 			'remote'      => 'https://github.com/' . $context['repo'] . '.git',
@@ -583,6 +643,11 @@ class RemoteWorkspaceBackend {
 			'dirty'       => count($files),
 			'files'       => $files,
 		);
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
+		}
+
+		return $result;
 	}
 
 	/**
@@ -591,6 +656,10 @@ class RemoteWorkspaceBackend {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function git_add( string $handle, array $paths ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			return WorkspaceAliasResolver::mutation_error($handle, 'git add');
+		}
+
 		$context = $this->resolve_handle($handle);
 		if ( is_wp_error($context) ) {
 			return $context;
@@ -611,6 +680,10 @@ class RemoteWorkspaceBackend {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function git_commit( string $handle, string $message ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			return WorkspaceAliasResolver::mutation_error($handle, 'git commit');
+		}
+
 		$context = $this->resolve_handle($handle);
 		if ( is_wp_error($context) ) {
 			return $context;
@@ -1103,6 +1176,10 @@ class RemoteWorkspaceBackend {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function git_push( string $handle, string $remote = 'origin', ?string $branch = null ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			return WorkspaceAliasResolver::mutation_error($handle, 'git push');
+		}
+
 		$context = $this->resolve_handle($handle);
 		if ( is_wp_error($context) ) {
 			return $context;
@@ -1131,6 +1208,26 @@ class RemoteWorkspaceBackend {
 	 * @return array<string,mixed>
 	 */
 	private function resolve_handle( string $handle ): array|\WP_Error {
+		$context_policy = WorkspaceAliasResolver::context_policy_for($handle);
+		if ( null !== $context_policy ) {
+			$repo = (string) ( $context_policy['repo'] ?? '' );
+			if ( '' === $repo ) {
+				$repo = (string) ( $context_policy['target'] ?? $handle );
+			}
+
+			return array(
+				'handle'            => (string) $context_policy['alias'],
+				'repo_name'         => (string) $context_policy['alias'],
+				'repo'              => $repo,
+				'branch'            => (string) ( $context_policy['ref'] ?? '' ),
+				'read_ref'          => (string) ( $context_policy['ref'] ?? '' ),
+				'pending_files'     => array(),
+				'changed_files'     => array(),
+				'last_commit_sha'   => '',
+				'read_only_context' => true,
+			);
+		}
+
 		$handle = $this->resolve_alias($handle);
 		$state  = $this->state();
 		if ( isset($state['worktrees'][ $handle ]) ) {

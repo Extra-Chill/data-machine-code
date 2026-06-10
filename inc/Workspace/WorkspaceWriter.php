@@ -50,6 +50,10 @@ class WorkspaceWriter {
 	 * @return array{success: bool, path?: string, size?: int, created?: bool}|\WP_Error
 	 */
 	public function write_file( string $name, string $path, string $content ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
+			return WorkspaceAliasResolver::mutation_error($name, 'write');
+		}
+
 		$repo_path = $this->workspace->get_repo_path($name);
 		$path      = ltrim($path, '/');
 
@@ -123,6 +127,10 @@ class WorkspaceWriter {
 	 * @return array{success: bool, path?: string, replacements?: int}|\WP_Error
 	 */
 	public function edit_file( string $name, string $path, string $old_string, string $new_string, bool $replace_all = false ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
+			return WorkspaceAliasResolver::mutation_error($name, 'edit');
+		}
+
 		$fs        = FilesystemHelper::get();
 		$repo_path = $this->workspace->get_repo_path($name);
 		$path      = ltrim($path, '/');
@@ -215,6 +223,10 @@ class WorkspaceWriter {
 	 * @return array{success: bool, name: string, path: string, changed_files: string[], diff: string, status: string, check_output: string, apply_output: string}|\WP_Error
 	 */
 	public function apply_patch( string $name, string $patch, bool $allow_primary_mutation = false ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
+			return WorkspaceAliasResolver::mutation_error($name, 'apply-patch');
+		}
+
 		$repo_path = $this->workspace->get_repo_path($name);
 		$parsed    = $this->workspace->parse_handle($name);
 
