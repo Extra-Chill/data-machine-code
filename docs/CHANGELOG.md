@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.94] - 2026-06-10
+
+### Fixed
+- fall back when workspace clone lacks git
+
 ## [0.47.93] - 2026-06-10
 
 ### Fixed
