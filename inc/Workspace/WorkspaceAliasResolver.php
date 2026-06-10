@@ -13,7 +13,7 @@ class WorkspaceAliasResolver {
 
 
 
-	private const OPTION = 'datamachine_code_workspace_aliases';
+	private const OPTION         = 'datamachine_code_workspace_aliases';
 	private const CONTEXT_OPTION = 'datamachine_code_context_repositories';
 
 	/**
@@ -22,7 +22,7 @@ class WorkspaceAliasResolver {
 	 * Runners can persist aliases in the option, or inject them just-in-time via
 	 * the filter when a single conversation should see an opaque project name.
 	 *
-	 * @return array<string,array{target:string,root:string}>
+	 * @return array<string,array{target:string,root:string,access:string,is_context:bool,repo:string,ref:string,paths:array<int,string>}>
 	 */
 	public static function aliases(): array {
 		$aliases = function_exists('get_option') ? get_option(self::OPTION, array()) : array();
@@ -38,9 +38,9 @@ class WorkspaceAliasResolver {
 			$aliases[ $alias ] = array_merge(
 				$context,
 				array(
-					'target'      => (string) ( $context['target'] ?? $alias ),
-					'access'      => 'read_only',
-					'is_context'  => true,
+					'target'     => (string) ( $context['target'] ?? $alias ),
+					'access'     => 'read_only',
+					'is_context' => true,
 				)
 			);
 		}
@@ -81,7 +81,7 @@ class WorkspaceAliasResolver {
 	/**
 	 * Return the normalized alias spec for an agent-facing handle.
 	 *
-	 * @return array{target:string,root:string}|null
+	 * @return array{target:string,root:string,access:string,is_context:bool,repo:string,ref:string,paths:array<int,string>}|null
 	 */
 	public static function spec( string $handle ): ?array {
 		return self::aliases()[ $handle ] ?? null;
@@ -199,7 +199,7 @@ class WorkspaceAliasResolver {
 			return null;
 		}
 
-		$normalized_path = self::normalize_path((string) ( $path ?? '' ));
+		$normalized_path = self::normalize_path( (string) ( $path ?? '' ) );
 		if ( self::path_allowed_by_policy($normalized_path, $policy, true) ) {
 			return null;
 		}
@@ -237,24 +237,24 @@ class WorkspaceAliasResolver {
 		$policy = self::context_policy_for($handle);
 		if ( null === $policy ) {
 			return array(
-				'access'   => 'read_write',
-				'writable' => true,
+				'access'    => 'read_write',
+				'writable'  => true,
 				'read_only' => false,
 			);
 		}
 
 		$attestation = array(
-			'access'       => 'read_only',
-			'writable'     => false,
-			'read_only'    => true,
-			'alias'        => (string) $policy['alias'],
-			'target'       => (string) $policy['target'],
-			'repo'         => (string) ( $policy['repo'] ?? '' ),
-			'ref'          => (string) ( $policy['ref'] ?? '' ),
-			'allowed_paths' => array_values((array) ( $policy['paths'] ?? array() )),
+			'access'        => 'read_only',
+			'writable'      => false,
+			'read_only'     => true,
+			'alias'         => (string) $policy['alias'],
+			'target'        => (string) $policy['target'],
+			'repo'          => (string) ( $policy['repo'] ?? '' ),
+			'ref'           => (string) ( $policy['ref'] ?? '' ),
+			'allowed_paths' => array_values( (array) ( $policy['paths'] ?? array() ) ),
 		);
 
-		$policy_json = function_exists('wp_json_encode') ? wp_json_encode($attestation) : json_encode($attestation);
+		$policy_json                = function_exists('wp_json_encode') ? wp_json_encode($attestation) : http_build_query($attestation, '', '&', PHP_QUERY_RFC3986);
 		$attestation['policy_hash'] = hash('sha256', (string) $policy_json);
 
 		return $attestation;
@@ -377,7 +377,7 @@ class WorkspaceAliasResolver {
 
 		$normalized = array();
 		foreach ( $paths as $path ) {
-			$path = self::normalize_path((string) $path);
+			$path = self::normalize_path( (string) $path );
 			if ( '' !== $path ) {
 				$normalized[] = $path;
 			}
@@ -387,7 +387,7 @@ class WorkspaceAliasResolver {
 	}
 
 	private static function normalize_path( string $path ): string {
-		$path = trim(str_replace('\\', '/', $path), '/');
+		$path     = trim(str_replace('\\', '/', $path), '/');
 		$segments = array();
 		foreach ( explode('/', $path) as $segment ) {
 			if ( '' === $segment || '.' === $segment || '..' === $segment || str_contains($segment, "\0") ) {
@@ -400,7 +400,7 @@ class WorkspaceAliasResolver {
 	}
 
 	private static function path_matches( string $path, string $allowed, bool $allow_ancestors ): bool {
-		$path = self::normalize_path($path);
+		$path    = self::normalize_path($path);
 		$allowed = self::normalize_path($allowed);
 		if ( '' === $allowed ) {
 			return true;

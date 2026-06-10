@@ -380,7 +380,7 @@ class RemoteWorkspaceBackend {
 		}
 
 		foreach ( $files as $file ) {
-			$file_path = (string) ( $file['path'] ?? '' );
+			$file_path      = (string) ( $file['path'] ?? '' );
 			$context_policy = WorkspaceAliasResolver::context_policy_for($handle);
 			if ( null !== $context_policy && ! WorkspaceAliasResolver::path_allowed_by_policy($file_path, $context_policy) ) {
 				continue;
@@ -628,7 +628,7 @@ class RemoteWorkspaceBackend {
 			return $context;
 		}
 
-		$files = array_values(array_unique(array_values( (array) $context['changed_files'])));
+		$files  = array_values(array_unique(array_values( (array) $context['changed_files'])));
 		$result = array(
 			'success'     => true,
 			'backend'     => 'github_api',

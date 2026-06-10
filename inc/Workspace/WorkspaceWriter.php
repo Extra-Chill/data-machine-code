@@ -15,7 +15,6 @@
 
 namespace DataMachineCode\Workspace;
 
-use DataMachine\Core\FilesRepository\FilesystemHelper;
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\PathSecurity;
 
@@ -131,7 +130,6 @@ class WorkspaceWriter {
 			return WorkspaceAliasResolver::mutation_error($name, 'edit');
 		}
 
-		$fs        = FilesystemHelper::get();
 		$repo_path = $this->workspace->get_repo_path($name);
 		$path      = ltrim($path, '/');
 
@@ -143,16 +141,16 @@ class WorkspaceWriter {
 		$validation = $this->workspace->validate_containment($file_path, $repo_path);
 
 		if ( ! $validation['valid'] ) {
-			return new \WP_Error('path_traversal', $validation['message'], array( 'status' => 403 ));
+			return new \WP_Error('path_traversal', (string) ( $validation['message'] ?? 'Path traversal detected. Access denied.' ), array( 'status' => 403 ));
 		}
 
-		$real_path = $validation['real_path'];
+		$real_path = (string) ( $validation['real_path'] ?? '' );
 
 		if ( ! is_file($real_path) ) {
 			return new \WP_Error('file_not_found', sprintf('File not found: %s', $path), array( 'status' => 404 ));
 		}
 
-		if ( ! is_readable($real_path) || ! $fs->is_writable($real_path) ) {
+		if ( ! is_readable($real_path) || ! is_writable($real_path) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_writable
 			return new \WP_Error('file_not_writable', sprintf('File not readable/writable: %s', $path), array( 'status' => 403 ));
 		}
 
@@ -193,7 +191,10 @@ class WorkspaceWriter {
 		if ( $replace_all ) {
 			$new_content = str_replace($old_string, $new_string, $content);
 		} else {
-			$pos         = strpos($content, $old_string);
+			$pos = strpos($content, $old_string);
+			if ( false === $pos ) {
+				return new \WP_Error('string_not_found', 'old_string not found in file content.', array( 'status' => 400 ));
+			}
 			$new_content = substr_replace($content, $new_string, $pos, strlen($old_string));
 		}
 

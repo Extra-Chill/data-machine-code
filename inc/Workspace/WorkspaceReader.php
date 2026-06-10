@@ -56,10 +56,10 @@ class WorkspaceReader {
 		$validation = $this->workspace->validate_containment($file_path, $repo_path);
 
 		if ( ! $validation['valid'] ) {
-			return new \WP_Error('path_traversal', $validation['message'], array( 'status' => 403 ));
+			return new \WP_Error('path_traversal', (string) ( $validation['message'] ?? 'Path traversal detected. Access denied.' ), array( 'status' => 403 ));
 		}
 
-		$real_path = $validation['real_path'];
+		$real_path = (string) ( $validation['real_path'] ?? '' );
 
 		if ( ! is_file($real_path) ) {
 			return new \WP_Error('file_not_found', sprintf('File not found: %s', $path), array( 'status' => 404 ));
@@ -70,6 +70,9 @@ class WorkspaceReader {
 		}
 
 		$size = filesize($real_path);
+		if ( false === $size ) {
+			return new \WP_Error('file_size_failed', sprintf('Failed to determine file size: %s', $path), array( 'status' => 500 ));
+		}
 
 		if ( $size > $max_size ) {
 			return new \WP_Error(
@@ -162,10 +165,10 @@ class WorkspaceReader {
 			$validation = $this->workspace->validate_containment($target_path, $repo_path);
 
 			if ( ! $validation['valid'] ) {
-				return new \WP_Error('path_traversal', $validation['message'], array( 'status' => 403 ));
+				return new \WP_Error('path_traversal', (string) ( $validation['message'] ?? 'Path traversal detected. Access denied.' ), array( 'status' => 403 ));
 			}
 
-			$target_path = $validation['real_path'];
+			$target_path = (string) ( $validation['real_path'] ?? '' );
 		}
 
 		if ( ! is_dir($target_path) ) {
@@ -259,9 +262,9 @@ class WorkspaceReader {
 			$target_path = $repo_real . '/' . $path;
 			$validation  = $this->workspace->validate_containment($target_path, $repo_real);
 			if ( ! $validation['valid'] ) {
-				return new \WP_Error('path_traversal', $validation['message'], array( 'status' => 403 ));
+				return new \WP_Error('path_traversal', (string) ( $validation['message'] ?? 'Path traversal detected. Access denied.' ), array( 'status' => 403 ));
 			}
-			$target_path = $validation['real_path'];
+			$target_path = (string) ( $validation['real_path'] ?? '' );
 			$search_path = $path;
 		}
 
@@ -280,7 +283,7 @@ class WorkspaceReader {
 		$files         = is_file($target_path) ? array( $target_path ) : $this->iterable_files($target_path);
 
 		foreach ( $files as $file_path ) {
-			$relative_path = ltrim(substr($file_path, strlen($repo_real)), '/');
+			$relative_path  = ltrim(substr($file_path, strlen($repo_real)), '/');
 			$context_policy = WorkspaceAliasResolver::context_policy_for($name);
 			if ( null !== $context_policy && ! WorkspaceAliasResolver::path_allowed_by_policy($relative_path, $context_policy) ) {
 				continue;
@@ -368,6 +371,10 @@ class WorkspaceReader {
 	 * @return array<int,array<string,mixed>>|\WP_Error
 	 */
 	private function grep_file( string $repo, string $file_path, string $relative_path, string $regex, int $context_lines, int $limit ): array|\WP_Error {
+		if ( $limit < 1 ) {
+			return new \WP_Error('grep_limit_exhausted', 'Search result limit exhausted.', array( 'status' => 400 ));
+		}
+
 		$size = filesize($file_path);
 		if ( false === $size || $size > Workspace::MAX_READ_SIZE ) {
 			return array();
