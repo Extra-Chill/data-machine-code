@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.93] - 2026-06-10
+
+### Fixed
+- route workspace clone CLI through ability
+
 ## [0.47.92] - 2026-06-10
 
 ### Changed
