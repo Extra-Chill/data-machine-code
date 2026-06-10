@@ -14,8 +14,8 @@ defined('ABSPATH') || exit;
 
 class CleanupRunService {
 
-	private const DEFAULT_APPLY_LIMIT = 25;
-	private const MAX_APPLY_LIMIT     = 100;
+	private const DEFAULT_APPLY_LIMIT        = 25;
+	private const MAX_APPLY_LIMIT            = 100;
 	private const WORKTREE_APPLY_BATCH_LIMIT = 1;
 
 
@@ -102,9 +102,9 @@ class CleanupRunService {
 		$results        = array();
 
 		if ( array() !== $artifact_rows ) {
-			$artifact_batch              = array_slice($artifact_rows, 0, $limit);
-			$processed_rows             += count($artifact_batch);
-			$batch_type                  = 'artifact_cleanup';
+			$artifact_batch  = array_slice($artifact_rows, 0, $limit);
+			$processed_rows += count($artifact_batch);
+			$batch_type      = 'artifact_cleanup';
 			$this->mark_batch_applying($artifact_batch, $run_id, $batch_type, $limit, $remaining_rows);
 			$results['artifact_cleanup'] = $this->workspace->worktree_cleanup_artifacts(
 				array(
@@ -118,9 +118,9 @@ class CleanupRunService {
 
 		$remaining_capacity = max(0, $limit - $processed_rows);
 		if ( $remaining_capacity > 0 && array() !== $worktree_rows ) {
-			$worktree_batch              = array_slice($worktree_rows, 0, min($remaining_capacity, self::WORKTREE_APPLY_BATCH_LIMIT));
-			$processed_rows             += count($worktree_batch);
-			$batch_type                  = '' === $batch_type ? 'worktree_removal' : 'mixed';
+			$worktree_batch  = array_slice($worktree_rows, 0, min($remaining_capacity, self::WORKTREE_APPLY_BATCH_LIMIT));
+			$processed_rows += count($worktree_batch);
+			$batch_type      = '' === $batch_type ? 'worktree_removal' : 'mixed';
 			$this->mark_batch_applying($worktree_batch, $run_id, $batch_type, $limit, $remaining_rows);
 			$results['worktree_removal'] = $this->workspace->worktree_cleanup_merged(
 				array(

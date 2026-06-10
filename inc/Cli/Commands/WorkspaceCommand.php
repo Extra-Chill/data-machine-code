@@ -847,7 +847,7 @@ class WorkspaceCommand extends BaseCommand {
 			'metric'
 		);
 		if ( ! empty($progress['note']) ) {
-			WP_CLI::log((string) $progress['note']);
+			WP_CLI::log( (string) $progress['note']);
 		}
 	}
 

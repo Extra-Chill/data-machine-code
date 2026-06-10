@@ -25,10 +25,6 @@ class CleanupRemainingWorkSummary {
 		$summary = self::empty_summary();
 
 		foreach ( $items as $item ) {
-			if ( ! is_array($item) ) {
-				continue;
-			}
-
 			$type     = (string) ( $item['item_type'] ?? 'unknown' );
 			$status   = (string) ( $item['status'] ?? 'unknown' );
 			$evidence = (array) ( $item['evidence'] ?? array() );
