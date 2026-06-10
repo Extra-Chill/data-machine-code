@@ -14,8 +14,9 @@ defined('ABSPATH') || exit;
 
 class CleanupRunService {
 
-	private const DEFAULT_APPLY_LIMIT = 25;
-	private const MAX_APPLY_LIMIT     = 100;
+	private const DEFAULT_APPLY_LIMIT        = 25;
+	private const MAX_APPLY_LIMIT            = 100;
+	private const WORKTREE_APPLY_BATCH_LIMIT = 1;
 
 
 
@@ -101,9 +102,10 @@ class CleanupRunService {
 		$results        = array();
 
 		if ( array() !== $artifact_rows ) {
-			$artifact_batch              = array_slice($artifact_rows, 0, $limit);
-			$processed_rows             += count($artifact_batch);
-			$batch_type                  = 'artifact_cleanup';
+			$artifact_batch  = array_slice($artifact_rows, 0, $limit);
+			$processed_rows += count($artifact_batch);
+			$batch_type      = 'artifact_cleanup';
+			$this->mark_batch_applying($artifact_batch, $run_id, $batch_type, $limit, $remaining_rows);
 			$results['artifact_cleanup'] = $this->workspace->worktree_cleanup_artifacts(
 				array(
 					'apply_plan' => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $artifact_batch) ),
@@ -116,9 +118,10 @@ class CleanupRunService {
 
 		$remaining_capacity = max(0, $limit - $processed_rows);
 		if ( $remaining_capacity > 0 && array() !== $worktree_rows ) {
-			$worktree_batch              = array_slice($worktree_rows, 0, $remaining_capacity);
-			$processed_rows             += count($worktree_batch);
-			$batch_type                  = '' === $batch_type ? 'worktree_removal' : 'mixed';
+			$worktree_batch  = array_slice($worktree_rows, 0, min($remaining_capacity, self::WORKTREE_APPLY_BATCH_LIMIT));
+			$processed_rows += count($worktree_batch);
+			$batch_type      = '' === $batch_type ? 'worktree_removal' : 'mixed';
+			$this->mark_batch_applying($worktree_batch, $run_id, $batch_type, $limit, $remaining_rows);
 			$results['worktree_removal'] = $this->workspace->worktree_cleanup_merged(
 				array(
 					'apply_plan'  => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $worktree_batch) ),
@@ -195,12 +198,14 @@ class CleanupRunService {
 			$summary['items_by_status'][ $status ] = ( $summary['items_by_status'][ $status ] ?? 0 ) + 1;
 			$summary['items_by_type'][ $type ]     = ( $summary['items_by_type'][ $type ] ?? 0 ) + 1;
 			$summary['bytes_reclaimed']           += max(0, (int) ( $item['bytes_reclaimed'] ?? 0 ));
-			if ( in_array($status, array( 'pending', 'failed' ), true) ) {
+			if ( in_array($status, array( 'pending', 'failed', 'applying' ), true) ) {
 				++$summary['pending_or_failed'];
 			}
 		}
 		ksort($summary['items_by_status']);
 		ksort($summary['items_by_type']);
+
+		$progress = $this->run_progress($run, $items, $summary);
 
 		return array(
 			'success'                => true,
@@ -210,7 +215,8 @@ class CleanupRunService {
 			'mode'                   => $run['mode'] ?? '',
 			'run'                    => $run,
 			'summary'                => $summary,
-			'remaining_work_summary' => CleanupRemainingWorkSummary::from_items($items),
+			'progress'               => $progress,
+			'remaining_work_summary' => $this->remaining_work_summary($run_id, $items, $progress),
 		);
 	}
 
@@ -285,7 +291,109 @@ class CleanupRunService {
 	}
 
 	private function pending_rows_of_type( array $items, string $type ): array {
-		return array_values(array_filter($items, fn( $item ) => (string) ( $item['item_type'] ?? '' ) === $type && in_array( (string) ( $item['status'] ?? '' ), array( 'pending', 'failed' ), true)));
+		return array_values(array_filter($items, fn( $item ) => (string) ( $item['item_type'] ?? '' ) === $type && in_array( (string) ( $item['status'] ?? '' ), array( 'pending', 'failed', 'applying' ), true)));
+	}
+
+	/**
+	 * Mark rows as in-progress before invoking destructive cleanup so interrupted
+	 * operator runs leave a visible, resumable checkpoint instead of silent state.
+	 *
+	 * @param array<int,array<string,mixed>> $items Batch rows.
+	 * @param string                         $run_id Run ID.
+	 * @param string                         $batch_type Batch type label.
+	 * @param int                            $limit Requested apply limit.
+	 * @param int                            $remaining_rows Rows remaining before this batch.
+	 */
+	private function mark_batch_applying( array $items, string $run_id, string $batch_type, int $limit, int $remaining_rows ): void {
+		$started_at = gmdate('Y-m-d H:i:s');
+		foreach ( $items as $item ) {
+			$this->repository->update_item(
+				(int) $item['id'],
+				array(
+					'status'   => 'applying',
+					'evidence' => array_merge(
+						(array) ( $item['evidence'] ?? array() ),
+						array(
+							'applying_started_at' => $started_at,
+							'applying_batch_type' => $batch_type,
+						)
+					),
+				)
+			);
+		}
+
+		$this->repository->update_run(
+			$run_id,
+			array(
+				'summary' => array(
+					'applying_batch' => array(
+						'type'             => $batch_type,
+						'limit'            => $limit,
+						'row_count'        => count($items),
+						'remaining_before' => $remaining_rows,
+						'started_at'       => $started_at,
+					),
+				),
+			)
+		);
+	}
+
+	/**
+	 * Build operator progress metadata for status/evidence output.
+	 *
+	 * @param array<string,mixed>            $run Run row.
+	 * @param array<int,array<string,mixed>> $items Item rows.
+	 * @param array<string,mixed>            $summary Aggregate summary.
+	 * @return array<string,mixed>
+	 */
+	private function run_progress( array $run, array $items, array $summary ): array {
+		$applying = array_values(array_filter($items, fn( $item ) => 'applying' === (string) ( $item['status'] ?? '' )));
+		$examples = array_slice(array_map(fn( $item ) => array(
+			'handle' => (string) ( $item['handle'] ?? '' ),
+			'type'   => (string) ( $item['item_type'] ?? '' ),
+		), $applying), 0, 3);
+
+		$started_at = (string) ( $run['started_at'] ?? '' );
+		$age        = '' !== $started_at ? max(0, time() - strtotime($started_at)) : 0;
+		$run_status = (string) ( $run['status'] ?? '' );
+		$resumable  = (int) ( $summary['pending_or_failed'] ?? 0 ) > 0 && in_array($run_status, array( 'applying', 'needs_resume' ), true);
+
+		return array(
+			'applying_rows'     => count($applying),
+			'applying_examples' => $examples,
+			'pending_or_failed' => (int) ( $summary['pending_or_failed'] ?? 0 ),
+			'started_at'        => $started_at,
+			'age_seconds'       => $age,
+			'resumable'         => $resumable,
+			'note'              => count($applying) > 0 ? 'Rows marked applying are safe to retry with workspace cleanup resume if the previous apply process was interrupted.' : '',
+		);
+	}
+
+	/**
+	 * Build remaining-work summary and prepend the current run resume command.
+	 *
+	 * @param string                         $run_id Run ID.
+	 * @param array<int,array<string,mixed>> $items Item rows.
+	 * @param array<string,mixed>            $progress Progress metadata.
+	 * @return array<string,mixed>
+	 */
+	private function remaining_work_summary( string $run_id, array $items, array $progress ): array {
+		$summary = CleanupRemainingWorkSummary::from_items($items);
+		if ( ! empty($progress['resumable']) ) {
+			array_unshift(
+				$summary['recommended_commands'],
+				array(
+					'bucket'            => 'current_run_resume',
+					'command'           => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
+					'apply'             => sprintf('studio wp datamachine-code workspace cleanup resume %s --limit=%d', $run_id, self::DEFAULT_APPLY_LIMIT),
+					'destructive'       => false,
+					'apply_destructive' => true,
+					'why'               => 'Resume the reviewed DB-backed cleanup run from persisted pending/failed/applying rows.',
+				)
+			);
+		}
+
+		return $summary;
 	}
 
 	private function apply_limit( array $opts ): int {

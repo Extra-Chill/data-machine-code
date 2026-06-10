@@ -767,6 +767,9 @@ class WorkspaceCommand extends BaseCommand {
 				WP_CLI::log(sprintf('%s: %s', ucfirst(str_replace('_', ' ', $key)), (string) $result[ $key ]));
 			}
 		}
+		if ( ! empty($result['progress']) && is_array($result['progress']) ) {
+			$this->render_cleanup_progress_summary( (array) $result['progress']);
+		}
 		if ( ! empty($result['remaining_work_summary']) && is_array($result['remaining_work_summary']) ) {
 			$this->render_cleanup_remaining_work_summary( (array) $result['remaining_work_summary']);
 		}
@@ -810,12 +813,41 @@ class WorkspaceCommand extends BaseCommand {
 			WP_CLI::log('Recommended next commands:');
 			$rows = array_map(
 				fn( $row ) => array(
-					'bucket'  => is_array($row) ? (string) ( $row['bucket'] ?? '' ) : '',
-					'command' => is_array($row) ? (string) ( $row['command'] ?? '' ) : '',
+					'bucket'            => is_array($row) ? (string) ( $row['bucket'] ?? '' ) : '',
+					'review_command'    => is_array($row) ? (string) ( $row['command'] ?? '' ) : '',
+					'apply_command'     => is_array($row) ? (string) ( $row['apply'] ?? '' ) : '',
+					'apply_destructive' => is_array($row) && ! empty($row['apply_destructive']) ? 'yes' : 'no',
 				),
 				array_slice($commands, 0, 10)
 			);
-			$this->format_items($rows, array( 'bucket', 'command' ), array( 'format' => 'table' ), 'bucket');
+			$this->format_items($rows, array( 'bucket', 'review_command', 'apply_command', 'apply_destructive' ), array( 'format' => 'table' ), 'bucket');
+		}
+	}
+
+	private function render_cleanup_progress_summary( array $progress ): void {
+		WP_CLI::log('');
+		WP_CLI::log('Progress:');
+		$this->format_items(
+			array(
+				array(
+					'metric' => 'applying_rows',
+					'value'  => (int) ( $progress['applying_rows'] ?? 0 ),
+				),
+				array(
+					'metric' => 'pending_or_failed',
+					'value'  => (int) ( $progress['pending_or_failed'] ?? 0 ),
+				),
+				array(
+					'metric' => 'resumable',
+					'value'  => ! empty($progress['resumable']) ? 'yes' : 'no',
+				),
+			),
+			array( 'metric', 'value' ),
+			array( 'format' => 'table' ),
+			'metric'
+		);
+		if ( ! empty($progress['note']) ) {
+			WP_CLI::log( (string) $progress['note']);
 		}
 	}
 
