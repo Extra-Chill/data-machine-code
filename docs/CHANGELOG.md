@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.92] - 2026-06-10
+
+### Changed
+- Add read-only context repositories
+
 ## [0.47.91] - 2026-06-10
 
 ### Fixed
