@@ -1035,8 +1035,8 @@ class WorkspaceTools extends BaseTool
                     ),
                     'type' => array(
                         'type'        => 'string',
-                        'enum'        => array( 'primary', 'worktree' ),
-                        'description' => 'Optional checkout type filter. Use "primary" for base checkouts or "worktree" for branch worktrees.',
+                        'enum'        => array( 'primary', 'worktree', 'context' ),
+                        'description' => 'Optional checkout type filter. Use "primary" for base checkouts, "worktree" for branch worktrees, or "context" for read-only context repositories.',
                     ),
             ),
             'required'   => array(),

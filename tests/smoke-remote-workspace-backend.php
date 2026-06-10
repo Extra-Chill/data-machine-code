@@ -15,6 +15,10 @@ namespace DataMachineCode\Abilities {
         'content' => "<?php\nreturn 'old';\n",
         'sha'     => 'file-sha-main-example',
         ),
+        'Automattic/studio:trunk:README.md' => array(
+        'content' => "Studio context\n",
+        'sha'     => 'file-sha-studio-readme',
+        ),
         );
         public static array $commits = array();
 
@@ -61,6 +65,7 @@ namespace DataMachineCode\Abilities {
             'success' => true,
             'files'   => array(
             array( 'path' => 'src/example.php', 'type' => 'file', 'size' => 20 ),
+            array( 'path' => 'README.md', 'type' => 'file', 'size' => 15 ),
             ),
             );
         }
@@ -225,6 +230,28 @@ namespace {
     $push = $backend->git_push('example@fix-example');
     $assert('push is successful compatibility no-op', ! is_wp_error($push) && 'fix/example' === $push['branch']);
     $assert('push backend result omits model-facing guidance', ! is_wp_error($push) && ! array_key_exists('next_required_tool', $push) && ! array_key_exists('next_required_args', $push));
+
+    update_option(
+        'datamachine_code_context_repositories',
+        array(
+            array(
+                'repo'  => 'Automattic/studio',
+                'ref'   => 'trunk',
+                'alias' => 'studio',
+                'paths' => array( 'README.md' ),
+            ),
+        )
+    );
+
+    $context_read = $backend->read_file('studio', 'README.md', 1000000);
+    $assert('remote context alias reads configured repo ref', ! is_wp_error($context_read) && str_contains($context_read['content'], 'Studio context'));
+    $assert('remote context read includes policy attestation', ! is_wp_error($context_read) && true === ( $context_read['workspace_policy']['read_only'] ?? false ));
+
+    $context_write = $backend->write_file('studio', 'README.md', "changed\n");
+    $assert('remote context write is rejected', is_wp_error($context_write) && 'context_repository_read_only' === $context_write->get_error_code());
+
+    $context_push = $backend->git_push('studio');
+    $assert('remote context push is rejected', is_wp_error($context_push) && 'context_repository_read_only' === $context_push->get_error_code());
 
     $second_worktree = $backend->worktree_add('example', 'fix/remove-me');
     $assert('second worktree add succeeds', ! is_wp_error($second_worktree) && 'example@fix-remove-me' === $second_worktree['handle']);

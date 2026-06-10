@@ -36,8 +36,8 @@ trait WorkspaceRepositoryLifecycle {
 
 		$repo_filter = null !== $repo && '' !== trim($repo) ? $this->parse_handle($repo)['repo'] : null;
 		$type_filter = null !== $type && '' !== trim($type) ? strtolower(trim($type)) : null;
-		if ( null !== $type_filter && ! in_array($type_filter, array( 'primary', 'worktree' ), true) ) {
-			return new \WP_Error('invalid_workspace_type', 'Workspace list type must be "primary" or "worktree".', array( 'status' => 400 ));
+		if ( null !== $type_filter && ! in_array($type_filter, array( 'primary', 'worktree', 'context' ), true) ) {
+			return new \WP_Error('invalid_workspace_type', 'Workspace list type must be "primary", "worktree", or "context".', array( 'status' => 400 ));
 		}
 
 		if ( ! is_dir($path) ) {
@@ -51,63 +51,86 @@ trait WorkspaceRepositoryLifecycle {
 		$repos   = array();
 		$entries = scandir($path);
 
-		foreach ( $entries as $entry ) {
-			if ( '.' === $entry || '..' === $entry ) {
-				continue;
-			}
-
-			$entry_path = $path . '/' . $entry;
-			if ( ! is_dir($entry_path) ) {
-				continue;
-			}
-
-			$git_path = $entry_path . '/.git';
-			$is_git   = is_dir($git_path) || is_file($git_path);
-			$is_wt    = is_file($git_path);
-			$parsed   = $this->parse_handle($entry);
-
-			if ( null !== $repo_filter && $parsed['repo'] !== $repo_filter ) {
-				continue;
-			}
-
-			$is_worktree = $is_wt || $parsed['is_worktree'];
-			if ( 'primary' === $type_filter && $is_worktree ) {
-				continue;
-			}
-			if ( 'worktree' === $type_filter && ! $is_worktree ) {
-				continue;
-			}
-
-			$repo_info = array(
-				'name'        => $entry,
-				'path'        => $entry_path,
-				'git'         => $is_git,
-				'is_worktree' => $is_worktree,
-				'repo'        => $parsed['repo'],
-			);
-
-			if ( $parsed['is_worktree'] ) {
-				$repo_info['branch_slug'] = $parsed['branch_slug'];
-			}
-
-			// Get git remote if available.
-			if ( $is_git ) {
-				$remote = $this->git_get_remote($entry_path);
-				if ( null !== $remote ) {
-					$repo_info['remote'] = $remote;
+		if ( 'context' !== $type_filter ) {
+			foreach ( $entries as $entry ) {
+				if ( '.' === $entry || '..' === $entry ) {
+					continue;
 				}
 
-				$branch = $this->git_get_branch($entry_path);
-				if ( null !== $branch ) {
-					$repo_info['branch'] = $branch;
+				$entry_path = $path . '/' . $entry;
+				if ( ! is_dir($entry_path) ) {
+					continue;
 				}
 
-				if ( ! $is_worktree ) {
-					$repo_info['primary_freshness'] = $this->build_primary_freshness_report($entry_path, $entry);
+				$git_path = $entry_path . '/.git';
+				$is_git   = is_dir($git_path) || is_file($git_path);
+				$is_wt    = is_file($git_path);
+				$parsed   = $this->parse_handle($entry);
+
+				if ( null !== $repo_filter && $parsed['repo'] !== $repo_filter ) {
+					continue;
 				}
+
+				$is_worktree = $is_wt || $parsed['is_worktree'];
+				if ( 'primary' === $type_filter && $is_worktree ) {
+					continue;
+				}
+				if ( 'worktree' === $type_filter && ! $is_worktree ) {
+					continue;
+				}
+
+				$repo_info = array(
+					'name'        => $entry,
+					'path'        => $entry_path,
+					'git'         => $is_git,
+					'is_worktree' => $is_worktree,
+					'repo'        => $parsed['repo'],
+				);
+
+				if ( $parsed['is_worktree'] ) {
+					$repo_info['branch_slug'] = $parsed['branch_slug'];
+				}
+
+				// Get git remote if available.
+				if ( $is_git ) {
+					$remote = $this->git_get_remote($entry_path);
+					if ( null !== $remote ) {
+						$repo_info['remote'] = $remote;
+					}
+
+					$branch = $this->git_get_branch($entry_path);
+					if ( null !== $branch ) {
+						$repo_info['branch'] = $branch;
+					}
+
+					if ( ! $is_worktree ) {
+						$repo_info['primary_freshness'] = $this->build_primary_freshness_report($entry_path, $entry);
+					}
+				}
+
+				$repos[] = $repo_info;
 			}
+		}
 
-			$repos[] = $repo_info;
+		if ( null === $type_filter || 'context' === $type_filter ) {
+			foreach ( WorkspaceAliasResolver::context_repositories() as $alias => $context ) {
+				if ( null !== $repo_filter && $this->parse_handle( (string) ( $context['target'] ?? $alias ) )['repo'] !== $repo_filter && $alias !== $repo_filter ) {
+					continue;
+				}
+
+				$target  = (string) ( $context['target'] ?? $alias );
+				$path    = $this->workspace_path . '/' . $this->parse_handle($target)['dir_name'];
+				$repos[] = array(
+					'name'             => $alias,
+					'path'             => is_dir($path) ? $path : null,
+					'git'              => is_dir($path . '/.git') || is_file($path . '/.git'),
+					'is_worktree'      => false,
+					'is_context'       => true,
+					'repo'             => (string) ( $context['repo'] ?? $target ),
+					'ref'              => (string) ( $context['ref'] ?? '' ),
+					'workspace_policy' => WorkspaceAliasResolver::policy_attestation($alias),
+				);
+			}
 		}
 
 		return array(
@@ -149,8 +172,8 @@ trait WorkspaceRepositoryLifecycle {
 			return new \WP_Error('invalid_clone_name', 'Repository names cannot contain "@". The "@<branch-slug>" suffix is reserved for worktrees (use "workspace worktree add" instead).', array( 'status' => 400 ));
 		}
 
-		$name      = $this->sanitize_name($name);
-		$repo_path = $this->workspace_path . '/' . $name;
+		$name                   = $this->sanitize_name($name);
+		$repo_path              = $this->workspace_path . '/' . $name;
 		$allow_duplicate_remote = ! empty($options['allow_duplicate_remote']);
 
 		// Check if already exists.
@@ -428,10 +451,10 @@ trait WorkspaceRepositoryLifecycle {
 			'repo_remote_exists',
 			sprintf('A primary checkout for %s already exists as "%s" at %s. Do not clone the same remote as "%s"; refresh/reuse the existing primary instead. Next steps: %s', $url, $existing_name, (string) ( $existing['path'] ?? '' ), $name, implode(' ', $next_steps)),
 			array(
-				'status'   => 409,
-				'url'      => $url,
-				'name'     => $name,
-				'existing' => $existing,
+				'status'     => 409,
+				'url'        => $url,
+				'name'       => $name,
+				'existing'   => $existing,
 				'next_steps' => $next_steps,
 			)
 		);
@@ -620,6 +643,30 @@ trait WorkspaceRepositoryLifecycle {
 	 * @return array{success: bool, name?: string, path?: string, branch?: string, remote?: string, commit?: string, dirty?: int}|\WP_Error
 	 */
 	public function show_repo( string $handle ): array|\WP_Error {
+		$context_policy = WorkspaceAliasResolver::context_policy_for($handle);
+		if ( null !== $context_policy ) {
+			$target    = (string) ( $context_policy['target'] ?? $handle );
+			$parsed    = $this->parse_handle($target);
+			$repo_path = $this->workspace_path . '/' . $parsed['dir_name'];
+			$ref       = (string) ( $context_policy['ref'] ?? '' );
+			if ( ! is_dir($repo_path) ) {
+				return array(
+					'success'          => true,
+					'name'             => (string) $context_policy['alias'],
+					'repo'             => (string) ( $context_policy['repo'] ?? $target ),
+					'is_worktree'      => false,
+					'is_context'       => true,
+					'path'             => null,
+					'branch'           => '' !== $ref ? $ref : null,
+					'remote'           => '' !== (string) ( $context_policy['repo'] ?? '' ) ? 'https://github.com/' . (string) $context_policy['repo'] . '.git' : null,
+					'commit'           => null,
+					'dirty'            => 0,
+					'workspace_policy' => WorkspaceAliasResolver::policy_attestation($handle),
+				);
+			}
+			$handle = $target;
+		}
+
 		$parsed    = $this->parse_handle($handle);
 		$repo_path = $this->workspace_path . '/' . $parsed['dir_name'];
 
@@ -636,17 +683,23 @@ trait WorkspaceRepositoryLifecycle {
 		$status = trim( (string) exec(sprintf('git -C %s status --porcelain 2>/dev/null | wc -l', $escaped)));
      // phpcs:enable
 
-		return array(
-			'success'     => true,
-			'name'        => $parsed['dir_name'],
-			'repo'        => $parsed['repo'],
-			'is_worktree' => $parsed['is_worktree'],
-			'path'        => $repo_path,
-			'branch'      => $branch ? $branch : null,
-			'remote'      => $remote ? $remote : null,
-			'commit'      => $commit ? $commit : null,
-			'dirty'       => (int) $status,
+		$result = array(
+			'success'           => true,
+			'name'              => null !== $context_policy ? (string) $context_policy['alias'] : $parsed['dir_name'],
+			'repo'              => $parsed['repo'],
+			'is_worktree'       => $parsed['is_worktree'],
+			'is_context'        => null !== $context_policy,
+			'path'              => $repo_path,
+			'branch'            => $branch ? $branch : null,
+			'remote'            => $remote ? $remote : null,
+			'commit'            => $commit ? $commit : null,
+			'dirty'             => (int) $status,
 			'primary_freshness' => ! $parsed['is_worktree'] ? $this->build_primary_freshness_report($repo_path, $parsed['dir_name']) : null,
 		);
+		if ( null !== $context_policy ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
+		}
+
+		return $result;
 	}
 }

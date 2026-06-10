@@ -15,7 +15,6 @@
 
 namespace DataMachineCode\Workspace;
 
-use DataMachine\Core\FilesRepository\FilesystemHelper;
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\PathSecurity;
 
@@ -50,6 +49,10 @@ class WorkspaceWriter {
 	 * @return array{success: bool, path?: string, size?: int, created?: bool}|\WP_Error
 	 */
 	public function write_file( string $name, string $path, string $content ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
+			return WorkspaceAliasResolver::mutation_error($name, 'write');
+		}
+
 		$repo_path = $this->workspace->get_repo_path($name);
 		$path      = ltrim($path, '/');
 
@@ -123,7 +126,10 @@ class WorkspaceWriter {
 	 * @return array{success: bool, path?: string, replacements?: int}|\WP_Error
 	 */
 	public function edit_file( string $name, string $path, string $old_string, string $new_string, bool $replace_all = false ): array|\WP_Error {
-		$fs        = FilesystemHelper::get();
+		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
+			return WorkspaceAliasResolver::mutation_error($name, 'edit');
+		}
+
 		$repo_path = $this->workspace->get_repo_path($name);
 		$path      = ltrim($path, '/');
 
@@ -135,16 +141,16 @@ class WorkspaceWriter {
 		$validation = $this->workspace->validate_containment($file_path, $repo_path);
 
 		if ( ! $validation['valid'] ) {
-			return new \WP_Error('path_traversal', $validation['message'], array( 'status' => 403 ));
+			return new \WP_Error('path_traversal', (string) ( $validation['message'] ?? 'Path traversal detected. Access denied.' ), array( 'status' => 403 ));
 		}
 
-		$real_path = $validation['real_path'];
+		$real_path = (string) ( $validation['real_path'] ?? '' );
 
 		if ( ! is_file($real_path) ) {
 			return new \WP_Error('file_not_found', sprintf('File not found: %s', $path), array( 'status' => 404 ));
 		}
 
-		if ( ! is_readable($real_path) || ! $fs->is_writable($real_path) ) {
+		if ( ! is_readable($real_path) || ! is_writable($real_path) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_writable
 			return new \WP_Error('file_not_writable', sprintf('File not readable/writable: %s', $path), array( 'status' => 403 ));
 		}
 
@@ -185,7 +191,10 @@ class WorkspaceWriter {
 		if ( $replace_all ) {
 			$new_content = str_replace($old_string, $new_string, $content);
 		} else {
-			$pos         = strpos($content, $old_string);
+			$pos = strpos($content, $old_string);
+			if ( false === $pos ) {
+				return new \WP_Error('string_not_found', 'old_string not found in file content.', array( 'status' => 400 ));
+			}
 			$new_content = substr_replace($content, $new_string, $pos, strlen($old_string));
 		}
 
@@ -215,6 +224,10 @@ class WorkspaceWriter {
 	 * @return array{success: bool, name: string, path: string, changed_files: string[], diff: string, status: string, check_output: string, apply_output: string}|\WP_Error
 	 */
 	public function apply_patch( string $name, string $patch, bool $allow_primary_mutation = false ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
+			return WorkspaceAliasResolver::mutation_error($name, 'apply-patch');
+		}
+
 		$repo_path = $this->workspace->get_repo_path($name);
 		$parsed    = $this->workspace->parse_handle($name);
 

@@ -40,6 +40,11 @@ class WorkspaceReader {
 	 * @return array{success: bool, content?: string, path?: string, size?: int, lines_read?: int, offset?: int}|\WP_Error
 	 */
 	public function read_file( string $name, string $path, int $max_size = Workspace::MAX_READ_SIZE, ?int $offset = null, ?int $limit = null ): array|\WP_Error {
+		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($name, $path);
+		if ( null !== $policy_error ) {
+			return $policy_error;
+		}
+
 		$repo_path = $this->workspace->get_repo_path($name);
 		$path      = ltrim($path, '/');
 
@@ -51,10 +56,10 @@ class WorkspaceReader {
 		$validation = $this->workspace->validate_containment($file_path, $repo_path);
 
 		if ( ! $validation['valid'] ) {
-			return new \WP_Error('path_traversal', $validation['message'], array( 'status' => 403 ));
+			return new \WP_Error('path_traversal', (string) ( $validation['message'] ?? 'Path traversal detected. Access denied.' ), array( 'status' => 403 ));
 		}
 
-		$real_path = $validation['real_path'];
+		$real_path = (string) ( $validation['real_path'] ?? '' );
 
 		if ( ! is_file($real_path) ) {
 			return new \WP_Error('file_not_found', sprintf('File not found: %s', $path), array( 'status' => 404 ));
@@ -65,6 +70,9 @@ class WorkspaceReader {
 		}
 
 		$size = filesize($real_path);
+		if ( false === $size ) {
+			return new \WP_Error('file_size_failed', sprintf('Failed to determine file size: %s', $path), array( 'status' => 500 ));
+		}
 
 		if ( $size > $max_size ) {
 			return new \WP_Error(
@@ -117,6 +125,10 @@ class WorkspaceReader {
 			'size'    => $size,
 		);
 
+		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($name);
+		}
+
 		if ( null !== $offset || null !== $limit ) {
 			$result['lines_read'] = $lines_read;
 			$result['offset']     = $start_line;
@@ -133,6 +145,11 @@ class WorkspaceReader {
 	 * @return array{success: bool, repo?: string, path?: string, entries?: array}|\WP_Error
 	 */
 	public function list_directory( string $name, ?string $path = null ): array|\WP_Error {
+		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($name, $path ?? '');
+		if ( null !== $policy_error ) {
+			return $policy_error;
+		}
+
 		$repo_path = $this->workspace->get_repo_path($name);
 
 		if ( ! is_dir($repo_path) ) {
@@ -148,10 +165,10 @@ class WorkspaceReader {
 			$validation = $this->workspace->validate_containment($target_path, $repo_path);
 
 			if ( ! $validation['valid'] ) {
-				return new \WP_Error('path_traversal', $validation['message'], array( 'status' => 403 ));
+				return new \WP_Error('path_traversal', (string) ( $validation['message'] ?? 'Path traversal detected. Access denied.' ), array( 'status' => 403 ));
 			}
 
-			$target_path = $validation['real_path'];
+			$target_path = (string) ( $validation['real_path'] ?? '' );
 		}
 
 		if ( ! is_dir($target_path) ) {
@@ -195,12 +212,20 @@ class WorkspaceReader {
 			}
 		);
 
-		return array(
+		$items = WorkspaceAliasResolver::filter_context_entries($name, $path ?? '/', $items);
+
+		$result = array(
 			'success' => true,
 			'repo'    => $name,
 			'path'    => $path ?? '/',
 			'entries' => $items,
 		);
+
+		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($name);
+		}
+
+		return $result;
 	}
 
 	/**
@@ -215,6 +240,11 @@ class WorkspaceReader {
 	 * @return array{success: bool, repo?: string, path?: string, pattern?: string, matches?: array, count?: int, truncated?: bool}|\WP_Error
 	 */
 	public function grep( string $name, string $pattern, ?string $path = null, ?string $include_pattern = null, int $max_results = 100, int $context_lines = 0 ): array|\WP_Error {
+		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($name, $path ?? '');
+		if ( null !== $policy_error ) {
+			return $policy_error;
+		}
+
 		$repo_path = $this->workspace->get_repo_path($name);
 		if ( ! is_dir($repo_path) ) {
 			return new \WP_Error('repo_not_found', sprintf('Repository "%s" not found in workspace.', $name), array( 'status' => 404 ));
@@ -232,9 +262,9 @@ class WorkspaceReader {
 			$target_path = $repo_real . '/' . $path;
 			$validation  = $this->workspace->validate_containment($target_path, $repo_real);
 			if ( ! $validation['valid'] ) {
-				return new \WP_Error('path_traversal', $validation['message'], array( 'status' => 403 ));
+				return new \WP_Error('path_traversal', (string) ( $validation['message'] ?? 'Path traversal detected. Access denied.' ), array( 'status' => 403 ));
 			}
-			$target_path = $validation['real_path'];
+			$target_path = (string) ( $validation['real_path'] ?? '' );
 			$search_path = $path;
 		}
 
@@ -253,7 +283,11 @@ class WorkspaceReader {
 		$files         = is_file($target_path) ? array( $target_path ) : $this->iterable_files($target_path);
 
 		foreach ( $files as $file_path ) {
-			$relative_path = ltrim(substr($file_path, strlen($repo_real)), '/');
+			$relative_path  = ltrim(substr($file_path, strlen($repo_real)), '/');
+			$context_policy = WorkspaceAliasResolver::context_policy_for($name);
+			if ( null !== $context_policy && ! WorkspaceAliasResolver::path_allowed_by_policy($relative_path, $context_policy) ) {
+				continue;
+			}
 			if ( str_starts_with($relative_path, '.git/') || ! $this->path_matches_include($relative_path, $include_pattern) ) {
 				continue;
 			}
@@ -269,7 +303,7 @@ class WorkspaceReader {
 			}
 		}
 
-		return array(
+		$result = array(
 			'success'   => true,
 			'repo'      => $name,
 			'path'      => $search_path,
@@ -278,6 +312,12 @@ class WorkspaceReader {
 			'count'     => count($matches),
 			'truncated' => count($matches) >= $max_results,
 		);
+
+		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($name);
+		}
+
+		return $result;
 	}
 
 	private function compile_search_pattern( string $pattern ): string|\WP_Error {
@@ -331,6 +371,10 @@ class WorkspaceReader {
 	 * @return array<int,array<string,mixed>>|\WP_Error
 	 */
 	private function grep_file( string $repo, string $file_path, string $relative_path, string $regex, int $context_lines, int $limit ): array|\WP_Error {
+		if ( $limit < 1 ) {
+			return new \WP_Error('grep_limit_exhausted', 'Search result limit exhausted.', array( 'status' => 400 ));
+		}
+
 		$size = filesize($file_path);
 		if ( false === $size || $size > Workspace::MAX_READ_SIZE ) {
 			return array();
