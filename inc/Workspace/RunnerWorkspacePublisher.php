@@ -47,7 +47,7 @@ class RunnerWorkspacePublisher {
 		}
 
 		$base = trim( (string) ( $input['base'] ?? $input['base_branch'] ?? $input['base_ref'] ?? '' ) );
-		$body = $this->build_pull_request_body((string) ( $input['pr_body'] ?? $input['body'] ?? '' ), $input);
+		$body = $this->build_pull_request_body( (string) ( $input['pr_body'] ?? $input['body'] ?? '' ), $input );
 
 		$status = WorkspaceAbilities::gitStatus(array( 'name' => $handle ));
 		if ( is_wp_error($status) ) {
@@ -125,37 +125,37 @@ class RunnerWorkspacePublisher {
 		}
 
 		return array(
-			'success'        => true,
-			'kind'           => 'runner_workspace_publication',
-			'workspace'      => array(
+			'success'      => true,
+			'kind'         => 'runner_workspace_publication',
+			'workspace'    => array(
 				'handle'  => $handle,
 				'backend' => (string) ( $push['backend'] ?? ( $status['backend'] ?? 'local_git' ) ),
 			),
-			'branch'         => array(
-				'name'      => (string) ( $push['branch'] ?? $branch ),
-				'base'      => '' !== $base ? $base : null,
-				'head'      => (string) $pr_input['head'],
-				'remote'    => (string) ( $push['remote'] ?? 'origin' ),
-				'url'       => $push['html_url'] ?? $push['url'] ?? null,
-				'push'      => $push,
+			'branch'       => array(
+				'name'   => (string) ( $push['branch'] ?? $branch ),
+				'base'   => '' !== $base ? $base : null,
+				'head'   => (string) $pr_input['head'],
+				'remote' => (string) ( $push['remote'] ?? 'origin' ),
+				'url'    => $push['html_url'] ?? $push['url'] ?? null,
+				'push'   => $push,
 			),
-			'commit'         => array(
+			'commit'       => array(
 				'created' => null !== $commit,
 				'sha'     => $this->extract_commit_sha($commit, $push),
 				'result'  => $commit,
 			),
-			'pull_request'   => array(
-				'repo'    => (string) ( $pull['repo'] ?? $target_repo ),
-				'number'  => (int) ( $pull['pull_number'] ?? $pull['number'] ?? 0 ),
-				'url'     => (string) ( $pull['html_url'] ?? $pull['url'] ?? '' ),
-				'reused'  => ! empty($pull['reused']),
-				'opened'  => empty($pull['reused']),
-				'result'  => $pull,
+			'pull_request' => array(
+				'repo'   => (string) ( $pull['repo'] ?? $target_repo ),
+				'number' => (int) ( $pull['pull_number'] ?? $pull['number'] ?? 0 ),
+				'url'    => (string) ( $pull['html_url'] ?? $pull['url'] ?? '' ),
+				'reused' => ! empty($pull['reused']),
+				'opened' => empty($pull['reused']),
+				'result' => $pull,
 			),
-			'evidence'       => array(
+			'evidence'     => array(
 				'context' => $input['evidence_context'] ?? $input['artifact_context'] ?? null,
 			),
-			'message'        => ! empty($pull['reused']) ? 'Runner workspace publication reused an existing pull request.' : 'Runner workspace publication opened a pull request.',
+			'message'      => ! empty($pull['reused']) ? 'Runner workspace publication reused an existing pull request.' : 'Runner workspace publication opened a pull request.',
 		);
 	}
 
@@ -210,8 +210,14 @@ class RunnerWorkspacePublisher {
 			return $body;
 		}
 
-		$encoded = function_exists('wp_json_encode') ? wp_json_encode($context, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) : json_encode($context, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-		if ( ! is_string($encoded) || '' === $encoded ) {
+		if ( function_exists('wp_json_encode') ) {
+			$encoded = wp_json_encode($context, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+		} else {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode -- fallback for standalone smoke tests outside WordPress.
+			$encoded = json_encode($context, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+		}
+
+		if ( ! is_string($encoded) ) {
 			return $body;
 		}
 

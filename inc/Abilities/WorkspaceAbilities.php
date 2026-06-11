@@ -3057,28 +3057,97 @@ class WorkspaceAbilities {
 			'type'       => 'object',
 			'required'   => array( 'workspace_handle', 'target_repo', 'commit_message', 'pr_title' ),
 			'properties' => array(
-				'workspace_handle'       => array( 'type' => 'string', 'description' => 'Workspace handle: <repo> or <repo>@<branch-slug>.' ),
-				'target_repo'            => array( 'type' => 'string', 'description' => 'GitHub repository in owner/repo format for the pull request.' ),
-				'base'                   => array( 'type' => 'string', 'description' => 'Base branch/ref for the pull request.' ),
-				'base_branch'            => array( 'type' => 'string', 'description' => 'Alias for base.' ),
-				'head'                   => array( 'type' => 'string', 'description' => 'Pull request head branch or owner:branch.' ),
-				'head_branch'            => array( 'type' => 'string', 'description' => 'Head branch to push and publish.' ),
-				'branch'                 => array( 'type' => 'string', 'description' => 'Alias for head_branch.' ),
-				'commit_message'         => array( 'type' => 'string', 'description' => 'Commit message for workspace changes.' ),
-				'pr_title'               => array( 'type' => 'string', 'description' => 'Pull request title.' ),
-				'pr_body'                => array( 'type' => 'string', 'description' => 'Pull request body.' ),
-				'labels'                 => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Optional pull request labels.' ),
-				'draft'                  => array( 'type' => 'boolean', 'description' => 'Open the pull request as a draft.' ),
-				'maintainer_can_modify'  => array( 'type' => 'boolean', 'description' => 'Allow maintainers to modify the pull request branch.' ),
-				'evidence_context'       => array( 'type' => 'object', 'description' => 'Runner evidence metadata appended to the PR body and returned in the result.' ),
-				'artifact_context'       => array( 'type' => 'object', 'description' => 'Alias for evidence_context.' ),
-				'run_artifacts'          => array( 'type' => 'array', 'items' => array( 'type' => 'object' ), 'description' => 'Run artifacts forwarded to PR artifact egress handling.' ),
-				'run_artifact_policy'    => array( 'type' => 'object', 'description' => 'Run artifact egress policy forwarded to PR creation.' ),
-				'paths'                  => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Workspace paths to stage before commit. Defaults to all changes.' ),
-				'remote'                 => array( 'type' => 'string', 'description' => 'Git remote name for local workspaces. Default origin.' ),
-				'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit publication from a primary checkout. Default false.' ),
-				'force_with_lease'       => array( 'type' => 'boolean', 'description' => 'Use --force-with-lease for local workspace push.' ),
-				'expected_sha'           => array( 'type' => 'string', 'description' => 'Expected remote branch SHA for --force-with-lease.' ),
+				'workspace_handle'       => array(
+					'type'        => 'string',
+					'description' => 'Workspace handle: <repo> or <repo>@<branch-slug>.',
+				),
+				'target_repo'            => array(
+					'type'        => 'string',
+					'description' => 'GitHub repository in owner/repo format for the pull request.',
+				),
+				'base'                   => array(
+					'type'        => 'string',
+					'description' => 'Base branch/ref for the pull request.',
+				),
+				'base_branch'            => array(
+					'type'        => 'string',
+					'description' => 'Alias for base.',
+				),
+				'head'                   => array(
+					'type'        => 'string',
+					'description' => 'Pull request head branch or owner:branch.',
+				),
+				'head_branch'            => array(
+					'type'        => 'string',
+					'description' => 'Head branch to push and publish.',
+				),
+				'branch'                 => array(
+					'type'        => 'string',
+					'description' => 'Alias for head_branch.',
+				),
+				'commit_message'         => array(
+					'type'        => 'string',
+					'description' => 'Commit message for workspace changes.',
+				),
+				'pr_title'               => array(
+					'type'        => 'string',
+					'description' => 'Pull request title.',
+				),
+				'pr_body'                => array(
+					'type'        => 'string',
+					'description' => 'Pull request body.',
+				),
+				'labels'                 => array(
+					'type'        => 'array',
+					'items'       => array( 'type' => 'string' ),
+					'description' => 'Optional pull request labels.',
+				),
+				'draft'                  => array(
+					'type'        => 'boolean',
+					'description' => 'Open the pull request as a draft.',
+				),
+				'maintainer_can_modify'  => array(
+					'type'        => 'boolean',
+					'description' => 'Allow maintainers to modify the pull request branch.',
+				),
+				'evidence_context'       => array(
+					'type'        => 'object',
+					'description' => 'Runner evidence metadata appended to the PR body and returned in the result.',
+				),
+				'artifact_context'       => array(
+					'type'        => 'object',
+					'description' => 'Alias for evidence_context.',
+				),
+				'run_artifacts'          => array(
+					'type'        => 'array',
+					'items'       => array( 'type' => 'object' ),
+					'description' => 'Run artifacts forwarded to PR artifact egress handling.',
+				),
+				'run_artifact_policy'    => array(
+					'type'        => 'object',
+					'description' => 'Run artifact egress policy forwarded to PR creation.',
+				),
+				'paths'                  => array(
+					'type'        => 'array',
+					'items'       => array( 'type' => 'string' ),
+					'description' => 'Workspace paths to stage before commit. Defaults to all changes.',
+				),
+				'remote'                 => array(
+					'type'        => 'string',
+					'description' => 'Git remote name for local workspaces. Default origin.',
+				),
+				'allow_primary_mutation' => array(
+					'type'        => 'boolean',
+					'description' => 'Permit publication from a primary checkout. Default false.',
+				),
+				'force_with_lease'       => array(
+					'type'        => 'boolean',
+					'description' => 'Use --force-with-lease for local workspace push.',
+				),
+				'expected_sha'           => array(
+					'type'        => 'string',
+					'description' => 'Expected remote branch SHA for --force-with-lease.',
+				),
 			),
 		);
 	}

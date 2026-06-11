@@ -1437,27 +1437,93 @@ class WorkspaceTools extends BaseTool
             'type'       => 'object',
             'required'   => array( 'workspace_handle', 'target_repo', 'commit_message', 'pr_title' ),
             'properties' => array(
-                'workspace_handle'       => array( 'type' => 'string', 'description' => 'Workspace handle: <repo> or <repo>@<branch-slug>.' ),
-                'target_repo'            => array( 'type' => 'string', 'description' => 'GitHub owner/repo for the PR.' ),
-                'base'                   => array( 'type' => 'string', 'description' => 'Base branch/ref.' ),
-                'head'                   => array( 'type' => 'string', 'description' => 'PR head branch or owner:branch.' ),
-                'head_branch'            => array( 'type' => 'string', 'description' => 'Branch to push/publish.' ),
-                'branch'                 => array( 'type' => 'string', 'description' => 'Alias for head_branch.' ),
-                'commit_message'         => array( 'type' => 'string', 'description' => 'Commit message.' ),
-                'pr_title'               => array( 'type' => 'string', 'description' => 'Pull request title.' ),
-                'pr_body'                => array( 'type' => 'string', 'description' => 'Pull request body.' ),
-                'labels'                 => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Optional PR labels.' ),
-                'draft'                  => array( 'type' => 'boolean', 'description' => 'Open as draft.' ),
-                'maintainer_can_modify'  => array( 'type' => 'boolean', 'description' => 'Allow maintainers to modify.' ),
-                'evidence_context'       => array( 'type' => 'object', 'description' => 'Runner evidence/artifact context.' ),
-                'artifact_context'       => array( 'type' => 'object', 'description' => 'Alias for evidence_context.' ),
-                'run_artifacts'          => array( 'type' => 'array', 'items' => array( 'type' => 'object' ), 'description' => 'Run artifacts forwarded to PR artifact handling.' ),
-                'run_artifact_policy'    => array( 'type' => 'object', 'description' => 'Artifact egress policy.' ),
-                'paths'                  => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Paths to stage. Defaults to all.' ),
-                'remote'                 => array( 'type' => 'string', 'description' => 'Git remote for local workspaces.' ),
-                'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit primary checkout publication.' ),
-                'force_with_lease'       => array( 'type' => 'boolean', 'description' => 'Use --force-with-lease.' ),
-                'expected_sha'           => array( 'type' => 'string', 'description' => 'Expected remote branch SHA.' ),
+                'workspace_handle'       => array(
+                    'type'        => 'string',
+                    'description' => 'Workspace handle: <repo> or <repo>@<branch-slug>.',
+                ),
+                'target_repo'            => array(
+                    'type'        => 'string',
+                    'description' => 'GitHub owner/repo for the PR.',
+                ),
+                'base'                   => array(
+                    'type'        => 'string',
+                    'description' => 'Base branch/ref.',
+                ),
+                'head'                   => array(
+                    'type'        => 'string',
+                    'description' => 'PR head branch or owner:branch.',
+                ),
+                'head_branch'            => array(
+                    'type'        => 'string',
+                    'description' => 'Branch to push/publish.',
+                ),
+                'branch'                 => array(
+                    'type'        => 'string',
+                    'description' => 'Alias for head_branch.',
+                ),
+                'commit_message'         => array(
+                    'type'        => 'string',
+                    'description' => 'Commit message.',
+                ),
+                'pr_title'               => array(
+                    'type'        => 'string',
+                    'description' => 'Pull request title.',
+                ),
+                'pr_body'                => array(
+                    'type'        => 'string',
+                    'description' => 'Pull request body.',
+                ),
+                'labels'                 => array(
+                    'type'        => 'array',
+                    'items'       => array( 'type' => 'string' ),
+                    'description' => 'Optional PR labels.',
+                ),
+                'draft'                  => array(
+                    'type'        => 'boolean',
+                    'description' => 'Open as draft.',
+                ),
+                'maintainer_can_modify'  => array(
+                    'type'        => 'boolean',
+                    'description' => 'Allow maintainers to modify.',
+                ),
+                'evidence_context'       => array(
+                    'type'        => 'object',
+                    'description' => 'Runner evidence/artifact context.',
+                ),
+                'artifact_context'       => array(
+                    'type'        => 'object',
+                    'description' => 'Alias for evidence_context.',
+                ),
+                'run_artifacts'          => array(
+                    'type'        => 'array',
+                    'items'       => array( 'type' => 'object' ),
+                    'description' => 'Run artifacts forwarded to PR artifact handling.',
+                ),
+                'run_artifact_policy'    => array(
+                    'type'        => 'object',
+                    'description' => 'Artifact egress policy.',
+                ),
+                'paths'                  => array(
+                    'type'        => 'array',
+                    'items'       => array( 'type' => 'string' ),
+                    'description' => 'Paths to stage. Defaults to all.',
+                ),
+                'remote'                 => array(
+                    'type'        => 'string',
+                    'description' => 'Git remote for local workspaces.',
+                ),
+                'allow_primary_mutation' => array(
+                    'type'        => 'boolean',
+                    'description' => 'Permit primary checkout publication.',
+                ),
+                'force_with_lease'       => array(
+                    'type'        => 'boolean',
+                    'description' => 'Use --force-with-lease.',
+                ),
+                'expected_sha'           => array(
+                    'type'        => 'string',
+                    'description' => 'Expected remote branch SHA.',
+                ),
             ),
             ),
             ), array( 'completion_signal' => 'complete' )
