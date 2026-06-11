@@ -93,8 +93,16 @@ final class WorktreeDiskBudget {
 		$effective_refuse_bytes = $thresholds['refuse_free_bytes'];
 		$effective_warn_bytes   = $thresholds['warn_free_bytes'];
 		if ( null !== $total_bytes && $total_bytes > 0 ) {
-			$effective_refuse_bytes = max($effective_refuse_bytes, (int) ceil($total_bytes * ( $thresholds['refuse_free_percent'] / 100 )));
-			$effective_warn_bytes   = max($effective_warn_bytes, (int) ceil($total_bytes * ( $thresholds['warn_free_percent'] / 100 )));
+			$effective_refuse_bytes = self::effective_free_bytes_threshold(
+				$thresholds['refuse_free_bytes'],
+				$thresholds['refuse_free_percent'],
+				$total_bytes
+			);
+			$effective_warn_bytes   = self::effective_free_bytes_threshold(
+				$thresholds['warn_free_bytes'],
+				$thresholds['warn_free_percent'],
+				$total_bytes
+			);
 		}
 
 		if ( null !== $free_bytes ) {
@@ -293,6 +301,28 @@ final class WorktreeDiskBudget {
 		}
 
 		return $count;
+	}
+
+	/**
+	 * Calculate the free-space threshold for the measured filesystem.
+	 *
+	 * The absolute GiB floor protects normal workspaces, but bounded ephemeral
+	 * filesystems can be smaller than that floor. In that case, the percentage
+	 * threshold is the only attainable safety signal.
+	 *
+	 * @param  int   $absolute_bytes Absolute free-space threshold.
+	 * @param  float $percent        Percentage free-space threshold.
+	 * @param  int   $total_bytes    Measured filesystem size.
+	 * @return int
+	 */
+	private static function effective_free_bytes_threshold( int $absolute_bytes, float $percent, int $total_bytes ): int {
+		$percent_bytes = (int) ceil($total_bytes * ( $percent / 100 ));
+
+		if ( $total_bytes < $absolute_bytes ) {
+			return $percent_bytes;
+		}
+
+		return max($absolute_bytes, $percent_bytes);
 	}
 
 	/**

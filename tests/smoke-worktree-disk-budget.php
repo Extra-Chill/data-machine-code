@@ -127,7 +127,32 @@ datamachine_code_budget_assert('warning' === $budget['status'], 'high worktree c
 datamachine_code_budget_assert(true === $budget['emergency_triggered'], 'worktree count warning triggers emergency cleanup');
 datamachine_code_budget_assert(str_contains($budget['warnings'][0], '101 worktree-like directories'), 'worktree-count warning is descriptive');
 
-echo "\n[7] inspect counts only worktree-like directories\n";
+echo "\n[7] small ephemeral filesystems use percentage thresholds\n";
+$budget = WorktreeDiskBudget::evaluate(
+    array(
+        'workspace_path' => '/workspace',
+        'free_bytes'     => 2 * $gib,
+        'total_bytes'    => 4 * $gib,
+        'worktree_count' => 0,
+    ),
+    $thresholds
+);
+datamachine_code_budget_assert('ok' === $budget['status'], 'small workspace with 50 percent free is ok');
+datamachine_code_budget_assert(0.4 === $budget['effective_refuse_gib'], 'small workspace refusal floor uses percentage threshold');
+datamachine_code_budget_assert(0.6 === $budget['effective_warn_gib'], 'small workspace warning floor uses percentage threshold');
+
+$budget = WorktreeDiskBudget::evaluate(
+    array(
+        'workspace_path' => '/workspace',
+        'free_bytes'     => (int) ( 0.2 * $gib ),
+        'total_bytes'    => 4 * $gib,
+        'worktree_count' => 0,
+    ),
+    $thresholds
+);
+datamachine_code_budget_assert('refused' === $budget['status'], 'small workspace still refuses below percentage threshold');
+
+echo "\n[8] inspect counts only worktree-like directories\n";
 $tmp = sys_get_temp_dir() . '/dmc-budget-' . uniqid('', true);
 mkdir($tmp);
 mkdir($tmp . '/repo');
