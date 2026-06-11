@@ -98,6 +98,7 @@ class WorkspaceTools extends BaseTool
         $this->registerTool('workspace_git_add', array( $this, 'getGitAddDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-add' ));
         $this->registerTool('workspace_git_commit', array( $this, 'getGitCommitDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-commit' ));
         $this->registerTool('workspace_git_push', array( $this, 'getGitPushDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-push' ));
+        $this->registerTool('workspace_publish_runner', array( $this, 'getPublishRunnerDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/publish-runner-workspace' ));
         $this->registerTool('workspace_git_rebase', array( $this, 'getGitRebaseDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-rebase' ));
         $this->registerTool('workspace_git_reset', array( $this, 'getGitResetDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-reset' ));
         $this->registerTool('workspace_pr_status', array( $this, 'getPrStatusDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-pr-status' ));
@@ -606,6 +607,22 @@ class WorkspaceTools extends BaseTool
         }
 
         return $this->executeAbility('datamachine-code/workspace-git-push', 'workspace_git_push', $input, array( 'name' ));
+    }
+
+    /**
+     * @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed>
+     */
+    public function handlePublishRunner( array $parameters ): array
+    {
+        $input = $parameters;
+        if (isset($parameters['name']) && ! isset($input['workspace_handle']) ) {
+            $input['workspace_handle'] = $parameters['name'];
+        }
+        if (isset($parameters['repo']) && ! isset($input['workspace_handle']) ) {
+            $input['workspace_handle'] = $parameters['repo'];
+        }
+
+        return $this->executeAbility('datamachine-code/publish-runner-workspace', 'workspace_publish_runner', $input, array( 'workspace_handle' ));
     }
 
     /**
@@ -1403,6 +1420,47 @@ class WorkspaceTools extends BaseTool
             'force_with_lease'       => array( 'type' => 'boolean', 'description' => 'Use --force-with-lease. Refuses protected base/fixed branches.' ),
             'expected_sha'            => array( 'type' => 'string', 'description' => 'Optional expected remote branch SHA.' ),
             ), array( 'name' ), array( 'completion_signal' => 'progress' ) 
+        );
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    public function getPublishRunnerDefinition(): array
+    {
+        return $this->withRuntime(
+            array(
+            'class'       => __CLASS__,
+            'method'      => 'handlePublishRunner',
+            'description' => 'Publish runner-owned workspace changes through the canonical DMC API: stage, commit, push, then open or reuse a pull request.',
+            'parameters'  => array(
+            'type'       => 'object',
+            'required'   => array( 'workspace_handle', 'target_repo', 'commit_message', 'pr_title' ),
+            'properties' => array(
+                'workspace_handle'       => array( 'type' => 'string', 'description' => 'Workspace handle: <repo> or <repo>@<branch-slug>.' ),
+                'target_repo'            => array( 'type' => 'string', 'description' => 'GitHub owner/repo for the PR.' ),
+                'base'                   => array( 'type' => 'string', 'description' => 'Base branch/ref.' ),
+                'head'                   => array( 'type' => 'string', 'description' => 'PR head branch or owner:branch.' ),
+                'head_branch'            => array( 'type' => 'string', 'description' => 'Branch to push/publish.' ),
+                'branch'                 => array( 'type' => 'string', 'description' => 'Alias for head_branch.' ),
+                'commit_message'         => array( 'type' => 'string', 'description' => 'Commit message.' ),
+                'pr_title'               => array( 'type' => 'string', 'description' => 'Pull request title.' ),
+                'pr_body'                => array( 'type' => 'string', 'description' => 'Pull request body.' ),
+                'labels'                 => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Optional PR labels.' ),
+                'draft'                  => array( 'type' => 'boolean', 'description' => 'Open as draft.' ),
+                'maintainer_can_modify'  => array( 'type' => 'boolean', 'description' => 'Allow maintainers to modify.' ),
+                'evidence_context'       => array( 'type' => 'object', 'description' => 'Runner evidence/artifact context.' ),
+                'artifact_context'       => array( 'type' => 'object', 'description' => 'Alias for evidence_context.' ),
+                'run_artifacts'          => array( 'type' => 'array', 'items' => array( 'type' => 'object' ), 'description' => 'Run artifacts forwarded to PR artifact handling.' ),
+                'run_artifact_policy'    => array( 'type' => 'object', 'description' => 'Artifact egress policy.' ),
+                'paths'                  => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Paths to stage. Defaults to all.' ),
+                'remote'                 => array( 'type' => 'string', 'description' => 'Git remote for local workspaces.' ),
+                'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit primary checkout publication.' ),
+                'force_with_lease'       => array( 'type' => 'boolean', 'description' => 'Use --force-with-lease.' ),
+                'expected_sha'           => array( 'type' => 'string', 'description' => 'Expected remote branch SHA.' ),
+            ),
+            ),
+            ), array( 'completion_signal' => 'complete' )
         );
     }
 
