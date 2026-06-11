@@ -58,6 +58,7 @@ class WorkspaceTools extends BaseTool
         'workspace_git_add',
         'workspace_git_commit',
         'workspace_git_push',
+        'workspace_run_runner_command',
         'workspace_git_rebase',
         'workspace_git_reset',
         'workspace_pr_status',
@@ -99,6 +100,7 @@ class WorkspaceTools extends BaseTool
         $this->registerTool('workspace_git_commit', array( $this, 'getGitCommitDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-commit' ));
         $this->registerTool('workspace_git_push', array( $this, 'getGitPushDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-push' ));
         $this->registerTool('workspace_publish_runner', array( $this, 'getPublishRunnerDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/publish-runner-workspace' ));
+        $this->registerTool('workspace_run_runner_command', array( $this, 'getRunRunnerCommandDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/run-runner-workspace-command' ));
         $this->registerTool('workspace_git_rebase', array( $this, 'getGitRebaseDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-rebase' ));
         $this->registerTool('workspace_git_reset', array( $this, 'getGitResetDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-reset' ));
         $this->registerTool('workspace_pr_status', array( $this, 'getPrStatusDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-pr-status' ));
@@ -623,6 +625,22 @@ class WorkspaceTools extends BaseTool
         }
 
         return $this->executeAbility('datamachine-code/publish-runner-workspace', 'workspace_publish_runner', $input, array( 'workspace_handle' ));
+    }
+
+    /**
+     * @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed>
+     */
+    public function handleRunRunnerCommand( array $parameters ): array
+    {
+        $input = $parameters;
+        if (isset($parameters['name']) && ! isset($input['workspace_handle']) ) {
+            $input['workspace_handle'] = $parameters['name'];
+        }
+        if (isset($parameters['repo']) && ! isset($input['workspace_handle']) ) {
+            $input['workspace_handle'] = $parameters['repo'];
+        }
+
+        return $this->executeAbility('datamachine-code/run-runner-workspace-command', 'workspace_run_runner_command', $input, array( 'workspace_handle', 'command' ));
     }
 
     /**
@@ -1531,7 +1549,37 @@ class WorkspaceTools extends BaseTool
     }
 
     /**
-     * @return array<string,mixed> 
+     * @return array<string,mixed>
+     */
+    public function getRunRunnerCommandDefinition(): array
+    {
+        return $this->withRuntime(
+            array(
+            'class'       => __CLASS__,
+            'method'      => 'handleRunRunnerCommand',
+            'description' => 'Run a bounded verification or drift command against a runner-owned workspace handle through the canonical DMC backend API.',
+            'parameters'  => array(
+            'type'       => 'object',
+            'required'   => array( 'workspace_handle', 'command' ),
+            'properties' => array(
+                'workspace_handle' => array( 'type' => 'string', 'description' => 'Workspace handle: <repo>, <repo>@<branch-slug>, or runner alias.' ),
+                'name'             => array( 'type' => 'string', 'description' => 'Alias for workspace_handle.' ),
+                'repo'             => array( 'type' => 'string', 'description' => 'Alias for workspace_handle.' ),
+                'command'          => array( 'type' => 'string', 'description' => 'Shell command to run inside the workspace.' ),
+                'description'      => array( 'type' => 'string', 'description' => 'Human-readable reason for the command.' ),
+                'timeout'          => array( 'type' => 'integer', 'description' => 'Timeout in seconds. Defaults to 300 and is capped at 1800.' ),
+                'timeout_seconds'  => array( 'type' => 'integer', 'description' => 'Alias for timeout.' ),
+                'cwd'              => array( 'type' => 'string', 'description' => 'Optional relative working directory inside the workspace.' ),
+                'env'              => array( 'type' => 'object', 'description' => 'Optional string environment variables.' ),
+                'context'          => array( 'type' => 'object', 'description' => 'Optional caller context carried for observability.' ),
+            ),
+            ),
+            ), array( 'completion_signal' => 'complete' )
+        );
+    }
+
+	/**
+	 * @return array<string,mixed>
      */
     public function getGitRebaseDefinition(): array
     {

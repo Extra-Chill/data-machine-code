@@ -651,6 +651,62 @@ class RemoteWorkspaceBackend {
 	}
 
 	/**
+	 * Remote/GitHub workspaces do not expose shell command execution.
+	 *
+	 * @param  string              $handle          Workspace handle.
+	 * @param  string              $command         Shell command requested by caller.
+	 * @param  string              $description     Human-readable reason for the command.
+	 * @param  int                 $timeout_seconds Timeout in seconds.
+	 * @param  array<string,mixed> $env             Environment variables, accepted for API symmetry.
+	 * @param  string|null         $cwd             Optional relative cwd, accepted for API symmetry.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function run_command( string $handle, string $command, string $description = '', int $timeout_seconds = 300, array $env = array(), ?string $cwd = null ): array|\WP_Error {
+		unset($timeout_seconds, $env, $cwd);
+
+		if ( '' === trim($command) ) {
+			return new \WP_Error('runner_workspace_command_missing_command', 'command is required.', array( 'status' => 400 ));
+		}
+
+		$context = $this->resolve_handle($handle);
+		if ( is_wp_error($context) ) {
+			return $context;
+		}
+
+		$result = array(
+			'success'      => false,
+			'kind'         => 'runner_workspace_command',
+			'backend'      => 'github_api',
+			'failure_type' => 'unavailable',
+			'name'         => $handle,
+			'repo'         => $context['repo_name'],
+			'path'         => 'github://' . $context['repo'] . ( '' !== (string) $context['branch'] ? '#' . $context['branch'] : '' ),
+			'command'      => trim($command),
+			'description'  => $description,
+			'exit_code'    => null,
+			'stdout'       => '',
+			'stderr'       => '',
+			'elapsed_ms'   => 0,
+			'timed_out'    => false,
+			'workspace'    => array(
+				'handle'      => $handle,
+				'repo'        => $context['repo_name'],
+				'github_repo' => $context['repo'],
+				'branch'      => $context['branch'],
+				'backend'     => 'github_api',
+				'is_context'  => ! empty($context['read_only_context']),
+			),
+			'message'      => 'Runner workspace command execution is unavailable for GitHub API remote workspaces; use a local runner workspace backend for shell commands.',
+		);
+
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
+		}
+
+		return $result;
+	}
+
+	/**
 	 * Compatibility no-op: files are tracked by pending remote workspace state.
 	 *
 	 * @return array<string,mixed>|\WP_Error

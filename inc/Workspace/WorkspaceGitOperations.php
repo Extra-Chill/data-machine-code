@@ -9,6 +9,7 @@ namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Support\GitHubRemote;
 use DataMachineCode\Support\PathSecurity;
+use DataMachineCode\Support\ProcessRunner;
 
 defined('ABSPATH') || exit;
 
@@ -116,6 +117,116 @@ trait WorkspaceGitOperations {
 			'success' => true,
 			'message' => trim( (string) $result['output']),
 			'name'    => $parsed['dir_name'],
+		);
+	}
+
+	/**
+	 * Run a bounded shell command in a runner workspace.
+	 *
+	 * @param  string              $handle          Workspace handle.
+	 * @param  string              $command         Shell command to execute.
+	 * @param  string              $description     Human-readable reason for the command.
+	 * @param  int                 $timeout_seconds Timeout in seconds.
+	 * @param  array<string,mixed> $env             Extra environment variables.
+	 * @param  string|null         $cwd             Optional relative working directory.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function run_runner_workspace_command( string $handle, string $command, string $description = '', int $timeout_seconds = 300, array $env = array(), ?string $cwd = null ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			return WorkspaceAliasResolver::mutation_error($handle, 'command execution');
+		}
+
+		$command = trim($command);
+		if ( '' === $command ) {
+			return new \WP_Error('runner_workspace_command_missing_command', 'command is required.', array( 'status' => 400 ));
+		}
+
+		$parsed    = $this->parse_handle($handle);
+		$repo_path = $this->resolve_repo_path($handle);
+		if ( is_wp_error($repo_path) ) {
+			return $repo_path;
+		}
+
+		$workdir = $repo_path;
+		if ( null !== $cwd && '' !== trim($cwd) ) {
+			$relative = trim(str_replace('\\', '/', $cwd), '/');
+			if ( '' === $relative || str_contains($relative, '..') ) {
+				return new \WP_Error('runner_workspace_command_invalid_cwd', 'cwd must be a relative path inside the workspace.', array( 'status' => 400 ));
+			}
+
+			$target = $repo_path . '/' . $relative;
+			if ( ! is_dir($target) ) {
+				return new \WP_Error('runner_workspace_command_cwd_not_found', sprintf('cwd "%s" was not found inside the workspace.', $relative), array( 'status' => 404 ));
+			}
+
+			$validation = $this->validate_containment($target, $repo_path);
+			if ( ! $validation['valid'] ) {
+				return new \WP_Error('path_traversal', $validation['message'], array( 'status' => 403 ));
+			}
+			$workdir = $validation['real_path'];
+		}
+
+		$clean_env = array();
+		foreach ( $env as $key => $value ) {
+			$key = trim( (string) $key );
+			if ( '' === $key || ! preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $key) ) {
+				return new \WP_Error('runner_workspace_command_invalid_env', sprintf('Invalid environment variable name "%s".', $key), array( 'status' => 400 ));
+			}
+			$clean_env[ $key ] = (string) $value;
+		}
+
+		$timeout_seconds = max(1, min(1800, $timeout_seconds));
+		$started         = microtime(true);
+		$base_env        = getenv();
+		if ( ! is_array($base_env) ) {
+			$base_env = $_ENV;
+		}
+
+		$result     = ProcessRunner::run(
+			$command,
+			array(
+				'cwd'              => $workdir,
+				'env'              => empty($clean_env) ? null : array_merge($base_env, $clean_env),
+				'timeout_seconds'  => $timeout_seconds,
+				'output_cap_bytes' => 1048576,
+				'error_as_result'  => true,
+				'separate_streams' => true,
+			)
+		);
+		$elapsed_ms = max(0, (int) round(( microtime(true) - $started ) * 1000));
+
+		if ( is_wp_error($result) ) {
+			return $result;
+		}
+
+		$stdout    = (string) ( $result['stdout'] ?? ( $result['output'] ?? '' ) );
+		$stderr    = (string) ( $result['stderr'] ?? '' );
+		$exit_code = (int) ( $result['exit_code'] ?? 1 );
+		$success   = 0 === $exit_code;
+
+		return array(
+			'success'      => $success,
+			'kind'         => 'runner_workspace_command',
+			'backend'      => 'local_git',
+			'failure_type' => $success ? null : 'command_failed',
+			'name'         => $parsed['dir_name'],
+			'repo'         => $parsed['repo'],
+			'path'         => $repo_path,
+			'cwd'          => $workdir,
+			'command'      => $command,
+			'description'  => $description,
+			'exit_code'    => $exit_code,
+			'stdout'       => $stdout,
+			'stderr'       => $stderr,
+			'elapsed_ms'   => $elapsed_ms,
+			'timed_out'    => false,
+			'workspace'    => array(
+				'handle'      => $parsed['dir_name'],
+				'repo'        => $parsed['repo'],
+				'is_worktree' => $parsed['is_worktree'],
+				'backend'     => 'local_git',
+			),
+			'message'      => $success ? 'Runner workspace command completed successfully.' : 'Runner workspace command failed.',
 		);
 	}
 
