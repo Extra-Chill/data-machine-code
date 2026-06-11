@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.98] - 2026-06-11
+
+### Changed
+- Support workspace path repo handles
+
 ## [0.47.97] - 2026-06-11
 
 ### Changed
