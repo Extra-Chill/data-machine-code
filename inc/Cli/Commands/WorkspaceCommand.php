@@ -45,6 +45,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * ## OPTIONS
 	 *
+	 * [<name>]
+	 * : Optional primary or worktree handle, such as <repo> or <repo>@<branch-slug>.
+	 *
 	 * [--ensure]
 	 * : Create the directory if it doesn't exist.
 	 *
@@ -52,6 +55,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 *     # Show workspace path
 	 *     wp datamachine-code workspace path
+	 *
+	 *     # Show path for a workspace repo or worktree
+	 *     wp datamachine-code workspace path my-plugin@fix-foo
 	 *
 	 *     # Show path and create if missing
 	 *     wp datamachine-code workspace path --ensure
@@ -65,11 +71,14 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$result = $ability->execute(
-			array(
-				'ensure' => ! empty($assoc_args['ensure']),
-			)
+		$input = array(
+			'ensure' => ! empty($assoc_args['ensure']),
 		);
+		if ( ! empty($args[0]) ) {
+			$input['name'] = (string) $args[0];
+		}
+
+		$result = $ability->execute($input);
 
 		if ( is_wp_error($result) ) {
 			WP_CLI::error($result->get_error_message());

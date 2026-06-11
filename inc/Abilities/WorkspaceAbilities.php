@@ -79,11 +79,15 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-path',
 				array(
 					'label'               => 'Get Workspace Path',
-					'description'         => 'Get the agent workspace directory path. Optionally create the directory.',
+					'description'         => 'Get the agent workspace root path, or the path for a workspace repository handle.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
+							'name'   => array(
+								'type'        => 'string',
+								'description' => 'Optional primary or worktree handle, such as <repo> or <repo>@<branch-slug>.',
+							),
 							'ensure' => array(
 								'type'        => 'boolean',
 								'description' => 'Create the workspace directory if it does not exist.',
@@ -2408,6 +2412,20 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function getPath( array $input ): array|\WP_Error {
+		if ( ! empty($input['name']) ) {
+			$result = self::showRepo(array( 'name' => (string) $input['name'] ));
+			if ( is_wp_error($result) ) {
+				return $result;
+			}
+
+			$path = (string) ( $result['path'] ?? '' );
+			return array(
+				'success' => true,
+				'path'    => $path,
+				'exists'  => '' !== $path && ( RemoteWorkspaceBackend::should_handle() || is_dir($path) ),
+			);
+		}
+
 		$workspace = new Workspace();
 
 		if ( ! empty($input['ensure']) ) {

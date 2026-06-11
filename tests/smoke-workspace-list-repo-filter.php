@@ -85,6 +85,7 @@ namespace {
         }
     }
 
+    include __DIR__ . '/../inc/Workspace/WorkspaceAliasResolver.php';
     include __DIR__ . '/../inc/Workspace/Workspace.php';
 
     $failures = 0;
