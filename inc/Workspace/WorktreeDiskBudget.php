@@ -94,12 +94,12 @@ final class WorktreeDiskBudget {
 		$effective_warn_bytes   = $thresholds['warn_free_bytes'];
 		if ( null !== $total_bytes && $total_bytes > 0 ) {
 			$effective_refuse_bytes = self::effective_free_bytes_threshold(
-				$thresholds['refuse_free_bytes'],
+				(int) $thresholds['refuse_free_bytes'],
 				$thresholds['refuse_free_percent'],
 				$total_bytes
 			);
 			$effective_warn_bytes   = self::effective_free_bytes_threshold(
-				$thresholds['warn_free_bytes'],
+				(int) $thresholds['warn_free_bytes'],
 				$thresholds['warn_free_percent'],
 				$total_bytes
 			);
@@ -112,7 +112,7 @@ final class WorktreeDiskBudget {
 					'Free disk space is %.1f GiB%s, below the refusal threshold of %.1f GiB or %.1f%% free, whichever is stricter.',
 					self::bytes_to_gib($free_bytes),
 					null === $free_percent ? '' : sprintf(' (%.1f%%)', $free_percent),
-					self::bytes_to_gib($thresholds['refuse_free_bytes']),
+					self::bytes_to_gib( (int) $thresholds['refuse_free_bytes'] ),
 					$thresholds['refuse_free_percent']
 				);
 			} elseif ( $free_bytes < $effective_warn_bytes ) {
@@ -120,7 +120,7 @@ final class WorktreeDiskBudget {
 					'Free disk space is %.1f GiB%s, below the warning threshold of %.1f GiB or %.1f%% free, whichever is stricter.',
 					self::bytes_to_gib($free_bytes),
 					null === $free_percent ? '' : sprintf(' (%.1f%%)', $free_percent),
-					self::bytes_to_gib($thresholds['warn_free_bytes']),
+					self::bytes_to_gib( (int) $thresholds['warn_free_bytes'] ),
 					$thresholds['warn_free_percent']
 				);
 			}
@@ -158,10 +158,10 @@ final class WorktreeDiskBudget {
 			'workspace_size_exact'      => false,
 			'worktree_count'            => $count,
 			'warn_free_bytes'           => $thresholds['warn_free_bytes'],
-			'warn_free_gib'             => round(self::bytes_to_gib($thresholds['warn_free_bytes']), 2),
+			'warn_free_gib'             => round(self::bytes_to_gib( (int) $thresholds['warn_free_bytes'] ), 2),
 			'warn_free_percent'         => $thresholds['warn_free_percent'],
 			'refuse_free_bytes'         => $thresholds['refuse_free_bytes'],
-			'refuse_free_gib'           => round(self::bytes_to_gib($thresholds['refuse_free_bytes']), 2),
+			'refuse_free_gib'           => round(self::bytes_to_gib( (int) $thresholds['refuse_free_bytes'] ), 2),
 			'refuse_free_percent'       => $thresholds['refuse_free_percent'],
 			'effective_refuse_bytes'    => $effective_refuse_bytes,
 			'effective_refuse_gib'      => round(self::bytes_to_gib($effective_refuse_bytes), 2),
