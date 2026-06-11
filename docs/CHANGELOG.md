@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.99] - 2026-06-11
+
+### Fixed
+- Fix disk budget for bounded workspaces
+
 ## [0.47.98] - 2026-06-11
 
 ### Changed
