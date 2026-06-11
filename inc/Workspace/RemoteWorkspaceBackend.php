@@ -689,12 +689,12 @@ class RemoteWorkspaceBackend {
 			'elapsed_ms'   => 0,
 			'timed_out'    => false,
 			'workspace'    => array(
-				'handle'     => $handle,
-				'repo'       => $context['repo_name'],
-				'github_repo'=> $context['repo'],
-				'branch'     => $context['branch'],
-				'backend'    => 'github_api',
-				'is_context' => ! empty($context['read_only_context']),
+				'handle'      => $handle,
+				'repo'        => $context['repo_name'],
+				'github_repo' => $context['repo'],
+				'branch'      => $context['branch'],
+				'backend'     => 'github_api',
+				'is_context'  => ! empty($context['read_only_context']),
 			),
 			'message'      => 'Runner workspace command execution is unavailable for GitHub API remote workspaces; use a local runner workspace backend for shell commands.',
 		);

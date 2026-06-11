@@ -3070,7 +3070,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function runRunnerWorkspaceCommand( array $input ): array|\WP_Error {
-		$handle = trim( (string) ( $input['workspace_handle'] ?? $input['name'] ?? $input['repo'] ?? '' ) );
+		$handle  = trim( (string) ( $input['workspace_handle'] ?? $input['name'] ?? $input['repo'] ?? '' ) );
 		$command = trim( (string) ( $input['command'] ?? '' ) );
 		$timeout = isset($input['timeout']) ? (int) $input['timeout'] : (int) ( $input['timeout_seconds'] ?? 300 );
 		$env     = isset($input['env']) && is_array($input['env']) ? $input['env'] : array();
@@ -3158,22 +3158,22 @@ class WorkspaceAbilities {
 		return array(
 			'type'       => 'object',
 			'properties' => array(
-				'success'       => array( 'type' => 'boolean' ),
-				'kind'          => array( 'type' => 'string' ),
-				'backend'       => array( 'type' => 'string' ),
-				'failure_type'  => array( 'type' => array( 'string', 'null' ) ),
-				'name'          => array( 'type' => 'string' ),
-				'repo'          => array( 'type' => 'string' ),
-				'path'          => array( 'type' => array( 'string', 'null' ) ),
-				'command'       => array( 'type' => 'string' ),
-				'description'   => array( 'type' => 'string' ),
-				'exit_code'     => array( 'type' => array( 'integer', 'null' ) ),
-				'stdout'        => array( 'type' => 'string' ),
-				'stderr'        => array( 'type' => 'string' ),
-				'elapsed_ms'    => array( 'type' => 'integer' ),
-				'timed_out'     => array( 'type' => 'boolean' ),
-				'workspace'     => array( 'type' => 'object' ),
-				'message'       => array( 'type' => 'string' ),
+				'success'      => array( 'type' => 'boolean' ),
+				'kind'         => array( 'type' => 'string' ),
+				'backend'      => array( 'type' => 'string' ),
+				'failure_type' => array( 'type' => array( 'string', 'null' ) ),
+				'name'         => array( 'type' => 'string' ),
+				'repo'         => array( 'type' => 'string' ),
+				'path'         => array( 'type' => array( 'string', 'null' ) ),
+				'command'      => array( 'type' => 'string' ),
+				'description'  => array( 'type' => 'string' ),
+				'exit_code'    => array( 'type' => array( 'integer', 'null' ) ),
+				'stdout'       => array( 'type' => 'string' ),
+				'stderr'       => array( 'type' => 'string' ),
+				'elapsed_ms'   => array( 'type' => 'integer' ),
+				'timed_out'    => array( 'type' => 'boolean' ),
+				'workspace'    => array( 'type' => 'object' ),
+				'message'      => array( 'type' => 'string' ),
 			),
 		);
 	}

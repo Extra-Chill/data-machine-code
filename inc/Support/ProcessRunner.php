@@ -26,7 +26,7 @@ final class ProcessRunner {
 	 *
 	 * @param  string              $command Shell command to execute.
 	 * @param  array<string,mixed> $options Execution options.
-	 * @return array{success: bool, output: string, exit_code: int}|\WP_Error
+	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function run( string $command, array $options = array() ): array|\WP_Error {
 		$timeout_seconds = max(0, (int) ( $options['timeout_seconds'] ?? 0 ));
@@ -53,7 +53,7 @@ final class ProcessRunner {
 
 	/**
 	 * @param  array<string,mixed> $options
-	 * @return array{success: bool, output: string, exit_code: int}|\WP_Error
+	 * @return array<string,mixed>|\WP_Error
 	 */
 	private static function run_via_exec( string $command, array $options, int $output_cap ): array|\WP_Error {
 		$shell = RuntimeCapabilities::shell_diagnostic();
@@ -87,7 +87,7 @@ final class ProcessRunner {
 	 * @param  array<string,mixed> $options
 	 * @param  callable|null       $on_output
 	 * @param  array<string,mixed>|null $env
-	 * @return array{success: bool, output: string, exit_code: int}|\WP_Error
+	 * @return array<string,mixed>|\WP_Error
 	 */
 	private static function run_via_proc_open( string $command, array $options, int $timeout_seconds, int $output_cap, ?callable $on_output, ?string $cwd, ?array $env ): array|\WP_Error {
 		$descriptor_spec = array(
@@ -108,8 +108,8 @@ final class ProcessRunner {
 		$stdout           = '';
 		$stderr           = '';
 		$output           = '';
-		$deadline  = $timeout_seconds > 0 ? microtime(true) + $timeout_seconds : null;
-		$exit_code = null;
+		$deadline         = $timeout_seconds > 0 ? microtime(true) + $timeout_seconds : null;
+		$exit_code        = 0;
 
 		while ( true ) {
 			$stdout_chunk = (string) stream_get_contents($pipes[1]);
@@ -126,7 +126,7 @@ final class ProcessRunner {
 
 			$status = proc_get_status($process);
 			if ( empty($status['running']) ) {
-				$exit_code = isset($status['exitcode']) ? (int) $status['exitcode'] : null;
+				$exit_code = (int) $status['exitcode'];
 				break;
 			}
 
@@ -158,7 +158,7 @@ final class ProcessRunner {
 		}
 
 		$close_code = proc_close($process);
-		if ( null === $exit_code ) {
+		if ( -1 === $exit_code ) {
 			$exit_code = $close_code;
 		}
 
@@ -236,6 +236,7 @@ final class ProcessRunner {
 	/**
 	 * @param array<string,mixed> $options
 	 * @param array<string,mixed> $data
+	 * @return array<string,mixed>|\WP_Error
 	 */
 	private static function error( array $options, string $message, array $data = array() ): array|\WP_Error {
 		if ( ! empty($options['error_as_result']) ) {

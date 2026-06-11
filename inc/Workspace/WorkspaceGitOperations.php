@@ -182,7 +182,7 @@ trait WorkspaceGitOperations {
 			$base_env = $_ENV;
 		}
 
-		$result          = ProcessRunner::run(
+		$result     = ProcessRunner::run(
 			$command,
 			array(
 				'cwd'              => $workdir,
@@ -193,7 +193,7 @@ trait WorkspaceGitOperations {
 				'separate_streams' => true,
 			)
 		);
-		$elapsed_ms      = max(0, (int) round(( microtime(true) - $started ) * 1000));
+		$elapsed_ms = max(0, (int) round(( microtime(true) - $started ) * 1000));
 
 		if ( is_wp_error($result) ) {
 			return $result;
