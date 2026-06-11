@@ -96,6 +96,7 @@ wp datamachine-code gitsync submit docs --message="Update docs"
 
 # Workspace
 wp datamachine-code workspace path
+wp datamachine-code workspace path repo-name@fix-foo
 wp datamachine-code workspace list
 wp datamachine-code workspace clone https://github.com/org/repo.git
 wp datamachine-code workspace show repo-name

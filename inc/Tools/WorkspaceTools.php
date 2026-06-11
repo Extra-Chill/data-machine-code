@@ -994,6 +994,10 @@ class WorkspaceTools extends BaseTool
             'parameters'  => array(
             'type'       => 'object',
             'properties' => array(
+            'name'   => array(
+            'type'        => 'string',
+            'description' => 'Optional workspace repository handle. Accepts either <repo> for a primary checkout or <repo>@<branch-slug> for a worktree.',
+                    ),
             'ensure' => array(
             'type'        => 'boolean',
             'description' => 'Create the workspace directory if it does not exist (default false).',
