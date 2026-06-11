@@ -1065,6 +1065,20 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
+				'datamachine-code/run-runner-workspace-command',
+				array(
+					'label'               => 'Run Runner Workspace Command',
+					'description'         => 'Run a bounded verification or drift command against a runner-owned workspace handle without exposing DMC local paths to callers.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => self::runnerWorkspaceCommandInputSchema(),
+					'output_schema'       => self::runnerWorkspaceCommandOutputSchema(),
+					'execute_callback'    => array( self::class, 'runRunnerWorkspaceCommand' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
 				'datamachine-code/workspace-git-rebase',
 				array(
 					'label'               => 'Workspace Git Rebase',
@@ -3047,6 +3061,121 @@ class WorkspaceAbilities {
 	 */
 	public static function publishRunnerWorkspace( array $input ): array|\WP_Error {
 		return ( new RunnerWorkspacePublisher() )->publish($input);
+	}
+
+	/**
+	 * Run a bounded command against a runner-owned workspace.
+	 *
+	 * @param  array<string,mixed> $input Command input.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function runRunnerWorkspaceCommand( array $input ): array|\WP_Error {
+		$handle = trim( (string) ( $input['workspace_handle'] ?? $input['name'] ?? $input['repo'] ?? '' ) );
+		$command = trim( (string) ( $input['command'] ?? '' ) );
+		$timeout = isset($input['timeout']) ? (int) $input['timeout'] : (int) ( $input['timeout_seconds'] ?? 300 );
+		$env     = isset($input['env']) && is_array($input['env']) ? $input['env'] : array();
+
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			$result = ( new RemoteWorkspaceBackend() )->run_command(
+				$handle,
+				$command,
+				(string) ( $input['description'] ?? '' ),
+				$timeout,
+				$env,
+				isset($input['cwd']) ? (string) $input['cwd'] : null
+			);
+			return self::decorate_remote_workspace_result('run_runner_workspace_command', $result);
+		}
+
+		$workspace = new Workspace();
+		return $workspace->run_runner_workspace_command(
+			$handle,
+			$command,
+			(string) ( $input['description'] ?? '' ),
+			$timeout,
+			$env,
+			isset($input['cwd']) ? (string) $input['cwd'] : null
+		);
+	}
+
+	/**
+	 * @return array<string,mixed>
+	 */
+	private static function runnerWorkspaceCommandInputSchema(): array {
+		return array(
+			'type'       => 'object',
+			'required'   => array( 'workspace_handle', 'command' ),
+			'properties' => array(
+				'workspace_handle' => array(
+					'type'        => 'string',
+					'description' => 'Workspace handle: <repo>, <repo>@<branch-slug>, or a runner-provided alias.',
+				),
+				'name'             => array(
+					'type'        => 'string',
+					'description' => 'Alias for workspace_handle.',
+				),
+				'repo'             => array(
+					'type'        => 'string',
+					'description' => 'Alias for workspace_handle.',
+				),
+				'command'          => array(
+					'type'        => 'string',
+					'description' => 'Shell command to run inside the workspace.',
+				),
+				'description'      => array(
+					'type'        => 'string',
+					'description' => 'Human-readable reason for the command.',
+				),
+				'timeout'          => array(
+					'type'        => 'integer',
+					'description' => 'Timeout in seconds. Defaults to 300 and is capped at 1800.',
+				),
+				'timeout_seconds'  => array(
+					'type'        => 'integer',
+					'description' => 'Alias for timeout.',
+				),
+				'cwd'              => array(
+					'type'        => 'string',
+					'description' => 'Optional relative working directory inside the workspace.',
+				),
+				'env'              => array(
+					'type'                 => 'object',
+					'description'          => 'Optional string environment variables for the command.',
+					'additionalProperties' => array( 'type' => 'string' ),
+				),
+				'context'          => array(
+					'type'        => 'object',
+					'description' => 'Optional caller context carried for observability.',
+				),
+			),
+		);
+	}
+
+	/**
+	 * @return array<string,mixed>
+	 */
+	private static function runnerWorkspaceCommandOutputSchema(): array {
+		return array(
+			'type'       => 'object',
+			'properties' => array(
+				'success'       => array( 'type' => 'boolean' ),
+				'kind'          => array( 'type' => 'string' ),
+				'backend'       => array( 'type' => 'string' ),
+				'failure_type'  => array( 'type' => array( 'string', 'null' ) ),
+				'name'          => array( 'type' => 'string' ),
+				'repo'          => array( 'type' => 'string' ),
+				'path'          => array( 'type' => array( 'string', 'null' ) ),
+				'command'       => array( 'type' => 'string' ),
+				'description'   => array( 'type' => 'string' ),
+				'exit_code'     => array( 'type' => array( 'integer', 'null' ) ),
+				'stdout'        => array( 'type' => 'string' ),
+				'stderr'        => array( 'type' => 'string' ),
+				'elapsed_ms'    => array( 'type' => 'integer' ),
+				'timed_out'     => array( 'type' => 'boolean' ),
+				'workspace'     => array( 'type' => 'object' ),
+				'message'       => array( 'type' => 'string' ),
+			),
+		);
 	}
 
 	/**

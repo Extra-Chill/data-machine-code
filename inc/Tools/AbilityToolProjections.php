@@ -62,6 +62,7 @@ class AbilityToolProjections {
 			'workspace_git_add'                    => self::workspace_write('datamachine-code/workspace-git-add'),
 			'workspace_git_commit'                 => self::workspace_write('datamachine-code/workspace-git-commit'),
 			'workspace_git_push'                   => self::workspace_write('datamachine-code/workspace-git-push'),
+			'workspace_run_runner_command'          => self::workspace_write('datamachine-code/run-runner-workspace-command'),
 			'workspace_git_rebase'                 => self::workspace_write('datamachine-code/workspace-git-rebase'),
 			'workspace_git_reset'                  => self::workspace_write('datamachine-code/workspace-git-reset'),
 			'workspace_worktree_add'               => self::workspace_write('datamachine-code/workspace-worktree-add'),

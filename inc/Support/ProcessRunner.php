@@ -104,13 +104,20 @@ final class ProcessRunner {
 		stream_set_blocking($pipes[1], false);
 		stream_set_blocking($pipes[2], false);
 
-		$output    = '';
+		$separate_streams = ! empty($options['separate_streams']);
+		$stdout           = '';
+		$stderr           = '';
+		$output           = '';
 		$deadline  = $timeout_seconds > 0 ? microtime(true) + $timeout_seconds : null;
 		$exit_code = null;
 
 		while ( true ) {
-			$chunk = (string) stream_get_contents($pipes[1]) . (string) stream_get_contents($pipes[2]);
+			$stdout_chunk = (string) stream_get_contents($pipes[1]);
+			$stderr_chunk = (string) stream_get_contents($pipes[2]);
+			$chunk        = $stdout_chunk . $stderr_chunk;
 			if ( '' !== $chunk ) {
+				$stdout .= $stdout_chunk;
+				$stderr .= $stderr_chunk;
 				$output .= $chunk;
 				if ( null !== $on_output ) {
 					$on_output($chunk);
@@ -124,13 +131,15 @@ final class ProcessRunner {
 			}
 
 			if ( null !== $deadline && microtime(true) >= $deadline ) {
-				$output = self::terminate_timed_out_process($process, $pipes, $output);
+				$remaining = self::terminate_timed_out_process($process, $pipes, $output, $stdout, $stderr);
 				return self::error(
 					$options,
 					sprintf('Process command timed out after %d second(s).', $timeout_seconds),
 					array(
 						'timeout' => $timeout_seconds,
-						'output'  => self::cap_output(trim($output), $output_cap),
+						'output'  => self::cap_output(trim($remaining['output']), $output_cap),
+						'stdout'  => self::cap_output(trim($remaining['stdout']), $output_cap),
+						'stderr'  => self::cap_output(trim($remaining['stderr']), $output_cap),
 					)
 				);
 			}
@@ -138,7 +147,11 @@ final class ProcessRunner {
 			usleep( (int) ( $options['poll_interval_microseconds'] ?? 50000 ) );
 		}
 
-		$output .= (string) stream_get_contents($pipes[1]) . (string) stream_get_contents($pipes[2]);
+		$stdout_tail = (string) stream_get_contents($pipes[1]);
+		$stderr_tail = (string) stream_get_contents($pipes[2]);
+		$stdout     .= $stdout_tail;
+		$stderr     .= $stderr_tail;
+		$output     .= $stdout_tail . $stderr_tail;
 		foreach ( $pipes as $pipe ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- Process pipes are not WordPress filesystem paths.
 			fclose($pipe);
@@ -150,29 +163,43 @@ final class ProcessRunner {
 		}
 
 		$output = self::cap_output(trim(str_replace("\r", "\n", $output)), $output_cap);
+		$stdout = self::cap_output(trim(str_replace("\r", "\n", $stdout)), $output_cap);
+		$stderr = self::cap_output(trim(str_replace("\r", "\n", $stderr)), $output_cap);
 		if ( 0 !== $exit_code ) {
+			$data = array(
+				'exit_code' => $exit_code,
+				'output'    => $output,
+			);
+			if ( $separate_streams ) {
+				$data['stdout'] = $stdout;
+				$data['stderr'] = $stderr;
+			}
+
 			return self::error(
 				$options,
 				sprintf('Process command failed (exit %d): %s', $exit_code, $output),
-				array(
-					'exit_code' => $exit_code,
-					'output'    => $output,
-				)
+				$data
 			);
 		}
 
-		return array(
+		$result = array(
 			'success'   => true,
 			'output'    => $output,
 			'exit_code' => 0,
 		);
+		if ( $separate_streams ) {
+			$result['stdout'] = $stdout;
+			$result['stderr'] = $stderr;
+		}
+
+		return $result;
 	}
 
 	/**
 	 * @param resource $process
 	 * @param array<int,resource> $pipes
 	 */
-	private static function terminate_timed_out_process( $process, array $pipes, string $output ): string {
+	private static function terminate_timed_out_process( $process, array $pipes, string $output, string $stdout = '', string $stderr = '' ): array {
 		proc_terminate($process);
 		usleep(100000);
 		$status = proc_get_status($process);
@@ -180,14 +207,22 @@ final class ProcessRunner {
 			proc_terminate($process, 9);
 		}
 
-		$output .= (string) stream_get_contents($pipes[1]) . (string) stream_get_contents($pipes[2]);
+		$stdout_tail = (string) stream_get_contents($pipes[1]);
+		$stderr_tail = (string) stream_get_contents($pipes[2]);
+		$stdout     .= $stdout_tail;
+		$stderr     .= $stderr_tail;
+		$output     .= $stdout_tail . $stderr_tail;
 		foreach ( $pipes as $pipe ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- Process pipes are not WordPress filesystem paths.
 			fclose($pipe);
 		}
 		proc_close($process);
 
-		return $output;
+		return array(
+			'output' => $output,
+			'stdout' => $stdout,
+			'stderr' => $stderr,
+		);
 	}
 
 	private static function cap_output( string $output, int $output_cap ): string {
@@ -204,11 +239,19 @@ final class ProcessRunner {
 	 */
 	private static function error( array $options, string $message, array $data = array() ): array|\WP_Error {
 		if ( ! empty($options['error_as_result']) ) {
-			return array(
+			$result = array(
 				'success'   => false,
 				'output'    => (string) ( $data['output'] ?? $message ),
 				'exit_code' => (int) ( $data['exit_code'] ?? 1 ),
 			);
+			if ( array_key_exists('stdout', $data) ) {
+				$result['stdout'] = (string) $data['stdout'];
+			}
+			if ( array_key_exists('stderr', $data) ) {
+				$result['stderr'] = (string) $data['stderr'];
+			}
+
+			return $result;
 		}
 
 		$code = isset($options['error_code']) && is_string($options['error_code']) && '' !== $options['error_code'] ? $options['error_code'] : 'process_command_failed';

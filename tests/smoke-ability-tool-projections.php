@@ -49,6 +49,10 @@ namespace {
 		return true;
 	}
 
+	function wp_json_encode( mixed $value, int $flags = 0 ): string|false {
+		return json_encode($value, $flags);
+	}
+
 	function dmc_projection_normalize_tool_result( array $ability_result, string $tool_name, string $ability_slug ): array {
 		$result              = $ability_result;
 		$result['tool_name'] = $result['tool_name'] ?? $tool_name;
@@ -144,6 +148,7 @@ namespace {
 		'workspace_git_add'     => 'datamachine-code/workspace-git-add',
 		'workspace_git_commit'  => 'datamachine-code/workspace-git-commit',
 		'workspace_git_push'    => 'datamachine-code/workspace-git-push',
+		'workspace_run_runner_command' => 'datamachine-code/run-runner-workspace-command',
 	);
 
 	foreach ( $expected_write as $tool_name => $ability_slug ) {
