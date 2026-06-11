@@ -46,7 +46,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## OPTIONS
 	 *
 	 * [<name>]
-	 * : Optional repository handle. Accepts either <repo> for a primary checkout or <repo>@<branch-slug> for a worktree.
+	 * : Optional primary or worktree handle, such as <repo> or <repo>@<branch-slug>.
 	 *
 	 * [--ensure]
 	 * : Create the directory if it doesn't exist.

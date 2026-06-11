@@ -40,7 +40,7 @@ namespace {
         }
     }
 
-    function is_wp_error( $value ): bool
+    function is_wp_error( $_value ): bool
     {
         return false;
     }
