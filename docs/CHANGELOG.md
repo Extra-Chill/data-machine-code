@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.96] - 2026-06-11
+
+### Changed
+- Add runner workspace publication API
+
 ## [0.47.95] - 2026-06-10
 
 ### Changed
