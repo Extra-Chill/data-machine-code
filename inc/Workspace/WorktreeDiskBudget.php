@@ -90,8 +90,8 @@ final class WorktreeDiskBudget {
 		$warnings = array();
 		$refused  = false;
 
-		$effective_refuse_bytes = $thresholds['refuse_free_bytes'];
-		$effective_warn_bytes   = $thresholds['warn_free_bytes'];
+		$effective_refuse_bytes = (int) $thresholds['refuse_free_bytes'];
+		$effective_warn_bytes   = (int) $thresholds['warn_free_bytes'];
 		if ( null !== $total_bytes && $total_bytes > 0 ) {
 			$effective_refuse_bytes = self::effective_refuse_free_bytes_threshold(
 				(int) $thresholds['refuse_free_bytes'],
