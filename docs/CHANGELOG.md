@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.112] - 2026-06-12
+
+### Fixed
+- Fix disk budget lint failures
+- Fix worktree disk budget percentage refusal
+
 ## [0.47.111] - 2026-06-12
 
 ### Changed
