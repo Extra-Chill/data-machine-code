@@ -2,6 +2,17 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.104] - 2026-06-12
+
+### Changed
+- guard release tags against stale source
+- Bound metadata reconciliation recommendations
+- Add workspace row triage flow
+
+### Fixed
+- Fix cleanup resume limit batching
+- Fix stale workspace lock triage
+
 ## [0.47.103] - 2026-06-12
 
 ### Fixed
