@@ -223,6 +223,14 @@ namespace {
     }
     $assert(true, is_dir($tmp . '/demo@clean/target'), 'bounded dry-run does not delete target directory');
 
+    $ranked_plan = $workspace->worktree_cleanup_artifacts(array( 'dry_run' => true, 'sort' => 'size', 'limit' => 2 ));
+    $assert(false, is_wp_error($ranked_plan), 'ranked artifact dry-run returns a plan');
+    $assert('ranked_inventory', $ranked_plan['pagination']['mode'] ?? '', 'ranked artifact dry-run scans full inventory once');
+    $assert('size', $ranked_plan['pagination']['sort'] ?? '', 'ranked artifact dry-run advertises size sort');
+    $assert(2, count($ranked_plan['candidates'] ?? array()), 'ranked artifact dry-run applies display limit after ranking');
+    $ranked_sizes = array_map(fn( $row ) => (int) ( $row['artifact_size_bytes'] ?? 0 ), $ranked_plan['candidates'] ?? array());
+    $assert(true, $ranked_sizes[0] >= $ranked_sizes[1], 'ranked artifact dry-run returns largest candidates first');
+
     // Exhaustive dry-run: full safety probes — restores the historical strict
     // view where dirty/unpushed worktrees are skipped at dry-run time.
     $exhaustive_plan = $workspace->worktree_cleanup_artifacts(array( 'dry_run' => true, 'exhaustive' => true ));

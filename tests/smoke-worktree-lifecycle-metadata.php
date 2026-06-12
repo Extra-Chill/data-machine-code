@@ -369,7 +369,9 @@ namespace {
     $assert(true, is_wp_error($refused), 'worktree_add refuses before creation when disk budget is unsafe');
     $assert(false, is_dir(DATAMACHINE_WORKSPACE_PATH . '/demo@feature-disk-budget-refusal'), 'refused disk budget does not leave a worktree directory');
     $assert(true, str_contains($refused->get_error_message(), DATAMACHINE_WORKSPACE_PATH), 'disk budget refusal names workspace root');
-    $assert(true, str_contains($refused->get_error_message(), 'cleanup-artifacts --dry-run'), 'disk budget refusal suggests artifact cleanup');
+    $assert(true, str_contains($refused->get_error_message(), 'Recommended cleanup, in order:'), 'disk budget refusal groups remediation commands');
+    $assert(true, str_contains($refused->get_error_message(), 'cleanup-artifacts --dry-run --sort=size'), 'disk budget refusal suggests largest artifact review');
+    $assert(true, str_contains($refused->get_error_message(), 'target reclaim:'), 'disk budget refusal includes target reclaim estimate');
 
     $result = $ws->worktree_add('demo', 'feature/metadata', 'HEAD', false, false, true, false);
     $assert(true, ! is_wp_error($result) && ( $result['success'] ?? false ), 'worktree_add succeeds without context injection');

@@ -41,6 +41,7 @@ trait WorkspaceArtifactCleanup {
 		$force      = ! empty($opts['force']);
 		$apply_plan = isset($opts['apply_plan']) && is_array($opts['apply_plan']) ? $opts['apply_plan'] : null;
 		$exhaustive = ! empty($opts['exhaustive']);
+		$sort       = isset($opts['sort']) ? strtolower(trim( (string) $opts['sort'])) : '';
 		$limit      = isset($opts['limit']) ? (int) $opts['limit'] : self::ARTIFACT_CLEANUP_DEFAULT_LIMIT;
 		$offset     = isset($opts['offset']) ? max(0, (int) $opts['offset']) : 0;
 		if ( $limit < 0 ) {
@@ -87,11 +88,14 @@ trait WorkspaceArtifactCleanup {
 			$only_handles = array_keys($only_handles);
 		}
 
+		$rank_by_size = $dry_run && null === $apply_plan && ! $exhaustive && in_array($sort, array( 'size', 'bytes' ), true);
+		$plan_limit   = $rank_by_size ? 0 : $limit;
+
 		$plan = $this->build_worktree_artifact_cleanup_plan(
 			$force,
 			array(
-				'limit'         => $limit,
-				'offset'        => $offset,
+				'limit'         => $plan_limit,
+				'offset'        => $rank_by_size ? 0 : $offset,
 				'only_handles'  => $only_handles,
 				'safety_probes' => $safety_probes,
 			)
@@ -108,6 +112,25 @@ trait WorkspaceArtifactCleanup {
 			$scoped     = $this->scope_worktree_artifact_cleanup_to_plan($planned, $candidates, $skipped);
 			$candidates = $scoped['candidates'];
 			$skipped    = $scoped['skipped'];
+		}
+
+		if ( $rank_by_size ) {
+			usort($candidates, fn( $a, $b ) => (int) ( $b['artifact_size_bytes'] ?? 0 ) <=> (int) ( $a['artifact_size_bytes'] ?? 0 ));
+			$total_ranked = count($candidates);
+			$candidates   = array_slice($candidates, 0, $limit);
+			$pagination   = array(
+				'mode'          => 'ranked_inventory',
+				'limit'         => $limit,
+				'offset'        => 0,
+				'scanned'       => (int) ( $pagination['scanned'] ?? 0 ),
+				'total'         => (int) ( $pagination['total'] ?? 0 ),
+				'complete'      => true,
+				'partial'       => false,
+				'next_offset'   => null,
+				'safety_probes' => $safety_probes,
+				'sort'          => 'size',
+				'ranked_total'  => $total_ranked,
+			);
 		}
 
 		$summary = $this->build_worktree_artifact_cleanup_summary($candidates, array(), $skipped);

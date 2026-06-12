@@ -176,8 +176,45 @@ final class WorktreeDiskBudget {
 			'cleanup_dry_run_command'   => 'studio wp datamachine-code workspace worktree cleanup --dry-run',
 			'artifact_cleanup_command'  => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run',
 			'emergency_cleanup_command' => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
+			'cleanup_recommendations'   => self::cleanup_recommendations($free_bytes, $effective_refuse_bytes),
 			'force_override_required'   => $refused,
 			'force_override_applied'    => $forced && ! empty($warnings),
+		);
+	}
+
+	/**
+	 * Build concise operator remediation commands for disk-pressure failures.
+	 *
+	 * @param  int|null $free_bytes              Current free bytes.
+	 * @param  int      $effective_refuse_bytes Effective refusal floor.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private static function cleanup_recommendations( ?int $free_bytes, int $effective_refuse_bytes ): array {
+		$target_reclaim = null === $free_bytes ? null : max(0, $effective_refuse_bytes - $free_bytes);
+		$target_human   = null === $target_reclaim ? 'enough space to clear the refusal threshold' : self::format_bytes($target_reclaim);
+
+		return array(
+			array(
+				'priority'               => 1,
+				'action'                 => 'review largest reconstructable artifacts',
+				'expected_reclaim_bytes' => $target_reclaim,
+				'expected_reclaim'       => $target_human,
+				'command'                => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --sort=size',
+			),
+			array(
+				'priority'               => 2,
+				'action'                 => 'apply reviewed cleanup-eligible worktrees',
+				'expected_reclaim_bytes' => $target_reclaim,
+				'expected_reclaim'       => $target_human,
+				'command'                => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25',
+			),
+			array(
+				'priority'               => 3,
+				'action'                 => 'generate combined emergency plan',
+				'expected_reclaim_bytes' => $target_reclaim,
+				'expected_reclaim'       => $target_human,
+				'command'                => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
+			),
 		);
 	}
 
@@ -271,6 +308,25 @@ final class WorktreeDiskBudget {
 			'refuse_free_percent' => $refuse_percent,
 			'warn_worktree_count' => $count,
 		);
+	}
+
+	/**
+	 * Format bytes for command guidance without WordPress runtime helpers.
+	 *
+	 * @param  int|float $bytes Bytes.
+	 * @return string
+	 */
+	private static function format_bytes( int|float $bytes ): string {
+		$bytes      = max(0, (float) $bytes);
+		$units      = array( 'B', 'KiB', 'MiB', 'GiB', 'TiB' );
+		$unit       = 0;
+		$unit_count = count($units);
+		while ( $bytes >= 1024 && $unit < $unit_count - 1 ) {
+			$bytes /= 1024;
+			++$unit;
+		}
+
+		return number_format($bytes, 0 === $unit ? 0 : 1) . ' ' . $units[ $unit ];
 	}
 
 	/**
