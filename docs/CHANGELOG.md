@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.109] - 2026-06-12
+
+### Changed
+- Enforce workspace writable roots in mutation tools
+
 ## [0.47.108] - 2026-06-12
 
 ### Fixed
