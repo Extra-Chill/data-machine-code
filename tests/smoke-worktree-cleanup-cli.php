@@ -770,6 +770,29 @@ namespace {
             'success' => true,
             'run_id'  => (string) ( $input['run_id'] ?? '' ),
             'state'   => 'planned',
+			'locks'   => array(
+			'stale_locks' => array(
+			'count'            => 1,
+			'database_count'   => 1,
+			'filesystem_count' => 0,
+			'preview_command'  => 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json',
+			'apply_command'    => 'wp datamachine-code workspace worktree locks --prune-stale --format=json',
+			'safety'           => 'Preview is non-destructive. Apply prunes expired DB rows and old unlocked filesystem lock files only; live filesystem flocks are reported and protected.',
+			'database'         => array(
+			array(
+			'source'             => 'database',
+			'lock_key'           => 'worktree-demo',
+			'scope'              => 'demo',
+			'owner'              => 'owner:123',
+			'session'            => 'ses-demo',
+			'age_seconds'        => 3600,
+			'live_flock_present' => false,
+			'safe_to_prune'      => true,
+			),
+			),
+			'filesystem'       => array(),
+			),
+			),
             );
         }
     }
@@ -1090,6 +1113,18 @@ namespace {
     $db_status_json = json_decode(WP_CLI::$logs[0] ?? '', true);
     datamachine_code_cleanup_assert('cleanup-run-20260504193024-abc123' === ( $cleanup_status_ability->last_input['run_id'] ?? '' ), 'DB cleanup run IDs are routed to cleanup status ability');
     datamachine_code_cleanup_assert('planned' === ( $db_status_json['state'] ?? '' ), 'DB cleanup run status does not route to job-backed status parser');
+	datamachine_code_cleanup_assert(1 === (int) ( $db_status_json['locks']['stale_locks']['database_count'] ?? 0 ), 'cleanup status JSON surfaces stale DB locks');
+	datamachine_code_cleanup_assert('wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' === (string) ( $db_status_json['locks']['stale_locks']['preview_command'] ?? '' ), 'cleanup status JSON includes exact stale lock preview command');
+	datamachine_code_cleanup_assert('wp datamachine-code workspace worktree locks --prune-stale --format=json' === (string) ( $db_status_json['locks']['stale_locks']['apply_command'] ?? '' ), 'cleanup status JSON includes exact stale lock apply command');
+	datamachine_code_cleanup_assert('ses-demo' === (string) ( $db_status_json['locks']['stale_locks']['database'][0]['session'] ?? '' ), 'cleanup status JSON includes stale DB lock session');
+	datamachine_code_cleanup_assert(3600 === (int) ( $db_status_json['locks']['stale_locks']['database'][0]['age_seconds'] ?? 0 ), 'cleanup status JSON includes stale DB lock age');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup(array( 'status', 'cleanup-run-20260504193024-abc123' ), array());
+	datamachine_code_cleanup_assert(in_array('Stale workspace locks:', WP_CLI::$logs, true), 'human cleanup status renders stale lock follow-up section');
+	datamachine_code_cleanup_assert(in_array('Preview: wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json', WP_CLI::$logs, true), 'human cleanup status renders exact prune preview command');
+	datamachine_code_cleanup_assert(in_array('Apply:   wp datamachine-code workspace worktree locks --prune-stale --format=json', WP_CLI::$logs, true), 'human cleanup status renders exact prune apply command');
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();

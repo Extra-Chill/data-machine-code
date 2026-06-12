@@ -365,7 +365,7 @@ trait WorkspaceHygieneReport {
 
 		$rows = array();
 		foreach ( $entries as $entry ) {
-			if ( '.' === $entry || '..' === $entry ) {
+			if ( '.' === $entry || '..' === $entry || str_starts_with((string) $entry, '.') ) {
 				continue;
 			}
 
@@ -444,7 +444,7 @@ trait WorkspaceHygieneReport {
 		$dirs = array_values(
 			array_filter(
 				$entries,
-				fn( $entry ) => '.' !== $entry && '..' !== $entry && is_dir($this->workspace_path . '/' . $entry)
+				fn( $entry ) => '.' !== $entry && '..' !== $entry && ! str_starts_with((string) $entry, '.') && is_dir($this->workspace_path . '/' . $entry)
 			)
 		);
 		sort($dirs, SORT_NATURAL);
