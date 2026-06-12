@@ -1121,7 +1121,7 @@ namespace {
 	datamachine_code_cleanup_assert('retention' === ( $cleanup_plan_ability->last_input['mode'] ?? '' ), 'cleanup plan receives retention mode');
 	datamachine_code_cleanup_assert(false === ( $cleanup_plan_ability->last_input['include_artifacts'] ?? true ), 'retention cleanup plan skips exhaustive artifact scan by default');
 	datamachine_code_cleanup_assert(true === ( $cleanup_plan_ability->last_input['include_worktrees'] ?? false ), 'retention cleanup plan keeps inventory worktree planning enabled');
-	datamachine_code_cleanup_assert(in_array('Planning cleanup (retention; worktree inventory only)...', WP_CLI::$logs, true), 'human cleanup plan reports bounded scan profile before planning');
+	datamachine_code_cleanup_assert(in_array('Planning cleanup (retention; local worktree merge signals)...', WP_CLI::$logs, true), 'human cleanup plan reports bounded scan profile before planning');
 	datamachine_code_cleanup_assert(in_array('Artifacts: skipped for bounded retention planning; run `wp datamachine-code workspace cleanup plan --mode=artifacts` when you want artifact rows.', WP_CLI::$logs, true), 'human cleanup plan shows explicit artifact follow-up command');
 
 	WP_CLI::$logs      = array();
