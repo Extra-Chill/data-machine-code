@@ -339,71 +339,6 @@ trait WorkspaceActiveNoSignalCleanup {
 	}
 
 	/**
-	 * Promote stale clean active/no-signal rows into cleanup metadata.
-	 *
-	 * This is the operator-approved bulk path for abandoned active rows. It only
-	 * writes cleanup_eligible metadata after the row is older than the requested
-	 * heartbeat age and current git probes still show no dirty or unpushed work.
-	 *
-	 * @param  array<string,mixed> $opts Options.
-	 * @return array<string,mixed>|\WP_Error
-	 */
-	public function worktree_active_no_signal_stale_clean_apply( array $opts = array() ): array|\WP_Error {
-		$older_than = isset($opts['older_than']) && '' !== trim( (string) $opts['older_than']) ? trim( (string) $opts['older_than']) : '7d';
-		$age        = $this->parse_worktree_cleanup_duration($older_than);
-		if ( is_wp_error($age) ) {
-			return $age;
-		}
-
-		return $this->apply_active_no_signal_metadata(
-			$opts,
-			array(
-				'operation'          => 'active-no-signal-stale-clean-apply',
-				'mode'               => 'active_no_signal_stale_clean_apply',
-				'review_only'        => false,
-				'written_as_planned' => true,
-				'inspected_fallback' => 'rows',
-				'summary_extra'      => static function ( array $report ) use ( $older_than ): array {
-					return array(
-						'older_than'           => $older_than,
-						'report_action_counts' => $report['summary']['by_suggested_action'] ?? array(),
-					);
-				},
-				'prepare_row'        => function ( array $row ) use ( $older_than, $age ): array|\WP_Error {
-					$stale = $this->build_active_no_signal_stale_age_evidence($row, $older_than, (int) $age);
-					if ( is_wp_error($stale) ) {
-						return $stale;
-					}
-
-					$action = (string) ( $row['suggested_action'] ?? '' );
-					if ( ! in_array($action, array( 'merged_to_default', 'patch_equivalent_default', 'contained_non_default_remote', 'remote_tracking_clean' ), true) ) {
-						return new \WP_Error('not_stale_clean_cleanup_candidate', 'row is not a clean stale active/no-signal cleanup candidate');
-					}
-
-					$row['stale_policy'] = $stale;
-					return $row;
-				},
-				'build_metadata'     => fn( array $row ): array|\WP_Error => $this->build_active_no_signal_stale_clean_metadata($row),
-				'build_planned'      => static function ( array $row, array $metadata ): array {
-					return array(
-						'handle'          => (string) ( $row['handle'] ?? '' ),
-						'repo'            => (string) ( $row['repo'] ?? '' ),
-						'branch'          => (string) ( $row['branch'] ?? '' ),
-						'path'            => (string) ( $row['path'] ?? '' ),
-						'suggested_action' => (string) ( $row['suggested_action'] ?? '' ),
-						'stale_policy'    => $row['stale_policy'] ?? null,
-						'metadata'        => $metadata,
-					);
-				},
-				'evidence'           => array(
-					'scope'  => 'promote stale clean active_no_signal rows into cleanup_eligible metadata for bounded removal',
-					'safety' => 'Requires stale heartbeat age plus current clean/no-unpushed git probes. Dirty and unpushed rows stay skipped; removal still uses bounded cleanup revalidation.',
-				),
-			)
-		);
-	}
-
-	/**
 	 * Apply active/no-signal report rows into cleanup metadata for one signal type.
 	 *
 	 * @param  array<string,mixed> $opts   Apply options.
@@ -551,7 +486,6 @@ trait WorkspaceActiveNoSignalCleanup {
 
 		$budget_arg  = '' !== $budget_label ? ' --until-budget=' . $budget_label : '';
 		$dry_run_arg = $dry_run ? ' --dry-run' : '';
-		$older_arg   = 'active-no-signal-stale-clean-apply' === $operation && isset($opts['older_than']) && '' !== trim( (string) $opts['older_than']) ? ' --older-than=' . trim( (string) $opts['older_than']) : '';
 		$limit       = (int) ( $pagination['limit'] ?? 25 );
 		$next_offset = (int) $pagination['next_offset'];
 		if ( ! $dry_run && $written_count > 0 ) {
@@ -561,10 +495,9 @@ trait WorkspaceActiveNoSignalCleanup {
 		}
 
 		$pagination['next_command'] = sprintf(
-			'studio wp datamachine-code workspace worktree %s%s%s --limit=%d --offset=%d%s --format=json',
+			'studio wp datamachine-code workspace worktree %s%s --limit=%d --offset=%d%s --format=json',
 			$operation,
 			$dry_run_arg,
-			$older_arg,
 			$limit,
 			$next_offset,
 			$budget_arg
@@ -793,78 +726,6 @@ trait WorkspaceActiveNoSignalCleanup {
 		$metadata['cleanup_eligibility_evidence'] = $evidence;
 
 		return $metadata;
-	}
-
-	/**
-	 * Build cleanup metadata from one stale clean active/no-signal row.
-	 *
-	 * @param  array<string,mixed> $row Evidence row.
-	 * @return array<string,mixed>|\WP_Error
-	 */
-	private function build_active_no_signal_stale_clean_metadata( array $row ): array|\WP_Error {
-		$action = (string) ( $row['suggested_action'] ?? '' );
-		if ( 'merged_to_default' === $action ) {
-			$metadata = $this->build_active_no_signal_merged_to_default_metadata($row);
-		} elseif ( in_array($action, array( 'patch_equivalent_default', 'contained_non_default_remote' ), true) ) {
-			$metadata = $this->build_active_no_signal_equivalent_clean_metadata($row);
-		} elseif ( 'remote_tracking_clean' === $action ) {
-			$metadata = $this->build_active_no_signal_remote_clean_metadata($row);
-		} else {
-			return new \WP_Error('not_stale_clean_cleanup_candidate', 'row is not a clean stale active/no-signal cleanup candidate');
-		}
-
-		if ( is_wp_error($metadata) ) {
-			return $metadata;
-		}
-
-		$metadata['auto_finalized_by']            = 'active_no_signal_stale_clean_apply';
-		$metadata['auto_finalized_signal']        = 'stale-active-clean';
-		$metadata['auto_finalized_reason']        = 'operator-approved stale active/no-signal cleanup policy found clean preserved work';
-		$metadata['cleanup_eligibility_evidence'] = array_merge(
-			(array) ( $metadata['cleanup_eligibility_evidence'] ?? array() ),
-			array(
-				'stale_policy' => $row['stale_policy'] ?? array(),
-			)
-		);
-
-		return $metadata;
-	}
-
-	/**
-	 * Build stale heartbeat evidence for an active/no-signal row.
-	 *
-	 * @param  array<string,mixed> $row        Evidence row.
-	 * @param  string              $older_than Operator age threshold.
-	 * @param  int                 $age        Threshold in seconds.
-	 * @return array<string,mixed>|\WP_Error
-	 */
-	private function build_active_no_signal_stale_age_evidence( array $row, string $older_than, int $age ): array|\WP_Error {
-		$metadata        = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
-		$lifecycle_state = WorktreeContextInjector::normalize_state( (string) ( $metadata['lifecycle_state'] ?? $row['lifecycle_state'] ?? '' ) );
-		if ( WorktreeContextInjector::STATE_ACTIVE !== $lifecycle_state ) {
-			return new \WP_Error('not_active_lifecycle_state', 'row is no longer active lifecycle metadata');
-		}
-
-		$last_seen = (string) ( $row['last_seen_at'] ?? ( $metadata['last_seen_at'] ?? ( $metadata['observed_at'] ?? ( $row['created_at'] ?? '' ) ) ) );
-		$seen_ts   = '' !== $last_seen ? strtotime($last_seen) : false;
-		if ( false === $seen_ts ) {
-			return new \WP_Error('unknown_stale_active_age', 'row has no parseable heartbeat, observed_at, or created_at timestamp');
-		}
-
-		$age_seconds = time() - (int) $seen_ts;
-		if ( $age_seconds < $age ) {
-			return new \WP_Error('stale_active_age_filter', sprintf('row heartbeat age is newer than --older-than=%s', $older_than));
-		}
-
-		return array(
-			'older_than'           => $older_than,
-			'duration_seconds'      => $age,
-			'last_seen_at'          => $last_seen,
-			'heartbeat_age_seconds' => $age_seconds,
-			'liveness'              => $row['liveness'] ?? null,
-			'liveness_reason'       => $row['liveness_reason'] ?? null,
-			'decision'              => 'included',
-		);
 	}
 
 	/**
@@ -1263,9 +1124,6 @@ trait WorkspaceActiveNoSignalCleanup {
 			'lifecycle_state'         => $metadata['lifecycle_state'] ?? null,
 			'metadata'                => $metadata,
 			'last_seen_at'            => $metadata['last_seen_at'] ?? ( $metadata['observed_at'] ?? null ),
-			'liveness'                => $row['liveness'] ?? null,
-			'liveness_reason'         => $row['liveness_reason'] ?? null,
-			'heartbeat_age_seconds'   => $row['heartbeat_age_seconds'] ?? null,
 			'dirty'                   => null,
 			'unpushed'                => null,
 			'pr'                      => null,

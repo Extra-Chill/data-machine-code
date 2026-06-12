@@ -2443,7 +2443,6 @@ class WorkspaceCommand extends BaseCommand {
 	 *   active-no-signal-report, active-no-signal-finalized-apply,
 	 *   active-no-signal-equivalent-clean-apply,
 	 *   active-no-signal-merged-apply, active-no-signal-remote-clean-apply,
-	 *   active-no-signal-stale-clean-apply,
 	 *   refresh-context, finalize, mark-cleanup-eligible.
 	 *
 	 * [<repo>]
@@ -2628,8 +2627,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * [--stage=<stage>]
 	 * : For `abandoned`, resume from a specific orchestration stage. Supported
-	 *   values: reconcile, finalized, equivalent-clean, merged, remote-clean,
-	 *   stale-clean, bounded.
+	 *   values: reconcile, finalized, equivalent-clean, merged, remote-clean, bounded.
 	 *
 	 * [--offset=<count>]
 	 * : For `cleanup --dry-run`, `cleanup-artifacts --dry-run`,
@@ -2754,8 +2752,6 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace worktree active-no-signal-equivalent-clean-apply --limit=25 --offset=0 --format=json
 	 *     wp datamachine-code workspace worktree active-no-signal-merged-apply --dry-run --limit=25 --offset=0 --format=json
 	 *     wp datamachine-code workspace worktree active-no-signal-merged-apply --limit=25 --offset=0 --format=json
-	 *     wp datamachine-code workspace worktree active-no-signal-stale-clean-apply --dry-run --older-than=7d --limit=100 --format=json
-	 *     wp datamachine-code workspace worktree active-no-signal-stale-clean-apply --older-than=7d --limit=100 --format=json
 	 *
 	 *     # Ignore dirty working-tree safety (caution)
 	 *     wp datamachine-code workspace worktree cleanup --force
@@ -2788,7 +2784,7 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|emergency-cleanup|reconcile-metadata|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-stale-clean-apply|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
+			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|emergency-cleanup|reconcile-metadata|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
 			return;
 		}
 
@@ -2862,7 +2858,6 @@ class WorkspaceCommand extends BaseCommand {
 			'active-no-signal-equivalent-clean-apply' => 'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply',
 			'active-no-signal-merged-apply'   => 'datamachine-code/workspace-worktree-active-no-signal-merged-apply',
 			'active-no-signal-remote-clean-apply' => 'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply',
-			'active-no-signal-stale-clean-apply' => 'datamachine-code/workspace-worktree-active-no-signal-stale-clean-apply',
 			'refresh-context'                => 'datamachine-code/workspace-worktree-refresh-context',
 			'finalize'                       => 'datamachine-code/workspace-worktree-finalize',
 			'mark-cleanup-eligible'          => 'datamachine-code/workspace-worktree-finalize',
@@ -3054,8 +3049,7 @@ class WorkspaceCommand extends BaseCommand {
 			case 'active-no-signal-equivalent-clean-apply':
 			case 'active-no-signal-merged-apply':
 			case 'active-no-signal-remote-clean-apply':
-			case 'active-no-signal-stale-clean-apply':
-				if ( in_array($operation, array( 'active-no-signal-finalized-apply', 'active-no-signal-equivalent-clean-apply', 'active-no-signal-merged-apply', 'active-no-signal-remote-clean-apply', 'active-no-signal-stale-clean-apply' ), true) ) {
+				if ( in_array($operation, array( 'active-no-signal-finalized-apply', 'active-no-signal-equivalent-clean-apply', 'active-no-signal-merged-apply', 'active-no-signal-remote-clean-apply' ), true) ) {
 					$input['dry_run'] = ! empty($assoc_args['dry-run']);
 				}
 				if ( isset($assoc_args['limit']) ) {
@@ -3066,9 +3060,6 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
 					$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
-				}
-				if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
-					$input['older_than'] = trim( (string) $assoc_args['older-than']);
 				}
 				break;
 
@@ -3148,7 +3139,6 @@ class WorkspaceCommand extends BaseCommand {
 		$offset       = isset($assoc_args['offset']) ? max(0, (int) $assoc_args['offset']) : 0;
 		$stage        = isset($assoc_args['stage']) ? strtolower( (string) preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $assoc_args['stage']) ) : 'reconcile';
 		$stage        = str_replace('_', '-', $stage);
-		$older_than   = isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ? trim( (string) $assoc_args['older-than']) : '7d';
 		$until_budget = isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ? trim( (string) $assoc_args['until-budget']) : '';
 		$deadline     = null;
 		$stage_order  = array(
@@ -3157,11 +3147,10 @@ class WorkspaceCommand extends BaseCommand {
 			'equivalent-clean' => 2,
 			'merged'           => 3,
 			'remote-clean'     => 4,
-			'stale-clean'      => 5,
-			'bounded'          => 6,
+			'bounded'          => 5,
 		);
 		if ( ! isset($stage_order[ $stage ]) ) {
-			return new \WP_Error('invalid_worktree_abandoned_stage', 'Invalid --stage value. Use reconcile, finalized, equivalent-clean, merged, remote-clean, stale-clean, or bounded.', array( 'status' => 400 ));
+			return new \WP_Error('invalid_worktree_abandoned_stage', 'Invalid --stage value. Use reconcile, finalized, equivalent-clean, merged, remote-clean, or bounded.', array( 'status' => 400 ));
 		}
 		if ( '' !== $until_budget ) {
 			$budget_seconds = $this->parse_worktree_abandoned_budget($until_budget);
@@ -3177,7 +3166,6 @@ class WorkspaceCommand extends BaseCommand {
 			'equivalent_clean'   => 'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply',
 			'merged'             => 'datamachine-code/workspace-worktree-active-no-signal-merged-apply',
 			'remote_clean'       => 'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply',
-			'stale_clean'        => 'datamachine-code/workspace-worktree-active-no-signal-stale-clean-apply',
 			'bounded_apply'      => 'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply',
 			'prune'              => 'datamachine-code/workspace-worktree-prune',
 		);
@@ -3198,7 +3186,6 @@ class WorkspaceCommand extends BaseCommand {
 			'applied'         => $apply,
 			'destructive'     => $apply,
 			'force'           => $force,
-			'older_than'      => $older_than,
 			'limit'           => $limit,
 			'stage'           => $stage,
 			'offset'          => $offset,
@@ -3270,7 +3257,7 @@ class WorkspaceCommand extends BaseCommand {
 					return $bounded;
 				}
 				$result['evidence']['budget_exhausted'] = $this->worktree_abandoned_budget_expired($deadline);
-				$result['continuation']                 = $this->build_worktree_abandoned_continuation('reconcile', $reconcile, $limit, $passes, $force, $until_budget, $older_than);
+				$result['continuation']                 = $this->build_worktree_abandoned_continuation('reconcile', $reconcile, $limit, $passes, $force, $until_budget);
 				$result['next_commands'][]              = (string) $result['continuation']['next_command'];
 				return $this->finalize_worktree_abandoned_result($result, $apply, $force, $limit, $passes, $until_budget, $started_at);
 			}
@@ -3292,11 +3279,6 @@ class WorkspaceCommand extends BaseCommand {
 			'remote_clean'     => array(
 				'stage'   => 'remote-clean',
 				'ability' => $abilities['remote_clean'],
-			),
-			'stale_clean'      => array(
-				'stage'      => 'stale-clean',
-				'ability'    => $abilities['stale_clean'],
-				'older_than' => $older_than,
 			),
 		);
 
@@ -3322,9 +3304,6 @@ class WorkspaceCommand extends BaseCommand {
 						'offset'  => $step_stage === $stage ? $offset : 0,
 					)
 				);
-				if ( isset($step_config['older_than']) ) {
-					$step_input['older_than'] = (string) $step_config['older_than'];
-				}
 				$step       = $this->drain_worktree_abandoned_pages($step_config['ability'], $step_input, $apply, $deadline);
 				if ( is_wp_error($step) ) {
 					return $step;
@@ -3344,7 +3323,7 @@ class WorkspaceCommand extends BaseCommand {
 						return $bounded;
 					}
 					$result['evidence']['budget_exhausted'] = $this->worktree_abandoned_budget_expired($deadline);
-					$result['continuation']                 = $this->build_worktree_abandoned_continuation($step_stage, $step, $limit, $passes, $force, $until_budget, $older_than);
+					$result['continuation']                 = $this->build_worktree_abandoned_continuation($step_stage, $step, $limit, $passes, $force, $until_budget);
 					$result['next_commands'][]              = (string) $result['continuation']['next_command'];
 					break 2;
 				}
@@ -3403,10 +3382,10 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( empty($result['continuation']) && ! $apply ) {
-			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree abandoned --apply%s --limit=%d --passes=%d --older-than=%s%s --format=json', $force ? ' --force' : '', $limit, $passes, (string) ( $result['older_than'] ?? '7d' ), '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
+			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree abandoned --apply%s --limit=%d --passes=%d%s --format=json', $force ? ' --force' : '', $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
 		}
 		if ( empty($result['continuation']) && ! $force ) {
-			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree abandoned --apply --force --limit=%d --passes=%d --older-than=%s%s --format=json', $limit, $passes, (string) ( $result['older_than'] ?? '7d' ), '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
+			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree abandoned --apply --force --limit=%d --passes=%d%s --format=json', $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
 		}
 
 		$result['evidence']['elapsed_ms'] = (int) round(( microtime(true) - $started_at ) * 1000);
@@ -3487,13 +3466,12 @@ class WorkspaceCommand extends BaseCommand {
 	 * @param  int                 $passes       Apply passes.
 	 * @param  bool                $force        Whether force mode is active.
 	 * @param  string              $until_budget Original budget argument.
-	 * @param  string              $older_than   Stale-clean age threshold.
 	 * @return array<string,mixed>
 	 */
-	private function build_worktree_abandoned_continuation( string $stage, array $step, int $limit, int $passes, bool $force, string $until_budget, string $older_than ): array {
+	private function build_worktree_abandoned_continuation( string $stage, array $step, int $limit, int $passes, bool $force, string $until_budget ): array {
 		$pagination  = (array) ( $step['pagination'] ?? $step['continuation'] ?? array() );
 		$next_offset = isset($pagination['next_offset']) ? max(0, (int) $pagination['next_offset']) : 0;
-		$command     = sprintf('studio wp datamachine-code workspace worktree abandoned --apply%s --stage=%s --offset=%d --limit=%d --passes=%d --older-than=%s%s --format=json', $force ? ' --force' : '', $stage, $next_offset, $limit, $passes, $older_than, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
+		$command     = sprintf('studio wp datamachine-code workspace worktree abandoned --apply%s --stage=%s --offset=%d --limit=%d --passes=%d%s --format=json', $force ? ' --force' : '', $stage, $next_offset, $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
 
 		return array(
 			'stage'        => $stage,
@@ -3990,10 +3968,6 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'active-no-signal-remote-clean-apply':
 				$this->render_worktree_active_no_signal_remote_clean_apply_result($result, $assoc_args);
-				return;
-
-			case 'active-no-signal-stale-clean-apply':
-				$this->render_worktree_active_no_signal_stale_clean_apply_result($result, $assoc_args);
 				return;
 
 			case 'cleanup-artifacts':
@@ -5459,102 +5433,6 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 		WP_CLI::success(sprintf('Promoted %d remote-clean worktree(s) to cleanup_eligible metadata.', count($written)));
-	}
-
-	/**
-	 * Render stale-clean active/no-signal metadata apply output.
-	 *
-	 * @param  array $result     Apply result.
-	 * @param  array $assoc_args CLI assoc args.
-	 * @return void
-	 */
-	private function render_worktree_active_no_signal_stale_clean_apply_result( array $result, array $assoc_args ): void {
-		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
-		if ( 'json' === $format ) {
-			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
-			return;
-		}
-
-		$summary = (array) ( $result['summary'] ?? array() );
-		$planned = (array) ( $result['planned'] ?? array() );
-		$written = (array) ( $result['written'] ?? array() );
-		$skipped = (array) ( $result['skipped'] ?? array() );
-		$dry_run = ! empty($result['dry_run']);
-
-		WP_CLI::log('Stale-clean active/no-signal apply summary:');
-		$summary_rows = array(
-			array(
-				'metric' => 'older_than',
-				'count'  => (string) ( $summary['older_than'] ?? '7d' ),
-			),
-			array(
-				'metric' => 'inspected',
-				'count'  => (int) ( $summary['inspected'] ?? 0 ),
-			),
-			array(
-				'metric' => 'planned',
-				'count'  => (int) ( $summary['planned'] ?? count($planned) ),
-			),
-			array(
-				'metric' => 'written',
-				'count'  => (int) ( $summary['written'] ?? count($written) ),
-			),
-			array(
-				'metric' => 'skipped',
-				'count'  => (int) ( $summary['skipped'] ?? count($skipped) ),
-			),
-		);
-		foreach ( (array) ( $summary['skipped_by_reason'] ?? array() ) as $reason => $count ) {
-			$summary_rows[] = array(
-				'metric' => 'skipped:' . $reason,
-				'count'  => (int) $count,
-			);
-		}
-		$this->format_items($summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric');
-
-		$rows = $dry_run ? $planned : $written;
-		if ( ! empty($rows) ) {
-			WP_CLI::log('');
-			WP_CLI::log($dry_run ? 'Would promote:' : 'Promoted:');
-			$items = array_map(
-				fn( $row ) => array(
-					'handle'       => $row['handle'] ?? '',
-					'branch'       => $row['branch'] ?? '',
-					'action'       => $row['suggested_action'] ?? '',
-					'last_seen_at' => $row['stale_policy']['last_seen_at'] ?? '',
-					'state'        => $row['metadata']['lifecycle_state'] ?? '',
-				),
-				$rows
-			);
-			$this->format_items($items, array( 'handle', 'branch', 'action', 'last_seen_at', 'state' ), array( 'format' => 'table' ), 'handle');
-		}
-
-		if ( ! empty($skipped) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Skipped:');
-			$items = array_map(
-				fn( $row ) => array(
-					'handle'      => $row['handle'] ?? '',
-					'action'      => $row['action'] ?? '',
-					'reason_code' => $row['reason_code'] ?? '',
-					'reason'      => $row['reason'] ?? '',
-				),
-				array_slice($skipped, 0, 10)
-			);
-			$this->format_items($items, array( 'handle', 'action', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
-		}
-
-		if ( ! empty($result['pagination']['next_command']) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Next page: ' . (string) $result['pagination']['next_command']);
-		}
-
-		if ( $dry_run ) {
-			WP_CLI::success(sprintf('%d stale-clean worktree(s) would be promoted to cleanup_eligible metadata.', count($planned)));
-			return;
-		}
-		WP_CLI::success(sprintf('Promoted %d stale-clean worktree(s) to cleanup_eligible metadata.', count($written)));
 	}
 
 	/**

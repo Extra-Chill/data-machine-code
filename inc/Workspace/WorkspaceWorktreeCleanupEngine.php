@@ -1650,7 +1650,6 @@ trait WorkspaceWorktreeCleanupEngine {
 			'finalized_apply_dry_run'        => 'studio wp datamachine-code workspace worktree active-no-signal-finalized-apply --dry-run ' . $base,
 			'equivalent_clean_apply_dry_run' => 'studio wp datamachine-code workspace worktree active-no-signal-equivalent-clean-apply --dry-run ' . $base,
 			'merged_apply_dry_run'           => 'studio wp datamachine-code workspace worktree active-no-signal-merged-apply --dry-run ' . $base,
-			'stale_clean_apply_dry_run'      => 'studio wp datamachine-code workspace worktree active-no-signal-stale-clean-apply --dry-run --older-than=7d ' . $base,
 		);
 	}
 
