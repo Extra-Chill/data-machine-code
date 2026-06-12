@@ -18,6 +18,7 @@ namespace {
     {
         public static array $logs = array();
         public static array $successes = array();
+        public static array $runcommands = array();
 
         public static function error( string $message ): void
         {
@@ -37,6 +38,18 @@ namespace {
         public static function warning( string $message ): void
         {
             self::$logs[] = 'warning: ' . $message;
+        }
+
+        public static function runcommand( string $command, array $options = array() ): string
+        {
+            self::$runcommands[] = $command;
+            if ('datamachine drain --job-id=123' === $command ) {
+                $GLOBALS['datamachine_code_cleanup_parent_drained'] = true;
+            }
+            if ('datamachine drain --job-id=125' === $command ) {
+                $GLOBALS['datamachine_code_cleanup_child_drained'] = true;
+            }
+            return '';
         }
     }
 
@@ -893,10 +906,10 @@ namespace {
                 'job_id'        => 125,
                 'parent_job_id' => 124,
                 'source'        => 'batch',
-                'status'        => 'processing',
+                'status'        => ! empty($GLOBALS['datamachine_code_cleanup_child_drained']) ? 'completed' : 'processing',
                 'engine_data'   => array(
-                 'batch_id'  => 'dm_batch_123',
-                 'task_type' => 'worktree_cleanup_chunk',
+                  'batch_id'  => 'dm_batch_123',
+                  'task_type' => 'worktree_cleanup_chunk',
                    ),
                   ),
                   array(
@@ -1086,6 +1099,7 @@ namespace {
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, 'Control task-backed workspace cleanup runs.'), 'workspace cleanup command documents task-backed controller surface');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '<plan|apply|run|status|resume|cancel|evidence>'), 'workspace cleanup synopsis exposes DB-backed and task-backed cleanup operations');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '[--dry-run]'), 'task-backed cleanup synopsis keeps synchronous dry-run review');
+    datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '[--drain]'), 'task-backed cleanup synopsis exposes drain option');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, 'apply runs freeze eligible candidates'), 'workspace cleanup limit help clarifies artifact apply scoping');
     datamachine_code_cleanup_assert(str_contains($doc_comment, 'positive maximum worktrees to scan'), 'worktree limit help requires positive page sizes');
     datamachine_code_cleanup_assert(str_contains($doc_comment, 'Use `--exhaustive` instead of `--limit=0`'), 'worktree limit help points unbounded artifact scans to exhaustive mode');
@@ -1142,6 +1156,8 @@ namespace {
     $run_json = json_decode(WP_CLI::$logs[0] ?? '', true);
     datamachine_code_cleanup_assert('jobs_queued' === ( $run_json['state'] ?? '' ), 'cleanup run queues a system task');
     datamachine_code_cleanup_assert('cleanup-run-123' === ( $run_json['run_id'] ?? '' ), 'cleanup run returns stable run id');
+    datamachine_code_cleanup_assert('studio wp datamachine drain --job-id=123' === ( $run_json['commands']['drain_parent'] ?? '' ), 'cleanup run JSON includes exact parent drain command');
+    datamachine_code_cleanup_assert(str_contains((string) ( $run_json['commands']['one_command_drain'] ?? '' ), '--drain'), 'cleanup run JSON exposes one-command drain path');
     datamachine_code_cleanup_assert('retention' === ( $cleanup_run_ability->last_input['mode'] ?? '' ), 'cleanup run ability receives mode');
     datamachine_code_cleanup_assert('workspace_cleanup_cli' === ( $cleanup_run_ability->last_input['source'] ?? '' ), 'cleanup run ability identifies explicit CLI source');
 
@@ -1226,6 +1242,8 @@ namespace {
     datamachine_code_cleanup_assert(1 === (int) ( $status_json['remaining_work_summary']['skipped_by_reason']['stale_worktree_marker']['count'] ?? 0 ), 'cleanup status groups stale marker blockers separately');
     datamachine_code_cleanup_assert(1 === (int) ( $status_json['remaining_work_summary']['skipped_by_reason']['primary_missing']['count'] ?? 0 ), 'cleanup status groups missing primary blockers separately');
     datamachine_code_cleanup_assert(10240 === (int) ( $status_json['remaining_work_summary']['remaining_reclaimable_artifact_bytes'] ?? 0 ), 'cleanup status reports remaining reclaimable artifact bytes');
+    datamachine_code_cleanup_assert('studio wp datamachine drain --job-id=125' === ( $status_json['drain']['commands']['active_children'] ?? '' ), 'cleanup status includes exact active child drain command');
+    datamachine_code_cleanup_assert(4096 === (int) ( $status_json['drain']['bytes_reclaimed'] ?? 0 ), 'cleanup status drain summary verifies bytes reclaimed');
     datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($status_json['remaining_work_summary']['recommended_commands'] ?? array()), 'workspace cleanup run --mode=artifacts'), 'cleanup status recommends next DMC commands per bucket');
     datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($status_json['remaining_work_summary']['recommended_commands'] ?? array()), 'git -C <worktree-path> status --short --branch'), 'cleanup status recommends dirty git status evidence');
     datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($status_json['remaining_work_summary']['recommended_commands'] ?? array()), 'git -C <worktree-path> log --oneline --decorate @{u}..HEAD'), 'cleanup status recommends unpushed git log evidence');
@@ -1233,6 +1251,20 @@ namespace {
     datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($status_json['remaining_work_summary']['recommended_commands'] ?? array()), 'workspace show <repo>'), 'cleanup status recommends missing primary report');
     datamachine_code_cleanup_assert('4.0 KiB' === ( $status_json['system_task_result']['report']['freed_human'] ?? '' ), 'cleanup status replaces pending child job freed placeholder');
     datamachine_code_cleanup_assert(! isset($status_json['system_task_result']['children']['job_ids']), 'cleanup status system task result omits full child job ids by default');
+
+    WP_CLI::$logs        = array();
+    WP_CLI::$successes   = array();
+    WP_CLI::$runcommands = array();
+    $GLOBALS['datamachine_code_cleanup_parent_drained'] = false;
+    $GLOBALS['datamachine_code_cleanup_child_drained']  = false;
+    $command->cleanup(array( 'run' ), array( 'mode' => 'artifacts', 'drain' => true, 'format' => 'json' ));
+    $drained_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    datamachine_code_cleanup_assert(array( 'datamachine drain --job-id=123', 'datamachine drain --job-id=125' ) === WP_CLI::$runcommands, 'cleanup run --drain drains parent then active child jobs');
+    datamachine_code_cleanup_assert(4096 === (int) ( $drained_json['drain']['bytes_reclaimed'] ?? 0 ), 'cleanup run --drain reports verified reclaimed bytes');
+    datamachine_code_cleanup_assert('partial_failed' === (string) ( $drained_json['drain']['completion_state'] ?? '' ), 'cleanup run --drain reports final cleanup state');
+    datamachine_code_cleanup_assert('studio wp datamachine-code workspace cleanup status cleanup-run-123 --format=json' === (string) ( $drained_json['drain']['verify_command'] ?? '' ), 'cleanup run --drain emits one verification command');
+    $GLOBALS['datamachine_code_cleanup_parent_drained'] = false;
+    $GLOBALS['datamachine_code_cleanup_child_drained']  = false;
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();

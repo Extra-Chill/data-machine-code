@@ -626,6 +626,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--verbose]
 	 * : Include full diagnostic child job ID lists in task-backed cleanup status output.
 	 *
+	 * [--drain]
+	 * : For `cleanup run`, drain the queued parent job, drain active child cleanup
+	 *   jobs discovered from cleanup status, then print verified bytes reclaimed.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -750,7 +754,142 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
+		$result = $this->attach_cleanup_run_commands($result, $mode);
+		if ( ! empty($assoc_args['drain']) ) {
+			$result = $this->drain_cleanup_run_to_status($result, $assoc_args);
+		}
+
 		$this->render_cleanup_control_result($result, $assoc_args);
+	}
+
+	/**
+	 * Attach operator commands to a queued cleanup run response.
+	 *
+	 * @param  array<string,mixed> $result Cleanup run result.
+	 * @param  string              $mode   Cleanup mode.
+	 * @return array<string,mixed>
+	 */
+	private function attach_cleanup_run_commands( array $result, string $mode ): array {
+		$job_id = (int) ( $result['job_id'] ?? 0 );
+		$run_id = (string) ( $result['run_id'] ?? ( $job_id > 0 ? $this->cleanup_run_id($job_id) : '' ) );
+		if ( $job_id <= 0 || '' === $run_id ) {
+			return $result;
+		}
+
+		$result['commands'] = array(
+			'drain_parent'        => sprintf('studio wp datamachine drain --job-id=%d', $job_id),
+			'status'              => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
+			'status_verbose'      => sprintf('studio wp datamachine-code workspace cleanup status %s --verbose --format=json', $run_id),
+			'one_command_drain'   => sprintf('studio wp datamachine-code workspace cleanup run --mode=%s --drain --format=json', $mode),
+			'bytes_verification'  => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
+		);
+
+		return $result;
+	}
+
+	/**
+	 * Drain a queued job-backed cleanup run through Data Machine, then return status evidence.
+	 *
+	 * @param  array<string,mixed> $result     Initial cleanup run result.
+	 * @param  array<string,mixed> $assoc_args CLI associative args.
+	 * @return array<string,mixed>
+	 */
+	private function drain_cleanup_run_to_status( array $result, array $assoc_args ): array {
+		$job_id = (int) ( $result['job_id'] ?? 0 );
+		$run_id = (string) ( $result['run_id'] ?? ( $job_id > 0 ? $this->cleanup_run_id($job_id) : '' ) );
+		if ( $job_id <= 0 || '' === $run_id ) {
+			$result['drain'] = array(
+				'success' => false,
+				'error'   => 'Cleanup run did not return a job id to drain.',
+			);
+			return $result;
+		}
+
+		$commands = array();
+		$errors   = array();
+		$max_passes = 10;
+
+		$parent_command = sprintf('datamachine drain --job-id=%d', $job_id);
+		$commands[]     = 'studio wp ' . $parent_command;
+		$error          = $this->run_wp_cli_command($parent_command);
+		if ( '' !== $error ) {
+			$errors[] = $error;
+		}
+
+		for ( $pass = 0; $pass < $max_passes; ++$pass ) {
+			$status = $this->cleanup_run_evidence_store()->read($run_id, true, true);
+			if ( $status instanceof \WP_Error ) {
+				$errors[] = $status->get_error_message();
+				break;
+			}
+
+			$children = (array) ( $status['evidence']['children'] ?? array() );
+			$active_child_ids = array_values(
+				array_unique(
+					array_filter(
+						array_map(
+							'intval',
+							array_merge(
+								(array) ( $children['pending_job_ids'] ?? array() ),
+								(array) ( $children['processing_job_ids'] ?? array() )
+							)
+						)
+					)
+				)
+			);
+			if ( array() === $active_child_ids ) {
+				break;
+			}
+
+			$child_command = sprintf('datamachine drain --job-id=%s', implode(',', $active_child_ids));
+			$commands[]    = 'studio wp ' . $child_command;
+			$error         = $this->run_wp_cli_command($child_command);
+			if ( '' !== $error ) {
+				$errors[] = $error;
+				break;
+			}
+		}
+
+		$final = $this->cleanup_run_evidence_store()->read($run_id, false, ! empty($assoc_args['verbose']));
+		$output = $final instanceof \WP_Error ? $result : $final;
+		$output['initial_run'] = $result;
+		$output['drain']       = array(
+			'success'           => array() === $errors,
+			'commands'          => $commands,
+			'errors'            => $errors,
+			'verify_command'    => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
+			'bytes_reclaimed'   => (int) ( $output['cleanup_items']['bytes_reclaimed'] ?? 0 ),
+			'freed_human'       => (string) ( $output['cleanup_items']['freed_human'] ?? $this->format_bytes(0) ),
+			'completion_state'  => (string) ( $output['state'] ?? 'unknown' ),
+		);
+
+		return $output;
+	}
+
+	/**
+	 * Run a WP-CLI command and return an error message on failure.
+	 *
+	 * @param  string $command Command without the leading `wp` binary.
+	 * @return string Empty string on success.
+	 */
+	private function run_wp_cli_command( string $command ): string {
+		if ( ! method_exists('WP_CLI', 'runcommand') ) {
+			return 'WP_CLI::runcommand is unavailable; run the reported drain commands manually.';
+		}
+
+		try {
+			WP_CLI::runcommand(
+				$command,
+				array(
+					'return'     => true,
+					'exit_error' => false,
+				)
+			);
+		} catch ( \Throwable $e ) {
+			return $e->getMessage();
+		}
+
+		return '';
 	}
 
 	private function cleanup_run_input( string $mode, array $assoc_args ): array {
@@ -1052,6 +1191,12 @@ class WorkspaceCommand extends BaseCommand {
 		if ( ! empty($result['progress']) && is_array($result['progress']) ) {
 			$this->render_cleanup_progress_summary( (array) $result['progress']);
 		}
+		if ( ! empty($result['commands']) && is_array($result['commands']) ) {
+			$this->render_cleanup_command_hints( (array) $result['commands']);
+		}
+		if ( ! empty($result['drain']) && is_array($result['drain']) ) {
+			$this->render_cleanup_drain_summary( (array) $result['drain']);
+		}
 		if ( ! empty($result['remaining_work_summary']) && is_array($result['remaining_work_summary']) ) {
 			$this->render_cleanup_remaining_work_summary( (array) $result['remaining_work_summary']);
 		}
@@ -1130,6 +1275,47 @@ class WorkspaceCommand extends BaseCommand {
 			);
 			$this->format_items($rows, array( 'bucket', 'review_command', 'apply_command', 'apply_destructive' ), array( 'format' => 'table' ), 'bucket');
 		}
+	}
+
+	/**
+	 * Render cleanup command hints.
+	 *
+	 * @param  array<string,string> $commands Commands keyed by purpose.
+	 * @return void
+	 */
+	private function render_cleanup_command_hints( array $commands ): void {
+		WP_CLI::log('');
+		WP_CLI::log('Cleanup commands:');
+		$rows = array();
+		foreach ( $commands as $purpose => $command ) {
+			$rows[] = array(
+				'purpose' => (string) $purpose,
+				'command' => (string) $command,
+			);
+		}
+		$this->format_items($rows, array( 'purpose', 'command' ), array( 'format' => 'table' ), 'purpose');
+	}
+
+	/**
+	 * Render cleanup drain summary.
+	 *
+	 * @param  array<string,mixed> $drain Drain summary.
+	 * @return void
+	 */
+	private function render_cleanup_drain_summary( array $drain ): void {
+		WP_CLI::log('');
+		WP_CLI::log('Drain summary:');
+		$this->format_items(
+			array(
+				array( 'metric' => 'success', 'value' => ! empty($drain['success']) ? 'yes' : 'no' ),
+				array( 'metric' => 'completion_state', 'value' => (string) ( $drain['completion_state'] ?? 'unknown' ) ),
+				array( 'metric' => 'bytes_reclaimed', 'value' => $this->format_bytes($drain['bytes_reclaimed'] ?? 0) ),
+				array( 'metric' => 'verify_command', 'value' => (string) ( $drain['verify_command'] ?? '' ) ),
+			),
+			array( 'metric', 'value' ),
+			array( 'format' => 'table' ),
+			'metric'
+		);
 	}
 
 	private function render_cleanup_progress_summary( array $progress ): void {
