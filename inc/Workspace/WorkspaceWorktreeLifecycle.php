@@ -784,7 +784,7 @@ trait WorkspaceWorktreeLifecycle {
 					$dirty_files = null;
 				}
 
-				$metadata_key     = null;
+				$metadata_key = null;
 				if ( ! $is_primary && $inside_ws ) {
 					$metadata_key = $relative;
 				} elseif ( ! $is_primary && ! $inside_ws ) {

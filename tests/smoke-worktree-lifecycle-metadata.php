@@ -360,7 +360,20 @@ namespace {
     $assert('unsupported_workspace_repo_argument', is_wp_error($bad_url_worktree) ? $bad_url_worktree->get_error_code() : null, 'missing URL primary returns a clear error code');
 
     $GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds'] = function ( array $thresholds ): array {
+        $thresholds['refuse_free_bytes']   = 1;
         $thresholds['refuse_free_percent'] = 100;
+        $thresholds['warn_free_percent']   = 100;
+        return $thresholds;
+    };
+    $percent_warning_worktree = $ws->worktree_add('demo', 'feature/percent-warning-skip-bootstrap', 'HEAD', false, false, true, false, false);
+    unset($GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds']);
+    $assert(false, is_wp_error($percent_warning_worktree), 'worktree_add with bootstrap disabled is not blocked by percentage threshold alone');
+    $assert('warning', is_wp_error($percent_warning_worktree) ? null : ( $percent_warning_worktree['disk_budget']['status'] ?? null ), 'percentage-only disk pressure remains visible as a warning');
+
+    $GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds'] = function ( array $thresholds ): array {
+        $thresholds['refuse_free_bytes']   = PHP_INT_MAX;
+        $thresholds['refuse_free_percent'] = 100;
+        $thresholds['warn_free_bytes']     = PHP_INT_MAX;
         $thresholds['warn_free_percent']   = 100;
         return $thresholds;
     };
