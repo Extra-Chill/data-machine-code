@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.103] - 2026-06-12
+
+### Fixed
+- Fix workspace hygiene and cleanup resume
+- Fix listed primary workspace fallback
+
 ## [0.47.102] - 2026-06-12
 
 ### Changed
