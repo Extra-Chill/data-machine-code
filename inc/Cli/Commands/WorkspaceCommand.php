@@ -113,6 +113,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *   - worktree
 	 * ---
 	 *
+	 * [--summary]
+	 * : Show compact workspace triage counts instead of one row per checkout.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -173,6 +176,11 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
+		if ( ! empty($assoc_args['summary']) ) {
+			$this->render_workspace_list_summary($result, $assoc_args);
+			return;
+		}
+
 		$items = array_map(
 			function ( $repo ) {
 				$freshness = is_array($repo['primary_freshness'] ?? null) ? $repo['primary_freshness'] : null;
@@ -197,6 +205,92 @@ class WorkspaceCommand extends BaseCommand {
 			$assoc_args,
 			'name'
 		);
+	}
+
+	/**
+	 * Render compact workspace list counts for cleanup triage.
+	 *
+	 * @param  array<string,mixed> $result     Workspace list ability result.
+	 * @param  array<string,mixed> $assoc_args CLI assoc args.
+	 * @return void
+	 */
+	private function render_workspace_list_summary( array $result, array $assoc_args ): void {
+		$repos   = (array) ( $result['repos'] ?? array() );
+		$summary = array(
+			'total'     => count($repos),
+			'primary'   => 0,
+			'worktree'  => 0,
+			'context'   => 0,
+			'non_git'   => 0,
+			'repos'     => array(),
+			'workspace' => (string) ( $result['path'] ?? '' ),
+		);
+
+		foreach ( $repos as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$kind = ! empty($row['is_context']) ? 'context' : ( ! empty($row['is_worktree']) ? 'worktree' : 'primary' );
+			++$summary[ $kind ];
+			if ( empty($row['git']) ) {
+				++$summary['non_git'];
+			}
+			$repo = (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' );
+			if ( ! isset($summary['repos'][ $repo ]) ) {
+				$summary['repos'][ $repo ] = array(
+					'repo'     => $repo,
+					'primary'  => 0,
+					'worktree' => 0,
+					'context'  => 0,
+					'total'    => 0,
+				);
+			}
+			++$summary['repos'][ $repo ][ $kind ];
+			++$summary['repos'][ $repo ]['total'];
+		}
+
+		ksort($summary['repos']);
+		$summary['repos'] = array_values($summary['repos']);
+
+		$format = (string) ( $assoc_args['format'] ?? 'table' );
+		if ( 'json' === $format ) {
+			WP_CLI::log( (string) wp_json_encode($summary, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			return;
+		}
+
+		WP_CLI::log(sprintf('Workspace: %s', $summary['workspace']));
+		$this->format_items(
+			array(
+				array(
+					'metric' => 'total',
+					'count'  => $summary['total'],
+				),
+				array(
+					'metric' => 'primary',
+					'count'  => $summary['primary'],
+				),
+				array(
+					'metric' => 'worktree',
+					'count'  => $summary['worktree'],
+				),
+				array(
+					'metric' => 'context',
+					'count'  => $summary['context'],
+				),
+				array(
+					'metric' => 'non_git',
+					'count'  => $summary['non_git'],
+				),
+			),
+			array( 'metric', 'count' ),
+			array( 'format' => 'table' ),
+			'metric'
+		);
+
+		if ( array() !== $summary['repos'] ) {
+			WP_CLI::log('Repos:');
+			$this->format_items($summary['repos'], array( 'repo', 'primary', 'worktree', 'context', 'total' ), array( 'format' => 'table' ), 'repo');
+		}
 	}
 
 	/**
@@ -339,6 +433,11 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * [--force]
 	 * : Pass force=true into the cleanup task params for modes that support it.
+	 *
+	 * [--include-artifacts]
+	 * : For `plan --mode=retention`, also include the exhaustive artifact cleanup
+	 *   scan. Omitted by default so safe retention planning stays bounded on large
+	 *   workspaces; use `--mode=artifacts` for an artifact-only plan.
 	 *
 	 * [--older-than=<duration>]
 	 * : Pass an age gate such as 7d or 24h into cleanup task params.
@@ -529,8 +628,18 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$input = array(
-			'mode'              => strtolower(preg_replace('/[^a-z0-9_\-]/', '', (string) ( $assoc_args['mode'] ?? 'retention' ))),
+		$mode = strtolower(preg_replace('/[^a-z0-9_\-]/', '', (string) ( $assoc_args['mode'] ?? 'retention' )));
+		if ( ! in_array($mode, self::CLEANUP_MODES, true) ) {
+			WP_CLI::error(sprintf('Unknown cleanup mode: %s. Expected one of: %s.', $mode, implode(', ', self::CLEANUP_MODES)));
+			return;
+		}
+
+		$include_artifacts = 'artifacts' === $mode || ! empty($assoc_args['include-artifacts']);
+		$include_worktrees = 'artifacts' !== $mode;
+		$input             = array(
+			'mode'              => $mode,
+			'include_artifacts' => $include_artifacts,
+			'include_worktrees' => $include_worktrees,
 			'include_resolvers' => true,
 		);
 		if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
@@ -538,6 +647,10 @@ class WorkspaceCommand extends BaseCommand {
 		}
 		if ( isset($assoc_args['force']) ) {
 			$input['force_artifact_cleanup'] = (bool) $assoc_args['force'];
+		}
+		if ( 'json' !== (string) ( $assoc_args['format'] ?? 'table' ) ) {
+			$profile = $include_artifacts ? 'includes artifact scan' : 'worktree inventory only';
+			WP_CLI::log(sprintf('Planning cleanup (%s; %s)...', $mode, $profile));
 		}
 
 		$result = $ability->execute($input);
@@ -912,6 +1025,10 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log(sprintf('Rows:   %d', (int) ( $summary['total_rows'] ?? 0 )));
 		WP_CLI::log(sprintf('Bytes:  %s', $this->format_bytes($summary['total_size_bytes'] ?? 0)));
 		WP_CLI::log(sprintf('Apply:  wp datamachine-code workspace cleanup apply %s', (string) ( $result['run_id'] ?? '' )));
+		$inputs = (array) ( $result['inputs'] ?? array() );
+		if ( empty($inputs['include_artifacts']) ) {
+			WP_CLI::log('Artifacts: skipped for bounded retention planning; run `wp datamachine-code workspace cleanup plan --mode=artifacts` when you want artifact rows.');
+		}
 	}
 
 	private function cleanup_run_id( int $job_id ): string {
