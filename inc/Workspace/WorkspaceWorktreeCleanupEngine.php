@@ -1072,7 +1072,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			),
 			'continuation'   => $continuation,
 			'evidence'       => array(
-				'elapsed_ms'        => (int) round(( microtime(true) - $started_at ) * 1000),
+				'elapsed_ms'      => (int) round(( microtime(true) - $started_at ) * 1000),
 				'inventory_total' => count($all_candidates),
 				'removed_handles' => array_values(array_filter(array_map(fn( $row ) => (string) $row['handle'], $removed))),
 				'skipped_handles' => array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $skipped))),
