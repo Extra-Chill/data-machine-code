@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.106] - 2026-06-12
+
+### Changed
+- Improve cleanup blocker follow-up reports
+
 ## [0.47.105] - 2026-06-12
 
 ### Changed
