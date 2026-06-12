@@ -141,6 +141,7 @@ final class WorkspaceLockStore {
 			'active_keys' => self::lock_keys_for_status('active', false),
 			'stale'       => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s AND expires_at < %s", 'active', $now)),
 			'stale_keys'  => self::lock_keys_for_status('active', true),
+			'locks'       => array_merge(self::lock_rows_for_status('active', false), self::lock_rows_for_status('active', true)),
 			'released'    => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s", 'released')),
 			'total'       => (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table}"),
 		);
@@ -211,7 +212,7 @@ final class WorkspaceLockStore {
 	 *
 	 * @return array<string,mixed>
 	 */
-	public static function prune_expired(): array {
+	public static function prune_expired( array $protected_lock_keys = array() ): array {
 		$status = self::status();
 		if ( empty($status['available']) ) {
 			return array(
@@ -224,22 +225,35 @@ final class WorkspaceLockStore {
 		}
 
 		global $wpdb;
-		$table           = self::table_name();
-		$now             = gmdate('Y-m-d H:i:s');
-		$released_cutoff = gmdate('Y-m-d H:i:s', time() - self::released_ttl_seconds());
+		$table               = self::table_name();
+		$now                 = gmdate('Y-m-d H:i:s');
+		$released_cutoff     = gmdate('Y-m-d H:i:s', time() - self::released_ttl_seconds());
+		$protected_lock_keys = array_values(array_unique(array_filter(array_map('strval', $protected_lock_keys))));
+		$protected_sql       = '';
+		$protected_args      = array();
+		if ( array() !== $protected_lock_keys ) {
+			$protected_sql  = ' AND lock_key NOT IN (' . implode(', ', array_fill(0, count($protected_lock_keys), '%s')) . ')';
+			$protected_args = $protected_lock_keys;
+		}
 
-     // phpcs:disable WordPress.DB.PreparedSQL -- Table name from $wpdb->prefix, not user input.
-		$wpdb->query($wpdb->prepare("UPDATE {$table} SET status = %s WHERE status = %s AND expires_at < %s", 'stale', 'active', $now));
+	 // phpcs:disable WordPress.DB.PreparedSQL -- Table name from $wpdb->prefix, not user input.
+		$mark_sql  = "UPDATE {$table} SET status = %s WHERE status = %s AND expires_at < %s{$protected_sql}";
+		$mark_args = array_merge(array( 'stale', 'active', $now ), $protected_args);
+		$wpdb->query(call_user_func_array(array( $wpdb, 'prepare' ), array_merge(array( $mark_sql ), $mark_args)));
 		$marked = (int) $wpdb->rows_affected;
 
-		$wpdb->query($wpdb->prepare("DELETE FROM {$table} WHERE status IN (%s, %s) AND COALESCE(released_at, expires_at) < %s", 'released', 'stale', $released_cutoff));
-     // phpcs:enable WordPress.DB.PreparedSQL
+		$delete_sql  = "DELETE FROM {$table} WHERE status IN (%s, %s) AND COALESCE(released_at, expires_at) < %s{$protected_sql}";
+		$delete_args = array_merge(array( 'released', 'stale', $released_cutoff ), $protected_args);
+		$wpdb->query(call_user_func_array(array( $wpdb, 'prepare' ), array_merge(array( $delete_sql ), $delete_args)));
+	 // phpcs:enable WordPress.DB.PreparedSQL
 		$deleted = (int) $wpdb->rows_affected;
 
 		return array(
 			'available'           => true,
 			'active_marked_stale' => $marked,
 			'released_deleted'    => $deleted,
+			'protected_active'    => count($protected_lock_keys),
+			'protected_keys'      => $protected_lock_keys,
 			'before'              => $status,
 			'after'               => self::status(),
 		);
@@ -320,6 +334,60 @@ final class WorkspaceLockStore {
 				static fn( string $key ): bool => '' !== $key
 			)
 		);
+	}
+
+	/**
+	 * Return lock rows for owner/session/age diagnostics.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	private static function lock_rows_for_status( string $status, bool $expired ): array {
+		global $wpdb;
+		if ( ! is_object($wpdb) || ! is_callable(array( $wpdb, 'prepare' )) || ! is_callable(array( $wpdb, 'get_results' )) ) {
+			return array();
+		}
+
+		$table    = self::table_name();
+		$now      = gmdate('Y-m-d H:i:s');
+		$operator = $expired ? '<' : '>=';
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from $wpdb->prefix, operator is constant-selected above.
+		$query = call_user_func(array( $wpdb, 'prepare' ), "SELECT id, lock_key, purpose, scope, owner, run_id, job_id, status, acquired_at, heartbeat_at, expires_at, released_at, metadata_json FROM {$table} WHERE status = %s AND expires_at {$operator} %s ORDER BY acquired_at DESC, id DESC LIMIT 25", $status, $now);
+		$rows  = call_user_func(array( $wpdb, 'get_results' ), $query, ARRAY_A);
+		if ( ! is_array($rows) ) {
+			return array();
+		}
+
+		return array_values(array_map(static fn( array $row ): array => self::normalize_lock_row($row, $expired ? 'stale' : 'active'), $rows));
+	}
+
+	/**
+	 * @param array<string,mixed> $row Raw DB row.
+	 * @return array<string,mixed>
+	 */
+	private static function normalize_lock_row( array $row, string $state ): array {
+		$row['id']       = (int) ( $row['id'] ?? 0 );
+		$row['job_id']   = isset($row['job_id']) ? (int) $row['job_id'] : null;
+		$row['state']    = $state;
+		$row['metadata'] = self::decode_metadata( (string) ( $row['metadata_json'] ?? '' ) );
+		unset($row['metadata_json']);
+
+		$acquired  = self::timestamp_seconds( (string) ( $row['acquired_at'] ?? '' ) );
+		$heartbeat = self::timestamp_seconds( (string) ( $row['heartbeat_at'] ?? '' ) );
+		$expires   = self::timestamp_seconds( (string) ( $row['expires_at'] ?? '' ) );
+		$time      = time();
+		if ( null !== $acquired ) {
+			$row['age_seconds'] = max(0, $time - $acquired);
+		}
+		if ( null !== $heartbeat ) {
+			$row['heartbeat_age_seconds'] = max(0, $time - $heartbeat);
+		}
+		if ( null !== $expires ) {
+			$row['expires_age_seconds'] = 'stale' === $state ? max(0, $time - $expires) : 0;
+			$row['expires_in_seconds']  = 'active' === $state ? max(0, $expires - $time) : 0;
+		}
+
+		return $row;
 	}
 
 	private static function expires_seconds(): int {

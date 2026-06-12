@@ -874,6 +874,7 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	private function render_cleanup_control_result( array $result, array $assoc_args ): void {
+		$result = $this->attach_current_workspace_lock_status($result);
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( 'json' === $format ) {
 			WP_CLI::log( (string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
@@ -896,9 +897,35 @@ class WorkspaceCommand extends BaseCommand {
 		if ( ! empty($result['remaining_work_summary']) && is_array($result['remaining_work_summary']) ) {
 			$this->render_cleanup_remaining_work_summary( (array) $result['remaining_work_summary']);
 		}
+		if ( ! empty($result['locks']['stale_locks']) && is_array($result['locks']['stale_locks']) ) {
+			$this->render_stale_lock_followup( (array) $result['locks']['stale_locks']);
+		}
 		if ( ! empty($result['evidence']) ) {
 			WP_CLI::log( (string) wp_json_encode($result['evidence'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 		}
+	}
+
+	/**
+	 * Attach live workspace lock status to cleanup triage surfaces when available.
+	 *
+	 * @param  array<string,mixed> $result Cleanup result.
+	 * @return array<string,mixed>
+	 */
+	private function attach_current_workspace_lock_status( array $result ): array {
+		if ( isset($result['locks']) || ! class_exists(Workspace::class) || ! class_exists(WorkspaceMutationLock::class) ) {
+			return $result;
+		}
+
+		try {
+			$workspace       = new Workspace();
+			$result['locks'] = WorkspaceMutationLock::status($workspace->get_path());
+		} catch ( \Throwable $e ) {
+			$result['locks'] = array(
+				'error' => $e->getMessage(),
+			);
+		}
+
+		return $result;
 	}
 
 	/**
@@ -3918,12 +3945,87 @@ class WorkspaceCommand extends BaseCommand {
 			$this->format_items($items, array( 'lock_key', 'scope', 'state', 'age_seconds', 'safe_to_prune', 'owner_source', 'path' ), $assoc_args, 'lock_key');
 		}
 
+		$db_locks = (array) ( $db['locks'] ?? array() );
+		if ( ! empty($db_locks) ) {
+			$items = array_map(
+				static function ( array $lock ): array {
+					return array(
+						'lock_key'    => (string) ( $lock['lock_key'] ?? '' ),
+						'scope'       => (string) ( $lock['scope'] ?? '' ),
+						'state'       => (string) ( $lock['state'] ?? $lock['status'] ?? '' ),
+						'owner'       => (string) ( $lock['owner'] ?? '' ),
+						'age_seconds' => $lock['age_seconds'] ?? null,
+						'expires_at'  => (string) ( $lock['expires_at'] ?? '' ),
+					);
+				},
+				$db_locks
+			);
+			WP_CLI::log('');
+			WP_CLI::log('Database lock rows:');
+			$this->format_items($items, array( 'lock_key', 'scope', 'state', 'owner', 'age_seconds', 'expires_at' ), $assoc_args, 'lock_key');
+		}
+
+		if ( ! empty($status['stale_locks']) && is_array($status['stale_locks']) ) {
+			$this->render_stale_lock_followup( (array) $status['stale_locks']);
+		}
+
 		$guidance = (array) ( $fs['guidance'] ?? $status['recovery_guidance'] ?? array() );
 		if ( ! empty($guidance) ) {
 			WP_CLI::log(sprintf('Status: %s', (string) ( $guidance['status_command'] ?? 'wp datamachine-code workspace worktree locks --format=json' )));
 			WP_CLI::log(sprintf('Prune:  %s', (string) ( $guidance['dry_run_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' )));
 			WP_CLI::log( (string) ( $guidance['safety'] ?? 'Active filesystem flocks are not pruned.' ) );
 		}
+	}
+
+	/**
+	 * Render stale lock follow-up rows with exact preview/apply commands.
+	 *
+	 * @param array<string,mixed> $report Stale lock report.
+	 */
+	private function render_stale_lock_followup( array $report ): void {
+		if ( (int) ( $report['count'] ?? 0 ) <= 0 ) {
+			return;
+		}
+
+		WP_CLI::log('');
+		WP_CLI::log('Stale workspace locks:');
+		WP_CLI::log(sprintf('Preview: %s', (string) ( $report['preview_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' )));
+		WP_CLI::log(sprintf('Apply:   %s', (string) ( $report['apply_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --format=json' )));
+		WP_CLI::log((string) ( $report['safety'] ?? 'Active filesystem flocks are reported and protected.' ));
+
+		$rows = array();
+		foreach ( (array) ( $report['database'] ?? array() ) as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$rows[] = array(
+				'source'             => 'database',
+				'lock_key'           => (string) ( $row['lock_key'] ?? '' ),
+				'scope'              => (string) ( $row['scope'] ?? '' ),
+				'owner'              => (string) ( $row['owner'] ?? '' ),
+				'session'            => (string) ( $row['session'] ?? '' ),
+				'age_seconds'        => $row['age_seconds'] ?? null,
+				'live_flock_present' => ! empty($row['live_flock_present']) ? 'yes' : 'no',
+				'safe_to_prune'      => ! empty($row['safe_to_prune']) ? 'yes' : 'no',
+			);
+		}
+		foreach ( (array) ( $report['filesystem'] ?? array() ) as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$rows[] = array(
+				'source'             => 'filesystem',
+				'lock_key'           => (string) ( $row['lock_key'] ?? '' ),
+				'scope'              => (string) ( $row['scope'] ?? '' ),
+				'owner'              => '',
+				'session'            => '',
+				'age_seconds'        => $row['age_seconds'] ?? null,
+				'live_flock_present' => ! empty($row['live_flock_present']) ? 'yes' : 'no',
+				'safe_to_prune'      => ! empty($row['safe_to_prune']) ? 'yes' : 'no',
+			);
+		}
+
+		$this->format_items($rows, array( 'source', 'lock_key', 'scope', 'owner', 'session', 'age_seconds', 'live_flock_present', 'safe_to_prune' ), array( 'format' => 'table' ), 'lock_key');
 	}
 
 	private function render_workspace_error( \WP_Error $error ): void {
@@ -4164,6 +4266,10 @@ class WorkspaceCommand extends BaseCommand {
 			array( 'format' => 'table' ),
 			'metric'
 		);
+
+		if ( ! empty($locks['stale_locks']) && is_array($locks['stale_locks']) ) {
+			$this->render_stale_lock_followup( (array) $locks['stale_locks']);
+		}
 
 		$duplicates = (array) ( $worktrees['duplicates'] ?? array() );
 		if ( array() !== $duplicates ) {

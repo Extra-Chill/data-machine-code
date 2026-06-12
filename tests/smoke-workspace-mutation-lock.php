@@ -131,10 +131,32 @@ namespace {
 			return empty($rows) ? null : $rows[count($rows) - 1];
 		}
 
+		/**
+		 * @return array<int,array<string,mixed>>
+		 */
+		public function get_results( string $sql, string $output ): array  // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
+		{
+			return $this->matching_rows($sql);
+		}
+
 		public function query( string $sql ): int  // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
 		{
 			$this->rows_affected = 0;
-			return 0;
+			$now                 = gmdate('Y-m-d H:i:s');
+			if (str_starts_with(trim($sql), 'UPDATE') ) {
+				foreach ( $this->rows as $id => $row ) {
+					$lock_key = (string) ( $row['lock_key'] ?? '' );
+					if ('active' !== (string) ( $row['status'] ?? '' ) || (string) ( $row['expires_at'] ?? '' ) >= $now ) {
+						continue;
+					}
+					if (str_contains($sql, 'lock_key NOT IN') && str_contains($sql, "'" . str_replace("'", "''", $lock_key) . "'") ) {
+						continue;
+					}
+					$this->rows[ $id ]['status'] = 'stale';
+					$this->rows_affected++;
+				}
+			}
+			return $this->rows_affected;
 		}
 
 		public function prepare( string $query, mixed ...$args ): string
@@ -159,6 +181,9 @@ namespace {
 						$status = (string) ( $row['status'] ?? '' );
 						$expiry = (string) ( $row['expires_at'] ?? '' );
 						if (str_contains($sql, "status = 'active'") && 'active' !== $status ) {
+							return false;
+						}
+						if (str_contains($sql, "status = 'stale'") && 'stale' !== $status ) {
 							return false;
 						}
 						if (str_contains($sql, "status = 'released'") ) {
@@ -338,6 +363,67 @@ namespace {
 	$assert(true, isset($db_data['active_lock']['retry_after_seconds']), 'busy failure includes retry-after seconds');
 	$assert(true, isset($db_data['active_lock']['age_seconds']), 'busy failure includes age seconds');
 	$assert(true, isset($db_data['active_lock']['metadata']['owner_context']), 'busy failure includes owner context metadata');
+
+	$active_row_id = array_key_last($GLOBALS['wpdb']->rows);
+	$GLOBALS['wpdb']->rows[ $active_row_id ]['expires_at'] = gmdate('Y-m-d H:i:s', time() - 3600);
+	$GLOBALS['wpdb']->rows[ $active_row_id ]['metadata_json'] = wp_json_encode(
+		array(
+			'owner_context' => array(
+				'runtime_ids' => array(
+					'opencode' => array(
+						'session_id' => 'ses-db-active',
+					),
+				),
+			),
+		)
+	);
+	$GLOBALS['wpdb']->insert(
+		$GLOBALS['wpdb']->prefix . 'datamachine_code_locks',
+		array(
+			'lock_key'      => 'worktree-db-stale',
+			'purpose'       => 'workspace_repo_mutation',
+			'scope'         => 'db-stale',
+			'owner'         => 'owner:123',
+			'run_id'        => 'run-123',
+			'job_id'        => 456,
+			'status'        => 'active',
+			'acquired_at'   => gmdate('Y-m-d H:i:s', time() - 7200),
+			'heartbeat_at'  => gmdate('Y-m-d H:i:s', time() - 7100),
+			'expires_at'    => gmdate('Y-m-d H:i:s', time() - 3600),
+			'released_at'   => null,
+			'metadata_json' => wp_json_encode(
+				array(
+					'owner_context' => array(
+						'runtime_ids' => array(
+							'opencode' => array(
+								'session_id' => 'ses-db-stale',
+							),
+						),
+					),
+				)
+			),
+		),
+		array()
+	);
+
+	$db_stale_status = \DataMachineCode\Workspace\WorkspaceMutationLock::status($db_tmp);
+	$db_stale_report = (array) ( $db_stale_status['stale_locks'] ?? array() );
+	$assert(2, (int) ( $db_stale_report['database_count'] ?? 0 ), 'stale DB rows are included in stale lock report');
+	$assert('wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json', (string) ( $db_stale_report['preview_command'] ?? '' ), 'stale lock report exposes exact prune preview command');
+	$assert('wp datamachine-code workspace worktree locks --prune-stale --format=json', (string) ( $db_stale_report['apply_command'] ?? '' ), 'stale lock report exposes exact prune apply command');
+	$db_rows = array_column((array) ( $db_stale_report['database'] ?? array() ), null, 'lock_key');
+	$assert(true, (bool) ( $db_rows['worktree-demo']['live_flock_present'] ?? false ), 'expired DB row with live filesystem flock is reported as live');
+	$assert(false, (bool) ( $db_rows['worktree-demo']['safe_to_prune'] ?? true ), 'expired DB row with live filesystem flock is not safe to prune');
+	$assert('ses-db-active', (string) ( $db_rows['worktree-demo']['session'] ?? '' ), 'stale DB report includes owner session evidence');
+	$assert(true, isset($db_rows['worktree-demo']['age_seconds']), 'stale DB report includes owner age');
+	$assert(false, (bool) ( $db_rows['worktree-db-stale']['live_flock_present'] ?? true ), 'stale DB row without filesystem flock reports no live flock');
+	$assert(true, (bool) ( $db_rows['worktree-db-stale']['safe_to_prune'] ?? false ), 'stale DB row without live flock is safe to prune');
+
+	$db_prune = \DataMachineCode\Workspace\WorkspaceMutationLock::prune_stale($db_tmp, false);
+	$assert(1, (int) ( $db_prune['database']['protected_active'] ?? 0 ), 'DB prune protects rows with live filesystem flocks');
+	$assert(1, (int) ( $db_prune['database']['active_marked_stale'] ?? 0 ), 'DB prune marks only unprotected expired rows stale');
+	$assert('active', (string) ( $GLOBALS['wpdb']->rows[ $active_row_id ]['status'] ?? '' ), 'DB prune refuses active filesystem lock row');
+
 	if (! is_wp_error($db_first) ) {
 		$db_first->release();
 	}
