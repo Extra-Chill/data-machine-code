@@ -107,7 +107,7 @@ namespace {
         'reason_code'         => 'needs_metadata_reconcile',
         'reason'              => 'inventory row has no lifecycle metadata; metadata reconciliation is required before cleanup planning can classify it',
         'missing_fields'      => array( 'repo', 'branch', 'path' ),
-        'hint'                => 'Run workspace worktree reconcile-metadata --dry-run --format=json to generate reviewed metadata reconciliation rows.',
+        'hint'                => 'Run workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json to generate reviewed metadata reconciliation rows.',
         'size_bytes'          => 0,
         'artifact_size_bytes' => 0,
         );
@@ -204,7 +204,7 @@ namespace {
         array(
          'reason_code' => 'needs_metadata_reconcile',
          'count'       => 2,
-         'command'     => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
+         'command'     => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json',
          'alternative' => 'Low-level apply still requires a reviewed --apply-plan=<file> until DB-backed cleanup runs land.',
          'destructive' => false,
         ),
@@ -1243,7 +1243,7 @@ namespace {
     datamachine_code_cleanup_assert(1 === (int) ( $decoded['summary']['liveness']['stale'] ?? 0 ), 'JSON summary includes liveness metadata counts');
     datamachine_code_cleanup_assert(5 === count($decoded['summary']['skipped_next_commands'] ?? array()), 'JSON summary includes actionable skipped next commands');
     datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][0]['command'] ?? '', 'worktree cleanup --dry-run --format=json'), 'JSON lifecycle command runs DMC-owned cleanup signal detection');
-    datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][1]['command'] ?? '', 'reconcile-metadata --dry-run --format=json'), 'JSON metadata command is metadata reconciliation');
+    datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][1]['command'] ?? '', 'reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json'), 'JSON metadata command is bounded metadata reconciliation');
     datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][2]['command'] ?? '', 'active-no-signal-report'), 'JSON active/no-signal command routes to evidence report');
     datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][3]['alternative'] ?? '', 'active-no-signal-finalized-apply --dry-run'), 'JSON no-merge command routes finalized PR rows to dry-run apply');
 
@@ -1254,14 +1254,21 @@ namespace {
     datamachine_code_cleanup_assert(10 === (int) ( $ability->last_input['offset'] ?? 0 ), 'cleanup forwards dry-run offset');
     datamachine_code_cleanup_assert('30s' === ( $ability->last_input['until_budget'] ?? '' ), 'cleanup forwards dry-run time budget');
 
-    WP_CLI::$logs      = array();
-    WP_CLI::$successes = array();
-    $command->worktree(array( 'active-no-signal-report' ), array( 'limit' => 5, 'offset' => 10, 'until-budget' => '30s', 'format' => 'json' ));
-    datamachine_code_cleanup_assert('30s' === ( $active_report_ability->last_input['until_budget'] ?? '' ), 'active/no-signal report forwards time budget');
-    $active_report_json = json_decode(WP_CLI::$logs[0] ?? '', true);
-    datamachine_code_cleanup_assert(str_contains($active_report_json['pagination']['next_command'] ?? '', '--until-budget=30s'), 'active/no-signal report JSON continuation keeps time budget');
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree(array( 'active-no-signal-report' ), array( 'limit' => 5, 'offset' => 10, 'until-budget' => '30s', 'format' => 'json' ));
+	datamachine_code_cleanup_assert('30s' === ( $active_report_ability->last_input['until_budget'] ?? '' ), 'active/no-signal report forwards time budget');
+	$active_report_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+	datamachine_code_cleanup_assert(str_contains($active_report_json['pagination']['next_command'] ?? '', '--until-budget=30s'), 'active/no-signal report JSON continuation keeps time budget');
 
-    WP_CLI::$logs      = array();
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree(array( 'reconcile-metadata' ), array( 'dry-run' => true, 'format' => 'json' ));
+	datamachine_code_cleanup_assert(25 === (int) ( $reconcile_metadata_ability->last_input['limit'] ?? 0 ), 'metadata reconciliation dry-run defaults to bounded limit');
+	datamachine_code_cleanup_assert(0 === (int) ( $reconcile_metadata_ability->last_input['offset'] ?? -1 ), 'metadata reconciliation dry-run defaults to first page');
+	datamachine_code_cleanup_assert('30s' === ( $reconcile_metadata_ability->last_input['until_budget'] ?? '' ), 'metadata reconciliation dry-run defaults to bounded time budget');
+
+	WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
     $command->worktree(array( 'active-no-signal-finalized-apply' ), array( 'dry-run' => true, 'limit' => 5, 'offset' => 10, 'until-budget' => '30s', 'format' => 'json' ));
     datamachine_code_cleanup_assert('30s' === ( $active_finalized_ability->last_input['until_budget'] ?? '' ), 'finalized active/no-signal apply forwards time budget');

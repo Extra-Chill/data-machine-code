@@ -230,7 +230,7 @@ trait WorkspaceCleanupPlan {
 
 			$resolver_type = WorktreeCleanupClassifier::resolver_type($reason);
 			$next_action   = match ( $resolver_type ) {
-				'metadata_reconciliation'  => 'workspace worktree reconcile-metadata --dry-run --format=json',
+				'metadata_reconciliation'  => sprintf('workspace worktree reconcile-metadata --dry-run --limit=%d --offset=0 --until-budget=%s --format=json', self::METADATA_RECONCILE_DEFAULT_LIMIT, self::METADATA_RECONCILE_DEFAULT_BUDGET),
 				'lifecycle_reconciliation' => 'workspace worktree cleanup --dry-run --format=json',
 				default                    => 'workspace worktree cleanup --dry-run --skip-github --format=json',
 			};

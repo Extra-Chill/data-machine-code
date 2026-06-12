@@ -33,6 +33,10 @@ class WorkspaceCommand extends BaseCommand {
 
 	private const CLEANUP_MODES = array( 'inventory', 'artifacts', 'retention', 'emergency' );
 
+	private const METADATA_RECONCILE_DEFAULT_LIMIT = 25;
+
+	private const METADATA_RECONCILE_DEFAULT_BUDGET = '30s';
+
 	private ?CleanupRunEvidenceStoreInterface $cleanup_run_evidence_store = null;
 
 	/**
@@ -2738,8 +2742,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace worktree abandoned --apply --force --limit=100 --passes=5 --until-budget=120s --format=json
 	 *
 	 *     # Adopt/reconcile unmanaged worktree metadata before cleanup
-	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json
-	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --format=json
+	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json
 	 *     wp datamachine-code workspace worktree reconcile-metadata --apply --limit=25 --offset=0 --format=json
 	 *     wp datamachine-code workspace worktree reconcile-metadata --apply --limit=50 --until-budget=60s --format=json
 	 *     wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json
@@ -3020,6 +3023,13 @@ class WorkspaceCommand extends BaseCommand {
 				$input['apply']    = ! empty($assoc_args['apply']);
 				$input['via_jobs'] = ! empty($assoc_args['via-jobs']);
 				$input['source']   = self::CLEANUP_CLI_SOURCE;
+				$uses_plan         = ! empty($assoc_args['apply-plan']);
+				$has_bounds        = isset($assoc_args['limit']) || isset($assoc_args['offset']) || ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) );
+				if ( ! $uses_plan && ! $has_bounds && ( $input['dry_run'] || $input['apply'] ) ) {
+					$input['limit']        = self::METADATA_RECONCILE_DEFAULT_LIMIT;
+					$input['offset']       = 0;
+					$input['until_budget'] = self::METADATA_RECONCILE_DEFAULT_BUDGET;
+				}
 				if ( isset($assoc_args['limit']) ) {
 					$input['limit'] = (int) $assoc_args['limit'];
 				}
@@ -3029,7 +3039,7 @@ class WorkspaceCommand extends BaseCommand {
 				if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
 					$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
 				}
-				if ( ! empty($assoc_args['apply-plan']) ) {
+				if ( $uses_plan ) {
 					$input['apply_plan'] = $this->read_worktree_json_plan( (string) $assoc_args['apply-plan'], 'metadata reconciliation');
 				}
 				break;
@@ -4935,13 +4945,17 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log('');
 		if ( ! empty($result['dry_run']) ) {
 			if ( isset($result['pagination']['next_offset']) ) {
-				WP_CLI::log(
-					sprintf(
-						'Next page: wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=%d --offset=%d --format=json',
-						(int) ( $result['pagination']['limit'] ?? 0 ),
-						(int) $result['pagination']['next_offset']
-					)
-				);
+				if ( ! empty($result['pagination']['next_command']) ) {
+					WP_CLI::log('Next page: ' . (string) $result['pagination']['next_command']);
+				} else {
+					WP_CLI::log(
+						sprintf(
+							'Next page: wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=%d --offset=%d --format=json',
+							(int) ( $result['pagination']['limit'] ?? 0 ),
+							(int) $result['pagination']['next_offset']
+						)
+					);
+				}
 			}
 			WP_CLI::success(sprintf('%d metadata reconciliation proposal(s). Review JSON output before applying; --apply-plan remains a low-level escape hatch until DB-backed cleanup runs land.', count($proposals)));
 			return;

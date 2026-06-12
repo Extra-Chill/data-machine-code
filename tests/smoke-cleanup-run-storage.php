@@ -241,7 +241,7 @@ datamachine_code_cleanup_run_assert(15 === (int) ( $evidence['remaining_work_sum
 datamachine_code_cleanup_run_assert(1 === (int) ( $evidence['remaining_work_summary']['skipped_by_reason']['plan_mismatch']['count'] ?? 0 ), 'evidence groups skipped plan mismatches');
 datamachine_code_cleanup_run_assert('demo@stale-artifact' === (string) ( $evidence['remaining_work_summary']['skipped_by_reason']['plan_mismatch']['examples'][0]['handle'] ?? '' ), 'skipped examples include representative handle');
 datamachine_code_cleanup_run_assert(4 === (int) ( $evidence['remaining_work_summary']['blocked_resolvers_by_reason']['needs_metadata_reconcile']['count'] ?? 0 ), 'evidence keeps blocked resolver bucket');
-datamachine_code_cleanup_run_assert(str_contains((string) wp_json_encode($evidence['remaining_work_summary']['recommended_commands']), 'workspace worktree reconcile-metadata'), 'summary recommends next DMC commands');
+datamachine_code_cleanup_run_assert(str_contains((string) wp_json_encode($evidence['remaining_work_summary']['recommended_commands']), 'workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json'), 'summary recommends bounded next DMC commands');
 datamachine_code_cleanup_run_assert(str_contains((string) wp_json_encode($evidence['remaining_work_summary']['recommended_commands']), 'apply_destructive'), 'summary labels destructive apply commands separately from review commands');
 
 $done = $service->resume($plan['run_id']);

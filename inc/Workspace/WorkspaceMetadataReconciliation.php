@@ -20,7 +20,7 @@ trait WorkspaceMetadataReconciliation {
 	 *
 	 * Dry-runs build a reviewed plan from the current git worktree listing.
 	 * Passing `limit` and/or `offset` bounds expensive per-worktree probes to
-	 * only that page; omitting both preserves the historical full scan.
+	 * only that page; CLI defaults provide a bounded first page for operators.
 	 * Applying a plan revalidates handle/path/repo/branch before writing metadata.
 	 *
 	 * @param  array $opts Options: dry_run bool, apply_plan array, limit int, offset int, until_budget string.
@@ -120,6 +120,9 @@ trait WorkspaceMetadataReconciliation {
 
 		$classified_skips = $this->classify_worktree_metadata_reconciliation_skips($skipped);
 		$pagination       = $paged ? $this->build_worktree_metadata_reconciliation_pagination($total_worktrees, count($page_worktrees), $limit, $offset) : null;
+		if ( null !== $pagination && null !== ( $pagination['next_offset'] ?? null ) ) {
+			$pagination['next_command'] = sprintf('studio wp datamachine-code workspace worktree reconcile-metadata --%s --limit=%d --offset=%d%s --format=json', $apply ? 'apply' : 'dry-run', $limit, (int) $pagination['next_offset'], null !== $budget_context ? ' --until-budget=' . (string) $budget_context['label'] : '');
+		}
 		if ( null !== $pagination && $budget_stopped ) {
 			$pagination['partial']      = true;
 			$pagination['complete']     = false;
