@@ -807,7 +807,7 @@ class WorkspaceCommand extends BaseCommand {
 			$input['force_artifact_cleanup'] = (bool) $assoc_args['force'];
 		}
 		if ( 'json' !== (string) ( $assoc_args['format'] ?? 'table' ) ) {
-			$profile = $include_artifacts ? 'includes artifact scan' : 'worktree inventory only';
+			$profile = $include_artifacts ? 'includes artifact scan' : 'local worktree merge signals';
 			WP_CLI::log(sprintf('Planning cleanup (%s; %s)...', $mode, $profile));
 		}
 

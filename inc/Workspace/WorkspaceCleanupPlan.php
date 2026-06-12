@@ -66,11 +66,10 @@ trait WorkspaceCleanupPlan {
 		if ( $inputs['include_worktrees'] ) {
 			$worktree_plan = $this->worktree_cleanup_merged(
 				array(
-					'dry_run'        => true,
-					'skip_github'    => true,
-					'inventory_only' => true,
-					'older_than'     => $inputs['worktree_older_than'],
-					'sort'           => $inputs['worktree_sort'],
+					'dry_run'     => true,
+					'skip_github' => true,
+					'older_than'  => $inputs['worktree_older_than'],
+					'sort'        => $inputs['worktree_sort'],
 				)
 			);
 			if ( $worktree_plan instanceof \WP_Error ) {
