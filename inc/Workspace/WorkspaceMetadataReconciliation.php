@@ -587,13 +587,21 @@ trait WorkspaceMetadataReconciliation {
 		}
 
 		if ( array() !== (array) $identity['conflicts'] ) {
+			$identity_classification = $this->classify_worktree_identity_metadata_conflict($wt, $identity);
+			if ( ! empty($identity_classification['repairable']) && 'stale_identity_metadata' === (string) $identity_classification['reason_code'] ) {
+				return $this->build_stale_worktree_identity_metadata_repair_row($base_row, $metadata, $identity_classification);
+			}
+
 			return array(
 				'skip' => array_merge(
 					$base_row,
 					array(
-						'reason_code'        => 'inconsistent_identity_metadata',
-						'reason'             => 'stored worktree identity metadata does not match the handle/path row',
-						'identity_conflicts' => $identity['conflicts'],
+						'reason_code'              => (string) $identity_classification['reason_code'],
+						'reason'                   => (string) $identity_classification['reason'],
+						'identity_conflicts'       => $identity['conflicts'],
+						'identity_classification'  => (string) $identity_classification['classification'],
+						'proposed_source_of_truth' => $identity_classification['proposed_source_of_truth'],
+						'next_command'             => (string) $identity_classification['next_command'],
 					)
 				),
 			);
@@ -1027,6 +1035,204 @@ trait WorkspaceMetadataReconciliation {
 		}
 		$metadata[ $field ]   = $value;
 		$source_map[ $field ] = $source;
+	}
+
+	/**
+	 * Classify identity metadata conflicts into operator-actionable buckets.
+	 *
+	 * @param  array<string,mixed> $wt       Worktree row.
+	 * @param  array<string,mixed> $identity Recovered identity data.
+	 * @return array<string,mixed>
+	 */
+	private function classify_worktree_identity_metadata_conflict( array $wt, array $identity ): array {
+		$handle        = (string) ( $wt['handle'] ?? '' );
+		$repo          = (string) ( $wt['repo'] ?? '' );
+		$branch        = (string) ( $wt['branch'] ?? '' );
+		$path          = rtrim((string) ( $wt['path'] ?? '' ), '/');
+		$parsed        = '' !== $handle ? $this->parse_handle($handle) : array( 'repo' => '', 'branch_slug' => '', 'is_worktree' => false );
+		$handle_branch = (string) ( $parsed['branch_slug'] ?? '' );
+		$branch_slug   = $this->slugify_branch($branch);
+		$path_basename = '' !== $path ? basename($path) : '';
+		$handle_path   = '' !== $handle && $path_basename === $handle;
+		$handle_repo   = ! empty($parsed['is_worktree']) && (string) ( $parsed['repo'] ?? '' ) === $repo;
+		$handle_branch_matches_current = '' !== $branch_slug && $branch_slug === $handle_branch;
+		$default_branch = $this->resolve_worktree_identity_default_branch((string) ( $identity['repo'] ?? $repo ));
+
+		$base = array(
+			'classification'           => 'manual_review_identity_metadata',
+			'reason_code'              => 'manual_review_identity_metadata',
+			'reason'                   => 'stored worktree identity metadata conflicts with the current row and no safe automatic source of truth is available',
+			'repairable'               => false,
+			'proposed_source_of_truth' => array(
+				'handle' => 'manual_review',
+				'repo'   => 'manual_review',
+				'branch' => 'manual_review',
+				'path'   => 'manual_review',
+			),
+			'next_command'             => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
+		);
+
+		if ( $handle_repo && $handle_path && $handle_branch_matches_current ) {
+			return array_merge(
+				$base,
+				array(
+					'classification'           => 'stale_identity_metadata',
+					'reason_code'              => 'stale_identity_metadata',
+					'reason'                   => 'stored identity metadata is stale; current handle, path, and git branch agree',
+					'repairable'               => true,
+					'proposed_source_of_truth' => array(
+						'handle' => 'filesystem_handle',
+						'repo'   => 'filesystem_handle',
+						'branch' => 'current_git_branch',
+						'path'   => 'git_worktree_path',
+					),
+					'next_command'             => 'studio wp datamachine-code workspace worktree reconcile-metadata --apply --format=json',
+				)
+			);
+		}
+
+		if ( $handle_repo && $handle_path && '' !== $branch && $default_branch === $branch ) {
+			return array_merge(
+				$base,
+				array(
+					'classification'           => 'default_branch_checkout_in_feature_worktree',
+					'reason_code'              => 'default_branch_checkout_in_feature_worktree',
+					'reason'                   => sprintf('worktree handle is feature-scoped, but git is currently on the default branch %s', $branch),
+					'proposed_source_of_truth' => array(
+						'handle' => 'filesystem_handle',
+						'repo'   => 'filesystem_handle',
+						'branch' => 'operator_review_required',
+						'path'   => 'git_worktree_path',
+					),
+					'next_command'             => sprintf('git -C %s switch <intended-feature-branch>', escapeshellarg($path)),
+				)
+			);
+		}
+
+		if ( $handle_repo && $handle_path && '' !== $branch && ! $handle_branch_matches_current ) {
+			return array_merge(
+				$base,
+				array(
+					'classification'           => 'branch_renamed_worktree',
+					'reason_code'              => 'branch_renamed_worktree',
+					'reason'                   => 'git branch no longer matches the canonical branch slug encoded in the worktree handle/path',
+					'proposed_source_of_truth' => array(
+						'handle' => 'filesystem_handle',
+						'repo'   => 'filesystem_handle',
+						'branch' => 'current_git_branch',
+						'path'   => 'git_worktree_path',
+					),
+					'next_command'             => sprintf('studio wp datamachine-code workspace worktree add %s %s --from=%s', escapeshellarg($repo), escapeshellarg($branch), escapeshellarg($branch)),
+				)
+			);
+		}
+
+		return $base;
+	}
+
+	/**
+	 * Resolve the short default branch name for identity diagnostics.
+	 */
+	private function resolve_worktree_identity_default_branch( string $repo ): string {
+		if ( '' === $repo ) {
+			return '';
+		}
+
+		$primary_path = $this->get_primary_path($repo);
+		if ( ! is_dir($primary_path . '/.git') ) {
+			return '';
+		}
+
+		$default_ref = $this->resolve_remote_default_ref($primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($default_ref) || ! is_string($default_ref) || '' === $default_ref ) {
+			return '';
+		}
+
+		$prefix = 'refs/remotes/origin/';
+		return str_starts_with($default_ref, $prefix) ? substr($default_ref, strlen($prefix)) : basename($default_ref);
+	}
+
+	/**
+	 * Build a metadata-only repair proposal for stale stored identity metadata.
+	 *
+	 * @param  array<string,mixed> $base_row       Shared reconciliation row data.
+	 * @param  array<string,mixed> $metadata       Stored metadata.
+	 * @param  array<string,mixed> $classification Identity classification.
+	 * @return array{proposal?:array<string,mixed>,skip?:array<string,mixed>}
+	 */
+	private function build_stale_worktree_identity_metadata_repair_row( array $base_row, array $metadata, array $classification ): array {
+		$handle = (string) ( $base_row['handle'] ?? '' );
+		$repo   = (string) ( $base_row['repo'] ?? '' );
+		$branch = (string) ( $base_row['branch'] ?? '' );
+		$path   = (string) ( $base_row['path'] ?? '' );
+
+		$dirty = $this->probe_worktree_dirty_count($path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($dirty) ) {
+			$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $path, $dirty, 'dirty-state probe', 'leaving stale identity metadata unchanged');
+			return array( 'skip' => array_merge($base_row, $classification, $diagnostic) );
+		}
+
+		$unpushed = $this->count_unpushed_commits($path);
+		if ( is_wp_error($unpushed) ) {
+			$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $path, $unpushed, 'cleanup safety probe', 'leaving stale identity metadata unchanged');
+			return array( 'skip' => array_merge($base_row, $classification, $diagnostic) );
+		}
+
+		if ( (int) $dirty > 0 || (int) $unpushed > 0 ) {
+			return array(
+				'skip' => array_merge(
+					$base_row,
+					$classification,
+					array(
+						'reason_code' => 'unsafe_stale_identity_metadata',
+						'reason'      => 'stale identity metadata is repairable, but dirty or unpushed worktree state blocks automatic metadata writes',
+						'dirty'       => (int) $dirty,
+						'unpushed'    => (int) $unpushed,
+					)
+				),
+			);
+		}
+
+		$proposed   = $metadata;
+		$source_map = array();
+		$this->set_reconciled_metadata_field($proposed, $source_map, 'handle', $handle, 'filesystem');
+		$this->set_reconciled_metadata_field($proposed, $source_map, 'repo', $repo, 'filesystem');
+		$this->set_reconciled_metadata_field($proposed, $source_map, 'branch', $branch, 'git');
+		$this->set_reconciled_metadata_field($proposed, $source_map, 'path', $path, 'git');
+		$this->set_reconciled_metadata_field($proposed, $source_map, 'observed_at', gmdate('c'), 'reconcile_run');
+
+		$created_at = '';
+		if ( ! empty($metadata['created_at']) && false !== strtotime((string) $metadata['created_at']) ) {
+			$created_at = gmdate('c', (int) strtotime((string) $metadata['created_at']));
+			$this->set_reconciled_metadata_field($proposed, $source_map, 'created_at', $created_at, 'metadata');
+		} else {
+			$mtime = file_exists($path) ? filemtime($path) : false;
+			if ( false !== $mtime ) {
+				$created_at = gmdate('c', (int) $mtime);
+				$this->set_reconciled_metadata_field($proposed, $source_map, 'created_at', $created_at, 'filesystem');
+			}
+		}
+
+		$state = isset($metadata['lifecycle_state']) ? WorktreeContextInjector::normalize_state((string) $metadata['lifecycle_state']) : null;
+		$this->set_reconciled_metadata_field($proposed, $source_map, 'lifecycle_state', $state ?? WorktreeContextInjector::STATE_ACTIVE, null === $state ? 'operator_plan' : 'metadata');
+
+		return array(
+			'proposal' => array_merge(
+				$base_row,
+				array(
+					'reason_code'              => 'stale_identity_metadata',
+					'reason'                   => (string) $classification['reason'],
+					'dirty'                    => (int) $dirty,
+					'unpushed'                 => (int) $unpushed,
+					'identity_conflicts'       => $base_row['identity_conflicts'] ?? array(),
+					'identity_classification'  => 'stale_identity_metadata',
+					'proposed_source_of_truth' => $classification['proposed_source_of_truth'],
+					'next_command'             => (string) $classification['next_command'],
+					'proposed_metadata'        => $proposed,
+					'source_map'               => $source_map,
+				)
+			),
+		);
 	}
 
 	/**

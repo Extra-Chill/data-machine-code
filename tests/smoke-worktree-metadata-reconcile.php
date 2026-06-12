@@ -577,9 +577,9 @@ namespace {
     $assert(true, isset($active_rows['demo@dirty-active']['upstream_equivalence']['probe_timings_ms']['dirty_path_classification']), 'upstream equivalence includes dirty path classification timing');
     $assert(true, (int) ( $active_rows['demo@dirty-active']['upstream_equivalence']['dirty_paths']['inspected'] ?? 0 ) >= 1, 'batched dirty path classification preserves inspected path count');
 
-    class Inconsistent_Identity_Metadata_Workspace extends \DataMachineCode\Workspace\Workspace
-    {
-        private string $tmp;
+	class Inconsistent_Identity_Metadata_Workspace extends \DataMachineCode\Workspace\Workspace
+	{
+		private string $tmp;
 
         public function __construct( string $tmp )
         {
@@ -591,11 +591,56 @@ namespace {
         {
             return array(
             'success'   => true,
-            'worktrees' => array(
-            array(
-            'handle'   => 'demo@feature-foo',
-            'repo'     => 'demo',
-            'branch'   => '',
+				'worktrees' => array(
+				array(
+				'handle'   => 'demo@unmanaged-missing',
+				'repo'     => 'demo',
+				'branch'   => 'unmanaged-missing',
+				'path'     => $this->tmp . '/demo@unmanaged-missing',
+				'metadata' => array(
+				'handle'          => 'demo@unmanaged-missing',
+				'repo'            => 'demo',
+				'branch'          => 'old-unmanaged-missing',
+				'path'            => $this->tmp . '/demo@unmanaged-missing-old',
+				'created_at'      => '2026-04-01T00:00:00+00:00',
+				'observed_at'     => '2026-04-01T00:00:00+00:00',
+				'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
+				),
+				),
+				array(
+				'handle'   => 'demo@unmanaged-partial',
+				'repo'     => 'demo',
+				'branch'   => 'renamed/current',
+				'path'     => $this->tmp . '/demo@unmanaged-partial',
+				'metadata' => array(
+				'handle'          => 'demo@unmanaged-partial',
+				'repo'            => 'demo',
+				'branch'          => 'unmanaged-partial',
+				'path'            => $this->tmp . '/demo@unmanaged-partial',
+				'created_at'      => '2026-04-01T00:00:00+00:00',
+				'observed_at'     => '2026-04-01T00:00:00+00:00',
+				'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
+				),
+				),
+				array(
+				'handle'   => 'demo@unmanaged-empty',
+				'repo'     => 'demo',
+				'branch'   => 'main',
+				'path'     => $this->tmp . '/demo@unmanaged-empty',
+				'metadata' => array(
+				'handle'          => 'demo@unmanaged-empty',
+				'repo'            => 'demo',
+				'branch'          => 'unmanaged-empty',
+				'path'            => $this->tmp . '/demo@unmanaged-empty',
+				'created_at'      => '2026-04-01T00:00:00+00:00',
+				'observed_at'     => '2026-04-01T00:00:00+00:00',
+				'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
+				),
+				),
+				array(
+				'handle'   => 'demo@feature-foo',
+				'repo'     => 'demo',
+				'branch'   => '',
             'path'     => $this->tmp . '/demo@unmanaged-missing',
             'metadata' => array(
             'handle'          => 'demo@feature-foo',
@@ -610,13 +655,35 @@ namespace {
             ),
             );
         }
-    }
+	}
 
-    $identity_plan = ( new Inconsistent_Identity_Metadata_Workspace($tmp) )->worktree_reconcile_metadata(array( 'dry_run' => true ));
-    $identity_skip = $identity_plan['skipped'][0] ?? array();
-    $assert('inconsistent_identity_metadata', $identity_skip['reason_code'] ?? '', 'metadata reconciliation blocks inconsistent stored identity metadata explicitly');
-    $assert(true, isset($identity_skip['identity_conflicts']['branch']), 'inconsistent identity skip includes branch mismatch diagnostics');
-    $active_report_page = $ws->worktree_active_no_signal_report(array( 'limit' => 1, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 60, 'internal_budget_started' => microtime(true) ));
+	$identity_plan = ( new Inconsistent_Identity_Metadata_Workspace($tmp) )->worktree_reconcile_metadata(array( 'dry_run' => true ));
+	$identity_proposals = array();
+	foreach ( (array) ( $identity_plan['proposals'] ?? array() ) as $row ) {
+		$identity_proposals[ $row['handle'] ?? '' ] = $row;
+	}
+	$identity_skips = array();
+	foreach ( (array) ( $identity_plan['skipped'] ?? array() ) as $row ) {
+		$identity_skips[ $row['handle'] ?? '' ] = $row;
+	}
+	$stale_identity = $identity_proposals['demo@unmanaged-missing'] ?? array();
+	$assert('stale_identity_metadata', $stale_identity['reason_code'] ?? '', 'metadata reconciliation proposes safe stale identity metadata repair');
+	$assert('current_git_branch', $stale_identity['proposed_source_of_truth']['branch'] ?? '', 'stale identity proposal names git branch as branch source of truth');
+	$assert('studio wp datamachine-code workspace worktree reconcile-metadata --apply --format=json', $stale_identity['next_command'] ?? '', 'stale identity proposal includes apply next command');
+	$assert(0, (int) ( $stale_identity['dirty'] ?? -1 ), 'stale identity repair requires clean dirty safety gate');
+	$assert(0, (int) ( $stale_identity['unpushed'] ?? -1 ), 'stale identity repair requires clean unpushed safety gate');
+	$branch_renamed = $identity_skips['demo@unmanaged-partial'] ?? array();
+	$assert('branch_renamed_worktree', $branch_renamed['reason_code'] ?? '', 'metadata reconciliation classifies branch-renamed worktrees');
+	$assert('current_git_branch', $branch_renamed['proposed_source_of_truth']['branch'] ?? '', 'branch-renamed row names current git branch as proposed source of truth');
+	$assert(true, str_contains($branch_renamed['next_command'] ?? '', 'workspace worktree add'), 'branch-renamed row includes a replacement worktree command');
+	$default_checkout = $identity_skips['demo@unmanaged-empty'] ?? array();
+	$assert('default_branch_checkout_in_feature_worktree', $default_checkout['reason_code'] ?? '', 'metadata reconciliation classifies default-branch checkout in feature worktree');
+	$assert('operator_review_required', $default_checkout['proposed_source_of_truth']['branch'] ?? '', 'default checkout leaves branch source of truth to operator review');
+	$assert(true, str_contains($default_checkout['next_command'] ?? '', 'switch <intended-feature-branch>'), 'default checkout includes branch switch next command');
+	$manual_identity = $identity_skips['demo@feature-foo'] ?? array();
+	$assert('manual_review_identity_metadata', $manual_identity['reason_code'] ?? '', 'metadata reconciliation leaves ambiguous identity conflicts for manual review');
+	$assert(true, isset($manual_identity['identity_conflicts']['branch']), 'manual identity skip includes branch mismatch diagnostics');
+	$active_report_page = $ws->worktree_active_no_signal_report(array( 'limit' => 1, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 60, 'internal_budget_started' => microtime(true) ));
     $assert(true, ! is_wp_error($active_report_page) && ( $active_report_page['success'] ?? false ), 'paginated active/no-signal report succeeds');
     $assert(true, str_contains($active_report_page['pagination']['next_command'] ?? '', 'active-no-signal-report --limit=1 --offset=1 --until-budget=1s --format=json'), 'active/no-signal report continuation preserves report operation');
     $budgeted_active_report = $ws->worktree_active_no_signal_report(array( 'limit' => 20, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 1, 'internal_budget_started' => microtime(true) - 1 ));
