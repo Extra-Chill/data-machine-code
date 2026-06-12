@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.110] - 2026-06-12
+
+### Changed
+- Clarify cleanup chunk drain progress
+
+### Fixed
+- Fix cleanup disk-pressure recommendations
+
 ## [0.47.109] - 2026-06-12
 
 ### Changed
