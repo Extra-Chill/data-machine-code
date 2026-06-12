@@ -79,6 +79,16 @@ class Workspace {
 	public const HYGIENE_DEFAULT_SIZE_LIMIT = 1000;
 
 	/**
+	 * Default page size for metadata reconciliation recommendations.
+	 */
+	public const METADATA_RECONCILE_DEFAULT_LIMIT = 25;
+
+	/**
+	 * Default wall-clock budget for metadata reconciliation recommendations.
+	 */
+	public const METADATA_RECONCILE_DEFAULT_BUDGET = '30s';
+
+	/**
 	 * @var string Resolved workspace path.
 	 */
 	private string $workspace_path;

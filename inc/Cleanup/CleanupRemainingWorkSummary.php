@@ -14,6 +14,7 @@ class CleanupRemainingWorkSummary {
 
 
 	private const EXAMPLE_LIMIT = 3;
+	private const METADATA_RECONCILE_COMMAND = 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json';
 
 	/**
 	 * Build a concise summary from DB-backed cleanup items.
@@ -218,7 +219,7 @@ class CleanupRemainingWorkSummary {
 
 	private static function command_for_reason( string $reason, string $bucket ): array {
 		$command = match ( $reason ) {
-			'needs_metadata_reconcile', 'lifecycle_reconciliation_candidate', 'repaired_metadata' => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
+			'needs_metadata_reconcile', 'lifecycle_reconciliation_candidate', 'repaired_metadata' => self::METADATA_RECONCILE_COMMAND,
 			'dirty_worktree', 'unpushed_commits', 'probe_timeout', 'plan_mismatch' => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --format=json',
 			'artifact_already_removed', 'artifact_plan_mismatch' => 'studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json',
 			default => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --format=json',

@@ -78,7 +78,7 @@ trait WorkspaceWorktreeInventoryCleanup {
 					$base_row, array(
 						'reason_code' => 'needs_metadata_reconcile',
 						'reason'      => 'inventory row has no lifecycle metadata; metadata reconciliation is required before cleanup planning can classify it',
-						'hint'        => 'Run workspace worktree reconcile-metadata --dry-run --format=json to generate reviewed metadata reconciliation rows.',
+						'hint'        => 'Run workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json to generate reviewed metadata reconciliation rows.',
 					)
 				);
 				continue;
