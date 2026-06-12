@@ -283,7 +283,7 @@ class WorkspaceCommand extends BaseCommand {
 					WP_CLI::error('Usage: wp datamachine-code workspace triage ' . $operation . ' <row-id> --reason=<reason>');
 					return;
 				}
-				$result = $workspace->workspace_row_triage_mark((string) $args[1], 'ignore' === $operation ? 'ignored' : 'quarantined', (string) ( $assoc_args['reason'] ?? '' ));
+				$result = $workspace->workspace_row_triage_mark( (string) $args[1], 'ignore' === $operation ? 'ignored' : 'quarantined', (string) ( $assoc_args['reason'] ?? '' ) );
 				$this->render_workspace_triage_result($result, $assoc_args, false);
 				return;
 
@@ -292,7 +292,7 @@ class WorkspaceCommand extends BaseCommand {
 					WP_CLI::error('Usage: wp datamachine-code workspace triage adopt <row-id> [--name=<name>]');
 					return;
 				}
-				$result = $workspace->workspace_row_triage_adopt((string) $args[1], isset($assoc_args['name']) ? (string) $assoc_args['name'] : null);
+				$result = $workspace->workspace_row_triage_adopt( (string) $args[1], isset($assoc_args['name']) ? (string) $assoc_args['name'] : null );
 				$this->render_workspace_triage_result($result, $assoc_args, false);
 				return;
 
@@ -321,7 +321,7 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( ! $is_list ) {
-			WP_CLI::success((string) ( $result['message'] ?? 'Workspace triage updated.' ));
+			WP_CLI::success( (string) ( $result['message'] ?? 'Workspace triage updated.' ) );
 			$row = is_array($result['row'] ?? null) ? (array) $result['row'] : array();
 			if ( array() !== $row ) {
 				$this->format_items(array( $this->workspace_triage_table_row($row) ), array( 'row_id', 'status', 'issues', 'age_days', 'reason', 'path' ), $assoc_args, 'row_id');
@@ -4155,7 +4155,7 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log('Stale workspace locks:');
 		WP_CLI::log(sprintf('Preview: %s', (string) ( $report['preview_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' )));
 		WP_CLI::log(sprintf('Apply:   %s', (string) ( $report['apply_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --format=json' )));
-		WP_CLI::log((string) ( $report['safety'] ?? 'Active filesystem flocks are reported and protected.' ));
+		WP_CLI::log( (string) ( $report['safety'] ?? 'Active filesystem flocks are reported and protected.' ) );
 
 		$rows = array();
 		foreach ( (array) ( $report['database'] ?? array() ) as $row ) {
