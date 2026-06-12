@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.111] - 2026-06-12
+
+### Changed
+- Include lifecycle candidates in active cleanup evidence
+
 ## [0.47.110] - 2026-06-12
 
 ### Changed
