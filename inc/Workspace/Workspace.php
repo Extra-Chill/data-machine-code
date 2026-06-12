@@ -22,6 +22,7 @@ require_once __DIR__ . '/WorkspaceGitOperations.php';
 require_once __DIR__ . '/WorkspaceHygieneReport.php';
 require_once __DIR__ . '/WorkspaceMetadataReconciliation.php';
 require_once __DIR__ . '/WorkspaceRepositoryLifecycle.php';
+require_once __DIR__ . '/WorkspaceRowTriage.php';
 require_once __DIR__ . '/WorkspaceWorktreeLifecycle.php';
 require_once __DIR__ . '/WorkspaceWorktreeCleanupEngine.php';
 require_once __DIR__ . '/WorkspaceWorktreeInventoryCleanup.php';
@@ -37,6 +38,7 @@ class Workspace {
 	use WorkspaceHygieneReport;
 	use WorkspaceMetadataReconciliation;
 	use WorkspaceRepositoryLifecycle;
+	use WorkspaceRowTriage;
 	use WorkspaceWorktreeLifecycle;
 	use WorkspaceWorktreeCleanupEngine;
 	use WorkspaceWorktreeInventoryCleanup;

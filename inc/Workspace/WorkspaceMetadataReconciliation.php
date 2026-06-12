@@ -481,8 +481,11 @@ trait WorkspaceMetadataReconciliation {
 				continue;
 			}
 
+			$metadata      = is_array($wt['metadata'] ?? null) ? (array) $wt['metadata'] : array();
+			$triage_status = $this->workspace_row_triage_status_from_metadata($metadata);
+			$skip_reason   = in_array($triage_status, array( 'ignored', 'quarantined' ), true) ? 'triage_' . $triage_status : 'complete_metadata';
 			++$skipped;
-			$reasons['complete_metadata'] = (int) ( $reasons['complete_metadata'] ?? 0 ) + 1;
+			$reasons[ $skip_reason ] = (int) ( $reasons[ $skip_reason ] ?? 0 ) + 1;
 		}
 
 		return array(
@@ -503,6 +506,12 @@ trait WorkspaceMetadataReconciliation {
 	 * @param  array<string,mixed> $wt Worktree list row.
 	 */
 	private function worktree_metadata_reconciliation_candidate_reason( array $wt ): ?string {
+		$metadata      = is_array($wt['metadata'] ?? null) ? (array) $wt['metadata'] : array();
+		$triage_status = $this->workspace_row_triage_status_from_metadata($metadata);
+		if ( in_array($triage_status, array( 'ignored', 'quarantined' ), true) ) {
+			return null;
+		}
+
 		if ( ! empty($wt['external']) ) {
 			return 'external_worktree';
 		}

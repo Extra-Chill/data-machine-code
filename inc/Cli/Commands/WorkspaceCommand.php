@@ -208,6 +208,153 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	/**
+	 * Triage external, noncanonical, and non-git workspace rows without cleanup.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <operation>
+	 * : Operation to run.
+	 * ---
+	 * options:
+	 *   - list
+	 *   - ignore
+	 *   - quarantine
+	 *   - adopt
+	 * ---
+	 *
+	 * [<row-id>]
+	 * : Row id from `workspace triage list` for ignore/quarantine/adopt.
+	 *
+	 * [--reason=<reason>]
+	 * : Required reason for ignore/quarantine metadata.
+	 *
+	 * [--name=<name>]
+	 * : Optional canonical primary name when adopting a safe row.
+	 *
+	 * [--status=<status>]
+	 * : Filter list by triage status.
+	 *
+	 * [--include-resolved]
+	 * : Include ignored, quarantined, and adopted rows in list output.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 *   - csv
+	 *   - yaml
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code workspace triage list
+	 *     wp datamachine-code workspace triage list --include-resolved --format=json
+	 *     wp datamachine-code workspace triage quarantine external:abc123 --reason='Created by raw git worktree outside DMC ownership'
+	 *     wp datamachine-code workspace triage ignore tmp --reason='Operator scratch directory, not DMC-owned'
+	 *     wp datamachine-code workspace triage adopt my-plugin
+	 *
+	 * @subcommand triage
+	 */
+	public function triage( array $args, array $assoc_args ): void {
+		$operation = (string) ( $args[0] ?? 'list' );
+		$workspace = new Workspace();
+
+		switch ( $operation ) {
+			case 'list':
+				$result = $workspace->workspace_row_triage_list(
+					array(
+						'status'           => isset($assoc_args['status']) ? (string) $assoc_args['status'] : '',
+						'include_resolved' => ! empty($assoc_args['include-resolved']),
+					)
+				);
+				$this->render_workspace_triage_result($result, $assoc_args, true);
+				return;
+
+			case 'ignore':
+			case 'quarantine':
+				if ( empty($args[1]) ) {
+					WP_CLI::error('Usage: wp datamachine-code workspace triage ' . $operation . ' <row-id> --reason=<reason>');
+					return;
+				}
+				$result = $workspace->workspace_row_triage_mark((string) $args[1], 'ignore' === $operation ? 'ignored' : 'quarantined', (string) ( $assoc_args['reason'] ?? '' ));
+				$this->render_workspace_triage_result($result, $assoc_args, false);
+				return;
+
+			case 'adopt':
+				if ( empty($args[1]) ) {
+					WP_CLI::error('Usage: wp datamachine-code workspace triage adopt <row-id> [--name=<name>]');
+					return;
+				}
+				$result = $workspace->workspace_row_triage_adopt((string) $args[1], isset($assoc_args['name']) ? (string) $assoc_args['name'] : null);
+				$this->render_workspace_triage_result($result, $assoc_args, false);
+				return;
+
+			default:
+				WP_CLI::error(sprintf('Unknown triage operation: %s', $operation));
+		}
+	}
+
+	/**
+	 * Render workspace row triage output.
+	 *
+	 * @param array<string,mixed>|\WP_Error $result     Result.
+	 * @param array<string,mixed>           $assoc_args CLI args.
+	 * @param bool                          $is_list    Whether result is a list.
+	 */
+	private function render_workspace_triage_result( array|\WP_Error $result, array $assoc_args, bool $is_list ): void {
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		$format = (string) ( $assoc_args['format'] ?? 'table' );
+		if ( 'json' === $format ) {
+			WP_CLI::log( (string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			return;
+		}
+
+		if ( ! $is_list ) {
+			WP_CLI::success((string) ( $result['message'] ?? 'Workspace triage updated.' ));
+			$row = is_array($result['row'] ?? null) ? (array) $result['row'] : array();
+			if ( array() !== $row ) {
+				$this->format_items(array( $this->workspace_triage_table_row($row) ), array( 'row_id', 'status', 'issues', 'age_days', 'reason', 'path' ), $assoc_args, 'row_id');
+			}
+			return;
+		}
+
+		WP_CLI::log(sprintf('Workspace: %s', (string) ( $result['workspace_path'] ?? '' )));
+		$rows = array_map(fn( array $row ): array => $this->workspace_triage_table_row($row), (array) ( $result['rows'] ?? array() ));
+		if ( array() === $rows ) {
+			WP_CLI::log('No unresolved external, noncanonical, or non-git workspace rows.');
+			return;
+		}
+
+		$this->format_items($rows, array( 'row_id', 'status', 'issues', 'age_days', 'repo', 'path' ), $assoc_args, 'row_id');
+		WP_CLI::log('Next: use `workspace triage ignore|quarantine <row-id> --reason=<reason>` or `workspace triage adopt <row-id>` for safe primary rows.');
+	}
+
+	/**
+	 * Build a compact table row for workspace triage output.
+	 *
+	 * @param  array<string,mixed> $row Triage row.
+	 * @return array<string,mixed>
+	 */
+	private function workspace_triage_table_row( array $row ): array {
+		return array(
+			'row_id'   => (string) ( $row['row_id'] ?? '' ),
+			'status'   => (string) ( $row['triage_status'] ?? '' ),
+			'issues'   => implode(',', array_map('strval', (array) ( $row['issues'] ?? array() ))),
+			'age_days' => null === ( $row['age_days'] ?? null ) ? '-' : (string) $row['age_days'],
+			'repo'     => (string) ( $row['repo'] ?? '' ),
+			'reason'   => (string) ( $row['triage_reason'] ?? '' ),
+			'path'     => (string) ( $row['path'] ?? '' ),
+		);
+	}
+
+	/**
 	 * Render compact workspace list counts for cleanup triage.
 	 *
 	 * @param  array<string,mixed> $result     Workspace list ability result.
@@ -251,6 +398,9 @@ class WorkspaceCommand extends BaseCommand {
 
 		ksort($summary['repos']);
 		$summary['repos'] = array_values($summary['repos']);
+		if ( $summary['non_git'] > 0 ) {
+			$summary['triage_command'] = 'wp datamachine-code workspace triage list --format=json';
+		}
 
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( 'json' === $format ) {
@@ -290,6 +440,10 @@ class WorkspaceCommand extends BaseCommand {
 		if ( array() !== $summary['repos'] ) {
 			WP_CLI::log('Repos:');
 			$this->format_items($summary['repos'], array( 'repo', 'primary', 'worktree', 'context', 'total' ), array( 'format' => 'table' ), 'repo');
+		}
+
+		if ( ! empty($summary['triage_command']) ) {
+			WP_CLI::log(sprintf('Triage: %s', $summary['triage_command']));
 		}
 	}
 
