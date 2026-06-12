@@ -217,13 +217,13 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_workspace_list_summary( array $result, array $assoc_args ): void {
 		$repos   = (array) ( $result['repos'] ?? array() );
 		$summary = array(
-			'total'       => count($repos),
-			'primary'     => 0,
-			'worktree'    => 0,
-			'context'     => 0,
-			'non_git'     => 0,
-			'repos'       => array(),
-			'workspace'   => (string) ( $result['path'] ?? '' ),
+			'total'     => count($repos),
+			'primary'   => 0,
+			'worktree'  => 0,
+			'context'   => 0,
+			'non_git'   => 0,
+			'repos'     => array(),
+			'workspace' => (string) ( $result['path'] ?? '' ),
 		);
 
 		foreach ( $repos as $row ) {
@@ -238,11 +238,11 @@ class WorkspaceCommand extends BaseCommand {
 			$repo = (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' );
 			if ( ! isset($summary['repos'][ $repo ]) ) {
 				$summary['repos'][ $repo ] = array(
-					'repo'      => $repo,
-					'primary'   => 0,
-					'worktree'  => 0,
-					'context'   => 0,
-					'total'     => 0,
+					'repo'     => $repo,
+					'primary'  => 0,
+					'worktree' => 0,
+					'context'  => 0,
+					'total'    => 0,
 				);
 			}
 			++$summary['repos'][ $repo ][ $kind ];
@@ -261,11 +261,26 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log(sprintf('Workspace: %s', $summary['workspace']));
 		$this->format_items(
 			array(
-				array( 'metric' => 'total', 'count' => $summary['total'] ),
-				array( 'metric' => 'primary', 'count' => $summary['primary'] ),
-				array( 'metric' => 'worktree', 'count' => $summary['worktree'] ),
-				array( 'metric' => 'context', 'count' => $summary['context'] ),
-				array( 'metric' => 'non_git', 'count' => $summary['non_git'] ),
+				array(
+					'metric' => 'total',
+					'count'  => $summary['total'],
+				),
+				array(
+					'metric' => 'primary',
+					'count'  => $summary['primary'],
+				),
+				array(
+					'metric' => 'worktree',
+					'count'  => $summary['worktree'],
+				),
+				array(
+					'metric' => 'context',
+					'count'  => $summary['context'],
+				),
+				array(
+					'metric' => 'non_git',
+					'count'  => $summary['non_git'],
+				),
 			),
 			array( 'metric', 'count' ),
 			array( 'format' => 'table' ),
@@ -621,7 +636,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$include_artifacts = 'artifacts' === $mode || ! empty($assoc_args['include-artifacts']);
 		$include_worktrees = 'artifacts' !== $mode;
-		$input = array(
+		$input             = array(
 			'mode'              => $mode,
 			'include_artifacts' => $include_artifacts,
 			'include_worktrees' => $include_worktrees,
