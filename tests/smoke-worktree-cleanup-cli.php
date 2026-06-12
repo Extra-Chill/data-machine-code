@@ -459,7 +459,8 @@ namespace {
             $offset = (int) ( $input['offset'] ?? 0 );
             $budget = isset($input['until_budget']) && '' !== trim((string) $input['until_budget']) ? ' --until-budget=' . trim((string) $input['until_budget']) : '';
             $dry_run = 'report' !== $this->mode && ! empty($input['dry_run']) ? ' --dry-run' : '';
-            $next_command = sprintf('studio wp datamachine-code workspace worktree active-no-signal-%s%s --limit=%d --offset=%d%s --format=json', $this->mode, $dry_run, $limit, $offset + $limit, $budget);
+            $older_than = 'stale-clean-apply' === $this->mode && isset($input['older_than']) ? ' --older-than=' . (string) $input['older_than'] : '';
+            $next_command = sprintf('studio wp datamachine-code workspace worktree active-no-signal-%s%s%s --limit=%d --offset=%d%s --format=json', $this->mode, $dry_run, $older_than, $limit, $offset + $limit, $budget);
             if ( null !== $this->stall_at_offset && $offset === $this->stall_at_offset ) {
                 return array(
                 'success' => true,
@@ -1033,6 +1034,7 @@ namespace {
     $active_equivalent_clean_ability = new FakeActiveNoSignalAbility('equivalent-clean-apply');
     $active_merged_ability = new FakeActiveNoSignalAbility('merged-apply');
     $active_remote_clean_ability = new FakeActiveNoSignalAbility('remote-clean-apply');
+    $active_stale_clean_ability = new FakeActiveNoSignalAbility('stale-clean-apply');
     $reconcile_metadata_ability = new FakeReconcileMetadataAbility();
 	$bounded_apply_ability = new FakeBoundedCleanupEligibleApplyAbility();
 	$prune_ability = new FakePruneAbility();
@@ -1061,6 +1063,7 @@ namespace {
     'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply' => $active_equivalent_clean_ability,
     'datamachine-code/workspace-worktree-active-no-signal-merged-apply' => $active_merged_ability,
     'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply' => $active_remote_clean_ability,
+    'datamachine-code/workspace-worktree-active-no-signal-stale-clean-apply' => $active_stale_clean_ability,
     'datamachine-code/workspace-worktree-reconcile-metadata' => $reconcile_metadata_ability,
     'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => $bounded_apply_ability,
     'datamachine-code/workspace-worktree-prune'              => $prune_ability,
@@ -1368,6 +1371,14 @@ namespace {
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
+    $command->worktree(array( 'active-no-signal-stale-clean-apply' ), array( 'dry-run' => true, 'older-than' => '14d', 'limit' => 5, 'offset' => 10, 'until-budget' => '30s', 'format' => 'json' ));
+    datamachine_code_cleanup_assert('14d' === ( $active_stale_clean_ability->last_input['older_than'] ?? '' ), 'stale-clean active/no-signal apply forwards age threshold');
+    datamachine_code_cleanup_assert('30s' === ( $active_stale_clean_ability->last_input['until_budget'] ?? '' ), 'stale-clean active/no-signal apply forwards time budget');
+    $active_stale_clean_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    datamachine_code_cleanup_assert(str_contains($active_stale_clean_json['pagination']['next_command'] ?? '', 'active-no-signal-stale-clean-apply --dry-run --older-than=14d'), 'stale-clean active/no-signal JSON continuation keeps age threshold');
+
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
     $command->worktree(array( 'active-no-signal-finalized-apply' ), array( 'dry-run' => true, 'limit' => 5, 'offset' => 10, 'until-budget' => '30s' ));
     datamachine_code_cleanup_assert(in_array('Next page: studio wp datamachine-code workspace worktree active-no-signal-finalized-apply --dry-run --limit=5 --offset=15 --until-budget=30s --format=json', WP_CLI::$logs, true), 'human active/no-signal apply continuation keeps dry-run and time budget');
 
@@ -1387,6 +1398,8 @@ namespace {
     datamachine_code_cleanup_assert(1 === preg_match('/^\d+s$/', $abandoned_forwarded_budget) && (int) $abandoned_forwarded_budget <= 30, 'abandoned forwards remaining time budget to active/no-signal marking');
     datamachine_code_cleanup_assert(array( 0, 1 ) === array_map(fn( $input ) => (int) ( $input['offset'] ?? 0 ), array_slice($active_finalized_ability->inputs, -2)), 'abandoned drains active/no-signal classifier pages in apply mode');
     datamachine_code_cleanup_assert(array( 0, 1 ) === array_map(fn( $input ) => (int) ( $input['offset'] ?? 0 ), array_slice($active_remote_clean_ability->inputs, -2)), 'abandoned drains remote-clean active/no-signal classifier pages before bounded cleanup');
+    datamachine_code_cleanup_assert(array( 0, 1 ) === array_map(fn( $input ) => (int) ( $input['offset'] ?? 0 ), array_slice($active_stale_clean_ability->inputs, -2)), 'abandoned drains stale-clean active/no-signal classifier pages before bounded cleanup');
+    datamachine_code_cleanup_assert('7d' === ( $active_stale_clean_ability->last_input['older_than'] ?? '' ), 'abandoned defaults stale-clean age threshold');
     datamachine_code_cleanup_assert(true === ( $bounded_apply_ability->last_input['force'] ?? null ), 'abandoned forwards force only to bounded cleanup removal');
     datamachine_code_cleanup_assert(false === ( $bounded_apply_ability->last_input['dry_run'] ?? null ), 'abandoned --apply removes eligible rows');
     datamachine_code_cleanup_assert(1 === $prune_ability->calls, 'abandoned prunes stale git metadata after cleanup pass');

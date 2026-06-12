@@ -2144,6 +2144,54 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-active-no-signal-stale-clean-apply',
+				array(
+					'label'               => 'Promote Stale Clean Active Worktrees',
+					'description'         => 'Promote stale clean active_no_signal rows into explicit cleanup_eligible metadata after an operator-approved age threshold. Reviewable and bounded; dirty and unpushed rows stay protected.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'dry_run'      => array(
+								'type'        => 'boolean',
+								'description' => 'If true, preview metadata promotions without writing.',
+							),
+							'limit'        => array(
+								'type'        => 'integer',
+								'description' => 'Maximum active_no_signal rows to inspect in this page. Defaults to 25.',
+							),
+							'offset'       => array(
+								'type'        => 'integer',
+								'description' => 'Pagination offset into the active_no_signal inventory ordering.',
+							),
+							'older_than'   => array(
+								'type'        => 'string',
+								'description' => 'Minimum heartbeat age, such as 7d, 24h, or 30m. Defaults to 7d.',
+							),
+							'until_budget' => array(
+								'type'        => 'string',
+								'description' => 'Compact time budget for the underlying active_no_signal report page, such as 60s or 10m.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'dry_run' => array( 'type' => 'boolean' ),
+							'planned' => array( 'type' => 'array' ),
+							'written' => array( 'type' => 'array' ),
+							'skipped' => array( 'type' => 'array' ),
+							'summary' => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeActiveNoSignalStaleCleanApply' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
 				'datamachine-code/workspace-worktree-cleanup-artifacts',
 				array(
 					'label'               => 'Cleanup Worktree Artifacts',
@@ -3909,6 +3957,33 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->worktree_active_no_signal_remote_clean_apply($opts);
+	}
+
+	/**
+	 * Promote stale clean active/no-signal evidence into cleanup metadata.
+	 *
+	 * @param  array $input Input parameters (dry_run, limit, offset, older_than).
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function worktreeActiveNoSignalStaleCleanApply( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		$opts      = array(
+			'dry_run' => ! empty($input['dry_run']),
+		);
+		if ( array_key_exists('limit', $input) ) {
+			$opts['limit'] = (int) $input['limit'];
+		}
+		if ( array_key_exists('offset', $input) ) {
+			$opts['offset'] = (int) $input['offset'];
+		}
+		if ( isset($input['older_than']) && '' !== trim( (string) $input['older_than']) ) {
+			$opts['older_than'] = trim( (string) $input['older_than']);
+		}
+		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
+			$opts['until_budget'] = trim( (string) $input['until_budget']);
+		}
+
+		return $workspace->worktree_active_no_signal_stale_clean_apply($opts);
 	}
 
 	/**

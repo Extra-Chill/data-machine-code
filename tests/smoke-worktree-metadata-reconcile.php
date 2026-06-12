@@ -975,8 +975,9 @@ namespace {
             'repo'            => 'demo',
             'branch'          => $metadata_branch,
             'path'            => $tmp . '/' . $handle,
-            'created_at'      => '2026-04-06T00:00:00+00:00',
-            'observed_at'     => '2026-04-06T00:00:00+00:00',
+            'created_at'      => 'demo@ambiguous-default' === $handle ? gmdate('c') : '2026-04-06T00:00:00+00:00',
+            'observed_at'     => 'demo@ambiguous-default' === $handle ? gmdate('c') : '2026-04-06T00:00:00+00:00',
+            'last_seen_at'    => 'demo@ambiguous-default' === $handle ? gmdate('c') : '2026-04-06T00:00:00+00:00',
             'lifecycle_state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_ACTIVE,
             )
         );
@@ -1008,6 +1009,20 @@ namespace {
     $assert('unsafe_dirty_or_unpushed', $merged_rows['demo@dirty-default-merged']['suggested_action'] ?? '', 'dirty contained branch remains unsafe');
     $assert('unsafe_dirty_or_unpushed', $merged_rows['demo@unpushed-default-merged']['suggested_action'] ?? '', 'unpushed contained branch remains unsafe');
     $assert('remote_tracking_clean', $merged_rows['demo@ambiguous-default']['suggested_action'] ?? '', 'clean remote-tracking branch is classified as cleanup-safe local-only checkout');
+
+    $stale_clean_dry_run = $ws->worktree_active_no_signal_stale_clean_apply(array( 'dry_run' => true, 'older_than' => '30d', 'limit' => 100, 'offset' => 0 ));
+    $assert(true, ! is_wp_error($stale_clean_dry_run) && ( $stale_clean_dry_run['success'] ?? false ), 'stale-clean active/no-signal dry-run succeeds');
+    $assert(true, (bool) ( $stale_clean_dry_run['dry_run'] ?? false ), 'stale-clean dry-run does not write');
+    $stale_clean_handles = array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), (array) ( $stale_clean_dry_run['planned'] ?? array() ));
+    $assert(true, in_array('demo@default-merged', $stale_clean_handles, true), 'stale-clean dry-run includes old clean rows');
+    $assert(false, in_array('demo@dirty-default-merged', $stale_clean_handles, true), 'stale-clean dry-run excludes dirty rows');
+    $assert(false, in_array('demo@unpushed-default-merged', $stale_clean_handles, true), 'stale-clean dry-run excludes unpushed rows');
+    $assert(false, in_array('demo@ambiguous-default', $stale_clean_handles, true), 'stale-clean dry-run age-filters recent clean rows');
+    $assert(true, 1 <= (int) ( $stale_clean_dry_run['summary']['skipped_by_reason']['not_stale_clean_cleanup_candidate'] ?? 0 ), 'stale-clean dry-run reports risky/non-candidate rows separately');
+    $assert(true, 1 <= (int) ( $stale_clean_dry_run['summary']['skipped_by_reason']['stale_active_age_filter'] ?? 0 ), 'stale-clean dry-run reports age-filtered rows separately');
+    $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@default-merged')['cleanup_eligible_at'] ?? '', 'stale-clean dry-run leaves old clean metadata unchanged');
+    $stale_clean_page = $ws->worktree_active_no_signal_stale_clean_apply(array( 'dry_run' => true, 'older_than' => '30d', 'limit' => 1, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 60, 'internal_budget_started' => microtime(true) ));
+    $assert(true, str_contains($stale_clean_page['pagination']['next_command'] ?? '', 'active-no-signal-stale-clean-apply --dry-run --older-than=30d --limit=1 --offset=1 --until-budget=1s --format=json'), 'stale-clean dry-run continuation preserves age threshold');
 
     $merged_dry_run = $ws->worktree_active_no_signal_merged_apply(array( 'dry_run' => true, 'limit' => 100, 'offset' => 0 ));
     $assert(true, ! is_wp_error($merged_dry_run) && ( $merged_dry_run['success'] ?? false ), 'merged-to-default active/no-signal dry-run succeeds');

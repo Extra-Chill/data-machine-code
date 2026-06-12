@@ -307,6 +307,8 @@ trait WorkspaceWorktreeInventoryCleanup {
 					'lifecycle_state' => $state,
 					'liveness'        => $liveness,
 					'liveness_reason' => $liveness_reason,
+					'last_seen_at'    => $wt['last_seen_at'] ?? null,
+					'heartbeat_age_seconds' => $wt['heartbeat_age_seconds'] ?? null,
 					'pr_url'          => $metadata['pr_url'] ?? null,
 					'pr_number'       => $metadata['pr_number'] ?? null,
 					'origin_task'     => $metadata['origin_task'] ?? null,
@@ -322,6 +324,8 @@ trait WorkspaceWorktreeInventoryCleanup {
 				'lifecycle_state' => $state,
 				'liveness'        => $liveness,
 				'liveness_reason' => $liveness_reason,
+				'last_seen_at'    => $wt['last_seen_at'] ?? null,
+				'heartbeat_age_seconds' => $wt['heartbeat_age_seconds'] ?? null,
 			)
 		);
 	}
