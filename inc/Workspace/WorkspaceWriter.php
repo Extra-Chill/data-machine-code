@@ -69,6 +69,11 @@ class WorkspaceWriter {
 			return new \WP_Error('path_traversal', 'Path traversal detected. Access denied.', array( 'status' => 403 ));
 		}
 
+		$policy_check = $this->ensure_writable_roots_allow_paths($name, array( $path ));
+		if ( is_wp_error($policy_check) ) {
+			return $policy_check;
+		}
+
 		$file_path = $repo_path . '/' . $path;
 		$existed   = file_exists($file_path);
 
@@ -142,6 +147,11 @@ class WorkspaceWriter {
 
 		if ( ! $validation['valid'] ) {
 			return new \WP_Error('path_traversal', (string) ( $validation['message'] ?? 'Path traversal detected. Access denied.' ), array( 'status' => 403 ));
+		}
+
+		$policy_check = $this->ensure_writable_roots_allow_paths($name, array( $path ));
+		if ( is_wp_error($policy_check) ) {
+			return $policy_check;
 		}
 
 		$real_path = (string) ( $validation['real_path'] ?? '' );
@@ -252,8 +262,24 @@ class WorkspaceWriter {
 			return new \WP_Error('empty_patch', 'Patch content is required.', array( 'status' => 400 ));
 		}
 
-		if ( false === strpos($patch, '--- ') || false === strpos($patch, '+++ ') || false === strpos($patch, '@@') ) {
-			return new \WP_Error('invalid_patch', 'Patch must be a unified diff with file headers and at least one hunk.', array( 'status' => 400 ));
+		if ( false === strpos($patch, 'diff --git ') && ( false === strpos($patch, '--- ') || false === strpos($patch, '+++ ') ) ) {
+			return new \WP_Error('invalid_patch', 'Patch must be a unified diff with file headers.', array( 'status' => 400 ));
+		}
+
+		$patch_paths = $this->extract_patch_paths($patch);
+		if ( empty($patch_paths) ) {
+			return new \WP_Error('invalid_patch_paths', 'Patch must include at least one file path.', array( 'status' => 400 ));
+		}
+
+		foreach ( $patch_paths as $patch_path ) {
+			if ( PathSecurity::hasTraversal($patch_path) || str_starts_with($patch_path, '/') ) {
+				return new \WP_Error('path_traversal', sprintf('Path traversal detected in patch path "%s". Access denied.', $patch_path), array( 'status' => 403 ));
+			}
+		}
+
+		$policy_check = $this->ensure_writable_roots_allow_paths($name, $patch_paths);
+		if ( is_wp_error($policy_check) ) {
+			return $policy_check;
 		}
 
 		$temp = function_exists('wp_tempnam') ? wp_tempnam('datamachine-code-patch-') : tempnam(sys_get_temp_dir(), 'datamachine-code-patch-');
@@ -410,5 +436,176 @@ class WorkspaceWriter {
 		}
 
 		return array_values(array_unique($files));
+	}
+
+	/**
+	 * Enforce configured writable roots before a writer mutation touches disk.
+	 *
+	 * @param  string            $name  Workspace handle.
+	 * @param  array<int,string> $paths Repo-relative paths the mutation would touch.
+	 * @return true|\WP_Error
+	 */
+	private function ensure_writable_roots_allow_paths( string $name, array $paths ): true|\WP_Error {
+		$parsed         = $this->workspace->parse_handle($name);
+		$writable_roots = $this->get_repo_writable_roots($parsed['repo']);
+		if ( empty($writable_roots) ) {
+			return true;
+		}
+
+		$rejected = array();
+		foreach ( $paths as $path ) {
+			$relative = $this->normalize_policy_path($path);
+			if ( '' === $relative ) {
+				continue;
+			}
+
+			if ( ! PathSecurity::isPathAllowed($relative, $writable_roots) ) {
+				$rejected[] = $relative;
+			}
+		}
+
+		$rejected = array_values(array_unique($rejected));
+		if ( empty($rejected) ) {
+			return true;
+		}
+
+		return new \WP_Error(
+			'path_not_allowed',
+			sprintf(
+				'Path(s) outside configured writable_roots: %s. Allowed writable_roots: %s.',
+				implode(', ', $rejected),
+				implode(', ', $writable_roots)
+			),
+			array(
+				'status'         => 403,
+				'rejected_paths' => $rejected,
+				'writable_roots' => $writable_roots,
+			)
+		);
+	}
+
+	/**
+	 * Return writable roots for a repo from datamachine_workspace_git_policies.
+	 *
+	 * @param  string $repo_name Repository name.
+	 * @return array<int,string>
+	 */
+	private function get_repo_writable_roots( string $repo_name ): array {
+		$policies = $this->get_workspace_git_policies();
+		$repo     = $policies['repos'][ $repo_name ] ?? array();
+		$paths    = $repo['writable_roots'] ?? $repo['allowed_paths'] ?? array();
+
+		return $this->normalize_policy_paths($paths);
+	}
+
+	/**
+	 * Read workspace git policy settings.
+	 *
+	 * @return array{repos: array<string, array<string, mixed>>}
+	 */
+	private function get_workspace_git_policies(): array {
+		$defaults = array( 'repos' => array() );
+		$settings = function_exists('get_option') ? get_option('datamachine_workspace_git_policies', $defaults) : $defaults;
+		if ( ! is_array($settings) ) {
+			$settings = $defaults;
+		}
+		if ( ! isset($settings['repos']) || ! is_array($settings['repos']) ) {
+			$settings['repos'] = array();
+		}
+		if ( function_exists('apply_filters') ) {
+			$settings = apply_filters('datamachine_workspace_git_policies', $settings);
+		}
+
+		return isset($settings['repos']) && is_array($settings['repos']) ? $settings : $defaults;
+	}
+
+	/**
+	 * Normalize policy path lists.
+	 *
+	 * @param  mixed $paths Raw policy value.
+	 * @return array<int,string>
+	 */
+	private function normalize_policy_paths( mixed $paths ): array {
+		if ( ! is_array($paths) ) {
+			return array();
+		}
+
+		$clean = array();
+		foreach ( $paths as $path ) {
+			$normalized = $this->normalize_policy_path((string) $path);
+			if ( '' !== $normalized ) {
+				$clean[] = $normalized;
+			}
+		}
+
+		return array_values(array_unique($clean));
+	}
+
+	/**
+	 * Normalize a repo-relative policy path.
+	 */
+	private function normalize_policy_path( string $path ): string {
+		return rtrim(ltrim(str_replace('\\', '/', trim($path)), '/'), '/');
+	}
+
+	/**
+	 * Extract every file path touched by a unified diff.
+	 *
+	 * @param  string $patch Unified diff.
+	 * @return array<int,string>
+	 */
+	private function extract_patch_paths( string $patch ): array {
+		$paths = array();
+		$lines = preg_split('/\n/', $patch);
+		if ( false === $lines ) {
+			return array();
+		}
+
+		foreach ( $lines as $line ) {
+			if ( preg_match('/^diff --git\s+(\S+)\s+(\S+)/', $line, $matches) ) {
+				foreach ( array( $matches[1], $matches[2] ) as $raw_path ) {
+					$path = $this->normalize_patch_path($raw_path);
+					if ( '' !== $path ) {
+						$paths[] = $path;
+					}
+				}
+				continue;
+			}
+
+			if ( preg_match('/^(?:---|\+\+\+)\s+(\S+)/', $line, $matches) ) {
+				$path = $this->normalize_patch_path($matches[1]);
+				if ( '' !== $path ) {
+					$paths[] = $path;
+				}
+				continue;
+			}
+
+			if ( preg_match('/^(?:rename|copy) (?:from|to)\s+(.+)$/', $line, $matches) ) {
+				$path = $this->normalize_patch_path($matches[1]);
+				if ( '' !== $path ) {
+					$paths[] = $path;
+				}
+			}
+		}
+
+		return array_values(array_unique($paths));
+	}
+
+	/**
+	 * Normalize a patch header path to repo-relative form.
+	 */
+	private function normalize_patch_path( string $path ): string {
+		$path = trim($path);
+		if ( '/dev/null' === $path ) {
+			return '';
+		}
+		$path = preg_replace('/\t.*$/', '', $path) ?? $path;
+		$path = preg_replace('/^"(.*)"$/', '$1', $path) ?? $path;
+		$path = str_replace('\\', '/', $path);
+		if ( str_starts_with($path, 'a/') || str_starts_with($path, 'b/') ) {
+			$path = substr($path, 2);
+		}
+
+		return $this->normalize_policy_path($path);
 	}
 }
