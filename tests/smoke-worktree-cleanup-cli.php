@@ -107,7 +107,7 @@ namespace {
         'reason_code'         => 'needs_metadata_reconcile',
         'reason'              => 'inventory row has no lifecycle metadata; metadata reconciliation is required before cleanup planning can classify it',
         'missing_fields'      => array( 'repo', 'branch', 'path' ),
-        'hint'                => 'Run workspace worktree reconcile-metadata --dry-run --format=json to generate reviewed metadata reconciliation rows.',
+        'hint'                => 'Run workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json to generate reviewed metadata reconciliation rows.',
         'size_bytes'          => 0,
         'artifact_size_bytes' => 0,
         );
@@ -232,7 +232,7 @@ namespace {
         array(
          'reason_code' => 'needs_metadata_reconcile',
          'count'       => 2,
-         'command'     => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
+         'command'     => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json',
          'alternative' => 'Low-level apply still requires a reviewed --apply-plan=<file> until DB-backed cleanup runs land.',
          'destructive' => false,
         ),
@@ -826,6 +826,29 @@ namespace {
             'success' => true,
             'run_id'  => (string) ( $input['run_id'] ?? '' ),
             'state'   => 'planned',
+			'locks'   => array(
+			'stale_locks' => array(
+			'count'            => 1,
+			'database_count'   => 1,
+			'filesystem_count' => 0,
+			'preview_command'  => 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json',
+			'apply_command'    => 'wp datamachine-code workspace worktree locks --prune-stale --format=json',
+			'safety'           => 'Preview is non-destructive. Apply prunes expired DB rows and old unlocked filesystem lock files only; live filesystem flocks are reported and protected.',
+			'database'         => array(
+			array(
+			'source'             => 'database',
+			'lock_key'           => 'worktree-demo',
+			'scope'              => 'demo',
+			'owner'              => 'owner:123',
+			'session'            => 'ses-demo',
+			'age_seconds'        => 3600,
+			'live_flock_present' => false,
+			'safe_to_prune'      => true,
+			),
+			),
+			'filesystem'       => array(),
+			),
+			),
             );
         }
     }
@@ -1149,6 +1172,18 @@ namespace {
     $db_status_json = json_decode(WP_CLI::$logs[0] ?? '', true);
     datamachine_code_cleanup_assert('cleanup-run-20260504193024-abc123' === ( $cleanup_status_ability->last_input['run_id'] ?? '' ), 'DB cleanup run IDs are routed to cleanup status ability');
     datamachine_code_cleanup_assert('planned' === ( $db_status_json['state'] ?? '' ), 'DB cleanup run status does not route to job-backed status parser');
+	datamachine_code_cleanup_assert(1 === (int) ( $db_status_json['locks']['stale_locks']['database_count'] ?? 0 ), 'cleanup status JSON surfaces stale DB locks');
+	datamachine_code_cleanup_assert('wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' === (string) ( $db_status_json['locks']['stale_locks']['preview_command'] ?? '' ), 'cleanup status JSON includes exact stale lock preview command');
+	datamachine_code_cleanup_assert('wp datamachine-code workspace worktree locks --prune-stale --format=json' === (string) ( $db_status_json['locks']['stale_locks']['apply_command'] ?? '' ), 'cleanup status JSON includes exact stale lock apply command');
+	datamachine_code_cleanup_assert('ses-demo' === (string) ( $db_status_json['locks']['stale_locks']['database'][0]['session'] ?? '' ), 'cleanup status JSON includes stale DB lock session');
+	datamachine_code_cleanup_assert(3600 === (int) ( $db_status_json['locks']['stale_locks']['database'][0]['age_seconds'] ?? 0 ), 'cleanup status JSON includes stale DB lock age');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup(array( 'status', 'cleanup-run-20260504193024-abc123' ), array());
+	datamachine_code_cleanup_assert(in_array('Stale workspace locks:', WP_CLI::$logs, true), 'human cleanup status renders stale lock follow-up section');
+	datamachine_code_cleanup_assert(in_array('Preview: wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json', WP_CLI::$logs, true), 'human cleanup status renders exact prune preview command');
+	datamachine_code_cleanup_assert(in_array('Apply:   wp datamachine-code workspace worktree locks --prune-stale --format=json', WP_CLI::$logs, true), 'human cleanup status renders exact prune apply command');
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
@@ -1277,7 +1312,7 @@ namespace {
     datamachine_code_cleanup_assert(1 === (int) ( $decoded['summary']['liveness']['stale'] ?? 0 ), 'JSON summary includes liveness metadata counts');
     datamachine_code_cleanup_assert(9 === count($decoded['summary']['skipped_next_commands'] ?? array()), 'JSON summary includes actionable skipped next commands');
     datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][0]['command'] ?? '', 'worktree cleanup --dry-run --format=json'), 'JSON lifecycle command runs DMC-owned cleanup signal detection');
-    datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][1]['command'] ?? '', 'reconcile-metadata --dry-run --format=json'), 'JSON metadata command is metadata reconciliation');
+    datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][1]['command'] ?? '', 'reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json'), 'JSON metadata command is bounded metadata reconciliation');
     datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][2]['command'] ?? '', 'active-no-signal-report'), 'JSON active/no-signal command routes to evidence report');
     datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][3]['alternative'] ?? '', 'active-no-signal-finalized-apply --dry-run'), 'JSON no-merge command routes finalized PR rows to dry-run apply');
     datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($decoded['summary']['skipped_next_commands'] ?? array()), 'git -C <worktree-path> status --short --branch'), 'JSON dirty bucket recommends narrow git status evidence');
@@ -1292,14 +1327,21 @@ namespace {
     datamachine_code_cleanup_assert(10 === (int) ( $ability->last_input['offset'] ?? 0 ), 'cleanup forwards dry-run offset');
     datamachine_code_cleanup_assert('30s' === ( $ability->last_input['until_budget'] ?? '' ), 'cleanup forwards dry-run time budget');
 
-    WP_CLI::$logs      = array();
-    WP_CLI::$successes = array();
-    $command->worktree(array( 'active-no-signal-report' ), array( 'limit' => 5, 'offset' => 10, 'until-budget' => '30s', 'format' => 'json' ));
-    datamachine_code_cleanup_assert('30s' === ( $active_report_ability->last_input['until_budget'] ?? '' ), 'active/no-signal report forwards time budget');
-    $active_report_json = json_decode(WP_CLI::$logs[0] ?? '', true);
-    datamachine_code_cleanup_assert(str_contains($active_report_json['pagination']['next_command'] ?? '', '--until-budget=30s'), 'active/no-signal report JSON continuation keeps time budget');
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree(array( 'active-no-signal-report' ), array( 'limit' => 5, 'offset' => 10, 'until-budget' => '30s', 'format' => 'json' ));
+	datamachine_code_cleanup_assert('30s' === ( $active_report_ability->last_input['until_budget'] ?? '' ), 'active/no-signal report forwards time budget');
+	$active_report_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+	datamachine_code_cleanup_assert(str_contains($active_report_json['pagination']['next_command'] ?? '', '--until-budget=30s'), 'active/no-signal report JSON continuation keeps time budget');
 
-    WP_CLI::$logs      = array();
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree(array( 'reconcile-metadata' ), array( 'dry-run' => true, 'format' => 'json' ));
+	datamachine_code_cleanup_assert(25 === (int) ( $reconcile_metadata_ability->last_input['limit'] ?? 0 ), 'metadata reconciliation dry-run defaults to bounded limit');
+	datamachine_code_cleanup_assert(0 === (int) ( $reconcile_metadata_ability->last_input['offset'] ?? -1 ), 'metadata reconciliation dry-run defaults to first page');
+	datamachine_code_cleanup_assert('30s' === ( $reconcile_metadata_ability->last_input['until_budget'] ?? '' ), 'metadata reconciliation dry-run defaults to bounded time budget');
+
+	WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
     $command->worktree(array( 'active-no-signal-finalized-apply' ), array( 'dry-run' => true, 'limit' => 5, 'offset' => 10, 'until-budget' => '30s', 'format' => 'json' ));
     datamachine_code_cleanup_assert('30s' === ( $active_finalized_ability->last_input['until_budget'] ?? '' ), 'finalized active/no-signal apply forwards time budget');

@@ -171,12 +171,18 @@ final class WorkspaceMutationLock {
 	public static function status( string $workspace_path ): array {
 		$filesystem = self::filesystem_status($workspace_path);
 		$database   = WorkspaceLockStore::status();
+		$stale      = self::stale_lock_report($database, $filesystem);
 
 		return array(
 			'database'          => $database,
 			'filesystem'        => $filesystem,
 			'active'            => self::logical_lock_count($database, $filesystem, 'active'),
 			'stale'             => self::logical_lock_count($database, $filesystem, 'stale'),
+			'stale_locks'       => $stale,
+			'prune_commands'    => array(
+				'preview' => 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json',
+				'apply'   => 'wp datamachine-code workspace worktree locks --prune-stale --format=json',
+			),
 			'retention_enabled' => true,
 			'policy'            => self::retention_policy(),
 		);
@@ -189,7 +195,13 @@ final class WorkspaceMutationLock {
 	 */
 	public static function prune_stale( string $workspace_path, bool $dry_run = false ): array {
 		$before    = self::status($workspace_path);
-		$db_pruned = $dry_run ? array( 'dry_run' => true ) : WorkspaceLockStore::prune_expired();
+		$protected = self::active_filesystem_lock_keys((array) ( $before['filesystem'] ?? array() ));
+		$db_pruned = $dry_run ? array(
+			'dry_run'          => true,
+			'protected_active' => count($protected),
+			'protected_keys'   => $protected,
+			'candidate_count'  => (int) ( $before['database']['stale'] ?? 0 ),
+		) : WorkspaceLockStore::prune_expired($protected);
 		$fs_pruned = self::prune_stale_filesystem_locks($workspace_path, $dry_run);
 		$after     = self::status($workspace_path);
 
@@ -250,6 +262,117 @@ final class WorkspaceMutationLock {
 				static fn( string $key ): bool => '' !== $key
 			)
 		);
+	}
+
+	/**
+	 * Build the operator-facing stale lock follow-up report.
+	 *
+	 * @param array<string,mixed> $database   DB lock status.
+	 * @param array<string,mixed> $filesystem Filesystem lock status.
+	 * @return array<string,mixed>
+	 */
+	private static function stale_lock_report( array $database, array $filesystem ): array {
+		$active_filesystem_keys = self::active_filesystem_lock_keys($filesystem);
+		$database_rows          = array();
+		foreach ( (array) ( $database['locks'] ?? array() ) as $lock ) {
+			if ( ! is_array($lock) || 'stale' !== (string) ( $lock['state'] ?? '' ) ) {
+				continue;
+			}
+			$lock_key           = (string) ( $lock['lock_key'] ?? '' );
+			$live_flock_present = in_array($lock_key, $active_filesystem_keys, true);
+			$owner_context      = (array) ( $lock['metadata']['owner_context'] ?? array() );
+			$database_rows[]    = array(
+				'source'                  => 'database',
+				'lock_key'                => $lock_key,
+				'scope'                   => (string) ( $lock['scope'] ?? '' ),
+				'state'                   => 'stale',
+				'owner'                   => (string) ( $lock['owner'] ?? '' ),
+				'session'                 => self::owner_context_session_id($owner_context),
+				'run_id'                  => (string) ( $lock['run_id'] ?? '' ),
+				'job_id'                  => $lock['job_id'] ?? null,
+				'acquired_at'             => (string) ( $lock['acquired_at'] ?? '' ),
+				'heartbeat_at'            => (string) ( $lock['heartbeat_at'] ?? '' ),
+				'expires_at'              => (string) ( $lock['expires_at'] ?? '' ),
+				'age_seconds'             => $lock['age_seconds'] ?? null,
+				'heartbeat_age_seconds'   => $lock['heartbeat_age_seconds'] ?? null,
+				'expires_age_seconds'     => $lock['expires_age_seconds'] ?? null,
+				'live_flock_present'      => $live_flock_present,
+				'safe_to_prune'           => ! $live_flock_present,
+				'preview_command'         => 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json',
+				'apply_command'           => 'wp datamachine-code workspace worktree locks --prune-stale --format=json',
+				'active_lock_refusal_note' => $live_flock_present ? 'Matching filesystem lock has a live flock; DB row is reported but protected from stale pruning.' : '',
+			);
+		}
+
+		$filesystem_rows = array();
+		foreach ( (array) ( $filesystem['locks'] ?? array() ) as $lock ) {
+			if ( ! is_array($lock) || 'stale' !== (string) ( $lock['state'] ?? '' ) ) {
+				continue;
+			}
+			$filesystem_rows[] = array(
+				'source'             => 'filesystem',
+				'lock_key'           => (string) ( $lock['lock_key'] ?? '' ),
+				'scope'              => (string) ( $lock['scope'] ?? '' ),
+				'state'              => 'stale',
+				'path'               => (string) ( $lock['path'] ?? '' ),
+				'mtime'              => $lock['mtime'] ?? null,
+				'age_seconds'        => $lock['age_seconds'] ?? null,
+				'live_flock_present' => false,
+				'safe_to_prune'      => ! empty($lock['safe_to_prune']),
+				'preview_command'    => 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json',
+				'apply_command'      => 'wp datamachine-code workspace worktree locks --prune-stale --format=json',
+			);
+		}
+
+		$count = count($database_rows) + count($filesystem_rows);
+		return array(
+			'count'                  => $count,
+			'database_count'         => count($database_rows),
+			'filesystem_count'       => count($filesystem_rows),
+			'active_filesystem_keys' => $active_filesystem_keys,
+			'preview_command'        => 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json',
+			'apply_command'          => 'wp datamachine-code workspace worktree locks --prune-stale --format=json',
+			'safety'                 => 'Preview is non-destructive. Apply prunes expired DB rows and old unlocked filesystem lock files only; live filesystem flocks are reported and protected.',
+			'database'               => $database_rows,
+			'filesystem'             => $filesystem_rows,
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $filesystem Filesystem lock status.
+	 * @return array<int,string>
+	 */
+	private static function active_filesystem_lock_keys( array $filesystem ): array {
+		return array_values(
+			array_filter(
+				array_map('strval', (array) ( $filesystem['active_keys'] ?? array() )),
+				static fn( string $key ): bool => '' !== $key
+			)
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $owner_context Decoded DB lock owner context.
+	 */
+	private static function owner_context_session_id( array $owner_context ): string {
+		$runtime_ids = (array) ( $owner_context['runtime_ids'] ?? array() );
+		foreach ( $runtime_ids as $entry ) {
+			if ( is_array($entry) && '' !== trim( (string) ( $entry['session_id'] ?? '' )) ) {
+				return (string) $entry['session_id'];
+			}
+		}
+		foreach ( $runtime_ids as $entry ) {
+			if ( ! is_array($entry) ) {
+				continue;
+			}
+			foreach ( $entry as $value ) {
+				if ( '' !== trim( (string) $value) ) {
+					return (string) $value;
+				}
+			}
+		}
+
+		return '';
 	}
 
 	/**

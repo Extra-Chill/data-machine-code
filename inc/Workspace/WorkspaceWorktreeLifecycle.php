@@ -775,7 +775,13 @@ trait WorkspaceWorktreeLifecycle {
 					$dirty_files = null;
 				}
 
-				$metadata        = ( ! $is_primary && $inside_ws ) ? WorktreeContextInjector::get_metadata($relative) : null;
+				$metadata_key     = null;
+				if ( ! $is_primary && $inside_ws ) {
+					$metadata_key = $relative;
+				} elseif ( ! $is_primary && ! $inside_ws ) {
+					$metadata_key = 'external:' . sha1($wt['path']);
+				}
+				$metadata        = null !== $metadata_key ? WorktreeContextInjector::get_metadata($metadata_key) : null;
 				$created_at      = is_array($metadata) ? ( $metadata['created_at'] ?? null ) : null;
 				$lifecycle_state = is_array($metadata) ? ( $metadata['lifecycle_state'] ?? null ) : null;
 				if ( null !== $state && $lifecycle_state !== $state ) {

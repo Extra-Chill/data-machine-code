@@ -14,6 +14,7 @@ class CleanupRemainingWorkSummary {
 
 
 	private const EXAMPLE_LIMIT = 3;
+	private const METADATA_RECONCILE_COMMAND = 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json';
 
 	/**
 	 * Build a concise summary from DB-backed cleanup items.
@@ -218,7 +219,7 @@ class CleanupRemainingWorkSummary {
 
 	private static function command_for_reason( string $reason, string $bucket ): array {
 		$command = match ( $reason ) {
-			'needs_metadata_reconcile', 'lifecycle_reconciliation_candidate', 'repaired_metadata' => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
+			'needs_metadata_reconcile', 'lifecycle_reconciliation_candidate', 'repaired_metadata' => self::METADATA_RECONCILE_COMMAND,
 			'dirty_worktree' => 'git -C <worktree-path> status --short --branch --untracked-files=normal',
 			'unpushed_commits' => 'git -C <worktree-path> log --oneline --decorate @{u}..HEAD',
 			'stale_worktree_marker' => 'git -C <primary-path> worktree prune --dry-run --verbose',
@@ -263,7 +264,7 @@ class CleanupRemainingWorkSummary {
 		return match ( $reason ) {
 			'dirty_worktree' => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --only=dirty_worktree --verbose --format=json',
 			'unpushed_commits' => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --only=unpushed_commits --verbose --format=json',
-			'stale_worktree_marker' => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
+			'stale_worktree_marker' => self::METADATA_RECONCILE_COMMAND,
 			'primary_missing' => 'If the checkout is gone, recreate it with `studio wp datamachine-code workspace clone <remote-url> --name=<repo>` or adopt the existing primary checkout with `studio wp datamachine-code workspace adopt <path> --name=<repo>`.',
 			default => '',
 		};

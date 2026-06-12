@@ -33,6 +33,10 @@ class WorkspaceCommand extends BaseCommand {
 
 	private const CLEANUP_MODES = array( 'inventory', 'artifacts', 'retention', 'emergency' );
 
+	private const METADATA_RECONCILE_DEFAULT_LIMIT = 25;
+
+	private const METADATA_RECONCILE_DEFAULT_BUDGET = '30s';
+
 	private ?CleanupRunEvidenceStoreInterface $cleanup_run_evidence_store = null;
 
 	/**
@@ -208,6 +212,153 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	/**
+	 * Triage external, noncanonical, and non-git workspace rows without cleanup.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <operation>
+	 * : Operation to run.
+	 * ---
+	 * options:
+	 *   - list
+	 *   - ignore
+	 *   - quarantine
+	 *   - adopt
+	 * ---
+	 *
+	 * [<row-id>]
+	 * : Row id from `workspace triage list` for ignore/quarantine/adopt.
+	 *
+	 * [--reason=<reason>]
+	 * : Required reason for ignore/quarantine metadata.
+	 *
+	 * [--name=<name>]
+	 * : Optional canonical primary name when adopting a safe row.
+	 *
+	 * [--status=<status>]
+	 * : Filter list by triage status.
+	 *
+	 * [--include-resolved]
+	 * : Include ignored, quarantined, and adopted rows in list output.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 *   - csv
+	 *   - yaml
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code workspace triage list
+	 *     wp datamachine-code workspace triage list --include-resolved --format=json
+	 *     wp datamachine-code workspace triage quarantine external:abc123 --reason='Created by raw git worktree outside DMC ownership'
+	 *     wp datamachine-code workspace triage ignore tmp --reason='Operator scratch directory, not DMC-owned'
+	 *     wp datamachine-code workspace triage adopt my-plugin
+	 *
+	 * @subcommand triage
+	 */
+	public function triage( array $args, array $assoc_args ): void {
+		$operation = (string) ( $args[0] ?? 'list' );
+		$workspace = new Workspace();
+
+		switch ( $operation ) {
+			case 'list':
+				$result = $workspace->workspace_row_triage_list(
+					array(
+						'status'           => isset($assoc_args['status']) ? (string) $assoc_args['status'] : '',
+						'include_resolved' => ! empty($assoc_args['include-resolved']),
+					)
+				);
+				$this->render_workspace_triage_result($result, $assoc_args, true);
+				return;
+
+			case 'ignore':
+			case 'quarantine':
+				if ( empty($args[1]) ) {
+					WP_CLI::error('Usage: wp datamachine-code workspace triage ' . $operation . ' <row-id> --reason=<reason>');
+					return;
+				}
+				$result = $workspace->workspace_row_triage_mark((string) $args[1], 'ignore' === $operation ? 'ignored' : 'quarantined', (string) ( $assoc_args['reason'] ?? '' ));
+				$this->render_workspace_triage_result($result, $assoc_args, false);
+				return;
+
+			case 'adopt':
+				if ( empty($args[1]) ) {
+					WP_CLI::error('Usage: wp datamachine-code workspace triage adopt <row-id> [--name=<name>]');
+					return;
+				}
+				$result = $workspace->workspace_row_triage_adopt((string) $args[1], isset($assoc_args['name']) ? (string) $assoc_args['name'] : null);
+				$this->render_workspace_triage_result($result, $assoc_args, false);
+				return;
+
+			default:
+				WP_CLI::error(sprintf('Unknown triage operation: %s', $operation));
+		}
+	}
+
+	/**
+	 * Render workspace row triage output.
+	 *
+	 * @param array<string,mixed>|\WP_Error $result     Result.
+	 * @param array<string,mixed>           $assoc_args CLI args.
+	 * @param bool                          $is_list    Whether result is a list.
+	 */
+	private function render_workspace_triage_result( array|\WP_Error $result, array $assoc_args, bool $is_list ): void {
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		$format = (string) ( $assoc_args['format'] ?? 'table' );
+		if ( 'json' === $format ) {
+			WP_CLI::log( (string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			return;
+		}
+
+		if ( ! $is_list ) {
+			WP_CLI::success((string) ( $result['message'] ?? 'Workspace triage updated.' ));
+			$row = is_array($result['row'] ?? null) ? (array) $result['row'] : array();
+			if ( array() !== $row ) {
+				$this->format_items(array( $this->workspace_triage_table_row($row) ), array( 'row_id', 'status', 'issues', 'age_days', 'reason', 'path' ), $assoc_args, 'row_id');
+			}
+			return;
+		}
+
+		WP_CLI::log(sprintf('Workspace: %s', (string) ( $result['workspace_path'] ?? '' )));
+		$rows = array_map(fn( array $row ): array => $this->workspace_triage_table_row($row), (array) ( $result['rows'] ?? array() ));
+		if ( array() === $rows ) {
+			WP_CLI::log('No unresolved external, noncanonical, or non-git workspace rows.');
+			return;
+		}
+
+		$this->format_items($rows, array( 'row_id', 'status', 'issues', 'age_days', 'repo', 'path' ), $assoc_args, 'row_id');
+		WP_CLI::log('Next: use `workspace triage ignore|quarantine <row-id> --reason=<reason>` or `workspace triage adopt <row-id>` for safe primary rows.');
+	}
+
+	/**
+	 * Build a compact table row for workspace triage output.
+	 *
+	 * @param  array<string,mixed> $row Triage row.
+	 * @return array<string,mixed>
+	 */
+	private function workspace_triage_table_row( array $row ): array {
+		return array(
+			'row_id'   => (string) ( $row['row_id'] ?? '' ),
+			'status'   => (string) ( $row['triage_status'] ?? '' ),
+			'issues'   => implode(',', array_map('strval', (array) ( $row['issues'] ?? array() ))),
+			'age_days' => null === ( $row['age_days'] ?? null ) ? '-' : (string) $row['age_days'],
+			'repo'     => (string) ( $row['repo'] ?? '' ),
+			'reason'   => (string) ( $row['triage_reason'] ?? '' ),
+			'path'     => (string) ( $row['path'] ?? '' ),
+		);
+	}
+
+	/**
 	 * Render compact workspace list counts for cleanup triage.
 	 *
 	 * @param  array<string,mixed> $result     Workspace list ability result.
@@ -251,6 +402,9 @@ class WorkspaceCommand extends BaseCommand {
 
 		ksort($summary['repos']);
 		$summary['repos'] = array_values($summary['repos']);
+		if ( $summary['non_git'] > 0 ) {
+			$summary['triage_command'] = 'wp datamachine-code workspace triage list --format=json';
+		}
 
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( 'json' === $format ) {
@@ -290,6 +444,10 @@ class WorkspaceCommand extends BaseCommand {
 		if ( array() !== $summary['repos'] ) {
 			WP_CLI::log('Repos:');
 			$this->format_items($summary['repos'], array( 'repo', 'primary', 'worktree', 'context', 'total' ), array( 'format' => 'table' ), 'repo');
+		}
+
+		if ( ! empty($summary['triage_command']) ) {
+			WP_CLI::log(sprintf('Triage: %s', $summary['triage_command']));
 		}
 	}
 
@@ -874,6 +1032,7 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	private function render_cleanup_control_result( array $result, array $assoc_args ): void {
+		$result = $this->attach_current_workspace_lock_status($result);
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( 'json' === $format ) {
 			WP_CLI::log( (string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
@@ -896,9 +1055,35 @@ class WorkspaceCommand extends BaseCommand {
 		if ( ! empty($result['remaining_work_summary']) && is_array($result['remaining_work_summary']) ) {
 			$this->render_cleanup_remaining_work_summary( (array) $result['remaining_work_summary']);
 		}
+		if ( ! empty($result['locks']['stale_locks']) && is_array($result['locks']['stale_locks']) ) {
+			$this->render_stale_lock_followup( (array) $result['locks']['stale_locks']);
+		}
 		if ( ! empty($result['evidence']) ) {
 			WP_CLI::log( (string) wp_json_encode($result['evidence'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 		}
+	}
+
+	/**
+	 * Attach live workspace lock status to cleanup triage surfaces when available.
+	 *
+	 * @param  array<string,mixed> $result Cleanup result.
+	 * @return array<string,mixed>
+	 */
+	private function attach_current_workspace_lock_status( array $result ): array {
+		if ( isset($result['locks']) || ! class_exists(Workspace::class) || ! class_exists(WorkspaceMutationLock::class) ) {
+			return $result;
+		}
+
+		try {
+			$workspace       = new Workspace();
+			$result['locks'] = WorkspaceMutationLock::status($workspace->get_path());
+		} catch ( \Throwable $e ) {
+			$result['locks'] = array(
+				'error' => $e->getMessage(),
+			);
+		}
+
+		return $result;
 	}
 
 	/**
@@ -2557,8 +2742,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace worktree abandoned --apply --force --limit=100 --passes=5 --until-budget=120s --format=json
 	 *
 	 *     # Adopt/reconcile unmanaged worktree metadata before cleanup
-	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json
-	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --format=json
+	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json
 	 *     wp datamachine-code workspace worktree reconcile-metadata --apply --limit=25 --offset=0 --format=json
 	 *     wp datamachine-code workspace worktree reconcile-metadata --apply --limit=50 --until-budget=60s --format=json
 	 *     wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json
@@ -2839,6 +3023,13 @@ class WorkspaceCommand extends BaseCommand {
 				$input['apply']    = ! empty($assoc_args['apply']);
 				$input['via_jobs'] = ! empty($assoc_args['via-jobs']);
 				$input['source']   = self::CLEANUP_CLI_SOURCE;
+				$uses_plan         = ! empty($assoc_args['apply-plan']);
+				$has_bounds        = isset($assoc_args['limit']) || isset($assoc_args['offset']) || ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) );
+				if ( ! $uses_plan && ! $has_bounds && ( $input['dry_run'] || $input['apply'] ) ) {
+					$input['limit']        = self::METADATA_RECONCILE_DEFAULT_LIMIT;
+					$input['offset']       = 0;
+					$input['until_budget'] = self::METADATA_RECONCILE_DEFAULT_BUDGET;
+				}
 				if ( isset($assoc_args['limit']) ) {
 					$input['limit'] = (int) $assoc_args['limit'];
 				}
@@ -2848,7 +3039,7 @@ class WorkspaceCommand extends BaseCommand {
 				if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
 					$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
 				}
-				if ( ! empty($assoc_args['apply-plan']) ) {
+				if ( $uses_plan ) {
 					$input['apply_plan'] = $this->read_worktree_json_plan( (string) $assoc_args['apply-plan'], 'metadata reconciliation');
 				}
 				break;
@@ -3918,12 +4109,87 @@ class WorkspaceCommand extends BaseCommand {
 			$this->format_items($items, array( 'lock_key', 'scope', 'state', 'age_seconds', 'safe_to_prune', 'owner_source', 'path' ), $assoc_args, 'lock_key');
 		}
 
+		$db_locks = (array) ( $db['locks'] ?? array() );
+		if ( ! empty($db_locks) ) {
+			$items = array_map(
+				static function ( array $lock ): array {
+					return array(
+						'lock_key'    => (string) ( $lock['lock_key'] ?? '' ),
+						'scope'       => (string) ( $lock['scope'] ?? '' ),
+						'state'       => (string) ( $lock['state'] ?? $lock['status'] ?? '' ),
+						'owner'       => (string) ( $lock['owner'] ?? '' ),
+						'age_seconds' => $lock['age_seconds'] ?? null,
+						'expires_at'  => (string) ( $lock['expires_at'] ?? '' ),
+					);
+				},
+				$db_locks
+			);
+			WP_CLI::log('');
+			WP_CLI::log('Database lock rows:');
+			$this->format_items($items, array( 'lock_key', 'scope', 'state', 'owner', 'age_seconds', 'expires_at' ), $assoc_args, 'lock_key');
+		}
+
+		if ( ! empty($status['stale_locks']) && is_array($status['stale_locks']) ) {
+			$this->render_stale_lock_followup( (array) $status['stale_locks']);
+		}
+
 		$guidance = (array) ( $fs['guidance'] ?? $status['recovery_guidance'] ?? array() );
 		if ( ! empty($guidance) ) {
 			WP_CLI::log(sprintf('Status: %s', (string) ( $guidance['status_command'] ?? 'wp datamachine-code workspace worktree locks --format=json' )));
 			WP_CLI::log(sprintf('Prune:  %s', (string) ( $guidance['dry_run_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' )));
 			WP_CLI::log( (string) ( $guidance['safety'] ?? 'Active filesystem flocks are not pruned.' ) );
 		}
+	}
+
+	/**
+	 * Render stale lock follow-up rows with exact preview/apply commands.
+	 *
+	 * @param array<string,mixed> $report Stale lock report.
+	 */
+	private function render_stale_lock_followup( array $report ): void {
+		if ( (int) ( $report['count'] ?? 0 ) <= 0 ) {
+			return;
+		}
+
+		WP_CLI::log('');
+		WP_CLI::log('Stale workspace locks:');
+		WP_CLI::log(sprintf('Preview: %s', (string) ( $report['preview_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' )));
+		WP_CLI::log(sprintf('Apply:   %s', (string) ( $report['apply_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --format=json' )));
+		WP_CLI::log((string) ( $report['safety'] ?? 'Active filesystem flocks are reported and protected.' ));
+
+		$rows = array();
+		foreach ( (array) ( $report['database'] ?? array() ) as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$rows[] = array(
+				'source'             => 'database',
+				'lock_key'           => (string) ( $row['lock_key'] ?? '' ),
+				'scope'              => (string) ( $row['scope'] ?? '' ),
+				'owner'              => (string) ( $row['owner'] ?? '' ),
+				'session'            => (string) ( $row['session'] ?? '' ),
+				'age_seconds'        => $row['age_seconds'] ?? null,
+				'live_flock_present' => ! empty($row['live_flock_present']) ? 'yes' : 'no',
+				'safe_to_prune'      => ! empty($row['safe_to_prune']) ? 'yes' : 'no',
+			);
+		}
+		foreach ( (array) ( $report['filesystem'] ?? array() ) as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$rows[] = array(
+				'source'             => 'filesystem',
+				'lock_key'           => (string) ( $row['lock_key'] ?? '' ),
+				'scope'              => (string) ( $row['scope'] ?? '' ),
+				'owner'              => '',
+				'session'            => '',
+				'age_seconds'        => $row['age_seconds'] ?? null,
+				'live_flock_present' => ! empty($row['live_flock_present']) ? 'yes' : 'no',
+				'safe_to_prune'      => ! empty($row['safe_to_prune']) ? 'yes' : 'no',
+			);
+		}
+
+		$this->format_items($rows, array( 'source', 'lock_key', 'scope', 'owner', 'session', 'age_seconds', 'live_flock_present', 'safe_to_prune' ), array( 'format' => 'table' ), 'lock_key');
 	}
 
 	private function render_workspace_error( \WP_Error $error ): void {
@@ -4164,6 +4430,10 @@ class WorkspaceCommand extends BaseCommand {
 			array( 'format' => 'table' ),
 			'metric'
 		);
+
+		if ( ! empty($locks['stale_locks']) && is_array($locks['stale_locks']) ) {
+			$this->render_stale_lock_followup( (array) $locks['stale_locks']);
+		}
 
 		$duplicates = (array) ( $worktrees['duplicates'] ?? array() );
 		if ( array() !== $duplicates ) {
@@ -4675,13 +4945,17 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log('');
 		if ( ! empty($result['dry_run']) ) {
 			if ( isset($result['pagination']['next_offset']) ) {
-				WP_CLI::log(
-					sprintf(
-						'Next page: wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=%d --offset=%d --format=json',
-						(int) ( $result['pagination']['limit'] ?? 0 ),
-						(int) $result['pagination']['next_offset']
-					)
-				);
+				if ( ! empty($result['pagination']['next_command']) ) {
+					WP_CLI::log('Next page: ' . (string) $result['pagination']['next_command']);
+				} else {
+					WP_CLI::log(
+						sprintf(
+							'Next page: wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=%d --offset=%d --format=json',
+							(int) ( $result['pagination']['limit'] ?? 0 ),
+							(int) $result['pagination']['next_offset']
+						)
+					);
+				}
 			}
 			WP_CLI::success(sprintf('%d metadata reconciliation proposal(s). Review JSON output before applying; --apply-plan remains a low-level escape hatch until DB-backed cleanup runs land.', count($proposals)));
 			return;

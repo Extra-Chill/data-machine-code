@@ -230,22 +230,23 @@ datamachine_code_cleanup_run_assert(false === (bool) ( $status['progress']['resu
 
 $apply = $service->apply($plan['run_id']);
 datamachine_code_cleanup_run_assert(! is_wp_error($apply), 'apply succeeds');
-datamachine_code_cleanup_run_assert('needs_resume' === (string) ( $apply['status'] ?? '' ), 'apply pauses after bounded worktree-removal batch');
+datamachine_code_cleanup_run_assert('completed' === (string) ( $apply['status'] ?? '' ), 'apply drains worktree rows up to the default limit');
+datamachine_code_cleanup_run_assert(4 === (int) ( $apply['processed'] ?? 0 ), 'apply reports processed row count');
+datamachine_code_cleanup_run_assert(2 === (int) ( $apply['applied'] ?? 0 ), 'apply reports applied row count');
+datamachine_code_cleanup_run_assert(2 === (int) ( $apply['skipped'] ?? 0 ), 'apply reports skipped row count');
+datamachine_code_cleanup_run_assert(null === ( $apply['next_command'] ?? null ), 'completed apply omits next command');
 
 $evidence = $service->evidence($plan['run_id']);
 datamachine_code_cleanup_run_assert(2 === (int) ( $evidence['summary']['items_by_status']['applied'] ?? 0 ), 'evidence reflects applied rows');
-datamachine_code_cleanup_run_assert(1 === (int) ( $evidence['summary']['items_by_status']['skipped'] ?? 0 ), 'evidence reflects skipped rows from first bounded batch');
+datamachine_code_cleanup_run_assert(2 === (int) ( $evidence['summary']['items_by_status']['skipped'] ?? 0 ), 'evidence reflects skipped rows from bounded batch');
 datamachine_code_cleanup_run_assert(35 === (int) ( $evidence['summary']['bytes_reclaimed'] ?? 0 ), 'evidence aggregates reclaimed bytes');
 datamachine_code_cleanup_run_assert(1 === (int) ( $evidence['remaining_work_summary']['applied_by_type']['artifact_cleanup']['count'] ?? 0 ), 'evidence groups applied artifact rows');
 datamachine_code_cleanup_run_assert(15 === (int) ( $evidence['remaining_work_summary']['applied_by_type']['artifact_cleanup']['bytes_reclaimed'] ?? 0 ), 'evidence reports artifact bytes reclaimed');
 datamachine_code_cleanup_run_assert(1 === (int) ( $evidence['remaining_work_summary']['skipped_by_reason']['plan_mismatch']['count'] ?? 0 ), 'evidence groups skipped plan mismatches');
 datamachine_code_cleanup_run_assert('demo@stale-artifact' === (string) ( $evidence['remaining_work_summary']['skipped_by_reason']['plan_mismatch']['examples'][0]['handle'] ?? '' ), 'skipped examples include representative handle');
 datamachine_code_cleanup_run_assert(4 === (int) ( $evidence['remaining_work_summary']['blocked_resolvers_by_reason']['needs_metadata_reconcile']['count'] ?? 0 ), 'evidence keeps blocked resolver bucket');
-datamachine_code_cleanup_run_assert(str_contains((string) wp_json_encode($evidence['remaining_work_summary']['recommended_commands']), 'workspace worktree reconcile-metadata'), 'summary recommends next DMC commands');
+datamachine_code_cleanup_run_assert(str_contains((string) wp_json_encode($evidence['remaining_work_summary']['recommended_commands']), 'workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json'), 'summary recommends bounded next DMC commands');
 datamachine_code_cleanup_run_assert(str_contains((string) wp_json_encode($evidence['remaining_work_summary']['recommended_commands']), 'apply_destructive'), 'summary labels destructive apply commands separately from review commands');
-
-$done = $service->resume($plan['run_id']);
-datamachine_code_cleanup_run_assert('completed' === (string) ( $done['status'] ?? '' ), 'resume completes final bounded worktree-removal batch');
 
 $bounded_workspace = new DataMachineCodeCleanupRunFakeWorkspace();
 $bounded_service = new \DataMachineCode\Workspace\CleanupRunService($repo, $bounded_workspace);
@@ -259,6 +260,24 @@ datamachine_code_cleanup_run_assert(str_contains((string) ( $bounded_apply['next
 datamachine_code_cleanup_run_assert(str_contains((string) wp_json_encode($bounded_apply['remaining_work_summary']['recommended_commands'] ?? array()), 'current_run_resume'), 'bounded apply recommends resuming the current reviewed run');
 datamachine_code_cleanup_run_assert(1 === count($bounded_workspace->artifact_calls), 'bounded apply only runs artifact cleanup first');
 datamachine_code_cleanup_run_assert(0 === count($bounded_workspace->worktree_calls), 'bounded apply defers worktree cleanup until artifacts drain');
+
+$multi_workspace = new DataMachineCodeCleanupRunFakeWorkspace();
+$multi_service = new \DataMachineCode\Workspace\CleanupRunService($repo, $multi_workspace);
+$multi_plan = $multi_service->plan(array( 'mode' => 'retention' ));
+datamachine_code_cleanup_run_assert(! is_wp_error($multi_plan), 'multi-row resume plan succeeds');
+$multi_apply = $multi_service->apply($multi_plan['run_id'], array( 'limit' => 2 ));
+datamachine_code_cleanup_run_assert('needs_resume' === (string) ( $multi_apply['status'] ?? '' ), 'multi-row apply pauses after artifact rows when worktrees remain');
+datamachine_code_cleanup_run_assert(2 === (int) ( $multi_apply['processed'] ?? 0 ), 'multi-row apply reports processed artifact rows');
+datamachine_code_cleanup_run_assert(str_contains((string) ( $multi_apply['next_command'] ?? '' ), 'workspace cleanup resume'), 'multi-row apply exposes top-level next command');
+$multi_resume = $multi_service->resume($multi_plan['run_id'], array( 'limit' => 2 ));
+datamachine_code_cleanup_run_assert('completed' === (string) ( $multi_resume['status'] ?? '' ), 'resume drains multiple worktree rows up to the requested limit');
+datamachine_code_cleanup_run_assert('worktree_removal' === (string) ( $multi_resume['batch']['type'] ?? '' ), 'multi-row resume reports worktree batch type');
+datamachine_code_cleanup_run_assert(2 === (int) ( $multi_resume['processed'] ?? 0 ), 'multi-row resume reports processed worktree rows');
+datamachine_code_cleanup_run_assert(1 === (int) ( $multi_resume['applied'] ?? 0 ), 'multi-row resume reports applied worktree rows');
+datamachine_code_cleanup_run_assert(1 === (int) ( $multi_resume['skipped'] ?? 0 ), 'multi-row resume reports skipped worktree rows');
+datamachine_code_cleanup_run_assert(null === ( $multi_resume['next_command'] ?? null ), 'multi-row resume omits next command when no rows remain');
+datamachine_code_cleanup_run_assert(1 === count($multi_workspace->worktree_calls), 'multi-row resume applies worktree rows in one safety-revalidated call');
+datamachine_code_cleanup_run_assert(2 === count($multi_workspace->worktree_calls[0]['apply_plan']['candidates'] ?? array()), 'multi-row resume sends both eligible worktree candidates');
 
 $applying_repo = new \DataMachineCode\Storage\CleanupRunRepository();
 $applying_plan = ( new \DataMachineCode\Workspace\CleanupRunService($applying_repo, new DataMachineCodeCleanupRunFakeWorkspace()) )->plan(array( 'mode' => 'retention' ));

@@ -103,12 +103,20 @@ jobs:
           persist-credentials: false
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
 
+      - name: Verify release checkout is current
+        id: source-guard
+        run: bash .github/scripts/verify-release-source.sh
+
       - uses: Extra-Chill/homeboy-action@v2
         id: release
         with:
           commands: release
           release-dry-run: ${{ inputs.dry-run || 'false' }}
           app-token: ${{ steps.app-token.outputs.token || '' }}
+
+      - name: Verify release tag contains current source
+        if: ${{ steps.release.outputs.release-version != '' && (github.event_name != 'workflow_dispatch' || inputs.dry-run != true) }}
+        run: bash .github/scripts/verify-release-source.sh --tag="v${{ steps.release.outputs.release-version }}" --expected-source="${{ steps.source-guard.outputs.source-sha }}"
 
   # ── Record failed SHA to prevent retry loops ──
   record-failure:

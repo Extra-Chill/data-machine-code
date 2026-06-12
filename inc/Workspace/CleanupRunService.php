@@ -16,7 +16,6 @@ class CleanupRunService {
 
 	private const DEFAULT_APPLY_LIMIT        = 25;
 	private const MAX_APPLY_LIMIT            = 100;
-	private const WORKTREE_APPLY_BATCH_LIMIT = 1;
 
 
 
@@ -98,6 +97,8 @@ class CleanupRunService {
 		$worktree_rows  = $this->pending_rows_of_type($items, 'worktree_removal');
 		$batch_type     = '';
 		$processed_rows = 0;
+		$applied_rows   = 0;
+		$skipped_rows   = 0;
 		$remaining_rows = max(0, count($artifact_rows) + count($worktree_rows));
 		$results        = array();
 
@@ -114,11 +115,13 @@ class CleanupRunService {
 				)
 			);
 			$this->record_apply_result($artifact_batch, $results['artifact_cleanup'], 'removed');
+			$applied_rows += count((array) ( $results['artifact_cleanup']['removed'] ?? array() ));
+			$skipped_rows += count((array) ( $results['artifact_cleanup']['skipped'] ?? array() ));
 		}
 
 		$remaining_capacity = max(0, $limit - $processed_rows);
 		if ( $remaining_capacity > 0 && array() !== $worktree_rows ) {
-			$worktree_batch  = array_slice($worktree_rows, 0, min($remaining_capacity, self::WORKTREE_APPLY_BATCH_LIMIT));
+			$worktree_batch  = array_slice($worktree_rows, 0, $remaining_capacity);
 			$processed_rows += count($worktree_batch);
 			$batch_type      = '' === $batch_type ? 'worktree_removal' : 'mixed';
 			$this->mark_batch_applying($worktree_batch, $run_id, $batch_type, $limit, $remaining_rows);
@@ -130,6 +133,8 @@ class CleanupRunService {
 				)
 			);
 			$this->record_apply_result($worktree_batch, $results['worktree_removal'], 'removed');
+			$applied_rows += count((array) ( $results['worktree_removal']['removed'] ?? array() ));
+			$skipped_rows += count((array) ( $results['worktree_removal']['skipped'] ?? array() ));
 		}
 
 		$status          = $this->status($run_id);
@@ -151,11 +156,17 @@ class CleanupRunService {
 			return $status;
 		}
 
+		$next_command = $pending_or_fail > 0 ? sprintf('studio wp datamachine-code workspace cleanup resume %s --limit=%d', $run_id, $limit) : null;
+
 		return array(
 			'success'                => true,
 			'state'                  => $next_status,
 			'run_id'                 => $run_id,
 			'status'                 => $next_status,
+			'processed'              => $processed_rows,
+			'applied'                => $applied_rows,
+			'skipped'                => $skipped_rows,
+			'next_command'           => $next_command,
 			'batch'                  => array(
 				'type'             => $batch_type,
 				'limit'            => $limit,
@@ -167,7 +178,7 @@ class CleanupRunService {
 			'summary'                => $status['summary'] ?? array(),
 			'remaining_work_summary' => $status['remaining_work_summary'] ?? array(),
 			'next'                   => $pending_or_fail > 0 ? array(
-				'resume_command' => sprintf('studio wp datamachine-code workspace cleanup resume %s --limit=%d', $run_id, $limit),
+				'resume_command' => $next_command,
 				'pending_rows'   => $pending_or_fail,
 			) : null,
 		);

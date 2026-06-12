@@ -73,12 +73,30 @@ trait WorkspaceWorktreeInventoryCleanup {
 				'metadata'    => $metadata,
 			);
 
+			if ( is_array($metadata) && array() !== $metadata ) {
+				$triage_status = $this->workspace_row_triage_status_from_metadata($metadata);
+				if ( in_array($triage_status, array( 'ignored', 'quarantined' ), true) ) {
+					$skipped[] = array_merge(
+						$base_row,
+						array(
+							'reason_code'   => 'triage_' . $triage_status,
+							'reason'        => sprintf('operator marked row %s: %s', $triage_status, (string) ( $metadata['triage_reason'] ?? '' )),
+							'hint'          => 'Intentional triage metadata excludes this row from unresolved cleanup blockers.',
+							'triage_status' => $triage_status,
+							'triage_reason' => $metadata['triage_reason'] ?? null,
+							'triaged_at'    => $metadata['triage_updated_at'] ?? null,
+						)
+					);
+					continue;
+				}
+			}
+
 			if ( ! is_array($metadata) || array() === $metadata ) {
 				$skipped[] = array_merge(
 					$base_row, array(
 						'reason_code' => 'needs_metadata_reconcile',
 						'reason'      => 'inventory row has no lifecycle metadata; metadata reconciliation is required before cleanup planning can classify it',
-						'hint'        => 'Run workspace worktree reconcile-metadata --dry-run --format=json to generate reviewed metadata reconciliation rows.',
+						'hint'        => 'Run workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json to generate reviewed metadata reconciliation rows.',
 					)
 				);
 				continue;

@@ -29,9 +29,11 @@ namespace {
     mkdir($workspace_root . '/beta@missing-metadata', 0755, true);
     mkdir($workspace_root . '/gamma@eligible', 0755, true);
     mkdir($workspace_root . '/cache', 0755, true);
+	mkdir($workspace_root . '/.locks', 0755, true);
     file_put_contents($workspace_root . '/alpha/payload.bin', str_repeat('a', 1024));
     file_put_contents($workspace_root . '/alpha@feat-one/payload.bin', str_repeat('b', 2048));
     file_put_contents($workspace_root . '/cache/payload.bin', str_repeat('c', 3072));
+	touch($workspace_root . '/.locks/worktree-stale.lock', time() - 172800);
     file_put_contents($workspace_root . '/not-a-dir.txt', 'ignored');
 
     define('ABSPATH', __DIR__ . '/');
@@ -177,6 +179,12 @@ namespace {
         datamachine_code_hygiene_report_assert(true === ( $minimal['remote_backend']['registered_state'] ?? false ), 'hygiene reports registered remote workspace state');
         datamachine_code_hygiene_report_assert('remote_or_fallback' === ( $minimal['remote_backend']['mode'] ?? '' ), 'hygiene reports remote backend fallback mode');
         datamachine_code_hygiene_report_assert(in_array('Remote workspace state is registered; local checkout commands should fall back to local workspace discovery when the remote backend misses a handle.', $minimal['notes'] ?? array(), true), 'hygiene notes remote backend local fallback expectation');
+		datamachine_code_hygiene_report_assert(1 === (int) ( $minimal['locks']['stale_locks']['filesystem_count'] ?? 0 ), 'hygiene report surfaces stale filesystem locks');
+		datamachine_code_hygiene_report_assert('wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' === (string) ( $minimal['locks']['stale_locks']['preview_command'] ?? '' ), 'hygiene stale lock report includes exact prune preview command');
+		datamachine_code_hygiene_report_assert('wp datamachine-code workspace worktree locks --prune-stale --format=json' === (string) ( $minimal['locks']['stale_locks']['apply_command'] ?? '' ), 'hygiene stale lock report includes exact prune apply command');
+		$hygiene_stale_filesystem_rows = (array) ( $minimal['locks']['stale_locks']['filesystem'] ?? array() );
+		datamachine_code_hygiene_report_assert(false === (bool) ( $hygiene_stale_filesystem_rows[0]['live_flock_present'] ?? true ), 'hygiene stale filesystem row reports no live flock');
+		datamachine_code_hygiene_report_assert(true === (bool) ( $hygiene_stale_filesystem_rows[0]['safe_to_prune'] ?? false ), 'hygiene stale filesystem row is safe to prune');
 
         echo "\n[1a] Size report exposes top offenders and kind grouping\n";
         $with_sizes = $workspace->workspace_hygiene_report(

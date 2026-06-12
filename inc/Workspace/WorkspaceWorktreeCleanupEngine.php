@@ -810,7 +810,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			return array(
 				'reason_code'    => 'owner_repo_mismatch',
 				'reason'         => sprintf('worktree handle repo (%s) does not match inventory repo (%s) - %s: %s', $parsed['repo'], $repo, $safety_outcome, $message),
-				'hint'           => 'Run workspace worktree reconcile-metadata --dry-run to review stale registry ownership, then prune or repair the mismatched row.',
+				'hint'           => 'Run workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json to review stale registry ownership, then prune or repair the mismatched row.',
 				'handle_repo'    => $parsed['repo'],
 				'inventory_repo' => $repo,
 				'git_error_code' => $error_code,
@@ -1716,6 +1716,11 @@ trait WorkspaceWorktreeCleanupEngine {
 	 */
 	private function worktree_cleanup_skipped_next_commands( array $skipped_by_reason ): array {
 		$active_no_signal_commands = $this->build_active_no_signal_next_commands(25, 0);
+		$metadata_reconcile_command = sprintf(
+			'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=%d --offset=0 --until-budget=%s --format=json',
+			self::METADATA_RECONCILE_DEFAULT_LIMIT,
+			self::METADATA_RECONCILE_DEFAULT_BUDGET
+		);
 		$templates                 = array(
 			'artifact_only_dirty_worktree'       => array(
 				'label'       => 'Review generated artifact cleanup separately',
@@ -1761,7 +1766,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			),
 			'needs_metadata_reconcile'           => array(
 				'label'       => 'Repair missing lifecycle metadata in bounded batches',
-				'command'     => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
+				'command'     => $metadata_reconcile_command,
 				'alternative' => 'Low-level apply still requires a reviewed --apply-plan=<file> until DB-backed cleanup runs land.',
 				'why'         => 'Reconciliation writes lifecycle metadata so future inventory cleanup can classify these rows without a full scan.',
 				'destructive' => false,
@@ -1827,7 +1832,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			),
 			'requires_full_scan'                 => array(
 				'label'       => 'Repair missing lifecycle metadata in bounded batches',
-				'command'     => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
+				'command'     => $metadata_reconcile_command,
 				'alternative' => 'Low-level apply still requires a reviewed --apply-plan=<file> until DB-backed cleanup runs land.',
 				'why'         => 'Reconciliation writes lifecycle metadata so future inventory cleanup no longer needs a full scan for those rows.',
 				'destructive' => false,
