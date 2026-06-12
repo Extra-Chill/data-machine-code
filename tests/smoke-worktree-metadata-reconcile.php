@@ -558,6 +558,8 @@ namespace {
         $active_rows[ $row['handle'] ?? '' ] = $row;
     }
     $assert('finalized_pr_reconcile', $active_rows['demo@head-merged']['suggested_action'] ?? '', 'active/no-signal report finds merged PRs by branch head');
+    $assert('finalized_pr_reconcile', $active_rows['demo@pr-merged']['suggested_action'] ?? '', 'active/no-signal report includes lifecycle reconciliation candidates with merged PR evidence');
+    $assert('lifecycle_reconciliation_candidate', $active_rows['demo@pr-merged']['inventory_reason_code'] ?? '', 'active/no-signal report preserves lifecycle reconciliation source reason');
     $assert('active_open_pr', $active_rows['demo@already-current']['suggested_action'] ?? '', 'active/no-signal report preserves open PRs as active');
     $assert(106, (int) ( $active_rows['demo@head-merged']['pr']['number'] ?? 0 ), 'active/no-signal report includes PR evidence');
     $assert('unsafe_dirty_or_unpushed', $active_rows['demo@dirty-active']['suggested_action'] ?? '', 'active/no-signal report keeps dirty rows unsafe');
@@ -702,7 +704,7 @@ namespace {
     $run(sprintf('git remote set-url origin %s', escapeshellarg($remote)), $primary);
     $assert(true, ! is_wp_error($finalized_dry_run) && ( $finalized_dry_run['success'] ?? false ), 'finalized active/no-signal dry-run succeeds');
     $assert(true, (bool) ( $finalized_dry_run['dry_run'] ?? false ), 'finalized active/no-signal dry-run does not write');
-    $assert(1, (int) ( $finalized_dry_run['summary']['planned'] ?? 0 ), 'finalized active/no-signal dry-run plans merged PR rows only');
+    $assert(2, (int) ( $finalized_dry_run['summary']['planned'] ?? 0 ), 'finalized active/no-signal dry-run plans merged PR rows only');
     $assert('', \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('demo@head-merged')['cleanup_eligible_at'] ?? '', 'finalized active/no-signal dry-run leaves metadata unchanged');
     $run('git remote set-url origin https://github.com/acme/demo.git', $primary);
     $budgeted_finalized_dry_run = $ws->worktree_active_no_signal_finalized_apply(array( 'dry_run' => true, 'limit' => 20, 'offset' => 0, 'internal_budget_label' => '1s', 'internal_budget_seconds' => 1, 'internal_budget_started' => microtime(true) - 1 ));
