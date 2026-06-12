@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.105] - 2026-06-12
+
+### Changed
+- Classify metadata identity reconciliation buckets
+
 ## [0.47.104] - 2026-06-12
 
 ### Changed
