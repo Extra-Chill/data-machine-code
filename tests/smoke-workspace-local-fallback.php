@@ -33,7 +33,7 @@ namespace DataMachineCode\Workspace {
 			self::$show_input = compact('handle');
 			return new \WP_Error(
 				'remote_workspace_repo_not_found',
-				'Remote workspace repository "homeboy" is not registered. Call workspace_clone first.'
+				'Remote workspace repository "wpcom-codebox" is not registered. Call workspace_clone first.'
 			);
 		}
 
@@ -42,7 +42,7 @@ namespace DataMachineCode\Workspace {
 			self::$worktree_input = compact('repo_name', 'branch', 'from');
 			return new \WP_Error(
 				'remote_workspace_repo_not_found',
-				'Remote workspace repository "homeboy" is not registered. Call workspace_clone first.'
+				'Remote workspace repository "wpcom-codebox" is not registered. Call workspace_clone first.'
 			);
 		}
 	}
@@ -62,7 +62,7 @@ namespace DataMachineCode\Workspace {
 				'is_worktree' => false,
 				'path'        => '/Users/chubes/Developer/' . $handle,
 				'branch'      => 'main',
-				'remote'      => 'https://github.com/Extra-Chill/homeboy.git',
+				'remote'      => 'git@github.a8c.com:Automattic/wpcom-codebox.git',
 				'commit'      => 'abc123 listed primary',
 				'dirty'       => 0,
 			);
@@ -148,35 +148,35 @@ namespace {
 
 	$show = \DataMachineCode\Abilities\WorkspaceAbilities::showRepo(
 		array(
-			'name' => 'homeboy',
+			'name' => 'wpcom-codebox',
 		)
 	);
 
-	$assert('remote show attempted first', 'homeboy' === ( \DataMachineCode\Workspace\RemoteWorkspaceBackend::$show_input['handle'] ?? '' ));
-	$assert('local show fallback attempted', 'homeboy' === ( \DataMachineCode\Workspace\Workspace::$show_input['handle'] ?? '' ));
-	$assert('show returns local listed primary', is_array($show) && '/Users/chubes/Developer/homeboy' === ( $show['path'] ?? '' ));
+	$assert('remote show attempted first', 'wpcom-codebox' === ( \DataMachineCode\Workspace\RemoteWorkspaceBackend::$show_input['handle'] ?? '' ));
+	$assert('local show fallback attempted', 'wpcom-codebox' === ( \DataMachineCode\Workspace\Workspace::$show_input['handle'] ?? '' ));
+	$assert('show returns local listed primary', is_array($show) && '/Users/chubes/Developer/wpcom-codebox' === ( $show['path'] ?? '' ));
 
 	$worktree = \DataMachineCode\Abilities\WorkspaceAbilities::worktreeAdd(
 		array(
-			'repo'                   => 'homeboy',
-			'branch'                 => 'fix/issue-4072-artifact-viewer-urls',
-			'from'                   => 'origin/main',
-			'inject_context'         => false,
-			'bootstrap'              => false,
-			'allow_stale'            => true,
-			'rebase_base'            => true,
-			'force'                  => true,
-			'task_url'               => 'https://github.com/Extra-Chill/homeboy/issues/4072',
-			'task_ref'               => 'Extra-Chill/homeboy#4072',
+			'repo'                 => 'wpcom-codebox',
+			'branch'               => 'fix/listed-primary-resolution',
+			'from'                 => 'origin/main',
+			'inject_context'       => false,
+			'bootstrap'            => false,
+			'allow_stale'          => true,
+			'rebase_base'          => true,
+			'force'                => true,
+			'task_url'             => 'https://github.com/Extra-Chill/data-machine-code/issues/635',
+			'task_ref'             => 'Extra-Chill/data-machine-code#635',
 		)
 	);
 
-	$assert('remote worktree add attempted first', 'homeboy' === ( \DataMachineCode\Workspace\RemoteWorkspaceBackend::$worktree_input['repo_name'] ?? '' ));
-	$assert('local worktree add fallback attempted', 'homeboy' === ( \DataMachineCode\Workspace\Workspace::$worktree_input['repo'] ?? '' ));
+	$assert('remote worktree add attempted first', 'wpcom-codebox' === ( \DataMachineCode\Workspace\RemoteWorkspaceBackend::$worktree_input['repo_name'] ?? '' ));
+	$assert('local worktree add fallback attempted', 'wpcom-codebox' === ( \DataMachineCode\Workspace\Workspace::$worktree_input['repo'] ?? '' ));
 	$assert('worktree add preserves base ref', 'origin/main' === ( \DataMachineCode\Workspace\Workspace::$worktree_input['from'] ?? '' ));
 	$assert('worktree add preserves local options', false === ( \DataMachineCode\Workspace\Workspace::$worktree_input['inject_context'] ?? null ) && true === ( \DataMachineCode\Workspace\Workspace::$worktree_input['allow_stale'] ?? null ));
-	$assert('worktree add preserves task metadata', 'Extra-Chill/homeboy#4072' === ( \DataMachineCode\Workspace\Workspace::$worktree_input['task']['task_ref'] ?? '' ));
-	$assert('worktree add returns local worktree result', is_array($worktree) && 'homeboy@fix-issue-4072-artifact-viewer-urls' === ( $worktree['handle'] ?? '' ));
+	$assert('worktree add preserves task metadata', 'Extra-Chill/data-machine-code#635' === ( \DataMachineCode\Workspace\Workspace::$worktree_input['task']['task_ref'] ?? '' ));
+	$assert('worktree add returns local worktree result', is_array($worktree) && 'wpcom-codebox@fix-listed-primary-resolution' === ( $worktree['handle'] ?? '' ));
 
 	if ( $failures ) {
 		echo "\nFailures:\n";
