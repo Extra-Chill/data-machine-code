@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.100] - 2026-06-12
+
+### Fixed
+- Fix cleanup planning triage
+
 ## [0.47.99] - 2026-06-11
 
 ### Fixed
