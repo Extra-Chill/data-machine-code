@@ -3,7 +3,7 @@
  * Plugin Name: Data Machine Code
  * Plugin URI: https://github.com/Extra-Chill/data-machine-code
  * Description: Bridge between WordPress and an external coding-agent runtime. Owns AGENTS.md, the workspace area, and the GitHub / workspace / git abilities the runtime calls back into. Activation is the declarative "a coding agent lives here" signal.
- * Version: 0.47.107
+ * Version: 0.47.108
  * Requires at least: 6.9
  * Requires PHP: 8.2
  * Author: Chris Huber, extrachill
@@ -17,7 +17,7 @@ if ( ! defined('WPINC') ) {
 	die;
 }
 
-define( 'DATAMACHINE_CODE_VERSION', '0.47.107' );
+define( 'DATAMACHINE_CODE_VERSION', '0.47.108' );
 define( 'DATAMACHINE_CODE_PATH', plugin_dir_path( __FILE__ ) );
 define( 'DATAMACHINE_CODE_URL', plugin_dir_url( __FILE__ ) );
 
