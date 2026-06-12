@@ -402,7 +402,98 @@ trait WorkspaceCoreUtilities {
 	 * @return string
 	 */
 	public function get_primary_path( string $repo ): string {
-		return $this->workspace_path . '/' . $this->sanitize_name($repo);
+		$resolved = $this->resolve_primary_repo_name($repo);
+		if ( is_wp_error($resolved) ) {
+			return $this->workspace_path . '/' . $this->sanitize_name($repo);
+		}
+
+		return $this->workspace_path . '/' . $resolved;
+	}
+
+	/**
+	 * Resolve a primary repo argument to the canonical workspace directory name.
+	 *
+	 * @param  string $repo Primary handle, git URL, or local checkout path.
+	 * @return string|\WP_Error Canonical primary handle or validation error.
+	 */
+	public function resolve_primary_repo_name( string $repo ): string|\WP_Error {
+		$repo = trim($repo);
+		if ( '' === $repo ) {
+			return new \WP_Error('invalid_repo', 'Repository name is required.', array( 'status' => 400 ));
+		}
+
+		if ( str_contains($repo, '@') && ! $this->looks_like_git_url($repo) ) {
+			return new \WP_Error('invalid_repo', 'Worktree handles cannot be used where a primary repository is required.', array( 'status' => 400 ));
+		}
+
+		if ( $this->looks_like_git_url($repo) ) {
+			$existing = $this->find_primary_by_remote($repo);
+			if ( null !== $existing ) {
+				return $existing['name'];
+			}
+
+			return new \WP_Error('unsupported_workspace_repo_argument', sprintf('Repository URL "%s" does not match an existing local primary checkout. Use a registered primary handle or run workspace clone first.', $repo), array( 'status' => 404 ));
+		}
+
+		if ( $this->looks_like_path_argument($repo) ) {
+			return $this->resolve_primary_repo_name_from_path($repo);
+		}
+
+		if ( str_contains($repo, '/') || str_contains($repo, '\\') ) {
+			return new \WP_Error('unsupported_workspace_repo_argument', sprintf('Repository argument "%s" is not a primary workspace handle. Use the local primary handle, or pass a URL/path that matches an existing local primary checkout.', $repo), array( 'status' => 400 ));
+		}
+
+		$sanitized = $this->sanitize_name($repo);
+		if ( '' === $sanitized ) {
+			return new \WP_Error('invalid_repo', sprintf('Repository argument "%s" did not produce a valid workspace handle.', $repo), array( 'status' => 400 ));
+		}
+
+		return $sanitized;
+	}
+
+	/**
+	 * Resolve a local path argument to an existing primary handle.
+	 *
+	 * @param  string $path Local checkout path.
+	 * @return string|\WP_Error Canonical primary handle or validation error.
+	 */
+	private function resolve_primary_repo_name_from_path( string $path ): string|\WP_Error {
+		$path          = rtrim($path, '/');
+		$expanded_path = str_starts_with($path, '~/') ? rtrim( (string) getenv('HOME'), '/') . substr($path, 1) : $path;
+		$real_path     = realpath($expanded_path);
+		$workspace     = realpath($this->workspace_path);
+		$resolved_path = false !== $real_path ? $real_path : $expanded_path;
+
+		if ( false !== $workspace && str_starts_with(rtrim($resolved_path, '/') . '/', rtrim($workspace, '/') . '/') ) {
+			$name = basename($resolved_path);
+			if ( '' !== $name && ! str_contains($name, '@') && is_dir($resolved_path) && ( is_dir($resolved_path . '/.git') || is_file($resolved_path . '/.git') ) ) {
+				return $name;
+			}
+		}
+
+		$remote = ( is_dir($resolved_path) && ( is_dir($resolved_path . '/.git') || is_file($resolved_path . '/.git') ) ) ? $this->git_get_remote($resolved_path) : null;
+		if ( null !== $remote ) {
+			$existing = $this->find_primary_by_remote($remote);
+			if ( null !== $existing ) {
+				return $existing['name'];
+			}
+		}
+
+		return new \WP_Error('unsupported_workspace_repo_argument', sprintf('Repository path "%s" does not resolve to an existing local primary checkout. Use a registered primary handle or run workspace clone/adopt first.', $path), array( 'status' => 404 ));
+	}
+
+	/**
+	 * Whether a repo argument looks like a git URL.
+	 */
+	private function looks_like_git_url( string $value ): bool {
+		return (bool) preg_match('#^(?:https?|ssh|git)://#i', $value) || (bool) preg_match('/^[^@\s]+@[^:\s]+:.+$/', $value);
+	}
+
+	/**
+	 * Whether a repo argument looks like a filesystem path.
+	 */
+	private function looks_like_path_argument( string $value ): bool {
+		return str_starts_with($value, '/') || str_starts_with($value, './') || str_starts_with($value, '../') || str_starts_with($value, '~/');
 	}
 
 	/**

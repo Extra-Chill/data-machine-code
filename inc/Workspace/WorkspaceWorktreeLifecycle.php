@@ -72,8 +72,11 @@ trait WorkspaceWorktreeLifecycle {
 			return $visible;
 		}
 
-		$repo   = $this->sanitize_name($repo);
+		$repo   = $this->resolve_primary_repo_name($repo);
 		$branch = trim($branch);
+		if ( is_wp_error($repo) ) {
+			return $repo;
+		}
 
 		if ( '' === $repo ) {
 			return new \WP_Error('invalid_repo', 'Repository name is required.', array( 'status' => 400 ));

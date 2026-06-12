@@ -1317,11 +1317,25 @@ class RemoteWorkspaceBackend {
 			return (string) $state['repos'][ $repo_name ]['repo'];
 		}
 
-		if ( str_contains($repo_name, '/') ) {
+		if ( $this->looks_like_url_or_path($repo_name) ) {
+			return new \WP_Error('unsupported_remote_workspace_repo_argument', sprintf('Remote workspace worktree add requires a registered workspace name or owner/repo slug, not URL/path argument "%s".', $repo_name), array( 'status' => 400 ));
+		}
+
+		if ( preg_match('#^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$#', $repo_name) ) {
 			return $repo_name;
 		}
 
 		return new \WP_Error('remote_workspace_repo_not_found', sprintf('Remote workspace repository "%s" is not registered. Call workspace_clone first.', $repo_name), array( 'status' => 404 ));
+	}
+
+	private function looks_like_url_or_path( string $value ): bool {
+		$value = trim($value);
+		return str_starts_with($value, '/')
+			|| str_starts_with($value, './')
+			|| str_starts_with($value, '../')
+			|| str_starts_with($value, '~/')
+			|| (bool) preg_match('#^(?:https?|ssh|git)://#i', $value)
+			|| (bool) preg_match('/^[^@\s]+@[^:\s]+:.+$/', $value);
 	}
 
 	private function resolve_alias( string $handle ): string {

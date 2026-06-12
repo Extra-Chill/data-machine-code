@@ -667,6 +667,11 @@ trait WorkspaceRepositoryLifecycle {
 			$handle = $target;
 		}
 
+		$resolved_handle = $this->resolve_primary_repo_name($handle);
+		if ( ! is_wp_error($resolved_handle) ) {
+			$handle = $resolved_handle;
+		}
+
 		$parsed    = $this->parse_handle($handle);
 		$repo_path = $this->workspace_path . '/' . $parsed['dir_name'];
 
