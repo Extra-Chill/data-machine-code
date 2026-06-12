@@ -20,6 +20,7 @@ final class WorktreeCleanupClassifier {
 	public const BUCKET_NEEDS_FULL_REVIEW            = 'needs_full_review';
 	public const BUCKET_BLOCKED_BY_DIRTY_OR_UNPUSHED = 'blocked_by_dirty_or_unpushed';
 	public const BUCKET_ARTIFACT_ONLY_DIRTY          = 'artifact_only_dirty_worktree';
+	public const BUCKET_INTENTIONAL_TRIAGE           = 'intentional_triage';
 
 	/**
 	 * Reason codes that indicate metadata/lifecycle reconciliation should run
@@ -66,6 +67,16 @@ final class WorktreeCleanupClassifier {
 	);
 
 	/**
+	 * Reason codes intentionally resolved by operator triage metadata.
+	 *
+	 * @var string[]
+	 */
+	private const TRIAGE_REASONS = array(
+		'triage_ignored',
+		'triage_quarantined',
+	);
+
+	/**
 	 * Reason codes that can generate read-only resolver plan rows.
 	 *
 	 * @var string[]
@@ -92,6 +103,10 @@ final class WorktreeCleanupClassifier {
 
 		if ( in_array($reason_code, self::RECONCILIATION_REASONS, true) ) {
 			return self::BUCKET_NEEDS_RECONCILIATION;
+		}
+
+		if ( in_array($reason_code, self::TRIAGE_REASONS, true) ) {
+			return self::BUCKET_INTENTIONAL_TRIAGE;
 		}
 
 		if ( in_array($reason_code, self::FULL_REVIEW_REASONS, true) ) {
@@ -128,6 +143,7 @@ final class WorktreeCleanupClassifier {
 		$buckets['metadata_reconciliation_candidates']  = (int) ( $skipped_by_reason['needs_metadata_reconcile'] ?? 0 ) + (int) ( $skipped_by_reason['requires_full_scan'] ?? 0 ) + (int) ( $skipped_by_reason['missing_metadata'] ?? 0 );
 		$buckets['dirty_unpushed']                      = $buckets[ self::BUCKET_BLOCKED_BY_DIRTY_OR_UNPUSHED ];
 		$buckets['active_no_signal']                    = (int) ( $skipped_by_reason['active_no_signal'] ?? 0 ) + (int) ( $skipped_by_reason['no_inventory_cleanup_signal'] ?? 0 );
+		$buckets['intentional_triage']                   = (int) ( $skipped_by_reason['triage_ignored'] ?? 0 ) + (int) ( $skipped_by_reason['triage_quarantined'] ?? 0 );
 
 		ksort($buckets);
 		return $buckets;
