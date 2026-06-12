@@ -55,10 +55,10 @@ trait WorkspaceHygieneReport {
 			$worktree_status_mode = 'top_level_inventory';
 		}
 
-		$size_report   = $include_sizes ? $this->build_workspace_size_report($size_limit) : $this->empty_workspace_size_report($size_limit, false);
-		$cleanup       = null;
-		$cleanup_error = null;
-		$locks         = WorkspaceMutationLock::status($this->workspace_path);
+		$size_report    = $include_sizes ? $this->build_workspace_size_report($size_limit) : $this->empty_workspace_size_report($size_limit, false);
+		$cleanup        = null;
+		$cleanup_error  = null;
+		$locks          = WorkspaceMutationLock::status($this->workspace_path);
 		$remote_backend = $this->build_remote_workspace_backend_report();
 
 		if ( $include_cleanup ) {
@@ -570,27 +570,27 @@ trait WorkspaceHygieneReport {
 	 */
 	private function summarize_workspace_worktrees( array $worktrees, ?array $cleanup ): array {
 		$summary = array(
-			'total'                      => count($worktrees),
-			'primaries'                  => 0,
-			'worktrees'                  => 0,
-			'artifacts'                  => 0,
-			'external'                   => 0,
-			'dirty'                      => 0,
-			'protected_dirty'            => 0,
-			'protected_unpushed'         => 0,
-			'missing_metadata'           => 0,
-			'stale_primaries'            => 0,
+			'total'                       => count($worktrees),
+			'primaries'                   => 0,
+			'worktrees'                   => 0,
+			'artifacts'                   => 0,
+			'external'                    => 0,
+			'dirty'                       => 0,
+			'protected_dirty'             => 0,
+			'protected_unpushed'          => 0,
+			'missing_metadata'            => 0,
+			'stale_primaries'             => 0,
 			'primary_freshness_by_status' => array(),
 			'primary_freshness_attention' => array(),
-			'base_branch_worktree_count' => 0,
-			'base_branch_worktrees'      => array(),
-			'by_liveness'                => array(
+			'base_branch_worktree_count'  => 0,
+			'base_branch_worktrees'       => array(),
+			'by_liveness'                 => array(
 				WorktreeContextInjector::LIVENESS_LIVE    => 0,
 				WorktreeContextInjector::LIVENESS_STOPPED => 0,
 				WorktreeContextInjector::LIVENESS_STALE   => 0,
 				WorktreeContextInjector::LIVENESS_UNKNOWN => 0,
 			),
-			'duplicate_task_groups'      => 0,
+			'duplicate_task_groups'       => 0,
 		);
 
 		foreach ( $worktrees as $row ) {

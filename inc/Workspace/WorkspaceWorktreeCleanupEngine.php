@@ -51,6 +51,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		$dry_run                   = ! empty($opts['dry_run']);
 		$force                     = ! empty($opts['force']);
 		$skip_github               = ! empty($opts['skip_github']);
+		$direct_apply_plan         = ! empty($opts['direct_apply_plan']);
 		$inventory_only            = ! empty($opts['inventory_only']);
 		$include_repaired_metadata = ! empty($opts['include_repaired_metadata']);
 		$apply_plan                = isset($opts['apply_plan']) && is_array($opts['apply_plan']) ? $opts['apply_plan'] : null;
@@ -104,6 +105,10 @@ trait WorkspaceWorktreeCleanupEngine {
 			// Applying a stale plan must never use the dirty override. The current
 			// workspace state is re-evaluated below and dirty rows stay skipped.
 			$force = false;
+
+			if ( $direct_apply_plan && ! $dry_run ) {
+				return $this->apply_worktree_cleanup_plan_candidates($planned_candidates, $force, $started_at);
+			}
 		}
 
 		$age_filter = null;
@@ -631,7 +636,7 @@ trait WorkspaceWorktreeCleanupEngine {
 					// Delete the now-detached local branch while the repo lock still covers
 					// shared git metadata.
 					$primary_path = $this->get_primary_path($cand['repo']);
-					$branch       = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($cand['branch'])));
+					$branch       = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($cand['branch'])), self::CLEANUP_GIT_PROBE_TIMEOUT);
 					return is_wp_error($branch) ? $branch : $remove;
 				}
 			);
@@ -1006,7 +1011,7 @@ trait WorkspaceWorktreeCleanupEngine {
 
 					$primary_path = $this->get_primary_path($repo);
 					if ( '' !== $branch ) {
-						$delete = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)));
+						$delete = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)), self::CLEANUP_GIT_PROBE_TIMEOUT);
 						if ( is_wp_error($delete) ) {
 							// Branch deletion failure is non-fatal: the worktree is
 							// gone, the local branch may still be useful or may have
@@ -1072,6 +1077,95 @@ trait WorkspaceWorktreeCleanupEngine {
 				'removed_handles' => array_values(array_filter(array_map(fn( $row ) => (string) $row['handle'], $removed))),
 				'skipped_handles' => array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $skipped))),
 				'source'          => $source,
+			),
+		);
+	}
+
+	/**
+	 * Apply DB-backed cleanup rows without rebuilding a full workspace scan.
+	 *
+	 * @param  array<int,array<string,mixed>> $candidates Reviewed cleanup rows.
+	 * @param  bool                           $force      Whether dirty worktrees may be removed.
+	 * @param  float                          $started_at Start timestamp.
+	 * @return array<string,mixed>
+	 */
+	private function apply_worktree_cleanup_plan_candidates( array $candidates, bool $force, float $started_at ): array {
+		$processed       = 0;
+		$removed         = array();
+		$skipped         = array();
+		$bytes_reclaimed = 0;
+
+		foreach ( $candidates as $candidate ) {
+			++$processed;
+			$revalidated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force);
+			if ( isset($revalidated['skipped']) ) {
+				$skipped[] = $revalidated['skipped'];
+				continue;
+			}
+
+			$validated = $revalidated;
+			$repo      = (string) ( $validated['repo'] ?? '' );
+			$branch    = (string) ( $validated['branch'] ?? '' );
+			$wt_path   = (string) ( $validated['path'] ?? '' );
+			$size      = (int) ( $validated['size_bytes'] ?? 0 );
+			if ( $size <= 0 ) {
+				$measured = $this->estimate_path_size_bytes($wt_path);
+				$size     = null === $measured ? 0 : (int) $measured;
+			}
+
+			$remove = WorkspaceMutationLock::with_repo(
+				$this->workspace_path,
+				$repo,
+				function () use ( $repo, $branch, $wt_path, $force ) {
+					$result = $this->remove_worktree_by_path($repo, $branch, $wt_path, $force);
+					if ( is_wp_error($result) ) {
+						return $result;
+					}
+
+					$primary_path = $this->get_primary_path($repo);
+					if ( '' !== $branch ) {
+						$delete = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+						if ( is_wp_error($delete) ) {
+							return $result;
+						}
+					}
+
+					return $result;
+				}
+			);
+
+			if ( is_wp_error($remove) ) {
+				$skipped[] = array(
+					'handle'      => (string) ( $candidate['handle'] ?? '' ),
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'remove_failed',
+					'reason'      => 'remove failed: ' . $remove->get_error_message(),
+					'size_bytes'  => $size,
+				);
+				continue;
+			}
+
+			$removed[]        = array_merge($validated, array( 'size_bytes' => $size ));
+			$bytes_reclaimed += max(0, $size);
+		}
+
+		return array(
+			'success'    => true,
+			'dry_run'    => false,
+			'candidates' => $candidates,
+			'removed'    => $removed,
+			'skipped'    => $skipped,
+			'summary'    => array(
+				'processed'       => $processed,
+				'removed'         => count($removed),
+				'skipped'         => count($skipped),
+				'bytes_reclaimed' => $bytes_reclaimed,
+			),
+			'evidence'   => array(
+				'elapsed_ms'        => (int) round(( microtime(true) - $started_at ) * 1000),
+				'direct_apply_plan' => true,
 			),
 		);
 	}
