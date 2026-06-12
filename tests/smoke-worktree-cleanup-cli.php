@@ -144,6 +144,31 @@ namespace {
         'reason_code' => 'lifecycle_reconciliation_candidate',
         'reason'      => 'stale or PR/task-backed lifecycle metadata has no cleanup signal; reconcile lifecycle state before cleanup eligibility is decided',
         );
+		$skipped[] = array(
+		'handle'      => 'repo@unpushed',
+		'repo'        => 'repo',
+		'branch'      => 'unpushed',
+		'path'        => '/workspace/repo@unpushed',
+		'reason_code' => 'unpushed_commits',
+		'reason'      => 'worktree has commits ahead of upstream; leaving in place',
+		);
+		$skipped[] = array(
+		'handle'      => 'repo@broken-marker',
+		'repo'        => 'repo',
+		'branch'      => 'broken-marker',
+		'path'        => '/workspace/repo@broken-marker',
+		'primary_path' => '/workspace/repo',
+		'reason_code' => 'stale_worktree_marker',
+		'reason'      => 'git worktree metadata marker is stale or missing',
+		);
+		$skipped[] = array(
+		'handle'      => 'missing-primary@feature',
+		'repo'        => 'missing-primary',
+		'branch'      => 'feature',
+		'path'        => '/workspace/missing-primary@feature',
+		'reason_code' => 'primary_missing',
+		'reason'      => 'primary checkout missing; refusing cleanup',
+		);
 
         return array(
         'success'    => true,
@@ -174,7 +199,10 @@ namespace {
                     'lifecycle_reconciliation_candidate'  => 1,
                     'needs_metadata_reconcile'             => 2,
                     'no_merge_signal'                      => 10,
+					'primary_missing'                      => 1,
                     'repaired_metadata'                    => 1,
+					'stale_worktree_marker'                => 1,
+					'unpushed_commits'                     => 1,
         ),
         'cleanup_buckets'       => array(
         'blocked_by_dirty_or_unpushed'       => 1,
@@ -229,6 +257,34 @@ namespace {
          'alternative' => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25 --older-than=7d',
          'destructive' => true,
         ),
+		array(
+		 'reason_code' => 'dirty_worktree',
+		 'count'       => 1,
+		 'command'     => 'git -C <worktree-path> status --short --branch --untracked-files=normal',
+		 'alternative' => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --only=dirty_worktree --verbose --format=json',
+		 'destructive' => false,
+		),
+		array(
+		 'reason_code' => 'unpushed_commits',
+		 'count'       => 1,
+		 'command'     => 'git -C <worktree-path> log --oneline --decorate @{u}..HEAD',
+		 'alternative' => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --only=unpushed_commits --verbose --format=json',
+		 'destructive' => false,
+		),
+		array(
+		 'reason_code' => 'stale_worktree_marker',
+		 'count'       => 1,
+		 'command'     => 'git -C <primary-path> worktree prune --dry-run --verbose',
+		 'alternative' => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
+		 'destructive' => false,
+		),
+		array(
+		 'reason_code' => 'primary_missing',
+		 'count'       => 1,
+		 'command'     => 'studio wp datamachine-code workspace show <repo>',
+		 'alternative' => 'Recreate with `studio wp datamachine-code workspace clone <remote-url> --name=<repo>` or adopt an existing checkout with `studio wp datamachine-code workspace adopt <path> --name=<repo>`.',
+		 'destructive' => false,
+		),
         ),
         'candidates_by_signal' => array(
         'upstream-gone' => 1,
@@ -834,9 +890,12 @@ namespace {
                  'skipped_count'    => 1,
                  'failed_count'     => 0,
                  'bytes_reclaimed'  => 4096,
-                 'skipped'          => array(
-                  array( 'handle' => 'repo@dirty', 'reason_code' => 'dirty_worktree', 'artifact_size_bytes' => 8192 ),
-                 ),
+				  'skipped'          => array(
+				   array( 'handle' => 'repo@dirty', 'repo' => 'repo', 'branch' => 'dirty', 'path' => '/workspace/repo@dirty', 'reason_code' => 'dirty_worktree', 'artifact_size_bytes' => 8192 ),
+				   array( 'handle' => 'repo@unpushed', 'repo' => 'repo', 'branch' => 'unpushed', 'path' => '/workspace/repo@unpushed', 'reason_code' => 'unpushed_commits' ),
+				   array( 'handle' => 'repo@broken-marker', 'repo' => 'repo', 'branch' => 'broken-marker', 'path' => '/workspace/repo@broken-marker', 'primary_path' => '/workspace/repo', 'reason_code' => 'stale_worktree_marker' ),
+				   array( 'handle' => 'missing-primary@feature', 'repo' => 'missing-primary', 'branch' => 'feature', 'path' => '/workspace/missing-primary@feature', 'reason_code' => 'primary_missing' ),
+				  ),
                  'failed'           => array(),
                    ),
                   ),
@@ -1128,8 +1187,15 @@ namespace {
     datamachine_code_cleanup_assert(4096 === (int) ( $status_json['remaining_work_summary']['applied_by_type']['artifact_discovery']['bytes_reclaimed'] ?? 0 ), 'cleanup status reports reclaimed bytes by applied type');
     datamachine_code_cleanup_assert(1 === (int) ( $status_json['remaining_work_summary']['skipped_by_reason']['dirty_worktree']['count'] ?? 0 ), 'cleanup status groups skipped rows by reason in remaining-work summary');
     datamachine_code_cleanup_assert('repo@dirty' === (string) ( $status_json['remaining_work_summary']['skipped_by_reason']['dirty_worktree']['examples'][0]['handle'] ?? '' ), 'cleanup status includes skipped examples');
+    datamachine_code_cleanup_assert(1 === (int) ( $status_json['remaining_work_summary']['skipped_by_reason']['unpushed_commits']['count'] ?? 0 ), 'cleanup status groups unpushed blockers separately');
+    datamachine_code_cleanup_assert(1 === (int) ( $status_json['remaining_work_summary']['skipped_by_reason']['stale_worktree_marker']['count'] ?? 0 ), 'cleanup status groups stale marker blockers separately');
+    datamachine_code_cleanup_assert(1 === (int) ( $status_json['remaining_work_summary']['skipped_by_reason']['primary_missing']['count'] ?? 0 ), 'cleanup status groups missing primary blockers separately');
     datamachine_code_cleanup_assert(10240 === (int) ( $status_json['remaining_work_summary']['remaining_reclaimable_artifact_bytes'] ?? 0 ), 'cleanup status reports remaining reclaimable artifact bytes');
     datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($status_json['remaining_work_summary']['recommended_commands'] ?? array()), 'workspace cleanup run --mode=artifacts'), 'cleanup status recommends next DMC commands per bucket');
+    datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($status_json['remaining_work_summary']['recommended_commands'] ?? array()), 'git -C <worktree-path> status --short --branch'), 'cleanup status recommends dirty git status evidence');
+    datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($status_json['remaining_work_summary']['recommended_commands'] ?? array()), 'git -C <worktree-path> log --oneline --decorate @{u}..HEAD'), 'cleanup status recommends unpushed git log evidence');
+    datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($status_json['remaining_work_summary']['recommended_commands'] ?? array()), 'git -C <primary-path> worktree prune --dry-run --verbose'), 'cleanup status recommends stale marker prune preview');
+    datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($status_json['remaining_work_summary']['recommended_commands'] ?? array()), 'workspace show <repo>'), 'cleanup status recommends missing primary report');
     datamachine_code_cleanup_assert('4.0 KiB' === ( $status_json['system_task_result']['report']['freed_human'] ?? '' ), 'cleanup status replaces pending child job freed placeholder');
     datamachine_code_cleanup_assert(! isset($status_json['system_task_result']['children']['job_ids']), 'cleanup status system task result omits full child job ids by default');
 
@@ -1159,6 +1225,9 @@ namespace {
     datamachine_code_cleanup_assert(false === ( $evidence_json['evidence']['storage']['filesystem_plans'] ?? true ), 'cleanup evidence does not depend on filesystem plan JSON');
     datamachine_code_cleanup_assert('datamachine_jobs' === ( $evidence_json['evidence']['storage']['source'] ?? '' ), 'cleanup evidence declares Data Machine job DB source while cleanup tables are pending');
     datamachine_code_cleanup_assert(1 === (int) ( $evidence_json['evidence']['artifact_cleanup']['skipped_by_reason']['dirty_worktree'] ?? 0 ), 'cleanup evidence aggregates skipped reasons');
+    datamachine_code_cleanup_assert(1 === (int) ( $evidence_json['evidence']['artifact_cleanup']['skipped_by_reason']['unpushed_commits'] ?? 0 ), 'cleanup evidence aggregates unpushed skipped reasons');
+    datamachine_code_cleanup_assert(1 === (int) ( $evidence_json['evidence']['artifact_cleanup']['skipped_by_reason']['stale_worktree_marker'] ?? 0 ), 'cleanup evidence aggregates stale marker skipped reasons');
+    datamachine_code_cleanup_assert(1 === (int) ( $evidence_json['evidence']['artifact_cleanup']['skipped_by_reason']['primary_missing'] ?? 0 ), 'cleanup evidence aggregates missing primary skipped reasons');
     datamachine_code_cleanup_assert(1 === (int) ( $evidence_json['evidence']['artifact_cleanup']['failed_by_reason']['apply_failed'] ?? 0 ), 'cleanup evidence aggregates failed reasons');
     datamachine_code_cleanup_assert(1 === (int) ( $evidence_json['evidence']['cleanup_items']['failed_by_reason']['apply_failed'] ?? 0 ), 'cleanup evidence reconstructs failed cleanup item reasons from job rows');
     datamachine_code_cleanup_assert(4 === count($evidence_json['evidence']['child_jobs'] ?? array()), 'cleanup evidence emits descendant child jobs');
@@ -1206,11 +1275,15 @@ namespace {
     datamachine_code_cleanup_assert(2 === (int) ( $decoded['summary']['cleanup_buckets']['metadata_reconciliation_candidates'] ?? 0 ), 'JSON summary includes metadata reconciliation bucket count');
     datamachine_code_cleanup_assert(1 === (int) ( $decoded['summary']['stale_reasons']['dirty'] ?? 0 ), 'JSON summary includes stale reason metadata counts');
     datamachine_code_cleanup_assert(1 === (int) ( $decoded['summary']['liveness']['stale'] ?? 0 ), 'JSON summary includes liveness metadata counts');
-    datamachine_code_cleanup_assert(5 === count($decoded['summary']['skipped_next_commands'] ?? array()), 'JSON summary includes actionable skipped next commands');
+    datamachine_code_cleanup_assert(9 === count($decoded['summary']['skipped_next_commands'] ?? array()), 'JSON summary includes actionable skipped next commands');
     datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][0]['command'] ?? '', 'worktree cleanup --dry-run --format=json'), 'JSON lifecycle command runs DMC-owned cleanup signal detection');
     datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][1]['command'] ?? '', 'reconcile-metadata --dry-run --format=json'), 'JSON metadata command is metadata reconciliation');
     datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][2]['command'] ?? '', 'active-no-signal-report'), 'JSON active/no-signal command routes to evidence report');
     datamachine_code_cleanup_assert(str_contains($decoded['summary']['skipped_next_commands'][3]['alternative'] ?? '', 'active-no-signal-finalized-apply --dry-run'), 'JSON no-merge command routes finalized PR rows to dry-run apply');
+    datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($decoded['summary']['skipped_next_commands'] ?? array()), 'git -C <worktree-path> status --short --branch'), 'JSON dirty bucket recommends narrow git status evidence');
+    datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($decoded['summary']['skipped_next_commands'] ?? array()), 'git -C <worktree-path> log --oneline --decorate @{u}..HEAD'), 'JSON unpushed bucket recommends narrow git log evidence');
+    datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($decoded['summary']['skipped_next_commands'] ?? array()), 'git -C <primary-path> worktree prune --dry-run --verbose'), 'JSON stale marker bucket recommends prune preview');
+    datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($decoded['summary']['skipped_next_commands'] ?? array()), 'workspace show <repo>'), 'JSON primary-missing bucket recommends primary report');
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
@@ -1385,8 +1458,8 @@ namespace {
     datamachine_code_cleanup_assert(in_array('table:10:handle,reason_code,age_days,size,artifacts,reason', WP_CLI::$logs, true), 'default skipped table omits path and hint fields but keeps disk fields');
     datamachine_code_cleanup_assert(in_array('Top repos by worktree size:', WP_CLI::$logs, true), 'human output includes top repo size summary');
     datamachine_code_cleanup_assert(in_array('Next commands for skipped buckets:', WP_CLI::$logs, true), 'human output includes actionable skipped command section');
-    datamachine_code_cleanup_assert(in_array('table:5:reason_code,count,destructive,command,alternative', WP_CLI::$logs, true), 'human output renders compact skipped command table');
-    datamachine_code_cleanup_assert(in_array('Showing 10 of 16 skipped rows. Re-run with --verbose for all rows or --only=<reason_code> to filter.', WP_CLI::$logs, true), 'human output truncates skipped rows with hint');
+    datamachine_code_cleanup_assert(in_array('table:9:reason_code,count,destructive,command,alternative', WP_CLI::$logs, true), 'human output renders compact skipped command table');
+    datamachine_code_cleanup_assert(in_array('Showing 10 of 19 skipped rows. Re-run with --verbose for all rows or --only=<reason_code> to filter.', WP_CLI::$logs, true), 'human output truncates skipped rows with hint');
     datamachine_code_cleanup_assert(1 === count(WP_CLI::$successes), 'human output keeps success suffix');
 
     echo "\n[3] verbose output keeps detailed human fields\n";
@@ -1394,7 +1467,7 @@ namespace {
     WP_CLI::$successes = array();
     $command->worktree(array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'verbose' => true ));
     datamachine_code_cleanup_assert(in_array('table:1:handle,branch,age_days,size,artifacts,signal,reason', WP_CLI::$logs, true), 'verbose candidate table keeps full reason field');
-    datamachine_code_cleanup_assert(in_array('table:16:handle,reason_code,reason,age_days,size,artifacts,repo,branch,path,primary_path,missing,hint', WP_CLI::$logs, true), 'verbose skipped table keeps diagnostic fields');
+    datamachine_code_cleanup_assert(in_array('table:19:handle,reason_code,reason,age_days,size,artifacts,repo,branch,path,primary_path,missing,hint', WP_CLI::$logs, true), 'verbose skipped table keeps diagnostic fields');
 
     echo "\n[4] --only filters rows while keeping full summary\n";
     WP_CLI::$logs      = array();
@@ -1404,7 +1477,7 @@ namespace {
     datamachine_code_cleanup_assert(array() === ( $filtered['candidates'] ?? null ), '--only reason hides candidates');
     datamachine_code_cleanup_assert(2 === count($filtered['skipped'] ?? array()), '--only reason keeps matching skipped rows only');
     datamachine_code_cleanup_assert('needs_metadata_reconcile' === ( $filtered['skipped'][0]['reason_code'] ?? '' ), '--only alias resolves to metadata reconciliation reason code');
-    datamachine_code_cleanup_assert(16 === (int) ( $filtered['summary']['skipped'] ?? 0 ), '--only leaves summary counts unfiltered');
+    datamachine_code_cleanup_assert(19 === (int) ( $filtered['summary']['skipped'] ?? 0 ), '--only leaves summary counts unfiltered');
 
     echo "\n[5] --only aliases resolve candidate section\n";
     foreach ( array( 'candidates', 'would-remove', 'would_remove' ) as $alias ) {
@@ -1424,7 +1497,7 @@ namespace {
     $command->worktree(array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'older-than' => '7d' ));
     datamachine_code_cleanup_assert('7d' === ( $ability->last_input['older_than'] ?? null ), 'older-than forwards to cleanup ability as older_than');
     datamachine_code_cleanup_assert(is_callable($ability->last_input['progress_callback'] ?? null), 'human cleanup passes progress callback to ability');
-    datamachine_code_cleanup_assert(in_array('table:24:metric,count', WP_CLI::$logs, true), 'age filter, cleanup buckets, stale/liveness, and disk summary rows are rendered');
+    datamachine_code_cleanup_assert(in_array('table:27:metric,count', WP_CLI::$logs, true), 'age filter, cleanup buckets, stale/liveness, and disk summary rows are rendered');
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();

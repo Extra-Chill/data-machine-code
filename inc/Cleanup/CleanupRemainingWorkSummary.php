@@ -219,30 +219,53 @@ class CleanupRemainingWorkSummary {
 	private static function command_for_reason( string $reason, string $bucket ): array {
 		$command = match ( $reason ) {
 			'needs_metadata_reconcile', 'lifecycle_reconciliation_candidate', 'repaired_metadata' => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
-			'dirty_worktree', 'unpushed_commits', 'probe_timeout', 'plan_mismatch' => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --format=json',
+			'dirty_worktree' => 'git -C <worktree-path> status --short --branch --untracked-files=normal',
+			'unpushed_commits' => 'git -C <worktree-path> log --oneline --decorate @{u}..HEAD',
+			'stale_worktree_marker' => 'git -C <primary-path> worktree prune --dry-run --verbose',
+			'primary_missing' => 'studio wp datamachine-code workspace show <repo>',
+			'probe_timeout', 'plan_mismatch' => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --format=json',
 			'artifact_already_removed', 'artifact_plan_mismatch' => 'studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json',
 			default => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --format=json',
 		};
 
-		return array(
+		$entry = array(
 			'bucket'            => $bucket . ':' . $reason,
 			'command'           => $command,
 			'destructive'       => false,
 			'apply_destructive' => false,
 			'why'               => self::reason_remediation($reason),
 		);
+
+		$alternative = self::reason_alternative($reason);
+		if ( '' !== $alternative ) {
+			$entry['alternative'] = $alternative;
+		}
+
+		return $entry;
 	}
 
 	private static function reason_remediation( string $reason ): string {
 		return match ( $reason ) {
-			'dirty_worktree' => 'Inspect dirty files before applying cleanup; artifact-only dirt may be removable through artifact cleanup, source dirt needs review.',
+			'dirty_worktree' => 'Inspect dirty files before applying cleanup; classify artifact-only dirt versus source edits before preserving, committing, or cleaning up.',
 			'artifact_plan_mismatch', 'plan_mismatch' => 'Regenerate a fresh plan because the saved row no longer matches current filesystem or branch state.',
 			'artifact_plan_not_current', 'artifact_already_removed' => 'Regenerate artifact cleanup evidence; the saved artifact row is no longer a current candidate.',
 			'needs_metadata_reconcile' => 'Run metadata reconciliation so DMC can classify the worktree without a full cleanup scan.',
 			'lifecycle_reconciliation_candidate' => 'Run lifecycle reconciliation to collect PR/merge signals before emitting removal rows.',
-			'unpushed_commits' => 'Push, merge, or intentionally abandon commits before retrying cleanup.',
+			'unpushed_commits' => 'Inspect commits ahead of upstream so the operator can push, merge, preserve, or intentionally abandon before retrying cleanup.',
+			'stale_worktree_marker' => 'Preview stale git worktree metadata pruning and repair registry metadata only after confirming the marker is stale.',
+			'primary_missing' => 'Recover, adopt, or recreate the missing primary checkout before worktree removal can be routed through git safely.',
 			'probe_timeout' => 'Retry the review path with a smaller bounded page or investigate the git probe timeout.',
 			default => 'Run the review command to refresh evidence before applying cleanup.',
+		};
+	}
+
+	private static function reason_alternative( string $reason ): string {
+		return match ( $reason ) {
+			'dirty_worktree' => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --only=dirty_worktree --verbose --format=json',
+			'unpushed_commits' => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --only=unpushed_commits --verbose --format=json',
+			'stale_worktree_marker' => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
+			'primary_missing' => 'If the checkout is gone, recreate it with `studio wp datamachine-code workspace clone <remote-url> --name=<repo>` or adopt the existing primary checkout with `studio wp datamachine-code workspace adopt <path> --name=<repo>`.',
+			default => '',
 		};
 	}
 }
