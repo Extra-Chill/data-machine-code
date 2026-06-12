@@ -92,13 +92,14 @@ final class PathSecurity {
 	}
 
 	/**
-	 * Check whether a relative path is under any of a set of prefix roots.
+	 * Check whether a relative path is under any of a set of prefix roots or glob patterns.
 	 *
 	 * Used to enforce `allowed_paths` policy when staging for commit —
 	 * a path must sit inside at least one of the configured roots to be
 	 * stageable. Roots are compared as directory prefixes (so root
 	 * `articles` matches `articles/foo.md` but not `articlesX/foo.md`),
-	 * and an exact-match counts.
+	 * exact matches count, and glob roots such as docs-star-star or
+	 * plugins-star-star-README are matched with fnmatch().
 	 *
 	 * Empty `$allowed_paths` returns false — an empty allowlist means
 	 * nothing is allowed, matching the conservative Phase 2 default.
@@ -120,6 +121,9 @@ final class PathSecurity {
 				continue;
 			}
 			if ( $normalized === $root || str_starts_with($normalized, $root . '/') ) {
+				return true;
+			}
+			if ( strpbrk($root, '*?[') && fnmatch($root, $normalized) ) {
 				return true;
 			}
 		}

@@ -67,7 +67,9 @@ namespace DataMachine\Core\FilesRepository {
 }
 
 namespace {
+    include __DIR__ . '/../inc/Support/PathSecurity.php';
     include __DIR__ . '/../inc/Support/GitRunner.php';
+    include __DIR__ . '/../inc/Workspace/WorkspaceAliasResolver.php';
     include __DIR__ . '/../inc/Workspace/Workspace.php';
     include __DIR__ . '/../inc/Workspace/WorkspaceWriter.php';
 

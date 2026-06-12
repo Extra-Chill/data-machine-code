@@ -58,8 +58,10 @@ if (! function_exists('apply_filters') ) {
 
 require __DIR__ . '/../vendor/autoload.php';
 require __DIR__ . '/../inc/Workspace/Workspace.php';
+require __DIR__ . '/../inc/Workspace/WorkspaceWriter.php';
 
 use DataMachineCode\Workspace\Workspace;
+use DataMachineCode\Workspace\WorkspaceWriter;
 
 $failures = array();
 $total    = 0;
@@ -207,6 +209,54 @@ $assert('git_add rejects nested .git paths', in_array('nested_git', $nested_git_
 $gitlink = $workspace->git_add('demo', array( 'work/nested' ), true);
 $gitlink_reasons = is_wp_error($gitlink) ? array_column($gitlink->get_error_data()['workspace_violations'] ?? array(), 'reason') : array();
 $assert('git_add rejects gitlink changes', in_array('gitlink', $gitlink_reasons, true));
+
+$run('git reset -q --hard origin/main && git clean -q -fd', $repo);
+$GLOBALS['dmc_workspace_policy_options']['datamachine_workspace_git_policies']['repos']['demo'] = array();
+$writer = new WorkspaceWriter($workspace);
+$unrestricted_write = $writer->write_file('demo', 'unrestricted/notes.txt', "unrestricted\n");
+$assert('workspace_write remains permissive without writable_roots', ! is_wp_error($unrestricted_write) && is_file($repo . '/unrestricted/notes.txt'));
+$run('git reset -q --hard origin/main && git clean -q -fd', $repo);
+
+$GLOBALS['dmc_workspace_policy_options']['datamachine_workspace_git_policies']['repos']['demo'] = array(
+    'writable_roots' => array( 'README.md', 'docs/**', 'plugins/**/README.md' ),
+);
+
+$write_docs = $writer->write_file('demo', 'docs/guide.md', "docs allowed\n");
+$assert('workspace_write allows configured docs path', ! is_wp_error($write_docs) && is_file($repo . '/docs/guide.md'));
+
+$edit_docs = $writer->edit_file('demo', 'docs/guide.md', 'docs allowed', 'docs edited');
+$assert('workspace_edit allows configured docs path', ! is_wp_error($edit_docs) && "docs edited\n" === file_get_contents($repo . '/docs/guide.md'));
+
+$write_plugin_readme = $writer->write_file('demo', 'plugins/amp/README.md', "plugin readme allowed\n");
+$assert('workspace_write allows configured plugin README glob', ! is_wp_error($write_plugin_readme) && is_file($repo . '/plugins/amp/README.md'));
+
+$write_agents = $writer->write_file('demo', 'plugins/amp/AGENTS.md', "blocked\n");
+$assert('workspace_write rejects plugin AGENTS outside writable_roots', is_wp_error($write_agents) && 'path_not_allowed' === $write_agents->get_error_code());
+$assert('workspace_write rejects plugin AGENTS before mutation', ! file_exists($repo . '/plugins/amp/AGENTS.md'));
+
+$patch_docs = $writer->apply_patch(
+    'demo',
+    "diff --git a/docs/patch.md b/docs/patch.md\nnew file mode 100644\nindex 0000000..d95f3ad\n--- /dev/null\n+++ b/docs/patch.md\n@@ -0,0 +1 @@\n+patch allowed\n",
+    true
+);
+$assert('workspace_apply_patch allows configured docs path', ! is_wp_error($patch_docs) && is_file($repo . '/docs/patch.md'));
+
+$patch_agents = $writer->apply_patch(
+    'demo',
+    "diff --git a/plugins/amp/AGENTS.md b/plugins/amp/AGENTS.md\nnew file mode 100644\nindex 0000000..2e65efe\n--- /dev/null\n+++ b/plugins/amp/AGENTS.md\n@@ -0,0 +1 @@\n+blocked\n",
+    true
+);
+$assert('workspace_apply_patch rejects plugin AGENTS outside writable_roots', is_wp_error($patch_agents) && 'path_not_allowed' === $patch_agents->get_error_code());
+$assert('workspace_apply_patch error names writable_roots', is_wp_error($patch_agents) && str_contains($patch_agents->get_error_message(), 'writable_roots'));
+$assert('workspace_apply_patch rejects plugin AGENTS before mutation', ! file_exists($repo . '/plugins/amp/AGENTS.md'));
+
+$rename_agents = $writer->apply_patch(
+    'demo',
+    "diff --git a/docs/guide.md b/plugins/amp/AGENTS.md\nsimilarity index 100%\nrename from docs/guide.md\nrename to plugins/amp/AGENTS.md\n",
+    true
+);
+$assert('workspace_apply_patch checks rename destination paths', is_wp_error($rename_agents) && 'path_not_allowed' === $rename_agents->get_error_code());
+$assert('workspace_apply_patch rejects rename before mutation', is_file($repo . '/docs/guide.md') && ! file_exists($repo . '/plugins/amp/AGENTS.md'));
 
 if (! empty($failures) ) {
     echo "\nFAIL: " . count($failures) . " assertion(s) failed out of {$total}\n";

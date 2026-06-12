@@ -1791,20 +1791,7 @@ trait WorkspaceGitOperations {
 	 * @return bool
 	 */
 	private function is_path_allowed( string $path, array $allowed_paths ): bool {
-		$normalized = ltrim(str_replace('\\', '/', $path), '/');
-
-		foreach ( $allowed_paths as $allowed ) {
-			$root = ltrim(str_replace('\\', '/', (string) $allowed), '/');
-			if ( '' === $root ) {
-				continue;
-			}
-
-			if ( $normalized === $root || str_starts_with($normalized, $root . '/') ) {
-				return true;
-			}
-		}
-
-		return false;
+		return PathSecurity::isPathAllowed($path, $allowed_paths);
 	}
 
 	/**
