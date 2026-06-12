@@ -47,7 +47,7 @@ trait WorkspaceActiveNoSignalCleanup {
 		$active = array_values(
 			array_filter(
 				(array) ( $inventory['skipped'] ?? array() ),
-				fn( $row ) => is_array($row) && in_array( (string) ( $row['reason_code'] ?? '' ), array( 'active_no_signal', 'no_inventory_cleanup_signal' ), true)
+				fn( $row ) => is_array($row) && in_array( (string) ( $row['reason_code'] ?? '' ), array( 'active_no_signal', 'no_inventory_cleanup_signal', 'lifecycle_reconciliation_candidate' ), true)
 			)
 		);
 		$total  = count($active);
@@ -140,7 +140,7 @@ trait WorkspaceActiveNoSignalCleanup {
 			'summary'      => array_merge($summary, array( 'slow_rows' => $this->summarize_slow_worktree_rows($rows) )),
 			'pagination'   => $pagination,
 			'evidence'     => array(
-				'scope'       => 'review-only active_no_signal worktree lifecycle evidence',
+				'scope'       => 'review-only active/no-signal and lifecycle reconciliation worktree evidence',
 				'safety'      => 'No worktrees or remote branches are deleted. Dirty and unpushed probes are evidence only.',
 				'budget'      => null === $budget_context ? null : $this->summarize_worktree_loop_budget_context($budget_context, $budget_stopped),
 				'probe_cache' => $probe_cache['stats'],
@@ -1121,6 +1121,7 @@ trait WorkspaceActiveNoSignalCleanup {
 			'branch_identity'         => $branch_identity,
 			'path'                    => $path,
 			'created_at'              => $row['created_at'] ?? null,
+			'inventory_reason_code'   => $row['reason_code'] ?? null,
 			'lifecycle_state'         => $metadata['lifecycle_state'] ?? null,
 			'metadata'                => $metadata,
 			'last_seen_at'            => $metadata['last_seen_at'] ?? ( $metadata['observed_at'] ?? null ),
