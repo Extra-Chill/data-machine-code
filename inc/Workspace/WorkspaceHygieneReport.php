@@ -59,6 +59,7 @@ trait WorkspaceHygieneReport {
 		$cleanup       = null;
 		$cleanup_error = null;
 		$locks         = WorkspaceMutationLock::status($this->workspace_path);
+		$remote_backend = $this->build_remote_workspace_backend_report();
 
 		if ( $include_cleanup ) {
 			$cleanup = $this->worktree_cleanup_merged(
@@ -92,6 +93,7 @@ trait WorkspaceHygieneReport {
 			),
 			'worktrees'                 => $worktree_summary,
 			'worktree_status_mode'      => $worktree_status_mode,
+			'remote_backend'            => $remote_backend,
 			'top_repos_by_worktrees'    => $this->top_repos_by_worktree_count($worktrees, 10),
 			'top_repos_by_size'         => $this->top_repos_by_size( (array) ( $size_report['entries'] ?? array() ), 10),
 			'locks'                     => $locks,
@@ -105,9 +107,37 @@ trait WorkspaceHygieneReport {
 						$include_cleanup ? 'Cleanup summary uses inventory-only dry-run detection (--inventory-only --skip-github); no per-worktree git probes or GitHub API lookups are required.' : 'Cleanup dry-run disabled by request.',
 						! empty($worktree_summary['stale_primaries']) ? 'One or more primary checkouts are behind their configured upstream according to local remote refs; refresh before using a primary for verification.' : '',
 						! empty($worktree_summary['base_branch_worktree_count']) ? 'One or more non-primary worktrees have a base branch checked out; gh pr merge --delete-branch can merge remotely but fail local cleanup.' : '',
+						! empty($remote_backend['registered_state']) ? 'Remote workspace state is registered; local checkout commands should fall back to local workspace discovery when the remote backend misses a handle.' : '',
 					)
 				)
 			),
+		);
+	}
+
+	/**
+	 * Summarize the GitHub API remote workspace backend state for diagnostics.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function build_remote_workspace_backend_report(): array {
+		$available = class_exists(RemoteWorkspaceBackend::class);
+		if ( ! $available ) {
+			return array(
+				'available'        => false,
+				'active'           => false,
+				'registered_state' => false,
+				'mode'             => 'local_git',
+			);
+		}
+
+		$registered_state = RemoteWorkspaceBackend::has_registered_state();
+		$active           = $registered_state ? true : RemoteWorkspaceBackend::should_handle();
+
+		return array(
+			'available'        => true,
+			'active'           => $active,
+			'registered_state' => $registered_state,
+			'mode'             => $active ? 'remote_or_fallback' : 'local_git',
 		);
 	}
 

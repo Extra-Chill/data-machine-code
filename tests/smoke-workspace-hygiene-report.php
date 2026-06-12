@@ -66,14 +66,31 @@ namespace {
         return $value instanceof \WP_Error;
     }
 
-    function get_option( string $name, $default = false )  // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
+    function get_option( string $name, $default = false )
     {
+        if ('datamachine_code_remote_workspace_state' === $name ) {
+            return array(
+            'repos'     => array(
+            'github-only' => array(
+            'repo' => 'Extra-Chill/github-only',
+            'url'  => 'https://github.com/Extra-Chill/github-only.git',
+            ),
+            ),
+            'worktrees' => array(),
+            );
+        }
+
+        if ('datamachine_worktree_metadata' !== $name ) {
+            return $default;
+        }
+
         return $GLOBALS['__dmc_hygiene_metadata'];
     }
 
     include __DIR__ . '/../inc/Workspace/WorkspaceLockStore.php';
     include __DIR__ . '/../inc/Workspace/WorkspaceMutationLock.php';
     include __DIR__ . '/../inc/Workspace/WorktreeContextInjector.php';
+    include __DIR__ . '/../inc/Workspace/RemoteWorkspaceBackend.php';
     include __DIR__ . '/../inc/Workspace/Workspace.php';
 
     function datamachine_code_hygiene_report_assert( bool $condition, string $message ): void
@@ -157,6 +174,9 @@ namespace {
         datamachine_code_hygiene_report_assert(1 === (int) ( $minimal['worktrees']['missing_metadata'] ?? 0 ), 'inventory counts missing metadata from registry only');
         datamachine_code_hygiene_report_assert('alpha' === ( $minimal['top_repos_by_worktrees'][0]['repo'] ?? '' ), 'inventory builds repo count leaders');
         datamachine_code_hygiene_report_assert(1 === (int) ( $minimal['top_repos_by_worktrees'][0]['worktree_count'] ?? 0 ), 'repo count leaders ignore primaries and missing-metadata repo still sorts after alpha');
+        datamachine_code_hygiene_report_assert(true === ( $minimal['remote_backend']['registered_state'] ?? false ), 'hygiene reports registered remote workspace state');
+        datamachine_code_hygiene_report_assert('remote_or_fallback' === ( $minimal['remote_backend']['mode'] ?? '' ), 'hygiene reports remote backend fallback mode');
+        datamachine_code_hygiene_report_assert(in_array('Remote workspace state is registered; local checkout commands should fall back to local workspace discovery when the remote backend misses a handle.', $minimal['notes'] ?? array(), true), 'hygiene notes remote backend local fallback expectation');
 
         echo "\n[1a] Size report exposes top offenders and kind grouping\n";
         $with_sizes = $workspace->workspace_hygiene_report(
