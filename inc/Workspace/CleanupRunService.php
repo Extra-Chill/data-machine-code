@@ -124,8 +124,9 @@ class CleanupRunService {
 			$this->mark_batch_applying($worktree_batch, $run_id, $batch_type, $limit, $remaining_rows);
 			$results['worktree_removal'] = $this->workspace->worktree_cleanup_merged(
 				array(
-					'apply_plan'  => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $worktree_batch) ),
-					'skip_github' => true,
+					'apply_plan'        => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $worktree_batch) ),
+					'direct_apply_plan' => true,
+					'skip_github'       => true,
 				)
 			);
 			$this->record_apply_result($worktree_batch, $results['worktree_removal'], 'removed');

@@ -7,11 +7,13 @@
 
 declare( strict_types=1 );
 
-$source_path = __DIR__ . '/../inc/Workspace/WorkspaceWorktreeCleanupEngine.php';
-$source      = file_get_contents($source_path);
+$source_path  = __DIR__ . '/../inc/Workspace/WorkspaceWorktreeCleanupEngine.php';
+$service_path = __DIR__ . '/../inc/Workspace/CleanupRunService.php';
+$source       = file_get_contents($source_path);
+$service      = file_get_contents($service_path);
 
-if ( false === $source ) {
-	fwrite(STDERR, "Could not read cleanup engine source.\n");
+if ( false === $source || false === $service ) {
+	fwrite(STDERR, "Could not read cleanup source.\n");
 	exit(1);
 }
 
@@ -33,6 +35,14 @@ if ( str_contains($function, 'rm -rf') ) {
 
 if ( ! str_contains($function, 'worktree_remove_incomplete') ) {
 	$failures[] = 'surviving worktree directory must return a row-level failure';
+}
+
+if ( ! str_contains($source, 'apply_worktree_cleanup_plan_candidates') || ! str_contains($source, '$direct_apply_plan && ! $dry_run') ) {
+	$failures[] = 'DB-backed cleanup apply must have a direct plan path';
+}
+
+if ( ! str_contains($service, "'direct_apply_plan' => true") ) {
+	$failures[] = 'CleanupRunService must request direct plan apply for worktree rows';
 }
 
 if ( $failures ) {
