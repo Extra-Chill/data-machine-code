@@ -81,6 +81,11 @@ namespace {
                 return $this->message;
             }
 
+            public function get_error_code(): string
+            {
+                return $this->code;
+            }
+
             public function get_error_data()
             {
                 return $this->data;
@@ -264,6 +269,7 @@ namespace {
     include __DIR__ . '/../inc/Workspace/WorkspaceMutationLock.php';
     include __DIR__ . '/../inc/Workspace/WorktreeStalenessProbe.php';
     include __DIR__ . '/../inc/Workspace/WorktreeDiskBudget.php';
+    include __DIR__ . '/../inc/Workspace/WorktreeBootstrapper.php';
     include __DIR__ . '/../inc/Workspace/WorktreeContextInjector.php';
     include __DIR__ . '/../inc/Workspace/Workspace.php';
 
@@ -341,9 +347,21 @@ namespace {
     $linked_items = array_values(array_filter($linked_list['worktrees'] ?? array(), fn( $wt ) => ( $wt['handle'] ?? '' ) === 'linked-primary'));
     $assert(1, count($linked_items), 'worktree_list discovers primary checkouts whose .git is a file');
 
+    $url_worktree = $ws->worktree_add('https://github.com/acme/demo.git', 'feature/url-primary-resolution', 'HEAD', false, false, true, false, false);
+    $assert(false, is_wp_error($url_worktree), 'worktree_add accepts URL matching an existing local primary');
+    $assert('demo@feature-url-primary-resolution', is_wp_error($url_worktree) ? null : ( $url_worktree['handle'] ?? null ), 'URL repo argument normalizes to primary handle');
+
+    $path_worktree = $ws->worktree_add($primary, 'feature/path-primary-resolution', 'HEAD', false, false, true, false, false);
+    $assert(false, is_wp_error($path_worktree), 'worktree_add accepts path to an existing local primary');
+    $assert('demo@feature-path-primary-resolution', is_wp_error($path_worktree) ? null : ( $path_worktree['handle'] ?? null ), 'path repo argument normalizes to primary handle');
+
+    $bad_url_worktree = $ws->worktree_add('https://github.com/acme/missing.git', 'feature/missing-url-primary-resolution', 'HEAD', false, false, true, false, false);
+    $assert(true, is_wp_error($bad_url_worktree), 'worktree_add rejects URL repo arguments without a matching local primary');
+    $assert('unsupported_workspace_repo_argument', is_wp_error($bad_url_worktree) ? $bad_url_worktree->get_error_code() : null, 'missing URL primary returns a clear error code');
+
     $GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds'] = function ( array $thresholds ): array {
-        $thresholds['refuse_free_bytes'] = PHP_INT_MAX;
-        $thresholds['warn_free_bytes']   = PHP_INT_MAX;
+        $thresholds['refuse_free_percent'] = 100;
+        $thresholds['warn_free_percent']   = 100;
         return $thresholds;
     };
     $refused = $ws->worktree_add('demo', 'feature/disk-budget-refusal', 'HEAD', true, true, true, false, false);
