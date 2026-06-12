@@ -2280,19 +2280,25 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		$cmd    = sprintf('worktree remove %s%s', $force ? '--force ' : '', escapeshellarg($real_path));
-		$result = $this->run_git($primary_path, $cmd);
+		$result = $this->run_git($primary_path, $cmd, self::CLEANUP_GIT_PROBE_TIMEOUT);
 
 		if ( is_wp_error($result) ) {
 			return $result;
 		}
 
-		// If the directory survived `git worktree remove` (can happen for
-		// locked worktrees, or when the worktree was already detached), prune
-		// the directory manually so cleanup is effective.
+		// `git worktree remove` is the destructive boundary. If Git reports
+		// success but the path survives, fail the row instead of falling back to
+		// an unbounded recursive delete that can wedge cleanup apply.
 		if ( is_dir($real_path) ) {
-			$escaped = escapeshellarg($real_path);
-            // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-			exec(sprintf('rm -rf %s 2>&1', $escaped));
+			return new \WP_Error(
+				'worktree_remove_incomplete',
+				sprintf('Git reported worktree removal success, but the directory still exists: %s', $real_path),
+				array(
+					'status'       => 500,
+					'path'         => $real_path,
+					'primary_path' => $primary_path,
+				)
+			);
 		}
 
 		WorktreeContextInjector::forget_metadata(basename($wt_path));
