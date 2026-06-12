@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.107] - 2026-06-12
+
+### Fixed
+- Fix remote worktree remove for reused handles
+
 ## [0.47.106] - 2026-06-12
 
 ### Changed
