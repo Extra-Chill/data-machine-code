@@ -99,7 +99,7 @@ datamachine_code_budget_assert('warning' === $budget['status'], 'forced low-spac
 datamachine_code_budget_assert(true === $budget['forced'], 'forced flag is recorded');
 datamachine_code_budget_assert(true === $budget['force_override_applied'], 'force override is visible in output data');
 
-echo "\n[5] percent floor refuses even when absolute free space is above 10 GiB\n";
+echo "\n[5] percent floor warns when absolute free space is above 10 GiB\n";
 $budget = WorktreeDiskBudget::evaluate(
     array(
         'workspace_path' => '/tmp/workspace',
@@ -109,9 +109,24 @@ $budget = WorktreeDiskBudget::evaluate(
     ),
     $thresholds
 );
-datamachine_code_budget_assert('refused' === $budget['status'], 'refused status below 10 percent free');
-datamachine_code_budget_assert(20.0 === $budget['effective_refuse_gib'], 'effective refusal floor uses stricter percentage threshold');
+datamachine_code_budget_assert('warning' === $budget['status'], 'warning status below 10 percent free but above absolute refusal floor');
+datamachine_code_budget_assert(10.0 === $budget['effective_refuse_gib'], 'effective refusal floor uses absolute threshold on normal filesystems');
+datamachine_code_budget_assert(30.0 === $budget['effective_warn_gib'], 'effective warning floor still uses stricter percentage threshold');
+datamachine_code_budget_assert(false === $budget['force_override_required'], 'substantial absolute free space does not require force');
 datamachine_code_budget_assert(7.5 === $budget['free_percent'], 'free percentage is reported');
+
+echo "\n[5b] large filesystem below absolute floor still refuses\n";
+$budget = WorktreeDiskBudget::evaluate(
+    array(
+        'workspace_path' => '/tmp/workspace',
+        'free_bytes'     => 5 * $gib,
+        'total_bytes'    => 200 * $gib,
+        'worktree_count' => 10,
+    ),
+    $thresholds
+);
+datamachine_code_budget_assert('refused' === $budget['status'], 'large filesystem still refuses below absolute floor');
+datamachine_code_budget_assert(true === $budget['force_override_required'], 'low absolute free space still requires force');
 
 echo "\n[6] high worktree count warns independently\n";
 $budget = WorktreeDiskBudget::evaluate(

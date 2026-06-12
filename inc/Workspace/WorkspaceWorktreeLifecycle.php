@@ -108,11 +108,12 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error(
 				'worktree_disk_budget_exceeded',
 				sprintf(
-					"Refusing to create worktree before bootstrap/install because the workspace disk budget is unsafe.\n%s\nThreshold: keep at least %.1f GiB free and %.1f%% free; effective floor on this filesystem is %.1f GiB.\nRun %s to review cleanup candidates, run %s to review artifact cleanup, or retry with --force only when a human explicitly accepts the disk-pressure risk.",
+					"Refusing to create worktree before bootstrap/install because the workspace disk budget is unsafe.\n%s\nThreshold: keep at least %.1f GiB free and %.1f%% free; effective floor on this filesystem is %.1f GiB.\nRun %s for a bounded cleanup path, run %s to review cleanup candidates, run %s to review artifact cleanup, or retry with --force only when a human explicitly accepts the disk-pressure risk.",
 					WorktreeDiskBudget::format_summary($disk_budget),
 					(float) ( $disk_budget['refuse_free_gib'] ?? 0 ),
 					(float) ( $disk_budget['refuse_free_percent'] ?? 0 ),
 					(float) ( $disk_budget['effective_refuse_gib'] ?? 0 ),
+					$disk_budget['emergency_cleanup_command'],
 					$disk_budget['cleanup_dry_run_command'],
 					$disk_budget['artifact_cleanup_command']
 				),
