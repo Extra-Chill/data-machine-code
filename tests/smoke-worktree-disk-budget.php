@@ -83,6 +83,9 @@ datamachine_code_budget_assert(in_array('free_space_refusal_threshold', $budget[
 datamachine_code_budget_assert(str_contains($budget['cleanup_dry_run_command'], 'workspace worktree cleanup --dry-run'), 'cleanup dry-run command is present');
 datamachine_code_budget_assert(str_contains($budget['artifact_cleanup_command'], 'workspace worktree cleanup-artifacts --dry-run'), 'artifact cleanup dry-run command is present');
 datamachine_code_budget_assert(str_contains($budget['emergency_cleanup_command'], 'workspace worktree emergency-cleanup'), 'emergency cleanup command is present');
+datamachine_code_budget_assert(3 === count($budget['cleanup_recommendations'] ?? array()), 'refusal includes ranked cleanup recommendations');
+datamachine_code_budget_assert(str_contains($budget['cleanup_recommendations'][0]['command'] ?? '', 'cleanup-artifacts --dry-run --sort=size'), 'first recommendation discovers largest artifacts');
+datamachine_code_budget_assert(5 * $gib === (int) ( $budget['cleanup_recommendations'][0]['expected_reclaim_bytes'] ?? 0 ), 'recommendation records target reclaim bytes');
 
 echo "\n[4] force makes low-space override explicit\n";
 $budget = WorktreeDiskBudget::evaluate(

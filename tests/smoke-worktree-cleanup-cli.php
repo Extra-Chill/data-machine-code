@@ -355,22 +355,34 @@ namespace {
                 $apply_command .= ' --limit=' . (int) ( $input['limit'] ?? 100 );
                 $apply_command .= ' --offset=' . (int) ( $input['offset'] ?? 0 );
             }
-            $apply_command .= ' --format=json';
-            return array(
-            'success'       => true,
-            'dry_run'       => ! empty($input['dry_run']),
-            'apply_command' => $apply_command,
-            'candidates'    => array(
-            array(
-            'handle'    => 'repo@old',
-            'repo'      => 'repo',
-            'branch'    => 'old',
-            'path'      => '/workspace/repo@old',
-            'artifacts' => array( array( 'path' => 'target', 'size_bytes' => 1024 ) ),
-            ),
-            ),
-            'removed'    => array(),
-            'skipped'    => array(
+			$apply_command .= ' --format=json';
+			$candidates = array(
+			array(
+			'handle'    => 'repo@old',
+			'repo'      => 'repo',
+			'branch'    => 'old',
+			'path'      => '/workspace/repo@old',
+			'artifacts' => array( array( 'path' => 'target', 'size_bytes' => 1024 ) ),
+			),
+			);
+			$pagination = array( 'mode' => 'bounded_inventory', 'scanned' => 1, 'total' => 1, 'offset' => 0, 'limit' => (int) ( $input['limit'] ?? 100 ), 'complete' => true, 'partial' => false, 'safety_probes' => false );
+			if ( 'size' === (string) ( $input['sort'] ?? '' ) ) {
+				$candidates[] = array(
+				'handle'    => 'repo@large',
+				'repo'      => 'repo',
+				'branch'    => 'large',
+				'path'      => '/workspace/repo@large',
+				'artifacts' => array( array( 'path' => 'target', 'size_bytes' => 4096 ) ),
+				);
+				$pagination = array( 'mode' => 'ranked_inventory', 'scanned' => 200, 'total' => 200, 'offset' => 0, 'limit' => (int) ( $input['limit'] ?? 100 ), 'complete' => true, 'partial' => false, 'safety_probes' => false, 'sort' => 'size', 'ranked_total' => 2 );
+			}
+			return array(
+			'success'       => true,
+			'dry_run'       => ! empty($input['dry_run']),
+			'apply_command' => $apply_command,
+			'candidates'    => $candidates,
+			'removed'    => array(),
+			'skipped'    => array(
             array(
             'handle'      => 'repo@active',
             'repo'        => 'repo',
@@ -380,16 +392,18 @@ namespace {
             'reason'      => 'worktree is an active symlink target',
             ),
             ),
-            'summary'    => array(
-            'apply_command'          => $apply_command,
-            'would_remove_artifacts' => 1,
-            'removed_artifacts'      => 0,
-            'skipped'                => 1,
-            'artifact_size_bytes'    => 1024,
-            ),
-            );
-        }
-    }
+			'summary'    => array(
+			'apply_command'          => $apply_command,
+			'would_remove_artifacts' => count($candidates),
+			'removed_artifacts'      => 0,
+			'skipped'                => 1,
+			'artifact_size_bytes'    => 1024,
+			'pagination'             => $pagination,
+			),
+			'pagination' => $pagination,
+			);
+		}
+	}
 
     class FakeEmergencyCleanupAbility
     {
@@ -1495,14 +1509,16 @@ namespace {
     WP_CLI::$successes = array();
     $command->worktree(array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true ));
     datamachine_code_cleanup_assert(str_starts_with(WP_CLI::$logs[0] ?? '', 'Cleanup progress:'), 'human output streams cleanup progress before summary');
-    datamachine_code_cleanup_assert(in_array('Summary:', WP_CLI::$logs, true), 'human output includes summary after progress');
-    datamachine_code_cleanup_assert(in_array('table:1:handle,branch,age_days,size,artifacts,signal,reason_code', WP_CLI::$logs, true), 'default candidate table uses compact disk fields');
-    datamachine_code_cleanup_assert(in_array('table:10:handle,reason_code,age_days,size,artifacts,reason', WP_CLI::$logs, true), 'default skipped table omits path and hint fields but keeps disk fields');
-    datamachine_code_cleanup_assert(in_array('Top repos by worktree size:', WP_CLI::$logs, true), 'human output includes top repo size summary');
-    datamachine_code_cleanup_assert(in_array('Next commands for skipped buckets:', WP_CLI::$logs, true), 'human output includes actionable skipped command section');
-    datamachine_code_cleanup_assert(in_array('table:9:reason_code,count,destructive,command,alternative', WP_CLI::$logs, true), 'human output renders compact skipped command table');
-    datamachine_code_cleanup_assert(in_array('Showing 10 of 19 skipped rows. Re-run with --verbose for all rows or --only=<reason_code> to filter.', WP_CLI::$logs, true), 'human output truncates skipped rows with hint');
-    datamachine_code_cleanup_assert(1 === count(WP_CLI::$successes), 'human output keeps success suffix');
+	datamachine_code_cleanup_assert(in_array('Summary:', WP_CLI::$logs, true), 'human output includes summary after progress');
+	datamachine_code_cleanup_assert(in_array('table:1:handle,branch,age_days,size,artifacts,signal,reason_code', WP_CLI::$logs, true), 'default candidate table uses compact disk fields');
+	datamachine_code_cleanup_assert(in_array('Skipped summary:', WP_CLI::$logs, true), 'default cleanup output summarizes skipped rows by reason');
+	datamachine_code_cleanup_assert(in_array('table:9:reason_code,count,examples', WP_CLI::$logs, true), 'default skipped summary groups reasons instead of listing every row');
+	datamachine_code_cleanup_assert(in_array('Re-run with --verbose to list every skipped row or --only=<reason_code> to inspect one bucket.', WP_CLI::$logs, true), 'default skipped summary points to verbose or filtered follow-up');
+	datamachine_code_cleanup_assert(! in_array('table:10:handle,reason_code,age_days,size,artifacts,reason', WP_CLI::$logs, true), 'default skipped table does not list individual skipped rows');
+	datamachine_code_cleanup_assert(in_array('Top repos by worktree size:', WP_CLI::$logs, true), 'human output includes top repo size summary');
+	datamachine_code_cleanup_assert(in_array('Next commands for skipped buckets:', WP_CLI::$logs, true), 'human output includes actionable skipped command section');
+	datamachine_code_cleanup_assert(in_array('table:9:reason_code,count,destructive,command,alternative', WP_CLI::$logs, true), 'human output renders compact skipped command table');
+	datamachine_code_cleanup_assert(1 === count(WP_CLI::$successes), 'human output keeps success suffix');
 
     echo "\n[3] verbose output keeps detailed human fields\n";
     WP_CLI::$logs      = array();
@@ -1551,8 +1567,16 @@ namespace {
     echo "\n[7] --sort forwards cleanup sorting field\n";
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
-    $command->worktree(array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'sort' => 'size', 'format' => 'json' ));
-    datamachine_code_cleanup_assert('size' === ( $ability->last_input['sort'] ?? null ), '--sort forwards to cleanup ability');
+	$command->worktree(array( 'cleanup' ), array( 'dry-run' => true, 'skip-github' => true, 'sort' => 'size', 'format' => 'json' ));
+	datamachine_code_cleanup_assert('size' === ( $ability->last_input['sort'] ?? null ), '--sort forwards to cleanup ability');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup(array( 'run' ), array( 'mode' => 'artifacts', 'dry-run' => true, 'sort' => 'size', 'format' => 'json' ));
+	datamachine_code_cleanup_assert('size' === ( $artifact_ability->last_input['sort'] ?? null ), 'workspace cleanup artifact dry-run forwards size sort');
+	$ranked_artifact_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+	datamachine_code_cleanup_assert('ranked_inventory' === ( $ranked_artifact_json['pagination']['mode'] ?? '' ), 'artifact size sort reports ranked inventory mode');
+	datamachine_code_cleanup_assert('size' === ( $ranked_artifact_json['pagination']['sort'] ?? '' ), 'artifact size sort advertises size ordering');
 
     echo "\n[8] --inventory-only forwards bounded cleanup review flag\n";
     WP_CLI::$logs      = array();
@@ -1563,12 +1587,27 @@ namespace {
     datamachine_code_cleanup_assert(str_contains($inventory_json['summary']['apply_command'] ?? '', 'bounded-cleanup-eligible-apply --limit=1'), 'inventory-only JSON exposes bounded cleanup-eligible apply command');
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
-    $command->worktree(array( 'cleanup' ), array( 'dry-run' => true, 'inventory-only' => true, 'skip-github' => true ));
-    datamachine_code_cleanup_assert(str_contains(WP_CLI::$successes[0] ?? '', 'Apply this bounded reviewed class with: studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=1'), 'inventory-only human output prints bounded apply command');
-    $command->worktree(array( 'cleanup' ), array( 'dry-run' => true, 'inventory-only' => true, 'include-repaired-metadata' => true, 'format' => 'json' ));
-    datamachine_code_cleanup_assert(true === ( $ability->last_input['include_repaired_metadata'] ?? null ), '--include-repaired-metadata forwards to cleanup ability');
+	$command->worktree(array( 'cleanup' ), array( 'dry-run' => true, 'inventory-only' => true, 'skip-github' => true ));
+	datamachine_code_cleanup_assert(str_contains(WP_CLI::$successes[0] ?? '', 'Apply this bounded reviewed class with: studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=1'), 'inventory-only human output prints bounded apply command');
+	$command->worktree(array( 'cleanup' ), array( 'dry-run' => true, 'inventory-only' => true, 'include-repaired-metadata' => true, 'format' => 'json' ));
+	datamachine_code_cleanup_assert(true === ( $ability->last_input['include_repaired_metadata'] ?? null ), '--include-repaired-metadata forwards to cleanup ability');
 
-    echo "\n[8a] active/no-signal apply forwards bounded continuation flags\n";
+	$bounded_apply_ability->extra_skipped = 30;
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree(array( 'bounded-cleanup-eligible-apply' ), array( 'limit' => 25 ));
+	datamachine_code_cleanup_assert(in_array('Result: removed 1 worktree(s); reclaimed 4.0 KiB; skipped 2.', WP_CLI::$logs, true), 'bounded cleanup apply highlights removed/reclaimed totals first');
+	datamachine_code_cleanup_assert(in_array('Skipped summary:', WP_CLI::$logs, true), 'bounded cleanup apply summarizes skipped rows by default');
+	datamachine_code_cleanup_assert(in_array('table:4:reason_code,count,examples', WP_CLI::$logs, true), 'bounded cleanup apply groups skipped reasons');
+	datamachine_code_cleanup_assert(! in_array('table:32:handle,reason_code,reason', WP_CLI::$logs, true), 'bounded cleanup apply default output does not list every skipped row');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree(array( 'bounded-cleanup-eligible-apply' ), array( 'limit' => 25, 'verbose' => true ));
+	datamachine_code_cleanup_assert(in_array('table:32:handle,reason_code,reason', WP_CLI::$logs, true), 'bounded cleanup apply verbose output lists skipped rows');
+	$bounded_apply_ability->extra_skipped = 0;
+
+	echo "\n[8a] active/no-signal apply forwards bounded continuation flags\n";
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
     $command->worktree(
@@ -1610,12 +1649,27 @@ namespace {
     datamachine_code_cleanup_assert('studio wp datamachine-code workspace cleanup run --mode=artifacts --limit=100 --offset=0 --format=json' === ( $artifact_json['apply_command'] ?? '' ), 'cleanup-artifacts JSON includes matching high-level apply command');
     datamachine_code_cleanup_assert(( $artifact_json['apply_command'] ?? '' ) === ( $artifact_json['summary']['apply_command'] ?? null ), 'cleanup-artifacts summary repeats matching apply command');
 
-    WP_CLI::$logs      = array();
-    WP_CLI::$successes = array();
-    $command->worktree(array( 'cleanup-artifacts' ), array( 'dry-run' => true ));
-    datamachine_code_cleanup_assert(str_contains(WP_CLI::$successes[0] ?? '', 'workspace cleanup run --mode=artifacts --limit=100 --offset=0 --format=json'), 'cleanup-artifacts dry-run points daily apply path to same task-backed page');
-    datamachine_code_cleanup_assert(str_contains(WP_CLI::$successes[0] ?? '', 'low-level escape hatch'), 'cleanup-artifacts dry-run demotes apply-plan wording');
-    datamachine_code_cleanup_assert(! str_contains(WP_CLI::$successes[0] ?? '', 'Save JSON'), 'cleanup-artifacts dry-run does not normalize saving plan files');
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree(array( 'cleanup-artifacts' ), array( 'dry-run' => true ));
+	datamachine_code_cleanup_assert(str_contains(WP_CLI::$successes[0] ?? '', 'workspace cleanup run --mode=artifacts --limit=100 --offset=0 --format=json'), 'cleanup-artifacts dry-run points daily apply path to same task-backed page');
+	datamachine_code_cleanup_assert(str_contains(WP_CLI::$successes[0] ?? '', 'low-level escape hatch'), 'cleanup-artifacts dry-run demotes apply-plan wording');
+	datamachine_code_cleanup_assert(! str_contains(WP_CLI::$successes[0] ?? '', 'Save JSON'), 'cleanup-artifacts dry-run does not normalize saving plan files');
+	datamachine_code_cleanup_assert(in_array('Skipped worktrees summary:', WP_CLI::$logs, true), 'cleanup-artifacts human output summarizes skipped worktrees by default');
+	datamachine_code_cleanup_assert(in_array('table:1:reason_code,count,examples', WP_CLI::$logs, true), 'cleanup-artifacts skipped summary is grouped by reason');
+	datamachine_code_cleanup_assert(! in_array('table:1:handle,repo,branch,artifacts,reason_code,reason', WP_CLI::$logs, true), 'cleanup-artifacts default output does not list every skipped worktree');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree(array( 'cleanup-artifacts' ), array( 'dry-run' => true, 'sort' => 'size' ));
+	datamachine_code_cleanup_assert('size' === ( $artifact_ability->last_input['sort'] ?? null ), 'cleanup-artifacts forwards size sort');
+	datamachine_code_cleanup_assert(in_array('Largest artifact opportunities:', WP_CLI::$logs, true), 'cleanup-artifacts size sort labels ranked opportunities');
+	datamachine_code_cleanup_assert(in_array('Ranked by size across 200 scanned worktree(s); showing the largest 2 candidate(s).', WP_CLI::$logs, true), 'cleanup-artifacts size sort explains full-inventory ranking');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree(array( 'cleanup-artifacts' ), array( 'dry-run' => true, 'verbose' => true ));
+	datamachine_code_cleanup_assert(in_array('table:1:handle,repo,branch,artifacts,reason_code,reason', WP_CLI::$logs, true), 'cleanup-artifacts verbose output lists skipped worktrees');
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();

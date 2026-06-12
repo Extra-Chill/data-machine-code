@@ -886,6 +886,9 @@ class WorkspaceCommand extends BaseCommand {
 				if ( ! empty($assoc_args['safety-probes']) ) {
 					$artifact_input['safety_probes'] = true;
 				}
+				if ( isset($assoc_args['sort']) && '' !== trim( (string) $assoc_args['sort']) ) {
+					$artifact_input['sort'] = trim( (string) $assoc_args['sort']);
+				}
 				$result = $ability ? $ability->execute($artifact_input) : new \WP_Error('artifact_cleanup_ability_missing', 'Artifact cleanup ability not registered.');
 				$this->render_worktree_artifact_cleanup_result_from_ability($result, $assoc_args);
 				return;
@@ -2580,8 +2583,10 @@ class WorkspaceCommand extends BaseCommand {
 	 *   metadata older than the compact duration (cleanup only, e.g. 7d, 24h).
 	 *   Candidate worktrees without valid `created_at` metadata are skipped.
 	 *
-	 * [--sort=<field>]
-	 * : Sort cleanup candidates by reporting field (cleanup only).
+		 * [--sort=<field>]
+		 * : Sort cleanup candidates by reporting field. For artifact cleanup,
+		 *   `--sort=size` scans the cheap inventory once and returns the largest
+		 *   artifact opportunities without manual pagination.
 	 * ---
 	 * options:
 	 *   - size
@@ -3077,6 +3082,9 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				if ( ! empty($assoc_args['safety-probes']) ) {
 					$input['safety_probes'] = true;
+				}
+				if ( isset($assoc_args['sort']) && '' !== trim( (string) $assoc_args['sort']) ) {
+					$input['sort'] = trim( (string) $assoc_args['sort']);
 				}
 				if ( ! empty($assoc_args['apply-plan']) ) {
 					$input['apply_plan'] = $this->read_worktree_cleanup_plan( (string) $assoc_args['apply-plan']);
@@ -4580,6 +4588,10 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
+		if ( ! $dry_run ) {
+			WP_CLI::log(sprintf('Result: removed %d worktree(s); reclaimed %s; skipped %d.', (int) ( $summary['removed'] ?? count($removed) ), $this->format_bytes($summary['bytes_reclaimed'] ?? 0), (int) ( $summary['skipped'] ?? count($skipped) )));
+		}
+
 		WP_CLI::log('Summary:');
 		$summary_rows = array(
 			array(
@@ -4702,27 +4714,32 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( ! empty($skipped) ) {
 			WP_CLI::log('');
-			WP_CLI::log('Skipped:');
-			$skipped_rows = array_map(
-				fn( $s ) => array(
-					'handle'       => $s['handle'] ?? '',
-					'reason_code'  => $s['reason_code'] ?? '',
-					'reason'       => $verbose ? ( $s['reason'] ?? '' ) : $this->shorten_cleanup_reason( (string) ( $s['reason'] ?? '' )),
-					'age_days'     => $s['age_days'] ?? '',
-					'size'         => $this->format_bytes($s['size_bytes'] ?? null),
-					'artifacts'    => $this->format_bytes($s['artifact_size_bytes'] ?? 0),
-					'repo'         => $s['repo'] ?? '',
-					'branch'       => $s['branch'] ?? '',
-					'path'         => $s['path'] ?? '',
-					'primary_path' => $s['primary_path'] ?? '',
-					'missing'      => implode(',', (array) ( $s['missing_fields'] ?? array() )),
-					'hint'         => $s['hint'] ?? '',
-				),
-				array_slice($skipped, 0, $limit)
-			);
-			$fields       = $verbose ? array( 'handle', 'reason_code', 'reason', 'age_days', 'size', 'artifacts', 'repo', 'branch', 'path', 'primary_path', 'missing', 'hint' ) : array( 'handle', 'reason_code', 'age_days', 'size', 'artifacts', 'reason' );
-			$this->format_items($skipped_rows, $fields, array( 'format' => 'table' ), 'handle');
-			$this->render_cleanup_truncation_hint(count($skipped), $limit, 'skipped rows');
+			if ( $verbose ) {
+				WP_CLI::log('Skipped:');
+				$skipped_rows = array_map(
+					fn( $s ) => array(
+						'handle'       => $s['handle'] ?? '',
+						'reason_code'  => $s['reason_code'] ?? '',
+						'reason'       => $s['reason'] ?? '',
+						'age_days'     => $s['age_days'] ?? '',
+						'size'         => $this->format_bytes($s['size_bytes'] ?? null),
+						'artifacts'    => $this->format_bytes($s['artifact_size_bytes'] ?? 0),
+						'repo'         => $s['repo'] ?? '',
+						'branch'       => $s['branch'] ?? '',
+						'path'         => $s['path'] ?? '',
+						'primary_path' => $s['primary_path'] ?? '',
+						'missing'      => implode(',', (array) ( $s['missing_fields'] ?? array() )),
+						'hint'         => $s['hint'] ?? '',
+					),
+					array_slice($skipped, 0, $limit)
+				);
+				$this->format_items($skipped_rows, array( 'handle', 'reason_code', 'reason', 'age_days', 'size', 'artifacts', 'repo', 'branch', 'path', 'primary_path', 'missing', 'hint' ), array( 'format' => 'table' ), 'handle');
+				$this->render_cleanup_truncation_hint(count($skipped), $limit, 'skipped rows');
+			} else {
+				WP_CLI::log('Skipped summary:');
+				$this->format_items($this->summarize_cleanup_skipped_rows($skipped), array( 'reason_code', 'count', 'examples' ), array( 'format' => 'table' ), 'reason_code');
+				WP_CLI::log('Re-run with --verbose to list every skipped row or --only=<reason_code> to inspect one bucket.');
+			}
 		}
 
 		WP_CLI::log('');
@@ -5455,6 +5472,8 @@ class WorkspaceCommand extends BaseCommand {
 		$skipped    = (array) ( $result['skipped'] ?? array() );
 		$summary    = (array) ( $result['summary'] ?? array() );
 		$dry_run    = ! empty($result['dry_run']);
+		$verbose    = ! empty($assoc_args['verbose']);
+		$pagination = $result['pagination'] ?? ( $summary['pagination'] ?? null );
 
 		if ( empty($candidates) && empty($removed) && empty($skipped) ) {
 			WP_CLI::log('No worktree artifacts found.');
@@ -5488,7 +5507,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( ! empty($candidates) ) {
 			WP_CLI::log('');
-			WP_CLI::log($dry_run ? 'Would remove artifacts:' : 'Artifact candidates:');
+			WP_CLI::log($dry_run && is_array($pagination) && 'size' === (string) ( $pagination['sort'] ?? '' ) ? 'Largest artifact opportunities:' : ( $dry_run ? 'Would remove artifacts:' : 'Artifact candidates:' ));
 			$this->format_items($this->flatten_artifact_cleanup_rows($candidates), array( 'handle', 'repo', 'branch', 'artifact', 'size', 'path' ), array( 'format' => 'table' ), 'handle');
 		}
 
@@ -5500,24 +5519,29 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( ! empty($skipped) ) {
 			WP_CLI::log('');
-			WP_CLI::log('Skipped worktrees:');
-			$rows = array_map(
-				fn( $row ) => array(
-					'handle'      => $row['handle'] ?? '',
-					'repo'        => $row['repo'] ?? '',
-					'branch'      => $row['branch'] ?? '',
-					'artifacts'   => count( (array) ( $row['artifacts'] ?? array() )),
-					'reason_code' => $row['reason_code'] ?? '',
-					'reason'      => $row['reason'] ?? '',
-				),
-				$skipped
-			);
-			$this->format_items($rows, array( 'handle', 'repo', 'branch', 'artifacts', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
+			if ( $verbose ) {
+				WP_CLI::log('Skipped worktrees:');
+				$rows = array_map(
+					fn( $row ) => array(
+						'handle'      => $row['handle'] ?? '',
+						'repo'        => $row['repo'] ?? '',
+						'branch'      => $row['branch'] ?? '',
+						'artifacts'   => count( (array) ( $row['artifacts'] ?? array() )),
+						'reason_code' => $row['reason_code'] ?? '',
+						'reason'      => $row['reason'] ?? '',
+					),
+					$skipped
+				);
+				$this->format_items($rows, array( 'handle', 'repo', 'branch', 'artifacts', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
+			} else {
+				WP_CLI::log('Skipped worktrees summary:');
+				$this->format_items($this->summarize_cleanup_skipped_rows($skipped), array( 'reason_code', 'count', 'examples' ), array( 'format' => 'table' ), 'reason_code');
+				WP_CLI::log('Re-run with --verbose to list every skipped worktree.');
+			}
 		}
 
 		WP_CLI::log('');
 
-		$pagination = $result['pagination'] ?? ( $summary['pagination'] ?? null );
 		if ( is_array($pagination) ) {
 			$mode_label = (string) ( $pagination['mode'] ?? 'bounded_inventory' );
 			WP_CLI::log(
@@ -5534,6 +5558,8 @@ class WorkspaceCommand extends BaseCommand {
 			);
 			if ( ! empty($pagination['partial']) && isset($pagination['next_offset']) ) {
 				WP_CLI::log(sprintf('Partial scan — re-run with --offset=%d to continue, or pass --exhaustive for a full audit.', (int) $pagination['next_offset']));
+			} elseif ( 'size' === (string) ( $pagination['sort'] ?? '' ) ) {
+				WP_CLI::log(sprintf('Ranked by size across %d scanned worktree(s); showing the largest %d candidate(s).', (int) ( $pagination['scanned'] ?? 0 ), count($candidates)));
 			}
 			WP_CLI::log('');
 		}
@@ -5595,6 +5621,11 @@ class WorkspaceCommand extends BaseCommand {
 		$continuation = (array) ( $result['continuation'] ?? array() );
 		$dry_run      = ! empty($result['dry_run']);
 		$job_backed   = ! empty($result['job_backed']);
+		$verbose      = ! empty($assoc_args['verbose']);
+
+		if ( ! $dry_run ) {
+			WP_CLI::log(sprintf('Result: removed %d worktree(s); reclaimed %s; skipped %d.', (int) ( $summary['removed'] ?? count($removed) ), $this->format_bytes($summary['bytes_reclaimed'] ?? 0), (int) ( $summary['skipped'] ?? count($skipped) )));
+		}
 
 		WP_CLI::log('Bounded cleanup apply summary:');
 		$summary_rows = array(
@@ -5666,16 +5697,22 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( ! empty($skipped) ) {
 			WP_CLI::log('');
-			WP_CLI::log('Skipped:');
-			$rows = array_map(
-				fn( $row ) => array(
-					'handle'      => $row['handle'] ?? '',
-					'reason_code' => $row['reason_code'] ?? '',
-					'reason'      => $this->shorten_cleanup_reason( (string) ( $row['reason'] ?? '' )),
-				),
-				$skipped
-			);
-			$this->format_items($rows, array( 'handle', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
+			if ( $verbose ) {
+				WP_CLI::log('Skipped:');
+				$rows = array_map(
+					fn( $row ) => array(
+						'handle'      => $row['handle'] ?? '',
+						'reason_code' => $row['reason_code'] ?? '',
+						'reason'      => $this->shorten_cleanup_reason( (string) ( $row['reason'] ?? '' )),
+					),
+					$skipped
+				);
+				$this->format_items($rows, array( 'handle', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
+			} else {
+				WP_CLI::log('Skipped summary:');
+				$this->format_items($this->summarize_cleanup_skipped_rows($skipped), array( 'reason_code', 'count', 'examples' ), array( 'format' => 'table' ), 'reason_code');
+				WP_CLI::log('Re-run with --verbose to list every skipped row.');
+			}
 		}
 
 		WP_CLI::log('');
@@ -5939,6 +5976,43 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 		WP_CLI::log(sprintf('Showing %d of %d %s. Re-run with --verbose for all rows or --only=<reason_code> to filter.', $limit, $total, $label));
+	}
+
+	/**
+	 * Summarize skipped cleanup rows by reason with representative handles.
+	 *
+	 * @param  array<int,array<string,mixed>> $skipped Skipped rows.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function summarize_cleanup_skipped_rows( array $skipped ): array {
+		$summary = array();
+		foreach ( $skipped as $row ) {
+			$reason_code = (string) ( $row['reason_code'] ?? 'unknown' );
+			if ( ! isset($summary[ $reason_code ]) ) {
+				$summary[ $reason_code ] = array(
+					'reason_code' => $reason_code,
+					'count'       => 0,
+					'examples'    => array(),
+				);
+			}
+			++$summary[ $reason_code ]['count'];
+			$handle = (string) ( $row['handle'] ?? '' );
+			if ( '' !== $handle && count($summary[ $reason_code ]['examples']) < 3 ) {
+				$summary[ $reason_code ]['examples'][] = $handle;
+			}
+		}
+
+		ksort($summary);
+		return array_values(
+			array_map(
+				fn( $row ) => array(
+					'reason_code' => $row['reason_code'],
+					'count'       => $row['count'],
+					'examples'    => implode(', ', $row['examples']),
+				),
+				$summary
+			)
+		);
 	}
 
 	/**
