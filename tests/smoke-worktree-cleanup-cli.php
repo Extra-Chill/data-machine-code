@@ -626,8 +626,8 @@ namespace {
         }
     }
 
-    class FakeListAbility
-    {
+	class FakeListAbility
+	{
         public function execute( array $input ): array  // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
         {
             return array(
@@ -673,12 +673,57 @@ namespace {
             ),
             ),
             );
-        }
-    }
+		}
+	}
 
-    class FakeCleanupRunAbility
-    {
-        public array $last_input = array();
+	class FakeWorkspaceListAbility
+	{
+		public function execute( array $input ): array  // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+		{
+			return array(
+			'success' => true,
+			'path'    => '/workspace',
+			'repos'   => array(
+			array(
+			'name'        => 'repo',
+			'repo'        => 'repo',
+			'branch'      => 'main',
+			'remote'      => 'https://example.com/repo.git',
+			'git'         => true,
+			'is_worktree' => false,
+			'path'        => '/workspace/repo',
+			),
+			array(
+			'name'        => 'repo@feature-one',
+			'repo'        => 'repo',
+			'branch'      => 'feature/one',
+			'git'         => true,
+			'is_worktree' => true,
+			'path'        => '/workspace/repo@feature-one',
+			),
+			array(
+			'name'        => 'docs@cleanup',
+			'repo'        => 'docs',
+			'branch'      => 'cleanup',
+			'git'         => false,
+			'is_worktree' => true,
+			'path'        => '/workspace/docs@cleanup',
+			),
+			array(
+			'name'       => 'context-docs',
+			'repo'       => 'docs',
+			'git'        => true,
+			'is_context' => true,
+			'path'       => '/workspace/docs',
+			),
+			),
+			);
+		}
+	}
+
+	class FakeCleanupRunAbility
+	{
+		public array $last_input = array();
 
         public function execute( array $input ): array
         {
@@ -691,11 +736,31 @@ namespace {
             'mode'      => (string) ( $input['mode'] ?? '' ),
             'task_type' => 'workspace_retention_cleanup',
             );
-        }
-    }
+		}
+	}
 
-    class FakeCleanupStatusAbility
-    {
+	class FakeCleanupPlanAbility
+	{
+		public array $last_input = array();
+
+		public function execute( array $input ): array
+		{
+			$this->last_input = $input;
+			return array(
+			'success' => true,
+			'run_id'  => 'cleanup-run-20260612000000-test',
+			'plan_id' => 'cleanup-plan-test',
+			'inputs'  => $input,
+			'summary' => array(
+			'total_rows'       => 2,
+			'total_size_bytes' => 4096,
+			),
+			);
+		}
+	}
+
+	class FakeCleanupStatusAbility
+	{
         public array $last_input = array();
 
         public function execute( array $input ): array
@@ -887,17 +952,21 @@ namespace {
     $active_merged_ability = new FakeActiveNoSignalAbility('merged-apply');
     $active_remote_clean_ability = new FakeActiveNoSignalAbility('remote-clean-apply');
     $reconcile_metadata_ability = new FakeReconcileMetadataAbility();
-    $bounded_apply_ability = new FakeBoundedCleanupEligibleApplyAbility();
-    $prune_ability = new FakePruneAbility();
-    $list_ability = new FakeListAbility();
-    $cleanup_run_ability = new FakeCleanupRunAbility();
-    $cleanup_status_ability = new FakeCleanupStatusAbility();
+	$bounded_apply_ability = new FakeBoundedCleanupEligibleApplyAbility();
+	$prune_ability = new FakePruneAbility();
+	$list_ability = new FakeListAbility();
+	$workspace_list_ability = new FakeWorkspaceListAbility();
+	$cleanup_run_ability = new FakeCleanupRunAbility();
+	$cleanup_plan_ability = new FakeCleanupPlanAbility();
+	$cleanup_status_ability = new FakeCleanupStatusAbility();
     $hygiene_ability = new FakeHygieneAbility();
     $get_jobs_ability = new FakeGetJobsAbility();
     $retry_job_ability = new FakeRetryJobAbility();
     $fail_job_ability = new FakeFailJobAbility();
-    $GLOBALS['__abilities'] = array(
-    'datamachine-code/workspace-cleanup-run'                 => $cleanup_run_ability,
+	$GLOBALS['__abilities'] = array(
+	'datamachine-code/workspace-list'                        => $workspace_list_ability,
+	'datamachine-code/workspace-cleanup-plan'                => $cleanup_plan_ability,
+	'datamachine-code/workspace-cleanup-run'                 => $cleanup_run_ability,
     'datamachine-code/workspace-cleanup-apply'               => $cleanup_status_ability,
     'datamachine-code/workspace-cleanup-status'              => $cleanup_status_ability,
     'datamachine-code/workspace-cleanup-resume'              => $cleanup_status_ability,
@@ -943,14 +1012,51 @@ namespace {
     datamachine_code_cleanup_assert(str_contains($doc_comment, 'workspace cleanup plan --mode=retention'), 'worktree examples include DB-backed cleanup plan');
     datamachine_code_cleanup_assert(str_contains($doc_comment, 'workspace cleanup run --mode=retention'), 'worktree examples include task-backed cleanup run');
     datamachine_code_cleanup_assert(! str_contains($doc_comment, '> cleanup-plan.json'), 'worktree examples do not normalize cleanup-plan file redirection');
-    datamachine_code_cleanup_assert(! str_contains($doc_comment, '> artifact-plan.json'), 'worktree examples do not normalize artifact-plan file redirection');
-    datamachine_code_cleanup_assert(! str_contains($doc_comment, '> emergency-plan.json'), 'worktree examples do not normalize emergency-plan file redirection');
-    datamachine_code_cleanup_assert(! str_contains($doc_comment, '> reconcile-plan.json'), 'worktree examples do not normalize reconcile-plan file redirection');
+	datamachine_code_cleanup_assert(! str_contains($doc_comment, '> artifact-plan.json'), 'worktree examples do not normalize artifact-plan file redirection');
+	datamachine_code_cleanup_assert(! str_contains($doc_comment, '> emergency-plan.json'), 'worktree examples do not normalize emergency-plan file redirection');
+	datamachine_code_cleanup_assert(! str_contains($doc_comment, '> reconcile-plan.json'), 'worktree examples do not normalize reconcile-plan file redirection');
 
-    echo "\n[0b] task-backed workspace cleanup run/status/control output\n";
-    WP_CLI::$logs      = array();
-    WP_CLI::$successes = array();
-    $command->cleanup(array( 'run' ), array( 'mode' => 'retention', 'format' => 'json' ));
+	echo "\n[0a2] workspace list compact triage output\n";
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->list_repos(array(), array( 'summary' => true ));
+	datamachine_code_cleanup_assert(in_array('Workspace: /workspace', WP_CLI::$logs, true), 'workspace list --summary prints workspace path');
+	datamachine_code_cleanup_assert(in_array('table:5:metric,count', WP_CLI::$logs, true), 'workspace list --summary prints compact metric counts');
+	datamachine_code_cleanup_assert(in_array('table:2:repo,primary,worktree,context,total', WP_CLI::$logs, true), 'workspace list --summary groups counts by repo');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->list_repos(array(), array( 'summary' => true, 'format' => 'json' ));
+	$list_summary_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+	datamachine_code_cleanup_assert(4 === (int) ( $list_summary_json['total'] ?? 0 ), 'workspace list --summary JSON keeps total count');
+	datamachine_code_cleanup_assert(2 === (int) ( $list_summary_json['worktree'] ?? 0 ), 'workspace list --summary JSON counts worktrees');
+	datamachine_code_cleanup_assert(1 === (int) ( $list_summary_json['non_git'] ?? 0 ), 'workspace list --summary JSON counts non-git rows');
+
+	echo "\n[0b] task-backed workspace cleanup run/status/control output\n";
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup(array( 'plan' ), array( 'mode' => 'retention' ));
+	datamachine_code_cleanup_assert('retention' === ( $cleanup_plan_ability->last_input['mode'] ?? '' ), 'cleanup plan receives retention mode');
+	datamachine_code_cleanup_assert(false === ( $cleanup_plan_ability->last_input['include_artifacts'] ?? true ), 'retention cleanup plan skips exhaustive artifact scan by default');
+	datamachine_code_cleanup_assert(true === ( $cleanup_plan_ability->last_input['include_worktrees'] ?? false ), 'retention cleanup plan keeps inventory worktree planning enabled');
+	datamachine_code_cleanup_assert(in_array('Planning cleanup (retention; worktree inventory only)...', WP_CLI::$logs, true), 'human cleanup plan reports bounded scan profile before planning');
+	datamachine_code_cleanup_assert(in_array('Artifacts: skipped for bounded retention planning; run `wp datamachine-code workspace cleanup plan --mode=artifacts` when you want artifact rows.', WP_CLI::$logs, true), 'human cleanup plan shows explicit artifact follow-up command');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup(array( 'plan' ), array( 'mode' => 'retention', 'include-artifacts' => true, 'format' => 'json' ));
+	datamachine_code_cleanup_assert(true === ( $cleanup_plan_ability->last_input['include_artifacts'] ?? false ), 'retention cleanup plan can explicitly include artifacts');
+	datamachine_code_cleanup_assert('{' === substr(WP_CLI::$logs[0] ?? '', 0, 1), 'json cleanup plan output is not prefixed by progress text');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup(array( 'plan' ), array( 'mode' => 'artifacts', 'format' => 'json' ));
+	datamachine_code_cleanup_assert(true === ( $cleanup_plan_ability->last_input['include_artifacts'] ?? false ), 'artifact cleanup plan includes artifact scan');
+	datamachine_code_cleanup_assert(false === ( $cleanup_plan_ability->last_input['include_worktrees'] ?? true ), 'artifact cleanup plan skips worktree removal rows');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup(array( 'run' ), array( 'mode' => 'retention', 'format' => 'json' ));
     $run_json = json_decode(WP_CLI::$logs[0] ?? '', true);
     datamachine_code_cleanup_assert('jobs_queued' === ( $run_json['state'] ?? '' ), 'cleanup run queues a system task');
     datamachine_code_cleanup_assert('cleanup-run-123' === ( $run_json['run_id'] ?? '' ), 'cleanup run returns stable run id');
