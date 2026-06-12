@@ -51,6 +51,7 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 			'artifact_cleanup'       => $aggregate['artifact_cleanup'],
 			'cleanup_items'          => $aggregate['cleanup_items'],
 			'remaining_work_summary' => CleanupRemainingWorkSummary::from_job_aggregate($aggregate),
+			'drain'                  => $this->cleanup_run_drain_summary($job_id, $state, $children, $aggregate),
 			'children'               => $children_for_output,
 		);
 
@@ -228,6 +229,48 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 			'pending_truncated'       => count($pending) > $limit,
 			'processing_truncated'    => count($processing) > $limit,
 			'diagnostic_job_id_lists' => 'Re-run status with --verbose or use cleanup evidence for full child job IDs.',
+		);
+	}
+
+	/**
+	 * Build exact Data Machine drain and verification commands for a cleanup run.
+	 *
+	 * @param  int    $job_id    Parent cleanup job ID.
+	 * @param  string $state     Computed cleanup state.
+	 * @param  array  $children  Full child job aggregate.
+	 * @param  array  $aggregate Full cleanup aggregate.
+	 * @return array<string,mixed>
+	 */
+	private function cleanup_run_drain_summary( int $job_id, string $state, array $children, array $aggregate ): array {
+		$active_child_ids = array_values(
+			array_unique(
+				array_filter(
+					array_map(
+						'intval',
+						array_merge(
+							(array) ( $children['pending_job_ids'] ?? array() ),
+							(array) ( $children['processing_job_ids'] ?? array() )
+						)
+					)
+				)
+			)
+		);
+		$run_id        = $this->cleanup_run_id($job_id);
+		$cleanup_items = (array) ( $aggregate['cleanup_items'] ?? array() );
+		$commands      = array(
+			'parent' => sprintf('studio wp datamachine drain --job-id=%d', $job_id),
+			'verify' => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
+		);
+		if ( array() !== $active_child_ids ) {
+			$commands['active_children'] = sprintf('studio wp datamachine drain --job-id=%s', implode(',', $active_child_ids));
+		}
+
+		return array(
+			'needed'               => in_array($state, array( 'running', 'children_processing' ), true),
+			'commands'             => $commands,
+			'active_child_job_ids' => $active_child_ids,
+			'bytes_reclaimed'      => (int) ( $cleanup_items['bytes_reclaimed'] ?? 0 ),
+			'freed_human'          => (string) ( $cleanup_items['freed_human'] ?? $this->format_bytes(0) ),
 		);
 	}
 
