@@ -2494,7 +2494,10 @@ class WorkspaceAbilities {
 	 */
 	public static function showRepo( array $input ): array|\WP_Error {
 		if ( RemoteWorkspaceBackend::should_handle() ) {
-			return ( new RemoteWorkspaceBackend() )->show($input['name'] ?? '');
+			$result = ( new RemoteWorkspaceBackend() )->show($input['name'] ?? '');
+			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
+				return $result;
+			}
 		}
 
 		$workspace = new Workspace();
@@ -3398,16 +3401,6 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function worktreeAdd( array $input ): array|\WP_Error {
-		if ( RemoteWorkspaceBackend::should_handle() ) {
-			$result = ( new RemoteWorkspaceBackend() )->worktree_add(
-				$input['repo'] ?? '',
-				$input['branch'] ?? '',
-				$input['from'] ?? null
-			);
-			return self::decorate_remote_workspace_result('worktree_add', $result);
-		}
-
-		$workspace = new Workspace();
 		// Default inject_context=true; only false when explicitly provided.
 		$inject_context = array_key_exists('inject_context', $input) ? (bool) $input['inject_context'] : true;
 		// Default bootstrap=true; only false when explicitly provided.
@@ -3424,6 +3417,19 @@ class WorkspaceAbilities {
 		if ( isset($input['task_ref']) && '' !== trim( (string) $input['task_ref']) ) {
 			$task['task_ref'] = (string) $input['task_ref'];
 		}
+
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			$result = ( new RemoteWorkspaceBackend() )->worktree_add(
+				$input['repo'] ?? '',
+				$input['branch'] ?? '',
+				$input['from'] ?? null
+			);
+			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
+				return self::decorate_remote_workspace_result('worktree_add', $result);
+			}
+		}
+
+		$workspace = new Workspace();
 		return $workspace->worktree_add(
 			$input['repo'] ?? '',
 			$input['branch'] ?? '',
@@ -3435,6 +3441,13 @@ class WorkspaceAbilities {
 			$force,
 			$task
 		);
+	}
+
+	/**
+	 * Whether a remote-backend lookup miss should be retried against local workspace discovery.
+	 */
+	private static function shouldFallbackToLocalWorkspace( mixed $result ): bool {
+		return is_wp_error($result) && 'remote_workspace_repo_not_found' === $result->get_error_code();
 	}
 
 	/**
