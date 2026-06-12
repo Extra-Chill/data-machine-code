@@ -180,6 +180,12 @@ namespace {
     $assert('worktree add returns DMC handle', ! is_wp_error($worktree) && 'example@fix-example' === $worktree['handle']);
     $assert('worktree add backend result omits model-facing guidance', ! is_wp_error($worktree) && ! array_key_exists('next_required_tool', $worktree) && ! array_key_exists('next_required_args', $worktree));
 
+    $url_worktree = $backend->worktree_add('https://github.com/chubes4/example.git', 'fix/url-argument');
+    $assert('worktree add rejects URL repo arguments in remote backend', is_wp_error($url_worktree) && 'unsupported_remote_workspace_repo_argument' === $url_worktree->get_error_code());
+
+    $path_worktree = $backend->worktree_add('/Users/chubes/Developer/example', 'fix/path-argument');
+    $assert('worktree add rejects path repo arguments in remote backend', is_wp_error($path_worktree) && 'unsupported_remote_workspace_repo_argument' === $path_worktree->get_error_code());
+
     update_option(
         'datamachine_code_workspace_aliases',
         array(

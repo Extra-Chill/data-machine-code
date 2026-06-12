@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.102] - 2026-06-12
+
+### Changed
+- Add workspace remote backend hygiene diagnostics
+
+## [0.47.101] - 2026-06-12
+
+### Fixed
+- Fix workspace worktree repo resolution
+
 ## [0.47.100] - 2026-06-12
 
 ### Fixed

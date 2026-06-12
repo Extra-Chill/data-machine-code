@@ -3444,10 +3444,10 @@ class WorkspaceAbilities {
 	}
 
 	/**
-	 * Whether a remote-backend lookup miss should be retried against local workspace discovery.
+	 * Whether a remote-backend miss should be retried against local workspace discovery.
 	 */
 	private static function shouldFallbackToLocalWorkspace( mixed $result ): bool {
-		return is_wp_error($result) && 'remote_workspace_repo_not_found' === $result->get_error_code();
+		return is_wp_error($result) && in_array($result->get_error_code(), array( 'remote_workspace_repo_not_found', 'unsupported_remote_workspace_repo_argument' ), true);
 	}
 
 	/**

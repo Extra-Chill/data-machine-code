@@ -167,6 +167,7 @@ namespace {
 			'rebase_base'          => true,
 			'force'                => true,
 			'task_url'             => 'https://github.com/Extra-Chill/data-machine-code/issues/635',
+			'task_ref'             => 'Extra-Chill/data-machine-code#635',
 		)
 	);
 
@@ -174,6 +175,7 @@ namespace {
 	$assert('local worktree add fallback attempted', 'wpcom-codebox' === ( \DataMachineCode\Workspace\Workspace::$worktree_input['repo'] ?? '' ));
 	$assert('worktree add preserves base ref', 'origin/main' === ( \DataMachineCode\Workspace\Workspace::$worktree_input['from'] ?? '' ));
 	$assert('worktree add preserves local options', false === ( \DataMachineCode\Workspace\Workspace::$worktree_input['inject_context'] ?? null ) && true === ( \DataMachineCode\Workspace\Workspace::$worktree_input['allow_stale'] ?? null ));
+	$assert('worktree add preserves task metadata', 'Extra-Chill/data-machine-code#635' === ( \DataMachineCode\Workspace\Workspace::$worktree_input['task']['task_ref'] ?? '' ));
 	$assert('worktree add returns local worktree result', is_array($worktree) && 'wpcom-codebox@fix-listed-primary-resolution' === ( $worktree['handle'] ?? '' ));
 
 	if ( $failures ) {
