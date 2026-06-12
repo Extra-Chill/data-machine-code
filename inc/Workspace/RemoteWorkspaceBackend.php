@@ -149,7 +149,11 @@ class RemoteWorkspaceBackend {
 		$handle = $repo_name . '@' . $this->branch_slug($branch);
 		$state  = $this->state();
 		if ( ! isset($state['worktrees'][ $handle ]) ) {
-			return new \WP_Error('remote_workspace_worktree_not_found', sprintf('Remote workspace worktree "%s" is not registered.', $handle), array( 'status' => 404 ));
+			$stored_handle = $this->find_worktree_handle_by_repo_branch($state, $repo_name, $branch);
+			if ( null === $stored_handle ) {
+				return new \WP_Error('remote_workspace_worktree_not_found', sprintf('Remote workspace worktree "%s" is not registered.', $handle), array( 'status' => 404 ));
+			}
+			$handle = $stored_handle;
 		}
 
 		unset($state['worktrees'][ $handle ]);
@@ -161,6 +165,37 @@ class RemoteWorkspaceBackend {
 			'handle'  => $handle,
 			'message' => sprintf('Remote workspace worktree "%s" removed from runtime state.', $handle),
 		);
+	}
+
+	/**
+	 * Find the stored worktree handle for a repo/branch pair.
+	 *
+	 * Remote worktree handles can outlive branch changes when an existing
+	 * worktree is reused for a fresh branch. Remove by the current branch should
+	 * still clear that registered row instead of requiring operators to know the
+	 * stale handle slug.
+	 *
+	 * @param  array<string,mixed> $state     Remote workspace state.
+	 * @param  string              $repo_name Workspace repo name.
+	 * @param  string              $branch    Current branch name.
+	 * @return string|null Stored handle, if exactly matched.
+	 */
+	private function find_worktree_handle_by_repo_branch( array $state, string $repo_name, string $branch ): ?string {
+		foreach ( (array) ( $state['worktrees'] ?? array() ) as $stored_handle => $worktree ) {
+			if ( ! is_array($worktree) ) {
+				continue;
+			}
+			if ( $repo_name !== (string) ( $worktree['repo_name'] ?? '' ) ) {
+				continue;
+			}
+			if ( $branch !== (string) ( $worktree['branch'] ?? '' ) ) {
+				continue;
+			}
+
+			return (string) $stored_handle;
+		}
+
+		return null;
 	}
 
 	/**

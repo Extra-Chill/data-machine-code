@@ -262,13 +262,28 @@ namespace {
     $second_worktree = $backend->worktree_add('example', 'fix/remove-me');
     $assert('second worktree add succeeds', ! is_wp_error($second_worktree) && 'example@fix-remove-me' === $second_worktree['handle']);
 
-    $remove = $backend->worktree_remove('example', 'fix/remove-me');
-    $assert('worktree remove clears remote runtime state', ! is_wp_error($remove) && 'example@fix-remove-me' === $remove['handle']);
-    $removed_status = $backend->git_status('example@fix-remove-me');
-    $assert('removed worktree no longer resolves', is_wp_error($removed_status) && 'remote_workspace_repo_not_found' === $removed_status->get_error_code());
+	$remove = $backend->worktree_remove('example', 'fix/remove-me');
+	$assert('worktree remove clears remote runtime state', ! is_wp_error($remove) && 'example@fix-remove-me' === $remove['handle']);
+	$removed_status = $backend->git_status('example@fix-remove-me');
+	$assert('removed worktree no longer resolves', is_wp_error($removed_status) && 'remote_workspace_repo_not_found' === $removed_status->get_error_code());
 
-    $state = $GLOBALS['dmc_remote_workspace_options']['datamachine_code_remote_workspace_state'];
-    $state['worktrees']['missing@stale'] = array(
+	$state = $GLOBALS['dmc_remote_workspace_options']['datamachine_code_remote_workspace_state'];
+	$state['worktrees']['example@old-reused-handle'] = array(
+		'repo_name'       => 'example',
+		'repo'            => 'chubes4/example',
+		'branch'          => 'fix/current-branch',
+		'pending_files'   => array(),
+		'changed_files'   => array(),
+		'last_commit_sha' => '',
+	);
+	$GLOBALS['dmc_remote_workspace_options']['datamachine_code_remote_workspace_state'] = $state;
+	$reused_remove = $backend->worktree_remove('example', 'fix/current-branch');
+	$assert('worktree remove finds reused handle by stored branch', ! is_wp_error($reused_remove) && 'example@old-reused-handle' === $reused_remove['handle']);
+	$state = $GLOBALS['dmc_remote_workspace_options']['datamachine_code_remote_workspace_state'];
+	$assert('worktree remove clears reused handle row', ! isset($state['worktrees']['example@old-reused-handle']));
+
+	$state = $GLOBALS['dmc_remote_workspace_options']['datamachine_code_remote_workspace_state'];
+	$state['worktrees']['missing@stale'] = array(
         'repo_name' => 'missing',
         'repo'      => 'chubes4/missing',
         'branch'    => 'stale',
