@@ -305,10 +305,10 @@ trait WorkspaceArtifactCleanup {
 		$skipped    = array();
 
 		foreach ( $slice as $wt ) {
-			$handle          = (string) ( $wt['handle'] ?? '?' );
-			$repo            = (string) ( $wt['repo'] ?? '' );
-			$wt_path         = (string) ( $wt['path'] ?? '' );
-			$resolved_branch = '' !== $wt_path ? $this->resolve_worktree_branch_from_head_file($wt_path) : null;
+			$handle                = (string) ( $wt['handle'] ?? '?' );
+			$repo                  = (string) ( $wt['repo'] ?? '' );
+			$wt_path               = (string) ( $wt['path'] ?? '' );
+			$resolved_branch       = '' !== $wt_path ? $this->resolve_worktree_branch_from_head_file($wt_path) : null;
 			$stale_marker_recovery = null;
 			if ( $safety_probes ) {
 				$branch = (string) ( $resolved_branch ?? $wt['branch'] ?? $wt['branch_slug'] ?? '' );
