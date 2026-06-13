@@ -1387,7 +1387,7 @@ class WorkspaceCommand extends BaseCommand {
 		}
 		WP_CLI::log('');
 		WP_CLI::log($label);
-		$rows   = array();
+		$rows = array();
 		foreach ( $reasons as $reason => $bucket ) {
 			$bucket   = (array) $bucket;
 			$examples = array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : (string) $row, (array) ( $bucket['examples'] ?? array() ));
@@ -1442,7 +1442,7 @@ class WorkspaceCommand extends BaseCommand {
 			'build_outputs'        => 'build outputs',
 			'caches'               => 'caches',
 		);
-		$rows = array();
+		$rows   = array();
 		foreach ( $labels as $category => $label ) {
 			$rows[] = array(
 				'category' => $label,
