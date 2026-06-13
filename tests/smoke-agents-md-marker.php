@@ -45,9 +45,17 @@ $stale_marker               = 'datamachine agent compose AGENTS.md';
 $expected_memory_agent_note = 'On multi-agent installs, pass `--agent=<slug>` to memory commands when auto-resolution is ambiguous.';
 $expected_agent_cli         = 'datamachine agent list|create|access|token|installed|install|diff';
 $stale_agent_cli            = 'datamachine agents list|create|access|tokens';
-$expected_workspace_cli     = 'datamachine-code workspace adopt|clone|list|show|path|hygiene|remove|worktree';
+// Workspace / GitHub / GitSync subcommand lists are now generated from the
+// command classes via CommandIntrospector (see #671) instead of hardcoded
+// pipe-lists, so the source asserts on the generation wiring + interpolation
+// tokens rather than a frozen string. The actual produced surface is exercised
+// against the real command classes further down.
+$expected_workspace_token   = 'datamachine-code workspace {$workspace_subcmds}';
+$expected_github_token       = 'datamachine-code github {$github_subcmds}';
+$expected_gitsync_token      = 'datamachine-code gitsync {$gitsync_subcmds}';
+$expected_introspect_wiring  = 'CommandIntrospector::pipe_list(';
+$stale_hardcoded_workspace   = 'workspace adopt|clone|list|show|path|hygiene|remove|worktree';
 $expected_worktree_cli      = 'datamachine-code workspace worktree add|list|remove|prune|cleanup|cleanup-artifacts|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible';
-$expected_gitsync_cli       = 'gitsync bind|list|status|pull|submit|push|policy|unbind';
 $expected_inventory_time    = 'Generated {$generated_at} from cloned repos';
 $expected_inventory_truth   = 'workspace list` is the source of truth';
 $expected_inventory_refresh = 'datamachine memory compose AGENTS.md{$agent_suffix}';
@@ -88,8 +96,16 @@ $assert(
     ! str_contains($source, $stale_agent_cli)
 );
 $assert(
-    'workspace lifecycle guidance includes current command family',
-    str_contains($source, $expected_workspace_cli)
+    'workspace guidance is generated from the command class, not hardcoded',
+    str_contains($source, $expected_workspace_token) && str_contains($source, $expected_introspect_wiring)
+);
+$assert(
+    'stale hardcoded workspace pipe-list is gone (#671)',
+    ! str_contains($source, $stale_hardcoded_workspace)
+);
+$assert(
+    'GitHub guidance is generated from the command class',
+    str_contains($source, $expected_github_token)
 );
 $assert(
     'worktree guidance includes current maintenance surfaces',
@@ -112,8 +128,8 @@ $assert(
     str_contains($source, $expected_abilities_note) && ! str_contains($source, $stale_abilities_cli)
 );
 $assert(
-    'GitSync guidance distinguishes compact sync family',
-    str_contains($source, $expected_gitsync_cli)
+    'GitSync guidance is generated from the command class',
+    str_contains($source, $expected_gitsync_token)
 );
 $assert(
     'AGENTS.md sections declare Data Machine Code ownership',
@@ -142,6 +158,56 @@ $assert(
 $assert(
     'plugin entrypoint no longer contains AGENTS.md heredoc sections',
     ! str_contains($entrypoint, $expected_agent_cli)
+);
+
+/*
+ * Exercise the reflection introspector against the real command classes in a
+ * non-WP-CLI context. This proves the workspace file-I/O surface that #671 was
+ * about (read/write/grep/edit/git/patch/ls) is actually produced, and that the
+ * helper runs without the WP_CLI runner being present.
+ */
+echo "\nCommandIntrospector against real command classes:\n";
+
+if (! defined('ABSPATH') ) {
+    define('ABSPATH', __DIR__ . '/');
+}
+if (! class_exists('WP_CLI') ) {
+    eval('class WP_CLI {}');
+}
+if (! class_exists('DataMachine\\Cli\\BaseCommand') ) {
+    eval('namespace DataMachine\\Cli; class BaseCommand {}');
+}
+
+require_once __DIR__ . '/../inc/Runtime/CommandIntrospector.php';
+require_once __DIR__ . '/../inc/Cli/Commands/WorkspaceCommand.php';
+require_once __DIR__ . '/../inc/Cli/Commands/GitHubCommand.php';
+require_once __DIR__ . '/../inc/Cli/Commands/GitSyncCommand.php';
+
+$workspace_subs = \DataMachineCode\Runtime\CommandIntrospector::subcommand_names('\\DataMachineCode\\Cli\\Commands\\WorkspaceCommand');
+$github_subs    = \DataMachineCode\Runtime\CommandIntrospector::subcommand_names('\\DataMachineCode\\Cli\\Commands\\GitHubCommand');
+$gitsync_subs   = \DataMachineCode\Runtime\CommandIntrospector::subcommand_names('\\DataMachineCode\\Cli\\Commands\\GitSyncCommand');
+
+$required_file_io = array( 'read', 'write', 'grep', 'edit', 'git', 'patch', 'ls' );
+$missing_file_io  = array_values(array_diff($required_file_io, $workspace_subs));
+
+$assert(
+    'workspace reflection surfaces the file-I/O subcommands omitted by #671',
+    empty($missing_file_io)
+);
+if (! empty($missing_file_io) ) {
+    echo '    missing: ' . implode(', ', $missing_file_io) . "\n";
+}
+$assert(
+    'workspace reflection still surfaces lifecycle subcommands',
+    empty(array_diff(array( 'clone', 'adopt', 'worktree', 'hygiene' ), $workspace_subs))
+);
+$assert(
+    'github reflection surfaces issue + PR subcommands',
+    empty(array_diff(array( 'issues', 'pulls', 'review-flow', 'comment' ), $github_subs))
+);
+$assert(
+    'gitsync reflection surfaces bind/submit/push subcommands',
+    empty(array_diff(array( 'bind', 'submit', 'push', 'policy' ), $gitsync_subs))
 );
 
 if (! empty($failures) ) {
