@@ -22,6 +22,7 @@ namespace DataMachineCode\Workspace {
 	{
 		public static array $show_input = array();
 		public static array $worktree_input = array();
+		public static bool $show_returns_remote_success = false;
 		public static bool $worktree_returns_remote_success = false;
 
 		public static function should_handle(): bool
@@ -29,9 +30,19 @@ namespace DataMachineCode\Workspace {
 			return true;
 		}
 
-		public function show( string $handle ): \WP_Error
+		public function show( string $handle ): array|\WP_Error
 		{
 			self::$show_input = compact('handle');
+			if ( self::$show_returns_remote_success ) {
+				return array(
+					'success'     => true,
+					'name'        => $handle,
+					'repo'        => $handle,
+					'is_worktree' => str_contains($handle, '@'),
+					'path'        => 'github://Automattic/' . str_replace('@', '#', $handle),
+				);
+			}
+
 			return new \WP_Error(
 				'remote_workspace_repo_not_found',
 				'Remote workspace repository "wpcom-codebox" is not registered. Call workspace_clone first.'
@@ -64,13 +75,17 @@ namespace DataMachineCode\Workspace {
 		public function show_repo( string $handle ): array
 		{
 			self::$show_input = compact('handle');
+			$parsed = explode('@', $handle, 2);
+			$repo   = $parsed[0];
+			$slug   = $parsed[1] ?? '';
+			$path   = '/Users/chubes/Developer/' . $handle;
 			return array(
 				'success'     => true,
 				'name'        => $handle,
-				'repo'        => $handle,
-				'is_worktree' => false,
-				'path'        => '/Users/chubes/Developer/' . $handle,
-				'branch'      => 'main',
+				'repo'        => $repo,
+				'is_worktree' => '' !== $slug,
+				'path'        => $path,
+				'branch'      => '' !== $slug ? str_replace('-', '/', $slug) : 'main',
 				'remote'      => 'git@github.a8c.com:Automattic/wpcom-codebox.git',
 				'commit'      => 'abc123 listed primary',
 				'dirty'       => 0,
@@ -161,9 +176,30 @@ namespace {
 		)
 	);
 
-	$assert('remote show attempted first', 'wpcom-codebox' === ( \DataMachineCode\Workspace\RemoteWorkspaceBackend::$show_input['handle'] ?? '' ));
-	$assert('local show fallback attempted', 'wpcom-codebox' === ( \DataMachineCode\Workspace\Workspace::$show_input['handle'] ?? '' ));
+	$assert('remote show is not consulted when local primary exists', array() === \DataMachineCode\Workspace\RemoteWorkspaceBackend::$show_input);
+	$assert('local show attempted first', 'wpcom-codebox' === ( \DataMachineCode\Workspace\Workspace::$show_input['handle'] ?? '' ));
 	$assert('show returns local listed primary', is_array($show) && '/Users/chubes/Developer/wpcom-codebox' === ( $show['path'] ?? '' ));
+
+	\DataMachineCode\Workspace\RemoteWorkspaceBackend::$show_returns_remote_success = true;
+	\DataMachineCode\Workspace\RemoteWorkspaceBackend::$show_input = array();
+	\DataMachineCode\Workspace\Workspace::$show_input = array();
+	$duplicate_show = \DataMachineCode\Abilities\WorkspaceAbilities::showRepo(
+		array(
+			'name' => 'wpcom-codebox',
+		)
+	);
+
+	$assert('duplicate remote show is not consulted when local primary exists', array() === \DataMachineCode\Workspace\RemoteWorkspaceBackend::$show_input);
+	$assert('duplicate local primary wins show path', is_array($duplicate_show) && '/Users/chubes/Developer/wpcom-codebox' === ( $duplicate_show['path'] ?? '' ));
+
+	$duplicate_path = \DataMachineCode\Abilities\WorkspaceAbilities::getPath(
+		array(
+			'name' => 'wpcom-codebox@fix-listed-primary-resolution',
+		)
+	);
+
+	$assert('workspace path returns local worktree when duplicate remote exists', is_array($duplicate_path) && '/Users/chubes/Developer/wpcom-codebox@fix-listed-primary-resolution' === ( $duplicate_path['path'] ?? '' ));
+	$assert('workspace path marks local worktree handle as existing', is_array($duplicate_path) && true === ( $duplicate_path['exists'] ?? null ));
 
 	\DataMachineCode\Workspace\RemoteWorkspaceBackend::$worktree_returns_remote_success = true;
 	\DataMachineCode\Workspace\RemoteWorkspaceBackend::$worktree_input = array();
