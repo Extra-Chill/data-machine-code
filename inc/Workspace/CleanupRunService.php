@@ -114,15 +114,16 @@ class CleanupRunService {
 			)
 		);
 
-		$items          = $this->repository->get_items($run_id);
-		$artifact_rows  = $this->pending_rows_of_type($items, 'artifact_cleanup');
-		$worktree_rows  = $this->pending_rows_of_type($items, 'worktree_removal');
-		$batch_type     = '';
-		$processed_rows = 0;
-		$applied_rows   = 0;
-		$skipped_rows   = 0;
-		$remaining_rows = max(0, count($artifact_rows) + count($worktree_rows));
-		$results        = array();
+		$items                = $this->repository->get_items($run_id);
+		$artifact_rows        = $this->pending_rows_of_type($items, 'artifact_cleanup');
+		$worktree_rows        = $this->pending_rows_of_type($items, 'worktree_removal');
+		$stale_worktrees_only = 'stale-worktrees' === (string) ( $run['mode'] ?? '' );
+		$batch_type           = '';
+		$processed_rows       = 0;
+		$applied_rows         = 0;
+		$skipped_rows         = 0;
+		$remaining_rows       = max(0, count($artifact_rows) + count($worktree_rows));
+		$results              = array();
 
 		if ( array() !== $artifact_rows ) {
 			$artifact_batch  = array_slice($artifact_rows, 0, $limit);
@@ -152,9 +153,10 @@ class CleanupRunService {
 			$this->mark_batch_applying($worktree_batch, $run_id, $batch_type, $limit, $remaining_rows);
 			$results['worktree_removal'] = $this->workspace->worktree_cleanup_merged(
 				array(
-					'apply_plan'        => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $worktree_batch) ),
-					'direct_apply_plan' => true,
-					'skip_github'       => true,
+					'apply_plan'          => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $worktree_batch) ),
+					'direct_apply_plan'   => true,
+					'skip_github'         => true,
+					'stale_liveness_only' => $stale_worktrees_only,
 				)
 			);
 			if ( $results['worktree_removal'] instanceof \WP_Error ) {

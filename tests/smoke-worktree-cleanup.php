@@ -599,6 +599,9 @@ namespace {
     $artifact_row = $cleanup_plan['rows']['artifact_cleanup'][0] ?? array();
     $assert(true, str_starts_with((string) ( $artifact_row['row_id'] ?? '' ), 'cleanup-row-'), 'artifact cleanup row has stable row ID');
     $assert(true, isset($cleanup_plan['rows']['worktree_removal']), 'cleanup plan includes worktree removal row bucket');
+	$assert(true, isset($cleanup_plan['action_rows']['remove_artifacts']), 'cleanup plan exposes remove_artifacts action rows separately');
+	$assert(true, isset($cleanup_plan['action_rows']['remove_worktree']), 'cleanup plan exposes remove_worktree action rows separately');
+	$assert(count($cleanup_plan['rows']['worktree_removal'] ?? array()), count($cleanup_plan['action_rows']['remove_worktree'] ?? array()), 'remove_worktree action rows mirror worktree removal rows');
     $assert_contains($cleanup_plan['rows']['worktree_removal'] ?? array(), 'demo@unmerged-feature', 'cleanup plan promotes locally clean remote-backed worktree instead of active/no-signal resolver');
     $assert(true, isset($cleanup_plan['rows']['resolver']), 'cleanup plan includes optional resolver row bucket');
     $chunk_report = $ws->workspace_cleanup_plan_chunks(

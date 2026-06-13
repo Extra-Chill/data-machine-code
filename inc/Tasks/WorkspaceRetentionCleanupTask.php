@@ -87,11 +87,12 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 		}
 
 		$opts = array(
-			'dry_run'          => ! empty($params['dry_run']),
-			'force'            => ! empty($params['force']),
-			'skip_github'      => array_key_exists('skip_github', $params) ? (bool) $params['skip_github'] : true,
-			'worktree_cleanup' => array_key_exists('worktree_cleanup', $params) ? (bool) $params['worktree_cleanup'] : true,
-			'artifact_cleanup' => array_key_exists('artifact_cleanup', $params) ? (bool) $params['artifact_cleanup'] : true,
+			'dry_run'             => ! empty($params['dry_run']),
+			'force'               => ! empty($params['force']),
+			'skip_github'         => array_key_exists('skip_github', $params) ? (bool) $params['skip_github'] : true,
+			'worktree_cleanup'    => array_key_exists('worktree_cleanup', $params) ? (bool) $params['worktree_cleanup'] : true,
+			'artifact_cleanup'    => array_key_exists('artifact_cleanup', $params) ? (bool) $params['artifact_cleanup'] : true,
+			'worktree_stale_only' => ! empty($params['worktree_stale_only']),
 		);
 		if ( isset($params['worktree_older_than']) && '' !== trim( (string) $params['worktree_older_than']) ) {
 			$opts['worktree_older_than'] = trim( (string) $params['worktree_older_than']);
@@ -217,6 +218,7 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 				'worktree_cleanup'    => (bool) $opts['worktree_cleanup'],
 				'artifact_cleanup'    => (bool) $opts['artifact_cleanup'],
 				'worktree_older_than' => (string) ( $opts['worktree_older_than'] ?? '14d' ),
+				'worktree_stale_only' => (bool) $opts['worktree_stale_only'],
 				'skip_github'         => (bool) $opts['skip_github'],
 				'force'               => (bool) $opts['force'],
 			),
@@ -255,14 +257,11 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 		);
 
 		if ( ! empty($opts['artifact_cleanup']) ) {
-			$artifact_limit = isset($params['limit']) ? max(0, (int) $params['limit']) : 100;
-			$artifact_page  = $workspace->worktree_cleanup_artifacts(
+			$artifact_page = $workspace->worktree_cleanup_artifacts(
 				array(
 					'dry_run'       => true,
 					'force'         => ! empty($opts['force']),
-					'limit'         => $artifact_limit,
-					'offset'        => isset($params['offset']) ? max(0, (int) $params['offset']) : 0,
-					'exhaustive'    => ! empty($params['exhaustive']),
+					'exhaustive'    => true,
 					'safety_probes' => true,
 				)
 			);
@@ -275,11 +274,12 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 		if ( ! empty($opts['worktree_cleanup']) ) {
 			$worktree_plan = $workspace->worktree_cleanup_merged(
 				array(
-					'dry_run'     => true,
-					'force'       => ! empty($opts['force']),
-					'skip_github' => ! empty($opts['skip_github']),
-					'older_than'  => (string) ( $opts['worktree_older_than'] ?? '14d' ),
-					'sort'        => 'age',
+					'dry_run'             => true,
+					'force'               => ! empty($opts['force']),
+					'skip_github'         => ! empty($opts['skip_github']),
+					'older_than'          => (string) ( $opts['worktree_older_than'] ?? '14d' ),
+					'sort'                => 'age',
+					'stale_liveness_only' => ! empty($opts['worktree_stale_only']),
 				)
 			);
 			if ( $worktree_plan instanceof \WP_Error ) {
@@ -323,11 +323,12 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 		foreach ( array( 'artifacts', 'metadata', 'worktrees' ) as $type ) {
 			foreach ( array_chunk( (array) ( $chunk_rows[ $type ] ?? array() ), $sizes[ $type ]) as $index => $rows ) {
 				$item_params[] = array(
-					'chunk_type'  => $type,
-					'chunk_index' => $index,
-					'rows'        => $rows,
-					'force'       => ! empty($opts['force']),
-					'skip_github' => ! empty($opts['skip_github']),
+					'chunk_type'          => $type,
+					'chunk_index'         => $index,
+					'rows'                => $rows,
+					'force'               => ! empty($opts['force']),
+					'skip_github'         => ! empty($opts['skip_github']),
+					'stale_liveness_only' => ! empty($opts['worktree_stale_only']),
 				);
 			}
 		}

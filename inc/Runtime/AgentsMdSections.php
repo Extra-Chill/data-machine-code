@@ -88,6 +88,23 @@ MD;
 					? "On this site, scope memory commands with `--agent={$agent_slug}` when reading, writing, searching, or composing agent memory."
 					: 'On multi-agent installs, pass `--agent=<slug>` to memory commands when auto-resolution is ambiguous.';
 
+				// Generate DMC's own command surface from reflection so the lists
+				// never drift from the registered truth (see #671). The fallback
+				// pipe-lists are only used if a command class is somehow
+				// unavailable in this compose context.
+				$workspace_subcmds = CommandIntrospector::pipe_list(
+					'\\DataMachineCode\\Cli\\Commands\\WorkspaceCommand',
+					'adopt|clone|list|show|path|hygiene|remove|worktree|read|write|grep|edit|git|patch|ls'
+				);
+				$github_subcmds    = CommandIntrospector::pipe_list(
+					'\\DataMachineCode\\Cli\\Commands\\GitHubCommand',
+					'issues|pulls|repos|status|view|close|review-flow|comment'
+				);
+				$gitsync_subcmds   = CommandIntrospector::pipe_list(
+					'\\DataMachineCode\\Cli\\Commands\\GitSyncCommand',
+					'bind|list|status|pull|submit|push|policy|unbind'
+				);
+
 				return <<<MD
 ## Data Machine
 
@@ -124,10 +141,10 @@ Discover the full command surface: `{$wp} datamachine --help`. The groups below 
 
 **Code (data-machine-code):** All code changes happen in Data Machine Code worktrees under `{$workspace_path}`. DMC owns workspace lifecycle, evidence capture, GitHub workflow glue, and GitSync; file CRUD inside a worktree uses whatever tool is fastest.
 - Workspace root: `{$workspace_path}`
-- **Workspace lifecycle:** `{$wp} datamachine-code workspace adopt|clone|list|show|path|hygiene|remove|worktree` — keeps the on-disk registry consistent and enforces the `<repo>@<slug>` handle convention.
+- **Workspace:** `{$wp} datamachine-code workspace {$workspace_subcmds}` — lifecycle (clone/adopt/list/show/path/hygiene/remove/worktree), plus the file-I/O surface you work through inside a worktree (`read`, `write`, `grep`, `edit`, `patch`, `ls`, `git`). Keeps the on-disk registry consistent and enforces the `<repo>@<slug>` handle convention.
 - **Worktrees:** `{$wp} datamachine-code workspace worktree add|list|remove|prune|cleanup|cleanup-artifacts|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible` — create isolated branches, refresh agent context, attach lifecycle metadata, and clean up safely.
-- **GitHub:** `{$wp} datamachine-code github issues|pulls|repos|status|view|close|review-flow|comment` — list/read GitHub state, manage issues, install review flows, and comment on reviews.
-- **Git sync:** `{$wp} datamachine-code gitsync bind|list|status|pull|submit|push|policy|unbind` — bind site-owned directories to remotes; `submit` opens or updates the PR path, while `push` writes directly to the configured branch.
+- **GitHub:** `{$wp} datamachine-code github {$github_subcmds}` — list/read GitHub state, manage issues and PRs, install review flows, and comment on reviews.
+- **Git sync:** `{$wp} datamachine-code gitsync {$gitsync_subcmds}` — bind site-owned directories to remotes; `submit` opens or updates the PR path, while `push` writes directly to the configured branch.
 - **Editing inside a worktree:** any tool. Local agents on the same disk should use native file I/O and raw `git`; routing edits through workspace abilities is ceremony, not safety.
 - **Workflow:** reuse the existing primary when one exists for the remote; otherwise `workspace clone <repo>` once → `worktree add <repo> <branch>` → edit files in the worktree with any tool → commit → push → PR.
 - **Primary freshness:** before using a primary checkout for investigation or verification, inspect `workspace list|show|hygiene` freshness metadata. If the primary is stale, run `workspace git pull <repo> --allow-primary-mutation` or create the worktree from an explicit remote ref with `worktree add <repo> <branch> --from=origin/<base>`. Do not clone a second top-level primary for the same remote just to get fresh code.

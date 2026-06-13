@@ -193,6 +193,11 @@ namespace {
     $run('git add local.txt && git commit -m local', $tmp . '/demo@unpushed');
     symlink($tmp . '/demo@active', $site_tmp . '/wp-content/plugins/demo-active');
 
+    mkdir($tmp . '/demo@broken-marker/target', 0755, true);
+    file_put_contents($tmp . '/demo@broken-marker/.git', 'gitdir: ' . $primary . '/.git/worktrees/demo@broken-marker' . "\n");
+    file_put_contents($tmp . '/demo@broken-marker/Cargo.toml', "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n");
+    file_put_contents($tmp . '/demo@broken-marker/target/artifact.bin', str_repeat('broken', 128));
+
     $workspace = new \DataMachineCode\Workspace\Workspace();
 
     echo "=== smoke-worktree-cleanup-artifacts ===\n";
@@ -218,6 +223,7 @@ namespace {
     $assert(true, in_array('demo@clean', $bounded_handles, true), 'bounded dry-run surfaces clean worktree');
     $assert(true, in_array('demo@dirty', $bounded_handles, true), 'bounded dry-run surfaces dirty worktree (deferred safety probes)');
     $assert(true, in_array('demo@unpushed', $bounded_handles, true), 'bounded dry-run surfaces unpushed worktree (deferred safety probes)');
+    $assert(true, in_array('demo@broken-marker', $bounded_handles, true), 'bounded dry-run surfaces stale-marker worktree for artifact review');
     foreach ( $plan['candidates'] ?? array() as $candidate ) {
         $assert(true, (bool) ( $candidate['safety_probes_deferred'] ?? false ), 'bounded candidate ' . ( $candidate['handle'] ?? '?' ) . ' is flagged safety_probes_deferred');
     }
@@ -301,18 +307,32 @@ namespace {
     $assert(false, is_dir($tmp . '/demo@clean/target'), 'apply-plan removes clean artifact directory');
     $assert(true, is_dir($tmp . '/demo@dirty/target'), 'apply-plan revalidation skips dirty worktree even when bounded plan flagged it');
     $assert(true, is_dir($tmp . '/demo@unpushed/target'), 'apply-plan revalidation skips unpushed worktree even when bounded plan flagged it');
+    $assert(true, is_dir($tmp . '/demo@broken-marker/target'), 'apply-plan revalidation skips stale-marker worktree without force');
     $assert(true, is_dir($tmp . '/demo@clean'), 'apply-plan leaves worktree directory in place');
 
     $apply_skip_reasons = array_column($apply['skipped'] ?? array(), 'reason_code', 'handle');
     $assert('dirty_worktree', $apply_skip_reasons['demo@dirty'] ?? '', 'apply-plan revalidation skips dirty rows with explicit reason');
     $assert('unpushed_commits', $apply_skip_reasons['demo@unpushed'] ?? '', 'apply-plan revalidation skips unpushed rows with explicit reason');
+    $assert('stale_worktree_marker', $apply_skip_reasons['demo@broken-marker'] ?? '', 'apply-plan revalidation gives stale marker recovery reason without force');
 
-    $force_plan = $workspace->worktree_cleanup_artifacts(array( 'dry_run' => true, 'exhaustive' => true, 'force' => true ));
+    $force_plan = $workspace->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true, 'force' => true ));
     $force_handles = array_column($force_plan['candidates'] ?? array(), 'handle');
-    $assert(true, in_array('demo@dirty', $force_handles, true), 'force permits dirty artifact candidate (exhaustive)');
-    $assert(true, in_array('demo@unpushed', $force_handles, true), 'force permits unpushed artifact candidate (exhaustive)');
+    $assert(true, in_array('demo@dirty', $force_handles, true), 'force permits dirty artifact candidate with bounded safety probes');
+    $assert(true, in_array('demo@unpushed', $force_handles, true), 'force permits unpushed artifact candidate with bounded safety probes');
+    $assert(true, in_array('demo@broken-marker', $force_handles, true), 'force permits stale-marker artifact candidate when path safety is validated');
+    $force_by_handle = array_column($force_plan['candidates'] ?? array(), null, 'handle');
     $force_skip_reasons = array_column($force_plan['skipped'] ?? array(), 'reason_code', 'handle');
     $assert('active_symlink_target', $force_skip_reasons['demo@active'] ?? '', 'force still protects active symlink target');
+
+    $broken_force_plan = array( 'candidates' => array( $force_by_handle['demo@broken-marker'] ?? array() ) );
+    $broken_force_apply = $workspace->worktree_cleanup_artifacts(array( 'apply_plan' => $broken_force_plan, 'force' => true ));
+    $assert(false, is_wp_error($broken_force_apply), 'force apply-plan for stale-marker artifact returns report');
+    $assert(1, (int) ( $broken_force_apply['summary']['removed_artifacts'] ?? 0 ), 'force apply-plan removes stale-marker reconstructable artifact');
+    $removed_by_handle = array_column($broken_force_apply['removed'] ?? array(), null, 'handle');
+    $assert('profile_artifacts_stale_worktree_marker', $removed_by_handle['demo@broken-marker']['reason_code'] ?? '', 'force apply-plan records explicit stale-marker recovery reason');
+    $assert(true, str_contains($removed_by_handle['demo@broken-marker']['metadata_reconciliation_hint'] ?? '', 'reconcile-metadata --dry-run'), 'force apply-plan points to metadata reconciliation after removal');
+    $assert(false, is_dir($tmp . '/demo@broken-marker/target'), 'force apply-plan removes stale-marker artifact directory');
+    $assert(true, is_dir($tmp . '/demo@broken-marker'), 'force apply-plan leaves stale-marker worktree directory in place');
 
     if ($failures > 0 ) {
         echo "\nFAILURES: {$failures}/{$total}\n";
