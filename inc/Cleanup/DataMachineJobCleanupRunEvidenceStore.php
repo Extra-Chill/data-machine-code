@@ -37,7 +37,8 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 		$child_jobs    = $this->get_cleanup_run_descendant_jobs($job_id);
 		$aggregate     = $this->aggregate_cleanup_child_jobs($child_jobs);
 		$children      = $aggregate['children'];
-		$state         = $this->cleanup_run_state( (string) ( $job['status'] ?? '' ), $children);
+		$parent_status = (string) ( $job['status'] ?? '' );
+		$state         = $this->cleanup_run_state($parent_status, $children, $parent_result, $aggregate);
 
 		$children_for_output = ( $include_evidence || $include_details ) ? $children : $this->summarize_cleanup_children($children);
 		$output              = array(
@@ -45,7 +46,8 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 			'state'                  => $state,
 			'run_id'                 => $this->cleanup_run_id($job_id),
 			'job_id'                 => $job_id,
-			'status'                 => in_array($state, array( 'children_processing', 'partial_failed' ), true) ? $state : ( $job['status'] ?? '' ),
+			'status'                 => $state,
+			'parent_status'          => $parent_status,
 			'created_at'             => $job['created_at'] ?? '',
 			'parent_completed_at'    => $job['completed_at'] ?? '',
 			'artifact_cleanup'       => $aggregate['artifact_cleanup'],
@@ -132,6 +134,7 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 				'processing'         => 0,
 				'completed'          => 0,
 				'failed'             => 0,
+				'skipped'            => 0,
 				'running'            => 0,
 				'total'              => 0,
 				'statuses'           => array(),
@@ -218,6 +221,7 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 			'processing'              => (int) ( $children['processing'] ?? 0 ),
 			'completed'               => (int) ( $children['completed'] ?? 0 ),
 			'failed'                  => (int) ( $children['failed'] ?? 0 ),
+			'skipped'                 => (int) ( $children['skipped'] ?? 0 ),
 			'running'                 => (int) ( $children['running'] ?? 0 ),
 			'total'                   => (int) ( $children['total'] ?? 0 ),
 			'statuses'                => (array) ( $children['statuses'] ?? array() ),
@@ -266,7 +270,7 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 		}
 
 		return array(
-			'needed'               => in_array($state, array( 'running', 'children_processing' ), true),
+			'needed'               => in_array($state, array( 'running', 'waiting_on_children' ), true),
 			'commands'             => $commands,
 			'active_child_job_ids' => $active_child_ids,
 			'bytes_reclaimed'      => (int) ( $cleanup_items['bytes_reclaimed'] ?? 0 ),
@@ -478,6 +482,10 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 			++$children['failed'];
 			return;
 		}
+		if ( str_starts_with($status, 'skipped') ) {
+			++$children['skipped'];
+			return;
+		}
 		if ( str_starts_with($status, 'completed') ) {
 			++$children['completed'];
 		}
@@ -574,20 +582,67 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 	 * @param  array  $children Child summary.
 	 * @return string
 	 */
-	private function cleanup_run_state( string $status, array $children ): string {
+	private function cleanup_run_state( string $status, array $children, array $parent_result, array $aggregate ): string {
 		$parent_state = $this->cleanup_job_state($status);
-		if ( in_array($parent_state, array( 'cancelled', 'partial_failure' ), true) ) {
+		if ( in_array($parent_state, array( 'cancelled', 'failed' ), true) ) {
 			return $parent_state;
 		}
 
 		if ( (int) ( $children['running'] ?? 0 ) > 0 ) {
-			return 'children_processing';
+			return 'waiting_on_children';
 		}
 		if ( (int) ( $children['failed'] ?? 0 ) > 0 ) {
-			return 'partial_failed';
+			return 'failed';
+		}
+
+		$child_total    = (int) ( $children['total'] ?? 0 );
+		$terminal_child = (int) ( $children['completed'] ?? 0 ) + (int) ( $children['skipped'] ?? 0 );
+		if ( $child_total > 0 && $terminal_child >= $child_total ) {
+			return 'complete';
+		}
+
+		if ( 0 === $child_total && $this->cleanup_parent_has_no_planned_work($parent_result, $aggregate) ) {
+			return 'no_work';
 		}
 
 		return $parent_state;
+	}
+
+	/**
+	 * Determine whether parent cleanup evidence proves there was no work to schedule.
+	 *
+	 * @param  array $parent_result Parent system task result.
+	 * @param  array $aggregate     Child aggregate.
+	 * @return bool
+	 */
+	private function cleanup_parent_has_no_planned_work( array $parent_result, array $aggregate ): bool {
+		if ( array() === $parent_result ) {
+			return false;
+		}
+
+		$cleanup_items = (array) ( $aggregate['cleanup_items'] ?? array() );
+		if ( (int) ( $cleanup_items['planned_rows'] ?? 0 ) > 0 ) {
+			return false;
+		}
+
+		if ( array_key_exists('chunks', $parent_result) && array() !== (array) $parent_result['chunks'] ) {
+			return false;
+		}
+
+		if ( isset($parent_result['evidence']) && is_array($parent_result['evidence']) && (int) ( $parent_result['evidence']['planned_chunks'] ?? 0 ) > 0 ) {
+			return false;
+		}
+
+		if ( isset($parent_result['chunk_row_counts']) && is_array($parent_result['chunk_row_counts']) ) {
+			foreach ( $parent_result['chunk_row_counts'] as $count ) {
+				if ( (int) $count > 0 ) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		return array_key_exists('chunks', $parent_result) || array_key_exists('chunk_row_counts', $parent_result);
 	}
 
 	/**
@@ -604,7 +659,7 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 			return 'cancelled';
 		}
 		if ( str_starts_with($status, 'failed') ) {
-			return 'partial_failure';
+			return 'failed';
 		}
 		if ( str_starts_with($status, 'completed') ) {
 			return 'complete';
