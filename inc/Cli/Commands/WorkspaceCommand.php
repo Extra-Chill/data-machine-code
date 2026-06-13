@@ -767,10 +767,26 @@ class WorkspaceCommand extends BaseCommand {
 
 		$result = $this->attach_cleanup_run_commands($result, $mode);
 		if ( ! empty($assoc_args['drain']) ) {
+			if ( 'json' === (string) ( $assoc_args['format'] ?? 'table' ) ) {
+				$this->render_cleanup_control_result($result + array( 'drain_state' => 'scheduled' ), $assoc_args);
+				$this->flush_cli_output();
+			}
 			$result = $this->drain_cleanup_run_to_status($result, $assoc_args);
 		}
 
 		$this->render_cleanup_control_result($result, $assoc_args);
+	}
+
+	/**
+	 * Flush stdout so JSON drain callers see the scheduled run before draining blocks.
+	 *
+	 * @return void
+	 */
+	private function flush_cli_output(): void {
+		if ( defined('STDOUT') ) {
+			fflush(STDOUT);
+		}
+		flush();
 	}
 
 	/**
