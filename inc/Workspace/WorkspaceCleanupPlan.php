@@ -85,18 +85,20 @@ trait WorkspaceCleanupPlan {
 			'resolver'         => $inputs['include_resolvers'] ? $this->build_cleanup_plan_resolver_rows( (array) ( $worktree_plan['skipped'] ?? array() )) : array(),
 		);
 
-		$action_rows     = array(
+		$action_rows = array(
 			'remove_artifacts' => $rows['artifact_cleanup'],
 			'remove_worktree'  => $rows['worktree_removal'],
 			'resolve_signal'   => $rows['resolver'],
 		);
-		$summary         = $this->build_cleanup_plan_summary($rows);
+
+		$summary                   = $this->build_cleanup_plan_summary($rows);
 		$summary['rows_by_action'] = array(
 			'remove_artifacts' => count($action_rows['remove_artifacts']),
 			'remove_worktree'  => count($action_rows['remove_worktree']),
 			'resolve_signal'   => count($action_rows['resolve_signal']),
 		);
-		$plan            = array(
+
+		$plan = array(
 			'success'        => true,
 			'mode'           => 'cleanup_plan',
 			'generated_at'   => gmdate('c'),
@@ -117,6 +119,7 @@ trait WorkspaceCleanupPlan {
 			'action_rows'    => $action_rows,
 			'summary'        => $summary,
 		);
+
 		$plan['plan_id'] = $this->stable_cleanup_hash(
 			array(
 				'inputs' => $inputs,

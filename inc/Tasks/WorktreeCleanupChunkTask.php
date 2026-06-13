@@ -117,7 +117,7 @@ class WorktreeCleanupChunkTask extends SystemTask {
 		};
 
 		if ( $result instanceof \WP_Error ) {
-			$failed = $this->rows_to_failed($rows, $result->get_error_code(), $result->get_error_message());
+			$failed = $this->rows_to_failed($rows, (string) $result->get_error_code(), $result->get_error_message());
 			$this->completeJob(
 				$jobId,
 				$this->build_chunk_result(
@@ -247,7 +247,7 @@ class WorktreeCleanupChunkTask extends SystemTask {
 					$planned,
 					array(),
 					$skipped,
-					$this->rows_to_failed($planned, $result->get_error_code(), $result->get_error_message()),
+					$this->rows_to_failed($planned, (string) $result->get_error_code(), $result->get_error_message()),
 					0,
 					$started_at,
 					array(

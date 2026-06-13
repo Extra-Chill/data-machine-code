@@ -87,12 +87,12 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 		}
 
 		$opts = array(
-			'dry_run'                 => ! empty($params['dry_run']),
-			'force'                   => ! empty($params['force']),
-			'skip_github'             => array_key_exists('skip_github', $params) ? (bool) $params['skip_github'] : true,
-			'worktree_cleanup'        => array_key_exists('worktree_cleanup', $params) ? (bool) $params['worktree_cleanup'] : true,
-			'artifact_cleanup'        => array_key_exists('artifact_cleanup', $params) ? (bool) $params['artifact_cleanup'] : true,
-			'worktree_stale_only'    => ! empty($params['worktree_stale_only']),
+			'dry_run'             => ! empty($params['dry_run']),
+			'force'               => ! empty($params['force']),
+			'skip_github'         => array_key_exists('skip_github', $params) ? (bool) $params['skip_github'] : true,
+			'worktree_cleanup'    => array_key_exists('worktree_cleanup', $params) ? (bool) $params['worktree_cleanup'] : true,
+			'artifact_cleanup'    => array_key_exists('artifact_cleanup', $params) ? (bool) $params['artifact_cleanup'] : true,
+			'worktree_stale_only' => ! empty($params['worktree_stale_only']),
 		);
 		if ( isset($params['worktree_older_than']) && '' !== trim( (string) $params['worktree_older_than']) ) {
 			$opts['worktree_older_than'] = trim( (string) $params['worktree_older_than']);
