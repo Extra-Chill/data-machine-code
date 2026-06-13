@@ -2493,6 +2493,14 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function showRepo( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			$local_result = self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['name'] ?? '' ));
+			if ( null !== $local_result ) {
+				return $local_result;
+			}
+		}
+
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			$result = ( new RemoteWorkspaceBackend() )->show($input['name'] ?? '');
 			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
@@ -2500,7 +2508,6 @@ class WorkspaceAbilities {
 			}
 		}
 
-		$workspace = new Workspace();
 		return $workspace->show_repo($input['name'] ?? '');
 	}
 
@@ -3461,17 +3468,34 @@ class WorkspaceAbilities {
 	 * Whether a repo argument resolves to an editable local primary checkout.
 	 */
 	private static function hasLocalPrimaryCheckout( Workspace $workspace, string $repo ): bool {
-		if ( '' === trim($repo) ) {
-			return false;
-		}
-
-		$result = $workspace->show_repo($repo);
-		if ( is_wp_error($result) ) {
+		$result = self::showLocalWorkspaceHandleIfPresent($workspace, $repo);
+		if ( null === $result ) {
 			return false;
 		}
 
 		$path = (string) ( $result['path'] ?? '' );
-		return '' !== $path && ! str_starts_with($path, 'github://') && ! str_contains(basename($path), '@');
+		return ! str_contains(basename($path), '@');
+	}
+
+	/**
+	 * Return local workspace details for an existing local handle, if present.
+	 */
+	private static function showLocalWorkspaceHandleIfPresent( Workspace $workspace, string $handle ): ?array {
+		if ( '' === trim($handle) ) {
+			return null;
+		}
+
+		$result = $workspace->show_repo($handle);
+		if ( is_wp_error($result) ) {
+			return null;
+		}
+
+		$path = (string) ( $result['path'] ?? '' );
+		if ( '' === $path || str_starts_with($path, 'github://') ) {
+			return null;
+		}
+
+		return $result;
 	}
 
 	/**
