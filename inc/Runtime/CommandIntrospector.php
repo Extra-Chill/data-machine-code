@@ -41,16 +41,13 @@ final class CommandIntrospector {
 	 * @return array<string,string> Ordered map of subcommand => description.
 	 */
 	public static function subcommands( string $command_class ): array {
+		// class_exists() triggers autoloading; once it returns true the
+		// ReflectionClass constructor cannot throw, so no try/catch is needed.
 		if ( ! class_exists($command_class) ) {
 			return array();
 		}
 
-		try {
-			$reflection = new \ReflectionClass($command_class);
-		} catch ( \Throwable $e ) {
-			return array();
-		}
-
+		$reflection  = new \ReflectionClass($command_class);
 		$subcommands = array();
 
 		foreach ( $reflection->getMethods(\ReflectionMethod::IS_PUBLIC) as $method ) {
