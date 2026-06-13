@@ -85,8 +85,20 @@ namespace {
         }
     }
 
+    include __DIR__ . '/../inc/Support/GitRunner.php';
     include __DIR__ . '/../inc/Workspace/WorkspaceAliasResolver.php';
     include __DIR__ . '/../inc/Workspace/Workspace.php';
+
+    exec('git --version 2>&1', $_git_version, $_git_version_exit);
+    if ( 0 !== $_git_version_exit ) {
+        echo "SKIP: git not available\n";
+        exit(0);
+    }
+
+    $git_init = static function ( string $dir ): void {
+        mkdir($dir, 0755, true);
+        exec('cd ' . escapeshellarg($dir) . ' && git init -q 2>&1');
+    };
 
     $failures = 0;
     $total    = 0;
@@ -110,15 +122,23 @@ namespace {
 
     echo "=== smoke-workspace-list-repo-filter ===\n";
 
-	mkdir($workspace_path . '/my-plugin', 0755, true);
-	mkdir($workspace_path . '/my-plugin@feature-one', 0755, true);
-    mkdir($workspace_path . '/data-machine-code', 0755, true);
+	// Primaries carry a real .git directory; worktrees carry a .git file
+	// pointing back at the primary. Non-git directories (junk) and dotfile
+	// infra dirs (.locks) must never be listed (#694).
+	mkdir($workspace_path, 0755, true);
+	$git_init($workspace_path . '/my-plugin');
+	exec('cd ' . escapeshellarg($workspace_path . '/my-plugin') . ' && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init 2>&1');
+	exec('cd ' . escapeshellarg($workspace_path . '/my-plugin') . ' && git worktree add -q ../my-plugin@feature-one -b feature-one 2>&1');
+	$git_init($workspace_path . '/data-machine-code');
+	mkdir($workspace_path . '/.locks', 0755, true);
+	file_put_contents($workspace_path . '/.locks/worktree-foo.lock', "lock\n");
+	mkdir($workspace_path . '/junk-no-git', 0755, true);
 
     $workspace = new \DataMachineCode\Workspace\Workspace();
 
-    echo "\n[1] Unfiltered list includes every workspace directory\n";
+    echo "\n[1] Unfiltered list includes every git workspace directory, excludes dotfiles and non-git dirs\n";
     $all = $workspace->list_repos();
-	$assert_same(array( 'data-machine-code', 'my-plugin', 'my-plugin@feature-one' ), $repo_names($all), 'unfiltered list includes all repos');
+	$assert_same(array( 'data-machine-code', 'my-plugin', 'my-plugin@feature-one' ), $repo_names($all), 'unfiltered list includes git repos but excludes .locks and junk-no-git');
 
     echo "\n[2] Repo filter includes primary checkout and worktrees\n";
 	$filtered = $workspace->list_repos('my-plugin');
@@ -144,6 +164,11 @@ namespace {
     $invalid = $workspace->list_repos(null, 'dirty');
     $assert_same(true, is_wp_error($invalid), 'invalid type returns WP_Error');
     $assert_same('invalid_workspace_type', is_wp_error($invalid) ? $invalid->get_error_code() : '', 'invalid type error code is stable');
+
+    echo "\n[8] Primary listing never includes dotfile infra dirs or non-git directories (#694)\n";
+    $primary_names = $repo_names($workspace->list_repos(null, 'primary'));
+    $assert_same(false, in_array('.locks', $primary_names, true), 'dotfile dir .locks is not listed as a primary');
+    $assert_same(false, in_array('junk-no-git', $primary_names, true), 'non-git directory is not listed as a primary');
 
     echo "\nResult: " . ( $total - $failures ) . "/{$total} passed\n";
     exit($failures > 0 ? 1 : 0);
