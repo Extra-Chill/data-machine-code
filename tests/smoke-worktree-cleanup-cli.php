@@ -44,6 +44,7 @@ namespace {
         {
             self::$runcommands[] = $command;
             if ('datamachine drain --job-id=123' === $command ) {
+                $GLOBALS['datamachine_code_cleanup_parent_drain_saw_scheduled_json'] = json_decode(self::$logs[0] ?? '', true);
                 $GLOBALS['datamachine_code_cleanup_parent_drained'] = true;
             }
             if ('datamachine drain --job-id=125' === $command ) {
@@ -1397,14 +1398,21 @@ namespace {
     WP_CLI::$runcommands = array();
     $GLOBALS['datamachine_code_cleanup_parent_drained'] = false;
     $GLOBALS['datamachine_code_cleanup_child_drained']  = false;
+    $GLOBALS['datamachine_code_cleanup_parent_drain_saw_scheduled_json'] = array();
     $command->cleanup(array( 'run' ), array( 'mode' => 'artifacts', 'drain' => true, 'format' => 'json' ));
-    $drained_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    $scheduled_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    $drained_json   = json_decode(end(WP_CLI::$logs) ?: '', true);
     datamachine_code_cleanup_assert(array( 'datamachine drain --job-id=123', 'datamachine drain --job-id=125' ) === WP_CLI::$runcommands, 'cleanup run --drain drains parent then active child jobs');
+    datamachine_code_cleanup_assert('cleanup-run-123' === ( $scheduled_json['run_id'] ?? '' ), 'cleanup run --drain JSON emits scheduled run id before final status');
+    datamachine_code_cleanup_assert(123 === (int) ( $scheduled_json['job_id'] ?? 0 ), 'cleanup run --drain JSON emits scheduled job id before final status');
+    datamachine_code_cleanup_assert('scheduled' === ( $scheduled_json['drain_state'] ?? '' ), 'cleanup run --drain JSON marks the early scheduled event');
+    datamachine_code_cleanup_assert('cleanup-run-123' === ( $GLOBALS['datamachine_code_cleanup_parent_drain_saw_scheduled_json']['run_id'] ?? '' ), 'cleanup run --drain exposes run id before invoking parent drain');
     datamachine_code_cleanup_assert(4096 === (int) ( $drained_json['drain']['bytes_reclaimed'] ?? 0 ), 'cleanup run --drain reports verified reclaimed bytes');
 	datamachine_code_cleanup_assert('failed' === (string) ( $drained_json['drain']['completion_state'] ?? '' ), 'cleanup run --drain reports final cleanup state');
 	datamachine_code_cleanup_assert('studio wp datamachine-code workspace cleanup status cleanup-run-123 --format=json' === (string) ( $drained_json['drain']['verify_command'] ?? '' ), 'cleanup run --drain emits one verification command');
 	$GLOBALS['datamachine_code_cleanup_parent_drained'] = false;
 	$GLOBALS['datamachine_code_cleanup_child_drained']  = false;
+    $GLOBALS['datamachine_code_cleanup_parent_drain_saw_scheduled_json'] = array();
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
@@ -1422,9 +1430,13 @@ namespace {
 	WP_CLI::$runcommands = array();
 	$GLOBALS['datamachine_code_cleanup_parent_drained'] = false;
 	$GLOBALS['datamachine_code_cleanup_child_drained']  = false;
+	$GLOBALS['datamachine_code_cleanup_parent_drain_saw_scheduled_json'] = array();
 	$command->cleanup(array( 'run' ), array( 'mode' => 'retention', 'drain' => true, 'format' => 'json' ));
-	$no_work_drained_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+	$no_work_scheduled_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+	$no_work_drained_json   = json_decode(end(WP_CLI::$logs) ?: '', true);
 	datamachine_code_cleanup_assert(array( 'datamachine drain --job-id=123' ) === WP_CLI::$runcommands, 'cleanup run --drain drains no-work parent once and does not invent child drains');
+	datamachine_code_cleanup_assert('cleanup-run-123' === ( $no_work_scheduled_json['run_id'] ?? '' ), 'cleanup run --drain no-work JSON emits scheduled run id before draining');
+	datamachine_code_cleanup_assert('cleanup-run-123' === ( $GLOBALS['datamachine_code_cleanup_parent_drain_saw_scheduled_json']['run_id'] ?? '' ), 'cleanup run --drain no-work exposes run id before invoking parent drain');
 	datamachine_code_cleanup_assert('no_work' === (string) ( $no_work_drained_json['drain']['completion_state'] ?? '' ), 'cleanup run --drain reports no_work instead of successful running state for no-child/no-work parents');
 	datamachine_code_cleanup_assert(true === (bool) ( $no_work_drained_json['drain']['success'] ?? false ), 'cleanup run --drain succeeds after no-work convergence');
 	$GLOBALS['datamachine_code_cleanup_status_scenario'] = 'default';
