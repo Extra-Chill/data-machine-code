@@ -57,6 +57,11 @@ trait WorkspaceRepositoryLifecycle {
 					continue;
 				}
 
+				// Skip dotfile entries (e.g. internal infra dirs like .locks).
+				if ( str_starts_with($entry, '.') ) {
+					continue;
+				}
+
 				$entry_path = $path . '/' . $entry;
 				if ( ! is_dir($entry_path) ) {
 					continue;
@@ -65,7 +70,14 @@ trait WorkspaceRepositoryLifecycle {
 				$git_path = $entry_path . '/.git';
 				$is_git   = is_dir($git_path) || is_file($git_path);
 				$is_wt    = is_file($git_path);
-				$parsed   = $this->parse_handle($entry);
+
+				// A real primary or worktree always has a .git entry. Non-git
+				// directories are not repositories and must not be emitted as rows.
+				if ( ! $is_git ) {
+					continue;
+				}
+
+				$parsed = $this->parse_handle($entry);
 
 				if ( null !== $repo_filter && $parsed['repo'] !== $repo_filter ) {
 					continue;
