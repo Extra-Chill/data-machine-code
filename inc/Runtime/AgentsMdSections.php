@@ -96,11 +96,11 @@ MD;
 					'\\DataMachineCode\\Cli\\Commands\\WorkspaceCommand',
 					'adopt|clone|list|show|path|hygiene|remove|worktree|read|write|grep|edit|git|patch|ls'
 				);
-				$github_subcmds = CommandIntrospector::pipe_list(
+				$github_subcmds    = CommandIntrospector::pipe_list(
 					'\\DataMachineCode\\Cli\\Commands\\GitHubCommand',
 					'issues|pulls|repos|status|view|close|review-flow|comment'
 				);
-				$gitsync_subcmds = CommandIntrospector::pipe_list(
+				$gitsync_subcmds   = CommandIntrospector::pipe_list(
 					'\\DataMachineCode\\Cli\\Commands\\GitSyncCommand',
 					'bind|list|status|pull|submit|push|policy|unbind'
 				);

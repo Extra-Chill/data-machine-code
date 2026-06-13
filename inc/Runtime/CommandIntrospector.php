@@ -37,16 +37,16 @@ final class CommandIntrospector {
 	 * Returns an empty array when the class is unavailable or has no subcommands,
 	 * so callers can fall back gracefully without fatals in any context.
 	 *
-	 * @param string $class Fully-qualified command class name.
+	 * @param string $command_class Fully-qualified command class name.
 	 * @return array<string,string> Ordered map of subcommand => description.
 	 */
-	public static function subcommands( string $class ): array {
-		if ( ! class_exists($class) ) {
+	public static function subcommands( string $command_class ): array {
+		if ( ! class_exists($command_class) ) {
 			return array();
 		}
 
 		try {
-			$reflection = new \ReflectionClass($class);
+			$reflection = new \ReflectionClass($command_class);
 		} catch ( \Throwable $e ) {
 			return array();
 		}
@@ -77,11 +77,11 @@ final class CommandIntrospector {
 	/**
 	 * Return only the subcommand names for a class, in declaration order.
 	 *
-	 * @param string $class Fully-qualified command class name.
+	 * @param string $command_class Fully-qualified command class name.
 	 * @return string[] Ordered list of subcommand names.
 	 */
-	public static function subcommand_names( string $class ): array {
-		return array_keys(self::subcommands($class));
+	public static function subcommand_names( string $command_class ): array {
+		return array_keys(self::subcommands($command_class));
 	}
 
 	/**
@@ -90,12 +90,12 @@ final class CommandIntrospector {
 	 * Falls back to the supplied default string when reflection yields nothing,
 	 * so AGENTS.md never renders an empty command line.
 	 *
-	 * @param string $class    Fully-qualified command class name.
-	 * @param string $fallback Pipe-list to use when reflection is unavailable.
+	 * @param string $command_class Fully-qualified command class name.
+	 * @param string $fallback      Pipe-list to use when reflection is unavailable.
 	 * @return string
 	 */
-	public static function pipe_list( string $class, string $fallback = '' ): string {
-		$names = self::subcommand_names($class);
+	public static function pipe_list( string $command_class, string $fallback = '' ): string {
+		$names = self::subcommand_names($command_class);
 		if ( empty($names) ) {
 			return $fallback;
 		}
