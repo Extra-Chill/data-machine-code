@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.118] - 2026-06-13
+
+### Fixed
+- skip dotfile and non-git dirs in workspace list classifier
+
 ## [0.47.117] - 2026-06-13
 
 ### Fixed
