@@ -54,6 +54,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		$direct_apply_plan         = ! empty($opts['direct_apply_plan']);
 		$inventory_only            = ! empty($opts['inventory_only']);
 		$include_repaired_metadata = ! empty($opts['include_repaired_metadata']);
+		$stale_liveness_only       = ! empty($opts['stale_liveness_only']);
 		$apply_plan                = isset($opts['apply_plan']) && is_array($opts['apply_plan']) ? $opts['apply_plan'] : null;
 		$older_than                = isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '';
 		$sort                      = isset($opts['sort']) ? trim( (string) $opts['sort']) : '';
@@ -107,7 +108,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			$force = false;
 
 			if ( $direct_apply_plan && ! $dry_run ) {
-				return $this->apply_worktree_cleanup_plan_candidates($planned_candidates, $force, $started_at);
+				return $this->apply_worktree_cleanup_plan_candidates($planned_candidates, $force, $started_at, $stale_liveness_only);
 			}
 		}
 
@@ -179,6 +180,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			$wt_path      = $wt['path'] ?? '';
 			$metadata     = $wt['metadata'] ?? null;
 			$created_at   = $wt['created_at'] ?? null;
+			$liveness     = (string) ( $wt['liveness'] ?? '' );
 			$disk_fields  = $this->extract_worktree_disk_fields($wt);
 			$identity     = $this->recover_worktree_identity_from_metadata($wt);
 			$repo         = (string) $identity['repo'];
@@ -207,6 +209,24 @@ trait WorkspaceWorktreeCleanupEngine {
 
 			++$checked;
 			$this->emit_worktree_cleanup_progress($progress, 'checking', (string) $handle, $checked, $total_worktrees, $candidates, $skipped, $removed_count, $started_at);
+
+			if ( $stale_liveness_only && 'stale' !== $liveness ) {
+				$skipped[] = array_merge(
+					array(
+						'handle'      => $handle,
+						'repo'        => $repo,
+						'branch'      => $branch,
+						'path'        => $wt_path,
+						'reason_code' => 'active_or_recent_worktree',
+						'reason'      => sprintf('worktree liveness is %s; stale-worktrees mode only removes stale/inactive worktrees', '' !== $liveness ? $liveness : 'unknown'),
+						'liveness'    => $liveness,
+						'created_at'  => $created_at,
+						'metadata'    => $metadata,
+					),
+					$disk_fields
+				);
+				continue;
+			}
 
 			if ( '' === $repo || '' === $branch || '' === $wt_path ) {
 				$missing_fields = array();
@@ -573,6 +593,7 @@ trait WorkspaceWorktreeCleanupEngine {
 					'reason'      => $signal['reason'],
 					'pr_url'      => $signal['pr_url'] ?? null,
 					'created_at'  => $created_at,
+					'liveness'    => $liveness,
 					'metadata'    => $metadata,
 				), $disk_fields
 			);
@@ -582,6 +603,8 @@ trait WorkspaceWorktreeCleanupEngine {
 			$candidates[] = $candidate;
 		}
 
+		$candidates = $this->dedupe_worktree_cleanup_rows($candidates);
+		$skipped    = $this->dedupe_worktree_cleanup_rows($skipped);
 		$candidates = $this->sort_worktree_cleanup_rows($candidates, $sort);
 
 		if ( null !== $planned_candidates ) {
@@ -654,7 +677,13 @@ trait WorkspaceWorktreeCleanupEngine {
 				);
 				continue;
 			}
-			$removed[] = $cand;
+			$removed[] = array_merge(
+				$cand,
+				array(
+					'removed_path'      => (string) ( $cand['path'] ?? '' ),
+					'path_exists_after' => is_dir( (string) ( $cand['path'] ?? '' ) ),
+				)
+			);
 			++$removed_count;
 		}
 
@@ -713,6 +742,34 @@ trait WorkspaceWorktreeCleanupEngine {
 			'next_command'   => $command,
 			'budget_stopped' => $budget_stopped,
 		);
+	}
+
+	/**
+	 * Collapse duplicate cleanup rows emitted by overlapping inventory/git sources.
+	 *
+	 * @param  array<int,array<string,mixed>> $rows Cleanup rows.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function dedupe_worktree_cleanup_rows( array $rows ): array {
+		$seen   = array();
+		$result = array();
+		foreach ( $rows as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$key = implode('|', array(
+				(string) ( $row['handle'] ?? '' ),
+				(string) ( $row['path'] ?? '' ),
+				(string) ( $row['reason_code'] ?? $row['signal'] ?? '' ),
+			));
+			if ( isset($seen[ $key ]) ) {
+				continue;
+			}
+			$seen[ $key ] = true;
+			$result[]     = $row;
+		}
+
+		return $result;
 	}
 
 	/**
@@ -1089,7 +1146,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  float                          $started_at Start timestamp.
 	 * @return array<string,mixed>
 	 */
-	private function apply_worktree_cleanup_plan_candidates( array $candidates, bool $force, float $started_at ): array {
+	private function apply_worktree_cleanup_plan_candidates( array $candidates, bool $force, float $started_at, bool $stale_liveness_only = false ): array {
 		$processed       = 0;
 		$removed         = array();
 		$skipped         = array();
@@ -1097,7 +1154,7 @@ trait WorkspaceWorktreeCleanupEngine {
 
 		foreach ( $candidates as $candidate ) {
 			++$processed;
-			$revalidated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force);
+			$revalidated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, $stale_liveness_only);
 			if ( isset($revalidated['skipped']) ) {
 				$skipped[] = $revalidated['skipped'];
 				continue;
@@ -1147,7 +1204,14 @@ trait WorkspaceWorktreeCleanupEngine {
 				continue;
 			}
 
-			$removed[]        = array_merge($validated, array( 'size_bytes' => $size ));
+			$removed[]        = array_merge(
+				$validated,
+				array(
+					'size_bytes'        => $size,
+					'removed_path'      => $wt_path,
+					'path_exists_after' => is_dir($wt_path),
+				)
+			);
 			$bytes_reclaimed += max(0, $size);
 		}
 
@@ -1190,11 +1254,26 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  bool  $force     Allow dirty worktrees.
 		 * @return array<string,mixed>
 		 */
-	private function revalidate_bounded_cleanup_eligible_candidate( array $candidate, bool $force ): array {
-		$handle  = (string) ( $candidate['handle'] ?? '' );
-		$repo    = (string) ( $candidate['repo'] ?? '' );
-		$branch  = (string) ( $candidate['branch'] ?? '' );
-		$wt_path = (string) ( $candidate['path'] ?? '' );
+	private function revalidate_bounded_cleanup_eligible_candidate( array $candidate, bool $force, bool $stale_liveness_only = false ): array {
+		$handle   = (string) ( $candidate['handle'] ?? '' );
+		$repo     = (string) ( $candidate['repo'] ?? '' );
+		$branch   = (string) ( $candidate['branch'] ?? '' );
+		$wt_path  = (string) ( $candidate['path'] ?? '' );
+		$liveness = (string) ( $candidate['liveness'] ?? '' );
+
+		if ( $stale_liveness_only && 'stale' !== $liveness ) {
+			return array(
+				'skipped' => array(
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'reason_code' => 'active_or_recent_worktree',
+					'reason'      => sprintf('planned row liveness is %s; stale-worktrees apply only removes stale/inactive worktrees', '' !== $liveness ? $liveness : 'unknown'),
+					'liveness'    => $liveness,
+				),
+			);
+		}
 
 		$missing_fields = array();
 		foreach (
@@ -1715,13 +1794,13 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @return array<int,array<string,mixed>>
 	 */
 	private function worktree_cleanup_skipped_next_commands( array $skipped_by_reason ): array {
-		$active_no_signal_commands = $this->build_active_no_signal_next_commands(25, 0);
+		$active_no_signal_commands  = $this->build_active_no_signal_next_commands(25, 0);
 		$metadata_reconcile_command = sprintf(
 			'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=%d --offset=0 --until-budget=%s --format=json',
 			self::METADATA_RECONCILE_DEFAULT_LIMIT,
 			self::METADATA_RECONCILE_DEFAULT_BUDGET
 		);
-		$templates                 = array(
+		$templates                  = array(
 			'artifact_only_dirty_worktree'       => array(
 				'label'       => 'Review generated artifact cleanup separately',
 				'command'     => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --format=json',
@@ -1729,28 +1808,28 @@ trait WorkspaceWorktreeCleanupEngine {
 				'why'         => 'Dirty paths are limited to declared reconstructable artifact directories, so artifact cleanup can shed them without force-removing source worktrees.',
 				'destructive' => false,
 			),
-			'dirty_worktree'                       => array(
+			'dirty_worktree'                     => array(
 				'label'       => 'Inspect dirty files before retrying cleanup',
 				'command'     => 'git -C <worktree-path> status --short --branch --untracked-files=normal',
 				'alternative' => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --only=dirty_worktree --verbose --format=json',
 				'why'         => 'Shows the exact dirty paths so operators can distinguish generated artifacts from source edits and decide whether to clean, commit, or preserve the worktree.',
 				'destructive' => false,
 			),
-			'unpushed_commits'                     => array(
+			'unpushed_commits'                   => array(
 				'label'       => 'Inspect commits ahead of upstream before cleanup',
 				'command'     => 'git -C <worktree-path> log --oneline --decorate @{u}..HEAD',
 				'alternative' => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --only=unpushed_commits --verbose --format=json',
 				'why'         => 'Lists the protected commits so operators can push, merge, preserve, or intentionally abandon them before retrying cleanup.',
 				'destructive' => false,
 			),
-			'stale_worktree_marker'                => array(
+			'stale_worktree_marker'              => array(
 				'label'       => 'Preview stale git worktree marker pruning',
 				'command'     => 'git -C <primary-path> worktree prune --dry-run --verbose',
 				'alternative' => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
 				'why'         => 'Confirms stale git metadata before any prune or registry repair, keeping cleanup non-destructive by default.',
 				'destructive' => false,
 			),
-			'primary_missing'                      => array(
+			'primary_missing'                    => array(
 				'label'       => 'Recover or adopt the missing primary checkout',
 				'command'     => 'studio wp datamachine-code workspace show <repo>',
 				'alternative' => 'Recreate with `studio wp datamachine-code workspace clone <remote-url> --name=<repo>` or adopt an existing checkout with `studio wp datamachine-code workspace adopt <path> --name=<repo>`.',

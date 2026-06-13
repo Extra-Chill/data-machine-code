@@ -1152,6 +1152,7 @@ namespace {
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '<plan|apply|run|status|resume|cancel|evidence>'), 'workspace cleanup synopsis exposes DB-backed and task-backed cleanup operations');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '[--dry-run]'), 'task-backed cleanup synopsis keeps synchronous dry-run review');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '[--drain]'), 'task-backed cleanup synopsis exposes drain option');
+	datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, 'stale-worktrees'), 'workspace cleanup synopsis exposes stale-worktrees destructive profile');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, 'apply runs freeze eligible candidates'), 'workspace cleanup limit help clarifies artifact apply scoping');
     datamachine_code_cleanup_assert(str_contains($doc_comment, 'positive maximum worktrees to scan'), 'worktree limit help requires positive page sizes');
     datamachine_code_cleanup_assert(str_contains($doc_comment, 'Use `--exhaustive` instead of `--limit=0`'), 'worktree limit help points unbounded artifact scans to exhaustive mode');
@@ -1204,6 +1205,15 @@ namespace {
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
+	$command->cleanup(array( 'plan' ), array( 'mode' => 'stale-worktrees', 'format' => 'json' ));
+	datamachine_code_cleanup_assert('stale-worktrees' === ( $cleanup_plan_ability->last_input['mode'] ?? '' ), 'stale-worktrees cleanup plan receives explicit destructive profile');
+	datamachine_code_cleanup_assert(false === ( $cleanup_plan_ability->last_input['include_artifacts'] ?? true ), 'stale-worktrees cleanup plan skips artifact rows by default');
+	datamachine_code_cleanup_assert(true === ( $cleanup_plan_ability->last_input['include_worktrees'] ?? false ), 'stale-worktrees cleanup plan keeps worktree removal rows');
+	datamachine_code_cleanup_assert(true === ( $cleanup_plan_ability->last_input['worktree_stale_only'] ?? false ), 'stale-worktrees cleanup plan requires stale liveness');
+	datamachine_code_cleanup_assert('14d' === ( $cleanup_plan_ability->last_input['worktree_older_than'] ?? '' ), 'stale-worktrees cleanup plan defaults to 14d age gate');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
 	$command->cleanup(array( 'run' ), array( 'mode' => 'retention', 'format' => 'json' ));
     $run_json = json_decode(WP_CLI::$logs[0] ?? '', true);
     datamachine_code_cleanup_assert('jobs_queued' === ( $run_json['state'] ?? '' ), 'cleanup run queues a system task');
@@ -1221,7 +1231,15 @@ namespace {
     datamachine_code_cleanup_assert(50 === (int) ( $cleanup_run_ability->last_input['offset'] ?? 0 ), 'cleanup run forwards artifact apply offset');
     $last_scheduled_cleanup_run = $cleanup_run_ability->last_input;
 
-    WP_CLI::$logs      = array();
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup(array( 'run' ), array( 'mode' => 'stale-worktrees', 'older-than' => '30d', 'format' => 'json' ));
+	datamachine_code_cleanup_assert('stale-worktrees' === ( $cleanup_run_ability->last_input['mode'] ?? '' ), 'cleanup run can schedule stale-worktrees mode');
+	datamachine_code_cleanup_assert(true === ( $cleanup_run_ability->last_input['worktree_stale_only'] ?? false ), 'cleanup run forwards stale-worktrees liveness guard');
+	datamachine_code_cleanup_assert('30d' === ( $cleanup_run_ability->last_input['older_than'] ?? '' ), 'cleanup run forwards stale-worktrees age gate');
+	$last_scheduled_cleanup_run = $cleanup_run_ability->last_input;
+
+	WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
     $command->cleanup(array( 'run' ), array( 'mode' => 'artifacts', 'dry-run' => true, 'format' => 'json' ));
     datamachine_code_cleanup_assert(true === ( $artifact_ability->last_input['dry_run'] ?? false ), 'cleanup run --dry-run uses artifact cleanup ability directly');

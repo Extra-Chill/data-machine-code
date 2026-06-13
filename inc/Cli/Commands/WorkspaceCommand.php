@@ -31,7 +31,7 @@ class WorkspaceCommand extends BaseCommand {
 
 	private const CLEANUP_CLI_SOURCE = 'workspace_cleanup_cli';
 
-	private const CLEANUP_MODES = array( 'inventory', 'artifacts', 'retention', 'emergency' );
+	private const CLEANUP_MODES = array( 'inventory', 'artifacts', 'retention', 'stale-worktrees', 'emergency' );
 
 	private const METADATA_RECONCILE_DEFAULT_LIMIT = 25;
 
@@ -583,6 +583,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *   - metadata
 	 *   - artifacts
 	 *   - retention
+	 *   - stale-worktrees
 	 *   - emergency
 	 * ---
 	 *
@@ -596,6 +597,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * : For `plan --mode=retention`, also include the exhaustive artifact cleanup
 	 *   scan. Omitted by default so safe retention planning stays bounded on large
 	 *   workspaces; use `--mode=artifacts` for an artifact-only plan.
+	 *   `--mode=stale-worktrees` never includes artifacts unless this flag is passed.
 	 *
 	 * [--older-than=<duration>]
 	 * : Pass an age gate such as 7d or 24h into cleanup task params.
@@ -650,6 +652,10 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 *     # Start task-backed retention cleanup and capture the returned run_id
 	 *     wp datamachine-code workspace cleanup run --mode=retention
+	 *
+	 *     # Review and then apply destructive stale worktree removal only
+	 *     wp datamachine-code workspace cleanup plan --mode=stale-worktrees --older-than=14d --format=json
+	 *     wp datamachine-code workspace cleanup run --mode=stale-worktrees --older-than=14d
 	 *
 	 *     # Review artifact cleanup synchronously (bounded; default limit=100)
 	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run
@@ -899,6 +905,23 @@ class WorkspaceCommand extends BaseCommand {
 		if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
 			$input['older_than'] = trim( (string) $assoc_args['older-than']);
 		}
+		if ( 'stale-worktrees' === $mode ) {
+			$input['worktree_stale_only'] = true;
+			if ( ! isset($input['older_than']) ) {
+				$input['older_than'] = '14d';
+			}
+		}
+		if ( 'artifacts' === $mode ) {
+			if ( isset($assoc_args['limit']) ) {
+				$input['limit'] = (int) $assoc_args['limit'];
+			}
+			if ( isset($assoc_args['offset']) ) {
+				$input['offset'] = (int) $assoc_args['offset'];
+			}
+			if ( ! empty($assoc_args['exhaustive']) ) {
+				$input['exhaustive'] = true;
+			}
+		}
 
 		return $input;
 	}
@@ -952,6 +975,12 @@ class WorkspaceCommand extends BaseCommand {
 		}
 		if ( isset($assoc_args['force']) ) {
 			$input['force_artifact_cleanup'] = (bool) $assoc_args['force'];
+		}
+		if ( 'stale-worktrees' === $mode ) {
+			$input['worktree_stale_only'] = true;
+			if ( empty($input['worktree_older_than']) ) {
+				$input['worktree_older_than'] = '14d';
+			}
 		}
 
 		return $input;
@@ -1024,6 +1053,19 @@ class WorkspaceCommand extends BaseCommand {
 				)
 				) : new \WP_Error('emergency_cleanup_ability_missing', 'Emergency cleanup ability not registered.');
 				$this->render_worktree_emergency_cleanup_result_from_ability($result, $assoc_args);
+				return;
+
+			case 'stale-worktrees':
+				$ability = wp_get_ability('datamachine-code/workspace-worktree-cleanup');
+				$input   = array(
+					'dry_run'             => true,
+					'force'               => ! empty($assoc_args['force']),
+					'skip_github'         => true,
+					'stale_liveness_only' => true,
+					'older_than'          => isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ? trim( (string) $assoc_args['older-than']) : '14d',
+				);
+				$result  = $ability ? $ability->execute($input) : new \WP_Error('worktree_cleanup_ability_missing', 'Worktree cleanup ability not registered.');
+				$this->render_worktree_cleanup_result_from_ability($result, $assoc_args);
 				return;
 
 			case 'retention':
