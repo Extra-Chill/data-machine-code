@@ -158,6 +158,7 @@ trait WorkspaceHygieneReport {
 		$skip_github         = array_key_exists('skip_github', $opts) ? (bool) $opts['skip_github'] : true;
 		$worktree_cleanup    = array_key_exists('worktree_cleanup', $opts) ? (bool) $opts['worktree_cleanup'] : true;
 		$artifact_cleanup    = array_key_exists('artifact_cleanup', $opts) ? (bool) $opts['artifact_cleanup'] : true;
+		$worktree_stale_only = ! empty($opts['worktree_stale_only']);
 		$worktree_older_than = isset($opts['worktree_older_than']) && '' !== trim( (string) $opts['worktree_older_than']) ? trim( (string) $opts['worktree_older_than']) : '14d';
 
 		$worktree_result = null;
@@ -167,11 +168,12 @@ trait WorkspaceHygieneReport {
 		if ( $worktree_cleanup ) {
 			$worktree_result = $this->worktree_cleanup_merged(
 				array(
-					'dry_run'     => $dry_run,
-					'force'       => $force,
-					'skip_github' => $skip_github,
-					'older_than'  => $worktree_older_than,
-					'sort'        => 'age',
+					'dry_run'             => $dry_run,
+					'force'               => $force,
+					'skip_github'         => $skip_github,
+					'older_than'          => $worktree_older_than,
+					'sort'                => 'age',
+					'stale_liveness_only' => $worktree_stale_only,
 				)
 			);
 			if ( $worktree_result instanceof \WP_Error ) {
@@ -220,6 +222,7 @@ trait WorkspaceHygieneReport {
 				'worktree_cleanup'    => $worktree_cleanup,
 				'artifact_cleanup'    => $artifact_cleanup,
 				'worktree_older_than' => $worktree_older_than,
+				'worktree_stale_only' => $worktree_stale_only,
 				'skip_github'         => $skip_github,
 				'force'               => $force,
 			),

@@ -1564,7 +1564,7 @@ class WorkspaceAbilities {
 						'properties' => array(
 							'mode'       => array(
 								'type'        => 'string',
-								'description' => 'Cleanup mode: inventory, artifacts, retention, or emergency.',
+								'description' => 'Cleanup mode: inventory, artifacts, retention, stale-worktrees, or emergency.',
 							),
 							'force'      => array(
 								'type'        => 'boolean',
@@ -1577,6 +1577,10 @@ class WorkspaceAbilities {
 							'older_than' => array(
 								'type'        => 'string',
 								'description' => 'Optional worktree retention age gate such as 14d.',
+							),
+							'worktree_stale_only' => array(
+								'type'        => 'boolean',
+								'description' => 'Only plan stale/inactive worktrees for destructive removal.',
 							),
 							'source'     => array(
 								'type'        => 'string',
@@ -2327,6 +2331,7 @@ class WorkspaceAbilities {
 							'force_artifact_cleanup' => array( 'type' => 'boolean' ),
 							'worktree_older_than'    => array( 'type' => 'string' ),
 							'worktree_sort'          => array( 'type' => 'string' ),
+							'worktree_stale_only'    => array( 'type' => 'boolean' ),
 							'plan'                   => array( 'type' => 'object' ),
 						),
 					),
@@ -2336,9 +2341,10 @@ class WorkspaceAbilities {
 							'success' => array( 'type' => 'boolean' ),
 							'mode'    => array( 'type' => 'string' ),
 							'plan_id' => array( 'type' => 'string' ),
-							'rows'    => array( 'type' => 'object' ),
-							'chunks'  => array( 'type' => 'array' ),
-							'summary' => array( 'type' => 'object' ),
+							'rows'        => array( 'type' => 'object' ),
+							'action_rows' => array( 'type' => 'object' ),
+							'chunks'      => array( 'type' => 'array' ),
+							'summary'     => array( 'type' => 'object' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'workspaceCleanupPlan' ),
@@ -3603,6 +3609,17 @@ class WorkspaceAbilities {
 					'skip_github'      => true,
 				),
 			),
+			'stale-worktrees' => array(
+				'task_type' => 'workspace_retention_cleanup',
+				'params'    => array(
+					'dry_run'              => false,
+					'artifact_cleanup'     => false,
+					'worktree_cleanup'     => true,
+					'skip_github'          => true,
+					'worktree_older_than'  => '14d',
+					'worktree_stale_only'  => true,
+				),
+			),
 			'retention' => array(
 				'task_type' => 'workspace_retention_cleanup',
 				'params'    => array(
@@ -3638,6 +3655,9 @@ class WorkspaceAbilities {
 		}
 		if ( isset($input['older_than']) && '' !== trim( (string) $input['older_than']) ) {
 			$params['worktree_older_than'] = trim( (string) $input['older_than']);
+		}
+		if ( isset($input['worktree_stale_only']) ) {
+			$params['worktree_stale_only'] = (bool) $input['worktree_stale_only'];
 		}
 		if ( 'artifacts' === $mode ) {
 			if ( isset($input['limit']) ) {
@@ -4034,6 +4054,7 @@ class WorkspaceAbilities {
 			'force_artifact_cleanup' => ! empty($input['force_artifact_cleanup']),
 			'include_resolvers'      => ! empty($input['include_resolvers']),
 			'mode'                   => (string) ( $input['mode'] ?? 'cleanup_plan' ),
+			'worktree_stale_only'    => ! empty($input['worktree_stale_only']),
 		);
 		foreach ( array( 'include_artifacts', 'include_worktrees' ) as $key ) {
 			if ( array_key_exists($key, $input) ) {
