@@ -3418,6 +3418,21 @@ class WorkspaceAbilities {
 			$task['task_ref'] = (string) $input['task_ref'];
 		}
 
+		$workspace = new Workspace();
+		if ( RemoteWorkspaceBackend::should_handle() && self::hasLocalPrimaryCheckout($workspace, (string) ( $input['repo'] ?? '' )) ) {
+			return $workspace->worktree_add(
+				$input['repo'] ?? '',
+				$input['branch'] ?? '',
+				$input['from'] ?? null,
+				$inject_context,
+				$bootstrap,
+				$allow_stale,
+				$rebase_base,
+				$force,
+				$task
+			);
+		}
+
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			$result = ( new RemoteWorkspaceBackend() )->worktree_add(
 				$input['repo'] ?? '',
@@ -3429,7 +3444,6 @@ class WorkspaceAbilities {
 			}
 		}
 
-		$workspace = new Workspace();
 		return $workspace->worktree_add(
 			$input['repo'] ?? '',
 			$input['branch'] ?? '',
@@ -3441,6 +3455,23 @@ class WorkspaceAbilities {
 			$force,
 			$task
 		);
+	}
+
+	/**
+	 * Whether a repo argument resolves to an editable local primary checkout.
+	 */
+	private static function hasLocalPrimaryCheckout( Workspace $workspace, string $repo ): bool {
+		if ( '' === trim($repo) ) {
+			return false;
+		}
+
+		$result = $workspace->show_repo($repo);
+		if ( is_wp_error($result) ) {
+			return false;
+		}
+
+		$path = (string) ( $result['path'] ?? '' );
+		return '' !== $path && ! str_starts_with($path, 'github://') && ! str_contains(basename($path), '@');
 	}
 
 	/**

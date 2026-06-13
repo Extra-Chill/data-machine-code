@@ -22,6 +22,7 @@ namespace DataMachineCode\Workspace {
 	{
 		public static array $show_input = array();
 		public static array $worktree_input = array();
+		public static bool $worktree_returns_remote_success = false;
 
 		public static function should_handle(): bool
 		{
@@ -37,9 +38,17 @@ namespace DataMachineCode\Workspace {
 			);
 		}
 
-		public function worktree_add( string $repo_name, string $branch, ?string $from = null ): \WP_Error
+		public function worktree_add( string $repo_name, string $branch, ?string $from = null ): array|\WP_Error
 		{
 			self::$worktree_input = compact('repo_name', 'branch', 'from');
+			if ( self::$worktree_returns_remote_success ) {
+				return array(
+					'success' => true,
+					'handle'  => $repo_name . '@' . str_replace('/', '-', $branch),
+					'path'    => 'github://Automattic/' . $repo_name . '#' . $branch,
+				);
+			}
+
 			return new \WP_Error(
 				'remote_workspace_repo_not_found',
 				'Remote workspace repository "wpcom-codebox" is not registered. Call workspace_clone first.'
@@ -156,6 +165,8 @@ namespace {
 	$assert('local show fallback attempted', 'wpcom-codebox' === ( \DataMachineCode\Workspace\Workspace::$show_input['handle'] ?? '' ));
 	$assert('show returns local listed primary', is_array($show) && '/Users/chubes/Developer/wpcom-codebox' === ( $show['path'] ?? '' ));
 
+	\DataMachineCode\Workspace\RemoteWorkspaceBackend::$worktree_returns_remote_success = true;
+	\DataMachineCode\Workspace\RemoteWorkspaceBackend::$worktree_input = array();
 	$worktree = \DataMachineCode\Abilities\WorkspaceAbilities::worktreeAdd(
 		array(
 			'repo'                 => 'wpcom-codebox',
@@ -171,12 +182,13 @@ namespace {
 		)
 	);
 
-	$assert('remote worktree add attempted first', 'wpcom-codebox' === ( \DataMachineCode\Workspace\RemoteWorkspaceBackend::$worktree_input['repo_name'] ?? '' ));
+	$assert('remote github worktree row is ignored when local primary exists', array() === \DataMachineCode\Workspace\RemoteWorkspaceBackend::$worktree_input);
 	$assert('local worktree add fallback attempted', 'wpcom-codebox' === ( \DataMachineCode\Workspace\Workspace::$worktree_input['repo'] ?? '' ));
 	$assert('worktree add preserves base ref', 'origin/main' === ( \DataMachineCode\Workspace\Workspace::$worktree_input['from'] ?? '' ));
 	$assert('worktree add preserves local options', false === ( \DataMachineCode\Workspace\Workspace::$worktree_input['inject_context'] ?? null ) && true === ( \DataMachineCode\Workspace\Workspace::$worktree_input['allow_stale'] ?? null ));
 	$assert('worktree add preserves task metadata', 'Extra-Chill/data-machine-code#635' === ( \DataMachineCode\Workspace\Workspace::$worktree_input['task']['task_ref'] ?? '' ));
 	$assert('worktree add returns local worktree result', is_array($worktree) && 'wpcom-codebox@fix-listed-primary-resolution' === ( $worktree['handle'] ?? '' ));
+	$assert('worktree add returns editable local path', is_array($worktree) && '/Users/chubes/Developer/wpcom-codebox@fix-listed-primary-resolution' === ( $worktree['path'] ?? '' ));
 
 	if ( $failures ) {
 		echo "\nFailures:\n";
