@@ -79,7 +79,7 @@ trait WorkspaceCleanupPlan {
 			}
 		}
 
-		$rows = array(
+		$rows    = array(
 			'artifact_cleanup' => $this->prepare_cleanup_plan_rows('artifact_cleanup', (array) ( $artifact_plan['candidates'] ?? array() ), 'safe'),
 			'worktree_removal' => $this->prepare_cleanup_plan_rows('worktree_removal', (array) ( $worktree_plan['candidates'] ?? array() ), 'reviewed_destructive'),
 			'resolver'         => $inputs['include_resolvers'] ? $this->build_cleanup_plan_resolver_rows( (array) ( $worktree_plan['skipped'] ?? array() )) : array(),
@@ -89,8 +89,8 @@ trait WorkspaceCleanupPlan {
 			'worktree_removal' => $this->prepare_cleanup_plan_blocked_rows('worktree_removal', (array) ( $worktree_plan['skipped'] ?? array() )),
 		);
 
-		$summary = $this->build_cleanup_plan_summary($rows, $blocked);
-		$plan    = array(
+		$summary         = $this->build_cleanup_plan_summary($rows, $blocked);
+		$plan            = array(
 			'success'        => true,
 			'mode'           => 'cleanup_plan',
 			'generated_at'   => gmdate('c'),
@@ -320,7 +320,7 @@ trait WorkspaceCleanupPlan {
 				if ( ! is_array($row) ) {
 					continue;
 				}
-				$reason = (string) ( $row['reason_code'] ?? 'unknown' );
+				$reason                              = (string) ( $row['reason_code'] ?? 'unknown' );
 				$blocked_reasons[ $type ][ $reason ] = ( $blocked_reasons[ $type ][ $reason ] ?? 0 ) + 1;
 			}
 		}
@@ -335,14 +335,14 @@ trait WorkspaceCleanupPlan {
 		}
 		unset($reasons);
 		return array(
-			'total_rows'             => $total_rows,
-			'rows_by_type'           => $counts,
-			'byte_totals'            => $byte_totals,
-			'total_size_bytes'       => $total_bytes,
+			'total_rows'              => $total_rows,
+			'rows_by_type'            => $counts,
+			'byte_totals'             => $byte_totals,
+			'total_size_bytes'        => $total_bytes,
 			'total_reclaimable_bytes' => $total_bytes,
-			'top_reclaimable'        => array_slice($top_rows, 0, 10),
-			'blocked_by_type'        => $blocked_counts,
-			'blocked_by_reason'      => $blocked_reasons,
+			'top_reclaimable'         => array_slice($top_rows, 0, 10),
+			'blocked_by_type'         => $blocked_counts,
+			'blocked_by_reason'       => $blocked_reasons,
 		);
 	}
 

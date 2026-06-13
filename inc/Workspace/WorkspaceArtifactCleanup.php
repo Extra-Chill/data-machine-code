@@ -121,7 +121,7 @@ trait WorkspaceArtifactCleanup {
 			if ( $limit > 0 ) {
 				$candidates = array_slice($candidates, 0, $limit);
 			}
-			$pagination   = array(
+			$pagination = array(
 				'mode'          => 'ranked_inventory',
 				'limit'         => $limit,
 				'offset'        => 0,

@@ -1747,13 +1747,13 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @return array<int,array<string,mixed>>
 	 */
 	private function worktree_cleanup_skipped_next_commands( array $skipped_by_reason ): array {
-		$active_no_signal_commands = $this->build_active_no_signal_next_commands(25, 0);
+		$active_no_signal_commands  = $this->build_active_no_signal_next_commands(25, 0);
 		$metadata_reconcile_command = sprintf(
 			'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=%d --offset=0 --until-budget=%s --format=json',
 			self::METADATA_RECONCILE_DEFAULT_LIMIT,
 			self::METADATA_RECONCILE_DEFAULT_BUDGET
 		);
-		$templates                 = array(
+		$templates                  = array(
 			'artifact_only_dirty_worktree'       => array(
 				'label'       => 'Review generated artifact cleanup separately',
 				'command'     => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --format=json',
@@ -1761,28 +1761,28 @@ trait WorkspaceWorktreeCleanupEngine {
 				'why'         => 'Dirty paths are limited to declared reconstructable artifact directories, so artifact cleanup can shed them without force-removing source worktrees.',
 				'destructive' => false,
 			),
-			'dirty_worktree'                       => array(
+			'dirty_worktree'                     => array(
 				'label'       => 'Inspect dirty files before retrying cleanup',
 				'command'     => 'git -C <worktree-path> status --short --branch --untracked-files=normal',
 				'alternative' => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --only=dirty_worktree --verbose --format=json',
 				'why'         => 'Shows the exact dirty paths so operators can distinguish generated artifacts from source edits and decide whether to clean, commit, or preserve the worktree.',
 				'destructive' => false,
 			),
-			'unpushed_commits'                     => array(
+			'unpushed_commits'                   => array(
 				'label'       => 'Inspect commits ahead of upstream before cleanup',
 				'command'     => 'git -C <worktree-path> log --oneline --decorate @{u}..HEAD',
 				'alternative' => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --only=unpushed_commits --verbose --format=json',
 				'why'         => 'Lists the protected commits so operators can push, merge, preserve, or intentionally abandon them before retrying cleanup.',
 				'destructive' => false,
 			),
-			'stale_worktree_marker'                => array(
+			'stale_worktree_marker'              => array(
 				'label'       => 'Preview stale git worktree marker pruning',
 				'command'     => 'git -C <primary-path> worktree prune --dry-run --verbose',
 				'alternative' => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --format=json',
 				'why'         => 'Confirms stale git metadata before any prune or registry repair, keeping cleanup non-destructive by default.',
 				'destructive' => false,
 			),
-			'primary_missing'                      => array(
+			'primary_missing'                    => array(
 				'label'       => 'Recover or adopt the missing primary checkout',
 				'command'     => 'studio wp datamachine-code workspace show <repo>',
 				'alternative' => 'Recreate with `studio wp datamachine-code workspace clone <remote-url> --name=<repo>` or adopt an existing checkout with `studio wp datamachine-code workspace adopt <path> --name=<repo>`.',
