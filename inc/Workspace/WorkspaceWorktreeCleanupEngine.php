@@ -149,7 +149,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		/** @var array<string,mixed> $github_cache */
 		$github_cache = array();
 
-		$all_worktrees   = array_values(array_filter( (array) $listing['worktrees'], fn( $wt ) => empty($wt['is_primary'])));
+		$all_worktrees   = $this->dedupe_worktree_cleanup_scan_rows(array_values(array_filter( (array) $listing['worktrees'], fn( $wt ) => empty($wt['is_primary']))));
 		$total_worktrees = count($all_worktrees);
 		$worktrees       = array_slice($all_worktrees, $offset, $limit);
 		$checked         = 0;
@@ -1571,6 +1571,38 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		return $summary;
+	}
+
+	/**
+	 * Remove duplicate rows from a cleanup scan while preserving inventory order.
+	 *
+	 * Worktree inventory can contain both git-discovered and DMC-registry views of
+	 * the same directory. Cleanup classification should report one candidate or
+	 * blocker per directory so high-volume summaries do not double-count bytes.
+	 *
+	 * @param  array<int,array<string,mixed>> $rows Worktree rows.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function dedupe_worktree_cleanup_scan_rows( array $rows ): array {
+		$seen   = array();
+		$result = array();
+		foreach ( $rows as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+
+			$handle = (string) ( $row['handle'] ?? '' );
+			$path   = (string) ( $row['path'] ?? '' );
+			$key    = '' !== $handle || '' !== $path ? $handle . '|' . $path : wp_json_encode($row);
+			if ( isset($seen[ $key ]) ) {
+				continue;
+			}
+
+			$seen[ $key ] = true;
+			$result[]     = $row;
+		}
+
+		return $result;
 	}
 
 	/**

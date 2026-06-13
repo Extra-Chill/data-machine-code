@@ -835,8 +835,17 @@ namespace {
 			'plan_id' => 'cleanup-plan-test',
 			'inputs'  => $input,
 			'summary' => array(
-			'total_rows'       => 2,
-			'total_size_bytes' => 4096,
+			'total_rows'              => 2,
+			'total_size_bytes'        => 4096,
+			'total_reclaimable_bytes' => 4096,
+			'byte_totals'             => array(
+			'artifact_cleanup' => 1024,
+			'worktree_removal' => 3072,
+			),
+			'blocked_by_type'         => array(
+			'artifact_cleanup' => 1,
+			'worktree_removal' => 0,
+			),
 			),
 			);
 		}
@@ -1147,10 +1156,13 @@ namespace {
 	WP_CLI::$successes = array();
 	$command->cleanup(array( 'plan' ), array( 'mode' => 'retention' ));
 	datamachine_code_cleanup_assert('retention' === ( $cleanup_plan_ability->last_input['mode'] ?? '' ), 'cleanup plan receives retention mode');
-	datamachine_code_cleanup_assert(false === ( $cleanup_plan_ability->last_input['include_artifacts'] ?? true ), 'retention cleanup plan skips exhaustive artifact scan by default');
+	datamachine_code_cleanup_assert(true === ( $cleanup_plan_ability->last_input['include_artifacts'] ?? false ), 'retention cleanup plan includes full-workspace artifact inventory by default');
 	datamachine_code_cleanup_assert(true === ( $cleanup_plan_ability->last_input['include_worktrees'] ?? false ), 'retention cleanup plan keeps inventory worktree planning enabled');
-	datamachine_code_cleanup_assert(in_array('Planning cleanup (retention; local worktree merge signals)...', WP_CLI::$logs, true), 'human cleanup plan reports bounded scan profile before planning');
-	datamachine_code_cleanup_assert(in_array('Artifacts: skipped for bounded retention planning; run `wp datamachine-code workspace cleanup plan --mode=artifacts` when you want artifact rows.', WP_CLI::$logs, true), 'human cleanup plan shows explicit artifact follow-up command');
+	datamachine_code_cleanup_assert(in_array('Planning cleanup (retention; full-workspace inventory, biggest wins first)...', WP_CLI::$logs, true), 'human cleanup plan reports high-volume inventory profile before planning');
+	datamachine_code_cleanup_assert(in_array('Reclaimable: 4.0 KiB', WP_CLI::$logs, true), 'human cleanup plan reports total reclaimable bytes up front');
+	datamachine_code_cleanup_assert(in_array('  artifact_cleanup: 1.0 KiB', WP_CLI::$logs, true), 'human cleanup plan surfaces artifact cleanup bytes separately');
+	datamachine_code_cleanup_assert(in_array('  worktree_removal: 3.0 KiB', WP_CLI::$logs, true), 'human cleanup plan surfaces worktree cleanup bytes separately');
+	datamachine_code_cleanup_assert(in_array('Blocked/kept rows are included in JSON under `blocked` with reason_code/reason; they are not applyable cleanup rows.', WP_CLI::$logs, true), 'human cleanup plan points to blocker reason details');
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();

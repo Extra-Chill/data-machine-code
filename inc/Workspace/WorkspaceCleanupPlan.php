@@ -34,7 +34,8 @@ trait WorkspaceCleanupPlan {
 			'include_worktrees'      => array_key_exists('include_worktrees', $opts) ? (bool) $opts['include_worktrees'] : true,
 			'include_resolvers'      => ! empty($opts['include_resolvers']),
 			'worktree_older_than'    => isset($opts['worktree_older_than']) ? trim( (string) $opts['worktree_older_than']) : '',
-			'worktree_sort'          => isset($opts['worktree_sort']) ? trim( (string) $opts['worktree_sort']) : '',
+			'worktree_sort'          => isset($opts['worktree_sort']) && '' !== trim( (string) $opts['worktree_sort']) ? trim( (string) $opts['worktree_sort']) : 'size',
+			'artifact_sort'          => isset($opts['artifact_sort']) && '' !== trim( (string) $opts['artifact_sort']) ? trim( (string) $opts['artifact_sort']) : 'size',
 		);
 
 		$artifact_plan = array(
@@ -43,14 +44,15 @@ trait WorkspaceCleanupPlan {
 			'summary'    => array(),
 		);
 		if ( $inputs['include_artifacts'] ) {
-			// Workspace cleanup plan is the source-of-truth orchestrator that
-			// later chunks/jobs consume — opt into the exhaustive scan so all
-			// safe worktrees are reviewed, not just the bounded dry-run page.
+			// Workspace cleanup plan is the source-of-truth orchestrator that later
+			// chunks/jobs consume. Use whole-workspace inventory planning so hundreds
+			// of worktrees are normal; apply still revalidates every row before delete.
 			$artifact_plan = $this->worktree_cleanup_artifacts(
 				array(
-					'dry_run'    => true,
-					'force'      => $inputs['force_artifact_cleanup'],
-					'exhaustive' => true,
+					'dry_run'        => true,
+					'force'          => $inputs['force_artifact_cleanup'],
+					'full_workspace' => true,
+					'sort'           => $inputs['artifact_sort'],
 				)
 			);
 			if ( $artifact_plan instanceof \WP_Error ) {
@@ -82,9 +84,13 @@ trait WorkspaceCleanupPlan {
 			'worktree_removal' => $this->prepare_cleanup_plan_rows('worktree_removal', (array) ( $worktree_plan['candidates'] ?? array() ), 'reviewed_destructive'),
 			'resolver'         => $inputs['include_resolvers'] ? $this->build_cleanup_plan_resolver_rows( (array) ( $worktree_plan['skipped'] ?? array() )) : array(),
 		);
+		$blocked = array(
+			'artifact_cleanup' => $this->prepare_cleanup_plan_blocked_rows('artifact_cleanup', (array) ( $artifact_plan['skipped'] ?? array() )),
+			'worktree_removal' => $this->prepare_cleanup_plan_blocked_rows('worktree_removal', (array) ( $worktree_plan['skipped'] ?? array() )),
+		);
 
-		$summary         = $this->build_cleanup_plan_summary($rows);
-		$plan            = array(
+		$summary = $this->build_cleanup_plan_summary($rows, $blocked);
+		$plan    = array(
 			'success'        => true,
 			'mode'           => 'cleanup_plan',
 			'generated_at'   => gmdate('c'),
@@ -102,6 +108,7 @@ trait WorkspaceCleanupPlan {
 				'worktree_removal' => $worktree_plan,
 			),
 			'rows'           => $rows,
+			'blocked'        => $blocked,
 			'summary'        => $summary,
 		);
 		$plan['plan_id'] = $this->stable_cleanup_hash(
@@ -198,6 +205,7 @@ trait WorkspaceCleanupPlan {
 	 */
 	private function prepare_cleanup_plan_rows( string $type, array $rows, string $safety_class ): array {
 		$result = array();
+		usort($rows, fn( $a, $b ) => $this->cleanup_plan_reclaimable_bytes( (array) $b) <=> $this->cleanup_plan_reclaimable_bytes( (array) $a));
 		foreach ( $rows as $row ) {
 			if ( ! is_array($row) ) {
 				continue;
@@ -205,6 +213,28 @@ trait WorkspaceCleanupPlan {
 			$row['row_type']     = $type;
 			$row['safety_class'] = $safety_class;
 			$row['row_id']       = $this->stable_cleanup_row_id($type, $row);
+			$result[]            = $row;
+		}
+		return $result;
+	}
+
+	/**
+	 * Add stable metadata to blocked/kept plan rows without making them applyable.
+	 *
+	 * @param  string           $type Cleanup row type the blocker belongs to.
+	 * @param  array<int,array> $rows Skipped rows from the underlying cleanup plan.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function prepare_cleanup_plan_blocked_rows( string $type, array $rows ): array {
+		$result = array();
+		usort($rows, fn( $a, $b ) => $this->cleanup_plan_reclaimable_bytes( (array) $b) <=> $this->cleanup_plan_reclaimable_bytes( (array) $a));
+		foreach ( $rows as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$row['row_type']     = $type . '_blocked';
+			$row['safety_class'] = 'blocked';
+			$row['row_id']       = $this->stable_cleanup_row_id($type . '_blocked', $row);
 			$result[]            = $row;
 		}
 		return $result;
@@ -257,33 +287,92 @@ trait WorkspaceCleanupPlan {
 	/**
 	 * Build stable cleanup plan summary counts.
 	 *
-	 * @param  array<string,array<int,array>> $rows Rows keyed by type.
+	 * @param  array<string,array<int,array>> $rows    Rows keyed by type.
+	 * @param  array<string,array<int,array>> $blocked Blocked rows keyed by type.
 	 * @return array<string,mixed>
 	 */
-	private function build_cleanup_plan_summary( array $rows ): array {
+	private function build_cleanup_plan_summary( array $rows, array $blocked = array() ): array {
 		$counts      = array();
 		$byte_totals = array();
 		$total_rows  = 0;
 		$total_bytes = 0;
+		$top_rows    = array();
 
 		foreach ( $rows as $type => $typed_rows ) {
 			$counts[ $type ]      = count( (array) $typed_rows);
 			$byte_totals[ $type ] = 0;
 			$total_rows          += $counts[ $type ];
 			foreach ( (array) $typed_rows as $row ) {
-				$bytes                 = max(0, (int) ( $row['artifact_size_bytes'] ?? $row['size_bytes'] ?? 0 ));
+				$bytes                 = $this->cleanup_plan_reclaimable_bytes( (array) $row);
 				$byte_totals[ $type ] += $bytes;
 				$total_bytes          += $bytes;
+				if ( $bytes > 0 ) {
+					$top_rows[] = $this->cleanup_plan_top_row_summary( (array) $row, (string) $type, $bytes);
+				}
 			}
 		}
 
+		$blocked_counts  = array();
+		$blocked_reasons = array();
+		foreach ( $blocked as $type => $typed_rows ) {
+			$blocked_counts[ $type ] = count( (array) $typed_rows);
+			foreach ( (array) $typed_rows as $row ) {
+				if ( ! is_array($row) ) {
+					continue;
+				}
+				$reason = (string) ( $row['reason_code'] ?? 'unknown' );
+				$blocked_reasons[ $type ][ $reason ] = ( $blocked_reasons[ $type ][ $reason ] ?? 0 ) + 1;
+			}
+		}
+		usort($top_rows, fn( $a, $b ) => (int) ( $b['reclaimable_bytes'] ?? 0 ) <=> (int) ( $a['reclaimable_bytes'] ?? 0 ));
+
 		ksort($counts);
 		ksort($byte_totals);
+		ksort($blocked_counts);
+		ksort($blocked_reasons);
+		foreach ( $blocked_reasons as &$reasons ) {
+			ksort($reasons);
+		}
+		unset($reasons);
 		return array(
-			'total_rows'       => $total_rows,
-			'rows_by_type'     => $counts,
-			'byte_totals'      => $byte_totals,
-			'total_size_bytes' => $total_bytes,
+			'total_rows'             => $total_rows,
+			'rows_by_type'           => $counts,
+			'byte_totals'            => $byte_totals,
+			'total_size_bytes'       => $total_bytes,
+			'total_reclaimable_bytes' => $total_bytes,
+			'top_reclaimable'        => array_slice($top_rows, 0, 10),
+			'blocked_by_type'        => $blocked_counts,
+			'blocked_by_reason'      => $blocked_reasons,
+		);
+	}
+
+	/**
+	 * Return the bytes a cleanup row is expected to reclaim.
+	 *
+	 * @param  array<string,mixed> $row Cleanup row.
+	 * @return int
+	 */
+	private function cleanup_plan_reclaimable_bytes( array $row ): int {
+		return max(0, (int) ( $row['artifact_size_bytes'] ?? $row['size_bytes'] ?? 0 ));
+	}
+
+	/**
+	 * Return a compact largest-win row for operator summaries.
+	 *
+	 * @param  array<string,mixed> $row   Cleanup row.
+	 * @param  string              $type  Row type.
+	 * @param  int                 $bytes Reclaimable bytes.
+	 * @return array<string,mixed>
+	 */
+	private function cleanup_plan_top_row_summary( array $row, string $type, int $bytes ): array {
+		return array(
+			'handle'            => (string) ( $row['handle'] ?? '' ),
+			'repo'              => (string) ( $row['repo'] ?? '' ),
+			'branch'            => (string) ( $row['branch'] ?? '' ),
+			'path'              => (string) ( $row['path'] ?? '' ),
+			'row_type'          => $type,
+			'reason_code'       => (string) ( $row['reason_code'] ?? '' ),
+			'reclaimable_bytes' => $bytes,
 		);
 	}
 
