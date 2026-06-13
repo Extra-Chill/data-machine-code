@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.113] - 2026-06-13
+
+### Changed
+- Avoid undocumented worktree shape access
+- Satisfy workspace routing static analysis
+
+### Fixed
+- Fix local primary worktree routing
+
 ## [0.47.112] - 2026-06-12
 
 ### Fixed
