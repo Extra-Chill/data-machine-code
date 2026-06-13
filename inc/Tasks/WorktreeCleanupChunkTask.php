@@ -110,13 +110,14 @@ class WorktreeCleanupChunkTask extends SystemTask {
 					'apply_plan'                => array( 'candidates' => $rows ),
 					'skip_github'               => array_key_exists('skip_github', $params) ? (bool) $params['skip_github'] : true,
 					'include_repaired_metadata' => ! empty($params['include_repaired_metadata']),
+					'stale_liveness_only'       => ! empty($params['stale_liveness_only']),
 				)
 			),
 			default     => new \WP_Error('invalid_cleanup_chunk_type', sprintf('Unknown cleanup chunk type: %s', $chunk_type), array( 'status' => 400 )),
 		};
 
 		if ( $result instanceof \WP_Error ) {
-			$failed = $this->rows_to_failed($rows, $result->get_error_code(), $result->get_error_message());
+			$failed = $this->rows_to_failed($rows, (string) $result->get_error_code(), $result->get_error_message());
 			$this->completeJob(
 				$jobId,
 				$this->build_chunk_result(
@@ -246,7 +247,7 @@ class WorktreeCleanupChunkTask extends SystemTask {
 					$planned,
 					array(),
 					$skipped,
-					$this->rows_to_failed($planned, $result->get_error_code(), $result->get_error_message()),
+					$this->rows_to_failed($planned, (string) $result->get_error_code(), $result->get_error_message()),
 					0,
 					$started_at,
 					array(

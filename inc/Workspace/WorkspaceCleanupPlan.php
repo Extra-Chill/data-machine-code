@@ -36,6 +36,7 @@ trait WorkspaceCleanupPlan {
 			'worktree_older_than'    => isset($opts['worktree_older_than']) ? trim( (string) $opts['worktree_older_than']) : '',
 			'worktree_sort'          => isset($opts['worktree_sort']) && '' !== trim( (string) $opts['worktree_sort']) ? trim( (string) $opts['worktree_sort']) : 'size',
 			'artifact_sort'          => isset($opts['artifact_sort']) && '' !== trim( (string) $opts['artifact_sort']) ? trim( (string) $opts['artifact_sort']) : 'size',
+			'worktree_stale_only'    => ! empty($opts['worktree_stale_only']),
 		);
 
 		$artifact_plan = array(
@@ -68,10 +69,11 @@ trait WorkspaceCleanupPlan {
 		if ( $inputs['include_worktrees'] ) {
 			$worktree_plan = $this->worktree_cleanup_merged(
 				array(
-					'dry_run'     => true,
-					'skip_github' => true,
-					'older_than'  => $inputs['worktree_older_than'],
-					'sort'        => $inputs['worktree_sort'],
+					'dry_run'             => true,
+					'skip_github'         => true,
+					'older_than'          => $inputs['worktree_older_than'],
+					'sort'                => $inputs['worktree_sort'],
+					'stale_liveness_only' => $inputs['worktree_stale_only'],
 				)
 			);
 			if ( $worktree_plan instanceof \WP_Error ) {
@@ -89,8 +91,20 @@ trait WorkspaceCleanupPlan {
 			'worktree_removal' => $this->prepare_cleanup_plan_blocked_rows('worktree_removal', (array) ( $worktree_plan['skipped'] ?? array() )),
 		);
 
-		$summary         = $this->build_cleanup_plan_summary($rows, $blocked);
-		$plan            = array(
+		$action_rows = array(
+			'remove_artifacts' => $rows['artifact_cleanup'],
+			'remove_worktree'  => $rows['worktree_removal'],
+			'resolve_signal'   => $rows['resolver'],
+		);
+
+		$summary                   = $this->build_cleanup_plan_summary($rows, $blocked);
+		$summary['rows_by_action'] = array(
+			'remove_artifacts' => count($action_rows['remove_artifacts']),
+			'remove_worktree'  => count($action_rows['remove_worktree']),
+			'resolve_signal'   => count($action_rows['resolve_signal']),
+		);
+
+		$plan = array(
 			'success'        => true,
 			'mode'           => 'cleanup_plan',
 			'generated_at'   => gmdate('c'),
@@ -109,8 +123,10 @@ trait WorkspaceCleanupPlan {
 			),
 			'rows'           => $rows,
 			'blocked'        => $blocked,
+			'action_rows'    => $action_rows,
 			'summary'        => $summary,
 		);
+
 		$plan['plan_id'] = $this->stable_cleanup_hash(
 			array(
 				'inputs' => $inputs,
