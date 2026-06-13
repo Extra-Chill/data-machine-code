@@ -3639,18 +3639,6 @@ class WorkspaceAbilities {
 		if ( isset($input['older_than']) && '' !== trim( (string) $input['older_than']) ) {
 			$params['worktree_older_than'] = trim( (string) $input['older_than']);
 		}
-		if ( 'artifacts' === $mode ) {
-			if ( isset($input['limit']) ) {
-				$params['limit'] = (int) $input['limit'];
-			}
-			if ( isset($input['offset']) ) {
-				$params['offset'] = (int) $input['offset'];
-			}
-			if ( ! empty($input['exhaustive']) ) {
-				$params['exhaustive'] = true;
-			}
-		}
-
 		$context = array();
 		if ( isset($input['user_id']) ) {
 			$context['user_id'] = (int) $input['user_id'];

@@ -255,14 +255,11 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 		);
 
 		if ( ! empty($opts['artifact_cleanup']) ) {
-			$artifact_limit = isset($params['limit']) ? max(0, (int) $params['limit']) : 100;
-			$artifact_page  = $workspace->worktree_cleanup_artifacts(
+			$artifact_page = $workspace->worktree_cleanup_artifacts(
 				array(
 					'dry_run'       => true,
 					'force'         => ! empty($opts['force']),
-					'limit'         => $artifact_limit,
-					'offset'        => isset($params['offset']) ? max(0, (int) $params['offset']) : 0,
-					'exhaustive'    => ! empty($params['exhaustive']),
+					'exhaustive'    => true,
 					'safety_probes' => true,
 				)
 			);
