@@ -781,11 +781,11 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$result['commands'] = array(
-			'drain_parent'        => sprintf('studio wp datamachine drain --job-id=%d', $job_id),
-			'status'              => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
-			'status_verbose'      => sprintf('studio wp datamachine-code workspace cleanup status %s --verbose --format=json', $run_id),
-			'one_command_drain'   => sprintf('studio wp datamachine-code workspace cleanup run --mode=%s --drain --format=json', $mode),
-			'bytes_verification'  => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
+			'drain_parent'       => sprintf('studio wp datamachine drain --job-id=%d', $job_id),
+			'status'             => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
+			'status_verbose'     => sprintf('studio wp datamachine-code workspace cleanup status %s --verbose --format=json', $run_id),
+			'one_command_drain'  => sprintf('studio wp datamachine-code workspace cleanup run --mode=%s --drain --format=json', $mode),
+			'bytes_verification' => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
 		);
 
 		return $result;
@@ -809,8 +809,8 @@ class WorkspaceCommand extends BaseCommand {
 			return $result;
 		}
 
-		$commands = array();
-		$errors   = array();
+		$commands   = array();
+		$errors     = array();
 		$max_passes = 10;
 
 		$parent_command = sprintf('datamachine drain --job-id=%d', $job_id);
@@ -827,7 +827,7 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 			}
 
-			$children = (array) ( $status['evidence']['children'] ?? array() );
+			$children         = (array) ( $status['evidence']['children'] ?? array() );
 			$active_child_ids = array_values(
 				array_unique(
 					array_filter(
@@ -854,17 +854,17 @@ class WorkspaceCommand extends BaseCommand {
 			}
 		}
 
-		$final = $this->cleanup_run_evidence_store()->read($run_id, false, ! empty($assoc_args['verbose']));
-		$output = $final instanceof \WP_Error ? $result : $final;
+		$final                 = $this->cleanup_run_evidence_store()->read($run_id, false, ! empty($assoc_args['verbose']));
+		$output                = $final instanceof \WP_Error ? $result : $final;
 		$output['initial_run'] = $result;
 		$output['drain']       = array(
-			'success'           => array() === $errors,
-			'commands'          => $commands,
-			'errors'            => $errors,
-			'verify_command'    => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
-			'bytes_reclaimed'   => (int) ( $output['cleanup_items']['bytes_reclaimed'] ?? 0 ),
-			'freed_human'       => (string) ( $output['cleanup_items']['freed_human'] ?? $this->format_bytes(0) ),
-			'completion_state'  => (string) ( $output['state'] ?? 'unknown' ),
+			'success'          => array() === $errors,
+			'commands'         => $commands,
+			'errors'           => $errors,
+			'verify_command'   => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
+			'bytes_reclaimed'  => (int) ( $output['cleanup_items']['bytes_reclaimed'] ?? 0 ),
+			'freed_human'      => (string) ( $output['cleanup_items']['freed_human'] ?? $this->format_bytes(0) ),
+			'completion_state' => (string) ( $output['state'] ?? 'unknown' ),
 		);
 
 		return $output;
@@ -877,10 +877,6 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return string Empty string on success.
 	 */
 	private function run_wp_cli_command( string $command ): string {
-		if ( ! method_exists('WP_CLI', 'runcommand') ) {
-			return 'WP_CLI::runcommand is unavailable; run the reported drain commands manually.';
-		}
-
 		try {
 			WP_CLI::runcommand(
 				$command,
@@ -1317,10 +1313,22 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log('Drain summary:');
 		$this->format_items(
 			array(
-				array( 'metric' => 'success', 'value' => ! empty($drain['success']) ? 'yes' : 'no' ),
-				array( 'metric' => 'completion_state', 'value' => (string) ( $drain['completion_state'] ?? 'unknown' ) ),
-				array( 'metric' => 'bytes_reclaimed', 'value' => $this->format_bytes($drain['bytes_reclaimed'] ?? 0) ),
-				array( 'metric' => 'verify_command', 'value' => (string) ( $drain['verify_command'] ?? '' ) ),
+				array(
+					'metric' => 'success',
+					'value'  => ! empty($drain['success']) ? 'yes' : 'no',
+				),
+				array(
+					'metric' => 'completion_state',
+					'value'  => (string) ( $drain['completion_state'] ?? 'unknown' ),
+				),
+				array(
+					'metric' => 'bytes_reclaimed',
+					'value'  => $this->format_bytes($drain['bytes_reclaimed'] ?? 0),
+				),
+				array(
+					'metric' => 'verify_command',
+					'value'  => (string) ( $drain['verify_command'] ?? '' ),
+				),
 			),
 			array( 'metric', 'value' ),
 			array( 'format' => 'table' ),
@@ -1379,7 +1387,7 @@ class WorkspaceCommand extends BaseCommand {
 		}
 		WP_CLI::log('');
 		WP_CLI::log($label);
-		$rows = array();
+		$rows   = array();
 		foreach ( $reasons as $reason => $bucket ) {
 			$bucket   = (array) $bucket;
 			$examples = array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : (string) $row, (array) ( $bucket['examples'] ?? array() ));
@@ -1458,11 +1466,11 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log('Top reclaimable paths:');
 		$rows = array_map(
 			fn( $row ) => array(
-				'size'     => is_array($row) ? $this->format_bytes($row['size_bytes'] ?? 0) : '0 B',
-				'category' => is_array($row) ? (string) ( $row['category'] ?? '' ) : '',
-				'risk'     => is_array($row) ? (string) ( $row['safety_class'] ?? '' ) : '',
-				'handle'   => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '',
-				'path'     => is_array($row) ? (string) ( $row['path'] ?? '' ) : '',
+				'size'     => $this->format_bytes($row['size_bytes'] ?? 0),
+				'category' => (string) ( $row['category'] ?? '' ),
+				'risk'     => (string) ( $row['safety_class'] ?? '' ),
+				'handle'   => (string) ( $row['handle'] ?? '' ),
+				'path'     => (string) ( $row['path'] ?? '' ),
 			),
 			$paths
 		);

@@ -14,8 +14,8 @@ defined('ABSPATH') || exit;
 
 class CleanupRunService {
 
-	private const DEFAULT_APPLY_LIMIT        = 25;
-	private const MAX_APPLY_LIMIT            = 100;
+	private const DEFAULT_APPLY_LIMIT = 25;
+	private const MAX_APPLY_LIMIT     = 100;
 
 
 
@@ -136,9 +136,12 @@ class CleanupRunService {
 					'limit'      => count($artifact_batch),
 				)
 			);
+			if ( $results['artifact_cleanup'] instanceof \WP_Error ) {
+				return $results['artifact_cleanup'];
+			}
 			$this->record_apply_result($artifact_batch, $results['artifact_cleanup'], 'removed');
-			$applied_rows += count((array) ( $results['artifact_cleanup']['removed'] ?? array() ));
-			$skipped_rows += count((array) ( $results['artifact_cleanup']['skipped'] ?? array() ));
+			$applied_rows += count( (array) ( $results['artifact_cleanup']['removed'] ?? array() ) );
+			$skipped_rows += count( (array) ( $results['artifact_cleanup']['skipped'] ?? array() ) );
 		}
 
 		$remaining_capacity = max(0, $limit - $processed_rows);
@@ -154,9 +157,12 @@ class CleanupRunService {
 					'skip_github'       => true,
 				)
 			);
+			if ( $results['worktree_removal'] instanceof \WP_Error ) {
+				return $results['worktree_removal'];
+			}
 			$this->record_apply_result($worktree_batch, $results['worktree_removal'], 'removed');
-			$applied_rows += count((array) ( $results['worktree_removal']['removed'] ?? array() ));
-			$skipped_rows += count((array) ( $results['worktree_removal']['skipped'] ?? array() ));
+			$applied_rows += count( (array) ( $results['worktree_removal']['removed'] ?? array() ) );
+			$skipped_rows += count( (array) ( $results['worktree_removal']['skipped'] ?? array() ) );
 		}
 
 		$status          = $this->status($run_id);
