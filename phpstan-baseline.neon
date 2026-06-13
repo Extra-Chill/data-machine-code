@@ -1,0 +1,40 @@
+# Cross-plugin: these classes live in the data-machine plugin; resolved at runtime.
+# Remove once homeboy-extensions#1340 adds dependency-stack PHPStan scanDirectories.
+#
+# AgentsMdSections.php composes AGENTS.md from sections registered against Data
+# Machine's substrate (DataMachine\Engine\AI\SectionRegistry / MemoryFileRegistry,
+# and the optional CliCommandIntrospector once data-machine#2613 lands) and reads
+# agent context via DataMachine\Core\FilesRepository\DirectoryManager. Those
+# classes ship in the sibling data-machine plugin and are guarded with
+# class_exists() at runtime; data-machine-code's PHPStan setup has no cross-plugin
+# class resolution, so they surface as class.notFound (and the method_exists()
+# guards collapse to impossibleType / alreadyNarrowedType). Every entry below is
+# such a cross-plugin reference — all pre-existing on main, identical before/after
+# #671, which only pulled the already-touched file into the changed-file scope.
+#
+# The homeboy WordPress lint extension includes this file additively alongside the
+# default config (PHPStan 2.x dropped the --baseline CLI flag, so baselines are
+# pulled in via includes:). reportUnmatchedIgnoredErrors is disabled so the gate
+# stays green across analysis variants (with/without substrate stubs loaded) and
+# when a given class is not referenced in a future change scope.
+parameters:
+	reportUnmatchedIgnoredErrors: false
+	ignoreErrors:
+		# SectionRegistry::register() — substrate class, runtime-guarded.
+		-
+			message: '#^Call to static method register\(\) on an unknown class DataMachine\\Engine\\AI\\(SectionRegistry|MemoryFileRegistry|CliCommandIntrospector)\.$#'
+			identifier: class.notFound
+			path: inc/Runtime/AgentsMdSections.php
+		# method_exists() on DataMachine\Engine\AI\* — unknown class makes PHPStan
+		# treat the runtime guard as always-false (FQCN literal is truncated).
+		-
+			message: '#^Call to function method_exists\(\) with ''(\\\\)?DataMachine\\\\Engine.*'' and ''register'' will always evaluate to false\.$#'
+			identifier: function.impossibleType
+			path: inc/Runtime/AgentsMdSections.php
+		# method_exists() on DataMachine\Core\FilesRepository\DirectoryManager —
+		# resolves as alreadyNarrowedType when substrate stubs are loaded (CI) or
+		# impossibleType when not (bare analysis); both stem from the cross-plugin
+		# reference.
+		-
+			message: '#^Call to function method_exists\(\) with DataMachine\\Core\\FilesRepository\\DirectoryManager and ''[^'']+'' will always evaluate to (true|false)\.$#'
+			path: inc/Runtime/AgentsMdSections.php
