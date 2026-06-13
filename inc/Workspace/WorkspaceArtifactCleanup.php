@@ -21,12 +21,10 @@ trait WorkspaceArtifactCleanup {
 	 * plan-only so every destructive run revalidates the exact worktree and
 	 * profile-derived artifact paths from a reviewed dry-run.
 	 *
-	 * Dry-run is bounded by default to keep huge workspaces (~hundreds of
-	 * worktrees) responsive: only the cheap top-level inventory is scanned for
-	 * artifact directories, per-worktree git status / unpushed-commit probes are
-	 * deferred unless `safety_probes` is requested, and the result is paginated
-	 * via `limit` + `offset`. Pass `exhaustive=true` to restore the full scan
-	 * (full git status + unpushed checks for every worktree).
+	 * Direct low-level dry-run is bounded by default to keep huge workspaces
+	 * (~hundreds of worktrees) responsive. Operators should apply through the
+	 * high-level cleanup plan/apply commands, which persist reviewed rows by run
+	 * ID instead of replaying a mutable inventory offset.
 	 *
 	 * Apply paths revalidate the planned subset only — they pass `only_handles`
 	 * derived from the plan into the builder so safety probes run against the
@@ -55,7 +53,7 @@ trait WorkspaceArtifactCleanup {
 		if ( $exhaustive ) {
 			$limit = 0;
 		}
-		$apply_command = $this->build_artifact_cleanup_apply_command($limit, $offset, $exhaustive);
+		$apply_command = $this->build_artifact_cleanup_apply_command();
 		// Apply paths default to safety probing (small subset). Dry-run defaults
 		// to skipping the per-worktree git probes unless explicitly requested or
 		// the caller asked for exhaustive mode.
@@ -204,27 +202,11 @@ trait WorkspaceArtifactCleanup {
 	}
 
 	/**
-	 * Build the high-level command that applies the same artifact cleanup page.
-	 *
-	 * @param  int  $limit      Effective bounded scan limit.
-	 * @param  int  $offset     Bounded inventory offset.
-	 * @param  bool $exhaustive Whether the dry-run used exhaustive mode.
+	 * Build the high-level command that persists a snapshot-safe artifact plan.
 	 * @return string
 	 */
-	private function build_artifact_cleanup_apply_command( int $limit, int $offset, bool $exhaustive ): string {
-		$parts = array(
-			'studio wp datamachine-code workspace cleanup run',
-			'--mode=artifacts',
-		);
-		if ( $exhaustive ) {
-			$parts[] = '--exhaustive';
-		} else {
-			$parts[] = sprintf('--limit=%d', $limit);
-			$parts[] = sprintf('--offset=%d', $offset);
-		}
-		$parts[] = '--format=json';
-
-		return implode(' ', $parts);
+	private function build_artifact_cleanup_apply_command(): string {
+		return 'studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json';
 	}
 
 	/**
