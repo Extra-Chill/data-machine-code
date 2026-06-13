@@ -900,14 +900,23 @@ namespace {
         }
     }
 
-    class FakeGetJobsAbility
-    {
-        public function execute( array $input ): array
-        {
-            if (isset($input['parent_job_id']) ) {
-                $children = array(
-                 123 => array(
-                  array(
+	class FakeGetJobsAbility
+	{
+		public function execute( array $input ): array
+		{
+			$scenario = (string) ( $GLOBALS['datamachine_code_cleanup_status_scenario'] ?? 'default' );
+			if (isset($input['parent_job_id']) ) {
+				if ( 'no_work' === $scenario ) {
+					return array(
+					'success' => true,
+					'jobs'    => array(),
+					'total'   => 0,
+					);
+				}
+
+				$children = array(
+				 123 => array(
+				  array(
                 'job_id'        => 124,
                 'parent_job_id' => 123,
                 'source'        => 'system',
@@ -917,12 +926,12 @@ namespace {
                  ),
                  124 => array(
                   array(
-                'job_id'        => 125,
-                'parent_job_id' => 124,
-                'source'        => 'batch',
-                'status'        => ! empty($GLOBALS['datamachine_code_cleanup_child_drained']) ? 'completed' : 'processing',
-                'engine_data'   => array(
-                  'batch_id'  => 'dm_batch_123',
+				  'job_id'        => 125,
+				  'parent_job_id' => 124,
+				  'source'        => 'batch',
+				  'status'        => 'completed_children' === $scenario || ! empty($GLOBALS['datamachine_code_cleanup_child_drained']) ? 'completed' : 'processing',
+				  'engine_data'   => array(
+				  'batch_id'  => 'dm_batch_123',
                   'task_type' => 'worktree_cleanup_chunk',
                    ),
                   ),
@@ -950,23 +959,23 @@ namespace {
                    ),
                   ),
                   array(
-                 'job_id'        => 127,
-                 'parent_job_id' => 124,
-                 'source'        => 'system',
-                 'status'        => 'failed - apply_failed',
-                 'engine_data'   => array(
-                 'task_type'        => 'worktree_cleanup_chunk',
-                 'success'          => false,
-                 'chunk_type'       => 'artifacts',
-                 'planned_count'    => 1,
-                 'applied_count'    => 0,
-                 'skipped_count'    => 0,
-                 'failed_count'     => 1,
-                 'bytes_reclaimed'  => 0,
-                 'skipped'          => array(),
-                 'failed'           => array(
-                   array( 'handle' => 'repo@failed', 'reason_code' => 'apply_failed', 'artifact_size_bytes' => 2048 ),
-                 ),
+				 'job_id'        => 127,
+				 'parent_job_id' => 124,
+				 'source'        => 'system',
+				 'status'        => 'completed_children' === $scenario ? 'completed' : 'failed - apply_failed',
+				 'engine_data'   => array(
+				 'task_type'        => 'worktree_cleanup_chunk',
+				 'success'          => 'completed_children' === $scenario,
+				 'chunk_type'       => 'artifacts',
+				 'planned_count'    => 1,
+				 'applied_count'    => 'completed_children' === $scenario ? 1 : 0,
+				 'skipped_count'    => 0,
+				 'failed_count'     => 'completed_children' === $scenario ? 0 : 1,
+				 'bytes_reclaimed'  => 0,
+				 'skipped'          => array(),
+				 'failed'           => 'completed_children' === $scenario ? array() : array(
+				   array( 'handle' => 'repo@failed', 'reason_code' => 'apply_failed', 'artifact_size_bytes' => 2048 ),
+				 ),
                    ),
                   ),
                  ),
@@ -985,31 +994,60 @@ namespace {
                 );
             }
 
-            return array(
-            'success' => true,
-            'jobs'    => array(
-            array(
-            'job_id'       => (int) $input['job_id'],
-            'flow_id'      => null,
-            'pipeline_id'  => null,
-            'source'       => 'system',
-            'status'       => 'completed',
-            'created_at'   => '2026-05-03 00:00:00',
-            'completed_at' => '2026-05-03 00:10:00',
-            'engine_data'  => array(
-            'cleanup_run' => array(
-            'mode'   => 'retention',
-            'source' => 'workspace_cleanup_cli',
-            ),
-            'success'     => true,
-            'job_backed'  => true,
-            'report'      => array(
-            'bytes_reclaimed' => 0,
-            'freed_human'     => 'pending child jobs',
-            ),
-                        ),
-            ),
-            ),
+			if ( 'no_work' === $scenario ) {
+				$engine_data = array(
+				'cleanup_run'      => array(
+				'mode'   => 'retention',
+				'source' => 'workspace_cleanup_cli',
+				),
+				'success'          => true,
+				'dry_run'          => false,
+				'destructive'      => false,
+				'job_backed'       => true,
+				'chunk_row_counts' => array(
+				'artifact_discovery' => 0,
+				'artifacts'          => 0,
+				'worktrees'          => 0,
+				),
+				'chunks'           => array(),
+				'report'           => array(
+				'bytes_reclaimed' => 0,
+				'freed_human'     => '0 B',
+				),
+				'evidence'         => array(
+				'planned_chunks' => 0,
+				'note'           => 'No cleanup chunks were eligible after plan generation.',
+				),
+				);
+			} else {
+				$engine_data = array(
+				'cleanup_run' => array(
+				'mode'   => 'retention',
+				'source' => 'workspace_cleanup_cli',
+				),
+				'success'     => true,
+				'job_backed'  => true,
+				'report'      => array(
+				'bytes_reclaimed' => 0,
+				'freed_human'     => 'pending child jobs',
+				),
+				);
+			}
+
+			return array(
+			'success' => true,
+			'jobs'    => array(
+			array(
+			'job_id'       => (int) $input['job_id'],
+			'flow_id'      => null,
+			'pipeline_id'  => null,
+			'source'       => 'system',
+			'status'       => in_array($scenario, array( 'no_work', 'completed_children' ), true) ? 'processing' : 'completed',
+			'created_at'   => '2026-05-03 00:00:00',
+			'completed_at' => '2026-05-03 00:10:00',
+			'engine_data'  => $engine_data,
+			),
+			),
             );
         }
     }
@@ -1225,12 +1263,13 @@ namespace {
     $command->cleanup(array( 'resume', 'cleanup-run-20260504193024-abc123' ), array( 'limit' => 9, 'format' => 'json' ));
     datamachine_code_cleanup_assert(9 === (int) ( $cleanup_status_ability->last_input['limit'] ?? 0 ), 'DB cleanup resume forwards bounded limit');
 
-    WP_CLI::$logs      = array();
-    WP_CLI::$successes = array();
-    $command->cleanup(array( 'status', 'cleanup-run-123' ), array( 'format' => 'json' ));
-    $status_json = json_decode(WP_CLI::$logs[0] ?? '', true);
-    datamachine_code_cleanup_assert('children_processing' === ( $status_json['state'] ?? '' ), 'cleanup status stays active while child batch is processing');
-    datamachine_code_cleanup_assert('children_processing' === ( $status_json['status'] ?? '' ), 'cleanup status does not report parent completed while children run');
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup(array( 'status', 'cleanup-run-123' ), array( 'format' => 'json' ));
+	$status_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+	datamachine_code_cleanup_assert('waiting_on_children' === ( $status_json['state'] ?? '' ), 'cleanup status stays active while child batch is processing');
+	datamachine_code_cleanup_assert('waiting_on_children' === ( $status_json['status'] ?? '' ), 'cleanup status does not report parent completed while children run');
+	datamachine_code_cleanup_assert('completed' === ( $status_json['parent_status'] ?? '' ), 'cleanup status preserves raw parent job status separately');
     datamachine_code_cleanup_assert('2026-05-03 00:10:00' === ( $status_json['parent_completed_at'] ?? '' ), 'cleanup status labels parent scheduler completion separately');
     datamachine_code_cleanup_assert(! isset($status_json['completed_at']), 'cleanup status does not expose parent completion as run completion');
     datamachine_code_cleanup_assert(! isset($status_json['children']['job_ids']), 'cleanup status omits full child job ids by default');
@@ -1275,12 +1314,48 @@ namespace {
     $drained_json = json_decode(WP_CLI::$logs[0] ?? '', true);
     datamachine_code_cleanup_assert(array( 'datamachine drain --job-id=123', 'datamachine drain --job-id=125' ) === WP_CLI::$runcommands, 'cleanup run --drain drains parent then active child jobs');
     datamachine_code_cleanup_assert(4096 === (int) ( $drained_json['drain']['bytes_reclaimed'] ?? 0 ), 'cleanup run --drain reports verified reclaimed bytes');
-    datamachine_code_cleanup_assert('partial_failed' === (string) ( $drained_json['drain']['completion_state'] ?? '' ), 'cleanup run --drain reports final cleanup state');
-    datamachine_code_cleanup_assert('studio wp datamachine-code workspace cleanup status cleanup-run-123 --format=json' === (string) ( $drained_json['drain']['verify_command'] ?? '' ), 'cleanup run --drain emits one verification command');
-    $GLOBALS['datamachine_code_cleanup_parent_drained'] = false;
-    $GLOBALS['datamachine_code_cleanup_child_drained']  = false;
+	datamachine_code_cleanup_assert('failed' === (string) ( $drained_json['drain']['completion_state'] ?? '' ), 'cleanup run --drain reports final cleanup state');
+	datamachine_code_cleanup_assert('studio wp datamachine-code workspace cleanup status cleanup-run-123 --format=json' === (string) ( $drained_json['drain']['verify_command'] ?? '' ), 'cleanup run --drain emits one verification command');
+	$GLOBALS['datamachine_code_cleanup_parent_drained'] = false;
+	$GLOBALS['datamachine_code_cleanup_child_drained']  = false;
 
-    WP_CLI::$logs      = array();
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$GLOBALS['datamachine_code_cleanup_status_scenario'] = 'no_work';
+	$command->cleanup(array( 'status', 'cleanup-run-123' ), array( 'format' => 'json' ));
+	$no_work_status_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+	datamachine_code_cleanup_assert('no_work' === ( $no_work_status_json['state'] ?? '' ), 'cleanup status converges no-child/no-work runs to no_work even when parent is still processing');
+	datamachine_code_cleanup_assert('processing' === ( $no_work_status_json['parent_status'] ?? '' ), 'no-work cleanup status preserves stale active parent job status separately');
+	datamachine_code_cleanup_assert(0 === (int) ( $no_work_status_json['cleanup_items']['planned_rows'] ?? -1 ), 'no-work cleanup status reports zero planned cleanup rows');
+	datamachine_code_cleanup_assert(0 === (int) ( $no_work_status_json['children']['total'] ?? -1 ), 'no-work cleanup status reports no children');
+	datamachine_code_cleanup_assert(false === (bool) ( $no_work_status_json['drain']['needed'] ?? true ), 'no-work cleanup status does not request more drain passes');
+
+	WP_CLI::$logs        = array();
+	WP_CLI::$successes   = array();
+	WP_CLI::$runcommands = array();
+	$GLOBALS['datamachine_code_cleanup_parent_drained'] = false;
+	$GLOBALS['datamachine_code_cleanup_child_drained']  = false;
+	$command->cleanup(array( 'run' ), array( 'mode' => 'retention', 'drain' => true, 'format' => 'json' ));
+	$no_work_drained_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+	datamachine_code_cleanup_assert(array( 'datamachine drain --job-id=123' ) === WP_CLI::$runcommands, 'cleanup run --drain drains no-work parent once and does not invent child drains');
+	datamachine_code_cleanup_assert('no_work' === (string) ( $no_work_drained_json['drain']['completion_state'] ?? '' ), 'cleanup run --drain reports no_work instead of successful running state for no-child/no-work parents');
+	datamachine_code_cleanup_assert(true === (bool) ( $no_work_drained_json['drain']['success'] ?? false ), 'cleanup run --drain succeeds after no-work convergence');
+	$GLOBALS['datamachine_code_cleanup_status_scenario'] = 'default';
+	$GLOBALS['datamachine_code_cleanup_parent_drained'] = false;
+	$GLOBALS['datamachine_code_cleanup_child_drained']  = false;
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$GLOBALS['datamachine_code_cleanup_status_scenario'] = 'completed_children';
+	$command->cleanup(array( 'status', 'cleanup-run-123' ), array( 'format' => 'json' ));
+	$completed_children_status_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+	datamachine_code_cleanup_assert('complete' === ( $completed_children_status_json['state'] ?? '' ), 'cleanup status converges to complete when all children are terminal even if parent is still processing');
+	datamachine_code_cleanup_assert('processing' === ( $completed_children_status_json['parent_status'] ?? '' ), 'completed-children cleanup status preserves stale active parent job status separately');
+	datamachine_code_cleanup_assert(4 === (int) ( $completed_children_status_json['children']['completed'] ?? 0 ), 'completed-children cleanup status counts terminal descendants');
+	datamachine_code_cleanup_assert(false === (bool) ( $completed_children_status_json['drain']['needed'] ?? true ), 'completed-children cleanup status does not request more drain passes');
+	$GLOBALS['datamachine_code_cleanup_status_scenario'] = 'default';
+
+	WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
     $command->cleanup(array( 'status', 'cleanup-run-123' ), array());
     datamachine_code_cleanup_assert(in_array('Remaining work summary:', WP_CLI::$logs, true), 'human cleanup status renders compact remaining-work summary');
