@@ -255,7 +255,7 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 		);
 
 		if ( ! empty($opts['artifact_cleanup']) ) {
-			$artifact_page  = $workspace->worktree_cleanup_artifacts(
+			$artifact_page = $workspace->worktree_cleanup_artifacts(
 				array(
 					'dry_run'       => true,
 					'force'         => ! empty($opts['force']),
