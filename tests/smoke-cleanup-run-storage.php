@@ -156,9 +156,19 @@ class DataMachineCodeCleanupRunFakeWorkspace extends \DataMachineCode\Workspace\
         array( 'handle' => 'demo@needs-metadata-4', 'row_type' => 'resolver', 'reason_code' => 'needs_metadata_reconcile', 'reason' => 'missing metadata' ),
         ),
         ),
-        'summary'       => array( 'total_rows' => 8, 'total_size_bytes' => 74 ),
-        );
-    }
+		'summary'       => array(
+		'total_rows'       => 8,
+		'total_size_bytes' => 74,
+		'recommended_commands' => array(
+		array(
+		'label'   => 'apply_reviewed_plan',
+		'risk'    => 'reviewed_destructive',
+		'command' => 'studio wp datamachine-code workspace cleanup apply <run-id>',
+		),
+		),
+		),
+		);
+	}
     public function worktree_cleanup_artifacts( array $opts = array() ): array|WP_Error
     {
         $this->artifact_calls[] = $opts;
@@ -218,6 +228,8 @@ $plan = $service->plan(array( 'mode' => 'retention' ));
 datamachine_code_cleanup_run_assert(! is_wp_error($plan), 'plan succeeds');
 datamachine_code_cleanup_run_assert(isset($plan['run_id']), 'plan returns run_id');
 datamachine_code_cleanup_run_assert(8 === (int) ( $plan['cleanup_storage']['item_count'] ?? 0 ), 'plan persists cleanup items');
+datamachine_code_cleanup_run_assert(str_contains((string) ( $plan['summary']['recommended_commands'][0]['command'] ?? '' ), (string) $plan['run_id']), 'plan materializes recommended command run id');
+datamachine_code_cleanup_run_assert(! str_contains((string) ( $plan['summary']['recommended_commands'][0]['command'] ?? '' ), '<run-id>'), 'plan recommended commands are directly executable');
 
 $status = $service->status($plan['run_id']);
 datamachine_code_cleanup_run_assert(8 === (int) ( $status['summary']['total_items'] ?? 0 ), 'status aggregates items');

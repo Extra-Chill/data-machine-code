@@ -600,6 +600,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--older-than=<duration>]
 	 * : Pass an age gate such as 7d or 24h into cleanup task params.
 	 *
+	 * [--top=<count>]
+	 * : For `plan`, number of largest reclaimable paths to show in the upfront
+	 *   summary. Defaults to 10.
+	 *
 	 * [--limit=<count>]
 	 * : For DB-backed `apply` / `resume`, maximum pending rows to process in this
 	 *   invocation (default 25, max 100). For `--mode=artifacts` pages, maximum
@@ -941,6 +945,9 @@ class WorkspaceCommand extends BaseCommand {
 		);
 		if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
 			$input['worktree_older_than'] = trim( (string) $assoc_args['older-than']);
+		}
+		if ( isset($assoc_args['top']) ) {
+			$input['top_n'] = (int) $assoc_args['top'];
 		}
 		if ( isset($assoc_args['force']) ) {
 			$input['force_artifact_cleanup'] = (bool) $assoc_args['force'];
@@ -1399,10 +1406,129 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log(sprintf('Rows:   %d', (int) ( $summary['total_rows'] ?? 0 )));
 		WP_CLI::log(sprintf('Bytes:  %s', $this->format_bytes($summary['total_size_bytes'] ?? 0)));
 		WP_CLI::log(sprintf('Apply:  wp datamachine-code workspace cleanup apply %s', (string) ( $result['run_id'] ?? '' )));
+		$this->render_cleanup_plan_category_totals( (array) ( $summary['category_totals'] ?? array() ) );
+		$this->render_cleanup_plan_top_reclaimable( (array) ( $summary['top_reclaimable'] ?? array() ) );
+		$this->render_cleanup_plan_blockers( (array) ( $summary['blockers'] ?? array() ) );
+		$this->render_cleanup_plan_recommended_commands( (array) ( $summary['recommended_commands'] ?? array() ), (string) ( $result['run_id'] ?? '' ) );
 		$inputs = (array) ( $result['inputs'] ?? array() );
 		if ( empty($inputs['include_artifacts']) ) {
 			WP_CLI::log('Artifacts: skipped for bounded retention planning; run `wp datamachine-code workspace cleanup plan --mode=artifacts` when you want artifact rows.');
 		}
+	}
+
+	/**
+	 * Render reclaimable cleanup bytes by category.
+	 *
+	 * @param array<string,int> $totals Category totals.
+	 */
+	private function render_cleanup_plan_category_totals( array $totals ): void {
+		if ( array() === $totals ) {
+			return;
+		}
+
+		WP_CLI::log('');
+		WP_CLI::log('Reclaimable space by category:');
+		$labels = array(
+			'whole_worktrees'      => 'whole worktrees',
+			'dependency_artifacts' => 'dependency artifacts',
+			'build_outputs'        => 'build outputs',
+			'caches'               => 'caches',
+		);
+		$rows = array();
+		foreach ( $labels as $category => $label ) {
+			$rows[] = array(
+				'category' => $label,
+				'bytes'    => $this->format_bytes($totals[ $category ] ?? 0),
+			);
+		}
+		$this->format_items($rows, array( 'category', 'bytes' ), array( 'format' => 'table' ), 'category');
+	}
+
+	/**
+	 * Render largest reclaimable paths.
+	 *
+	 * @param array<int,array<string,mixed>> $paths Top paths.
+	 */
+	private function render_cleanup_plan_top_reclaimable( array $paths ): void {
+		if ( array() === $paths ) {
+			return;
+		}
+
+		WP_CLI::log('');
+		WP_CLI::log('Top reclaimable paths:');
+		$rows = array_map(
+			fn( $row ) => array(
+				'size'     => is_array($row) ? $this->format_bytes($row['size_bytes'] ?? 0) : '0 B',
+				'category' => is_array($row) ? (string) ( $row['category'] ?? '' ) : '',
+				'risk'     => is_array($row) ? (string) ( $row['safety_class'] ?? '' ) : '',
+				'handle'   => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '',
+				'path'     => is_array($row) ? (string) ( $row['path'] ?? '' ) : '',
+			),
+			$paths
+		);
+		$this->format_items($rows, array( 'size', 'category', 'risk', 'handle', 'path' ), array( 'format' => 'table' ), 'size');
+	}
+
+	/**
+	 * Render blockers grouped by reason and repo.
+	 *
+	 * @param array<string,array<string,mixed>> $blockers Blocker buckets.
+	 */
+	private function render_cleanup_plan_blockers( array $blockers ): void {
+		if ( array() === $blockers ) {
+			return;
+		}
+
+		WP_CLI::log('');
+		WP_CLI::log('Blockers by reason and repo:');
+		$rows = array();
+		foreach ( $blockers as $reason => $bucket ) {
+			$bucket = (array) $bucket;
+			$repos  = array();
+			foreach ( (array) ( $bucket['repos'] ?? array() ) as $repo => $repo_bucket ) {
+				$repo_bucket = (array) $repo_bucket;
+				$repos[]     = sprintf('%s=%d', (string) $repo, (int) ( $repo_bucket['count'] ?? 0 ));
+			}
+			$rows[] = array(
+				'reason'   => (string) $reason,
+				'count'    => (int) ( $bucket['count'] ?? 0 ),
+				'bytes'    => $this->format_bytes($bucket['size_bytes'] ?? 0),
+				'repos'    => implode(', ', array_slice($repos, 0, 5)),
+				'examples' => implode(', ', array_slice(array_map('strval', (array) ( $bucket['examples'] ?? array() )), 0, 5)),
+			);
+		}
+		$this->format_items($rows, array( 'reason', 'count', 'bytes', 'repos', 'examples' ), array( 'format' => 'table' ), 'reason');
+	}
+
+	/**
+	 * Render directly executable recommended cleanup commands.
+	 *
+	 * @param array<int,array<string,string>> $commands Recommended commands.
+	 * @param string                          $run_id   Cleanup run ID.
+	 */
+	private function render_cleanup_plan_recommended_commands( array $commands, string $run_id ): void {
+		if ( array() === $commands ) {
+			return;
+		}
+
+		WP_CLI::log('');
+		WP_CLI::log('Recommended commands:');
+		$rows = array_map(
+			function ( $row ) use ( $run_id ): array {
+				$row     = (array) $row;
+				$command = (string) ( $row['command'] ?? '' );
+				if ( '' !== $run_id ) {
+					$command = str_replace('<run-id>', $run_id, $command);
+				}
+				return array(
+					'label'   => (string) ( $row['label'] ?? '' ),
+					'risk'    => (string) ( $row['risk'] ?? '' ),
+					'command' => $command,
+				);
+			},
+			$commands
+		);
+		$this->format_items($rows, array( 'label', 'risk', 'command' ), array( 'format' => 'table' ), 'label');
 	}
 
 	private function cleanup_run_id( int $job_id ): string {

@@ -53,6 +53,8 @@ class CleanupRunService {
 		if ( $run_id instanceof \WP_Error ) {
 			return $run_id;
 		}
+		$plan['summary'] = $this->materialize_plan_recommended_commands( (array) ( $plan['summary'] ?? array() ), $run_id );
+		$this->repository->update_run($run_id, array( 'summary' => $plan['summary'] ));
 
 		$inserted = $this->repository->add_items($run_id, $items);
 		if ( $inserted instanceof \WP_Error ) {
@@ -68,6 +70,26 @@ class CleanupRunService {
 		);
 
 		return $plan;
+	}
+
+	/**
+	 * Replace run-id placeholders in persisted plan command recommendations.
+	 *
+	 * @param  array<string,mixed> $summary Plan summary.
+	 * @param  string              $run_id  Cleanup run ID.
+	 * @return array<string,mixed>
+	 */
+	private function materialize_plan_recommended_commands( array $summary, string $run_id ): array {
+		$commands = array();
+		foreach ( (array) ( $summary['recommended_commands'] ?? array() ) as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$row['command'] = str_replace('<run-id>', $run_id, (string) ( $row['command'] ?? '' ));
+			$commands[]     = $row;
+		}
+		$summary['recommended_commands'] = $commands;
+		return $summary;
 	}
 
 	/**
