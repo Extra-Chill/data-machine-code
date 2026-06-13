@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.116] - 2026-06-13
+
+### Fixed
+- Fix cleanup drain JSON run visibility
+
 ## [0.47.115] - 2026-06-13
 
 ### Changed
