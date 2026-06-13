@@ -965,6 +965,25 @@ namespace {
 					'total'   => 0,
 					);
 				}
+				if ( 'idle_wrapper' === $scenario ) {
+					$jobs = 123 === (int) $input['parent_job_id']
+						? array(
+							array(
+								'job_id'        => 128,
+								'parent_job_id' => 123,
+								'source'        => 'pipeline_system_task',
+								'status'        => 'processing',
+								'engine_data'   => array(),
+							),
+						)
+						: array();
+
+					return array(
+						'success' => true,
+						'jobs'    => $jobs,
+						'total'   => count($jobs),
+					);
+				}
 
 				$children = array(
 				 123 => array(
@@ -1094,7 +1113,7 @@ namespace {
 			'flow_id'      => null,
 			'pipeline_id'  => null,
 			'source'       => 'system',
-			'status'       => in_array($scenario, array( 'no_work', 'completed_children' ), true) ? 'processing' : 'completed',
+			'status'       => in_array($scenario, array( 'no_work', 'completed_children', 'idle_wrapper' ), true) ? 'processing' : 'completed',
 			'created_at'   => '2026-05-03 00:00:00',
 			'completed_at' => '2026-05-03 00:10:00',
 			'engine_data'  => $engine_data,
@@ -1452,6 +1471,18 @@ namespace {
 	datamachine_code_cleanup_assert('processing' === ( $completed_children_status_json['parent_status'] ?? '' ), 'completed-children cleanup status preserves stale active parent job status separately');
 	datamachine_code_cleanup_assert(4 === (int) ( $completed_children_status_json['children']['completed'] ?? 0 ), 'completed-children cleanup status counts terminal descendants');
 	datamachine_code_cleanup_assert(false === (bool) ( $completed_children_status_json['drain']['needed'] ?? true ), 'completed-children cleanup status does not request more drain passes');
+	$GLOBALS['datamachine_code_cleanup_status_scenario'] = 'default';
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$GLOBALS['datamachine_code_cleanup_status_scenario'] = 'idle_wrapper';
+	$command->cleanup(array( 'status', 'cleanup-run-123' ), array( 'format' => 'json' ));
+	$idle_wrapper_status_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+	datamachine_code_cleanup_assert('complete' === ( $idle_wrapper_status_json['state'] ?? '' ), 'cleanup status converges empty processing wrapper jobs instead of waiting forever');
+	datamachine_code_cleanup_assert('processing' === ( $idle_wrapper_status_json['parent_status'] ?? '' ), 'idle-wrapper cleanup status preserves raw parent job status separately');
+	datamachine_code_cleanup_assert(0 === (int) ( $idle_wrapper_status_json['children']['running'] ?? -1 ), 'idle-wrapper cleanup status does not count empty wrappers as running children');
+	datamachine_code_cleanup_assert(array() === ( $idle_wrapper_status_json['children']['processing_job_ids'] ?? array() ), 'idle-wrapper cleanup status omits empty wrappers from active child drain ids');
+	datamachine_code_cleanup_assert(false === (bool) ( $idle_wrapper_status_json['drain']['needed'] ?? true ), 'idle-wrapper cleanup status does not request another drain pass');
 	$GLOBALS['datamachine_code_cleanup_status_scenario'] = 'default';
 
 	WP_CLI::$logs      = array();

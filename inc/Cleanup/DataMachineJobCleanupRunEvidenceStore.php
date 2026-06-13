@@ -142,25 +142,34 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 			),
 		);
 
+		$parent_job_ids = array();
+		foreach ( $child_jobs as $child ) {
+			$parent_job_id = (int) ( is_array($child) ? ( $child['parent_job_id'] ?? 0 ) : 0 );
+			if ( $parent_job_id > 0 ) {
+				$parent_job_ids[ $parent_job_id ] = true;
+			}
+		}
+
 		foreach ( $child_jobs as $child ) {
 			$child_job_id = (int) ( $child['job_id'] ?? 0 );
 			$status       = (string) ( $child['status'] ?? '' );
 			$engine_data  = $this->normalize_engine_data($child['engine_data'] ?? array());
 			$result       = $this->extract_system_task_result($engine_data);
+			$idle_wrapper = $this->is_idle_cleanup_wrapper_job($child, $engine_data, $result, $parent_job_ids);
 
 			++$summary['children']['total'];
 			if ( $child_job_id > 0 ) {
 				$summary['children']['job_ids'][] = $child_job_id;
 				if ( 'pending' === $status ) {
 					$summary['children']['pending_job_ids'][] = $child_job_id;
-				} elseif ( 'processing' === $status ) {
+				} elseif ( 'processing' === $status && ! $idle_wrapper ) {
 					$summary['children']['processing_job_ids'][] = $child_job_id;
 				} elseif ( str_starts_with($status, 'failed') ) {
 					$summary['children']['failed_job_ids'][] = $child_job_id;
 				}
 			}
 
-			$this->count_cleanup_child_status($summary['children'], $status);
+			$this->count_cleanup_child_status($summary['children'], $idle_wrapper ? 'skipped - idle_wrapper' : $status);
 			if ( isset($summary['children']['statuses'][ $status ]) ) {
 				++$summary['children']['statuses'][ $status ];
 			} elseif ( '' !== $status ) {
@@ -464,6 +473,31 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 		}
 
 		return array();
+	}
+
+	/**
+	 * Detect drained wrapper jobs that have no cleanup evidence or descendants.
+	 *
+	 * @param  array<string,mixed> $child          Child job row.
+	 * @param  array<string,mixed> $engine_data    Normalized engine data.
+	 * @param  array<string,mixed> $result         Extracted task result.
+	 * @param  array<int,bool>     $parent_job_ids Child IDs that have descendants.
+	 * @return bool
+	 */
+	private function is_idle_cleanup_wrapper_job( array $child, array $engine_data, array $result, array $parent_job_ids ): bool {
+		$child_job_id = (int) ( $child['job_id'] ?? 0 );
+		$status       = (string) ( $child['status'] ?? '' );
+		$source       = (string) ( $child['source'] ?? '' );
+
+		if ( 'processing' !== $status || 'pipeline_system_task' !== $source || $child_job_id <= 0 || isset($parent_job_ids[ $child_job_id ]) ) {
+			return false;
+		}
+
+		if ( array() !== $result || isset($engine_data['batch_id']) || 'worktree_cleanup_chunk' === (string) ( $engine_data['task_type'] ?? '' ) ) {
+			return false;
+		}
+
+		return true;
 	}
 
 	/**
