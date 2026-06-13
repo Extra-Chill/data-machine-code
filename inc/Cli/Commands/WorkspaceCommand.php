@@ -654,9 +654,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Review artifact cleanup synchronously (bounded; default limit=100)
 	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run
 	 *
-	 *     # Walk a huge workspace in 100-worktree pages
-	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --offset=0 --format=json
-	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --offset=100 --format=json
+	 *     # Persist a snapshot-safe artifact cleanup plan, then apply it by run ID
+	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json
+	 *     wp datamachine-code workspace cleanup apply cleanup-run-20260504120000-abc123
 	 *
 	 *     # Full audit (slow on huge workspaces)
 	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --exhaustive --format=json
@@ -903,17 +903,6 @@ class WorkspaceCommand extends BaseCommand {
 		if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
 			$input['older_than'] = trim( (string) $assoc_args['older-than']);
 		}
-		if ( 'artifacts' === $mode ) {
-			if ( isset($assoc_args['limit']) ) {
-				$input['limit'] = (int) $assoc_args['limit'];
-			}
-			if ( isset($assoc_args['offset']) ) {
-				$input['offset'] = (int) $assoc_args['offset'];
-			}
-			if ( ! empty($assoc_args['exhaustive']) ) {
-				$input['exhaustive'] = true;
-			}
-		}
 
 		return $input;
 	}
@@ -931,6 +920,29 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
+		$input = $this->cleanup_plan_input($mode, $assoc_args);
+		if ( 'json' !== (string) ( $assoc_args['format'] ?? 'table' ) ) {
+			$profile = ! empty($input['include_artifacts']) ? 'includes artifact scan' : 'local worktree merge signals';
+			WP_CLI::log(sprintf('Planning cleanup (%s; %s)...', $mode, $profile));
+		}
+
+		$result = $ability->execute($input);
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		$this->render_cleanup_plan_result($result, $assoc_args);
+	}
+
+	/**
+	 * Normalize cleanup plan input shared by `cleanup plan` and dry-run `cleanup run`.
+	 *
+	 * @param  string $mode       Cleanup mode.
+	 * @param  array  $assoc_args CLI associative args.
+	 * @return array<string,mixed>
+	 */
+	private function cleanup_plan_input( string $mode, array $assoc_args ): array {
 		$include_artifacts = 'artifacts' === $mode || ! empty($assoc_args['include-artifacts']);
 		$include_worktrees = 'artifacts' !== $mode;
 		$input             = array(
@@ -945,18 +957,8 @@ class WorkspaceCommand extends BaseCommand {
 		if ( isset($assoc_args['force']) ) {
 			$input['force_artifact_cleanup'] = (bool) $assoc_args['force'];
 		}
-		if ( 'json' !== (string) ( $assoc_args['format'] ?? 'table' ) ) {
-			$profile = $include_artifacts ? 'includes artifact scan' : 'local worktree merge signals';
-			WP_CLI::log(sprintf('Planning cleanup (%s; %s)...', $mode, $profile));
-		}
 
-		$result = $ability->execute($input);
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
-			return;
-		}
-
-		$this->render_cleanup_plan_result($result, $assoc_args);
+		return $input;
 	}
 
 	private function run_cleanup_control_ability( string $operation, string $run_id, array $assoc_args ): void {
@@ -1008,28 +1010,13 @@ class WorkspaceCommand extends BaseCommand {
 				return;
 
 			case 'artifacts':
-				$ability        = wp_get_ability('datamachine-code/workspace-worktree-cleanup-artifacts');
-				$artifact_input = array(
-					'dry_run' => true,
-					'force'   => ! empty($assoc_args['force']),
-				);
-				if ( isset($assoc_args['limit']) ) {
-					$artifact_input['limit'] = (int) $assoc_args['limit'];
+				$ability = wp_get_ability('datamachine-code/workspace-cleanup-plan');
+				$result  = $ability ? $ability->execute($this->cleanup_plan_input($mode, $assoc_args)) : new \WP_Error('cleanup_plan_ability_missing', 'Workspace cleanup plan ability not registered.');
+				if ( is_wp_error($result) ) {
+					WP_CLI::error($result->get_error_message());
+					return;
 				}
-				if ( isset($assoc_args['offset']) ) {
-					$artifact_input['offset'] = (int) $assoc_args['offset'];
-				}
-				if ( ! empty($assoc_args['exhaustive']) ) {
-					$artifact_input['exhaustive'] = true;
-				}
-				if ( ! empty($assoc_args['safety-probes']) ) {
-					$artifact_input['safety_probes'] = true;
-				}
-				if ( isset($assoc_args['sort']) && '' !== trim( (string) $assoc_args['sort']) ) {
-					$artifact_input['sort'] = trim( (string) $assoc_args['sort']);
-				}
-				$result = $ability ? $ability->execute($artifact_input) : new \WP_Error('artifact_cleanup_ability_missing', 'Artifact cleanup ability not registered.');
-				$this->render_worktree_artifact_cleanup_result_from_ability($result, $assoc_args);
+				$this->render_cleanup_plan_result($result, $assoc_args);
 				return;
 
 			case 'emergency':
