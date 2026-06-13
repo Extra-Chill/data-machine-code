@@ -53,6 +53,8 @@ class CleanupRunService {
 		if ( $run_id instanceof \WP_Error ) {
 			return $run_id;
 		}
+		$plan['summary'] = $this->materialize_plan_recommended_commands( (array) ( $plan['summary'] ?? array() ), $run_id );
+		$this->repository->update_run($run_id, array( 'summary' => $plan['summary'] ));
 
 		$inserted = $this->repository->add_items($run_id, $items);
 		if ( $inserted instanceof \WP_Error ) {
@@ -68,6 +70,26 @@ class CleanupRunService {
 		);
 
 		return $plan;
+	}
+
+	/**
+	 * Replace run-id placeholders in persisted plan command recommendations.
+	 *
+	 * @param  array<string,mixed> $summary Plan summary.
+	 * @param  string              $run_id  Cleanup run ID.
+	 * @return array<string,mixed>
+	 */
+	private function materialize_plan_recommended_commands( array $summary, string $run_id ): array {
+		$commands = array();
+		foreach ( (array) ( $summary['recommended_commands'] ?? array() ) as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$row['command'] = str_replace('<run-id>', $run_id, (string) ( $row['command'] ?? '' ));
+			$commands[]     = $row;
+		}
+		$summary['recommended_commands'] = $commands;
+		return $summary;
 	}
 
 	/**
@@ -115,13 +137,12 @@ class CleanupRunService {
 					'limit'      => count($artifact_batch),
 				)
 			);
-			$this->record_apply_result($artifact_batch, $results['artifact_cleanup'], 'removed');
-			if ( ! is_wp_error($results['artifact_cleanup']) ) {
-				$applied_rows += count( (array) ( $results['artifact_cleanup']['removed'] ?? array() ) );
-				$skipped_rows += count( (array) ( $results['artifact_cleanup']['skipped'] ?? array() ) );
-			} else {
-				$skipped_rows += count($artifact_batch);
+			if ( $results['artifact_cleanup'] instanceof \WP_Error ) {
+				return $results['artifact_cleanup'];
 			}
+			$this->record_apply_result($artifact_batch, $results['artifact_cleanup'], 'removed');
+			$applied_rows += count( (array) ( $results['artifact_cleanup']['removed'] ?? array() ) );
+			$skipped_rows += count( (array) ( $results['artifact_cleanup']['skipped'] ?? array() ) );
 		}
 
 		$remaining_capacity = max(0, $limit - $processed_rows);
@@ -138,13 +159,12 @@ class CleanupRunService {
 					'stale_liveness_only' => $stale_worktrees_only,
 				)
 			);
-			$this->record_apply_result($worktree_batch, $results['worktree_removal'], 'removed');
-			if ( ! is_wp_error($results['worktree_removal']) ) {
-				$applied_rows += count( (array) ( $results['worktree_removal']['removed'] ?? array() ) );
-				$skipped_rows += count( (array) ( $results['worktree_removal']['skipped'] ?? array() ) );
-			} else {
-				$skipped_rows += count($worktree_batch);
+			if ( $results['worktree_removal'] instanceof \WP_Error ) {
+				return $results['worktree_removal'];
 			}
+			$this->record_apply_result($worktree_batch, $results['worktree_removal'], 'removed');
+			$applied_rows += count( (array) ( $results['worktree_removal']['removed'] ?? array() ) );
+			$skipped_rows += count( (array) ( $results['worktree_removal']['skipped'] ?? array() ) );
 		}
 
 		$status          = $this->status($run_id);

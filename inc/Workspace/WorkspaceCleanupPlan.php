@@ -33,6 +33,7 @@ trait WorkspaceCleanupPlan {
 			'include_artifacts'      => array_key_exists('include_artifacts', $opts) ? (bool) $opts['include_artifacts'] : true,
 			'include_worktrees'      => array_key_exists('include_worktrees', $opts) ? (bool) $opts['include_worktrees'] : true,
 			'include_resolvers'      => ! empty($opts['include_resolvers']),
+			'top_n'                  => isset($opts['top_n']) ? max(1, min(50, (int) $opts['top_n'])) : 10,
 			'worktree_older_than'    => isset($opts['worktree_older_than']) ? trim( (string) $opts['worktree_older_than']) : '',
 			'worktree_sort'          => isset($opts['worktree_sort']) ? trim( (string) $opts['worktree_sort']) : '',
 			'worktree_stale_only'    => ! empty($opts['worktree_stale_only']),
@@ -91,7 +92,7 @@ trait WorkspaceCleanupPlan {
 			'resolve_signal'   => $rows['resolver'],
 		);
 
-		$summary                   = $this->build_cleanup_plan_summary($rows);
+		$summary                   = $this->build_cleanup_plan_summary($rows, $artifact_plan, $worktree_plan, $inputs);
 		$summary['rows_by_action'] = array(
 			'remove_artifacts' => count($action_rows['remove_artifacts']),
 			'remove_worktree'  => count($action_rows['remove_worktree']),
@@ -276,7 +277,7 @@ trait WorkspaceCleanupPlan {
 	 * @param  array<string,array<int,array>> $rows Rows keyed by type.
 	 * @return array<string,mixed>
 	 */
-	private function build_cleanup_plan_summary( array $rows ): array {
+	private function build_cleanup_plan_summary( array $rows, array $artifact_plan = array(), array $worktree_plan = array(), array $inputs = array() ): array {
 		$counts      = array();
 		$byte_totals = array();
 		$total_rows  = 0;
@@ -295,12 +296,240 @@ trait WorkspaceCleanupPlan {
 
 		ksort($counts);
 		ksort($byte_totals);
+		$category_totals = $this->cleanup_plan_category_totals($rows);
+		$category_total  = array_sum(array_map('intval', $category_totals));
+
 		return array(
-			'total_rows'       => $total_rows,
-			'rows_by_type'     => $counts,
-			'byte_totals'      => $byte_totals,
-			'total_size_bytes' => $total_bytes,
+			'total_rows'           => $total_rows,
+			'rows_by_type'         => $counts,
+			'byte_totals'          => $byte_totals,
+			'total_size_bytes'     => $category_total > 0 ? $category_total : $total_bytes,
+			'category_totals'      => $category_totals,
+			'top_reclaimable'      => $this->cleanup_plan_top_reclaimable_paths($rows, (int) ( $inputs['top_n'] ?? 10 )),
+			'blockers'             => $this->cleanup_plan_blockers($artifact_plan, $worktree_plan),
+			'recommended_commands' => $this->cleanup_plan_recommended_commands($inputs),
 		);
+	}
+
+	/**
+	 * Summarize reclaimable bytes by operator-facing category.
+	 *
+	 * @param  array<string,array<int,array>> $rows Cleanup rows keyed by type.
+	 * @return array<string,int>
+	 */
+	private function cleanup_plan_category_totals( array $rows ): array {
+		$totals = array(
+			'whole_worktrees'      => 0,
+			'dependency_artifacts' => 0,
+			'build_outputs'        => 0,
+			'caches'               => 0,
+		);
+
+		foreach ( (array) ( $rows['worktree_removal'] ?? array() ) as $row ) {
+			if ( is_array($row) ) {
+				$totals['whole_worktrees'] += max(0, (int) ( $row['size_bytes'] ?? 0 ));
+			}
+		}
+
+		foreach ( (array) ( $rows['artifact_cleanup'] ?? array() ) as $row ) {
+			foreach ( (array) ( is_array($row) ? ( $row['artifacts'] ?? array() ) : array() ) as $artifact ) {
+				if ( ! is_array($artifact) ) {
+					continue;
+				}
+				$category             = $this->cleanup_artifact_category( (string) ( $artifact['path'] ?? '' ));
+				$totals[ $category ] += max(0, (int) ( $artifact['size_bytes'] ?? 0 ));
+			}
+		}
+
+		return $totals;
+	}
+
+	/**
+	 * Classify a reconstructable artifact path for high-level reporting.
+	 *
+	 * @param  string $path Artifact path.
+	 * @return string
+	 */
+	private function cleanup_artifact_category( string $path ): string {
+		$name = strtolower(basename($path));
+		if ( in_array($name, array( 'node_modules', 'vendor', '.pnpm-store', '.yarn', 'bower_components' ), true) ) {
+			return 'dependency_artifacts';
+		}
+
+		if ( in_array($name, array( '.cache', 'cache', 'caches', '.npm', '.composer', '.turbo' ), true) ) {
+			return 'caches';
+		}
+
+		return 'build_outputs';
+	}
+
+	/**
+	 * Return the largest reclaimable paths across worktree and artifact rows.
+	 *
+	 * @param  array<string,array<int,array>> $rows Cleanup rows keyed by type.
+	 * @param  int                            $limit Maximum paths to return.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function cleanup_plan_top_reclaimable_paths( array $rows, int $limit ): array {
+		$paths = array();
+		foreach ( (array) ( $rows['worktree_removal'] ?? array() ) as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$paths[] = array(
+				'path'         => (string) ( $row['path'] ?? '' ),
+				'handle'       => (string) ( $row['handle'] ?? '' ),
+				'repo'         => (string) ( $row['repo'] ?? '' ),
+				'category'     => 'whole_worktrees',
+				'row_type'     => 'worktree_removal',
+				'safety_class' => (string) ( $row['safety_class'] ?? 'reviewed_destructive' ),
+				'size_bytes'   => max(0, (int) ( $row['size_bytes'] ?? 0 )),
+			);
+		}
+
+		foreach ( (array) ( $rows['artifact_cleanup'] ?? array() ) as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
+				if ( ! is_array($artifact) ) {
+					continue;
+				}
+				$paths[] = array(
+					'path'         => (string) ( $artifact['path'] ?? '' ),
+					'handle'       => (string) ( $row['handle'] ?? '' ),
+					'repo'         => (string) ( $row['repo'] ?? '' ),
+					'category'     => $this->cleanup_artifact_category( (string) ( $artifact['path'] ?? '' )),
+					'row_type'     => 'artifact_cleanup',
+					'safety_class' => (string) ( $row['safety_class'] ?? 'safe' ),
+					'size_bytes'   => max(0, (int) ( $artifact['size_bytes'] ?? 0 )),
+				);
+			}
+		}
+
+		usort($paths, fn( $a, $b ) => (int) ( $b['size_bytes'] ?? 0 ) <=> (int) ( $a['size_bytes'] ?? 0 ));
+		return array_slice($paths, 0, max(1, $limit));
+	}
+
+	/**
+	 * Group blocked cleanup opportunities by reason and repo.
+	 *
+	 * @param  array<string,mixed> $artifact_plan Artifact plan.
+	 * @param  array<string,mixed> $worktree_plan Worktree plan.
+	 * @return array<string,array<string,mixed>>
+	 */
+	private function cleanup_plan_blockers( array $artifact_plan, array $worktree_plan ): array {
+		$blockers = array();
+		foreach ( array(
+			'artifact_cleanup' => $artifact_plan,
+			'worktree_removal' => $worktree_plan,
+		) as $type => $plan ) {
+			foreach ( (array) ( $plan['skipped'] ?? array() ) as $row ) {
+				if ( ! is_array($row) ) {
+					continue;
+				}
+				$reason = (string) ( $row['reason_code'] ?? 'unknown' );
+				$repo   = (string) ( $row['repo'] ?? 'unknown' );
+				if ( '' === $repo ) {
+					$repo = 'unknown';
+				}
+				$bytes                                   = max(0, (int) ( $row['artifact_size_bytes'] ?? $row['size_bytes'] ?? 0 ));
+				$blockers[ $reason ]                   ??= array(
+					'count'      => 0,
+					'size_bytes' => 0,
+					'repos'      => array(),
+					'examples'   => array(),
+				);
+				$blockers[ $reason ]['count']            = (int) $blockers[ $reason ]['count'] + 1;
+				$blockers[ $reason ]['size_bytes']      += $bytes;
+				$blockers[ $reason ]['repos'][ $repo ] ??= array(
+					'count'      => 0,
+					'size_bytes' => 0,
+					'examples'   => array(),
+				);
+				$blockers[ $reason ]['repos'][ $repo ]['count']       = (int) $blockers[ $reason ]['repos'][ $repo ]['count'] + 1;
+				$blockers[ $reason ]['repos'][ $repo ]['size_bytes'] += $bytes;
+				if ( count($blockers[ $reason ]['examples']) < 5 ) {
+					$blockers[ $reason ]['examples'][] = (string) ( $row['handle'] ?? $row['path'] ?? '' );
+				}
+				if ( count($blockers[ $reason ]['repos'][ $repo ]['examples']) < 3 ) {
+					$blockers[ $reason ]['repos'][ $repo ]['examples'][] = (string) ( $row['handle'] ?? $row['path'] ?? '' );
+				}
+			}
+		}
+
+		uasort($blockers, function ( $a, $b ): int {
+			$size_compare = (int) ( $b['size_bytes'] ?? 0 ) <=> (int) ( $a['size_bytes'] ?? 0 );
+			if ( 0 !== $size_compare ) {
+				return $size_compare;
+			}
+			return (int) ( $b['count'] ?? 0 ) <=> (int) ( $a['count'] ?? 0 );
+		});
+		foreach ( $blockers as &$bucket ) {
+			uasort($bucket['repos'], function ( $a, $b ): int {
+				$size_compare = (int) ( $b['size_bytes'] ?? 0 ) <=> (int) ( $a['size_bytes'] ?? 0 );
+				if ( 0 !== $size_compare ) {
+					return $size_compare;
+				}
+				return (int) ( $b['count'] ?? 0 ) <=> (int) ( $a['count'] ?? 0 );
+			});
+		}
+		unset($bucket);
+
+		return $blockers;
+	}
+
+	/**
+	 * Build directly executable cleanup recommendations with risk labels.
+	 *
+	 * @param  array<string,mixed> $inputs Plan inputs.
+	 * @return array<int,array<string,string>>
+	 */
+	private function cleanup_plan_recommended_commands( array $inputs ): array {
+		$commands = array(
+			array(
+				'label'   => 'apply_reviewed_plan',
+				'risk'    => 'reviewed_destructive',
+				'command' => 'studio wp datamachine-code workspace cleanup apply <run-id>',
+				'when'    => 'after reviewing this plan; revalidates every destructive row before removal',
+			),
+			array(
+				'label'   => 'inspect_full_plan_json',
+				'risk'    => 'none',
+				'command' => 'studio wp datamachine-code workspace cleanup plan --mode=retention --format=json',
+				'when'    => 'export the full plan for review or archival',
+			),
+			array(
+				'label'   => 'resolve_metadata_blockers',
+				'risk'    => 'none',
+				'command' => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json',
+				'when'    => 'metadata blockers prevent classification',
+			),
+			array(
+				'label'   => 'refresh_merge_signals',
+				'risk'    => 'none',
+				'command' => 'studio wp datamachine-code workspace worktree cleanup --dry-run --format=json',
+				'when'    => 'active or lifecycle rows need full merge/PR signal review',
+			),
+		);
+
+		if ( empty($inputs['include_artifacts']) ) {
+			$commands[] = array(
+				'label'   => 'audit_artifacts',
+				'risk'    => 'none',
+				'command' => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts',
+				'when'    => 'include dependency artifacts, build outputs, and caches in a separate full plan',
+			);
+		}
+
+		$commands[] = array(
+			'label'   => 'force_dirty_artifacts_only',
+			'risk'    => 'high_destructive',
+			'command' => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --force',
+			'when'    => 'operator explicitly accepts artifact cleanup in dirty worktrees; source edits remain protected from worktree removal',
+		);
+
+		return $commands;
 	}
 
 	/**

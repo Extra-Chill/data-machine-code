@@ -837,6 +837,48 @@ namespace {
 			'summary' => array(
 			'total_rows'       => 2,
 			'total_size_bytes' => 4096,
+			'category_totals'  => array(
+			'whole_worktrees'      => 1024,
+			'dependency_artifacts' => 2048,
+			'build_outputs'        => 512,
+			'caches'               => 512,
+			),
+			'top_reclaimable'  => array(
+			array(
+			'path'         => '/workspace/repo@feature/node_modules',
+			'handle'       => 'repo@feature',
+			'repo'         => 'repo',
+			'category'     => 'dependency_artifacts',
+			'safety_class' => 'safe',
+			'size_bytes'   => 2048,
+			),
+			),
+			'blockers'         => array(
+			'dirty_worktree' => array(
+			'count'      => 1,
+			'size_bytes' => 1024,
+			'repos'      => array(
+			'repo' => array(
+			'count'      => 1,
+			'size_bytes' => 1024,
+			'examples'   => array( 'repo@dirty' ),
+			),
+			),
+			'examples'   => array( 'repo@dirty' ),
+			),
+			),
+			'recommended_commands' => array(
+			array(
+			'label'   => 'apply_reviewed_plan',
+			'risk'    => 'reviewed_destructive',
+			'command' => 'studio wp datamachine-code workspace cleanup apply <run-id>',
+			),
+			array(
+			'label'   => 'resolve_metadata_blockers',
+			'risk'    => 'none',
+			'command' => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json',
+			),
+			),
 			),
 			);
 		}
@@ -1189,7 +1231,20 @@ namespace {
 	datamachine_code_cleanup_assert(false === ( $cleanup_plan_ability->last_input['include_artifacts'] ?? true ), 'retention cleanup plan skips exhaustive artifact scan by default');
 	datamachine_code_cleanup_assert(true === ( $cleanup_plan_ability->last_input['include_worktrees'] ?? false ), 'retention cleanup plan keeps inventory worktree planning enabled');
 	datamachine_code_cleanup_assert(in_array('Planning cleanup (retention; local worktree merge signals)...', WP_CLI::$logs, true), 'human cleanup plan reports bounded scan profile before planning');
+	datamachine_code_cleanup_assert(in_array('Reclaimable space by category:', WP_CLI::$logs, true), 'human cleanup plan reports category totals up front');
+	datamachine_code_cleanup_assert(in_array('Top reclaimable paths:', WP_CLI::$logs, true), 'human cleanup plan reports top reclaimable paths');
+	datamachine_code_cleanup_assert(in_array('Blockers by reason and repo:', WP_CLI::$logs, true), 'human cleanup plan reports blockers before apply');
+	datamachine_code_cleanup_assert(in_array('Recommended commands:', WP_CLI::$logs, true), 'human cleanup plan reports directly executable commands');
+	datamachine_code_cleanup_assert(in_array('table:4:category,bytes', WP_CLI::$logs, true), 'category table has expected report shape');
+	datamachine_code_cleanup_assert(in_array('table:1:size,category,risk,handle,path', WP_CLI::$logs, true), 'top reclaimable table has expected report shape');
+	datamachine_code_cleanup_assert(in_array('table:1:reason,count,bytes,repos,examples', WP_CLI::$logs, true), 'blocker table has expected report shape');
+	datamachine_code_cleanup_assert(in_array('table:2:label,risk,command', WP_CLI::$logs, true), 'recommended command table includes risk labels');
 	datamachine_code_cleanup_assert(in_array('Artifacts: skipped for bounded retention planning; run `wp datamachine-code workspace cleanup plan --mode=artifacts` when you want artifact rows.', WP_CLI::$logs, true), 'human cleanup plan shows explicit artifact follow-up command');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup(array( 'plan' ), array( 'mode' => 'retention', 'top' => 3 ));
+	datamachine_code_cleanup_assert(3 === (int) ( $cleanup_plan_ability->last_input['top_n'] ?? 0 ), 'cleanup plan forwards top-N summary size');
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
