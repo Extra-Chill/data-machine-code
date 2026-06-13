@@ -22,11 +22,14 @@ final class AgentsMdSections {
 		}
 
 		$registry_class = '\DataMachine\Engine\AI\MemoryFileRegistry';
-		if ( ! method_exists($registry_class, 'register') ) {
+		if ( ! is_callable(array( $registry_class, 'register' )) ) {
 			return;
 		}
+		$register = array( $registry_class, 'register' );
+		/** @var callable $register */
 
-		$registry_class::register(
+		call_user_func(
+			$register,
 			'AGENTS.md', 5, array(
 				'layer'           => defined($registry_class . '::LAYER_SHARED') ? constant($registry_class . '::LAYER_SHARED') : 'shared',
 				'protected'       => true,
@@ -60,7 +63,7 @@ final class AgentsMdSections {
 	}
 
 	private static function register_auto_generated_marker( string $wp ): void {
-		\DataMachine\Engine\AI\SectionRegistry::register(
+		self::register_section(
 			'AGENTS.md', 'auto-generated-marker', 0, function () use ( $wp ) {
 				$generated_at = gmdate('c');
 				return <<<MD
@@ -79,7 +82,7 @@ MD;
 	}
 
 	private static function register_datamachine_section( string $wp ): void {
-		\DataMachine\Engine\AI\SectionRegistry::register(
+		self::register_section(
 			'AGENTS.md', 'datamachine', 10, function () use ( $wp ) {
 				$workspace_path = self::resolve_workspace_path();
 				$agent_slug     = self::resolve_agent_slug();
@@ -167,7 +170,7 @@ MD;
 	}
 
 	private static function register_workspace_inventory_section( string $wp ): void {
-		\DataMachine\Engine\AI\SectionRegistry::register(
+		self::register_section(
 			'AGENTS.md', 'workspace-inventory', 15, function () use ( $wp ) {
 				return self::render_workspace_inventory_section($wp);
 			}, array(
@@ -181,7 +184,7 @@ MD;
 	}
 
 	private static function register_abilities_section(): void {
-		\DataMachine\Engine\AI\SectionRegistry::register(
+		self::register_section(
 			'AGENTS.md', 'abilities', 20, function () {
 				return <<<'MD'
 ## Abilities
@@ -201,7 +204,7 @@ MD;
 	}
 
 	private static function register_wordpress_source_section(): void {
-		\DataMachine\Engine\AI\SectionRegistry::register(
+		self::register_section(
 			'AGENTS.md', 'wordpress-source', 30, function () {
 				return <<<'MD'
 ## WordPress Source (Read-Only Reference)
@@ -227,7 +230,7 @@ MD;
 			return;
 		}
 
-		\DataMachine\Engine\AI\SectionRegistry::register(
+		self::register_section(
 			'AGENTS.md', 'multisite', 40, function () use ( $wp ) {
 				return <<<MD
 ## Multisite
@@ -266,6 +269,20 @@ MD;
 		return apply_filters('datamachine_wp_cli_cmd', implode(' ', $parts));
 	}
 
+	/**
+	 * Register an AGENTS.md section through the optional Data Machine registry.
+	 */
+	private static function register_section( string $file, string $section, int $priority, callable $callback, array $metadata ): void {
+		$registry_class = '\DataMachine\Engine\AI\SectionRegistry';
+		if ( ! is_callable(array( $registry_class, 'register' )) ) {
+			return;
+		}
+		$register = array( $registry_class, 'register' );
+		/** @var callable $register */
+
+		call_user_func($register, $file, $section, $priority, $callback, $metadata);
+	}
+
 	private static function resolve_workspace_path(): string {
 		if ( class_exists(Workspace::class) ) {
 			$workspace_path = ( new Workspace() )->get_path();
@@ -281,8 +298,8 @@ MD;
 		if ( class_exists('\DataMachine\Core\FilesRepository\DirectoryManager') ) {
 			try {
 				$directory_manager = new \DataMachine\Core\FilesRepository\DirectoryManager();
-				$user_id           = method_exists($directory_manager, 'get_effective_user_id') ? (int) $directory_manager->get_effective_user_id(0) : 0;
-				$agent_slug        = method_exists($directory_manager, 'resolve_agent_slug') ? (string) $directory_manager->resolve_agent_slug(array( 'user_id' => $user_id )) : '';
+				$user_id           = (int) $directory_manager->get_effective_user_id(0);
+				$agent_slug        = (string) $directory_manager->resolve_agent_slug(array( 'user_id' => $user_id ));
 
 				if ( '' !== trim($agent_slug) ) {
 					return trim($agent_slug);

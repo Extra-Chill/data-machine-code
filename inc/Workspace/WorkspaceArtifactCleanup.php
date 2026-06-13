@@ -35,22 +35,23 @@ trait WorkspaceArtifactCleanup {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_cleanup_artifacts( array $opts = array() ): array|\WP_Error {
-		$dry_run    = ! empty($opts['dry_run']);
-		$force      = ! empty($opts['force']);
-		$apply_plan = isset($opts['apply_plan']) && is_array($opts['apply_plan']) ? $opts['apply_plan'] : null;
-		$exhaustive = ! empty($opts['exhaustive']);
-		$sort       = isset($opts['sort']) ? strtolower(trim( (string) $opts['sort'])) : '';
-		$limit      = isset($opts['limit']) ? (int) $opts['limit'] : self::ARTIFACT_CLEANUP_DEFAULT_LIMIT;
-		$offset     = isset($opts['offset']) ? max(0, (int) $opts['offset']) : 0;
+		$dry_run        = ! empty($opts['dry_run']);
+		$force          = ! empty($opts['force']);
+		$apply_plan     = isset($opts['apply_plan']) && is_array($opts['apply_plan']) ? $opts['apply_plan'] : null;
+		$exhaustive     = ! empty($opts['exhaustive']);
+		$full_workspace = ! empty($opts['full_workspace']);
+		$sort           = isset($opts['sort']) ? strtolower(trim( (string) $opts['sort'])) : '';
+		$limit          = isset($opts['limit']) ? (int) $opts['limit'] : self::ARTIFACT_CLEANUP_DEFAULT_LIMIT;
+		$offset         = isset($opts['offset']) ? max(0, (int) $opts['offset']) : 0;
 		if ( $limit < 0 ) {
 			return new \WP_Error('invalid_artifact_cleanup_limit', 'Artifact cleanup --limit must be greater than 0. Use --exhaustive for an unbounded full artifact audit.', array( 'status' => 400 ));
 		}
-		if ( ! $exhaustive && $limit <= 0 ) {
-			return new \WP_Error('invalid_artifact_cleanup_limit', 'Artifact cleanup --limit must be greater than 0. Use --exhaustive for an unbounded full artifact audit.', array( 'status' => 400 ));
+		if ( ! $exhaustive && ! $full_workspace && $limit <= 0 ) {
+			return new \WP_Error('invalid_artifact_cleanup_limit', 'Artifact cleanup --limit must be greater than 0. Use --exhaustive for an unbounded full artifact audit, or the high-level workspace cleanup plan for full-workspace inventory planning.', array( 'status' => 400 ));
 		}
 		// Allow callers to opt out of bounded mode entirely only through the
 		// explicit exhaustive path, which also enables safety probes.
-		if ( $exhaustive ) {
+		if ( $exhaustive || $full_workspace ) {
 			$limit = 0;
 		}
 		$apply_command = $this->build_artifact_cleanup_apply_command();
@@ -115,8 +116,10 @@ trait WorkspaceArtifactCleanup {
 		if ( $rank_by_size ) {
 			usort($candidates, fn( $a, $b ) => (int) ( $b['artifact_size_bytes'] ?? 0 ) <=> (int) ( $a['artifact_size_bytes'] ?? 0 ));
 			$total_ranked = count($candidates);
-			$candidates   = array_slice($candidates, 0, $limit);
-			$pagination   = array(
+			if ( $limit > 0 ) {
+				$candidates = array_slice($candidates, 0, $limit);
+			}
+			$pagination = array(
 				'mode'          => 'ranked_inventory',
 				'limit'         => $limit,
 				'offset'        => 0,

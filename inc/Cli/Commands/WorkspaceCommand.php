@@ -594,10 +594,11 @@ class WorkspaceCommand extends BaseCommand {
 	 * : Pass force=true into the cleanup task params for modes that support it.
 	 *
 	 * [--include-artifacts]
-	 * : For `plan --mode=retention`, also include the exhaustive artifact cleanup
-	 *   scan. Omitted by default so safe retention planning stays bounded on large
-	 *   workspaces; use `--mode=artifacts` for an artifact-only plan.
-	 *   `--mode=stale-worktrees` never includes artifacts unless this flag is passed.
+	 * : For `plan --mode=retention`, include artifact cleanup rows. Retention
+	 *   planning includes a full-workspace artifact inventory by default; this flag
+	 *   remains accepted for explicitness and `--mode=artifacts` still creates an
+	 *   artifact-only plan. `--mode=stale-worktrees` never includes artifacts unless
+	 *   this flag is passed.
 	 *
 	 * [--older-than=<duration>]
 	 * : Pass an age gate such as 7d or 24h into cleanup task params.
@@ -945,7 +946,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$input = $this->cleanup_plan_input($mode, $assoc_args);
 		if ( 'json' !== (string) ( $assoc_args['format'] ?? 'table' ) ) {
-			$profile = ! empty($input['include_artifacts']) ? 'includes artifact scan' : 'local worktree merge signals';
+			$profile = ! empty($input['include_artifacts']) ? 'full-workspace inventory, biggest wins first' : 'local worktree merge signals';
 			WP_CLI::log(sprintf('Planning cleanup (%s; %s)...', $mode, $profile));
 		}
 
@@ -966,7 +967,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array<string,mixed>
 	 */
 	private function cleanup_plan_input( string $mode, array $assoc_args ): array {
-		$include_artifacts = 'artifacts' === $mode || ! empty($assoc_args['include-artifacts']);
+		$include_artifacts = 'retention' === $mode || 'artifacts' === $mode || ! empty($assoc_args['include-artifacts']);
 		$include_worktrees = 'artifacts' !== $mode;
 		$input             = array(
 			'mode'              => $mode,
@@ -982,6 +983,11 @@ class WorkspaceCommand extends BaseCommand {
 		}
 		if ( isset($assoc_args['force']) ) {
 			$input['force_artifact_cleanup'] = (bool) $assoc_args['force'];
+		}
+		if ( isset($assoc_args['sort']) && '' !== trim( (string) $assoc_args['sort']) ) {
+			$sort                   = trim( (string) $assoc_args['sort']);
+			$input['artifact_sort'] = $sort;
+			$input['worktree_sort'] = $sort;
 		}
 		if ( 'stale-worktrees' === $mode ) {
 			$input['worktree_stale_only'] = true;
@@ -1433,8 +1439,18 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log(sprintf('Run ID: %s', (string) ( $result['run_id'] ?? '' )));
 		WP_CLI::log(sprintf('Plan ID: %s', (string) ( $result['plan_id'] ?? '' )));
 		WP_CLI::log(sprintf('Rows:   %d', (int) ( $summary['total_rows'] ?? 0 )));
-		WP_CLI::log(sprintf('Bytes:  %s', $this->format_bytes($summary['total_size_bytes'] ?? 0)));
+		WP_CLI::log(sprintf('Reclaimable: %s', $this->format_bytes($summary['total_reclaimable_bytes'] ?? $summary['total_size_bytes'] ?? 0)));
+		$byte_totals = (array) ( $summary['byte_totals'] ?? array() );
+		if ( array() !== $byte_totals ) {
+			foreach ( $byte_totals as $type => $bytes ) {
+				WP_CLI::log(sprintf('  %s: %s', (string) $type, $this->format_bytes($bytes)));
+			}
+		}
 		WP_CLI::log(sprintf('Apply:  wp datamachine-code workspace cleanup apply %s', (string) ( $result['run_id'] ?? '' )));
+		$blocked = (array) ( $summary['blocked_by_type'] ?? array() );
+		if ( array_sum(array_map('intval', $blocked)) > 0 ) {
+			WP_CLI::log('Blocked/kept rows are included in JSON under `blocked` with reason_code/reason; they are not applyable cleanup rows.');
+		}
 		$this->render_cleanup_plan_category_totals( (array) ( $summary['category_totals'] ?? array() ) );
 		$this->render_cleanup_plan_top_reclaimable( (array) ( $summary['top_reclaimable'] ?? array() ) );
 		$this->render_cleanup_plan_blockers( (array) ( $summary['blockers'] ?? array() ) );

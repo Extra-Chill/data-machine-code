@@ -835,15 +835,24 @@ namespace {
 			'plan_id' => 'cleanup-plan-test',
 			'inputs'  => $input,
 			'summary' => array(
-			'total_rows'       => 2,
-			'total_size_bytes' => 4096,
-			'category_totals'  => array(
+			'total_rows'              => 2,
+			'total_size_bytes'        => 4096,
+			'total_reclaimable_bytes' => 4096,
+			'byte_totals'             => array(
+			'artifact_cleanup' => 1024,
+			'worktree_removal' => 3072,
+			),
+			'blocked_by_type'         => array(
+			'artifact_cleanup' => 1,
+			'worktree_removal' => 0,
+			),
+			'category_totals'         => array(
 			'whole_worktrees'      => 1024,
 			'dependency_artifacts' => 2048,
 			'build_outputs'        => 512,
 			'caches'               => 512,
 			),
-			'top_reclaimable'  => array(
+			'top_reclaimable'         => array(
 			array(
 			'path'         => '/workspace/repo@feature/node_modules',
 			'handle'       => 'repo@feature',
@@ -853,7 +862,7 @@ namespace {
 			'size_bytes'   => 2048,
 			),
 			),
-			'blockers'         => array(
+			'blockers'                => array(
 			'dirty_worktree' => array(
 			'count'      => 1,
 			'size_bytes' => 1024,
@@ -867,7 +876,7 @@ namespace {
 			'examples'   => array( 'repo@dirty' ),
 			),
 			),
-			'recommended_commands' => array(
+			'recommended_commands'    => array(
 			array(
 			'label'   => 'apply_reviewed_plan',
 			'risk'    => 'reviewed_destructive',
@@ -1228,9 +1237,13 @@ namespace {
 	WP_CLI::$successes = array();
 	$command->cleanup(array( 'plan' ), array( 'mode' => 'retention' ));
 	datamachine_code_cleanup_assert('retention' === ( $cleanup_plan_ability->last_input['mode'] ?? '' ), 'cleanup plan receives retention mode');
-	datamachine_code_cleanup_assert(false === ( $cleanup_plan_ability->last_input['include_artifacts'] ?? true ), 'retention cleanup plan skips exhaustive artifact scan by default');
+	datamachine_code_cleanup_assert(true === ( $cleanup_plan_ability->last_input['include_artifacts'] ?? false ), 'retention cleanup plan includes full-workspace artifact inventory by default');
 	datamachine_code_cleanup_assert(true === ( $cleanup_plan_ability->last_input['include_worktrees'] ?? false ), 'retention cleanup plan keeps inventory worktree planning enabled');
-	datamachine_code_cleanup_assert(in_array('Planning cleanup (retention; local worktree merge signals)...', WP_CLI::$logs, true), 'human cleanup plan reports bounded scan profile before planning');
+	datamachine_code_cleanup_assert(in_array('Planning cleanup (retention; full-workspace inventory, biggest wins first)...', WP_CLI::$logs, true), 'human cleanup plan reports high-volume inventory profile before planning');
+	datamachine_code_cleanup_assert(in_array('Reclaimable: 4.0 KiB', WP_CLI::$logs, true), 'human cleanup plan reports total reclaimable bytes up front');
+	datamachine_code_cleanup_assert(in_array('  artifact_cleanup: 1.0 KiB', WP_CLI::$logs, true), 'human cleanup plan surfaces artifact cleanup bytes separately');
+	datamachine_code_cleanup_assert(in_array('  worktree_removal: 3.0 KiB', WP_CLI::$logs, true), 'human cleanup plan surfaces worktree cleanup bytes separately');
+	datamachine_code_cleanup_assert(in_array('Blocked/kept rows are included in JSON under `blocked` with reason_code/reason; they are not applyable cleanup rows.', WP_CLI::$logs, true), 'human cleanup plan points to blocker reason details');
 	datamachine_code_cleanup_assert(in_array('Reclaimable space by category:', WP_CLI::$logs, true), 'human cleanup plan reports category totals up front');
 	datamachine_code_cleanup_assert(in_array('Top reclaimable paths:', WP_CLI::$logs, true), 'human cleanup plan reports top reclaimable paths');
 	datamachine_code_cleanup_assert(in_array('Blockers by reason and repo:', WP_CLI::$logs, true), 'human cleanup plan reports blockers before apply');
@@ -1239,7 +1252,6 @@ namespace {
 	datamachine_code_cleanup_assert(in_array('table:1:size,category,risk,handle,path', WP_CLI::$logs, true), 'top reclaimable table has expected report shape');
 	datamachine_code_cleanup_assert(in_array('table:1:reason,count,bytes,repos,examples', WP_CLI::$logs, true), 'blocker table has expected report shape');
 	datamachine_code_cleanup_assert(in_array('table:2:label,risk,command', WP_CLI::$logs, true), 'recommended command table includes risk labels');
-	datamachine_code_cleanup_assert(in_array('Artifacts: skipped for bounded retention planning; run `wp datamachine-code workspace cleanup plan --mode=artifacts` when you want artifact rows.', WP_CLI::$logs, true), 'human cleanup plan shows explicit artifact follow-up command');
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
@@ -1295,10 +1307,12 @@ namespace {
 	$last_scheduled_cleanup_run = $cleanup_run_ability->last_input;
 
 	WP_CLI::$logs      = array();
-    WP_CLI::$successes = array();
-    $command->cleanup(array( 'run' ), array( 'mode' => 'artifacts', 'dry-run' => true, 'format' => 'json' ));
-    datamachine_code_cleanup_assert(true === ( $artifact_ability->last_input['dry_run'] ?? false ), 'cleanup run --dry-run uses artifact cleanup ability directly');
-    datamachine_code_cleanup_assert($last_scheduled_cleanup_run === $cleanup_run_ability->last_input, 'cleanup run --dry-run does not schedule cleanup run ability');
+	WP_CLI::$successes = array();
+	$command->cleanup(array( 'run' ), array( 'mode' => 'artifacts', 'dry-run' => true, 'format' => 'json' ));
+	datamachine_code_cleanup_assert('artifacts' === ( $cleanup_plan_ability->last_input['mode'] ?? '' ), 'cleanup run --dry-run uses cleanup plan ability for artifact review');
+	datamachine_code_cleanup_assert(true === ( $cleanup_plan_ability->last_input['include_artifacts'] ?? false ), 'cleanup run --dry-run artifact review includes artifact scan');
+	datamachine_code_cleanup_assert(false === ( $cleanup_plan_ability->last_input['include_worktrees'] ?? true ), 'cleanup run --dry-run artifact review skips worktree removal rows');
+	datamachine_code_cleanup_assert($last_scheduled_cleanup_run === $cleanup_run_ability->last_input, 'cleanup run --dry-run does not schedule cleanup run ability');
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
@@ -1753,10 +1767,9 @@ namespace {
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->cleanup(array( 'run' ), array( 'mode' => 'artifacts', 'dry-run' => true, 'sort' => 'size', 'format' => 'json' ));
-	datamachine_code_cleanup_assert('size' === ( $artifact_ability->last_input['sort'] ?? null ), 'workspace cleanup artifact dry-run forwards size sort');
+	datamachine_code_cleanup_assert('size' === ( $cleanup_plan_ability->last_input['artifact_sort'] ?? null ), 'workspace cleanup artifact dry-run forwards size sort');
 	$ranked_artifact_json = json_decode(WP_CLI::$logs[0] ?? '', true);
-	datamachine_code_cleanup_assert('ranked_inventory' === ( $ranked_artifact_json['pagination']['mode'] ?? '' ), 'artifact size sort reports ranked inventory mode');
-	datamachine_code_cleanup_assert('size' === ( $ranked_artifact_json['pagination']['sort'] ?? '' ), 'artifact size sort advertises size ordering');
+	datamachine_code_cleanup_assert('size' === ( $ranked_artifact_json['inputs']['artifact_sort'] ?? '' ), 'artifact size sort appears in cleanup plan input');
 
     echo "\n[8] --inventory-only forwards bounded cleanup review flag\n";
     WP_CLI::$logs      = array();
