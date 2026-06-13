@@ -3470,9 +3470,8 @@ class WorkspaceAbilities {
 			return false;
 		}
 
-		$path        = (string) ( $result['path'] ?? '' );
-		$is_worktree = (bool) ( $result['is_worktree'] ?? false );
-		return ! $is_worktree && '' !== $path && ! str_starts_with($path, 'github://');
+		$path = (string) ( $result['path'] ?? '' );
+		return '' !== $path && ! str_starts_with($path, 'github://') && ! str_contains(basename($path), '@');
 	}
 
 	/**
