@@ -2,6 +2,29 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.115] - 2026-06-13
+
+### Changed
+- Finish cleanup command lint
+- Add stale worktree cleanup profile
+- Improve cleanup plan summary
+
+### Fixed
+- Fix AGENTS.md section registry lint
+- fix(agents-md): generate datamachine-code sections from real command tree (#671)
+- Fix stale cleanup lint issues
+- Fix cleanup plan lint
+- Fix local workspace path precedence
+- Fix cleanup planning lint
+- Fix cleanup snapshot lint findings
+- Fix cleanup status lint
+- Fix artifact cleanup lint
+- Fix cleanup snapshot lint formatting
+- Fix high-volume workspace cleanup planning
+- Fix cleanup pagination snapshots
+- Fix stale marker artifact cleanup
+- Fix cleanup parent status convergence
+
 ## [0.47.113] - 2026-06-13
 
 ### Changed
