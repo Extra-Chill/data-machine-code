@@ -259,9 +259,9 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 				)
 			)
 		);
-		$run_id        = $this->cleanup_run_id($job_id);
-		$cleanup_items = (array) ( $aggregate['cleanup_items'] ?? array() );
-		$commands      = array(
+		$run_id           = $this->cleanup_run_id($job_id);
+		$cleanup_items    = (array) ( $aggregate['cleanup_items'] ?? array() );
+		$commands         = array(
 			'parent' => sprintf('studio wp datamachine drain --job-id=%d', $job_id),
 			'verify' => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
 		);
@@ -554,9 +554,6 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 	private function sum_cleanup_rows_bytes( array $rows, array $fields ): int {
 		$total = 0;
 		foreach ( $rows as $row ) {
-			if ( ! is_array($row) ) {
-				continue;
-			}
 			$found = false;
 			foreach ( $fields as $field ) {
 				if ( isset($row[ $field ]) ) {
