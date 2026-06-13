@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.114] - 2026-06-13
+
+### Fixed
+- Fix cleanup status lint
+- Fix artifact cleanup lint
+- Fix stale marker artifact cleanup
+- Fix cleanup parent status convergence
+
 ## [0.47.113] - 2026-06-13
 
 ### Changed
