@@ -309,6 +309,7 @@ trait WorkspaceArtifactCleanup {
 			$repo            = (string) ( $wt['repo'] ?? '' );
 			$wt_path         = (string) ( $wt['path'] ?? '' );
 			$resolved_branch = '' !== $wt_path ? $this->resolve_worktree_branch_from_head_file($wt_path) : null;
+			$stale_marker_recovery = null;
 			if ( $safety_probes ) {
 				$branch = (string) ( $resolved_branch ?? $wt['branch'] ?? $wt['branch_slug'] ?? '' );
 			} else {
@@ -381,14 +382,20 @@ trait WorkspaceArtifactCleanup {
 					$dirty_probe = $this->probe_worktree_dirty_count($wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 					if ( is_wp_error($dirty_probe) ) {
 						$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $wt_path, $dirty_probe, 'artifact cleanup dirty-state probe', 'leaving artifacts in place');
-						$skipped[]  = array_merge(
-							$base_row,
-							$diagnostic,
-							array( 'artifacts' => $artifacts )
-						);
-						continue;
+						if ( $force && $this->is_stale_worktree_marker_diagnostic($diagnostic) ) {
+							$stale_marker_recovery = $diagnostic;
+							$dirty_count           = 0;
+						} else {
+							$skipped[] = array_merge(
+								$base_row,
+								$diagnostic,
+								array( 'artifacts' => $artifacts )
+							);
+							continue;
+						}
+					} else {
+						$dirty_count = (int) $dirty_probe;
 					}
-					$dirty_count = (int) $dirty_probe;
 				}
 				if ( $dirty_count > 0 && ! $force ) {
 					$skipped[] = array_merge(
@@ -402,26 +409,32 @@ trait WorkspaceArtifactCleanup {
 					continue;
 				}
 
-				$unpushed = $this->count_unpushed_commits($wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
-				if ( is_wp_error($unpushed) ) {
-					$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $wt_path, $unpushed, 'artifact cleanup safety probe', 'leaving artifacts in place');
-					$skipped[]  = array_merge(
-						$base_row,
-						$diagnostic,
-						array( 'artifacts' => $artifacts )
-					);
-					continue;
-				}
-				if ( $unpushed > 0 && ! $force ) {
-					$skipped[] = array_merge(
-						$base_row, array(
-							'reason_code' => 'unpushed_commits',
-							'reason'      => sprintf('%d unpushed commit(s) - pass force=true to override artifact cleanup only', $unpushed),
-							'unpushed'    => $unpushed,
-							'artifacts'   => $artifacts,
-						)
-					);
-					continue;
+				if ( null === $stale_marker_recovery ) {
+					$unpushed = $this->count_unpushed_commits($wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+					if ( is_wp_error($unpushed) ) {
+						$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $wt_path, $unpushed, 'artifact cleanup safety probe', 'leaving artifacts in place');
+						if ( $force && $this->is_stale_worktree_marker_diagnostic($diagnostic) ) {
+							$stale_marker_recovery = $diagnostic;
+						} else {
+							$skipped[] = array_merge(
+								$base_row,
+								$diagnostic,
+								array( 'artifacts' => $artifacts )
+							);
+							continue;
+						}
+					}
+					if ( isset($unpushed) && ! is_wp_error($unpushed) && $unpushed > 0 && ! $force ) {
+						$skipped[] = array_merge(
+							$base_row, array(
+								'reason_code' => 'unpushed_commits',
+								'reason'      => sprintf('%d unpushed commit(s) - pass force=true to override artifact cleanup only', $unpushed),
+								'unpushed'    => $unpushed,
+								'artifacts'   => $artifacts,
+							)
+						);
+						continue;
+					}
 				}
 			}
 
@@ -440,6 +453,12 @@ trait WorkspaceArtifactCleanup {
 				// before deletion, so the candidate is reviewable but not
 				// destructible from a bounded plan alone.
 				$candidate['safety_probes_deferred'] = true;
+			}
+			if ( null !== $stale_marker_recovery ) {
+				$candidate['reason_code']                  = 'profile_artifacts_stale_worktree_marker';
+				$candidate['reason']                       = 'profile-derived reconstructable artifacts can be removed; git worktree marker is stale, but explicit force allows artifact-only cleanup after path containment validation';
+				$candidate['git_metadata_warning']         = $stale_marker_recovery['reason'] ?? 'git worktree metadata marker is stale or missing';
+				$candidate['metadata_reconciliation_hint'] = 'Run studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json to repair stale worktree metadata after artifact cleanup.';
 			}
 			$candidates[] = $candidate;
 		}
@@ -516,6 +535,16 @@ trait WorkspaceArtifactCleanup {
 			'removed_size_bytes'     => $removed_bytes,
 			'artifact_size_by_repo'  => $artifact_by_repo,
 		);
+	}
+
+	/**
+	 * Check whether a git probe diagnostic represents stale worktree metadata.
+	 *
+	 * @param  array<string,mixed> $diagnostic Classified git probe diagnostic.
+	 * @return bool
+	 */
+	private function is_stale_worktree_marker_diagnostic( array $diagnostic ): bool {
+		return 'stale_worktree_marker' === (string) ( $diagnostic['reason_code'] ?? '' );
 	}
 
 	/**
