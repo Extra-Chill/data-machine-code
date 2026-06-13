@@ -873,10 +873,6 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return string Empty string on success.
 	 */
 	private function run_wp_cli_command( string $command ): string {
-		if ( ! method_exists('WP_CLI', 'runcommand') ) {
-			return 'WP_CLI::runcommand is unavailable; run the reported drain commands manually.';
-		}
-
 		try {
 			WP_CLI::runcommand(
 				$command,
@@ -1061,14 +1057,6 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 		$this->render_worktree_cleanup_result($result, $assoc_args);
-	}
-
-	private function render_worktree_artifact_cleanup_result_from_ability( array|\WP_Error $result, array $assoc_args ): void {
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
-			return;
-		}
-		$this->render_worktree_artifact_cleanup_result($result, $assoc_args);
 	}
 
 	private function render_worktree_emergency_cleanup_result_from_ability( array|\WP_Error $result, array $assoc_args ): void {
