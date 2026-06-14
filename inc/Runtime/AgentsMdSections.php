@@ -149,9 +149,8 @@ Discover the full command surface: `{$wp} datamachine --help`. The groups below 
 - **GitHub:** `{$wp} datamachine-code github {$github_subcmds}` — list/read GitHub state, manage issues and PRs, install review flows, and comment on reviews.
 - **Git sync:** `{$wp} datamachine-code gitsync {$gitsync_subcmds}` — bind site-owned directories to remotes; `submit` opens or updates the PR path, while `push` writes directly to the configured branch.
 - **Editing inside a worktree:** any tool. Local agents on the same disk should use native file I/O and raw `git`; routing edits through workspace abilities is ceremony, not safety.
-- **Workflow:** reuse the existing primary when one exists for the remote; otherwise `workspace clone <repo>` once → `worktree add <repo> <branch>` → edit files in the worktree with any tool → commit → push → PR.
+- **Workspace lifecycle:** use `workspace clone` for primary checkout adoption/cloning and `workspace worktree add` for isolated branches. Use the CLI `--help` output for current flags and subcommands.
 - **Primary freshness:** before using a primary checkout for investigation or verification, inspect `workspace list|show|hygiene` freshness metadata. If the primary is stale, run `workspace git pull <repo> --allow-primary-mutation` or create the worktree from an explicit remote ref with `worktree add <repo> <branch> --from=origin/<base>`. Do not clone a second top-level primary for the same remote just to get fresh code.
-- **Why worktrees:** parallel-session isolation on disk. Multiple agents cook features in the same repo without stepping on each other.
 - **Primary is read-only.** Never edit `<workspace>/<repo>` (no `@slug`). Mutating ops on bare `<repo>` handles via the CLI require `--allow-primary-mutation`. The primary tracks the deployed branch — operate on a worktree.
 - **Rule:** Never modify files under `wp-content/plugins/` or `wp-content/themes/` directly. Those paths are **read-only reference**. All code changes go through the workspace so they are tracked in git and reviewed via pull requests.
 
