@@ -213,7 +213,7 @@ namespace {
     $assert('bounded_inventory', $plan['pagination']['mode'] ?? '', 'bounded dry-run advertises bounded_inventory mode');
     $assert(false, (bool) ( $plan['pagination']['safety_probes'] ?? true ), 'bounded dry-run reports safety_probes=false');
     $assert(true, (bool) ( $plan['pagination']['complete'] ?? false ), 'bounded dry-run completes when total <= limit');
-    $assert('studio wp datamachine-code workspace cleanup run --mode=artifacts --limit=100 --offset=0 --format=json', $plan['apply_command'] ?? '', 'bounded dry-run exposes matching high-level apply command');
+    $assert('studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json', $plan['apply_command'] ?? '', 'bounded dry-run exposes DB-backed high-level apply command');
     $assert($plan['apply_command'] ?? '', $plan['summary']['apply_command'] ?? '', 'bounded dry-run summary repeats apply command');
 
     $bounded_skip_reasons = array_column($plan['skipped'] ?? array(), 'reason_code', 'handle');
@@ -246,7 +246,7 @@ namespace {
     $assert(1, count($exhaustive_plan['candidates'] ?? array()), 'exhaustive dry-run skips dirty/unpushed worktrees');
     $assert('demo@clean', $exhaustive_plan['candidates'][0]['handle'] ?? '', 'exhaustive clean worktree is candidate');
     $assert('target', $exhaustive_plan['candidates'][0]['artifacts'][0]['path'] ?? '', 'exhaustive candidate artifact path comes from profile');
-    $assert('studio wp datamachine-code workspace cleanup run --mode=artifacts --exhaustive --format=json', $exhaustive_plan['apply_command'] ?? '', 'exhaustive dry-run exposes matching high-level apply command');
+    $assert('studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json', $exhaustive_plan['apply_command'] ?? '', 'exhaustive dry-run exposes DB-backed high-level apply command');
 
     $skip_reasons = array_column($exhaustive_plan['skipped'] ?? array(), 'reason_code', 'handle');
     $assert('dirty_worktree', $skip_reasons['demo@dirty'] ?? '', 'exhaustive dirty worktree is protected');
@@ -269,7 +269,7 @@ namespace {
     $page_one = $workspace->worktree_cleanup_artifacts(array( 'dry_run' => true, 'limit' => 1, 'offset' => 0 ));
     $assert(false, is_wp_error($page_one), 'page-1 dry-run succeeds');
     $assert(1, (int) ( $page_one['pagination']['scanned'] ?? 0 ), 'page-1 scanned exactly one worktree');
-    $assert('studio wp datamachine-code workspace cleanup run --mode=artifacts --limit=1 --offset=0 --format=json', $page_one['apply_command'] ?? '', 'page-1 dry-run apply command preserves page scope');
+    $assert('studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json', $page_one['apply_command'] ?? '', 'page-1 dry-run points to DB-backed high-level apply command');
     $assert(true, (bool) ( $page_one['pagination']['partial'] ?? false ), 'page-1 reports partial=true');
     $assert(false, (bool) ( $page_one['pagination']['complete'] ?? true ), 'page-1 reports complete=false');
     $assert(1, (int) ( $page_one['pagination']['next_offset'] ?? 0 ), 'page-1 next_offset advances by limit');
@@ -281,7 +281,7 @@ namespace {
     $direct_apply = $workspace->worktree_cleanup_artifacts(array());
     $assert(true, is_wp_error($direct_apply), 'direct apply without plan is rejected');
     $assert('artifact_cleanup_plan_required', $direct_apply->code ?? '', 'direct apply error is explicit');
-    $assert(true, str_contains($direct_apply->get_error_message(), 'workspace cleanup run --mode=artifacts --limit=100 --offset=0 --format=json'), 'direct apply error points to matching high-level apply command');
+    $assert(true, str_contains($direct_apply->get_error_message(), 'workspace cleanup run --mode=artifacts --dry-run --format=json'), 'direct apply error points to DB-backed high-level apply command');
 
     // Build a stricter plan from the exhaustive scan for precise apply-shape
     // assertions. This keeps the source-file-mismatch test deterministic
@@ -314,6 +314,30 @@ namespace {
     $assert('dirty_worktree', $apply_skip_reasons['demo@dirty'] ?? '', 'apply-plan revalidation skips dirty rows with explicit reason');
     $assert('unpushed_commits', $apply_skip_reasons['demo@unpushed'] ?? '', 'apply-plan revalidation skips unpushed rows with explicit reason');
     $assert('stale_worktree_marker', $apply_skip_reasons['demo@broken-marker'] ?? '', 'apply-plan revalidation gives stale marker recovery reason without force');
+
+    $make_branch('protected');
+    $protected_path = $tmp . '/demo@protected';
+    $run(sprintf('git worktree add %s protected', escapeshellarg($protected_path)), $primary);
+    mkdir($protected_path . '/target', 0755, true);
+    file_put_contents($protected_path . '/target/artifact.bin', str_repeat('protected', 128));
+    register_shutdown_function(
+        function () use ( $protected_path ) {
+            if (is_dir($protected_path) ) {
+                chmod($protected_path, 0755);
+            }
+        }
+    );
+    $protected_plan_full = $workspace->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true ));
+    $protected_by_handle = array_column($protected_plan_full['candidates'] ?? array(), null, 'handle');
+    $protected_plan      = array( 'candidates' => array( $protected_by_handle['demo@protected'] ?? array() ) );
+    chmod($protected_path, 0555);
+    $protected_apply = $workspace->worktree_cleanup_artifacts(array( 'apply_plan' => $protected_plan ));
+    chmod($protected_path, 0755);
+    $assert(false, is_wp_error($protected_apply), 'permission-blocked artifact cleanup returns report');
+    $assert(0, (int) ( $protected_apply['summary']['removed_artifacts'] ?? -1 ), 'permission-blocked artifact is not counted as removed');
+    $protected_skip_reasons = array_column($protected_apply['skipped'] ?? array(), 'reason_code', 'handle');
+    $assert('artifact_remove_failed', $protected_skip_reasons['demo@protected'] ?? '', 'permission-blocked artifact cleanup reports explicit remove failure');
+    $assert(true, is_dir($protected_path . '/target'), 'permission-blocked artifact directory remains for retry');
 
     $force_plan = $workspace->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true, 'force' => true ));
     $force_handles = array_column($force_plan['candidates'] ?? array(), 'handle');

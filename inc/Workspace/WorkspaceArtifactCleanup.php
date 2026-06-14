@@ -710,8 +710,23 @@ trait WorkspaceArtifactCleanup {
 			return new \WP_Error('artifact_path_outside_worktree', sprintf('Refusing artifact cleanup for %s: %s', $relative, $artifact_validation['message'] ?? ''), array( 'status' => 403 ));
 		}
 
-     // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		exec(sprintf('rm -rf %s 2>&1', escapeshellarg($artifact_real)));
+		$output = array();
+		$exit   = 0;
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
+		exec(sprintf('rm -rf %s 2>&1', escapeshellarg($artifact_real)), $output, $exit);
+		if ( 0 !== $exit ) {
+			$message = trim(implode("\n", array_map('strval', $output)));
+			return new \WP_Error(
+				'artifact_remove_failed',
+				sprintf('Artifact removal command failed for %s%s', $relative, '' !== $message ? ': ' . $message : '.'),
+				array( 'status' => 500 )
+			);
+		}
+
+		clearstatcache(true, $artifact_real);
+		if ( file_exists($artifact_real) ) {
+			return new \WP_Error('artifact_remove_failed', sprintf('Artifact path still exists after removal: %s', $relative), array( 'status' => 500 ));
+		}
 
 		return true;
 	}
