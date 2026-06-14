@@ -13,10 +13,9 @@
  * the shared implementation. Until then, keep this self-contained.
  *
  * Context safety: this runs on `plugins_loaded` in web/cron compose contexts,
- * NOT only under WP-CLI. It therefore reflects over autoloadable command CLASSES
- * (via ReflectionClass) and never touches the live WP_CLI runner. Reflecting a
- * class does not instantiate it, so command-class constructor dependencies are
- * never exercised.
+ * NOT only under WP-CLI. It only autoloads command classes when WP-CLI's base
+ * command class is already present, then reflects over the class without
+ * touching the live WP_CLI runner or constructing command instances.
  *
  * @package DataMachineCode\Runtime
  */
@@ -41,6 +40,10 @@ final class CommandIntrospector {
 	 * @return array<string,string> Ordered map of subcommand => description.
 	 */
 	public static function subcommands( string $command_class ): array {
+		if ( ! class_exists('WP_CLI_Command', false) ) {
+			return array();
+		}
+
 		// class_exists() triggers autoloading; once it returns true the
 		// ReflectionClass constructor cannot throw, so no try/catch is needed.
 		if ( ! class_exists($command_class) ) {
