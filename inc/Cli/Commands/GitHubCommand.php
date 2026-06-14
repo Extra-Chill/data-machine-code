@@ -1,0 +1,1012 @@
+<?php
+/**
+ * WP-CLI GitHub Command
+ *
+ * Provides CLI access to GitHub integration: listing issues, PRs, repos,
+ * and managing issues (view, close, comment). Wraps GitHubAbilities.
+ *
+ * @package DataMachineCode\Cli\Commands
+ * @since   0.1.0
+ */
+
+namespace DataMachineCode\Cli\Commands;
+
+use WP_CLI;
+use DataMachine\Cli\BaseCommand;
+use DataMachineCode\Abilities\GitHubAbilities;
+use DataMachineCode\GitHub\PrReviewFlowInstaller;
+use DataMachineCode\GitHub\PrReviewFlowScaffold;
+use DataMachineCode\Support\GitHubCredentialSettingsMigration;
+
+defined('ABSPATH') || exit;
+
+class GitHubCommand extends BaseCommand {
+
+
+
+	/**
+	 * List issues from a GitHub repository.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--repo=<repo>]
+	 * : Repository in owner/repo format. Falls back to default repo in settings.
+	 *
+	 * [--state=<state>]
+	 * : Issue state: open, closed, all (default: open).
+	 *
+	 * [--labels=<labels>]
+	 * : Comma-separated label names to filter by.
+	 *
+	 * [--assignee=<assignee>]
+	 * : Filter by assignee username.
+	 *
+	 * [--per_page=<count>]
+	 * : Results per page (default: 30, max: 100).
+	 *
+	 * [--page=<page>]
+	 * : Page number (default: 1).
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 *   - csv
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     # List open issues for a repo
+	 *     $ wp datamachine-code github issues --repo=Extra-Chill/data-machine
+	 *
+	 *     # List issues with specific labels
+	 *     $ wp datamachine-code github issues --repo=Extra-Chill/data-machine --labels=enhancement
+	 *
+	 *     # List closed issues
+	 *     $ wp datamachine-code github issues --repo=Extra-Chill/data-machine --state=closed --per_page=10
+	 *
+	 * @subcommand issues
+	 */
+	public function issues( array $args, array $assoc_args ): void {
+		$this->requireConfig();
+
+		$input = $this->buildInput($assoc_args, array( 'repo', 'state', 'labels', 'assignee', 'per_page', 'page' ));
+		$input = $this->resolveRepo($input);
+
+		$result = $this->execute_ability('datamachine-code/list-github-issues', $input);
+
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		$format = $assoc_args['format'] ?? 'table';
+
+		if ( 'json' === $format ) {
+			WP_CLI::line( (string) \wp_json_encode($result, JSON_PRETTY_PRINT));
+			return;
+		}
+
+		$issues = $result['issues'] ?? array();
+
+		if ( empty($issues) ) {
+			WP_CLI::log('No issues found.');
+			return;
+		}
+
+		$items = array();
+		foreach ( $issues as $issue ) {
+			$items[] = array(
+				'number'     => $issue['number'],
+				'state'      => $issue['state'],
+				'title'      => mb_substr($issue['title'], 0, 60),
+				'labels'     => implode(', ', $issue['labels'] ?? array()),
+				'assignees'  => implode(', ', $issue['assignees'] ?? array()),
+				'comments'   => $issue['comments'],
+				'created_at' => $this->shortDate($issue['created_at']),
+			);
+		}
+
+		$this->format_items($items, array( 'number', 'state', 'title', 'labels', 'comments', 'created_at' ), $assoc_args);
+		WP_CLI::log(sprintf('%d issue(s) returned.', count($items)));
+	}
+
+	/**
+	 * View a single GitHub issue.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <issue_number>
+	 * : Issue number.
+	 *
+	 * [--repo=<repo>]
+	 * : Repository in owner/repo format.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     $ wp datamachine-code github view 413 --repo=Extra-Chill/data-machine
+	 *
+	 * @subcommand view
+	 */
+	public function view( array $args, array $assoc_args ): void {
+		$this->requireConfig();
+
+		$issue_number = \absint($args[0] ?? 0);
+		if ( $issue_number <= 0 ) {
+			WP_CLI::error('Please provide a valid issue number.');
+			return;
+		}
+
+		$input         = array( 'issue_number' => $issue_number );
+		$input['repo'] = $assoc_args['repo'] ?? '';
+		$input         = $this->resolveRepo($input);
+
+		$result = $this->execute_ability('datamachine-code/get-github-issue', $input);
+
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		$format = $assoc_args['format'] ?? 'table';
+
+		if ( 'json' === $format ) {
+			WP_CLI::line( (string) \wp_json_encode($result, JSON_PRETTY_PRINT));
+			return;
+		}
+
+		$issue = $result['issue'];
+
+		WP_CLI::log(WP_CLI::colorize(sprintf('%%G#%d%%n %s', $issue['number'], $issue['title'])));
+		WP_CLI::log(sprintf('State: %s | Author: %s | Comments: %d', $issue['state'], $issue['user'], $issue['comments']));
+
+		if ( ! empty($issue['labels']) ) {
+			WP_CLI::log('Labels: ' . implode(', ', $issue['labels']));
+		}
+		if ( ! empty($issue['assignees']) ) {
+			WP_CLI::log('Assignees: ' . implode(', ', $issue['assignees']));
+		}
+
+		WP_CLI::log('Created: ' . $issue['created_at']);
+		WP_CLI::log('URL: ' . $issue['html_url']);
+
+		if ( ! empty($issue['body']) ) {
+			WP_CLI::log('');
+			WP_CLI::log($issue['body']);
+		}
+	}
+
+	/**
+	 * Close a GitHub issue.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <issue_number>
+	 * : Issue number to close.
+	 *
+	 * [--repo=<repo>]
+	 * : Repository in owner/repo format.
+	 *
+	 * [--comment=<comment>]
+	 * : Optional comment to add before closing.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     $ wp datamachine-code github close 315 --repo=Extra-Chill/data-machine
+	 *
+	 *     $ wp datamachine-code github close 315 --repo=Extra-Chill/data-machine --comment="Fixed in v0.33.0"
+	 *
+	 * @subcommand close
+	 */
+	public function close_issue( array $args, array $assoc_args ): void {
+		$this->requireConfig();
+
+		$issue_number = \absint($args[0] ?? 0);
+		if ( $issue_number <= 0 ) {
+			WP_CLI::error('Please provide a valid issue number.');
+			return;
+		}
+
+		$input = $this->resolveRepo(
+			array(
+				'repo'         => $assoc_args['repo'] ?? '',
+				'issue_number' => $issue_number,
+			)
+		);
+
+		// Add comment first if provided.
+		if ( ! empty($assoc_args['comment']) ) {
+			$comment_result = $this->execute_ability(
+				'datamachine-code/comment-github-issue',
+				array(
+					'repo'         => $input['repo'],
+					'issue_number' => $issue_number,
+					'body'         => $assoc_args['comment'],
+				)
+			);
+
+			if ( is_wp_error($comment_result) ) {
+					WP_CLI::warning('Failed to add comment: ' . $comment_result->get_error_message());
+			}
+		}
+
+		$input['state'] = 'closed';
+		$result         = $this->execute_ability('datamachine-code/update-github-issue', $input);
+
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		WP_CLI::success(sprintf('Issue #%d closed.', $issue_number));
+	}
+
+	/**
+	 * Comment on a GitHub issue.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <issue_number>
+	 * : Issue number to comment on.
+	 *
+	 * <body>
+	 * : Comment body (supports Markdown).
+	 *
+	 * [--repo=<repo>]
+	 * : Repository in owner/repo format.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     $ wp datamachine-code github comment 315 "Investigating this now."
+	 *
+	 * @subcommand comment
+	 */
+	public function comment( array $args, array $assoc_args ): void {
+		$this->requireConfig();
+
+		$issue_number = \absint($args[0] ?? 0);
+		$body         = $args[1] ?? '';
+
+		if ( $issue_number <= 0 || empty($body) ) {
+			WP_CLI::error('Required: <issue_number> <body>');
+			return;
+		}
+
+		$input = $this->resolveRepo(
+			array(
+				'repo'         => $assoc_args['repo'] ?? '',
+				'issue_number' => $issue_number,
+				'body'         => $body,
+			)
+		);
+
+		$result = $this->execute_ability('datamachine-code/comment-github-issue', $input);
+
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		WP_CLI::success(sprintf('Comment added to issue #%d.', $issue_number));
+	}
+
+	/**
+	 * List pull requests from a repository.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--repo=<repo>]
+	 * : Repository in owner/repo format.
+	 *
+	 * [--state=<state>]
+	 * : PR state: open, closed, all (default: open).
+	 *
+	 * [--per_page=<count>]
+	 * : Results per page (default: 30, max: 100).
+	 *
+	 * [--page=<page>]
+	 * : Page number (default: 1).
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 *   - csv
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     $ wp datamachine-code github pulls --repo=Extra-Chill/data-machine
+	 *
+	 * @subcommand pulls
+	 */
+	public function pulls( array $args, array $assoc_args ): void {
+		$this->requireConfig();
+
+		$input = $this->buildInput($assoc_args, array( 'repo', 'state', 'per_page', 'page' ));
+		$input = $this->resolveRepo($input);
+
+		$result = $this->execute_ability('datamachine-code/list-github-pulls', $input);
+
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		$format = $assoc_args['format'] ?? 'table';
+
+		if ( 'json' === $format ) {
+			WP_CLI::line( (string) \wp_json_encode($result, JSON_PRETTY_PRINT));
+			return;
+		}
+
+		$pulls = $result['pulls'] ?? array();
+
+		if ( empty($pulls) ) {
+			WP_CLI::log('No pull requests found.');
+			return;
+		}
+
+		$items = array();
+		foreach ( $pulls as $pr ) {
+			$status = $pr['state'];
+			if ( ! empty($pr['merged']) ) {
+				$status = 'merged';
+			} elseif ( ! empty($pr['draft']) ) {
+				$status = 'draft';
+			}
+
+			$items[] = array(
+				'number'     => $pr['number'],
+				'status'     => $status,
+				'title'      => mb_substr($pr['title'], 0, 60),
+				'branch'     => $pr['head'] ?? '',
+				'user'       => $pr['user'] ?? '',
+				'created_at' => $this->shortDate($pr['created_at']),
+			);
+		}
+
+		$this->format_items($items, array( 'number', 'status', 'title', 'branch', 'user', 'created_at' ), $assoc_args);
+		WP_CLI::log(sprintf('%d PR(s) returned.', count($items)));
+	}
+
+	/**
+	 * Merge a GitHub pull request through the GitHub API.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <pull_number>
+	 * : Pull request number to merge.
+	 *
+	 * [--repo=<repo>]
+	 * : Repository in owner/repo format.
+	 *
+	 * --expected-head-sha=<sha>
+	 * : Exact pull request head SHA expected immediately before merge.
+	 *
+	 * [--method=<method>]
+	 * : GitHub merge method.
+	 * ---
+	 * default: squash
+	 * options:
+	 *   - merge
+	 *   - squash
+	 *   - rebase
+	 * ---
+	 *
+	 * [--delete-branch]
+	 * : Delete the pull request head branch through the GitHub API after merge.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code github merge 383 --repo=Extra-Chill/data-machine-code --expected-head-sha=abc123 --delete-branch
+	 *
+	 * @subcommand merge
+	 */
+	public function merge_pull( array $args, array $assoc_args ): void {
+		$this->requireConfig();
+
+		$pull_number = \absint($args[0] ?? 0);
+		if ( $pull_number <= 0 ) {
+			WP_CLI::error('Please provide a valid pull request number.');
+			return;
+		}
+
+		$expected_head_sha = trim( (string) ( $assoc_args['expected-head-sha'] ?? '' ));
+		if ( '' === $expected_head_sha ) {
+			WP_CLI::error('Required: --expected-head-sha=<sha>');
+			return;
+		}
+
+		$input = $this->resolveRepo(
+			array(
+				'repo'              => $assoc_args['repo'] ?? '',
+				'pull_number'       => $pull_number,
+				'expected_head_sha' => $expected_head_sha,
+				'merge_method'      => $assoc_args['method'] ?? 'squash',
+				'delete_branch'     => ! empty($assoc_args['delete-branch']),
+			)
+		);
+
+		$result = $this->execute_ability('datamachine-code/merge-github-pull-request', $input);
+		$this->render_pull_mutation_result($result, $assoc_args, 'Pull request merged.');
+	}
+
+	/**
+	 * Cleanup a merged GitHub pull request through the GitHub API.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <pull_number>
+	 * : Pull request number to cleanup.
+	 *
+	 * [--repo=<repo>]
+	 * : Repository in owner/repo format.
+	 *
+	 * [--dry-run]
+	 * : Preview the cleanup decision without deleting the branch.
+	 *
+	 * [--local-only]
+	 * : Finalize and remove the matching local DMC worktree without deleting the remote branch.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code github cleanup-pr 383 --repo=Extra-Chill/data-machine-code --dry-run
+	 *     wp datamachine-code github cleanup-pr 383 --repo=Extra-Chill/data-machine-code
+	 *
+	 * @subcommand cleanup-pr
+	 */
+	public function cleanup_pull( array $args, array $assoc_args ): void {
+		$this->requireConfig();
+
+		$pull_number = \absint($args[0] ?? 0);
+		if ( $pull_number <= 0 ) {
+			WP_CLI::error('Please provide a valid pull request number.');
+			return;
+		}
+
+		$input = $this->resolveRepo(
+			array(
+				'repo'        => $assoc_args['repo'] ?? '',
+				'pull_number' => $pull_number,
+				'dry_run'     => ! empty($assoc_args['dry-run']),
+				'local_only'  => ! empty($assoc_args['local-only']),
+			)
+		);
+
+		$result = $this->execute_ability('datamachine-code/cleanup-github-pull-request', $input);
+		$this->render_pull_mutation_result($result, $assoc_args, 'Pull request cleanup complete.');
+	}
+
+	/**
+	 * List repositories for a user or organization.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <owner>
+	 * : GitHub user or organization name.
+	 *
+	 * [--sort=<sort>]
+	 * : Sort by: created, updated, pushed, full_name (default: updated).
+	 *
+	 * [--per_page=<count>]
+	 * : Results per page (default: 30, max: 100).
+	 *
+	 * [--page=<page>]
+	 * : Page number (default: 1).
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 *   - csv
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     $ wp datamachine-code github repos Extra-Chill
+	 *
+	 *     $ wp datamachine-code github repos chubes4 --sort=pushed
+	 *
+	 * @subcommand repos
+	 */
+	public function repos( array $args, array $assoc_args ): void {
+		$this->requireConfig();
+
+		$owner = $args[0] ?? '';
+		if ( empty($owner) ) {
+			WP_CLI::error('Required: <owner> (GitHub user or organization name).');
+			return;
+		}
+
+		$input          = $this->buildInput($assoc_args, array( 'sort', 'per_page', 'page' ));
+		$input['owner'] = $owner;
+
+		$result = $this->execute_ability('datamachine-code/list-github-repos', $input);
+
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		$format = $assoc_args['format'] ?? 'table';
+
+		if ( 'json' === $format ) {
+			WP_CLI::line( (string) \wp_json_encode($result, JSON_PRETTY_PRINT));
+			return;
+		}
+
+		$repos = $result['repos'] ?? array();
+
+		if ( empty($repos) ) {
+			WP_CLI::log('No repositories found.');
+			return;
+		}
+
+		$items = array();
+		foreach ( $repos as $repo ) {
+			$items[] = array(
+				'repo'        => $repo['full_name'],
+				'language'    => $repo['language'] ?? '',
+				'stars'       => $repo['stargazers_count'],
+				'open_issues' => $repo['open_issues'],
+				'private'     => $repo['private'] ? 'yes' : 'no',
+				'last_push'   => $this->shortDate($repo['pushed_at']),
+			);
+		}
+
+		$this->format_items($items, array( 'repo', 'language', 'stars', 'open_issues', 'private', 'last_push' ), $assoc_args);
+		WP_CLI::log(sprintf('%d repo(s) returned.', count($items)));
+	}
+
+	/**
+	 * Check GitHub integration status.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     $ wp datamachine-code github status
+	 *
+	 * @subcommand status
+	 */
+	public function status( array $args, array $assoc_args ): void {
+		$result = $this->execute_ability('datamachine-code/github-status', array());
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		$auth_status  = $result['auth_status'] ?? array();
+		$configured   = ! empty($result['configured']);
+		$default_repo = $result['default_repo'] ?? '';
+
+		$items = array(
+			array(
+				'setting' => 'Auth Mode',
+				'value'   => $auth_status['mode'] ?? 'pat',
+			),
+			array(
+				'setting' => 'Configured',
+				'value'   => $configured ? 'Configured' : 'Not configured',
+			),
+			array(
+				'setting' => 'GitHub PAT',
+				'value'   => ! empty($auth_status['pat_configured']) ? 'Configured' : 'Not configured',
+			),
+			array(
+				'setting' => 'GitHub App ID',
+				'value'   => ! empty($auth_status['app_id_configured']) ? 'Configured' : 'Not configured',
+			),
+			array(
+				'setting' => 'GitHub App Installation ID',
+				'value'   => ! empty($auth_status['app_installation_configured']) ? 'Configured' : 'Not configured',
+			),
+			array(
+				'setting' => 'GitHub App Private Key',
+				'value'   => ! empty($auth_status['app_private_key_configured']) ? 'Configured' : 'Not configured',
+			),
+			array(
+				'setting' => 'Default Repository',
+				'value'   => $default_repo ? $default_repo : 'Not set',
+			),
+			array(
+				'setting' => 'App Permissions',
+				'value'   => 'Contents: read, Issues: read/write, Pull requests: read/write, Checks: read, Commit statuses: read, Actions: read for artifacts',
+			),
+		);
+
+		$this->format_items($items, array( 'setting', 'value' ), $assoc_args);
+
+		// Show configured credential profiles.
+		$profiles = $auth_status['profiles'] ?? array();
+		if ( ! empty($profiles) ) {
+			WP_CLI::log('');
+			WP_CLI::log('Configured credential profiles:');
+			$profile_items = array();
+			foreach ( $profiles as $profile ) {
+				$profile_items[] = array(
+					'id'            => $profile['id'] ?? '',
+					'label'         => $profile['label'] ?? '',
+					'mode'          => $profile['mode'] ?? '',
+					'configured'    => ! empty($profile['configured']) ? 'yes' : 'no',
+					'default_repo'  => $profile['default_repo'] ?? '',
+					'allowed_repos' => implode(', ', $profile['allowed_repos'] ?? array()),
+				);
+			}
+			$this->format_items($profile_items, array( 'id', 'label', 'mode', 'configured', 'default_repo', 'allowed_repos' ), $assoc_args);
+			$default_id = $auth_status['default_profile_id'] ?? '';
+			if ( '' !== $default_id ) {
+				WP_CLI::log(sprintf('Default profile: %s', $default_id));
+			}
+		}
+
+		// Show registered repos from the filter.
+		$repos = $result['registered_repos'] ?? array();
+		if ( ! empty($repos) ) {
+			WP_CLI::log('');
+			WP_CLI::log('Registered repos for issue creation:');
+
+			$repo_items = array();
+			foreach ( $repos as $entry ) {
+				$repo_items[] = array(
+					'repo'  => ( $entry['owner'] ?? '' ) . '/' . ( $entry['repo'] ?? '' ),
+					'label' => $entry['label'] ?? '',
+				);
+			}
+
+			$this->format_items($repo_items, array( 'repo', 'label' ), $assoc_args);
+		}
+
+		$legacy = $auth_status['legacy_migration'] ?? array();
+		if ( ! empty($legacy['legacy_keys_present']) ) {
+			WP_CLI::log('');
+			WP_CLI::warning('Legacy GitHub credential settings are still present. Run `wp datamachine-code github migrate-credentials --apply` after reviewing the dry run.');
+		}
+	}
+
+	/**
+	 * Migrate legacy single GitHub credential settings into profiles.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--apply]
+	 * : Write github_credential_profiles and github_default_profile_id. Omit for dry run.
+	 *
+	 * [--force]
+	 * : Overwrite existing profile settings from legacy settings.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 * ---
+	 *
+	 * @subcommand migrate-credentials
+	 */
+	public function migrate_credentials( array $args, array $assoc_args ): void {
+		$result = GitHubCredentialSettingsMigration::migrate( ! empty($assoc_args['apply']), ! empty($assoc_args['force']) );
+
+		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			WP_CLI::line( (string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) );
+			return;
+		}
+
+		$items = array(
+			array(
+				'field' => 'Applied',
+				'value' => ! empty($result['applied']) ? 'yes' : 'no',
+			),
+			array(
+				'field' => 'Legacy keys present',
+				'value' => ! empty($result['legacy_keys_present']) ? 'yes' : 'no',
+			),
+			array(
+				'field' => 'Profiles present',
+				'value' => ! empty($result['profiles_present']) ? 'yes' : 'no',
+			),
+			array(
+				'field' => 'Message',
+				'value' => (string) ( $result['message'] ?? '' ),
+			),
+		);
+		$this->format_items($items, array( 'field', 'value' ), $assoc_args);
+
+		if ( ! empty($result['applied']) ) {
+			WP_CLI::success('GitHub credential profiles migrated.');
+		} else {
+			WP_CLI::log('Dry run complete; pass --apply to write changes.');
+		}
+	}
+
+	/**
+	 * Scaffold or install a GitHub PR review flow definition.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <action>
+	 * : Review-flow action. Supports: create, install.
+	 *
+	 * [--repo=<repo>]
+	 * : Repository in owner/repo format. Falls back to default repo in settings.
+	 *
+	 * [--agent=<agent>]
+	 * : Agent slug or ID that should own the generated flow when imported.
+	 *
+	 * [--name=<name>]
+	 * : Pipeline/flow display name.
+	 * ---
+	 * default: GitHub PR review
+	 * ---
+	 *
+	 * [--comment-mode=<mode>]
+	 * : PR comment behavior hint for the generated AI step.
+	 * ---
+	 * default: managed
+	 * options:
+	 *   - managed
+	 *   - append
+	 *   - dry_run
+	 * ---
+	 *
+	 * [--actions=<actions>]
+	 * : Comma-separated GitHub webhook actions. Defaults depend on --trigger.
+	 * ---
+	 * default: opened,reopened,synchronize,ready_for_review for pull_request; completed for workflow_run
+	 * ---
+	 *
+	 * [--trigger=<trigger>]
+	 * : GitHub webhook event to review from.
+	 * ---
+	 * default: pull_request
+	 * options:
+	 *   - pull_request
+	 *   - workflow_run
+	 * ---
+	 *
+	 * [--workflow-names=<names>]
+	 * : Comma-separated workflow_run.name allow-list, for example Plugin CI.
+	 *
+	 * [--workflow-paths=<paths>]
+	 * : Comma-separated workflow_run.path allow-list, for example .github/workflows/ci.yml.
+	 *
+	 * [--mode=<mode>]
+	 * : create action mode. `scaffold` preserves the historical JSON-only output; `install` creates the Data Machine pipeline/flow.
+	 * ---
+	 * default: scaffold
+	 * options:
+	 *   - scaffold
+	 *   - install
+	 * ---
+	 *
+	 * [--secret-id=<id>]
+	 * : Webhook secret roster id used when installing. A secret is generated unless --secret is supplied.
+	 * ---
+	 * default: github_webhook
+	 * ---
+	 *
+	 * [--secret=<secret>]
+	 * : Explicit webhook secret. Prefer the generated secret to avoid putting secrets in shell history.
+	 *
+	 * [--allow-drafts]
+	 * : Allow draft pull_request events through the GitHub verifier.
+	 *
+	 * [--force]
+	 * : Install even when an existing DMC PR review flow marker exists for the repo.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: json
+	 * options:
+	 *   - json
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code github review-flow create \
+	 *       --repo=Extra-Chill/data-machine-code \
+	 *       --agent=code-reviewer \
+	 *       --name="DMC PR review" \
+	 *       --comment-mode=managed
+	 *
+	 *     wp datamachine-code github review-flow install \
+	 *       --repo=Extra-Chill/data-machine-code \
+	 *       --agent=code-reviewer \
+	 *       --secret-id=github_pr_review
+	 *
+	 * @subcommand review-flow
+	 */
+	public function review_flow( array $args, array $assoc_args ): void {
+		$action = $args[0] ?? '';
+		if ( ! in_array($action, array( 'create', 'install' ), true) ) {
+			WP_CLI::error('Usage: wp datamachine-code github review-flow <create|install> [--repo=<owner/repo>] [--agent=<agent>] [--name=<name>] [--comment-mode=<managed|append|dry_run>] [--actions=<csv>]');
+			return;
+		}
+
+		$repo = GitHubAbilities::resolveRepo($assoc_args['repo'] ?? '');
+		if ( empty($repo) ) {
+			WP_CLI::error('Required: --repo=<owner/repo> (or set a default repo in settings).');
+			return;
+		}
+
+		$options = array(
+			'repo'           => $repo,
+			'agent'          => $assoc_args['agent'] ?? '',
+			'name'           => $assoc_args['name'] ?? 'GitHub PR review',
+			'comment_mode'   => $assoc_args['comment-mode'] ?? 'managed',
+			'trigger'        => $assoc_args['trigger'] ?? 'pull_request',
+			'actions'        => $assoc_args['actions'] ?? null,
+			'workflow_names' => $assoc_args['workflow-names'] ?? '',
+			'workflow_paths' => $assoc_args['workflow-paths'] ?? '',
+			'secret_id'      => $assoc_args['secret-id'] ?? 'github_webhook',
+			'secret'         => $assoc_args['secret'] ?? '',
+			'allow_drafts'   => ! empty($assoc_args['allow-drafts']),
+			'force'          => ! empty($assoc_args['force']),
+		);
+
+		$mode = 'install' === $action ? 'install' : (string) ( $assoc_args['mode'] ?? 'scaffold' );
+		if ( ! in_array($mode, array( 'scaffold', 'install' ), true) ) {
+			WP_CLI::error('Invalid --mode. Expected scaffold or install.');
+			return;
+		}
+
+		if ( 'install' === $mode ) {
+			$installed = PrReviewFlowInstaller::install($options);
+			if ( is_wp_error($installed) ) {
+				WP_CLI::error($installed->get_error_message());
+				return;
+			}
+
+			WP_CLI::line( (string) wp_json_encode($installed, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			return;
+		}
+
+		$definition = PrReviewFlowScaffold::build($options);
+
+		WP_CLI::line( (string) wp_json_encode($definition, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+	}
+
+	// -------------------------------------------------------------------------
+	// Helpers
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Require GitHub to be configured.
+	 */
+	private function requireConfig(): void {
+		$status = $this->execute_ability('datamachine-code/github-status', array());
+		if ( is_wp_error($status) ) {
+			WP_CLI::error($status->get_error_message());
+		}
+
+		if ( empty($status['configured']) ) {
+			WP_CLI::error('GitHub authentication is not configured. Configure a credential profile (github_credential_profiles) or set legacy github_pat / GitHub App credentials.');
+		}
+	}
+
+	/**
+	 * Resolve repo — use provided value or fall back to default.
+	 *
+	 * @param  array $input Input array with optional 'repo' key.
+	 * @return array Input with resolved repo.
+	 */
+	private function resolveRepo( array $input ): array {
+		$input['repo'] = GitHubAbilities::resolveRepo($input['repo'] ?? '');
+		if ( empty($input['repo']) ) {
+			WP_CLI::error('Required: --repo=<owner/repo> (or set a default repo in settings, or register repos via datamachine_github_issue_repos filter).');
+		}
+		return $input;
+	}
+
+	/**
+	 * Build ability input from assoc_args.
+	 *
+	 * @param  array $assoc_args Command arguments.
+	 * @param  array $keys       Keys to extract.
+	 * @return array
+	 */
+	private function buildInput( array $assoc_args, array $keys ): array {
+		$input = array();
+		foreach ( $keys as $key ) {
+			if ( isset($assoc_args[ $key ]) ) {
+				$input[ $key ] = $assoc_args[ $key ];
+			}
+		}
+		return $input;
+	}
+
+	private function execute_ability( string $ability_name, array $input ): array|\WP_Error {
+		if ( ! function_exists('wp_get_ability') ) {
+			return new \WP_Error('abilities_api_unavailable', 'WordPress Abilities API is not available.');
+		}
+
+		$ability = wp_get_ability($ability_name);
+		if ( ! $ability ) {
+			return new \WP_Error('ability_not_found', sprintf('Ability not found: %s', $ability_name));
+		}
+
+		return $ability->execute($input);
+	}
+
+	/**
+	 * Render a PR mutation result.
+	 */
+	private function render_pull_mutation_result( array|\WP_Error $result, array $assoc_args, string $fallback_message ): void {
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		if ( 'json' === ( $assoc_args['format'] ?? 'table' ) ) {
+			WP_CLI::line( (string) \wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			return;
+		}
+
+		$items = array();
+		foreach ( $result as $key => $value ) {
+			if ( is_array($value) || is_object($value) ) {
+				continue;
+			}
+
+			$items[] = array(
+				'field' => (string) $key,
+				'value' => is_bool($value) ? ( $value ? 'yes' : 'no' ) : (string) $value,
+			);
+		}
+
+		$this->format_items($items, array( 'field', 'value' ), $assoc_args);
+		WP_CLI::success( (string) ( $result['message'] ?? $fallback_message ));
+	}
+
+	/**
+	 * Format an ISO date to a shorter form.
+	 *
+	 * @param  string $date ISO 8601 date string.
+	 * @return string Short date (Y-m-d).
+	 */
+	private function shortDate( string $date ): string {
+		if ( empty($date) ) {
+			return '';
+		}
+		$timestamp = strtotime($date);
+		return $timestamp ? gmdate('Y-m-d', $timestamp) : $date;
+	}
+}
