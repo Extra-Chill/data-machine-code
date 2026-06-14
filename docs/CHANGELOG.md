@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.121] - 2026-06-14
+
+### Fixed
+- guard command introspection outside WP-CLI
+
 ## [0.47.120] - 2026-06-14
 
 ### Fixed
