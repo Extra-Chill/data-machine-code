@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.119] - 2026-06-14
+
+### Fixed
+- support branch pull for detached primaries
+
 ## [0.47.118] - 2026-06-13
 
 ### Fixed
