@@ -3519,7 +3519,7 @@ class WorkspaceCommand extends BaseCommand {
 	private function run_worktree_abandoned_orchestration( array $assoc_args ): array|\WP_Error {
 		$apply        = ! empty($assoc_args['apply']);
 		$force        = ! empty($assoc_args['force']);
-		$limit        = isset($assoc_args['limit']) ? max(1, min(100, (int) $assoc_args['limit'])) : 100;
+		$limit        = isset($assoc_args['limit']) ? max(1, min(1000, (int) $assoc_args['limit'])) : 100;
 		$passes       = isset($assoc_args['passes']) ? max(1, min(25, (int) $assoc_args['passes'])) : 5;
 		$offset       = isset($assoc_args['offset']) ? max(0, (int) $assoc_args['offset']) : 0;
 		$stage        = isset($assoc_args['stage']) ? strtolower( (string) preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $assoc_args['stage']) ) : 'reconcile';
@@ -3580,6 +3580,7 @@ class WorkspaceCommand extends BaseCommand {
 			'steps'           => array(),
 			'blocked'         => array(),
 			'summary'         => array(
+				'scanned'                     => 0,
 				'reconciled'                  => 0,
 				'marked_cleanup_eligible'     => 0,
 				'would_mark_cleanup_eligible' => 0,
@@ -3633,6 +3634,7 @@ class WorkspaceCommand extends BaseCommand {
 				return $reconcile;
 			}
 			$result['steps']['reconcile_metadata'] = $this->summarize_worktree_abandoned_step($reconcile);
+			$result['summary']['scanned']         += (int) ( $result['steps']['reconcile_metadata']['inspected'] ?? 0 );
 			$result['summary']['reconciled']       = (int) ( $reconcile['summary']['written'] ?? 0 );
 			$result['summary']['would_reconcile']  = (int) ( $reconcile['summary']['proposed'] ?? 0 );
 
@@ -3696,6 +3698,7 @@ class WorkspaceCommand extends BaseCommand {
 
 				$step_key                                      = sprintf('%s_pass_%d', $key, $pass);
 				$result['steps'][ $step_key ]                  = $this->summarize_worktree_abandoned_step($step);
+				$result['summary']['scanned']                 += (int) ( $result['steps'][ $step_key ]['inspected'] ?? 0 );
 				$written                                       = (int) ( $step['summary']['written'] ?? 0 );
 				$planned                                       = (int) ( $step['summary']['planned'] ?? 0 );
 				$pass_marked                                  += $apply ? $written : $planned;
@@ -3837,6 +3840,7 @@ class WorkspaceCommand extends BaseCommand {
 		$result['summary']['removed']         += (int) ( $bounded['summary']['removed'] ?? 0 );
 		$result['summary']['would_remove']    += (int) ( $bounded['summary']['would_remove'] ?? 0 );
 		$result['summary']['bytes_reclaimed'] += (int) ( $bounded['summary']['bytes_reclaimed'] ?? 0 );
+		$result['summary']['scanned']         += (int) ( $result['steps'][ sprintf('bounded_apply_%s', $step_label) ]['inspected'] ?? 0 );
 		$result['blocked']                     = $this->merge_worktree_abandoned_blockers($result['blocked'], (array) ( $bounded['skipped'] ?? array() ));
 
 		return $bounded;
@@ -4088,6 +4092,10 @@ class WorkspaceCommand extends BaseCommand {
 				array(
 					'metric' => 'applied',
 					'value'  => ! empty($result['applied']) ? 'yes' : 'no',
+				),
+				array(
+					'metric' => 'scanned',
+					'value'  => (string) ( $summary['scanned'] ?? 0 ),
 				),
 				array(
 					'metric' => 'reconciled',
