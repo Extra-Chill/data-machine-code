@@ -111,6 +111,7 @@ class WorktreeCleanupChunkTask extends SystemTask {
 					'skip_github'               => array_key_exists('skip_github', $params) ? (bool) $params['skip_github'] : true,
 					'include_repaired_metadata' => ! empty($params['include_repaired_metadata']),
 					'stale_liveness_only'       => ! empty($params['stale_liveness_only']),
+					'remove_timeout'            => isset($params['remove_timeout']) ? (int) $params['remove_timeout'] : null,
 				)
 			),
 			default     => new \WP_Error('invalid_cleanup_chunk_type', sprintf('Unknown cleanup chunk type: %s', $chunk_type), array( 'status' => 400 )),

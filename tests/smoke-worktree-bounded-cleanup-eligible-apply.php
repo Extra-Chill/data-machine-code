@@ -352,8 +352,14 @@ namespace {
     $assert(2, count($dry['candidates'] ?? array()), 'bounded limit caps dry-run candidates');
     $remaining = (int) ( $dry['continuation']['remaining_total'] ?? 0 );
     $assert(true, $remaining >= 4, 'continuation reports remaining cleanup-eligible candidates');
+    $assert(60, (int) ( $dry['continuation']['remove_timeout'] ?? 0 ), 'dry-run exposes default cleanup removal timeout');
     $assert_skipped($dry['skipped'] ?? array(), 'demo@repaired-metadata-clean', 'active_no_signal', 'repaired metadata rows require explicit include flag');
     $assert_skipped($dry['skipped'] ?? array(), 'demo@eligible-submodule', 'submodule_worktree', 'submodule worktree is skipped before planning removal');
+
+    $custom_timeout_dry = $ws->worktree_bounded_cleanup_eligible_apply(array( 'dry_run' => true, 'limit' => 2, 'remove_timeout' => 120 ));
+    $assert(true, ! is_wp_error($custom_timeout_dry) && ( $custom_timeout_dry['success'] ?? false ), 'custom remove-timeout dry-run returns success');
+    $assert(120, (int) ( $custom_timeout_dry['continuation']['remove_timeout'] ?? 0 ), 'custom remove-timeout is reflected in continuation');
+    $assert(120, (int) ( $custom_timeout_dry['evidence']['remove_timeout'] ?? 0 ), 'custom remove-timeout is reflected in evidence');
 
     $repaired_dry = $ws->worktree_bounded_cleanup_eligible_apply(array( 'dry_run' => true, 'limit' => 20, 'include_repaired_metadata' => true, 'older_than' => '24h' ));
     $assert(true, ! is_wp_error($repaired_dry) && ( $repaired_dry['success'] ?? false ), 'repaired-metadata dry-run returns success');
@@ -376,8 +382,26 @@ namespace {
     $bad_limit = $ws->worktree_bounded_cleanup_eligible_apply(array( 'dry_run' => true, 'limit' => 0 ));
     $assert(true, is_wp_error($bad_limit), 'invalid limit returns WP_Error');
 
+    $bad_remove_timeout = $ws->worktree_bounded_cleanup_eligible_apply(array( 'dry_run' => true, 'remove_timeout' => 1 ));
+    $assert(true, is_wp_error($bad_remove_timeout), 'remove-timeout below probe timeout returns WP_Error');
+
     $bad_via_jobs_dry_run = $ws->worktree_bounded_cleanup_eligible_apply(array( 'dry_run' => true, 'via_jobs' => true ));
     $assert(true, is_wp_error($bad_via_jobs_dry_run), 'via_jobs combined with dry_run is rejected');
+
+    $timeout_skip_reflection = new \ReflectionMethod($ws, 'build_worktree_remove_failure_skip');
+    $timeout_skip = $timeout_skip_reflection->invoke(
+        $ws,
+        array(
+            'handle' => 'demo@eligible-clean',
+            'repo'   => 'demo',
+            'branch' => 'eligible-clean',
+            'path'   => $tmp . '/demo@eligible-clean',
+        ),
+        new \WP_Error('git_command_timeout', 'Git command timed out after 7 second(s).', array( 'timeout' => 7 )),
+        7
+    );
+    $assert('remove_timeout', $timeout_skip['reason_code'] ?? '', 'git remove timeout is classified separately from generic remove failure');
+    $assert(true, str_contains((string) ( $timeout_skip['continuation_command'] ?? '' ), '--remove-timeout='), 'timeout skip includes resumable remove-timeout command');
 
     echo "\nApply scenario (synchronous)\n";
     $apply = $ws->worktree_bounded_cleanup_eligible_apply(array( 'limit' => 10 ));

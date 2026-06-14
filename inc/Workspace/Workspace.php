@@ -60,6 +60,11 @@ class Workspace {
 	protected const CLEANUP_GIT_PROBE_TIMEOUT = 5;
 
 	/**
+	 * Bound destructive git worktree removal separately from cheap probes.
+	 */
+	protected const CLEANUP_GIT_REMOVE_TIMEOUT = 60;
+
+	/**
 	 * Closed PR pages to inspect per repo during cleanup.
 	 */
 	protected const CLEANUP_GITHUB_MAX_PAGES = 3;

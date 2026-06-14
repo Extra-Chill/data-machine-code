@@ -2960,10 +2960,14 @@ class WorkspaceCommand extends BaseCommand {
 	 *   metadata older than the compact duration (cleanup only, e.g. 7d, 24h).
 	 *   Candidate worktrees without valid `created_at` metadata are skipped.
 	 *
-		 * [--sort=<field>]
-		 * : Sort cleanup candidates by reporting field. For artifact cleanup,
-		 *   `--sort=size` scans the cheap inventory once and returns the largest
-		 *   artifact opportunities without manual pagination.
+	 * [--remove-timeout=<seconds>]
+	 * : Timeout for destructive `git worktree remove` during cleanup apply.
+	 *   Defaults to a larger removal-specific budget than cheap git probes.
+		 *
+	 * [--sort=<field>]
+	 * : Sort cleanup candidates by reporting field. For artifact cleanup,
+	 *   `--sort=size` scans the cheap inventory once and returns the largest
+	 *   artifact opportunities without manual pagination.
 	 * ---
 	 * options:
 	 *   - size
@@ -3491,6 +3495,9 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				if ( isset($assoc_args['sort']) && '' !== trim( (string) $assoc_args['sort']) ) {
 					$input['sort'] = trim( (string) $assoc_args['sort']);
+				}
+				if ( isset($assoc_args['remove-timeout']) && '' !== trim( (string) $assoc_args['remove-timeout']) ) {
+					$input['remove_timeout'] = (int) $assoc_args['remove-timeout'];
 				}
 				break;
 		}
