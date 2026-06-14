@@ -2387,6 +2387,29 @@ class WorkspaceAbilities {
 				)
 			);
 
+			AbilityRegistry::register(
+				'datamachine-code/workspace-cleanup-until-empty',
+				array(
+					'label'               => 'Run Artifact Cleanup Until Empty',
+					'description'         => 'Repeatedly plan and apply DB-backed artifact cleanup until no safe rows remain, a budget is hit, or candidates repeat.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'mode'           => array( 'type' => 'string' ),
+							'force'          => array( 'type' => 'boolean' ),
+							'limit'          => array( 'type' => 'integer' ),
+							'max_passes'     => array( 'type' => 'integer' ),
+							'budget_seconds' => array( 'type' => 'integer' ),
+						),
+					),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'workspaceCleanupUntilEmpty' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
 			foreach ( array( 'status', 'evidence', 'resume', 'cancel' ) as $cleanup_operation ) {
 				AbilityRegistry::register(
 					'datamachine-code/workspace-cleanup-' . $cleanup_operation,
@@ -4139,6 +4162,22 @@ class WorkspaceAbilities {
 	 */
 	public static function workspaceCleanupApply( array $input ): array|\WP_Error {
 		return ( new CleanupRunService() )->apply( (string) ( $input['run_id'] ?? '' ), self::cleanupRunApplyOptions($input));
+	}
+
+	/**
+	 * Run artifact cleanup until no rows remain or progress stalls.
+	 *
+	 * @param  array $input Input parameters.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function workspaceCleanupUntilEmpty( array $input ): array|\WP_Error {
+		$options = self::cleanupRunApplyOptions($input);
+		foreach ( array( 'mode', 'max_passes', 'budget_seconds' ) as $key ) {
+			if ( isset($input[ $key ]) ) {
+				$options[ $key ] = 'mode' === $key ? (string) $input[ $key ] : (int) $input[ $key ];
+			}
+		}
+		return ( new CleanupRunService() )->until_empty($options);
 	}
 
 	/**

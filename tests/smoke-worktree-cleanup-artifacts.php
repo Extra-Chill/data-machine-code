@@ -304,6 +304,8 @@ namespace {
     $assert(false, is_wp_error($apply), 'apply-plan returns report');
     $assert(false, (bool) ( $apply['dry_run'] ?? true ), 'apply-plan is destructive mode');
     $assert(1, (int) ( $apply['summary']['removed_artifacts'] ?? 0 ), 'apply-plan from bounded plan only removes safe-revalidated rows');
+    $apply_removed_by_handle = array_column($apply['removed'] ?? array(), null, 'handle');
+    $assert(false, (bool) ( $apply_removed_by_handle['demo@clean']['artifacts'][0]['removal']['exists_after'] ?? true ), 'apply-plan records verified artifact absence evidence');
     $assert(false, is_dir($tmp . '/demo@clean/target'), 'apply-plan removes clean artifact directory');
     $assert(true, is_dir($tmp . '/demo@dirty/target'), 'apply-plan revalidation skips dirty worktree even when bounded plan flagged it');
     $assert(true, is_dir($tmp . '/demo@unpushed/target'), 'apply-plan revalidation skips unpushed worktree even when bounded plan flagged it');

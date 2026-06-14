@@ -176,7 +176,7 @@ trait WorkspaceArtifactCleanup {
 					break;
 				}
 
-				$removed_artifacts[] = $artifact;
+				$removed_artifacts[] = is_array($remove) ? array_merge($artifact, array( 'removal' => $remove )) : $artifact;
 			}
 
 			if ( $failed ) {
@@ -678,9 +678,9 @@ trait WorkspaceArtifactCleanup {
 	 *
 	 * @param  string $worktree_path Worktree root path.
 	 * @param  string $relative      Profile-relative artifact path.
-	 * @return true|\WP_Error
+	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function remove_worktree_artifact_path( string $worktree_path, string $relative ): true|\WP_Error {
+	private function remove_worktree_artifact_path( string $worktree_path, string $relative ): array|\WP_Error {
 		$relative = trim($relative, '/');
 		if ( '' === $relative || str_contains($relative, '..') ) {
 			return new \WP_Error('invalid_artifact_path', sprintf('Invalid artifact path: %s', $relative), array( 'status' => 400 ));
@@ -728,7 +728,12 @@ trait WorkspaceArtifactCleanup {
 			return new \WP_Error('artifact_remove_failed', sprintf('Artifact path still exists after removal: %s', $relative), array( 'status' => 500 ));
 		}
 
-		return true;
+		return array(
+			'resolved_path' => $artifact_real,
+			'exit_code'     => $exit,
+			'exists_after'  => false,
+			'verified_at'   => gmdate('c'),
+		);
 	}
 
 	/**

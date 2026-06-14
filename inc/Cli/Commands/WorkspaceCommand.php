@@ -567,7 +567,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## OPTIONS
 	 *
 	 * <operation>
-	 * : Cleanup operation. One of: <plan|apply|run|status|resume|cancel|evidence>.
+	 * : Cleanup operation. One of: <plan|apply|until-empty|run|status|resume|cancel|evidence>.
 	 *   Existing task-backed controls remain: <run|status|resume|cancel|evidence>.
 	 *
 	 * [<run-id>]
@@ -637,6 +637,14 @@ class WorkspaceCommand extends BaseCommand {
 	 * : For `cleanup run`, drain the queued parent job, drain active child cleanup
 	 *   jobs discovered from cleanup status, then print verified bytes reclaimed.
 	 *
+	 * [--max-passes=<count>]
+	 * : For `cleanup until-empty --mode=artifacts`, maximum plan/apply passes before
+	 *   stopping. Defaults to 10, max 25.
+	 *
+	 * [--budget-seconds=<seconds>]
+	 * : For `cleanup until-empty --mode=artifacts`, stop before starting another
+	 *   pass after this many seconds.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -669,6 +677,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json
 	 *     wp datamachine-code workspace cleanup apply cleanup-run-20260504120000-abc123
 	 *
+	 *     # Repeatedly apply reviewed safe artifact rows until none remain
+	 *     wp datamachine-code workspace cleanup until-empty --mode=artifacts --format=json
+	 *
 	 *     # Full audit (slow on huge workspaces)
 	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --exhaustive --format=json
 	 *
@@ -700,6 +711,10 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'apply':
 				$this->run_cleanup_control_ability('apply', (string) ( $args[1] ?? '' ), $assoc_args);
+				return;
+
+			case 'until-empty':
+				$this->run_cleanup_until_empty($assoc_args);
 				return;
 
 			case 'run':
@@ -772,6 +787,45 @@ class WorkspaceCommand extends BaseCommand {
 				$this->flush_cli_output();
 			}
 			$result = $this->drain_cleanup_run_to_status($result, $assoc_args);
+		}
+
+		$this->render_cleanup_control_result($result, $assoc_args);
+	}
+
+	private function run_cleanup_until_empty( array $assoc_args ): void {
+		$mode = strtolower(preg_replace('/[^a-z0-9_\-]/', '', (string) ( $assoc_args['mode'] ?? 'artifacts' )));
+		if ( 'artifacts' !== $mode ) {
+			WP_CLI::error('cleanup until-empty currently supports --mode=artifacts only.');
+			return;
+		}
+
+		$ability = wp_get_ability('datamachine-code/workspace-cleanup-until-empty');
+		if ( ! $ability ) {
+			WP_CLI::error('Workspace cleanup until-empty ability not registered.');
+			return;
+		}
+
+		$input = array( 'mode' => $mode );
+		foreach ( array( 'force', 'limit' ) as $key ) {
+			if ( isset($assoc_args[ $key ]) ) {
+				$input[ $key ] = 'force' === $key ? (bool) $assoc_args[ $key ] : (int) $assoc_args[ $key ];
+			}
+		}
+		foreach (
+			array(
+				'max-passes'     => 'max_passes',
+				'budget-seconds' => 'budget_seconds',
+			) as $cli_key => $input_key
+		) {
+			if ( isset($assoc_args[ $cli_key ]) ) {
+				$input[ $input_key ] = (int) $assoc_args[ $cli_key ];
+			}
+		}
+
+		$result = $ability->execute($input);
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
 		}
 
 		$this->render_cleanup_control_result($result, $assoc_args);
