@@ -211,6 +211,59 @@ class DataMachineCodeCleanupRunFakeWorkspace extends \DataMachineCode\Workspace\
     }
 }
 
+class DataMachineCodeCleanupUntilEmptyWorkspace extends DataMachineCodeCleanupRunFakeWorkspace
+{
+    public int $plan_calls = 0;
+    public bool $repeat = false;
+
+    public function workspace_cleanup_plan( array $opts = array() ): array|WP_Error
+    {
+        ++$this->plan_calls;
+        if (! $this->repeat && $this->plan_calls > 2 ) {
+            return array(
+            'success' => true,
+            'mode'    => 'cleanup_plan',
+            'plan_id' => 'cleanup-plan-empty-' . $this->plan_calls,
+            'rows'    => array( 'artifact_cleanup' => array(), 'worktree_removal' => array(), 'resolver' => array() ),
+            'summary' => array( 'total_rows' => 0, 'recommended_commands' => array() ),
+            );
+        }
+
+        return array(
+        'success' => true,
+        'mode'    => 'cleanup_plan',
+        'plan_id' => 'cleanup-plan-until-' . $this->plan_calls,
+        'rows'    => array(
+        'artifact_cleanup' => array(
+        array(
+        'handle'              => 'demo@artifact-' . ( $this->repeat ? 'repeat' : $this->plan_calls ),
+        'repo'                => 'demo',
+        'branch'              => 'main',
+        'path'                => '/tmp/demo@artifact',
+        'row_type'            => 'artifact_cleanup',
+        'reason_code'         => 'profile_artifact',
+        'artifact_size_bytes' => 10,
+        'artifacts'           => array( array( 'path' => 'target', 'size_bytes' => 10 ) ),
+        ),
+        ),
+        'worktree_removal' => array(),
+        'resolver'         => array(),
+        ),
+        'summary' => array( 'total_rows' => 1, 'recommended_commands' => array() ),
+        );
+    }
+
+    public function worktree_cleanup_artifacts( array $opts = array() ): array|WP_Error
+    {
+        $this->artifact_calls[] = $opts;
+        $removed = array();
+        foreach ( (array) ( $opts['apply_plan']['candidates'] ?? array() ) as $candidate ) {
+            $removed[] = is_array($candidate) ? $candidate : array();
+        }
+        return array( 'removed' => $removed, 'skipped' => array(), 'summary' => array() );
+    }
+}
+
 function datamachine_code_cleanup_run_assert( bool $condition, string $message ): void
 {
     if (! $condition ) {
@@ -314,5 +367,22 @@ $bounded_done = $bounded_service->resume($bounded_plan['run_id'], array( 'limit'
 datamachine_code_cleanup_run_assert('completed' === (string) ( $bounded_done['status'] ?? '' ), 'bounded resume completes final batch');
 datamachine_code_cleanup_run_assert(2 === count($bounded_workspace->artifact_calls), 'bounded resume drains artifact batches before worktrees');
 datamachine_code_cleanup_run_assert(2 === count($bounded_workspace->worktree_calls), 'bounded resume drains worktree batches after artifacts');
+
+$until_workspace = new DataMachineCodeCleanupUntilEmptyWorkspace();
+$until_service = new \DataMachineCode\Workspace\CleanupRunService(new \DataMachineCode\Storage\CleanupRunRepository(), $until_workspace);
+$until_result = $until_service->until_empty(array( 'mode' => 'artifacts', 'limit' => 1, 'max_passes' => 5 ));
+datamachine_code_cleanup_run_assert(! is_wp_error($until_result), 'until-empty succeeds');
+datamachine_code_cleanup_run_assert('completed' === (string) ( $until_result['state'] ?? '' ), 'until-empty stops when artifact plan is empty');
+datamachine_code_cleanup_run_assert(2 === (int) ( $until_result['pass_count'] ?? 0 ), 'until-empty records two cleanup passes before empty plan');
+datamachine_code_cleanup_run_assert(2 === (int) ( $until_result['applied'] ?? 0 ), 'until-empty aggregates applied rows');
+datamachine_code_cleanup_run_assert(20 === (int) ( $until_result['bytes_reclaimed'] ?? 0 ), 'until-empty aggregates reclaimed bytes');
+
+$repeat_workspace = new DataMachineCodeCleanupUntilEmptyWorkspace();
+$repeat_workspace->repeat = true;
+$repeat_service = new \DataMachineCode\Workspace\CleanupRunService(new \DataMachineCode\Storage\CleanupRunRepository(), $repeat_workspace);
+$repeat_result = $repeat_service->until_empty(array( 'mode' => 'artifacts', 'limit' => 1, 'max_passes' => 5 ));
+datamachine_code_cleanup_run_assert('repeated_candidates' === (string) ( $repeat_result['state'] ?? '' ), 'until-empty stops when candidate fingerprint repeats');
+datamachine_code_cleanup_run_assert(false === (bool) ( $repeat_result['success'] ?? true ), 'repeated candidate loop is not reported as clean success');
+datamachine_code_cleanup_run_assert(1 === (int) ( $repeat_result['pass_count'] ?? 0 ), 'repeat detection stops before applying the repeated pass');
 
 echo "DB-backed cleanup run storage smoke passed.\n";

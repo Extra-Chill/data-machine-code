@@ -311,6 +311,146 @@ class CleanupRunService {
 		return $this->apply($run_id, $opts);
 	}
 
+	/**
+	 * Repeatedly plan/apply artifact cleanup until no safe rows remain or progress stalls.
+	 *
+	 * @param  array<string,mixed> $opts Loop options.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function until_empty( array $opts = array() ): array|\WP_Error {
+		$mode = (string) ( $opts['mode'] ?? 'artifacts' );
+		if ( 'artifacts' !== $mode ) {
+			return new \WP_Error('cleanup_until_empty_unsupported_mode', 'Cleanup until-empty currently supports mode=artifacts only.', array( 'status' => 400 ));
+		}
+
+		$max_passes     = max(1, min(25, (int) ( $opts['max_passes'] ?? 10 )));
+		$limit          = $this->apply_limit($opts);
+		$started        = microtime(true);
+		$budget_seconds = isset($opts['budget_seconds']) ? max(1, (int) $opts['budget_seconds']) : 0;
+		$seen           = array();
+		$passes         = array();
+		$total_bytes    = 0;
+		$total_applied  = 0;
+		$total_skipped  = 0;
+
+		for ( $pass = 1; $pass <= $max_passes; ++$pass ) {
+			if ( $budget_seconds > 0 && microtime(true) - $started >= $budget_seconds ) {
+				return $this->until_empty_result('budget_exhausted', $passes, $total_bytes, $total_applied, $total_skipped, array( 'budget_seconds' => $budget_seconds ));
+			}
+
+			$plan = $this->plan(
+				array(
+					'mode'                   => 'artifacts',
+					'include_artifacts'      => true,
+					'include_worktrees'      => false,
+					'include_resolvers'      => false,
+					'force_artifact_cleanup' => ! empty($opts['force']),
+				)
+			);
+			if ( $plan instanceof \WP_Error ) {
+				return $plan;
+			}
+
+			$rows        = (array) ( $plan['rows']['artifact_cleanup'] ?? array() );
+			$fingerprint = $this->cleanup_rows_fingerprint($rows);
+			if ( array() === $rows ) {
+				return $this->until_empty_result('completed', $passes, $total_bytes, $total_applied, $total_skipped, array( 'final_run_id' => $plan['run_id'] ?? null ));
+			}
+			if ( isset($seen[ $fingerprint ]) ) {
+				return $this->until_empty_result(
+					'repeated_candidates',
+					$passes,
+					$total_bytes,
+					$total_applied,
+					$total_skipped,
+					array(
+						'run_id'      => $plan['run_id'] ?? null,
+						'fingerprint' => $fingerprint,
+						'reason'      => 'The same artifact candidate set appeared after a previous apply; stopping to avoid a cleanup loop.',
+					)
+				);
+			}
+			$seen[ $fingerprint ] = true;
+
+			$run_id        = (string) ( $plan['run_id'] ?? '' );
+			$run_applied   = 0;
+			$run_skipped   = 0;
+			$run_reclaimed = 0;
+			$status        = null;
+			do {
+				$apply = $this->apply(
+					$run_id,
+					array(
+						'force' => ! empty($opts['force']),
+						'limit' => $limit,
+					)
+				);
+				if ( $apply instanceof \WP_Error ) {
+					return $apply;
+				}
+				$run_applied  += (int) ( $apply['applied'] ?? 0 );
+				$run_skipped  += (int) ( $apply['skipped'] ?? 0 );
+				$run_reclaimed = (int) ( $apply['summary']['bytes_reclaimed'] ?? $run_reclaimed );
+				$status        = (string) ( $apply['status'] ?? '' );
+			} while ( 'needs_resume' === $status );
+
+			$total_applied += $run_applied;
+			$total_skipped += $run_skipped;
+			$total_bytes   += $run_reclaimed;
+			$passes[]       = array(
+				'pass'            => $pass,
+				'run_id'          => $run_id,
+				'planned_rows'    => count($rows),
+				'applied'         => $run_applied,
+				'skipped'         => $run_skipped,
+				'bytes_reclaimed' => $run_reclaimed,
+				'fingerprint'     => $fingerprint,
+			);
+
+			if ( 0 === $run_applied ) {
+				return $this->until_empty_result('no_progress', $passes, $total_bytes, $total_applied, $total_skipped, array( 'run_id' => $run_id ));
+			}
+		}
+
+		return $this->until_empty_result('max_passes_reached', $passes, $total_bytes, $total_applied, $total_skipped, array( 'max_passes' => $max_passes ));
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $rows Cleanup rows.
+	 */
+	private function cleanup_rows_fingerprint( array $rows ): string {
+		$parts = array();
+		foreach ( $rows as $row ) {
+			$artifacts = array();
+			foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
+				if ( is_array($artifact) ) {
+					$artifacts[] = (string) ( $artifact['path'] ?? '' );
+				}
+			}
+			sort($artifacts);
+			$parts[] = implode('|', array( (string) ( $row['handle'] ?? '' ), (string) ( $row['path'] ?? '' ), implode(',', $artifacts) ));
+		}
+		sort($parts);
+		return sha1(implode("\n", $parts));
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $passes Loop pass summaries.
+	 * @param array<string,mixed>            $extra  Extra result fields.
+	 */
+	private function until_empty_result( string $state, array $passes, int $bytes, int $applied, int $skipped, array $extra = array() ): array {
+		return array(
+			'success'         => in_array($state, array( 'completed', 'budget_exhausted', 'max_passes_reached' ), true),
+			'state'           => $state,
+			'status'          => $state,
+			'passes'          => $passes,
+			'pass_count'      => count($passes),
+			'applied'         => $applied,
+			'skipped'         => $skipped,
+			'bytes_reclaimed' => $bytes,
+		) + $extra;
+	}
+
 	private function plan_items( array $plan ): array {
 		$items = array();
 		foreach ( (array) ( $plan['rows'] ?? array() ) as $type => $rows ) {

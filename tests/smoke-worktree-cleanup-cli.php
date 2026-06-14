@@ -1177,6 +1177,7 @@ namespace {
 	$cleanup_run_ability = new FakeCleanupRunAbility();
 	$cleanup_plan_ability = new FakeCleanupPlanAbility();
 	$cleanup_status_ability = new FakeCleanupStatusAbility();
+	$cleanup_until_empty_ability = new FakeCleanupStatusAbility();
     $hygiene_ability = new FakeHygieneAbility();
     $get_jobs_ability = new FakeGetJobsAbility();
     $retry_job_ability = new FakeRetryJobAbility();
@@ -1185,6 +1186,7 @@ namespace {
 	'datamachine-code/workspace-list'                        => $workspace_list_ability,
 	'datamachine-code/workspace-cleanup-plan'                => $cleanup_plan_ability,
 	'datamachine-code/workspace-cleanup-run'                 => $cleanup_run_ability,
+	'datamachine-code/workspace-cleanup-until-empty'         => $cleanup_until_empty_ability,
     'datamachine-code/workspace-cleanup-apply'               => $cleanup_status_ability,
     'datamachine-code/workspace-cleanup-status'              => $cleanup_status_ability,
     'datamachine-code/workspace-cleanup-resume'              => $cleanup_status_ability,
@@ -1221,9 +1223,11 @@ namespace {
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--stage=<stage>]"), 'worktree synopsis declares abandoned --stage at top level');
     datamachine_code_cleanup_assert(! str_contains($doc_comment, "\n\t\t * [--apply-plan=<file>]"), 'cleanup flags are not hidden behind nested docblock indentation');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, 'Control task-backed workspace cleanup runs.'), 'workspace cleanup command documents task-backed controller surface');
-    datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '<plan|apply|run|status|resume|cancel|evidence>'), 'workspace cleanup synopsis exposes DB-backed and task-backed cleanup operations');
+    datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '<plan|apply|until-empty|run|status|resume|cancel|evidence>'), 'workspace cleanup synopsis exposes DB-backed and task-backed cleanup operations');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '[--dry-run]'), 'task-backed cleanup synopsis keeps synchronous dry-run review');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '[--drain]'), 'task-backed cleanup synopsis exposes drain option');
+	datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '[--max-passes=<count>]'), 'workspace cleanup synopsis exposes until-empty pass budget');
+	datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, 'workspace cleanup until-empty --mode=artifacts'), 'workspace cleanup examples include artifact until-empty loop');
 	datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, 'stale-worktrees'), 'workspace cleanup synopsis exposes stale-worktrees destructive profile');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, 'apply runs freeze eligible candidates'), 'workspace cleanup limit help clarifies artifact apply scoping');
     datamachine_code_cleanup_assert(str_contains($doc_comment, 'positive maximum worktrees to scan'), 'worktree limit help requires positive page sizes');
@@ -1334,6 +1338,15 @@ namespace {
 	datamachine_code_cleanup_assert(true === ( $cleanup_plan_ability->last_input['include_artifacts'] ?? false ), 'cleanup run --dry-run artifact review includes artifact scan');
 	datamachine_code_cleanup_assert(false === ( $cleanup_plan_ability->last_input['include_worktrees'] ?? true ), 'cleanup run --dry-run artifact review skips worktree removal rows');
 	datamachine_code_cleanup_assert($last_scheduled_cleanup_run === $cleanup_run_ability->last_input, 'cleanup run --dry-run does not schedule cleanup run ability');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup(array( 'until-empty' ), array( 'mode' => 'artifacts', 'limit' => 11, 'max-passes' => 3, 'budget-seconds' => 60, 'force' => true, 'format' => 'json' ));
+	datamachine_code_cleanup_assert('artifacts' === ( $cleanup_until_empty_ability->last_input['mode'] ?? '' ), 'cleanup until-empty forwards artifact mode');
+	datamachine_code_cleanup_assert(11 === (int) ( $cleanup_until_empty_ability->last_input['limit'] ?? 0 ), 'cleanup until-empty forwards apply limit');
+	datamachine_code_cleanup_assert(3 === (int) ( $cleanup_until_empty_ability->last_input['max_passes'] ?? 0 ), 'cleanup until-empty forwards pass cap');
+	datamachine_code_cleanup_assert(60 === (int) ( $cleanup_until_empty_ability->last_input['budget_seconds'] ?? 0 ), 'cleanup until-empty forwards time budget');
+	datamachine_code_cleanup_assert(true === (bool) ( $cleanup_until_empty_ability->last_input['force'] ?? false ), 'cleanup until-empty forwards force flag');
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
