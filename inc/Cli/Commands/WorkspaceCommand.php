@@ -4320,12 +4320,25 @@ class WorkspaceCommand extends BaseCommand {
 				return;
 
 			case 'prune':
-				$pruned = $result['pruned'] ?? array();
-				if ( empty($pruned) ) {
+				$pruned                = (array) ( $result['pruned'] ?? array() );
+				$stale_inventory       = (array) ( $result['stale_inventory'] ?? array() );
+				$stale_marker_blockers = (array) ( $result['stale_marker_blockers'] ?? array() );
+				if ( empty($pruned) && empty($stale_inventory) && empty($stale_marker_blockers) ) {
 					WP_CLI::log('Nothing to prune.');
 					return;
 				}
-				WP_CLI::success(sprintf('Pruned worktree registry across: %s', implode(', ', $pruned)));
+				if ( ! empty($pruned) ) {
+					WP_CLI::success(sprintf('Pruned worktree registry across: %s', implode(', ', $pruned)));
+				}
+				if ( ! empty($stale_inventory) ) {
+					WP_CLI::success(sprintf('Removed %d stale worktree inventory artifact%s.', count($stale_inventory), 1 === count($stale_inventory) ? '' : 's'));
+				}
+				if ( ! empty($stale_marker_blockers) ) {
+					WP_CLI::warning(sprintf('Found %d path-present stale worktree marker blocker%s; left checkout paths in place for review.', count($stale_marker_blockers), 1 === count($stale_marker_blockers) ? '' : 's'));
+					foreach ( $stale_marker_blockers as $blocker ) {
+						WP_CLI::log(sprintf('  - %s at %s', (string) ( $blocker['handle'] ?? '' ), (string) ( $blocker['path'] ?? '' )));
+					}
+				}
 				return;
 
 			case 'cleanup':
