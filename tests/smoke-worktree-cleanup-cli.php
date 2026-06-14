@@ -1644,6 +1644,15 @@ namespace {
     datamachine_code_cleanup_assert(2 === (int) ( $abandoned_json['summary']['removed'] ?? 0 ), 'abandoned summary reports removed rows from initial and post-classifier drains');
     datamachine_code_cleanup_assert(2 === (int) ( $abandoned_json['summary']['blocked'] ?? 0 ), 'abandoned summary reports blocked rows');
     datamachine_code_cleanup_assert(1 === (int) ( $abandoned_json['summary']['blocked_by_reason']['unpushed_commits'] ?? 0 ), 'abandoned preserves unpushed-commit blocker evidence');
+    datamachine_code_cleanup_assert(16 === (int) ( $abandoned_json['summary']['scanned'] ?? 0 ), 'abandoned summary reports aggregate scanned rows across classifier and bounded cleanup stages');
+
+    WP_CLI::$logs      = array();
+    WP_CLI::$successes = array();
+    $command->worktree(array( 'abandoned' ), array( 'apply' => true, 'force' => true, 'stage' => 'bounded', 'limit' => 500, 'passes' => 1, 'format' => 'json' ));
+    $abandoned_bulk_limit_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+    datamachine_code_cleanup_assert(JSON_ERROR_NONE === json_last_error(), 'abandoned bulk-limit JSON output parses cleanly');
+    datamachine_code_cleanup_assert(500 === (int) ( $abandoned_bulk_limit_json['limit'] ?? 0 ), 'abandoned honors operator bulk limit above the old 100-row cap');
+    datamachine_code_cleanup_assert(500 === (int) ( $bounded_apply_ability->last_input['limit'] ?? 0 ), 'abandoned forwards operator bulk limit to bounded cleanup apply');
 
     $bounded_apply_ability->extra_skipped = 30;
     WP_CLI::$logs      = array();
