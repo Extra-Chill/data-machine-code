@@ -45,14 +45,13 @@ $stale_marker               = 'datamachine agent compose AGENTS.md';
 $expected_memory_agent_note = 'On multi-agent installs, pass `--agent=<slug>` to memory commands when auto-resolution is ambiguous.';
 $expected_agent_cli         = 'datamachine agent list|create|access|token|installed|install|diff';
 $stale_agent_cli            = 'datamachine agents list|create|access|tokens';
-// Workspace / GitHub / GitSync subcommand lists are now generated from the
+// Workspace / GitHub subcommand lists are now generated from the
 // command classes via CommandIntrospector (see #671) instead of hardcoded
 // pipe-lists, so the source asserts on the generation wiring + interpolation
 // tokens rather than a frozen string. The actual produced surface is exercised
 // against the real command classes further down.
 $expected_workspace_token   = 'datamachine-code workspace {$workspace_subcmds}';
 $expected_github_token       = 'datamachine-code github {$github_subcmds}';
-$expected_gitsync_token      = 'datamachine-code gitsync {$gitsync_subcmds}';
 $expected_introspect_wiring  = 'CommandIntrospector::pipe_list(';
 $stale_hardcoded_workspace   = 'workspace adopt|clone|list|show|path|hygiene|remove|worktree';
 $expected_worktree_cli      = 'datamachine-code workspace worktree add|list|remove|prune|cleanup|cleanup-artifacts|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible';
@@ -126,10 +125,6 @@ $assert(
 $assert(
     'abilities guidance avoids missing discovery command',
     str_contains($source, $expected_abilities_note) && ! str_contains($source, $stale_abilities_cli)
-);
-$assert(
-    'GitSync guidance is generated from the command class',
-    str_contains($source, $expected_gitsync_token)
 );
 $assert(
     'AGENTS.md sections declare Data Machine Code ownership',
@@ -268,11 +263,9 @@ if (! class_exists('DataMachine\\Cli\\BaseCommand') ) {
 
 require_once __DIR__ . '/../inc/Cli/Commands/WorkspaceCommand.php';
 require_once __DIR__ . '/../inc/Cli/Commands/GitHubCommand.php';
-require_once __DIR__ . '/../inc/Cli/Commands/GitSyncCommand.php';
 
 $workspace_subs = \DataMachineCode\Runtime\CommandIntrospector::subcommand_names('\\DataMachineCode\\Cli\\Commands\\WorkspaceCommand');
 $github_subs    = \DataMachineCode\Runtime\CommandIntrospector::subcommand_names('\\DataMachineCode\\Cli\\Commands\\GitHubCommand');
-$gitsync_subs   = \DataMachineCode\Runtime\CommandIntrospector::subcommand_names('\\DataMachineCode\\Cli\\Commands\\GitSyncCommand');
 
 $required_file_io = array( 'read', 'write', 'grep', 'edit', 'git', 'patch', 'ls' );
 $missing_file_io  = array_values(array_diff($required_file_io, $workspace_subs));
@@ -292,11 +285,6 @@ $assert(
     'github reflection surfaces issue + PR subcommands',
     empty(array_diff(array( 'issues', 'pulls', 'review-flow', 'comment' ), $github_subs))
 );
-$assert(
-    'gitsync reflection surfaces bind/submit/push subcommands',
-    empty(array_diff(array( 'bind', 'submit', 'push', 'policy' ), $gitsync_subs))
-);
-
 if (! empty($failures) ) {
     echo "\nFAIL: " . count($failures) . " assertion(s)\n";
     foreach ( $failures as $f ) {

@@ -3,9 +3,8 @@
  * Git Runner
  *
  * Thin shared wrapper around `exec()` for running git commands in a target
- * directory. Used by both `Workspace\Workspace` (for agent-owned checkouts
- * under the workspace root) and `GitSync\GitSync` (for site-owned subtrees
- * under ABSPATH).
+ * directory. Used by `Workspace\Workspace` for agent-owned checkouts under
+ * the workspace root.
  *
  * Keeps the shell invocation pattern in one place so containment checks,
  * stderr merging, and error shape stay consistent across callers.
