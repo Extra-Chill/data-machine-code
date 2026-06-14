@@ -77,7 +77,7 @@ trait WorkspaceGitOperations {
 	 * @param  bool   $allow_dirty Allow pull with dirty working tree.
 	 * @return array
 	 */
-	public function git_pull( string $handle, bool $allow_dirty = false, bool $allow_primary_mutation = false ): array|\WP_Error {
+	public function git_pull( string $handle, bool $allow_dirty = false, bool $allow_primary_mutation = false, string $remote = 'origin', ?string $branch = null ): array|\WP_Error {
 		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
 			return WorkspaceAliasResolver::mutation_error($handle, 'git pull');
 		}
@@ -107,7 +107,18 @@ trait WorkspaceGitOperations {
 			return new \WP_Error('dirty_working_tree', 'Working tree is dirty. Commit/stash changes first or pass allow_dirty=true.', array( 'status' => 400 ));
 		}
 
-		$result = $this->run_git($repo_path, 'pull --ff-only');
+		$remote = trim($remote);
+		$branch = null !== $branch ? trim($branch) : null;
+		if ( '' === $remote ) {
+			$remote = 'origin';
+		}
+
+		$command = 'pull --ff-only';
+		if ( null !== $branch && '' !== $branch ) {
+			$command .= ' ' . escapeshellarg($remote) . ' ' . escapeshellarg($branch);
+		}
+
+		$result = $this->run_git($repo_path, $command);
 
 		if ( is_wp_error($result) ) {
 			return $result;
