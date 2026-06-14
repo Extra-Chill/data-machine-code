@@ -1228,7 +1228,7 @@ trait WorkspaceWorktreeLifecycle {
 				continue;
 			}
 
-			$contents = file_get_contents($marker);
+			$contents = file_get_contents($marker); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reads a validated local .git marker, not a remote URL.
 			if ( false === $contents || ! preg_match('/^gitdir:\s*(.+)$/mi', $contents, $matches) ) {
 				continue;
 			}
@@ -1242,7 +1242,7 @@ trait WorkspaceWorktreeLifecycle {
 				continue;
 			}
 
-			$primary_path = '' !== $repo ? $this->get_primary_path($repo) : (string) ( $row['primary_path'] ?? '' );
+			$primary_path            = '' !== $repo ? $this->get_primary_path($repo) : (string) ( $row['primary_path'] ?? '' );
 			$stale_marker_blockers[] = array(
 				'handle'       => $handle,
 				'repo'         => $repo,
