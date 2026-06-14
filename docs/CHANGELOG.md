@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.120] - 2026-06-14
+
+### Fixed
+- satisfy cleanup lint checks
+- satisfy worktree prune lint
+- align cleanup scanned counters
+- make cleanup worktree removal timeout resumable
+- report stale marker blockers during worktree prune
+- honor bulk abandoned cleanup limits
+
 ## [0.47.119] - 2026-06-14
 
 ### Fixed
