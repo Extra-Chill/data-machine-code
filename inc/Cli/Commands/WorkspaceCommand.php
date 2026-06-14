@@ -3634,7 +3634,7 @@ class WorkspaceCommand extends BaseCommand {
 				return $reconcile;
 			}
 			$result['steps']['reconcile_metadata'] = $this->summarize_worktree_abandoned_step($reconcile);
-			$result['summary']['scanned']          += (int) ( $result['steps']['reconcile_metadata']['inspected'] ?? 0 );
+			$result['summary']['scanned']         += (int) ( $result['steps']['reconcile_metadata']['inspected'] ?? 0 );
 			$result['summary']['reconciled']       = (int) ( $reconcile['summary']['written'] ?? 0 );
 			$result['summary']['would_reconcile']  = (int) ( $reconcile['summary']['proposed'] ?? 0 );
 
@@ -3698,7 +3698,7 @@ class WorkspaceCommand extends BaseCommand {
 
 				$step_key                                      = sprintf('%s_pass_%d', $key, $pass);
 				$result['steps'][ $step_key ]                  = $this->summarize_worktree_abandoned_step($step);
-				$result['summary']['scanned']                  += (int) ( $result['steps'][ $step_key ]['inspected'] ?? 0 );
+				$result['summary']['scanned']                 += (int) ( $result['steps'][ $step_key ]['inspected'] ?? 0 );
 				$written                                       = (int) ( $step['summary']['written'] ?? 0 );
 				$planned                                       = (int) ( $step['summary']['planned'] ?? 0 );
 				$pass_marked                                  += $apply ? $written : $planned;
