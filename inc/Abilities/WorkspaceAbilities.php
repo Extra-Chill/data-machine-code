@@ -841,6 +841,14 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Permit mutation on the primary checkout (default false). Worktrees are always allowed.',
 							),
+							'remote'                 => array(
+								'type'        => 'string',
+								'description' => 'Remote name for pull when branch is supplied (default origin).',
+							),
+							'branch'                 => array(
+								'type'        => 'string',
+								'description' => 'Remote branch to pull. Useful when the checkout is detached.',
+							),
 						),
 						'required'   => array( 'name' ),
 					),
@@ -2991,7 +2999,9 @@ class WorkspaceAbilities {
 		return $workspace->git_pull(
 			$input['name'] ?? '',
 			! empty($input['allow_dirty']),
-			! empty($input['allow_primary_mutation'])
+			! empty($input['allow_primary_mutation']),
+			(string) ( $input['remote'] ?? 'origin' ),
+			isset($input['branch']) ? (string) $input['branch'] : null
 		);
 	}
 

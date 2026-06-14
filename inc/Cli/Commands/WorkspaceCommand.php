@@ -2554,10 +2554,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * : Permit mutating ops (pull/add/commit/push) on the primary checkout. Default-deny — use a worktree handle (`<repo>@<branch-slug>`) instead whenever possible.
 	 *
 	 * [--remote=<remote>]
-	 * : Remote name for push (default: origin).
+	 * : Remote name for pull/push (default: origin).
 	 *
 	 * [--branch=<branch>]
-	 * : Branch override for push.
+	 * : Branch override for pull/push. For pull, supplies an explicit remote branch when the checkout is detached.
 	 *
 	 * [--from=<ref>]
 	 * : From ref for diff.
@@ -2640,6 +2640,10 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( 'pull' === $operation ) {
 			$input['allow_dirty'] = ! empty($assoc_args['allow-dirty']);
+			$input['remote']      = $assoc_args['remote'] ?? 'origin';
+			if ( ! empty($assoc_args['branch']) ) {
+				$input['branch'] = (string) $assoc_args['branch'];
+			}
 		}
 
 		if ( 'add' === $operation ) {
