@@ -748,9 +748,6 @@ trait WorkspaceWorktreeCleanupEngine {
 		$seen   = array();
 		$result = array();
 		foreach ( $rows as $row ) {
-			if ( ! is_array($row) ) {
-				continue;
-			}
 			$key = implode('|', array(
 				(string) ( $row['handle'] ?? '' ),
 				(string) ( $row['path'] ?? '' ),
@@ -907,6 +904,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @return string
 	 */
 	private function get_wp_error_code( \WP_Error $error ): string {
+		// @phpstan-ignore-next-line Smoke tests provide a minimal WP_Error stub.
 		return method_exists($error, 'get_error_code') ? (string) $error->get_error_code() : (string) ( $error->code ?? '' );
 	}
 
@@ -917,6 +915,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @return mixed
 	 */
 	private function get_wp_error_data( \WP_Error $error ): mixed {
+		// @phpstan-ignore-next-line Smoke tests provide a minimal WP_Error stub.
 		return method_exists($error, 'get_error_data') ? $error->get_error_data() : ( $error->data ?? null );
 	}
 
@@ -1106,7 +1105,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		if ( array() !== array_filter($timeout_handles) ) {
-			$continuation['timeout_handles']       = array_values(array_filter($timeout_handles));
+			$continuation['timeout_handles']        = array_values(array_filter($timeout_handles));
 			$continuation['timeout_resume_command'] = $this->build_bounded_cleanup_resume_command($limit, $opts, $this->next_worktree_cleanup_remove_timeout($remove_timeout_seconds));
 			$continuation['timeout_hint']           = 'Removal timed out after passing safety checks; rerun with a larger --remove-timeout to resume the remaining cleanup-eligible rows.';
 		}
@@ -1762,10 +1761,6 @@ trait WorkspaceWorktreeCleanupEngine {
 		$seen   = array();
 		$result = array();
 		foreach ( $rows as $row ) {
-			if ( ! is_array($row) ) {
-				continue;
-			}
-
 			$handle = (string) ( $row['handle'] ?? '' );
 			$path   = (string) ( $row['path'] ?? '' );
 			$key    = '' !== $handle || '' !== $path ? $handle . '|' . $path : wp_json_encode($row);
