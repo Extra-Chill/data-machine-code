@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.123] - 2026-06-14
+
+### Changed
+- remove GitSync feature
+
 ## [0.47.122] - 2026-06-14
 
 ### Fixed
