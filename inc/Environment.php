@@ -4,8 +4,8 @@
  *
  * Public signal that Data Machine Code is active on this host.
  *
- * Data Machine Code exposes code-adjacent GitHub, GitSync, workspace, and
- * runtime capabilities. Its activation means those DMC surfaces are available
+ * Data Machine Code exposes code-adjacent GitHub, workspace, and runtime
+ * capabilities. Its activation means those DMC surfaces are available
  * to inspect and call, but callers must still check narrower capabilities
  * before assuming shell execution or broad filesystem writes.
  *
@@ -20,9 +20,8 @@
  *     }
  *
  * Managed hosts may support API-first DMC subsystems such as GitHub abilities
- * and GitSync while still denying shell execution or writes outside approved
- * site-owned paths. Capability checks are intentionally narrower than host
- * detection.
+ * while still denying shell execution or writes outside approved site-owned
+ * paths. Capability checks are intentionally narrower than host detection.
  *
  * @package DataMachineCode
  * @since   0.6.0

@@ -2,10 +2,10 @@
 /**
  * Path Security
  *
- * Shared containment + sensitive-file primitives used by both
- * `Workspace\Workspace` and `GitSync\GitSync`. Kept in one place so the
- * block list, traversal detection, and realpath-based containment stay
- * consistent across every code path that touches the filesystem.
+ * Shared containment + sensitive-file primitives used by workspace paths.
+ * Kept in one place so the block list, traversal detection, and
+ * realpath-based containment stay consistent across every code path that
+ * touches the filesystem.
  *
  * @package DataMachineCode\Support
  * @since   0.7.0

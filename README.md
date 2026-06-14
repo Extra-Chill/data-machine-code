@@ -1,24 +1,23 @@
 # Data Machine Code
 
-**Data Machine Code gives a WordPress site code-adjacent GitHub and workspace abilities** — API-first GitHub operations, managed-host-safe GitSync for site-owned files, and shell-backed workspaces for installs that can run a local coding runtime. Built on [Data Machine](https://github.com/Extra-Chill/data-machine), powered by the Abilities API.
+**Data Machine Code gives a WordPress site code-adjacent GitHub and workspace abilities** — API-first GitHub operations and shell-backed workspaces for installs that can run a local coding runtime. Built on [Data Machine](https://github.com/Extra-Chill/data-machine), powered by the Abilities API.
 
 Who pulls the trigger is up to you. DMC has three driver modes, and each mode uses only the capabilities the host actually supports:
 
 - **An external coding-agent runtime** on your machine pointed at the site — interactive, human-in-the-loop; requires shell/git/workspace access.
-- **The site itself, via a Data Machine flow** — scheduled or webhook-triggered; can use API-first GitHub/GitSync abilities without a shell, or workspace abilities when the host supports them.
+- **The site itself, via a Data Machine flow** — scheduled or webhook-triggered; can use API-first GitHub abilities without a shell, or workspace abilities when the host supports them.
 - **An ephemeral CI job** that boots a WordPress instance with DMC loaded for a single check (Playground + GitHub Actions). The site exists for one job, codes for one PR, dies.
 
-Managed-host support depends on the subsystem. GitHub API abilities and GitSync use `wp_remote_request()` plus WordPress-owned storage and are designed to work on managed hosts. Workspace, worktree, shell-git, AGENTS.md projection, and co-located runtime features require a host where PHP can see and mutate the configured workspace and, for git operations, execute shell commands.
+Managed-host support depends on the subsystem. GitHub API abilities use `wp_remote_request()` and are designed to work on managed hosts. Workspace, worktree, shell-git, AGENTS.md projection, and co-located runtime features require a host where PHP can see and mutate the configured workspace and, for git operations, execute shell commands.
 
 ## What It Is
 
-DMC's activation is the declarative answer to **"does this WordPress site have code-adjacent capabilities?"** When DMC is loaded, the install gains GitHub API abilities, optional GitSync bindings for site-owned files, and shell-backed workspace/git abilities when the environment supports them. The `\DataMachineCode\Environment` surface lets other plugins gate disk-side behavior without guessing which host they are running on.
+DMC's activation is the declarative answer to **"does this WordPress site have code-adjacent capabilities?"** When DMC is loaded, the install gains GitHub API abilities and shell-backed workspace/git abilities when the environment supports them. The `\DataMachineCode\Environment` surface lets other plugins gate disk-side behavior without guessing which host they are running on.
 
 That framing reshapes what every other plugin can assume:
 
 - **AGENTS.md is composed and written to the WP root** for external runtimes that discover it on session start, when the filesystem permits it. DMC owns the file, contributes core sections, and lets other plugins register more via Data Machine's `SectionRegistry`. In-process and CI drivers don't use AGENTS.md — they get context through Data Machine's normal channels (system prompts, memory files, flow user messages). AGENTS.md is a co-located-runtime feature, not the universal interface.
-- **The site gains GitHub, GitSync, workspace, and git abilities** through the Abilities API. API-first abilities are host-portable; workspace/git abilities are still gated by filesystem and shell capability.
-- **GitSync binds site-owned directories under `ABSPATH` to GitHub repos** using the GitHub Contents + Git Data APIs. It needs no local git binary, no `.git` directory, and no shell, so consumers can use it on managed hosts that allow the target site-owned path to be written.
+- **The site gains GitHub, workspace, and git abilities** through the Abilities API. API-first abilities are host-portable; workspace/git abilities are still gated by filesystem and shell capability.
 - **A worktree-native workspace area** at `~/.datamachine/workspace/` lets shell-capable installs clone repos, edit files in isolated branches, and push changes — all gated by per-repo policies. Same workspace whether the editor is an external runtime, an in-process AI step, or a CI job.
 - **`\DataMachineCode\Environment` is a capability surface** plugins can read to ask "is DMC active?", "can we shell out?", "is the filesystem writable outside `/uploads`?". Other DM plugins use it to gate disk-side hooks (e.g. Intelligence's `SKILL.md` sync).
 
@@ -32,7 +31,7 @@ The important seam is not self-hosted versus managed; it is API-first versus she
 | **In-process flow** | DM AI step inside a flow | Long-lived install | An Intelligence wiki maintenance flow calling workspace abilities; a webhook-triggered PR review flow |
 | **Ephemeral CI** | DM flow inside Playground / GitHub Actions | One job | [`wc-site-generator`](https://github.com/chubes4/wc-site-generator) static-site validation; the Stage 5 Playground proof |
 
-The registered surface is broad, but callers should select abilities that match the host. For example, a managed-host flow can use GitHub API and GitSync abilities, while a co-located runtime can additionally use workspace and shell-git abilities.
+The registered surface is broad, but callers should select abilities that match the host. For example, a managed-host flow can use GitHub API abilities, while a co-located runtime can additionally use workspace and shell-git abilities.
 
 ## How It Differs From Other Data Machine Extensions
 
@@ -47,13 +46,6 @@ Sibling extensions like `data-machine-socials` and `data-machine-business` are *
 - GitHub fetch handler for pipeline workflows
 - GitHub pull request webhook validation mode for review-flow triggers
 - PR review flow scaffold for webhook-triggered review automation with bounded context gathering and managed comment upsert
-
-### GitSync
-- Bind site-owned directories under `ABSPATH` to GitHub repositories
-- Pull files from GitHub via the Contents and Git Data APIs
-- Submit local file changes through a sticky proposal branch and PR
-- Push directly to the pinned branch only when both write policy keys are enabled
-- Works without local git, `.git` directories, shell execution, or workspace checkouts
 
 ### Workspace Management
 - Clone and manage git repositories in a secure workspace directory
@@ -85,14 +77,6 @@ wp datamachine-code github pulls --repo=owner/repo
 wp datamachine-code github repos owner
 wp datamachine-code github review-flow create --repo=owner/repo --agent=code-reviewer
 wp datamachine-code github status
-
-# GitSync — API-first, no local git required
-wp datamachine-code gitsync bind docs \
-  --local=/wp-content/uploads/intelligence-docs/ \
-  --remote=https://github.com/owner/repo
-wp datamachine-code gitsync pull docs
-wp datamachine-code gitsync status docs --format=json
-wp datamachine-code gitsync submit docs --message="Update docs"
 
 # Workspace
 wp datamachine-code workspace path
@@ -138,7 +122,7 @@ DMC discovers primary checkouts and worktrees by scanning the configured workspa
 root. Worktree lifecycle metadata supports cleanup and reconciliation; if that
 workspace path is not visible to PHP, DMC cannot see the checkouts.
 
-Workspace and worktree commands are shell-backed. On managed hosts, prefer GitSync for site-owned content trees that need GitHub synchronization without a local checkout.
+Workspace and worktree commands are shell-backed and require a host where PHP can see the configured workspace root.
 
 The primary checkout (bare `<repo>`) is **read-only by default** for mutating
 operations — pass `--allow-primary-mutation` to override. The default-deny is
@@ -162,9 +146,7 @@ on it are how parallel agents corrupt each other's work.
   - A Data Machine flow on the site that calls DMC's tools / abilities (in-process driver).
   - A CI workflow that boots WordPress with DMC loaded and runs a DM flow against it; see [`wc-site-generator`](https://github.com/chubes4/wc-site-generator) for the canonical Playground-based example.
 - Shell-backed workspace/git features require `exec()`, a local `git` binary, and a visible writable workspace path.
-- GitSync requires GitHub credentials plus a writable site-owned path under `ABSPATH`; it does not require shell or local git.
-
-DMC's abilities still register without a co-located runtime. API-first flows can exercise GitHub/GitSync directly; an idle workspace is only relevant when using workspace/git abilities.
+DMC's abilities still register without a co-located runtime. API-first flows can exercise GitHub abilities directly; an idle workspace is only relevant when using workspace/git abilities.
 
 ## Installation
 
@@ -174,7 +156,7 @@ DMC's abilities still register without a co-located runtime. API-first flows can
 4. Activate the plugin
 5. Wire up at least one driver or API-first flow:
    - **Co-located runtime:** point a coding-agent runtime at the install. See [`wp-coding-agents`](https://github.com/Extra-Chill/wp-coding-agents).
-   - **In-process flow:** create a DM flow whose AI step calls GitHub, GitSync, workspace, or git abilities directly. PR review flows (`wp datamachine-code github review-flow create`) are the bundled example.
+   - **In-process flow:** create a DM flow whose AI step calls GitHub, workspace, or git abilities directly. PR review flows (`wp datamachine-code github review-flow create`) are the bundled example.
    - **Ephemeral CI:** check DMC out into a CI job alongside Data Machine and run a flow inside Playground or a fresh WP install. See `wc-site-generator`'s `.github/workflows/playground-stage-5.yml` and `static-site-validation.yml` for working references.
 
 ## Configuration
@@ -311,7 +293,7 @@ if ( class_exists( '\DataMachineCode\Environment' ) ) {
 \DataMachineCode\Environment::has_writable_fs();  // can we write outside /uploads?
 ```
 
-This is intentionally simpler than detecting WP.com vs VIP vs self-hosted vs CI vs Studio. What matters is which DMC subsystem the caller needs: API-first GitHub/GitSync, writable filesystem projection, or shell-backed workspace/git.
+This is intentionally simpler than detecting WP.com vs VIP vs self-hosted vs CI vs Studio. What matters is which DMC subsystem the caller needs: API-first GitHub, writable filesystem projection, or shell-backed workspace/git.
 
 ## Roadmap
 

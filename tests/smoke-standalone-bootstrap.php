@@ -104,7 +104,6 @@ $assert('workspace category registers', isset($GLOBALS['dmc_standalone_categorie
 $assert('GitHub category registers', isset($GLOBALS['dmc_standalone_categories']['datamachine-code-github']));
 $assert('workspace ability registers', isset($GLOBALS['dmc_standalone_abilities']['datamachine-code/workspace-read']));
 $assert('GitHub ability registers', isset($GLOBALS['dmc_standalone_abilities']['datamachine-code/list-github-issues']));
-$assert('GitSync ability registers', isset($GLOBALS['dmc_standalone_abilities']['datamachine-code/gitsync-status']));
 $assert('code task ability registers', isset($GLOBALS['dmc_standalone_abilities']['datamachine-code/create-code-task']));
 $assert('permission facade allows core callbacks', \DataMachineCode\Support\PermissionHelper::can_manage());
 $assert('settings facade falls back to options', 'fallback' === \DataMachineCode\Support\PluginSettings::get('missing_setting', 'fallback'));

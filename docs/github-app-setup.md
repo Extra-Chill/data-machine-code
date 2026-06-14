@@ -2,7 +2,7 @@
 
 Operator runbook for switching Data Machine Code's GitHub authentication from a classic PAT to a GitHub App installation. Posts as a bot user instead of a human, scopes to one install, rotates per-call installation tokens automatically.
 
-This is a one-time setup per host. After it lands, every `datamachine/*-github-*` ability call (issue filing, PR creation, comments, gitsync writes, workspace pushes) automatically posts as the bot. Consumers don't need to know which mode is active.
+This is a one-time setup per host. After it lands, every `datamachine/*-github-*` ability call (issue filing, PR creation, comments, workspace pushes) automatically posts as the bot. Consumers don't need to know which mode is active.
 
 ## When to do this
 
