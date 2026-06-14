@@ -64,6 +64,10 @@ trait WorkspaceWorktreeCleanupEngine {
 		$offset                    = array_key_exists('offset', $opts) ? max(0, (int) $opts['offset']) : 0;
 		$budget_context            = null;
 		$budget_stopped            = false;
+		$remove_timeout_seconds    = $this->normalize_worktree_cleanup_remove_timeout($opts['remove_timeout'] ?? null);
+		if ( is_wp_error($remove_timeout_seconds) ) {
+			return $remove_timeout_seconds;
+		}
 
 		if ( isset($opts['until_budget']) && '' !== trim( (string) $opts['until_budget']) ) {
 			if ( ! $dry_run ) {
@@ -108,7 +112,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			$force = false;
 
 			if ( $direct_apply_plan && ! $dry_run ) {
-				return $this->apply_worktree_cleanup_plan_candidates($planned_candidates, $force, $started_at, $stale_liveness_only);
+				return $this->apply_worktree_cleanup_plan_candidates($planned_candidates, $force, $started_at, $stale_liveness_only, $remove_timeout_seconds);
 			}
 		}
 
@@ -650,8 +654,8 @@ trait WorkspaceWorktreeCleanupEngine {
 			$remove = WorkspaceMutationLock::with_repo(
 				$this->workspace_path,
 				$cand['repo'],
-				function () use ( $cand, $force ) {
-					$remove = $this->remove_worktree_by_path($cand['repo'], $cand['branch'], $cand['path'], $force);
+				function () use ( $cand, $force, $remove_timeout_seconds ) {
+					$remove = $this->remove_worktree_by_path($cand['repo'], $cand['branch'], $cand['path'], $force, $remove_timeout_seconds);
 					if ( is_wp_error($remove) ) {
 						return $remove;
 					}
@@ -664,17 +668,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				}
 			);
 			if ( is_wp_error($remove) ) {
-				$skipped[] = array(
-					'handle'      => $cand['handle'],
-					'repo'        => $cand['repo'] ?? '',
-					'branch'      => $cand['branch'] ?? '',
-					'path'        => $cand['path'] ?? '',
-					'reason_code' => 'remove_failed',
-					'reason'      => 'remove failed: ' . $remove->get_error_message(),
-					'created_at'  => $cand['created_at'] ?? null,
-					'metadata'    => $cand['metadata'] ?? null,
-					'size_bytes'  => $cand['size_bytes'] ?? null,
-				);
+				$skipped[] = $this->build_worktree_remove_failure_skip($cand, $remove, $remove_timeout_seconds);
 				continue;
 			}
 			$removed[] = array_merge(
@@ -961,6 +955,10 @@ trait WorkspaceWorktreeCleanupEngine {
 		$older_than                = isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '';
 		$sort                      = isset($opts['sort']) ? trim( (string) $opts['sort']) : 'age';
 		$source                    = isset($opts['source']) ? trim( (string) $opts['source']) : 'workspace_bounded_cleanup_eligible_apply';
+		$remove_timeout_seconds    = $this->normalize_worktree_cleanup_remove_timeout($opts['remove_timeout'] ?? null);
+		if ( is_wp_error($remove_timeout_seconds) ) {
+			return $remove_timeout_seconds;
+		}
 
 		$limit = isset($opts['limit']) ? (int) $opts['limit'] : 25;
 		if ( $limit < 1 ) {
@@ -1000,6 +998,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			'next_call_hint'    => count($deferred) > 0 ? sprintf('Run the bounded cleanup-eligible apply again to drain the next %d candidate(s).', min($limit, count($deferred))) : null,
 			'inventory_skipped' => count($inventory_skipped),
 			'limit_applied'     => $limit,
+			'remove_timeout'    => $remove_timeout_seconds,
 		);
 
 		if ( $dry_run ) {
@@ -1025,19 +1024,21 @@ trait WorkspaceWorktreeCleanupEngine {
 					'elapsed_ms'      => (int) round(( microtime(true) - $started_at ) * 1000),
 					'inventory_total' => count($all_candidates),
 					'planned_handles' => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', $batch))),
+					'remove_timeout'  => $remove_timeout_seconds,
 					'source'          => $source,
 				),
 			);
 		}
 
 		if ( $via_jobs ) {
-			return $this->schedule_bounded_cleanup_eligible_chunks($batch, $deferred, $force, $source, $started_at, $continuation, $include_repaired_metadata);
+			return $this->schedule_bounded_cleanup_eligible_chunks($batch, $deferred, $force, $source, $started_at, $continuation, $include_repaired_metadata, $remove_timeout_seconds);
 		}
 
 		$processed       = 0;
 		$removed         = array();
 		$skipped         = $inventory_skipped;
 		$bytes_reclaimed = 0;
+		$timeout_handles = array();
 
 		foreach ( $batch as $candidate ) {
 			++$processed;
@@ -1060,8 +1061,8 @@ trait WorkspaceWorktreeCleanupEngine {
 			$remove = WorkspaceMutationLock::with_repo(
 				$this->workspace_path,
 				$repo,
-				function () use ( $repo, $branch, $wt_path, $force ) {
-					$result = $this->remove_worktree_by_path($repo, $branch, $wt_path, $force);
+				function () use ( $repo, $branch, $wt_path, $force, $remove_timeout_seconds ) {
+					$result = $this->remove_worktree_by_path($repo, $branch, $wt_path, $force, $remove_timeout_seconds);
 					if ( is_wp_error($result) ) {
 							return $result;
 					}
@@ -1082,14 +1083,11 @@ trait WorkspaceWorktreeCleanupEngine {
 			);
 
 			if ( is_wp_error($remove) ) {
-				$skipped[] = array(
-					'handle'      => (string) ( $candidate['handle'] ?? '' ),
-					'repo'        => $repo,
-					'branch'      => $branch,
-					'path'        => $wt_path,
-					'reason_code' => 'remove_failed',
-					'reason'      => 'remove failed: ' . $remove->get_error_message(),
-				);
+				$skip      = $this->build_worktree_remove_failure_skip($candidate, $remove, $remove_timeout_seconds);
+				$skipped[] = $skip;
+				if ( 'remove_timeout' === (string) ( $skip['reason_code'] ?? '' ) ) {
+					$timeout_handles[] = (string) ( $skip['handle'] ?? '' );
+				}
 				continue;
 			}
 
@@ -1105,6 +1103,12 @@ trait WorkspaceWorktreeCleanupEngine {
 				is_array($candidate['metadata'] ?? null) ? array( 'metadata' => $candidate['metadata'] ) : array()
 			);
 			$bytes_reclaimed += max(0, $size);
+		}
+
+		if ( array() !== array_filter($timeout_handles) ) {
+			$continuation['timeout_handles']       = array_values(array_filter($timeout_handles));
+			$continuation['timeout_resume_command'] = $this->build_bounded_cleanup_resume_command($limit, $opts, $this->next_worktree_cleanup_remove_timeout($remove_timeout_seconds));
+			$continuation['timeout_hint']           = 'Removal timed out after passing safety checks; rerun with a larger --remove-timeout to resume the remaining cleanup-eligible rows.';
 		}
 
 		// Best-effort prune in case any registry rows are now stale.
@@ -1133,6 +1137,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				'inventory_total' => count($all_candidates),
 				'removed_handles' => array_values(array_filter(array_map(fn( $row ) => (string) $row['handle'], $removed))),
 				'skipped_handles' => array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $skipped))),
+				'remove_timeout'  => $remove_timeout_seconds,
 				'source'          => $source,
 			),
 		);
@@ -1146,7 +1151,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  float                          $started_at Start timestamp.
 	 * @return array<string,mixed>
 	 */
-	private function apply_worktree_cleanup_plan_candidates( array $candidates, bool $force, float $started_at, bool $stale_liveness_only = false ): array {
+	private function apply_worktree_cleanup_plan_candidates( array $candidates, bool $force, float $started_at, bool $stale_liveness_only = false, int $remove_timeout_seconds = self::CLEANUP_GIT_REMOVE_TIMEOUT ): array {
 		$processed       = 0;
 		$removed         = array();
 		$skipped         = array();
@@ -1173,8 +1178,8 @@ trait WorkspaceWorktreeCleanupEngine {
 			$remove = WorkspaceMutationLock::with_repo(
 				$this->workspace_path,
 				$repo,
-				function () use ( $repo, $branch, $wt_path, $force ) {
-					$result = $this->remove_worktree_by_path($repo, $branch, $wt_path, $force);
+				function () use ( $repo, $branch, $wt_path, $force, $remove_timeout_seconds ) {
+					$result = $this->remove_worktree_by_path($repo, $branch, $wt_path, $force, $remove_timeout_seconds);
 					if ( is_wp_error($result) ) {
 						return $result;
 					}
@@ -1192,14 +1197,9 @@ trait WorkspaceWorktreeCleanupEngine {
 			);
 
 			if ( is_wp_error($remove) ) {
-				$skipped[] = array(
-					'handle'      => (string) ( $candidate['handle'] ?? '' ),
-					'repo'        => $repo,
-					'branch'      => $branch,
-					'path'        => $wt_path,
-					'reason_code' => 'remove_failed',
-					'reason'      => 'remove failed: ' . $remove->get_error_message(),
-					'size_bytes'  => $size,
+				$skipped[] = array_merge(
+					$this->build_worktree_remove_failure_skip($candidate, $remove, $remove_timeout_seconds),
+					array( 'size_bytes' => $size )
 				);
 				continue;
 			}
@@ -1468,7 +1468,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  array<string,mixed>            $continuation Continuation envelope.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function schedule_bounded_cleanup_eligible_chunks( array $batch, array $deferred, bool $force, string $source, float $started_at, array $continuation, bool $include_repaired_metadata = false ): array|\WP_Error {
+	private function schedule_bounded_cleanup_eligible_chunks( array $batch, array $deferred, bool $force, string $source, float $started_at, array $continuation, bool $include_repaired_metadata = false, int $remove_timeout_seconds = self::CLEANUP_GIT_REMOVE_TIMEOUT ): array|\WP_Error {
 		if ( ! class_exists('\DataMachine\Engine\Tasks\TaskScheduler') ) {
 			return new \WP_Error('task_scheduler_unavailable', 'Data Machine TaskScheduler is unavailable; cannot schedule bounded cleanup-eligible apply chunks.', array( 'status' => 500 ));
 		}
@@ -1523,6 +1523,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				'force'                     => $force,
 				'skip_github'               => true,
 				'include_repaired_metadata' => $include_repaired_metadata,
+				'remove_timeout'            => $remove_timeout_seconds,
 				'source'                    => $source,
 			);
 		}
@@ -1563,9 +1564,104 @@ trait WorkspaceWorktreeCleanupEngine {
 				'planned_handles' => array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $batch))),
 				'batch_job_id'    => (int) ( $batch_result['batch_job_id'] ?? 0 ),
 				'direct_job_ids'  => $batch_result['job_ids'] ?? array(),
+				'remove_timeout'  => $remove_timeout_seconds,
 				'source'          => $source,
 			),
 		);
+	}
+
+	/**
+	 * Normalize a cleanup worktree removal timeout.
+	 *
+	 * @param  mixed $value Raw option value.
+	 * @return int|\WP_Error
+	 */
+	private function normalize_worktree_cleanup_remove_timeout( mixed $value ): int|\WP_Error {
+		if ( null === $value || '' === $value ) {
+			return self::CLEANUP_GIT_REMOVE_TIMEOUT;
+		}
+
+		$timeout = (int) $value;
+		if ( $timeout < self::CLEANUP_GIT_PROBE_TIMEOUT ) {
+			return new \WP_Error('invalid_cleanup_remove_timeout', sprintf('Cleanup remove timeout must be at least %d seconds.', self::CLEANUP_GIT_PROBE_TIMEOUT), array( 'status' => 400 ));
+		}
+
+		return min($timeout, 3600);
+	}
+
+	/**
+	 * Suggest a larger timeout while keeping reruns bounded.
+	 *
+	 * @param  int $timeout Current timeout in seconds.
+	 * @return int
+	 */
+	private function next_worktree_cleanup_remove_timeout( int $timeout ): int {
+		return min(3600, max($timeout + 30, $timeout * 2));
+	}
+
+	/**
+	 * Build a resumable bounded cleanup command for timeout rows.
+	 *
+	 * @param  int   $limit                  Candidate limit.
+	 * @param  array $opts                   Original apply options.
+	 * @param  int   $remove_timeout_seconds Timeout to include.
+	 * @return string
+	 */
+	private function build_bounded_cleanup_resume_command( int $limit, array $opts, int $remove_timeout_seconds ): string {
+		$parts = array(
+			'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply',
+			'--limit=' . max(1, $limit),
+			'--remove-timeout=' . $remove_timeout_seconds,
+		);
+
+		if ( ! empty($opts['force']) ) {
+			$parts[] = '--force';
+		}
+		if ( ! empty($opts['include_repaired_metadata']) ) {
+			$parts[] = '--include-repaired-metadata';
+		}
+		if ( isset($opts['older_than']) && '' !== trim( (string) $opts['older_than']) ) {
+			$parts[] = '--older-than=' . escapeshellarg(trim( (string) $opts['older_than']));
+		}
+		if ( isset($opts['sort']) && '' !== trim( (string) $opts['sort']) ) {
+			$parts[] = '--sort=' . escapeshellarg(trim( (string) $opts['sort']));
+		}
+
+		return implode(' ', $parts);
+	}
+
+	/**
+	 * Build a stable skipped row for git worktree removal failures.
+	 *
+	 * @param  array     $candidate              Candidate row.
+	 * @param  \WP_Error $error                  Removal error.
+	 * @param  int       $remove_timeout_seconds Timeout used.
+	 * @return array<string,mixed>
+	 */
+	private function build_worktree_remove_failure_skip( array $candidate, \WP_Error $error, int $remove_timeout_seconds ): array {
+		$is_timeout = $this->is_git_timeout_error($error);
+		$row        = array(
+			'handle'      => (string) ( $candidate['handle'] ?? '' ),
+			'repo'        => (string) ( $candidate['repo'] ?? '' ),
+			'branch'      => (string) ( $candidate['branch'] ?? '' ),
+			'path'        => (string) ( $candidate['path'] ?? '' ),
+			'reason_code' => $is_timeout ? 'remove_timeout' : 'remove_failed',
+			'reason'      => ( $is_timeout ? sprintf('remove timed out after %d second(s): ', $remove_timeout_seconds) : 'remove failed: ' ) . $error->get_error_message(),
+			'created_at'  => $candidate['created_at'] ?? null,
+			'metadata'    => $candidate['metadata'] ?? null,
+		);
+
+		if ( isset($candidate['size_bytes']) ) {
+			$row['size_bytes'] = $candidate['size_bytes'];
+		}
+
+		if ( $is_timeout ) {
+			$row['remove_timeout']       = $remove_timeout_seconds;
+			$row['hint']                 = 'Safety checks passed, but git worktree remove exceeded the cleanup removal timeout. Rerun bounded cleanup with a larger --remove-timeout value.';
+			$row['continuation_command'] = $this->build_bounded_cleanup_resume_command(25, array(), $this->next_worktree_cleanup_remove_timeout($remove_timeout_seconds));
+		}
+
+		return $row;
 	}
 
 	/**
@@ -2471,7 +2567,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  bool   $force   Pass --force to `git worktree remove`.
 	 * @return array{success: bool, handle: string, message: string}|\WP_Error
 	 */
-	private function remove_worktree_by_path( string $repo, string $branch, string $wt_path, bool $force ): array|\WP_Error {
+	private function remove_worktree_by_path( string $repo, string $branch, string $wt_path, bool $force, int $remove_timeout_seconds = self::CLEANUP_GIT_REMOVE_TIMEOUT ): array|\WP_Error {
 		$repo = $this->sanitize_name($repo);
 		if ( '' === $repo ) {
 			return new \WP_Error('invalid_repo', 'Repository name is required.', array( 'status' => 400 ));
@@ -2518,7 +2614,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		$cmd    = sprintf('worktree remove %s%s', $force ? '--force ' : '', escapeshellarg($real_path));
-		$result = $this->run_git($primary_path, $cmd, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$result = $this->run_git($primary_path, $cmd, $remove_timeout_seconds);
 
 		if ( is_wp_error($result) ) {
 			return $result;

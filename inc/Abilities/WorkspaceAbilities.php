@@ -2288,6 +2288,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Schedule each candidate as a single-row worktree_cleanup_chunk job for resumable async apply.',
 							),
+							'remove_timeout'            => array(
+								'type'        => 'integer',
+								'description' => 'Timeout in seconds for destructive git worktree remove calls during apply. Defaults to the cleanup removal timeout.',
+							),
 							'include_repaired_metadata' => array(
 								'type'        => 'boolean',
 								'description' => 'Also include repaired metadata rows. Requires explicit opt-in and still runs fresh safety probes before removal.',
@@ -4031,7 +4035,7 @@ class WorkspaceAbilities {
 	/**
 	 * Apply only worktrees with explicit lifecycle cleanup_eligible metadata in a bounded batch.
 	 *
-	 * @param  array $input Input parameters (dry_run, limit, older_than, sort, force, via_jobs, source).
+	 * @param  array $input Input parameters (dry_run, limit, older_than, sort, force, via_jobs, remove_timeout, source).
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function worktreeBoundedCleanupEligibleApply( array $input ): array|\WP_Error {
@@ -4050,6 +4054,9 @@ class WorkspaceAbilities {
 		}
 		if ( isset($input['sort']) && '' !== trim( (string) $input['sort']) ) {
 			$opts['sort'] = trim( (string) $input['sort']);
+		}
+		if ( isset($input['remove_timeout']) ) {
+			$opts['remove_timeout'] = (int) $input['remove_timeout'];
 		}
 		if ( isset($input['source']) && '' !== trim( (string) $input['source']) ) {
 			$opts['source'] = trim( (string) $input['source']);

@@ -1216,6 +1216,7 @@ namespace {
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--include-repaired-metadata]"), 'worktree synopsis declares --include-repaired-metadata at top level');
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--apply]"), 'worktree synopsis declares --apply at top level');
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--via-jobs]"), 'worktree synopsis declares --via-jobs at top level');
+    datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--remove-timeout=<seconds>]"), 'worktree synopsis declares --remove-timeout at top level');
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--passes=<count>]"), 'worktree synopsis declares abandoned --passes at top level');
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--stage=<stage>]"), 'worktree synopsis declares abandoned --stage at top level');
     datamachine_code_cleanup_assert(! str_contains($doc_comment, "\n\t\t * [--apply-plan=<file>]"), 'cleanup flags are not hidden behind nested docblock indentation');
@@ -1832,10 +1833,16 @@ namespace {
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->worktree(array( 'bounded-cleanup-eligible-apply' ), array( 'limit' => 25 ));
+	datamachine_code_cleanup_assert(25 === (int) ( $bounded_apply_ability->last_input['limit'] ?? 0 ), 'bounded cleanup apply forwards limit');
 	datamachine_code_cleanup_assert(in_array('Result: removed 1 worktree(s); reclaimed 4.0 KiB; skipped 2.', WP_CLI::$logs, true), 'bounded cleanup apply highlights removed/reclaimed totals first');
 	datamachine_code_cleanup_assert(in_array('Skipped summary:', WP_CLI::$logs, true), 'bounded cleanup apply summarizes skipped rows by default');
 	datamachine_code_cleanup_assert(in_array('table:4:reason_code,count,examples', WP_CLI::$logs, true), 'bounded cleanup apply groups skipped reasons');
 	datamachine_code_cleanup_assert(! in_array('table:32:handle,reason_code,reason', WP_CLI::$logs, true), 'bounded cleanup apply default output does not list every skipped row');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree(array( 'bounded-cleanup-eligible-apply' ), array( 'limit' => 25, 'remove-timeout' => 120, 'format' => 'json' ));
+	datamachine_code_cleanup_assert(120 === (int) ( $bounded_apply_ability->last_input['remove_timeout'] ?? 0 ), 'bounded cleanup apply forwards remove-timeout');
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
