@@ -161,24 +161,111 @@ $assert(
 );
 
 /*
- * Exercise the reflection introspector against the real command classes in a
- * non-WP-CLI context. This proves the workspace file-I/O surface that #671 was
- * about (read/write/grep/edit/git/patch/ls) is actually produced, and that the
- * helper runs without the WP_CLI runner being present.
+ * Exercise the reflection introspector in both runtime contexts. First prove it
+ * does not autoload WP-CLI-only command classes when WP_CLI_Command is absent,
+ * then prove it still reflects the real command classes when the WP-CLI base is
+ * available.
  */
-echo "\nCommandIntrospector against real command classes:\n";
+echo "\nCommandIntrospector runtime safety:\n";
 
 if (! defined('ABSPATH') ) {
     define('ABSPATH', __DIR__ . '/');
+}
+
+require_once __DIR__ . '/../inc/Runtime/CommandIntrospector.php';
+
+$base_autoloaded    = false;
+$command_autoloaded = false;
+$base_autoloader    = static function ( string $class ) use ( &$base_autoloaded ): void {
+    if ( 'DataMachine\\Cli\\BaseCommand' !== $class ) {
+        return;
+    }
+
+    $base_autoloaded = true;
+    eval('namespace DataMachine\\Cli; class BaseCommand extends \\WP_CLI_Command {}');
+};
+$command_autoloader = static function ( string $class ) use ( &$command_autoloaded ): void {
+    if ( 'DataMachineCode\\Cli\\Commands\\WorkspaceCommand' !== $class ) {
+        return;
+    }
+
+    $command_autoloaded = true;
+    require_once __DIR__ . '/../inc/Cli/Commands/WorkspaceCommand.php';
+};
+
+spl_autoload_register($base_autoloader);
+spl_autoload_register($command_autoloader);
+
+$workspace_fallback = \DataMachineCode\Runtime\CommandIntrospector::pipe_list(
+    '\\DataMachineCode\\Cli\\Commands\\WorkspaceCommand',
+    'fallback-workspace'
+);
+
+if (! function_exists('apply_filters') ) {
+    function apply_filters( string $hook, $value ) {
+        return $value;
+    }
+}
+if (! function_exists('is_multisite') ) {
+    function is_multisite(): bool {
+        return false;
+    }
+}
+if (! function_exists('is_wp_error') ) {
+    function is_wp_error( $value ): bool {
+        return false;
+    }
+}
+if (! class_exists('DataMachine\\Engine\\AI\\MemoryFileRegistry') ) {
+    eval('namespace DataMachine\\Engine\\AI; class MemoryFileRegistry { public const LAYER_SHARED = "shared"; public static array $files = array(); public static function register(...$args): void { self::$files[] = $args; } }');
+}
+if (! class_exists('DataMachine\\Engine\\AI\\SectionRegistry') ) {
+    eval('namespace DataMachine\\Engine\\AI; class SectionRegistry { public static array $sections = array(); public static function register(...$args): void { self::$sections[] = $args; } }');
+}
+
+require_once __DIR__ . '/../inc/Runtime/AgentsMdSections.php';
+\DataMachineCode\Runtime\AgentsMdSections::register();
+
+$datamachine_section = '';
+foreach ( \DataMachine\Engine\AI\SectionRegistry::$sections as $registered_section ) {
+    if ( isset($registered_section[1]) && 'datamachine' === $registered_section[1] && is_callable($registered_section[3] ?? null) ) {
+        $datamachine_section = (string) call_user_func($registered_section[3]);
+        break;
+    }
+}
+
+spl_autoload_unregister($base_autoloader);
+spl_autoload_unregister($command_autoloader);
+
+$assert(
+    'workspace command fallback is used when WP_CLI_Command is unavailable',
+    'fallback-workspace' === $workspace_fallback
+);
+$assert(
+    'WP-CLI-only BaseCommand is not autoloaded without WP_CLI_Command',
+    false === $base_autoloaded
+);
+$assert(
+    'WP-CLI-only command class is not autoloaded without WP_CLI_Command',
+    false === $command_autoloaded
+);
+$assert(
+    'Data Machine AGENTS.md section composes without WP_CLI_Command',
+    str_contains($datamachine_section, 'datamachine-code workspace adopt|clone|list|show|path|hygiene|remove|worktree|read|write|grep|edit|git|patch|ls')
+);
+
+echo "\nCommandIntrospector against real command classes:\n";
+
+if (! class_exists('WP_CLI_Command') ) {
+    eval('class WP_CLI_Command {}');
 }
 if (! class_exists('WP_CLI') ) {
     eval('class WP_CLI {}');
 }
 if (! class_exists('DataMachine\\Cli\\BaseCommand') ) {
-    eval('namespace DataMachine\\Cli; class BaseCommand {}');
+    eval('namespace DataMachine\\Cli; class BaseCommand extends \\WP_CLI_Command {}');
 }
 
-require_once __DIR__ . '/../inc/Runtime/CommandIntrospector.php';
 require_once __DIR__ . '/../inc/Cli/Commands/WorkspaceCommand.php';
 require_once __DIR__ . '/../inc/Cli/Commands/GitHubCommand.php';
 require_once __DIR__ . '/../inc/Cli/Commands/GitSyncCommand.php';
