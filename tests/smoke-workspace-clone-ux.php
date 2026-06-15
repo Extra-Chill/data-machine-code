@@ -87,8 +87,11 @@ namespace {
         }
     }
 
-    include __DIR__ . '/../inc/Support/GitRunner.php';
-    include __DIR__ . '/../inc/Workspace/Workspace.php';
+	include __DIR__ . '/../inc/Support/GitRunner.php';
+	include __DIR__ . '/../inc/Support/PathSecurity.php';
+	include __DIR__ . '/../inc/Workspace/WorkspaceAliasResolver.php';
+	include __DIR__ . '/../inc/Workspace/Workspace.php';
+	include __DIR__ . '/../inc/Workspace/WorkspaceReader.php';
 
     $failures = 0;
     $total    = 0;
@@ -201,7 +204,7 @@ namespace {
         $assert(is_wp_error($duplicate), 'same remote clone reports an error');
         $assert_same('repo_remote_exists', $duplicate->get_error_code(), 'same remote clone uses repo_remote_exists code');
         $assert(str_contains($duplicate->get_error_message(), 'fixture-clone'), 'same remote clone names the existing primary');
-        $assert(str_contains($duplicate->get_error_message(), 'workspace git pull fixture-clone --allow-primary-mutation'), 'same remote clone includes refresh command');
+		$assert(str_contains($duplicate->get_error_message(), 'workspace git pull fixture-clone --allow-primary-refresh'), 'same remote clone includes refresh command');
         $assert(str_contains($duplicate->get_error_message(), 'workspace worktree add fixture-clone <branch>'), 'same remote clone includes worktree command');
         $exact_duplicate = $workspace_object->clone_repo($upstream);
         $assert(is_wp_error($exact_duplicate), 'exact same remote clone reports an error');
@@ -222,7 +225,15 @@ namespace {
         $assert(! is_wp_error($show), 'show_repo succeeds for primary');
         $assert_same('stale', $show['primary_freshness']['status'] ?? null, 'primary freshness reports stale status');
         $assert_same(1, $show['primary_freshness']['behind'] ?? null, 'primary freshness reports behind count');
-        $assert(str_contains($show['primary_freshness']['suggested_command'] ?? '', 'workspace git pull fixture-clone --allow-primary-mutation'), 'primary freshness includes refresh command');
+		$assert(str_contains($show['primary_freshness']['suggested_command'] ?? '', 'workspace git pull fixture-clone --allow-primary-refresh'), 'primary freshness includes refresh command');
+
+		echo "\n[3c] Stale primary reads require explicit opt-in\n";
+		$reader       = new \DataMachineCode\Workspace\WorkspaceReader($workspace_object);
+		$blocked_read = $reader->read_file('fixture-clone', 'README.md');
+		$assert(is_wp_error($blocked_read), 'stale primary read is blocked by default');
+		$assert_same('stale_primary_read_blocked', is_wp_error($blocked_read) ? $blocked_read->get_error_code() : '', 'stale primary read uses expected error code');
+		$allowed_read = $reader->read_file('fixture-clone', 'README.md', \DataMachineCode\Workspace\Workspace::MAX_READ_SIZE, null, null, true);
+		$assert(! is_wp_error($allowed_read), 'stale primary read succeeds with explicit opt-in');
 
         $remote_url = getenv('REMOTE_CLONE_URL');
         if (is_string($remote_url) && '' !== trim($remote_url) ) {

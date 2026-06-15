@@ -511,6 +511,7 @@ trait WorkspaceCoreUtilities {
 			$url = 'ssh://' . $matches[2] . '/' . $matches[3];
 		}
 
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.parse_url_parse_url -- wp_parse_url() is unavailable in pure-PHP smoke tests.
 		$parts = function_exists('wp_parse_url') ? wp_parse_url($url) : parse_url($url);
 		if ( is_array($parts) && ! empty($parts['host']) ) {
 			$host = strtolower( (string) $parts['host']);
@@ -592,21 +593,21 @@ trait WorkspaceCoreUtilities {
 			);
 		}
 
-		$header   = strtok((string) ( $status_result['output'] ?? '' ), "\n");
+		$header   = strtok( (string) ( $status_result['output'] ?? '' ), "\n");
 		$header   = false === $header ? '' : trim($header);
 		$branch   = null;
 		$detached = false;
-		$upstream      = null;
+		$upstream = null;
 		$behind   = 0;
 		$ahead    = 0;
 		$status   = 'unknown';
 
 		if ( preg_match('/^## HEAD \(no branch\)/', $header) ) {
 			$detached = true;
-			$status = 'detached';
+			$status   = 'detached';
 		} elseif ( preg_match('/^## (.+?)(?:\.\.\.([^\s\[]+))?(?: \[(.+)\])?$/', $header, $matches) ) {
-			$branch   = trim((string) $matches[1]);
-			$upstream = isset($matches[2]) && '' !== $matches[2] ? trim((string) $matches[2]) : null;
+			$branch     = trim( (string) $matches[1]);
+			$upstream   = isset($matches[2]) && '' !== $matches[2] ? trim( (string) $matches[2]) : null;
 			$divergence = isset($matches[3]) ? (string) $matches[3] : '';
 
 			if ( preg_match('/behind (\d+)/', $divergence, $behind_match) ) {
@@ -654,7 +655,55 @@ trait WorkspaceCoreUtilities {
 	 * @return string WP-CLI command.
 	 */
 	private function primary_refresh_command( string $handle ): string {
-		return sprintf('wp datamachine-code workspace git pull %s --allow-primary-mutation', $handle);
+		return sprintf('wp datamachine-code workspace git pull %s --allow-primary-refresh', $handle);
+	}
+
+	/**
+	 * Guard reads from stale or otherwise unsafe primary checkouts.
+	 *
+	 * @param  string $handle              Workspace handle.
+	 * @param  bool   $allow_stale_primary Whether stale primary reads are explicitly allowed.
+	 * @return true|\WP_Error
+	 */
+	public function ensure_primary_read_allowed( string $handle, bool $allow_stale_primary = false ): true|\WP_Error {
+		$parsed = $this->parse_handle($handle);
+		if ( $parsed['is_worktree'] || $allow_stale_primary ) {
+			return true;
+		}
+
+		$repo_path = $this->workspace_path . '/' . $parsed['dir_name'];
+		if ( ! is_dir($repo_path) ) {
+			return true;
+		}
+
+		$freshness = $this->build_primary_freshness_report($repo_path, $parsed['dir_name']);
+		if ( ! is_array($freshness) ) {
+			return true;
+		}
+
+		$status = (string) ( $freshness['status'] ?? 'unknown' );
+		if ( ! in_array($status, array( 'stale', 'diverged', 'detached', 'unknown', 'no_upstream', 'ahead' ), true) ) {
+			return true;
+		}
+
+		$behind_value = $freshness['behind'] ?? null;
+		$ahead_value  = $freshness['ahead'] ?? null;
+
+		return new \WP_Error(
+			'stale_primary_read_blocked',
+			sprintf(
+				'Primary checkout "%s" is %s and may not reflect the current remote. Refresh with `%s`, read a fresh worktree, or pass allow_stale_primary=true to opt in. Behind: %s. Ahead: %s.',
+				$parsed['repo'],
+				$status,
+				(string) ( $freshness['suggested_command'] ?? $this->primary_refresh_command($parsed['dir_name']) ),
+				null === $behind_value ? '-' : (string) $behind_value,
+				null === $ahead_value ? '-' : (string) $ahead_value
+			),
+			array(
+				'status'            => 409,
+				'primary_freshness' => $freshness,
+			)
+		);
 	}
 
 	/**

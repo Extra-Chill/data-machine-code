@@ -1910,11 +1910,14 @@ class WorkspaceCommand extends BaseCommand {
 	 * default: 1048576
 	 * ---
 	 *
-	 * [--offset=<line>]
-	 * : Line number to start reading from (1-indexed).
-	 *
-	 * [--limit=<lines>]
-	 * : Maximum number of lines to return.
+		 * [--offset=<line>]
+		 * : Line number to start reading from (1-indexed).
+		 *
+		 * [--limit=<lines>]
+		 * : Maximum number of lines to return.
+		 *
+		 * [--allow-stale-primary]
+		 * : Explicitly read from a stale, diverged, detached, or otherwise unsafe primary checkout.
 	 *
 	 * ## EXAMPLES
 	 *
@@ -1958,6 +1961,10 @@ class WorkspaceCommand extends BaseCommand {
 			$input['limit'] = (int) $assoc_args['limit'];
 		}
 
+		if ( ! empty($assoc_args['allow-stale-primary']) ) {
+			$input['allow_stale_primary'] = true;
+		}
+
 		$result = $ability->execute($input);
 
 		if ( is_wp_error($result) ) {
@@ -1980,12 +1987,15 @@ class WorkspaceCommand extends BaseCommand {
 	 * <repo>
 	 * : Repository directory name.
 	 *
-	 * [<path>]
-	 * : Relative directory path within the repo (defaults to root).
-	 *
-	 * [--format=<format>]
-	 * : Output format.
-	 * ---
+		 * [<path>]
+		 * : Relative directory path within the repo (defaults to root).
+		 *
+		 * [--allow-stale-primary]
+		 * : Explicitly list a stale, diverged, detached, or otherwise unsafe primary checkout.
+		 *
+		 * [--format=<format>]
+		 * : Output format.
+		 * ---
 	 * default: table
 	 * options:
 	 *   - table
@@ -2023,6 +2033,10 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( ! empty($args[1]) ) {
 			$input['path'] = $args[1];
+		}
+
+		if ( ! empty($assoc_args['allow-stale-primary']) ) {
+			$input['allow_stale_primary'] = true;
 		}
 
 		$result = $ability->execute($input);
@@ -2079,15 +2093,18 @@ class WorkspaceCommand extends BaseCommand {
 	 * default: 100
 	 * ---
 	 *
-	 * [--context-lines=<count>]
-	 * : Number of surrounding lines to include for each match.
-	 * ---
-	 * default: 0
-	 * ---
-	 *
-	 * [--format=<format>]
-	 * : Output format.
-	 * ---
+		 * [--context-lines=<count>]
+		 * : Number of surrounding lines to include for each match.
+		 * ---
+		 * default: 0
+		 * ---
+		 *
+		 * [--allow-stale-primary]
+		 * : Explicitly grep a stale, diverged, detached, or otherwise unsafe primary checkout.
+		 *
+		 * [--format=<format>]
+		 * : Output format.
+		 * ---
 	 * default: table
 	 * options:
 	 *   - table
@@ -2133,6 +2150,10 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( isset($assoc_args['context-lines']) ) {
 			$input['context_lines'] = (int) $assoc_args['context-lines'];
+		}
+
+		if ( ! empty($assoc_args['allow-stale-primary']) ) {
+			$input['allow_stale_primary'] = true;
 		}
 
 		$result = $ability->execute($input);
@@ -2601,11 +2622,17 @@ class WorkspaceCommand extends BaseCommand {
 	 * : Relative path (repeatable) for add/diff operations. Named `--rel`
 	 *   to avoid colliding with WP-CLI's documented global `--path` flag.
 	 *
-	 * [--allow-dirty]
-	 * : Allow pull with dirty working tree.
-	 *
-	 * [--allow-primary-mutation]
-	 * : Permit mutating ops (pull/add/commit/push) on the primary checkout. Default-deny — use a worktree handle (`<repo>@<branch-slug>`) instead whenever possible.
+		 * [--allow-dirty]
+		 * : Allow pull with dirty working tree.
+		 *
+		 * [--allow-primary-refresh]
+		 * : Permit safe primary refresh with `git pull --ff-only`.
+		 *
+		 * [--allow-primary-mutation]
+		 * : Legacy alias for `--allow-primary-refresh` on `git pull`, and for non-dangerous primary file/index mutations. Does not permit primary commit, push, reset, or rebase.
+		 *
+		 * [--allow-dangerous-primary-mutation]
+		 * : Permit primary commit, push, reset, or rebase. Use only for an explicitly approved primary mutation.
 	 *
 	 * [--remote=<remote>]
 	 * : Remote name for pull/push (default: origin).
@@ -2687,8 +2714,11 @@ class WorkspaceCommand extends BaseCommand {
 
 		$input = array( 'name' => $repo );
 
-		// Mutating ops accept --allow-primary-mutation to operate on a primary checkout.
-		if ( in_array($operation, array( 'pull', 'add', 'commit', 'push', 'rebase', 'reset', 'pr-rebase' ), true) ) {
+		if ( 'pull' === $operation ) {
+			$input['allow_primary_refresh'] = ! empty($assoc_args['allow-primary-refresh']) || ! empty($assoc_args['allow-primary-mutation']);
+		} elseif ( in_array($operation, array( 'commit', 'push', 'rebase', 'reset', 'pr-rebase' ), true) ) {
+			$input['allow_dangerous_primary_mutation'] = ! empty($assoc_args['allow-dangerous-primary-mutation']);
+		} elseif ( in_array($operation, array( 'add' ), true) ) {
 			$input['allow_primary_mutation'] = ! empty($assoc_args['allow-primary-mutation']);
 		}
 

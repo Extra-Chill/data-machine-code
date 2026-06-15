@@ -93,7 +93,7 @@ trait WorkspaceGitOperations {
 			return $policy_check;
 		}
 
-		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation);
+		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation, 'Pass allow_primary_refresh=true to refresh it');
 		if ( is_wp_error($primary_check) ) {
 			return $primary_check;
 		}
@@ -513,7 +513,7 @@ trait WorkspaceGitOperations {
 			return $policy_check;
 		}
 
-		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation);
+		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation, 'Pass allow_dangerous_primary_mutation=true to commit on it');
 		if ( is_wp_error($primary_check) ) {
 			return $primary_check;
 		}
@@ -595,7 +595,7 @@ trait WorkspaceGitOperations {
 			return $policy_check;
 		}
 
-		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation);
+		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation, 'Pass allow_dangerous_primary_mutation=true to push from it');
 		if ( is_wp_error($primary_check) ) {
 			return $primary_check;
 		}
@@ -718,7 +718,7 @@ trait WorkspaceGitOperations {
 			return $policy_check;
 		}
 
-		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation);
+		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation, 'Pass allow_dangerous_primary_mutation=true to rebase it');
 		if ( is_wp_error($primary_check) ) {
 			return $primary_check;
 		}
@@ -792,7 +792,7 @@ trait WorkspaceGitOperations {
 			return $policy_check;
 		}
 
-		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation);
+		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation, 'Pass allow_dangerous_primary_mutation=true to reset it');
 		if ( is_wp_error($primary_check) ) {
 			return $primary_check;
 		}
@@ -889,7 +889,7 @@ trait WorkspaceGitOperations {
 			return $policy_check;
 		}
 
-		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation);
+		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation, 'Pass allow_dangerous_primary_mutation=true to rebase it');
 		if ( is_wp_error($primary_check) ) {
 			return $primary_check;
 		}
@@ -1163,7 +1163,7 @@ trait WorkspaceGitOperations {
 	 * @param  bool                                                     $allow
 	 * @return true|\WP_Error
 	 */
-	private function ensure_primary_mutation_allowed( array $parsed, bool $allow ): true|\WP_Error {
+	private function ensure_primary_mutation_allowed( array $parsed, bool $allow, string $allow_guidance = 'Pass allow_primary_mutation=true to operate on it' ): true|\WP_Error {
 		if ( $parsed['is_worktree'] ) {
 			return true;
 		}
@@ -1173,8 +1173,9 @@ trait WorkspaceGitOperations {
 		return new \WP_Error(
 			'primary_mutation_blocked',
 			sprintf(
-				'Primary checkout "%s" is read-only by default. Pass allow_primary_mutation=true to operate on it, or use a worktree handle (e.g. %s@<branch-slug>).',
+				'Primary checkout "%s" is read-only by default. %s, or use a worktree handle (e.g. %s@<branch-slug>).',
 				$parsed['repo'],
+				$allow_guidance,
 				$parsed['repo']
 			),
 			array( 'status' => 403 )
