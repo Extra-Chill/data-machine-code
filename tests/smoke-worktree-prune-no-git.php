@@ -179,7 +179,9 @@ namespace {
 
 	mkdir(DATAMACHINE_WORKSPACE_PATH . '/demo/.git', 0777, true);
 	mkdir(DATAMACHINE_WORKSPACE_PATH . '/demo@stale-marker', 0777, true);
+	mkdir(DATAMACHINE_WORKSPACE_PATH . '/demo@cleanup-stale-marker', 0777, true);
 	file_put_contents(DATAMACHINE_WORKSPACE_PATH . '/demo@stale-marker/.git', 'gitdir: ' . DATAMACHINE_WORKSPACE_PATH . '/demo/.git/worktrees/demo@stale-marker' . "\n");
+	file_put_contents(DATAMACHINE_WORKSPACE_PATH . '/demo@cleanup-stale-marker/.git', 'gitdir: ' . DATAMACHINE_WORKSPACE_PATH . '/demo/.git/worktrees/demo@cleanup-stale-marker' . "\n");
 
 	$GLOBALS['wpdb'] = new DatamachineCodePruneFakeWpdb();
 	$GLOBALS['wpdb']->rows['demo@missing-path'] = array(
@@ -206,6 +208,22 @@ namespace {
 		'metadata'      => array(),
 		'updated_at'    => '2026-06-13 00:00:00',
 	);
+	$GLOBALS['wpdb']->rows['demo@cleanup-stale-marker'] = array(
+		'handle'        => 'demo@cleanup-stale-marker',
+		'repo'          => 'demo',
+		'branch'        => 'cleanup-stale-marker',
+		'path'          => DATAMACHINE_WORKSPACE_PATH . '/demo@cleanup-stale-marker',
+		'primary_path'  => DATAMACHINE_WORKSPACE_PATH . '/demo',
+		'is_primary'    => 0,
+		'is_worktree'   => 1,
+		'missing_path'     => 0,
+		'lifecycle_state'  => 'cleanup_eligible',
+		'cleanup_signal'   => 'cleanup_eligible',
+		'metadata'         => array(
+			'lifecycle_state' => 'cleanup_eligible',
+		),
+		'updated_at'       => '2026-06-13 00:00:00',
+	);
 
 	require __DIR__ . '/../inc/Support/RuntimeCapabilities.php';
 	require __DIR__ . '/../inc/Support/ProcessRunner.php';
@@ -225,7 +243,9 @@ namespace {
 	$assert('prune returns host git command', ! is_wp_error($result) && str_contains((string) ( $result['next_commands'][0] ?? '' ), 'git -C'));
 	$assert('inventory refresh still runs', ! is_wp_error($result) && isset($result['inventory']['summary']));
 	$assert('prune removes missing-path inventory artifact', ! is_wp_error($result) && 'demo@missing-path' === ( $result['stale_inventory'][0]['handle'] ?? '' ) && ! isset($GLOBALS['wpdb']->rows['demo@missing-path']));
+	$assert('prune repairs cleanup-eligible stale marker path', ! is_wp_error($result) && 'demo@cleanup-stale-marker' === ( $result['stale_marker_repaired'][0]['handle'] ?? '' ) && ! isset($GLOBALS['wpdb']->rows['demo@cleanup-stale-marker']) && ! is_dir(DATAMACHINE_WORKSPACE_PATH . '/demo@cleanup-stale-marker'));
 	$assert('prune reports path-present stale marker blocker', ! is_wp_error($result) && 'stale_worktree_marker' === ( $result['stale_marker_blockers'][0]['reason_code'] ?? '' ));
+	$assert('stale marker blocker returns DMC-owned removal command', ! is_wp_error($result) && str_contains((string) ( $result['stale_marker_blockers'][0]['next_command'] ?? '' ), 'workspace remove'));
 	$assert('prune leaves path-present stale marker row for review', isset($GLOBALS['wpdb']->rows['demo@stale-marker']));
 
     putenv(false === $old_path ? 'PATH' : 'PATH=' . $old_path);
