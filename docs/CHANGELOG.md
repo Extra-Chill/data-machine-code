@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.126] - 2026-06-15
+
+### Fixed
+- satisfy workspace guard lint
+- separate safe primary refresh from mutations
+
 ## [0.47.125] - 2026-06-15
 
 ### Fixed
