@@ -408,6 +408,22 @@ class CleanupRunService {
 			);
 
 			if ( 0 === $run_applied ) {
+				$blocked_summary = (array) ( $apply['remaining_work_summary']['skipped_by_reason'] ?? array() );
+				if ( ( $total_applied > 0 || $total_bytes > 0 ) && $run_skipped > 0 ) {
+					return $this->until_empty_result(
+						'completed_with_skips',
+						$passes,
+						$total_bytes,
+						$total_applied,
+						$total_skipped,
+						array(
+							'run_id'                    => $run_id,
+							'remaining_blocked_count'   => $run_skipped,
+							'remaining_blocked_reasons' => $blocked_summary,
+						)
+					);
+				}
+
 				return $this->until_empty_result('no_progress', $passes, $total_bytes, $total_applied, $total_skipped, array( 'run_id' => $run_id ));
 			}
 		}
@@ -440,7 +456,7 @@ class CleanupRunService {
 	 */
 	private function until_empty_result( string $state, array $passes, int $bytes, int $applied, int $skipped, array $extra = array() ): array {
 		return array(
-			'success'         => in_array($state, array( 'completed', 'budget_exhausted', 'max_passes_reached' ), true),
+			'success'         => in_array($state, array( 'completed', 'completed_with_skips', 'budget_exhausted', 'max_passes_reached' ), true),
 			'state'           => $state,
 			'status'          => $state,
 			'passes'          => $passes,

@@ -264,6 +264,66 @@ class DataMachineCodeCleanupUntilEmptyWorkspace extends DataMachineCodeCleanupRu
     }
 }
 
+class DataMachineCodeCleanupUntilEmptyBlockedWorkspace extends DataMachineCodeCleanupUntilEmptyWorkspace
+{
+    public function workspace_cleanup_plan( array $opts = array() ): array|WP_Error
+    {
+        ++$this->plan_calls;
+        if ($this->plan_calls > 3 ) {
+            return array(
+            'success' => true,
+            'mode'    => 'cleanup_plan',
+            'plan_id' => 'cleanup-plan-empty-' . $this->plan_calls,
+            'rows'    => array( 'artifact_cleanup' => array(), 'worktree_removal' => array(), 'resolver' => array() ),
+            'summary' => array( 'total_rows' => 0, 'recommended_commands' => array() ),
+            );
+        }
+
+        $blocked = 3 === $this->plan_calls;
+        return array(
+        'success' => true,
+        'mode'    => 'cleanup_plan',
+        'plan_id' => 'cleanup-plan-until-blocked-' . $this->plan_calls,
+        'rows'    => array(
+        'artifact_cleanup' => array(
+        array(
+        'handle'              => $blocked ? 'demo@blocked-artifact' : 'demo@artifact-' . $this->plan_calls,
+        'repo'                => 'demo',
+        'branch'              => 'main',
+        'path'                => '/tmp/demo@artifact-' . $this->plan_calls,
+        'row_type'            => 'artifact_cleanup',
+        'reason_code'         => 'profile_artifact',
+        'artifact_size_bytes' => 10,
+        'artifacts'           => array( array( 'path' => 'target', 'size_bytes' => 10 ) ),
+        ),
+        ),
+        'worktree_removal' => array(),
+        'resolver'         => array(),
+        ),
+        'summary' => array( 'total_rows' => 1, 'recommended_commands' => array() ),
+        );
+    }
+
+    public function worktree_cleanup_artifacts( array $opts = array() ): array|WP_Error
+    {
+        $this->artifact_calls[] = $opts;
+        $removed = array();
+        $skipped = array();
+        foreach ( (array) ( $opts['apply_plan']['candidates'] ?? array() ) as $candidate ) {
+            if (is_array($candidate) && 'demo@blocked-artifact' === (string) ( $candidate['handle'] ?? '' ) ) {
+                $skipped[] = array(
+                'handle'      => 'demo@blocked-artifact',
+                'reason_code' => 'dirty_worktree',
+                'reason'      => 'working tree is dirty',
+                );
+                continue;
+            }
+            $removed[] = is_array($candidate) ? $candidate : array();
+        }
+        return array( 'removed' => $removed, 'skipped' => $skipped, 'summary' => array() );
+    }
+}
+
 function datamachine_code_cleanup_run_assert( bool $condition, string $message ): void
 {
     if (! $condition ) {
@@ -384,5 +444,17 @@ $repeat_result = $repeat_service->until_empty(array( 'mode' => 'artifacts', 'lim
 datamachine_code_cleanup_run_assert('repeated_candidates' === (string) ( $repeat_result['state'] ?? '' ), 'until-empty stops when candidate fingerprint repeats');
 datamachine_code_cleanup_run_assert(false === (bool) ( $repeat_result['success'] ?? true ), 'repeated candidate loop is not reported as clean success');
 datamachine_code_cleanup_run_assert(1 === (int) ( $repeat_result['pass_count'] ?? 0 ), 'repeat detection stops before applying the repeated pass');
+
+$GLOBALS['wpdb'] = new DataMachineCodeCleanupRunFakeWpdb();
+$blocked_workspace = new DataMachineCodeCleanupUntilEmptyBlockedWorkspace();
+$blocked_service = new \DataMachineCode\Workspace\CleanupRunService(new \DataMachineCode\Storage\CleanupRunRepository(), $blocked_workspace);
+$blocked_result = $blocked_service->until_empty(array( 'mode' => 'artifacts', 'limit' => 1, 'max_passes' => 5 ));
+datamachine_code_cleanup_run_assert('completed_with_skips' === (string) ( $blocked_result['state'] ?? '' ), 'until-empty reports completed_with_skips after earlier progress and final blocked skips');
+datamachine_code_cleanup_run_assert(true === (bool) ( $blocked_result['success'] ?? false ), 'completed_with_skips is reported as top-level success');
+datamachine_code_cleanup_run_assert(3 === (int) ( $blocked_result['pass_count'] ?? 0 ), 'completed_with_skips includes the blocked final pass');
+datamachine_code_cleanup_run_assert(2 === (int) ( $blocked_result['applied'] ?? 0 ), 'completed_with_skips preserves cumulative applied rows');
+datamachine_code_cleanup_run_assert(20 === (int) ( $blocked_result['bytes_reclaimed'] ?? 0 ), 'completed_with_skips preserves cumulative reclaimed bytes');
+datamachine_code_cleanup_run_assert(1 === (int) ( $blocked_result['remaining_blocked_count'] ?? 0 ), 'completed_with_skips reports remaining blocked count');
+datamachine_code_cleanup_run_assert(1 === (int) ( $blocked_result['remaining_blocked_reasons']['dirty_worktree']['count'] ?? 0 ), 'completed_with_skips reports blocked reasons from final skipped rows');
 
 echo "DB-backed cleanup run storage smoke passed.\n";
