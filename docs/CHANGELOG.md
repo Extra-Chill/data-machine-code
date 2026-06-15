@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.130] - 2026-06-15
+
+### Changed
+- Add cleanup evidence summary output
+
+### Fixed
+- Fix cleanup summary lint
+- Fix stale lock guidance lint
+- Fix stale lock cleanup guidance
+
 ## [0.47.129] - 2026-06-15
 
 ### Fixed
