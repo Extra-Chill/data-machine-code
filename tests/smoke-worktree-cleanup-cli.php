@@ -1896,11 +1896,28 @@ namespace {
 	WP_CLI::$successes = array();
 	$command->worktree(array( 'bounded-cleanup-eligible-apply' ), array( 'limit' => 25, 'remove-timeout' => 120, 'format' => 'json' ));
 	datamachine_code_cleanup_assert(120 === (int) ( $bounded_apply_ability->last_input['remove_timeout'] ?? 0 ), 'bounded cleanup apply forwards remove-timeout');
+	$bounded_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+	datamachine_code_cleanup_assert(JSON_ERROR_NONE === json_last_error(), 'bounded cleanup compact JSON parses cleanly');
+	datamachine_code_cleanup_assert(32 === (int) ( $bounded_json['summary']['skipped'] ?? 0 ), 'bounded cleanup compact JSON reports full skipped count');
+	datamachine_code_cleanup_assert(! isset($bounded_json['skipped']), 'bounded cleanup compact JSON omits full skipped rows by default');
+	datamachine_code_cleanup_assert(15 === (int) ( $bounded_json['blocker_buckets']['active_no_signal']['count'] ?? 0 ), 'bounded cleanup compact JSON buckets active/no-signal blockers');
+	datamachine_code_cleanup_assert('repo@blocked-0' === (string) ( $bounded_json['blocker_buckets']['active_no_signal']['examples'][0]['handle'] ?? '' ), 'bounded cleanup compact JSON includes bounded blocker examples');
+	datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($bounded_json['next_actions'] ?? array()), 'active-no-signal-report'), 'bounded cleanup compact JSON includes actionable next actions');
+	datamachine_code_cleanup_assert(! isset($bounded_json['continuation']['remaining_handles']), 'bounded cleanup compact JSON omits full remaining handle lists');
+	datamachine_code_cleanup_assert(32 === (int) ( $bounded_json['continuation']['remaining_handles_count'] ?? 0 ), 'bounded cleanup compact JSON keeps remaining handle count');
+	datamachine_code_cleanup_assert(10 === count($bounded_json['evidence']['skipped_handles_examples'] ?? array()), 'bounded cleanup compact JSON keeps bounded skipped handle examples');
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();
 	$command->worktree(array( 'bounded-cleanup-eligible-apply' ), array( 'limit' => 25, 'verbose' => true ));
 	datamachine_code_cleanup_assert(in_array('table:32:handle,reason_code,reason', WP_CLI::$logs, true), 'bounded cleanup apply verbose output lists skipped rows');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree(array( 'bounded-cleanup-eligible-apply' ), array( 'limit' => 25, 'verbose' => true, 'format' => 'json' ));
+	$bounded_verbose_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+	datamachine_code_cleanup_assert(32 === count($bounded_verbose_json['skipped'] ?? array()), 'bounded cleanup verbose JSON preserves full skipped rows');
+	datamachine_code_cleanup_assert(32 === count($bounded_verbose_json['pagination']['remaining_handles'] ?? array()), 'bounded cleanup verbose JSON preserves full remaining handles');
 	$bounded_apply_ability->extra_skipped = 0;
 
 	echo "\n[8a] active/no-signal apply forwards bounded continuation flags\n";
