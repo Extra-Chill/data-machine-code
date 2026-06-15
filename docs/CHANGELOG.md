@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.129] - 2026-06-15
+
+### Fixed
+- Fix cleanup until-empty blocked skip success
+
 ## [0.47.128] - 2026-06-15
 
 ### Changed
