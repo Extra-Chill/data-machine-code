@@ -244,37 +244,56 @@ add_filter(
  * enforces that categories are only registered during this action.
  */
 function datamachine_code_register_ability_categories() {
-	wp_register_ability_category(
-		'datamachine-code-workspace',
-		array(
-			'label'       => __('Code Workspace', 'data-machine-code'),
-			'description' => __('Git workspace management — clone, read, write, edit, and git operations.', 'data-machine-code'),
-		)
-	);
+	if ( ! function_exists( 'wp_register_ability_category' ) ) {
+		return;
+	}
 
-	wp_register_ability_category(
-		'datamachine-code-github',
-		array(
-			'label'       => __('GitHub', 'data-machine-code'),
-			'description' => __('GitHub issue, pull request, and repository operations.', 'data-machine-code'),
-		)
-	);
+	// Core's wp_abilities_api_categories_init action can fire more than once per
+	// request on multisite; guard each registration so a repeat fire is a clean
+	// no-op instead of tripping a _doing_it_wrong "already registered" notice.
+	$has_category = function ( string $slug ): bool {
+		return function_exists( 'wp_has_ability_category' ) && wp_has_ability_category( $slug );
+	};
 
-	wp_register_ability_category(
-		'datamachine-code-code-task',
-		array(
-			'label'       => __('Code Tasks', 'data-machine-code'),
-			'description' => __('Create isolated coding tasks from structured source evidence packets.', 'data-machine-code'),
-		)
-	);
+	if ( ! $has_category( 'datamachine-code-workspace' ) ) {
+		wp_register_ability_category(
+			'datamachine-code-workspace',
+			array(
+				'label'       => __('Code Workspace', 'data-machine-code'),
+				'description' => __('Git workspace management — clone, read, write, edit, and git operations.', 'data-machine-code'),
+			)
+		);
+	}
 
-	wp_register_ability_category(
-		'datamachine-code-runtime',
-		array(
-			'label'       => __('WordPress Runtime', 'data-machine-code'),
-			'description' => __('Read-only inspection of the live WordPress runtime and allowlisted source roots.', 'data-machine-code'),
-		)
-	);
+	if ( ! $has_category( 'datamachine-code-github' ) ) {
+		wp_register_ability_category(
+			'datamachine-code-github',
+			array(
+				'label'       => __('GitHub', 'data-machine-code'),
+				'description' => __('GitHub issue, pull request, and repository operations.', 'data-machine-code'),
+			)
+		);
+	}
+
+	if ( ! $has_category( 'datamachine-code-code-task' ) ) {
+		wp_register_ability_category(
+			'datamachine-code-code-task',
+			array(
+				'label'       => __('Code Tasks', 'data-machine-code'),
+				'description' => __('Create isolated coding tasks from structured source evidence packets.', 'data-machine-code'),
+			)
+		);
+	}
+
+	if ( ! $has_category( 'datamachine-code-runtime' ) ) {
+		wp_register_ability_category(
+			'datamachine-code-runtime',
+			array(
+				'label'       => __('WordPress Runtime', 'data-machine-code'),
+				'description' => __('Read-only inspection of the live WordPress runtime and allowlisted source roots.', 'data-machine-code'),
+			)
+		);
+	}
 }
 
 /**
