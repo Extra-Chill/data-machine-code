@@ -2559,7 +2559,7 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function readFile( array $input ): array|\WP_Error {
-		$input = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$input     = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
 		$workspace = new Workspace();
 		$reader    = new WorkspaceReader($workspace);
 		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
@@ -2601,7 +2601,7 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function listDirectory( array $input ): array|\WP_Error {
-		$input = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$input     = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
 		$workspace = new Workspace();
 		$reader    = new WorkspaceReader($workspace);
 		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
@@ -2634,7 +2634,7 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function grepFiles( array $input ): array|\WP_Error {
-		$input = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$input     = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
 		$workspace = new Workspace();
 		$reader    = new WorkspaceReader($workspace);
 		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
