@@ -2559,9 +2559,11 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function readFile( array $input ): array|\WP_Error {
-		$input = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
-		if ( RemoteWorkspaceBackend::should_handle() ) {
-			return ( new RemoteWorkspaceBackend() )->read_file(
+		$input     = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$workspace = new Workspace();
+		$reader    = new WorkspaceReader($workspace);
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
+			return $reader->read_file(
 				$input['repo'] ?? '',
 				$input['path'] ?? '',
 				isset($input['max_size']) ? (int) $input['max_size'] : Workspace::MAX_READ_SIZE,
@@ -2570,8 +2572,18 @@ class WorkspaceAbilities {
 			);
 		}
 
-		$workspace = new Workspace();
-		$reader    = new WorkspaceReader($workspace);
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			$result = ( new RemoteWorkspaceBackend() )->read_file(
+				$input['repo'] ?? '',
+				$input['path'] ?? '',
+				isset($input['max_size']) ? (int) $input['max_size'] : Workspace::MAX_READ_SIZE,
+				isset($input['offset']) ? (int) $input['offset'] : null,
+				isset($input['limit']) ? (int) $input['limit'] : null
+			);
+			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
+				return $result;
+			}
+		}
 
 		return $reader->read_file(
 			$input['repo'] ?? '',
@@ -2589,16 +2601,25 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function listDirectory( array $input ): array|\WP_Error {
-		$input = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
-		if ( RemoteWorkspaceBackend::should_handle() ) {
-			return ( new RemoteWorkspaceBackend() )->list_directory(
+		$input     = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$workspace = new Workspace();
+		$reader    = new WorkspaceReader($workspace);
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
+			return $reader->list_directory(
 				$input['repo'] ?? '',
 				$input['path'] ?? null
 			);
 		}
 
-		$workspace = new Workspace();
-		$reader    = new WorkspaceReader($workspace);
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			$result = ( new RemoteWorkspaceBackend() )->list_directory(
+				$input['repo'] ?? '',
+				$input['path'] ?? null
+			);
+			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
+				return $result;
+			}
+		}
 
 		return $reader->list_directory(
 			$input['repo'] ?? '',
@@ -2613,9 +2634,11 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function grepFiles( array $input ): array|\WP_Error {
-		$input = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
-		if ( RemoteWorkspaceBackend::should_handle() ) {
-			return ( new RemoteWorkspaceBackend() )->grep(
+		$input     = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$workspace = new Workspace();
+		$reader    = new WorkspaceReader($workspace);
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
+			return $reader->grep(
 				$input['repo'] ?? '',
 				$input['pattern'] ?? '',
 				$input['path'] ?? null,
@@ -2625,8 +2648,19 @@ class WorkspaceAbilities {
 			);
 		}
 
-		$workspace = new Workspace();
-		$reader    = new WorkspaceReader($workspace);
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			$result = ( new RemoteWorkspaceBackend() )->grep(
+				$input['repo'] ?? '',
+				$input['pattern'] ?? '',
+				$input['path'] ?? null,
+				$input['include'] ?? null,
+				isset($input['max_results']) ? (int) $input['max_results'] : 100,
+				isset($input['context_lines']) ? (int) $input['context_lines'] : 0
+			);
+			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
+				return $result;
+			}
+		}
 
 		return $reader->grep(
 			$input['repo'] ?? '',

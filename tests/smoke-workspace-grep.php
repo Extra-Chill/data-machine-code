@@ -53,6 +53,7 @@ namespace {
     }
 
     include __DIR__ . '/../inc/Support/PathSecurity.php';
+    include __DIR__ . '/../inc/Workspace/WorkspaceAliasResolver.php';
     include __DIR__ . '/../inc/Workspace/Workspace.php';
     include __DIR__ . '/../inc/Workspace/WorkspaceReader.php';
 
