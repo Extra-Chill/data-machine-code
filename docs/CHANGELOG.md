@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.128] - 2026-06-15
+
+### Changed
+- Use neutral mounted runtime bootstrap
+- Add mounted sandbox self-configuration
+
+### Fixed
+- Fix mounted runtime bootstrap lint
+
 ## [0.47.127] - 2026-06-15
 
 ### Fixed
