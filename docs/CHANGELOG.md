@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.125] - 2026-06-15
+
+### Fixed
+- align workspace reader assignments
+- prefer local workspace reads when remote state exists
+
 ## [0.47.124] - 2026-06-14
 
 ### Fixed
