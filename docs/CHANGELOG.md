@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.132] - 2026-06-15
+
+### Changed
+- stop narrating core's datamachine namespace in DMC AGENTS.md section
+
 ## [0.47.131] - 2026-06-15
 
 ### Fixed
