@@ -238,23 +238,23 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'repo'     => array(
+							'repo'                => array(
 								'type'        => 'string',
 								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
-							'path'     => array(
+							'path'                => array(
 								'type'        => 'string',
 								'description' => 'Relative file path within the repo.',
 							),
-							'max_size' => array(
+							'max_size'            => array(
 								'type'        => 'integer',
 								'description' => 'Maximum file size in bytes (default 1 MB).',
 							),
-							'offset'   => array(
+							'offset'              => array(
 								'type'        => 'integer',
 								'description' => 'Line number to start reading from (1-indexed).',
 							),
-							'limit'    => array(
+							'limit'               => array(
 								'type'        => 'integer',
 								'description' => 'Maximum number of lines to return.',
 							),
@@ -291,11 +291,11 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'repo' => array(
+							'repo'                => array(
 								'type'        => 'string',
 								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
-							'path' => array(
+							'path'                => array(
 								'type'        => 'string',
 								'description' => 'Relative directory path within the repo (omit for root).',
 							),
@@ -340,27 +340,27 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'repo'          => array(
+							'repo'                => array(
 								'type'        => 'string',
 								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
-							'pattern'       => array(
+							'pattern'             => array(
 								'type'        => 'string',
 								'description' => 'Regular expression pattern to search for.',
 							),
-							'path'          => array(
+							'path'                => array(
 								'type'        => 'string',
 								'description' => 'Optional relative file or directory path to search within.',
 							),
-							'include'       => array(
+							'include'             => array(
 								'type'        => 'string',
 								'description' => 'Optional glob pattern to limit matching file paths.',
 							),
-							'max_results'   => array(
+							'max_results'         => array(
 								'type'        => 'integer',
 								'description' => 'Maximum number of matches to return (default 100, max 500).',
 							),
-							'context_lines' => array(
+							'context_lines'       => array(
 								'type'        => 'integer',
 								'description' => 'Number of surrounding lines to include for each match (default 0, max 10).',
 							),
@@ -986,11 +986,11 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'name'                   => array(
+							'name'    => array(
 								'type'        => 'string',
 								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
-							'message'                => array(
+							'message' => array(
 								'type'        => 'string',
 								'description' => 'Commit message.',
 							),
@@ -1025,15 +1025,15 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'name'                   => array(
+							'name'             => array(
 								'type'        => 'string',
 								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
-							'remote'                 => array(
+							'remote'           => array(
 								'type'        => 'string',
 								'description' => 'Remote name (default origin).',
 							),
-							'branch'                 => array(
+							'branch'           => array(
 								'type'        => 'string',
 								'description' => 'Branch override.',
 							),
@@ -1041,11 +1041,11 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Permit pushing from a primary checkout. Use only for an explicitly approved primary mutation.',
 							),
-							'force_with_lease'       => array(
+							'force_with_lease' => array(
 								'type'        => 'boolean',
 								'description' => 'Use git push --force-with-lease. Refuses protected base/fixed branches.',
 							),
-							'expected_sha'           => array(
+							'expected_sha'     => array(
 								'type'        => 'string',
 								'description' => 'Optional expected remote branch SHA for --force-with-lease.',
 							),
@@ -1115,23 +1115,23 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'name'                   => array(
+							'name'            => array(
 								'type'        => 'string',
 								'description' => 'Workspace handle: `<repo>` or `<repo>@<branch-slug>`.',
 							),
-							'onto'                   => array(
+							'onto'            => array(
 								'type'        => 'string',
 								'description' => 'Base ref to rebase onto. Defaults to origin/HEAD or origin/<branch>.',
 							),
-							'interactive'            => array(
+							'interactive'     => array(
 								'type'        => 'boolean',
 								'description' => 'Reserved; interactive rebases are not supported.',
 							),
-							'strategy_option'        => array(
+							'strategy_option' => array(
 								'type'        => 'string',
 								'description' => 'Optional git strategy option such as theirs or ours.',
 							),
-							'continue'               => array(
+							'continue'        => array(
 								'type'        => 'boolean',
 								'description' => 'Continue an in-progress rebase after conflicts were resolved and staged.',
 							),
@@ -1158,20 +1158,20 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'name'                   => array(
+							'name'              => array(
 								'type'        => 'string',
 								'description' => 'Workspace handle: `<repo>` or `<repo>@<branch-slug>`.',
 							),
-							'mode'                   => array(
+							'mode'              => array(
 								'type'        => 'string',
 								'enum'        => array( 'soft', 'mixed', 'hard' ),
 								'description' => 'Reset mode. Default mixed.',
 							),
-							'target'                 => array(
+							'target'            => array(
 								'type'        => 'string',
 								'description' => 'Target ref or commit. Defaults to origin/HEAD or origin/<branch>.',
 							),
-							'allow_destructive'      => array(
+							'allow_destructive' => array(
 								'type'        => 'boolean',
 								'description' => 'Required for hard reset.',
 							),
@@ -1241,19 +1241,19 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'name'                   => array(
+							'name'       => array(
 								'type'        => 'string',
 								'description' => 'Workspace handle.',
 							),
-							'pr'                     => array(
+							'pr'         => array(
 								'type'        => array( 'string', 'integer' ),
 								'description' => 'PR number or URL. Defaults to the current branch PR.',
 							),
-							'squash'                 => array(
+							'squash'     => array(
 								'type'        => 'boolean',
 								'description' => 'Squash rebased commits into one PR-title commit before pushing.',
 							),
-							'drop_paths'             => array(
+							'drop_paths' => array(
 								'type'        => 'array',
 								'items'       => array( 'type' => 'string' ),
 								'description' => 'Glob patterns to resolve by taking the base version during rebase conflicts.',

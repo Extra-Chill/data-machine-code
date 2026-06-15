@@ -511,6 +511,7 @@ trait WorkspaceCoreUtilities {
 			$url = 'ssh://' . $matches[2] . '/' . $matches[3];
 		}
 
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.parse_url_parse_url -- wp_parse_url() is unavailable in pure-PHP smoke tests.
 		$parts = function_exists('wp_parse_url') ? wp_parse_url($url) : parse_url($url);
 		if ( is_array($parts) && ! empty($parts['host']) ) {
 			$host = strtolower( (string) $parts['host']);
@@ -592,21 +593,21 @@ trait WorkspaceCoreUtilities {
 			);
 		}
 
-		$header   = strtok((string) ( $status_result['output'] ?? '' ), "\n");
+		$header   = strtok( (string) ( $status_result['output'] ?? '' ), "\n");
 		$header   = false === $header ? '' : trim($header);
 		$branch   = null;
 		$detached = false;
-		$upstream      = null;
+		$upstream = null;
 		$behind   = 0;
 		$ahead    = 0;
 		$status   = 'unknown';
 
 		if ( preg_match('/^## HEAD \(no branch\)/', $header) ) {
 			$detached = true;
-			$status = 'detached';
+			$status   = 'detached';
 		} elseif ( preg_match('/^## (.+?)(?:\.\.\.([^\s\[]+))?(?: \[(.+)\])?$/', $header, $matches) ) {
-			$branch   = trim((string) $matches[1]);
-			$upstream = isset($matches[2]) && '' !== $matches[2] ? trim((string) $matches[2]) : null;
+			$branch     = trim( (string) $matches[1]);
+			$upstream   = isset($matches[2]) && '' !== $matches[2] ? trim( (string) $matches[2]) : null;
 			$divergence = isset($matches[3]) ? (string) $matches[3] : '';
 
 			if ( preg_match('/behind (\d+)/', $divergence, $behind_match) ) {
@@ -685,6 +686,9 @@ trait WorkspaceCoreUtilities {
 			return true;
 		}
 
+		$behind_value = $freshness['behind'] ?? null;
+		$ahead_value  = $freshness['ahead'] ?? null;
+
 		return new \WP_Error(
 			'stale_primary_read_blocked',
 			sprintf(
@@ -692,8 +696,8 @@ trait WorkspaceCoreUtilities {
 				$parsed['repo'],
 				$status,
 				(string) ( $freshness['suggested_command'] ?? $this->primary_refresh_command($parsed['dir_name']) ),
-				null === ( $freshness['behind'] ?? null ) ? '-' : (string) $freshness['behind'],
-				null === ( $freshness['ahead'] ?? null ) ? '-' : (string) $freshness['ahead']
+				null === $behind_value ? '-' : (string) $behind_value,
+				null === $ahead_value ? '-' : (string) $ahead_value
 			),
 			array(
 				'status'            => 409,
