@@ -258,6 +258,10 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'Maximum number of lines to return.',
 							),
+							'allow_stale_primary' => array(
+								'type'        => 'boolean',
+								'description' => 'Explicitly allow reading from a stale, diverged, detached, or otherwise unsafe primary checkout. Worktree reads are unaffected.',
+							),
 						),
 						'required'   => array( 'path' ),
 					),
@@ -294,6 +298,10 @@ class WorkspaceAbilities {
 							'path' => array(
 								'type'        => 'string',
 								'description' => 'Relative directory path within the repo (omit for root).',
+							),
+							'allow_stale_primary' => array(
+								'type'        => 'boolean',
+								'description' => 'Explicitly allow listing a stale, diverged, detached, or otherwise unsafe primary checkout. Worktree reads are unaffected.',
 							),
 						),
 						'required'   => array(),
@@ -355,6 +363,10 @@ class WorkspaceAbilities {
 							'context_lines' => array(
 								'type'        => 'integer',
 								'description' => 'Number of surrounding lines to include for each match (default 0, max 10).',
+							),
+							'allow_stale_primary' => array(
+								'type'        => 'boolean',
+								'description' => 'Explicitly allow grepping a stale, diverged, detached, or otherwise unsafe primary checkout. Worktree reads are unaffected.',
 							),
 						),
 						'required'   => array( 'pattern' ),
@@ -824,7 +836,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-git-pull',
 				array(
 					'label'               => 'Workspace Git Pull',
-					'description'         => 'Run git pull --ff-only for a workspace handle. Mutating ops on the primary checkout require allow_primary_mutation=true.',
+					'description'         => 'Run git pull --ff-only for a workspace handle. Primary refresh requires allow_primary_refresh=true; worktrees are always allowed.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -837,9 +849,13 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Allow pull when working tree is dirty.',
 							),
+							'allow_primary_refresh'  => array(
+								'type'        => 'boolean',
+								'description' => 'Permit safe primary refresh with git pull --ff-only. Worktrees are always allowed.',
+							),
 							'allow_primary_mutation' => array(
 								'type'        => 'boolean',
-								'description' => 'Permit mutation on the primary checkout (default false). Worktrees are always allowed.',
+								'description' => 'Legacy alias for allow_primary_refresh on git pull only.',
 							),
 							'remote'                 => array(
 								'type'        => 'string',
@@ -965,7 +981,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-git-commit',
 				array(
 					'label'               => 'Workspace Git Commit',
-					'description'         => 'Commit staged changes in a workspace handle. Mutating ops on the primary checkout require allow_primary_mutation=true.',
+					'description'         => 'Commit staged changes in a workspace handle. Primary commits require allow_dangerous_primary_mutation=true; use a worktree whenever possible.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -978,9 +994,9 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Commit message.',
 							),
-							'allow_primary_mutation' => array(
+							'allow_dangerous_primary_mutation' => array(
 								'type'        => 'boolean',
-								'description' => 'Permit mutation on the primary checkout (default false). Worktrees are always allowed.',
+								'description' => 'Permit committing on a primary checkout. Use only for an explicitly approved primary mutation.',
 							),
 						),
 						'required'   => array( 'name', 'message' ),
@@ -1021,9 +1037,9 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Branch override.',
 							),
-							'allow_primary_mutation' => array(
+							'allow_dangerous_primary_mutation' => array(
 								'type'        => 'boolean',
-								'description' => 'Permit pushing from the primary checkout (default false). Worktrees are always allowed.',
+								'description' => 'Permit pushing from a primary checkout. Use only for an explicitly approved primary mutation.',
 							),
 							'force_with_lease'       => array(
 								'type'        => 'boolean',
@@ -1119,9 +1135,9 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Continue an in-progress rebase after conflicts were resolved and staged.',
 							),
-							'allow_primary_mutation' => array(
+							'allow_dangerous_primary_mutation' => array(
 								'type'        => 'boolean',
-								'description' => 'Permit mutation on a primary checkout. Default false.',
+								'description' => 'Permit rebasing a primary checkout. Use only for an explicitly approved primary mutation.',
 							),
 						),
 						'required'   => array( 'name' ),
@@ -1159,9 +1175,9 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Required for hard reset.',
 							),
-							'allow_primary_mutation' => array(
+							'allow_dangerous_primary_mutation' => array(
 								'type'        => 'boolean',
-								'description' => 'Permit mutation on a primary checkout. Default false.',
+								'description' => 'Permit resetting a primary checkout. Use only for an explicitly approved primary mutation.',
 							),
 						),
 						'required'   => array( 'name' ),
@@ -1242,9 +1258,9 @@ class WorkspaceAbilities {
 								'items'       => array( 'type' => 'string' ),
 								'description' => 'Glob patterns to resolve by taking the base version during rebase conflicts.',
 							),
-							'allow_primary_mutation' => array(
+							'allow_dangerous_primary_mutation' => array(
 								'type'        => 'boolean',
-								'description' => 'Permit mutation on a primary checkout. Default false.',
+								'description' => 'Permit rebasing and force-with-lease pushing from a primary checkout. Use only for an explicitly approved primary mutation.',
 							),
 						),
 						'required'   => array( 'name' ),
@@ -2568,7 +2584,8 @@ class WorkspaceAbilities {
 				$input['path'] ?? '',
 				isset($input['max_size']) ? (int) $input['max_size'] : Workspace::MAX_READ_SIZE,
 				isset($input['offset']) ? (int) $input['offset'] : null,
-				isset($input['limit']) ? (int) $input['limit'] : null
+				isset($input['limit']) ? (int) $input['limit'] : null,
+				! empty($input['allow_stale_primary'])
 			);
 		}
 
@@ -2590,7 +2607,8 @@ class WorkspaceAbilities {
 			$input['path'] ?? '',
 			isset($input['max_size']) ? (int) $input['max_size'] : Workspace::MAX_READ_SIZE,
 			isset($input['offset']) ? (int) $input['offset'] : null,
-			isset($input['limit']) ? (int) $input['limit'] : null
+			isset($input['limit']) ? (int) $input['limit'] : null,
+			! empty($input['allow_stale_primary'])
 		);
 	}
 
@@ -2607,7 +2625,8 @@ class WorkspaceAbilities {
 		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
 			return $reader->list_directory(
 				$input['repo'] ?? '',
-				$input['path'] ?? null
+				$input['path'] ?? null,
+				! empty($input['allow_stale_primary'])
 			);
 		}
 
@@ -2623,7 +2642,8 @@ class WorkspaceAbilities {
 
 		return $reader->list_directory(
 			$input['repo'] ?? '',
-			$input['path'] ?? null
+			$input['path'] ?? null,
+			! empty($input['allow_stale_primary'])
 		);
 	}
 
@@ -2644,7 +2664,8 @@ class WorkspaceAbilities {
 				$input['path'] ?? null,
 				$input['include'] ?? null,
 				isset($input['max_results']) ? (int) $input['max_results'] : 100,
-				isset($input['context_lines']) ? (int) $input['context_lines'] : 0
+				isset($input['context_lines']) ? (int) $input['context_lines'] : 0,
+				! empty($input['allow_stale_primary'])
 			);
 		}
 
@@ -2668,7 +2689,8 @@ class WorkspaceAbilities {
 			$input['path'] ?? null,
 			$input['include'] ?? null,
 			isset($input['max_results']) ? (int) $input['max_results'] : 100,
-			isset($input['context_lines']) ? (int) $input['context_lines'] : 0
+			isset($input['context_lines']) ? (int) $input['context_lines'] : 0,
+			! empty($input['allow_stale_primary'])
 		);
 	}
 
@@ -3060,7 +3082,7 @@ class WorkspaceAbilities {
 		return $workspace->git_pull(
 			$input['name'] ?? '',
 			! empty($input['allow_dirty']),
-			! empty($input['allow_primary_mutation']),
+			! empty($input['allow_primary_refresh']) || ! empty($input['allow_primary_mutation']),
 			(string) ( $input['remote'] ?? 'origin' ),
 			isset($input['branch']) ? (string) $input['branch'] : null
 		);
@@ -3127,7 +3149,7 @@ class WorkspaceAbilities {
 		return $workspace->git_commit(
 			$input['name'] ?? '',
 			$input['message'] ?? '',
-			! empty($input['allow_primary_mutation'])
+			! empty($input['allow_dangerous_primary_mutation'])
 		);
 	}
 
@@ -3152,7 +3174,7 @@ class WorkspaceAbilities {
 			$input['name'] ?? '',
 			$input['remote'] ?? 'origin',
 			$input['branch'] ?? null,
-			! empty($input['allow_primary_mutation']),
+			! empty($input['allow_dangerous_primary_mutation']),
 			! empty($input['force_with_lease']),
 			$input['expected_sha'] ?? null
 		);
@@ -3420,7 +3442,7 @@ class WorkspaceAbilities {
 			$input['onto'] ?? null,
 			$input['strategy_option'] ?? null,
 			! empty($input['continue']),
-			! empty($input['allow_primary_mutation'])
+			! empty($input['allow_dangerous_primary_mutation'])
 		);
 	}
 
@@ -3437,7 +3459,7 @@ class WorkspaceAbilities {
 			$input['mode'] ?? 'mixed',
 			$input['target'] ?? null,
 			! empty($input['allow_destructive']),
-			! empty($input['allow_primary_mutation'])
+			! empty($input['allow_dangerous_primary_mutation'])
 		);
 	}
 
@@ -3474,7 +3496,7 @@ class WorkspaceAbilities {
 			$input['pr'] ?? null,
 			! empty($input['squash']),
 			$drop_paths,
-			! empty($input['allow_primary_mutation'])
+			! empty($input['allow_dangerous_primary_mutation'])
 		);
 	}
 

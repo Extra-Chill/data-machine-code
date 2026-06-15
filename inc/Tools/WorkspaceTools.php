@@ -302,6 +302,9 @@ class WorkspaceTools extends BaseTool
         if (isset($input['_workspace_alias_error']) ) {
             return $this->buildErrorResponse((string) $input['_workspace_alias_error'], 'workspace_ls');
         }
+		if (array_key_exists('allow_stale_primary', $parameters) ) {
+			$input['allow_stale_primary'] = (bool) $parameters['allow_stale_primary'];
+		}
         $result = $ability->execute($input);
 
         if (is_wp_error($result) ) {
@@ -350,6 +353,10 @@ class WorkspaceTools extends BaseTool
             $input['limit'] = (int) $parameters['limit'];
         }
 
+		if (array_key_exists('allow_stale_primary', $parameters) ) {
+			$input['allow_stale_primary'] = (bool) $parameters['allow_stale_primary'];
+		}
+
         $result = $ability->execute($input);
 
         if (is_wp_error($result) ) {
@@ -397,6 +404,9 @@ class WorkspaceTools extends BaseTool
                 $input[ $key ] = (int) $parameters[ $key ];
             }
         }
+		if (array_key_exists('allow_stale_primary', $parameters) ) {
+			$input['allow_stale_primary'] = (bool) $parameters['allow_stale_primary'];
+		}
 
         $result = $ability->execute($input);
 
@@ -525,7 +535,7 @@ class WorkspaceTools extends BaseTool
     public function handleGitPull( array $parameters ): array
     {
         $input = array( 'name' => $parameters['name'] ?? $parameters['repo'] ?? '' );
-        foreach ( array( 'allow_dirty', 'allow_primary_mutation' ) as $key ) {
+        foreach ( array( 'allow_dirty', 'allow_primary_refresh', 'allow_primary_mutation' ) as $key ) {
             if (array_key_exists($key, $parameters) ) {
                 $input[ $key ] = (bool) $parameters[ $key ];
             }
@@ -584,8 +594,8 @@ class WorkspaceTools extends BaseTool
         'name'    => $parameters['name'] ?? $parameters['repo'] ?? '',
         'message' => $parameters['message'] ?? '',
         );
-        if (array_key_exists('allow_primary_mutation', $parameters) ) {
-            $input['allow_primary_mutation'] = (bool) $parameters['allow_primary_mutation'];
+        if (array_key_exists('allow_dangerous_primary_mutation', $parameters) ) {
+            $input['allow_dangerous_primary_mutation'] = (bool) $parameters['allow_dangerous_primary_mutation'];
         }
 
         return $this->executeAbility('datamachine-code/workspace-git-commit', 'workspace_git_commit', $input, array( 'name' ));
@@ -602,7 +612,7 @@ class WorkspaceTools extends BaseTool
                 $input[ $key ] = $parameters[ $key ];
             }
         }
-        foreach ( array( 'allow_primary_mutation', 'force_with_lease' ) as $key ) {
+        foreach ( array( 'allow_dangerous_primary_mutation', 'force_with_lease' ) as $key ) {
             if (array_key_exists($key, $parameters) ) {
                 $input[ $key ] = (bool) $parameters[ $key ];
             }
@@ -654,7 +664,7 @@ class WorkspaceTools extends BaseTool
                 $input[ $key ] = $parameters[ $key ];
             }
         }
-        foreach ( array( 'continue', 'allow_primary_mutation' ) as $key ) {
+        foreach ( array( 'continue', 'allow_dangerous_primary_mutation' ) as $key ) {
             if (array_key_exists($key, $parameters) ) {
                 $input[ $key ] = (bool) $parameters[ $key ];
             }
@@ -674,7 +684,7 @@ class WorkspaceTools extends BaseTool
                 $input[ $key ] = $parameters[ $key ];
             }
         }
-        foreach ( array( 'allow_destructive', 'allow_primary_mutation' ) as $key ) {
+        foreach ( array( 'allow_destructive', 'allow_dangerous_primary_mutation' ) as $key ) {
             if (array_key_exists($key, $parameters) ) {
                 $input[ $key ] = (bool) $parameters[ $key ];
             }
@@ -710,7 +720,7 @@ class WorkspaceTools extends BaseTool
         if (isset($parameters['drop_paths']) && is_array($parameters['drop_paths']) ) {
             $input['drop_paths'] = $parameters['drop_paths'];
         }
-        foreach ( array( 'squash', 'allow_primary_mutation' ) as $key ) {
+        foreach ( array( 'squash', 'allow_dangerous_primary_mutation' ) as $key ) {
             if (array_key_exists($key, $parameters) ) {
                 $input[ $key ] = (bool) $parameters[ $key ];
             }
@@ -1127,10 +1137,14 @@ class WorkspaceTools extends BaseTool
             'type'        => 'string',
             'description' => 'Workspace repository directory name.',
                     ),
-                    'path' => array(
-                        'type'        => 'string',
-                        'description' => 'Optional relative directory path inside the repo.',
-                    ),
+					'path' => array(
+						'type'        => 'string',
+						'description' => 'Optional relative directory path inside the repo.',
+					),
+					'allow_stale_primary' => array(
+						'type'        => 'boolean',
+						'description' => 'Explicitly list a stale, diverged, detached, or otherwise unsafe primary checkout. Worktree reads are unaffected.',
+					),
             ),
             'required'   => array(),
             ),
@@ -1169,10 +1183,14 @@ class WorkspaceTools extends BaseTool
                         'type'        => 'integer',
                         'description' => 'Line offset to start reading from (1-indexed).',
                     ),
-                    'limit'    => array(
-                        'type'        => 'integer',
-                        'description' => 'Maximum number of lines to return.',
-                    ),
+					'limit'    => array(
+						'type'        => 'integer',
+						'description' => 'Maximum number of lines to return.',
+					),
+					'allow_stale_primary' => array(
+						'type'        => 'boolean',
+						'description' => 'Explicitly read from a stale, diverged, detached, or otherwise unsafe primary checkout. Worktree reads are unaffected.',
+					),
             ),
             'required'   => array( 'path' ),
             ),
@@ -1215,10 +1233,14 @@ class WorkspaceTools extends BaseTool
                         'type'        => 'integer',
                         'description' => 'Maximum number of matches to return (default 100, max 500).',
                     ),
-                    'context_lines' => array(
-                        'type'        => 'integer',
-                        'description' => 'Number of surrounding lines to include for each match (default 0, max 10).',
-                    ),
+					'context_lines' => array(
+						'type'        => 'integer',
+						'description' => 'Number of surrounding lines to include for each match (default 0, max 10).',
+					),
+					'allow_stale_primary' => array(
+						'type'        => 'boolean',
+						'description' => 'Explicitly grep a stale, diverged, detached, or otherwise unsafe primary checkout. Worktree reads are unaffected.',
+					),
             ),
             'required'   => array( 'pattern' ),
             ),
@@ -1368,7 +1390,8 @@ class WorkspaceTools extends BaseTool
         return $this->simpleGitDefinition(
             'handleGitPull', 'Run git pull --ff-only for a workspace handle. Policy-gated for pipeline use.', array(
             'allow_dirty'            => array( 'type' => 'boolean', 'description' => 'Allow pull when working tree is dirty. Default false.' ),
-            'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
+            'allow_primary_refresh'  => array( 'type' => 'boolean', 'description' => 'Permit safe primary refresh with git pull --ff-only. Default false.' ),
+            'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Legacy alias for allow_primary_refresh on git pull only.' ),
             ), array( 'name' ), array( 'completion_signal' => 'progress' ) 
         );
     }
@@ -1424,7 +1447,7 @@ class WorkspaceTools extends BaseTool
         return $this->simpleGitDefinition(
             'handleGitCommit', 'Commit staged changes in a workspace handle. Policy-gated for pipeline use.', array(
             'message'                => array( 'type' => 'string', 'description' => 'Commit message.' ),
-            'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
+            'allow_dangerous_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit committing on a primary checkout. Use only for an explicitly approved primary mutation.' ),
             ), array( 'name', 'message' ), array( 'completion_signal' => 'progress' ) 
         );
     }
@@ -1438,7 +1461,7 @@ class WorkspaceTools extends BaseTool
             'handleGitPush', 'Push commits for a workspace handle. Policy-gated for pipeline use.', array(
             'remote'                 => array( 'type' => 'string', 'description' => 'Remote name. Default origin.' ),
             'branch'                 => array( 'type' => 'string', 'description' => 'Branch override.' ),
-            'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
+            'allow_dangerous_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit pushing from a primary checkout. Use only for an explicitly approved primary mutation.' ),
             'force_with_lease'       => array( 'type' => 'boolean', 'description' => 'Use --force-with-lease. Refuses protected base/fixed branches.' ),
             'expected_sha'            => array( 'type' => 'string', 'description' => 'Optional expected remote branch SHA.' ),
             ), array( 'name' ), array( 'completion_signal' => 'progress' ) 
@@ -1592,7 +1615,7 @@ class WorkspaceTools extends BaseTool
             'onto'                   => array( 'type' => 'string', 'description' => 'Base ref to rebase onto.' ),
             'strategy_option'        => array( 'type' => 'string', 'description' => 'Optional strategy option, such as theirs or ours.' ),
             'continue'               => array( 'type' => 'boolean', 'description' => 'Continue an in-progress rebase.' ),
-            'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
+            'allow_dangerous_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit rebasing a primary checkout. Use only for an explicitly approved primary mutation.' ),
             ), array( 'name' ), array( 'completion_signal' => 'progress' ) 
         );
     }
@@ -1607,7 +1630,7 @@ class WorkspaceTools extends BaseTool
             'mode'                   => array( 'type' => 'string', 'enum' => array( 'soft', 'mixed', 'hard' ), 'description' => 'Reset mode.' ),
             'target'                 => array( 'type' => 'string', 'description' => 'Target ref or commit.' ),
             'allow_destructive'      => array( 'type' => 'boolean', 'description' => 'Required for hard reset.' ),
-            'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
+            'allow_dangerous_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit resetting a primary checkout. Use only for an explicitly approved primary mutation.' ),
             ), array( 'name' ), array( 'completion_signal' => 'progress' ) 
         );
     }
@@ -1635,7 +1658,7 @@ class WorkspaceTools extends BaseTool
             'pr'                     => array( 'type' => array( 'string', 'integer' ), 'description' => 'PR number or URL.' ),
             'squash'                 => array( 'type' => 'boolean', 'description' => 'Squash rebased commits into one PR-title commit.' ),
             'drop_paths'             => array( 'type' => 'array', 'items' => array( 'type' => 'string' ), 'description' => 'Conflict path globs to resolve by taking the base version.' ),
-            'allow_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit mutation on a primary checkout. Default false.' ),
+            'allow_dangerous_primary_mutation' => array( 'type' => 'boolean', 'description' => 'Permit rebasing and force-with-lease pushing from a primary checkout. Use only for an explicitly approved primary mutation.' ),
             ), array( 'name' ), array( 'completion_signal' => 'progress' ) 
         );
     }
