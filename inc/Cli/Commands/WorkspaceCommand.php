@@ -1318,17 +1318,51 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array<string,mixed>
 	 */
 	private function attach_current_workspace_lock_status( array $result ): array {
-		if ( isset($result['locks']) || ! class_exists(Workspace::class) || ! class_exists(WorkspaceMutationLock::class) ) {
+		if ( ! isset($result['locks']) && class_exists(Workspace::class) && class_exists(WorkspaceMutationLock::class) ) {
+			try {
+				$workspace       = new Workspace();
+				$result['locks'] = WorkspaceMutationLock::status($workspace->get_path());
+			} catch ( \Throwable $e ) {
+				$result['locks'] = array(
+					'error' => $e->getMessage(),
+				);
+			}
+		}
+
+		return $this->attach_stale_lock_recommendation($result);
+	}
+
+	/**
+	 * Promote safe stale-lock remediation above the detailed lock evidence.
+	 *
+	 * @param  array<string,mixed> $result Cleanup result.
+	 * @return array<string,mixed>
+	 */
+	private function attach_stale_lock_recommendation( array $result ): array {
+		$report = $result['locks']['stale_locks'] ?? null;
+		if ( ! is_array($report) || (int) ( $report['count'] ?? 0 ) <= 0 ) {
 			return $result;
 		}
 
-		try {
-			$workspace       = new Workspace();
-			$result['locks'] = WorkspaceMutationLock::status($workspace->get_path());
-		} catch ( \Throwable $e ) {
-			$result['locks'] = array(
-				'error' => $e->getMessage(),
-			);
+		$protected = 0;
+		foreach ( array( 'database', 'filesystem' ) as $source ) {
+			foreach ( (array) ( $report[ $source ] ?? array() ) as $row ) {
+				if ( is_array($row) && empty($row['safe_to_prune']) ) {
+					++$protected;
+				}
+			}
+		}
+
+		$result['stale_lock_summary'] = array(
+			'stale_database_locks'   => (int) ( $report['database_count'] ?? 0 ),
+			'stale_filesystem_locks' => (int) ( $report['filesystem_count'] ?? 0 ),
+			'active_protected_locks' => $protected,
+			'preview_command'        => (string) ( $report['preview_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' ),
+			'prune_command'          => (string) ( $report['apply_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --format=json' ),
+		);
+
+		if ( 0 === $protected ) {
+			$result['recommended_next_step'] = $result['stale_lock_summary']['prune_command'];
 		}
 
 		return $result;
