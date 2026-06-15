@@ -1354,11 +1354,11 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$result['stale_lock_summary'] = array(
-			'stale_database_locks'    => (int) ( $report['database_count'] ?? 0 ),
-			'stale_filesystem_locks'  => (int) ( $report['filesystem_count'] ?? 0 ),
-			'active_protected_locks'  => $protected,
-			'preview_command'         => (string) ( $report['preview_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' ),
-			'prune_command'           => (string) ( $report['apply_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --format=json' ),
+			'stale_database_locks'   => (int) ( $report['database_count'] ?? 0 ),
+			'stale_filesystem_locks' => (int) ( $report['filesystem_count'] ?? 0 ),
+			'active_protected_locks' => $protected,
+			'preview_command'        => (string) ( $report['preview_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' ),
+			'prune_command'          => (string) ( $report['apply_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --format=json' ),
 		);
 
 		if ( 0 === $protected ) {
