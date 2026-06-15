@@ -1225,7 +1225,8 @@ namespace {
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, 'Control task-backed workspace cleanup runs.'), 'workspace cleanup command documents task-backed controller surface');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '<plan|apply|until-empty|run|status|resume|cancel|evidence>'), 'workspace cleanup synopsis exposes DB-backed and task-backed cleanup operations');
     datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '[--dry-run]'), 'task-backed cleanup synopsis keeps synchronous dry-run review');
-    datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '[--drain]'), 'task-backed cleanup synopsis exposes drain option');
+	datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '[--drain]'), 'task-backed cleanup synopsis exposes drain option');
+	datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '[--summary]'), 'task-backed cleanup synopsis exposes compact summary option');
 	datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, '[--max-passes=<count>]'), 'workspace cleanup synopsis exposes until-empty pass budget');
 	datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, 'workspace cleanup until-empty --mode=artifacts'), 'workspace cleanup examples include artifact until-empty loop');
 	datamachine_code_cleanup_assert(str_contains($cleanup_doc_comment, 'stale-worktrees'), 'workspace cleanup synopsis exposes stale-worktrees destructive profile');
@@ -1538,6 +1539,29 @@ namespace {
     datamachine_code_cleanup_assert(1 === (int) ( $evidence_json['evidence']['artifact_cleanup']['failed_by_reason']['apply_failed'] ?? 0 ), 'cleanup evidence aggregates failed reasons');
     datamachine_code_cleanup_assert(1 === (int) ( $evidence_json['evidence']['cleanup_items']['failed_by_reason']['apply_failed'] ?? 0 ), 'cleanup evidence reconstructs failed cleanup item reasons from job rows');
     datamachine_code_cleanup_assert(4 === count($evidence_json['evidence']['child_jobs'] ?? array()), 'cleanup evidence emits descendant child jobs');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup(array( 'evidence', 'cleanup-run-123' ), array( 'summary' => true, 'format' => 'json' ));
+	$summary_json = json_decode(WP_CLI::$logs[0] ?? '', true);
+	datamachine_code_cleanup_assert(! isset($summary_json['evidence']), 'cleanup evidence --summary omits full nested evidence');
+	datamachine_code_cleanup_assert('cleanup-run-123' === ( $summary_json['run_id'] ?? '' ), 'cleanup evidence --summary keeps run id');
+	datamachine_code_cleanup_assert(4 === (int) ( $summary_json['cleanup_counts']['planned'] ?? 0 ), 'cleanup evidence --summary reports planned cleanup rows');
+	datamachine_code_cleanup_assert(4096 === (int) ( $summary_json['cleanup_counts']['bytes_reclaimed'] ?? 0 ), 'cleanup evidence --summary reports reclaimed bytes');
+	datamachine_code_cleanup_assert(10240 === (int) ( $summary_json['artifact_cleanup']['remaining_reclaimable_artifact_bytes'] ?? 0 ), 'cleanup evidence --summary reports remaining reclaimable artifact bytes');
+	datamachine_code_cleanup_assert(1 === (int) ( $summary_json['skipped_by_reason']['dirty_worktree']['count'] ?? 0 ), 'cleanup evidence --summary groups skipped reasons');
+	datamachine_code_cleanup_assert('repo@dirty' === (string) ( $summary_json['top_blocked_examples'][0]['handle'] ?? '' ), 'cleanup evidence --summary includes largest blocked example');
+	datamachine_code_cleanup_assert('dirty_worktree' === (string) ( $summary_json['top_blocked_examples'][0]['reason'] ?? '' ), 'cleanup evidence --summary includes example reason');
+	datamachine_code_cleanup_assert(8192 === (int) ( $summary_json['top_blocked_examples'][0]['size_bytes'] ?? 0 ), 'cleanup evidence --summary includes example size');
+	datamachine_code_cleanup_assert(str_contains((string) wp_json_encode($summary_json['recommended_commands'] ?? array()), 'workspace cleanup run --mode=artifacts'), 'cleanup evidence --summary includes recommended commands');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->cleanup(array( 'evidence', 'cleanup-run-123' ), array( 'summary' => true ));
+	datamachine_code_cleanup_assert(in_array('Cleanup operator summary:', WP_CLI::$logs, true), 'cleanup evidence --summary human output prints operator heading');
+	datamachine_code_cleanup_assert(in_array('table:6:metric,value', WP_CLI::$logs, true), 'cleanup evidence --summary human output prints compact metric table');
+	datamachine_code_cleanup_assert(in_array('Top blocked examples:', WP_CLI::$logs, true), 'cleanup evidence --summary human output prints blocked examples');
+	datamachine_code_cleanup_assert(array() !== array_filter(WP_CLI::$logs, fn( $log ) => str_contains((string) $log, ':size,reason,handle,artifact_path,path')), 'cleanup evidence --summary human output prints blocked example table');
 
     WP_CLI::$logs      = array();
     WP_CLI::$successes = array();
