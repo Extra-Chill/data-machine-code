@@ -24,11 +24,13 @@ namespace DataMachineCode\Workspace {
 		public static array $read_input = array();
 		public static array $list_input = array();
 		public static array $grep_input = array();
+		public static array $git_status_input = array();
 		public static array $worktree_input = array();
 		public static bool $show_returns_remote_success = false;
 		public static bool $read_returns_remote_success = false;
 		public static bool $list_returns_remote_success = false;
 		public static bool $grep_returns_remote_success = false;
+		public static bool $git_status_returns_remote_success = false;
 		public static bool $worktree_returns_remote_success = false;
 
 		public static function should_handle(): bool
@@ -130,16 +132,42 @@ namespace DataMachineCode\Workspace {
 				'Remote workspace repository "wpcom-codebox" is not registered. Call workspace_clone first.'
 			);
 		}
+
+		public function git_status( string $handle ): array|\WP_Error
+		{
+			self::$git_status_input = compact('handle');
+			if ( self::$git_status_returns_remote_success ) {
+				return array(
+					'success' => true,
+					'backend' => 'github_api',
+					'name'    => $handle,
+					'path'    => 'github://Automattic/' . str_replace('@', '#', $handle),
+					'dirty'   => 0,
+					'files'   => array(),
+				);
+			}
+
+			return new \WP_Error(
+				'remote_workspace_repo_not_found',
+				'Remote workspace repository "wpcom-codebox" is not registered. Call workspace_clone first.'
+			);
+		}
 	}
 
 	class Workspace
 	{
 		public static array $show_input = array();
+		public static array $git_status_input = array();
 		public static array $worktree_input = array();
+		public static bool $show_returns_local_success = true;
 
-		public function show_repo( string $handle ): array
+		public function show_repo( string $handle ): array|\WP_Error
 		{
 			self::$show_input = compact('handle');
+			if ( ! self::$show_returns_local_success ) {
+				return new \WP_Error('workspace_repo_not_found', 'Workspace repository not found.');
+			}
+
 			$parsed = explode('@', $handle, 2);
 			$repo   = $parsed[0];
 			$slug   = $parsed[1] ?? '';
@@ -173,6 +201,18 @@ namespace DataMachineCode\Workspace {
 				'success' => true,
 				'handle'  => $repo . '@' . str_replace('/', '-', $branch),
 				'path'    => '/Users/chubes/Developer/' . $repo . '@' . str_replace('/', '-', $branch),
+			);
+		}
+
+		public function git_status( string $handle ): array
+		{
+			self::$git_status_input = compact('handle');
+			return array(
+				'success' => true,
+				'name'    => $handle,
+				'path'    => '/Users/chubes/Developer/' . $handle,
+				'dirty'   => 1,
+				'files'   => array( ' M README.md' ),
 			);
 		}
 	}
@@ -375,6 +415,34 @@ namespace {
 	$assert('local grep attempted for local primary', 'wpcom-codebox' === ( \DataMachineCode\Workspace\WorkspaceReader::$grep_input['name'] ?? '' ));
 	$assert('grep preserves options locally', '*.php' === ( \DataMachineCode\Workspace\WorkspaceReader::$grep_input['include_pattern'] ?? '' ) && 7 === ( \DataMachineCode\Workspace\WorkspaceReader::$grep_input['max_results'] ?? null ) && 2 === ( \DataMachineCode\Workspace\WorkspaceReader::$grep_input['context_lines'] ?? null ));
 	$assert('grep returns local matches', is_array($grep) && 1 === ( $grep['count'] ?? null ));
+
+	\DataMachineCode\Workspace\RemoteWorkspaceBackend::$git_status_returns_remote_success = true;
+	\DataMachineCode\Workspace\RemoteWorkspaceBackend::$git_status_input = array();
+	\DataMachineCode\Workspace\Workspace::$git_status_input = array();
+	$git_status = \DataMachineCode\Abilities\WorkspaceAbilities::gitStatus(
+		array(
+			'name' => 'wpcom-codebox',
+		)
+	);
+
+	$assert('remote git status is not consulted when local primary exists', array() === \DataMachineCode\Workspace\RemoteWorkspaceBackend::$git_status_input);
+	$assert('local git status attempted for local primary', 'wpcom-codebox' === ( \DataMachineCode\Workspace\Workspace::$git_status_input['handle'] ?? '' ));
+	$assert('git status returns local dirty state', is_array($git_status) && 1 === ( $git_status['dirty'] ?? null ));
+
+	\DataMachineCode\Workspace\Workspace::$show_returns_local_success = false;
+	\DataMachineCode\Workspace\RemoteWorkspaceBackend::$git_status_returns_remote_success = false;
+	\DataMachineCode\Workspace\RemoteWorkspaceBackend::$git_status_input = array();
+	\DataMachineCode\Workspace\Workspace::$git_status_input = array();
+	$miss_status = \DataMachineCode\Abilities\WorkspaceAbilities::gitStatus(
+		array(
+			'name' => 'wpcom-codebox',
+		)
+	);
+
+	$assert('remote git status miss is consulted before fallback', 'wpcom-codebox' === ( \DataMachineCode\Workspace\RemoteWorkspaceBackend::$git_status_input['handle'] ?? '' ));
+	$assert('remote git status miss falls back locally', 'wpcom-codebox' === ( \DataMachineCode\Workspace\Workspace::$git_status_input['handle'] ?? '' ));
+	$assert('git status fallback returns local result', is_array($miss_status) && '/Users/chubes/Developer/wpcom-codebox' === ( $miss_status['path'] ?? '' ));
+	\DataMachineCode\Workspace\Workspace::$show_returns_local_success = true;
 
 	\DataMachineCode\Workspace\RemoteWorkspaceBackend::$worktree_returns_remote_success = true;
 	\DataMachineCode\Workspace\RemoteWorkspaceBackend::$worktree_input = array();

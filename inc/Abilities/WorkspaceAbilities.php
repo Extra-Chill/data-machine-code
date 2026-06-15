@@ -3062,12 +3062,18 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function gitStatus( array $input ): array|\WP_Error {
-		if ( RemoteWorkspaceBackend::should_handle() ) {
-			$result = ( new RemoteWorkspaceBackend() )->git_status($input['name'] ?? '');
-			return self::decorate_remote_workspace_result('git_status', $result);
+		$workspace = new Workspace();
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['name'] ?? '' )) ) {
+			return $workspace->git_status($input['name'] ?? '');
 		}
 
-		$workspace = new Workspace();
+		if ( RemoteWorkspaceBackend::should_handle() ) {
+			$result = ( new RemoteWorkspaceBackend() )->git_status($input['name'] ?? '');
+			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
+				return self::decorate_remote_workspace_result('git_status', $result);
+			}
+		}
+
 		return $workspace->git_status($input['name'] ?? '');
 	}
 
