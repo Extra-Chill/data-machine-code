@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.127] - 2026-06-15
+
+### Fixed
+- fall back to local workspace git status
+
 ## [0.47.126] - 2026-06-15
 
 ### Fixed
