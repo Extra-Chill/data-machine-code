@@ -19,7 +19,13 @@ final class MountedSandboxBootstrap {
 	private static array $context = array();
 
 	public static function register(): void {
-		add_action('wp_codebox_sandbox_runtime_bootstrap', array( self::class, 'configure' ), 10, 1);
+		add_action('mounted_runtime_bootstrap', array( self::class, 'configure' ), 10, 1);
+		add_action('wordpress_runtime_bootstrap', array( self::class, 'configure' ), 10, 1);
+
+		$context = self::discover_context();
+		if ( self::should_configure($context) ) {
+			self::configure($context);
+		}
 	}
 
 	/**
@@ -38,6 +44,38 @@ final class MountedSandboxBootstrap {
 	/** @return array<string,mixed> */
 	public static function context(): array {
 		return self::$context;
+	}
+
+	/** @return array<string,mixed> */
+	private static function discover_context(): array {
+		foreach ( array( 'mounted_runtime_context', 'wordpress_runtime_context' ) as $global_key ) {
+			$context = $GLOBALS[ $global_key ] ?? null;
+			if ( is_array($context) ) {
+				return $context;
+			}
+		}
+
+		$encoded = getenv('MOUNTED_RUNTIME_CONTEXT');
+		if ( is_string($encoded) && '' !== $encoded ) {
+			$decoded = json_decode($encoded, true);
+			if ( is_array($decoded) ) {
+				return $decoded;
+			}
+		}
+
+		$workspace_root = getenv('MOUNTED_RUNTIME_WORKSPACE_ROOT');
+		if ( is_string($workspace_root) && '' !== $workspace_root ) {
+			return array( 'workspace_root' => $workspace_root );
+		}
+
+		return is_dir(self::DEFAULT_WORKSPACE_ROOT)
+			? array( 'workspace_root' => self::DEFAULT_WORKSPACE_ROOT )
+			: array();
+	}
+
+	/** @param array<string,mixed> $context */
+	private static function should_configure( array $context ): bool {
+		return '' !== self::workspace_root_from_context($context);
 	}
 
 	/** @param array<string,mixed> $context */
@@ -102,7 +140,7 @@ final class MountedSandboxBootstrap {
 			$root      = isset($workspace['root']) ? (string) $workspace['root'] : '';
 		}
 
-		return '' !== $root ? rtrim($root, '/') : self::DEFAULT_WORKSPACE_ROOT;
+		return '' !== $root ? rtrim($root, '/') : '';
 	}
 
 	/**

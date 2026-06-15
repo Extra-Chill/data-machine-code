@@ -93,23 +93,22 @@ namespace {
 		}
 	);
 
-	\DataMachineCode\Runtime\MountedSandboxBootstrap::register();
-	do_action(
-		'wp_codebox_sandbox_runtime_bootstrap',
-		array(
-			'workspace_root'     => $root,
-			'sandbox_workspace' => array(
-				'root'   => $root,
-				'mounts' => array(
-					array( 'target' => $repo_backed, 'sourceMode' => 'repo-backed' ),
-					array( 'target' => $local_repo, 'sourceMode' => 'local' ),
-				),
+	$GLOBALS['mounted_runtime_context'] = array(
+		'workspace_root'     => $root,
+		'sandbox_workspace' => array(
+			'root'   => $root,
+			'mounts' => array(
+				array( 'target' => $repo_backed, 'sourceMode' => 'repo-backed' ),
+				array( 'target' => $local_repo, 'sourceMode' => 'local' ),
 			),
-		)
+		),
 	);
+	\DataMachineCode\Runtime\MountedSandboxBootstrap::register();
 
 	$assert('defines workspace path from generic sandbox context', defined('DATAMACHINE_WORKSPACE_PATH') && DATAMACHINE_WORKSPACE_PATH === $root);
 	$assert('forces mounted local workspace backend', false === apply_filters('datamachine_code_remote_workspace_backend_should_handle', true));
+	$registered_actions = array_keys($GLOBALS['dmc_mounted_sandbox_actions']);
+	$assert('registers only neutral mounted-runtime actions', $registered_actions === array( 'mounted_runtime_bootstrap', 'wordpress_runtime_bootstrap', 'wp_abilities_api_init' ));
 
 	do_action('wp_abilities_api_init');
 	$adopted = \DataMachineCode\Abilities\WorkspaceAbilities::$adopted;
