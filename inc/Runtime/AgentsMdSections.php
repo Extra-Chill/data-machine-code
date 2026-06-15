@@ -83,78 +83,48 @@ MD;
 
 	private static function register_datamachine_section( string $wp ): void {
 		self::register_section(
-			'AGENTS.md', 'datamachine', 10, function () use ( $wp ) {
+			'AGENTS.md', 'datamachine-code', 10, function () use ( $wp ) {
 				$workspace_path = self::resolve_workspace_path();
-				$agent_slug     = self::resolve_agent_slug();
-				$agent_suffix   = '' !== $agent_slug ? ' --agent=' . $agent_slug : '';
-				$agent_note     = '' !== $agent_slug
-					? "On this site, scope memory commands with `--agent={$agent_slug}` when reading, writing, searching, or composing agent memory."
-					: 'On multi-agent installs, pass `--agent=<slug>` to memory commands when auto-resolution is ambiguous.';
 
 				// Generate DMC's own command surface from reflection so the lists
-				// never drift from the registered truth (see #671). The fallback
-				// pipe-lists are only used if a command class is somehow
-				// unavailable in this compose context.
+				// never drift from the registered truth (see #671, #734). The
+				// fallback pipe-lists are only used if a command class is somehow
+				// unavailable in this compose context. Core's `datamachine`
+				// namespace is NOT narrated here — core registers its own
+				// reflected AGENTS.md section (data-machine#2640); hand-copying it
+				// here is a layer inversion that silently drifts (e.g. the removed
+				// `datamachine analytics` line, now owned by data-machine-business).
 				$workspace_subcmds = CommandIntrospector::pipe_list(
 					'\\DataMachineCode\\Cli\\Commands\\WorkspaceCommand',
 					'adopt|clone|list|show|path|hygiene|remove|worktree|read|write|grep|edit|git|patch|ls'
+				);
+				$worktree_subcmds  = CommandIntrospector::match_arm_pipe_list(
+					'\\DataMachineCode\\Cli\\Commands\\WorkspaceCommand',
+					'worktree',
+					'add|list|remove|prune|cleanup|cleanup-artifacts|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible'
 				);
 				$github_subcmds    = CommandIntrospector::pipe_list(
 					'\\DataMachineCode\\Cli\\Commands\\GitHubCommand',
 					'issues|pulls|repos|status|view|close|review-flow|comment'
 				);
 				return <<<MD
-## Data Machine
+## Data Machine Code
 
-Data Machine is your operating layer — memory, automation, and orchestration via WP-CLI.
+All code changes happen in Data Machine Code worktrees under `{$workspace_path}`. DMC owns workspace lifecycle, evidence capture, and GitHub workflow glue; file CRUD inside a worktree uses whatever tool is fastest. Core's `datamachine` operating layer (memory, automation, communication, content ops, system) is documented in its own AGENTS.md section — run `{$wp} datamachine --help` to discover it.
 
-Discover the full command surface: `{$wp} datamachine --help`. The groups below are the major command families — always run `--help` on any subcommand to see its options.
-
-**Memory & Agents:** Persistent files across sessions plus agent identity management.
-- Memory paths / read / write / search / compose: `{$wp} datamachine memory paths|read|write|search|compose{$agent_suffix}`
-- Agent management: `{$wp} datamachine agent list|create|access|token|installed|install|diff` — identities, permissions, bearer tokens, portable bundles
-- Update MEMORY.md when you learn something persistent — read it first, append new info.
-- {$agent_note}
-
-**Automation:** Self-scheduling workflows that run without human intervention.
-- Flows: `{$wp} datamachine flow create|run|list` — scheduled or on-demand tasks
-- Pipelines: `{$wp} datamachine pipeline create|list` — multi-step processing chains
-- Jobs / pending actions: `{$wp} datamachine jobs list|retry|summary`, `{$wp} datamachine pending-actions` — monitor queued work and approval gates
-- Drain due work: `{$wp} datamachine drain` — run due actions until empty or budgeted
-- Discover available step types: `{$wp} datamachine step-types list`
-- Discover available handlers: `{$wp} datamachine handlers list`
-- Processed items (dedupe): `{$wp} datamachine processed-items`
-- Retention policies: `{$wp} datamachine retention`
-
-**Communication:** Chat sessions and email I/O.
-- Chat: `{$wp} datamachine chat` — multi-turn agent conversations with tool calling
-- Email: `{$wp} datamachine email` — IMAP read / SMTP reply (wired to the site's mail stack)
-
-**Content ops:** Post-level and site-wide content tooling.
-- Posts / taxonomy / blocks: `{$wp} datamachine post|taxonomy|block`
-- SEO helpers: `{$wp} datamachine alt-text|meta-description|image|link|indexnow`
-- Analytics & logs: `{$wp} datamachine analytics|logs`
-- Settings & auth: `{$wp} datamachine settings|auth`
-- External sites & handler tests: `{$wp} datamachine external|test`
-
-**Code (data-machine-code):** All code changes happen in Data Machine Code worktrees under `{$workspace_path}`. DMC owns workspace lifecycle, evidence capture, and GitHub workflow glue; file CRUD inside a worktree uses whatever tool is fastest.
 - Workspace root: `{$workspace_path}`
 - **Workspace:** `{$wp} datamachine-code workspace {$workspace_subcmds}` — lifecycle (clone/adopt/list/show/path/hygiene/remove/worktree), plus the file-I/O surface you work through inside a worktree (`read`, `write`, `grep`, `edit`, `patch`, `ls`, `git`). Keeps the on-disk registry consistent and enforces the `<repo>@<slug>` handle convention.
-- **Worktrees:** `{$wp} datamachine-code workspace worktree add|list|remove|prune|cleanup|cleanup-artifacts|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible` — create isolated branches, refresh agent context, attach lifecycle metadata, and clean up safely.
+- **Worktrees:** `{$wp} datamachine-code workspace worktree {$worktree_subcmds}` — create isolated branches, refresh agent context, attach lifecycle metadata, and clean up safely.
 - **GitHub:** `{$wp} datamachine-code github {$github_subcmds}` — list/read GitHub state, manage issues and PRs, install review flows, and comment on reviews.
 - **Editing inside a worktree:** any tool. Local agents on the same disk should use native file I/O and raw `git`; routing edits through workspace abilities is ceremony, not safety.
 - **Workspace lifecycle:** use `workspace clone` for primary checkout adoption/cloning and `workspace worktree add` for isolated branches. Use the CLI `--help` output for current flags and subcommands.
 - **Primary freshness:** before using a primary checkout for investigation or verification, inspect `workspace list|show|hygiene` freshness metadata. If the primary is stale, run `workspace git pull <repo> --allow-primary-refresh` or create the worktree from an explicit remote ref with `worktree add <repo> <branch> --from=origin/<base>`. Stale primary reads require an explicit `--allow-stale-primary` opt-in. Do not clone a second top-level primary for the same remote just to get fresh code.
 - **Primary is read-only.** Never edit `<workspace>/<repo>` (no `@slug`). Safe primary refresh uses `--allow-primary-refresh`; primary commit, push, reset, and rebase require the stronger `--allow-dangerous-primary-mutation` approval. The primary tracks the deployed branch — operate on a worktree.
 - **Rule:** Never modify files under `wp-content/plugins/` or `wp-content/themes/` directly. Those paths are **read-only reference**. All code changes go through the workspace so they are tracked in git and reviewed via pull requests.
-
-**System:** `{$wp} datamachine system health|prompts|run` — site health, prompt inspection, diagnostic runs.
-
-Use `--help` on any command to discover options and subcommands.
 MD;
 			}, array(
-				'label'       => 'Data Machine',
-				'description' => 'Memory, automation, workspace, and system operations.',
+				'label'       => 'Data Machine Code',
+				'description' => 'Workspace, worktree, and GitHub operations owned by Data Machine Code.',
 				'owner'       => 'data-machine-code',
 				'freshness'   => 'snapshot',
 				'conditions'  => 'Always registered when Data Machine Code and composable memory section registration are available.',
