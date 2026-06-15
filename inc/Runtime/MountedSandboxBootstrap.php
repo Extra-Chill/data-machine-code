@@ -111,14 +111,14 @@ final class MountedSandboxBootstrap {
 			return;
 		}
 
-		$workspace_root = rtrim((string) DATAMACHINE_WORKSPACE_PATH, '/');
+		$workspace_root = rtrim( (string) DATAMACHINE_WORKSPACE_PATH, '/');
 		$mounts         = self::workspace_mounts(self::$context, $workspace_root);
 		foreach ( $mounts as $mount ) {
 			if ( ! empty($mount['repo_backed']) ) {
 				continue;
 			}
 
-			$path = (string) ( $mount['path'] ?? '' );
+			$path = (string) $mount['path'];
 			if ( '' === $path || ! is_dir($path) || ! is_dir($path . '/.git') ) {
 				continue;
 			}
@@ -155,7 +155,7 @@ final class MountedSandboxBootstrap {
 				if ( ! is_array($mount) ) {
 					continue;
 				}
-				$target = rtrim((string) ( $mount['target'] ?? '' ), '/');
+				$target = rtrim( (string) ( $mount['target'] ?? '' ), '/');
 				if ( '' === $target || 0 !== strpos($target . '/', $workspace_root . '/') ) {
 					continue;
 				}
@@ -170,7 +170,8 @@ final class MountedSandboxBootstrap {
 			return $mounts;
 		}
 
-		foreach ( glob($workspace_root . '/*', GLOB_ONLYDIR) ?: array() as $path ) {
+		$paths = glob($workspace_root . '/*', GLOB_ONLYDIR);
+		foreach ( false !== $paths ? $paths : array() as $path ) {
 			$mounts[] = array(
 				'path'        => $path,
 				'repo_backed' => is_file($path . '/.git'),
