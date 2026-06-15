@@ -131,6 +131,7 @@ function datamachine_code_bootstrap() {
 	new \DataMachineCode\Abilities\WordPressRuntimeAbilities();
 	\DataMachineCode\SourceInventory\WorkspaceSourceInventory::register();
 	\DataMachineCode\AgentsApi\WorkspaceExecutorAdapter::register();
+	\DataMachineCode\Runtime\MountedSandboxBootstrap::register();
 	datamachine_code_register_datamachine_integrations();
 
 	// Register ability categories on the correct hook (must happen during wp_abilities_api_categories_init).
