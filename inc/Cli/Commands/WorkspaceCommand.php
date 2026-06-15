@@ -633,6 +633,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--verbose]
 	 * : Include full diagnostic child job ID lists in task-backed cleanup status output.
 	 *
+	 * [--summary]
+	 * : For `status` and `evidence`, print compact operator-focused cleanup counts,
+	 *   blockers, examples, and next commands instead of full nested evidence.
+	 *
 	 * [--drain]
 	 * : For `cleanup run`, drain the queued parent job, drain active child cleanup
 	 *   jobs discovered from cleanup status, then print verified bytes reclaimed.
@@ -694,6 +698,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 *     # Print recorded evidence / engine data
 	 *     wp datamachine-code workspace cleanup evidence cleanup-run-123 --format=json
+	 *
+	 *     # Print compact evidence summary for chat/operator follow-up
+	 *     wp datamachine-code workspace cleanup evidence cleanup-run-123 --summary
 	 *
 	 * @subcommand cleanup
 	 */
@@ -1276,6 +1283,9 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_cleanup_control_result( array $result, array $assoc_args ): void {
 		$result = $this->attach_current_workspace_lock_status($result);
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
+		if ( ! empty($assoc_args['summary']) ) {
+			$result = $this->build_cleanup_operator_summary($result);
+		}
 		if ( 'json' === $format ) {
 			WP_CLI::log( (string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 			return;
@@ -1290,6 +1300,10 @@ class WorkspaceCommand extends BaseCommand {
 			if ( isset($result[ $key ]) && '' !== (string) $result[ $key ] ) {
 				WP_CLI::log(sprintf('%s: %s', ucfirst(str_replace('_', ' ', $key)), (string) $result[ $key ]));
 			}
+		}
+		if ( ! empty($assoc_args['summary']) ) {
+			$this->render_cleanup_operator_summary($result);
+			return;
 		}
 		if ( ! empty($result['progress']) && is_array($result['progress']) ) {
 			$this->render_cleanup_progress_summary( (array) $result['progress']);
@@ -1309,6 +1323,227 @@ class WorkspaceCommand extends BaseCommand {
 		if ( ! empty($result['evidence']) ) {
 			WP_CLI::log( (string) wp_json_encode($result['evidence'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 		}
+	}
+
+	/**
+	 * Render compact cleanup status/evidence summary tables.
+	 *
+	 * @param  array<string,mixed> $summary Compact cleanup summary.
+	 * @return void
+	 */
+	private function render_cleanup_operator_summary( array $summary ): void {
+		WP_CLI::log('');
+		WP_CLI::log('Cleanup operator summary:');
+		$cleanup_counts = (array) ( $summary['cleanup_counts'] ?? array() );
+		$artifacts      = (array) ( $summary['artifact_cleanup'] ?? array() );
+		$this->format_items(
+			array(
+				array( 'metric' => 'planned_rows', 'value' => (int) ( $cleanup_counts['planned'] ?? 0 ) ),
+				array( 'metric' => 'applied_rows', 'value' => (int) ( $cleanup_counts['applied'] ?? 0 ) ),
+				array( 'metric' => 'skipped_rows', 'value' => (int) ( $cleanup_counts['skipped'] ?? 0 ) ),
+				array( 'metric' => 'failed_rows', 'value' => (int) ( $cleanup_counts['failed'] ?? 0 ) ),
+				array( 'metric' => 'bytes_reclaimed', 'value' => $this->format_bytes($cleanup_counts['bytes_reclaimed'] ?? 0) ),
+				array( 'metric' => 'remaining_reclaimable_artifacts', 'value' => $this->format_bytes($artifacts['remaining_reclaimable_artifact_bytes'] ?? 0) ),
+			),
+			array( 'metric', 'value' ),
+			array( 'format' => 'table' ),
+			'metric'
+		);
+
+		$this->render_cleanup_summary_reason_rows('Skipped rows by reason:', (array) ( $summary['skipped_by_reason'] ?? array() ));
+		$this->render_cleanup_summary_reason_rows('Failed rows by reason:', (array) ( $summary['failed_by_reason'] ?? array() ));
+
+		$examples = (array) ( $summary['top_blocked_examples'] ?? array() );
+		if ( array() !== $examples ) {
+			WP_CLI::log('');
+			WP_CLI::log('Top blocked examples:');
+			$rows = array_map(
+				fn( $row ) => array(
+					'size'          => $this->format_bytes(is_array($row) ? ( $row['size_bytes'] ?? 0 ) : 0),
+					'reason'        => is_array($row) ? (string) ( $row['reason'] ?? '' ) : '',
+					'handle'        => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '',
+					'artifact_path' => is_array($row) ? (string) ( $row['artifact_path'] ?? '' ) : '',
+					'path'          => is_array($row) ? (string) ( $row['path'] ?? '' ) : '',
+				),
+				array_slice($examples, 0, 10)
+			);
+			$this->format_items($rows, array( 'size', 'reason', 'handle', 'artifact_path', 'path' ), array( 'format' => 'table' ), 'size');
+		}
+
+		$commands = (array) ( $summary['recommended_commands'] ?? array() );
+		if ( array() !== $commands ) {
+			WP_CLI::log('');
+			WP_CLI::log('Recommended next commands:');
+			$rows = array_map(
+				fn( $row ) => array(
+					'bucket'            => is_array($row) ? (string) ( $row['bucket'] ?? '' ) : '',
+					'review_command'    => is_array($row) ? (string) ( $row['command'] ?? '' ) : '',
+					'apply_command'     => is_array($row) ? (string) ( $row['apply'] ?? '' ) : '',
+					'apply_destructive' => is_array($row) && ! empty($row['apply_destructive']) ? 'yes' : 'no',
+				),
+				array_slice($commands, 0, 10)
+			);
+			$this->format_items($rows, array( 'bucket', 'review_command', 'apply_command', 'apply_destructive' ), array( 'format' => 'table' ), 'bucket');
+		}
+	}
+
+	/**
+	 * Build compact cleanup status/evidence output for chat/operator workflows.
+	 *
+	 * @param  array<string,mixed> $result Cleanup status/evidence result.
+	 * @return array<string,mixed>
+	 */
+	private function build_cleanup_operator_summary( array $result ): array {
+		$cleanup_items = (array) ( $result['cleanup_items'] ?? $result['evidence']['cleanup_items'] ?? array() );
+		$artifacts     = (array) ( $result['artifact_cleanup'] ?? $result['evidence']['artifact_cleanup'] ?? array() );
+		$remaining     = (array) ( $result['remaining_work_summary'] ?? array() );
+
+		return array_filter(
+			array(
+				'success'        => (bool) ( $result['success'] ?? false ),
+				'run_id'         => (string) ( $result['run_id'] ?? '' ),
+				'job_id'         => isset($result['job_id']) ? (int) $result['job_id'] : null,
+				'mode'           => (string) ( $result['mode'] ?? $result['evidence']['engine_data']['cleanup_run']['mode'] ?? '' ),
+				'state'          => (string) ( $result['state'] ?? '' ),
+				'status'         => (string) ( $result['status'] ?? '' ),
+				'parent_status'  => (string) ( $result['parent_status'] ?? '' ),
+				'created_at'     => (string) ( $result['created_at'] ?? '' ),
+				'completed_at'   => (string) ( $result['completed_at'] ?? $result['parent_completed_at'] ?? '' ),
+				'cleanup_counts' => array(
+					'planned'         => (int) ( $cleanup_items['planned_rows'] ?? 0 ),
+					'applied'         => (int) ( $cleanup_items['applied_rows'] ?? 0 ),
+					'skipped'         => (int) ( $cleanup_items['skipped_rows'] ?? 0 ),
+					'failed'          => (int) ( $cleanup_items['failed_rows'] ?? 0 ),
+					'bytes_reclaimed' => (int) ( $cleanup_items['bytes_reclaimed'] ?? 0 ),
+					'freed_human'     => (string) ( $cleanup_items['freed_human'] ?? $this->format_bytes($cleanup_items['bytes_reclaimed'] ?? 0) ),
+				),
+				'artifact_cleanup' => array(
+					'planned'                              => (int) ( $artifacts['planned_rows'] ?? 0 ),
+					'applied'                              => (int) ( $artifacts['applied_rows'] ?? 0 ),
+					'skipped'                              => (int) ( $artifacts['skipped_rows'] ?? 0 ),
+					'failed'                               => (int) ( $artifacts['failed_rows'] ?? 0 ),
+					'bytes_reclaimed'                      => (int) ( $artifacts['bytes_reclaimed'] ?? 0 ),
+					'remaining_reclaimable_artifact_bytes' => (int) ( $remaining['remaining_reclaimable_artifact_bytes'] ?? $artifacts['remaining_reclaimable_artifact_bytes'] ?? 0 ),
+					'remaining_reclaimable_human'          => $this->format_bytes($remaining['remaining_reclaimable_artifact_bytes'] ?? $artifacts['remaining_reclaimable_artifact_bytes'] ?? 0),
+				),
+				'children'       => $this->build_cleanup_operator_child_summary( (array) ( $result['children'] ?? $result['evidence']['children'] ?? array() ) ),
+				'by_type'        => (array) ( $cleanup_items['by_type'] ?? array() ),
+				'skipped_by_reason' => (array) ( $remaining['skipped_by_reason'] ?? $cleanup_items['skipped_examples_by_reason'] ?? array() ),
+				'failed_by_reason'  => (array) ( $cleanup_items['failed_by_reason'] ?? $artifacts['failed_by_reason'] ?? array() ),
+				'top_blocked_examples' => $this->cleanup_operator_blocked_examples($result),
+				'recommended_commands' => (array) ( $remaining['recommended_commands'] ?? array() ),
+				'locks'                => (array) ( $result['locks'] ?? array() ),
+			),
+			fn( $value ) => null !== $value && array() !== $value && '' !== $value
+		);
+	}
+
+	/**
+	 * Summarize child cleanup jobs without unbounded ID lists.
+	 *
+	 * @param  array<string,mixed> $children Child job aggregate.
+	 * @return array<string,mixed>
+	 */
+	private function build_cleanup_operator_child_summary( array $children ): array {
+		return array(
+			'total'      => (int) ( $children['total'] ?? 0 ),
+			'running'    => (int) ( $children['running'] ?? 0 ),
+			'completed'  => (int) ( $children['completed'] ?? 0 ),
+			'failed'     => (int) ( $children['failed'] ?? 0 ),
+			'skipped'    => (int) ( $children['skipped'] ?? 0 ),
+			'statuses'   => (array) ( $children['statuses'] ?? array() ),
+			'batch_jobs' => isset($children['batch_total']) ? (int) $children['batch_total'] : count( (array) ( $children['batch_job_ids'] ?? array() ) ),
+			'chunk_jobs' => isset($children['chunk_total']) ? (int) $children['chunk_total'] : count( (array) ( $children['chunk_job_ids'] ?? array() ) ),
+		);
+	}
+
+	/**
+	 * Extract largest blocked cleanup examples from compact summaries and full evidence when available.
+	 *
+	 * @param  array<string,mixed> $result Cleanup status/evidence result.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function cleanup_operator_blocked_examples( array $result ): array {
+		$examples = array();
+		foreach ( (array) ( $result['remaining_work_summary']['skipped_by_reason'] ?? array() ) as $reason => $bucket ) {
+			foreach ( (array) ( is_array($bucket) ? ( $bucket['examples'] ?? array() ) : array() ) as $row ) {
+				if ( is_array($row) ) {
+					$examples[] = $this->cleanup_operator_example_row($row, (string) $reason);
+				}
+			}
+		}
+
+		foreach ( (array) ( $result['evidence']['child_jobs'] ?? array() ) as $job ) {
+			$engine_data = (array) ( is_array($job) ? ( $job['engine_data'] ?? array() ) : array() );
+			foreach ( array( 'skipped', 'failed' ) as $bucket ) {
+				foreach ( (array) ( $engine_data[ $bucket ] ?? array() ) as $row ) {
+					if ( is_array($row) ) {
+						$examples[] = $this->cleanup_operator_example_row($row, (string) ( $row['reason_code'] ?? $bucket ));
+					}
+				}
+			}
+		}
+
+		usort($examples, fn( $a, $b ) => (int) ( $b['size_bytes'] ?? 0 ) <=> (int) ( $a['size_bytes'] ?? 0 ));
+		$seen = array();
+		$deduped = array_values(array_filter(
+			$examples,
+			function ( array $row ) use ( &$seen ): bool {
+				$key = (string) ( $row['handle'] ?? '' ) . '|' . (string) ( $row['reason'] ?? '' ) . '|' . (string) ( $row['path'] ?? '' );
+				if ( isset($seen[ $key ]) ) {
+					return false;
+				}
+				$seen[ $key ] = true;
+				return true;
+			}
+		));
+		return array_slice($deduped, 0, 10);
+	}
+
+	/**
+	 * Normalize one blocked cleanup example row for compact output.
+	 *
+	 * @param  array<string,mixed> $row    Cleanup row.
+	 * @param  string              $reason Fallback reason code.
+	 * @return array<string,mixed>
+	 */
+	private function cleanup_operator_example_row( array $row, string $reason ): array {
+		$artifact_path = (string) ( $row['artifact_path'] ?? '' );
+		$artifacts     = (array) ( $row['artifacts'] ?? array() );
+		if ( '' === $artifact_path && isset($artifacts[0]) && is_array($artifacts[0]) ) {
+			$artifact_path = (string) ( $artifacts[0]['path'] ?? '' );
+		}
+
+		return array_filter(
+			array(
+				'handle'        => (string) ( $row['handle'] ?? '' ),
+				'reason'        => (string) ( $row['reason_code'] ?? $row['reason'] ?? $reason ),
+				'path'          => (string) ( $row['path'] ?? '' ),
+				'artifact_path' => $artifact_path,
+				'size_bytes'    => $this->cleanup_operator_row_bytes($row),
+				'size'          => $this->format_bytes($this->cleanup_operator_row_bytes($row)),
+			),
+			fn( $value ) => '' !== $value && 0 !== $value
+		);
+	}
+
+	/**
+	 * Return best-known reclaimable bytes for one cleanup row.
+	 *
+	 * @param  array<string,mixed> $row Cleanup row.
+	 * @return int
+	 */
+	private function cleanup_operator_row_bytes( array $row ): int {
+		foreach ( array( 'artifact_size_bytes', 'size_bytes', 'bytes_reclaimed' ) as $field ) {
+			if ( isset($row[ $field ]) ) {
+				return max(0, (int) $row[ $field ]);
+			}
+		}
+		$total = 0;
+		foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
+			$total += max(0, (int) ( is_array($artifact) ? ( $artifact['size_bytes'] ?? 0 ) : 0 ));
+		}
+		return $total;
 	}
 
 	/**
