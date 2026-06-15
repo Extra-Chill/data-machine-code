@@ -1338,12 +1338,30 @@ class WorkspaceCommand extends BaseCommand {
 		$artifacts      = (array) ( $summary['artifact_cleanup'] ?? array() );
 		$this->format_items(
 			array(
-				array( 'metric' => 'planned_rows', 'value' => (int) ( $cleanup_counts['planned'] ?? 0 ) ),
-				array( 'metric' => 'applied_rows', 'value' => (int) ( $cleanup_counts['applied'] ?? 0 ) ),
-				array( 'metric' => 'skipped_rows', 'value' => (int) ( $cleanup_counts['skipped'] ?? 0 ) ),
-				array( 'metric' => 'failed_rows', 'value' => (int) ( $cleanup_counts['failed'] ?? 0 ) ),
-				array( 'metric' => 'bytes_reclaimed', 'value' => $this->format_bytes($cleanup_counts['bytes_reclaimed'] ?? 0) ),
-				array( 'metric' => 'remaining_reclaimable_artifacts', 'value' => $this->format_bytes($artifacts['remaining_reclaimable_artifact_bytes'] ?? 0) ),
+				array(
+					'metric' => 'planned_rows',
+					'value'  => (int) ( $cleanup_counts['planned'] ?? 0 ),
+				),
+				array(
+					'metric' => 'applied_rows',
+					'value'  => (int) ( $cleanup_counts['applied'] ?? 0 ),
+				),
+				array(
+					'metric' => 'skipped_rows',
+					'value'  => (int) ( $cleanup_counts['skipped'] ?? 0 ),
+				),
+				array(
+					'metric' => 'failed_rows',
+					'value'  => (int) ( $cleanup_counts['failed'] ?? 0 ),
+				),
+				array(
+					'metric' => 'bytes_reclaimed',
+					'value'  => $this->format_bytes($cleanup_counts['bytes_reclaimed'] ?? 0),
+				),
+				array(
+					'metric' => 'remaining_reclaimable_artifacts',
+					'value'  => $this->format_bytes($artifacts['remaining_reclaimable_artifact_bytes'] ?? 0),
+				),
 			),
 			array( 'metric', 'value' ),
 			array( 'format' => 'table' ),
@@ -1400,16 +1418,16 @@ class WorkspaceCommand extends BaseCommand {
 
 		return array_filter(
 			array(
-				'success'        => (bool) ( $result['success'] ?? false ),
-				'run_id'         => (string) ( $result['run_id'] ?? '' ),
-				'job_id'         => isset($result['job_id']) ? (int) $result['job_id'] : null,
-				'mode'           => (string) ( $result['mode'] ?? $result['evidence']['engine_data']['cleanup_run']['mode'] ?? '' ),
-				'state'          => (string) ( $result['state'] ?? '' ),
-				'status'         => (string) ( $result['status'] ?? '' ),
-				'parent_status'  => (string) ( $result['parent_status'] ?? '' ),
-				'created_at'     => (string) ( $result['created_at'] ?? '' ),
-				'completed_at'   => (string) ( $result['completed_at'] ?? $result['parent_completed_at'] ?? '' ),
-				'cleanup_counts' => array(
+				'success'              => (bool) ( $result['success'] ?? false ),
+				'run_id'               => (string) ( $result['run_id'] ?? '' ),
+				'job_id'               => isset($result['job_id']) ? (int) $result['job_id'] : null,
+				'mode'                 => (string) ( $result['mode'] ?? $result['evidence']['engine_data']['cleanup_run']['mode'] ?? '' ),
+				'state'                => (string) ( $result['state'] ?? '' ),
+				'status'               => (string) ( $result['status'] ?? '' ),
+				'parent_status'        => (string) ( $result['parent_status'] ?? '' ),
+				'created_at'           => (string) ( $result['created_at'] ?? '' ),
+				'completed_at'         => (string) ( $result['completed_at'] ?? $result['parent_completed_at'] ?? '' ),
+				'cleanup_counts'       => array(
 					'planned'         => (int) ( $cleanup_items['planned_rows'] ?? 0 ),
 					'applied'         => (int) ( $cleanup_items['applied_rows'] ?? 0 ),
 					'skipped'         => (int) ( $cleanup_items['skipped_rows'] ?? 0 ),
@@ -1417,7 +1435,7 @@ class WorkspaceCommand extends BaseCommand {
 					'bytes_reclaimed' => (int) ( $cleanup_items['bytes_reclaimed'] ?? 0 ),
 					'freed_human'     => (string) ( $cleanup_items['freed_human'] ?? $this->format_bytes($cleanup_items['bytes_reclaimed'] ?? 0) ),
 				),
-				'artifact_cleanup' => array(
+				'artifact_cleanup'     => array(
 					'planned'                              => (int) ( $artifacts['planned_rows'] ?? 0 ),
 					'applied'                              => (int) ( $artifacts['applied_rows'] ?? 0 ),
 					'skipped'                              => (int) ( $artifacts['skipped_rows'] ?? 0 ),
@@ -1426,10 +1444,10 @@ class WorkspaceCommand extends BaseCommand {
 					'remaining_reclaimable_artifact_bytes' => (int) ( $remaining['remaining_reclaimable_artifact_bytes'] ?? $artifacts['remaining_reclaimable_artifact_bytes'] ?? 0 ),
 					'remaining_reclaimable_human'          => $this->format_bytes($remaining['remaining_reclaimable_artifact_bytes'] ?? $artifacts['remaining_reclaimable_artifact_bytes'] ?? 0),
 				),
-				'children'       => $this->build_cleanup_operator_child_summary( (array) ( $result['children'] ?? $result['evidence']['children'] ?? array() ) ),
-				'by_type'        => (array) ( $cleanup_items['by_type'] ?? array() ),
-				'skipped_by_reason' => (array) ( $remaining['skipped_by_reason'] ?? $cleanup_items['skipped_examples_by_reason'] ?? array() ),
-				'failed_by_reason'  => (array) ( $cleanup_items['failed_by_reason'] ?? $artifacts['failed_by_reason'] ?? array() ),
+				'children'             => $this->build_cleanup_operator_child_summary( (array) ( $result['children'] ?? $result['evidence']['children'] ?? array() ) ),
+				'by_type'              => (array) ( $cleanup_items['by_type'] ?? array() ),
+				'skipped_by_reason'    => (array) ( $remaining['skipped_by_reason'] ?? $cleanup_items['skipped_examples_by_reason'] ?? array() ),
+				'failed_by_reason'     => (array) ( $cleanup_items['failed_by_reason'] ?? $artifacts['failed_by_reason'] ?? array() ),
 				'top_blocked_examples' => $this->cleanup_operator_blocked_examples($result),
 				'recommended_commands' => (array) ( $remaining['recommended_commands'] ?? array() ),
 				'locks'                => (array) ( $result['locks'] ?? array() ),
@@ -1485,7 +1503,7 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		usort($examples, fn( $a, $b ) => (int) ( $b['size_bytes'] ?? 0 ) <=> (int) ( $a['size_bytes'] ?? 0 ));
-		$seen = array();
+		$seen    = array();
 		$deduped = array_values(array_filter(
 			$examples,
 			function ( array $row ) use ( &$seen ): bool {
