@@ -1114,11 +1114,12 @@ trait WorkspaceWorktreeLifecycle {
 	 * @return array{success: bool, pruned: array, skipped?: array, next_commands?: array, inventory?: array, stale_inventory?: array, stale_marker_blockers?: array}|\WP_Error
 	 */
 	public function worktree_prune(): array|\WP_Error {
-		$pruned        = array();
-		$skipped       = array();
-		$next_commands = array();
-		$stale_rows    = array();
-		$marker_blocks = array();
+		$pruned          = array();
+		$skipped         = array();
+		$next_commands   = array();
+		$stale_rows      = array();
+		$marker_blocks   = array();
+		$marker_repaired = array();
 
 		if ( ! is_dir($this->workspace_path) ) {
 			return array(
@@ -1166,8 +1167,9 @@ trait WorkspaceWorktreeLifecycle {
 			return $inventory_diagnostics;
 		}
 
-		$stale_rows    = (array) ( $inventory_diagnostics['stale_inventory'] ?? array() );
-		$marker_blocks = (array) ( $inventory_diagnostics['stale_marker_blockers'] ?? array() );
+		$stale_rows      = (array) ( $inventory_diagnostics['stale_inventory'] ?? array() );
+		$marker_blocks   = (array) ( $inventory_diagnostics['stale_marker_blockers'] ?? array() );
+		$marker_repaired = (array) ( $inventory_diagnostics['stale_marker_repaired'] ?? array() );
 		foreach ( (array) ( $inventory_diagnostics['next_commands'] ?? array() ) as $command ) {
 			$next_commands[] = (string) $command;
 		}
@@ -1180,6 +1182,7 @@ trait WorkspaceWorktreeLifecycle {
 			'inventory'             => $refresh,
 			'stale_inventory'       => $stale_rows,
 			'stale_marker_blockers' => $marker_blocks,
+			'stale_marker_repaired' => $marker_repaired,
 		);
 	}
 
@@ -1190,7 +1193,8 @@ trait WorkspaceWorktreeLifecycle {
 	 * cleanup-eligible inventory rows for worktrees that no longer exist, and
 	 * those rows can block bounded cleanup even after Git reports nothing to
 	 * prune. Missing-path rows are safe to forget because no checkout remains on
-	 * disk; path-present stale markers are reported but left in place.
+	 * disk; path-present stale markers are removed only when the inventory row has
+	 * a cleanup signal and exactly matches the expected workspace worktree path.
 	 *
 	 * @return array<string,mixed>|\WP_Error
 	 */
@@ -1198,6 +1202,7 @@ trait WorkspaceWorktreeLifecycle {
 		$repository            = $this->worktree_inventory();
 		$stale_inventory       = array();
 		$stale_marker_blockers = array();
+		$stale_marker_repaired = array();
 		$next_commands         = array();
 
 		foreach ( $repository->list() as $row ) {
@@ -1242,7 +1247,18 @@ trait WorkspaceWorktreeLifecycle {
 				continue;
 			}
 
-			$primary_path            = '' !== $repo ? $this->get_primary_path($repo) : (string) ( $row['primary_path'] ?? '' );
+			$primary_path = '' !== $repo ? $this->get_primary_path($repo) : (string) ( $row['primary_path'] ?? '' );
+			$repair       = $this->repair_cleanup_eligible_stale_worktree_marker($row, $parsed, $gitdir, $primary_path);
+			if ( $repair instanceof \WP_Error ) {
+				return $repair;
+			}
+
+			if ( null !== $repair ) {
+				$stale_marker_repaired[] = $repair;
+				continue;
+			}
+
+			$remove_command          = sprintf('studio wp datamachine-code workspace remove %s --yes', escapeshellarg($handle));
 			$stale_marker_blockers[] = array(
 				'handle'       => $handle,
 				'repo'         => $repo,
@@ -1250,18 +1266,81 @@ trait WorkspaceWorktreeLifecycle {
 				'primary_path' => $primary_path,
 				'gitdir'       => $gitdir,
 				'reason_code'  => 'stale_worktree_marker',
-				'reason'       => 'worktree path still exists, but its .git marker points at a missing primary .git/worktrees entry; leaving checkout in place for operator review',
-				'hint'         => 'Inspect the path before removal. If it is only a stale artifact, use a reviewed cleanup-artifacts apply-plan or remove the worktree through DMC once metadata is repaired.',
+				'reason'       => 'worktree path still exists, but its .git marker points at a missing primary .git/worktrees entry; leaving checkout in place because the row is not an exact cleanup-eligible stale marker candidate',
+				'hint'         => 'Inspect the path before removal. If it is safe to discard, run the DMC-owned remove command returned in next_command.',
+				'next_command' => $remove_command,
 			);
-			if ( '' !== $primary_path ) {
-				$next_commands[] = sprintf('git -C %s worktree prune -v', escapeshellarg($primary_path));
-			}
+			$next_commands[]         = $remove_command;
 		}
 
 		return array(
 			'stale_inventory'       => $stale_inventory,
 			'stale_marker_blockers' => $stale_marker_blockers,
+			'stale_marker_repaired' => $stale_marker_repaired,
 			'next_commands'         => array_values(array_unique($next_commands)),
+		);
+	}
+
+	/**
+	 * Remove an exact cleanup-eligible stale marker worktree path from DMC-owned state.
+	 *
+	 * @param array<string,mixed> $row          Inventory row.
+	 * @param array<string,mixed> $parsed       Parsed worktree handle.
+	 * @param string              $gitdir       Missing gitdir from the stale marker.
+	 * @param string              $primary_path Primary checkout path.
+	 * @return array<string,mixed>|null|\WP_Error
+	 */
+	private function repair_cleanup_eligible_stale_worktree_marker( array $row, array $parsed, string $gitdir, string $primary_path ): array|null|\WP_Error {
+		$handle   = (string) ( $row['handle'] ?? '' );
+		$repo     = (string) ( $row['repo'] ?? '' );
+		$path     = rtrim( (string) ( $row['path'] ?? '' ), '/');
+		$metadata = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
+		if ( empty($metadata) && ! empty($row['lifecycle_state']) ) {
+			$metadata['lifecycle_state'] = (string) $row['lifecycle_state'];
+		}
+		if ( empty($metadata) && 'cleanup_eligible' === (string) ( $row['cleanup_signal'] ?? '' ) ) {
+			$metadata['lifecycle_state'] = 'cleanup_eligible';
+		}
+
+		if ( '' === $handle || '' === $path || empty($parsed['is_worktree']) || ! WorktreeContextInjector::has_cleanup_signal($metadata) ) {
+			return null;
+		}
+
+		$expected_path = rtrim($this->workspace_path, '/') . '/' . (string) ( $parsed['dir_name'] ?? $handle );
+		if ( $path !== $expected_path ) {
+			return null;
+		}
+
+		$validation    = $this->validate_containment($path, $this->workspace_path);
+		$expected_real = realpath($expected_path);
+		if ( empty($validation['valid']) || false === $expected_real || (string) ( $validation['real_path'] ?? '' ) !== $expected_real ) {
+			return null;
+		}
+
+		$removed_paths = $this->remove_directory_recursive($path, $this->workspace_path);
+		if ( $removed_paths instanceof \WP_Error ) {
+			return $removed_paths;
+		}
+
+		WorktreeContextInjector::forget_metadata($handle);
+		$this->worktree_inventory()->delete($handle);
+		if ( '' !== $primary_path && is_dir($primary_path . '/.git') ) {
+			WorkspaceMutationLock::with_repo(
+				$this->workspace_path,
+				$repo,
+				fn() => $this->run_git($primary_path, 'worktree prune')
+			);
+		}
+
+		return array(
+			'handle'        => $handle,
+			'repo'          => $repo,
+			'path'          => $path,
+			'primary_path'  => $primary_path,
+			'gitdir'        => $gitdir,
+			'reason_code'   => 'stale_worktree_marker_repaired',
+			'reason'        => 'cleanup-eligible worktree path exactly matched a stale .git marker row and was removed from DMC workspace state',
+			'removed_paths' => $removed_paths,
 		);
 	}
 
