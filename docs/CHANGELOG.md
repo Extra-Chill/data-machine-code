@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.136] - 2026-06-16
+
+### Changed
+- Bound cleanup planning scans
+
 ## [0.47.135] - 2026-06-16
 
 ### Fixed
