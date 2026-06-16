@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.133] - 2026-06-16
+
+### Fixed
+- repair cleanup-eligible stale worktree markers
+
 ## [0.47.132] - 2026-06-15
 
 ### Changed
