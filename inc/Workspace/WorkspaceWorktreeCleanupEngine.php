@@ -155,7 +155,12 @@ trait WorkspaceWorktreeCleanupEngine {
 		/** @var array<string,mixed> $github_cache */
 		$github_cache = array();
 
-		$all_worktrees   = $this->dedupe_worktree_cleanup_scan_rows(array_values(array_filter( (array) $listing['worktrees'], fn( $wt ) => empty($wt['is_primary']))));
+		$all_worktrees   = $this->dedupe_worktree_cleanup_scan_rows(
+			array_merge(
+				array_values(array_filter( (array) $listing['worktrees'], fn( $wt ) => empty($wt['is_primary']))),
+				$this->discover_broken_orphan_worktree_markers((array) $listing['worktrees'])
+			)
+		);
 		$total_worktrees = count($all_worktrees);
 		$worktrees       = array_slice($all_worktrees, $offset, $limit);
 		$checked         = 0;
@@ -192,6 +197,28 @@ trait WorkspaceWorktreeCleanupEngine {
 			$branch       = (string) $identity['branch'];
 			$wt_path      = (string) $identity['path'];
 			$primary_path = '' !== $repo ? $this->get_primary_path($repo) : '';
+
+			if ( ! empty($wt['broken_orphan_marker']) ) {
+				$candidates[] = array_merge(
+					array(
+						'handle'             => $handle,
+						'repo'               => $repo,
+						'branch'             => '',
+						'path'               => $wt_path,
+						'dirty'              => null,
+						'signal'             => 'broken_orphan_worktree_marker',
+						'reason_code'        => 'broken_orphan_worktree_marker',
+						'reason'             => 'managed worktree directory has a .git pointer to missing Git worktree metadata',
+						'broken_target_path' => (string) ( $wt['broken_target_path'] ?? '' ),
+						'hint'               => 'Cleanup apply will remove this orphan directory only after revalidating that the .git pointer still targets missing worktree metadata.',
+						'created_at'         => $created_at,
+						'liveness'           => $liveness,
+						'metadata'           => $metadata,
+					),
+					$disk_fields
+				);
+				continue;
+			}
 
 			if ( ! empty($wt['external']) ) {
 				$skipped[] = array_merge(
@@ -588,18 +615,19 @@ trait WorkspaceWorktreeCleanupEngine {
 
 			$candidate = array_merge(
 				array(
-					'handle'      => $wt['handle'],
-					'repo'        => $repo,
-					'branch'      => $branch,
-					'path'        => $wt_path,
-					'dirty'       => $dirty_count,
-					'signal'      => $signal['signal'],
-					'reason_code' => $signal['signal'],
-					'reason'      => $signal['reason'],
-					'pr_url'      => $signal['pr_url'] ?? null,
-					'created_at'  => $created_at,
-					'liveness'    => $liveness,
-					'metadata'    => $metadata,
+					'handle'          => $wt['handle'],
+					'repo'            => $repo,
+					'branch'          => $branch,
+					'path'            => $wt_path,
+					'dirty'           => $dirty_count,
+					'signal'          => $signal['signal'],
+					'reason_code'     => $signal['signal'],
+					'reason'          => $signal['reason'],
+					'cleanup_reasons' => array_values(array_filter(array( $signal['signal'], $signal['reason'] ))),
+					'pr_url'          => $signal['pr_url'] ?? null,
+					'created_at'      => $created_at,
+					'liveness'        => $liveness,
+					'metadata'        => $metadata,
 				), $disk_fields
 			);
 			if ( null !== $age_decision ) {
@@ -664,6 +692,9 @@ trait WorkspaceWorktreeCleanupEngine {
 					// Delete the now-detached local branch while the repo lock still covers
 					// shared git metadata.
 					$primary_path = $this->get_primary_path($cand['repo']);
+					if ( '' === (string) ( $cand['branch'] ?? '' ) ) {
+						return $remove;
+					}
 					$branch       = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($cand['branch'])), self::CLEANUP_GIT_PROBE_TIMEOUT);
 					return is_wp_error($branch) ? $branch : $remove;
 				}
@@ -762,6 +793,127 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Find workspace-local managed directories whose .git file points at missing worktree metadata.
+	 *
+	 * @param  array<int,array<string,mixed>> $listed_worktrees Rows already returned by git worktree list.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function discover_broken_orphan_worktree_markers( array $listed_worktrees ): array {
+		$known = array();
+		foreach ( $listed_worktrees as $row ) {
+			$handle = (string) ( $row['handle'] ?? '' );
+			$path   = (string) ( $row['path'] ?? '' );
+			if ( '' !== $handle ) {
+				$known[ $handle ] = true;
+			}
+			if ( '' !== $path ) {
+				$known[ rtrim($path, '/') ] = true;
+			}
+		}
+
+		if ( ! is_dir($this->workspace_path) ) {
+			return array();
+		}
+
+		$entries = scandir($this->workspace_path);
+		if ( false === $entries ) {
+			return array();
+		}
+
+		$rows = array();
+		foreach ( $entries as $entry ) {
+			if ( '.' === $entry || '..' === $entry || ! str_contains($entry, '@') || isset($known[ $entry ]) ) {
+				continue;
+			}
+
+			$parsed = $this->parse_handle($entry);
+			if ( empty($parsed['is_worktree']) || '' === (string) ( $parsed['repo'] ?? '' ) ) {
+				continue;
+			}
+
+			$path = rtrim($this->workspace_path, '/') . '/' . $entry;
+			if ( isset($known[ $path ]) || ! is_dir($path) ) {
+				continue;
+			}
+
+			$broken = $this->classify_broken_orphan_worktree_marker($path);
+			if ( null === $broken ) {
+				continue;
+			}
+
+			$repo       = (string) $parsed['repo'];
+			$metadata   = WorktreeContextInjector::get_metadata($entry);
+			$created_at = is_array($metadata) ? ( $metadata['created_at'] ?? null ) : null;
+			$liveness   = WorktreeContextInjector::classify_liveness(is_array($metadata) ? $metadata : null);
+			$disk       = array(
+				'size_bytes'           => null,
+				'estimated_size_bytes' => null,
+				'last_touched_at'      => $this->detect_worktree_last_touched_at($path, is_array($metadata) ? $metadata : null, is_string($created_at) ? $created_at : null),
+				'age_days'             => $this->calculate_age_days(is_string($created_at) ? $created_at : null),
+				'artifacts'            => array(),
+				'artifact_size_bytes'  => 0,
+			);
+
+			$rows[] = array_merge(
+				array(
+					'handle'               => $entry,
+					'repo'                 => $repo,
+					'is_worktree'          => true,
+					'is_primary'           => false,
+					'external'             => false,
+					'branch_slug'          => $parsed['branch_slug'] ?? null,
+					'branch'               => '',
+					'head'                 => '',
+					'path'                 => $path,
+					'dirty'                => null,
+					'created_at'           => $created_at,
+					'lifecycle_state'      => is_array($metadata) ? ( $metadata['lifecycle_state'] ?? null ) : null,
+					'liveness'             => $liveness['liveness'],
+					'liveness_reason'      => $liveness['reason'],
+					'metadata'             => $metadata,
+					'broken_orphan_marker' => true,
+					'broken_target_path'   => $broken['gitdir'],
+				),
+				$disk
+			);
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Return broken gitdir evidence when a worktree marker targets missing metadata.
+	 *
+	 * @return array{gitdir:string}|null
+	 */
+	private function classify_broken_orphan_worktree_marker( string $path ): ?array {
+		$marker = rtrim($path, '/') . '/.git';
+		if ( ! is_file($marker) ) {
+			return null;
+		}
+
+		$contents = file_get_contents($marker); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reads a local .git marker.
+		if ( false === $contents || ! preg_match('/^gitdir:\s*(.+)$/mi', $contents, $matches) ) {
+			return null;
+		}
+
+		$gitdir = trim($matches[1]);
+		if ( '' === $gitdir ) {
+			return null;
+		}
+		if ( ! str_starts_with($gitdir, '/') ) {
+			$gitdir = rtrim($path, '/') . '/' . $gitdir;
+		}
+
+		$normalized = str_replace('\\', '/', $gitdir);
+		if ( ! str_contains($normalized, '/.git/worktrees/') || file_exists($gitdir) ) {
+			return null;
+		}
+
+		return array( 'gitdir' => $gitdir );
 	}
 
 	/**
@@ -1376,6 +1528,31 @@ trait WorkspaceWorktreeCleanupEngine {
 					'reason_code' => 'not_a_worktree',
 					'reason'      => 'worktree marker missing — refusing to apply bounded cleanup',
 				),
+			);
+		}
+
+		if ( 'broken_orphan_worktree_marker' === (string) ( $candidate['signal'] ?? $candidate['reason_code'] ?? '' ) ) {
+			$broken = $this->classify_broken_orphan_worktree_marker($real_path);
+			if ( null === $broken ) {
+				return array(
+					'skipped' => array(
+						'handle'      => $handle,
+						'repo'        => $repo,
+						'branch'      => $branch,
+						'path'        => $wt_path,
+						'reason_code' => 'plan_not_current',
+						'reason'      => 'planned broken orphan marker no longer points at missing Git worktree metadata',
+					),
+				);
+			}
+
+			return array_merge(
+				$candidate,
+				array(
+					'branch'             => '',
+					'path'               => $real_path,
+					'broken_target_path' => $broken['gitdir'],
+				)
 			);
 		}
 
@@ -2474,6 +2651,9 @@ trait WorkspaceWorktreeCleanupEngine {
 				return new \WP_Error('invalid_cleanup_plan', sprintf('Cleanup plan candidate #%d is not an object.', (int) $index), array( 'status' => 400 ));
 			}
 			foreach ( $required as $field ) {
+				if ( 'branch' === $field && 'broken_orphan_worktree_marker' === (string) ( $row['signal'] ?? $row['reason_code'] ?? '' ) ) {
+					continue;
+				}
 				if ( '' === trim( (string) ( $row[ $field ] ?? '' )) ) {
 					return new \WP_Error('invalid_cleanup_plan', sprintf('Cleanup plan candidate #%d is missing %s.', (int) $index, $field), array( 'status' => 400 ));
 				}
@@ -2638,6 +2818,26 @@ trait WorkspaceWorktreeCleanupEngine {
 				'not_a_worktree',
 				sprintf('Refusing to remove "%s": .git is not a worktree marker file (got: %s). This may be a primary checkout.', $wt_path, is_dir($git_marker) ? 'directory' : 'missing'),
 				array( 'status' => 403 )
+			);
+		}
+
+		$broken_marker = $this->classify_broken_orphan_worktree_marker($real_path);
+		if ( null !== $broken_marker ) {
+			$removed_paths = $this->remove_directory_recursive($real_path, $this->workspace_path);
+			if ( is_wp_error($removed_paths) ) {
+				return $removed_paths;
+			}
+
+			WorktreeContextInjector::forget_metadata(basename($wt_path));
+			$this->worktree_inventory()->delete(basename($wt_path));
+
+			return array(
+				'success'            => true,
+				'handle'             => basename($wt_path),
+				'message'            => sprintf('Broken orphan worktree directory at "%s" removed.', $wt_path),
+				'branch'             => '',
+				'broken_target_path' => $broken_marker['gitdir'],
+				'removed_paths'      => $removed_paths,
 			);
 		}
 
