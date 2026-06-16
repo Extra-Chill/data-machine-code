@@ -6530,12 +6530,12 @@ class WorkspaceCommand extends BaseCommand {
 		$compact_summary = array_merge(
 			$summary,
 			array(
-				'processed'          => (int) ( $summary['processed'] ?? $summary['inspected'] ?? count($candidates) ),
-				'would_remove'       => (int) ( $summary['would_remove'] ?? ( ! empty($result['dry_run']) ? count($candidates) : 0 ) ),
-				'removed'            => (int) ( $summary['removed'] ?? count($removed) ),
-				'skipped'            => max((int) ( $summary['skipped'] ?? 0 ), count($skipped)),
-				'bytes_reclaimed'    => (int) ( $summary['bytes_reclaimed'] ?? 0 ),
-				'skipped_by_reason'  => array_map(fn( $bucket ) => (int) ( $bucket['count'] ?? 0 ), $buckets),
+				'processed'            => (int) ( $summary['processed'] ?? $summary['inspected'] ?? count($candidates) ),
+				'would_remove'         => (int) ( $summary['would_remove'] ?? ( ! empty($result['dry_run']) ? count($candidates) : 0 ) ),
+				'removed'              => (int) ( $summary['removed'] ?? count($removed) ),
+				'skipped'              => max( (int) ( $summary['skipped'] ?? 0 ), count($skipped) ),
+				'bytes_reclaimed'      => (int) ( $summary['bytes_reclaimed'] ?? 0 ),
+				'skipped_by_reason'    => array_map(fn( $bucket ) => (int) ( $bucket['count'] ?? 0 ), $buckets),
 				'blocker_bucket_count' => count($buckets),
 			)
 		);
@@ -6552,8 +6552,8 @@ class WorkspaceCommand extends BaseCommand {
 			'next_actions'    => $actions,
 			'candidates'      => $this->compact_cleanup_rows($candidates, 25),
 			'removed'         => $this->compact_cleanup_rows($removed, 25),
-			'continuation'    => $this->compact_cleanup_continuation((array) ( $result['continuation'] ?? $result['pagination'] ?? array() )),
-			'evidence'        => $this->compact_cleanup_evidence((array) ( $result['evidence'] ?? array() ), $skipped),
+			'continuation'    => $this->compact_cleanup_continuation( (array) ( $result['continuation'] ?? $result['pagination'] ?? array() ) ),
+			'evidence'        => $this->compact_cleanup_evidence( (array) ( $result['evidence'] ?? array() ), $skipped ),
 		);
 
 		if ( ! empty($result['job_backed']) ) {
@@ -6607,20 +6607,50 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$defaults = array(
-			'active_no_signal'          => array( 'command' => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json', 'destructive' => false ),
-			'needs_metadata_reconcile'  => array( 'command' => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json', 'destructive' => false ),
-			'lifecycle_reconciliation_candidate' => array( 'command' => 'studio wp datamachine-code workspace worktree cleanup --dry-run --format=json', 'destructive' => false ),
-			'dirty_worktree'            => array( 'command' => 'git -C <worktree-path> status --short --branch --untracked-files=normal', 'destructive' => false ),
-			'unpushed_commits'          => array( 'command' => 'git -C <worktree-path> log --oneline --decorate @{u}..HEAD', 'destructive' => false ),
-			'stale_worktree_marker'     => array( 'command' => 'git -C <primary-path> worktree prune --dry-run --verbose', 'destructive' => false ),
-			'primary_missing'           => array( 'command' => 'studio wp datamachine-code workspace show <repo>', 'destructive' => false ),
-			'submodule_worktree'        => array( 'command' => 'git -C <worktree-path> submodule status --recursive', 'destructive' => false ),
-			'remove_timeout'            => array( 'command' => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=25 --remove-timeout=<seconds>', 'destructive' => true ),
+			'active_no_signal'                   => array(
+				'command'     => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json',
+				'destructive' => false,
+			),
+			'needs_metadata_reconcile'           => array(
+				'command'     => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json',
+				'destructive' => false,
+			),
+			'lifecycle_reconciliation_candidate' => array(
+				'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --format=json',
+				'destructive' => false,
+			),
+			'dirty_worktree'                     => array(
+				'command'     => 'git -C <worktree-path> status --short --branch --untracked-files=normal',
+				'destructive' => false,
+			),
+			'unpushed_commits'                   => array(
+				'command'     => 'git -C <worktree-path> log --oneline --decorate @{u}..HEAD',
+				'destructive' => false,
+			),
+			'stale_worktree_marker'              => array(
+				'command'     => 'git -C <primary-path> worktree prune --dry-run --verbose',
+				'destructive' => false,
+			),
+			'primary_missing'                    => array(
+				'command'     => 'studio wp datamachine-code workspace show <repo>',
+				'destructive' => false,
+			),
+			'submodule_worktree'                 => array(
+				'command'     => 'git -C <worktree-path> submodule status --recursive',
+				'destructive' => false,
+			),
+			'remove_timeout'                     => array(
+				'command'     => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=25 --remove-timeout=<seconds>',
+				'destructive' => true,
+			),
 		);
 
 		$actions = array();
 		foreach ( $buckets as $reason_code => $bucket ) {
-			$hint = $by_reason[ $reason_code ] ?? $defaults[ $reason_code ] ?? array( 'command' => 'Re-run with --verbose --format=json and inspect this reason_code before retrying cleanup.', 'destructive' => false );
+			$hint      = $by_reason[ $reason_code ] ?? $defaults[ $reason_code ] ?? array(
+				'command'     => 'Re-run with --verbose --format=json and inspect this reason_code before retrying cleanup.',
+				'destructive' => false,
+			);
 			$actions[] = array(
 				'reason_code' => $reason_code,
 				'count'       => (int) ( $bucket['count'] ?? 0 ),
@@ -6666,7 +6696,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array<string,mixed>
 	 */
 	private function compact_cleanup_evidence( array $evidence, array $skipped ): array {
-		$skipped_handles = array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', $skipped)));
+		$skipped_handles = array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $skipped)));
 		unset($evidence['skipped_handles']);
 		$evidence['skipped_handles_count']    = count($skipped_handles);
 		$evidence['skipped_handles_examples'] = array_slice($skipped_handles, 0, 10);
@@ -6686,7 +6716,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array<int,array<string,mixed>>
 	 */
 	private function compact_cleanup_rows( array $rows, int $limit ): array {
-		return array_values(array_map(fn( $row ) => $this->compact_cleanup_row((array) $row), array_slice($rows, 0, $limit)));
+		return array_map(fn( $row ) => $this->compact_cleanup_row( (array) $row ), array_slice($rows, 0, $limit));
 	}
 
 	/**
@@ -6701,7 +6731,7 @@ class WorkspaceCommand extends BaseCommand {
 			'repo'        => $row['repo'] ?? null,
 			'branch'      => $row['branch'] ?? null,
 			'reason_code' => $row['reason_code'] ?? $row['signal'] ?? null,
-			'reason'      => isset($row['reason']) ? $this->shorten_cleanup_reason((string) $row['reason']) : null,
+			'reason'      => isset($row['reason']) ? $this->shorten_cleanup_reason( (string) $row['reason'] ) : null,
 			'path'        => $row['path'] ?? null,
 		);
 
