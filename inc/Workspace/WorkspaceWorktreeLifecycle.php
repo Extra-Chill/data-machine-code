@@ -1114,9 +1114,9 @@ trait WorkspaceWorktreeLifecycle {
 	 * @return array{success: bool, pruned: array, skipped?: array, next_commands?: array, inventory?: array, stale_inventory?: array, stale_marker_blockers?: array}|\WP_Error
 	 */
 	public function worktree_prune(): array|\WP_Error {
-		$pruned        = array();
-		$skipped       = array();
-		$next_commands = array();
+		$pruned          = array();
+		$skipped         = array();
+		$next_commands   = array();
 		$stale_rows      = array();
 		$marker_blocks   = array();
 		$marker_repaired = array();
