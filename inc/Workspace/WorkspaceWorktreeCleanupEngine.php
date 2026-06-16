@@ -97,7 +97,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				return new \WP_Error('inventory_cleanup_apply_plan_unsupported', 'Inventory-only cleanup cannot apply a plan because it intentionally skips full safety revalidation.', array( 'status' => 400 ));
 			}
 
-			return $this->worktree_cleanup_inventory_only($older_than, $sort, $include_repaired_metadata);
+			return $this->worktree_cleanup_inventory_only($older_than, $sort, $include_repaired_metadata, $limit, $offset);
 		}
 
 		$planned_candidates = null;

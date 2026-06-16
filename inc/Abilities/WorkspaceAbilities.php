@@ -2357,6 +2357,10 @@ class WorkspaceAbilities {
 							'include_worktrees'      => array( 'type' => 'boolean' ),
 							'include_resolvers'      => array( 'type' => 'boolean' ),
 							'force_artifact_cleanup' => array( 'type' => 'boolean' ),
+							'limit'                  => array( 'type' => 'integer' ),
+							'offset'                 => array( 'type' => 'integer' ),
+							'until_budget'           => array( 'type' => 'string' ),
+							'full_workspace'         => array( 'type' => 'boolean' ),
 							'worktree_older_than'    => array( 'type' => 'string' ),
 							'worktree_sort'          => array( 'type' => 'string' ),
 							'worktree_stale_only'    => array( 'type' => 'boolean' ),
@@ -4182,10 +4186,18 @@ class WorkspaceAbilities {
 			'mode'                   => (string) ( $input['mode'] ?? 'cleanup_plan' ),
 			'worktree_stale_only'    => ! empty($input['worktree_stale_only']),
 		);
-		foreach ( array( 'include_artifacts', 'include_worktrees' ) as $key ) {
+		foreach ( array( 'include_artifacts', 'include_worktrees', 'full_workspace' ) as $key ) {
 			if ( array_key_exists($key, $input) ) {
 				$opts[ $key ] = (bool) $input[ $key ];
 			}
+		}
+		foreach ( array( 'limit', 'offset' ) as $key ) {
+			if ( isset($input[ $key ]) ) {
+				$opts[ $key ] = (int) $input[ $key ];
+			}
+		}
+		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
+			$opts['until_budget'] = trim( (string) $input['until_budget']);
 		}
 		if ( isset($input['worktree_older_than']) && '' !== trim( (string) $input['worktree_older_than']) ) {
 			$opts['worktree_older_than'] = trim( (string) $input['worktree_older_than']);

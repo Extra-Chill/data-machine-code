@@ -602,7 +602,10 @@ namespace {
 	$assert(true, isset($cleanup_plan['action_rows']['remove_artifacts']), 'cleanup plan exposes remove_artifacts action rows separately');
 	$assert(true, isset($cleanup_plan['action_rows']['remove_worktree']), 'cleanup plan exposes remove_worktree action rows separately');
 	$assert(count($cleanup_plan['rows']['worktree_removal'] ?? array()), count($cleanup_plan['action_rows']['remove_worktree'] ?? array()), 'remove_worktree action rows mirror worktree removal rows');
-    $assert_contains($cleanup_plan['rows']['worktree_removal'] ?? array(), 'demo@unmerged-feature', 'cleanup plan promotes locally clean remote-backed worktree instead of active/no-signal resolver');
+	$assert_contains($cleanup_plan['rows']['worktree_removal'] ?? array(), 'demo@inventory-cleanup-eligible', 'cleanup plan defaults to cheap inventory cleanup-eligible rows');
+	$full_cleanup_plan = $ws->workspace_cleanup_plan(array( 'include_resolvers' => true, 'full_workspace' => true ));
+	$assert(true, ! is_wp_error($full_cleanup_plan) && ( $full_cleanup_plan['success'] ?? false ), 'full cleanup plan audit succeeds when explicitly requested');
+	$assert_contains($full_cleanup_plan['rows']['worktree_removal'] ?? array(), 'demo@unmerged-feature', 'full cleanup plan promotes locally clean remote-backed worktree after deeper probes');
     $assert(true, isset($cleanup_plan['rows']['resolver']), 'cleanup plan includes optional resolver row bucket');
     $chunk_report = $ws->workspace_cleanup_plan_chunks(
         array(
