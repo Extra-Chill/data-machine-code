@@ -635,12 +635,13 @@ namespace {
         public array $inputs = array();
         public int $extra_skipped = 0;
 
-        public function execute( array $input ): array
-        {
-            $this->last_input = $input;
-            $this->inputs[]   = $input;
-            $skipped = array(
-            array(
+		public function execute( array $input ): array
+		{
+			$this->last_input = $input;
+			$this->inputs[]   = $input;
+			$discard_unpushed = ! empty($input['discard_unpushed']);
+			$skipped = array(
+			array(
             'handle'      => 'repo@dirty',
             'repo'        => 'repo',
             'branch'      => 'dirty',
@@ -649,18 +650,21 @@ namespace {
             'reason'      => 'working tree dirty',
             'dirty'       => 1,
             'unpushed'    => 0,
-            ),
-            array(
-            'handle'      => 'repo@unpushed',
-            'repo'        => 'repo',
-            'branch'      => 'unpushed',
+			),
+			);
+			$unpushed_skip = array(
+			'handle'      => 'repo@unpushed',
+			'repo'        => 'repo',
+			'branch'      => 'unpushed',
             'path'        => '/workspace/repo@unpushed',
             'reason_code' => 'unpushed_commits',
             'reason'      => 'unpushed commits remain protected',
             'dirty'       => 0,
-            'unpushed'    => 2,
-            ),
-            );
+			'unpushed'    => 2,
+			);
+			if ( ! $discard_unpushed ) {
+				$skipped[] = $unpushed_skip;
+			}
             for ( $i = 0; $i < $this->extra_skipped; ++$i ) {
                 $skipped[] = array(
                 'handle'      => 'repo@blocked-' . $i,
@@ -673,18 +677,46 @@ namespace {
             }
             $remaining_handles = array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $skipped);
 
-            return array(
-            'success' => true,
-            'mode'    => 'bounded_cleanup_eligible_apply',
-            'dry_run' => ! empty($input['dry_run']),
+			$removed = empty($input['dry_run']) ? array(
+			array(
+			'handle'                     => $discard_unpushed ? 'repo@unpushed' : 'repo@clean',
+			'repo'                       => 'repo',
+			'branch'                     => $discard_unpushed ? 'unpushed' : 'clean',
+			'path'                       => $discard_unpushed ? '/workspace/repo@unpushed' : '/workspace/repo@clean',
+			'size_bytes'                 => 4096,
+			'unpushed_before_remove'     => $discard_unpushed ? 2 : 0,
+			'discarded_unpushed_commits' => $discard_unpushed,
+			'path_exists_after'          => false,
+			),
+			) : array();
+
+			return array(
+			'success' => true,
+			'mode'    => 'bounded_cleanup_eligible_apply',
+			'dry_run' => ! empty($input['dry_run']),
             'summary' => array(
             'inspected'        => 3,
             'would_remove'     => ! empty($input['dry_run']) ? 1 : 0,
             'removed'          => empty($input['dry_run']) ? 1 : 0,
-            'skipped'          => 2,
-            'bytes_reclaimed'  => empty($input['dry_run']) ? 4096 : 0,
-            ),
-            'skipped' => $skipped,
+			'skipped'          => $discard_unpushed ? 1 : 2,
+			'bytes_reclaimed'  => empty($input['dry_run']) ? 4096 : 0,
+			'discarded_unpushed' => $discard_unpushed && empty($input['dry_run']) ? 1 : 0,
+			),
+			'removed' => $removed,
+			'skipped' => $skipped,
+			'evidence' => array(
+			'discard_unpushed'    => $discard_unpushed,
+			'discarded_unpushed'  => $discard_unpushed && empty($input['dry_run']) ? array(
+			array(
+			'handle'                 => 'repo@unpushed',
+			'repo'                   => 'repo',
+			'branch'                 => 'unpushed',
+			'path'                   => '/workspace/repo@unpushed',
+			'unpushed_before_remove' => 2,
+			'path_exists_after'      => false,
+			),
+			) : array(),
+			),
             'pagination' => array(
             'remaining_total'   => count($remaining_handles),
             'remaining_handles' => $remaining_handles,
@@ -1219,6 +1251,7 @@ namespace {
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--apply]"), 'worktree synopsis declares --apply at top level');
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--via-jobs]"), 'worktree synopsis declares --via-jobs at top level');
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--remove-timeout=<seconds>]"), 'worktree synopsis declares --remove-timeout at top level');
+	datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--discard-unpushed]"), 'worktree synopsis declares --discard-unpushed at top level');
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--passes=<count>]"), 'worktree synopsis declares abandoned --passes at top level');
     datamachine_code_cleanup_assert(str_contains($doc_comment, "\n\t * [--stage=<stage>]"), 'worktree synopsis declares abandoned --stage at top level');
     datamachine_code_cleanup_assert(! str_contains($doc_comment, "\n\t\t * [--apply-plan=<file>]"), 'cleanup flags are not hidden behind nested docblock indentation');
@@ -1896,6 +1929,14 @@ namespace {
 	WP_CLI::$successes = array();
 	$command->worktree(array( 'bounded-cleanup-eligible-apply' ), array( 'limit' => 25, 'remove-timeout' => 120, 'format' => 'json' ));
 	datamachine_code_cleanup_assert(120 === (int) ( $bounded_apply_ability->last_input['remove_timeout'] ?? 0 ), 'bounded cleanup apply forwards remove-timeout');
+
+	WP_CLI::$logs      = array();
+	WP_CLI::$successes = array();
+	$command->worktree(array( 'bounded-cleanup-eligible-apply' ), array( 'limit' => 25, 'discard-unpushed' => true ));
+	datamachine_code_cleanup_assert(true === ( $bounded_apply_ability->last_input['discard_unpushed'] ?? null ), 'bounded cleanup apply forwards explicit discard-unpushed flag');
+	datamachine_code_cleanup_assert(in_array('table:1:handle,repo,branch,size,unpushed,path', WP_CLI::$logs, true), 'bounded cleanup removed table prints unpushed counts');
+	datamachine_code_cleanup_assert(in_array('table:1:handle,unpushed_before,path_exists_after,path', WP_CLI::$logs, true), 'bounded cleanup discard evidence table prints exact handles and before/after evidence');
+	datamachine_code_cleanup_assert(in_array('warning: Discarded unpushed commits for cleanup-eligible worktrees. Evidence follows.', WP_CLI::$logs, true), 'bounded cleanup warns when discarding unpushed commits');
 
 	WP_CLI::$logs      = array();
 	WP_CLI::$successes = array();

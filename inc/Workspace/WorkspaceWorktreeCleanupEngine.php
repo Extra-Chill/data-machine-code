@@ -50,6 +50,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	public function worktree_cleanup_merged( array $opts = array() ): array|\WP_Error {
 		$dry_run                   = ! empty($opts['dry_run']);
 		$force                     = ! empty($opts['force']);
+		$discard_unpushed          = ! empty($opts['discard_unpushed']);
 		$skip_github               = ! empty($opts['skip_github']);
 		$direct_apply_plan         = ! empty($opts['direct_apply_plan']);
 		$inventory_only            = ! empty($opts['inventory_only']);
@@ -112,7 +113,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			$force = false;
 
 			if ( $direct_apply_plan && ! $dry_run ) {
-				return $this->apply_worktree_cleanup_plan_candidates($planned_candidates, $force, $started_at, $stale_liveness_only, $remove_timeout_seconds);
+				return $this->apply_worktree_cleanup_plan_candidates($planned_candidates, $force, $started_at, $stale_liveness_only, $remove_timeout_seconds, $discard_unpushed);
 			}
 		}
 
@@ -942,13 +943,14 @@ trait WorkspaceWorktreeCleanupEngine {
 	 *     batch so the operator can keep going (next call without changes
 	 *     re-derives the same list cheaply).
 	 *
-	 * @param  array $opts Options: dry_run, limit, older_than, sort, force, via_jobs, source.
+	 * @param  array $opts Options: dry_run, limit, older_than, sort, force, discard_unpushed, via_jobs, source.
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_bounded_cleanup_eligible_apply( array $opts = array() ): array|\WP_Error {
 		$started_at                = microtime(true);
 		$dry_run                   = ! empty($opts['dry_run']);
 		$force                     = ! empty($opts['force']);
+		$discard_unpushed          = ! empty($opts['discard_unpushed']);
 		$via_jobs                  = ! empty($opts['via_jobs']);
 		$include_repaired_metadata = ! empty($opts['include_repaired_metadata']);
 		$older_than                = isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '';
@@ -1023,6 +1025,7 @@ trait WorkspaceWorktreeCleanupEngine {
 					'elapsed_ms'      => (int) round(( microtime(true) - $started_at ) * 1000),
 					'inventory_total' => count($all_candidates),
 					'planned_handles' => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', $batch))),
+					'discard_unpushed'=> $discard_unpushed,
 					'remove_timeout'  => $remove_timeout_seconds,
 					'source'          => $source,
 				),
@@ -1030,7 +1033,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		if ( $via_jobs ) {
-			return $this->schedule_bounded_cleanup_eligible_chunks($batch, $deferred, $force, $source, $started_at, $continuation, $include_repaired_metadata, $remove_timeout_seconds);
+			return $this->schedule_bounded_cleanup_eligible_chunks($batch, $deferred, $force, $source, $started_at, $continuation, $include_repaired_metadata, $remove_timeout_seconds, $discard_unpushed);
 		}
 
 		$processed       = 0;
@@ -1038,10 +1041,11 @@ trait WorkspaceWorktreeCleanupEngine {
 		$skipped         = $inventory_skipped;
 		$bytes_reclaimed = 0;
 		$timeout_handles = array();
+		$discarded_unpushed = array();
 
 		foreach ( $batch as $candidate ) {
 			++$processed;
-			$revalidated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force);
+			$revalidated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, false, $discard_unpushed);
 			if ( isset($revalidated['skipped']) ) {
 				$skipped[] = $revalidated['skipped'];
 				continue;
@@ -1090,17 +1094,32 @@ trait WorkspaceWorktreeCleanupEngine {
 				continue;
 			}
 
-			$removed[]        = array_merge(
+			$unpushed_count = (int) ( $validated['unpushed'] ?? 0 );
+			$removed_row     = array_merge(
 				array(
-					'handle'      => (string) ( $candidate['handle'] ?? '' ),
-					'repo'        => $repo,
-					'branch'      => $branch,
-					'path'        => $wt_path,
-					'size_bytes'  => $size,
-					'reason_code' => 'cleanup_eligible',
+					'handle'                     => (string) ( $candidate['handle'] ?? '' ),
+					'repo'                       => $repo,
+					'branch'                     => $branch,
+					'path'                       => $wt_path,
+					'size_bytes'                 => $size,
+					'reason_code'                => 'cleanup_eligible',
+					'unpushed_before_remove'     => $unpushed_count,
+					'discarded_unpushed_commits' => $discard_unpushed && $unpushed_count > 0,
+					'path_exists_after'          => is_dir($wt_path),
 				),
 				is_array($candidate['metadata'] ?? null) ? array( 'metadata' => $candidate['metadata'] ) : array()
 			);
+			$removed[] = $removed_row;
+			if ( $discard_unpushed && $unpushed_count > 0 ) {
+				$discarded_unpushed[] = array(
+					'handle'                 => (string) ( $candidate['handle'] ?? '' ),
+					'repo'                   => $repo,
+					'branch'                 => $branch,
+					'path'                   => $wt_path,
+					'unpushed_before_remove' => $unpushed_count,
+					'path_exists_after'      => is_dir($wt_path),
+				);
+			}
 			$bytes_reclaimed += max(0, $size);
 		}
 
@@ -1129,6 +1148,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				'skipped'         => count($skipped),
 				'bytes_reclaimed' => $bytes_reclaimed,
 				'limit'           => $limit,
+				'discarded_unpushed' => count($discarded_unpushed),
 			),
 			'continuation'   => $continuation,
 			'evidence'       => array(
@@ -1136,6 +1156,8 @@ trait WorkspaceWorktreeCleanupEngine {
 				'inventory_total' => count($all_candidates),
 				'removed_handles' => array_values(array_filter(array_map(fn( $row ) => (string) $row['handle'], $removed))),
 				'skipped_handles' => array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $skipped))),
+				'discard_unpushed'=> $discard_unpushed,
+				'discarded_unpushed' => $discarded_unpushed,
 				'remove_timeout'  => $remove_timeout_seconds,
 				'source'          => $source,
 			),
@@ -1150,7 +1172,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  float                          $started_at Start timestamp.
 	 * @return array<string,mixed>
 	 */
-	private function apply_worktree_cleanup_plan_candidates( array $candidates, bool $force, float $started_at, bool $stale_liveness_only = false, int $remove_timeout_seconds = self::CLEANUP_GIT_REMOVE_TIMEOUT ): array {
+	private function apply_worktree_cleanup_plan_candidates( array $candidates, bool $force, float $started_at, bool $stale_liveness_only = false, int $remove_timeout_seconds = self::CLEANUP_GIT_REMOVE_TIMEOUT, bool $discard_unpushed = false ): array {
 		$processed       = 0;
 		$removed         = array();
 		$skipped         = array();
@@ -1158,7 +1180,7 @@ trait WorkspaceWorktreeCleanupEngine {
 
 		foreach ( $candidates as $candidate ) {
 			++$processed;
-			$revalidated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, $stale_liveness_only);
+			$revalidated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, $stale_liveness_only, $discard_unpushed);
 			if ( isset($revalidated['skipped']) ) {
 				$skipped[] = $revalidated['skipped'];
 				continue;
@@ -1253,7 +1275,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  bool  $force     Allow dirty worktrees.
 		 * @return array<string,mixed>
 		 */
-	private function revalidate_bounded_cleanup_eligible_candidate( array $candidate, bool $force, bool $stale_liveness_only = false ): array {
+	private function revalidate_bounded_cleanup_eligible_candidate( array $candidate, bool $force, bool $stale_liveness_only = false, bool $discard_unpushed = false ): array {
 		$handle   = (string) ( $candidate['handle'] ?? '' );
 		$repo     = (string) ( $candidate['repo'] ?? '' );
 		$branch   = (string) ( $candidate['branch'] ?? '' );
@@ -1435,7 +1457,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			);
 		}
 
-		if ( $unpushed > 0 && ! $allow_effective_clean_removal ) {
+		if ( $unpushed > 0 && ! $allow_effective_clean_removal && ! $discard_unpushed ) {
 			return array(
 				'skipped' => array(
 					'handle'      => $handle,
@@ -1443,13 +1465,13 @@ trait WorkspaceWorktreeCleanupEngine {
 					'branch'      => $branch,
 					'path'        => $wt_path,
 					'reason_code' => 'unpushed_commits',
-					'reason'      => sprintf('%d unpushed commit(s) — bounded cleanup-eligible apply refuses to remove even with force=true', $unpushed),
+					'reason'      => sprintf('%d unpushed commit(s) — bounded cleanup-eligible apply refuses to remove without discard_unpushed=true', $unpushed),
 					'unpushed'    => $unpushed,
 				),
 			);
 		}
 
-		return array_merge($candidate, array( 'path' => $real_path ));
+		return array_merge($candidate, array( 'path' => $real_path, 'unpushed' => (int) $unpushed ));
 	}
 
 	/**
@@ -1467,7 +1489,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  array<string,mixed>            $continuation Continuation envelope.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function schedule_bounded_cleanup_eligible_chunks( array $batch, array $deferred, bool $force, string $source, float $started_at, array $continuation, bool $include_repaired_metadata = false, int $remove_timeout_seconds = self::CLEANUP_GIT_REMOVE_TIMEOUT ): array|\WP_Error {
+	private function schedule_bounded_cleanup_eligible_chunks( array $batch, array $deferred, bool $force, string $source, float $started_at, array $continuation, bool $include_repaired_metadata = false, int $remove_timeout_seconds = self::CLEANUP_GIT_REMOVE_TIMEOUT, bool $discard_unpushed = false ): array|\WP_Error {
 		if ( ! class_exists('\DataMachine\Engine\Tasks\TaskScheduler') ) {
 			return new \WP_Error('task_scheduler_unavailable', 'Data Machine TaskScheduler is unavailable; cannot schedule bounded cleanup-eligible apply chunks.', array( 'status' => 500 ));
 		}
@@ -1520,6 +1542,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				'chunk_index'               => count($item_params),
 				'rows'                      => array( $row ),
 				'force'                     => $force,
+				'discard_unpushed'          => $discard_unpushed,
 				'skip_github'               => true,
 				'include_repaired_metadata' => $include_repaired_metadata,
 				'remove_timeout'            => $remove_timeout_seconds,
@@ -1563,6 +1586,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				'planned_handles' => array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $batch))),
 				'batch_job_id'    => (int) ( $batch_result['batch_job_id'] ?? 0 ),
 				'direct_job_ids'  => $batch_result['job_ids'] ?? array(),
+				'discard_unpushed'=> $discard_unpushed,
 				'remove_timeout'  => $remove_timeout_seconds,
 				'source'          => $source,
 			),
@@ -1615,6 +1639,9 @@ trait WorkspaceWorktreeCleanupEngine {
 
 		if ( ! empty($opts['force']) ) {
 			$parts[] = '--force';
+		}
+		if ( ! empty($opts['discard_unpushed']) ) {
+			$parts[] = '--discard-unpushed';
 		}
 		if ( ! empty($opts['include_repaired_metadata']) ) {
 			$parts[] = '--include-repaired-metadata';

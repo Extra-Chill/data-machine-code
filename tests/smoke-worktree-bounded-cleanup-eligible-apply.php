@@ -438,7 +438,7 @@ namespace {
     $assert(false, is_dir($tmp . '/demo@repaired-metadata-clean'), 'repaired metadata clean directory removed from disk');
     $assert(true, is_dir($tmp . '/demo@repaired-metadata-dirty'), 'repaired metadata dirty directory survives apply');
 
-    echo "\nForce gate (dirty allowed, unpushed never allowed)\n";
+    echo "\nForce gate (dirty allowed, unpushed still requires explicit discard)\n";
     $force_apply = $ws->worktree_bounded_cleanup_eligible_apply(array( 'limit' => 10, 'force' => true ));
     $assert(true, ! is_wp_error($force_apply) && ( $force_apply['success'] ?? false ), 'force apply returns success');
     // Dirty worktree should now be removed.
@@ -446,6 +446,19 @@ namespace {
     // Unpushed worktree must still be skipped — even with force.
     $assert_skipped($force_apply['skipped'] ?? array(), 'demo@eligible-unpushed', 'unpushed_commits', 'unpushed gate not overridden by force=true');
     $assert(true, is_dir($tmp . '/demo@eligible-unpushed'), 'unpushed cleanup-eligible directory survives force apply');
+
+    echo "\nDiscard-unpushed gate (operator-approved data loss)\n";
+    $discard_apply = $ws->worktree_bounded_cleanup_eligible_apply(array( 'limit' => 10, 'discard_unpushed' => true ));
+    $assert(true, ! is_wp_error($discard_apply) && ( $discard_apply['success'] ?? false ), 'discard-unpushed apply returns success');
+    $assert_contains($discard_apply['removed'] ?? array(), 'demo@eligible-unpushed', 'discard_unpushed=true removes cleanup-eligible worktree with unpushed commits');
+    $discard_rows = array_values(array_filter($discard_apply['removed'] ?? array(), fn( $row ) => ( $row['handle'] ?? '' ) === 'demo@eligible-unpushed'));
+    $assert(1, (int) ( $discard_rows[0]['unpushed_before_remove'] ?? 0 ), 'discard evidence records unpushed count before removal');
+    $assert(false, (bool) ( $discard_rows[0]['path_exists_after'] ?? true ), 'discard evidence records path removed after cleanup');
+    $evidence = (array) ( $discard_apply['evidence'] ?? array() );
+    $discard_evidence = (array) ( $evidence['discarded_unpushed'] ?? array() );
+    $assert('demo@eligible-unpushed', (string) ( $discard_evidence[0]['handle'] ?? '' ), 'discard evidence lists exact discarded handle');
+    $assert(1, (int) ( $discard_evidence[0]['unpushed_before_remove'] ?? 0 ), 'discard evidence lists exact discarded unpushed count');
+    $assert(false, is_dir($tmp . '/demo@eligible-unpushed'), 'unpushed cleanup-eligible directory is removed only after discard_unpushed=true');
 
     echo "\nResult: " . ( $total - $failures ) . "/{$total} passed\n";
     exit($failures > 0 ? 1 : 0);
