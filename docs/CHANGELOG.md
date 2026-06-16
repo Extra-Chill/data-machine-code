@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.1] - 2026-06-16
+
+### Fixed
+- gate AGENTS sections on core setting
+
 ## [0.48.0] - 2026-06-16
 
 ### Added
