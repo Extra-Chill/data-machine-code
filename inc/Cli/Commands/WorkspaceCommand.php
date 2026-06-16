@@ -3326,6 +3326,11 @@ class WorkspaceCommand extends BaseCommand {
 	 *   include repaired metadata rows as operator-approved cleanup candidates.
 	 *   Apply still runs fresh dirty/unpushed/containment/primary safety probes.
 	 *
+	 * [--discard-unpushed]
+	 * : With bounded-cleanup-eligible-apply only, explicitly discard unpushed
+	 *   commits after reviewed cleanup eligibility and fresh safety probes. This
+	 *   is a data-loss mode and is not implied by --force.
+	 *
 	 * [--older-than=<duration>]
 	 * : Limit cleanup candidates to worktrees with lifecycle `created_at`
 	 *   metadata older than the compact duration (cleanup only, e.g. 7d, 24h).
@@ -3484,6 +3489,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # (cheap inventory only — no full git worktree scan, no GitHub lookup)
 	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25
 	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=25
+	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --discard-unpushed --limit=25
 	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --via-jobs --limit=10 --older-than=7d
 	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --include-repaired-metadata --older-than=7d --limit=25
 	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --include-repaired-metadata --older-than=7d --limit=25
@@ -3855,6 +3861,7 @@ class WorkspaceCommand extends BaseCommand {
 			case 'bounded-cleanup-eligible-apply':
 				$input['dry_run']                   = ! empty($assoc_args['dry-run']);
 				$input['force']                     = ! empty($assoc_args['force']);
+				$input['discard_unpushed']          = ! empty($assoc_args['discard-unpushed']);
 				$input['via_jobs']                  = ! empty($assoc_args['via-jobs']);
 				$input['include_repaired_metadata'] = ! empty($assoc_args['include-repaired-metadata']);
 				$input['source']                    = self::CLEANUP_CLI_SOURCE;
@@ -6461,15 +6468,32 @@ class WorkspaceCommand extends BaseCommand {
 			WP_CLI::log('Removed worktrees:');
 			$rows = array_map(
 				fn( $row ) => array(
-					'handle' => $row['handle'] ?? '',
-					'repo'   => $row['repo'] ?? '',
-					'branch' => $row['branch'] ?? '',
-					'size'   => $this->format_bytes($row['size_bytes'] ?? null),
-					'path'   => $row['path'] ?? '',
+					'handle'   => $row['handle'] ?? '',
+					'repo'     => $row['repo'] ?? '',
+					'branch'   => $row['branch'] ?? '',
+					'size'     => $this->format_bytes($row['size_bytes'] ?? null),
+					'unpushed' => (int) ( $row['unpushed_before_remove'] ?? 0 ),
+					'path'     => $row['path'] ?? '',
 				),
 				$removed
 			);
-			$this->format_items($rows, array( 'handle', 'repo', 'branch', 'size', 'path' ), array( 'format' => 'table' ), 'handle');
+			$this->format_items($rows, array( 'handle', 'repo', 'branch', 'size', 'unpushed', 'path' ), array( 'format' => 'table' ), 'handle');
+		}
+
+		$evidence           = (array) ( $result['evidence'] ?? array() );
+		$discarded_unpushed = (array) ( $evidence['discarded_unpushed'] ?? array() );
+		if ( ! empty($discarded_unpushed) ) {
+			WP_CLI::warning('Discarded unpushed commits for cleanup-eligible worktrees. Evidence follows.');
+			$rows = array_map(
+				fn( $row ) => array(
+					'handle'            => $row['handle'] ?? '',
+					'unpushed_before'   => (int) ( $row['unpushed_before_remove'] ?? 0 ),
+					'path_exists_after' => ! empty($row['path_exists_after']) ? 'yes' : 'no',
+					'path'              => $row['path'] ?? '',
+				),
+				$discarded_unpushed
+			);
+			$this->format_items($rows, array( 'handle', 'unpushed_before', 'path_exists_after', 'path' ), array( 'format' => 'table' ), 'handle');
 		}
 
 		if ( ! empty($skipped) ) {

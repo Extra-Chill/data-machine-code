@@ -2300,6 +2300,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Allow apply on dirty worktrees. Unpushed-commit gate is never overridden.',
 							),
+							'discard_unpushed'          => array(
+								'type'        => 'boolean',
+								'description' => 'Explicitly discard unpushed commits for bounded cleanup-eligible rows. This is a data-loss mode and is separate from force.',
+							),
 							'via_jobs'                  => array(
 								'type'        => 'boolean',
 								'description' => 'Schedule each candidate as a single-row worktree_cleanup_chunk job for resumable async apply.',
@@ -4120,7 +4124,7 @@ class WorkspaceAbilities {
 	/**
 	 * Apply only worktrees with explicit lifecycle cleanup_eligible metadata in a bounded batch.
 	 *
-	 * @param  array $input Input parameters (dry_run, limit, older_than, sort, force, via_jobs, remove_timeout, source).
+	 * @param  array $input Input parameters (dry_run, limit, older_than, sort, force, discard_unpushed, via_jobs, remove_timeout, source).
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function worktreeBoundedCleanupEligibleApply( array $input ): array|\WP_Error {
@@ -4128,6 +4132,7 @@ class WorkspaceAbilities {
 		$opts      = array(
 			'dry_run'                   => ! empty($input['dry_run']),
 			'force'                     => ! empty($input['force']),
+			'discard_unpushed'          => ! empty($input['discard_unpushed']),
 			'via_jobs'                  => ! empty($input['via_jobs']),
 			'include_repaired_metadata' => ! empty($input['include_repaired_metadata']),
 		);

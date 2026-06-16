@@ -108,6 +108,9 @@ class WorktreeCleanupChunkTask extends SystemTask {
 			'worktrees' => $workspace->worktree_cleanup_merged(
 				array(
 					'apply_plan'                => array( 'candidates' => $rows ),
+					'direct_apply_plan'         => true,
+					'force'                     => ! empty($params['force']),
+					'discard_unpushed'          => ! empty($params['discard_unpushed']),
 					'skip_github'               => array_key_exists('skip_github', $params) ? (bool) $params['skip_github'] : true,
 					'include_repaired_metadata' => ! empty($params['include_repaired_metadata']),
 					'stale_liveness_only'       => ! empty($params['stale_liveness_only']),
