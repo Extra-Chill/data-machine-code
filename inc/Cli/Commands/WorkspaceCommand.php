@@ -3459,11 +3459,13 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # Just dirty detection, skip size scan
 	 *     wp datamachine-code workspace worktree list --with-status
 	 *
-	 *     # Remove a worktree
+	 *     # Remove a worktree (two-arg form, or a single <repo>@<branch-slug> handle)
 	 *     wp datamachine-code workspace worktree remove data-machine fix/foo
+	 *     wp datamachine-code workspace worktree remove data-machine@fix-foo
 	 *
 	 *     # Force-remove a dirty worktree
 	 *     wp datamachine-code workspace worktree remove data-machine fix/foo --force
+	 *     wp datamachine-code workspace worktree remove data-machine@fix-foo --force
 	 *
 	 *     # Prune stale worktree registry entries across all primaries
 	 *     wp datamachine-code workspace worktree prune
@@ -3746,12 +3748,22 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 
 			case 'remove':
-				if ( empty($args[1]) || empty($args[2]) ) {
-					WP_CLI::error('Usage: worktree remove <repo> <branch> [--force]');
+				// Accept either the two-arg `<repo> <branch>` form or a single
+				// `<repo>@<branch-slug>` handle (as printed by `list`/`path`/cleanup
+				// output). When both positionals are present, the two-arg form wins and
+				// acts as the disambiguator; a lone first arg containing `@` is split on
+				// the FIRST `@` into repo + branch-slug.
+				$remove_repo   = (string) ( $args[1] ?? '' );
+				$remove_branch = (string) ( $args[2] ?? '' );
+				if ( '' === $remove_branch && false !== strpos($remove_repo, '@') ) {
+					list( $remove_repo, $remove_branch ) = explode('@', $remove_repo, 2);
+				}
+				if ( '' === $remove_repo || '' === $remove_branch ) {
+					WP_CLI::error('Usage: worktree remove <repo> <branch> | <repo>@<branch-slug> [--force]');
 					return;
 				}
-				$input['repo']   = $args[1];
-				$input['branch'] = $args[2];
+				$input['repo']   = $remove_repo;
+				$input['branch'] = $remove_branch;
 				$input['force']  = ! empty($assoc_args['force']);
 				break;
 
