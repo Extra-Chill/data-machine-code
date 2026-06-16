@@ -1022,12 +1022,12 @@ trait WorkspaceWorktreeCleanupEngine {
 				),
 				'continuation'   => $continuation,
 				'evidence'       => array(
-					'elapsed_ms'      => (int) round(( microtime(true) - $started_at ) * 1000),
-					'inventory_total' => count($all_candidates),
-					'planned_handles' => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', $batch))),
-					'discard_unpushed'=> $discard_unpushed,
-					'remove_timeout'  => $remove_timeout_seconds,
-					'source'          => $source,
+					'elapsed_ms'       => (int) round(( microtime(true) - $started_at ) * 1000),
+					'inventory_total'  => count($all_candidates),
+					'planned_handles'  => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', $batch))),
+					'discard_unpushed' => $discard_unpushed,
+					'remove_timeout'   => $remove_timeout_seconds,
+					'source'           => $source,
 				),
 			);
 		}
@@ -1036,11 +1036,11 @@ trait WorkspaceWorktreeCleanupEngine {
 			return $this->schedule_bounded_cleanup_eligible_chunks($batch, $deferred, $force, $source, $started_at, $continuation, $include_repaired_metadata, $remove_timeout_seconds, $discard_unpushed);
 		}
 
-		$processed       = 0;
-		$removed         = array();
-		$skipped         = $inventory_skipped;
-		$bytes_reclaimed = 0;
-		$timeout_handles = array();
+		$processed          = 0;
+		$removed            = array();
+		$skipped            = $inventory_skipped;
+		$bytes_reclaimed    = 0;
+		$timeout_handles    = array();
 		$discarded_unpushed = array();
 
 		foreach ( $batch as $candidate ) {
@@ -1095,7 +1095,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			}
 
 			$unpushed_count = (int) ( $validated['unpushed'] ?? 0 );
-			$removed_row     = array_merge(
+			$removed_row    = array_merge(
 				array(
 					'handle'                     => (string) ( $candidate['handle'] ?? '' ),
 					'repo'                       => $repo,
@@ -1109,7 +1109,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				),
 				is_array($candidate['metadata'] ?? null) ? array( 'metadata' => $candidate['metadata'] ) : array()
 			);
-			$removed[] = $removed_row;
+			$removed[]      = $removed_row;
 			if ( $discard_unpushed && $unpushed_count > 0 ) {
 				$discarded_unpushed[] = array(
 					'handle'                 => (string) ( $candidate['handle'] ?? '' ),
@@ -1143,23 +1143,23 @@ trait WorkspaceWorktreeCleanupEngine {
 			'removed'        => $removed,
 			'skipped'        => $skipped,
 			'summary'        => array(
-				'processed'       => $processed,
-				'removed'         => count($removed),
-				'skipped'         => count($skipped),
-				'bytes_reclaimed' => $bytes_reclaimed,
-				'limit'           => $limit,
+				'processed'          => $processed,
+				'removed'            => count($removed),
+				'skipped'            => count($skipped),
+				'bytes_reclaimed'    => $bytes_reclaimed,
+				'limit'              => $limit,
 				'discarded_unpushed' => count($discarded_unpushed),
 			),
 			'continuation'   => $continuation,
 			'evidence'       => array(
-				'elapsed_ms'      => (int) round(( microtime(true) - $started_at ) * 1000),
-				'inventory_total' => count($all_candidates),
-				'removed_handles' => array_values(array_filter(array_map(fn( $row ) => (string) $row['handle'], $removed))),
-				'skipped_handles' => array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $skipped))),
-				'discard_unpushed'=> $discard_unpushed,
+				'elapsed_ms'         => (int) round(( microtime(true) - $started_at ) * 1000),
+				'inventory_total'    => count($all_candidates),
+				'removed_handles'    => array_values(array_filter(array_map(fn( $row ) => (string) $row['handle'], $removed))),
+				'skipped_handles'    => array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $skipped))),
+				'discard_unpushed'   => $discard_unpushed,
 				'discarded_unpushed' => $discarded_unpushed,
-				'remove_timeout'  => $remove_timeout_seconds,
-				'source'          => $source,
+				'remove_timeout'     => $remove_timeout_seconds,
+				'source'             => $source,
 			),
 		);
 	}
@@ -1471,7 +1471,13 @@ trait WorkspaceWorktreeCleanupEngine {
 			);
 		}
 
-		return array_merge($candidate, array( 'path' => $real_path, 'unpushed' => (int) $unpushed ));
+		return array_merge(
+			$candidate,
+			array(
+				'path'     => $real_path,
+				'unpushed' => (int) $unpushed,
+			)
+		);
 	}
 
 	/**
@@ -1582,13 +1588,13 @@ trait WorkspaceWorktreeCleanupEngine {
 			),
 			'continuation'   => $continuation,
 			'evidence'       => array(
-				'elapsed_ms'      => (int) round(( microtime(true) - $started_at ) * 1000),
-				'planned_handles' => array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $batch))),
-				'batch_job_id'    => (int) ( $batch_result['batch_job_id'] ?? 0 ),
-				'direct_job_ids'  => $batch_result['job_ids'] ?? array(),
-				'discard_unpushed'=> $discard_unpushed,
-				'remove_timeout'  => $remove_timeout_seconds,
-				'source'          => $source,
+				'elapsed_ms'       => (int) round(( microtime(true) - $started_at ) * 1000),
+				'planned_handles'  => array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $batch))),
+				'batch_job_id'     => (int) ( $batch_result['batch_job_id'] ?? 0 ),
+				'direct_job_ids'   => $batch_result['job_ids'] ?? array(),
+				'discard_unpushed' => $discard_unpushed,
+				'remove_timeout'   => $remove_timeout_seconds,
+				'source'           => $source,
 			),
 		);
 	}

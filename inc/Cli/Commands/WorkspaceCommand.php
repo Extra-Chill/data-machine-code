@@ -6479,7 +6479,7 @@ class WorkspaceCommand extends BaseCommand {
 			$this->format_items($rows, array( 'handle', 'repo', 'branch', 'size', 'unpushed', 'path' ), array( 'format' => 'table' ), 'handle');
 		}
 
-		$evidence            = (array) ( $result['evidence'] ?? array() );
+		$evidence           = (array) ( $result['evidence'] ?? array() );
 		$discarded_unpushed = (array) ( $evidence['discarded_unpushed'] ?? array() );
 		if ( ! empty($discarded_unpushed) ) {
 			WP_CLI::warning('Discarded unpushed commits for cleanup-eligible worktrees. Evidence follows.');
