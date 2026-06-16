@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.134] - 2026-06-16
+
+### Fixed
+- compact bounded cleanup JSON output
+
 ## [0.47.133] - 2026-06-16
 
 ### Fixed
