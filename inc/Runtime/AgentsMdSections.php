@@ -17,6 +17,10 @@ final class AgentsMdSections {
 	 * Register AGENTS.md as a composable memory file and add DMC-owned sections.
 	 */
 	public static function register(): void {
+		if ( ! function_exists('datamachine_agents_md_enabled') || ! datamachine_agents_md_enabled() ) {
+			return;
+		}
+
 		if ( ! class_exists('\DataMachine\Engine\AI\MemoryFileRegistry') ) {
 			return;
 		}
@@ -58,6 +62,10 @@ final class AgentsMdSections {
 	 * Register workspace change hooks that invalidate composable AGENTS.md.
 	 */
 	public static function register_invalidation_hooks( array $hooks ): array {
+		if ( ! function_exists('datamachine_agents_md_enabled') || ! datamachine_agents_md_enabled() ) {
+			return $hooks;
+		}
+
 		$hooks[] = 'datamachine_code_workspace_changed';
 		return $hooks;
 	}
