@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.47.135] - 2026-06-16
+
+### Fixed
+- add explicit discard for unpushed cleanup worktrees
+
 ## [0.47.134] - 2026-06-16
 
 ### Fixed
