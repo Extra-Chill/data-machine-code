@@ -81,6 +81,16 @@ class Workspace {
 	public const ARTIFACT_CLEANUP_DEFAULT_LIMIT = 100;
 
 	/**
+	 * Default cleanup plan page size for high-level retention planning.
+	 */
+	public const CLEANUP_PLAN_DEFAULT_LIMIT = 100;
+
+	/**
+	 * Default wall-clock budget for high-level worktree retention review pages.
+	 */
+	public const CLEANUP_PLAN_DEFAULT_BUDGET = '30s';
+
+	/**
 	 * Default cap on top-level workspace entries sized by hygiene reports.
 	 */
 	public const HYGIENE_DEFAULT_SIZE_LIMIT = 1000;

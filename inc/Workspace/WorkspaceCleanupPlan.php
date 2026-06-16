@@ -34,9 +34,13 @@ trait WorkspaceCleanupPlan {
 			'include_worktrees'      => array_key_exists('include_worktrees', $opts) ? (bool) $opts['include_worktrees'] : true,
 			'include_resolvers'      => ! empty($opts['include_resolvers']),
 			'top_n'                  => isset($opts['top_n']) ? max(1, min(50, (int) $opts['top_n'])) : 10,
+			'limit'                  => isset($opts['limit']) ? max(1, (int) $opts['limit']) : self::CLEANUP_PLAN_DEFAULT_LIMIT,
+			'offset'                 => isset($opts['offset']) ? max(0, (int) $opts['offset']) : 0,
+			'until_budget'           => isset($opts['until_budget']) && '' !== trim( (string) $opts['until_budget']) ? trim( (string) $opts['until_budget']) : self::CLEANUP_PLAN_DEFAULT_BUDGET,
+			'full_workspace'         => ! empty($opts['full_workspace']),
 			'worktree_older_than'    => isset($opts['worktree_older_than']) ? trim( (string) $opts['worktree_older_than']) : '',
-			'worktree_sort'          => isset($opts['worktree_sort']) && '' !== trim( (string) $opts['worktree_sort']) ? trim( (string) $opts['worktree_sort']) : 'size',
-			'artifact_sort'          => isset($opts['artifact_sort']) && '' !== trim( (string) $opts['artifact_sort']) ? trim( (string) $opts['artifact_sort']) : 'size',
+			'worktree_sort'          => isset($opts['worktree_sort']) && '' !== trim( (string) $opts['worktree_sort']) ? trim( (string) $opts['worktree_sort']) : '',
+			'artifact_sort'          => isset($opts['artifact_sort']) && '' !== trim( (string) $opts['artifact_sort']) ? trim( (string) $opts['artifact_sort']) : '',
 			'worktree_stale_only'    => ! empty($opts['worktree_stale_only']),
 		);
 
@@ -46,14 +50,13 @@ trait WorkspaceCleanupPlan {
 			'summary'    => array(),
 		);
 		if ( $inputs['include_artifacts'] ) {
-			// Workspace cleanup plan is the source-of-truth orchestrator that later
-			// chunks/jobs consume. Use whole-workspace inventory planning so hundreds
-			// of worktrees are normal; apply still revalidates every row before delete.
 			$artifact_plan = $this->worktree_cleanup_artifacts(
 				array(
 					'dry_run'        => true,
 					'force'          => $inputs['force_artifact_cleanup'],
-					'full_workspace' => true,
+					'full_workspace' => $inputs['full_workspace'],
+					'limit'          => $inputs['limit'],
+					'offset'         => $inputs['offset'],
 					'sort'           => $inputs['artifact_sort'],
 				)
 			);
@@ -68,15 +71,20 @@ trait WorkspaceCleanupPlan {
 			'summary'    => array(),
 		);
 		if ( $inputs['include_worktrees'] ) {
-			$worktree_plan = $this->worktree_cleanup_merged(
-				array(
-					'dry_run'             => true,
-					'skip_github'         => true,
-					'older_than'          => $inputs['worktree_older_than'],
-					'sort'                => $inputs['worktree_sort'],
-					'stale_liveness_only' => $inputs['worktree_stale_only'],
-				)
+			$worktree_args = array(
+				'dry_run'             => true,
+				'skip_github'         => true,
+				'inventory_only'      => ! $inputs['full_workspace'],
+				'older_than'          => $inputs['worktree_older_than'],
+				'sort'                => $inputs['worktree_sort'],
+				'stale_liveness_only' => $inputs['worktree_stale_only'],
 			);
+			if ( ! $inputs['full_workspace'] ) {
+				$worktree_args['limit']        = $inputs['limit'];
+				$worktree_args['offset']       = $inputs['offset'];
+				$worktree_args['until_budget'] = $inputs['until_budget'];
+			}
+			$worktree_plan = $this->worktree_cleanup_merged($worktree_args);
 			if ( $worktree_plan instanceof \WP_Error ) {
 				return $worktree_plan;
 			}
@@ -98,12 +106,16 @@ trait WorkspaceCleanupPlan {
 			'resolve_signal'   => $rows['resolver'],
 		);
 
+		$continuation              = $this->build_cleanup_plan_continuation($artifact_plan, $worktree_plan, $inputs);
 		$summary                   = $this->build_cleanup_plan_summary($rows, $blocked, $artifact_plan, $worktree_plan, $inputs);
 		$summary['rows_by_action'] = array(
 			'remove_artifacts' => count($action_rows['remove_artifacts']),
 			'remove_worktree'  => count($action_rows['remove_worktree']),
 			'resolve_signal'   => count($action_rows['resolve_signal']),
 		);
+		if ( array() !== $continuation ) {
+			$summary['continuation'] = $continuation;
+		}
 
 		$plan = array(
 			'success'        => true,
@@ -127,6 +139,9 @@ trait WorkspaceCleanupPlan {
 			'action_rows'    => $action_rows,
 			'summary'        => $summary,
 		);
+		if ( array() !== $continuation ) {
+			$plan['continuation'] = $continuation;
+		}
 
 		$plan['plan_id'] = $this->stable_cleanup_hash(
 			array(
@@ -370,6 +385,66 @@ trait WorkspaceCleanupPlan {
 	}
 
 	/**
+	 * Build operator continuation evidence from bounded child cleanup plans.
+	 *
+	 * @param  array<string,mixed> $artifact_plan Artifact cleanup child plan.
+	 * @param  array<string,mixed> $worktree_plan Worktree cleanup child plan.
+	 * @param  array<string,mixed> $inputs        Normalized plan inputs.
+	 * @return array<string,mixed>
+	 */
+	private function build_cleanup_plan_continuation( array $artifact_plan, array $worktree_plan, array $inputs ): array {
+		$limit       = max(1, (int) ( $inputs['limit'] ?? self::CLEANUP_PLAN_DEFAULT_LIMIT ));
+		$offset      = max(0, (int) ( $inputs['offset'] ?? 0 ));
+		$next_offset = null;
+		$lanes       = array();
+
+		$plans = array(
+			'artifact_cleanup' => $artifact_plan,
+			'worktree_removal' => $worktree_plan,
+		);
+
+		foreach ( $plans as $lane => $plan ) {
+			$pagination = is_array($plan['pagination'] ?? null) ? $plan['pagination'] : ( is_array($plan['summary']['pagination'] ?? null) ? $plan['summary']['pagination'] : null );
+			if ( null === $pagination ) {
+				continue;
+			}
+
+			$lane_next      = $pagination['next_offset'] ?? null;
+			$lanes[ $lane ] = array(
+				'complete'       => ! empty($pagination['complete']),
+				'partial'        => ! empty($pagination['partial']),
+				'offset'         => (int) ( $pagination['offset'] ?? $offset ),
+				'limit'          => isset($pagination['limit']) ? (int) $pagination['limit'] : $limit,
+				'scanned'        => (int) ( $pagination['scanned'] ?? 0 ),
+				'total'          => (int) ( $pagination['total'] ?? 0 ),
+				'next_offset'    => null === $lane_next ? null : (int) $lane_next,
+				'budget_stopped' => ! empty($pagination['budget_stopped']),
+			);
+			if ( null !== $lane_next ) {
+				$next_offset = null === $next_offset ? (int) $lane_next : min($next_offset, (int) $lane_next);
+			}
+		}
+
+		if ( array() === $lanes ) {
+			return array();
+		}
+
+		$complete = null === $next_offset;
+		return array(
+			'bounded'            => empty($inputs['full_workspace']),
+			'complete'           => $complete,
+			'partial'            => ! $complete,
+			'limit'              => $limit,
+			'offset'             => $offset,
+			'next_offset'        => $next_offset,
+			'lanes'              => $lanes,
+			'next_command'       => null === $next_offset ? null : sprintf('studio wp datamachine-code workspace cleanup plan --mode=retention --limit=%d --offset=%d --format=json', $limit, $next_offset),
+			'full_audit_command' => 'studio wp datamachine-code workspace cleanup plan --mode=retention --exhaustive --format=json',
+			'operator_note'      => empty($inputs['full_workspace']) ? 'Default cleanup planning is bounded for large workspaces; review/apply this page or continue with next_command for the next page.' : 'Full-workspace cleanup audit requested explicitly.',
+		);
+	}
+
+	/**
 	 * Return the bytes a cleanup row is expected to reclaim.
 	 *
 	 * @param  array<string,mixed> $row Cleanup row.
@@ -584,8 +659,8 @@ trait WorkspaceCleanupPlan {
 			array(
 				'label'   => 'inspect_full_plan_json',
 				'risk'    => 'none',
-				'command' => 'studio wp datamachine-code workspace cleanup plan --mode=retention --format=json',
-				'when'    => 'export the full plan for review or archival',
+				'command' => 'studio wp datamachine-code workspace cleanup plan --mode=retention --exhaustive --format=json',
+				'when'    => 'operator explicitly wants a full unbounded audit for review or archival',
 			),
 			array(
 				'label'   => 'resolve_metadata_blockers',
@@ -596,8 +671,8 @@ trait WorkspaceCleanupPlan {
 			array(
 				'label'   => 'refresh_merge_signals',
 				'risk'    => 'none',
-				'command' => 'studio wp datamachine-code workspace worktree cleanup --dry-run --format=json',
-				'when'    => 'active or lifecycle rows need full merge/PR signal review',
+				'command' => 'studio wp datamachine-code workspace worktree cleanup --dry-run --limit=100 --offset=0 --until-budget=30s --format=json',
+				'when'    => 'active or lifecycle rows need deeper merge/PR signal review after the cheap inventory pass',
 			),
 		);
 

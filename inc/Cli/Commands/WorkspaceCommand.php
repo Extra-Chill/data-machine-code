@@ -593,12 +593,12 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--force]
 	 * : Pass force=true into the cleanup task params for modes that support it.
 	 *
-	 * [--include-artifacts]
-	 * : For `plan --mode=retention`, include artifact cleanup rows. Retention
-	 *   planning includes a full-workspace artifact inventory by default; this flag
-	 *   remains accepted for explicitness and `--mode=artifacts` still creates an
-	 *   artifact-only plan. `--mode=stale-worktrees` never includes artifacts unless
-	 *   this flag is passed.
+		 * [--include-artifacts]
+		 * : For `plan --mode=retention`, include artifact cleanup rows. Retention
+		 *   planning includes a bounded artifact inventory page by default; this flag
+		 *   remains accepted for explicitness and `--mode=artifacts` still creates an
+		 *   artifact-only plan. `--mode=stale-worktrees` never includes artifacts unless
+		 *   this flag is passed.
 	 *
 	 * [--older-than=<duration>]
 	 * : Pass an age gate such as 7d or 24h into cleanup task params.
@@ -607,23 +607,22 @@ class WorkspaceCommand extends BaseCommand {
 	 * : For `plan`, number of largest reclaimable paths to show in the upfront
 	 *   summary. Defaults to 10.
 	 *
-	 * [--limit=<count>]
-	 * : For DB-backed `apply` / `resume`, maximum pending rows to process in this
-	 *   invocation (default 25, max 100). For `--mode=artifacts` pages, maximum
-	 *   worktrees to scan; dry-run reviews scan this bounded page synchronously,
-	 *   and apply runs freeze eligible candidates from the same bounded page.
-	 *   Artifact page scans default to 100. Use 0 to disable the artifact scan cap
-	 *   (combine with --exhaustive for a full audit).
+		 * [--limit=<count>]
+		 * : For DB-backed `apply` / `resume`, maximum pending rows to process in this
+		 *   invocation (default 25, max 100). For `plan`, maximum worktrees to scan in
+		 *   each cleanup lane page. Plan pages default to 100 so huge workspaces return
+		 *   actionable JSON quickly. Use --exhaustive for a full audit.
 	 *
-	 * [--offset=<count>]
-	 * : Pagination offset (0-indexed) for `--mode=artifacts` dry-run and apply
-	 *   pages. Walk huge workspaces by feeding the previous response's
-	 *   `pagination.next_offset` until `pagination.complete` is true.
+		 * [--offset=<count>]
+		 * : Pagination offset (0-indexed) for bounded plan pages and artifact dry-run
+		 *   pages. Walk huge workspaces by feeding the previous response's
+		 *   `continuation.next_offset` until `continuation.complete` is true.
 	 *
-	 * [--exhaustive]
-	 * : For `--mode=artifacts --dry-run`, scan every worktree AND run per-worktree
-	 *   git status / unpushed-commit safety probes. Slow on huge workspaces; use
-	 *   sparingly for full audits.
+		 * [--exhaustive]
+		 * : For `plan`, request a full unbounded audit instead of the default bounded
+		 *   inventory-first page. For `--mode=artifacts --dry-run`, scan every worktree
+		 *   AND run per-worktree git status / unpushed-commit safety probes. Slow on
+		 *   huge workspaces; use sparingly for full audits.
 	 *
 	 * [--safety-probes]
 	 * : For `--mode=artifacts --dry-run`, run the per-worktree git safety probes
@@ -1065,6 +1064,15 @@ class WorkspaceCommand extends BaseCommand {
 			$sort                   = trim( (string) $assoc_args['sort']);
 			$input['artifact_sort'] = $sort;
 			$input['worktree_sort'] = $sort;
+		}
+		if ( isset($assoc_args['limit']) ) {
+			$input['limit'] = (int) $assoc_args['limit'];
+		}
+		if ( isset($assoc_args['offset']) ) {
+			$input['offset'] = (int) $assoc_args['offset'];
+		}
+		if ( ! empty($assoc_args['exhaustive']) ) {
+			$input['full_workspace'] = true;
 		}
 		if ( 'stale-worktrees' === $mode ) {
 			$input['worktree_stale_only'] = true;

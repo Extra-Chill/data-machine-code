@@ -21,11 +21,14 @@ trait WorkspaceWorktreeInventoryCleanup {
 	 * Only explicit lifecycle cleanup signals become candidates; every ambiguous
 	 * worktree is skipped with stable reason codes for review.
 	 *
-	 * @param  string $older_than Optional age filter duration.
-	 * @param  string $sort       Optional candidate sort.
+	 * @param  string   $older_than                Optional age filter duration.
+	 * @param  string   $sort                      Optional candidate sort.
+	 * @param  bool     $include_repaired_metadata Whether repaired metadata rows can be candidates.
+	 * @param  int|null $limit                     Optional worktree page size.
+	 * @param  int      $offset                    Optional worktree page offset.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function worktree_cleanup_inventory_only( string $older_than, string $sort, bool $include_repaired_metadata = false ): array|\WP_Error {
+	private function worktree_cleanup_inventory_only( string $older_than, string $sort, bool $include_repaired_metadata = false, ?int $limit = null, int $offset = 0 ): array|\WP_Error {
 		$age_filter = null;
 		if ( '' !== $older_than ) {
 			$duration_seconds = $this->parse_worktree_cleanup_duration($older_than);
@@ -48,7 +51,14 @@ trait WorkspaceWorktreeInventoryCleanup {
 		$candidates = array();
 		$skipped    = array();
 
-		foreach ( $this->build_workspace_inventory_rows() as $wt ) {
+		$inventory_rows = array_values(array_filter($this->build_workspace_inventory_rows(), fn( $wt ) => ! empty($wt['is_worktree']) ));
+		$total          = count($inventory_rows);
+		$offset         = max(0, $offset);
+		$page_rows      = null === $limit ? array_slice($inventory_rows, $offset) : array_slice($inventory_rows, $offset, max(1, $limit));
+		$processed      = 0;
+
+		foreach ( $page_rows as $wt ) {
+			++$processed;
 			if ( empty($wt['is_worktree']) ) {
 				continue;
 			}
@@ -234,13 +244,17 @@ trait WorkspaceWorktreeInventoryCleanup {
 		}
 
 		$candidates = $this->sort_worktree_cleanup_rows($candidates, $sort);
+		$pagination = $this->build_worktree_cleanup_pagination($offset, $limit, $processed, $total, false, null);
 		$summary    = $this->build_worktree_cleanup_summary($candidates, array(), $skipped, $age_filter);
+		if ( null !== $pagination ) {
+			$summary['pagination'] = $pagination;
+		}
 		if ( ! empty($candidates) ) {
 			$summary['bounded_cleanup_eligible_apply'] = $this->build_bounded_cleanup_eligible_apply_hint(count($candidates), $older_than, $sort, $include_repaired_metadata);
 			$summary['apply_command']                  = $summary['bounded_cleanup_eligible_apply']['apply_command'];
 		}
 
-		return array(
+		$response = array(
 			'success'        => true,
 			'dry_run'        => true,
 			'inventory_only' => true,
@@ -249,6 +263,10 @@ trait WorkspaceWorktreeInventoryCleanup {
 			'skipped'        => $skipped,
 			'summary'        => $summary,
 		);
+		if ( null !== $pagination ) {
+			$response['pagination'] = $pagination;
+		}
+		return $response;
 	}
 
 	/**
