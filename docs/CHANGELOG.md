@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.0] - 2026-06-16
+
+### Added
+- accept repo@branch handle in worktree remove
+
 ## [0.47.136] - 2026-06-16
 
 ### Changed
