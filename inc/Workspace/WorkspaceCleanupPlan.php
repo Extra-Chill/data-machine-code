@@ -72,13 +72,13 @@ trait WorkspaceCleanupPlan {
 		);
 		if ( $inputs['include_worktrees'] ) {
 			$worktree_args = array(
-					'dry_run'             => true,
-					'skip_github'         => true,
-					'inventory_only'      => ! $inputs['full_workspace'],
-					'older_than'          => $inputs['worktree_older_than'],
-					'sort'                => $inputs['worktree_sort'],
-					'stale_liveness_only' => $inputs['worktree_stale_only'],
-				);
+				'dry_run'             => true,
+				'skip_github'         => true,
+				'inventory_only'      => ! $inputs['full_workspace'],
+				'older_than'          => $inputs['worktree_older_than'],
+				'sort'                => $inputs['worktree_sort'],
+				'stale_liveness_only' => $inputs['worktree_stale_only'],
+			);
 			if ( ! $inputs['full_workspace'] ) {
 				$worktree_args['limit']        = $inputs['limit'];
 				$worktree_args['offset']       = $inputs['offset'];
@@ -398,13 +398,18 @@ trait WorkspaceCleanupPlan {
 		$next_offset = null;
 		$lanes       = array();
 
-		foreach ( array( 'artifact_cleanup' => $artifact_plan, 'worktree_removal' => $worktree_plan ) as $lane => $plan ) {
+		$plans = array(
+			'artifact_cleanup' => $artifact_plan,
+			'worktree_removal' => $worktree_plan,
+		);
+
+		foreach ( $plans as $lane => $plan ) {
 			$pagination = is_array($plan['pagination'] ?? null) ? $plan['pagination'] : ( is_array($plan['summary']['pagination'] ?? null) ? $plan['summary']['pagination'] : null );
 			if ( null === $pagination ) {
 				continue;
 			}
 
-			$lane_next       = $pagination['next_offset'] ?? null;
+			$lane_next      = $pagination['next_offset'] ?? null;
 			$lanes[ $lane ] = array(
 				'complete'       => ! empty($pagination['complete']),
 				'partial'        => ! empty($pagination['partial']),
@@ -426,16 +431,16 @@ trait WorkspaceCleanupPlan {
 
 		$complete = null === $next_offset;
 		return array(
-			'bounded'              => empty($inputs['full_workspace']),
-			'complete'             => $complete,
-			'partial'              => ! $complete,
-			'limit'                => $limit,
-			'offset'               => $offset,
-			'next_offset'          => $next_offset,
-			'lanes'                => $lanes,
-			'next_command'         => null === $next_offset ? null : sprintf('studio wp datamachine-code workspace cleanup plan --mode=retention --limit=%d --offset=%d --format=json', $limit, $next_offset),
-			'full_audit_command'   => 'studio wp datamachine-code workspace cleanup plan --mode=retention --exhaustive --format=json',
-			'operator_note'        => empty($inputs['full_workspace']) ? 'Default cleanup planning is bounded for large workspaces; review/apply this page or continue with next_command for the next page.' : 'Full-workspace cleanup audit requested explicitly.',
+			'bounded'            => empty($inputs['full_workspace']),
+			'complete'           => $complete,
+			'partial'            => ! $complete,
+			'limit'              => $limit,
+			'offset'             => $offset,
+			'next_offset'        => $next_offset,
+			'lanes'              => $lanes,
+			'next_command'       => null === $next_offset ? null : sprintf('studio wp datamachine-code workspace cleanup plan --mode=retention --limit=%d --offset=%d --format=json', $limit, $next_offset),
+			'full_audit_command' => 'studio wp datamachine-code workspace cleanup plan --mode=retention --exhaustive --format=json',
+			'operator_note'      => empty($inputs['full_workspace']) ? 'Default cleanup planning is bounded for large workspaces; review/apply this page or continue with next_command for the next page.' : 'Full-workspace cleanup audit requested explicitly.',
 		);
 	}
 
