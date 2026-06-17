@@ -19,6 +19,7 @@ use DataMachineCode\Support\PermissionHelper;
 use DataMachineCode\Support\PluginSettings;
 use DataMachineCode\GitHub\PrReviewEscalationPolicy;
 use DataMachineCode\Support\GitHubCredentialResolver;
+use DataMachineCode\Support\GitHubRemote;
 use DataMachineCode\Support\RunArtifactBundleFileWriter;
 use DataMachineCode\Support\RunArtifactPrSectionRenderer;
 use DataMachineCode\Workspace\Workspace;
@@ -31,6 +32,10 @@ if ( ! class_exists(AbilityRegistry::class) ) {
 
 if ( ! class_exists(GitHubCredentialResolver::class) ) {
 	include_once dirname(__DIR__) . '/Support/GitHubCredentialResolver.php';
+}
+
+if ( ! class_exists(GitHubRemote::class) ) {
+	include_once dirname(__DIR__) . '/Support/GitHubRemote.php';
 }
 
 if ( ! class_exists(PrReviewEscalationPolicy::class) ) {
@@ -69,9 +74,9 @@ class GitHubAbilities {
 	private static array $token_modes = array();
 
 	/**
-	 * GitHub API base URL.
+	 * GitHub API base URL for non-repository-scoped public GitHub requests.
 	 */
-	const API_BASE = 'https://api.github.com';
+	const API_BASE = GitHubRemote::PUBLIC_API_BASE_URL;
 
 	/**
 	 * Default per_page for API requests.
@@ -1377,7 +1382,7 @@ class GitHubAbilities {
 			$query_params['since'] = sanitize_text_field($input['since']);
 		}
 
-		$url      = sprintf('%s/repos/%s/issues', self::API_BASE, $repo);
+		$url      = GitHubRemote::apiUrl($repo, 'issues');
 		$response = self::apiGet($url, $query_params, $pat);
 
 		if ( is_wp_error($response) ) {
@@ -1410,7 +1415,7 @@ class GitHubAbilities {
 			return self::patError();
 		}
 
-		$url      = sprintf('%s/repos/%s/issues/%d', self::API_BASE, $repo, $issue_number);
+		$url      = GitHubRemote::apiUrl($repo, 'issues/' . $issue_number);
 		$response = self::apiGet($url, array(), $pat);
 
 		if ( is_wp_error($response) ) {
@@ -1472,7 +1477,7 @@ class GitHubAbilities {
 			return new \WP_Error('no_fields', 'No fields to update. Provide title, body, state, labels, or assignees.', array( 'status' => 400 ));
 		}
 
-		$url      = sprintf('%s/repos/%s/issues/%d', self::API_BASE, $repo, $issue_number);
+		$url      = GitHubRemote::apiUrl($repo, 'issues/' . $issue_number);
 		$response = self::apiRequest('PATCH', $url, $body, $pat);
 
 		if ( is_wp_error($response) ) {
@@ -1521,7 +1526,7 @@ class GitHubAbilities {
 			}
 		}
 
-		$url      = sprintf('%s/repos/%s/issues', self::API_BASE, $repo);
+		$url      = GitHubRemote::apiUrl($repo, 'issues');
 		$response = self::apiRequest('POST', $url, $body, $pat);
 
 		if ( is_wp_error($response) ) {
@@ -1661,7 +1666,7 @@ class GitHubAbilities {
 			$body['maintainer_can_modify'] = true;
 		}
 
-		$url      = sprintf('%s/repos/%s/pulls', self::API_BASE, $repo);
+		$url      = GitHubRemote::apiUrl($repo, 'pulls');
 		$response = self::apiRequest('POST', $url, $body, $pat);
 
 		if ( is_wp_error($response) ) {
@@ -1728,7 +1733,7 @@ class GitHubAbilities {
 		$head_query = str_contains($head, ':') ? $head : sprintf('%s:%s', $repo_owner, $head);
 		$head_ref   = str_contains($head, ':') ? substr($head, (int) strpos($head, ':') + 1) : $head;
 
-		$url      = sprintf('%s/repos/%s/pulls', self::API_BASE, $repo);
+		$url      = GitHubRemote::apiUrl($repo, 'pulls');
 		$response = self::apiGet(
 			$url,
 			array(
@@ -1988,7 +1993,7 @@ class GitHubAbilities {
 	 * @return array|\WP_Error
 	 */
 	private static function applyLabelsToNumber( string $repo, int $number, array $labels, string $pat ): array|\WP_Error {
-		$url      = sprintf('%s/repos/%s/issues/%d/labels', self::API_BASE, $repo, $number);
+		$url      = GitHubRemote::apiUrl($repo, 'issues/' . $number . '/labels');
 		$response = self::apiRequest('POST', $url, array( 'labels' => $labels ), $pat);
 
 		if ( is_wp_error($response) ) {
@@ -2057,7 +2062,7 @@ class GitHubAbilities {
 			return self::patError();
 		}
 
-		$url      = sprintf('%s/repos/%s/issues/%d/labels', self::API_BASE, $repo, $number);
+		$url      = GitHubRemote::apiUrl($repo, 'issues/' . $number . '/labels');
 		$response = self::apiRequest('POST', $url, array( 'labels' => $labels ), $pat);
 
 		if ( is_wp_error($response) ) {
@@ -2117,7 +2122,7 @@ class GitHubAbilities {
 			return self::patError();
 		}
 
-		$url      = sprintf('%s/repos/%s/issues/%d/labels/%s', self::API_BASE, $repo, $number, rawurlencode($label));
+		$url      = GitHubRemote::apiUrl($repo, 'issues/' . $number . '/labels/' . rawurlencode($label));
 		$response = self::apiRequest('DELETE', $url, null, $pat);
 
 		if ( is_wp_error($response) ) {
@@ -2149,7 +2154,7 @@ class GitHubAbilities {
 	 * @return string|\WP_Error Default branch name or error.
 	 */
 	private static function resolveDefaultBranch( string $repo, string $pat ): string|\WP_Error {
-		$response = self::apiGet(sprintf('%s/repos/%s', self::API_BASE, $repo), array(), $pat);
+		$response = self::apiGet(GitHubRemote::apiUrl($repo), array(), $pat);
 		if ( is_wp_error($response) ) {
 			return $response;
 		}
@@ -2185,7 +2190,7 @@ class GitHubAbilities {
 			}
 		}
 
-		$url      = sprintf('%s/repos/%s/issues/%d/comments', self::API_BASE, $repo, $issue_number);
+		$url      = GitHubRemote::apiUrl($repo, 'issues/' . $issue_number . '/comments');
 		$response = self::apiRequest('POST', $url, array( 'body' => $body ), $pat);
 
 		if ( is_wp_error($response) ) {
@@ -2212,7 +2217,7 @@ class GitHubAbilities {
 	 * @return true|\WP_Error True when a comment may be posted, or an error explaining why not.
 	 */
 	private static function checkIssueAutomationCommentTurn( string $repo, int $issue_number, string $pat ): true|\WP_Error {
-		$issue = self::apiGet(sprintf('%s/repos/%s/issues/%d', self::API_BASE, $repo, $issue_number), array(), $pat);
+		$issue = self::apiGet(GitHubRemote::apiUrl($repo, 'issues/' . $issue_number), array(), $pat);
 		if ( is_wp_error($issue) ) {
 			return $issue;
 		}
@@ -2228,7 +2233,7 @@ class GitHubAbilities {
 		}
 
 		$comments = self::apiGet(
-			sprintf('%s/repos/%s/issues/%d/comments', self::API_BASE, $repo, $issue_number),
+			GitHubRemote::apiUrl($repo, 'issues/' . $issue_number . '/comments'),
 			array(
 				'per_page' => self::MAX_PER_PAGE,
 				'page'     => (int) ceil($comment_count / self::MAX_PER_PAGE),
@@ -2326,7 +2331,7 @@ class GitHubAbilities {
 
 		$api_get     = $api_get ?? array( self::class, 'apiGet' );
 		$api_request = $api_request ?? array( self::class, 'apiRequest' );
-		$pull_url    = sprintf('%s/repos/%s/pulls/%d', self::API_BASE, $repo, $pull_number);
+		$pull_url    = GitHubRemote::apiUrl($repo, 'pulls/' . $pull_number);
 
 		$pull_response = $api_get($pull_url, array(), $pat);
 		if ( is_wp_error($pull_response) ) {
@@ -2343,7 +2348,7 @@ class GitHubAbilities {
 			return new \WP_Error('pull_request_head_sha_mismatch', 'Pull request head SHA does not match expected_head_sha.', array( 'status' => 409 ));
 		}
 
-		$merge_url = sprintf('%s/repos/%s/pulls/%d/merge', self::API_BASE, $repo, $pull_number);
+		$merge_url = GitHubRemote::apiUrl($repo, 'pulls/' . $pull_number . '/merge');
 		$response  = $api_request('PUT', $merge_url, array( 'merge_method' => $merge_method ), $pat);
 		if ( is_wp_error($response) ) {
 			return $response;
@@ -2406,7 +2411,7 @@ class GitHubAbilities {
 
 		$api_get     = $api_get ?? array( self::class, 'apiGet' );
 		$api_request = $api_request ?? array( self::class, 'apiRequest' );
-		$pull_url    = sprintf('%s/repos/%s/pulls/%d', self::API_BASE, $repo, $pull_number);
+		$pull_url    = GitHubRemote::apiUrl($repo, 'pulls/' . $pull_number);
 
 		$pull_response = $api_get($pull_url, array(), $pat);
 		if ( is_wp_error($pull_response) ) {
@@ -2470,7 +2475,7 @@ class GitHubAbilities {
 		}
 
 		$encoded_head_branch = implode('/', array_map('rawurlencode', explode('/', $head_branch)));
-		$delete_url          = sprintf('%s/repos/%s/git/refs/heads/%s', self::API_BASE, $repo, $encoded_head_branch);
+		$delete_url          = GitHubRemote::apiUrl($repo, 'git/refs/heads/' . $encoded_head_branch);
 		$deleted             = $api_request('DELETE', $delete_url, null, $pat);
 		if ( is_wp_error($deleted) ) {
 			$status = is_array($deleted->get_error_data()) ? (int) ( $deleted->get_error_data()['status'] ?? 0 ) : 0;
@@ -2570,7 +2575,7 @@ class GitHubAbilities {
 		$comments = array();
 		$page     = 1;
 		do {
-			$comments_url = sprintf('%s/repos/%s/issues/%d/comments', self::API_BASE, $repo, $pull_number);
+			$comments_url = GitHubRemote::apiUrl($repo, 'issues/' . $pull_number . '/comments');
 			$page_result  = $api_get(
 				$comments_url,
 				array(
@@ -2598,7 +2603,7 @@ class GitHubAbilities {
 
 			$response = $api_request(
 				'PATCH',
-				sprintf('%s/repos/%s/issues/comments/%d', self::API_BASE, $repo, $comment_id),
+				GitHubRemote::apiUrl($repo, 'issues/comments/' . $comment_id),
 				array( 'body' => $target_body ),
 				$pat
 			);
@@ -2611,7 +2616,7 @@ class GitHubAbilities {
 
 		$response = $api_request(
 			'POST',
-			sprintf('%s/repos/%s/issues/%d/comments', self::API_BASE, $repo, $pull_number),
+			GitHubRemote::apiUrl($repo, 'issues/' . $pull_number . '/comments'),
 			array( 'body' => $target_body ),
 			$pat
 		);
@@ -2731,7 +2736,7 @@ class GitHubAbilities {
 			'page'     => max(1, (int) ( $input['page'] ?? 1 )),
 		);
 
-		$url      = sprintf('%s/repos/%s/pulls', self::API_BASE, $repo);
+		$url      = GitHubRemote::apiUrl($repo, 'pulls');
 		$response = self::apiGet($url, $query_params, $pat);
 
 		if ( is_wp_error($response) ) {
@@ -3699,7 +3704,7 @@ class GitHubAbilities {
 			return self::patError();
 		}
 
-		$url      = sprintf('%s/repos/%s/pulls/%d', self::API_BASE, $repo, $pull_number);
+		$url      = GitHubRemote::apiUrl($repo, 'pulls/' . $pull_number);
 		$response = self::apiGet($url, array(), $pat);
 
 		if ( is_wp_error($response) ) {
@@ -3720,7 +3725,7 @@ class GitHubAbilities {
 	 */
 	private static function getLatestIssueComment( string $repo, int $issue_number, int $comment_count, string $pat ): array|\WP_Error|null {
 		$page = max(1, $comment_count);
-		$url  = sprintf('%s/repos/%s/issues/%d/comments', self::API_BASE, $repo, $issue_number);
+		$url  = GitHubRemote::apiUrl($repo, 'issues/' . $issue_number . '/comments');
 
 		$response = self::apiGet(
 			$url, array(
@@ -3765,7 +3770,7 @@ class GitHubAbilities {
 			'page'     => max(1, (int) ( $input['page'] ?? 1 )),
 		);
 
-		$url      = sprintf('%s/repos/%s/pulls/%d/files', self::API_BASE, $repo, $pull_number);
+		$url      = GitHubRemote::apiUrl($repo, 'pulls/' . $pull_number . '/files');
 		$response = self::apiGet($url, $query_params, $pat);
 
 		if ( is_wp_error($response) ) {
@@ -3804,7 +3809,7 @@ class GitHubAbilities {
 			'per_page' => self::clampPerPage($input['per_page'] ?? $input['max_check_runs'] ?? self::DEFAULT_PER_PAGE),
 		);
 
-		$url      = sprintf('%s/repos/%s/commits/%s/check-runs', self::API_BASE, $repo, $sha);
+		$url      = GitHubRemote::apiUrl($repo, 'commits/' . $sha . '/check-runs');
 		$response = self::apiGet($url, $query_params, $pat);
 
 		if ( is_wp_error($response) ) {
@@ -3845,7 +3850,7 @@ class GitHubAbilities {
 			return self::patError();
 		}
 
-		$url      = sprintf('%s/repos/%s/commits/%s/status', self::API_BASE, $repo, $sha);
+		$url      = GitHubRemote::apiUrl($repo, 'commits/' . $sha . '/status');
 		$response = self::apiGet($url, array(), $pat);
 
 		if ( is_wp_error($response) ) {
@@ -3898,7 +3903,7 @@ class GitHubAbilities {
 
 		$api_get = $api_get ?? static fn( string $url, array $query ) => self::apiGet($url, $query, $pat);
 		if ( '' === $head_sha ) {
-			$pull_response = $api_get(sprintf('%s/repos/%s/pulls/%d', self::API_BASE, $repo, $pull_number), array());
+			$pull_response = $api_get(GitHubRemote::apiUrl($repo, 'pulls/' . $pull_number), array());
 			if ( is_wp_error($pull_response) ) {
 				return $pull_response;
 			}
@@ -3910,7 +3915,7 @@ class GitHubAbilities {
 		}
 
 		$artifacts_response = $api_get(
-			sprintf('%s/repos/%s/actions/artifacts', self::API_BASE, $repo),
+			GitHubRemote::apiUrl($repo, 'actions/artifacts'),
 			array(
 				'name'     => $artifact_name,
 				'per_page' => self::MAX_PER_PAGE,
@@ -4170,7 +4175,7 @@ class GitHubAbilities {
 		}
 
 		// Check if the file already exists to get its SHA for update.
-		$get_url    = sprintf('%s/repos/%s/contents/%s', self::API_BASE, $repo, $file_path);
+		$get_url    = GitHubRemote::apiUrl($repo, 'contents/' . $file_path);
 		$get_params = array();
 		if ( ! empty($branch) ) {
 			$get_params['ref'] = $branch;
@@ -4198,7 +4203,7 @@ class GitHubAbilities {
 			$body['branch'] = $branch;
 		}
 
-		$put_url  = sprintf('%s/repos/%s/contents/%s', self::API_BASE, $repo, $file_path);
+		$put_url  = GitHubRemote::apiUrl($repo, 'contents/' . $file_path);
 		$response = self::apiRequest('PUT', $put_url, $body, $pat);
 
 		if ( is_wp_error($response) ) {
@@ -4314,7 +4319,7 @@ class GitHubAbilities {
 	 * @return true|\WP_Error True when the branch exists or was created.
 	 */
 	private static function ensureBranchExists( string $repo, string $branch, string $pat ): true|\WP_Error {
-		$branch_ref_url = sprintf('%s/repos/%s/git/ref/heads/%s', self::API_BASE, $repo, rawurlencode($branch));
+		$branch_ref_url = GitHubRemote::apiUrl($repo, 'git/ref/heads/' . rawurlencode($branch));
 		$response       = self::apiGet($branch_ref_url, array(), $pat);
 
 		if ( ! is_wp_error($response) ) {
@@ -4331,7 +4336,7 @@ class GitHubAbilities {
 			return $default_branch;
 		}
 
-		$default_ref_url = sprintf('%s/repos/%s/git/ref/heads/%s', self::API_BASE, $repo, rawurlencode($default_branch));
+		$default_ref_url = GitHubRemote::apiUrl($repo, 'git/ref/heads/' . rawurlencode($default_branch));
 		$default_ref     = self::apiGet($default_ref_url, array(), $pat);
 		if ( is_wp_error($default_ref) ) {
 			return $default_ref;
@@ -4342,7 +4347,7 @@ class GitHubAbilities {
 			return new \WP_Error('github_default_branch_sha_missing', 'GitHub did not return a SHA for the repository default branch.', array( 'status' => 500 ));
 		}
 
-		$create_ref_url = sprintf('%s/repos/%s/git/refs', self::API_BASE, $repo);
+		$create_ref_url = GitHubRemote::apiUrl($repo, 'git/refs');
 		$created        = self::apiRequest(
 			'POST',
 			$create_ref_url,
@@ -4385,7 +4390,7 @@ class GitHubAbilities {
 		$branch = sanitize_text_field($input['ref'] ?? $input['branch'] ?? '');
 		$ref    = ! empty($branch) ? $branch : 'HEAD';
 
-		$url      = sprintf('%s/repos/%s/git/trees/%s', self::API_BASE, $repo, $ref);
+		$url      = GitHubRemote::apiUrl($repo, 'git/trees/' . $ref);
 		$response = self::apiGet($url, array( 'recursive' => '1' ), $pat);
 
 		if ( is_wp_error($response) ) {
@@ -4527,7 +4532,7 @@ class GitHubAbilities {
 	 * @return array|\WP_Error Normalized file or error.
 	 */
 	private static function getSingleFileContent( string $repo, string $path, array $query_params, string $pat ): array|\WP_Error {
-		$url      = sprintf('%s/repos/%s/contents/%s', self::API_BASE, $repo, ltrim($path, '/'));
+		$url      = GitHubRemote::apiUrl($repo, 'contents/' . ltrim($path, '/'));
 		$response = self::apiGet($url, $query_params, $pat);
 
 		if ( is_wp_error($response) ) {

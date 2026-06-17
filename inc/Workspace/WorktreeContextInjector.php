@@ -69,6 +69,8 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Support\GitHubRemote;
+
 defined('ABSPATH') || exit;
 
 class WorktreeContextInjector {
@@ -870,10 +872,15 @@ class WorktreeContextInjector {
 		}
 
 		$metadata = array( 'pr_ref' => $pr );
-		if ( preg_match('~^https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)(?:[/?#].*)?$~', $pr, $matches) ) {
-			$metadata['pr_url']    = sprintf('https://github.com/%s/%s/pull/%d', $matches[1], $matches[2], (int) $matches[3]);
-			$metadata['pr_number'] = (int) $matches[3];
-			$metadata['pr_repo']   = $matches[1] . '/' . $matches[2];
+		if ( preg_match('~^https?://([^/]+)/([^/]+)/([^/]+)/pull/(\d+)(?:[/?#].*)?$~', $pr, $matches) ) {
+			$descriptor = GitHubRemote::descriptor(sprintf('https://%s/%s/%s', $matches[1], $matches[2], $matches[3]));
+			if ( null === $descriptor ) {
+				return $metadata;
+			}
+
+			$metadata['pr_url']    = $descriptor['web_url'] . '/pull/' . (int) $matches[4];
+			$metadata['pr_number'] = (int) $matches[4];
+			$metadata['pr_repo']   = $descriptor['slug'];
 			return $metadata;
 		}
 

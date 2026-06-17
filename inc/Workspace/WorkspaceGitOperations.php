@@ -659,7 +659,7 @@ trait WorkspaceGitOperations {
 		if ( null !== $remote_url ) {
 			$github_repo = GitHubRemote::slug($remote_url);
 			if ( null !== $github_repo ) {
-				$branch_url = 'https://github.com/' . $github_repo . '/tree/' . rawurlencode($target_branch);
+				$branch_url = GitHubRemote::branchUrl($remote_url, $target_branch);
 			}
 		}
 

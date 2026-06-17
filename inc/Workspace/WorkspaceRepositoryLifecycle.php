@@ -8,6 +8,7 @@
 namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Support\GitRunner;
+use DataMachineCode\Support\GitHubRemote;
 use DataMachineCode\Support\ProcessRunner;
 
 defined('ABSPATH') || exit;
@@ -670,7 +671,7 @@ trait WorkspaceRepositoryLifecycle {
 					'is_context'       => true,
 					'path'             => null,
 					'branch'           => '' !== $ref ? $ref : null,
-					'remote'           => '' !== (string) ( $context_policy['repo'] ?? '' ) ? 'https://github.com/' . (string) $context_policy['repo'] . '.git' : null,
+					'remote'           => '' !== (string) ( $context_policy['repo'] ?? '' ) ? GitHubRemote::cloneUrl((string) $context_policy['repo']) : null,
 					'commit'           => null,
 					'dirty'            => 0,
 					'workspace_policy' => WorkspaceAliasResolver::policy_attestation($handle),
