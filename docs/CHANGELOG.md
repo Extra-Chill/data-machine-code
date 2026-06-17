@@ -2,6 +2,20 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.4] - 2026-06-17
+
+### Changed
+- share CLI rendering helpers
+- make AGENTS workspace policy filterable
+- centralize GitHub repository descriptors
+- register worktree context projections
+
+### Fixed
+- require workspace handles for file abilities
+- commit remote workspace files atomically
+- fail closed on unverified worktree freshness
+- resolve PR publication targets
+
 ## [0.48.3] - 2026-06-17
 
 ### Fixed
