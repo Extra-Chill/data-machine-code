@@ -25,6 +25,12 @@ use DataMachineCode\Workspace\WorkspaceMutationLock;
 
 defined('ABSPATH') || exit;
 
+/**
+ * Workspace WP-CLI command surface.
+ *
+ * @method void format_items( array $items, array $fields, array $assoc_args, string $id_field = '' )
+ */
+// @phpstan-ignore-next-line DataMachine\Cli\BaseCommand is provided by the Data Machine plugin at runtime.
 class WorkspaceCommand extends BaseCommand {
 
 

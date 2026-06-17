@@ -27,8 +27,8 @@ class WorkspaceAbandonedCleanupOrchestrator {
 	 * @param callable|null $clock            Optional clock returning microtime-style seconds.
 	 */
 	public function __construct( ?callable $ability_resolver = null, ?callable $clock = null ) {
-		$this->ability_resolver = $ability_resolver ?: static fn( string $name ) => function_exists('wp_get_ability') ? wp_get_ability($name) : null;
-		$this->clock            = $clock ?: static fn(): float => microtime(true);
+		$this->ability_resolver = $ability_resolver ? $ability_resolver : static fn( string $name ) => function_exists('wp_get_ability') ? wp_get_ability($name) : null;
+		$this->clock            = $clock ? $clock : static fn(): float => microtime(true);
 	}
 
 	/**
@@ -66,8 +66,8 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			return $abilities;
 		}
 
-		$started_at = $this->now();
-		$result     = $this->initial_result($apply, $force, $limit, $stage, $offset, $passes);
+		$started_at  = $this->now();
+		$result      = $this->initial_result($apply, $force, $limit, $stage, $offset, $passes);
 		$common_page = array(
 			'limit'  => $limit,
 			'source' => $source,
@@ -147,12 +147,12 @@ class WorkspaceAbandonedCleanupOrchestrator {
 					return $step;
 				}
 
-				$step_key                                          = sprintf('%s_pass_%d', $key, $pass);
-				$result['steps'][ $step_key ]                      = $this->summarize_step($step);
-				$result['summary']['scanned']                     += (int) ( $result['steps'][ $step_key ]['inspected'] ?? 0 );
-				$written                                           = (int) ( $step['summary']['written'] ?? 0 );
-				$planned                                           = (int) ( $step['summary']['planned'] ?? 0 );
-				$pass_marked                                      += $apply ? $written : $planned;
+				$step_key                                      = sprintf('%s_pass_%d', $key, $pass);
+				$result['steps'][ $step_key ]                  = $this->summarize_step($step);
+				$result['summary']['scanned']                 += (int) ( $result['steps'][ $step_key ]['inspected'] ?? 0 );
+				$written                                       = (int) ( $step['summary']['written'] ?? 0 );
+				$planned                                       = (int) ( $step['summary']['planned'] ?? 0 );
+				$pass_marked                                  += $apply ? $written : $planned;
 				$result['summary']['marked_cleanup_eligible']     += $written;
 				$result['summary']['would_mark_cleanup_eligible'] += $planned;
 
@@ -235,10 +235,22 @@ class WorkspaceAbandonedCleanupOrchestrator {
 	/** @return array<string,array<string,mixed>> */
 	private function mark_steps( array $abilities ): array {
 		return array(
-			'finalized'        => array( 'stage' => 'finalized', 'ability' => $abilities['finalized'] ),
-			'equivalent_clean' => array( 'stage' => 'equivalent-clean', 'ability' => $abilities['equivalent_clean'] ),
-			'merged'           => array( 'stage' => 'merged', 'ability' => $abilities['merged'] ),
-			'remote_clean'     => array( 'stage' => 'remote-clean', 'ability' => $abilities['remote_clean'] ),
+			'finalized'        => array(
+				'stage'   => 'finalized',
+				'ability' => $abilities['finalized'],
+			),
+			'equivalent_clean' => array(
+				'stage'   => 'equivalent-clean',
+				'ability' => $abilities['equivalent_clean'],
+			),
+			'merged'           => array(
+				'stage'   => 'merged',
+				'ability' => $abilities['merged'],
+			),
+			'remote_clean'     => array(
+				'stage'   => 'remote-clean',
+				'ability' => $abilities['remote_clean'],
+			),
 		);
 	}
 
@@ -348,7 +360,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			return $bounded;
 		}
 
-		$step_key                    = sprintf('bounded_apply_%s', $step_label);
+		$step_key                     = sprintf('bounded_apply_%s', $step_label);
 		$result['steps'][ $step_key ] = $this->summarize_step($bounded);
 
 		$result['summary']['removed']         += (int) ( $bounded['summary']['removed'] ?? 0 );
