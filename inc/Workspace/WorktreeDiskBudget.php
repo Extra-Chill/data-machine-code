@@ -199,20 +199,24 @@ final class WorktreeDiskBudget {
 				'expected_reclaim_bytes' => $target_reclaim,
 				'expected_reclaim'       => $target_human,
 				'command'                => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --sort=size',
+				'preview_command'        => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --sort=size',
 			),
 			array(
 				'priority'               => 2,
-				'action'                 => 'apply reviewed cleanup-eligible worktrees',
+				'action'                 => 'review and apply bounded cleanup-eligible worktrees',
 				'expected_reclaim_bytes' => $target_reclaim,
 				'expected_reclaim'       => $target_human,
 				'command'                => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25',
+				'preview_command'        => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25',
+				'apply_command'          => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=25',
 			),
 			array(
 				'priority'               => 3,
-				'action'                 => 'generate combined emergency plan',
+				'action'                 => 'generate combined emergency cleanup report',
 				'expected_reclaim_bytes' => $target_reclaim,
 				'expected_reclaim'       => $target_human,
 				'command'                => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
+				'preview_command'        => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
 			),
 		);
 	}

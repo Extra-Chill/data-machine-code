@@ -1158,9 +1158,8 @@ class WorkspaceCommand extends BaseCommand {
 				$result  = $ability ? $ability->execute(
 				array(
 					'include_cleanup'         => true,
-					'include_sizes'           => true,
+					'include_sizes'           => false,
 					'include_worktree_status' => false,
-					'size_limit'              => 200,
 				)
 				) : new \WP_Error('workspace_hygiene_ability_missing', 'Workspace hygiene ability not registered.');
 				$this->render_workspace_hygiene_report_from_ability($result, $assoc_args);
@@ -1378,6 +1377,7 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log('Cleanup operator summary:');
 		$cleanup_counts = (array) ( $summary['cleanup_counts'] ?? array() );
 		$artifacts      = (array) ( $summary['artifact_cleanup'] ?? array() );
+		$remaining_safe = (int) ( $summary['remaining_safe_candidates'] ?? $summary['remaining_safely_removable_worktrees'] ?? 0 );
 		$this->format_items(
 			array(
 				array(
@@ -1399,6 +1399,14 @@ class WorkspaceCommand extends BaseCommand {
 				array(
 					'metric' => 'bytes_reclaimed',
 					'value'  => $this->format_bytes($cleanup_counts['bytes_reclaimed'] ?? 0),
+				),
+				array(
+					'metric' => 'remaining_safe_candidates',
+					'value'  => $remaining_safe,
+				),
+				array(
+					'metric' => 'protected_unpushed_candidates',
+					'value'  => (int) ( $summary['protected_unpushed_candidates'] ?? 0 ),
 				),
 				array(
 					'metric' => 'remaining_reclaimable_artifacts',
@@ -1460,16 +1468,16 @@ class WorkspaceCommand extends BaseCommand {
 
 		return array_filter(
 			array(
-				'success'              => (bool) ( $result['success'] ?? false ),
-				'run_id'               => (string) ( $result['run_id'] ?? '' ),
-				'job_id'               => isset($result['job_id']) ? (int) $result['job_id'] : null,
-				'mode'                 => (string) ( $result['mode'] ?? $result['evidence']['engine_data']['cleanup_run']['mode'] ?? '' ),
-				'state'                => (string) ( $result['state'] ?? '' ),
-				'status'               => (string) ( $result['status'] ?? '' ),
-				'parent_status'        => (string) ( $result['parent_status'] ?? '' ),
-				'created_at'           => (string) ( $result['created_at'] ?? '' ),
-				'completed_at'         => (string) ( $result['completed_at'] ?? $result['parent_completed_at'] ?? '' ),
-				'cleanup_counts'       => array(
+				'success'                       => (bool) ( $result['success'] ?? false ),
+				'run_id'                        => (string) ( $result['run_id'] ?? '' ),
+				'job_id'                        => isset($result['job_id']) ? (int) $result['job_id'] : null,
+				'mode'                          => (string) ( $result['mode'] ?? $result['evidence']['engine_data']['cleanup_run']['mode'] ?? '' ),
+				'state'                         => (string) ( $result['state'] ?? '' ),
+				'status'                        => (string) ( $result['status'] ?? '' ),
+				'parent_status'                 => (string) ( $result['parent_status'] ?? '' ),
+				'created_at'                    => (string) ( $result['created_at'] ?? '' ),
+				'completed_at'                  => (string) ( $result['completed_at'] ?? $result['parent_completed_at'] ?? '' ),
+				'cleanup_counts'                => array(
 					'planned'         => (int) ( $cleanup_items['planned_rows'] ?? 0 ),
 					'applied'         => (int) ( $cleanup_items['applied_rows'] ?? 0 ),
 					'skipped'         => (int) ( $cleanup_items['skipped_rows'] ?? 0 ),
@@ -1477,7 +1485,11 @@ class WorkspaceCommand extends BaseCommand {
 					'bytes_reclaimed' => (int) ( $cleanup_items['bytes_reclaimed'] ?? 0 ),
 					'freed_human'     => (string) ( $cleanup_items['freed_human'] ?? $this->format_bytes($cleanup_items['bytes_reclaimed'] ?? 0) ),
 				),
-				'artifact_cleanup'     => array(
+				'total_bytes_reclaimed'         => (int) ( $remaining['total_bytes_reclaimed'] ?? $cleanup_items['bytes_reclaimed'] ?? 0 ),
+				'total_reclaimed_human'         => $this->format_bytes($remaining['total_bytes_reclaimed'] ?? $cleanup_items['bytes_reclaimed'] ?? 0),
+				'remaining_safe_candidates'     => (int) ( $remaining['remaining_safe_candidates'] ?? $remaining['remaining_safely_removable_worktrees'] ?? 0 ),
+				'protected_unpushed_candidates' => (int) ( $remaining['protected_unpushed_candidates'] ?? 0 ),
+				'artifact_cleanup'              => array(
 					'planned'                              => (int) ( $artifacts['planned_rows'] ?? 0 ),
 					'applied'                              => (int) ( $artifacts['applied_rows'] ?? 0 ),
 					'skipped'                              => (int) ( $artifacts['skipped_rows'] ?? 0 ),
@@ -1486,13 +1498,14 @@ class WorkspaceCommand extends BaseCommand {
 					'remaining_reclaimable_artifact_bytes' => (int) ( $remaining['remaining_reclaimable_artifact_bytes'] ?? $artifacts['remaining_reclaimable_artifact_bytes'] ?? 0 ),
 					'remaining_reclaimable_human'          => $this->format_bytes($remaining['remaining_reclaimable_artifact_bytes'] ?? $artifacts['remaining_reclaimable_artifact_bytes'] ?? 0),
 				),
-				'children'             => $this->build_cleanup_operator_child_summary( (array) ( $result['children'] ?? $result['evidence']['children'] ?? array() ) ),
-				'by_type'              => (array) ( $cleanup_items['by_type'] ?? array() ),
-				'skipped_by_reason'    => (array) ( $remaining['skipped_by_reason'] ?? $cleanup_items['skipped_examples_by_reason'] ?? array() ),
-				'failed_by_reason'     => (array) ( $cleanup_items['failed_by_reason'] ?? $artifacts['failed_by_reason'] ?? array() ),
-				'top_blocked_examples' => $this->cleanup_operator_blocked_examples($result),
-				'recommended_commands' => (array) ( $remaining['recommended_commands'] ?? array() ),
-				'locks'                => (array) ( $result['locks'] ?? array() ),
+				'children'                      => $this->build_cleanup_operator_child_summary( (array) ( $result['children'] ?? $result['evidence']['children'] ?? array() ) ),
+				'by_type'                       => (array) ( $cleanup_items['by_type'] ?? array() ),
+				'skipped_by_reason'             => (array) ( $remaining['skipped_by_reason'] ?? $cleanup_items['skipped_examples_by_reason'] ?? array() ),
+				'failed_by_reason'              => (array) ( $cleanup_items['failed_by_reason'] ?? $artifacts['failed_by_reason'] ?? array() ),
+				'top_blocked_examples'          => $this->cleanup_operator_blocked_examples($result),
+				'recommended_commands'          => (array) ( $remaining['recommended_commands'] ?? array() ),
+				'next_commands'                 => (array) ( $remaining['next_commands'] ?? array() ),
+				'locks'                         => (array) ( $result['locks'] ?? array() ),
 			),
 			fn( $value ) => null !== $value && array() !== $value && '' !== $value
 		);
@@ -1675,12 +1688,20 @@ class WorkspaceCommand extends BaseCommand {
 		$this->format_items(
 			array(
 				array(
+					'metric' => 'total_bytes_reclaimed',
+					'value'  => $this->format_bytes($summary['total_bytes_reclaimed'] ?? 0),
+				),
+				array(
 					'metric' => 'remaining_reclaimable_artifact_bytes',
 					'value'  => $this->format_bytes($summary['remaining_reclaimable_artifact_bytes'] ?? 0),
 				),
 				array(
-					'metric' => 'remaining_safely_removable_worktrees',
-					'value'  => (int) ( $summary['remaining_safely_removable_worktrees'] ?? 0 ),
+					'metric' => 'remaining_safe_candidates',
+					'value'  => (int) ( $summary['remaining_safe_candidates'] ?? $summary['remaining_safely_removable_worktrees'] ?? 0 ),
+				),
+				array(
+					'metric' => 'protected_unpushed_candidates',
+					'value'  => (int) ( $summary['protected_unpushed_candidates'] ?? 0 ),
 				),
 			),
 			array( 'metric', 'value' ),
@@ -2063,8 +2084,8 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--skip-cleanup]
 	 * : Skip the local cleanup dry-run summary.
 	 *
-	 * [--skip-sizes]
-	 * : Skip best-effort workspace size collection.
+	 * [--include-sizes]
+	 * : Include best-effort workspace size collection. This can be expensive on huge workspaces; combine with --size-limit.
 	 *
 	 * [--include-worktree-status]
 	 * : Include full per-worktree git status. This can be expensive on huge workspaces.
@@ -2094,7 +2115,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$input = array(
 			'include_cleanup'         => empty($assoc_args['skip-cleanup']),
-			'include_sizes'           => empty($assoc_args['skip-sizes']),
+			'include_sizes'           => ! empty($assoc_args['include-sizes']),
 			'include_worktree_status' => ! empty($assoc_args['include-worktree-status']),
 			'refresh_inventory'       => ! empty($assoc_args['refresh-inventory']),
 		);
@@ -4853,6 +4874,12 @@ class WorkspaceCommand extends BaseCommand {
 			WP_CLI::log( (string) $report['suggested_cleanup_command']);
 		}
 
+		if ( ! empty($report['suggested_size_command']) ) {
+			WP_CLI::log('');
+			WP_CLI::log('Suggested bounded size review:');
+			WP_CLI::log( (string) $report['suggested_size_command']);
+		}
+
 		foreach ( (array) ( $report['notes'] ?? array() ) as $note ) {
 			WP_CLI::log('Note: ' . $note);
 		}
@@ -6025,6 +6052,8 @@ class WorkspaceCommand extends BaseCommand {
 			}
 		}
 
+		$this->render_active_no_signal_triage_preview( (array) ( $result['active_no_signal_triage'] ?? array() ) );
+
 		WP_CLI::log('');
 		$remaining = (int) ( $continuation['remaining_total'] ?? 0 );
 		if ( $remaining > 0 ) {
@@ -6163,19 +6192,20 @@ class WorkspaceCommand extends BaseCommand {
 		);
 
 		$report = array(
-			'success'         => (bool) ( $result['success'] ?? true ),
-			'mode'            => (string) ( $result['mode'] ?? 'bounded_cleanup_eligible_apply' ),
-			'dry_run'         => ! empty($result['dry_run']),
-			'destructive'     => ! empty($result['destructive']),
-			'workspace_path'  => $result['workspace_path'] ?? null,
-			'generated_at'    => $result['generated_at'] ?? null,
-			'summary'         => $compact_summary,
-			'blocker_buckets' => $buckets,
-			'next_actions'    => $actions,
-			'candidates'      => $this->compact_cleanup_rows($candidates, 25),
-			'removed'         => $this->compact_cleanup_rows($removed, 25),
-			'continuation'    => $this->compact_cleanup_continuation( (array) ( $result['continuation'] ?? $result['pagination'] ?? array() ) ),
-			'evidence'        => $this->compact_cleanup_evidence( (array) ( $result['evidence'] ?? array() ), $skipped ),
+			'success'                 => (bool) ( $result['success'] ?? true ),
+			'mode'                    => (string) ( $result['mode'] ?? 'bounded_cleanup_eligible_apply' ),
+			'dry_run'                 => ! empty($result['dry_run']),
+			'destructive'             => ! empty($result['destructive']),
+			'workspace_path'          => $result['workspace_path'] ?? null,
+			'generated_at'            => $result['generated_at'] ?? null,
+			'summary'                 => $compact_summary,
+			'blocker_buckets'         => $buckets,
+			'next_actions'            => $actions,
+			'active_no_signal_triage' => (array) ( $result['active_no_signal_triage'] ?? array() ),
+			'candidates'              => $this->compact_cleanup_rows($candidates, 25),
+			'removed'                 => $this->compact_cleanup_rows($removed, 25),
+			'continuation'            => $this->compact_cleanup_continuation( (array) ( $result['continuation'] ?? $result['pagination'] ?? array() ) ),
+			'evidence'                => $this->compact_cleanup_evidence( (array) ( $result['evidence'] ?? array() ), $skipped ),
 		);
 
 		if ( ! empty($result['job_backed']) ) {
@@ -6183,6 +6213,55 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		return array_filter($report, fn( $value ) => null !== $value);
+	}
+
+	/**
+	 * Render concise active/no-signal triage preview from bounded cleanup output.
+	 *
+	 * @param  array<string,mixed> $preview Triage preview payload.
+	 * @return void
+	 */
+	private function render_active_no_signal_triage_preview( array $preview ): void {
+		$total = (int) ( $preview['total'] ?? 0 );
+		if ( $total <= 0 ) {
+			return;
+		}
+
+		WP_CLI::log('');
+		WP_CLI::log(sprintf('Active/no-signal triage preview: %d unresolved active worktree(s).', $total));
+		$summary_rows = array();
+		foreach ( (array) ( $preview['by_age'] ?? array() ) as $bucket => $count ) {
+			if ( (int) $count > 0 ) {
+				$summary_rows[] = array(
+					'dimension' => 'age',
+					'bucket'    => (string) $bucket,
+					'count'     => (int) $count,
+				);
+			}
+		}
+		foreach ( (array) ( $preview['by_liveness'] ?? array() ) as $bucket => $count ) {
+			$summary_rows[] = array(
+				'dimension' => 'liveness',
+				'bucket'    => (string) $bucket,
+				'count'     => (int) $count,
+			);
+		}
+		foreach ( (array) ( $preview['by_repo'] ?? array() ) as $bucket => $count ) {
+			$summary_rows[] = array(
+				'dimension' => 'repo',
+				'bucket'    => (string) $bucket,
+				'count'     => (int) $count,
+			);
+		}
+		$this->format_items($summary_rows, array( 'dimension', 'bucket', 'count' ), array( 'format' => 'table' ), 'dimension');
+
+		WP_CLI::log('Non-destructive next commands:');
+		foreach ( (array) ( $preview['commands'] ?? array() ) as $label => $command ) {
+			WP_CLI::log(sprintf('  %s: %s', (string) $label, (string) $command));
+		}
+		if ( ! empty($preview['safety']) ) {
+			WP_CLI::log('Safety: ' . (string) $preview['safety']);
+		}
 	}
 
 	/**

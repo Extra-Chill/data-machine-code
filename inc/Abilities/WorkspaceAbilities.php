@@ -1524,7 +1524,7 @@ class WorkspaceAbilities {
 							),
 							'include_sizes'           => array(
 								'type'        => 'boolean',
-								'description' => 'Include best-effort top-level workspace size data. Default true.',
+								'description' => 'Include best-effort top-level workspace size data. Default false for huge-workspace safety.',
 							),
 							'include_worktree_status' => array(
 								'type'        => 'boolean',
@@ -1536,7 +1536,7 @@ class WorkspaceAbilities {
 							),
 							'size_limit'              => array(
 								'type'        => 'integer',
-								'description' => 'Maximum top-level workspace entries to size. Default 1000.',
+								'description' => 'Maximum top-level workspace entries to size when include_sizes is true. Default 1000.',
 							),
 						),
 					),
@@ -1557,6 +1557,7 @@ class WorkspaceAbilities {
 							'locks'                     => array( 'type' => 'object' ),
 							'cleanup'                   => array( 'type' => 'object' ),
 							'suggested_cleanup_command' => array( 'type' => 'string' ),
+							'suggested_size_command'    => array( 'type' => 'string' ),
 							'notes'                     => array( 'type' => 'array' ),
 						),
 					),
@@ -3868,9 +3869,8 @@ class WorkspaceAbilities {
 				'task_type' => 'workspace_hygiene_report',
 				'params'    => array(
 					'include_cleanup'         => true,
-					'include_sizes'           => true,
+					'include_sizes'           => false,
 					'include_worktree_status' => false,
-					'size_limit'              => 200,
 				),
 			),
 			'artifacts'       => array(

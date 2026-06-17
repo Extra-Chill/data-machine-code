@@ -607,17 +607,20 @@ class CleanupRunService {
 	private function remaining_work_summary( string $run_id, array $items, array $progress ): array {
 		$summary = CleanupRemainingWorkSummary::from_items($items);
 		if ( ! empty($progress['resumable']) ) {
+			$resume_command = array(
+				'bucket'            => 'current_run_resume',
+				'command'           => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
+				'apply'             => sprintf('studio wp datamachine-code workspace cleanup resume %s --limit=%d', $run_id, self::DEFAULT_APPLY_LIMIT),
+				'destructive'       => false,
+				'apply_destructive' => true,
+				'why'               => 'Resume the reviewed DB-backed cleanup run from persisted pending/failed/applying rows.',
+			);
 			array_unshift(
 				$summary['recommended_commands'],
-				array(
-					'bucket'            => 'current_run_resume',
-					'command'           => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
-					'apply'             => sprintf('studio wp datamachine-code workspace cleanup resume %s --limit=%d', $run_id, self::DEFAULT_APPLY_LIMIT),
-					'destructive'       => false,
-					'apply_destructive' => true,
-					'why'               => 'Resume the reviewed DB-backed cleanup run from persisted pending/failed/applying rows.',
-				)
+				$resume_command
 			);
+			array_unshift($summary['next_commands'], (string) $resume_command['command'], (string) $resume_command['apply']);
+			$summary['next_commands'] = array_values(array_unique($summary['next_commands']));
 		}
 
 		return $summary;

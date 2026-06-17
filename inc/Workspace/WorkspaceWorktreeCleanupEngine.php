@@ -697,7 +697,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			}
 
 			$parsed = $this->parse_handle($entry);
-			if ( empty($parsed['is_worktree']) || '' === (string) ( $parsed['repo'] ?? '' ) ) {
+			if ( empty($parsed['is_worktree']) || '' === (string) $parsed['repo'] ) {
 				continue;
 			}
 
@@ -1012,7 +1012,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		$batch    = array_slice($all_candidates, 0, $limit);
 		$deferred = array_slice($all_candidates, $limit);
 
-		$continuation = array(
+		$continuation            = array(
 			'remaining_total'   => count($deferred),
 			'remaining_handles' => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', $deferred))),
 			'next_call_hint'    => count($deferred) > 0 ? sprintf('Run the bounded cleanup-eligible apply again to drain the next %d candidate(s).', min($limit, count($deferred))) : null,
@@ -1020,27 +1020,29 @@ trait WorkspaceWorktreeCleanupEngine {
 			'limit_applied'     => $limit,
 			'remove_timeout'    => $remove_timeout_seconds,
 		);
+		$active_no_signal_triage = WorktreeActiveNoSignalTriagePreview::build($inventory_skipped, min($limit, 25));
 
 		if ( $dry_run ) {
 			return array(
-				'success'        => true,
-				'mode'           => 'bounded_cleanup_eligible_apply',
-				'dry_run'        => true,
-				'destructive'    => false,
-				'workspace_path' => $this->workspace_path,
-				'generated_at'   => gmdate('c'),
-				'candidates'     => $batch,
-				'removed'        => array(),
-				'skipped'        => $inventory_skipped,
-				'summary'        => array(
+				'success'                 => true,
+				'mode'                    => 'bounded_cleanup_eligible_apply',
+				'dry_run'                 => true,
+				'destructive'             => false,
+				'workspace_path'          => $this->workspace_path,
+				'generated_at'            => gmdate('c'),
+				'candidates'              => $batch,
+				'removed'                 => array(),
+				'skipped'                 => $inventory_skipped,
+				'summary'                 => array(
 					'processed'       => count($batch),
 					'removed'         => 0,
 					'skipped'         => count($inventory_skipped),
 					'bytes_reclaimed' => 0,
 					'limit'           => $limit,
 				),
-				'continuation'   => $continuation,
-				'evidence'       => array(
+				'continuation'            => $continuation,
+				'active_no_signal_triage' => $active_no_signal_triage,
+				'evidence'                => array(
 					'elapsed_ms'       => (int) round(( microtime(true) - $started_at ) * 1000),
 					'inventory_total'  => count($all_candidates),
 					'planned_handles'  => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', $batch))),
@@ -1152,16 +1154,16 @@ trait WorkspaceWorktreeCleanupEngine {
 		$this->worktree_prune();
 
 		return array(
-			'success'        => true,
-			'mode'           => 'bounded_cleanup_eligible_apply',
-			'dry_run'        => false,
-			'destructive'    => true,
-			'workspace_path' => $this->workspace_path,
-			'generated_at'   => gmdate('c'),
-			'candidates'     => $batch,
-			'removed'        => $removed,
-			'skipped'        => $skipped,
-			'summary'        => array(
+			'success'                 => true,
+			'mode'                    => 'bounded_cleanup_eligible_apply',
+			'dry_run'                 => false,
+			'destructive'             => true,
+			'workspace_path'          => $this->workspace_path,
+			'generated_at'            => gmdate('c'),
+			'candidates'              => $batch,
+			'removed'                 => $removed,
+			'skipped'                 => $skipped,
+			'summary'                 => array(
 				'processed'          => $processed,
 				'removed'            => count($removed),
 				'skipped'            => count($skipped),
@@ -1169,8 +1171,9 @@ trait WorkspaceWorktreeCleanupEngine {
 				'limit'              => $limit,
 				'discarded_unpushed' => count($discarded_unpushed),
 			),
-			'continuation'   => $continuation,
-			'evidence'       => array(
+			'continuation'            => $continuation,
+			'active_no_signal_triage' => $active_no_signal_triage,
+			'evidence'                => array(
 				'elapsed_ms'         => (int) round(( microtime(true) - $started_at ) * 1000),
 				'inventory_total'    => count($all_candidates),
 				'removed_handles'    => array_values(array_filter(array_map(fn( $row ) => (string) $row['handle'], $removed))),

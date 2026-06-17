@@ -18,11 +18,12 @@ trait WorkspaceHygieneReport {
 	 *
 	 * The report intentionally defaults to local-only cleanup detection so an
 	 * on-demand or scheduled run never depends on GitHub API availability. Size
-	 * collection is best-effort and bounded by a top-level entry limit.
+	 * collection is best-effort, bounded by a top-level entry limit, and opt-in
+	 * so the default path stays cheap on very large workspaces.
 	 *
 	 * @param  array $opts {
 	 * @type   bool $include_cleanup         Whether to include a cleanup dry-run. Default true.
-	 * @type   bool $include_sizes           Whether to include best-effort `du` sizes. Default true.
+	 * @type   bool $include_sizes           Whether to include best-effort `du` sizes. Default false.
 	 * @type   bool $include_worktree_status Whether to include full git worktree status. Default false.
 	 * @type   int  $size_limit              Maximum top-level workspace entries to size. Default 1000.
 	 * }
@@ -30,7 +31,7 @@ trait WorkspaceHygieneReport {
 	 */
 	public function workspace_hygiene_report( array $opts = array() ): array|\WP_Error {
 		$include_cleanup         = array_key_exists('include_cleanup', $opts) ? (bool) $opts['include_cleanup'] : true;
-		$include_sizes           = array_key_exists('include_sizes', $opts) ? (bool) $opts['include_sizes'] : true;
+		$include_sizes           = array_key_exists('include_sizes', $opts) ? (bool) $opts['include_sizes'] : false;
 		$include_worktree_status = array_key_exists('include_worktree_status', $opts) ? (bool) $opts['include_worktree_status'] : false;
 		$refresh_inventory       = ! empty($opts['refresh_inventory']);
 		$size_limit              = isset($opts['size_limit']) ? max(0, (int) $opts['size_limit']) : self::HYGIENE_DEFAULT_SIZE_LIMIT;
@@ -100,10 +101,11 @@ trait WorkspaceHygieneReport {
 			'locks'                     => $locks,
 			'cleanup'                   => $this->summarize_workspace_cleanup($cleanup, $cleanup_error, (array) ( $size_report['entries'] ?? array() )),
 			'suggested_cleanup_command' => 'wp datamachine-code workspace worktree cleanup --dry-run --inventory-only --skip-github --format=json',
+			'suggested_size_command'    => 'wp datamachine-code workspace hygiene --include-sizes --size-limit=100 --format=json',
 			'notes'                     => array_values(
 				array_filter(
 					array(
-						$include_sizes ? (string) ( $size_report['mode_note'] ?? '' ) : 'Size scan disabled by request.',
+						$include_sizes ? (string) ( $size_report['mode_note'] ?? '' ) : 'Size scan skipped by default for large-workspace safety; pass --include-sizes with --size-limit for a bounded size pass.',
 						$include_worktree_status ? 'Full worktree status enabled; this may run git status across every worktree.' : 'Worktree status uses cheap top-level inventory; pass --include-worktree-status for full git status.',
 						$include_cleanup ? 'Cleanup summary uses inventory-only dry-run detection (--inventory-only --skip-github); no per-worktree git probes or GitHub API lookups are required.' : 'Cleanup dry-run disabled by request.',
 						! empty($worktree_summary['stale_primaries']) ? 'One or more primary checkouts are behind their configured upstream according to local remote refs; refresh before using a primary for verification.' : '',
