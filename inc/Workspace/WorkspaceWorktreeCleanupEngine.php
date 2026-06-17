@@ -477,117 +477,30 @@ trait WorkspaceWorktreeCleanupEngine {
 			if ( null === $signal ) {
 				$signal = $this->detect_merge_signal($primary_path, $repo, $branch, $skip_github, $github_cache);
 			}
-			if ( null === $signal ) {
-				$skipped[] = array_merge(
-					array(
-						'handle'                 => $handle,
-						'repo'                   => $repo,
-						'branch'                 => $branch,
-						'path'                   => $wt_path,
-						'reason_code'            => 'no_merge_signal',
-						'reason'                 => 'no merge signal — leaving in place',
-						'merge_signal_evidence'  => $this->build_no_merge_signal_evidence($primary_path, $branch, $skip_github),
-						'active_review_command'  => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json',
-						'active_review_commands' => $this->build_active_no_signal_next_commands(25, 0),
-						'created_at'             => $created_at,
-						'metadata'               => $metadata,
-					), $disk_fields
-				);
-				continue;
-			}
-
-			if ( 'probe-timeout' === $signal['signal'] ) {
-				$skipped[] = array_merge(
-					array(
-						'handle'      => $handle,
-						'repo'        => $repo,
-						'branch'      => $branch,
-						'path'        => $wt_path,
-						'reason_code' => 'probe_timeout',
-						'reason'      => $signal['reason'],
-						'created_at'  => $created_at,
-						'metadata'    => $metadata,
-					), $disk_fields
-				);
-				continue;
-			}
-
-			if ( 'github-unknown' === $signal['signal'] ) {
-				$skipped[] = array_merge(
-					array(
-						'handle'                 => $handle,
-						'repo'                   => $repo,
-						'branch'                 => $branch,
-						'path'                   => $wt_path,
-						'reason_code'            => 'github_unknown',
-						'reason'                 => $signal['reason'],
-						'merge_signal_evidence'  => array(
-							'classification' => 'github_signal_unavailable',
-							'github_signal'  => 'unavailable',
-							'reason'         => $signal['reason'],
-						),
-						'active_review_command'  => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json',
-						'active_review_commands' => $this->build_active_no_signal_next_commands(25, 0),
-						'created_at'             => $created_at,
-						'metadata'               => $metadata,
-					), $disk_fields
-				);
-				continue;
-			}
-
-			$age_decision = null;
-			if ( null !== $age_filter ) {
-				$age_decision = WorktreeAgeFilter::decide($created_at, $age_filter);
-				if ( 'unknown_age' === $age_decision['decision'] ) {
-					$skipped[] = array_merge(
-						array(
-							'handle'     => $handle,
-							'repo'       => $repo,
-							'branch'     => $branch,
-							'path'       => $wt_path,
-							'created_at' => $created_at,
-							'metadata'   => $metadata,
-						),
-						WorktreeAgeFilter::skip_fields($age_decision),
-						$disk_fields
-					);
-					continue;
-				}
-
-				if ( 'excluded' === $age_decision['decision'] ) {
-					$skipped[] = array_merge(
-						array(
-							'handle'     => $handle,
-							'repo'       => $repo,
-							'branch'     => $branch,
-							'path'       => $wt_path,
-							'created_at' => $created_at,
-							'metadata'   => $metadata,
-						),
-						WorktreeAgeFilter::skip_fields($age_decision),
-						$disk_fields
-					);
-					continue;
-				}
-			}
-
-			$candidate = array_merge(
+			$classification = WorktreeCleanupCandidateClassifier::classify_merge_signal_path(
 				array(
-					'handle'          => $wt['handle'],
-					'repo'            => $repo,
-					'branch'          => $branch,
-					'path'            => $wt_path,
-					'dirty'           => $dirty_count,
-					'cleanup_reasons' => array_values(array_filter(array( $signal['signal'], $signal['reason'] ))),
-					'created_at'      => $created_at,
-					'liveness'        => $liveness,
-					'metadata'        => $metadata,
-				), WorktreeCleanupSignal::candidate_fields($signal, true), $disk_fields
+					'handle'      => $handle,
+					'repo'        => $repo,
+					'branch'      => $branch,
+					'path'        => $wt_path,
+					'dirty_count' => $dirty_count,
+					'created_at'  => $created_at,
+					'liveness'    => $liveness,
+					'metadata'    => $metadata,
+					'disk_fields' => $disk_fields,
+				),
+				$signal,
+				$age_filter,
+				fn() => $this->build_no_merge_signal_evidence($primary_path, $branch, $skip_github),
+				$this->build_active_no_signal_next_commands(25, 0)
 			);
-			if ( null !== $age_decision ) {
-				$candidate['age_filter'] = $age_decision['age_filter'];
+
+			if ( 'candidate' === $classification['type'] ) {
+				$candidates[] = $classification['row'];
+				continue;
 			}
-			$candidates[] = $candidate;
+
+			$skipped[] = $classification['row'];
 		}
 
 		$candidates = $this->dedupe_worktree_cleanup_rows($candidates);

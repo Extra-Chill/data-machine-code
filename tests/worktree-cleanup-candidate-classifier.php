@@ -1,0 +1,89 @@
+<?php
+
+declare(strict_types=1);
+
+if ( ! defined('ABSPATH') ) {
+	define('ABSPATH', __DIR__ . '/fixtures/');
+}
+
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeAgeFilter.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupSignal.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupCandidateClassifier.php';
+
+use DataMachineCode\Workspace\WorktreeAgeFilter;
+use DataMachineCode\Workspace\WorktreeCleanupCandidateClassifier;
+
+function worktree_cleanup_candidate_assert_same( mixed $expected, mixed $actual, string $message ): void {
+	if ( $expected !== $actual ) {
+		throw new RuntimeException(sprintf('%s Expected %s, got %s.', $message, var_export($expected, true), var_export($actual, true)));
+	}
+}
+
+$context = array(
+	'handle'      => 'repo@merged-branch',
+	'repo'        => 'repo',
+	'branch'      => 'merged-branch',
+	'path'        => '/tmp/repo@merged-branch',
+	'dirty_count' => 0,
+	'created_at'  => '2026-01-01T00:00:00+00:00',
+	'liveness'    => 'stale',
+	'metadata'    => array( 'created_at' => '2026-01-01T00:00:00+00:00' ),
+	'disk_fields' => array( 'size_bytes' => 123 ),
+);
+
+$age_filter       = null;
+$evidence_called  = false;
+$candidate_result = WorktreeCleanupCandidateClassifier::classify_merge_signal_path(
+	$context,
+	array(
+		'signal' => 'github-merged-pr',
+		'reason' => 'GitHub reports merged PR',
+		'pr_url' => 'https://example.com/pr/1',
+	),
+	$age_filter,
+	function () use ( &$evidence_called ): array {
+		$evidence_called = true;
+		return array( 'classification' => 'no_cleanup_signal' );
+	},
+	array( 'review_command' => 'review' )
+);
+
+worktree_cleanup_candidate_assert_same('candidate', $candidate_result['type'], 'merged signal is a candidate');
+worktree_cleanup_candidate_assert_same('github-merged-pr', $candidate_result['row']['signal'], 'candidate signal is preserved');
+worktree_cleanup_candidate_assert_same('github-merged-pr', $candidate_result['row']['reason_code'], 'candidate reason_code matches signal');
+worktree_cleanup_candidate_assert_same(false, $evidence_called, 'no-signal evidence stays lazy for candidates');
+
+$no_signal_filter = null;
+$no_signal        = WorktreeCleanupCandidateClassifier::classify_merge_signal_path(
+	$context,
+	null,
+	$no_signal_filter,
+	function (): array {
+		return array( 'classification' => 'no_cleanup_signal' );
+	},
+	array( 'review_command' => 'review' )
+);
+
+worktree_cleanup_candidate_assert_same('skip', $no_signal['type'], 'missing signal is skipped');
+worktree_cleanup_candidate_assert_same('no_merge_signal', $no_signal['row']['reason_code'], 'missing signal reason_code matches cleanup contract');
+worktree_cleanup_candidate_assert_same(array( 'classification' => 'no_cleanup_signal' ), $no_signal['row']['merge_signal_evidence'], 'missing signal includes evidence');
+
+$recent_context               = $context;
+$recent_context['created_at'] = '2026-06-16T00:00:00+00:00';
+$recent_age_filter           = WorktreeAgeFilter::build('30d', 30 * 24 * 60 * 60, strtotime('2026-06-17T00:00:00+00:00'));
+$age_skip                    = WorktreeCleanupCandidateClassifier::classify_merge_signal_path(
+	$recent_context,
+	array(
+		'signal' => 'upstream-gone',
+		'reason' => 'upstream branch is gone',
+	),
+	$recent_age_filter,
+	fn(): array => array(),
+	array()
+);
+
+worktree_cleanup_candidate_assert_same('skip', $age_skip['type'], 'recent worktree is skipped by age filter');
+worktree_cleanup_candidate_assert_same('age_filter', $age_skip['row']['reason_code'], 'age skip reason_code matches cleanup contract');
+worktree_cleanup_candidate_assert_same(1, $recent_age_filter['excluded'], 'age filter excluded counter is updated');
+
+echo "worktree-cleanup-candidate-classifier: ok\n";
