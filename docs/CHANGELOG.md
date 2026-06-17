@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.6] - 2026-06-17
+
+### Changed
+- Refactor metadata reconciliation row building
+- Refactor workspace handle parsing
+- Refactor contained recursive directory removal
+- isolate PR run artifact access
+- centralize PR label handling
+
 ## [0.48.5] - 2026-06-17
 
 ### Changed
