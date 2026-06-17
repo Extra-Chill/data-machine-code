@@ -7,14 +7,18 @@
 
 namespace DataMachineCode\Workspace;
 
-use DataMachineCode\Support\GitRunner;
+use DataMachineCode\Support\CommandSpec;
 use DataMachineCode\Support\GitHubRemote;
+use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\ProcessRunner;
 
 defined('ABSPATH') || exit;
 
 if ( ! class_exists(ProcessRunner::class) ) {
 	require_once dirname(__DIR__) . '/Support/ProcessRunner.php';
+}
+if ( ! class_exists(CommandSpec::class) ) {
+	require_once dirname(__DIR__) . '/Support/CommandSpec.php';
 }
 
 trait WorkspaceRepositoryLifecycle {
@@ -242,8 +246,12 @@ trait WorkspaceRepositoryLifecycle {
 			return $env;
 		}
 
-		$command = $this->build_clone_command($url, $repo_path, $partial_clone);
-		$result  = $this->run_clone_command($command, $progress_callback, $started_at, $env);
+		$command = $this->build_clone_command($url, $repo_path, $partial_clone, $env);
+		if ( is_wp_error($command) ) {
+			return $command;
+		}
+
+		$result = $this->run_clone_command($command, $progress_callback, $started_at);
 
 		if ( is_wp_error($result) ) {
 			return $this->clone_failed_error($result, $name, $repo_path, $url);
@@ -265,18 +273,23 @@ trait WorkspaceRepositoryLifecycle {
 	 * @param  string $url           Git clone URL.
 	 * @param  string $repo_path     Destination path.
 	 * @param  bool   $partial_clone Whether to request blobless partial clone.
-	 * @return string Shell command.
+	 * @param  array<string,string>|null $env Extra process environment.
+	 * @return CommandSpec|\WP_Error Command spec.
 	 */
-	private function build_clone_command( string $url, string $repo_path, bool $partial_clone ): string {
-		$args = array( 'clone', '--progress' );
+	private function build_clone_command( string $url, string $repo_path, bool $partial_clone, ?array $env ): CommandSpec|\WP_Error {
+		$args = array( 'git', 'clone', '--progress' );
 		if ( $partial_clone ) {
 			$args[] = '--filter=blob:none';
 		}
 
-		$args[] = escapeshellarg($url);
-		$args[] = escapeshellarg($repo_path);
+		$args[] = $url;
+		$args[] = $repo_path;
 
-		return 'GIT_TERMINAL_PROMPT=0 git ' . implode(' ', $args);
+		$env                        = $env ?? getenv();
+		$env                        = is_array($env) ? $env : array();
+		$env['GIT_TERMINAL_PROMPT'] = '0';
+
+		return CommandSpec::from_argv($args, array( 'env' => $env ));
 	}
 
 	/**
@@ -333,16 +346,15 @@ trait WorkspaceRepositoryLifecycle {
 	/**
 	 * Stream a clone command to an optional progress callback.
 	 *
-	 * @param  string        $command           Shell command.
+	 * @param  CommandSpec   $command           Command spec.
 	 * @param  callable|null $progress_callback Optional progress callback.
 	 * @param  float         $started_at        Clone start timestamp.
 	 * @return array{success: true, output: string}|\WP_Error
 	 */
-	private function run_clone_command( string $command, ?callable $progress_callback, float $started_at, ?array $env = null ): array|\WP_Error {
+	private function run_clone_command( CommandSpec $command, ?callable $progress_callback, float $started_at ): array|\WP_Error {
 		$result = ProcessRunner::run(
 			$command,
 			array(
-				'env'                        => $env,
 				'error_code'                 => 'clone_failed',
 				'poll_interval_microseconds' => 100000,
 				'on_output'                  => function ( string $chunk ) use ( $progress_callback, $started_at ): void {

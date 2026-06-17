@@ -16,6 +16,9 @@ defined('ABSPATH') || exit;
 if ( ! class_exists(RuntimeCapabilities::class) ) {
 	require_once __DIR__ . '/RuntimeCapabilities.php';
 }
+if ( ! class_exists(CommandSpec::class) ) {
+	require_once __DIR__ . '/CommandSpec.php';
+}
 
 final class ProcessRunner {
 
@@ -24,18 +27,23 @@ final class ProcessRunner {
 	/**
 	 * Execute a shell command and return a normalized result envelope.
 	 *
-	 * @param  string              $command Shell command to execute.
+	 * @param  string|CommandSpec $command Shell command or argv command spec to execute.
 	 * @param  array<string,mixed> $options Execution options.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	public static function run( string $command, array $options = array() ): array|\WP_Error {
+	public static function run( string|CommandSpec $command, array $options = array() ): array|\WP_Error {
 		$timeout_seconds = max(0, (int) ( $options['timeout_seconds'] ?? 0 ));
 		$output_cap      = max(0, (int) ( $options['output_cap_bytes'] ?? 0 ));
 		$on_output       = is_callable($options['on_output'] ?? null) ? $options['on_output'] : null;
-		$env             = isset($options['env']) && is_array($options['env']) ? $options['env'] : null;
-		$cwd             = isset($options['cwd']) && is_string($options['cwd']) && '' !== $options['cwd'] ? $options['cwd'] : null;
+		$env             = self::resolve_env($command, $options);
+		$cwd             = self::resolve_cwd($command, $options);
+		$is_command_spec = $command instanceof CommandSpec;
 
-		if ( 0 === $timeout_seconds && null === $on_output && null === $env && null === $cwd ) {
+		if ( $is_command_spec && null === $command->env() && isset($options['env']) && ! is_array($options['env']) ) {
+			return self::error($options, 'Process command environment must be an array.', array( 'status' => 400 ));
+		}
+
+		if ( ! $is_command_spec && 0 === $timeout_seconds && null === $on_output && null === $env && null === $cwd ) {
 			return self::run_via_exec($command, $options, $output_cap);
 		}
 
@@ -48,7 +56,9 @@ final class ProcessRunner {
 			);
 		}
 
-		return self::run_via_proc_open($command, $options, $timeout_seconds, $output_cap, $on_output, $cwd, $env);
+		$process_command = $is_command_spec ? $command->argv() : $command;
+
+		return self::run_via_proc_open($process_command, $options, $timeout_seconds, $output_cap, $on_output, $cwd, $env);
 	}
 
 	/**
@@ -89,7 +99,7 @@ final class ProcessRunner {
 	 * @param  array<string,mixed>|null $env
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private static function run_via_proc_open( string $command, array $options, int $timeout_seconds, int $output_cap, ?callable $on_output, ?string $cwd, ?array $env ): array|\WP_Error {
+	private static function run_via_proc_open( string|array $command, array $options, int $timeout_seconds, int $output_cap, ?callable $on_output, ?string $cwd, ?array $env ): array|\WP_Error {
 		$descriptor_spec = array(
 			1 => array( 'pipe', 'w' ),
 			2 => array( 'pipe', 'w' ),
@@ -193,6 +203,31 @@ final class ProcessRunner {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * @param string|CommandSpec   $command Shell command or argv command spec.
+	 * @param array<string,mixed> $options Execution options.
+	 */
+	private static function resolve_cwd( string|CommandSpec $command, array $options ): ?string {
+		if ( isset($options['cwd']) && is_string($options['cwd']) && '' !== $options['cwd'] ) {
+			return $options['cwd'];
+		}
+
+		return $command instanceof CommandSpec ? $command->cwd() : null;
+	}
+
+	/**
+	 * @param string|CommandSpec   $command Shell command or argv command spec.
+	 * @param array<string,mixed> $options Execution options.
+	 * @return array<string,mixed>|null
+	 */
+	private static function resolve_env( string|CommandSpec $command, array $options ): ?array {
+		if ( isset($options['env']) && is_array($options['env']) ) {
+			return $options['env'];
+		}
+
+		return $command instanceof CommandSpec ? $command->env() : null;
 	}
 
 	/**
