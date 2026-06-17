@@ -40,6 +40,11 @@ class WorkspaceReader {
 	 * @return array{success: bool, content?: string, path?: string, size?: int, lines_read?: int, offset?: int}|\WP_Error
 	 */
 	public function read_file( string $name, string $path, int $max_size = Workspace::MAX_READ_SIZE, ?int $offset = null, ?int $limit = null, bool $allow_stale_primary = false ): array|\WP_Error {
+		$handle_check = $this->workspace->require_explicit_workspace_handle($name);
+		if ( is_wp_error($handle_check) ) {
+			return $handle_check;
+		}
+
 		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($name, $path);
 		if ( null !== $policy_error ) {
 			return $policy_error;
@@ -150,6 +155,11 @@ class WorkspaceReader {
 	 * @return array{success: bool, repo?: string, path?: string, entries?: array}|\WP_Error
 	 */
 	public function list_directory( string $name, ?string $path = null, bool $allow_stale_primary = false ): array|\WP_Error {
+		$handle_check = $this->workspace->require_explicit_workspace_handle($name);
+		if ( is_wp_error($handle_check) ) {
+			return $handle_check;
+		}
+
 		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($name, $path ?? '');
 		if ( null !== $policy_error ) {
 			return $policy_error;
@@ -250,6 +260,11 @@ class WorkspaceReader {
 	 * @return array{success: bool, repo?: string, path?: string, pattern?: string, matches?: array, count?: int, truncated?: bool}|\WP_Error
 	 */
 	public function grep( string $name, string $pattern, ?string $path = null, ?string $include_pattern = null, int $max_results = 100, int $context_lines = 0, bool $allow_stale_primary = false ): array|\WP_Error {
+		$handle_check = $this->workspace->require_explicit_workspace_handle($name);
+		if ( is_wp_error($handle_check) ) {
+			return $handle_check;
+		}
+
 		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($name, $path ?? '');
 		if ( null !== $policy_error ) {
 			return $policy_error;
