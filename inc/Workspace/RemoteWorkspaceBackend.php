@@ -877,7 +877,7 @@ class RemoteWorkspaceBackend {
 	}
 
 	/**
-	 * Commit pending remote workspace changes through GitHub Contents API.
+	 * Commit pending remote workspace changes through one GitHub Git-data commit.
 	 *
 	 * @return array<string,mixed>|\WP_Error
 	 */
@@ -899,36 +899,23 @@ class RemoteWorkspaceBackend {
 			return new \WP_Error('nothing_to_commit', 'No remote workspace changes to commit.', array( 'status' => 400 ));
 		}
 
-		$last_sha = '';
-		foreach ( $pending as $path => $content ) {
-			$current_sha = $this->file_sha_for_commit($context, (string) $path);
-			if ( is_wp_error($current_sha) ) {
-				return $current_sha;
-			}
-
-			$input = array(
+		$result = GitHubAbilities::commitFiles(
+			array(
 				'repo'           => $context['repo'],
-				'file_path'      => $path,
-				'content'        => (string) $content,
+				'files'          => $pending,
 				'commit_message' => $message,
 				'branch'         => $context['branch'],
-			);
-			if ( '' !== $current_sha ) {
-				$input['sha'] = $current_sha;
-			}
-
-			$result = GitHubAbilities::createOrUpdateFile(
-				$input
-			);
-			if ( is_wp_error($result) ) {
-				return $result;
-			}
-			$last_sha = (string) ( $result['commit']['sha'] ?? $last_sha );
+			)
+		);
+		if ( is_wp_error($result) ) {
+			return $result;
 		}
+
+		$commit_sha = (string) ( $result['commit']['sha'] ?? '' );
 
 		$state = $this->state();
 		$state['worktrees'][ $context['handle'] ]['pending_files']   = array();
-		$state['worktrees'][ $context['handle'] ]['last_commit_sha'] = $last_sha;
+		$state['worktrees'][ $context['handle'] ]['last_commit_sha'] = $commit_sha;
 		$this->save_state($state);
 
 		return array(
@@ -936,36 +923,9 @@ class RemoteWorkspaceBackend {
 			'backend' => 'github_api',
 			'name'    => $handle,
 			'branch'  => $context['branch'],
-			'commit'  => $last_sha,
+			'commit'  => $commit_sha,
 			'message' => sprintf('Committed remote workspace changes to %s.', $context['branch']),
 		);
-	}
-
-	/**
-	 * Resolve the current file SHA for a Contents API update.
-	 *
-	 * @param array<string,mixed> $context Remote workspace context.
-	 */
-	private function file_sha_for_commit( array $context, string $path ): string|\WP_Error {
-		$file = $this->get_file_contents_with_fallback($context, $path);
-		if ( is_wp_error($file) ) {
-			$status = (int) ( $file->get_error_data()['status'] ?? 0 );
-			if ( 404 === $status ) {
-				return '';
-			}
-
-			return $file;
-		}
-		if ( empty($file['files'][0]) ) {
-			$status = (int) ( $file['errors'][0]['status'] ?? 0 );
-			if ( 404 === $status ) {
-				return '';
-			}
-
-			return new \WP_Error('remote_workspace_file_unavailable', $file['errors'][0]['message'] ?? sprintf('File not found: %s.', $path), array( 'status' => 404 ));
-		}
-
-		return (string) ( $file['files'][0]['sha'] ?? '' );
 	}
 
 	/**
