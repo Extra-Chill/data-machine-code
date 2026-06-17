@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.8] - 2026-06-17
+
+### Changed
+- Add argv command specs to process runner
+
 ## [0.48.7] - 2026-06-17
 
 ### Changed
