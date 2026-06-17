@@ -30,10 +30,16 @@ class WorkspaceWriter {
 	private Workspace $workspace;
 
 	/**
+	 * @var WorkspacePolicy
+	 */
+	private WorkspacePolicy $policy;
+
+	/**
 	 * @param Workspace $workspace Workspace instance for path resolution and validation.
 	 */
-	public function __construct( Workspace $workspace ) {
+	public function __construct( Workspace $workspace, ?WorkspacePolicy $policy = null ) {
 		$this->workspace = $workspace;
+		$this->policy    = $policy ?? new WorkspacePolicy();
 	}
 
 	/**
@@ -71,7 +77,7 @@ class WorkspaceWriter {
 			return new \WP_Error('path_traversal', 'Path traversal detected. Access denied.', array( 'status' => 403 ));
 		}
 
-		$policy_check = $this->ensure_writable_roots_allow_paths($name, array( $path ));
+		$policy_check = $this->policy->assert_paths_writable($this->workspace->parse_handle($name)['repo'], array( $path ));
 		if ( is_wp_error($policy_check) ) {
 			return $policy_check;
 		}
@@ -153,7 +159,7 @@ class WorkspaceWriter {
 			return new \WP_Error('path_traversal', (string) ( $validation['message'] ?? 'Path traversal detected. Access denied.' ), array( 'status' => 403 ));
 		}
 
-		$policy_check = $this->ensure_writable_roots_allow_paths($name, array( $path ));
+		$policy_check = $this->policy->assert_paths_writable($this->workspace->parse_handle($name)['repo'], array( $path ));
 		if ( is_wp_error($policy_check) ) {
 			return $policy_check;
 		}
@@ -269,7 +275,7 @@ class WorkspaceWriter {
 			}
 		}
 
-		$policy_check = $this->ensure_writable_roots_allow_paths($name, $patch_paths);
+		$policy_check = $this->policy->assert_paths_writable($this->workspace->parse_handle($name)['repo'], $patch_paths);
 		if ( is_wp_error($policy_check) ) {
 			return $policy_check;
 		}
@@ -444,116 +450,6 @@ class WorkspaceWriter {
 	}
 
 	/**
-	 * Enforce configured writable roots before a writer mutation touches disk.
-	 *
-	 * @param  string            $name  Workspace handle.
-	 * @param  array<int,string> $paths Repo-relative paths the mutation would touch.
-	 * @return true|\WP_Error
-	 */
-	private function ensure_writable_roots_allow_paths( string $name, array $paths ): true|\WP_Error {
-		$parsed         = $this->workspace->parse_handle($name);
-		$writable_roots = $this->get_repo_writable_roots($parsed['repo']);
-		if ( empty($writable_roots) ) {
-			return true;
-		}
-
-		$rejected = array();
-		foreach ( $paths as $path ) {
-			$relative = $this->normalize_policy_path($path);
-			if ( '' === $relative ) {
-				continue;
-			}
-
-			if ( ! PathSecurity::isPathAllowed($relative, $writable_roots) ) {
-				$rejected[] = $relative;
-			}
-		}
-
-		$rejected = array_values(array_unique($rejected));
-		if ( empty($rejected) ) {
-			return true;
-		}
-
-		return new \WP_Error(
-			'path_not_allowed',
-			sprintf(
-				'Path(s) outside configured writable_roots: %s. Allowed writable_roots: %s.',
-				implode(', ', $rejected),
-				implode(', ', $writable_roots)
-			),
-			array(
-				'status'         => 403,
-				'rejected_paths' => $rejected,
-				'writable_roots' => $writable_roots,
-			)
-		);
-	}
-
-	/**
-	 * Return writable roots for a repo from datamachine_workspace_git_policies.
-	 *
-	 * @param  string $repo_name Repository name.
-	 * @return array<int,string>
-	 */
-	private function get_repo_writable_roots( string $repo_name ): array {
-		$policies = $this->get_workspace_git_policies();
-		$repo     = $policies['repos'][ $repo_name ] ?? array();
-		$paths    = $repo['writable_roots'] ?? $repo['allowed_paths'] ?? array();
-
-		return $this->normalize_policy_paths($paths);
-	}
-
-	/**
-	 * Read workspace git policy settings.
-	 *
-	 * @return array{repos: array<string, array<string, mixed>>}
-	 */
-	private function get_workspace_git_policies(): array {
-		$defaults = array( 'repos' => array() );
-		$settings = function_exists('get_option') ? get_option('datamachine_workspace_git_policies', $defaults) : $defaults;
-		if ( ! is_array($settings) ) {
-			$settings = $defaults;
-		}
-		if ( ! isset($settings['repos']) || ! is_array($settings['repos']) ) {
-			$settings['repos'] = array();
-		}
-		if ( function_exists('apply_filters') ) {
-			$settings = apply_filters('datamachine_workspace_git_policies', $settings);
-		}
-
-		return isset($settings['repos']) && is_array($settings['repos']) ? $settings : $defaults;
-	}
-
-	/**
-	 * Normalize policy path lists.
-	 *
-	 * @param  mixed $paths Raw policy value.
-	 * @return array<int,string>
-	 */
-	private function normalize_policy_paths( mixed $paths ): array {
-		if ( ! is_array($paths) ) {
-			return array();
-		}
-
-		$clean = array();
-		foreach ( $paths as $path ) {
-			$normalized = $this->normalize_policy_path((string) $path);
-			if ( '' !== $normalized ) {
-				$clean[] = $normalized;
-			}
-		}
-
-		return array_values(array_unique($clean));
-	}
-
-	/**
-	 * Normalize a repo-relative policy path.
-	 */
-	private function normalize_policy_path( string $path ): string {
-		return rtrim(ltrim(str_replace('\\', '/', trim($path)), '/'), '/');
-	}
-
-	/**
 	 * Extract every file path touched by a unified diff.
 	 *
 	 * @param  string $patch Unified diff.
@@ -611,6 +507,6 @@ class WorkspaceWriter {
 			$path = substr($path, 2);
 		}
 
-		return $this->normalize_policy_path($path);
+		return $this->policy->normalize_path($path);
 	}
 }

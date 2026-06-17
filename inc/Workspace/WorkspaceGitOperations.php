@@ -1272,11 +1272,7 @@ trait WorkspaceGitOperations {
 	 * @return array<int,string>
 	 */
 	private function get_repo_writable_roots( string $repo_name ): array {
-		$policies = $this->get_workspace_git_policies();
-		$repo     = $policies['repos'][ $repo_name ] ?? array();
-		$paths    = $repo['writable_roots'] ?? $repo['allowed_paths'] ?? array();
-
-		return $this->normalize_policy_paths($paths);
+		return ( new WorkspacePolicy() )->writable_roots_for_repo($repo_name);
 	}
 
 	/**
@@ -1286,10 +1282,7 @@ trait WorkspaceGitOperations {
 	 * @return array<int,string>
 	 */
 	private function get_repo_hidden_paths( string $repo_name ): array {
-		$policies = $this->get_workspace_git_policies();
-		$repo     = $policies['repos'][ $repo_name ] ?? array();
-
-		return $this->normalize_policy_paths($repo['hidden_paths'] ?? array());
+		return ( new WorkspacePolicy() )->hidden_paths_for_repo($repo_name);
 	}
 
 	/**
@@ -1299,23 +1292,7 @@ trait WorkspaceGitOperations {
 	 * @return array<int,string>
 	 */
 	private function normalize_policy_paths( mixed $paths ): array {
-		if ( ! is_array($paths) ) {
-			return array();
-		}
-
-		$clean = array();
-		foreach ( $paths as $path ) {
-			$normalized = trim( (string) $path);
-			if ( '' === $normalized ) {
-				continue;
-			}
-
-			$normalized = ltrim(str_replace('\\', '/', $normalized), '/');
-			$normalized = rtrim($normalized, '/');
-			$clean[]    = $normalized;
-		}
-
-		return array_values(array_unique($clean));
+		return ( new WorkspacePolicy() )->normalize_paths($paths);
 	}
 
 	/**
@@ -1357,10 +1334,8 @@ trait WorkspaceGitOperations {
 	 * @return array<string,mixed>|null|\WP_Error
 	 */
 	private function build_workspace_policy_attestation( string $repo_name, string $repo_path, ?array $paths = null ): array|null|\WP_Error {
-		$writable_roots = $this->get_repo_writable_roots($repo_name);
-		$hidden_paths   = $this->get_repo_hidden_paths($repo_name);
-
-		if ( empty($writable_roots) && empty($hidden_paths) ) {
+		$policy = new WorkspacePolicy();
+		if ( empty($policy->writable_roots_for_repo($repo_name)) && empty($policy->hidden_paths_for_repo($repo_name)) ) {
 			return null;
 		}
 
@@ -1374,47 +1349,15 @@ trait WorkspaceGitOperations {
 			return $ignored_files;
 		}
 
-		$changed_files = array_values(array_unique(array_merge($changed_files, $ignored_files)));
-		sort($changed_files);
-
-		$policy = array(
-			'writable_roots' => $writable_roots,
-			'hidden_paths'   => $hidden_paths,
-		);
-
-		$real_repo = realpath($repo_path);
-		if ( false === $real_repo ) {
-			return new \WP_Error('repo_path_unavailable', 'Repository path cannot be resolved for workspace policy attestation.', array( 'status' => 500 ));
-		}
-
-		$violations = array();
-		foreach ( $changed_files as $path ) {
-			$violations = array_merge($violations, $this->workspace_policy_path_violations($repo_path, $real_repo, $path, $writable_roots, $hidden_paths, $ignored_files));
-		}
-
-     // phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode -- fallback for standalone smoke tests outside WordPress.
-		$policy_json = function_exists('wp_json_encode') ? wp_json_encode($policy) : json_encode($policy);
-
-		return array(
-			'policy_hash'      => hash('sha256', (string) $policy_json),
-			'checked_roots'    => array(
-				'repository'     => $real_repo,
-				'writable_roots' => $writable_roots,
-				'hidden_paths'   => $hidden_paths,
-			),
-			'changed_files'    => $changed_files,
-			'violations'       => $violations,
-			'supported_checks' => array(
-				'writable_roots',
-				'hidden_paths',
-				'symlink',
-				'gitlink',
-				'nested_git',
-				'non_regular',
-				'outside_realpath',
-				'ignored',
-				'hardlink',
-			),
+		return $policy->attest_changed_paths(
+			$repo_name,
+			$repo_path,
+			$changed_files,
+			$ignored_files,
+			function ( string $path ) use ( $repo_path ): string {
+				$stage = $this->run_git($repo_path, 'ls-files --stage -- ' . escapeshellarg($path));
+				return is_wp_error($stage) ? '' : (string) ( $stage['output'] ?? '' );
+			}
 		);
 	}
 
@@ -1496,89 +1439,6 @@ trait WorkspaceGitOperations {
 		}
 
 		return array_values(array_unique($files));
-	}
-
-	/**
-	 * Build all policy violations for a single relative path.
-	 *
-	 * @param  string            $repo_path      Repository path.
-	 * @param  string            $real_repo      Real repository path.
-	 * @param  string            $path           Relative path.
-	 * @param  array<int,string> $writable_roots Writable roots.
-	 * @param  array<int,string> $hidden_paths   Hidden paths.
-	 * @param  array<int,string> $ignored_files  Ignored files.
-	 * @return array<int,array<string,string>>
-	 */
-	private function workspace_policy_path_violations( string $repo_path, string $real_repo, string $path, array $writable_roots, array $hidden_paths, array $ignored_files ): array {
-		$violations = array();
-		$path       = ltrim(str_replace('\\', '/', $path), '/');
-		$absolute   = $repo_path . '/' . $path;
-
-		$add_violation = static function ( string $reason, string $detail = '' ) use ( &$violations, $path ): void {
-			$violation = array(
-				'path'   => $path,
-				'reason' => $reason,
-			);
-			if ( '' !== $detail ) {
-				$violation['detail'] = $detail;
-			}
-			$violations[] = $violation;
-		};
-
-		if ( ! empty($writable_roots) && ! $this->is_path_allowed($path, $writable_roots) ) {
-			$add_violation('outside_writable_roots', 'Changed path is outside configured writable_roots.');
-		}
-
-		if ( ! empty($hidden_paths) && $this->is_path_allowed($path, $hidden_paths) ) {
-			$add_violation('hidden_path', 'Changed path is under configured hidden_paths.');
-		}
-
-		if ( '.git' === $path || str_starts_with($path, '.git/') || str_contains($path, '/.git/') || str_ends_with($path, '/.git') ) {
-			$add_violation('nested_git', 'Changed path includes a .git directory or file.');
-		}
-
-		if ( in_array($path, $ignored_files, true) ) {
-			$add_violation('ignored', 'Changed path is ignored by git exclude rules.');
-		}
-
-		if ( is_link($absolute) ) {
-			$add_violation('symlink', 'Changed path is a symlink.');
-			$target = readlink($absolute);
-			if ( false !== $target ) {
-				$target_path = str_starts_with($target, '/') ? $target : dirname($absolute) . '/' . $target;
-				$real_target = realpath($target_path);
-				if ( false === $real_target || ( $real_target !== $real_repo && ! str_starts_with($real_target, $real_repo . '/') ) ) {
-					$add_violation('outside_realpath', 'Symlink target resolves outside the repository.');
-				}
-				foreach ( $hidden_paths as $hidden_path ) {
-					$hidden_real = realpath($repo_path . '/' . $hidden_path);
-					if ( false !== $hidden_real && false !== $real_target && ( $real_target === $hidden_real || str_starts_with($real_target, $hidden_real . '/') ) ) {
-						$add_violation('hidden_path_exposure', 'Symlink target resolves under hidden_paths.');
-					}
-				}
-			}
-		} elseif ( file_exists($absolute) ) {
-			$real_path = realpath($absolute);
-			if ( false === $real_path || ( $real_path !== $real_repo && ! str_starts_with($real_path, $real_repo . '/') ) ) {
-				$add_violation('outside_realpath', 'Changed path resolves outside the repository.');
-			}
-
-			if ( ! is_file($absolute) && ! is_dir($absolute) ) {
-				$add_violation('non_regular', 'Changed path is neither a regular file nor a directory.');
-			}
-
-			$stat = @lstat($absolute); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-			if ( is_array($stat) && is_file($absolute) && (int) ( $stat['nlink'] ?? 1 ) > 1 ) {
-				$add_violation('hardlink', 'Changed file has more than one hardlink.');
-			}
-		}
-
-		$stage = $this->run_git($repo_path, 'ls-files --stage -- ' . escapeshellarg($path));
-		if ( ! is_wp_error($stage) && preg_match('/^160000\s/', (string) ( $stage['output'] ?? '' )) ) {
-			$add_violation('gitlink', 'Changed path is a gitlink/submodule entry.');
-		}
-
-		return $violations;
 	}
 
 	/**
