@@ -195,10 +195,10 @@ class RemoteWorkspaceBackend {
 			if ( ! is_array($worktree) ) {
 				continue;
 			}
-			if ( $repo_name !== (string) ( $worktree['repo_name'] ?? '' ) ) {
+			if ( (string) ( $worktree['repo_name'] ?? '' ) !== $repo_name ) {
 				continue;
 			}
-			if ( $branch !== (string) ( $worktree['branch'] ?? '' ) ) {
+			if ( (string) ( $worktree['branch'] ?? '' ) !== $branch ) {
 				continue;
 			}
 
@@ -492,7 +492,7 @@ class RemoteWorkspaceBackend {
 			return $path;
 		}
 
-		$policy_check = $this->policy->assert_paths_writable((string) $context['repo_name'], array( $path ));
+		$policy_check = $this->policy->assert_paths_writable( (string) $context['repo_name'], array( $path ) );
 		if ( is_wp_error($policy_check) ) {
 			return $policy_check;
 		}
@@ -532,7 +532,7 @@ class RemoteWorkspaceBackend {
 			return $normalized_path;
 		}
 
-		$policy_check = $this->policy->assert_paths_writable((string) $context['repo_name'], array( $normalized_path ));
+		$policy_check = $this->policy->assert_paths_writable( (string) $context['repo_name'], array( $normalized_path ) );
 		if ( is_wp_error($policy_check) ) {
 			return $policy_check;
 		}
@@ -605,7 +605,7 @@ class RemoteWorkspaceBackend {
 			? '#' . $context['branch']
 			: '' ),
 			'branch'      => '' !== (string) $context['branch'] ? (string) $context['branch'] : null,
-			'remote'      => GitHubRemote::cloneUrl((string) $context['repo']),
+			'remote'      => GitHubRemote::cloneUrl( (string) $context['repo'] ),
 			'commit'      => '' !== $context['last_commit_sha'] ? $context['last_commit_sha'] : null,
 			'dirty'       => count($files),
 			'files'       => $files,
@@ -698,7 +698,7 @@ class RemoteWorkspaceBackend {
 			'is_context'  => ! empty($context['read_only_context']),
 			'path'        => 'github://' . $context['repo'] . '#' . $context['branch'],
 			'branch'      => $context['branch'],
-			'remote'      => GitHubRemote::cloneUrl((string) $context['repo']),
+			'remote'      => GitHubRemote::cloneUrl( (string) $context['repo'] ),
 			'commit'      => '' !== $context['last_commit_sha'] ? $context['last_commit_sha'] : null,
 			'dirty'       => count($files),
 			'files'       => $files,
@@ -1262,7 +1262,7 @@ class RemoteWorkspaceBackend {
 		}
 
 		$push_branch = null !== $branch && '' !== $branch ? $branch : $context['branch'];
-		$branch_url  = '' !== $push_branch ? GitHubRemote::branchUrl((string) $context['repo'], (string) $push_branch) : null;
+		$branch_url  = '' !== $push_branch ? GitHubRemote::branchUrl( (string) $context['repo'], (string) $push_branch ) : null;
 
 		return array(
 			'success'        => true,

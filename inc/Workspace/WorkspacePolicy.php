@@ -68,7 +68,7 @@ final class WorkspacePolicy {
 
 		$clean = array();
 		foreach ( $paths as $path ) {
-			$normalized = $this->normalize_path((string) $path);
+			$normalized = $this->normalize_path( (string) $path );
 			if ( '' !== $normalized ) {
 				$clean[] = $normalized;
 			}
@@ -270,7 +270,7 @@ final class WorkspacePolicy {
 			}
 
 			$stat = @lstat($absolute); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-			if ( is_array($stat) && is_file($absolute) && (int) ( $stat['nlink'] ?? 1 ) > 1 ) {
+			if ( is_array($stat) && is_file($absolute) && (int) $stat[3] > 1 ) {
 				$add_violation('hardlink', 'Changed file has more than one hardlink.');
 			}
 		}

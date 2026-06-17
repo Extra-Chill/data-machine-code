@@ -507,6 +507,6 @@ class WorkspaceWriter {
 			$path = substr($path, 2);
 		}
 
-		return $this->normalize_policy_path($path);
+		return $this->policy->normalize_path($path);
 	}
 }
