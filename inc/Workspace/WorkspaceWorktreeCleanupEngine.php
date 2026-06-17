@@ -158,7 +158,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		$all_worktrees   = $this->dedupe_worktree_cleanup_scan_rows(
 			array_merge(
 				array_values(array_filter( (array) $listing['worktrees'], fn( $wt ) => empty($wt['is_primary']))),
-				$this->discover_broken_orphan_worktree_markers((array) $listing['worktrees'])
+				$this->discover_broken_orphan_worktree_markers( (array) $listing['worktrees'])
 			)
 		);
 		$total_worktrees = count($all_worktrees);
@@ -695,7 +695,7 @@ trait WorkspaceWorktreeCleanupEngine {
 					if ( '' === (string) ( $cand['branch'] ?? '' ) ) {
 						return $remove;
 					}
-					$branch       = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($cand['branch'])), self::CLEANUP_GIT_PROBE_TIMEOUT);
+					$branch = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($cand['branch'])), self::CLEANUP_GIT_PROBE_TIMEOUT);
 					return is_wp_error($branch) ? $branch : $remove;
 				}
 			);

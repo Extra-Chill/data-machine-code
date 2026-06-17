@@ -733,15 +733,15 @@ trait WorkspaceHygieneReport {
 		}
 
 		$counts = array(
-			'total_candidates'             => count($worktrees),
-			'safe_removable_count'         => count($cleanup_candidates),
-			'valid_clean_count'            => 0,
-			'valid_dirty_count'            => 0,
-			'invalid_broken_orphan_count'  => 0,
-			'unmanaged_skipped_count'      => 0,
-			'dirty_probe_skipped_count'    => 0,
-			'known_worktree_count'         => 0,
-			'known_primary_count'          => 0,
+			'total_candidates'            => count($worktrees),
+			'safe_removable_count'        => count($cleanup_candidates),
+			'valid_clean_count'           => 0,
+			'valid_dirty_count'           => 0,
+			'invalid_broken_orphan_count' => 0,
+			'unmanaged_skipped_count'     => 0,
+			'dirty_probe_skipped_count'   => 0,
+			'known_worktree_count'        => 0,
+			'known_primary_count'         => 0,
 		);
 
 		foreach ( $worktrees as $row ) {
@@ -804,10 +804,10 @@ trait WorkspaceHygieneReport {
 			'partial'                           => ! $include_worktree_status || empty($size_report['scan_complete']),
 			'status_probe_required_for_summary' => false,
 			'counts'                            => $counts,
-			'estimated_reclaimable_bytes'        => $estimated_reclaimable,
-			'estimated_reclaimable_human'        => $this->format_bytes($estimated_reclaimable),
-			'top_disk_consumers'                 => array_slice((array) ( $size_report['top_entries'] ?? array() ), 0, 10),
-			'progress'                           => array(
+			'estimated_reclaimable_bytes'       => $estimated_reclaimable,
+			'estimated_reclaimable_human'       => $this->format_bytes($estimated_reclaimable),
+			'top_disk_consumers'                => array_slice( (array) ( $size_report['top_entries'] ?? array() ), 0, 10),
+			'progress'                          => array(
 				'size_scanned_entries' => (int) ( $size_report['scanned_entries'] ?? 0 ),
 				'size_total_entries'   => (int) ( $size_report['total_entries'] ?? count($worktrees) ),
 				'size_scan_complete'   => (bool) ( $size_report['scan_complete'] ?? true ),
