@@ -19,8 +19,8 @@ use WP_CLI;
 use DataMachine\Cli\BaseCommand;
 use DataMachineCode\Cli\CliResponseRenderer;
 use DataMachineCode\Cli\CliRepeatableOptionParser;
+use DataMachineCode\Cleanup\CompositeCleanupRunEvidenceStore;
 use DataMachineCode\Cleanup\CleanupRunEvidenceStoreInterface;
-use DataMachineCode\Cleanup\DataMachineJobCleanupRunEvidenceStore;
 use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 use DataMachineCode\Workspace\WorkspaceMutationLock;
@@ -766,16 +766,12 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'status':
 			case 'evidence':
-				if ( ! $this->is_job_cleanup_run_id( (string) ( $args[1] ?? '' )) ) {
-					$this->run_cleanup_control_ability($operation, (string) ( $args[1] ?? '' ), $assoc_args);
-					return;
-				}
-				$job_id = $this->cleanup_run_job_id( (string) ( $args[1] ?? '' ));
-				if ( $job_id <= 0 ) {
+				$run_id = (string) ( $args[1] ?? '' );
+				if ( '' === trim($run_id) ) {
 					WP_CLI::error('Usage: wp datamachine-code workspace cleanup ' . $operation . ' <run-id>');
 					return;
 				}
-				$this->render_cleanup_run_status($job_id, $assoc_args, 'evidence' === $operation);
+				$this->render_cleanup_run_status($run_id, $assoc_args, 'evidence' === $operation);
 				return;
 
 			case 'resume':
@@ -1244,8 +1240,8 @@ class WorkspaceCommand extends BaseCommand {
 		$this->render_worktree_emergency_cleanup_result($result, $assoc_args);
 	}
 
-	private function render_cleanup_run_status( int $job_id, array $assoc_args, bool $evidence ): void {
-		$output = $this->cleanup_run_evidence_store()->read($this->cleanup_run_id($job_id), $evidence, ! empty($assoc_args['verbose']));
+	private function render_cleanup_run_status( string $run_id, array $assoc_args, bool $evidence ): void {
+		$output = $this->cleanup_run_evidence_store()->read($run_id, $evidence, ! empty($assoc_args['verbose']));
 		if ( $output instanceof \WP_Error ) {
 			WP_CLI::error($output->get_error_message());
 			return;
@@ -1256,7 +1252,7 @@ class WorkspaceCommand extends BaseCommand {
 
 	private function cleanup_run_evidence_store(): CleanupRunEvidenceStoreInterface {
 		if ( null === $this->cleanup_run_evidence_store ) {
-			$this->cleanup_run_evidence_store = new DataMachineJobCleanupRunEvidenceStore();
+			$this->cleanup_run_evidence_store = new CompositeCleanupRunEvidenceStore();
 		}
 
 		return $this->cleanup_run_evidence_store;
