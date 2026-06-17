@@ -77,7 +77,7 @@ final class WorktreeCleanupCandidateClassifier {
 		$age_decision = null;
 		if ( null !== $age_filter ) {
 			$age_decision = WorktreeAgeFilter::decide($context['created_at'] ?? null, $age_filter);
-			if ( in_array((string) ( $age_decision['decision'] ?? '' ), array( 'unknown_age', 'excluded' ), true) ) {
+			if ( in_array( (string) ( $age_decision['decision'] ?? '' ), array( 'unknown_age', 'excluded' ), true) ) {
 				return self::skip(
 					array_merge(
 						$base,
