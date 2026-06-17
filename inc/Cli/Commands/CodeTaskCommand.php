@@ -7,6 +7,7 @@
 
 namespace DataMachineCode\Cli\Commands;
 
+use DataMachineCode\Cli\CliResponseRenderer;
 use DataMachine\Cli\BaseCommand;
 use WP_CLI;
 
@@ -81,11 +82,11 @@ class CodeTaskCommand extends BaseCommand {
 		}
 
 		if ( 'json' === ( $assoc_args['format'] ?? 'table' ) ) {
-			WP_CLI::log(wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			$this->renderer()->json($result);
 			return;
 		}
 
-		$this->format_items(
+		$this->renderer()->items(
 			array(
 				array(
 					'repo'        => $result['repo'] ?? '',
@@ -96,9 +97,12 @@ class CodeTaskCommand extends BaseCommand {
 				),
 			),
 			array( 'repo', 'branch', 'handle', 'prompt_path', 'source_url' ),
-			$assoc_args,
-			'repo'
+			$assoc_args
 		);
+	}
+
+	private function renderer(): CliResponseRenderer {
+		return new CliResponseRenderer();
 	}
 
 	/**
