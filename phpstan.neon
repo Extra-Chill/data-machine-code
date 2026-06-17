@@ -1,0 +1,3 @@
+parameters:
+    scanFiles:
+        - stubs/phpstan/datamachine-base-command.php

@@ -1,0 +1,533 @@
+<?php
+/**
+ * Abandoned worktree cleanup orchestration service.
+ *
+ * @package DataMachineCode\Workspace
+ */
+
+namespace DataMachineCode\Workspace;
+
+defined('ABSPATH') || exit;
+
+/**
+ * Composes bounded workspace cleanup abilities into the abandoned cleanup flow.
+ */
+class WorkspaceAbandonedCleanupOrchestrator {
+
+	private const DEFAULT_SOURCE = 'workspace_abandoned_cleanup_ability';
+
+	/** @var callable */
+	private $ability_resolver;
+
+	/** @var callable */
+	private $clock;
+
+	/**
+	 * @param callable|null $ability_resolver Optional resolver receiving an ability name.
+	 * @param callable|null $clock            Optional clock returning microtime-style seconds.
+	 */
+	public function __construct( ?callable $ability_resolver = null, ?callable $clock = null ) {
+		$this->ability_resolver = $ability_resolver ? $ability_resolver : static fn( string $name ) => function_exists('wp_get_ability') ? wp_get_ability($name) : null;
+		$this->clock            = $clock ? $clock : static fn(): float => microtime(true);
+	}
+
+	/**
+	 * Run the operator-facing abandoned-worktree cleanup workflow.
+	 *
+	 * @param  array<string,mixed> $input Orchestration input.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function run( array $input ): array|\WP_Error {
+		$apply        = ! empty($input['apply']);
+		$force        = ! empty($input['force']);
+		$limit        = isset($input['limit']) ? max(1, min(1000, (int) $input['limit'])) : 100;
+		$passes       = isset($input['passes']) ? max(1, min(25, (int) $input['passes'])) : 5;
+		$offset       = isset($input['offset']) ? max(0, (int) $input['offset']) : 0;
+		$stage        = isset($input['stage']) ? strtolower( (string) preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $input['stage']) ) : 'reconcile';
+		$stage        = str_replace('_', '-', $stage);
+		$until_budget = isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ? trim( (string) $input['until_budget']) : '';
+		$source       = isset($input['source']) && '' !== trim( (string) $input['source']) ? trim( (string) $input['source']) : self::DEFAULT_SOURCE;
+		$deadline     = null;
+		$stage_order  = $this->stage_order();
+
+		if ( ! isset($stage_order[ $stage ]) ) {
+			return new \WP_Error('invalid_worktree_abandoned_stage', 'Invalid stage value. Use reconcile, finalized, equivalent-clean, merged, remote-clean, or bounded.', array( 'status' => 400 ));
+		}
+		if ( '' !== $until_budget ) {
+			$budget_seconds = $this->parse_budget($until_budget);
+			if ( is_wp_error($budget_seconds) ) {
+				return $budget_seconds;
+			}
+			$deadline = $this->now() + $budget_seconds;
+		}
+
+		$abilities = $this->resolve_required_abilities();
+		if ( is_wp_error($abilities) ) {
+			return $abilities;
+		}
+
+		$started_at  = $this->now();
+		$result      = $this->initial_result($apply, $force, $limit, $stage, $offset, $passes);
+		$common_page = array(
+			'limit'  => $limit,
+			'source' => $source,
+		);
+
+		if ( $apply ) {
+			$bounded = $this->run_bounded_apply($abilities['bounded_apply'], $result, true, $force, $limit, $source, 'initial');
+			if ( is_wp_error($bounded) ) {
+				return $bounded;
+			}
+
+			if ( 'bounded' === $stage ) {
+				$prune = $this->execute_ability($abilities['prune'], array());
+				if ( is_wp_error($prune) ) {
+					return $prune;
+				}
+				$result['steps']['prune'] = $this->summarize_step($prune);
+
+				return $this->finalize_result($result, $apply, $force, $limit, $passes, $until_budget, $started_at);
+			}
+		}
+
+		if ( $stage_order[ $stage ] <= $stage_order['reconcile'] ) {
+			$reconcile_input = array_merge(
+				$common_page,
+				array(
+					'dry_run' => ! $apply,
+					'apply'   => $apply,
+					'offset'  => 'reconcile' === $stage ? $offset : 0,
+				)
+			);
+			$reconcile       = $this->drain_pages($abilities['reconcile_metadata'], $reconcile_input, $apply, $deadline);
+			if ( is_wp_error($reconcile) ) {
+				return $reconcile;
+			}
+			$result['steps']['reconcile_metadata'] = $this->summarize_step($reconcile);
+			$result['summary']['scanned']         += (int) ( $result['steps']['reconcile_metadata']['inspected'] ?? 0 );
+			$result['summary']['reconciled']       = (int) ( $reconcile['summary']['written'] ?? 0 );
+			$result['summary']['would_reconcile']  = (int) ( $reconcile['summary']['proposed'] ?? 0 );
+
+			if ( $this->stage_incomplete($reconcile) ) {
+				$bounded = $this->run_bounded_apply($abilities['bounded_apply'], $result, $apply, $force, $limit, $source, 'reconcile');
+				if ( is_wp_error($bounded) ) {
+					return $bounded;
+				}
+				$result['evidence']['budget_exhausted'] = $this->budget_expired($deadline);
+				$result['continuation']                 = $this->build_continuation('reconcile', $reconcile, $limit, $passes, $force, $until_budget);
+				$result['next_commands'][]              = (string) $result['continuation']['next_command'];
+				return $this->finalize_result($result, $apply, $force, $limit, $passes, $until_budget, $started_at);
+			}
+		}
+
+		$effective_passes = $apply ? $passes : 1;
+		foreach ( range(1, $effective_passes) as $pass ) {
+			$result['executed_passes'] = $pass;
+			$pass_marked               = 0;
+			foreach ( $this->mark_steps($abilities) as $key => $step_config ) {
+				$step_stage = (string) $step_config['stage'];
+				if ( $stage_order[ $step_stage ] < $stage_order[ $stage ] ) {
+					continue;
+				}
+
+				if ( $this->budget_expired($deadline) ) {
+					$result['evidence']['budget_exhausted'] = true;
+					break 2;
+				}
+
+				$step_input = array_merge(
+					$common_page,
+					array(
+						'dry_run' => ! $apply,
+						'offset'  => $step_stage === $stage ? $offset : 0,
+					)
+				);
+				$step       = $this->drain_pages($step_config['ability'], $step_input, $apply, $deadline);
+				if ( is_wp_error($step) ) {
+					return $step;
+				}
+
+				$step_key                                      = sprintf('%s_pass_%d', $key, $pass);
+				$result['steps'][ $step_key ]                  = $this->summarize_step($step);
+				$result['summary']['scanned']                 += (int) ( $result['steps'][ $step_key ]['inspected'] ?? 0 );
+				$written                                       = (int) ( $step['summary']['written'] ?? 0 );
+				$planned                                       = (int) ( $step['summary']['planned'] ?? 0 );
+				$pass_marked                                  += $apply ? $written : $planned;
+				$result['summary']['marked_cleanup_eligible'] += $written;
+				$result['summary']['would_mark_cleanup_eligible'] += $planned;
+
+				if ( $this->stage_incomplete($step) ) {
+					$bounded = $this->run_bounded_apply($abilities['bounded_apply'], $result, $apply, $force, $limit, $source, $step_stage);
+					if ( is_wp_error($bounded) ) {
+						return $bounded;
+					}
+					$result['evidence']['budget_exhausted'] = $this->budget_expired($deadline);
+					$result['continuation']                 = $this->build_continuation($step_stage, $step, $limit, $passes, $force, $until_budget);
+					$result['next_commands'][]              = (string) $result['continuation']['next_command'];
+					break 2;
+				}
+			}
+
+			$bounded = $this->run_bounded_apply($abilities['bounded_apply'], $result, $apply, $force, $limit, $source, sprintf('pass_%d', $pass));
+			if ( is_wp_error($bounded) ) {
+				return $bounded;
+			}
+
+			$removed_or_would = (int) ( $bounded['summary']['removed'] ?? 0 ) + (int) ( $bounded['summary']['would_remove'] ?? 0 );
+			if ( 0 === $pass_marked && 0 === $removed_or_would ) {
+				break;
+			}
+		}
+
+		if ( $apply ) {
+			$prune = $this->execute_ability($abilities['prune'], array());
+			if ( is_wp_error($prune) ) {
+				return $prune;
+			}
+			$result['steps']['prune'] = $this->summarize_step($prune);
+		} else {
+			$result['steps']['prune'] = array(
+				'mode'    => 'prune',
+				'skipped' => true,
+				'reason'  => 'preview mode does not prune git worktree metadata; re-run with --apply to prune after removal.',
+			);
+		}
+
+		return $this->finalize_result($result, $apply, $force, $limit, $passes, $until_budget, $started_at);
+	}
+
+	/** @return array<string,int> */
+	private function stage_order(): array {
+		return array(
+			'reconcile'        => 0,
+			'finalized'        => 1,
+			'equivalent-clean' => 2,
+			'merged'           => 3,
+			'remote-clean'     => 4,
+			'bounded'          => 5,
+		);
+	}
+
+	/** @return array<string,mixed>|\WP_Error */
+	private function resolve_required_abilities(): array|\WP_Error {
+		$required = array(
+			'reconcile_metadata' => 'datamachine-code/workspace-worktree-reconcile-metadata',
+			'finalized'          => 'datamachine-code/workspace-worktree-active-no-signal-finalized-apply',
+			'equivalent_clean'   => 'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply',
+			'merged'             => 'datamachine-code/workspace-worktree-active-no-signal-merged-apply',
+			'remote_clean'       => 'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply',
+			'bounded_apply'      => 'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply',
+			'prune'              => 'datamachine-code/workspace-worktree-prune',
+		);
+
+		$abilities = array();
+		foreach ( $required as $key => $ability_name ) {
+			$ability = ( $this->ability_resolver )($ability_name);
+			if ( ! $ability ) {
+				return new \WP_Error('worktree_abandoned_ability_missing', sprintf('Worktree abandoned cleanup ability not available: %s', $ability_name), array( 'status' => 500 ));
+			}
+			$abilities[ $key ] = $ability;
+		}
+
+		return $abilities;
+	}
+
+	/** @return array<string,array<string,mixed>> */
+	private function mark_steps( array $abilities ): array {
+		return array(
+			'finalized'        => array(
+				'stage'   => 'finalized',
+				'ability' => $abilities['finalized'],
+			),
+			'equivalent_clean' => array(
+				'stage'   => 'equivalent-clean',
+				'ability' => $abilities['equivalent_clean'],
+			),
+			'merged'           => array(
+				'stage'   => 'merged',
+				'ability' => $abilities['merged'],
+			),
+			'remote_clean'     => array(
+				'stage'   => 'remote-clean',
+				'ability' => $abilities['remote_clean'],
+			),
+		);
+	}
+
+	private function now(): float {
+		return (float) ( $this->clock )();
+	}
+
+	/** @return array<string,mixed> */
+	private function initial_result( bool $apply, bool $force, int $limit, string $stage, int $offset, int $passes ): array {
+		return array(
+			'success'         => true,
+			'mode'            => 'abandoned_worktree_cleanup',
+			'applied'         => $apply,
+			'destructive'     => $apply,
+			'force'           => $force,
+			'limit'           => $limit,
+			'stage'           => $stage,
+			'offset'          => $offset,
+			'passes'          => $passes,
+			'executed_passes' => 0,
+			'generated_at'    => gmdate('c'),
+			'steps'           => array(),
+			'blocked'         => array(),
+			'summary'         => array(
+				'scanned'                     => 0,
+				'reconciled'                  => 0,
+				'marked_cleanup_eligible'     => 0,
+				'would_mark_cleanup_eligible' => 0,
+				'removed'                     => 0,
+				'would_remove'                => 0,
+				'bytes_reclaimed'             => 0,
+				'blocked'                     => 0,
+				'blocked_by_reason'           => array(),
+			),
+			'next_commands'   => array(),
+			'evidence'        => array(
+				'safety' => $apply
+					? 'Applies only rows proven by existing DMC cleanup abilities; unpushed commits remain protected even with --force.'
+					: 'Preview only. Re-run with --apply to write cleanup metadata and remove eligible worktrees.',
+			),
+		);
+	}
+
+	private function execute_ability( object $ability, array $input ): array|\WP_Error {
+		$execute = array( $ability, 'execute' );
+		if ( ! is_callable($execute) ) {
+			return new \WP_Error('worktree_abandoned_ability_invalid', 'Worktree abandoned cleanup ability is not executable.', array( 'status' => 500 ));
+		}
+
+		$result = $execute($input);
+		return is_array($result) || is_wp_error($result) ? $result : new \WP_Error('worktree_abandoned_ability_invalid_result', 'Worktree abandoned cleanup ability returned an invalid result.', array( 'status' => 500 ));
+	}
+
+	private function finalize_result( array $result, bool $apply, bool $force, int $limit, int $passes, string $until_budget, float $started_at ): array {
+		$result['blocked']            = array_values( (array) ( $result['blocked'] ?? array() ) );
+		$result['summary']['blocked'] = count($result['blocked']);
+		foreach ( $result['blocked'] as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$reason = (string) ( $row['reason_code'] ?? 'unknown' );
+			$result['summary']['blocked_by_reason'][ $reason ] = (int) ( $result['summary']['blocked_by_reason'][ $reason ] ?? 0 ) + 1;
+		}
+
+		if ( empty($result['continuation']) && ! $apply ) {
+			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree abandoned --apply%s --limit=%d --passes=%d%s --format=json', $force ? ' --force' : '', $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
+		}
+		if ( empty($result['continuation']) && ! $force ) {
+			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree abandoned --apply --force --limit=%d --passes=%d%s --format=json', $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
+		}
+
+		$result['evidence']['elapsed_ms'] = (int) round(( $this->now() - $started_at ) * 1000);
+
+		return $result;
+	}
+
+	private function stage_incomplete( array $step ): bool {
+		$pagination = (array) ( $step['pagination'] ?? $step['continuation'] ?? array() );
+		if ( empty($pagination) || ! empty($pagination['complete']) || ! isset($pagination['next_offset']) ) {
+			return false;
+		}
+
+		$next_offset = (int) $pagination['next_offset'];
+		$current     = (int) ( $pagination['offset'] ?? 0 );
+		$total       = isset($pagination['total']) ? (int) $pagination['total'] : null;
+		if ( $next_offset === $current && ! empty($pagination['partial']) ) {
+			return true;
+		}
+		if ( null !== $total && $next_offset >= $total ) {
+			return false;
+		}
+
+		return $next_offset > $current;
+	}
+
+	private function run_bounded_apply( object $ability, array &$result, bool $apply, bool $force, int $limit, string $source, string $step_label ): array|\WP_Error {
+		$bounded = $this->execute_ability(
+			$ability,
+			array(
+				'dry_run' => ! $apply,
+				'force'   => $force,
+				'limit'   => $limit,
+				'source'  => $source,
+			)
+		);
+		if ( is_wp_error($bounded) ) {
+			return $bounded;
+		}
+
+		$step_key                     = sprintf('bounded_apply_%s', $step_label);
+		$result['steps'][ $step_key ] = $this->summarize_step($bounded);
+
+		$result['summary']['removed']         += (int) ( $bounded['summary']['removed'] ?? 0 );
+		$result['summary']['would_remove']    += (int) ( $bounded['summary']['would_remove'] ?? 0 );
+		$result['summary']['bytes_reclaimed'] += (int) ( $bounded['summary']['bytes_reclaimed'] ?? 0 );
+		$result['summary']['scanned']         += (int) ( $result['steps'][ $step_key ]['inspected'] ?? 0 );
+		$result['blocked']                     = $this->merge_blockers($result['blocked'], (array) ( $bounded['skipped'] ?? array() ));
+
+		return $bounded;
+	}
+
+	private function build_continuation( string $stage, array $step, int $limit, int $passes, bool $force, string $until_budget ): array {
+		$pagination  = (array) ( $step['pagination'] ?? $step['continuation'] ?? array() );
+		$next_offset = isset($pagination['next_offset']) ? max(0, (int) $pagination['next_offset']) : 0;
+		$command     = sprintf('studio wp datamachine-code workspace worktree abandoned --apply%s --stage=%s --offset=%d --limit=%d --passes=%d%s --format=json', $force ? ' --force' : '', $stage, $next_offset, $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
+
+		return array(
+			'stage'        => $stage,
+			'offset'       => $next_offset,
+			'next_command' => $command,
+			'pagination'   => $pagination,
+		);
+	}
+
+	private function drain_pages( object $ability, array $base_input, bool $apply, ?float $deadline = null ): array|\WP_Error {
+		$pages       = array();
+		$summary     = array();
+		$pagination  = array();
+		$offset      = isset($base_input['offset']) ? max(0, (int) $base_input['offset']) : 0;
+		$max_pages   = $apply ? 100 : 1;
+		$last_result = array();
+
+		for ( $page = 1; $page <= $max_pages; ++$page ) {
+			if ( null !== $deadline && $this->budget_expired($deadline) ) {
+				break;
+			}
+
+			$input = $base_input;
+			if ( isset($base_input['offset']) || $page > 1 ) {
+				$input['offset'] = $offset;
+			}
+			$this->apply_remaining_budget($input, $deadline);
+
+			$result = $this->execute_ability($ability, $input);
+			if ( is_wp_error($result) ) {
+				return $result;
+			}
+
+			$last_result = $result;
+			$pages[]     = $this->summarize_step($result);
+
+			foreach ( (array) ( $result['summary'] ?? array() ) as $key => $value ) {
+				if ( is_numeric($value) ) {
+					$summary[ $key ] = (int) ( $summary[ $key ] ?? 0 ) + (int) $value;
+				}
+			}
+
+			$pagination = (array) ( $result['pagination'] ?? $result['continuation'] ?? array() );
+			if ( ! $apply || empty($pagination) || ! empty($pagination['complete']) ) {
+				break;
+			}
+
+			$next_offset = isset($pagination['next_offset']) ? (int) $pagination['next_offset'] : null;
+			if ( null === $next_offset || $next_offset <= $offset ) {
+				break;
+			}
+
+			$total = isset($pagination['total']) ? (int) $pagination['total'] : null;
+			if ( null !== $total && $next_offset >= $total ) {
+				break;
+			}
+
+			$offset = $next_offset;
+		}
+
+		if ( array() === $last_result ) {
+			$last_result = array(
+				'success'          => true,
+				'mode'             => 'abandoned_budget_exhausted',
+				'dry_run'          => ! empty($base_input['dry_run']),
+				'applied'          => $apply,
+				'budget_exhausted' => true,
+			);
+		}
+
+		$last_result['summary']    = $summary;
+		$last_result['pagination'] = $pagination;
+		$last_result['pages']      = $pages;
+		$last_result['page_count'] = count($pages);
+
+		return $last_result;
+	}
+
+	private function parse_budget( string $duration ): int|\WP_Error {
+		if ( ! preg_match('/^(\d+)([smh])$/', trim($duration), $matches) ) {
+			return new \WP_Error('invalid_worktree_abandoned_budget', 'Invalid until_budget duration. Use a compact value like 60s, 10m, or 1h.', array( 'status' => 400 ));
+		}
+
+		$value = (int) $matches[1];
+		if ( $value < 1 ) {
+			return new \WP_Error('invalid_worktree_abandoned_budget', 'Invalid until_budget duration. Duration must be greater than zero.', array( 'status' => 400 ));
+		}
+
+		return match ( $matches[2] ) {
+			'h' => $value * HOUR_IN_SECONDS,
+			'm' => $value * MINUTE_IN_SECONDS,
+			default => $value,
+		};
+	}
+
+	private function apply_remaining_budget( array &$input, ?float $deadline ): void {
+		if ( null === $deadline ) {
+			return;
+		}
+
+		$remaining             = max(1, (int) floor($deadline - $this->now()));
+		$input['until_budget'] = $remaining . 's';
+	}
+
+	private function budget_expired( ?float $deadline ): bool {
+		return null !== $deadline && $this->now() >= $deadline;
+	}
+
+	private function summarize_step( array $step ): array {
+		$summary = (array) ( $step['summary'] ?? array() );
+		return array(
+			'mode'            => (string) ( $step['mode'] ?? '' ),
+			'page_count'      => (int) ( $step['page_count'] ?? 1 ),
+			'dry_run'         => ! empty($step['dry_run']),
+			'applied'         => ! empty($step['applied']) || ! empty($step['destructive']),
+			'inspected'       => (int) ( $summary['inspected'] ?? $summary['processed'] ?? 0 ),
+			'planned'         => (int) ( $summary['planned'] ?? $summary['would_remove'] ?? $summary['proposed'] ?? 0 ),
+			'written'         => (int) ( $summary['written'] ?? 0 ),
+			'removed'         => (int) ( $summary['removed'] ?? 0 ),
+			'skipped'         => (int) ( $summary['skipped'] ?? 0 ),
+			'bytes_reclaimed' => (int) ( $summary['bytes_reclaimed'] ?? 0 ),
+			'pagination'      => (array) ( $step['pagination'] ?? $step['continuation'] ?? array() ),
+		);
+	}
+
+	private function merge_blockers( array $existing, array $incoming ): array {
+		$merged = array();
+		foreach ( $existing as $row ) {
+			$handle            = (string) ( $row['handle'] ?? count($merged) );
+			$merged[ $handle ] = $row;
+		}
+
+		foreach ( $incoming as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$handle = (string) ( $row['handle'] ?? '' );
+			if ( '' === $handle ) {
+				$handle = 'row_' . count($merged);
+			}
+			$merged[ $handle ] = array(
+				'handle'      => $handle,
+				'repo'        => (string) ( $row['repo'] ?? '' ),
+				'branch'      => (string) ( $row['branch'] ?? '' ),
+				'path'        => (string) ( $row['path'] ?? '' ),
+				'reason_code' => (string) ( $row['reason_code'] ?? 'unknown' ),
+				'reason'      => (string) ( $row['reason'] ?? '' ),
+				'dirty'       => isset($row['dirty']) ? (int) $row['dirty'] : null,
+				'unpushed'    => isset($row['unpushed']) ? (int) $row['unpushed'] : null,
+			);
+		}
+
+		return $merged;
+	}
+}

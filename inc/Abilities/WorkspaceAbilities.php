@@ -19,6 +19,7 @@ use DataMachineCode\Workspace\CleanupRunService;
 use DataMachineCode\Workspace\RemoteWorkspaceBackend;
 use DataMachineCode\Workspace\RunnerWorkspacePublisher;
 use DataMachineCode\Workspace\Workspace;
+use DataMachineCode\Workspace\WorkspaceAbandonedCleanupOrchestrator;
 use DataMachineCode\Workspace\WorkspaceReader;
 use DataMachineCode\Workspace\WorkspaceWriter;
 use DataMachineCode\Support\GitRunner;
@@ -2184,6 +2185,69 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-abandoned-cleanup',
+				array(
+					'label'               => 'Orchestrate Abandoned Worktree Cleanup',
+					'description'         => 'Run the bounded abandoned-worktree cleanup orchestration: reconcile metadata, promote safe cleanup candidates, remove eligible rows, prune git metadata, and return continuation evidence.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'apply'        => array(
+								'type'        => 'boolean',
+								'description' => 'If true, write cleanup metadata and remove bounded cleanup-eligible worktrees. Defaults to preview mode.',
+							),
+							'force'        => array(
+								'type'        => 'boolean',
+								'description' => 'Forward force to bounded cleanup removal. Unpushed commits remain protected.',
+							),
+							'limit'        => array(
+								'type'        => 'integer',
+								'description' => 'Page/removal limit, clamped to 1..1000. Defaults to 100.',
+							),
+							'passes'       => array(
+								'type'        => 'integer',
+								'description' => 'Maximum apply passes, clamped to 1..25. Preview mode runs one pass.',
+							),
+							'offset'       => array(
+								'type'        => 'integer',
+								'description' => 'Stage pagination offset for resumed runs.',
+							),
+							'stage'        => array(
+								'type'        => 'string',
+								'enum'        => array( 'reconcile', 'finalized', 'equivalent-clean', 'merged', 'remote-clean', 'bounded' ),
+								'description' => 'Stage to start from. Defaults to reconcile.',
+							),
+							'until_budget' => array(
+								'type'        => 'string',
+								'description' => 'Optional compact wall-clock budget such as 60s, 10m, or 1h.',
+							),
+							'source'       => array(
+								'type'        => 'string',
+								'description' => 'Caller source marker forwarded to underlying cleanup abilities.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'       => array( 'type' => 'boolean' ),
+							'mode'          => array( 'type' => 'string' ),
+							'applied'       => array( 'type' => 'boolean' ),
+							'summary'       => array( 'type' => 'object' ),
+							'steps'         => array( 'type' => 'object' ),
+							'blocked'       => array( 'type' => 'array' ),
+							'continuation'  => array( 'type' => 'object' ),
+							'next_commands' => array( 'type' => 'array' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeAbandonedCleanup' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
 				'datamachine-code/workspace-worktree-cleanup-artifacts',
 				array(
 					'label'               => 'Cleanup Worktree Artifacts',
@@ -4138,6 +4202,18 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->worktree_active_no_signal_remote_clean_apply($opts);
+	}
+
+	/**
+	 * Orchestrate abandoned-worktree cleanup across existing bounded abilities.
+	 *
+	 * @param  array $input Orchestration input.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function worktreeAbandonedCleanup( array $input ): array|\WP_Error {
+		$orchestrator = new WorkspaceAbandonedCleanupOrchestrator();
+
+		return $orchestrator->run($input);
 	}
 
 	/**
