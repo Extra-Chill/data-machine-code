@@ -15,6 +15,7 @@ namespace DataMachineCode\Workspace;
 defined('ABSPATH') || exit;
 
 require_once __DIR__ . '/WorkspaceCoreUtilities.php';
+require_once __DIR__ . '/WorktreeActiveNoSignalTriagePreview.php';
 require_once __DIR__ . '/WorkspaceActiveNoSignalCleanup.php';
 require_once __DIR__ . '/WorkspaceArtifactCleanup.php';
 require_once __DIR__ . '/WorkspaceCleanupPlan.php';

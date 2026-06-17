@@ -1020,6 +1020,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			'limit_applied'     => $limit,
 			'remove_timeout'    => $remove_timeout_seconds,
 		);
+		$active_no_signal_triage = WorktreeActiveNoSignalTriagePreview::build($inventory_skipped, min($limit, 25));
 
 		if ( $dry_run ) {
 			return array(
@@ -1040,6 +1041,7 @@ trait WorkspaceWorktreeCleanupEngine {
 					'limit'           => $limit,
 				),
 				'continuation'   => $continuation,
+				'active_no_signal_triage' => $active_no_signal_triage,
 				'evidence'       => array(
 					'elapsed_ms'       => (int) round(( microtime(true) - $started_at ) * 1000),
 					'inventory_total'  => count($all_candidates),
@@ -1170,6 +1172,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				'discarded_unpushed' => count($discarded_unpushed),
 			),
 			'continuation'   => $continuation,
+			'active_no_signal_triage' => $active_no_signal_triage,
 			'evidence'       => array(
 				'elapsed_ms'         => (int) round(( microtime(true) - $started_at ) * 1000),
 				'inventory_total'    => count($all_candidates),
