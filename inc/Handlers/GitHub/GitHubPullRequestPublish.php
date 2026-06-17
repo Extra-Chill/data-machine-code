@@ -10,6 +10,8 @@ namespace DataMachineCode\Handlers\GitHub;
 use DataMachine\Core\Steps\HandlerRegistrationTrait;
 use DataMachine\Core\Steps\Publish\Handlers\PublishHandler;
 use DataMachineCode\Abilities\GitHubAbilities;
+use DataMachineCode\RunArtifacts\DataMachineRunArtifactRepository;
+use DataMachineCode\RunArtifacts\RunArtifactRepositoryInterface;
 use DataMachineCode\Support\RunArtifactBundleFileWriter;
 use DataMachineCode\Support\RunArtifactPrSectionRenderer;
 
@@ -23,8 +25,11 @@ class GitHubPullRequestPublish extends PublishHandler {
 
 	use HandlerRegistrationTrait;
 
-	public function __construct() {
+	private RunArtifactRepositoryInterface $run_artifact_repository;
+
+	public function __construct( ?RunArtifactRepositoryInterface $run_artifact_repository = null ) {
 		parent::__construct('github_pull_request');
+		$this->run_artifact_repository = $run_artifact_repository ?? new DataMachineRunArtifactRepository();
 
 		self::registerHandler(
 			'github_pull_request',
@@ -305,7 +310,7 @@ class GitHubPullRequestPublish extends PublishHandler {
 			return array();
 		}
 
-		$artifacts = $this->jobArtifactsForPublish($job_id);
+		$artifacts = $this->run_artifact_repository->artifacts_for_job($job_id);
 		if ( empty($artifacts) ) {
 			return array();
 		}
@@ -331,7 +336,7 @@ class GitHubPullRequestPublish extends PublishHandler {
 	 * @return array<int,array<string,mixed>> File records accepted by the normal files loop.
 	 */
 	private function bundleFileArtifactsForPublish( array $parameters, array $handler_config ): array {
-		$artifacts = is_array($parameters['run_artifacts'] ?? null) ? $parameters['run_artifacts'] : $this->jobArtifactsForPublish( (int) ( $parameters['job_id'] ?? 0 ));
+		$artifacts = is_array($parameters['run_artifacts'] ?? null) ? $parameters['run_artifacts'] : $this->run_artifact_repository->artifacts_for_job( (int) ( $parameters['job_id'] ?? 0 ));
 		if ( empty($artifacts) ) {
 			return array();
 		}
@@ -359,7 +364,7 @@ class GitHubPullRequestPublish extends PublishHandler {
 			}
 		}
 
-		return $this->jobRunArtifactEgressPolicy( (int) ( $parameters['job_id'] ?? 0 ));
+		return $this->run_artifact_repository->egress_policy_for_job( (int) ( $parameters['job_id'] ?? 0 ));
 	}
 
 	/**
@@ -415,39 +420,6 @@ class GitHubPullRequestPublish extends PublishHandler {
 		$mode   = sanitize_text_field( (string) ( $config['mode'] ?? $handler_config['run_artifact_attachment_mode'] ?? RunArtifactPrSectionRenderer::MODE_BODY_SECTION ));
 
 		return RunArtifactPrSectionRenderer::MODE_COMMENT === $mode ? RunArtifactPrSectionRenderer::MODE_COMMENT : RunArtifactPrSectionRenderer::MODE_BODY_SECTION;
-	}
-
-	/**
-	 * @return array<string,mixed>
-	 */
-	private function jobArtifactsForPublish( int $job_id ): array {
-		if ( $job_id <= 0 || ! class_exists('\\DataMachine\\Core\\JobArtifacts') ) {
-			return array();
-		}
-
-		$result = ( new \DataMachine\Core\JobArtifacts() )->get($job_id);
-		if ( empty($result['success']) || ! is_array($result['artifacts'] ?? null) ) {
-			return array();
-		}
-
-		return $result['artifacts'];
-	}
-
-	/**
-	 * @return array<string,mixed>
-	 */
-	private function jobRunArtifactEgressPolicy( int $job_id ): array {
-		if ( $job_id <= 0 || ! class_exists('\\DataMachine\\Core\\Database\\Jobs\\Jobs') ) {
-			return array();
-		}
-
-		$jobs = new \DataMachine\Core\Database\Jobs\Jobs();
-		if ( ! method_exists($jobs, 'retrieve_engine_data') ) {
-			return array();
-		}
-
-		$engine_data = $jobs->retrieve_engine_data($job_id);
-		return is_array($engine_data['run_artifact_egress_policy'] ?? null) ? $engine_data['run_artifact_egress_policy'] : array();
 	}
 
 	/**
