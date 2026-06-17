@@ -160,7 +160,33 @@ trait WorkspaceWorktreeLifecycle {
 			$response['bootstrap'] = WorktreeBootstrapper::bootstrap($wt_path);
 		}
 
-		$this->worktree_inventory()->upsert($this->build_worktree_inventory_row_from_handle($wt_handle));
+		if ( ! is_dir($wt_path) || ! file_exists($wt_path . '/.git') ) {
+			return new \WP_Error(
+				'worktree_not_materialized',
+				sprintf('Git reported worktree "%s" was added at %s, but the checkout is not accessible after creation.', $wt_handle, $wt_path),
+				array(
+					'status' => 500,
+					'handle' => $wt_handle,
+					'path'   => $wt_path,
+				)
+			);
+		}
+
+		$persisted = $this->worktree_inventory()->upsert($this->build_worktree_inventory_row_from_handle($wt_handle));
+		if ( ! $persisted ) {
+			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+			WorktreeContextInjector::forget_metadata($wt_handle);
+
+			return new \WP_Error(
+				'worktree_inventory_persist_failed',
+				sprintf('Worktree "%s" was created but could not be persisted to the workspace inventory; rolled back the checkout instead of reporting success.', $wt_handle),
+				array(
+					'status' => 500,
+					'handle' => $wt_handle,
+					'path'   => $wt_path,
+				)
+			);
+		}
 
 		$this->emit_workspace_changed('worktree_add', $repo, $wt_handle, $wt_path);
 
