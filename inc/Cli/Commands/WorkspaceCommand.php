@@ -47,6 +47,7 @@ class WorkspaceCommand extends BaseCommand {
 		'cleanup'                                 => array( 'ability' => 'datamachine-code/workspace-worktree-cleanup' ),
 		'cleanup-artifacts'                       => array( 'ability' => 'datamachine-code/workspace-worktree-cleanup-artifacts' ),
 		'bounded-cleanup-eligible-apply'          => array( 'ability' => 'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' ),
+		'cleanup-eligible-drain'                  => array( 'ability' => 'datamachine-code/workspace-worktree-cleanup-eligible-drain' ),
 		'emergency-cleanup'                       => array( 'ability' => 'datamachine-code/workspace-worktree-emergency-cleanup' ),
 		'reconcile-metadata'                      => array( 'ability' => 'datamachine-code/workspace-worktree-reconcile-metadata' ),
 		'active-no-signal-report'                 => array(
@@ -3211,7 +3212,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * <operation>
 	 * : Worktree operation: add, list, remove, prune, locks, cleanup, cleanup-artifacts,
-	 *   bounded-cleanup-eligible-apply, emergency-cleanup, reconcile-metadata,
+	 *   bounded-cleanup-eligible-apply, cleanup-eligible-drain, emergency-cleanup, reconcile-metadata,
 	 *   active-no-signal-report, active-no-signal-finalized-apply,
 	 *   active-no-signal-equivalent-clean-apply,
 	 *   active-no-signal-merged-apply, active-no-signal-remote-clean-apply,
@@ -3358,7 +3359,8 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--discard-unpushed]
 	 * : With bounded-cleanup-eligible-apply only, explicitly discard unpushed
 	 *   commits after reviewed cleanup eligibility and fresh safety probes. This
-	 *   is a data-loss mode and is not implied by --force.
+	 *   is a data-loss mode and is not implied by --force. Cleanup-eligible-drain
+	 *   refuses this option.
 	 *
 	 * [--older-than=<duration>]
 	 * : Limit cleanup candidates to worktrees with lifecycle `created_at`
@@ -3414,7 +3416,8 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * [--passes=<count>]
 	 * : For `abandoned`, maximum apply passes to run after marking eligible rows.
-	 *   Preview mode always runs a single non-destructive classification pass.
+	 *   For `cleanup-eligible-drain`, maximum bounded cleanup-eligible apply
+	 *   passes to run. Preview mode always runs one non-destructive pass.
 	 *
 	 * [--stage=<stage>]
 	 * : For `abandoned`, resume from a specific orchestration stage. Supported
@@ -3427,7 +3430,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *   passing the previous response's `pagination.next_offset`.
 	 *
 	 * [--until-budget=<duration>]
-	 * : For `cleanup --dry-run` and `reconcile-metadata`, enforce a compact
+	 * : For `cleanup --dry-run`, `cleanup-eligible-drain`, and `reconcile-metadata`, enforce a compact
 	 *   wall-clock budget for dry-run pages or direct-apply drains (e.g. 60s,
 	 *   10m). Also supported by `active-no-signal-report` and the active/no-signal
 	 *   apply flows. Returns continuation
@@ -3524,6 +3527,8 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --via-jobs --limit=10 --older-than=7d
 	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --include-repaired-metadata --older-than=7d --limit=25
 	 *     wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --include-repaired-metadata --older-than=7d --limit=25
+	 *     wp datamachine-code workspace worktree cleanup-eligible-drain --limit=25 --format=json
+	 *     wp datamachine-code workspace worktree cleanup-eligible-drain --apply --limit=25 --passes=10 --until-budget=120s --format=json
 	 *
 	 *     # Local-only detection (no GitHub API call)
 	 *     wp datamachine-code workspace worktree cleanup --skip-github
@@ -3581,7 +3586,7 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|emergency-cleanup|reconcile-metadata|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
+			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
 			return;
 		}
 
@@ -3896,6 +3901,24 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				if ( isset($assoc_args['remove-timeout']) && '' !== trim( (string) $assoc_args['remove-timeout']) ) {
 					$input['remove_timeout'] = (int) $assoc_args['remove-timeout'];
+				}
+				break;
+
+			case 'cleanup-eligible-drain':
+				$input['apply']                     = ! empty($assoc_args['apply']);
+				$input['force']                     = ! empty($assoc_args['force']);
+				$input['discard_unpushed']          = ! empty($assoc_args['discard-unpushed']);
+				$input['include_repaired_metadata'] = ! empty($assoc_args['include-repaired-metadata']);
+				$input['source']                    = self::CLEANUP_CLI_SOURCE;
+				foreach ( array( 'limit', 'passes', 'remove-timeout' ) as $key ) {
+					if ( isset($assoc_args[ $key ]) ) {
+						$input[ str_replace('-', '_', $key) ] = (int) $assoc_args[ $key ];
+					}
+				}
+				foreach ( array( 'older-than', 'sort', 'until-budget' ) as $key ) {
+					if ( isset($assoc_args[ $key ]) && '' !== trim( (string) $assoc_args[ $key ]) ) {
+						$input[ str_replace('-', '_', $key) ] = trim( (string) $assoc_args[ $key ]);
+					}
 				}
 				break;
 		}
@@ -4281,6 +4304,10 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'bounded-cleanup-eligible-apply':
 				$this->render_worktree_bounded_cleanup_eligible_apply_result($result, $assoc_args);
+				return;
+
+			case 'cleanup-eligible-drain':
+				$this->render_worktree_cleanup_eligible_drain_result($result, $assoc_args);
 				return;
 
 			case 'emergency-cleanup':
@@ -6045,6 +6072,95 @@ class WorkspaceCommand extends BaseCommand {
 			WP_CLI::success(sprintf('Bounded cleanup-eligible apply scheduled %d cleanup chunk job(s).', (int) ( $summary['scheduled_jobs'] ?? 0 )));
 		} else {
 			WP_CLI::success(sprintf('Bounded cleanup-eligible apply removed %d worktree(s); reclaimed %s.', (int) ( $summary['removed'] ?? 0 ), $this->format_bytes($summary['bytes_reclaimed'] ?? 0)));
+		}
+	}
+
+	/**
+	 * Render cleanup-eligible drain output.
+	 *
+	 * @param  array $result     Drain result.
+	 * @param  array $assoc_args CLI args.
+	 * @return void
+	 */
+	private function render_worktree_cleanup_eligible_drain_result( array $result, array $assoc_args ): void {
+		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			$this->renderer()->json($result);
+			return;
+		}
+
+		$summary          = (array) ( $result['summary'] ?? array() );
+		$final_free_space = (array) ( $summary['final_free_space'] ?? array() );
+		WP_CLI::log('Cleanup-eligible drain summary:');
+		$this->format_items(
+			array(
+				array(
+					'metric' => 'mode',
+					'value'  => ! empty($result['applied']) ? 'apply' : 'preview',
+				),
+				array(
+					'metric' => 'passes',
+					'value'  => (int) ( $summary['passes'] ?? 0 ),
+				),
+				array(
+					'metric' => 'processed',
+					'value'  => (int) ( $summary['processed'] ?? 0 ),
+				),
+				array(
+					'metric' => 'would_remove',
+					'value'  => (int) ( $summary['would_remove'] ?? 0 ),
+				),
+				array(
+					'metric' => 'removed',
+					'value'  => (int) ( $summary['removed'] ?? 0 ),
+				),
+				array(
+					'metric' => 'skipped',
+					'value'  => (int) ( $summary['skipped'] ?? 0 ),
+				),
+				array(
+					'metric' => 'bytes_reclaimed',
+					'value'  => $this->format_bytes( (int) ( $summary['bytes_reclaimed'] ?? 0 ) ),
+				),
+				array(
+					'metric' => 'stop_reason',
+					'value'  => (string) ( $summary['stop_reason'] ?? '' ),
+				),
+				array(
+					'metric' => 'final_free_space',
+					'value'  => (string) ( $final_free_space['free_human'] ?? 'unknown' ),
+				),
+			),
+			array( 'metric', 'value' ),
+			array( 'format' => 'table' ),
+			'metric'
+		);
+
+		$passes = (array) ( $result['pass_results'] ?? array() );
+		if ( ! empty($passes) ) {
+			WP_CLI::log('');
+			WP_CLI::log('Pass evidence:');
+			$this->format_items(
+				array_map(
+					fn( $row ) => array(
+						'pass'            => (int) ( $row['pass'] ?? 0 ),
+						'processed'       => (int) ( $row['processed'] ?? 0 ),
+						'would_remove'    => (int) ( $row['would_remove'] ?? 0 ),
+						'removed'         => (int) ( $row['removed'] ?? 0 ),
+						'skipped'         => (int) ( $row['skipped'] ?? 0 ),
+						'remaining_total' => (int) ( $row['remaining_total'] ?? 0 ),
+						'bytes'           => $this->format_bytes($row['bytes_reclaimed'] ?? 0),
+					),
+					$passes
+				),
+				array( 'pass', 'processed', 'would_remove', 'removed', 'skipped', 'remaining_total', 'bytes' ),
+				array( 'format' => 'table' ),
+				'pass'
+			);
+		}
+
+		if ( ! empty($result['next_commands']) ) {
+			WP_CLI::log('');
+			WP_CLI::log('Next command: ' . (string) ( (array) $result['next_commands'] )[0]);
 		}
 	}
 

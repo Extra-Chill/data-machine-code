@@ -21,6 +21,7 @@ use DataMachineCode\Workspace\RemoteWorkspaceBackend;
 use DataMachineCode\Workspace\RunnerWorkspacePublisher;
 use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorkspaceAbandonedCleanupOrchestrator;
+use DataMachineCode\Workspace\WorkspaceCleanupEligibleDrainOrchestrator;
 use DataMachineCode\Workspace\WorkspaceReader;
 use DataMachineCode\Workspace\WorkspaceWriter;
 use DataMachineCode\Support\GitRunner;
@@ -2425,6 +2426,35 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-cleanup-eligible-drain',
+				array(
+					'label'               => 'Drain Cleanup-Eligible Worktrees',
+					'description'         => 'Repeat the bounded cleanup-eligible apply primitive until no safe candidates remain, the pass limit is reached, or the time budget expires. Defaults to preview mode and never discards unpushed commits.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'apply'                     => array( 'type' => 'boolean' ),
+							'force'                     => array( 'type' => 'boolean' ),
+							'limit'                     => array( 'type' => 'integer' ),
+							'passes'                    => array( 'type' => 'integer' ),
+							'until_budget'              => array( 'type' => 'string' ),
+							'older_than'                => array( 'type' => 'string' ),
+							'sort'                      => array( 'type' => 'string' ),
+							'remove_timeout'            => array( 'type' => 'integer' ),
+							'include_repaired_metadata' => array( 'type' => 'boolean' ),
+							'discard_unpushed'          => array( 'type' => 'boolean' ),
+							'source'                    => array( 'type' => 'string' ),
+						),
+					),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'worktreeCleanupEligibleDrain' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
 				'datamachine-code/workspace-cleanup-plan',
 				array(
 					'label'               => 'Build DB-backed Workspace Cleanup Plan',
@@ -4281,6 +4311,18 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->worktree_bounded_cleanup_eligible_apply($opts);
+	}
+
+	/**
+	 * Drain cleanup-eligible worktrees with repeated bounded apply passes.
+	 *
+	 * @param  array $input Input parameters.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function worktreeCleanupEligibleDrain( array $input ): array|\WP_Error {
+		$orchestrator = new WorkspaceCleanupEligibleDrainOrchestrator();
+
+		return $orchestrator->run($input);
 	}
 
 	/**
