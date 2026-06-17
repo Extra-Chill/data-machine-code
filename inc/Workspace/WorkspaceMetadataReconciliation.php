@@ -676,7 +676,7 @@ trait WorkspaceMetadataReconciliation {
 		$proposed       = $classification['proposed_metadata'];
 		$source_map     = $classification['source_map'];
 		$invalid_fields = $classification['invalid_fields'];
-		$missing_after = array_values(
+		$missing_after  = array_values(
 			array_filter(
 				array(
 					empty($proposed['created_at']) ? 'created_at' : '',
@@ -1128,18 +1128,22 @@ trait WorkspaceMetadataReconciliation {
 	 * @return array<string,mixed>
 	 */
 	private function classify_worktree_identity_metadata_conflict( array $wt, array $identity ): array {
-		$handle        = (string) ( $wt['handle'] ?? '' );
-		$repo          = (string) ( $wt['repo'] ?? '' );
-		$branch        = (string) ( $wt['branch'] ?? '' );
-		$path          = rtrim((string) ( $wt['path'] ?? '' ), '/');
-		$parsed        = '' !== $handle ? $this->parse_handle($handle) : array( 'repo' => '', 'branch_slug' => '', 'is_worktree' => false );
-		$handle_branch = (string) ( $parsed['branch_slug'] ?? '' );
-		$branch_slug   = $this->slugify_branch($branch);
-		$path_basename = '' !== $path ? basename($path) : '';
-		$handle_path   = '' !== $handle && $path_basename === $handle;
-		$handle_repo   = ! empty($parsed['is_worktree']) && (string) ( $parsed['repo'] ?? '' ) === $repo;
+		$handle                        = (string) ( $wt['handle'] ?? '' );
+		$repo                          = (string) ( $wt['repo'] ?? '' );
+		$branch                        = (string) ( $wt['branch'] ?? '' );
+		$path                          = rtrim( (string) ( $wt['path'] ?? '' ), '/' );
+		$parsed                        = '' !== $handle ? $this->parse_handle( $handle ) : array(
+			'repo'        => '',
+			'branch_slug' => '',
+			'is_worktree' => false,
+		);
+		$handle_branch                 = (string) ( $parsed['branch_slug'] ?? '' );
+		$branch_slug                   = $this->slugify_branch($branch);
+		$path_basename                 = '' !== $path ? basename($path) : '';
+		$handle_path                   = '' !== $handle && $path_basename === $handle;
+		$handle_repo                   = ! empty($parsed['is_worktree']) && (string) ( $parsed['repo'] ?? '' ) === $repo;
 		$handle_branch_matches_current = '' !== $branch_slug && $branch_slug === $handle_branch;
-		$default_branch = $this->resolve_worktree_identity_default_branch((string) ( $identity['repo'] ?? $repo ));
+		$default_branch                = $this->resolve_worktree_identity_default_branch( (string) ( $identity['repo'] ?? $repo ) );
 
 		$base = array(
 			'classification'           => 'manual_review_identity_metadata',
@@ -1285,8 +1289,8 @@ trait WorkspaceMetadataReconciliation {
 		$this->set_reconciled_metadata_field($proposed, $source_map, 'observed_at', gmdate('c'), 'reconcile_run');
 
 		$created_at = '';
-		if ( ! empty($metadata['created_at']) && false !== strtotime((string) $metadata['created_at']) ) {
-			$created_at = gmdate('c', (int) strtotime((string) $metadata['created_at']));
+		if ( ! empty($metadata['created_at']) && false !== strtotime( (string) $metadata['created_at'] ) ) {
+			$created_at = gmdate('c', (int) strtotime( (string) $metadata['created_at'] ) );
 			$this->set_reconciled_metadata_field($proposed, $source_map, 'created_at', $created_at, 'metadata');
 		} else {
 			$mtime = file_exists($path) ? filemtime($path) : false;
@@ -1296,7 +1300,7 @@ trait WorkspaceMetadataReconciliation {
 			}
 		}
 
-		$state = isset($metadata['lifecycle_state']) ? WorktreeContextInjector::normalize_state((string) $metadata['lifecycle_state']) : null;
+		$state = isset($metadata['lifecycle_state']) ? WorktreeContextInjector::normalize_state( (string) $metadata['lifecycle_state'] ) : null;
 		$this->set_reconciled_metadata_field($proposed, $source_map, 'lifecycle_state', $state ?? WorktreeContextInjector::STATE_ACTIVE, null === $state ? 'operator_plan' : 'metadata');
 
 		return array(
