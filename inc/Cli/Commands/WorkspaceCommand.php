@@ -39,24 +39,39 @@ class WorkspaceCommand extends BaseCommand {
 
 	private const METADATA_RECONCILE_DEFAULT_BUDGET = '30s';
 
-	private const WORKTREE_OPERATION_ABILITIES = array(
-		'add'                                     => 'datamachine-code/workspace-worktree-add',
-		'list'                                    => 'datamachine-code/workspace-worktree-list',
-		'remove'                                  => 'datamachine-code/workspace-worktree-remove',
-		'prune'                                   => 'datamachine-code/workspace-worktree-prune',
-		'cleanup'                                 => 'datamachine-code/workspace-worktree-cleanup',
-		'cleanup-artifacts'                       => 'datamachine-code/workspace-worktree-cleanup-artifacts',
-		'bounded-cleanup-eligible-apply'          => 'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply',
-		'emergency-cleanup'                       => 'datamachine-code/workspace-worktree-emergency-cleanup',
-		'reconcile-metadata'                      => 'datamachine-code/workspace-worktree-reconcile-metadata',
-		'active-no-signal-report'                 => 'datamachine-code/workspace-worktree-active-no-signal-report',
-		'active-no-signal-finalized-apply'        => 'datamachine-code/workspace-worktree-active-no-signal-finalized-apply',
-		'active-no-signal-equivalent-clean-apply' => 'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply',
-		'active-no-signal-merged-apply'           => 'datamachine-code/workspace-worktree-active-no-signal-merged-apply',
-		'active-no-signal-remote-clean-apply'     => 'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply',
-		'refresh-context'                         => 'datamachine-code/workspace-worktree-refresh-context',
-		'finalize'                                => 'datamachine-code/workspace-worktree-finalize',
-		'mark-cleanup-eligible'                   => 'datamachine-code/workspace-worktree-finalize',
+	private const WORKTREE_OPERATIONS = array(
+		'add'                                     => array( 'ability' => 'datamachine-code/workspace-worktree-add' ),
+		'list'                                    => array( 'ability' => 'datamachine-code/workspace-worktree-list' ),
+		'remove'                                  => array( 'ability' => 'datamachine-code/workspace-worktree-remove' ),
+		'prune'                                   => array( 'ability' => 'datamachine-code/workspace-worktree-prune' ),
+		'cleanup'                                 => array( 'ability' => 'datamachine-code/workspace-worktree-cleanup' ),
+		'cleanup-artifacts'                       => array( 'ability' => 'datamachine-code/workspace-worktree-cleanup-artifacts' ),
+		'bounded-cleanup-eligible-apply'          => array( 'ability' => 'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' ),
+		'emergency-cleanup'                       => array( 'ability' => 'datamachine-code/workspace-worktree-emergency-cleanup' ),
+		'reconcile-metadata'                      => array( 'ability' => 'datamachine-code/workspace-worktree-reconcile-metadata' ),
+		'active-no-signal-report'                 => array(
+			'ability'       => 'datamachine-code/workspace-worktree-active-no-signal-report',
+			'input_builder' => 'build_worktree_active_no_signal_input',
+		),
+		'active-no-signal-finalized-apply'        => array(
+			'ability'       => 'datamachine-code/workspace-worktree-active-no-signal-finalized-apply',
+			'input_builder' => 'build_worktree_active_no_signal_input',
+		),
+		'active-no-signal-equivalent-clean-apply' => array(
+			'ability'       => 'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply',
+			'input_builder' => 'build_worktree_active_no_signal_input',
+		),
+		'active-no-signal-merged-apply'           => array(
+			'ability'       => 'datamachine-code/workspace-worktree-active-no-signal-merged-apply',
+			'input_builder' => 'build_worktree_active_no_signal_input',
+		),
+		'active-no-signal-remote-clean-apply'     => array(
+			'ability'       => 'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply',
+			'input_builder' => 'build_worktree_active_no_signal_input',
+		),
+		'refresh-context'                         => array( 'ability' => 'datamachine-code/workspace-worktree-refresh-context' ),
+		'finalize'                                => array( 'ability' => 'datamachine-code/workspace-worktree-finalize' ),
+		'mark-cleanup-eligible'                   => array( 'ability' => 'datamachine-code/workspace-worktree-finalize' ),
 	);
 
 	private ?CleanupRunEvidenceStoreInterface $cleanup_run_evidence_store = null;
@@ -3608,7 +3623,8 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability_name = self::WORKTREE_OPERATION_ABILITIES[ $operation ] ?? '';
+		$operation_config = self::WORKTREE_OPERATIONS[ $operation ] ?? array();
+		$ability_name     = (string) ( $operation_config['ability'] ?? '' );
 
 		if ( '' === $ability_name ) {
 			WP_CLI::error(sprintf('Unknown worktree operation: %s', $operation));
@@ -3621,7 +3637,11 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$input = array();
+		$input         = array();
+		$input_builder = (string) ( $operation_config['input_builder'] ?? '' );
+		if ( '' !== $input_builder && method_exists($this, $input_builder) ) {
+			$input = $this->{$input_builder}($operation, $assoc_args);
+		}
 
 		switch ( $operation ) {
 			case 'add':
@@ -3807,18 +3827,6 @@ class WorkspaceCommand extends BaseCommand {
 			case 'active-no-signal-equivalent-clean-apply':
 			case 'active-no-signal-merged-apply':
 			case 'active-no-signal-remote-clean-apply':
-				if ( in_array($operation, array( 'active-no-signal-finalized-apply', 'active-no-signal-equivalent-clean-apply', 'active-no-signal-merged-apply', 'active-no-signal-remote-clean-apply' ), true) ) {
-					$input['dry_run'] = ! empty($assoc_args['dry-run']);
-				}
-				if ( isset($assoc_args['limit']) ) {
-					$input['limit'] = (int) $assoc_args['limit'];
-				}
-				if ( isset($assoc_args['offset']) ) {
-					$input['offset'] = (int) $assoc_args['offset'];
-				}
-				if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
-					$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
-				}
 				break;
 
 			case 'cleanup-artifacts':
@@ -3883,6 +3891,32 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$this->renderWorktreeResult($operation, $result, $assoc_args);
+	}
+
+	/**
+	 * Build shared input for active-no-signal worktree operations.
+	 *
+	 * @param  string              $operation  Worktree operation.
+	 * @param  array<string,mixed> $assoc_args CLI args.
+	 * @return array<string,mixed>
+	 */
+	private function build_worktree_active_no_signal_input( string $operation, array $assoc_args ): array {
+		$input = array();
+
+		if ( in_array($operation, array( 'active-no-signal-finalized-apply', 'active-no-signal-equivalent-clean-apply', 'active-no-signal-merged-apply', 'active-no-signal-remote-clean-apply' ), true) ) {
+			$input['dry_run'] = ! empty($assoc_args['dry-run']);
+		}
+		if ( isset($assoc_args['limit']) ) {
+			$input['limit'] = (int) $assoc_args['limit'];
+		}
+		if ( isset($assoc_args['offset']) ) {
+			$input['offset'] = (int) $assoc_args['offset'];
+		}
+		if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
+			$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
+		}
+
+		return $input;
 	}
 
 	/**
