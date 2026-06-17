@@ -54,7 +54,7 @@ class CleanupRunService {
 			return $run_id;
 		}
 		$plan['summary'] = $this->materialize_plan_recommended_commands( (array) ( $plan['summary'] ?? array() ), $run_id );
-		$updated = $this->update_run_or_error($run_id, array( 'summary' => $plan['summary'] ), 'planned');
+		$updated         = $this->update_run_or_error($run_id, array( 'summary' => $plan['summary'] ), 'planned');
 		if ( $updated instanceof \WP_Error ) {
 			return $updated;
 		}
@@ -136,7 +136,7 @@ class CleanupRunService {
 			$artifact_batch  = array_slice($artifact_rows, 0, $limit);
 			$processed_rows += count($artifact_batch);
 			$batch_type      = 'artifact_cleanup';
-			$marked = $this->mark_batch_applying($artifact_batch, $run_id, $batch_type, $limit, $remaining_rows);
+			$marked          = $this->mark_batch_applying($artifact_batch, $run_id, $batch_type, $limit, $remaining_rows);
 			if ( $marked instanceof \WP_Error ) {
 				return $marked;
 			}
@@ -163,7 +163,7 @@ class CleanupRunService {
 			$worktree_batch  = array_slice($worktree_rows, 0, $remaining_capacity);
 			$processed_rows += count($worktree_batch);
 			$batch_type      = '' === $batch_type ? 'worktree_removal' : 'mixed';
-			$marked = $this->mark_batch_applying($worktree_batch, $run_id, $batch_type, $limit, $remaining_rows);
+			$marked          = $this->mark_batch_applying($worktree_batch, $run_id, $batch_type, $limit, $remaining_rows);
 			if ( $marked instanceof \WP_Error ) {
 				return $marked;
 			}
@@ -674,7 +674,7 @@ class CleanupRunService {
 				}
 				continue;
 			}
-			$skip = $skipped_by_handle[ $handle ] ?? null;
+			$skip    = $skipped_by_handle[ $handle ] ?? null;
 			$updated = $this->update_item_or_error(
 				(int) $item['id'],
 				array(
