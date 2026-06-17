@@ -55,6 +55,7 @@ namespace {
 
 	require_once dirname(__DIR__) . '/inc/Support/PathSecurity.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceAliasResolver.php';
+	require_once dirname(__DIR__) . '/inc/Workspace/WorkspacePolicy.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/Workspace.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceReader.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWriter.php';
