@@ -730,7 +730,7 @@ class GitHubCommand extends BaseCommand {
 		$result = GitHubCredentialSettingsMigration::migrate( ! empty($assoc_args['apply']), ! empty($assoc_args['force']) );
 
 		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-			WP_CLI::line( (string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) );
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -900,13 +900,13 @@ class GitHubCommand extends BaseCommand {
 				return;
 			}
 
-			WP_CLI::line( (string) wp_json_encode($installed, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			$this->renderer()->json($installed);
 			return;
 		}
 
 		$definition = PrReviewFlowScaffold::build($options);
 
-		WP_CLI::line( (string) wp_json_encode($definition, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+		$this->renderer()->json($definition);
 	}
 
 	// -------------------------------------------------------------------------
@@ -981,7 +981,7 @@ class GitHubCommand extends BaseCommand {
 		}
 
 		if ( 'json' === ( $assoc_args['format'] ?? 'table' ) ) {
-			WP_CLI::line( (string) \wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			$this->renderer()->json($result);
 			return;
 		}
 
