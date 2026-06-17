@@ -14,6 +14,8 @@ use DataMachineCode\Storage\WorktreeInventoryRepository;
 
 defined('ABSPATH') || exit;
 
+require_once __DIR__ . '/WorkspaceHandle.php';
+
 trait WorkspaceCoreUtilities {
 
 	/**
@@ -225,31 +227,7 @@ trait WorkspaceCoreUtilities {
 	 * @return array{repo: string, branch_slug: string|null, is_worktree: bool, dir_name: string}
 	 */
 	public function parse_handle( string $handle ): array {
-		$handle = trim($handle);
-
-		if ( str_contains($handle, '@') ) {
-			$parts = explode('@', $handle, 2);
-			$repo  = $this->sanitize_name($parts[0]);
-			$slug  = $this->sanitize_slug($parts[1]);
-
-			if ( '' !== $repo && '' !== $slug ) {
-				return array(
-					'repo'        => $repo,
-					'branch_slug' => $slug,
-					'is_worktree' => true,
-					'dir_name'    => $repo . '@' . $slug,
-				);
-			}
-		}
-
-		$repo = $this->sanitize_name($handle);
-
-		return array(
-			'repo'        => $repo,
-			'branch_slug' => null,
-			'is_worktree' => false,
-			'dir_name'    => $repo,
-		);
+		return WorkspaceHandle::parse($handle)->to_array();
 	}
 
 	/**
