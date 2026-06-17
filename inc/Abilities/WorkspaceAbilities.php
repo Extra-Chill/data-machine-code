@@ -1283,7 +1283,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-worktree-add',
 				array(
 					'label'               => 'Add Workspace Worktree',
-					'description'         => 'Create a git worktree for a branch under `<repo>@<branch-slug>`. Branches are created off the supplied `from` ref (default `origin/HEAD`) when they do not yet exist locally. When `inject_context` is true (default), the originating site\'s composed AGENTS.md is made visible to OpenCode: symlinked into the worktree root when no repo-owned AGENTS.md exists, otherwise added via local OpenCode instructions so both files load. Site agent memory is snapshotted into `.claude/CLAUDE.local.md`, and injected paths are added to the worktree\'s per-checkout `info/exclude`. When `bootstrap` is true (default), submodule init plus root or one-level nested package-manager/composer installs run after creation so the worktree is immediately test/build-ready; set false to create a bare checkout.',
+					'description'         => 'Create a git worktree for a branch under `<repo>@<branch-slug>`. Branches are created off the supplied `from` ref (default `origin/HEAD`) when they do not yet exist locally. Creation fails closed when remote freshness cannot be verified; set `allow_unverified_freshness=true` only for intentional offline work. When `inject_context` is true (default), the originating site\'s composed AGENTS.md is made visible to OpenCode: symlinked into the worktree root when no repo-owned AGENTS.md exists, otherwise added via local OpenCode instructions so both files load. Site agent memory is snapshotted into `.claude/CLAUDE.local.md`, and injected paths are added to the worktree\'s per-checkout `info/exclude`. When `bootstrap` is true (default), submodule init plus root or one-level nested package-manager/composer installs run after creation so the worktree is immediately test/build-ready; set false to create a bare checkout.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -1311,6 +1311,10 @@ class WorkspaceAbilities {
 							'allow_stale'    => array(
 								'type'        => 'boolean',
 								'description' => 'Bypass the staleness gate. When false (default), any branch/base behind the remote default branch is refused, and a new worktree more than `datamachine_worktree_stale_threshold` commits behind upstream is rolled back with a staleness error. Set true to opt in to a known-stale checkout.',
+							),
+							'allow_unverified_freshness' => array(
+								'type'        => 'boolean',
+								'description' => 'Bypass the fetch-failure freshness gate. When false (default), worktree creation is refused if remote freshness cannot be verified. Set true only for intentional offline work with local refs.',
 							),
 							'rebase_base'    => array(
 								'type'        => 'boolean',
@@ -1354,7 +1358,7 @@ class WorkspaceAbilities {
 							),
 							'fetch_failed'              => array(
 								'type'        => 'boolean',
-								'description' => 'Present only when the pre-create `git fetch origin` failed. Worktree creation continues either way; staleness fields are omitted when true.',
+								'description' => 'Present only when the pre-create `git fetch origin` failed and allow_unverified_freshness=true allowed creation to continue. Staleness fields are omitted when true.',
 							),
 							'fetch_error'               => array(
 								'type'        => 'string',
@@ -3535,6 +3539,8 @@ class WorkspaceAbilities {
 		$bootstrap = array_key_exists('bootstrap', $input) ? (bool) $input['bootstrap'] : true;
 		// Default allow_stale=false (gate enforced); only true when explicitly opted in.
 		$allow_stale = array_key_exists('allow_stale', $input) ? (bool) $input['allow_stale'] : false;
+		// Default allow_unverified_freshness=false (fetch-failure gate enforced).
+		$allow_unverified_freshness = array_key_exists('allow_unverified_freshness', $input) ? (bool) $input['allow_unverified_freshness'] : false;
 		// Default rebase_base=false; only true when explicitly requested.
 		$rebase_base = array_key_exists('rebase_base', $input) ? (bool) $input['rebase_base'] : false;
 		$force       = ! empty($input['force']);
@@ -3557,7 +3563,8 @@ class WorkspaceAbilities {
 				$allow_stale,
 				$rebase_base,
 				$force,
-				$task
+				$task,
+				$allow_unverified_freshness
 			);
 		}
 
@@ -3581,7 +3588,8 @@ class WorkspaceAbilities {
 			$allow_stale,
 			$rebase_base,
 			$force,
-			$task
+			$task,
+			$allow_unverified_freshness
 		);
 	}
 

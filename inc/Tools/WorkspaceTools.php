@@ -560,7 +560,7 @@ class WorkspaceTools extends BaseTool
             }
         }
 
-        foreach ( array( 'inject_context', 'bootstrap', 'allow_stale', 'rebase_base', 'force' ) as $key ) {
+        foreach ( array( 'inject_context', 'bootstrap', 'allow_stale', 'allow_unverified_freshness', 'rebase_base', 'force' ) as $key ) {
             if (array_key_exists($key, $parameters) ) {
                 $input[ $key ] = (bool) $parameters[ $key ];
             }
@@ -1414,7 +1414,8 @@ class WorkspaceTools extends BaseTool
             'from'           => array( 'type' => 'string', 'description' => 'Base ref when creating the branch. Defaults to origin/HEAD.' ),
             'inject_context' => array( 'type' => 'boolean', 'description' => 'Inject originating agent context into the worktree. Default true.' ),
             'bootstrap'      => array( 'type' => 'boolean', 'description' => 'Run detected bootstrap steps after creation. Default true.' ),
-            'allow_stale'    => array( 'type' => 'boolean', 'description' => 'Bypass the staleness gate. Default false.' ),
+            'allow_stale'    => array( 'type' => 'boolean', 'description' => 'Bypass the verified staleness gate. Default false.' ),
+            'allow_unverified_freshness' => array( 'type' => 'boolean', 'description' => 'Bypass fetch-failure freshness verification for intentional offline work. Default false.' ),
             'rebase_base'    => array( 'type' => 'boolean', 'description' => 'Rebase the worktree onto the upstream tip after creation. Default false.' ),
             'force'          => array( 'type' => 'boolean', 'description' => 'Bypass disk-budget refusal threshold. Default false.' ),
             'task_url'       => array( 'type' => 'string', 'description' => 'Optional task or issue URL to record on the worktree.' ),
