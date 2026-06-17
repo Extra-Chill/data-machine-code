@@ -41,6 +41,10 @@ trait WorkspaceWorktreeLifecycle {
 	 * Pass `$bootstrap = false` (or `--no-bootstrap` on the CLI) for a bare
 	 * checkout when you only need to read code on that branch.
 	 *
+	 * When remote freshness cannot be verified, worktree creation is refused
+	 * unless `$allow_unverified_freshness` is set. This keeps default operation
+	 * fail-closed while preserving intentional offline workflows.
+	 *
 	 * When the branch/base is behind the remote default branch, worktree
 	 * creation is refused unless `$allow_stale` is set. This check is
 	 * zero-tolerance: any default-branch commits missing from the requested
@@ -64,9 +68,11 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  bool        $allow_stale    Bypass the staleness gate (default false).
 	 * @param  bool        $rebase_base    Rebase onto upstream after creation (default false).
 	 * @param  bool        $force          Bypass the disk-budget refusal threshold (default false).
+	 * @param  array       $task           Optional task metadata recorded on the worktree.
+	 * @param  bool        $allow_unverified_freshness Bypass fetch-failure freshness verification (default false).
 	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
-	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array() ): array|\WP_Error {
+	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false ): array|\WP_Error {
 		$visible = $this->require_workspace_visible();
 		if ( null !== $visible ) {
 			return $visible;
@@ -146,7 +152,8 @@ trait WorkspaceWorktreeLifecycle {
 				$wt_handle,
 				$wt_path,
 				$primary_path,
-				$task
+				$task,
+				$allow_unverified_freshness
 			)
 		);
 
@@ -207,6 +214,8 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  string      $wt_handle      Worktree handle.
 	 * @param  string      $wt_path        Worktree path.
 	 * @param  string      $primary_path   Primary checkout path.
+	 * @param  array       $task           Optional task metadata recorded on the worktree.
+	 * @param  bool        $allow_unverified_freshness Bypass fetch-failure freshness verification.
 	 * @return array|\WP_Error
 	 */
 	private function worktree_add_locked(
@@ -220,18 +229,31 @@ trait WorkspaceWorktreeLifecycle {
 		string $wt_handle,
 		string $wt_path,
 		string $primary_path,
-		array $task = array()
+		array $task = array(),
+		bool $allow_unverified_freshness = false
 	): array|\WP_Error {
 		if ( is_dir($wt_path) ) {
 			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
 		}
 
 		// Always fetch first so staleness data (and the default base) reflects the
-		// current remote. Failure is logged but never aborts — offline work should
-		// still be possible, the agent just needs to know staleness is unknown.
+		// current remote. If fetch fails, default to fail-closed unless the caller
+		// explicitly opts into unverified/offline freshness.
 		$fetch        = WorktreeStalenessProbe::fetch($primary_path);
 		$fetch_failed = ! $fetch['ok'];
 		$fetch_error  = $fetch['error'] ?? null;
+		if ( $fetch_failed && ! $allow_unverified_freshness ) {
+			return new \WP_Error(
+				'worktree_freshness_unverified',
+				'Refusing to create worktree because remote freshness could not be verified. Retry after connectivity is restored, or pass allow_unverified_freshness=true only when intentionally working offline with stale local refs.',
+				array(
+					'status'                     => 409,
+					'fetch_failed'               => true,
+					'fetch_error'                => $fetch_error,
+					'allow_unverified_freshness' => false,
+				)
+			);
+		}
 
 		// Does the branch already exist locally?
      // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec

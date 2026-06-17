@@ -3248,20 +3248,28 @@ class WorkspaceCommand extends BaseCommand {
 	 *   read use (faster, no deps installed). The ability-level input is
 	 *   `bootstrap=false`; this flag is the CLI shorthand (matches the
 	 *   existing `--skip-context-injection` convention).
-	 *
-	 * [--allow-stale]
-	 * : Bypass the staleness gate (applies to `add` only). By default,
-	 *   `worktree add` refuses any branch/base that is behind the remote
-	 *   default branch after fetch, and refuses to return a worktree that
-	 *   would be more than
-	 *   `datamachine_worktree_stale_threshold` commits (default 50) behind
-	 *   upstream — the stale checkout is torn down and a `worktree_stale`
-	 *   error is returned with remediation options. Pass `--allow-stale` to
-	 *   opt in to a known-stale checkout. Default-branch freshness is
-	 *   zero-tolerance: one missing default-branch commit is stale. The
-	 *   ability-level input is
-	 *   `allow_stale=true`.
-	 *
+		 *
+		 * [--allow-stale]
+		 * : Bypass the staleness gate (applies to `add` only). By default,
+		 *   `worktree add` refuses any branch/base that is behind the remote
+		 *   default branch after fetch, fails closed when fetch cannot verify
+		 *   remote freshness, and refuses to return a worktree that
+		 *   would be more than
+		 *   `datamachine_worktree_stale_threshold` commits (default 50) behind
+		 *   upstream — the stale checkout is torn down and a `worktree_stale`
+		 *   error is returned with remediation options. Pass `--allow-stale` to
+		 *   opt in to a known-stale checkout. Default-branch freshness is
+		 *   zero-tolerance: one missing default-branch commit is stale. The
+		 *   ability-level input is
+		 *   `allow_stale=true`.
+		 *
+		 * [--allow-unverified-freshness]
+		 * : Bypass the fetch-failure freshness gate (applies to `add` only).
+		 *   By default, `worktree add` refuses to create a checkout when `git fetch`
+		 *   fails because remote freshness cannot be verified. Use this only for
+		 *   intentional offline work with local refs. The ability-level input is
+		 *   `allow_unverified_freshness=true`.
+		 *
 	 * [--rebase-base]
 	 * : After creating the worktree, rebase onto the upstream tip (applies
 	 *   to `add` only). For existing branches this is `@{upstream}`; for
@@ -3534,11 +3542,14 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 *     # Create a bare worktree (skip the default bootstrap pass)
 	 *     wp datamachine-code workspace worktree add data-machine fix/foo --skip-bootstrap
-	 *
-	 *     # Proceed with a known-stale base/branch (bypass the staleness gate)
-	 *     wp datamachine-code workspace worktree add data-machine fix/foo --allow-stale
-	 *
-	 *     # Auto-rebase onto upstream after creation
+		 *
+		 *     # Proceed with a known-stale base/branch (bypass the staleness gate)
+		 *     wp datamachine-code workspace worktree add data-machine fix/foo --allow-stale
+		 *
+		 *     # Proceed intentionally while offline when fetch cannot verify freshness
+		 *     wp datamachine-code workspace worktree add data-machine fix/foo --allow-unverified-freshness
+		 *
+		 *     # Auto-rebase onto upstream after creation
 	 *     wp datamachine-code workspace worktree add data-machine fix/foo --rebase-base
 	 *
 	 *     # Re-read the originating site's agent memory into an existing worktree
@@ -3653,7 +3664,7 @@ class WorkspaceCommand extends BaseCommand {
 		switch ( $operation ) {
 			case 'add':
 				if ( empty($args[1]) || empty($args[2]) ) {
-					WP_CLI::error('Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-ref=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--rebase-base] [--force]');
+					WP_CLI::error('Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-ref=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--allow-unverified-freshness] [--rebase-base] [--force]');
 					return;
 				}
 				$input['repo']    = $args[1];
@@ -3685,6 +3696,8 @@ class WorkspaceCommand extends BaseCommand {
 				$input['bootstrap'] = empty($assoc_args['skip-bootstrap']);
 				// --allow-stale opts in to a known-stale worktree (default: gate enforced).
 				$input['allow_stale'] = ! empty($assoc_args['allow-stale']);
+				// --allow-unverified-freshness opts in when fetch cannot verify remote refs.
+				$input['allow_unverified_freshness'] = ! empty($assoc_args['allow-unverified-freshness']);
 				// --rebase-base auto-rebases onto upstream after creation (default: off).
 				$input['rebase_base'] = ! empty($assoc_args['rebase-base']);
 				// --force is an explicit disk-budget override for add.
