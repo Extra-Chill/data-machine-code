@@ -3640,7 +3640,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$input         = array();
 		$input_builder = (string) ( $operation_config['input_builder'] ?? '' );
-		if ( '' !== $input_builder && method_exists($this, $input_builder) ) {
+		if ( '' !== $input_builder ) {
 			$input = $this->{$input_builder}($operation, $assoc_args);
 		}
 
@@ -6059,19 +6059,47 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$summary = (array) ( $result['summary'] ?? array() );
+		$summary          = (array) ( $result['summary'] ?? array() );
+		$final_free_space = (array) ( $summary['final_free_space'] ?? array() );
 		WP_CLI::log('Cleanup-eligible drain summary:');
 		$this->format_items(
 			array(
-				array( 'metric' => 'mode', 'value' => ! empty($result['applied']) ? 'apply' : 'preview' ),
-				array( 'metric' => 'passes', 'value' => (int) ( $summary['passes'] ?? 0 ) ),
-				array( 'metric' => 'processed', 'value' => (int) ( $summary['processed'] ?? 0 ) ),
-				array( 'metric' => 'would_remove', 'value' => (int) ( $summary['would_remove'] ?? 0 ) ),
-				array( 'metric' => 'removed', 'value' => (int) ( $summary['removed'] ?? 0 ) ),
-				array( 'metric' => 'skipped', 'value' => (int) ( $summary['skipped'] ?? 0 ) ),
-				array( 'metric' => 'bytes_reclaimed', 'value' => $this->format_bytes($summary['bytes_reclaimed'] ?? 0) ),
-				array( 'metric' => 'stop_reason', 'value' => (string) ( $summary['stop_reason'] ?? '' ) ),
-				array( 'metric' => 'final_free_space', 'value' => (string) ( (array) ( $summary['final_free_space'] ?? array() )['free_human'] ?? 'unknown' ) ),
+				array(
+					'metric' => 'mode',
+					'value'  => ! empty($result['applied']) ? 'apply' : 'preview',
+				),
+				array(
+					'metric' => 'passes',
+					'value'  => (int) ( $summary['passes'] ?? 0 ),
+				),
+				array(
+					'metric' => 'processed',
+					'value'  => (int) ( $summary['processed'] ?? 0 ),
+				),
+				array(
+					'metric' => 'would_remove',
+					'value'  => (int) ( $summary['would_remove'] ?? 0 ),
+				),
+				array(
+					'metric' => 'removed',
+					'value'  => (int) ( $summary['removed'] ?? 0 ),
+				),
+				array(
+					'metric' => 'skipped',
+					'value'  => (int) ( $summary['skipped'] ?? 0 ),
+				),
+				array(
+					'metric' => 'bytes_reclaimed',
+					'value'  => $this->format_bytes( (int) ( $summary['bytes_reclaimed'] ?? 0 ) ),
+				),
+				array(
+					'metric' => 'stop_reason',
+					'value'  => (string) ( $summary['stop_reason'] ?? '' ),
+				),
+				array(
+					'metric' => 'final_free_space',
+					'value'  => (string) ( $final_free_space['free_human'] ?? 'unknown' ),
+				),
 			),
 			array( 'metric', 'value' ),
 			array( 'format' => 'table' ),

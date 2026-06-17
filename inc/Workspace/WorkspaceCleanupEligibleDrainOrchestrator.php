@@ -65,7 +65,7 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 		}
 
 		$ability = ( $this->ability_resolver )('datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply');
-		if ( ! $ability || ! is_callable(array( $ability, 'execute' )) ) {
+		if ( ! is_object($ability) || ! is_callable(array( $ability, 'execute' )) ) {
 			return new \WP_Error('cleanup_eligible_drain_ability_missing', 'Bounded cleanup-eligible apply ability is not available.', array( 'status' => 500 ));
 		}
 
@@ -130,18 +130,18 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 			$continuation   = (array) ( $pass_result['continuation'] ?? array() );
 			$evidence       = (array) ( $pass_result['evidence'] ?? array() );
 			$pass_summary   = array(
-				'pass'               => $pass,
-				'dry_run'            => ! empty($pass_result['dry_run']),
-				'processed'          => (int) ( $summary['processed'] ?? 0 ),
-				'would_remove'       => ! empty($pass_result['dry_run']) ? count( (array) ( $pass_result['candidates'] ?? array() ) ) : 0,
-				'removed'            => (int) ( $summary['removed'] ?? 0 ),
-				'skipped'            => (int) ( $summary['skipped'] ?? 0 ),
-				'bytes_reclaimed'    => (int) ( $summary['bytes_reclaimed'] ?? 0 ),
-				'remaining_total'    => (int) ( $continuation['remaining_total'] ?? 0 ),
-				'elapsed_ms'         => (int) ( $evidence['elapsed_ms'] ?? 0 ),
-				'removed_handles'    => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', (array) ( $pass_result['removed'] ?? array() )))),
-				'candidate_handles'  => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', (array) ( $pass_result['candidates'] ?? array() )))),
-				'skipped_by_reason'  => $this->summarize_skipped((array) ( $pass_result['skipped'] ?? array() )),
+				'pass'              => $pass,
+				'dry_run'           => ! empty($pass_result['dry_run']),
+				'processed'         => (int) ( $summary['processed'] ?? 0 ),
+				'would_remove'      => ! empty($pass_result['dry_run']) ? count( (array) ( $pass_result['candidates'] ?? array() ) ) : 0,
+				'removed'           => (int) ( $summary['removed'] ?? 0 ),
+				'skipped'           => (int) ( $summary['skipped'] ?? 0 ),
+				'bytes_reclaimed'   => (int) ( $summary['bytes_reclaimed'] ?? 0 ),
+				'remaining_total'   => (int) ( $continuation['remaining_total'] ?? 0 ),
+				'elapsed_ms'        => (int) ( $evidence['elapsed_ms'] ?? 0 ),
+				'removed_handles'   => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', (array) ( $pass_result['removed'] ?? array() )))),
+				'candidate_handles' => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', (array) ( $pass_result['candidates'] ?? array() )))),
+				'skipped_by_reason' => $this->summarize_skipped( (array) ( $pass_result['skipped'] ?? array() ) ),
 			);
 
 			$result['pass_results'][] = $pass_summary;
@@ -213,7 +213,7 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 	private function summarize_skipped( array $rows ): array {
 		$summary = array();
 		foreach ( $rows as $row ) {
-			$reason = is_array($row) ? (string) ( $row['reason_code'] ?? 'unknown' ) : 'unknown';
+			$reason             = (string) ( $row['reason_code'] ?? 'unknown' );
 			$summary[ $reason ] = (int) ( $summary[ $reason ] ?? 0 ) + 1;
 		}
 		return $summary;
@@ -235,16 +235,17 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 		return array(
 			'path'        => $workspace_path,
 			'free_bytes'  => false === $free ? null : (int) $free,
-			'free_human'  => false === $free ? 'unknown' : $this->format_bytes((int) $free),
+			'free_human'  => false === $free ? 'unknown' : $this->format_bytes( (int) $free ),
 			'total_bytes' => false === $total ? null : (int) $total,
 		);
 	}
 
 	private function format_bytes( int $bytes ): string {
-		$units = array( 'B', 'KiB', 'MiB', 'GiB', 'TiB' );
-		$value = (float) max(0, $bytes);
-		$unit  = 0;
-		while ( $value >= 1024 && $unit < count($units) - 1 ) {
+		$units      = array( 'B', 'KiB', 'MiB', 'GiB', 'TiB' );
+		$value      = (float) max(0, $bytes);
+		$unit       = 0;
+		$unit_count = count($units);
+		while ( $value >= 1024 && $unit < $unit_count - 1 ) {
 			$value /= 1024;
 			++$unit;
 		}
