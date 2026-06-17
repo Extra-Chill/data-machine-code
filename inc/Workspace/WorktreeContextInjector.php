@@ -73,6 +73,8 @@ use DataMachineCode\Support\GitHubRemote;
 
 defined('ABSPATH') || exit;
 
+require_once __DIR__ . '/WorkspaceHandle.php';
+
 class WorktreeContextInjector {
 
 
@@ -1862,18 +1864,18 @@ class WorktreeContextInjector {
 			return;
 		}
 
-		$handle_parts = explode('@', $handle, 2);
-		$task         = is_array($metadata['origin_task'] ?? null) ? (array) $metadata['origin_task'] : array();
-		$session      = is_array($metadata['origin_session'] ?? null) ? self::summarize_session($metadata) : array();
+		$workspace_handle = WorkspaceHandle::parse($handle);
+		$task             = is_array($metadata['origin_task'] ?? null) ? (array) $metadata['origin_task'] : array();
+		$session          = is_array($metadata['origin_session'] ?? null) ? self::summarize_session($metadata) : array();
 
 		$repository->upsert(
 			array(
 				'handle'          => $handle,
-				'repo'            => (string) ( $metadata['repo'] ?? $handle_parts[0] ),
-				'branch'          => $metadata['branch'] ?? ( $handle_parts[1] ?? null ),
+				'repo'            => (string) ( $metadata['repo'] ?? $workspace_handle->repo() ),
+				'branch'          => $metadata['branch'] ?? $workspace_handle->branch_slug(),
 				'path'            => (string) ( $metadata['path'] ?? '' ),
 				'primary_path'    => $metadata['primary_path'] ?? null,
-				'is_primary'      => ! str_contains($handle, '@'),
+				'is_primary'      => ! $workspace_handle->is_worktree(),
 				'lifecycle_state' => $metadata['lifecycle_state'] ?? null,
 				'origin_site'     => $metadata['origin_site'] ?? null,
 				'origin_agent'    => $metadata['origin_agent'] ?? null,
@@ -1901,10 +1903,9 @@ class WorktreeContextInjector {
 			return null;
 		}
 
-		foreach ( $repository->list() as $row ) {
-			if ( (string) ( $row['handle'] ?? '' ) === $handle && is_array($row['metadata'] ?? null) ) {
-				return (array) $row['metadata'];
-			}
+		$row = $repository->get($handle);
+		if ( is_array($row) && is_array($row['metadata'] ?? null) ) {
+			return (array) $row['metadata'];
 		}
 
 		return null;
