@@ -51,7 +51,7 @@
  *       'flow_id'      => $flow_id,
  *       'initial_data' => array(
  *           'active_workspace' => array(
- *               'handle' => 'extrachill-artist-platform@docs/agent-run-123',
+ *               'handle' => 'example-plugin@docs/agent-run-123',
  *           ),
  *       ),
  *   ) );
@@ -62,7 +62,7 @@
  * == Layer purity ==
  *
  * This class talks about workspaces, not docs, voice, or any consumer
- * concept. Downstream plugins (e.g. extrachill-docs) consume the
+ * concept. Downstream plugins (e.g. example-docs) consume the
  * active_workspace entry to make their own routing decisions. DMC stays
  * generic.
  *
