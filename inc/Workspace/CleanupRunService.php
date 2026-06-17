@@ -54,7 +54,10 @@ class CleanupRunService {
 			return $run_id;
 		}
 		$plan['summary'] = $this->materialize_plan_recommended_commands( (array) ( $plan['summary'] ?? array() ), $run_id );
-		$this->repository->update_run($run_id, array( 'summary' => $plan['summary'] ));
+		$updated         = $this->update_run_or_error($run_id, array( 'summary' => $plan['summary'] ), 'planned');
+		if ( $updated instanceof \WP_Error ) {
+			return $updated;
+		}
 
 		$inserted = $this->repository->add_items($run_id, $items);
 		if ( $inserted instanceof \WP_Error ) {
@@ -107,12 +110,16 @@ class CleanupRunService {
 
 		$limit = $this->apply_limit($opts);
 
-		$this->repository->update_run(
+		$updated = $this->update_run_or_error(
 			$run_id, array(
 				'status'     => 'applying',
 				'started_at' => gmdate('Y-m-d H:i:s'),
-			)
+			),
+			'applying'
 		);
+		if ( $updated instanceof \WP_Error ) {
+			return $updated;
+		}
 
 		$items                = $this->repository->get_items($run_id);
 		$artifact_rows        = $this->pending_rows_of_type($items, 'artifact_cleanup');
@@ -129,7 +136,10 @@ class CleanupRunService {
 			$artifact_batch  = array_slice($artifact_rows, 0, $limit);
 			$processed_rows += count($artifact_batch);
 			$batch_type      = 'artifact_cleanup';
-			$this->mark_batch_applying($artifact_batch, $run_id, $batch_type, $limit, $remaining_rows);
+			$marked          = $this->mark_batch_applying($artifact_batch, $run_id, $batch_type, $limit, $remaining_rows);
+			if ( $marked instanceof \WP_Error ) {
+				return $marked;
+			}
 			$results['artifact_cleanup'] = $this->workspace->worktree_cleanup_artifacts(
 				array(
 					'apply_plan' => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $artifact_batch) ),
@@ -140,7 +150,10 @@ class CleanupRunService {
 			if ( $results['artifact_cleanup'] instanceof \WP_Error ) {
 				return $results['artifact_cleanup'];
 			}
-			$this->record_apply_result($artifact_batch, $results['artifact_cleanup'], 'removed');
+			$recorded = $this->record_apply_result($artifact_batch, $results['artifact_cleanup'], 'removed');
+			if ( $recorded instanceof \WP_Error ) {
+				return $recorded;
+			}
 			$applied_rows += count( (array) ( $results['artifact_cleanup']['removed'] ?? array() ) );
 			$skipped_rows += count( (array) ( $results['artifact_cleanup']['skipped'] ?? array() ) );
 		}
@@ -150,7 +163,10 @@ class CleanupRunService {
 			$worktree_batch  = array_slice($worktree_rows, 0, $remaining_capacity);
 			$processed_rows += count($worktree_batch);
 			$batch_type      = '' === $batch_type ? 'worktree_removal' : 'mixed';
-			$this->mark_batch_applying($worktree_batch, $run_id, $batch_type, $limit, $remaining_rows);
+			$marked          = $this->mark_batch_applying($worktree_batch, $run_id, $batch_type, $limit, $remaining_rows);
+			if ( $marked instanceof \WP_Error ) {
+				return $marked;
+			}
 			$results['worktree_removal'] = $this->workspace->worktree_cleanup_merged(
 				array(
 					'apply_plan'          => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $worktree_batch) ),
@@ -162,7 +178,10 @@ class CleanupRunService {
 			if ( $results['worktree_removal'] instanceof \WP_Error ) {
 				return $results['worktree_removal'];
 			}
-			$this->record_apply_result($worktree_batch, $results['worktree_removal'], 'removed');
+			$recorded = $this->record_apply_result($worktree_batch, $results['worktree_removal'], 'removed');
+			if ( $recorded instanceof \WP_Error ) {
+				return $recorded;
+			}
 			$applied_rows += count( (array) ( $results['worktree_removal']['removed'] ?? array() ) );
 			$skipped_rows += count( (array) ( $results['worktree_removal']['skipped'] ?? array() ) );
 		}
@@ -173,13 +192,17 @@ class CleanupRunService {
 		$next_status     = $pending_or_fail > 0 ? 'needs_resume' : 'completed';
 		$completed_at    = 'completed' === $next_status ? gmdate('Y-m-d H:i:s') : null;
 
-		$this->repository->update_run(
+		$updated = $this->update_run_or_error(
 			$run_id, array(
 				'status'       => $next_status,
 				'completed_at' => $completed_at,
 				'summary'      => $summary,
-			)
+			),
+			$next_status
 		);
+		if ( $updated instanceof \WP_Error ) {
+			return $updated;
+		}
 
 		$status = $this->status($run_id);
 		if ( $status instanceof \WP_Error ) {
@@ -502,10 +525,10 @@ class CleanupRunService {
 	 * @param int                            $limit Requested apply limit.
 	 * @param int                            $remaining_rows Rows remaining before this batch.
 	 */
-	private function mark_batch_applying( array $items, string $run_id, string $batch_type, int $limit, int $remaining_rows ): void {
+	private function mark_batch_applying( array $items, string $run_id, string $batch_type, int $limit, int $remaining_rows ): ?\WP_Error {
 		$started_at = gmdate('Y-m-d H:i:s');
 		foreach ( $items as $item ) {
-			$this->repository->update_item(
+			$updated = $this->update_item_or_error(
 				(int) $item['id'],
 				array(
 					'status'   => 'applying',
@@ -516,11 +539,15 @@ class CleanupRunService {
 							'applying_batch_type' => $batch_type,
 						)
 					),
-				)
+				),
+				'applying'
 			);
+			if ( $updated instanceof \WP_Error ) {
+				return $updated;
+			}
 		}
 
-		$this->repository->update_run(
+		$updated = $this->update_run_or_error(
 			$run_id,
 			array(
 				'summary' => array(
@@ -532,8 +559,10 @@ class CleanupRunService {
 						'started_at'       => $started_at,
 					),
 				),
-			)
+			),
+			'applying'
 		);
+		return $updated instanceof \WP_Error ? $updated : null;
 	}
 
 	/**
@@ -599,18 +628,22 @@ class CleanupRunService {
 		return max(1, min(self::MAX_APPLY_LIMIT, $limit));
 	}
 
-	private function record_apply_result( array $items, mixed $result, string $applied_key ): void {
+	private function record_apply_result( array $items, mixed $result, string $applied_key ): ?\WP_Error {
 		if ( $result instanceof \WP_Error ) {
 			foreach ( $items as $item ) {
-				$this->repository->update_item(
+				$updated = $this->update_item_or_error(
 					(int) $item['id'], array(
 						'status'      => 'failed',
 						'reason_code' => $result->get_error_code(),
 						'reason'      => $result->get_error_message(),
-					)
+					),
+					'failed'
 				);
+				if ( $updated instanceof \WP_Error ) {
+					return $updated;
+				}
 			}
-			return;
+			return null;
 		}
 
 		$applied_by_handle = array();
@@ -626,28 +659,76 @@ class CleanupRunService {
 			$handle = (string) ( $item['handle'] ?? '' );
 			if ( isset($applied_by_handle[ $handle ]) ) {
 				$applied = $applied_by_handle[ $handle ];
-				$this->repository->update_item(
+				$updated = $this->update_item_or_error(
 					(int) $item['id'],
 					array(
 						'status'          => 'applied',
 						'applied_at'      => gmdate('Y-m-d H:i:s'),
 						'bytes_reclaimed' => max(0, (int) ( $applied['artifact_size_bytes'] ?? $applied['size_bytes'] ?? $item['evidence']['artifact_size_bytes'] ?? $item['evidence']['size_bytes'] ?? 0 )),
 						'evidence'        => array_merge( (array) $item['evidence'], array( 'applied' => $applied )),
-					)
+					),
+					'applied'
 				);
+				if ( $updated instanceof \WP_Error ) {
+					return $updated;
+				}
 				continue;
 			}
-			$skip = $skipped_by_handle[ $handle ] ?? null;
-			$this->repository->update_item(
+			$skip    = $skipped_by_handle[ $handle ] ?? null;
+			$updated = $this->update_item_or_error(
 				(int) $item['id'],
 				array(
 					'status'      => 'skipped',
 					'reason_code' => is_array($skip) ? (string) ( $skip['reason_code'] ?? 'apply_skipped' ) : 'apply_skipped',
 					'reason'      => is_array($skip) ? (string) ( $skip['reason'] ?? '' ) : 'row was not applied',
 					'evidence'    => is_array($skip) ? $skip : $item['evidence'],
-				)
+				),
+				'skipped'
 			);
+			if ( $updated instanceof \WP_Error ) {
+				return $updated;
+			}
 		}
+
+		return null;
+	}
+
+	/**
+	 * @param array<string,mixed> $fields Run fields.
+	 */
+	private function update_run_or_error( string $run_id, array $fields, string $state ): ?\WP_Error {
+		if ( $this->repository->update_run($run_id, $fields) ) {
+			return null;
+		}
+
+		return new \WP_Error(
+			'cleanup_run_update_failed',
+			sprintf('Failed to persist cleanup run %s state for run %s.', $state, $run_id),
+			array(
+				'status' => 500,
+				'run_id' => $run_id,
+				'state'  => $state,
+			)
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $fields Item fields.
+	 */
+	private function update_item_or_error( int $item_id, array $fields, string $state ): ?\WP_Error {
+		if ( $this->repository->update_item($item_id, $fields) ) {
+			return null;
+		}
+
+		return new \WP_Error(
+			'cleanup_item_update_failed',
+			sprintf('Failed to persist cleanup item %s state for item %d.', $state, $item_id),
+			array(
+				'status'  => 500,
+				'item_id' => $item_id,
+				'state'   => $state,
+			)
+		);
 	}
 
 	private function planned_action_for_type( string $type ): string {
