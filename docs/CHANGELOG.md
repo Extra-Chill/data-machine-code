@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.5] - 2026-06-17
+
+### Changed
+- Refactor abandoned worktree cleanup orchestration
+- Centralize workspace writable-root policy
+
 ## [0.48.4] - 2026-06-17
 
 ### Changed
