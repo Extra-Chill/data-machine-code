@@ -354,7 +354,11 @@ trait WorkspaceGitOperations {
 			return WorkspaceAliasResolver::mutation_error($handle, 'delete');
 		}
 
-		$parsed    = $this->parse_handle($handle);
+		$parsed = $this->require_explicit_workspace_handle($handle);
+		if ( is_wp_error($parsed) ) {
+			return $parsed;
+		}
+
 		$repo_name = $parsed['repo'];
 		$repo_path = $this->resolve_repo_path($handle);
 		if ( is_wp_error($repo_path) ) {

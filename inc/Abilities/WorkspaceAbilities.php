@@ -263,7 +263,7 @@ class WorkspaceAbilities {
 								'description' => 'Explicitly allow reading from a stale, diverged, detached, or otherwise unsafe primary checkout. Worktree reads are unaffected.',
 							),
 						),
-						'required'   => array( 'path' ),
+						'required'   => array( 'repo', 'path' ),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -304,7 +304,7 @@ class WorkspaceAbilities {
 								'description' => 'Explicitly allow listing a stale, diverged, detached, or otherwise unsafe primary checkout. Worktree reads are unaffected.',
 							),
 						),
-						'required'   => array(),
+						'required'   => array( 'repo' ),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -369,7 +369,7 @@ class WorkspaceAbilities {
 								'description' => 'Explicitly allow grepping a stale, diverged, detached, or otherwise unsafe primary checkout. Worktree reads are unaffected.',
 							),
 						),
-						'required'   => array( 'pattern' ),
+						'required'   => array( 'repo', 'pattern' ),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -575,8 +575,12 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'File content to write.',
 							),
+							'allow_primary_mutation' => array(
+								'type'        => 'boolean',
+								'description' => 'Permit mutation on the primary checkout (default false). Worktrees are always allowed.',
+							),
 						),
-						'required'   => array( 'path', 'content' ),
+						'required'   => array( 'repo', 'path', 'content' ),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -638,8 +642,12 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Replace all occurrences (default false).',
 							),
+							'allow_primary_mutation' => array(
+								'type'        => 'boolean',
+								'description' => 'Permit mutation on the primary checkout (default false). Worktrees are always allowed.',
+							),
 						),
-						'required'   => array( 'path' ),
+						'required'   => array( 'repo', 'path' ),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -951,7 +959,7 @@ class WorkspaceAbilities {
 								'description' => 'Permit mutation on the primary checkout (default false). Worktrees are always allowed.',
 							),
 						),
-						'required'   => array( 'path' ),
+						'required'   => array( 'repo', 'path' ),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -2583,9 +2591,13 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function readFile( array $input ): array|\WP_Error {
-		$input     = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
-		$workspace = new Workspace();
-		$reader    = new WorkspaceReader($workspace);
+		$input        = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$workspace    = new Workspace();
+		$handle_check = $workspace->require_explicit_workspace_handle($input['repo'] ?? '');
+		if ( is_wp_error($handle_check) ) {
+			return $handle_check;
+		}
+		$reader       = new WorkspaceReader($workspace);
 		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
 			return $reader->read_file(
 				$input['repo'] ?? '',
@@ -2627,9 +2639,13 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function listDirectory( array $input ): array|\WP_Error {
-		$input     = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
-		$workspace = new Workspace();
-		$reader    = new WorkspaceReader($workspace);
+		$input        = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$workspace    = new Workspace();
+		$handle_check = $workspace->require_explicit_workspace_handle($input['repo'] ?? '');
+		if ( is_wp_error($handle_check) ) {
+			return $handle_check;
+		}
+		$reader       = new WorkspaceReader($workspace);
 		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
 			return $reader->list_directory(
 				$input['repo'] ?? '',
@@ -2662,9 +2678,13 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function grepFiles( array $input ): array|\WP_Error {
-		$input     = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
-		$workspace = new Workspace();
-		$reader    = new WorkspaceReader($workspace);
+		$input        = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$workspace    = new Workspace();
+		$handle_check = $workspace->require_explicit_workspace_handle($input['repo'] ?? '');
+		if ( is_wp_error($handle_check) ) {
+			return $handle_check;
+		}
+		$reader       = new WorkspaceReader($workspace);
 		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
 			return $reader->grep(
 				$input['repo'] ?? '',
@@ -2954,7 +2974,13 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function writeFile( array $input ): array|\WP_Error {
-		$input = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$input        = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$workspace    = new Workspace();
+		$handle_check = $workspace->ensure_workspace_mutation_allowed($input['repo'] ?? '', ! empty($input['allow_primary_mutation']));
+		if ( is_wp_error($handle_check) ) {
+			return $handle_check;
+		}
+
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			$result = ( new RemoteWorkspaceBackend() )->write_file(
 				$input['repo'] ?? '',
@@ -2964,13 +2990,13 @@ class WorkspaceAbilities {
 			return self::decorate_remote_workspace_result('write_file', $result);
 		}
 
-		$workspace = new Workspace();
-		$writer    = new WorkspaceWriter($workspace);
+		$writer = new WorkspaceWriter($workspace);
 
 		return $writer->write_file(
 			$input['repo'] ?? '',
 			$input['path'] ?? '',
-			$input['content'] ?? ''
+			$input['content'] ?? '',
+			! empty($input['allow_primary_mutation'])
 		);
 	}
 
@@ -2981,7 +3007,12 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function editFile( array $input ): array|\WP_Error {
-		$input      = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$input        = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$workspace    = new Workspace();
+		$handle_check = $workspace->ensure_workspace_mutation_allowed($input['repo'] ?? '', ! empty($input['allow_primary_mutation']));
+		if ( is_wp_error($handle_check) ) {
+			return $handle_check;
+		}
 		$old_string = (string) ( $input['old_string'] ?? $input['search'] ?? $input['old'] ?? '' );
 		$new_string = (string) ( $input['new_string'] ?? $input['replace'] ?? $input['new'] ?? '' );
 
@@ -3004,15 +3035,15 @@ class WorkspaceAbilities {
 			return self::decorate_remote_workspace_result('edit_file', $result);
 		}
 
-		$workspace = new Workspace();
-		$writer    = new WorkspaceWriter($workspace);
+		$writer = new WorkspaceWriter($workspace);
 
 		return $writer->edit_file(
 			$input['repo'] ?? '',
 			$input['path'] ?? '',
 			$old_string,
 			$new_string,
-			! empty($input['replace_all'])
+			! empty($input['replace_all']),
+			! empty($input['allow_primary_mutation'])
 		);
 	}
 

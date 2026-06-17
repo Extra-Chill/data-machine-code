@@ -45,12 +45,14 @@ class WorkspaceWriter {
 	 *
 	 * @param  string $name    Repository directory name.
 	 * @param  string $path    Relative file path within the repo.
-	 * @param  string $content File content to write.
+	 * @param  string $content                File content to write.
+	 * @param  bool   $allow_primary_mutation Permit mutation on a primary checkout.
 	 * @return array{success: bool, path?: string, size?: int, created?: bool}|\WP_Error
 	 */
-	public function write_file( string $name, string $path, string $content ): array|\WP_Error {
-		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
-			return WorkspaceAliasResolver::mutation_error($name, 'write');
+	public function write_file( string $name, string $path, string $content, bool $allow_primary_mutation = false ): array|\WP_Error {
+		$mutation_check = $this->ensure_workspace_mutation_allowed($name, 'write', $allow_primary_mutation);
+		if ( is_wp_error($mutation_check) ) {
+			return $mutation_check;
 		}
 
 		$repo_path = $this->workspace->get_repo_path($name);
@@ -127,12 +129,14 @@ class WorkspaceWriter {
 	 * @param  string $path        Relative file path within the repo.
 	 * @param  string $old_string  Text to find.
 	 * @param  string $new_string  Replacement text.
-	 * @param  bool   $replace_all Replace all occurrences (default false).
+	 * @param  bool   $replace_all            Replace all occurrences (default false).
+	 * @param  bool   $allow_primary_mutation Permit mutation on a primary checkout.
 	 * @return array{success: bool, path?: string, replacements?: int}|\WP_Error
 	 */
-	public function edit_file( string $name, string $path, string $old_string, string $new_string, bool $replace_all = false ): array|\WP_Error {
-		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
-			return WorkspaceAliasResolver::mutation_error($name, 'edit');
+	public function edit_file( string $name, string $path, string $old_string, string $new_string, bool $replace_all = false, bool $allow_primary_mutation = false ): array|\WP_Error {
+		$mutation_check = $this->ensure_workspace_mutation_allowed($name, 'edit', $allow_primary_mutation);
+		if ( is_wp_error($mutation_check) ) {
+			return $mutation_check;
 		}
 
 		$repo_path = $this->workspace->get_repo_path($name);
@@ -234,27 +238,15 @@ class WorkspaceWriter {
 	 * @return array{success: bool, name: string, path: string, changed_files: string[], diff: string, status: string, check_output: string, apply_output: string}|\WP_Error
 	 */
 	public function apply_patch( string $name, string $patch, bool $allow_primary_mutation = false ): array|\WP_Error {
-		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
-			return WorkspaceAliasResolver::mutation_error($name, 'apply-patch');
+		$mutation_check = $this->ensure_workspace_mutation_allowed($name, 'apply-patch', $allow_primary_mutation);
+		if ( is_wp_error($mutation_check) ) {
+			return $mutation_check;
 		}
 
 		$repo_path = $this->workspace->get_repo_path($name);
-		$parsed    = $this->workspace->parse_handle($name);
 
 		if ( ! is_dir($repo_path) ) {
 			return new \WP_Error('repo_not_found', sprintf('Repository "%s" not found in workspace.', $name), array( 'status' => 404 ));
-		}
-
-		if ( empty($parsed['is_worktree']) && ! $allow_primary_mutation ) {
-			return new \WP_Error(
-				'primary_mutation_blocked',
-				sprintf(
-					'Primary checkout "%s" is read-only by default. Pass allow_primary_mutation=true to operate on it, or use a worktree handle (e.g. %s@<branch-slug>).',
-					$parsed['repo'],
-					$parsed['repo']
-				),
-				array( 'status' => 403 )
-			);
 		}
 
 		$patch = str_replace("\r\n", "\n", $patch);
@@ -346,6 +338,19 @@ class WorkspaceWriter {
 				unlink($temp);
 			}
 		}
+	}
+
+	private function ensure_workspace_mutation_allowed( string $name, string $operation, bool $allow_primary_mutation ): true|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
+			return WorkspaceAliasResolver::mutation_error($name, $operation);
+		}
+
+		$allowed = $this->workspace->ensure_workspace_mutation_allowed($name, $allow_primary_mutation);
+		if ( is_wp_error($allowed) ) {
+			return $allowed;
+		}
+
+		return true;
 	}
 
 	/**

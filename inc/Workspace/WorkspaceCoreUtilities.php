@@ -253,6 +253,63 @@ trait WorkspaceCoreUtilities {
 	}
 
 	/**
+	 * Require file-operation callers to name a workspace handle explicitly.
+	 *
+	 * @param  string $handle Workspace handle from ability input.
+	 * @return array{repo: string, branch_slug: string|null, is_worktree: bool, dir_name: string}|\WP_Error
+	 */
+	public function require_explicit_workspace_handle( string $handle ): array|\WP_Error {
+		$handle = trim($handle);
+		if ( '' === $handle ) {
+			return new \WP_Error(
+				'missing_workspace_handle',
+				'Workspace file operations require an explicit repo/worktree handle; workspace-root access is not allowed.',
+				array( 'status' => 400 )
+			);
+		}
+
+		$parsed = $this->parse_handle($handle);
+		if ( '' === $parsed['dir_name'] || '' === $parsed['repo'] ) {
+			return new \WP_Error(
+				'invalid_workspace_handle',
+				'Workspace file operations require a valid repo/worktree handle; workspace-root access is not allowed.',
+				array( 'status' => 400 )
+			);
+		}
+
+		return $parsed;
+	}
+
+	/**
+	 * Enforce the default read-only policy for primary checkout mutations.
+	 *
+	 * @param  string $handle Workspace handle.
+	 * @param  bool   $allow  Whether primary checkout mutation is explicitly allowed.
+	 * @return array{repo: string, branch_slug: string|null, is_worktree: bool, dir_name: string}|\WP_Error
+	 */
+	public function ensure_workspace_mutation_allowed( string $handle, bool $allow = false, string $allow_guidance = 'Pass allow_primary_mutation=true to operate on it' ): array|\WP_Error {
+		$parsed = $this->require_explicit_workspace_handle($handle);
+		if ( is_wp_error($parsed) ) {
+			return $parsed;
+		}
+
+		if ( $parsed['is_worktree'] || $allow ) {
+			return $parsed;
+		}
+
+		return new \WP_Error(
+			'primary_mutation_blocked',
+			sprintf(
+				'Primary checkout "%s" is read-only by default. %s, or use a worktree handle (e.g. %s@<branch-slug>).',
+				$parsed['repo'],
+				$allow_guidance,
+				$parsed['repo']
+			),
+			array( 'status' => 403 )
+		);
+	}
+
+	/**
 	 * Convert a branch name to a filesystem-safe slug.
 	 *
 	 * Slashes become dashes (`fix/foo-bar` → `fix-foo-bar`). Anything else
