@@ -7,7 +7,13 @@
 
 namespace DataMachineCode\Storage;
 
+use DataMachineCode\Support\JsonCodec;
+
 defined('ABSPATH') || exit;
+
+if ( ! class_exists(JsonCodec::class) ) {
+	require_once dirname(__DIR__) . '/Support/JsonCodec.php';
+}
 
 class CleanupRunRepository {
 
@@ -188,13 +194,11 @@ class CleanupRunRepository {
 	}
 
 	private function encode( mixed $value ): string {
-		$encoded = wp_json_encode($value, JSON_UNESCAPED_SLASHES);
-		return false === $encoded ? '{}' : $encoded;
+		return JsonCodec::encode_or_default($value, '{}', JSON_UNESCAPED_SLASHES);
 	}
 
 	private function decode( mixed $value ): array {
-		$decoded = json_decode( (string) $value, true);
-		return is_array($decoded) ? $decoded : array();
+		return JsonCodec::decode_array($value, array());
 	}
 
 	private function new_run_id(): string {

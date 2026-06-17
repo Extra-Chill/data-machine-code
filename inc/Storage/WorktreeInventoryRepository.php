@@ -7,7 +7,13 @@
 
 namespace DataMachineCode\Storage;
 
+use DataMachineCode\Support\JsonCodec;
+
 defined('ABSPATH') || exit;
+
+if ( ! class_exists(JsonCodec::class) ) {
+	require_once dirname(__DIR__) . '/Support/JsonCodec.php';
+}
 
 class WorktreeInventoryRepository {
 
@@ -245,7 +251,7 @@ class WorktreeInventoryRepository {
 			'size_bytes'          => isset($row['size_bytes']) ? ( null === $row['size_bytes'] ? null : (int) $row['size_bytes'] ) : null,
 			'cleanup_signal'      => $this->cleanup_signal($row, $metadata),
 			'missing_path'        => ! empty($row['missing_path']) ? 1 : 0,
-			'metadata'            => wp_json_encode($metadata),
+			'metadata'            => JsonCodec::encode_or_default($metadata),
 			'updated_at'          => current_time('mysql', true),
 		);
 	}
@@ -257,8 +263,7 @@ class WorktreeInventoryRepository {
 	 * @return array<string,mixed>
 	 */
 	private function decode_row( array $row ): array {
-		$decoded         = isset($row['metadata']) && is_string($row['metadata']) ? json_decode($row['metadata'], true) : null;
-		$row['metadata'] = is_array($decoded) ? $decoded : null;
+		$row['metadata'] = isset($row['metadata']) && is_string($row['metadata']) ? JsonCodec::decode_array($row['metadata'], null) : null;
 		foreach ( array( 'id', 'is_primary', 'dirty_count', 'unpushed_count', 'artifact_count', 'artifact_size_bytes', 'size_bytes', 'missing_path' ) as $key ) {
 			if ( isset($row[ $key ]) ) {
 				$row[ $key ] = (int) $row[ $key ];
