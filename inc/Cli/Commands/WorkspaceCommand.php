@@ -3637,7 +3637,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$input = array();
+		$input         = array();
 		$input_builder = (string) ( $operation_config['input_builder'] ?? '' );
 		if ( '' !== $input_builder && method_exists($this, $input_builder) ) {
 			$input = $this->{$input_builder}($operation, $assoc_args);
