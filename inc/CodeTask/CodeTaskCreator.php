@@ -7,6 +7,7 @@
 
 namespace DataMachineCode\CodeTask;
 
+use DataMachineCode\Support\GitHubRemote;
 use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorkspaceWriter;
 
@@ -122,25 +123,17 @@ class CodeTaskCreator {
 	 */
 	public static function resolve_repo( string $repo ): array|\WP_Error {
 		$repo = trim($repo);
-		if ( preg_match('#^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$#', $repo, $matches) ) {
-			$slug = $matches[1] . '/' . $matches[2];
+		$descriptor = GitHubRemote::descriptor($repo);
+		if ( null !== $descriptor ) {
+			$slug = $descriptor['slug'];
 			return array(
 				'slug' => $slug,
 				'name' => self::repo_name_from_slug($slug),
-				'url'  => 'https://github.com/' . $slug . '.git',
+				'url'  => $descriptor['https_clone_url'],
 			);
 		}
 
-		if ( preg_match('#^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$#', $repo, $matches) ) {
-			$slug = $matches[1] . '/' . $matches[2];
-			return array(
-				'slug' => $slug,
-				'name' => self::repo_name_from_slug($slug),
-				'url'  => 'https://github.com/' . $slug . '.git',
-			);
-		}
-
-		return new \WP_Error('invalid_repo', 'Repository must be a GitHub owner/repo slug or https://github.com/owner/repo URL.', array( 'status' => 400 ));
+		return new \WP_Error('invalid_repo', 'Repository must be a GitHub owner/repo slug or supported GitHub URL.', array( 'status' => 400 ));
 	}
 
 	public static function build_branch_name( EvidencePacket $packet ): string {

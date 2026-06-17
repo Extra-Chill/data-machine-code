@@ -8,6 +8,7 @@
 namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Abilities\GitHubAbilities;
+use DataMachineCode\Support\GitHubRemote;
 use DataMachineCode\Support\PathSecurity;
 
 defined('ABSPATH') || exit;
@@ -691,7 +692,7 @@ class RemoteWorkspaceBackend {
 			? '#' . $context['branch']
 			: '' ),
 			'branch'      => '' !== (string) $context['branch'] ? (string) $context['branch'] : null,
-			'remote'      => 'https://github.com/' . $context['repo'] . '.git',
+			'remote'      => GitHubRemote::cloneUrl((string) $context['repo']),
 			'commit'      => '' !== $context['last_commit_sha'] ? $context['last_commit_sha'] : null,
 			'dirty'       => count($files),
 			'files'       => $files,
@@ -784,7 +785,7 @@ class RemoteWorkspaceBackend {
 			'is_context'  => ! empty($context['read_only_context']),
 			'path'        => 'github://' . $context['repo'] . '#' . $context['branch'],
 			'branch'      => $context['branch'],
-			'remote'      => 'https://github.com/' . $context['repo'] . '.git',
+			'remote'      => GitHubRemote::cloneUrl((string) $context['repo']),
 			'commit'      => '' !== $context['last_commit_sha'] ? $context['last_commit_sha'] : null,
 			'dirty'       => count($files),
 			'files'       => $files,
@@ -1348,7 +1349,7 @@ class RemoteWorkspaceBackend {
 		}
 
 		$push_branch = null !== $branch && '' !== $branch ? $branch : $context['branch'];
-		$branch_url  = '' !== $push_branch ? 'https://github.com/' . $context['repo'] . '/tree/' . rawurlencode($push_branch) : null;
+		$branch_url  = '' !== $push_branch ? GitHubRemote::branchUrl((string) $context['repo'], (string) $push_branch) : null;
 
 		return array(
 			'success'        => true,
