@@ -30,7 +30,7 @@ defined('ABSPATH') || exit;
  *
  * @method void format_items( array $items, array $fields, array $assoc_args, string $id_field = '' )
  */
-// @phpstan-ignore-next-line DataMachine\Cli\BaseCommand is provided by the Data Machine plugin at runtime.
+// @phpstan-ignore-next-line class.notFound
 class WorkspaceCommand extends BaseCommand {
 
 

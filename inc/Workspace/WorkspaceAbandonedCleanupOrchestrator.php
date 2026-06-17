@@ -153,7 +153,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 				$written                                       = (int) ( $step['summary']['written'] ?? 0 );
 				$planned                                       = (int) ( $step['summary']['planned'] ?? 0 );
 				$pass_marked                                  += $apply ? $written : $planned;
-				$result['summary']['marked_cleanup_eligible']     += $written;
+				$result['summary']['marked_cleanup_eligible'] += $written;
 				$result['summary']['would_mark_cleanup_eligible'] += $planned;
 
 				if ( $this->stage_incomplete($step) ) {
