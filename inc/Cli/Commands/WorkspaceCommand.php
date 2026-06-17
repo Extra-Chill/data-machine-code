@@ -6049,20 +6049,20 @@ class WorkspaceCommand extends BaseCommand {
 		);
 
 		$report = array(
-			'success'         => (bool) ( $result['success'] ?? true ),
-			'mode'            => (string) ( $result['mode'] ?? 'bounded_cleanup_eligible_apply' ),
-			'dry_run'         => ! empty($result['dry_run']),
-			'destructive'     => ! empty($result['destructive']),
-			'workspace_path'  => $result['workspace_path'] ?? null,
-			'generated_at'    => $result['generated_at'] ?? null,
-			'summary'         => $compact_summary,
-			'blocker_buckets' => $buckets,
-			'next_actions'    => $actions,
+			'success'                 => (bool) ( $result['success'] ?? true ),
+			'mode'                    => (string) ( $result['mode'] ?? 'bounded_cleanup_eligible_apply' ),
+			'dry_run'                 => ! empty($result['dry_run']),
+			'destructive'             => ! empty($result['destructive']),
+			'workspace_path'          => $result['workspace_path'] ?? null,
+			'generated_at'            => $result['generated_at'] ?? null,
+			'summary'                 => $compact_summary,
+			'blocker_buckets'         => $buckets,
+			'next_actions'            => $actions,
 			'active_no_signal_triage' => (array) ( $result['active_no_signal_triage'] ?? array() ),
-			'candidates'      => $this->compact_cleanup_rows($candidates, 25),
-			'removed'         => $this->compact_cleanup_rows($removed, 25),
-			'continuation'    => $this->compact_cleanup_continuation( (array) ( $result['continuation'] ?? $result['pagination'] ?? array() ) ),
-			'evidence'        => $this->compact_cleanup_evidence( (array) ( $result['evidence'] ?? array() ), $skipped ),
+			'candidates'              => $this->compact_cleanup_rows($candidates, 25),
+			'removed'                 => $this->compact_cleanup_rows($removed, 25),
+			'continuation'            => $this->compact_cleanup_continuation( (array) ( $result['continuation'] ?? $result['pagination'] ?? array() ) ),
+			'evidence'                => $this->compact_cleanup_evidence( (array) ( $result['evidence'] ?? array() ), $skipped ),
 		);
 
 		if ( ! empty($result['job_backed']) ) {
