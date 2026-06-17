@@ -1377,6 +1377,7 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log('Cleanup operator summary:');
 		$cleanup_counts = (array) ( $summary['cleanup_counts'] ?? array() );
 		$artifacts      = (array) ( $summary['artifact_cleanup'] ?? array() );
+		$remaining_safe = (int) ( $summary['remaining_safe_candidates'] ?? $summary['remaining_safely_removable_worktrees'] ?? 0 );
 		$this->format_items(
 			array(
 				array(
@@ -1398,6 +1399,14 @@ class WorkspaceCommand extends BaseCommand {
 				array(
 					'metric' => 'bytes_reclaimed',
 					'value'  => $this->format_bytes($cleanup_counts['bytes_reclaimed'] ?? 0),
+				),
+				array(
+					'metric' => 'remaining_safe_candidates',
+					'value'  => $remaining_safe,
+				),
+				array(
+					'metric' => 'protected_unpushed_candidates',
+					'value'  => (int) ( $summary['protected_unpushed_candidates'] ?? 0 ),
 				),
 				array(
 					'metric' => 'remaining_reclaimable_artifacts',
@@ -1476,6 +1485,10 @@ class WorkspaceCommand extends BaseCommand {
 					'bytes_reclaimed' => (int) ( $cleanup_items['bytes_reclaimed'] ?? 0 ),
 					'freed_human'     => (string) ( $cleanup_items['freed_human'] ?? $this->format_bytes($cleanup_items['bytes_reclaimed'] ?? 0) ),
 				),
+				'total_bytes_reclaimed'          => (int) ( $remaining['total_bytes_reclaimed'] ?? $cleanup_items['bytes_reclaimed'] ?? 0 ),
+				'total_reclaimed_human'          => $this->format_bytes($remaining['total_bytes_reclaimed'] ?? $cleanup_items['bytes_reclaimed'] ?? 0),
+				'remaining_safe_candidates'      => (int) ( $remaining['remaining_safe_candidates'] ?? $remaining['remaining_safely_removable_worktrees'] ?? 0 ),
+				'protected_unpushed_candidates' => (int) ( $remaining['protected_unpushed_candidates'] ?? 0 ),
 				'artifact_cleanup'     => array(
 					'planned'                              => (int) ( $artifacts['planned_rows'] ?? 0 ),
 					'applied'                              => (int) ( $artifacts['applied_rows'] ?? 0 ),
@@ -1491,6 +1504,7 @@ class WorkspaceCommand extends BaseCommand {
 				'failed_by_reason'     => (array) ( $cleanup_items['failed_by_reason'] ?? $artifacts['failed_by_reason'] ?? array() ),
 				'top_blocked_examples' => $this->cleanup_operator_blocked_examples($result),
 				'recommended_commands' => (array) ( $remaining['recommended_commands'] ?? array() ),
+				'next_commands'        => (array) ( $remaining['next_commands'] ?? array() ),
 				'locks'                => (array) ( $result['locks'] ?? array() ),
 			),
 			fn( $value ) => null !== $value && array() !== $value && '' !== $value
@@ -1674,12 +1688,20 @@ class WorkspaceCommand extends BaseCommand {
 		$this->format_items(
 			array(
 				array(
+					'metric' => 'total_bytes_reclaimed',
+					'value'  => $this->format_bytes($summary['total_bytes_reclaimed'] ?? 0),
+				),
+				array(
 					'metric' => 'remaining_reclaimable_artifact_bytes',
 					'value'  => $this->format_bytes($summary['remaining_reclaimable_artifact_bytes'] ?? 0),
 				),
 				array(
-					'metric' => 'remaining_safely_removable_worktrees',
-					'value'  => (int) ( $summary['remaining_safely_removable_worktrees'] ?? 0 ),
+					'metric' => 'remaining_safe_candidates',
+					'value'  => (int) ( $summary['remaining_safe_candidates'] ?? $summary['remaining_safely_removable_worktrees'] ?? 0 ),
+				),
+				array(
+					'metric' => 'protected_unpushed_candidates',
+					'value'  => (int) ( $summary['protected_unpushed_candidates'] ?? 0 ),
 				),
 			),
 			array( 'metric', 'value' ),

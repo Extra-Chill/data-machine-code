@@ -90,9 +90,13 @@ class CleanupRemainingWorkSummary {
 			'applied_by_type'                      => array(),
 			'skipped_by_reason'                    => array(),
 			'blocked_resolvers_by_reason'          => array(),
+			'total_bytes_reclaimed'                => 0,
 			'remaining_reclaimable_artifact_bytes' => 0,
 			'remaining_safely_removable_worktrees' => 0,
+			'remaining_safe_candidates'            => 0,
+			'protected_unpushed_candidates'        => 0,
 			'recommended_commands'                 => array(),
+			'next_commands'                        => array(),
 		);
 	}
 
@@ -170,8 +174,45 @@ class CleanupRemainingWorkSummary {
 		ksort($summary['applied_by_type']);
 		ksort($summary['skipped_by_reason']);
 		ksort($summary['blocked_resolvers_by_reason']);
+		$summary['total_bytes_reclaimed']         = self::total_applied_bytes( (array) $summary['applied_by_type']);
+		$summary['remaining_safe_candidates']     = (int) ( $summary['remaining_safely_removable_worktrees'] ?? 0 );
+		$summary['protected_unpushed_candidates'] = self::reason_count($summary, 'unpushed_commits');
 		$summary['recommended_commands'] = self::recommended_commands($summary);
+		$summary['next_commands']        = self::next_commands( (array) $summary['recommended_commands']);
 		return $summary;
+	}
+
+	private static function total_applied_bytes( array $types ): int {
+		$total = 0;
+		foreach ( $types as $row ) {
+			$total += max(0, (int) ( is_array($row) ? ( $row['bytes_reclaimed'] ?? 0 ) : 0 ));
+		}
+		return $total;
+	}
+
+	private static function reason_count( array $summary, string $reason ): int {
+		$total = 0;
+		foreach ( array( 'skipped_by_reason', 'blocked_resolvers_by_reason' ) as $bucket ) {
+			$row    = (array) ( $summary[ $bucket ][ $reason ] ?? array() );
+			$total += max(0, (int) ( $row['count'] ?? 0 ));
+		}
+		return $total;
+	}
+
+	private static function next_commands( array $commands ): array {
+		$next = array();
+		foreach ( $commands as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			foreach ( array( 'command', 'apply', 'alternative' ) as $field ) {
+				$value = (string) ( $row[ $field ] ?? '' );
+				if ( '' !== $value ) {
+					$next[] = $value;
+				}
+			}
+		}
+		return array_values(array_unique($next));
 	}
 
 	private static function recommended_commands( array $summary ): array {
