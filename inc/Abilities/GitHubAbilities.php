@@ -1606,27 +1606,7 @@ class GitHubAbilities {
 
 		if ( null !== $existing_pull ) {
 			$pull     = self::normalizePull($existing_pull);
-			$labels   = self::mergeProvenanceLabels(isset($input['labels']) && is_array($input['labels']) ? $input['labels'] : array());
-			$labeling = null;
-
-			if ( ! empty($labels) && ! empty($pull['number']) ) {
-				$label_response = self::applyLabelsToNumber($repo, (int) $pull['number'], $labels, $pat);
-				if ( is_wp_error($label_response) ) {
-					$labeling = array(
-						'success'    => false,
-						'labels'     => $labels,
-						'error_code' => $label_response->get_error_code(),
-						'error'      => $label_response->get_error_message(),
-						'status'     => is_array($label_response->get_error_data()) ? ( $label_response->get_error_data()['status'] ?? null ) : null,
-					);
-				} else {
-					$labeling = array(
-						'success'        => true,
-						'labels'         => $labels,
-						'applied_labels' => $label_response['applied_labels'] ?? array(),
-					);
-				}
-			}
+			$labeling = self::labelPullRequest($repo, (int) ( $pull['number'] ?? 0 ), $input, $pat);
 
 			$result = array(
 				'success'      => true,
@@ -1674,27 +1654,7 @@ class GitHubAbilities {
 		}
 
 		$pull     = self::normalizePull($response['data']);
-		$labels   = self::mergeProvenanceLabels(isset($input['labels']) && is_array($input['labels']) ? $input['labels'] : array());
-		$labeling = null;
-
-		if ( ! empty($labels) && ! empty($pull['number']) ) {
-			$label_response = self::applyLabelsToNumber($repo, (int) $pull['number'], $labels, $pat);
-			if ( is_wp_error($label_response) ) {
-				$labeling = array(
-					'success'    => false,
-					'labels'     => $labels,
-					'error_code' => $label_response->get_error_code(),
-					'error'      => $label_response->get_error_message(),
-					'status'     => is_array($label_response->get_error_data()) ? ( $label_response->get_error_data()['status'] ?? null ) : null,
-				);
-			} else {
-				$labeling = array(
-					'success'        => true,
-					'labels'         => $labels,
-					'applied_labels' => $label_response['applied_labels'] ?? array(),
-				);
-			}
-		}
+		$labeling = self::labelPullRequest($repo, (int) ( $pull['number'] ?? 0 ), $input, $pat);
 
 		$result = array(
 			'success'      => true,
@@ -1929,6 +1889,41 @@ class GitHubAbilities {
 		}
 
 		return $merged;
+	}
+
+	/**
+	 * Apply PR labels and normalize the result for every PR creation path.
+	 *
+	 * @param  string $repo   Repository owner/name.
+	 * @param  int    $number Pull request number.
+	 * @param  array  $input  Pull request input.
+	 * @param  string $pat    GitHub token.
+	 * @return array<string,mixed>|null
+	 */
+	private static function labelPullRequest( string $repo, int $number, array $input, string $pat ): ?array {
+		$labels = self::mergeProvenanceLabels(isset($input['labels']) && is_array($input['labels']) ? $input['labels'] : array());
+		if ( empty($labels) || $number <= 0 ) {
+			return null;
+		}
+
+		$label_response = self::applyLabelsToNumber($repo, $number, $labels, $pat);
+		if ( is_wp_error($label_response) ) {
+			$error_data = $label_response->get_error_data();
+
+			return array(
+				'success'    => false,
+				'labels'     => $labels,
+				'error_code' => $label_response->get_error_code(),
+				'error'      => $label_response->get_error_message(),
+				'status'     => is_array($error_data) ? ( $error_data['status'] ?? null ) : null,
+			);
+		}
+
+		return array(
+			'success'        => true,
+			'labels'         => $labels,
+			'applied_labels' => $label_response['applied_labels'] ?? array(),
+		);
 	}
 
 	/**
