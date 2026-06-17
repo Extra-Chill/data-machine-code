@@ -195,7 +195,7 @@ final class WorkspaceMutationLock {
 	 */
 	public static function prune_stale( string $workspace_path, bool $dry_run = false ): array {
 		$before    = self::status($workspace_path);
-		$protected = self::active_filesystem_lock_keys((array) ( $before['filesystem'] ?? array() ));
+		$protected = self::active_filesystem_lock_keys( (array) ( $before['filesystem'] ?? array() ) );
 		$db_pruned = $dry_run ? array(
 			'dry_run'          => true,
 			'protected_active' => count($protected),
@@ -282,24 +282,24 @@ final class WorkspaceMutationLock {
 			$live_flock_present = in_array($lock_key, $active_filesystem_keys, true);
 			$owner_context      = (array) ( $lock['metadata']['owner_context'] ?? array() );
 			$database_rows[]    = array(
-				'source'                  => 'database',
-				'lock_key'                => $lock_key,
-				'scope'                   => (string) ( $lock['scope'] ?? '' ),
-				'state'                   => 'stale',
-				'owner'                   => (string) ( $lock['owner'] ?? '' ),
-				'session'                 => self::owner_context_session_id($owner_context),
-				'run_id'                  => (string) ( $lock['run_id'] ?? '' ),
-				'job_id'                  => $lock['job_id'] ?? null,
-				'acquired_at'             => (string) ( $lock['acquired_at'] ?? '' ),
-				'heartbeat_at'            => (string) ( $lock['heartbeat_at'] ?? '' ),
-				'expires_at'              => (string) ( $lock['expires_at'] ?? '' ),
-				'age_seconds'             => $lock['age_seconds'] ?? null,
-				'heartbeat_age_seconds'   => $lock['heartbeat_age_seconds'] ?? null,
-				'expires_age_seconds'     => $lock['expires_age_seconds'] ?? null,
-				'live_flock_present'      => $live_flock_present,
-				'safe_to_prune'           => ! $live_flock_present,
-				'preview_command'         => 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json',
-				'apply_command'           => 'wp datamachine-code workspace worktree locks --prune-stale --format=json',
+				'source'                   => 'database',
+				'lock_key'                 => $lock_key,
+				'scope'                    => (string) ( $lock['scope'] ?? '' ),
+				'state'                    => 'stale',
+				'owner'                    => (string) ( $lock['owner'] ?? '' ),
+				'session'                  => self::owner_context_session_id($owner_context),
+				'run_id'                   => (string) ( $lock['run_id'] ?? '' ),
+				'job_id'                   => $lock['job_id'] ?? null,
+				'acquired_at'              => (string) ( $lock['acquired_at'] ?? '' ),
+				'heartbeat_at'             => (string) ( $lock['heartbeat_at'] ?? '' ),
+				'expires_at'               => (string) ( $lock['expires_at'] ?? '' ),
+				'age_seconds'              => $lock['age_seconds'] ?? null,
+				'heartbeat_age_seconds'    => $lock['heartbeat_age_seconds'] ?? null,
+				'expires_age_seconds'      => $lock['expires_age_seconds'] ?? null,
+				'live_flock_present'       => $live_flock_present,
+				'safe_to_prune'            => ! $live_flock_present,
+				'preview_command'          => 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json',
+				'apply_command'            => 'wp datamachine-code workspace worktree locks --prune-stale --format=json',
 				'active_lock_refusal_note' => $live_flock_present ? 'Matching filesystem lock has a live flock; DB row is reported but protected from stale pruning.' : '',
 			);
 		}

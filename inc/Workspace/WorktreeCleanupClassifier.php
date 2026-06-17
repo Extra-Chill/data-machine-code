@@ -143,7 +143,7 @@ final class WorktreeCleanupClassifier {
 		$buckets['metadata_reconciliation_candidates']  = (int) ( $skipped_by_reason['needs_metadata_reconcile'] ?? 0 ) + (int) ( $skipped_by_reason['requires_full_scan'] ?? 0 ) + (int) ( $skipped_by_reason['missing_metadata'] ?? 0 );
 		$buckets['dirty_unpushed']                      = $buckets[ self::BUCKET_BLOCKED_BY_DIRTY_OR_UNPUSHED ];
 		$buckets['active_no_signal']                    = (int) ( $skipped_by_reason['active_no_signal'] ?? 0 ) + (int) ( $skipped_by_reason['no_inventory_cleanup_signal'] ?? 0 );
-		$buckets['intentional_triage']                   = (int) ( $skipped_by_reason['triage_ignored'] ?? 0 ) + (int) ( $skipped_by_reason['triage_quarantined'] ?? 0 );
+		$buckets['intentional_triage']                  = (int) ( $skipped_by_reason['triage_ignored'] ?? 0 ) + (int) ( $skipped_by_reason['triage_quarantined'] ?? 0 );
 
 		ksort($buckets);
 		return $buckets;

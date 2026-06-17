@@ -13,7 +13,7 @@ class CleanupRemainingWorkSummary {
 
 
 
-	private const EXAMPLE_LIMIT = 3;
+	private const EXAMPLE_LIMIT              = 3;
 	private const METADATA_RECONCILE_COMMAND = 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json';
 
 	/**
