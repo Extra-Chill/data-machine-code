@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.9] - 2026-06-17
+
+### Changed
+- Refactor cleanup evidence behind DMC boundary
+- Refactor worktree cleanup candidate classification
+- Refactor worktree active-no-signal input routing
+- Refactor JSON state serialization
+- Refactor worktree metadata inventory lookup
+
 ## [0.48.8] - 2026-06-17
 
 ### Changed
