@@ -15,6 +15,7 @@
 namespace DataMachineCode\Abilities;
 
 use DataMachineCode\Support\PermissionHelper;
+use DataMachineCode\Cleanup\WorkspaceCleanupRunEvidenceStore;
 use DataMachineCode\Workspace\CleanupRunService;
 use DataMachineCode\Workspace\RemoteWorkspaceBackend;
 use DataMachineCode\Workspace\RunnerWorkspacePublisher;
@@ -4389,7 +4390,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function workspaceCleanupStatus( array $input ): array|\WP_Error {
-		return ( new CleanupRunService() )->status( (string) ( $input['run_id'] ?? '' ));
+		return ( new WorkspaceCleanupRunEvidenceStore() )->read( (string) ( $input['run_id'] ?? '' ));
 	}
 
 	/**
@@ -4399,7 +4400,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function workspaceCleanupEvidence( array $input ): array|\WP_Error {
-		return ( new CleanupRunService() )->evidence( (string) ( $input['run_id'] ?? '' ));
+		return ( new WorkspaceCleanupRunEvidenceStore() )->read( (string) ( $input['run_id'] ?? '' ), true );
 	}
 
 	/**
