@@ -4227,6 +4227,207 @@ class GitHubAbilities {
 	}
 
 	/**
+	 * Commit multiple file writes atomically by creating Git objects and moving one ref.
+	 *
+	 * Unlike the Contents API, this publishes all file changes in one commit or leaves
+	 * the branch ref unchanged when any pre-publication step fails.
+	 *
+	 * @param  array $input {
+	 *                      Required: repo, files, commit_message.
+	 *                      Optional: branch.
+	 *                      }
+	 * @return array|\WP_Error Success payload or error.
+	 */
+	public static function commitFiles( array $input ): array|\WP_Error {
+		$repo = self::resolveRepo(sanitize_text_field($input['repo'] ?? ''));
+		if ( empty($repo) ) {
+			return new \WP_Error('missing_repo', 'Repository (owner/repo) is required or configure a default repo.', array( 'status' => 400 ));
+		}
+
+		$commit_message = sanitize_text_field($input['commit_message'] ?? '');
+		if ( empty($commit_message) ) {
+			return new \WP_Error('missing_commit_message', 'Commit message is required.', array( 'status' => 400 ));
+		}
+
+		$files = self::normalizeCommitFiles($input['files'] ?? array());
+		if ( is_wp_error($files) ) {
+			return $files;
+		}
+		if ( empty($files) ) {
+			return new \WP_Error('missing_files', 'At least one file is required for an atomic GitHub commit.', array( 'status' => 400 ));
+		}
+
+		$pat = self::getPatForRepo($repo);
+		if ( empty($pat) ) {
+			return self::patError();
+		}
+
+		$branch = sanitize_text_field($input['branch'] ?? '');
+		if ( '' === $branch ) {
+			$branch = self::resolveDefaultBranch($repo, $pat);
+			if ( is_wp_error($branch) ) {
+				return $branch;
+			}
+		} else {
+			$branch_result = self::ensureBranchExists($repo, $branch, $pat);
+			if ( is_wp_error($branch_result) ) {
+				return $branch_result;
+			}
+		}
+
+		$ref_url = sprintf('%s/repos/%s/git/ref/heads/%s', self::API_BASE, $repo, rawurlencode($branch));
+		$ref     = self::apiGet($ref_url, array(), $pat);
+		if ( is_wp_error($ref) ) {
+			return $ref;
+		}
+
+		$base_commit_sha = (string) ( $ref['data']['object']['sha'] ?? '' );
+		if ( '' === $base_commit_sha ) {
+			return new \WP_Error('github_ref_sha_missing', 'GitHub did not return a SHA for the target branch ref.', array( 'status' => 500 ));
+		}
+
+		$base_commit = self::apiGet(sprintf('%s/repos/%s/git/commits/%s', self::API_BASE, $repo, rawurlencode($base_commit_sha)), array(), $pat);
+		if ( is_wp_error($base_commit) ) {
+			return $base_commit;
+		}
+
+		$base_tree_sha = (string) ( $base_commit['data']['tree']['sha'] ?? '' );
+		if ( '' === $base_tree_sha ) {
+			return new \WP_Error('github_base_tree_sha_missing', 'GitHub did not return a tree SHA for the target branch commit.', array( 'status' => 500 ));
+		}
+
+		$tree_entries = array();
+		foreach ( $files as $file ) {
+			$blob = self::apiRequest(
+				'POST',
+				sprintf('%s/repos/%s/git/blobs', self::API_BASE, $repo),
+				array(
+					'content'  => (string) $file['content'],
+					'encoding' => 'utf-8',
+				),
+				$pat
+			);
+			if ( is_wp_error($blob) ) {
+				return $blob;
+			}
+
+			$blob_sha = (string) ( $blob['data']['sha'] ?? '' );
+			if ( '' === $blob_sha ) {
+				return new \WP_Error('github_blob_sha_missing', sprintf('GitHub did not return a blob SHA for %s.', $file['path']), array( 'status' => 500 ));
+			}
+
+			$tree_entries[] = array(
+				'path' => $file['path'],
+				'mode' => '100644',
+				'type' => 'blob',
+				'sha'  => $blob_sha,
+			);
+		}
+
+		$tree = self::apiRequest(
+			'POST',
+			sprintf('%s/repos/%s/git/trees', self::API_BASE, $repo),
+			array(
+				'base_tree' => $base_tree_sha,
+				'tree'      => $tree_entries,
+			),
+			$pat
+		);
+		if ( is_wp_error($tree) ) {
+			return $tree;
+		}
+
+		$new_tree_sha = (string) ( $tree['data']['sha'] ?? '' );
+		if ( '' === $new_tree_sha ) {
+			return new \WP_Error('github_tree_sha_missing', 'GitHub did not return a tree SHA for the atomic commit.', array( 'status' => 500 ));
+		}
+
+		$commit = self::apiRequest(
+			'POST',
+			sprintf('%s/repos/%s/git/commits', self::API_BASE, $repo),
+			array(
+				'message' => $commit_message,
+				'tree'    => $new_tree_sha,
+				'parents' => array( $base_commit_sha ),
+			),
+			$pat
+		);
+		if ( is_wp_error($commit) ) {
+			return $commit;
+		}
+
+		$new_commit_sha = (string) ( $commit['data']['sha'] ?? '' );
+		if ( '' === $new_commit_sha ) {
+			return new \WP_Error('github_commit_sha_missing', 'GitHub did not return a SHA for the atomic commit.', array( 'status' => 500 ));
+		}
+
+		$updated_ref = self::apiRequest(
+			'PATCH',
+			$ref_url,
+			array(
+				'sha'   => $new_commit_sha,
+				'force' => false,
+			),
+			$pat
+		);
+		if ( is_wp_error($updated_ref) ) {
+			return $updated_ref;
+		}
+
+		return array(
+			'success' => true,
+			'commit'  => array(
+				'sha'      => $new_commit_sha,
+				'html_url' => $commit['data']['html_url'] ?? '',
+				'message'  => $commit['data']['message'] ?? $commit_message,
+			),
+			'branch'  => $branch,
+			'files'   => array_map(static fn( array $file ): string => (string) $file['path'], $files),
+			'message' => sprintf('Committed %d file(s) to %s in %s.', count($files), $branch, $repo),
+		);
+	}
+
+	/**
+	 * Normalize an atomic commit file set.
+	 *
+	 * @param  mixed $files Associative path => content map or list of path/content arrays.
+	 * @return array<int,array{path:string,content:string}>|\WP_Error
+	 */
+	private static function normalizeCommitFiles( mixed $files ): array|\WP_Error {
+		if ( ! is_array($files) ) {
+			return new \WP_Error('invalid_files', 'Files must be an array.', array( 'status' => 400 ));
+		}
+
+		$normalized = array();
+		foreach ( $files as $key => $value ) {
+			if ( is_array($value) ) {
+				$path    = self::normalizeRepoWritePath($value['path'] ?? $key);
+				$content = $value['content'] ?? '';
+			} else {
+				$path    = self::normalizeRepoWritePath($key);
+				$content = $value;
+			}
+
+			if ( is_wp_error($path) ) {
+				return $path;
+			}
+			if ( '' === $path ) {
+				return new \WP_Error('missing_file_path', 'Each file in an atomic GitHub commit requires a path.', array( 'status' => 400 ));
+			}
+			if ( ! is_scalar($content) && null !== $content ) {
+				return new \WP_Error('invalid_file_content', sprintf('File content for %s must be scalar.', $path), array( 'status' => 400 ));
+			}
+
+			$normalized[ $path ] = array(
+				'path'    => $path,
+				'content' => (string) $content,
+			);
+		}
+
+		return array_values($normalized);
+	}
+
+	/**
 	 * Normalize a repository write path without allowing traversal outside the repo.
 	 *
 	 * @param  mixed $path Candidate repository-relative path.

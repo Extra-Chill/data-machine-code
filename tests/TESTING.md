@@ -12,6 +12,7 @@ php tests/smoke-worktree-handles.php                          # pure-unit, fast
 php tests/smoke-worktree-cleanup.php                          # spawns a real git workspace
 php tests/smoke-worktree-cleanup-merged-obsolete-dirty.php    # merged + obsolete-on-default classifier
 php tests/smoke-worktree-bootstrap.php                        # fixture + real git, no WP required
+php tests/github-atomic-commit.php                            # GitHub API stubs, no network
 ```
 
 Expected: `32/32 passed`, `131/131 passed`, `14/14 passed`, and `30/30 passed`
