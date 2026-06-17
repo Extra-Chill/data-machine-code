@@ -563,26 +563,15 @@ trait WorkspaceMetadataReconciliation {
 		$branch   = (string) $identity['branch'];
 		$path     = (string) $identity['path'];
 		$metadata = is_array($wt['metadata'] ?? null) ? (array) $wt['metadata'] : array();
-
-		$base_row = array(
-			'handle'          => $handle,
-			'repo'            => $repo,
-			'branch'          => $branch,
-			'path'            => $path,
-			'hydrated_fields' => $identity['hydrated_fields'],
-			'stored_identity' => $identity['stored_identity'],
-			'metadata'        => array() === $metadata ? null : $metadata,
-		);
+		$base_row = $this->build_worktree_metadata_reconciliation_base_row($handle, $repo, $branch, $path, $identity, $metadata);
 
 		if ( ! empty($wt['external']) ) {
-			return array(
-				'skip' => array_merge(
-					$base_row,
-					array(
-						'reason_code' => 'external_worktree',
-						'reason'      => 'external worktree outside the DMC workspace',
-					)
-				),
+			return $this->build_worktree_metadata_reconciliation_skip(
+				$base_row,
+				array(
+					'reason_code' => 'external_worktree',
+					'reason'      => 'external worktree outside the DMC workspace',
+				)
 			);
 		}
 
@@ -592,22 +581,176 @@ trait WorkspaceMetadataReconciliation {
 				return $this->build_stale_worktree_identity_metadata_repair_row($base_row, $metadata, $identity_classification);
 			}
 
-			return array(
-				'skip' => array_merge(
-					$base_row,
-					array(
-						'reason_code'              => (string) $identity_classification['reason_code'],
-						'reason'                   => (string) $identity_classification['reason'],
-						'identity_conflicts'       => $identity['conflicts'],
-						'identity_classification'  => (string) $identity_classification['classification'],
-						'proposed_source_of_truth' => $identity_classification['proposed_source_of_truth'],
-						'next_command'             => (string) $identity_classification['next_command'],
-					)
-				),
+			return $this->build_worktree_metadata_reconciliation_skip(
+				$base_row,
+				array(
+					'reason_code'              => (string) $identity_classification['reason_code'],
+					'reason'                   => (string) $identity_classification['reason'],
+					'identity_conflicts'       => $identity['conflicts'],
+					'identity_classification'  => (string) $identity_classification['classification'],
+					'proposed_source_of_truth' => $identity_classification['proposed_source_of_truth'],
+					'next_command'             => (string) $identity_classification['next_command'],
+				)
 			);
 		}
 
-		$missing = array_values(
+		$missing = $this->get_missing_worktree_identity_fields($handle, $repo, $branch, $path);
+		if ( array() !== $missing ) {
+			return $this->build_worktree_metadata_reconciliation_skip(
+				$base_row,
+				array(
+					'reason_code'    => 'missing_identity',
+					'reason'         => 'current worktree row is missing required identity fields',
+					'missing_fields' => $missing,
+				)
+			);
+		}
+
+		$parsed = $this->parse_handle($handle);
+		if ( empty($parsed['is_worktree']) || $parsed['repo'] !== $repo ) {
+			return $this->build_worktree_metadata_reconciliation_skip(
+				$base_row,
+				array(
+					'reason_code' => 'noncanonical_handle',
+					'reason'      => 'worktree is not represented by a canonical <repo>@<slug> workspace handle',
+				)
+			);
+		}
+
+		if ( ! empty($identity['detached_branch']) ) {
+			return $this->build_worktree_metadata_reconciliation_skip(
+				$base_row,
+				array(
+					'reason_code'   => 'detached_worktree',
+					'reason'        => sprintf('git reports detached HEAD; stored metadata identifies branch %s', $branch),
+					'actual_branch' => '',
+					'hint'          => 'Reattach the worktree to the stored branch before applying metadata reconciliation, or remove it manually after review.',
+				)
+			);
+		}
+
+		$dirty = $wt['dirty'] ?? null;
+		if ( null === $dirty ) {
+			$dirty = $this->probe_worktree_dirty_count($path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+			if ( is_wp_error($dirty) ) {
+				$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $path, $dirty, 'dirty-state probe', 'leaving lifecycle unchanged');
+				return $this->build_worktree_metadata_reconciliation_skip($base_row, $diagnostic);
+			}
+		}
+		$dirty    = (int) $dirty;
+		$unpushed = $this->count_unpushed_commits($path);
+		if ( is_wp_error($unpushed) ) {
+			$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $path, $unpushed, 'cleanup safety probe', 'leaving lifecycle unchanged');
+			return $this->build_worktree_metadata_reconciliation_skip($base_row, $diagnostic);
+		}
+
+		$finalizer_signal = $this->detect_worktree_lifecycle_finalizer_signal($wt, $metadata, $github_cache, $fetched);
+		if ( null !== $finalizer_signal && 'probe-timeout' === ( $finalizer_signal['signal'] ?? '' ) ) {
+			return $this->build_worktree_metadata_reconciliation_skip(
+				$base_row,
+				array(
+					'reason_code' => 'probe_timeout',
+					'reason'      => 'merge-signal probe timed out - leaving lifecycle unchanged: ' . $finalizer_signal['reason'],
+				)
+			);
+		}
+
+		if ( null !== $finalizer_signal && ! $this->has_explicit_cleanup_eligible_state($metadata) ) {
+			if ( $dirty > 0 || $unpushed > 0 ) {
+				return $this->build_worktree_metadata_reconciliation_skip(
+					$base_row,
+					array(
+						'reason_code' => 'unsafe_cleanup_eligible_state',
+						'reason'      => 'merged lifecycle signal found, but dirty or unpushed worktree is not auto-finalized',
+						'dirty'       => $dirty,
+						'unpushed'    => $unpushed,
+						'signal'      => $finalizer_signal['signal'],
+					)
+				);
+			}
+
+			return $this->build_worktree_metadata_reconciliation_finalizer_proposal($base_row, $metadata, $handle, $repo, $branch, $path, $dirty, $unpushed, $finalizer_signal);
+		}
+
+		$classification = $this->build_worktree_metadata_backfill_classification($metadata, $handle, $repo, $branch, $path);
+		$proposed       = $classification['proposed_metadata'];
+		$source_map     = $classification['source_map'];
+		$invalid_fields = $classification['invalid_fields'];
+		$missing_after = array_values(
+			array_filter(
+				array(
+					empty($proposed['created_at']) ? 'created_at' : '',
+					empty($proposed['lifecycle_state']) ? 'lifecycle_state' : '',
+				)
+			)
+		);
+		if ( array() !== $missing_after ) {
+			return $this->build_worktree_metadata_reconciliation_skip(
+				$base_row,
+				array(
+					'reason_code'    => 'insufficient_signal',
+					'reason'         => 'not enough stable metadata could be inferred safely',
+					'missing_fields' => $missing_after,
+				)
+			);
+		}
+
+		$metadata_missing = $this->get_missing_worktree_metadata_fields($metadata);
+
+		if ( array() === $metadata_missing && array() === $invalid_fields ) {
+			return array();
+		}
+
+		return $this->build_worktree_metadata_backfill_proposal($base_row, $dirty, $unpushed, $metadata_missing, $invalid_fields, $proposed, $source_map);
+	}
+
+	/**
+	 * Build the common row fields shared by skip rows and proposals.
+	 *
+	 * @param  string              $handle   Worktree handle.
+	 * @param  string              $repo     Repository handle.
+	 * @param  string              $branch   Branch name.
+	 * @param  string              $path     Worktree path.
+	 * @param  array<string,mixed> $identity Recovered identity metadata.
+	 * @param  array<string,mixed> $metadata Persisted metadata.
+	 * @return array<string,mixed>
+	 */
+	private function build_worktree_metadata_reconciliation_base_row( string $handle, string $repo, string $branch, string $path, array $identity, array $metadata ): array {
+		return array(
+			'handle'          => $handle,
+			'repo'            => $repo,
+			'branch'          => $branch,
+			'path'            => $path,
+			'hydrated_fields' => $identity['hydrated_fields'],
+			'stored_identity' => $identity['stored_identity'],
+			'metadata'        => array() === $metadata ? null : $metadata,
+		);
+	}
+
+	/**
+	 * Wrap a metadata reconciliation skip row.
+	 *
+	 * @param  array<string,mixed> $base_row Common reconciliation row fields.
+	 * @param  array<string,mixed> $details  Skip-specific details.
+	 * @return array{skip:array<string,mixed>}
+	 */
+	private function build_worktree_metadata_reconciliation_skip( array $base_row, array $details ): array {
+		return array(
+			'skip' => array_merge($base_row, $details),
+		);
+	}
+
+	/**
+	 * Identify missing current worktree identity fields.
+	 *
+	 * @param  string $handle Worktree handle.
+	 * @param  string $repo   Repository handle.
+	 * @param  string $branch Branch name.
+	 * @param  string $path   Worktree path.
+	 * @return string[]
+	 */
+	private function get_missing_worktree_identity_fields( string $handle, string $repo, string $branch, string $path ): array {
+		return array_values(
 			array_filter(
 				array(
 					'' === $handle ? 'handle' : '',
@@ -617,170 +760,104 @@ trait WorkspaceMetadataReconciliation {
 				)
 			)
 		);
-		if ( array() !== $missing ) {
-			return array(
-				'skip' => array_merge(
-					$base_row,
-					array(
-						'reason_code'    => 'missing_identity',
-						'reason'         => 'current worktree row is missing required identity fields',
-						'missing_fields' => $missing,
-					)
-				),
-			);
-		}
+	}
 
-		$parsed = $this->parse_handle($handle);
-		if ( empty($parsed['is_worktree']) || $parsed['repo'] !== $repo ) {
-			return array(
-				'skip' => array_merge(
-					$base_row,
-					array(
-						'reason_code' => 'noncanonical_handle',
-						'reason'      => 'worktree is not represented by a canonical <repo>@<slug> workspace handle',
-					)
-				),
-			);
-		}
+	/**
+	 * Build an auto-finalization proposal from a merge signal.
+	 *
+	 * @param  array<string,mixed> $base_row         Common reconciliation row fields.
+	 * @param  array<string,mixed> $metadata         Persisted metadata.
+	 * @param  string              $handle           Worktree handle.
+	 * @param  string              $repo             Repository handle.
+	 * @param  string              $branch           Branch name.
+	 * @param  string              $path             Worktree path.
+	 * @param  int                 $dirty            Dirty file count.
+	 * @param  int                 $unpushed         Unpushed commit count.
+	 * @param  array<string,mixed> $finalizer_signal Finalizer evidence.
+	 * @return array{proposal:array<string,mixed>}
+	 */
+	private function build_worktree_metadata_reconciliation_finalizer_proposal( array $base_row, array $metadata, string $handle, string $repo, string $branch, string $path, int $dirty, int $unpushed, array $finalizer_signal ): array {
+		$finalized_state    = (string) ( $finalizer_signal['finalized_state'] ?? WorktreeContextInjector::STATE_MERGED );
+		$finalizer_metadata = WorktreeContextInjector::build_finalizer_metadata(
+			$finalized_state,
+			isset($finalizer_signal['pr_url']) ? (string) $finalizer_signal['pr_url'] : null
+		);
+		$evidence           = array_filter(
+			array(
+				'signal'          => $finalizer_signal['signal'],
+				'finalized_state' => $finalized_state,
+				'reason'          => $finalizer_signal['reason'],
+				'detected_at'     => gmdate('c'),
+				'dirty'           => $dirty,
+				'unpushed'        => $unpushed,
+				'pr_url'          => $finalizer_signal['pr_url'] ?? null,
+			),
+			fn( $value ) => null !== $value && '' !== $value
+		);
+		$proposed           = array_merge(
+			$metadata,
+			array(
+				'handle'       => $handle,
+				'repo'         => $repo,
+				'branch'       => $branch,
+				'path'         => $path,
+				'observed_at'  => gmdate('c'),
+				'last_seen_at' => gmdate('c'),
+			),
+			$finalizer_metadata,
+			array(
+				'auto_finalized_by'            => 'worktree_reconcile_metadata',
+				'auto_finalized_signal'        => $finalizer_signal['signal'],
+				'auto_finalized_reason'        => $finalizer_signal['reason'],
+				'cleanup_eligibility_evidence' => $evidence,
+			)
+		);
 
-		if ( ! empty($identity['detached_branch']) ) {
-			return array(
-				'skip' => array_merge(
-					$base_row,
-					array(
-						'reason_code'   => 'detached_worktree',
-						'reason'        => sprintf('git reports detached HEAD; stored metadata identifies branch %s', $branch),
-						'actual_branch' => '',
-						'hint'          => 'Reattach the worktree to the stored branch before applying metadata reconciliation, or remove it manually after review.',
-					)
-				),
-			);
-		}
-
-		$dirty = $wt['dirty'] ?? null;
-		if ( null === $dirty ) {
-			$dirty = $this->probe_worktree_dirty_count($path, self::CLEANUP_GIT_PROBE_TIMEOUT);
-			if ( is_wp_error($dirty) ) {
-				$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $path, $dirty, 'dirty-state probe', 'leaving lifecycle unchanged');
-				return array(
-					'skip' => array_merge(
-						$base_row,
-						$diagnostic
-					),
-				);
+		if ( empty($proposed['created_at']) ) {
+			$created_at = file_exists($path) ? filemtime($path) : false;
+			if ( false !== $created_at ) {
+				$proposed['created_at'] = gmdate('c', (int) $created_at);
 			}
 		}
-		$dirty    = (int) $dirty;
-		$unpushed = $this->count_unpushed_commits($path);
-		if ( is_wp_error($unpushed) ) {
-			$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $path, $unpushed, 'cleanup safety probe', 'leaving lifecycle unchanged');
-			return array(
-				'skip' => array_merge(
-					$base_row,
-					$diagnostic
-				),
-			);
-		}
 
-		$finalizer_signal = $this->detect_worktree_lifecycle_finalizer_signal($wt, $metadata, $github_cache, $fetched);
-		if ( null !== $finalizer_signal && 'probe-timeout' === ( $finalizer_signal['signal'] ?? '' ) ) {
-			return array(
-				'skip' => array_merge(
-					$base_row,
-					array(
-						'reason_code' => 'probe_timeout',
-						'reason'      => 'merge-signal probe timed out - leaving lifecycle unchanged: ' . $finalizer_signal['reason'],
-					)
-				),
-			);
-		}
-
-		if ( null !== $finalizer_signal && ! $this->has_explicit_cleanup_eligible_state($metadata) ) {
-			if ( $dirty > 0 || $unpushed > 0 ) {
-				return array(
-					'skip' => array_merge(
-						$base_row,
-						array(
-							'reason_code' => 'unsafe_cleanup_eligible_state',
-							'reason'      => 'merged lifecycle signal found, but dirty or unpushed worktree is not auto-finalized',
-							'dirty'       => $dirty,
-							'unpushed'    => $unpushed,
-							'signal'      => $finalizer_signal['signal'],
-						)
-					),
-				);
-			}
-
-			$finalized_state    = (string) ( $finalizer_signal['finalized_state'] ?? WorktreeContextInjector::STATE_MERGED );
-			$finalizer_metadata = WorktreeContextInjector::build_finalizer_metadata(
-				$finalized_state,
-				isset($finalizer_signal['pr_url']) ? (string) $finalizer_signal['pr_url'] : null
-			);
-			$evidence           = array_filter(
+		return array(
+			'proposal' => array_merge(
+				$base_row,
 				array(
-					'signal'          => $finalizer_signal['signal'],
-					'finalized_state' => $finalized_state,
-					'reason'          => $finalizer_signal['reason'],
-					'detected_at'     => gmdate('c'),
-					'dirty'           => $dirty,
-					'unpushed'        => $unpushed,
-					'pr_url'          => $finalizer_signal['pr_url'] ?? null,
-				),
-				fn( $value ) => null !== $value && '' !== $value
-			);
-			$proposed           = array_merge(
-				$metadata,
-				array(
-					'handle'       => $handle,
-					'repo'         => $repo,
-					'branch'       => $branch,
-					'path'         => $path,
-					'observed_at'  => gmdate('c'),
-					'last_seen_at' => gmdate('c'),
-				),
-				$finalizer_metadata,
-				array(
-					'auto_finalized_by'            => 'worktree_reconcile_metadata',
-					'auto_finalized_signal'        => $finalizer_signal['signal'],
-					'auto_finalized_reason'        => $finalizer_signal['reason'],
-					'cleanup_eligibility_evidence' => $evidence,
-				)
-			);
-
-			if ( empty($proposed['created_at']) ) {
-				$created_at = file_exists($path) ? filemtime($path) : false;
-				if ( false !== $created_at ) {
-					$proposed['created_at'] = gmdate('c', (int) $created_at);
-				}
-			}
-
-			return array(
-				'proposal' => array_merge(
-					$base_row,
-					array(
-						'reason_code'       => 'auto_finalize_merged',
-						'reason'            => 'merged PR or branch state proves lifecycle can be finalized as cleanup_eligible',
-						'dirty'             => $dirty,
-						'unpushed'          => $unpushed,
-						'signal'            => $finalizer_signal['signal'],
-						'pr_url'            => $finalizer_signal['pr_url'] ?? null,
-						'proposed_metadata' => $proposed,
-						'source_map'        => array(
-							'handle'                       => 'filesystem',
-							'repo'                         => 'filesystem',
-							'branch'                       => 'git',
-							'path'                         => 'git',
-							'created_at'                   => empty($metadata['created_at']) ? 'filesystem' : 'metadata',
-							'observed_at'                  => 'reconcile_run',
-							'lifecycle_state'              => 'merge_signal',
-							'finalized_state'              => 'merge_signal',
-							'cleanup_eligibility_evidence' => 'merge_signal',
-						),
+					'reason_code'       => 'auto_finalize_merged',
+					'reason'            => 'merged PR or branch state proves lifecycle can be finalized as cleanup_eligible',
+					'dirty'             => $dirty,
+					'unpushed'          => $unpushed,
+					'signal'            => $finalizer_signal['signal'],
+					'pr_url'            => $finalizer_signal['pr_url'] ?? null,
+					'proposed_metadata' => $proposed,
+					'source_map'        => array(
+						'handle'                       => 'filesystem',
+						'repo'                         => 'filesystem',
+						'branch'                       => 'git',
+						'path'                         => 'git',
+						'created_at'                   => empty($metadata['created_at']) ? 'filesystem' : 'metadata',
+						'observed_at'                  => 'reconcile_run',
+						'lifecycle_state'              => 'merge_signal',
+						'finalized_state'              => 'merge_signal',
+						'cleanup_eligibility_evidence' => 'merge_signal',
 					),
 				),
-			);
-		}
+			),
+		);
+	}
 
+	/**
+	 * Build proposed metadata and field classifications for backfill proposals.
+	 *
+	 * @param  array<string,mixed> $metadata Persisted metadata.
+	 * @param  string              $handle   Worktree handle.
+	 * @param  string              $repo     Repository handle.
+	 * @param  string              $branch   Branch name.
+	 * @param  string              $path     Worktree path.
+	 * @return array{proposed_metadata:array<string,mixed>,source_map:array<string,string>,invalid_fields:string[]}
+	 */
+	private function build_worktree_metadata_backfill_classification( array $metadata, string $handle, string $repo, string $branch, string $path ): array {
 		$proposed   = $metadata;
 		$source_map = array();
 		$this->set_reconciled_metadata_field($proposed, $source_map, 'handle', $handle, 'filesystem');
@@ -832,27 +909,21 @@ trait WorkspaceMetadataReconciliation {
 		} else {
 			$this->set_reconciled_metadata_field($proposed, $source_map, 'lifecycle_state', WorktreeContextInjector::STATE_ACTIVE, 'operator_plan');
 		}
-		$missing_after = array_values(
-			array_filter(
-				array(
-					empty($proposed['created_at']) ? 'created_at' : '',
-					empty($proposed['lifecycle_state']) ? 'lifecycle_state' : '',
-				)
-			)
-		);
-		if ( array() !== $missing_after ) {
-			return array(
-				'skip' => array_merge(
-					$base_row,
-					array(
-						'reason_code'    => 'insufficient_signal',
-						'reason'         => 'not enough stable metadata could be inferred safely',
-						'missing_fields' => $missing_after,
-					)
-				),
-			);
-		}
 
+		return array(
+			'proposed_metadata' => $proposed,
+			'source_map'        => $source_map,
+			'invalid_fields'    => $invalid_fields,
+		);
+	}
+
+	/**
+	 * Identify missing required persisted metadata fields.
+	 *
+	 * @param  array<string,mixed> $metadata Persisted metadata.
+	 * @return string[]
+	 */
+	private function get_missing_worktree_metadata_fields( array $metadata ): array {
 		$metadata_missing = array();
 		foreach ( array( 'handle', 'repo', 'branch', 'path', 'created_at', 'observed_at', 'lifecycle_state' ) as $field ) {
 			if ( ! array_key_exists($field, $metadata) || '' === (string) $metadata[ $field ] ) {
@@ -860,10 +931,22 @@ trait WorkspaceMetadataReconciliation {
 			}
 		}
 
-		if ( array() === $metadata_missing && array() === $invalid_fields ) {
-			return array();
-		}
+		return $metadata_missing;
+	}
 
+	/**
+	 * Build a metadata backfill proposal row.
+	 *
+	 * @param  array<string,mixed> $base_row         Common reconciliation row fields.
+	 * @param  int                 $dirty            Dirty file count.
+	 * @param  int                 $unpushed         Unpushed commit count.
+	 * @param  string[]            $metadata_missing Missing metadata fields.
+	 * @param  string[]            $invalid_fields   Invalid metadata fields.
+	 * @param  array<string,mixed> $proposed         Proposed metadata.
+	 * @param  array<string,mixed> $source_map       Proposed metadata source map.
+	 * @return array{proposal:array<string,mixed>}
+	 */
+	private function build_worktree_metadata_backfill_proposal( array $base_row, int $dirty, int $unpushed, array $metadata_missing, array $invalid_fields, array $proposed, array $source_map ): array {
 		return array(
 			'proposal' => array_merge(
 				$base_row,
