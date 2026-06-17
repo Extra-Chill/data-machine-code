@@ -349,8 +349,8 @@ class WorkspaceAliasResolver {
 			return $value;
 		}
 
-		$sanitized = self::sanitize_scoped_string($value, $root);
-		$sanitized = str_replace($handle, $alias, $sanitized);
+		$sanitized        = self::sanitize_scoped_string($value, $root);
+		$sanitized        = str_replace($handle, $alias, $sanitized);
 		$workspace_handle = WorkspaceHandle::parse($handle);
 		if ( $workspace_handle->is_worktree() ) {
 			$sanitized = str_replace(array( $workspace_handle->repo(), (string) $workspace_handle->branch_slug() ), array( $alias, $alias ), $sanitized);

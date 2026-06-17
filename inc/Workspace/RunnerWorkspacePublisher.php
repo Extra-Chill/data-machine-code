@@ -43,13 +43,13 @@ class RunnerWorkspacePublisher {
 			return new \WP_Error('runner_workspace_publish_missing_pr_title', 'pr_title is required.', array( 'status' => 400 ));
 		}
 
-		$base = trim( (string) ( $input['base'] ?? $input['base_branch'] ?? $input['base_ref'] ?? '' ) );
+		$base   = trim( (string) ( $input['base'] ?? $input['base_branch'] ?? $input['base_ref'] ?? '' ) );
 		$target = $this->resolve_publication_target($input, $handle, $target_repo, $base);
 		if ( is_wp_error($target) ) {
 			return $target;
 		}
 		$branch = $target['push_branch'];
-		$body = $this->build_pull_request_body( (string) ( $input['pr_body'] ?? $input['body'] ?? '' ), $input );
+		$body   = $this->build_pull_request_body( (string) ( $input['pr_body'] ?? $input['body'] ?? '' ), $input );
 
 		$status = WorkspaceAbilities::gitStatus(array( 'name' => $handle ));
 		if ( is_wp_error($status) ) {
@@ -177,7 +177,8 @@ class RunnerWorkspacePublisher {
 			return $head;
 		}
 
-		$base_owner = strtolower(strtok($base_repo, '/') ?: '');
+		$base_owner = strtok($base_repo, '/');
+		$base_owner = false === $base_owner ? '' : strtolower($base_owner);
 		$head_owner = $head['owner'];
 		$head_repo  = null === $head_owner ? $base_repo : $head_owner . '/' . substr($base_repo, (int) strpos($base_repo, '/') + 1);
 
@@ -200,12 +201,12 @@ class RunnerWorkspacePublisher {
 		$head_ref    = null === $head_owner ? $push_branch : $head_owner . ':' . $head['branch'];
 
 		return array(
-			'base_repo'    => $base_repo,
-			'base_ref'     => $base,
-			'head_repo'    => $head_repo,
-			'head_ref'     => $head_ref,
-			'push_remote'  => $push_remote,
-			'push_branch'  => $push_branch,
+			'base_repo'   => $base_repo,
+			'base_ref'    => $base,
+			'head_repo'   => $head_repo,
+			'head_ref'    => $head_ref,
+			'push_remote' => $push_remote,
+			'push_branch' => $push_branch,
 		);
 	}
 
@@ -222,16 +223,25 @@ class RunnerWorkspacePublisher {
 					if ( '' === $owner || '' === $head_branch ) {
 						return new \WP_Error('runner_workspace_publish_invalid_head_branch', 'Head must be a branch or owner:branch.', array( 'status' => 400 ));
 					}
-					return array( 'owner' => $owner, 'branch' => $head_branch );
+					return array(
+						'owner'  => $owner,
+						'branch' => $head_branch,
+					);
 				}
 
-				return array( 'owner' => null, 'branch' => $branch );
+				return array(
+					'owner'  => null,
+					'branch' => $branch,
+				);
 			}
 		}
 
 		$workspace_handle = WorkspaceHandle::parse($handle);
 		if ( null !== $workspace_handle->branch_slug() && '' !== $workspace_handle->branch_slug() ) {
-			return array( 'owner' => null, 'branch' => $workspace_handle->branch_slug() );
+			return array(
+				'owner'  => null,
+				'branch' => $workspace_handle->branch_slug(),
+			);
 		}
 
 		return new \WP_Error('runner_workspace_publish_missing_head_branch', 'A head branch/ref or branch context is required.', array( 'status' => 400 ));
