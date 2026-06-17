@@ -671,7 +671,7 @@ trait WorkspaceRepositoryLifecycle {
 					'is_context'       => true,
 					'path'             => null,
 					'branch'           => '' !== $ref ? $ref : null,
-					'remote'           => '' !== (string) ( $context_policy['repo'] ?? '' ) ? GitHubRemote::cloneUrl((string) $context_policy['repo']) : null,
+					'remote'           => '' !== (string) ( $context_policy['repo'] ?? '' ) ? GitHubRemote::cloneUrl( (string) $context_policy['repo'] ) : null,
 					'commit'           => null,
 					'dirty'            => 0,
 					'workspace_policy' => WorkspaceAliasResolver::policy_attestation($handle),
