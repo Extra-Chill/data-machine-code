@@ -7,7 +7,13 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Support\JsonCodec;
+
 defined('ABSPATH') || exit;
+
+if ( ! class_exists(JsonCodec::class) ) {
+	require_once dirname(__DIR__) . '/Support/JsonCodec.php';
+}
 
 if ( ! class_exists(WorktreeCleanupClassifier::class) ) {
 	require_once __DIR__ . '/WorktreeCleanupClassifier.php';
@@ -780,8 +786,8 @@ trait WorkspaceCleanupPlan {
 	 */
 	private function stable_cleanup_hash( mixed $value, string $prefix ): string {
 		$this->ksort_recursive($value);
-		$encoded = wp_json_encode($value, JSON_UNESCAPED_SLASHES);
-		if ( false === $encoded || '' === $encoded ) {
+		$encoded = JsonCodec::encode($value, JSON_UNESCAPED_SLASHES);
+		if ( null === $encoded || '' === $encoded ) {
 			$encoded = $prefix . '-json-error-' . json_last_error_msg();
 		}
 		return $prefix . '-' . substr(hash('sha256', $encoded), 0, 24);
