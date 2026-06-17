@@ -7,6 +7,8 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Support\GitRunner;
+
 defined('ABSPATH') || exit;
 
 trait WorkspaceWorktreeLifecycle {
@@ -256,12 +258,11 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		// Does the branch already exist locally?
-     // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		exec(sprintf('git -C %s show-ref --verify --quiet %s 2>&1', escapeshellarg($primary_path), escapeshellarg('refs/heads/' . $branch)), $_unused, $exists_local);
+		$exists_local   = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
 		$created_branch = false;
 		$resolved_base  = null;
 
-		if ( 0 === $exists_local ) {
+		if ( $exists_local ) {
 			if ( ! $allow_stale && ! $rebase_base && ! $fetch_failed ) {
 				$default_guard = $this->assert_ref_current_with_default_branch($primary_path, $branch, $repo, $branch, 'branch');
 				if ( is_wp_error($default_guard) ) {

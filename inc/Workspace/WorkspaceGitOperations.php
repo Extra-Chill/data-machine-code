@@ -8,6 +8,7 @@
 namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Support\GitHubRemote;
+use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\PathSecurity;
 use DataMachineCode\Support\ProcessRunner;
 
@@ -41,10 +42,6 @@ trait WorkspaceGitOperations {
 			return $policy_attestation;
 		}
 
-		$branch_result = $this->run_git($repo_path, 'rev-parse --abbrev-ref HEAD');
-		$remote_result = $this->run_git($repo_path, 'config --get remote.origin.url');
-		$latest_result = $this->run_git($repo_path, 'log -1 --format="%h %s"');
-
 		$files = array_filter(array_map('trim', explode("\n", $status_result['output'] ?? '')));
 
 		$response = array(
@@ -53,9 +50,9 @@ trait WorkspaceGitOperations {
 			'repo'        => $parsed['repo'],
 			'is_worktree' => $parsed['is_worktree'],
 			'path'        => $repo_path,
-			'branch'      => ! is_wp_error($branch_result) ? trim( (string) $branch_result['output']) : null,
-			'remote'      => ! is_wp_error($remote_result) ? trim( (string) $remote_result['output']) : null,
-			'commit'      => ! is_wp_error($latest_result) ? trim( (string) $latest_result['output']) : null,
+			'branch'      => GitRunner::current_branch($repo_path),
+			'remote'      => GitRunner::remote_url($repo_path),
+			'commit'      => GitRunner::latest_commit_summary($repo_path),
 			'dirty'       => count($files),
 			'files'       => array_values($files),
 		);
@@ -1709,14 +1706,7 @@ trait WorkspaceGitOperations {
 	 * @return string|null Remote URL or null.
 	 */
 	private function git_get_remote( string $repo_path, string $remote_name = 'origin' ): ?string {
-		$escaped     = escapeshellarg($repo_path);
-		$remote_name = preg_replace('/[^A-Za-z0-9._-]/', '', $remote_name);
-		if ( '' === $remote_name ) {
-			return null;
-		}
-     // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		$remote = exec(sprintf('git -C %s config --get %s 2>/dev/null', $escaped, escapeshellarg('remote.' . $remote_name . '.url')));
-		return ( '' !== $remote ) ? $remote : null;
+		return GitRunner::remote_url($repo_path, $remote_name);
 	}
 
 	/**
@@ -1726,9 +1716,6 @@ trait WorkspaceGitOperations {
 	 * @return string|null Branch name or null.
 	 */
 	private function git_get_branch( string $repo_path ): ?string {
-		$escaped = escapeshellarg($repo_path);
-        // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		$branch = exec(sprintf('git -C %s rev-parse --abbrev-ref HEAD 2>/dev/null', $escaped));
-		return ( '' !== $branch ) ? $branch : null;
+		return GitRunner::current_branch($repo_path);
 	}
 }

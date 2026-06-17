@@ -688,14 +688,10 @@ trait WorkspaceRepositoryLifecycle {
 			return new \WP_Error('repo_not_found', sprintf('Workspace handle "%s" not found.', $parsed['dir_name']), array( 'status' => 404 ));
 		}
 
-		$escaped = escapeshellarg($repo_path);
-
-     // phpcs:disable WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		$branch = trim( (string) exec(sprintf('git -C %s rev-parse --abbrev-ref HEAD 2>/dev/null', $escaped)));
-		$remote = trim( (string) exec(sprintf('git -C %s config --get remote.origin.url 2>/dev/null', $escaped)));
-		$commit = trim( (string) exec(sprintf('git -C %s log -1 --format="%%h %%s" 2>/dev/null', $escaped)));
-		$status = trim( (string) exec(sprintf('git -C %s status --porcelain 2>/dev/null | wc -l', $escaped)));
-     // phpcs:enable
+		$branch = GitRunner::current_branch($repo_path);
+		$remote = GitRunner::remote_url($repo_path);
+		$commit = GitRunner::latest_commit_summary($repo_path);
+		$status = GitRunner::dirty_count($repo_path);
 
 		$result = array(
 			'success'           => true,
@@ -704,10 +700,10 @@ trait WorkspaceRepositoryLifecycle {
 			'is_worktree'       => $parsed['is_worktree'],
 			'is_context'        => null !== $context_policy,
 			'path'              => $repo_path,
-			'branch'            => $branch ? $branch : null,
-			'remote'            => $remote ? $remote : null,
-			'commit'            => $commit ? $commit : null,
-			'dirty'             => (int) $status,
+			'branch'            => $branch,
+			'remote'            => $remote,
+			'commit'            => $commit,
+			'dirty'             => $status,
 			'primary_freshness' => ! $parsed['is_worktree'] ? $this->build_primary_freshness_report($repo_path, $parsed['dir_name']) : null,
 		);
 		if ( null !== $context_policy ) {
