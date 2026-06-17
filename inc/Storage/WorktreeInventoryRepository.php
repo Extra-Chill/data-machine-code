@@ -144,10 +144,10 @@ class WorktreeInventoryRepository {
 
 		if ( method_exists($wpdb, 'get_row') && method_exists($wpdb, 'prepare') ) {
 			$table = self::table_name();
-			// phpcs:disable WordPress.DB.PreparedSQL -- Table name from $wpdb->prefix, not user input.
-			$sql = $wpdb->prepare("SELECT * FROM {$table} WHERE handle = %s LIMIT 1", $handle);
-			// phpcs:enable WordPress.DB.PreparedSQL
-			$row = $wpdb->get_row($sql, ARRAY_A);
+			$row   = $wpdb->get_row(
+				$wpdb->prepare('SELECT * FROM %i WHERE handle = %s LIMIT 1', $table, $handle),
+				ARRAY_A
+			);
 			return is_array($row) ? $this->decode_row($row) : null;
 		}
 
