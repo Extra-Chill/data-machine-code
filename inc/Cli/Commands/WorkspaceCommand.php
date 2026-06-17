@@ -3635,7 +3635,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$input         = array();
 		$input_builder = (string) ( $operation_config['input_builder'] ?? '' );
-		if ( '' !== $input_builder && method_exists($this, $input_builder) ) {
+		if ( '' !== $input_builder ) {
 			$input = $this->{$input_builder}($operation, $assoc_args);
 		}
 
@@ -5998,7 +5998,7 @@ class WorkspaceCommand extends BaseCommand {
 			}
 		}
 
-		$this->render_active_no_signal_triage_preview((array) ( $result['active_no_signal_triage'] ?? array() ));
+		$this->render_active_no_signal_triage_preview( (array) ( $result['active_no_signal_triage'] ?? array() ) );
 
 		WP_CLI::log('');
 		$remaining = (int) ( $continuation['remaining_total'] ?? 0 );

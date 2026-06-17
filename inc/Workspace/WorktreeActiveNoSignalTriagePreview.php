@@ -44,7 +44,7 @@ final class WorktreeActiveNoSignalTriagePreview {
 		);
 
 		foreach ( $rows as $row ) {
-			if ( ! is_array($row) || ! in_array((string) ( $row['reason_code'] ?? '' ), self::ACTIVE_REASON_CODES, true) ) {
+			if ( ! in_array( (string) ( $row['reason_code'] ?? '' ), self::ACTIVE_REASON_CODES, true ) ) {
 				continue;
 			}
 

@@ -697,7 +697,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			}
 
 			$parsed = $this->parse_handle($entry);
-			if ( empty($parsed['is_worktree']) || '' === (string) ( $parsed['repo'] ?? '' ) ) {
+			if ( empty($parsed['is_worktree']) || '' === (string) $parsed['repo'] ) {
 				continue;
 			}
 
