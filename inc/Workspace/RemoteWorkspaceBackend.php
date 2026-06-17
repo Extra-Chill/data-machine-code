@@ -9,11 +9,19 @@ namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Abilities\GitHubAbilities;
 use DataMachineCode\Support\GitHubRemote;
-use DataMachineCode\Support\PathSecurity;
 
 defined('ABSPATH') || exit;
 
 class RemoteWorkspaceBackend {
+
+	/**
+	 * @var WorkspacePolicy
+	 */
+	private WorkspacePolicy $policy;
+
+	public function __construct( ?WorkspacePolicy $policy = null ) {
+		$this->policy = $policy ?? new WorkspacePolicy();
+	}
 
 
 
@@ -484,7 +492,7 @@ class RemoteWorkspaceBackend {
 			return $path;
 		}
 
-		$policy_check = $this->ensure_writable_roots_allow_paths((string) $context['repo_name'], array( $path ));
+		$policy_check = $this->policy->assert_paths_writable((string) $context['repo_name'], array( $path ));
 		if ( is_wp_error($policy_check) ) {
 			return $policy_check;
 		}
@@ -502,101 +510,6 @@ class RemoteWorkspaceBackend {
 			'size'    => strlen($content),
 			'created' => true,
 		);
-	}
-
-	/**
-	 * Enforce configured writable roots before a remote mutation is staged.
-	 *
-	 * @param  string            $repo_name Repository name.
-	 * @param  array<int,string> $paths     Repo-relative paths.
-	 * @return true|\WP_Error
-	 */
-	private function ensure_writable_roots_allow_paths( string $repo_name, array $paths ): true|\WP_Error {
-		$writable_roots = $this->get_repo_writable_roots($repo_name);
-		if ( empty($writable_roots) ) {
-			return true;
-		}
-
-		$rejected = array();
-		foreach ( $paths as $path ) {
-			$relative = $this->normalize_policy_path($path);
-			if ( '' !== $relative && ! PathSecurity::isPathAllowed($relative, $writable_roots) ) {
-				$rejected[] = $relative;
-			}
-		}
-
-		$rejected = array_values(array_unique($rejected));
-		if ( empty($rejected) ) {
-			return true;
-		}
-
-		return new \WP_Error(
-			'path_not_allowed',
-			sprintf(
-				'Path(s) outside configured writable_roots: %s. Allowed writable_roots: %s.',
-				implode(', ', $rejected),
-				implode(', ', $writable_roots)
-			),
-			array(
-				'status'         => 403,
-				'rejected_paths' => $rejected,
-				'writable_roots' => $writable_roots,
-			)
-		);
-	}
-
-	/**
-	 * @return array<int,string>
-	 */
-	private function get_repo_writable_roots( string $repo_name ): array {
-		$policies = $this->get_workspace_git_policies();
-		$repo     = $policies['repos'][ $repo_name ] ?? array();
-		$paths    = $repo['writable_roots'] ?? $repo['allowed_paths'] ?? array();
-
-		return $this->normalize_policy_paths($paths);
-	}
-
-	/**
-	 * @return array{repos: array<string, array<string, mixed>>}
-	 */
-	private function get_workspace_git_policies(): array {
-		$defaults = array( 'repos' => array() );
-		$settings = function_exists('get_option') ? get_option('datamachine_workspace_git_policies', $defaults) : $defaults;
-		if ( ! is_array($settings) ) {
-			$settings = $defaults;
-		}
-		if ( ! isset($settings['repos']) || ! is_array($settings['repos']) ) {
-			$settings['repos'] = array();
-		}
-		if ( function_exists('apply_filters') ) {
-			$settings = apply_filters('datamachine_workspace_git_policies', $settings);
-		}
-
-		return isset($settings['repos']) && is_array($settings['repos']) ? $settings : $defaults;
-	}
-
-	/**
-	 * @param  mixed $paths Raw policy value.
-	 * @return array<int,string>
-	 */
-	private function normalize_policy_paths( mixed $paths ): array {
-		if ( ! is_array($paths) ) {
-			return array();
-		}
-
-		$clean = array();
-		foreach ( $paths as $path ) {
-			$normalized = $this->normalize_policy_path((string) $path);
-			if ( '' !== $normalized ) {
-				$clean[] = $normalized;
-			}
-		}
-
-		return array_values(array_unique($clean));
-	}
-
-	private function normalize_policy_path( string $path ): string {
-		return rtrim(ltrim(str_replace('\\', '/', trim($path)), '/'), '/');
 	}
 
 	/**
@@ -619,7 +532,7 @@ class RemoteWorkspaceBackend {
 			return $normalized_path;
 		}
 
-		$policy_check = $this->ensure_writable_roots_allow_paths((string) $context['repo_name'], array( $normalized_path ));
+		$policy_check = $this->policy->assert_paths_writable((string) $context['repo_name'], array( $normalized_path ));
 		if ( is_wp_error($policy_check) ) {
 			return $policy_check;
 		}
