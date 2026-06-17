@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.12] - 2026-06-17
+
+### Changed
+- Add cleanup-eligible drain command
+
 ## [0.48.11] - 2026-06-17
 
 ### Changed
