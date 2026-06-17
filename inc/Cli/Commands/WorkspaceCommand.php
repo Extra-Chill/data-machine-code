@@ -6025,6 +6025,8 @@ class WorkspaceCommand extends BaseCommand {
 			}
 		}
 
+		$this->render_active_no_signal_triage_preview( (array) ( $result['active_no_signal_triage'] ?? array() ) );
+
 		WP_CLI::log('');
 		$remaining = (int) ( $continuation['remaining_total'] ?? 0 );
 		if ( $remaining > 0 ) {
@@ -6074,19 +6076,20 @@ class WorkspaceCommand extends BaseCommand {
 		);
 
 		$report = array(
-			'success'         => (bool) ( $result['success'] ?? true ),
-			'mode'            => (string) ( $result['mode'] ?? 'bounded_cleanup_eligible_apply' ),
-			'dry_run'         => ! empty($result['dry_run']),
-			'destructive'     => ! empty($result['destructive']),
-			'workspace_path'  => $result['workspace_path'] ?? null,
-			'generated_at'    => $result['generated_at'] ?? null,
-			'summary'         => $compact_summary,
-			'blocker_buckets' => $buckets,
-			'next_actions'    => $actions,
-			'candidates'      => $this->compact_cleanup_rows($candidates, 25),
-			'removed'         => $this->compact_cleanup_rows($removed, 25),
-			'continuation'    => $this->compact_cleanup_continuation( (array) ( $result['continuation'] ?? $result['pagination'] ?? array() ) ),
-			'evidence'        => $this->compact_cleanup_evidence( (array) ( $result['evidence'] ?? array() ), $skipped ),
+			'success'                 => (bool) ( $result['success'] ?? true ),
+			'mode'                    => (string) ( $result['mode'] ?? 'bounded_cleanup_eligible_apply' ),
+			'dry_run'                 => ! empty($result['dry_run']),
+			'destructive'             => ! empty($result['destructive']),
+			'workspace_path'          => $result['workspace_path'] ?? null,
+			'generated_at'            => $result['generated_at'] ?? null,
+			'summary'                 => $compact_summary,
+			'blocker_buckets'         => $buckets,
+			'next_actions'            => $actions,
+			'active_no_signal_triage' => (array) ( $result['active_no_signal_triage'] ?? array() ),
+			'candidates'              => $this->compact_cleanup_rows($candidates, 25),
+			'removed'                 => $this->compact_cleanup_rows($removed, 25),
+			'continuation'            => $this->compact_cleanup_continuation( (array) ( $result['continuation'] ?? $result['pagination'] ?? array() ) ),
+			'evidence'                => $this->compact_cleanup_evidence( (array) ( $result['evidence'] ?? array() ), $skipped ),
 		);
 
 		if ( ! empty($result['job_backed']) ) {
@@ -6094,6 +6097,55 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		return array_filter($report, fn( $value ) => null !== $value);
+	}
+
+	/**
+	 * Render concise active/no-signal triage preview from bounded cleanup output.
+	 *
+	 * @param  array<string,mixed> $preview Triage preview payload.
+	 * @return void
+	 */
+	private function render_active_no_signal_triage_preview( array $preview ): void {
+		$total = (int) ( $preview['total'] ?? 0 );
+		if ( $total <= 0 ) {
+			return;
+		}
+
+		WP_CLI::log('');
+		WP_CLI::log(sprintf('Active/no-signal triage preview: %d unresolved active worktree(s).', $total));
+		$summary_rows = array();
+		foreach ( (array) ( $preview['by_age'] ?? array() ) as $bucket => $count ) {
+			if ( (int) $count > 0 ) {
+				$summary_rows[] = array(
+					'dimension' => 'age',
+					'bucket'    => (string) $bucket,
+					'count'     => (int) $count,
+				);
+			}
+		}
+		foreach ( (array) ( $preview['by_liveness'] ?? array() ) as $bucket => $count ) {
+			$summary_rows[] = array(
+				'dimension' => 'liveness',
+				'bucket'    => (string) $bucket,
+				'count'     => (int) $count,
+			);
+		}
+		foreach ( (array) ( $preview['by_repo'] ?? array() ) as $bucket => $count ) {
+			$summary_rows[] = array(
+				'dimension' => 'repo',
+				'bucket'    => (string) $bucket,
+				'count'     => (int) $count,
+			);
+		}
+		$this->format_items($summary_rows, array( 'dimension', 'bucket', 'count' ), array( 'format' => 'table' ), 'dimension');
+
+		WP_CLI::log('Non-destructive next commands:');
+		foreach ( (array) ( $preview['commands'] ?? array() ) as $label => $command ) {
+			WP_CLI::log(sprintf('  %s: %s', (string) $label, (string) $command));
+		}
+		if ( ! empty($preview['safety']) ) {
+			WP_CLI::log('Safety: ' . (string) $preview['safety']);
+		}
 	}
 
 	/**
