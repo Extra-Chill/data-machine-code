@@ -134,4 +134,63 @@ final class GitRunner {
 			'output'  => $result['output'],
 		);
 	}
+
+	/**
+	 * Run a read-only git probe and return trimmed output, or null on failure.
+	 */
+	public static function probe_output( string $path, string $args ): ?string {
+		$result = self::run($path, $args);
+		if ( is_wp_error($result) ) {
+			return null;
+		}
+
+		$output = trim( (string) ( $result['output'] ?? '' ));
+		return '' !== $output ? $output : null;
+	}
+
+	/**
+	 * Get the current branch for a repository.
+	 */
+	public static function current_branch( string $path ): ?string {
+		return self::probe_output($path, 'rev-parse --abbrev-ref HEAD');
+	}
+
+	/**
+	 * Get a configured remote URL for a repository.
+	 */
+	public static function remote_url( string $path, string $remote_name = 'origin' ): ?string {
+		$remote_name = preg_replace('/[^A-Za-z0-9._-]/', '', $remote_name);
+		if ( '' === $remote_name ) {
+			return null;
+		}
+
+		return self::probe_output($path, 'config --get ' . escapeshellarg('remote.' . $remote_name . '.url'));
+	}
+
+	/**
+	 * Get the latest commit summary for a repository.
+	 */
+	public static function latest_commit_summary( string $path ): ?string {
+		return self::probe_output($path, 'log -1 --format="%h %s"');
+	}
+
+	/**
+	 * Count dirty status lines for a repository.
+	 */
+	public static function dirty_count( string $path ): int {
+		$output = self::probe_output($path, 'status --porcelain');
+		if ( null === $output ) {
+			return 0;
+		}
+
+		return count(array_filter(array_map('trim', explode("\n", $output))));
+	}
+
+	/**
+	 * Check whether an exact ref exists.
+	 */
+	public static function ref_exists( string $path, string $ref ): bool {
+		$result = self::run($path, 'show-ref --verify --quiet ' . escapeshellarg($ref));
+		return ! is_wp_error($result);
+	}
 }
