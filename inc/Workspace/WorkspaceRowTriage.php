@@ -34,7 +34,7 @@ trait WorkspaceRowTriage {
 		$rows             = array_merge($this->workspace_top_level_triage_rows(), $this->workspace_external_worktree_triage_rows());
 
 		if ( '' !== $status_filter ) {
-			$rows = array_values(array_filter($rows, static fn( array $row ): bool => $status_filter === (string) ( $row['triage_status'] ?? '' )));
+			$rows = array_values(array_filter($rows, static fn( array $row ): bool => (string) ( $row['triage_status'] ?? '' ) === $status_filter));
 		} elseif ( ! $include_resolved ) {
 			$rows = array_values(array_filter($rows, static fn( array $row ): bool => 'unresolved' === (string) ( $row['triage_status'] ?? '' )));
 		}
@@ -42,8 +42,8 @@ trait WorkspaceRowTriage {
 		usort(
 			$rows,
 			static function ( array $a, array $b ): int {
-				$status_cmp = strcmp((string) ( $a['triage_status'] ?? '' ), (string) ( $b['triage_status'] ?? '' ));
-				return 0 !== $status_cmp ? $status_cmp : strcmp((string) ( $a['row_id'] ?? '' ), (string) ( $b['row_id'] ?? '' ));
+				$status_cmp = strcmp( (string) ( $a['triage_status'] ?? '' ), (string) ( $b['triage_status'] ?? '' ) );
+				return 0 !== $status_cmp ? $status_cmp : strcmp( (string) ( $a['row_id'] ?? '' ), (string) ( $b['row_id'] ?? '' ) );
 			}
 		);
 
@@ -104,7 +104,7 @@ trait WorkspaceRowTriage {
 			$metadata['triage_created_at'] = $now;
 		}
 
-		WorktreeContextInjector::store_lifecycle_metadata((string) ( $row['metadata_key'] ?? $row_id ), $metadata);
+		WorktreeContextInjector::store_lifecycle_metadata( (string) ( $row['metadata_key'] ?? $row_id ), $metadata );
 
 		$updated = $this->workspace_row_triage_find($row_id, true);
 		if ( is_wp_error($updated) ) {
@@ -145,7 +145,7 @@ trait WorkspaceRowTriage {
 			return new \WP_Error('triage_adopt_linked_worktree_unsupported', 'Linked worktree rows cannot be adopted as primary checkouts.', array( 'status' => 400 ));
 		}
 
-		$adopt = $this->adopt_repo((string) ( $row['path'] ?? '' ), $name);
+		$adopt = $this->adopt_repo( (string) ( $row['path'] ?? '' ), $name );
 		if ( is_wp_error($adopt) ) {
 			return $adopt;
 		}
@@ -346,7 +346,7 @@ trait WorkspaceRowTriage {
 		$triage_status = $this->workspace_row_triage_status_from_metadata($metadata);
 
 		$created_at = isset($metadata['created_at']) ? (string) $metadata['created_at'] : null;
-		$mtime      = @filemtime((string) ( $row['path'] ?? '' )); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Best-effort provenance for local workspace rows.
+		$mtime      = @filemtime( (string) ( $row['path'] ?? '' ) ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Best-effort provenance for local workspace rows.
 		if ( null === $created_at && false !== $mtime ) {
 			$created_at = gmdate('c', $mtime);
 		}
@@ -409,7 +409,7 @@ trait WorkspaceRowTriage {
 		}
 
 		foreach ( (array) ( $result['rows'] ?? array() ) as $row ) {
-			if ( $row_id === (string) ( $row['row_id'] ?? '' ) ) {
+			if ( (string) ( $row['row_id'] ?? '' ) === $row_id ) {
 				return $row;
 			}
 		}
@@ -425,15 +425,15 @@ trait WorkspaceRowTriage {
 	 */
 	private function workspace_row_triage_summary( array $rows ): array {
 		$summary = array(
-			'total'              => count($rows),
-			'unresolved'         => 0,
-			'ignored'            => 0,
-			'quarantined'        => 0,
-			'adopted'            => 0,
-			'external_worktree'  => 0,
+			'total'               => count($rows),
+			'unresolved'          => 0,
+			'ignored'             => 0,
+			'quarantined'         => 0,
+			'adopted'             => 0,
+			'external_worktree'   => 0,
 			'noncanonical_handle' => 0,
-			'non_git'            => 0,
-			'by_issue'           => array(),
+			'non_git'             => 0,
+			'by_issue'            => array(),
 		);
 
 		foreach ( $rows as $row ) {

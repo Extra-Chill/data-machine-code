@@ -122,7 +122,7 @@ class CodeTaskCreator {
 	 * @return array{slug:string,name:string,url:string}|\WP_Error
 	 */
 	public static function resolve_repo( string $repo ): array|\WP_Error {
-		$repo = trim($repo);
+		$repo       = trim($repo);
 		$descriptor = GitHubRemote::descriptor($repo);
 		if ( null !== $descriptor ) {
 			$slug = $descriptor['slug'];
