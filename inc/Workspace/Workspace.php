@@ -24,6 +24,8 @@ require_once __DIR__ . '/WorkspaceMetadataReconciliation.php';
 require_once __DIR__ . '/WorkspaceRepositoryLifecycle.php';
 require_once __DIR__ . '/WorkspaceRowTriage.php';
 require_once __DIR__ . '/WorkspaceWorktreeLifecycle.php';
+require_once __DIR__ . '/WorktreeAgeFilter.php';
+require_once __DIR__ . '/WorktreeCleanupSignal.php';
 require_once __DIR__ . '/WorkspaceWorktreeCleanupEngine.php';
 require_once __DIR__ . '/WorkspaceWorktreeInventoryCleanup.php';
 require_once __DIR__ . '/WorkspaceWorktreeEmergencyCleanup.php';
