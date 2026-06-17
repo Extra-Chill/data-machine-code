@@ -41,12 +41,12 @@ class RunnerWorkspacePublisher {
 			return new \WP_Error('runner_workspace_publish_missing_pr_title', 'pr_title is required.', array( 'status' => 400 ));
 		}
 
-		$branch = $this->resolve_head_branch($input, $handle);
-		if ( is_wp_error($branch) ) {
-			return $branch;
-		}
-
 		$base = trim( (string) ( $input['base'] ?? $input['base_branch'] ?? $input['base_ref'] ?? '' ) );
+		$target = $this->resolve_publication_target($input, $handle, $target_repo, $base);
+		if ( is_wp_error($target) ) {
+			return $target;
+		}
+		$branch = $target['push_branch'];
 		$body = $this->build_pull_request_body( (string) ( $input['pr_body'] ?? $input['body'] ?? '' ), $input );
 
 		$status = WorkspaceAbilities::gitStatus(array( 'name' => $handle ));
@@ -81,11 +81,12 @@ class RunnerWorkspacePublisher {
 
 		$push_input = array(
 			'name'                   => $handle,
-			'branch'                 => $branch,
+			'branch'                 => $target['push_branch'],
+			'remote'                 => $target['push_remote'],
 			'allow_primary_mutation' => ! empty($input['allow_primary_mutation']),
 			'force_with_lease'       => ! empty($input['force_with_lease']),
 		);
-		foreach ( array( 'remote', 'expected_sha' ) as $key ) {
+		foreach ( array( 'expected_sha' ) as $key ) {
 			if ( isset($input[ $key ]) && '' !== trim( (string) $input[ $key ] ) ) {
 				$push_input[ $key ] = $input[ $key ];
 			}
@@ -97,13 +98,13 @@ class RunnerWorkspacePublisher {
 		}
 
 		$pr_input = array(
-			'repo'  => $target_repo,
+			'repo'  => $target['base_repo'],
 			'title' => $pr_title,
-			'head'  => $this->resolve_pr_head($input, $branch),
+			'head'  => $target['head_ref'],
 			'body'  => $body,
 		);
-		if ( '' !== $base ) {
-			$pr_input['base'] = $base;
+		if ( '' !== $target['base_ref'] ) {
+			$pr_input['base'] = $target['base_ref'];
 		}
 		foreach ( array( 'draft', 'maintainer_can_modify' ) as $key ) {
 			if ( array_key_exists($key, $input) ) {
@@ -133,7 +134,7 @@ class RunnerWorkspacePublisher {
 			),
 			'branch'       => array(
 				'name'   => (string) ( $push['branch'] ?? $branch ),
-				'base'   => '' !== $base ? $base : null,
+				'base'   => '' !== $target['base_ref'] ? $target['base_ref'] : null,
 				'head'   => (string) $pr_input['head'],
 				'remote' => (string) ( $push['remote'] ?? 'origin' ),
 				'url'    => $push['html_url'] ?? $push['url'] ?? null,
@@ -161,19 +162,75 @@ class RunnerWorkspacePublisher {
 
 	/**
 	 * @param array<string,mixed> $input
+	 * @return array{base_repo:string,base_ref:string,head_repo:string,head_ref:string,push_remote:string,push_branch:string}|\WP_Error
 	 */
-	private function resolve_head_branch( array $input, string $handle ): string|\WP_Error {
+	private function resolve_publication_target( array $input, string $handle, string $target_repo, string $base ): array|\WP_Error {
+		$base_repo = $this->normalize_repo_slug($target_repo);
+		if ( null === $base_repo ) {
+			return new \WP_Error('runner_workspace_publish_invalid_target_repo', 'target_repo must be in owner/repo format.', array( 'status' => 400 ));
+		}
+
+		$head = $this->resolve_head_branch($input, $handle);
+		if ( is_wp_error($head) ) {
+			return $head;
+		}
+
+		$base_owner = strtolower(strtok($base_repo, '/') ?: '');
+		$head_owner = $head['owner'];
+		$head_repo  = null === $head_owner ? $base_repo : $head_owner . '/' . substr($base_repo, (int) strpos($base_repo, '/') + 1);
+
+		$explicit_remote = $this->first_non_empty($input, array( 'push_remote', 'remote' ));
+		if ( null !== $explicit_remote ) {
+			$push_remote = $explicit_remote;
+		} elseif ( null === $head_owner || strtolower($head_owner) === $base_owner ) {
+			$push_remote = 'origin';
+		} elseif ( '' !== $head_owner ) {
+			$push_remote = $head_owner;
+		} else {
+			return new \WP_Error('runner_workspace_publish_ambiguous_cross_fork_head', 'Cross-fork pull request heads require a push remote that maps to the head repository.', array( 'status' => 400 ));
+		}
+
+		if ( null !== $head_owner && strtolower($head_owner) !== $base_owner && null === $explicit_remote && strtolower($push_remote) !== strtolower($head_owner) ) {
+			return new \WP_Error('runner_workspace_publish_ambiguous_cross_fork_head', 'Cross-fork pull request heads require a push remote that maps to the head repository.', array( 'status' => 400 ));
+		}
+
+		$push_branch = $this->first_non_empty($input, array( 'push_branch' )) ?? $head['branch'];
+		$head_ref    = null === $head_owner ? $push_branch : $head_owner . ':' . $head['branch'];
+
+		return array(
+			'base_repo'    => $base_repo,
+			'base_ref'     => $base,
+			'head_repo'    => $head_repo,
+			'head_ref'     => $head_ref,
+			'push_remote'  => $push_remote,
+			'push_branch'  => $push_branch,
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $input
+	 * @return array{owner:?string,branch:string}|\WP_Error
+	 */
+	private function resolve_head_branch( array $input, string $handle ): array|\WP_Error {
 		foreach ( array( 'head', 'head_branch', 'head_ref', 'branch' ) as $key ) {
 			$branch = trim( (string) ( $input[ $key ] ?? '' ) );
 			if ( '' !== $branch ) {
-				return str_contains($branch, ':') ? substr($branch, (int) strpos($branch, ':') + 1) : $branch;
+				if ( str_contains($branch, ':') ) {
+					list($owner, $head_branch) = array_map('trim', explode(':', $branch, 2));
+					if ( '' === $owner || '' === $head_branch ) {
+						return new \WP_Error('runner_workspace_publish_invalid_head_branch', 'Head must be a branch or owner:branch.', array( 'status' => 400 ));
+					}
+					return array( 'owner' => $owner, 'branch' => $head_branch );
+				}
+
+				return array( 'owner' => null, 'branch' => $branch );
 			}
 		}
 
 		if ( str_contains($handle, '@') ) {
 			$slug = substr($handle, (int) strpos($handle, '@') + 1);
 			if ( '' !== $slug ) {
-				return $slug;
+				return array( 'owner' => null, 'branch' => $slug );
 			}
 		}
 
@@ -183,9 +240,24 @@ class RunnerWorkspacePublisher {
 	/**
 	 * @param array<string,mixed> $input
 	 */
-	private function resolve_pr_head( array $input, string $branch ): string {
-		$head = trim( (string) ( $input['head'] ?? $input['head_ref'] ?? '' ) );
-		return '' !== $head ? $head : $branch;
+	private function first_non_empty( array $input, array $keys ): ?string {
+		foreach ( $keys as $key ) {
+			$value = trim( (string) ( $input[ $key ] ?? '' ) );
+			if ( '' !== $value ) {
+				return $value;
+			}
+		}
+
+		return null;
+	}
+
+	private function normalize_repo_slug( string $repo ): ?string {
+		$repo = trim($repo);
+		if ( ! preg_match('#^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$#', $repo) ) {
+			return null;
+		}
+
+		return $repo;
 	}
 
 	/**
