@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.7] - 2026-06-17
+
+### Changed
+- Refactor shared worktree cleanup primitives
+- Refactor CLI JSON rendering through shared renderer
+- Fail closed on cleanup state persistence errors
+- Refactor git probe helpers
+
 ## [0.48.6] - 2026-06-17
 
 ### Changed
