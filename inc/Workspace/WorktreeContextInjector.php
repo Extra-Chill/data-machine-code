@@ -169,6 +169,16 @@ class WorktreeContextInjector {
 	private const MEMORY_FILES = array( 'MEMORY.md', 'USER.md', 'RULES.md' );
 
 	/**
+	 * Filterable registry hook for worktree context projection targets.
+	 */
+	public const PROJECTION_TARGETS_FILTER = 'datamachine_code_worktree_context_projection_targets';
+
+	/**
+	 * Filterable registry hook for projection cleanup markers.
+	 */
+	public const PROJECTION_CLEANUP_FILTER = 'datamachine_code_worktree_context_projection_cleanup';
+
+	/**
 	 * Site-provided sections that should be visible before long memory snapshots.
 	 */
 	private const PRIORITY_RULE_SECTIONS = array( 'Minion Session Routing' );
@@ -1085,46 +1095,24 @@ class WorktreeContextInjector {
 			);
 		}
 
-		$body    = self::render($payload);
-		$written = array();
+		$written         = array();
+		$exclude_entries = array();
 
-		foreach ( self::INJECTED_PATHS as $relative ) {
-			$abs = rtrim($worktree_path, '/') . '/' . $relative;
-			$dir = dirname($abs);
-			if ( ! is_dir($dir) ) {
-                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir
-				if ( ! wp_mkdir_p($dir) ) {
-					return new \WP_Error(
-						'mkdir_failed',
-						sprintf('Failed to create directory: %s', $dir),
-						array( 'status' => 500 )
-					);
-				}
+		foreach ( self::get_projection_targets($payload) as $target ) {
+			if ( ! is_array($target) ) {
+				continue;
 			}
-         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-			$bytes = file_put_contents($abs, $body);
-			if ( false === $bytes ) {
-				return new \WP_Error(
-					'write_failed',
-					sprintf('Failed to write injected file: %s', $abs),
-					array( 'status' => 500 )
-				);
+
+			$result = self::project_context_target($worktree_path, $payload, $target);
+			if ( is_wp_error($result) ) {
+				return $result;
 			}
-			$written[] = $abs;
-		}
 
-		$agents_projection = self::project_site_agents_md($worktree_path, $payload);
-		if ( is_wp_error($agents_projection) ) {
-			return $agents_projection;
-		}
-		$written = array_merge($written, $agents_projection);
-
-		$exclude_entries = self::INJECTED_PATHS;
-		if ( ! empty($agents_projection) ) {
-			$exclude_entries[] = self::PROJECTED_AGENTS_PATH;
-			$exclude_entries[] = self::PROJECTED_AGENTS_MARKER_PATH;
-			$exclude_entries[] = self::PROJECTED_OPENCODE_CONFIG_PATH;
-			$exclude_entries[] = self::PROJECTED_OPENCODE_CONFIG_MARKER_PATH;
+			$target_written = $result['written'] ?? array();
+			$written        = array_merge($written, $target_written);
+			if ( ! empty($result['exclude']) ) {
+				$exclude_entries = array_merge($exclude_entries, $result['exclude']);
+			}
 		}
 
 		$exclude_path = self::append_exclude_entries($worktree_path, $exclude_entries);
@@ -1134,6 +1122,162 @@ class WorktreeContextInjector {
 			'written'      => $written,
 			'exclude_path' => $exclude_path,
 		);
+	}
+
+	/**
+	 * Return registered worktree context projection targets.
+	 *
+	 * Registry entry shape:
+	 * - `path`: relative file path for rendered payload writes.
+	 * - `renderer`: optional callable receiving payload and returning string.
+	 * - `projector`: optional callable receiving worktree path and payload.
+	 * - `exclude`: bool or relative path list to add to per-checkout exclude.
+	 * - `exclude_paths`: relative path list added when a projector writes files.
+	 *
+	 * @param  array $payload Payload from {@see self::build_payload()}.
+	 * @return array<string,array<string,mixed>> Projection target registry.
+	 */
+	public static function get_projection_targets( array $payload = array() ): array {
+		$targets = array(
+			'claude_local_context' => array(
+				'path'     => self::INJECTED_PATHS[0],
+				'renderer' => array( self::class, 'render' ),
+				'exclude'  => true,
+			),
+			'site_agents_md'       => array(
+				'projector'     => array( self::class, 'project_site_agents_md' ),
+				'exclude_paths' => array(
+					self::PROJECTED_AGENTS_PATH,
+					self::PROJECTED_AGENTS_MARKER_PATH,
+					self::PROJECTED_OPENCODE_CONFIG_PATH,
+					self::PROJECTED_OPENCODE_CONFIG_MARKER_PATH,
+				),
+			),
+		);
+
+		if ( function_exists('apply_filters') ) {
+			$targets = apply_filters(self::PROJECTION_TARGETS_FILTER, $targets, $payload);
+		}
+
+		return is_array($targets) ? $targets : array();
+	}
+
+	/**
+	 * Return registered cleanup handlers and marker paths.
+	 *
+	 * @return array<string,array<string,mixed>> Projection cleanup registry.
+	 */
+	public static function get_projection_cleanup_registry(): array {
+		$cleanup = array(
+			'site_agents_md'       => array(
+				'cleanup' => array( self::class, 'cleanup_site_agents_projection' ),
+			),
+			'opencode_config'      => array(
+				'cleanup' => array( self::class, 'cleanup_opencode_projection' ),
+			),
+			'claude_local_context' => array(
+				'paths' => self::INJECTED_PATHS,
+			),
+			'legacy_opencode'      => array(
+				'paths' => self::LEGACY_INJECTED_PATHS,
+			),
+		);
+
+		if ( function_exists('apply_filters') ) {
+			$cleanup = apply_filters(self::PROJECTION_CLEANUP_FILTER, $cleanup);
+		}
+
+		return is_array($cleanup) ? $cleanup : array();
+	}
+
+	/**
+	 * Apply one projection target from the registry.
+	 *
+	 * @param  string $worktree_path Absolute path to the worktree directory.
+	 * @param  array  $payload       Payload from {@see self::build_payload()}.
+	 * @param  array  $target        Projection target configuration.
+	 * @return array{written:string[],exclude:string[]}|\WP_Error Projection result.
+	 */
+	private static function project_context_target( string $worktree_path, array $payload, array $target ): array|\WP_Error {
+		$written = array();
+		$exclude = array();
+
+		if ( isset($target['path']) && is_string($target['path']) && '' !== trim($target['path']) ) {
+			$renderer = $target['renderer'] ?? array( self::class, 'render' );
+			if ( ! is_callable($renderer) ) {
+				return new \WP_Error('context_projection_renderer_invalid', 'Context projection renderer is not callable.', array( 'status' => 500 ));
+			}
+
+			$body = call_user_func($renderer, $payload, $worktree_path, $target);
+			if ( ! is_string($body) ) {
+				return new \WP_Error('context_projection_renderer_invalid', 'Context projection renderer must return a string.', array( 'status' => 500 ));
+			}
+
+			$result = self::write_projection_file($worktree_path, $target['path'], $body);
+			if ( is_wp_error($result) ) {
+				return $result;
+			}
+			$written[] = $result;
+
+			if ( true === ( $target['exclude'] ?? false ) ) {
+				$exclude[] = $target['path'];
+			}
+		}
+
+		if ( isset($target['projector']) ) {
+			if ( ! is_callable($target['projector']) ) {
+				return new \WP_Error('context_projection_projector_invalid', 'Context projection projector is not callable.', array( 'status' => 500 ));
+			}
+
+			$result = call_user_func($target['projector'], $worktree_path, $payload, $target);
+			if ( is_wp_error($result) ) {
+				return $result;
+			}
+			if ( ! is_array($result) ) {
+				return new \WP_Error('context_projection_projector_invalid', 'Context projection projector must return an array of written paths.', array( 'status' => 500 ));
+			}
+			$written = array_merge($written, array_values($result));
+
+			if ( ! empty($result) && ! empty($target['exclude_paths']) && is_array($target['exclude_paths']) ) {
+				$exclude = array_merge($exclude, array_values($target['exclude_paths']));
+			}
+		}
+
+		if ( isset($target['exclude']) && is_array($target['exclude']) ) {
+			$exclude = array_merge($exclude, array_values($target['exclude']));
+		}
+
+		return array(
+			'written' => $written,
+			'exclude' => $exclude,
+		);
+	}
+
+	/**
+	 * Write a generated projection file under a worktree.
+	 *
+	 * @param  string $worktree_path Absolute path to the worktree directory.
+	 * @param  string $relative      Relative projection path.
+	 * @param  string $body          Projection content.
+	 * @return string|\WP_Error Absolute written path or error.
+	 */
+	private static function write_projection_file( string $worktree_path, string $relative, string $body ): string|\WP_Error {
+		$abs = rtrim($worktree_path, '/') . '/' . ltrim($relative, '/');
+		$dir = dirname($abs);
+		if ( ! is_dir($dir) ) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir
+			if ( ! wp_mkdir_p($dir) ) {
+				return new \WP_Error('mkdir_failed', sprintf('Failed to create directory: %s', $dir), array( 'status' => 500 ));
+			}
+		}
+
+     // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+		$bytes = file_put_contents($abs, $body);
+		if ( false === $bytes ) {
+			return new \WP_Error('write_failed', sprintf('Failed to write injected file: %s', $abs), array( 'status' => 500 ));
+		}
+
+		return $abs;
 	}
 
 	/**
@@ -1327,6 +1471,38 @@ class WorktreeContextInjector {
 	 * @return array{success: bool, removed: string[]}
 	 */
 	public static function uninject( string $worktree_path ): array {
+		$removed = array();
+
+		foreach ( self::get_projection_cleanup_registry() as $entry ) {
+			if ( ! is_array($entry) ) {
+				continue;
+			}
+
+			if ( isset($entry['cleanup']) && is_callable($entry['cleanup']) ) {
+				$result = call_user_func($entry['cleanup'], $worktree_path, $entry);
+				if ( is_array($result) ) {
+					$removed = array_merge($removed, array_values($result));
+				}
+			}
+
+			if ( ! empty($entry['paths']) && is_array($entry['paths']) ) {
+				$removed = array_merge($removed, self::remove_projection_paths($worktree_path, $entry['paths']));
+			}
+		}
+
+		return array(
+			'success' => true,
+			'removed' => $removed,
+		);
+	}
+
+	/**
+	 * Remove DMC-owned AGENTS.md projections from a worktree.
+	 *
+	 * @param  string $worktree_path Worktree directory.
+	 * @return string[] Removed absolute paths.
+	 */
+	private static function cleanup_site_agents_projection( string $worktree_path ): array {
 		$removed           = array();
 		$projected_agents  = rtrim($worktree_path, '/') . '/' . self::PROJECTED_AGENTS_PATH;
 		$projection_marker = rtrim($worktree_path, '/') . '/' . self::PROJECTED_AGENTS_MARKER_PATH;
@@ -1358,6 +1534,17 @@ class WorktreeContextInjector {
 			$removed[] = $projection_marker;
 		}
 
+		return $removed;
+	}
+
+	/**
+	 * Restore or remove DMC-owned OpenCode config projections from a worktree.
+	 *
+	 * @param  string $worktree_path Worktree directory.
+	 * @return string[] Removed absolute paths.
+	 */
+	private static function cleanup_opencode_projection( string $worktree_path ): array {
+		$removed         = array();
 		$opencode_config = rtrim($worktree_path, '/') . '/' . self::PROJECTED_OPENCODE_CONFIG_PATH;
 		$opencode_marker = rtrim($worktree_path, '/') . '/' . self::PROJECTED_OPENCODE_CONFIG_MARKER_PATH;
 		if ( is_file($opencode_marker) ) {
@@ -1376,7 +1563,19 @@ class WorktreeContextInjector {
 			$removed[] = $opencode_marker;
 		}
 
-		foreach ( array_merge(self::INJECTED_PATHS, self::LEGACY_INJECTED_PATHS) as $relative ) {
+		return $removed;
+	}
+
+	/**
+	 * Remove relative projection paths from a worktree.
+	 *
+	 * @param  string   $worktree_path Worktree directory.
+	 * @param  string[] $paths         Relative paths to remove.
+	 * @return string[] Removed absolute paths.
+	 */
+	private static function remove_projection_paths( string $worktree_path, array $paths ): array {
+		$removed = array();
+		foreach ( $paths as $relative ) {
 			$abs = rtrim($worktree_path, '/') . '/' . $relative;
 			if ( is_file($abs) ) {
                 // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes DMC-injected local-only context files from a worktree.
@@ -1385,10 +1584,7 @@ class WorktreeContextInjector {
 			}
 		}
 
-		return array(
-			'success' => true,
-			'removed' => $removed,
-		);
+		return $removed;
 	}
 
 	/**
