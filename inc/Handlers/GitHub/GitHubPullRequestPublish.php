@@ -220,33 +220,21 @@ class GitHubPullRequestPublish extends PublishHandler {
 		$pull_number = (int) ( $result['pull_number'] ?? 0 );
 
 		$labels         = $this->resolveListParameter($parameters['labels'] ?? null, $handler_config['labels'] ?? '');
-		$applied_labels = array();
-		$label_error    = null;
+		$labeling       = is_array($result['labeling'] ?? null) ? $result['labeling'] : null;
+		$applied_labels = is_array($labeling['applied_labels'] ?? null) ? $labeling['applied_labels'] : array();
+		$label_error    = is_array($labeling) && false === ( $labeling['success'] ?? true ) ? (string) ( $labeling['error'] ?? '' ) : null;
 
-		if ( ! empty($labels) && $pull_number > 0 ) {
-			$label_result = GitHubAbilities::addLabels(
+		if ( null !== $label_error ) {
+			$this->log(
+				'warning',
+				'GitHub Pull Request opened but failed to apply labels: ' . $label_error,
 				array(
+					'job_id'      => $parameters['job_id'] ?? null,
 					'repo'        => $repo,
 					'pull_number' => $pull_number,
-					'labels'      => $labels,
+					'labels'      => $labeling['labels'] ?? $labels,
 				)
 			);
-
-			if ( is_wp_error($label_result) ) {
-				$label_error = $label_result->get_error_message();
-				$this->log(
-					'warning',
-					'GitHub Pull Request opened but failed to apply labels: ' . $label_error,
-					array(
-						'job_id'      => $parameters['job_id'] ?? null,
-						'repo'        => $repo,
-						'pull_number' => $pull_number,
-						'labels'      => $labels,
-					)
-				);
-			} else {
-				$applied_labels = $label_result['applied_labels'] ?? array();
-			}
 		}
 
 		$response_data = array(
