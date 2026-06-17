@@ -82,6 +82,7 @@ final class Datamachine_Code_Test_Wpdb {
 	public string $last_error = '';
 	public int $insert_id = 0;
 	public int $rows_affected = 0;
+	public int $get_row_calls = 0;
 
 	/** @var array<string,array<string,mixed>> */
 	public array $rows = array();
@@ -130,6 +131,17 @@ final class Datamachine_Code_Test_Wpdb {
 
 	public function get_results( string $sql, string $output = ARRAY_A ): array {
 		return array_values($this->rows);
+	}
+
+	public function get_row( string $sql, string $output = ARRAY_A ): ?array {
+		++$this->get_row_calls;
+		foreach ( $this->rows as $handle => $row ) {
+			if ( str_contains($sql, (string) $handle) ) {
+				return $row;
+			}
+		}
+
+		return null;
 	}
 
 	public function prepare( string $query, mixed ...$args ): string {
@@ -225,6 +237,7 @@ try {
 
 	$show = $workspace->show_repo('homeboy@audit-primitives-20260616');
 	assert_true(! is_wp_error($show), 'persisted worktree is not visible to show_repo');
+	assert_true(0 < $wpdb->get_row_calls, 'persisted worktree metadata did not use direct inventory lookup');
 
 	$list    = $workspace->worktree_list('homeboy', null, array( 'include_status' => false, 'include_disk' => false ));
 	$handles = array_map(static fn( array $row ): string => (string) $row['handle'], $list['worktrees'] ?? array());

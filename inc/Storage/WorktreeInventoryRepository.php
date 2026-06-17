@@ -130,6 +130,37 @@ class WorktreeInventoryRepository {
 	}
 
 	/**
+	 * Fetch one inventory row by handle.
+	 *
+	 * @return array<string,mixed>|null
+	 */
+	public function get( string $handle ): ?array {
+		global $wpdb;
+
+		$handle = trim($handle);
+		if ( '' === $handle || ! isset($wpdb) ) {
+			return null;
+		}
+
+		if ( method_exists($wpdb, 'get_row') && method_exists($wpdb, 'prepare') ) {
+			$table = self::table_name();
+			$row   = $wpdb->get_row(
+				$wpdb->prepare('SELECT * FROM %i WHERE handle = %s LIMIT 1', $table, $handle),
+				ARRAY_A
+			);
+			return is_array($row) ? $this->decode_row($row) : null;
+		}
+
+		foreach ( $this->list() as $row ) {
+			if ( (string) ( $row['handle'] ?? '' ) === $handle ) {
+				return $row;
+			}
+		}
+
+		return null;
+	}
+
+	/**
 	 * Mark a known row as missing on disk instead of dropping it silently.
 	 */
 	public function mark_missing( string $handle ): bool {
