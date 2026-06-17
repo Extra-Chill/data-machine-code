@@ -13,6 +13,7 @@ namespace DataMachineCode\Cli\Commands;
 
 use WP_CLI;
 use DataMachine\Cli\BaseCommand;
+use DataMachineCode\Cli\CliResponseRenderer;
 use DataMachineCode\Abilities\GitHubAbilities;
 use DataMachineCode\GitHub\PrReviewFlowInstaller;
 use DataMachineCode\GitHub\PrReviewFlowScaffold;
@@ -86,7 +87,7 @@ class GitHubCommand extends BaseCommand {
 		$format = $assoc_args['format'] ?? 'table';
 
 		if ( 'json' === $format ) {
-			WP_CLI::line( (string) \wp_json_encode($result, JSON_PRETTY_PRINT));
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -110,7 +111,7 @@ class GitHubCommand extends BaseCommand {
 			);
 		}
 
-		$this->format_items($items, array( 'number', 'state', 'title', 'labels', 'comments', 'created_at' ), $assoc_args);
+		$this->renderer()->items($items, array( 'number', 'state', 'title', 'labels', 'comments', 'created_at' ), $assoc_args);
 		WP_CLI::log(sprintf('%d issue(s) returned.', count($items)));
 	}
 
@@ -163,7 +164,7 @@ class GitHubCommand extends BaseCommand {
 		$format = $assoc_args['format'] ?? 'table';
 
 		if ( 'json' === $format ) {
-			WP_CLI::line( (string) \wp_json_encode($result, JSON_PRETTY_PRINT));
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -351,7 +352,7 @@ class GitHubCommand extends BaseCommand {
 		$format = $assoc_args['format'] ?? 'table';
 
 		if ( 'json' === $format ) {
-			WP_CLI::line( (string) \wp_json_encode($result, JSON_PRETTY_PRINT));
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -381,7 +382,7 @@ class GitHubCommand extends BaseCommand {
 			);
 		}
 
-		$this->format_items($items, array( 'number', 'status', 'title', 'branch', 'user', 'created_at' ), $assoc_args);
+		$this->renderer()->items($items, array( 'number', 'status', 'title', 'branch', 'user', 'created_at' ), $assoc_args);
 		WP_CLI::log(sprintf('%d PR(s) returned.', count($items)));
 	}
 
@@ -568,7 +569,7 @@ class GitHubCommand extends BaseCommand {
 		$format = $assoc_args['format'] ?? 'table';
 
 		if ( 'json' === $format ) {
-			WP_CLI::line( (string) \wp_json_encode($result, JSON_PRETTY_PRINT));
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -591,8 +592,12 @@ class GitHubCommand extends BaseCommand {
 			);
 		}
 
-		$this->format_items($items, array( 'repo', 'language', 'stars', 'open_issues', 'private', 'last_push' ), $assoc_args);
+		$this->renderer()->items($items, array( 'repo', 'language', 'stars', 'open_issues', 'private', 'last_push' ), $assoc_args);
 		WP_CLI::log(sprintf('%d repo(s) returned.', count($items)));
+	}
+
+	private function renderer(): CliResponseRenderer {
+		return new CliResponseRenderer();
 	}
 
 	/**
