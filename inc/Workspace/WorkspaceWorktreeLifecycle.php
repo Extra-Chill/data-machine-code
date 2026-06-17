@@ -114,13 +114,30 @@ trait WorkspaceWorktreeLifecycle {
 		$disk_budget = WorktreeDiskBudget::inspect($this->workspace_path, WorktreeDiskBudget::thresholds($repo, $branch), $force);
 		if ( 'refused' === ( $disk_budget['status'] ?? '' ) ) {
 			$recommendations = array_map(
-				fn( $row ) => sprintf(
-					'%d. %s: %s (target reclaim: %s)',
-					(int) ( $row['priority'] ?? 0 ),
-					(string) ( $row['action'] ?? 'cleanup' ),
-					(string) ( $row['command'] ?? '' ),
-					(string) ( $row['expected_reclaim'] ?? 'unknown' )
-				),
+				static function ( $row ): string {
+					$commands = array_filter(
+						array(
+							'preview' => (string) ( $row['preview_command'] ?? $row['command'] ?? '' ),
+							'apply'   => (string) ( $row['apply_command'] ?? '' ),
+						)
+					);
+					$command_text = implode(
+						'; ',
+						array_map(
+							static fn( string $label, string $command ): string => sprintf('%s: %s', $label, $command),
+							array_keys($commands),
+							array_values($commands)
+						)
+					);
+
+					return sprintf(
+						'%d. %s: %s (target reclaim: %s)',
+						(int) ( $row['priority'] ?? 0 ),
+						(string) ( $row['action'] ?? 'cleanup' ),
+						$command_text,
+						(string) ( $row['expected_reclaim'] ?? 'unknown' )
+					);
+				},
 				(array) ( $disk_budget['cleanup_recommendations'] ?? array() )
 			);
 			return new \WP_Error(
