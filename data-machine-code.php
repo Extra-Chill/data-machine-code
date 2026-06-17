@@ -407,8 +407,7 @@ add_filter(
 			'task_params'     => array(
 				'source'          => 'recurring_schedule',
 				'include_cleanup' => true,
-				'include_sizes'   => true,
-				'size_limit'      => 200,
+				'include_sizes'   => false,
 			),
 		);
 		return $schedules;

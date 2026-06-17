@@ -1157,9 +1157,8 @@ class WorkspaceCommand extends BaseCommand {
 				$result  = $ability ? $ability->execute(
 				array(
 					'include_cleanup'         => true,
-					'include_sizes'           => true,
+					'include_sizes'           => false,
 					'include_worktree_status' => false,
-					'size_limit'              => 200,
 				)
 				) : new \WP_Error('workspace_hygiene_ability_missing', 'Workspace hygiene ability not registered.');
 				$this->render_workspace_hygiene_report_from_ability($result, $assoc_args);
@@ -2062,8 +2061,8 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--skip-cleanup]
 	 * : Skip the local cleanup dry-run summary.
 	 *
-	 * [--skip-sizes]
-	 * : Skip best-effort workspace size collection.
+	 * [--include-sizes]
+	 * : Include best-effort workspace size collection. This can be expensive on huge workspaces; combine with --size-limit.
 	 *
 	 * [--include-worktree-status]
 	 * : Include full per-worktree git status. This can be expensive on huge workspaces.
@@ -2093,7 +2092,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$input = array(
 			'include_cleanup'         => empty($assoc_args['skip-cleanup']),
-			'include_sizes'           => empty($assoc_args['skip-sizes']),
+			'include_sizes'           => ! empty($assoc_args['include-sizes']),
 			'include_worktree_status' => ! empty($assoc_args['include-worktree-status']),
 			'refresh_inventory'       => ! empty($assoc_args['refresh-inventory']),
 		);
@@ -4824,6 +4823,12 @@ class WorkspaceCommand extends BaseCommand {
 			WP_CLI::log('');
 			WP_CLI::log('Suggested cleanup review:');
 			WP_CLI::log( (string) $report['suggested_cleanup_command']);
+		}
+
+		if ( ! empty($report['suggested_size_command']) ) {
+			WP_CLI::log('');
+			WP_CLI::log('Suggested bounded size review:');
+			WP_CLI::log( (string) $report['suggested_size_command']);
 		}
 
 		foreach ( (array) ( $report['notes'] ?? array() ) as $note ) {
