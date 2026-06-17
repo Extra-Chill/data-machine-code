@@ -171,9 +171,11 @@ trait WorkspaceWorktreeInventoryCleanup {
 
 			$signal    = WorktreeCleanupSignal::from_metadata($metadata);
 			$candidate = array_merge(
-				$base_row, array(
-					'dirty'       => 0,
-				), WorktreeCleanupSignal::candidate_fields($signal ?? array(), true)
+				$base_row,
+				array(
+					'dirty' => 0,
+				),
+				WorktreeCleanupSignal::candidate_fields($signal ?? array(), true)
 			);
 			if ( null !== $age_decision ) {
 				$candidate['age_filter'] = $age_decision['age_filter'];

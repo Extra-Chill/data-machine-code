@@ -541,13 +541,15 @@ trait WorkspaceWorktreeCleanupEngine {
 				if ( 'unknown_age' === $age_decision['decision'] ) {
 					$skipped[] = array_merge(
 						array(
-							'handle'      => $handle,
-							'repo'        => $repo,
-							'branch'      => $branch,
-							'path'        => $wt_path,
-							'created_at'  => $created_at,
-							'metadata'    => $metadata,
-						), WorktreeAgeFilter::skip_fields($age_decision), $disk_fields
+							'handle'     => $handle,
+							'repo'       => $repo,
+							'branch'     => $branch,
+							'path'       => $wt_path,
+							'created_at' => $created_at,
+							'metadata'   => $metadata,
+						),
+						WorktreeAgeFilter::skip_fields($age_decision),
+						$disk_fields
 					);
 					continue;
 				}
@@ -555,13 +557,15 @@ trait WorkspaceWorktreeCleanupEngine {
 				if ( 'excluded' === $age_decision['decision'] ) {
 					$skipped[] = array_merge(
 						array(
-							'handle'      => $handle,
-							'repo'        => $repo,
-							'branch'      => $branch,
-							'path'        => $wt_path,
-							'created_at'  => $created_at,
-							'metadata'    => $metadata,
-						), WorktreeAgeFilter::skip_fields($age_decision), $disk_fields
+							'handle'     => $handle,
+							'repo'       => $repo,
+							'branch'     => $branch,
+							'path'       => $wt_path,
+							'created_at' => $created_at,
+							'metadata'   => $metadata,
+						),
+						WorktreeAgeFilter::skip_fields($age_decision),
+						$disk_fields
 					);
 					continue;
 				}
