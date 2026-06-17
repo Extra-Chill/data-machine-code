@@ -1365,7 +1365,7 @@ trait WorkspaceWorktreeLifecycle {
 			return null;
 		}
 
-		$removed_paths = $this->remove_directory_recursive($path, $this->workspace_path);
+		$removed_paths = $this->remove_contained_directory_recursive($path, $this->workspace_path, $this->workspace_path);
 		if ( $removed_paths instanceof \WP_Error ) {
 			return $removed_paths;
 		}

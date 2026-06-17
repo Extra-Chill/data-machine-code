@@ -2823,7 +2823,7 @@ trait WorkspaceWorktreeCleanupEngine {
 
 		$broken_marker = $this->classify_broken_orphan_worktree_marker($real_path);
 		if ( null !== $broken_marker ) {
-			$removed_paths = $this->remove_directory_recursive($real_path, $this->workspace_path);
+			$removed_paths = $this->remove_contained_directory_recursive($real_path, $this->workspace_path, $this->workspace_path);
 			if ( is_wp_error($removed_paths) ) {
 				return $removed_paths;
 			}

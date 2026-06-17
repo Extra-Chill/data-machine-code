@@ -850,6 +850,75 @@ trait WorkspaceCoreUtilities {
 	}
 
 	/**
+	 * Recursively remove an existing directory after validating containment.
+	 *
+	 * The target must be a real directory inside, but not equal to, the container.
+	 * Symlinks are unlinked as entries and never traversed.
+	 *
+	 * @param  string      $absolute      Absolute directory path to remove.
+	 * @param  string      $container     Parent directory that must contain the target.
+	 * @param  string|null $relative_base Base path used to report deleted relative paths.
+	 * @return array<int,string>|\WP_Error
+	 */
+	protected function remove_contained_directory_recursive( string $absolute, string $container, ?string $relative_base = null ): array|\WP_Error {
+		$validation = $this->validate_containment($absolute, $container);
+		if ( ! $validation['valid'] ) {
+			return new \WP_Error('path_traversal', (string) ( $validation['message'] ?? 'Path traversal detected. Access denied.' ), array( 'status' => 403 ));
+		}
+
+		$container_real = realpath($container);
+		$target_real    = (string) ( $validation['real_path'] ?? '' );
+		if ( false === $container_real || '' === $target_real || $target_real === $container_real ) {
+			return new \WP_Error('unsafe_delete_root', sprintf('Refusing to recursively delete container root: %s', $absolute), array( 'status' => 403 ));
+		}
+
+		if ( ! is_dir($target_real) || is_link($absolute) ) {
+			return new \WP_Error('not_a_directory', sprintf('Recursive delete target is not a directory: %s', $absolute), array( 'status' => 400 ));
+		}
+
+		$relative_base_real = realpath($relative_base ?? $container);
+		if ( false === $relative_base_real ) {
+			$relative_base_real = $container_real;
+		}
+
+		$deleted = array();
+		// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Failure is converted into a WP_Error below.
+		$entries = @scandir($target_real);
+		if ( false === $entries ) {
+			return new \WP_Error('scandir_failed', sprintf('Failed to read directory: %s', $target_real), array( 'status' => 500 ));
+		}
+
+		foreach ( $entries as $entry ) {
+			if ( '.' === $entry || '..' === $entry ) {
+				continue;
+			}
+
+			$child = $target_real . '/' . $entry;
+			if ( is_dir($child) && ! is_link($child) ) {
+				$nested = $this->remove_contained_directory_recursive($child, $container_real, $relative_base_real);
+				if ( is_wp_error($nested) ) {
+					return $nested;
+				}
+				$deleted = array_merge($deleted, $nested);
+			} else {
+				// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+				if ( ! unlink($child) ) {
+					return new \WP_Error('delete_failed', sprintf('Failed to delete file: %s', $child), array( 'status' => 500 ));
+				}
+				$deleted[] = ltrim(substr($child, strlen($relative_base_real)), '/');
+			}
+		}
+
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_rmdir
+		if ( ! rmdir($target_real) ) {
+			return new \WP_Error('delete_failed', sprintf('Failed to remove directory: %s', $target_real), array( 'status' => 500 ));
+		}
+
+		$deleted[] = ltrim(substr($target_real, strlen($relative_base_real)), '/');
+		return $deleted;
+	}
+
+	/**
 	 * Derive a repo name from a git URL.
 	 *
 	 * @param  string $url Git URL.
