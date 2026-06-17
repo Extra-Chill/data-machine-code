@@ -36,16 +36,7 @@ trait WorkspaceWorktreeInventoryCleanup {
 				return $duration_seconds;
 			}
 
-			$threshold_ts = time() - $duration_seconds;
-			$age_filter   = array(
-				'type'             => 'older_than',
-				'older_than'       => $older_than,
-				'duration_seconds' => $duration_seconds,
-				'threshold'        => gmdate('c', $threshold_ts),
-				'threshold_unix'   => $threshold_ts,
-				'excluded'         => 0,
-				'unknown_age'      => 0,
-			);
+			$age_filter = WorktreeAgeFilter::build($older_than, $duration_seconds);
 		}
 
 		$candidates = array();
@@ -117,56 +108,33 @@ trait WorkspaceWorktreeInventoryCleanup {
 				if ( $include_repaired_metadata && $repaired ) {
 					$age_decision = null;
 					if ( null !== $age_filter ) {
-						$created_ts = is_string($created_at) && '' !== $created_at ? strtotime($created_at) : false;
-						if ( false === $created_ts ) {
-							++$age_filter['unknown_age'];
+						$age_decision = WorktreeAgeFilter::decide($created_at, $age_filter);
+						if ( 'unknown_age' === $age_decision['decision'] ) {
 							$skipped[] = array_merge(
-								$base_row, array(
-									'reason_code' => 'unknown_age',
-									'reason'      => 'missing or invalid created_at metadata - age filter cannot decide safely',
-									'age_filter'  => array(
-										'type'       => 'older_than',
-										'older_than' => $age_filter['older_than'],
-										'threshold'  => $age_filter['threshold'],
-										'decision'   => 'unknown_age',
-									),
-								)
+								$base_row,
+								WorktreeAgeFilter::skip_fields($age_decision)
 							);
 							continue;
 						}
 
-						$age_decision = array(
-							'type'        => 'older_than',
-							'older_than'  => $age_filter['older_than'],
-							'threshold'   => $age_filter['threshold'],
-							'created_at'  => $created_at,
-							'age_seconds' => time() - $created_ts,
-						);
-						if ( $created_ts > $age_filter['threshold_unix'] ) {
-							++$age_filter['excluded'];
+						if ( 'excluded' === $age_decision['decision'] ) {
 							$skipped[] = array_merge(
-								$base_row, array(
-									'reason_code' => 'age_filter',
-									'reason'      => sprintf('created_at %s is newer than --older-than=%s threshold %s', $created_at, $age_filter['older_than'], $age_filter['threshold']),
-									'age_filter'  => array_merge($age_decision, array( 'decision' => 'excluded' )),
-								)
+								$base_row,
+								WorktreeAgeFilter::skip_fields($age_decision)
 							);
 							continue;
 						}
-						$age_decision['decision'] = 'included';
 					}
 
+					$signal    = WorktreeCleanupSignal::from_metadata($metadata, true);
 					$candidate = array_merge(
 						$base_row, array(
 							'dirty'         => 0,
-							'signal'        => 'repaired_metadata',
-							'reason_code'   => 'repaired_metadata',
-							'reason'        => 'operator-approved cleanup of repaired metadata',
 							'repair_status' => 'repaired_metadata',
-						)
+						), WorktreeCleanupSignal::candidate_fields($signal ?? array())
 					);
 					if ( null !== $age_decision ) {
-									$candidate['age_filter'] = $age_decision;
+						$candidate['age_filter'] = $age_decision['age_filter'];
 					}
 					$candidates[] = $candidate;
 					continue;
@@ -181,63 +149,36 @@ trait WorkspaceWorktreeInventoryCleanup {
 				continue;
 			}
 
+			$age_decision = null;
 			if ( null !== $age_filter ) {
-				$created_ts = is_string($created_at) && '' !== $created_at ? strtotime($created_at) : false;
-				if ( false === $created_ts ) {
-					++$age_filter['unknown_age'];
+				$age_decision = WorktreeAgeFilter::decide($created_at, $age_filter);
+				if ( 'unknown_age' === $age_decision['decision'] ) {
 					$skipped[] = array_merge(
-						$base_row, array(
-							'reason_code' => 'unknown_age',
-							'reason'      => 'missing or invalid created_at metadata - age filter cannot decide safely',
-							'age_filter'  => array(
-								'type'       => 'older_than',
-								'older_than' => $age_filter['older_than'],
-								'threshold'  => $age_filter['threshold'],
-								'decision'   => 'unknown_age',
-							),
-						)
+						$base_row,
+						WorktreeAgeFilter::skip_fields($age_decision)
 					);
 					continue;
 				}
 
-				if ( $created_ts > $age_filter['threshold_unix'] ) {
-					++$age_filter['excluded'];
+				if ( 'excluded' === $age_decision['decision'] ) {
 					$skipped[] = array_merge(
-						$base_row, array(
-							'reason_code' => 'age_filter',
-							'reason'      => sprintf('created_at %s is newer than --older-than=%s threshold %s', $created_at, $age_filter['older_than'], $age_filter['threshold']),
-							'age_filter'  => array(
-								'type'        => 'older_than',
-								'older_than'  => $age_filter['older_than'],
-								'threshold'   => $age_filter['threshold'],
-								'created_at'  => $created_at,
-								'age_seconds' => time() - $created_ts,
-								'decision'    => 'excluded',
-							),
-						)
+						$base_row,
+						WorktreeAgeFilter::skip_fields($age_decision)
 					);
 					continue;
 				}
 			}
 
+			$signal    = WorktreeCleanupSignal::from_metadata($metadata);
 			$candidate = array_merge(
-				$base_row, array(
-					'dirty'       => 0,
-					'signal'      => 'cleanup_eligible',
-					'reason_code' => 'cleanup_eligible',
-					'reason'      => 'worktree finalized or explicitly marked cleanup_eligible',
-					'pr_url'      => $metadata['pr_url'] ?? null,
-				)
+				$base_row,
+				array(
+					'dirty' => 0,
+				),
+				WorktreeCleanupSignal::candidate_fields($signal ?? array(), true)
 			);
-			if ( null !== $age_filter && is_string($created_at) && '' !== $created_at ) {
-				$candidate['age_filter'] = array(
-					'type'        => 'older_than',
-					'older_than'  => $age_filter['older_than'],
-					'threshold'   => $age_filter['threshold'],
-					'created_at'  => $created_at,
-					'age_seconds' => time() - (int) strtotime($created_at),
-					'decision'    => 'included',
-				);
+			if ( null !== $age_decision ) {
+				$candidate['age_filter'] = $age_decision['age_filter'];
 			}
 
 			$candidates[] = $candidate;

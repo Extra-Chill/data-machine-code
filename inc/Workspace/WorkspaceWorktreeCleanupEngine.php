@@ -124,16 +124,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				return $duration_seconds;
 			}
 
-			$threshold_ts = time() - $duration_seconds;
-			$age_filter   = array(
-				'type'             => 'older_than',
-				'older_than'       => $older_than,
-				'duration_seconds' => $duration_seconds,
-				'threshold'        => gmdate('c', $threshold_ts),
-				'threshold_unix'   => $threshold_ts,
-				'excluded'         => 0,
-				'unknown_age'      => 0,
-			);
+			$age_filter = WorktreeAgeFilter::build($older_than, $duration_seconds);
 		}
 
 		$listing = $this->worktree_list(
@@ -482,21 +473,8 @@ trait WorkspaceWorktreeCleanupEngine {
 				$fetched[ $repo ] = true;
 			}
 
-			$signal = null;
-			if ( is_array($metadata) && WorktreeContextInjector::has_cleanup_signal($metadata) ) {
-				$signal = array(
-					'signal' => 'cleanup_eligible',
-					'reason' => 'worktree finalized or explicitly marked cleanup_eligible',
-				);
-				if ( ! empty($metadata['pr_url']) ) {
-					$signal['pr_url'] = (string) $metadata['pr_url'];
-				}
-			} elseif ( $include_repaired_metadata && is_array($metadata) && ! empty($metadata['metadata_repaired']) ) {
-				$signal = array(
-					'signal' => 'repaired_metadata',
-					'reason' => 'operator-approved cleanup of repaired metadata',
-				);
-			} else {
+			$signal = is_array($metadata) ? WorktreeCleanupSignal::from_metadata($metadata, $include_repaired_metadata) : null;
+			if ( null === $signal ) {
 				$signal = $this->detect_merge_signal($primary_path, $repo, $branch, $skip_github, $github_cache);
 			}
 			if ( null === $signal ) {
@@ -559,58 +537,38 @@ trait WorkspaceWorktreeCleanupEngine {
 
 			$age_decision = null;
 			if ( null !== $age_filter ) {
-				$created_ts = is_string($created_at) && '' !== $created_at ? strtotime($created_at) : false;
-				if ( false === $created_ts ) {
-					++$age_filter['unknown_age'];
+				$age_decision = WorktreeAgeFilter::decide($created_at, $age_filter);
+				if ( 'unknown_age' === $age_decision['decision'] ) {
 					$skipped[] = array_merge(
 						array(
-							'handle'      => $handle,
-							'repo'        => $repo,
-							'branch'      => $branch,
-							'path'        => $wt_path,
-							'reason_code' => 'unknown_age',
-							'reason'      => 'missing or invalid created_at metadata - age filter cannot decide safely',
-							'created_at'  => $created_at,
-							'metadata'    => $metadata,
-							'age_filter'  => array(
-								'type'       => 'older_than',
-								'older_than' => $age_filter['older_than'],
-								'threshold'  => $age_filter['threshold'],
-								'decision'   => 'unknown_age',
-							),
-						), $disk_fields
+							'handle'     => $handle,
+							'repo'       => $repo,
+							'branch'     => $branch,
+							'path'       => $wt_path,
+							'created_at' => $created_at,
+							'metadata'   => $metadata,
+						),
+						WorktreeAgeFilter::skip_fields($age_decision),
+						$disk_fields
 					);
 					continue;
 				}
 
-				$age_seconds  = time() - $created_ts;
-				$age_decision = array(
-					'type'        => 'older_than',
-					'older_than'  => $age_filter['older_than'],
-					'threshold'   => $age_filter['threshold'],
-					'created_at'  => $created_at,
-					'age_seconds' => $age_seconds,
-				);
-
-				if ( $created_ts > $age_filter['threshold_unix'] ) {
-					++$age_filter['excluded'];
+				if ( 'excluded' === $age_decision['decision'] ) {
 					$skipped[] = array_merge(
 						array(
-							'handle'      => $handle,
-							'repo'        => $repo,
-							'branch'      => $branch,
-							'path'        => $wt_path,
-							'reason_code' => 'age_filter',
-							'reason'      => sprintf('created_at %s is newer than --older-than=%s threshold %s', $created_at, $age_filter['older_than'], $age_filter['threshold']),
-							'created_at'  => $created_at,
-							'metadata'    => $metadata,
-							'age_filter'  => array_merge($age_decision, array( 'decision' => 'excluded' )),
-						), $disk_fields
+							'handle'     => $handle,
+							'repo'       => $repo,
+							'branch'     => $branch,
+							'path'       => $wt_path,
+							'created_at' => $created_at,
+							'metadata'   => $metadata,
+						),
+						WorktreeAgeFilter::skip_fields($age_decision),
+						$disk_fields
 					);
 					continue;
 				}
-
-				$age_decision['decision'] = 'included';
 			}
 
 			$candidate = array_merge(
@@ -620,18 +578,14 @@ trait WorkspaceWorktreeCleanupEngine {
 					'branch'          => $branch,
 					'path'            => $wt_path,
 					'dirty'           => $dirty_count,
-					'signal'          => $signal['signal'],
-					'reason_code'     => $signal['signal'],
-					'reason'          => $signal['reason'],
 					'cleanup_reasons' => array_values(array_filter(array( $signal['signal'], $signal['reason'] ))),
-					'pr_url'          => $signal['pr_url'] ?? null,
 					'created_at'      => $created_at,
 					'liveness'        => $liveness,
 					'metadata'        => $metadata,
-				), $disk_fields
+				), WorktreeCleanupSignal::candidate_fields($signal, true), $disk_fields
 			);
 			if ( null !== $age_decision ) {
-				$candidate['age_filter'] = $age_decision;
+				$candidate['age_filter'] = $age_decision['age_filter'];
 			}
 			$candidates[] = $candidate;
 		}
