@@ -3404,7 +3404,15 @@ class WorkspaceAbilities {
 				),
 				'remote'                 => array(
 					'type'        => 'string',
-					'description' => 'Git remote name for local workspaces. Default origin.',
+					'description' => 'Git remote name for local workspaces. Default origin for same-repo heads or the head owner for owner:branch heads.',
+				),
+				'push_remote'            => array(
+					'type'        => 'string',
+					'description' => 'Explicit git remote to push before opening the pull request. Overrides remote.',
+				),
+				'push_branch'            => array(
+					'type'        => 'string',
+					'description' => 'Explicit branch name to push. Defaults to the pull request head branch without owner prefix.',
 				),
 				'allow_primary_mutation' => array(
 					'type'        => 'boolean',
