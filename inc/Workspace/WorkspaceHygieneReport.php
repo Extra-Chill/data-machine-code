@@ -85,6 +85,7 @@ trait WorkspaceHygieneReport {
 			'generated_at'              => gmdate('c'),
 			'workspace_path'            => $this->workspace_path,
 			'destructive'               => false,
+			'fast_stats'                => $this->build_workspace_fast_stats($worktrees, $cleanup, $size_report, $include_worktree_status),
 			'size'                      => $size_report,
 			'disk'                      => $this->build_workspace_disk_report(),
 			'inventory'                 => array(
@@ -397,7 +398,8 @@ trait WorkspaceHygieneReport {
 				'branch_slug'           => $parsed['branch_slug'],
 				'branch'                => is_array($metadata) && ! empty($metadata['branch']) ? (string) $metadata['branch'] : (string) ( $parsed['branch_slug'] ?? '' ),
 				'path'                  => $path,
-				'dirty'                 => 0,
+				'dirty'                 => null,
+				'git_marker_state'      => $this->workspace_entry_git_marker_state($kind, $path),
 				'created_at'            => is_array($metadata) ? ( $metadata['created_at'] ?? null ) : null,
 				'lifecycle_state'       => is_array($metadata) ? ( $metadata['lifecycle_state'] ?? null ) : null,
 				'pr_url'                => is_array($metadata) ? ( $metadata['pr_url'] ?? null ) : null,
@@ -711,6 +713,109 @@ trait WorkspaceHygieneReport {
 	}
 
 	/**
+	 * Build a cheap high-volume summary before expensive status probes finish.
+	 *
+	 * @param  array<int,array>       $worktrees               Cheap or full worktree rows.
+	 * @param  array<string,mixed>|null $cleanup               Inventory cleanup report.
+	 * @param  array<string,mixed>    $size_report             Bounded top-level size report.
+	 * @param  bool                   $include_worktree_status Whether dirty probes ran.
+	 * @return array<string,mixed>
+	 */
+	private function build_workspace_fast_stats( array $worktrees, ?array $cleanup, array $size_report, bool $include_worktree_status ): array {
+		$cleanup_candidates = (array) ( $cleanup['candidates'] ?? array() );
+		$cleanup_summary    = (array) ( $cleanup['summary'] ?? array() );
+		$safe_handles       = array();
+		foreach ( $cleanup_candidates as $candidate ) {
+			$handle = is_array($candidate) ? (string) ( $candidate['handle'] ?? '' ) : '';
+			if ( '' !== $handle ) {
+				$safe_handles[ $handle ] = true;
+			}
+		}
+
+		$counts = array(
+			'total_candidates'            => count($worktrees),
+			'safe_removable_count'        => count($cleanup_candidates),
+			'valid_clean_count'           => 0,
+			'valid_dirty_count'           => 0,
+			'invalid_broken_orphan_count' => 0,
+			'unmanaged_skipped_count'     => 0,
+			'dirty_probe_skipped_count'   => 0,
+			'known_worktree_count'        => 0,
+			'known_primary_count'         => 0,
+		);
+
+		foreach ( $worktrees as $row ) {
+			$kind         = (string) ( $row['kind'] ?? '' );
+			$is_primary   = ! empty($row['is_primary']);
+			$is_worktree  = ! empty($row['is_worktree']);
+			$marker_state = (string) ( $row['git_marker_state'] ?? ( $is_worktree || $is_primary ? 'unknown' : 'unmanaged' ) );
+
+			if ( $is_primary ) {
+				++$counts['known_primary_count'];
+				if ( ! in_array($marker_state, array( 'primary_git_dir', 'unknown' ), true) ) {
+					++$counts['invalid_broken_orphan_count'];
+				}
+				continue;
+			}
+
+			if ( ! $is_worktree ) {
+				if ( in_array($kind, array( 'artifact', 'other' ), true) ) {
+					++$counts['unmanaged_skipped_count'];
+				}
+				continue;
+			}
+
+			++$counts['known_worktree_count'];
+			if ( ! in_array($marker_state, array( 'worktree_git_file', 'unknown' ), true) ) {
+				++$counts['invalid_broken_orphan_count'];
+				continue;
+			}
+
+			$dirty = $row['dirty'] ?? null;
+			if ( null === $dirty ) {
+				++$counts['dirty_probe_skipped_count'];
+				if ( isset($safe_handles[ (string) ( $row['handle'] ?? '' ) ]) ) {
+					++$counts['valid_clean_count'];
+				}
+				continue;
+			}
+
+			if ( (int) $dirty > 0 ) {
+				++$counts['valid_dirty_count'];
+			} else {
+				++$counts['valid_clean_count'];
+			}
+		}
+
+		$blocked_dirty = (int) ( $cleanup_summary['skipped_by_reason']['dirty_worktree'] ?? 0 ) + (int) ( $cleanup_summary['skipped_by_reason']['unpushed_commits'] ?? 0 );
+		if ( $blocked_dirty > $counts['valid_dirty_count'] ) {
+			$counts['valid_dirty_count'] = $blocked_dirty;
+		}
+
+		$estimated_reclaimable = (int) ( $cleanup_summary['total_size_bytes'] ?? 0 );
+		if ( $estimated_reclaimable <= 0 ) {
+			foreach ( $cleanup_candidates as $candidate ) {
+				$estimated_reclaimable += max(0, (int) ( is_array($candidate) ? ( $candidate['size_bytes'] ?? 0 ) : 0 ));
+			}
+		}
+
+		return array(
+			'mode'                              => $include_worktree_status ? 'full_git_status' : 'cheap_metadata_first',
+			'partial'                           => ! $include_worktree_status || empty($size_report['scan_complete']),
+			'status_probe_required_for_summary' => false,
+			'counts'                            => $counts,
+			'estimated_reclaimable_bytes'       => $estimated_reclaimable,
+			'estimated_reclaimable_human'       => $this->format_bytes($estimated_reclaimable),
+			'top_disk_consumers'                => array_slice( (array) ( $size_report['top_entries'] ?? array() ), 0, 10),
+			'progress'                          => array(
+				'size_scanned_entries' => (int) ( $size_report['scanned_entries'] ?? 0 ),
+				'size_total_entries'   => (int) ( $size_report['total_entries'] ?? count($worktrees) ),
+				'size_scan_complete'   => (bool) ( $size_report['scan_complete'] ?? true ),
+			),
+		);
+	}
+
+	/**
 	 * Report whether DB cleanup storage tables are available for retention hooks.
 	 *
 	 * @return array<string,mixed>
@@ -942,6 +1047,32 @@ trait WorkspaceHygieneReport {
 		}
 
 		return '' !== (string) ( $parsed['repo'] ?? '' ) ? 'primary' : 'other';
+	}
+
+	/**
+	 * Classify a top-level entry's git marker using filesystem metadata only.
+	 *
+	 * @param  string $kind Entry kind.
+	 * @param  string $path Entry path.
+	 * @return string
+	 */
+	private function workspace_entry_git_marker_state( string $kind, string $path ): string {
+		$marker = rtrim($path, '/') . '/.git';
+		if ( 'worktree' === $kind ) {
+			if ( is_file($marker) ) {
+				return 'worktree_git_file';
+			}
+			if ( is_dir($marker) ) {
+				return 'primary_git_dir_in_worktree_slot';
+			}
+			return 'missing_git_marker';
+		}
+
+		if ( 'primary' === $kind ) {
+			return is_dir($marker) ? 'primary_git_dir' : 'missing_git_marker';
+		}
+
+		return 'unmanaged';
 	}
 
 	/**

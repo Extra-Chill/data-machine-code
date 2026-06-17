@@ -874,11 +874,22 @@ trait WorkspaceCoreUtilities {
 			return 0;
 		}
 
+		$status = $this->run_git($wt_path, 'status --porcelain=v1 --branch --untracked-files=no', $timeout_seconds);
+		if ( is_wp_error($status) ) {
+			return $this->is_git_timeout_error($status) ? $status : 0;
+		}
+
+		$header = strtok( (string) ( $status['output'] ?? '' ), "\n");
+		$header = false === $header ? '' : trim($header);
+		if ( preg_match('/ahead (\d+)/', $header, $ahead_match) ) {
+			return (int) $ahead_match[1];
+		}
+
 		// Prefer `@{push}` (respects push.default / push.remote mapping); fall
 		// back to `@{upstream}` for the common case where they're the same.
-		// Both expand to the tracked remote ref; if that ref is gone, this
-		// returns non-zero exit and we can't compute unpushed — treat as 0
-		// and let dirty / merge-signal checks handle it.
+		// Both expand to the tracked remote ref. If that ref is gone, fall back
+		// to the status header above: explicit ahead counts are protected, while
+		// clean upstream-gone worktrees can still use marker-independent cleanup.
 		$commands = array(
 			'rev-list --count @{push}..HEAD',
 			'rev-list --count @{upstream}..HEAD',
@@ -897,6 +908,10 @@ trait WorkspaceCoreUtilities {
 			if ( '' !== $output && ctype_digit($output) ) {
 				return (int) $output;
 			}
+		}
+
+		if ( ! str_contains($header, 'gone') && ! preg_match('/^## [^.\[]+$/', $header) ) {
+			return 0;
 		}
 
 		return 0;
