@@ -115,7 +115,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( 'refused' === ( $disk_budget['status'] ?? '' ) ) {
 			$recommendations = array_map(
 				static function ( $row ): string {
-					$commands = array_filter(
+					$commands     = array_filter(
 						array(
 							'preview' => (string) ( $row['preview_command'] ?? $row['command'] ?? '' ),
 							'apply'   => (string) ( $row['apply_command'] ?? '' ),
