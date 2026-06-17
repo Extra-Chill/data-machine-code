@@ -92,7 +92,9 @@ MD;
 	private static function register_datamachine_section( string $wp ): void {
 		self::register_section(
 			'AGENTS.md', 'datamachine-code', 10, function () use ( $wp ) {
-				$workspace_path = self::resolve_workspace_path();
+				$workspace_path           = self::resolve_workspace_path();
+				$workspace_policy_intro   = self::render_workspace_policy_intro($workspace_path);
+				$workspace_policy_section = self::render_workspace_policy_section($workspace_path, $wp);
 
 				// Generate DMC's own command surface from reflection so the lists
 				// never drift from the registered truth (see #671, #734). The
@@ -118,7 +120,7 @@ MD;
 				return <<<MD
 ## Data Machine Code
 
-All code changes happen in Data Machine Code worktrees under `{$workspace_path}`. DMC owns workspace lifecycle, evidence capture, and GitHub workflow glue; file CRUD inside a worktree uses whatever tool is fastest. Core's `datamachine` operating layer (memory, automation, communication, content ops, system) is documented in its own AGENTS.md section — run `{$wp} datamachine --help` to discover it.
+{$workspace_policy_intro}DMC owns workspace lifecycle, evidence capture, and GitHub workflow glue; file CRUD inside a worktree uses whatever tool is fastest. Core's `datamachine` operating layer (memory, automation, communication, content ops, system) is documented in its own AGENTS.md section — run `{$wp} datamachine --help` to discover it.
 
 - Workspace root: `{$workspace_path}`
 - **Workspace:** `{$wp} datamachine-code workspace {$workspace_subcmds}` — lifecycle (clone/adopt/list/show/path/hygiene/remove/worktree), plus the file-I/O surface you work through inside a worktree (`read`, `write`, `grep`, `edit`, `patch`, `ls`, `git`). Keeps the on-disk registry consistent and enforces the `<repo>@<slug>` handle convention.
@@ -126,9 +128,7 @@ All code changes happen in Data Machine Code worktrees under `{$workspace_path}`
 - **GitHub:** `{$wp} datamachine-code github {$github_subcmds}` — list/read GitHub state, manage issues and PRs, install review flows, and comment on reviews.
 - **Editing inside a worktree:** any tool. Local agents on the same disk should use native file I/O and raw `git`; routing edits through workspace abilities is ceremony, not safety.
 - **Workspace lifecycle:** use `workspace clone` for primary checkout adoption/cloning and `workspace worktree add` for isolated branches. Use the CLI `--help` output for current flags and subcommands.
-- **Primary freshness:** before using a primary checkout for investigation or verification, inspect `workspace list|show|hygiene` freshness metadata. If the primary is stale, run `workspace git pull <repo> --allow-primary-refresh` or create the worktree from an explicit remote ref with `worktree add <repo> <branch> --from=origin/<base>`. Stale primary reads require an explicit `--allow-stale-primary` opt-in. Do not clone a second top-level primary for the same remote just to get fresh code.
-- **Primary is read-only.** Never edit `<workspace>/<repo>` (no `@slug`). Safe primary refresh uses `--allow-primary-refresh`; primary commit, push, reset, and rebase require the stronger `--allow-dangerous-primary-mutation` approval. The primary tracks the deployed branch — operate on a worktree.
-- **Rule:** Never modify files under `wp-content/plugins/` or `wp-content/themes/` directly. Those paths are **read-only reference**. All code changes go through the workspace so they are tracked in git and reviewed via pull requests.
+{$workspace_policy_section}
 MD;
 			}, array(
 				'label'       => 'Data Machine Code',
@@ -138,6 +138,49 @@ MD;
 				'conditions'  => 'Always registered when Data Machine Code and composable memory section registration are available.',
 			)
 		);
+	}
+
+	private static function render_workspace_policy_intro( string $workspace_path ): string {
+		$default = "All code changes happen in Data Machine Code worktrees under `{$workspace_path}`. ";
+
+		/**
+		 * Filters the site-owned workspace policy sentence rendered before DMC command facts.
+		 *
+		 * @param string $default        Default policy markdown.
+		 * @param string $workspace_path Resolved DMC workspace root.
+		 */
+		$filtered = apply_filters('datamachine_code_workspace_policy_intro', $default, $workspace_path);
+		if ( ! is_string($filtered) ) {
+			return $default;
+		}
+
+		return $filtered;
+	}
+
+	private static function render_workspace_policy_section( string $workspace_path, string $wp ): string {
+		$default = <<<'MD'
+- **Primary freshness:** before using a primary checkout for investigation or verification, inspect `workspace list|show|hygiene` freshness metadata. If the primary is stale, run `workspace git pull <repo> --allow-primary-refresh` or create the worktree from an explicit remote ref with `worktree add <repo> <branch> --from=origin/<base>`. Stale primary reads require an explicit `--allow-stale-primary` opt-in. Do not clone a second top-level primary for the same remote just to get fresh code.
+- **Primary is read-only.** Never edit `<workspace>/<repo>` (no `@slug`). Safe primary refresh uses `--allow-primary-refresh`; primary commit, push, reset, and rebase require the stronger `--allow-dangerous-primary-mutation` approval. The primary tracks the deployed branch — operate on a worktree.
+- **Rule:** Never modify files under `wp-content/plugins/` or `wp-content/themes/` directly. Those paths are **read-only reference**. All code changes go through the workspace so they are tracked in git and reviewed via pull requests.
+MD;
+
+		/**
+		 * Filters site-owned workspace policy guidance rendered in AGENTS.md.
+		 *
+		 * Data Machine Code owns the workspace command facts above. Callers own
+		 * local policy, such as primary checkout mutability and read-only source
+		 * directory rules. Return an empty string to omit the policy block.
+		 *
+		 * @param string $default        Default policy markdown.
+		 * @param string $workspace_path Resolved DMC workspace root.
+		 * @param string $wp             WP-CLI command prefix.
+		 */
+		$filtered = apply_filters('datamachine_code_workspace_policy_section', $default, $workspace_path, $wp);
+		if ( ! is_string($filtered) ) {
+			return $default;
+		}
+
+		return trim($filtered);
 	}
 
 	private static function register_workspace_inventory_section( string $wp ): void {
