@@ -72,9 +72,12 @@
 
 namespace DataMachineCode\Runtime;
 
+use DataMachineCode\Workspace\WorkspaceHandle;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 
 defined('ABSPATH') || exit;
+
+require_once dirname(__DIR__) . '/Workspace/WorkspaceHandle.php';
 
 class ActiveWorkspaceProjector {
 
@@ -143,22 +146,20 @@ class ActiveWorkspaceProjector {
 	 * @return array<string,mixed>
 	 */
 	private static function build_entry( string $handle, array $overrides ): array {
-		$metadata   = WorktreeContextInjector::get_metadata($handle);
-		$is_primary = ! str_contains($handle, '@');
+		$metadata         = WorktreeContextInjector::get_metadata($handle);
+		$workspace_handle = WorkspaceHandle::parse($handle);
+		$is_primary       = ! $workspace_handle->is_worktree();
 
 		$entry = array(
 			'handle'  => $handle,
 			'primary' => $is_primary,
 		);
 
-		// Derive repo + branch from handle.
-		$handle_parts = explode('@', $handle, 2);
-		$repo_slug    = $handle_parts[0] ?? '';
-		if ( '' !== $repo_slug ) {
-			$entry['repo'] = $repo_slug;
+		if ( '' !== $workspace_handle->repo() ) {
+			$entry['repo'] = $workspace_handle->repo();
 		}
-		if ( ! $is_primary && isset($handle_parts[1]) && '' !== $handle_parts[1] ) {
-			$entry['branch'] = $handle_parts[1];
+		if ( null !== $workspace_handle->branch_slug() && '' !== $workspace_handle->branch_slug() ) {
+			$entry['branch'] = $workspace_handle->branch_slug();
 		}
 
 		// Enrich from persisted metadata.

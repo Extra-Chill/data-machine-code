@@ -12,6 +12,8 @@ use DataMachineCode\Abilities\WorkspaceAbilities;
 
 defined('ABSPATH') || exit;
 
+require_once __DIR__ . '/WorkspaceHandle.php';
+
 class RunnerWorkspacePublisher {
 
 	/**
@@ -227,11 +229,9 @@ class RunnerWorkspacePublisher {
 			}
 		}
 
-		if ( str_contains($handle, '@') ) {
-			$slug = substr($handle, (int) strpos($handle, '@') + 1);
-			if ( '' !== $slug ) {
-				return array( 'owner' => null, 'branch' => $slug );
-			}
+		$workspace_handle = WorkspaceHandle::parse($handle);
+		if ( null !== $workspace_handle->branch_slug() && '' !== $workspace_handle->branch_slug() ) {
+			return array( 'owner' => null, 'branch' => $workspace_handle->branch_slug() );
 		}
 
 		return new \WP_Error('runner_workspace_publish_missing_head_branch', 'A head branch/ref or branch context is required.', array( 'status' => 400 ));
