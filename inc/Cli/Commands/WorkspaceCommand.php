@@ -17,6 +17,7 @@ namespace DataMachineCode\Cli\Commands;
 
 use WP_CLI;
 use DataMachine\Cli\BaseCommand;
+use DataMachineCode\Cli\CliResponseRenderer;
 use DataMachineCode\Cli\CliRepeatableOptionParser;
 use DataMachineCode\Cleanup\CleanupRunEvidenceStoreInterface;
 use DataMachineCode\Cleanup\DataMachineJobCleanupRunEvidenceStore;
@@ -37,6 +38,26 @@ class WorkspaceCommand extends BaseCommand {
 	private const METADATA_RECONCILE_DEFAULT_LIMIT = 25;
 
 	private const METADATA_RECONCILE_DEFAULT_BUDGET = '30s';
+
+	private const WORKTREE_OPERATION_ABILITIES = array(
+		'add'                                     => 'datamachine-code/workspace-worktree-add',
+		'list'                                    => 'datamachine-code/workspace-worktree-list',
+		'remove'                                  => 'datamachine-code/workspace-worktree-remove',
+		'prune'                                   => 'datamachine-code/workspace-worktree-prune',
+		'cleanup'                                 => 'datamachine-code/workspace-worktree-cleanup',
+		'cleanup-artifacts'                       => 'datamachine-code/workspace-worktree-cleanup-artifacts',
+		'bounded-cleanup-eligible-apply'          => 'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply',
+		'emergency-cleanup'                       => 'datamachine-code/workspace-worktree-emergency-cleanup',
+		'reconcile-metadata'                      => 'datamachine-code/workspace-worktree-reconcile-metadata',
+		'active-no-signal-report'                 => 'datamachine-code/workspace-worktree-active-no-signal-report',
+		'active-no-signal-finalized-apply'        => 'datamachine-code/workspace-worktree-active-no-signal-finalized-apply',
+		'active-no-signal-equivalent-clean-apply' => 'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply',
+		'active-no-signal-merged-apply'           => 'datamachine-code/workspace-worktree-active-no-signal-merged-apply',
+		'active-no-signal-remote-clean-apply'     => 'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply',
+		'refresh-context'                         => 'datamachine-code/workspace-worktree-refresh-context',
+		'finalize'                                => 'datamachine-code/workspace-worktree-finalize',
+		'mark-cleanup-eligible'                   => 'datamachine-code/workspace-worktree-finalize',
+	);
 
 	private ?CleanupRunEvidenceStoreInterface $cleanup_run_evidence_store = null;
 
@@ -317,7 +338,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( 'json' === $format ) {
-			WP_CLI::log( (string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -409,7 +430,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( 'json' === $format ) {
-			WP_CLI::log( (string) wp_json_encode($summary, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			$this->renderer()->json($summary);
 			return;
 		}
 
@@ -1296,7 +1317,7 @@ class WorkspaceCommand extends BaseCommand {
 			$result = $this->build_cleanup_operator_summary($result);
 		}
 		if ( 'json' === $format ) {
-			WP_CLI::log( (string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			$this->renderer()->json($result);
 			return;
 		}
 		if ( 'yaml' === $format && class_exists('Spyc') ) {
@@ -1330,7 +1351,7 @@ class WorkspaceCommand extends BaseCommand {
 			$this->render_stale_lock_followup( (array) $result['locks']['stale_locks']);
 		}
 		if ( ! empty($result['evidence']) ) {
-			WP_CLI::log( (string) wp_json_encode($result['evidence'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			$this->renderer()->json($result['evidence']);
 		}
 	}
 
@@ -1796,7 +1817,7 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_cleanup_plan_result( array $result, array $assoc_args ): void {
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( 'json' === $format ) {
-			WP_CLI::log( (string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -2121,8 +2142,7 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -2731,7 +2751,7 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( 'json' === (string) ( $assoc_args['format'] ?? 'table' ) ) {
-			WP_CLI::log( (string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -3557,7 +3577,7 @@ class WorkspaceCommand extends BaseCommand {
 		if ( 'backfill-origin-session' === $operation ) {
 			$result = WorktreeContextInjector::backfill_legacy_origin_sessions( ! empty($assoc_args['apply']) );
 			if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-				WP_CLI::line( (string) wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) );
+				$this->renderer()->json($result);
 				return;
 			}
 
@@ -3588,26 +3608,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability_name = match ( $operation ) {
-			'add'                            => 'datamachine-code/workspace-worktree-add',
-			'list'                           => 'datamachine-code/workspace-worktree-list',
-			'remove'                         => 'datamachine-code/workspace-worktree-remove',
-			'prune'                          => 'datamachine-code/workspace-worktree-prune',
-			'cleanup'                        => 'datamachine-code/workspace-worktree-cleanup',
-			'cleanup-artifacts'              => 'datamachine-code/workspace-worktree-cleanup-artifacts',
-			'bounded-cleanup-eligible-apply' => 'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply',
-			'emergency-cleanup'              => 'datamachine-code/workspace-worktree-emergency-cleanup',
-			'reconcile-metadata'             => 'datamachine-code/workspace-worktree-reconcile-metadata',
-			'active-no-signal-report'        => 'datamachine-code/workspace-worktree-active-no-signal-report',
-			'active-no-signal-finalized-apply' => 'datamachine-code/workspace-worktree-active-no-signal-finalized-apply',
-			'active-no-signal-equivalent-clean-apply' => 'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply',
-			'active-no-signal-merged-apply'   => 'datamachine-code/workspace-worktree-active-no-signal-merged-apply',
-			'active-no-signal-remote-clean-apply' => 'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply',
-			'refresh-context'                => 'datamachine-code/workspace-worktree-refresh-context',
-			'finalize'                       => 'datamachine-code/workspace-worktree-finalize',
-			'mark-cleanup-eligible'          => 'datamachine-code/workspace-worktree-finalize',
-			default                          => '',
-		};
+		$ability_name = self::WORKTREE_OPERATION_ABILITIES[ $operation ] ?? '';
 
 		if ( '' === $ability_name ) {
 			WP_CLI::error(sprintf('Unknown worktree operation: %s', $operation));
@@ -3924,8 +3925,7 @@ class WorkspaceCommand extends BaseCommand {
 			if ( empty($assoc_args['verbose']) ) {
 				$result = $this->compact_worktree_abandoned_result($result);
 			}
-			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -4087,8 +4087,7 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function renderWorktreeResult( string $operation, array $result, array $assoc_args ): void {
 		if ( 'add' === $operation && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -4322,8 +4321,7 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function render_workspace_lock_result( array $result, array $assoc_args, bool $prune ): void {
 		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -4562,8 +4560,7 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_workspace_hygiene_report( array $report, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			$json = wp_json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
+			$this->renderer()->json($report);
 			return;
 		}
 
@@ -4817,8 +4814,7 @@ class WorkspaceCommand extends BaseCommand {
 		$report = $this->filter_worktree_cleanup_report($result, $only);
 
 		if ( 'json' === $format ) {
-			$json = wp_json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
+			$this->renderer()->json($report);
 			return;
 		}
 
@@ -5065,8 +5061,7 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_metadata_reconciliation_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -5254,8 +5249,7 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_active_no_signal_report_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -5345,8 +5339,7 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_active_no_signal_finalized_apply_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -5436,8 +5429,7 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_active_no_signal_equivalent_clean_apply_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -5527,8 +5519,7 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_active_no_signal_merged_apply_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -5618,8 +5609,7 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_active_no_signal_remote_clean_apply_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -5709,8 +5699,7 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_artifact_cleanup_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -5857,8 +5846,7 @@ class WorkspaceCommand extends BaseCommand {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
 			$report = ! empty($assoc_args['verbose']) ? $result : $this->compact_worktree_bounded_cleanup_eligible_apply_json($result);
-			$json   = wp_json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
+			$this->renderer()->json($report);
 			return;
 		}
 
@@ -6235,8 +6223,7 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_emergency_cleanup_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			$json = wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-			WP_CLI::log(false === $json ? '{}' : $json);
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -6621,6 +6608,10 @@ class WorkspaceCommand extends BaseCommand {
 		// No signal available (default base was origin/HEAD, or no upstream
 		// configured for the existing branch). Elide the line rather than
 		// print a potentially-misleading "up to date".
+	}
+
+	private function renderer(): CliResponseRenderer {
+		return new CliResponseRenderer();
 	}
 
 	/**
