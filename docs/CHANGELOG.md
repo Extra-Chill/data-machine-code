@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.3] - 2026-06-17
+
+### Fixed
+- verify worktree add persistence
+
 ## [0.48.2] - 2026-06-17
 
 ### Changed
