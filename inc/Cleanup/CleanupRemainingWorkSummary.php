@@ -177,8 +177,8 @@ class CleanupRemainingWorkSummary {
 		$summary['total_bytes_reclaimed']         = self::total_applied_bytes( (array) $summary['applied_by_type']);
 		$summary['remaining_safe_candidates']     = (int) ( $summary['remaining_safely_removable_worktrees'] ?? 0 );
 		$summary['protected_unpushed_candidates'] = self::reason_count($summary, 'unpushed_commits');
-		$summary['recommended_commands'] = self::recommended_commands($summary);
-		$summary['next_commands']        = self::next_commands( (array) $summary['recommended_commands']);
+		$summary['recommended_commands']          = self::recommended_commands($summary);
+		$summary['next_commands']                 = self::next_commands( (array) $summary['recommended_commands']);
 		return $summary;
 	}
 
