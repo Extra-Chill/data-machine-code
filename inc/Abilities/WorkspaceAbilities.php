@@ -565,15 +565,15 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'repo'    => array(
+							'repo'                   => array(
 								'type'        => 'string',
 								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
-							'path'    => array(
+							'path'                   => array(
 								'type'        => 'string',
 								'description' => 'Relative file path within the repo.',
 							),
-							'content' => array(
+							'content'                => array(
 								'type'        => 'string',
 								'description' => 'File content to write.',
 							),
@@ -608,39 +608,39 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'repo'        => array(
+							'repo'                   => array(
 								'type'        => 'string',
 								'description' => 'Workspace handle: `<repo>` (primary) or `<repo>@<branch-slug>` (worktree).',
 							),
-							'path'        => array(
+							'path'                   => array(
 								'type'        => 'string',
 								'description' => 'Relative file path within the repo.',
 							),
-							'old_string'  => array(
+							'old_string'             => array(
 								'type'        => 'string',
 								'description' => 'Text to find.',
 							),
-							'new_string'  => array(
+							'new_string'             => array(
 								'type'        => 'string',
 								'description' => 'Replacement text.',
 							),
-							'search'      => array(
+							'search'                 => array(
 								'type'        => 'string',
 								'description' => 'Alias for old_string.',
 							),
-							'replace'     => array(
+							'replace'                => array(
 								'type'        => 'string',
 								'description' => 'Alias for new_string.',
 							),
-							'old'         => array(
+							'old'                    => array(
 								'type'        => 'string',
 								'description' => 'Alias for old_string.',
 							),
-							'new'         => array(
+							'new'                    => array(
 								'type'        => 'string',
 								'description' => 'Alias for new_string.',
 							),
-							'replace_all' => array(
+							'replace_all'            => array(
 								'type'        => 'boolean',
 								'description' => 'Replace all occurrences (default false).',
 							),
@@ -1298,27 +1298,27 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'repo'           => array(
+							'repo'                       => array(
 								'type'        => 'string',
 								'description' => 'Primary repo name (no @-suffix).',
 							),
-							'branch'         => array(
+							'branch'                     => array(
 								'type'        => 'string',
 								'description' => 'Branch to check out in the worktree (e.g. fix/foo-bar). Slashes become dashes in the on-disk slug.',
 							),
-							'from'           => array(
+							'from'                       => array(
 								'type'        => 'string',
 								'description' => 'Base ref when creating the branch (default origin/HEAD).',
 							),
-							'inject_context' => array(
+							'inject_context'             => array(
 								'type'        => 'boolean',
 								'description' => 'Inject the originating site\'s agent context (MEMORY.md, USER.md, RULES.md) into the new worktree. Default true. Set false to create a bare worktree.',
 							),
-							'bootstrap'      => array(
+							'bootstrap'                  => array(
 								'type'        => 'boolean',
 								'description' => 'Run detected bootstrap steps (submodule init plus root or one-level nested package-manager/composer installs) after creating the worktree. Default true. Steps are skipped gracefully when their trigger file or tool is missing. Set false for a bare checkout (e.g. when only reading code).',
 							),
-							'allow_stale'    => array(
+							'allow_stale'                => array(
 								'type'        => 'boolean',
 								'description' => 'Bypass the staleness gate. When false (default), any branch/base behind the remote default branch is refused, and a new worktree more than `datamachine_worktree_stale_threshold` commits behind upstream is rolled back with a staleness error. Set true to opt in to a known-stale checkout.',
 							),
@@ -1326,19 +1326,19 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Bypass the fetch-failure freshness gate. When false (default), worktree creation is refused if remote freshness cannot be verified. Set true only for intentional offline work with local refs.',
 							),
-							'rebase_base'    => array(
+							'rebase_base'                => array(
 								'type'        => 'boolean',
 								'description' => 'After creating the worktree, rebase onto the upstream tip (the branch\'s @{upstream} for existing branches, origin/<base> for new branches off a local base). Default false. On rebase conflicts the rebase is aborted; the worktree stays at its pre-rebase state and `rebase_succeeded: false` is surfaced.',
 							),
-							'force'          => array(
+							'force'                      => array(
 								'type'        => 'boolean',
 								'description' => 'Explicitly bypass the disk-budget refusal threshold. The disk-budget report still appears in output so the override is visible.',
 							),
-							'task_url'       => array(
+							'task_url'                   => array(
 								'type'        => 'string',
 								'description' => 'Optional task/issue URL (e.g. GitHub issue link) to record on the worktree for ownership/duplicate detection. Falls back to DATAMACHINE_TASK_URL env when omitted.',
 							),
-							'task_ref'       => array(
+							'task_ref'                   => array(
 								'type'        => 'string',
 								'description' => 'Optional short task/issue reference (e.g. `org/repo#123`) recorded alongside task_url. Falls back to DATAMACHINE_TASK_REF env when omitted.',
 							),
@@ -2666,7 +2666,7 @@ class WorkspaceAbilities {
 		if ( is_wp_error($handle_check) ) {
 			return $handle_check;
 		}
-		$reader       = new WorkspaceReader($workspace);
+		$reader = new WorkspaceReader($workspace);
 		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
 			return $reader->read_file(
 				$input['repo'] ?? '',
@@ -2714,7 +2714,7 @@ class WorkspaceAbilities {
 		if ( is_wp_error($handle_check) ) {
 			return $handle_check;
 		}
-		$reader       = new WorkspaceReader($workspace);
+		$reader = new WorkspaceReader($workspace);
 		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
 			return $reader->list_directory(
 				$input['repo'] ?? '',
@@ -2753,7 +2753,7 @@ class WorkspaceAbilities {
 		if ( is_wp_error($handle_check) ) {
 			return $handle_check;
 		}
-		$reader       = new WorkspaceReader($workspace);
+		$reader = new WorkspaceReader($workspace);
 		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
 			return $reader->grep(
 				$input['repo'] ?? '',
