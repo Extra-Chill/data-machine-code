@@ -613,13 +613,9 @@ trait WorkspaceRepositoryLifecycle {
 			}
 		}
 
-		// Remove recursively.
-		$escaped = escapeshellarg($validation['real_path']);
-     // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		exec(sprintf('rm -rf %s 2>&1', $escaped), $output, $exit_code);
-
-		if ( 0 !== $exit_code ) {
-			return new \WP_Error('remove_failed', sprintf('Failed to remove (exit %d): %s', $exit_code, implode("\n", $output)), array( 'status' => 500 ));
+		$removed = $this->remove_contained_directory_recursive($validation['real_path'], $this->workspace_path, $this->workspace_path);
+		if ( is_wp_error($removed) ) {
+			return $removed;
 		}
 
 		// If we removed a worktree directory but didn't go through `git worktree remove`,

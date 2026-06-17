@@ -427,7 +427,7 @@ trait WorkspaceGitOperations {
 				$deleted[] = $relative;
 			}
 		} elseif ( $is_dir ) {
-			$removed = $this->remove_directory_recursive($absolute, $repo_path);
+			$removed = $this->remove_contained_directory_recursive($absolute, $repo_path, $repo_path);
 			if ( is_wp_error($removed) ) {
 				return $removed;
 			}
@@ -448,48 +448,6 @@ trait WorkspaceGitOperations {
 			'deleted'     => $deleted,
 			'was_tracked' => $is_tracked,
 		);
-	}
-
-	/**
-	 * Recursively remove an untracked directory under a repo, returning the
-	 * list of relative paths removed (deepest first).
-	 *
-	 * @param  string $absolute  Absolute path to remove.
-	 * @param  string $repo_path Repo root for relative-path computation.
-	 * @return array<int,string>|\WP_Error
-	 */
-	private function remove_directory_recursive( string $absolute, string $repo_path ): array|\WP_Error {
-		$deleted = array();
-        // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Failure is converted into a WP_Error below.
-		$entries = @scandir($absolute);
-		if ( false === $entries ) {
-			return new \WP_Error('scandir_failed', sprintf('Failed to read directory: %s', $absolute), array( 'status' => 500 ));
-		}
-		foreach ( $entries as $entry ) {
-			if ( '.' === $entry || '..' === $entry ) {
-				continue;
-			}
-			$child = $absolute . '/' . $entry;
-			if ( is_dir($child) && ! is_link($child) ) {
-				$nested = $this->remove_directory_recursive($child, $repo_path);
-				if ( is_wp_error($nested) ) {
-					return $nested;
-				}
-				$deleted = array_merge($deleted, $nested);
-			} else {
-                // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
-				if ( ! unlink($child) ) {
-					return new \WP_Error('delete_failed', sprintf('Failed to delete file: %s', $child), array( 'status' => 500 ));
-				}
-				$deleted[] = ltrim(substr($child, strlen($repo_path)), '/');
-			}
-		}
-     // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_rmdir
-		if ( ! rmdir($absolute) ) {
-			return new \WP_Error('delete_failed', sprintf('Failed to remove directory: %s', $absolute), array( 'status' => 500 ));
-		}
-		$deleted[] = ltrim(substr($absolute, strlen($repo_path)), '/');
-		return $deleted;
 	}
 
 	/**
