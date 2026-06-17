@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.11] - 2026-06-17
+
+### Changed
+- Add active no-signal triage preview
+- Make workspace hygiene size scans opt-in
+- Improve cleanup summary output
+
+### Fixed
+- Fix disk-budget refusal cleanup guidance
+
 ## [0.48.10] - 2026-06-17
 
 ### Fixed
