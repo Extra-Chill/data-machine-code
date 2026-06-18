@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.13] - 2026-06-18
+
+### Fixed
+- Fix local worktree remove routing
+
 ## [0.48.12] - 2026-06-17
 
 ### Changed
