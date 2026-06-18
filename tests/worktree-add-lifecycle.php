@@ -170,7 +170,9 @@ final class Datamachine_Code_Test_Wpdb {
 
 require_once dirname(__DIR__) . '/vendor/autoload.php';
 require_once dirname(__DIR__) . '/inc/Workspace/Workspace.php';
+require_once dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php';
 
+use DataMachineCode\Abilities\WorkspaceAbilities;
 use DataMachineCode\Workspace\Workspace;
 
 function run_command( string $command, ?string $cwd = null ): string {
@@ -242,6 +244,25 @@ try {
 	$list    = $workspace->worktree_list('homeboy', null, array( 'include_status' => false, 'include_disk' => false ));
 	$handles = array_map(static fn( array $row ): string => (string) $row['handle'], $list['worktrees'] ?? array());
 	assert_true(in_array('homeboy@audit-primitives-20260616', $handles, true), 'persisted worktree is not visible to worktree_list');
+
+	update_option(
+		'datamachine_code_remote_workspace_state',
+		array(
+			'repos' => array(
+				'other-repo' => array( 'repo' => 'owner/other-repo' ),
+			),
+		)
+	);
+	$removed = WorkspaceAbilities::worktreeRemove(
+		array(
+			'repo'   => 'homeboy',
+			'branch' => 'audit-primitives-20260616',
+			'force'  => true,
+		)
+	);
+	assert_true(! is_wp_error($removed), is_wp_error($removed) ? $removed->get_error_message() : 'worktreeRemove failed');
+	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-20260616'), 'local worktree remove did not remove the fixture path');
+	assert_true(! isset($wpdb->rows['homeboy@audit-primitives-20260616']), 'local worktree remove did not delete inventory row');
 
 	$failure_wpdb = new Datamachine_Code_Test_Wpdb();
 	$failure_wpdb->fail_replace = true;
