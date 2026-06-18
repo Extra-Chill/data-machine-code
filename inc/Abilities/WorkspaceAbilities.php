@@ -4013,18 +4013,30 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function worktreeRemove( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		$repo      = (string) ( $input['repo'] ?? '' );
+		$branch    = (string) ( $input['branch'] ?? '' );
+		$handle    = $repo . '@' . $workspace->slugify_branch($branch);
+
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, $handle) ) {
+			return $workspace->worktree_remove(
+				$repo,
+				$branch,
+				! empty($input['force'])
+			);
+		}
+
 		if ( RemoteWorkspaceBackend::has_registered_state() && RemoteWorkspaceBackend::should_handle() ) {
 			$result = ( new RemoteWorkspaceBackend() )->worktree_remove(
-				$input['repo'] ?? '',
-				$input['branch'] ?? ''
+				$repo,
+				$branch
 			);
 			return self::decorate_remote_workspace_result('worktree_remove', $result);
 		}
 
-		$workspace = new Workspace();
 		return $workspace->worktree_remove(
-			$input['repo'] ?? '',
-			$input['branch'] ?? '',
+			$repo,
+			$branch,
 			! empty($input['force'])
 		);
 	}
