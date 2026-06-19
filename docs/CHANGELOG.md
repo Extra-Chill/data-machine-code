@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.14] - 2026-06-19
+
+### Fixed
+- Fix mounted sandbox open_basedir probe
+
 ## [0.48.13] - 2026-06-18
 
 ### Fixed
