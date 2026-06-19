@@ -68,9 +68,30 @@ final class MountedSandboxBootstrap {
 			return array( 'workspace_root' => $workspace_root );
 		}
 
-		return is_dir(self::DEFAULT_WORKSPACE_ROOT)
+		return self::path_allowed_by_open_basedir(self::DEFAULT_WORKSPACE_ROOT) && is_dir(self::DEFAULT_WORKSPACE_ROOT)
 			? array( 'workspace_root' => self::DEFAULT_WORKSPACE_ROOT )
 			: array();
+	}
+
+	private static function path_allowed_by_open_basedir( string $path ): bool {
+		$open_basedir = ini_get('open_basedir');
+		if ( false === $open_basedir || '' === $open_basedir ) {
+			return true;
+		}
+
+		$path = rtrim($path, '/');
+		foreach ( explode(PATH_SEPARATOR, $open_basedir) as $allowed_path ) {
+			$allowed_path = rtrim($allowed_path, '/');
+			if ( '' === $allowed_path ) {
+				continue;
+			}
+
+			if ( $path === $allowed_path || str_starts_with($path . '/', $allowed_path . '/') ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/** @param array<string,mixed> $context */
