@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.17] - 2026-06-21
+
+### Changed
+- Use runtime workspace context for mounted runtimes
+
 ## [0.48.16] - 2026-06-21
 
 ### Changed
