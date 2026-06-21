@@ -617,7 +617,7 @@ trait WorkspaceMetadataReconciliation {
 			);
 		}
 
-		if ( ! empty($identity['detached_branch']) ) {
+		if ( ! empty($identity['detached_branch']) && ! $this->has_stored_lifecycle_finalizer_context($metadata) ) {
 			return $this->build_worktree_metadata_reconciliation_skip(
 				$base_row,
 				array(
@@ -644,7 +644,15 @@ trait WorkspaceMetadataReconciliation {
 			return $this->build_worktree_metadata_reconciliation_skip($base_row, $diagnostic);
 		}
 
-		$finalizer_signal = $this->detect_worktree_lifecycle_finalizer_signal($wt, $metadata, $github_cache, $fetched);
+		$resolved_wt       = array_merge(
+			$wt,
+			array(
+				'repo'   => $repo,
+				'branch' => $branch,
+				'path'   => $path,
+			)
+		);
+		$finalizer_signal = $this->detect_worktree_lifecycle_finalizer_signal($resolved_wt, $metadata, $github_cache, $fetched);
 		if ( null !== $finalizer_signal && 'probe-timeout' === ( $finalizer_signal['signal'] ?? '' ) ) {
 			return $this->build_worktree_metadata_reconciliation_skip(
 				$base_row,
@@ -670,6 +678,16 @@ trait WorkspaceMetadataReconciliation {
 			}
 
 			return $this->build_worktree_metadata_reconciliation_finalizer_proposal($base_row, $metadata, $handle, $repo, $branch, $path, $dirty, $unpushed, $finalizer_signal);
+		}
+
+		if ( $this->has_stored_lifecycle_finalizer_context($metadata) ) {
+			return $this->build_worktree_metadata_reconciliation_skip(
+				$base_row,
+				array(
+					'reason_code' => 'insufficient_finalizer_signal',
+					'reason'      => 'stored PR or finalizer metadata is present, but no definitive finalizer signal was available; leaving lifecycle unchanged',
+				)
+			);
 		}
 
 		$classification = $this->build_worktree_metadata_backfill_classification($metadata, $handle, $repo, $branch, $path);
@@ -980,6 +998,22 @@ trait WorkspaceMetadataReconciliation {
 	}
 
 	/**
+	 * Whether stored metadata indicates this row needs finalizer review, not active backfill.
+	 *
+	 * @param  array<string,mixed> $metadata Worktree metadata.
+	 * @return bool
+	 */
+	private function has_stored_lifecycle_finalizer_context( array $metadata ): bool {
+		foreach ( array( 'pr_url', 'pr_number', 'pr_repo', 'origin_task', 'finalized_state', 'cleanup_eligible_at' ) as $field ) {
+			if ( ! empty($metadata[ $field ]) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
 	 * Detect an unambiguous merge signal for lifecycle reconciliation.
 	 *
 	 * @param  array<string,mixed> $wt           Current worktree listing row.
@@ -991,6 +1025,11 @@ trait WorkspaceMetadataReconciliation {
 	private function detect_worktree_lifecycle_finalizer_signal( array $wt, array $metadata, array &$github_cache, array &$fetched ): ?array {
 		$repo         = (string) ( $wt['repo'] ?? '' );
 		$branch       = (string) ( $wt['branch'] ?? '' );
+		$pr_signal    = $this->detect_stored_pr_merged_signal($metadata, $github_cache);
+		if ( null !== $pr_signal ) {
+			return $pr_signal;
+		}
+
 		$primary_path = '' !== $repo ? $this->get_primary_path($repo) : '';
 		if ( '' === $repo || '' === $branch || ! is_dir($primary_path . '/.git') ) {
 			return null;
@@ -1005,11 +1044,6 @@ trait WorkspaceMetadataReconciliation {
 				);
 			}
 			$fetched[ $repo ] = true;
-		}
-
-		$pr_signal = $this->detect_stored_pr_merged_signal($metadata, $github_cache);
-		if ( null !== $pr_signal ) {
-			return $pr_signal;
 		}
 
 		$signal = $this->detect_merge_signal($primary_path, $repo, $branch, false, $github_cache);
