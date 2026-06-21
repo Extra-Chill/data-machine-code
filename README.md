@@ -295,7 +295,7 @@ if ( class_exists( '\DataMachineCode\Environment' ) ) {
 
 This is intentionally simpler than detecting WP.com vs VIP vs self-hosted vs CI vs Studio. What matters is which DMC subsystem the caller needs: API-first GitHub, writable filesystem projection, or shell-backed workspace/git.
 
-### Mounted Sandbox Runtime Context
+### Mounted Runtime Context
 
 Mounted runtimes can self-configure DMC by passing a context through `$GLOBALS['mounted_runtime_context']`, `$GLOBALS['wordpress_runtime_context']`, `MOUNTED_RUNTIME_CONTEXT`, or `MOUNTED_RUNTIME_WORKSPACE_ROOT`.
 
@@ -306,7 +306,7 @@ WP Codebox sandboxes may instead pass a versioned contract through `$GLOBALS['wp
   "schema": "wp-codebox/runtime-context/v1",
   "payload": {
     "workspace_root": "/workspace",
-    "sandbox_workspace": {
+    "runtime_workspace": {
       "root": "/workspace",
       "mounts": [
         { "target": "/workspace/example", "sourceMode": "mounted" }
@@ -316,7 +316,7 @@ WP Codebox sandboxes may instead pass a versioned contract through `$GLOBALS['wp
 }
 ```
 
-DMC unwraps the versioned `payload` to the same internal context shape as the generic mounted-runtime contract, so existing workspace root and mount adoption behavior stays shared.
+DMC unwraps the versioned `payload` to the same internal context shape as the generic mounted-runtime contract, so existing workspace root and mount adoption behavior stays shared. `runtime_workspace` is the canonical workspace object; `sandbox_workspace` is retained only as a deprecated compatibility alias.
 
 ## Roadmap
 
