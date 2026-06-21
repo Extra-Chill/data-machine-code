@@ -18,7 +18,6 @@ set_error_handler(
 );
 
 $method = new ReflectionMethod(DataMachineCode\Runtime\MountedSandboxBootstrap::class, 'discover_context');
-$method->setAccessible(true);
 $context = $method->invoke(null);
 
 restore_error_handler();

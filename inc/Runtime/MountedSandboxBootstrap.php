@@ -8,8 +8,13 @@
 namespace DataMachineCode\Runtime;
 
 use DataMachineCode\Abilities\WorkspaceAbilities;
+use DataMachineCode\Support\RuntimeCapabilities;
 
 defined('ABSPATH') || exit;
+
+if ( ! class_exists(RuntimeCapabilities::class) ) {
+	require_once dirname(__DIR__) . '/Support/RuntimeCapabilities.php';
+}
 
 final class MountedSandboxBootstrap {
 
@@ -48,18 +53,20 @@ final class MountedSandboxBootstrap {
 
 	/** @return array<string,mixed> */
 	private static function discover_context(): array {
-		foreach ( array( 'mounted_runtime_context', 'wordpress_runtime_context' ) as $global_key ) {
+		foreach ( array( 'wp_codebox_runtime_context', 'mounted_runtime_context', 'wordpress_runtime_context' ) as $global_key ) {
 			$context = $GLOBALS[ $global_key ] ?? null;
 			if ( is_array($context) ) {
-				return $context;
+				return self::normalize_context($context);
 			}
 		}
 
-		$encoded = getenv('MOUNTED_RUNTIME_CONTEXT');
-		if ( is_string($encoded) && '' !== $encoded ) {
-			$decoded = json_decode($encoded, true);
-			if ( is_array($decoded) ) {
-				return $decoded;
+		foreach ( array( 'WP_CODEBOX_RUNTIME_CONTEXT', 'MOUNTED_RUNTIME_CONTEXT' ) as $env_key ) {
+			$encoded = getenv($env_key);
+			if ( is_string($encoded) && '' !== $encoded ) {
+				$decoded = json_decode($encoded, true);
+				if ( is_array($decoded) ) {
+					return self::normalize_context($decoded);
+				}
 			}
 		}
 
@@ -71,6 +78,24 @@ final class MountedSandboxBootstrap {
 		return self::path_allowed_by_open_basedir(self::DEFAULT_WORKSPACE_ROOT) && is_dir(self::DEFAULT_WORKSPACE_ROOT)
 			? array( 'workspace_root' => self::DEFAULT_WORKSPACE_ROOT )
 			: array();
+	}
+
+	/**
+	 * @param array<string,mixed> $context
+	 * @return array<string,mixed>
+	 */
+	private static function normalize_context( array $context ): array {
+		$schema = (string) ( $context['schema'] ?? '' );
+		if ( ! RuntimeCapabilities::supports_runtime_context_schema($schema) ) {
+			return $context;
+		}
+
+		$payload = is_array($context['payload'] ?? null) ? $context['payload'] : $context;
+		if ( ! isset($payload['schema']) ) {
+			$payload['schema'] = $schema;
+		}
+
+		return $payload;
 	}
 
 	private static function path_allowed_by_open_basedir( string $path ): bool {

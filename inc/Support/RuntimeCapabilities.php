@@ -15,17 +15,24 @@ defined('ABSPATH') || exit;
 
 final class RuntimeCapabilities {
 
-
+	public const CODEBOX_RUNTIME_CONTEXT_SCHEMA = 'wp-codebox/runtime-context/v1';
 
 	/**
-	 * @var array<string,mixed>|null
+	 * @var array{ok: bool, reason: string, exec_available: bool, shell_exec_available: bool, proc_open_available: bool, output?: string, exit_code?: int|null}|null
 	 */
 	private static ?array $shell_diagnostic = null;
 
 	/**
-	 * @var array<string,array<string,mixed>>
+	 * @var array<string,array{binary: string, available: bool, path: string, exec_available: bool, exit_code: int|null}>
 	 */
 	private static array $binary_diagnostics = array();
+
+	/**
+	 * Whether a runtime context schema is a DMC-supported mounted runtime contract.
+	 */
+	public static function supports_runtime_context_schema( string $schema ): bool {
+		return self::CODEBOX_RUNTIME_CONTEXT_SCHEMA === $schema;
+	}
 
 	/**
 	 * Return the shell capability diagnostic for this request.
