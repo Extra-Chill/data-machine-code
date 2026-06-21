@@ -4,7 +4,7 @@
  */
 
 define('ABSPATH', __DIR__ . '/fixtures/wordpress/');
-require_once dirname(__DIR__) . '/inc/Runtime/MountedSandboxBootstrap.php';
+require_once dirname(__DIR__) . '/inc/Runtime/MountedRuntimeBootstrap.php';
 
 $warnings = array();
 set_error_handler(
@@ -17,7 +17,7 @@ set_error_handler(
 	}
 );
 
-$method = new ReflectionMethod(DataMachineCode\Runtime\MountedSandboxBootstrap::class, 'discover_context');
+$method = new ReflectionMethod(DataMachineCode\Runtime\MountedRuntimeBootstrap::class, 'discover_context');
 $context = $method->invoke(null);
 
 restore_error_handler();
@@ -28,8 +28,8 @@ if (array() !== $warnings) {
 }
 
 if (array() !== $context) {
-	fwrite(STDERR, 'Expected no mounted sandbox context when /workspace is outside open_basedir.' . PHP_EOL);
+	fwrite(STDERR, 'Expected no mounted runtime context when /workspace is outside open_basedir.' . PHP_EOL);
 	exit(1);
 }
 
-echo "Mounted sandbox open_basedir regression passed.\n";
+echo "Mounted runtime open_basedir regression passed.\n";

@@ -1,6 +1,6 @@
 <?php
 /**
- * Self-configuration for mounted sandbox runtimes.
+ * Self-configuration for mounted runtimes.
  *
  * @package DataMachineCode\Runtime
  */
@@ -16,7 +16,7 @@ if ( ! class_exists(RuntimeCapabilities::class) ) {
 	require_once dirname(__DIR__) . '/Support/RuntimeCapabilities.php';
 }
 
-final class MountedSandboxBootstrap {
+final class MountedRuntimeBootstrap {
 
 	private const DEFAULT_WORKSPACE_ROOT = '/workspace';
 
@@ -36,10 +36,10 @@ final class MountedSandboxBootstrap {
 	/**
 	 * Configure DMC from a generic mounted-runtime context.
 	 *
-	 * @param array<string,mixed> $context Runtime context supplied by the sandbox substrate.
+	 * @param array<string,mixed> $context Runtime context supplied by the mounted runtime substrate.
 	 */
 	public static function configure( array $context = array() ): void {
-		self::$context = $context;
+		self::$context = self::normalize_workspace_context($context);
 		self::configure_workspace_root($context);
 		self::force_mounted_workspace_backend();
 
@@ -87,7 +87,7 @@ final class MountedSandboxBootstrap {
 	private static function normalize_context( array $context ): array {
 		$schema = (string) ( $context['schema'] ?? '' );
 		if ( ! RuntimeCapabilities::supports_runtime_context_schema($schema) ) {
-			return $context;
+			return self::normalize_workspace_context($context);
 		}
 
 		$payload = is_array($context['payload'] ?? null) ? $context['payload'] : $context;
@@ -95,7 +95,23 @@ final class MountedSandboxBootstrap {
 			$payload['schema'] = $schema;
 		}
 
-		return $payload;
+		return self::normalize_workspace_context($payload);
+	}
+
+	/**
+	 * @param array<string,mixed> $context
+	 * @return array<string,mixed>
+	 */
+	private static function normalize_workspace_context( array $context ): array {
+		if ( ! is_array($context['runtime_workspace'] ?? null) && is_array($context['sandbox_workspace'] ?? null) ) {
+			$context['runtime_workspace'] = $context['sandbox_workspace'];
+		}
+
+		if ( ! is_array($context['sandbox_workspace'] ?? null) && is_array($context['runtime_workspace'] ?? null) ) {
+			$context['sandbox_workspace'] = $context['runtime_workspace'];
+		}
+
+		return $context;
 	}
 
 	private static function path_allowed_by_open_basedir( string $path ): bool {
@@ -182,7 +198,7 @@ final class MountedSandboxBootstrap {
 	private static function workspace_root_from_context( array $context ): string {
 		$root = isset($context['workspace_root']) ? (string) $context['workspace_root'] : '';
 		if ( '' === $root ) {
-			$workspace = is_array($context['sandbox_workspace'] ?? null) ? $context['sandbox_workspace'] : array();
+			$workspace = self::runtime_workspace_from_context($context);
 			$root      = isset($workspace['root']) ? (string) $workspace['root'] : '';
 		}
 
@@ -194,7 +210,7 @@ final class MountedSandboxBootstrap {
 	 * @return array<int,array{path:string,repo_backed:bool}>
 	 */
 	private static function workspace_mounts( array $context, string $workspace_root ): array {
-		$workspace = is_array($context['sandbox_workspace'] ?? null) ? $context['sandbox_workspace'] : array();
+		$workspace = self::runtime_workspace_from_context($context);
 		$mounts    = array();
 		if ( is_array($workspace['mounts'] ?? null) ) {
 			foreach ( $workspace['mounts'] as $mount ) {
@@ -226,4 +242,18 @@ final class MountedSandboxBootstrap {
 
 		return $mounts;
 	}
+
+	/**
+	 * @param array<string,mixed> $context
+	 * @return array<string,mixed>
+	 */
+	private static function runtime_workspace_from_context( array $context ): array {
+		if ( is_array($context['runtime_workspace'] ?? null) ) {
+			return $context['runtime_workspace'];
+		}
+
+		return is_array($context['sandbox_workspace'] ?? null) ? $context['sandbox_workspace'] : array();
+	}
 }
+
+class_alias(MountedRuntimeBootstrap::class, __NAMESPACE__ . '\\MountedSandboxBootstrap');
