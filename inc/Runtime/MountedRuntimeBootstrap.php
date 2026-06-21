@@ -53,14 +53,14 @@ final class MountedRuntimeBootstrap {
 
 	/** @return array<string,mixed> */
 	private static function discover_context(): array {
-		foreach ( array( 'wp_codebox_runtime_context', 'mounted_runtime_context', 'wordpress_runtime_context' ) as $global_key ) {
+		foreach ( array( 'mounted_runtime_context', 'wordpress_runtime_context' ) as $global_key ) {
 			$context = $GLOBALS[ $global_key ] ?? null;
 			if ( is_array($context) ) {
 				return self::normalize_context($context);
 			}
 		}
 
-		foreach ( array( 'WP_CODEBOX_RUNTIME_CONTEXT', 'MOUNTED_RUNTIME_CONTEXT' ) as $env_key ) {
+		foreach ( array( 'MOUNTED_RUNTIME_CONTEXT', 'WORDPRESS_RUNTIME_CONTEXT' ) as $env_key ) {
 			$encoded = getenv($env_key);
 			if ( is_string($encoded) && '' !== $encoded ) {
 				$decoded = json_decode($encoded, true);
