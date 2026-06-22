@@ -76,6 +76,27 @@ $mounts = $method->invoke(
 
 mounted_runtime_context_assert_same('wp-site-generator@wpsg-lab-proof-20260622-2102', $mounts[0]['workspace_ref'] ?? '', 'Mounted workspace adoption preserves the full worktree handle.');
 
+$context_property = new ReflectionProperty(MountedRuntimeBootstrap::class, 'context');
+$context_property->setValue(
+	null,
+	array(
+		'workspace_root'    => '/tmp/mounted-workspace',
+		'runtime_workspace' => array(
+			'root'   => '/tmp/mounted-workspace',
+			'mounts' => array(
+				array(
+					'target'       => '/tmp/mounted-workspace/wp-site-generator',
+					'sourceMode'   => 'mounted',
+					'workspaceRef' => 'wp-site-generator@wpsg-lab-proof-20260622-2102',
+				),
+			),
+		),
+	)
+);
+
+$aliases = MountedRuntimeBootstrap::mounted_workspace_path_aliases();
+mounted_runtime_context_assert_same('wp-site-generator@wpsg-lab-proof-20260622-2102', $aliases['/tmp/mounted-workspace/wp-site-generator'] ?? '', 'Mounted runtime exposes target path aliases to full workspace refs.');
+
 $method = new ReflectionMethod(MountedRuntimeBootstrap::class, 'discover_context');
 
 $GLOBALS['wordpress_runtime_context'] = array( 'workspace_root' => '/tmp/generic-wordpress-workspace' );
