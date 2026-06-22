@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.19] - 2026-06-22
+
+### Changed
+- Remove Codebox runtime context vocabulary
+
 ## [0.48.18] - 2026-06-22
 
 ### Changed
