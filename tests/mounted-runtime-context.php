@@ -55,6 +55,29 @@ unset($GLOBALS['mounted_runtime_context']);
 
 mounted_runtime_context_assert_same('/tmp/legacy-mounted-workspace', $context['runtime_workspace']['root'] ?? '', 'Deprecated sandbox workspace input is normalized to runtime workspace.');
 
+$method = new ReflectionMethod(MountedRuntimeBootstrap::class, 'workspace_mounts');
+
+$mounts = $method->invoke(
+	null,
+	array(
+		'runtime_workspace' => array(
+			'root'   => '/tmp/mounted-workspace',
+			'mounts' => array(
+				array(
+					'target'       => '/tmp/mounted-workspace/wp-site-generator',
+					'sourceMode'   => 'mounted',
+					'workspaceRef' => 'wp-site-generator@wpsg-lab-proof-20260622-2102',
+				),
+			),
+		),
+	),
+	'/tmp/mounted-workspace'
+);
+
+mounted_runtime_context_assert_same('wp-site-generator@wpsg-lab-proof-20260622-2102', $mounts[0]['workspace_ref'] ?? '', 'Mounted workspace adoption preserves the full worktree handle.');
+
+$method = new ReflectionMethod(MountedRuntimeBootstrap::class, 'discover_context');
+
 $GLOBALS['wordpress_runtime_context'] = array( 'workspace_root' => '/tmp/generic-wordpress-workspace' );
 $context                              = $method->invoke(null);
 unset($GLOBALS['wordpress_runtime_context']);
