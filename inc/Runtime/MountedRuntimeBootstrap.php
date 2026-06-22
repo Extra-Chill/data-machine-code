@@ -185,10 +185,11 @@ final class MountedRuntimeBootstrap {
 				continue;
 			}
 
+			$workspace_ref = (string) ( $mount['workspace_ref'] ?? '' );
 			WorkspaceAbilities::adoptRepo(
 				array(
 					'path' => $path,
-					'name' => basename($path),
+					'name' => '' !== $workspace_ref ? $workspace_ref : basename($path),
 				)
 			);
 		}
@@ -207,7 +208,7 @@ final class MountedRuntimeBootstrap {
 
 	/**
 	 * @param array<string,mixed> $context
-	 * @return array<int,array{path:string,repo_backed:bool}>
+	 * @return array<int,array{path:string,repo_backed:bool,workspace_ref?:string}>
 	 */
 	private static function workspace_mounts( array $context, string $workspace_root ): array {
 		$workspace = self::runtime_workspace_from_context($context);
@@ -221,9 +222,14 @@ final class MountedRuntimeBootstrap {
 				if ( '' === $target || 0 !== strpos($target . '/', $workspace_root . '/') ) {
 					continue;
 				}
-				$mounts[] = array(
-					'path'        => $target,
-					'repo_backed' => 'repo-backed' === (string) ( $mount['sourceMode'] ?? '' ),
+				$workspace_ref = trim( (string) ( $mount['workspaceRef'] ?? '' ) );
+				$mounts[]      = array_filter(
+					array(
+						'path'          => $target,
+						'repo_backed'   => 'repo-backed' === (string) ( $mount['sourceMode'] ?? '' ),
+						'workspace_ref' => $workspace_ref,
+					),
+					static fn ( $value ): bool => '' !== $value
 				);
 			}
 		}
