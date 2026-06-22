@@ -81,9 +81,9 @@ putenv('WORDPRESS_RUNTIME_CONTEXT');
 
 mounted_runtime_context_assert_same('/tmp/generic-wordpress-env-workspace', $context['workspace_root'] ?? '', 'Generic WordPress env context works.');
 
-$legacy_global_key              = 'wp_' . 'code' . 'box_runtime_context';
-$legacy_env_key                 = 'WP_' . 'CODE' . 'BOX_RUNTIME_CONTEXT';
-$legacy_schema                  = 'wp-' . 'code' . 'box/runtime-context/v1';
+$legacy_global_key              = 'legacy_vendor_runtime_context';
+$legacy_env_key                 = 'LEGACY_VENDOR_RUNTIME_CONTEXT';
+$legacy_schema                  = 'legacy-vendor/runtime-context/v1';
 $GLOBALS[ $legacy_global_key ]  = array( 'workspace_root' => '/tmp/legacy-global-workspace' );
 $generic_fallback_env_context   = json_encode(array( 'workspace_root' => '/tmp/generic-fallback-workspace' ));
 putenv('MOUNTED_RUNTIME_CONTEXT=' . $generic_fallback_env_context);
@@ -121,10 +121,14 @@ $runtime_support_files = array(
 $forbidden_runtime_tokens = array(
 	$legacy_global_key,
 	$legacy_env_key,
-	'CODE' . 'BOX_RUNTIME_CONTEXT_SCHEMA',
+	'WP_CODEBOX_RUNTIME_CONTEXT',
+	'wp_codebox_runtime_context',
+	'wp-codebox/runtime-context/v1',
+	'CODEBOX_RUNTIME_CONTEXT_SCHEMA',
+	'Codebox',
+	'codebox',
+	'CODEBOX',
 	$legacy_schema,
-	'Code' . 'box',
-	'code' . 'box',
 );
 
 foreach ( $runtime_support_files as $runtime_support_file ) {
