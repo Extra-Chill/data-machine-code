@@ -299,11 +299,11 @@ This is intentionally simpler than detecting WP.com vs VIP vs self-hosted vs CI 
 
 Mounted runtimes can self-configure DMC by passing a context through `$GLOBALS['mounted_runtime_context']`, `$GLOBALS['wordpress_runtime_context']`, `MOUNTED_RUNTIME_CONTEXT`, or `MOUNTED_RUNTIME_WORKSPACE_ROOT`.
 
-WP Codebox sandboxes may instead pass a versioned contract through `$GLOBALS['wp_codebox_runtime_context']` or `WP_CODEBOX_RUNTIME_CONTEXT`:
+When a runtime needs to pass a versioned contract, use the generic WordPress runtime schema:
 
 ```json
 {
-  "schema": "wp-codebox/runtime-context/v1",
+  "schema": "wordpress/runtime-context/v1",
   "payload": {
     "workspace_root": "/workspace",
     "runtime_workspace": {
