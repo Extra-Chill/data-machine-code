@@ -81,4 +81,59 @@ putenv('WORDPRESS_RUNTIME_CONTEXT');
 
 mounted_runtime_context_assert_same('/tmp/generic-wordpress-env-workspace', $context['workspace_root'] ?? '', 'Generic WordPress env context works.');
 
+$legacy_global_key              = 'wp_' . 'code' . 'box_runtime_context';
+$legacy_env_key                 = 'WP_' . 'CODE' . 'BOX_RUNTIME_CONTEXT';
+$legacy_schema                  = 'wp-' . 'code' . 'box/runtime-context/v1';
+$GLOBALS[ $legacy_global_key ]  = array( 'workspace_root' => '/tmp/legacy-global-workspace' );
+$generic_fallback_env_context   = json_encode(array( 'workspace_root' => '/tmp/generic-fallback-workspace' ));
+putenv('MOUNTED_RUNTIME_CONTEXT=' . $generic_fallback_env_context);
+
+$context = $method->invoke(null);
+unset($GLOBALS[ $legacy_global_key ]);
+putenv('MOUNTED_RUNTIME_CONTEXT');
+
+mounted_runtime_context_assert_same('/tmp/generic-fallback-workspace', $context['workspace_root'] ?? '', 'Legacy vendor global is ignored in favor of generic runtime context.');
+
+putenv($legacy_env_key . '=' . json_encode(array( 'workspace_root' => '/tmp/legacy-env-workspace' )));
+putenv('MOUNTED_RUNTIME_WORKSPACE_ROOT=/tmp/generic-env-fallback-workspace');
+
+$context = $method->invoke(null);
+putenv($legacy_env_key);
+putenv('MOUNTED_RUNTIME_WORKSPACE_ROOT');
+
+mounted_runtime_context_assert_same('/tmp/generic-env-fallback-workspace', $context['workspace_root'] ?? '', 'Legacy vendor env context is ignored in favor of generic runtime context.');
+
+$GLOBALS['mounted_runtime_context'] = array(
+	'schema'  => $legacy_schema,
+	'payload' => array( 'workspace_root' => '/tmp/legacy-schema-payload-workspace' ),
+);
+
+$context = $method->invoke(null);
+unset($GLOBALS['mounted_runtime_context']);
+
+mounted_runtime_context_assert_same('', $context['workspace_root'] ?? '', 'Unsupported legacy vendor schema payload is not unwrapped.');
+
+$runtime_support_files = array(
+	dirname(__DIR__) . '/inc/Runtime/MountedRuntimeBootstrap.php',
+	dirname(__DIR__) . '/inc/Support/RuntimeCapabilities.php',
+	dirname(__DIR__) . '/README.md',
+);
+$forbidden_runtime_tokens = array(
+	$legacy_global_key,
+	$legacy_env_key,
+	'CODE' . 'BOX_RUNTIME_CONTEXT_SCHEMA',
+	$legacy_schema,
+	'Code' . 'box',
+	'code' . 'box',
+);
+
+foreach ( $runtime_support_files as $runtime_support_file ) {
+	$contents = file_get_contents($runtime_support_file);
+	foreach ( $forbidden_runtime_tokens as $forbidden_runtime_token ) {
+		if ( false !== strpos((string) $contents, $forbidden_runtime_token) ) {
+			throw new RuntimeException(sprintf('Forbidden runtime token %s found in %s.', $forbidden_runtime_token, $runtime_support_file));
+		}
+	}
+}
+
 echo "Mounted runtime context regression passed.\n";

@@ -16,7 +16,7 @@ All notable changes to Data Machine Code will be documented in this file.
 ## [0.48.16] - 2026-06-21
 
 ### Changed
-- Add Codebox runtime context contract
+- Add mounted runtime context contract
 
 ## [0.48.15] - 2026-06-21
 
