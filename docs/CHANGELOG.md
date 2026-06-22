@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.20] - 2026-06-22
+
+### Changed
+- Tighten mounted runtime vocabulary coverage
+
 ## [0.48.19] - 2026-06-22
 
 ### Changed
