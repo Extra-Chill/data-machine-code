@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.22] - 2026-06-24
+
+### Changed
+- Neutralize mounted runtime fixture vocabulary
+
 ## [0.48.21] - 2026-06-22
 
 ### Changed
