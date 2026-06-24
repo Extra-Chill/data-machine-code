@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.23] - 2026-06-24
+
+### Changed
+- Remove mounted sandbox runtime compatibility
+
 ## [0.48.22] - 2026-06-24
 
 ### Changed
