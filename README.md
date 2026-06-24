@@ -316,7 +316,7 @@ When a runtime needs to pass a versioned contract, use the generic WordPress run
 }
 ```
 
-DMC unwraps the versioned `payload` to the same internal context shape as the generic mounted-runtime contract, so existing workspace root and mount adoption behavior stays shared. `runtime_workspace` is the canonical workspace object; `sandbox_workspace` is retained only as a deprecated compatibility alias.
+DMC unwraps the versioned `payload` to the same internal context shape as the generic mounted-runtime contract, so existing workspace root and mount adoption behavior stays shared. `runtime_workspace` is the canonical workspace object; legacy runtime-specific workspace aliases should be translated by the runtime owner before DMC receives the context.
 
 ## Roadmap
 
