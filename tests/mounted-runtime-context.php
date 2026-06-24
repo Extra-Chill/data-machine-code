@@ -64,9 +64,9 @@ $mounts = $method->invoke(
 			'root'   => '/tmp/mounted-workspace',
 			'mounts' => array(
 				array(
-					'target'       => '/tmp/mounted-workspace/wp-site-generator',
+					'target'       => '/tmp/mounted-workspace/acme-builder',
 					'sourceMode'   => 'mounted',
-					'workspaceRef' => 'wp-site-generator@wpsg-lab-proof-20260622-2102',
+					'workspaceRef' => 'acme-builder@fixture-proof-20260622-2102',
 				),
 			),
 		),
@@ -74,7 +74,7 @@ $mounts = $method->invoke(
 	'/tmp/mounted-workspace'
 );
 
-mounted_runtime_context_assert_same('wp-site-generator@wpsg-lab-proof-20260622-2102', $mounts[0]['workspace_ref'] ?? '', 'Mounted workspace adoption preserves the full worktree handle.');
+mounted_runtime_context_assert_same('acme-builder@fixture-proof-20260622-2102', $mounts[0]['workspace_ref'] ?? '', 'Mounted workspace adoption preserves the full worktree handle.');
 
 $method = new ReflectionMethod(MountedRuntimeBootstrap::class, 'discover_context');
 
@@ -144,13 +144,13 @@ $runtime_support_files = array(
 $forbidden_runtime_tokens = array(
 	$legacy_global_key,
 	$legacy_env_key,
-	'WP_CODEBOX_RUNTIME_CONTEXT',
-	'wp_codebox_runtime_context',
-	'wp-codebox/runtime-context/v1',
-	'CODEBOX_RUNTIME_CONTEXT_SCHEMA',
-	'Codebox',
-	'codebox',
-	'CODEBOX',
+	'ACME_RUNNER_RUNTIME_CONTEXT',
+	'acme_runner_runtime_context',
+	'acme-runner/runtime-context/v1',
+	'ACME_RUNNER_RUNTIME_CONTEXT_SCHEMA',
+	'Acme Runner',
+	'acme-runner',
+	'ACME_RUNNER',
 	$legacy_schema,
 );
 
