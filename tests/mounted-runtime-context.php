@@ -39,21 +39,8 @@ unset($GLOBALS['mounted_runtime_context']);
 mounted_runtime_context_assert_same(RuntimeCapabilities::RUNTIME_CONTEXT_SCHEMA, $context['schema'] ?? '', 'Mounted context keeps its versioned schema.');
 mounted_runtime_context_assert_same('/tmp/mounted-workspace', $context['workspace_root'] ?? '', 'Mounted payload is unwrapped for workspace discovery.');
 mounted_runtime_context_assert_same('/tmp/mounted-workspace', $context['runtime_workspace']['root'] ?? '', 'Runtime workspace is preserved.');
-mounted_runtime_context_assert_same('/tmp/mounted-workspace', $context['sandbox_workspace']['root'] ?? '', 'Deprecated sandbox workspace alias is preserved.');
-
-$GLOBALS['mounted_runtime_context'] = array(
-	'schema'  => RuntimeCapabilities::RUNTIME_CONTEXT_SCHEMA,
-	'payload' => array(
-		'sandbox_workspace' => array(
-			'root' => '/tmp/legacy-mounted-workspace',
-		),
-	),
-);
-
-$context = $method->invoke(null);
-unset($GLOBALS['mounted_runtime_context']);
-
-mounted_runtime_context_assert_same('/tmp/legacy-mounted-workspace', $context['runtime_workspace']['root'] ?? '', 'Deprecated sandbox workspace input is normalized to runtime workspace.');
+mounted_runtime_context_assert_same(false, array_key_exists('sandbox_' . 'workspace', $context), 'Mounted runtime context does not emit the deprecated workspace alias.');
+mounted_runtime_context_assert_same(false, class_exists('DataMachineCode\\Runtime\\Mounted' . 'SandboxBootstrap'), 'Deprecated mounted sandbox bootstrap alias is not registered.');
 
 $method = new ReflectionMethod(MountedRuntimeBootstrap::class, 'workspace_mounts');
 
@@ -152,6 +139,8 @@ $forbidden_runtime_tokens = array(
 	'acme-runner',
 	'ACME_RUNNER',
 	$legacy_schema,
+	'sandbox_' . 'workspace',
+	'Mounted' . 'SandboxBootstrap',
 );
 
 foreach ( $runtime_support_files as $runtime_support_file ) {

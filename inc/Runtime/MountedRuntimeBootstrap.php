@@ -103,14 +103,6 @@ final class MountedRuntimeBootstrap {
 	 * @return array<string,mixed>
 	 */
 	private static function normalize_workspace_context( array $context ): array {
-		if ( ! is_array($context['runtime_workspace'] ?? null) && is_array($context['sandbox_workspace'] ?? null) ) {
-			$context['runtime_workspace'] = $context['sandbox_workspace'];
-		}
-
-		if ( ! is_array($context['sandbox_workspace'] ?? null) && is_array($context['runtime_workspace'] ?? null) ) {
-			$context['sandbox_workspace'] = $context['runtime_workspace'];
-		}
-
 		return $context;
 	}
 
@@ -254,12 +246,6 @@ final class MountedRuntimeBootstrap {
 	 * @return array<string,mixed>
 	 */
 	private static function runtime_workspace_from_context( array $context ): array {
-		if ( is_array($context['runtime_workspace'] ?? null) ) {
-			return $context['runtime_workspace'];
-		}
-
-		return is_array($context['sandbox_workspace'] ?? null) ? $context['sandbox_workspace'] : array();
+		return is_array($context['runtime_workspace'] ?? null) ? $context['runtime_workspace'] : array();
 	}
 }
-
-class_alias(MountedRuntimeBootstrap::class, __NAMESPACE__ . '\\MountedSandboxBootstrap');
