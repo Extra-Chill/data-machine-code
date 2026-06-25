@@ -229,10 +229,12 @@ trait WorkspaceMetadataReconciliation {
 		$elapsed      = microtime(true) - $started_at;
 		$complete     = ! empty($last_pagination['complete']);
 		$partial      = ! $complete;
-		$next_command = $partial ? sprintf(
+		$mutation_count = count($written);
+		$restart_offset = $mutation_count > 0 ? 0 : (int) ( $last_pagination['next_offset'] ?? $next_offset );
+		$next_command   = $partial ? sprintf(
 			'studio wp datamachine-code workspace worktree reconcile-metadata --apply --limit=%d --offset=%d --until-budget=%s --format=json',
 			$limit,
-			(int) ( $last_pagination['next_offset'] ?? $next_offset ),
+			$restart_offset,
 			$budget_label
 		) : null;
 
@@ -244,7 +246,7 @@ trait WorkspaceMetadataReconciliation {
 			'scanned'     => $scanned,
 			'partial'     => $partial,
 			'complete'    => $complete,
-			'next_offset' => $partial ? (int) ( $last_pagination['next_offset'] ?? $next_offset ) : null,
+			'next_offset' => $partial ? $restart_offset : null,
 		);
 		if ( null !== $next_command ) {
 			$pagination['next_command'] = $next_command;
@@ -1493,6 +1495,9 @@ trait WorkspaceMetadataReconciliation {
 
 		if ( isset($plan['pagination']) && is_array($plan['pagination']) ) {
 			$result['pagination'] = $plan['pagination'];
+			if ( ! empty($plan['direct_apply']) && count($written) > 0 ) {
+				$result['pagination'] = $this->restart_worktree_metadata_reconciliation_pagination((array) $result['pagination']);
+			}
 		}
 		if ( isset($plan['evidence']) && is_array($plan['evidence']) ) {
 			$result['evidence'] = array_merge(
@@ -1599,6 +1604,38 @@ trait WorkspaceMetadataReconciliation {
 			'complete'    => $complete,
 			'next_offset' => $complete ? null : $next_offset,
 		);
+	}
+
+	/**
+	 * Restart follow-up apply pages after writes because the candidate set changed.
+	 *
+	 * @param  array<string,mixed> $pagination Pagination payload.
+	 * @return array<string,mixed>
+	 */
+	private function restart_worktree_metadata_reconciliation_pagination( array $pagination ): array {
+		if ( empty($pagination['partial']) || null === ( $pagination['next_offset'] ?? null ) ) {
+			return $pagination;
+		}
+
+		$pagination['next_offset']  = 0;
+		$pagination['next_command'] = sprintf(
+			'studio wp datamachine-code workspace worktree reconcile-metadata --apply --limit=%d --offset=0%s --format=json',
+			(int) ( $pagination['limit'] ?? self::METADATA_RECONCILE_DEFAULT_LIMIT ),
+			$this->worktree_metadata_reconciliation_budget_arg((string) ( $pagination['next_command'] ?? '' ))
+		);
+
+		return $pagination;
+	}
+
+	/**
+	 * Extract the existing budget argument from a generated continuation command.
+	 */
+	private function worktree_metadata_reconciliation_budget_arg( string $command ): string {
+		if ( preg_match('/ --until-budget=([^ ]+)/', $command, $matches) ) {
+			return ' --until-budget=' . $matches[1];
+		}
+
+		return '';
 	}
 
 	/**
