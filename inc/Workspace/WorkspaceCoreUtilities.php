@@ -1091,7 +1091,7 @@ trait WorkspaceCoreUtilities {
 	 * The payload mirrors the workspace `name`/`repo` taxonomy used elsewhere
 	 * in this class:
 	 *
-	 *   - `op`:   one of `clone`, `adopt`, `remove`, `worktree_add`, `worktree_remove`.
+	 *   - `op`:   one of `clone`, `adopt`, `remove`, `primary_refresh`, `worktree_add`, `worktree_remove`.
 	 *   - `repo`: bare repository name (no `@<slug>` suffix).
 	 *   - `name`: workspace entry name on disk (`<repo>` for primaries,
 	 *             `<repo>@<slug>` for worktrees).
@@ -1112,7 +1112,7 @@ trait WorkspaceCoreUtilities {
 		 * @since 0.31.0
 		 *
 		 * @param array{op: string, repo: string, name: string, path: string} $payload {
-		 *     @type  string $op   One of clone|adopt|remove|worktree_add|worktree_remove.
+		 *     @type  string $op   One of clone|adopt|remove|primary_refresh|worktree_add|worktree_remove.
 		 *     @type  string $repo Bare repository name (no @-suffix).
 		 *     @type  string $name Workspace entry name (<repo> or <repo>@<slug>).
 		 *     @type  string $path Absolute path of the workspace entry.
