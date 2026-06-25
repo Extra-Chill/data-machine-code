@@ -226,9 +226,9 @@ trait WorkspaceMetadataReconciliation {
 			$next_offset = (int) $page_pagination['next_offset'];
 		} while ( ( $budget_seconds - ( microtime(true) - $started_at ) ) > $reserve_seconds );
 
-		$elapsed      = microtime(true) - $started_at;
-		$complete     = ! empty($last_pagination['complete']);
-		$partial      = ! $complete;
+		$elapsed        = microtime(true) - $started_at;
+		$complete       = ! empty($last_pagination['complete']);
+		$partial        = ! $complete;
 		$mutation_count = count($written);
 		$restart_offset = $mutation_count > 0 ? 0 : (int) ( $last_pagination['next_offset'] ?? $next_offset );
 		$next_command   = $partial ? sprintf(
@@ -646,7 +646,7 @@ trait WorkspaceMetadataReconciliation {
 			return $this->build_worktree_metadata_reconciliation_skip($base_row, $diagnostic);
 		}
 
-		$resolved_wt       = array_merge(
+		$resolved_wt = array_merge(
 			$wt,
 			array(
 				'repo'   => $repo,
@@ -1025,9 +1025,9 @@ trait WorkspaceMetadataReconciliation {
 	 * @return array{signal:string,reason:string,finalized_state?:string,pr_url?:string}|null
 	 */
 	private function detect_worktree_lifecycle_finalizer_signal( array $wt, array $metadata, array &$github_cache, array &$fetched ): ?array {
-		$repo         = (string) ( $wt['repo'] ?? '' );
-		$branch       = (string) ( $wt['branch'] ?? '' );
-		$pr_signal    = $this->detect_stored_pr_merged_signal($metadata, $github_cache);
+		$repo      = (string) ( $wt['repo'] ?? '' );
+		$branch    = (string) ( $wt['branch'] ?? '' );
+		$pr_signal = $this->detect_stored_pr_merged_signal($metadata, $github_cache);
 		if ( null !== $pr_signal ) {
 			return $pr_signal;
 		}
@@ -1496,7 +1496,7 @@ trait WorkspaceMetadataReconciliation {
 		if ( isset($plan['pagination']) && is_array($plan['pagination']) ) {
 			$result['pagination'] = $plan['pagination'];
 			if ( ! empty($plan['direct_apply']) && count($written) > 0 ) {
-				$result['pagination'] = $this->restart_worktree_metadata_reconciliation_pagination((array) $result['pagination']);
+				$result['pagination'] = $this->restart_worktree_metadata_reconciliation_pagination( (array) $result['pagination'] );
 			}
 		}
 		if ( isset($plan['evidence']) && is_array($plan['evidence']) ) {
@@ -1621,7 +1621,7 @@ trait WorkspaceMetadataReconciliation {
 		$pagination['next_command'] = sprintf(
 			'studio wp datamachine-code workspace worktree reconcile-metadata --apply --limit=%d --offset=0%s --format=json',
 			(int) ( $pagination['limit'] ?? self::METADATA_RECONCILE_DEFAULT_LIMIT ),
-			$this->worktree_metadata_reconciliation_budget_arg((string) ( $pagination['next_command'] ?? '' ))
+			$this->worktree_metadata_reconciliation_budget_arg( (string) ( $pagination['next_command'] ?? '' ) )
 		);
 
 		return $pagination;
