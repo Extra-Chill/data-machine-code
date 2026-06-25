@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.24] - 2026-06-25
+
+### Changed
+- Compact workspace cleanup JSON output
+
+### Fixed
+- Fix cleanup apply pagination restart
+- Fix artifact cleanup apply command contract
+- Fix cleanup revalidation candidate state
+
 ## [0.48.23] - 2026-06-24
 
 ### Changed
