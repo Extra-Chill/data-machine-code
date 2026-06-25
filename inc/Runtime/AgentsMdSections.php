@@ -26,7 +26,7 @@ final class AgentsMdSections {
 		}
 
 		$registry_class = '\DataMachine\Engine\AI\MemoryFileRegistry';
-		$register = array( $registry_class, 'register' );
+		$register       = array( $registry_class, 'register' );
 		/** @var callable $register */
 
 		call_user_func(
@@ -287,7 +287,7 @@ MD;
 	 */
 	private static function register_section( string $file, string $section, int $priority, callable $callback, array $metadata ): void {
 		$registry_class = '\DataMachine\Engine\AI\SectionRegistry';
-		$register = array( $registry_class, 'register' );
+		$register       = array( $registry_class, 'register' );
 		/** @var callable $register */
 
 		call_user_func($register, $file, $section, $priority, $callback, $metadata);
@@ -427,11 +427,11 @@ MD;
 		}
 
 		$body            = implode("\n", $lines);
-		$attention_block  = self::render_primary_freshness_attention_block($attention_lines);
-		$generated_at     = gmdate('c');
-		$workspace_path   = $listing['path'];
-		$agent_slug       = self::resolve_agent_slug();
-		$agent_suffix     = '' !== $agent_slug ? ' --agent=' . $agent_slug : '';
+		$attention_block = self::render_primary_freshness_attention_block($attention_lines);
+		$generated_at    = gmdate('c');
+		$workspace_path  = $listing['path'];
+		$agent_slug      = self::resolve_agent_slug();
+		$agent_suffix    = '' !== $agent_slug ? ' --agent=' . $agent_slug : '';
 
 		return <<<MD
 ## Workspace Inventory
