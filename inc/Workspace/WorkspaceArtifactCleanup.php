@@ -151,8 +151,8 @@ trait WorkspaceArtifactCleanup {
 				'removed'               => array(),
 				'skipped'               => $skipped,
 				'summary'               => array(
-					'apply_command'          => $apply_command,
-					'preview_command'        => $preview_command,
+					'apply_command'         => $apply_command,
+					'preview_command'       => $preview_command,
 					'rerun_preview_command' => $preview_command,
 				) + $summary,
 			);
