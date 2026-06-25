@@ -1057,17 +1057,19 @@ trait WorkspaceWorktreeCleanupEngine {
 			return $this->schedule_bounded_cleanup_eligible_chunks($batch, $deferred, $force, $source, $started_at, $continuation, $include_repaired_metadata, $remove_timeout_seconds, $discard_unpushed);
 		}
 
-		$processed          = 0;
-		$removed            = array();
-		$skipped            = $inventory_skipped;
-		$bytes_reclaimed    = 0;
-		$timeout_handles    = array();
-		$discarded_unpushed = array();
+		$processed            = 0;
+		$processed_candidates = array();
+		$removed              = array();
+		$skipped              = $inventory_skipped;
+		$bytes_reclaimed      = 0;
+		$timeout_handles      = array();
+		$discarded_unpushed   = array();
 
 		foreach ( $batch as $candidate ) {
 			++$processed;
 			$revalidated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, false, $discard_unpushed);
 			if ( isset($revalidated['skipped']) ) {
+				$processed_candidates[] = $this->build_bounded_cleanup_processed_candidate($candidate, 'skipped', $revalidated['skipped']);
 				$skipped[] = $revalidated['skipped'];
 				continue;
 			}
@@ -1108,6 +1110,7 @@ trait WorkspaceWorktreeCleanupEngine {
 
 			if ( is_wp_error($remove) ) {
 				$skip      = $this->build_worktree_remove_failure_skip($candidate, $remove, $remove_timeout_seconds);
+				$processed_candidates[] = $this->build_bounded_cleanup_processed_candidate($validated, 'skipped', $skip);
 				$skipped[] = $skip;
 				if ( 'remove_timeout' === (string) ( $skip['reason_code'] ?? '' ) ) {
 					$timeout_handles[] = (string) ( $skip['handle'] ?? '' );
@@ -1130,7 +1133,8 @@ trait WorkspaceWorktreeCleanupEngine {
 				),
 				is_array($candidate['metadata'] ?? null) ? array( 'metadata' => $candidate['metadata'] ) : array()
 			);
-			$removed[]      = $removed_row;
+			$removed[]              = $removed_row;
+			$processed_candidates[] = $this->build_bounded_cleanup_processed_candidate($validated, 'removed', $removed_row);
 			if ( $discard_unpushed && $unpushed_count > 0 ) {
 				$discarded_unpushed[] = array(
 					'handle'                 => (string) ( $candidate['handle'] ?? '' ),
@@ -1160,7 +1164,8 @@ trait WorkspaceWorktreeCleanupEngine {
 			'destructive'             => true,
 			'workspace_path'          => $this->workspace_path,
 			'generated_at'            => gmdate('c'),
-			'candidates'              => $batch,
+			'planned_candidates'      => $batch,
+			'candidates'              => $processed_candidates,
 			'removed'                 => $removed,
 			'skipped'                 => $skipped,
 			'summary'                 => array(
@@ -1184,6 +1189,31 @@ trait WorkspaceWorktreeCleanupEngine {
 				'source'             => $source,
 			),
 		);
+	}
+
+	/**
+	 * Attach final revalidation/removal outcome to a processed bounded cleanup row.
+	 *
+	 * @param  array<string,mixed> $candidate Planned or revalidated candidate row.
+	 * @param  string              $action    Final action: removed or skipped.
+	 * @param  array<string,mixed> $outcome   Fresh removal or blocker row.
+	 * @return array<string,mixed>
+	 */
+	private function build_bounded_cleanup_processed_candidate( array $candidate, string $action, array $outcome ): array {
+		$row = $candidate;
+		foreach ( array( 'dirty', 'unpushed', 'path', 'size_bytes' ) as $field ) {
+			if ( array_key_exists($field, $outcome) ) {
+				$row[ $field ] = $outcome[ $field ];
+			}
+		}
+
+		$row['final_action']      = $action;
+		$row['final_reason_code'] = (string) ( $outcome['reason_code'] ?? $action );
+		if ( isset($outcome['reason']) ) {
+			$row['final_reason'] = (string) $outcome['reason'];
+		}
+
+		return $row;
 	}
 
 	/**
@@ -1500,6 +1530,7 @@ trait WorkspaceWorktreeCleanupEngine {
 					'reason_code' => 'dirty_worktree',
 					'reason'      => sprintf('working tree dirty (%d entries) — bounded cleanup-eligible apply refuses to override; rerun with force=true after review', $dirty_count),
 					'dirty'       => $dirty_count,
+					'unpushed'    => (int) $unpushed,
 				),
 			);
 		}
@@ -1513,6 +1544,7 @@ trait WorkspaceWorktreeCleanupEngine {
 					'path'        => $wt_path,
 					'reason_code' => 'unpushed_commits',
 					'reason'      => sprintf('%d unpushed commit(s) — bounded cleanup-eligible apply refuses to remove without discard_unpushed=true', $unpushed),
+					'dirty'       => $dirty_count,
 					'unpushed'    => $unpushed,
 				),
 			);
@@ -1522,6 +1554,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			$candidate,
 			array(
 				'path'     => $real_path,
+				'dirty'    => $dirty_count,
 				'unpushed' => (int) $unpushed,
 			)
 		);
