@@ -26,9 +26,6 @@ final class AgentsMdSections {
 		}
 
 		$registry_class = '\DataMachine\Engine\AI\MemoryFileRegistry';
-		if ( ! is_callable(array( $registry_class, 'register' )) ) {
-			return;
-		}
 		$register = array( $registry_class, 'register' );
 		/** @var callable $register */
 
@@ -149,6 +146,7 @@ MD;
 		 * @param string $default        Default policy markdown.
 		 * @param string $workspace_path Resolved DMC workspace root.
 		 */
+		/** @var mixed $filtered */
 		$filtered = apply_filters('datamachine_code_workspace_policy_intro', $default, $workspace_path);
 		if ( ! is_string($filtered) ) {
 			return $default;
@@ -175,6 +173,7 @@ MD;
 		 * @param string $workspace_path Resolved DMC workspace root.
 		 * @param string $wp             WP-CLI command prefix.
 		 */
+		/** @var mixed $filtered */
 		$filtered = apply_filters('datamachine_code_workspace_policy_section', $default, $workspace_path, $wp);
 		if ( ! is_string($filtered) ) {
 			return $default;
@@ -288,9 +287,6 @@ MD;
 	 */
 	private static function register_section( string $file, string $section, int $priority, callable $callback, array $metadata ): void {
 		$registry_class = '\DataMachine\Engine\AI\SectionRegistry';
-		if ( ! is_callable(array( $registry_class, 'register' )) ) {
-			return;
-		}
 		$register = array( $registry_class, 'register' );
 		/** @var callable $register */
 
@@ -431,11 +427,11 @@ MD;
 		}
 
 		$body            = implode("\n", $lines);
-		$attention_block = self::render_primary_freshness_attention_block($attention_lines);
-		$generated_at   = gmdate('c');
-		$workspace_path = $listing['path'];
-		$agent_slug     = self::resolve_agent_slug();
-		$agent_suffix   = '' !== $agent_slug ? ' --agent=' . $agent_slug : '';
+		$attention_block  = self::render_primary_freshness_attention_block($attention_lines);
+		$generated_at     = gmdate('c');
+		$workspace_path   = $listing['path'];
+		$agent_slug       = self::resolve_agent_slug();
+		$agent_suffix     = '' !== $agent_slug ? ' --agent=' . $agent_slug : '';
 
 		return <<<MD
 ## Workspace Inventory
