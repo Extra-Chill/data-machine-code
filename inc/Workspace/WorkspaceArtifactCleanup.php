@@ -142,18 +142,18 @@ trait WorkspaceArtifactCleanup {
 
 		if ( $dry_run ) {
 			$response = array(
-				'success'                => true,
-				'dry_run'                => true,
-				'apply_command'          => $apply_command,
-				'preview_command'        => $preview_command,
-				'rerun_preview_command'  => $preview_command,
-				'candidates'             => $candidates,
-				'removed'                => array(),
-				'skipped'                => $skipped,
-				'summary'                => array(
+				'success'               => true,
+				'dry_run'               => true,
+				'apply_command'         => $apply_command,
+				'preview_command'       => $preview_command,
+				'rerun_preview_command' => $preview_command,
+				'candidates'            => $candidates,
+				'removed'               => array(),
+				'skipped'               => $skipped,
+				'summary'               => array(
 					'apply_command'          => $apply_command,
 					'preview_command'        => $preview_command,
-					'rerun_preview_command'  => $preview_command,
+					'rerun_preview_command' => $preview_command,
 				) + $summary,
 			);
 			if ( null !== $pagination ) {
