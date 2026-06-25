@@ -61,6 +61,33 @@ final class AbandonedCleanupFakeAbility {
 	}
 }
 
+final class AbandonedCleanupQueuedAbility {
+	/** @var array<int,array<string,mixed>> */
+	public array $calls = array();
+
+	/** @param array<int,array<string,mixed>> $responses */
+	public function __construct( private array $responses ) {}
+
+	/** @return array<string,mixed> */
+	public function execute( array $input ): array {
+		$this->calls[] = $input;
+		$response      = array_shift($this->responses) ?: array();
+
+		return array_merge(
+			array(
+				'success'    => true,
+				'mode'       => 'queued',
+				'dry_run'    => ! empty($input['dry_run']),
+				'applied'    => empty($input['dry_run']),
+				'summary'    => array(),
+				'pagination' => array( 'complete' => true ),
+				'skipped'    => array(),
+			),
+			$response
+		);
+	}
+}
+
 function abandoned_cleanup_assert( bool $condition, string $label ): void {
 	if ( ! $condition ) {
 		fwrite(STDERR, 'failed: ' . $label . PHP_EOL);
@@ -105,5 +132,37 @@ abandoned_cleanup_assert(1 === $result['summary']['would_mark_cleanup_eligible']
 abandoned_cleanup_assert(1 === $result['summary']['would_remove'], 'planned removal is counted');
 abandoned_cleanup_assert(1 === $result['summary']['blocked'], 'blocked rows are counted');
 abandoned_cleanup_assert(! empty($result['next_commands'][0]), 'next apply command is present');
+
+$reconcile_restart = new AbandonedCleanupQueuedAbility(
+	array(
+		array(
+			'mode'       => 'reconcile_metadata',
+			'summary'    => array( 'inspected' => 1, 'written' => 1 ),
+			'pagination' => array( 'offset' => 0, 'limit' => 10, 'scanned' => 1, 'partial' => true, 'complete' => false, 'next_offset' => 0 ),
+		),
+		array(
+			'mode'       => 'reconcile_metadata',
+			'summary'    => array( 'inspected' => 1, 'written' => 0 ),
+			'pagination' => array( 'offset' => 0, 'limit' => 10, 'scanned' => 1, 'partial' => false, 'complete' => true, 'next_offset' => null ),
+		),
+	)
+);
+$restart_abilities = array(
+	'datamachine-code/workspace-worktree-reconcile-metadata' => $reconcile_restart,
+	'datamachine-code/workspace-worktree-active-no-signal-finalized-apply' => new AbandonedCleanupFakeAbility('finalized', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply' => new AbandonedCleanupFakeAbility('equivalent_clean', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-merged-apply' => new AbandonedCleanupFakeAbility('merged', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply' => new AbandonedCleanupFakeAbility('remote_clean', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => new AbandonedCleanupFakeAbility('bounded', array( 'processed' => 0, 'removed' => 0 ), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-prune' => new AbandonedCleanupFakeAbility('prune'),
+);
+$orchestrator      = new DataMachineCode\Workspace\WorkspaceAbandonedCleanupOrchestrator(
+	static fn( string $name ) => $restart_abilities[ $name ] ?? null,
+	static fn(): float => 1000.0
+);
+$restart_result    = $orchestrator->run(array( 'apply' => true, 'limit' => 10, 'passes' => 1 ));
+abandoned_cleanup_assert(! is_wp_error($restart_result), 'restart apply succeeds');
+abandoned_cleanup_assert(2 === count($reconcile_restart->calls), 'mutating reconcile pagination restarts instead of stopping');
+abandoned_cleanup_assert(0 === $reconcile_restart->calls[1]['offset'], 'second reconcile page restarts at offset zero');
 
 fwrite(STDOUT, 'abandoned cleanup orchestrator smoke passed' . PHP_EOL);

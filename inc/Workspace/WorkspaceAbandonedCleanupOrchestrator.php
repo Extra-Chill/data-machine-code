@@ -336,6 +336,9 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		$next_offset = (int) $pagination['next_offset'];
 		$current     = (int) ( $pagination['offset'] ?? 0 );
 		$total       = isset($pagination['total']) ? (int) $pagination['total'] : null;
+		if ( ! empty($pagination['partial']) && $next_offset < $current ) {
+			return true;
+		}
 		if ( $next_offset === $current && ! empty($pagination['partial']) ) {
 			return true;
 		}
@@ -423,8 +426,9 @@ class WorkspaceAbandonedCleanupOrchestrator {
 				break;
 			}
 
-			$next_offset = isset($pagination['next_offset']) ? (int) $pagination['next_offset'] : null;
-			if ( null === $next_offset || $next_offset <= $offset ) {
+			$next_offset    = isset($pagination['next_offset']) ? (int) $pagination['next_offset'] : null;
+			$mutation_count = (int) ( $result['summary']['written'] ?? 0 ) + (int) ( $result['summary']['removed'] ?? 0 );
+			if ( null === $next_offset || ( $next_offset <= $offset && ( $mutation_count <= 0 || empty($pagination['partial']) ) ) ) {
 				break;
 			}
 
