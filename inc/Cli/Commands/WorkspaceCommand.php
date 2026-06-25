@@ -19,6 +19,7 @@ use WP_CLI;
 use DataMachine\Cli\BaseCommand;
 use DataMachineCode\Cli\CliResponseRenderer;
 use DataMachineCode\Cli\CliRepeatableOptionParser;
+use DataMachineCode\Cli\WorkspaceCompactOutput;
 use DataMachineCode\Cleanup\CompositeCleanupRunEvidenceStore;
 use DataMachineCode\Cleanup\CleanupRunEvidenceStoreInterface;
 use DataMachineCode\Workspace\Workspace;
@@ -1247,7 +1248,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$this->render_cleanup_control_result($output, $assoc_args);
+		$this->render_cleanup_control_result($output, $assoc_args, $evidence);
 	}
 
 	private function cleanup_run_evidence_store(): CleanupRunEvidenceStoreInterface {
@@ -1321,13 +1322,16 @@ class WorkspaceCommand extends BaseCommand {
 		return array_values(array_unique(array_filter(array_merge(array( $job_id ), $pending_ids, $processing_ids))));
 	}
 
-	private function render_cleanup_control_result( array $result, array $assoc_args ): void {
+	private function render_cleanup_control_result( array $result, array $assoc_args, bool $full_evidence = false ): void {
 		$result = $this->attach_current_workspace_lock_status($result);
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( ! empty($assoc_args['summary']) ) {
 			$result = $this->build_cleanup_operator_summary($result);
 		}
 		if ( 'json' === $format ) {
+			if ( empty($assoc_args['verbose']) && empty($assoc_args['summary']) && ! $full_evidence ) {
+				$result = WorkspaceCompactOutput::cleanup_control_result($result);
+			}
 			$this->renderer()->json($result);
 			return;
 		}
@@ -4399,6 +4403,9 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function render_workspace_lock_result( array $result, array $assoc_args, bool $prune ): void {
 		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result = WorkspaceCompactOutput::lock_result($result);
+			}
 			$this->renderer()->json($result);
 			return;
 		}
@@ -4638,6 +4645,9 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_workspace_hygiene_report( array $report, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$report = WorkspaceCompactOutput::hygiene_report($report);
+			}
 			$this->renderer()->json($report);
 			return;
 		}
@@ -4898,6 +4908,9 @@ class WorkspaceCommand extends BaseCommand {
 		$report = $this->filter_worktree_cleanup_report($result, $only);
 
 		if ( 'json' === $format ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$report = WorkspaceCompactOutput::cleanup_result($report);
+			}
 			$this->renderer()->json($report);
 			return;
 		}
@@ -5783,6 +5796,9 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_artifact_cleanup_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result = WorkspaceCompactOutput::cleanup_result($result);
+			}
 			$this->renderer()->json($result);
 			return;
 		}
@@ -6084,6 +6100,9 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function render_worktree_cleanup_eligible_drain_result( array $result, array $assoc_args ): void {
 		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result = WorkspaceCompactOutput::cleanup_result($result);
+			}
 			$this->renderer()->json($result);
 			return;
 		}
@@ -6448,6 +6467,9 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_emergency_cleanup_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result = WorkspaceCompactOutput::cleanup_result($result);
+			}
 			$this->renderer()->json($result);
 			return;
 		}
