@@ -174,7 +174,7 @@ class WorkspaceCompactOutput {
 			if ( ! is_array( $row ) ) {
 				continue;
 			}
-			$reason = (string) ( $row['reason_code'] ?? $row['reason'] ?? 'unknown' );
+			$reason               = (string) ( $row['reason_code'] ?? $row['reason'] ?? 'unknown' );
 			$buckets[ $reason ] ??= array(
 				'count'    => 0,
 				'examples' => array(),
