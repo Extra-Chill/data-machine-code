@@ -1070,7 +1070,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			$revalidated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, false, $discard_unpushed);
 			if ( isset($revalidated['skipped']) ) {
 				$processed_candidates[] = $this->build_bounded_cleanup_processed_candidate($candidate, 'skipped', $revalidated['skipped']);
-				$skipped[] = $revalidated['skipped'];
+				$skipped[]              = $revalidated['skipped'];
 				continue;
 			}
 
@@ -1109,17 +1109,17 @@ trait WorkspaceWorktreeCleanupEngine {
 			);
 
 			if ( is_wp_error($remove) ) {
-				$skip      = $this->build_worktree_remove_failure_skip($candidate, $remove, $remove_timeout_seconds);
+				$skip                   = $this->build_worktree_remove_failure_skip($candidate, $remove, $remove_timeout_seconds);
 				$processed_candidates[] = $this->build_bounded_cleanup_processed_candidate($validated, 'skipped', $skip);
-				$skipped[] = $skip;
+				$skipped[]              = $skip;
 				if ( 'remove_timeout' === (string) ( $skip['reason_code'] ?? '' ) ) {
 					$timeout_handles[] = (string) ( $skip['handle'] ?? '' );
 				}
 				continue;
 			}
 
-			$unpushed_count = (int) ( $validated['unpushed'] ?? 0 );
-			$removed_row    = array_merge(
+			$unpushed_count         = (int) ( $validated['unpushed'] ?? 0 );
+			$removed_row            = array_merge(
 				array(
 					'handle'                     => (string) ( $candidate['handle'] ?? '' ),
 					'repo'                       => $repo,
