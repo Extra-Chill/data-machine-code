@@ -121,6 +121,10 @@ trait WorkspaceGitOperations {
 			return $result;
 		}
 
+		if ( empty($parsed['is_worktree']) ) {
+			$this->emit_workspace_changed('primary_refresh', $parsed['repo'], $parsed['dir_name'], $repo_path);
+		}
+
 		return array(
 			'success' => true,
 			'message' => trim( (string) $result['output']),

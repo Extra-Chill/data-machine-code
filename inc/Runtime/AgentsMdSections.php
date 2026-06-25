@@ -26,10 +26,7 @@ final class AgentsMdSections {
 		}
 
 		$registry_class = '\DataMachine\Engine\AI\MemoryFileRegistry';
-		if ( ! is_callable(array( $registry_class, 'register' )) ) {
-			return;
-		}
-		$register = array( $registry_class, 'register' );
+		$register       = array( $registry_class, 'register' );
 		/** @var callable $register */
 
 		call_user_func(
@@ -149,6 +146,7 @@ MD;
 		 * @param string $default        Default policy markdown.
 		 * @param string $workspace_path Resolved DMC workspace root.
 		 */
+		/** @var mixed $filtered */
 		$filtered = apply_filters('datamachine_code_workspace_policy_intro', $default, $workspace_path);
 		if ( ! is_string($filtered) ) {
 			return $default;
@@ -175,6 +173,7 @@ MD;
 		 * @param string $workspace_path Resolved DMC workspace root.
 		 * @param string $wp             WP-CLI command prefix.
 		 */
+		/** @var mixed $filtered */
 		$filtered = apply_filters('datamachine_code_workspace_policy_section', $default, $workspace_path, $wp);
 		if ( ! is_string($filtered) ) {
 			return $default;
@@ -288,10 +287,7 @@ MD;
 	 */
 	private static function register_section( string $file, string $section, int $priority, callable $callback, array $metadata ): void {
 		$registry_class = '\DataMachine\Engine\AI\SectionRegistry';
-		if ( ! is_callable(array( $registry_class, 'register' )) ) {
-			return;
-		}
-		$register = array( $registry_class, 'register' );
+		$register       = array( $registry_class, 'register' );
 		/** @var callable $register */
 
 		call_user_func($register, $file, $section, $priority, $callback, $metadata);
@@ -374,20 +370,31 @@ MD;
 			$mode = 'compact';
 		}
 
-		$lines = array();
+		$lines           = array();
+		$attention_lines = array();
 		foreach ( $by_repo as $repo => $bucket ) {
-			$primary    = $bucket['primary'];
+			$primary    = is_array($bucket['primary']) ? $bucket['primary'] : array();
 			$worktrees  = $bucket['worktrees'];
 			$wt_count   = count($worktrees);
 			$branch     = $primary['branch'] ?? null;
 			$remote     = $primary['remote'] ?? null;
 			$branch_str = ( null !== $branch && '' !== $branch ) ? sprintf(' (`%s`)', $branch) : '';
+			$freshness  = is_array($primary['primary_freshness'] ?? null) ? $primary['primary_freshness'] : null;
+
+			$attention = self::format_primary_freshness_attention($repo, $freshness);
+			if ( '' !== $attention ) {
+				$attention_lines[] = $attention;
+			}
 
 			if ( 'compact' === $mode ) {
 				$suffix_parts   = array();
 				$suffix_parts[] = sprintf('%d %s', $wt_count, 1 === $wt_count ? 'worktree' : 'worktrees');
 				if ( null !== $remote && '' !== $remote ) {
 					$suffix_parts[] = $remote;
+				}
+				$freshness_badge = self::format_primary_freshness_badge($freshness);
+				if ( '' !== $freshness_badge ) {
+					$suffix_parts[] = $freshness_badge;
 				}
 				$lines[] = sprintf('- **%s**%s — %s', $repo, $branch_str, implode(' · ', $suffix_parts));
 				continue;
@@ -396,6 +403,10 @@ MD;
 			$header = sprintf('- **%s**%s', $repo, $branch_str);
 			if ( null !== $remote && '' !== $remote ) {
 				$header .= ' — ' . $remote;
+			}
+			$freshness_badge = self::format_primary_freshness_badge($freshness);
+			if ( '' !== $freshness_badge ) {
+				$header .= ' · ' . $freshness_badge;
 			}
 			$lines[] = $header;
 
@@ -415,11 +426,12 @@ MD;
 			}
 		}
 
-		$body           = implode("\n", $lines);
-		$generated_at   = gmdate('c');
-		$workspace_path = $listing['path'];
-		$agent_slug     = self::resolve_agent_slug();
-		$agent_suffix   = '' !== $agent_slug ? ' --agent=' . $agent_slug : '';
+		$body            = implode("\n", $lines);
+		$attention_block = self::render_primary_freshness_attention_block($attention_lines);
+		$generated_at    = gmdate('c');
+		$workspace_path  = $listing['path'];
+		$agent_slug      = self::resolve_agent_slug();
+		$agent_suffix    = '' !== $agent_slug ? ' --agent=' . $agent_slug : '';
 
 		return <<<MD
 ## Workspace Inventory
@@ -427,6 +439,101 @@ MD;
 Generated {$generated_at} from cloned repos in `{$workspace_path}`. This section can be stale; `{$wp} datamachine-code workspace list` is the source of truth for current worktrees and branches.
 
 Refresh this file with `{$wp} datamachine memory compose AGENTS.md{$agent_suffix}` after workspace changes if the inventory looks stale.
+
+{$attention_block}
+
+{$body}
+MD;
+	}
+
+	private static function primary_freshness_needs_attention( ?array $freshness ): bool {
+		if ( null === $freshness ) {
+			return false;
+		}
+
+		$status = (string) ( $freshness['status'] ?? '' );
+		return in_array($status, array( 'stale', 'diverged', 'detached', 'unknown', 'no_upstream', 'ahead' ), true);
+	}
+
+	private static function primary_freshness_needs_refresh( ?array $freshness ): bool {
+		if ( null === $freshness ) {
+			return false;
+		}
+
+		$status = (string) ( $freshness['status'] ?? '' );
+		return in_array($status, array( 'stale', 'diverged' ), true);
+	}
+
+	private static function format_primary_freshness_badge( ?array $freshness ): string {
+		if ( ! self::primary_freshness_needs_attention($freshness) ) {
+			return '';
+		}
+
+		$status = (string) ( $freshness['status'] ?? 'unknown' );
+		$parts  = array( 'primary ' . $status );
+		if ( isset($freshness['behind']) && is_numeric($freshness['behind']) && (int) $freshness['behind'] > 0 ) {
+			$parts[] = sprintf('behind %d', (int) $freshness['behind']);
+		}
+		if ( isset($freshness['ahead']) && is_numeric($freshness['ahead']) && (int) $freshness['ahead'] > 0 ) {
+			$parts[] = sprintf('ahead %d', (int) $freshness['ahead']);
+		}
+
+		return implode(', ', $parts);
+	}
+
+	private static function format_primary_freshness_attention( string $repo, ?array $freshness ): string {
+		if ( ! self::primary_freshness_needs_attention($freshness) ) {
+			return '';
+		}
+
+		$status   = (string) ( $freshness['status'] ?? 'unknown' );
+		$branch   = (string) ( $freshness['branch'] ?? '' );
+		$upstream = (string) ( $freshness['upstream'] ?? '' );
+		$details  = array();
+		if ( '' !== $branch ) {
+			$details[] = sprintf('branch `%s`', $branch);
+		}
+		if ( '' !== $upstream ) {
+			$details[] = sprintf('upstream `%s`', $upstream);
+		}
+		if ( isset($freshness['behind']) && is_numeric($freshness['behind']) ) {
+			$details[] = sprintf('behind %d', (int) $freshness['behind']);
+		}
+		if ( isset($freshness['ahead']) && is_numeric($freshness['ahead']) ) {
+			$details[] = sprintf('ahead %d', (int) $freshness['ahead']);
+		}
+
+		$line = sprintf('- **%s** primary is `%s`', $repo, $status);
+		if ( ! empty($details) ) {
+			$line .= ' (' . implode(', ', $details) . ')';
+		}
+
+		$command = (string) ( $freshness['suggested_command'] ?? '' );
+		if ( '' !== $command && self::primary_freshness_needs_refresh($freshness) ) {
+			$line .= sprintf('. Refresh: `%s`', $command);
+		}
+
+		return $line . '.';
+	}
+
+	private static function render_primary_freshness_attention_block( array $attention_lines ): string {
+		if ( empty($attention_lines) ) {
+			return '';
+		}
+
+		$max_lines = 20;
+		$shown     = array_slice($attention_lines, 0, $max_lines);
+		$omitted   = count($attention_lines) - count($shown);
+		if ( $omitted > 0 ) {
+			$shown[] = sprintf('- %d more primary checkout(s) need attention; run `wp datamachine-code workspace list` for the full set.', $omitted);
+		}
+
+		$body = implode("\n", $shown);
+
+		return <<<MD
+**Primary Checkout Attention**
+
+These primary checkouts may be stale or unsafe to read. Refresh them or create a worktree from an explicit remote ref before using them as source evidence.
 
 {$body}
 MD;
