@@ -69,6 +69,7 @@ trait WorkspaceCleanupPlan {
 			if ( $artifact_plan instanceof \WP_Error ) {
 				return $artifact_plan;
 			}
+			$artifact_plan = $this->normalize_cleanup_plan_child_preview_commands($artifact_plan);
 		}
 
 		$worktree_plan = array(
@@ -376,6 +377,7 @@ trait WorkspaceCleanupPlan {
 		$category_total  = array_sum(array_map('intval', $category_totals));
 
 		return array(
+			'apply_command'           => 'studio wp datamachine-code workspace cleanup apply <run-id>',
 			'total_rows'              => $total_rows,
 			'rows_by_type'            => $counts,
 			'byte_totals'             => $byte_totals,
@@ -388,6 +390,32 @@ trait WorkspaceCleanupPlan {
 			'blockers'                => $this->cleanup_plan_blockers($artifact_plan, $worktree_plan),
 			'recommended_commands'    => $this->cleanup_plan_recommended_commands($inputs),
 		);
+	}
+
+	/**
+	 * Keep embedded child dry-runs from advertising preview commands as applies.
+	 *
+	 * @param  array<string,mixed> $plan Child artifact cleanup plan.
+	 * @return array<string,mixed>
+	 */
+	private function normalize_cleanup_plan_child_preview_commands( array $plan ): array {
+		$preview_command = (string) ( $plan['preview_command'] ?? $plan['rerun_preview_command'] ?? $plan['apply_command'] ?? '' );
+		unset($plan['apply_command']);
+		if ( '' !== $preview_command ) {
+			$plan['preview_command']       = $preview_command;
+			$plan['rerun_preview_command'] = $preview_command;
+		}
+
+		if ( isset($plan['summary']) && is_array($plan['summary']) ) {
+			$summary_preview_command = (string) ( $plan['summary']['preview_command'] ?? $plan['summary']['rerun_preview_command'] ?? $plan['summary']['apply_command'] ?? $preview_command );
+			unset($plan['summary']['apply_command']);
+			if ( '' !== $summary_preview_command ) {
+				$plan['summary']['preview_command']       = $summary_preview_command;
+				$plan['summary']['rerun_preview_command'] = $summary_preview_command;
+			}
+		}
+
+		return $plan;
 	}
 
 	/**

@@ -5886,7 +5886,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( $dry_run ) {
 			$apply_command = (string) ( $result['apply_command'] ?? $summary['apply_command'] ?? 'studio wp datamachine-code workspace cleanup run --mode=artifacts --format=json' );
-			WP_CLI::success(sprintf('%d artifact(s) would be removed. Apply this page with `%s`; --apply-plan remains a low-level escape hatch.', (int) ( $summary['would_remove_artifacts'] ?? 0 ), $apply_command));
+			WP_CLI::success(sprintf('%d artifact(s) would be removed. Apply reviewed artifact cleanup with `%s`; --apply-plan remains a low-level escape hatch.', (int) ( $summary['would_remove_artifacts'] ?? 0 ), $apply_command));
 			return;
 		}
 		WP_CLI::success(sprintf('Removed %d artifact(s); %d worktree(s) skipped.', (int) ( $summary['removed_artifacts'] ?? 0 ), count($skipped)));

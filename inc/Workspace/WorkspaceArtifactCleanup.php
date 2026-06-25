@@ -54,7 +54,8 @@ trait WorkspaceArtifactCleanup {
 		if ( $exhaustive || $full_workspace ) {
 			$limit = 0;
 		}
-		$apply_command = $this->build_artifact_cleanup_apply_command();
+		$apply_command   = $this->build_artifact_cleanup_apply_command();
+		$preview_command = $this->build_artifact_cleanup_preview_command($opts);
 		// Apply paths default to safety probing (small subset). Dry-run defaults
 		// to skipping the per-worktree git probes unless explicitly requested or
 		// the caller asked for exhaustive mode.
@@ -67,7 +68,7 @@ trait WorkspaceArtifactCleanup {
 		}
 
 		if ( ! $dry_run && null === $apply_plan ) {
-			return new \WP_Error('artifact_cleanup_plan_required', sprintf('Artifact cleanup applies through the high-level cleanup runner for daily cleanup. Run `%s` to apply the same bounded page, or use --dry-run first and --apply-plan=<file> only as a low-level escape hatch.', $apply_command), array( 'status' => 400 ));
+			return new \WP_Error('artifact_cleanup_plan_required', sprintf('Artifact cleanup applies through the high-level cleanup runner for daily cleanup. Run `%s` to apply reviewed artifact cleanup, or use --dry-run first and --apply-plan=<file> only as a low-level escape hatch.', $apply_command), array( 'status' => 400 ));
 		}
 
 		$only_handles = null;
@@ -141,13 +142,19 @@ trait WorkspaceArtifactCleanup {
 
 		if ( $dry_run ) {
 			$response = array(
-				'success'       => true,
-				'dry_run'       => true,
-				'apply_command' => $apply_command,
-				'candidates'    => $candidates,
-				'removed'       => array(),
-				'skipped'       => $skipped,
-				'summary'       => array( 'apply_command' => $apply_command ) + $summary,
+				'success'               => true,
+				'dry_run'               => true,
+				'apply_command'         => $apply_command,
+				'preview_command'       => $preview_command,
+				'rerun_preview_command' => $preview_command,
+				'candidates'            => $candidates,
+				'removed'               => array(),
+				'skipped'               => $skipped,
+				'summary'               => array(
+					'apply_command'         => $apply_command,
+					'preview_command'       => $preview_command,
+					'rerun_preview_command' => $preview_command,
+				) + $summary,
 			);
 			if ( null !== $pagination ) {
 				$response['pagination'] = $pagination;
@@ -209,7 +216,37 @@ trait WorkspaceArtifactCleanup {
 	 * @return string
 	 */
 	private function build_artifact_cleanup_apply_command(): string {
-		return 'studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json';
+		return 'studio wp datamachine-code workspace cleanup run --mode=artifacts';
+	}
+
+	/**
+	 * Build the preview command for the current artifact cleanup dry-run.
+	 *
+	 * @param  array<string,mixed> $opts Dry-run options.
+	 * @return string
+	 */
+	private function build_artifact_cleanup_preview_command( array $opts ): string {
+		$parts = array( 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run' );
+		if ( ! empty($opts['force']) ) {
+			$parts[] = '--force';
+		}
+		if ( isset($opts['limit']) ) {
+			$parts[] = '--limit=' . (int) $opts['limit'];
+		}
+		if ( isset($opts['offset']) && (int) $opts['offset'] > 0 ) {
+			$parts[] = '--offset=' . (int) $opts['offset'];
+		}
+		if ( ! empty($opts['exhaustive']) ) {
+			$parts[] = '--exhaustive';
+		}
+		if ( ! empty($opts['safety_probes']) ) {
+			$parts[] = '--safety-probes';
+		}
+		if ( isset($opts['sort']) && '' !== trim( (string) $opts['sort']) ) {
+			$parts[] = '--sort=' . preg_replace('/[^a-z0-9_\-]/i', '', (string) $opts['sort']);
+		}
+		$parts[] = '--format=json';
+		return implode(' ', $parts);
 	}
 
 	/**
