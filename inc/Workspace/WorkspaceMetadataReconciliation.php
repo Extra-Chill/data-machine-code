@@ -646,7 +646,7 @@ trait WorkspaceMetadataReconciliation {
 			return $this->build_worktree_metadata_reconciliation_skip($base_row, $diagnostic);
 		}
 
-		$resolved_wt = array_merge(
+		$resolved_wt      = array_merge(
 			$wt,
 			array(
 				'repo'   => $repo,
