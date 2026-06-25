@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.25] - 2026-06-25
+
+### Changed
+- Align AGENTS inventory assignments
+- Refresh AGENTS inventory after primary pulls
+- Surface stale primaries in AGENTS inventory
+
+### Fixed
+- Fix AGENTS inventory lint
+
 ## [0.48.24] - 2026-06-25
 
 ### Changed
