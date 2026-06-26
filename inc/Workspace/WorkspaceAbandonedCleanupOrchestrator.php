@@ -22,6 +22,8 @@ class WorkspaceAbandonedCleanupOrchestrator {
 	/** @var callable */
 	private $clock;
 
+	private ?object $active_no_signal_report_ability = null;
+
 	/**
 	 * @param callable|null $ability_resolver Optional resolver receiving an ability name.
 	 * @param callable|null $clock            Optional clock returning microtime-style seconds.
@@ -69,7 +71,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			$deadline = $this->now() + $budget_seconds;
 		}
 
-		$abilities = $this->resolve_required_abilities();
+		$abilities = $this->resolve_required_abilities($active_no_signal_drain);
 		if ( is_wp_error($abilities) ) {
 			return $abilities;
 		}
@@ -217,7 +219,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 	}
 
 	/** @return array<string,mixed>|\WP_Error */
-	private function resolve_required_abilities(): array|\WP_Error {
+	private function resolve_required_abilities( bool $active_no_signal_drain = false ): array|\WP_Error {
 		$required = array(
 			'reconcile_metadata' => 'datamachine-code/workspace-worktree-reconcile-metadata',
 			'finalized'          => 'datamachine-code/workspace-worktree-active-no-signal-finalized-apply',
@@ -227,6 +229,9 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			'bounded_apply'      => 'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply',
 			'prune'              => 'datamachine-code/workspace-worktree-prune',
 		);
+		if ( $active_no_signal_drain ) {
+			$required['active_no_signal_report'] = 'datamachine-code/workspace-worktree-active-no-signal-report';
+		}
 
 		$abilities = array();
 		foreach ( $required as $key => $ability_name ) {
@@ -236,6 +241,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			}
 			$abilities[ $key ] = $ability;
 		}
+		$this->active_no_signal_report_ability = $abilities['active_no_signal_report'] ?? null;
 
 		return $abilities;
 	}
@@ -334,10 +340,120 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		if ( empty($result['continuation']) && ! $force && ! $active_no_signal_drain ) {
 			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree abandoned --apply --force --limit=%d --passes=%d%s --format=json', $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
 		}
+		if ( $active_no_signal_drain && empty($result['continuation']) && empty($result['evidence']['budget_exhausted']) ) {
+			$this->append_active_no_signal_backlog_summary($result, min($limit, 25));
+		}
 
 		$result['evidence']['elapsed_ms'] = (int) round(( $this->now() - $started_at ) * 1000);
 
 		return $result;
+	}
+
+	private function append_active_no_signal_backlog_summary( array &$result, int $limit ): void {
+		if ( null === $this->active_no_signal_report_ability ) {
+			return;
+		}
+
+		$limit  = max(1, $limit);
+		$report = $this->execute_ability(
+			$this->active_no_signal_report_ability,
+			array(
+				'limit'        => $limit,
+				'offset'       => 0,
+				'until_budget' => '15s',
+			)
+		);
+		if ( is_wp_error($report) ) {
+			$result['remaining_active_no_signal_backlog'] = array(
+				'available' => false,
+				'reason'    => (string) $report->get_error_code(),
+				'message'   => $report->get_error_message(),
+				'next_commands' => array(
+					sprintf('studio wp datamachine-code workspace worktree active-no-signal-report --limit=%d --offset=0 --format=json', $limit),
+				),
+			);
+			return;
+		}
+
+		$result['remaining_active_no_signal_backlog'] = $this->build_active_no_signal_backlog_summary($report, $limit);
+		foreach ( (array) ( $result['remaining_active_no_signal_backlog']['next_commands'] ?? array() ) as $command ) {
+			$result['next_commands'][] = (string) $command;
+		}
+		$result['next_commands'] = array_values(array_unique(array_filter(array_map('strval', (array) $result['next_commands']))));
+	}
+
+	/** @return array<string,mixed> */
+	private function build_active_no_signal_backlog_summary( array $report, int $limit ): array {
+		$rows       = (array) ( $report['rows'] ?? array() );
+		$summary    = (array) ( $report['summary'] ?? array() );
+		$pagination = (array) ( $report['pagination'] ?? array() );
+		$total      = (int) ( $summary['total_active_no_signal'] ?? $pagination['total'] ?? 0 );
+		$sampled    = (int) ( $summary['inspected'] ?? count($rows) );
+		$buckets    = array();
+
+		foreach ( (array) ( $summary['by_suggested_action'] ?? array() ) as $reason => $count ) {
+			$buckets[ (string) $reason ] = array(
+				'count'    => (int) $count,
+				'examples' => array(),
+			);
+		}
+
+		foreach ( $rows as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$reason              = (string) ( $row['suggested_action'] ?? 'insufficient_signal' );
+			$buckets[ $reason ] ??= array(
+				'count'    => 0,
+				'examples' => array(),
+			);
+			if ( ! isset($summary['by_suggested_action'][ $reason ]) ) {
+				++$buckets[ $reason ]['count'];
+			}
+			if ( count($buckets[ $reason ]['examples']) < 3 ) {
+				$buckets[ $reason ]['examples'][] = $this->active_no_signal_backlog_example($row);
+			}
+		}
+		ksort($buckets);
+
+		$commands = array(
+			sprintf('studio wp datamachine-code workspace worktree active-no-signal-report --limit=%d --offset=0 --format=json', $limit),
+			sprintf('studio wp datamachine-code workspace worktree active-no-signal-report --limit=%d --offset=0 --verbose --format=json', $limit),
+		);
+		if ( ! empty($pagination['next_command']) ) {
+			$commands[] = (string) $pagination['next_command'];
+		}
+
+		return array(
+			'available'                    => true,
+			'total_active_no_signal'       => $total,
+			'sampled'                      => $sampled,
+			'unreviewed_count'             => max(0, $total - $sampled),
+			'by_actionable_reason'         => $buckets,
+			'counts_scope'                 => 'bounded_post_drain_sample_only',
+			'limitation'                   => 'Counts by actionable reason cover only this bounded post-drain sample; active-no-signal report has pagination but no safe bucket filter, so full per-bucket totals are not scanned by default.',
+			'pagination'                   => $pagination,
+			'next_commands'                => array_values(array_unique(array_filter($commands))),
+		);
+	}
+
+	/** @return array<string,mixed> */
+	private function active_no_signal_backlog_example( array $row ): array {
+		$example = array(
+			'handle' => (string) ( $row['handle'] ?? '' ),
+		);
+		foreach ( array( 'repo', 'branch', 'path', 'reason' ) as $field ) {
+			if ( isset($row[ $field ]) && '' !== (string) $row[ $field ] ) {
+				$example[ $field ] = (string) $row[ $field ];
+			}
+		}
+		if ( isset($row['dirty']) ) {
+			$example['dirty'] = (int) $row['dirty'];
+		}
+		if ( isset($row['unpushed']) ) {
+			$example['unpushed'] = (int) $row['unpushed'];
+		}
+		return $example;
 	}
 
 	private function stage_incomplete( array $step ): bool {
