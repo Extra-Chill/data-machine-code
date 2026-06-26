@@ -10,6 +10,7 @@ namespace DataMachineCode\Tasks;
 use DataMachine\Core\PluginSettings;
 use DataMachine\Engine\AI\System\Tasks\SystemTask;
 use DataMachine\Engine\Tasks\TaskScheduler;
+use DataMachineCode\Support\SystemTaskDrainability;
 use DataMachineCode\Workspace\Workspace;
 
 defined('ABSPATH') || exit;
@@ -207,6 +208,10 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 			return new \WP_Error('cleanup_chunk_schedule_failed', 'Failed to schedule cleanup chunk jobs.', array( 'status' => 500 ));
 		}
 
+		$drainability = SystemTaskDrainability::ensure_jobs_have_execute_step_actions(
+			is_array($batch['job_ids'] ?? null) ? $batch['job_ids'] : array()
+		);
+
 		return array(
 			'success'          => true,
 			'dry_run'          => false,
@@ -237,6 +242,7 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 				'planned_handles' => $this->cleanup_chunk_handles($chunk_rows),
 				'batch_job_id'    => (int) ( $batch['batch_job_id'] ?? 0 ),
 				'direct_job_ids'  => $batch['job_ids'] ?? array(),
+				'drainability'    => $drainability,
 			),
 		);
 	}
