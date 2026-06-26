@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.27] - 2026-06-26
+
+### Changed
+- Add active no-signal cleanup drain
+
+### Fixed
+- Fix cleanup drain lint
+
 ## [0.48.26] - 2026-06-26
 
 ### Changed
