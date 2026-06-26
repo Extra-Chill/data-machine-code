@@ -7,6 +7,8 @@
 
 namespace DataMachineCode\Cleanup;
 
+use DataMachineCode\Support\SystemTaskDrainability;
+
 defined('ABSPATH') || exit;
 
 class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreInterface {
@@ -126,19 +128,20 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 				'remaining_safely_removable_worktrees' => 0,
 			),
 			'children'         => array(
-				'batch_job_ids'      => array(),
-				'chunk_job_ids'      => array(),
-				'pending_job_ids'    => array(),
-				'processing_job_ids' => array(),
-				'failed_job_ids'     => array(),
-				'processing'         => 0,
-				'completed'          => 0,
-				'failed'             => 0,
-				'skipped'            => 0,
-				'running'            => 0,
-				'total'              => 0,
-				'statuses'           => array(),
-				'job_ids'            => array(),
+				'batch_job_ids'                            => array(),
+				'chunk_job_ids'                            => array(),
+				'pending_job_ids'                          => array(),
+				'pending_without_drainable_action_job_ids' => array(),
+				'processing_job_ids'                       => array(),
+				'failed_job_ids'                           => array(),
+				'processing'                               => 0,
+				'completed'                                => 0,
+				'failed'                                   => 0,
+				'skipped'                                  => 0,
+				'running'                                  => 0,
+				'total'                                    => 0,
+				'statuses'                                 => array(),
+				'job_ids'                                  => array(),
 			),
 		);
 
@@ -162,6 +165,9 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 				$summary['children']['job_ids'][] = $child_job_id;
 				if ( 'pending' === $status ) {
 					$summary['children']['pending_job_ids'][] = $child_job_id;
+					if ( ! SystemTaskDrainability::job_has_execute_step_action($child_job_id) ) {
+						$summary['children']['pending_without_drainable_action_job_ids'][] = $child_job_id;
+					}
 				} elseif ( 'processing' === $status && ! $idle_wrapper ) {
 					$summary['children']['processing_job_ids'][] = $child_job_id;
 				} elseif ( str_starts_with($status, 'failed') ) {
@@ -204,11 +210,12 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 		$summary['cleanup_items']['freed_human']    = $this->format_bytes($summary['cleanup_items']['bytes_reclaimed']);
 		$summary['children']['batch_job_ids']       = array_values(array_unique($summary['children']['batch_job_ids']));
 		$summary['children']['chunk_job_ids']       = array_values(array_unique($summary['children']['chunk_job_ids']));
-		$summary['children']['pending_job_ids']     = array_values(array_unique($summary['children']['pending_job_ids']));
-		$summary['children']['processing_job_ids']  = array_values(array_unique($summary['children']['processing_job_ids']));
-		$summary['children']['failed_job_ids']      = array_values(array_unique($summary['children']['failed_job_ids']));
-		$summary['children']['job_ids']             = array_values(array_unique($summary['children']['job_ids']));
-		$summary['children']['running']             = (int) $summary['children']['processing'];
+		$summary['children']['pending_job_ids']                          = array_values(array_unique($summary['children']['pending_job_ids']));
+		$summary['children']['pending_without_drainable_action_job_ids'] = array_values(array_unique($summary['children']['pending_without_drainable_action_job_ids']));
+		$summary['children']['processing_job_ids']                       = array_values(array_unique($summary['children']['processing_job_ids']));
+		$summary['children']['failed_job_ids']                           = array_values(array_unique($summary['children']['failed_job_ids']));
+		$summary['children']['job_ids']                                  = array_values(array_unique($summary['children']['job_ids']));
+		$summary['children']['running']                                  = (int) $summary['children']['processing'];
 
 		return $summary;
 	}
@@ -224,6 +231,7 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 		$batch_ids  = (array) ( $children['batch_job_ids'] ?? array() );
 		$chunk_ids  = (array) ( $children['chunk_job_ids'] ?? array() );
 		$pending    = (array) ( $children['pending_job_ids'] ?? array() );
+		$undrainable = (array) ( $children['pending_without_drainable_action_job_ids'] ?? array() );
 		$processing = (array) ( $children['processing_job_ids'] ?? array() );
 
 		return array(
@@ -238,6 +246,7 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 			'chunk_total'             => count($chunk_ids),
 			'failed_job_ids'          => (array) ( $children['failed_job_ids'] ?? array() ),
 			'pending_job_ids'         => array_slice($pending, 0, $limit),
+			'pending_without_drainable_action_job_ids' => array_slice($undrainable, 0, $limit),
 			'processing_job_ids'      => array_slice($processing, 0, $limit),
 			'pending_truncated'       => count($pending) > $limit,
 			'processing_truncated'    => count($processing) > $limit,
@@ -277,13 +286,24 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 		if ( array() !== $active_child_ids ) {
 			$commands['active_children'] = sprintf('studio wp datamachine drain --job-id=%s', implode(',', $active_child_ids));
 		}
+		$undrainable_child_ids = array_values(
+			array_unique(
+				array_filter(
+					array_map('intval', (array) ( $children['pending_without_drainable_action_job_ids'] ?? array() ))
+				)
+			)
+		);
+		if ( array() !== $undrainable_child_ids ) {
+			$commands['repair_undrainable_children'] = sprintf('studio wp datamachine-code workspace cleanup resume %s --format=json', $run_id);
+		}
 
 		return array(
 			'needed'               => in_array($state, array( 'running', 'waiting_on_children' ), true),
 			'commands'             => $commands,
-			'active_child_job_ids' => $active_child_ids,
-			'bytes_reclaimed'      => (int) ( $cleanup_items['bytes_reclaimed'] ?? 0 ),
-			'freed_human'          => (string) ( $cleanup_items['freed_human'] ?? $this->format_bytes(0) ),
+			'active_child_job_ids'      => $active_child_ids,
+			'undrainable_child_job_ids' => $undrainable_child_ids,
+			'bytes_reclaimed'           => (int) ( $cleanup_items['bytes_reclaimed'] ?? 0 ),
+			'freed_human'               => (string) ( $cleanup_items['freed_human'] ?? $this->format_bytes(0) ),
 		);
 	}
 
