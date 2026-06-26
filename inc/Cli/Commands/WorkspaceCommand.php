@@ -5346,6 +5346,9 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_active_no_signal_report_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result = WorkspaceCompactOutput::cleanup_result($result);
+			}
 			$this->renderer()->json($result);
 			return;
 		}
@@ -5436,6 +5439,9 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_active_no_signal_finalized_apply_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result = WorkspaceCompactOutput::cleanup_result($result);
+			}
 			$this->renderer()->json($result);
 			return;
 		}
@@ -5526,6 +5532,9 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_active_no_signal_equivalent_clean_apply_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result = WorkspaceCompactOutput::cleanup_result($result);
+			}
 			$this->renderer()->json($result);
 			return;
 		}
@@ -5616,6 +5625,9 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_active_no_signal_merged_apply_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result = WorkspaceCompactOutput::cleanup_result($result);
+			}
 			$this->renderer()->json($result);
 			return;
 		}
@@ -5706,6 +5718,9 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_active_no_signal_remote_clean_apply_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result = WorkspaceCompactOutput::cleanup_result($result);
+			}
 			$this->renderer()->json($result);
 			return;
 		}
@@ -5945,7 +5960,7 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_bounded_cleanup_eligible_apply_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			$report = ! empty($assoc_args['verbose']) ? $result : $this->compact_worktree_bounded_cleanup_eligible_apply_json($result);
+			$report = ! empty($assoc_args['verbose']) ? $result : WorkspaceCompactOutput::cleanup_result($result);
 			$this->renderer()->json($report);
 			return;
 		}

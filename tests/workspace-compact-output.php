@@ -71,6 +71,59 @@ compact_output_assert(20 === ( $cleanup['blockers']['dirty_worktree']['count'] ?
 compact_output_assert(count((array) ( $cleanup['samples']['skipped'] ?? array() )) <= 5, 'Compact cleanup output must sample skipped rows.');
 compact_output_assert(! empty($cleanup['next_commands']), 'Compact cleanup output must preserve next commands.');
 
+$active_report = WorkspaceCompactOutput::cleanup_result(
+	array(
+		'success'    => true,
+		'mode'       => 'active_no_signal_report',
+		'rows'       => $large_rows,
+		'summary'    => array(
+			'total_active_no_signal' => 40,
+			'inspected'              => 40,
+			'by_suggested_action'    => array( 'remote_tracking_clean' => 40 ),
+		),
+		'pagination' => array(
+			'total'        => 80,
+			'offset'       => 0,
+			'limit'        => 40,
+			'next_offset'  => 40,
+			'next_command' => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=40 --offset=40 --format=json',
+		),
+	)
+);
+
+compact_output_assert(! isset($active_report['rows']), 'Compact active/no-signal report must omit full rows array.');
+compact_output_assert(40 === ( $active_report['row_counts']['rows'] ?? null ), 'Compact active/no-signal report must preserve row count.');
+compact_output_assert(40 === ( $active_report['pagination']['next_offset'] ?? null ), 'Compact active/no-signal report must preserve pagination.');
+compact_output_assert(in_array('studio wp datamachine-code workspace worktree active-no-signal-report --limit=40 --offset=40 --format=json', (array) ( $active_report['next_commands'] ?? array() ), true), 'Compact active/no-signal report must expose next page command.');
+
+$active_apply = WorkspaceCompactOutput::cleanup_result(
+	array(
+		'success'    => true,
+		'mode'       => 'active_no_signal_remote_clean_apply',
+		'dry_run'    => true,
+		'planned'    => $large_rows,
+		'written'    => $large_rows,
+		'skipped'    => $large_rows,
+		'summary'    => array(
+			'inspected'         => 40,
+			'planned'           => 40,
+			'written'           => 40,
+			'skipped'           => 40,
+			'skipped_by_reason' => array( 'not_remote_tracking_clean' => 40 ),
+		),
+		'pagination' => array(
+			'next_command' => 'studio wp datamachine-code workspace worktree active-no-signal-remote-clean-apply --dry-run --limit=40 --offset=40 --format=json',
+		),
+	)
+);
+
+compact_output_assert(! isset($active_apply['planned']), 'Compact active/no-signal apply must omit full planned array.');
+compact_output_assert(! isset($active_apply['written']), 'Compact active/no-signal apply must omit full written array.');
+compact_output_assert(40 === ( $active_apply['row_counts']['planned'] ?? null ), 'Compact active/no-signal apply must preserve planned count.');
+compact_output_assert(40 === ( $active_apply['row_counts']['written'] ?? null ), 'Compact active/no-signal apply must preserve written count.');
+compact_output_assert(40 === ( $active_apply['blockers']['not_remote_tracking_clean']['count'] ?? null ), 'Compact active/no-signal apply must preserve blocker counts from summary.');
+compact_output_assert(in_array('studio wp datamachine-code workspace worktree active-no-signal-remote-clean-apply --dry-run --limit=40 --offset=40 --format=json', (array) ( $active_apply['next_commands'] ?? array() ), true), 'Compact active/no-signal apply must expose next page command.');
+
 $locks = WorkspaceCompactOutput::lock_result(
 	array(
 		'active'     => 2,
