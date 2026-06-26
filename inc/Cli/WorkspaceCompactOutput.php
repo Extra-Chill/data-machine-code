@@ -15,8 +15,8 @@ class WorkspaceCompactOutput {
 
 	public static function cleanup_result( array $result ): array {
 		$summary    = (array) ( $result['summary'] ?? array() );
-		$candidates = (array) ( $result['candidates'] ?? $result['artifact_candidates'] ?? array() );
-		$removed    = (array) ( $result['removed'] ?? $result['removed_worktrees'] ?? $result['removed_artifacts'] ?? array() );
+		$candidates = (array) ( $result['candidates'] ?? $result['artifact_candidates'] ?? $result['worktree_candidates'] ?? $result['rows'] ?? $result['planned'] ?? array() );
+		$removed    = (array) ( $result['removed'] ?? $result['removed_worktrees'] ?? $result['removed_artifacts'] ?? $result['written'] ?? array() );
 		$skipped    = (array) ( $result['skipped'] ?? array() );
 
 		return self::filter_empty(
@@ -144,7 +144,7 @@ class WorkspaceCompactOutput {
 
 	private static function row_counts( array $result ): array {
 		$counts = array();
-		foreach ( array( 'candidates', 'artifact_candidates', 'worktree_candidates', 'removed', 'removed_artifacts', 'removed_worktrees', 'skipped', 'written', 'proposals', 'pass_results' ) as $key ) {
+		foreach ( array( 'candidates', 'artifact_candidates', 'worktree_candidates', 'rows', 'planned', 'removed', 'removed_artifacts', 'removed_worktrees', 'written', 'skipped', 'proposals', 'pass_results' ) as $key ) {
 			if ( isset( $result[ $key ] ) && is_array( $result[ $key ] ) ) {
 				$counts[ $key ] = count( $result[ $key ] );
 			}
@@ -202,6 +202,14 @@ class WorkspaceCompactOutput {
 			}
 			if ( ! empty($summary[ $field ]) ) {
 				$commands[] = (string) $summary[ $field ];
+			}
+		}
+		foreach ( array( 'pagination', 'continuation' ) as $bucket ) {
+			if ( ! empty($result[ $bucket ]['next_command']) ) {
+				$commands[] = (string) $result[ $bucket ]['next_command'];
+			}
+			if ( ! empty($summary[ $bucket ]['next_command']) ) {
+				$commands[] = (string) $summary[ $bucket ]['next_command'];
 			}
 		}
 		$deduped = array();

@@ -5346,6 +5346,9 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_active_no_signal_report_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result = WorkspaceCompactOutput::cleanup_result($result);
+			}
 			$this->renderer()->json($result);
 			return;
 		}
@@ -5436,6 +5439,9 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_active_no_signal_finalized_apply_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result = WorkspaceCompactOutput::cleanup_result($result);
+			}
 			$this->renderer()->json($result);
 			return;
 		}
@@ -5526,6 +5532,9 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_active_no_signal_equivalent_clean_apply_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result = WorkspaceCompactOutput::cleanup_result($result);
+			}
 			$this->renderer()->json($result);
 			return;
 		}
@@ -5616,6 +5625,9 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_active_no_signal_merged_apply_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result = WorkspaceCompactOutput::cleanup_result($result);
+			}
 			$this->renderer()->json($result);
 			return;
 		}
@@ -5706,6 +5718,9 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_active_no_signal_remote_clean_apply_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result = WorkspaceCompactOutput::cleanup_result($result);
+			}
 			$this->renderer()->json($result);
 			return;
 		}
@@ -5945,7 +5960,7 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_bounded_cleanup_eligible_apply_result( array $result, array $assoc_args ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			$report = ! empty($assoc_args['verbose']) ? $result : $this->compact_worktree_bounded_cleanup_eligible_apply_json($result);
+			$report = ! empty($assoc_args['verbose']) ? $result : WorkspaceCompactOutput::cleanup_result($result);
 			$this->renderer()->json($report);
 			return;
 		}
@@ -6184,57 +6199,6 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	/**
-	 * Compact bounded cleanup JSON for chat/operator output.
-	 *
-	 * @param  array<string,mixed> $result Full bounded apply result.
-	 * @return array<string,mixed>
-	 */
-	private function compact_worktree_bounded_cleanup_eligible_apply_json( array $result ): array {
-		$summary    = (array) ( $result['summary'] ?? array() );
-		$candidates = (array) ( $result['candidates'] ?? array() );
-		$removed    = (array) ( $result['removed'] ?? array() );
-		$skipped    = (array) ( $result['skipped'] ?? array() );
-		$buckets    = $this->build_cleanup_blocker_buckets($skipped);
-		$actions    = $this->build_cleanup_next_actions($buckets, (array) ( $summary['skipped_next_commands'] ?? array() ));
-
-		$compact_summary = array_merge(
-			$summary,
-			array(
-				'processed'            => (int) ( $summary['processed'] ?? $summary['inspected'] ?? count($candidates) ),
-				'would_remove'         => (int) ( $summary['would_remove'] ?? ( ! empty($result['dry_run']) ? count($candidates) : 0 ) ),
-				'removed'              => (int) ( $summary['removed'] ?? count($removed) ),
-				'skipped'              => max( (int) ( $summary['skipped'] ?? 0 ), count($skipped) ),
-				'bytes_reclaimed'      => (int) ( $summary['bytes_reclaimed'] ?? 0 ),
-				'skipped_by_reason'    => array_map(fn( $bucket ) => (int) ( $bucket['count'] ?? 0 ), $buckets),
-				'blocker_bucket_count' => count($buckets),
-			)
-		);
-
-		$report = array(
-			'success'                 => (bool) ( $result['success'] ?? true ),
-			'mode'                    => (string) ( $result['mode'] ?? 'bounded_cleanup_eligible_apply' ),
-			'dry_run'                 => ! empty($result['dry_run']),
-			'destructive'             => ! empty($result['destructive']),
-			'workspace_path'          => $result['workspace_path'] ?? null,
-			'generated_at'            => $result['generated_at'] ?? null,
-			'summary'                 => $compact_summary,
-			'blocker_buckets'         => $buckets,
-			'next_actions'            => $actions,
-			'active_no_signal_triage' => (array) ( $result['active_no_signal_triage'] ?? array() ),
-			'candidates'              => $this->compact_cleanup_rows($candidates, 25),
-			'removed'                 => $this->compact_cleanup_rows($removed, 25),
-			'continuation'            => $this->compact_cleanup_continuation( (array) ( $result['continuation'] ?? $result['pagination'] ?? array() ) ),
-			'evidence'                => $this->compact_cleanup_evidence( (array) ( $result['evidence'] ?? array() ), $skipped ),
-		);
-
-		if ( ! empty($result['job_backed']) ) {
-			$report['job_backed'] = true;
-		}
-
-		return array_filter($report, fn( $value ) => null !== $value);
-	}
-
-	/**
 	 * Render concise active/no-signal triage preview from bounded cleanup output.
 	 *
 	 * @param  array<string,mixed> $preview Triage preview payload.
@@ -6281,187 +6245,6 @@ class WorkspaceCommand extends BaseCommand {
 		if ( ! empty($preview['safety']) ) {
 			WP_CLI::log('Safety: ' . (string) $preview['safety']);
 		}
-	}
-
-	/**
-	 * Build skipped blocker buckets with bounded examples.
-	 *
-	 * @param  array<int,array<string,mixed>> $rows Skipped rows.
-	 * @return array<string,array<string,mixed>>
-	 */
-	private function build_cleanup_blocker_buckets( array $rows ): array {
-		$buckets = array();
-		foreach ( $rows as $row ) {
-			$reason_code = (string) ( $row['reason_code'] ?? 'unknown' );
-			if ( ! isset($buckets[ $reason_code ]) ) {
-				$buckets[ $reason_code ] = array(
-					'count'    => 0,
-					'examples' => array(),
-					'reason'   => (string) ( $row['reason'] ?? '' ),
-				);
-			}
-			++$buckets[ $reason_code ]['count'];
-			if ( count($buckets[ $reason_code ]['examples']) < 3 ) {
-				$buckets[ $reason_code ]['examples'][] = $this->compact_cleanup_row($row);
-			}
-		}
-
-		ksort($buckets);
-		return $buckets;
-	}
-
-	/**
-	 * Build compact next actions for unresolved blocker classes.
-	 *
-	 * @param  array<string,array<string,mixed>> $buckets Blocker buckets.
-	 * @param  array<int,array<string,mixed>>    $commands Existing cleanup command hints.
-	 * @return array<int,array<string,mixed>>
-	 */
-	private function build_cleanup_next_actions( array $buckets, array $commands ): array {
-		$by_reason = array();
-		foreach ( $commands as $command ) {
-			$reason_code = (string) ( $command['reason_code'] ?? '' );
-			if ( '' !== $reason_code ) {
-				$by_reason[ $reason_code ] = $command;
-			}
-		}
-
-		$defaults = array(
-			'active_no_signal'                   => array(
-				'command'     => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json',
-				'destructive' => false,
-			),
-			'needs_metadata_reconcile'           => array(
-				'command'     => 'studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json',
-				'destructive' => false,
-			),
-			'lifecycle_reconciliation_candidate' => array(
-				'command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run --format=json',
-				'destructive' => false,
-			),
-			'dirty_worktree'                     => array(
-				'command'     => 'git -C <worktree-path> status --short --branch --untracked-files=normal',
-				'destructive' => false,
-			),
-			'unpushed_commits'                   => array(
-				'command'     => 'git -C <worktree-path> log --oneline --decorate @{u}..HEAD',
-				'destructive' => false,
-			),
-			'stale_worktree_marker'              => array(
-				'command'     => 'git -C <primary-path> worktree prune --dry-run --verbose',
-				'destructive' => false,
-			),
-			'primary_missing'                    => array(
-				'command'     => 'studio wp datamachine-code workspace show <repo>',
-				'destructive' => false,
-			),
-			'submodule_worktree'                 => array(
-				'command'     => 'git -C <worktree-path> submodule status --recursive',
-				'destructive' => false,
-			),
-			'remove_timeout'                     => array(
-				'command'     => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=25 --remove-timeout=<seconds>',
-				'destructive' => true,
-			),
-		);
-
-		$actions = array();
-		foreach ( $buckets as $reason_code => $bucket ) {
-			$hint      = $by_reason[ $reason_code ] ?? $defaults[ $reason_code ] ?? array(
-				'command'     => 'Re-run with --verbose --format=json and inspect this reason_code before retrying cleanup.',
-				'destructive' => false,
-			);
-			$actions[] = array(
-				'reason_code' => $reason_code,
-				'count'       => (int) ( $bucket['count'] ?? 0 ),
-				'command'     => (string) ( $hint['command'] ?? '' ),
-				'alternative' => (string) ( $hint['alternative'] ?? '' ),
-				'destructive' => ! empty($hint['destructive']),
-			);
-		}
-
-		return $actions;
-	}
-
-	/**
-	 * Compact a bounded cleanup continuation without full handle lists.
-	 *
-	 * @param  array<string,mixed> $continuation Continuation payload.
-	 * @return array<string,mixed>
-	 */
-	private function compact_cleanup_continuation( array $continuation ): array {
-		if ( empty($continuation) ) {
-			return array();
-		}
-
-		$handles = array_values(array_filter(array_map('strval', (array) ( $continuation['remaining_handles'] ?? array() ))));
-		unset($continuation['remaining_handles']);
-		if ( ! isset($continuation['remaining_total']) && isset($continuation['total']) ) {
-			$continuation['remaining_total'] = (int) $continuation['total'];
-		}
-		$continuation['remaining_handles_count']    = count($handles);
-		$continuation['remaining_handles_examples'] = array_slice($handles, 0, 10);
-		if ( count($handles) > 10 ) {
-			$continuation['remaining_handles_truncated'] = true;
-		}
-
-		return $continuation;
-	}
-
-	/**
-	 * Compact evidence while removing full skipped handle lists.
-	 *
-	 * @param  array<string,mixed>              $evidence Evidence payload.
-	 * @param  array<int,array<string,mixed>>   $skipped  Skipped rows.
-	 * @return array<string,mixed>
-	 */
-	private function compact_cleanup_evidence( array $evidence, array $skipped ): array {
-		$skipped_handles = array_values(array_filter(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $skipped)));
-		unset($evidence['skipped_handles']);
-		$evidence['skipped_handles_count']    = count($skipped_handles);
-		$evidence['skipped_handles_examples'] = array_slice($skipped_handles, 0, 10);
-		if ( count($skipped_handles) > 10 ) {
-			$evidence['skipped_handles_truncated'] = true;
-		}
-		$evidence['full_detail_hint'] = 'Re-run with --verbose --format=json for full skipped rows and handle lists.';
-
-		return $evidence;
-	}
-
-	/**
-	 * Compact cleanup rows to the fields operators need first.
-	 *
-	 * @param  array<int,array<string,mixed>> $rows  Rows to compact.
-	 * @param  int                           $limit Maximum rows.
-	 * @return array<int,array<string,mixed>>
-	 */
-	private function compact_cleanup_rows( array $rows, int $limit ): array {
-		return array_map(fn( $row ) => $this->compact_cleanup_row( (array) $row ), array_slice($rows, 0, $limit));
-	}
-
-	/**
-	 * Compact one cleanup row.
-	 *
-	 * @param  array<string,mixed> $row Cleanup row.
-	 * @return array<string,mixed>
-	 */
-	private function compact_cleanup_row( array $row ): array {
-		$compact = array(
-			'handle'      => $row['handle'] ?? null,
-			'repo'        => $row['repo'] ?? null,
-			'branch'      => $row['branch'] ?? null,
-			'reason_code' => $row['reason_code'] ?? $row['signal'] ?? null,
-			'reason'      => isset($row['reason']) ? $this->shorten_cleanup_reason( (string) $row['reason'] ) : null,
-			'path'        => $row['path'] ?? null,
-		);
-
-		foreach ( array( 'size_bytes', 'artifact_size_bytes', 'dirty', 'unpushed', 'created_at', 'liveness', 'pr_url' ) as $field ) {
-			if ( array_key_exists($field, $row) ) {
-				$compact[ $field ] = $row[ $field ];
-			}
-		}
-
-		return array_filter($compact, fn( $value ) => null !== $value && '' !== $value && array() !== $value);
 	}
 
 	private function render_worktree_emergency_cleanup_result( array $result, array $assoc_args ): void {
