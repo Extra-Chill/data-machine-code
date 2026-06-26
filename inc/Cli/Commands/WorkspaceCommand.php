@@ -1310,13 +1310,18 @@ class WorkspaceCommand extends BaseCommand {
 			return array( $job_id );
 		}
 
-		$children       = (array) ( $output['evidence']['children'] ?? array() );
-		$processing_ids = array_map('intval', (array) ( $children['processing_job_ids'] ?? array() ));
-		$failed_ids     = array_map('intval', (array) ( $children['failed_job_ids'] ?? array() ));
-		$pending_ids    = array_map('intval', (array) ( $children['pending_job_ids'] ?? array() ));
+		$children        = (array) ( $output['evidence']['children'] ?? array() );
+		$processing_ids  = array_map('intval', (array) ( $children['processing_job_ids'] ?? array() ));
+		$failed_ids      = array_map('intval', (array) ( $children['failed_job_ids'] ?? array() ));
+		$pending_ids     = array_map('intval', (array) ( $children['pending_job_ids'] ?? array() ));
+		$undrainable_ids = array_map('intval', (array) ( $children['pending_without_drainable_action_job_ids'] ?? array() ));
 
 		if ( 'resume' === $operation ) {
+			$repair = \DataMachineCode\Support\SystemTaskDrainability::ensure_jobs_have_execute_step_actions($undrainable_ids);
 			$child_targets = array_values(array_unique(array_filter(array_merge($processing_ids, $failed_ids))));
+			if ( array() === $child_targets && (int) ( $repair['repaired'] ?? 0 ) > 0 ) {
+				return array();
+			}
 			return array() !== $child_targets ? $child_targets : array( $job_id );
 		}
 
