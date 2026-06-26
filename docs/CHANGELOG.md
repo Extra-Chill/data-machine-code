@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.28] - 2026-06-26
+
+### Changed
+- Summarize active no-signal drain backlog
+
+### Fixed
+- Fix artifact cleanup child drainability
+- Fix hygiene cleanup candidate safety labels
+
 ## [0.48.27] - 2026-06-26
 
 ### Changed
