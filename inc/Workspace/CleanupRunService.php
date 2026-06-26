@@ -432,6 +432,20 @@ class CleanupRunService {
 
 			if ( 0 === $run_applied ) {
 				$blocked_summary = (array) ( $apply['remaining_work_summary']['skipped_by_reason'] ?? array() );
+				if ( $run_skipped > 0 && $this->artifact_cleanup_blocked_only($blocked_summary, $run_skipped) ) {
+					return $this->until_empty_result(
+						'complete_with_blockers',
+						$passes,
+						$total_bytes,
+						$total_applied,
+						$total_skipped,
+						array(
+							'run_id'                    => $run_id,
+							'remaining_blocked_count'   => $run_skipped,
+							'remaining_blocked_reasons' => $blocked_summary,
+						)
+					);
+				}
 				if ( ( $total_applied > 0 || $total_bytes > 0 ) && $run_skipped > 0 ) {
 					return $this->until_empty_result(
 						'completed_with_skips',
@@ -474,12 +488,35 @@ class CleanupRunService {
 	}
 
 	/**
+	 * @param array<string,array<string,mixed>> $skipped_by_reason Skipped summary bucket.
+	 */
+	private function artifact_cleanup_blocked_only( array $skipped_by_reason, int $skipped_count ): bool {
+		if ( $skipped_count <= 0 || array() === $skipped_by_reason ) {
+			return false;
+		}
+
+		$blocked_reasons = array(
+			'dirty_worktree'   => true,
+			'unpushed_commits' => true,
+		);
+		$count           = 0;
+		foreach ( $skipped_by_reason as $reason => $bucket ) {
+			if ( ! isset($blocked_reasons[ (string) $reason ]) ) {
+				return false;
+			}
+			$count += max(0, (int) ( $bucket['count'] ?? 0 ));
+		}
+
+		return $count >= $skipped_count;
+	}
+
+	/**
 	 * @param array<int,array<string,mixed>> $passes Loop pass summaries.
 	 * @param array<string,mixed>            $extra  Extra result fields.
 	 */
 	private function until_empty_result( string $state, array $passes, int $bytes, int $applied, int $skipped, array $extra = array() ): array {
 		return array(
-			'success'         => in_array($state, array( 'completed', 'completed_with_skips', 'budget_exhausted', 'max_passes_reached' ), true),
+			'success'         => in_array($state, array( 'completed', 'completed_with_skips', 'complete_with_blockers', 'budget_exhausted', 'max_passes_reached' ), true),
 			'state'           => $state,
 			'status'          => $state,
 			'passes'          => $passes,
