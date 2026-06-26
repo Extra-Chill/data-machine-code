@@ -16,6 +16,7 @@ defined('ABSPATH') || exit;
 final class WorktreeCleanupClassifier {
 
 	public const BUCKET_SAFE_TO_REMOVE_NOW           = 'safe_to_remove_now';
+	public const BUCKET_CLEANUP_ELIGIBLE_UNPROBED   = 'cleanup_eligible_pending_revalidation';
 	public const BUCKET_NEEDS_RECONCILIATION         = 'needs_reconciliation';
 	public const BUCKET_NEEDS_FULL_REVIEW            = 'needs_full_review';
 	public const BUCKET_BLOCKED_BY_DIRTY_OR_UNPUSHED = 'blocked_by_dirty_or_unpushed';
@@ -122,16 +123,24 @@ final class WorktreeCleanupClassifier {
 	 * @param  int               $candidate_count      Candidate row count.
 	 * @param  array<string,int> $candidates_by_signal Candidate signal counts.
 	 * @param  array<string,int> $skipped_by_reason    Skipped reason counts.
+	 * @param  string            $candidate_bucket     Bucket to use for candidate rows.
 	 * @return array<string,int>
 	 */
-	public static function buckets( int $candidate_count, array $candidates_by_signal, array $skipped_by_reason ): array {
+	public static function buckets(
+		int $candidate_count,
+		array $candidates_by_signal,
+		array $skipped_by_reason,
+		string $candidate_bucket = self::BUCKET_SAFE_TO_REMOVE_NOW
+	): array {
 		$buckets = array(
 			self::BUCKET_ARTIFACT_ONLY_DIRTY          => 0,
 			self::BUCKET_BLOCKED_BY_DIRTY_OR_UNPUSHED => 0,
+			self::BUCKET_CLEANUP_ELIGIBLE_UNPROBED   => 0,
 			self::BUCKET_NEEDS_FULL_REVIEW            => 0,
 			self::BUCKET_NEEDS_RECONCILIATION         => 0,
-			self::BUCKET_SAFE_TO_REMOVE_NOW           => $candidate_count,
+			self::BUCKET_SAFE_TO_REMOVE_NOW           => 0,
 		);
+		$buckets[ $candidate_bucket ] = ( $buckets[ $candidate_bucket ] ?? 0 ) + $candidate_count;
 
 		foreach ( $skipped_by_reason as $reason_code => $count ) {
 			$bucket             = self::bucket_for_reason( (string) $reason_code );

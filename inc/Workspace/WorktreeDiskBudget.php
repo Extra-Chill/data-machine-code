@@ -203,12 +203,13 @@ final class WorktreeDiskBudget {
 			),
 			array(
 				'priority'               => 2,
-				'action'                 => 'review and apply bounded cleanup-eligible worktrees',
+				'action'                 => 'review bounded cleanup-eligible worktrees; apply revalidates before removal',
 				'expected_reclaim_bytes' => $target_reclaim,
 				'expected_reclaim'       => $target_human,
 				'command'                => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25',
 				'preview_command'        => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25',
 				'apply_command'          => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=25',
+				'apply_note'             => 'Apply runs fresh dirty, unpushed, containment, and primary safety probes and may skip rows that the cheap inventory review listed.',
 			),
 			array(
 				'priority'               => 3,
