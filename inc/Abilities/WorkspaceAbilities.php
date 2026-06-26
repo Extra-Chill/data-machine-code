@@ -2188,6 +2188,65 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-active-no-signal-drain',
+				array(
+					'label'               => 'Drain Safe Active Worktree Cleanup',
+					'description'         => 'Run safe active/no-signal classifiers, remove newly cleanup-eligible worktrees through bounded cleanup, and stop with protected blockers. Refuses force and unpushed discard.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'apply'        => array(
+								'type'        => 'boolean',
+								'description' => 'If true, write safe cleanup metadata and remove bounded cleanup-eligible worktrees. Defaults to preview mode.',
+							),
+							'limit'        => array(
+								'type'        => 'integer',
+								'description' => 'Page/removal limit, clamped to 1..1000. Defaults to 100.',
+							),
+							'passes'       => array(
+								'type'        => 'integer',
+								'description' => 'Maximum apply passes, clamped to 1..25. Preview mode runs one pass.',
+							),
+							'offset'       => array(
+								'type'        => 'integer',
+								'description' => 'Stage pagination offset for resumed runs.',
+							),
+							'stage'        => array(
+								'type'        => 'string',
+								'enum'        => array( 'finalized', 'equivalent-clean', 'merged', 'remote-clean', 'bounded' ),
+								'description' => 'Active/no-signal stage to start from. Defaults to finalized.',
+							),
+							'until_budget' => array(
+								'type'        => 'string',
+								'description' => 'Optional compact wall-clock budget such as 60s, 10m, or 1h.',
+							),
+							'source'       => array(
+								'type'        => 'string',
+								'description' => 'Caller source marker forwarded to underlying cleanup abilities.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'       => array( 'type' => 'boolean' ),
+							'mode'          => array( 'type' => 'string' ),
+							'applied'       => array( 'type' => 'boolean' ),
+							'summary'       => array( 'type' => 'object' ),
+							'steps'         => array( 'type' => 'object' ),
+							'blocked'       => array( 'type' => 'array' ),
+							'continuation'  => array( 'type' => 'object' ),
+							'next_commands' => array( 'type' => 'array' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeActiveNoSignalDrain' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
 				'datamachine-code/workspace-worktree-abandoned-cleanup',
 				array(
 					'label'               => 'Orchestrate Abandoned Worktree Cleanup',
@@ -4245,6 +4304,23 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->worktree_active_no_signal_remote_clean_apply($opts);
+	}
+
+	/**
+	 * Drain safe active/no-signal cleanup classifications and removals.
+	 *
+	 * @param  array $input Orchestration input.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function worktreeActiveNoSignalDrain( array $input ): array|\WP_Error {
+		$input['active_no_signal_drain'] = true;
+		if ( ! array_key_exists('force', $input) ) {
+			$input['force'] = false;
+		}
+
+		$orchestrator = new WorkspaceAbandonedCleanupOrchestrator();
+
+		return $orchestrator->run($input);
 	}
 
 	/**

@@ -71,6 +71,7 @@ class WorkspaceCommand extends BaseCommand {
 			'ability'       => 'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply',
 			'input_builder' => 'build_worktree_active_no_signal_input',
 		),
+		'active-no-signal-drain'                  => array( 'ability' => 'datamachine-code/workspace-worktree-active-no-signal-drain' ),
 		'refresh-context'                         => array( 'ability' => 'datamachine-code/workspace-worktree-refresh-context' ),
 		'finalize'                                => array( 'ability' => 'datamachine-code/workspace-worktree-finalize' ),
 		'mark-cleanup-eligible'                   => array( 'ability' => 'datamachine-code/workspace-worktree-finalize' ),
@@ -3220,6 +3221,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *   active-no-signal-report, active-no-signal-finalized-apply,
 	 *   active-no-signal-equivalent-clean-apply,
 	 *   active-no-signal-merged-apply, active-no-signal-remote-clean-apply,
+	 *   active-no-signal-drain,
 	 *   refresh-context, finalize, mark-cleanup-eligible.
 	 *
 	 * [<repo>]
@@ -3419,13 +3421,15 @@ class WorkspaceCommand extends BaseCommand {
 	 *   audit.
 	 *
 	 * [--passes=<count>]
-	 * : For `abandoned`, maximum apply passes to run after marking eligible rows.
+	 * : For `abandoned` and `active-no-signal-drain`, maximum apply passes to run after marking eligible rows.
 	 *   For `cleanup-eligible-drain`, maximum bounded cleanup-eligible apply
 	 *   passes to run. Preview mode always runs one non-destructive pass.
 	 *
 	 * [--stage=<stage>]
 	 * : For `abandoned`, resume from a specific orchestration stage. Supported
 	 *   values: reconcile, finalized, equivalent-clean, merged, remote-clean, bounded.
+	 *   For `active-no-signal-drain`, supported values are finalized,
+	 *   equivalent-clean, merged, remote-clean, and bounded.
 	 *
 	 * [--offset=<count>]
 	 * : For `cleanup --dry-run`, `cleanup-artifacts --dry-run`,
@@ -3543,6 +3547,8 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # One operator pass for abandoned worktrees: reconcile, mark safe rows, remove eligible rows, and report blockers
 	 *     wp datamachine-code workspace worktree abandoned --format=json
 	 *     wp datamachine-code workspace worktree abandoned --apply --force --limit=100 --passes=5 --until-budget=120s --format=json
+	 *     wp datamachine-code workspace worktree active-no-signal-drain --format=json
+	 *     wp datamachine-code workspace worktree active-no-signal-drain --apply --limit=100 --passes=5 --until-budget=120s --format=json
 	 *
 	 *     # Adopt/reconcile unmanaged worktree metadata before cleanup
 	 *     wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json
@@ -3590,12 +3596,22 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
+			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
 			return;
 		}
 
 		if ( 'abandoned' === $operation ) {
 			$result = $this->run_worktree_abandoned_orchestration($assoc_args);
+			if ( is_wp_error($result) ) {
+				$this->render_workspace_error($result);
+				return;
+			}
+			$this->render_worktree_abandoned_result($result, $assoc_args);
+			return;
+		}
+
+		if ( 'active-no-signal-drain' === $operation ) {
+			$result = $this->run_worktree_active_no_signal_drain($assoc_args);
 			if ( is_wp_error($result) ) {
 				$this->render_workspace_error($result);
 				return;
@@ -3978,6 +3994,41 @@ class WorkspaceCommand extends BaseCommand {
 		$input = array(
 			'apply'  => ! empty($assoc_args['apply']),
 			'force'  => ! empty($assoc_args['force']),
+			'source' => self::CLEANUP_CLI_SOURCE,
+		);
+		foreach ( array( 'limit', 'passes', 'offset', 'stage' ) as $key ) {
+			if ( array_key_exists($key, $assoc_args) ) {
+				$input[ $key ] = $assoc_args[ $key ];
+			}
+		}
+		if ( isset($assoc_args['until-budget']) ) {
+			$input['until_budget'] = $assoc_args['until-budget'];
+		}
+
+		return $ability->execute($input);
+	}
+
+	/**
+	 * Run the active/no-signal drain ability from CLI flags.
+	 *
+	 * @param  array<string,mixed> $assoc_args CLI args.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function run_worktree_active_no_signal_drain( array $assoc_args ): array|\WP_Error {
+		if ( ! empty($assoc_args['force']) ) {
+			return new \WP_Error('active_no_signal_drain_refuses_force', 'Active/no-signal drain will not force cleanup. Protected blockers remain blocked.', array( 'status' => 400 ));
+		}
+		if ( ! empty($assoc_args['discard-unpushed']) ) {
+			return new \WP_Error('active_no_signal_drain_refuses_unpushed_discard', 'Active/no-signal drain will not discard unpushed commits.', array( 'status' => 400 ));
+		}
+
+		$ability = wp_get_ability('datamachine-code/workspace-worktree-active-no-signal-drain');
+		if ( ! $ability ) {
+			return new \WP_Error('active_no_signal_drain_ability_missing', 'Worktree active/no-signal drain ability not available: datamachine-code/workspace-worktree-active-no-signal-drain', array( 'status' => 500 ));
+		}
+
+		$input = array(
+			'apply'  => ! empty($assoc_args['apply']),
 			'source' => self::CLEANUP_CLI_SOURCE,
 		);
 		foreach ( array( 'limit', 'passes', 'offset', 'stage' ) as $key ) {
