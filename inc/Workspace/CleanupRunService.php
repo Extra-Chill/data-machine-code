@@ -495,13 +495,16 @@ class CleanupRunService {
 			return false;
 		}
 
-		$blocked_reasons = array( 'dirty_worktree' => true, 'unpushed_commits' => true );
+		$blocked_reasons = array(
+			'dirty_worktree'   => true,
+			'unpushed_commits' => true,
+		);
 		$count           = 0;
 		foreach ( $skipped_by_reason as $reason => $bucket ) {
 			if ( ! isset($blocked_reasons[ (string) $reason ]) ) {
 				return false;
 			}
-			$count += max(0, (int) ( is_array($bucket) ? ( $bucket['count'] ?? 0 ) : 0 ));
+			$count += max(0, (int) ( $bucket['count'] ?? 0 ));
 		}
 
 		return $count >= $skipped_count;
