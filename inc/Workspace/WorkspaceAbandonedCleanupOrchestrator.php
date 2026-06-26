@@ -47,16 +47,16 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		if ( $active_no_signal_drain && ! empty($input['discard_unpushed']) ) {
 			return new \WP_Error('active_no_signal_drain_refuses_unpushed_discard', 'Active/no-signal drain will not discard unpushed commits.', array( 'status' => 400 ));
 		}
-		$limit        = isset($input['limit']) ? max(1, min(1000, (int) $input['limit'])) : 100;
-		$passes       = isset($input['passes']) ? max(1, min(25, (int) $input['passes'])) : 5;
-		$offset       = isset($input['offset']) ? max(0, (int) $input['offset']) : 0;
+		$limit         = isset($input['limit']) ? max(1, min(1000, (int) $input['limit'])) : 100;
+		$passes        = isset($input['passes']) ? max(1, min(25, (int) $input['passes'])) : 5;
+		$offset        = isset($input['offset']) ? max(0, (int) $input['offset']) : 0;
 		$default_stage = $active_no_signal_drain ? 'finalized' : 'reconcile';
-		$stage        = isset($input['stage']) ? strtolower( (string) preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $input['stage']) ) : $default_stage;
-		$stage        = str_replace('_', '-', $stage);
-		$until_budget = isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ? trim( (string) $input['until_budget']) : '';
-		$source       = isset($input['source']) && '' !== trim( (string) $input['source']) ? trim( (string) $input['source']) : self::DEFAULT_SOURCE;
-		$deadline     = null;
-		$stage_order  = $this->stage_order();
+		$stage         = isset($input['stage']) ? strtolower( (string) preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $input['stage']) ) : $default_stage;
+		$stage         = str_replace('_', '-', $stage);
+		$until_budget  = isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ? trim( (string) $input['until_budget']) : '';
+		$source        = isset($input['source']) && '' !== trim( (string) $input['source']) ? trim( (string) $input['source']) : self::DEFAULT_SOURCE;
+		$deadline      = null;
+		$stage_order   = $this->stage_order();
 
 		if ( ! isset($stage_order[ $stage ]) ) {
 			return new \WP_Error('invalid_worktree_abandoned_stage', 'Invalid stage value. Use reconcile, finalized, equivalent-clean, merged, remote-clean, or bounded.', array( 'status' => 400 ));
