@@ -45,8 +45,10 @@ try {
 	assert_true(in_array('studio wp datamachine-code workspace worktree emergency-cleanup --format=json', $commands, true), 'emergency cleanup report command is missing');
 
 	$bounded = $budget['cleanup_recommendations'][1];
+	assert_true(str_contains($bounded['action'], 'apply revalidates'), 'bounded cleanup action must explain apply revalidation');
 	assert_true('studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25' === $bounded['preview_command'], 'bounded cleanup preview command is missing');
 	assert_true('studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=25' === $bounded['apply_command'], 'bounded cleanup apply command is missing');
+	assert_true(str_contains($bounded['apply_note'], 'may skip rows'), 'bounded cleanup apply note must explain dirty/unpushed revalidation can block removal');
 
 	fwrite(STDOUT, "worktree-disk-budget ok\n");
 } catch (Throwable $e) {

@@ -1782,9 +1782,17 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  array<int,array> $candidates Candidate rows.
 	 * @param  array<int,array> $removed    Removed rows.
 	 * @param  array<int,array> $skipped    Skipped rows.
+	 * @param  array|null       $age_filter Optional age filter summary.
+	 * @param  string           $candidate_bucket Bucket to use for candidate rows.
 	 * @return array<string,mixed>
 	 */
-	private function build_worktree_cleanup_summary( array $candidates, array $removed, array $skipped, ?array $age_filter = null ): array {
+	private function build_worktree_cleanup_summary(
+		array $candidates,
+		array $removed,
+		array $skipped,
+		?array $age_filter = null,
+		string $candidate_bucket = WorktreeCleanupClassifier::BUCKET_SAFE_TO_REMOVE_NOW
+	): array {
 		$skipped_by_reason    = array();
 		$candidates_by_signal = array();
 		$stale_reasons        = array();
@@ -1840,7 +1848,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			'skipped'               => count($skipped),
 			'skipped_by_reason'     => $skipped_by_reason,
 			'skipped_next_commands' => $this->worktree_cleanup_skipped_next_commands($skipped_by_reason),
-			'cleanup_buckets'       => $this->worktree_cleanup_buckets(count($candidates), $candidates_by_signal, $skipped_by_reason),
+			'cleanup_buckets'       => $this->worktree_cleanup_buckets(count($candidates), $candidates_by_signal, $skipped_by_reason, $candidate_bucket),
 			'candidates_by_signal'  => $candidates_by_signal,
 			'stale_reasons'         => $stale_reasons,
 			'liveness'              => $liveness,
@@ -1944,10 +1952,16 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  int               $candidate_count      Candidate row count.
 	 * @param  array<string,int> $candidates_by_signal Candidate signal counts.
 	 * @param  array<string,int> $skipped_by_reason    Skipped reason counts.
+	 * @param  string            $candidate_bucket     Bucket to use for candidate rows.
 	 * @return array<string,int>
 	 */
-	private function worktree_cleanup_buckets( int $candidate_count, array $candidates_by_signal, array $skipped_by_reason ): array {
-		return WorktreeCleanupClassifier::buckets($candidate_count, $candidates_by_signal, $skipped_by_reason);
+	private function worktree_cleanup_buckets(
+		int $candidate_count,
+		array $candidates_by_signal,
+		array $skipped_by_reason,
+		string $candidate_bucket = WorktreeCleanupClassifier::BUCKET_SAFE_TO_REMOVE_NOW
+	): array {
+		return WorktreeCleanupClassifier::buckets($candidate_count, $candidates_by_signal, $skipped_by_reason, $candidate_bucket);
 	}
 
 	/**

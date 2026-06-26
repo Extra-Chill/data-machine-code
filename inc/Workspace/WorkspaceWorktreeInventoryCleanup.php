@@ -173,7 +173,8 @@ trait WorkspaceWorktreeInventoryCleanup {
 			$candidate = array_merge(
 				$base_row,
 				array(
-					'dirty' => 0,
+					'dirty'               => null,
+					'safety_probe_status' => 'not_run_inventory_only',
 				),
 				WorktreeCleanupSignal::candidate_fields($signal ?? array(), true)
 			);
@@ -186,7 +187,7 @@ trait WorkspaceWorktreeInventoryCleanup {
 
 		$candidates = $this->sort_worktree_cleanup_rows($candidates, $sort);
 		$pagination = $this->build_worktree_cleanup_pagination($offset, $limit, $processed, $total, false, null);
-		$summary    = $this->build_worktree_cleanup_summary($candidates, array(), $skipped, $age_filter);
+		$summary    = $this->build_worktree_cleanup_summary($candidates, array(), $skipped, $age_filter, WorktreeCleanupClassifier::BUCKET_CLEANUP_ELIGIBLE_UNPROBED);
 		if ( null !== $pagination ) {
 			$summary['pagination'] = $pagination;
 		}
