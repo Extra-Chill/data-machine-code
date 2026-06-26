@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.26] - 2026-06-26
+
+### Changed
+- Remove obsolete bounded cleanup formatter
+- Compact worktree cleanup operator JSON
+
+### Fixed
+- Fix cleanup blocked-only lint
+- Fix artifact cleanup blocked-only completion
+
 ## [0.48.25] - 2026-06-25
 
 ### Changed
