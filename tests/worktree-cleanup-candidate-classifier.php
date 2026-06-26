@@ -8,9 +8,11 @@ if ( ! defined('ABSPATH') ) {
 
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeAgeFilter.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupSignal.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupClassifier.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupCandidateClassifier.php';
 
 use DataMachineCode\Workspace\WorktreeAgeFilter;
+use DataMachineCode\Workspace\WorktreeCleanupClassifier;
 use DataMachineCode\Workspace\WorktreeCleanupCandidateClassifier;
 
 function worktree_cleanup_candidate_assert_same( mixed $expected, mixed $actual, string $message ): void {
@@ -85,5 +87,17 @@ $age_skip                    = WorktreeCleanupCandidateClassifier::classify_merg
 worktree_cleanup_candidate_assert_same('skip', $age_skip['type'], 'recent worktree is skipped by age filter');
 worktree_cleanup_candidate_assert_same('age_filter', $age_skip['row']['reason_code'], 'age skip reason_code matches cleanup contract');
 worktree_cleanup_candidate_assert_same(1, $recent_age_filter['excluded'], 'age filter excluded counter is updated');
+
+$inventory_buckets = WorktreeCleanupClassifier::buckets(
+	3,
+	array( 'cleanup_eligible' => 3 ),
+	array(),
+	WorktreeCleanupClassifier::BUCKET_CLEANUP_ELIGIBLE_UNPROBED
+);
+worktree_cleanup_candidate_assert_same(3, $inventory_buckets['cleanup_eligible_pending_revalidation'], 'inventory-only candidates are pending revalidation');
+worktree_cleanup_candidate_assert_same(0, $inventory_buckets['safe_to_remove_now'], 'inventory-only candidates are not labeled safe to remove now');
+
+$probed_buckets = WorktreeCleanupClassifier::buckets(2, array(), array());
+worktree_cleanup_candidate_assert_same(2, $probed_buckets['safe_to_remove_now'], 'probed cleanup candidates keep the safe-to-remove bucket');
 
 echo "worktree-cleanup-candidate-classifier: ok\n";

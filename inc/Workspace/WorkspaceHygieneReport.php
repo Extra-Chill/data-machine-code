@@ -726,24 +726,17 @@ trait WorkspaceHygieneReport {
 	private function build_workspace_fast_stats( array $worktrees, ?array $cleanup, array $size_report, bool $include_worktree_status ): array {
 		$cleanup_candidates = (array) ( $cleanup['candidates'] ?? array() );
 		$cleanup_summary    = (array) ( $cleanup['summary'] ?? array() );
-		$safe_handles       = array();
-		foreach ( $cleanup_candidates as $candidate ) {
-			$handle = is_array($candidate) ? (string) ( $candidate['handle'] ?? '' ) : '';
-			if ( '' !== $handle ) {
-				$safe_handles[ $handle ] = true;
-			}
-		}
 
 		$counts = array(
-			'total_candidates'            => count($worktrees),
-			'safe_removable_count'        => count($cleanup_candidates),
-			'valid_clean_count'           => 0,
-			'valid_dirty_count'           => 0,
-			'invalid_broken_orphan_count' => 0,
-			'unmanaged_skipped_count'     => 0,
-			'dirty_probe_skipped_count'   => 0,
-			'known_worktree_count'        => 0,
-			'known_primary_count'         => 0,
+			'total_candidates'                  => count($worktrees),
+			'cleanup_eligible_unprobed_count'   => count($cleanup_candidates),
+			'valid_clean_count'                 => 0,
+			'valid_dirty_count'                 => 0,
+			'invalid_broken_orphan_count'       => 0,
+			'unmanaged_skipped_count'           => 0,
+			'dirty_probe_skipped_count'         => 0,
+			'known_worktree_count'              => 0,
+			'known_primary_count'               => 0,
 		);
 
 		foreach ( $worktrees as $row ) {
@@ -776,9 +769,6 @@ trait WorkspaceHygieneReport {
 			$dirty = $row['dirty'] ?? null;
 			if ( null === $dirty ) {
 				++$counts['dirty_probe_skipped_count'];
-				if ( isset($safe_handles[ (string) ( $row['handle'] ?? '' ) ]) ) {
-					++$counts['valid_clean_count'];
-				}
 				continue;
 			}
 
@@ -800,11 +790,17 @@ trait WorkspaceHygieneReport {
 				$estimated_reclaimable += max(0, (int) ( is_array($candidate) ? ( $candidate['size_bytes'] ?? 0 ) : 0 ));
 			}
 		}
+		$safety_probe_status = $include_worktree_status ? 'worktree_status_requested' : 'not_run_inventory_only';
+		$safety_probe_note   = $include_worktree_status
+			? 'Worktree status was requested for the inventory rows; destructive cleanup still revalidates each row before removal.'
+			: 'Cleanup-eligible rows came from cheap inventory only; bounded apply revalidates dirty state, unpushed commits, containment, and primary safety before deletion.';
 
 		return array(
 			'mode'                              => $include_worktree_status ? 'full_git_status' : 'cheap_metadata_first',
 			'partial'                           => ! $include_worktree_status || empty($size_report['scan_complete']),
-			'status_probe_required_for_summary' => false,
+			'safety_probe_status'                => $safety_probe_status,
+			'safety_probe_note'                  => $safety_probe_note,
+			'status_probe_required_for_summary' => ! $include_worktree_status,
 			'counts'                            => $counts,
 			'estimated_reclaimable_bytes'       => $estimated_reclaimable,
 			'estimated_reclaimable_human'       => $this->format_bytes($estimated_reclaimable),
