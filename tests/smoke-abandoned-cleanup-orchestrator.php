@@ -18,6 +18,14 @@ if ( ! class_exists('WP_Error') ) {
 			$this->message = $message;
 			$this->data    = $data;
 		}
+
+		public function get_error_code(): string {
+			return $this->code;
+		}
+
+		public function get_error_message(): string {
+			return $this->message;
+		}
 	}
 }
 
@@ -57,6 +65,7 @@ final class AbandonedCleanupFakeAbility {
 			'summary'    => $this->summary,
 			'pagination' => $this->pagination,
 			'skipped'    => $this->skipped,
+			'rows'       => $this->skipped,
 		);
 	}
 }
@@ -82,6 +91,7 @@ final class AbandonedCleanupQueuedAbility {
 				'summary'    => array(),
 				'pagination' => array( 'complete' => true ),
 				'skipped'    => array(),
+				'rows'       => array(),
 			),
 			$response
 		);
@@ -171,6 +181,34 @@ $active_abilities = array(
 	'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply' => new AbandonedCleanupFakeAbility('equivalent_clean', array(), array( 'complete' => true )),
 	'datamachine-code/workspace-worktree-active-no-signal-merged-apply' => new AbandonedCleanupFakeAbility('merged', array(), array( 'complete' => true )),
 	'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply' => new AbandonedCleanupFakeAbility('remote_clean', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-report' => new AbandonedCleanupFakeAbility(
+		'active_no_signal_report',
+		array(
+			'total_active_no_signal' => 5,
+			'inspected'              => 2,
+			'by_suggested_action'    => array(
+				'inspect_unpushed_or_dirty' => 1,
+				'insufficient_signal'       => 1,
+			),
+		),
+		array( 'complete' => false, 'total' => 5, 'next_command' => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=10 --offset=2 --format=json' ),
+		array(
+			array(
+				'handle'           => 'repo@dirty',
+				'repo'             => 'repo',
+				'branch'           => 'dirty',
+				'suggested_action' => 'inspect_unpushed_or_dirty',
+				'dirty'            => 1,
+				'unpushed'         => 0,
+			),
+			array(
+				'handle'           => 'repo@unknown',
+				'repo'             => 'repo',
+				'branch'           => 'unknown',
+				'suggested_action' => 'insufficient_signal',
+			),
+		)
+	),
 	'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => new AbandonedCleanupFakeAbility('bounded', array( 'processed' => 1, 'removed' => 1 ), array( 'complete' => true )),
 	'datamachine-code/workspace-worktree-prune' => new AbandonedCleanupFakeAbility('prune'),
 );
@@ -184,6 +222,12 @@ abandoned_cleanup_assert('active_no_signal_drain' === $active_result['mode'], 'a
 abandoned_cleanup_assert(0 === count($active_abilities['datamachine-code/workspace-worktree-reconcile-metadata']->calls), 'active/no-signal drain skips reconcile metadata');
 abandoned_cleanup_assert(1 === $active_result['summary']['marked_cleanup_eligible'], 'active/no-signal drain counts metadata promotions');
 abandoned_cleanup_assert(2 === $active_result['summary']['removed'], 'active/no-signal drain removes bounded eligible rows before and after classification');
+abandoned_cleanup_assert(5 === $active_result['remaining_active_no_signal_backlog']['total_active_no_signal'], 'active/no-signal drain summarizes remaining backlog total');
+abandoned_cleanup_assert(2 === $active_result['remaining_active_no_signal_backlog']['sampled'], 'active/no-signal drain summarizes sampled backlog rows');
+abandoned_cleanup_assert(1 === $active_result['remaining_active_no_signal_backlog']['by_actionable_reason']['inspect_unpushed_or_dirty']['count'], 'active/no-signal drain groups backlog by actionable reason');
+abandoned_cleanup_assert(3 === $active_result['remaining_active_no_signal_backlog']['unreviewed_count'], 'active/no-signal drain reports unreviewed backlog count');
+abandoned_cleanup_assert('bounded_post_drain_sample_only' === $active_result['remaining_active_no_signal_backlog']['counts_scope'], 'active/no-signal drain documents bounded counts scope');
+abandoned_cleanup_assert(in_array('studio wp datamachine-code workspace worktree active-no-signal-report --limit=10 --offset=2 --format=json', $active_result['next_commands'], true), 'active/no-signal drain includes next report page command');
 
 $force_result = $orchestrator->run(array( 'active_no_signal_drain' => true, 'apply' => true, 'force' => true ));
 abandoned_cleanup_assert(is_wp_error($force_result), 'active/no-signal drain refuses force');
@@ -200,6 +244,7 @@ $restart_abilities     = array(
 	'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply' => new AbandonedCleanupFakeAbility('equivalent_clean', array(), array( 'complete' => true )),
 	'datamachine-code/workspace-worktree-active-no-signal-merged-apply' => new AbandonedCleanupFakeAbility('merged', array(), array( 'complete' => true )),
 	'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply' => new AbandonedCleanupFakeAbility('remote_clean', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-report' => new AbandonedCleanupFakeAbility('active_no_signal_report', array( 'total_active_no_signal' => 0, 'inspected' => 0, 'by_suggested_action' => array() ), array( 'complete' => true, 'total' => 0 )),
 	'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => new AbandonedCleanupFakeAbility('bounded', array( 'processed' => 0, 'removed' => 0 ), array( 'complete' => true )),
 	'datamachine-code/workspace-worktree-prune' => new AbandonedCleanupFakeAbility('prune'),
 );
