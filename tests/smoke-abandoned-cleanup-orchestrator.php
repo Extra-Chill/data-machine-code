@@ -165,4 +165,57 @@ abandoned_cleanup_assert(! is_wp_error($restart_result), 'restart apply succeeds
 abandoned_cleanup_assert(2 === count($reconcile_restart->calls), 'mutating reconcile pagination restarts instead of stopping');
 abandoned_cleanup_assert(0 === $reconcile_restart->calls[1]['offset'], 'second reconcile page restarts at offset zero');
 
+$active_abilities = array(
+	'datamachine-code/workspace-worktree-reconcile-metadata' => new AbandonedCleanupFakeAbility('reconcile_metadata', array( 'inspected' => 99 ), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-finalized-apply' => new AbandonedCleanupFakeAbility('finalized', array( 'inspected' => 1, 'written' => 1 ), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply' => new AbandonedCleanupFakeAbility('equivalent_clean', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-merged-apply' => new AbandonedCleanupFakeAbility('merged', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply' => new AbandonedCleanupFakeAbility('remote_clean', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => new AbandonedCleanupFakeAbility('bounded', array( 'processed' => 1, 'removed' => 1 ), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-prune' => new AbandonedCleanupFakeAbility('prune'),
+);
+$orchestrator     = new DataMachineCode\Workspace\WorkspaceAbandonedCleanupOrchestrator(
+	static fn( string $name ) => $active_abilities[ $name ] ?? null,
+	static fn(): float => 1000.0
+);
+$active_result    = $orchestrator->run(array( 'active_no_signal_drain' => true, 'apply' => true, 'limit' => 10, 'passes' => 1 ));
+abandoned_cleanup_assert(! is_wp_error($active_result), 'active/no-signal drain succeeds');
+abandoned_cleanup_assert('active_no_signal_drain' === $active_result['mode'], 'active/no-signal drain mode is explicit');
+abandoned_cleanup_assert(0 === count($active_abilities['datamachine-code/workspace-worktree-reconcile-metadata']->calls), 'active/no-signal drain skips reconcile metadata');
+abandoned_cleanup_assert(1 === $active_result['summary']['marked_cleanup_eligible'], 'active/no-signal drain counts metadata promotions');
+abandoned_cleanup_assert(2 === $active_result['summary']['removed'], 'active/no-signal drain removes bounded eligible rows before and after classification');
+
+$force_result = $orchestrator->run(array( 'active_no_signal_drain' => true, 'apply' => true, 'force' => true ));
+abandoned_cleanup_assert(is_wp_error($force_result), 'active/no-signal drain refuses force');
+abandoned_cleanup_assert('active_no_signal_drain_refuses_force' === $force_result->code, 'active/no-signal drain force refusal code');
+
+$candidate_set_changed = new AbandonedCleanupFakeAbility(
+	'finalized',
+	array( 'inspected' => 1, 'written' => 1 ),
+	array( 'offset' => 0, 'limit' => 10, 'scanned' => 1, 'partial' => true, 'complete' => false, 'next_offset' => 0 )
+);
+$restart_abilities     = array(
+	'datamachine-code/workspace-worktree-reconcile-metadata' => new AbandonedCleanupFakeAbility('reconcile_metadata', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-finalized-apply' => $candidate_set_changed,
+	'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply' => new AbandonedCleanupFakeAbility('equivalent_clean', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-merged-apply' => new AbandonedCleanupFakeAbility('merged', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply' => new AbandonedCleanupFakeAbility('remote_clean', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => new AbandonedCleanupFakeAbility('bounded', array( 'processed' => 0, 'removed' => 0 ), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-prune' => new AbandonedCleanupFakeAbility('prune'),
+);
+$clock_index           = 0;
+$clock_values          = array( 1000.0, 1000.0, 1000.0, 1000.0, 1002.0, 1002.0 );
+$orchestrator          = new DataMachineCode\Workspace\WorkspaceAbandonedCleanupOrchestrator(
+	static fn( string $name ) => $restart_abilities[ $name ] ?? null,
+	static function () use ( &$clock_index, $clock_values ): float {
+		$value = $clock_values[ min($clock_index, count($clock_values) - 1) ];
+		++$clock_index;
+		return $value;
+	}
+);
+$restart_result        = $orchestrator->run(array( 'active_no_signal_drain' => true, 'apply' => true, 'limit' => 10, 'passes' => 1, 'until_budget' => '1s' ));
+abandoned_cleanup_assert(! is_wp_error($restart_result), 'active/no-signal restart result succeeds');
+abandoned_cleanup_assert(! empty($restart_result['continuation']['candidate_set_changed_restart_required']), 'restart continuation exposes candidate set changed evidence');
+abandoned_cleanup_assert('active-no-signal-drain' === explode(' ', (string) $restart_result['continuation']['next_command'])[5], 'restart next command uses active/no-signal drain');
+
 fwrite(STDOUT, 'abandoned cleanup orchestrator smoke passed' . PHP_EOL);

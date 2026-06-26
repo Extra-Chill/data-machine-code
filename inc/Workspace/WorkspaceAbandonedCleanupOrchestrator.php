@@ -38,12 +38,20 @@ class WorkspaceAbandonedCleanupOrchestrator {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function run( array $input ): array|\WP_Error {
-		$apply        = ! empty($input['apply']);
-		$force        = ! empty($input['force']);
+		$active_no_signal_drain = ! empty($input['active_no_signal_drain']);
+		$apply                  = ! empty($input['apply']);
+		$force                  = ! empty($input['force']);
+		if ( $active_no_signal_drain && $force ) {
+			return new \WP_Error('active_no_signal_drain_refuses_force', 'Active/no-signal drain will not force cleanup. Protected blockers remain blocked.', array( 'status' => 400 ));
+		}
+		if ( $active_no_signal_drain && ! empty($input['discard_unpushed']) ) {
+			return new \WP_Error('active_no_signal_drain_refuses_unpushed_discard', 'Active/no-signal drain will not discard unpushed commits.', array( 'status' => 400 ));
+		}
 		$limit        = isset($input['limit']) ? max(1, min(1000, (int) $input['limit'])) : 100;
 		$passes       = isset($input['passes']) ? max(1, min(25, (int) $input['passes'])) : 5;
 		$offset       = isset($input['offset']) ? max(0, (int) $input['offset']) : 0;
-		$stage        = isset($input['stage']) ? strtolower( (string) preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $input['stage']) ) : 'reconcile';
+		$default_stage = $active_no_signal_drain ? 'finalized' : 'reconcile';
+		$stage        = isset($input['stage']) ? strtolower( (string) preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $input['stage']) ) : $default_stage;
 		$stage        = str_replace('_', '-', $stage);
 		$until_budget = isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ? trim( (string) $input['until_budget']) : '';
 		$source       = isset($input['source']) && '' !== trim( (string) $input['source']) ? trim( (string) $input['source']) : self::DEFAULT_SOURCE;
@@ -67,7 +75,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		}
 
 		$started_at  = $this->now();
-		$result      = $this->initial_result($apply, $force, $limit, $stage, $offset, $passes);
+		$result      = $this->initial_result($apply, $force, $limit, $stage, $offset, $passes, $active_no_signal_drain);
 		$common_page = array(
 			'limit'  => $limit,
 			'source' => $source,
@@ -86,7 +94,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 				}
 				$result['steps']['prune'] = $this->summarize_step($prune);
 
-				return $this->finalize_result($result, $apply, $force, $limit, $passes, $until_budget, $started_at);
+				return $this->finalize_result($result, $apply, $force, $limit, $passes, $until_budget, $started_at, $active_no_signal_drain);
 			}
 		}
 
@@ -114,9 +122,9 @@ class WorkspaceAbandonedCleanupOrchestrator {
 					return $bounded;
 				}
 				$result['evidence']['budget_exhausted'] = $this->budget_expired($deadline);
-				$result['continuation']                 = $this->build_continuation('reconcile', $reconcile, $limit, $passes, $force, $until_budget);
+				$result['continuation']                 = $this->build_continuation('reconcile', $reconcile, $limit, $passes, $force, $until_budget, $active_no_signal_drain);
 				$result['next_commands'][]              = (string) $result['continuation']['next_command'];
-				return $this->finalize_result($result, $apply, $force, $limit, $passes, $until_budget, $started_at);
+				return $this->finalize_result($result, $apply, $force, $limit, $passes, $until_budget, $started_at, $active_no_signal_drain);
 			}
 		}
 
@@ -162,7 +170,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 						return $bounded;
 					}
 					$result['evidence']['budget_exhausted'] = $this->budget_expired($deadline);
-					$result['continuation']                 = $this->build_continuation($step_stage, $step, $limit, $passes, $force, $until_budget);
+					$result['continuation']                 = $this->build_continuation($step_stage, $step, $limit, $passes, $force, $until_budget, $active_no_signal_drain);
 					$result['next_commands'][]              = (string) $result['continuation']['next_command'];
 					break 2;
 				}
@@ -193,7 +201,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			);
 		}
 
-		return $this->finalize_result($result, $apply, $force, $limit, $passes, $until_budget, $started_at);
+		return $this->finalize_result($result, $apply, $force, $limit, $passes, $until_budget, $started_at, $active_no_signal_drain);
 	}
 
 	/** @return array<string,int> */
@@ -259,10 +267,10 @@ class WorkspaceAbandonedCleanupOrchestrator {
 	}
 
 	/** @return array<string,mixed> */
-	private function initial_result( bool $apply, bool $force, int $limit, string $stage, int $offset, int $passes ): array {
+	private function initial_result( bool $apply, bool $force, int $limit, string $stage, int $offset, int $passes, bool $active_no_signal_drain = false ): array {
 		return array(
 			'success'         => true,
-			'mode'            => 'abandoned_worktree_cleanup',
+			'mode'            => $active_no_signal_drain ? 'active_no_signal_drain' : 'abandoned_worktree_cleanup',
 			'applied'         => $apply,
 			'destructive'     => $apply,
 			'force'           => $force,
@@ -287,9 +295,13 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			),
 			'next_commands'   => array(),
 			'evidence'        => array(
-				'safety' => $apply
-					? 'Applies only rows proven by existing DMC cleanup abilities; unpushed commits remain protected even with --force.'
-					: 'Preview only. Re-run with --apply to write cleanup metadata and remove eligible worktrees.',
+				'safety' => $active_no_signal_drain
+					? ( $apply
+						? 'Applies only safe active/no-signal classifiers and bounded cleanup; force and unpushed discard are refused.'
+						: 'Preview only. Re-run with --apply to promote safe active/no-signal rows and remove eligible worktrees.' )
+					: ( $apply
+						? 'Applies only rows proven by existing DMC cleanup abilities; unpushed commits remain protected even with --force.'
+						: 'Preview only. Re-run with --apply to write cleanup metadata and remove eligible worktrees.' ),
 			),
 		);
 	}
@@ -304,7 +316,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		return is_array($result) || is_wp_error($result) ? $result : new \WP_Error('worktree_abandoned_ability_invalid_result', 'Worktree abandoned cleanup ability returned an invalid result.', array( 'status' => 500 ));
 	}
 
-	private function finalize_result( array $result, bool $apply, bool $force, int $limit, int $passes, string $until_budget, float $started_at ): array {
+	private function finalize_result( array $result, bool $apply, bool $force, int $limit, int $passes, string $until_budget, float $started_at, bool $active_no_signal_drain = false ): array {
 		$result['blocked']            = array_values( (array) ( $result['blocked'] ?? array() ) );
 		$result['summary']['blocked'] = count($result['blocked']);
 		foreach ( $result['blocked'] as $row ) {
@@ -315,10 +327,11 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			$result['summary']['blocked_by_reason'][ $reason ] = (int) ( $result['summary']['blocked_by_reason'][ $reason ] ?? 0 ) + 1;
 		}
 
+		$operation = $active_no_signal_drain ? 'active-no-signal-drain' : 'abandoned';
 		if ( empty($result['continuation']) && ! $apply ) {
-			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree abandoned --apply%s --limit=%d --passes=%d%s --format=json', $force ? ' --force' : '', $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
+			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree %s --apply%s --limit=%d --passes=%d%s --format=json', $operation, $force ? ' --force' : '', $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
 		}
-		if ( empty($result['continuation']) && ! $force ) {
+		if ( empty($result['continuation']) && ! $force && ! $active_no_signal_drain ) {
 			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree abandoned --apply --force --limit=%d --passes=%d%s --format=json', $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
 		}
 
@@ -375,17 +388,27 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		return $bounded;
 	}
 
-	private function build_continuation( string $stage, array $step, int $limit, int $passes, bool $force, string $until_budget ): array {
+	private function build_continuation( string $stage, array $step, int $limit, int $passes, bool $force, string $until_budget, bool $active_no_signal_drain = false ): array {
 		$pagination  = (array) ( $step['pagination'] ?? $step['continuation'] ?? array() );
 		$next_offset = isset($pagination['next_offset']) ? max(0, (int) $pagination['next_offset']) : 0;
-		$command     = sprintf('studio wp datamachine-code workspace worktree abandoned --apply%s --stage=%s --offset=%d --limit=%d --passes=%d%s --format=json', $force ? ' --force' : '', $stage, $next_offset, $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
+		$operation   = $active_no_signal_drain ? 'active-no-signal-drain' : 'abandoned';
+		$command     = sprintf('studio wp datamachine-code workspace worktree %s --apply%s --stage=%s --offset=%d --limit=%d --passes=%d%s --format=json', $operation, $force ? ' --force' : '', $stage, $next_offset, $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
+		$current     = (int) ( $pagination['offset'] ?? 0 );
+		$mutated     = (int) ( $step['summary']['written'] ?? 0 ) + (int) ( $step['summary']['removed'] ?? 0 );
+		$restart     = ! empty($pagination['partial']) && $next_offset <= $current && $mutated > 0;
 
-		return array(
+		$continuation = array(
 			'stage'        => $stage,
 			'offset'       => $next_offset,
 			'next_command' => $command,
 			'pagination'   => $pagination,
 		);
+		if ( $restart ) {
+			$continuation['candidate_set_changed_restart_required'] = true;
+			$continuation['reason']                                 = 'candidate_set_changed_restart_required';
+		}
+
+		return $continuation;
 	}
 
 	private function drain_pages( object $ability, array $base_input, bool $apply, ?float $deadline = null ): array|\WP_Error {
