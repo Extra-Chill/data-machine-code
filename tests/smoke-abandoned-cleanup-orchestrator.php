@@ -263,4 +263,57 @@ abandoned_cleanup_assert(! is_wp_error($restart_result), 'active/no-signal resta
 abandoned_cleanup_assert(! empty($restart_result['continuation']['candidate_set_changed_restart_required']), 'restart continuation exposes candidate set changed evidence');
 abandoned_cleanup_assert('active-no-signal-drain' === explode(' ', (string) $restart_result['continuation']['next_command'])[5], 'restart next command uses active/no-signal drain');
 
+$stage_budget_abilities = array(
+	'datamachine-code/workspace-worktree-reconcile-metadata' => new AbandonedCleanupFakeAbility('reconcile_metadata', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-finalized-apply' => new AbandonedCleanupFakeAbility('finalized', array( 'inspected' => 1, 'written' => 1 ), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply' => new AbandonedCleanupFakeAbility('equivalent_clean', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-merged-apply' => new AbandonedCleanupFakeAbility('merged', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply' => new AbandonedCleanupFakeAbility('remote_clean', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-report' => new AbandonedCleanupFakeAbility('active_no_signal_report', array( 'total_active_no_signal' => 0, 'inspected' => 0, 'by_suggested_action' => array() ), array( 'complete' => true, 'total' => 0 )),
+	'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => new AbandonedCleanupFakeAbility('bounded', array( 'processed' => 0, 'removed' => 0 ), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-prune' => new AbandonedCleanupFakeAbility('prune'),
+);
+$clock_index            = 0;
+$clock_values           = array( 1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 1002.0, 1002.0 );
+$orchestrator           = new DataMachineCode\Workspace\WorkspaceAbandonedCleanupOrchestrator(
+	static fn( string $name ) => $stage_budget_abilities[ $name ] ?? null,
+	static function () use ( &$clock_index, $clock_values ): float {
+		$value = $clock_values[ min($clock_index, count($clock_values) - 1) ];
+		++$clock_index;
+		return $value;
+	}
+);
+$stage_budget_result    = $orchestrator->run(array( 'active_no_signal_drain' => true, 'apply' => true, 'limit' => 10, 'passes' => 1, 'until_budget' => '1s' ));
+abandoned_cleanup_assert(! is_wp_error($stage_budget_result), 'active/no-signal stage budget result succeeds');
+abandoned_cleanup_assert('budget_exhausted_before_stage' === $stage_budget_result['continuation']['reason'], 'stage budget continuation explains boundary');
+abandoned_cleanup_assert('equivalent-clean' === $stage_budget_result['continuation']['stage'], 'stage budget continuation resumes at next safe stage');
+abandoned_cleanup_assert(0 === count($stage_budget_abilities['datamachine-code/workspace-worktree-prune']->calls), 'stage budget continuation skips prune after budget exhaustion');
+abandoned_cleanup_assert(str_contains((string) $stage_budget_result['continuation']['next_command'], '--stage=equivalent-clean --offset=0'), 'stage budget continuation command resumes exact safe boundary');
+
+$bounded_budget_abilities = array(
+	'datamachine-code/workspace-worktree-reconcile-metadata' => new AbandonedCleanupFakeAbility('reconcile_metadata', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-finalized-apply' => new AbandonedCleanupFakeAbility('finalized', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply' => new AbandonedCleanupFakeAbility('equivalent_clean', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-merged-apply' => new AbandonedCleanupFakeAbility('merged', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply' => new AbandonedCleanupFakeAbility('remote_clean', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-report' => new AbandonedCleanupFakeAbility('active_no_signal_report', array( 'total_active_no_signal' => 0, 'inspected' => 0, 'by_suggested_action' => array() ), array( 'complete' => true, 'total' => 0 )),
+	'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => new AbandonedCleanupFakeAbility('bounded', array( 'processed' => 1, 'removed' => 1 ), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-prune' => new AbandonedCleanupFakeAbility('prune'),
+);
+$clock_index              = 0;
+$orchestrator             = new DataMachineCode\Workspace\WorkspaceAbandonedCleanupOrchestrator(
+	static fn( string $name ) => $bounded_budget_abilities[ $name ] ?? null,
+	static function () use ( &$clock_index ): float {
+		$value = $clock_index < 14 ? 1000.0 : 1002.0;
+		++$clock_index;
+		return $value;
+	}
+);
+$bounded_budget_result    = $orchestrator->run(array( 'active_no_signal_drain' => true, 'apply' => true, 'limit' => 10, 'passes' => 2, 'until_budget' => '1s' ));
+abandoned_cleanup_assert(! is_wp_error($bounded_budget_result), 'active/no-signal bounded budget result succeeds');
+abandoned_cleanup_assert('budget_exhausted_after_bounded_apply' === $bounded_budget_result['continuation']['reason'], 'bounded budget continuation explains boundary');
+abandoned_cleanup_assert('finalized' === $bounded_budget_result['continuation']['stage'], 'bounded budget continuation resumes as full safe drain');
+abandoned_cleanup_assert(0 === count($bounded_budget_abilities['datamachine-code/workspace-worktree-prune']->calls), 'bounded budget continuation skips prune after budget exhaustion');
+abandoned_cleanup_assert(str_contains((string) $bounded_budget_result['continuation']['hint'], 'Re-run next_command'), 'bounded budget continuation has operator hint');
+
 fwrite(STDOUT, 'abandoned cleanup orchestrator smoke passed' . PHP_EOL);
