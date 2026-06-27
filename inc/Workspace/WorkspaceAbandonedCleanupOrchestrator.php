@@ -142,6 +142,8 @@ class WorkspaceAbandonedCleanupOrchestrator {
 
 				if ( $this->budget_expired($deadline) ) {
 					$result['evidence']['budget_exhausted'] = true;
+					$result['continuation']                 = $this->build_budget_continuation($step_stage, 0, $limit, $passes, $force, $until_budget, $active_no_signal_drain, 'budget_exhausted_before_stage');
+					$result['next_commands'][]              = (string) $result['continuation']['next_command'];
 					break 2;
 				}
 
@@ -182,11 +184,21 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			if ( is_wp_error($bounded) ) {
 				return $bounded;
 			}
+			if ( $this->budget_expired($deadline) ) {
+				$result['evidence']['budget_exhausted'] = true;
+				$result['continuation']                 = $this->build_budget_continuation($default_stage, 0, $limit, $passes, $force, $until_budget, $active_no_signal_drain, 'budget_exhausted_after_bounded_apply');
+				$result['next_commands'][]              = (string) $result['continuation']['next_command'];
+				break;
+			}
 
 			$removed_or_would = (int) ( $bounded['summary']['removed'] ?? 0 ) + (int) ( $bounded['summary']['would_remove'] ?? 0 );
 			if ( 0 === $pass_marked && 0 === $removed_or_would ) {
 				break;
 			}
+		}
+
+		if ( ! empty($result['continuation']) ) {
+			return $this->finalize_result($result, $apply, $force, $limit, $passes, $until_budget, $started_at, $active_no_signal_drain);
 		}
 
 		if ( $apply ) {
@@ -507,8 +519,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 	private function build_continuation( string $stage, array $step, int $limit, int $passes, bool $force, string $until_budget, bool $active_no_signal_drain = false ): array {
 		$pagination  = (array) ( $step['pagination'] ?? $step['continuation'] ?? array() );
 		$next_offset = isset($pagination['next_offset']) ? max(0, (int) $pagination['next_offset']) : 0;
-		$operation   = $active_no_signal_drain ? 'active-no-signal-drain' : 'abandoned';
-		$command     = sprintf('studio wp datamachine-code workspace worktree %s --apply%s --stage=%s --offset=%d --limit=%d --passes=%d%s --format=json', $operation, $force ? ' --force' : '', $stage, $next_offset, $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
+		$command     = $this->build_continuation_command($stage, $next_offset, $limit, $passes, $force, $until_budget, $active_no_signal_drain);
 		$current     = (int) ( $pagination['offset'] ?? 0 );
 		$mutated     = (int) ( $step['summary']['written'] ?? 0 ) + (int) ( $step['summary']['removed'] ?? 0 );
 		$restart     = ! empty($pagination['partial']) && $next_offset <= $current && $mutated > 0;
@@ -520,11 +531,40 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			'pagination'   => $pagination,
 		);
 		if ( $restart ) {
+			$written = (int) ( $step['summary']['written'] ?? 0 );
+			$removed = (int) ( $step['summary']['removed'] ?? 0 );
+
 			$continuation['candidate_set_changed_restart_required'] = true;
 			$continuation['reason']                                 = 'candidate_set_changed_restart_required';
+			$continuation['reason_description']                     = 'The previous cleanup pass changed the candidate set, so the next safe continuation intentionally restarts this stage from offset 0.';
+			$continuation['progress_delta']                         = array(
+				'written'           => $written,
+				'removed'           => $removed,
+				'total_mutations'   => $written + $removed,
+				'previous_offset'   => $current,
+				'restart_offset'    => $next_offset,
+				'candidate_set_now' => 'changed',
+			);
+			$continuation['next_command_label']                     = 'Restart this stage from offset 0 because the cleanup candidate set changed.';
 		}
 
 		return $continuation;
+	}
+
+	private function build_budget_continuation( string $stage, int $offset, int $limit, int $passes, bool $force, string $until_budget, bool $active_no_signal_drain, string $reason ): array {
+		return array(
+			'stage'            => $stage,
+			'offset'           => max(0, $offset),
+			'next_command'     => $this->build_continuation_command($stage, max(0, $offset), $limit, $passes, $force, $until_budget, $active_no_signal_drain),
+			'reason'           => $reason,
+			'budget_exhausted' => true,
+			'hint'             => 'Budget expired after safe progress. Re-run next_command to continue the drain from the next safe boundary.',
+		);
+	}
+
+	private function build_continuation_command( string $stage, int $offset, int $limit, int $passes, bool $force, string $until_budget, bool $active_no_signal_drain ): string {
+		$operation = $active_no_signal_drain ? 'active-no-signal-drain' : 'abandoned';
+		return sprintf('studio wp datamachine-code workspace worktree %s --apply%s --stage=%s --offset=%d --limit=%d --passes=%d%s --format=json', $operation, $force ? ' --force' : '', $stage, $offset, $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
 	}
 
 	private function drain_pages( object $ability, array $base_input, bool $apply, ?float $deadline = null ): array|\WP_Error {

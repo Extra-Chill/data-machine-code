@@ -121,6 +121,9 @@ compact_output_assert(! isset($active_apply['planned']), 'Compact active/no-sign
 compact_output_assert(! isset($active_apply['written']), 'Compact active/no-signal apply must omit full written array.');
 compact_output_assert(40 === ( $active_apply['row_counts']['planned'] ?? null ), 'Compact active/no-signal apply must preserve planned count.');
 compact_output_assert(40 === ( $active_apply['row_counts']['written'] ?? null ), 'Compact active/no-signal apply must preserve written count.');
+compact_output_assert(count((array) ( $active_apply['samples']['planned'] ?? array() )) <= 5, 'Compact active/no-signal apply must sample planned metadata rows.');
+compact_output_assert(count((array) ( $active_apply['samples']['written'] ?? array() )) <= 5, 'Compact active/no-signal apply must sample written metadata rows.');
+compact_output_assert(empty($active_apply['samples']['removed'] ?? array()), 'Compact active/no-signal apply must not label written metadata rows as removed samples.');
 compact_output_assert(40 === ( $active_apply['blockers']['not_remote_tracking_clean']['count'] ?? null ), 'Compact active/no-signal apply must preserve blocker counts from summary.');
 compact_output_assert(in_array('studio wp datamachine-code workspace worktree active-no-signal-remote-clean-apply --dry-run --limit=40 --offset=40 --format=json', (array) ( $active_apply['next_commands'] ?? array() ), true), 'Compact active/no-signal apply must expose next page command.');
 
@@ -167,12 +170,35 @@ $hygiene = WorkspaceCompactOutput::hygiene_report(
 			'counts'              => array(
 				'cleanup_eligible_unprobed_count' => 40,
 				'dirty_probe_skipped_count'       => 40,
+				'inventory_known_dirty_count'     => 20,
+				'inventory_known_blocker_count'   => 3,
+				'fresh_probed_blocker_count'      => 0,
 			),
 			'safety_probe_status' => 'not_run_inventory_only',
 		),
-		'worktrees'                 => array( 'worktrees' => 40, 'protected_dirty' => 20 ),
+		'worktrees'                 => array(
+			'worktrees'                           => 40,
+			'inventory_known_dirty'               => 20,
+			'protected_dirty'                     => 3,
+			'protected_dirty_inventory_known'     => 3,
+			'protected_dirty_fresh_probed'        => 0,
+			'protected_unpushed_inventory_known'  => 0,
+			'protected_unpushed_fresh_probed'     => 0,
+			'protected_count_probe_source'        => 'inventory_known',
+		),
 		'locks'                     => array( 'active' => 2, 'stale' => 40, 'database' => array( 'locks' => $large_rows ) ),
 		'cleanup'                   => array(
+			'blocker_probe_source' => 'inventory_known',
+			'blocker_counts'       => array(
+				'inventory_known' => array(
+					'dirty_worktree'   => 3,
+					'unpushed_commits' => 0,
+				),
+				'fresh_probe'     => array(
+					'dirty_worktree'   => 0,
+					'unpushed_commits' => 0,
+				),
+			),
 			'summary'            => array(
 				'would_remove'                      => 40,
 				'inventory_cleanup_candidate_count' => 40,
@@ -199,6 +225,15 @@ compact_output_assert(40 === ( $hygiene['fast_stats']['counts']['cleanup_eligibl
 compact_output_assert(! isset($hygiene['fast_stats']['counts']['safe_removable_count']), 'Compact hygiene output must not expose misleading safe_removable_count for cheap inventory.');
 compact_output_assert(40 === ( $hygiene['cleanup']['summary']['inventory_cleanup_candidate_count'] ?? null ), 'Compact cleanup summary must expose inventory cleanup candidates separately.');
 compact_output_assert(0 === ( $hygiene['cleanup']['summary']['fresh_safe_removable_count'] ?? null ), 'Compact cleanup summary must not mark inventory cleanup candidates as fresh safe removals.');
+compact_output_assert(20 === ( $hygiene['fast_stats']['counts']['inventory_known_dirty_count'] ?? null ), 'Compact hygiene output must preserve inventory-known dirty counts.');
+compact_output_assert(3 === ( $hygiene['fast_stats']['counts']['inventory_known_blocker_count'] ?? null ), 'Compact hygiene output must preserve inventory-known blocker counts.');
+compact_output_assert(0 === ( $hygiene['fast_stats']['counts']['fresh_probed_blocker_count'] ?? null ), 'Compact hygiene output must distinguish fresh-probed blocker counts.');
+compact_output_assert(20 === ( $hygiene['worktrees']['inventory_known_dirty'] ?? null ), 'Compact hygiene output must label inventory-known dirty worktrees.');
+compact_output_assert(3 === ( $hygiene['worktrees']['protected_dirty_inventory_known'] ?? null ), 'Compact hygiene output must label inventory-known dirty blockers.');
+compact_output_assert(0 === ( $hygiene['worktrees']['protected_dirty_fresh_probed'] ?? null ), 'Compact hygiene output must label fresh-probed dirty blockers separately.');
+compact_output_assert('inventory_known' === ( $hygiene['cleanup']['blocker_probe_source'] ?? null ), 'Compact hygiene output must expose blocker probe source.');
+compact_output_assert(3 === ( $hygiene['cleanup']['blocker_counts']['inventory_known']['dirty_worktree'] ?? null ), 'Compact hygiene output must preserve inventory-known dirty blocker bucket.');
+compact_output_assert(0 === ( $hygiene['cleanup']['blocker_counts']['fresh_probe']['dirty_worktree'] ?? null ), 'Compact hygiene output must preserve fresh-probed dirty blocker bucket.');
 compact_output_assert(40 === ( $hygiene['cleanup']['summary']['cleanup_buckets']['cleanup_eligible_pending_revalidation'] ?? null ), 'Compact cleanup summary must preserve pending-revalidation bucket.');
 compact_output_assert(0 === ( $hygiene['cleanup']['summary']['cleanup_buckets']['safe_to_remove_now'] ?? null ), 'Compact cleanup summary must not mark unprobed inventory candidates safe.');
 compact_output_assert(123456 === ( $hygiene['size']['total_bytes'] ?? null ), 'Compact hygiene output must preserve size bytes.');
