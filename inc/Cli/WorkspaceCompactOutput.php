@@ -93,6 +93,8 @@ class WorkspaceCompactOutput {
 				'worktree_status_mode'      => $report['worktree_status_mode'] ?? null,
 				'locks'                     => isset( $report['locks'] ) ? self::lock_result( (array) $report['locks'] ) : null,
 				'cleanup'                   => array(
+					'blocker_probe_source' => $cleanup['blocker_probe_source'] ?? null,
+					'blocker_counts'       => $cleanup['blocker_counts'] ?? null,
 					'summary'            => (array) ( $cleanup['summary'] ?? array() ),
 					'biggest_candidates' => self::compact_rows( (array) ( $cleanup['biggest_candidates'] ?? array() ) ),
 				),
