@@ -2,6 +2,18 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.29] - 2026-06-26
+
+### Changed
+- Add safe workspace cleanup entrypoint
+- Clarify hygiene inventory blocker counts
+- Clarify cleanup restart continuations
+
+### Fixed
+- Fix hygiene cleanup candidate terminology
+- clarify active no-signal drain budget continuation
+- Fix cleanup metadata compact samples
+
 ## [0.48.28] - 2026-06-26
 
 ### Changed
