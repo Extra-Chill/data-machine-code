@@ -121,6 +121,9 @@ compact_output_assert(! isset($active_apply['planned']), 'Compact active/no-sign
 compact_output_assert(! isset($active_apply['written']), 'Compact active/no-signal apply must omit full written array.');
 compact_output_assert(40 === ( $active_apply['row_counts']['planned'] ?? null ), 'Compact active/no-signal apply must preserve planned count.');
 compact_output_assert(40 === ( $active_apply['row_counts']['written'] ?? null ), 'Compact active/no-signal apply must preserve written count.');
+compact_output_assert(count((array) ( $active_apply['samples']['planned'] ?? array() )) <= 5, 'Compact active/no-signal apply must sample planned metadata rows.');
+compact_output_assert(count((array) ( $active_apply['samples']['written'] ?? array() )) <= 5, 'Compact active/no-signal apply must sample written metadata rows.');
+compact_output_assert(empty($active_apply['samples']['removed'] ?? array()), 'Compact active/no-signal apply must not label written metadata rows as removed samples.');
 compact_output_assert(40 === ( $active_apply['blockers']['not_remote_tracking_clean']['count'] ?? null ), 'Compact active/no-signal apply must preserve blocker counts from summary.');
 compact_output_assert(in_array('studio wp datamachine-code workspace worktree active-no-signal-remote-clean-apply --dry-run --limit=40 --offset=40 --format=json', (array) ( $active_apply['next_commands'] ?? array() ), true), 'Compact active/no-signal apply must expose next page command.');
 
