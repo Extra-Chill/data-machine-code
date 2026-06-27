@@ -1842,22 +1842,25 @@ trait WorkspaceWorktreeCleanupEngine {
 		arsort($size_by_repo);
 		arsort($artifact_by_repo);
 
-		$summary = array(
-			'would_remove'          => count($candidates),
-			'removed'               => count($removed),
-			'skipped'               => count($skipped),
-			'skipped_by_reason'     => $skipped_by_reason,
-			'skipped_next_commands' => $this->worktree_cleanup_skipped_next_commands($skipped_by_reason),
-			'cleanup_buckets'       => $this->worktree_cleanup_buckets(count($candidates), $candidates_by_signal, $skipped_by_reason, $candidate_bucket),
-			'candidates_by_signal'  => $candidates_by_signal,
-			'stale_reasons'         => $stale_reasons,
-			'liveness'              => $liveness,
-			'total_size_bytes'      => $total_size_bytes,
-			'artifact_size_bytes'   => $total_artifact_bytes,
-			'size_by_repo'          => $size_by_repo,
-			'artifact_size_by_repo' => $artifact_by_repo,
-			'top_by_size'           => $this->summarize_top_worktree_rows($all_rows, 'size_bytes'),
-			'top_by_age'            => $this->summarize_top_worktree_rows($all_rows, 'age_days'),
+		$candidate_count = count($candidates);
+		$summary         = array(
+			'would_remove'                      => $candidate_count,
+			'inventory_cleanup_candidate_count' => WorktreeCleanupClassifier::BUCKET_CLEANUP_ELIGIBLE_UNPROBED === $candidate_bucket ? $candidate_count : 0,
+			'fresh_safe_removable_count'        => WorktreeCleanupClassifier::BUCKET_SAFE_TO_REMOVE_NOW === $candidate_bucket ? $candidate_count : 0,
+			'removed'                           => count($removed),
+			'skipped'                           => count($skipped),
+			'skipped_by_reason'                 => $skipped_by_reason,
+			'skipped_next_commands'             => $this->worktree_cleanup_skipped_next_commands($skipped_by_reason),
+			'cleanup_buckets'                   => $this->worktree_cleanup_buckets($candidate_count, $candidates_by_signal, $skipped_by_reason, $candidate_bucket),
+			'candidates_by_signal'              => $candidates_by_signal,
+			'stale_reasons'                     => $stale_reasons,
+			'liveness'                          => $liveness,
+			'total_size_bytes'                  => $total_size_bytes,
+			'artifact_size_bytes'               => $total_artifact_bytes,
+			'size_by_repo'                      => $size_by_repo,
+			'artifact_size_by_repo'             => $artifact_by_repo,
+			'top_by_size'                       => $this->summarize_top_worktree_rows($all_rows, 'size_bytes'),
+			'top_by_age'                        => $this->summarize_top_worktree_rows($all_rows, 'age_days'),
 		);
 
 		if ( null !== $age_filter ) {

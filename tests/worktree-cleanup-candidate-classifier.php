@@ -10,6 +10,7 @@ require_once dirname(__DIR__) . '/inc/Workspace/WorktreeAgeFilter.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupSignal.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupClassifier.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupCandidateClassifier.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeCleanupEngine.php';
 
 use DataMachineCode\Workspace\WorktreeAgeFilter;
 use DataMachineCode\Workspace\WorktreeCleanupClassifier;
@@ -99,5 +100,30 @@ worktree_cleanup_candidate_assert_same(0, $inventory_buckets['safe_to_remove_now
 
 $probed_buckets = WorktreeCleanupClassifier::buckets(2, array(), array());
 worktree_cleanup_candidate_assert_same(2, $probed_buckets['safe_to_remove_now'], 'probed cleanup candidates keep the safe-to-remove bucket');
+
+$engine = new class {
+	use DataMachineCode\Workspace\WorkspaceWorktreeCleanupEngine;
+
+	public function summary( array $candidates, string $bucket ): array {
+		$method = new ReflectionMethod($this, 'build_worktree_cleanup_summary');
+		return $method->invoke($this, $candidates, array(), array(), null, $bucket);
+	}
+
+	private function worktree_cleanup_skipped_next_commands( array $skipped_by_reason ): array {
+		return array();
+	}
+
+	private function summarize_top_worktree_rows( array $rows, string $field ): array {
+		return array();
+	}
+};
+
+$inventory_summary = $engine->summary(array( array( 'signal' => 'cleanup_eligible' ) ), WorktreeCleanupClassifier::BUCKET_CLEANUP_ELIGIBLE_UNPROBED);
+worktree_cleanup_candidate_assert_same(1, $inventory_summary['inventory_cleanup_candidate_count'], 'inventory summary exposes cheap cleanup candidates separately');
+worktree_cleanup_candidate_assert_same(0, $inventory_summary['fresh_safe_removable_count'], 'inventory summary does not label unprobed candidates fresh safe');
+
+$fresh_summary = $engine->summary(array( array( 'signal' => 'github-merged-pr' ) ), WorktreeCleanupClassifier::BUCKET_SAFE_TO_REMOVE_NOW);
+worktree_cleanup_candidate_assert_same(0, $fresh_summary['inventory_cleanup_candidate_count'], 'fresh summary does not count inventory-only candidates');
+worktree_cleanup_candidate_assert_same(1, $fresh_summary['fresh_safe_removable_count'], 'fresh summary exposes freshly probed safe removals');
 
 echo "worktree-cleanup-candidate-classifier: ok\n";

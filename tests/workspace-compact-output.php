@@ -174,9 +174,11 @@ $hygiene = WorkspaceCompactOutput::hygiene_report(
 		'locks'                     => array( 'active' => 2, 'stale' => 40, 'database' => array( 'locks' => $large_rows ) ),
 		'cleanup'                   => array(
 			'summary'            => array(
-				'would_remove'        => 40,
-				'artifact_size_bytes' => 654321,
-				'cleanup_buckets'     => array(
+				'would_remove'                      => 40,
+				'inventory_cleanup_candidate_count' => 40,
+				'fresh_safe_removable_count'        => 0,
+				'artifact_size_bytes'               => 654321,
+				'cleanup_buckets'                   => array(
 					'cleanup_eligible_pending_revalidation' => 40,
 					'safe_to_remove_now'                    => 0,
 				),
@@ -195,6 +197,8 @@ $hygiene = WorkspaceCompactOutput::hygiene_report(
 compact_output_assert(40 === ( $hygiene['worktrees']['worktrees'] ?? null ), 'Compact hygiene output must preserve worktree counts.');
 compact_output_assert(40 === ( $hygiene['fast_stats']['counts']['cleanup_eligible_unprobed_count'] ?? null ), 'Compact hygiene output must label cheap cleanup candidates as unprobed.');
 compact_output_assert(! isset($hygiene['fast_stats']['counts']['safe_removable_count']), 'Compact hygiene output must not expose misleading safe_removable_count for cheap inventory.');
+compact_output_assert(40 === ( $hygiene['cleanup']['summary']['inventory_cleanup_candidate_count'] ?? null ), 'Compact cleanup summary must expose inventory cleanup candidates separately.');
+compact_output_assert(0 === ( $hygiene['cleanup']['summary']['fresh_safe_removable_count'] ?? null ), 'Compact cleanup summary must not mark inventory cleanup candidates as fresh safe removals.');
 compact_output_assert(40 === ( $hygiene['cleanup']['summary']['cleanup_buckets']['cleanup_eligible_pending_revalidation'] ?? null ), 'Compact cleanup summary must preserve pending-revalidation bucket.');
 compact_output_assert(0 === ( $hygiene['cleanup']['summary']['cleanup_buckets']['safe_to_remove_now'] ?? null ), 'Compact cleanup summary must not mark unprobed inventory candidates safe.');
 compact_output_assert(123456 === ( $hygiene['size']['total_bytes'] ?? null ), 'Compact hygiene output must preserve size bytes.');
