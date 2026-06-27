@@ -32,6 +32,7 @@ require_once __DIR__ . '/WorkspaceWorktreeCleanupEngine.php';
 require_once __DIR__ . '/WorkspaceWorktreeInventoryCleanup.php';
 require_once __DIR__ . '/WorkspaceWorktreeEmergencyCleanup.php';
 require_once __DIR__ . '/WorktreeCleanupClassifier.php';
+require_once __DIR__ . '/WorkspaceSafeCleanupOrchestrator.php';
 
 class Workspace {
 	use WorkspaceCoreUtilities;

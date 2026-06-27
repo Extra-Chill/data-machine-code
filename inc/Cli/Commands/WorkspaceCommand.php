@@ -23,6 +23,7 @@ use DataMachineCode\Cli\WorkspaceCompactOutput;
 use DataMachineCode\Cleanup\CompositeCleanupRunEvidenceStore;
 use DataMachineCode\Cleanup\CleanupRunEvidenceStoreInterface;
 use DataMachineCode\Workspace\Workspace;
+use DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 use DataMachineCode\Workspace\WorkspaceMutationLock;
 
@@ -607,7 +608,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## OPTIONS
 	 *
 	 * <operation>
-	 * : Cleanup operation. One of: <plan|apply|until-empty|run|status|resume|cancel|evidence>.
+	 * : Cleanup operation. One of: <safe|plan|apply|until-empty|run|status|resume|cancel|evidence>.
 	 *   Existing task-backed controls remain: <run|status|resume|cancel|evidence>.
 	 *
 	 * [<run-id>]
@@ -628,17 +629,19 @@ class WorkspaceCommand extends BaseCommand {
 	 * ---
 	 *
 	 * [--dry-run]
-	 * : Run the selected cleanup review synchronously through workspace abilities.
+	 * : Run the selected cleanup review synchronously through workspace abilities. For
+	 *   `safe`, preview all safe stages and stale lock pruning without removals.
 	 *
 	 * [--force]
 	 * : Pass force=true into the cleanup task params for modes that support it.
+	 *   Refused by `safe`.
 	 *
-		 * [--include-artifacts]
-		 * : For `plan --mode=retention`, include artifact cleanup rows. Retention
-		 *   planning includes a bounded artifact inventory page by default; this flag
-		 *   remains accepted for explicitness and `--mode=artifacts` still creates an
-		 *   artifact-only plan. `--mode=stale-worktrees` never includes artifacts unless
-		 *   this flag is passed.
+	 * [--include-artifacts]
+	 * : For `plan --mode=retention`, include artifact cleanup rows. Retention
+	 *   planning includes a bounded artifact inventory page by default; this flag
+	 *   remains accepted for explicitness and `--mode=artifacts` still creates an
+	 *   artifact-only plan. `--mode=stale-worktrees` never includes artifacts unless
+	 *   this flag is passed.
 	 *
 	 * [--older-than=<duration>]
 	 * : Pass an age gate such as 7d or 24h into cleanup task params.
@@ -647,22 +650,22 @@ class WorkspaceCommand extends BaseCommand {
 	 * : For `plan`, number of largest reclaimable paths to show in the upfront
 	 *   summary. Defaults to 10.
 	 *
-		 * [--limit=<count>]
-		 * : For DB-backed `apply` / `resume`, maximum pending rows to process in this
-		 *   invocation (default 25, max 100). For `plan`, maximum worktrees to scan in
-		 *   each cleanup lane page. Plan pages default to 100 so huge workspaces return
-		 *   actionable JSON quickly. Use --exhaustive for a full audit.
+	 * [--limit=<count>]
+	 * : For DB-backed `apply` / `resume`, maximum pending rows to process in this
+	 *   invocation (default 25, max 100). For `plan`, maximum worktrees to scan in
+	 *   each cleanup lane page. Plan pages default to 100 so huge workspaces return
+	 *   actionable JSON quickly. Use --exhaustive for a full audit.
 	 *
-		 * [--offset=<count>]
-		 * : Pagination offset (0-indexed) for bounded plan pages and artifact dry-run
-		 *   pages. Walk huge workspaces by feeding the previous response's
-		 *   `continuation.next_offset` until `continuation.complete` is true.
+	 * [--offset=<count>]
+	 * : Pagination offset (0-indexed) for bounded plan pages and artifact dry-run
+	 *   pages. Walk huge workspaces by feeding the previous response's
+	 *   `continuation.next_offset` until `continuation.complete` is true.
 	 *
-		 * [--exhaustive]
-		 * : For `plan`, request a full unbounded audit instead of the default bounded
-		 *   inventory-first page. For `--mode=artifacts --dry-run`, scan every worktree
-		 *   AND run per-worktree git status / unpushed-commit safety probes. Slow on
-		 *   huge workspaces; use sparingly for full audits.
+	 * [--exhaustive]
+	 * : For `plan`, request a full unbounded audit instead of the default bounded
+	 *   inventory-first page. For `--mode=artifacts --dry-run`, scan every worktree
+	 *   AND run per-worktree git status / unpushed-commit safety probes. Slow on
+	 *   huge workspaces; use sparingly for full audits.
 	 *
 	 * [--safety-probes]
 	 * : For `--mode=artifacts --dry-run`, run the per-worktree git safety probes
@@ -688,6 +691,12 @@ class WorkspaceCommand extends BaseCommand {
 	 * : For `cleanup until-empty --mode=artifacts`, stop before starting another
 	 *   pass after this many seconds.
 	 *
+	 * [--passes=<count>]
+	 * : For `cleanup safe`, maximum child-drain passes per cycle. Defaults to 10.
+	 *
+	 * [--cycles=<count>]
+	 * : For `cleanup safe`, maximum safe cleanup cycles before stopping. Defaults to 5.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -699,6 +708,9 @@ class WorkspaceCommand extends BaseCommand {
 	 * ---
 	 *
 	 * ## EXAMPLES
+	 *
+	 *     # Apply all currently safe DMC workspace cleanup and report blockers
+	 *     wp datamachine-code workspace cleanup safe --format=json
 	 *
 	 *     # Create a DB-backed cleanup plan for review
 	 *     wp datamachine-code workspace cleanup plan --mode=retention
@@ -746,11 +758,15 @@ class WorkspaceCommand extends BaseCommand {
 	public function cleanup( array $args, array $assoc_args ): void {
 		$operation = (string) ( $args[0] ?? '' );
 		if ( '' === $operation ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace cleanup <plan|apply|run|status|resume|cancel|evidence> [<run-id>] [--mode=<mode>]');
+			WP_CLI::error('Usage: wp datamachine-code workspace cleanup <safe|plan|apply|run|status|resume|cancel|evidence> [<run-id>] [--mode=<mode>]');
 			return;
 		}
 
 		switch ( $operation ) {
+			case 'safe':
+				$this->run_cleanup_safe($assoc_args);
+				return;
+
 			case 'plan':
 				$this->run_cleanup_plan($assoc_args);
 				return;
@@ -795,6 +811,78 @@ class WorkspaceCommand extends BaseCommand {
 				WP_CLI::error(sprintf('Unknown cleanup operation: %s', $operation));
 				return;
 		}
+	}
+
+	private function run_cleanup_safe( array $assoc_args ): void {
+		$input = array(
+			'dry_run'          => ! empty($assoc_args['dry-run']),
+			'force'            => ! empty($assoc_args['force']),
+			'discard_unpushed' => ! empty($assoc_args['discard-unpushed']),
+			'source'           => self::CLEANUP_CLI_SOURCE,
+		);
+		foreach ( array( 'limit', 'passes', 'cycles' ) as $key ) {
+			if ( isset($assoc_args[ $key ]) ) {
+				$input[ $key ] = (int) $assoc_args[ $key ];
+			}
+		}
+		if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
+			$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
+		}
+
+		$orchestrator = new WorkspaceSafeCleanupOrchestrator();
+		$result       = $orchestrator->run($input);
+		if ( is_wp_error($result) ) {
+			$this->render_workspace_error($result);
+			return;
+		}
+
+		$this->render_cleanup_safe_result($result, $assoc_args);
+	}
+
+	private function render_cleanup_safe_result( array $result, array $assoc_args ): void {
+		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			if ( empty($assoc_args['verbose']) ) {
+				$result['steps'] = $this->compact_safe_cleanup_steps( (array) ( $result['steps'] ?? array() ) );
+			}
+			$this->renderer()->json($result);
+			return;
+		}
+
+		$summary = (array) ( $result['summary'] ?? array() );
+		WP_CLI::log('Safe workspace cleanup:');
+		$this->format_items(
+			array(
+				array( 'metric' => 'applied', 'value' => ! empty($result['applied']) ? 'yes' : 'no' ),
+				array( 'metric' => 'state', 'value' => (string) ( $result['state'] ?? '-' ) ),
+				array( 'metric' => 'cycles', 'value' => (string) ( $summary['cycles'] ?? 0 ) ),
+				array( 'metric' => 'removed', 'value' => (string) ( $summary['removed'] ?? 0 ) ),
+				array( 'metric' => 'would_remove', 'value' => (string) ( $summary['would_remove'] ?? 0 ) ),
+				array( 'metric' => 'marked_cleanup_eligible', 'value' => (string) ( $summary['marked_cleanup_eligible'] ?? 0 ) ),
+				array( 'metric' => 'bytes_reclaimed', 'value' => $this->format_bytes( (int) ( $summary['bytes_reclaimed'] ?? 0 ) ) ),
+				array( 'metric' => 'stale_lock_files_removed', 'value' => (string) ( $summary['lock_files_removed'] ?? 0 ) ),
+				array( 'metric' => 'blockers', 'value' => (string) ( $summary['blocker_count'] ?? 0 ) ),
+			),
+			array( 'metric', 'value' ),
+			array( 'format' => 'table' ),
+			'metric'
+		);
+
+		$blockers = (array) ( $result['blockers'] ?? array() );
+		if ( array() !== $blockers ) {
+			WP_CLI::log('Compact blockers:');
+			$this->format_items($blockers, array( 'reason_code', 'count' ), array( 'format' => 'table' ), 'reason_code');
+		}
+	}
+
+	private function compact_safe_cleanup_steps( array $steps ): array {
+		$compact = array();
+		foreach ( $steps as $key => $step ) {
+			if ( is_array($step) ) {
+				$compact[ $key ] = $step;
+			}
+		}
+
+		return $compact;
 	}
 
 	private function run_cleanup_task( array $assoc_args ): void {
