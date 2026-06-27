@@ -95,38 +95,41 @@ class WorkspaceReader {
 			);
 		}
 
-     // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
-		$content = file_get_contents($real_path);
-
-		if ( false === $content ) {
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_read_fopen
+		$handle = fopen($real_path, 'rb');
+		if ( false === $handle ) {
 			return new \WP_Error('read_failed', sprintf('Failed to read file: %s', $path), array( 'status' => 500 ));
 		}
 
-		// Detect binary: check for null bytes in first 8 KB.
-		$sample = substr($content, 0, 8192);
+		// Detect binary: check for null bytes in first 8 KB without loading the whole file.
+		$sample = fread($handle, 8192);
+		if ( false === $sample ) {
+			fclose($handle);
+			return new \WP_Error('read_failed', sprintf('Failed to read file: %s', $path), array( 'status' => 500 ));
+		}
 		if ( false !== strpos($sample, "\0") ) {
+			fclose($handle);
 			return new \WP_Error('binary_file', sprintf('Binary file detected: %s. Only text files can be read.', $path), array( 'status' => 400 ));
 		}
 
-		// Apply line offset and limit if specified.
 		$lines_read = 0;
 		$start_line = 1;
 		if ( null !== $offset || null !== $limit ) {
-			$lines       = explode("\n", $content);
-			$total_lines = count($lines);
-
-			if ( null !== $offset ) {
-				$start_line = max(1, $offset);
-				$lines      = array_slice($lines, $start_line - 1);
+			rewind($handle);
+			$slice      = $this->read_line_slice($handle, $offset, $limit);
+			$content    = $slice['content'];
+			$lines_read = $slice['lines_read'];
+			$start_line = $slice['offset'];
+		} else {
+			rewind($handle);
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_read_stream_get_contents
+			$content = stream_get_contents($handle);
+			if ( false === $content ) {
+				fclose($handle);
+				return new \WP_Error('read_failed', sprintf('Failed to read file: %s', $path), array( 'status' => 500 ));
 			}
-
-			if ( null !== $limit ) {
-				$lines = array_slice($lines, 0, $limit);
-			}
-
-			$content    = implode("\n", $lines);
-			$lines_read = count($lines);
 		}
+		fclose($handle);
 
 		$result = array(
 			'success' => true,
@@ -145,6 +148,41 @@ class WorkspaceReader {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Read a bounded line slice from an already-open text file handle.
+	 *
+	 * @param resource $handle Open readable file handle.
+	 * @return array{content:string,lines_read:int,offset:int}
+	 */
+	private function read_line_slice( $handle, ?int $offset, ?int $limit ): array {
+		$start_line = max(1, (int) ( $offset ?? 1 ));
+		$max_lines  = null === $limit ? null : max(0, $limit);
+		$line_no    = 0;
+		$lines      = array();
+
+		while ( ! feof($handle) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_read_fgets
+			$line = fgets($handle);
+			if ( false === $line ) {
+				break;
+			}
+			++$line_no;
+			if ( $line_no < $start_line ) {
+				continue;
+			}
+			if ( null !== $max_lines && count($lines) >= $max_lines ) {
+				break;
+			}
+			$lines[] = rtrim($line, "\n");
+		}
+
+		return array(
+			'content'    => implode("\n", $lines),
+			'lines_read' => count($lines),
+			'offset'     => $start_line,
+		);
 	}
 
 	/**

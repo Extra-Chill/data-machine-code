@@ -4644,6 +4644,23 @@ class WorkspaceAbilities {
 			return null;
 		}
 
+		foreach ( self::mounted_workspace_path_aliases() as $mount_path => $workspace_ref ) {
+			if ( $path !== $mount_path && ! str_starts_with($path, $mount_path . '/') ) {
+				continue;
+			}
+
+			$relative = ltrim(substr($path, strlen($mount_path)), '/');
+			$segments = '' === $relative ? array() : array_values(array_filter(explode('/', $relative), static fn( string $segment ): bool => '' !== $segment && '.' !== $segment));
+			if ( in_array('..', $segments, true) ) {
+				return null;
+			}
+
+			return array(
+				'repo' => $workspace_ref,
+				'path' => implode('/', $segments),
+			);
+		}
+
 		$relative = ltrim(substr($path, strlen($root)), '/');
 		if ( '' === $relative ) {
 			return null;
@@ -4659,6 +4676,30 @@ class WorkspaceAbilities {
 			'repo' => $repo,
 			'path' => implode('/', $segments),
 		);
+	}
+
+	/** @return array<string,string> */
+	private static function mounted_workspace_path_aliases(): array {
+		if ( ! class_exists('\DataMachineCode\Runtime\MountedRuntimeBootstrap') ) {
+			return array();
+		}
+
+		$aliases = \DataMachineCode\Runtime\MountedRuntimeBootstrap::mounted_workspace_path_aliases();
+		if ( ! is_array($aliases) ) {
+			return array();
+		}
+
+		$normalized = array();
+		foreach ( $aliases as $path => $workspace_ref ) {
+			$path          = rtrim(str_replace('\\', '/', (string) $path), '/');
+			$workspace_ref = trim( (string) $workspace_ref );
+			if ( '' !== $path && '' !== $workspace_ref ) {
+				$normalized[ $path ] = $workspace_ref;
+			}
+		}
+
+		uksort($normalized, static fn ( string $left, string $right ): int => strlen($right) <=> strlen($left));
+		return $normalized;
 	}
 
 	/**
