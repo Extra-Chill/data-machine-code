@@ -520,8 +520,21 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			'pagination'   => $pagination,
 		);
 		if ( $restart ) {
+			$written = (int) ( $step['summary']['written'] ?? 0 );
+			$removed = (int) ( $step['summary']['removed'] ?? 0 );
+
 			$continuation['candidate_set_changed_restart_required'] = true;
 			$continuation['reason']                                 = 'candidate_set_changed_restart_required';
+			$continuation['reason_description']                     = 'The previous cleanup pass changed the candidate set, so the next safe continuation intentionally restarts this stage from offset 0.';
+			$continuation['progress_delta']                         = array(
+				'written'           => $written,
+				'removed'           => $removed,
+				'total_mutations'   => $written + $removed,
+				'previous_offset'   => $current,
+				'restart_offset'    => $next_offset,
+				'candidate_set_now' => 'changed',
+			);
+			$continuation['next_command_label']                     = 'Restart this stage from offset 0 because the cleanup candidate set changed.';
 		}
 
 		return $continuation;

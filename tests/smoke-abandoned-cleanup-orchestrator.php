@@ -261,6 +261,12 @@ $orchestrator          = new DataMachineCode\Workspace\WorkspaceAbandonedCleanup
 $restart_result        = $orchestrator->run(array( 'active_no_signal_drain' => true, 'apply' => true, 'limit' => 10, 'passes' => 1, 'until_budget' => '1s' ));
 abandoned_cleanup_assert(! is_wp_error($restart_result), 'active/no-signal restart result succeeds');
 abandoned_cleanup_assert(! empty($restart_result['continuation']['candidate_set_changed_restart_required']), 'restart continuation exposes candidate set changed evidence');
+abandoned_cleanup_assert('candidate_set_changed_restart_required' === $restart_result['continuation']['reason'], 'restart continuation exposes machine-readable restart reason');
+abandoned_cleanup_assert(str_contains((string) $restart_result['continuation']['reason_description'], 'candidate set'), 'restart continuation explains why offset zero is expected');
+abandoned_cleanup_assert(1 === (int) $restart_result['continuation']['progress_delta']['written'], 'restart continuation exposes written progress delta');
+abandoned_cleanup_assert(1 === (int) $restart_result['continuation']['progress_delta']['total_mutations'], 'restart continuation exposes total mutation progress delta');
+abandoned_cleanup_assert(0 === (int) $restart_result['continuation']['progress_delta']['restart_offset'], 'restart continuation exposes the intentional restart offset');
+abandoned_cleanup_assert(str_contains((string) $restart_result['continuation']['next_command_label'], 'candidate set changed'), 'restart continuation labels the restart command');
 abandoned_cleanup_assert('active-no-signal-drain' === explode(' ', (string) $restart_result['continuation']['next_command'])[5], 'restart next command uses active/no-signal drain');
 
 fwrite(STDOUT, 'abandoned cleanup orchestrator smoke passed' . PHP_EOL);
