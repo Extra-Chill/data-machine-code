@@ -4766,12 +4766,28 @@ class WorkspaceCommand extends BaseCommand {
 					'value'  => (string) ( $worktrees['artifacts'] ?? 0 ),
 				),
 				array(
-					'metric' => 'dirty_protected',
-					'value'  => (string) ( $worktrees['protected_dirty'] ?? 0 ),
+					'metric' => 'inventory_known_dirty',
+					'value'  => (string) ( $worktrees['inventory_known_dirty'] ?? 0 ),
 				),
 				array(
-					'metric' => 'unpushed_protected',
-					'value'  => (string) ( $worktrees['protected_unpushed'] ?? 0 ),
+					'metric' => 'inventory_known_dirty_blockers',
+					'value'  => (string) ( $worktrees['protected_dirty_inventory_known'] ?? 0 ),
+				),
+				array(
+					'metric' => 'inventory_known_unpushed_blockers',
+					'value'  => (string) ( $worktrees['protected_unpushed_inventory_known'] ?? 0 ),
+				),
+				array(
+					'metric' => 'fresh_probed_dirty_blockers',
+					'value'  => (string) ( $worktrees['protected_dirty_fresh_probed'] ?? 0 ),
+				),
+				array(
+					'metric' => 'fresh_probed_unpushed_blockers',
+					'value'  => (string) ( $worktrees['protected_unpushed_fresh_probed'] ?? 0 ),
+				),
+				array(
+					'metric' => 'blocker_probe_source',
+					'value'  => (string) ( $worktrees['protected_count_probe_source'] ?? 'none' ),
 				),
 				array(
 					'metric' => 'missing_metadata',
