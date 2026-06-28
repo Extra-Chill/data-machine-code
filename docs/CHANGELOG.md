@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.30] - 2026-06-28
+
+### Changed
+- Reframe plugin description around the coding tools DMC provides
+
 ## [0.48.29] - 2026-06-26
 
 ### Changed
