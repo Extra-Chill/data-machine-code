@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.31] - 2026-06-28
+
+### Fixed
+- make primary refresh recoverable when default branch has no upstream
+
 ## [0.48.30] - 2026-06-28
 
 ### Changed
