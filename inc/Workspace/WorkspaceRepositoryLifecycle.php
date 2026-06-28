@@ -257,6 +257,13 @@ trait WorkspaceRepositoryLifecycle {
 			return $this->clone_failed_error($result, $name, $repo_path, $url);
 		}
 
+		// Guarantee the freshly cloned default branch tracks its remote (issue
+		// #833). `git clone` normally sets this, but some server/git/partial-clone
+		// configurations leave the default branch with no upstream, which later
+		// breaks `workspace git pull --allow-primary-refresh`. Establish tracking
+		// here so primaries are refreshable from the moment they exist.
+		$this->ensure_default_branch_tracking($repo_path);
+
 		$this->emit_workspace_changed('clone', $name, $name, $repo_path);
 
 		return array(
@@ -265,6 +272,47 @@ trait WorkspaceRepositoryLifecycle {
 			'path'    => $repo_path,
 			'message' => sprintf('Cloned %s into workspace as "%s".', $url, $name),
 		);
+	}
+
+	/**
+	 * Ensure the primary's currently checked-out default branch tracks origin.
+	 *
+	 * Issue #833: a primary whose default branch has no upstream tracking ref
+	 * reports freshness `no_upstream` and cannot be refreshed via
+	 * `workspace git pull --allow-primary-refresh`. This sets tracking right
+	 * after clone so the primary is refreshable from the start.
+	 *
+	 * Best-effort and non-fatal: a failure to set tracking must not fail an
+	 * otherwise successful clone. No-ops when the branch already tracks, when
+	 * HEAD is detached, or when the remote lacks a same-named branch.
+	 *
+	 * @param  string $repo_path Primary checkout path.
+	 * @return void
+	 */
+	private function ensure_default_branch_tracking( string $repo_path ): void {
+		if ( ! is_dir($repo_path . '/.git') ) {
+			return;
+		}
+
+		$branch = $this->git_get_branch($repo_path);
+		if ( null === $branch || '' === $branch || 'HEAD' === $branch ) {
+			return;
+		}
+
+		// Already tracking? Leave it alone.
+		$upstream = $this->run_git($repo_path, 'rev-parse --abbrev-ref --symbolic-full-name @{upstream}');
+		if ( ! is_wp_error($upstream) && '' !== trim( (string) ( $upstream['output'] ?? '' )) ) {
+			return;
+		}
+
+		// Only set tracking when origin has a matching branch.
+		$remote_branch = $this->run_git($repo_path, 'ls-remote --heads origin ' . escapeshellarg($branch));
+		if ( is_wp_error($remote_branch) || '' === trim( (string) ( $remote_branch['output'] ?? '' )) ) {
+			return;
+		}
+
+		// Best-effort: ignore failure so clone success is preserved.
+		$this->run_git($repo_path, 'branch --set-upstream-to=' . escapeshellarg('origin/' . $branch) . ' ' . escapeshellarg($branch));
 	}
 
 	/**

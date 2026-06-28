@@ -110,6 +110,16 @@ trait WorkspaceGitOperations {
 			$remote = 'origin';
 		}
 
+		// A primary's default branch can lack upstream tracking (issue #833):
+		// `git pull --ff-only` then hard-fails with "no tracking information".
+		// When the local branch has no upstream but a same-named branch exists
+		// on the remote, set the upstream so the fast-forward pull can proceed.
+		// This stays fast-forward-only — no merge commit, no rewrite.
+		$recovered_upstream = $this->ensure_pull_upstream($repo_path, $remote, $branch);
+		if ( is_wp_error($recovered_upstream) ) {
+			return $recovered_upstream;
+		}
+
 		$command = 'pull --ff-only';
 		if ( null !== $branch && '' !== $branch ) {
 			$command .= ' ' . escapeshellarg($remote) . ' ' . escapeshellarg($branch);
@@ -1538,6 +1548,60 @@ trait WorkspaceGitOperations {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Make a fast-forward pull recoverable when the local branch has no upstream.
+	 *
+	 * Issue #833: a primary checkout's default branch can be created without an
+	 * upstream tracking ref (`branch.<name>.remote`/`merge` unset), which makes
+	 * `git pull --ff-only` hard-fail with "There is no tracking information for
+	 * the current branch". When that happens and the remote has a same-named
+	 * branch, set the upstream so the subsequent `--ff-only` pull proceeds.
+	 *
+	 * This intentionally only sets tracking — it never merges, rewrites, or
+	 * changes which commit HEAD points at. The caller's `pull --ff-only` remains
+	 * the single fast-forward operation, so safe primary refresh stays safe.
+	 *
+	 * No-ops (returns true) when:
+	 *   - the branch already has an upstream,
+	 *   - HEAD is detached (no current branch),
+	 *   - the remote has no matching branch (let `pull` surface the real error).
+	 *
+	 * @param  string      $repo_path Repository path.
+	 * @param  string      $remote    Remote name (e.g. "origin").
+	 * @param  string|null $branch    Explicit branch override, or null for HEAD's branch.
+	 * @return true|\WP_Error
+	 */
+	private function ensure_pull_upstream( string $repo_path, string $remote, ?string $branch ): true|\WP_Error {
+		$local_branch = null !== $branch && '' !== trim($branch) ? trim($branch) : $this->git_get_branch($repo_path);
+		if ( null === $local_branch || '' === $local_branch || 'HEAD' === $local_branch ) {
+			// Detached HEAD or indeterminate branch: nothing to track. Let the
+			// pull command produce its own diagnostic.
+			return true;
+		}
+
+		// Already tracking? Nothing to do.
+		$upstream = $this->run_git($repo_path, 'rev-parse --abbrev-ref --symbolic-full-name @{upstream}');
+		if ( ! is_wp_error($upstream) && '' !== trim( (string) ( $upstream['output'] ?? '' )) ) {
+			return true;
+		}
+
+		// Only set tracking when the remote actually has a same-named branch;
+		// otherwise leave state untouched so `pull` reports the accurate error.
+		if ( null === $this->git_remote_branch_sha($repo_path, $remote, $local_branch) ) {
+			return true;
+		}
+
+		$set = $this->run_git(
+			$repo_path,
+			'branch --set-upstream-to=' . escapeshellarg($remote . '/' . $local_branch) . ' ' . escapeshellarg($local_branch)
+		);
+		if ( is_wp_error($set) ) {
+			return $set;
+		}
+
+		return true;
 	}
 
 	/**
