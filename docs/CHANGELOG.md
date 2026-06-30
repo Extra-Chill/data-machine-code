@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.32] - 2026-06-30
+
+### Changed
+- Expose safe workspace cleanup ability
+
 ## [0.48.31] - 2026-06-28
 
 ### Fixed
