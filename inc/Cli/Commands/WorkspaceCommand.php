@@ -23,7 +23,6 @@ use DataMachineCode\Cli\WorkspaceCompactOutput;
 use DataMachineCode\Cleanup\CompositeCleanupRunEvidenceStore;
 use DataMachineCode\Cleanup\CleanupRunEvidenceStoreInterface;
 use DataMachineCode\Workspace\Workspace;
-use DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 use DataMachineCode\Workspace\WorkspaceMutationLock;
 
@@ -829,8 +828,13 @@ class WorkspaceCommand extends BaseCommand {
 			$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
 		}
 
-		$orchestrator = new WorkspaceSafeCleanupOrchestrator();
-		$result       = $orchestrator->run($input);
+		$ability = wp_get_ability('datamachine-code/workspace-cleanup-safe');
+		if ( ! $ability ) {
+			WP_CLI::error('Safe workspace cleanup ability not available.');
+			return;
+		}
+
+		$result = $ability->execute($input);
 		if ( is_wp_error($result) ) {
 			$this->render_workspace_error($result);
 			return;
