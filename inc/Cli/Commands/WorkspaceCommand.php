@@ -1438,7 +1438,7 @@ class WorkspaceCommand extends BaseCommand {
 		if ( 'resume' === $operation ) {
 			$repair        = \DataMachineCode\Support\SystemTaskDrainability::ensure_jobs_have_execute_step_actions($undrainable_ids);
 			$child_targets = array_values(array_unique(array_filter(array_merge($processing_ids, $failed_ids))));
-			if ( array() === $child_targets && (int) ( $repair['repaired'] ?? 0 ) > 0 ) {
+			if ( array() === $child_targets && (int) $repair['repaired'] > 0 ) {
 				return array();
 			}
 			return array() !== $child_targets ? $child_targets : array( $job_id );
