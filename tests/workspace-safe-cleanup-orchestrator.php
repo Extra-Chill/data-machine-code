@@ -33,7 +33,30 @@ if ( ! function_exists('is_wp_error') ) {
 	}
 }
 
+$safe_cleanup_registered_abilities = array();
+
+if ( ! function_exists('wp_register_ability') ) {
+	function wp_register_ability( string $slug, array $args ): void {
+		$GLOBALS['safe_cleanup_registered_abilities'][ $slug ] = $args;
+	}
+}
+
+if ( ! function_exists('doing_action') ) {
+	function doing_action( string $hook ): bool {
+		return 'wp_abilities_api_init' === $hook;
+	}
+}
+
+if ( ! function_exists('add_action') ) {
+	function add_action( string $hook, callable $callback ): void {
+		if ( 'wp_abilities_api_init' === $hook ) {
+			$callback();
+		}
+	}
+}
+
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceSafeCleanupOrchestrator.php';
+require_once dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php';
 
 final class SafeCleanupQueuedAbility {
 	/** @var array<int,array<string,mixed>> */
@@ -59,6 +82,20 @@ function safe_cleanup_assert( bool $condition, string $label ): void {
 		exit(1);
 	}
 }
+
+new DataMachineCode\Abilities\WorkspaceAbilities();
+$safe_cleanup_ability = $GLOBALS['safe_cleanup_registered_abilities']['datamachine-code/workspace-cleanup-safe'] ?? null;
+safe_cleanup_assert(is_array($safe_cleanup_ability), 'safe cleanup ability is registered');
+safe_cleanup_assert(array( DataMachineCode\Abilities\WorkspaceAbilities::class, 'workspaceCleanupSafe' ) === $safe_cleanup_ability['execute_callback'], 'safe cleanup ability uses canonical callback');
+safe_cleanup_assert(isset($safe_cleanup_ability['input_schema']['properties']['dry_run']), 'safe cleanup ability accepts dry_run');
+safe_cleanup_assert(isset($safe_cleanup_ability['input_schema']['properties']['force']), 'safe cleanup ability documents force refusal');
+safe_cleanup_assert(isset($safe_cleanup_ability['input_schema']['properties']['discard_unpushed']), 'safe cleanup ability documents discard refusal');
+safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['summary']), 'safe cleanup ability documents summary output');
+safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['blockers']), 'safe cleanup ability documents blockers output');
+
+$ability_force_result = DataMachineCode\Abilities\WorkspaceAbilities::workspaceCleanupSafe(array( 'force' => true ));
+safe_cleanup_assert(is_wp_error($ability_force_result), 'safe cleanup ability callback executes orchestrator refusal');
+safe_cleanup_assert('safe_cleanup_refuses_force' === $ability_force_result->code, 'safe cleanup ability force refusal code');
 
 $empty_ability = new SafeCleanupQueuedAbility(array());
 $orchestrator  = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(

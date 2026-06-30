@@ -22,6 +22,7 @@ use DataMachineCode\Workspace\RunnerWorkspacePublisher;
 use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorkspaceAbandonedCleanupOrchestrator;
 use DataMachineCode\Workspace\WorkspaceCleanupEligibleDrainOrchestrator;
+use DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator;
 use DataMachineCode\Workspace\WorkspaceReader;
 use DataMachineCode\Workspace\WorkspaceWriter;
 use DataMachineCode\Support\GitRunner;
@@ -1643,6 +1644,69 @@ class WorkspaceAbilities {
 						),
 					),
 					'execute_callback'    => array( self::class, 'workspaceCleanupRun' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-cleanup-safe',
+				array(
+					'label'               => 'Run Safe Workspace Cleanup',
+					'description'         => 'Run the canonical DMC safe workspace cleanup flow. Uses DMC safe classifiers/removals, refuses force and unpushed discard, and reports remaining blockers.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'dry_run'          => array(
+								'type'        => 'boolean',
+								'description' => 'Preview safe cleanup without removing worktrees or stale DMC lock files.',
+							),
+							'limit'            => array(
+								'type'        => 'integer',
+								'description' => 'Maximum rows each child drain processes per pass. Clamped by the orchestrator.',
+							),
+							'passes'           => array(
+								'type'        => 'integer',
+								'description' => 'Maximum child-drain passes per cycle. Clamped by the orchestrator.',
+							),
+							'cycles'           => array(
+								'type'        => 'integer',
+								'description' => 'Maximum safe cleanup cycles before stopping. Clamped by the orchestrator.',
+							),
+							'until_budget'     => array(
+								'type'        => 'string',
+								'description' => 'Optional child-drain time budget such as 30s.',
+							),
+							'source'           => array(
+								'type'        => 'string',
+								'description' => 'Caller source marker recorded on child cleanup operations.',
+							),
+							'force'            => array(
+								'type'        => 'boolean',
+								'description' => 'Always refused by safe cleanup; dirty worktrees remain blockers.',
+							),
+							'discard_unpushed' => array(
+								'type'        => 'boolean',
+								'description' => 'Always refused by safe cleanup; unpushed worktrees remain blockers.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'     => array( 'type' => 'boolean' ),
+							'mode'        => array( 'type' => 'string' ),
+							'applied'     => array( 'type' => 'boolean' ),
+							'destructive' => array( 'type' => 'boolean' ),
+							'summary'     => array( 'type' => 'object' ),
+							'blockers'    => array( 'type' => 'array' ),
+							'evidence'    => array( 'type' => 'object' ),
+							'steps'       => array( 'type' => 'object' ),
+							'state'       => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'workspaceCleanupSafe' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
 				)
@@ -4042,6 +4106,17 @@ class WorkspaceAbilities {
 			'mode'      => $mode,
 			'task_type' => $task_type,
 		);
+	}
+
+	/**
+	 * Run the canonical safe workspace cleanup flow.
+	 *
+	 * @param  array $input Input parameters.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function workspaceCleanupSafe( array $input ): array|\WP_Error {
+		$orchestrator = new WorkspaceSafeCleanupOrchestrator();
+		return $orchestrator->run($input);
 	}
 
 	/**
