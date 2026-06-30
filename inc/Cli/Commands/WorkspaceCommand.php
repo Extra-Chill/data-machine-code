@@ -856,15 +856,42 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log('Safe workspace cleanup:');
 		$this->format_items(
 			array(
-				array( 'metric' => 'applied', 'value' => ! empty($result['applied']) ? 'yes' : 'no' ),
-				array( 'metric' => 'state', 'value' => (string) ( $result['state'] ?? '-' ) ),
-				array( 'metric' => 'cycles', 'value' => (string) ( $summary['cycles'] ?? 0 ) ),
-				array( 'metric' => 'removed', 'value' => (string) ( $summary['removed'] ?? 0 ) ),
-				array( 'metric' => 'would_remove', 'value' => (string) ( $summary['would_remove'] ?? 0 ) ),
-				array( 'metric' => 'marked_cleanup_eligible', 'value' => (string) ( $summary['marked_cleanup_eligible'] ?? 0 ) ),
-				array( 'metric' => 'bytes_reclaimed', 'value' => $this->format_bytes( (int) ( $summary['bytes_reclaimed'] ?? 0 ) ) ),
-				array( 'metric' => 'stale_lock_files_removed', 'value' => (string) ( $summary['lock_files_removed'] ?? 0 ) ),
-				array( 'metric' => 'blockers', 'value' => (string) ( $summary['blocker_count'] ?? 0 ) ),
+				array(
+					'metric' => 'applied',
+					'value'  => ! empty($result['applied']) ? 'yes' : 'no',
+				),
+				array(
+					'metric' => 'state',
+					'value'  => (string) ( $result['state'] ?? '-' ),
+				),
+				array(
+					'metric' => 'cycles',
+					'value'  => (string) ( $summary['cycles'] ?? 0 ),
+				),
+				array(
+					'metric' => 'removed',
+					'value'  => (string) ( $summary['removed'] ?? 0 ),
+				),
+				array(
+					'metric' => 'would_remove',
+					'value'  => (string) ( $summary['would_remove'] ?? 0 ),
+				),
+				array(
+					'metric' => 'marked_cleanup_eligible',
+					'value'  => (string) ( $summary['marked_cleanup_eligible'] ?? 0 ),
+				),
+				array(
+					'metric' => 'bytes_reclaimed',
+					'value'  => $this->format_bytes( (int) ( $summary['bytes_reclaimed'] ?? 0 ) ),
+				),
+				array(
+					'metric' => 'stale_lock_files_removed',
+					'value'  => (string) ( $summary['lock_files_removed'] ?? 0 ),
+				),
+				array(
+					'metric' => 'blockers',
+					'value'  => (string) ( $summary['blocker_count'] ?? 0 ),
+				),
 			),
 			array( 'metric', 'value' ),
 			array( 'format' => 'table' ),
@@ -1409,7 +1436,7 @@ class WorkspaceCommand extends BaseCommand {
 		$undrainable_ids = array_map('intval', (array) ( $children['pending_without_drainable_action_job_ids'] ?? array() ));
 
 		if ( 'resume' === $operation ) {
-			$repair = \DataMachineCode\Support\SystemTaskDrainability::ensure_jobs_have_execute_step_actions($undrainable_ids);
+			$repair        = \DataMachineCode\Support\SystemTaskDrainability::ensure_jobs_have_execute_step_actions($undrainable_ids);
 			$child_targets = array_values(array_unique(array_filter(array_merge($processing_ids, $failed_ids))));
 			if ( array() === $child_targets && (int) ( $repair['repaired'] ?? 0 ) > 0 ) {
 				return array();
