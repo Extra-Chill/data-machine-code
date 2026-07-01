@@ -274,10 +274,10 @@ trait WorkspaceCleanupPlan {
 			$accounting             = $this->cleanup_plan_row_size_accounting($row);
 			$row['size_status']     = $accounting['status'];
 			$row['size_accounting'] = $accounting;
-			$row['row_type']     = $type . '_blocked';
-			$row['safety_class'] = 'blocked';
-			$row['row_id']       = $this->stable_cleanup_row_id($type . '_blocked', $row);
-			$result[]            = $row;
+			$row['row_type']        = $type . '_blocked';
+			$row['safety_class']    = 'blocked';
+			$row['row_id']          = $this->stable_cleanup_row_id($type . '_blocked', $row);
+			$result[]               = $row;
 		}
 		return $result;
 	}
@@ -704,7 +704,7 @@ trait WorkspaceCleanupPlan {
 				);
 				$blockers[ $reason ]['count']            = (int) $blockers[ $reason ]['count'] + 1;
 				$blockers[ $reason ]['size_bytes']      += $bytes;
-				$blockers[ $reason ]['size_accounting'] = $this->cleanup_plan_add_size_accounting($blockers[ $reason ]['size_accounting'], $accounting);
+				$blockers[ $reason ]['size_accounting']  = $this->cleanup_plan_add_size_accounting($blockers[ $reason ]['size_accounting'], $accounting);
 				$blockers[ $reason ]['repos'][ $repo ] ??= array(
 					'count'           => 0,
 					'size_bytes'      => 0,
@@ -717,8 +717,8 @@ trait WorkspaceCleanupPlan {
 					),
 					'examples'        => array(),
 				);
-				$blockers[ $reason ]['repos'][ $repo ]['count']       = (int) $blockers[ $reason ]['repos'][ $repo ]['count'] + 1;
-				$blockers[ $reason ]['repos'][ $repo ]['size_bytes'] += $bytes;
+				$blockers[ $reason ]['repos'][ $repo ]['count']           = (int) $blockers[ $reason ]['repos'][ $repo ]['count'] + 1;
+				$blockers[ $reason ]['repos'][ $repo ]['size_bytes']      += $bytes;
 				$blockers[ $reason ]['repos'][ $repo ]['size_accounting'] = $this->cleanup_plan_add_size_accounting($blockers[ $reason ]['repos'][ $repo ]['size_accounting'], $accounting);
 				if ( count($blockers[ $reason ]['examples']) < 5 ) {
 					$blockers[ $reason ]['examples'][] = array(

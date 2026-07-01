@@ -95,8 +95,8 @@ class WorkspaceCompactOutput {
 				'cleanup'                   => array(
 					'blocker_probe_source' => $cleanup['blocker_probe_source'] ?? null,
 					'blocker_counts'       => $cleanup['blocker_counts'] ?? null,
-					'summary'            => (array) ( $cleanup['summary'] ?? array() ),
-					'biggest_candidates' => self::compact_rows( (array) ( $cleanup['biggest_candidates'] ?? array() ) ),
+					'summary'              => (array) ( $cleanup['summary'] ?? array() ),
+					'biggest_candidates'   => self::compact_rows( (array) ( $cleanup['biggest_candidates'] ?? array() ) ),
 				),
 				'size'                      => array(
 					'mode'          => $size['mode'] ?? null,
