@@ -718,7 +718,7 @@ trait WorkspaceCleanupPlan {
 					'examples'        => array(),
 				);
 				$blockers[ $reason ]['repos'][ $repo ]['count']           = (int) $blockers[ $reason ]['repos'][ $repo ]['count'] + 1;
-				$blockers[ $reason ]['repos'][ $repo ]['size_bytes']      += $bytes;
+				$blockers[ $reason ]['repos'][ $repo ]['size_bytes']     += $bytes;
 				$blockers[ $reason ]['repos'][ $repo ]['size_accounting'] = $this->cleanup_plan_add_size_accounting($blockers[ $reason ]['repos'][ $repo ]['size_accounting'], $accounting);
 				if ( count($blockers[ $reason ]['examples']) < 5 ) {
 					$blockers[ $reason ]['examples'][] = array(
