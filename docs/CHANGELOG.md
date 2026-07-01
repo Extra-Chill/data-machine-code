@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.34] - 2026-07-01
+
+### Changed
+- cover worktree disk pressure gate
+
 ## [0.48.33] - 2026-07-01
 
 ### Changed
