@@ -626,9 +626,10 @@ class CleanupRunService {
 			'applying_rows'     => count($applying),
 			'applying_examples' => $examples,
 			'pending_or_failed' => (int) ( $summary['pending_or_failed'] ?? 0 ),
+			'safe_cleanup'      => $run['summary']['safe_cleanup_progress'] ?? null,
 			'started_at'        => $started_at,
 			'age_seconds'       => $age,
-			'resumable'         => $resumable,
+			'resumable'         => $resumable || ( 'safe_workspace_cleanup' === (string) ( $run['mode'] ?? '' ) && 'applying' === $run_status ),
 			'note'              => count($applying) > 0 ? 'Rows marked applying are safe to retry with workspace cleanup resume if the previous apply process was interrupted.' : '',
 		);
 	}
@@ -642,7 +643,22 @@ class CleanupRunService {
 	 * @return array<string,mixed>
 	 */
 	private function remaining_work_summary( string $run_id, array $items, array $progress ): array {
-		$summary = CleanupRemainingWorkSummary::from_items($items);
+		$summary       = CleanupRemainingWorkSummary::from_items($items);
+		$safe_cleanup  = is_array($progress['safe_cleanup'] ?? null) ? (array) $progress['safe_cleanup'] : array();
+		$safe_commands = is_array($safe_cleanup['commands'] ?? null) ? (array) $safe_cleanup['commands'] : array();
+		if ( isset($safe_commands['status'], $safe_commands['resume']) ) {
+			$resume_command = array(
+				'bucket'            => 'safe_cleanup_continuation',
+				'command'           => (string) $safe_commands['status'],
+				'apply'             => (string) $safe_commands['resume'],
+				'destructive'       => false,
+				'apply_destructive' => true,
+				'why'               => 'Inspect or continue the DMC safe cleanup run from durable progress evidence.',
+			);
+			array_unshift($summary['recommended_commands'], $resume_command);
+			array_unshift($summary['next_commands'], (string) $resume_command['command'], (string) $resume_command['apply']);
+			$summary['next_commands'] = array_values(array_unique($summary['next_commands']));
+		}
 		if ( ! empty($progress['resumable']) ) {
 			$resume_command = array(
 				'bucket'            => 'current_run_resume',

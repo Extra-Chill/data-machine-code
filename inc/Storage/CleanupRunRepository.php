@@ -15,9 +15,11 @@ if ( ! class_exists(JsonCodec::class) ) {
 	require_once dirname(__DIR__) . '/Support/JsonCodec.php';
 }
 
-class CleanupRunRepository {
+if ( ! interface_exists(CleanupRunRepositoryInterface::class) ) {
+	require_once __DIR__ . '/CleanupRunRepositoryInterface.php';
+}
 
-
+class CleanupRunRepository implements CleanupRunRepositoryInterface {
 
 	/**
 	 * Create a cleanup run.
@@ -60,7 +62,7 @@ class CleanupRunRepository {
 	 * Insert planned cleanup items.
 	 *
 	 * @param  string           $run_id Run ID.
-	 * @param  array<int,array> $items  Items.
+	 * @param  array<int,mixed> $items  Items.
 	 * @return int|\WP_Error
 	 */
 	public function add_items( string $run_id, array $items ): int|\WP_Error {

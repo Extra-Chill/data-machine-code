@@ -55,6 +55,7 @@ if ( ! function_exists('add_action') ) {
 	}
 }
 
+require_once dirname(__DIR__) . '/inc/Storage/CleanupRunRepositoryInterface.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceSafeCleanupOrchestrator.php';
 require_once dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php';
 
@@ -76,6 +77,26 @@ final class SafeCleanupQueuedAbility {
 	}
 }
 
+final class SafeCleanupFakeRunRepository implements \DataMachineCode\Storage\CleanupRunRepositoryInterface {
+	/** @var array<string,array<string,mixed>> */
+	public array $runs = array();
+
+	/** @var array<int,array<string,mixed>> */
+	public array $updates = array();
+
+	public function create_run( array $run ): string {
+		$run_id = 'cleanup-run-safe-test';
+		$this->runs[ $run_id ] = $run + array( 'run_id' => $run_id );
+		return $run_id;
+	}
+
+	public function update_run( string $run_id, array $fields ): bool {
+		$this->updates[] = array( 'run_id' => $run_id, 'fields' => $fields );
+		$this->runs[ $run_id ] = array_merge($this->runs[ $run_id ] ?? array( 'run_id' => $run_id ), $fields);
+		return true;
+	}
+}
+
 function safe_cleanup_assert( bool $condition, string $label ): void {
 	if ( ! $condition ) {
 		fwrite(STDERR, 'failed: ' . $label . PHP_EOL);
@@ -92,6 +113,8 @@ safe_cleanup_assert(isset($safe_cleanup_ability['input_schema']['properties']['f
 safe_cleanup_assert(isset($safe_cleanup_ability['input_schema']['properties']['discard_unpushed']), 'safe cleanup ability documents discard refusal');
 safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['summary']), 'safe cleanup ability documents summary output');
 safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['blockers']), 'safe cleanup ability documents blockers output');
+safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['run_id']), 'safe cleanup ability documents run_id output');
+safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['continuation']), 'safe cleanup ability documents continuation output');
 
 $ability_force_result = DataMachineCode\Abilities\WorkspaceAbilities::workspaceCleanupSafe(array( 'force' => true ));
 safe_cleanup_assert(is_wp_error($ability_force_result), 'safe cleanup ability callback executes orchestrator refusal');
@@ -154,6 +177,8 @@ $active_no_signal = new SafeCleanupQueuedAbility(
 	)
 );
 $lock_calls = array();
+$run_repository = new SafeCleanupFakeRunRepository();
+$progress_envelopes = array();
 $orchestrator = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
 	static fn( string $name ) => match ( $name ) {
 		'datamachine-code/workspace-worktree-cleanup-eligible-drain' => $cleanup_eligible,
@@ -167,12 +192,27 @@ $orchestrator = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
 			'after'      => array( 'active' => 0, 'stale' => 0 ),
 			'filesystem' => array( 'removed_count' => $dry_run ? 0 : 1, 'skipped_count' => 0 ),
 		);
-	}
+	},
+	$run_repository
 );
 
-$result = $orchestrator->run(array( 'limit' => 7, 'passes' => 4, 'cycles' => 3 ));
+$result = $orchestrator->run(
+	array(
+		'limit'             => 7,
+		'passes'            => 4,
+		'cycles'            => 3,
+		'progress_callback' => static function ( array $progress ) use ( &$progress_envelopes ): void {
+			$progress_envelopes[] = $progress;
+		},
+	)
+);
 safe_cleanup_assert(! is_wp_error($result), 'safe cleanup succeeds');
 safe_cleanup_assert(true === $result['applied'], 'safe cleanup applies by default');
+safe_cleanup_assert('cleanup-run-safe-test' === ( $result['run_id'] ?? null ), 'safe cleanup returns durable run id');
+safe_cleanup_assert('cleanup-run-safe-test' === ( $progress_envelopes[0]['run_id'] ?? null ), 'safe cleanup emits early run id before long child work');
+safe_cleanup_assert('applying' === ( $progress_envelopes[0]['state'] ?? null ), 'early progress reports applying state');
+safe_cleanup_assert(str_contains((string) ( $result['continuation']['status_command'] ?? '' ), 'workspace cleanup status cleanup-run-safe-test'), 'continuation exposes status command');
+safe_cleanup_assert(str_contains((string) ( $result['continuation']['resume_command'] ?? '' ), 'workspace cleanup safe --limit=7 --passes=4 --cycles=3'), 'continuation exposes safe resume command');
 safe_cleanup_assert(2 === count($lock_calls), 'stale locks pruned before and after cleanup');
 safe_cleanup_assert(false === $lock_calls[0] && false === $lock_calls[1], 'lock pruning is destructive only in apply mode');
 safe_cleanup_assert(2 === count($cleanup_eligible->calls), 'cleanup eligible drain repeats until no progress');
@@ -185,6 +225,9 @@ safe_cleanup_assert(6 === ( $result['summary']['blocker_count'] ?? null ), 'comp
 safe_cleanup_assert(1 === ( $result['summary']['blockers_by_reason']['dirty_worktree'] ?? null ), 'dirty blocker count is preserved');
 safe_cleanup_assert(2 === ( $result['summary']['blockers_by_reason']['unpushed_commits'] ?? null ), 'unpushed blocker count is preserved');
 safe_cleanup_assert(3 === ( $result['summary']['blockers_by_reason']['insufficient_signal'] ?? null ), 'active backlog blocker count is preserved');
+safe_cleanup_assert(count($run_repository->updates) >= 5, 'safe cleanup checkpoints progress repeatedly');
+safe_cleanup_assert('complete_with_blockers' === ( $run_repository->runs['cleanup-run-safe-test']['status'] ?? null ), 'safe cleanup persists final run state');
+safe_cleanup_assert(2 === ( $run_repository->runs['cleanup-run-safe-test']['summary']['safe_cleanup_progress']['summary']['removed'] ?? null ), 'safe cleanup persists reclaimed progress summary');
 
 $preview_lock_calls = array();
 $preview = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
@@ -192,7 +235,8 @@ $preview = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
 	static function ( bool $dry_run ) use ( &$preview_lock_calls ): array {
 		$preview_lock_calls[] = $dry_run;
 		return array( 'dry_run' => $dry_run, 'after' => array( 'active' => 0, 'stale' => 1 ), 'filesystem' => array( 'removed_count' => 0 ) );
-	}
+	},
+	new SafeCleanupFakeRunRepository()
 );
 $preview_result = $preview->run(array( 'dry_run' => true, 'cycles' => 3 ));
 safe_cleanup_assert(! is_wp_error($preview_result), 'preview succeeds');
