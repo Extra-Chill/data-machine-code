@@ -121,6 +121,15 @@ namespace {
 	$assert(is_array($write_worktree) && ! empty($write_worktree['success']), 'write_file allows worktree mutation');
 	$assert('worktree' === file_get_contents($workspace_root . '/demo@feature-policy/new.txt'), 'worktree write lands in the worktree handle');
 
+	$large_lines = array();
+	for ( $i = 1; $i <= 5000; ++$i ) {
+		$large_lines[] = 'line-' . $i;
+	}
+	file_put_contents($workspace_root . '/demo@feature-policy/large.txt', implode("\n", $large_lines));
+	$large_slice = $reader->read_file('demo@feature-policy', 'large.txt', 1024 * 1024, 4999, 2);
+	$assert(is_array($large_slice) && "line-4999\nline-5000" === $large_slice['content'], 'bounded read streams the requested line slice');
+	$assert(is_array($large_slice) && 2 === $large_slice['lines_read'] && 4999 === $large_slice['offset'], 'bounded read reports slice metadata');
+
 	$write_primary_allowed = $writer->write_file('demo', 'allowed.txt', 'allowed', true);
 	$assert(is_array($write_primary_allowed) && ! empty($write_primary_allowed['success']), 'write_file honors explicit primary mutation override');
 

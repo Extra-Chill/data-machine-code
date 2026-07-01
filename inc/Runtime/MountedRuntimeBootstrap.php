@@ -51,6 +51,26 @@ final class MountedRuntimeBootstrap {
 		return self::$context;
 	}
 
+	/** @return array<string,string> Mounted target path => workspace handle. */
+	public static function mounted_workspace_path_aliases(): array {
+		$workspace_root = defined('DATAMACHINE_WORKSPACE_PATH') ? rtrim( (string) DATAMACHINE_WORKSPACE_PATH, '/') : self::workspace_root_from_context(self::$context);
+		if ( '' === $workspace_root ) {
+			return array();
+		}
+
+		$aliases = array();
+		foreach ( self::workspace_mounts(self::$context, $workspace_root) as $mount ) {
+			$path          = rtrim( (string) $mount['path'], '/');
+			$workspace_ref = trim( (string) ( $mount['workspace_ref'] ?? '' ) );
+			if ( '' !== $path && '' !== $workspace_ref ) {
+				$aliases[ $path ] = $workspace_ref;
+			}
+		}
+
+		uksort($aliases, static fn ( string $left, string $right ): int => strlen($right) <=> strlen($left));
+		return $aliases;
+	}
+
 	/** @return array<string,mixed> */
 	private static function discover_context(): array {
 		foreach ( array( 'mounted_runtime_context', 'wordpress_runtime_context' ) as $global_key ) {
