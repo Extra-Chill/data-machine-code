@@ -26,5 +26,4 @@ interface CleanupRunRepositoryInterface {
 	 * @param  array<string,mixed> $fields Run fields.
 	 */
 	public function update_run( string $run_id, array $fields ): bool;
-
 }

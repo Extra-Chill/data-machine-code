@@ -367,7 +367,7 @@ class WorkspaceSafeCleanupOrchestrator {
 		$blockers = array();
 		foreach ( $rows as $row ) {
 			$reason                        = (string) ( $row['reason_code'] ?? 'unknown' );
-			$blockers[ $reason ]           ??= array(
+			$blockers[ $reason ]         ??= array(
 				'reason_code' => $reason,
 				'count'       => 0,
 			);
