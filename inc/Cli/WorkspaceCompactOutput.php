@@ -172,8 +172,9 @@ class WorkspaceCompactOutput {
 		$buckets = array();
 		foreach ( $counts as $reason => $count ) {
 			$buckets[ (string) $reason ] = array(
-				'count'    => (int) $count,
-				'examples' => array(),
+				'count'           => (int) $count,
+				'size_accounting' => self::empty_size_accounting(),
+				'examples'        => array(),
 			);
 		}
 		foreach ( $rows as $row ) {
@@ -182,12 +183,14 @@ class WorkspaceCompactOutput {
 			}
 			$reason               = (string) ( $row['reason_code'] ?? $row['reason'] ?? 'unknown' );
 			$buckets[ $reason ] ??= array(
-				'count'    => 0,
-				'examples' => array(),
+				'count'           => 0,
+				'size_accounting' => self::empty_size_accounting(),
+				'examples'        => array(),
 			);
 			if ( ! isset( $counts[ $reason ] ) ) {
 				++$buckets[ $reason ]['count'];
 			}
+			$buckets[ $reason ]['size_accounting'] = self::add_row_size_accounting( (array) $buckets[ $reason ]['size_accounting'], $row );
 			if ( count( $buckets[ $reason ]['examples'] ) < 3 ) {
 				$buckets[ $reason ]['examples'][] = self::compact_row( $row );
 			}
@@ -313,7 +316,65 @@ class WorkspaceCompactOutput {
 				$compact[ $field ] = $row[ $field ];
 			}
 		}
+		foreach ( array( 'size_status', 'size_accounting', 'fields_skipped' ) as $field ) {
+			if ( array_key_exists( $field, $row ) ) {
+				$compact[ $field ] = $row[ $field ];
+			}
+		}
 		return self::filter_empty( $compact );
+	}
+
+	private static function empty_size_accounting(): array {
+		return array(
+			'known_bytes'      => 0,
+			'known_count'      => 0,
+			'known_zero_count' => 0,
+			'skipped_count'    => 0,
+			'unknown_count'    => 0,
+		);
+	}
+
+	private static function add_row_size_accounting( array $accounting, array $row ): array {
+		$accounting = array_merge( self::empty_size_accounting(), array_map( 'intval', $accounting ) );
+		$status     = self::row_size_status( $row );
+		if ( 'known' === $status || 'known_zero' === $status ) {
+			++$accounting['known_count'];
+			$accounting['known_bytes'] += self::row_known_bytes( $row );
+			if ( 'known_zero' === $status ) {
+				++$accounting['known_zero_count'];
+			}
+		} elseif ( 'skipped' === $status ) {
+			++$accounting['skipped_count'];
+		} else {
+			++$accounting['unknown_count'];
+		}
+
+		return $accounting;
+	}
+
+	private static function row_size_status( array $row ): string {
+		if ( isset( $row['size_accounting'] ) && is_array( $row['size_accounting'] ) && isset( $row['size_accounting']['status'] ) ) {
+			return (string) $row['size_accounting']['status'];
+		}
+		foreach ( array( 'artifact_size_bytes', 'size_bytes', 'bytes_reclaimed' ) as $field ) {
+			if ( array_key_exists( $field, $row ) && is_numeric( $row[ $field ] ) ) {
+				return 0 === max( 0, (int) $row[ $field ] ) ? 'known_zero' : 'known';
+			}
+		}
+		$skipped = array_map( 'strval', (array) ( $row['fields_skipped'] ?? array() ) );
+		return array_intersect( $skipped, array( 'disk', 'size', 'sizes' ) ) ? 'skipped' : 'unknown';
+	}
+
+	private static function row_known_bytes( array $row ): int {
+		if ( isset( $row['size_accounting'] ) && is_array( $row['size_accounting'] ) && isset( $row['size_accounting']['bytes'] ) && is_numeric( $row['size_accounting']['bytes'] ) ) {
+			return max( 0, (int) $row['size_accounting']['bytes'] );
+		}
+		foreach ( array( 'artifact_size_bytes', 'size_bytes', 'bytes_reclaimed' ) as $field ) {
+			if ( array_key_exists( $field, $row ) && is_numeric( $row[ $field ] ) ) {
+				return max( 0, (int) $row[ $field ] );
+			}
+		}
+		return 0;
 	}
 
 	private static function filter_empty( array $data ): array {
