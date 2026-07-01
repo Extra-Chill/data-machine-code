@@ -42,7 +42,13 @@ function is_wp_error( mixed $value ): bool {
 	return $value instanceof WP_Error;
 }
 
+$GLOBALS['datamachine_code_test_filters'] = array();
 function apply_filters( string $hook_name, mixed $value, mixed ...$args ): mixed {
+	$callback = $GLOBALS['datamachine_code_test_filters'][ $hook_name ] ?? null;
+	if ( is_callable($callback) ) {
+		return $callback($value, ...$args);
+	}
+
 	return $value;
 }
 
@@ -232,10 +238,31 @@ try {
 	$GLOBALS['wpdb'] = $wpdb;
 
 	$workspace = new Workspace();
+	$GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds'] = static function ( array $thresholds ) use ( $workspace_root ): array {
+		$free = disk_free_space($workspace_root);
+		assert_true(false !== $free, 'fixture workspace free space is not measurable');
+		$thresholds['refuse_free_bytes']   = (int) $free + 1;
+		$thresholds['warn_free_bytes']     = (int) $free + 1;
+		$thresholds['refuse_free_percent'] = 0.0;
+		$thresholds['warn_free_percent']   = 0.0;
+		return $thresholds;
+	};
+	$refused = $workspace->worktree_add('homeboy', 'audit-primitives-disk-refused', 'origin/main', false, false, false, false, false);
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds']);
+	assert_true(is_wp_error($refused), 'disk pressure below the hard floor reported success');
+	assert_true('worktree_disk_budget_exceeded' === $refused->get_error_code(), 'unexpected disk pressure refusal error code');
+	$refusal_data = (array) $refused->get_error_data();
+	$disk_budget  = (array) ( $refusal_data['disk_budget'] ?? array() );
+	assert_true('refused' === ( $disk_budget['status'] ?? '' ), 'disk pressure refusal did not include refused budget status');
+	assert_true(isset($disk_budget['free_bytes'], $disk_budget['effective_refuse_bytes']), 'disk pressure refusal must include exact free and required bytes');
+	assert_true(str_contains($refused->get_error_message(), 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25'), 'disk pressure refusal must include the next cleanup command');
+	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-disk-refused'), 'disk pressure refusal left a worktree directory behind');
+
 	$result    = $workspace->worktree_add('homeboy', 'audit-primitives-20260616', 'origin/main', false, false, false, false, true);
 	assert_true(! is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : 'worktree_add failed');
 	assert_true(is_dir($result['path']), 'successful worktree_add path is not accessible');
 	assert_true(isset($wpdb->rows['homeboy@audit-primitives-20260616']), 'successful worktree_add was not persisted');
+	assert_true('refused' !== ( $result['disk_budget']['status'] ?? '' ), 'normal worktree_add should pass the disk budget gate without hard refusal');
 
 	$show = $workspace->show_repo('homeboy@audit-primitives-20260616');
 	assert_true(! is_wp_error($show), 'persisted worktree is not visible to show_repo');
