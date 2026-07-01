@@ -50,6 +50,25 @@ try {
 	assert_true('studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=25' === $bounded['apply_command'], 'bounded cleanup apply command is missing');
 	assert_true(str_contains($bounded['apply_note'], 'may skip rows'), 'bounded cleanup apply note must explain dirty/unpushed revalidation can block removal');
 
+	$healthy = WorktreeDiskBudget::evaluate(
+		array(
+			'workspace_path' => '/tmp/dmc-test-workspace',
+			'free_bytes'     => 40 * $gib,
+			'total_bytes'    => 100 * $gib,
+			'worktree_count' => 12,
+		),
+		array(
+			'warn_free_bytes'     => 20 * $gib,
+			'refuse_free_bytes'   => 10 * $gib,
+			'warn_free_percent'   => 15.0,
+			'refuse_free_percent' => 10.0,
+			'warn_worktree_count' => 100,
+		)
+	);
+
+	assert_true('ok' === $healthy['status'], 'healthy free space should pass the worktree disk budget gate');
+	assert_true(array() === $healthy['warnings'], 'healthy free space should not emit disk budget warnings');
+
 	fwrite(STDOUT, "worktree-disk-budget ok\n");
 } catch (Throwable $e) {
 	fwrite(STDERR, $e->getMessage() . "\n");
