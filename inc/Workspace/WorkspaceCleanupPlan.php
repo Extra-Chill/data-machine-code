@@ -271,10 +271,13 @@ trait WorkspaceCleanupPlan {
 			if ( ! is_array($row) ) {
 				continue;
 			}
-			$row['row_type']     = $type . '_blocked';
-			$row['safety_class'] = 'blocked';
-			$row['row_id']       = $this->stable_cleanup_row_id($type . '_blocked', $row);
-			$result[]            = $row;
+			$accounting             = $this->cleanup_plan_row_size_accounting($row);
+			$row['size_status']     = $accounting['status'];
+			$row['size_accounting'] = $accounting;
+			$row['row_type']        = $type . '_blocked';
+			$row['safety_class']    = 'blocked';
+			$row['row_id']          = $this->stable_cleanup_row_id($type . '_blocked', $row);
+			$result[]               = $row;
 		}
 		return $result;
 	}
@@ -485,7 +488,60 @@ trait WorkspaceCleanupPlan {
 	 * @return int
 	 */
 	private function cleanup_plan_reclaimable_bytes( array $row ): int {
-		return max(0, (int) ( $row['artifact_size_bytes'] ?? $row['size_bytes'] ?? 0 ));
+		$accounting = $this->cleanup_plan_row_size_accounting($row);
+		return null === $accounting['bytes'] ? 0 : max(0, (int) $accounting['bytes']);
+	}
+
+	/**
+	 * Return explicit size accounting for a cleanup row.
+	 *
+	 * @param  array<string,mixed> $row Cleanup row.
+	 * @return array<string,mixed>
+	 */
+	private function cleanup_plan_row_size_accounting( array $row ): array {
+		foreach ( array( 'artifact_size_bytes', 'size_bytes', 'bytes_reclaimed' ) as $field ) {
+			if ( array_key_exists($field, $row) && is_numeric($row[ $field ]) ) {
+				$bytes = max(0, (int) $row[ $field ]);
+				return array(
+					'status' => 0 === $bytes ? 'known_zero' : 'known',
+					'bytes'  => $bytes,
+					'source' => $field,
+				);
+			}
+		}
+
+		$artifact_bytes = 0;
+		$artifact_known = false;
+		foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
+			if ( is_array($artifact) && array_key_exists('size_bytes', $artifact) && is_numeric($artifact['size_bytes']) ) {
+				$artifact_known  = true;
+				$artifact_bytes += max(0, (int) $artifact['size_bytes']);
+			}
+		}
+		if ( $artifact_known ) {
+			return array(
+				'status' => 0 === $artifact_bytes ? 'known_zero' : 'known',
+				'bytes'  => $artifact_bytes,
+				'source' => 'artifacts.size_bytes',
+			);
+		}
+
+		$skipped = array_map('strval', (array) ( $row['fields_skipped'] ?? array() ));
+		if ( array_intersect($skipped, array( 'disk', 'size', 'sizes' )) ) {
+			return array(
+				'status' => 'skipped',
+				'bytes'  => null,
+				'source' => null,
+				'reason' => 'disk_size_probe_skipped',
+			);
+		}
+
+		return array(
+			'status' => 'unknown',
+			'bytes'  => null,
+			'source' => null,
+			'reason' => 'size_not_reported',
+		);
 	}
 
 	/**
@@ -630,27 +686,51 @@ trait WorkspaceCleanupPlan {
 				if ( '' === $repo ) {
 					$repo = 'unknown';
 				}
-				$bytes                                   = max(0, (int) ( $row['artifact_size_bytes'] ?? $row['size_bytes'] ?? 0 ));
+				$accounting                              = $this->cleanup_plan_row_size_accounting($row);
+				$bytes                                   = null === $accounting['bytes'] ? 0 : max(0, (int) $accounting['bytes']);
+				$status                                  = (string) $accounting['status'];
 				$blockers[ $reason ]                   ??= array(
-					'count'      => 0,
-					'size_bytes' => 0,
-					'repos'      => array(),
-					'examples'   => array(),
+					'count'           => 0,
+					'size_bytes'      => 0,
+					'size_accounting' => array(
+						'known_bytes'      => 0,
+						'known_count'      => 0,
+						'known_zero_count' => 0,
+						'skipped_count'    => 0,
+						'unknown_count'    => 0,
+					),
+					'repos'           => array(),
+					'examples'        => array(),
 				);
 				$blockers[ $reason ]['count']            = (int) $blockers[ $reason ]['count'] + 1;
 				$blockers[ $reason ]['size_bytes']      += $bytes;
+				$blockers[ $reason ]['size_accounting']  = $this->cleanup_plan_add_size_accounting($blockers[ $reason ]['size_accounting'], $accounting);
 				$blockers[ $reason ]['repos'][ $repo ] ??= array(
-					'count'      => 0,
-					'size_bytes' => 0,
-					'examples'   => array(),
+					'count'           => 0,
+					'size_bytes'      => 0,
+					'size_accounting' => array(
+						'known_bytes'      => 0,
+						'known_count'      => 0,
+						'known_zero_count' => 0,
+						'skipped_count'    => 0,
+						'unknown_count'    => 0,
+					),
+					'examples'        => array(),
 				);
-				$blockers[ $reason ]['repos'][ $repo ]['count']       = (int) $blockers[ $reason ]['repos'][ $repo ]['count'] + 1;
-				$blockers[ $reason ]['repos'][ $repo ]['size_bytes'] += $bytes;
+				$blockers[ $reason ]['repos'][ $repo ]['count']           = (int) $blockers[ $reason ]['repos'][ $repo ]['count'] + 1;
+				$blockers[ $reason ]['repos'][ $repo ]['size_bytes']     += $bytes;
+				$blockers[ $reason ]['repos'][ $repo ]['size_accounting'] = $this->cleanup_plan_add_size_accounting($blockers[ $reason ]['repos'][ $repo ]['size_accounting'], $accounting);
 				if ( count($blockers[ $reason ]['examples']) < 5 ) {
-					$blockers[ $reason ]['examples'][] = (string) ( $row['handle'] ?? $row['path'] ?? '' );
+					$blockers[ $reason ]['examples'][] = array(
+						'handle'      => (string) ( $row['handle'] ?? $row['path'] ?? '' ),
+						'size_status' => $status,
+					);
 				}
 				if ( count($blockers[ $reason ]['repos'][ $repo ]['examples']) < 3 ) {
-					$blockers[ $reason ]['repos'][ $repo ]['examples'][] = (string) ( $row['handle'] ?? $row['path'] ?? '' );
+					$blockers[ $reason ]['repos'][ $repo ]['examples'][] = array(
+						'handle'      => (string) ( $row['handle'] ?? $row['path'] ?? '' ),
+						'size_status' => $status,
+					);
 				}
 			}
 		}
@@ -677,6 +757,41 @@ trait WorkspaceCleanupPlan {
 	}
 
 	/**
+	 * Add one row's explicit size accounting into a blocker bucket.
+	 *
+	 * @param  array<string,int>   $bucket     Existing bucket accounting.
+	 * @param  array<string,mixed> $accounting Row accounting.
+	 * @return array<string,int>
+	 */
+	private function cleanup_plan_add_size_accounting( array $bucket, array $accounting ): array {
+		$bucket = array_merge(
+			array(
+				'known_bytes'      => 0,
+				'known_count'      => 0,
+				'known_zero_count' => 0,
+				'skipped_count'    => 0,
+				'unknown_count'    => 0,
+			),
+			array_map('intval', $bucket)
+		);
+
+		$status = (string) ( $accounting['status'] ?? 'unknown' );
+		if ( 'known' === $status || 'known_zero' === $status ) {
+			++$bucket['known_count'];
+			$bucket['known_bytes'] += max(0, (int) ( $accounting['bytes'] ?? 0 ));
+			if ( 'known_zero' === $status ) {
+				++$bucket['known_zero_count'];
+			}
+		} elseif ( 'skipped' === $status ) {
+			++$bucket['skipped_count'];
+		} else {
+			++$bucket['unknown_count'];
+		}
+
+		return $bucket;
+	}
+
+	/**
 	 * Build directly executable cleanup recommendations with risk labels.
 	 *
 	 * @param  array<string,mixed> $inputs Plan inputs.
@@ -684,6 +799,12 @@ trait WorkspaceCleanupPlan {
 	 */
 	private function cleanup_plan_recommended_commands( array $inputs ): array {
 		$commands = array(
+			array(
+				'label'   => 'bounded_size_aware_review',
+				'risk'    => 'none',
+				'command' => sprintf('studio wp datamachine-code workspace hygiene --include-sizes --size-limit=%d --format=json', max(1, (int) ( $inputs['limit'] ?? self::CLEANUP_PLAN_DEFAULT_LIMIT ))),
+				'when'    => 'cleanup blockers or cheap inventory rows have skipped or unknown size accounting under disk pressure',
+			),
 			array(
 				'label'   => 'apply_reviewed_plan',
 				'risk'    => 'reviewed_destructive',

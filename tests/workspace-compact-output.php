@@ -71,6 +71,35 @@ compact_output_assert(20 === ( $cleanup['blockers']['dirty_worktree']['count'] ?
 compact_output_assert(count((array) ( $cleanup['samples']['skipped'] ?? array() )) <= 5, 'Compact cleanup output must sample skipped rows.');
 compact_output_assert(! empty($cleanup['next_commands']), 'Compact cleanup output must preserve next commands.');
 
+$unknown_size_cleanup = WorkspaceCompactOutput::cleanup_result(
+	array(
+		'success' => true,
+		'skipped' => array(
+			array(
+				'handle'         => 'repo@disk-skipped',
+				'reason_code'    => 'dirty_worktree',
+				'fields_skipped' => array( 'disk' ),
+			),
+			array(
+				'handle'      => 'repo@unknown-size',
+				'reason_code' => 'dirty_worktree',
+			),
+			array(
+				'handle'      => 'repo@zero-size',
+				'reason_code' => 'dirty_worktree',
+				'size_bytes'  => 0,
+			),
+		),
+		'summary' => array(
+			'skipped_by_reason' => array( 'dirty_worktree' => 3 ),
+		),
+	)
+);
+compact_output_assert(1 === ( $unknown_size_cleanup['blockers']['dirty_worktree']['size_accounting']['skipped_count'] ?? null ), 'Compact blocker summary should count skipped size probes.');
+compact_output_assert(1 === ( $unknown_size_cleanup['blockers']['dirty_worktree']['size_accounting']['unknown_count'] ?? null ), 'Compact blocker summary should count unknown size rows.');
+compact_output_assert(1 === ( $unknown_size_cleanup['blockers']['dirty_worktree']['size_accounting']['known_zero_count'] ?? null ), 'Compact blocker summary should distinguish true zero from unknown.');
+compact_output_assert(in_array('disk', (array) ( $unknown_size_cleanup['samples']['skipped'][0]['fields_skipped'] ?? array() ), true), 'Compact skipped sample should preserve skipped disk field evidence.');
+
 $active_report = WorkspaceCompactOutput::cleanup_result(
 	array(
 		'success'    => true,

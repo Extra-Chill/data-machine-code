@@ -2086,12 +2086,59 @@ class WorkspaceCommand extends BaseCommand {
 			$rows[] = array(
 				'reason'   => (string) $reason,
 				'count'    => (int) ( $bucket['count'] ?? 0 ),
-				'bytes'    => $this->format_bytes($bucket['size_bytes'] ?? 0),
+				'bytes'    => $this->format_cleanup_size_accounting($bucket),
 				'repos'    => implode(', ', array_slice($repos, 0, 5)),
-				'examples' => implode(', ', array_slice(array_map('strval', (array) ( $bucket['examples'] ?? array() )), 0, 5)),
+				'examples' => implode(', ', array_slice(array_map(fn( $row ) => $this->format_cleanup_blocker_example($row), (array) ( $bucket['examples'] ?? array() )), 0, 5)),
 			);
 		}
 		$this->format_items($rows, array( 'reason', 'count', 'bytes', 'repos', 'examples' ), array( 'format' => 'table' ), 'reason');
+	}
+
+	/**
+	 * Format blocker size accounting without hiding skipped/unknown probes as 0 B.
+	 *
+	 * @param  array<string,mixed> $bucket Blocker bucket.
+	 * @return string
+	 */
+	private function format_cleanup_size_accounting( array $bucket ): string {
+		$accounting = (array) ( $bucket['size_accounting'] ?? array() );
+		$known      = (int) ( $accounting['known_count'] ?? 0 );
+		$known_zero = (int) ( $accounting['known_zero_count'] ?? 0 );
+		$skipped    = (int) ( $accounting['skipped_count'] ?? 0 );
+		$unknown    = (int) ( $accounting['unknown_count'] ?? 0 );
+		$bytes      = array_key_exists('known_bytes', $accounting) ? (int) $accounting['known_bytes'] : (int) ( $bucket['size_bytes'] ?? 0 );
+
+		$parts = array();
+		if ( $known > 0 ) {
+			$parts[] = sprintf('%s known', $this->format_bytes($bytes));
+		}
+		if ( $known_zero > 0 ) {
+			$parts[] = sprintf('%d true zero', $known_zero);
+		}
+		if ( $skipped > 0 ) {
+			$parts[] = sprintf('%d skipped', $skipped);
+		}
+		if ( $unknown > 0 ) {
+			$parts[] = sprintf('%d unknown', $unknown);
+		}
+
+		return array() === $parts ? $this->format_bytes($bucket['size_bytes'] ?? null) : implode('; ', $parts);
+	}
+
+	/**
+	 * Format a compact blocker example that may carry size status metadata.
+	 *
+	 * @param  mixed $row Example row.
+	 * @return string
+	 */
+	private function format_cleanup_blocker_example( mixed $row ): string {
+		if ( ! is_array($row) ) {
+			return (string) $row;
+		}
+
+		$handle = (string) ( $row['handle'] ?? $row['path'] ?? '' );
+		$status = (string) ( $row['size_status'] ?? '' );
+		return '' === $status ? $handle : sprintf('%s (%s)', $handle, $status);
 	}
 
 	/**

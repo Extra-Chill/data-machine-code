@@ -61,7 +61,39 @@ final class ArtifactCleanupPlanContractWorkspace {
 			'success'    => true,
 			'dry_run'    => true,
 			'candidates' => array(),
-			'skipped'    => array(),
+			'skipped'    => array(
+				array(
+					'handle'         => 'repo@skipped-size',
+					'repo'           => 'repo',
+					'branch'         => 'skipped-size',
+					'path'           => '/tmp/dmc-artifact-cleanup-contract/repo@skipped-size',
+					'reason_code'    => 'dirty_worktree',
+					'fields_skipped' => array( 'disk' ),
+				),
+				array(
+					'handle'      => 'repo@unknown-size',
+					'repo'        => 'repo',
+					'branch'      => 'unknown-size',
+					'path'        => '/tmp/dmc-artifact-cleanup-contract/repo@unknown-size',
+					'reason_code' => 'dirty_worktree',
+				),
+				array(
+					'handle'      => 'repo@zero-size',
+					'repo'        => 'repo',
+					'branch'      => 'zero-size',
+					'path'        => '/tmp/dmc-artifact-cleanup-contract/repo@zero-size',
+					'reason_code' => 'dirty_worktree',
+					'size_bytes'  => 0,
+				),
+				array(
+					'handle'      => 'repo@known-size',
+					'repo'        => 'repo',
+					'branch'      => 'known-size',
+					'path'        => '/tmp/dmc-artifact-cleanup-contract/repo@known-size',
+					'reason_code' => 'dirty_worktree',
+					'size_bytes'  => 2048,
+				),
+			),
 			'summary'    => array(),
 		);
 	}
@@ -100,6 +132,28 @@ artifact_cleanup_plan_contract_assert(
 artifact_cleanup_plan_contract_assert(
 	( $artifact_plan['summary']['preview_command'] ?? null ) === ( $artifact_plan['summary']['rerun_preview_command'] ?? null ),
 	'nested artifact summary should expose matching preview commands'
+);
+
+$blocked_plan = $workspace->workspace_cleanup_plan(array( 'include_artifacts' => false, 'limit' => 25, 'offset' => 0 ));
+artifact_cleanup_plan_contract_assert(is_array($blocked_plan), 'blocked cleanup plan should return an array');
+
+$blocked_rows = (array) ( $blocked_plan['blocked']['worktree_removal'] ?? array() );
+artifact_cleanup_plan_contract_assert(4 === count($blocked_rows), 'blocked plan should preserve skipped rows');
+$statuses = array_column($blocked_rows, 'size_status', 'handle');
+artifact_cleanup_plan_contract_assert('skipped' === ( $statuses['repo@skipped-size'] ?? null ), 'disk-skipped rows should be marked skipped, not 0 B');
+artifact_cleanup_plan_contract_assert('unknown' === ( $statuses['repo@unknown-size'] ?? null ), 'missing size rows should be marked unknown, not 0 B');
+artifact_cleanup_plan_contract_assert('known_zero' === ( $statuses['repo@zero-size'] ?? null ), 'explicit zero rows should remain distinguishable as true zero');
+artifact_cleanup_plan_contract_assert('known' === ( $statuses['repo@known-size'] ?? null ), 'positive byte rows should be marked known');
+
+$blocker_accounting = $blocked_plan['summary']['blockers']['dirty_worktree']['size_accounting'] ?? array();
+artifact_cleanup_plan_contract_assert(2048 === ( $blocker_accounting['known_bytes'] ?? null ), 'blocker summary should sum only known bytes');
+artifact_cleanup_plan_contract_assert(2 === ( $blocker_accounting['known_count'] ?? null ), 'blocker summary should count known rows including true zero');
+artifact_cleanup_plan_contract_assert(1 === ( $blocker_accounting['known_zero_count'] ?? null ), 'blocker summary should count true zero separately');
+artifact_cleanup_plan_contract_assert(1 === ( $blocker_accounting['skipped_count'] ?? null ), 'blocker summary should count skipped size probes');
+artifact_cleanup_plan_contract_assert(1 === ( $blocker_accounting['unknown_count'] ?? null ), 'blocker summary should count unknown size rows');
+artifact_cleanup_plan_contract_assert(
+	'bounded_size_aware_review' === ( $blocked_plan['summary']['recommended_commands'][0]['label'] ?? null ),
+	'cleanup plan should suggest a bounded size-aware review command before exhaustive audit'
 );
 
 fwrite(STDOUT, "artifact-cleanup-plan-output-contract ok\n");
