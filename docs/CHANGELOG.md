@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.33] - 2026-07-01
+
+### Changed
+- Resolve mounted paths through workspace refs
+
 ## [0.48.32] - 2026-06-30
 
 ### Changed
