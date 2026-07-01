@@ -827,6 +827,12 @@ class WorkspaceCommand extends BaseCommand {
 		if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
 			$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
 		}
+		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			$input['progress_callback'] = function ( array $progress ) use ( $assoc_args ): void {
+				$this->render_cleanup_safe_result($progress, $assoc_args);
+				$this->flush_cli_output();
+			};
+		}
 
 		$ability = wp_get_ability('datamachine-code/workspace-cleanup-safe');
 		if ( ! $ability ) {

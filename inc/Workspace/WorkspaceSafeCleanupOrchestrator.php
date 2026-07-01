@@ -22,13 +22,18 @@ class WorkspaceSafeCleanupOrchestrator {
 	/** @var callable */
 	private $lock_pruner;
 
+	/** @var object|null */
+	private $run_repository;
+
 	/**
 	 * @param callable|null $ability_resolver Resolver receiving an ability name.
 	 * @param callable|null $lock_pruner      Callback receiving a dry-run bool.
+	 * @param object|null   $run_repository   Cleanup run repository override for tests.
 	 */
-	public function __construct( ?callable $ability_resolver = null, ?callable $lock_pruner = null ) {
+	public function __construct( ?callable $ability_resolver = null, ?callable $lock_pruner = null, ?object $run_repository = null ) {
 		$this->ability_resolver = $ability_resolver ? $ability_resolver : static fn( string $name ) => function_exists('wp_get_ability') ? wp_get_ability($name) : null;
 		$this->lock_pruner      = $lock_pruner ? $lock_pruner : array( $this, 'prune_locks' );
+		$this->run_repository   = $run_repository;
 	}
 
 	/**
@@ -50,6 +55,7 @@ class WorkspaceSafeCleanupOrchestrator {
 		$passes  = isset($input['passes']) ? max(1, min(100, (int) $input['passes'])) : 10;
 		$cycles  = isset($input['cycles']) ? max(1, min(25, (int) $input['cycles'])) : 5;
 		$source  = isset($input['source']) && '' !== trim( (string) $input['source']) ? trim( (string) $input['source']) : self::DEFAULT_SOURCE;
+		$progress_callback = isset($input['progress_callback']) && is_callable($input['progress_callback']) ? $input['progress_callback'] : null;
 
 		$cleanup_eligible = $this->resolve_ability('datamachine-code/workspace-worktree-cleanup-eligible-drain');
 		if ( is_wp_error($cleanup_eligible) ) {
@@ -88,12 +94,31 @@ class WorkspaceSafeCleanupOrchestrator {
 			),
 		);
 
+		$run_id = $this->create_progress_run($result, $dry_run, $limit, $passes, $cycles, $source);
+		if ( $run_id instanceof \WP_Error ) {
+			return $run_id;
+		}
+		$result['run_id']       = $run_id;
+		$result['commands']     = $this->progress_commands($run_id, $dry_run, $limit, $passes, $cycles, $input);
+		$result['continuation'] = array(
+			'run_id'           => $run_id,
+			'status_command'   => $result['commands']['status'],
+			'evidence_command' => $result['commands']['evidence'],
+			'resume_command'   => $result['commands']['resume'],
+			'note'             => 'If the client disconnects, inspect this run_id and rerun the resume command. Safe cleanup remains bounded and preserves dirty/unpushed blockers.',
+		);
+		$this->checkpoint_progress($run_id, $result, 'applying');
+		if ( null !== $progress_callback ) {
+			$progress_callback($this->early_progress_result($result));
+		}
+
 		$lock_start = ( $this->lock_pruner )($dry_run);
 		if ( is_wp_error($lock_start) ) {
 			return $lock_start;
 		}
 		$result['steps']['lock_prune_start'] = $this->summarize_lock_step($lock_start);
 		$result['summary']['lock_files_removed'] += (int) ( $result['steps']['lock_prune_start']['removed_count'] ?? 0 );
+		$this->checkpoint_progress($run_id, $result, 'applying');
 
 		$common = array(
 			'apply'            => ! $dry_run,
@@ -117,6 +142,7 @@ class WorkspaceSafeCleanupOrchestrator {
 			}
 			$result['steps'][ 'cleanup_eligible_' . $cycle ] = $this->summarize_cleanup_step($eligible);
 			$cycle_progress += $this->accumulate_cleanup_step($result, $eligible);
+			$this->checkpoint_progress($run_id, $result, 'applying');
 
 			$active = $this->execute_ability($active_no_signal, $common);
 			if ( is_wp_error($active) ) {
@@ -124,6 +150,7 @@ class WorkspaceSafeCleanupOrchestrator {
 			}
 			$result['steps'][ 'active_no_signal_' . $cycle ] = $this->summarize_cleanup_step($active);
 			$cycle_progress += $this->accumulate_cleanup_step($result, $active);
+			$this->checkpoint_progress($run_id, $result, 'applying');
 
 			if ( $dry_run || 0 === $cycle_progress ) {
 				break;
@@ -136,6 +163,7 @@ class WorkspaceSafeCleanupOrchestrator {
 		}
 		$result['steps']['lock_prune_end'] = $this->summarize_lock_step($lock_end);
 		$result['summary']['lock_files_removed'] += (int) ( $result['steps']['lock_prune_end']['removed_count'] ?? 0 );
+		$this->checkpoint_progress($run_id, $result, 'applying');
 
 		$result['blockers']                    = $this->compact_blockers($result['blockers']);
 		$result['summary']['blocker_count']    = array_sum(array_map(static fn( array $row ): int => (int) ( $row['count'] ?? 0 ), $result['blockers']));
@@ -145,8 +173,103 @@ class WorkspaceSafeCleanupOrchestrator {
 		} else {
 			$result['state'] = 'complete';
 		}
+		$this->checkpoint_progress($run_id, $result, $result['state']);
 
 		return $result;
+	}
+
+	/** @return string|\WP_Error */
+	private function create_progress_run( array $result, bool $dry_run, int $limit, int $passes, int $cycles, string $source ): string|\WP_Error {
+		$repository = $this->progress_repository();
+		$run_id     = $repository->create_run(
+			array(
+				'mode'       => 'safe_workspace_cleanup',
+				'status'     => 'applying',
+				'started_at' => gmdate('Y-m-d H:i:s'),
+				'policy'     => array(
+					'dry_run'          => $dry_run,
+					'force'            => false,
+					'discard_unpushed' => false,
+					'limit'            => $limit,
+					'passes'           => $passes,
+					'cycles'           => $cycles,
+					'source'           => $source,
+				),
+				'summary'    => $this->progress_summary($result),
+			)
+		);
+
+		return $run_id;
+	}
+
+	private function checkpoint_progress( string $run_id, array $result, string $status ): void {
+		$repository = $this->progress_repository();
+		$fields     = array(
+			'status'  => $status,
+			'summary' => $this->progress_summary($result),
+		);
+		if ( in_array($status, array( 'complete', 'complete_with_blockers' ), true) ) {
+			$fields['completed_at'] = gmdate('Y-m-d H:i:s');
+		}
+		$repository->update_run($run_id, $fields);
+	}
+
+	private function progress_repository(): object {
+		if ( null === $this->run_repository ) {
+			$this->run_repository = new \DataMachineCode\Storage\CleanupRunRepository();
+		}
+
+		return $this->run_repository;
+	}
+
+	/** @return array<string,mixed> */
+	private function progress_summary( array $result ): array {
+		return array(
+			'safe_cleanup_progress' => array(
+				'generated_at'  => gmdate('c'),
+				'state'         => (string) ( $result['state'] ?? 'applying' ),
+				'applied'       => (bool) ( $result['applied'] ?? false ),
+				'destructive'   => (bool) ( $result['destructive'] ?? false ),
+				'summary'       => (array) ( $result['summary'] ?? array() ),
+				'blockers'      => (array) ( $result['blockers'] ?? array() ),
+				'steps'         => (array) ( $result['steps'] ?? array() ),
+				'commands'      => (array) ( $result['commands'] ?? array() ),
+				'continuation'  => (array) ( $result['continuation'] ?? array() ),
+			),
+		);
+	}
+
+	/** @return array<string,string> */
+	private function progress_commands( string $run_id, bool $dry_run, int $limit, int $passes, int $cycles, array $input ): array {
+		$resume = sprintf('studio wp datamachine-code workspace cleanup safe --limit=%d --passes=%d --cycles=%d', $limit, $passes, $cycles);
+		if ( $dry_run ) {
+			$resume .= ' --dry-run';
+		}
+		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
+			$resume .= ' --until-budget=' . trim( (string) $input['until_budget']);
+		}
+
+		return array(
+			'status'   => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
+			'evidence' => sprintf('studio wp datamachine-code workspace cleanup evidence %s --format=json', $run_id),
+			'resume'   => $resume . ' --format=json',
+		);
+	}
+
+	/** @return array<string,mixed> */
+	private function early_progress_result( array $result ): array {
+		return array(
+			'success'      => true,
+			'mode'         => (string) ( $result['mode'] ?? 'safe_workspace_cleanup' ),
+			'state'        => 'applying',
+			'run_id'       => (string) ( $result['run_id'] ?? '' ),
+			'applied'      => (bool) ( $result['applied'] ?? false ),
+			'destructive'  => (bool) ( $result['destructive'] ?? false ),
+			'generated_at' => gmdate('c'),
+			'summary'      => (array) ( $result['summary'] ?? array() ),
+			'commands'     => (array) ( $result['commands'] ?? array() ),
+			'continuation' => (array) ( $result['continuation'] ?? array() ),
+		);
 	}
 
 	private function resolve_ability( string $name ): mixed {
