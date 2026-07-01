@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.35] - 2026-07-01
+
+### Changed
+- Expose safe cleanup progress evidence
+- Make cleanup blocker size accounting explicit
+
 ## [0.48.34] - 2026-07-01
 
 ### Changed
