@@ -22,15 +22,15 @@ class WorkspaceSafeCleanupOrchestrator {
 	/** @var callable */
 	private $lock_pruner;
 
-	/** @var object|null */
+	/** @var \DataMachineCode\Storage\CleanupRunRepositoryInterface|null */
 	private $run_repository;
 
 	/**
 	 * @param callable|null $ability_resolver Resolver receiving an ability name.
 	 * @param callable|null $lock_pruner      Callback receiving a dry-run bool.
-	 * @param object|null   $run_repository   Cleanup run repository override for tests.
+	 * @param \DataMachineCode\Storage\CleanupRunRepositoryInterface|null $run_repository Cleanup run repository override for tests.
 	 */
-	public function __construct( ?callable $ability_resolver = null, ?callable $lock_pruner = null, ?object $run_repository = null ) {
+	public function __construct( ?callable $ability_resolver = null, ?callable $lock_pruner = null, ?\DataMachineCode\Storage\CleanupRunRepositoryInterface $run_repository = null ) {
 		$this->ability_resolver = $ability_resolver ? $ability_resolver : static fn( string $name ) => function_exists('wp_get_ability') ? wp_get_ability($name) : null;
 		$this->lock_pruner      = $lock_pruner ? $lock_pruner : array( $this, 'prune_locks' );
 		$this->run_repository   = $run_repository;
@@ -50,11 +50,11 @@ class WorkspaceSafeCleanupOrchestrator {
 			return new \WP_Error('safe_cleanup_refuses_unpushed_discard', 'Safe workspace cleanup refuses unpushed commit discard. Unpushed worktrees remain blockers.', array( 'status' => 400 ));
 		}
 
-		$dry_run = ! empty($input['dry_run']);
-		$limit   = isset($input['limit']) ? max(1, min(200, (int) $input['limit'])) : 25;
-		$passes  = isset($input['passes']) ? max(1, min(100, (int) $input['passes'])) : 10;
-		$cycles  = isset($input['cycles']) ? max(1, min(25, (int) $input['cycles'])) : 5;
-		$source  = isset($input['source']) && '' !== trim( (string) $input['source']) ? trim( (string) $input['source']) : self::DEFAULT_SOURCE;
+		$dry_run           = ! empty($input['dry_run']);
+		$limit             = isset($input['limit']) ? max(1, min(200, (int) $input['limit'])) : 25;
+		$passes            = isset($input['passes']) ? max(1, min(100, (int) $input['passes'])) : 10;
+		$cycles            = isset($input['cycles']) ? max(1, min(25, (int) $input['cycles'])) : 5;
+		$source            = isset($input['source']) && '' !== trim( (string) $input['source']) ? trim( (string) $input['source']) : self::DEFAULT_SOURCE;
 		$progress_callback = isset($input['progress_callback']) && is_callable($input['progress_callback']) ? $input['progress_callback'] : null;
 
 		$cleanup_eligible = $this->resolve_ability('datamachine-code/workspace-worktree-cleanup-eligible-drain');
@@ -116,7 +116,7 @@ class WorkspaceSafeCleanupOrchestrator {
 		if ( is_wp_error($lock_start) ) {
 			return $lock_start;
 		}
-		$result['steps']['lock_prune_start'] = $this->summarize_lock_step($lock_start);
+		$result['steps']['lock_prune_start']       = $this->summarize_lock_step($lock_start);
 		$result['summary']['lock_files_removed'] += (int) ( $result['steps']['lock_prune_start']['removed_count'] ?? 0 );
 		$this->checkpoint_progress($run_id, $result, 'applying');
 
@@ -134,14 +134,14 @@ class WorkspaceSafeCleanupOrchestrator {
 
 		for ( $cycle = 1; $cycle <= $cycles; ++$cycle ) {
 			$result['summary']['cycles'] = $cycle;
-			$cycle_progress             = 0;
+			$cycle_progress              = 0;
 
 			$eligible = $this->execute_ability($cleanup_eligible, $common);
 			if ( is_wp_error($eligible) ) {
 				return $eligible;
 			}
 			$result['steps'][ 'cleanup_eligible_' . $cycle ] = $this->summarize_cleanup_step($eligible);
-			$cycle_progress += $this->accumulate_cleanup_step($result, $eligible);
+			$cycle_progress                              += $this->accumulate_cleanup_step($result, $eligible);
 			$this->checkpoint_progress($run_id, $result, 'applying');
 
 			$active = $this->execute_ability($active_no_signal, $common);
@@ -149,7 +149,7 @@ class WorkspaceSafeCleanupOrchestrator {
 				return $active;
 			}
 			$result['steps'][ 'active_no_signal_' . $cycle ] = $this->summarize_cleanup_step($active);
-			$cycle_progress += $this->accumulate_cleanup_step($result, $active);
+			$cycle_progress                              += $this->accumulate_cleanup_step($result, $active);
 			$this->checkpoint_progress($run_id, $result, 'applying');
 
 			if ( $dry_run || 0 === $cycle_progress ) {
@@ -161,12 +161,12 @@ class WorkspaceSafeCleanupOrchestrator {
 		if ( is_wp_error($lock_end) ) {
 			return $lock_end;
 		}
-		$result['steps']['lock_prune_end'] = $this->summarize_lock_step($lock_end);
+		$result['steps']['lock_prune_end']         = $this->summarize_lock_step($lock_end);
 		$result['summary']['lock_files_removed'] += (int) ( $result['steps']['lock_prune_end']['removed_count'] ?? 0 );
 		$this->checkpoint_progress($run_id, $result, 'applying');
 
-		$result['blockers']                    = $this->compact_blockers($result['blockers']);
-		$result['summary']['blocker_count']    = array_sum(array_map(static fn( array $row ): int => (int) ( $row['count'] ?? 0 ), $result['blockers']));
+		$result['blockers']                      = $this->compact_blockers($result['blockers']);
+		$result['summary']['blocker_count']      = array_sum(array_map(static fn( array $row ): int => (int) ( $row['count'] ?? 0 ), $result['blockers']));
 		$result['summary']['blockers_by_reason'] = array_column($result['blockers'], 'count', 'reason_code');
 		if ( ! $dry_run && $result['summary']['blocker_count'] > 0 ) {
 			$result['state'] = 'complete_with_blockers';
@@ -214,7 +214,7 @@ class WorkspaceSafeCleanupOrchestrator {
 		$repository->update_run($run_id, $fields);
 	}
 
-	private function progress_repository(): object {
+	private function progress_repository(): \DataMachineCode\Storage\CleanupRunRepositoryInterface {
 		if ( null === $this->run_repository ) {
 			$this->run_repository = new \DataMachineCode\Storage\CleanupRunRepository();
 		}
@@ -226,15 +226,15 @@ class WorkspaceSafeCleanupOrchestrator {
 	private function progress_summary( array $result ): array {
 		return array(
 			'safe_cleanup_progress' => array(
-				'generated_at'  => gmdate('c'),
-				'state'         => (string) ( $result['state'] ?? 'applying' ),
-				'applied'       => (bool) ( $result['applied'] ?? false ),
-				'destructive'   => (bool) ( $result['destructive'] ?? false ),
-				'summary'       => (array) ( $result['summary'] ?? array() ),
-				'blockers'      => (array) ( $result['blockers'] ?? array() ),
-				'steps'         => (array) ( $result['steps'] ?? array() ),
-				'commands'      => (array) ( $result['commands'] ?? array() ),
-				'continuation'  => (array) ( $result['continuation'] ?? array() ),
+				'generated_at' => gmdate('c'),
+				'state'        => (string) ( $result['state'] ?? 'applying' ),
+				'applied'      => (bool) ( $result['applied'] ?? false ),
+				'destructive'  => (bool) ( $result['destructive'] ?? false ),
+				'summary'      => (array) ( $result['summary'] ?? array() ),
+				'blockers'     => (array) ( $result['blockers'] ?? array() ),
+				'steps'        => (array) ( $result['steps'] ?? array() ),
+				'commands'     => (array) ( $result['commands'] ?? array() ),
+				'continuation' => (array) ( $result['continuation'] ?? array() ),
 			),
 		);
 	}
@@ -282,11 +282,11 @@ class WorkspaceSafeCleanupOrchestrator {
 	}
 
 	private function execute_ability( object $ability, array $input ): array|\WP_Error {
-		$result = $ability->execute($input);
+		$result = call_user_func(array( $ability, 'execute' ), $input);
 		return is_array($result) || is_wp_error($result) ? $result : new \WP_Error('safe_cleanup_invalid_result', 'Safe cleanup child ability returned an invalid result.', array( 'status' => 500 ));
 	}
 
-	private function prune_locks( bool $dry_run ): array|\WP_Error {
+	private function prune_locks( bool $dry_run ): array {
 		$workspace = new Workspace();
 		return WorkspaceMutationLock::prune_stale($workspace->get_path(), $dry_run);
 	}
@@ -325,7 +325,7 @@ class WorkspaceSafeCleanupOrchestrator {
 
 	/** @return array<string,int> */
 	private function extract_blocker_counts( array $step ): array {
-		$counts = array();
+		$counts  = array();
 		$summary = (array) ( $step['summary'] ?? array() );
 		foreach ( (array) ( $summary['blocked_by_reason'] ?? $summary['skipped_by_reason'] ?? array() ) as $reason => $count ) {
 			$counts[ (string) $reason ] = (int) $count;
@@ -362,7 +362,7 @@ class WorkspaceSafeCleanupOrchestrator {
 	private function compact_blockers( array $rows ): array {
 		$blockers = array();
 		foreach ( $rows as $row ) {
-			$reason = (string) ( $row['reason_code'] ?? 'unknown' );
+			$reason                = (string) ( $row['reason_code'] ?? 'unknown' );
 			$blockers[ $reason ] ??= array(
 				'reason_code' => $reason,
 				'count'       => 0,

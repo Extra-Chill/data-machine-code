@@ -643,8 +643,8 @@ class CleanupRunService {
 	 * @return array<string,mixed>
 	 */
 	private function remaining_work_summary( string $run_id, array $items, array $progress ): array {
-		$summary = CleanupRemainingWorkSummary::from_items($items);
-		$safe_cleanup = is_array($progress['safe_cleanup'] ?? null) ? (array) $progress['safe_cleanup'] : array();
+		$summary       = CleanupRemainingWorkSummary::from_items($items);
+		$safe_cleanup  = is_array($progress['safe_cleanup'] ?? null) ? (array) $progress['safe_cleanup'] : array();
 		$safe_commands = is_array($safe_cleanup['commands'] ?? null) ? (array) $safe_cleanup['commands'] : array();
 		if ( isset($safe_commands['status'], $safe_commands['resume']) ) {
 			$resume_command = array(
