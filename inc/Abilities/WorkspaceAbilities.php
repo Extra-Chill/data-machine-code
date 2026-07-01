@@ -4760,9 +4760,6 @@ class WorkspaceAbilities {
 		}
 
 		$aliases = \DataMachineCode\Runtime\MountedRuntimeBootstrap::mounted_workspace_path_aliases();
-		if ( ! is_array($aliases) ) {
-			return array();
-		}
 
 		$normalized = array();
 		foreach ( $aliases as $path => $workspace_ref ) {

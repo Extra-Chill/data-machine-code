@@ -60,7 +60,7 @@ final class MountedRuntimeBootstrap {
 
 		$aliases = array();
 		foreach ( self::workspace_mounts(self::$context, $workspace_root) as $mount ) {
-			$path          = rtrim( (string) ( $mount['path'] ?? '' ), '/');
+			$path          = rtrim( (string) $mount['path'], '/');
 			$workspace_ref = trim( (string) ( $mount['workspace_ref'] ?? '' ) );
 			if ( '' !== $path && '' !== $workspace_ref ) {
 				$aliases[ $path ] = $workspace_ref;
