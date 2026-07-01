@@ -95,20 +95,22 @@ class WorkspaceReader {
 			);
 		}
 
-		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_read_fopen
+		// Streaming read is required for bounded/offset reads; WP_Filesystem has no streaming API.
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
 		$handle = fopen($real_path, 'rb');
 		if ( false === $handle ) {
 			return new \WP_Error('read_failed', sprintf('Failed to read file: %s', $path), array( 'status' => 500 ));
 		}
 
 		// Detect binary: check for null bytes in first 8 KB without loading the whole file.
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread
 		$sample = fread($handle, 8192);
 		if ( false === $sample ) {
-			fclose($handle);
+			fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 			return new \WP_Error('read_failed', sprintf('Failed to read file: %s', $path), array( 'status' => 500 ));
 		}
 		if ( false !== strpos($sample, "\0") ) {
-			fclose($handle);
+			fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 			return new \WP_Error('binary_file', sprintf('Binary file detected: %s. Only text files can be read.', $path), array( 'status' => 400 ));
 		}
 
@@ -125,11 +127,11 @@ class WorkspaceReader {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_read_stream_get_contents
 			$content = stream_get_contents($handle);
 			if ( false === $content ) {
-				fclose($handle);
+				fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 				return new \WP_Error('read_failed', sprintf('Failed to read file: %s', $path), array( 'status' => 500 ));
 			}
 		}
-		fclose($handle);
+		fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 
 		$result = array(
 			'success' => true,
