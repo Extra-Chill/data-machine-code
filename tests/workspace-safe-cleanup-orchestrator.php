@@ -55,7 +55,7 @@ if ( ! function_exists('add_action') ) {
 	}
 }
 
-require_once dirname(__DIR__) . '/inc/Storage/CleanupRunRepository.php';
+require_once dirname(__DIR__) . '/inc/Storage/CleanupRunRepositoryInterface.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceSafeCleanupOrchestrator.php';
 require_once dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php';
 

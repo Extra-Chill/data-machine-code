@@ -116,7 +116,7 @@ class WorkspaceSafeCleanupOrchestrator {
 		if ( is_wp_error($lock_start) ) {
 			return $lock_start;
 		}
-		$result['steps']['lock_prune_start']       = $this->summarize_lock_step($lock_start);
+		$result['steps']['lock_prune_start']      = $this->summarize_lock_step($lock_start);
 		$result['summary']['lock_files_removed'] += (int) ( $result['steps']['lock_prune_start']['removed_count'] ?? 0 );
 		$this->checkpoint_progress($run_id, $result, 'applying');
 
@@ -141,7 +141,7 @@ class WorkspaceSafeCleanupOrchestrator {
 				return $eligible;
 			}
 			$result['steps'][ 'cleanup_eligible_' . $cycle ] = $this->summarize_cleanup_step($eligible);
-			$cycle_progress                              += $this->accumulate_cleanup_step($result, $eligible);
+			$cycle_progress                                 += $this->accumulate_cleanup_step($result, $eligible);
 			$this->checkpoint_progress($run_id, $result, 'applying');
 
 			$active = $this->execute_ability($active_no_signal, $common);
@@ -149,7 +149,7 @@ class WorkspaceSafeCleanupOrchestrator {
 				return $active;
 			}
 			$result['steps'][ 'active_no_signal_' . $cycle ] = $this->summarize_cleanup_step($active);
-			$cycle_progress                              += $this->accumulate_cleanup_step($result, $active);
+			$cycle_progress                                 += $this->accumulate_cleanup_step($result, $active);
 			$this->checkpoint_progress($run_id, $result, 'applying');
 
 			if ( $dry_run || 0 === $cycle_progress ) {
@@ -161,7 +161,7 @@ class WorkspaceSafeCleanupOrchestrator {
 		if ( is_wp_error($lock_end) ) {
 			return $lock_end;
 		}
-		$result['steps']['lock_prune_end']         = $this->summarize_lock_step($lock_end);
+		$result['steps']['lock_prune_end']        = $this->summarize_lock_step($lock_end);
 		$result['summary']['lock_files_removed'] += (int) ( $result['steps']['lock_prune_end']['removed_count'] ?? 0 );
 		$this->checkpoint_progress($run_id, $result, 'applying');
 
@@ -282,7 +282,11 @@ class WorkspaceSafeCleanupOrchestrator {
 	}
 
 	private function execute_ability( object $ability, array $input ): array|\WP_Error {
-		$result = call_user_func(array( $ability, 'execute' ), $input);
+		$executor = array( $ability, 'execute' );
+		if ( ! is_callable($executor) ) {
+			return new \WP_Error('safe_cleanup_ability_missing', 'Safe cleanup ability is not executable.', array( 'status' => 500 ));
+		}
+		$result = $executor($input);
 		return is_array($result) || is_wp_error($result) ? $result : new \WP_Error('safe_cleanup_invalid_result', 'Safe cleanup child ability returned an invalid result.', array( 'status' => 500 ));
 	}
 
@@ -362,8 +366,8 @@ class WorkspaceSafeCleanupOrchestrator {
 	private function compact_blockers( array $rows ): array {
 		$blockers = array();
 		foreach ( $rows as $row ) {
-			$reason                = (string) ( $row['reason_code'] ?? 'unknown' );
-			$blockers[ $reason ] ??= array(
+			$reason                        = (string) ( $row['reason_code'] ?? 'unknown' );
+			$blockers[ $reason ]           ??= array(
 				'reason_code' => $reason,
 				'count'       => 0,
 			);
