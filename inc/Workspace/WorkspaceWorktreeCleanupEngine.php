@@ -529,7 +529,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				'apply_command' => 'studio wp datamachine-code workspace cleanup apply <run-id>',
 				'note'          => 'The plan command stores this reviewed page as DB-backed cleanup rows; apply revalidates each row before deletion.',
 			);
-			$summary['pagination'] = $pagination;
+			$summary['pagination']             = $pagination;
 		}
 
 		if ( $dry_run ) {
