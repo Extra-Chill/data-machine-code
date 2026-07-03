@@ -72,7 +72,11 @@ trait WorkspaceWorktreeCleanupEngine {
 
 		if ( isset($opts['until_budget']) && '' !== trim( (string) $opts['until_budget']) ) {
 			if ( ! $dry_run ) {
-				return new \WP_Error('cleanup_budget_requires_dry_run', 'Budgeted cleanup is review-only. Use --dry-run with --until-budget, then apply a reviewed cleanup path.', array( 'status' => 400 ));
+				return new \WP_Error(
+					'cleanup_budget_requires_dry_run',
+					sprintf('Budgeted cleanup is review-only. Run `%s`, review the DB-backed rows, then run `studio wp datamachine-code workspace cleanup apply <run-id>`.', $this->build_worktree_cleanup_review_plan_command($limit, $offset, trim( (string) $opts['until_budget']))),
+					array( 'status' => 400 )
+				);
 			}
 
 			$budget_seconds = $this->parse_worktree_metadata_reconciliation_budget(trim( (string) $opts['until_budget']));
@@ -83,7 +87,11 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		if ( ( null !== $limit || $offset > 0 ) && ! $dry_run ) {
-			return new \WP_Error('cleanup_pagination_requires_dry_run', 'Paginated cleanup is review-only. Use --dry-run with --limit/--offset, then apply a reviewed cleanup path.', array( 'status' => 400 ));
+			return new \WP_Error(
+				'cleanup_pagination_requires_dry_run',
+				sprintf('Paginated cleanup is review-only. Run `%s`, review the DB-backed rows, then run `studio wp datamachine-code workspace cleanup apply <run-id>`.', $this->build_worktree_cleanup_review_plan_command($limit, $offset, isset($opts['until_budget']) ? trim( (string) $opts['until_budget']) : '')),
+				array( 'status' => 400 )
+			);
 		}
 
 		if ( '' !== $sort && ! in_array($sort, array( 'size', 'age' ), true) ) {
@@ -516,7 +524,12 @@ trait WorkspaceWorktreeCleanupEngine {
 		$summary    = $this->build_worktree_cleanup_summary($candidates, array(), $skipped, $age_filter);
 		$pagination = $this->build_worktree_cleanup_pagination($offset, $limit, $processed, $total_worktrees, $budget_stopped, $budget_context);
 		if ( null !== $pagination ) {
-			$summary['pagination'] = $pagination;
+			$pagination['reviewed_apply_path'] = array(
+				'plan_command'  => $this->build_worktree_cleanup_review_plan_command($limit, $offset, null !== $budget_context ? (string) ( $budget_context['label'] ?? '' ) : ''),
+				'apply_command' => 'studio wp datamachine-code workspace cleanup apply <run-id>',
+				'note'          => 'The plan command stores this reviewed page as DB-backed cleanup rows; apply revalidates each row before deletion.',
+			);
+			$summary['pagination']             = $pagination;
 		}
 
 		if ( $dry_run ) {
@@ -635,6 +648,21 @@ trait WorkspaceWorktreeCleanupEngine {
 			'next_command'   => $command,
 			'budget_stopped' => $budget_stopped,
 		);
+	}
+
+	/**
+	 * Build the DB-backed review command for bounded worktree cleanup rows.
+	 */
+	private function build_worktree_cleanup_review_plan_command( ?int $limit, int $offset, string $until_budget ): string {
+		$parts = array(
+			'studio wp datamachine-code workspace cleanup plan --mode=retention',
+			null === $limit ? null : '--limit=' . max(1, $limit),
+			'--offset=' . max(0, $offset),
+			'' !== trim($until_budget) ? '--until-budget=' . trim($until_budget) : null,
+			'--format=json',
+		);
+
+		return implode(' ', array_values(array_filter($parts, fn( $part ) => null !== $part)));
 	}
 
 	/**
