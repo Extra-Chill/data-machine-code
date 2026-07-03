@@ -6399,6 +6399,10 @@ class WorkspaceCommand extends BaseCommand {
 					'value'  => (int) ( $summary['processed'] ?? 0 ),
 				),
 				array(
+					'metric' => 'planned',
+					'value'  => (int) ( $summary['planned'] ?? 0 ),
+				),
+				array(
 					'metric' => 'would_remove',
 					'value'  => (int) ( $summary['would_remove'] ?? 0 ),
 				),
@@ -6437,6 +6441,7 @@ class WorkspaceCommand extends BaseCommand {
 					fn( $row ) => array(
 						'pass'            => (int) ( $row['pass'] ?? 0 ),
 						'processed'       => (int) ( $row['processed'] ?? 0 ),
+						'planned'         => (int) ( $row['planned'] ?? 0 ),
 						'would_remove'    => (int) ( $row['would_remove'] ?? 0 ),
 						'removed'         => (int) ( $row['removed'] ?? 0 ),
 						'skipped'         => (int) ( $row['skipped'] ?? 0 ),
@@ -6445,7 +6450,7 @@ class WorkspaceCommand extends BaseCommand {
 					),
 					$passes
 				),
-				array( 'pass', 'processed', 'would_remove', 'removed', 'skipped', 'remaining_total', 'bytes' ),
+				array( 'pass', 'processed', 'planned', 'would_remove', 'removed', 'skipped', 'remaining_total', 'bytes' ),
 				array( 'format' => 'table' ),
 				'pass'
 			);

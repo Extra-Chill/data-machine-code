@@ -82,6 +82,7 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 			'summary'      => array(
 				'passes'          => 0,
 				'processed'       => 0,
+				'planned'         => 0,
 				'would_remove'    => 0,
 				'removed'         => 0,
 				'skipped'         => 0,
@@ -133,7 +134,8 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 				'pass'              => $pass,
 				'dry_run'           => ! empty($pass_result['dry_run']),
 				'processed'         => (int) ( $summary['processed'] ?? 0 ),
-				'would_remove'      => ! empty($pass_result['dry_run']) ? count( (array) ( $pass_result['candidates'] ?? array() ) ) : 0,
+				'planned'           => ! empty($pass_result['dry_run']) ? count( (array) ( $pass_result['candidates'] ?? array() ) ) : 0,
+				'would_remove'      => (int) ( $summary['would_remove'] ?? 0 ),
 				'removed'           => (int) ( $summary['removed'] ?? 0 ),
 				'skipped'           => (int) ( $summary['skipped'] ?? 0 ),
 				'bytes_reclaimed'   => (int) ( $summary['bytes_reclaimed'] ?? 0 ),
@@ -147,6 +149,7 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 			$result['pass_results'][] = $pass_summary;
 			++$result['summary']['passes'];
 			$result['summary']['processed']       += $pass_summary['processed'];
+			$result['summary']['planned']         += $pass_summary['planned'];
 			$result['summary']['would_remove']    += $pass_summary['would_remove'];
 			$result['summary']['removed']         += $pass_summary['removed'];
 			$result['summary']['skipped']         += $pass_summary['skipped'];
