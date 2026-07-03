@@ -154,7 +154,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 						'offset'  => $step_stage === $stage ? $offset : 0,
 					)
 				);
-				$step       = $this->drain_pages($step_config['ability'], $step_input, $apply, $deadline, $active_no_signal_drain);
+				$step       = $this->drain_pages($step_config['ability'], $step_input, $apply, $deadline, true);
 				if ( is_wp_error($step) ) {
 					return $step;
 				}

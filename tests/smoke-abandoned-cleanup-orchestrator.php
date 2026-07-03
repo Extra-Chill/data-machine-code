@@ -362,4 +362,37 @@ abandoned_cleanup_assert(str_contains((string) $zero_yield_result['continuation'
 abandoned_cleanup_assert(0 === count($zero_yield_equivalent->calls), 'zero-yield stop avoids advancing into later active/no-signal stages');
 abandoned_cleanup_assert(0 === count($zero_yield_abilities['datamachine-code/workspace-worktree-prune']->calls), 'zero-yield stop skips prune while continuation remains');
 
+$abandoned_zero_yield_finalized = new AbandonedCleanupQueuedAbility(
+	array(
+		array(
+			'mode'       => 'finalized',
+			'summary'    => array( 'inspected' => 10, 'written' => 0 ),
+			'pagination' => array( 'offset' => 0, 'limit' => 10, 'scanned' => 10, 'partial' => true, 'complete' => false, 'next_offset' => 10, 'total' => 30 ),
+		),
+	)
+);
+$abandoned_zero_yield_equivalent = new AbandonedCleanupFakeAbility('equivalent_clean', array( 'inspected' => 10, 'written' => 1 ), array( 'complete' => true ));
+$abandoned_zero_yield_abilities  = array(
+	'datamachine-code/workspace-worktree-reconcile-metadata' => new AbandonedCleanupFakeAbility('reconcile_metadata', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-finalized-apply' => $abandoned_zero_yield_finalized,
+	'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply' => $abandoned_zero_yield_equivalent,
+	'datamachine-code/workspace-worktree-active-no-signal-merged-apply' => new AbandonedCleanupFakeAbility('merged', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply' => new AbandonedCleanupFakeAbility('remote_clean', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => new AbandonedCleanupFakeAbility('bounded', array( 'processed' => 0, 'removed' => 0 ), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-prune' => new AbandonedCleanupFakeAbility('prune'),
+);
+$orchestrator                   = new DataMachineCode\Workspace\WorkspaceAbandonedCleanupOrchestrator(
+	static fn( string $name ) => $abandoned_zero_yield_abilities[ $name ] ?? null,
+	static fn(): float => 1000.0
+);
+$abandoned_zero_yield_result    = $orchestrator->run(array( 'apply' => true, 'limit' => 10, 'passes' => 3, 'until_budget' => '300s' ));
+abandoned_cleanup_assert(! is_wp_error($abandoned_zero_yield_result), 'abandoned zero-yield result succeeds');
+abandoned_cleanup_assert('abandoned_worktree_cleanup' === $abandoned_zero_yield_result['mode'], 'abandoned zero-yield keeps abandoned mode');
+abandoned_cleanup_assert('no_progress_in_stage' === $abandoned_zero_yield_result['continuation']['reason'], 'abandoned zero-yield continuation uses no-progress reason');
+abandoned_cleanup_assert('no_progress_in_stage' === ( $abandoned_zero_yield_result['summary']['stop_reason'] ?? null ), 'abandoned zero-yield summary exposes stop reason');
+abandoned_cleanup_assert(str_contains((string) $abandoned_zero_yield_result['continuation']['recommendation'], 'Stop this drain'), 'abandoned zero-yield continuation recommends stopping');
+abandoned_cleanup_assert(str_contains((string) $abandoned_zero_yield_result['continuation']['next_command'], ' worktree abandoned --apply --stage=finalized --offset=10'), 'abandoned zero-yield continuation resumes same stage next page');
+abandoned_cleanup_assert(0 === count($abandoned_zero_yield_equivalent->calls), 'abandoned zero-yield stop avoids advancing into later active/no-signal stages');
+abandoned_cleanup_assert(0 === count($abandoned_zero_yield_abilities['datamachine-code/workspace-worktree-prune']->calls), 'abandoned zero-yield stop skips prune while continuation remains');
+
 fwrite(STDOUT, 'abandoned cleanup orchestrator smoke passed' . PHP_EOL);
