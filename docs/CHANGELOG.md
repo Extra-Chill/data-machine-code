@@ -2,6 +2,17 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.37] - 2026-07-03
+
+### Changed
+- Stop active no-signal drain on zero-yield pages
+- Explain remaining metadata reconcile blockers
+- Explain hygiene cleanup revalidation blockers
+
+### Fixed
+- Fix retention cleanup plan worktree rows
+- Fix empty safe cleanup status finalization
+
 ## [0.48.36] - 2026-07-03
 
 ### Fixed
