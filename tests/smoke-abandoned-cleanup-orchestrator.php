@@ -236,7 +236,7 @@ abandoned_cleanup_assert('active_no_signal_drain_refuses_force' === $force_resul
 $candidate_set_changed = new AbandonedCleanupFakeAbility(
 	'finalized',
 	array( 'inspected' => 1, 'written' => 1 ),
-	array( 'offset' => 0, 'limit' => 10, 'scanned' => 1, 'partial' => true, 'complete' => false, 'next_offset' => 0 )
+	array( 'offset' => 10, 'limit' => 10, 'scanned' => 1, 'partial' => true, 'complete' => false, 'next_offset' => 10 )
 );
 $restart_abilities     = array(
 	'datamachine-code/workspace-worktree-reconcile-metadata' => new AbandonedCleanupFakeAbility('reconcile_metadata', array(), array( 'complete' => true )),
@@ -265,9 +265,13 @@ abandoned_cleanup_assert('candidate_set_changed_restart_required' === $restart_r
 abandoned_cleanup_assert(str_contains((string) $restart_result['continuation']['reason_description'], 'candidate set'), 'restart continuation explains why offset zero is expected');
 abandoned_cleanup_assert(1 === (int) $restart_result['continuation']['progress_delta']['written'], 'restart continuation exposes written progress delta');
 abandoned_cleanup_assert(1 === (int) $restart_result['continuation']['progress_delta']['total_mutations'], 'restart continuation exposes total mutation progress delta');
+abandoned_cleanup_assert(10 === (int) $restart_result['continuation']['progress_delta']['previous_offset'], 'restart continuation documents the previous offset');
+abandoned_cleanup_assert(10 === (int) $restart_result['continuation']['progress_delta']['next_offset'], 'restart continuation documents the unsafe candidate-set continuation offset');
 abandoned_cleanup_assert(0 === (int) $restart_result['continuation']['progress_delta']['restart_offset'], 'restart continuation exposes the intentional restart offset');
+abandoned_cleanup_assert(0 === (int) $restart_result['continuation']['offset'], 'restart continuation top-level offset matches the restart command offset');
 abandoned_cleanup_assert(str_contains((string) $restart_result['continuation']['next_command_label'], 'candidate set changed'), 'restart continuation labels the restart command');
 abandoned_cleanup_assert('active-no-signal-drain' === explode(' ', (string) $restart_result['continuation']['next_command'])[5], 'restart next command uses active/no-signal drain');
+abandoned_cleanup_assert(str_contains((string) $restart_result['continuation']['next_command'], '--offset=0'), 'restart next command restarts active/no-signal drain at offset zero');
 
 $stage_budget_abilities = array(
 	'datamachine-code/workspace-worktree-reconcile-metadata' => new AbandonedCleanupFakeAbility('reconcile_metadata', array(), array( 'complete' => true )),
