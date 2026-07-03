@@ -270,6 +270,28 @@ class CleanupRunService {
 		ksort($summary['items_by_status']);
 		ksort($summary['items_by_type']);
 
+		$terminal_safe_state = $this->terminal_empty_safe_cleanup_state($run, $summary);
+		if ( null !== $terminal_safe_state ) {
+			$completed_at = (string) ( $run['completed_at'] ?? '' );
+			if ( '' === $completed_at ) {
+				$completed_at = gmdate('Y-m-d H:i:s');
+			}
+			$updated = $this->update_run_or_error(
+				$run_id,
+				array(
+					'status'       => $terminal_safe_state,
+					'completed_at' => $completed_at,
+					'summary'      => (array) ( $run['summary'] ?? array() ),
+				),
+				$terminal_safe_state
+			);
+			if ( $updated instanceof \WP_Error ) {
+				return $updated;
+			}
+			$run['status']       = $terminal_safe_state;
+			$run['completed_at'] = $completed_at;
+		}
+
 		$progress = $this->run_progress($run, $items, $summary);
 
 		return array(
@@ -629,9 +651,32 @@ class CleanupRunService {
 			'safe_cleanup'      => $run['summary']['safe_cleanup_progress'] ?? null,
 			'started_at'        => $started_at,
 			'age_seconds'       => $age,
-			'resumable'         => $resumable || ( 'safe_workspace_cleanup' === (string) ( $run['mode'] ?? '' ) && 'applying' === $run_status ),
+			'resumable'         => $resumable,
 			'note'              => count($applying) > 0 ? 'Rows marked applying are safe to retry with workspace cleanup resume if the previous apply process was interrupted.' : '',
 		);
+	}
+
+	private function terminal_empty_safe_cleanup_state( array $run, array $summary ): ?string {
+		if ( 'safe_workspace_cleanup' !== (string) ( $run['mode'] ?? '' ) || 'applying' !== (string) ( $run['status'] ?? '' ) ) {
+			return null;
+		}
+		if ( (int) ( $summary['total_items'] ?? 0 ) > 0 || (int) ( $summary['pending_or_failed'] ?? 0 ) > 0 ) {
+			return null;
+		}
+
+		$safe_cleanup = (array) ( $run['summary']['safe_cleanup_progress'] ?? array() );
+		if ( array() === $safe_cleanup ) {
+			return null;
+		}
+
+		$state = (string) ( $safe_cleanup['state'] ?? '' );
+		if ( in_array($state, array( 'complete', 'complete_with_blockers' ), true) ) {
+			return $state;
+		}
+
+		$safe_summary  = (array) ( $safe_cleanup['summary'] ?? array() );
+		$blocker_count = (int) ( $safe_summary['blocker_count'] ?? 0 );
+		return $blocker_count > 0 ? 'complete_with_blockers' : 'complete';
 	}
 
 	/**
@@ -646,7 +691,7 @@ class CleanupRunService {
 		$summary       = CleanupRemainingWorkSummary::from_items($items);
 		$safe_cleanup  = is_array($progress['safe_cleanup'] ?? null) ? (array) $progress['safe_cleanup'] : array();
 		$safe_commands = is_array($safe_cleanup['commands'] ?? null) ? (array) $safe_cleanup['commands'] : array();
-		if ( isset($safe_commands['status'], $safe_commands['resume']) ) {
+		if ( ! empty($progress['resumable']) && isset($safe_commands['status'], $safe_commands['resume']) ) {
 			$resume_command = array(
 				'bucket'            => 'safe_cleanup_continuation',
 				'command'           => (string) $safe_commands['status'],
