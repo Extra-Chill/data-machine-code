@@ -81,7 +81,6 @@ trait WorkspaceCleanupPlan {
 			$worktree_args = array(
 				'dry_run'             => true,
 				'skip_github'         => true,
-				'inventory_only'      => ! $inputs['full_workspace'],
 				'older_than'          => $inputs['worktree_older_than'],
 				'sort'                => $inputs['worktree_sort'],
 				'stale_liveness_only' => $inputs['worktree_stale_only'],

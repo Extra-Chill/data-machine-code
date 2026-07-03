@@ -660,6 +660,11 @@ class WorkspaceCommand extends BaseCommand {
 	 *   pages. Walk huge workspaces by feeding the previous response's
 	 *   `continuation.next_offset` until `continuation.complete` is true.
 	 *
+	 * [--until-budget=<duration>]
+	 * : For bounded retention plans, cap the worktree safety-probe page by wall
+	 *   clock budget, such as 30s or 2m. The stored plan page remains reviewable
+	 *   and applyable through `cleanup apply <run-id>`.
+	 *
 	 * [--exhaustive]
 	 * : For `plan`, request a full unbounded audit instead of the default bounded
 	 *   inventory-first page. For `--mode=artifacts --dry-run`, scan every worktree
@@ -1234,6 +1239,9 @@ class WorkspaceCommand extends BaseCommand {
 		}
 		if ( ! empty($assoc_args['exhaustive']) ) {
 			$input['full_workspace'] = true;
+		}
+		if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
+			$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
 		}
 		if ( 'stale-worktrees' === $mode ) {
 			$input['worktree_stale_only'] = true;
