@@ -98,7 +98,8 @@ cleanup_eligible_drain_assert(! is_wp_error($preview), 'preview succeeds');
 cleanup_eligible_drain_assert(false === $preview['applied'], 'preview is non-destructive');
 cleanup_eligible_drain_assert(1 === count($preview_ability->calls), 'preview runs one pass');
 cleanup_eligible_drain_assert('preview' === $preview['summary']['stop_reason'], 'preview stop reason');
-cleanup_eligible_drain_assert(2 === $preview['summary']['would_remove'], 'preview counts would-remove candidates');
+cleanup_eligible_drain_assert(2 === $preview['summary']['planned'], 'preview counts planned candidates');
+cleanup_eligible_drain_assert(0 === $preview['summary']['would_remove'], 'preview does not claim removal before fresh safety checks');
 
 $empty_ability = new CleanupEligibleDrainFakeAbility(
 	array(
