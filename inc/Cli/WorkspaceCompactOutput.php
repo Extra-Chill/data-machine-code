@@ -95,6 +95,7 @@ class WorkspaceCompactOutput {
 				'cleanup'                   => array(
 					'blocker_probe_source' => $cleanup['blocker_probe_source'] ?? null,
 					'blocker_counts'       => $cleanup['blocker_counts'] ?? null,
+					'expected_outcome'     => $cleanup['expected_outcome'] ?? null,
 					'summary'              => (array) ( $cleanup['summary'] ?? array() ),
 					'biggest_candidates'   => self::compact_rows( (array) ( $cleanup['biggest_candidates'] ?? array() ) ),
 				),
@@ -311,12 +312,12 @@ class WorkspaceCompactOutput {
 			'path'        => $row['path'] ?? null,
 			'pr_url'      => $row['pr_url'] ?? null,
 		);
-		foreach ( array( 'size_bytes', 'artifact_size_bytes', 'bytes_reclaimed', 'dirty', 'unpushed', 'age_days', 'created_at', 'liveness' ) as $field ) {
+		foreach ( array( 'size_bytes', 'artifact_size_bytes', 'bytes_reclaimed', 'dirty', 'unpushed', 'age_days', 'created_at', 'liveness', 'fresh_revalidation_status' ) as $field ) {
 			if ( array_key_exists( $field, $row ) ) {
 				$compact[ $field ] = $row[ $field ];
 			}
 		}
-		foreach ( array( 'size_status', 'size_accounting', 'fields_skipped' ) as $field ) {
+		foreach ( array( 'size_status', 'size_accounting', 'fields_skipped', 'fresh_revalidation_blockers', 'fresh_revalidation_checks' ) as $field ) {
 			if ( array_key_exists( $field, $row ) ) {
 				$compact[ $field ] = $row[ $field ];
 			}

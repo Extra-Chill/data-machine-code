@@ -54,6 +54,7 @@ $candidate_result = WorktreeCleanupCandidateClassifier::classify_merge_signal_pa
 worktree_cleanup_candidate_assert_same('candidate', $candidate_result['type'], 'merged signal is a candidate');
 worktree_cleanup_candidate_assert_same('github-merged-pr', $candidate_result['row']['signal'], 'candidate signal is preserved');
 worktree_cleanup_candidate_assert_same('github-merged-pr', $candidate_result['row']['reason_code'], 'candidate reason_code matches signal');
+worktree_cleanup_candidate_assert_same(0, $candidate_result['row']['unpushed'], 'fresh safe candidate records the passed unpushed probe');
 worktree_cleanup_candidate_assert_same(false, $evidence_called, 'no-signal evidence stays lazy for candidates');
 
 $no_signal_filter = null;

@@ -92,6 +92,7 @@ final class WorktreeCleanupCandidateClassifier {
 			$base,
 			array(
 				'dirty'           => (int) ( $context['dirty_count'] ?? 0 ),
+				'unpushed'        => 0,
 				'cleanup_reasons' => array_values(array_filter(array( $signal['signal'] ?? '', $signal['reason'] ?? '' ))),
 				'liveness'        => (string) ( $context['liveness'] ?? '' ),
 			),

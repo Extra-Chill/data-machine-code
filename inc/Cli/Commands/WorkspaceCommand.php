@@ -5109,14 +5109,18 @@ class WorkspaceCommand extends BaseCommand {
 			$this->format_items(
 				array_map(
 					fn( $row ) => array(
-						'handle' => $row['handle'] ?? '',
-						'branch' => $row['branch'] ?? '',
-						'signal' => $row['signal'] ?? '',
-						'size'   => $row['size_human'] ?? '',
+						'handle'         => $row['handle'] ?? '',
+						'branch'         => $row['branch'] ?? '',
+						'signal'         => $row['signal'] ?? '',
+						'size'           => $row['size_human'] ?? '',
+						'dirty'          => array_key_exists('dirty', (array) $row) ? ( null === $row['dirty'] ? 'unknown' : $row['dirty'] ) : '',
+						'unpushed'       => array_key_exists('unpushed', (array) $row) ? ( null === $row['unpushed'] ? 'unknown' : $row['unpushed'] ) : '',
+						'fresh_status'   => $row['fresh_revalidation_status'] ?? '',
+						'fresh_blockers' => implode(',', array_map('strval', (array) ( $row['fresh_revalidation_blockers'] ?? array() ))),
 					),
 					$candidates
 				),
-				array( 'handle', 'branch', 'signal', 'size' ),
+				array( 'handle', 'branch', 'signal', 'size', 'dirty', 'unpushed', 'fresh_status', 'fresh_blockers' ),
 				array( 'format' => 'table' ),
 				'handle'
 			);
@@ -5126,6 +5130,9 @@ class WorkspaceCommand extends BaseCommand {
 			WP_CLI::log('');
 			WP_CLI::log('Suggested cleanup review:');
 			WP_CLI::log( (string) $report['suggested_cleanup_command']);
+			if ( ! empty($cleanup['expected_outcome']) ) {
+				WP_CLI::log( (string) $cleanup['expected_outcome']);
+			}
 		}
 
 		if ( ! empty($report['suggested_size_command']) ) {
