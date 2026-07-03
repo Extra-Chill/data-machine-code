@@ -178,8 +178,8 @@ class WorkspaceAbandonedCleanupOrchestrator {
 						$result['evidence']['adaptive_stop'] = $step['adaptive_stop'];
 						$result['summary']['stop_reason']    = (string) ( $step['adaptive_stop']['reason'] ?? 'no_progress_in_stage' );
 					}
-					$result['continuation']                 = $this->build_continuation($step_stage, $step, $limit, $passes, $force, $until_budget, $active_no_signal_drain);
-					$result['next_commands'][]              = (string) $result['continuation']['next_command'];
+					$result['continuation']    = $this->build_continuation($step_stage, $step, $limit, $passes, $force, $until_budget, $active_no_signal_drain);
+					$result['next_commands'][] = (string) $result['continuation']['next_command'];
 					break 2;
 				}
 			}
@@ -381,9 +381,9 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		);
 		if ( is_wp_error($report) ) {
 			$result['remaining_active_no_signal_backlog'] = array(
-				'available' => false,
-				'reason'    => (string) $report->get_error_code(),
-				'message'   => $report->get_error_message(),
+				'available'     => false,
+				'reason'        => (string) $report->get_error_code(),
+				'message'       => $report->get_error_message(),
 				'next_commands' => array(
 					sprintf('studio wp datamachine-code workspace worktree active-no-signal-report --limit=%d --offset=0 --format=json', $limit),
 				),
@@ -418,7 +418,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			if ( ! is_array($row) ) {
 				continue;
 			}
-			$reason              = (string) ( $row['suggested_action'] ?? 'insufficient_signal' );
+			$reason               = (string) ( $row['suggested_action'] ?? 'insufficient_signal' );
 			$buckets[ $reason ] ??= array(
 				'count'    => 0,
 				'examples' => array(),
@@ -441,15 +441,15 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		}
 
 		return array(
-			'available'                    => true,
-			'total_active_no_signal'       => $total,
-			'sampled'                      => $sampled,
-			'unreviewed_count'             => max(0, $total - $sampled),
-			'by_actionable_reason'         => $buckets,
-			'counts_scope'                 => 'bounded_post_drain_sample_only',
-			'limitation'                   => 'Counts by actionable reason cover only this bounded post-drain sample; active-no-signal report has pagination but no safe bucket filter, so full per-bucket totals are not scanned by default.',
-			'pagination'                   => $pagination,
-			'next_commands'                => array_values(array_unique(array_filter($commands))),
+			'available'              => true,
+			'total_active_no_signal' => $total,
+			'sampled'                => $sampled,
+			'unreviewed_count'       => max(0, $total - $sampled),
+			'by_actionable_reason'   => $buckets,
+			'counts_scope'           => 'bounded_post_drain_sample_only',
+			'limitation'             => 'Counts by actionable reason cover only this bounded post-drain sample; active-no-signal report has pagination but no safe bucket filter, so full per-bucket totals are not scanned by default.',
+			'pagination'             => $pagination,
+			'next_commands'          => array_values(array_unique($commands)),
 		);
 	}
 
@@ -629,18 +629,18 @@ class WorkspaceAbandonedCleanupOrchestrator {
 				break;
 			}
 
-			if ( $stop_on_no_progress && $apply && $mutation_count <= 0 && $inspected > 0 ) {
+			if ( $stop_on_no_progress && $mutation_count <= 0 && $inspected > 0 ) {
 				$last_result['adaptive_stop'] = array(
 					'reason'             => 'no_progress_in_stage',
 					'reason_description' => 'This stage scanned a page and produced no cleanup metadata writes or removals, so the drain stopped before spending more budget on low-yield pages.',
 					'recommendation'     => 'Stop this drain for now, or run next_command to continue this stage from the next page if you want a deeper scan.',
 					'progress_delta'     => array(
-						'inspected'        => $inspected,
-						'written'          => (int) ( $result['summary']['written'] ?? 0 ),
-						'removed'          => (int) ( $result['summary']['removed'] ?? 0 ),
-						'total_mutations'  => $mutation_count,
-						'previous_offset'  => $offset,
-						'next_offset'      => $next_offset,
+						'inspected'       => $inspected,
+						'written'         => (int) ( $result['summary']['written'] ?? 0 ),
+						'removed'         => (int) ( $result['summary']['removed'] ?? 0 ),
+						'total_mutations' => $mutation_count,
+						'previous_offset' => $offset,
+						'next_offset'     => $next_offset,
 					),
 				);
 				break;
