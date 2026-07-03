@@ -377,9 +377,9 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		);
 		if ( is_wp_error($report) ) {
 			$result['remaining_active_no_signal_backlog'] = array(
-				'available' => false,
-				'reason'    => (string) $report->get_error_code(),
-				'message'   => $report->get_error_message(),
+				'available'     => false,
+				'reason'        => (string) $report->get_error_code(),
+				'message'       => $report->get_error_message(),
 				'next_commands' => array(
 					sprintf('studio wp datamachine-code workspace worktree active-no-signal-report --limit=%d --offset=0 --format=json', $limit),
 				),
@@ -414,7 +414,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			if ( ! is_array($row) ) {
 				continue;
 			}
-			$reason              = (string) ( $row['suggested_action'] ?? 'insufficient_signal' );
+			$reason               = (string) ( $row['suggested_action'] ?? 'insufficient_signal' );
 			$buckets[ $reason ] ??= array(
 				'count'    => 0,
 				'examples' => array(),
@@ -437,15 +437,15 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		}
 
 		return array(
-			'available'                    => true,
-			'total_active_no_signal'       => $total,
-			'sampled'                      => $sampled,
-			'unreviewed_count'             => max(0, $total - $sampled),
-			'by_actionable_reason'         => $buckets,
-			'counts_scope'                 => 'bounded_post_drain_sample_only',
-			'limitation'                   => 'Counts by actionable reason cover only this bounded post-drain sample; active-no-signal report has pagination but no safe bucket filter, so full per-bucket totals are not scanned by default.',
-			'pagination'                   => $pagination,
-			'next_commands'                => array_values(array_unique(array_filter($commands))),
+			'available'              => true,
+			'total_active_no_signal' => $total,
+			'sampled'                => $sampled,
+			'unreviewed_count'       => max(0, $total - $sampled),
+			'by_actionable_reason'   => $buckets,
+			'counts_scope'           => 'bounded_post_drain_sample_only',
+			'limitation'             => 'Counts by actionable reason cover only this bounded post-drain sample; active-no-signal report has pagination but no safe bucket filter, so full per-bucket totals are not scanned by default.',
+			'pagination'             => $pagination,
+			'next_commands'          => array_values(array_unique($commands)),
 		);
 	}
 
@@ -517,11 +517,11 @@ class WorkspaceAbandonedCleanupOrchestrator {
 	}
 
 	private function build_continuation( string $stage, array $step, int $limit, int $passes, bool $force, string $until_budget, bool $active_no_signal_drain = false ): array {
-		$pagination  = (array) ( $step['pagination'] ?? $step['continuation'] ?? array() );
-		$next_offset = isset($pagination['next_offset']) ? max(0, (int) $pagination['next_offset']) : 0;
-		$current     = (int) ( $pagination['offset'] ?? 0 );
-		$mutated     = (int) ( $step['summary']['written'] ?? 0 ) + (int) ( $step['summary']['removed'] ?? 0 );
-		$restart     = ! empty($pagination['partial']) && $next_offset <= $current && $mutated > 0;
+		$pagination     = (array) ( $step['pagination'] ?? $step['continuation'] ?? array() );
+		$next_offset    = isset($pagination['next_offset']) ? max(0, (int) $pagination['next_offset']) : 0;
+		$current        = (int) ( $pagination['offset'] ?? 0 );
+		$mutated        = (int) ( $step['summary']['written'] ?? 0 ) + (int) ( $step['summary']['removed'] ?? 0 );
+		$restart        = ! empty($pagination['partial']) && $next_offset <= $current && $mutated > 0;
 		$command_offset = $restart ? 0 : $next_offset;
 		$command        = $this->build_continuation_command($stage, $command_offset, $limit, $passes, $force, $until_budget, $active_no_signal_drain);
 
