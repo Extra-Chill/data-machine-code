@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.38] - 2026-07-03
+
+### Changed
+- Stop abandoned cleanup on zero-yield pages
+
+### Fixed
+- Fix cleanup eligible drain dry-run counts
+
 ## [0.48.37] - 2026-07-03
 
 ### Changed
