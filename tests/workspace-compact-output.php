@@ -38,6 +38,11 @@ function compact_output_large_rows( int $count ): array {
 }
 
 $large_rows = compact_output_large_rows(40);
+$hygiene_candidate_rows = $large_rows;
+$hygiene_candidate_rows[0]['dirty']                        = null;
+$hygiene_candidate_rows[0]['fresh_revalidation_status']    = 'not_run_inventory_only';
+$hygiene_candidate_rows[0]['fresh_revalidation_blockers']  = array( 'pending_fresh_revalidation' );
+$hygiene_candidate_rows[0]['fresh_revalidation_checks']    = array( 'dirty_worktree', 'unpushed_commits', 'primary_or_protected_worktree', 'containment_failure' );
 $cleanup    = WorkspaceCompactOutput::cleanup_result(
 	array(
 		'success'    => true,
@@ -218,6 +223,7 @@ $hygiene = WorkspaceCompactOutput::hygiene_report(
 		'locks'                     => array( 'active' => 2, 'stale' => 40, 'database' => array( 'locks' => $large_rows ) ),
 		'cleanup'                   => array(
 			'blocker_probe_source' => 'inventory_known',
+			'expected_outcome'     => 'Expected outcome: hygiene found 40 cleanup-eligible row(s) pending fresh revalidation and 0 fresh-safe removals.',
 			'blocker_counts'       => array(
 				'inventory_known' => array(
 					'dirty_worktree'   => 3,
@@ -238,7 +244,7 @@ $hygiene = WorkspaceCompactOutput::hygiene_report(
 					'safe_to_remove_now'                    => 0,
 				),
 			),
-			'biggest_candidates' => $large_rows,
+			'biggest_candidates' => $hygiene_candidate_rows,
 		),
 		'size'                      => array(
 			'total_bytes' => 123456,
@@ -263,10 +269,14 @@ compact_output_assert(0 === ( $hygiene['worktrees']['protected_dirty_fresh_probe
 compact_output_assert('inventory_known' === ( $hygiene['cleanup']['blocker_probe_source'] ?? null ), 'Compact hygiene output must expose blocker probe source.');
 compact_output_assert(3 === ( $hygiene['cleanup']['blocker_counts']['inventory_known']['dirty_worktree'] ?? null ), 'Compact hygiene output must preserve inventory-known dirty blocker bucket.');
 compact_output_assert(0 === ( $hygiene['cleanup']['blocker_counts']['fresh_probe']['dirty_worktree'] ?? null ), 'Compact hygiene output must preserve fresh-probed dirty blocker bucket.');
+compact_output_assert(isset($hygiene['cleanup']['expected_outcome']), 'Compact hygiene output must preserve expected cleanup outcome.');
 compact_output_assert(40 === ( $hygiene['cleanup']['summary']['cleanup_buckets']['cleanup_eligible_pending_revalidation'] ?? null ), 'Compact cleanup summary must preserve pending-revalidation bucket.');
 compact_output_assert(0 === ( $hygiene['cleanup']['summary']['cleanup_buckets']['safe_to_remove_now'] ?? null ), 'Compact cleanup summary must not mark unprobed inventory candidates safe.');
 compact_output_assert(123456 === ( $hygiene['size']['total_bytes'] ?? null ), 'Compact hygiene output must preserve size bytes.');
 compact_output_assert(40 === ( $hygiene['size']['entry_count'] ?? null ), 'Compact hygiene output must preserve size entry count.');
 compact_output_assert(count((array) ( $hygiene['cleanup']['biggest_candidates'] ?? array() )) <= 5, 'Compact hygiene output must sample cleanup candidates.');
+compact_output_assert('not_run_inventory_only' === ( $hygiene['cleanup']['biggest_candidates'][0]['fresh_revalidation_status'] ?? null ), 'Compact hygiene candidates must preserve fresh revalidation status.');
+compact_output_assert(array( 'pending_fresh_revalidation' ) === ( $hygiene['cleanup']['biggest_candidates'][0]['fresh_revalidation_blockers'] ?? null ), 'Compact hygiene candidates must preserve fresh blocker examples.');
+compact_output_assert(in_array('unpushed_commits', (array) ( $hygiene['cleanup']['biggest_candidates'][0]['fresh_revalidation_checks'] ?? array() ), true), 'Compact hygiene candidates must preserve fresh revalidation checks.');
 
 echo "workspace compact output test passed.\n";
