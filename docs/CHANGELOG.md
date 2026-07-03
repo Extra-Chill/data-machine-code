@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.36] - 2026-07-03
+
+### Fixed
+- Fix active no-signal drain restart continuation
+
 ## [0.48.35] - 2026-07-01
 
 ### Changed
