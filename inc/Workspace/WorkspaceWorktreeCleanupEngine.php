@@ -266,19 +266,22 @@ trait WorkspaceWorktreeCleanupEngine {
 				}
 				$skipped[] = array_merge(
 					array(
-						'handle'             => $handle,
-						'repo'               => $repo,
-						'branch'             => $branch,
-						'path'               => $wt_path,
-						'reason_code'        => 'missing_metadata',
-						'reason'             => 'missing repo/branch/path',
-						'missing_fields'     => $missing_fields,
-						'hydrated_fields'    => $identity['hydrated_fields'],
-						'identity_conflicts' => $identity['conflicts'],
-						'stored_identity'    => $identity['stored_identity'],
-						'hint'               => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
-						'created_at'         => $created_at,
-						'metadata'           => $metadata,
+						'handle'                  => $handle,
+						'repo'                    => $repo,
+						'branch'                  => $branch,
+						'path'                    => $wt_path,
+						'reason_code'             => 'missing_metadata',
+						'reason'                  => 'missing repo/branch/path',
+						'missing_fields'          => $missing_fields,
+						'hydrated_fields'         => $identity['hydrated_fields'],
+						'identity_conflicts'      => $identity['conflicts'],
+						'stored_identity'         => $identity['stored_identity'],
+						'reconcile_reason_code'   => array() === $identity['conflicts'] ? 'missing_identity' : 'manual_review_identity_metadata',
+						'reconcile_skipped_state' => 'manual_repair_required',
+						'reconcile_next_action'   => 'repair the missing identity fields or stale registry row before another reconcile pass can classify cleanup safety',
+						'hint'                    => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
+						'created_at'              => $created_at,
+						'metadata'                => $metadata,
 					), $disk_fields
 				);
 				continue;

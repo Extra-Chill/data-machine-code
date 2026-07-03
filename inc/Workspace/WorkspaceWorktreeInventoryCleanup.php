@@ -95,9 +95,12 @@ trait WorkspaceWorktreeInventoryCleanup {
 			if ( ! is_array($metadata) || array() === $metadata ) {
 				$skipped[] = array_merge(
 					$base_row, array(
-						'reason_code' => 'needs_metadata_reconcile',
-						'reason'      => 'inventory row has no lifecycle metadata; metadata reconciliation is required before cleanup planning can classify it',
-						'hint'        => 'Run workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json to generate reviewed metadata reconciliation rows.',
+						'reason_code'             => 'needs_metadata_reconcile',
+						'reason'                  => 'inventory row has no lifecycle metadata; metadata reconciliation is required before cleanup planning can classify it',
+						'reconcile_reason_code'   => 'missing_metadata',
+						'reconcile_skipped_state' => 'not_yet_reconciled',
+						'reconcile_next_action'   => 'run complete reconcile dry-run, then apply reviewed repairable rows; if complete output lists this row under skipped_by_reason, follow that reason before retrying cleanup',
+						'hint'                    => 'Run workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json to generate reviewed metadata reconciliation rows.',
 					)
 				);
 				continue;

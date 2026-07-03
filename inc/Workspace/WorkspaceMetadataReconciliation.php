@@ -146,6 +146,9 @@ trait WorkspaceMetadataReconciliation {
 		$plan['summary']['prefiltered'] = $prefilter['summary'];
 		if ( null !== $pagination ) {
 			$plan['pagination'] = $pagination;
+			if ( ! empty($pagination['complete']) ) {
+				$plan['remaining_blockers'] = $this->build_worktree_metadata_reconciliation_remaining_blockers($proposals, array(), $skipped, $dry_run, $limit, null !== $budget_context ? (string) $budget_context['label'] : '');
+			}
 			$plan['evidence']   = array(
 				'scope'                     => 'paginated metadata reconciliation dry-run',
 				'note'                      => 'Only candidate rows with missing, incomplete, invalid, or finalizable metadata ran per-worktree dirty, unpushed, merge-signal, and GitHub probes. Run the next_offset page until complete for full inventory review.',
@@ -252,7 +255,7 @@ trait WorkspaceMetadataReconciliation {
 			$pagination['next_command'] = $next_command;
 		}
 
-		return array(
+		$result = array(
 			'success'            => true,
 			'dry_run'            => false,
 			'applied'            => true,
@@ -280,6 +283,11 @@ trait WorkspaceMetadataReconciliation {
 				)
 			),
 		);
+		if ( $complete ) {
+			$result['remaining_blockers'] = $this->build_worktree_metadata_reconciliation_remaining_blockers($proposals, $written, $skipped, false, $limit, $budget_label);
+		}
+
+		return $result;
 	}
 
 	/**
@@ -1498,6 +1506,9 @@ trait WorkspaceMetadataReconciliation {
 			if ( ! empty($plan['direct_apply']) && count($written) > 0 ) {
 				$result['pagination'] = $this->restart_worktree_metadata_reconciliation_pagination( (array) $result['pagination'] );
 			}
+			if ( ! empty($result['pagination']['complete']) ) {
+				$result['remaining_blockers'] = $this->build_worktree_metadata_reconciliation_remaining_blockers($planned, $written, $skipped, false, (int) ( $result['pagination']['limit'] ?? self::METADATA_RECONCILE_DEFAULT_LIMIT ), '');
+			}
 		}
 		if ( isset($plan['evidence']) && is_array($plan['evidence']) ) {
 			$result['evidence'] = array_merge(
@@ -1688,6 +1699,79 @@ trait WorkspaceMetadataReconciliation {
 			'skipped_by_reason' => $skipped_by_reason,
 			'proposed_by_state' => $states,
 			'slow_rows'         => $this->summarize_slow_worktree_rows(array_merge($proposals, $skipped)),
+		);
+	}
+
+	/**
+	 * Explain why metadata reconciliation blockers remain after a complete bounded pass.
+	 *
+	 * @param  array<int,array<string,mixed>> $proposals Proposal rows.
+	 * @param  array<int,array<string,mixed>> $written   Written rows.
+	 * @param  array<int,array<string,mixed>> $skipped   Skipped rows.
+	 * @param  bool                           $dry_run   Whether this was a dry-run page.
+	 * @param  int                            $limit     Page size for generated commands.
+	 * @param  string                         $budget    Optional budget label.
+	 * @return array<string,mixed>
+	 */
+	private function build_worktree_metadata_reconciliation_remaining_blockers( array $proposals, array $written, array $skipped, bool $dry_run, int $limit, string $budget ): array {
+		$written_handles   = array_flip(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $written));
+		$pending_proposals = array_values(array_filter($proposals, fn( $row ) => '' === (string) ( $row['handle'] ?? '' ) || ! isset($written_handles[ (string) $row['handle'] ] )));
+
+		$proposed_by_reason = array();
+		$proposed_by_state  = array();
+		foreach ( $pending_proposals as $row ) {
+			$reason                        = (string) ( $row['reason_code'] ?? 'unknown' );
+			$state                         = (string) ( $row['proposed_metadata']['lifecycle_state'] ?? 'unknown' );
+			$proposed_by_reason[ $reason ] = (int) ( $proposed_by_reason[ $reason ] ?? 0 ) + 1;
+			$proposed_by_state[ $state ]   = (int) ( $proposed_by_state[ $state ] ?? 0 ) + 1;
+		}
+		ksort($proposed_by_reason);
+		ksort($proposed_by_state);
+
+		$skipped_by_reason = array();
+		$manual_repair     = 0;
+		$retry_may_help    = 0;
+		foreach ( $skipped as $row ) {
+			$reason                       = (string) ( $row['reason_code'] ?? 'unknown' );
+			$skipped_by_reason[ $reason ] = (int) ( $skipped_by_reason[ $reason ] ?? 0 ) + 1;
+			if ( in_array($reason, array( 'probe_timeout', 'git_probe_failed', 'github_unknown' ), true) ) {
+				++$retry_may_help;
+			} else {
+				++$manual_repair;
+			}
+		}
+		ksort($skipped_by_reason);
+
+		$budget_arg = '' !== $budget ? ' --until-budget=' . $budget : '';
+		if ( $dry_run && array() !== $pending_proposals ) {
+			$next_action  = 'apply_reviewed_plan';
+			$next_command = sprintf('studio wp datamachine-code workspace worktree reconcile-metadata --apply --limit=%d --offset=0%s --format=json', $limit, $budget_arg);
+			$why          = 'The complete dry-run found repairable rows; applying the reviewed plan can reduce these blockers.';
+		} elseif ( $retry_may_help > 0 ) {
+			$next_action  = 'retry_after_transient_probe_failure';
+			$next_command = sprintf('studio wp datamachine-code workspace worktree reconcile-metadata --apply --limit=%d --offset=0%s --format=json', $limit, $budget_arg);
+			$why          = 'Some rows were skipped because probes were unavailable or timed out; another pass may help after the underlying probe issue clears.';
+		} elseif ( $manual_repair > 0 ) {
+			$next_action  = 'manual_repair_required';
+			$next_command = null;
+			$why          = 'The bounded pass is complete and remaining skipped rows need operator repair before reconciliation can classify them.';
+		} else {
+			$next_action  = 'none';
+			$next_command = null;
+			$why          = 'The bounded pass is complete and no metadata reconciliation blockers remain in the scanned candidate set.';
+		}
+
+		return array(
+			'total'              => count($pending_proposals) + count($skipped),
+			'needs_apply'        => count($pending_proposals),
+			'manual_repair'      => $manual_repair,
+			'retry_may_help'     => $retry_may_help,
+			'proposed_by_reason' => $proposed_by_reason,
+			'proposed_by_state'  => $proposed_by_state,
+			'skipped_by_reason'  => $skipped_by_reason,
+			'next_action'        => $next_action,
+			'next_command'       => $next_command,
+			'why'                => $why,
 		);
 	}
 
