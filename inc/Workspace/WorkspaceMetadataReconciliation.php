@@ -149,7 +149,7 @@ trait WorkspaceMetadataReconciliation {
 			if ( ! empty($pagination['complete']) ) {
 				$plan['remaining_blockers'] = $this->build_worktree_metadata_reconciliation_remaining_blockers($proposals, array(), $skipped, $dry_run, $limit, null !== $budget_context ? (string) $budget_context['label'] : '');
 			}
-			$plan['evidence']   = array(
+			$plan['evidence'] = array(
 				'scope'                     => 'paginated metadata reconciliation dry-run',
 				'note'                      => 'Only candidate rows with missing, incomplete, invalid, or finalizable metadata ran per-worktree dirty, unpushed, merge-signal, and GitHub probes. Run the next_offset page until complete for full inventory review.',
 				'fields_skipped_by_listing' => (array) ( $listing['fields_skipped'] ?? array() ),
