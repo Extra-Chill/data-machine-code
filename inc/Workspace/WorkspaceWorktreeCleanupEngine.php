@@ -1199,7 +1199,9 @@ trait WorkspaceWorktreeCleanupEngine {
 			++$processed;
 			$revalidated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, false, $discard_unpushed);
 			if ( isset($revalidated['skipped']) ) {
-				$skipped[] = $revalidated['skipped'];
+				$skip      = $revalidated['skipped'];
+				$skipped[] = $skip;
+				$this->persist_bounded_cleanup_blocker($candidate, $skip, $source);
 				continue;
 			}
 
@@ -1240,6 +1242,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			if ( is_wp_error($remove) ) {
 				$skip      = $this->build_worktree_remove_failure_skip($candidate, $remove, $remove_timeout_seconds);
 				$skipped[] = $skip;
+				$this->persist_bounded_cleanup_blocker($candidate, $skip, $source);
 				if ( 'remove_timeout' === (string) ( $skip['reason_code'] ?? '' ) ) {
 					$timeout_handles[] = (string) ( $skip['handle'] ?? '' );
 				}
@@ -1334,7 +1337,9 @@ trait WorkspaceWorktreeCleanupEngine {
 			++$processed;
 			$revalidated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, $stale_liveness_only, $discard_unpushed);
 			if ( isset($revalidated['skipped']) ) {
-				$skipped[] = $revalidated['skipped'];
+				$skip      = $revalidated['skipped'];
+				$skipped[] = $skip;
+				$this->persist_bounded_cleanup_blocker($candidate, $skip, 'workspace_cleanup_plan_apply');
 				continue;
 			}
 
@@ -1370,10 +1375,12 @@ trait WorkspaceWorktreeCleanupEngine {
 			);
 
 			if ( is_wp_error($remove) ) {
-				$skipped[] = array_merge(
+				$skip      = array_merge(
 					$this->build_worktree_remove_failure_skip($candidate, $remove, $remove_timeout_seconds),
 					array( 'size_bytes' => $size )
 				);
+				$skipped[] = $skip;
+				$this->persist_bounded_cleanup_blocker($candidate, $skip, 'workspace_cleanup_plan_apply');
 				continue;
 			}
 
@@ -1653,6 +1660,47 @@ trait WorkspaceWorktreeCleanupEngine {
 			array(
 				'path'     => $real_path,
 				'unpushed' => (int) $unpushed,
+			)
+		);
+	}
+
+	/**
+	 * Persist concise apply-time blocker evidence for cleanup-eligible rows.
+	 *
+	 * @param  array<string,mixed> $candidate Candidate row from inventory.
+	 * @param  array<string,mixed> $skip      Fresh skip row from apply-time gates.
+	 * @param  string              $source    Apply source marker.
+	 * @return void
+	 */
+	private function persist_bounded_cleanup_blocker( array $candidate, array $skip, string $source ): void {
+		$handle = (string) ( $skip['handle'] ?? $candidate['handle'] ?? '' );
+		if ( '' === $handle ) {
+			return;
+		}
+
+		$metadata = is_array($candidate['metadata'] ?? null) ? $candidate['metadata'] : array();
+		if ( ! WorktreeContextInjector::has_cleanup_signal($metadata) ) {
+			return;
+		}
+
+		$reason = trim( (string) ( $skip['reason'] ?? '' ) );
+		if ( strlen($reason) > 240 ) {
+			$reason = substr($reason, 0, 237) . '...';
+		}
+
+		WorktreeContextInjector::store_lifecycle_metadata(
+			$handle,
+			array(
+				'last_cleanup_blocker' => array_filter(
+					array(
+						'reason_code' => (string) ( $skip['reason_code'] ?? 'unknown' ),
+						'reason'      => $reason,
+						'observed_at' => gmdate('c'),
+						'source'      => $source,
+						'dirty'       => isset($skip['dirty']) ? (int) $skip['dirty'] : null,
+						'unpushed'    => isset($skip['unpushed']) ? (int) $skip['unpushed'] : null,
+					)
+				),
 			)
 		);
 	}

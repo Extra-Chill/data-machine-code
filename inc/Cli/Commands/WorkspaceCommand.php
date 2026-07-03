@@ -6779,7 +6779,7 @@ class WorkspaceCommand extends BaseCommand {
 			'path'        => $row['path'] ?? null,
 		);
 
-		foreach ( array( 'size_bytes', 'artifact_size_bytes', 'dirty', 'unpushed', 'created_at', 'liveness', 'pr_url' ) as $field ) {
+		foreach ( array( 'size_bytes', 'artifact_size_bytes', 'dirty', 'unpushed', 'created_at', 'liveness', 'pr_url', 'last_cleanup_blocker' ) as $field ) {
 			if ( array_key_exists($field, $row) ) {
 				$compact[ $field ] = $row[ $field ];
 			}

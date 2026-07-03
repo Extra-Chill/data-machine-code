@@ -60,6 +60,7 @@ trait WorkspaceHygieneReport {
 		$cleanup_error  = null;
 		$locks          = WorkspaceMutationLock::status($this->workspace_path);
 		$remote_backend = $this->build_remote_workspace_backend_report();
+		$disk_report    = $this->build_workspace_disk_report();
 
 		if ( $include_cleanup ) {
 			$cleanup = $this->worktree_cleanup_merged(
@@ -79,6 +80,7 @@ trait WorkspaceHygieneReport {
 			}
 		}
 		$worktree_summary = $this->summarize_workspace_worktrees($worktrees, $cleanup);
+		$size_warning     = $this->build_size_scan_disabled_warning($include_sizes, $worktree_summary, $disk_report);
 
 		return array(
 			'success'                   => true,
@@ -87,7 +89,7 @@ trait WorkspaceHygieneReport {
 			'destructive'               => false,
 			'fast_stats'                => $this->build_workspace_fast_stats($worktrees, $cleanup, $size_report, $include_worktree_status),
 			'size'                      => $size_report,
-			'disk'                      => $this->build_workspace_disk_report(),
+			'disk'                      => $disk_report,
 			'inventory'                 => array(
 				'freshness' => $this->worktree_inventory()->freshness(),
 				'refresh'   => $inventory_refresh,
@@ -104,6 +106,7 @@ trait WorkspaceHygieneReport {
 				array_filter(
 					array(
 						$include_sizes ? (string) ( $size_report['mode_note'] ?? '' ) : 'Size scan disabled by request.',
+						$size_warning,
 						$include_worktree_status ? 'Full worktree status enabled; this may run git status across every worktree.' : 'Worktree status uses cheap top-level inventory; pass --include-worktree-status for full git status.',
 						$include_cleanup ? 'Cleanup summary uses inventory-only dry-run detection (--inventory-only --skip-github); no per-worktree git probes or GitHub API lookups are required.' : 'Cleanup dry-run disabled by request.',
 						! empty($worktree_summary['stale_primaries']) ? 'One or more primary checkouts are behind their configured upstream according to local remote refs; refresh before using a primary for verification.' : '',
@@ -113,6 +116,36 @@ trait WorkspaceHygieneReport {
 				)
 			),
 		);
+	}
+
+	/**
+	 * Build a remediation hint when size data is intentionally unavailable.
+	 *
+	 * @param  bool  $include_sizes    Whether the hygiene report measured sizes.
+	 * @param  array $worktree_summary Worktree summary counts.
+	 * @param  array $disk_report      Free-space report.
+	 * @return string
+	 */
+	private function build_size_scan_disabled_warning( bool $include_sizes, array $worktree_summary, array $disk_report ): string {
+		if ( $include_sizes ) {
+			return '';
+		}
+
+		$worktree_count = (int) ( $worktree_summary['worktrees'] ?? 0 );
+		$free_bytes     = isset($disk_report['free_bytes']) && is_numeric($disk_report['free_bytes']) ? (int) $disk_report['free_bytes'] : null;
+		$total_bytes    = isset($disk_report['total_bytes']) && is_numeric($disk_report['total_bytes']) ? (int) $disk_report['total_bytes'] : null;
+		$free_percent   = null;
+		if ( null !== $free_bytes && null !== $total_bytes && $total_bytes > 0 ) {
+			$free_percent = ( $free_bytes / $total_bytes ) * 100;
+		}
+
+		$high_worktree_count = $worktree_count > 100;
+		$disk_pressure       = ( null !== $free_bytes && $free_bytes < 20 * 1073741824 ) || ( null !== $free_percent && $free_percent < 15.0 );
+		if ( ! $high_worktree_count && ! $disk_pressure ) {
+			return '';
+		}
+
+		return 'Size scan is disabled while workspace pressure signals exist; run `studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --sort=size` for a bounded hotspot report, or rerun hygiene without --skip-sizes.';
 	}
 
 	/**
@@ -485,6 +518,7 @@ trait WorkspaceHygieneReport {
 		return array(
 			'mode'            => 'best_effort_top_level_du',
 			'mode_note'       => 'Workspace size is best-effort: top-level entries are sized with du and capped by size_limit.',
+			'measured'        => true,
 			'size_limit'      => $limit,
 			'total_entries'   => $total_dirs,
 			'scanned_entries' => $scanned_count,
@@ -505,15 +539,17 @@ trait WorkspaceHygieneReport {
 	 * @return array<string,mixed>
 	 */
 	private function empty_workspace_size_report( int $limit, bool $enabled ): array {
+		$total_bytes = $enabled ? 0 : null;
 		return array(
-			'mode'            => $enabled ? 'best_effort_top_level_du' : 'disabled',
+			'mode'            => $enabled ? 'best_effort_top_level_du' : 'not_measured',
 			'mode_note'       => $enabled ? 'Workspace path is unavailable or unreadable; no size data collected.' : 'Size scan disabled by request.',
+			'measured'        => false,
 			'size_limit'      => $limit,
 			'total_entries'   => 0,
 			'scanned_entries' => 0,
 			'scan_complete'   => true,
-			'total_bytes'     => 0,
-			'total_human'     => $this->format_bytes(0),
+			'total_bytes'     => $total_bytes,
+			'total_human'     => $enabled ? $this->format_bytes(0) : 'unknown',
 			'by_kind'         => array(),
 			'entries'         => array(),
 			'top_entries'     => array(),
