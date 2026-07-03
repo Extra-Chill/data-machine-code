@@ -154,7 +154,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 						'offset'  => $step_stage === $stage ? $offset : 0,
 					)
 				);
-				$step       = $this->drain_pages($step_config['ability'], $step_input, $apply, $deadline);
+				$step       = $this->drain_pages($step_config['ability'], $step_input, $apply, $deadline, $active_no_signal_drain);
 				if ( is_wp_error($step) ) {
 					return $step;
 				}
@@ -174,6 +174,10 @@ class WorkspaceAbandonedCleanupOrchestrator {
 						return $bounded;
 					}
 					$result['evidence']['budget_exhausted'] = $this->budget_expired($deadline);
+					if ( ! empty($step['adaptive_stop']) && is_array($step['adaptive_stop']) ) {
+						$result['evidence']['adaptive_stop'] = $step['adaptive_stop'];
+						$result['summary']['stop_reason']    = (string) ( $step['adaptive_stop']['reason'] ?? 'no_progress_in_stage' );
+					}
 					$result['continuation']                 = $this->build_continuation($step_stage, $step, $limit, $passes, $force, $until_budget, $active_no_signal_drain);
 					$result['next_commands'][]              = (string) $result['continuation']['next_command'];
 					break 2;
@@ -523,6 +527,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		$current     = (int) ( $pagination['offset'] ?? 0 );
 		$mutated     = (int) ( $step['summary']['written'] ?? 0 ) + (int) ( $step['summary']['removed'] ?? 0 );
 		$restart     = ! empty($pagination['partial']) && $next_offset <= $current && $mutated > 0;
+		$adaptive    = (array) ( $step['adaptive_stop'] ?? array() );
 
 		$continuation = array(
 			'stage'        => $stage,
@@ -547,6 +552,13 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			);
 			$continuation['next_command_label']                     = 'Restart this stage from offset 0 because the cleanup candidate set changed.';
 		}
+		if ( ! empty($adaptive) ) {
+			$continuation['reason']             = (string) ( $adaptive['reason'] ?? 'no_progress_in_stage' );
+			$continuation['reason_description'] = (string) ( $adaptive['reason_description'] ?? 'The previous stage page scanned rows but produced no cleanup mutations, so the drain stopped before spending more budget on low-yield pages.' );
+			$continuation['recommendation']     = (string) ( $adaptive['recommendation'] ?? 'Stop this drain for now, or run next_command to continue this stage from the next page if you want a deeper scan.' );
+			$continuation['progress_delta']     = (array) ( $adaptive['progress_delta'] ?? array() );
+			$continuation['next_command_label'] = 'Continue this stage despite the no-progress adaptive stop.';
+		}
 
 		return $continuation;
 	}
@@ -567,7 +579,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		return sprintf('studio wp datamachine-code workspace worktree %s --apply%s --stage=%s --offset=%d --limit=%d --passes=%d%s --format=json', $operation, $force ? ' --force' : '', $stage, $offset, $limit, $passes, '' !== $until_budget ? ' --until-budget=' . $until_budget : '');
 	}
 
-	private function drain_pages( object $ability, array $base_input, bool $apply, ?float $deadline = null ): array|\WP_Error {
+	private function drain_pages( object $ability, array $base_input, bool $apply, ?float $deadline = null, bool $stop_on_no_progress = false ): array|\WP_Error {
 		$pages       = array();
 		$summary     = array();
 		$pagination  = array();
@@ -607,12 +619,30 @@ class WorkspaceAbandonedCleanupOrchestrator {
 
 			$next_offset    = isset($pagination['next_offset']) ? (int) $pagination['next_offset'] : null;
 			$mutation_count = (int) ( $result['summary']['written'] ?? 0 ) + (int) ( $result['summary']['removed'] ?? 0 );
+			$inspected      = (int) ( $result['summary']['inspected'] ?? $result['summary']['processed'] ?? 0 );
 			if ( null === $next_offset || ( $next_offset <= $offset && ( $mutation_count <= 0 || empty($pagination['partial']) ) ) ) {
 				break;
 			}
 
 			$total = isset($pagination['total']) ? (int) $pagination['total'] : null;
 			if ( null !== $total && $next_offset >= $total ) {
+				break;
+			}
+
+			if ( $stop_on_no_progress && $apply && $mutation_count <= 0 && $inspected > 0 ) {
+				$last_result['adaptive_stop'] = array(
+					'reason'             => 'no_progress_in_stage',
+					'reason_description' => 'This stage scanned a page and produced no cleanup metadata writes or removals, so the drain stopped before spending more budget on low-yield pages.',
+					'recommendation'     => 'Stop this drain for now, or run next_command to continue this stage from the next page if you want a deeper scan.',
+					'progress_delta'     => array(
+						'inspected'        => $inspected,
+						'written'          => (int) ( $result['summary']['written'] ?? 0 ),
+						'removed'          => (int) ( $result['summary']['removed'] ?? 0 ),
+						'total_mutations'  => $mutation_count,
+						'previous_offset'  => $offset,
+						'next_offset'      => $next_offset,
+					),
+				);
 				break;
 			}
 

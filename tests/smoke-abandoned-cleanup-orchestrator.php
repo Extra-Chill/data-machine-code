@@ -322,4 +322,40 @@ abandoned_cleanup_assert('finalized' === $bounded_budget_result['continuation'][
 abandoned_cleanup_assert(0 === count($bounded_budget_abilities['datamachine-code/workspace-worktree-prune']->calls), 'bounded budget continuation skips prune after budget exhaustion');
 abandoned_cleanup_assert(str_contains((string) $bounded_budget_result['continuation']['hint'], 'Re-run next_command'), 'bounded budget continuation has operator hint');
 
+$zero_yield_finalized = new AbandonedCleanupQueuedAbility(
+	array(
+		array(
+			'mode'       => 'finalized',
+			'summary'    => array( 'inspected' => 10, 'written' => 0 ),
+			'pagination' => array( 'offset' => 0, 'limit' => 10, 'scanned' => 10, 'partial' => true, 'complete' => false, 'next_offset' => 10, 'total' => 30 ),
+		),
+	)
+);
+$zero_yield_equivalent = new AbandonedCleanupFakeAbility('equivalent_clean', array( 'inspected' => 10, 'written' => 1 ), array( 'complete' => true ));
+$zero_yield_abilities  = array(
+	'datamachine-code/workspace-worktree-reconcile-metadata' => new AbandonedCleanupFakeAbility('reconcile_metadata', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-finalized-apply' => $zero_yield_finalized,
+	'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply' => $zero_yield_equivalent,
+	'datamachine-code/workspace-worktree-active-no-signal-merged-apply' => new AbandonedCleanupFakeAbility('merged', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply' => new AbandonedCleanupFakeAbility('remote_clean', array(), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-active-no-signal-report' => new AbandonedCleanupFakeAbility('active_no_signal_report', array( 'total_active_no_signal' => 0, 'inspected' => 0, 'by_suggested_action' => array() ), array( 'complete' => true, 'total' => 0 )),
+	'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => new AbandonedCleanupFakeAbility('bounded', array( 'processed' => 0, 'removed' => 0 ), array( 'complete' => true )),
+	'datamachine-code/workspace-worktree-prune' => new AbandonedCleanupFakeAbility('prune'),
+);
+$orchestrator          = new DataMachineCode\Workspace\WorkspaceAbandonedCleanupOrchestrator(
+	static fn( string $name ) => $zero_yield_abilities[ $name ] ?? null,
+	static fn(): float => 1000.0
+);
+$zero_yield_result     = $orchestrator->run(array( 'active_no_signal_drain' => true, 'apply' => true, 'limit' => 10, 'passes' => 3, 'until_budget' => '300s' ));
+abandoned_cleanup_assert(! is_wp_error($zero_yield_result), 'active/no-signal zero-yield result succeeds');
+abandoned_cleanup_assert('no_progress_in_stage' === $zero_yield_result['continuation']['reason'], 'zero-yield continuation uses no-progress reason');
+abandoned_cleanup_assert(false === (bool) ( $zero_yield_result['evidence']['budget_exhausted'] ?? true ), 'zero-yield stop is distinct from budget exhaustion');
+abandoned_cleanup_assert('no_progress_in_stage' === ( $zero_yield_result['summary']['stop_reason'] ?? null ), 'zero-yield summary exposes stop reason');
+abandoned_cleanup_assert(10 === (int) ( $zero_yield_result['continuation']['progress_delta']['inspected'] ?? 0 ), 'zero-yield continuation exposes inspected count');
+abandoned_cleanup_assert(0 === (int) ( $zero_yield_result['continuation']['progress_delta']['total_mutations'] ?? -1 ), 'zero-yield continuation exposes zero mutations');
+abandoned_cleanup_assert(str_contains((string) $zero_yield_result['continuation']['recommendation'], 'Stop this drain'), 'zero-yield continuation recommends stopping');
+abandoned_cleanup_assert(str_contains((string) $zero_yield_result['continuation']['next_command'], '--stage=finalized --offset=10'), 'zero-yield continuation resumes same stage next page');
+abandoned_cleanup_assert(0 === count($zero_yield_equivalent->calls), 'zero-yield stop avoids advancing into later active/no-signal stages');
+abandoned_cleanup_assert(0 === count($zero_yield_abilities['datamachine-code/workspace-worktree-prune']->calls), 'zero-yield stop skips prune while continuation remains');
+
 fwrite(STDOUT, 'abandoned cleanup orchestrator smoke passed' . PHP_EOL);
