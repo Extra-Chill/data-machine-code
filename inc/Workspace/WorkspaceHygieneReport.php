@@ -664,13 +664,13 @@ trait WorkspaceHygieneReport {
 		$summary['duplicates']            = $duplicates;
 
 		if ( null !== $cleanup ) {
-			$by_reason                    = (array) ( $cleanup['summary']['skipped_by_reason'] ?? array() );
-			$dirty_blockers               = (int) ( $by_reason['dirty_worktree'] ?? 0 );
-			$unpushed_blockers            = (int) ( $by_reason['unpushed_commits'] ?? 0 );
+			$by_reason                     = (array) ( $cleanup['summary']['skipped_by_reason'] ?? array() );
+			$dirty_blockers                = (int) ( $by_reason['dirty_worktree'] ?? 0 );
+			$unpushed_blockers             = (int) ( $by_reason['unpushed_commits'] ?? 0 );
 			$summary['protected_dirty']    = $dirty_blockers;
 			$summary['protected_unpushed'] = $unpushed_blockers;
-			$summary['missing_metadata']  = (int) ( $by_reason['missing_metadata'] ?? 0 );
-			$summary['external']          = max($summary['external'], (int) ( $by_reason['external_worktree'] ?? 0 ));
+			$summary['missing_metadata']   = (int) ( $by_reason['missing_metadata'] ?? 0 );
+			$summary['external']           = max($summary['external'], (int) ( $by_reason['external_worktree'] ?? 0 ));
 
 			$probe_source                            = ! empty($cleanup['inventory_only']) ? 'inventory_known' : 'fresh_probe';
 			$summary['protected_count_probe_source'] = $probe_source;
@@ -750,7 +750,7 @@ trait WorkspaceHygieneReport {
 			'candidates_by_signal' => $summary['candidates_by_signal'] ?? array(),
 		);
 
-		$expected_outcome                = $this->workspace_cleanup_expected_outcome($summary, ! empty($cleanup['inventory_only']));
+		$expected_outcome = $this->workspace_cleanup_expected_outcome($summary, ! empty($cleanup['inventory_only']));
 		if ( '' !== $expected_outcome ) {
 			$result['expected_outcome'] = $expected_outcome;
 		}
@@ -768,7 +768,7 @@ trait WorkspaceHygieneReport {
 	private function annotate_workspace_cleanup_candidates_for_hygiene( array $candidates, string $probe_source ): array {
 		foreach ( $candidates as &$candidate ) {
 			if ( 'inventory_known' === $probe_source ) {
-				$candidate['fresh_revalidation_status']  = (string) ( $candidate['safety_probe_status'] ?? 'not_run_inventory_only' );
+				$candidate['fresh_revalidation_status']   = (string) ( $candidate['safety_probe_status'] ?? 'not_run_inventory_only' );
 				$candidate['fresh_revalidation_blockers'] = array( 'pending_fresh_revalidation' );
 				$candidate['fresh_revalidation_checks']   = array( 'dirty_worktree', 'unpushed_commits', 'primary_or_protected_worktree', 'containment_failure' );
 				continue;
