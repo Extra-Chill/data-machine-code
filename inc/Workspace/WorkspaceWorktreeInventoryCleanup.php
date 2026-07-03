@@ -229,6 +229,9 @@ trait WorkspaceWorktreeInventoryCleanup {
 					'pr_url'      => $metadata['pr_url'] ?? null,
 				)
 			);
+			if ( is_array($metadata['last_cleanup_blocker'] ?? null) ) {
+				$candidate['last_cleanup_blocker'] = $metadata['last_cleanup_blocker'];
+			}
 			if ( null !== $age_filter && is_string($created_at) && '' !== $created_at ) {
 				$candidate['age_filter'] = array(
 					'type'        => 'older_than',
