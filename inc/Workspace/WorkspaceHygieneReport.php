@@ -664,13 +664,13 @@ trait WorkspaceHygieneReport {
 		$summary['duplicates']            = $duplicates;
 
 		if ( null !== $cleanup ) {
-			$by_reason                      = (array) ( $cleanup['summary']['skipped_by_reason'] ?? array() );
-			$dirty_blockers                 = (int) ( $by_reason['dirty_worktree'] ?? 0 );
-			$unpushed_blockers              = (int) ( $by_reason['unpushed_commits'] ?? 0 );
-			$summary['protected_dirty']      = $dirty_blockers;
-			$summary['protected_unpushed']   = $unpushed_blockers;
-			$summary['missing_metadata']    = (int) ( $by_reason['missing_metadata'] ?? 0 );
-			$summary['external']            = max($summary['external'], (int) ( $by_reason['external_worktree'] ?? 0 ));
+			$by_reason                    = (array) ( $cleanup['summary']['skipped_by_reason'] ?? array() );
+			$dirty_blockers               = (int) ( $by_reason['dirty_worktree'] ?? 0 );
+			$unpushed_blockers            = (int) ( $by_reason['unpushed_commits'] ?? 0 );
+			$summary['protected_dirty']    = $dirty_blockers;
+			$summary['protected_unpushed'] = $unpushed_blockers;
+			$summary['missing_metadata']  = (int) ( $by_reason['missing_metadata'] ?? 0 );
+			$summary['external']          = max($summary['external'], (int) ( $by_reason['external_worktree'] ?? 0 ));
 
 			$probe_source                            = ! empty($cleanup['inventory_only']) ? 'inventory_known' : 'fresh_probe';
 			$summary['protected_count_probe_source'] = $probe_source;
@@ -721,15 +721,15 @@ trait WorkspaceHygieneReport {
 		}
 		unset($candidate);
 		usort($candidates, fn( $a, $b ) => (int) ( $b['size_bytes'] ?? 0 ) <=> (int) ( $a['size_bytes'] ?? 0 ));
-		$summary        = (array) ( $cleanup['summary'] ?? array() );
-		$skipped_reason = (array) ( $summary['skipped_by_reason'] ?? array() );
-		$probe_source   = ! empty($cleanup['inventory_only']) ? 'inventory_known' : 'fresh_probe';
-		$candidates     = $this->annotate_workspace_cleanup_candidates_for_hygiene($candidates, $probe_source);
-		$empty_blockers = array(
+		$summary                         = (array) ( $cleanup['summary'] ?? array() );
+		$skipped_reason                  = (array) ( $summary['skipped_by_reason'] ?? array() );
+		$probe_source                    = ! empty($cleanup['inventory_only']) ? 'inventory_known' : 'fresh_probe';
+		$candidates                      = $this->annotate_workspace_cleanup_candidates_for_hygiene($candidates, $probe_source);
+		$empty_blockers                  = array(
 			'dirty_worktree'   => 0,
 			'unpushed_commits' => 0,
 		);
-		$blocker_counts = array(
+		$blocker_counts                  = array(
 			'inventory_known' => $empty_blockers,
 			'fresh_probe'     => $empty_blockers,
 		);
@@ -737,7 +737,7 @@ trait WorkspaceHygieneReport {
 			'dirty_worktree'   => (int) ( $skipped_reason['dirty_worktree'] ?? 0 ),
 			'unpushed_commits' => (int) ( $skipped_reason['unpushed_commits'] ?? 0 ),
 		);
-		$result = array(
+		$result                          = array(
 			'included'             => true,
 			'dry_run'              => true,
 			'skip_github'          => true,
@@ -750,7 +750,7 @@ trait WorkspaceHygieneReport {
 			'candidates_by_signal' => $summary['candidates_by_signal'] ?? array(),
 		);
 
-		$expected_outcome = $this->workspace_cleanup_expected_outcome($summary, ! empty($cleanup['inventory_only']));
+		$expected_outcome                = $this->workspace_cleanup_expected_outcome($summary, ! empty($cleanup['inventory_only']));
 		if ( '' !== $expected_outcome ) {
 			$result['expected_outcome'] = $expected_outcome;
 		}
@@ -817,18 +817,18 @@ trait WorkspaceHygieneReport {
 		$cleanup_summary    = (array) ( $cleanup['summary'] ?? array() );
 
 		$counts = array(
-			'total_candidates'                  => count($worktrees),
-			'cleanup_eligible_unprobed_count'   => count($cleanup_candidates),
-			'valid_clean_count'                 => 0,
-			'valid_dirty_count'                 => 0,
-			'inventory_known_dirty_count'       => 0,
-			'inventory_known_blocker_count'     => 0,
-			'fresh_probed_blocker_count'        => 0,
-			'invalid_broken_orphan_count'       => 0,
-			'unmanaged_skipped_count'           => 0,
-			'dirty_probe_skipped_count'         => 0,
-			'known_worktree_count'              => 0,
-			'known_primary_count'               => 0,
+			'total_candidates'                => count($worktrees),
+			'cleanup_eligible_unprobed_count' => count($cleanup_candidates),
+			'valid_clean_count'               => 0,
+			'valid_dirty_count'               => 0,
+			'inventory_known_dirty_count'     => 0,
+			'inventory_known_blocker_count'   => 0,
+			'fresh_probed_blocker_count'      => 0,
+			'invalid_broken_orphan_count'     => 0,
+			'unmanaged_skipped_count'         => 0,
+			'dirty_probe_skipped_count'       => 0,
+			'known_worktree_count'            => 0,
+			'known_primary_count'             => 0,
 		);
 
 		foreach ( $worktrees as $row ) {
@@ -896,8 +896,8 @@ trait WorkspaceHygieneReport {
 		return array(
 			'mode'                              => $include_worktree_status ? 'full_git_status' : 'cheap_metadata_first',
 			'partial'                           => ! $include_worktree_status || empty($size_report['scan_complete']),
-			'safety_probe_status'                => $safety_probe_status,
-			'safety_probe_note'                  => $safety_probe_note,
+			'safety_probe_status'               => $safety_probe_status,
+			'safety_probe_note'                 => $safety_probe_note,
 			'status_probe_required_for_summary' => ! $include_worktree_status,
 			'counts'                            => $counts,
 			'estimated_reclaimable_bytes'       => $estimated_reclaimable,
