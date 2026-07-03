@@ -519,14 +519,15 @@ class WorkspaceAbandonedCleanupOrchestrator {
 	private function build_continuation( string $stage, array $step, int $limit, int $passes, bool $force, string $until_budget, bool $active_no_signal_drain = false ): array {
 		$pagination  = (array) ( $step['pagination'] ?? $step['continuation'] ?? array() );
 		$next_offset = isset($pagination['next_offset']) ? max(0, (int) $pagination['next_offset']) : 0;
-		$command     = $this->build_continuation_command($stage, $next_offset, $limit, $passes, $force, $until_budget, $active_no_signal_drain);
 		$current     = (int) ( $pagination['offset'] ?? 0 );
 		$mutated     = (int) ( $step['summary']['written'] ?? 0 ) + (int) ( $step['summary']['removed'] ?? 0 );
 		$restart     = ! empty($pagination['partial']) && $next_offset <= $current && $mutated > 0;
+		$command_offset = $restart ? 0 : $next_offset;
+		$command        = $this->build_continuation_command($stage, $command_offset, $limit, $passes, $force, $until_budget, $active_no_signal_drain);
 
 		$continuation = array(
 			'stage'        => $stage,
-			'offset'       => $next_offset,
+			'offset'       => $command_offset,
 			'next_command' => $command,
 			'pagination'   => $pagination,
 		);
@@ -542,7 +543,8 @@ class WorkspaceAbandonedCleanupOrchestrator {
 				'removed'           => $removed,
 				'total_mutations'   => $written + $removed,
 				'previous_offset'   => $current,
-				'restart_offset'    => $next_offset,
+				'next_offset'       => $next_offset,
+				'restart_offset'    => 0,
 				'candidate_set_now' => 'changed',
 			);
 			$continuation['next_command_label']                     = 'Restart this stage from offset 0 because the cleanup candidate set changed.';
