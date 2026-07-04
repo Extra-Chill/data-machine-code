@@ -55,15 +55,6 @@ final class CleanupRetentionPlanWorktreeRemovalWorkspace {
 					'size_bytes'  => 100,
 				),
 				array(
-					'handle'      => 'repo@remote-clean',
-					'repo'        => 'repo',
-					'branch'      => 'remote-clean',
-					'path'        => '/tmp/dmc-retention-plan-contract/repo@remote-clean',
-					'signal'      => 'remote-tracking-clean',
-					'reason_code' => 'remote-tracking-clean',
-					'size_bytes'  => 200,
-				),
-				array(
 					'handle'      => 'repo@upstream-gone',
 					'repo'        => 'repo',
 					'branch'      => 'upstream-gone',
@@ -73,9 +64,21 @@ final class CleanupRetentionPlanWorktreeRemovalWorkspace {
 					'size_bytes'  => 300,
 				),
 			),
-			'skipped'    => array(),
+			'skipped'    => array(
+				array(
+					'handle'            => 'repo@remote-clean',
+					'repo'              => 'repo',
+					'branch'            => 'remote-clean',
+					'path'              => '/tmp/dmc-retention-plan-contract/repo@remote-clean',
+					'row_type'          => 'protected',
+					'reason_code'       => 'active_lifecycle',
+					'protecting_reason' => 'active_lifecycle',
+					'signal'            => 'remote-tracking-clean',
+					'size_bytes'        => 200,
+				),
+			),
 			'summary'    => array(
-				'fresh_safe_removable_count' => 3,
+				'fresh_safe_removable_count' => 2,
 			),
 			'pagination' => array(
 				'total'          => 5,
@@ -118,14 +121,18 @@ cleanup_retention_plan_assert(3 === (int) ( $workspace->last_worktree_cleanup_op
 cleanup_retention_plan_assert('45s' === ( $workspace->last_worktree_cleanup_opts['until_budget'] ?? null ), 'retention plan should pass the budget to worktree cleanup');
 
 $rows = (array) ( $plan['rows']['worktree_removal'] ?? array() );
-cleanup_retention_plan_assert(3 === count($rows), 'retention plan should preserve fresh safe worktree cleanup candidates as removal rows');
+cleanup_retention_plan_assert(2 === count($rows), 'retention plan should preserve fresh safe worktree cleanup candidates as removal rows');
 
 $signals = array_column($rows, 'signal', 'handle');
 cleanup_retention_plan_assert('local-merged' === ( $signals['repo@local-merged'] ?? null ), 'local-merged candidates should be applyable worktree_removal rows');
-cleanup_retention_plan_assert('remote-tracking-clean' === ( $signals['repo@remote-clean'] ?? null ), 'remote-tracking-clean candidates should be applyable worktree_removal rows');
 cleanup_retention_plan_assert('upstream-gone' === ( $signals['repo@upstream-gone'] ?? null ), 'upstream-gone candidates should be applyable worktree_removal rows');
-cleanup_retention_plan_assert(3 === (int) ( $plan['summary']['rows_by_action']['remove_worktree'] ?? 0 ), 'remove_worktree action rows should match reviewed safe rows');
+cleanup_retention_plan_assert(2 === (int) ( $plan['summary']['rows_by_action']['remove_worktree'] ?? 0 ), 'remove_worktree action rows should match reviewed safe rows');
 cleanup_retention_plan_assert('studio wp datamachine-code workspace cleanup apply <run-id>' === ( $plan['summary']['apply_command'] ?? '' ), 'retention plan should expose the DB-backed apply command');
+
+$blocked = (array) ( $plan['blocked']['worktree_removal'] ?? array() );
+$blocked_by_handle = array_column($blocked, null, 'handle');
+cleanup_retention_plan_assert('protected' === ( $blocked_by_handle['repo@remote-clean']['row_type'] ?? null ), 'remote-tracking-clean-only rows should remain visible as protected plan evidence');
+cleanup_retention_plan_assert('active_lifecycle' === ( $blocked_by_handle['repo@remote-clean']['protecting_reason'] ?? null ), 'protected remote-tracking-clean row should name active_lifecycle as the protection');
 
 $engine = new class {
 	use WorkspaceWorktreeCleanupEngine;

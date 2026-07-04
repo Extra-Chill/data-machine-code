@@ -13,6 +13,8 @@ defined('ABSPATH') || exit;
 
 trait WorkspaceWorktreeCleanupEngine {
 
+	private const RETENTION_RECENT_ACTIVITY_SECONDS = 86400;
+
 	/**
 	 * Cleanup merged worktrees across all primary checkouts.
 	 *
@@ -1364,6 +1366,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		$branch   = (string) ( $candidate['branch'] ?? '' );
 		$wt_path  = (string) ( $candidate['path'] ?? '' );
 		$liveness = (string) ( $candidate['liveness'] ?? '' );
+		$metadata = is_array($candidate['metadata'] ?? null) ? $candidate['metadata'] : array();
 
 		if ( $stale_liveness_only && 'stale' !== $liveness ) {
 			return array(
@@ -1402,6 +1405,44 @@ trait WorkspaceWorktreeCleanupEngine {
 					'reason_code'    => 'missing_metadata',
 					'reason'         => 'missing inventory metadata for bounded cleanup-eligible apply: ' . implode(', ', $missing_fields),
 					'missing_fields' => $missing_fields,
+				),
+			);
+		}
+
+		$recent_activity = $this->worktree_cleanup_recent_activity_protection($metadata);
+		if ( null !== $recent_activity ) {
+			return array(
+				'skipped' => array_merge(
+					array(
+						'handle'            => $handle,
+						'repo'              => $repo,
+						'branch'            => $branch,
+						'path'              => $wt_path,
+						'row_type'          => 'protected',
+						'reason_code'       => 'recent_activity',
+						'protecting_reason' => 'recent_activity',
+						'reason'            => sprintf('worktree metadata was seen %d second(s) ago; retention cleanup requires at least %d second(s) without activity', (int) $recent_activity['age_seconds'], self::RETENTION_RECENT_ACTIVITY_SECONDS),
+						'metadata'          => $metadata,
+					),
+					$recent_activity
+				),
+			);
+		}
+
+		if ( ! $this->worktree_cleanup_has_removable_lifecycle($metadata) ) {
+			return array(
+				'skipped' => array(
+					'handle'            => $handle,
+					'repo'              => $repo,
+					'branch'            => $branch,
+					'path'              => $wt_path,
+					'row_type'          => 'protected',
+					'reason_code'       => 'active_lifecycle',
+					'protecting_reason' => 'active_lifecycle',
+					'reason'            => 'retention cleanup only removes worktrees with finalized, abandoned, or cleanup_eligible lifecycle metadata',
+					'lifecycle_state'   => (string) ( $metadata['lifecycle_state'] ?? '' ),
+					'finalized_state'   => (string) ( $metadata['finalized_state'] ?? '' ),
+					'metadata'          => $metadata,
 				),
 			);
 		}
@@ -1543,7 +1584,6 @@ trait WorkspaceWorktreeCleanupEngine {
 			);
 		}
 
-		$metadata                      = is_array($candidate['metadata'] ?? null) ? $candidate['metadata'] : array();
 		$cleanup_evidence              = is_array($metadata['cleanup_eligibility_evidence'] ?? null) ? $metadata['cleanup_eligibility_evidence'] : array();
 		$allow_effective_clean_removal = false;
 		if ( ( $dirty_count > 0 || $unpushed > 0 ) && 'upstream-equivalent-clean' === (string) ( $cleanup_evidence['signal'] ?? '' ) ) {
@@ -1581,6 +1621,38 @@ trait WorkspaceWorktreeCleanupEngine {
 			);
 		}
 
+		$uses_remote_tracking_clean = in_array(
+			'remote-tracking-clean',
+			array(
+				(string) ( $candidate['signal'] ?? '' ),
+				(string) ( $candidate['reason_code'] ?? '' ),
+				(string) ( $cleanup_evidence['signal'] ?? '' ),
+			),
+			true
+		);
+		if ( $uses_remote_tracking_clean ) {
+			$open_pr_protection = $this->worktree_cleanup_open_pr_protection($primary_path, $repo, $branch);
+			if ( null !== $open_pr_protection ) {
+				$reason_code = (string) ( $open_pr_protection['reason_code'] ?? 'skipped_unverified' );
+				return array(
+					'skipped' => array_merge(
+						array(
+							'handle'            => $handle,
+							'repo'              => $repo,
+							'branch'            => $branch,
+							'path'              => $wt_path,
+							'row_type'          => 'protected',
+							'reason_code'       => $reason_code,
+							'protecting_reason' => 'open_pr' === $reason_code ? 'open_pr' : 'skipped_unverified',
+							'reason'            => (string) ( $open_pr_protection['reason'] ?? 'remote-tracking-clean GitHub safety check could not verify that no open PR exists' ),
+							'metadata'          => $metadata,
+						),
+						$open_pr_protection
+					),
+				);
+			}
+		}
+
 		return array_merge(
 			$candidate,
 			array(
@@ -1589,6 +1661,126 @@ trait WorkspaceWorktreeCleanupEngine {
 				'unpushed' => (int) $unpushed,
 			)
 		);
+	}
+
+	/**
+	 * Lifecycle states retention cleanup may remove.
+	 *
+	 * @return array<int,string>
+	 */
+	private function worktree_cleanup_removable_lifecycle_states(): array {
+		return array(
+			WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE,
+			WorktreeContextInjector::STATE_MERGED,
+			WorktreeContextInjector::STATE_CLOSED,
+			WorktreeContextInjector::STATE_ABANDONED,
+		);
+	}
+
+	/**
+	 * Determine whether metadata explicitly allows retention cleanup removal.
+	 *
+	 * @param  array<string,mixed> $metadata Worktree metadata.
+	 * @return bool
+	 */
+	private function worktree_cleanup_has_removable_lifecycle( array $metadata ): bool {
+		$state           = isset($metadata['lifecycle_state']) ? WorktreeContextInjector::normalize_state( (string) $metadata['lifecycle_state']) : null;
+		$finalized_state = isset($metadata['finalized_state']) ? WorktreeContextInjector::normalize_state( (string) $metadata['finalized_state']) : null;
+		$removable       = $this->worktree_cleanup_removable_lifecycle_states();
+
+		return in_array($state, $removable, true) || in_array($finalized_state, $removable, true);
+	}
+
+	/**
+	 * Return a recent-activity protection row when metadata heartbeat is fresh.
+	 *
+	 * @param  array<string,mixed> $metadata Worktree metadata.
+	 * @return array<string,mixed>|null
+	 */
+	private function worktree_cleanup_recent_activity_protection( array $metadata ): ?array {
+		$last_seen = (string) ( $metadata['last_seen_at'] ?? $metadata['observed_at'] ?? '' );
+		if ( '' === $last_seen ) {
+			return null;
+		}
+
+		$timestamp = strtotime($last_seen);
+		if ( false === $timestamp ) {
+			return null;
+		}
+
+		$age = max(0, time() - (int) $timestamp);
+		if ( $age >= self::RETENTION_RECENT_ACTIVITY_SECONDS ) {
+			return null;
+		}
+
+		return array(
+			'last_seen_at'         => $last_seen,
+			'age_seconds'          => $age,
+			'recency_window_seconds' => self::RETENTION_RECENT_ACTIVITY_SECONDS,
+		);
+	}
+
+	/**
+	 * Fail-safe open-PR protection for remote-tracking-clean cleanup rows.
+	 *
+	 * @param  string $primary_path Primary checkout path.
+	 * @param  string $repo         Repository name.
+	 * @param  string $branch       Branch name.
+	 * @return array<string,mixed>|null Protection row, or null when verified safe.
+	 */
+	private function worktree_cleanup_open_pr_protection( string $primary_path, string $repo, string $branch ): ?array {
+		$slug = $this->resolve_github_slug($primary_path);
+		if ( null === $slug || '' === $slug ) {
+			return array(
+				'reason_code' => 'skipped_unverified',
+				'reason'      => sprintf('remote-tracking-clean requires an open-PR safety check, but no GitHub slug could be resolved for %s', $repo),
+				'github'      => array( 'verified' => false ),
+			);
+		}
+
+		$github_cache = array();
+		$pr           = $this->find_pr_for_branch_direct($slug, $branch, $github_cache, false);
+		if ( is_wp_error($pr) ) {
+			return array(
+				'reason_code' => 'skipped_unverified',
+				'reason'      => 'remote-tracking-clean open-PR safety check failed: ' . $pr->get_error_message(),
+				'github'      => array(
+					'verified' => false,
+					'slug'     => $slug,
+					'error'    => $pr->get_error_code(),
+				),
+			);
+		}
+
+		if ( null === $pr ) {
+			if ( ! class_exists('\DataMachineCode\Abilities\GitHubAbilities') || empty(\DataMachineCode\Abilities\GitHubAbilities::getPat(array( 'repo' => $slug ))) ) {
+				return array(
+					'reason_code' => 'skipped_unverified',
+					'reason'      => 'remote-tracking-clean open-PR safety check could not run because GitHub credentials are unavailable',
+					'github'      => array(
+						'verified' => false,
+						'slug'     => $slug,
+					),
+				);
+			}
+
+			return null;
+		}
+
+		if ( 'open' === (string) ( $pr['state'] ?? '' ) ) {
+			return array(
+				'reason_code' => 'open_pr',
+				'reason'      => sprintf('branch has open PR #%d; retention cleanup must keep the worktree', (int) ( $pr['number'] ?? 0 )),
+				'github'      => array(
+					'verified' => true,
+					'slug'     => $slug,
+					'pr'       => $pr,
+				),
+				'pr_url'      => (string) ( $pr['html_url'] ?? '' ),
+			);
+		}
+
+		return null;
 	}
 
 	/**

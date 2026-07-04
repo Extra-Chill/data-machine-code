@@ -74,6 +74,25 @@ final class WorktreeCleanupCandidateClassifier {
 			);
 		}
 
+		if ( 'remote-tracking-clean' === (string) ( $signal['signal'] ?? '' ) && ! self::has_removable_lifecycle($context['metadata'] ?? null) ) {
+			return self::skip(
+				array_merge(
+					$base,
+					array(
+						'row_type'                  => 'protected',
+						'reason_code'               => 'active_lifecycle',
+						'protecting_reason'         => 'active_lifecycle',
+						'reason'                    => 'remote-tracking-clean is not a standalone destructive cleanup signal; lifecycle must be finalized, abandoned, or cleanup_eligible first',
+						'merge_signal_evidence'     => $signal,
+						'active_review_command'     => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json',
+						'active_review_commands'    => $active_review_commands,
+						'remote_tracking_clean_only' => true,
+					),
+					$disk_fields
+				)
+			);
+		}
+
 		$age_decision = null;
 		if ( null !== $age_filter ) {
 			$age_decision = WorktreeAgeFilter::decide($context['created_at'] ?? null, $age_filter);
@@ -124,6 +143,29 @@ final class WorktreeCleanupCandidateClassifier {
 			'created_at' => $context['created_at'] ?? null,
 			'metadata'   => $context['metadata'] ?? null,
 		);
+	}
+
+	/**
+	 * Whether lifecycle metadata explicitly allows retention cleanup to remove a worktree.
+	 *
+	 * @param  mixed $metadata Worktree metadata.
+	 * @return bool
+	 */
+	private static function has_removable_lifecycle( mixed $metadata ): bool {
+		if ( ! is_array($metadata) ) {
+			return false;
+		}
+
+		$state           = isset($metadata['lifecycle_state']) ? WorktreeContextInjector::normalize_state( (string) $metadata['lifecycle_state']) : null;
+		$finalized_state = isset($metadata['finalized_state']) ? WorktreeContextInjector::normalize_state( (string) $metadata['finalized_state']) : null;
+		$removable       = array(
+			WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE,
+			WorktreeContextInjector::STATE_MERGED,
+			WorktreeContextInjector::STATE_CLOSED,
+			WorktreeContextInjector::STATE_ABANDONED,
+		);
+
+		return in_array($state, $removable, true) || in_array($finalized_state, $removable, true);
 	}
 
 	/**
