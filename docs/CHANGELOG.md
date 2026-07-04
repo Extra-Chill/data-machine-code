@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.40] - 2026-07-04
+
+### Changed
+- Protect active worktrees from retention cleanup
+
 ## [0.48.39] - 2026-07-04
 
 ### Fixed
