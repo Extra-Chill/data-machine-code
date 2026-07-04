@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.39] - 2026-07-04
+
+### Fixed
+- honor upstream-equivalent cleanup signals
+
 ## [0.48.38] - 2026-07-03
 
 ### Changed
