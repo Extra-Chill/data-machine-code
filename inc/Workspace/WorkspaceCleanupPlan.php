@@ -273,7 +273,7 @@ trait WorkspaceCleanupPlan {
 			$accounting             = $this->cleanup_plan_row_size_accounting($row);
 			$row['size_status']     = $accounting['status'];
 			$row['size_accounting'] = $accounting;
-			$row['row_type']        = $type . '_blocked';
+			$row['row_type']        = 'protected' === (string) ( $row['row_type'] ?? '' ) ? 'protected' : $type . '_blocked';
 			$row['safety_class']    = 'blocked';
 			$row['row_id']          = $this->stable_cleanup_row_id($type . '_blocked', $row);
 			$result[]               = $row;

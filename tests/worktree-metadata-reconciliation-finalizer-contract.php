@@ -23,9 +23,10 @@ function worktree_metadata_reconciliation_finalizer_contract_assert_before( stri
 	}
 }
 
-worktree_metadata_reconciliation_finalizer_contract_assert_contains('$resolved_wt       = array_merge(', $source, 'Reconciliation must pass recovered identity into finalizer detection.');
+worktree_metadata_reconciliation_finalizer_contract_assert_contains('$resolved_wt', $source, 'Reconciliation must pass recovered identity into finalizer detection.');
+worktree_metadata_reconciliation_finalizer_contract_assert_contains('= array_merge(', $source, 'Reconciliation must merge recovered identity before finalizer detection.');
 worktree_metadata_reconciliation_finalizer_contract_assert_contains('$finalizer_signal = $this->detect_worktree_lifecycle_finalizer_signal($resolved_wt, $metadata, $github_cache, $fetched);', $source, 'Finalizer detection must use the resolved worktree row.');
 worktree_metadata_reconciliation_finalizer_contract_assert_contains("! empty(\$identity['detached_branch']) && ! \$this->has_stored_lifecycle_finalizer_context(\$metadata)", $source, 'PR-backed detached rows must be allowed to reach finalizer detection.');
-worktree_metadata_reconciliation_finalizer_contract_assert_before('$pr_signal    = $this->detect_stored_pr_merged_signal($metadata, $github_cache);', "fetch --prune --quiet origin", $source, 'Stored PR finalizer checks must run before local fetch.');
+worktree_metadata_reconciliation_finalizer_contract_assert_before('$pr_signal = $this->detect_stored_pr_merged_signal($metadata, $github_cache);', "fetch --prune --quiet origin", $source, 'Stored PR finalizer checks must run before local fetch.');
 
 echo "worktree-metadata-reconciliation-finalizer-contract: ok\n";
