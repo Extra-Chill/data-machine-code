@@ -1690,6 +1690,14 @@ trait WorkspaceActiveNoSignalCleanup {
 	 * @return string
 	 */
 	private function suggest_active_no_signal_action( array $row ): string {
+		$effective_status = (string) ( $row['upstream_equivalence']['effective_status'] ?? '' );
+		if ( 'equivalent_clean' === $effective_status ) {
+			return 'patch_equivalent_default';
+		}
+		if ( 'contained_non_default_remote' === $effective_status ) {
+			return 'contained_non_default_remote';
+		}
+
 		if ( (int) ( $row['dirty'] ?? 0 ) > 0 || (int) ( $row['unpushed'] ?? 0 ) > 0 ) {
 			return 'unsafe_dirty_or_unpushed';
 		}
@@ -1704,14 +1712,6 @@ trait WorkspaceActiveNoSignalCleanup {
 
 		if ( 0 === (int) ( $row['commits_outside_default'] ?? -1 ) ) {
 			return 'merged_to_default';
-		}
-
-		$effective_status = (string) ( $row['upstream_equivalence']['effective_status'] ?? '' );
-		if ( 'equivalent_clean' === $effective_status ) {
-			return 'patch_equivalent_default';
-		}
-		if ( 'contained_non_default_remote' === $effective_status ) {
-			return 'contained_non_default_remote';
 		}
 
 		if ( true === ( $row['remote_tracking'] ?? null ) ) {
