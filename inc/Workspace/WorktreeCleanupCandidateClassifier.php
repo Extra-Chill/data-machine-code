@@ -79,13 +79,13 @@ final class WorktreeCleanupCandidateClassifier {
 				array_merge(
 					$base,
 					array(
-						'row_type'                  => 'protected',
-						'reason_code'               => 'active_lifecycle',
-						'protecting_reason'         => 'active_lifecycle',
-						'reason'                    => 'remote-tracking-clean is not a standalone destructive cleanup signal; lifecycle must be finalized, abandoned, or cleanup_eligible first',
-						'merge_signal_evidence'     => $signal,
-						'active_review_command'     => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json',
-						'active_review_commands'    => $active_review_commands,
+						'row_type'                   => 'protected',
+						'reason_code'                => 'active_lifecycle',
+						'protecting_reason'          => 'active_lifecycle',
+						'reason'                     => 'remote-tracking-clean is not a standalone destructive cleanup signal; lifecycle must be finalized, abandoned, or cleanup_eligible first',
+						'merge_signal_evidence'      => $signal,
+						'active_review_command'      => 'studio wp datamachine-code workspace worktree active-no-signal-report --limit=25 --offset=0 --format=json',
+						'active_review_commands'     => $active_review_commands,
 						'remote_tracking_clean_only' => true,
 					),
 					$disk_fields

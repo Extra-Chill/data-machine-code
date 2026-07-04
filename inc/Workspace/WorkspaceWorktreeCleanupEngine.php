@@ -1714,8 +1714,8 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		return array(
-			'last_seen_at'         => $last_seen,
-			'age_seconds'          => $age,
+			'last_seen_at'           => $last_seen,
+			'age_seconds'            => $age,
 			'recency_window_seconds' => self::RETENTION_RECENT_ACTIVITY_SECONDS,
 		);
 	}
