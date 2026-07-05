@@ -65,8 +65,8 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		if ( '' === $repo_scope && '' !== $scope && $this->scope_is_worktree_filter($scope) ) {
 			$repo_scope = $scope;
 		}
-		$deadline      = null;
-		$stage_order   = $this->stage_order();
+		$deadline    = null;
+		$stage_order = $this->stage_order();
 
 		if ( ! isset($stage_order[ $stage ]) ) {
 			return new \WP_Error('invalid_worktree_abandoned_stage', 'Invalid stage value. Use reconcile, finalized, equivalent-clean, merged, remote-clean, or bounded.', array( 'status' => 400 ));
