@@ -29,6 +29,11 @@ trait WorkspaceActiveNoSignalCleanup {
 			? $opts['next_command_operation']
 			: 'active-no-signal-report';
 		$next_dry_run   = 'active-no-signal-report' !== $next_operation && ! empty($opts['dry_run']);
+		$scope          = $this->normalize_worktree_operation_scope(isset($opts['repo']) ? (string) $opts['repo'] : '');
+		if ( is_wp_error($scope) ) {
+			return $scope;
+		}
+		$scope_arg = $this->worktree_operation_scope_cli_arg($scope);
 		if ( $limit <= 0 ) {
 			return new \WP_Error('invalid_active_no_signal_limit', 'Active/no-signal report --limit must be greater than 0.', array( 'status' => 400 ));
 		}
@@ -39,7 +44,7 @@ trait WorkspaceActiveNoSignalCleanup {
 			}
 		}
 
-		$inventory = $this->worktree_cleanup_inventory_only('', '', false);
+		$inventory = $this->worktree_cleanup_inventory_only('', '', false, null, 0, null === $scope ? '' : (string) $scope['argument']);
 		if ( is_wp_error($inventory) ) {
 			return $inventory;
 		}
@@ -124,7 +129,7 @@ trait WorkspaceActiveNoSignalCleanup {
 			'partial'      => null !== $next_offset,
 			'complete'     => null === $next_offset,
 			'next_offset'  => $next_offset,
-			'next_command' => null === $next_offset ? null : sprintf('studio wp datamachine-code workspace worktree %s%s --limit=%d --offset=%d%s --format=json', $next_operation, $next_dry_run ? ' --dry-run' : '', $limit, $next_offset, null !== $budget_context ? ' --until-budget=' . (string) $budget_context['label'] : ''),
+			'next_command' => null === $next_offset ? null : sprintf('studio wp datamachine-code workspace worktree %s%s%s --limit=%d --offset=%d%s --format=json', $next_operation, $scope_arg, $next_dry_run ? ' --dry-run' : '', $limit, $next_offset, null !== $budget_context ? ' --until-budget=' . (string) $budget_context['label'] : ''),
 		);
 		if ( $budget_stopped ) {
 			$pagination['partial']  = true;
@@ -140,7 +145,8 @@ trait WorkspaceActiveNoSignalCleanup {
 			'summary'      => array_merge($summary, array( 'slow_rows' => $this->summarize_slow_worktree_rows($rows) )),
 			'pagination'   => $pagination,
 			'evidence'     => array(
-				'scope'       => 'review-only active/no-signal and lifecycle reconciliation worktree evidence',
+				'scope'       => null === $scope ? 'review-only active/no-signal and lifecycle reconciliation worktree evidence' : 'review-only active/no-signal and lifecycle reconciliation worktree evidence scoped to ' . (string) $scope['argument'],
+				'repo_scope'  => $scope,
 				'safety'      => 'No worktrees or remote branches are deleted. Dirty and unpushed probes are evidence only.',
 				'budget'      => null === $budget_context ? null : $this->summarize_worktree_loop_budget_context($budget_context, $budget_stopped),
 				'probe_cache' => $probe_cache['stats'],
@@ -484,6 +490,8 @@ trait WorkspaceActiveNoSignalCleanup {
 			$budget_label = $matches[1];
 		}
 
+		$scope       = $this->normalize_worktree_operation_scope(isset($opts['repo']) ? (string) $opts['repo'] : '');
+		$scope_arg   = is_wp_error($scope) ? '' : $this->worktree_operation_scope_cli_arg($scope);
 		$budget_arg  = '' !== $budget_label ? ' --until-budget=' . $budget_label : '';
 		$dry_run_arg = $dry_run ? ' --dry-run' : '';
 		$limit       = (int) ( $pagination['limit'] ?? 25 );
@@ -494,8 +502,9 @@ trait WorkspaceActiveNoSignalCleanup {
 		}
 
 		$pagination['next_command'] = sprintf(
-			'studio wp datamachine-code workspace worktree %s%s --limit=%d --offset=%d%s --format=json',
+			'studio wp datamachine-code workspace worktree %s%s%s --limit=%d --offset=%d%s --format=json',
 			$operation,
+			$scope_arg,
 			$dry_run_arg,
 			$limit,
 			$next_offset,

@@ -3800,7 +3800,7 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( 'active-no-signal-drain' === $operation ) {
-			$result = $this->run_worktree_active_no_signal_drain($assoc_args);
+			$result = $this->run_worktree_active_no_signal_drain($assoc_args, isset($args[1]) ? (string) $args[1] : '');
 			if ( is_wp_error($result) ) {
 				$this->render_workspace_error($result);
 				return;
@@ -3871,7 +3871,7 @@ class WorkspaceCommand extends BaseCommand {
 		$input         = array();
 		$input_builder = (string) ( $operation_config['input_builder'] ?? '' );
 		if ( '' !== $input_builder ) {
-			$input = $this->{$input_builder}($operation, $assoc_args);
+			$input = $this->{$input_builder}($operation, $assoc_args, isset($args[1]) ? (string) $args[1] : '');
 		}
 
 		switch ( $operation ) {
@@ -4028,6 +4028,9 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				break;
 			case 'reconcile-metadata':
+				if ( ! empty($args[1]) ) {
+					$input['repo'] = (string) $args[1];
+				}
 				$input['dry_run']  = ! empty($assoc_args['dry-run']);
 				$input['apply']    = ! empty($assoc_args['apply']);
 				$input['via_jobs'] = ! empty($assoc_args['via-jobs']);
@@ -4149,8 +4152,11 @@ class WorkspaceCommand extends BaseCommand {
 	 * @param  array<string,mixed> $assoc_args CLI args.
 	 * @return array<string,mixed>
 	 */
-	private function build_worktree_active_no_signal_input( string $operation, array $assoc_args ): array {
+	private function build_worktree_active_no_signal_input( string $operation, array $assoc_args, string $repo = '' ): array {
 		$input = array();
+		if ( '' !== trim($repo) ) {
+			$input['repo'] = trim($repo);
+		}
 
 		if ( in_array($operation, array( 'active-no-signal-finalized-apply', 'active-no-signal-equivalent-clean-apply', 'active-no-signal-merged-apply', 'active-no-signal-remote-clean-apply' ), true) ) {
 			$input['dry_run'] = ! empty($assoc_args['dry-run']);
@@ -4203,7 +4209,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * @param  array<string,mixed> $assoc_args CLI args.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function run_worktree_active_no_signal_drain( array $assoc_args ): array|\WP_Error {
+	private function run_worktree_active_no_signal_drain( array $assoc_args, string $repo = '' ): array|\WP_Error {
 		if ( ! empty($assoc_args['force']) ) {
 			return new \WP_Error('active_no_signal_drain_refuses_force', 'Active/no-signal drain will not force cleanup. Protected blockers remain blocked.', array( 'status' => 400 ));
 		}
@@ -4223,6 +4229,12 @@ class WorkspaceCommand extends BaseCommand {
 		foreach ( array( 'limit', 'passes', 'offset', 'stage', 'scope' ) as $key ) {
 			if ( array_key_exists($key, $assoc_args) ) {
 				$input[ $key ] = $assoc_args[ $key ];
+			}
+		}
+		if ( '' !== trim($repo) ) {
+			$input['repo'] = trim($repo);
+			if ( empty($input['scope']) ) {
+				$input['scope'] = trim($repo);
 			}
 		}
 		if ( isset($assoc_args['until-budget']) ) {

@@ -2007,6 +2007,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'With apply=true, schedule bounded metadata reconciliation page jobs instead of applying synchronously.',
 							),
+							'repo'         => array(
+								'type'        => 'string',
+								'description' => 'Optional primary repo or worktree handle scope. When supplied, pagination, evidence, and writes are constrained to matching rows.',
+							),
 							'limit'        => array(
 								'type'        => 'integer',
 								'description' => 'Positive page size for bounded dry-run, direct apply, budgeted apply, or job-backed apply.',
@@ -2060,6 +2064,10 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Compact time budget for this report page, such as 60s or 10m.',
 							),
+							'repo'         => array(
+								'type'        => 'string',
+								'description' => 'Optional primary repo or worktree handle scope. When supplied, pagination and evidence are constrained to matching rows.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -2102,6 +2110,10 @@ class WorkspaceAbilities {
 							'until_budget' => array(
 								'type'        => 'string',
 								'description' => 'Compact time budget for the underlying active_no_signal report page, such as 60s or 10m.',
+							),
+							'repo'         => array(
+								'type'        => 'string',
+								'description' => 'Optional primary repo or worktree handle scope. When supplied, pagination, evidence, and writes are constrained to matching rows.',
 							),
 						),
 					),
@@ -2147,6 +2159,10 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Compact time budget for the underlying active_no_signal report page, such as 60s or 10m.',
 							),
+							'repo'         => array(
+								'type'        => 'string',
+								'description' => 'Optional primary repo or worktree handle scope. When supplied, pagination, evidence, and writes are constrained to matching rows.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -2191,6 +2207,10 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Compact time budget for the underlying active_no_signal report page, such as 60s or 10m.',
 							),
+							'repo'         => array(
+								'type'        => 'string',
+								'description' => 'Optional primary repo or worktree handle scope. When supplied, pagination, evidence, and writes are constrained to matching rows.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -2234,6 +2254,10 @@ class WorkspaceAbilities {
 							'until_budget' => array(
 								'type'        => 'string',
 								'description' => 'Compact time budget for the underlying active_no_signal report page, such as 60s or 10m.',
+							),
+							'repo'         => array(
+								'type'        => 'string',
+								'description' => 'Optional primary repo or worktree handle scope. When supplied, pagination, evidence, and writes are constrained to matching rows.',
 							),
 						),
 					),
@@ -2295,6 +2319,10 @@ class WorkspaceAbilities {
 							'source'       => array(
 								'type'        => 'string',
 								'description' => 'Caller source marker forwarded to underlying cleanup abilities.',
+							),
+							'repo'         => array(
+								'type'        => 'string',
+								'description' => 'Optional primary repo or worktree handle scope forwarded to underlying paginated cleanup abilities.',
 							),
 						),
 					),
@@ -4270,6 +4298,9 @@ class WorkspaceAbilities {
 		if ( isset($input['source']) && '' !== trim( (string) $input['source']) ) {
 			$opts['source'] = trim( (string) $input['source']);
 		}
+		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
+			$opts['repo'] = trim( (string) $input['repo']);
+		}
 
 		return $workspace->worktree_reconcile_metadata($opts);
 	}
@@ -4291,6 +4322,9 @@ class WorkspaceAbilities {
 		}
 		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
 			$opts['until_budget'] = trim( (string) $input['until_budget']);
+		}
+		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
+			$opts['repo'] = trim( (string) $input['repo']);
 		}
 
 		return $workspace->worktree_active_no_signal_report($opts);
@@ -4316,6 +4350,9 @@ class WorkspaceAbilities {
 		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
 			$opts['until_budget'] = trim( (string) $input['until_budget']);
 		}
+		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
+			$opts['repo'] = trim( (string) $input['repo']);
+		}
 
 		return $workspace->worktree_active_no_signal_finalized_apply($opts);
 	}
@@ -4339,6 +4376,9 @@ class WorkspaceAbilities {
 		}
 		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
 			$opts['until_budget'] = trim( (string) $input['until_budget']);
+		}
+		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
+			$opts['repo'] = trim( (string) $input['repo']);
 		}
 
 		return $workspace->worktree_active_no_signal_equivalent_clean_apply($opts);
@@ -4364,6 +4404,9 @@ class WorkspaceAbilities {
 		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
 			$opts['until_budget'] = trim( (string) $input['until_budget']);
 		}
+		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
+			$opts['repo'] = trim( (string) $input['repo']);
+		}
 
 		return $workspace->worktree_active_no_signal_merged_apply($opts);
 	}
@@ -4387,6 +4430,9 @@ class WorkspaceAbilities {
 		}
 		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
 			$opts['until_budget'] = trim( (string) $input['until_budget']);
+		}
+		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
+			$opts['repo'] = trim( (string) $input['repo']);
 		}
 
 		return $workspace->worktree_active_no_signal_remote_clean_apply($opts);

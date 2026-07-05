@@ -58,8 +58,15 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		$until_budget  = isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ? trim( (string) $input['until_budget']) : '';
 		$source        = isset($input['source']) && '' !== trim( (string) $input['source']) ? trim( (string) $input['source']) : self::DEFAULT_SOURCE;
 		$scope         = isset($input['scope']) && '' !== trim( (string) $input['scope']) ? $this->sanitize_scope( (string) $input['scope']) : '';
-		$deadline      = null;
-		$stage_order   = $this->stage_order();
+		$repo_scope    = isset($input['repo']) && '' !== trim( (string) $input['repo']) ? trim( (string) $input['repo']) : '';
+		if ( '' === $scope && '' !== $repo_scope ) {
+			$scope = $this->sanitize_scope($repo_scope);
+		}
+		if ( '' === $repo_scope && '' !== $scope && $this->scope_is_worktree_filter($scope) ) {
+			$repo_scope = $scope;
+		}
+		$deadline    = null;
+		$stage_order = $this->stage_order();
 
 		if ( ! isset($stage_order[ $stage ]) ) {
 			return new \WP_Error('invalid_worktree_abandoned_stage', 'Invalid stage value. Use reconcile, finalized, equivalent-clean, merged, remote-clean, or bounded.', array( 'status' => 400 ));
@@ -85,6 +92,9 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		);
 		if ( '' !== $scope ) {
 			$common_page['scope'] = $scope;
+		}
+		if ( '' !== $repo_scope ) {
+			$common_page['repo'] = $repo_scope;
 		}
 
 		if ( $apply ) {
@@ -298,6 +308,10 @@ class WorkspaceAbandonedCleanupOrchestrator {
 		$scope = trim( (string) $scope, '-' );
 
 		return substr($scope, 0, 120);
+	}
+
+	private function scope_is_worktree_filter( string $scope ): bool {
+		return 1 === preg_match('/^[a-zA-Z0-9._-]+(?:@[a-zA-Z0-9._-]+)?$/', $scope);
 	}
 
 	/** @return array<string,mixed> */

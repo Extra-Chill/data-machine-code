@@ -26,9 +26,10 @@ trait WorkspaceWorktreeInventoryCleanup {
 	 * @param  bool     $include_repaired_metadata Whether repaired metadata rows can be candidates.
 	 * @param  int|null $limit                     Optional worktree page size.
 	 * @param  int      $offset                    Optional worktree page offset.
+	 * @param  string   $scope_arg                 Optional primary repo or worktree handle scope.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function worktree_cleanup_inventory_only( string $older_than, string $sort, bool $include_repaired_metadata = false, ?int $limit = null, int $offset = 0 ): array|\WP_Error {
+	private function worktree_cleanup_inventory_only( string $older_than, string $sort, bool $include_repaired_metadata = false, ?int $limit = null, int $offset = 0, string $scope_arg = '' ): array|\WP_Error {
 		$age_filter = null;
 		if ( '' !== $older_than ) {
 			$duration_seconds = $this->parse_worktree_cleanup_duration($older_than);
@@ -42,7 +43,12 @@ trait WorkspaceWorktreeInventoryCleanup {
 		$candidates = array();
 		$skipped    = array();
 
-		$inventory_rows = array_values(array_filter($this->build_workspace_inventory_rows(), fn( $wt ) => ! empty($wt['is_worktree']) ));
+		$scope = $this->normalize_worktree_operation_scope($scope_arg);
+		if ( is_wp_error($scope) ) {
+			return $scope;
+		}
+
+		$inventory_rows = array_values(array_filter($this->build_workspace_inventory_rows(), fn( $wt ) => ! empty($wt['is_worktree']) && $this->worktree_row_matches_operation_scope($wt, $scope) ));
 		$total          = count($inventory_rows);
 		$offset         = max(0, $offset);
 		$page_rows      = null === $limit ? array_slice($inventory_rows, $offset) : array_slice($inventory_rows, $offset, max(1, $limit));
@@ -203,6 +209,7 @@ trait WorkspaceWorktreeInventoryCleanup {
 			'success'        => true,
 			'dry_run'        => true,
 			'inventory_only' => true,
+			'scope'          => $scope,
 			'candidates'     => $candidates,
 			'removed'        => array(),
 			'skipped'        => $skipped,
