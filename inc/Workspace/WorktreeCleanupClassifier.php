@@ -16,7 +16,7 @@ defined('ABSPATH') || exit;
 final class WorktreeCleanupClassifier {
 
 	public const BUCKET_SAFE_TO_REMOVE_NOW           = 'safe_to_remove_now';
-	public const BUCKET_CLEANUP_ELIGIBLE_UNPROBED   = 'cleanup_eligible_pending_revalidation';
+	public const BUCKET_CLEANUP_ELIGIBLE_UNPROBED    = 'cleanup_eligible_pending_revalidation';
 	public const BUCKET_NEEDS_RECONCILIATION         = 'needs_reconciliation';
 	public const BUCKET_NEEDS_FULL_REVIEW            = 'needs_full_review';
 	public const BUCKET_BLOCKED_BY_DIRTY_OR_UNPUSHED = 'blocked_by_dirty_or_unpushed';
@@ -132,10 +132,10 @@ final class WorktreeCleanupClassifier {
 		array $skipped_by_reason,
 		string $candidate_bucket = self::BUCKET_SAFE_TO_REMOVE_NOW
 	): array {
-		$buckets = array(
+		$buckets                      = array(
 			self::BUCKET_ARTIFACT_ONLY_DIRTY          => 0,
 			self::BUCKET_BLOCKED_BY_DIRTY_OR_UNPUSHED => 0,
-			self::BUCKET_CLEANUP_ELIGIBLE_UNPROBED   => 0,
+			self::BUCKET_CLEANUP_ELIGIBLE_UNPROBED    => 0,
 			self::BUCKET_NEEDS_FULL_REVIEW            => 0,
 			self::BUCKET_NEEDS_RECONCILIATION         => 0,
 			self::BUCKET_SAFE_TO_REMOVE_NOW           => 0,

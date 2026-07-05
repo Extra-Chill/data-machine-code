@@ -112,9 +112,9 @@ class WorkspaceHygieneReportTask extends SystemTask {
 			$this->failJob($jobId, $result->get_error_message());
 			return;
 		}
-		$worktrees                     = (array) ( $result['worktrees'] ?? array() );
-		$cleanup                       = (array) ( $result['cleanup']['summary'] ?? array() );
-		$fast_counts                   = (array) ( $result['fast_stats']['counts'] ?? array() );
+		$worktrees                    = (array) ( $result['worktrees'] ?? array() );
+		$cleanup                      = (array) ( $result['cleanup']['summary'] ?? array() );
+		$fast_counts                  = (array) ( $result['fast_stats']['counts'] ?? array() );
 		$inventory_cleanup_candidates = (int) ( $cleanup['inventory_cleanup_candidate_count'] ?? $fast_counts['cleanup_eligible_unprobed_count'] ?? 0 );
 		do_action(
 			'datamachine_log',
