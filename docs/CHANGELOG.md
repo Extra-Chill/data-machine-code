@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.44] - 2026-07-05
+
+### Fixed
+- Fix cleanup release lint
+
 ## [0.48.43] - 2026-07-05
 
 ### Fixed
