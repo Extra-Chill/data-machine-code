@@ -437,6 +437,55 @@ trait WorkspaceWorktreeCleanupEngine {
 				continue;
 			}
 			if ( $unpushed > 0 ) {
+				$primary_path = $this->get_primary_path($repo);
+				if ( ! is_dir($primary_path . '/.git') ) {
+					$skipped[] = array_merge(
+						array(
+							'handle'      => $handle,
+							'repo'        => $repo,
+							'branch'      => $branch,
+							'path'        => $wt_path,
+							'reason_code' => 'missing_metadata',
+							'reason'      => 'primary checkout missing',
+							'hint'        => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
+							'created_at'  => $created_at,
+							'metadata'    => $metadata,
+						), $disk_fields
+					);
+					continue;
+				}
+
+				$patch_equivalence = $this->classify_unpushed_patch_equivalent_to_default($primary_path, $wt_path, $repo, $fetched, $fetch_timeouts);
+				if ( is_wp_error($patch_equivalence) ) {
+					$skipped[] = $this->build_worktree_probe_failure_skip($handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields, $patch_equivalence);
+					continue;
+				}
+
+				if ( is_array($patch_equivalence) ) {
+					$candidates[] = array_merge(
+						array(
+							'handle'                     => $handle,
+							'repo'                       => $repo,
+							'branch'                     => $branch,
+							'path'                       => $wt_path,
+							'dirty'                      => $dirty_count,
+							'unpushed'                   => $unpushed,
+							'signal'                     => 'patch-equivalent-to-default',
+							'reason_code'                => 'patch-equivalent-to-default',
+							'reason'                     => sprintf('%d unpushed commit(s) are patch-equivalent to the remote default branch; removing the clean worktree is safe without discarding unique work', $unpushed),
+							'hint'                       => 'Cleanup removes only the clean worktree for this reviewed class and preserves the local branch because commit containment did not prove a normal merge.',
+							'cleanup_reasons'            => array( 'patch-equivalent-to-default', 'git cherry proved every local patch exists on the remote default branch' ),
+							'patch_equivalence_evidence' => $patch_equivalence,
+							'preserve_local_branch'      => true,
+							'created_at'                 => $created_at,
+							'liveness'                   => $liveness,
+							'metadata'                   => $metadata,
+						),
+						$disk_fields
+					);
+					continue;
+				}
+
 				$skipped[] = array_merge(
 					array(
 						'handle'      => $handle,
@@ -574,6 +623,12 @@ trait WorkspaceWorktreeCleanupEngine {
 						return $remove;
 					}
 
+					if ( ! empty($cand['preserve_local_branch']) ) {
+						$remove['local_branch_preserved'] = true;
+						$remove['branch_delete_skipped']  = 'patch-equivalent cleanup preserves the local branch instead of force-deleting commits whose containment was not proven';
+						return $remove;
+					}
+
 					// Delete the now-detached local branch while the repo lock still covers
 					// shared git metadata.
 					$primary_path = $this->get_primary_path($cand['repo']);
@@ -668,6 +723,54 @@ trait WorkspaceWorktreeCleanupEngine {
 		);
 
 		return implode(' ', array_values(array_filter($parts, fn( $part ) => null !== $part)));
+	}
+
+	/**
+	 * Prove that a clean worktree's unpushed commits are already present on default by patch-id.
+	 *
+	 * @param  string             $primary_path   Primary checkout path.
+	 * @param  string             $wt_path        Worktree path.
+	 * @param  string             $repo           Workspace repo name.
+	 * @param  array<string,bool> $fetched        Repo fetch cache.
+	 * @param  array<string,\WP_Error> $fetch_timeouts Repo fetch timeout cache.
+	 * @return array<string,mixed>|\WP_Error|null Evidence when safe, timeout error, or null when not proven.
+	 */
+	private function classify_unpushed_patch_equivalent_to_default( string $primary_path, string $wt_path, string $repo, array &$fetched, array &$fetch_timeouts ): array|\WP_Error|null {
+		if ( isset($fetch_timeouts[ $repo ]) ) {
+			return $fetch_timeouts[ $repo ];
+		}
+
+		if ( empty($fetched[ $repo ]) ) {
+			$fetch = $this->run_git($primary_path, 'fetch --prune --quiet origin', self::CLEANUP_GIT_PROBE_TIMEOUT);
+			if ( is_wp_error($fetch) && $this->is_git_timeout_error($fetch) ) {
+				$fetch_timeouts[ $repo ] = $fetch;
+				return $fetch;
+			}
+			$fetched[ $repo ] = true;
+		}
+
+		$default_ref = $this->resolve_remote_default_ref($primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($default_ref) ) {
+			return $default_ref;
+		}
+		if ( null === $default_ref || '' === $default_ref ) {
+			return null;
+		}
+
+		$evidence                          = $this->build_clean_upstream_equivalence_evidence($primary_path, $wt_path, $default_ref, '');
+		$evidence['compared_refs']         = array(
+			'left'  => $default_ref,
+			'right' => 'HEAD',
+			'tool'  => 'git cherry',
+		);
+		$evidence['safe_cleanup_reason']   = 'git cherry reported every local commit with a patch-equivalent match on the remote default branch; no unique patch would be lost by removing the clean worktree';
+		$evidence['local_branch_handling'] = 'preserve_local_branch';
+
+		if ( 'equivalent_clean' !== (string) ( $evidence['effective_status'] ?? '' ) ) {
+			return null;
+		}
+
+		return $evidence;
 	}
 
 	/**
