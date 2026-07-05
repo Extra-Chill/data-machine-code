@@ -2328,7 +2328,16 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## OPTIONS
 	 *
 	 * <operation>
-	 * : Inventory operation. Currently: refresh.
+	 * : Inventory operation. One of: refresh, prune-missing.
+	 *
+	 * [--dry-run]
+	 * : (prune-missing) Preview candidates and skips without deleting rows.
+	 *
+	 * [--yes]
+	 * : (prune-missing) Skip the confirmation prompt before deleting rows.
+	 *
+	 * [--force]
+	 * : (prune-missing) Allow pruning rows with unpushed commits or an open PR.
 	 *
 	 * [--format=<format>]
 	 * : Output format.
@@ -2343,15 +2352,35 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 *     wp datamachine-code workspace inventory refresh --format=json
 	 *
+	 *     # Preview ghost missing_path rows before deleting
+	 *     wp datamachine-code workspace inventory prune-missing --dry-run
+	 *
+	 *     # Delete confirmed-absent ghost rows
+	 *     wp datamachine-code workspace inventory prune-missing --yes
+	 *
 	 * @subcommand inventory
 	 */
 	public function inventory( array $args, array $assoc_args ): void {
 		$operation = $args[0] ?? '';
-		if ( 'refresh' !== $operation ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace inventory refresh [--format=<format>]');
+		if ( 'refresh' === $operation ) {
+			$this->inventory_refresh( $assoc_args );
 			return;
 		}
 
+		if ( 'prune-missing' === $operation ) {
+			$this->inventory_prune_missing( $assoc_args );
+			return;
+		}
+
+		WP_CLI::error('Usage: wp datamachine-code workspace inventory <refresh|prune-missing> [--format=<format>]');
+	}
+
+	/**
+	 * Refresh the DB-backed worktree inventory from the current filesystem view.
+	 *
+	 * @param array<string,mixed> $assoc_args Associative args.
+	 */
+	private function inventory_refresh( array $assoc_args ): void {
 		$ability = wp_get_ability('datamachine-code/workspace-worktree-inventory-refresh');
 		if ( ! $ability ) {
 			WP_CLI::error('Workspace inventory refresh ability not available.');
@@ -2371,6 +2400,64 @@ class WorkspaceCommand extends BaseCommand {
 
 		$summary = (array) ( $result['summary'] ?? array() );
 		WP_CLI::success(sprintf('Inventory refreshed: %d upserted, %d marked missing.', (int) ( $summary['upserted'] ?? 0 ), (int) ( $summary['marked_missing'] ?? 0 )));
+	}
+
+	/**
+	 * Prune DB-backed inventory rows flagged missing_path whose path is still absent.
+	 *
+	 * @param array<string,mixed> $assoc_args Associative args.
+	 */
+	private function inventory_prune_missing( array $assoc_args ): void {
+		$dry_run = ! empty($assoc_args['dry-run']);
+		$force   = ! empty($assoc_args['force']);
+
+		$ability = wp_get_ability('datamachine-code/workspace-worktree-inventory-prune-missing');
+		if ( ! $ability ) {
+			WP_CLI::error('Workspace inventory prune-missing ability not available.');
+			return;
+		}
+
+		// A dry-run preview never mutates, so it does not need confirmation.
+		if ( ! $dry_run && empty($assoc_args['yes']) ) {
+			$preview = $ability->execute(array( 'dry_run' => true ));
+			if ( is_wp_error($preview) ) {
+				WP_CLI::error($preview->get_error_message());
+				return;
+			}
+
+			$preview_summary = (array) ( $preview['summary'] ?? array() );
+			$would_delete    = (int) ( $preview_summary['deleted'] ?? 0 );
+			$would_skip      = (int) ( $preview_summary['skipped'] ?? 0 );
+			if ( 0 === $would_delete ) {
+				WP_CLI::success(sprintf('Nothing to prune: 0 rows would be deleted, %d skipped.', $would_skip));
+				return;
+			}
+
+			WP_CLI::confirm(sprintf('Prune %d missing_path inventory row(s) (%d skipped)? Pass --yes to skip this prompt.', $would_delete, $would_skip));
+		}
+
+		$result = $ability->execute(
+			array(
+				'dry_run' => $dry_run,
+				'force'   => $force,
+			)
+		);
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			$this->renderer()->json($result);
+			return;
+		}
+
+		$summary = (array) ( $result['summary'] ?? array() );
+		if ( $dry_run ) {
+			WP_CLI::success(sprintf('Inventory prune (dry-run): %d would be deleted, %d skipped.', (int) ( $summary['deleted'] ?? 0 ), (int) ( $summary['skipped'] ?? 0 )));
+		} else {
+			WP_CLI::success(sprintf('Inventory pruned: %d deleted, %d skipped.', (int) ( $summary['deleted'] ?? 0 ), (int) ( $summary['skipped'] ?? 0 )));
+		}
 	}
 
 	/**

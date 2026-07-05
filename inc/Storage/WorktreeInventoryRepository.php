@@ -192,6 +192,126 @@ class WorktreeInventoryRepository {
 	}
 
 	/**
+	 * Prune inventory rows flagged missing_path whose on-disk path is still absent.
+	 *
+	 * Safety guards:
+	 *   - Re-probes each candidate's path on disk; only deletes when the path is
+	 *     STILL absent (a stale missing_path flag alone is not trusted).
+	 *   - Refuses to delete rows with unpushed_count > 0 or a non-empty pr_url
+	 *     unless 'force' is true; such rows are reported as skipped.
+	 *
+	 * @param  array{dry_run?: bool, force?: bool} $opts Options.
+	 * @return array<string,mixed> Result with deleted/skipped lists and summary.
+	 */
+	public function pruneMissing( array $opts = array() ): array {
+		$dry_run = ! empty($opts['dry_run']);
+		$force   = ! empty($opts['force']);
+
+		$rows    = $this->missing_path_rows();
+		$deleted = array();
+		$skipped = array();
+
+		foreach ( $rows as $row ) {
+			$handle = (string) ( $row['handle'] ?? '' );
+			$path   = (string) ( $row['path'] ?? '' );
+
+			// Re-probe the disk: only reap when the path is STILL absent.
+			if ( '' !== $path && is_dir($path) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_dir
+				$skipped[] = array(
+					'handle' => $handle,
+					'path'   => $path,
+					'reason' => 'path_present_on_disk',
+				);
+				continue;
+			}
+
+			// Protect rows carrying unpushed work or an open PR unless forced.
+			if ( ! $force ) {
+				$unpushed = isset($row['unpushed_count']) ? (int) $row['unpushed_count'] : 0;
+				$pr_url   = isset($row['pr_url']) ? trim((string) $row['pr_url']) : '';
+
+				if ( $unpushed > 0 ) {
+					$skipped[] = array(
+						'handle'        => $handle,
+						'path'          => $path,
+						'reason'        => 'unpushed_count',
+						'unpushed_count' => $unpushed,
+					);
+					continue;
+				}
+
+				if ( '' !== $pr_url ) {
+					$skipped[] = array(
+						'handle' => $handle,
+						'path'   => $path,
+						'reason' => 'pr_url',
+						'pr_url' => $pr_url,
+					);
+					continue;
+				}
+			}
+
+			if ( $dry_run ) {
+				$deleted[] = array(
+					'handle' => $handle,
+					'path'   => $path,
+					'repo'   => (string) ( $row['repo'] ?? '' ),
+				);
+				continue;
+			}
+
+			if ( $this->delete($handle) ) {
+				$deleted[] = array(
+					'handle' => $handle,
+					'path'   => $path,
+					'repo'   => (string) ( $row['repo'] ?? '' ),
+				);
+			} else {
+				$skipped[] = array(
+					'handle' => $handle,
+					'path'   => $path,
+					'reason' => 'delete_failed',
+				);
+			}
+		}
+
+		return array(
+			'success'   => true,
+			'pruned_at' => gmdate('c'),
+			'dry_run'   => $dry_run,
+			'deleted'   => $deleted,
+			'skipped'   => $skipped,
+			'summary'   => array(
+				'deleted' => count($deleted),
+				'skipped' => count($skipped),
+				'total'   => count($rows),
+			),
+		);
+	}
+
+	/**
+	 * Fetch all rows currently flagged missing_path.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function missing_path_rows(): array {
+		global $wpdb;
+
+		if ( ! isset($wpdb) || ! method_exists($wpdb, 'get_results') ) {
+			return array();
+		}
+
+		$table = self::table_name();
+		// phpcs:disable WordPress.DB.PreparedSQL -- Table name from $wpdb->prefix, not user input.
+		$sql = "SELECT * FROM {$table} WHERE missing_path = 1 ORDER BY handle ASC";
+		// phpcs:enable WordPress.DB.PreparedSQL
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Static string, no user input.
+		$rows = $wpdb->get_results($sql, ARRAY_A);
+		return is_array($rows) ? array_map(array( $this, 'decode_row' ), $rows) : array();
+	}
+
+	/**
 	 * Fetch all rows, optionally filtered by repo.
 	 *
 	 * @return array<int,array<string,mixed>>

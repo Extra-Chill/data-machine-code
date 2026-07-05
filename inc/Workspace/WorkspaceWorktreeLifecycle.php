@@ -1063,6 +1063,19 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/**
+	 * Prune DB-backed inventory rows flagged missing_path whose path is still absent.
+	 *
+	 * Re-probes each candidate on disk, protects rows with unpushed work or an
+	 * open PR unless forced, and deletes the confirmed-absent survivors.
+	 *
+	 * @param  array{dry_run?: bool, force?: bool} $opts Options.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function worktree_inventory_prune_missing( array $opts = array() ): array|\WP_Error {
+		return $this->worktree_inventory()->pruneMissing($opts);
+	}
+
+	/**
 	 * Build a single inventory row for a known workspace handle.
 	 *
 	 * @param  string $handle Workspace handle.
