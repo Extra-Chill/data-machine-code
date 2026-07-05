@@ -21,8 +21,8 @@ jobs:
   homeboy:
     uses: Extra-Chill/homeboy-action/.github/workflows/ci.yml@v2
     with:
-      commands: audit,lint,test
-      expected-commands: audit,lint,test
+      commands: review audit,review lint,review test
+      expected-commands: review audit,review lint,review test
       autofix: 'true'
-      autofix-commands: 'lint --fix'
+      autofix-commands: 'review lint --fix'
     secrets: inherit
