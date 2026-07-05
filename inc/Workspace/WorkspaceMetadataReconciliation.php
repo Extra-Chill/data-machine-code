@@ -39,9 +39,9 @@ trait WorkspaceMetadataReconciliation {
 			return $scope;
 		}
 		$scope_arg = $this->worktree_operation_scope_cli_arg($scope);
-		$paged        = array_key_exists('limit', $opts) || array_key_exists('offset', $opts) || '' !== $until_budget;
-		$limit        = $paged ? ( array_key_exists('limit', $opts) ? (int) $opts['limit'] : self::METADATA_RECONCILE_DEFAULT_LIMIT ) : 0;
-		$offset       = $paged ? max(0, (int) ( $opts['offset'] ?? 0 )) : 0;
+		$paged     = array_key_exists('limit', $opts) || array_key_exists('offset', $opts) || '' !== $until_budget;
+		$limit     = $paged ? ( array_key_exists('limit', $opts) ? (int) $opts['limit'] : self::METADATA_RECONCILE_DEFAULT_LIMIT ) : 0;
+		$offset    = $paged ? max(0, (int) ( $opts['offset'] ?? 0 )) : 0;
 
 		if ( null !== $apply_plan ) {
 			return $this->apply_worktree_metadata_reconciliation_plan($apply_plan);
