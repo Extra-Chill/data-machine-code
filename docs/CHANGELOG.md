@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.42] - 2026-07-05
+
+### Changed
+- Add patch-equivalent worktree cleanup path
+- Improve abandoned cleanup no-progress guidance
+
+### Fixed
+- Fix safe cleanup evidence byte rollups
+
 ## [0.48.41] - 2026-07-05
 
 ### Changed
