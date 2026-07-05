@@ -757,13 +757,13 @@ trait WorkspaceWorktreeCleanupEngine {
 			return null;
 		}
 
-		$evidence                         = $this->build_clean_upstream_equivalence_evidence($primary_path, $wt_path, $default_ref, '');
-		$evidence['compared_refs']        = array(
+		$evidence                          = $this->build_clean_upstream_equivalence_evidence($primary_path, $wt_path, $default_ref, '');
+		$evidence['compared_refs']         = array(
 			'left'  => $default_ref,
 			'right' => 'HEAD',
 			'tool'  => 'git cherry',
 		);
-		$evidence['safe_cleanup_reason']  = 'git cherry reported every local commit with a patch-equivalent match on the remote default branch; no unique patch would be lost by removing the clean worktree';
+		$evidence['safe_cleanup_reason']   = 'git cherry reported every local commit with a patch-equivalent match on the remote default branch; no unique patch would be lost by removing the clean worktree';
 		$evidence['local_branch_handling'] = 'preserve_local_branch';
 
 		if ( 'equivalent_clean' !== (string) ( $evidence['effective_status'] ?? '' ) ) {
