@@ -6,6 +6,8 @@ if ( ! defined('ABSPATH') ) {
 	define('ABSPATH', __DIR__ . '/fixtures/');
 }
 
+require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceHandle.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceCoreUtilities.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceMetadataReconciliation.php';
 
 function worktree_metadata_reconciliation_remaining_blockers_assert_same( mixed $expected, mixed $actual, string $message ): void {
@@ -15,6 +17,7 @@ function worktree_metadata_reconciliation_remaining_blockers_assert_same( mixed 
 }
 
 $reconciler = new class {
+	use DataMachineCode\Workspace\WorkspaceCoreUtilities;
 	use DataMachineCode\Workspace\WorkspaceMetadataReconciliation;
 };
 
@@ -48,6 +51,28 @@ worktree_metadata_reconciliation_remaining_blockers_assert_same(array( 'active' 
 worktree_metadata_reconciliation_remaining_blockers_assert_same(array( 'missing_identity' => 1 ), $dry_run['skipped_by_reason'], 'dry-run groups skipped blockers by reconcile reason');
 worktree_metadata_reconciliation_remaining_blockers_assert_same('apply_reviewed_plan', $dry_run['next_action'], 'dry-run next action points at apply when it can help');
 worktree_metadata_reconciliation_remaining_blockers_assert_same('studio wp datamachine-code workspace worktree reconcile-metadata --apply --limit=25 --offset=0 --until-budget=30s --format=json', $dry_run['next_command'], 'dry-run next command is actionable');
+
+$scoped_dry_run = $method->invoke(
+	$reconciler,
+	array(
+		array(
+			'handle'            => 'homeboy@one',
+			'reason_code'       => 'metadata_backfill',
+			'proposed_metadata' => array( 'lifecycle_state' => 'active' ),
+		),
+	),
+	array(),
+	array(),
+	true,
+	25,
+	'30s',
+	array(
+		'argument' => 'homeboy',
+		'repo'     => 'homeboy',
+		'handle'   => null,
+	)
+);
+worktree_metadata_reconciliation_remaining_blockers_assert_same('studio wp datamachine-code workspace worktree reconcile-metadata homeboy --apply --limit=25 --offset=0 --until-budget=30s --format=json', $scoped_dry_run['next_command'], 'scoped dry-run next command preserves repo scope');
 
 $manual = $method->invoke(
 	$reconciler,

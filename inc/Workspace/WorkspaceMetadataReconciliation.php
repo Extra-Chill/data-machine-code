@@ -34,6 +34,11 @@ trait WorkspaceMetadataReconciliation {
 		$source       = isset($opts['source']) ? trim( (string) $opts['source']) : 'workspace_metadata_reconcile';
 		$apply_plan   = isset($opts['apply_plan']) && is_array($opts['apply_plan']) ? $opts['apply_plan'] : null;
 		$until_budget = isset($opts['until_budget']) ? trim( (string) $opts['until_budget']) : '';
+		$scope        = $this->normalize_worktree_operation_scope(isset($opts['repo']) ? (string) $opts['repo'] : '');
+		if ( is_wp_error($scope) ) {
+			return $scope;
+		}
+		$scope_arg = $this->worktree_operation_scope_cli_arg($scope);
 		$paged        = array_key_exists('limit', $opts) || array_key_exists('offset', $opts) || '' !== $until_budget;
 		$limit        = $paged ? ( array_key_exists('limit', $opts) ? (int) $opts['limit'] : self::METADATA_RECONCILE_DEFAULT_LIMIT ) : 0;
 		$offset       = $paged ? max(0, (int) ( $opts['offset'] ?? 0 )) : 0;
@@ -61,7 +66,7 @@ trait WorkspaceMetadataReconciliation {
 			}
 
 			if ( $apply && ! $dry_run ) {
-				return $this->drain_worktree_metadata_reconciliation_budget($limit, $offset, $until_budget, $budget_seconds);
+				return $this->drain_worktree_metadata_reconciliation_budget($limit, $offset, $until_budget, $budget_seconds, null === $scope ? '' : (string) $scope['argument']);
 			}
 		}
 		if ( $via_jobs && ! $paged ) {
@@ -71,7 +76,7 @@ trait WorkspaceMetadataReconciliation {
 		}
 
 		$listing = $this->worktree_list(
-			null,
+			null === $scope ? null : (string) $scope['repo'],
 			null,
 			$paged ? array(
 				'include_status' => false,
@@ -85,7 +90,7 @@ trait WorkspaceMetadataReconciliation {
 		$all_worktrees   = array_values(
 			array_filter(
 				(array) ( $listing['worktrees'] ?? array() ),
-				fn( $wt ) => empty($wt['is_primary'])
+				fn( $wt ) => empty($wt['is_primary']) && is_array($wt) && $this->worktree_row_matches_operation_scope($wt, $scope)
 			)
 		);
 		$prefilter       = $this->prefilter_worktree_metadata_reconciliation_rows($all_worktrees);
@@ -121,13 +126,13 @@ trait WorkspaceMetadataReconciliation {
 		$classified_skips = $this->classify_worktree_metadata_reconciliation_skips($skipped);
 		$pagination       = $paged ? $this->build_worktree_metadata_reconciliation_pagination($total_worktrees, count($page_worktrees), $limit, $offset) : null;
 		if ( null !== $pagination && null !== ( $pagination['next_offset'] ?? null ) ) {
-			$pagination['next_command'] = sprintf('studio wp datamachine-code workspace worktree reconcile-metadata --%s --limit=%d --offset=%d%s --format=json', $apply ? 'apply' : 'dry-run', $limit, (int) $pagination['next_offset'], null !== $budget_context ? ' --until-budget=' . (string) $budget_context['label'] : '');
+			$pagination['next_command'] = sprintf('studio wp datamachine-code workspace worktree reconcile-metadata%s --%s --limit=%d --offset=%d%s --format=json', $scope_arg, $apply ? 'apply' : 'dry-run', $limit, (int) $pagination['next_offset'], null !== $budget_context ? ' --until-budget=' . (string) $budget_context['label'] : '');
 		}
 		if ( null !== $pagination && $budget_stopped ) {
 			$pagination['partial']      = true;
 			$pagination['complete']     = false;
 			$pagination['next_offset']  = $offset + count($page_worktrees);
-			$pagination['next_command'] = sprintf('studio wp datamachine-code workspace worktree reconcile-metadata --%s --limit=%d --offset=%d%s --format=json', $apply ? 'apply' : 'dry-run', $limit, (int) $pagination['next_offset'], null !== $budget_context ? ' --until-budget=' . (string) $budget_context['label'] : '');
+			$pagination['next_command'] = sprintf('studio wp datamachine-code workspace worktree reconcile-metadata%s --%s --limit=%d --offset=%d%s --format=json', $scope_arg, $apply ? 'apply' : 'dry-run', $limit, (int) $pagination['next_offset'], null !== $budget_context ? ' --until-budget=' . (string) $budget_context['label'] : '');
 		}
 
 		$plan                           = array(
@@ -144,13 +149,15 @@ trait WorkspaceMetadataReconciliation {
 			'summary'            => $this->build_worktree_metadata_reconciliation_summary($paged ? count($page_worktrees) : count($page_scope), $proposals, array(), $skipped),
 		);
 		$plan['summary']['prefiltered'] = $prefilter['summary'];
+		$plan['scope']                  = $scope;
 		if ( null !== $pagination ) {
 			$plan['pagination'] = $pagination;
 			if ( ! empty($pagination['complete']) ) {
-				$plan['remaining_blockers'] = $this->build_worktree_metadata_reconciliation_remaining_blockers($proposals, array(), $skipped, $dry_run, $limit, null !== $budget_context ? (string) $budget_context['label'] : '');
+				$plan['remaining_blockers'] = $this->build_worktree_metadata_reconciliation_remaining_blockers($proposals, array(), $skipped, $dry_run, $limit, null !== $budget_context ? (string) $budget_context['label'] : '', $scope);
 			}
 			$plan['evidence'] = array(
-				'scope'                     => 'paginated metadata reconciliation dry-run',
+				'scope'                     => null === $scope ? 'paginated metadata reconciliation dry-run' : 'paginated metadata reconciliation scoped to ' . (string) $scope['argument'],
+				'repo_scope'                => $scope,
 				'note'                      => 'Only candidate rows with missing, incomplete, invalid, or finalizable metadata ran per-worktree dirty, unpushed, merge-signal, and GitHub probes. Run the next_offset page until complete for full inventory review.',
 				'fields_skipped_by_listing' => (array) ( $listing['fields_skipped'] ?? array() ),
 				'prefilter'                 => $prefilter['summary'],
@@ -180,7 +187,7 @@ trait WorkspaceMetadataReconciliation {
 	 * @param  int    $budget_seconds Parsed budget in seconds.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function drain_worktree_metadata_reconciliation_budget( int $limit, int $offset, string $budget_label, int $budget_seconds ): array|\WP_Error {
+	private function drain_worktree_metadata_reconciliation_budget( int $limit, int $offset, string $budget_label, int $budget_seconds, string $scope_arg = '' ): array|\WP_Error {
 		$started_at      = microtime(true);
 		$reserve_seconds = min(5.0, max(1.0, $budget_seconds * 0.1));
 		$pages           = array();
@@ -190,11 +197,17 @@ trait WorkspaceMetadataReconciliation {
 		$scanned         = 0;
 		$next_offset     = $offset;
 		$last_pagination = null;
+		$scope           = $this->normalize_worktree_operation_scope($scope_arg);
+		if ( is_wp_error($scope) ) {
+			return $scope;
+		}
+		$scope_cli_arg = $this->worktree_operation_scope_cli_arg($scope);
 
 		do {
 			$page = $this->worktree_reconcile_metadata(
 				array(
 					'apply'                   => true,
+					'repo'                    => null === $scope ? '' : (string) $scope['argument'],
 					'limit'                   => $limit,
 					'offset'                  => $next_offset,
 					'internal_budget_label'   => $budget_label,
@@ -235,7 +248,8 @@ trait WorkspaceMetadataReconciliation {
 		$mutation_count = count($written);
 		$restart_offset = $mutation_count > 0 ? 0 : (int) ( $last_pagination['next_offset'] ?? $next_offset );
 		$next_command   = $partial ? sprintf(
-			'studio wp datamachine-code workspace worktree reconcile-metadata --apply --limit=%d --offset=%d --until-budget=%s --format=json',
+			'studio wp datamachine-code workspace worktree reconcile-metadata%s --apply --limit=%d --offset=%d --until-budget=%s --format=json',
+			$scope_cli_arg,
 			$limit,
 			$restart_offset,
 			$budget_label
@@ -271,7 +285,8 @@ trait WorkspaceMetadataReconciliation {
 			'pagination'         => $pagination,
 			'evidence'           => array_filter(
 				array(
-					'scope'                   => 'time-budgeted metadata reconciliation direct apply',
+					'scope'                   => null === $scope ? 'time-budgeted metadata reconciliation direct apply' : 'time-budgeted metadata reconciliation direct apply scoped to ' . (string) $scope['argument'],
+					'repo_scope'              => $scope,
 					'apply_source'            => 'direct_apply',
 					'budget'                  => $budget_label,
 					'budget_seconds'          => $budget_seconds,
@@ -284,7 +299,7 @@ trait WorkspaceMetadataReconciliation {
 			),
 		);
 		if ( $complete ) {
-			$result['remaining_blockers'] = $this->build_worktree_metadata_reconciliation_remaining_blockers($proposals, $written, $skipped, false, $limit, $budget_label);
+			$result['remaining_blockers'] = $this->build_worktree_metadata_reconciliation_remaining_blockers($proposals, $written, $skipped, false, $limit, $budget_label, $scope);
 		}
 
 		return $result;
@@ -1500,6 +1515,9 @@ trait WorkspaceMetadataReconciliation {
 			'external_worktrees' => $classified_skips['external_worktrees'],
 			'summary'            => $this->build_worktree_metadata_reconciliation_summary($inspected, $planned, $written, $skipped),
 		);
+		if ( isset($plan['scope']) && is_array($plan['scope']) ) {
+			$result['scope'] = $plan['scope'];
+		}
 
 		if ( isset($plan['pagination']) && is_array($plan['pagination']) ) {
 			$result['pagination'] = $plan['pagination'];
@@ -1507,14 +1525,15 @@ trait WorkspaceMetadataReconciliation {
 				$result['pagination'] = $this->restart_worktree_metadata_reconciliation_pagination( (array) $result['pagination'] );
 			}
 			if ( ! empty($result['pagination']['complete']) ) {
-				$result['remaining_blockers'] = $this->build_worktree_metadata_reconciliation_remaining_blockers($planned, $written, $skipped, false, (int) ( $result['pagination']['limit'] ?? self::METADATA_RECONCILE_DEFAULT_LIMIT ), '');
+				$result_scope                 = is_array($result['scope'] ?? null) ? $result['scope'] : null;
+				$result['remaining_blockers'] = $this->build_worktree_metadata_reconciliation_remaining_blockers($planned, $written, $skipped, false, (int) ( $result['pagination']['limit'] ?? self::METADATA_RECONCILE_DEFAULT_LIMIT ), '', $result_scope);
 			}
 		}
 		if ( isset($plan['evidence']) && is_array($plan['evidence']) ) {
 			$result['evidence'] = array_merge(
 				$plan['evidence'],
 				array(
-					'scope'        => ! empty($plan['direct_apply']) ? 'paginated metadata reconciliation direct apply' : (string) ( $plan['evidence']['scope'] ?? 'paginated metadata reconciliation apply-plan' ),
+					'scope'        => (string) ( $plan['evidence']['scope'] ?? ( ! empty($plan['direct_apply']) ? 'paginated metadata reconciliation direct apply' : 'paginated metadata reconciliation apply-plan' ) ),
 					'apply_source' => ! empty($plan['direct_apply']) ? 'direct_apply' : 'apply_plan',
 				)
 			);
@@ -1711,9 +1730,10 @@ trait WorkspaceMetadataReconciliation {
 	 * @param  bool                           $dry_run   Whether this was a dry-run page.
 	 * @param  int                            $limit     Page size for generated commands.
 	 * @param  string                         $budget    Optional budget label.
+	 * @param  array{argument: string, repo: string, handle: string|null}|null $scope Optional operation scope.
 	 * @return array<string,mixed>
 	 */
-	private function build_worktree_metadata_reconciliation_remaining_blockers( array $proposals, array $written, array $skipped, bool $dry_run, int $limit, string $budget ): array {
+	private function build_worktree_metadata_reconciliation_remaining_blockers( array $proposals, array $written, array $skipped, bool $dry_run, int $limit, string $budget, ?array $scope = null ): array {
 		$written_handles   = array_flip(array_map(fn( $row ) => (string) ( $row['handle'] ?? '' ), $written));
 		$pending_proposals = array_values(array_filter($proposals, fn( $row ) => '' === (string) ( $row['handle'] ?? '' ) || ! isset($written_handles[ (string) $row['handle'] ] )));
 
@@ -1743,13 +1763,14 @@ trait WorkspaceMetadataReconciliation {
 		ksort($skipped_by_reason);
 
 		$budget_arg = '' !== $budget ? ' --until-budget=' . $budget : '';
+		$scope_arg  = $this->worktree_operation_scope_cli_arg($scope);
 		if ( $dry_run && array() !== $pending_proposals ) {
 			$next_action  = 'apply_reviewed_plan';
-			$next_command = sprintf('studio wp datamachine-code workspace worktree reconcile-metadata --apply --limit=%d --offset=0%s --format=json', $limit, $budget_arg);
+			$next_command = sprintf('studio wp datamachine-code workspace worktree reconcile-metadata%s --apply --limit=%d --offset=0%s --format=json', $scope_arg, $limit, $budget_arg);
 			$why          = 'The complete dry-run found repairable rows; applying the reviewed plan can reduce these blockers.';
 		} elseif ( $retry_may_help > 0 ) {
 			$next_action  = 'retry_after_transient_probe_failure';
-			$next_command = sprintf('studio wp datamachine-code workspace worktree reconcile-metadata --apply --limit=%d --offset=0%s --format=json', $limit, $budget_arg);
+			$next_command = sprintf('studio wp datamachine-code workspace worktree reconcile-metadata%s --apply --limit=%d --offset=0%s --format=json', $scope_arg, $limit, $budget_arg);
 			$why          = 'Some rows were skipped because probes were unavailable or timed out; another pass may help after the underlying probe issue clears.';
 		} elseif ( $manual_repair > 0 ) {
 			$next_action  = 'manual_repair_required';

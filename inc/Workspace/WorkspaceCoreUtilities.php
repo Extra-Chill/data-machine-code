@@ -231,6 +231,70 @@ trait WorkspaceCoreUtilities {
 	}
 
 	/**
+	 * Normalize an optional worktree cleanup/reconciliation scope.
+	 *
+	 * @param  string|null $scope Optional primary repo or worktree handle.
+	 * @return array{argument: string, repo: string, handle: string|null}|null|\WP_Error
+	 */
+	protected function normalize_worktree_operation_scope( ?string $scope ): array|null|\WP_Error {
+		$scope = null === $scope ? '' : trim($scope);
+		if ( '' === $scope ) {
+			return null;
+		}
+
+		$parsed = $this->parse_handle($scope);
+		if ( '' === $parsed['repo'] || '' === $parsed['dir_name'] ) {
+			return new \WP_Error('invalid_worktree_scope', sprintf('Worktree cleanup scope "%s" must be a primary repo or worktree handle.', $scope), array( 'status' => 400 ));
+		}
+
+		return array(
+			'argument' => $scope,
+			'repo'     => $parsed['repo'],
+			'handle'   => $parsed['is_worktree'] ? $parsed['dir_name'] : null,
+		);
+	}
+
+	/**
+	 * Whether an inventory/worktree row matches a normalized operation scope.
+	 *
+	 * @param  array<string,mixed>                                                   $row   Inventory or evidence row.
+	 * @param  array{argument: string, repo: string, handle: string|null}|null $scope Optional normalized scope.
+	 * @return bool
+	 */
+	protected function worktree_row_matches_operation_scope( array $row, ?array $scope ): bool {
+		if ( null === $scope ) {
+			return true;
+		}
+
+		$handle = (string) ( $row['handle'] ?? $row['name'] ?? '' );
+		if ( null !== $scope['handle'] ) {
+			return $handle === $scope['handle'];
+		}
+
+		$repo = (string) ( $row['repo'] ?? '' );
+		if ( '' === $repo && '' !== $handle ) {
+			$repo = $this->parse_handle($handle)['repo'];
+		}
+
+		return $repo === $scope['repo'];
+	}
+
+	/**
+	 * Build the positional CLI scope segment for continuation commands.
+	 *
+	 * @param  array{argument: string, repo: string, handle: string|null}|null $scope Optional normalized scope.
+	 * @return string
+	 */
+	protected function worktree_operation_scope_cli_arg( ?array $scope ): string {
+		if ( null === $scope ) {
+			return '';
+		}
+
+		$argument = (string) $scope['argument'];
+		return ' ' . ( preg_match('/^[A-Za-z0-9._@-]+$/', $argument) ? $argument : escapeshellarg($argument) );
+	}
+
+	/**
 	 * Require file-operation callers to name a workspace handle explicitly.
 	 *
 	 * @param  string $handle Workspace handle from ability input.
