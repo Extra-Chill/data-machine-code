@@ -147,7 +147,7 @@ class DataMachineJobCleanupRunEvidenceStore implements CleanupRunEvidenceStoreIn
 
 		$parent_job_ids = array();
 		foreach ( $child_jobs as $child ) {
-			$parent_job_id = (int) ( is_array($child) ? ( $child['parent_job_id'] ?? 0 ) : 0 );
+			$parent_job_id = (int) ( $child['parent_job_id'] ?? 0 );
 			if ( $parent_job_id > 0 ) {
 				$parent_job_ids[ $parent_job_id ] = true;
 			}
