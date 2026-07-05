@@ -295,7 +295,7 @@ class WorkspaceAbandonedCleanupOrchestrator {
 	private function sanitize_scope( string $scope ): string {
 		$scope = trim($scope);
 		$scope = preg_replace('/[^a-zA-Z0-9_.@:-]/', '-', $scope);
-		$scope = trim((string) $scope, '-');
+		$scope = trim( (string) $scope, '-' );
 
 		return substr($scope, 0, 120);
 	}
@@ -568,13 +568,13 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			$continuation['next_command_label']                     = 'Restart this stage from offset 0 because the cleanup candidate set changed.';
 		}
 		if ( ! empty($adaptive) ) {
-			$continuation['reason']             = (string) ( $adaptive['reason'] ?? 'no_progress_in_stage' );
-			$continuation['reason_description'] = (string) ( $adaptive['reason_description'] ?? 'The previous stage page scanned rows but produced no cleanup mutations, so the drain stopped before spending more budget on low-yield pages.' );
-			$continuation['recommendation']     = (string) ( $adaptive['recommendation'] ?? 'Stop this drain for now, or run next_command to continue this stage from the next page if you want a deeper scan.' );
-			$continuation['priority_hint']      = (string) ( $adaptive['priority_hint'] ?? 'This page produced no mutations. Prefer bounded cleanup-eligible apply or an active/no-signal report before walking more low-yield pages.' );
+			$continuation['reason']               = (string) ( $adaptive['reason'] ?? 'no_progress_in_stage' );
+			$continuation['reason_description']   = (string) ( $adaptive['reason_description'] ?? 'The previous stage page scanned rows but produced no cleanup mutations, so the drain stopped before spending more budget on low-yield pages.' );
+			$continuation['recommendation']       = (string) ( $adaptive['recommendation'] ?? 'Stop this drain for now, or run next_command to continue this stage from the next page if you want a deeper scan.' );
+			$continuation['priority_hint']        = (string) ( $adaptive['priority_hint'] ?? 'This page produced no mutations. Prefer bounded cleanup-eligible apply or an active/no-signal report before walking more low-yield pages.' );
 			$continuation['alternative_commands'] = (array) ( $adaptive['alternative_commands'] ?? array() );
-			$continuation['progress_delta']     = (array) ( $adaptive['progress_delta'] ?? array() );
-			$continuation['next_command_label'] = 'Continue this stage despite the no-progress adaptive stop.';
+			$continuation['progress_delta']       = (array) ( $adaptive['progress_delta'] ?? array() );
+			$continuation['next_command_label']   = 'Continue this stage despite the no-progress adaptive stop.';
 		}
 
 		return $continuation;
@@ -647,17 +647,17 @@ class WorkspaceAbandonedCleanupOrchestrator {
 			}
 
 			if ( $stop_on_no_progress && $mutation_count <= 0 && $inspected > 0 ) {
-				$scope_suffix = isset($base_input['scope']) && '' !== (string) $base_input['scope'] ? ' --scope=' . (string) $base_input['scope'] : '';
+				$scope_suffix                 = isset($base_input['scope']) && '' !== (string) $base_input['scope'] ? ' --scope=' . (string) $base_input['scope'] : '';
 				$last_result['adaptive_stop'] = array(
-					'reason'             => 'no_progress_in_stage',
-					'reason_description' => 'This stage scanned a page and produced no cleanup metadata writes or removals, so the drain stopped before spending more budget on low-yield pages.',
-					'recommendation'     => 'Stop this drain for now. If freeing disk is urgent, review bounded cleanup-eligible rows or sample the active/no-signal backlog before walking more pages in this low-yield stage.',
-					'priority_hint'      => 'Prioritize already cleanup-eligible rows and actionable active/no-signal evidence before continuing a stage page that produced zero mutations.',
+					'reason'               => 'no_progress_in_stage',
+					'reason_description'   => 'This stage scanned a page and produced no cleanup metadata writes or removals, so the drain stopped before spending more budget on low-yield pages.',
+					'recommendation'       => 'Stop this drain for now. If freeing disk is urgent, review bounded cleanup-eligible rows or sample the active/no-signal backlog before walking more pages in this low-yield stage.',
+					'priority_hint'        => 'Prioritize already cleanup-eligible rows and actionable active/no-signal evidence before continuing a stage page that produced zero mutations.',
 					'alternative_commands' => array(
 						sprintf('studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=%d%s --format=json', (int) ( $base_input['limit'] ?? 25 ), $scope_suffix),
 						sprintf('studio wp datamachine-code workspace worktree active-no-signal-report --limit=%d --offset=0%s --format=json', min(25, (int) ( $base_input['limit'] ?? 25 )), $scope_suffix),
 					),
-					'progress_delta'     => array(
+					'progress_delta'       => array(
 						'inspected'       => $inspected,
 						'written'         => (int) ( $result['summary']['written'] ?? 0 ),
 						'removed'         => (int) ( $result['summary']['removed'] ?? 0 ),
