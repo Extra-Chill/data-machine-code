@@ -3616,6 +3616,10 @@ class WorkspaceCommand extends BaseCommand {
 	 *   For `active-no-signal-drain`, supported values are finalized,
 	 *   equivalent-clean, merged, remote-clean, and bounded.
 	 *
+	 * [--scope=<label>]
+	 * : For `abandoned` and `active-no-signal-drain`, preserve an operator scope
+	 *   label in continuation commands and child cleanup inputs.
+	 *
 	 * [--offset=<count>]
 	 * : For `cleanup --dry-run`, `cleanup-artifacts --dry-run`,
 	 *   `abandoned`, `reconcile-metadata`, and `active-no-signal-report`,
@@ -4181,7 +4185,7 @@ class WorkspaceCommand extends BaseCommand {
 			'force'  => ! empty($assoc_args['force']),
 			'source' => self::CLEANUP_CLI_SOURCE,
 		);
-		foreach ( array( 'limit', 'passes', 'offset', 'stage' ) as $key ) {
+		foreach ( array( 'limit', 'passes', 'offset', 'stage', 'scope' ) as $key ) {
 			if ( array_key_exists($key, $assoc_args) ) {
 				$input[ $key ] = $assoc_args[ $key ];
 			}
@@ -4216,7 +4220,7 @@ class WorkspaceCommand extends BaseCommand {
 			'apply'  => ! empty($assoc_args['apply']),
 			'source' => self::CLEANUP_CLI_SOURCE,
 		);
-		foreach ( array( 'limit', 'passes', 'offset', 'stage' ) as $key ) {
+		foreach ( array( 'limit', 'passes', 'offset', 'stage', 'scope' ) as $key ) {
 			if ( array_key_exists($key, $assoc_args) ) {
 				$input[ $key ] = $assoc_args[ $key ];
 			}
