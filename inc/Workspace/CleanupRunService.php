@@ -673,10 +673,10 @@ class CleanupRunService {
 			return;
 		}
 
-		$summary['removed']          = max(0, (int) ( $safe_summary['removed'] ?? 0 ));
-		$summary['bytes_reclaimed']  = max((int) ( $summary['bytes_reclaimed'] ?? 0 ), max(0, (int) ( $safe_summary['bytes_reclaimed'] ?? 0 )));
-		$summary['would_remove']     = max(0, (int) ( $safe_summary['would_remove'] ?? 0 ));
-		$summary['blocker_count']    = max(0, (int) ( $safe_summary['blocker_count'] ?? 0 ));
+		$summary['removed']         = max(0, (int) ( $safe_summary['removed'] ?? 0 ));
+		$summary['bytes_reclaimed'] = max( (int) ( $summary['bytes_reclaimed'] ?? 0 ), max(0, (int) ( $safe_summary['bytes_reclaimed'] ?? 0 )));
+		$summary['would_remove']    = max(0, (int) ( $safe_summary['would_remove'] ?? 0 ));
+		$summary['blocker_count']   = max(0, (int) ( $safe_summary['blocker_count'] ?? 0 ));
 	}
 
 	/**
@@ -694,7 +694,7 @@ class CleanupRunService {
 		$by_type = array();
 
 		foreach ( $items as $item ) {
-			$type = (string) ( $item['item_type'] ?? 'unknown' );
+			$type               = (string) ( $item['item_type'] ?? 'unknown' );
 			$by_type[ $type ] ??= array(
 				'planned_rows'    => 0,
 				'applied_rows'    => 0,
@@ -763,7 +763,7 @@ class CleanupRunService {
 			'count'           => $removed,
 			'bytes_reclaimed' => $bytes,
 		);
-		$summary['total_bytes_reclaimed'] = max((int) ( $summary['total_bytes_reclaimed'] ?? 0 ), $bytes);
+		$summary['total_bytes_reclaimed']                     = max( (int) ( $summary['total_bytes_reclaimed'] ?? 0 ), $bytes);
 	}
 
 	/**
@@ -783,11 +783,12 @@ class CleanupRunService {
 	}
 
 	private function format_bytes( int $bytes ): string {
-		$bytes = max(0, $bytes);
-		$units = array( 'B', 'KiB', 'MiB', 'GiB', 'TiB' );
-		$value = (float) $bytes;
-		$unit  = 0;
-		while ( $value >= 1024 && $unit < count($units) - 1 ) {
+		$bytes      = max(0, $bytes);
+		$units      = array( 'B', 'KiB', 'MiB', 'GiB', 'TiB' );
+		$value      = (float) $bytes;
+		$unit       = 0;
+		$unit_count = count($units);
+		while ( $value >= 1024 && $unit < $unit_count - 1 ) {
 			$value /= 1024;
 			++$unit;
 		}
