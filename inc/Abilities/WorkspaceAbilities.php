@@ -2288,6 +2288,10 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Optional compact wall-clock budget such as 60s, 10m, or 1h.',
 							),
+							'scope'        => array(
+								'type'        => 'string',
+								'description' => 'Operator scope label preserved in continuation commands and forwarded to child cleanup abilities.',
+							),
 							'source'       => array(
 								'type'        => 'string',
 								'description' => 'Caller source marker forwarded to underlying cleanup abilities.',
@@ -2350,6 +2354,10 @@ class WorkspaceAbilities {
 							'until_budget' => array(
 								'type'        => 'string',
 								'description' => 'Optional compact wall-clock budget such as 60s, 10m, or 1h.',
+							),
+							'scope'        => array(
+								'type'        => 'string',
+								'description' => 'Operator scope label preserved in continuation commands and forwarded to child cleanup abilities.',
 							),
 							'source'       => array(
 								'type'        => 'string',

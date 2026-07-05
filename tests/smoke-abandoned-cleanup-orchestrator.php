@@ -385,13 +385,17 @@ $orchestrator                   = new DataMachineCode\Workspace\WorkspaceAbandon
 	static fn( string $name ) => $abandoned_zero_yield_abilities[ $name ] ?? null,
 	static fn(): float => 1000.0
 );
-$abandoned_zero_yield_result    = $orchestrator->run(array( 'apply' => true, 'limit' => 10, 'passes' => 3, 'until_budget' => '300s' ));
+$abandoned_zero_yield_result    = $orchestrator->run(array( 'apply' => true, 'limit' => 10, 'passes' => 3, 'until_budget' => '300s', 'scope' => 'repo:stage-finalized' ));
 abandoned_cleanup_assert(! is_wp_error($abandoned_zero_yield_result), 'abandoned zero-yield result succeeds');
 abandoned_cleanup_assert('abandoned_worktree_cleanup' === $abandoned_zero_yield_result['mode'], 'abandoned zero-yield keeps abandoned mode');
+abandoned_cleanup_assert('repo:stage-finalized' === $abandoned_zero_yield_result['scope'], 'abandoned zero-yield preserves operator scope');
 abandoned_cleanup_assert('no_progress_in_stage' === $abandoned_zero_yield_result['continuation']['reason'], 'abandoned zero-yield continuation uses no-progress reason');
 abandoned_cleanup_assert('no_progress_in_stage' === ( $abandoned_zero_yield_result['summary']['stop_reason'] ?? null ), 'abandoned zero-yield summary exposes stop reason');
 abandoned_cleanup_assert(str_contains((string) $abandoned_zero_yield_result['continuation']['recommendation'], 'Stop this drain'), 'abandoned zero-yield continuation recommends stopping');
-abandoned_cleanup_assert(str_contains((string) $abandoned_zero_yield_result['continuation']['next_command'], ' worktree abandoned --apply --stage=finalized --offset=10'), 'abandoned zero-yield continuation resumes same stage next page');
+abandoned_cleanup_assert(str_contains((string) $abandoned_zero_yield_result['continuation']['priority_hint'], 'Prioritize already cleanup-eligible rows'), 'abandoned zero-yield continuation includes priority hint');
+abandoned_cleanup_assert(in_array('studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=10 --scope=repo:stage-finalized --format=json', (array) $abandoned_zero_yield_result['continuation']['alternative_commands'], true), 'abandoned zero-yield suggests scoped bounded cleanup review');
+abandoned_cleanup_assert(str_contains((string) $abandoned_zero_yield_result['continuation']['next_command'], ' worktree abandoned --apply --stage=finalized --offset=10 --limit=10 --passes=3 --until-budget=300s --scope=repo:stage-finalized --format=json'), 'abandoned zero-yield continuation preserves stage, budget, scope, and next page');
+abandoned_cleanup_assert('repo:stage-finalized' === (string) ( $abandoned_zero_yield_finalized->calls[0]['scope'] ?? '' ), 'abandoned zero-yield forwards scope to child stage ability');
 abandoned_cleanup_assert(0 === count($abandoned_zero_yield_equivalent->calls), 'abandoned zero-yield stop avoids advancing into later active/no-signal stages');
 abandoned_cleanup_assert(0 === count($abandoned_zero_yield_abilities['datamachine-code/workspace-worktree-prune']->calls), 'abandoned zero-yield stop skips prune while continuation remains');
 
