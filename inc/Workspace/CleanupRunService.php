@@ -269,6 +269,7 @@ class CleanupRunService {
 		}
 		ksort($summary['items_by_status']);
 		ksort($summary['items_by_type']);
+		$this->apply_safe_cleanup_progress_summary($run, $summary);
 
 		$terminal_safe_state = $this->terminal_empty_safe_cleanup_state($run, $summary);
 		if ( null !== $terminal_safe_state ) {
@@ -292,7 +293,10 @@ class CleanupRunService {
 			$run['completed_at'] = $completed_at;
 		}
 
-		$progress = $this->run_progress($run, $items, $summary);
+		$progress               = $this->run_progress($run, $items, $summary);
+		$cleanup_items          = $this->cleanup_items_summary($run, $items, $summary);
+		$remaining_work_summary = $this->remaining_work_summary($run_id, $items, $progress);
+		$this->apply_safe_cleanup_remaining_summary($run, $remaining_work_summary);
 
 		return array(
 			'success'                => true,
@@ -302,8 +306,9 @@ class CleanupRunService {
 			'mode'                   => $run['mode'] ?? '',
 			'run'                    => $run,
 			'summary'                => $summary,
+			'cleanup_items'          => $cleanup_items,
 			'progress'               => $progress,
-			'remaining_work_summary' => $this->remaining_work_summary($run_id, $items, $progress),
+			'remaining_work_summary' => $remaining_work_summary,
 		);
 	}
 
@@ -654,6 +659,140 @@ class CleanupRunService {
 			'resumable'         => $resumable,
 			'note'              => count($applying) > 0 ? 'Rows marked applying are safe to retry with workspace cleanup resume if the previous apply process was interrupted.' : '',
 		);
+	}
+
+	/**
+	 * Fold item-less safe cleanup progress into the same counters used by evidence summaries.
+	 *
+	 * @param array<string,mixed> $run     Run row.
+	 * @param array<string,mixed> $summary Mutable status summary.
+	 */
+	private function apply_safe_cleanup_progress_summary( array $run, array &$summary ): void {
+		$safe_summary = $this->safe_cleanup_summary($run);
+		if ( array() === $safe_summary || (int) ( $summary['total_items'] ?? 0 ) > 0 ) {
+			return;
+		}
+
+		$summary['removed']          = max(0, (int) ( $safe_summary['removed'] ?? 0 ));
+		$summary['bytes_reclaimed']  = max((int) ( $summary['bytes_reclaimed'] ?? 0 ), max(0, (int) ( $safe_summary['bytes_reclaimed'] ?? 0 )));
+		$summary['would_remove']     = max(0, (int) ( $safe_summary['would_remove'] ?? 0 ));
+		$summary['blocker_count']    = max(0, (int) ( $safe_summary['blocker_count'] ?? 0 ));
+	}
+
+	/**
+	 * Build cleanup_items-compatible rollups for DB and safe-cleanup runs.
+	 *
+	 * @param array<string,mixed>            $run     Run row.
+	 * @param array<int,array<string,mixed>> $items   Item rows.
+	 * @param array<string,mixed>            $summary Status summary.
+	 * @return array<string,mixed>
+	 */
+	private function cleanup_items_summary( array $run, array $items, array $summary ): array {
+		$planned = count($items);
+		$applied = (int) ( $summary['items_by_status']['applied'] ?? 0 );
+		$bytes   = max(0, (int) ( $summary['bytes_reclaimed'] ?? 0 ));
+		$by_type = array();
+
+		foreach ( $items as $item ) {
+			$type = (string) ( $item['item_type'] ?? 'unknown' );
+			$by_type[ $type ] ??= array(
+				'planned_rows'    => 0,
+				'applied_rows'    => 0,
+				'skipped_rows'    => 0,
+				'failed_rows'     => 0,
+				'bytes_reclaimed' => 0,
+			);
+			++$by_type[ $type ]['planned_rows'];
+			$status = (string) ( $item['status'] ?? '' );
+			if ( 'applied' === $status ) {
+				++$by_type[ $type ]['applied_rows'];
+				$by_type[ $type ]['bytes_reclaimed'] += max(0, (int) ( $item['bytes_reclaimed'] ?? 0 ));
+			} elseif ( 'skipped' === $status ) {
+				++$by_type[ $type ]['skipped_rows'];
+			} elseif ( 'failed' === $status ) {
+				++$by_type[ $type ]['failed_rows'];
+			}
+		}
+
+		$safe_summary = $this->safe_cleanup_summary($run);
+		if ( array() === $items && array() !== $safe_summary ) {
+			$applied = max(0, (int) ( $safe_summary['removed'] ?? 0 ));
+			$planned = $applied;
+			$bytes   = max(0, (int) ( $safe_summary['bytes_reclaimed'] ?? 0 ));
+			$by_type = array(
+				'safe_workspace_cleanup' => array(
+					'planned_rows'    => $planned,
+					'applied_rows'    => $applied,
+					'skipped_rows'    => 0,
+					'failed_rows'     => 0,
+					'bytes_reclaimed' => $bytes,
+				),
+			);
+		}
+
+		return array(
+			'planned_rows'    => $planned,
+			'applied_rows'    => $applied,
+			'skipped_rows'    => (int) ( $summary['items_by_status']['skipped'] ?? 0 ),
+			'failed_rows'     => (int) ( $summary['items_by_status']['failed'] ?? 0 ),
+			'bytes_reclaimed' => $bytes,
+			'freed_human'     => $this->format_bytes($bytes),
+			'by_type'         => $by_type,
+		);
+	}
+
+	/**
+	 * Fold safe cleanup progress into remaining-work summary totals used by --summary output.
+	 *
+	 * @param array<string,mixed> $run     Run row.
+	 * @param array<string,mixed> $summary Mutable remaining-work summary.
+	 */
+	private function apply_safe_cleanup_remaining_summary( array $run, array &$summary ): void {
+		$safe_summary = $this->safe_cleanup_summary($run);
+		if ( array() === $safe_summary ) {
+			return;
+		}
+
+		$removed = max(0, (int) ( $safe_summary['removed'] ?? 0 ));
+		$bytes   = max(0, (int) ( $safe_summary['bytes_reclaimed'] ?? 0 ));
+		if ( $removed <= 0 && $bytes <= 0 ) {
+			return;
+		}
+
+		$summary['applied_by_type']['safe_workspace_cleanup'] = array(
+			'count'           => $removed,
+			'bytes_reclaimed' => $bytes,
+		);
+		$summary['total_bytes_reclaimed'] = max((int) ( $summary['total_bytes_reclaimed'] ?? 0 ), $bytes);
+	}
+
+	/**
+	 * Return the persisted safe cleanup summary, if this is a safe cleanup run.
+	 *
+	 * @param array<string,mixed> $run Run row.
+	 * @return array<string,mixed>
+	 */
+	private function safe_cleanup_summary( array $run ): array {
+		if ( 'safe_workspace_cleanup' !== (string) ( $run['mode'] ?? '' ) ) {
+			return array();
+		}
+
+		$safe_cleanup = (array) ( $run['summary']['safe_cleanup_progress'] ?? array() );
+		$summary      = (array) ( $safe_cleanup['summary'] ?? array() );
+		return array() === $summary ? array() : $summary;
+	}
+
+	private function format_bytes( int $bytes ): string {
+		$bytes = max(0, $bytes);
+		$units = array( 'B', 'KiB', 'MiB', 'GiB', 'TiB' );
+		$value = (float) $bytes;
+		$unit  = 0;
+		while ( $value >= 1024 && $unit < count($units) - 1 ) {
+			$value /= 1024;
+			++$unit;
+		}
+
+		return 0 === $unit ? sprintf('%d %s', $bytes, $units[ $unit ]) : sprintf('%.1f %s', $value, $units[ $unit ]);
 	}
 
 	private function terminal_empty_safe_cleanup_state( array $run, array $summary ): ?string {

@@ -117,6 +117,36 @@ namespace {
 	safe_status_assert_same('complete', $evidence['state'] ?? null, 'Evidence should report terminal state.');
 	safe_status_assert_same(array(), $evidence['items'] ?? null, 'Evidence should keep empty item list explicit.');
 
+	$repo->runs['cleanup-run-reclaimed-safe'] = array(
+		'run_id'       => 'cleanup-run-reclaimed-safe',
+		'mode'         => 'safe_workspace_cleanup',
+		'status'       => 'complete',
+		'started_at'   => gmdate('Y-m-d H:i:s', time() - 300),
+		'completed_at' => gmdate('Y-m-d H:i:s'),
+		'summary'      => array(
+			'safe_cleanup_progress' => array(
+				'state'   => 'complete',
+				'summary' => array(
+					'removed'         => 2,
+					'bytes_reclaimed' => 4096,
+				),
+			),
+		),
+	);
+	$reclaimed_status = $service->status('cleanup-run-reclaimed-safe');
+	safe_status_assert_same(false, is_wp_error($reclaimed_status), 'Safe cleanup status with reclaimed bytes should succeed.');
+	safe_status_assert_same(2, $reclaimed_status['summary']['removed'] ?? null, 'Safe cleanup status summary should preserve removed count.');
+	safe_status_assert_same(4096, $reclaimed_status['summary']['bytes_reclaimed'] ?? null, 'Safe cleanup status summary should preserve reclaimed bytes.');
+	safe_status_assert_same(2, $reclaimed_status['cleanup_items']['applied_rows'] ?? null, 'Safe cleanup cleanup_items should expose removed count as applied rows.');
+	safe_status_assert_same(4096, $reclaimed_status['cleanup_items']['bytes_reclaimed'] ?? null, 'Safe cleanup cleanup_items should expose reclaimed bytes.');
+	safe_status_assert_same(4096, $reclaimed_status['remaining_work_summary']['total_bytes_reclaimed'] ?? null, 'Safe cleanup remaining summary should expose reclaimed bytes.');
+	safe_status_assert_same(2, $reclaimed_status['remaining_work_summary']['applied_by_type']['safe_workspace_cleanup']['count'] ?? null, 'Safe cleanup remaining summary should expose removed count by type.');
+
+	$reclaimed_evidence = $service->evidence('cleanup-run-reclaimed-safe');
+	safe_status_assert_same(false, is_wp_error($reclaimed_evidence), 'Safe cleanup evidence with reclaimed bytes should succeed.');
+	safe_status_assert_same(2, $reclaimed_evidence['cleanup_items']['applied_rows'] ?? null, 'Safe cleanup evidence should preserve removed count.');
+	safe_status_assert_same(4096, $reclaimed_evidence['cleanup_items']['bytes_reclaimed'] ?? null, 'Safe cleanup evidence should preserve reclaimed bytes.');
+
 	$repo->runs['cleanup-run-blocked-safe'] = array(
 		'run_id'  => 'cleanup-run-blocked-safe',
 		'mode'    => 'safe_workspace_cleanup',
