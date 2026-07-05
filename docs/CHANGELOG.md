@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.48.43] - 2026-07-05
+
+### Fixed
+- Fix cleanup repo scoping for paginated paths
+
 ## [0.48.42] - 2026-07-05
 
 ### Changed
