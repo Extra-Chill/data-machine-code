@@ -228,13 +228,13 @@ class WorktreeInventoryRepository {
 			// Protect rows carrying unpushed work or an open PR unless forced.
 			if ( ! $force ) {
 				$unpushed = isset($row['unpushed_count']) ? (int) $row['unpushed_count'] : 0;
-				$pr_url   = isset($row['pr_url']) ? trim((string) $row['pr_url']) : '';
+				$pr_url   = isset($row['pr_url']) ? trim( (string) $row['pr_url'] ) : '';
 
 				if ( $unpushed > 0 ) {
 					$skipped[] = array(
-						'handle'        => $handle,
-						'path'          => $path,
-						'reason'        => 'unpushed_count',
+						'handle'         => $handle,
+						'path'           => $path,
+						'reason'         => 'unpushed_count',
 						'unpushed_count' => $unpushed,
 					);
 					continue;
