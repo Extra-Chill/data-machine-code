@@ -40,9 +40,11 @@ if ( ! function_exists('is_wp_error') ) {
 
 require_once dirname(__DIR__) . '/inc/Support/CommandSpec.php';
 require_once dirname(__DIR__) . '/inc/Support/RuntimeCapabilities.php';
+require_once dirname(__DIR__) . '/inc/Support/PathSecurity.php';
 require_once dirname(__DIR__) . '/inc/Support/ProcessRunner.php';
 require_once dirname(__DIR__) . '/inc/Support/GitRunner.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceHandle.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceCoreUtilities.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceActiveNoSignalCleanup.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeCleanupEngine.php';
@@ -136,5 +138,102 @@ worktree_cleanup_patch_equivalence_assert_same('HEAD', $evidence['compared_refs'
 worktree_cleanup_patch_equivalence_assert_same(1, $evidence['git_cherry']['equivalent'], 'squash-equivalent commit is counted as equivalent');
 worktree_cleanup_patch_equivalence_assert_same(0, $evidence['git_cherry']['unmatched'], 'no unmatched commits are promoted');
 worktree_cleanup_patch_equivalence_assert_same('preserve_local_branch', $evidence['local_branch_handling'], 'cleanup preserves non-contained local branch');
+
+$suggest_action = new ReflectionMethod($cleanup, 'suggest_active_no_signal_action');
+$merged_action = $suggest_action->invoke(
+	$cleanup,
+	array(
+		'dirty'                   => 0,
+		'unpushed'                => 0,
+		'commits_outside_default' => 0,
+		'remote_tracking'         => true,
+		'upstream_equivalence'    => array(
+			'effective_status' => 'equivalent_clean',
+		),
+	)
+);
+worktree_cleanup_patch_equivalence_assert_same('merged_to_default', $merged_action, 'exact clean containment in the remote default branch should win over patch-equivalence and remote-tracking labels');
+
+$merged = $root . '/merged-worktree';
+worktree_cleanup_patch_equivalence_run($primary, 'git worktree add -b merged-feature ../merged-worktree origin/main');
+worktree_cleanup_patch_equivalence_run($merged, 'git config user.email test@example.com');
+worktree_cleanup_patch_equivalence_run($merged, 'git config user.name Test');
+file_put_contents($merged . '/merged.txt', "merged\n");
+worktree_cleanup_patch_equivalence_run($merged, 'git add merged.txt');
+worktree_cleanup_patch_equivalence_run($merged, 'git commit -m merged-feature');
+worktree_cleanup_patch_equivalence_run($primary, 'git merge --ff-only merged-feature');
+worktree_cleanup_patch_equivalence_run($primary, 'git push origin main');
+
+$merged_cleanup = new class($root) {
+	use WorkspaceCoreUtilities;
+	use WorkspaceActiveNoSignalCleanup;
+	use WorkspaceWorktreeCleanupEngine;
+
+	protected const CLEANUP_GIT_PROBE_TIMEOUT = 5;
+
+	protected string $workspace_path;
+
+	public function __construct( string $workspace_path ) {
+		$this->workspace_path = $workspace_path;
+	}
+
+	public function get_primary_path( string $repo ): string {
+		return $this->workspace_path . '/primary';
+	}
+
+	protected function resolve_remote_default_ref( string $primary_path, int $timeout_seconds = 0 ): string|WP_Error|null {
+		return 'refs/remotes/origin/main';
+	}
+
+	/** @return array<int,string> */
+	protected function protected_base_branch_names(): array {
+		return array( 'main', 'master', 'trunk', 'develop' );
+	}
+
+	protected function resolve_worktree_branch_from_head_file( string $wt_path ): ?string {
+		$result = $this->run_git($wt_path, 'branch --show-current', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($result) ) {
+			return null;
+		}
+
+		$branch = trim((string) ( $result['output'] ?? '' ));
+		return '' === $branch ? null : $branch;
+	}
+
+	protected function probe_worktree_dirty_count( string $path, int $timeout_seconds = 0 ): int|WP_Error {
+		$result = $this->run_git($path, 'status --porcelain', $timeout_seconds);
+		if ( is_wp_error($result) ) {
+			return $result;
+		}
+
+		$lines = array_filter(array_map('trim', explode("\n", (string) ( $result['output'] ?? '' ))));
+		return count($lines);
+	}
+
+	/** @return array<string,mixed> */
+	public function worktree_active_no_signal_report( array $opts = array() ): array {
+		return array(
+			'success' => true,
+			'rows'    => array(
+				array(
+					'handle'                  => 'repo@merged-feature',
+					'repo'                    => 'repo',
+					'branch'                  => 'merged-feature',
+					'path'                    => $this->workspace_path . '/merged-worktree',
+					'dirty'                   => 0,
+					'unpushed'                => 0,
+					'commits_outside_default' => 0,
+					'suggested_action'        => 'remote_tracking_clean',
+				),
+			),
+			'summary' => array( 'inspected' => 1 ),
+		);
+	}
+};
+
+$merged_apply = $merged_cleanup->worktree_active_no_signal_merged_apply(array( 'dry_run' => true ));
+worktree_cleanup_patch_equivalence_assert_same(true, is_array($merged_apply), 'merged apply should return a dry-run result');
+worktree_cleanup_patch_equivalence_assert_same(1, $merged_apply['summary']['planned'], 'merged apply should plan clean rows with zero commits outside default even when an older report label was remote_tracking_clean');
+worktree_cleanup_patch_equivalence_assert_same('repo@merged-feature', $merged_apply['planned'][0]['handle'], 'merged apply should preserve the planned handle');
 
 echo "worktree-cleanup-patch-equivalence: ok\n";

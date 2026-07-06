@@ -4081,6 +4081,9 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 
 			case 'cleanup':
+				if ( ! empty($args[1]) ) {
+					$input['repo'] = (string) $args[1];
+				}
 				$input['dry_run']                   = ! empty($assoc_args['dry-run']);
 				$input['force']                     = ! empty($assoc_args['force']);
 				$input['skip_github']               = ! empty($assoc_args['skip-github']);
