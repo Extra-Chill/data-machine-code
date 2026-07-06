@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.49.1] - 2026-07-06
+
+### Fixed
+- Fix worktree cleanup merged classifier
+
 ## [0.49.0] - 2026-07-06
 
 ### Added
