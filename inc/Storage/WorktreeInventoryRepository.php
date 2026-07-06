@@ -26,7 +26,6 @@ class WorktreeInventoryRepository {
 	 */
 	public static function install_schema(): void {
 		global $wpdb;
-		/** @var \wpdb $wpdb */
 
 		if ( ! isset($wpdb) ) {
 			return;
@@ -91,7 +90,6 @@ class WorktreeInventoryRepository {
 	 */
 	public static function table_name(): string {
 		global $wpdb;
-		/** @var \wpdb $wpdb */
 		$prefix = isset($wpdb->prefix) ? (string) $wpdb->prefix : '';
 		return $prefix . self::TABLE;
 	}
@@ -104,7 +102,6 @@ class WorktreeInventoryRepository {
 	 */
 	public function upsert( array $row ): bool {
 		global $wpdb;
-		/** @var \wpdb $wpdb */
 
 		if ( ! isset($wpdb) ) {
 			return false;
@@ -128,7 +125,6 @@ class WorktreeInventoryRepository {
 	 */
 	public function delete( string $handle ): bool {
 		global $wpdb;
-		/** @var \wpdb $wpdb */
 
 		$handle = trim($handle);
 		if ( '' === $handle || ! isset($wpdb) || ! method_exists($wpdb, 'delete') ) {
@@ -146,7 +142,6 @@ class WorktreeInventoryRepository {
 	 */
 	public function get( string $handle ): ?array {
 		global $wpdb;
-		/** @var \wpdb $wpdb */
 
 		$handle = trim($handle);
 		if ( '' === $handle || ! isset($wpdb) ) {
@@ -176,7 +171,6 @@ class WorktreeInventoryRepository {
 	 */
 	public function mark_missing( string $handle ): bool {
 		global $wpdb;
-		/** @var \wpdb $wpdb */
 
 		$handle = trim($handle);
 		if ( '' === $handle || ! isset($wpdb) || ! method_exists($wpdb, 'update') ) {
@@ -302,7 +296,6 @@ class WorktreeInventoryRepository {
 	 */
 	private function missing_path_rows(): array {
 		global $wpdb;
-		/** @var \wpdb $wpdb */
 
 		if ( ! isset($wpdb) || ! method_exists($wpdb, 'get_results') ) {
 			return array();
@@ -325,7 +318,6 @@ class WorktreeInventoryRepository {
 	 */
 	public function list( ?string $repo = null ): array {
 		global $wpdb;
-		/** @var \wpdb $wpdb */
 
 		if ( ! isset($wpdb) || ! method_exists($wpdb, 'get_results') ) {
 			return array();
