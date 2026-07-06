@@ -1595,6 +1595,42 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-inventory-prune-missing',
+				array(
+					'label'               => 'Prune Missing Worktree Inventory Rows',
+					'description'         => 'Delete DB-backed worktree inventory rows flagged missing_path whose on-disk path is still absent. Re-probes each candidate before deletion and protects rows with unpushed commits or an open PR unless force is set.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'dry_run' => array(
+								'type'        => 'boolean',
+								'description' => 'Preview candidates and skips without deleting any rows. Default false.',
+							),
+							'force'   => array(
+								'type'        => 'boolean',
+								'description' => 'Allow pruning rows with unpushed_count > 0 or a non-empty pr_url. Default false.',
+							),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'   => array( 'type' => 'boolean' ),
+							'pruned_at' => array( 'type' => 'string' ),
+							'dry_run'   => array( 'type' => 'boolean' ),
+							'deleted'   => array( 'type' => 'array' ),
+							'skipped'   => array( 'type' => 'array' ),
+							'summary'   => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeInventoryPruneMissing' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
 				'datamachine-code/workspace-cleanup-run',
 				array(
 					'label'               => 'Schedule Workspace Cleanup Run',
@@ -4012,6 +4048,22 @@ class WorkspaceAbilities {
 	public static function worktreeInventoryRefresh( array $input ): array|\WP_Error {   // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 		$workspace = new Workspace();
 		return $workspace->worktree_inventory_refresh();
+	}
+
+	/**
+	 * Prune missing_path inventory rows whose on-disk path is still absent.
+	 *
+	 * @param  array $input Input parameters.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function worktreeInventoryPruneMissing( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		return $workspace->worktree_inventory_prune_missing(
+			array(
+				'dry_run' => ! empty($input['dry_run']),
+				'force'   => ! empty($input['force']),
+			)
+		);
 	}
 
 	/**
