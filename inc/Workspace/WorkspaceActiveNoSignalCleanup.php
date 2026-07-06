@@ -266,7 +266,14 @@ trait WorkspaceActiveNoSignalCleanup {
 					return array( 'report_action_counts' => $report['summary']['by_suggested_action'] ?? array() );
 				},
 				'prepare_row'      => function ( array $row ): array|\WP_Error {
-					if ( 'merged_to_default' !== (string) ( $row['suggested_action'] ?? '' ) ) {
+					$is_merged_to_default = 'merged_to_default' === (string) ( $row['suggested_action'] ?? '' )
+						|| (
+							0 === (int) ( $row['dirty'] ?? -1 )
+							&& 0 === (int) ( $row['unpushed'] ?? -1 )
+							&& 0 === (int) ( $row['commits_outside_default'] ?? -1 )
+						);
+
+					if ( ! $is_merged_to_default ) {
 						return new \WP_Error('not_merged_to_default', 'row is not a clean merged-to-default candidate');
 					}
 
@@ -1699,6 +1706,10 @@ trait WorkspaceActiveNoSignalCleanup {
 	 * @return string
 	 */
 	private function suggest_active_no_signal_action( array $row ): string {
+		if ( 0 === (int) ( $row['dirty'] ?? -1 ) && 0 === (int) ( $row['unpushed'] ?? -1 ) && 0 === (int) ( $row['commits_outside_default'] ?? -1 ) ) {
+			return 'merged_to_default';
+		}
+
 		$effective_status = (string) ( $row['upstream_equivalence']['effective_status'] ?? '' );
 		if ( 'equivalent_clean' === $effective_status ) {
 			return 'patch_equivalent_default';
@@ -1717,10 +1728,6 @@ trait WorkspaceActiveNoSignalCleanup {
 				return ! empty($pr['merged_at']) ? 'finalized_pr_reconcile' : 'closed_pr_reconcile';
 			}
 			return 'active_open_pr';
-		}
-
-		if ( 0 === (int) ( $row['commits_outside_default'] ?? -1 ) ) {
-			return 'merged_to_default';
 		}
 
 		if ( true === ( $row['remote_tracking'] ?? null ) ) {
