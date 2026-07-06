@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.49.0] - 2026-07-06
+
+### Added
+- prune orphaned missing_path inventory rows
+
 ## [0.48.44] - 2026-07-05
 
 ### Fixed
