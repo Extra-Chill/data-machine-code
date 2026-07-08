@@ -266,20 +266,29 @@ trait WorkspaceActiveNoSignalCleanup {
 					return array( 'report_action_counts' => $report['summary']['by_suggested_action'] ?? array() );
 				},
 				'prepare_row'      => function ( array $row ): array|\WP_Error {
-					$is_merged_to_default = 'merged_to_default' === (string) ( $row['suggested_action'] ?? '' )
-						|| (
-							0 === (int) ( $row['dirty'] ?? -1 )
-							&& 0 === (int) ( $row['unpushed'] ?? -1 )
-							&& 0 === (int) ( $row['commits_outside_default'] ?? -1 )
-						);
-
-					if ( ! $is_merged_to_default ) {
-						return new \WP_Error('not_merged_to_default', 'row is not a clean merged-to-default candidate');
+					$action = (string) ( $row['suggested_action'] ?? '' );
+					if ( in_array($action, array( 'merged_to_default', 'patch_equivalent_default' ), true) ) {
+						return $row;
 					}
 
-					return $row;
+					if (
+						0 === (int) ( $row['dirty'] ?? -1 )
+						&& 0 === (int) ( $row['unpushed'] ?? -1 )
+						&& 0 === (int) ( $row['commits_outside_default'] ?? -1 )
+					) {
+						return $row;
+					}
+
+					return new \WP_Error('not_merged_to_default', 'row is not a clean merged-to-default candidate');
 				},
-				'build_metadata'   => fn( array $row ): array|\WP_Error => $this->build_active_no_signal_merged_to_default_metadata($row),
+				'build_metadata'   => function ( array $row ): array|\WP_Error {
+					$action = (string) ( $row['suggested_action'] ?? '' );
+					if ( 'patch_equivalent_default' === $action ) {
+						return $this->build_active_no_signal_patch_equivalent_to_default_metadata($row);
+					}
+
+					return $this->build_active_no_signal_merged_to_default_metadata($row);
+				},
 				'build_planned'    => static function ( array $row, array $metadata ): array {
 					return array(
 						'handle'   => (string) ( $row['handle'] ?? '' ),
@@ -711,6 +720,39 @@ trait WorkspaceActiveNoSignalCleanup {
 	}
 
 	/**
+	 * Build cleanup metadata from one clean patch-equivalent-to-default evidence row.
+	 *
+	 * @param  array<string,mixed> $row Evidence row.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function build_active_no_signal_patch_equivalent_to_default_metadata( array $row ): array|\WP_Error {
+		$handle = (string) ( $row['handle'] ?? '' );
+		$repo   = (string) ( $row['repo'] ?? '' );
+		$branch = (string) ( $row['branch'] ?? '' );
+		$path   = (string) ( $row['path'] ?? '' );
+
+		$evidence = $this->build_current_patch_equivalent_to_default_cleanup_evidence($handle, $repo, $branch, $path);
+		if ( is_wp_error($evidence) ) {
+			return $evidence;
+		}
+
+		$metadata                                 = $this->build_active_no_signal_cleanup_metadata(
+			$row,
+			$handle,
+			$repo,
+			$branch,
+			(string) ( $evidence['path'] ?? $path ),
+			WorktreeContextInjector::STATE_MERGED
+		);
+		$metadata['auto_finalized_by']            = 'active_no_signal_merged_apply';
+		$metadata['auto_finalized_signal']        = 'patch-equivalent-to-default';
+		$metadata['auto_finalized_reason']        = sprintf('active/no-signal report found branch patch-equivalent to %s', (string) ( $evidence['default_ref'] ?? 'remote default' ));
+		$metadata['cleanup_eligibility_evidence'] = $evidence;
+
+		return $metadata;
+	}
+
+	/**
 	 * Build cleanup metadata from one clean remote-tracking evidence row.
 	 *
 	 * @param  array<string,mixed> $row Evidence row.
@@ -968,6 +1010,87 @@ trait WorkspaceActiveNoSignalCleanup {
 			'commits_outside_default' => $commits_outside_default,
 			'dirty'                   => (int) $dirty,
 			'unpushed'                => (int) $unpushed,
+		);
+	}
+
+	/**
+	 * Recompute patch-equivalent-to-default evidence for the current worktree state.
+	 *
+	 * @param  string $handle Workspace handle.
+	 * @param  string $repo   Repository name.
+	 * @param  string $branch Branch name.
+	 * @param  string $path   Worktree path.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	private function build_current_patch_equivalent_to_default_cleanup_evidence( string $handle, string $repo, string $branch, string $path ): array|\WP_Error {
+		foreach (
+		array(
+			'handle' => $handle,
+			'repo'   => $repo,
+			'branch' => $branch,
+			'path'   => $path,
+		) as $field => $value
+		) {
+			if ( '' === $value ) {
+				return new \WP_Error('missing_identity', 'missing required identity field: ' . $field);
+			}
+		}
+
+		$facts = $this->validate_current_cleanup_worktree(
+			$repo,
+			$path,
+			$branch,
+			array(
+				'require_clean'          => true,
+				'dirty_error_message'    => 'refusing to mark dirty worktree cleanup_eligible from patch-equivalent-to-default evidence',
+				'unpushed_error_message' => 'refusing to mark worktree with unpushed commits cleanup_eligible from patch-equivalent-to-default evidence',
+			)
+		);
+		if ( is_wp_error($facts) ) {
+			return $facts;
+		}
+
+		$real_path    = (string) $facts['real_path'];
+		$primary_path = (string) $facts['primary_path'];
+		$dirty        = (int) $facts['dirty'];
+		$unpushed     = (int) $facts['unpushed'];
+
+		$default_ref = $this->resolve_remote_default_ref($primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( ! is_string($default_ref) || '' === $default_ref ) {
+			return new \WP_Error('missing_default_ref', 'primary checkout default ref could not be resolved');
+		}
+
+		$upstream_equivalence = $this->build_clean_upstream_equivalence_evidence($primary_path, $real_path, $default_ref, $branch);
+		if ( 'equivalent_clean' !== (string) ( $upstream_equivalence['effective_status'] ?? '' ) ) {
+			return new \WP_Error('not_patch_equivalent_to_default', 'current branch is not patch-equivalent to remote default');
+		}
+
+		$branch_ref  = 'refs/heads/' . $branch;
+		$branch_head = $this->run_git($primary_path, sprintf('rev-parse --verify %s', escapeshellarg($branch_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($branch_head) ) {
+			return $branch_head;
+		}
+		$default_head = $this->run_git($primary_path, sprintf('rev-parse --verify %s', escapeshellarg($default_ref . '^{commit}')), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($default_head) ) {
+			return $default_head;
+		}
+
+		return array(
+			'signal'               => 'patch-equivalent-to-default',
+			'finalized_state'      => WorktreeContextInjector::STATE_MERGED,
+			'reason'               => 'branch commits are patch-equivalent to the remote default ref',
+			'detected_at'          => gmdate('c'),
+			'handle'               => $handle,
+			'repo'                 => $repo,
+			'branch'               => $branch,
+			'path'                 => $real_path,
+			'default_ref'          => $default_ref,
+			'branch_ref'           => $branch_ref,
+			'branch_head'          => trim( (string) ( $branch_head['output'] ?? '' )),
+			'default_head'         => trim( (string) ( $default_head['output'] ?? '' )),
+			'upstream_equivalence' => $upstream_equivalence,
+			'dirty'                => (int) $dirty,
+			'unpushed'             => (int) $unpushed,
 		);
 	}
 
@@ -1710,14 +1833,6 @@ trait WorkspaceActiveNoSignalCleanup {
 			return 'merged_to_default';
 		}
 
-		$effective_status = (string) ( $row['upstream_equivalence']['effective_status'] ?? '' );
-		if ( 'equivalent_clean' === $effective_status ) {
-			return 'patch_equivalent_default';
-		}
-		if ( 'contained_non_default_remote' === $effective_status ) {
-			return 'contained_non_default_remote';
-		}
-
 		if ( (int) ( $row['dirty'] ?? 0 ) > 0 || (int) ( $row['unpushed'] ?? 0 ) > 0 ) {
 			return 'unsafe_dirty_or_unpushed';
 		}
@@ -1728,6 +1843,14 @@ trait WorkspaceActiveNoSignalCleanup {
 				return ! empty($pr['merged_at']) ? 'finalized_pr_reconcile' : 'closed_pr_reconcile';
 			}
 			return 'active_open_pr';
+		}
+
+		$effective_status = (string) ( $row['upstream_equivalence']['effective_status'] ?? '' );
+		if ( 'equivalent_clean' === $effective_status ) {
+			return 'patch_equivalent_default';
+		}
+		if ( 'contained_non_default_remote' === $effective_status ) {
+			return 'contained_non_default_remote';
 		}
 
 		if ( true === ( $row['remote_tracking'] ?? null ) ) {
