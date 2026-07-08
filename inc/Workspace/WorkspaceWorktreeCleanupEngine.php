@@ -3441,14 +3441,41 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		$unique_commits = (int) trim( (string) ( $result['output'] ?? '' ));
-		if ( 0 !== $unique_commits ) {
-			return null;
+		if ( 0 === $unique_commits ) {
+			return array(
+				'signal' => 'local-merged',
+				'reason' => sprintf('branch has no commits outside remote default (%s)', $default_ref),
+			);
 		}
 
-		return array(
-			'signal' => 'local-merged',
-			'reason' => sprintf('branch has no commits outside remote default (%s)', $default_ref),
+		// Squash merges create a new commit on the default branch, so the
+		// original branch tip is never an ancestor of origin/main. Fall back
+		// to patch-equivalence detection: if every local patch already exists
+		// on the default branch, removing the clean worktree is safe.
+		$cherry = $this->run_git(
+			$primary_path,
+			sprintf('cherry %s %s', escapeshellarg($default_ref), escapeshellarg($branch_ref)),
+			self::CLEANUP_GIT_PROBE_TIMEOUT
 		);
+		if ( is_wp_error($cherry) && $this->is_git_timeout_error($cherry) ) {
+			return array(
+				'signal' => 'probe-timeout',
+				'reason' => $cherry->get_error_message(),
+			);
+		}
+		if ( ! is_wp_error($cherry) ) {
+			$counts = $this->parse_git_cherry_counts( (string) ( $cherry['output'] ?? '' ) );
+			if ( 0 < (int) $counts['total'] && 0 === (int) $counts['unmatched'] && 0 === (int) $counts['unknown'] ) {
+				return array(
+					'signal'                  => 'patch-equivalent-merged',
+					'reason'                  => sprintf('branch commits are patch-equivalent to remote default (%s) — squash merge detected', $default_ref),
+					'preserve_local_branch'   => true,
+					'patch_equivalence_count' => (int) $counts['total'],
+				);
+			}
+		}
+
+		return null;
 	}
 
 	/**

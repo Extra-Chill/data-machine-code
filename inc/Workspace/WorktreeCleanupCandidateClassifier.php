@@ -121,6 +121,9 @@ final class WorktreeCleanupCandidateClassifier {
 		if ( null !== $age_decision ) {
 			$candidate['age_filter'] = $age_decision['age_filter'];
 		}
+		if ( ! empty($signal['preserve_local_branch']) ) {
+			$candidate['preserve_local_branch'] = true;
+		}
 
 		return array(
 			'type' => 'candidate',
