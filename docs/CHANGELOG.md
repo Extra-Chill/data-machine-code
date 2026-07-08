@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.49.2] - 2026-07-08
+
+### Fixed
+- treat patch-equivalence to default as a merged cleanup signal
+
 ## [0.49.1] - 2026-07-06
 
 ### Fixed
