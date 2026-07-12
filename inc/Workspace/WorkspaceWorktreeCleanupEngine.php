@@ -1524,7 +1524,7 @@ trait WorkspaceWorktreeCleanupEngine {
 						'row_type'          => 'protected',
 						'reason_code'       => 'recent_activity',
 						'protecting_reason' => 'recent_activity',
-						'reason'            => sprintf('worktree metadata was seen %d second(s) ago; retention cleanup requires at least %d second(s) without activity', (int) $recent_activity['age_seconds'], self::RETENTION_RECENT_ACTIVITY_SECONDS),
+						'reason'            => sprintf('worktree lifecycle %s was updated %d second(s) ago; retention cleanup requires at least %d second(s) without activity', (string) $recent_activity['activity_field'], (int) $recent_activity['age_seconds'], self::RETENTION_RECENT_ACTIVITY_SECONDS),
 						'metadata'          => $metadata,
 					),
 					$recent_activity
@@ -1795,19 +1795,29 @@ trait WorkspaceWorktreeCleanupEngine {
 	}
 
 	/**
-	 * Return a recent-activity protection row when metadata heartbeat is fresh.
+	 * Return a recent-activity protection row when lifecycle activity is fresh.
+	 *
+	 * Observation heartbeats are deliberately excluded: inventory and
+	 * reconciliation scans refresh them without worktree activity.
 	 *
 	 * @param  array<string,mixed> $metadata Worktree metadata.
 	 * @return array<string,mixed>|null
 	 */
 	private function worktree_cleanup_recent_activity_protection( array $metadata ): ?array {
-		$last_seen = (string) ( $metadata['last_seen_at'] ?? $metadata['observed_at'] ?? '' );
-		if ( '' === $last_seen ) {
-			return null;
+		$activity_field = '';
+		$timestamp      = 0;
+		foreach ( array( 'created_at', 'finalized_at', 'cleanup_eligible_at' ) as $field ) {
+			$value = (string) ( $metadata[ $field ] ?? '' );
+			$time  = strtotime($value);
+			if ( '' === $value || false === $time || $time <= $timestamp ) {
+				continue;
+			}
+
+			$activity_field = $field;
+			$timestamp      = $time;
 		}
 
-		$timestamp = strtotime($last_seen);
-		if ( false === $timestamp ) {
+		if ( '' === $activity_field ) {
 			return null;
 		}
 
@@ -1817,7 +1827,8 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		return array(
-			'last_seen_at'           => $last_seen,
+			'activity_at'            => gmdate('c', $timestamp),
+			'activity_field'         => $activity_field,
 			'age_seconds'            => $age,
 			'recency_window_seconds' => self::RETENTION_RECENT_ACTIVITY_SECONDS,
 		);
