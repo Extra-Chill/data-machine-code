@@ -1827,8 +1827,8 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		return array(
-			'activity_at'             => gmdate('c', $timestamp),
-			'activity_field'          => $activity_field,
+			'activity_at'            => gmdate('c', $timestamp),
+			'activity_field'         => $activity_field,
 			'age_seconds'            => $age,
 			'recency_window_seconds' => self::RETENTION_RECENT_ACTIVITY_SECONDS,
 		);
