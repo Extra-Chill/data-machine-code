@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.49.5] - 2026-07-12
+
+### Fixed
+- exclude submodules from package bootstrap
+
 ## [0.49.4] - 2026-07-12
 
 ### Fixed
