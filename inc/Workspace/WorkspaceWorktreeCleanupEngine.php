@@ -1368,7 +1368,8 @@ trait WorkspaceWorktreeCleanupEngine {
 
 		foreach ( $candidates as $candidate ) {
 			++$processed;
-			$revalidated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, $stale_liveness_only, $discard_unpushed);
+			$reviewed_lifecycle_snapshot = is_array($candidate['metadata'] ?? null) ? $candidate['metadata'] : array();
+			$revalidated                 = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, $stale_liveness_only, $discard_unpushed, $reviewed_lifecycle_snapshot);
 			if ( isset($revalidated['skipped']) ) {
 				$skipped[] = $revalidated['skipped'];
 				continue;
@@ -1461,15 +1462,22 @@ trait WorkspaceWorktreeCleanupEngine {
 	 *
 	 * @param  array $candidate Inventory candidate row.
 	 * @param  bool  $force     Allow dirty worktrees.
-		 * @return array<string,mixed>
-		 */
-	private function revalidate_bounded_cleanup_eligible_candidate( array $candidate, bool $force, bool $stale_liveness_only = false, bool $discard_unpushed = false ): array {
+	 * @param  bool  $stale_liveness_only Limit removal to stale worktrees.
+	 * @param  bool  $discard_unpushed     Allow removal of reviewed unpushed commits.
+	 * @param  array<string,mixed>|null $reviewed_lifecycle_snapshot Lifecycle metadata captured in a reviewed plan.
+	 * @return array<string,mixed>
+	 */
+	private function revalidate_bounded_cleanup_eligible_candidate( array $candidate, bool $force, bool $stale_liveness_only = false, bool $discard_unpushed = false, ?array $reviewed_lifecycle_snapshot = null ): array {
 		$handle   = (string) ( $candidate['handle'] ?? '' );
 		$repo     = (string) ( $candidate['repo'] ?? '' );
 		$branch   = (string) ( $candidate['branch'] ?? '' );
 		$wt_path  = (string) ( $candidate['path'] ?? '' );
 		$liveness = (string) ( $candidate['liveness'] ?? '' );
 		$metadata = is_array($candidate['metadata'] ?? null) ? $candidate['metadata'] : array();
+		if ( null !== $reviewed_lifecycle_snapshot && function_exists('get_option') ) {
+			$current_metadata = WorktreeContextInjector::get_metadata($handle);
+			$metadata         = is_array($current_metadata) ? $current_metadata : array();
+		}
 
 		if ( $stale_liveness_only && 'stale' !== $liveness ) {
 			return array(
@@ -1513,7 +1521,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		$recent_activity = $this->worktree_cleanup_recent_activity_protection($metadata);
-		if ( null !== $recent_activity ) {
+		if ( null !== $recent_activity && ( null === $reviewed_lifecycle_snapshot || ! $this->worktree_cleanup_lifecycle_matches_reviewed_plan($reviewed_lifecycle_snapshot, $metadata) ) ) {
 			return array(
 				'skipped' => array_merge(
 					array(
@@ -1832,6 +1840,23 @@ trait WorkspaceWorktreeCleanupEngine {
 			'age_seconds'            => $age,
 			'recency_window_seconds' => self::RETENTION_RECENT_ACTIVITY_SECONDS,
 		);
+	}
+
+	/**
+	 * Determine whether a reviewed row still has the lifecycle state the operator saw.
+	 *
+	 * @param  array<string,mixed> $reviewed_metadata Lifecycle metadata captured in the reviewed plan.
+	 * @param  array<string,mixed> $current_metadata  Current lifecycle metadata.
+	 * @return bool
+	 */
+	private function worktree_cleanup_lifecycle_matches_reviewed_plan( array $reviewed_metadata, array $current_metadata ): bool {
+		foreach ( array( 'finalized_at', 'cleanup_eligible_at', 'created_at', 'lifecycle_state' ) as $field ) {
+			if ( (string) ( $reviewed_metadata[ $field ] ?? '' ) !== (string) ( $current_metadata[ $field ] ?? '' ) ) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/**
