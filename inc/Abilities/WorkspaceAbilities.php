@@ -1295,7 +1295,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-worktree-add',
 				array(
 					'label'               => 'Add Workspace Worktree',
-					'description'         => 'Create a git worktree for a branch under `<repo>@<branch-slug>`. Branches are created off the supplied `from` ref (default `origin/HEAD`) when they do not yet exist locally. Creation fails closed when remote freshness cannot be verified; set `allow_unverified_freshness=true` only for intentional offline work. When `inject_context` is true (default), the originating site\'s composed AGENTS.md is made visible to OpenCode: symlinked into the worktree root when no repo-owned AGENTS.md exists, otherwise added via local OpenCode instructions so both files load. Site agent memory is snapshotted into `.claude/CLAUDE.local.md`, and injected paths are added to the worktree\'s per-checkout `info/exclude`. When `bootstrap` is true (default), submodule init plus root or one-level nested package-manager/composer installs run after creation so the worktree is immediately test/build-ready; set false to create a bare checkout.',
+					'description'         => 'Create a git worktree for a branch under `<repo>@<branch-slug>`. Branches are created off the supplied `from` ref (default `origin/HEAD`) when they do not yet exist locally. Creation fails closed when remote freshness cannot be verified; set `allow_unverified_freshness=true` only for intentional offline work. When `inject_context` is true (default), the originating site\'s composed AGENTS.md is made visible to OpenCode: symlinked into the worktree root when no repo-owned AGENTS.md exists, otherwise added via local OpenCode instructions so both files load. Site agent memory is snapshotted into `.claude/CLAUDE.local.md`, and injected paths are added to the worktree\'s per-checkout `info/exclude`. When `bootstrap` is true (default), submodule init plus root or one-level nested package-manager/composer installs run after creation. Git submodule package roots are excluded unless `.datamachine/worktree-bootstrap.json` explicitly opts them in; set false to create a bare checkout.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -1318,7 +1318,7 @@ class WorkspaceAbilities {
 							),
 							'bootstrap'                  => array(
 								'type'        => 'boolean',
-								'description' => 'Run detected bootstrap steps (submodule init plus root or one-level nested package-manager/composer installs) after creating the worktree. Default true. Steps are skipped gracefully when their trigger file or tool is missing. Set false for a bare checkout (e.g. when only reading code).',
+								'description' => 'Run detected bootstrap steps (submodule init plus root or one-level nested package-manager/composer installs) after creating the worktree. Git submodule package roots are excluded unless `.datamachine/worktree-bootstrap.json` explicitly opts them in. Default true. Steps are skipped gracefully when their trigger file or tool is missing. Set false for a bare checkout (e.g. when only reading code).',
 							),
 							'allow_stale'                => array(
 								'type'        => 'boolean',

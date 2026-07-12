@@ -26,8 +26,9 @@
  *      if `composer.lock` exists
  *
  * Dependency roots include the worktree root plus one-level child directories
- * with lockfiles. This covers lightweight monorepos where each top-level
- * component is installable on its own without requiring repo-specific config.
+ * with lockfiles. Git submodule roots are excluded: they own independent
+ * dependency lifecycles. A repository may explicitly opt a submodule in via
+ * `.datamachine/worktree-bootstrap.json`; see `submodule_dependency_roots`.
  *
  * Each step is optional. Missing binaries (no `pnpm` on PATH, etc.) downgrade
  * to a `skipped` result rather than failing. Command failures are returned as
@@ -91,6 +92,9 @@ final class WorktreeBootstrapper {
 		'vendor',
 	);
 
+	/** Repository-owned opt-in contract for submodule dependency roots. */
+	private const SUBMODULE_BOOTSTRAP_CONFIG = '.datamachine/worktree-bootstrap.json';
+
 	/**
 	 * Run all applicable bootstrap steps inside the given worktree.
 	 *
@@ -98,6 +102,7 @@ final class WorktreeBootstrapper {
 	 * @return array{
 	 *     success: bool,
 	 *     ran_any: bool,
+	 *     skipped_package_roots: array<int, array{relative: string, manager: string, reason: string}>,
 	 *     steps: array<int, array{
 	 *         step: string,
 	 *         status: string,
@@ -109,10 +114,11 @@ final class WorktreeBootstrapper {
 	 * }
 	 */
 	public static function bootstrap( string $worktree_path ): array {
-		$steps = array();
+		$package_discovery = self::discover_package_roots($worktree_path);
+		$steps             = array();
 
 		$steps[] = self::run_submodules($worktree_path);
-		$steps   = array_merge($steps, self::run_packages($worktree_path));
+		$steps   = array_merge($steps, self::run_packages($package_discovery['roots']));
 		$steps   = array_merge($steps, self::run_composer($worktree_path));
 
 		$failed  = array_filter($steps, fn( $s ) => self::STATUS_FAILED === ( $s['status'] ?? '' ));
@@ -121,6 +127,7 @@ final class WorktreeBootstrapper {
 		return array(
 			'success' => empty($failed),
 			'ran_any' => $ran_any,
+			'skipped_package_roots' => $package_discovery['skipped'],
 			'steps'   => $steps,
 		);
 	}
@@ -135,18 +142,20 @@ final class WorktreeBootstrapper {
 	 *     packages: ?string,  // Root package manager slug or null.
 	 *     composer: bool,
 	 *     package_roots: array<int, array{path: string, relative: string, manager: string}>,
+	 *     skipped_package_roots: array<int, array{relative: string, manager: string, reason: string}>,
 	 *     composer_roots: array<int, array{path: string, relative: string}>,
 	 * }
 	 */
 	public static function detect( string $worktree_path ): array {
-		$package_roots  = self::discover_package_roots($worktree_path);
+		$package_discovery = self::discover_package_roots($worktree_path);
 		$composer_roots = self::discover_composer_roots($worktree_path);
 
 		return array(
 			'submodules'     => is_file(rtrim($worktree_path, '/') . '/.gitmodules'),
 			'packages'       => self::detect_package_manager($worktree_path),
 			'composer'       => is_file(rtrim($worktree_path, '/') . '/composer.lock'),
-			'package_roots'  => $package_roots,
+			'package_roots'  => $package_discovery['roots'],
+			'skipped_package_roots' => $package_discovery['skipped'],
 			'composer_roots' => $composer_roots,
 		);
 	}
@@ -226,8 +235,7 @@ final class WorktreeBootstrapper {
 	/**
 	 * Run the detected package manager's install command, if any.
 	 */
-	private static function run_packages( string $worktree_path ): array {
-		$roots = self::discover_package_roots($worktree_path);
+	private static function run_packages( array $roots ): array {
 		if ( empty($roots) ) {
 			return array(
 				array(
@@ -317,13 +325,22 @@ final class WorktreeBootstrapper {
 	/**
 	 * Discover package-manager roots at the repo root and one directory deep.
 	 *
-	 * @return array<int, array{path: string, relative: string, manager: string}>
+	 * @return array{roots: array<int, array{path: string, relative: string, manager: string}>, skipped: array<int, array{relative: string, manager: string, reason: string}>}
 	 */
 	private static function discover_package_roots( string $worktree_path ): array {
 		$roots = array();
+		$skipped = array();
 		foreach ( self::candidate_dependency_roots($worktree_path) as $candidate ) {
 			$manager = self::detect_package_manager($candidate['path']);
 			if ( null === $manager ) {
+				continue;
+			}
+			if ( ! empty($candidate['submodule']) && empty($candidate['submodule_opted_in']) ) {
+				$skipped[] = array(
+					'relative' => $candidate['relative'],
+					'manager'  => $manager,
+					'reason'   => 'git submodule dependency root is excluded by default',
+				);
 				continue;
 			}
 			$roots[] = array(
@@ -332,7 +349,10 @@ final class WorktreeBootstrapper {
 				'manager'  => $manager,
 			);
 		}
-		return $roots;
+		return array(
+			'roots'   => $roots,
+			'skipped' => $skipped,
+		);
 	}
 
 	/**
@@ -343,6 +363,9 @@ final class WorktreeBootstrapper {
 	private static function discover_composer_roots( string $worktree_path ): array {
 		$roots = array();
 		foreach ( self::candidate_dependency_roots($worktree_path) as $candidate ) {
+			if ( ! empty($candidate['submodule']) && empty($candidate['submodule_opted_in']) ) {
+				continue;
+			}
 			if ( ! is_file($candidate['path'] . '/composer.lock') ) {
 				continue;
 			}
@@ -354,10 +377,12 @@ final class WorktreeBootstrapper {
 	/**
 	 * Return the repo root plus one-level child directories that may own deps.
 	 *
-	 * @return array<int, array{path: string, relative: string}>
+	 * @return array<int, array{path: string, relative: string, submodule?: bool, submodule_opted_in?: bool}>
 	 */
 	private static function candidate_dependency_roots( string $worktree_path ): array {
 		$root       = rtrim($worktree_path, '/');
+		$submodules = self::submodule_paths($root);
+		$opted_in   = self::opted_in_submodule_dependency_roots($root);
 		$candidates = array(
 			array(
 				'path'     => $root,
@@ -380,12 +405,73 @@ final class WorktreeBootstrapper {
 				continue;
 			}
 			$candidates[] = array(
-				'path'     => $path,
-				'relative' => $entry,
+				'path'                 => $path,
+				'relative'             => $entry,
+				'submodule'            => isset($submodules[$entry]),
+				'submodule_opted_in'   => isset($opted_in[$entry]),
 			);
 		}
 
 		return $candidates;
+	}
+
+	/**
+	 * Read declared submodule paths without depending on an initialized checkout.
+	 *
+	 * `.gitmodules` is tracked by the superproject and is available even when a
+	 * submodule's pinned commit cannot be fetched or checked out.
+	 *
+	 * @return array<string, true> Relative submodule paths keyed by path.
+	 */
+	private static function submodule_paths( string $worktree_path ): array {
+		$gitmodules = $worktree_path . '/.gitmodules';
+		if ( ! is_file($gitmodules) ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Invalid or unreadable declarations simply provide no boundaries.
+		$sections = @parse_ini_file($gitmodules, true, INI_SCANNER_RAW);
+		if ( ! is_array($sections) ) {
+			return array();
+		}
+
+		$paths = array();
+		foreach ( $sections as $section ) {
+			$path = is_array($section) ? (string) ($section['path'] ?? '') : '';
+			$path = trim($path, '/');
+			if ( '' !== $path && ! str_contains($path, '..') ) {
+				$paths[$path] = true;
+			}
+		}
+		return $paths;
+	}
+
+	/**
+	 * Read the explicit repository contract for submodules DMC may bootstrap.
+	 *
+	 * @return array<string, true> Relative submodule paths keyed by path.
+	 */
+	private static function opted_in_submodule_dependency_roots( string $worktree_path ): array {
+		$config = $worktree_path . '/' . self::SUBMODULE_BOOTSTRAP_CONFIG;
+		if ( ! is_file($config) ) {
+			return array();
+		}
+
+		$decoded = json_decode((string) file_get_contents($config), true);
+		$declared = is_array($decoded) && is_array($decoded['submodule_dependency_roots'] ?? null)
+			? $decoded['submodule_dependency_roots']
+			: array();
+		$paths = array();
+		foreach ( $declared as $path ) {
+			if ( ! is_string($path) ) {
+				continue;
+			}
+			$path = trim($path, '/');
+			if ( '' !== $path && ! str_contains($path, '..') ) {
+				$paths[$path] = true;
+			}
+		}
+		return $paths;
 	}
 
 	/**
