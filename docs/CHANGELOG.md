@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.49.4] - 2026-07-12
+
+### Fixed
+- waive reviewed cleanup recency guard (#888)
+
 ## [0.49.3] - 2026-07-12
 
 ### Fixed
