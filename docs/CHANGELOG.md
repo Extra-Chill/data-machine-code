@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.49.3] - 2026-07-12
+
+### Fixed
+- Fix retention cleanup observer-heartbeat deadlock
+
 ## [0.49.2] - 2026-07-08
 
 ### Fixed
