@@ -105,6 +105,11 @@ namespace {
 			return $method->invoke($this, $candidate, false, false, false);
 		}
 
+		public function revalidate_reviewed( array $candidate, array $reviewed_lifecycle_snapshot ): array {
+			$method = new ReflectionMethod($this, 'revalidate_bounded_cleanup_eligible_candidate');
+			return $method->invoke($this, $candidate, false, false, false, $reviewed_lifecycle_snapshot);
+		}
+
 		private function validate_containment( string $path, string $container ): array {
 			$real_path  = realpath($path);
 			$real_root  = realpath($container);
@@ -172,6 +177,16 @@ namespace {
 	$recent_lifecycle                                                = $harness->revalidate($recent_lifecycle_candidate);
 	retention_apply_protections_assert('recent_activity' === ( $recent_lifecycle['skipped']['reason_code'] ?? null ), 'recent cleanup_eligible_at rows are protected from apply removal');
 	retention_apply_protections_assert('cleanup_eligible_at' === ( $recent_lifecycle['skipped']['activity_field'] ?? null ), 'recent lifecycle protection identifies the lifecycle activity field');
+
+	$reviewed_lifecycle_candidate                                      = $base_candidate;
+	$reviewed_lifecycle_candidate['metadata']['cleanup_eligible_at'] = gmdate('c', time() - 60);
+	$reviewed_lifecycle                                              = $harness->revalidate_reviewed($reviewed_lifecycle_candidate, $reviewed_lifecycle_candidate['metadata']);
+	retention_apply_protections_assert(! isset($reviewed_lifecycle['skipped']), 'reviewed rows with unchanged recent lifecycle metadata remain removable');
+
+	$changed_lifecycle_candidate                               = $reviewed_lifecycle_candidate;
+	$changed_lifecycle_candidate['metadata']['finalized_at'] = gmdate('c', time() - 30);
+	$changed_lifecycle                                        = $harness->revalidate_reviewed($changed_lifecycle_candidate, $reviewed_lifecycle_candidate['metadata']);
+	retention_apply_protections_assert('recent_activity' === ( $changed_lifecycle['skipped']['reason_code'] ?? null ), 'reviewed rows with changed lifecycle metadata remain protected');
 
 	GitHubAbilities::$mode = 'open';
 	$open_pr              = $harness->revalidate($base_candidate);
