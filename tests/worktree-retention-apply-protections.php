@@ -163,8 +163,15 @@ namespace {
 
 	$recent_candidate                         = $base_candidate;
 	$recent_candidate['metadata']['last_seen_at'] = gmdate('c', time() - 60);
+	$recent_candidate['metadata']['observed_at']  = gmdate('c', time() - 60);
 	$recent                                   = $harness->revalidate($recent_candidate);
-	retention_apply_protections_assert('recent_activity' === ( $recent['skipped']['reason_code'] ?? null ), 'recent last_seen_at rows are protected from apply removal');
+	retention_apply_protections_assert(! isset($recent['skipped']), 'recent observation heartbeats do not protect cleanup-eligible rows from apply removal');
+
+	$recent_lifecycle_candidate                                      = $base_candidate;
+	$recent_lifecycle_candidate['metadata']['cleanup_eligible_at'] = gmdate('c', time() - 60);
+	$recent_lifecycle                                                = $harness->revalidate($recent_lifecycle_candidate);
+	retention_apply_protections_assert('recent_activity' === ( $recent_lifecycle['skipped']['reason_code'] ?? null ), 'recent cleanup_eligible_at rows are protected from apply removal');
+	retention_apply_protections_assert('cleanup_eligible_at' === ( $recent_lifecycle['skipped']['activity_field'] ?? null ), 'recent lifecycle protection identifies the lifecycle activity field');
 
 	GitHubAbilities::$mode = 'open';
 	$open_pr              = $harness->revalidate($base_candidate);
