@@ -35,7 +35,8 @@ trait WorkspaceWorktreeLifecycle {
 	 * When `$bootstrap` is true (default), a bootstrap pass runs after the
 	 * worktree is created: `git submodule update --init --recursive` if
 	 * `.gitmodules` is present, package-manager installs for root or one-level
-	 * nested dependency roots with lockfiles (pnpm/bun/yarn/npm), and
+	 * nested dependency roots with lockfiles (pnpm/bun/yarn/npm; submodule roots
+	 * are excluded unless `.datamachine/worktree-bootstrap.json` opts them in), and
 	 * `composer install` for root or one-level nested dependency roots with
 	 * `composer.lock`. Steps are independent and each one is skipped gracefully
 	 * when its tool is unavailable. A failing step is surfaced in the result
