@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.51.0] - 2026-07-13
+
+### Added
+- add targeted worktree safety lookup
+
 ## [0.50.0] - 2026-07-12
 
 ### Added
