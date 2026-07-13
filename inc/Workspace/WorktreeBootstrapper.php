@@ -86,6 +86,8 @@ final class WorktreeBootstrapper {
 	private const NESTED_ROOT_EXCLUDE_DIRS = array(
 		'.git',
 		'.github',
+		'.claude',
+		'.opencode',
 		'node_modules',
 		'vendor',
 	);
@@ -395,7 +397,7 @@ final class WorktreeBootstrapper {
 		}
 
 		foreach ( $entries as $entry ) {
-			if ( str_starts_with($entry, '.') || in_array($entry, self::NESTED_ROOT_EXCLUDE_DIRS, true) ) {
+			if ( '.' === $entry || '..' === $entry || in_array($entry, self::NESTED_ROOT_EXCLUDE_DIRS, true) ) {
 				continue;
 			}
 			$path = $root . '/' . $entry;

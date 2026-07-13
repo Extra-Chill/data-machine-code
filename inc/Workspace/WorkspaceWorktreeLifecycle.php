@@ -453,7 +453,7 @@ trait WorkspaceWorktreeLifecycle {
 				'task_ref'    => isset($task['task_ref']) ? (string) $task['task_ref'] : '',
 			)
 		);
-		$metadata_stored = WorktreeContextInjector::store_lifecycle_metadata($wt_handle, $lifecycle_metadata);
+		$metadata_stored    = WorktreeContextInjector::store_lifecycle_metadata($wt_handle, $lifecycle_metadata);
 		if ( is_wp_error($metadata_stored) ) {
 			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch);
 			return $metadata_stored;

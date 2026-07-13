@@ -900,10 +900,14 @@ class WorktreeContextInjector {
 			$memory  = new $memory_class($user_id, 0, $filename);
 			$content = null;
 			if ( is_callable(array( $memory, 'get_all' )) ) {
-				$result  = call_user_func(array( $memory, 'get_all' ));
+				/** @var callable(): mixed $get_all */
+				$get_all = array( $memory, 'get_all' );
+				$result  = $get_all();
 				$content = is_array($result) && ! empty($result['success']) && is_string($result['content'] ?? null) ? $result['content'] : null;
 			} elseif ( is_callable(array( $memory, 'get_file_path' )) ) {
-				$file_path = call_user_func(array( $memory, 'get_file_path' ));
+				/** @var callable(): mixed $get_file_path */
+				$get_file_path = array( $memory, 'get_file_path' );
+				$file_path     = $get_file_path();
 				if ( is_string($file_path) && is_readable($file_path) ) {
 					$content = file_get_contents($file_path); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- AgentMemory returns a validated local file path, not a remote URL.
 				}
@@ -1070,16 +1074,12 @@ class WorktreeContextInjector {
 		$exclude_entries = array();
 
 		foreach ( self::get_projection_targets($payload) as $target ) {
-			if ( ! is_array($target) ) {
-				continue;
-			}
-
 			$result = self::project_context_target($worktree_path, $payload, $target);
 			if ( is_wp_error($result) ) {
 				return $result;
 			}
 
-			$target_written = $result['written'] ?? array();
+			$target_written = $result['written'];
 			$written        = array_merge($written, $target_written);
 			if ( ! empty($result['exclude']) ) {
 				$exclude_entries = array_merge($exclude_entries, $result['exclude']);
@@ -1248,10 +1248,6 @@ class WorktreeContextInjector {
 		$removed = array();
 
 		foreach ( self::get_projection_cleanup_registry() as $entry ) {
-			if ( ! is_array($entry) ) {
-				continue;
-			}
-
 			if ( isset($entry['cleanup']) && is_callable($entry['cleanup']) ) {
 				$result = call_user_func($entry['cleanup'], $worktree_path, $entry);
 				if ( is_array($result) ) {
@@ -1312,7 +1308,7 @@ class WorktreeContextInjector {
 					$all = array();
 				}
 
-				$existing = isset($all[ $handle ]) && is_array($all[ $handle ]) ? $all[ $handle ] : self::get_inventory_metadata($handle) ?? array();
+				$existing        = isset($all[ $handle ]) && is_array($all[ $handle ]) ? $all[ $handle ] : self::get_inventory_metadata($handle) ?? array();
 				$stored_metadata = array_merge($existing, $metadata);
 				$all[ $handle ]  = $stored_metadata;
 
