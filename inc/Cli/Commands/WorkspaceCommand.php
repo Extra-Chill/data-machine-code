@@ -4539,11 +4539,11 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				$items  = array_map(
 				function ( $wt ) {
-					$skipped = (array) ( $wt['fields_skipped'] ?? array() );
-					$dirty   = $wt['dirty'] ?? null;
+					$skipped  = (array) ( $wt['fields_skipped'] ?? array() );
+					$dirty    = $wt['dirty'] ?? null;
 					$unpushed = $wt['unpushed'] ?? null;
-					$size    = $wt['size_bytes'] ?? null;
-					$item = array(
+					$size     = $wt['size_bytes'] ?? null;
+					$item     = array(
 						'handle'              => $wt['handle'] ?? '',
 						'repo'                => $wt['repo'] ?? '',
 						'kind'                => ! empty($wt['is_primary']) ? 'primary' : 'worktree',
