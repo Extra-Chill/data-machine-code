@@ -43,6 +43,7 @@ class WorkspaceCommand extends BaseCommand {
 	private const WORKTREE_OPERATIONS = array(
 		'add'                                     => array( 'ability' => 'datamachine-code/workspace-worktree-add' ),
 		'list'                                    => array( 'ability' => 'datamachine-code/workspace-worktree-list' ),
+		'get'                                     => array( 'ability' => 'datamachine-code/workspace-worktree-list' ),
 		'remove'                                  => array( 'ability' => 'datamachine-code/workspace-worktree-remove' ),
 		'prune'                                   => array( 'ability' => 'datamachine-code/workspace-worktree-prune' ),
 		'cleanup'                                 => array( 'ability' => 'datamachine-code/workspace-worktree-cleanup' ),
@@ -3872,7 +3873,7 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
+			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|get|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
 			return;
 		}
 
@@ -4058,6 +4059,16 @@ class WorkspaceCommand extends BaseCommand {
 				|| ! empty($assoc_args['full']);
 				$input['include_status'] = $want_status;
 				$input['include_disk']   = $want_disk;
+				break;
+
+			case 'get':
+				if ( empty($args[1]) ) {
+					WP_CLI::error('Usage: worktree get <handle> [--with-status] [--format=json]');
+					return;
+				}
+				$input['handle']         = (string) $args[1];
+				$input['include_status'] = true;
+				$input['include_disk']   = false;
 				break;
 
 			case 'remove':
@@ -4512,6 +4523,7 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		switch ( $operation ) {
+			case 'get':
 			case 'list':
 				$worktrees = $result['worktrees'] ?? array();
 				if ( ! empty($assoc_args['stale']) ) {

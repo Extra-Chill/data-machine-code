@@ -767,6 +767,10 @@ trait WorkspaceWorktreeLifecycle {
 	public function worktree_list( ?string $repo = null, ?string $state = null, array $opts = array() ): array|\WP_Error {
 		$include_status = array_key_exists('include_status', $opts) ? (bool) $opts['include_status'] : true;
 		$include_disk   = array_key_exists('include_disk', $opts) ? (bool) $opts['include_disk'] : true;
+		$handle         = isset($opts['handle']) ? trim( (string) $opts['handle']) : '';
+		if ( '' !== $handle && null === $repo ) {
+			$repo = str_contains($handle, '@') ? strstr($handle, '@', true) : $handle;
+		}
 
 		$skipped_groups = array();
 		if ( ! $include_status ) {
@@ -840,6 +844,9 @@ trait WorkspaceWorktreeLifecycle {
 					// External worktree (created via raw `git worktree add` outside the workspace).
 					// Show the absolute path so it is still useful, even though it has no `<repo>@<slug>` handle.
 					$handle = $wt['path'];
+				}
+				if ( '' !== (string) ( $opts['handle'] ?? '' ) && $handle !== (string) $opts['handle'] ) {
+					continue;
 				}
 
 				if ( $include_status ) {
