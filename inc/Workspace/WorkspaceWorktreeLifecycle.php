@@ -23,14 +23,11 @@ trait WorkspaceWorktreeLifecycle {
 	 * exist locally, it is created from `<from>` (default `origin/HEAD`).
 	 *
 	 * When `$inject_context` is true (default) and Data Machine's agent memory
-	 * layer is available, the originating site's AGENTS.md is made visible to
-	 * OpenCode: symlinked into the worktree root when no repo-owned AGENTS.md
-	 * exists, otherwise added via local OpenCode instructions so both files load.
-	 * MEMORY.md / USER.md / RULES.md are snapshotted into
-	 * `.claude/CLAUDE.local.md`. Injected paths are added to the worktree's
-	 * per-checkout `info/exclude`. When the memory layer is absent the worktree
-	 * is still created successfully; injection silently
-	 * skips.
+	 * layer is available, the originating site context is rendered into the
+	 * runtime projections registered by installed integrations. Projected paths
+	 * are added to the worktree's per-checkout `info/exclude`. When the memory
+	 * layer is absent the worktree is still created successfully; injection
+	 * silently skips.
 	 *
 	 * When `$bootstrap` is true (default), a bootstrap pass runs after the
 	 * worktree is created: `git submodule update --init --recursive` if

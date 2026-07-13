@@ -79,25 +79,49 @@ remove_tree($temp_root);
 mkdir($temp_root, 0777, true);
 
 try {
+	$GLOBALS['datamachine_code_projection_test_filters'] = array();
+	assert_true(array() === WorktreeContextInjector::get_projection_targets(), 'DMC must not provide runtime projection defaults');
+	assert_true(array() === WorktreeContextInjector::get_projection_cleanup_registry(), 'DMC must not provide runtime cleanup defaults');
+
+	$cleanup_called = false;
 	$GLOBALS['datamachine_code_projection_test_filters'] = array(
 		WorktreeContextInjector::PROJECTION_TARGETS_FILTER => array(
 			static function ( array $targets ): array {
-				$targets = array();
+				assert_true(array() === $targets, 'projection registrations must start empty');
 				$targets['custom_context'] = array(
 					'path'     => '.custom/context.md',
 					'renderer' => static fn( array $payload ): string => 'custom:' . (string) ( $payload['site_name'] ?? '' ),
 					'exclude'  => true,
 				);
+				$targets['custom_manifest'] = array(
+					'projector'     => static function ( string $worktree_path, array $payload, array $target ): array {
+						$path = $worktree_path . '/.custom/manifest.json';
+						file_put_contents($path, json_encode(array( 'site' => $payload['site_name'], 'target' => array_key_exists('exclude_paths', $target) )));
+						return array( $path );
+					},
+					'exclude_paths' => array( '.custom/manifest.json' ),
+				);
 				return $targets;
 			},
 		),
 		WorktreeContextInjector::PROJECTION_CLEANUP_FILTER => array(
-			static function ( array $cleanup ): array {
-				return array(
-					'custom_context' => array(
-						'paths' => array( '.custom/context.md' ),
-					),
+			static function ( array $cleanup ) use ( &$cleanup_called ): array {
+				assert_true(array() === $cleanup, 'cleanup registrations must start empty');
+				$cleanup['custom_context'] = array(
+					'paths' => array( '.custom/context.md' ),
 				);
+				$cleanup['custom_manifest'] = array(
+					'cleanup' => static function ( string $worktree_path, array $entry ) use ( &$cleanup_called ): array {
+						$cleanup_called = true;
+						$path = $worktree_path . '/.custom/manifest.json';
+						if ( is_file($path) ) {
+							unlink($path);
+							return array( $path );
+						}
+						return array();
+					},
+				);
+				return $cleanup;
 			},
 		),
 	);
@@ -112,11 +136,17 @@ try {
 	assert_true(! is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : 'inject failed');
 	assert_true(is_file($temp_root . '/.custom/context.md'), 'custom projection was not written');
 	assert_true('custom:Projection Test' === trim((string) file_get_contents($temp_root . '/.custom/context.md')), 'custom renderer output mismatch');
-	assert_true(! is_file($temp_root . '/.claude/CLAUDE.local.md'), 'default Claude projection was not replaceable');
+	assert_true(is_file($temp_root . '/.custom/manifest.json'), 'custom projector output was not written');
+	$manifest = json_decode((string) file_get_contents($temp_root . '/.custom/manifest.json'), true);
+	assert_true('Projection Test' === ($manifest['site'] ?? null) && true === ($manifest['target'] ?? null), 'custom projector arguments mismatch');
+	assert_true(in_array($temp_root . '/.custom/manifest.json', $result['written'], true), 'custom projector output was not reported');
 
 	$removed = WorktreeContextInjector::uninject($temp_root);
 	assert_true(! is_file($temp_root . '/.custom/context.md'), 'custom cleanup path was not removed');
+	assert_true(! is_file($temp_root . '/.custom/manifest.json'), 'custom cleanup callback output was not removed');
 	assert_true(in_array($temp_root . '/.custom/context.md', $removed['removed'], true), 'custom cleanup did not report removed path');
+	assert_true(in_array($temp_root . '/.custom/manifest.json', $removed['removed'], true), 'custom cleanup callback did not report removed path');
+	assert_true($cleanup_called, 'custom cleanup callback was not called');
 } finally {
 	remove_tree($temp_root);
 }
