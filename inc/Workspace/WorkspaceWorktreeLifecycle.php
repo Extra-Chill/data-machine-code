@@ -770,8 +770,8 @@ trait WorkspaceWorktreeLifecycle {
 		$target_handle  = isset($opts['handle']) ? trim( (string) $opts['handle']) : '';
 		if ( '' !== $target_handle ) {
 			// Inventory/listing handles name the on-disk worktree, not its Git branch.
-			$parsed_handle  = $this->parse_handle($target_handle);
-			$target_handle  = $parsed_handle['dir_name'];
+			$parsed_handle = $this->parse_handle($target_handle);
+			$target_handle = $parsed_handle['dir_name'];
 			if ( null === $repo ) {
 				$repo = $parsed_handle['repo'];
 			}
@@ -828,10 +828,10 @@ trait WorkspaceWorktreeLifecycle {
 		$worktrees = array();
 
 		foreach ( $primaries as $primary ) {
-			$primary_path = $this->workspace_path . '/' . $primary;
-			$primary_repo = $this->parse_handle($primary)['repo'];
+			$primary_path      = $this->workspace_path . '/' . $primary;
+			$primary_repo      = $this->parse_handle($primary)['repo'];
 			$scanning_worktree = str_contains($primary, '@');
-			$result       = $this->run_git($primary_path, 'worktree list --porcelain');
+			$result            = $this->run_git($primary_path, 'worktree list --porcelain');
 			if ( is_wp_error($result) ) {
 				continue;
 			}
@@ -863,11 +863,11 @@ trait WorkspaceWorktreeLifecycle {
 				}
 
 				if ( $include_status ) {
-					$dirty_result      = $this->run_git($wt['path'], 'status --porcelain');
-					$dirty_files       = is_wp_error($dirty_result)
+					$dirty_result     = $this->run_git($wt['path'], 'status --porcelain');
+					$dirty_files      = is_wp_error($dirty_result)
 					? 0
 					: count(array_filter(array_map('trim', explode("\n", $dirty_result['output'] ?? ''))));
-					$unpushed_commits  = $this->count_unpushed_commits($wt['path']);
+					$unpushed_commits = $this->count_unpushed_commits($wt['path']);
 					if ( is_wp_error($unpushed_commits) ) {
 						return $unpushed_commits;
 					}

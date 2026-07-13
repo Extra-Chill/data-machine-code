@@ -4541,7 +4541,6 @@ class WorkspaceCommand extends BaseCommand {
 							)
 						);
 						WP_CLI::halt(1);
-						return;
 					}
 					WP_CLI::log('No worktrees found.');
 					$duplicates = (array) ( $result['duplicates'] ?? array() );
