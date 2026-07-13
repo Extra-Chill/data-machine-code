@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.51.4] - 2026-07-13
+
+### Fixed
+- Fix SQLite worktree registry contention
+
 ## [0.51.3] - 2026-07-13
 
 ### Fixed
