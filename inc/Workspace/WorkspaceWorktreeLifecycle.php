@@ -23,14 +23,11 @@ trait WorkspaceWorktreeLifecycle {
 	 * exist locally, it is created from `<from>` (default `origin/HEAD`).
 	 *
 	 * When `$inject_context` is true (default) and Data Machine's agent memory
-	 * layer is available, the originating site's AGENTS.md is made visible to
-	 * OpenCode: symlinked into the worktree root when no repo-owned AGENTS.md
-	 * exists, otherwise added via local OpenCode instructions so both files load.
-	 * MEMORY.md / USER.md / RULES.md are snapshotted into
-	 * `.claude/CLAUDE.local.md`. Injected paths are added to the worktree's
-	 * per-checkout `info/exclude`. When the memory layer is absent the worktree
-	 * is still created successfully; injection silently
-	 * skips.
+	 * layer is available, the originating site context is rendered into the
+	 * runtime projections registered by installed integrations. Projected paths
+	 * are added to the worktree's per-checkout `info/exclude`. When the memory
+	 * layer is absent the worktree is still created successfully; injection
+	 * silently skips.
 	 *
 	 * When `$bootstrap` is true (default), a bootstrap pass runs after the
 	 * worktree is created: `git submodule update --init --recursive` if
@@ -451,14 +448,14 @@ trait WorkspaceWorktreeLifecycle {
 				'repo'        => $repo,
 				'branch'      => $branch,
 				'base_ref'    => $created_branch ? $resolved_base : null,
-				'base_source' => $created_branch ? ( null !== $from && '' !== trim($from) ? 'requested_ref' : 'default_base' ) : 'existing_local_branch',
-				'task_url'    => isset($task['task_url']) ? (string) $task['task_url'] : '',
-				'task_ref'    => isset($task['task_ref']) ? (string) $task['task_ref'] : '',
+				'base_source' => $created_branch ? ( null !== $from && '' !== trim( $from ) ? 'requested_ref' : 'default_base' ) : 'existing_local_branch',
+				'task_url'    => isset( $task['task_url'] ) ? (string) $task['task_url'] : '',
+				'task_ref'    => isset( $task['task_ref'] ) ? (string) $task['task_ref'] : '',
 			)
 		);
-		$metadata_stored = WorktreeContextInjector::store_lifecycle_metadata($wt_handle, $lifecycle_metadata);
-		if ( is_wp_error($metadata_stored) ) {
-			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch);
+		$metadata_stored    = WorktreeContextInjector::store_lifecycle_metadata( $wt_handle, $lifecycle_metadata );
+		if ( is_wp_error( $metadata_stored ) ) {
+			$this->rollback_rejected_worktree( $primary_path, $wt_path, $branch, $created_branch );
 			return $metadata_stored;
 		}
 		$response['created_at'] = $lifecycle_metadata['created_at'] ?? null;
