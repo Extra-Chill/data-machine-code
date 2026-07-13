@@ -114,21 +114,21 @@ final class WorktreeBootstrapper {
 	 * }
 	 */
 	public static function bootstrap( string $worktree_path ): array {
-		$package_discovery = self::discover_package_roots($worktree_path);
+		$package_discovery = self::discover_package_roots( $worktree_path );
 		$steps             = array();
 
-		$steps[] = self::run_submodules($worktree_path);
-		$steps   = array_merge($steps, self::run_packages($package_discovery['roots']));
-		$steps   = array_merge($steps, self::run_composer($worktree_path));
+		$steps[] = self::run_submodules( $worktree_path );
+		$steps   = array_merge( $steps, self::run_packages( $package_discovery['roots'] ) );
+		$steps   = array_merge( $steps, self::run_composer( $worktree_path ) );
 
-		$failed  = array_filter($steps, fn( $s ) => self::STATUS_FAILED === ( $s['status'] ?? '' ));
-		$ran_any = (bool) array_filter($steps, fn( $s ) => self::STATUS_RAN === ( $s['status'] ?? '' ));
+		$failed  = array_filter( $steps, fn( $s ) => self::STATUS_FAILED === ( $s['status'] ?? '' ) );
+		$ran_any = (bool) array_filter( $steps, fn( $s ) => self::STATUS_RAN === ( $s['status'] ?? '' ) );
 
 		return array(
-			'success' => empty($failed),
-			'ran_any' => $ran_any,
+			'success'               => empty( $failed ),
+			'ran_any'               => $ran_any,
 			'skipped_package_roots' => $package_discovery['skipped'],
-			'steps'   => $steps,
+			'steps'                 => $steps,
 		);
 	}
 
@@ -147,16 +147,16 @@ final class WorktreeBootstrapper {
 	 * }
 	 */
 	public static function detect( string $worktree_path ): array {
-		$package_discovery = self::discover_package_roots($worktree_path);
-		$composer_roots = self::discover_composer_roots($worktree_path);
+		$package_discovery = self::discover_package_roots( $worktree_path );
+		$composer_roots    = self::discover_composer_roots( $worktree_path );
 
 		return array(
-			'submodules'     => is_file(rtrim($worktree_path, '/') . '/.gitmodules'),
-			'packages'       => self::detect_package_manager($worktree_path),
-			'composer'       => is_file(rtrim($worktree_path, '/') . '/composer.lock'),
-			'package_roots'  => $package_discovery['roots'],
+			'submodules'            => is_file( rtrim( $worktree_path, '/' ) . '/.gitmodules' ),
+			'packages'              => self::detect_package_manager( $worktree_path ),
+			'composer'              => is_file( rtrim( $worktree_path, '/' ) . '/composer.lock' ),
+			'package_roots'         => $package_discovery['roots'],
 			'skipped_package_roots' => $package_discovery['skipped'],
-			'composer_roots' => $composer_roots,
+			'composer_roots'        => $composer_roots,
 		);
 	}
 
@@ -328,14 +328,14 @@ final class WorktreeBootstrapper {
 	 * @return array{roots: array<int, array{path: string, relative: string, manager: string}>, skipped: array<int, array{relative: string, manager: string, reason: string}>}
 	 */
 	private static function discover_package_roots( string $worktree_path ): array {
-		$roots = array();
+		$roots   = array();
 		$skipped = array();
-		foreach ( self::candidate_dependency_roots($worktree_path) as $candidate ) {
-			$manager = self::detect_package_manager($candidate['path']);
+		foreach ( self::candidate_dependency_roots( $worktree_path ) as $candidate ) {
+			$manager = self::detect_package_manager( $candidate['path'] );
 			if ( null === $manager ) {
 				continue;
 			}
-			if ( ! empty($candidate['submodule']) && empty($candidate['submodule_opted_in']) ) {
+			if ( ! empty( $candidate['submodule'] ) && empty( $candidate['submodule_opted_in'] ) ) {
 				$skipped[] = array(
 					'relative' => $candidate['relative'],
 					'manager'  => $manager,
@@ -397,18 +397,18 @@ final class WorktreeBootstrapper {
 		}
 
 		foreach ( $entries as $entry ) {
-			if ( '.' === $entry || '..' === $entry || in_array($entry, self::NESTED_ROOT_EXCLUDE_DIRS, true) ) {
+			if ( '.' === $entry || '..' === $entry || in_array( $entry, self::NESTED_ROOT_EXCLUDE_DIRS, true ) ) {
 				continue;
 			}
 			$path = $root . '/' . $entry;
-			if ( ! is_dir($path) || is_link($path) ) {
+			if ( ! is_dir( $path ) || is_link( $path ) ) {
 				continue;
 			}
 			$candidates[] = array(
-				'path'                 => $path,
-				'relative'             => $entry,
-				'submodule'            => isset($submodules[$entry]),
-				'submodule_opted_in'   => isset($opted_in[$entry]),
+				'path'               => $path,
+				'relative'           => $entry,
+				'submodule'          => isset( $submodules[ $entry ] ),
+				'submodule_opted_in' => isset( $opted_in[ $entry ] ),
 			);
 		}
 
@@ -425,22 +425,22 @@ final class WorktreeBootstrapper {
 	 */
 	private static function submodule_paths( string $worktree_path ): array {
 		$gitmodules = $worktree_path . '/.gitmodules';
-		if ( ! is_file($gitmodules) ) {
+		if ( ! is_file( $gitmodules ) ) {
 			return array();
 		}
 
 		// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Invalid or unreadable declarations simply provide no boundaries.
-		$sections = @parse_ini_file($gitmodules, true, INI_SCANNER_RAW);
-		if ( ! is_array($sections) ) {
+		$sections = @parse_ini_file( $gitmodules, true, INI_SCANNER_RAW );
+		if ( ! is_array( $sections ) ) {
 			return array();
 		}
 
 		$paths = array();
 		foreach ( $sections as $section ) {
-			$path = is_array($section) ? (string) ($section['path'] ?? '') : '';
-			$path = trim($path, '/');
-			if ( '' !== $path && ! str_contains($path, '..') ) {
-				$paths[$path] = true;
+			$path = is_array( $section ) ? (string) ( $section['path'] ?? '' ) : '';
+			$path = trim( $path, '/' );
+			if ( '' !== $path && ! str_contains( $path, '..' ) ) {
+				$paths[ $path ] = true;
 			}
 		}
 		return $paths;
@@ -453,22 +453,23 @@ final class WorktreeBootstrapper {
 	 */
 	private static function opted_in_submodule_dependency_roots( string $worktree_path ): array {
 		$config = $worktree_path . '/' . self::SUBMODULE_BOOTSTRAP_CONFIG;
-		if ( ! is_file($config) ) {
+		if ( ! is_file( $config ) ) {
 			return array();
 		}
 
-		$decoded = json_decode((string) file_get_contents($config), true);
-		$declared = is_array($decoded) && is_array($decoded['submodule_dependency_roots'] ?? null)
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reading a local repository config file.
+		$decoded  = json_decode( (string) file_get_contents( $config ), true );
+		$declared = is_array( $decoded ) && is_array( $decoded['submodule_dependency_roots'] ?? null )
 			? $decoded['submodule_dependency_roots']
 			: array();
-		$paths = array();
+		$paths    = array();
 		foreach ( $declared as $path ) {
 			if ( ! is_string($path) ) {
 				continue;
 			}
-			$path = trim($path, '/');
-			if ( '' !== $path && ! str_contains($path, '..') ) {
-				$paths[$path] = true;
+			$path = trim( $path, '/' );
+			if ( '' !== $path && ! str_contains( $path, '..' ) ) {
+				$paths[ $path ] = true;
 			}
 		}
 		return $paths;

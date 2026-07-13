@@ -1303,22 +1303,22 @@ class WorktreeContextInjector {
 		$updated         = SqliteBusyRetry::run(
 			'worktree_lifecycle_metadata_option',
 			static function () use ( $handle, $metadata, &$stored_metadata ): bool {
-				$all = get_option(self::METADATA_OPTION, array());
-				if ( ! is_array($all) ) {
+				$all = get_option( self::METADATA_OPTION, array() );
+				if ( ! is_array( $all ) ) {
 					$all = array();
 				}
 
-				$existing        = isset($all[ $handle ]) && is_array($all[ $handle ]) ? $all[ $handle ] : self::get_inventory_metadata($handle) ?? array();
-				$stored_metadata = array_merge($existing, $metadata);
+				$existing        = isset( $all[ $handle ] ) && is_array( $all[ $handle ] ) ? $all[ $handle ] : self::get_inventory_metadata( $handle ) ?? array();
+				$stored_metadata = array_merge( $existing, $metadata );
 				$all[ $handle ]  = $stored_metadata;
 
 				// A false return also means the value was already identical, which is
 				// idempotent. SQLite busy errors are identified through $wpdb->last_error.
-				update_option(self::METADATA_OPTION, $all, false);
+				update_option( self::METADATA_OPTION, $all, false );
 				return true;
 			}
 		);
-		if ( is_wp_error($updated) ) {
+		if ( is_wp_error( $updated ) ) {
 			return $updated;
 		}
 

@@ -448,14 +448,14 @@ trait WorkspaceWorktreeLifecycle {
 				'repo'        => $repo,
 				'branch'      => $branch,
 				'base_ref'    => $created_branch ? $resolved_base : null,
-				'base_source' => $created_branch ? ( null !== $from && '' !== trim($from) ? 'requested_ref' : 'default_base' ) : 'existing_local_branch',
-				'task_url'    => isset($task['task_url']) ? (string) $task['task_url'] : '',
-				'task_ref'    => isset($task['task_ref']) ? (string) $task['task_ref'] : '',
+				'base_source' => $created_branch ? ( null !== $from && '' !== trim( $from ) ? 'requested_ref' : 'default_base' ) : 'existing_local_branch',
+				'task_url'    => isset( $task['task_url'] ) ? (string) $task['task_url'] : '',
+				'task_ref'    => isset( $task['task_ref'] ) ? (string) $task['task_ref'] : '',
 			)
 		);
-		$metadata_stored    = WorktreeContextInjector::store_lifecycle_metadata($wt_handle, $lifecycle_metadata);
-		if ( is_wp_error($metadata_stored) ) {
-			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch);
+		$metadata_stored    = WorktreeContextInjector::store_lifecycle_metadata( $wt_handle, $lifecycle_metadata );
+		if ( is_wp_error( $metadata_stored ) ) {
+			$this->rollback_rejected_worktree( $primary_path, $wt_path, $branch, $created_branch );
 			return $metadata_stored;
 		}
 		$response['created_at'] = $lifecycle_metadata['created_at'] ?? null;
