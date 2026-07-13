@@ -85,6 +85,8 @@ function dbDelta( string $sql ): array {
 final class Datamachine_Code_Test_Wpdb {
 	public string $prefix = 'wp_';
 	public bool $fail_replace = false;
+	public bool $sqlite = false;
+	public bool $busy_replace = false;
 	public string $last_error = '';
 	public int $insert_id = 0;
 	public int $rows_affected = 0;
@@ -100,7 +102,15 @@ final class Datamachine_Code_Test_Wpdb {
 		return '';
 	}
 
+	public function db_server_info(): string {
+		return $this->sqlite ? 'SQLite 3' : 'MySQL 8.4';
+	}
+
 	public function replace( string $table, array $data ): int|false {
+		if ( $this->busy_replace ) {
+			$this->last_error = 'database is locked';
+			return false;
+		}
 		if ( $this->fail_replace ) {
 			return false;
 		}
@@ -330,6 +340,17 @@ try {
 	assert_true(is_wp_error($failed), 'inventory persistence failure reported success');
 	assert_true('worktree_inventory_persist_failed' === $failed->get_error_code(), 'unexpected persistence failure error code');
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-persist-fails'), 'failed persistence left a worktree directory behind');
+
+	$contention_wpdb = new Datamachine_Code_Test_Wpdb();
+	$contention_wpdb->sqlite = true;
+	$contention_wpdb->busy_replace = true;
+	$GLOBALS['wpdb'] = $contention_wpdb;
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_sqlite_busy_retry_max_wait_ms'] = static fn(): int => 1;
+	$contention = $workspace->worktree_add('homeboy', 'audit-primitives-sqlite-locked', 'origin/main', false, false, false, false, true);
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_sqlite_busy_retry_max_wait_ms']);
+	assert_true(is_wp_error($contention), 'SQLite contention reported success');
+	assert_true('workspace_sqlite_lock_contention' === $contention->get_error_code(), 'SQLite contention did not return the structured error');
+	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-sqlite-locked'), 'SQLite contention left a partial Git worktree behind');
 
 	$GLOBALS['wpdb'] = new Datamachine_Code_Test_Wpdb();
 	run_command('git remote set-url origin ' . escapeshellarg($workspace_root . '/missing-origin.git'), $workspace_root . '/homeboy');

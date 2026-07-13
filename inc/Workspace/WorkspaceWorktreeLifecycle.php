@@ -199,10 +199,16 @@ trait WorkspaceWorktreeLifecycle {
 			);
 		}
 
-		$persisted = $this->worktree_inventory()->upsert($this->build_worktree_inventory_row_from_handle($wt_handle));
+		$inventory = $this->worktree_inventory();
+		$persisted = $inventory->upsert($this->build_worktree_inventory_row_from_handle($wt_handle));
 		if ( ! $persisted ) {
 			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
 			WorktreeContextInjector::forget_metadata($wt_handle);
+
+			$inventory_error = $inventory->last_error();
+			if ( $inventory_error instanceof \WP_Error ) {
+				return $inventory_error;
+			}
 
 			return new \WP_Error(
 				'worktree_inventory_persist_failed',
@@ -450,7 +456,11 @@ trait WorkspaceWorktreeLifecycle {
 				'task_ref'    => isset($task['task_ref']) ? (string) $task['task_ref'] : '',
 			)
 		);
-		WorktreeContextInjector::store_lifecycle_metadata($wt_handle, $lifecycle_metadata);
+		$metadata_stored = WorktreeContextInjector::store_lifecycle_metadata($wt_handle, $lifecycle_metadata);
+		if ( is_wp_error($metadata_stored) ) {
+			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch);
+			return $metadata_stored;
+		}
 		$response['created_at'] = $lifecycle_metadata['created_at'] ?? null;
 		$response['metadata']   = WorktreeContextInjector::get_metadata($wt_handle);
 
@@ -468,7 +478,11 @@ trait WorkspaceWorktreeLifecycle {
 					$response['context_injected']    = false;
 					$response['context_skip_reason'] = 'inject failed: ' . $injection->get_error_message();
 				} else {
-					WorktreeContextInjector::store_metadata($wt_handle, $payload);
+					$metadata_stored = WorktreeContextInjector::store_metadata($wt_handle, $payload);
+					if ( is_wp_error($metadata_stored) ) {
+						$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch);
+						return $metadata_stored;
+					}
 					$response['metadata']         = WorktreeContextInjector::get_metadata($wt_handle);
 					$response['context_injected'] = true;
 					$response['context_files']    = $injection['written'];
