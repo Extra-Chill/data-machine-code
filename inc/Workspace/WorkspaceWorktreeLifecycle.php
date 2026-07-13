@@ -850,11 +850,11 @@ trait WorkspaceWorktreeLifecycle {
 				}
 
 				if ( $include_status ) {
-					$dirty_result = $this->run_git($wt['path'], 'status --porcelain');
-					$dirty_files  = is_wp_error($dirty_result)
+					$dirty_result      = $this->run_git($wt['path'], 'status --porcelain');
+					$dirty_files       = is_wp_error($dirty_result)
 					? 0
 					: count(array_filter(array_map('trim', explode("\n", $dirty_result['output'] ?? ''))));
-					$unpushed_commits = $this->count_unpushed_commits($wt['path']);
+					$unpushed_commits  = $this->count_unpushed_commits($wt['path']);
 					if ( is_wp_error($unpushed_commits) ) {
 						return $unpushed_commits;
 					}
