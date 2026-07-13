@@ -4529,8 +4529,9 @@ class WorkspaceCommand extends BaseCommand {
 				function ( $wt ) {
 					$skipped = (array) ( $wt['fields_skipped'] ?? array() );
 					$dirty   = $wt['dirty'] ?? null;
+					$unpushed = $wt['unpushed'] ?? null;
 					$size    = $wt['size_bytes'] ?? null;
-					return array(
+					$item = array(
 						'handle'              => $wt['handle'] ?? '',
 						'repo'                => $wt['repo'] ?? '',
 						'kind'                => ! empty($wt['is_primary']) ? 'primary' : 'worktree',
@@ -4562,12 +4563,21 @@ class WorkspaceCommand extends BaseCommand {
 						'task_full'           => $wt['task'] ?? null,
 						'path'                => $wt['path'] ?? '',
 					);
+					if ( null !== $dirty && null !== $unpushed ) {
+						$item['safety'] = array(
+							'dirty'    => 0 !== (int) $dirty,
+							'unpushed' => 0 !== (int) $unpushed,
+							'primary'  => ! empty($wt['is_primary']),
+						);
+					}
+
+					return $item;
 				},
 				$worktrees
 				);
 				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'liveness', 'last_seen_at', 'owner', 'agent', 'session', 'task', 'pr', 'age_days', 'size', 'artifacts', 'stale', 'path' );
 				if ( in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true) ) {
-					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'created_at', 'liveness', 'liveness_reason', 'last_seen_at', 'owner_full', 'session_full', 'task_full', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'fields_skipped', 'metadata', 'path' );
+					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'safety', 'state', 'created_at', 'liveness', 'liveness_reason', 'last_seen_at', 'owner_full', 'session_full', 'task_full', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'fields_skipped', 'metadata', 'path' );
 				}
 				$skipped_global = (array) ( $result['fields_skipped'] ?? array() );
 				if ( ! empty($skipped_global) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true) ) {

@@ -847,8 +847,13 @@ trait WorkspaceWorktreeLifecycle {
 					$dirty_files  = is_wp_error($dirty_result)
 					? 0
 					: count(array_filter(array_map('trim', explode("\n", $dirty_result['output'] ?? ''))));
+					$unpushed_commits = $this->count_unpushed_commits($wt['path']);
+					if ( is_wp_error($unpushed_commits) ) {
+						return $unpushed_commits;
+					}
 				} else {
-					$dirty_files = null;
+					$dirty_files      = null;
+					$unpushed_commits = null;
 				}
 
 				$metadata_key = null;
@@ -911,6 +916,7 @@ trait WorkspaceWorktreeLifecycle {
 						'head'                  => $wt['head'],
 						'path'                  => $wt['path'],
 						'dirty'                 => $dirty_files,
+						'unpushed'              => $unpushed_commits,
 						'created_at'            => $created_at,
 						'lifecycle_state'       => $lifecycle_state,
 						'pr_url'                => is_array($metadata) ? ( $metadata['pr_url'] ?? null ) : null,
