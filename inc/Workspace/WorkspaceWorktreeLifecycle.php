@@ -767,9 +767,14 @@ trait WorkspaceWorktreeLifecycle {
 	public function worktree_list( ?string $repo = null, ?string $state = null, array $opts = array() ): array|\WP_Error {
 		$include_status = array_key_exists('include_status', $opts) ? (bool) $opts['include_status'] : true;
 		$include_disk   = array_key_exists('include_disk', $opts) ? (bool) $opts['include_disk'] : true;
-		$handle         = isset($opts['handle']) ? trim( (string) $opts['handle']) : '';
-		if ( '' !== $handle && null === $repo ) {
-			$repo = str_contains($handle, '@') ? strstr($handle, '@', true) : $handle;
+		$target_handle  = isset($opts['handle']) ? trim( (string) $opts['handle']) : '';
+		if ( '' !== $target_handle ) {
+			// Inventory/listing handles name the on-disk worktree, not its Git branch.
+			$parsed_handle = $this->parse_handle($target_handle);
+			$target_handle = $parsed_handle['dir_name'];
+			if ( null === $repo ) {
+				$repo = $parsed_handle['repo'];
+			}
 		}
 
 		$skipped_groups = array();
@@ -813,12 +818,20 @@ trait WorkspaceWorktreeLifecycle {
 			$repo      = $this->sanitize_name($repo);
 			$primaries = array_values(array_filter($primaries, fn( $p ) => $p === $repo));
 		}
+		if ( '' !== $target_handle && is_file($this->workspace_path . '/' . $target_handle . '/.git') ) {
+			// A retained worktree can be the only local Git entry point after its
+			// original primary was removed or moved. Use it to resolve its own
+			// canonical directory handle rather than requiring a primary directory.
+			$primaries = array( $target_handle );
+		}
 
 		$worktrees = array();
 
 		foreach ( $primaries as $primary ) {
-			$primary_path = $this->workspace_path . '/' . $primary;
-			$result       = $this->run_git($primary_path, 'worktree list --porcelain');
+			$primary_path      = $this->workspace_path . '/' . $primary;
+			$primary_repo      = $this->parse_handle($primary)['repo'];
+			$scanning_worktree = str_contains($primary, '@');
+			$result            = $this->run_git($primary_path, 'worktree list --porcelain');
 			if ( is_wp_error($result) ) {
 				continue;
 			}
@@ -830,7 +843,7 @@ trait WorkspaceWorktreeLifecycle {
 					continue;
 				}
 
-				$is_primary    = ( $wt['path'] === $primary_path );
+				$is_primary    = ! $scanning_worktree && ( $wt['path'] === $primary_path );
 				$workspace_pfx = $this->workspace_path . '/';
 				$inside_ws     = str_starts_with($wt['path'], $workspace_pfx);
 				$relative      = $inside_ws ? substr($wt['path'], strlen($workspace_pfx)) : '';
@@ -845,16 +858,16 @@ trait WorkspaceWorktreeLifecycle {
 					// Show the absolute path so it is still useful, even though it has no `<repo>@<slug>` handle.
 					$handle = $wt['path'];
 				}
-				if ( '' !== (string) ( $opts['handle'] ?? '' ) && $handle !== (string) $opts['handle'] ) {
+				if ( '' !== $target_handle && $handle !== $target_handle ) {
 					continue;
 				}
 
 				if ( $include_status ) {
-					$dirty_result      = $this->run_git($wt['path'], 'status --porcelain');
-					$dirty_files       = is_wp_error($dirty_result)
+					$dirty_result     = $this->run_git($wt['path'], 'status --porcelain');
+					$dirty_files      = is_wp_error($dirty_result)
 					? 0
 					: count(array_filter(array_map('trim', explode("\n", $dirty_result['output'] ?? ''))));
-					$unpushed_commits  = $this->count_unpushed_commits($wt['path']);
+					$unpushed_commits = $this->count_unpushed_commits($wt['path']);
 					if ( is_wp_error($unpushed_commits) ) {
 						return $unpushed_commits;
 					}
@@ -877,7 +890,7 @@ trait WorkspaceWorktreeLifecycle {
 				}
 
 				if ( $include_disk ) {
-					$disk = $this->build_worktree_disk_report($primary, $wt['path'], ! $is_primary, $created_at, $metadata);
+					$disk = $this->build_worktree_disk_report($primary_repo, $wt['path'], ! $is_primary, $created_at, $metadata);
 				} else {
 					$disk = array(
 						'size_bytes'           => null,
@@ -914,7 +927,7 @@ trait WorkspaceWorktreeLifecycle {
 				$row = array_merge(
 					array(
 						'handle'                => $handle,
-						'repo'                  => $primary,
+						'repo'                  => $primary_repo,
 						'is_worktree'           => ! $is_primary,
 						'is_primary'            => $is_primary,
 						'external'              => ! $is_primary && ! $inside_ws,

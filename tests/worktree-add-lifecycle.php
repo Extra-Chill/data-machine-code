@@ -238,6 +238,26 @@ try {
 	$GLOBALS['wpdb'] = $wpdb;
 
 	$workspace = new Workspace();
+	run_command(
+		'git clone ' . escapeshellarg($workspace_root . '/origin.git') . ' ' . escapeshellarg($workspace_root . '/homeboy@custom-provider-auth-live')
+	);
+	run_command(
+		'git worktree add -b issue/242-embedding-generation ' . escapeshellarg($workspace_root . '/homeboy@address-darren-embedding-review') . ' origin/main',
+		$workspace_root . '/homeboy@custom-provider-auth-live'
+	);
+	$canonical_targeted = $workspace->worktree_list(
+		null,
+		null,
+		array(
+			'handle'         => 'homeboy@address-darren-embedding-review',
+			'include_status' => true,
+			'include_disk'   => false,
+		)
+	);
+	assert_true(1 === count($canonical_targeted['worktrees'] ?? array()), 'canonical worktree handle did not resolve when its directory slug differs from the Git branch');
+	assert_true('homeboy@address-darren-embedding-review' === ( $canonical_targeted['worktrees'][0]['handle'] ?? '' ), 'canonical worktree lookup returned the wrong handle');
+	assert_true('issue/242-embedding-generation' === ( $canonical_targeted['worktrees'][0]['branch'] ?? '' ), 'canonical worktree lookup did not preserve the Git branch');
+	assert_true(null !== ( $canonical_targeted['worktrees'][0]['dirty'] ?? null ), 'canonical worktree lookup did not run the requested status probe');
 	$GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds'] = static function ( array $thresholds ) use ( $workspace_root ): array {
 		$free = disk_free_space($workspace_root);
 		assert_true(false !== $free, 'fixture workspace free space is not measurable');

@@ -4530,6 +4530,18 @@ class WorkspaceCommand extends BaseCommand {
 					$worktrees = array_values(array_filter($worktrees, fn( $wt ) => ! empty($wt['stale_reason'])));
 				}
 				if ( empty($worktrees) ) {
+					if ( 'get' === $operation && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+						$this->renderer()->json(
+							array(
+								'success' => false,
+								'error'   => array(
+									'code'    => 'worktree_not_found',
+									'message' => 'No worktree found for the requested handle.',
+								),
+							)
+						);
+						WP_CLI::halt(1);
+					}
 					WP_CLI::log('No worktrees found.');
 					$duplicates = (array) ( $result['duplicates'] ?? array() );
 					if ( ! empty($duplicates) ) {
