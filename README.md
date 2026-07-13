@@ -122,6 +122,12 @@ DMC discovers primary checkouts and worktrees by scanning the configured workspa
 root. Worktree lifecycle metadata supports cleanup and reconciliation; if that
 workspace path is not visible to PHP, DMC cannot see the checkouts.
 
+SQLite is supported for DMC registries and lower-concurrency workspace use. For
+concurrent fleet cooking, use MySQL: SQLite permits one writer at a time. DMC
+retries short SQLite busy/locked registry writes with bounded backoff and returns
+a structured lock-contention error when that budget is exhausted; it does not
+make prolonged multi-writer contention equivalent to MySQL throughput.
+
 Workspace and worktree commands are shell-backed and require a host where PHP can see the configured workspace root.
 
 The primary checkout (bare `<repo>`) is **read-only by default** for mutating

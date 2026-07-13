@@ -15,11 +15,17 @@ if ( ! class_exists(JsonCodec::class) ) {
 	require_once dirname(__DIR__) . '/Support/JsonCodec.php';
 }
 
+if ( ! class_exists(SqliteBusyRetry::class) ) {
+	require_once __DIR__ . '/SqliteBusyRetry.php';
+}
+
 class WorktreeInventoryRepository {
 
 
 
 	public const TABLE = 'datamachine_code_worktrees';
+
+	private ?\WP_Error $last_error = null;
 
 	/**
 	 * Install or upgrade the worktree inventory table.
@@ -102,6 +108,7 @@ class WorktreeInventoryRepository {
 	 */
 	public function upsert( array $row ): bool {
 		global $wpdb;
+		$this->last_error = null;
 
 		if ( ! isset($wpdb) ) {
 			return false;
@@ -113,7 +120,11 @@ class WorktreeInventoryRepository {
 		}
 
 		if ( method_exists($wpdb, 'replace') ) {
-			$result = $wpdb->replace(self::table_name(), $data);
+			$result = SqliteBusyRetry::run('worktree_inventory_upsert', fn() => $wpdb->replace(self::table_name(), $data));
+			if ( $result instanceof \WP_Error ) {
+				$this->last_error = $result;
+				return false;
+			}
 			return false !== $result;
 		}
 
@@ -125,14 +136,26 @@ class WorktreeInventoryRepository {
 	 */
 	public function delete( string $handle ): bool {
 		global $wpdb;
+		$this->last_error = null;
 
 		$handle = trim($handle);
 		if ( '' === $handle || ! isset($wpdb) || ! method_exists($wpdb, 'delete') ) {
 			return false;
 		}
 
-		$result = $wpdb->delete(self::table_name(), array( 'handle' => $handle ));
+		$result = SqliteBusyRetry::run('worktree_inventory_delete', fn() => $wpdb->delete(self::table_name(), array( 'handle' => $handle )));
+		if ( $result instanceof \WP_Error ) {
+			$this->last_error = $result;
+			return false;
+		}
 		return false !== $result;
+	}
+
+	/**
+	 * Return the structured error from the most recent failed mutation.
+	 */
+	public function last_error(): ?\WP_Error {
+		return $this->last_error;
 	}
 
 	/**
@@ -171,22 +194,24 @@ class WorktreeInventoryRepository {
 	 */
 	public function mark_missing( string $handle ): bool {
 		global $wpdb;
+		$this->last_error = null;
 
 		$handle = trim($handle);
 		if ( '' === $handle || ! isset($wpdb) || ! method_exists($wpdb, 'update') ) {
 			return false;
 		}
 
-		$result = $wpdb->update(
-			self::table_name(),
-			array(
-				'missing_path'      => 1,
-				'last_probe_at'     => current_time('mysql', true),
-				'last_probe_status' => 'missing_path',
-				'updated_at'        => current_time('mysql', true),
-			),
-			array( 'handle' => $handle )
+		$data = array(
+			'missing_path'      => 1,
+			'last_probe_at'     => current_time('mysql', true),
+			'last_probe_status' => 'missing_path',
+			'updated_at'        => current_time('mysql', true),
 		);
+		$result = SqliteBusyRetry::run('worktree_inventory_mark_missing', fn() => $wpdb->update(self::table_name(), $data, array( 'handle' => $handle )));
+		if ( $result instanceof \WP_Error ) {
+			$this->last_error = $result;
+			return false;
+		}
 
 		return false !== $result;
 	}

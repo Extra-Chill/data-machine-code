@@ -69,6 +69,8 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Storage\SqliteBusyRetry;
+
 use DataMachineCode\Support\GitHubRemote;
 
 defined('ABSPATH') || exit;
@@ -1602,26 +1604,36 @@ class WorktreeContextInjector {
 	 * @param string $handle   Workspace handle.
 	 * @param array  $metadata Metadata fields.
 	 */
-	public static function store_lifecycle_metadata( string $handle, array $metadata ): void {
+	public static function store_lifecycle_metadata( string $handle, array $metadata ): bool|\WP_Error {
 		if ( ! function_exists('get_option') || ! function_exists('update_option') ) {
 			$existing = self::get_inventory_metadata($handle) ?? array();
-			self::upsert_inventory_metadata($handle, array_merge($existing, $metadata));
-			return;
+			return self::upsert_inventory_metadata($handle, array_merge($existing, $metadata));
 		}
 
-		$all = get_option(self::METADATA_OPTION, array());
-		if ( ! is_array($all) ) {
-			$all = array();
+		$stored_metadata = array();
+		$updated         = SqliteBusyRetry::run(
+			'worktree_lifecycle_metadata_option',
+			static function () use ( $handle, $metadata, &$stored_metadata ): bool {
+				$all = get_option(self::METADATA_OPTION, array());
+				if ( ! is_array($all) ) {
+					$all = array();
+				}
+
+				$existing = isset($all[ $handle ]) && is_array($all[ $handle ]) ? $all[ $handle ] : self::get_inventory_metadata($handle) ?? array();
+				$stored_metadata = array_merge($existing, $metadata);
+				$all[ $handle ]  = $stored_metadata;
+
+				// A false return also means the value was already identical, which is
+				// idempotent. SQLite busy errors are identified through $wpdb->last_error.
+				update_option(self::METADATA_OPTION, $all, false);
+				return true;
+			}
+		);
+		if ( is_wp_error($updated) ) {
+			return $updated;
 		}
 
-		$existing = isset($all[ $handle ]) && is_array($all[ $handle ]) ? $all[ $handle ] : array();
-		if ( empty($existing) ) {
-			$existing = self::get_inventory_metadata($handle) ?? array();
-		}
-		$all[ $handle ] = array_merge($existing, $metadata);
-
-		update_option(self::METADATA_OPTION, $all, false);
-		self::upsert_inventory_metadata($handle, $all[ $handle ]);
+		return self::upsert_inventory_metadata($handle, $stored_metadata);
 	}
 
 	/**
@@ -1630,8 +1642,8 @@ class WorktreeContextInjector {
 	 * @param string $handle  Workspace handle.
 	 * @param array  $payload Payload from {@see self::build_payload()}.
 	 */
-	public static function store_metadata( string $handle, array $payload ): void {
-		self::store_lifecycle_metadata(
+	public static function store_metadata( string $handle, array $payload ): bool|\WP_Error {
+		return self::store_lifecycle_metadata(
 			$handle, array(
 				'site_url'         => (string) ( $payload['site_url'] ?? '' ),
 				'site_name'        => (string) ( $payload['site_name'] ?? '' ),
@@ -1858,17 +1870,17 @@ class WorktreeContextInjector {
 	 * @param string              $handle   Workspace handle.
 	 * @param array<string,mixed> $metadata Lifecycle metadata.
 	 */
-	private static function upsert_inventory_metadata( string $handle, array $metadata ): void {
+	private static function upsert_inventory_metadata( string $handle, array $metadata ): bool|\WP_Error {
 		$repository = self::inventory_repository();
 		if ( null === $repository ) {
-			return;
+			return true;
 		}
 
 		$workspace_handle = WorkspaceHandle::parse($handle);
 		$task             = is_array($metadata['origin_task'] ?? null) ? (array) $metadata['origin_task'] : array();
 		$session          = is_array($metadata['origin_session'] ?? null) ? self::summarize_session($metadata) : array();
 
-		$repository->upsert(
+		$stored = $repository->upsert(
 			array(
 				'handle'          => $handle,
 				'repo'            => (string) ( $metadata['repo'] ?? $workspace_handle->repo() ),
@@ -1890,6 +1902,8 @@ class WorktreeContextInjector {
 				'metadata'        => $metadata,
 			)
 		);
+
+		return $stored ? true : $repository->last_error() ?? new \WP_Error('worktree_inventory_persist_failed', 'Failed to persist worktree lifecycle metadata.', array( 'status' => 500 ));
 	}
 
 	/**
