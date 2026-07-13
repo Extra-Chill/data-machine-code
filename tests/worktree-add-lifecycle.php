@@ -271,6 +271,18 @@ try {
 	$list    = $workspace->worktree_list('homeboy', null, array( 'include_status' => false, 'include_disk' => false ));
 	$handles = array_map(static fn( array $row ): string => (string) $row['handle'], $list['worktrees'] ?? array());
 	assert_true(in_array('homeboy@audit-primitives-20260616', $handles, true), 'persisted worktree is not visible to worktree_list');
+	$targeted = $workspace->worktree_list(
+		null,
+		null,
+		array(
+			'handle'         => 'homeboy@audit-primitives-20260616',
+			'include_status' => true,
+			'include_disk'   => false,
+		)
+	);
+	assert_true(1 === count($targeted['worktrees'] ?? array()), 'targeted worktree lookup returned unrelated rows');
+	assert_true('homeboy@audit-primitives-20260616' === ( $targeted['worktrees'][0]['handle'] ?? '' ), 'targeted worktree lookup returned the wrong handle');
+	assert_true(null !== ( $targeted['worktrees'][0]['dirty'] ?? null ), 'targeted worktree lookup did not run the requested status probe');
 
 	update_option(
 		'datamachine_code_remote_workspace_state',

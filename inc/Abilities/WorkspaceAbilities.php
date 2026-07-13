@@ -1764,6 +1764,10 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Optional repo name to limit the list.',
 							),
+							'handle'         => array(
+								'type'        => 'string',
+								'description' => 'Optional exact worktree handle. Filters before status and disk probes.',
+							),
 							'state'          => array(
 								'type'        => 'string',
 								'description' => 'Optional lifecycle state filter.',
@@ -4006,6 +4010,7 @@ class WorkspaceAbilities {
 		$opts = array(
 			'include_status' => array_key_exists('include_status', $input) ? (bool) $input['include_status'] : false,
 			'include_disk'   => array_key_exists('include_disk', $input) ? (bool) $input['include_disk'] : false,
+			'handle'         => isset($input['handle']) ? (string) $input['handle'] : '',
 		);
 
 		return $workspace->worktree_list($repo, $state, $opts);
