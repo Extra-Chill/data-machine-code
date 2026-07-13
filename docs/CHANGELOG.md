@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.50.0] - 2026-07-12
+
+### Added
+- expose worktree safety fields for orchestrators
+
 ## [0.49.5] - 2026-07-12
 
 ### Fixed
