@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.51.1] - 2026-07-13
+
+### Changed
+- Align targeted worktree lookup assignments
+
 ## [0.51.0] - 2026-07-13
 
 ### Added
