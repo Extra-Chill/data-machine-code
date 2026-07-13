@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.51.2] - 2026-07-13
+
+### Fixed
+- serialize worktree list JSON directly
+
 ## [0.51.1] - 2026-07-13
 
 ### Changed
