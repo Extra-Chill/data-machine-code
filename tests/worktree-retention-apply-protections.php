@@ -37,6 +37,16 @@ namespace DataMachineCode\Abilities {
 }
 
 namespace {
+	$GLOBALS['retention_apply_metadata'] = array();
+
+	function get_option( string $key, mixed $default = false ): mixed {
+		if ( DataMachineCode\Workspace\WorktreeContextInjector::METADATA_OPTION === $key ) {
+			return $GLOBALS['retention_apply_metadata'];
+		}
+
+		return $default;
+	}
+
 	if ( ! defined('ABSPATH') ) {
 		define('ABSPATH', __DIR__ . '/fixtures/');
 	}
@@ -101,11 +111,19 @@ namespace {
 		}
 
 		public function revalidate( array $candidate ): array {
+			$GLOBALS['retention_apply_metadata'][ (string) $candidate['handle'] ] = $candidate['metadata'];
 			$method = new ReflectionMethod($this, 'revalidate_bounded_cleanup_eligible_candidate');
 			return $method->invoke($this, $candidate, false, false, false);
 		}
 
+		public function revalidate_current( array $candidate, array $current_metadata ): array {
+			$GLOBALS['retention_apply_metadata'][ (string) $candidate['handle'] ] = $current_metadata;
+			$method = new ReflectionMethod($this, 'revalidate_bounded_cleanup_eligible_candidate');
+			return $method->invoke($this, $candidate, false, false, false, $candidate['metadata']);
+		}
+
 		public function revalidate_reviewed( array $candidate, array $reviewed_lifecycle_snapshot ): array {
+			$GLOBALS['retention_apply_metadata'][ (string) $candidate['handle'] ] = $candidate['metadata'];
 			$method = new ReflectionMethod($this, 'revalidate_bounded_cleanup_eligible_candidate');
 			return $method->invoke($this, $candidate, false, false, false, $reviewed_lifecycle_snapshot);
 		}
@@ -199,6 +217,14 @@ namespace {
 	GitHubAbilities::$mode = 'none';
 	$removable            = $harness->revalidate($base_candidate);
 	retention_apply_protections_assert(! isset($removable['skipped']), 'finalized remote-tracking-clean rows remain removable when no open PR exists and GitHub is verified');
+
+	$became_live_metadata = array(
+		'lifecycle_state' => WorktreeContextInjector::STATE_ACTIVE,
+		'last_seen_at'    => gmdate('c'),
+	);
+	$became_live          = $harness->revalidate_current($base_candidate, $became_live_metadata);
+	retention_apply_protections_assert('live_worktree' === ( $became_live['skipped']['reason_code'] ?? null ), 'a worktree that becomes live after planning is protected during apply revalidation');
+	retention_apply_protections_assert('heartbeat_fresh' === ( $became_live['skipped']['liveness_reason'] ?? null ), 'apply-time protection surfaces fresh liveness evidence');
 
 	fwrite(STDOUT, "worktree-retention-apply-protections ok\n");
 }

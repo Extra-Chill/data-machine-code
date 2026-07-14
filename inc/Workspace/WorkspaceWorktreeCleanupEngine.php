@@ -185,19 +185,41 @@ trait WorkspaceWorktreeCleanupEngine {
 			}
 
 			++$processed;
-			$handle       = $wt['handle'] ?? '?';
-			$repo         = $wt['repo'] ?? '';
-			$branch       = $wt['branch'] ?? '';
-			$wt_path      = $wt['path'] ?? '';
-			$metadata     = $wt['metadata'] ?? null;
-			$created_at   = $wt['created_at'] ?? null;
-			$liveness     = (string) ( $wt['liveness'] ?? '' );
-			$disk_fields  = $this->extract_worktree_disk_fields($wt);
-			$identity     = $this->recover_worktree_identity_from_metadata($wt);
-			$repo         = (string) $identity['repo'];
-			$branch       = (string) $identity['branch'];
-			$wt_path      = (string) $identity['path'];
-			$primary_path = '' !== $repo ? $this->get_primary_path($repo) : '';
+			$handle          = $wt['handle'] ?? '?';
+			$repo            = $wt['repo'] ?? '';
+			$branch          = $wt['branch'] ?? '';
+			$wt_path         = $wt['path'] ?? '';
+			$metadata        = $wt['metadata'] ?? null;
+			$created_at      = $wt['created_at'] ?? null;
+			$liveness        = (string) ( $wt['liveness'] ?? '' );
+			$liveness_reason = (string) ( $wt['liveness_reason'] ?? '' );
+			$disk_fields     = $this->extract_worktree_disk_fields($wt);
+			$identity        = $this->recover_worktree_identity_from_metadata($wt);
+			$repo            = (string) $identity['repo'];
+			$branch          = (string) $identity['branch'];
+			$wt_path         = (string) $identity['path'];
+			$primary_path    = '' !== $repo ? $this->get_primary_path($repo) : '';
+			$live_protection = WorktreeCleanupCandidateClassifier::live_protection(
+				array(
+					'liveness'        => $liveness,
+					'liveness_reason' => $liveness_reason,
+				)
+			);
+			if ( null !== $live_protection ) {
+				$skipped[] = array_merge(
+					array(
+						'handle'     => $handle,
+						'repo'       => $repo,
+						'branch'     => $branch,
+						'path'       => $wt_path,
+						'created_at' => $created_at,
+						'metadata'   => $metadata,
+					),
+					$live_protection,
+					$disk_fields
+				);
+				continue;
+			}
 
 			if ( ! empty($wt['broken_orphan_marker']) ) {
 				$candidates[] = array_merge(
@@ -541,15 +563,16 @@ trait WorkspaceWorktreeCleanupEngine {
 			}
 			$classification = WorktreeCleanupCandidateClassifier::classify_merge_signal_path(
 				array(
-					'handle'      => $handle,
-					'repo'        => $repo,
-					'branch'      => $branch,
-					'path'        => $wt_path,
-					'dirty_count' => $dirty_count,
-					'created_at'  => $created_at,
-					'liveness'    => $liveness,
-					'metadata'    => $metadata,
-					'disk_fields' => $disk_fields,
+					'handle'          => $handle,
+					'repo'            => $repo,
+					'branch'          => $branch,
+					'path'            => $wt_path,
+					'dirty_count'     => $dirty_count,
+					'created_at'      => $created_at,
+					'liveness'        => $liveness,
+					'liveness_reason' => $liveness_reason,
+					'metadata'        => $metadata,
+					'disk_fields'     => $disk_fields,
 				),
 				$signal,
 				$age_filter,
@@ -614,6 +637,11 @@ trait WorkspaceWorktreeCleanupEngine {
 
 		foreach ( $candidates as $cand ) {
 			$this->emit_worktree_cleanup_progress($progress, 'removing', (string) ( $cand['handle'] ?? '' ), $checked, count($worktrees), $candidates, $skipped, $removed_count, $started_at);
+			$live_protection = $this->worktree_cleanup_live_protection($cand);
+			if ( null !== $live_protection ) {
+				$skipped[] = array_merge($cand, $live_protection);
+				continue;
+			}
 			$remove = WorkspaceMutationLock::with_repo(
 				$this->workspace_path,
 				$cand['repo'],
@@ -1472,11 +1500,32 @@ trait WorkspaceWorktreeCleanupEngine {
 		$repo     = (string) ( $candidate['repo'] ?? '' );
 		$branch   = (string) ( $candidate['branch'] ?? '' );
 		$wt_path  = (string) ( $candidate['path'] ?? '' );
-		$liveness = (string) ( $candidate['liveness'] ?? '' );
 		$metadata = is_array($candidate['metadata'] ?? null) ? $candidate['metadata'] : array();
-		if ( null !== $reviewed_lifecycle_snapshot && function_exists('get_option') ) {
+		if ( function_exists('get_option') ) {
 			$current_metadata = WorktreeContextInjector::get_metadata($handle);
 			$metadata         = is_array($current_metadata) ? $current_metadata : array();
+		}
+		$current_liveness = WorktreeContextInjector::classify_liveness($metadata);
+		$liveness         = (string) $current_liveness['liveness'];
+		$live_protection  = WorktreeCleanupCandidateClassifier::live_protection(
+			array(
+				'liveness'        => $liveness,
+				'liveness_reason' => (string) $current_liveness['reason'],
+			)
+		);
+		if ( null !== $live_protection ) {
+			return array(
+				'skipped' => array_merge(
+					array(
+						'handle'   => $handle,
+						'repo'     => $repo,
+						'branch'   => $branch,
+						'path'     => $wt_path,
+						'metadata' => $metadata,
+					),
+					$live_protection
+				),
+			);
 		}
 
 		if ( $stale_liveness_only && 'stale' !== $liveness ) {
@@ -1772,6 +1821,25 @@ trait WorkspaceWorktreeCleanupEngine {
 				'unpushed' => (int) $unpushed,
 			)
 		);
+	}
+
+	/**
+	 * Re-read persisted liveness before a direct destructive cleanup step.
+	 *
+	 * @param  array<string,mixed> $candidate Planned cleanup candidate.
+	 * @return array<string,mixed>|null
+	 */
+	private function worktree_cleanup_live_protection( array $candidate ): ?array {
+		$context = $candidate;
+		$handle  = (string) ( $candidate['handle'] ?? '' );
+		if ( '' !== $handle && function_exists('get_option') ) {
+			$metadata                   = WorktreeContextInjector::get_metadata($handle);
+			$liveness                   = WorktreeContextInjector::classify_liveness(is_array($metadata) ? $metadata : null);
+			$context['liveness']        = $liveness['liveness'];
+			$context['liveness_reason'] = $liveness['reason'];
+		}
+
+		return WorktreeCleanupCandidateClassifier::live_protection($context);
 	}
 
 	/**
