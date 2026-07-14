@@ -7,6 +7,7 @@ if ( ! defined('ABSPATH') ) {
 }
 
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeAgeFilter.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupSignal.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupClassifier.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupCandidateClassifier.php';
@@ -15,6 +16,7 @@ require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeCleanupEngine.p
 use DataMachineCode\Workspace\WorktreeAgeFilter;
 use DataMachineCode\Workspace\WorktreeCleanupClassifier;
 use DataMachineCode\Workspace\WorktreeCleanupCandidateClassifier;
+use DataMachineCode\Workspace\WorktreeContextInjector;
 
 function worktree_cleanup_candidate_assert_same( mixed $expected, mixed $actual, string $message ): void {
 	if ( $expected !== $actual ) {
@@ -56,6 +58,51 @@ worktree_cleanup_candidate_assert_same('github-merged-pr', $candidate_result['ro
 worktree_cleanup_candidate_assert_same('github-merged-pr', $candidate_result['row']['reason_code'], 'candidate reason_code matches signal');
 worktree_cleanup_candidate_assert_same(0, $candidate_result['row']['unpushed'], 'fresh safe candidate records the passed unpushed probe');
 worktree_cleanup_candidate_assert_same(false, $evidence_called, 'no-signal evidence stays lazy for candidates');
+
+foreach (
+	array(
+		'local-merged'           => WorktreeContextInjector::STATE_ACTIVE,
+		'patch-equivalent-merged' => WorktreeContextInjector::STATE_ACTIVE,
+		'cleanup_eligible'        => WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE,
+	) as $signal_name => $lifecycle_state
+) {
+	$live_context                    = $context;
+	$live_context['liveness']        = WorktreeContextInjector::LIVENESS_LIVE;
+	$live_context['liveness_reason'] = 'registered_runtime_live';
+	$live_context['metadata']['lifecycle_state'] = $lifecycle_state;
+	$live_filter                     = null;
+	$live_result                     = WorktreeCleanupCandidateClassifier::classify_merge_signal_path(
+		$live_context,
+		array(
+			'signal' => $signal_name,
+			'reason' => 'otherwise removable',
+		),
+		$live_filter,
+		fn(): array => array(),
+		array()
+	);
+
+	worktree_cleanup_candidate_assert_same('skip', $live_result['type'], sprintf('live %s row is protected', $signal_name));
+	worktree_cleanup_candidate_assert_same('live_worktree', $live_result['row']['reason_code'], sprintf('live %s row has stable protection reason', $signal_name));
+	worktree_cleanup_candidate_assert_same('live', $live_result['row']['liveness_evidence']['state'], sprintf('live %s row surfaces liveness evidence', $signal_name));
+}
+
+foreach ( array( 'local-merged', 'patch-equivalent-merged', 'cleanup_eligible' ) as $signal_name ) {
+	$stopped_context             = $context;
+	$stopped_context['liveness'] = WorktreeContextInjector::LIVENESS_STOPPED;
+	$stopped_filter              = null;
+	$stopped_result              = WorktreeCleanupCandidateClassifier::classify_merge_signal_path(
+		$stopped_context,
+		array(
+			'signal' => $signal_name,
+			'reason' => 'otherwise removable',
+		),
+		$stopped_filter,
+		fn(): array => array(),
+		array()
+	);
+	worktree_cleanup_candidate_assert_same('candidate', $stopped_result['type'], sprintf('stopped %s equivalent remains removable', $signal_name));
+}
 
 $no_signal_filter = null;
 $no_signal        = WorktreeCleanupCandidateClassifier::classify_merge_signal_path(

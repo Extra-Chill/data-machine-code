@@ -42,6 +42,7 @@ final class WorktreeCleanupClassifier {
 	 * @var string[]
 	 */
 	private const FULL_REVIEW_REASONS = array(
+		'live_worktree',
 		'active_no_signal',
 		'no_inventory_cleanup_signal',
 		'no_merge_signal',

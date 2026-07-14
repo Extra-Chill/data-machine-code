@@ -219,9 +219,9 @@ class WorktreeContextInjector {
 	 * Classify the liveness of a worktree from its persisted lifecycle metadata.
 	 *
 	 * Returns a stable shape the listing/hygiene surfaces can render directly.
-	 * The classification is intentionally non-destructive: callers must not
-	 * derive cleanup actions from `liveness` alone — combine with dirtiness
-	 * and unpushed-commit checks before acting.
+	 * The classification is intentionally non-destructive: `live` may protect a
+	 * worktree, but non-live states never prove deletion safety. Callers must
+	 * still combine them with dirtiness, unpushed-commit, and lifecycle checks.
 	 *
 	 * Reason codes:
 	 *   - `metadata_missing`     — no metadata record at all

@@ -24,6 +24,10 @@ final class WorktreeCleanupCandidateClassifier {
 	public static function classify_merge_signal_path( array $context, ?array $signal, ?array &$age_filter, callable $no_merge_signal_evidence, array $active_review_commands ): array {
 		$base        = self::base_row($context);
 		$disk_fields = is_array($context['disk_fields'] ?? null) ? $context['disk_fields'] : array();
+		$live        = self::live_protection($context);
+		if ( null !== $live ) {
+			return self::skip(array_merge($base, $live, $disk_fields));
+		}
 
 		if ( null === $signal ) {
 			return self::skip(
@@ -128,6 +132,37 @@ final class WorktreeCleanupCandidateClassifier {
 		return array(
 			'type' => 'candidate',
 			'row'  => $candidate,
+		);
+	}
+
+	/**
+	 * Build the hard protection row for an authoritative positive live signal.
+	 *
+	 * Liveness is runtime-agnostic. Integrations own how session activity reaches
+	 * the normalized inventory field; cleanup only consumes the stable value.
+	 *
+	 * @param  array<string,mixed> $context Normalized worktree context.
+	 * @return array<string,mixed>|null
+	 */
+	public static function live_protection( array $context ): ?array {
+		$liveness = (string) ( $context['liveness'] ?? '' );
+		if ( WorktreeContextInjector::LIVENESS_LIVE !== $liveness ) {
+			return null;
+		}
+
+		$liveness_reason = (string) ( $context['liveness_reason'] ?? '' );
+
+		return array(
+			'row_type'          => 'protected',
+			'reason_code'       => 'live_worktree',
+			'protecting_reason' => 'live_worktree',
+			'reason'            => 'authoritative liveness evidence reports a live owner; cleanup cannot remove this worktree',
+			'liveness'          => $liveness,
+			'liveness_reason'   => $liveness_reason,
+			'liveness_evidence' => array(
+				'state'  => $liveness,
+				'reason' => $liveness_reason,
+			),
 		);
 	}
 
