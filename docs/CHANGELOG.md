@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.51.7] - 2026-07-14
+
+### Fixed
+- protect live worktrees from cleanup
+
 ## [0.51.6] - 2026-07-13
 
 ### Changed
