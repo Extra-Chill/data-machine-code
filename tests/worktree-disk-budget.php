@@ -40,7 +40,7 @@ try {
 	assert_true(str_contains(WorktreeDiskBudget::format_summary($budget), '2.0 GiB (2.0%) free'), 'summary should include current free GiB and percent');
 
 	$commands = array_column($budget['cleanup_recommendations'], 'command');
-	assert_true(in_array('studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --sort=size', $commands, true), 'artifact cleanup preview command is missing');
+	assert_true(in_array('studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json', $commands, true), 'DB-backed artifact cleanup plan command is missing');
 	assert_true(in_array('studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25', $commands, true), 'bounded cleanup-eligible dry-run command is missing');
 	assert_true(in_array('studio wp datamachine-code workspace worktree emergency-cleanup --format=json', $commands, true), 'emergency cleanup report command is missing');
 
@@ -49,6 +49,11 @@ try {
 	assert_true('studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25' === $bounded['preview_command'], 'bounded cleanup preview command is missing');
 	assert_true('studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=25' === $bounded['apply_command'], 'bounded cleanup apply command is missing');
 	assert_true(str_contains($bounded['apply_note'], 'may skip rows'), 'bounded cleanup apply note must explain dirty/unpushed revalidation can block removal');
+
+	$artifacts = $budget['cleanup_recommendations'][0];
+	assert_true('studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json' === $artifacts['preview_command'], 'artifact cleanup preview should create a DB-backed plan');
+	assert_true('studio wp datamachine-code workspace cleanup apply <run-id>' === $artifacts['apply_command'], 'artifact cleanup guidance should expose the DB-backed apply command');
+	assert_true(str_contains($artifacts['apply_note'], 'run_id'), 'artifact cleanup guidance should explain how to obtain the apply run id');
 
 	$healthy = WorktreeDiskBudget::evaluate(
 		array(

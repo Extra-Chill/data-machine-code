@@ -4187,6 +4187,10 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 
 			case 'emergency-cleanup':
+				if ( ! empty($assoc_args['apply']) ) {
+					WP_CLI::error('`workspace worktree emergency-cleanup --apply` is not supported. Review a DB-backed artifact plan with `studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json`, then apply it with `studio wp datamachine-code workspace cleanup apply <run-id>`.');
+					return;
+				}
 				$input['dry_run'] = true;
 				$input['force']   = ! empty($assoc_args['force']);
 				if ( ! empty($assoc_args['apply-plan']) ) {
@@ -6756,7 +6760,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		WP_CLI::log('');
 		if ( $dry_run ) {
-			WP_CLI::success('Emergency plan generated. Prefer `workspace cleanup run --mode=emergency`; --apply-plan remains a low-level escape hatch until DB-backed cleanup runs land.');
+			WP_CLI::success('Emergency preview generated. Create a DB-backed artifact review run with `studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json`, note its run_id, then apply it with `studio wp datamachine-code workspace cleanup apply <run-id>`.');
 			return;
 		}
 		WP_CLI::success(sprintf('Emergency cleanup removed %d artifact group(s) and %d worktree(s); %d skipped.', count($removed_artifacts), count($removed_worktrees), count($skipped)));

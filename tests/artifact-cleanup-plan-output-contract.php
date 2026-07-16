@@ -156,4 +156,15 @@ artifact_cleanup_plan_contract_assert(
 	'cleanup plan should suggest a bounded size-aware review command before exhaustive audit'
 );
 
+$workspace_command_source = file_get_contents(dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php');
+artifact_cleanup_plan_contract_assert(false !== $workspace_command_source, 'workspace command source should be readable');
+artifact_cleanup_plan_contract_assert(
+	false !== strpos($workspace_command_source, '`workspace worktree emergency-cleanup --apply` is not supported. Review a DB-backed artifact plan with `studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json`, then apply it with `studio wp datamachine-code workspace cleanup apply <run-id>`.'),
+	'emergency cleanup --apply should fail with the DB-backed review and apply commands'
+);
+artifact_cleanup_plan_contract_assert(
+	false !== strpos($workspace_command_source, 'Create a DB-backed artifact review run with `studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json`, note its run_id, then apply it with `studio wp datamachine-code workspace cleanup apply <run-id>`.'),
+	'emergency cleanup preview should direct operators to create and apply a DB-backed run'
+);
+
 fwrite(STDOUT, "artifact-cleanup-plan-output-contract ok\n");
