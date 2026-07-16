@@ -2485,10 +2485,10 @@ trait WorkspaceWorktreeCleanupEngine {
 		);
 		$templates                  = array(
 			'artifact_only_dirty_worktree'       => array(
-				'label'       => 'Review generated artifact cleanup separately',
-				'command'     => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --format=json',
-				'alternative' => 'studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run',
-				'why'         => 'Dirty paths are limited to declared reconstructable artifact directories, so artifact cleanup can shed them without force-removing source worktrees.',
+				'label'       => 'Review and apply generated artifact cleanup separately',
+				'command'     => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
+				'alternative' => 'studio wp datamachine-code workspace cleanup apply <run-id>',
+				'why'         => 'Dirty paths are limited to declared reconstructable artifact directories, so a reviewed DB-backed artifact plan can reclaim them without force-removing source worktrees.',
 				'destructive' => false,
 			),
 			'dirty_worktree'                     => array(

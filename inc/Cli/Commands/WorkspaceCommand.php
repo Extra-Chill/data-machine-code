@@ -732,18 +732,18 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace cleanup plan --mode=stale-worktrees --older-than=14d --format=json
 	 *     wp datamachine-code workspace cleanup run --mode=stale-worktrees --older-than=14d
 	 *
-	 *     # Review artifact cleanup synchronously (bounded; default limit=100)
-	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run
+	 *     # Create a DB-backed artifact cleanup plan for review (bounded; default limit=100)
+	 *     wp datamachine-code workspace cleanup plan --mode=artifacts --format=json
 	 *
 	 *     # Persist a snapshot-safe artifact cleanup plan, then apply it by run ID
-	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json
+	 *     wp datamachine-code workspace cleanup plan --mode=artifacts --format=json
 	 *     wp datamachine-code workspace cleanup apply cleanup-run-20260504120000-abc123
 	 *
 	 *     # Repeatedly apply reviewed safe artifact rows until none remain
 	 *     wp datamachine-code workspace cleanup until-empty --mode=artifacts --format=json
 	 *
 	 *     # Full audit (slow on huge workspaces)
-	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --exhaustive --format=json
+	 *     wp datamachine-code workspace cleanup plan --mode=artifacts --exhaustive --format=json
 	 *
 	 *     # Inspect progress for a returned run
 	 *     wp datamachine-code workspace cleanup status cleanup-run-123

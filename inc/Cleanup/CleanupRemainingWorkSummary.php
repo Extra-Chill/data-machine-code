@@ -266,7 +266,7 @@ class CleanupRemainingWorkSummary {
 			'stale_worktree_marker' => 'git -C <primary-path> worktree prune --dry-run --verbose',
 			'primary_missing' => 'studio wp datamachine-code workspace show <repo>',
 			'probe_timeout', 'plan_mismatch' => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --format=json',
-			'artifact_already_removed', 'artifact_plan_mismatch' => 'studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json',
+			'artifact_already_removed', 'artifact_plan_mismatch' => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
 			default => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --format=json',
 		};
 

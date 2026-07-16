@@ -183,6 +183,14 @@ artifact_cleanup_plan_contract_assert(
 $workspace_command_source = file_get_contents(dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php');
 artifact_cleanup_plan_contract_assert(false !== $workspace_command_source, 'workspace command source should be readable');
 artifact_cleanup_plan_contract_assert(
+	false === strpos($workspace_command_source, 'cleanup run --mode=artifacts'),
+	'workspace command help should not advertise artifact scheduling as review or apply guidance'
+);
+artifact_cleanup_plan_contract_assert(
+	false !== strpos($workspace_command_source, 'wp datamachine-code workspace cleanup plan --mode=artifacts --format=json'),
+	'workspace command help should advertise the DB-backed artifact review command'
+);
+artifact_cleanup_plan_contract_assert(
 	false !== strpos($workspace_command_source, '`workspace worktree emergency-cleanup --apply` is not supported. Review a DB-backed artifact plan with `studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json`, then apply it with `studio wp datamachine-code workspace cleanup apply <run-id>`.'),
 	'emergency cleanup --apply should fail with the DB-backed review and apply commands'
 );
@@ -193,6 +201,17 @@ artifact_cleanup_plan_contract_assert(
 artifact_cleanup_plan_contract_assert(
 	false !== strpos($workspace_command_source, 'Create a reviewed DB-backed plan with `%s`, note its run_id, then apply it with `%s`; --apply-plan remains a low-level escape hatch.'),
 	'cleanup-artifacts preview should direct operators to create and apply a DB-backed run'
+);
+
+$worktree_cleanup_engine_source = file_get_contents(dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeCleanupEngine.php');
+artifact_cleanup_plan_contract_assert(false !== $worktree_cleanup_engine_source, 'worktree cleanup engine source should be readable');
+artifact_cleanup_plan_contract_assert(
+	false !== strpos($worktree_cleanup_engine_source, "'command'     => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json'"),
+	'dirty-artifact remediation should create a DB-backed artifact plan'
+);
+artifact_cleanup_plan_contract_assert(
+	false !== strpos($worktree_cleanup_engine_source, "'alternative' => 'studio wp datamachine-code workspace cleanup apply <run-id>'"),
+	'dirty-artifact remediation should apply the reviewed DB-backed run by ID'
 );
 
 fwrite(STDOUT, "artifact-cleanup-plan-output-contract ok\n");
