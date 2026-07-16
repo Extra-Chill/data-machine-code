@@ -11,6 +11,14 @@ namespace DataMachineCode\Workspace {
 	}
 }
 
+namespace DataMachine\Cli {
+	if ( ! class_exists(BaseCommand::class) ) {
+		abstract class BaseCommand {
+			protected function format_items( array $items, array $fields, array $assoc_args, string $id_field = '' ): void {}
+		}
+	}
+}
+
 namespace {
 	if ( ! defined('ABSPATH') ) {
 		define('ABSPATH', __DIR__ . '/fixtures/');
@@ -37,6 +45,22 @@ namespace {
 	if ( ! function_exists('is_wp_error') ) {
 		function is_wp_error( mixed $thing ): bool {
 			return $thing instanceof WP_Error;
+		}
+	}
+
+	if ( ! function_exists('wp_json_encode') ) {
+		function wp_json_encode( mixed $value, int $flags = 0, int $depth = 512 ): string|false {
+			return json_encode($value, $flags, $depth);
+		}
+	}
+
+	if ( ! class_exists('WP_CLI') ) {
+		class WP_CLI {
+			public static string $output = '';
+
+			public static function line( string $message ): void {
+				self::$output .= $message;
+			}
 		}
 	}
 
@@ -67,6 +91,30 @@ namespace {
 			$this->updates[] = array( 'run_id' => $run_id, 'fields' => $fields );
 			$this->runs[ $run_id ] = array_merge($this->runs[ $run_id ] ?? array(), $fields);
 			return true;
+		}
+	}
+
+	final class SafeCleanupCliAbility {
+		/** @param array<string,mixed> $input */
+		public function execute( array $input ): array {
+			if ( isset($input['progress_callback']) ) {
+				$input['progress_callback'](array(
+					'state'   => 'applying',
+					'summary' => array( 'cycles' => 0, 'removed' => 0 ),
+				));
+			}
+
+			return array(
+				'state'   => 'complete',
+				'summary' => array( 'cycles' => 1, 'removed' => 2 ),
+			);
+		}
+	}
+
+	$cleanup_safe_cli_ability = new SafeCleanupCliAbility();
+	if ( ! function_exists('wp_get_ability') ) {
+		function wp_get_ability( string $name ): ?SafeCleanupCliAbility {
+			return 'datamachine-code/workspace-cleanup-safe' === $name ? $GLOBALS['cleanup_safe_cli_ability'] : null;
 		}
 	}
 
@@ -178,6 +226,15 @@ namespace {
 	$pending = $service->status('cleanup-run-pending');
 	safe_status_assert_same('applying', $pending['state'] ?? null, 'Applying run with pending work should stay applying.');
 	safe_status_assert_same(true, $pending['progress']['resumable'] ?? null, 'Applying run with pending work should remain resumable.');
+
+	require_once dirname(__DIR__) . '/inc/Cli/CliResponseRenderer.php';
+	require_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
+	WP_CLI::$output = '';
+	$command = new DataMachineCode\Cli\Commands\WorkspaceCommand();
+	$command->cleanup(array( 'safe' ), array( 'format' => 'json' ));
+	$json_output = json_decode(WP_CLI::$output, true, 512, JSON_THROW_ON_ERROR);
+	safe_status_assert_same('complete', $json_output['state'] ?? null, 'Safe cleanup JSON stdout must contain the terminal response.');
+	safe_status_assert_same(1, $json_output['summary']['cycles'] ?? null, 'Safe cleanup JSON stdout must not contain the initial progress checkpoint.');
 
 	echo "cleanup safe status terminal test passed.\n";
 }
