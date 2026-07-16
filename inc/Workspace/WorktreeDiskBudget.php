@@ -173,7 +173,7 @@ final class WorktreeDiskBudget {
 			'emergency_triggered'       => array() !== $trigger_reasons,
 			'trigger_reasons'           => $trigger_reasons,
 			'cleanup_dry_run_command'   => 'studio wp datamachine-code workspace worktree cleanup --dry-run',
-			'artifact_cleanup_command'  => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run',
+			'artifact_cleanup_command'  => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
 			'emergency_cleanup_command' => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
 			'cleanup_recommendations'   => self::cleanup_recommendations($free_bytes, $effective_refuse_bytes),
 			'force_override_required'   => $refused,

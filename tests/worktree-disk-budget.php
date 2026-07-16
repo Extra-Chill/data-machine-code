@@ -38,6 +38,7 @@ try {
 	assert_true('refused' === $budget['status'], 'low free space should refuse worktree creation');
 	assert_true(8 * $gib === $budget['cleanup_recommendations'][0]['expected_reclaim_bytes'], 'recommendations should include the bytes needed to clear the effective floor');
 	assert_true(str_contains(WorktreeDiskBudget::format_summary($budget), '2.0 GiB (2.0%) free'), 'summary should include current free GiB and percent');
+	assert_true('studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json' === $budget['artifact_cleanup_command'], 'disk-budget artifact cleanup command should create a DB-backed review plan');
 
 	$commands = array_column($budget['cleanup_recommendations'], 'command');
 	assert_true(in_array('studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json', $commands, true), 'DB-backed artifact cleanup plan command is missing');

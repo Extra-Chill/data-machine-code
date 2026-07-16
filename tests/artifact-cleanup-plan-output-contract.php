@@ -213,5 +213,9 @@ artifact_cleanup_plan_contract_assert(
 	false !== strpos($worktree_cleanup_engine_source, "'alternative' => 'studio wp datamachine-code workspace cleanup apply <run-id>'"),
 	'dirty-artifact remediation should apply the reviewed DB-backed run by ID'
 );
+artifact_cleanup_plan_contract_assert(
+	false !== strpos($worktree_cleanup_engine_source, "'hint'        => 'Run studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json, note its run_id, then run studio wp datamachine-code workspace cleanup apply <run-id> to reclaim reviewed reconstructable artifacts; source edits are still protected by dirty_worktree.'"),
+	'artifact-only dirty-worktree hints should direct operators through DB-backed plan and apply commands'
+);
 
 fwrite(STDOUT, "artifact-cleanup-plan-output-contract ok\n");

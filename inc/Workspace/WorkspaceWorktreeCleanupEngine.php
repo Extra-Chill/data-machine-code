@@ -376,7 +376,7 @@ trait WorkspaceWorktreeCleanupEngine {
 							'reason_code' => 'artifact_only_dirty_worktree',
 							'reason'      => sprintf('working tree dirty only from declared/generated artifact paths (%d files) - run artifact cleanup instead of force-removing the worktree', $dirty_count),
 							'dirty'       => $dirty_count,
-							'hint'        => 'Run studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run to review reconstructable artifact cleanup; source edits are still protected by dirty_worktree.',
+							'hint'        => 'Run studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json, note its run_id, then run studio wp datamachine-code workspace cleanup apply <run-id> to reclaim reviewed reconstructable artifacts; source edits are still protected by dirty_worktree.',
 							'created_at'  => $created_at,
 							'metadata'    => $metadata,
 						), $disk_fields, array(
