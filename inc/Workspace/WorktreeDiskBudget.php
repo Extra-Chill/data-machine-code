@@ -173,7 +173,7 @@ final class WorktreeDiskBudget {
 			'emergency_triggered'       => array() !== $trigger_reasons,
 			'trigger_reasons'           => $trigger_reasons,
 			'cleanup_dry_run_command'   => 'studio wp datamachine-code workspace worktree cleanup --dry-run',
-			'artifact_cleanup_command'  => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run',
+			'artifact_cleanup_command'  => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
 			'emergency_cleanup_command' => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
 			'cleanup_recommendations'   => self::cleanup_recommendations($free_bytes, $effective_refuse_bytes),
 			'force_override_required'   => $refused,
@@ -195,11 +195,13 @@ final class WorktreeDiskBudget {
 		return array(
 			array(
 				'priority'               => 1,
-				'action'                 => 'review largest reconstructable artifacts',
+				'action'                 => 'create a DB-backed plan for the largest reconstructable artifacts',
 				'expected_reclaim_bytes' => $target_reclaim,
 				'expected_reclaim'       => $target_human,
-				'command'                => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --sort=size',
-				'preview_command'        => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --sort=size',
+				'command'                => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
+				'preview_command'        => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
+				'apply_command'          => 'studio wp datamachine-code workspace cleanup apply <run-id>',
+				'apply_note'             => 'Review output includes the DB-backed run_id required by the apply command.',
 			),
 			array(
 				'priority'               => 2,

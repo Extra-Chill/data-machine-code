@@ -54,6 +54,7 @@ trait WorkspaceArtifactCleanup {
 		if ( $exhaustive || $full_workspace ) {
 			$limit = 0;
 		}
+		$review_command  = $this->build_artifact_cleanup_review_command();
 		$apply_command   = $this->build_artifact_cleanup_apply_command();
 		$preview_command = $this->build_artifact_cleanup_preview_command($opts);
 		// Apply paths default to safety probing (small subset). Dry-run defaults
@@ -68,7 +69,7 @@ trait WorkspaceArtifactCleanup {
 		}
 
 		if ( ! $dry_run && null === $apply_plan ) {
-			return new \WP_Error('artifact_cleanup_plan_required', sprintf('Artifact cleanup applies through the high-level cleanup runner for daily cleanup. Run `%s` to apply reviewed artifact cleanup, or use --dry-run first and --apply-plan=<file> only as a low-level escape hatch.', $apply_command), array( 'status' => 400 ));
+			return new \WP_Error('artifact_cleanup_plan_required', sprintf('Artifact cleanup requires a reviewed DB-backed plan. Run `%s`, note its run_id, then run `%s`. Use --dry-run first and --apply-plan=<file> only as a low-level escape hatch.', $review_command, $apply_command), array( 'status' => 400 ));
 		}
 
 		$only_handles = null;
@@ -144,6 +145,7 @@ trait WorkspaceArtifactCleanup {
 			$response = array(
 				'success'               => true,
 				'dry_run'               => true,
+				'review_command'        => $review_command,
 				'apply_command'         => $apply_command,
 				'preview_command'       => $preview_command,
 				'rerun_preview_command' => $preview_command,
@@ -151,6 +153,7 @@ trait WorkspaceArtifactCleanup {
 				'removed'               => array(),
 				'skipped'               => $skipped,
 				'summary'               => array(
+					'review_command'        => $review_command,
 					'apply_command'         => $apply_command,
 					'preview_command'       => $preview_command,
 					'rerun_preview_command' => $preview_command,
@@ -215,8 +218,17 @@ trait WorkspaceArtifactCleanup {
 	 * Build the high-level command that persists a snapshot-safe artifact plan.
 	 * @return string
 	 */
+	private function build_artifact_cleanup_review_command(): string {
+		return 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json';
+	}
+
+	/**
+	 * Build the command that applies a reviewed DB-backed artifact plan.
+	 *
+	 * @return string
+	 */
 	private function build_artifact_cleanup_apply_command(): string {
-		return 'studio wp datamachine-code workspace cleanup run --mode=artifacts';
+		return 'studio wp datamachine-code workspace cleanup apply <run-id>';
 	}
 
 	/**

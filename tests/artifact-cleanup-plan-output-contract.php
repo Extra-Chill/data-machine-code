@@ -8,7 +8,9 @@ if ( ! defined('ABSPATH') ) {
 
 require_once dirname(__DIR__) . '/vendor/autoload.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceCleanupPlan.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceArtifactCleanup.php';
 
+use DataMachineCode\Workspace\WorkspaceArtifactCleanup;
 use DataMachineCode\Workspace\WorkspaceCleanupPlan;
 
 function artifact_cleanup_plan_contract_assert( bool $condition, string $message ): void {
@@ -26,12 +28,15 @@ final class ArtifactCleanupPlanContractWorkspace {
 	private string $workspace_path = '/tmp/dmc-artifact-cleanup-contract';
 
 	public function worktree_cleanup_artifacts( array $opts = array() ): array {
-		$preview_command = 'studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json';
+		$preview_command = 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --format=json';
 
 		return array(
-			'success'       => true,
-			'dry_run'       => true,
-			'apply_command' => $preview_command,
+			'success'               => true,
+			'dry_run'               => true,
+			'review_command'        => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
+			'apply_command'         => 'studio wp datamachine-code workspace cleanup apply <run-id>',
+			'preview_command'       => $preview_command,
+			'rerun_preview_command' => $preview_command,
 			'candidates'    => array(
 				array(
 					'handle'              => 'repo@example',
@@ -48,8 +53,11 @@ final class ArtifactCleanupPlanContractWorkspace {
 				),
 			),
 			'skipped'       => array(),
-			'summary'       => array(
-				'apply_command'          => $preview_command,
+			'summary'               => array(
+				'review_command'         => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
+				'apply_command'          => 'studio wp datamachine-code workspace cleanup apply <run-id>',
+				'preview_command'        => $preview_command,
+				'rerun_preview_command'  => $preview_command,
 				'would_remove_artifacts' => 1,
 				'artifact_size_bytes'    => 123,
 			),
@@ -103,6 +111,10 @@ final class ArtifactCleanupPlanContractWorkspace {
 	}
 }
 
+final class ArtifactCleanupPreviewContractWorkspace {
+	use WorkspaceArtifactCleanup;
+}
+
 if ( ! function_exists('wp_json_encode') ) {
 	function wp_json_encode( $data, $options = 0, $depth = 512 ) {
 		return json_encode($data, $options, $depth);
@@ -122,7 +134,7 @@ $artifact_plan = $plan['plans']['artifact_cleanup'] ?? array();
 artifact_cleanup_plan_contract_assert(! array_key_exists('apply_command', $artifact_plan), 'nested artifact plan should not expose apply_command');
 artifact_cleanup_plan_contract_assert(! array_key_exists('apply_command', $artifact_plan['summary'] ?? array()), 'nested artifact summary should not expose apply_command');
 artifact_cleanup_plan_contract_assert(
-	'studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json' === ( $artifact_plan['preview_command'] ?? '' ),
+	'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --format=json' === ( $artifact_plan['preview_command'] ?? '' ),
 	'nested artifact plan should expose preview_command'
 );
 artifact_cleanup_plan_contract_assert(
@@ -154,6 +166,56 @@ artifact_cleanup_plan_contract_assert(1 === ( $blocker_accounting['unknown_count
 artifact_cleanup_plan_contract_assert(
 	'bounded_size_aware_review' === ( $blocked_plan['summary']['recommended_commands'][0]['label'] ?? null ),
 	'cleanup plan should suggest a bounded size-aware review command before exhaustive audit'
+);
+
+$artifact_preview_workspace = new ArtifactCleanupPreviewContractWorkspace();
+$review_method              = new ReflectionMethod($artifact_preview_workspace, 'build_artifact_cleanup_review_command');
+$apply_method               = new ReflectionMethod($artifact_preview_workspace, 'build_artifact_cleanup_apply_command');
+artifact_cleanup_plan_contract_assert(
+	'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json' === $review_method->invoke($artifact_preview_workspace),
+	'artifact cleanup preview should create a DB-backed plan'
+);
+artifact_cleanup_plan_contract_assert(
+	'studio wp datamachine-code workspace cleanup apply <run-id>' === $apply_method->invoke($artifact_preview_workspace),
+	'artifact cleanup preview should apply the reviewed DB-backed run by ID'
+);
+
+$workspace_command_source = file_get_contents(dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php');
+artifact_cleanup_plan_contract_assert(false !== $workspace_command_source, 'workspace command source should be readable');
+artifact_cleanup_plan_contract_assert(
+	false === strpos($workspace_command_source, 'cleanup run --mode=artifacts'),
+	'workspace command help should not advertise artifact scheduling as review or apply guidance'
+);
+artifact_cleanup_plan_contract_assert(
+	false !== strpos($workspace_command_source, 'wp datamachine-code workspace cleanup plan --mode=artifacts --format=json'),
+	'workspace command help should advertise the DB-backed artifact review command'
+);
+artifact_cleanup_plan_contract_assert(
+	false !== strpos($workspace_command_source, '`workspace worktree emergency-cleanup --apply` is not supported. Review a DB-backed artifact plan with `studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json`, then apply it with `studio wp datamachine-code workspace cleanup apply <run-id>`.'),
+	'emergency cleanup --apply should fail with the DB-backed review and apply commands'
+);
+artifact_cleanup_plan_contract_assert(
+	false !== strpos($workspace_command_source, 'Create a DB-backed artifact review run with `studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json`, note its run_id, then apply it with `studio wp datamachine-code workspace cleanup apply <run-id>`.'),
+	'emergency cleanup preview should direct operators to create and apply a DB-backed run'
+);
+artifact_cleanup_plan_contract_assert(
+	false !== strpos($workspace_command_source, 'Create a reviewed DB-backed plan with `%s`, note its run_id, then apply it with `%s`; --apply-plan remains a low-level escape hatch.'),
+	'cleanup-artifacts preview should direct operators to create and apply a DB-backed run'
+);
+
+$worktree_cleanup_engine_source = file_get_contents(dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeCleanupEngine.php');
+artifact_cleanup_plan_contract_assert(false !== $worktree_cleanup_engine_source, 'worktree cleanup engine source should be readable');
+artifact_cleanup_plan_contract_assert(
+	false !== strpos($worktree_cleanup_engine_source, "'command'     => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json'"),
+	'dirty-artifact remediation should create a DB-backed artifact plan'
+);
+artifact_cleanup_plan_contract_assert(
+	false !== strpos($worktree_cleanup_engine_source, "'alternative' => 'studio wp datamachine-code workspace cleanup apply <run-id>'"),
+	'dirty-artifact remediation should apply the reviewed DB-backed run by ID'
+);
+artifact_cleanup_plan_contract_assert(
+	false !== strpos($worktree_cleanup_engine_source, "'hint'        => 'Run studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json, note its run_id, then run studio wp datamachine-code workspace cleanup apply <run-id> to reclaim reviewed reconstructable artifacts; source edits are still protected by dirty_worktree.'"),
+	'artifact-only dirty-worktree hints should direct operators through DB-backed plan and apply commands'
 );
 
 fwrite(STDOUT, "artifact-cleanup-plan-output-contract ok\n");

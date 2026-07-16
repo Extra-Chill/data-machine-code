@@ -733,18 +733,18 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace cleanup plan --mode=stale-worktrees --older-than=14d --format=json
 	 *     wp datamachine-code workspace cleanup run --mode=stale-worktrees --older-than=14d
 	 *
-	 *     # Review artifact cleanup synchronously (bounded; default limit=100)
-	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run
+	 *     # Create a DB-backed artifact cleanup plan for review (bounded; default limit=100)
+	 *     wp datamachine-code workspace cleanup plan --mode=artifacts --format=json
 	 *
 	 *     # Persist a snapshot-safe artifact cleanup plan, then apply it by run ID
-	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json
+	 *     wp datamachine-code workspace cleanup plan --mode=artifacts --format=json
 	 *     wp datamachine-code workspace cleanup apply cleanup-run-20260504120000-abc123
 	 *
 	 *     # Repeatedly apply reviewed safe artifact rows until none remain
 	 *     wp datamachine-code workspace cleanup until-empty --mode=artifacts --format=json
 	 *
 	 *     # Full audit (slow on huge workspaces)
-	 *     wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --exhaustive --format=json
+	 *     wp datamachine-code workspace cleanup plan --mode=artifacts --exhaustive --format=json
 	 *
 	 *     # Inspect progress for a returned run
 	 *     wp datamachine-code workspace cleanup status cleanup-run-123
@@ -4212,6 +4212,10 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 
 			case 'emergency-cleanup':
+				if ( ! empty($assoc_args['apply']) ) {
+					WP_CLI::error('`workspace worktree emergency-cleanup --apply` is not supported. Review a DB-backed artifact plan with `studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json`, then apply it with `studio wp datamachine-code workspace cleanup apply <run-id>`.');
+					return;
+				}
 				$input['dry_run'] = true;
 				$input['force']   = ! empty($assoc_args['force']);
 				if ( ! empty($assoc_args['apply-plan']) ) {
@@ -6343,8 +6347,9 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( $dry_run ) {
-			$apply_command = (string) ( $result['apply_command'] ?? $summary['apply_command'] ?? 'studio wp datamachine-code workspace cleanup run --mode=artifacts --format=json' );
-			WP_CLI::success(sprintf('%d artifact(s) would be removed. Apply reviewed artifact cleanup with `%s`; --apply-plan remains a low-level escape hatch.', (int) ( $summary['would_remove_artifacts'] ?? 0 ), $apply_command));
+			$review_command = (string) ( $result['review_command'] ?? $summary['review_command'] ?? 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json' );
+			$apply_command  = (string) ( $result['apply_command'] ?? $summary['apply_command'] ?? 'studio wp datamachine-code workspace cleanup apply <run-id>' );
+			WP_CLI::success(sprintf('%d artifact(s) would be removed. Create a reviewed DB-backed plan with `%s`, note its run_id, then apply it with `%s`; --apply-plan remains a low-level escape hatch.', (int) ( $summary['would_remove_artifacts'] ?? 0 ), $review_command, $apply_command));
 			return;
 		}
 		WP_CLI::success(sprintf('Removed %d artifact(s); %d worktree(s) skipped.', (int) ( $summary['removed_artifacts'] ?? 0 ), count($skipped)));
@@ -6781,7 +6786,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		WP_CLI::log('');
 		if ( $dry_run ) {
-			WP_CLI::success('Emergency plan generated. Prefer `workspace cleanup run --mode=emergency`; --apply-plan remains a low-level escape hatch until DB-backed cleanup runs land.');
+			WP_CLI::success('Emergency preview generated. Create a DB-backed artifact review run with `studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json`, note its run_id, then apply it with `studio wp datamachine-code workspace cleanup apply <run-id>`.');
 			return;
 		}
 		WP_CLI::success(sprintf('Emergency cleanup removed %d artifact group(s) and %d worktree(s); %d skipped.', count($removed_artifacts), count($removed_worktrees), count($skipped)));

@@ -50,6 +50,11 @@ $summary = CleanupRemainingWorkSummary::from_items(
 				'artifact_size_bytes' => 4096,
 			),
 		),
+		array(
+			'item_type'   => 'artifact_cleanup',
+			'status'      => 'skipped',
+			'reason_code' => 'artifact_plan_mismatch',
+		),
 	)
 );
 
@@ -59,6 +64,18 @@ cleanup_summary_assert_same(1, $summary['protected_unpushed_candidates'] ?? null
 cleanup_summary_assert_same(4096, $summary['remaining_reclaimable_artifact_bytes'] ?? null, 'Remaining reclaimable artifact bytes should stay visible.');
 
 $next_commands = (array) ( $summary['next_commands'] ?? array() );
+$recommended_commands = (array) ( $summary['recommended_commands'] ?? array() );
+$artifact_commands = array_values(array_filter($recommended_commands, fn( $row ) => 'remaining_artifacts' === ( $row['bucket'] ?? '' )));
+cleanup_summary_assert_same(1, count($artifact_commands), 'Remaining artifact work should expose one review/apply command pair.');
+cleanup_summary_assert_same('studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json', $artifact_commands[0]['command'] ?? null, 'Remaining artifact command should create a DB-backed review plan.');
+cleanup_summary_assert_same('studio wp datamachine-code workspace cleanup apply <run-id>', $artifact_commands[0]['apply'] ?? null, 'Remaining artifact apply should use the reviewed DB-backed run ID.');
+
+$mismatch_commands = array_values(array_filter($recommended_commands, fn( $row ) => 'skipped:artifact_plan_mismatch' === ( $row['bucket'] ?? '' )));
+cleanup_summary_assert_same(1, count($mismatch_commands), 'Artifact plan mismatch should expose one remediation command.');
+cleanup_summary_assert_same('studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json', $mismatch_commands[0]['command'] ?? null, 'Artifact plan mismatch remediation should create a fresh DB-backed plan.');
+cleanup_summary_assert_same(true, in_array('studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json', $next_commands, true), 'Artifact DB-backed review command should be flattened into next_commands.');
+cleanup_summary_assert_same(true, in_array('studio wp datamachine-code workspace cleanup apply <run-id>', $next_commands, true), 'Artifact DB-backed apply command should be flattened into next_commands.');
+cleanup_summary_assert_same(false, in_array('studio wp datamachine-code workspace cleanup run --mode=artifacts', $next_commands, true), 'Artifact next commands must not imply the scheduler reclaims disk.');
 cleanup_summary_assert_same(true, in_array('studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25', $next_commands, true), 'Safe worktree review command should be flattened into next_commands.');
 cleanup_summary_assert_same(true, in_array('studio wp datamachine-code workspace cleanup run --mode=retention', $next_commands, true), 'Safe worktree apply command should be flattened into next_commands.');
 cleanup_summary_assert_same(true, in_array('git -C <worktree-path> log --oneline --decorate @{u}..HEAD', $next_commands, true), 'Unpushed inspection command should be flattened into next_commands.');

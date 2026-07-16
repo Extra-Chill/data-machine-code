@@ -220,11 +220,11 @@ class CleanupRemainingWorkSummary {
 		if ( (int) $summary['remaining_reclaimable_artifact_bytes'] > 0 ) {
 			$commands[] = array(
 				'bucket'            => 'remaining_artifacts',
-				'command'           => 'studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json',
-				'apply'             => 'studio wp datamachine-code workspace cleanup run --mode=artifacts',
+				'command'           => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
+				'apply'             => 'studio wp datamachine-code workspace cleanup apply <run-id>',
 				'destructive'       => false,
 				'apply_destructive' => true,
-				'why'               => 'Preview remaining artifact cleanup first; the apply command removes revalidated artifacts.',
+				'why'               => 'Create a reviewed DB-backed artifact plan, then apply its returned run_id to remove revalidated artifacts.',
 			);
 		}
 		if ( (int) $summary['remaining_safely_removable_worktrees'] > 0 ) {
@@ -266,7 +266,7 @@ class CleanupRemainingWorkSummary {
 			'stale_worktree_marker' => 'git -C <primary-path> worktree prune --dry-run --verbose',
 			'primary_missing' => 'studio wp datamachine-code workspace show <repo>',
 			'probe_timeout', 'plan_mismatch' => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --format=json',
-			'artifact_already_removed', 'artifact_plan_mismatch' => 'studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run --format=json',
+			'artifact_already_removed', 'artifact_plan_mismatch' => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
 			default => 'studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --format=json',
 		};
 

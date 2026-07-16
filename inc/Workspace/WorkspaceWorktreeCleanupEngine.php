@@ -376,7 +376,7 @@ trait WorkspaceWorktreeCleanupEngine {
 							'reason_code' => 'artifact_only_dirty_worktree',
 							'reason'      => sprintf('working tree dirty only from declared/generated artifact paths (%d files) - run artifact cleanup instead of force-removing the worktree', $dirty_count),
 							'dirty'       => $dirty_count,
-							'hint'        => 'Run studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run to review reconstructable artifact cleanup; source edits are still protected by dirty_worktree.',
+							'hint'        => 'Run studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json, note its run_id, then run studio wp datamachine-code workspace cleanup apply <run-id> to reclaim reviewed reconstructable artifacts; source edits are still protected by dirty_worktree.',
 							'created_at'  => $created_at,
 							'metadata'    => $metadata,
 						), $disk_fields, array(
@@ -2488,10 +2488,10 @@ trait WorkspaceWorktreeCleanupEngine {
 		);
 		$templates                  = array(
 			'artifact_only_dirty_worktree'       => array(
-				'label'       => 'Review generated artifact cleanup separately',
-				'command'     => 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --format=json',
-				'alternative' => 'studio wp datamachine-code workspace cleanup run --mode=artifacts --dry-run',
-				'why'         => 'Dirty paths are limited to declared reconstructable artifact directories, so artifact cleanup can shed them without force-removing source worktrees.',
+				'label'       => 'Review and apply generated artifact cleanup separately',
+				'command'     => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
+				'alternative' => 'studio wp datamachine-code workspace cleanup apply <run-id>',
+				'why'         => 'Dirty paths are limited to declared reconstructable artifact directories, so a reviewed DB-backed artifact plan can reclaim them without force-removing source worktrees.',
 				'destructive' => false,
 			),
 			'dirty_worktree'                     => array(
