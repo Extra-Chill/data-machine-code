@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.51.8] - 2026-07-16
+
+### Changed
+- Keep cleanup safe JSON output machine-readable
+- Make artifact cleanup apply guidance actionable
+- Ignore artifact maintenance in worktree recency
+- Report DB-backed cleanup apply counts accurately
+- Repair undrainable cleanup children during drain
+
 ## [0.51.7] - 2026-07-14
 
 ### Fixed
