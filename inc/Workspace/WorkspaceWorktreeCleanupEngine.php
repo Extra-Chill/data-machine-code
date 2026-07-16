@@ -1882,7 +1882,10 @@ trait WorkspaceWorktreeCleanupEngine {
 	private function worktree_cleanup_recent_activity_protection( array $metadata ): ?array {
 		$activity_field = '';
 		$timestamp      = 0;
-		foreach ( array( 'created_at', 'finalized_at', 'cleanup_eligible_at' ) as $field ) {
+		// `created_at` may be a best-effort filesystem backfill. In particular,
+		// removing a top-level artifact updates the worktree root mtime. Only
+		// explicit lifecycle transitions may defer retention cleanup.
+		foreach ( array( 'finalized_at', 'cleanup_eligible_at' ) as $field ) {
 			$value = (string) ( $metadata[ $field ] ?? '' );
 			$time  = strtotime($value);
 			if ( '' === $value || false === $time || $time <= $timestamp ) {
