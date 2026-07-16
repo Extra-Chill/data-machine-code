@@ -80,6 +80,7 @@ namespace {
 	}
 
 	require_once dirname(__DIR__) . '/vendor/autoload.php';
+	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceArtifactCleanup.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeCleanupEngine.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 
@@ -94,6 +95,7 @@ namespace {
 	}
 
 	final class RetentionApplyProtectionHarness {
+		use DataMachineCode\Workspace\WorkspaceArtifactCleanup;
 		use WorkspaceWorktreeCleanupEngine;
 
 		protected const CLEANUP_GITHUB_TIMEOUT     = 5;
@@ -126,6 +128,10 @@ namespace {
 			$GLOBALS['retention_apply_metadata'][ (string) $candidate['handle'] ] = $candidate['metadata'];
 			$method = new ReflectionMethod($this, 'revalidate_bounded_cleanup_eligible_candidate');
 			return $method->invoke($this, $candidate, false, false, false, $reviewed_lifecycle_snapshot);
+		}
+
+		public function remove_artifact( string $worktree_path, string $relative ): array|WP_Error {
+			return $this->remove_worktree_artifact_path($worktree_path, $relative);
 		}
 
 		private function validate_containment( string $path, string $container ): array {
@@ -189,6 +195,23 @@ namespace {
 	$recent_candidate['metadata']['observed_at']  = gmdate('c', time() - 60);
 	$recent                                   = $harness->revalidate($recent_candidate);
 	retention_apply_protections_assert(! isset($recent['skipped']), 'recent observation heartbeats do not protect cleanup-eligible rows from apply removal');
+
+	$artifact_path = $work . '/vendor';
+	mkdir($artifact_path, 0777, true);
+	file_put_contents($artifact_path . '/generated.php', '<?php');
+	$cleanup_started_at = time();
+	touch($work, $cleanup_started_at - 172800);
+	$artifact_cleanup = $harness->remove_artifact($work, 'vendor');
+	retention_apply_protections_assert(is_array($artifact_cleanup), 'artifact cleanup should remove the declared artifact path');
+	retention_apply_protections_assert(! is_dir($artifact_path), 'artifact cleanup should remove the artifact directory');
+	clearstatcache(true, $work);
+	$root_mtime = filemtime($work);
+	retention_apply_protections_assert(false !== $root_mtime, 'artifact cleanup should leave worktree root mtime available for legacy metadata backfill');
+	retention_apply_protections_assert((int) $root_mtime >= $cleanup_started_at, 'artifact cleanup should update the worktree root mtime');
+	$artifact_maintenance_candidate                         = $base_candidate;
+	$artifact_maintenance_candidate['metadata']['created_at'] = gmdate('c', (int) $root_mtime);
+	$artifact_maintenance = $harness->revalidate($artifact_maintenance_candidate);
+	retention_apply_protections_assert(! isset($artifact_maintenance['skipped']), 'artifact cleanup root mtime does not manufacture recent activity protection for cleanup-eligible worktrees');
 
 	$recent_lifecycle_candidate                                      = $base_candidate;
 	$recent_lifecycle_candidate['metadata']['cleanup_eligible_at'] = gmdate('c', time() - 60);
