@@ -229,6 +229,7 @@ class CleanupRunService {
 			),
 			'results'                => $results,
 			'summary'                => $status['summary'] ?? array(),
+			'cleanup_items'          => $status['cleanup_items'] ?? array(),
 			'remaining_work_summary' => $status['remaining_work_summary'] ?? array(),
 			'next'                   => $pending_or_fail > 0 ? array(
 				'resume_command' => $next_command,

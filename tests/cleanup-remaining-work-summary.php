@@ -64,4 +64,49 @@ cleanup_summary_assert_same(true, in_array('studio wp datamachine-code workspace
 cleanup_summary_assert_same(true, in_array('git -C <worktree-path> log --oneline --decorate @{u}..HEAD', $next_commands, true), 'Unpushed inspection command should be flattened into next_commands.');
 cleanup_summary_assert_same(true, in_array('studio wp datamachine-code workspace cleanup run --mode=retention --dry-run --only=unpushed_commits --verbose --format=json', $next_commands, true), 'Unpushed focused review command should be flattened into next_commands.');
 
+eval('namespace DataMachine\\Cli; class BaseCommand {}');
+require_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
+
+$command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
+$method  = new ReflectionMethod($command, 'build_cleanup_operator_summary');
+
+$task_backed = $method->invoke(
+	$command,
+	array(
+		'cleanup_items'          => array(
+			'planned_rows'    => 4,
+			'applied_rows'    => 2,
+			'skipped_rows'    => 1,
+			'failed_rows'     => 1,
+			'bytes_reclaimed' => 3072,
+		),
+		'remaining_work_summary' => array( 'total_bytes_reclaimed' => 3072 ),
+	)
+);
+cleanup_summary_assert_same(4, $task_backed['cleanup_counts']['planned'] ?? null, 'Task-backed cleanup planned count should remain unchanged.');
+cleanup_summary_assert_same(2, $task_backed['cleanup_counts']['applied'] ?? null, 'Task-backed cleanup applied count should remain unchanged.');
+cleanup_summary_assert_same(1, $task_backed['cleanup_counts']['skipped'] ?? null, 'Task-backed cleanup skipped count should remain unchanged.');
+cleanup_summary_assert_same(1, $task_backed['cleanup_counts']['failed'] ?? null, 'Task-backed cleanup failed count should remain unchanged.');
+cleanup_summary_assert_same(3072, $task_backed['cleanup_counts']['bytes_reclaimed'] ?? null, 'Task-backed cleanup reclaimed bytes should remain unchanged.');
+
+$db_backed_apply = $method->invoke(
+	$command,
+	array(
+		'cleanup_items'          => array(
+			'planned_rows'    => 3,
+			'applied_rows'    => 1,
+			'skipped_rows'    => 1,
+			'failed_rows'     => 1,
+			'bytes_reclaimed' => 2048,
+		),
+		'remaining_work_summary' => array( 'total_bytes_reclaimed' => 2048 ),
+	)
+);
+cleanup_summary_assert_same(3, $db_backed_apply['cleanup_counts']['planned'] ?? null, 'DB-backed apply planned count should use persisted cleanup item totals.');
+cleanup_summary_assert_same(1, $db_backed_apply['cleanup_counts']['applied'] ?? null, 'DB-backed apply applied count should use persisted cleanup item totals.');
+cleanup_summary_assert_same(1, $db_backed_apply['cleanup_counts']['skipped'] ?? null, 'DB-backed apply skipped count should use persisted cleanup item totals.');
+cleanup_summary_assert_same(1, $db_backed_apply['cleanup_counts']['failed'] ?? null, 'DB-backed apply failed count should use persisted cleanup item totals.');
+cleanup_summary_assert_same(2048, $db_backed_apply['cleanup_counts']['bytes_reclaimed'] ?? null, 'DB-backed apply reclaimed bytes should match remaining work totals.');
+cleanup_summary_assert_same(2048, $db_backed_apply['total_bytes_reclaimed'] ?? null, 'DB-backed apply top-level reclaimed bytes should match remaining work totals.');
+
 echo "cleanup remaining work summary test passed.\n";
