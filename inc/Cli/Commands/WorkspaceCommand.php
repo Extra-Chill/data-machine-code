@@ -22,6 +22,7 @@ use DataMachineCode\Cli\CliRepeatableOptionParser;
 use DataMachineCode\Cli\WorkspaceCompactOutput;
 use DataMachineCode\Cleanup\CompositeCleanupRunEvidenceStore;
 use DataMachineCode\Cleanup\CleanupRunEvidenceStoreInterface;
+use DataMachineCode\Support\SystemTaskDrainability;
 use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 use DataMachineCode\Workspace\WorkspaceMutationLock;
@@ -1061,8 +1062,10 @@ class WorkspaceCommand extends BaseCommand {
 			return $result;
 		}
 
-		$commands   = array();
-		$errors     = array();
+		$commands             = array();
+		$errors               = array();
+		$drainability_repairs = array();
+		$repaired_child_ids   = array();
 		$max_passes = 10;
 
 		$parent_command = sprintf('datamachine drain --job-id=%d', $job_id);
@@ -1080,6 +1083,26 @@ class WorkspaceCommand extends BaseCommand {
 			}
 
 			$children         = (array) ( $status['evidence']['children'] ?? array() );
+			$undrainable_child_ids = array_values(
+				array_unique(
+					array_filter(
+						array_map('intval', (array) ( $children['pending_without_drainable_action_job_ids'] ?? array() ))
+					)
+				)
+			);
+			if ( array() !== $undrainable_child_ids ) {
+				$repair = SystemTaskDrainability::ensure_jobs_have_execute_step_actions($undrainable_child_ids);
+				$pass_repaired_child_ids = array_values(
+					array_diff($undrainable_child_ids, (array) ( $repair['unrepairable'] ?? array() ))
+				);
+				$repaired_child_ids = array_values(array_unique(array_merge($repaired_child_ids, $pass_repaired_child_ids)));
+				$drainability_repairs[] = array(
+					'pass'                        => $pass + 1,
+					'detected_child_job_ids'      => $undrainable_child_ids,
+					'repaired_child_job_ids'      => $pass_repaired_child_ids,
+					'unrepairable_child_job_ids'  => (array) ( $repair['unrepairable'] ?? array() ),
+				);
+			}
 			$active_child_ids = array_values(
 				array_unique(
 					array_filter(
@@ -1117,6 +1140,8 @@ class WorkspaceCommand extends BaseCommand {
 			'bytes_reclaimed'  => (int) ( $output['cleanup_items']['bytes_reclaimed'] ?? 0 ),
 			'freed_human'      => (string) ( $output['cleanup_items']['freed_human'] ?? $this->format_bytes(0) ),
 			'completion_state' => (string) ( $output['state'] ?? 'unknown' ),
+			'drainability_repairs'    => $drainability_repairs,
+			'repaired_child_job_ids'  => $repaired_child_ids,
 		);
 
 		return $output;
