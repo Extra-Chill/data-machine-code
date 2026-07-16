@@ -835,7 +835,8 @@ class WorkspaceCommand extends BaseCommand {
 		if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
 			$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
 		}
-		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+		if ( 'json' !== (string) ( $assoc_args['format'] ?? '' ) ) {
+			// JSON stdout is a terminal response contract; progress is persisted with the run.
 			$input['progress_callback'] = function ( array $progress ) use ( $assoc_args ): void {
 				$this->render_cleanup_safe_result($progress, $assoc_args);
 				$this->flush_cli_output();
