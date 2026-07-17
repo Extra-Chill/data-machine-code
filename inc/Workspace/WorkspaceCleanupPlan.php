@@ -131,6 +131,7 @@ trait WorkspaceCleanupPlan {
 			'inputs'         => $inputs,
 			'safety_policy'  => array(
 				'applies_inline'               => false,
+				'force_artifact_cleanup'       => $inputs['force_artifact_cleanup'],
 				'artifact_cleanup'             => 'apply-plan must revalidate profile-derived artifact paths before deletion',
 				'worktree_removal'             => 'apply-plan must re-run dirty, unpushed, identity, lifecycle, containment, and primary protections before deletion',
 				'resolver'                     => 'resolver rows may gather merge signals but cannot delete worktrees',
@@ -379,7 +380,7 @@ trait WorkspaceCleanupPlan {
 		$category_total  = array_sum(array_map('intval', $category_totals));
 
 		return array(
-			'apply_command'           => 'studio wp datamachine-code workspace cleanup apply <run-id>',
+			'apply_command'           => $this->cleanup_plan_apply_command($inputs),
 			'total_rows'              => $total_rows,
 			'rows_by_type'            => $counts,
 			'byte_totals'             => $byte_totals,
@@ -807,7 +808,7 @@ trait WorkspaceCleanupPlan {
 			array(
 				'label'   => 'apply_reviewed_plan',
 				'risk'    => 'reviewed_destructive',
-				'command' => 'studio wp datamachine-code workspace cleanup apply <run-id>',
+				'command' => $this->cleanup_plan_apply_command($inputs),
 				'when'    => 'after reviewing this plan; revalidates every destructive row before removal',
 			),
 			array(
@@ -847,6 +848,15 @@ trait WorkspaceCleanupPlan {
 		);
 
 		return $commands;
+	}
+
+	/**
+	 * Reproduce the artifact-only force policy selected when the plan was reviewed.
+	 *
+	 * @param array<string,mixed> $inputs Plan inputs.
+	 */
+	private function cleanup_plan_apply_command( array $inputs ): string {
+		return 'studio wp datamachine-code workspace cleanup apply <run-id>' . ( ! empty($inputs['force_artifact_cleanup']) ? ' --force' : '' );
 	}
 
 	/**

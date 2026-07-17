@@ -55,7 +55,7 @@ trait WorkspaceArtifactCleanup {
 			$limit = 0;
 		}
 		$review_command  = $this->build_artifact_cleanup_review_command();
-		$apply_command   = $this->build_artifact_cleanup_apply_command();
+		$apply_command   = $this->build_artifact_cleanup_apply_command($force);
 		$preview_command = $this->build_artifact_cleanup_preview_command($opts);
 		// Apply paths default to safety probing (small subset). Dry-run defaults
 		// to skipping the per-worktree git probes unless explicitly requested or
@@ -227,8 +227,8 @@ trait WorkspaceArtifactCleanup {
 	 *
 	 * @return string
 	 */
-	private function build_artifact_cleanup_apply_command(): string {
-		return 'studio wp datamachine-code workspace cleanup apply <run-id>';
+	private function build_artifact_cleanup_apply_command( bool $force = false ): string {
+		return 'studio wp datamachine-code workspace cleanup apply <run-id>' . ( $force ? ' --force' : '' );
 	}
 
 	/**
