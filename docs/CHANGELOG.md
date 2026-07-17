@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.51.9] - 2026-07-17
+
+### Changed
+- Preserve artifact cleanup force intent through apply
+
 ## [0.51.8] - 2026-07-16
 
 ### Changed
