@@ -124,17 +124,17 @@ class CleanupRunService {
 			return $updated;
 		}
 
-		$items                = $this->repository->get_items($run_id);
+		$items                  = $this->repository->get_items($run_id);
 		$force_artifact_cleanup = ! empty( (array) ( $run['policy'] ?? array() )['force_artifact_cleanup'] );
-		$artifact_rows        = $this->pending_rows_of_type($items, 'artifact_cleanup');
-		$worktree_rows        = $this->pending_rows_of_type($items, 'worktree_removal');
-		$stale_worktrees_only = 'stale-worktrees' === (string) ( $run['mode'] ?? '' );
-		$batch_type           = '';
-		$processed_rows       = 0;
-		$applied_rows         = 0;
-		$skipped_rows         = 0;
-		$remaining_rows       = max(0, count($artifact_rows) + count($worktree_rows));
-		$results              = array();
+		$artifact_rows          = $this->pending_rows_of_type($items, 'artifact_cleanup');
+		$worktree_rows          = $this->pending_rows_of_type($items, 'worktree_removal');
+		$stale_worktrees_only   = 'stale-worktrees' === (string) ( $run['mode'] ?? '' );
+		$batch_type             = '';
+		$processed_rows         = 0;
+		$applied_rows           = 0;
+		$skipped_rows           = 0;
+		$remaining_rows         = max(0, count($artifact_rows) + count($worktree_rows));
+		$results                = array();
 
 		if ( array() !== $artifact_rows ) {
 			$artifact_batch  = array_slice($artifact_rows, 0, $limit);
