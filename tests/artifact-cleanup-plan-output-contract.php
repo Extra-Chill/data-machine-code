@@ -130,6 +130,20 @@ artifact_cleanup_plan_contract_assert(
 	'cleanup plan summary should expose the authoritative apply command'
 );
 
+$forced_plan = $workspace->workspace_cleanup_plan(array( 'include_worktrees' => false, 'force_artifact_cleanup' => true ));
+artifact_cleanup_plan_contract_assert(
+	true === ( $forced_plan['safety_policy']['force_artifact_cleanup'] ?? null ),
+	'forced artifact plans should persist the reviewed artifact-only force policy'
+);
+artifact_cleanup_plan_contract_assert(
+	'studio wp datamachine-code workspace cleanup apply <run-id> --force' === ( $forced_plan['summary']['apply_command'] ?? '' ),
+	'forced artifact plans should recommend the exact forced apply command'
+);
+artifact_cleanup_plan_contract_assert(
+	'studio wp datamachine-code workspace cleanup apply <run-id> --force' === ( $forced_plan['summary']['recommended_commands'][1]['command'] ?? '' ),
+	'forced artifact plans should retain force in every reviewed-plan recommendation'
+);
+
 $artifact_plan = $plan['plans']['artifact_cleanup'] ?? array();
 artifact_cleanup_plan_contract_assert(! array_key_exists('apply_command', $artifact_plan), 'nested artifact plan should not expose apply_command');
 artifact_cleanup_plan_contract_assert(! array_key_exists('apply_command', $artifact_plan['summary'] ?? array()), 'nested artifact summary should not expose apply_command');
@@ -178,6 +192,10 @@ artifact_cleanup_plan_contract_assert(
 artifact_cleanup_plan_contract_assert(
 	'studio wp datamachine-code workspace cleanup apply <run-id>' === $apply_method->invoke($artifact_preview_workspace),
 	'artifact cleanup preview should apply the reviewed DB-backed run by ID'
+);
+artifact_cleanup_plan_contract_assert(
+	'studio wp datamachine-code workspace cleanup apply <run-id> --force' === $apply_method->invoke($artifact_preview_workspace, true),
+	'forced artifact previews should preserve force in the DB-backed apply command'
 );
 
 $workspace_command_source = file_get_contents(dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php');

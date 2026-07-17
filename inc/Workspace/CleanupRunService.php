@@ -83,6 +83,9 @@ class CleanupRunService {
 	 * @return array<string,mixed>
 	 */
 	private function materialize_plan_recommended_commands( array $summary, string $run_id ): array {
+		if ( isset($summary['apply_command']) ) {
+			$summary['apply_command'] = str_replace('<run-id>', $run_id, (string) $summary['apply_command']);
+		}
 		$commands = array();
 		foreach ( (array) ( $summary['recommended_commands'] ?? array() ) as $row ) {
 			if ( ! is_array($row) ) {
@@ -122,6 +125,7 @@ class CleanupRunService {
 		}
 
 		$items                = $this->repository->get_items($run_id);
+		$force_artifact_cleanup = ! empty( (array) ( $run['policy'] ?? array() )['force_artifact_cleanup'] );
 		$artifact_rows        = $this->pending_rows_of_type($items, 'artifact_cleanup');
 		$worktree_rows        = $this->pending_rows_of_type($items, 'worktree_removal');
 		$stale_worktrees_only = 'stale-worktrees' === (string) ( $run['mode'] ?? '' );
@@ -143,7 +147,8 @@ class CleanupRunService {
 			$results['artifact_cleanup'] = $this->workspace->worktree_cleanup_artifacts(
 				array(
 					'apply_plan' => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $artifact_batch) ),
-					'force'      => ! empty($opts['force']),
+					// The reviewed run policy can force only reconstructable artifact deletion.
+					'force'      => $force_artifact_cleanup,
 					'limit'      => count($artifact_batch),
 				)
 			);
@@ -209,7 +214,7 @@ class CleanupRunService {
 			return $status;
 		}
 
-		$next_command = $pending_or_fail > 0 ? sprintf('studio wp datamachine-code workspace cleanup resume %s --limit=%d', $run_id, $limit) : null;
+		$next_command = $pending_or_fail > 0 ? $this->cleanup_run_resume_command($run_id, $limit, $force_artifact_cleanup) : null;
 
 		return array(
 			'success'                => true,
@@ -296,7 +301,7 @@ class CleanupRunService {
 
 		$progress               = $this->run_progress($run, $items, $summary);
 		$cleanup_items          = $this->cleanup_items_summary($run, $items, $summary);
-		$remaining_work_summary = $this->remaining_work_summary($run_id, $items, $progress);
+		$remaining_work_summary = $this->remaining_work_summary($run, $run_id, $items, $progress);
 		$this->apply_safe_cleanup_remaining_summary($run, $remaining_work_summary);
 
 		return array(
@@ -828,7 +833,7 @@ class CleanupRunService {
 	 * @param array<string,mixed>            $progress Progress metadata.
 	 * @return array<string,mixed>
 	 */
-	private function remaining_work_summary( string $run_id, array $items, array $progress ): array {
+	private function remaining_work_summary( array $run, string $run_id, array $items, array $progress ): array {
 		$summary       = CleanupRemainingWorkSummary::from_items($items);
 		$safe_cleanup  = is_array($progress['safe_cleanup'] ?? null) ? (array) $progress['safe_cleanup'] : array();
 		$safe_commands = is_array($safe_cleanup['commands'] ?? null) ? (array) $safe_cleanup['commands'] : array();
@@ -849,7 +854,7 @@ class CleanupRunService {
 			$resume_command = array(
 				'bucket'            => 'current_run_resume',
 				'command'           => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
-				'apply'             => sprintf('studio wp datamachine-code workspace cleanup resume %s --limit=%d', $run_id, self::DEFAULT_APPLY_LIMIT),
+				'apply'             => $this->cleanup_run_resume_command($run_id, self::DEFAULT_APPLY_LIMIT, ! empty( (array) ( $run['policy'] ?? array() )['force_artifact_cleanup'] )),
 				'destructive'       => false,
 				'apply_destructive' => true,
 				'why'               => 'Resume the reviewed DB-backed cleanup run from persisted pending/failed/applying rows.',
@@ -863,6 +868,10 @@ class CleanupRunService {
 		}
 
 		return $summary;
+	}
+
+	private function cleanup_run_resume_command( string $run_id, int $limit, bool $force_artifact_cleanup ): string {
+		return sprintf('studio wp datamachine-code workspace cleanup resume %s --limit=%d', $run_id, $limit) . ( $force_artifact_cleanup ? ' --force' : '' );
 	}
 
 	private function apply_limit( array $opts ): int {
