@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.51.10] - 2026-07-17
+
+### Fixed
+- Fix cleanup force policy assignment alignment
+
 ## [0.51.9] - 2026-07-17
 
 ### Changed
