@@ -560,7 +560,7 @@ trait WorkspaceActiveNoSignalCleanup {
 		}
 
 		$primary_path = $this->get_primary_path($repo);
-		if ( ! is_dir($primary_path . '/.git') ) {
+		if ( ! GitCheckout::exists($primary_path) ) {
 			return new \WP_Error('missing_primary', 'primary checkout missing');
 		}
 
@@ -1139,7 +1139,7 @@ trait WorkspaceActiveNoSignalCleanup {
 
 		$primary_path         = $this->get_primary_path($repo);
 		$missing_primary_code = (string) ( $opts['missing_primary_code'] ?? 'missing_primary' );
-		if ( '' === $primary_path || ! is_dir($primary_path . '/.git') ) {
+		if ( '' === $primary_path || ! GitCheckout::exists($primary_path) ) {
 			return new \WP_Error($missing_primary_code, 'primary checkout missing');
 		}
 
@@ -1278,7 +1278,7 @@ trait WorkspaceActiveNoSignalCleanup {
 			$out['branch_probe_error'] = $branch_probe->get_error_message();
 		}
 
-		if ( '' === $repo || '' === $branch || '' === $path || ! is_dir($path) || ! is_dir($primary_path . '/.git') ) {
+		if ( '' === $repo || '' === $branch || '' === $path || ! is_dir($path) || ! GitCheckout::exists($primary_path) ) {
 			$out['suggested_action'] = 'insufficient_signal';
 			$out['reason']           = 'missing repo, branch, path, worktree, or primary checkout';
 			return $out;

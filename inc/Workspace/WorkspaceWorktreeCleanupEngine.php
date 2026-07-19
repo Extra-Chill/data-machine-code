@@ -460,7 +460,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			}
 			if ( $unpushed > 0 ) {
 				$primary_path = $this->get_primary_path($repo);
-				if ( ! is_dir($primary_path . '/.git') ) {
+				if ( ! GitCheckout::exists($primary_path) ) {
 					$skipped[] = array_merge(
 						array(
 							'handle'      => $handle,
@@ -525,7 +525,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			}
 
 			$primary_path = $this->get_primary_path($repo);
-			if ( ! is_dir($primary_path . '/.git') ) {
+			if ( ! GitCheckout::exists($primary_path) ) {
 				$skipped[] = array_merge(
 					array(
 						'handle'      => $handle,
@@ -1689,7 +1689,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		$primary_path = $this->get_primary_path($repo);
-		if ( ! is_dir($primary_path . '/.git') ) {
+		if ( ! GitCheckout::exists($primary_path) ) {
 			return array(
 				'skipped' => array(
 					'handle'      => $handle,
@@ -3135,7 +3135,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		$primary_path = $this->get_primary_path($repo);
-		if ( ! is_dir($primary_path . '/.git') ) {
+		if ( ! GitCheckout::exists($primary_path) ) {
 			return new \WP_Error('primary_not_found', sprintf('Primary checkout for "%s" does not exist.', $repo), array( 'status' => 404 ));
 		}
 
@@ -3276,7 +3276,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		$primary_path = $this->get_primary_path($repo);
-		if ( ! is_dir($primary_path . '/.git') ) {
+		if ( ! GitCheckout::exists($primary_path) ) {
 			return null;
 		}
 

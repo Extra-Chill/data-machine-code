@@ -98,7 +98,7 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		$primary_path = $this->get_primary_path($repo);
-		if ( ! is_dir($primary_path) || ! is_dir($primary_path . '/.git') ) {
+		if ( ! GitCheckout::exists($primary_path) ) {
 			return new \WP_Error('primary_not_found', sprintf('Primary checkout for "%s" does not exist. Clone it first.', $repo), array( 'status' => 404 ));
 		}
 
@@ -586,7 +586,7 @@ trait WorkspaceWorktreeLifecycle {
 
 			$repo         = (string) ( $wt['repo'] ?? '' );
 			$primary_path = '' !== $repo ? $this->get_primary_path($repo) : '';
-			if ( '' === $primary_path || ! is_dir($primary_path . '/.git') ) {
+			if ( '' === $primary_path || ! GitCheckout::exists($primary_path) ) {
 				continue;
 			}
 
@@ -1178,7 +1178,7 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		$primary_path = $this->get_primary_path($repo);
-		if ( ! is_dir($primary_path . '/.git') ) {
+		if ( ! GitCheckout::exists($primary_path) ) {
 			return new \WP_Error('primary_not_found', sprintf('Primary checkout for "%s" does not exist.', $repo), array( 'status' => 404 ));
 		}
 
@@ -1228,6 +1228,10 @@ trait WorkspaceWorktreeLifecycle {
 	/**
 	 * Prune stale worktree registry entries across all primaries.
 	 *
+	 * Git removes only registrations whose worktree path is absent. Expiring now
+	 * makes that reconciliation immediate without touching existing checkouts,
+	 * including dirty or unpushed worktrees.
+	 *
 	 * @return array{success: bool, pruned: array, skipped?: array, next_commands?: array, inventory?: array, stale_inventory?: array, stale_marker_blockers?: array}|\WP_Error
 	 */
 	public function worktree_prune(): array|\WP_Error {
@@ -1251,13 +1255,13 @@ trait WorkspaceWorktreeLifecycle {
 				continue;
 			}
 			$primary_path = $this->workspace_path . '/' . $entry;
-			if ( ! is_dir($primary_path . '/.git') ) {
+			if ( ! GitCheckout::exists($primary_path) ) {
 				continue;
 			}
 			$result = WorkspaceMutationLock::with_repo(
 				$this->workspace_path,
 				$entry,
-				fn() => $this->run_git($primary_path, 'worktree prune -v')
+				fn() => $this->run_git($primary_path, 'worktree prune -v --expire=now')
 			);
 			if ( is_wp_error($result) ) {
 				if ( 'datamachine_workspace_git_unavailable' === $result->get_error_code() ) {
@@ -1266,12 +1270,17 @@ trait WorkspaceWorktreeLifecycle {
 						'primary_path' => $primary_path,
 						'reason'       => $result->get_error_message(),
 					);
-					$next_commands[] = sprintf('git -C %s worktree prune -v', escapeshellarg($primary_path));
+					$next_commands[] = sprintf('git -C %s worktree prune -v --expire=now', escapeshellarg($primary_path));
 					continue;
 				}
 				return $result;
 			}
-			$pruned[] = $entry;
+			// Git emits a verbose line for every removed registration. Preserve the
+			// existing `pruned` result as evidence of actual reconciliation instead
+			// of reporting every primary that was merely scanned.
+			if ( '' !== trim((string) ( $result['output'] ?? '' )) ) {
+				$pruned[] = $entry;
+			}
 		}
 
 		$refresh = $this->worktree_inventory_refresh();
@@ -1441,7 +1450,7 @@ trait WorkspaceWorktreeLifecycle {
 
 		WorktreeContextInjector::forget_metadata($handle);
 		$this->worktree_inventory()->delete($handle);
-		if ( '' !== $primary_path && is_dir($primary_path . '/.git') ) {
+		if ( '' !== $primary_path && GitCheckout::exists($primary_path) ) {
 			WorkspaceMutationLock::with_repo(
 				$this->workspace_path,
 				$repo,
