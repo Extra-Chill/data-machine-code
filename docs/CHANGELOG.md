@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.51.11] - 2026-07-19
+
+### Changed
+- Scope bounded cleanup apply to repository
+
+### Fixed
+- Fix stale linked worktree registration pruning
+
 ## [0.51.10] - 2026-07-17
 
 ### Fixed
