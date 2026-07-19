@@ -2561,6 +2561,10 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
+							'repo'                      => array(
+								'type'        => 'string',
+								'description' => 'Restrict the batch to one primary repository or exact worktree handle.',
+							),
 							'dry_run'                   => array(
 								'type'        => 'boolean',
 								'description' => 'Preview the bounded batch without removing anything.',
@@ -2612,6 +2616,7 @@ class WorkspaceAbilities {
 							'destructive'    => array( 'type' => 'boolean' ),
 							'job_backed'     => array( 'type' => 'boolean' ),
 							'workspace_path' => array( 'type' => 'string' ),
+							'scope'          => array( 'type' => array( 'object', 'null' ) ),
 							'generated_at'   => array( 'type' => 'string' ),
 							'candidates'     => array( 'type' => 'array' ),
 							'removed'        => array( 'type' => 'array' ),
@@ -4559,7 +4564,7 @@ class WorkspaceAbilities {
 	/**
 	 * Apply only worktrees with explicit lifecycle cleanup_eligible metadata in a bounded batch.
 	 *
-	 * @param  array $input Input parameters (dry_run, limit, older_than, sort, force, discard_unpushed, via_jobs, remove_timeout, source).
+	 * @param  array $input Input parameters (repo, dry_run, limit, older_than, sort, force, discard_unpushed, via_jobs, remove_timeout, source).
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function worktreeBoundedCleanupEligibleApply( array $input ): array|\WP_Error {
@@ -4573,6 +4578,9 @@ class WorkspaceAbilities {
 		);
 		if ( isset($input['limit']) ) {
 			$opts['limit'] = (int) $input['limit'];
+		}
+		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
+			$opts['repo'] = trim( (string) $input['repo']);
 		}
 		if ( isset($input['older_than']) && '' !== trim( (string) $input['older_than']) ) {
 			$opts['older_than'] = trim( (string) $input['older_than']);

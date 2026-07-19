@@ -4232,6 +4232,9 @@ class WorkspaceCommand extends BaseCommand {
 				$input['via_jobs']                  = ! empty($assoc_args['via-jobs']);
 				$input['include_repaired_metadata'] = ! empty($assoc_args['include-repaired-metadata']);
 				$input['source']                    = self::CLEANUP_CLI_SOURCE;
+				if ( ! empty($args[1]) ) {
+					$input['repo'] = (string) $args[1];
+				}
 				if ( isset($assoc_args['limit']) ) {
 					$input['limit'] = (int) $assoc_args['limit'];
 				}

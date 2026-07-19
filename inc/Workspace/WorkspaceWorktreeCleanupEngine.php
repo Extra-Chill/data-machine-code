@@ -1126,7 +1126,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 *     batch so the operator can keep going (next call without changes
 	 *     re-derives the same list cheaply).
 	 *
-	 * @param  array $opts Options: dry_run, limit, older_than, sort, force, discard_unpushed, via_jobs, source.
+	 * @param  array $opts Options: repo, dry_run, limit, older_than, sort, force, discard_unpushed, via_jobs, source.
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_bounded_cleanup_eligible_apply( array $opts = array() ): array|\WP_Error {
@@ -1139,6 +1139,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		$older_than                = isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '';
 		$sort                      = isset($opts['sort']) ? trim( (string) $opts['sort']) : 'age';
 		$source                    = isset($opts['source']) ? trim( (string) $opts['source']) : 'workspace_bounded_cleanup_eligible_apply';
+		$repo                      = isset($opts['repo']) ? trim( (string) $opts['repo']) : '';
 		$remove_timeout_seconds    = $this->normalize_worktree_cleanup_remove_timeout($opts['remove_timeout'] ?? null);
 		if ( is_wp_error($remove_timeout_seconds) ) {
 			return $remove_timeout_seconds;
@@ -1165,13 +1166,14 @@ trait WorkspaceWorktreeCleanupEngine {
 		// the bounded cleanup-eligible apply never triggers full worktree_list / fetch / GitHub
 		// API work just to plan. This intentionally does not honor `apply_plan`
 		// — bounded cleanup-eligible apply IS the apply path; no separate plan file is needed.
-		$inventory = $this->worktree_cleanup_inventory_only($older_than, $sort, $include_repaired_metadata);
+		$inventory = $this->worktree_cleanup_inventory_only($older_than, $sort, $include_repaired_metadata, null, 0, $repo);
 		if ( $inventory instanceof \WP_Error ) {
 			return $inventory;
 		}
 
 		$all_candidates    = array_values( (array) ( $inventory['candidates'] ?? array() ));
 		$inventory_skipped = array_values( (array) ( $inventory['skipped'] ?? array() ));
+		$scope             = is_array($inventory['scope'] ?? null) ? $inventory['scope'] : null;
 
 		$batch    = array_slice($all_candidates, 0, $limit);
 		$deferred = array_slice($all_candidates, $limit);
@@ -1183,6 +1185,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			'inventory_skipped' => count($inventory_skipped),
 			'limit_applied'     => $limit,
 			'remove_timeout'    => $remove_timeout_seconds,
+			'scope'             => $scope,
 		);
 		$active_no_signal_triage = WorktreeActiveNoSignalTriagePreview::build($inventory_skipped, min($limit, 25));
 
@@ -1193,6 +1196,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				'dry_run'                 => true,
 				'destructive'             => false,
 				'workspace_path'          => $this->workspace_path,
+				'scope'                   => $scope,
 				'generated_at'            => gmdate('c'),
 				'candidates'              => $batch,
 				'removed'                 => array(),
@@ -1212,13 +1216,14 @@ trait WorkspaceWorktreeCleanupEngine {
 					'planned_handles'  => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', $batch))),
 					'discard_unpushed' => $discard_unpushed,
 					'remove_timeout'   => $remove_timeout_seconds,
+					'scope'            => $scope,
 					'source'           => $source,
 				),
 			);
 		}
 
 		if ( $via_jobs ) {
-			return $this->schedule_bounded_cleanup_eligible_chunks($batch, $deferred, $force, $source, $started_at, $continuation, $include_repaired_metadata, $remove_timeout_seconds, $discard_unpushed);
+			return $this->schedule_bounded_cleanup_eligible_chunks($batch, $deferred, $force, $source, $started_at, $continuation, $include_repaired_metadata, $remove_timeout_seconds, $discard_unpushed, $scope);
 		}
 
 		$processed            = 0;
@@ -1327,6 +1332,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			'dry_run'                 => false,
 			'destructive'             => true,
 			'workspace_path'          => $this->workspace_path,
+			'scope'                   => $scope,
 			'generated_at'            => gmdate('c'),
 			'planned_candidates'      => $batch,
 			'candidates'              => $processed_candidates,
@@ -1350,6 +1356,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				'discard_unpushed'   => $discard_unpushed,
 				'discarded_unpushed' => $discarded_unpushed,
 				'remove_timeout'     => $remove_timeout_seconds,
+				'scope'              => $scope,
 				'source'             => $source,
 			),
 		);
@@ -2008,7 +2015,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  array<string,mixed>            $continuation Continuation envelope.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function schedule_bounded_cleanup_eligible_chunks( array $batch, array $deferred, bool $force, string $source, float $started_at, array $continuation, bool $include_repaired_metadata = false, int $remove_timeout_seconds = self::CLEANUP_GIT_REMOVE_TIMEOUT, bool $discard_unpushed = false ): array|\WP_Error {
+	private function schedule_bounded_cleanup_eligible_chunks( array $batch, array $deferred, bool $force, string $source, float $started_at, array $continuation, bool $include_repaired_metadata = false, int $remove_timeout_seconds = self::CLEANUP_GIT_REMOVE_TIMEOUT, bool $discard_unpushed = false, ?array $scope = null ): array|\WP_Error {
 		if ( ! class_exists('\DataMachine\Engine\Tasks\TaskScheduler') ) {
 			return new \WP_Error('task_scheduler_unavailable', 'Data Machine TaskScheduler is unavailable; cannot schedule bounded cleanup-eligible apply chunks.', array( 'status' => 500 ));
 		}
@@ -2021,6 +2028,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				'destructive'    => false,
 				'job_backed'     => true,
 				'workspace_path' => $this->workspace_path,
+				'scope'          => $scope,
 				'generated_at'   => gmdate('c'),
 				'candidates'     => array(),
 				'removed'        => array(),
@@ -2037,6 +2045,7 @@ trait WorkspaceWorktreeCleanupEngine {
 					'elapsed_ms' => (int) round(( microtime(true) - $started_at ) * 1000),
 					'note'       => 'No bounded-cleanup-eligible-apply candidates eligible for scheduling.',
 					'source'     => $source,
+					'scope'      => $scope,
 				),
 			);
 		}
@@ -2088,6 +2097,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			'destructive'    => true,
 			'job_backed'     => true,
 			'workspace_path' => $this->workspace_path,
+			'scope'          => $scope,
 			'generated_at'   => gmdate('c'),
 			'candidates'     => $batch,
 			'removed'        => array(),
@@ -2107,6 +2117,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				'direct_job_ids'   => $batch_result['job_ids'] ?? array(),
 				'discard_unpushed' => $discard_unpushed,
 				'remove_timeout'   => $remove_timeout_seconds,
+				'scope'            => $scope,
 				'source'           => $source,
 			),
 		);
@@ -2150,8 +2161,10 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @return string
 	 */
 	private function build_bounded_cleanup_resume_command( int $limit, array $opts, int $remove_timeout_seconds ): string {
+		$scope = $this->normalize_worktree_operation_scope(isset($opts['repo']) ? (string) $opts['repo'] : '');
+		$scope = is_array($scope) ? $scope : null;
 		$parts = array(
-			'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply',
+			'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply' . $this->worktree_operation_scope_cli_arg($scope),
 			'--limit=' . max(1, $limit),
 			'--remove-timeout=' . $remove_timeout_seconds,
 		);
