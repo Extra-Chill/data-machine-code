@@ -682,7 +682,7 @@ trait WorkspaceRepositoryLifecycle {
 		// prune the registry on the primary so it doesn't keep stale entries.
 		if ( $parsed['is_worktree'] ) {
 			$primary_path = $this->get_primary_path($parsed['repo']);
-			if ( is_dir($primary_path . '/.git') ) {
+			if ( GitCheckout::exists($primary_path) ) {
 				WorkspaceMutationLock::with_repo(
 					$this->workspace_path,
 					$parsed['repo'],

@@ -1056,7 +1056,7 @@ trait WorkspaceMetadataReconciliation {
 		}
 
 		$primary_path = '' !== $repo ? $this->get_primary_path($repo) : '';
-		if ( '' === $repo || '' === $branch || ! is_dir($primary_path . '/.git') ) {
+		if ( '' === $repo || '' === $branch || ! GitCheckout::exists($primary_path) ) {
 			return null;
 		}
 
@@ -1285,7 +1285,7 @@ trait WorkspaceMetadataReconciliation {
 		}
 
 		$primary_path = $this->get_primary_path($repo);
-		if ( ! is_dir($primary_path . '/.git') ) {
+		if ( ! GitCheckout::exists($primary_path) ) {
 			return '';
 		}
 
