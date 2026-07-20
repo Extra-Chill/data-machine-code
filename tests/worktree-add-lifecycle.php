@@ -112,6 +112,7 @@ final class Datamachine_Code_Test_Wpdb {
 			return false;
 		}
 		if ( $this->fail_replace ) {
+			$this->last_error = 'constraint failed for token=ghp_abcdefghijklmnop and ' . str_repeat('x', 600);
 			return false;
 		}
 
@@ -339,6 +340,11 @@ try {
 	$failed = $workspace->worktree_add('homeboy', 'audit-primitives-persist-fails', 'origin/main', false, false, false, false, true);
 	assert_true(is_wp_error($failed), 'inventory persistence failure reported success');
 	assert_true('worktree_inventory_persist_failed' === $failed->get_error_code(), 'unexpected persistence failure error code');
+	$failure_data = (array) $failed->get_error_data();
+	assert_true('worktree_inventory_upsert' === ( $failure_data['operation'] ?? '' ), 'inventory persistence failure did not identify the failed operation');
+	assert_true('database' === ( $failure_data['backend'] ?? '' ), 'inventory persistence failure did not identify the database backend');
+	assert_true(! str_contains((string) ( $failure_data['database_error'] ?? '' ), 'ghp_abcdefghijklmnop'), 'inventory persistence failure exposed a secret-like database detail');
+	assert_true(strlen((string) ( $failure_data['database_error'] ?? '' )) <= 512, 'inventory persistence failure did not bound database details');
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-persist-fails'), 'failed persistence left a worktree directory behind');
 
 	$contention_wpdb = new Datamachine_Code_Test_Wpdb();
