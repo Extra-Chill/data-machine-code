@@ -32,21 +32,38 @@ defined('ABSPATH') || exit;
 
 final class WorktreeStalenessProbe {
 
+	/**
+	 * Keep the worktree-creation freshness check aligned with bounded lifecycle
+	 * git probes, without allowing a remote to hold the workspace mutation lock.
+	 */
+	private const FETCH_TIMEOUT_SECONDS = 5;
 
 
 	/**
 	 * Fetch `origin` in a repository. Returns structured result instead of
 	 * throwing so the caller can decide whether to continue on failure.
 	 *
-	 * @param  string $repo_path Primary repo path (passed to `git -C`).
-	 * @return array{ok: bool, error?: string}
+	 * @param  string        $repo_path Primary repo path (passed to `git -C`).
+	 * @param  callable|null $runner    Optional git runner, used by deterministic tests.
+	 * @return array{ok: bool, error?: string, timed_out?: bool, timeout_seconds?: int}
 	 */
-	public static function fetch( string $repo_path ): array {
-		$result = GitRunner::run($repo_path, 'fetch --quiet origin');
+	public static function fetch( string $repo_path, ?callable $runner = null ): array {
+		$runner = $runner ?? static fn( string $path, string $args, int $timeout ): array|\WP_Error => GitRunner::run($path, $args, $timeout);
+		$result = $runner($repo_path, 'fetch --quiet origin', self::FETCH_TIMEOUT_SECONDS);
 		if ( is_wp_error($result) ) {
 			$data  = $result->get_error_data();
 			$tail  = is_array($data) && isset($data['output']) ? trim( (string) $data['output']) : '';
 			$error = '' !== $tail ? $tail : $result->get_error_message();
+			$code  = method_exists($result, 'get_error_code') ? $result->get_error_code() : '';
+			if ( 'git_command_timeout' === $code ) {
+				return array(
+					'ok'              => false,
+					'timed_out'       => true,
+					'timeout_seconds' => self::FETCH_TIMEOUT_SECONDS,
+					'error'           => sprintf('Remote freshness fetch timed out after %d seconds. Check origin connectivity or credentials and retry; use allow_unverified_freshness=true only for intentional offline work.', self::FETCH_TIMEOUT_SECONDS),
+				);
+			}
+
 			return array(
 				'ok'    => false,
 				'error' => $error,
