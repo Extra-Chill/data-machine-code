@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.51.12] - 2026-07-20
+
+### Changed
+- Preserve worktree inventory persistence diagnostics
+
 ## [0.51.11] - 2026-07-19
 
 ### Changed
