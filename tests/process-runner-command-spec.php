@@ -35,9 +35,17 @@ if ( ! class_exists('WP_Error') ) {
 require_once dirname(__DIR__) . '/inc/Support/CommandSpec.php';
 require_once dirname(__DIR__) . '/inc/Support/RuntimeCapabilities.php';
 require_once dirname(__DIR__) . '/inc/Support/ProcessRunner.php';
+require_once dirname(__DIR__) . '/inc/Support/GitRunner.php';
 
 use DataMachineCode\Support\CommandSpec;
+use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\ProcessRunner;
+
+if ( ! function_exists('is_wp_error') ) {
+	function is_wp_error( mixed $thing ): bool {
+		return $thing instanceof WP_Error;
+	}
+}
 
 function process_runner_assert_same( mixed $expected, mixed $actual, string $message ): void {
 	if ( $expected !== $actual ) {
@@ -48,6 +56,12 @@ function process_runner_assert_same( mixed $expected, mixed $actual, string $mes
 function process_runner_assert_not_error( mixed $result, string $message ): void {
 	if ( $result instanceof WP_Error ) {
 		throw new RuntimeException(sprintf('%s %s', $message, $result->get_error_message()));
+	}
+}
+
+function process_runner_assert_less_than( float $expected, float $actual, string $message ): void {
+	if ( $actual >= $expected ) {
+		throw new RuntimeException(sprintf('%s Expected less than %.2f, got %.2f.', $message, $expected, $actual));
 	}
 }
 
@@ -79,6 +93,32 @@ $timed_out = ProcessRunner::run(
 );
 process_runner_assert_same(true, $timed_out instanceof WP_Error, 'ProcessRunner should terminate a controlled hanging process.');
 process_runner_assert_same(1, $timed_out->get_error_data()['timeout'] ?? null, 'ProcessRunner timeout result carries the configured budget.');
+
+if ( 'Windows' !== PHP_OS_FAMILY ) {
+	$descendant_command = 'printf descendant-ready; sleep 6 & wait';
+	$started            = microtime(true);
+	$descendant_timeout = ProcessRunner::run(
+		CommandSpec::from_argv(array( '/bin/sh', '-c', $descendant_command )),
+		array(
+			'timeout_seconds'            => 1,
+			'poll_interval_microseconds' => 1000,
+			'separate_streams'           => true,
+		)
+	);
+	$elapsed = microtime(true) - $started;
+	process_runner_assert_same(true, $descendant_timeout instanceof WP_Error, 'ProcessRunner should time out an argv command whose shell descendant retains pipes.');
+	process_runner_assert_same('descendant-ready', $descendant_timeout->get_error_data()['stdout'] ?? null, 'Timed-out argv commands preserve captured stdout.');
+	process_runner_assert_less_than(3.0, $elapsed, 'Timed-out argv commands must not wait for pipe-owning descendants.');
+
+	$alias_args = '-c ' . escapeshellarg('alias.timeout-descendant=!sh -c ' . escapeshellarg($descendant_command)) . ' timeout-descendant';
+	$started    = microtime(true);
+	$git_timeout = GitRunner::run(sys_get_temp_dir(), $alias_args, 1);
+	$elapsed     = microtime(true) - $started;
+	process_runner_assert_same(true, $git_timeout instanceof WP_Error, 'GitRunner string commands should time out when a git alias leaves a pipe-owning descendant.');
+	process_runner_assert_same('git_command_timeout', $git_timeout->get_error_code(), 'GitRunner string commands preserve the timeout error envelope.');
+	process_runner_assert_same('descendant-ready', $git_timeout->get_error_data()['output'] ?? null, 'GitRunner string commands preserve captured output.');
+	process_runner_assert_less_than(3.0, $elapsed, 'GitRunner string commands must not wait for pipe-owning descendants.');
+}
 
 $invalid = CommandSpec::from_argv(array());
 process_runner_assert_same(true, $invalid instanceof WP_Error, 'CommandSpec rejects empty argv.');
