@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.51.13] - 2026-07-20
+
+### Changed
+- Bound worktree freshness fetch
+
 ## [0.51.12] - 2026-07-20
 
 ### Changed
