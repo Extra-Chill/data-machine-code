@@ -265,6 +265,8 @@ trait WorkspaceWorktreeLifecycle {
 		$fetch        = WorktreeStalenessProbe::fetch($primary_path);
 		$fetch_failed = ! $fetch['ok'];
 		$fetch_error  = $fetch['error'] ?? null;
+		$fetch_timed_out = ! empty($fetch['timed_out']);
+		$fetch_timeout_seconds = $fetch['timeout_seconds'] ?? null;
 		if ( $fetch_failed && ! $allow_unverified_freshness ) {
 			return new \WP_Error(
 				'worktree_freshness_unverified',
@@ -273,6 +275,8 @@ trait WorkspaceWorktreeLifecycle {
 					'status'                     => 409,
 					'fetch_failed'               => true,
 					'fetch_error'                => $fetch_error,
+					'fetch_timed_out'            => $fetch_timed_out,
+					'fetch_timeout_seconds'      => $fetch_timeout_seconds,
 					'allow_unverified_freshness' => false,
 				)
 			);
@@ -321,6 +325,10 @@ trait WorkspaceWorktreeLifecycle {
 
 		if ( $fetch_failed ) {
 			$response['fetch_failed'] = true;
+			if ( $fetch_timed_out ) {
+				$response['fetch_timed_out']       = true;
+				$response['fetch_timeout_seconds'] = $fetch_timeout_seconds;
+			}
 			if ( null !== $fetch_error && '' !== $fetch_error ) {
 				$response['fetch_error'] = $fetch_error;
 			}

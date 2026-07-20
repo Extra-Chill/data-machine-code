@@ -1376,6 +1376,14 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Present only when fetch_failed=true. Trimmed error output from the failing fetch.',
 							),
+							'fetch_timed_out'           => array(
+								'type'        => 'boolean',
+								'description' => 'Present only when the pre-create freshness fetch timed out and allow_unverified_freshness=true allowed creation to continue. This is not stale-repository evidence.',
+							),
+							'fetch_timeout_seconds'     => array(
+								'type'        => 'integer',
+								'description' => 'Present only when fetch_timed_out=true. The bounded freshness-fetch budget in seconds.',
+							),
 							'stale_commits_behind'      => array(
 								'type'        => 'integer',
 								'description' => 'For the existing-local-branch path, how many commits the worktree branch is behind its configured upstream. Omitted when no upstream is configured.',

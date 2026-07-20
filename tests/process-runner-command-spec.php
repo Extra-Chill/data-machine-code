@@ -70,6 +70,16 @@ process_runner_assert_not_error($result, 'ProcessRunner should execute argv spec
 process_runner_assert_same('argv-ok|' . basename($cwd), $result['stdout'], 'CommandSpec preserves argv, cwd, and env policy.');
 process_runner_assert_same('', $result['stderr'], 'CommandSpec captures stderr separately.');
 
+$timed_out = ProcessRunner::run(
+	CommandSpec::from_argv(array( PHP_BINARY, '-r', 'while (true) {}' )),
+	array(
+		'timeout_seconds'           => 1,
+		'poll_interval_microseconds' => 1000,
+	)
+);
+process_runner_assert_same(true, $timed_out instanceof WP_Error, 'ProcessRunner should terminate a controlled hanging process.');
+process_runner_assert_same(1, $timed_out->get_error_data()['timeout'] ?? null, 'ProcessRunner timeout result carries the configured budget.');
+
 $invalid = CommandSpec::from_argv(array());
 process_runner_assert_same(true, $invalid instanceof WP_Error, 'CommandSpec rejects empty argv.');
 
