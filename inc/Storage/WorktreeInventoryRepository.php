@@ -8,11 +8,16 @@
 namespace DataMachineCode\Storage;
 
 use DataMachineCode\Support\JsonCodec;
+use DataMachineCode\Support\SecretRedactor;
 
 defined('ABSPATH') || exit;
 
 if ( ! class_exists(JsonCodec::class) ) {
 	require_once dirname(__DIR__) . '/Support/JsonCodec.php';
+}
+
+if ( ! class_exists(SecretRedactor::class) ) {
+	require_once dirname(__DIR__) . '/Support/SecretRedactor.php';
 }
 
 if ( ! class_exists(SqliteBusyRetry::class) ) {
@@ -125,7 +130,11 @@ class WorktreeInventoryRepository {
 				$this->last_error = $result;
 				return false;
 			}
-			return false !== $result;
+			if ( false === $result ) {
+				$this->last_error = $this->mutation_failure_error('worktree_inventory_upsert');
+				return false;
+			}
+			return true;
 		}
 
 		return false;
@@ -156,6 +165,28 @@ class WorktreeInventoryRepository {
 	 */
 	public function last_error(): ?\WP_Error {
 		return $this->last_error;
+	}
+
+	/**
+	 * Return an actionable, secret-safe diagnostic for a failed DB mutation.
+	 */
+	private function mutation_failure_error( string $operation ): \WP_Error {
+		global $wpdb;
+
+		$database_error = trim((string) ( $wpdb->last_error ?? '' ));
+		$database_error = SecretRedactor::redact($database_error);
+		$database_error = substr($database_error, 0, 512);
+
+		return new \WP_Error(
+			'worktree_inventory_persist_failed',
+			'Failed to persist worktree lifecycle metadata.',
+			array(
+				'status'         => 500,
+				'operation'      => $operation,
+				'backend'        => SqliteBusyRetry::is_sqlite($wpdb) ? 'sqlite' : 'database',
+				'database_error' => '' !== $database_error ? $database_error : null,
+			)
+		);
 	}
 
 	/**
