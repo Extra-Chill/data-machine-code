@@ -155,6 +155,7 @@ final class ProcessRunner {
 						'output'  => self::cap_output(trim($remaining['output']), $output_cap),
 						'stdout'  => self::cap_output(trim($remaining['stdout']), $output_cap),
 						'stderr'  => self::cap_output(trim($remaining['stderr']), $output_cap),
+						'cleanup' => $remaining['cleanup'],
 					)
 				);
 			}
@@ -240,27 +241,47 @@ final class ProcessRunner {
 	 * @param array<int,resource> $pipes
 	 */
 	private static function terminate_timed_out_process( $process, array $pipes, string $output, string $stdout = '', string $stderr = '', int $pid = 0, bool $uses_process_group = false ): array {
+		$cleanup = array(
+			'containment' => 'process',
+			'verified'    => false,
+			'attempts'    => 2,
+			'signal'      => 'SIGTERM,SIGKILL',
+		);
 		if ( self::is_windows() && $pid > 0 ) {
 			// taskkill's /T removes descendants that inherited the process pipes.
-			self::terminate_windows_process_tree($pid);
+			$taskkill = self::terminate_windows_process_tree($pid);
+			$cleanup = array(
+				'containment' => 'windows_process_tree',
+				'verified'    => $taskkill['success'],
+				'attempts'    => 1,
+				'taskkill_exit_code' => $taskkill['exit_code'],
+			);
 		} elseif ( $uses_process_group && $pid > 0 && function_exists('posix_kill') ) {
-			// POSIX timed commands run in their own session, so a negative PID targets only that command tree.
-			posix_kill(-$pid, 15);
-		} else {
-			self::terminate_posix_process_tree($pid, 15);
+			// The invocation owns this session's process group. One force signal avoids
+			// a later negative-PID signal after the group has ceased to exist.
+			$verified = posix_kill(-$pid, 9);
+			if ( $verified ) {
+				$cleanup = array(
+					'containment' => 'posix_process_group',
+					'verified'    => true,
+					'attempts'    => 1,
+					'signal'      => 'SIGKILL',
+				);
+			} else {
+				proc_terminate($process);
+			}
+		} elseif ( ! self::is_windows() ) {
 			proc_terminate($process);
 		}
-		usleep(100000);
-		$status = proc_get_status($process);
-		if ( ! empty($status['running']) ) {
-			if ( self::is_windows() ) {
-				proc_terminate($process, 9);
-			} elseif ( $uses_process_group && $pid > 0 && function_exists('posix_kill') ) {
-				posix_kill(-$pid, 9);
-			} else {
-				self::terminate_posix_process_tree($pid, 9);
-				proc_terminate($process, 9);
-			}
+		if ( ! empty($cleanup['verified']) ) {
+			usleep(100000);
+		} elseif ( self::is_windows() ) {
+			// taskkill failed, so only terminate the owned proc_open parent.
+			proc_terminate($process, 9);
+			$cleanup['fallback_parent_terminated'] = true;
+		} else {
+			usleep(100000);
+			proc_terminate($process, 9);
 		}
 
 		$stdout_tail = (string) stream_get_contents($pipes[1]);
@@ -278,6 +299,7 @@ final class ProcessRunner {
 			'output' => $output,
 			'stdout' => $stdout,
 			'stderr' => $stderr,
+			'cleanup' => $cleanup,
 		);
 	}
 
@@ -315,33 +337,19 @@ final class ProcessRunner {
 		return 'Windows' === PHP_OS_FAMILY;
 	}
 
-	private static function terminate_windows_process_tree( int $pid ): void {
+	/**
+	 * @return array{success:bool,exit_code:int}
+	 */
+	private static function terminate_windows_process_tree( int $pid ): array {
+		$output    = array();
+		$exit_code = 1;
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		@exec(sprintf('taskkill /PID %d /T /F', $pid));
-	}
+		@exec(sprintf('taskkill /PID %d /T /F', $pid), $output, $exit_code);
 
-	private static function terminate_posix_process_tree( int $pid, int $signal ): void {
-		if ( $pid <= 0 || ! function_exists('posix_kill') ) {
-			return;
-		}
-
-		// macOS does not ship setsid(1); collect descendants before terminating their parent.
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		@exec('ps -eo pid=,ppid=', $processes);
-		$children = array();
-		foreach ( $processes as $process ) {
-			$columns = preg_split('/\s+/', trim($process));
-			if ( 2 === count($columns) ) {
-				$children[(int) $columns[1]][] = (int) $columns[0];
-			}
-		}
-
-		$pending = $children[$pid] ?? array();
-		while ( ! empty($pending) ) {
-			$child = array_pop($pending);
-			$pending = array_merge($pending, $children[$child] ?? array());
-			posix_kill($child, $signal);
-		}
+		return array(
+			'success'   => 0 === $exit_code,
+			'exit_code' => $exit_code,
+		);
 	}
 
 	private static function cap_output( string $output, int $output_cap ): string {
@@ -369,6 +377,9 @@ final class ProcessRunner {
 			}
 			if ( array_key_exists('stderr', $data) ) {
 				$result['stderr'] = (string) $data['stderr'];
+			}
+			if ( array_key_exists('cleanup', $data) ) {
+				$result['cleanup'] = $data['cleanup'];
 			}
 
 			return $result;
