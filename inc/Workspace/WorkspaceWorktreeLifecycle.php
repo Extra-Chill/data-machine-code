@@ -542,6 +542,26 @@ trait WorkspaceWorktreeLifecycle {
 			),
 			$metadata
 		);
+		if ( WorktreeContextInjector::has_cleanup_signal($metadata) ) {
+			$dirty_paths = $this->probe_worktree_dirty_paths($wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+			if ( $dirty_paths instanceof \WP_Error ) {
+				return $dirty_paths;
+			}
+			if ( array() !== $dirty_paths ) {
+				return new \WP_Error(
+					'worktree_dirty',
+					sprintf('Refusing to mark worktree "%s" terminal because git status reports %d dirty path(s). Commit, stash, or discard the changes, then finalize again.', $parsed['dir_name'], count($dirty_paths)),
+					array(
+						'status'      => 409,
+						'handle'      => $parsed['dir_name'],
+						'path'        => $wt_path,
+						'dirty_count' => count($dirty_paths),
+						'dirty_paths' => array_slice($dirty_paths, 0, 25),
+						'hint'        => 'Run git status --short in the worktree, resolve every listed change, then retry finalization.',
+					)
+				);
+			}
+		}
 		WorktreeContextInjector::store_lifecycle_metadata($parsed['dir_name'], $metadata);
 
 		$stored = WorktreeContextInjector::get_metadata($parsed['dir_name']) ?? array();

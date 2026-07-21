@@ -294,6 +294,34 @@ try {
 	assert_true(is_dir($result['path']), 'successful worktree_add path is not accessible');
 	assert_true(isset($wpdb->rows['homeboy@audit-primitives-20260616']), 'successful worktree_add was not persisted');
 	assert_true('refused' !== ( $result['disk_budget']['status'] ?? '' ), 'normal worktree_add should pass the disk budget gate without hard refusal');
+	$handle = 'homeboy@audit-primitives-20260616';
+
+	file_put_contents($result['path'] . '/untracked.txt', "untracked\n");
+	$untracked_finalization = $workspace->worktree_finalize($handle, 'merged');
+	assert_true(is_wp_error($untracked_finalization), 'untracked worktree finalization reported success');
+	assert_true('worktree_dirty' === $untracked_finalization->get_error_code(), 'untracked finalization did not return worktree_dirty');
+	assert_true(1 === ( $untracked_finalization->get_error_data()['dirty_count'] ?? 0 ), 'untracked finalization did not report the dirty count');
+	assert_true(in_array('?? untracked.txt', $untracked_finalization->get_error_data()['dirty_paths'] ?? array(), true), 'untracked finalization did not report the dirty path');
+	assert_true('active' === ( $wpdb->rows[$handle]['lifecycle_state'] ?? '' ), 'dirty terminal finalization mutated lifecycle metadata');
+	$active_update = $workspace->worktree_finalize($handle, 'active');
+	assert_true(! is_wp_error($active_update), 'dirty active lifecycle update must remain permissive');
+	unlink($result['path'] . '/untracked.txt');
+
+	file_put_contents($result['path'] . '/README.md', "unstaged\n");
+	$unstaged_finalization = $workspace->worktree_finalize($handle, 'closed');
+	assert_true(is_wp_error($unstaged_finalization) && 'worktree_dirty' === $unstaged_finalization->get_error_code(), 'unstaged worktree finalization did not fail closed');
+	run_command('git checkout -- README.md', $result['path']);
+
+	file_put_contents($result['path'] . '/README.md', "staged\n");
+	run_command('git add README.md', $result['path']);
+	$staged_finalization = $workspace->worktree_finalize($handle, 'cleanup_eligible');
+	assert_true(is_wp_error($staged_finalization) && 'worktree_dirty' === $staged_finalization->get_error_code(), 'staged worktree finalization did not fail closed');
+	assert_true('active' === ( $wpdb->rows[$handle]['lifecycle_state'] ?? '' ), 'staged terminal finalization mutated lifecycle metadata');
+	run_command('git reset --hard HEAD', $result['path']);
+
+	$clean_finalization = $workspace->worktree_finalize($handle, 'merged');
+	assert_true(! is_wp_error($clean_finalization), 'clean terminal worktree finalization failed');
+	assert_true('cleanup_eligible' === ( $clean_finalization['lifecycle_state'] ?? '' ), 'clean terminal finalization did not expose cleanup eligibility');
 
 	$show = $workspace->show_repo('homeboy@audit-primitives-20260616');
 	assert_true(! is_wp_error($show), 'persisted worktree is not visible to show_repo');
