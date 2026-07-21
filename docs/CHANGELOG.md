@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.51.14] - 2026-07-21
+
+### Changed
+- Bound ProcessRunner timeout across shell descendants
+
 ## [0.51.13] - 2026-07-20
 
 ### Changed
