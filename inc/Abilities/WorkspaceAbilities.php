@@ -25,6 +25,7 @@ use DataMachineCode\Workspace\WorkspaceCleanupEligibleDrainOrchestrator;
 use DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator;
 use DataMachineCode\Workspace\WorkspaceReader;
 use DataMachineCode\Workspace\WorkspaceWriter;
+use DataMachineCode\Workspace\WorktreeContextInjector;
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\RuntimeCapabilities;
 
@@ -1343,6 +1344,10 @@ class WorkspaceAbilities {
 							'task_ref'                   => array(
 								'type'        => 'string',
 								'description' => 'Optional short task/issue reference (e.g. `org/repo#123`) recorded alongside task_url. Falls back to DATAMACHINE_TASK_REF env when omitted.',
+							),
+							'require_task_tracker'       => array(
+								'type'        => 'boolean',
+								'description' => 'Require a valid task URL or task reference before creating the worktree. Default false for operator-local worktrees.',
 							),
 						),
 						'required'   => array( 'repo', 'branch' ),
@@ -3887,6 +3892,7 @@ class WorkspaceAbilities {
 		// Default rebase_base=false; only true when explicitly requested.
 		$rebase_base = array_key_exists('rebase_base', $input) ? (bool) $input['rebase_base'] : false;
 		$force       = ! empty($input['force']);
+		$require_task_tracker = ! empty($input['require_task_tracker']);
 		$task        = array();
 		if ( isset($input['task_url']) && '' !== trim( (string) $input['task_url']) ) {
 			$task['task_url'] = (string) $input['task_url'];
@@ -3896,6 +3902,10 @@ class WorkspaceAbilities {
 		}
 
 		$workspace = new Workspace();
+		$task = WorktreeContextInjector::resolve_task_metadata($task) ?? array();
+		if ( $require_task_tracker && empty($task) && RemoteWorkspaceBackend::should_handle() && ! self::hasLocalPrimaryCheckout($workspace, (string) ( $input['repo'] ?? '' )) ) {
+			return new \WP_Error('worktree_task_tracker_required', 'Refusing to create a managed worktree without a valid task URL or task reference.', array( 'status' => 400 ));
+		}
 		if ( RemoteWorkspaceBackend::should_handle() && self::hasLocalPrimaryCheckout($workspace, (string) ( $input['repo'] ?? '' )) ) {
 			return $workspace->worktree_add(
 				$input['repo'] ?? '',
@@ -3907,7 +3917,8 @@ class WorkspaceAbilities {
 				$rebase_base,
 				$force,
 				$task,
-				$allow_unverified_freshness
+				$allow_unverified_freshness,
+				$require_task_tracker
 			);
 		}
 
@@ -3915,7 +3926,8 @@ class WorkspaceAbilities {
 			$result = ( new RemoteWorkspaceBackend() )->worktree_add(
 				$input['repo'] ?? '',
 				$input['branch'] ?? '',
-				$input['from'] ?? null
+				$input['from'] ?? null,
+				$task
 			);
 			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
 				return self::decorate_remote_workspace_result('worktree_add', $result);
@@ -3932,7 +3944,8 @@ class WorkspaceAbilities {
 			$rebase_base,
 			$force,
 			$task,
-			$allow_unverified_freshness
+			$allow_unverified_freshness,
+			$require_task_tracker
 		);
 	}
 

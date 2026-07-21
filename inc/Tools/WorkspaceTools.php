@@ -560,7 +560,7 @@ class WorkspaceTools extends BaseTool
             }
         }
 
-        foreach ( array( 'inject_context', 'bootstrap', 'allow_stale', 'allow_unverified_freshness', 'rebase_base', 'force' ) as $key ) {
+        foreach ( array( 'inject_context', 'bootstrap', 'allow_stale', 'allow_unverified_freshness', 'rebase_base', 'force', 'require_task_tracker' ) as $key ) {
             if (array_key_exists($key, $parameters) ) {
                 $input[ $key ] = (bool) $parameters[ $key ];
             }
@@ -1420,6 +1420,7 @@ class WorkspaceTools extends BaseTool
             'force'          => array( 'type' => 'boolean', 'description' => 'Bypass disk-budget refusal threshold. Default false.' ),
             'task_url'       => array( 'type' => 'string', 'description' => 'Optional task or issue URL to record on the worktree.' ),
             'task_ref'       => array( 'type' => 'string', 'description' => 'Optional short task or issue reference to record on the worktree.' ),
+            'require_task_tracker' => array( 'type' => 'boolean', 'description' => 'Require task metadata before creating the worktree. Default false for operator-local worktrees.' ),
             ),
             'required'   => array( 'repo', 'branch' ),
             ),
