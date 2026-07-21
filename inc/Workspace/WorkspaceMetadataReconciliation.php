@@ -1675,6 +1675,17 @@ trait WorkspaceMetadataReconciliation {
 	 * @return int|\WP_Error Dirty file count, or WP_Error when git probe failed.
 	 */
 	private function probe_worktree_dirty_count( string $path, int $timeout_seconds = 0 ): int|\WP_Error {
+		$paths = $this->probe_worktree_dirty_paths($path, $timeout_seconds);
+		return is_wp_error($paths) ? $paths : count($paths);
+	}
+
+	/**
+	 * Probe dirty paths with the porcelain contract shared by cleanup and lifecycle gates.
+	 *
+	 * @param  string $path Worktree path.
+	 * @return string[]|\WP_Error Dirty porcelain entries, or WP_Error when git probe failed.
+	 */
+	private function probe_worktree_dirty_paths( string $path, int $timeout_seconds = 0 ): array|\WP_Error {
 		if ( '' === $path || ! is_dir($path) ) {
 			return new \WP_Error('worktree_path_missing', 'worktree path is not a directory', array( 'status' => 400 ));
 		}
@@ -1682,8 +1693,7 @@ trait WorkspaceMetadataReconciliation {
 		if ( is_wp_error($result) ) {
 			return $result;
 		}
-		$lines = array_filter(array_map('trim', explode("\n", (string) ( $result['output'] ?? '' ))));
-		return count($lines);
+		return array_values(array_filter(array_map('trim', explode("\n", (string) ( $result['output'] ?? '' )))));
 	}
 
 	/**
