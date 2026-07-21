@@ -550,8 +550,9 @@ class WorkspaceTools extends BaseTool
     public function handleWorktreeAdd( array $parameters ): array
     {
         $input = array(
-        'repo'   => $parameters['repo'] ?? '',
-        'branch' => $parameters['branch'] ?? '',
+        'repo'                 => $parameters['repo'] ?? '',
+        'branch'               => $parameters['branch'] ?? '',
+        'require_task_tracker' => true,
         );
 
         foreach ( array( 'from', 'task_url', 'task_ref' ) as $key ) {

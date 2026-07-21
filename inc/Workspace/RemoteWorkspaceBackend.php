@@ -107,7 +107,7 @@ class RemoteWorkspaceBackend {
 	 *
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	public function worktree_add( string $repo_name, string $branch, ?string $from = null ): array|\WP_Error {
+	public function worktree_add( string $repo_name, string $branch, ?string $from = null, array $task = array() ): array|\WP_Error {
 		$repo = $this->resolve_repo($repo_name);
 		if ( is_wp_error($repo) ) {
 			return $repo;
@@ -126,6 +126,7 @@ class RemoteWorkspaceBackend {
 			'repo'            => $repo,
 			'branch'          => $branch,
 			'base_ref'        => null !== $from && '' !== $from ? $from : '',
+			'task'            => $task,
 			'pending_files'   => array(),
 			'changed_files'   => array(),
 			'last_commit_sha' => '',

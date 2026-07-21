@@ -26,7 +26,7 @@ interface CodeTaskWorkspaceInterface {
 	/**
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	public function worktree_add( string $repo, string $branch, ?string $from, bool $inject_context, bool $bootstrap, bool $allow_stale, bool $rebase_base, bool $force ): array|\WP_Error;
+	public function worktree_add( string $repo, string $branch, ?string $from, bool $inject_context, bool $bootstrap, bool $allow_stale, bool $rebase_base, bool $force, array $task, bool $require_task_tracker ): array|\WP_Error;
 
 	public function get_repo_path( string $handle ): string;
 }

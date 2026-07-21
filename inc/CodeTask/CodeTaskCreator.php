@@ -70,7 +70,9 @@ class CodeTaskCreator {
 			true,
 			! empty($args['allow_stale']),
 			false,
-			! empty($args['force'])
+			! empty($args['force']),
+			array( 'task_url' => $packet->source_url() ),
+			true
 		);
 
 		if ( $worktree instanceof \WP_Error ) {
