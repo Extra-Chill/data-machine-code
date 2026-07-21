@@ -313,6 +313,12 @@ trait WorkspaceWorktreeLifecycle {
 			return $result;
 		}
 
+		$identity_configuration = $this->configure_repository_git_identity($wt_path);
+		if ( null !== $identity_configuration ) {
+			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch);
+			return $identity_configuration;
+		}
+
 		$response = array(
 			'success'        => true,
 			'handle'         => $wt_handle,

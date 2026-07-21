@@ -21,6 +21,7 @@ require_once __DIR__ . '/WorkspaceActiveNoSignalCleanup.php';
 require_once __DIR__ . '/WorkspaceArtifactCleanup.php';
 require_once __DIR__ . '/WorkspaceCleanupPlan.php';
 require_once __DIR__ . '/WorkspaceGitOperations.php';
+require_once __DIR__ . '/WorkspaceGitIdentityPolicy.php';
 require_once __DIR__ . '/WorkspaceHygieneReport.php';
 require_once __DIR__ . '/WorkspaceMetadataReconciliation.php';
 require_once __DIR__ . '/WorkspaceRepositoryLifecycle.php';
@@ -41,6 +42,7 @@ class Workspace {
 	use WorkspaceArtifactCleanup;
 	use WorkspaceCleanupPlan;
 	use WorkspaceGitOperations;
+	use WorkspaceGitIdentityPolicy;
 	use WorkspaceHygieneReport;
 	use WorkspaceMetadataReconciliation;
 	use WorkspaceRepositoryLifecycle;
