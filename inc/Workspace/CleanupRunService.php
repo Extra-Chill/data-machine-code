@@ -125,7 +125,8 @@ class CleanupRunService {
 		}
 
 		$items                  = $this->repository->get_items($run_id);
-		$force_artifact_cleanup = ! empty( (array) ( $run['policy'] ?? array() )['force_artifact_cleanup'] );
+		$policy                  = (array) ( $run['policy'] ?? array() );
+		$force_artifact_cleanup = ! empty($policy['force_artifact_cleanup']);
 		$artifact_rows          = $this->pending_rows_of_type($items, 'artifact_cleanup');
 		$worktree_rows          = $this->pending_rows_of_type($items, 'worktree_removal');
 		$stale_worktrees_only   = 'stale-worktrees' === (string) ( $run['mode'] ?? '' );
@@ -835,6 +836,7 @@ class CleanupRunService {
 	 */
 	private function remaining_work_summary( array $run, string $run_id, array $items, array $progress ): array {
 		$summary       = CleanupRemainingWorkSummary::from_items($items);
+		$policy        = (array) ( $run['policy'] ?? array() );
 		$safe_cleanup  = is_array($progress['safe_cleanup'] ?? null) ? (array) $progress['safe_cleanup'] : array();
 		$safe_commands = is_array($safe_cleanup['commands'] ?? null) ? (array) $safe_cleanup['commands'] : array();
 		if ( ! empty($progress['resumable']) && isset($safe_commands['status'], $safe_commands['resume']) ) {
@@ -854,7 +856,7 @@ class CleanupRunService {
 			$resume_command = array(
 				'bucket'            => 'current_run_resume',
 				'command'           => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
-				'apply'             => $this->cleanup_run_resume_command($run_id, self::DEFAULT_APPLY_LIMIT, ! empty( (array) ( $run['policy'] ?? array() )['force_artifact_cleanup'] )),
+				'apply'             => $this->cleanup_run_resume_command($run_id, self::DEFAULT_APPLY_LIMIT, ! empty($policy['force_artifact_cleanup'])),
 				'destructive'       => false,
 				'apply_destructive' => true,
 				'why'               => 'Resume the reviewed DB-backed cleanup run from persisted pending/failed/applying rows.',

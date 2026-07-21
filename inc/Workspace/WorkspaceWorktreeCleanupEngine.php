@@ -2784,7 +2784,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  string $path Worktree path.
 	 * @return array{paths: array<int,string>, artifacts: array<int,array<string,mixed>>, artifact_size_bytes: int}|null Artifact-only classification.
 	 */
-	private function classify_artifact_only_dirty_worktree( string $repo, string $path ): ?array {
+	protected function classify_artifact_only_dirty_worktree( string $repo, string $path ): ?array {
 		if ( '' === $repo || '' === $path || ! is_dir($path) ) {
 			return null;
 		}

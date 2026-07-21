@@ -2690,6 +2690,7 @@ class WorkspaceAbilities {
 							'full_workspace'         => array( 'type' => 'boolean' ),
 							'worktree_older_than'    => array( 'type' => 'string' ),
 							'worktree_sort'          => array( 'type' => 'string' ),
+							'artifact_sort'          => array( 'type' => 'string' ),
 							'worktree_stale_only'    => array( 'type' => 'boolean' ),
 							'plan'                   => array( 'type' => 'object' ),
 						),
@@ -4668,6 +4669,9 @@ class WorkspaceAbilities {
 		}
 		if ( isset($input['worktree_sort']) && '' !== trim( (string) $input['worktree_sort']) ) {
 			$opts['worktree_sort'] = trim( (string) $input['worktree_sort']);
+		}
+		if ( isset($input['artifact_sort']) && '' !== trim( (string) $input['artifact_sort']) ) {
+			$opts['artifact_sort'] = trim( (string) $input['artifact_sort']);
 		}
 		if ( isset($input['plan']) && is_array($input['plan']) ) {
 			$opts['plan'] = $input['plan'];
