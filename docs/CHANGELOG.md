@@ -2,6 +2,17 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.53.0] - 2026-07-21
+
+### Added
+- require managed task trackers
+
+### Changed
+- compact generated agents context
+
+### Fixed
+- reject dirty terminal worktree finalization
+
 ## [0.52.0] - 2026-07-21
 
 ### Added
