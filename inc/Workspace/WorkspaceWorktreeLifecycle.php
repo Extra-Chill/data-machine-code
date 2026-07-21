@@ -70,9 +70,10 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  bool        $force          Bypass the disk-budget refusal threshold (default false).
 	 * @param  array       $task           Optional task metadata recorded on the worktree.
 	 * @param  bool        $allow_unverified_freshness Bypass fetch-failure freshness verification (default false).
+	 * @param  bool        $require_task_tracker Reject creation without task metadata (default false).
 	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
-	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false ): array|\WP_Error {
+	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false ): array|\WP_Error {
 		$visible = $this->require_workspace_visible();
 		if ( null !== $visible ) {
 			return $visible;
@@ -90,6 +91,15 @@ trait WorkspaceWorktreeLifecycle {
 
 		if ( '' === $branch ) {
 			return new \WP_Error('invalid_branch', 'Branch name is required.', array( 'status' => 400 ));
+		}
+
+		$task = WorktreeContextInjector::resolve_task_metadata($task) ?? array();
+		if ( $require_task_tracker && empty($task) ) {
+			return new \WP_Error(
+				'worktree_task_tracker_required',
+				'Refusing to create a managed worktree without a valid task URL or task reference. Supply task_url or task_ref, or use an operator-local creation path that does not require a tracker.',
+				array( 'status' => 400 )
+			);
 		}
 
 		$slug = $this->slugify_branch($branch);

@@ -161,7 +161,7 @@ class WorktreeContextInjector {
 		$user      = self::resolve_origin_user();
 		$agent     = self::resolve_origin_agent();
 		$session   = self::resolve_origin_session();
-		$task      = self::resolve_origin_task($args);
+		$task      = self::resolve_task_metadata($args);
 
 		$created_at = gmdate('c');
 
@@ -1474,7 +1474,7 @@ class WorktreeContextInjector {
 	}
 
 	/**
-	 * Resolve a task/issue reference for the worktree, when available.
+	 * Resolve valid task metadata for the worktree, when available.
 	 *
 	 * Sources, in order:
 	 *   1. Caller-supplied `task_url` / `task_ref` in `$args` (explicit wins).
@@ -1486,7 +1486,7 @@ class WorktreeContextInjector {
 	 * @param  array<string,mixed> $args Worktree creation context.
 	 * @return array<string,mixed>|null
 	 */
-	private static function resolve_origin_task( array $args = array() ): ?array {
+	public static function resolve_task_metadata( array $args = array() ): ?array {
 		$task = array();
 
 		$task_url = isset($args['task_url']) && '' !== trim( (string) $args['task_url']) ? trim( (string) $args['task_url']) : '';
@@ -1496,7 +1496,8 @@ class WorktreeContextInjector {
 				$task_url = trim($env_task_url);
 			}
 		}
-		if ( '' !== $task_url && preg_match('#^https?://#', $task_url) ) {
+		$task_url_parts = '' !== $task_url ? parse_url($task_url) : false;
+		if ( is_array($task_url_parts) && isset($task_url_parts['host'], $task_url_parts['scheme']) && in_array(strtolower((string) $task_url_parts['scheme']), array( 'http', 'https' ), true) ) {
 			$task['task_url'] = $task_url;
 		}
 
@@ -1507,7 +1508,8 @@ class WorktreeContextInjector {
 				$task_ref = trim($env_task_ref);
 			}
 		}
-		if ( '' !== $task_ref ) {
+		$normalized_task_ref = strtolower($task_ref);
+		if ( '' !== $normalized_task_ref && ! preg_match('/\s/', $normalized_task_ref) ) {
 			$task['task_ref'] = $task_ref;
 		}
 
