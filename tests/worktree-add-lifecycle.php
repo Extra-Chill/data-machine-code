@@ -289,6 +289,34 @@ try {
 	assert_true(str_contains($refused->get_error_message(), 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25'), 'disk pressure refusal must include the next cleanup command');
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-disk-refused'), 'disk pressure refusal left a worktree directory behind');
 
+	$ability_default = WorkspaceAbilities::worktreeAdd(
+		array(
+			'repo'            => 'homeboy',
+			'branch'          => 'ability-default-tracker-required',
+			'from'            => 'origin/main',
+			'inject_context'  => false,
+			'bootstrap'       => false,
+			'force'           => true,
+		)
+	);
+	assert_true(is_wp_error($ability_default), 'agent-facing worktree ability accepted missing tracker metadata by default');
+	assert_true('worktree_task_tracker_required' === $ability_default->get_error_code(), 'agent-facing worktree ability returned an unexpected error code');
+	assert_true(! is_dir($workspace_root . '/homeboy@ability-default-tracker-required'), 'agent-facing tracker refusal left a worktree directory behind');
+
+	$ability_operator_local = WorkspaceAbilities::worktreeAdd(
+		array(
+			'repo'                 => 'homeboy',
+			'branch'               => 'ability-operator-local',
+			'from'                 => 'origin/main',
+			'inject_context'       => false,
+			'bootstrap'            => false,
+			'force'                => true,
+			'require_task_tracker' => false,
+		)
+	);
+	assert_true(! is_wp_error($ability_operator_local), is_wp_error($ability_operator_local) ? $ability_operator_local->get_error_message() : 'explicit operator-local ability creation failed');
+	assert_true(is_dir($workspace_root . '/homeboy@ability-operator-local'), 'explicit operator-local ability creation did not materialize a worktree');
+
 	$strict_missing = $workspace->worktree_add('homeboy', 'audit-primitives-tracker-required', 'origin/main', false, false, false, false, true, array(), false, true);
 	assert_true(is_wp_error($strict_missing), 'strict worktree creation accepted missing tracker metadata');
 	assert_true('worktree_task_tracker_required' === $strict_missing->get_error_code(), 'strict worktree creation returned an unexpected error code');

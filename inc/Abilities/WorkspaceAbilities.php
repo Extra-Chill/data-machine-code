@@ -1347,7 +1347,7 @@ class WorkspaceAbilities {
 							),
 							'require_task_tracker'       => array(
 								'type'        => 'boolean',
-								'description' => 'Require a valid task URL or task reference before creating the worktree. Default false for operator-local worktrees.',
+								'description' => 'Require a valid task URL or task reference before creating the worktree. Defaults true; trusted operator-local callers may explicitly set false.',
 							),
 						),
 						'required'   => array( 'repo', 'branch' ),
@@ -3891,8 +3891,8 @@ class WorkspaceAbilities {
 		$allow_unverified_freshness = array_key_exists('allow_unverified_freshness', $input) ? (bool) $input['allow_unverified_freshness'] : false;
 		// Default rebase_base=false; only true when explicitly requested.
 		$rebase_base = array_key_exists('rebase_base', $input) ? (bool) $input['rebase_base'] : false;
-		$force       = ! empty($input['force']);
-		$require_task_tracker = ! empty($input['require_task_tracker']);
+		$force                = ! empty($input['force']);
+		$require_task_tracker = array_key_exists('require_task_tracker', $input) ? (bool) $input['require_task_tracker'] : true;
 		$task        = array();
 		if ( isset($input['task_url']) && '' !== trim( (string) $input['task_url']) ) {
 			$task['task_url'] = (string) $input['task_url'];
