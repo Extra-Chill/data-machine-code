@@ -518,6 +518,10 @@ trait WorkspaceGitOperations {
 		if ( is_wp_error($attestation) ) {
 			return $attestation;
 		}
+		$identity_check = $this->enforce_repository_git_identity($repo_path);
+		if ( null !== $identity_check ) {
+			return $identity_check;
+		}
 
 		$commit = $this->run_git($repo_path, 'commit -m ' . escapeshellarg($message));
 		if ( is_wp_error($commit) ) {
@@ -952,6 +956,10 @@ trait WorkspaceGitOperations {
 			$commit_cmd = 'commit -m ' . escapeshellarg($title);
 			if ( '' !== $body ) {
 				$commit_cmd .= ' -m ' . escapeshellarg($body);
+			}
+			$identity_check = $this->enforce_repository_git_identity($repo_path);
+			if ( null !== $identity_check ) {
+				return $identity_check;
 			}
 			$commit = $this->run_git($repo_path, $commit_cmd);
 			if ( is_wp_error($commit) ) {
