@@ -62,7 +62,6 @@ namespace {
 		}
 	}
 
-	require_once dirname(__DIR__) . '/inc/Runtime/CommandIntrospector.php';
 	require_once dirname(__DIR__) . '/inc/Runtime/AgentsMdSections.php';
 
 	\DataMachineCode\Runtime\AgentsMdSections::register();
@@ -85,11 +84,10 @@ namespace {
 		$default,
 		'default workspace policy section missing'
 	);
-	assert_contains(
-		'- **Workspace:** `wp datamachine-code workspace adopt|clone|list|show|path|hygiene|remove|worktree|read|write|grep|edit|git|patch|ls`',
-		$default,
-		'DMC workspace command facts missing'
-	);
+	assert_contains('- **Workspace:** `wp datamachine-code workspace --help` is the live lifecycle and file-I/O command reference.', $default, 'workspace command discovery pointer missing');
+	assert_contains('- **Worktrees:** `wp datamachine-code workspace worktree --help` is the live branch lifecycle reference.', $default, 'worktree command discovery pointer missing');
+	assert_contains('- **GitHub:** `wp datamachine-code github --help` is the live GitHub command reference.', $default, 'GitHub command discovery pointer missing');
+	assert_not_contains('adopt|clone|list|show|path|hygiene', $default, 'enumerated workspace commands returned');
 
 	add_test_filter(
 		'datamachine_code_workspace_policy_intro',
@@ -108,7 +106,7 @@ namespace {
 	assert_contains('Use local project policy for `unavailable; run datamachine-code workspace path to diagnose`. DMC owns workspace lifecycle', $filtered, 'workspace policy intro filter was not applied');
 	assert_contains('- **Local policy:** caller-owned workspace rules.', $filtered, 'workspace policy section filter was not applied');
 	assert_not_contains('- **Primary is read-only.** Never edit `<workspace>/<repo>` (no `@slug`).', $filtered, 'default policy section remained after filter override');
-	assert_contains('- **Workspace:** `wp datamachine-code workspace adopt|clone|list|show|path|hygiene|remove|worktree|read|write|grep|edit|git|patch|ls`', $filtered, 'DMC command facts changed after policy filter');
+	assert_contains('- **Workspace:** `wp datamachine-code workspace --help` is the live lifecycle and file-I/O command reference.', $filtered, 'DMC command discovery pointer changed after policy filter');
 
 	fwrite(STDOUT, "agents-md sections smoke passed\n");
 }

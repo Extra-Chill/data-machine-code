@@ -93,36 +93,15 @@ MD;
 				$workspace_policy_intro   = self::render_workspace_policy_intro($workspace_path);
 				$workspace_policy_section = self::render_workspace_policy_section($workspace_path, $wp);
 
-				// Generate DMC's own command surface from reflection so the lists
-				// never drift from the registered truth (see #671, #734). The
-				// fallback pipe-lists are only used if a command class is somehow
-				// unavailable in this compose context. Core's `datamachine`
-				// namespace is NOT narrated here — core registers its own
-				// reflected AGENTS.md section (data-machine#2640); hand-copying it
-				// here is a layer inversion that silently drifts (e.g. the removed
-				// `datamachine analytics` line, now owned by data-machine-business).
-				$workspace_subcmds = CommandIntrospector::pipe_list(
-					'\\DataMachineCode\\Cli\\Commands\\WorkspaceCommand',
-					'adopt|clone|list|show|path|hygiene|remove|worktree|read|write|grep|edit|git|patch|ls'
-				);
-				$worktree_subcmds  = CommandIntrospector::match_arm_pipe_list(
-					'\\DataMachineCode\\Cli\\Commands\\WorkspaceCommand',
-					'worktree',
-					'add|list|remove|prune|cleanup|cleanup-artifacts|reconcile-metadata|refresh-context|finalize|mark-cleanup-eligible'
-				);
-				$github_subcmds    = CommandIntrospector::pipe_list(
-					'\\DataMachineCode\\Cli\\Commands\\GitHubCommand',
-					'issues|pulls|repos|status|view|close|review-flow|comment'
-				);
 				return <<<MD
 ## Data Machine Code
 
 {$workspace_policy_intro}DMC owns workspace lifecycle, evidence capture, and GitHub workflow glue; file CRUD inside a worktree uses whatever tool is fastest. Core's `datamachine` operating layer (memory, automation, communication, content ops, system) is documented in its own AGENTS.md section — run `{$wp} datamachine --help` to discover it.
 
 - Workspace root: `{$workspace_path}`
-- **Workspace:** `{$wp} datamachine-code workspace {$workspace_subcmds}` — lifecycle (clone/adopt/list/show/path/hygiene/remove/worktree), plus the file-I/O surface you work through inside a worktree (`read`, `write`, `grep`, `edit`, `patch`, `ls`, `git`). Keeps the on-disk registry consistent and enforces the `<repo>@<slug>` handle convention.
-- **Worktrees:** `{$wp} datamachine-code workspace worktree {$worktree_subcmds}` — create isolated branches, refresh agent context, attach lifecycle metadata, and clean up safely.
-- **GitHub:** `{$wp} datamachine-code github {$github_subcmds}` — list/read GitHub state, manage issues and PRs, install review flows, and comment on reviews.
+- **Workspace:** `{$wp} datamachine-code workspace --help` is the live lifecycle and file-I/O command reference. It enforces `<repo>@<slug>` handles and maintains workspace registry state.
+- **Worktrees:** `{$wp} datamachine-code workspace worktree --help` is the live branch lifecycle reference.
+- **GitHub:** `{$wp} datamachine-code github --help` is the live GitHub command reference.
 - **Editing inside a worktree:** any tool. Local agents on the same disk should use native file I/O and raw `git`; routing edits through workspace abilities is ceremony, not safety.
 - **Workspace lifecycle:** use `workspace clone` for primary checkout adoption/cloning and `workspace worktree add` for isolated branches. Use the CLI `--help` output for current flags and subcommands.
 {$workspace_policy_section}
@@ -365,17 +344,20 @@ MD;
 
 		ksort($by_repo, SORT_NATURAL | SORT_FLAG_CASE);
 
-		$mode = apply_filters('datamachine_code_workspace_inventory_mode', 'compact');
-		if ( ! in_array($mode, array( 'compact', 'full' ), true) ) {
-			$mode = 'compact';
+		// Full snapshots remain available to sites that explicitly need them.
+		$mode = apply_filters('datamachine_code_workspace_inventory_mode', 'summary');
+		if ( ! in_array($mode, array( 'summary', 'full' ), true) ) {
+			$mode = 'summary';
 		}
 
 		$lines           = array();
 		$attention_lines = array();
+		$worktree_count  = 0;
 		foreach ( $by_repo as $repo => $bucket ) {
 			$primary    = is_array($bucket['primary']) ? $bucket['primary'] : array();
 			$worktrees  = $bucket['worktrees'];
 			$wt_count   = count($worktrees);
+			$worktree_count += $wt_count;
 			$branch     = $primary['branch'] ?? null;
 			$remote     = $primary['remote'] ?? null;
 			$branch_str = ( null !== $branch && '' !== $branch ) ? sprintf(' (`%s`)', $branch) : '';
@@ -386,17 +368,7 @@ MD;
 				$attention_lines[] = $attention;
 			}
 
-			if ( 'compact' === $mode ) {
-				$suffix_parts   = array();
-				$suffix_parts[] = sprintf('%d %s', $wt_count, 1 === $wt_count ? 'worktree' : 'worktrees');
-				if ( null !== $remote && '' !== $remote ) {
-					$suffix_parts[] = $remote;
-				}
-				$freshness_badge = self::format_primary_freshness_badge($freshness);
-				if ( '' !== $freshness_badge ) {
-					$suffix_parts[] = $freshness_badge;
-				}
-				$lines[] = sprintf('- **%s**%s — %s', $repo, $branch_str, implode(' · ', $suffix_parts));
+			if ( 'summary' === $mode ) {
 				continue;
 			}
 
@@ -427,23 +399,54 @@ MD;
 		}
 
 		$body            = implode("\n", $lines);
-		$attention_block = self::render_primary_freshness_attention_block($attention_lines);
-		$generated_at    = gmdate('c');
+		$attention_block = 'full' === $mode
+			? self::render_primary_freshness_attention_block($attention_lines)
+			: self::render_primary_freshness_summary($attention_lines, $wp);
 		$workspace_path  = $listing['path'];
 		$agent_slug      = self::resolve_agent_slug();
 		$agent_suffix    = '' !== $agent_slug ? ' --agent=' . $agent_slug : '';
 
+		if ( 'summary' === $mode ) {
+			$primary_count  = count($by_repo);
+			$primary_label  = 1 === $primary_count ? 'checkout' : 'checkouts';
+			$worktree_label = 1 === $worktree_count ? 'worktree' : 'worktrees';
+			return <<<MD
+## Workspace Inventory
+
+Live workspace state is intentionally not embedded here. Run `{$wp} datamachine-code workspace list` for the authoritative inventory, `{$wp} datamachine-code workspace show <repo>` for one checkout, or `{$wp} datamachine-code workspace hygiene` for freshness and cleanup diagnostics.
+
+Snapshot summary: {$primary_count} primary {$primary_label} and {$worktree_count} {$worktree_label} under `{$workspace_path}`.
+
+{$attention_block}
+MD;
+		}
+
 		return <<<MD
 ## Workspace Inventory
 
-Generated {$generated_at} from cloned repos in `{$workspace_path}`. This section can be stale; `{$wp} datamachine-code workspace list` is the source of truth for current worktrees and branches.
+Detailed snapshot from cloned repos in `{$workspace_path}`. `{$wp} datamachine-code workspace list` remains the source of truth for current worktrees and branches.
 
-Refresh this file with `{$wp} datamachine memory compose AGENTS.md{$agent_suffix}` after workspace changes if the inventory looks stale.
+Refresh this file with `{$wp} datamachine memory compose AGENTS.md{$agent_suffix}` after workspace changes.
 
 {$attention_block}
 
 {$body}
 MD;
+	}
+
+	private static function render_primary_freshness_summary( array $attention_lines, string $wp ): string {
+		$count = count($attention_lines);
+		if ( 0 === $count ) {
+			return '';
+		}
+
+		return sprintf(
+			'Primary checkout attention: %d %s need%s inspection. Run `%s datamachine-code workspace list` for details.',
+			$count,
+			1 === $count ? 'checkout' : 'checkouts',
+			1 === $count ? 's' : '',
+			$wp
+		);
 	}
 
 	private static function primary_freshness_needs_attention( ?array $freshness ): bool {
