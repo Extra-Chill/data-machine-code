@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.52.0] - 2026-07-21
+
+### Added
+- enforce configured Git identities
+
 ## [0.51.15] - 2026-07-21
 
 ### Fixed
