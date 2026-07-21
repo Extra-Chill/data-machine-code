@@ -176,6 +176,19 @@ $active_no_signal = new SafeCleanupQueuedAbility(
 		),
 	)
 );
+$artifact_cleanup = new SafeCleanupQueuedAbility(
+	array(
+		array(
+			'success'         => true,
+			'state'           => 'completed',
+			'applied'         => 2,
+			'skipped'         => 1,
+			'bytes_reclaimed' => 2048,
+			'remaining_blocked_reasons' => array( 'artifact_plan_mismatch' => array( 'count' => 1 ) ),
+			'passes'          => array( array( 'planned_rows' => 3 ) ),
+		),
+	)
+);
 $lock_calls = array();
 $run_repository = new SafeCleanupFakeRunRepository();
 $progress_envelopes = array();
@@ -183,6 +196,7 @@ $orchestrator = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
 	static fn( string $name ) => match ( $name ) {
 		'datamachine-code/workspace-worktree-cleanup-eligible-drain' => $cleanup_eligible,
 		'datamachine-code/workspace-worktree-active-no-signal-drain' => $active_no_signal,
+		'datamachine-code/workspace-cleanup-until-empty' => $artifact_cleanup,
 		default => null,
 	},
 	static function ( bool $dry_run ) use ( &$lock_calls ): array {
@@ -218,16 +232,21 @@ safe_cleanup_assert(false === $lock_calls[0] && false === $lock_calls[1], 'lock 
 safe_cleanup_assert(2 === count($cleanup_eligible->calls), 'cleanup eligible drain repeats until no progress');
 safe_cleanup_assert(false === $cleanup_eligible->calls[0]['force'], 'child force is false');
 safe_cleanup_assert(false === $cleanup_eligible->calls[0]['discard_unpushed'], 'child discard_unpushed is false');
-safe_cleanup_assert(2 === ( $result['summary']['removed'] ?? null ), 'removed rows are accumulated');
+safe_cleanup_assert(4 === ( $result['summary']['removed'] ?? null ), 'artifact and worktree removals are accumulated');
+safe_cleanup_assert(3 === ( $result['summary']['planned'] ?? null ), 'artifact reviewed rows are counted');
+safe_cleanup_assert(2 === ( $result['summary']['applied_rows'] ?? null ), 'artifact applied rows are counted');
+safe_cleanup_assert(1 === ( $result['summary']['skipped_rows'] ?? null ), 'artifact skipped rows are counted');
+safe_cleanup_assert(3072 === ( $result['summary']['bytes_reclaimed'] ?? null ), 'measured artifact and worktree bytes are accumulated');
 safe_cleanup_assert(1 === ( $result['summary']['marked_cleanup_eligible'] ?? null ), 'marked cleanup eligible rows are accumulated');
 safe_cleanup_assert(2 === ( $result['summary']['lock_files_removed'] ?? null ), 'lock removals are accumulated');
-safe_cleanup_assert(6 === ( $result['summary']['blocker_count'] ?? null ), 'compact blockers are counted');
+safe_cleanup_assert(7 === ( $result['summary']['blocker_count'] ?? null ), 'compact blockers are counted');
+safe_cleanup_assert(1 === ( $result['summary']['blockers_by_reason']['artifact_plan_mismatch'] ?? null ), 'artifact blocker count is preserved');
 safe_cleanup_assert(1 === ( $result['summary']['blockers_by_reason']['dirty_worktree'] ?? null ), 'dirty blocker count is preserved');
 safe_cleanup_assert(2 === ( $result['summary']['blockers_by_reason']['unpushed_commits'] ?? null ), 'unpushed blocker count is preserved');
 safe_cleanup_assert(3 === ( $result['summary']['blockers_by_reason']['insufficient_signal'] ?? null ), 'active backlog blocker count is preserved');
 safe_cleanup_assert(count($run_repository->updates) >= 5, 'safe cleanup checkpoints progress repeatedly');
 safe_cleanup_assert('complete_with_blockers' === ( $run_repository->runs['cleanup-run-safe-test']['status'] ?? null ), 'safe cleanup persists final run state');
-safe_cleanup_assert(2 === ( $run_repository->runs['cleanup-run-safe-test']['summary']['safe_cleanup_progress']['summary']['removed'] ?? null ), 'safe cleanup persists reclaimed progress summary');
+safe_cleanup_assert(4 === ( $run_repository->runs['cleanup-run-safe-test']['summary']['safe_cleanup_progress']['summary']['removed'] ?? null ), 'safe cleanup persists reclaimed progress summary');
 
 $preview_lock_calls = array();
 $preview = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(

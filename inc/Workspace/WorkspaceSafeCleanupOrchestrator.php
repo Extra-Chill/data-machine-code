@@ -65,6 +65,10 @@ class WorkspaceSafeCleanupOrchestrator {
 		if ( is_wp_error($active_no_signal) ) {
 			return $active_no_signal;
 		}
+		$artifact_cleanup = $this->resolve_ability($dry_run ? 'datamachine-code/workspace-cleanup-plan' : 'datamachine-code/workspace-cleanup-until-empty');
+		if ( is_wp_error($artifact_cleanup) ) {
+			return $artifact_cleanup;
+		}
 
 		$result = array(
 			'success'      => true,
@@ -78,6 +82,10 @@ class WorkspaceSafeCleanupOrchestrator {
 			'steps'        => array(),
 			'summary'      => array(
 				'cycles'                  => 0,
+				'planned'                 => 0,
+				'applied_rows'            => 0,
+				'skipped_rows'            => 0,
+				'would_reclaim_bytes'     => 0,
 				'removed'                 => 0,
 				'would_remove'            => 0,
 				'marked_cleanup_eligible' => 0,
@@ -118,6 +126,28 @@ class WorkspaceSafeCleanupOrchestrator {
 		}
 		$result['steps']['lock_prune_start']      = $this->summarize_lock_step($lock_start);
 		$result['summary']['lock_files_removed'] += (int) ( $result['steps']['lock_prune_start']['removed_count'] ?? 0 );
+		$this->checkpoint_progress($run_id, $result, 'applying');
+
+		$artifact_input = $dry_run
+			? array(
+				'mode'              => 'artifacts',
+				'include_artifacts' => true,
+				'include_worktrees' => false,
+				'include_resolvers' => false,
+				'limit'             => $limit,
+			)
+			: array(
+				'mode'           => 'artifacts',
+				'force'          => false,
+				'limit'          => $limit,
+				'max_passes'     => $passes,
+			);
+		$artifacts      = $this->execute_ability($artifact_cleanup, $artifact_input);
+		if ( is_wp_error($artifacts) ) {
+			return $artifacts;
+		}
+		$result['steps']['artifact_cleanup'] = $this->summarize_artifact_step($artifacts, $dry_run);
+		$this->accumulate_artifact_step($result, $result['steps']['artifact_cleanup']);
 		$this->checkpoint_progress($run_id, $result, 'applying');
 
 		$common = array(
@@ -309,6 +339,54 @@ class WorkspaceSafeCleanupOrchestrator {
 			'bytes_reclaimed'         => (int) ( $summary['bytes_reclaimed'] ?? 0 ),
 			'blockers'                => $this->extract_blocker_counts($step),
 		);
+	}
+
+	/** @return array<string,mixed> */
+	private function summarize_artifact_step( array $step, bool $dry_run ): array {
+		$rows    = (array) ( $step['rows']['artifact_cleanup'] ?? array() );
+		$blocked = (array) ( $step['blocked']['artifact_cleanup'] ?? array() );
+		$passes  = (array) ( $step['passes'] ?? array() );
+		$planned = $dry_run ? count($rows) : array_sum(array_map(static fn( array $pass ): int => (int) ( $pass['planned_rows'] ?? 0 ), $passes));
+		$blockers = array();
+		if ( $dry_run ) {
+			foreach ( $blocked as $row ) {
+				$reason              = (string) ( is_array($row) ? ( $row['reason_code'] ?? 'unknown' ) : 'unknown' );
+				$blockers[ $reason ] = ( $blockers[ $reason ] ?? 0 ) + 1;
+			}
+		} else {
+			foreach ( (array) ( $step['remaining_blocked_reasons'] ?? array() ) as $reason => $bucket ) {
+				$blockers[ (string) $reason ] = max(0, (int) ( is_array($bucket) ? ( $bucket['count'] ?? 0 ) : $bucket ));
+			}
+		}
+
+		return array(
+			'mode'            => 'artifacts',
+			'applied'         => ! $dry_run,
+			'planned'         => $planned,
+			'applied_rows'    => $dry_run ? 0 : (int) ( $step['applied'] ?? 0 ),
+			'skipped_rows'    => $dry_run ? count($blocked) : (int) ( $step['skipped'] ?? 0 ),
+			'bytes_reclaimed' => $dry_run ? 0 : (int) ( $step['bytes_reclaimed'] ?? 0 ),
+			'would_reclaim'   => $dry_run ? (int) ( $step['summary']['total_reclaimable_bytes'] ?? 0 ) : 0,
+			'blockers'        => array_filter($blockers),
+			'state'           => (string) ( $step['state'] ?? $step['status'] ?? 'planned' ),
+		);
+	}
+
+	/** @param array<string,mixed> $step */
+	private function accumulate_artifact_step( array &$result, array $step ): void {
+		$result['summary']['planned']      += (int) ( $step['planned'] ?? 0 );
+		$result['summary']['applied_rows'] += (int) ( $step['applied_rows'] ?? 0 );
+		$result['summary']['skipped_rows'] += (int) ( $step['skipped_rows'] ?? 0 );
+		$result['summary']['would_reclaim_bytes'] += (int) ( $step['would_reclaim'] ?? 0 );
+		$result['summary']['removed']      += (int) ( $step['applied_rows'] ?? 0 );
+		$result['summary']['would_remove'] += (int) ( $step['planned'] ?? 0 );
+		$result['summary']['bytes_reclaimed'] += (int) ( $step['bytes_reclaimed'] ?? 0 );
+		foreach ( (array) ( $step['blockers'] ?? array() ) as $reason => $count ) {
+			$result['blockers'][] = array(
+				'reason_code' => (string) $reason,
+				'count'       => (int) $count,
+			);
+		}
 	}
 
 	private function accumulate_cleanup_step( array &$result, array $step ): int {

@@ -34,7 +34,9 @@ trait WorkspaceCleanupPlan {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function workspace_cleanup_plan( array $opts = array() ): array|\WP_Error {
+		$mode = (string) ( $opts['mode'] ?? 'cleanup_plan' );
 		$inputs = array(
+			'mode'                   => $mode,
 			'force_artifact_cleanup' => ! empty($opts['force_artifact_cleanup']),
 			'include_artifacts'      => array_key_exists('include_artifacts', $opts) ? (bool) $opts['include_artifacts'] : true,
 			'include_worktrees'      => array_key_exists('include_worktrees', $opts) ? (bool) $opts['include_worktrees'] : true,
@@ -46,7 +48,7 @@ trait WorkspaceCleanupPlan {
 			'full_workspace'         => ! empty($opts['full_workspace']),
 			'worktree_older_than'    => isset($opts['worktree_older_than']) ? trim( (string) $opts['worktree_older_than']) : '',
 			'worktree_sort'          => isset($opts['worktree_sort']) && '' !== trim( (string) $opts['worktree_sort']) ? trim( (string) $opts['worktree_sort']) : '',
-			'artifact_sort'          => isset($opts['artifact_sort']) && '' !== trim( (string) $opts['artifact_sort']) ? trim( (string) $opts['artifact_sort']) : '',
+			'artifact_sort'          => isset($opts['artifact_sort']) && '' !== trim( (string) $opts['artifact_sort']) ? trim( (string) $opts['artifact_sort']) : ( 'artifacts' === $mode ? 'size' : '' ),
 			'worktree_stale_only'    => ! empty($opts['worktree_stale_only']),
 		);
 
@@ -244,7 +246,10 @@ trait WorkspaceCleanupPlan {
 	 */
 	private function prepare_cleanup_plan_rows( string $type, array $rows, string $safety_class ): array {
 		$result = array();
-		usort($rows, fn( $a, $b ) => $this->cleanup_plan_reclaimable_bytes( (array) $b) <=> $this->cleanup_plan_reclaimable_bytes( (array) $a));
+		usort($rows, function ( $a, $b ): int {
+			$size = $this->cleanup_plan_reclaimable_bytes( (array) $b) <=> $this->cleanup_plan_reclaimable_bytes( (array) $a);
+			return 0 !== $size ? $size : strcmp( (string) ( $a['handle'] ?? '' ), (string) ( $b['handle'] ?? '' ));
+		});
 		foreach ( $rows as $row ) {
 			if ( ! is_array($row) ) {
 				continue;
@@ -467,6 +472,7 @@ trait WorkspaceCleanupPlan {
 		}
 
 		$complete = null === $next_offset;
+		$mode     = (string) ( $inputs['mode'] ?? 'retention' );
 		return array(
 			'bounded'            => empty($inputs['full_workspace']),
 			'complete'           => $complete,
@@ -475,8 +481,8 @@ trait WorkspaceCleanupPlan {
 			'offset'             => $offset,
 			'next_offset'        => $next_offset,
 			'lanes'              => $lanes,
-			'next_command'       => null === $next_offset ? null : sprintf('studio wp datamachine-code workspace cleanup plan --mode=retention --limit=%d --offset=%d --format=json', $limit, $next_offset),
-			'full_audit_command' => 'studio wp datamachine-code workspace cleanup plan --mode=retention --exhaustive --format=json',
+			'next_command'       => null === $next_offset ? null : sprintf('studio wp datamachine-code workspace cleanup plan --mode=%s --limit=%d --offset=%d --format=json', $mode, $limit, $next_offset),
+			'full_audit_command' => sprintf('studio wp datamachine-code workspace cleanup plan --mode=%s --exhaustive --format=json', $mode),
 			'operator_note'      => empty($inputs['full_workspace']) ? 'Default cleanup planning is bounded for large workspaces; review/apply this page or continue with next_command for the next page.' : 'Full-workspace cleanup audit requested explicitly.',
 		);
 	}

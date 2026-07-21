@@ -116,20 +116,25 @@ trait WorkspaceArtifactCleanup {
 		}
 
 		if ( $rank_by_size ) {
-			usort($candidates, fn( $a, $b ) => (int) ( $b['artifact_size_bytes'] ?? 0 ) <=> (int) ( $a['artifact_size_bytes'] ?? 0 ));
+			usort($candidates, function ( $a, $b ): int {
+				$size = (int) ( $b['artifact_size_bytes'] ?? 0 ) <=> (int) ( $a['artifact_size_bytes'] ?? 0 );
+				return 0 !== $size ? $size : strcmp( (string) ( $a['handle'] ?? '' ), (string) ( $b['handle'] ?? '' ));
+			});
 			$total_ranked = count($candidates);
+			$rank_offset  = min($offset, $total_ranked);
 			if ( $limit > 0 ) {
-				$candidates = array_slice($candidates, 0, $limit);
+				$candidates = array_slice($candidates, $rank_offset, $limit);
 			}
+			$rank_end   = $limit > 0 ? min($rank_offset + $limit, $total_ranked) : $total_ranked;
 			$pagination = array(
 				'mode'          => 'ranked_inventory',
 				'limit'         => $limit,
-				'offset'        => 0,
+				'offset'        => $rank_offset,
 				'scanned'       => (int) ( $pagination['scanned'] ?? 0 ),
 				'total'         => (int) ( $pagination['total'] ?? 0 ),
-				'complete'      => true,
-				'partial'       => false,
-				'next_offset'   => null,
+				'complete'      => $rank_end >= $total_ranked,
+				'partial'       => $rank_end < $total_ranked,
+				'next_offset'   => $rank_end < $total_ranked ? $rank_end : null,
 				'safety_probes' => $safety_probes,
 				'sort'          => 'size',
 				'ranked_total'  => $total_ranked,
@@ -432,15 +437,19 @@ trait WorkspaceArtifactCleanup {
 					}
 				}
 				if ( $dirty_count > 0 && ! $force ) {
-					$skipped[] = array_merge(
-						$base_row, array(
-							'reason_code' => 'dirty_worktree',
-							'reason'      => sprintf('working tree dirty (%d files) - pass force=true to override artifact cleanup only', $dirty_count),
-							'dirty'       => $dirty_count,
-							'artifacts'   => $artifacts,
-						)
-					);
-					continue;
+					$artifact_dirty = $this->classify_artifact_only_dirty_worktree($repo, $wt_path);
+					if ( null === $artifact_dirty ) {
+						$skipped[] = array_merge(
+							$base_row, array(
+								'reason_code' => 'dirty_worktree',
+								'reason'      => sprintf('working tree contains source changes (%d dirty paths) - leaving artifacts in place', $dirty_count),
+								'dirty'       => $dirty_count,
+								'artifacts'   => $artifacts,
+							)
+						);
+						continue;
+					}
+					$base_row['artifact_dirty_paths'] = $artifact_dirty['paths'];
 				}
 
 				if ( null === $stale_marker_recovery ) {
@@ -549,7 +558,7 @@ trait WorkspaceArtifactCleanup {
 
 		foreach ( $removed as $row ) {
 			foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
-				$removed_bytes += max(0, (int) ( is_array($artifact) ? ( $artifact['size_bytes'] ?? 0 ) : 0 ));
+				$removed_bytes += max(0, (int) ( is_array($artifact) ? ( $artifact['removal']['bytes_reclaimed'] ?? $artifact['size_bytes'] ?? 0 ) : 0 ));
 				++$removed_count;
 			}
 		}
@@ -696,6 +705,11 @@ trait WorkspaceArtifactCleanup {
 					$mismatches[] = 'artifact:' . $relative;
 					continue;
 				}
+				if ( is_array($planned_artifact) && array_key_exists('size_bytes', $planned_artifact)
+					&& (int) $planned_artifact['size_bytes'] !== (int) ( $current_artifacts[ $relative ]['size_bytes'] ?? -1 ) ) {
+					$mismatches[] = 'artifact_size:' . $relative;
+					continue;
+				}
 				$artifacts[] = $current_artifacts[ $relative ];
 			}
 
@@ -758,6 +772,7 @@ trait WorkspaceArtifactCleanup {
 		if ( ! $artifact_validation['valid'] || '' === $artifact_real || $artifact_real === $worktree_real ) {
 			return new \WP_Error('artifact_path_outside_worktree', sprintf('Refusing artifact cleanup for %s: %s', $relative, $artifact_validation['message'] ?? ''), array( 'status' => 403 ));
 		}
+		$bytes_reclaimed = max(0, $this->estimate_path_size_bytes($artifact_real));
 
 		$output = array();
 		$exit   = 0;
@@ -778,10 +793,11 @@ trait WorkspaceArtifactCleanup {
 		}
 
 		return array(
-			'resolved_path' => $artifact_real,
-			'exit_code'     => $exit,
-			'exists_after'  => false,
-			'verified_at'   => gmdate('c'),
+			'resolved_path'   => $artifact_real,
+			'bytes_reclaimed' => $bytes_reclaimed,
+			'exit_code'       => $exit,
+			'exists_after'    => false,
+			'verified_at'     => gmdate('c'),
 		);
 	}
 
