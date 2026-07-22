@@ -91,6 +91,9 @@ wp datamachine-code workspace worktree list
 wp datamachine-code workspace worktree remove repo-name fix/foo
 wp datamachine-code workspace worktree prune
 
+# Typed Homeboy promotion apply (explicit handle supports {handle} argv substitution)
+wp datamachine-code workspace promotion-apply repo-name@fix-foo < promotion-request.json
+
 # Daily workspace cleanup — task-backed, inspectable by run_id
 wp datamachine-code workspace cleanup run --mode=retention
 wp datamachine-code workspace cleanup status cleanup-run-123
@@ -110,6 +113,11 @@ wp datamachine-code workspace git push repo-name@fix-foo
 wp datamachine-code workspace git log repo-name@fix-foo
 wp datamachine-code workspace git diff repo-name@fix-foo
 ```
+
+`promotion-apply` reads one `homeboy/agent-task-promotion-apply-request/v1`
+object from stdin and emits `homeboy/agent-task-promotion-apply-response/v1` on
+stdout. It only applies through the managed worktree patch primitive and refuses
+primary, dirty, mismatched, and untrusted-unpushed targets.
 
 ### Worktrees: parallel-safe branch work
 

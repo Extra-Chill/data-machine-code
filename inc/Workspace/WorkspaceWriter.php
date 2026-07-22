@@ -241,9 +241,10 @@ class WorkspaceWriter {
 	 * @param  string $name                   Workspace handle.
 	 * @param  string $patch                  Unified diff to apply.
 	 * @param  bool   $allow_primary_mutation Permit mutation on a primary checkout.
-	 * @return array{success: bool, name: string, path: string, changed_files: string[], diff: string, status: string, check_output: string, apply_output: string}|\WP_Error
+	 * @param  bool   $dry_run                Check the patch without applying it.
+	 * @return array{success: bool, name: string, path: string, changed_files: string[], diff: string, status: string, check_output: string, apply_output: string, dry_run?: bool}|\WP_Error
 	 */
-	public function apply_patch( string $name, string $patch, bool $allow_primary_mutation = false ): array|\WP_Error {
+	public function apply_patch( string $name, string $patch, bool $allow_primary_mutation = false, bool $dry_run = false ): array|\WP_Error {
 		$mutation_check = $this->ensure_workspace_mutation_allowed($name, 'apply-patch', $allow_primary_mutation);
 		if ( is_wp_error($mutation_check) ) {
 			return $mutation_check;
@@ -302,6 +303,20 @@ class WorkspaceWriter {
 						'status' => 400,
 						'output' => $check->get_error_data()['output'] ?? '',
 					)
+				);
+			}
+
+			if ( $dry_run ) {
+				return array(
+					'success'       => true,
+					'name'          => $name,
+					'path'          => $repo_path,
+					'changed_files' => $patch_paths,
+					'diff'          => '',
+					'status'        => '',
+					'check_output'  => $check['output'],
+					'apply_output'  => '',
+					'dry_run'       => true,
 				);
 			}
 
