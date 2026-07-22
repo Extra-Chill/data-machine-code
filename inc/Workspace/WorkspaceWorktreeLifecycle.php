@@ -1045,6 +1045,42 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/**
+	 * Resolve a live worktree only when it has the matching DMC inventory row.
+	 *
+	 * This is the ownership boundary for external callers that must not operate
+	 * on a worktree created outside DMC, even when it happens to sit below the
+	 * configured workspace root.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function managed_worktree_get( string $handle ): array|\WP_Error {
+		$parsed = $this->parse_handle($handle);
+		if ( ! $parsed['is_worktree'] || $handle !== $parsed['dir_name'] ) {
+			return new \WP_Error('unmanaged_worktree', 'The requested handle is not a managed non-primary worktree.', array( 'status' => 403 ));
+		}
+		$stored = $this->worktree_inventory()->get($handle);
+		if ( ! is_array($stored) || ! empty($stored['missing_path']) || $handle !== ( $stored['handle'] ?? null ) || ! empty($stored['is_primary']) ) {
+			return new \WP_Error('unmanaged_worktree', 'The requested handle has no active DMC worktree registry entry.', array( 'status' => 403 ));
+		}
+		$listing = $this->worktree_list((string) $parsed['repo'], null, array( 'handle' => $handle, 'include_status' => true, 'include_disk' => false ));
+		if ( is_wp_error($listing) ) {
+			return $listing;
+		}
+		$rows = (array) ( $listing['worktrees'] ?? array() );
+		if ( 1 !== count($rows) || ! is_array($rows[0]) ) {
+			return new \WP_Error('unmanaged_worktree', 'The requested handle is not a live DMC-managed worktree.', array( 'status' => 403 ));
+		}
+		$row         = $rows[0];
+		$stored_path = realpath((string) ( $stored['path'] ?? '' ));
+		$live_path   = realpath((string) ( $row['path'] ?? '' ));
+		if ( $handle !== ( $row['handle'] ?? null ) || empty($row['is_worktree']) || ! empty($row['is_primary']) || ! empty($row['external']) || false === $stored_path || false === $live_path || $stored_path !== $live_path ) {
+			return new \WP_Error('unmanaged_worktree', 'The requested worktree does not match its DMC registry path.', array( 'status' => 403 ));
+		}
+		$row['path'] = $live_path;
+		return $row;
+	}
+
+	/**
 	 * Return warning metadata when a non-primary worktree holds a base branch.
 	 *
 	 * GitHub CLI merge flows may try to check out or delete the PR base branch

@@ -19,6 +19,7 @@ use WP_CLI;
 use DataMachine\Cli\BaseCommand;
 use DataMachineCode\Cli\CliResponseRenderer;
 use DataMachineCode\Cli\CliRepeatableOptionParser;
+use DataMachineCode\Cli\HomeboyPromotionApplyAdapter;
 use DataMachineCode\Cli\WorkspaceCompactOutput;
 use DataMachineCode\Cleanup\CompositeCleanupRunEvidenceStore;
 use DataMachineCode\Cleanup\CleanupRunEvidenceStoreInterface;
@@ -3099,6 +3100,50 @@ class WorkspaceCommand extends BaseCommand {
 		foreach ( $changed_files as $file ) {
 			WP_CLI::log('  - ' . $file);
 		}
+	}
+
+	/**
+	 * Apply a typed Homeboy promotion request to one managed worktree.
+	 *
+	 * Reads exactly one `homeboy/agent-task-promotion-apply-request/v1` JSON
+	 * object from stdin and writes its response object to stdout. The explicit
+	 * handle is intended for Homeboy's `{handle}` argv substitution.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <handle>
+	 * : Exact DMC-managed non-primary worktree handle.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code workspace promotion-apply data-machine-code@feat-945 < request.json
+	 *
+	 * @subcommand promotion-apply
+	 */
+	public function promotion_apply( array $args, array $assoc_args ): void {
+		$handle = (string) ( $args[0] ?? '' );
+		if ( '' === trim($handle) || isset($args[1]) ) {
+			WP_CLI::error('Usage: wp datamachine-code workspace promotion-apply <handle> < request.json');
+			return;
+		}
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+		$input = file_get_contents('php://stdin');
+		if ( false === $input ) {
+			WP_CLI::error('Failed to read promotion request from stdin.');
+			return;
+		}
+		$request = json_decode($input, true);
+		if ( ! is_array($request) || JSON_ERROR_NONE !== json_last_error() ) {
+			WP_CLI::error('Promotion request stdin must contain one JSON object.');
+			return;
+		}
+
+		$result = HomeboyPromotionApplyAdapter::create()->execute($handle, $request);
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_code() . ': ' . $result->get_error_message());
+			return;
+		}
+		$this->renderer()->json($result);
 	}
 
 	/**
