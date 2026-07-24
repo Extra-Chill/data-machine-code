@@ -1149,9 +1149,8 @@ trait WorkspaceCoreUtilities {
 	/**
 	 * Fire the shared workspace-lifecycle action after a successful mutation.
 	 *
-	 * Listeners use this signal to refresh derived state (e.g. invalidating
-	 * the composable AGENTS.md so its workspace-inventory section reflects the
-	 * change). Only emitted on success, AFTER the on-disk change is durable.
+	 * Listeners use this signal to refresh optional derived workspace state.
+	 * Only emitted on success, AFTER the on-disk change is durable.
 	 * The payload mirrors the workspace `name`/`repo` taxonomy used elsewhere
 	 * in this class:
 	 *

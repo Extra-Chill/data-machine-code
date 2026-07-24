@@ -475,4 +475,3 @@ add_filter(
 | in DataMachineCode\Runtime\AgentsMdSections.
 */
 add_action('plugins_loaded', array( \DataMachineCode\Runtime\AgentsMdSections::class, 'register' ), 22);
-add_filter('datamachine_composable_invalidation_hooks', array( \DataMachineCode\Runtime\AgentsMdSections::class, 'register_invalidation_hooks' ));
