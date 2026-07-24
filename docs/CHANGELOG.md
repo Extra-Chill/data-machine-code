@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.53.1] - 2026-07-24
+
+### Changed
+- drop generic WordPress guidance
+
 ## [0.53.0] - 2026-07-21
 
 ### Added
