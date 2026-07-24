@@ -712,13 +712,28 @@ trait WorkspaceRepositoryLifecycle {
 	 * @return array{success: bool, name?: string, path?: string, branch?: string, remote?: string, commit?: string, dirty?: int}|\WP_Error
 	 */
 	public function show_repo( string $handle ): array|\WP_Error {
-		$context_policy = WorkspaceAliasResolver::context_policy_for($handle);
+		$requested_handle = $handle;
+		$context_policy   = null;
+		$parsed           = $this->parse_handle($handle);
+		$repo_path        = $this->workspace_path . '/' . $parsed['dir_name'];
+		$inspection       = WorkspaceTargetInspector::inspect($repo_path, $parsed['dir_name']);
+		if ( is_wp_error($inspection) ) {
+			return $inspection;
+		}
+
+		if ( empty($inspection['exists']) ) {
+			$context_policy = WorkspaceAliasResolver::context_policy_for($handle);
+		}
 		if ( null !== $context_policy ) {
 			$target    = (string) ( $context_policy['target'] ?? $handle );
 			$parsed    = $this->parse_handle($target);
 			$repo_path = $this->workspace_path . '/' . $parsed['dir_name'];
 			$ref       = (string) ( $context_policy['ref'] ?? '' );
-			if ( ! is_dir($repo_path) ) {
+			$inspection = WorkspaceTargetInspector::inspect($repo_path, $handle);
+			if ( is_wp_error($inspection) ) {
+				return $inspection;
+			}
+			if ( empty($inspection['exists']) ) {
 				return array(
 					'success'          => true,
 					'name'             => (string) $context_policy['alias'],
@@ -736,22 +751,22 @@ trait WorkspaceRepositoryLifecycle {
 			$handle = $target;
 		}
 
-		$resolved_handle = $this->resolve_primary_repo_name($handle);
-		if ( ! is_wp_error($resolved_handle) ) {
-			$handle = $resolved_handle;
+		if ( empty($inspection['exists']) && null === $context_policy ) {
+			$resolved_handle = $this->resolve_primary_repo_name($handle);
+			if ( ! is_wp_error($resolved_handle) && $resolved_handle !== $handle ) {
+				$handle     = $resolved_handle;
+				$parsed     = $this->parse_handle($handle);
+				$repo_path  = $this->workspace_path . '/' . $parsed['dir_name'];
+				$inspection = WorkspaceTargetInspector::inspect($repo_path, $parsed['dir_name']);
+				if ( is_wp_error($inspection) ) {
+					return $inspection;
+				}
+			}
 		}
 
-		$parsed    = $this->parse_handle($handle);
-		$repo_path = $this->workspace_path . '/' . $parsed['dir_name'];
-
-		if ( ! is_dir($repo_path) ) {
-			return new \WP_Error('repo_not_found', sprintf('Workspace handle "%s" not found.', $parsed['dir_name']), array( 'status' => 404 ));
+		if ( empty($inspection['exists']) ) {
+			return new \WP_Error('repo_not_found', sprintf('Workspace handle "%s" not found.', $requested_handle), array( 'status' => 404 ));
 		}
-
-		$branch = GitRunner::current_branch($repo_path);
-		$remote = GitRunner::remote_url($repo_path);
-		$commit = GitRunner::latest_commit_summary($repo_path);
-		$status = GitRunner::dirty_count($repo_path);
 
 		$result = array(
 			'success'           => true,
@@ -760,11 +775,13 @@ trait WorkspaceRepositoryLifecycle {
 			'is_worktree'       => $parsed['is_worktree'],
 			'is_context'        => null !== $context_policy,
 			'path'              => $repo_path,
-			'branch'            => $branch,
-			'remote'            => $remote,
-			'commit'            => $commit,
-			'dirty'             => $status,
-			'primary_freshness' => ! $parsed['is_worktree'] ? $this->build_primary_freshness_report($repo_path, $parsed['dir_name']) : null,
+			'branch'            => $inspection['branch'] ?? null,
+			'remote'            => $inspection['remote'] ?? null,
+			'commit'            => $inspection['commit'] ?? null,
+			'dirty'             => (int) ( $inspection['dirty'] ?? 0 ),
+			'primary_freshness' => ! $parsed['is_worktree'] && is_string($inspection['branch_status'] ?? null)
+				? $this->build_primary_freshness_report_from_status_output((string) $inspection['branch_status'], $parsed['dir_name'])
+				: null,
 		);
 		if ( null !== $context_policy ) {
 			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);

@@ -2888,21 +2888,22 @@ class WorkspaceAbilities {
 	 */
 	public static function showRepo( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
-		if ( RemoteWorkspaceBackend::should_handle() ) {
-			$local_result = self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['name'] ?? '' ));
-			if ( null !== $local_result ) {
-				return $local_result;
-			}
+		$handle    = (string) ( $input['name'] ?? '' );
+		$local     = $workspace->show_repo($handle);
+		if ( ! is_wp_error($local) && empty($local['is_context']) ) {
+			return $local;
 		}
 
+		// Registered remote state remains authoritative for local misses, bounded
+		// local failures, and context aliases whose checkout is not mounted.
 		if ( RemoteWorkspaceBackend::should_handle() ) {
-			$result = ( new RemoteWorkspaceBackend() )->show($input['name'] ?? '');
+			$result = ( new RemoteWorkspaceBackend() )->show($handle);
 			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
 				return $result;
 			}
 		}
 
-		return $workspace->show_repo($input['name'] ?? '');
+		return $local;
 	}
 
 	/**
