@@ -9,7 +9,7 @@ if ( 'cli' !== PHP_SAPI || ! isset($argv[1]) ) {
 	exit(2);
 }
 
-$path = (string) $argv[1];
+$workspace_path   = (string) $argv[1];
 $filesystem_probe = (string) ( $argv[2] ?? '' );
 $git_command      = (string) ( $argv[3] ?? 'git' );
 
@@ -18,10 +18,10 @@ if ( '' !== $filesystem_probe ) {
 	$output = array();
 	$exit   = 0;
 	// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Injected read-only probe remains outer-deadline-controlled.
-	exec($filesystem_probe . ' ' . escapeshellarg($path), $output, $exit);
+	exec($filesystem_probe . ' ' . escapeshellarg($workspace_path), $output, $exit);
 	$exists = 0 === $exit && '1' === trim(implode("\n", $output));
 } else {
-	$exists = is_dir($path);
+	$exists = is_dir($workspace_path);
 }
 if ( ! $exists ) {
 	fwrite(STDOUT, json_encode(array( 'exists' => false ), JSON_UNESCAPED_SLASHES));
@@ -29,9 +29,9 @@ if ( ! $exists ) {
 }
 
 /** @return string|null */
-$git_probe = static function ( string $operation, string $args ) use ( $path, $git_command ): ?string {
+$git_probe = static function ( string $operation, string $args ) use ( $workspace_path, $git_command ): ?string {
 	fwrite(STDERR, 'DMC_BOUNDARY:git:' . $operation . "\n");
-	$command = $git_command . ' --no-optional-locks -C ' . escapeshellarg($path) . ' ' . $args . ' 2>&1';
+	$command = $git_command . ' --no-optional-locks -C ' . escapeshellarg($workspace_path) . ' ' . $args . ' 2>&1';
 	$output  = array();
 	$exit    = 0;
 	// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Isolated, outer-deadline-controlled read-only probe.

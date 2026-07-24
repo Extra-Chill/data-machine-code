@@ -52,7 +52,7 @@ final class WorkspaceTargetInspector {
 		$result = ProcessRunner::run(
 			$command,
 			array(
-				'timeout_seconds' => $timeout,
+				'timeout_seconds'  => $timeout,
 				'separate_streams' => true,
 				'output_cap_bytes' => 32768,
 				'error_code'       => 'workspace_target_lookup_failed',
@@ -81,7 +81,7 @@ final class WorkspaceTargetInspector {
 			);
 		}
 
-		$decoded = json_decode((string) ( $result['stdout'] ?? '' ), true);
+		$decoded = json_decode(( string ) ( $result['stdout'] ?? '' ), true);
 		if ( ! is_array($decoded) ) {
 			return new \WP_Error(
 				'workspace_target_lookup_invalid_response',
