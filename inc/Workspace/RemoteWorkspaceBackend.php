@@ -619,6 +619,36 @@ class RemoteWorkspaceBackend {
 	}
 
 	/**
+	 * Return registered remote state needed to materialize a local checkout.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function materialization_context( string $handle ): array|\WP_Error {
+		$context = $this->resolve_handle($handle);
+		if ( is_wp_error($context) ) {
+			return $context;
+		}
+		if ( ! empty($context['read_only_context']) ) {
+			return new \WP_Error('remote_workspace_materialization_unsupported', 'Read-only context repositories cannot be materialized as editable workspaces.', array( 'status' => 400 ));
+		}
+
+		$state     = $this->state();
+		$repo_name = (string) ( $context['repo_name'] ?? '' );
+		$repo       = (string) ( $context['repo'] ?? '' );
+		$url        = (string) ( $state['repos'][ $repo_name ]['url'] ?? GitHubRemote::cloneUrl($repo) );
+
+		return array(
+			'handle'    => (string) ( $context['handle'] ?? $handle ),
+			'repo_name' => $repo_name,
+			'repo'      => $repo,
+			'url'       => $url,
+			'branch'    => (string) ( $context['branch'] ?? '' ),
+			'base_ref'  => (string) ( $context['base_ref'] ?? '' ),
+			'task'      => (array) ( $context['task'] ?? array() ),
+		);
+	}
+
+	/**
 	 * Return a diff of pending remote workspace changes.
 	 *
 	 * @return array<string,mixed>|\WP_Error

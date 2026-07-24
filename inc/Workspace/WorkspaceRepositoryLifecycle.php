@@ -275,6 +275,96 @@ trait WorkspaceRepositoryLifecycle {
 	}
 
 	/**
+	 * Materialize registered remote workspace state through the local lifecycle.
+	 *
+	 * @param array<string,mixed> $remote Registered remote workspace details.
+	 * @param array<string,mixed> $options Local clone/worktree options.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function materialize_remote_workspace( array $remote, array $options = array() ): array|\WP_Error {
+		$repo_name = trim( (string) ( $remote['repo_name'] ?? '' ) );
+		$url       = trim( (string) ( $remote['url'] ?? '' ) );
+		$branch    = trim( (string) ( $remote['branch'] ?? '' ) );
+		if ( '' === $repo_name || '' === $url ) {
+			return new \WP_Error('remote_workspace_materialization_invalid', 'Registered remote workspace is missing its repository identity.', array( 'status' => 400 ));
+		}
+
+		$primary = $this->show_repo($repo_name);
+		if ( is_wp_error($primary) ) {
+			$primary = $this->clone_repo(
+				$url,
+				$repo_name,
+				array(
+					'full'                   => ! empty($options['full']),
+					'allow_duplicate_remote' => ! empty($options['allow_duplicate_remote']),
+				)
+			);
+			if ( is_wp_error($primary) ) {
+				return $primary;
+			}
+		} elseif ( ! empty($primary['is_worktree']) || $this->normalize_git_remote_url($url) !== $this->normalize_git_remote_url((string) ( $primary['remote'] ?? '' )) ) {
+			return new \WP_Error('remote_workspace_materialization_primary_conflict', sprintf('Workspace primary "%s" does not match the registered remote %s.', $repo_name, $url), array( 'status' => 409 ));
+		}
+
+		if ( '' === $branch ) {
+			return array(
+				'success'             => true,
+				'backend'             => 'local_git',
+				'handle'              => $repo_name,
+				'path'                => (string) ( $primary['path'] ?? '' ),
+				'materialized_primary' => true,
+				'message'             => sprintf('Materialized remote workspace primary "%s".', $repo_name),
+			);
+		}
+
+		$handle   = $repo_name . '@' . $this->slugify_branch($branch);
+		$existing = $this->show_repo($handle);
+		if ( ! is_wp_error($existing) ) {
+			if ( (string) ( $existing['branch'] ?? '' ) !== $branch ) {
+				return new \WP_Error('remote_workspace_materialization_worktree_conflict', sprintf('Workspace handle "%s" is already checked out to branch "%s".', $handle, (string) ( $existing['branch'] ?? '' )), array( 'status' => 409 ));
+			}
+			return array(
+				'success'              => true,
+				'backend'              => 'local_git',
+				'handle'               => $handle,
+				'path'                 => (string) ( $existing['path'] ?? '' ),
+				'branch'               => $branch,
+				'already_materialized' => true,
+				'message'              => sprintf('Remote workspace "%s" is already materialized at %s.', $handle, (string) ( $existing['path'] ?? '' )),
+			);
+		}
+
+		$remote_branch = $this->run_git((string) ( $primary['path'] ?? '' ), 'ls-remote --heads origin ' . escapeshellarg($branch));
+		if ( is_wp_error($remote_branch) ) {
+			return $remote_branch;
+		}
+		$from = '' !== trim( (string) ( $remote_branch['output'] ?? '' ) )
+			? 'origin/' . $branch
+			: ( '' !== trim( (string) ( $remote['base_ref'] ?? '' ) ) ? (string) $remote['base_ref'] : null );
+
+		$result = $this->worktree_add(
+			$repo_name,
+			$branch,
+			$from,
+			array_key_exists('inject_context', $options) ? (bool) $options['inject_context'] : true,
+			array_key_exists('bootstrap', $options) ? (bool) $options['bootstrap'] : true,
+			! empty($options['allow_stale']),
+			! empty($options['rebase_base']),
+			! empty($options['force']),
+			(array) ( $remote['task'] ?? array() ),
+			! empty($options['allow_unverified_freshness']),
+			array_key_exists('require_task_tracker', $options) ? (bool) $options['require_task_tracker'] : true
+		);
+		if ( is_wp_error($result) ) {
+			return $result;
+		}
+
+		$result['backend']      = 'local_git';
+		$result['materialized'] = true;
+		return $result;
+	}
+
+	/**
 	 * Ensure the primary's currently checked-out default branch tracks origin.
 	 *
 	 * Issue #833: a primary whose default branch has no upstream tracking ref

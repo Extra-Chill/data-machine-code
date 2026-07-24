@@ -457,6 +457,45 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
+				'datamachine-code/workspace-materialize',
+				array(
+					'label'               => 'Materialize Remote Workspace',
+					'description'         => 'Materialize a registered GitHub API workspace primary or worktree as an authoritative local checkout. Existing local clone, duplicate-remote, freshness, task, and worktree safety policies remain enforced.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'handle'                     => array( 'type' => 'string', 'description' => 'Registered remote primary or worktree handle.' ),
+							'full'                       => array( 'type' => 'boolean', 'description' => 'Disable blobless partial clone when creating the local primary.' ),
+							'allow_duplicate_remote'     => array( 'type' => 'boolean', 'description' => 'Explicitly permit a second local primary for the same remote.' ),
+							'inject_context'             => array( 'type' => 'boolean', 'description' => 'Inject workspace context into a materialized worktree. Default true.' ),
+							'bootstrap'                  => array( 'type' => 'boolean', 'description' => 'Run the normal worktree bootstrap after materialization. Default true.' ),
+							'allow_stale'                => array( 'type' => 'boolean', 'description' => 'Explicitly bypass worktree staleness gates.' ),
+							'allow_unverified_freshness' => array( 'type' => 'boolean', 'description' => 'Explicitly permit materialization when freshness fetch cannot be verified.' ),
+							'rebase_base'                => array( 'type' => 'boolean', 'description' => 'Rebase the materialized worktree onto its upstream when needed.' ),
+							'force'                      => array( 'type' => 'boolean', 'description' => 'Explicitly bypass the worktree disk-budget refusal.' ),
+							'require_task_tracker'       => array( 'type' => 'boolean', 'description' => 'Require task metadata from the registered remote worktree. Default true.' ),
+						),
+						'required'   => array( 'handle' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'  => array( 'type' => 'boolean' ),
+							'backend'  => array( 'type' => 'string' ),
+							'handle'   => array( 'type' => 'string' ),
+							'path'     => array( 'type' => 'string' ),
+							'branch'   => array( 'type' => 'string' ),
+							'message'  => array( 'type' => 'string' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'materializeRemoteWorkspace' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
 				'datamachine-code/workspace-context-repositories',
 				array(
 					'label'               => 'Register Workspace Context Repositories',
@@ -3189,6 +3228,23 @@ class WorkspaceAbilities {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Materialize registered GitHub API workspace state using the local backend.
+	 *
+	 * @param array<string,mixed> $input Materialization options.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function materializeRemoteWorkspace( array $input ): array|\WP_Error {
+		$remote = new RemoteWorkspaceBackend();
+		$context = $remote->materialization_context((string) ( $input['handle'] ?? '' ));
+		if ( is_wp_error($context) ) {
+			return $context;
+		}
+
+		$workspace = new Workspace();
+		return $workspace->materialize_remote_workspace($context, $input);
 	}
 
 	/**

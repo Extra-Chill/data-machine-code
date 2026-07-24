@@ -269,6 +269,33 @@ try {
 	assert_true('homeboy@address-darren-embedding-review' === ( $canonical_targeted['worktrees'][0]['handle'] ?? '' ), 'canonical worktree lookup returned the wrong handle');
 	assert_true('issue/242-embedding-generation' === ( $canonical_targeted['worktrees'][0]['branch'] ?? '' ), 'canonical worktree lookup did not preserve the Git branch');
 	assert_true(null !== ( $canonical_targeted['worktrees'][0]['dirty'] ?? null ), 'canonical worktree lookup did not run the requested status probe');
+
+	// A GitHub API workspace registers only this identity. Materialization must
+	// use the normal local lifecycle so the resulting handle is resolver-ready.
+	$materialized = $workspace->materialize_remote_workspace(
+		array(
+			'handle'    => 'homeboy@feat-remote-materialization',
+			'repo_name' => 'homeboy',
+			'repo'      => 'owner/homeboy',
+			'url'       => $workspace_root . '/origin.git',
+			'branch'    => 'feat/remote-materialization',
+			'base_ref'  => 'origin/main',
+			'task'      => array( 'task_url' => 'https://example.test/issues/255' ),
+		),
+		array(
+			'inject_context'       => false,
+			'bootstrap'            => false,
+			'force'                => true,
+			'require_task_tracker' => true,
+		)
+	);
+	assert_true(! is_wp_error($materialized), is_wp_error($materialized) ? $materialized->get_error_message() : 'remote workspace materialization failed');
+	assert_true($workspace_root . '/homeboy@feat-remote-materialization' === ( $materialized['path'] ?? '' ), 'materialized workspace returned an unexpected path');
+	assert_true(is_file($workspace_root . '/homeboy@feat-remote-materialization/.git'), 'materialized workspace did not create a local worktree');
+	assert_true('https://example.test/issues/255' === ( $wpdb->rows['homeboy@feat-remote-materialization']['task_url'] ?? '' ), 'materialization did not preserve remote task metadata');
+	$materialized_targeted = $workspace->worktree_list(null, null, array( 'handle' => 'homeboy@feat-remote-materialization', 'include_status' => false, 'include_disk' => false ));
+	assert_true(1 === count($materialized_targeted['worktrees'] ?? array()), 'materialized workspace is not discoverable by targeted worktree lookup');
+	assert_true($workspace_root . '/homeboy@feat-remote-materialization' === ( $materialized_targeted['worktrees'][0]['path'] ?? '' ), 'targeted lookup did not return the materialized local path');
 	$GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds'] = static function ( array $thresholds ) use ( $workspace_root ): array {
 		$free = disk_free_space($workspace_root);
 		assert_true(false !== $free, 'fixture workspace free space is not measurable');

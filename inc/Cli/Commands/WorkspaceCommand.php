@@ -554,6 +554,64 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	/**
+	 * Materialize a registered remote workspace as a local checkout.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <handle>
+	 * : Registered remote primary or worktree handle.
+	 *
+	 * [--skip-bootstrap]
+	 * : Create a bare worktree without dependency installation.
+	 *
+	 * [--allow-stale]
+	 * : Explicitly bypass worktree staleness gates.
+	 *
+	 * [--allow-unverified-freshness]
+	 * : Explicitly permit materialization when freshness cannot be verified.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code workspace materialize mcp-adapter@feat-255-successful-pre-execution-completion
+	 *
+	 * @subcommand materialize
+	 */
+	public function materialize( array $args, array $assoc_args ): void {
+		if ( empty($args[0]) ) {
+			WP_CLI::error('Remote workspace handle is required.');
+			return;
+		}
+
+		$ability = wp_get_ability('datamachine-code/workspace-materialize');
+		if ( ! $ability ) {
+			WP_CLI::error('Workspace materialize ability not available.');
+			return;
+		}
+
+		$result = $ability->execute(
+			array(
+				'handle'                     => (string) $args[0],
+				'full'                       => ! empty($assoc_args['full']),
+				'allow_duplicate_remote'     => ! empty($assoc_args['allow-duplicate-remote']),
+				'inject_context'             => empty($assoc_args['skip-context-injection']),
+				'bootstrap'                  => empty($assoc_args['skip-bootstrap']),
+				'allow_stale'                => ! empty($assoc_args['allow-stale']),
+				'allow_unverified_freshness' => ! empty($assoc_args['allow-unverified-freshness']),
+				'rebase_base'                => ! empty($assoc_args['rebase-base']),
+				'force'                      => ! empty($assoc_args['force']),
+				'require_task_tracker'       => ! isset($assoc_args['require-task-tracker']) || ! empty($assoc_args['require-task-tracker']),
+			)
+		);
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		WP_CLI::success((string) ( $result['message'] ?? 'Remote workspace materialized.' ));
+		WP_CLI::log(sprintf('Path: %s', (string) ( $result['path'] ?? '' )));
+	}
+
+	/**
 	 * Adopt an existing primary checkout already under the workspace root.
 	 *
 	 * ## OPTIONS
