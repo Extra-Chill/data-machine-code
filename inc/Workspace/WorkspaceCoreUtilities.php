@@ -692,7 +692,7 @@ trait WorkspaceCoreUtilities {
 			);
 		}
 
-		return $this->build_primary_freshness_report_from_status_output((string) ( $status_result['output'] ?? '' ), $handle);
+		return $this->build_primary_freshness_report_from_status_output(( string ) ( $status_result['output'] ?? '' ), $handle);
 	}
 
 	/**

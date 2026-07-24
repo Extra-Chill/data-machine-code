@@ -754,10 +754,10 @@ trait WorkspaceRepositoryLifecycle {
 		if ( empty($inspection['exists']) && null === $context_policy ) {
 			$resolved_handle = $this->resolve_primary_repo_name($handle);
 			if ( ! is_wp_error($resolved_handle) && $resolved_handle !== $handle ) {
-				$handle     = $resolved_handle;
-				$parsed     = $this->parse_handle($handle);
-				$repo_path  = $this->workspace_path . '/' . $parsed['dir_name'];
-				$inspection = WorkspaceTargetInspector::inspect($repo_path, $parsed['dir_name']);
+				$handle      = $resolved_handle;
+				$parsed      = $this->parse_handle($handle);
+				$repo_path   = $this->workspace_path . '/' . $parsed['dir_name'];
+				$inspection  = WorkspaceTargetInspector::inspect($repo_path, $parsed['dir_name']);
 				if ( is_wp_error($inspection) ) {
 					return $inspection;
 				}
@@ -780,7 +780,7 @@ trait WorkspaceRepositoryLifecycle {
 			'commit'            => $inspection['commit'] ?? null,
 			'dirty'             => (int) ( $inspection['dirty'] ?? 0 ),
 			'primary_freshness' => ! $parsed['is_worktree'] && is_string($inspection['branch_status'] ?? null)
-				? $this->build_primary_freshness_report_from_status_output((string) $inspection['branch_status'], $parsed['dir_name'])
+				? $this->build_primary_freshness_report_from_status_output(( string ) $inspection['branch_status'], $parsed['dir_name'])
 				: null,
 		);
 		if ( null !== $context_policy ) {
