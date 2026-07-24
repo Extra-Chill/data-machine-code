@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.53.4] - 2026-07-24
+
+### Changed
+- satisfy workspace probe lint
+
 ## [0.53.3] - 2026-07-24
 
 ### Fixed
