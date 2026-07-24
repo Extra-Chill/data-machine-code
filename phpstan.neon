@@ -1,0 +1,13 @@
+parameters:
+    scanFiles:
+        - stubs/phpstan/datamachine-base-command.php
+        - stubs/phpstan/datamachine-plugin-settings.php
+        - stubs/phpstan/datamachine-system-task.php
+    ignoreErrors:
+        # The inventory repository intentionally guards $wpdb with isset()/method_exists()
+        # for multisite safety, which narrows the global to class-string|object and makes
+        # PHPStan reject the subsequent $wpdb method calls. The runtime object is always a
+        # \wpdb here; these calls are safe.
+        -
+            identifier: method.nonObject
+            path: inc/Storage/WorktreeInventoryRepository.php
