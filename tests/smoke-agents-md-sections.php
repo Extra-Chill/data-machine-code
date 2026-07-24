@@ -70,30 +70,37 @@ namespace {
 	if ( ! isset($sections['datamachine-code']) ) {
 		throw new RuntimeException('datamachine-code section was not registered');
 	}
-	if ( ! isset($sections['workspace-inventory']) ) {
-		throw new RuntimeException('workspace-inventory section was not registered');
+	if ( isset($sections['workspace-inventory']) ) {
+		throw new RuntimeException('workspace-inventory section should not be registered');
 	}
 	if ( isset($sections['abilities']) || isset($sections['wordpress-source']) ) {
 		throw new RuntimeException('generic WordPress guidance must be registered by wp-coding-agents');
+	}
+	if ( 20 !== $sections['datamachine-code']['priority'] ) {
+		throw new RuntimeException('datamachine-code section priority must be 20');
 	}
 
 	$render = $sections['datamachine-code']['callback'];
 	$default = $render();
 
 	assert_contains(
-		'All code changes happen in Data Machine Code worktrees under `unavailable; run datamachine-code workspace path to diagnose`. DMC owns workspace lifecycle',
+		'All code changes happen in Data Machine Code worktrees. The controller workspace root is `unavailable; run datamachine-code workspace path to diagnose`.',
 		$default,
 		'default workspace policy intro changed'
 	);
+	assert_contains('DMC owns authoritative repository, primary-checkout, worktree, and GitHub workspace state. Homeboy consumes DMC-managed worktrees', $default, 'DMC/Homeboy ownership boundary missing');
 	assert_contains(
 		'- **Primary is read-only.** Never edit `<workspace>/<repo>` (no `@slug`).',
 		$default,
 		'default workspace policy section missing'
 	);
-	assert_contains('- **Workspace:** `wp datamachine-code workspace --help` is the live lifecycle and file-I/O command reference.', $default, 'workspace command discovery pointer missing');
-	assert_contains('- **Worktrees:** `wp datamachine-code workspace worktree --help` is the live branch lifecycle reference.', $default, 'worktree command discovery pointer missing');
-	assert_contains('- **GitHub:** `wp datamachine-code github --help` is the live GitHub command reference.', $default, 'GitHub command discovery pointer missing');
+	assert_contains('**Default routing**', $default, 'DMC default routing missing');
+	assert_contains('workspace worktree add <repo> <branch> --from=origin/<base>', $default, 'worktree creation route missing');
+	assert_contains('workspace worktree finalize <repo@slug> --pr=<url>', $default, 'worktree finalization route missing');
+	assert_contains('**Discovery**', $default, 'DMC discovery guidance missing');
 	assert_not_contains('adopt|clone|list|show|path|hygiene', $default, 'enumerated workspace commands returned');
+	assert_not_contains('wp-content/plugins/', $default, 'DMC duplicated WordPress source guidance');
+	assert_not_contains('Snapshot summary:', $default, 'DMC embedded workspace inventory state');
 
 	add_test_filter(
 		'datamachine_code_workspace_policy_intro',
@@ -109,10 +116,10 @@ namespace {
 	);
 
 	$filtered = $render();
-	assert_contains('Use local project policy for `unavailable; run datamachine-code workspace path to diagnose`. DMC owns workspace lifecycle', $filtered, 'workspace policy intro filter was not applied');
+	assert_contains('Use local project policy for `unavailable; run datamachine-code workspace path to diagnose`. DMC owns authoritative repository', $filtered, 'workspace policy intro filter was not applied');
 	assert_contains('- **Local policy:** caller-owned workspace rules.', $filtered, 'workspace policy section filter was not applied');
 	assert_not_contains('- **Primary is read-only.** Never edit `<workspace>/<repo>` (no `@slug`).', $filtered, 'default policy section remained after filter override');
-	assert_contains('- **Workspace:** `wp datamachine-code workspace --help` is the live lifecycle and file-I/O command reference.', $filtered, 'DMC command discovery pointer changed after policy filter');
+	assert_contains('**Default routing**', $filtered, 'DMC routing changed after policy filter');
 
 	fwrite(STDOUT, "agents-md sections smoke passed\n");
 }
