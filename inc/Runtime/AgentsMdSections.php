@@ -50,8 +50,6 @@ final class AgentsMdSections {
 		self::register_auto_generated_marker($wp);
 		self::register_datamachine_section($wp);
 		self::register_workspace_inventory_section($wp);
-		self::register_abilities_section();
-		self::register_wordpress_source_section();
 		self::register_multisite_section($wp);
 	}
 
@@ -171,48 +169,6 @@ MD;
 				'owner'       => 'data-machine-code',
 				'freshness'   => 'snapshot',
 				'conditions'  => 'Registered when Data Machine Code is active; content is omitted when no workspace inventory is available.',
-			)
-		);
-	}
-
-	private static function register_abilities_section(): void {
-		self::register_section(
-			'AGENTS.md', 'abilities', 20, function () {
-				return <<<'MD'
-## Abilities
-
-WordPress Abilities are the universal tool surface. Plugins register abilities that are automatically available via REST API, MCP, and chat.
-
-Data Machine Code does not currently register a WP-CLI abilities discovery command. Use the active runtime tool listings exposed to MCP/chat/REST, and plugin-specific `--help` output, before assuming what's available.
-MD;
-			}, array(
-				'label'       => 'Abilities',
-				'description' => 'WordPress Abilities API discovery.',
-				'owner'       => 'data-machine-code',
-				'freshness'   => 'static',
-				'conditions'  => 'Always registered when Data Machine Code and composable memory section registration are available.',
-			)
-		);
-	}
-
-	private static function register_wordpress_source_section(): void {
-		self::register_section(
-			'AGENTS.md', 'wordpress-source', 30, function () {
-				return <<<'MD'
-## WordPress Source (Read-Only Reference)
-
-These directories are **read-only reference material** — grep and read them to understand code, but never edit them directly. All code changes go through the workspace (see Code above).
-
-- `wp-content/plugins/` — plugin source (read-only)
-- `wp-content/themes/` — theme source (read-only)
-- `wp-includes/` — WordPress core (read-only)
-MD;
-			}, array(
-				'label'       => 'WordPress Source',
-				'description' => 'Pointers to WordPress source directories.',
-				'owner'       => 'data-machine-code',
-				'freshness'   => 'static',
-				'conditions'  => 'Always registered when Data Machine Code and composable memory section registration are available.',
 			)
 		);
 	}
