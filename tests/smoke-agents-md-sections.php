@@ -70,6 +70,12 @@ namespace {
 	if ( ! isset($sections['datamachine-code']) ) {
 		throw new RuntimeException('datamachine-code section was not registered');
 	}
+	if ( ! isset($sections['workspace-inventory']) ) {
+		throw new RuntimeException('workspace-inventory section was not registered');
+	}
+	if ( isset($sections['abilities']) || isset($sections['wordpress-source']) ) {
+		throw new RuntimeException('generic WordPress guidance must be registered by wp-coding-agents');
+	}
 
 	$render = $sections['datamachine-code']['callback'];
 	$default = $render();
