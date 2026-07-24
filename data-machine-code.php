@@ -21,6 +21,47 @@ define( 'DATAMACHINE_CODE_VERSION', '0.53.2' );
 define( 'DATAMACHINE_CODE_PATH', plugin_dir_path( __FILE__ ) );
 define( 'DATAMACHINE_CODE_URL', plugin_dir_url( __FILE__ ) );
 
+/**
+ * Classify DMC CLI requests which must not initialize runtime services.
+ *
+ * WP-CLI loads WordPress before it dispatches nested help, so command methods
+ * cannot protect help from plugin bootstrap side effects. Inspect only DMC's
+ * own argv namespace here and leave every unrelated WP-CLI request unchanged.
+ *
+ * @param array<int,mixed>|null $argv Raw process arguments.
+ */
+function datamachine_code_is_side_effect_free_cli_request( ?array $argv = null ): bool {
+	if ( ! defined('WP_CLI') || ! WP_CLI ) {
+		return false;
+	}
+
+	$tokens = array_values(array_map('strval', $argv ?? ( is_array($GLOBALS['argv'] ?? null) ? $GLOBALS['argv'] : array() )));
+	if ( ! in_array('datamachine-code', $tokens, true) ) {
+		return false;
+	}
+
+	if ( in_array('--help', $tokens, true) || in_array('-h', $tokens, true) ) {
+		return true;
+	}
+
+	$help_index = array_search('help', $tokens, true);
+	$dmc_index  = array_search('datamachine-code', $tokens, true);
+	return false !== $help_index && false !== $dmc_index && $help_index < $dmc_index;
+}
+
+/**
+ * Whether this request is a targeted, read-only workspace command.
+ */
+function datamachine_code_is_targeted_workspace_read_cli_request( ?array $argv = null ): bool {
+	if ( ! defined('WP_CLI') || ! WP_CLI ) {
+		return false;
+	}
+
+	$tokens          = array_values(array_map('strval', $argv ?? ( is_array($GLOBALS['argv'] ?? null) ? $GLOBALS['argv'] : array() )));
+	$workspace_index = array_search('workspace', $tokens, true);
+	return false !== $workspace_index && 'show' === ( $tokens[ $workspace_index + 1 ] ?? '' ) && in_array('datamachine-code', array_slice($tokens, 0, $workspace_index), true);
+}
+
 // PSR-4 Autoloading.
 require_once __DIR__ . '/vendor/autoload.php';
 
@@ -41,7 +82,7 @@ register_activation_hook(__FILE__, 'datamachine_code_install_schema');
  * Keep schema current for already-active installs after deploy/update.
  */
 function datamachine_code_maybe_upgrade_schema(): void {
-	if ( function_exists('wp_installing') && wp_installing() ) {
+	if ( datamachine_code_is_side_effect_free_cli_request() || datamachine_code_is_targeted_workspace_read_cli_request() || ( function_exists('wp_installing') && wp_installing() ) ) {
 		return;
 	}
 
@@ -75,7 +116,7 @@ function datamachine_code_has_datamachine_integration(): bool {
 function datamachine_code_register_bundle_artifacts(): void {
 	static $registered = false;
 
-	if ( $registered ) {
+	if ( $registered || datamachine_code_is_side_effect_free_cli_request() ) {
 		return;
 	}
 
@@ -90,7 +131,7 @@ datamachine_code_register_bundle_artifacts();
 function datamachine_code_register_datamachine_integrations(): void {
 	static $registered = false;
 
-	if ( $registered || ! datamachine_code_has_datamachine_integration() ) {
+	if ( $registered || datamachine_code_is_side_effect_free_cli_request() || ! datamachine_code_has_datamachine_integration() ) {
 		return;
 	}
 
@@ -117,7 +158,7 @@ function datamachine_code_register_datamachine_integrations(): void {
 function datamachine_code_bootstrap() {
 	static $bootstrapped = false;
 
-	if ( $bootstrapped ) {
+	if ( $bootstrapped || datamachine_code_is_side_effect_free_cli_request() || datamachine_code_is_targeted_workspace_read_cli_request() ) {
 		return;
 	}
 
@@ -321,7 +362,7 @@ add_action('plugins_loaded', 'datamachine_code_register_cli_commands', 21);
  * Only load when Data Machine core's AI engine is available.
  */
 function datamachine_code_load_chat_tools() {
-	if ( ! class_exists('DataMachine\Engine\AI\Tools\BaseTool') ) {
+	if ( datamachine_code_is_side_effect_free_cli_request() || datamachine_code_is_targeted_workspace_read_cli_request() || ! class_exists('DataMachine\Engine\AI\Tools\BaseTool') ) {
 		return;
 	}
 

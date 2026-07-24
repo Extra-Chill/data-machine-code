@@ -17,6 +17,7 @@ namespace DataMachineCode\Cli\Commands;
 
 use WP_CLI;
 use DataMachine\Cli\BaseCommand;
+use DataMachineCode\Abilities\WorkspaceAbilities;
 use DataMachineCode\Cli\CliResponseRenderer;
 use DataMachineCode\Cli\CliRepeatableOptionParser;
 use DataMachineCode\Cli\WorkspaceCompactOutput;
@@ -2510,13 +2511,9 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-show');
-		if ( ! $ability ) {
-			WP_CLI::error('Workspace show ability not available.');
-			return;
-		}
-
-		$result = $ability->execute(array( 'name' => $args[0] ));
+		// This targeted read is also the lightweight startup path used before the
+		// Abilities API runtime has been bootstrapped.
+		$result = WorkspaceAbilities::showRepo(array( 'name' => $args[0] ));
 
 		if ( is_wp_error($result) ) {
 			WP_CLI::error($result->get_error_message());

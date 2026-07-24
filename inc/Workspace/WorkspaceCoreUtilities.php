@@ -692,7 +692,17 @@ trait WorkspaceCoreUtilities {
 			);
 		}
 
-		$header   = strtok( (string) ( $status_result['output'] ?? '' ), "\n");
+		return $this->build_primary_freshness_report_from_status_output((string) ( $status_result['output'] ?? '' ), $handle);
+	}
+
+	/**
+	 * Build primary freshness metadata from an already-bounded local status probe.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function build_primary_freshness_report_from_status_output( string $status_output, string $handle ): array {
+
+		$header   = strtok($status_output, "\n");
 		$header   = false === $header ? '' : trim($header);
 		$branch   = null;
 		$detached = false;
