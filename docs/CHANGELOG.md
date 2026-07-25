@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.53.5] - 2026-07-25
+
+### Changed
+- Materialize remote workspaces locally
+
 ## [0.53.4] - 2026-07-24
 
 ### Changed
