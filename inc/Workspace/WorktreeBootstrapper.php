@@ -278,7 +278,7 @@ final class WorktreeBootstrapper {
 				continue;
 			}
 
-			$steps[] = self::run_command(self::STEP_PACKAGES, $root['path'], $command, $root['relative']);
+			$steps[] = self::run_command(self::STEP_PACKAGES, $root['path'], $command, $root['relative'], true);
 		}
 
 		return $steps;
@@ -315,7 +315,8 @@ final class WorktreeBootstrapper {
 				self::STEP_COMPOSER,
 				$root['path'],
 				'composer install --no-interaction --prefer-dist',
-				$root['relative']
+				$root['relative'],
+				true
 			);
 		}
 
@@ -584,7 +585,24 @@ final class WorktreeBootstrapper {
 	 * Note: we do not shell-escape the command itself — these are hard-coded
 	 * invocations, not user input. The `cd` target is escaped.
 	 */
-	private static function run_command( string $step, string $worktree_path, string $command, string $relative = '.' ): array {
+	private static function run_command( string $step, string $worktree_path, string $command, string $relative = '.', bool $preserve_tracked_files = false ): array {
+		$snapshot = $preserve_tracked_files ? self::snapshot_tracked_state($worktree_path) : null;
+		if ( $preserve_tracked_files && null === $snapshot ) {
+			return array(
+				'step'        => $step,
+				'status'      => self::STATUS_FAILED,
+				'relative'    => $relative,
+				'command'     => $command,
+				'exit_code'   => 1,
+				'output_tail' => 'Could not snapshot tracked files before dependency bootstrap.',
+				'tracked_file_cleanup' => array(
+					'restored_paths' => array(),
+					'retained_paths' => array(),
+					'error'          => 'pre-command snapshot failed',
+				),
+			);
+		}
+
 		$result = ProcessRunner::run(
 			sprintf('%s%s 2>&1', self::shell_env_prefix(), $command),
 			array(
@@ -598,7 +616,7 @@ final class WorktreeBootstrapper {
 			$data    = $result instanceof \WP_Error ? $result->get_error_data() : $result;
 			$data    = is_array($data) ? $data : array();
 			$message = $result instanceof \WP_Error ? $result->get_error_message() : 'Process command failed.';
-			return array(
+			$step_result = array(
 				'step'        => $step,
 				'status'      => self::STATUS_FAILED,
 				'relative'    => $relative,
@@ -606,15 +624,161 @@ final class WorktreeBootstrapper {
 				'exit_code'   => (int) ( $data['exit_code'] ?? 1 ),
 				'output_tail' => (string) ( $data['output'] ?? $message ),
 			);
+		} else {
+			$step_result = array(
+				'step'        => $step,
+				'status'      => self::STATUS_RAN,
+				'relative'    => $relative,
+				'command'     => $command,
+				'exit_code'   => 0,
+				'output_tail' => $result['output'],
+			);
+		}
+
+		if ( ! $preserve_tracked_files ) {
+			return $step_result;
+		}
+
+		$cleanup = self::restore_tracked_state($worktree_path, $snapshot);
+		$step_result['tracked_file_cleanup'] = $cleanup;
+		if ( isset($cleanup['error']) ) {
+			$step_result['status']      = self::STATUS_FAILED;
+			$step_result['exit_code']   = 1;
+			$step_result['output_tail'] = trim($step_result['output_tail'] . "\nTracked-file cleanup failed: " . $cleanup['error']);
+		}
+
+		return $step_result;
+	}
+
+	/**
+	 * Snapshot repository-wide index and worktree deltas before dependency tools
+	 * run. Their generated tracked changes must not claim or erase prior edits.
+	 *
+	 * @return array{cached_patch: string, worktree_patch: string, worktree_paths: array<int, string>, retained_paths: array<int, string>}|null
+	 */
+	private static function snapshot_tracked_state( string $worktree_path ): ?array {
+		$repo_root = self::git_output($worktree_path, 'git rev-parse --show-toplevel');
+		$repo_root = null === $repo_root ? null : trim($repo_root);
+		if ( null === $repo_root || '' === $repo_root ) {
+			return null;
+		}
+		$cached_patch   = self::git_raw_output($repo_root, 'git diff --cached --binary');
+		$worktree_patch = self::git_raw_output($repo_root, 'git diff --binary');
+		$cached_paths   = self::git_paths($repo_root, 'git diff --cached --name-only -z');
+		$worktree_paths = self::git_paths($repo_root, 'git diff --name-only -z');
+		if ( null === $cached_patch || null === $worktree_patch || null === $cached_paths || null === $worktree_paths ) {
+			return null;
 		}
 
 		return array(
-			'step'        => $step,
-			'status'      => self::STATUS_RAN,
-			'relative'    => $relative,
-			'command'     => $command,
-			'exit_code'   => 0,
-			'output_tail' => $result['output'],
+			'cached_patch'   => $cached_patch,
+			'worktree_patch' => $worktree_patch,
+			'worktree_paths' => $worktree_paths,
+			'retained_paths' => self::unique_paths(array_merge($cached_paths, $worktree_paths)),
 		);
+	}
+
+	/**
+	 * Restore paths changed by the dependency command, then replay the exact
+	 * index and worktree deltas that existed before it.
+	 *
+	 * @param array{cached_patch: string, worktree_patch: string, worktree_paths: array<int, string>, retained_paths: array<int, string>} $snapshot
+	 * @return array{restored_paths: array<int, string>, retained_paths: array<int, string>, error?: string}
+	 */
+	private static function restore_tracked_state( string $worktree_path, array $snapshot ): array {
+		$repo_root = self::git_output($worktree_path, 'git rev-parse --show-toplevel');
+		$repo_root = null === $repo_root ? null : trim($repo_root);
+		if ( null === $repo_root || '' === $repo_root ) {
+			return self::cleanup_error($snapshot, 'could not identify repository root for tracked-file cleanup');
+		}
+		$cached_paths = self::git_paths($repo_root, 'git diff --cached --name-only -z');
+		if ( null === $cached_paths ) {
+			return self::cleanup_error($snapshot, 'could not inspect post-command index changes');
+		}
+		foreach ( $cached_paths as $path ) {
+			if ( null === self::git_output($repo_root, 'git reset --mixed HEAD -- ' . escapeshellarg($path)) ) {
+				return self::cleanup_error($snapshot, sprintf('could not restore index path %s', $path));
+			}
+		}
+		if ( ! self::apply_patch($repo_root, $snapshot['cached_patch'], true) ) {
+			return self::cleanup_error($snapshot, 'could not replay pre-command index changes');
+		}
+
+		$worktree_paths = self::git_paths($repo_root, 'git diff --name-only -z');
+		if ( null === $worktree_paths ) {
+			return self::cleanup_error($snapshot, 'could not inspect post-command worktree changes');
+		}
+		foreach ( self::unique_paths(array_merge($worktree_paths, $snapshot['worktree_paths'])) as $path ) {
+			if ( null === self::git_output($repo_root, 'git checkout-index --force ' . escapeshellarg($path)) ) {
+				return self::cleanup_error($snapshot, sprintf('could not restore worktree path %s', $path));
+			}
+		}
+		if ( ! self::apply_patch($repo_root, $snapshot['worktree_patch'], false) ) {
+			return self::cleanup_error($snapshot, 'could not replay pre-command worktree changes');
+		}
+
+		return array(
+			'restored_paths' => self::unique_paths(array_merge($cached_paths, $worktree_paths)),
+			'retained_paths' => $snapshot['retained_paths'],
+		);
+	}
+
+	/** @return array{restored_paths: array<int, string>, retained_paths: array<int, string>, error: string} */
+	private static function cleanup_error( array $snapshot, string $error ): array {
+		return array(
+			'restored_paths' => array(),
+			'retained_paths' => $snapshot['retained_paths'],
+			'error'          => $error,
+		);
+	}
+
+	private static function apply_patch( string $worktree_path, string $patch, bool $cached ): bool {
+		if ( '' === $patch ) {
+			return true;
+		}
+		$path = tempnam(sys_get_temp_dir(), 'dmc-bootstrap-patch-');
+		if ( false === $path || false === file_put_contents($path, $patch) ) {
+			return false;
+		}
+		$result = self::git_output($worktree_path, sprintf('git apply %s--binary < %s', $cached ? '--cached ' : '', escapeshellarg($path)));
+		unlink($path);
+		return null !== $result;
+	}
+
+	/** @return string|null */
+	private static function git_output( string $worktree_path, string $command ): ?string {
+		$result = ProcessRunner::run($command, array( 'cwd' => $worktree_path, 'error_as_result' => true ));
+		return $result instanceof \WP_Error || empty($result['success']) ? null : (string) $result['output'];
+	}
+
+	/** @return array<int, string>|null */
+	private static function git_paths( string $worktree_path, string $command ): ?array {
+		$output = self::git_raw_output($worktree_path, $command);
+		if ( null === $output ) {
+			return null;
+		}
+		return array_values(array_filter(explode("\0", $output), static fn( $path ) => '' !== $path));
+	}
+
+	/** Return Git output without ProcessRunner's text normalization. */
+	private static function git_raw_output( string $worktree_path, string $command ): ?string {
+		$path = tempnam(sys_get_temp_dir(), 'dmc-bootstrap-git-');
+		if ( false === $path ) {
+			return null;
+		}
+		$result = ProcessRunner::run(
+			$command . ' > ' . escapeshellarg($path),
+			array( 'cwd' => $worktree_path, 'error_as_result' => true )
+		);
+		$output = ! $result instanceof \WP_Error && ! empty($result['success']) ? file_get_contents($path) : false;
+		unlink($path);
+		return false === $output ? null : $output;
+	}
+
+	/** @return array<int, string> */
+	private static function unique_paths( array $paths ): array {
+		$paths = array_values(array_unique($paths));
+		sort($paths, SORT_STRING);
+		return $paths;
 	}
 }
