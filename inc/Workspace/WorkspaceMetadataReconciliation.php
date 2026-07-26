@@ -568,8 +568,9 @@ trait WorkspaceMetadataReconciliation {
 			return 'invalid_lifecycle_state';
 		}
 
-		if ( WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE !== $state && ( ! empty($metadata['pr_url']) || ! empty($metadata['pr_number']) ) ) {
-			return 'stored_pr_signal';
+		$liveness = WorktreeContextInjector::classify_liveness($metadata);
+		if ( WorktreeCleanupCandidateClassifier::needs_lifecycle_reconciliation($metadata, (string) ( $liveness['liveness'] ?? '' )) ) {
+			return 'lifecycle_reconciliation_candidate';
 		}
 
 		return null;
