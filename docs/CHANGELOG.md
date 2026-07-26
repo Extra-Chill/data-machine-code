@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.54.0] - 2026-07-26
+
+### Added
+- explain shared workspace filesystem usage
+
+### Fixed
+- reconcile safe cleanup lifecycle candidates
+
 ## [0.53.6] - 2026-07-26
 
 ### Fixed
