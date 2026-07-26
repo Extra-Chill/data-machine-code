@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.53.6] - 2026-07-26
+
+### Fixed
+- Fix worktree bootstrap artifact cleanup
+
 ## [0.53.5] - 2026-07-25
 
 ### Changed
