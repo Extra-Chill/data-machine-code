@@ -168,6 +168,10 @@ $active_no_signal = new SafeCleanupQueuedAbility(
 			'success' => true,
 			'mode'    => 'active_no_signal_drain',
 			'summary' => array( 'marked_cleanup_eligible' => 0, 'removed' => 0 ),
+			'continuation' => array(
+				'reason'       => 'page_incomplete',
+				'next_command' => 'studio wp datamachine-code workspace worktree active-no-signal-drain --apply --stage=finalized --offset=7 --limit=7',
+			),
 			'remaining_active_no_signal_backlog' => array(
 				'by_actionable_reason' => array(
 					'insufficient_signal' => array( 'count' => 3 ),
@@ -244,6 +248,9 @@ safe_cleanup_assert(1 === ( $result['summary']['blockers_by_reason']['artifact_p
 safe_cleanup_assert(1 === ( $result['summary']['blockers_by_reason']['dirty_worktree'] ?? null ), 'dirty blocker count is preserved');
 safe_cleanup_assert(2 === ( $result['summary']['blockers_by_reason']['unpushed_commits'] ?? null ), 'unpushed blocker count is preserved');
 safe_cleanup_assert(3 === ( $result['summary']['blockers_by_reason']['insufficient_signal'] ?? null ), 'active backlog blocker count is preserved');
+safe_cleanup_assert('maximum_observed_per_reason_across_stages' === ( $result['summary']['blocker_count_scope'] ?? null ), 'aggregate blocker counts document deduplication scope');
+safe_cleanup_assert(isset($result['blockers_by_stage']['cleanup_eligible_1']['dirty_worktree']), 'per-stage blocker counts remain available');
+safe_cleanup_assert(str_contains((string) ( $result['continuation']['next_command'] ?? '' ), 'active-no-signal-drain'), 'child page continuation is surfaced');
 safe_cleanup_assert(count($run_repository->updates) >= 5, 'safe cleanup checkpoints progress repeatedly');
 safe_cleanup_assert('complete_with_blockers' === ( $run_repository->runs['cleanup-run-safe-test']['status'] ?? null ), 'safe cleanup persists final run state');
 safe_cleanup_assert(4 === ( $run_repository->runs['cleanup-run-safe-test']['summary']['safe_cleanup_progress']['summary']['removed'] ?? null ), 'safe cleanup persists reclaimed progress summary');
@@ -262,5 +269,19 @@ safe_cleanup_assert(! is_wp_error($preview_result), 'preview succeeds');
 safe_cleanup_assert(false === $preview_result['applied'], 'preview does not apply');
 safe_cleanup_assert(array( true, true ) === $preview_lock_calls, 'preview lock pruning stays dry-run');
 safe_cleanup_assert(1 === ( $preview_result['summary']['cycles'] ?? null ), 'preview runs one cycle');
+
+$duplicate_blocker_ability = new SafeCleanupQueuedAbility(
+	array(
+		array( 'success' => true, 'summary' => array( 'skipped_by_reason' => array( 'lifecycle_reconciliation_candidate' => 145 ) ) ),
+		array( 'success' => true, 'summary' => array( 'skipped_by_reason' => array( 'lifecycle_reconciliation_candidate' => 145 ) ) ),
+	)
+);
+$duplicate_preview = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+	static fn() => $duplicate_blocker_ability,
+	static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
+	new SafeCleanupFakeRunRepository()
+);
+$duplicate_result = $duplicate_preview->run(array( 'dry_run' => true ));
+safe_cleanup_assert(145 === ( $duplicate_result['summary']['blocker_count'] ?? null ), 'the same inventory blockers are not double-counted across safe-cleanup stages');
 
 fwrite(STDOUT, "workspace safe cleanup orchestrator test passed\n");

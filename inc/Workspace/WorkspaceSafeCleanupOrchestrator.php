@@ -95,6 +95,7 @@ class WorkspaceSafeCleanupOrchestrator {
 				'blockers_by_reason'      => array(),
 			),
 			'blockers'     => array(),
+			'blockers_by_stage' => array(),
 			'evidence'     => array(
 				'safety' => $dry_run
 					? 'Preview only. Uses DMC safe classifiers/removals and stale lock pruning in dry-run mode.'
@@ -146,7 +147,8 @@ class WorkspaceSafeCleanupOrchestrator {
 		if ( is_wp_error($artifacts) ) {
 			return $artifacts;
 		}
-		$result['steps']['artifact_cleanup'] = $this->summarize_artifact_step($artifacts, $dry_run);
+		$result['steps']['artifact_cleanup']                  = $this->summarize_artifact_step($artifacts, $dry_run);
+		$result['blockers_by_stage']['artifact_cleanup']      = (array) ( $result['steps']['artifact_cleanup']['blockers'] ?? array() );
 		$this->accumulate_artifact_step($result, $result['steps']['artifact_cleanup']);
 		$this->checkpoint_progress($run_id, $result, 'applying');
 
@@ -171,6 +173,7 @@ class WorkspaceSafeCleanupOrchestrator {
 				return $eligible;
 			}
 			$result['steps'][ 'cleanup_eligible_' . $cycle ] = $this->summarize_cleanup_step($eligible);
+			$result['blockers_by_stage'][ 'cleanup_eligible_' . $cycle ] = (array) ( $result['steps'][ 'cleanup_eligible_' . $cycle ]['blockers'] ?? array() );
 			$cycle_progress                                 += $this->accumulate_cleanup_step($result, $eligible);
 			$this->checkpoint_progress($run_id, $result, 'applying');
 
@@ -179,7 +182,12 @@ class WorkspaceSafeCleanupOrchestrator {
 				return $active;
 			}
 			$result['steps'][ 'active_no_signal_' . $cycle ] = $this->summarize_cleanup_step($active);
+			$result['blockers_by_stage'][ 'active_no_signal_' . $cycle ] = (array) ( $result['steps'][ 'active_no_signal_' . $cycle ]['blockers'] ?? array() );
 			$cycle_progress                                 += $this->accumulate_cleanup_step($result, $active);
+			if ( is_array($active['continuation'] ?? null) && ! empty($active['continuation']['next_command']) ) {
+				$result['continuation']['next_command'] = (string) $active['continuation']['next_command'];
+				$result['continuation']['reason']       = (string) ( $active['continuation']['reason'] ?? 'active_no_signal_page_incomplete' );
+			}
 			$this->checkpoint_progress($run_id, $result, 'applying');
 
 			if ( $dry_run || 0 === $cycle_progress ) {
@@ -198,6 +206,7 @@ class WorkspaceSafeCleanupOrchestrator {
 		$result['blockers']                      = $this->compact_blockers($result['blockers']);
 		$result['summary']['blocker_count']      = array_sum(array_map(static fn( array $row ): int => (int) ( $row['count'] ?? 0 ), $result['blockers']));
 		$result['summary']['blockers_by_reason'] = array_column($result['blockers'], 'count', 'reason_code');
+		$result['summary']['blocker_count_scope'] = 'maximum_observed_per_reason_across_stages';
 		if ( ! $dry_run && $result['summary']['blocker_count'] > 0 ) {
 			$result['state'] = 'complete_with_blockers';
 		} else {
@@ -449,7 +458,7 @@ class WorkspaceSafeCleanupOrchestrator {
 				'reason_code' => $reason,
 				'count'       => 0,
 			);
-			$blockers[ $reason ]['count'] += (int) ( $row['count'] ?? 0 );
+			$blockers[ $reason ]['count'] = max($blockers[ $reason ]['count'], (int) ( $row['count'] ?? 0 ));
 		}
 		ksort($blockers);
 

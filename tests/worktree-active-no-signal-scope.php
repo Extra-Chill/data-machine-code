@@ -30,6 +30,7 @@ require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceHandle.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceCoreUtilities.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeAgeFilter.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupCandidateClassifier.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupSignal.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupClassifier.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeInventoryCleanup.php';

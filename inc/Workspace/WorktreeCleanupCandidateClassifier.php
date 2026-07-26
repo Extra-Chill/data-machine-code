@@ -12,6 +12,24 @@ defined('ABSPATH') || exit;
 final class WorktreeCleanupCandidateClassifier {
 
 	/**
+	 * Whether non-live lifecycle context needs terminal-signal reconciliation.
+	 *
+	 * @param  array<string,mixed> $metadata Persisted lifecycle metadata.
+	 */
+	public static function needs_lifecycle_reconciliation( array $metadata, string $liveness ): bool {
+		if ( WorktreeContextInjector::LIVENESS_LIVE === $liveness || WorktreeContextInjector::has_cleanup_signal($metadata) ) {
+			return false;
+		}
+
+		$origin_task = is_array($metadata['origin_task'] ?? null) ? $metadata['origin_task'] : array();
+
+		return ! empty($metadata['pr_url'])
+			|| ! empty($metadata['pr_number'])
+			|| ! empty($metadata['pr_ref'])
+			|| ! empty($origin_task['task_url']);
+	}
+
+	/**
 	 * Classify one clean, non-primary worktree after safety probes and signal detection.
 	 *
 	 * @param  array<string,mixed>      $context                   Normalized worktree context.

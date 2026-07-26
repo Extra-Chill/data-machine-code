@@ -218,6 +218,12 @@ namespace {
 	$recent_lifecycle                                                = $harness->revalidate($recent_lifecycle_candidate);
 	retention_apply_protections_assert('recent_activity' === ( $recent_lifecycle['skipped']['reason_code'] ?? null ), 'recent cleanup_eligible_at rows are protected from apply removal');
 	retention_apply_protections_assert('cleanup_eligible_at' === ( $recent_lifecycle['skipped']['activity_field'] ?? null ), 'recent lifecycle protection identifies the lifecycle activity field');
+	retention_apply_protections_assert(86400 === ( $recent_lifecycle['skipped']['recency_window_seconds'] ?? null ), 'recent lifecycle protection documents its bounded expiry');
+
+	$expired_lifecycle_candidate                                      = $base_candidate;
+	$expired_lifecycle_candidate['metadata']['cleanup_eligible_at'] = gmdate('c', time() - 86401);
+	$expired_lifecycle                                                = $harness->revalidate($expired_lifecycle_candidate);
+	retention_apply_protections_assert(! isset($expired_lifecycle['skipped']), 'cleanup eligibility becomes removable after the documented recency window expires');
 
 	$reviewed_lifecycle_candidate                                      = $base_candidate;
 	$reviewed_lifecycle_candidate['metadata']['cleanup_eligible_at'] = gmdate('c', time() - 60);

@@ -272,10 +272,7 @@ trait WorkspaceWorktreeInventoryCleanup {
 		$liveness         = (string) ( $wt['liveness'] ?? WorktreeContextInjector::LIVENESS_UNKNOWN );
 		$liveness_reason  = (string) ( $wt['liveness_reason'] ?? '' );
 		$state            = isset($metadata['lifecycle_state']) ? WorktreeContextInjector::normalize_state( (string) $metadata['lifecycle_state']) : null;
-		$has_pr_context   = ! empty($metadata['pr_url']) || ! empty($metadata['pr_number']) || ! empty($metadata['pr_ref']);
-		$has_task_context = is_array($metadata['origin_task'] ?? null) && ! empty($metadata['origin_task']['task_url']);
-
-		if ( WorktreeContextInjector::LIVENESS_LIVE !== $liveness && ( $has_pr_context || $has_task_context ) ) {
+		if ( WorktreeCleanupCandidateClassifier::needs_lifecycle_reconciliation($metadata, $liveness) ) {
 			return array_merge(
 				$base_row, array(
 					'reason_code'     => 'lifecycle_reconciliation_candidate',
