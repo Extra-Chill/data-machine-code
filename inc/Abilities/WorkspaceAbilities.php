@@ -1458,7 +1458,7 @@ class WorkspaceAbilities {
 							),
 							'disk_budget'               => array(
 								'type'        => 'object',
-								'description' => 'Pre-create disk-budget report: free bytes/GiB, worktree count, thresholds, status, warnings, and force override state.',
+								'description' => 'Pre-create disk-budget report: filesystem capacity/used/free and safety thresholds, bounded workspace allocation and mount diagnostics when available, estimated shared usage, worktree count, warnings, and force override state.',
 							),
 							'rebase_attempted'          => array(
 								'type'        => 'boolean',

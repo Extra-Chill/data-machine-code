@@ -9,6 +9,9 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Support\CommandSpec;
+use DataMachineCode\Support\ProcessRunner;
+
 defined('ABSPATH') || exit;
 
 final class WorktreeDiskBudget {
@@ -42,28 +45,42 @@ final class WorktreeDiskBudget {
 	 */
 	private const DEFAULT_WARN_WORKTREE_COUNT = 100;
 
+	private const DEFAULT_USAGE_PROBE_TIMEOUT_SECONDS = 3;
+
+	private const SHARED_USAGE_MINIMUM_BYTES = 1073741824;
+
+	private const SHARED_USAGE_MINIMUM_PERCENT = 5.0;
+
+	/** @var array<string,int|null> */
+	private static array $workspace_usage_cache = array();
+
 	/**
-	 * Inspect workspace disk budget without walking file contents.
+	 * Inspect workspace disk budget without an unbounded content walk.
 	 *
 	 * @param  string $workspace_path Workspace root path.
 	 * @param  array  $thresholds     Optional threshold override for tests.
 	 * @param  bool   $forced         Whether the caller explicitly forced creation.
+	 * @param  array  $options        Optional bounded diagnostic probe controls.
 	 * @return array<string,mixed>
 	 */
-	public static function inspect( string $workspace_path, array $thresholds = array(), bool $forced = false ): array {
+	public static function inspect( string $workspace_path, array $thresholds = array(), bool $forced = false, array $options = array() ): array {
 		$thresholds  = self::normalize_thresholds($thresholds);
 		$free_bytes  = is_dir($workspace_path) ? disk_free_space($workspace_path) : false; // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_disk_free_space
 		$total_bytes = is_dir($workspace_path) ? disk_total_space($workspace_path) : false; // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_disk_total_space
 		$free_bytes  = is_float($free_bytes) ? (int) $free_bytes : null;
 		$total_bytes = is_float($total_bytes) ? (int) $total_bytes : null;
 		$worktrees   = self::count_worktree_like_dirs($workspace_path);
+		$diagnostics = self::collect_volume_diagnostics($workspace_path, $options);
 
 		return self::evaluate(
-			array(
-				'workspace_path' => $workspace_path,
-				'free_bytes'     => $free_bytes,
-				'total_bytes'    => $total_bytes,
-				'worktree_count' => $worktrees,
+			array_merge(
+				$diagnostics,
+				array(
+					'workspace_path' => $workspace_path,
+					'free_bytes'     => $free_bytes,
+					'total_bytes'    => $total_bytes,
+					'worktree_count' => $worktrees,
+				)
 			),
 			$thresholds,
 			$forced
@@ -86,7 +103,21 @@ final class WorktreeDiskBudget {
 		if ( null !== $free_bytes && null !== $total_bytes && $total_bytes > 0 ) {
 			$free_percent = ( $free_bytes / $total_bytes ) * 100;
 		}
-		$count    = isset($metrics['worktree_count']) && is_numeric($metrics['worktree_count']) ? (int) $metrics['worktree_count'] : 0;
+		$count                     = isset($metrics['worktree_count']) && is_numeric($metrics['worktree_count']) ? (int) $metrics['worktree_count'] : 0;
+		$filesystem_used_bytes     = null !== $free_bytes && null !== $total_bytes ? max(0, $total_bytes - $free_bytes) : null;
+		$workspace_allocated_bytes = isset($metrics['workspace_allocated_bytes']) && is_numeric($metrics['workspace_allocated_bytes'])
+			? max(0, (int) $metrics['workspace_allocated_bytes'])
+			: null;
+		$shared_usage_estimate_bytes = null;
+		$shared_usage_detected       = false;
+		if ( null !== $filesystem_used_bytes && null !== $workspace_allocated_bytes ) {
+			$shared_usage_estimate_bytes = max(0, $filesystem_used_bytes - $workspace_allocated_bytes);
+			$materiality_floor           = max(
+				self::SHARED_USAGE_MINIMUM_BYTES,
+				(int) ceil($filesystem_used_bytes * ( self::SHARED_USAGE_MINIMUM_PERCENT / 100 ))
+			);
+			$shared_usage_detected        = $shared_usage_estimate_bytes >= $materiality_floor;
+		}
 		$warnings = array();
 		$refused  = false;
 
@@ -109,14 +140,14 @@ final class WorktreeDiskBudget {
 			if ( $free_bytes < $effective_refuse_bytes ) {
 				$refused    = ! $forced;
 				$warnings[] = sprintf(
-					'Free disk space is %.1f GiB%s, below the refusal threshold of %.1f GiB.',
+					'Free filesystem space is %.1f GiB%s, below the refusal threshold of %.1f GiB.',
 					self::bytes_to_gib($free_bytes),
 					null === $free_percent ? '' : sprintf(' (%.1f%%)', $free_percent),
 					self::bytes_to_gib($effective_refuse_bytes)
 				);
 			} elseif ( $free_bytes < $effective_warn_bytes ) {
 				$warnings[] = sprintf(
-					'Free disk space is %.1f GiB%s, below the warning threshold of %.1f GiB or %.1f%% free, whichever is stricter.',
+					'Free filesystem space is %.1f GiB%s, below the warning threshold of %.1f GiB or %.1f%% free, whichever is stricter.',
 					self::bytes_to_gib($free_bytes),
 					null === $free_percent ? '' : sprintf(' (%.1f%%)', $free_percent),
 					self::bytes_to_gib( (int) $thresholds['warn_free_bytes'] ),
@@ -124,7 +155,7 @@ final class WorktreeDiskBudget {
 				);
 			}
 		} else {
-			$warnings[] = 'Free disk space could not be measured.';
+			$warnings[] = 'Free filesystem space could not be measured.';
 		}
 
 		if ( $count > $thresholds['warn_worktree_count'] ) {
@@ -135,8 +166,15 @@ final class WorktreeDiskBudget {
 			);
 		}
 
-		$status          = $refused ? 'refused' : ( empty($warnings) ? 'ok' : 'warning' );
-		$trigger_reasons = array();
+		$status              = $refused ? 'refused' : ( empty($warnings) ? 'ok' : 'warning' );
+		$trigger_reasons     = array();
+		$diagnostic_messages = array();
+		if ( $shared_usage_detected ) {
+			$diagnostic_messages[] = sprintf(
+				'Filesystem usage includes an estimated %.1f GiB outside the measured workspace subtree.',
+				self::bytes_to_gib( (int) $shared_usage_estimate_bytes )
+			);
+		}
 		if ( null !== $free_bytes && $free_bytes < $effective_refuse_bytes ) {
 			$trigger_reasons[] = 'free_space_refusal_threshold';
 		} elseif ( null !== $free_bytes && $free_bytes < $effective_warn_bytes ) {
@@ -147,15 +185,27 @@ final class WorktreeDiskBudget {
 		}
 
 		return array(
-			'workspace_path'            => (string) ( $metrics['workspace_path'] ?? '' ),
-			'free_bytes'                => $free_bytes,
-			'free_gib'                  => null === $free_bytes ? null : round(self::bytes_to_gib($free_bytes), 2),
-			'total_bytes'               => $total_bytes,
-			'total_gib'                 => null === $total_bytes ? null : round(self::bytes_to_gib($total_bytes), 2),
-			'free_percent'              => null === $free_percent ? null : round($free_percent, 2),
-			'workspace_size_bytes'      => null,
-			'workspace_size_exact'      => false,
-			'worktree_count'            => $count,
+			'workspace_path'              => (string) ( $metrics['workspace_path'] ?? '' ),
+			'filesystem_total_bytes'      => $total_bytes,
+			'filesystem_used_bytes'       => $filesystem_used_bytes,
+			'filesystem_free_bytes'       => $free_bytes,
+			'safety_basis'                => 'filesystem_free_bytes',
+			'free_bytes'                  => $free_bytes,
+			'free_gib'                    => null === $free_bytes ? null : round(self::bytes_to_gib($free_bytes), 2),
+			'total_bytes'                 => $total_bytes,
+			'total_gib'                   => null === $total_bytes ? null : round(self::bytes_to_gib($total_bytes), 2),
+			'free_percent'                => null === $free_percent ? null : round($free_percent, 2),
+			'workspace_allocated_bytes'   => $workspace_allocated_bytes,
+			'workspace_size_bytes'        => $workspace_allocated_bytes,
+			'workspace_size_exact'        => false,
+			'workspace_usage_probe'       => (string) ( $metrics['workspace_usage_probe'] ?? 'unavailable' ),
+			'mount_target'                => isset($metrics['mount_target']) ? (string) $metrics['mount_target'] : null,
+			'mount_source'                => isset($metrics['mount_source']) ? (string) $metrics['mount_source'] : null,
+			'mount_source_subdirectory'   => isset($metrics['mount_source_subdirectory']) ? (string) $metrics['mount_source_subdirectory'] : null,
+			'shared_usage_estimate_bytes' => $shared_usage_estimate_bytes,
+			'shared_usage_detected'       => $shared_usage_detected,
+			'diagnostic_messages'         => $diagnostic_messages,
+			'worktree_count'              => $count,
 			'warn_free_bytes'           => $thresholds['warn_free_bytes'],
 			'warn_free_gib'             => round(self::bytes_to_gib( (int) $thresholds['warn_free_bytes'] ), 2),
 			'warn_free_percent'         => $thresholds['warn_free_percent'],
@@ -267,13 +317,156 @@ final class WorktreeDiskBudget {
 			$free .= sprintf(' (%.1f%%)', (float) $budget['free_percent']);
 		}
 		$total = null === ( $budget['total_gib'] ?? null ) ? 'unknown total' : sprintf('%.1f GiB total', (float) $budget['total_gib']);
-		return sprintf(
+		$summary = sprintf(
 			'Disk budget: workspace=%s, %s free of %s, %d worktree-like dirs, status=%s.',
 			(string) ( $budget['workspace_path'] ?? '' ),
 			$free,
 			$total,
 			(int) ( $budget['worktree_count'] ?? 0 ),
 			(string) ( $budget['status'] ?? 'unknown' )
+		);
+		if ( ! empty($budget['shared_usage_detected']) && null !== ( $budget['shared_usage_estimate_bytes'] ?? null ) ) {
+			$summary .= sprintf(
+				' Estimated usage outside the measured workspace subtree: %.1f GiB.',
+				self::bytes_to_gib( (int) $budget['shared_usage_estimate_bytes'] )
+			);
+		}
+
+		return $summary;
+	}
+
+	/**
+	 * Parse the most specific Linux mountinfo row containing a path.
+	 *
+	 * @param  string $mountinfo Linux /proc/self/mountinfo contents.
+	 * @param  string $workspace_path Workspace root path.
+	 * @return array<string,string>|null
+	 */
+	public static function parse_mountinfo( string $mountinfo, string $workspace_path ): ?array {
+		$workspace_path = rtrim($workspace_path, '/');
+		$workspace_path = '' === $workspace_path ? '/' : $workspace_path;
+		$best           = null;
+
+		foreach ( preg_split('/\r?\n/', $mountinfo) ?: array() as $line ) {
+			$separator = strpos($line, ' - ');
+			if ( false === $separator ) {
+				continue;
+			}
+
+			$left  = preg_split('/\s+/', substr($line, 0, $separator)) ?: array();
+			$right = preg_split('/\s+/', substr($line, $separator + 3)) ?: array();
+			if ( count($left) < 5 || count($right) < 2 ) {
+				continue;
+			}
+
+			$target = self::decode_mountinfo_path((string) $left[4]);
+			if ( '/' !== $target && $workspace_path !== $target && ! str_starts_with($workspace_path, rtrim($target, '/') . '/') ) {
+				continue;
+			}
+
+			if ( null !== $best && strlen($target) <= strlen($best['mount_target']) ) {
+				continue;
+			}
+
+			$best = array(
+				'mount_target'              => $target,
+				'mount_source'              => self::decode_mountinfo_path((string) $right[1]),
+				'mount_source_subdirectory' => self::decode_mountinfo_path((string) $left[3]),
+			);
+		}
+
+		return $best;
+	}
+
+	/**
+	 * Collect best-effort diagnostics without affecting the safety decision.
+	 *
+	 * @param  string $workspace_path Workspace root path.
+	 * @param  array  $options Probe controls and test overrides.
+	 * @return array<string,mixed>
+	 */
+	private static function collect_volume_diagnostics( string $workspace_path, array $options ): array {
+		$mountinfo = array_key_exists('mountinfo', $options)
+			? ( is_string($options['mountinfo']) ? $options['mountinfo'] : '' )
+			: self::read_mountinfo();
+		$mount = '' === $mountinfo ? null : self::parse_mountinfo($mountinfo, $workspace_path);
+
+		$include_usage = array_key_exists('include_workspace_usage', $options)
+			? (bool) $options['include_workspace_usage']
+			: false;
+		$allocated = null;
+		$probe     = 'disabled';
+		if ( $include_usage ) {
+			$allocated = array_key_exists('workspace_allocated_bytes', $options)
+				? ( is_numeric($options['workspace_allocated_bytes']) ? max(0, (int) $options['workspace_allocated_bytes']) : null )
+				: self::measure_workspace_allocated_bytes(
+					$workspace_path,
+					max(1, (int) ( $options['usage_probe_timeout_seconds'] ?? self::DEFAULT_USAGE_PROBE_TIMEOUT_SECONDS ))
+				);
+			$probe = null === $allocated
+				? 'unavailable'
+				: (string) ( $options['workspace_usage_probe'] ?? ( array_key_exists('workspace_allocated_bytes', $options) ? 'provided' : 'bounded_du' ) );
+		}
+
+		return array_merge(
+			array(
+				'workspace_allocated_bytes' => $allocated,
+				'workspace_usage_probe'     => $probe,
+			),
+			$mount ?? array()
+		);
+	}
+
+	private static function read_mountinfo(): string {
+		$path = '/proc/self/mountinfo';
+		if ( ! is_readable($path) ) {
+			return '';
+		}
+
+		$contents = file_get_contents($path); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+		return false === $contents ? '' : $contents;
+	}
+
+	private static function measure_workspace_allocated_bytes( string $workspace_path, int $timeout_seconds ): ?int {
+		if ( ! is_dir($workspace_path) ) {
+			return null;
+		}
+
+		$cache_key = $workspace_path . ':' . $timeout_seconds;
+		if ( array_key_exists($cache_key, self::$workspace_usage_cache) ) {
+			return self::$workspace_usage_cache[ $cache_key ];
+		}
+
+		$command = CommandSpec::from_argv(array( 'du', '-sx', '-B1', '--', $workspace_path ));
+		if ( $command instanceof \WP_Error ) {
+			return self::$workspace_usage_cache[ $cache_key ] = null;
+		}
+		$result = ProcessRunner::run(
+			$command,
+			array(
+				'timeout_seconds'  => $timeout_seconds,
+				'output_cap_bytes' => 1024,
+				'error_as_result'  => true,
+			)
+		);
+		if ( $result instanceof \WP_Error || empty($result['success']) ) {
+			return self::$workspace_usage_cache[ $cache_key ] = null;
+		}
+
+		$parts = preg_split('/\s+/', trim( (string) ( $result['output'] ?? '' ))) ?: array();
+		$bytes = isset($parts[0]) && is_numeric($parts[0]) ? max(0, (int) $parts[0]) : null;
+		return self::$workspace_usage_cache[ $cache_key ] = $bytes;
+	}
+
+	private static function decode_mountinfo_path( string $path ): string {
+		return strtr(
+			$path,
+			array(
+				'\\040' => ' ',
+				'\\011' => "\t",
+				'\\012' => "\n",
+				'\\134' => '\\',
+			)
 		);
 	}
 

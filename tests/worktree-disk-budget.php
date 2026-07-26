@@ -36,6 +36,11 @@ try {
 	);
 
 	assert_true('refused' === $budget['status'], 'low free space should refuse worktree creation');
+	assert_true('filesystem_free_bytes' === $budget['safety_basis'], 'response should identify the unchanged filesystem safety basis');
+	assert_true(str_contains($budget['warnings'][0] ?? '', 'Free filesystem space'), 'threshold messaging should identify filesystem free space');
+	assert_true(98 * $gib === $budget['filesystem_used_bytes'], 'filesystem used bytes should be explicit');
+	assert_true(2 * $gib === $budget['filesystem_free_bytes'], 'filesystem free bytes should be explicit');
+	assert_true(100 * $gib === $budget['filesystem_total_bytes'], 'filesystem total bytes should be explicit');
 	assert_true(8 * $gib === $budget['cleanup_recommendations'][0]['expected_reclaim_bytes'], 'recommendations should include the bytes needed to clear the effective floor');
 	assert_true(str_contains(WorktreeDiskBudget::format_summary($budget), '2.0 GiB (2.0%) free'), 'summary should include current free GiB and percent');
 	assert_true('studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json' === $budget['artifact_cleanup_command'], 'disk-budget artifact cleanup command should create a DB-backed review plan');
@@ -74,6 +79,100 @@ try {
 
 	assert_true('ok' === $healthy['status'], 'healthy free space should pass the worktree disk budget gate');
 	assert_true(array() === $healthy['warnings'], 'healthy free space should not emit disk budget warnings');
+	assert_true(array_key_exists('workspace_size_bytes', $healthy) && null === $healthy['workspace_size_bytes'], 'legacy workspace size field should remain present when diagnostics are unavailable');
+
+	$root_mount = WorktreeDiskBudget::parse_mountinfo(
+		'32 24 8:2 / / rw,relatime - ext4 /dev/sdb rw',
+		'/var/lib/datamachine/workspace'
+	);
+	assert_true('/' === ( $root_mount['mount_target'] ?? null ), 'normal root mount target should be discovered');
+	assert_true('/dev/sdb' === ( $root_mount['mount_source'] ?? null ), 'normal root mount source should be discovered');
+	assert_true('/' === ( $root_mount['mount_source_subdirectory'] ?? null ), 'normal root mount should report the device root');
+
+	$subdirectory_mount = WorktreeDiskBudget::parse_mountinfo(
+		implode(
+			"\n",
+			array(
+				'32 24 8:2 / /mnt/storage rw,relatime - ext4 /dev/sdb rw',
+				'41 32 8:2 /dmc-workspace /var/lib/datamachine/workspace rw,relatime - ext4 /dev/sdb rw',
+			)
+		),
+		'/var/lib/datamachine/workspace/repository'
+	);
+	assert_true('/var/lib/datamachine/workspace' === ( $subdirectory_mount['mount_target'] ?? null ), 'most specific mount target should be selected');
+	assert_true('/dev/sdb' === ( $subdirectory_mount['mount_source'] ?? null ), 'subdirectory mount source should be discovered');
+	assert_true('/dmc-workspace' === ( $subdirectory_mount['mount_source_subdirectory'] ?? null ), 'source subdirectory should be explicit');
+
+	$shared = WorktreeDiskBudget::evaluate(
+		array(
+			'workspace_path'            => '/var/lib/datamachine/workspace',
+			'free_bytes'                => 20 * $gib,
+			'total_bytes'               => 200 * $gib,
+			'workspace_allocated_bytes' => 125 * $gib,
+			'workspace_usage_probe'     => 'provided',
+			'mount_target'              => '/var/lib/datamachine/workspace',
+			'mount_source'              => '/dev/sdb',
+			'mount_source_subdirectory' => '/dmc-workspace',
+			'worktree_count'            => 12,
+		),
+		array(
+			'warn_free_bytes'     => 20 * $gib,
+			'refuse_free_bytes'   => 10 * $gib,
+			'warn_free_percent'   => 15.0,
+			'refuse_free_percent' => 10.0,
+			'warn_worktree_count' => 100,
+		)
+	);
+	assert_true(55 * $gib === $shared['shared_usage_estimate_bytes'], 'shared usage should be filesystem used minus measured workspace usage');
+	assert_true(true === $shared['shared_usage_detected'], 'material shared usage should be detected');
+	assert_true(str_contains($shared['diagnostic_messages'][0] ?? '', 'outside the measured workspace subtree'), 'shared usage should have explicit diagnostic messaging');
+	assert_true(str_contains(WorktreeDiskBudget::format_summary($shared), 'Estimated usage outside'), 'summary should explain the shared usage delta');
+
+	$unavailable = WorktreeDiskBudget::inspect(
+		__DIR__,
+		array(),
+		false,
+		array(
+			'mountinfo'              => null,
+			'include_workspace_usage' => false,
+		)
+	);
+	assert_true(null === $unavailable['mount_target'], 'unavailable mount probe should return null fields');
+	assert_true(null === $unavailable['workspace_allocated_bytes'], 'disabled usage probe should return null allocated bytes');
+	assert_true('disabled' === $unavailable['workspace_usage_probe'], 'disabled usage probe state should be explicit');
+
+	$bounded_probe = WorktreeDiskBudget::inspect(
+		__DIR__,
+		array(),
+		false,
+		array(
+			'mountinfo'                  => '',
+			'include_workspace_usage'     => true,
+			'usage_probe_timeout_seconds' => 1,
+		)
+	);
+	assert_true(is_int($bounded_probe['workspace_allocated_bytes']), 'bounded subtree probe should report allocated bytes for a small readable directory');
+	assert_true('bounded_du' === $bounded_probe['workspace_usage_probe'], 'successful bounded subtree probe should identify its mode');
+
+	$refusal_with_diagnostics = WorktreeDiskBudget::evaluate(
+		array(
+			'workspace_path'            => '/tmp/dmc-test-workspace',
+			'free_bytes'                => 2 * $gib,
+			'total_bytes'               => 100 * $gib,
+			'workspace_allocated_bytes' => 40 * $gib,
+			'worktree_count'            => 12,
+		),
+		array(
+			'warn_free_bytes'     => 20 * $gib,
+			'refuse_free_bytes'   => 10 * $gib,
+			'warn_free_percent'   => 15.0,
+			'refuse_free_percent' => 10.0,
+			'warn_worktree_count' => 100,
+		)
+	);
+	assert_true($budget['status'] === $refusal_with_diagnostics['status'], 'diagnostics must not change refusal behavior');
+	assert_true($budget['effective_refuse_bytes'] === $refusal_with_diagnostics['effective_refuse_bytes'], 'diagnostics must not change the refusal threshold');
+	assert_true($budget['trigger_reasons'] === $refusal_with_diagnostics['trigger_reasons'], 'diagnostics must not change refusal reasons');
 
 	fwrite(STDOUT, "worktree-disk-budget ok\n");
 } catch (Throwable $e) {

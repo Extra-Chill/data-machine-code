@@ -119,7 +119,12 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
 		}
 
-		$disk_budget = WorktreeDiskBudget::inspect($this->workspace_path, WorktreeDiskBudget::thresholds($repo, $branch), $force);
+		$disk_budget = WorktreeDiskBudget::inspect(
+			$this->workspace_path,
+			WorktreeDiskBudget::thresholds($repo, $branch),
+			$force,
+			array( 'include_workspace_usage' => true )
+		);
 		if ( 'refused' === ( $disk_budget['status'] ?? '' ) ) {
 			$recommendations = array_map(
 				static function ( $row ): string {

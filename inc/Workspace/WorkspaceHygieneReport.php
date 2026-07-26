@@ -88,7 +88,7 @@ trait WorkspaceHygieneReport {
 			'destructive'               => false,
 			'fast_stats'                => $this->build_workspace_fast_stats($worktrees, $cleanup, $size_report, $include_worktree_status),
 			'size'                      => $size_report,
-			'disk'                      => $this->build_workspace_disk_report(),
+			'disk'                      => $this->build_workspace_disk_report($size_report),
 			'inventory'                 => array(
 				'freshness' => $this->worktree_inventory()->freshness(),
 				'refresh'   => $inventory_refresh,
@@ -549,22 +549,37 @@ trait WorkspaceHygieneReport {
 	/**
 	 * Build workspace disk/free-space report.
 	 *
+	 * @param  array<string,mixed>|null $size_report Optional completed workspace size report.
 	 * @return array<string,mixed>
 	 */
-	private function build_workspace_disk_report(): array {
+	private function build_workspace_disk_report( ?array $size_report = null ): array {
 		$path  = '' !== $this->workspace_path && is_dir($this->workspace_path) ? $this->workspace_path : dirname($this->workspace_path);
-		$free  = '' !== $path ? disk_free_space($path) : false;
-		$total = '' !== $path ? disk_total_space($path) : false;
-
-		$free_bytes  = false === $free ? null : (int) $free;
-		$total_bytes = false === $total ? null : (int) $total;
+		$size_complete = is_array($size_report) && ! empty($size_report['scan_complete']) && 'disabled' !== ( $size_report['mode'] ?? 'disabled' );
+		$options       = array( 'include_workspace_usage' => $size_complete );
+		if ( $size_complete ) {
+			$options['workspace_allocated_bytes'] = (int) ( $size_report['total_bytes'] ?? 0 );
+			$options['workspace_usage_probe']     = 'best_effort_top_level_du';
+		}
+		$budget = WorktreeDiskBudget::inspect($path, array(), false, $options);
 
 		return array(
-			'path'        => $path,
-			'free_bytes'  => $free_bytes,
-			'free_human'  => null === $free_bytes ? null : $this->format_bytes($free_bytes),
-			'total_bytes' => $total_bytes,
-			'total_human' => null === $total_bytes ? null : $this->format_bytes($total_bytes),
+			'path'                        => $path,
+			'free_bytes'                  => $budget['filesystem_free_bytes'],
+			'free_human'                  => null === $budget['filesystem_free_bytes'] ? null : $this->format_bytes($budget['filesystem_free_bytes']),
+			'total_bytes'                 => $budget['filesystem_total_bytes'],
+			'total_human'                 => null === $budget['filesystem_total_bytes'] ? null : $this->format_bytes($budget['filesystem_total_bytes']),
+			'filesystem_used_bytes'       => $budget['filesystem_used_bytes'],
+			'filesystem_free_bytes'       => $budget['filesystem_free_bytes'],
+			'filesystem_total_bytes'      => $budget['filesystem_total_bytes'],
+			'workspace_allocated_bytes'   => $budget['workspace_allocated_bytes'],
+			'workspace_usage_probe'       => $budget['workspace_usage_probe'],
+			'mount_target'                => $budget['mount_target'],
+			'mount_source'                => $budget['mount_source'],
+			'mount_source_subdirectory'   => $budget['mount_source_subdirectory'],
+			'shared_usage_estimate_bytes' => $budget['shared_usage_estimate_bytes'],
+			'shared_usage_detected'       => $budget['shared_usage_detected'],
+			'diagnostic_messages'         => $budget['diagnostic_messages'],
+			'safety_basis'                => $budget['safety_basis'],
 		);
 	}
 
