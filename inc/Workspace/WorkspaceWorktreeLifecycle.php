@@ -560,7 +560,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( WorktreeContextInjector::has_cleanup_signal($metadata) ) {
 			$dirty_paths = $this->probe_worktree_dirty_paths($wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 			if ( $dirty_paths instanceof \WP_Error ) {
-				return $dirty_paths;
+				return $this->worktree_finalize_phase_error('dirty_probe', $parsed['dir_name'], $wt_path, $dirty_paths);
 			}
 			if ( array() !== $dirty_paths ) {
 				return new \WP_Error(
@@ -577,10 +577,33 @@ trait WorkspaceWorktreeLifecycle {
 				);
 			}
 		}
-		WorktreeContextInjector::store_lifecycle_metadata($parsed['dir_name'], $metadata);
+		$metadata_persisted = WorktreeContextInjector::store_lifecycle_metadata($parsed['dir_name'], $metadata);
+		if ( $metadata_persisted instanceof \WP_Error ) {
+			$committed = 'worktree_inventory_persist_failed' === $metadata_persisted->get_error_code();
+			$phase     = $committed ? 'inventory_upsert' : 'lifecycle_metadata_persistence';
+			return $this->worktree_finalize_phase_error(
+				$phase,
+				$parsed['dir_name'],
+				$wt_path,
+				$metadata_persisted,
+				$committed
+			);
+		}
 
 		$stored = WorktreeContextInjector::get_metadata($parsed['dir_name']) ?? array();
-		$this->worktree_inventory()->upsert($this->build_worktree_inventory_row_from_handle($parsed['dir_name']));
+		if ( ! $this->worktree_metadata_contains($stored, $metadata) ) {
+			return new \WP_Error(
+				'worktree_finalize_metadata_readback_failed',
+				'Lifecycle metadata could not be read back after finalization. Retry finalization; no cleanup should proceed until the lifecycle state is visible.',
+				array(
+					'status'                       => 500,
+					'phase'                        => 'lifecycle_metadata_readback',
+					'handle'                       => $parsed['dir_name'],
+					'path'                         => $wt_path,
+					'lifecycle_metadata_committed' => true,
+				)
+			);
+		}
 		return array(
 			'success'         => true,
 			'handle'          => $parsed['dir_name'],
@@ -589,6 +612,187 @@ trait WorkspaceWorktreeLifecycle {
 			'metadata'        => $stored,
 			'message'         => sprintf('Worktree "%s" marked %s.', $parsed['dir_name'], (string) ( $stored['lifecycle_state'] ?? $normalized_state )),
 		);
+	}
+
+	/**
+	 * Resolve one local worktree without enumerating workspace primaries.
+	 *
+	 * @param array{include_status?: bool, include_disk?: bool} $opts Probe options.
+	 * @return array{success: bool, worktrees: array, fields_skipped: array<int,string>}|\WP_Error
+	 */
+	public function worktree_get( string $handle, array $opts = array() ): array|\WP_Error {
+		$parsed = $this->parse_handle($handle);
+		$path   = $this->workspace_path . '/' . $parsed['dir_name'];
+		if ( '' === $parsed['dir_name'] || ! is_dir($path) || ! file_exists($path . '/.git') ) {
+			return new \WP_Error(
+				'worktree_not_found',
+				sprintf('Worktree "%s" does not exist on disk.', $parsed['dir_name']),
+				array(
+					'status' => 404,
+					'handle' => $parsed['dir_name'],
+					'path'   => $path,
+				)
+			);
+		}
+
+		$include_status = array_key_exists('include_status', $opts) ? (bool) $opts['include_status'] : true;
+		$include_disk   = array_key_exists('include_disk', $opts) ? (bool) $opts['include_disk'] : false;
+		$skipped_groups = array();
+		if ( ! $include_status ) {
+			$skipped_groups[] = 'status';
+		}
+		if ( ! $include_disk ) {
+			$skipped_groups[] = 'disk';
+		}
+
+		$head = $this->run_git($path, 'rev-parse --verify HEAD', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( $head instanceof \WP_Error ) {
+			return $this->worktree_get_probe_error('identity', $parsed['dir_name'], $path, $head);
+		}
+		$branch = $this->run_git($path, 'branch --show-current', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( $branch instanceof \WP_Error ) {
+			return $this->worktree_get_probe_error('identity', $parsed['dir_name'], $path, $branch);
+		}
+
+		if ( $include_status ) {
+			$dirty_paths = $this->probe_worktree_dirty_paths($path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+			if ( $dirty_paths instanceof \WP_Error ) {
+				return $this->worktree_get_probe_error('status', $parsed['dir_name'], $path, $dirty_paths);
+			}
+			$unpushed = $this->count_unpushed_commits($path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+			if ( $unpushed instanceof \WP_Error ) {
+				return $this->worktree_get_probe_error('unpushed', $parsed['dir_name'], $path, $unpushed);
+			}
+			$dirty = count($dirty_paths);
+		} else {
+			$dirty    = null;
+			$unpushed = null;
+		}
+
+		$metadata        = $parsed['is_worktree'] ? WorktreeContextInjector::get_metadata($parsed['dir_name']) : null;
+		$metadata        = is_array($metadata) ? $metadata : null;
+		$created_at      = $metadata['created_at'] ?? null;
+		$liveness        = WorktreeContextInjector::classify_liveness($metadata);
+		$disk            = $include_disk ? $this->build_worktree_disk_report($parsed['repo'], $path, $parsed['is_worktree'], $created_at, $metadata) : array(
+			'size_bytes'          => null,
+			'estimated_size_bytes' => null,
+			'last_touched_at'     => null,
+			'age_days'            => $this->calculate_age_days($created_at),
+			'artifacts'           => array(),
+			'artifact_size_bytes' => 0,
+		);
+		$row             = array_merge(
+			array(
+				'handle'                => $parsed['dir_name'],
+				'repo'                  => $parsed['repo'],
+				'is_worktree'           => $parsed['is_worktree'],
+				'is_primary'            => ! $parsed['is_worktree'],
+				'external'              => false,
+				'branch_slug'           => $parsed['branch_slug'],
+				'branch'                => trim( (string) ( $branch['output'] ?? '' )),
+				'head'                  => trim( (string) ( $head['output'] ?? '' )),
+				'path'                  => $path,
+				'dirty'                 => $dirty,
+				'unpushed'              => $unpushed,
+				'created_at'            => $created_at,
+				'lifecycle_state'       => $metadata['lifecycle_state'] ?? null,
+				'pr_url'                => $metadata['pr_url'] ?? null,
+				'pr_number'             => $metadata['pr_number'] ?? null,
+				'last_seen_at'          => $metadata['last_seen_at'] ?? null,
+				'liveness'              => $liveness['liveness'],
+				'liveness_reason'       => $liveness['reason'],
+				'heartbeat_age_seconds' => $liveness['heartbeat_age_seconds'],
+				'owner'                 => WorktreeContextInjector::summarize_owner($metadata),
+				'session'               => WorktreeContextInjector::summarize_session($metadata),
+				'task'                  => is_array($metadata['origin_task'] ?? null) ? $metadata['origin_task'] : null,
+				'metadata'              => $metadata,
+			),
+			$disk
+		);
+		$stale_reason = $this->detect_worktree_stale_reason(
+			$parsed['is_worktree'],
+			(int) ( $dirty ?? 0 ),
+			$disk['age_days'] ?? null,
+			$created_at,
+			array(
+				'status_probed' => $include_status,
+				'disk_probed'   => $include_disk,
+			)
+		);
+		if ( null !== $stale_reason ) {
+			$row['stale_reason'] = $stale_reason;
+		}
+		if ( ! empty($skipped_groups) ) {
+			$row['fields_skipped'] = $skipped_groups;
+		}
+
+		return array(
+			'success'               => true,
+			'worktrees'             => array( $row ),
+			'duplicates'            => array(),
+			'base_branch_worktrees' => array(),
+			'fields_skipped'        => $skipped_groups,
+		);
+	}
+
+	/**
+	 * Preserve the original failure while making the blocked finalization phase explicit.
+	 */
+	private function worktree_finalize_phase_error( string $phase, string $handle, string $path, \WP_Error $error, bool $metadata_committed = false ): \WP_Error {
+		$data = (array) $error->get_error_data();
+		$data = array_merge(
+			$data,
+			array(
+				'status'                       => (int) ( $data['status'] ?? 500 ),
+				'phase'                        => $phase,
+				'handle'                       => $handle,
+				'path'                         => $path,
+				'cause_code'                   => $error->get_error_code(),
+				'lifecycle_metadata_committed' => $metadata_committed,
+				'retry_safe'                   => true,
+			)
+		);
+		if ( $metadata_committed ) {
+			$data['hint'] = 'Lifecycle metadata is committed but the inventory is incomplete. Retry the same finalize command; it is idempotent.';
+		}
+
+		return new \WP_Error('worktree_finalize_' . $phase . '_failed', sprintf('Worktree finalization %s failed: %s', str_replace('_', ' ', $phase), $error->get_error_message()), $data);
+	}
+
+	/**
+	 * Verify that every field requested by a finalizer write is visible on readback.
+	 *
+	 * @param array<string,mixed> $stored   Persisted metadata.
+	 * @param array<string,mixed> $expected Requested metadata.
+	 */
+	private function worktree_metadata_contains( array $stored, array $expected ): bool {
+		foreach ( $expected as $key => $value ) {
+			if ( ! array_key_exists($key, $stored) || $stored[ $key ] !== $value ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Preserve the original failure while identifying the bounded targeted-get probe.
+	 */
+	private function worktree_get_probe_error( string $phase, string $handle, string $path, \WP_Error $error ): \WP_Error {
+		$cause_data = (array) $error->get_error_data();
+		$data       = array_merge(
+			$cause_data,
+			array(
+				'status'     => (int) ( $cause_data['status'] ?? 500 ),
+				'phase'      => $phase,
+				'handle'     => $handle,
+				'path'       => $path,
+				'cause_code' => $error->get_error_code(),
+				'timeout_seconds' => self::CLEANUP_GIT_PROBE_TIMEOUT,
+			)
+		);
+
+		return new \WP_Error('worktree_get_' . $phase . '_probe_failed', sprintf('Targeted worktree lookup %s probe failed: %s', $phase, $error->get_error_message()), $data);
 	}
 
 	/**
@@ -828,15 +1032,6 @@ trait WorkspaceWorktreeLifecycle {
 		$include_status = array_key_exists('include_status', $opts) ? (bool) $opts['include_status'] : true;
 		$include_disk   = array_key_exists('include_disk', $opts) ? (bool) $opts['include_disk'] : true;
 		$target_handle  = isset($opts['handle']) ? trim( (string) $opts['handle']) : '';
-		if ( '' !== $target_handle ) {
-			// Inventory/listing handles name the on-disk worktree, not its Git branch.
-			$parsed_handle = $this->parse_handle($target_handle);
-			$target_handle = $parsed_handle['dir_name'];
-			if ( null === $repo ) {
-				$repo = $parsed_handle['repo'];
-			}
-		}
-
 		$skipped_groups = array();
 		if ( ! $include_status ) {
 			$skipped_groups[] = 'status';
@@ -852,6 +1047,29 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		} else {
 			$state = null;
+		}
+		if ( '' !== $target_handle ) {
+			// A handle is a single-checkout query, not a filtered workspace scan.
+			$result = $this->worktree_get($target_handle, $opts);
+			if ( $result instanceof \WP_Error ) {
+				if ( 'worktree_not_found' !== $result->get_error_code() ) {
+					return $result;
+				}
+				return array(
+					'success'               => true,
+					'worktrees'             => array(),
+					'duplicates'            => array(),
+					'base_branch_worktrees' => array(),
+					'fields_skipped'        => $skipped_groups,
+				);
+			}
+			if ( null === $state ) {
+				return $result;
+			}
+			if ( ( $result['worktrees'][0]['lifecycle_state'] ?? null ) !== $state ) {
+				$result['worktrees'] = array();
+			}
+			return $result;
 		}
 		if ( ! is_dir($this->workspace_path) ) {
 			return array(

@@ -59,7 +59,18 @@ function datamachine_code_is_targeted_workspace_read_cli_request( ?array $argv =
 
 	$tokens          = array_values(array_map('strval', $argv ?? ( is_array($GLOBALS['argv'] ?? null) ? $GLOBALS['argv'] : array() )));
 	$workspace_index = array_search('workspace', $tokens, true);
-	return false !== $workspace_index && 'show' === ( $tokens[ $workspace_index + 1 ] ?? '' ) && in_array('datamachine-code', array_slice($tokens, 0, $workspace_index), true);
+	if ( false === $workspace_index || ! in_array('datamachine-code', array_slice($tokens, 0, $workspace_index), true) ) {
+		return false;
+	}
+
+	$operation = $tokens[ $workspace_index + 1 ] ?? '';
+	if ( 'show' === $operation ) {
+		return true;
+	}
+
+	// `worktree get` resolves one local checkout directly and must not start
+	// runtime services before its bounded probes run. Finalize remains mutable.
+	return 'worktree' === $operation && 'get' === ( $tokens[ $workspace_index + 2 ] ?? '' );
 }
 
 // PSR-4 Autoloading.

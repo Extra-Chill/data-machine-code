@@ -4022,6 +4022,41 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
+		// `worktree get` has a minimal CLI bootstrap path because it is a single
+		// bounded local lookup. It must not depend on registered Abilities.
+		if ( 'get' === $operation ) {
+			if ( empty($args[1]) ) {
+				WP_CLI::error('Usage: worktree get <handle> [--with-status] [--format=json]');
+				return;
+			}
+			$result = ( new Workspace() )->worktree_get(
+				(string) $args[1],
+				array(
+					'include_status' => true,
+					'include_disk'   => false,
+				)
+			);
+			if ( is_wp_error($result) ) {
+				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+					$this->renderer()->json(
+						array(
+							'success' => false,
+							'error'   => array(
+								'code'    => $result->get_error_code(),
+								'message' => $result->get_error_message(),
+								'data'    => $result->get_error_data(),
+							),
+						)
+					);
+					WP_CLI::halt(1);
+				}
+				$this->render_workspace_error($result);
+				return;
+			}
+			$this->renderWorktreeResult('get', $result, $assoc_args);
+			return;
+		}
+
 		$operation_config = self::WORKTREE_OPERATIONS[ $operation ] ?? array();
 		$ability_name     = (string) ( $operation_config['ability'] ?? '' );
 
