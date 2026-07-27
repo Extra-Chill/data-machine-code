@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.54.1] - 2026-07-27
+
+### Changed
+- Bound targeted worktree lifecycle commands
+
+### Fixed
+- Fix lifecycle persistence diagnostics
+
 ## [0.54.0] - 2026-07-26
 
 ### Added
