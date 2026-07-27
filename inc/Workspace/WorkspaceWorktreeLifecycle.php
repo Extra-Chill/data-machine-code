@@ -579,8 +579,9 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		$metadata_persisted = WorktreeContextInjector::store_lifecycle_metadata($parsed['dir_name'], $metadata);
 		if ( $metadata_persisted instanceof \WP_Error ) {
-			$committed = 'worktree_inventory_persist_failed' === $metadata_persisted->get_error_code();
-			$phase     = $committed ? 'inventory_upsert' : 'lifecycle_metadata_persistence';
+			$stored    = WorktreeContextInjector::get_metadata($parsed['dir_name']) ?? array();
+			$committed = $this->worktree_metadata_contains($stored, $metadata);
+			$phase     = $committed && 'worktree_inventory_persist_failed' === $metadata_persisted->get_error_code() ? 'inventory_upsert' : 'lifecycle_metadata_persistence';
 			return $this->worktree_finalize_phase_error(
 				$phase,
 				$parsed['dir_name'],
@@ -600,7 +601,7 @@ trait WorkspaceWorktreeLifecycle {
 					'phase'                        => 'lifecycle_metadata_readback',
 					'handle'                       => $parsed['dir_name'],
 					'path'                         => $wt_path,
-					'lifecycle_metadata_committed' => true,
+					'lifecycle_metadata_committed' => false,
 				)
 			);
 		}
@@ -1545,7 +1546,7 @@ trait WorkspaceWorktreeLifecycle {
 			// Git emits a verbose line for every removed registration. Preserve the
 			// existing `pruned` result as evidence of actual reconciliation instead
 			// of reporting every primary that was merely scanned.
-			if ( '' !== trim((string) ( $result['output'] ?? '' )) ) {
+			if ( '' !== trim( (string) ( $result['output'] ?? '' )) ) {
 				$pruned[] = $entry;
 			}
 		}

@@ -607,7 +607,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		WP_CLI::success((string) ( $result['message'] ?? 'Remote workspace materialized.' ));
+		WP_CLI::success( (string) ( $result['message'] ?? 'Remote workspace materialized.' ));
 		WP_CLI::log(sprintf('Path: %s', (string) ( $result['path'] ?? '' )));
 	}
 

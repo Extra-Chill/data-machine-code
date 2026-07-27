@@ -31,6 +31,7 @@ define( 'DATAMACHINE_CODE_URL', plugin_dir_url( __FILE__ ) );
  * @param array<int,mixed>|null $argv Raw process arguments.
  */
 function datamachine_code_is_side_effect_free_cli_request( ?array $argv = null ): bool {
+	// @phpstan-ignore-next-line WP_CLI is only guaranteed true in the analysis bootstrap.
 	if ( ! defined('WP_CLI') || ! WP_CLI ) {
 		return false;
 	}
@@ -53,6 +54,7 @@ function datamachine_code_is_side_effect_free_cli_request( ?array $argv = null )
  * Whether this request is a targeted, read-only workspace command.
  */
 function datamachine_code_is_targeted_workspace_read_cli_request( ?array $argv = null ): bool {
+	// @phpstan-ignore-next-line WP_CLI is only guaranteed true in the analysis bootstrap.
 	if ( ! defined('WP_CLI') || ! WP_CLI ) {
 		return false;
 	}
