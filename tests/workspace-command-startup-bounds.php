@@ -117,6 +117,14 @@ namespace {
 
 	require_once $root . '/data-machine-code.php';
 	do_action('plugins_loaded');
+	startup_bounds_assert(
+		datamachine_code_is_targeted_workspace_read_cli_request(array( 'wp', 'datamachine-code', 'workspace', 'worktree', 'get', 'repo@branch', '--format=json' )),
+		'Targeted worktree get did not use the side-effect-free bootstrap classification.'
+	);
+	startup_bounds_assert(
+		! datamachine_code_is_targeted_workspace_read_cli_request(array( 'wp', 'datamachine-code', 'workspace', 'worktree', 'finalize', 'repo@branch', '--pr=https://github.com/example/repo/pull/1' )),
+		'Worktree finalize must retain the normal mutable-service bootstrap path.'
+	);
 
 	startup_bounds_assert(isset(WP_CLI::$commands['datamachine-code workspace']), 'Nested help did not register the workspace command for WP-CLI dispatch.');
 	startup_bounds_assert(0 === $GLOBALS['dmc_test_get_option_calls'], 'Nested help initialized database-backed discovery.');

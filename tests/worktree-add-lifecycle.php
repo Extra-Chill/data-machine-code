@@ -356,6 +356,7 @@ try {
 	assert_true(isset($wpdb->rows['homeboy@audit-primitives-20260616']), 'successful worktree_add was not persisted');
 	assert_true('refused' !== ( $result['disk_budget']['status'] ?? '' ), 'normal worktree_add should pass the disk budget gate without hard refusal');
 	assert_true('https://example.test/issues/explicit' === ( $wpdb->rows['homeboy@audit-primitives-20260616']['task_url'] ?? '' ), 'explicit tracker metadata did not override the environment fallback');
+	run_command('git push -u origin audit-primitives-20260616', $result['path']);
 
 	$environment_tracker = $workspace->worktree_add('homeboy', 'audit-primitives-environment-tracker', 'origin/main', false, false, false, false, true, array(), false, true);
 	assert_true(! is_wp_error($environment_tracker), is_wp_error($environment_tracker) ? $environment_tracker->get_error_message() : 'environment tracker fallback failed');
@@ -410,6 +411,54 @@ try {
 	assert_true(1 === count($targeted['worktrees'] ?? array()), 'targeted worktree lookup returned unrelated rows');
 	assert_true('homeboy@audit-primitives-20260616' === ( $targeted['worktrees'][0]['handle'] ?? '' ), 'targeted worktree lookup returned the wrong handle');
 	assert_true(null !== ( $targeted['worktrees'][0]['dirty'] ?? null ), 'targeted worktree lookup did not run the requested status probe');
+	$missing_target = $workspace->worktree_list(null, null, array( 'handle' => 'homeboy@missing', 'include_status' => true, 'include_disk' => false ));
+	assert_true(! is_wp_error($missing_target) && array() === ( $missing_target['worktrees'] ?? null ), 'targeted worktree list changed its missing-handle empty-list contract');
+	$targeted_default = $workspace->worktree_get($handle);
+	assert_true(! is_wp_error($targeted_default), 'default targeted worktree_get failed');
+	assert_true(in_array('disk', $targeted_default['fields_skipped'] ?? array(), true), 'default targeted worktree_get ran an unbounded disk probe');
+
+	// A targeted lookup must stay bounded by the requested checkout, even when
+	// the workspace contains many unrelated broken primary markers.
+	for ( $index = 0; $index < 300; ++$index ) {
+		$unrelated = $workspace_root . '/unrelated-' . $index;
+		mkdir($unrelated, 0777, true);
+		file_put_contents($unrelated . '/.git', 'gitdir: /missing/' . $index);
+	}
+	$started       = microtime(true);
+	$targeted_large = $workspace->worktree_get($handle, array( 'include_status' => true, 'include_disk' => false ));
+	$elapsed       = microtime(true) - $started;
+	assert_true(! is_wp_error($targeted_large), 'targeted worktree_get failed in a large workspace fixture');
+	assert_true(1 === count($targeted_large['worktrees'] ?? array()), 'targeted worktree_get returned unrelated worktrees');
+	assert_true($elapsed < 3.0, sprintf('targeted worktree_get scanned unrelated workspace entries: %.3fs', $elapsed));
+
+	// Every targeted Git probe has a finite deadline and identifies the phase
+	// that blocked without consulting another checkout.
+	$fake_bin = $workspace_root . '/fake-bin';
+	mkdir($fake_bin, 0777, true);
+	file_put_contents($fake_bin . '/git', "#!/bin/sh\nsleep 10\n");
+	chmod($fake_bin . '/git', 0755);
+	$original_path = getenv('PATH');
+	putenv('PATH=' . $fake_bin . ':' . ( false === $original_path ? '' : $original_path ));
+	$started       = microtime(true);
+	$timed_out     = $workspace->worktree_get($handle, array( 'include_status' => true, 'include_disk' => false ));
+	$elapsed       = microtime(true) - $started;
+	putenv('PATH=' . ( false === $original_path ? '' : $original_path ));
+	assert_true(is_wp_error($timed_out), 'stalled targeted Git probe did not fail');
+	assert_true('worktree_get_identity_probe_failed' === $timed_out->get_error_code(), 'stalled targeted Git probe did not identify its phase');
+	assert_true(5 === ( $timed_out->get_error_data()['timeout_seconds'] ?? null ), 'stalled targeted Git probe did not report its deadline');
+	assert_true($elapsed < 7.0, sprintf('stalled targeted Git probe exceeded its deadline: %.3fs', $elapsed));
+
+	// Inventory contention after the option metadata write reports a retry-safe
+	// inventory phase and preserves the committed lifecycle state.
+	$wpdb->fail_replace = true;
+	$inventory_failure  = $workspace->worktree_finalize($handle, 'pr_opened', 'https://github.com/Extra-Chill/data-machine-code/pull/964');
+	$wpdb->fail_replace = false;
+	assert_true(is_wp_error($inventory_failure), 'inventory persistence failure reported finalization success');
+	assert_true('worktree_finalize_inventory_upsert_failed' === $inventory_failure->get_error_code(), 'inventory failure did not identify the inventory upsert phase');
+	assert_true(true === ( $inventory_failure->get_error_data()['lifecycle_metadata_committed'] ?? false ), 'inventory failure did not report committed lifecycle metadata');
+	$retry = $workspace->worktree_finalize($handle, 'pr_opened', 'https://github.com/Extra-Chill/data-machine-code/pull/964');
+	assert_true(! is_wp_error($retry), 'idempotent finalization retry failed after inventory persistence recovered');
+	assert_true('https://github.com/Extra-Chill/data-machine-code/pull/964' === ( $retry['metadata']['pr_url'] ?? '' ), 'finalization retry did not read back PR lifecycle metadata');
 
 	update_option(
 		'datamachine_code_remote_workspace_state',
