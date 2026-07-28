@@ -1552,7 +1552,27 @@ class WorktreeContextInjector {
 			wp_cache_delete(self::METADATA_OPTION, 'options');
 		}
 
-		return self::get_metadata($handle);
+		$inventory_metadata = self::get_inventory_metadata($handle);
+		$option_metadata    = null;
+		if ( function_exists('get_option') ) {
+			$all = get_option(self::METADATA_OPTION, array());
+			if ( is_array($all) && is_array($all[ $handle ] ?? null) ) {
+				$option_metadata = (array) $all[ $handle ];
+			}
+		}
+
+		if ( ! is_array($inventory_metadata) ) {
+			return $option_metadata;
+		}
+		if ( ! is_array($option_metadata) ) {
+			return $inventory_metadata;
+		}
+
+		$inventory_seen = strtotime( (string) ( $inventory_metadata['last_seen_at'] ?? '' ) ) ?: 0;
+		$option_seen    = strtotime( (string) ( $option_metadata['last_seen_at'] ?? '' ) ) ?: 0;
+		return $option_seen > $inventory_seen
+			? array_merge($inventory_metadata, $option_metadata)
+			: array_merge($option_metadata, $inventory_metadata);
 	}
 
 	/**

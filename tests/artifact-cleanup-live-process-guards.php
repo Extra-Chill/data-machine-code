@@ -6,11 +6,26 @@ namespace {
 	if ( ! defined('ABSPATH') ) {
 		define('ABSPATH', __DIR__ . '/fixtures/');
 	}
+	if ( ! defined('ARRAY_A') ) {
+		define('ARRAY_A', 'ARRAY_A');
+	}
 
 	$GLOBALS['artifact_guard_authoritative_metadata'] = array();
 	$GLOBALS['artifact_guard_cached_metadata']        = array();
 	$GLOBALS['artifact_guard_cache_loaded']           = false;
 	$GLOBALS['artifact_guard_cache_evictions']        = 0;
+	$GLOBALS['artifact_guard_inventory_row']          = null;
+	$GLOBALS['wpdb']                                  = new class() {
+		public string $base_prefix = 'wp_';
+
+		public function prepare( string $query, mixed ...$args ): string {
+			return $query;
+		}
+
+		public function get_row( string $query, string $output ): ?array {
+			return $GLOBALS['artifact_guard_inventory_row'];
+		}
+	};
 
 	function get_option( string $key, mixed $default = false ): mixed {
 		if ( DataMachineCode\Workspace\WorktreeContextInjector::METADATA_OPTION !== $key ) {
@@ -249,6 +264,24 @@ namespace {
 	$cache_race = $harness->worktree_cleanup_artifacts(array( 'apply_plan' => array( 'candidates' => $plan['candidates'] ) ));
 	artifact_guard_assert_same('live_worktree', $cache_race['skipped'][0]['reason_code'] ?? null, 'final revalidation must evict stale option cache and observe concurrent heartbeat');
 	artifact_guard_assert_same(true, $GLOBALS['artifact_guard_cache_evictions'] > 0, 'final liveness read must explicitly evict the option cache');
+
+	$GLOBALS['artifact_guard_inventory_row'] = array(
+		'handle'   => 'repo@guard',
+		'metadata' => json_encode(
+			array(
+				'lifecycle_state' => WorktreeContextInjector::STATE_ACTIVE,
+				'last_seen_at'    => gmdate('c'),
+			)
+		),
+	);
+	$GLOBALS['artifact_guard_authoritative_metadata']['repo@guard'] = array(
+		'lifecycle_state' => WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE,
+		'last_seen_at'    => gmdate('c', time() - 172800),
+	);
+	$GLOBALS['artifact_guard_cache_loaded'] = false;
+	$inventory_race = $harness->worktree_cleanup_artifacts(array( 'apply_plan' => array( 'candidates' => $plan['candidates'] ) ));
+	artifact_guard_assert_same('live_worktree', $inventory_race['skipped'][0]['reason_code'] ?? null, 'newer inventory heartbeat must not be masked by older option metadata');
+	$GLOBALS['artifact_guard_inventory_row'] = null;
 
 	$GLOBALS['artifact_guard_authoritative_metadata']['repo@guard'] = array(
 		'lifecycle_state' => WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE,

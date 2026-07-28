@@ -1723,6 +1723,7 @@ class WorkspaceCommand extends BaseCommand {
 				'cleanup_counts'                => array(
 					'planned'         => (int) ( $cleanup_items['planned_rows'] ?? 0 ),
 					'applied'         => (int) ( $cleanup_items['applied_rows'] ?? 0 ),
+					'partial'         => (int) ( $cleanup_items['partial_rows'] ?? 0 ),
 					'skipped'         => (int) ( $cleanup_items['skipped_rows'] ?? 0 ),
 					'failed'          => (int) ( $cleanup_items['failed_rows'] ?? 0 ),
 					'bytes_reclaimed' => (int) ( $cleanup_items['bytes_reclaimed'] ?? 0 ),
@@ -1735,6 +1736,7 @@ class WorkspaceCommand extends BaseCommand {
 				'artifact_cleanup'              => array(
 					'planned'                              => (int) ( $artifacts['planned_rows'] ?? 0 ),
 					'applied'                              => (int) ( $artifacts['applied_rows'] ?? 0 ),
+					'partial'                              => (int) ( $artifacts['partial_rows'] ?? 0 ),
 					'skipped'                              => (int) ( $artifacts['skipped_rows'] ?? 0 ),
 					'failed'                               => (int) ( $artifacts['failed_rows'] ?? 0 ),
 					'bytes_reclaimed'                      => (int) ( $artifacts['bytes_reclaimed'] ?? 0 ),
