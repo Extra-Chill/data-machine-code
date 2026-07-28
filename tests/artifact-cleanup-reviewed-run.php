@@ -78,6 +78,9 @@ namespace DataMachineCode\Workspace {
 			unset($timeout);
 			return array('output' => str_starts_with($command, 'status --porcelain') ? (string) ($this->dirty[$path] ?? '') : '');
 		}
+		protected function detect_active_artifact_processes(string $worktree_path, array $artifacts, bool $fresh = false): array {
+			return array('status' => 'available', 'evidence' => array(), 'diagnostics' => array());
+		}
 		private function classify_worktree_git_probe_failure(string $handle, string $repo, string $path, \WP_Error $error, string $probe, string $action): array {
 			return array(
 				'handle' => $handle,

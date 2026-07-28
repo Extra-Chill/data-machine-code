@@ -2519,7 +2519,11 @@ class WorkspaceAbilities {
 							),
 							'force'         => array(
 								'type'        => 'boolean',
-								'description' => 'If true, allow artifact cleanup in dirty or unpushed worktrees. Active plugin/theme symlink targets remain protected.',
+								'description' => 'If true, allow artifact cleanup in dirty or unpushed worktrees. Does not override live worktrees, active processes, or unavailable process evidence.',
+							),
+							'allow_active_artifact_cleanup' => array(
+								'type'        => 'boolean',
+								'description' => 'Explicitly allow active artifact eviction after reviewing live/process/unavailable evidence. Separate from force and must be repeated at DB-backed apply/resume.',
 							),
 							'apply_plan'    => array(
 								'type'        => 'object',
@@ -2550,6 +2554,7 @@ class WorkspaceAbilities {
 							'dry_run'    => array( 'type' => 'boolean' ),
 							'candidates' => array( 'type' => 'array' ),
 							'removed'    => array( 'type' => 'array' ),
+							'partial'    => array( 'type' => 'array' ),
 							'skipped'    => array( 'type' => 'array' ),
 							'summary'    => array( 'type' => 'object' ),
 							'pagination' => array( 'type' => 'object' ),
@@ -2728,6 +2733,7 @@ class WorkspaceAbilities {
 							'include_worktrees'      => array( 'type' => 'boolean' ),
 							'include_resolvers'      => array( 'type' => 'boolean' ),
 							'force_artifact_cleanup' => array( 'type' => 'boolean' ),
+							'allow_active_artifact_cleanup' => array( 'type' => 'boolean' ),
 							'limit'                  => array( 'type' => 'integer' ),
 							'offset'                 => array( 'type' => 'integer' ),
 							'until_budget'           => array( 'type' => 'string' ),
@@ -2769,6 +2775,7 @@ class WorkspaceAbilities {
 						'properties' => array(
 							'run_id' => array( 'type' => 'string' ),
 							'force'  => array( 'type' => 'boolean' ),
+							'allow_active_artifact_cleanup' => array( 'type' => 'boolean' ),
 							'limit'  => array( 'type' => 'integer' ),
 						),
 					),
@@ -2790,6 +2797,7 @@ class WorkspaceAbilities {
 						'properties' => array(
 							'mode'           => array( 'type' => 'string' ),
 							'force'          => array( 'type' => 'boolean' ),
+							'allow_active_artifact_cleanup' => array( 'type' => 'boolean' ),
 							'limit'          => array( 'type' => 'integer' ),
 							'max_passes'     => array( 'type' => 'integer' ),
 							'budget_seconds' => array( 'type' => 'integer' ),
@@ -2815,6 +2823,7 @@ class WorkspaceAbilities {
 							'properties' => array(
 								'run_id' => array( 'type' => 'string' ),
 								'force'  => array( 'type' => 'boolean' ),
+								'allow_active_artifact_cleanup' => array( 'type' => 'boolean' ),
 								'limit'  => array( 'type' => 'integer' ),
 							),
 						),
@@ -4611,7 +4620,8 @@ class WorkspaceAbilities {
 	/**
 	 * Remove profile-derived artifacts inside workspace worktrees.
 	 *
-	 * @param  array $input Input parameters (dry_run, force, apply_plan, limit,
+	 * @param  array $input Input parameters (dry_run, force,
+	 *                      allow_active_artifact_cleanup, apply_plan, limit,
 	 *                      offset, exhaustive, safety_probes).
 	 * @return array
 	 */
@@ -4620,6 +4630,7 @@ class WorkspaceAbilities {
 		$opts      = array(
 			'dry_run' => ! empty($input['dry_run']),
 			'force'   => ! empty($input['force']),
+			'allow_active_artifact_cleanup' => ! empty($input['allow_active_artifact_cleanup']),
 		);
 		if ( isset($input['apply_plan']) && is_array($input['apply_plan']) ) {
 			$opts['apply_plan'] = $input['apply_plan'];
@@ -4717,6 +4728,7 @@ class WorkspaceAbilities {
 	public static function workspaceCleanupPlan( array $input ): array|\WP_Error {
 		$opts = array(
 			'force_artifact_cleanup' => ! empty($input['force_artifact_cleanup']),
+			'allow_active_artifact_cleanup' => ! empty($input['allow_active_artifact_cleanup']),
 			'include_resolvers'      => ! empty($input['include_resolvers']),
 			'mode'                   => (string) ( $input['mode'] ?? 'cleanup_plan' ),
 			'worktree_stale_only'    => ! empty($input['worktree_stale_only']),
@@ -4829,7 +4841,10 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>
 	 */
 	private static function cleanupRunApplyOptions( array $input ): array {
-		$options = array( 'force' => ! empty($input['force']) );
+		$options = array(
+			'force'                         => ! empty($input['force']),
+			'allow_active_artifact_cleanup' => ! empty($input['allow_active_artifact_cleanup']),
+		);
 		if ( isset($input['limit']) ) {
 			$options['limit'] = (int) $input['limit'];
 		}

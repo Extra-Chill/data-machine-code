@@ -13,7 +13,7 @@ require_once __DIR__ . '/WorktreeContextInjector.php';
 
 trait WorkspaceArtifactCleanup {
 
-	/** @var array<int,array<string,mixed>>|null Request-local process path snapshot. */
+	/** @var array<string,mixed>|null Request-local process path snapshot. */
 	private ?array $artifact_process_path_snapshot = null;
 
 	/**
@@ -33,13 +33,15 @@ trait WorkspaceArtifactCleanup {
 	 * derived from the plan into the builder so safety probes run against the
 	 * planned worktrees rather than the entire workspace.
 	 *
-	 * @param  array $opts Cleanup options (dry_run, force, apply_plan, limit,
+	 * @param  array $opts Cleanup options (dry_run, force,
+	 *                     allow_active_artifact_cleanup, apply_plan, limit,
 	 *                     offset, exhaustive, safety_probes).
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_cleanup_artifacts( array $opts = array() ): array|\WP_Error {
 		$dry_run        = ! empty($opts['dry_run']);
 		$force          = ! empty($opts['force']);
+		$allow_active   = ! empty($opts['allow_active_artifact_cleanup']);
 		$apply_plan     = isset($opts['apply_plan']) && is_array($opts['apply_plan']) ? $opts['apply_plan'] : null;
 		$exhaustive     = ! empty($opts['exhaustive']);
 		$full_workspace = ! empty($opts['full_workspace']);
@@ -58,7 +60,7 @@ trait WorkspaceArtifactCleanup {
 			$limit = 0;
 		}
 		$review_command  = $this->build_artifact_cleanup_review_command();
-		$apply_command   = $this->build_artifact_cleanup_apply_command($force);
+		$apply_command   = $this->build_artifact_cleanup_apply_command($force, $allow_active);
 		$preview_command = $this->build_artifact_cleanup_preview_command($opts);
 		// Apply paths default to safety probing (small subset). Dry-run defaults
 		// to skipping the per-worktree git probes unless explicitly requested or
@@ -98,6 +100,7 @@ trait WorkspaceArtifactCleanup {
 		$plan = $this->build_worktree_artifact_cleanup_plan(
 			$force,
 			array(
+				'allow_active_artifact_cleanup' => $allow_active,
 				'limit'         => $plan_limit,
 				'offset'        => $rank_by_size ? 0 : $offset,
 				'only_handles'  => $only_handles,
@@ -159,6 +162,7 @@ trait WorkspaceArtifactCleanup {
 				'rerun_preview_command' => $preview_command,
 				'candidates'            => $candidates,
 				'removed'               => array(),
+				'partial'               => array(),
 				'skipped'               => $skipped,
 				'summary'               => array(
 					'review_command'        => $review_command,
@@ -174,23 +178,39 @@ trait WorkspaceArtifactCleanup {
 		}
 
 		$removed = array();
+		$partial = array();
 		foreach ( $candidates as $candidate ) {
 			$removed_artifacts = array();
+			$artifacts         = array_values((array) ( $candidate['artifacts'] ?? array() ));
 			$failed            = false;
+			$process_guard     = $this->active_artifact_process_protection( (string) ( $candidate['path'] ?? '' ), $artifacts, true);
+			if ( null !== $process_guard ) {
+				if ( ! $allow_active ) {
+					$skipped[] = array_merge($candidate, $process_guard);
+					continue;
+				}
+				$candidate['safety_overrides'][] = $process_guard;
+			}
 
-			foreach ( (array) ( $candidate['artifacts'] ?? array() ) as $artifact ) {
-				if ( ! $force ) {
-					$protection = $this->current_artifact_cleanup_protection($candidate, array( $artifact ), true);
-					if ( null !== $protection ) {
-						$skipped[] = array_merge($candidate, $protection, array( 'artifacts' => array( $artifact ) ));
-						$failed    = true;
-						break;
+			foreach ( $artifacts as $artifact_index => $artifact ) {
+				$liveness_guard = $this->current_artifact_liveness_protection($candidate);
+				if ( null !== $liveness_guard && ! $allow_active ) {
+					$blocked = array_merge($candidate, $liveness_guard, array( 'artifacts' => array_slice($artifacts, $artifact_index) ));
+					if ( array() === $removed_artifacts ) {
+						$skipped[] = $blocked;
+					} else {
+						$partial[] = $this->build_partial_artifact_cleanup_row($candidate, $removed_artifacts, array_slice($artifacts, $artifact_index), $liveness_guard);
 					}
+					$failed = true;
+					break;
+				}
+				if ( null !== $liveness_guard ) {
+					$candidate['safety_overrides'][] = $liveness_guard;
 				}
 
 				$remove = $this->remove_worktree_artifact_path( (string) $candidate['path'], (string) ( $artifact['path'] ?? '' ));
 				if ( $remove instanceof \WP_Error ) {
-					$skipped[] = array(
+					$blocker = array(
 						'handle'      => $candidate['handle'] ?? '',
 						'repo'        => $candidate['repo'] ?? '',
 						'branch'      => $candidate['branch'] ?? '',
@@ -199,11 +219,17 @@ trait WorkspaceArtifactCleanup {
 						'reason'      => sprintf('failed to remove artifact %s: %s', (string) ( $artifact['path'] ?? '' ), $remove->get_error_message()),
 						'artifacts'   => array( $artifact ),
 					);
-					$failed    = true;
+					if ( array() === $removed_artifacts ) {
+						$skipped[] = $blocker;
+					} else {
+						$partial[] = $this->build_partial_artifact_cleanup_row($candidate, $removed_artifacts, array_slice($artifacts, $artifact_index), $blocker);
+					}
+					$failed = true;
 					break;
 				}
 
 				$removed_artifacts[] = is_array($remove) ? array_merge($artifact, array( 'removal' => $remove )) : $artifact;
+				$this->after_artifact_cleanup_mutation($candidate, $artifact, count($removed_artifacts));
 			}
 
 			if ( $failed ) {
@@ -213,7 +239,9 @@ trait WorkspaceArtifactCleanup {
 			$removed[] = array_merge($candidate, array( 'artifacts' => $removed_artifacts ));
 		}
 
-		$apply_summary = $this->build_worktree_artifact_cleanup_summary($candidates, $removed, $skipped);
+		$removed       = $this->observe_artifact_reclamation_rows($removed);
+		$partial       = $this->observe_artifact_reclamation_rows($partial);
+		$apply_summary = $this->build_worktree_artifact_cleanup_summary($candidates, $removed, $skipped, $partial);
 		if ( null !== $pagination ) {
 			$apply_summary['pagination'] = $pagination;
 		}
@@ -222,6 +250,7 @@ trait WorkspaceArtifactCleanup {
 			'dry_run'    => false,
 			'candidates' => $candidates,
 			'removed'    => $removed,
+			'partial'    => $partial,
 			'skipped'    => $skipped,
 			'summary'    => $apply_summary,
 		);
@@ -244,8 +273,10 @@ trait WorkspaceArtifactCleanup {
 	 *
 	 * @return string
 	 */
-	private function build_artifact_cleanup_apply_command( bool $force = false ): string {
-		return 'studio wp datamachine-code workspace cleanup apply <run-id>' . ( $force ? ' --force' : '' );
+	private function build_artifact_cleanup_apply_command( bool $force = false, bool $allow_active = false ): string {
+		return 'studio wp datamachine-code workspace cleanup apply <run-id>'
+			. ( $force ? ' --force' : '' )
+			. ( $allow_active ? ' --allow-active-artifact-cleanup' : '' );
 	}
 
 	/**
@@ -258,6 +289,9 @@ trait WorkspaceArtifactCleanup {
 		$parts = array( 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run' );
 		if ( ! empty($opts['force']) ) {
 			$parts[] = '--force';
+		}
+		if ( ! empty($opts['allow_active_artifact_cleanup']) ) {
+			$parts[] = '--allow-active-artifact-cleanup';
 		}
 		if ( isset($opts['limit']) ) {
 			$parts[] = '--limit=' . (int) $opts['limit'];
@@ -305,6 +339,7 @@ trait WorkspaceArtifactCleanup {
 	private function build_worktree_artifact_cleanup_plan( bool $force, array $opts = array() ): array|\WP_Error {
 		$limit         = isset($opts['limit']) ? (int) $opts['limit'] : 0;
 		$offset        = isset($opts['offset']) ? max(0, (int) $opts['offset']) : 0;
+		$allow_active  = ! empty($opts['allow_active_artifact_cleanup']);
 		$only_handles  = isset($opts['only_handles']) && is_array($opts['only_handles'])
 		? array_values(array_filter(array_map('strval', $opts['only_handles']), fn( $h ) => '' !== $h))
 		: null;
@@ -429,7 +464,7 @@ trait WorkspaceArtifactCleanup {
 
 			$liveness_protection = $this->artifact_liveness_protection($wt);
 			if ( null !== $liveness_protection ) {
-				if ( ! $force ) {
+				if ( ! $allow_active ) {
 					$skipped[] = array_merge($base_row, $liveness_protection, array( 'artifacts' => $artifacts ));
 					continue;
 				}
@@ -438,7 +473,7 @@ trait WorkspaceArtifactCleanup {
 
 			$process_protection = $this->active_artifact_process_protection($wt_path, $artifacts);
 			if ( null !== $process_protection ) {
-				if ( ! $force ) {
+				if ( ! $allow_active ) {
 					$skipped[] = array_merge($base_row, $process_protection, array( 'artifacts' => $artifacts ));
 					continue;
 				}
@@ -560,16 +595,14 @@ trait WorkspaceArtifactCleanup {
 	}
 
 	/**
-	 * Return authoritative liveness or active-process protection for an artifact deletion.
+	 * Return authoritative liveness protection from a cache-evicting metadata read.
 	 *
 	 * @param  array<string,mixed> $candidate Worktree candidate.
-	 * @param  array<int,array>    $artifacts Artifact rows about to be removed.
-	 * @param  bool                $fresh     Whether process evidence must bypass the request snapshot.
 	 * @return array<string,mixed>|null
 	 */
-	private function current_artifact_cleanup_protection( array $candidate, array $artifacts, bool $fresh = false ): ?array {
+	private function current_artifact_liveness_protection( array $candidate ): ?array {
 		$handle   = (string) ( $candidate['handle'] ?? '' );
-		$metadata = '' !== $handle ? WorktreeContextInjector::get_metadata($handle) : null;
+		$metadata = '' !== $handle ? WorktreeContextInjector::get_metadata_fresh($handle) : null;
 		$liveness = WorktreeContextInjector::classify_liveness(is_array($metadata) ? $metadata : null);
 		$row      = array_merge(
 			$candidate,
@@ -584,8 +617,7 @@ trait WorkspaceArtifactCleanup {
 			)
 		);
 
-		$protection = $this->artifact_liveness_protection($row);
-		return null !== $protection ? $protection : $this->active_artifact_process_protection( (string) ( $candidate['path'] ?? '' ), $artifacts, $fresh);
+		return $this->artifact_liveness_protection($row);
 	}
 
 	/**
@@ -625,16 +657,28 @@ trait WorkspaceArtifactCleanup {
 	 * @return array<string,mixed>|null
 	 */
 	private function active_artifact_process_protection( string $worktree_path, array $artifacts, bool $fresh = false ): ?array {
-		$evidence = $this->detect_active_artifact_processes($worktree_path, $artifacts, $fresh);
-		if ( array() === $evidence ) {
+		$probe    = $this->detect_active_artifact_processes($worktree_path, $artifacts, $fresh);
+		$evidence = (array) ( $probe['evidence'] ?? array() );
+		if ( array() !== $evidence ) {
+			return array(
+				'reason_code'       => 'active_build',
+				'protecting_reason' => 'active_build',
+				'reason'            => 'active process cwd or open file intersects the worktree artifacts; leaving reconstructable artifacts in place',
+				'process_probe'      => $probe,
+				'process_evidence'   => $evidence,
+			);
+		}
+
+		$status = (string) ( $probe['status'] ?? 'unavailable' );
+		if ( 'available' === $status ) {
 			return null;
 		}
 
 		return array(
-			'reason_code'       => 'active_build',
-			'protecting_reason' => 'active_build',
-			'reason'            => 'active process cwd or open file intersects the worktree artifacts; leaving reconstructable artifacts in place',
-			'process_evidence'  => $evidence,
+			'reason_code'       => 'uncertain' === $status ? 'active_process_probe_uncertain' : 'active_process_probe_unavailable',
+			'protecting_reason' => 'active_process_probe_' . $status,
+			'reason'            => 'active process use could not be authoritatively excluded; safe cleanup is failing closed',
+			'process_probe'      => $probe,
 		);
 	}
 
@@ -644,12 +688,16 @@ trait WorkspaceArtifactCleanup {
 	 * @param  string           $worktree_path Worktree root.
 	 * @param  array<int,array> $artifacts     Profile-derived artifact rows.
 	 * @param  bool             $fresh         Whether to rebuild the process snapshot.
-	 * @return array<int,array<string,mixed>>
+	 * @return array{status:string,evidence:array<int,array<string,mixed>>,diagnostics:array<string,mixed>}
 	 */
 	protected function detect_active_artifact_processes( string $worktree_path, array $artifacts, bool $fresh = false ): array {
 		$worktree_real = realpath($worktree_path);
-		if ( false === $worktree_real || ! is_dir('/proc') ) {
-			return array();
+		if ( false === $worktree_real ) {
+			return array(
+				'status'      => 'unavailable',
+				'evidence'    => array(),
+				'diagnostics' => array( 'reason' => 'worktree_path_unresolved' ),
+			);
 		}
 
 		$roots = array( rtrim($worktree_real, '/') );
@@ -661,7 +709,8 @@ trait WorkspaceArtifactCleanup {
 			}
 		}
 
-		$records = $this->artifact_process_path_records($fresh);
+		$snapshot = $this->artifact_process_path_records($fresh);
+		$records  = (array) ( $snapshot['records'] ?? array() );
 		$matches = array();
 		foreach ( $records as $record ) {
 			$path = rtrim( (string) ( $record['path'] ?? '' ), '/');
@@ -676,29 +725,55 @@ trait WorkspaceArtifactCleanup {
 			}
 		}
 
-		return $matches;
+		return array(
+			'status'      => (string) ( $snapshot['status'] ?? 'unavailable' ),
+			'evidence'    => $matches,
+			'diagnostics' => (array) ( $snapshot['diagnostics'] ?? array() ),
+		);
 	}
 
 	/**
 	 * Snapshot process paths once for preview, or freshly for final apply revalidation.
 	 *
-	 * @return array<int,array<string,mixed>>
+	 * @return array{status:string,records:array<int,array<string,mixed>>,diagnostics:array<string,mixed>}
 	 */
-	private function artifact_process_path_records( bool $fresh ): array {
+	protected function artifact_process_path_records( bool $fresh ): array {
 		if ( ! $fresh && null !== $this->artifact_process_path_snapshot ) {
 			return $this->artifact_process_path_snapshot;
 		}
 
-		$records = array();
-		$entries = scandir('/proc');
-		if ( false === $entries ) {
-			return array();
+		$proc_root = $this->artifact_process_root();
+		if ( ! is_dir($proc_root) || ! is_readable($proc_root) ) {
+			return array(
+				'status'      => 'unavailable',
+				'records'     => array(),
+				'diagnostics' => array( 'reason' => 'process_filesystem_unavailable', 'path' => $proc_root ),
+			);
 		}
+
+		$records = array();
+		$entries = scandir($proc_root);
+		if ( false === $entries ) {
+			return array(
+				'status'      => 'unavailable',
+				'records'     => array(),
+				'diagnostics' => array( 'reason' => 'process_filesystem_unreadable', 'path' => $proc_root ),
+			);
+		}
+		$scanned              = 0;
+		$unreadable           = array();
+		$foreign_namespaces   = array();
+		$self_mount_namespace = @readlink($proc_root . '/self/ns/mnt'); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Procfs namespace links may be unavailable on non-Linux hosts.
 		foreach ( $entries as $entry ) {
 			if ( ! ctype_digit( (string) $entry ) || getmypid() === (int) $entry ) {
 				continue;
 			}
-			$proc = '/proc/' . $entry;
+			$proc = $proc_root . '/' . $entry;
+			++$scanned;
+			$mount_namespace = @readlink($proc . '/ns/mnt'); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Processes can exit between procfs enumeration and readlink.
+			if ( is_string($self_mount_namespace) && is_string($mount_namespace) && $mount_namespace !== $self_mount_namespace ) {
+				$foreign_namespaces[] = array( 'pid' => (int) $entry, 'mount_namespace' => $mount_namespace );
+			}
 			// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Processes can exit between procfs enumeration and ownership lookup.
 			$owner_uid = @fileowner($proc);
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Local procfs metadata, not a remote request.
@@ -713,11 +788,16 @@ trait WorkspaceArtifactCleanup {
 					'match_type' => 'cwd',
 					'path'       => preg_replace('/ \(deleted\)$/', '', $cwd),
 				);
+			} elseif ( is_dir($proc) ) {
+				$unreadable[] = array( 'pid' => (int) $entry, 'resource' => 'cwd' );
 			}
 
 			// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Processes can exit between procfs enumeration and scandir.
 			$fd_entries = @scandir($proc . '/fd');
 			if ( false === $fd_entries ) {
+				if ( is_dir($proc) ) {
+					$unreadable[] = array( 'pid' => (int) $entry, 'resource' => 'fd' );
+				}
 				continue;
 			}
 			foreach ( $fd_entries as $fd ) {
@@ -740,10 +820,115 @@ trait WorkspaceArtifactCleanup {
 			}
 		}
 
+		$status = array() === $unreadable && array() === $foreign_namespaces ? 'available' : 'uncertain';
+		$result = array(
+			'status'      => $status,
+			'records'     => $records,
+			'diagnostics' => array(
+				'process_root'             => $proc_root,
+				'scanned_processes'        => $scanned,
+				'path_records'             => count($records),
+				'unreadable_processes'     => array_slice($unreadable, 0, 10),
+				'foreign_mount_namespaces' => array_slice($foreign_namespaces, 0, 10),
+			),
+		);
 		if ( ! $fresh ) {
-			$this->artifact_process_path_snapshot = $records;
+			$this->artifact_process_path_snapshot = $result;
 		}
-		return $records;
+		return $result;
+	}
+
+	/**
+	 * Resolve the process filesystem root. Overridable for deterministic tests.
+	 */
+	protected function artifact_process_root(): string {
+		return '/proc';
+	}
+
+	/**
+	 * Preserve measured mutation when a later artifact in the row becomes blocked.
+	 *
+	 * @param  array<string,mixed> $candidate         Reviewed candidate.
+	 * @param  array<int,array>    $removed_artifacts Artifacts already removed.
+	 * @param  array<int,array>    $remaining         Artifacts left in place.
+	 * @param  array<string,mixed> $blocker           Current typed protection.
+	 * @return array<string,mixed>
+	 */
+	private function build_partial_artifact_cleanup_row( array $candidate, array $removed_artifacts, array $remaining, array $blocker ): array {
+		$bytes = array_sum(
+			array_map(
+				fn( $artifact ) => max(0, (int) ( $artifact['removal']['bytes_reclaimed'] ?? 0 )),
+				$removed_artifacts
+			)
+		);
+
+		return array_merge(
+			$candidate,
+			array(
+				'reason_code'       => 'partial_artifact_cleanup',
+				'reason'            => 'one or more artifacts were removed before a later artifact became blocked',
+				'artifacts'         => $removed_artifacts,
+				'remaining_artifacts' => $remaining,
+				'bytes_reclaimed'   => $bytes,
+				'blocker'           => $blocker,
+			)
+		);
+	}
+
+	/**
+	 * Observe whether removed artifacts stayed absent through the cleanup window.
+	 *
+	 * @param  array<int,array> $rows Removed or partially removed rows.
+	 * @return array<int,array>
+	 */
+	private function observe_artifact_reclamation_rows( array $rows ): array {
+		foreach ( $rows as &$row ) {
+			$observations = array();
+			foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
+				$relative = is_array($artifact) ? (string) ( $artifact['path'] ?? '' ) : '';
+				if ( '' === $relative ) {
+					continue;
+				}
+				$observations[] = $this->observe_artifact_reclamation_path( (string) ( $row['path'] ?? '' ), $relative);
+			}
+			$row['reclamation_observation'] = array(
+				'observed_at'  => gmdate('c'),
+				'window'       => 'through_cleanup_completion',
+				'observations' => $observations,
+				'durable'      => ! in_array(false, array_column($observations, 'durable'), true),
+			);
+		}
+		unset($row);
+
+		return $rows;
+	}
+
+	/**
+	 * Observe one removed path at cleanup completion.
+	 *
+	 * @return array<string,mixed>
+	 */
+	protected function observe_artifact_reclamation_path( string $worktree_path, string $relative ): array {
+		$path    = rtrim($worktree_path, '/') . '/' . trim($relative, '/');
+		$rebuilt = is_dir($path);
+
+		return array(
+			'path'          => $relative,
+			'status'        => $rebuilt ? 'rebuilt_before_cleanup_completed' : 'absent_at_cleanup_completion',
+			'durable'       => ! $rebuilt,
+			'rebuilt_bytes' => $rebuilt ? max(0, $this->estimate_path_size_bytes($path)) : 0,
+		);
+	}
+
+	/**
+	 * Test/integration seam invoked after each successful artifact mutation.
+	 *
+	 * @param array<string,mixed> $candidate Worktree candidate.
+	 * @param array<string,mixed> $artifact  Removed artifact row.
+	 * @param int                 $count     Number removed from the row so far.
+	 */
+	protected function after_artifact_cleanup_mutation( array $candidate, array $artifact, int $count ): void {
+		unset($candidate, $artifact, $count);
 	}
 
 	/**
@@ -752,15 +937,18 @@ trait WorkspaceArtifactCleanup {
 	 * @param  array<int,array> $candidates Candidate rows.
 	 * @param  array<int,array> $removed    Removed rows.
 	 * @param  array<int,array> $skipped    Skipped rows.
+	 * @param  array<int,array> $partial    Partially removed rows.
 	 * @return array<string,mixed>
 	 */
-	private function build_worktree_artifact_cleanup_summary( array $candidates, array $removed, array $skipped ): array {
+	private function build_worktree_artifact_cleanup_summary( array $candidates, array $removed, array $skipped, array $partial = array() ): array {
 		$skipped_by_reason = array();
 		$artifact_by_repo  = array();
 		$would_bytes       = 0;
 		$removed_bytes     = 0;
 		$would_count       = 0;
 		$removed_count     = 0;
+		$durable_bytes     = 0;
+		$rebuilt_bytes     = 0;
 
 		foreach ( $skipped as $row ) {
 			$code                       = (string) ( $row['reason_code'] ?? 'unknown' );
@@ -777,10 +965,17 @@ trait WorkspaceArtifactCleanup {
 			}
 		}
 
-		foreach ( $removed as $row ) {
+		foreach ( array_merge($removed, $partial) as $row ) {
 			foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
 				$removed_bytes += max(0, (int) ( is_array($artifact) ? ( $artifact['removal']['bytes_reclaimed'] ?? $artifact['size_bytes'] ?? 0 ) : 0 ));
 				++$removed_count;
+			}
+			$observation = (array) ( $row['reclamation_observation'] ?? array() );
+			foreach ( (array) ( $observation['observations'] ?? array() ) as $item ) {
+				$rebuilt_bytes += max(0, (int) ( $item['rebuilt_bytes'] ?? 0 ));
+			}
+			if ( ! empty($observation['durable']) ) {
+				$durable_bytes += array_sum(array_map(fn( $artifact ) => max(0, (int) ( $artifact['removal']['bytes_reclaimed'] ?? 0 )), (array) ( $row['artifacts'] ?? array() )));
 			}
 		}
 
@@ -791,12 +986,15 @@ trait WorkspaceArtifactCleanup {
 			'would_remove_worktrees' => count($candidates),
 			'would_remove_artifacts' => $would_count,
 			'removed_worktrees'      => count($removed),
+			'partially_removed_worktrees' => count($partial),
 			'removed_artifacts'      => $removed_count,
 			'skipped'                => count($skipped),
 			'skipped_by_reason'      => $skipped_by_reason,
 			'artifact_count'         => 0 === $removed_count ? $would_count : $removed_count,
 			'artifact_size_bytes'    => 0 === $removed_count ? $would_bytes : $removed_bytes,
 			'removed_size_bytes'     => $removed_bytes,
+			'durable_reclaimed_bytes' => $durable_bytes,
+			'rebuilt_artifact_bytes' => $rebuilt_bytes,
 			'artifact_size_by_repo'  => $artifact_by_repo,
 		);
 	}

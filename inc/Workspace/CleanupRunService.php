@@ -127,6 +127,17 @@ class CleanupRunService {
 		$items                  = $this->repository->get_items($run_id);
 		$policy                  = (array) ( $run['policy'] ?? array() );
 		$force_artifact_cleanup = ! empty($policy['force_artifact_cleanup']);
+		$allow_active_cleanup   = ! empty($policy['allow_active_artifact_cleanup']);
+		$requested_active       = ! empty($opts['allow_active_artifact_cleanup']);
+		if ( $allow_active_cleanup !== $requested_active ) {
+			return new \WP_Error(
+				'active_artifact_cleanup_override_mismatch',
+				$allow_active_cleanup
+					? 'This reviewed run permits active artifact eviction; repeat --allow-active-artifact-cleanup to apply it explicitly.'
+					: 'Active artifact eviction was not reviewed in this cleanup run. Create a new plan with --allow-active-artifact-cleanup.',
+				array( 'status' => 400 )
+			);
+		}
 		$artifact_rows          = $this->pending_rows_of_type($items, 'artifact_cleanup');
 		$worktree_rows          = $this->pending_rows_of_type($items, 'worktree_removal');
 		$stale_worktrees_only   = 'stale-worktrees' === (string) ( $run['mode'] ?? '' );
@@ -134,6 +145,7 @@ class CleanupRunService {
 		$processed_rows         = 0;
 		$applied_rows           = 0;
 		$skipped_rows           = 0;
+		$partial_rows           = 0;
 		$remaining_rows         = max(0, count($artifact_rows) + count($worktree_rows));
 		$results                = array();
 
@@ -150,6 +162,7 @@ class CleanupRunService {
 					'apply_plan' => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $artifact_batch) ),
 					// The reviewed run policy can force only reconstructable artifact deletion.
 					'force'      => $force_artifact_cleanup,
+					'allow_active_artifact_cleanup' => $allow_active_cleanup,
 					'limit'      => count($artifact_batch),
 				)
 			);
@@ -162,6 +175,7 @@ class CleanupRunService {
 			}
 			$applied_rows += count( (array) ( $results['artifact_cleanup']['removed'] ?? array() ) );
 			$skipped_rows += count( (array) ( $results['artifact_cleanup']['skipped'] ?? array() ) );
+			$partial_rows += count( (array) ( $results['artifact_cleanup']['partial'] ?? array() ) );
 		}
 
 		$remaining_capacity = max(0, $limit - $processed_rows);
@@ -215,7 +229,7 @@ class CleanupRunService {
 			return $status;
 		}
 
-		$next_command = $pending_or_fail > 0 ? $this->cleanup_run_resume_command($run_id, $limit, $force_artifact_cleanup) : null;
+		$next_command = $pending_or_fail > 0 ? $this->cleanup_run_resume_command($run_id, $limit, $force_artifact_cleanup, $allow_active_cleanup) : null;
 
 		return array(
 			'success'                => true,
@@ -224,6 +238,7 @@ class CleanupRunService {
 			'status'                 => $next_status,
 			'processed'              => $processed_rows,
 			'applied'                => $applied_rows,
+			'partial'                => $partial_rows,
 			'skipped'                => $skipped_rows,
 			'next_command'           => $next_command,
 			'batch'                  => array(
@@ -402,6 +417,7 @@ class CleanupRunService {
 					'include_worktrees'      => false,
 					'include_resolvers'      => false,
 					'force_artifact_cleanup' => ! empty($opts['force']),
+					'allow_active_artifact_cleanup' => ! empty($opts['allow_active_artifact_cleanup']),
 				)
 			);
 			if ( $plan instanceof \WP_Error ) {
@@ -439,6 +455,7 @@ class CleanupRunService {
 					$run_id,
 					array(
 						'force' => ! empty($opts['force']),
+						'allow_active_artifact_cleanup' => ! empty($opts['allow_active_artifact_cleanup']),
 						'limit' => $limit,
 					)
 				);
@@ -697,6 +714,7 @@ class CleanupRunService {
 	private function cleanup_items_summary( array $run, array $items, array $summary ): array {
 		$planned = count($items);
 		$applied = (int) ( $summary['items_by_status']['applied'] ?? 0 );
+		$partial = (int) ( $summary['items_by_status']['partial'] ?? 0 );
 		$bytes   = max(0, (int) ( $summary['bytes_reclaimed'] ?? 0 ));
 		$by_type = array();
 
@@ -705,6 +723,7 @@ class CleanupRunService {
 			$by_type[ $type ] ??= array(
 				'planned_rows'    => 0,
 				'applied_rows'    => 0,
+				'partial_rows'    => 0,
 				'skipped_rows'    => 0,
 				'failed_rows'     => 0,
 				'bytes_reclaimed' => 0,
@@ -713,6 +732,9 @@ class CleanupRunService {
 			$status = (string) ( $item['status'] ?? '' );
 			if ( 'applied' === $status ) {
 				++$by_type[ $type ]['applied_rows'];
+				$by_type[ $type ]['bytes_reclaimed'] += max(0, (int) ( $item['bytes_reclaimed'] ?? 0 ));
+			} elseif ( 'partial' === $status ) {
+				++$by_type[ $type ]['partial_rows'];
 				$by_type[ $type ]['bytes_reclaimed'] += max(0, (int) ( $item['bytes_reclaimed'] ?? 0 ));
 			} elseif ( 'skipped' === $status ) {
 				++$by_type[ $type ]['skipped_rows'];
@@ -730,6 +752,7 @@ class CleanupRunService {
 				'safe_workspace_cleanup' => array(
 					'planned_rows'    => $planned,
 					'applied_rows'    => $applied,
+					'partial_rows'    => 0,
 					'skipped_rows'    => 0,
 					'failed_rows'     => 0,
 					'bytes_reclaimed' => $bytes,
@@ -740,6 +763,7 @@ class CleanupRunService {
 		return array(
 			'planned_rows'    => $planned,
 			'applied_rows'    => $applied,
+			'partial_rows'    => $partial,
 			'skipped_rows'    => (int) ( $summary['items_by_status']['skipped'] ?? 0 ),
 			'failed_rows'     => (int) ( $summary['items_by_status']['failed'] ?? 0 ),
 			'bytes_reclaimed' => $bytes,
@@ -856,7 +880,7 @@ class CleanupRunService {
 			$resume_command = array(
 				'bucket'            => 'current_run_resume',
 				'command'           => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
-				'apply'             => $this->cleanup_run_resume_command($run_id, self::DEFAULT_APPLY_LIMIT, ! empty($policy['force_artifact_cleanup'])),
+				'apply'             => $this->cleanup_run_resume_command($run_id, self::DEFAULT_APPLY_LIMIT, ! empty($policy['force_artifact_cleanup']), ! empty($policy['allow_active_artifact_cleanup'])),
 				'destructive'       => false,
 				'apply_destructive' => true,
 				'why'               => 'Resume the reviewed DB-backed cleanup run from persisted pending/failed/applying rows.',
@@ -872,8 +896,10 @@ class CleanupRunService {
 		return $summary;
 	}
 
-	private function cleanup_run_resume_command( string $run_id, int $limit, bool $force_artifact_cleanup ): string {
-		return sprintf('studio wp datamachine-code workspace cleanup resume %s --limit=%d', $run_id, $limit) . ( $force_artifact_cleanup ? ' --force' : '' );
+	private function cleanup_run_resume_command( string $run_id, int $limit, bool $force_artifact_cleanup, bool $allow_active_cleanup = false ): string {
+		return sprintf('studio wp datamachine-code workspace cleanup resume %s --limit=%d', $run_id, $limit)
+			. ( $force_artifact_cleanup ? ' --force' : '' )
+			. ( $allow_active_cleanup ? ' --allow-active-artifact-cleanup' : '' );
 	}
 
 	private function apply_limit( array $opts ): int {
@@ -907,9 +933,32 @@ class CleanupRunService {
 		foreach ( (array) ( $result['skipped'] ?? array() ) as $skip ) {
 			$skipped_by_handle[ (string) ( $skip['handle'] ?? '' ) ] = $skip;
 		}
+		$partial_by_handle = array();
+		foreach ( (array) ( $result['partial'] ?? array() ) as $partial ) {
+			$partial_by_handle[ (string) ( $partial['handle'] ?? '' ) ] = is_array($partial) ? $partial : array();
+		}
 
 		foreach ( $items as $item ) {
 			$handle = (string) ( $item['handle'] ?? '' );
+			if ( isset($partial_by_handle[ $handle ]) ) {
+				$partial = $partial_by_handle[ $handle ];
+				$updated = $this->update_item_or_error(
+					(int) $item['id'],
+					array(
+						'status'          => 'partial',
+						'applied_at'      => gmdate('Y-m-d H:i:s'),
+						'reason_code'     => 'partial_artifact_cleanup',
+						'reason'          => (string) ( $partial['reason'] ?? '' ),
+						'bytes_reclaimed' => max(0, (int) ( $partial['bytes_reclaimed'] ?? 0 )),
+						'evidence'        => array_merge( (array) $item['evidence'], array( 'partial' => $partial )),
+					),
+					'partial'
+				);
+				if ( $updated instanceof \WP_Error ) {
+					return $updated;
+				}
+				continue;
+			}
 			if ( isset($applied_by_handle[ $handle ]) ) {
 				$applied = $applied_by_handle[ $handle ];
 				$updated = $this->update_item_or_error(

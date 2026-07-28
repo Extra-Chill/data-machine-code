@@ -1537,6 +1537,30 @@ class WorktreeContextInjector {
 	}
 
 	/**
+	 * Fetch metadata after evicting the request/object-cache option snapshot.
+	 *
+	 * Destructive final revalidation uses this path so a heartbeat written by a
+	 * concurrent process after planning cannot be hidden by an earlier option read.
+	 * The DB-backed inventory is queried again by {@see self::get_metadata()} and
+	 * remains the fallback when the legacy option is unavailable.
+	 *
+	 * @param  string $handle Workspace handle.
+	 * @return array|null
+	 */
+	public static function get_metadata_fresh( string $handle ): ?array {
+		$inventory_metadata = self::get_inventory_metadata($handle);
+		if ( is_array($inventory_metadata) ) {
+			return $inventory_metadata;
+		}
+
+		if ( function_exists('wp_cache_delete') ) {
+			wp_cache_delete(self::METADATA_OPTION, 'options');
+		}
+
+		return self::get_metadata($handle);
+	}
+
+	/**
 	 * Drop persisted metadata for a handle. Called when a worktree is removed.
 	 *
 	 * @param string $handle Workspace handle.
