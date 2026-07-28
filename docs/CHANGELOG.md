@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.55.3] - 2026-07-28
+
+### Fixed
+- keep workspace lock inspection available under contention
+- bound workspace mutation admission under SQLite contention
+
 ## [0.55.2] - 2026-07-28
 
 ### Fixed
