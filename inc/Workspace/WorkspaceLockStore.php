@@ -9,6 +9,10 @@ namespace DataMachineCode\Workspace;
 
 defined('ABSPATH') || exit;
 
+if ( ! class_exists(\DataMachineCode\Storage\SqliteBusyRetry::class) ) {
+	include_once dirname(__DIR__) . '/Storage/SqliteBusyRetry.php';
+}
+
 final class WorkspaceLockStore {
 
 
@@ -45,24 +49,30 @@ final class WorkspaceLockStore {
 		$expires = gmdate('Y-m-d H:i:s', time() + self::expires_seconds());
 		$meta    = isset($args['metadata']) && is_array($args['metadata']) ? $args['metadata'] : array();
 
-		$inserted = $wpdb->insert(
-			self::table_name(),
-			array(
-				'lock_key'      => self::bounded_string( (string) ( $args['lock_key'] ?? '' ), 190),
-				'purpose'       => self::bounded_string( (string) ( $args['purpose'] ?? 'workspace_repo_mutation' ), 100),
-				'scope'         => self::bounded_string( (string) ( $args['scope'] ?? '' ), 190),
-				'owner'         => self::bounded_string( (string) ( $args['owner'] ?? self::default_owner() ), 190),
-				'run_id'        => self::nullable_bounded_string($args['run_id'] ?? null, 100),
-				'job_id'        => isset($args['job_id']) ? (int) $args['job_id'] : null,
-				'status'        => 'active',
-				'acquired_at'   => $now,
-				'heartbeat_at'  => $now,
-				'expires_at'    => $expires,
-				'released_at'   => null,
-				'metadata_json' => self::encode_metadata($meta),
-			),
-			array( '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
+		$inserted = \DataMachineCode\Storage\SqliteBusyRetry::run(
+			'workspace_lock_register',
+			static fn() => $wpdb->insert(
+				self::table_name(),
+				array(
+					'lock_key'      => self::bounded_string( (string) ( $args['lock_key'] ?? '' ), 190),
+					'purpose'       => self::bounded_string( (string) ( $args['purpose'] ?? 'workspace_repo_mutation' ), 100),
+					'scope'         => self::bounded_string( (string) ( $args['scope'] ?? '' ), 190),
+					'owner'         => self::bounded_string( (string) ( $args['owner'] ?? self::default_owner() ), 190),
+					'run_id'        => self::nullable_bounded_string($args['run_id'] ?? null, 100),
+					'job_id'        => isset($args['job_id']) ? (int) $args['job_id'] : null,
+					'status'        => 'active',
+					'acquired_at'   => $now,
+					'heartbeat_at'  => $now,
+					'expires_at'    => $expires,
+					'released_at'   => null,
+					'metadata_json' => self::encode_metadata($meta),
+				),
+				array( '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
+			)
 		);
+		if ( is_wp_error($inserted) ) {
+			return $inserted;
+		}
 
 		if ( false === $inserted ) {
 			return new \WP_Error(
@@ -87,15 +97,18 @@ final class WorkspaceLockStore {
 		}
 
 		global $wpdb;
-		$wpdb->update(
-			self::table_name(),
-			array(
-				'status'      => 'released',
-				'released_at' => gmdate('Y-m-d H:i:s'),
-			),
-			array( 'id' => $lock_id ),
-			array( '%s', '%s' ),
-			array( '%d' )
+		\DataMachineCode\Storage\SqliteBusyRetry::run(
+			'workspace_lock_release',
+			static fn() => $wpdb->update(
+				self::table_name(),
+				array(
+					'status'      => 'released',
+					'released_at' => gmdate('Y-m-d H:i:s'),
+				),
+				array( 'id' => $lock_id ),
+				array( '%s', '%s' ),
+				array( '%d' )
+			)
 		);
 	}
 
