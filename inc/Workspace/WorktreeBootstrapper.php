@@ -210,7 +210,7 @@ final class WorktreeBootstrapper {
 			 * @param bool   $bootstrap     Whether dependency bootstrap was requested.
 			 */
 			$filtered = apply_filters('datamachine_worktree_bootstrap_demand', $defaults, $detected, $worktree_path, $bootstrap);
-			if ( is_array($filtered) && $filtered !== $defaults ) {
+			if ( $filtered !== $defaults ) {
 				$defaults = array_merge($defaults, $filtered);
 				$source   = 'wordpress_filter';
 			}

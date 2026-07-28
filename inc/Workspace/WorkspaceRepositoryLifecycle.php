@@ -799,7 +799,7 @@ trait WorkspaceRepositoryLifecycle {
 	 * Show detailed info about a workspace repo.
 	 *
 	 * @param  string $handle Workspace handle.
-	 * @return array{success: bool, name?: string, path?: string, branch?: string, remote?: string, commit?: string, dirty?: int, workspace_capacity?: array}|\WP_Error
+	 * @return array{success: bool, name?: string, repo?: string, is_worktree?: bool, is_context?: bool, path?: string|null, branch?: string|null, remote?: string|null, commit?: string|null, dirty?: int, workspace_capacity?: array, primary_freshness?: array|null, workspace_policy?: array}|\WP_Error
 	 */
 	public function show_repo( string $handle ): array|\WP_Error {
 		$requested_handle = $handle;

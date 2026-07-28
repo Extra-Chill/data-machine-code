@@ -5205,6 +5205,11 @@ class WorkspaceCommand extends BaseCommand {
 		$inventory        = (array) ( $report['inventory']['freshness'] ?? array() );
 		$cleanup          = (array) ( $report['cleanup'] ?? array() );
 		$cleanup_summary  = (array) ( $cleanup['summary'] ?? array() );
+		$inode_total      = null === ( $disk['filesystem_total_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_total_inodes'] );
+		$inode_used       = null === ( $disk['filesystem_used_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_used_inodes'] );
+		$inode_free       = null === ( $disk['filesystem_free_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_free_inodes'] );
+		$inode_used_pct   = null === ( $disk['used_inode_percent'] ?? null ) ? 'unknown' : (string) $disk['used_inode_percent'];
+		$inode_free_pct   = null === ( $disk['free_inode_percent'] ?? null ) ? 'unknown' : (string) $disk['free_inode_percent'];
 
 		WP_CLI::log('Workspace hygiene:');
 		$this->format_items(
@@ -5251,7 +5256,7 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array(
 					'metric' => 'inode_capacity',
-					'value'  => sprintf('total=%s used=%s (%s%%) free=%s (%s%%)', null === ( $disk['filesystem_total_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_total_inodes'] ), null === ( $disk['filesystem_used_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_used_inodes'] ), null === ( $disk['used_inode_percent'] ?? null ) ? 'unknown' : (string) $disk['used_inode_percent'], null === ( $disk['filesystem_free_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_free_inodes'] ), null === ( $disk['free_inode_percent'] ?? null ) ? 'unknown' : (string) $disk['free_inode_percent']),
+					'value'  => sprintf('total=%s used=%s (%s%%) free=%s (%s%%)', $inode_total, $inode_used, $inode_used_pct, $inode_free, $inode_free_pct),
 				),
 				array(
 					'metric' => 'capacity_status',

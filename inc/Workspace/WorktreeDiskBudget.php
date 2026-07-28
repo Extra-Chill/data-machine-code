@@ -341,7 +341,6 @@ final class WorktreeDiskBudget {
 			'warn_byte_shortfall'         => $warn_byte_shortfall,
 			'refuse_inode_shortfall'      => $refuse_inode_shortfall,
 			'warn_inode_shortfall'        => $warn_inode_shortfall,
-			'target_recovery_bytes'       => $refuse_byte_shortfall,
 			'target_recovery_bytes'       => $refused ? $refuse_byte_shortfall : $warn_byte_shortfall,
 			'target_recovery_inodes'      => $refused ? $refuse_inode_shortfall : $warn_inode_shortfall,
 			'warn_worktree_count'         => $thresholds['warn_worktree_count'],
