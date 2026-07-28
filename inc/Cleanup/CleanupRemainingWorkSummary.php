@@ -31,9 +31,11 @@ class CleanupRemainingWorkSummary {
 			$evidence = (array) ( $item['evidence'] ?? array() );
 			$row      = array_merge($evidence, $item);
 
-			if ( 'applied' === $status ) {
+			if ( in_array($status, array( 'applied', 'partial' ), true) ) {
 				self::increment_type($summary['applied_by_type'], $type, (int) ( $item['bytes_reclaimed'] ?? 0 ));
-				continue;
+				if ( 'applied' === $status ) {
+					continue;
+				}
 			}
 
 			if ( 'skipped' === $status || 'failed' === $status ) {
@@ -45,7 +47,10 @@ class CleanupRemainingWorkSummary {
 			}
 
 			if ( 'artifact_cleanup' === $type && 'applied' !== $status ) {
-				$summary['remaining_reclaimable_artifact_bytes'] += self::row_bytes($row, array( 'artifact_size_bytes', 'size_bytes' ));
+				$remaining = (array) ( $evidence['partial']['remaining_artifacts'] ?? array() );
+				$summary['remaining_reclaimable_artifact_bytes'] += 'partial' === $status
+					? array_sum(array_map(fn( $artifact ) => max(0, (int) ( $artifact['size_bytes'] ?? 0 )), $remaining))
+					: self::row_bytes($row, array( 'artifact_size_bytes', 'size_bytes' ));
 			}
 			if ( 'worktree_removal' === $type && in_array($status, array( 'pending', 'failed', 'applying' ), true) ) {
 				++$summary['remaining_safely_removable_worktrees'];
@@ -69,7 +74,12 @@ class CleanupRemainingWorkSummary {
 			if ( ! is_array($row) ) {
 				continue;
 			}
-			self::increment_type($summary['applied_by_type'], (string) $type, (int) ( $row['bytes_reclaimed'] ?? 0 ), (int) ( $row['applied_rows'] ?? 0 ));
+			self::increment_type(
+				$summary['applied_by_type'],
+				(string) $type,
+				(int) ( $row['bytes_reclaimed'] ?? 0 ),
+				(int) ( $row['applied_rows'] ?? 0 ) + (int) ( $row['partial_rows'] ?? 0 )
+			);
 		}
 
 		foreach ( (array) ( $items['skipped_examples_by_reason'] ?? array() ) as $reason => $bucket ) {

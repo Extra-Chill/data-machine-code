@@ -34,10 +34,11 @@ trait WorkspaceCleanupPlan {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function workspace_cleanup_plan( array $opts = array() ): array|\WP_Error {
-		$mode = (string) ( $opts['mode'] ?? 'cleanup_plan' );
+		$mode   = (string) ( $opts['mode'] ?? 'cleanup_plan' );
 		$inputs = array(
 			'mode'                   => $mode,
 			'force_artifact_cleanup' => ! empty($opts['force_artifact_cleanup']),
+			'allow_active_artifact_cleanup' => ! empty($opts['allow_active_artifact_cleanup']),
 			'include_artifacts'      => array_key_exists('include_artifacts', $opts) ? (bool) $opts['include_artifacts'] : true,
 			'include_worktrees'      => array_key_exists('include_worktrees', $opts) ? (bool) $opts['include_worktrees'] : true,
 			'include_resolvers'      => ! empty($opts['include_resolvers']),
@@ -62,6 +63,7 @@ trait WorkspaceCleanupPlan {
 				array(
 					'dry_run'        => true,
 					'force'          => $inputs['force_artifact_cleanup'],
+					'allow_active_artifact_cleanup' => $inputs['allow_active_artifact_cleanup'],
 					'full_workspace' => $inputs['full_workspace'],
 					'limit'          => $inputs['limit'],
 					'offset'         => $inputs['offset'],
@@ -134,7 +136,8 @@ trait WorkspaceCleanupPlan {
 			'safety_policy'  => array(
 				'applies_inline'               => false,
 				'force_artifact_cleanup'       => $inputs['force_artifact_cleanup'],
-				'artifact_cleanup'             => 'apply-plan must revalidate profile-derived artifact paths before deletion',
+				'allow_active_artifact_cleanup' => $inputs['allow_active_artifact_cleanup'],
+				'artifact_cleanup'             => 'apply-plan must freshly revalidate profile-derived paths, authoritative liveness before each artifact, and active process use once per row immediately before mutation',
 				'worktree_removal'             => 'apply-plan must re-run dirty, unpushed, identity, lifecycle, containment, and primary protections before deletion',
 				'resolver'                     => 'resolver rows may gather merge signals but cannot delete worktrees',
 				'destructive_rows_need_review' => true,
@@ -862,7 +865,9 @@ trait WorkspaceCleanupPlan {
 	 * @param array<string,mixed> $inputs Plan inputs.
 	 */
 	private function cleanup_plan_apply_command( array $inputs ): string {
-		return 'studio wp datamachine-code workspace cleanup apply <run-id>' . ( ! empty($inputs['force_artifact_cleanup']) ? ' --force' : '' );
+		return 'studio wp datamachine-code workspace cleanup apply <run-id>'
+			. ( ! empty($inputs['force_artifact_cleanup']) ? ' --force' : '' )
+			. ( ! empty($inputs['allow_active_artifact_cleanup']) ? ' --allow-active-artifact-cleanup' : '' );
 	}
 
 	/**
