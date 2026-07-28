@@ -26,6 +26,7 @@ use DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator;
 use DataMachineCode\Workspace\WorkspaceReader;
 use DataMachineCode\Workspace\WorkspaceWriter;
 use DataMachineCode\Workspace\WorktreeContextInjector;
+use DataMachineCode\Workspace\WorktreeDiskBudget;
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\RuntimeCapabilities;
 
@@ -221,6 +222,10 @@ class WorkspaceAbilities {
 							'remote'            => array( 'type' => array( 'string', 'null' ) ),
 							'commit'            => array( 'type' => array( 'string', 'null' ) ),
 							'dirty'             => array( 'type' => 'integer' ),
+							'workspace_capacity' => array(
+								'type'        => 'object',
+								'description' => 'Complete workspace capacity envelope including byte and inode total/used/free values and percentages, probe, status, warnings, reasons, thresholds, and remediation commands.',
+							),
 							'primary_freshness' => self::primaryFreshnessSchema(),
 						),
 					),
@@ -2946,6 +2951,9 @@ class WorkspaceAbilities {
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			$result = ( new RemoteWorkspaceBackend() )->show($handle);
 			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
+				if ( is_array($result) && is_dir($workspace->get_path()) ) {
+					$result['workspace_capacity'] = WorktreeDiskBudget::inspect($workspace->get_path());
+				}
 				return $result;
 			}
 		}

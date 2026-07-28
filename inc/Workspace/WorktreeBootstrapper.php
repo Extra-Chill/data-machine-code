@@ -95,6 +95,20 @@ final class WorktreeBootstrapper {
 	/** Repository-owned opt-in contract for submodule dependency roots. */
 	private const SUBMODULE_BOOTSTRAP_CONFIG = '.datamachine/worktree-bootstrap.json';
 
+	/** Conservative capacity allowances used before dependency trees exist. */
+	private const DEFAULT_DEMAND = array(
+		'git_bytes'            => 16777216,
+		'git_inodes'           => 256,
+		'submodule_bytes'      => 1073741824,
+		'submodule_inodes'     => 250000,
+		'package_root_bytes'   => 2147483648,
+		'package_root_inodes'  => 1000000,
+		'composer_root_bytes'  => 1073741824,
+		'composer_root_inodes' => 250000,
+	);
+
+	private const DEFAULT_COMMAND_TIMEOUT_SECONDS = 600;
+
 	/**
 	 * Run all applicable bootstrap steps inside the given worktree.
 	 *
@@ -132,6 +146,16 @@ final class WorktreeBootstrapper {
 		);
 	}
 
+	/** Resolve the finite deadline applied to every dependency bootstrap command. */
+	public static function command_timeout_seconds( string $step = '', string $relative = '.' ): int {
+		$timeout = self::DEFAULT_COMMAND_TIMEOUT_SECONDS;
+		if ( function_exists('apply_filters') ) {
+			$timeout = (int) apply_filters('datamachine_code_worktree_bootstrap_command_timeout_seconds', $timeout, $step, $relative);
+		}
+
+		return max(1, $timeout);
+	}
+
 	/**
 	 * Detect which bootstrap steps WOULD run for a given worktree path, without
 	 * executing anything. Useful for diagnostics and for the smoke test.
@@ -139,6 +163,7 @@ final class WorktreeBootstrapper {
 	 * @param  string $worktree_path Absolute path to the worktree root.
 	 * @return array{
 	 *     submodules: bool,
+	 *     submodule_roots: array<int, string>,
 	 *     packages: ?string,  // Root package manager slug or null.
 	 *     composer: bool,
 	 *     package_roots: array<int, array{path: string, relative: string, manager: string}>,
@@ -152,11 +177,76 @@ final class WorktreeBootstrapper {
 
 		return array(
 			'submodules'            => is_file( rtrim( $worktree_path, '/' ) . '/.gitmodules' ),
+			'submodule_roots'        => array_keys(self::submodule_paths(rtrim($worktree_path, '/'))),
 			'packages'              => self::detect_package_manager( $worktree_path ),
 			'composer'              => is_file( rtrim( $worktree_path, '/' ) . '/composer.lock' ),
 			'package_roots'         => $package_discovery['roots'],
 			'skipped_package_roots' => $package_discovery['skipped'],
 			'composer_roots'        => $composer_roots,
+		);
+	}
+
+	/**
+	 * Build a conservative pre-create capacity plan from authoritative detection.
+	 *
+	 * The Git reserve covers the worktree administration/index lock mutation and
+	 * is retained for bare checkouts. Dependency allowances are only included
+	 * when bootstrap is requested. Values are defaults, not measured forecasts.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public static function demand_plan( string $worktree_path, bool $bootstrap = true ): array {
+		$detected = self::detect($worktree_path);
+		$defaults = self::DEFAULT_DEMAND;
+		$source   = 'conservative_defaults';
+
+		if ( function_exists('apply_filters') ) {
+			/**
+			 * Filters conservative per-operation worktree bootstrap demand allowances.
+			 *
+			 * @param array  $defaults      Default byte and inode allowances.
+			 * @param array  $detected      Result from WorktreeBootstrapper::detect().
+			 * @param string $worktree_path Existing checkout used for detection.
+			 * @param bool   $bootstrap     Whether dependency bootstrap was requested.
+			 */
+			$filtered = apply_filters('datamachine_worktree_bootstrap_demand', $defaults, $detected, $worktree_path, $bootstrap);
+			if ( is_array($filtered) && $filtered !== $defaults ) {
+				$defaults = array_merge($defaults, $filtered);
+				$source   = 'wordpress_filter';
+			}
+		}
+
+		foreach ( self::DEFAULT_DEMAND as $key => $fallback ) {
+			$defaults[ $key ] = isset($defaults[ $key ]) && is_numeric($defaults[ $key ])
+				? max(0, (int) $defaults[ $key ])
+				: $fallback;
+		}
+
+		$submodule_count = $bootstrap ? count((array) $detected['submodule_roots']) : 0;
+		$package_count   = $bootstrap ? count((array) $detected['package_roots']) : 0;
+		$composer_count  = $bootstrap ? count((array) $detected['composer_roots']) : 0;
+		$bytes           = $defaults['git_bytes']
+			+ ( $submodule_count * $defaults['submodule_bytes'] )
+			+ ( $package_count * $defaults['package_root_bytes'] )
+			+ ( $composer_count * $defaults['composer_root_bytes'] );
+		$inodes          = $defaults['git_inodes']
+			+ ( $submodule_count * $defaults['submodule_inodes'] )
+			+ ( $package_count * $defaults['package_root_inodes'] )
+			+ ( $composer_count * $defaults['composer_root_inodes'] );
+
+		return array(
+			'bytes'             => $bytes,
+			'inodes'            => $inodes,
+			'source'            => $source,
+			'fallback_semantics' => 'conservative_defaults_are_used_without_wordpress_or_for_invalid_filtered_values',
+			'bootstrap'         => $bootstrap,
+			'detected'          => $detected,
+			'counts'            => array(
+				'submodules'     => $submodule_count,
+				'package_roots'  => $package_count,
+				'composer_roots' => $composer_count,
+			),
+			'allowances'        => $defaults,
 		);
 	}
 
@@ -586,6 +676,7 @@ final class WorktreeBootstrapper {
 	 * invocations, not user input. The `cd` target is escaped.
 	 */
 	private static function run_command( string $step, string $worktree_path, string $command, string $relative = '.', bool $preserve_tracked_files = false ): array {
+		$timeout_seconds = self::command_timeout_seconds($step, $relative);
 		$snapshot = $preserve_tracked_files ? self::snapshot_tracked_state($worktree_path) : null;
 		if ( $preserve_tracked_files && null === $snapshot ) {
 			return array(
@@ -607,6 +698,7 @@ final class WorktreeBootstrapper {
 			sprintf('%s%s 2>&1', self::shell_env_prefix(), $command),
 			array(
 				'cwd'              => $worktree_path,
+				'timeout_seconds'  => $timeout_seconds,
 				'output_cap_bytes' => self::OUTPUT_CAP_BYTES,
 				'error_as_result'  => true,
 			)
@@ -616,13 +708,18 @@ final class WorktreeBootstrapper {
 			$data    = $result instanceof \WP_Error ? $result->get_error_data() : $result;
 			$data    = is_array($data) ? $data : array();
 			$message = $result instanceof \WP_Error ? $result->get_error_message() : 'Process command failed.';
+			$timed_out   = isset($data['timeout']);
 			$step_result = array(
 				'step'        => $step,
 				'status'      => self::STATUS_FAILED,
+				'reason'      => $timed_out ? 'command_timeout' : 'command_failed',
 				'relative'    => $relative,
 				'command'     => $command,
 				'exit_code'   => (int) ( $data['exit_code'] ?? 1 ),
 				'output_tail' => (string) ( $data['output'] ?? $message ),
+				'timed_out'   => $timed_out,
+				'timeout_seconds' => $timeout_seconds,
+				'cleanup'     => is_array($data['cleanup'] ?? null) ? $data['cleanup'] : null,
 			);
 		} else {
 			$step_result = array(
@@ -632,6 +729,8 @@ final class WorktreeBootstrapper {
 				'command'     => $command,
 				'exit_code'   => 0,
 				'output_tail' => $result['output'],
+				'timed_out'   => false,
+				'timeout_seconds' => $timeout_seconds,
 			);
 		}
 

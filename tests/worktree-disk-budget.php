@@ -37,11 +37,11 @@ try {
 
 	assert_true('refused' === $budget['status'], 'low free space should refuse worktree creation');
 	assert_true('independent_filesystem_bytes_and_inodes' === $budget['safety_basis'], 'response should identify independent byte and inode safeguards');
-	assert_true(str_contains($budget['warnings'][0] ?? '', 'Free filesystem space'), 'threshold messaging should identify filesystem free space');
+	assert_true(str_contains($budget['warnings'][0] ?? '', 'Projected free filesystem space'), 'threshold messaging should identify projected filesystem free space');
 	assert_true(98 * $gib === $budget['filesystem_used_bytes'], 'filesystem used bytes should be explicit');
 	assert_true(2 * $gib === $budget['filesystem_free_bytes'], 'filesystem free bytes should be explicit');
 	assert_true(100 * $gib === $budget['filesystem_total_bytes'], 'filesystem total bytes should be explicit');
-	assert_true(8 * $gib === $budget['cleanup_recommendations'][0]['expected_reclaim_bytes'], 'recommendations should include the bytes needed to clear the effective floor');
+	assert_true(( 8 * $gib ) + 1 === $budget['cleanup_recommendations'][0]['expected_reclaim_bytes'], 'recommendations should include the bytes needed to move above the inclusive floor');
 	assert_true(str_contains(WorktreeDiskBudget::format_summary($budget), '2.0 GiB (2.0%) free'), 'summary should include current free GiB and percent');
 	assert_true('studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json' === $budget['artifact_cleanup_command'], 'disk-budget artifact cleanup command should create a DB-backed review plan');
 
@@ -103,11 +103,12 @@ try {
 		$inode_thresholds
 	);
 	assert_true('refused' === $inode_refused['status'], 'healthy bytes with insufficient inodes should refuse admission');
-	assert_true(in_array('free_inode_refusal_threshold', $inode_refused['trigger_reasons'], true), 'inode refusal should have an independent trigger reason');
+	assert_true(in_array('projected_free_inodes_absolute_refusal_floor', $inode_refused['trigger_reasons'], true), 'inode refusal should have an independent trigger reason');
 	assert_true(12607200 === $inode_refused['filesystem_used_inodes'], 'used inode count should be explicit');
 	assert_true(500000 === $inode_refused['filesystem_free_inodes'], 'free inode count should be explicit');
 	assert_true(13107200 === $inode_refused['filesystem_total_inodes'], 'total inode count should be explicit');
-	assert_true(500000 === $inode_refused['cleanup_recommendations'][0]['expected_reclaim_inodes'], 'remediation should state exact inode recovery needed');
+	assert_true(810721 === $inode_refused['target_recovery_inodes'], 'global remediation should state exact inode recovery needed above the stricter inclusive floor');
+	assert_true(null === $inode_refused['cleanup_recommendations'][0]['expected_reclaim_inodes'], 'unmeasured candidates must not claim the global inode deficit as reclaim evidence');
 	assert_true(str_contains(WorktreeDiskBudget::format_summary($inode_refused), '500,000'), 'summary should include free inode capacity');
 
 	$inode_warning = WorktreeDiskBudget::evaluate(
@@ -120,7 +121,8 @@ try {
 		$inode_thresholds
 	);
 	assert_true('warning' === $inode_warning['status'], 'inode warning threshold should not refuse admission');
-	assert_true(in_array('free_inode_warning_threshold', $inode_warning['trigger_reasons'], true), 'inode warning should have a stable trigger reason');
+	assert_true(in_array('projected_free_inodes_absolute_warning_floor', $inode_warning['trigger_reasons'], true), 'inode warning should have a stable trigger reason');
+	assert_true(500001 === $inode_warning['target_recovery_inodes'], 'warning pressure should target recovery through the inclusive warning floor');
 
 	$inode_recovered = WorktreeDiskBudget::evaluate(
 		array(
@@ -143,8 +145,8 @@ try {
 		$inode_thresholds
 	);
 	assert_true('refused' === $byte_only_pressure['status'], 'healthy inodes must not weaken byte refusal');
-	assert_true(in_array('free_space_refusal_threshold', $byte_only_pressure['trigger_reasons'], true), 'byte refusal remains independently visible');
-	assert_true(! in_array('free_inode_refusal_threshold', $byte_only_pressure['trigger_reasons'], true), 'healthy inodes should not be mislabeled under byte pressure');
+	assert_true(in_array('projected_free_bytes_absolute_refusal_floor', $byte_only_pressure['trigger_reasons'], true), 'byte refusal remains independently visible');
+	assert_true(! in_array('projected_free_inodes_absolute_refusal_floor', $byte_only_pressure['trigger_reasons'], true), 'healthy inodes should not be mislabeled under byte pressure');
 
 	$unsupported_inodes = WorktreeDiskBudget::evaluate(
 		array(
@@ -170,6 +172,59 @@ try {
 	);
 	assert_true('warning' === $forced_inode_pressure['status'], 'explicit force should downgrade inode refusal to a warning');
 	assert_true(true === $forced_inode_pressure['force_override_applied'], 'forced inode admission should remain explicit in evidence');
+
+	$projected_equality = WorktreeDiskBudget::evaluate(
+		array(
+			'free_bytes'   => 11 * $gib,
+			'total_bytes'  => 100 * $gib,
+			'free_inodes'  => 1000256,
+			'total_inodes' => 10000000,
+		),
+		$inode_thresholds,
+		false,
+		array( 'bytes' => $gib, 'inodes' => 256, 'source' => 'test_plan' )
+	);
+	assert_true('refused' === $projected_equality['status'], 'projected equality with refusal floors must refuse');
+	assert_true(10 * $gib === $projected_equality['projected_free_bytes'], 'projected free bytes should subtract demand');
+	assert_true(1000000 === $projected_equality['projected_free_inodes'], 'projected free inodes should subtract demand');
+	assert_true(1 === $projected_equality['refuse_byte_shortfall'], 'equality byte shortfall should be exactly one byte');
+	assert_true(1 === $projected_equality['refuse_inode_shortfall'], 'equality inode shortfall should be exactly one inode');
+	assert_true('test_plan' === $projected_equality['demand_source'], 'demand source should remain explicit');
+	$git_lock_boundary = WorktreeDiskBudget::evaluate(
+		array( 'free_bytes' => ( 10 * $gib ) + 16777217, 'total_bytes' => 100 * $gib, 'free_inodes' => 1000257, 'total_inodes' => 10000000 ),
+		$inode_thresholds,
+		false,
+		array( 'bytes' => 16777216, 'inodes' => 256, 'source' => 'git_mutation_reserve' )
+	);
+	assert_true('warning' === $git_lock_boundary['status'], 'One byte and inode beyond refusal floors should preserve Git mutation headroom while warning.');
+	$git_fixture = sys_get_temp_dir() . '/dmc-git-lock-boundary-' . bin2hex(random_bytes(6));
+	mkdir($git_fixture . '/.git', 0777, true);
+	assert_true(false !== file_put_contents($git_fixture . '/.git/index.lock', ''), 'Admitted Git mutation reserve must permit index.lock creation.');
+	unlink($git_fixture . '/.git/index.lock');
+	rmdir($git_fixture . '/.git');
+	rmdir($git_fixture);
+
+	$large_percentage_floor = WorktreeDiskBudget::evaluate(
+		array( 'free_bytes' => 50 * $gib, 'total_bytes' => 1000 * $gib ),
+		$inode_thresholds
+	);
+	assert_true('refused' === $large_percentage_floor['status'], 'large filesystems must retain the independent percentage refusal floor');
+	assert_true(in_array('projected_free_bytes_percentage_refusal_floor', $large_percentage_floor['trigger_reasons'], true), 'percentage refusal reason should be independently exposed');
+	assert_true(! in_array('projected_free_bytes_absolute_refusal_floor', $large_percentage_floor['trigger_reasons'], true), 'percentage pressure must not fabricate an absolute-floor reason');
+
+	$gnu = WorktreeDiskBudget::parse_inode_probe_output("1000:250\n", 'gnu_statfs');
+	assert_true(array( 'total_inodes' => 1000, 'free_inodes' => 250, 'probe' => 'gnu_statfs' ) === $gnu, 'GNU statfs output should parse deterministically');
+	$bsd = WorktreeDiskBudget::parse_inode_probe_output('2000:1500', 'bsd_statfs');
+	assert_true('bsd_statfs' === $bsd['probe'] && 1500 === $bsd['free_inodes'], 'BSD statfs output should parse deterministically');
+	foreach ( array( '1000', '1000:2:1', 'x:1', '10:11' ) as $malformed ) {
+		assert_true('unavailable' === WorktreeDiskBudget::parse_inode_probe_output($malformed, 'gnu_statfs')['probe'], 'malformed or impossible telemetry must remain unavailable');
+	}
+	assert_true('unavailable' === WorktreeDiskBudget::parse_inode_probe_output('10:1', 'unsupported')['probe'], 'unsupported probes must remain unavailable');
+	$bsd_fallback = WorktreeDiskBudget::probe_inode_capacity(
+		__DIR__,
+		static fn( array $argv, string $probe ): array => array( 'success' => 'bsd_statfs' === $probe, 'output' => '3000:1200' )
+	);
+	assert_true('bsd_statfs' === $bsd_fallback['probe'], 'failed GNU probing should fall through to BSD statfs');
 
 	$root_mount = WorktreeDiskBudget::parse_mountinfo(
 		'32 24 8:2 / / rw,relatime - ext4 /dev/sdb rw',

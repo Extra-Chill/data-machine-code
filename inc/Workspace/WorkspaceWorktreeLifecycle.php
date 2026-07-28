@@ -137,8 +137,27 @@ trait WorkspaceWorktreeLifecycle {
 				$wt_handle,
 				$wt_path,
 				$primary_path
-			)
+			),
+			self::worktree_capacity_wait_timeout_seconds($bootstrap)
 		);
+	}
+
+	/**
+	 * Resolve the explicit global-capacity lock wait budget.
+	 *
+	 * Lock order is always global capacity first, then the repository lock. The
+	 * global lock remains held through bounded bootstrap so concurrent admissions
+	 * cannot inspect stale capacity. Its default wait exceeds the default bounded
+	 * dependency command timeout and can be tuned for installations with many
+	 * bootstrap roots.
+	 */
+	public static function worktree_capacity_wait_timeout_seconds( bool $bootstrap = true ): int {
+		$timeout = 1800;
+		if ( function_exists('apply_filters') ) {
+			$timeout = (int) apply_filters('datamachine_code_worktree_capacity_wait_timeout_seconds', $timeout, $bootstrap);
+		}
+
+		return max(1, $timeout);
 	}
 
 	/**
@@ -166,11 +185,13 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
 		}
 
+		$demand_plan = WorktreeBootstrapper::demand_plan($primary_path, $bootstrap);
 		$disk_budget = WorktreeDiskBudget::inspect(
 			$this->workspace_path,
 			WorktreeDiskBudget::thresholds($repo, $branch),
 			$force,
-			array( 'include_workspace_usage' => true )
+			array( 'include_workspace_usage' => true ),
+			$demand_plan
 		);
 		if ( 'refused' === ( $disk_budget['status'] ?? '' ) ) {
 			$recommendations = array_map(

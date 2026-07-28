@@ -197,6 +197,7 @@ namespace {
 	$database_calls = $GLOBALS['dmc_test_get_option_calls'];
 	$remote         = \DataMachineCode\Abilities\WorkspaceAbilities::showRepo(array( 'name' => 'remote-target' ));
 	startup_bounds_assert(! is_wp_error($remote) && 'github_api' === ( $remote['backend'] ?? null ), 'Local miss did not preserve registered remote workspace behavior.');
+	startup_bounds_assert(is_array($remote['workspace_capacity'] ?? null), 'Remote show variant must attach measurable local workspace capacity.');
 	startup_bounds_assert($GLOBALS['dmc_test_get_option_calls'] > $database_calls, 'Remote show did not cross the database option boundary.');
 
 	mkdir($workspace . '/timeout-target');
@@ -211,6 +212,7 @@ namespace {
 	$context = \DataMachineCode\Abilities\WorkspaceAbilities::showRepo(array( 'name' => 'remote-context' ));
 	startup_bounds_assert(! is_wp_error($context) && 'github_api' === ( $context['backend'] ?? null ), 'Context alias did not preserve registered remote workspace behavior.');
 	startup_bounds_assert(! empty($context['is_context']), 'Remote context alias lost its context policy.');
+	startup_bounds_assert(is_array($context['workspace_capacity'] ?? null), 'Context show variant must attach measurable local workspace capacity.');
 	unset($GLOBALS['dmc_test_filters']['datamachine_code_context_repositories']);
 
 	startup_bounds_assert(! is_dir($workspace . '/.locks'), 'Read/help startup acquired a mutation lock.');

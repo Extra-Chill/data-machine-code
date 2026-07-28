@@ -5220,7 +5220,23 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array(
 					'metric' => 'disk_free',
-					'value'  => (string) ( $disk['free_human'] ?? '-' ),
+					'value'  => sprintf('%s (%s%%)', (string) ( $disk['free_human'] ?? '-' ), null === ( $disk['free_percent'] ?? null ) ? '-' : (string) $disk['free_percent']),
+				),
+				array(
+					'metric' => 'disk_used',
+					'value'  => sprintf('%s (%s%%)', null === ( $disk['filesystem_used_bytes'] ?? null ) ? '-' : $this->format_bytes( (int) $disk['filesystem_used_bytes'] ), null === ( $disk['used_percent'] ?? null ) ? '-' : (string) $disk['used_percent']),
+				),
+				array(
+					'metric' => 'disk_total',
+					'value'  => (string) ( $disk['total_human'] ?? '-' ),
+				),
+				array(
+					'metric' => 'inode_capacity',
+					'value'  => sprintf('total=%s used=%s (%s%%) free=%s (%s%%)', null === ( $disk['filesystem_total_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_total_inodes'] ), null === ( $disk['filesystem_used_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_used_inodes'] ), null === ( $disk['used_inode_percent'] ?? null ) ? 'unknown' : (string) $disk['used_inode_percent'], null === ( $disk['filesystem_free_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_free_inodes'] ), null === ( $disk['free_inode_percent'] ?? null ) ? 'unknown' : (string) $disk['free_inode_percent']),
+				),
+				array(
+					'metric' => 'capacity_status',
+					'value'  => (string) ( $disk['status'] ?? 'unknown' ),
 				),
 				array(
 					'metric' => 'worktree_status_mode',

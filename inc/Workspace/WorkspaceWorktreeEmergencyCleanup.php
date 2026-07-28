@@ -52,6 +52,8 @@ trait WorkspaceWorktreeEmergencyCleanup {
 		$artifact_candidates = array();
 		$worktree_candidates = array();
 		$skipped             = array();
+		$entry_count_started = microtime(true);
+		$entry_count_deadline = $entry_count_started + self::HYGIENE_DEFAULT_SIZE_TOTAL_TIMEOUT;
 
 		foreach ( $this->build_workspace_inventory_rows() as $wt ) {
 			if ( ! empty($wt['is_primary']) ) {
@@ -65,6 +67,7 @@ trait WorkspaceWorktreeEmergencyCleanup {
 			$metadata   = is_array($wt['metadata'] ?? null) ? (array) $wt['metadata'] : null;
 			$created_at = is_string($wt['created_at'] ?? null) ? (string) $wt['created_at'] : null;
 			$disk       = $this->build_worktree_disk_report($repo, $path, true, $created_at, $metadata);
+			$disk       = $this->annotate_emergency_disk_entry_counts($disk, $path, $entry_count_deadline);
 			$base_row   = array_merge(
 				array(
 					'handle'     => $handle,
@@ -103,6 +106,9 @@ trait WorkspaceWorktreeEmergencyCleanup {
 						'artifacts'           => $disk['artifacts'],
 						'artifact_count'      => count( (array) $disk['artifacts']),
 						'artifact_size_bytes' => (int) ( $disk['artifact_size_bytes'] ?? 0 ),
+						'entry_count'         => $disk['artifact_entry_count'] ?? null,
+						'entry_count_minimum' => (int) ( $disk['artifact_entry_count_minimum'] ?? 0 ),
+						'entry_count_status'  => (string) ( $disk['artifact_entry_count_status'] ?? 'unknown' ),
 						'reason_code'         => 'profile_artifacts',
 						'reason'              => 'profile-derived reconstructable artifacts can be removed first under disk pressure',
 					)
@@ -114,6 +120,9 @@ trait WorkspaceWorktreeEmergencyCleanup {
 				$worktree_candidates[] = array_merge(
 					$base_row, array(
 						'dirty'       => 0,
+						'entry_count' => $disk['worktree_entry_count'] ?? null,
+						'entry_count_minimum' => (int) ( $disk['worktree_entry_count'] ?? 0 ),
+						'entry_count_status' => (string) ( $disk['worktree_entry_count_status'] ?? 'unknown' ),
 						'signal'      => $lifecycle_state,
 						'reason_code' => $lifecycle_state,
 						'reason'      => sprintf('worktree lifecycle state is %s; deletion requires reviewed apply-plan revalidation', $lifecycle_state),
@@ -130,7 +139,15 @@ trait WorkspaceWorktreeEmergencyCleanup {
 			}
 		}
 
-		usort($artifact_candidates, fn( $a, $b ) => (int) ( $b['artifact_size_bytes'] ?? 0 ) <=> (int) ( $a['artifact_size_bytes'] ?? 0 ));
+		usort($artifact_candidates, static function ( $a, $b ): int {
+			$a_measured = 'measured' === (string) ( $a['entry_count_status'] ?? '' );
+			$b_measured = 'measured' === (string) ( $b['entry_count_status'] ?? '' );
+			if ( $a_measured !== $b_measured ) {
+				return $b_measured <=> $a_measured;
+			}
+			$count = (int) ( $b['entry_count'] ?? -1 ) <=> (int) ( $a['entry_count'] ?? -1 );
+			return 0 !== $count ? $count : (int) ( $b['artifact_size_bytes'] ?? 0 ) <=> (int) ( $a['artifact_size_bytes'] ?? 0 );
+		});
 		usort($worktree_candidates, fn( $a, $b ) => (int) ( $b['age_days'] ?? -1 ) <=> (int) ( $a['age_days'] ?? -1 ));
 
 		return array(
@@ -144,8 +161,48 @@ trait WorkspaceWorktreeEmergencyCleanup {
 			'removed_artifacts'   => array(),
 			'removed_worktrees'   => array(),
 			'skipped'             => $skipped,
+			'entry_count_probe'   => array(
+				'per_entry_timeout_seconds' => self::HYGIENE_DEFAULT_SIZE_ENTRY_TIMEOUT,
+				'total_timeout_seconds'     => self::HYGIENE_DEFAULT_SIZE_TOTAL_TIMEOUT,
+				'duration_seconds'          => round(microtime(true) - $entry_count_started, 3),
+			),
 			'summary'             => $this->build_worktree_emergency_cleanup_summary($artifact_candidates, $worktree_candidates, array(), array(), $skipped),
 		);
+	}
+
+	/** Attach bounded count evidence to artifact paths and the containing worktree. */
+	private function annotate_emergency_disk_entry_counts( array $disk, string $path, float $deadline ): array {
+		$artifact_total    = 0;
+		$artifact_complete = true;
+		foreach ( (array) ( $disk['artifacts'] ?? array() ) as $index => $artifact ) {
+			$relative  = (string) ( $artifact['path'] ?? '' );
+			$remaining = $deadline - microtime(true);
+			$probe     = $remaining > 0
+				? $this->directory_entry_count_best_effort(rtrim($path, '/') . '/' . $relative, max(1, min(self::HYGIENE_DEFAULT_SIZE_ENTRY_TIMEOUT, (int) ceil($remaining))))
+				: array( 'success' => false, 'reason' => 'total_timeout' );
+			$measured = ! empty($probe['success']);
+			$disk['artifacts'][ $index ]['entry_count']        = $measured ? (int) $probe['entry_count'] : null;
+			$disk['artifacts'][ $index ]['entry_count_status'] = $measured ? 'measured' : 'unknown';
+			$disk['artifacts'][ $index ]['entry_count_reason'] = $measured ? null : (string) ( $probe['reason'] ?? 'probe_failed' );
+			$artifact_total += $measured ? (int) $probe['entry_count'] : 0;
+			$artifact_complete = $artifact_complete && $measured;
+		}
+		$disk['artifact_entry_count']        = $artifact_complete ? $artifact_total : null;
+		$disk['artifact_entry_count_minimum'] = $artifact_total;
+		$disk['artifact_entry_count_status'] = $artifact_complete ? 'measured' : ( $artifact_total > 0 ? 'partial' : 'unknown' );
+
+		$remaining = $deadline - microtime(true);
+		$probe     = $remaining > 0
+			? $this->directory_entry_count_best_effort($path, max(1, min(self::HYGIENE_DEFAULT_SIZE_ENTRY_TIMEOUT, (int) ceil($remaining))))
+			: array( 'success' => false, 'reason' => 'total_timeout' );
+		$disk['worktree_entry_count']        = ! empty($probe['success']) ? (int) $probe['entry_count'] : null;
+		$disk['worktree_entry_count_status'] = ! empty($probe['success']) ? 'measured' : 'unknown';
+		$disk['worktree_entry_count_reason'] = ! empty($probe['success']) ? null : (string) ( $probe['reason'] ?? 'probe_failed' );
+		$disk['entry_count']                  = ! empty($disk['artifacts']) ? $disk['artifact_entry_count'] : $disk['worktree_entry_count'];
+		$disk['entry_count_minimum']          = ! empty($disk['artifacts']) ? $artifact_total : (int) ( $disk['worktree_entry_count'] ?? 0 );
+		$disk['entry_count_status']           = ! empty($disk['artifacts']) ? $disk['artifact_entry_count_status'] : $disk['worktree_entry_count_status'];
+
+		return $disk;
 	}
 
 	/**
@@ -412,6 +469,7 @@ trait WorkspaceWorktreeEmergencyCleanup {
 			'removed_artifact_bytes' => $removed_bytes,
 			'worktree_size_bytes'    => array_sum(array_map(fn( $row ) => max(0, (int) ( $row['size_bytes'] ?? 0 )), $worktree_candidates)),
 			'top_artifacts_by_size'  => $this->summarize_top_worktree_rows($artifact_candidates, 'artifact_size_bytes'),
+			'top_artifacts_by_count' => $this->summarize_top_worktree_rows($artifact_candidates, 'entry_count'),
 			'top_worktrees_by_age'   => $this->summarize_top_worktree_rows($worktree_candidates, 'age_days'),
 		);
 	}

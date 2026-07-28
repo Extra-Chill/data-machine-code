@@ -134,7 +134,9 @@ final class WorkspaceMutationLock {
 
 			if ( 0 === $timeout || ( microtime(true) - $started ) >= $timeout ) {
 				fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-				$error_data = self::busy_error_data($repo, $lock_path);
+				$error_data                         = self::busy_error_data($repo, $lock_path);
+				$error_data['wait_timeout_seconds'] = $timeout;
+				$error_data['timed_out']            = true;
 				return new \WP_Error(
 					'workspace_repo_busy',
 					sprintf(

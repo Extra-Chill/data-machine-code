@@ -835,6 +835,7 @@ trait WorkspaceRepositoryLifecycle {
 					'remote'           => '' !== (string) ( $context_policy['repo'] ?? '' ) ? GitHubRemote::cloneUrl( (string) $context_policy['repo'] ) : null,
 					'commit'           => null,
 					'dirty'            => 0,
+					'workspace_capacity' => WorktreeDiskBudget::inspect($this->workspace_path),
 					'workspace_policy' => WorkspaceAliasResolver::policy_attestation($handle),
 				);
 			}
