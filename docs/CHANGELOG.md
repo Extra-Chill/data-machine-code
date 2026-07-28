@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.55.1] - 2026-07-28
+
+### Fixed
+- enforce artifact cleanup age filters
+
 ## [0.55.0] - 2026-07-28
 
 ### Added
