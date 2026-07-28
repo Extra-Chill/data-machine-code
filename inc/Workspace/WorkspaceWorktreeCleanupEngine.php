@@ -1231,6 +1231,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		$removed              = array();
 		$skipped              = $inventory_skipped;
 		$bytes_reclaimed      = 0;
+		$unknown_reclaimed    = 0;
 		$timeout_handles      = array();
 		$discarded_unpushed   = array();
 
@@ -1250,7 +1251,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			$size      = (int) ( $validated['size_bytes'] ?? 0 );
 			if ( $size <= 0 ) {
 				$measured = $this->estimate_path_size_bytes($wt_path);
-				$size     = null === $measured ? 0 : (int) $measured;
+				$size     = null === $measured ? null : (int) $measured;
 			}
 
 			$remove = WorkspaceMutationLock::with_repo(
@@ -1295,7 +1296,10 @@ trait WorkspaceWorktreeCleanupEngine {
 					'branch'                     => $branch,
 					'path'                       => $wt_path,
 					'size_bytes'                 => $size,
-					'reason_code'                => 'cleanup_eligible',
+					'reason_code'                => (string) ( $remove['reason_code'] ?? ( $validated['reason_code'] ?? 'cleanup_eligible' ) ),
+					'cleanup_reason_code'        => 'cleanup_eligible',
+					'removal_status'             => (string) ( $remove['removal_status'] ?? 'complete' ),
+					'removal_error'              => $remove['removal_error'] ?? null,
 					'unpushed_before_remove'     => $unpushed_count,
 					'discarded_unpushed_commits' => $discard_unpushed && $unpushed_count > 0,
 					'path_exists_after'          => is_dir($wt_path),
@@ -1314,7 +1318,11 @@ trait WorkspaceWorktreeCleanupEngine {
 					'path_exists_after'      => is_dir($wt_path),
 				);
 			}
-			$bytes_reclaimed += max(0, $size);
+			if ( null === $size ) {
+				++$unknown_reclaimed;
+			} else {
+				$bytes_reclaimed += max(0, $size);
+			}
 		}
 
 		if ( array() !== array_filter($timeout_handles) ) {
@@ -1338,13 +1346,15 @@ trait WorkspaceWorktreeCleanupEngine {
 			'candidates'              => $processed_candidates,
 			'removed'                 => $removed,
 			'skipped'                 => $skipped,
-			'summary'                 => array(
-				'processed'          => $processed,
-				'removed'            => count($removed),
-				'skipped'            => count($skipped),
-				'bytes_reclaimed'    => $bytes_reclaimed,
-				'limit'              => $limit,
-				'discarded_unpushed' => count($discarded_unpushed),
+			'summary'                 => array_merge(
+				array(
+					'processed'          => $processed,
+					'removed'            => count($removed),
+					'skipped'            => count($skipped),
+					'limit'              => $limit,
+					'discarded_unpushed' => count($discarded_unpushed),
+				),
+				$this->build_reclaimed_bytes_summary($bytes_reclaimed, $unknown_reclaimed)
 			),
 			'continuation'            => $continuation,
 			'active_no_signal_triage' => $active_no_signal_triage,
@@ -1396,10 +1406,11 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @return array<string,mixed>
 	 */
 	private function apply_worktree_cleanup_plan_candidates( array $candidates, bool $force, float $started_at, bool $stale_liveness_only = false, int $remove_timeout_seconds = self::CLEANUP_GIT_REMOVE_TIMEOUT, bool $discard_unpushed = false ): array {
-		$processed       = 0;
-		$removed         = array();
-		$skipped         = array();
-		$bytes_reclaimed = 0;
+		$processed         = 0;
+		$removed           = array();
+		$skipped           = array();
+		$bytes_reclaimed   = 0;
+		$unknown_reclaimed = 0;
 
 		foreach ( $candidates as $candidate ) {
 			++$processed;
@@ -1417,7 +1428,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			$size      = (int) ( $validated['size_bytes'] ?? 0 );
 			if ( $size <= 0 ) {
 				$measured = $this->estimate_path_size_bytes($wt_path);
-				$size     = null === $measured ? 0 : (int) $measured;
+				$size     = null === $measured ? null : (int) $measured;
 			}
 
 			$remove = WorkspaceMutationLock::with_repo(
@@ -1449,15 +1460,23 @@ trait WorkspaceWorktreeCleanupEngine {
 				continue;
 			}
 
-			$removed[]        = array_merge(
+			$removed[] = array_merge(
 				$validated,
 				array(
-					'size_bytes'        => $size,
-					'removed_path'      => $wt_path,
-					'path_exists_after' => is_dir($wt_path),
+					'size_bytes'          => $size,
+					'removed_path'        => $wt_path,
+					'path_exists_after'   => is_dir($wt_path),
+					'reason_code'         => (string) ( $remove['reason_code'] ?? ( $validated['reason_code'] ?? 'cleanup_eligible' ) ),
+					'cleanup_reason_code' => 'cleanup_eligible',
+					'removal_status'      => (string) ( $remove['removal_status'] ?? 'complete' ),
+					'removal_error'       => $remove['removal_error'] ?? null,
 				)
 			);
-			$bytes_reclaimed += max(0, $size);
+			if ( null === $size ) {
+				++$unknown_reclaimed;
+			} else {
+				$bytes_reclaimed += max(0, $size);
+			}
 		}
 
 		return array(
@@ -1466,11 +1485,13 @@ trait WorkspaceWorktreeCleanupEngine {
 			'candidates' => $candidates,
 			'removed'    => $removed,
 			'skipped'    => $skipped,
-			'summary'    => array(
-				'processed'       => $processed,
-				'removed'         => count($removed),
-				'skipped'         => count($skipped),
-				'bytes_reclaimed' => $bytes_reclaimed,
+			'summary'    => array_merge(
+				array(
+					'processed' => $processed,
+					'removed'   => count($removed),
+					'skipped'   => count($skipped),
+				),
+				$this->build_reclaimed_bytes_summary($bytes_reclaimed, $unknown_reclaimed)
 			),
 			'evidence'   => array(
 				'elapsed_ms'        => (int) round(( microtime(true) - $started_at ) * 1000),
@@ -2744,6 +2765,19 @@ trait WorkspaceWorktreeCleanupEngine {
 	}
 
 	/**
+	 * Build truthful reclaimed-byte accounting when some removed paths were unmeasurable.
+	 *
+	 * @return array{bytes_reclaimed: ?int, bytes_reclaimed_minimum: int, bytes_reclaimed_unknown: int}
+	 */
+	private function build_reclaimed_bytes_summary( int $known_bytes, int $unknown_paths ): array {
+		return array(
+			'bytes_reclaimed'         => $unknown_paths > 0 ? null : max(0, $known_bytes),
+			'bytes_reclaimed_minimum' => max(0, $known_bytes),
+			'bytes_reclaimed_unknown' => max(0, $unknown_paths),
+		);
+	}
+
+	/**
 	 * Detect non-source artifact directories worth reporting separately.
 	 *
 	 * @param  string $repo Repo name.
@@ -3139,7 +3173,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  string $branch  Branch the worktree is checked out to.
 	 * @param  string $wt_path Absolute path to the worktree directory.
 	 * @param  bool   $force   Pass --force to `git worktree remove`.
-	 * @return array{success: bool, handle: string, message: string}|\WP_Error
+	 * @return array{success: bool, handle: string, message: string, removal_status: string, reason_code?: string, removal_error?: array{code: string, message: string}}|\WP_Error
 	 */
 	private function remove_worktree_by_path( string $repo, string $branch, string $wt_path, bool $force, int $remove_timeout_seconds = self::CLEANUP_GIT_REMOVE_TIMEOUT ): array|\WP_Error {
 		$repo = $this->sanitize_name($repo);
@@ -3202,6 +3236,8 @@ trait WorkspaceWorktreeCleanupEngine {
 				'handle'             => basename($wt_path),
 				'message'            => sprintf('Broken orphan worktree directory at "%s" removed.', $wt_path),
 				'branch'             => '',
+				'removal_status'     => 'complete',
+				'reason_code'        => 'broken_orphan_removed',
 				'broken_target_path' => $broken_marker['gitdir'],
 				'removed_paths'      => $removed_paths,
 			);
@@ -3211,7 +3247,30 @@ trait WorkspaceWorktreeCleanupEngine {
 		$result = $this->run_git($primary_path, $cmd, $remove_timeout_seconds);
 
 		if ( is_wp_error($result) ) {
-			return $result;
+			clearstatcache(true, $real_path);
+			if ( is_dir($real_path) ) {
+				return $result;
+			}
+
+			// Git can delete the worktree before failing to update its own
+			// administrative metadata. The destructive operation still happened,
+			// so preserve the error as partial-removal evidence instead of
+			// misclassifying the row as an untouched failure.
+			WorktreeContextInjector::forget_metadata(basename($wt_path));
+			$this->worktree_inventory()->delete(basename($wt_path));
+
+			return array(
+				'success'        => true,
+				'handle'         => basename($wt_path),
+				'message'        => sprintf('Worktree at "%s" was removed, but Git metadata cleanup failed.', $wt_path),
+				'branch'         => $branch,
+				'removal_status' => 'partial',
+				'reason_code'    => 'filesystem_removed_git_metadata_failed',
+				'removal_error'  => array(
+					'code'    => (string) $result->get_error_code(),
+					'message' => $result->get_error_message(),
+				),
+			);
 		}
 
 		// `git worktree remove` is the destructive boundary. If Git reports
@@ -3233,10 +3292,11 @@ trait WorkspaceWorktreeCleanupEngine {
 		$this->worktree_inventory()->delete(basename($wt_path));
 
 		return array(
-			'success' => true,
-			'handle'  => basename($wt_path),
-			'message' => sprintf('Worktree at "%s" removed.', $wt_path),
-			'branch'  => $branch,
+			'success'        => true,
+			'handle'         => basename($wt_path),
+			'message'        => sprintf('Worktree at "%s" removed.', $wt_path),
+			'branch'         => $branch,
+			'removal_status' => 'complete',
 		);
 	}
 
