@@ -2588,6 +2588,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'If true, run per-worktree git status + unpushed-commit safety probes during the dry-run. Default false in bounded mode (apply paths revalidate planned rows). Implied by exhaustive=true and apply_plan.',
 							),
+							'older_than'    => array(
+								'type'        => 'string',
+								'description' => 'Optional worktree creation age gate such as 24h. Missing or invalid authoritative timestamps fail closed.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -2844,6 +2848,7 @@ class WorkspaceAbilities {
 							'limit'          => array( 'type' => 'integer' ),
 							'max_passes'     => array( 'type' => 'integer' ),
 							'budget_seconds' => array( 'type' => 'integer' ),
+							'older_than'     => array( 'type' => 'string' ),
 						),
 					),
 					'output_schema'       => array( 'type' => 'object' ),
@@ -4699,6 +4704,9 @@ class WorkspaceAbilities {
 		if ( array_key_exists('safety_probes', $input) ) {
 			$opts['safety_probes'] = (bool) $input['safety_probes'];
 		}
+		if ( isset($input['older_than']) && '' !== trim( (string) $input['older_than']) ) {
+			$opts['older_than'] = trim( (string) $input['older_than']);
+		}
 
 		return $workspace->worktree_cleanup_artifacts($opts);
 	}
@@ -4848,9 +4856,9 @@ class WorkspaceAbilities {
 	 */
 	public static function workspaceCleanupUntilEmpty( array $input ): array|\WP_Error {
 		$options = self::cleanupRunApplyOptions($input);
-		foreach ( array( 'mode', 'max_passes', 'budget_seconds' ) as $key ) {
+		foreach ( array( 'mode', 'max_passes', 'budget_seconds', 'older_than' ) as $key ) {
 			if ( isset($input[ $key ]) ) {
-				$options[ $key ] = 'mode' === $key ? (string) $input[ $key ] : (int) $input[ $key ];
+				$options[ $key ] = in_array($key, array( 'mode', 'older_than' ), true) ? trim( (string) $input[ $key ]) : (int) $input[ $key ];
 			}
 		}
 		return ( new CleanupRunService() )->until_empty($options);

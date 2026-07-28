@@ -163,6 +163,7 @@ class CleanupRunService {
 					// The reviewed run policy can force only reconstructable artifact deletion.
 					'force'      => $force_artifact_cleanup,
 					'allow_active_artifact_cleanup' => $allow_active_cleanup,
+					'older_than' => (string) ( $policy['artifact_age_filter']['older_than'] ?? '' ),
 					'limit'      => count($artifact_batch),
 				)
 			);
@@ -418,6 +419,7 @@ class CleanupRunService {
 					'include_resolvers'      => false,
 					'force_artifact_cleanup' => ! empty($opts['force']),
 					'allow_active_artifact_cleanup' => ! empty($opts['allow_active_artifact_cleanup']),
+					'worktree_older_than'    => isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '',
 				)
 			);
 			if ( $plan instanceof \WP_Error ) {
