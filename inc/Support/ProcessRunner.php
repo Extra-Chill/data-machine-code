@@ -381,6 +381,9 @@ final class ProcessRunner {
 			if ( array_key_exists('cleanup', $data) ) {
 				$result['cleanup'] = $data['cleanup'];
 			}
+			if ( array_key_exists('timeout', $data) ) {
+				$result['timeout'] = (int) $data['timeout'];
+			}
 
 			return $result;
 		}
