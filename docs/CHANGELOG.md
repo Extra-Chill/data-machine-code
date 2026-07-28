@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.55.0] - 2026-07-28
+
+### Added
+- enforce workspace inode capacity
+
 ## [0.54.4] - 2026-07-28
 
 ### Fixed
