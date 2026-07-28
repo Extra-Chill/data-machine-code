@@ -765,20 +765,45 @@ trait WorkspaceWorktreeLifecycle {
 	/**
 	 * Resolve one local worktree without enumerating workspace primaries.
 	 *
+	 * `$handle_or_path` accepts an exact workspace handle or an exact canonical
+	 * path to a direct child of the canonical workspace root.
+	 *
 	 * @param array{include_status?: bool, include_disk?: bool} $opts Probe options.
 	 * @return array{success: bool, worktrees: array, fields_skipped: array<int,string>}|\WP_Error
 	 */
-	public function worktree_get( string $handle, array $opts = array() ): array|\WP_Error {
-		$parsed = $this->parse_handle($handle);
-		$path   = $this->workspace_path . '/' . $parsed['dir_name'];
-		if ( '' === $parsed['dir_name'] || ! is_dir($path) || ! file_exists($path . '/.git') ) {
+	public function worktree_get( string $handle_or_path, array $opts = array() ): array|\WP_Error {
+		$target = trim($handle_or_path);
+		$path   = '';
+		$parsed = null;
+
+		if ( str_starts_with($target, '/') ) {
+			$workspace_path = realpath($this->workspace_path);
+			$path           = realpath($target);
+			if ( false !== $workspace_path && false !== $path && $target === $path && dirname($path) === $workspace_path ) {
+				$candidate = basename($path);
+				$parsed    = $this->parse_handle($candidate);
+				if ( $candidate !== $parsed['dir_name'] ) {
+					$parsed = null;
+				}
+			}
+		} else {
+			$parsed = $this->parse_handle($target);
+			if ( $target !== $parsed['dir_name'] ) {
+				$parsed = null;
+			} else {
+				$path = $this->workspace_path . '/' . $parsed['dir_name'];
+			}
+		}
+
+		if ( ! is_array($parsed) || '' === $parsed['dir_name'] || ! is_dir($path) || ! file_exists($path . '/.git') ) {
+			$not_found_handle = is_array($parsed) ? $parsed['dir_name'] : $target;
 			return new \WP_Error(
 				'worktree_not_found',
-				sprintf('Worktree "%s" does not exist on disk.', $parsed['dir_name']),
+				sprintf('Worktree "%s" does not exist on disk.', $not_found_handle),
 				array(
 					'status' => 404,
-					'handle' => $parsed['dir_name'],
-					'path'   => $path,
+					'handle' => $not_found_handle,
+					'path'   => '' !== $path ? $path : $target,
 				)
 			);
 		}
