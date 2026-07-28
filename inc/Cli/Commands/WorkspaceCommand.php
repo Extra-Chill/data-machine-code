@@ -695,8 +695,13 @@ class WorkspaceCommand extends BaseCommand {
 	 *   `safe`, preview all safe stages and stale lock pruning without removals.
 	 *
 	 * [--force]
-	 * : Pass force=true into the cleanup task params for modes that support it.
+	 * : Allow dirty/unpushed artifact cleanup in modes that support it. This does
+	 *   not override live worktrees, active processes, or unavailable process evidence.
 	 *   Refused by `safe`.
+	 *
+	 * [--allow-active-artifact-cleanup]
+	 * : Explicitly review active artifact eviction during `plan`, and repeat the
+	 *   flag during `apply` or `resume`. Separate from `--force`; never used by `safe`.
 	 *
 	 * [--include-artifacts]
 	 * : For `plan --mode=retention`, include artifact cleanup rows. Retention
@@ -1047,6 +1052,9 @@ class WorkspaceCommand extends BaseCommand {
 				$input[ $key ] = 'force' === $key ? (bool) $assoc_args[ $key ] : (int) $assoc_args[ $key ];
 			}
 		}
+		if ( isset($assoc_args['allow-active-artifact-cleanup']) ) {
+			$input['allow_active_artifact_cleanup'] = (bool) $assoc_args['allow-active-artifact-cleanup'];
+		}
 		foreach (
 			array(
 				'max-passes'     => 'max_passes',
@@ -1314,6 +1322,9 @@ class WorkspaceCommand extends BaseCommand {
 		if ( isset($assoc_args['force']) ) {
 			$input['force_artifact_cleanup'] = (bool) $assoc_args['force'];
 		}
+		if ( isset($assoc_args['allow-active-artifact-cleanup']) ) {
+			$input['allow_active_artifact_cleanup'] = (bool) $assoc_args['allow-active-artifact-cleanup'];
+		}
 		if ( isset($assoc_args['sort']) && '' !== trim( (string) $assoc_args['sort']) ) {
 			$sort                   = trim( (string) $assoc_args['sort']);
 			$input['artifact_sort'] = $sort;
@@ -1356,8 +1367,9 @@ class WorkspaceCommand extends BaseCommand {
 
 		$result = $ability->execute(
 			array(
-				'run_id' => $run_id,
-				'force'  => ! empty($assoc_args['force']),
+				'run_id'                        => $run_id,
+				'force'                         => ! empty($assoc_args['force']),
+				'allow_active_artifact_cleanup' => ! empty($assoc_args['allow-active-artifact-cleanup']),
 			) + ( isset($assoc_args['limit']) ? array( 'limit' => (int) $assoc_args['limit'] ) : array() )
 		);
 		if ( is_wp_error($result) ) {
@@ -1711,6 +1723,7 @@ class WorkspaceCommand extends BaseCommand {
 				'cleanup_counts'                => array(
 					'planned'         => (int) ( $cleanup_items['planned_rows'] ?? 0 ),
 					'applied'         => (int) ( $cleanup_items['applied_rows'] ?? 0 ),
+					'partial'         => (int) ( $cleanup_items['partial_rows'] ?? 0 ),
 					'skipped'         => (int) ( $cleanup_items['skipped_rows'] ?? 0 ),
 					'failed'          => (int) ( $cleanup_items['failed_rows'] ?? 0 ),
 					'bytes_reclaimed' => (int) ( $cleanup_items['bytes_reclaimed'] ?? 0 ),
@@ -1723,6 +1736,7 @@ class WorkspaceCommand extends BaseCommand {
 				'artifact_cleanup'              => array(
 					'planned'                              => (int) ( $artifacts['planned_rows'] ?? 0 ),
 					'applied'                              => (int) ( $artifacts['applied_rows'] ?? 0 ),
+					'partial'                              => (int) ( $artifacts['partial_rows'] ?? 0 ),
 					'skipped'                              => (int) ( $artifacts['skipped_rows'] ?? 0 ),
 					'failed'                               => (int) ( $artifacts['failed_rows'] ?? 0 ),
 					'bytes_reclaimed'                      => (int) ( $artifacts['bytes_reclaimed'] ?? 0 ),
@@ -3690,6 +3704,10 @@ class WorkspaceCommand extends BaseCommand {
 	 *   `remove`, force-remove a worktree even if it is dirty. For `cleanup`,
 	 *   force dirty-worktree removal but not the unpushed-commits safety.
 	 *
+	 * [--allow-active-artifact-cleanup]
+	 * : For `cleanup-artifacts`, explicitly evict artifacts despite live worktree,
+	 *   active-process, or unavailable-process evidence. Separate from `--force`.
+	 *
 	 * [--pr=<url-or-number>]
 	 * : Attach pull request metadata when finalizing or marking a worktree
 	 *   cleanup-eligible.
@@ -4305,6 +4323,7 @@ class WorkspaceCommand extends BaseCommand {
 			case 'cleanup-artifacts':
 				$input['dry_run'] = ! empty($assoc_args['dry-run']);
 				$input['force']   = ! empty($assoc_args['force']);
+				$input['allow_active_artifact_cleanup'] = ! empty($assoc_args['allow-active-artifact-cleanup']);
 				if ( isset($assoc_args['limit']) ) {
 					$input['limit'] = (int) $assoc_args['limit'];
 				}

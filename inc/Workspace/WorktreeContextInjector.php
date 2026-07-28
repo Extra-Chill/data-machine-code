@@ -1537,6 +1537,45 @@ class WorktreeContextInjector {
 	}
 
 	/**
+	 * Fetch metadata after evicting the request/object-cache option snapshot.
+	 *
+	 * Destructive final revalidation uses this path so a heartbeat written by a
+	 * concurrent process after planning cannot be hidden by an earlier option read.
+	 * The DB-backed inventory is queried again by {@see self::get_metadata()} and
+	 * remains the fallback when the legacy option is unavailable.
+	 *
+	 * @param  string $handle Workspace handle.
+	 * @return array|null
+	 */
+	public static function get_metadata_fresh( string $handle ): ?array {
+		if ( function_exists('wp_cache_delete') ) {
+			wp_cache_delete(self::METADATA_OPTION, 'options');
+		}
+
+		$inventory_metadata = self::get_inventory_metadata($handle);
+		$option_metadata    = null;
+		if ( function_exists('get_option') ) {
+			$all = get_option(self::METADATA_OPTION, array());
+			if ( is_array($all) && is_array($all[ $handle ] ?? null) ) {
+				$option_metadata = (array) $all[ $handle ];
+			}
+		}
+
+		if ( ! is_array($inventory_metadata) ) {
+			return $option_metadata;
+		}
+		if ( ! is_array($option_metadata) ) {
+			return $inventory_metadata;
+		}
+
+		$inventory_seen = strtotime( (string) ( $inventory_metadata['last_seen_at'] ?? '' ) ) ?: 0;
+		$option_seen    = strtotime( (string) ( $option_metadata['last_seen_at'] ?? '' ) ) ?: 0;
+		return $option_seen > $inventory_seen
+			? array_merge($inventory_metadata, $option_metadata)
+			: array_merge($option_metadata, $inventory_metadata);
+	}
+
+	/**
 	 * Drop persisted metadata for a handle. Called when a worktree is removed.
 	 *
 	 * @param string $handle Workspace handle.

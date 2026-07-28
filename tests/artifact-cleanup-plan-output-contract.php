@@ -144,6 +144,16 @@ artifact_cleanup_plan_contract_assert(
 	'forced artifact plans should retain force in every reviewed-plan recommendation'
 );
 
+$active_plan = $workspace->workspace_cleanup_plan(array( 'include_worktrees' => false, 'allow_active_artifact_cleanup' => true ));
+artifact_cleanup_plan_contract_assert(
+	true === ( $active_plan['safety_policy']['allow_active_artifact_cleanup'] ?? null ),
+	'active artifact eviction must persist as a distinct reviewed policy'
+);
+artifact_cleanup_plan_contract_assert(
+	'studio wp datamachine-code workspace cleanup apply <run-id> --allow-active-artifact-cleanup' === ( $active_plan['summary']['apply_command'] ?? '' ),
+	'active artifact plans must require the distinct apply override'
+);
+
 $artifact_plan = $plan['plans']['artifact_cleanup'] ?? array();
 artifact_cleanup_plan_contract_assert(! array_key_exists('apply_command', $artifact_plan), 'nested artifact plan should not expose apply_command');
 artifact_cleanup_plan_contract_assert(! array_key_exists('apply_command', $artifact_plan['summary'] ?? array()), 'nested artifact summary should not expose apply_command');
