@@ -126,9 +126,9 @@ final class WorktreeDiskBudget {
 			$free_inode_percent = ( $free_inodes / $total_inodes ) * 100;
 			$used_inode_percent = 100 - $free_inode_percent;
 		}
-		$count                     = isset($metrics['worktree_count']) && is_numeric($metrics['worktree_count']) ? (int) $metrics['worktree_count'] : 0;
-		$filesystem_used_bytes     = null !== $free_bytes && null !== $total_bytes ? max(0, $total_bytes - $free_bytes) : null;
-		$workspace_allocated_bytes = isset($metrics['workspace_allocated_bytes']) && is_numeric($metrics['workspace_allocated_bytes'])
+		$count                       = isset($metrics['worktree_count']) && is_numeric($metrics['worktree_count']) ? (int) $metrics['worktree_count'] : 0;
+		$filesystem_used_bytes       = null !== $free_bytes && null !== $total_bytes ? max(0, $total_bytes - $free_bytes) : null;
+		$workspace_allocated_bytes   = isset($metrics['workspace_allocated_bytes']) && is_numeric($metrics['workspace_allocated_bytes'])
 			? max(0, (int) $metrics['workspace_allocated_bytes'])
 			: null;
 		$shared_usage_estimate_bytes = null;
@@ -139,7 +139,7 @@ final class WorktreeDiskBudget {
 				self::SHARED_USAGE_MINIMUM_BYTES,
 				(int) ceil($filesystem_used_bytes * ( self::SHARED_USAGE_MINIMUM_PERCENT / 100 ))
 			);
-			$shared_usage_detected        = $shared_usage_estimate_bytes >= $materiality_floor;
+			$shared_usage_detected       = $shared_usage_estimate_bytes >= $materiality_floor;
 		}
 		$warnings = array();
 		$refused  = false;
@@ -161,8 +161,8 @@ final class WorktreeDiskBudget {
 		$effective_refuse_inodes = (int) $thresholds['refuse_free_inodes'];
 		$effective_warn_inodes   = (int) $thresholds['warn_free_inodes'];
 		if ( null !== $total_inodes && $total_inodes > 0 ) {
-			$effective_refuse_inodes = self::effective_refuse_free_bytes_threshold((int) $thresholds['refuse_free_inodes'], (float) $thresholds['refuse_free_inode_percent'], $total_inodes);
-			$effective_warn_inodes   = self::effective_free_bytes_threshold((int) $thresholds['warn_free_inodes'], (float) $thresholds['warn_free_inode_percent'], $total_inodes);
+			$effective_refuse_inodes = self::effective_refuse_free_bytes_threshold( (int) $thresholds['refuse_free_inodes'], (float) $thresholds['refuse_free_inode_percent'], $total_inodes);
+			$effective_warn_inodes   = self::effective_free_bytes_threshold( (int) $thresholds['warn_free_inodes'], (float) $thresholds['warn_free_inode_percent'], $total_inodes);
 		}
 
 		if ( null !== $free_bytes ) {
@@ -192,7 +192,7 @@ final class WorktreeDiskBudget {
 				$refused    = ! $forced;
 				$warnings[] = sprintf('Free filesystem inodes are %s%s, below the refusal threshold of %s.', number_format($free_inodes), null === $free_inode_percent ? '' : sprintf(' (%.1f%%)', $free_inode_percent), number_format($effective_refuse_inodes));
 			} elseif ( $free_inodes < $effective_warn_inodes ) {
-				$warnings[] = sprintf('Free filesystem inodes are %s%s, below the warning threshold of %s or %.1f%% free, whichever is stricter.', number_format($free_inodes), null === $free_inode_percent ? '' : sprintf(' (%.1f%%)', $free_inode_percent), number_format((int) $thresholds['warn_free_inodes']), (float) $thresholds['warn_free_inode_percent']);
+				$warnings[] = sprintf('Free filesystem inodes are %s%s, below the warning threshold of %s or %.1f%% free, whichever is stricter.', number_format($free_inodes), null === $free_inode_percent ? '' : sprintf(' (%.1f%%)', $free_inode_percent), number_format( (int) $thresholds['warn_free_inodes']), (float) $thresholds['warn_free_inode_percent']);
 			}
 		}
 
@@ -261,34 +261,34 @@ final class WorktreeDiskBudget {
 			'shared_usage_detected'       => $shared_usage_detected,
 			'diagnostic_messages'         => $diagnostic_messages,
 			'worktree_count'              => $count,
-			'warn_free_bytes'           => $thresholds['warn_free_bytes'],
-			'warn_free_gib'             => round(self::bytes_to_gib( (int) $thresholds['warn_free_bytes'] ), 2),
-			'warn_free_percent'         => $thresholds['warn_free_percent'],
-			'refuse_free_bytes'         => $thresholds['refuse_free_bytes'],
-			'refuse_free_gib'           => round(self::bytes_to_gib( (int) $thresholds['refuse_free_bytes'] ), 2),
-			'refuse_free_percent'       => $thresholds['refuse_free_percent'],
-			'effective_refuse_bytes'    => $effective_refuse_bytes,
-			'effective_refuse_gib'      => round(self::bytes_to_gib($effective_refuse_bytes), 2),
-			'effective_warn_bytes'      => $effective_warn_bytes,
-			'effective_warn_gib'        => round(self::bytes_to_gib($effective_warn_bytes), 2),
-			'warn_free_inodes'          => $thresholds['warn_free_inodes'],
-			'warn_free_inode_percent'   => $thresholds['warn_free_inode_percent'],
-			'refuse_free_inodes'        => $thresholds['refuse_free_inodes'],
-			'refuse_free_inode_percent' => $thresholds['refuse_free_inode_percent'],
-			'effective_refuse_inodes'   => $effective_refuse_inodes,
-			'effective_warn_inodes'     => $effective_warn_inodes,
-			'warn_worktree_count'       => $thresholds['warn_worktree_count'],
-			'forced'                    => $forced,
-			'status'                    => $status,
-			'warnings'                  => $warnings,
-			'emergency_triggered'       => array() !== $trigger_reasons,
-			'trigger_reasons'           => $trigger_reasons,
-			'cleanup_dry_run_command'   => 'studio wp datamachine-code workspace worktree cleanup --dry-run',
-			'artifact_cleanup_command'  => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
-			'emergency_cleanup_command' => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
-			'cleanup_recommendations'   => self::cleanup_recommendations($free_bytes, $effective_refuse_bytes, $free_inodes, $effective_refuse_inodes),
-			'force_override_required'   => $refused,
-			'force_override_applied'    => $forced && ! empty($warnings),
+			'warn_free_bytes'             => $thresholds['warn_free_bytes'],
+			'warn_free_gib'               => round(self::bytes_to_gib( (int) $thresholds['warn_free_bytes'] ), 2),
+			'warn_free_percent'           => $thresholds['warn_free_percent'],
+			'refuse_free_bytes'           => $thresholds['refuse_free_bytes'],
+			'refuse_free_gib'             => round(self::bytes_to_gib( (int) $thresholds['refuse_free_bytes'] ), 2),
+			'refuse_free_percent'         => $thresholds['refuse_free_percent'],
+			'effective_refuse_bytes'      => $effective_refuse_bytes,
+			'effective_refuse_gib'        => round(self::bytes_to_gib($effective_refuse_bytes), 2),
+			'effective_warn_bytes'        => $effective_warn_bytes,
+			'effective_warn_gib'          => round(self::bytes_to_gib($effective_warn_bytes), 2),
+			'warn_free_inodes'            => $thresholds['warn_free_inodes'],
+			'warn_free_inode_percent'     => $thresholds['warn_free_inode_percent'],
+			'refuse_free_inodes'          => $thresholds['refuse_free_inodes'],
+			'refuse_free_inode_percent'   => $thresholds['refuse_free_inode_percent'],
+			'effective_refuse_inodes'     => $effective_refuse_inodes,
+			'effective_warn_inodes'       => $effective_warn_inodes,
+			'warn_worktree_count'         => $thresholds['warn_worktree_count'],
+			'forced'                      => $forced,
+			'status'                      => $status,
+			'warnings'                    => $warnings,
+			'emergency_triggered'         => array() !== $trigger_reasons,
+			'trigger_reasons'             => $trigger_reasons,
+			'cleanup_dry_run_command'     => 'studio wp datamachine-code workspace worktree cleanup --dry-run',
+			'artifact_cleanup_command'    => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
+			'emergency_cleanup_command'   => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
+			'cleanup_recommendations'     => self::cleanup_recommendations($free_bytes, $effective_refuse_bytes, $free_inodes, $effective_refuse_inodes),
+			'force_override_required'     => $refused,
+			'force_override_applied'      => $forced && ! empty($warnings),
 		);
 	}
 
@@ -306,35 +306,35 @@ final class WorktreeDiskBudget {
 
 		return array(
 			array(
-				'priority'               => 1,
-				'action'                 => 'create a DB-backed plan for the largest reconstructable artifacts',
-				'expected_reclaim_bytes' => $target_reclaim,
-				'expected_reclaim'       => $target_human,
+				'priority'                => 1,
+				'action'                  => 'create a DB-backed plan for the largest reconstructable artifacts',
+				'expected_reclaim_bytes'  => $target_reclaim,
+				'expected_reclaim'        => $target_human,
 				'expected_reclaim_inodes' => $target_inodes,
-				'command'                => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
-				'preview_command'        => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
-				'apply_command'          => 'studio wp datamachine-code workspace cleanup apply <run-id>',
-				'apply_note'             => 'Review output includes the DB-backed run_id required by the apply command.',
+				'command'                 => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
+				'preview_command'         => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
+				'apply_command'           => 'studio wp datamachine-code workspace cleanup apply <run-id>',
+				'apply_note'              => 'Review output includes the DB-backed run_id required by the apply command.',
 			),
 			array(
-				'priority'               => 2,
-				'action'                 => 'review bounded cleanup-eligible worktrees; apply revalidates before removal',
-				'expected_reclaim_bytes' => $target_reclaim,
-				'expected_reclaim'       => $target_human,
+				'priority'                => 2,
+				'action'                  => 'review bounded cleanup-eligible worktrees; apply revalidates before removal',
+				'expected_reclaim_bytes'  => $target_reclaim,
+				'expected_reclaim'        => $target_human,
 				'expected_reclaim_inodes' => $target_inodes,
-				'command'                => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25',
-				'preview_command'        => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25',
-				'apply_command'          => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=25',
-				'apply_note'             => 'Apply runs fresh dirty, unpushed, containment, and primary safety probes and may skip rows that the cheap inventory review listed.',
+				'command'                 => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25',
+				'preview_command'         => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25',
+				'apply_command'           => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --limit=25',
+				'apply_note'              => 'Apply runs fresh dirty, unpushed, containment, and primary safety probes and may skip rows that the cheap inventory review listed.',
 			),
 			array(
-				'priority'               => 3,
-				'action'                 => 'generate combined emergency cleanup report',
-				'expected_reclaim_bytes' => $target_reclaim,
-				'expected_reclaim'       => $target_human,
+				'priority'                => 3,
+				'action'                  => 'generate combined emergency cleanup report',
+				'expected_reclaim_bytes'  => $target_reclaim,
+				'expected_reclaim'        => $target_human,
 				'expected_reclaim_inodes' => $target_inodes,
-				'command'                => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
-				'preview_command'        => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
+				'command'                 => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
+				'preview_command'         => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
 			),
 		);
 	}
@@ -348,15 +348,15 @@ final class WorktreeDiskBudget {
 	 */
 	public static function thresholds( string $repo, string $branch ): array {
 		$thresholds = array(
-			'warn_free_bytes'     => self::DEFAULT_WARN_FREE_GIB * self::BYTES_PER_GIB,
-			'refuse_free_bytes'   => self::DEFAULT_REFUSE_FREE_GIB * self::BYTES_PER_GIB,
-			'warn_free_percent'   => self::DEFAULT_WARN_FREE_PERCENT,
-			'refuse_free_percent' => self::DEFAULT_REFUSE_FREE_PERCENT,
+			'warn_free_bytes'           => self::DEFAULT_WARN_FREE_GIB * self::BYTES_PER_GIB,
+			'refuse_free_bytes'         => self::DEFAULT_REFUSE_FREE_GIB * self::BYTES_PER_GIB,
+			'warn_free_percent'         => self::DEFAULT_WARN_FREE_PERCENT,
+			'refuse_free_percent'       => self::DEFAULT_REFUSE_FREE_PERCENT,
 			'warn_free_inodes'          => self::DEFAULT_WARN_FREE_INODES,
 			'refuse_free_inodes'        => self::DEFAULT_REFUSE_FREE_INODES,
 			'warn_free_inode_percent'   => self::DEFAULT_WARN_FREE_INODE_PERCENT,
 			'refuse_free_inode_percent' => self::DEFAULT_REFUSE_FREE_INODE_PERCENT,
-			'warn_worktree_count' => self::DEFAULT_WARN_WORKTREE_COUNT,
+			'warn_worktree_count'       => self::DEFAULT_WARN_WORKTREE_COUNT,
 		);
 
 		if ( function_exists('apply_filters') ) {
@@ -385,8 +385,8 @@ final class WorktreeDiskBudget {
 		if ( null !== ( $budget['free_percent'] ?? null ) ) {
 			$free .= sprintf(' (%.1f%%)', (float) $budget['free_percent']);
 		}
-		$total = null === ( $budget['total_gib'] ?? null ) ? 'unknown total' : sprintf('%.1f GiB total', (float) $budget['total_gib']);
-		$summary = sprintf(
+		$total      = null === ( $budget['total_gib'] ?? null ) ? 'unknown total' : sprintf('%.1f GiB total', (float) $budget['total_gib']);
+		$summary    = sprintf(
 			'Disk budget: workspace=%s, %s free of %s, %d worktree-like dirs, status=%s.',
 			(string) ( $budget['workspace_path'] ?? '' ),
 			$free,
@@ -394,11 +394,11 @@ final class WorktreeDiskBudget {
 			(int) ( $budget['worktree_count'] ?? 0 ),
 			(string) ( $budget['status'] ?? 'unknown' )
 		);
-		$inode_free = null === ( $budget['free_inodes'] ?? null ) ? 'unknown' : number_format((int) $budget['free_inodes']);
+		$inode_free = null === ( $budget['free_inodes'] ?? null ) ? 'unknown' : number_format( (int) $budget['free_inodes']);
 		if ( null !== ( $budget['free_inode_percent'] ?? null ) ) {
 			$inode_free .= sprintf(' (%.1f%%)', (float) $budget['free_inode_percent']);
 		}
-		$inode_total = null === ( $budget['total_inodes'] ?? null ) ? 'unknown total' : number_format((int) $budget['total_inodes']) . ' total';
+		$inode_total = null === ( $budget['total_inodes'] ?? null ) ? 'unknown total' : number_format( (int) $budget['total_inodes']) . ' total';
 		$summary    .= sprintf(' Inodes: %s free of %s.', $inode_free, $inode_total);
 		if ( ! empty($budget['shared_usage_detected']) && null !== ( $budget['shared_usage_estimate_bytes'] ?? null ) ) {
 			$summary .= sprintf(
@@ -422,19 +422,22 @@ final class WorktreeDiskBudget {
 		$workspace_path = '' === $workspace_path ? '/' : $workspace_path;
 		$best           = null;
 
-		foreach ( preg_split('/\r?\n/', $mountinfo) ?: array() as $line ) {
+		$mountinfo_lines = preg_split('/\r?\n/', $mountinfo);
+		foreach ( false === $mountinfo_lines ? array() : $mountinfo_lines as $line ) {
 			$separator = strpos($line, ' - ');
 			if ( false === $separator ) {
 				continue;
 			}
 
-			$left  = preg_split('/\s+/', substr($line, 0, $separator)) ?: array();
-			$right = preg_split('/\s+/', substr($line, $separator + 3)) ?: array();
+			$left  = preg_split('/\s+/', substr($line, 0, $separator));
+			$left  = false === $left ? array() : $left;
+			$right = preg_split('/\s+/', substr($line, $separator + 3));
+			$right = false === $right ? array() : $right;
 			if ( count($left) < 5 || count($right) < 2 ) {
 				continue;
 			}
 
-			$target = self::decode_mountinfo_path((string) $left[4]);
+			$target = self::decode_mountinfo_path( (string) $left[4]);
 			if ( '/' !== $target && $workspace_path !== $target && ! str_starts_with($workspace_path, rtrim($target, '/') . '/') ) {
 				continue;
 			}
@@ -445,8 +448,8 @@ final class WorktreeDiskBudget {
 
 			$best = array(
 				'mount_target'              => $target,
-				'mount_source'              => self::decode_mountinfo_path((string) $right[1]),
-				'mount_source_subdirectory' => self::decode_mountinfo_path((string) $left[3]),
+				'mount_source'              => self::decode_mountinfo_path( (string) $right[1]),
+				'mount_source_subdirectory' => self::decode_mountinfo_path( (string) $left[3]),
 			);
 		}
 
@@ -464,13 +467,13 @@ final class WorktreeDiskBudget {
 		$mountinfo = array_key_exists('mountinfo', $options)
 			? ( is_string($options['mountinfo']) ? $options['mountinfo'] : '' )
 			: self::read_mountinfo();
-		$mount = '' === $mountinfo ? null : self::parse_mountinfo($mountinfo, $workspace_path);
+		$mount     = '' === $mountinfo ? null : self::parse_mountinfo($mountinfo, $workspace_path);
 
 		$include_usage = array_key_exists('include_workspace_usage', $options)
 			? (bool) $options['include_workspace_usage']
 			: false;
-		$allocated = null;
-		$probe     = 'disabled';
+		$allocated     = null;
+		$probe         = 'disabled';
 		if ( $include_usage ) {
 			$allocated = array_key_exists('workspace_allocated_bytes', $options)
 				? ( is_numeric($options['workspace_allocated_bytes']) ? max(0, (int) $options['workspace_allocated_bytes']) : null )
@@ -478,7 +481,7 @@ final class WorktreeDiskBudget {
 					$workspace_path,
 					max(1, (int) ( $options['usage_probe_timeout_seconds'] ?? self::DEFAULT_USAGE_PROBE_TIMEOUT_SECONDS ))
 				);
-			$probe = null === $allocated
+			$probe     = null === $allocated
 				? 'unavailable'
 				: (string) ( $options['workspace_usage_probe'] ?? ( array_key_exists('workspace_allocated_bytes', $options) ? 'provided' : 'bounded_du' ) );
 		}
@@ -514,7 +517,8 @@ final class WorktreeDiskBudget {
 
 		$command = CommandSpec::from_argv(array( 'du', '-sx', '-B1', '--', $workspace_path ));
 		if ( $command instanceof \WP_Error ) {
-			return self::$workspace_usage_cache[ $cache_key ] = null;
+			self::$workspace_usage_cache[ $cache_key ] = null;
+			return null;
 		}
 		$result = ProcessRunner::run(
 			$command,
@@ -525,12 +529,16 @@ final class WorktreeDiskBudget {
 			)
 		);
 		if ( $result instanceof \WP_Error || empty($result['success']) ) {
-			return self::$workspace_usage_cache[ $cache_key ] = null;
+			self::$workspace_usage_cache[ $cache_key ] = null;
+			return null;
 		}
 
-		$parts = preg_split('/\s+/', trim( (string) ( $result['output'] ?? '' ))) ?: array();
+		$parts = preg_split('/\s+/', trim( (string) ( $result['output'] ?? '' )));
+		$parts = false === $parts ? array() : $parts;
 		$bytes = isset($parts[0]) && is_numeric($parts[0]) ? max(0, (int) $parts[0]) : null;
-		return self::$workspace_usage_cache[ $cache_key ] = $bytes;
+
+		self::$workspace_usage_cache[ $cache_key ] = $bytes;
+		return $bytes;
 	}
 
 	/**
@@ -546,15 +554,23 @@ final class WorktreeDiskBudget {
 		if ( $command instanceof \WP_Error ) {
 			return self::normalize_inode_metrics(null);
 		}
-		$result = ProcessRunner::run($command, array( 'timeout_seconds' => 2, 'output_cap_bytes' => 256, 'error_as_result' => true ));
+		$result = ProcessRunner::run($command, array(
+			'timeout_seconds'  => 2,
+			'output_cap_bytes' => 256,
+			'error_as_result'  => true,
+		));
 		if ( $result instanceof \WP_Error || empty($result['success']) ) {
 			return self::normalize_inode_metrics(null);
 		}
-		$parts = explode(':', trim((string) ( $result['output'] ?? '' )), 2);
+		$parts = explode(':', trim( (string) ( $result['output'] ?? '' )), 2);
 		if ( 2 !== count($parts) || ! ctype_digit($parts[0]) || ! ctype_digit($parts[1]) ) {
 			return self::normalize_inode_metrics(null);
 		}
-		return self::normalize_inode_metrics(array( 'total_inodes' => (int) $parts[0], 'free_inodes' => (int) $parts[1], 'probe' => 'gnu_statfs' ));
+		return self::normalize_inode_metrics(array(
+			'total_inodes' => (int) $parts[0],
+			'free_inodes'  => (int) $parts[1],
+			'probe'        => 'gnu_statfs',
+		));
 	}
 
 	/**
@@ -563,11 +579,19 @@ final class WorktreeDiskBudget {
 	 */
 	private static function normalize_inode_metrics( mixed $metrics ): array {
 		if ( ! is_array($metrics) || ! isset($metrics['total_inodes'], $metrics['free_inodes']) || ! is_numeric($metrics['total_inodes']) || ! is_numeric($metrics['free_inodes']) ) {
-			return array( 'total_inodes' => null, 'free_inodes' => null, 'probe' => 'unavailable' );
+			return array(
+				'total_inodes' => null,
+				'free_inodes'  => null,
+				'probe'        => 'unavailable',
+			);
 		}
 		$total = max(0, (int) $metrics['total_inodes']);
 		$free  = min($total, max(0, (int) $metrics['free_inodes']));
-		return array( 'total_inodes' => $total, 'free_inodes' => $free, 'probe' => (string) ( $metrics['probe'] ?? 'provided' ) );
+		return array(
+			'total_inodes' => $total,
+			'free_inodes'  => $free,
+			'probe'        => (string) ( $metrics['probe'] ?? 'provided' ),
+		);
 	}
 
 	private static function decode_mountinfo_path( string $path ): string {
@@ -589,24 +613,24 @@ final class WorktreeDiskBudget {
 	 * @return array<string,int|float>
 	 */
 	private static function normalize_thresholds( array $thresholds ): array {
-		$warn_free      = isset($thresholds['warn_free_bytes']) && is_numeric($thresholds['warn_free_bytes'])
+		$warn_free            = isset($thresholds['warn_free_bytes']) && is_numeric($thresholds['warn_free_bytes'])
 		? max(0, (int) $thresholds['warn_free_bytes'])
 		: self::DEFAULT_WARN_FREE_GIB * self::BYTES_PER_GIB;
-		$refuse_free    = isset($thresholds['refuse_free_bytes']) && is_numeric($thresholds['refuse_free_bytes'])
+		$refuse_free          = isset($thresholds['refuse_free_bytes']) && is_numeric($thresholds['refuse_free_bytes'])
 		? max(0, (int) $thresholds['refuse_free_bytes'])
 		: self::DEFAULT_REFUSE_FREE_GIB * self::BYTES_PER_GIB;
-		$warn_percent   = isset($thresholds['warn_free_percent']) && is_numeric($thresholds['warn_free_percent'])
+		$warn_percent         = isset($thresholds['warn_free_percent']) && is_numeric($thresholds['warn_free_percent'])
 		? max(0.0, min(100.0, (float) $thresholds['warn_free_percent']))
 		: self::DEFAULT_WARN_FREE_PERCENT;
-		$refuse_percent = isset($thresholds['refuse_free_percent']) && is_numeric($thresholds['refuse_free_percent'])
+		$refuse_percent       = isset($thresholds['refuse_free_percent']) && is_numeric($thresholds['refuse_free_percent'])
 		? max(0.0, min(100.0, (float) $thresholds['refuse_free_percent']))
 		: self::DEFAULT_REFUSE_FREE_PERCENT;
-		$count          = isset($thresholds['warn_worktree_count']) && is_numeric($thresholds['warn_worktree_count'])
+		$count                = isset($thresholds['warn_worktree_count']) && is_numeric($thresholds['warn_worktree_count'])
 		? max(0, (int) $thresholds['warn_worktree_count'])
 		: self::DEFAULT_WARN_WORKTREE_COUNT;
-		$warn_inodes = isset($thresholds['warn_free_inodes']) && is_numeric($thresholds['warn_free_inodes']) ? max(0, (int) $thresholds['warn_free_inodes']) : self::DEFAULT_WARN_FREE_INODES;
-		$refuse_inodes = isset($thresholds['refuse_free_inodes']) && is_numeric($thresholds['refuse_free_inodes']) ? max(0, (int) $thresholds['refuse_free_inodes']) : self::DEFAULT_REFUSE_FREE_INODES;
-		$warn_inode_percent = isset($thresholds['warn_free_inode_percent']) && is_numeric($thresholds['warn_free_inode_percent']) ? max(0.0, min(100.0, (float) $thresholds['warn_free_inode_percent'])) : self::DEFAULT_WARN_FREE_INODE_PERCENT;
+		$warn_inodes          = isset($thresholds['warn_free_inodes']) && is_numeric($thresholds['warn_free_inodes']) ? max(0, (int) $thresholds['warn_free_inodes']) : self::DEFAULT_WARN_FREE_INODES;
+		$refuse_inodes        = isset($thresholds['refuse_free_inodes']) && is_numeric($thresholds['refuse_free_inodes']) ? max(0, (int) $thresholds['refuse_free_inodes']) : self::DEFAULT_REFUSE_FREE_INODES;
+		$warn_inode_percent   = isset($thresholds['warn_free_inode_percent']) && is_numeric($thresholds['warn_free_inode_percent']) ? max(0.0, min(100.0, (float) $thresholds['warn_free_inode_percent'])) : self::DEFAULT_WARN_FREE_INODE_PERCENT;
 		$refuse_inode_percent = isset($thresholds['refuse_free_inode_percent']) && is_numeric($thresholds['refuse_free_inode_percent']) ? max(0.0, min(100.0, (float) $thresholds['refuse_free_inode_percent'])) : self::DEFAULT_REFUSE_FREE_INODE_PERCENT;
 
 		if ( $refuse_free > $warn_free ) {
@@ -623,11 +647,11 @@ final class WorktreeDiskBudget {
 		}
 
 		return array(
-			'warn_free_bytes'     => $warn_free,
-			'refuse_free_bytes'   => $refuse_free,
-			'warn_free_percent'   => $warn_percent,
-			'refuse_free_percent' => $refuse_percent,
-			'warn_worktree_count' => $count,
+			'warn_free_bytes'           => $warn_free,
+			'refuse_free_bytes'         => $refuse_free,
+			'warn_free_percent'         => $warn_percent,
+			'refuse_free_percent'       => $refuse_percent,
+			'warn_worktree_count'       => $count,
 			'warn_free_inodes'          => $warn_inodes,
 			'refuse_free_inodes'        => $refuse_inodes,
 			'warn_free_inode_percent'   => $warn_inode_percent,
