@@ -49,4 +49,14 @@ $viable = DataMachineCode\Workspace\WorkspaceEmergencyCandidateSelector::select(
 inode_selection_assert(array( 'bytes', 'inodes' ) === array_column($viable['candidates'], 'handle'), 'Mixed selection must find the viable bounded complementary pair instead of choosing the balanced dead end.');
 inode_selection_assert(true === $viable['target_met'], 'A viable bounded mixed-resource set must be reported as meeting both targets.');
 
+$impossible = array();
+for ( $index = 0; $index < 100; ++$index ) {
+	$impossible[] = array( 'handle' => 'candidate-' . $index, 'entry_count' => 1, 'entry_count_status' => 'measured', 'artifact_size_bytes' => 1 );
+}
+$started            = microtime(true);
+$impossible_result  = DataMachineCode\Workspace\WorkspaceEmergencyCandidateSelector::select($impossible, 1000, 1000, 25, 'artifact_size_bytes');
+$selection_duration = microtime(true) - $started;
+inode_selection_assert(false === $impossible_result['target_met'], 'Impossible mixed targets must retain truthful unmet evidence.');
+inode_selection_assert($selection_duration < 2.0, 'Mixed candidate selection must remain computationally bounded.');
+
 echo "workspace-inode-emergency-selection: ok\n";

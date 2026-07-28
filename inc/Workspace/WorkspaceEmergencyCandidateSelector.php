@@ -10,6 +10,8 @@ namespace DataMachineCode\Workspace;
 defined('ABSPATH') || exit;
 
 final class WorkspaceEmergencyCandidateSelector {
+	private const MAX_SEARCH_CANDIDATES = 256;
+	private const MAX_SEARCH_STATES     = 4096;
 
 	/** Select a viable bounded recovery set, or the strongest truthful fallback. */
 	public static function select( array $candidates, int $target_bytes, int $target_inodes, int $limit, string $bytes_field ): array {
@@ -59,30 +61,38 @@ final class WorkspaceEmergencyCandidateSelector {
 	}
 
 	/** @return array<int,array<string,mixed>>|null */
-	private static function find_viable_set( array $rows, int $target_bytes, int $target_inodes, int $limit, int $offset = 0, array $selected = array(), int $bytes = 0, int $inodes = 0 ): ?array {
-		if ( $bytes >= $target_bytes && $inodes >= $target_inodes ) {
-			return $selected;
-		}
-		$slots = $limit - count($selected);
-		if ( $slots <= 0 || $offset >= count($rows) ) {
-			return null;
-		}
-		$remaining  = array_slice($rows, $offset);
-		$byte_caps  = array_column($remaining, 'bytes');
-		$inode_caps = array_column($remaining, 'inodes');
-		rsort($byte_caps, SORT_NUMERIC);
-		rsort($inode_caps, SORT_NUMERIC);
-		if ( $bytes + array_sum(array_slice($byte_caps, 0, $slots)) < $target_bytes || $inodes + array_sum(array_slice($inode_caps, 0, $slots)) < $target_inodes ) {
-			return null;
-		}
-		$row_count = count($rows);
-		for ( $index = $offset; $index < $row_count; ++$index ) {
-			$next   = array_merge($selected, array( $rows[ $index ] ));
-			$result = self::find_viable_set($rows, $target_bytes, $target_inodes, $limit, $index + 1, $next, $bytes + $rows[ $index ]['bytes'], $inodes + $rows[ $index ]['inodes']);
-			if ( null !== $result ) {
-				return $result;
+	private static function find_viable_set( array $rows, int $target_bytes, int $target_inodes, int $limit ): ?array {
+		$states = array(
+			array( 'selected' => array(), 'bytes' => 0, 'inodes' => 0 ),
+		);
+		foreach ( array_slice($rows, 0, self::MAX_SEARCH_CANDIDATES) as $row ) {
+			$next_states = $states;
+			foreach ( $states as $state ) {
+				if ( count($state['selected']) >= $limit ) {
+					continue;
+				}
+				$next = array(
+					'selected' => array_merge($state['selected'], array( $row )),
+					'bytes'    => $state['bytes'] + $row['bytes'],
+					'inodes'   => $state['inodes'] + $row['inodes'],
+				);
+				if ( $next['bytes'] >= $target_bytes && $next['inodes'] >= $target_inodes ) {
+					return $next['selected'];
+				}
+				$next_states[] = $next;
 			}
+
+			usort(
+				$next_states,
+				static function ( array $left, array $right ) use ( $target_bytes, $target_inodes ): int {
+					$left_score  = min($target_bytes, $left['bytes']) + min($target_inodes, $left['inodes']);
+					$right_score = min($target_bytes, $right['bytes']) + min($target_inodes, $right['inodes']);
+					return $right_score <=> $left_score ?: count($left['selected']) <=> count($right['selected']);
+				}
+			);
+			$states = array_slice($next_states, 0, self::MAX_SEARCH_STATES);
 		}
+
 		return null;
 	}
 

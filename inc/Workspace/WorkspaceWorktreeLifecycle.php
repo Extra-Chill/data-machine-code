@@ -310,6 +310,13 @@ trait WorkspaceWorktreeLifecycle {
 		if ( is_wp_error($response) ) {
 			return $response;
 		}
+		if ( ! empty($response['rebase_cleanup_failed']) ) {
+			return new \WP_Error(
+				'worktree_rebase_cleanup_failed',
+				'Rebase failed and its cleanup could not be verified; refusing bootstrap until the worktree is repaired.',
+				array( 'status' => 500, 'path' => $wt_path, 'rebase' => $response )
+			);
+		}
 
 		$response['disk_budget'] = $disk_budget;
 		if ( ! empty($response['rebase_succeeded']) ) {
@@ -2122,24 +2129,37 @@ trait WorkspaceWorktreeLifecycle {
 			return null;
 		}
 
-		$remaining = max(1, (int) floor($operation_deadline - microtime(true)));
-		$result    = $this->run_git($wt_path, sprintf('rebase %s', escapeshellarg($target)), min(300, $remaining));
+		$remaining = (int) floor($operation_deadline - microtime(true));
+		if ( $remaining <= 5 ) {
+			return array(
+				'rebase_attempted'      => false,
+				'rebase_target'         => $target,
+				'rebase_succeeded'      => false,
+				'rebase_cleanup_failed' => true,
+				'rebase_error'          => 'The operation deadline left no bounded window for rebase and verified abort.',
+			);
+		}
+		$result = $this->run_git($wt_path, sprintf('rebase %s', escapeshellarg($target)), min(300, $remaining - 5));
 
 		if ( is_wp_error($result) ) {
 			// Abort so the worktree stays at its pre-rebase HEAD. Agent can
 			// retry manually after resolving conflicts.
-			$abort_remaining = max(1, (int) floor($operation_deadline - microtime(true)));
-			$this->run_git($wt_path, 'rebase --abort', min(60, $abort_remaining));
+			$abort_remaining = (int) floor($operation_deadline - microtime(true));
+			$abort           = $abort_remaining > 0
+				? $this->run_git($wt_path, 'rebase --abort', min(5, $abort_remaining))
+				: new \WP_Error('worktree_rebase_abort_timeout', 'No operation deadline remained for rebase cleanup.');
 
 			$data  = $result->get_error_data();
 			$tail  = is_array($data) && isset($data['output']) ? trim( (string) $data['output']) : '';
 			$error = '' !== $tail ? $tail : $result->get_error_message();
 
 			return array(
-				'rebase_attempted' => true,
-				'rebase_target'    => $target,
-				'rebase_succeeded' => false,
-				'rebase_error'     => $error,
+				'rebase_attempted'      => true,
+				'rebase_target'         => $target,
+				'rebase_succeeded'      => false,
+				'rebase_cleanup_failed' => is_wp_error($abort),
+				'rebase_error'          => $error,
+				'rebase_abort_error'    => is_wp_error($abort) ? $abort->get_error_message() : null,
 			);
 		}
 

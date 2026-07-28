@@ -108,7 +108,7 @@ try {
 	$lifecycle_source = file_get_contents(dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php');
 	bootstrap_demand_assert(str_contains((string) $lifecycle_source, 'self::worktree_capacity_wait_timeout_seconds($bootstrap)'), 'Admission must pass the explicit capacity wait policy to the global lock.');
 	bootstrap_demand_assert(str_contains((string) $lifecycle_source, 'remaining_demand_after_materialization') && str_contains((string) $lifecycle_source, "'post_rebase_admission'"), 'Successful rebase must remeasure and re-run admission before bootstrap.');
-	bootstrap_demand_assert(str_contains((string) $lifecycle_source, "'rebase --abort', min(60, \$abort_remaining)"), 'Rebase and abort must share the aggregate bounded operation deadline.');
+	bootstrap_demand_assert(str_contains((string) $lifecycle_source, "'rebase --abort', min(5, \$abort_remaining)") && str_contains((string) $lifecycle_source, "'rebase_cleanup_failed' => is_wp_error(\$abort)"), 'Rebase cleanup must be bounded and its failure must be surfaced.');
 	unset($GLOBALS['bootstrap_demand_filters']['datamachine_code_worktree_capacity_wait_timeout_seconds']);
 	bootstrap_demand_assert(WorktreeBootstrapper::total_timeout_seconds() + 600 === $lock_policy::worktree_capacity_wait_timeout_seconds(true), 'Capacity wait must exceed the complete bounded bootstrap lifecycle.');
 
