@@ -68,6 +68,7 @@ trait WorkspaceCleanupPlan {
 					'limit'          => $inputs['limit'],
 					'offset'         => $inputs['offset'],
 					'sort'           => $inputs['artifact_sort'],
+					'older_than'     => $inputs['worktree_older_than'],
 				)
 			);
 			if ( $artifact_plan instanceof \WP_Error ) {
@@ -137,7 +138,8 @@ trait WorkspaceCleanupPlan {
 				'applies_inline'               => false,
 				'force_artifact_cleanup'       => $inputs['force_artifact_cleanup'],
 				'allow_active_artifact_cleanup' => $inputs['allow_active_artifact_cleanup'],
-				'artifact_cleanup'             => 'apply-plan must freshly revalidate profile-derived paths, authoritative liveness before each artifact, and active process use once per row immediately before mutation',
+				'artifact_age_filter'          => is_array($artifact_plan['age_filter'] ?? null) ? $artifact_plan['age_filter'] : null,
+				'artifact_cleanup'             => 'apply-plan must freshly revalidate the reviewed age gate, profile-derived paths, authoritative liveness before each artifact, and active process use once per row immediately before mutation',
 				'worktree_removal'             => 'apply-plan must re-run dirty, unpushed, identity, lifecycle, containment, and primary protections before deletion',
 				'resolver'                     => 'resolver rows may gather merge signals but cannot delete worktrees',
 				'destructive_rows_need_review' => true,
@@ -484,10 +486,18 @@ trait WorkspaceCleanupPlan {
 			'offset'             => $offset,
 			'next_offset'        => $next_offset,
 			'lanes'              => $lanes,
-			'next_command'       => null === $next_offset ? null : sprintf('studio wp datamachine-code workspace cleanup plan --mode=%s --limit=%d --offset=%d --format=json', $mode, $limit, $next_offset),
-			'full_audit_command' => sprintf('studio wp datamachine-code workspace cleanup plan --mode=%s --exhaustive --format=json', $mode),
+			'next_command'       => null === $next_offset ? null : sprintf('studio wp datamachine-code workspace cleanup plan --mode=%s --limit=%d --offset=%d%s --format=json', $mode, $limit, $next_offset, $this->cleanup_plan_age_command_arg($inputs)),
+			'full_audit_command' => sprintf('studio wp datamachine-code workspace cleanup plan --mode=%s --exhaustive%s --format=json', $mode, $this->cleanup_plan_age_command_arg($inputs)),
 			'operator_note'      => empty($inputs['full_workspace']) ? 'Default cleanup planning is bounded for large workspaces; review/apply this page or continue with next_command for the next page.' : 'Full-workspace cleanup audit requested explicitly.',
 		);
+	}
+
+	/**
+	 * Preserve the reviewed age gate in generated plan commands.
+	 */
+	private function cleanup_plan_age_command_arg( array $inputs ): string {
+		$older_than = trim( (string) ( $inputs['worktree_older_than'] ?? '' ));
+		return '' === $older_than ? '' : ' --older-than=' . escapeshellarg($older_than);
 	}
 
 	/**
@@ -823,7 +833,7 @@ trait WorkspaceCleanupPlan {
 			array(
 				'label'   => 'inspect_full_plan_json',
 				'risk'    => 'none',
-				'command' => 'studio wp datamachine-code workspace cleanup plan --mode=retention --exhaustive --format=json',
+				'command' => 'studio wp datamachine-code workspace cleanup plan --mode=retention --exhaustive' . $this->cleanup_plan_age_command_arg($inputs) . ' --format=json',
 				'when'    => 'operator explicitly wants a full unbounded audit for review or archival',
 			),
 			array(
@@ -844,7 +854,7 @@ trait WorkspaceCleanupPlan {
 			$commands[] = array(
 				'label'   => 'audit_artifacts',
 				'risk'    => 'none',
-				'command' => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts',
+				'command' => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts' . $this->cleanup_plan_age_command_arg($inputs),
 				'when'    => 'include dependency artifacts, build outputs, and caches in a separate full plan',
 			);
 		}
@@ -852,7 +862,7 @@ trait WorkspaceCleanupPlan {
 		$commands[] = array(
 			'label'   => 'force_dirty_artifacts_only',
 			'risk'    => 'high_destructive',
-			'command' => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --force',
+			'command' => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --force' . $this->cleanup_plan_age_command_arg($inputs),
 			'when'    => 'operator explicitly accepts artifact cleanup in dirty worktrees; source edits remain protected from worktree removal',
 		);
 

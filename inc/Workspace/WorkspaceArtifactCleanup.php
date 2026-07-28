@@ -10,6 +10,7 @@ namespace DataMachineCode\Workspace;
 defined('ABSPATH') || exit;
 
 require_once __DIR__ . '/WorktreeContextInjector.php';
+require_once __DIR__ . '/WorktreeAgeFilter.php';
 
 trait WorkspaceArtifactCleanup {
 
@@ -35,7 +36,7 @@ trait WorkspaceArtifactCleanup {
 	 *
 	 * @param  array $opts Cleanup options (dry_run, force,
 	 *                     allow_active_artifact_cleanup, apply_plan, limit,
-	 *                     offset, exhaustive, safety_probes).
+	 *                     offset, exhaustive, safety_probes, older_than).
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_cleanup_artifacts( array $opts = array() ): array|\WP_Error {
@@ -43,6 +44,11 @@ trait WorkspaceArtifactCleanup {
 		$force          = ! empty($opts['force']);
 		$allow_active   = ! empty($opts['allow_active_artifact_cleanup']);
 		$apply_plan     = isset($opts['apply_plan']) && is_array($opts['apply_plan']) ? $opts['apply_plan'] : null;
+		$older_than     = isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '';
+		if ( '' === $older_than && null !== $apply_plan && is_array($apply_plan['age_filter'] ?? null) ) {
+			$older_than = trim( (string) ( $apply_plan['age_filter']['older_than'] ?? '' ));
+		}
+		$opts['older_than'] = $older_than;
 		$exhaustive     = ! empty($opts['exhaustive']);
 		$full_workspace = ! empty($opts['full_workspace']);
 		$sort           = isset($opts['sort']) ? strtolower(trim( (string) $opts['sort'])) : '';
@@ -59,7 +65,7 @@ trait WorkspaceArtifactCleanup {
 		if ( $exhaustive || $full_workspace ) {
 			$limit = 0;
 		}
-		$review_command  = $this->build_artifact_cleanup_review_command();
+		$review_command  = $this->build_artifact_cleanup_review_command($opts);
 		$apply_command   = $this->build_artifact_cleanup_apply_command($force, $allow_active);
 		$preview_command = $this->build_artifact_cleanup_preview_command($opts);
 		// Apply paths default to safety probing (small subset). Dry-run defaults
@@ -105,6 +111,7 @@ trait WorkspaceArtifactCleanup {
 				'offset'        => $rank_by_size ? 0 : $offset,
 				'only_handles'  => $only_handles,
 				'safety_probes' => $safety_probes,
+				'older_than'    => $older_than,
 			)
 		);
 		if ( $plan instanceof \WP_Error ) {
@@ -114,6 +121,7 @@ trait WorkspaceArtifactCleanup {
 		$candidates = $plan['candidates'];
 		$skipped    = $plan['skipped'];
 		$pagination = $plan['pagination'] ?? null;
+		$age_filter = is_array($plan['age_filter'] ?? null) ? $plan['age_filter'] : null;
 
 		if ( null !== $planned ) {
 			$scoped     = $this->scope_worktree_artifact_cleanup_to_plan($planned, $candidates, $skipped);
@@ -145,11 +153,17 @@ trait WorkspaceArtifactCleanup {
 				'sort'          => 'size',
 				'ranked_total'  => $total_ranked,
 			);
+			if ( null !== $age_filter ) {
+				$pagination['age_filter'] = $age_filter;
+			}
 		}
 
 		$summary = $this->build_worktree_artifact_cleanup_summary($candidates, array(), $skipped);
 		if ( null !== $pagination ) {
 			$summary['pagination'] = $pagination;
+		}
+		if ( null !== $age_filter ) {
+			$summary['age_filter'] = $age_filter;
 		}
 
 		if ( $dry_run ) {
@@ -164,6 +178,7 @@ trait WorkspaceArtifactCleanup {
 				'removed'               => array(),
 				'partial'               => array(),
 				'skipped'               => $skipped,
+				'age_filter'            => $age_filter,
 				'summary'               => array(
 					'review_command'        => $review_command,
 					'apply_command'         => $apply_command,
@@ -252,6 +267,7 @@ trait WorkspaceArtifactCleanup {
 			'removed'    => $removed,
 			'partial'    => $partial,
 			'skipped'    => $skipped,
+			'age_filter' => $age_filter,
 			'summary'    => $apply_summary,
 		);
 		if ( null !== $pagination ) {
@@ -264,8 +280,10 @@ trait WorkspaceArtifactCleanup {
 	 * Build the high-level command that persists a snapshot-safe artifact plan.
 	 * @return string
 	 */
-	private function build_artifact_cleanup_review_command(): string {
-		return 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json';
+	private function build_artifact_cleanup_review_command( array $opts = array() ): string {
+		return 'studio wp datamachine-code workspace cleanup plan --mode=artifacts'
+			. ( '' !== trim( (string) ( $opts['older_than'] ?? '' )) ? ' --older-than=' . escapeshellarg(trim( (string) $opts['older_than'])) : '' )
+			. ' --format=json';
 	}
 
 	/**
@@ -308,6 +326,9 @@ trait WorkspaceArtifactCleanup {
 		if ( isset($opts['sort']) && '' !== trim( (string) $opts['sort']) ) {
 			$parts[] = '--sort=' . preg_replace('/[^a-z0-9_\-]/i', '', (string) $opts['sort']);
 		}
+		if ( isset($opts['older_than']) && '' !== trim( (string) $opts['older_than']) ) {
+			$parts[] = '--older-than=' . escapeshellarg(trim( (string) $opts['older_than']));
+		}
 		$parts[] = '--format=json';
 		return implode(' ', $parts);
 	}
@@ -333,7 +354,7 @@ trait WorkspaceArtifactCleanup {
 	 *
 	 * @param  bool  $force Whether to allow dirty/unpushed worktrees.
 	 * @param  array $opts  Options: `limit` (0 = unbounded internal exhaustive mode), `offset`,
-	 *                      `only_handles` (array<string>|null), `safety_probes`.
+	 *                      `only_handles` (array<string>|null), `safety_probes`, `older_than`.
 	 * @return array{candidates: array<int,array>, skipped: array<int,array>, pagination: ?array<string,mixed>}|\WP_Error
 	 */
 	private function build_worktree_artifact_cleanup_plan( bool $force, array $opts = array() ): array|\WP_Error {
@@ -344,6 +365,15 @@ trait WorkspaceArtifactCleanup {
 		? array_values(array_filter(array_map('strval', $opts['only_handles']), fn( $h ) => '' !== $h))
 		: null;
 		$safety_probes = ! empty($opts['safety_probes']);
+		$older_than    = isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '';
+		$age_filter    = null;
+		if ( '' !== $older_than ) {
+			$duration_seconds = $this->parse_worktree_cleanup_duration($older_than);
+			if ( $duration_seconds instanceof \WP_Error ) {
+				return $duration_seconds;
+			}
+			$age_filter = WorktreeAgeFilter::build($older_than, $duration_seconds);
+		}
 
 		$only_index = null;
 		if ( null !== $only_handles ) {
@@ -427,6 +457,15 @@ trait WorkspaceArtifactCleanup {
 
 			if ( empty($artifacts) ) {
 				continue;
+			}
+
+			if ( null !== $age_filter ) {
+				$age_decision = WorktreeAgeFilter::decide($base_row['created_at'], $age_filter);
+				if ( 'included' !== (string) ( $age_decision['decision'] ?? '' ) ) {
+					$skipped[] = array_merge($base_row, WorktreeAgeFilter::skip_fields($age_decision), array( 'artifacts' => $artifacts ));
+					continue;
+				}
+				$base_row['age_filter'] = $age_decision['age_filter'];
 			}
 
 			if ( ! empty($wt['external']) ) {
@@ -586,11 +625,15 @@ trait WorkspaceArtifactCleanup {
 			'next_offset'   => ( $bounded && $slice_end < $total ) ? $slice_end : null,
 			'safety_probes' => $safety_probes,
 		);
+		if ( null !== $age_filter ) {
+			$pagination['age_filter'] = $age_filter;
+		}
 
 		return array(
 			'candidates' => $candidates,
 			'skipped'    => $skipped,
 			'pagination' => $pagination,
+			'age_filter' => $age_filter,
 		);
 	}
 

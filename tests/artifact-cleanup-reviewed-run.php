@@ -249,6 +249,75 @@ namespace {
 	reviewed_artifact_assert('completed', $drained['state'] ?? null, 'repeated drain/apply should remain terminal after all reviewed rows are recorded');
 	reviewed_artifact_assert(0, $drained['processed'] ?? null, 'terminal drain/apply should process no duplicate rows');
 
+	$now = time();
+	$boundary_filter = DataMachineCode\Workspace\WorktreeAgeFilter::build('24h', 86400, $now);
+	reviewed_artifact_assert('included', DataMachineCode\Workspace\WorktreeAgeFilter::decide(gmdate('c', $now - 86400), $boundary_filter, $now)['decision'], 'a timestamp exactly equal to the threshold must be included');
+	$younger_filter = DataMachineCode\Workspace\WorktreeAgeFilter::build('24h', 86400, $now);
+	reviewed_artifact_assert('excluded', DataMachineCode\Workspace\WorktreeAgeFilter::decide(gmdate('c', $now - 86399), $younger_filter, $now)['decision'], 'a timestamp one second younger than the threshold must be excluded');
+	$older_filter = DataMachineCode\Workspace\WorktreeAgeFilter::build('24h', 86400, $now);
+	reviewed_artifact_assert('included', DataMachineCode\Workspace\WorktreeAgeFilter::decide(gmdate('c', $now - 86401), $older_filter, $now)['decision'], 'a timestamp one second older than the threshold must be included');
+
+	foreach (array(
+		'age-old'        => gmdate('c', $now - 172800),
+		'age-transition' => gmdate('c', $now - 172800),
+		'age-young'      => gmdate('c', $now - 60),
+		'age-missing'    => null,
+	) as $slug => $created_at) {
+		$path = $root . '/repo@' . $slug;
+		mkdir($path, 0777, true);
+		file_put_contents($path . '/composer.json', '{}');
+		mkdir($path . '/vendor', 0777, true);
+		file_put_contents($path . '/vendor/generated.bin', str_repeat('a', 'age-transition' === $slug ? 22000 : 11000));
+		$workspace->rows[] = array(
+			'handle'      => 'repo@' . $slug,
+			'repo'        => 'repo',
+			'branch'      => 'test/' . $slug,
+			'path'        => $path,
+			'is_worktree' => true,
+			'is_primary'  => false,
+			'created_at'  => $created_at,
+		);
+	}
+
+	$age_preview = $workspace->worktree_cleanup_artifacts(array('dry_run' => true, 'sort' => 'size', 'limit' => 10, 'older_than' => '24h', 'force' => true, 'allow_active_artifact_cleanup' => true));
+	reviewed_artifact_assert(array('repo@age-transition', 'repo@age-old'), array_column($age_preview['candidates'], 'handle'), 'only old artifact candidates should survive the age gate regardless of force overrides');
+	$age_reasons = array_column($age_preview['skipped'], 'reason_code', 'handle');
+	reviewed_artifact_assert('age_filter', $age_reasons['repo@age-young'] ?? null, 'young artifact candidates should be excluded by age');
+	reviewed_artifact_assert('unknown_age', $age_reasons['repo@age-missing'] ?? null, 'missing authoritative timestamps should fail closed');
+	reviewed_artifact_assert('24h', $age_preview['pagination']['age_filter']['older_than'] ?? null, 'pagination must retain the normalized age policy');
+	reviewed_artifact_assert(true, str_contains($age_preview['preview_command'] ?? '', "--older-than='24h'"), 'preview rerun command must retain the age policy');
+	reviewed_artifact_assert(true, str_contains($age_preview['review_command'] ?? '', "--older-than='24h'"), 'DB-backed review command must retain the age policy');
+
+	$age_plan_page = $workspace->workspace_cleanup_plan(array('mode' => 'artifacts', 'include_worktrees' => false, 'limit' => 1, 'worktree_older_than' => '24h'));
+	reviewed_artifact_assert(true, str_contains($age_plan_page['continuation']['next_command'] ?? '', "--older-than='24h'"), 'continuation command must retain the age policy');
+	reviewed_artifact_assert(true, str_contains($age_plan_page['continuation']['full_audit_command'] ?? '', "--older-than='24h'"), 'full audit command must retain the age policy');
+
+	$age_repository = new ReviewedArtifactRepository();
+	$age_service = new DataMachineCode\Workspace\CleanupRunService($age_repository, $workspace);
+	$db_age_plan = $age_service->plan(array(
+		'mode' => 'artifacts',
+		'include_artifacts' => true,
+		'include_worktrees' => false,
+		'include_resolvers' => false,
+		'limit' => 10,
+		'worktree_older_than' => '24h',
+	));
+	reviewed_artifact_assert('24h', $age_repository->runs['cleanup-run-reviewed']['policy']['artifact_age_filter']['older_than'] ?? null, 'DB-backed runs must persist the normalized artifact age policy');
+	reviewed_artifact_assert(2, $db_age_plan['cleanup_storage']['item_count'] ?? null, 'DB-backed age plans should persist only old candidates');
+	foreach ($workspace->rows as &$row) {
+		if ('repo@age-transition' === ($row['handle'] ?? '')) {
+			$row['created_at'] = gmdate('c');
+		}
+	}
+	unset($row);
+	$db_age_apply = $age_service->apply('cleanup-run-reviewed', array('limit' => 10));
+	reviewed_artifact_assert(1, $db_age_apply['applied'] ?? null, 'an old candidate should remain eligible at apply time');
+	reviewed_artifact_assert(1, $db_age_apply['skipped'] ?? null, 'a candidate that becomes young before apply must fail closed');
+	reviewed_artifact_assert(false, is_dir($root . '/repo@age-old/vendor'), 'old candidate artifacts should be removed');
+	reviewed_artifact_assert(true, is_dir($root . '/repo@age-transition/vendor'), 'candidate made young before apply must be preserved');
+	$age_items = $age_repository->get_items('cleanup-run-reviewed');
+	reviewed_artifact_assert('age_filter', array_column($age_items, 'reason_code', 'handle')['repo@age-transition'] ?? null, 'apply-time age transition should record the age gate reason');
+
 	reviewed_artifact_remove_tree($root);
 	fwrite(STDOUT, "artifact-cleanup-reviewed-run ok\n");
 }

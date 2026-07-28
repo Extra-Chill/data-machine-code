@@ -1055,6 +1055,9 @@ class WorkspaceCommand extends BaseCommand {
 		if ( isset($assoc_args['allow-active-artifact-cleanup']) ) {
 			$input['allow_active_artifact_cleanup'] = (bool) $assoc_args['allow-active-artifact-cleanup'];
 		}
+		if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
+			$input['older_than'] = trim( (string) $assoc_args['older-than']);
+		}
 		foreach (
 			array(
 				'max-passes'     => 'max_passes',
@@ -3762,7 +3765,8 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 * [--older-than=<duration>]
 	 * : Limit cleanup candidates to worktrees with lifecycle `created_at`
-	 *   metadata older than the compact duration (cleanup only, e.g. 7d, 24h).
+	 *   metadata older than the compact duration (cleanup and cleanup-artifacts,
+	 *   e.g. 7d, 24h).
 	 *   Candidate worktrees without valid `created_at` metadata are skipped.
 	 *
 	 * [--remove-timeout=<seconds>]
@@ -4282,6 +4286,9 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				if ( isset($assoc_args['sort']) && '' !== trim( (string) $assoc_args['sort']) ) {
 					$input['sort'] = trim( (string) $assoc_args['sort']);
+				}
+				if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
+					$input['older_than'] = trim( (string) $assoc_args['older-than']);
 				}
 				break;
 			case 'reconcile-metadata':
