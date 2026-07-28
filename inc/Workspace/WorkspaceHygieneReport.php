@@ -15,6 +15,9 @@ defined('ABSPATH') || exit;
 if ( ! class_exists(ProcessRunner::class) ) {
 	require_once dirname(__DIR__) . '/Support/ProcessRunner.php';
 }
+if ( ! class_exists(WorkspaceEmergencyCandidateSelector::class) ) {
+	require_once __DIR__ . '/WorkspaceEmergencyCandidateSelector.php';
+}
 
 trait WorkspaceHygieneReport {
 
@@ -302,13 +305,13 @@ trait WorkspaceHygieneReport {
 
 		$target_bytes       = (int) ( $budget['target_recovery_bytes'] ?? 0 );
 		$target_inodes      = (int) ( $budget['target_recovery_inodes'] ?? 0 );
-		$selection          = $this->select_emergency_candidates($artifact_candidates, $target_bytes, $target_inodes, $artifact_chunk_size, 'artifact_size_bytes');
+		$selection          = WorkspaceEmergencyCandidateSelector::select($artifact_candidates, $target_bytes, $target_inodes, $artifact_chunk_size, 'artifact_size_bytes');
 		$selected_artifacts = $selection['candidates'];
 		$blocked_reasons    = array();
 		$selected_worktrees = array();
 		if ( ! $selection['target_met'] && array() !== $worktree_candidates ) {
 			if ( $allow_worktree_deletion && $human_approved_deletion ) {
-				$worktree_selection                             = $this->select_emergency_candidates(
+				$worktree_selection                             = WorkspaceEmergencyCandidateSelector::select(
 					$worktree_candidates,
 					max(0, $target_bytes - $selection['planned_measured_recovery_bytes']),
 					max(0, $target_inodes - $selection['planned_measured_recovery_inodes']),
@@ -382,62 +385,6 @@ trait WorkspaceHygieneReport {
 				'force_worktree_deletion_applied'  => $force_worktree_deletion,
 			),
 			'capacity_evidence'       => $this->build_capacity_evidence($capacity_before, $capacity_after),
-		);
-	}
-
-	/** Select measured rows according to the resource that crossed its capacity floor. */
-	private function select_emergency_candidates( array $candidates, int $target_bytes, int $target_inodes, int $limit, string $bytes_field ): array {
-		usort(
-			$candidates,
-			static function ( array $left, array $right ) use ( $target_bytes, $target_inodes, $bytes_field ): int {
-				$left_bytes   = is_numeric($left[ $bytes_field ] ?? null) ? max(0, (int) $left[ $bytes_field ]) : 0;
-				$right_bytes  = is_numeric($right[ $bytes_field ] ?? null) ? max(0, (int) $right[ $bytes_field ]) : 0;
-				$left_inodes  = 'measured' === (string) ( $left['entry_count_status'] ?? '' ) ? max(0, (int) ( $left['entry_count'] ?? 0 )) : 0;
-				$right_inodes = 'measured' === (string) ( $right['entry_count_status'] ?? '' ) ? max(0, (int) ( $right['entry_count'] ?? 0 )) : 0;
-				if ( $target_bytes > 0 && 0 === $target_inodes ) {
-					return $right_bytes <=> $left_bytes;
-				}
-				if ( $target_inodes > 0 && 0 === $target_bytes ) {
-					return $right_inodes <=> $left_inodes;
-				}
-				$left_score  = ( $left_bytes / max(1, $target_bytes) ) + ( $left_inodes / max(1, $target_inodes) );
-				$right_score = ( $right_bytes / max(1, $target_bytes) ) + ( $right_inodes / max(1, $target_inodes) );
-				return $right_score <=> $left_score;
-			}
-		);
-		$selected       = array();
-		$planned_bytes  = 0;
-		$planned_inodes = 0;
-		foreach ( $candidates as $candidate ) {
-			if ( count($selected) >= $limit ) {
-				break;
-			}
-			$bytes  = is_numeric($candidate[ $bytes_field ] ?? null) ? max(0, (int) $candidate[ $bytes_field ]) : 0;
-			$inodes = 'measured' === (string) ( $candidate['entry_count_status'] ?? '' ) && is_numeric($candidate['entry_count'] ?? null)
-				? max(0, (int) $candidate['entry_count'])
-				: 0;
-			if ( ( $target_bytes > 0 && 0 === $bytes && 0 === $target_inodes ) || ( $target_inodes > 0 && 0 === $inodes && 0 === $target_bytes ) ) {
-				continue;
-			}
-			$selected[]      = $candidate;
-			$planned_bytes  += $bytes;
-			$planned_inodes += $inodes;
-			if ( $planned_bytes >= $target_bytes && $planned_inodes >= $target_inodes ) {
-				break;
-			}
-		}
-
-		return array(
-			'candidates'                       => $selected,
-			'target_recovery_bytes'            => max(0, $target_bytes),
-			'target_recovery_inodes'           => max(0, $target_inodes),
-			'planned_measured_recovery_bytes'  => $planned_bytes,
-			'planned_measured_recovery_inodes' => $planned_inodes,
-			'target_met'                       => $planned_bytes >= $target_bytes && $planned_inodes >= $target_inodes,
-			'chunk_limit'                      => $limit,
-			'measured_candidate_count'         => count(array_filter($candidates, static fn( $row ) => 'measured' === (string) ( $row['entry_count_status'] ?? '' ))),
-			'unknown_candidate_count'          => count(array_filter($candidates, static fn( $row ) => 'measured' !== (string) ( $row['entry_count_status'] ?? '' ))),
-			'evidence_semantics'               => 'Byte pressure uses measured byte recovery, inode pressure uses measured entry recovery, and mixed pressure must satisfy both targets.',
 		);
 	}
 

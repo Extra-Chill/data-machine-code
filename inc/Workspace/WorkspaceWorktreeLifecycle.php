@@ -156,11 +156,20 @@ trait WorkspaceWorktreeLifecycle {
 	 * bootstrap roots.
 	 */
 	public static function worktree_capacity_wait_timeout_seconds( bool $bootstrap = true ): int {
-		$timeout = $bootstrap ? WorktreeBootstrapper::total_timeout_seconds() + 600 : 600;
+		$timeout = self::worktree_capacity_operation_timeout_seconds($bootstrap) + 60;
 		if ( function_exists('apply_filters') ) {
 			$timeout = (int) apply_filters('datamachine_code_worktree_capacity_wait_timeout_seconds', $timeout, $bootstrap);
 		}
 
+		return max(1, $timeout);
+	}
+
+	/** Resolve the aggregate deadline covering create, rebase, and bootstrap. */
+	public static function worktree_capacity_operation_timeout_seconds( bool $bootstrap = true ): int {
+		$timeout = $bootstrap ? WorktreeBootstrapper::total_timeout_seconds() + 540 : 540;
+		if ( function_exists('apply_filters') ) {
+			$timeout = (int) apply_filters('datamachine_code_worktree_capacity_operation_timeout_seconds', $timeout, $bootstrap);
+		}
 		return max(1, $timeout);
 	}
 
@@ -185,6 +194,7 @@ trait WorkspaceWorktreeLifecycle {
 		string $wt_path,
 		string $primary_path
 	): array|\WP_Error {
+		$operation_deadline = microtime(true) + self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		if ( is_dir($wt_path) ) {
 			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
 		}
@@ -293,6 +303,7 @@ trait WorkspaceWorktreeLifecycle {
 					'fetch_timeout_seconds' => $fetch_timeout_seconds,
 					'exists_local'          => $exists_local,
 					'target_ref'            => $target_ref,
+					'operation_deadline'    => $operation_deadline,
 				)
 			);
 
@@ -301,9 +312,44 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		$response['disk_budget'] = $disk_budget;
+		if ( ! empty($response['rebase_succeeded']) ) {
+			$post_rebase_demand = WorktreeBootstrapper::demand_plan_for_target($wt_path, 'HEAD', $bootstrap);
+			if ( $post_rebase_demand instanceof \WP_Error ) {
+				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+				return $post_rebase_demand;
+			}
+			$post_rebase_demand                  = WorktreeBootstrapper::remaining_demand_after_materialization($post_rebase_demand);
+			$post_rebase_budget                  = WorktreeDiskBudget::inspect(
+				$this->workspace_path,
+				WorktreeDiskBudget::thresholds($repo, $branch),
+				$force,
+				array( 'include_workspace_usage' => true ),
+				$post_rebase_demand
+			);
+			$response['post_rebase_disk_budget'] = $post_rebase_budget;
+			$response['disk_budget']             = $post_rebase_budget;
+			if ( 'refused' === ( $post_rebase_budget['status'] ?? '' ) ) {
+				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+				WorktreeContextInjector::forget_metadata($wt_handle);
+				return new \WP_Error(
+					'worktree_disk_budget_exceeded',
+					'Refusing dependency bootstrap because the effective post-rebase target exceeds the workspace capacity budget.',
+					array(
+						'status'      => 507,
+						'disk_budget' => $post_rebase_budget,
+						'phase'       => 'post_rebase_admission',
+					)
+				);
+			}
+		}
 
 		if ( $bootstrap ) {
-			$response['bootstrap'] = WorktreeBootstrapper::bootstrap($wt_path);
+			$remaining_seconds = (int) floor($operation_deadline - microtime(true));
+			if ( $remaining_seconds <= 0 ) {
+				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+				return new \WP_Error('worktree_operation_timeout', 'The aggregate worktree operation deadline expired before dependency bootstrap.', array( 'status' => 504 ));
+			}
+			$response['bootstrap'] = WorktreeBootstrapper::bootstrap($wt_path, $remaining_seconds);
 		}
 
 		if ( ! is_dir($wt_path) || ! file_exists($wt_path . '/.git') ) {
@@ -416,7 +462,8 @@ trait WorkspaceWorktreeLifecycle {
 			$created_branch = true;
 		}
 
-		$result = $this->run_git($primary_path, $cmd, 300);
+		$add_remaining = max(1, (int) floor( (float) ( $preflight['operation_deadline'] ?? 0.0 ) - microtime(true)));
+		$result        = $this->run_git($primary_path, $cmd, min(300, $add_remaining));
 		if ( is_wp_error($result) ) {
 			return $result;
 		}
@@ -489,7 +536,7 @@ trait WorkspaceWorktreeLifecycle {
 		// the worktree at its pre-rebase state AND still trips the gate, so
 		// --rebase-base alone on a conflicting rebase isn't a silent bypass.
 		if ( $rebase_base && ! $fetch_failed ) {
-			$rebase_result = $this->try_rebase_worktree($wt_path, $response, $created_branch);
+			$rebase_result = $this->try_rebase_worktree($wt_path, $response, $created_branch, (float) ( $preflight['operation_deadline'] ?? 0.0 ));
 			if ( null !== $rebase_result ) {
 				$response = array_merge($response, $rebase_result);
 			}
@@ -2052,7 +2099,7 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  bool   $created_branch Whether this was a freshly-created branch.
 	 * @return array|null
 	 */
-	private function try_rebase_worktree( string $wt_path, array &$response, bool $created_branch ): ?array {
+	private function try_rebase_worktree( string $wt_path, array &$response, bool $created_branch, float $operation_deadline ): ?array {
 		$target = null;
 		$clear  = null;
 
@@ -2075,12 +2122,14 @@ trait WorkspaceWorktreeLifecycle {
 			return null;
 		}
 
-		$result = $this->run_git($wt_path, sprintf('rebase %s', escapeshellarg($target)));
+		$remaining = max(1, (int) floor($operation_deadline - microtime(true)));
+		$result    = $this->run_git($wt_path, sprintf('rebase %s', escapeshellarg($target)), min(300, $remaining));
 
 		if ( is_wp_error($result) ) {
 			// Abort so the worktree stays at its pre-rebase HEAD. Agent can
 			// retry manually after resolving conflicts.
-			$this->run_git($wt_path, 'rebase --abort');
+			$abort_remaining = max(1, (int) floor($operation_deadline - microtime(true)));
+			$this->run_git($wt_path, 'rebase --abort', min(60, $abort_remaining));
 
 			$data  = $result->get_error_data();
 			$tail  = is_array($data) && isset($data['output']) ? trim( (string) $data['output']) : '';

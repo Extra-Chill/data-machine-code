@@ -200,8 +200,14 @@ try {
 	assert_true(1000001 === $git_lock_boundary['projected_free_inodes'], 'Boundary projection must subtract tracked entries and the separate Git safety margin.');
 	$git_fixture = sys_get_temp_dir() . '/dmc-git-lock-boundary-' . bin2hex(random_bytes(6));
 	mkdir($git_fixture . '/.git', 0777, true);
-	assert_true(false !== file_put_contents($git_fixture . '/.git/index.lock', ''), 'Admitted Git mutation reserve must permit index.lock creation.');
+	for ( $index = 0; $index < 555; ++$index ) {
+		file_put_contents($git_fixture . '/modeled-' . $index, '');
+	}
+	assert_true(false !== file_put_contents($git_fixture . '/.git/index.lock', ''), 'The bounded fixture must consume its modeled final inode with the Git index lock.');
 	unlink($git_fixture . '/.git/index.lock');
+	for ( $index = 0; $index < 555; ++$index ) {
+		unlink($git_fixture . '/modeled-' . $index);
+	}
 	rmdir($git_fixture . '/.git');
 	rmdir($git_fixture);
 

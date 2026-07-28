@@ -249,6 +249,20 @@ try {
 	$GLOBALS['wpdb'] = $wpdb;
 
 	$workspace = new Workspace();
+	$source_path = $workspace_root . '/source';
+	$primary_path = $workspace_root . '/homeboy';
+	run_command('git checkout -b stale-rebase-demand', $source_path);
+	file_put_contents($source_path . '/stale.txt', "stale\n");
+	run_command('git add stale.txt && git commit -m stale && git push -u origin stale-rebase-demand', $source_path);
+	run_command('git fetch origin && git checkout -b stale-rebase-demand origin/stale-rebase-demand && git checkout main', $primary_path);
+	mkdir($source_path . '/upstream-package', 0777, true);
+	file_put_contents($source_path . '/upstream-package/composer.lock', '{}');
+	run_command('git add upstream-package/composer.lock && git commit -m upstream-dependency && git push', $source_path);
+	$rebased_admission = $workspace->worktree_add('homeboy', 'stale-rebase-demand', null, false, true, false, true, true);
+	assert_true(! is_wp_error($rebased_admission), is_wp_error($rebased_admission) ? $rebased_admission->get_error_message() : 'stale branch rebase admission failed');
+	assert_true(true === ( $rebased_admission['rebase_succeeded'] ?? false ), 'stale branch was not rebased onto its advanced upstream');
+	assert_true(1 === ( $rebased_admission['post_rebase_disk_budget']['demand_plan']['counts']['composer_roots'] ?? 0 ), 'post-rebase admission did not reserve the dependency root introduced only by upstream');
+	assert_true('post_materialization_target_tree_conservative' === ( $rebased_admission['post_rebase_disk_budget']['demand_source'] ?? '' ), 'post-rebase admission did not report its effective target-tree demand source');
 	run_command(
 		'git clone ' . escapeshellarg($workspace_root . '/origin.git') . ' ' . escapeshellarg($workspace_root . '/homeboy@custom-provider-auth-live')
 	);

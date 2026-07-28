@@ -133,8 +133,12 @@ final class WorktreeBootstrapper {
 	 *     }>,
 	 * }
 	 */
-	public static function bootstrap( string $worktree_path ): array {
-		self::$bootstrap_deadline = microtime(true) + self::total_timeout_seconds();
+	public static function bootstrap( string $worktree_path, ?int $remaining_operation_seconds = null ): array {
+		$total_timeout = self::total_timeout_seconds();
+		if ( null !== $remaining_operation_seconds ) {
+			$total_timeout = min($total_timeout, max(1, $remaining_operation_seconds));
+		}
+		self::$bootstrap_deadline = microtime(true) + $total_timeout;
 		$package_discovery        = self::discover_package_roots( $worktree_path );
 		$steps                    = array();
 
@@ -320,6 +324,14 @@ final class WorktreeBootstrapper {
 			'allowances'         => $defaults,
 			'fallback_semantics' => 'tracked target entries and bytes are measured from Git; dependency installs use conservative allowances',
 		);
+	}
+
+	/** Remove demand already materialized by `git worktree add` or rebase. */
+	public static function remaining_demand_after_materialization( array $plan ): array {
+		$plan['bytes']  = max(0, (int) ( $plan['bytes'] ?? 0 ) - (int) ( $plan['tracked_bytes'] ?? 0 ));
+		$plan['inodes'] = max(0, (int) ( $plan['inodes'] ?? 0 ) - (int) ( $plan['counts']['tracked_entries'] ?? 0 ));
+		$plan['source'] = 'post_materialization_target_tree_conservative';
+		return $plan;
 	}
 
 	/** Parse bounded NUL-delimited `git ls-tree -r -t -l` output. */

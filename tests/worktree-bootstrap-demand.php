@@ -37,6 +37,7 @@ function bootstrap_demand_assert( bool $condition, string $message ): void {
 $fixture = sys_get_temp_dir() . '/dmc-bootstrap-demand-' . bin2hex(random_bytes(6));
 $bin = $fixture . '/bin';
 $repo = $fixture . '/repo';
+$rebase_worktree = $fixture . '/rebased';
 mkdir($fixture . '/frontend', 0777, true);
 mkdir($fixture . '/php', 0777, true);
 mkdir($bin, 0777, true);
@@ -80,6 +81,24 @@ try {
 	bootstrap_demand_assert($target_tree['inodes'] >= $target_tree['counts']['tracked_entries'] + $target_tree['git_safety_margin']['inodes'], 'Admission must reserve tracked materialization plus an explicit Git lock margin.');
 	bootstrap_demand_assert($target_tree['target_commit'] !== $primary_tree['target_commit'], 'Differing refs must retain their exact resolved commits in demand evidence.');
 
+	exec('git -C ' . escapeshellarg($repo) . ' checkout -qb stale-branch');
+	file_put_contents($repo . '/stale.txt', 'stale');
+	exec('git -C ' . escapeshellarg($repo) . ' add stale.txt && git -C ' . escapeshellarg($repo) . ' commit -qm stale');
+	exec('git -C ' . escapeshellarg($repo) . ' checkout -q ' . escapeshellarg($primary_branch));
+	mkdir($repo . '/upstream-package', 0777, true);
+	file_put_contents($repo . '/upstream-package/composer.lock', '{}');
+	file_put_contents($repo . '/upstream-package/upstream.txt', 'upstream');
+	exec('git -C ' . escapeshellarg($repo) . ' add upstream-package && git -C ' . escapeshellarg($repo) . ' commit -qm upstream');
+	$stale_tree = WorktreeBootstrapper::demand_plan_for_target($repo, 'stale-branch', true);
+	exec('git -C ' . escapeshellarg($repo) . ' worktree add -q ' . escapeshellarg($rebase_worktree) . ' stale-branch');
+	exec('git -C ' . escapeshellarg($rebase_worktree) . ' rebase ' . escapeshellarg($primary_branch));
+	$rebased_tree = WorktreeBootstrapper::demand_plan_for_target($rebase_worktree, 'HEAD', true);
+	$remaining_rebased = WorktreeBootstrapper::remaining_demand_after_materialization($rebased_tree);
+	bootstrap_demand_assert(0 === $stale_tree['counts']['composer_roots'] && 1 === $rebased_tree['counts']['composer_roots'], 'Post-rebase demand must include dependency roots introduced only by upstream.');
+	bootstrap_demand_assert($rebased_tree['counts']['tracked_entries'] > $stale_tree['counts']['tracked_entries'], 'Post-rebase target inspection must include tracked upstream materialization.');
+	bootstrap_demand_assert($remaining_rebased['inodes'] === $rebased_tree['inodes'] - $rebased_tree['counts']['tracked_entries'], 'Post-rebase re-admission must project only future dependency and Git-margin demand after remeasuring materialized files.');
+	exec('git -C ' . escapeshellarg($repo) . ' worktree remove --force ' . escapeshellarg($rebase_worktree));
+
 	$GLOBALS['bootstrap_demand_filters']['datamachine_code_worktree_bootstrap_command_timeout_seconds'] = static fn() => 1;
 	bootstrap_demand_assert(1 === WorktreeBootstrapper::command_timeout_seconds('submodules'), 'Bootstrap command timeout must be explicitly filterable.');
 	$GLOBALS['bootstrap_demand_filters']['datamachine_code_worktree_capacity_wait_timeout_seconds'] = static fn() => 77;
@@ -88,6 +107,8 @@ try {
 	bootstrap_demand_assert(77 === $lock_policy::worktree_capacity_wait_timeout_seconds(true), 'Capacity admission wait must use its explicit filter instead of the lock default.');
 	$lifecycle_source = file_get_contents(dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php');
 	bootstrap_demand_assert(str_contains((string) $lifecycle_source, 'self::worktree_capacity_wait_timeout_seconds($bootstrap)'), 'Admission must pass the explicit capacity wait policy to the global lock.');
+	bootstrap_demand_assert(str_contains((string) $lifecycle_source, 'remaining_demand_after_materialization') && str_contains((string) $lifecycle_source, "'post_rebase_admission'"), 'Successful rebase must remeasure and re-run admission before bootstrap.');
+	bootstrap_demand_assert(str_contains((string) $lifecycle_source, "'rebase --abort', min(60, \$abort_remaining)"), 'Rebase and abort must share the aggregate bounded operation deadline.');
 	unset($GLOBALS['bootstrap_demand_filters']['datamachine_code_worktree_capacity_wait_timeout_seconds']);
 	bootstrap_demand_assert(WorktreeBootstrapper::total_timeout_seconds() + 600 === $lock_policy::worktree_capacity_wait_timeout_seconds(true), 'Capacity wait must exceed the complete bounded bootstrap lifecycle.');
 
@@ -106,6 +127,11 @@ try {
 
 	echo "worktree-bootstrap-demand: ok\n";
 } finally {
+	if ( is_dir($rebase_worktree) ) {
+		$iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($rebase_worktree, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
+		foreach ( $iterator as $entry ) { $entry->isDir() ? rmdir($entry->getPathname()) : unlink($entry->getPathname()); }
+		rmdir($rebase_worktree);
+	}
 	if ( is_dir($repo) ) {
 		$iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($repo, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
 		foreach ( $iterator as $entry ) {
