@@ -15,10 +15,11 @@ defined('ABSPATH') || exit;
 if ( ! class_exists(ProcessRunner::class) ) {
 	require_once dirname(__DIR__) . '/Support/ProcessRunner.php';
 }
+if ( ! class_exists(WorkspaceEmergencyCandidateSelector::class) ) {
+	require_once __DIR__ . '/WorkspaceEmergencyCandidateSelector.php';
+}
 
 trait WorkspaceHygieneReport {
-
-
 
 	/**
 	 * Build a non-destructive workspace hygiene report.
@@ -177,6 +178,7 @@ trait WorkspaceHygieneReport {
 
 		$worktree_result = null;
 		$artifact_result = null;
+		$capacity_before = $this->build_workspace_disk_report();
 		$lock_retention  = WorkspaceMutationLock::prune_stale($this->workspace_path, $dry_run);
 
 		if ( $worktree_cleanup ) {
@@ -224,15 +226,16 @@ trait WorkspaceHygieneReport {
 			}
 		}
 
-		$report = $this->build_workspace_retention_report($worktree_result, $artifact_result, $dry_run);
+		$report         = $this->build_workspace_retention_report($worktree_result, $artifact_result, $dry_run);
+		$capacity_after = $this->build_workspace_disk_report();
 
 		return array(
-			'success'        => true,
-			'dry_run'        => $dry_run,
-			'destructive'    => ! $dry_run,
-			'generated_at'   => gmdate('c'),
-			'workspace_path' => $this->workspace_path,
-			'policy'         => array(
+			'success'           => true,
+			'dry_run'           => $dry_run,
+			'destructive'       => ! $dry_run,
+			'generated_at'      => gmdate('c'),
+			'workspace_path'    => $this->workspace_path,
+			'policy'            => array(
 				'worktree_cleanup'    => $worktree_cleanup,
 				'artifact_cleanup'    => $artifact_cleanup,
 				'worktree_older_than' => $worktree_older_than,
@@ -240,12 +243,13 @@ trait WorkspaceHygieneReport {
 				'skip_github'         => $skip_github,
 				'force'               => $force,
 			),
-			'lock_retention' => $lock_retention,
-			'storage'        => $this->cleanup_storage_status(),
-			'report'         => $report,
-			'worktrees'      => $worktree_result,
-			'artifacts'      => $artifact_result,
-			'disk'           => $this->build_workspace_disk_report(),
+			'lock_retention'    => $lock_retention,
+			'storage'           => $this->cleanup_storage_status(),
+			'report'            => $report,
+			'worktrees'         => $worktree_result,
+			'artifacts'         => $artifact_result,
+			'disk'              => $capacity_after,
+			'capacity_evidence' => $this->build_capacity_evidence($capacity_before, $capacity_after),
 		);
 	}
 
@@ -268,6 +272,7 @@ trait WorkspaceHygieneReport {
 		$force_worktree_deletion = ! empty($opts['force']) && $human_approved_deletion;
 		$thresholds              = isset($opts['thresholds']) && is_array($opts['thresholds']) ? $opts['thresholds'] : WorktreeDiskBudget::thresholds('workspace', 'emergency-cleanup');
 		$budget                  = WorktreeDiskBudget::inspect($this->workspace_path, $thresholds);
+		$capacity_before         = $this->build_workspace_disk_report();
 
 		$plan = $this->worktree_emergency_cleanup(array( 'dry_run' => true ));
 		if ( $plan instanceof \WP_Error ) {
@@ -281,30 +286,49 @@ trait WorkspaceHygieneReport {
 
 		$triggered = ! empty($budget['emergency_triggered']);
 		if ( ! $triggered ) {
+			$capacity_after = $this->build_workspace_disk_report();
 			return array(
-				'success'         => true,
-				'triggered'       => false,
-				'skipped'         => true,
-				'reason'          => 'disk thresholds not crossed',
-				'dry_run'         => $dry_run,
-				'generated_at'    => gmdate('c'),
-				'workspace_path'  => $this->workspace_path,
-				'disk_budget'     => $budget,
-				'emergency_plan'  => $plan,
-				'action_required' => false,
-				'applied'         => null,
+				'success'           => true,
+				'triggered'         => false,
+				'skipped'           => true,
+				'reason'            => 'disk thresholds not crossed',
+				'dry_run'           => $dry_run,
+				'generated_at'      => gmdate('c'),
+				'workspace_path'    => $this->workspace_path,
+				'disk_budget'       => $budget,
+				'emergency_plan'    => $plan,
+				'action_required'   => false,
+				'applied'           => null,
+				'capacity_evidence' => $this->build_capacity_evidence($capacity_before, $capacity_after),
 			);
 		}
 
-		$selected_artifacts = array_slice($artifact_candidates, 0, $artifact_chunk_size);
+		$target_bytes       = (int) ( $budget['target_recovery_bytes'] ?? 0 );
+		$target_inodes      = (int) ( $budget['target_recovery_inodes'] ?? 0 );
+		$selection          = WorkspaceEmergencyCandidateSelector::select($artifact_candidates, $target_bytes, $target_inodes, $artifact_chunk_size, 'artifact_size_bytes');
+		$selected_artifacts = $selection['candidates'];
 		$blocked_reasons    = array();
 		$selected_worktrees = array();
-		if ( array() === $selected_artifacts && array() !== $worktree_candidates ) {
+		if ( ! $selection['target_met'] && array() !== $worktree_candidates ) {
 			if ( $allow_worktree_deletion && $human_approved_deletion ) {
-				$selected_worktrees = $worktree_candidates;
+				$worktree_selection                             = WorkspaceEmergencyCandidateSelector::select(
+					$worktree_candidates,
+					max(0, $target_bytes - $selection['planned_measured_recovery_bytes']),
+					max(0, $target_inodes - $selection['planned_measured_recovery_inodes']),
+					$artifact_chunk_size,
+					'size_bytes'
+				);
+				$selected_worktrees                             = $worktree_selection['candidates'];
+				$selection['planned_measured_recovery_bytes']  += $worktree_selection['planned_measured_recovery_bytes'];
+				$selection['planned_measured_recovery_inodes'] += $worktree_selection['planned_measured_recovery_inodes'];
+				$selection['target_met']                        = $selection['planned_measured_recovery_bytes'] >= $target_bytes
+					&& $selection['planned_measured_recovery_inodes'] >= $target_inodes;
 			} else {
 				$blocked_reasons[] = 'worktree_deletion_requires_human_approval';
 			}
+		}
+		if ( ! $selection['target_met'] ) {
+			$blocked_reasons[] = 'measured_capacity_recovery_target_unmet';
 		}
 
 		$apply_plan = array_merge(
@@ -334,6 +358,7 @@ trait WorkspaceHygieneReport {
 			}
 		}
 		$blocked_reasons = array_values(array_unique($blocked_reasons));
+		$capacity_after  = $this->build_workspace_disk_report();
 
 		return array(
 			'success'                 => true,
@@ -349,6 +374,7 @@ trait WorkspaceHygieneReport {
 			'artifact_chunk_size'     => $artifact_chunk_size,
 			'selected_artifact_count' => count($selected_artifacts),
 			'selected_worktree_count' => count($selected_worktrees),
+			'inode_recovery_plan'     => $selection,
 			'action_required'         => array() !== $blocked_reasons || ( array() === $selected_artifacts && array() !== $worktree_candidates && array() === $selected_worktrees ),
 			'action_required_reasons' => $blocked_reasons,
 			'policy'                  => array(
@@ -358,6 +384,7 @@ trait WorkspaceHygieneReport {
 				'force_requires_human_approval'    => true,
 				'force_worktree_deletion_applied'  => $force_worktree_deletion,
 			),
+			'capacity_evidence'       => $this->build_capacity_evidence($capacity_before, $capacity_after),
 		);
 	}
 
@@ -467,17 +494,19 @@ trait WorkspaceHygieneReport {
 		);
 		sort($dirs, SORT_NATURAL);
 
-		$total_dirs = count($dirs);
-		$sample     = array_slice($dirs, 0, $limit);
-		$rows       = array();
-		$skipped    = array();
-		$total      = 0;
-		$attempted  = 0;
-		$started_at = microtime(true);
-		$deadline   = $started_at + $total_timeout;
+		$total_dirs        = count($dirs);
+		$sample            = array_slice($dirs, 0, $limit);
+		$rows              = array();
+		$skipped           = array();
+		$count_skipped     = array();
+		$total             = 0;
+		$total_entry_count = 0;
+		$attempted         = 0;
+		$started_at        = microtime(true);
+		$deadline          = $started_at + $total_timeout;
 
 		foreach ( $sample as $index => $entry ) {
-			$path = $this->workspace_path . '/' . $entry;
+			$path      = $this->workspace_path . '/' . $entry;
 			$remaining = $deadline - microtime(true);
 			if ( $remaining <= 0 ) {
 				foreach ( array_slice($sample, $index) as $unattempted ) {
@@ -495,31 +524,58 @@ trait WorkspaceHygieneReport {
 			++$attempted;
 			if ( empty($probe['success']) ) {
 				$skipped[] = array(
-					'handle'         => $entry,
-					'path'           => $path,
-					'reason'         => (string) ( $probe['reason'] ?? 'probe_failed' ),
+					'handle'          => $entry,
+					'path'            => $path,
+					'reason'          => (string) ( $probe['reason'] ?? 'probe_failed' ),
 					'timeout_seconds' => $probe['timeout_seconds'] ?? null,
-					'cleanup'        => $probe['cleanup'] ?? null,
+					'cleanup'         => $probe['cleanup'] ?? null,
 				);
+			}
+			$remaining_count = $deadline - microtime(true);
+			$count_probe     = $remaining_count > 0
+				? $this->directory_entry_count_best_effort($path, max(1, min($entry_timeout, (int) ceil($remaining_count))))
+				: array(
+					'success' => false,
+					'reason'  => 'total_timeout',
+				);
+			if ( empty($count_probe['success']) ) {
+				$count_skipped[] = array(
+					'handle'          => $entry,
+					'path'            => $path,
+					'reason'          => (string) ( $count_probe['reason'] ?? 'probe_failed' ),
+					'timeout_seconds' => $count_probe['timeout_seconds'] ?? null,
+					'cleanup'         => $count_probe['cleanup'] ?? null,
+				);
+			}
+			if ( empty($probe['success']) && empty($count_probe['success']) ) {
 				continue;
 			}
-			$size = (int) $probe['bytes'];
+			$size        = ! empty($probe['success']) ? (int) $probe['bytes'] : null;
+			$entry_count = ! empty($count_probe['success']) ? (int) $count_probe['entry_count'] : null;
 
-			$parsed = $this->parse_handle($entry);
-			$total += $size;
-			$rows[] = array(
-				'handle'      => $entry,
-				'repo'        => $parsed['repo'],
-				'is_worktree' => ! empty($parsed['is_worktree']),
-				'kind'        => $this->classify_workspace_entry_kind($entry, $parsed, $path),
-				'path'        => $path,
-				'bytes'       => $size,
-				'human'       => $this->format_bytes($size),
+			$parsed             = $this->parse_handle($entry);
+			$total             += $size ?? 0;
+			$total_entry_count += $entry_count ?? 0;
+			$rows[]             = array(
+				'handle'             => $entry,
+				'repo'               => $parsed['repo'],
+				'is_worktree'        => ! empty($parsed['is_worktree']),
+				'kind'               => $this->classify_workspace_entry_kind($entry, $parsed, $path),
+				'path'               => $path,
+				'bytes'              => $size,
+				'human'              => null === $size ? null : $this->format_bytes($size),
+				'entry_count'        => $entry_count,
+				'entry_count_status' => null === $entry_count ? 'unknown' : 'measured',
+				'entry_count_reason' => null === $entry_count ? (string) ( $count_probe['reason'] ?? 'probe_failed' ) : null,
 			);
 		}
 
 		usort($rows, fn( $a, $b ) => (int) $b['bytes'] <=> (int) $a['bytes']);
-		$scan_complete = count($sample) >= $total_dirs && array() === $skipped;
+		$scan_complete       = count($sample) >= $total_dirs && array() === $skipped;
+		$count_scan_complete = count($sample) >= $total_dirs && array() === $count_skipped;
+		$count_measured      = count(array_filter($rows, static fn( $row ) => null !== ( $row['entry_count'] ?? null )));
+		$top_by_count        = array_values(array_filter($rows, static fn( $row ) => null !== ( $row['entry_count'] ?? null )));
+		usort($top_by_count, static fn( $a, $b ) => (int) $b['entry_count'] <=> (int) $a['entry_count']);
 
 		return array(
 			'mode'                  => 'best_effort_top_level_du',
@@ -531,15 +587,27 @@ trait WorkspaceHygieneReport {
 			'total_entries'         => $total_dirs,
 			'sampled_entries'       => count($sample),
 			'attempted_entries'     => $attempted,
-			'scanned_entries'       => count($rows),
+			'scanned_entries'       => count(array_filter($rows, static fn( $row ) => null !== ( $row['bytes'] ?? null ))),
 			'skipped_entries'       => $skipped,
 			'timed_out_entries'     => count(array_filter($skipped, fn( $row ) => in_array($row['reason'] ?? '', array( 'entry_timeout', 'total_timeout' ), true))),
 			'scan_complete'         => $scan_complete,
 			'total_bytes'           => $total,
 			'total_human'           => $this->format_bytes($total),
+			'entry_count'           => $count_scan_complete ? $total_entry_count : null,
+			'total_entry_count'     => $count_scan_complete ? $total_entry_count : null,
+			'entry_count_minimum'   => $total_entry_count,
+			'entry_count_scan'      => array(
+				'status'           => $count_scan_complete ? 'complete' : ( $count_measured > 0 ? 'partial' : 'unknown' ),
+				'complete'         => $count_scan_complete,
+				'measured_entries' => $count_measured,
+				'unknown_entries'  => max(0, count($sample) - $count_measured),
+				'truncated'        => count($sample) < $total_dirs,
+				'skipped_entries'  => $count_skipped,
+			),
 			'by_kind'               => $this->workspace_size_by_kind($rows),
 			'entries'               => $rows,
 			'top_entries'           => array_slice($rows, 0, 10),
+			'top_entries_by_count'  => array_slice($top_by_count, 0, 10),
 		);
 	}
 
@@ -567,9 +635,21 @@ trait WorkspaceHygieneReport {
 			'scan_complete'         => true,
 			'total_bytes'           => 0,
 			'total_human'           => $this->format_bytes(0),
+			'entry_count'           => $enabled ? 0 : null,
+			'total_entry_count'     => $enabled ? 0 : null,
+			'entry_count_minimum'   => 0,
+			'entry_count_scan'      => array(
+				'status'           => $enabled ? 'unknown' : 'disabled',
+				'complete'         => $enabled,
+				'measured_entries' => 0,
+				'unknown_entries'  => 0,
+				'truncated'        => false,
+				'skipped_entries'  => array(),
+			),
 			'by_kind'               => array(),
 			'entries'               => array(),
 			'top_entries'           => array(),
+			'top_entries_by_count'  => array(),
 		);
 	}
 
@@ -582,12 +662,18 @@ trait WorkspaceHygieneReport {
 	 */
 	private function directory_size_bytes_best_effort( string $path, int $timeout_seconds ): array {
 		if ( ! is_dir($path) ) {
-			return array( 'success' => false, 'reason' => 'missing_directory' );
+			return array(
+				'success' => false,
+				'reason'  => 'missing_directory',
+			);
 		}
 
 		$command = CommandSpec::from_argv(array( 'du', '-sk', '--', $path ));
 		if ( $command instanceof \WP_Error ) {
-			return array( 'success' => false, 'reason' => 'invalid_command' );
+			return array(
+				'success' => false,
+				'reason'  => 'invalid_command',
+			);
 		}
 		$result = ProcessRunner::run(
 			$command,
@@ -607,12 +693,69 @@ trait WorkspaceHygieneReport {
 			);
 		}
 
-		$parts = preg_split('/\s+/', trim( (string) ( $result['output'] ?? '' ))) ?: array();
+		$parts = preg_split('/\s+/', trim( (string) ( $result['output'] ?? '' )));
+		$parts = false === $parts ? array() : $parts;
 		if ( ! isset($parts[0]) || ! is_numeric($parts[0]) ) {
-			return array( 'success' => false, 'reason' => 'invalid_output' );
+			return array(
+				'success' => false,
+				'reason'  => 'invalid_output',
+			);
 		}
 
-		return array( 'success' => true, 'bytes' => max(0, (int) $parts[0]) * 1024 );
+		return array(
+			'success' => true,
+			'bytes'   => max(0, (int) $parts[0]) * 1024,
+		);
+	}
+
+	/**
+	 * Best-effort allocated entry count via GNU `du --inodes` with a hard deadline.
+	 *
+	 * @return array{success:bool,entry_count?:int,reason?:string,timeout_seconds?:int,cleanup?:array<string,mixed>}
+	 */
+	private function directory_entry_count_best_effort( string $path, int $timeout_seconds ): array {
+		if ( ! is_dir($path) ) {
+			return array(
+				'success' => false,
+				'reason'  => 'missing_directory',
+			);
+		}
+
+		$command = CommandSpec::from_argv(array( 'du', '--inodes', '-s', '--', $path ));
+		if ( $command instanceof \WP_Error ) {
+			return array(
+				'success' => false,
+				'reason'  => 'invalid_command',
+			);
+		}
+		$result = ProcessRunner::run($command, array(
+			'timeout_seconds'  => max(1, $timeout_seconds),
+			'output_cap_bytes' => 1024,
+			'error_as_result'  => true,
+		));
+		if ( $result instanceof \WP_Error || empty($result['success']) ) {
+			$timed_out = is_array($result) && isset($result['timeout']);
+			return array(
+				'success'         => false,
+				'reason'          => $timed_out ? 'entry_timeout' : 'probe_failed',
+				'timeout_seconds' => $timed_out ? (int) $result['timeout'] : null,
+				'cleanup'         => is_array($result) && is_array($result['cleanup'] ?? null) ? $result['cleanup'] : null,
+			);
+		}
+
+		$parts = preg_split('/\s+/', trim( (string) ( $result['output'] ?? '' )));
+		$parts = false === $parts ? array() : $parts;
+		if ( ! isset($parts[0]) || ! ctype_digit($parts[0]) ) {
+			return array(
+				'success' => false,
+				'reason'  => 'invalid_output',
+			);
+		}
+
+		return array(
+			'success'     => true,
+			'entry_count' => max(0, (int) $parts[0]),
+		);
 	}
 
 	/**
@@ -622,7 +765,7 @@ trait WorkspaceHygieneReport {
 	 * @return array<string,mixed>
 	 */
 	private function build_workspace_disk_report( ?array $size_report = null ): array {
-		$path  = '' !== $this->workspace_path && is_dir($this->workspace_path) ? $this->workspace_path : dirname($this->workspace_path);
+		$path          = '' !== $this->workspace_path && is_dir($this->workspace_path) ? $this->workspace_path : dirname($this->workspace_path);
 		$size_complete = is_array($size_report) && ! empty($size_report['scan_complete']) && 'disabled' !== ( $size_report['mode'] ?? 'disabled' );
 		$options       = array( 'include_workspace_usage' => $size_complete );
 		if ( $size_complete ) {
@@ -631,7 +774,7 @@ trait WorkspaceHygieneReport {
 		}
 		$budget = WorktreeDiskBudget::inspect($path, array(), false, $options);
 
-		return array(
+		return array_merge($budget, array(
 			'path'                        => $path,
 			'free_bytes'                  => $budget['filesystem_free_bytes'],
 			'free_human'                  => null === $budget['filesystem_free_bytes'] ? null : $this->format_bytes($budget['filesystem_free_bytes']),
@@ -640,6 +783,12 @@ trait WorkspaceHygieneReport {
 			'filesystem_used_bytes'       => $budget['filesystem_used_bytes'],
 			'filesystem_free_bytes'       => $budget['filesystem_free_bytes'],
 			'filesystem_total_bytes'      => $budget['filesystem_total_bytes'],
+			'filesystem_used_inodes'      => $budget['filesystem_used_inodes'],
+			'filesystem_free_inodes'      => $budget['filesystem_free_inodes'],
+			'filesystem_total_inodes'     => $budget['filesystem_total_inodes'],
+			'free_inode_percent'          => $budget['free_inode_percent'],
+			'used_inode_percent'          => $budget['used_inode_percent'],
+			'inode_probe'                 => $budget['inode_probe'],
 			'workspace_allocated_bytes'   => $budget['workspace_allocated_bytes'],
 			'workspace_usage_probe'       => $budget['workspace_usage_probe'],
 			'mount_target'                => $budget['mount_target'],
@@ -649,6 +798,28 @@ trait WorkspaceHygieneReport {
 			'shared_usage_detected'       => $budget['shared_usage_detected'],
 			'diagnostic_messages'         => $budget['diagnostic_messages'],
 			'safety_basis'                => $budget['safety_basis'],
+		));
+	}
+
+	/**
+	 * Build measured cleanup capacity evidence. Null deltas explicitly mean the
+	 * platform could not provide both snapshots; no inode estimate is invented.
+	 *
+	 * @param array<string,mixed> $before Capacity before cleanup.
+	 * @param array<string,mixed> $after  Capacity after cleanup.
+	 * @return array<string,mixed>
+	 */
+	private function build_capacity_evidence( array $before, array $after ): array {
+		$before_free_inodes = is_numeric($before['filesystem_free_inodes'] ?? null) ? (int) $before['filesystem_free_inodes'] : null;
+		$after_free_inodes  = is_numeric($after['filesystem_free_inodes'] ?? null) ? (int) $after['filesystem_free_inodes'] : null;
+		$before_free_bytes  = is_numeric($before['filesystem_free_bytes'] ?? null) ? (int) $before['filesystem_free_bytes'] : null;
+		$after_free_bytes   = is_numeric($after['filesystem_free_bytes'] ?? null) ? (int) $after['filesystem_free_bytes'] : null;
+
+		return array(
+			'before'           => $before,
+			'after'            => $after,
+			'reclaimed_bytes'  => null === $before_free_bytes || null === $after_free_bytes ? null : max(0, $after_free_bytes - $before_free_bytes),
+			'reclaimed_inodes' => null === $before_free_inodes || null === $after_free_inodes ? null : max(0, $after_free_inodes - $before_free_inodes),
 		);
 	}
 

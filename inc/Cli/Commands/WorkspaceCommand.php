@@ -2615,6 +2615,9 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log(sprintf('Branch:   %s', $result['branch'] ?? '-'));
 		WP_CLI::log(sprintf('Remote:   %s', $result['remote'] ?? '-'));
 		WP_CLI::log(sprintf('Latest:   %s', $result['commit'] ?? '-'));
+		if ( is_array($result['workspace_capacity'] ?? null) ) {
+			WP_CLI::log(\DataMachineCode\Workspace\WorktreeDiskBudget::format_summary($result['workspace_capacity']));
+		}
 		if ( empty($result['is_worktree']) && is_array($result['primary_freshness'] ?? null) ) {
 			$freshness = $result['primary_freshness'];
 			WP_CLI::log(sprintf('Freshness: %s', (string) ( $freshness['status'] ?? 'unknown' )));
@@ -4318,8 +4321,8 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 
 			case 'cleanup-artifacts':
-				$input['dry_run'] = ! empty($assoc_args['dry-run']);
-				$input['force']   = ! empty($assoc_args['force']);
+				$input['dry_run']                       = ! empty($assoc_args['dry-run']);
+				$input['force']                         = ! empty($assoc_args['force']);
 				$input['allow_active_artifact_cleanup'] = ! empty($assoc_args['allow-active-artifact-cleanup']);
 				if ( isset($assoc_args['limit']) ) {
 					$input['limit'] = (int) $assoc_args['limit'];
@@ -5202,6 +5205,11 @@ class WorkspaceCommand extends BaseCommand {
 		$inventory        = (array) ( $report['inventory']['freshness'] ?? array() );
 		$cleanup          = (array) ( $report['cleanup'] ?? array() );
 		$cleanup_summary  = (array) ( $cleanup['summary'] ?? array() );
+		$inode_total      = null === ( $disk['filesystem_total_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_total_inodes'] );
+		$inode_used       = null === ( $disk['filesystem_used_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_used_inodes'] );
+		$inode_free       = null === ( $disk['filesystem_free_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_free_inodes'] );
+		$inode_used_pct   = null === ( $disk['used_inode_percent'] ?? null ) ? 'unknown' : (string) $disk['used_inode_percent'];
+		$inode_free_pct   = null === ( $disk['free_inode_percent'] ?? null ) ? 'unknown' : (string) $disk['free_inode_percent'];
 
 		WP_CLI::log('Workspace hygiene:');
 		$this->format_items(
@@ -5236,7 +5244,23 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array(
 					'metric' => 'disk_free',
-					'value'  => (string) ( $disk['free_human'] ?? '-' ),
+					'value'  => sprintf('%s (%s%%)', (string) ( $disk['free_human'] ?? '-' ), null === ( $disk['free_percent'] ?? null ) ? '-' : (string) $disk['free_percent']),
+				),
+				array(
+					'metric' => 'disk_used',
+					'value'  => sprintf('%s (%s%%)', null === ( $disk['filesystem_used_bytes'] ?? null ) ? '-' : $this->format_bytes( (int) $disk['filesystem_used_bytes'] ), null === ( $disk['used_percent'] ?? null ) ? '-' : (string) $disk['used_percent']),
+				),
+				array(
+					'metric' => 'disk_total',
+					'value'  => (string) ( $disk['total_human'] ?? '-' ),
+				),
+				array(
+					'metric' => 'inode_capacity',
+					'value'  => sprintf('total=%s used=%s (%s%%) free=%s (%s%%)', $inode_total, $inode_used, $inode_used_pct, $inode_free, $inode_free_pct),
+				),
+				array(
+					'metric' => 'capacity_status',
+					'value'  => (string) ( $disk['status'] ?? 'unknown' ),
 				),
 				array(
 					'metric' => 'worktree_status_mode',

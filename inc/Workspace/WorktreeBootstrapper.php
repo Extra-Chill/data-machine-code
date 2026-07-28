@@ -46,6 +46,7 @@ namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Support\ProcessRunner;
 use DataMachineCode\Support\RuntimeCapabilities;
+use DataMachineCode\Support\GitRunner;
 
 defined('ABSPATH') || exit;
 
@@ -54,6 +55,9 @@ if ( ! class_exists(ProcessRunner::class) ) {
 }
 if ( ! class_exists(RuntimeCapabilities::class) ) {
 	require_once dirname(__DIR__) . '/Support/RuntimeCapabilities.php';
+}
+if ( ! class_exists(GitRunner::class) ) {
+	require_once dirname(__DIR__) . '/Support/GitRunner.php';
 }
 
 final class WorktreeBootstrapper {
@@ -95,6 +99,22 @@ final class WorktreeBootstrapper {
 	/** Repository-owned opt-in contract for submodule dependency roots. */
 	private const SUBMODULE_BOOTSTRAP_CONFIG = '.datamachine/worktree-bootstrap.json';
 
+	/** Conservative capacity allowances used before dependency trees exist. */
+	private const DEFAULT_DEMAND = array(
+		'git_bytes'            => 16777216,
+		'git_inodes'           => 256,
+		'submodule_bytes'      => 1073741824,
+		'submodule_inodes'     => 250000,
+		'package_root_bytes'   => 2147483648,
+		'package_root_inodes'  => 1000000,
+		'composer_root_bytes'  => 1073741824,
+		'composer_root_inodes' => 250000,
+	);
+
+	private const DEFAULT_COMMAND_TIMEOUT_SECONDS = 600;
+	private const DEFAULT_TOTAL_TIMEOUT_SECONDS   = 1800;
+	private static ?float $bootstrap_deadline     = null;
+
 	/**
 	 * Run all applicable bootstrap steps inside the given worktree.
 	 *
@@ -113,9 +133,14 @@ final class WorktreeBootstrapper {
 	 *     }>,
 	 * }
 	 */
-	public static function bootstrap( string $worktree_path ): array {
-		$package_discovery = self::discover_package_roots( $worktree_path );
-		$steps             = array();
+	public static function bootstrap( string $worktree_path, ?int $remaining_operation_seconds = null ): array {
+		$total_timeout = self::total_timeout_seconds();
+		if ( null !== $remaining_operation_seconds ) {
+			$total_timeout = min($total_timeout, max(1, $remaining_operation_seconds));
+		}
+		self::$bootstrap_deadline = microtime(true) + $total_timeout;
+		$package_discovery        = self::discover_package_roots( $worktree_path );
+		$steps                    = array();
 
 		$steps[] = self::run_submodules( $worktree_path );
 		$steps   = array_merge( $steps, self::run_packages( $package_discovery['roots'] ) );
@@ -124,12 +149,34 @@ final class WorktreeBootstrapper {
 		$failed  = array_filter( $steps, fn( $s ) => self::STATUS_FAILED === ( $s['status'] ?? '' ) );
 		$ran_any = (bool) array_filter( $steps, fn( $s ) => self::STATUS_RAN === ( $s['status'] ?? '' ) );
 
-		return array(
+		$result                   = array(
 			'success'               => empty( $failed ),
 			'ran_any'               => $ran_any,
 			'skipped_package_roots' => $package_discovery['skipped'],
 			'steps'                 => $steps,
 		);
+		self::$bootstrap_deadline = null;
+		return $result;
+	}
+
+	/** Resolve the finite deadline for the complete dependency bootstrap. */
+	public static function total_timeout_seconds(): int {
+		$timeout = self::DEFAULT_TOTAL_TIMEOUT_SECONDS;
+		if ( function_exists('apply_filters') ) {
+			$timeout = (int) apply_filters('datamachine_code_worktree_bootstrap_total_timeout_seconds', $timeout);
+		}
+
+		return max(1, $timeout);
+	}
+
+	/** Resolve the finite deadline applied to every dependency bootstrap command. */
+	public static function command_timeout_seconds( string $step = '', string $relative = '.' ): int {
+		$timeout = self::DEFAULT_COMMAND_TIMEOUT_SECONDS;
+		if ( function_exists('apply_filters') ) {
+			$timeout = (int) apply_filters('datamachine_code_worktree_bootstrap_command_timeout_seconds', $timeout, $step, $relative);
+		}
+
+		return max(1, $timeout);
 	}
 
 	/**
@@ -139,6 +186,7 @@ final class WorktreeBootstrapper {
 	 * @param  string $worktree_path Absolute path to the worktree root.
 	 * @return array{
 	 *     submodules: bool,
+	 *     submodule_roots: array<int, string>,
 	 *     packages: ?string,  // Root package manager slug or null.
 	 *     composer: bool,
 	 *     package_roots: array<int, array{path: string, relative: string, manager: string}>,
@@ -152,12 +200,215 @@ final class WorktreeBootstrapper {
 
 		return array(
 			'submodules'            => is_file( rtrim( $worktree_path, '/' ) . '/.gitmodules' ),
+			'submodule_roots'       => array_keys(self::submodule_paths(rtrim($worktree_path, '/'))),
 			'packages'              => self::detect_package_manager( $worktree_path ),
 			'composer'              => is_file( rtrim( $worktree_path, '/' ) . '/composer.lock' ),
 			'package_roots'         => $package_discovery['roots'],
 			'skipped_package_roots' => $package_discovery['skipped'],
 			'composer_roots'        => $composer_roots,
 		);
+	}
+
+	/**
+	 * Build a conservative pre-create capacity plan from authoritative detection.
+	 *
+	 * The Git reserve covers the worktree administration/index lock mutation and
+	 * is retained for bare checkouts. Dependency allowances are only included
+	 * when bootstrap is requested. Values are defaults, not measured forecasts.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public static function demand_plan( string $worktree_path, bool $bootstrap = true ): array {
+		$detected = self::detect($worktree_path);
+		$defaults = self::DEFAULT_DEMAND;
+		$source   = 'conservative_defaults';
+
+		if ( function_exists('apply_filters') ) {
+			/**
+			 * Filters conservative per-operation worktree bootstrap demand allowances.
+			 *
+			 * @param array  $defaults      Default byte and inode allowances.
+			 * @param array  $detected      Result from WorktreeBootstrapper::detect().
+			 * @param string $worktree_path Existing checkout used for detection.
+			 * @param bool   $bootstrap     Whether dependency bootstrap was requested.
+			 */
+			$filtered = apply_filters('datamachine_worktree_bootstrap_demand', $defaults, $detected, $worktree_path, $bootstrap);
+			if ( $filtered !== $defaults ) {
+				$defaults = array_merge($defaults, $filtered);
+				$source   = 'wordpress_filter';
+			}
+		}
+
+		foreach ( self::DEFAULT_DEMAND as $key => $fallback ) {
+			$defaults[ $key ] = isset($defaults[ $key ]) && is_numeric($defaults[ $key ])
+				? max(0, (int) $defaults[ $key ])
+				: $fallback;
+		}
+
+		$submodule_count = $bootstrap ? count( (array) $detected['submodule_roots']) : 0;
+		$package_count   = $bootstrap ? count( (array) $detected['package_roots']) : 0;
+		$composer_count  = $bootstrap ? count( (array) $detected['composer_roots']) : 0;
+		$bytes           = $defaults['git_bytes']
+			+ ( $submodule_count * $defaults['submodule_bytes'] )
+			+ ( $package_count * $defaults['package_root_bytes'] )
+			+ ( $composer_count * $defaults['composer_root_bytes'] );
+		$inodes          = $defaults['git_inodes']
+			+ ( $submodule_count * $defaults['submodule_inodes'] )
+			+ ( $package_count * $defaults['package_root_inodes'] )
+			+ ( $composer_count * $defaults['composer_root_inodes'] );
+
+		return array(
+			'bytes'              => $bytes,
+			'inodes'             => $inodes,
+			'source'             => $source,
+			'fallback_semantics' => 'conservative_defaults_are_used_without_wordpress_or_for_invalid_filtered_values',
+			'bootstrap'          => $bootstrap,
+			'detected'           => $detected,
+			'counts'             => array(
+				'submodules'     => $submodule_count,
+				'package_roots'  => $package_count,
+				'composer_roots' => $composer_count,
+			),
+			'allowances'         => $defaults,
+		);
+	}
+
+	/**
+	 * Build demand from the exact Git tree that will materialize in the worktree.
+	 *
+	 * @param callable|null $runner Deterministic test seam receiving repo path and resolved commit.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public static function demand_plan_for_target( string $repo_path, string $target_ref, bool $bootstrap = true, ?callable $runner = null ): array|\WP_Error {
+		$commit = GitRunner::probe_output($repo_path, 'rev-parse --verify ' . escapeshellarg($target_ref . '^{commit}'));
+		if ( null === $commit || 1 !== preg_match('/^[0-9a-f]{40,64}$/D', $commit) ) {
+			return new \WP_Error('worktree_target_ref_invalid', sprintf('Could not resolve target ref "%s" before capacity admission.', $target_ref), array( 'status' => 400 ));
+		}
+
+		if ( null !== $runner ) {
+			$tree_output = $runner($repo_path, $commit);
+		} else {
+			$tree = GitRunner::run($repo_path, 'ls-tree -r -t -l -z --full-tree ' . escapeshellarg($commit), 30);
+			if ( $tree instanceof \WP_Error ) {
+				return $tree;
+			}
+			$tree_output = (string) $tree['output'];
+		}
+		if ( ! is_string($tree_output) ) {
+			return new \WP_Error('worktree_target_tree_unavailable', 'Target tree inspection did not return parseable output.', array( 'status' => 500 ));
+		}
+
+		$tree_plan = self::parse_target_tree($tree_output);
+		$defaults  = self::filtered_demand_defaults($tree_plan['detected'], $repo_path, $bootstrap);
+		$counts    = array(
+			'tracked_entries' => $tree_plan['tracked_entries'],
+			'submodules'      => $bootstrap ? count($tree_plan['detected']['submodule_roots']) : 0,
+			'package_roots'   => $bootstrap ? count($tree_plan['detected']['package_roots']) : 0,
+			'composer_roots'  => $bootstrap ? count($tree_plan['detected']['composer_roots']) : 0,
+		);
+
+		return array(
+			'bytes'              => $tree_plan['tracked_bytes'] + $defaults['git_bytes'] + ( $counts['submodules'] * $defaults['submodule_bytes'] ) + ( $counts['package_roots'] * $defaults['package_root_bytes'] ) + ( $counts['composer_roots'] * $defaults['composer_root_bytes'] ),
+			'inodes'             => $counts['tracked_entries'] + $defaults['git_inodes'] + ( $counts['submodules'] * $defaults['submodule_inodes'] ) + ( $counts['package_roots'] * $defaults['package_root_inodes'] ) + ( $counts['composer_roots'] * $defaults['composer_root_inodes'] ),
+			'source'             => 'target_git_tree_conservative',
+			'target_ref'         => $target_ref,
+			'target_commit'      => $commit,
+			'tracked_bytes'      => $tree_plan['tracked_bytes'],
+			'git_safety_margin'  => array(
+				'bytes'  => $defaults['git_bytes'],
+				'inodes' => $defaults['git_inodes'],
+			),
+			'bootstrap'          => $bootstrap,
+			'detected'           => $tree_plan['detected'],
+			'counts'             => $counts,
+			'allowances'         => $defaults,
+			'fallback_semantics' => 'tracked target entries and bytes are measured from Git; dependency installs use conservative allowances',
+		);
+	}
+
+	/** Remove demand already materialized by `git worktree add` or rebase. */
+	public static function remaining_demand_after_materialization( array $plan ): array {
+		$plan['bytes']  = max(0, (int) ( $plan['bytes'] ?? 0 ) - (int) ( $plan['tracked_bytes'] ?? 0 ));
+		$plan['inodes'] = max(0, (int) ( $plan['inodes'] ?? 0 ) - (int) ( $plan['counts']['tracked_entries'] ?? 0 ));
+		$plan['source'] = 'post_materialization_target_tree_conservative';
+		return $plan;
+	}
+
+	/** Parse bounded NUL-delimited `git ls-tree -r -t -l` output. */
+	public static function parse_target_tree( string $output ): array {
+		$tracked_entries = 0;
+		$tracked_bytes   = 0;
+		$package_roots   = array();
+		$composer_roots  = array();
+		$submodule_roots = array();
+		$lockfiles       = array( 'pnpm-lock.yaml', 'bun.lockb', 'bun.lock', 'yarn.lock', 'package-lock.json' );
+
+		foreach ( explode("\0", $output) as $record ) {
+			if ( '' === $record || 1 !== preg_match('/^(\d{6})\s+(blob|tree|commit)\s+[0-9a-f]+\s+(-|\d+)\t(.*)$/sD', $record, $matches) ) {
+				continue;
+			}
+			++$tracked_entries;
+			$path = $matches[4];
+			if ( 'blob' === $matches[2] && is_numeric($matches[3]) ) {
+				$tracked_bytes += max(0, (int) $matches[3]);
+			}
+			if ( '160000' === $matches[1] ) {
+				$submodule_roots[ $path ] = array( 'relative' => $path );
+			}
+			$dirname = dirname($path);
+			if ( '.' !== $dirname && str_contains($dirname, '/') ) {
+				continue;
+			}
+			$basename = basename($path);
+			if ( in_array($basename, $lockfiles, true) ) {
+				$relative                   = '.' === $dirname ? '.' : $dirname;
+				$package_roots[ $relative ] = array(
+					'relative' => $relative,
+					'manager'  => self::manager_for_lockfile($basename),
+				);
+			}
+			if ( 'composer.lock' === $basename ) {
+				$relative                    = '.' === $dirname ? '.' : $dirname;
+				$composer_roots[ $relative ] = array( 'relative' => $relative );
+			}
+		}
+
+		return array(
+			'tracked_entries' => $tracked_entries,
+			'tracked_bytes'   => $tracked_bytes,
+			'detected'        => array(
+				'submodules'            => array() !== $submodule_roots,
+				'submodule_roots'       => array_values($submodule_roots),
+				'packages'              => $package_roots['.']['manager'] ?? null,
+				'composer'              => isset($composer_roots['.']),
+				'package_roots'         => array_values($package_roots),
+				'skipped_package_roots' => array(),
+				'composer_roots'        => array_values($composer_roots),
+			),
+		);
+	}
+
+	private static function manager_for_lockfile( string $lockfile ): string {
+		return match ( $lockfile ) {
+			'pnpm-lock.yaml' => 'pnpm',
+			'bun.lockb', 'bun.lock' => 'bun',
+			'yarn.lock' => 'yarn',
+			default => 'npm',
+		};
+	}
+
+	private static function filtered_demand_defaults( array $detected, string $path, bool $bootstrap ): array {
+		$defaults = self::DEFAULT_DEMAND;
+		if ( function_exists('apply_filters') ) {
+			$filtered = apply_filters('datamachine_worktree_bootstrap_demand', $defaults, $detected, $path, $bootstrap);
+			if ( is_array($filtered) ) {
+				$defaults = array_merge($defaults, $filtered);
+			}
+		}
+		foreach ( self::DEFAULT_DEMAND as $key => $fallback ) {
+			$defaults[ $key ] = isset($defaults[ $key ]) && is_numeric($defaults[ $key ]) ? max(0, (int) $defaults[ $key ]) : $fallback;
+		}
+		return $defaults;
 	}
 
 	/**
@@ -586,15 +837,33 @@ final class WorktreeBootstrapper {
 	 * invocations, not user input. The `cd` target is escaped.
 	 */
 	private static function run_command( string $step, string $worktree_path, string $command, string $relative = '.', bool $preserve_tracked_files = false ): array {
+		$timeout_seconds = self::command_timeout_seconds($step, $relative);
+		if ( null !== self::$bootstrap_deadline ) {
+			$remaining = (int) floor(self::$bootstrap_deadline - microtime(true));
+			if ( $remaining <= 0 ) {
+				return array(
+					'step'            => $step,
+					'status'          => self::STATUS_FAILED,
+					'reason'          => 'bootstrap_total_timeout',
+					'relative'        => $relative,
+					'command'         => $command,
+					'exit_code'       => 1,
+					'output_tail'     => 'The complete dependency bootstrap deadline was exhausted before this step.',
+					'timed_out'       => true,
+					'timeout_seconds' => self::total_timeout_seconds(),
+				);
+			}
+			$timeout_seconds = min($timeout_seconds, $remaining);
+		}
 		$snapshot = $preserve_tracked_files ? self::snapshot_tracked_state($worktree_path) : null;
 		if ( $preserve_tracked_files && null === $snapshot ) {
 			return array(
-				'step'        => $step,
-				'status'      => self::STATUS_FAILED,
-				'relative'    => $relative,
-				'command'     => $command,
-				'exit_code'   => 1,
-				'output_tail' => 'Could not snapshot tracked files before dependency bootstrap.',
+				'step'                 => $step,
+				'status'               => self::STATUS_FAILED,
+				'relative'             => $relative,
+				'command'              => $command,
+				'exit_code'            => 1,
+				'output_tail'          => 'Could not snapshot tracked files before dependency bootstrap.',
 				'tracked_file_cleanup' => array(
 					'restored_paths' => array(),
 					'retained_paths' => array(),
@@ -607,31 +876,39 @@ final class WorktreeBootstrapper {
 			sprintf('%s%s 2>&1', self::shell_env_prefix(), $command),
 			array(
 				'cwd'              => $worktree_path,
+				'timeout_seconds'  => $timeout_seconds,
 				'output_cap_bytes' => self::OUTPUT_CAP_BYTES,
 				'error_as_result'  => true,
 			)
 		);
 
 		if ( $result instanceof \WP_Error || empty($result['success']) ) {
-			$data    = $result instanceof \WP_Error ? $result->get_error_data() : $result;
-			$data    = is_array($data) ? $data : array();
-			$message = $result instanceof \WP_Error ? $result->get_error_message() : 'Process command failed.';
+			$data        = $result instanceof \WP_Error ? $result->get_error_data() : $result;
+			$data        = is_array($data) ? $data : array();
+			$message     = $result instanceof \WP_Error ? $result->get_error_message() : 'Process command failed.';
+			$timed_out   = isset($data['timeout']);
 			$step_result = array(
-				'step'        => $step,
-				'status'      => self::STATUS_FAILED,
-				'relative'    => $relative,
-				'command'     => $command,
-				'exit_code'   => (int) ( $data['exit_code'] ?? 1 ),
-				'output_tail' => (string) ( $data['output'] ?? $message ),
+				'step'            => $step,
+				'status'          => self::STATUS_FAILED,
+				'reason'          => $timed_out ? 'command_timeout' : 'command_failed',
+				'relative'        => $relative,
+				'command'         => $command,
+				'exit_code'       => (int) ( $data['exit_code'] ?? 1 ),
+				'output_tail'     => (string) ( $data['output'] ?? $message ),
+				'timed_out'       => $timed_out,
+				'timeout_seconds' => $timeout_seconds,
+				'cleanup'         => is_array($data['cleanup'] ?? null) ? $data['cleanup'] : null,
 			);
 		} else {
 			$step_result = array(
-				'step'        => $step,
-				'status'      => self::STATUS_RAN,
-				'relative'    => $relative,
-				'command'     => $command,
-				'exit_code'   => 0,
-				'output_tail' => $result['output'],
+				'step'            => $step,
+				'status'          => self::STATUS_RAN,
+				'relative'        => $relative,
+				'command'         => $command,
+				'exit_code'       => 0,
+				'output_tail'     => $result['output'],
+				'timed_out'       => false,
+				'timeout_seconds' => $timeout_seconds,
 			);
 		}
 
@@ -639,7 +916,7 @@ final class WorktreeBootstrapper {
 			return $step_result;
 		}
 
-		$cleanup = self::restore_tracked_state($worktree_path, $snapshot);
+		$cleanup                             = self::restore_tracked_state($worktree_path, $snapshot);
 		$step_result['tracked_file_cleanup'] = $cleanup;
 		if ( isset($cleanup['error']) ) {
 			$step_result['status']      = self::STATUS_FAILED;
@@ -737,17 +1014,20 @@ final class WorktreeBootstrapper {
 			return true;
 		}
 		$path = tempnam(sys_get_temp_dir(), 'dmc-bootstrap-patch-');
-		if ( false === $path || false === file_put_contents($path, $patch) ) {
+		if ( false === $path || false === file_put_contents($path, $patch) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Git apply requires an exact temporary binary patch file.
 			return false;
 		}
 		$result = self::git_output($worktree_path, sprintf('git apply %s--binary < %s', $cached ? '--cached ' : '', escapeshellarg($path)));
-		unlink($path);
+		unlink($path); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes the private temporary patch immediately after Git consumes it.
 		return null !== $result;
 	}
 
 	/** @return string|null */
 	private static function git_output( string $worktree_path, string $command ): ?string {
-		$result = ProcessRunner::run($command, array( 'cwd' => $worktree_path, 'error_as_result' => true ));
+		$result = ProcessRunner::run($command, array(
+			'cwd'             => $worktree_path,
+			'error_as_result' => true,
+		));
 		return $result instanceof \WP_Error || empty($result['success']) ? null : (string) $result['output'];
 	}
 
@@ -768,10 +1048,13 @@ final class WorktreeBootstrapper {
 		}
 		$result = ProcessRunner::run(
 			$command . ' > ' . escapeshellarg($path),
-			array( 'cwd' => $worktree_path, 'error_as_result' => true )
+			array(
+				'cwd'             => $worktree_path,
+				'error_as_result' => true,
+			)
 		);
-		$output = ! $result instanceof \WP_Error && ! empty($result['success']) ? file_get_contents($path) : false;
-		unlink($path);
+		$output = ! $result instanceof \WP_Error && ! empty($result['success']) ? file_get_contents($path) : false; // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reads exact NUL-delimited Git output from a local temporary file.
+		unlink($path); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes the private Git output file immediately after reading it.
 		return false === $output ? null : $output;
 	}
 

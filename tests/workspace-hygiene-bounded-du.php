@@ -39,6 +39,7 @@ final class WorkspaceHygieneBoundedDuHarness {
 
 	use \DataMachineCode\Workspace\WorkspaceHygieneReport {
 		directory_size_bytes_best_effort as public probeDirectorySize;
+		directory_entry_count_best_effort as public probeEntryCount;
 		build_workspace_size_report as public buildSizeReport;
 	}
 
@@ -100,6 +101,8 @@ try {
 	workspace_hygiene_du_assert_same(1, $timeout['timeout_seconds'] ?? null, 'Hanging du must report its deadline.');
 	workspace_hygiene_du_assert_same(true, is_array($timeout['cleanup'] ?? null), 'Hanging du must preserve process cleanup evidence.');
 	workspace_hygiene_du_assert_less_than(3.0, $elapsed, 'Hanging du must not occupy the worker beyond its deadline.');
+	$count_timeout = ( new WorkspaceHygieneBoundedDuHarness() )->probeEntryCount($data, 1);
+	workspace_hygiene_du_assert_same('entry_timeout', $count_timeout['reason'] ?? null, 'Hanging inode-count probe must remain typed unknown by timeout reason.');
 
 	$started = microtime(true);
 	$report  = ( new WorkspaceHygieneBoundedDuHarness($data) )->buildSizeReport(2, 5, 1);
@@ -115,6 +118,13 @@ try {
 	$success = ( new WorkspaceHygieneBoundedDuHarness() )->probeDirectorySize($data, 1);
 	workspace_hygiene_du_assert_same(true, $success['success'] ?? null, 'Successful du must remain available.');
 	workspace_hygiene_du_assert_same(7 * 1024, $success['bytes'] ?? null, 'Successful du must preserve KiB-to-byte conversion.');
+
+	file_put_contents($du, "#!/bin/sh\ncase \"\$1\" in\n  --inodes) case \"\$4\" in */a) printf '90\\t%s\\n' \"\$4\" ;; *) printf '3\\t%s\\n' \"\$4\" ;; esac ;;\n  *) case \"\$3\" in */b) printf '100\\t%s\\n' \"\$3\" ;; *) printf '1\\t%s\\n' \"\$3\" ;; esac ;;\nesac\n");
+	chmod($du, 0700);
+	$ranked = ( new WorkspaceHygieneBoundedDuHarness($data) )->buildSizeReport(2, 2, 10);
+	workspace_hygiene_du_assert_same('complete', $ranked['entry_count_scan']['status'] ?? null, 'Successful bounded count pass must report complete telemetry.');
+	workspace_hygiene_du_assert_same('a', $ranked['top_entries_by_count'][0]['handle'] ?? null, 'Entry-count ranking must be independent from byte ranking.');
+	workspace_hygiene_du_assert_same('b', $ranked['top_entries'][0]['handle'] ?? null, 'Byte ranking must remain independent from entry-count ranking.');
 } finally {
 	putenv('PATH=' . $original_path);
 	if ( is_file($du) ) {

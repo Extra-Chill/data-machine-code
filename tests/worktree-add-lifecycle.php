@@ -249,6 +249,20 @@ try {
 	$GLOBALS['wpdb'] = $wpdb;
 
 	$workspace = new Workspace();
+	$source_path = $workspace_root . '/source';
+	$primary_path = $workspace_root . '/homeboy';
+	run_command('git checkout -b stale-rebase-demand', $source_path);
+	file_put_contents($source_path . '/stale.txt', "stale\n");
+	run_command('git add stale.txt && git commit -m stale && git push -u origin stale-rebase-demand', $source_path);
+	run_command('git fetch origin && git checkout -b stale-rebase-demand origin/stale-rebase-demand && git checkout main', $primary_path);
+	mkdir($source_path . '/upstream-package', 0777, true);
+	file_put_contents($source_path . '/upstream-package/composer.lock', '{}');
+	run_command('git add upstream-package/composer.lock && git commit -m upstream-dependency && git push', $source_path);
+	$rebased_admission = $workspace->worktree_add('homeboy', 'stale-rebase-demand', null, false, true, false, true, true);
+	assert_true(! is_wp_error($rebased_admission), is_wp_error($rebased_admission) ? $rebased_admission->get_error_message() : 'stale branch rebase admission failed');
+	assert_true(true === ( $rebased_admission['rebase_succeeded'] ?? false ), 'stale branch was not rebased onto its advanced upstream');
+	assert_true(1 === ( $rebased_admission['post_rebase_disk_budget']['demand_plan']['counts']['composer_roots'] ?? 0 ), 'post-rebase admission did not reserve the dependency root introduced only by upstream');
+	assert_true('post_materialization_target_tree_conservative' === ( $rebased_admission['post_rebase_disk_budget']['demand_source'] ?? '' ), 'post-rebase admission did not report its effective target-tree demand source');
 	run_command(
 		'git clone ' . escapeshellarg($workspace_root . '/origin.git') . ' ' . escapeshellarg($workspace_root . '/homeboy@custom-provider-auth-live')
 	);
@@ -355,6 +369,14 @@ try {
 	assert_true(is_dir($result['path']), 'successful worktree_add path is not accessible');
 	assert_true(isset($wpdb->rows['homeboy@audit-primitives-20260616']), 'successful worktree_add was not persisted');
 	assert_true('refused' !== ( $result['disk_budget']['status'] ?? '' ), 'normal worktree_add should pass the disk budget gate without hard refusal');
+	$capacity_locks = array_values(
+		array_filter(
+			$wpdb->lock_rows,
+			static fn( array $row ): bool => 'workspace-capacity-admission' === ( $row['scope'] ?? '' )
+		)
+	);
+	assert_true(array() !== $capacity_locks, 'worktree admission did not acquire the workspace-wide capacity lock');
+	assert_true('released' === ( $capacity_locks[count($capacity_locks) - 1]['status'] ?? '' ), 'workspace capacity lock was not released after creation and bootstrap boundary');
 	assert_true('https://example.test/issues/explicit' === ( $wpdb->rows['homeboy@audit-primitives-20260616']['task_url'] ?? '' ), 'explicit tracker metadata did not override the environment fallback');
 	run_command('git push -u origin audit-primitives-20260616', $result['path']);
 

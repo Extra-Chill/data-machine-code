@@ -30,6 +30,11 @@ $hygiene = new class {
 		$method = new ReflectionMethod($this, 'workspace_cleanup_expected_outcome');
 		return $method->invoke($this, $summary, $inventory_only);
 	}
+
+	public function capacity_evidence( array $before, array $after ): array {
+		$method = new ReflectionMethod($this, 'build_capacity_evidence');
+		return $method->invoke($this, $before, $after);
+	}
 };
 
 $inventory_candidates = $hygiene->annotate(
@@ -73,5 +78,24 @@ $expected_outcome = $hygiene->outcome(
 
 hygiene_cleanup_summary_assert(str_contains($expected_outcome, '8 cleanup-eligible row(s) pending fresh revalidation'), 'expected outcome names pending cleanup-eligible rows');
 hygiene_cleanup_summary_assert(str_contains($expected_outcome, '0 fresh-safe removals'), 'expected outcome names zero fresh-safe removals');
+
+$capacity_evidence = $hygiene->capacity_evidence(
+	array(
+		'filesystem_free_bytes'  => 1000,
+		'filesystem_free_inodes' => 200,
+	),
+	array(
+		'filesystem_free_bytes'  => 1600,
+		'filesystem_free_inodes' => 450,
+	)
+);
+hygiene_cleanup_summary_assert(600 === $capacity_evidence['reclaimed_bytes'], 'cleanup evidence should report measured bytes recovered');
+hygiene_cleanup_summary_assert(250 === $capacity_evidence['reclaimed_inodes'], 'cleanup evidence should report measured inodes recovered');
+
+$unknown_inode_evidence = $hygiene->capacity_evidence(
+	array( 'filesystem_free_bytes' => 1000 ),
+	array( 'filesystem_free_bytes' => 1600 )
+);
+hygiene_cleanup_summary_assert(null === $unknown_inode_evidence['reclaimed_inodes'], 'cleanup evidence must use null when inode telemetry is unavailable');
 
 echo "workspace hygiene cleanup summary test passed.\n";

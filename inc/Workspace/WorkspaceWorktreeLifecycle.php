@@ -119,11 +119,120 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
 		}
 
+		return WorkspaceMutationLock::with_repo(
+			$this->workspace_path,
+			'workspace-capacity-admission',
+			fn() => WorkspaceMutationLock::with_repo(
+				$this->workspace_path,
+				$repo,
+				fn() => $this->worktree_add_with_capacity_lock(
+					$repo,
+					$branch,
+					$from,
+					$inject_context,
+					$bootstrap,
+					$allow_stale,
+					$rebase_base,
+					$force,
+					$task,
+					$allow_unverified_freshness,
+					$slug,
+					$wt_handle,
+					$wt_path,
+					$primary_path
+				)
+			),
+			self::worktree_capacity_wait_timeout_seconds($bootstrap)
+		);
+	}
+
+	/**
+	 * Resolve the explicit global-capacity lock wait budget.
+	 *
+	 * Lock order is always global capacity first, then the repository lock. The
+	 * global lock remains held through bounded bootstrap so concurrent admissions
+	 * cannot inspect stale capacity. Its default wait exceeds the default bounded
+	 * dependency command timeout and can be tuned for installations with many
+	 * bootstrap roots.
+	 */
+	public static function worktree_capacity_wait_timeout_seconds( bool $bootstrap = true ): int {
+		$timeout = self::worktree_capacity_operation_timeout_seconds($bootstrap) + 60;
+		if ( function_exists('apply_filters') ) {
+			$timeout = (int) apply_filters('datamachine_code_worktree_capacity_wait_timeout_seconds', $timeout, $bootstrap);
+		}
+
+		return max(1, $timeout);
+	}
+
+	/** Resolve the aggregate deadline covering create, rebase, and bootstrap. */
+	public static function worktree_capacity_operation_timeout_seconds( bool $bootstrap = true ): int {
+		$timeout = $bootstrap ? WorktreeBootstrapper::total_timeout_seconds() + 540 : 540;
+		if ( function_exists('apply_filters') ) {
+			$timeout = (int) apply_filters('datamachine_code_worktree_capacity_operation_timeout_seconds', $timeout, $bootstrap);
+		}
+		return max(1, $timeout);
+	}
+
+	/**
+	 * Inspect, create, and bootstrap while holding the workspace-wide capacity
+	 * lock. A later concurrent admission therefore measures the first one's
+	 * completed dependency allocation rather than overcommitting stale capacity.
+	 */
+	private function worktree_add_with_capacity_lock(
+		string $repo,
+		string $branch,
+		?string $from,
+		bool $inject_context,
+		bool $bootstrap,
+		bool $allow_stale,
+		bool $rebase_base,
+		bool $force,
+		array $task,
+		bool $allow_unverified_freshness,
+		string $slug,
+		string $wt_handle,
+		string $wt_path,
+		string $primary_path
+	): array|\WP_Error {
+		$operation_deadline = microtime(true) + self::worktree_capacity_operation_timeout_seconds($bootstrap);
+		if ( is_dir($wt_path) ) {
+			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
+		}
+
+		$fetch                 = WorktreeStalenessProbe::fetch($primary_path);
+		$fetch_failed          = ! $fetch['ok'];
+		$fetch_error           = $fetch['error'] ?? null;
+		$fetch_timed_out       = ! empty($fetch['timed_out']);
+		$fetch_timeout_seconds = $fetch['timeout_seconds'] ?? null;
+		if ( $fetch_failed && ! $allow_unverified_freshness ) {
+			return new \WP_Error(
+				'worktree_freshness_unverified',
+				'Refusing to create worktree because remote freshness could not be verified. Retry after connectivity is restored, or pass allow_unverified_freshness=true only when intentionally working offline with stale local refs.',
+				array(
+					'status'                     => 409,
+					'fetch_failed'               => true,
+					'fetch_error'                => $fetch_error,
+					'fetch_timed_out'            => $fetch_timed_out,
+					'fetch_timeout_seconds'      => $fetch_timeout_seconds,
+					'allow_unverified_freshness' => false,
+				)
+			);
+		}
+
+		$exists_local = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
+		$target_ref   = $exists_local
+			? 'refs/heads/' . $branch
+			: ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) );
+		$demand_plan  = WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
+		if ( $demand_plan instanceof \WP_Error ) {
+			return $demand_plan;
+		}
 		$disk_budget = WorktreeDiskBudget::inspect(
 			$this->workspace_path,
 			WorktreeDiskBudget::thresholds($repo, $branch),
 			$force,
-			array( 'include_workspace_usage' => true )
+			array( 'include_workspace_usage' => true ),
+			$demand_plan
 		);
 		if ( 'refused' === ( $disk_budget['status'] ?? '' ) ) {
 			$recommendations = array_map(
@@ -144,11 +253,12 @@ trait WorkspaceWorktreeLifecycle {
 					);
 
 					return sprintf(
-						'%d. %s: %s (target reclaim: %s)',
+						'%d. %s: %s (target reclaim: %s; inodes: %s)',
 						(int) ( $row['priority'] ?? 0 ),
 						(string) ( $row['action'] ?? 'cleanup' ),
 						$command_text,
-						(string) ( $row['expected_reclaim'] ?? 'unknown' )
+						(string) ( $row['expected_reclaim'] ?? 'unknown' ),
+						null === ( $row['expected_reclaim_inodes'] ?? null ) ? 'unknown' : number_format( (int) $row['expected_reclaim_inodes'] )
 					);
 				},
 				(array) ( $disk_budget['cleanup_recommendations'] ?? array() )
@@ -156,11 +266,14 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error(
 				'worktree_disk_budget_exceeded',
 				sprintf(
-					"Refusing to create worktree before bootstrap/install because the workspace disk budget is unsafe.\n%s\nThreshold: keep at least %.1f GiB free and %.1f%% free; effective floor on this filesystem is %.1f GiB.\nRecommended cleanup, in order:\n%s\nRetry with --force only when a human explicitly accepts the disk-pressure risk.",
+					"Refusing to create worktree before bootstrap/install because the workspace capacity budget is unsafe.\n%s\nByte threshold: keep at least %.1f GiB free and %.1f%% free; effective floor is %.1f GiB.\nInode threshold: keep at least %s free and %.1f%% free; effective floor is %s.\nRecommended cleanup, in order:\n%s\nRetry with --force only when a human explicitly accepts the capacity risk.",
 					WorktreeDiskBudget::format_summary($disk_budget),
 					(float) ( $disk_budget['refuse_free_gib'] ?? 0 ),
 					(float) ( $disk_budget['refuse_free_percent'] ?? 0 ),
 					(float) ( $disk_budget['effective_refuse_gib'] ?? 0 ),
+					number_format( (int) ( $disk_budget['refuse_free_inodes'] ?? 0 ) ),
+					(float) ( $disk_budget['refuse_free_inode_percent'] ?? 0 ),
+					number_format( (int) ( $disk_budget['effective_refuse_inodes'] ?? 0 ) ),
 					implode("\n", array_filter($recommendations))
 				),
 				array(
@@ -170,10 +283,7 @@ trait WorkspaceWorktreeLifecycle {
 			);
 		}
 
-		$response = WorkspaceMutationLock::with_repo(
-			$this->workspace_path,
-			$repo,
-			fn() => $this->worktree_add_locked(
+		$response = $this->worktree_add_locked(
 				$repo,
 				$branch,
 				$from,
@@ -185,18 +295,68 @@ trait WorkspaceWorktreeLifecycle {
 				$wt_path,
 				$primary_path,
 				$task,
-				$allow_unverified_freshness
-			)
-		);
+				$allow_unverified_freshness,
+				array(
+					'fetch_failed'          => $fetch_failed,
+					'fetch_error'           => $fetch_error,
+					'fetch_timed_out'       => $fetch_timed_out,
+					'fetch_timeout_seconds' => $fetch_timeout_seconds,
+					'exists_local'          => $exists_local,
+					'target_ref'            => $target_ref,
+					'operation_deadline'    => $operation_deadline,
+				)
+			);
 
 		if ( is_wp_error($response) ) {
 			return $response;
 		}
+		if ( ! empty($response['rebase_cleanup_failed']) ) {
+			return new \WP_Error(
+				'worktree_rebase_cleanup_failed',
+				'Rebase failed and its cleanup could not be verified; refusing bootstrap until the worktree is repaired.',
+				array( 'status' => 500, 'path' => $wt_path, 'rebase' => $response )
+			);
+		}
 
 		$response['disk_budget'] = $disk_budget;
+		if ( ! empty($response['rebase_succeeded']) ) {
+			$post_rebase_demand = WorktreeBootstrapper::demand_plan_for_target($wt_path, 'HEAD', $bootstrap);
+			if ( $post_rebase_demand instanceof \WP_Error ) {
+				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+				return $post_rebase_demand;
+			}
+			$post_rebase_demand                  = WorktreeBootstrapper::remaining_demand_after_materialization($post_rebase_demand);
+			$post_rebase_budget                  = WorktreeDiskBudget::inspect(
+				$this->workspace_path,
+				WorktreeDiskBudget::thresholds($repo, $branch),
+				$force,
+				array( 'include_workspace_usage' => true ),
+				$post_rebase_demand
+			);
+			$response['post_rebase_disk_budget'] = $post_rebase_budget;
+			$response['disk_budget']             = $post_rebase_budget;
+			if ( 'refused' === ( $post_rebase_budget['status'] ?? '' ) ) {
+				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+				WorktreeContextInjector::forget_metadata($wt_handle);
+				return new \WP_Error(
+					'worktree_disk_budget_exceeded',
+					'Refusing dependency bootstrap because the effective post-rebase target exceeds the workspace capacity budget.',
+					array(
+						'status'      => 507,
+						'disk_budget' => $post_rebase_budget,
+						'phase'       => 'post_rebase_admission',
+					)
+				);
+			}
+		}
 
 		if ( $bootstrap ) {
-			$response['bootstrap'] = WorktreeBootstrapper::bootstrap($wt_path);
+			$remaining_seconds = (int) floor($operation_deadline - microtime(true));
+			if ( $remaining_seconds <= 0 ) {
+				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+				return new \WP_Error('worktree_operation_timeout', 'The aggregate worktree operation deadline expired before dependency bootstrap.', array( 'status' => 504 ));
+			}
+			$response['bootstrap'] = WorktreeBootstrapper::bootstrap($wt_path, $remaining_seconds);
 		}
 
 		if ( ! is_dir($wt_path) || ! file_exists($wt_path . '/.git') ) {
@@ -268,7 +428,8 @@ trait WorkspaceWorktreeLifecycle {
 		string $wt_path,
 		string $primary_path,
 		array $task = array(),
-		bool $allow_unverified_freshness = false
+		bool $allow_unverified_freshness = false,
+		array $preflight = array()
 	): array|\WP_Error {
 		if ( is_dir($wt_path) ) {
 			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
@@ -277,28 +438,13 @@ trait WorkspaceWorktreeLifecycle {
 		// Always fetch first so staleness data (and the default base) reflects the
 		// current remote. If fetch fails, default to fail-closed unless the caller
 		// explicitly opts into unverified/offline freshness.
-		$fetch        = WorktreeStalenessProbe::fetch($primary_path);
-		$fetch_failed = ! $fetch['ok'];
-		$fetch_error  = $fetch['error'] ?? null;
-		$fetch_timed_out = ! empty($fetch['timed_out']);
-		$fetch_timeout_seconds = $fetch['timeout_seconds'] ?? null;
-		if ( $fetch_failed && ! $allow_unverified_freshness ) {
-			return new \WP_Error(
-				'worktree_freshness_unverified',
-				'Refusing to create worktree because remote freshness could not be verified. Retry after connectivity is restored, or pass allow_unverified_freshness=true only when intentionally working offline with stale local refs.',
-				array(
-					'status'                     => 409,
-					'fetch_failed'               => true,
-					'fetch_error'                => $fetch_error,
-					'fetch_timed_out'            => $fetch_timed_out,
-					'fetch_timeout_seconds'      => $fetch_timeout_seconds,
-					'allow_unverified_freshness' => false,
-				)
-			);
-		}
+		$fetch_failed          = ! empty($preflight['fetch_failed']);
+		$fetch_error           = $preflight['fetch_error'] ?? null;
+		$fetch_timed_out       = ! empty($preflight['fetch_timed_out']);
+		$fetch_timeout_seconds = $preflight['fetch_timeout_seconds'] ?? null;
 
 		// Does the branch already exist locally?
-		$exists_local   = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
+		$exists_local   = ! empty($preflight['exists_local']);
 		$created_branch = false;
 		$resolved_base  = null;
 
@@ -311,7 +457,7 @@ trait WorkspaceWorktreeLifecycle {
 			}
 			$cmd = sprintf('worktree add %s %s', escapeshellarg($wt_path), escapeshellarg($branch));
 		} else {
-			$base          = $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path);
+			$base          = (string) ( $preflight['target_ref'] ?? ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) ) );
 			$resolved_base = $base;
 			if ( ! $allow_stale && ! $rebase_base && ! $fetch_failed ) {
 				$default_guard = $this->assert_ref_current_with_default_branch($primary_path, $resolved_base, $repo, $branch, 'base');
@@ -323,7 +469,8 @@ trait WorkspaceWorktreeLifecycle {
 			$created_branch = true;
 		}
 
-		$result = $this->run_git($primary_path, $cmd);
+		$add_remaining = max(1, (int) floor( (float) ( $preflight['operation_deadline'] ?? 0.0 ) - microtime(true)));
+		$result        = $this->run_git($primary_path, $cmd, min(300, $add_remaining));
 		if ( is_wp_error($result) ) {
 			return $result;
 		}
@@ -396,7 +543,7 @@ trait WorkspaceWorktreeLifecycle {
 		// the worktree at its pre-rebase state AND still trips the gate, so
 		// --rebase-base alone on a conflicting rebase isn't a silent bypass.
 		if ( $rebase_base && ! $fetch_failed ) {
-			$rebase_result = $this->try_rebase_worktree($wt_path, $response, $created_branch);
+			$rebase_result = $this->try_rebase_worktree($wt_path, $response, $created_branch, (float) ( $preflight['operation_deadline'] ?? 0.0 ));
 			if ( null !== $rebase_result ) {
 				$response = array_merge($response, $rebase_result);
 			}
@@ -670,19 +817,19 @@ trait WorkspaceWorktreeLifecycle {
 			$unpushed = null;
 		}
 
-		$metadata        = $parsed['is_worktree'] ? WorktreeContextInjector::get_metadata($parsed['dir_name']) : null;
-		$metadata        = is_array($metadata) ? $metadata : null;
-		$created_at      = $metadata['created_at'] ?? null;
-		$liveness        = WorktreeContextInjector::classify_liveness($metadata);
-		$disk            = $include_disk ? $this->build_worktree_disk_report($parsed['repo'], $path, $parsed['is_worktree'], $created_at, $metadata) : array(
-			'size_bytes'          => null,
+		$metadata     = $parsed['is_worktree'] ? WorktreeContextInjector::get_metadata($parsed['dir_name']) : null;
+		$metadata     = is_array($metadata) ? $metadata : null;
+		$created_at   = $metadata['created_at'] ?? null;
+		$liveness     = WorktreeContextInjector::classify_liveness($metadata);
+		$disk         = $include_disk ? $this->build_worktree_disk_report($parsed['repo'], $path, $parsed['is_worktree'], $created_at, $metadata) : array(
+			'size_bytes'           => null,
 			'estimated_size_bytes' => null,
-			'last_touched_at'     => null,
-			'age_days'            => $this->calculate_age_days($created_at),
-			'artifacts'           => array(),
-			'artifact_size_bytes' => 0,
+			'last_touched_at'      => null,
+			'age_days'             => $this->calculate_age_days($created_at),
+			'artifacts'            => array(),
+			'artifact_size_bytes'  => 0,
 		);
-		$row             = array_merge(
+		$row          = array_merge(
 			array(
 				'handle'                => $parsed['dir_name'],
 				'repo'                  => $parsed['repo'],
@@ -784,11 +931,11 @@ trait WorkspaceWorktreeLifecycle {
 		$data       = array_merge(
 			$cause_data,
 			array(
-				'status'     => (int) ( $cause_data['status'] ?? 500 ),
-				'phase'      => $phase,
-				'handle'     => $handle,
-				'path'       => $path,
-				'cause_code' => $error->get_error_code(),
+				'status'          => (int) ( $cause_data['status'] ?? 500 ),
+				'phase'           => $phase,
+				'handle'          => $handle,
+				'path'            => $path,
+				'cause_code'      => $error->get_error_code(),
 				'timeout_seconds' => self::CLEANUP_GIT_PROBE_TIMEOUT,
 			)
 		);
@@ -1959,7 +2106,7 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  bool   $created_branch Whether this was a freshly-created branch.
 	 * @return array|null
 	 */
-	private function try_rebase_worktree( string $wt_path, array &$response, bool $created_branch ): ?array {
+	private function try_rebase_worktree( string $wt_path, array &$response, bool $created_branch, float $operation_deadline ): ?array {
 		$target = null;
 		$clear  = null;
 
@@ -1982,22 +2129,37 @@ trait WorkspaceWorktreeLifecycle {
 			return null;
 		}
 
-		$result = $this->run_git($wt_path, sprintf('rebase %s', escapeshellarg($target)));
+		$remaining = (int) floor($operation_deadline - microtime(true));
+		if ( $remaining <= 5 ) {
+			return array(
+				'rebase_attempted'      => false,
+				'rebase_target'         => $target,
+				'rebase_succeeded'      => false,
+				'rebase_cleanup_failed' => true,
+				'rebase_error'          => 'The operation deadline left no bounded window for rebase and verified abort.',
+			);
+		}
+		$result = $this->run_git($wt_path, sprintf('rebase %s', escapeshellarg($target)), min(300, $remaining - 5));
 
 		if ( is_wp_error($result) ) {
 			// Abort so the worktree stays at its pre-rebase HEAD. Agent can
 			// retry manually after resolving conflicts.
-			$this->run_git($wt_path, 'rebase --abort');
+			$abort_remaining = (int) floor($operation_deadline - microtime(true));
+			$abort           = $abort_remaining > 0
+				? $this->run_git($wt_path, 'rebase --abort', min(5, $abort_remaining))
+				: new \WP_Error('worktree_rebase_abort_timeout', 'No operation deadline remained for rebase cleanup.');
 
 			$data  = $result->get_error_data();
 			$tail  = is_array($data) && isset($data['output']) ? trim( (string) $data['output']) : '';
 			$error = '' !== $tail ? $tail : $result->get_error_message();
 
 			return array(
-				'rebase_attempted' => true,
-				'rebase_target'    => $target,
-				'rebase_succeeded' => false,
-				'rebase_error'     => $error,
+				'rebase_attempted'      => true,
+				'rebase_target'         => $target,
+				'rebase_succeeded'      => false,
+				'rebase_cleanup_failed' => is_wp_error($abort),
+				'rebase_error'          => $error,
+				'rebase_abort_error'    => is_wp_error($abort) ? $abort->get_error_message() : null,
 			);
 		}
 
