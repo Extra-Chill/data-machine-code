@@ -112,6 +112,18 @@ class CleanupRunService {
 		}
 
 		$limit = $this->apply_limit($opts);
+		$policy                = (array) ( $run['policy'] ?? array() );
+		$allow_active_cleanup = ! empty($policy['allow_active_artifact_cleanup']);
+		$requested_active     = ! empty($opts['allow_active_artifact_cleanup']);
+		if ( $allow_active_cleanup !== $requested_active ) {
+			return new \WP_Error(
+				'active_artifact_cleanup_override_mismatch',
+				$allow_active_cleanup
+					? 'This reviewed run permits active artifact eviction; repeat --allow-active-artifact-cleanup to apply it explicitly.'
+					: 'Active artifact eviction was not reviewed in this cleanup run. Create a new plan with --allow-active-artifact-cleanup.',
+				array( 'status' => 400 )
+			);
+		}
 
 		$updated = $this->update_run_or_error(
 			$run_id, array(
@@ -125,19 +137,7 @@ class CleanupRunService {
 		}
 
 		$items                  = $this->repository->get_items($run_id);
-		$policy                  = (array) ( $run['policy'] ?? array() );
 		$force_artifact_cleanup = ! empty($policy['force_artifact_cleanup']);
-		$allow_active_cleanup   = ! empty($policy['allow_active_artifact_cleanup']);
-		$requested_active       = ! empty($opts['allow_active_artifact_cleanup']);
-		if ( $allow_active_cleanup !== $requested_active ) {
-			return new \WP_Error(
-				'active_artifact_cleanup_override_mismatch',
-				$allow_active_cleanup
-					? 'This reviewed run permits active artifact eviction; repeat --allow-active-artifact-cleanup to apply it explicitly.'
-					: 'Active artifact eviction was not reviewed in this cleanup run. Create a new plan with --allow-active-artifact-cleanup.',
-				array( 'status' => 400 )
-			);
-		}
 		$artifact_rows          = $this->pending_rows_of_type($items, 'artifact_cleanup');
 		$worktree_rows          = $this->pending_rows_of_type($items, 'worktree_removal');
 		$stale_worktrees_only   = 'stale-worktrees' === (string) ( $run['mode'] ?? '' );
@@ -949,7 +949,7 @@ class CleanupRunService {
 						'applied_at'      => gmdate('Y-m-d H:i:s'),
 						'reason_code'     => 'partial_artifact_cleanup',
 						'reason'          => (string) ( $partial['reason'] ?? '' ),
-						'bytes_reclaimed' => max(0, (int) ( $partial['bytes_reclaimed'] ?? 0 )),
+						'bytes_reclaimed' => max(0, (int) ( $partial['durable_reclaimed_bytes'] ?? 0 )),
 						'evidence'        => array_merge( (array) $item['evidence'], array( 'partial' => $partial )),
 					),
 					'partial'
@@ -966,7 +966,7 @@ class CleanupRunService {
 					array(
 						'status'          => 'applied',
 						'applied_at'      => gmdate('Y-m-d H:i:s'),
-						'bytes_reclaimed' => max(0, (int) ( $applied['artifact_size_bytes'] ?? $applied['size_bytes'] ?? $item['evidence']['artifact_size_bytes'] ?? $item['evidence']['size_bytes'] ?? 0 )),
+						'bytes_reclaimed' => max(0, (int) ( $applied['durable_reclaimed_bytes'] ?? 0 )),
 						'evidence'        => array_merge( (array) $item['evidence'], array( 'applied' => $applied )),
 					),
 					'applied'

@@ -763,7 +763,11 @@ trait WorkspaceArtifactCleanup {
 		$scanned              = 0;
 		$unreadable           = array();
 		$foreign_namespaces   = array();
+		$unknown_namespaces   = array();
 		$self_mount_namespace = @readlink($proc_root . '/self/ns/mnt'); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Procfs namespace links may be unavailable on non-Linux hosts.
+		if ( ! is_string($self_mount_namespace) || '' === $self_mount_namespace ) {
+			$unknown_namespaces[] = array( 'pid' => getmypid(), 'scope' => 'self' );
+		}
 		foreach ( $entries as $entry ) {
 			if ( ! ctype_digit( (string) $entry ) || getmypid() === (int) $entry ) {
 				continue;
@@ -771,7 +775,11 @@ trait WorkspaceArtifactCleanup {
 			$proc = $proc_root . '/' . $entry;
 			++$scanned;
 			$mount_namespace = @readlink($proc . '/ns/mnt'); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Processes can exit between procfs enumeration and readlink.
-			if ( is_string($self_mount_namespace) && is_string($mount_namespace) && $mount_namespace !== $self_mount_namespace ) {
+			if ( ! is_string($mount_namespace) || '' === $mount_namespace ) {
+				if ( is_dir($proc) ) {
+					$unknown_namespaces[] = array( 'pid' => (int) $entry, 'scope' => 'process' );
+				}
+			} elseif ( is_string($self_mount_namespace) && $mount_namespace !== $self_mount_namespace ) {
 				$foreign_namespaces[] = array( 'pid' => (int) $entry, 'mount_namespace' => $mount_namespace );
 			}
 			// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Processes can exit between procfs enumeration and ownership lookup.
@@ -820,7 +828,7 @@ trait WorkspaceArtifactCleanup {
 			}
 		}
 
-		$status = array() === $unreadable && array() === $foreign_namespaces ? 'available' : 'uncertain';
+		$status = array() === $unreadable && array() === $foreign_namespaces && array() === $unknown_namespaces ? 'available' : 'uncertain';
 		$result = array(
 			'status'      => $status,
 			'records'     => $records,
@@ -830,6 +838,7 @@ trait WorkspaceArtifactCleanup {
 				'path_records'             => count($records),
 				'unreadable_processes'     => array_slice($unreadable, 0, 10),
 				'foreign_mount_namespaces' => array_slice($foreign_namespaces, 0, 10),
+				'unknown_mount_namespaces' => array_slice($unknown_namespaces, 0, 10),
 			),
 		);
 		if ( ! $fresh ) {
@@ -884,13 +893,21 @@ trait WorkspaceArtifactCleanup {
 	private function observe_artifact_reclamation_rows( array $rows ): array {
 		foreach ( $rows as &$row ) {
 			$observations = array();
+			$durable_bytes = 0;
+			$rebuilt_bytes = 0;
 			foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
 				$relative = is_array($artifact) ? (string) ( $artifact['path'] ?? '' ) : '';
 				if ( '' === $relative ) {
 					continue;
 				}
-				$observations[] = $this->observe_artifact_reclamation_path( (string) ( $row['path'] ?? '' ), $relative);
+				$observation    = $this->observe_artifact_reclamation_path( (string) ( $row['path'] ?? '' ), $relative);
+				$observations[] = $observation;
+				$removed_bytes  = max(0, (int) ( $artifact['removal']['bytes_reclaimed'] ?? 0 ));
+				$durable_bytes += ! empty($observation['durable']) ? $removed_bytes : 0;
+				$rebuilt_bytes += max(0, (int) ( $observation['rebuilt_bytes'] ?? 0 ));
 			}
+			$row['durable_reclaimed_bytes'] = $durable_bytes;
+			$row['rebuilt_artifact_bytes']  = $rebuilt_bytes;
 			$row['reclamation_observation'] = array(
 				'observed_at'  => gmdate('c'),
 				'window'       => 'through_cleanup_completion',
@@ -970,13 +987,8 @@ trait WorkspaceArtifactCleanup {
 				$removed_bytes += max(0, (int) ( is_array($artifact) ? ( $artifact['removal']['bytes_reclaimed'] ?? $artifact['size_bytes'] ?? 0 ) : 0 ));
 				++$removed_count;
 			}
-			$observation = (array) ( $row['reclamation_observation'] ?? array() );
-			foreach ( (array) ( $observation['observations'] ?? array() ) as $item ) {
-				$rebuilt_bytes += max(0, (int) ( $item['rebuilt_bytes'] ?? 0 ));
-			}
-			if ( ! empty($observation['durable']) ) {
-				$durable_bytes += array_sum(array_map(fn( $artifact ) => max(0, (int) ( $artifact['removal']['bytes_reclaimed'] ?? 0 )), (array) ( $row['artifacts'] ?? array() )));
-			}
+			$durable_bytes += max(0, (int) ( $row['durable_reclaimed_bytes'] ?? 0 ));
+			$rebuilt_bytes += max(0, (int) ( $row['rebuilt_artifact_bytes'] ?? 0 ));
 		}
 
 		ksort($skipped_by_reason);

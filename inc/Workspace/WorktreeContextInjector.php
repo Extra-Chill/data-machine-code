@@ -1548,11 +1548,6 @@ class WorktreeContextInjector {
 	 * @return array|null
 	 */
 	public static function get_metadata_fresh( string $handle ): ?array {
-		$inventory_metadata = self::get_inventory_metadata($handle);
-		if ( is_array($inventory_metadata) ) {
-			return $inventory_metadata;
-		}
-
 		if ( function_exists('wp_cache_delete') ) {
 			wp_cache_delete(self::METADATA_OPTION, 'options');
 		}

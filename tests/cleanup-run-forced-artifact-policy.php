@@ -154,6 +154,7 @@ namespace {
 	);
 	$missing_active_override = $service->apply('cleanup-run-active-artifacts');
 	forced_artifact_policy_assert('active_artifact_cleanup_override_mismatch', $missing_active_override instanceof WP_Error ? $missing_active_override->get_error_code() : null, 'reviewed active eviction must be repeated explicitly at apply time.');
+	forced_artifact_policy_assert('planned', $repo->runs['cleanup-run-active-artifacts']['status'] ?? null, 'override mismatch must not mutate the reviewed run state.');
 	$active_apply = $service->apply('cleanup-run-active-artifacts', array( 'allow_active_artifact_cleanup' => true ));
 	forced_artifact_policy_assert(true, $active_apply['success'] ?? null, 'matching reviewed and apply-time active override should be accepted.');
 

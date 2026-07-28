@@ -67,6 +67,7 @@ namespace DataMachineCode\Workspace {
 
 		public array $rows = array();
 		public string $workspace_path;
+		public ?string $process_root = null;
 
 		public function __construct( string $workspace_path ) {
 			$this->workspace_path = $workspace_path;
@@ -74,6 +75,14 @@ namespace DataMachineCode\Workspace {
 
 		public function probe_processes( string $path, array $artifacts, bool $fresh = true ): array {
 			return $this->detect_active_artifact_processes($path, $artifacts, $fresh);
+		}
+
+		public function probe_process_snapshot( bool $fresh = true ): array {
+			return $this->artifact_process_path_records($fresh);
+		}
+
+		protected function artifact_process_root(): string {
+			return $this->process_root ?? '/proc';
 		}
 
 		private function build_workspace_inventory_rows(): array {
@@ -209,6 +218,19 @@ namespace {
 		proc_terminate($process);
 		proc_close($process);
 	}
+
+	$fake_proc = $root . '/proc-fixture';
+	mkdir($fake_proc . '/self/ns', 0777, true);
+	mkdir($fake_proc . '/999999/fd', 0777, true);
+	mkdir($fake_proc . '/999999/ns', 0777, true);
+	symlink($path, $fake_proc . '/999999/cwd');
+	file_put_contents($fake_proc . '/999999/comm', 'fixture');
+	$namespace_scanner               = new ArtifactCleanupGuardHarness($root);
+	$namespace_scanner->process_root = $fake_proc;
+	$namespace_probe                 = $namespace_scanner->probe_process_snapshot();
+	artifact_guard_assert_same('uncertain', $namespace_probe['status'] ?? null, 'missing mount namespace links must fail closed as uncertain');
+	artifact_guard_assert_same(true, array() !== (array) ( $namespace_probe['diagnostics']['unknown_mount_namespaces'] ?? array() ), 'uncertain namespace probe must preserve typed diagnostics');
+	unlink($fake_proc . '/999999/cwd');
 
 	$harness->process_probe = array( 'status' => 'available', 'evidence' => array(), 'diagnostics' => array() );
 	$GLOBALS['artifact_guard_authoritative_metadata']['repo@guard'] = array(
