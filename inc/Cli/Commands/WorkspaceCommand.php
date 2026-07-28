@@ -2377,6 +2377,18 @@ class WorkspaceCommand extends BaseCommand {
 	 * default: 1000
 	 * ---
 	 *
+	 * [--size-entry-timeout=<seconds>]
+	 * : Maximum time one top-level size probe may run.
+	 * ---
+	 * default: 5
+	 * ---
+	 *
+	 * [--size-total-timeout=<seconds>]
+	 * : Maximum wall-clock time for the complete size pass.
+	 * ---
+	 * default: 30
+	 * ---
+	 *
 	 * ## EXAMPLES
 	 *
 	 *     wp datamachine-code workspace hygiene
@@ -2399,6 +2411,12 @@ class WorkspaceCommand extends BaseCommand {
 		);
 		if ( isset($assoc_args['size-limit']) ) {
 			$input['size_limit'] = (int) $assoc_args['size-limit'];
+		}
+		if ( isset($assoc_args['size-entry-timeout']) ) {
+			$input['size_entry_timeout'] = (int) $assoc_args['size-entry-timeout'];
+		}
+		if ( isset($assoc_args['size-total-timeout']) ) {
+			$input['size_total_timeout'] = (int) $assoc_args['size-total-timeout'];
 		}
 
 		$result = $ability->execute($input);

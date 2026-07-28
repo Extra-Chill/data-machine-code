@@ -121,6 +121,7 @@ $timed_out_result = ProcessRunner::run(
 	)
 );
 process_runner_assert_same(false, $timed_out_result['success'] ?? null, 'Result-mode timeouts report failure.');
+process_runner_assert_same(1, $timed_out_result['timeout'] ?? null, 'Result-mode timeouts preserve the configured deadline.');
 process_runner_assert_same(true, is_array($timed_out_result['cleanup'] ?? null), 'Result-mode timeouts preserve cleanup diagnostics.');
 
 if ( 'Windows' !== PHP_OS_FAMILY ) {

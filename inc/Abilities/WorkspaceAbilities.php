@@ -1591,6 +1591,14 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'Maximum top-level workspace entries to size when include_sizes is true. Default 1000.',
 							),
+							'size_entry_timeout'      => array(
+								'type'        => 'integer',
+								'description' => 'Maximum seconds for one top-level size probe. Default 5.',
+							),
+							'size_total_timeout'      => array(
+								'type'        => 'integer',
+								'description' => 'Maximum seconds for the complete size pass. Default 30.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -4123,6 +4131,12 @@ class WorkspaceAbilities {
 		}
 		if ( isset($input['size_limit']) ) {
 			$opts['size_limit'] = (int) $input['size_limit'];
+		}
+		if ( isset($input['size_entry_timeout']) ) {
+			$opts['size_entry_timeout'] = (int) $input['size_entry_timeout'];
+		}
+		if ( isset($input['size_total_timeout']) ) {
+			$opts['size_total_timeout'] = (int) $input['size_total_timeout'];
 		}
 
 		return $workspace->workspace_hygiene_report($opts);
