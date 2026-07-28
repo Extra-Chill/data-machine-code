@@ -34,7 +34,7 @@ trait WorkspaceCleanupPlan {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function workspace_cleanup_plan( array $opts = array() ): array|\WP_Error {
-		$mode = (string) ( $opts['mode'] ?? 'cleanup_plan' );
+		$mode   = (string) ( $opts['mode'] ?? 'cleanup_plan' );
 		$inputs = array(
 			'mode'                   => $mode,
 			'force_artifact_cleanup' => ! empty($opts['force_artifact_cleanup']),
@@ -134,7 +134,7 @@ trait WorkspaceCleanupPlan {
 			'safety_policy'  => array(
 				'applies_inline'               => false,
 				'force_artifact_cleanup'       => $inputs['force_artifact_cleanup'],
-				'artifact_cleanup'             => 'apply-plan must revalidate profile-derived artifact paths before deletion',
+				'artifact_cleanup'             => 'apply-plan must revalidate profile-derived paths, authoritative liveness, and active process use immediately before artifact deletion',
 				'worktree_removal'             => 'apply-plan must re-run dirty, unpushed, identity, lifecycle, containment, and primary protections before deletion',
 				'resolver'                     => 'resolver rows may gather merge signals but cannot delete worktrees',
 				'destructive_rows_need_review' => true,

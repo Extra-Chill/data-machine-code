@@ -9,9 +9,12 @@ namespace DataMachineCode\Workspace;
 
 defined('ABSPATH') || exit;
 
+require_once __DIR__ . '/WorktreeContextInjector.php';
+
 trait WorkspaceArtifactCleanup {
 
-
+	/** @var array<int,array<string,mixed>>|null Request-local process path snapshot. */
+	private ?array $artifact_process_path_snapshot = null;
 
 	/**
 	 * Cleanup reconstructable artifact directories inside workspace worktrees.
@@ -176,6 +179,15 @@ trait WorkspaceArtifactCleanup {
 			$failed            = false;
 
 			foreach ( (array) ( $candidate['artifacts'] ?? array() ) as $artifact ) {
+				if ( ! $force ) {
+					$protection = $this->current_artifact_cleanup_protection($candidate, array( $artifact ), true);
+					if ( null !== $protection ) {
+						$skipped[] = array_merge($candidate, $protection, array( 'artifacts' => array( $artifact ) ));
+						$failed    = true;
+						break;
+					}
+				}
+
 				$remove = $this->remove_worktree_artifact_path( (string) $candidate['path'], (string) ( $artifact['path'] ?? '' ));
 				if ( $remove instanceof \WP_Error ) {
 					$skipped[] = array(
@@ -276,9 +288,9 @@ trait WorkspaceArtifactCleanup {
 	 *   `count_unpushed_commits`) are skipped unless `safety_probes` is set.
 	 *   This keeps a dry-run on ~hundreds of worktrees responsive enough for a
 	 *   synchronous CLI / ability call.
-	 * - **Exhaustive mode** (`exhaustive=true` or `safety_probes=true`): use
-	 *   `worktree_list()` and run the full per-worktree dirty + unpushed probes.
-	 *   Slower but the historical, fully-validated behavior.
+	 * Liveness and active-process protections apply in both modes. Exhaustive
+	 * mode (`exhaustive=true` or `safety_probes=true`) additionally uses
+	 * `worktree_list()` and runs the full per-worktree dirty + unpushed probes.
 	 *
 	 * Pagination via `limit` + `offset` always operates on the inventory ordering
 	 * after `only_handles` filtering. The returned plan includes a `pagination`
@@ -369,13 +381,14 @@ trait WorkspaceArtifactCleanup {
 				$artifacts = '' !== $wt_path ? $this->detect_worktree_artifacts($repo, $wt_path) : array();
 			}
 
-			$base_row = array(
+			$base_row         = array(
 				'handle'     => $handle,
 				'repo'       => $repo,
 				'branch'     => $branch,
 				'path'       => $wt_path,
 				'created_at' => $wt['created_at'] ?? null,
 			);
+			$safety_overrides = array();
 
 			if ( empty($artifacts) ) {
 				continue;
@@ -412,6 +425,24 @@ trait WorkspaceArtifactCleanup {
 					)
 				);
 				continue;
+			}
+
+			$liveness_protection = $this->artifact_liveness_protection($wt);
+			if ( null !== $liveness_protection ) {
+				if ( ! $force ) {
+					$skipped[] = array_merge($base_row, $liveness_protection, array( 'artifacts' => $artifacts ));
+					continue;
+				}
+				$safety_overrides[] = $liveness_protection;
+			}
+
+			$process_protection = $this->active_artifact_process_protection($wt_path, $artifacts);
+			if ( null !== $process_protection ) {
+				if ( ! $force ) {
+					$skipped[] = array_merge($base_row, $process_protection, array( 'artifacts' => $artifacts ));
+					continue;
+				}
+				$safety_overrides[] = $process_protection;
 			}
 
 			if ( $safety_probes ) {
@@ -503,6 +534,9 @@ trait WorkspaceArtifactCleanup {
 				$candidate['git_metadata_warning']         = $stale_marker_recovery['reason'] ?? 'git worktree metadata marker is stale or missing';
 				$candidate['metadata_reconciliation_hint'] = 'Run studio wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --offset=0 --until-budget=30s --format=json to repair stale worktree metadata after artifact cleanup.';
 			}
+			if ( array() !== $safety_overrides ) {
+				$candidate['safety_overrides'] = $safety_overrides;
+			}
 			$candidates[] = $candidate;
 		}
 
@@ -523,6 +557,193 @@ trait WorkspaceArtifactCleanup {
 			'skipped'    => $skipped,
 			'pagination' => $pagination,
 		);
+	}
+
+	/**
+	 * Return authoritative liveness or active-process protection for an artifact deletion.
+	 *
+	 * @param  array<string,mixed> $candidate Worktree candidate.
+	 * @param  array<int,array>    $artifacts Artifact rows about to be removed.
+	 * @param  bool                $fresh     Whether process evidence must bypass the request snapshot.
+	 * @return array<string,mixed>|null
+	 */
+	private function current_artifact_cleanup_protection( array $candidate, array $artifacts, bool $fresh = false ): ?array {
+		$handle   = (string) ( $candidate['handle'] ?? '' );
+		$metadata = '' !== $handle ? WorktreeContextInjector::get_metadata($handle) : null;
+		$liveness = WorktreeContextInjector::classify_liveness(is_array($metadata) ? $metadata : null);
+		$row      = array_merge(
+			$candidate,
+			array(
+				'liveness'              => $liveness['liveness'],
+				'liveness_reason'       => $liveness['reason'],
+				'heartbeat_age_seconds' => $liveness['heartbeat_age_seconds'],
+				'last_seen_at'          => $liveness['last_seen_at'],
+				'metadata'              => $metadata,
+				'owner'                 => WorktreeContextInjector::summarize_owner(is_array($metadata) ? $metadata : null),
+				'session'               => WorktreeContextInjector::summarize_session(is_array($metadata) ? $metadata : null),
+			)
+		);
+
+		$protection = $this->artifact_liveness_protection($row);
+		return null !== $protection ? $protection : $this->active_artifact_process_protection( (string) ( $candidate['path'] ?? '' ), $artifacts, $fresh);
+	}
+
+	/**
+	 * Build a typed protection row from normalized worktree liveness.
+	 *
+	 * @param  array<string,mixed> $row Worktree inventory row.
+	 * @return array<string,mixed>|null
+	 */
+	private function artifact_liveness_protection( array $row ): ?array {
+		if ( WorktreeContextInjector::LIVENESS_LIVE !== (string) ( $row['liveness'] ?? '' ) ) {
+			return null;
+		}
+
+		return array(
+			'reason_code'       => 'live_worktree',
+			'protecting_reason' => 'live_worktree',
+			'reason'            => 'authoritative liveness evidence reports a live owner; leaving reconstructable artifacts in place',
+			'liveness'          => WorktreeContextInjector::LIVENESS_LIVE,
+			'liveness_reason'   => (string) ( $row['liveness_reason'] ?? '' ),
+			'liveness_evidence' => array(
+				'state'                 => WorktreeContextInjector::LIVENESS_LIVE,
+				'reason'                => (string) ( $row['liveness_reason'] ?? '' ),
+				'last_seen_at'          => $row['last_seen_at'] ?? null,
+				'heartbeat_age_seconds' => $row['heartbeat_age_seconds'] ?? null,
+				'owner'                 => $row['owner'] ?? array(),
+				'session'               => $row['session'] ?? array(),
+			),
+		);
+	}
+
+	/**
+	 * Build a typed protection row when a process uses the worktree or artifact roots.
+	 *
+	 * @param  string           $worktree_path Worktree root.
+	 * @param  array<int,array> $artifacts     Profile-derived artifact rows.
+	 * @param  bool             $fresh         Whether to bypass the request-local process snapshot.
+	 * @return array<string,mixed>|null
+	 */
+	private function active_artifact_process_protection( string $worktree_path, array $artifacts, bool $fresh = false ): ?array {
+		$evidence = $this->detect_active_artifact_processes($worktree_path, $artifacts, $fresh);
+		if ( array() === $evidence ) {
+			return null;
+		}
+
+		return array(
+			'reason_code'       => 'active_build',
+			'protecting_reason' => 'active_build',
+			'reason'            => 'active process cwd or open file intersects the worktree artifacts; leaving reconstructable artifacts in place',
+			'process_evidence'  => $evidence,
+		);
+	}
+
+	/**
+	 * Conservatively inspect Linux process cwd/open-file paths without naming runtimes or tools.
+	 *
+	 * @param  string           $worktree_path Worktree root.
+	 * @param  array<int,array> $artifacts     Profile-derived artifact rows.
+	 * @param  bool             $fresh         Whether to rebuild the process snapshot.
+	 * @return array<int,array<string,mixed>>
+	 */
+	protected function detect_active_artifact_processes( string $worktree_path, array $artifacts, bool $fresh = false ): array {
+		$worktree_real = realpath($worktree_path);
+		if ( false === $worktree_real || ! is_dir('/proc') ) {
+			return array();
+		}
+
+		$roots = array( rtrim($worktree_real, '/') );
+		foreach ( $artifacts as $artifact ) {
+			$relative = is_array($artifact) ? trim( (string) ( $artifact['path'] ?? '' ), '/') : '';
+			$real     = '' !== $relative ? realpath($worktree_real . '/' . $relative) : false;
+			if ( false !== $real ) {
+				$roots[] = rtrim($real, '/');
+			}
+		}
+
+		$records = $this->artifact_process_path_records($fresh);
+		$matches = array();
+		foreach ( $records as $record ) {
+			$path = rtrim( (string) ( $record['path'] ?? '' ), '/');
+			foreach ( $roots as $root ) {
+				if ( $path === $root || str_starts_with($path, $root . '/') ) {
+					$matches[] = $record;
+					break;
+				}
+			}
+			if ( count($matches) >= 10 ) {
+				break;
+			}
+		}
+
+		return $matches;
+	}
+
+	/**
+	 * Snapshot process paths once for preview, or freshly for final apply revalidation.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function artifact_process_path_records( bool $fresh ): array {
+		if ( ! $fresh && null !== $this->artifact_process_path_snapshot ) {
+			return $this->artifact_process_path_snapshot;
+		}
+
+		$records = array();
+		$entries = scandir('/proc');
+		if ( false === $entries ) {
+			return array();
+		}
+		foreach ( $entries as $entry ) {
+			if ( ! ctype_digit( (string) $entry ) || getmypid() === (int) $entry ) {
+				continue;
+			}
+			$proc = '/proc/' . $entry;
+			// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Processes can exit between procfs enumeration and ownership lookup.
+			$owner_uid = @fileowner($proc);
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Local procfs metadata, not a remote request.
+			$command = is_readable($proc . '/comm') ? trim( (string) file_get_contents($proc . '/comm')) : '';
+			// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Processes can exit between procfs enumeration and readlink.
+			$cwd = @readlink($proc . '/cwd');
+			if ( is_string($cwd) && '' !== $cwd ) {
+				$records[] = array(
+					'pid'        => (int) $entry,
+					'command'    => $command,
+					'owner_uid'  => false === $owner_uid ? null : $owner_uid,
+					'match_type' => 'cwd',
+					'path'       => preg_replace('/ \(deleted\)$/', '', $cwd),
+				);
+			}
+
+			// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Processes can exit between procfs enumeration and scandir.
+			$fd_entries = @scandir($proc . '/fd');
+			if ( false === $fd_entries ) {
+				continue;
+			}
+			foreach ( $fd_entries as $fd ) {
+				if ( ! ctype_digit( (string) $fd ) ) {
+					continue;
+				}
+				// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- File descriptors can close during procfs inspection.
+				$target = @readlink($proc . '/fd/' . $fd);
+				if ( ! is_string($target) || ! str_starts_with($target, '/') ) {
+					continue;
+				}
+				$records[] = array(
+					'pid'        => (int) $entry,
+					'command'    => $command,
+					'owner_uid'  => false === $owner_uid ? null : $owner_uid,
+					'match_type' => 'open_file',
+					'fd'         => (int) $fd,
+					'path'       => preg_replace('/ \(deleted\)$/', '', $target),
+				);
+			}
+		}
+
+		if ( ! $fresh ) {
+			$this->artifact_process_path_snapshot = $records;
+		}
+		return $records;
 	}
 
 	/**
@@ -706,7 +927,7 @@ trait WorkspaceArtifactCleanup {
 					continue;
 				}
 				if ( is_array($planned_artifact) && array_key_exists('size_bytes', $planned_artifact)
-					&& (int) $planned_artifact['size_bytes'] !== (int) ( $current_artifacts[ $relative ]['size_bytes'] ?? -1 ) ) {
+					&& (int) ( $current_artifacts[ $relative ]['size_bytes'] ?? -1 ) !== (int) $planned_artifact['size_bytes'] ) {
 					$mismatches[] = 'artifact_size:' . $relative;
 					continue;
 				}
