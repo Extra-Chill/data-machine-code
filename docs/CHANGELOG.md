@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.54.3] - 2026-07-28
+
+### Fixed
+- bound workspace hygiene size probes
+
 ## [0.54.2] - 2026-07-28
 
 ### Fixed
