@@ -29,9 +29,12 @@ final class WorkspaceMutationLock {
 
 	private int $lock_id = 0;
 
-	private function __construct( $handle, int $lock_id = 0 ) {
+	private string $request_path;
+
+	private function __construct( $handle, int $lock_id = 0, string $request_path = '' ) {
 		$this->handle  = $handle;
 		$this->lock_id = $lock_id;
+		$this->request_path = $request_path;
 	}
 
 	/**
@@ -97,8 +100,11 @@ final class WorkspaceMutationLock {
 		}
 
 		$lock_path = $lock_dir . '/worktree-' . $repo . '.lock';
+		$request_path = self::record_request($lock_dir, $repo, $lock_path);
+		$request_id   = '' === $request_path ? '' : basename($request_path, '.json');
 		$handle    = fopen($lock_path, 'c'); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
 		if ( false === $handle ) {
+			self::remove_request($request_path);
 			return new \WP_Error(
 				'workspace_lock_open_failed',
 				sprintf('Failed to open workspace mutation lock: %s', $lock_path),
@@ -111,6 +117,7 @@ final class WorkspaceMutationLock {
 
 		do {
 			if ( flock($handle, LOCK_EX | LOCK_NB) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+				self::update_request($request_path, 'acquiring');
 				$lock_id = WorkspaceLockStore::register_acquired(
 					array(
 						'lock_key' => 'worktree-' . $repo,
@@ -119,20 +126,26 @@ final class WorkspaceMutationLock {
 						'metadata' => array(
 							'workspace_path' => $workspace_path,
 							'lock_path'      => $lock_path,
+							'request_id'     => $request_id,
 							'owner_context'  => WorkspaceLockStore::default_owner_context(),
 						),
 					)
 				);
 				if ( is_wp_error($lock_id) ) {
+					self::remove_request($request_path);
 						flock($handle, LOCK_UN); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
 						fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-						return $lock_id;
+						return self::admission_error($lock_id, $repo, $lock_path, $request_id);
 				}
 
-				return new self($handle, (int) $lock_id);
+				self::update_request($request_path, 'acquired');
+				return new self($handle, (int) $lock_id, $request_path);
 			}
 
+			self::update_request($request_path, 'queued');
+
 			if ( 0 === $timeout || ( microtime(true) - $started ) >= $timeout ) {
+				self::remove_request($request_path);
 				fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 				$error_data                         = self::busy_error_data($repo, $lock_path);
 				$error_data['wait_timeout_seconds'] = $timeout;
@@ -163,6 +176,8 @@ final class WorkspaceMutationLock {
 		fclose($this->handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 		$this->handle  = null;
 		$this->lock_id = 0;
+		self::remove_request($this->request_path);
+		$this->request_path = '';
 	}
 
 	/**
@@ -172,6 +187,7 @@ final class WorkspaceMutationLock {
 	 */
 	public static function status( string $workspace_path ): array {
 		$filesystem = self::filesystem_status($workspace_path);
+		$queue      = self::queued_requests($workspace_path);
 		$database   = WorkspaceLockStore::status();
 		$stale      = self::stale_lock_report($database, $filesystem);
 
@@ -187,6 +203,7 @@ final class WorkspaceMutationLock {
 			),
 			'retention_enabled' => true,
 			'policy'            => self::retention_policy(),
+			'queue'             => $queue,
 		);
 	}
 
@@ -223,6 +240,88 @@ final class WorkspaceMutationLock {
 	private static function sanitize_repo_key( string $repo ): string {
 		$repo = preg_replace('/[^a-zA-Z0-9._-]/', '', $repo);
 		return trim( (string) $repo, '-.');
+	}
+
+	private static function admission_error( \WP_Error $error, string $repo, string $lock_path, string $request_id ): \WP_Error {
+		$data = (array) $error->get_error_data();
+		$data = array_merge(
+			$data,
+			array(
+				'resource'      => $lock_path,
+				'repo'          => $repo,
+				'request_id'    => $request_id,
+				'owner'         => WorkspaceLockStore::default_owner_context(),
+				'retry_command' => sprintf('wp datamachine-code workspace worktree add %s <branch> --from=origin/main', $repo),
+			)
+		);
+		return new \WP_Error($error->get_error_code(), $error->get_error_message(), $data);
+	}
+
+	private static function record_request( string $lock_dir, string $repo, string $lock_path ): string {
+		$request_dir = $lock_dir . '/requests';
+		if ( ! is_dir($request_dir) && ! @mkdir($request_dir, 0755, true) && ! is_dir($request_dir) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir
+			return '';
+		}
+		$request_id = bin2hex(random_bytes(12));
+		$path       = $request_dir . '/' . $request_id . '.json';
+		self::write_request($path, array(
+			'request_id' => $request_id,
+			'repo'       => $repo,
+			'resource'   => $lock_path,
+			'state'      => 'queued',
+			'pid'        => getmypid(),
+			'created_at' => gmdate('c'),
+		));
+		return $path;
+	}
+
+	private static function update_request( string $path, string $state ): void {
+		if ( '' === $path || ! is_file($path) ) {
+			return;
+		}
+		$data = json_decode((string) file_get_contents($path), true);
+		if ( ! is_array($data) ) {
+			return;
+		}
+		$data['state']      = $state;
+		$data['updated_at'] = gmdate('c');
+		self::write_request($path, $data);
+	}
+
+	private static function write_request( string $path, array $data ): void {
+		if ( '' !== $path ) {
+			$json = function_exists('wp_json_encode') ? wp_json_encode($data) : json_encode($data);
+			$temporary = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
+			if ( false !== file_put_contents($temporary, false === $json ? '{}' : (string) $json, LOCK_EX) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+				rename($temporary, $path); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+			}
+		}
+	}
+
+	private static function remove_request( string $path ): void {
+		if ( '' !== $path && is_file($path) ) {
+			unlink($path); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+		}
+	}
+
+	/** @return array<int,array<string,mixed>> */
+	private static function queued_requests( string $workspace_path ): array {
+		$files = glob(rtrim($workspace_path, '/') . '/.locks/requests/*.json') ?: array();
+		$rows  = array();
+		foreach ( array_slice($files, 0, 25) as $file ) {
+			$row = json_decode((string) file_get_contents($file), true);
+			if ( is_array($row) && ! self::request_owner_exited($row) ) {
+				$rows[] = $row;
+			} elseif ( is_array($row) ) {
+				self::remove_request($file);
+			}
+		}
+		return $rows;
+	}
+
+	private static function request_owner_exited( array $request ): bool {
+		$pid = (int) ( $request['pid'] ?? 0 );
+		return $pid > 0 && function_exists('posix_kill') && ! @posix_kill($pid, 0);
 	}
 
 	/**
@@ -534,23 +633,9 @@ final class WorkspaceMutationLock {
 	 * @return array<string,mixed>
 	 */
 	private static function owner_evidence_for_lock( string $lock_key, string $scope ): array {
-		$active_lock = WorkspaceLockStore::active_lock($lock_key, $scope);
-		if ( is_array($active_lock) ) {
-			return array(
-				'source' => 'database',
-				'lock'   => $active_lock,
-			);
-		}
-		if ( is_wp_error($active_lock) ) {
-			return array(
-				'source'  => 'database_error',
-				'message' => $active_lock->get_error_message(),
-			);
-		}
-
 		return array(
 			'source'  => 'filesystem_only',
-			'message' => 'No active DB lock row is visible for this held filesystem flock.',
+			'message' => 'Database owner lookup is intentionally deferred so lock inspection remains available during database contention.',
 		);
 	}
 
