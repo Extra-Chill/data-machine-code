@@ -446,17 +446,32 @@ try {
 		mkdir($unrelated, 0777, true);
 		file_put_contents($unrelated . '/.git', 'gitdir: /missing/' . $index);
 	}
+	$fake_bin = $workspace_root . '/fake-bin';
+	mkdir($fake_bin, 0777, true);
+	$git_probe_log = $workspace_root . '/git-probe.log';
+	$real_git      = trim((string) shell_exec('command -v git'));
+	assert_true('' !== $real_git, 'test fixture could not resolve git');
+	file_put_contents($fake_bin . '/git', "#!/bin/sh\nprintf '%s\\n' \"\$*\" >> " . escapeshellarg($git_probe_log) . "\nexec " . escapeshellarg($real_git) . " \"\$@\"\n");
+	chmod($fake_bin . '/git', 0755);
+	$original_path = getenv('PATH');
+	putenv('PATH=' . $fake_bin . ':' . ( false === $original_path ? '' : $original_path ));
 	$started       = microtime(true);
-	$targeted_large = $workspace->worktree_get($handle, array( 'include_status' => true, 'include_disk' => false ));
+	$targeted_large = $workspace->worktree_get($result['path'], array( 'include_status' => true, 'include_disk' => false ));
 	$elapsed       = microtime(true) - $started;
+	putenv('PATH=' . ( false === $original_path ? '' : $original_path ));
 	assert_true(! is_wp_error($targeted_large), 'targeted worktree_get failed in a large workspace fixture');
 	assert_true(1 === count($targeted_large['worktrees'] ?? array()), 'targeted worktree_get returned unrelated worktrees');
+	assert_true($handle === ( $targeted_large['worktrees'][0]['handle'] ?? '' ), 'canonical-path worktree_get returned the wrong handle');
+	assert_true($result['path'] === ( $targeted_large['worktrees'][0]['path'] ?? '' ), 'canonical-path worktree_get did not preserve the canonical path');
 	assert_true($elapsed < 3.0, sprintf('targeted worktree_get scanned unrelated workspace entries: %.3fs', $elapsed));
+	$git_probes = array_values(array_filter(file($git_probe_log, FILE_IGNORE_NEW_LINES) ?: array(), static fn( string $probe ): bool => str_starts_with($probe, '-C ')));
+	assert_true(5 === count($git_probes), 'targeted worktree_get did not perform its bounded identity and safety probes');
+	foreach ( $git_probes as $probe ) {
+		assert_true(str_starts_with($probe, '-C ' . $result['path'] . ' '), 'targeted worktree_get probed an unrelated worktree: ' . $probe);
+	}
 
 	// Every targeted Git probe has a finite deadline and identifies the phase
 	// that blocked without consulting another checkout.
-	$fake_bin = $workspace_root . '/fake-bin';
-	mkdir($fake_bin, 0777, true);
 	file_put_contents($fake_bin . '/git', "#!/bin/sh\nsleep 10\n");
 	chmod($fake_bin . '/git', 0755);
 	$original_path = getenv('PATH');

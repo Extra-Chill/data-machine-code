@@ -4069,7 +4069,7 @@ class WorkspaceCommand extends BaseCommand {
 		// bounded local lookup. It must not depend on registered Abilities.
 		if ( 'get' === $operation ) {
 			if ( empty($args[1]) ) {
-				WP_CLI::error('Usage: worktree get <handle> [--with-status] [--format=json]');
+				WP_CLI::error('Usage: worktree get <handle|canonical-path> [--with-status] [--format=json]');
 				return;
 			}
 			$result = ( new Workspace() )->worktree_get(
@@ -4223,7 +4223,7 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'get':
 				if ( empty($args[1]) ) {
-					WP_CLI::error('Usage: worktree get <handle> [--with-status] [--format=json]');
+					WP_CLI::error('Usage: worktree get <handle|canonical-path> [--with-status] [--format=json]');
 					return;
 				}
 				$input['handle']         = (string) $args[1];
