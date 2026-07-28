@@ -269,6 +269,7 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 					'force'         => ! empty($opts['force']),
 					'exhaustive'    => true,
 					'safety_probes' => true,
+					'older_than'    => (string) ( $opts['worktree_older_than'] ?? '' ),
 				)
 			);
 			if ( $artifact_page instanceof \WP_Error ) {
@@ -323,6 +324,7 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 				'offset'      => max(0, (int) ( $page['offset'] ?? 0 )),
 				'force'       => ! empty($opts['force']),
 				'skip_github' => ! empty($opts['skip_github']),
+				'older_than'  => (string) ( $opts['worktree_older_than'] ?? '' ),
 			);
 		}
 
@@ -335,6 +337,7 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 					'force'               => ! empty($opts['force']),
 					'skip_github'         => ! empty($opts['skip_github']),
 					'stale_liveness_only' => ! empty($opts['worktree_stale_only']),
+					'older_than'          => 'artifacts' === $type ? (string) ( $opts['worktree_older_than'] ?? '' ) : '',
 				);
 			}
 		}

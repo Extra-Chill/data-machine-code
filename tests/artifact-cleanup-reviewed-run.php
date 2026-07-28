@@ -317,6 +317,15 @@ namespace {
 	reviewed_artifact_assert(true, is_dir($root . '/repo@age-transition/vendor'), 'candidate made young before apply must be preserved');
 	$age_items = $age_repository->get_items('cleanup-run-reviewed');
 	reviewed_artifact_assert('age_filter', array_column($age_items, 'reason_code', 'handle')['repo@age-transition'] ?? null, 'apply-time age transition should record the age gate reason');
+	$cli_source       = file_get_contents(dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php');
+	$retention_source = file_get_contents(dirname(__DIR__) . '/inc/Tasks/WorkspaceRetentionCleanupTask.php');
+	$chunk_source     = file_get_contents(dirname(__DIR__) . '/inc/Tasks/WorktreeCleanupChunkTask.php');
+	$cleanup_artifacts_start  = strpos((string) $cli_source, "case 'cleanup-artifacts':");
+	$cleanup_artifacts_end    = false === $cleanup_artifacts_start ? false : strpos((string) $cli_source, "case 'emergency-cleanup':", $cleanup_artifacts_start);
+	$cleanup_artifacts_source = false === $cleanup_artifacts_start || false === $cleanup_artifacts_end ? '' : substr((string) $cli_source, $cleanup_artifacts_start, $cleanup_artifacts_end - $cleanup_artifacts_start);
+	reviewed_artifact_assert(true, str_contains($cleanup_artifacts_source, "['older_than']") && str_contains($cleanup_artifacts_source, "['older-than']"), 'low-level cleanup-artifacts CLI dispatch must preserve older-than');
+	reviewed_artifact_assert(true, str_contains((string) $retention_source, "'older_than'    => (string) ( \$opts['worktree_older_than'] ?? '' )"), 'background retention discovery must preserve the artifact age policy');
+	reviewed_artifact_assert(true, substr_count((string) $chunk_source, "'older_than' => (string) ( \$params['older_than'] ?? '' )") >= 2, 'background artifact chunks must preserve age policy through discovery and apply');
 
 	reviewed_artifact_remove_tree($root);
 	fwrite(STDOUT, "artifact-cleanup-reviewed-run ok\n");

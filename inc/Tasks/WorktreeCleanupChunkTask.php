@@ -102,6 +102,7 @@ class WorktreeCleanupChunkTask extends SystemTask {
 				array(
 					'apply_plan' => array( 'candidates' => $rows ),
 					'force'      => ! empty($params['force']),
+					'older_than' => (string) ( $params['older_than'] ?? '' ),
 					'limit'      => count($rows),
 				)
 			),
@@ -184,6 +185,7 @@ class WorktreeCleanupChunkTask extends SystemTask {
 				'limit'         => $limit,
 				'offset'        => $offset,
 				'safety_probes' => true,
+				'older_than'    => (string) ( $params['older_than'] ?? '' ),
 			)
 		);
 
@@ -239,6 +241,7 @@ class WorktreeCleanupChunkTask extends SystemTask {
 			array(
 				'apply_plan' => array( 'candidates' => $planned ),
 				'force'      => $force,
+				'older_than' => (string) ( $params['older_than'] ?? '' ),
 				'limit'      => count($planned),
 			)
 		);

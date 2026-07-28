@@ -4287,9 +4287,6 @@ class WorkspaceCommand extends BaseCommand {
 				if ( isset($assoc_args['sort']) && '' !== trim( (string) $assoc_args['sort']) ) {
 					$input['sort'] = trim( (string) $assoc_args['sort']);
 				}
-				if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
-					$input['older_than'] = trim( (string) $assoc_args['older-than']);
-				}
 				break;
 			case 'reconcile-metadata':
 				if ( ! empty($args[1]) ) {
@@ -4345,6 +4342,9 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				if ( isset($assoc_args['sort']) && '' !== trim( (string) $assoc_args['sort']) ) {
 					$input['sort'] = trim( (string) $assoc_args['sort']);
+				}
+				if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
+					$input['older_than'] = trim( (string) $assoc_args['older-than']);
 				}
 				if ( ! empty($assoc_args['apply-plan']) ) {
 					$input['apply_plan'] = $this->read_worktree_cleanup_plan( (string) $assoc_args['apply-plan']);
