@@ -7,7 +7,14 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Support\CommandSpec;
+use DataMachineCode\Support\ProcessRunner;
+
 defined('ABSPATH') || exit;
+
+if ( ! class_exists(ProcessRunner::class) ) {
+	require_once dirname(__DIR__) . '/Support/ProcessRunner.php';
+}
 
 trait WorkspaceHygieneReport {
 
@@ -26,6 +33,8 @@ trait WorkspaceHygieneReport {
 	 * @type   bool $include_sizes           Whether to include best-effort `du` sizes. Default false.
 	 * @type   bool $include_worktree_status Whether to include full git worktree status. Default false.
 	 * @type   int  $size_limit              Maximum top-level workspace entries to size. Default 1000.
+	 * @type   int  $size_entry_timeout      Maximum seconds for one size probe. Default 5.
+	 * @type   int  $size_total_timeout      Maximum seconds for the complete size pass. Default 30.
 	 * }
 	 * @return array<string,mixed>|\WP_Error
 	 */
@@ -35,6 +44,8 @@ trait WorkspaceHygieneReport {
 		$include_worktree_status = array_key_exists('include_worktree_status', $opts) ? (bool) $opts['include_worktree_status'] : false;
 		$refresh_inventory       = ! empty($opts['refresh_inventory']);
 		$size_limit              = isset($opts['size_limit']) ? max(0, (int) $opts['size_limit']) : self::HYGIENE_DEFAULT_SIZE_LIMIT;
+		$size_entry_timeout      = isset($opts['size_entry_timeout']) ? max(1, (int) $opts['size_entry_timeout']) : self::HYGIENE_DEFAULT_SIZE_ENTRY_TIMEOUT;
+		$size_total_timeout      = isset($opts['size_total_timeout']) ? max(1, (int) $opts['size_total_timeout']) : self::HYGIENE_DEFAULT_SIZE_TOTAL_TIMEOUT;
 
 		$inventory_refresh = null;
 		if ( $refresh_inventory ) {
@@ -56,7 +67,7 @@ trait WorkspaceHygieneReport {
 			$worktree_status_mode = 'top_level_inventory';
 		}
 
-		$size_report    = $include_sizes ? $this->build_workspace_size_report($size_limit) : $this->empty_workspace_size_report($size_limit, false);
+		$size_report    = $include_sizes ? $this->build_workspace_size_report($size_limit, $size_entry_timeout, $size_total_timeout) : $this->empty_workspace_size_report($size_limit, false, $size_entry_timeout, $size_total_timeout);
 		$cleanup        = null;
 		$cleanup_error  = null;
 		$locks          = WorkspaceMutationLock::status($this->workspace_path);
@@ -438,14 +449,14 @@ trait WorkspaceHygieneReport {
 	 * @param  int $limit Maximum entries to size.
 	 * @return array<string,mixed>
 	 */
-	private function build_workspace_size_report( int $limit ): array {
+	private function build_workspace_size_report( int $limit, int $entry_timeout, int $total_timeout ): array {
 		if ( '' === $this->workspace_path || ! is_dir($this->workspace_path) ) {
-			return $this->empty_workspace_size_report($limit, true);
+			return $this->empty_workspace_size_report($limit, true, $entry_timeout, $total_timeout);
 		}
 
 		$entries = scandir($this->workspace_path);
 		if ( false === $entries ) {
-			return $this->empty_workspace_size_report($limit, true);
+			return $this->empty_workspace_size_report($limit, true, $entry_timeout, $total_timeout);
 		}
 
 		$dirs = array_values(
@@ -459,14 +470,40 @@ trait WorkspaceHygieneReport {
 		$total_dirs = count($dirs);
 		$sample     = array_slice($dirs, 0, $limit);
 		$rows       = array();
+		$skipped    = array();
 		$total      = 0;
+		$attempted  = 0;
+		$started_at = microtime(true);
+		$deadline   = $started_at + $total_timeout;
 
-		foreach ( $sample as $entry ) {
+		foreach ( $sample as $index => $entry ) {
 			$path = $this->workspace_path . '/' . $entry;
-			$size = $this->directory_size_bytes_best_effort($path);
-			if ( null === $size ) {
+			$remaining = $deadline - microtime(true);
+			if ( $remaining <= 0 ) {
+				foreach ( array_slice($sample, $index) as $unattempted ) {
+					$skipped[] = array(
+						'handle' => $unattempted,
+						'path'   => $this->workspace_path . '/' . $unattempted,
+						'reason' => 'total_timeout',
+					);
+				}
+				break;
+			}
+
+			$probe_timeout = max(1, min($entry_timeout, (int) ceil($remaining)));
+			$probe         = $this->directory_size_bytes_best_effort($path, $probe_timeout);
+			++$attempted;
+			if ( empty($probe['success']) ) {
+				$skipped[] = array(
+					'handle'         => $entry,
+					'path'           => $path,
+					'reason'         => (string) ( $probe['reason'] ?? 'probe_failed' ),
+					'timeout_seconds' => $probe['timeout_seconds'] ?? null,
+					'cleanup'        => $probe['cleanup'] ?? null,
+				);
 				continue;
 			}
+			$size = (int) $probe['bytes'];
 
 			$parsed = $this->parse_handle($entry);
 			$total += $size;
@@ -482,20 +519,27 @@ trait WorkspaceHygieneReport {
 		}
 
 		usort($rows, fn( $a, $b ) => (int) $b['bytes'] <=> (int) $a['bytes']);
-		$scanned_count = count($sample);
+		$scan_complete = count($sample) >= $total_dirs && array() === $skipped;
 
 		return array(
-			'mode'            => 'best_effort_top_level_du',
-			'mode_note'       => 'Workspace size is best-effort: top-level entries are sized with du and capped by size_limit.',
-			'size_limit'      => $limit,
-			'total_entries'   => $total_dirs,
-			'scanned_entries' => $scanned_count,
-			'scan_complete'   => $scanned_count >= $total_dirs,
-			'total_bytes'     => $total,
-			'total_human'     => $this->format_bytes($total),
-			'by_kind'         => $this->workspace_size_by_kind($rows),
-			'entries'         => $rows,
-			'top_entries'     => array_slice($rows, 0, 10),
+			'mode'                  => 'best_effort_top_level_du',
+			'mode_note'             => 'Workspace size is best-effort: top-level entries use supervised du probes with per-entry and total deadlines.',
+			'size_limit'            => $limit,
+			'entry_timeout_seconds' => $entry_timeout,
+			'total_timeout_seconds' => $total_timeout,
+			'duration_seconds'      => round(microtime(true) - $started_at, 3),
+			'total_entries'         => $total_dirs,
+			'sampled_entries'       => count($sample),
+			'attempted_entries'     => $attempted,
+			'scanned_entries'       => count($rows),
+			'skipped_entries'       => $skipped,
+			'timed_out_entries'     => count(array_filter($skipped, fn( $row ) => in_array($row['reason'] ?? '', array( 'entry_timeout', 'total_timeout' ), true))),
+			'scan_complete'         => $scan_complete,
+			'total_bytes'           => $total,
+			'total_human'           => $this->format_bytes($total),
+			'by_kind'               => $this->workspace_size_by_kind($rows),
+			'entries'               => $rows,
+			'top_entries'           => array_slice($rows, 0, 10),
 		);
 	}
 
@@ -506,19 +550,26 @@ trait WorkspaceHygieneReport {
 	 * @param  bool $enabled Whether size scanning was requested.
 	 * @return array<string,mixed>
 	 */
-	private function empty_workspace_size_report( int $limit, bool $enabled ): array {
+	private function empty_workspace_size_report( int $limit, bool $enabled, int $entry_timeout = self::HYGIENE_DEFAULT_SIZE_ENTRY_TIMEOUT, int $total_timeout = self::HYGIENE_DEFAULT_SIZE_TOTAL_TIMEOUT ): array {
 		return array(
-			'mode'            => $enabled ? 'best_effort_top_level_du' : 'disabled',
-			'mode_note'       => $enabled ? 'Workspace path is unavailable or unreadable; no size data collected.' : 'Size scan disabled by request.',
-			'size_limit'      => $limit,
-			'total_entries'   => 0,
-			'scanned_entries' => 0,
-			'scan_complete'   => true,
-			'total_bytes'     => 0,
-			'total_human'     => $this->format_bytes(0),
-			'by_kind'         => array(),
-			'entries'         => array(),
-			'top_entries'     => array(),
+			'mode'                  => $enabled ? 'best_effort_top_level_du' : 'disabled',
+			'mode_note'             => $enabled ? 'Workspace path is unavailable or unreadable; no size data collected.' : 'Size scan disabled by request.',
+			'size_limit'            => $limit,
+			'entry_timeout_seconds' => $entry_timeout,
+			'total_timeout_seconds' => $total_timeout,
+			'duration_seconds'      => 0.0,
+			'total_entries'         => 0,
+			'sampled_entries'       => 0,
+			'attempted_entries'     => 0,
+			'scanned_entries'       => 0,
+			'skipped_entries'       => array(),
+			'timed_out_entries'     => 0,
+			'scan_complete'         => true,
+			'total_bytes'           => 0,
+			'total_human'           => $this->format_bytes(0),
+			'by_kind'               => array(),
+			'entries'               => array(),
+			'top_entries'           => array(),
 		);
 	}
 
@@ -526,24 +577,42 @@ trait WorkspaceHygieneReport {
 	 * Best-effort directory size via `du -sk`.
 	 *
 	 * @param  string $path Directory path.
-	 * @return int|null Size in bytes, or null when unavailable.
+	 * @param  int    $timeout_seconds Probe deadline in seconds.
+	 * @return array{success:bool,bytes?:int,reason?:string,timeout_seconds?:int,cleanup?:array<string,mixed>}
 	 */
-	private function directory_size_bytes_best_effort( string $path ): ?int {
+	private function directory_size_bytes_best_effort( string $path, int $timeout_seconds ): array {
 		if ( ! is_dir($path) ) {
-			return null;
+			return array( 'success' => false, 'reason' => 'missing_directory' );
 		}
 
-		$output = array();
-		$exit   = 0;
-     // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Local workspace hygiene needs best-effort disk usage; input path is shell-escaped.
-		exec(sprintf('du -sk %s 2>/dev/null', escapeshellarg($path)), $output, $exit);
-		if ( 0 !== $exit || empty($output[0]) ) {
-			return null;
+		$command = CommandSpec::from_argv(array( 'du', '-sk', '--', $path ));
+		if ( $command instanceof \WP_Error ) {
+			return array( 'success' => false, 'reason' => 'invalid_command' );
+		}
+		$result = ProcessRunner::run(
+			$command,
+			array(
+				'timeout_seconds'  => max(1, $timeout_seconds),
+				'output_cap_bytes' => 1024,
+				'error_as_result'  => true,
+			)
+		);
+		if ( $result instanceof \WP_Error || empty($result['success']) ) {
+			$timed_out = is_array($result) && isset($result['timeout']);
+			return array(
+				'success'         => false,
+				'reason'          => $timed_out ? 'entry_timeout' : 'probe_failed',
+				'timeout_seconds' => $timed_out ? (int) $result['timeout'] : null,
+				'cleanup'         => is_array($result) && is_array($result['cleanup'] ?? null) ? $result['cleanup'] : null,
+			);
 		}
 
-		$parts = preg_split('/\s+/', trim( (string) $output[0]));
-		$kb    = isset($parts[0]) ? (int) $parts[0] : 0;
-		return max(0, $kb) * 1024;
+		$parts = preg_split('/\s+/', trim( (string) ( $result['output'] ?? '' ))) ?: array();
+		if ( ! isset($parts[0]) || ! is_numeric($parts[0]) ) {
+			return array( 'success' => false, 'reason' => 'invalid_output' );
+		}
+
+		return array( 'success' => true, 'bytes' => max(0, (int) $parts[0]) * 1024 );
 	}
 
 	/**
