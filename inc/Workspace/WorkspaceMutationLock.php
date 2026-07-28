@@ -187,6 +187,7 @@ final class WorkspaceMutationLock {
 	 */
 	public static function status( string $workspace_path ): array {
 		$filesystem = self::filesystem_status($workspace_path);
+		$queue      = self::queued_requests($workspace_path);
 		$database   = WorkspaceLockStore::status();
 		$stale      = self::stale_lock_report($database, $filesystem);
 
@@ -202,7 +203,7 @@ final class WorkspaceMutationLock {
 			),
 			'retention_enabled' => true,
 			'policy'            => self::retention_policy(),
-			'queue'             => self::queued_requests($workspace_path),
+			'queue'             => $queue,
 		);
 	}
 
@@ -290,7 +291,10 @@ final class WorkspaceMutationLock {
 	private static function write_request( string $path, array $data ): void {
 		if ( '' !== $path ) {
 			$json = function_exists('wp_json_encode') ? wp_json_encode($data) : json_encode($data);
-			file_put_contents($path, false === $json ? '{}' : (string) $json, LOCK_EX); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+			$temporary = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
+			if ( false !== file_put_contents($temporary, false === $json ? '{}' : (string) $json, LOCK_EX) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+				rename($temporary, $path); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+			}
 		}
 	}
 
@@ -306,11 +310,18 @@ final class WorkspaceMutationLock {
 		$rows  = array();
 		foreach ( array_slice($files, 0, 25) as $file ) {
 			$row = json_decode((string) file_get_contents($file), true);
-			if ( is_array($row) ) {
+			if ( is_array($row) && ! self::request_owner_exited($row) ) {
 				$rows[] = $row;
+			} elseif ( is_array($row) ) {
+				self::remove_request($file);
 			}
 		}
 		return $rows;
+	}
+
+	private static function request_owner_exited( array $request ): bool {
+		$pid = (int) ( $request['pid'] ?? 0 );
+		return $pid > 0 && function_exists('posix_kill') && ! @posix_kill($pid, 0);
 	}
 
 	/**
@@ -622,23 +633,9 @@ final class WorkspaceMutationLock {
 	 * @return array<string,mixed>
 	 */
 	private static function owner_evidence_for_lock( string $lock_key, string $scope ): array {
-		$active_lock = WorkspaceLockStore::active_lock($lock_key, $scope);
-		if ( is_array($active_lock) ) {
-			return array(
-				'source' => 'database',
-				'lock'   => $active_lock,
-			);
-		}
-		if ( is_wp_error($active_lock) ) {
-			return array(
-				'source'  => 'database_error',
-				'message' => $active_lock->get_error_message(),
-			);
-		}
-
 		return array(
 			'source'  => 'filesystem_only',
-			'message' => 'No active DB lock row is visible for this held filesystem flock.',
+			'message' => 'Database owner lookup is intentionally deferred so lock inspection remains available during database contention.',
 		);
 	}
 

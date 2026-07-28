@@ -129,11 +129,38 @@ final class WorkspaceLockStore {
 			);
 		}
 
-		$ensured = self::ensure_table();
-		if ( $ensured instanceof \WP_Error ) {
+		// Inspection must never create or migrate schema: callers use this path
+		// specifically while a writer may be stalled. SQLite contention is bounded
+		// by the same primitive used for lock ownership writes.
+		global $wpdb;
+		$table = self::table_name();
+		$now   = gmdate('Y-m-d H:i:s');
+		$result = \DataMachineCode\Storage\SqliteBusyRetry::run(
+			'workspace_lock_status',
+			static function () use ( $wpdb, $table, $now ): array|false {
+				$active = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s AND expires_at >= %s", 'active', $now));
+				if ( false === $active ) {
+					return false;
+				}
+				return array(
+					'active'      => (int) $active,
+					'active_keys' => self::lock_keys_for_status('active', false),
+					'stale'       => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s AND expires_at < %s", 'active', $now)),
+					'stale_keys'  => self::lock_keys_for_status('active', true),
+					'locks'       => array_merge(self::lock_rows_for_status('active', false), self::lock_rows_for_status('active', true)),
+					'released'    => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s", 'released')),
+					'total'       => (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table}"),
+				);
+			}
+		);
+		if ( is_wp_error($result) ) {
+			$error_data = (array) $result->get_error_data();
 			return array(
 				'available' => false,
-				'error'     => $ensured->get_error_message(),
+				'state'     => 'contended',
+				'error'     => $result->get_error_message(),
+				'error_code' => $result->get_error_code(),
+				'retry_after_seconds' => (int) ( $error_data['retry_after_seconds'] ?? 1 ),
 				'table'     => self::table_name(),
 				'active'    => 0,
 				'stale'     => 0,
@@ -141,24 +168,24 @@ final class WorkspaceLockStore {
 				'total'     => 0,
 			);
 		}
+		if ( false === $result ) {
+			return array(
+				'available' => false,
+				'state'     => 'unavailable',
+				'error'     => (string) $wpdb->last_error,
+				'table'     => $table,
+				'active'    => 0,
+				'stale'     => 0,
+				'released'  => 0,
+				'total'     => 0,
+			);
+		}
 
-		global $wpdb;
-		$table = self::table_name();
-		$now   = gmdate('Y-m-d H:i:s');
-
-     // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from $wpdb->prefix, not user input.
 		return array(
 			'available'   => true,
 			'table'       => $table,
-			'active'      => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s AND expires_at >= %s", 'active', $now)),
-			'active_keys' => self::lock_keys_for_status('active', false),
-			'stale'       => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s AND expires_at < %s", 'active', $now)),
-			'stale_keys'  => self::lock_keys_for_status('active', true),
-			'locks'       => array_merge(self::lock_rows_for_status('active', false), self::lock_rows_for_status('active', true)),
-			'released'    => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s", 'released')),
-			'total'       => (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table}"),
+			...$result,
 		);
-     // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 	}
 
 	/**

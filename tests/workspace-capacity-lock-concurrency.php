@@ -142,6 +142,30 @@ try {
 	capacity_lock_assert('error:workspace_repo_busy' === $timed_out['output'], 'Short waiter returned an unexpected lock error.');
 	capacity_lock_assert(array() === ( glob($workspace . '/.locks/requests/*.json') ?: array() ), 'Cancelled or released requests left queue evidence behind.');
 
+	if ( function_exists('posix_kill') ) {
+		$ready = $workspace . '/kill-ready';
+		$holder = proc_open(array( PHP_BINARY, __FILE__, 'holder', $workspace, $ready, '2' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
+		capacity_lock_assert(is_resource($holder), 'Could not start cancellation lock holder.');
+		fclose($holder_pipes[0]);
+		$deadline = microtime(true) + 3;
+		while ( ! is_file($ready) && microtime(true) < $deadline ) { usleep(10000); }
+		$waiter = proc_open(array( PHP_BINARY, __FILE__, 'waiter', $workspace, '5' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $waiter_pipes);
+		capacity_lock_assert(is_resource($waiter), 'Could not start cancellable waiter.');
+		fclose($waiter_pipes[0]);
+		$deadline = microtime(true) + 3;
+		do { $requests = glob($workspace . '/.locks/requests/*.json') ?: array(); usleep(10000); } while ( array() === $requests && microtime(true) < $deadline );
+		capacity_lock_assert(1 === count($requests), 'Cancellable waiter did not create request evidence.');
+		$status = proc_get_status($waiter);
+		$killed_pid = (int) $status['pid'];
+		posix_kill($killed_pid, SIGKILL);
+		stream_get_contents($waiter_pipes[1]); stream_get_contents($waiter_pipes[2]);
+		fclose($waiter_pipes[1]); fclose($waiter_pipes[2]); proc_close($waiter);
+		$queue = WorkspaceMutationLock::status($workspace)['queue'] ?? array();
+		capacity_lock_assert(array() === array_filter($queue, static fn( array $request ): bool => $killed_pid === (int) ($request['pid'] ?? 0)), 'SIGKILL request was not reconciled after its owner exited.');
+		fclose($holder_pipes[1]); fclose($holder_pipes[2]); proc_close($holder);
+		unlink($ready);
+	}
+
 	// Eight independent admissions must remain observable while an unrelated
 	// holder stalls the shared capacity resource, then drain without leftovers.
 	$ready = $workspace . '/fanout-ready';
@@ -161,10 +185,11 @@ try {
 	$deadline = microtime(true) + 3;
 	do {
 		$queue = WorkspaceMutationLock::status($workspace)['queue'] ?? array();
-		if ( 8 === count($queue) ) { break; }
+		$queued = array_filter($queue, static fn( array $request ): bool => 'queued' === ($request['state'] ?? ''));
+		if ( 8 === count($queued) ) { break; }
 		usleep(10000);
 	} while ( microtime(true) < $deadline );
-	capacity_lock_assert(8 === count($queue), 'Every queued fanout admission must have durable queue evidence.');
+	capacity_lock_assert(8 === count($queued ?? array()), 'Every queued fanout admission must have durable queue evidence.');
 	foreach ( $waiters as [ $process, $pipes ] ) {
 		$output = stream_get_contents($pipes[1]);
 		$error = stream_get_contents($pipes[2]);
@@ -205,7 +230,7 @@ try {
 	capacity_lock_assert('130' === file_get_contents($state), 'Refused second admission must not consume stale capacity.');
 	echo "workspace-capacity-lock-concurrency: ok\n";
 } finally {
-	foreach ( array( 'capacity-state', 'admission-ready', 'second-ready', 'fanout-ready' ) as $file ) {
+	foreach ( array( 'capacity-state', 'admission-ready', 'second-ready', 'fanout-ready', 'kill-ready' ) as $file ) {
 		if ( is_file($workspace . '/' . $file) ) { unlink($workspace . '/' . $file); }
 	}
 	if ( is_file($workspace . '/ready') ) {
