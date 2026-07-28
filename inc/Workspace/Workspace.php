@@ -104,6 +104,16 @@ class Workspace {
 	public const HYGIENE_DEFAULT_SIZE_LIMIT = 1000;
 
 	/**
+	 * Maximum time one hygiene size probe may occupy the worker.
+	 */
+	public const HYGIENE_DEFAULT_SIZE_ENTRY_TIMEOUT = 5;
+
+	/**
+	 * Maximum wall-clock time for the complete hygiene size pass.
+	 */
+	public const HYGIENE_DEFAULT_SIZE_TOTAL_TIMEOUT = 30;
+
+	/**
 	 * Default page size for metadata reconciliation recommendations.
 	 */
 	public const METADATA_RECONCILE_DEFAULT_LIMIT = 25;
