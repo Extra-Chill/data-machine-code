@@ -119,6 +119,53 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
 		}
 
+		return WorkspaceMutationLock::with_repo(
+			$this->workspace_path,
+			'workspace-capacity-admission',
+			fn() => $this->worktree_add_with_capacity_lock(
+				$repo,
+				$branch,
+				$from,
+				$inject_context,
+				$bootstrap,
+				$allow_stale,
+				$rebase_base,
+				$force,
+				$task,
+				$allow_unverified_freshness,
+				$slug,
+				$wt_handle,
+				$wt_path,
+				$primary_path
+			)
+		);
+	}
+
+	/**
+	 * Inspect, create, and bootstrap while holding the workspace-wide capacity
+	 * lock. A later concurrent admission therefore measures the first one's
+	 * completed dependency allocation rather than overcommitting stale capacity.
+	 */
+	private function worktree_add_with_capacity_lock(
+		string $repo,
+		string $branch,
+		?string $from,
+		bool $inject_context,
+		bool $bootstrap,
+		bool $allow_stale,
+		bool $rebase_base,
+		bool $force,
+		array $task,
+		bool $allow_unverified_freshness,
+		string $slug,
+		string $wt_handle,
+		string $wt_path,
+		string $primary_path
+	): array|\WP_Error {
+		if ( is_dir($wt_path) ) {
+			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
+		}
+
 		$disk_budget = WorktreeDiskBudget::inspect(
 			$this->workspace_path,
 			WorktreeDiskBudget::thresholds($repo, $branch),
@@ -144,11 +191,12 @@ trait WorkspaceWorktreeLifecycle {
 					);
 
 					return sprintf(
-						'%d. %s: %s (target reclaim: %s)',
+						'%d. %s: %s (target reclaim: %s; inodes: %s)',
 						(int) ( $row['priority'] ?? 0 ),
 						(string) ( $row['action'] ?? 'cleanup' ),
 						$command_text,
-						(string) ( $row['expected_reclaim'] ?? 'unknown' )
+						(string) ( $row['expected_reclaim'] ?? 'unknown' ),
+						null === ( $row['expected_reclaim_inodes'] ?? null ) ? 'unknown' : number_format( (int) $row['expected_reclaim_inodes'] )
 					);
 				},
 				(array) ( $disk_budget['cleanup_recommendations'] ?? array() )
@@ -156,11 +204,14 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error(
 				'worktree_disk_budget_exceeded',
 				sprintf(
-					"Refusing to create worktree before bootstrap/install because the workspace disk budget is unsafe.\n%s\nThreshold: keep at least %.1f GiB free and %.1f%% free; effective floor on this filesystem is %.1f GiB.\nRecommended cleanup, in order:\n%s\nRetry with --force only when a human explicitly accepts the disk-pressure risk.",
+					"Refusing to create worktree before bootstrap/install because the workspace capacity budget is unsafe.\n%s\nByte threshold: keep at least %.1f GiB free and %.1f%% free; effective floor is %.1f GiB.\nInode threshold: keep at least %s free and %.1f%% free; effective floor is %s.\nRecommended cleanup, in order:\n%s\nRetry with --force only when a human explicitly accepts the capacity risk.",
 					WorktreeDiskBudget::format_summary($disk_budget),
 					(float) ( $disk_budget['refuse_free_gib'] ?? 0 ),
 					(float) ( $disk_budget['refuse_free_percent'] ?? 0 ),
 					(float) ( $disk_budget['effective_refuse_gib'] ?? 0 ),
+					number_format( (int) ( $disk_budget['refuse_free_inodes'] ?? 0 ) ),
+					(float) ( $disk_budget['refuse_free_inode_percent'] ?? 0 ),
+					number_format( (int) ( $disk_budget['effective_refuse_inodes'] ?? 0 ) ),
 					implode("\n", array_filter($recommendations))
 				),
 				array(

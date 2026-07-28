@@ -355,6 +355,14 @@ try {
 	assert_true(is_dir($result['path']), 'successful worktree_add path is not accessible');
 	assert_true(isset($wpdb->rows['homeboy@audit-primitives-20260616']), 'successful worktree_add was not persisted');
 	assert_true('refused' !== ( $result['disk_budget']['status'] ?? '' ), 'normal worktree_add should pass the disk budget gate without hard refusal');
+	$capacity_locks = array_values(
+		array_filter(
+			$wpdb->lock_rows,
+			static fn( array $row ): bool => 'workspace-capacity-admission' === ( $row['scope'] ?? '' )
+		)
+	);
+	assert_true(array() !== $capacity_locks, 'worktree admission did not acquire the workspace-wide capacity lock');
+	assert_true('released' === ( $capacity_locks[count($capacity_locks) - 1]['status'] ?? '' ), 'workspace capacity lock was not released after creation and bootstrap boundary');
 	assert_true('https://example.test/issues/explicit' === ( $wpdb->rows['homeboy@audit-primitives-20260616']['task_url'] ?? '' ), 'explicit tracker metadata did not override the environment fallback');
 	run_command('git push -u origin audit-primitives-20260616', $result['path']);
 

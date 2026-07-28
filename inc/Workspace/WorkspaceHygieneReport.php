@@ -166,6 +166,7 @@ trait WorkspaceHygieneReport {
 
 		$worktree_result = null;
 		$artifact_result = null;
+		$capacity_before = $this->build_workspace_disk_report();
 		$lock_retention  = WorkspaceMutationLock::prune_stale($this->workspace_path, $dry_run);
 
 		if ( $worktree_cleanup ) {
@@ -213,15 +214,16 @@ trait WorkspaceHygieneReport {
 			}
 		}
 
-		$report = $this->build_workspace_retention_report($worktree_result, $artifact_result, $dry_run);
+		$report         = $this->build_workspace_retention_report($worktree_result, $artifact_result, $dry_run);
+		$capacity_after = $this->build_workspace_disk_report();
 
 		return array(
-			'success'        => true,
-			'dry_run'        => $dry_run,
-			'destructive'    => ! $dry_run,
-			'generated_at'   => gmdate('c'),
-			'workspace_path' => $this->workspace_path,
-			'policy'         => array(
+			'success'           => true,
+			'dry_run'           => $dry_run,
+			'destructive'       => ! $dry_run,
+			'generated_at'      => gmdate('c'),
+			'workspace_path'    => $this->workspace_path,
+			'policy'            => array(
 				'worktree_cleanup'    => $worktree_cleanup,
 				'artifact_cleanup'    => $artifact_cleanup,
 				'worktree_older_than' => $worktree_older_than,
@@ -229,12 +231,13 @@ trait WorkspaceHygieneReport {
 				'skip_github'         => $skip_github,
 				'force'               => $force,
 			),
-			'lock_retention' => $lock_retention,
-			'storage'        => $this->cleanup_storage_status(),
-			'report'         => $report,
-			'worktrees'      => $worktree_result,
-			'artifacts'      => $artifact_result,
-			'disk'           => $this->build_workspace_disk_report(),
+			'lock_retention'    => $lock_retention,
+			'storage'           => $this->cleanup_storage_status(),
+			'report'            => $report,
+			'worktrees'         => $worktree_result,
+			'artifacts'         => $artifact_result,
+			'disk'              => $capacity_after,
+			'capacity_evidence' => $this->build_capacity_evidence($capacity_before, $capacity_after),
 		);
 	}
 
@@ -257,6 +260,7 @@ trait WorkspaceHygieneReport {
 		$force_worktree_deletion = ! empty($opts['force']) && $human_approved_deletion;
 		$thresholds              = isset($opts['thresholds']) && is_array($opts['thresholds']) ? $opts['thresholds'] : WorktreeDiskBudget::thresholds('workspace', 'emergency-cleanup');
 		$budget                  = WorktreeDiskBudget::inspect($this->workspace_path, $thresholds);
+		$capacity_before         = $this->build_workspace_disk_report();
 
 		$plan = $this->worktree_emergency_cleanup(array( 'dry_run' => true ));
 		if ( $plan instanceof \WP_Error ) {
@@ -270,18 +274,20 @@ trait WorkspaceHygieneReport {
 
 		$triggered = ! empty($budget['emergency_triggered']);
 		if ( ! $triggered ) {
+			$capacity_after = $this->build_workspace_disk_report();
 			return array(
-				'success'         => true,
-				'triggered'       => false,
-				'skipped'         => true,
-				'reason'          => 'disk thresholds not crossed',
-				'dry_run'         => $dry_run,
-				'generated_at'    => gmdate('c'),
-				'workspace_path'  => $this->workspace_path,
-				'disk_budget'     => $budget,
-				'emergency_plan'  => $plan,
-				'action_required' => false,
-				'applied'         => null,
+				'success'           => true,
+				'triggered'         => false,
+				'skipped'           => true,
+				'reason'            => 'disk thresholds not crossed',
+				'dry_run'           => $dry_run,
+				'generated_at'      => gmdate('c'),
+				'workspace_path'    => $this->workspace_path,
+				'disk_budget'       => $budget,
+				'emergency_plan'    => $plan,
+				'action_required'   => false,
+				'applied'           => null,
+				'capacity_evidence' => $this->build_capacity_evidence($capacity_before, $capacity_after),
 			);
 		}
 
@@ -323,6 +329,7 @@ trait WorkspaceHygieneReport {
 			}
 		}
 		$blocked_reasons = array_values(array_unique($blocked_reasons));
+		$capacity_after  = $this->build_workspace_disk_report();
 
 		return array(
 			'success'                 => true,
@@ -347,6 +354,7 @@ trait WorkspaceHygieneReport {
 				'force_requires_human_approval'    => true,
 				'force_worktree_deletion_applied'  => $force_worktree_deletion,
 			),
+			'capacity_evidence'       => $this->build_capacity_evidence($capacity_before, $capacity_after),
 		);
 	}
 
@@ -553,7 +561,7 @@ trait WorkspaceHygieneReport {
 	 * @return array<string,mixed>
 	 */
 	private function build_workspace_disk_report( ?array $size_report = null ): array {
-		$path  = '' !== $this->workspace_path && is_dir($this->workspace_path) ? $this->workspace_path : dirname($this->workspace_path);
+		$path          = '' !== $this->workspace_path && is_dir($this->workspace_path) ? $this->workspace_path : dirname($this->workspace_path);
 		$size_complete = is_array($size_report) && ! empty($size_report['scan_complete']) && 'disabled' !== ( $size_report['mode'] ?? 'disabled' );
 		$options       = array( 'include_workspace_usage' => $size_complete );
 		if ( $size_complete ) {
@@ -571,6 +579,12 @@ trait WorkspaceHygieneReport {
 			'filesystem_used_bytes'       => $budget['filesystem_used_bytes'],
 			'filesystem_free_bytes'       => $budget['filesystem_free_bytes'],
 			'filesystem_total_bytes'      => $budget['filesystem_total_bytes'],
+			'filesystem_used_inodes'      => $budget['filesystem_used_inodes'],
+			'filesystem_free_inodes'      => $budget['filesystem_free_inodes'],
+			'filesystem_total_inodes'     => $budget['filesystem_total_inodes'],
+			'free_inode_percent'          => $budget['free_inode_percent'],
+			'used_inode_percent'          => $budget['used_inode_percent'],
+			'inode_probe'                 => $budget['inode_probe'],
 			'workspace_allocated_bytes'   => $budget['workspace_allocated_bytes'],
 			'workspace_usage_probe'       => $budget['workspace_usage_probe'],
 			'mount_target'                => $budget['mount_target'],
@@ -580,6 +594,28 @@ trait WorkspaceHygieneReport {
 			'shared_usage_detected'       => $budget['shared_usage_detected'],
 			'diagnostic_messages'         => $budget['diagnostic_messages'],
 			'safety_basis'                => $budget['safety_basis'],
+		);
+	}
+
+	/**
+	 * Build measured cleanup capacity evidence. Null deltas explicitly mean the
+	 * platform could not provide both snapshots; no inode estimate is invented.
+	 *
+	 * @param array<string,mixed> $before Capacity before cleanup.
+	 * @param array<string,mixed> $after  Capacity after cleanup.
+	 * @return array<string,mixed>
+	 */
+	private function build_capacity_evidence( array $before, array $after ): array {
+		$before_free_inodes = is_numeric($before['filesystem_free_inodes'] ?? null) ? (int) $before['filesystem_free_inodes'] : null;
+		$after_free_inodes  = is_numeric($after['filesystem_free_inodes'] ?? null) ? (int) $after['filesystem_free_inodes'] : null;
+		$before_free_bytes  = is_numeric($before['filesystem_free_bytes'] ?? null) ? (int) $before['filesystem_free_bytes'] : null;
+		$after_free_bytes   = is_numeric($after['filesystem_free_bytes'] ?? null) ? (int) $after['filesystem_free_bytes'] : null;
+
+		return array(
+			'before'           => $before,
+			'after'            => $after,
+			'reclaimed_bytes'  => null === $before_free_bytes || null === $after_free_bytes ? null : max(0, $after_free_bytes - $before_free_bytes),
+			'reclaimed_inodes' => null === $before_free_inodes || null === $after_free_inodes ? null : max(0, $after_free_inodes - $before_free_inodes),
 		);
 	}
 

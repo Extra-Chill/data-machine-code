@@ -2583,6 +2583,9 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log(sprintf('Branch:   %s', $result['branch'] ?? '-'));
 		WP_CLI::log(sprintf('Remote:   %s', $result['remote'] ?? '-'));
 		WP_CLI::log(sprintf('Latest:   %s', $result['commit'] ?? '-'));
+		if ( is_array($result['workspace_capacity'] ?? null) ) {
+			WP_CLI::log(\DataMachineCode\Workspace\WorktreeDiskBudget::format_summary($result['workspace_capacity']));
+		}
 		if ( empty($result['is_worktree']) && is_array($result['primary_freshness'] ?? null) ) {
 			$freshness = $result['primary_freshness'];
 			WP_CLI::log(sprintf('Freshness: %s', (string) ( $freshness['status'] ?? 'unknown' )));

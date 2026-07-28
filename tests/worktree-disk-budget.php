@@ -36,7 +36,7 @@ try {
 	);
 
 	assert_true('refused' === $budget['status'], 'low free space should refuse worktree creation');
-	assert_true('filesystem_free_bytes' === $budget['safety_basis'], 'response should identify the unchanged filesystem safety basis');
+	assert_true('independent_filesystem_bytes_and_inodes' === $budget['safety_basis'], 'response should identify independent byte and inode safeguards');
 	assert_true(str_contains($budget['warnings'][0] ?? '', 'Free filesystem space'), 'threshold messaging should identify filesystem free space');
 	assert_true(98 * $gib === $budget['filesystem_used_bytes'], 'filesystem used bytes should be explicit');
 	assert_true(2 * $gib === $budget['filesystem_free_bytes'], 'filesystem free bytes should be explicit');
@@ -80,6 +80,96 @@ try {
 	assert_true('ok' === $healthy['status'], 'healthy free space should pass the worktree disk budget gate');
 	assert_true(array() === $healthy['warnings'], 'healthy free space should not emit disk budget warnings');
 	assert_true(array_key_exists('workspace_size_bytes', $healthy) && null === $healthy['workspace_size_bytes'], 'legacy workspace size field should remain present when diagnostics are unavailable');
+
+	$inode_thresholds = array(
+		'warn_free_bytes'          => 20 * $gib,
+		'refuse_free_bytes'        => 10 * $gib,
+		'warn_free_percent'        => 15.0,
+		'refuse_free_percent'      => 10.0,
+		'warn_free_inodes'         => 2000000,
+		'refuse_free_inodes'       => 1000000,
+		'warn_free_inode_percent'  => 15.0,
+		'refuse_free_inode_percent'=> 10.0,
+		'warn_worktree_count'      => 100,
+	);
+	$inode_refused = WorktreeDiskBudget::evaluate(
+		array(
+			'workspace_path' => '/tmp/dmc-test-workspace',
+			'free_bytes'     => 40 * $gib,
+			'total_bytes'    => 100 * $gib,
+			'free_inodes'    => 500000,
+			'total_inodes'   => 13107200,
+		),
+		$inode_thresholds
+	);
+	assert_true('refused' === $inode_refused['status'], 'healthy bytes with insufficient inodes should refuse admission');
+	assert_true(in_array('free_inode_refusal_threshold', $inode_refused['trigger_reasons'], true), 'inode refusal should have an independent trigger reason');
+	assert_true(12607200 === $inode_refused['filesystem_used_inodes'], 'used inode count should be explicit');
+	assert_true(500000 === $inode_refused['filesystem_free_inodes'], 'free inode count should be explicit');
+	assert_true(13107200 === $inode_refused['filesystem_total_inodes'], 'total inode count should be explicit');
+	assert_true(500000 === $inode_refused['cleanup_recommendations'][0]['expected_reclaim_inodes'], 'remediation should state exact inode recovery needed');
+	assert_true(str_contains(WorktreeDiskBudget::format_summary($inode_refused), '500,000'), 'summary should include free inode capacity');
+
+	$inode_warning = WorktreeDiskBudget::evaluate(
+		array(
+			'free_bytes'   => 40 * $gib,
+			'total_bytes'  => 100 * $gib,
+			'free_inodes'  => 1500000,
+			'total_inodes' => 13107200,
+		),
+		$inode_thresholds
+	);
+	assert_true('warning' === $inode_warning['status'], 'inode warning threshold should not refuse admission');
+	assert_true(in_array('free_inode_warning_threshold', $inode_warning['trigger_reasons'], true), 'inode warning should have a stable trigger reason');
+
+	$inode_recovered = WorktreeDiskBudget::evaluate(
+		array(
+			'free_bytes'   => 40 * $gib,
+			'total_bytes'  => 100 * $gib,
+			'free_inodes'  => 3915099,
+			'total_inodes' => 13107200,
+		),
+		$inode_thresholds
+	);
+	assert_true('ok' === $inode_recovered['status'], 'successful cleanup recovery above both inode thresholds should pass');
+
+	$byte_only_pressure = WorktreeDiskBudget::evaluate(
+		array(
+			'free_bytes'   => 2 * $gib,
+			'total_bytes'  => 100 * $gib,
+			'free_inodes'  => 4000000,
+			'total_inodes' => 13107200,
+		),
+		$inode_thresholds
+	);
+	assert_true('refused' === $byte_only_pressure['status'], 'healthy inodes must not weaken byte refusal');
+	assert_true(in_array('free_space_refusal_threshold', $byte_only_pressure['trigger_reasons'], true), 'byte refusal remains independently visible');
+	assert_true(! in_array('free_inode_refusal_threshold', $byte_only_pressure['trigger_reasons'], true), 'healthy inodes should not be mislabeled under byte pressure');
+
+	$unsupported_inodes = WorktreeDiskBudget::evaluate(
+		array(
+			'free_bytes'  => 40 * $gib,
+			'total_bytes' => 100 * $gib,
+		),
+		$inode_thresholds
+	);
+	assert_true('ok' === $unsupported_inodes['status'], 'unsupported inode telemetry should preserve healthy byte admission');
+	assert_true(null === $unsupported_inodes['filesystem_free_inodes'], 'unsupported inode telemetry should use null, not an estimate');
+	assert_true('unavailable' === $unsupported_inodes['inode_probe'], 'unsupported inode telemetry should expose a typed probe state');
+	assert_true(str_contains(implode(' ', $unsupported_inodes['diagnostic_messages']), 'byte safeguards remain enforced'), 'unsupported inode telemetry should explain byte-only enforcement');
+
+	$forced_inode_pressure = WorktreeDiskBudget::evaluate(
+		array(
+			'free_bytes'   => 40 * $gib,
+			'total_bytes'  => 100 * $gib,
+			'free_inodes'  => 1,
+			'total_inodes' => 13107200,
+		),
+		$inode_thresholds,
+		true
+	);
+	assert_true('warning' === $forced_inode_pressure['status'], 'explicit force should downgrade inode refusal to a warning');
+	assert_true(true === $forced_inode_pressure['force_override_applied'], 'forced inode admission should remain explicit in evidence');
 
 	$root_mount = WorktreeDiskBudget::parse_mountinfo(
 		'32 24 8:2 / / rw,relatime - ext4 /dev/sdb rw',
