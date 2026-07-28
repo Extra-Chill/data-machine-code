@@ -49,10 +49,10 @@ trait WorkspaceWorktreeEmergencyCleanup {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private function build_worktree_emergency_cleanup_plan(): array|\WP_Error {
-		$artifact_candidates = array();
-		$worktree_candidates = array();
-		$skipped             = array();
-		$entry_count_started = microtime(true);
+		$artifact_candidates  = array();
+		$worktree_candidates  = array();
+		$skipped              = array();
+		$entry_count_started  = microtime(true);
 		$entry_count_deadline = $entry_count_started + self::HYGIENE_DEFAULT_SIZE_TOTAL_TIMEOUT;
 
 		foreach ( $this->build_workspace_inventory_rows() as $wt ) {
@@ -119,14 +119,14 @@ trait WorkspaceWorktreeEmergencyCleanup {
 			if ( in_array($lifecycle_state, $this->emergency_cleanup_lifecycle_states(), true) ) {
 				$worktree_candidates[] = array_merge(
 					$base_row, array(
-						'dirty'       => 0,
-						'entry_count' => $disk['worktree_entry_count'] ?? null,
+						'dirty'               => 0,
+						'entry_count'         => $disk['worktree_entry_count'] ?? null,
 						'entry_count_minimum' => (int) ( $disk['worktree_entry_count'] ?? 0 ),
-						'entry_count_status' => (string) ( $disk['worktree_entry_count_status'] ?? 'unknown' ),
-						'signal'      => $lifecycle_state,
-						'reason_code' => $lifecycle_state,
-						'reason'      => sprintf('worktree lifecycle state is %s; deletion requires reviewed apply-plan revalidation', $lifecycle_state),
-						'pr_url'      => $metadata['pr_url'] ?? null,
+						'entry_count_status'  => (string) ( $disk['worktree_entry_count_status'] ?? 'unknown' ),
+						'signal'              => $lifecycle_state,
+						'reason_code'         => $lifecycle_state,
+						'reason'              => sprintf('worktree lifecycle state is %s; deletion requires reviewed apply-plan revalidation', $lifecycle_state),
+						'pr_url'              => $metadata['pr_url'] ?? null,
 					)
 				);
 			} else {
@@ -175,32 +175,38 @@ trait WorkspaceWorktreeEmergencyCleanup {
 		$artifact_total    = 0;
 		$artifact_complete = true;
 		foreach ( (array) ( $disk['artifacts'] ?? array() ) as $index => $artifact ) {
-			$relative  = (string) ( $artifact['path'] ?? '' );
-			$remaining = $deadline - microtime(true);
-			$probe     = $remaining > 0
+			$relative                                   = (string) ( $artifact['path'] ?? '' );
+			$remaining                                  = $deadline - microtime(true);
+			$probe                                      = $remaining > 0
 				? $this->directory_entry_count_best_effort(rtrim($path, '/') . '/' . $relative, max(1, min(self::HYGIENE_DEFAULT_SIZE_ENTRY_TIMEOUT, (int) ceil($remaining))))
-				: array( 'success' => false, 'reason' => 'total_timeout' );
-			$measured = ! empty($probe['success']);
-			$disk['artifacts'][ $index ]['entry_count']        = $measured ? (int) $probe['entry_count'] : null;
+				: array(
+					'success' => false,
+					'reason'  => 'total_timeout',
+				);
+			$measured                                   = ! empty($probe['success']);
+			$disk['artifacts'][ $index ]['entry_count'] = $measured ? (int) $probe['entry_count'] : null;
 			$disk['artifacts'][ $index ]['entry_count_status'] = $measured ? 'measured' : 'unknown';
 			$disk['artifacts'][ $index ]['entry_count_reason'] = $measured ? null : (string) ( $probe['reason'] ?? 'probe_failed' );
-			$artifact_total += $measured ? (int) $probe['entry_count'] : 0;
-			$artifact_complete = $artifact_complete && $measured;
+			$artifact_total                                   += $measured ? (int) $probe['entry_count'] : 0;
+			$artifact_complete                                 = $artifact_complete && $measured;
 		}
-		$disk['artifact_entry_count']        = $artifact_complete ? $artifact_total : null;
+		$disk['artifact_entry_count']         = $artifact_complete ? $artifact_total : null;
 		$disk['artifact_entry_count_minimum'] = $artifact_total;
-		$disk['artifact_entry_count_status'] = $artifact_complete ? 'measured' : ( $artifact_total > 0 ? 'partial' : 'unknown' );
+		$disk['artifact_entry_count_status']  = $artifact_complete ? 'measured' : ( $artifact_total > 0 ? 'partial' : 'unknown' );
 
-		$remaining = $deadline - microtime(true);
-		$probe     = $remaining > 0
+		$remaining                           = $deadline - microtime(true);
+		$probe                               = $remaining > 0
 			? $this->directory_entry_count_best_effort($path, max(1, min(self::HYGIENE_DEFAULT_SIZE_ENTRY_TIMEOUT, (int) ceil($remaining))))
-			: array( 'success' => false, 'reason' => 'total_timeout' );
+			: array(
+				'success' => false,
+				'reason'  => 'total_timeout',
+			);
 		$disk['worktree_entry_count']        = ! empty($probe['success']) ? (int) $probe['entry_count'] : null;
 		$disk['worktree_entry_count_status'] = ! empty($probe['success']) ? 'measured' : 'unknown';
 		$disk['worktree_entry_count_reason'] = ! empty($probe['success']) ? null : (string) ( $probe['reason'] ?? 'probe_failed' );
-		$disk['entry_count']                  = ! empty($disk['artifacts']) ? $disk['artifact_entry_count'] : $disk['worktree_entry_count'];
-		$disk['entry_count_minimum']          = ! empty($disk['artifacts']) ? $artifact_total : (int) ( $disk['worktree_entry_count'] ?? 0 );
-		$disk['entry_count_status']           = ! empty($disk['artifacts']) ? $disk['artifact_entry_count_status'] : $disk['worktree_entry_count_status'];
+		$disk['entry_count']                 = ! empty($disk['artifacts']) ? $disk['artifact_entry_count'] : $disk['worktree_entry_count'];
+		$disk['entry_count_minimum']         = ! empty($disk['artifacts']) ? $artifact_total : (int) ( $disk['worktree_entry_count'] ?? 0 );
+		$disk['entry_count_status']          = ! empty($disk['artifacts']) ? $disk['artifact_entry_count_status'] : $disk['worktree_entry_count_status'];
 
 		return $disk;
 	}

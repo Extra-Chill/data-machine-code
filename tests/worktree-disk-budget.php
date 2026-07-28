@@ -191,12 +191,13 @@ try {
 	assert_true(1 === $projected_equality['refuse_inode_shortfall'], 'equality inode shortfall should be exactly one inode');
 	assert_true('test_plan' === $projected_equality['demand_source'], 'demand source should remain explicit');
 	$git_lock_boundary = WorktreeDiskBudget::evaluate(
-		array( 'free_bytes' => ( 10 * $gib ) + 16777217, 'total_bytes' => 100 * $gib, 'free_inodes' => 1000257, 'total_inodes' => 10000000 ),
+		array( 'free_bytes' => ( 10 * $gib ) + 16777517, 'total_bytes' => 100 * $gib, 'free_inodes' => 1000557, 'total_inodes' => 10000000 ),
 		$inode_thresholds,
 		false,
-		array( 'bytes' => 16777216, 'inodes' => 256, 'source' => 'git_mutation_reserve' )
+		array( 'bytes' => 16777516, 'inodes' => 556, 'source' => 'target_tree_plus_git_margin' )
 	);
-	assert_true('warning' === $git_lock_boundary['status'], 'One byte and inode beyond refusal floors should preserve Git mutation headroom while warning.');
+	assert_true('warning' === $git_lock_boundary['status'], 'One byte and inode beyond refusal floors should preserve tracked materialization plus Git lock margin while warning.');
+	assert_true(1000001 === $git_lock_boundary['projected_free_inodes'], 'Boundary projection must subtract tracked entries and the separate Git safety margin.');
 	$git_fixture = sys_get_temp_dir() . '/dmc-git-lock-boundary-' . bin2hex(random_bytes(6));
 	mkdir($git_fixture . '/.git', 0777, true);
 	assert_true(false !== file_put_contents($git_fixture . '/.git/index.lock', ''), 'Admitted Git mutation reserve must permit index.lock creation.');
@@ -212,19 +213,21 @@ try {
 	assert_true(in_array('projected_free_bytes_percentage_refusal_floor', $large_percentage_floor['trigger_reasons'], true), 'percentage refusal reason should be independently exposed');
 	assert_true(! in_array('projected_free_bytes_absolute_refusal_floor', $large_percentage_floor['trigger_reasons'], true), 'percentage pressure must not fabricate an absolute-floor reason');
 
-	$gnu = WorktreeDiskBudget::parse_inode_probe_output("1000:250\n", 'gnu_statfs');
-	assert_true(array( 'total_inodes' => 1000, 'free_inodes' => 250, 'probe' => 'gnu_statfs' ) === $gnu, 'GNU statfs output should parse deterministically');
-	$bsd = WorktreeDiskBudget::parse_inode_probe_output('2000:1500', 'bsd_statfs');
-	assert_true('bsd_statfs' === $bsd['probe'] && 1500 === $bsd['free_inodes'], 'BSD statfs output should parse deterministically');
+	$gnu_fixture = "Filesystem Inodes IUsed IFree IUse% Mounted on\n/dev/sda 1000 750 250 75% /workspace\n";
+	$gnu = WorktreeDiskBudget::parse_inode_probe_output($gnu_fixture, 'gnu_df_i');
+	assert_true(array( 'total_inodes' => 1000, 'free_inodes' => 250, 'probe' => 'gnu_df_i' ) === $gnu, 'GNU df inode output should parse deterministically');
+	$bsd_fixture = "Filesystem 512-blocks Used Available Capacity iused ifree %iused Mounted on\n/dev/disk1 100 20 80 20% 500 1500 25% /workspace\n";
+	$bsd = WorktreeDiskBudget::parse_inode_probe_output($bsd_fixture, 'bsd_df_i');
+	assert_true('bsd_df_i' === $bsd['probe'] && 2000 === $bsd['total_inodes'] && 1500 === $bsd['free_inodes'], 'BSD df inode output should derive total inodes deterministically.');
 	foreach ( array( '1000', '1000:2:1', 'x:1', '10:11' ) as $malformed ) {
-		assert_true('unavailable' === WorktreeDiskBudget::parse_inode_probe_output($malformed, 'gnu_statfs')['probe'], 'malformed or impossible telemetry must remain unavailable');
+		assert_true('unavailable' === WorktreeDiskBudget::parse_inode_probe_output($malformed, 'gnu_df_i')['probe'], 'malformed or impossible telemetry must remain unavailable');
 	}
 	assert_true('unavailable' === WorktreeDiskBudget::parse_inode_probe_output('10:1', 'unsupported')['probe'], 'unsupported probes must remain unavailable');
 	$bsd_fallback = WorktreeDiskBudget::probe_inode_capacity(
 		__DIR__,
-		static fn( array $argv, string $probe ): array => array( 'success' => 'bsd_statfs' === $probe, 'output' => '3000:1200' )
+		static fn( array $argv, string $probe ): array => array( 'success' => 'bsd_df_i' === $probe, 'output' => "Filesystem 512-blocks Used Available Capacity iused ifree %iused Mounted on\n/dev/disk1 100 20 80 20% 1800 1200 60% /workspace" )
 	);
-	assert_true('bsd_statfs' === $bsd_fallback['probe'], 'failed GNU probing should fall through to BSD statfs');
+	assert_true('bsd_df_i' === $bsd_fallback['probe'], 'failed GNU probing should fall through to BSD df.');
 
 	$root_mount = WorktreeDiskBudget::parse_mountinfo(
 		'32 24 8:2 / / rw,relatime - ext4 /dev/sdb rw',

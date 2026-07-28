@@ -122,21 +122,25 @@ trait WorkspaceWorktreeLifecycle {
 		return WorkspaceMutationLock::with_repo(
 			$this->workspace_path,
 			'workspace-capacity-admission',
-			fn() => $this->worktree_add_with_capacity_lock(
+			fn() => WorkspaceMutationLock::with_repo(
+				$this->workspace_path,
 				$repo,
-				$branch,
-				$from,
-				$inject_context,
-				$bootstrap,
-				$allow_stale,
-				$rebase_base,
-				$force,
-				$task,
-				$allow_unverified_freshness,
-				$slug,
-				$wt_handle,
-				$wt_path,
-				$primary_path
+				fn() => $this->worktree_add_with_capacity_lock(
+					$repo,
+					$branch,
+					$from,
+					$inject_context,
+					$bootstrap,
+					$allow_stale,
+					$rebase_base,
+					$force,
+					$task,
+					$allow_unverified_freshness,
+					$slug,
+					$wt_handle,
+					$wt_path,
+					$primary_path
+				)
 			),
 			self::worktree_capacity_wait_timeout_seconds($bootstrap)
 		);
@@ -152,7 +156,7 @@ trait WorkspaceWorktreeLifecycle {
 	 * bootstrap roots.
 	 */
 	public static function worktree_capacity_wait_timeout_seconds( bool $bootstrap = true ): int {
-		$timeout = 1800;
+		$timeout = $bootstrap ? WorktreeBootstrapper::total_timeout_seconds() + 600 : 600;
 		if ( function_exists('apply_filters') ) {
 			$timeout = (int) apply_filters('datamachine_code_worktree_capacity_wait_timeout_seconds', $timeout, $bootstrap);
 		}
@@ -185,7 +189,34 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
 		}
 
-		$demand_plan = WorktreeBootstrapper::demand_plan($primary_path, $bootstrap);
+		$fetch                 = WorktreeStalenessProbe::fetch($primary_path);
+		$fetch_failed          = ! $fetch['ok'];
+		$fetch_error           = $fetch['error'] ?? null;
+		$fetch_timed_out       = ! empty($fetch['timed_out']);
+		$fetch_timeout_seconds = $fetch['timeout_seconds'] ?? null;
+		if ( $fetch_failed && ! $allow_unverified_freshness ) {
+			return new \WP_Error(
+				'worktree_freshness_unverified',
+				'Refusing to create worktree because remote freshness could not be verified. Retry after connectivity is restored, or pass allow_unverified_freshness=true only when intentionally working offline with stale local refs.',
+				array(
+					'status'                     => 409,
+					'fetch_failed'               => true,
+					'fetch_error'                => $fetch_error,
+					'fetch_timed_out'            => $fetch_timed_out,
+					'fetch_timeout_seconds'      => $fetch_timeout_seconds,
+					'allow_unverified_freshness' => false,
+				)
+			);
+		}
+
+		$exists_local = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
+		$target_ref   = $exists_local
+			? 'refs/heads/' . $branch
+			: ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) );
+		$demand_plan  = WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
+		if ( $demand_plan instanceof \WP_Error ) {
+			return $demand_plan;
+		}
 		$disk_budget = WorktreeDiskBudget::inspect(
 			$this->workspace_path,
 			WorktreeDiskBudget::thresholds($repo, $branch),
@@ -242,10 +273,7 @@ trait WorkspaceWorktreeLifecycle {
 			);
 		}
 
-		$response = WorkspaceMutationLock::with_repo(
-			$this->workspace_path,
-			$repo,
-			fn() => $this->worktree_add_locked(
+		$response = $this->worktree_add_locked(
 				$repo,
 				$branch,
 				$from,
@@ -257,9 +285,16 @@ trait WorkspaceWorktreeLifecycle {
 				$wt_path,
 				$primary_path,
 				$task,
-				$allow_unverified_freshness
-			)
-		);
+				$allow_unverified_freshness,
+				array(
+					'fetch_failed'          => $fetch_failed,
+					'fetch_error'           => $fetch_error,
+					'fetch_timed_out'       => $fetch_timed_out,
+					'fetch_timeout_seconds' => $fetch_timeout_seconds,
+					'exists_local'          => $exists_local,
+					'target_ref'            => $target_ref,
+				)
+			);
 
 		if ( is_wp_error($response) ) {
 			return $response;
@@ -340,7 +375,8 @@ trait WorkspaceWorktreeLifecycle {
 		string $wt_path,
 		string $primary_path,
 		array $task = array(),
-		bool $allow_unverified_freshness = false
+		bool $allow_unverified_freshness = false,
+		array $preflight = array()
 	): array|\WP_Error {
 		if ( is_dir($wt_path) ) {
 			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
@@ -349,28 +385,13 @@ trait WorkspaceWorktreeLifecycle {
 		// Always fetch first so staleness data (and the default base) reflects the
 		// current remote. If fetch fails, default to fail-closed unless the caller
 		// explicitly opts into unverified/offline freshness.
-		$fetch        = WorktreeStalenessProbe::fetch($primary_path);
-		$fetch_failed = ! $fetch['ok'];
-		$fetch_error  = $fetch['error'] ?? null;
-		$fetch_timed_out = ! empty($fetch['timed_out']);
-		$fetch_timeout_seconds = $fetch['timeout_seconds'] ?? null;
-		if ( $fetch_failed && ! $allow_unverified_freshness ) {
-			return new \WP_Error(
-				'worktree_freshness_unverified',
-				'Refusing to create worktree because remote freshness could not be verified. Retry after connectivity is restored, or pass allow_unverified_freshness=true only when intentionally working offline with stale local refs.',
-				array(
-					'status'                     => 409,
-					'fetch_failed'               => true,
-					'fetch_error'                => $fetch_error,
-					'fetch_timed_out'            => $fetch_timed_out,
-					'fetch_timeout_seconds'      => $fetch_timeout_seconds,
-					'allow_unverified_freshness' => false,
-				)
-			);
-		}
+		$fetch_failed          = ! empty($preflight['fetch_failed']);
+		$fetch_error           = $preflight['fetch_error'] ?? null;
+		$fetch_timed_out       = ! empty($preflight['fetch_timed_out']);
+		$fetch_timeout_seconds = $preflight['fetch_timeout_seconds'] ?? null;
 
 		// Does the branch already exist locally?
-		$exists_local   = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
+		$exists_local   = ! empty($preflight['exists_local']);
 		$created_branch = false;
 		$resolved_base  = null;
 
@@ -383,7 +404,7 @@ trait WorkspaceWorktreeLifecycle {
 			}
 			$cmd = sprintf('worktree add %s %s', escapeshellarg($wt_path), escapeshellarg($branch));
 		} else {
-			$base          = $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path);
+			$base          = (string) ( $preflight['target_ref'] ?? ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) ) );
 			$resolved_base = $base;
 			if ( ! $allow_stale && ! $rebase_base && ! $fetch_failed ) {
 				$default_guard = $this->assert_ref_current_with_default_branch($primary_path, $resolved_base, $repo, $branch, 'base');
@@ -395,7 +416,7 @@ trait WorkspaceWorktreeLifecycle {
 			$created_branch = true;
 		}
 
-		$result = $this->run_git($primary_path, $cmd);
+		$result = $this->run_git($primary_path, $cmd, 300);
 		if ( is_wp_error($result) ) {
 			return $result;
 		}
@@ -742,19 +763,19 @@ trait WorkspaceWorktreeLifecycle {
 			$unpushed = null;
 		}
 
-		$metadata        = $parsed['is_worktree'] ? WorktreeContextInjector::get_metadata($parsed['dir_name']) : null;
-		$metadata        = is_array($metadata) ? $metadata : null;
-		$created_at      = $metadata['created_at'] ?? null;
-		$liveness        = WorktreeContextInjector::classify_liveness($metadata);
-		$disk            = $include_disk ? $this->build_worktree_disk_report($parsed['repo'], $path, $parsed['is_worktree'], $created_at, $metadata) : array(
-			'size_bytes'          => null,
+		$metadata     = $parsed['is_worktree'] ? WorktreeContextInjector::get_metadata($parsed['dir_name']) : null;
+		$metadata     = is_array($metadata) ? $metadata : null;
+		$created_at   = $metadata['created_at'] ?? null;
+		$liveness     = WorktreeContextInjector::classify_liveness($metadata);
+		$disk         = $include_disk ? $this->build_worktree_disk_report($parsed['repo'], $path, $parsed['is_worktree'], $created_at, $metadata) : array(
+			'size_bytes'           => null,
 			'estimated_size_bytes' => null,
-			'last_touched_at'     => null,
-			'age_days'            => $this->calculate_age_days($created_at),
-			'artifacts'           => array(),
-			'artifact_size_bytes' => 0,
+			'last_touched_at'      => null,
+			'age_days'             => $this->calculate_age_days($created_at),
+			'artifacts'            => array(),
+			'artifact_size_bytes'  => 0,
 		);
-		$row             = array_merge(
+		$row          = array_merge(
 			array(
 				'handle'                => $parsed['dir_name'],
 				'repo'                  => $parsed['repo'],
@@ -856,11 +877,11 @@ trait WorkspaceWorktreeLifecycle {
 		$data       = array_merge(
 			$cause_data,
 			array(
-				'status'     => (int) ( $cause_data['status'] ?? 500 ),
-				'phase'      => $phase,
-				'handle'     => $handle,
-				'path'       => $path,
-				'cause_code' => $error->get_error_code(),
+				'status'          => (int) ( $cause_data['status'] ?? 500 ),
+				'phase'           => $phase,
+				'handle'          => $handle,
+				'path'            => $path,
+				'cause_code'      => $error->get_error_code(),
 				'timeout_seconds' => self::CLEANUP_GIT_PROBE_TIMEOUT,
 			)
 		);

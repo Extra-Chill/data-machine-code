@@ -36,9 +36,11 @@ function bootstrap_demand_assert( bool $condition, string $message ): void {
 
 $fixture = sys_get_temp_dir() . '/dmc-bootstrap-demand-' . bin2hex(random_bytes(6));
 $bin = $fixture . '/bin';
+$repo = $fixture . '/repo';
 mkdir($fixture . '/frontend', 0777, true);
 mkdir($fixture . '/php', 0777, true);
 mkdir($bin, 0777, true);
+mkdir($repo, 0777, true);
 file_put_contents($fixture . '/package-lock.json', '{}');
 file_put_contents($fixture . '/frontend/pnpm-lock.yaml', '');
 file_put_contents($fixture . '/php/composer.lock', '{}');
@@ -57,6 +59,27 @@ try {
 	bootstrap_demand_assert('conservative_defaults' === $bootstrap['source'], 'Standalone fallback source must be explicit.');
 	bootstrap_demand_assert(str_contains($bootstrap['fallback_semantics'], 'without_wordpress'), 'Fallback semantics must be explicit.');
 
+	exec('git -C ' . escapeshellarg($repo) . ' init -q && git -C ' . escapeshellarg($repo) . ' config user.email test@example.com && git -C ' . escapeshellarg($repo) . ' config user.name Test');
+	file_put_contents($repo . '/README.md', "primary\n");
+	exec('git -C ' . escapeshellarg($repo) . ' add README.md && git -C ' . escapeshellarg($repo) . ' commit -qm primary');
+	$primary_branch = trim((string) shell_exec('git -C ' . escapeshellarg($repo) . ' branch --show-current'));
+	exec('git -C ' . escapeshellarg($repo) . ' checkout -qb target-tree');
+	mkdir($repo . '/frontend', 0777, true);
+	file_put_contents($repo . '/frontend/package-lock.json', '{}');
+	for ( $index = 0; $index < 300; ++$index ) {
+		file_put_contents($repo . '/frontend/tracked-' . $index . '.txt', 'x');
+	}
+	exec('git -C ' . escapeshellarg($repo) . ' add frontend && git -C ' . escapeshellarg($repo) . ' commit -qm target');
+	exec('git -C ' . escapeshellarg($repo) . ' checkout -q ' . escapeshellarg($primary_branch));
+
+	$primary_tree = WorktreeBootstrapper::demand_plan_for_target($repo, $primary_branch, true);
+	$target_tree  = WorktreeBootstrapper::demand_plan_for_target($repo, 'target-tree', true);
+	bootstrap_demand_assert(! is_wp_error($primary_tree) && ! is_wp_error($target_tree), 'Both primary and differing target refs must resolve before admission.');
+	bootstrap_demand_assert(0 === $primary_tree['counts']['package_roots'] && 1 === $target_tree['counts']['package_roots'], 'Dependency demand must come from the target tree rather than the current primary checkout.');
+	bootstrap_demand_assert($target_tree['counts']['tracked_entries'] > 256, 'Target-tree tracked entry demand fixture must exceed the old fixed Git reserve.');
+	bootstrap_demand_assert($target_tree['inodes'] >= $target_tree['counts']['tracked_entries'] + $target_tree['git_safety_margin']['inodes'], 'Admission must reserve tracked materialization plus an explicit Git lock margin.');
+	bootstrap_demand_assert($target_tree['target_commit'] !== $primary_tree['target_commit'], 'Differing refs must retain their exact resolved commits in demand evidence.');
+
 	$GLOBALS['bootstrap_demand_filters']['datamachine_code_worktree_bootstrap_command_timeout_seconds'] = static fn() => 1;
 	bootstrap_demand_assert(1 === WorktreeBootstrapper::command_timeout_seconds('submodules'), 'Bootstrap command timeout must be explicitly filterable.');
 	$GLOBALS['bootstrap_demand_filters']['datamachine_code_worktree_capacity_wait_timeout_seconds'] = static fn() => 77;
@@ -65,6 +88,8 @@ try {
 	bootstrap_demand_assert(77 === $lock_policy::worktree_capacity_wait_timeout_seconds(true), 'Capacity admission wait must use its explicit filter instead of the lock default.');
 	$lifecycle_source = file_get_contents(dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php');
 	bootstrap_demand_assert(str_contains((string) $lifecycle_source, 'self::worktree_capacity_wait_timeout_seconds($bootstrap)'), 'Admission must pass the explicit capacity wait policy to the global lock.');
+	unset($GLOBALS['bootstrap_demand_filters']['datamachine_code_worktree_capacity_wait_timeout_seconds']);
+	bootstrap_demand_assert(WorktreeBootstrapper::total_timeout_seconds() + 600 === $lock_policy::worktree_capacity_wait_timeout_seconds(true), 'Capacity wait must exceed the complete bounded bootstrap lifecycle.');
 
 	$git = $bin . '/git';
 	file_put_contents($git, "#!/bin/sh\nexec sleep 5\n");
@@ -81,6 +106,13 @@ try {
 
 	echo "worktree-bootstrap-demand: ok\n";
 } finally {
+	if ( is_dir($repo) ) {
+		$iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($repo, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
+		foreach ( $iterator as $entry ) {
+			$entry->isDir() ? rmdir($entry->getPathname()) : unlink($entry->getPathname());
+		}
+		rmdir($repo);
+	}
 	foreach ( array( 'package-lock.json', 'frontend/pnpm-lock.yaml', 'php/composer.lock', '.gitmodules' ) as $file ) {
 		unlink($fixture . '/' . $file);
 	}

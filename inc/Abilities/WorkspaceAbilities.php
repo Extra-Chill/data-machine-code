@@ -211,22 +211,22 @@ class WorkspaceAbilities {
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success'           => array( 'type' => 'boolean' ),
-							'name'              => array( 'type' => 'string' ),
-							'repo'              => array( 'type' => 'string' ),
-							'is_worktree'       => array( 'type' => 'boolean' ),
-							'path'              => array( 'type' => 'string' ),
+							'success'            => array( 'type' => 'boolean' ),
+							'name'               => array( 'type' => 'string' ),
+							'repo'               => array( 'type' => 'string' ),
+							'is_worktree'        => array( 'type' => 'boolean' ),
+							'path'               => array( 'type' => 'string' ),
 							// Nullable: detached HEAD has no branch; local-only repos
 							// have no remote; freshly-init'd repos have no commit yet.
-							'branch'            => array( 'type' => array( 'string', 'null' ) ),
-							'remote'            => array( 'type' => array( 'string', 'null' ) ),
-							'commit'            => array( 'type' => array( 'string', 'null' ) ),
-							'dirty'             => array( 'type' => 'integer' ),
+							'branch'             => array( 'type' => array( 'string', 'null' ) ),
+							'remote'             => array( 'type' => array( 'string', 'null' ) ),
+							'commit'             => array( 'type' => array( 'string', 'null' ) ),
+							'dirty'              => array( 'type' => 'integer' ),
 							'workspace_capacity' => array(
 								'type'        => 'object',
 								'description' => 'Complete workspace capacity envelope including byte and inode total/used/free values and percentages, probe, status, warnings, reasons, thresholds, and remediation commands.',
 							),
-							'primary_freshness' => self::primaryFreshnessSchema(),
+							'primary_freshness'  => self::primaryFreshnessSchema(),
 						),
 					),
 					'execute_callback'    => array( self::class, 'showRepo' ),
@@ -470,28 +470,58 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'handle'                     => array( 'type' => 'string', 'description' => 'Registered remote primary or worktree handle.' ),
-							'full'                       => array( 'type' => 'boolean', 'description' => 'Disable blobless partial clone when creating the local primary.' ),
-							'allow_duplicate_remote'     => array( 'type' => 'boolean', 'description' => 'Explicitly permit a second local primary for the same remote.' ),
-							'inject_context'             => array( 'type' => 'boolean', 'description' => 'Inject workspace context into a materialized worktree. Default true.' ),
-							'bootstrap'                  => array( 'type' => 'boolean', 'description' => 'Run the normal worktree bootstrap after materialization. Default true.' ),
-							'allow_stale'                => array( 'type' => 'boolean', 'description' => 'Explicitly bypass worktree staleness gates.' ),
-							'allow_unverified_freshness' => array( 'type' => 'boolean', 'description' => 'Explicitly permit materialization when freshness fetch cannot be verified.' ),
-							'rebase_base'                => array( 'type' => 'boolean', 'description' => 'Rebase the materialized worktree onto its upstream when needed.' ),
-							'force'                      => array( 'type' => 'boolean', 'description' => 'Explicitly bypass the worktree disk-budget refusal.' ),
-							'require_task_tracker'       => array( 'type' => 'boolean', 'description' => 'Require task metadata from the registered remote worktree. Default true.' ),
+							'handle'                     => array(
+								'type'        => 'string',
+								'description' => 'Registered remote primary or worktree handle.',
+							),
+							'full'                       => array(
+								'type'        => 'boolean',
+								'description' => 'Disable blobless partial clone when creating the local primary.',
+							),
+							'allow_duplicate_remote'     => array(
+								'type'        => 'boolean',
+								'description' => 'Explicitly permit a second local primary for the same remote.',
+							),
+							'inject_context'             => array(
+								'type'        => 'boolean',
+								'description' => 'Inject workspace context into a materialized worktree. Default true.',
+							),
+							'bootstrap'                  => array(
+								'type'        => 'boolean',
+								'description' => 'Run the normal worktree bootstrap after materialization. Default true.',
+							),
+							'allow_stale'                => array(
+								'type'        => 'boolean',
+								'description' => 'Explicitly bypass worktree staleness gates.',
+							),
+							'allow_unverified_freshness' => array(
+								'type'        => 'boolean',
+								'description' => 'Explicitly permit materialization when freshness fetch cannot be verified.',
+							),
+							'rebase_base'                => array(
+								'type'        => 'boolean',
+								'description' => 'Rebase the materialized worktree onto its upstream when needed.',
+							),
+							'force'                      => array(
+								'type'        => 'boolean',
+								'description' => 'Explicitly bypass the worktree disk-budget refusal.',
+							),
+							'require_task_tracker'       => array(
+								'type'        => 'boolean',
+								'description' => 'Require task metadata from the registered remote worktree. Default true.',
+							),
 						),
 						'required'   => array( 'handle' ),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success'  => array( 'type' => 'boolean' ),
-							'backend'  => array( 'type' => 'string' ),
-							'handle'   => array( 'type' => 'string' ),
-							'path'     => array( 'type' => 'string' ),
-							'branch'   => array( 'type' => 'string' ),
-							'message'  => array( 'type' => 'string' ),
+							'success' => array( 'type' => 'boolean' ),
+							'backend' => array( 'type' => 'string' ),
+							'handle'  => array( 'type' => 'string' ),
+							'path'    => array( 'type' => 'string' ),
+							'branch'  => array( 'type' => 'string' ),
+							'message' => array( 'type' => 'string' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'materializeRemoteWorkspace' ),
@@ -3262,8 +3292,8 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function materializeRemoteWorkspace( array $input ): array|\WP_Error {
-		$remote = new RemoteWorkspaceBackend();
-		$context = $remote->materialization_context((string) ( $input['handle'] ?? '' ));
+		$remote  = new RemoteWorkspaceBackend();
+		$context = $remote->materialization_context( (string) ( $input['handle'] ?? '' ));
 		if ( is_wp_error($context) ) {
 			return $context;
 		}
@@ -3972,10 +4002,10 @@ class WorkspaceAbilities {
 		// Default allow_unverified_freshness=false (fetch-failure gate enforced).
 		$allow_unverified_freshness = array_key_exists('allow_unverified_freshness', $input) ? (bool) $input['allow_unverified_freshness'] : false;
 		// Default rebase_base=false; only true when explicitly requested.
-		$rebase_base = array_key_exists('rebase_base', $input) ? (bool) $input['rebase_base'] : false;
+		$rebase_base          = array_key_exists('rebase_base', $input) ? (bool) $input['rebase_base'] : false;
 		$force                = ! empty($input['force']);
 		$require_task_tracker = array_key_exists('require_task_tracker', $input) ? (bool) $input['require_task_tracker'] : true;
-		$task        = array();
+		$task                 = array();
 		if ( isset($input['task_url']) && '' !== trim( (string) $input['task_url']) ) {
 			$task['task_url'] = (string) $input['task_url'];
 		}
@@ -3984,7 +4014,7 @@ class WorkspaceAbilities {
 		}
 
 		$workspace = new Workspace();
-		$task = WorktreeContextInjector::resolve_task_metadata($task) ?? array();
+		$task      = WorktreeContextInjector::resolve_task_metadata($task) ?? array();
 		if ( $require_task_tracker && empty($task) && RemoteWorkspaceBackend::should_handle() && ! self::hasLocalPrimaryCheckout($workspace, (string) ( $input['repo'] ?? '' )) ) {
 			return new \WP_Error('worktree_task_tracker_required', 'Refusing to create a managed worktree without a valid task URL or task reference.', array( 'status' => 400 ));
 		}
@@ -4650,8 +4680,8 @@ class WorkspaceAbilities {
 	public static function worktreeCleanupArtifacts( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$opts      = array(
-			'dry_run' => ! empty($input['dry_run']),
-			'force'   => ! empty($input['force']),
+			'dry_run'                       => ! empty($input['dry_run']),
+			'force'                         => ! empty($input['force']),
 			'allow_active_artifact_cleanup' => ! empty($input['allow_active_artifact_cleanup']),
 		);
 		if ( isset($input['apply_plan']) && is_array($input['apply_plan']) ) {
@@ -4749,11 +4779,11 @@ class WorkspaceAbilities {
 	 */
 	public static function workspaceCleanupPlan( array $input ): array|\WP_Error {
 		$opts = array(
-			'force_artifact_cleanup' => ! empty($input['force_artifact_cleanup']),
+			'force_artifact_cleanup'        => ! empty($input['force_artifact_cleanup']),
 			'allow_active_artifact_cleanup' => ! empty($input['allow_active_artifact_cleanup']),
-			'include_resolvers'      => ! empty($input['include_resolvers']),
-			'mode'                   => (string) ( $input['mode'] ?? 'cleanup_plan' ),
-			'worktree_stale_only'    => ! empty($input['worktree_stale_only']),
+			'include_resolvers'             => ! empty($input['include_resolvers']),
+			'mode'                          => (string) ( $input['mode'] ?? 'cleanup_plan' ),
+			'worktree_stale_only'           => ! empty($input['worktree_stale_only']),
 		);
 		foreach ( array( 'include_artifacts', 'include_worktrees', 'full_workspace' ) as $key ) {
 			if ( array_key_exists($key, $input) ) {

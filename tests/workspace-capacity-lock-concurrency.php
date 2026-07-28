@@ -23,9 +23,12 @@ if ( ! function_exists('is_wp_error') ) {
 }
 
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceMutationLock.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeBootstrapper.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeDiskBudget.php';
 
 use DataMachineCode\Workspace\WorkspaceMutationLock;
+use DataMachineCode\Workspace\WorktreeDiskBudget;
 
 function capacity_lock_assert( bool $condition, string $message ): void {
 	if ( ! $condition ) {
@@ -62,6 +65,35 @@ if ( 'waiter' === $mode ) {
 	}
 	fwrite(STDOUT, sprintf('acquired:%.3f', microtime(true) - $started));
 	exit(0);
+}
+
+if ( 'admission' === $mode ) {
+	$workspace = (string) $argv[2];
+	$state     = (string) $argv[3];
+	$ready     = (string) $argv[4];
+	$result = WorkspaceMutationLock::with_repo(
+		$workspace,
+		'workspace-capacity-admission',
+		static function () use ( $state, $ready ): string {
+			$free = (int) file_get_contents($state);
+			$budget = WorktreeDiskBudget::evaluate(
+				array( 'free_bytes' => 1000000, 'total_bytes' => 2000000, 'free_inodes' => $free, 'total_inodes' => 1000 ),
+				array( 'warn_free_bytes' => 1, 'warn_free_percent' => 0.0, 'refuse_free_bytes' => 1, 'refuse_free_percent' => 0.0, 'warn_free_inodes' => 150, 'warn_free_inode_percent' => 0.0, 'refuse_free_inodes' => 100, 'refuse_free_inode_percent' => 0.0, 'warn_worktree_count' => 99 ),
+				false,
+				array( 'bytes' => 0, 'inodes' => 50, 'source' => 'concurrency_test' )
+			);
+			if ( 'refused' === $budget['status'] ) {
+				return 'refused';
+			}
+			file_put_contents($state, (string) ( $free - 50 ));
+			file_put_contents($ready, 'ready');
+			sleep(1);
+			return 'admitted';
+		},
+		5
+	);
+	fwrite(STDOUT, is_wp_error($result) ? 'error' : $result);
+	exit(is_wp_error($result) ? 4 : 0);
 }
 
 $workspace = sys_get_temp_dir() . '/dmc-capacity-lock-' . bin2hex(random_bytes(6));
@@ -112,9 +144,34 @@ try {
 	$policy = new class {
 		use DataMachineCode\Workspace\WorkspaceWorktreeLifecycle;
 	};
-	capacity_lock_assert(1800 === $policy::worktree_capacity_wait_timeout_seconds(true), 'Bootstrap admissions must not inherit the 30-second repo-lock wait.');
+	capacity_lock_assert(2400 === $policy::worktree_capacity_wait_timeout_seconds(true), 'Bootstrap admission wait must exceed the complete bounded operation lifecycle.');
+
+	$state = $workspace . '/capacity-state';
+	$admission_ready = $workspace . '/admission-ready';
+	file_put_contents($state, '180');
+	$first = proc_open(array( PHP_BINARY, __FILE__, 'admission', $workspace, $state, $admission_ready ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $first_pipes);
+	capacity_lock_assert(is_resource($first), 'Could not start first admission process.');
+	fclose($first_pipes[0]);
+	$deadline = microtime(true) + 3;
+	while ( ! is_file($admission_ready) && microtime(true) < $deadline ) { usleep(10000); }
+	capacity_lock_assert(is_file($admission_ready), 'First admission did not materialize its demand.');
+	$second = proc_open(array( PHP_BINARY, __FILE__, 'admission', $workspace, $state, $workspace . '/second-ready' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $second_pipes);
+	capacity_lock_assert(is_resource($second), 'Could not start second admission process.');
+	fclose($second_pipes[0]);
+	$second_output = stream_get_contents($second_pipes[1]);
+	fclose($second_pipes[1]); fclose($second_pipes[2]);
+	$second_exit = proc_close($second);
+	$first_output = stream_get_contents($first_pipes[1]);
+	fclose($first_pipes[1]); fclose($first_pipes[2]);
+	$first_exit = proc_close($first);
+	capacity_lock_assert(0 === $first_exit && 'admitted' === $first_output, 'First measured admission should succeed.');
+	capacity_lock_assert(0 === $second_exit && 'refused' === $second_output, 'Second admission must remeasure after serialization and refuse projected overcommit.');
+	capacity_lock_assert('130' === file_get_contents($state), 'Refused second admission must not consume stale capacity.');
 	echo "workspace-capacity-lock-concurrency: ok\n";
 } finally {
+	foreach ( array( 'capacity-state', 'admission-ready', 'second-ready' ) as $file ) {
+		if ( is_file($workspace . '/' . $file) ) { unlink($workspace . '/' . $file); }
+	}
 	if ( is_file($workspace . '/ready') ) {
 		unlink($workspace . '/ready');
 	}
