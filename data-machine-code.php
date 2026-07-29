@@ -401,6 +401,7 @@ add_filter(
 		$tasks['worktree_cleanup']                 = \DataMachineCode\Tasks\WorktreeCleanupTask::class;
 		$tasks['workspace_disk_emergency_cleanup'] = \DataMachineCode\Tasks\WorkspaceDiskEmergencyCleanupTask::class;
 		$tasks['workspace_retention_cleanup']      = \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask::class;
+		$tasks['workspace_safe_cleanup']           = \DataMachineCode\Tasks\WorkspaceSafeCleanupTask::class;
 		$tasks['workspace_hygiene_report']         = \DataMachineCode\Tasks\WorkspaceHygieneReportTask::class;
 		return $tasks;
 	}
@@ -452,6 +453,7 @@ add_filter(
 				'artifact_chunk_size' => 10,
 			),
 		);
+		$schedules['workspace_safe_cleanup']           = \DataMachineCode\Tasks\WorkspaceSafeCleanupTask::recurringSchedule();
 		$schedules['workspace_hygiene_report']         = array(
 			'task_type'       => 'workspace_hygiene_report',
 			'interval'        => 'weekly',
