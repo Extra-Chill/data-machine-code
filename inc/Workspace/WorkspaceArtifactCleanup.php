@@ -7,10 +7,16 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Support\MacOSLsofProcessPathProbe;
+use DataMachineCode\Support\ProcfsProcessPathProbe;
+use DataMachineCode\Support\ProcessPathProbeInterface;
+use DataMachineCode\Support\UnsupportedProcessPathProbe;
+
 defined('ABSPATH') || exit;
 
 require_once __DIR__ . '/WorktreeContextInjector.php';
 require_once __DIR__ . '/WorktreeAgeFilter.php';
+require_once dirname(__DIR__) . '/Support/ProcessPathProbe.php';
 
 trait WorkspaceArtifactCleanup {
 
@@ -35,7 +41,7 @@ trait WorkspaceArtifactCleanup {
 	 * planned worktrees rather than the entire workspace.
 	 *
 	 * @param  array $opts Cleanup options (dry_run, force,
-	 *                     allow_active_artifact_cleanup, apply_plan, limit,
+	 *                     allow_active_artifact_cleanup, allow_unavailable_process_probe, apply_plan, limit,
 	 *                     offset, exhaustive, safety_probes, older_than).
 	 * @return array<string,mixed>|\WP_Error
 	 */
@@ -43,6 +49,7 @@ trait WorkspaceArtifactCleanup {
 		$dry_run        = ! empty($opts['dry_run']);
 		$force          = ! empty($opts['force']);
 		$allow_active   = ! empty($opts['allow_active_artifact_cleanup']);
+		$allow_unavailable_process_probe = ! empty($opts['allow_unavailable_process_probe']);
 		$apply_plan     = isset($opts['apply_plan']) && is_array($opts['apply_plan']) ? $opts['apply_plan'] : null;
 		$older_than     = isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '';
 		if ( '' === $older_than && null !== $apply_plan && is_array($apply_plan['age_filter'] ?? null) ) {
@@ -66,7 +73,7 @@ trait WorkspaceArtifactCleanup {
 			$limit = 0;
 		}
 		$review_command  = $this->build_artifact_cleanup_review_command($opts);
-		$apply_command   = $this->build_artifact_cleanup_apply_command($force, $allow_active);
+		$apply_command   = $this->build_artifact_cleanup_apply_command($force, $allow_active, $allow_unavailable_process_probe);
 		$preview_command = $this->build_artifact_cleanup_preview_command($opts);
 		// Apply paths default to safety probing (small subset). Dry-run defaults
 		// to skipping the per-worktree git probes unless explicitly requested or
@@ -107,6 +114,7 @@ trait WorkspaceArtifactCleanup {
 			$force,
 			array(
 				'allow_active_artifact_cleanup' => $allow_active,
+				'allow_unavailable_process_probe' => $allow_unavailable_process_probe,
 				'limit'         => $plan_limit,
 				'offset'        => $rank_by_size ? 0 : $offset,
 				'only_handles'  => $only_handles,
@@ -291,10 +299,11 @@ trait WorkspaceArtifactCleanup {
 	 *
 	 * @return string
 	 */
-	private function build_artifact_cleanup_apply_command( bool $force = false, bool $allow_active = false ): string {
+	private function build_artifact_cleanup_apply_command( bool $force = false, bool $allow_active = false, bool $allow_unavailable_process_probe = false ): string {
 		return 'studio wp datamachine-code workspace cleanup apply <run-id>'
 			. ( $force ? ' --force' : '' )
-			. ( $allow_active ? ' --allow-active-artifact-cleanup' : '' );
+			. ( $allow_active ? ' --allow-active-artifact-cleanup' : '' )
+			. ( $allow_unavailable_process_probe ? ' --allow-unavailable-process-probe' : '' );
 	}
 
 	/**
@@ -310,6 +319,9 @@ trait WorkspaceArtifactCleanup {
 		}
 		if ( ! empty($opts['allow_active_artifact_cleanup']) ) {
 			$parts[] = '--allow-active-artifact-cleanup';
+		}
+		if ( ! empty($opts['allow_unavailable_process_probe']) ) {
+			$parts[] = '--allow-unavailable-process-probe';
 		}
 		if ( isset($opts['limit']) ) {
 			$parts[] = '--limit=' . (int) $opts['limit'];
@@ -361,6 +373,7 @@ trait WorkspaceArtifactCleanup {
 		$limit         = isset($opts['limit']) ? (int) $opts['limit'] : 0;
 		$offset        = isset($opts['offset']) ? max(0, (int) $opts['offset']) : 0;
 		$allow_active  = ! empty($opts['allow_active_artifact_cleanup']);
+		$allow_unavailable_process_probe = ! empty($opts['allow_unavailable_process_probe']);
 		$only_handles  = isset($opts['only_handles']) && is_array($opts['only_handles'])
 		? array_values(array_filter(array_map('strval', $opts['only_handles']), fn( $h ) => '' !== $h))
 		: null;
@@ -512,7 +525,8 @@ trait WorkspaceArtifactCleanup {
 
 			$process_protection = $this->active_artifact_process_protection($wt_path, $artifacts);
 			if ( null !== $process_protection ) {
-				if ( ! $allow_active ) {
+				$is_probe_unavailable = str_starts_with((string) ($process_protection['reason_code'] ?? ''), 'active_process_probe_');
+				if ( ( $is_probe_unavailable && ! $allow_unavailable_process_probe ) || ( ! $is_probe_unavailable && ! $allow_active ) ) {
 					$skipped[] = array_merge($base_row, $process_protection, array( 'artifacts' => $artifacts ));
 					continue;
 				}
@@ -726,7 +740,7 @@ trait WorkspaceArtifactCleanup {
 	}
 
 	/**
-	 * Conservatively inspect Linux process cwd/open-file paths without naming runtimes or tools.
+	 * Conservatively inspect process cwd/open-file paths through the host provider.
 	 *
 	 * @param  string           $worktree_path Worktree root.
 	 * @param  array<int,array> $artifacts     Profile-derived artifact rows.
@@ -785,6 +799,15 @@ trait WorkspaceArtifactCleanup {
 			return $this->artifact_process_path_snapshot;
 		}
 
+		$result = $this->artifact_process_path_probe()->snapshot();
+		if ( ! $fresh ) {
+			$this->artifact_process_path_snapshot = $result;
+		}
+		return $result;
+	}
+
+	/** @return array{status:string,records:array<int,array<string,mixed>>,diagnostics:array<string,mixed>} */
+	private function artifact_procfs_process_path_records(): array {
 		$proc_root = $this->artifact_process_root();
 		if ( ! is_dir($proc_root) || ! is_readable($proc_root) ) {
 			return array(
@@ -884,9 +907,6 @@ trait WorkspaceArtifactCleanup {
 				'unknown_mount_namespaces' => array_slice($unknown_namespaces, 0, 10),
 			),
 		);
-		if ( ! $fresh ) {
-			$this->artifact_process_path_snapshot = $result;
-		}
 		return $result;
 	}
 
@@ -895,6 +915,20 @@ trait WorkspaceArtifactCleanup {
 	 */
 	protected function artifact_process_root(): string {
 		return '/proc';
+	}
+
+	/** Resolve the host process-path provider. Overridable for deterministic tests. */
+	protected function artifact_process_path_probe(): ProcessPathProbeInterface {
+		if ( '/proc' !== $this->artifact_process_root() ) {
+			return new ProcfsProcessPathProbe(fn() => $this->artifact_procfs_process_path_records());
+		}
+		if ( 'Darwin' === PHP_OS_FAMILY ) {
+			return new MacOSLsofProcessPathProbe();
+		}
+		if ( 'Linux' === PHP_OS_FAMILY ) {
+			return new ProcfsProcessPathProbe(fn() => $this->artifact_procfs_process_path_records());
+		}
+		return new UnsupportedProcessPathProbe(PHP_OS_FAMILY);
 	}
 
 	/**

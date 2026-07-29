@@ -163,6 +163,7 @@ namespace {
 	use DataMachineCode\Workspace\ArtifactCleanupGuardHarness;
 	use DataMachineCode\Workspace\ControlledArtifactCleanupGuardHarness;
 	use DataMachineCode\Workspace\WorktreeContextInjector;
+	use DataMachineCode\Support\MacOSLsofProcessPathProbe;
 
 	function artifact_guard_assert_same( mixed $expected, mixed $actual, string $message ): void {
 		if ( $expected !== $actual ) {
@@ -220,18 +221,35 @@ namespace {
 	$forced = $harness->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true, 'force' => true ));
 	artifact_guard_assert_same(0, count($forced['candidates']), 'legacy force must not override unavailable active-process evidence');
 	$active_override = $harness->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true, 'allow_active_artifact_cleanup' => true ));
-	artifact_guard_assert_same(1, count($active_override['candidates']), 'distinct active artifact override must permit reviewed eviction');
-	artifact_guard_assert_same('active_process_probe_unavailable', $active_override['candidates'][0]['safety_overrides'][0]['reason_code'] ?? null, 'active override must retain typed unavailable evidence');
+	artifact_guard_assert_same(0, count($active_override['candidates']), 'live-owner eviction override must not waive unavailable process evidence');
+	$probe_override = $harness->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true, 'allow_unavailable_process_probe' => true ));
+	artifact_guard_assert_same(1, count($probe_override['candidates']), 'process-probe override must permit reviewed cleanup without waiving live-owner eviction');
+	artifact_guard_assert_same('active_process_probe_unavailable', $probe_override['candidates'][0]['safety_overrides'][0]['reason_code'] ?? null, 'probe override must retain typed unavailable evidence');
 
-	$real_scanner = new ArtifactCleanupGuardHarness($root);
-	$descriptors  = array( 0 => array( 'file', '/dev/null', 'r' ), 1 => array( 'file', '/dev/null', 'w' ), 2 => array( 'file', '/dev/null', 'w' ) );
-	$process      = proc_open(array( '/bin/sleep', '5' ), $descriptors, $pipes, $path);
-	if ( is_resource($process) ) {
-		usleep(100000);
-		$real_probe = $real_scanner->probe_processes($path, array( array( 'path' => 'vendor' ) ));
-		artifact_guard_assert_same(true, array() !== (array) ( $real_probe['evidence'] ?? array() ), 'real procfs scanner must detect a child process cwd in the worktree');
-		proc_terminate($process);
-		proc_close($process);
+	$mac_no_match = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => "p42\0ctest\0f3\0n/tmp/unrelated\0" ));
+	artifact_guard_assert_same('available', $mac_no_match->snapshot()['status'], 'macOS lsof no-match snapshot must be available');
+	$mac_cwd = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => "p42\0ctest\0fcwd\0n{$path}\0" ));
+	$mac_cwd_records = $mac_cwd->snapshot()['records'];
+	artifact_guard_assert_same('cwd', $mac_cwd_records[0]['match_type'] ?? null, 'macOS lsof cwd evidence must retain its match type');
+	$mac_open_file = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => "p42\0ctest\0f12\0n{$path}/vendor/generated.php\0" ));
+	$mac_open_file_records = $mac_open_file->snapshot()['records'];
+	artifact_guard_assert_same('open_file', $mac_open_file_records[0]['match_type'] ?? null, 'macOS lsof open-file evidence must retain its match type');
+	$mac_timeout = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => false, 'timeout' => 2 ));
+	artifact_guard_assert_same('uncertain', $mac_timeout->snapshot()['status'], 'macOS lsof timeout must fail closed as uncertain');
+	$mac_exit_race = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => "p42\0ctest\0" ));
+	artifact_guard_assert_same(array(), $mac_exit_race->snapshot()['records'], 'macOS lsof process-exit races without path records must remain safe no-match evidence');
+
+	if ( in_array(PHP_OS_FAMILY, array( 'Linux', 'Darwin' ), true) ) {
+		$real_scanner = new ArtifactCleanupGuardHarness($root);
+		$descriptors  = array( 0 => array( 'file', '/dev/null', 'r' ), 1 => array( 'file', '/dev/null', 'w' ), 2 => array( 'file', '/dev/null', 'w' ) );
+		$process      = proc_open(array( '/bin/sleep', '5' ), $descriptors, $pipes, $path);
+		if ( is_resource($process) ) {
+			usleep(100000);
+			$real_probe = $real_scanner->probe_processes($path, array( array( 'path' => 'vendor' ) ));
+			artifact_guard_assert_same(true, array() !== (array) ( $real_probe['evidence'] ?? array() ), 'host process scanner must detect a child process cwd in the worktree');
+			proc_terminate($process);
+			proc_close($process);
+		}
 	}
 
 	$fake_proc = $root . '/proc-fixture';

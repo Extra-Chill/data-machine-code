@@ -2568,6 +2568,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Explicitly allow active artifact eviction after reviewing live/process/unavailable evidence. Separate from force and must be repeated at DB-backed apply/resume.',
 							),
+							'allow_unavailable_process_probe' => array(
+								'type'        => 'boolean',
+								'description' => 'Explicitly allow cleanup when process-path inspection is unavailable or uncertain. This does not waive authoritative live-owner or active-process evidence.',
+							),
 							'apply_plan'    => array(
 								'type'        => 'object',
 								'description' => 'Decoded artifact cleanup dry-run report to apply after revalidating every worktree and artifact path.',
@@ -4678,7 +4682,7 @@ class WorkspaceAbilities {
 	 * Remove profile-derived artifacts inside workspace worktrees.
 	 *
 	 * @param  array $input Input parameters (dry_run, force,
-	 *                      allow_active_artifact_cleanup, apply_plan, limit,
+	 *                      allow_active_artifact_cleanup, allow_unavailable_process_probe, apply_plan, limit,
 	 *                      offset, exhaustive, safety_probes).
 	 * @return array
 	 */
@@ -4688,6 +4692,7 @@ class WorkspaceAbilities {
 			'dry_run'                       => ! empty($input['dry_run']),
 			'force'                         => ! empty($input['force']),
 			'allow_active_artifact_cleanup' => ! empty($input['allow_active_artifact_cleanup']),
+			'allow_unavailable_process_probe' => ! empty($input['allow_unavailable_process_probe']),
 		);
 		if ( isset($input['apply_plan']) && is_array($input['apply_plan']) ) {
 			$opts['apply_plan'] = $input['apply_plan'];
