@@ -4328,6 +4328,7 @@ class WorkspaceCommand extends BaseCommand {
 				$input['dry_run']                       = ! empty($assoc_args['dry-run']);
 				$input['force']                         = ! empty($assoc_args['force']);
 				$input['allow_active_artifact_cleanup'] = ! empty($assoc_args['allow-active-artifact-cleanup']);
+				$input['allow_unavailable_process_probe'] = ! empty($assoc_args['allow-unavailable-process-probe']);
 				if ( isset($assoc_args['limit']) ) {
 					$input['limit'] = (int) $assoc_args['limit'];
 				}
