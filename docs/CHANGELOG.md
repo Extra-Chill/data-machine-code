@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.55.4] - 2026-07-29
+
+### Fixed
+- bound emergency cleanup task results
+
 ## [0.55.3] - 2026-07-28
 
 ### Fixed
