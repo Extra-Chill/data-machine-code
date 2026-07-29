@@ -63,7 +63,11 @@ final class WorkspaceEmergencyCandidateSelector {
 	/** @return array<int,array<string,mixed>>|null */
 	private static function find_viable_set( array $rows, int $target_bytes, int $target_inodes, int $limit ): ?array {
 		$states = array(
-			array( 'selected' => array(), 'bytes' => 0, 'inodes' => 0 ),
+			array(
+				'selected' => array(),
+				'bytes'    => 0,
+				'inodes'   => 0,
+			),
 		);
 		foreach ( array_slice($rows, 0, self::MAX_SEARCH_CANDIDATES) as $row ) {
 			$next_states = $states;
@@ -87,7 +91,8 @@ final class WorkspaceEmergencyCandidateSelector {
 				static function ( array $left, array $right ) use ( $target_bytes, $target_inodes ): int {
 					$left_score  = min($target_bytes, $left['bytes']) + min($target_inodes, $left['inodes']);
 					$right_score = min($target_bytes, $right['bytes']) + min($target_inodes, $right['inodes']);
-					return $right_score <=> $left_score ?: count($left['selected']) <=> count($right['selected']);
+					$score_order = $right_score <=> $left_score;
+					return 0 !== $score_order ? $score_order : count($left['selected']) <=> count($right['selected']);
 				}
 			);
 			$states = array_slice($next_states, 0, self::MAX_SEARCH_STATES);

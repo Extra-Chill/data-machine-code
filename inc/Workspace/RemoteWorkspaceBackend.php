@@ -634,8 +634,8 @@ class RemoteWorkspaceBackend {
 
 		$state     = $this->state();
 		$repo_name = (string) ( $context['repo_name'] ?? '' );
-		$repo       = (string) ( $context['repo'] ?? '' );
-		$url        = (string) ( $state['repos'][ $repo_name ]['url'] ?? GitHubRemote::cloneUrl($repo) );
+		$repo      = (string) ( $context['repo'] ?? '' );
+		$url       = (string) ( $state['repos'][ $repo_name ]['url'] ?? GitHubRemote::cloneUrl($repo) );
 
 		return array(
 			'handle'    => (string) ( $context['handle'] ?? $handle ),

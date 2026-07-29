@@ -81,7 +81,7 @@ final class WorkspaceTargetInspector {
 			);
 		}
 
-		$decoded = json_decode(( string ) ( $result['stdout'] ?? '' ), true);
+		$decoded = json_decode( (string) ( $result['stdout'] ?? '' ), true);
 		if ( ! is_array($decoded) ) {
 			return new \WP_Error(
 				'workspace_target_lookup_invalid_response',

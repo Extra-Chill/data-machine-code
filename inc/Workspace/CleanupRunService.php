@@ -111,8 +111,8 @@ class CleanupRunService {
 			return new \WP_Error('cleanup_run_not_found', sprintf('Cleanup run not found: %s', $run_id), array( 'status' => 404 ));
 		}
 
-		$limit = $this->apply_limit($opts);
-		$policy                = (array) ( $run['policy'] ?? array() );
+		$limit                = $this->apply_limit($opts);
+		$policy               = (array) ( $run['policy'] ?? array() );
 		$allow_active_cleanup = ! empty($policy['allow_active_artifact_cleanup']);
 		$requested_active     = ! empty($opts['allow_active_artifact_cleanup']);
 		if ( $allow_active_cleanup !== $requested_active ) {
@@ -159,12 +159,12 @@ class CleanupRunService {
 			}
 			$results['artifact_cleanup'] = $this->workspace->worktree_cleanup_artifacts(
 				array(
-					'apply_plan' => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $artifact_batch) ),
+					'apply_plan'                    => array( 'candidates' => array_map(fn( $item ) => $item['evidence'], $artifact_batch) ),
 					// The reviewed run policy can force only reconstructable artifact deletion.
-					'force'      => $force_artifact_cleanup,
+					'force'                         => $force_artifact_cleanup,
 					'allow_active_artifact_cleanup' => $allow_active_cleanup,
-					'older_than' => (string) ( $policy['artifact_age_filter']['older_than'] ?? '' ),
-					'limit'      => count($artifact_batch),
+					'older_than'                    => (string) ( $policy['artifact_age_filter']['older_than'] ?? '' ),
+					'limit'                         => count($artifact_batch),
 				)
 			);
 			if ( $results['artifact_cleanup'] instanceof \WP_Error ) {
@@ -413,13 +413,13 @@ class CleanupRunService {
 
 			$plan = $this->plan(
 				array(
-					'mode'                   => 'artifacts',
-					'include_artifacts'      => true,
-					'include_worktrees'      => false,
-					'include_resolvers'      => false,
-					'force_artifact_cleanup' => ! empty($opts['force']),
+					'mode'                          => 'artifacts',
+					'include_artifacts'             => true,
+					'include_worktrees'             => false,
+					'include_resolvers'             => false,
+					'force_artifact_cleanup'        => ! empty($opts['force']),
 					'allow_active_artifact_cleanup' => ! empty($opts['allow_active_artifact_cleanup']),
-					'worktree_older_than'    => isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '',
+					'worktree_older_than'           => isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '',
 				)
 			);
 			if ( $plan instanceof \WP_Error ) {
@@ -456,9 +456,9 @@ class CleanupRunService {
 				$apply = $this->apply(
 					$run_id,
 					array(
-						'force' => ! empty($opts['force']),
+						'force'                         => ! empty($opts['force']),
 						'allow_active_artifact_cleanup' => ! empty($opts['allow_active_artifact_cleanup']),
-						'limit' => $limit,
+						'limit'                         => $limit,
 					)
 				);
 				if ( $apply instanceof \WP_Error ) {

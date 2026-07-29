@@ -94,6 +94,7 @@ final class ProcessRunner {
 	}
 
 	/**
+	 * @param  string|list<string>    $command
 	 * @param  array<string,mixed> $options
 	 * @param  callable|null       $on_output
 	 * @param  array<string,mixed>|null $env
@@ -146,7 +147,7 @@ final class ProcessRunner {
 			}
 
 			if ( null !== $deadline && microtime(true) >= $deadline ) {
-				$remaining = self::terminate_timed_out_process($process, $pipes, $output, $stdout, $stderr, (int) ( $status['pid'] ?? 0 ), $uses_process_group);
+				$remaining = self::terminate_timed_out_process($process, $pipes, $output, $stdout, $stderr, (int) $status['pid'], $uses_process_group);
 				return self::error(
 					$options,
 					sprintf('Process command timed out after %d second(s).', $timeout_seconds),
@@ -250,10 +251,10 @@ final class ProcessRunner {
 		if ( self::is_windows() && $pid > 0 ) {
 			// taskkill's /T removes descendants that inherited the process pipes.
 			$taskkill = self::terminate_windows_process_tree($pid);
-			$cleanup = array(
-				'containment' => 'windows_process_tree',
-				'verified'    => $taskkill['success'],
-				'attempts'    => 1,
+			$cleanup  = array(
+				'containment'        => 'windows_process_tree',
+				'verified'           => $taskkill['success'],
+				'attempts'           => 1,
 				'taskkill_exit_code' => $taskkill['exit_code'],
 			);
 		} elseif ( $uses_process_group && $pid > 0 && function_exists('posix_kill') ) {
@@ -296,9 +297,9 @@ final class ProcessRunner {
 		proc_close($process);
 
 		return array(
-			'output' => $output,
-			'stdout' => $stdout,
-			'stderr' => $stderr,
+			'output'  => $output,
+			'stdout'  => $stdout,
+			'stderr'  => $stderr,
 			'cleanup' => $cleanup,
 		);
 	}
@@ -307,19 +308,28 @@ final class ProcessRunner {
 	 * Put timed POSIX commands in a session of their own so descendants cannot
 	 * keep the command's pipes alive after the timeout owner exits.
 	 *
-	 * @param string|array<int,string> $command Command to execute.
-	 * @return array{command: string|array<int,string>, uses_process_group: bool}
+	 * @param string|list<string> $command Command to execute.
+	 * @return array{command: string|list<string>, uses_process_group: bool}
 	 */
 	private static function command_with_process_group( string|array $command, int $timeout_seconds ): array {
 		if ( $timeout_seconds <= 0 || self::is_windows() || null === self::setsid_command() ) {
-			return array( 'command' => $command, 'uses_process_group' => false );
+			return array(
+				'command'            => $command,
+				'uses_process_group' => false,
+			);
 		}
 
 		if ( is_array($command) ) {
-			return array( 'command' => array_merge(array( self::setsid_command() ), $command), 'uses_process_group' => true );
+			return array(
+				'command'            => array_merge(array( self::setsid_command() ), $command),
+				'uses_process_group' => true,
+			);
 		}
 
-		return array( 'command' => array( self::setsid_command(), 'sh', '-c', $command ), 'uses_process_group' => true );
+		return array(
+			'command'            => array( self::setsid_command(), 'sh', '-c', $command ),
+			'uses_process_group' => true,
+		);
 	}
 
 	private static function setsid_command(): ?string {
@@ -344,7 +354,7 @@ final class ProcessRunner {
 		$output    = array();
 		$exit_code = 1;
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		@exec(sprintf('taskkill /PID %d /T /F', $pid), $output, $exit_code);
+		exec(sprintf('taskkill /PID %d /T /F', $pid), $output, $exit_code);
 
 		return array(
 			'success'   => 0 === $exit_code,

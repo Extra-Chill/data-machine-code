@@ -313,8 +313,8 @@ trait WorkspaceHygieneReport {
 			if ( $allow_worktree_deletion && $human_approved_deletion ) {
 				$worktree_selection                             = WorkspaceEmergencyCandidateSelector::select(
 					$worktree_candidates,
-					max(0, $target_bytes - $selection['planned_measured_recovery_bytes']),
-					max(0, $target_inodes - $selection['planned_measured_recovery_inodes']),
+					(int) max(0, $target_bytes - $selection['planned_measured_recovery_bytes']),
+					(int) max(0, $target_inodes - $selection['planned_measured_recovery_inodes']),
 					$artifact_chunk_size,
 					'size_bytes'
 				);

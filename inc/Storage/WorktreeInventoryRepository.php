@@ -173,7 +173,7 @@ class WorktreeInventoryRepository {
 	private function mutation_failure_error( string $operation ): \WP_Error {
 		global $wpdb;
 
-		$database_error = trim((string) ( $wpdb->last_error ?? '' ));
+		$database_error = trim( (string) ( $wpdb->last_error ?? '' ));
 		$database_error = SecretRedactor::redact($database_error);
 		$database_error = substr($database_error, 0, 512);
 
@@ -232,7 +232,7 @@ class WorktreeInventoryRepository {
 			return false;
 		}
 
-		$data = array(
+		$data   = array(
 			'missing_path'      => 1,
 			'last_probe_at'     => current_time('mysql', true),
 			'last_probe_status' => 'missing_path',

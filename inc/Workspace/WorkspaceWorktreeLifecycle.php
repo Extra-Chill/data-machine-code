@@ -314,7 +314,11 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error(
 				'worktree_rebase_cleanup_failed',
 				'Rebase failed and its cleanup could not be verified; refusing bootstrap until the worktree is repaired.',
-				array( 'status' => 500, 'path' => $wt_path, 'rebase' => $response )
+				array(
+					'status' => 500,
+					'path'   => $wt_path,
+					'rebase' => $response,
+				)
 			);
 		}
 

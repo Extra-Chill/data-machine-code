@@ -82,7 +82,7 @@ trait WorkspaceGitIdentityPolicy {
 			return null;
 		}
 
-		$remote     = trim((string) ($remote_result['output'] ?? ''));
+		$remote     = trim( (string) ( $remote_result['output'] ?? '' ));
 		$descriptor = GitHubRemote::descriptor($remote);
 		if ( null === $descriptor || ! function_exists('apply_filters') ) {
 			return null;
@@ -96,13 +96,16 @@ trait WorkspaceGitIdentityPolicy {
 			return new \WP_Error('invalid_git_identity_policy', 'Git identity policy must return an array with non-empty name and email values.', array( 'status' => 500 ));
 		}
 
-		$name  = trim((string) ($identity['name'] ?? ''));
-		$email = trim((string) ($identity['email'] ?? ''));
+		$name  = trim( (string) ( $identity['name'] ?? '' ));
+		$email = trim( (string) ( $identity['email'] ?? '' ));
 		if ( '' === $name || '' === $email ) {
 			return new \WP_Error('invalid_git_identity_policy', 'Git identity policy must provide non-empty name and email values.', array( 'status' => 500 ));
 		}
 
-		return array( 'name' => $name, 'email' => $email );
+		return array(
+			'name'  => $name,
+			'email' => $email,
+		);
 	}
 
 	/**
@@ -113,6 +116,6 @@ trait WorkspaceGitIdentityPolicy {
 			return '';
 		}
 
-		return trim((string) ($result['output'] ?? ''));
+		return trim( (string) ( $result['output'] ?? '' ));
 	}
 }

@@ -47,7 +47,7 @@ class CleanupRemainingWorkSummary {
 			}
 
 			if ( 'artifact_cleanup' === $type && 'applied' !== $status ) {
-				$remaining = (array) ( $evidence['partial']['remaining_artifacts'] ?? array() );
+				$remaining                                        = (array) ( $evidence['partial']['remaining_artifacts'] ?? array() );
 				$summary['remaining_reclaimable_artifact_bytes'] += 'partial' === $status
 					? array_sum(array_map(fn( $artifact ) => max(0, (int) ( $artifact['size_bytes'] ?? 0 )), $remaining))
 					: self::row_bytes($row, array( 'artifact_size_bytes', 'size_bytes' ));

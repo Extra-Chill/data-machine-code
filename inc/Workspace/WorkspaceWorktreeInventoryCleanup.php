@@ -269,9 +269,9 @@ trait WorkspaceWorktreeInventoryCleanup {
 	 * @return array<string,mixed>
 	 */
 	private function build_inventory_cleanup_no_signal_skip( array $base_row, array $wt, array $metadata ): array {
-		$liveness         = (string) ( $wt['liveness'] ?? WorktreeContextInjector::LIVENESS_UNKNOWN );
-		$liveness_reason  = (string) ( $wt['liveness_reason'] ?? '' );
-		$state            = isset($metadata['lifecycle_state']) ? WorktreeContextInjector::normalize_state( (string) $metadata['lifecycle_state']) : null;
+		$liveness        = (string) ( $wt['liveness'] ?? WorktreeContextInjector::LIVENESS_UNKNOWN );
+		$liveness_reason = (string) ( $wt['liveness_reason'] ?? '' );
+		$state           = isset($metadata['lifecycle_state']) ? WorktreeContextInjector::normalize_state( (string) $metadata['lifecycle_state']) : null;
 		if ( WorktreeCleanupCandidateClassifier::needs_lifecycle_reconciliation($metadata, $liveness) ) {
 			return array_merge(
 				$base_row, array(

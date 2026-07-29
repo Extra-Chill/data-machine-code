@@ -94,6 +94,22 @@ class WorkspaceDiskEmergencyCleanupTask extends SystemTask {
 
 		$workspace = new Workspace();
 		$result    = $workspace->workspace_disk_emergency_cleanup(array_merge($opts, array( 'dry_run' => true )));
+		if ( $result instanceof \WP_Error ) {
+			do_action(
+				'datamachine_log',
+				'error',
+				'Workspace disk emergency cleanup failed',
+				array(
+					'task'  => $this->getTaskType(),
+					'jobId' => $jobId,
+					'error' => $result->get_error_message(),
+					'code'  => $result->get_error_code(),
+				)
+			);
+			$this->failJob($jobId, $result->get_error_message());
+			return;
+		}
+
 		if ( ! empty($result['triggered']) && empty($opts['dry_run']) && ! empty($result['selected_artifact_count']) ) {
 			$result = $this->schedule_artifact_cleanup_chunks($jobId, $result, $params);
 		}
