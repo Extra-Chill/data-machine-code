@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.55.6] - 2026-07-29
+
+### Fixed
+- restore release lint gate
+
 ## [0.55.5] - 2026-07-29
 
 ### Fixed
