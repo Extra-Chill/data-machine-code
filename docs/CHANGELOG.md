@@ -2,6 +2,13 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.55.5] - 2026-07-29
+
+### Fixed
+- probe artifact processes on macOS
+- reuse compatible worktree handles
+- schedule safe workspace cleanup
+
 ## [0.55.4] - 2026-07-29
 
 ### Fixed
