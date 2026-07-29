@@ -116,7 +116,7 @@ trait WorkspaceWorktreeLifecycle {
 		$wt_path   = $this->workspace_path . '/' . $wt_handle;
 
 		if ( is_dir($wt_path) ) {
-			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
+			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task);
 		}
 
 		return WorkspaceMutationLock::with_repo(
@@ -196,7 +196,7 @@ trait WorkspaceWorktreeLifecycle {
 	): array|\WP_Error {
 		$operation_deadline = microtime(true) + self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		if ( is_dir($wt_path) ) {
-			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
+			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task);
 		}
 
 		$fetch                 = WorktreeStalenessProbe::fetch($primary_path);
@@ -294,6 +294,7 @@ trait WorkspaceWorktreeLifecycle {
 				$wt_handle,
 				$wt_path,
 				$primary_path,
+				$bootstrap,
 				$task,
 				$allow_unverified_freshness,
 				array(
@@ -412,6 +413,7 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  string      $wt_handle      Worktree handle.
 	 * @param  string      $wt_path        Worktree path.
 	 * @param  string      $primary_path   Primary checkout path.
+	 * @param  bool        $bootstrap      Whether dependency bootstrap was requested.
 	 * @param  array       $task           Optional task metadata recorded on the worktree.
 	 * @param  bool        $allow_unverified_freshness Bypass fetch-failure freshness verification.
 	 * @return array|\WP_Error
@@ -427,6 +429,7 @@ trait WorkspaceWorktreeLifecycle {
 		string $wt_handle,
 		string $wt_path,
 		string $primary_path,
+		bool $bootstrap,
 		array $task = array(),
 		bool $allow_unverified_freshness = false,
 		array $preflight = array()
@@ -629,6 +632,12 @@ trait WorkspaceWorktreeLifecycle {
 				'task_ref'    => isset( $task['task_ref'] ) ? (string) $task['task_ref'] : '',
 			)
 		);
+		$lifecycle_metadata['reuse_contract'] = array(
+			'branch'         => $branch,
+			'base_ref'       => $created_branch ? $resolved_base : 'existing_local_branch',
+			'inject_context' => $inject_context,
+			'bootstrap'      => $bootstrap,
+		);
 		$metadata_stored    = WorktreeContextInjector::store_lifecycle_metadata( $wt_handle, $lifecycle_metadata );
 		if ( is_wp_error( $metadata_stored ) ) {
 			$this->rollback_rejected_worktree( $primary_path, $wt_path, $branch, $created_branch );
@@ -667,6 +676,90 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		return $response;
+	}
+
+	/**
+	 * Reuse an exact managed handle only when its persisted contract proves it is
+	 * safe. This intentionally does not search for equivalent task candidates or
+	 * recycle terminal worktrees; those need explicit caller policy.
+	 */
+	private function reuse_existing_worktree( string $handle, string $branch, ?string $from, bool $inject_context, bool $bootstrap, array $task ): array|\WP_Error {
+		$inspection = $this->worktree_get($handle, array( 'include_status' => true, 'include_disk' => false ));
+		if ( is_wp_error($inspection) || empty($inspection['worktrees'][0]) ) {
+			return $this->worktree_reuse_refused($handle, 'inspection_failed', array(
+				'error_code' => is_wp_error($inspection) ? $inspection->get_error_code() : 'worktree_not_found',
+			));
+		}
+
+		$existing = $inspection['worktrees'][0];
+		$evidence = array(
+			'handle'   => $handle,
+			'branch'   => $existing['branch'] ?? null,
+			'head'     => $existing['head'] ?? null,
+			'dirty'    => $existing['dirty'] ?? null,
+			'unpushed' => $existing['unpushed'] ?? null,
+			'liveness' => $existing['liveness'] ?? null,
+			'task'     => $existing['task'] ?? null,
+			'metadata' => $existing['metadata'] ?? null,
+		);
+		if ( $branch !== ( $existing['branch'] ?? null ) ) {
+			return $this->worktree_reuse_refused($handle, 'branch_mismatch', $evidence + array( 'requested_branch' => $branch ));
+		}
+		if ( (int) ( $existing['dirty'] ?? 0 ) > 0 ) {
+			return $this->worktree_reuse_refused($handle, 'dirty_worktree', $evidence);
+		}
+		if ( (int) ( $existing['unpushed'] ?? 0 ) > 0 ) {
+			return $this->worktree_reuse_refused($handle, 'unpushed_commits', $evidence);
+		}
+		if ( WorktreeContextInjector::LIVENESS_LIVE === ( $existing['liveness'] ?? null ) ) {
+			return $this->worktree_reuse_refused($handle, 'live_worktree', $evidence);
+		}
+
+		$metadata = is_array($existing['metadata'] ?? null) ? $existing['metadata'] : array();
+		$contract = is_array($metadata['reuse_contract'] ?? null) ? $metadata['reuse_contract'] : array();
+		if ( array() === $contract ) {
+			return $this->worktree_reuse_refused($handle, 'reuse_contract_missing', $evidence);
+		}
+		$requested_base = null !== $from && '' !== trim($from) ? trim($from) : ( $contract['base_ref'] ?? null );
+		if ( $requested_base !== ( $contract['base_ref'] ?? null ) ) {
+			return $this->worktree_reuse_refused($handle, 'base_mismatch', $evidence + array( 'requested_base_ref' => $requested_base, 'stored_base_ref' => $contract['base_ref'] ?? null ));
+		}
+		if ( $inject_context !== (bool) ( $contract['inject_context'] ?? null ) || $bootstrap !== (bool) ( $contract['bootstrap'] ?? null ) ) {
+			return $this->worktree_reuse_refused($handle, 'runtime_incompatible', $evidence + array(
+				'requested_runtime' => array( 'inject_context' => $inject_context, 'bootstrap' => $bootstrap ),
+				'stored_runtime'    => array( 'inject_context' => $contract['inject_context'] ?? null, 'bootstrap' => $contract['bootstrap'] ?? null ),
+			));
+		}
+		if ( $this->worktree_reuse_task_identity($task) !== $this->worktree_reuse_task_identity((array) ($existing['task'] ?? array())) ) {
+			return $this->worktree_reuse_refused($handle, 'task_mismatch', $evidence + array( 'requested_task' => $task ));
+		}
+
+		return array(
+			'success'        => true,
+			'handle'         => $handle,
+			'path'           => $existing['path'],
+			'branch'         => $branch,
+			'slug'           => $this->slugify_branch($branch),
+			'created_branch' => false,
+			'reused'         => true,
+			'reuse'          => array( 'status' => 'accepted', 'reason_code' => 'exact_compatible_handle' ) + $evidence,
+			'metadata'       => $metadata,
+			'message'        => sprintf('Reused clean compatible worktree "%s" at %s.', $handle, $existing['path']),
+		);
+	}
+
+	/** @return \WP_Error Typed evidence for a non-reusable exact handle. */
+	private function worktree_reuse_refused( string $handle, string $reason_code, array $evidence ): \WP_Error {
+		return new \WP_Error(
+			'worktree_reuse_refused',
+			sprintf('Refusing to reuse worktree "%s": %s.', $handle, str_replace('_', ' ', $reason_code)),
+			array( 'status' => 409, 'reuse' => array( 'status' => 'refused', 'reason_code' => $reason_code ) + $evidence )
+		);
+	}
+
+	/** @return string Stable task identity used only to guard exact-handle reuse. */
+	private function worktree_reuse_task_identity( array $task ): string {
+		return (string) ( $task['task_url'] ?? $task['task_ref'] ?? '' );
 	}
 
 	/**
