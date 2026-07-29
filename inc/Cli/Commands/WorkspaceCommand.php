@@ -4069,7 +4069,7 @@ class WorkspaceCommand extends BaseCommand {
 		// bounded local lookup. It must not depend on registered Abilities.
 		if ( 'get' === $operation ) {
 			if ( empty($args[1]) ) {
-				WP_CLI::error('Usage: worktree get <handle> [--with-status] [--format=json]');
+				WP_CLI::error('Usage: worktree get <handle|canonical-path> [--with-status] [--format=json]');
 				return;
 			}
 			$result = ( new Workspace() )->worktree_get(
@@ -4223,7 +4223,7 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'get':
 				if ( empty($args[1]) ) {
-					WP_CLI::error('Usage: worktree get <handle> [--with-status] [--format=json]');
+					WP_CLI::error('Usage: worktree get <handle|canonical-path> [--with-status] [--format=json]');
 					return;
 				}
 				$input['handle']         = (string) $args[1];
@@ -4325,9 +4325,10 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 
 			case 'cleanup-artifacts':
-				$input['dry_run']                       = ! empty($assoc_args['dry-run']);
-				$input['force']                         = ! empty($assoc_args['force']);
-				$input['allow_active_artifact_cleanup'] = ! empty($assoc_args['allow-active-artifact-cleanup']);
+				$input['dry_run']                         = ! empty($assoc_args['dry-run']);
+				$input['force']                           = ! empty($assoc_args['force']);
+				$input['allow_active_artifact_cleanup']   = ! empty($assoc_args['allow-active-artifact-cleanup']);
+				$input['allow_unavailable_process_probe'] = ! empty($assoc_args['allow-unavailable-process-probe']);
 				if ( isset($assoc_args['limit']) ) {
 					$input['limit'] = (int) $assoc_args['limit'];
 				}

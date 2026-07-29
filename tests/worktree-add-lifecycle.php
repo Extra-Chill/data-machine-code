@@ -385,6 +385,33 @@ try {
 	assert_true('https://example.test/issues/environment' === ( $wpdb->rows['homeboy@audit-primitives-environment-tracker']['task_url'] ?? '' ), 'environment tracker metadata was not persisted');
 	putenv('DATAMACHINE_TASK_URL');
 
+	$reusable = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	assert_true(! is_wp_error($reusable), is_wp_error($reusable) ? $reusable->get_error_message() : 'reuse fixture creation failed');
+	$reuse_handle      = 'homeboy@idempotent-reuse';
+	$reuse_created_at  = $wpdb->rows[$reuse_handle]['created_at'] ?? null;
+	$live_reuse_refusal = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	assert_true(is_wp_error($live_reuse_refusal) && 'worktree_reuse_refused' === $live_reuse_refusal->get_error_code(), 'live worktree reuse did not fail closed');
+	assert_true('live_worktree' === ( $live_reuse_refusal->get_error_data()['reuse']['reason_code'] ?? null ), 'live worktree refusal lacked typed reuse evidence');
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata($reuse_handle, array( 'last_seen_at' => gmdate('c', time() - 90000) ));
+	$reused = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	assert_true(! is_wp_error($reused), is_wp_error($reused) ? $reused->get_error_message() : 'clean compatible worktree was not reused');
+	assert_true(true === ( $reused['reused'] ?? false ) && 'exact_compatible_handle' === ( $reused['reuse']['reason_code'] ?? null ), 'exact reuse did not return accepted evidence');
+	assert_true($reuse_created_at === ( $wpdb->rows[$reuse_handle]['created_at'] ?? null ), 'reuse rewrote durable lifecycle metadata');
+	assert_true('https://example.test/issues/reuse' === ( $wpdb->rows[$reuse_handle]['task_url'] ?? '' ), 'reuse rewrote durable task metadata');
+	file_put_contents($reusable['path'] . '/reuse-dirty.txt', "dirty\n");
+	$dirty_reuse_refusal = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	assert_true(is_wp_error($dirty_reuse_refusal) && 'dirty_worktree' === ( $dirty_reuse_refusal->get_error_data()['reuse']['reason_code'] ?? null ), 'dirty worktree reuse did not fail closed');
+	unlink($reusable['path'] . '/reuse-dirty.txt');
+	$runtime_reuse_refusal = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', true, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	assert_true(is_wp_error($runtime_reuse_refusal) && 'runtime_incompatible' === ( $runtime_reuse_refusal->get_error_data()['reuse']['reason_code'] ?? null ), 'incompatible context runtime reuse did not fail closed');
+	$base_reuse_refusal = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/other-base', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	assert_true(is_wp_error($base_reuse_refusal) && 'base_mismatch' === ( $base_reuse_refusal->get_error_data()['reuse']['reason_code'] ?? null ), 'mismatched base reuse did not fail closed');
+	run_command('git push -u origin idempotent-reuse', $reusable['path']);
+	file_put_contents($reusable['path'] . '/reuse-commit.txt', "unpushed\n");
+	run_command('git add reuse-commit.txt && git commit -m reuse-unpushed', $reusable['path']);
+	$unpushed_reuse_refusal = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	assert_true(is_wp_error($unpushed_reuse_refusal) && 'unpushed_commits' === ( $unpushed_reuse_refusal->get_error_data()['reuse']['reason_code'] ?? null ), 'unpushed worktree reuse did not fail closed');
+
 	$handle = 'homeboy@audit-primitives-20260616';
 
 	file_put_contents($result['path'] . '/untracked.txt', "untracked\n");
@@ -446,17 +473,32 @@ try {
 		mkdir($unrelated, 0777, true);
 		file_put_contents($unrelated . '/.git', 'gitdir: /missing/' . $index);
 	}
+	$fake_bin = $workspace_root . '/fake-bin';
+	mkdir($fake_bin, 0777, true);
+	$git_probe_log = $workspace_root . '/git-probe.log';
+	$real_git      = trim((string) shell_exec('command -v git'));
+	assert_true('' !== $real_git, 'test fixture could not resolve git');
+	file_put_contents($fake_bin . '/git', "#!/bin/sh\nprintf '%s\\n' \"\$*\" >> " . escapeshellarg($git_probe_log) . "\nexec " . escapeshellarg($real_git) . " \"\$@\"\n");
+	chmod($fake_bin . '/git', 0755);
+	$original_path = getenv('PATH');
+	putenv('PATH=' . $fake_bin . ':' . ( false === $original_path ? '' : $original_path ));
 	$started       = microtime(true);
-	$targeted_large = $workspace->worktree_get($handle, array( 'include_status' => true, 'include_disk' => false ));
+	$targeted_large = $workspace->worktree_get($result['path'], array( 'include_status' => true, 'include_disk' => false ));
 	$elapsed       = microtime(true) - $started;
+	putenv('PATH=' . ( false === $original_path ? '' : $original_path ));
 	assert_true(! is_wp_error($targeted_large), 'targeted worktree_get failed in a large workspace fixture');
 	assert_true(1 === count($targeted_large['worktrees'] ?? array()), 'targeted worktree_get returned unrelated worktrees');
+	assert_true($handle === ( $targeted_large['worktrees'][0]['handle'] ?? '' ), 'canonical-path worktree_get returned the wrong handle');
+	assert_true($result['path'] === ( $targeted_large['worktrees'][0]['path'] ?? '' ), 'canonical-path worktree_get did not preserve the canonical path');
 	assert_true($elapsed < 3.0, sprintf('targeted worktree_get scanned unrelated workspace entries: %.3fs', $elapsed));
+	$git_probes = array_values(array_filter(file($git_probe_log, FILE_IGNORE_NEW_LINES) ?: array(), static fn( string $probe ): bool => str_starts_with($probe, '-C ')));
+	assert_true(5 === count($git_probes), 'targeted worktree_get did not perform its bounded identity and safety probes');
+	foreach ( $git_probes as $probe ) {
+		assert_true(str_starts_with($probe, '-C ' . $result['path'] . ' '), 'targeted worktree_get probed an unrelated worktree: ' . $probe);
+	}
 
 	// Every targeted Git probe has a finite deadline and identifies the phase
 	// that blocked without consulting another checkout.
-	$fake_bin = $workspace_root . '/fake-bin';
-	mkdir($fake_bin, 0777, true);
 	file_put_contents($fake_bin . '/git', "#!/bin/sh\nsleep 10\n");
 	chmod($fake_bin . '/git', 0755);
 	$original_path = getenv('PATH');

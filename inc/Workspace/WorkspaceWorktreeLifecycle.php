@@ -116,7 +116,7 @@ trait WorkspaceWorktreeLifecycle {
 		$wt_path   = $this->workspace_path . '/' . $wt_handle;
 
 		if ( is_dir($wt_path) ) {
-			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
+			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task);
 		}
 
 		return WorkspaceMutationLock::with_repo(
@@ -196,7 +196,7 @@ trait WorkspaceWorktreeLifecycle {
 	): array|\WP_Error {
 		$operation_deadline = microtime(true) + self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		if ( is_dir($wt_path) ) {
-			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
+			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task);
 		}
 
 		$fetch                 = WorktreeStalenessProbe::fetch($primary_path);
@@ -294,6 +294,7 @@ trait WorkspaceWorktreeLifecycle {
 				$wt_handle,
 				$wt_path,
 				$primary_path,
+				$bootstrap,
 				$task,
 				$allow_unverified_freshness,
 				array(
@@ -416,6 +417,7 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  string      $wt_handle      Worktree handle.
 	 * @param  string      $wt_path        Worktree path.
 	 * @param  string      $primary_path   Primary checkout path.
+	 * @param  bool        $bootstrap      Whether dependency bootstrap was requested.
 	 * @param  array       $task           Optional task metadata recorded on the worktree.
 	 * @param  bool        $allow_unverified_freshness Bypass fetch-failure freshness verification.
 	 * @return array|\WP_Error
@@ -431,6 +433,7 @@ trait WorkspaceWorktreeLifecycle {
 		string $wt_handle,
 		string $wt_path,
 		string $primary_path,
+		bool $bootstrap,
 		array $task = array(),
 		bool $allow_unverified_freshness = false,
 		array $preflight = array()
@@ -621,7 +624,7 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		}
 
-		$lifecycle_metadata = WorktreeContextInjector::build_lifecycle_metadata(
+		$lifecycle_metadata                   = WorktreeContextInjector::build_lifecycle_metadata(
 			array(
 				'handle'      => $wt_handle,
 				'path'        => $wt_path,
@@ -633,7 +636,13 @@ trait WorkspaceWorktreeLifecycle {
 				'task_ref'    => isset( $task['task_ref'] ) ? (string) $task['task_ref'] : '',
 			)
 		);
-		$metadata_stored    = WorktreeContextInjector::store_lifecycle_metadata( $wt_handle, $lifecycle_metadata );
+		$lifecycle_metadata['reuse_contract'] = array(
+			'branch'         => $branch,
+			'base_ref'       => $created_branch ? $resolved_base : 'existing_local_branch',
+			'inject_context' => $inject_context,
+			'bootstrap'      => $bootstrap,
+		);
+		$metadata_stored                      = WorktreeContextInjector::store_lifecycle_metadata( $wt_handle, $lifecycle_metadata );
 		if ( is_wp_error( $metadata_stored ) ) {
 			$this->rollback_rejected_worktree( $primary_path, $wt_path, $branch, $created_branch );
 			return $metadata_stored;
@@ -671,6 +680,113 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		return $response;
+	}
+
+	/**
+	 * Reuse an exact managed handle only when its persisted contract proves it is
+	 * safe. This intentionally does not search for equivalent task candidates or
+	 * recycle terminal worktrees; those need explicit caller policy.
+	 *
+	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
+	 */
+	private function reuse_existing_worktree( string $handle, string $branch, ?string $from, bool $inject_context, bool $bootstrap, array $task ): array|\WP_Error {
+		$inspection = $this->worktree_get($handle, array(
+			'include_status' => true,
+			'include_disk'   => false,
+		));
+		if ( is_wp_error($inspection) || empty($inspection['worktrees'][0]) ) {
+			return $this->worktree_reuse_refused($handle, 'inspection_failed', array(
+				'error_code' => is_wp_error($inspection) ? $inspection->get_error_code() : 'worktree_not_found',
+			));
+		}
+
+		$existing = $inspection['worktrees'][0];
+		$evidence = array(
+			'handle'   => $handle,
+			'branch'   => $existing['branch'] ?? null,
+			'head'     => $existing['head'] ?? null,
+			'dirty'    => $existing['dirty'] ?? null,
+			'unpushed' => $existing['unpushed'] ?? null,
+			'liveness' => $existing['liveness'] ?? null,
+			'task'     => $existing['task'] ?? null,
+			'metadata' => $existing['metadata'] ?? null,
+		);
+		if ( ( $existing['branch'] ?? null ) !== $branch ) {
+			return $this->worktree_reuse_refused($handle, 'branch_mismatch', $evidence + array( 'requested_branch' => $branch ));
+		}
+		if ( (int) ( $existing['dirty'] ?? 0 ) > 0 ) {
+			return $this->worktree_reuse_refused($handle, 'dirty_worktree', $evidence);
+		}
+		if ( (int) ( $existing['unpushed'] ?? 0 ) > 0 ) {
+			return $this->worktree_reuse_refused($handle, 'unpushed_commits', $evidence);
+		}
+		if ( WorktreeContextInjector::LIVENESS_LIVE === ( $existing['liveness'] ?? null ) ) {
+			return $this->worktree_reuse_refused($handle, 'live_worktree', $evidence);
+		}
+
+		$metadata = is_array($existing['metadata'] ?? null) ? $existing['metadata'] : array();
+		$contract = is_array($metadata['reuse_contract'] ?? null) ? $metadata['reuse_contract'] : array();
+		if ( array() === $contract ) {
+			return $this->worktree_reuse_refused($handle, 'reuse_contract_missing', $evidence);
+		}
+		$requested_base = null !== $from && '' !== trim($from) ? trim($from) : ( $contract['base_ref'] ?? null );
+		if ( ( $contract['base_ref'] ?? null ) !== $requested_base ) {
+			return $this->worktree_reuse_refused($handle, 'base_mismatch', $evidence + array(
+				'requested_base_ref' => $requested_base,
+				'stored_base_ref'    => $contract['base_ref'] ?? null,
+			));
+		}
+		if ( (bool) ( $contract['inject_context'] ?? null ) !== $inject_context || (bool) ( $contract['bootstrap'] ?? null ) !== $bootstrap ) {
+			return $this->worktree_reuse_refused($handle, 'runtime_incompatible', $evidence + array(
+				'requested_runtime' => array(
+					'inject_context' => $inject_context,
+					'bootstrap'      => $bootstrap,
+				),
+				'stored_runtime'    => array(
+					'inject_context' => $contract['inject_context'] ?? null,
+					'bootstrap'      => $contract['bootstrap'] ?? null,
+				),
+			));
+		}
+		if ( $this->worktree_reuse_task_identity($task) !== $this->worktree_reuse_task_identity( (array) ( $existing['task'] ?? array() )) ) {
+			return $this->worktree_reuse_refused($handle, 'task_mismatch', $evidence + array( 'requested_task' => $task ));
+		}
+
+		return array(
+			'success'        => true,
+			'handle'         => $handle,
+			'path'           => $existing['path'],
+			'branch'         => $branch,
+			'slug'           => $this->slugify_branch($branch),
+			'created_branch' => false,
+			'reused'         => true,
+			'reuse'          => array(
+				'status'      => 'accepted',
+				'reason_code' => 'exact_compatible_handle',
+			) + $evidence,
+			'metadata'       => $metadata,
+			'message'        => sprintf('Reused clean compatible worktree "%s" at %s.', $handle, $existing['path']),
+		);
+	}
+
+	/** @return \WP_Error Typed evidence for a non-reusable exact handle. */
+	private function worktree_reuse_refused( string $handle, string $reason_code, array $evidence ): \WP_Error {
+		return new \WP_Error(
+			'worktree_reuse_refused',
+			sprintf('Refusing to reuse worktree "%s": %s.', $handle, str_replace('_', ' ', $reason_code)),
+			array(
+				'status' => 409,
+				'reuse'  => array(
+					'status'      => 'refused',
+					'reason_code' => $reason_code,
+				) + $evidence,
+			)
+		);
+	}
+
+	/** @return string Stable task identity used only to guard exact-handle reuse. */
+	private function worktree_reuse_task_identity( array $task ): string {
+		return (string) ( $task['task_url'] ?? $task['task_ref'] ?? '' );
 	}
 
 	/**
@@ -769,20 +885,45 @@ trait WorkspaceWorktreeLifecycle {
 	/**
 	 * Resolve one local worktree without enumerating workspace primaries.
 	 *
+	 * `$handle_or_path` accepts an exact workspace handle or an exact canonical
+	 * path to a direct child of the canonical workspace root.
+	 *
 	 * @param array{include_status?: bool, include_disk?: bool} $opts Probe options.
 	 * @return array{success: bool, worktrees: array, fields_skipped: array<int,string>}|\WP_Error
 	 */
-	public function worktree_get( string $handle, array $opts = array() ): array|\WP_Error {
-		$parsed = $this->parse_handle($handle);
-		$path   = $this->workspace_path . '/' . $parsed['dir_name'];
-		if ( '' === $parsed['dir_name'] || ! is_dir($path) || ! file_exists($path . '/.git') ) {
+	public function worktree_get( string $handle_or_path, array $opts = array() ): array|\WP_Error {
+		$target = trim($handle_or_path);
+		$path   = '';
+		$parsed = null;
+
+		if ( str_starts_with($target, '/') ) {
+			$workspace_path = realpath($this->workspace_path);
+			$path           = realpath($target);
+			if ( false !== $workspace_path && false !== $path && $target === $path && dirname($path) === $workspace_path ) {
+				$candidate = basename($path);
+				$parsed    = $this->parse_handle($candidate);
+				if ( $candidate !== $parsed['dir_name'] ) {
+					$parsed = null;
+				}
+			}
+		} else {
+			$parsed = $this->parse_handle($target);
+			if ( $target !== $parsed['dir_name'] ) {
+				$parsed = null;
+			} else {
+				$path = $this->workspace_path . '/' . $parsed['dir_name'];
+			}
+		}
+
+		if ( ! is_array($parsed) || '' === $parsed['dir_name'] || false === $path || ! is_dir($path) || ! file_exists($path . '/.git') ) {
+			$not_found_handle = is_array($parsed) ? $parsed['dir_name'] : $target;
 			return new \WP_Error(
 				'worktree_not_found',
-				sprintf('Worktree "%s" does not exist on disk.', $parsed['dir_name']),
+				sprintf('Worktree "%s" does not exist on disk.', $not_found_handle),
 				array(
 					'status' => 404,
-					'handle' => $parsed['dir_name'],
-					'path'   => $path,
+					'handle' => $not_found_handle,
+					'path'   => '' !== $path ? $path : $target,
 				)
 			);
 		}

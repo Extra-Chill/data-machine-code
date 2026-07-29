@@ -2,6 +2,29 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.55.5] - 2026-07-29
+
+### Fixed
+- probe artifact processes on macOS
+- reuse compatible worktree handles
+- schedule safe workspace cleanup
+
+## [0.55.4] - 2026-07-29
+
+### Fixed
+- bound emergency cleanup task results
+
+## [0.55.3] - 2026-07-28
+
+### Fixed
+- keep workspace lock inspection available under contention
+- bound workspace mutation admission under SQLite contention
+
+## [0.55.2] - 2026-07-28
+
+### Fixed
+- resolve managed worktrees by path
+
 ## [0.55.1] - 2026-07-28
 
 ### Fixed

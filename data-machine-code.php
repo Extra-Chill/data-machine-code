@@ -3,7 +3,7 @@
  * Plugin Name: Data Machine Code
  * Plugin URI: https://github.com/Extra-Chill/data-machine-code
  * Description: Provides the workspace, git, and GitHub coding tools a coding agent uses to make tracked, reviewable changes — whether the agent runtime runs on the host or inside a Codebox sandbox. Owns AGENTS.md and the workspace area. Activation is the declarative "a coding agent lives here" signal.
- * Version: 0.55.1
+ * Version: 0.55.5
  * Requires at least: 6.9
  * Requires PHP: 8.2
  * Author: Chris Huber, extrachill
@@ -17,7 +17,7 @@ if ( ! defined('WPINC') ) {
 	die;
 }
 
-define( 'DATAMACHINE_CODE_VERSION', '0.55.1' );
+define( 'DATAMACHINE_CODE_VERSION', '0.55.5' );
 define( 'DATAMACHINE_CODE_PATH', plugin_dir_path( __FILE__ ) );
 define( 'DATAMACHINE_CODE_URL', plugin_dir_url( __FILE__ ) );
 
@@ -401,6 +401,7 @@ add_filter(
 		$tasks['worktree_cleanup']                 = \DataMachineCode\Tasks\WorktreeCleanupTask::class;
 		$tasks['workspace_disk_emergency_cleanup'] = \DataMachineCode\Tasks\WorkspaceDiskEmergencyCleanupTask::class;
 		$tasks['workspace_retention_cleanup']      = \DataMachineCode\Tasks\WorkspaceRetentionCleanupTask::class;
+		$tasks['workspace_safe_cleanup']           = \DataMachineCode\Tasks\WorkspaceSafeCleanupTask::class;
 		$tasks['workspace_hygiene_report']         = \DataMachineCode\Tasks\WorkspaceHygieneReportTask::class;
 		return $tasks;
 	}
@@ -452,6 +453,7 @@ add_filter(
 				'artifact_chunk_size' => 10,
 			),
 		);
+		$schedules['workspace_safe_cleanup']           = \DataMachineCode\Tasks\WorkspaceSafeCleanupTask::recurringSchedule();
 		$schedules['workspace_hygiene_report']         = array(
 			'task_type'       => 'workspace_hygiene_report',
 			'interval'        => 'weekly',
