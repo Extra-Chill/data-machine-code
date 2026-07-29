@@ -36,21 +36,21 @@ trait WorkspaceCleanupPlan {
 	public function workspace_cleanup_plan( array $opts = array() ): array|\WP_Error {
 		$mode   = (string) ( $opts['mode'] ?? 'cleanup_plan' );
 		$inputs = array(
-			'mode'                   => $mode,
-			'force_artifact_cleanup' => ! empty($opts['force_artifact_cleanup']),
+			'mode'                          => $mode,
+			'force_artifact_cleanup'        => ! empty($opts['force_artifact_cleanup']),
 			'allow_active_artifact_cleanup' => ! empty($opts['allow_active_artifact_cleanup']),
-			'include_artifacts'      => array_key_exists('include_artifacts', $opts) ? (bool) $opts['include_artifacts'] : true,
-			'include_worktrees'      => array_key_exists('include_worktrees', $opts) ? (bool) $opts['include_worktrees'] : true,
-			'include_resolvers'      => ! empty($opts['include_resolvers']),
-			'top_n'                  => isset($opts['top_n']) ? max(1, min(50, (int) $opts['top_n'])) : 10,
-			'limit'                  => isset($opts['limit']) ? max(1, (int) $opts['limit']) : self::CLEANUP_PLAN_DEFAULT_LIMIT,
-			'offset'                 => isset($opts['offset']) ? max(0, (int) $opts['offset']) : 0,
-			'until_budget'           => isset($opts['until_budget']) && '' !== trim( (string) $opts['until_budget']) ? trim( (string) $opts['until_budget']) : self::CLEANUP_PLAN_DEFAULT_BUDGET,
-			'full_workspace'         => ! empty($opts['full_workspace']),
-			'worktree_older_than'    => isset($opts['worktree_older_than']) ? trim( (string) $opts['worktree_older_than']) : '',
-			'worktree_sort'          => isset($opts['worktree_sort']) && '' !== trim( (string) $opts['worktree_sort']) ? trim( (string) $opts['worktree_sort']) : '',
-			'artifact_sort'          => isset($opts['artifact_sort']) && '' !== trim( (string) $opts['artifact_sort']) ? trim( (string) $opts['artifact_sort']) : ( 'artifacts' === $mode ? 'size' : '' ),
-			'worktree_stale_only'    => ! empty($opts['worktree_stale_only']),
+			'include_artifacts'             => array_key_exists('include_artifacts', $opts) ? (bool) $opts['include_artifacts'] : true,
+			'include_worktrees'             => array_key_exists('include_worktrees', $opts) ? (bool) $opts['include_worktrees'] : true,
+			'include_resolvers'             => ! empty($opts['include_resolvers']),
+			'top_n'                         => isset($opts['top_n']) ? max(1, min(50, (int) $opts['top_n'])) : 10,
+			'limit'                         => isset($opts['limit']) ? max(1, (int) $opts['limit']) : self::CLEANUP_PLAN_DEFAULT_LIMIT,
+			'offset'                        => isset($opts['offset']) ? max(0, (int) $opts['offset']) : 0,
+			'until_budget'                  => isset($opts['until_budget']) && '' !== trim( (string) $opts['until_budget']) ? trim( (string) $opts['until_budget']) : self::CLEANUP_PLAN_DEFAULT_BUDGET,
+			'full_workspace'                => ! empty($opts['full_workspace']),
+			'worktree_older_than'           => isset($opts['worktree_older_than']) ? trim( (string) $opts['worktree_older_than']) : '',
+			'worktree_sort'                 => isset($opts['worktree_sort']) && '' !== trim( (string) $opts['worktree_sort']) ? trim( (string) $opts['worktree_sort']) : '',
+			'artifact_sort'                 => isset($opts['artifact_sort']) && '' !== trim( (string) $opts['artifact_sort']) ? trim( (string) $opts['artifact_sort']) : ( 'artifacts' === $mode ? 'size' : '' ),
+			'worktree_stale_only'           => ! empty($opts['worktree_stale_only']),
 		);
 
 		$artifact_plan = array(
@@ -61,14 +61,14 @@ trait WorkspaceCleanupPlan {
 		if ( $inputs['include_artifacts'] ) {
 			$artifact_plan = $this->worktree_cleanup_artifacts(
 				array(
-					'dry_run'        => true,
-					'force'          => $inputs['force_artifact_cleanup'],
+					'dry_run'                       => true,
+					'force'                         => $inputs['force_artifact_cleanup'],
 					'allow_active_artifact_cleanup' => $inputs['allow_active_artifact_cleanup'],
-					'full_workspace' => $inputs['full_workspace'],
-					'limit'          => $inputs['limit'],
-					'offset'         => $inputs['offset'],
-					'sort'           => $inputs['artifact_sort'],
-					'older_than'     => $inputs['worktree_older_than'],
+					'full_workspace'                => $inputs['full_workspace'],
+					'limit'                         => $inputs['limit'],
+					'offset'                        => $inputs['offset'],
+					'sort'                          => $inputs['artifact_sort'],
+					'older_than'                    => $inputs['worktree_older_than'],
 				)
 			);
 			if ( $artifact_plan instanceof \WP_Error ) {
@@ -135,14 +135,14 @@ trait WorkspaceCleanupPlan {
 			'workspace_path' => $this->workspace_path,
 			'inputs'         => $inputs,
 			'safety_policy'  => array(
-				'applies_inline'               => false,
-				'force_artifact_cleanup'       => $inputs['force_artifact_cleanup'],
+				'applies_inline'                => false,
+				'force_artifact_cleanup'        => $inputs['force_artifact_cleanup'],
 				'allow_active_artifact_cleanup' => $inputs['allow_active_artifact_cleanup'],
-				'artifact_age_filter'          => is_array($artifact_plan['age_filter'] ?? null) ? $artifact_plan['age_filter'] : null,
-				'artifact_cleanup'             => 'apply-plan must freshly revalidate the reviewed age gate, profile-derived paths, authoritative liveness before each artifact, and active process use once per row immediately before mutation',
-				'worktree_removal'             => 'apply-plan must re-run dirty, unpushed, identity, lifecycle, containment, and primary protections before deletion',
-				'resolver'                     => 'resolver rows may gather merge signals but cannot delete worktrees',
-				'destructive_rows_need_review' => true,
+				'artifact_age_filter'           => is_array($artifact_plan['age_filter'] ?? null) ? $artifact_plan['age_filter'] : null,
+				'artifact_cleanup'              => 'apply-plan must freshly revalidate the reviewed age gate, profile-derived paths, authoritative liveness before each artifact, and active process use once per row immediately before mutation',
+				'worktree_removal'              => 'apply-plan must re-run dirty, unpushed, identity, lifecycle, containment, and primary protections before deletion',
+				'resolver'                      => 'resolver rows may gather merge signals but cannot delete worktrees',
+				'destructive_rows_need_review'  => true,
 			),
 			'plans'          => array(
 				'artifact_cleanup' => $artifact_plan,

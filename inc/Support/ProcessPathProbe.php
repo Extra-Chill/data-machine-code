@@ -1,4 +1,5 @@
 <?php
+// phpcs:disable Generic.Files.OneObjectStructurePerFile.MultipleFound -- The interface and its small provider implementations form one process-probe contract.
 /**
  * Portable process path probes.
  *
@@ -28,7 +29,7 @@ final class ProcfsProcessPathProbe implements ProcessPathProbeInterface {
 	public function __construct(private $scanner) {}
 
 	public function snapshot(): array {
-		return ($this->scanner)();
+		return ( $this->scanner )();
 	}
 }
 
@@ -40,7 +41,11 @@ final class UnsupportedProcessPathProbe implements ProcessPathProbeInterface {
 		return array(
 			'status'      => 'unsupported',
 			'records'     => array(),
-			'diagnostics' => array( 'reason' => 'process_path_probe_unsupported', 'platform' => $this->platform, 'remediation' => 'Use a supported host process-path provider before artifact cleanup.' ),
+			'diagnostics' => array(
+				'reason'      => 'process_path_probe_unsupported',
+				'platform'    => $this->platform,
+				'remediation' => 'Use a supported host process-path provider before artifact cleanup.',
+			),
 		);
 	}
 }
@@ -53,17 +58,25 @@ final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
 	public function snapshot(): array {
 		$argv = array( 'lsof', '-n', '-P', '-Fpcfn0' );
 		if ( is_callable($this->runner) ) {
-			$result = ($this->runner)($argv);
+			$result = ( $this->runner )($argv);
 		} else {
 			$command = CommandSpec::from_argv($argv);
-			$result  = $command instanceof \WP_Error ? $command : ProcessRunner::run($command, array( 'timeout_seconds' => 2, 'output_cap_bytes' => 1048576, 'error_as_result' => true ));
+			$result  = $command instanceof \WP_Error ? $command : ProcessRunner::run($command, array(
+				'timeout_seconds'  => 2,
+				'output_cap_bytes' => 1048576,
+				'error_as_result'  => true,
+			));
 		}
 		if ( $result instanceof \WP_Error || ! is_array($result) || empty($result['success']) ) {
 			$data = $result instanceof \WP_Error ? (array) $result->get_error_data() : (array) $result;
 			return array(
 				'status'      => 'uncertain',
 				'records'     => array(),
-				'diagnostics' => array( 'reason' => ! empty($data['timeout']) ? 'process_path_probe_timeout' : 'process_path_probe_failed', 'provider' => 'lsof', 'details' => $data ),
+				'diagnostics' => array(
+					'reason'   => ! empty($data['timeout']) ? 'process_path_probe_timeout' : 'process_path_probe_failed',
+					'provider' => 'lsof',
+					'details'  => $data,
+				),
 			);
 		}
 
@@ -71,7 +84,7 @@ final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
 		$pid     = 0;
 		$command = '';
 		$fd      = '';
-		foreach ( explode("\0", (string) ($result['output'] ?? '')) as $field ) {
+		foreach ( explode("\0", (string) ( $result['output'] ?? '' )) as $field ) {
 			$field = ltrim($field, "\n");
 			if ( '' === $field ) {
 				continue;
@@ -97,7 +110,10 @@ final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
 		return array(
 			'status'      => 'available',
 			'records'     => $records,
-			'diagnostics' => array( 'provider' => 'lsof', 'path_records' => count($records) ),
+			'diagnostics' => array(
+				'provider'     => 'lsof',
+				'path_records' => count($records),
+			),
 		);
 	}
 }

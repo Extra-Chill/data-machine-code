@@ -16,9 +16,9 @@ defined('ABSPATH') || exit;
 
 class WorkspaceDiskEmergencyCleanupTask extends SystemTask {
 
-	private const MAX_DURABLE_REASONS = 10;
+	private const MAX_DURABLE_REASONS      = 10;
 	private const MAX_DURABLE_REASON_BYTES = 120;
-	private const MAX_DURABLE_JOB_IDS = 25;
+	private const MAX_DURABLE_JOB_IDS      = 25;
 	/**
 	 * PluginSettings key that gates threshold-triggered emergency cleanup.
 	 */
@@ -95,6 +95,22 @@ class WorkspaceDiskEmergencyCleanupTask extends SystemTask {
 
 		$workspace = new Workspace();
 		$result    = $workspace->workspace_disk_emergency_cleanup(array_merge($opts, array( 'dry_run' => true )));
+		if ( $result instanceof \WP_Error ) {
+			do_action(
+				'datamachine_log',
+				'error',
+				'Workspace disk emergency cleanup failed',
+				array(
+					'task'  => $this->getTaskType(),
+					'jobId' => $jobId,
+					'error' => $result->get_error_message(),
+					'code'  => $result->get_error_code(),
+				)
+			);
+			$this->failJob($jobId, $result->get_error_message());
+			return;
+		}
+
 		if ( ! empty($result['triggered']) && empty($opts['dry_run']) && ! empty($result['selected_artifact_count']) ) {
 			$result = $this->schedule_artifact_cleanup_chunks($jobId, $result, $params);
 		}
@@ -115,9 +131,9 @@ class WorkspaceDiskEmergencyCleanupTask extends SystemTask {
 			return;
 		}
 
-		$budget  = (array) ( $result['disk_budget'] ?? array() );
-		$summary = (array) ( $result['scheduled_summary'] ?? array() );
-		$message = ! empty($result['triggered'])
+		$budget         = (array) ( $result['disk_budget'] ?? array() );
+		$summary        = (array) ( $result['scheduled_summary'] ?? array() );
+		$message        = ! empty($result['triggered'])
 		? sprintf(
 			'Workspace disk emergency cleanup triggered (%s): scheduled %d artifact chunk(s) covering %d artifact row(s); action_required=%s.',
 			implode(',', (array) ( $budget['trigger_reasons'] ?? array() )),
@@ -153,34 +169,34 @@ class WorkspaceDiskEmergencyCleanupTask extends SystemTask {
 	 * @return array<string,mixed>
 	 */
 	private function compact_durable_report( array $result ): array {
-		$budget   = (array) ( $result['disk_budget'] ?? array() );
-		$summary  = (array) ( $result['scheduled_summary'] ?? array() );
+		$budget    = (array) ( $result['disk_budget'] ?? array() );
+		$summary   = (array) ( $result['scheduled_summary'] ?? array() );
 		$selection = (array) ( $result['inode_recovery_plan'] ?? array() );
-		$capacity = (array) ( $result['capacity_evidence'] ?? array() );
+		$capacity  = (array) ( $result['capacity_evidence'] ?? array() );
 
 		return array(
-			'success'                  => ! empty($result['success']),
-			'triggered'                => ! empty($result['triggered']),
-			'skipped'                  => ! empty($result['skipped']),
-			'dry_run'                  => ! empty($result['dry_run']),
-			'generated_at'             => (string) ( $result['generated_at'] ?? '' ),
-			'trigger_reasons'          => $this->compact_reasons($budget['trigger_reasons'] ?? array()),
-			'selected_artifact_count'  => (int) ( $result['selected_artifact_count'] ?? 0 ),
-			'selected_worktree_count'  => (int) ( $result['selected_worktree_count'] ?? 0 ),
-			'scheduled'                => array(
-				'chunks'        => (int) ( $summary['scheduled_chunks'] ?? 0 ),
+			'success'                 => ! empty($result['success']),
+			'triggered'               => ! empty($result['triggered']),
+			'skipped'                 => ! empty($result['skipped']),
+			'dry_run'                 => ! empty($result['dry_run']),
+			'generated_at'            => (string) ( $result['generated_at'] ?? '' ),
+			'trigger_reasons'         => $this->compact_reasons($budget['trigger_reasons'] ?? array()),
+			'selected_artifact_count' => (int) ( $result['selected_artifact_count'] ?? 0 ),
+			'selected_worktree_count' => (int) ( $result['selected_worktree_count'] ?? 0 ),
+			'scheduled'               => array(
+				'chunks'         => (int) ( $summary['scheduled_chunks'] ?? 0 ),
 				'artifact_rows'  => (int) ( $summary['scheduled_artifact_rows'] ?? 0 ),
 				'batch_job_id'   => (int) ( $summary['batch_job_id'] ?? 0 ),
 				'direct_job_ids' => array_slice(array_map('intval', (array) ( $summary['direct_job_ids'] ?? array() )), 0, self::MAX_DURABLE_JOB_IDS),
 			),
-			'measured_recovery'        => array(
-				'target_bytes'          => (int) ( $budget['target_recovery_bytes'] ?? 0 ),
-				'target_inodes'         => (int) ( $budget['target_recovery_inodes'] ?? 0 ),
-				'planned_bytes'         => (int) ( $selection['planned_measured_recovery_bytes'] ?? 0 ),
-				'planned_inodes'        => (int) ( $selection['planned_measured_recovery_inodes'] ?? 0 ),
-				'target_met'            => ! empty($selection['target_met']),
-				'reclaimed_bytes'       => is_numeric($capacity['reclaimed_bytes'] ?? null) ? (int) $capacity['reclaimed_bytes'] : null,
-				'reclaimed_inodes'      => is_numeric($capacity['reclaimed_inodes'] ?? null) ? (int) $capacity['reclaimed_inodes'] : null,
+			'measured_recovery'       => array(
+				'target_bytes'     => (int) ( $budget['target_recovery_bytes'] ?? 0 ),
+				'target_inodes'    => (int) ( $budget['target_recovery_inodes'] ?? 0 ),
+				'planned_bytes'    => (int) ( $selection['planned_measured_recovery_bytes'] ?? 0 ),
+				'planned_inodes'   => (int) ( $selection['planned_measured_recovery_inodes'] ?? 0 ),
+				'target_met'       => ! empty($selection['target_met']),
+				'reclaimed_bytes'  => is_numeric($capacity['reclaimed_bytes'] ?? null) ? (int) $capacity['reclaimed_bytes'] : null,
+				'reclaimed_inodes' => is_numeric($capacity['reclaimed_inodes'] ?? null) ? (int) $capacity['reclaimed_inodes'] : null,
 			),
 			'action_required'         => ! empty($result['action_required']),
 			'action_required_reasons' => $this->compact_reasons($result['action_required_reasons'] ?? array()),
@@ -194,8 +210,8 @@ class WorkspaceDiskEmergencyCleanupTask extends SystemTask {
 	 */
 	private function compact_reasons( mixed $reasons ): array {
 		$compact = array();
-		foreach ( array_slice((array) $reasons, 0, self::MAX_DURABLE_REASONS) as $reason ) {
-			$compact[] = substr((string) $reason, 0, self::MAX_DURABLE_REASON_BYTES);
+		foreach ( array_slice( (array) $reasons, 0, self::MAX_DURABLE_REASONS) as $reason ) {
+			$compact[] = substr( (string) $reason, 0, self::MAX_DURABLE_REASON_BYTES);
 		}
 		return $compact;
 	}
@@ -205,7 +221,7 @@ class WorkspaceDiskEmergencyCleanupTask extends SystemTask {
 	 * @return array<string,mixed>
 	 */
 	private function compact_capacity_evidence( array $capacity ): array {
-		$fields = array( 'filesystem_total_bytes', 'filesystem_free_bytes', 'filesystem_free_inodes', 'workspace_allocated_bytes' );
+		$fields  = array( 'filesystem_total_bytes', 'filesystem_free_bytes', 'filesystem_free_inodes', 'workspace_allocated_bytes' );
 		$compact = array(
 			'reclaimed_bytes'  => is_numeric($capacity['reclaimed_bytes'] ?? null) ? (int) $capacity['reclaimed_bytes'] : null,
 			'reclaimed_inodes' => is_numeric($capacity['reclaimed_inodes'] ?? null) ? (int) $capacity['reclaimed_inodes'] : null,

@@ -4689,9 +4689,9 @@ class WorkspaceAbilities {
 	public static function worktreeCleanupArtifacts( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$opts      = array(
-			'dry_run'                       => ! empty($input['dry_run']),
-			'force'                         => ! empty($input['force']),
-			'allow_active_artifact_cleanup' => ! empty($input['allow_active_artifact_cleanup']),
+			'dry_run'                         => ! empty($input['dry_run']),
+			'force'                           => ! empty($input['force']),
+			'allow_active_artifact_cleanup'   => ! empty($input['allow_active_artifact_cleanup']),
 			'allow_unavailable_process_probe' => ! empty($input['allow_unavailable_process_probe']),
 		);
 		if ( isset($input['apply_plan']) && is_array($input['apply_plan']) ) {

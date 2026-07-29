@@ -315,7 +315,11 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error(
 				'worktree_rebase_cleanup_failed',
 				'Rebase failed and its cleanup could not be verified; refusing bootstrap until the worktree is repaired.',
-				array( 'status' => 500, 'path' => $wt_path, 'rebase' => $response )
+				array(
+					'status' => 500,
+					'path'   => $wt_path,
+					'rebase' => $response,
+				)
 			);
 		}
 
@@ -620,7 +624,7 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		}
 
-		$lifecycle_metadata = WorktreeContextInjector::build_lifecycle_metadata(
+		$lifecycle_metadata                   = WorktreeContextInjector::build_lifecycle_metadata(
 			array(
 				'handle'      => $wt_handle,
 				'path'        => $wt_path,
@@ -638,7 +642,7 @@ trait WorkspaceWorktreeLifecycle {
 			'inject_context' => $inject_context,
 			'bootstrap'      => $bootstrap,
 		);
-		$metadata_stored    = WorktreeContextInjector::store_lifecycle_metadata( $wt_handle, $lifecycle_metadata );
+		$metadata_stored                      = WorktreeContextInjector::store_lifecycle_metadata( $wt_handle, $lifecycle_metadata );
 		if ( is_wp_error( $metadata_stored ) ) {
 			$this->rollback_rejected_worktree( $primary_path, $wt_path, $branch, $created_branch );
 			return $metadata_stored;
@@ -682,9 +686,14 @@ trait WorkspaceWorktreeLifecycle {
 	 * Reuse an exact managed handle only when its persisted contract proves it is
 	 * safe. This intentionally does not search for equivalent task candidates or
 	 * recycle terminal worktrees; those need explicit caller policy.
+	 *
+	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
 	private function reuse_existing_worktree( string $handle, string $branch, ?string $from, bool $inject_context, bool $bootstrap, array $task ): array|\WP_Error {
-		$inspection = $this->worktree_get($handle, array( 'include_status' => true, 'include_disk' => false ));
+		$inspection = $this->worktree_get($handle, array(
+			'include_status' => true,
+			'include_disk'   => false,
+		));
 		if ( is_wp_error($inspection) || empty($inspection['worktrees'][0]) ) {
 			return $this->worktree_reuse_refused($handle, 'inspection_failed', array(
 				'error_code' => is_wp_error($inspection) ? $inspection->get_error_code() : 'worktree_not_found',
@@ -702,7 +711,7 @@ trait WorkspaceWorktreeLifecycle {
 			'task'     => $existing['task'] ?? null,
 			'metadata' => $existing['metadata'] ?? null,
 		);
-		if ( $branch !== ( $existing['branch'] ?? null ) ) {
+		if ( ( $existing['branch'] ?? null ) !== $branch ) {
 			return $this->worktree_reuse_refused($handle, 'branch_mismatch', $evidence + array( 'requested_branch' => $branch ));
 		}
 		if ( (int) ( $existing['dirty'] ?? 0 ) > 0 ) {
@@ -721,16 +730,25 @@ trait WorkspaceWorktreeLifecycle {
 			return $this->worktree_reuse_refused($handle, 'reuse_contract_missing', $evidence);
 		}
 		$requested_base = null !== $from && '' !== trim($from) ? trim($from) : ( $contract['base_ref'] ?? null );
-		if ( $requested_base !== ( $contract['base_ref'] ?? null ) ) {
-			return $this->worktree_reuse_refused($handle, 'base_mismatch', $evidence + array( 'requested_base_ref' => $requested_base, 'stored_base_ref' => $contract['base_ref'] ?? null ));
-		}
-		if ( $inject_context !== (bool) ( $contract['inject_context'] ?? null ) || $bootstrap !== (bool) ( $contract['bootstrap'] ?? null ) ) {
-			return $this->worktree_reuse_refused($handle, 'runtime_incompatible', $evidence + array(
-				'requested_runtime' => array( 'inject_context' => $inject_context, 'bootstrap' => $bootstrap ),
-				'stored_runtime'    => array( 'inject_context' => $contract['inject_context'] ?? null, 'bootstrap' => $contract['bootstrap'] ?? null ),
+		if ( ( $contract['base_ref'] ?? null ) !== $requested_base ) {
+			return $this->worktree_reuse_refused($handle, 'base_mismatch', $evidence + array(
+				'requested_base_ref' => $requested_base,
+				'stored_base_ref'    => $contract['base_ref'] ?? null,
 			));
 		}
-		if ( $this->worktree_reuse_task_identity($task) !== $this->worktree_reuse_task_identity((array) ($existing['task'] ?? array())) ) {
+		if ( (bool) ( $contract['inject_context'] ?? null ) !== $inject_context || (bool) ( $contract['bootstrap'] ?? null ) !== $bootstrap ) {
+			return $this->worktree_reuse_refused($handle, 'runtime_incompatible', $evidence + array(
+				'requested_runtime' => array(
+					'inject_context' => $inject_context,
+					'bootstrap'      => $bootstrap,
+				),
+				'stored_runtime'    => array(
+					'inject_context' => $contract['inject_context'] ?? null,
+					'bootstrap'      => $contract['bootstrap'] ?? null,
+				),
+			));
+		}
+		if ( $this->worktree_reuse_task_identity($task) !== $this->worktree_reuse_task_identity( (array) ( $existing['task'] ?? array() )) ) {
 			return $this->worktree_reuse_refused($handle, 'task_mismatch', $evidence + array( 'requested_task' => $task ));
 		}
 
@@ -742,7 +760,10 @@ trait WorkspaceWorktreeLifecycle {
 			'slug'           => $this->slugify_branch($branch),
 			'created_branch' => false,
 			'reused'         => true,
-			'reuse'          => array( 'status' => 'accepted', 'reason_code' => 'exact_compatible_handle' ) + $evidence,
+			'reuse'          => array(
+				'status'      => 'accepted',
+				'reason_code' => 'exact_compatible_handle',
+			) + $evidence,
 			'metadata'       => $metadata,
 			'message'        => sprintf('Reused clean compatible worktree "%s" at %s.', $handle, $existing['path']),
 		);
@@ -753,7 +774,13 @@ trait WorkspaceWorktreeLifecycle {
 		return new \WP_Error(
 			'worktree_reuse_refused',
 			sprintf('Refusing to reuse worktree "%s": %s.', $handle, str_replace('_', ' ', $reason_code)),
-			array( 'status' => 409, 'reuse' => array( 'status' => 'refused', 'reason_code' => $reason_code ) + $evidence )
+			array(
+				'status' => 409,
+				'reuse'  => array(
+					'status'      => 'refused',
+					'reason_code' => $reason_code,
+				) + $evidence,
+			)
 		);
 	}
 
@@ -888,7 +915,7 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		}
 
-		if ( ! is_array($parsed) || '' === $parsed['dir_name'] || ! is_dir($path) || ! file_exists($path . '/.git') ) {
+		if ( ! is_array($parsed) || '' === $parsed['dir_name'] || false === $path || ! is_dir($path) || ! file_exists($path . '/.git') ) {
 			$not_found_handle = is_array($parsed) ? $parsed['dir_name'] : $target;
 			return new \WP_Error(
 				'worktree_not_found',

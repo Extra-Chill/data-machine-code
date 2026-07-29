@@ -1496,8 +1496,12 @@ class WorktreeContextInjector {
 				$task_url = trim($env_task_url);
 			}
 		}
-		$task_url_parts = '' !== $task_url ? parse_url($task_url) : false;
-		if ( is_array($task_url_parts) && isset($task_url_parts['host'], $task_url_parts['scheme']) && in_array(strtolower((string) $task_url_parts['scheme']), array( 'http', 'https' ), true) ) {
+		$task_url_parts = false;
+		if ( '' !== $task_url ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.parse_url_parse_url -- This class also runs in standalone bootstrap contexts without WordPress loaded.
+			$task_url_parts = function_exists('wp_parse_url') ? wp_parse_url($task_url) : parse_url($task_url);
+		}
+		if ( is_array($task_url_parts) && isset($task_url_parts['host'], $task_url_parts['scheme']) && in_array(strtolower( (string) $task_url_parts['scheme']), array( 'http', 'https' ), true) ) {
 			$task['task_url'] = $task_url;
 		}
 
@@ -1568,8 +1572,10 @@ class WorktreeContextInjector {
 			return $inventory_metadata;
 		}
 
-		$inventory_seen = strtotime( (string) ( $inventory_metadata['last_seen_at'] ?? '' ) ) ?: 0;
-		$option_seen    = strtotime( (string) ( $option_metadata['last_seen_at'] ?? '' ) ) ?: 0;
+		$inventory_seen = strtotime( (string) ( $inventory_metadata['last_seen_at'] ?? '' ) );
+		$option_seen    = strtotime( (string) ( $option_metadata['last_seen_at'] ?? '' ) );
+		$inventory_seen = false !== $inventory_seen ? $inventory_seen : 0;
+		$option_seen    = false !== $option_seen ? $option_seen : 0;
 		return $option_seen > $inventory_seen
 			? array_merge($inventory_metadata, $option_metadata)
 			: array_merge($option_metadata, $inventory_metadata);

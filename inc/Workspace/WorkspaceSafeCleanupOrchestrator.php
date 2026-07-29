@@ -71,16 +71,16 @@ class WorkspaceSafeCleanupOrchestrator {
 		}
 
 		$result = array(
-			'success'      => true,
-			'mode'         => 'safe_workspace_cleanup',
-			'applied'      => ! $dry_run,
-			'destructive'  => ! $dry_run,
-			'limit'        => $limit,
-			'passes'       => $passes,
-			'cycles'       => $cycles,
-			'generated_at' => gmdate('c'),
-			'steps'        => array(),
-			'summary'      => array(
+			'success'           => true,
+			'mode'              => 'safe_workspace_cleanup',
+			'applied'           => ! $dry_run,
+			'destructive'       => ! $dry_run,
+			'limit'             => $limit,
+			'passes'            => $passes,
+			'cycles'            => $cycles,
+			'generated_at'      => gmdate('c'),
+			'steps'             => array(),
+			'summary'           => array(
 				'cycles'                  => 0,
 				'planned'                 => 0,
 				'applied_rows'            => 0,
@@ -94,9 +94,9 @@ class WorkspaceSafeCleanupOrchestrator {
 				'blocker_count'           => 0,
 				'blockers_by_reason'      => array(),
 			),
-			'blockers'     => array(),
+			'blockers'          => array(),
 			'blockers_by_stage' => array(),
-			'evidence'     => array(
+			'evidence'          => array(
 				'safety' => $dry_run
 					? 'Preview only. Uses DMC safe classifiers/removals and stale lock pruning in dry-run mode.'
 					: 'Applies only DMC safe classifiers/removals, refuses force and unpushed discard, and prunes stale DMC locks.',
@@ -138,17 +138,17 @@ class WorkspaceSafeCleanupOrchestrator {
 				'limit'             => $limit,
 			)
 			: array(
-				'mode'           => 'artifacts',
-				'force'          => false,
-				'limit'          => $limit,
-				'max_passes'     => $passes,
+				'mode'       => 'artifacts',
+				'force'      => false,
+				'limit'      => $limit,
+				'max_passes' => $passes,
 			);
 		$artifacts      = $this->execute_ability($artifact_cleanup, $artifact_input);
 		if ( is_wp_error($artifacts) ) {
 			return $artifacts;
 		}
-		$result['steps']['artifact_cleanup']                  = $this->summarize_artifact_step($artifacts, $dry_run);
-		$result['blockers_by_stage']['artifact_cleanup']      = (array) ( $result['steps']['artifact_cleanup']['blockers'] ?? array() );
+		$result['steps']['artifact_cleanup']             = $this->summarize_artifact_step($artifacts, $dry_run);
+		$result['blockers_by_stage']['artifact_cleanup'] = (array) ( $result['steps']['artifact_cleanup']['blockers'] ?? array() );
 		$this->accumulate_artifact_step($result, $result['steps']['artifact_cleanup']);
 		$this->checkpoint_progress($run_id, $result, 'applying');
 
@@ -172,18 +172,18 @@ class WorkspaceSafeCleanupOrchestrator {
 			if ( is_wp_error($eligible) ) {
 				return $eligible;
 			}
-			$result['steps'][ 'cleanup_eligible_' . $cycle ] = $this->summarize_cleanup_step($eligible);
+			$result['steps'][ 'cleanup_eligible_' . $cycle ]             = $this->summarize_cleanup_step($eligible);
 			$result['blockers_by_stage'][ 'cleanup_eligible_' . $cycle ] = (array) ( $result['steps'][ 'cleanup_eligible_' . $cycle ]['blockers'] ?? array() );
-			$cycle_progress                                 += $this->accumulate_cleanup_step($result, $eligible);
+			$cycle_progress += $this->accumulate_cleanup_step($result, $eligible);
 			$this->checkpoint_progress($run_id, $result, 'applying');
 
 			$active = $this->execute_ability($active_no_signal, $common);
 			if ( is_wp_error($active) ) {
 				return $active;
 			}
-			$result['steps'][ 'active_no_signal_' . $cycle ] = $this->summarize_cleanup_step($active);
+			$result['steps'][ 'active_no_signal_' . $cycle ]             = $this->summarize_cleanup_step($active);
 			$result['blockers_by_stage'][ 'active_no_signal_' . $cycle ] = (array) ( $result['steps'][ 'active_no_signal_' . $cycle ]['blockers'] ?? array() );
-			$cycle_progress                                 += $this->accumulate_cleanup_step($result, $active);
+			$cycle_progress += $this->accumulate_cleanup_step($result, $active);
 			if ( is_array($active['continuation'] ?? null) && ! empty($active['continuation']['next_command']) ) {
 				$result['continuation']['next_command'] = (string) $active['continuation']['next_command'];
 				$result['continuation']['reason']       = (string) ( $active['continuation']['reason'] ?? 'active_no_signal_page_incomplete' );
@@ -203,9 +203,9 @@ class WorkspaceSafeCleanupOrchestrator {
 		$result['summary']['lock_files_removed'] += (int) ( $result['steps']['lock_prune_end']['removed_count'] ?? 0 );
 		$this->checkpoint_progress($run_id, $result, 'applying');
 
-		$result['blockers']                      = $this->compact_blockers($result['blockers']);
-		$result['summary']['blocker_count']      = array_sum(array_map(static fn( array $row ): int => (int) ( $row['count'] ?? 0 ), $result['blockers']));
-		$result['summary']['blockers_by_reason'] = array_column($result['blockers'], 'count', 'reason_code');
+		$result['blockers']                       = $this->compact_blockers($result['blockers']);
+		$result['summary']['blocker_count']       = array_sum(array_map(static fn( array $row ): int => (int) ( $row['count'] ?? 0 ), $result['blockers']));
+		$result['summary']['blockers_by_reason']  = array_column($result['blockers'], 'count', 'reason_code');
 		$result['summary']['blocker_count_scope'] = 'maximum_observed_per_reason_across_stages';
 		if ( ! $dry_run && $result['summary']['blocker_count'] > 0 ) {
 			$result['state'] = 'complete_with_blockers';
@@ -352,10 +352,10 @@ class WorkspaceSafeCleanupOrchestrator {
 
 	/** @return array<string,mixed> */
 	private function summarize_artifact_step( array $step, bool $dry_run ): array {
-		$rows    = (array) ( $step['rows']['artifact_cleanup'] ?? array() );
-		$blocked = (array) ( $step['blocked']['artifact_cleanup'] ?? array() );
-		$passes  = (array) ( $step['passes'] ?? array() );
-		$planned = $dry_run ? count($rows) : array_sum(array_map(static fn( array $pass ): int => (int) ( $pass['planned_rows'] ?? 0 ), $passes));
+		$rows     = (array) ( $step['rows']['artifact_cleanup'] ?? array() );
+		$blocked  = (array) ( $step['blocked']['artifact_cleanup'] ?? array() );
+		$passes   = (array) ( $step['passes'] ?? array() );
+		$planned  = $dry_run ? count($rows) : array_sum(array_map(static fn( array $pass ): int => (int) ( $pass['planned_rows'] ?? 0 ), $passes));
 		$blockers = array();
 		if ( $dry_run ) {
 			foreach ( $blocked as $row ) {
@@ -383,13 +383,13 @@ class WorkspaceSafeCleanupOrchestrator {
 
 	/** @param array<string,mixed> $step */
 	private function accumulate_artifact_step( array &$result, array $step ): void {
-		$result['summary']['planned']      += (int) ( $step['planned'] ?? 0 );
-		$result['summary']['applied_rows'] += (int) ( $step['applied_rows'] ?? 0 );
-		$result['summary']['skipped_rows'] += (int) ( $step['skipped_rows'] ?? 0 );
+		$result['summary']['planned']             += (int) ( $step['planned'] ?? 0 );
+		$result['summary']['applied_rows']        += (int) ( $step['applied_rows'] ?? 0 );
+		$result['summary']['skipped_rows']        += (int) ( $step['skipped_rows'] ?? 0 );
 		$result['summary']['would_reclaim_bytes'] += (int) ( $step['would_reclaim'] ?? 0 );
-		$result['summary']['removed']      += (int) ( $step['applied_rows'] ?? 0 );
-		$result['summary']['would_remove'] += (int) ( $step['planned'] ?? 0 );
-		$result['summary']['bytes_reclaimed'] += (int) ( $step['bytes_reclaimed'] ?? 0 );
+		$result['summary']['removed']             += (int) ( $step['applied_rows'] ?? 0 );
+		$result['summary']['would_remove']        += (int) ( $step['planned'] ?? 0 );
+		$result['summary']['bytes_reclaimed']     += (int) ( $step['bytes_reclaimed'] ?? 0 );
 		foreach ( (array) ( $step['blockers'] ?? array() ) as $reason => $count ) {
 			$result['blockers'][] = array(
 				'reason_code' => (string) $reason,
@@ -453,8 +453,8 @@ class WorkspaceSafeCleanupOrchestrator {
 	private function compact_blockers( array $rows ): array {
 		$blockers = array();
 		foreach ( $rows as $row ) {
-			$reason                        = (string) ( $row['reason_code'] ?? 'unknown' );
-			$blockers[ $reason ]         ??= array(
+			$reason                       = (string) ( $row['reason_code'] ?? 'unknown' );
+			$blockers[ $reason ]        ??= array(
 				'reason_code' => $reason,
 				'count'       => 0,
 			);

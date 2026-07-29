@@ -1,0 +1,505 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Call to function method_exists\(\) with WP_Ability and ''execute'' will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: inc/AgentsApi/WorkspaceExecutorAdapter.php
+
+		-
+			message: '#^Call to function method_exists\(\) with WP_Error and ''get_error_code'' will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: inc/AgentsApi/WorkspaceExecutorAdapter.php
+
+		-
+			message: '#^Call to function method_exists\(\) with WP_Error and ''get_error_message'' will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: inc/AgentsApi/WorkspaceExecutorAdapter.php
+
+		-
+			message: '#^Parameter \#3 \$error_type of static method DataMachineCode\\AgentsApi\\WorkspaceExecutorAdapter\:\:error_result\(\) expects string, int\|string given\.$#'
+			identifier: argument.type
+			count: 1
+			path: inc/AgentsApi/WorkspaceExecutorAdapter.php
+
+		-
+			message: '#^Cannot access offset ''configured'' on array\|WP_Error\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: inc/Cli/Commands/GitHubCommand.php
+
+		-
+			message: '#^Static method DataMachineCode\\Environment\:\:evaluate_shell_capability\(\) is unused\.$#'
+			identifier: method.unused
+			count: 1
+			path: inc/Environment.php
+
+		-
+			message: '#^Cannot access offset ''issues'' on array\|WP_Error\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: inc/Handlers/GitHub/GitHub.php
+
+		-
+			message: '#^Cannot access offset ''pulls'' on array\|WP_Error\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: inc/Handlers/GitHub/GitHub.php
+
+		-
+			message: '#^Call to function is_array\(\) with array\<string, mixed\> will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: inc/Runtime/ActiveWorkspaceProjector.php
+
+		-
+			message: '#^Call to function is_string\(\) with string will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: inc/Runtime/ActiveWorkspaceProjector.php
+
+		-
+			message: '#^Call to function is_string\(\) with string will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: inc/Runtime/WordPressRuntimeInspector.php
+
+		-
+			message: '#^Call to function method_exists\(\) with WP_Theme and ''get'' will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 4
+			path: inc/Runtime/WordPressRuntimeInspector.php
+
+		-
+			message: '#^PHPDoc tag @param references unknown parameter\: \$input$#'
+			identifier: parameter.notFound
+			count: 1
+			path: inc/SourceInventory/WorkspaceSourceInventory.php
+
+		-
+			message: '#^Cannot call method get_charset_collate\(\) on class\-string\|object\.$#'
+			identifier: method.nonObject
+			count: 1
+			path: inc/Storage/CleanupSchema.php
+
+		-
+			message: '#^Parameter \#1 \$hook_name of function apply_filters expects non\-empty\-string, string given\.$#'
+			identifier: argument.type
+			count: 1
+			path: inc/Storage/SqliteBusyRetry.php
+
+		-
+			message: '#^Right side of && is always true\.$#'
+			identifier: booleanAnd.rightAlwaysTrue
+			count: 2
+			path: inc/Support/CommandSpec.php
+
+		-
+			message: '#^Strict comparison using \=\=\= between '''' and non\-empty\-string will always evaluate to false\.$#'
+			identifier: identical.alwaysFalse
+			count: 2
+			path: inc/Support/GitHubRemote.php
+
+		-
+			message: '#^Call to function method_exists\(\) with WP_Error and ''get_error_data'' will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: inc/Support/GitRunner.php
+
+		-
+			message: '#^Offset ''output'' on array\{success\: true, output\: string\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: inc/Support/GitRunner.php
+
+		-
+			message: '#^Parameter \#3 \$depth of function json_encode expects int\<1, max\>, int given\.$#'
+			identifier: argument.type
+			count: 1
+			path: inc/Support/JsonCodec.php
+
+		-
+			message: '#^Parameter \#3 \$depth of function wp_json_encode expects int\<1, max\>, int given\.$#'
+			identifier: argument.type
+			count: 1
+			path: inc/Support/JsonCodec.php
+
+		-
+			message: '#^Call to function is_array\(\) with array\<int\|string, mixed\> will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: inc/Support/RunArtifactPrSectionRenderer.php
+
+		-
+			message: '#^Unreachable statement \- code above always terminates\.$#'
+			identifier: deadCode.unreachable
+			count: 1
+			path: inc/Support/RunArtifactPrSectionRenderer.php
+
+		-
+			message: '#^Offset 0 on non\-empty\-list\<\(int\|string\)\> on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: inc/Support/SystemTaskDrainability.php
+
+		-
+			message: '#^Strict comparison using \=\=\= between false and int will always evaluate to false\.$#'
+			identifier: identical.alwaysFalse
+			count: 1
+			path: inc/Support/SystemTaskDrainability.php
+
+		-
+			message: '#^Argument of an invalid type list\<string\>\|false supplied for foreach, only iterables are supported\.$#'
+			identifier: foreach.nonIterable
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Call to function is_array\(\) with array will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 11
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Call to function is_array\(\) with array\<string, mixed\> will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 2
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Call to function is_array\(\) with array\<string, string\> will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 3
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Call to function method_exists\(\) with WP_Error and ''get_error_code'' will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Cannot call method get_error_message\(\) on array\<string, mixed\>\|WP_Error\.$#'
+			identifier: method.nonObject
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^If condition is always true\.$#'
+			identifier: if.alwaysTrue
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Method DataMachineCode\\Workspace\\Workspace\:\:artifact_process_path_records\(\) should return array\{status\: string, records\: array\<int, array\<string, mixed\>\>, diagnostics\: array\<string, mixed\>\} but returns array\<string, mixed\>\.$#'
+			identifier: return.type
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Negated boolean expression is always false\.$#'
+			identifier: booleanNot.alwaysFalse
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Negated boolean expression is always true\.$#'
+			identifier: booleanNot.alwaysTrue
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''artifact_size_bytes'' on non\-empty\-array on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''bytes'' might not exist on array\{success\: true, bytes\?\: int, reason\?\: string, timeout_seconds\?\: int, cleanup\?\: array\<string, mixed\>\}\.$#'
+			identifier: offsetAccess.notFound
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''count'' on array\{count\: int\<1, max\>, size_bytes\: int\<0, max\>, size_accounting\: array\<string, int\>, repos\: non\-empty\-array\<non\-empty\-string, array\<''count''\|''examples''\|''size_accounting''\|''size_bytes'', mixed\>\>, examples\: list\<array\{handle\: string, size_status\: string\}\>\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''diagnostics'' on array\{status\: string, records\: array\<int, array\<string, mixed\>\>, diagnostics\: array\<string, mixed\>\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''elapsed_ms'' on non\-empty\-array\<string, mixed\> on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 3
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''entry_count'' might not exist on array\{success\: bool, entry_count\?\: int, reason\?\: string, timeout_seconds\?\: int, cleanup\?\: array\<string, mixed\>\}\.$#'
+			identifier: offsetAccess.notFound
+			count: 2
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''entry_count'' might not exist on array\{success\: true, entry_count\?\: int, reason\?\: string, timeout_seconds\?\: int, cleanup\?\: array\<string, mixed\>\}\.$#'
+			identifier: offsetAccess.notFound
+			count: 2
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''entry_count_status'' on non\-empty\-array on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''evidence'' on array\{status\: string, evidence\: array\<int, array\<string, mixed\>\>, diagnostics\: array\<string, mixed\>\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''fields_skipped'' on array\{success\: bool, worktrees\: array, fields_skipped\: array\<int, string\>\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''is_worktree'' on non\-empty\-array\<string, mixed\> in empty\(\) always exists and is not falsy\.$#'
+			identifier: empty.offset
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''liveness'' on array\{liveness\: string, reason\: string, heartbeat_age_seconds\: int\|null, last_seen_at\: string\|null\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''message'' might not exist on array\{valid\: false, real_path\?\: string, message\?\: string\}\.$#'
+			identifier: offsetAccess.notFound
+			count: 3
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''real_path'' might not exist on array\{valid\: true, real_path\?\: string, message\?\: string\}\.$#'
+			identifier: offsetAccess.notFound
+			count: 3
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''reason'' on array\{handle\: string, path\: non\-falsy\-string, reason\: ''total_timeout''\}\|array\{handle\: string, path\: non\-falsy\-string, reason\: string, timeout_seconds\: int\|null, cleanup\: array\<string, mixed\>\|null\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''records'' on array\{status\: string, records\: array\<int, array\<string, mixed\>\>, diagnostics\: array\<string, mixed\>\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''repo'' on array\{repo\: string, branch_slug\: string\|null, is_worktree\: true, dir_name\?\: string\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''row_id'' on non\-empty\-array\<mixed\> on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 3
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''signal'' on array\{signal\: string, reason\: string, finalized_state\?\: string, pr_url\?\: string\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''signal'' on array\{signal\: string, reason\: string, pr_url\?\: string\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''size_bytes'' on array\{count\: int\<1, max\>, size_bytes\: int\<0, max\>, size_accounting\: array\<string, int\>, repos\: non\-empty\-array\<non\-empty\-string, array\<''count''\|''examples''\|''size_accounting''\|''size_bytes'', mixed\>\>, examples\: list\<array\{handle\: string, size_status\: string\}\>\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''size_bytes'' on array\{path\: string, handle\: string, repo\: string, category\: string, row_type\: ''artifact_cleanup''\|''worktree_removal'', safety_class\: string, size_bytes\: int\<0, max\>\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''status'' on array\{status\: string, evidence\: array\<int, array\<string, mixed\>\>, diagnostics\: array\<string, mixed\>\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''status'' on array\{status\: string, records\: array\<int, array\<string, mixed\>\>, diagnostics\: array\<string, mixed\>\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Offset ''worktrees'' on array\{success\: bool, worktrees\: array, fields_skipped\: array\<int, string\>\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 8
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Parameter \#1 \$array \(array\<non\-falsy\-string\>\) to function array_filter does not contain falsy values, the array will always stay the same\.$#'
+			identifier: arrayFilter.same
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Parameter \#1 \$array \(list\<array\<string, mixed\>\>\) of array_values is already a list, call has no effect\.$#'
+			identifier: arrayValues.list
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Parameter \#1 \$array of function uasort contains unresolvable type\.$#'
+			identifier: argument.unresolvableType
+			count: 2
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Parameter \#2 \$callback of function uasort contains unresolvable type\.$#'
+			identifier: argument.unresolvableType
+			count: 2
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Parameter \#2 \$default_ref of method DataMachineCode\\Workspace\\Workspace\:\:worktree_behind_default_branch_error\(\) expects string, string\|WP_Error given\.$#'
+			identifier: argument.type
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Parameter \#2 \.\.\.\$values of function sprintf expects bool\|float\|int\|string\|null, int\<1, max\>\|WP_Error given\.$#'
+			identifier: argument.type
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Parameter \#3 \$upstream of static method DataMachineCode\\Workspace\\WorktreeStalenessProbe\:\:behind_count\(\) expects string, string\|WP_Error given\.$#'
+			identifier: argument.type
+			count: 2
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Parameter \#7 \$scope of method DataMachineCode\\Workspace\\Workspace\:\:build_worktree_metadata_reconciliation_remaining_blockers\(\) expects array\{argument\: string, repo\: string, handle\: string\|null\}\|null, array\<mixed, mixed\>\|null given\.$#'
+			identifier: argument.type
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Result of && is always false\.$#'
+			identifier: booleanAnd.alwaysFalse
+			count: 2
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Strict comparison using \!\=\= between '''' and '''' will always evaluate to false\.$#'
+			identifier: notIdentical.alwaysFalse
+			count: 2
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Strict comparison using \!\=\= between '''' and non\-empty\-string will always evaluate to true\.$#'
+			identifier: notIdentical.alwaysTrue
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Strict comparison using \!\=\= between mixed and \*NEVER\* will always evaluate to true\.$#'
+			identifier: notIdentical.alwaysTrue
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Strict comparison using \!\=\= between null and null will always evaluate to false\.$#'
+			identifier: notIdentical.alwaysFalse
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Strict comparison using \!\=\= between null and string will always evaluate to true\.$#'
+			identifier: notIdentical.alwaysTrue
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Strict comparison using \=\=\= between '''' and non\-empty\-string will always evaluate to false\.$#'
+			identifier: identical.alwaysFalse
+			count: 2
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Strict comparison using \=\=\= between null and string will always evaluate to false\.$#'
+			identifier: identical.alwaysFalse
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Variable \$unpushed in isset\(\) always exists and is not nullable\.$#'
+			identifier: isset.variable
+			count: 1
+			path: inc/Workspace/Workspace.php
+
+		-
+			message: '#^Cannot access offset ''output'' on array\{success\: true, output\: string\}\|WP_Error\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 7
+			path: inc/Workspace/WorkspaceDiff.php
+
+		-
+			message: '#^Offset ''message'' might not exist on array\{valid\: false, real_path\?\: string, message\?\: string\}\.$#'
+			identifier: offsetAccess.notFound
+			count: 1
+			path: inc/Workspace/WorkspaceDiff.php
+
+		-
+			message: '#^Offset ''real_path'' might not exist on array\{valid\: true, real_path\?\: string, message\?\: string\}\.$#'
+			identifier: offsetAccess.notFound
+			count: 1
+			path: inc/Workspace/WorkspaceDiff.php
+
+		-
+			message: '#^Offset 0 on non\-empty\-list\<string\> on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: inc/Workspace/WorkspaceHandle.php
+
+		-
+			message: '#^Cannot call method get_charset_collate\(\) on class\-string\|object\.$#'
+			identifier: method.nonObject
+			count: 1
+			path: inc/Workspace/WorkspaceLockStore.php
+
+		-
+			message: '#^Parameter \#1 \$callback of function call_user_func_array expects callable\(\)\: mixed, array\{mixed, ''prepare''\} given\.$#'
+			identifier: argument.type
+			count: 2
+			path: inc/Workspace/WorkspaceLockStore.php
+
+		-
+			message: '#^Call to function method_exists\(\) with WP_Error and ''get_error_code'' will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: inc/Workspace/WorktreeStalenessProbe.php

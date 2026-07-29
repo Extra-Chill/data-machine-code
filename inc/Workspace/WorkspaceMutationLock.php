@@ -32,8 +32,8 @@ final class WorkspaceMutationLock {
 	private string $request_path;
 
 	private function __construct( $handle, int $lock_id = 0, string $request_path = '' ) {
-		$this->handle  = $handle;
-		$this->lock_id = $lock_id;
+		$this->handle       = $handle;
+		$this->lock_id      = $lock_id;
 		$this->request_path = $request_path;
 	}
 
@@ -99,10 +99,10 @@ final class WorkspaceMutationLock {
 			}
 		}
 
-		$lock_path = $lock_dir . '/worktree-' . $repo . '.lock';
+		$lock_path    = $lock_dir . '/worktree-' . $repo . '.lock';
 		$request_path = self::record_request($lock_dir, $repo, $lock_path);
 		$request_id   = '' === $request_path ? '' : basename($request_path, '.json');
-		$handle    = fopen($lock_path, 'c'); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+		$handle       = fopen($lock_path, 'c'); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
 		if ( false === $handle ) {
 			self::remove_request($request_path);
 			return new \WP_Error(
@@ -259,7 +259,7 @@ final class WorkspaceMutationLock {
 
 	private static function record_request( string $lock_dir, string $repo, string $lock_path ): string {
 		$request_dir = $lock_dir . '/requests';
-		if ( ! is_dir($request_dir) && ! @mkdir($request_dir, 0755, true) && ! is_dir($request_dir) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir
+		if ( ! is_dir($request_dir) && ! @mkdir($request_dir, 0755, true) && ! is_dir($request_dir) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir,WordPress.PHP.NoSilencedErrors.Discouraged -- Atomic local lock setup handles the suppressed race by rechecking the directory.
 			return '';
 		}
 		$request_id = bin2hex(random_bytes(12));
@@ -279,7 +279,7 @@ final class WorkspaceMutationLock {
 		if ( '' === $path || ! is_file($path) ) {
 			return;
 		}
-		$data = json_decode((string) file_get_contents($path), true);
+		$data = json_decode( (string) file_get_contents($path), true); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reads a local lock request file, not a remote URL.
 		if ( ! is_array($data) ) {
 			return;
 		}
@@ -290,7 +290,7 @@ final class WorkspaceMutationLock {
 
 	private static function write_request( string $path, array $data ): void {
 		if ( '' !== $path ) {
-			$json = function_exists('wp_json_encode') ? wp_json_encode($data) : json_encode($data);
+			$json      = function_exists('wp_json_encode') ? wp_json_encode($data) : json_encode($data); // phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode -- This lock primitive also runs outside WordPress bootstrap.
 			$temporary = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
 			if ( false !== file_put_contents($temporary, false === $json ? '{}' : (string) $json, LOCK_EX) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
 				rename($temporary, $path); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
@@ -306,10 +306,11 @@ final class WorkspaceMutationLock {
 
 	/** @return array<int,array<string,mixed>> */
 	private static function queued_requests( string $workspace_path ): array {
-		$files = glob(rtrim($workspace_path, '/') . '/.locks/requests/*.json') ?: array();
+		$files = glob(rtrim($workspace_path, '/') . '/.locks/requests/*.json');
+		$files = false !== $files ? $files : array();
 		$rows  = array();
 		foreach ( array_slice($files, 0, 25) as $file ) {
-			$row = json_decode((string) file_get_contents($file), true);
+			$row = json_decode( (string) file_get_contents($file), true); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reads a local lock request file, not a remote URL.
 			if ( is_array($row) && ! self::request_owner_exited($row) ) {
 				$rows[] = $row;
 			} elseif ( is_array($row) ) {
@@ -321,7 +322,7 @@ final class WorkspaceMutationLock {
 
 	private static function request_owner_exited( array $request ): bool {
 		$pid = (int) ( $request['pid'] ?? 0 );
-		return $pid > 0 && function_exists('posix_kill') && ! @posix_kill($pid, 0);
+		return $pid > 0 && function_exists('posix_kill') && ! @posix_kill($pid, 0); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Probe failure means the request owner is unavailable.
 	}
 
 	/**
@@ -608,7 +609,7 @@ final class WorkspaceMutationLock {
 		if ( ! flock($handle, LOCK_EX | LOCK_NB) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
 			$entry['state']             = 'active';
 			$entry['reason']            = 'filesystem_flock_held';
-			$entry['owner_evidence']    = self::owner_evidence_for_lock($lock_key, $scope);
+			$entry['owner_evidence']    = self::owner_evidence_for_lock();
 			$entry['recovery_command']  = 'wp datamachine-code workspace worktree locks --format=json';
 			$entry['safe_to_prune']     = false;
 			$entry['operator_guidance'] = 'An active OS flock cannot be safely pruned. Inspect the owner evidence or running DMC/WP-CLI processes and retry after the holder exits.';
@@ -632,7 +633,7 @@ final class WorkspaceMutationLock {
 	/**
 	 * @return array<string,mixed>
 	 */
-	private static function owner_evidence_for_lock( string $lock_key, string $scope ): array {
+	private static function owner_evidence_for_lock(): array {
 		return array(
 			'source'  => 'filesystem_only',
 			'message' => 'Database owner lookup is intentionally deferred so lock inspection remains available during database contention.',

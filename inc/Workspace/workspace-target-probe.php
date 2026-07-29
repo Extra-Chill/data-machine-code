@@ -1,4 +1,5 @@
 <?php
+// phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_fwrite,WordPress.WP.AlternativeFunctions.json_encode_json_encode -- Standalone CLI child runs without WordPress loaded.
 /**
  * Killable child probe used by WorkspaceTargetInspector.
  *
@@ -24,7 +25,7 @@ if ( '' !== $filesystem_probe ) {
 	$exists = is_dir($workspace_path);
 }
 if ( ! $exists ) {
-	fwrite(STDOUT, json_encode(array( 'exists' => false ), JSON_UNESCAPED_SLASHES));
+	fwrite(STDOUT, (string) json_encode(array( 'exists' => false ), JSON_UNESCAPED_SLASHES));
 	exit(0);
 }
 
@@ -52,7 +53,7 @@ $dirty         = count(array_filter($status_lines, static fn ( string $line ): b
 
 fwrite(
 	STDOUT,
-	json_encode(
+	(string) json_encode(
 		array(
 			'exists'        => true,
 			'branch'        => '' !== (string) $branch ? $branch : null,

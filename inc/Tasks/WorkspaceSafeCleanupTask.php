@@ -78,7 +78,7 @@ class WorkspaceSafeCleanupTask extends SystemTask {
 			return;
 		}
 
-		$input = array(
+		$input  = array(
 			'source'           => (string) ( $params['source'] ?? 'system_task' ),
 			'limit'            => isset($params['limit']) ? (int) $params['limit'] : 25,
 			'passes'           => isset($params['passes']) ? (int) $params['passes'] : 5,
@@ -91,12 +91,21 @@ class WorkspaceSafeCleanupTask extends SystemTask {
 		$result = $this->run_safe_cleanup($input);
 
 		if ( $result instanceof \WP_Error ) {
-			do_action('datamachine_log', 'error', 'Safe workspace cleanup failed', array( 'task' => $this->getTaskType(), 'jobId' => $jobId, 'error' => $result->get_error_message(), 'code' => $result->get_error_code() ));
+			do_action('datamachine_log', 'error', 'Safe workspace cleanup failed', array(
+				'task'  => $this->getTaskType(),
+				'jobId' => $jobId,
+				'error' => $result->get_error_message(),
+				'code'  => $result->get_error_code(),
+			));
 			$this->failJob($jobId, $result->get_error_message());
 			return;
 		}
 
-		do_action('datamachine_log', 'info', 'Safe workspace cleanup completed.', array( 'task' => $this->getTaskType(), 'jobId' => $jobId, 'result' => $result ));
+		do_action('datamachine_log', 'info', 'Safe workspace cleanup completed.', array(
+			'task'   => $this->getTaskType(),
+			'jobId'  => $jobId,
+			'result' => $result,
+		));
 		$this->completeJob($jobId, $result);
 	}
 

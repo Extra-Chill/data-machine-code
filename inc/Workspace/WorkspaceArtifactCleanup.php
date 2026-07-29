@@ -46,21 +46,21 @@ trait WorkspaceArtifactCleanup {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_cleanup_artifacts( array $opts = array() ): array|\WP_Error {
-		$dry_run        = ! empty($opts['dry_run']);
-		$force          = ! empty($opts['force']);
-		$allow_active   = ! empty($opts['allow_active_artifact_cleanup']);
+		$dry_run                         = ! empty($opts['dry_run']);
+		$force                           = ! empty($opts['force']);
+		$allow_active                    = ! empty($opts['allow_active_artifact_cleanup']);
 		$allow_unavailable_process_probe = ! empty($opts['allow_unavailable_process_probe']);
-		$apply_plan     = isset($opts['apply_plan']) && is_array($opts['apply_plan']) ? $opts['apply_plan'] : null;
-		$older_than     = isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '';
+		$apply_plan                      = isset($opts['apply_plan']) && is_array($opts['apply_plan']) ? $opts['apply_plan'] : null;
+		$older_than                      = isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '';
 		if ( '' === $older_than && null !== $apply_plan && is_array($apply_plan['age_filter'] ?? null) ) {
 			$older_than = trim( (string) ( $apply_plan['age_filter']['older_than'] ?? '' ));
 		}
 		$opts['older_than'] = $older_than;
-		$exhaustive     = ! empty($opts['exhaustive']);
-		$full_workspace = ! empty($opts['full_workspace']);
-		$sort           = isset($opts['sort']) ? strtolower(trim( (string) $opts['sort'])) : '';
-		$limit          = isset($opts['limit']) ? (int) $opts['limit'] : self::ARTIFACT_CLEANUP_DEFAULT_LIMIT;
-		$offset         = isset($opts['offset']) ? max(0, (int) $opts['offset']) : 0;
+		$exhaustive         = ! empty($opts['exhaustive']);
+		$full_workspace     = ! empty($opts['full_workspace']);
+		$sort               = isset($opts['sort']) ? strtolower(trim( (string) $opts['sort'])) : '';
+		$limit              = isset($opts['limit']) ? (int) $opts['limit'] : self::ARTIFACT_CLEANUP_DEFAULT_LIMIT;
+		$offset             = isset($opts['offset']) ? max(0, (int) $opts['offset']) : 0;
 		if ( $limit < 0 ) {
 			return new \WP_Error('invalid_artifact_cleanup_limit', 'Artifact cleanup --limit must be greater than 0. Use --exhaustive for an unbounded full artifact audit.', array( 'status' => 400 ));
 		}
@@ -113,13 +113,13 @@ trait WorkspaceArtifactCleanup {
 		$plan = $this->build_worktree_artifact_cleanup_plan(
 			$force,
 			array(
-				'allow_active_artifact_cleanup' => $allow_active,
+				'allow_active_artifact_cleanup'   => $allow_active,
 				'allow_unavailable_process_probe' => $allow_unavailable_process_probe,
-				'limit'         => $plan_limit,
-				'offset'        => $rank_by_size ? 0 : $offset,
-				'only_handles'  => $only_handles,
-				'safety_probes' => $safety_probes,
-				'older_than'    => $older_than,
+				'limit'                           => $plan_limit,
+				'offset'                          => $rank_by_size ? 0 : $offset,
+				'only_handles'                    => $only_handles,
+				'safety_probes'                   => $safety_probes,
+				'older_than'                      => $older_than,
 			)
 		);
 		if ( $plan instanceof \WP_Error ) {
@@ -204,7 +204,7 @@ trait WorkspaceArtifactCleanup {
 		$partial = array();
 		foreach ( $candidates as $candidate ) {
 			$removed_artifacts = array();
-			$artifacts         = array_values((array) ( $candidate['artifacts'] ?? array() ));
+			$artifacts         = array_values( (array) ( $candidate['artifacts'] ?? array() ));
 			$failed            = false;
 			$process_guard     = $this->active_artifact_process_protection( (string) ( $candidate['path'] ?? '' ), $artifacts, true);
 			if ( null !== $process_guard ) {
@@ -367,19 +367,19 @@ trait WorkspaceArtifactCleanup {
 	 * @param  bool  $force Whether to allow dirty/unpushed worktrees.
 	 * @param  array $opts  Options: `limit` (0 = unbounded internal exhaustive mode), `offset`,
 	 *                      `only_handles` (array<string>|null), `safety_probes`, `older_than`.
-	 * @return array{candidates: array<int,array>, skipped: array<int,array>, pagination: ?array<string,mixed>}|\WP_Error
+	 * @return array{candidates: array<int,array>, skipped: array<int,array>, pagination: ?array<string,mixed>, age_filter: ?array<string,mixed>}|\WP_Error
 	 */
 	private function build_worktree_artifact_cleanup_plan( bool $force, array $opts = array() ): array|\WP_Error {
-		$limit         = isset($opts['limit']) ? (int) $opts['limit'] : 0;
-		$offset        = isset($opts['offset']) ? max(0, (int) $opts['offset']) : 0;
-		$allow_active  = ! empty($opts['allow_active_artifact_cleanup']);
+		$limit                           = isset($opts['limit']) ? (int) $opts['limit'] : 0;
+		$offset                          = isset($opts['offset']) ? max(0, (int) $opts['offset']) : 0;
+		$allow_active                    = ! empty($opts['allow_active_artifact_cleanup']);
 		$allow_unavailable_process_probe = ! empty($opts['allow_unavailable_process_probe']);
-		$only_handles  = isset($opts['only_handles']) && is_array($opts['only_handles'])
+		$only_handles                    = isset($opts['only_handles']) && is_array($opts['only_handles'])
 		? array_values(array_filter(array_map('strval', $opts['only_handles']), fn( $h ) => '' !== $h))
 		: null;
-		$safety_probes = ! empty($opts['safety_probes']);
-		$older_than    = isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '';
-		$age_filter    = null;
+		$safety_probes                   = ! empty($opts['safety_probes']);
+		$older_than                      = isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '';
+		$age_filter                      = null;
 		if ( '' !== $older_than ) {
 			$duration_seconds = $this->parse_worktree_cleanup_duration($older_than);
 			if ( $duration_seconds instanceof \WP_Error ) {
@@ -525,7 +525,7 @@ trait WorkspaceArtifactCleanup {
 
 			$process_protection = $this->active_artifact_process_protection($wt_path, $artifacts);
 			if ( null !== $process_protection ) {
-				$is_probe_unavailable = str_starts_with((string) ($process_protection['reason_code'] ?? ''), 'active_process_probe_');
+				$is_probe_unavailable = str_starts_with( (string) ( $process_protection['reason_code'] ?? '' ), 'active_process_probe_');
 				if ( ( $is_probe_unavailable && ! $allow_unavailable_process_probe ) || ( ! $is_probe_unavailable && ! $allow_active ) ) {
 					$skipped[] = array_merge($base_row, $process_protection, array( 'artifacts' => $artifacts ));
 					continue;
@@ -721,8 +721,8 @@ trait WorkspaceArtifactCleanup {
 				'reason_code'       => 'active_build',
 				'protecting_reason' => 'active_build',
 				'reason'            => 'active process cwd or open file intersects the worktree artifacts; leaving reconstructable artifacts in place',
-				'process_probe'      => $probe,
-				'process_evidence'   => $evidence,
+				'process_probe'     => $probe,
+				'process_evidence'  => $evidence,
 			);
 		}
 
@@ -735,7 +735,7 @@ trait WorkspaceArtifactCleanup {
 			'reason_code'       => 'uncertain' === $status ? 'active_process_probe_uncertain' : 'active_process_probe_unavailable',
 			'protecting_reason' => 'active_process_probe_' . $status,
 			'reason'            => 'active process use could not be authoritatively excluded; safe cleanup is failing closed',
-			'process_probe'      => $probe,
+			'process_probe'     => $probe,
 		);
 	}
 
@@ -768,7 +768,7 @@ trait WorkspaceArtifactCleanup {
 
 		$snapshot = $this->artifact_process_path_records($fresh);
 		$records  = (array) ( $snapshot['records'] ?? array() );
-		$matches = array();
+		$matches  = array();
 		foreach ( $records as $record ) {
 			$path = rtrim( (string) ( $record['path'] ?? '' ), '/');
 			foreach ( $roots as $root ) {
@@ -813,7 +813,10 @@ trait WorkspaceArtifactCleanup {
 			return array(
 				'status'      => 'unavailable',
 				'records'     => array(),
-				'diagnostics' => array( 'reason' => 'process_filesystem_unavailable', 'path' => $proc_root ),
+				'diagnostics' => array(
+					'reason' => 'process_filesystem_unavailable',
+					'path'   => $proc_root,
+				),
 			);
 		}
 
@@ -823,7 +826,10 @@ trait WorkspaceArtifactCleanup {
 			return array(
 				'status'      => 'unavailable',
 				'records'     => array(),
-				'diagnostics' => array( 'reason' => 'process_filesystem_unreadable', 'path' => $proc_root ),
+				'diagnostics' => array(
+					'reason' => 'process_filesystem_unreadable',
+					'path'   => $proc_root,
+				),
 			);
 		}
 		$scanned              = 0;
@@ -832,7 +838,10 @@ trait WorkspaceArtifactCleanup {
 		$unknown_namespaces   = array();
 		$self_mount_namespace = @readlink($proc_root . '/self/ns/mnt'); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Procfs namespace links may be unavailable on non-Linux hosts.
 		if ( ! is_string($self_mount_namespace) || '' === $self_mount_namespace ) {
-			$unknown_namespaces[] = array( 'pid' => getmypid(), 'scope' => 'self' );
+			$unknown_namespaces[] = array(
+				'pid'   => getmypid(),
+				'scope' => 'self',
+			);
 		}
 		foreach ( $entries as $entry ) {
 			if ( ! ctype_digit( (string) $entry ) || getmypid() === (int) $entry ) {
@@ -843,10 +852,16 @@ trait WorkspaceArtifactCleanup {
 			$mount_namespace = @readlink($proc . '/ns/mnt'); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Processes can exit between procfs enumeration and readlink.
 			if ( ! is_string($mount_namespace) || '' === $mount_namespace ) {
 				if ( is_dir($proc) ) {
-					$unknown_namespaces[] = array( 'pid' => (int) $entry, 'scope' => 'process' );
+					$unknown_namespaces[] = array(
+						'pid'   => (int) $entry,
+						'scope' => 'process',
+					);
 				}
 			} elseif ( is_string($self_mount_namespace) && $mount_namespace !== $self_mount_namespace ) {
-				$foreign_namespaces[] = array( 'pid' => (int) $entry, 'mount_namespace' => $mount_namespace );
+				$foreign_namespaces[] = array(
+					'pid'             => (int) $entry,
+					'mount_namespace' => $mount_namespace,
+				);
 			}
 			// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Processes can exit between procfs enumeration and ownership lookup.
 			$owner_uid = @fileowner($proc);
@@ -863,14 +878,20 @@ trait WorkspaceArtifactCleanup {
 					'path'       => preg_replace('/ \(deleted\)$/', '', $cwd),
 				);
 			} elseif ( is_dir($proc) ) {
-				$unreadable[] = array( 'pid' => (int) $entry, 'resource' => 'cwd' );
+				$unreadable[] = array(
+					'pid'      => (int) $entry,
+					'resource' => 'cwd',
+				);
 			}
 
 			// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Processes can exit between procfs enumeration and scandir.
 			$fd_entries = @scandir($proc . '/fd');
 			if ( false === $fd_entries ) {
 				if ( is_dir($proc) ) {
-					$unreadable[] = array( 'pid' => (int) $entry, 'resource' => 'fd' );
+					$unreadable[] = array(
+						'pid'      => (int) $entry,
+						'resource' => 'fd',
+					);
 				}
 				continue;
 			}
@@ -951,12 +972,12 @@ trait WorkspaceArtifactCleanup {
 		return array_merge(
 			$candidate,
 			array(
-				'reason_code'       => 'partial_artifact_cleanup',
-				'reason'            => 'one or more artifacts were removed before a later artifact became blocked',
-				'artifacts'         => $removed_artifacts,
+				'reason_code'         => 'partial_artifact_cleanup',
+				'reason'              => 'one or more artifacts were removed before a later artifact became blocked',
+				'artifacts'           => $removed_artifacts,
 				'remaining_artifacts' => $remaining,
-				'bytes_reclaimed'   => $bytes,
-				'blocker'           => $blocker,
+				'bytes_reclaimed'     => $bytes,
+				'blocker'             => $blocker,
 			)
 		);
 	}
@@ -969,7 +990,7 @@ trait WorkspaceArtifactCleanup {
 	 */
 	private function observe_artifact_reclamation_rows( array $rows ): array {
 		foreach ( $rows as &$row ) {
-			$observations = array();
+			$observations  = array();
 			$durable_bytes = 0;
 			$rebuilt_bytes = 0;
 			foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
@@ -1072,19 +1093,19 @@ trait WorkspaceArtifactCleanup {
 		arsort($artifact_by_repo);
 
 		return array(
-			'would_remove_worktrees' => count($candidates),
-			'would_remove_artifacts' => $would_count,
-			'removed_worktrees'      => count($removed),
+			'would_remove_worktrees'      => count($candidates),
+			'would_remove_artifacts'      => $would_count,
+			'removed_worktrees'           => count($removed),
 			'partially_removed_worktrees' => count($partial),
-			'removed_artifacts'      => $removed_count,
-			'skipped'                => count($skipped),
-			'skipped_by_reason'      => $skipped_by_reason,
-			'artifact_count'         => 0 === $removed_count ? $would_count : $removed_count,
-			'artifact_size_bytes'    => 0 === $removed_count ? $would_bytes : $removed_bytes,
-			'removed_size_bytes'     => $removed_bytes,
-			'durable_reclaimed_bytes' => $durable_bytes,
-			'rebuilt_artifact_bytes' => $rebuilt_bytes,
-			'artifact_size_by_repo'  => $artifact_by_repo,
+			'removed_artifacts'           => $removed_count,
+			'skipped'                     => count($skipped),
+			'skipped_by_reason'           => $skipped_by_reason,
+			'artifact_count'              => 0 === $removed_count ? $would_count : $removed_count,
+			'artifact_size_bytes'         => 0 === $removed_count ? $would_bytes : $removed_bytes,
+			'removed_size_bytes'          => $removed_bytes,
+			'durable_reclaimed_bytes'     => $durable_bytes,
+			'rebuilt_artifact_bytes'      => $rebuilt_bytes,
+			'artifact_size_by_repo'       => $artifact_by_repo,
 		);
 	}
 

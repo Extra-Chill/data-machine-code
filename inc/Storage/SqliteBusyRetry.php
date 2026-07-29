@@ -11,9 +11,9 @@ defined('ABSPATH') || exit;
 
 final class SqliteBusyRetry {
 
-	private const DEFAULT_MAX_WAIT_MS = 1000;
+	private const DEFAULT_MAX_WAIT_MS     = 1000;
 	private const DEFAULT_INITIAL_WAIT_MS = 25;
-	private const DEFAULT_MAX_DELAY_MS = 250;
+	private const DEFAULT_MAX_DELAY_MS    = 250;
 
 	/**
 	 * Retry only a SQLite write which reports a transient busy/locked failure.
@@ -44,10 +44,11 @@ final class SqliteBusyRetry {
 					throw $error;
 				}
 				$busy_message = $error->getMessage();
-				$result = false;
+				$result       = false;
 			}
 
-			if ( false !== $result || ! self::is_busy_error($busy_message ?: (string) ( $wpdb->last_error ?? '' )) ) {
+			$last_error = '' !== $busy_message ? $busy_message : (string) ( $wpdb->last_error ?? '' );
+			if ( false !== $result || ! self::is_busy_error($last_error) ) {
 				return $result;
 			}
 
@@ -72,7 +73,7 @@ final class SqliteBusyRetry {
 			$delay_ms = min($max_delay_ms, $initial_wait_ms * ( 2 ** ( $attempts - 1 ) ));
 			// Spread competing CLI processes without extending the configured budget.
 			$jitter_ms = $delay_ms > 1 ? random_int(0, max(1, (int) floor($delay_ms / 4))) : 0;
-			usleep((int) min($delay_ms + $jitter_ms, max(1, $max_wait_ms - $elapsed_ms)) * 1000);
+			usleep( (int) min($delay_ms + $jitter_ms, max(1, $max_wait_ms - $elapsed_ms)) * 1000);
 		} while ( true );
 	}
 
@@ -84,10 +85,11 @@ final class SqliteBusyRetry {
 			return false;
 		}
 
-		$signals = array(get_class($database));
+		$signals = array( get_class($database) );
 		if ( method_exists($database, 'db_server_info') ) {
 			try {
 				$signals[] = (string) $database->db_server_info();
+			// phpcs:ignore Generic.CodeAnalysis.EmptyStatement.DetectedCatch -- A failed optional capability probe is intentionally ignored.
 			} catch ( \Throwable ) {
 				// A failed capability probe must not alter normal database behavior.
 			}
@@ -112,8 +114,8 @@ final class SqliteBusyRetry {
 		return str_contains($message, 'database is locked') || str_contains($message, 'database is busy') || str_contains($message, 'sqlite_busy') || str_contains($message, 'sqlite_locked');
 	}
 
-	private static function filtered_positive_int( string $hook, int $default ): int {
-		$value = function_exists('apply_filters') ? (int) apply_filters($hook, $default) : $default;
+	private static function filtered_positive_int( string $hook, int $default_value ): int {
+		$value = function_exists('apply_filters') ? (int) apply_filters($hook, $default_value) : $default_value;
 		return max(1, $value);
 	}
 }
