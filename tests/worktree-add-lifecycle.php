@@ -388,6 +388,17 @@ try {
 	$reusable = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
 	assert_true(! is_wp_error($reusable), is_wp_error($reusable) ? $reusable->get_error_message() : 'reuse fixture creation failed');
 	$reuse_handle      = 'homeboy@idempotent-reuse';
+	$disposable_intent = array( 'purpose' => 'integration-test', 'owner_run_ref' => 'run-991', 'cleanup_policy' => 'remove_on_success' );
+	$disposable = $workspace->worktree_add('homeboy', 'purpose-owned-disposable', 'origin/main', false, false, false, false, true, array(), false, false, $disposable_intent);
+	assert_true(! is_wp_error($disposable), is_wp_error($disposable) ? $disposable->get_error_message() : 'purpose-owned disposable creation failed');
+	assert_true('integration-test' === ( $wpdb->rows['homeboy@purpose-owned-disposable']['purpose'] ?? '' ), 'purpose was not persisted to local inventory');
+	assert_true('run-991' === ( $disposable['metadata']['owner_run_ref'] ?? '' ), 'owner run reference did not round-trip through lifecycle metadata');
+	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata('homeboy@purpose-owned-disposable', array( 'last_seen_at' => gmdate('c', time() - 90000) ));
+	$disposable_mismatch = $workspace->worktree_add('homeboy', 'purpose-owned-disposable', 'origin/main', false, false, false, false, true, array(), false, false, array( 'purpose' => 'other', 'owner_run_ref' => 'run-991', 'cleanup_policy' => 'remove_on_success' ));
+	assert_true(is_wp_error($disposable_mismatch) && 'disposable_intent_mismatch' === ( $disposable_mismatch->get_error_data()['reuse']['reason_code'] ?? '' ), 'incompatible disposable reuse did not return typed intent evidence');
+	$disposable_finalized = $workspace->worktree_finalize('homeboy@purpose-owned-disposable', 'active', null, 'success');
+	assert_true(! is_wp_error($disposable_finalized) && 'cleanup_eligible' === ( $disposable_finalized['lifecycle_state'] ?? '' ), 'successful owner terminal outcome did not make disposable worktree cleanup eligible');
+	assert_true(strtotime((string) ( $disposable_finalized['metadata']['last_seen_at'] ?? '' )) < strtotime((string) ( $disposable_finalized['metadata']['finalized_at'] ?? '' )), 'terminal finalization must not refresh heartbeat activity');
 	$reuse_created_at  = $wpdb->rows[$reuse_handle]['created_at'] ?? null;
 	$live_reuse_refusal = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
 	assert_true(is_wp_error($live_reuse_refusal) && 'worktree_reuse_refused' === $live_reuse_refusal->get_error_code(), 'live worktree reuse did not fail closed');

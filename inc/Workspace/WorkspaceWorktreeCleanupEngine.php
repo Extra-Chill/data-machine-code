@@ -340,7 +340,12 @@ trait WorkspaceWorktreeCleanupEngine {
 				continue;
 			}
 
-			if ( in_array($branch, $protected_branches, true) ) {
+			$owner_terminal_disposable = WorktreeContextInjector::has_owner_terminal_disposable_cleanup_signal($metadata);
+			$protected_disposable_exception = in_array($branch, $protected_branches, true)
+				&& $owner_terminal_disposable
+				&& WorktreeContextInjector::LIVENESS_LIVE !== $liveness
+				&& $branch === (string) ( $identity['actual_branch'] ?? $branch );
+			if ( in_array($branch, $protected_branches, true) && ! $protected_disposable_exception ) {
 				$skipped[] = array_merge(
 					array(
 						'handle'      => $handle,
@@ -581,6 +586,11 @@ trait WorkspaceWorktreeCleanupEngine {
 			);
 
 			if ( 'candidate' === $classification['type'] ) {
+				if ( $protected_disposable_exception ) {
+					// Never delete the primary's protected local branch with the linked checkout.
+					$classification['row']['preserve_local_branch'] = true;
+					$classification['row']['protected_disposable_exception'] = true;
+				}
 				$candidates[] = $classification['row'];
 				continue;
 			}
@@ -1597,8 +1607,9 @@ trait WorkspaceWorktreeCleanupEngine {
 			);
 		}
 
+		$owner_terminal_disposable = WorktreeContextInjector::has_owner_terminal_disposable_cleanup_signal($metadata);
 		$recent_activity = $this->worktree_cleanup_recent_activity_protection($metadata);
-		if ( null !== $recent_activity && ( null === $reviewed_lifecycle_snapshot || ! $this->worktree_cleanup_lifecycle_matches_reviewed_plan($reviewed_lifecycle_snapshot, $metadata) ) ) {
+		if ( ! $owner_terminal_disposable && null !== $recent_activity && ( null === $reviewed_lifecycle_snapshot || ! $this->worktree_cleanup_lifecycle_matches_reviewed_plan($reviewed_lifecycle_snapshot, $metadata) ) ) {
 			return array(
 				'skipped' => array_merge(
 					array(
@@ -1689,6 +1700,15 @@ trait WorkspaceWorktreeCleanupEngine {
 					'reason'      => 'worktree marker missing — refusing to apply bounded cleanup',
 				),
 			);
+		}
+
+		$protected_branch = in_array($branch, array( 'main', 'master', 'trunk', 'develop', 'HEAD' ), true);
+		if ( $protected_branch && ! $owner_terminal_disposable ) {
+			return array( 'skipped' => array(
+				'handle' => $handle, 'repo' => $repo, 'branch' => $branch, 'path' => $wt_path,
+				'reason_code' => 'protected_base_branch_worktree',
+				'reason' => 'bounded cleanup preserves protected/base branches unless the creator recorded a successful disposable terminal outcome.',
+			) );
 		}
 
 		if ( 'broken_orphan_worktree_marker' === (string) ( $candidate['signal'] ?? $candidate['reason_code'] ?? '' ) ) {
@@ -1839,6 +1859,23 @@ trait WorkspaceWorktreeCleanupEngine {
 					),
 				);
 			}
+		}
+
+		if ( $protected_branch ) {
+			$current_branch = $this->run_git($real_path, 'branch --show-current', self::CLEANUP_GIT_PROBE_TIMEOUT);
+			$remote_head = $this->run_git($primary_path, 'rev-parse --verify ' . escapeshellarg('origin/' . $branch), self::CLEANUP_GIT_PROBE_TIMEOUT);
+			$local_head = $this->run_git($real_path, 'rev-parse --verify HEAD', self::CLEANUP_GIT_PROBE_TIMEOUT);
+			if ( is_wp_error($current_branch) || is_wp_error($remote_head) || is_wp_error($local_head)
+				|| $branch !== trim((string) ($current_branch['output'] ?? ''))
+				|| trim((string) ($remote_head['output'] ?? '')) !== trim((string) ($local_head['output'] ?? '')) ) {
+				return array( 'skipped' => array(
+					'handle' => $handle, 'repo' => $repo, 'branch' => $branch, 'path' => $wt_path,
+					'reason_code' => 'protected_branch_not_identical',
+					'reason' => 'protected linked branch is not proven identical to its remote branch.',
+				) );
+			}
+			$candidate['preserve_local_branch'] = true;
+			$candidate['protected_disposable_exception'] = true;
 		}
 
 		return array_merge(

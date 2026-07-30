@@ -12,6 +12,34 @@ defined('ABSPATH') || exit;
 final class WorktreeCleanupCandidateClassifier {
 
 	/**
+	 * Review-only projection for legacy operation staging worktrees. Names are a
+	 * weak hint only; every supplied safety evidence field must also be true.
+	 * This deliberately never returns a destructive cleanup candidate.
+	 */
+	public static function classify_legacy_operation_staging_ghost( array $context ): ?array {
+		$branch = (string) ( $context['branch'] ?? '' );
+		$looks_operational = 1 === preg_match('/(?:^|[-\/])(release|recover)(?:[-\/]|$)/i', $branch);
+		if ( ! $looks_operational
+			|| ! empty($context['is_primary'])
+			|| empty($context['workspace_contained'])
+			|| empty($context['stale'])
+			|| ! empty($context['dirty'])
+			|| ! empty($context['unpushed'])
+			|| empty($context['default_contained'])
+			|| WorktreeContextInjector::LIVENESS_LIVE === ( $context['liveness'] ?? null ) ) {
+			return null;
+		}
+
+		return array(
+			'row_type'    => 'review_only',
+			'review_only' => true,
+			'reason_code' => 'likely_legacy_operation_staging_ghost',
+			'reason'      => 'stale clean pushed non-primary operation-named worktree is default-contained; review manually before any removal.',
+			'evidence'    => array_intersect_key($context, array_flip(array( 'branch', 'stale', 'dirty', 'unpushed', 'default_contained', 'workspace_contained', 'liveness' ))),
+		);
+	}
+
+	/**
 	 * Whether non-live lifecycle context needs terminal-signal reconciliation.
 	 *
 	 * @param  array<string,mixed> $metadata Persisted lifecycle metadata.

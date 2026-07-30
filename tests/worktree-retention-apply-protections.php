@@ -220,6 +220,13 @@ namespace {
 	retention_apply_protections_assert('cleanup_eligible_at' === ( $recent_lifecycle['skipped']['activity_field'] ?? null ), 'recent lifecycle protection identifies the lifecycle activity field');
 	retention_apply_protections_assert(86400 === ( $recent_lifecycle['skipped']['recency_window_seconds'] ?? null ), 'recent lifecycle protection documents its bounded expiry');
 
+	$owner_terminal_candidate = $recent_lifecycle_candidate;
+	$owner_terminal_candidate['metadata'] = array_merge($owner_terminal_candidate['metadata'], array(
+		'purpose' => 'test-disposable', 'owner_run_ref' => 'run-991', 'cleanup_policy' => 'remove_on_success', 'owner_terminal_outcome' => 'success',
+	));
+	$owner_terminal = $harness->revalidate($owner_terminal_candidate);
+	retention_apply_protections_assert(! isset($owner_terminal['skipped']), 'successful owner-terminal disposable worktrees are immediately eligible despite their finalization timestamp');
+
 	$expired_lifecycle_candidate                                      = $base_candidate;
 	$expired_lifecycle_candidate['metadata']['cleanup_eligible_at'] = gmdate('c', time() - 86401);
 	$expired_lifecycle                                                = $harness->revalidate($expired_lifecycle_candidate);

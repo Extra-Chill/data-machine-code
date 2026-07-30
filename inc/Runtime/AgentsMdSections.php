@@ -86,7 +86,7 @@ MD;
 **Default routing**
 - Inspect workspace state: `{$wp} datamachine-code workspace list`, `{$wp} datamachine-code workspace show <repo>`, or `{$wp} datamachine-code workspace hygiene`
 - Create isolated work: `{$wp} datamachine-code workspace worktree add <repo> <branch> --from=origin/<base>`
-- Record PR/final state: `{$wp} datamachine-code workspace worktree finalize <repo@slug> --pr=<url>`
+- Record PR/final state: `{$wp} datamachine-code workspace worktree finalize <repo@slug> --pr=<url>`. Creators of `remove_on_success` disposable worktrees must terminally finalize their own run with `--owner-terminal-outcome=success`; this is the explicit handoff to cleanup after clean/pushed/non-live safety checks.
 - Refresh an authoritative primary: `{$wp} datamachine-code workspace git pull <repo> --allow-primary-refresh`
 - Inspect or manage GitHub state: `{$wp} datamachine-code github --help`
 - Edit inside a local worktree with native file tools and raw `git`; routing local file I/O through workspace abilities is ceremony, not safety.

@@ -73,7 +73,7 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  bool        $require_task_tracker Reject creation without task metadata (default false).
 	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
-	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false ): array|\WP_Error {
+	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array() ): array|\WP_Error {
 		$visible = $this->require_workspace_visible();
 		if ( null !== $visible ) {
 			return $visible;
@@ -94,6 +94,10 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		$task = WorktreeContextInjector::resolve_task_metadata($task) ?? array();
+		if ( array_key_exists('cleanup_policy', $intent) && null === WorktreeContextInjector::normalize_cleanup_policy($intent['cleanup_policy']) ) {
+			return new \WP_Error('invalid_cleanup_policy', 'cleanup_policy must be one of: ' . implode(', ', WorktreeContextInjector::VALID_CLEANUP_POLICIES) . '.', array( 'status' => 400 ));
+		}
+		$intent = WorktreeContextInjector::normalize_disposable_intent($intent);
 		if ( $require_task_tracker && empty($task) ) {
 			return new \WP_Error(
 				'worktree_task_tracker_required',
@@ -116,7 +120,7 @@ trait WorkspaceWorktreeLifecycle {
 		$wt_path   = $this->workspace_path . '/' . $wt_handle;
 
 		if ( is_dir($wt_path) ) {
-			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task);
+			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent);
 		}
 
 		return WorkspaceMutationLock::with_repo(
@@ -136,6 +140,7 @@ trait WorkspaceWorktreeLifecycle {
 					$force,
 					$task,
 					$allow_unverified_freshness,
+					$intent,
 					$slug,
 					$wt_handle,
 					$wt_path,
@@ -189,6 +194,7 @@ trait WorkspaceWorktreeLifecycle {
 		bool $force,
 		array $task,
 		bool $allow_unverified_freshness,
+		array $intent,
 		string $slug,
 		string $wt_handle,
 		string $wt_path,
@@ -196,7 +202,7 @@ trait WorkspaceWorktreeLifecycle {
 	): array|\WP_Error {
 		$operation_deadline = microtime(true) + self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		if ( is_dir($wt_path) ) {
-			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task);
+			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent);
 		}
 
 		$fetch                 = WorktreeStalenessProbe::fetch($primary_path);
@@ -297,6 +303,7 @@ trait WorkspaceWorktreeLifecycle {
 				$bootstrap,
 				$task,
 				$allow_unverified_freshness,
+				$intent,
 				array(
 					'fetch_failed'          => $fetch_failed,
 					'fetch_error'           => $fetch_error,
@@ -436,6 +443,7 @@ trait WorkspaceWorktreeLifecycle {
 		bool $bootstrap,
 		array $task = array(),
 		bool $allow_unverified_freshness = false,
+		array $intent = array(),
 		array $preflight = array()
 	): array|\WP_Error {
 		if ( is_dir($wt_path) ) {
@@ -634,6 +642,9 @@ trait WorkspaceWorktreeLifecycle {
 				'base_source' => $created_branch ? ( null !== $from && '' !== trim( $from ) ? 'requested_ref' : 'default_base' ) : 'existing_local_branch',
 				'task_url'    => isset( $task['task_url'] ) ? (string) $task['task_url'] : '',
 				'task_ref'    => isset( $task['task_ref'] ) ? (string) $task['task_ref'] : '',
+				'purpose'     => $intent['purpose'] ?? null,
+				'owner_run_ref' => $intent['owner_run_ref'] ?? null,
+				'cleanup_policy' => $intent['cleanup_policy'] ?? null,
 			)
 		);
 		$lifecycle_metadata['reuse_contract'] = array(
@@ -641,6 +652,9 @@ trait WorkspaceWorktreeLifecycle {
 			'base_ref'       => $created_branch ? $resolved_base : 'existing_local_branch',
 			'inject_context' => $inject_context,
 			'bootstrap'      => $bootstrap,
+			'purpose'        => $intent['purpose'] ?? null,
+			'owner_run_ref'  => $intent['owner_run_ref'] ?? null,
+			'cleanup_policy' => $intent['cleanup_policy'] ?? null,
 		);
 		$metadata_stored                      = WorktreeContextInjector::store_lifecycle_metadata( $wt_handle, $lifecycle_metadata );
 		if ( is_wp_error( $metadata_stored ) ) {
@@ -689,7 +703,7 @@ trait WorkspaceWorktreeLifecycle {
 	 *
 	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
-	private function reuse_existing_worktree( string $handle, string $branch, ?string $from, bool $inject_context, bool $bootstrap, array $task ): array|\WP_Error {
+	private function reuse_existing_worktree( string $handle, string $branch, ?string $from, bool $inject_context, bool $bootstrap, array $task, array $intent = array() ): array|\WP_Error {
 		$inspection = $this->worktree_get($handle, array(
 			'include_status' => true,
 			'include_disk'   => false,
@@ -751,6 +765,13 @@ trait WorkspaceWorktreeLifecycle {
 		if ( $this->worktree_reuse_task_identity($task) !== $this->worktree_reuse_task_identity( (array) ( $existing['task'] ?? array() )) ) {
 			return $this->worktree_reuse_refused($handle, 'task_mismatch', $evidence + array( 'requested_task' => $task ));
 		}
+		$stored_intent = WorktreeContextInjector::normalize_disposable_intent($contract + $metadata);
+		if ( $intent !== $stored_intent ) {
+			return $this->worktree_reuse_refused($handle, 'disposable_intent_mismatch', $evidence + array(
+				'requested_intent' => $intent,
+				'stored_intent'    => $stored_intent,
+			));
+		}
 
 		return array(
 			'success'        => true,
@@ -797,7 +818,7 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  string|null $pr     Optional PR URL or number.
 	 * @return array{success: bool, handle: string, path: string, lifecycle_state: string, metadata: array, message: string}|\WP_Error
 	 */
-	public function worktree_finalize( string $handle, string $state, ?string $pr = null ): array|\WP_Error {
+	public function worktree_finalize( string $handle, string $state, ?string $pr = null, ?string $owner_terminal_outcome = null ): array|\WP_Error {
 		$parsed = $this->parse_handle($handle);
 		if ( ! $parsed['is_worktree'] ) {
 			return new \WP_Error('not_a_worktree', sprintf('Handle "%s" is a primary checkout, not a worktree.', $handle), array( 'status' => 400 ));
@@ -813,14 +834,13 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error('worktree_not_found', sprintf('Worktree "%s" does not exist on disk.', $parsed['dir_name']), array( 'status' => 404 ));
 		}
 
-		$metadata = WorktreeContextInjector::build_finalizer_metadata($normalized_state, $pr);
+		$existing_metadata = WorktreeContextInjector::get_metadata($parsed['dir_name']) ?? array();
+		$metadata = WorktreeContextInjector::build_finalizer_metadata($normalized_state, $pr, $owner_terminal_outcome, $existing_metadata);
 		$metadata = array_merge(
 			array(
 				'handle'       => $parsed['dir_name'],
 				'path'         => $wt_path,
 				'repo'         => $parsed['repo'],
-				// Finalize is itself an explicit liveness signal from the owner.
-				'last_seen_at' => gmdate('c'),
 			),
 			$metadata
 		);
@@ -991,6 +1011,10 @@ trait WorkspaceWorktreeLifecycle {
 				'lifecycle_state'       => $metadata['lifecycle_state'] ?? null,
 				'pr_url'                => $metadata['pr_url'] ?? null,
 				'pr_number'             => $metadata['pr_number'] ?? null,
+				'purpose'               => $metadata['purpose'] ?? null,
+				'owner_run_ref'         => $metadata['owner_run_ref'] ?? null,
+				'cleanup_policy'        => $metadata['cleanup_policy'] ?? null,
+				'owner_terminal_outcome'=> $metadata['owner_terminal_outcome'] ?? null,
 				'last_seen_at'          => $metadata['last_seen_at'] ?? null,
 				'liveness'              => $liveness['liveness'],
 				'liveness_reason'       => $liveness['reason'],
