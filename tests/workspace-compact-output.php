@@ -29,6 +29,15 @@ function compact_output_large_rows( int $count ): array {
 			'path'                => '/tmp/repo@branch-' . $i,
 			'reason_code'         => 0 === $i % 2 ? 'dirty_worktree' : 'unpushed_commits',
 			'reason'              => str_repeat('large evidence ', 80),
+			'process_probe_diagnostics' => array(
+				'provider'             => 'lsof',
+				'provider_status'      => 'uncertain',
+				'classification'       => 'timed_out',
+				'error'                => 'process_path_probe_timeout',
+				'candidate_path'       => '/tmp/repo@branch-' . $i,
+				'inspected_path_count' => 0,
+				'guidance'             => 'Retry the bounded dry run.',
+			),
 			'size_bytes'          => 1024 * ( $i + 1 ),
 			'artifact_size_bytes' => 512 * ( $i + 1 ),
 			'evidence'            => array_fill(0, 20, str_repeat('x', 100)),
@@ -75,6 +84,7 @@ compact_output_assert(123456 === ( $cleanup['bytes']['total_size_bytes'] ?? null
 compact_output_assert(20 === ( $cleanup['blockers']['dirty_worktree']['count'] ?? null ), 'Compact cleanup output must preserve blocker counts.');
 compact_output_assert(count((array) ( $cleanup['samples']['skipped'] ?? array() )) <= 5, 'Compact cleanup output must sample skipped rows.');
 compact_output_assert(! empty($cleanup['next_commands']), 'Compact cleanup output must preserve next commands.');
+compact_output_assert('timed_out' === ( $cleanup['samples']['skipped'][0]['process_probe_diagnostics']['classification'] ?? null ), 'Compact cleanup output must preserve safe process-probe diagnostics.');
 
 $unknown_size_cleanup = WorkspaceCompactOutput::cleanup_result(
 	array(

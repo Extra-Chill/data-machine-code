@@ -62,12 +62,23 @@ namespace {
 	function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
 		return $value;
 	}
+
+	$GLOBALS['artifact_guard_registered_abilities'] = array();
+
+	function wp_register_ability( string $slug, array $args ): void {
+		$GLOBALS['artifact_guard_registered_abilities'][ $slug ] = $args;
+	}
+
+	function doing_action( string $hook ): bool {
+		return 'wp_abilities_api_init' === $hook;
+	}
 }
 
-namespace DataMachineCode\Workspace {
+	namespace DataMachineCode\Workspace {
 	require_once dirname(__DIR__) . '/vendor/autoload.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceArtifactCleanup.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeCleanupEngine.php';
+	require_once dirname(__DIR__) . '/inc/Cli/WorkspaceCompactOutput.php';
 
 	class ArtifactCleanupGuardHarness {
 		use WorkspaceArtifactCleanup;
@@ -128,6 +139,17 @@ namespace DataMachineCode\Workspace {
 		}
 	}
 
+	final class Workspace {
+		public const ARTIFACT_CLEANUP_DEFAULT_LIMIT = 100;
+		public const MAX_READ_SIZE = 1048576;
+		public static array $artifact_cleanup_options = array();
+
+		public function worktree_cleanup_artifacts( array $opts = array() ): array {
+			self::$artifact_cleanup_options = $opts;
+			return array( 'success' => true, 'dry_run' => ! empty($opts['dry_run']), 'candidates' => array(), 'skipped' => array() );
+		}
+	}
+
 	final class ControlledArtifactCleanupGuardHarness extends ArtifactCleanupGuardHarness {
 		public array $process_probe = array( 'status' => 'available', 'evidence' => array(), 'diagnostics' => array() );
 		public int $fresh_process_scans = 0;
@@ -157,19 +179,44 @@ namespace DataMachineCode\Workspace {
 			return parent::observe_artifact_reclamation_path($worktree_path, $relative);
 		}
 	}
+
+	final class MacOSArtifactCleanupGuardHarness extends ArtifactCleanupGuardHarness {
+		public function __construct( string $workspace_path, private \DataMachineCode\Support\ProcessPathProbeInterface $probe ) {
+			parent::__construct($workspace_path);
+		}
+
+		protected function detect_active_artifact_processes( string $worktree_path, array $artifacts, bool $fresh = false ): array {
+			$snapshot = $this->probe->snapshot();
+			return array(
+				'status'      => (string) ( $snapshot['status'] ?? 'unavailable' ),
+				'evidence'    => (array) ( $snapshot['records'] ?? array() ),
+				'diagnostics' => (array) ( $snapshot['diagnostics'] ?? array() ),
+			);
+		}
+	}
 }
 
 namespace {
 	use DataMachineCode\Workspace\ArtifactCleanupGuardHarness;
 	use DataMachineCode\Workspace\ControlledArtifactCleanupGuardHarness;
+	use DataMachineCode\Workspace\MacOSArtifactCleanupGuardHarness;
 	use DataMachineCode\Workspace\WorktreeContextInjector;
 	use DataMachineCode\Support\MacOSLsofProcessPathProbe;
+	use DataMachineCode\Cli\WorkspaceCompactOutput;
+	use DataMachineCode\Abilities\WorkspaceAbilities;
 
 	function artifact_guard_assert_same( mixed $expected, mixed $actual, string $message ): void {
 		if ( $expected !== $actual ) {
 			throw new RuntimeException($message . '\nExpected: ' . var_export($expected, true) . '\nActual: ' . var_export($actual, true));
 		}
 	}
+
+	require_once dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php';
+	new WorkspaceAbilities();
+	$artifact_ability = $GLOBALS['artifact_guard_registered_abilities']['datamachine-code/workspace-worktree-cleanup-artifacts'] ?? array();
+	artifact_guard_assert_same(true, isset($artifact_ability['input_schema']['properties']['only_handle'], $artifact_ability['input_schema']['properties']['only_handles']), 'artifact cleanup ability must register singular and plural retry scopes');
+	WorkspaceAbilities::worktreeCleanupArtifacts(array( 'dry_run' => true, 'only_handle' => 'repo@z-blocked', 'only_handles' => array( 'repo@z-blocked', 'repo@z-blocked' ) ));
+	artifact_guard_assert_same(array( 'repo@z-blocked' ), \DataMachineCode\Workspace\Workspace::$artifact_cleanup_options['only_handles'] ?? null, 'artifact cleanup ability must normalize retry scopes into the planner option');
 
 	function artifact_guard_remove_tree( string $path ): void {
 		if ( ! is_dir($path) ) {
@@ -218,6 +265,34 @@ namespace {
 	$harness->process_probe = array( 'status' => 'unavailable', 'evidence' => array(), 'diagnostics' => array( 'reason' => 'process_filesystem_unavailable' ) );
 	$unavailable            = $harness->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true ));
 	artifact_guard_assert_same('active_process_probe_unavailable', $unavailable['skipped'][0]['reason_code'] ?? null, 'unavailable process evidence must fail closed');
+	artifact_guard_assert_same('unknown', $unavailable['skipped'][0]['process_probe_diagnostics']['provider'] ?? null, 'unavailable process skips must report the provider');
+	artifact_guard_assert_same('unavailable', $unavailable['skipped'][0]['process_probe_diagnostics']['classification'] ?? null, 'unavailable process skips must use a stable classification');
+	artifact_guard_assert_same($path, $unavailable['skipped'][0]['process_probe_diagnostics']['candidate_path'] ?? null, 'unavailable process skips must identify the candidate path');
+	artifact_guard_assert_same(0, $unavailable['skipped'][0]['process_probe_diagnostics']['inspected_path_count'] ?? null, 'unavailable process skips must report inspected path count');
+	artifact_guard_assert_same("studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --safety-probes --limit=1 --only-handle='repo@guard' --format=json", $unavailable['skipped'][0]['process_probe_diagnostics']['retry_command'] ?? null, 'unavailable process skips must include a targeted bounded retry command');
+	$unavailable_compact = WorkspaceCompactOutput::cleanup_result($unavailable);
+	artifact_guard_assert_same('unavailable', $unavailable_compact['samples']['skipped'][0]['process_probe_diagnostics']['classification'] ?? null, 'compact output must preserve cleanup process-probe diagnostics');
+	artifact_guard_assert_same(true, in_array($unavailable['skipped'][0]['process_probe_diagnostics']['retry_command'], (array) ( $unavailable_compact['next_commands'] ?? array() ), true), 'compact output must promote process-probe retry commands to next_commands');
+	$first_path = $root . '/repo@a-first';
+	mkdir($first_path, 0777, true);
+	artifact_guard_create_artifacts($first_path);
+	$first_row = $base;
+	$first_row['handle'] = 'repo@a-first';
+	$first_row['branch'] = 'test/first';
+	$first_row['path']   = $first_path;
+	$blocked_row = $base;
+	$blocked_row['handle'] = 'repo@z-blocked';
+	$blocked_row['branch'] = 'test/blocked';
+	$harness->rows          = array($blocked_row, $first_row);
+	$harness->process_probe = array( 'status' => 'unavailable', 'evidence' => array(), 'diagnostics' => array( 'reason' => 'process_filesystem_unavailable' ) );
+	$blocked_preview = $harness->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true, 'only_handles' => array( 'repo@z-blocked' ) ));
+	artifact_guard_assert_same('repo@z-blocked', $blocked_preview['skipped'][0]['handle'] ?? null, 'targeted retry must inspect the blocked handle rather than the first inventory row');
+	artifact_guard_assert_same(1, $blocked_preview['pagination']['scanned'] ?? null, 'targeted retry must stay bounded to the selected handle');
+	$harness->process_probe = array( 'status' => 'available', 'evidence' => array(), 'diagnostics' => array() );
+	$retried = $harness->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true, 'only_handles' => array( 'repo@z-blocked' ) ));
+	artifact_guard_assert_same('repo@z-blocked', $retried['candidates'][0]['handle'] ?? null, 'retry command scope must select the intended blocked worktree');
+	$harness->rows          = array($base);
+	$harness->process_probe = array( 'status' => 'unavailable', 'evidence' => array(), 'diagnostics' => array( 'reason' => 'process_filesystem_unavailable' ) );
 	$forced = $harness->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true, 'force' => true ));
 	artifact_guard_assert_same(0, count($forced['candidates']), 'legacy force must not override unavailable active-process evidence');
 	$active_override = $harness->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true, 'allow_active_artifact_cleanup' => true ));
@@ -226,29 +301,90 @@ namespace {
 	artifact_guard_assert_same(1, count($probe_override['candidates']), 'process-probe override must permit reviewed cleanup without waiving live-owner eviction');
 	artifact_guard_assert_same('active_process_probe_unavailable', $probe_override['candidates'][0]['safety_overrides'][0]['reason_code'] ?? null, 'probe override must retain typed unavailable evidence');
 
-	$mac_no_match = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => "p42\0ctest\0f3\0n/tmp/unrelated\0" ));
+	$mac_no_match = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => "p42\0cnode\0f3\0n/tmp/unrelated\0" ));
 	artifact_guard_assert_same('available', $mac_no_match->snapshot()['status'], 'macOS lsof no-match snapshot must be available');
+	$mac_no_process_harness = new MacOSArtifactCleanupGuardHarness($root, new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => '' )));
+	$mac_no_process_harness->rows = array($base);
+	$mac_no_process = $mac_no_process_harness->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true ));
+	artifact_guard_assert_same(1, count($mac_no_process['candidates']), 'macOS-shaped Node no-process evidence must leave cleanup eligible');
 	$mac_cwd = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => "p42\0ctest\0fcwd\0n{$path}\0" ));
 	$mac_cwd_records = $mac_cwd->snapshot()['records'];
 	artifact_guard_assert_same('cwd', $mac_cwd_records[0]['match_type'] ?? null, 'macOS lsof cwd evidence must retain its match type');
 	$mac_open_file = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => "p42\0ctest\0f12\0n{$path}/vendor/generated.php\0" ));
 	$mac_open_file_records = $mac_open_file->snapshot()['records'];
 	artifact_guard_assert_same('open_file', $mac_open_file_records[0]['match_type'] ?? null, 'macOS lsof open-file evidence must retain its match type');
+	$mac_active_probe = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => "p42\0cnode\0fcwd\0n{$path}\0" ));
+	$mac_active_snapshot = $mac_active_probe->snapshot();
+	artifact_guard_assert_same('cwd', $mac_active_snapshot['records'][0]['match_type'] ?? null, 'macOS-shaped Node cwd output must parse as cwd evidence');
+	artifact_guard_assert_same($path, $mac_active_snapshot['records'][0]['path'] ?? null, 'macOS-shaped Node cwd output must preserve the candidate path');
+	$mac_active_harness = new MacOSArtifactCleanupGuardHarness($root, $mac_active_probe);
+	$mac_active_harness->rows = array($base);
+	$mac_active = $mac_active_harness->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true ));
+	artifact_guard_assert_same('active_build', $mac_active['skipped'][0]['reason_code'] ?? null, 'macOS-shaped Node cwd evidence must block cleanup');
 	$mac_timeout = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => false, 'timeout' => 2 ));
 	artifact_guard_assert_same('uncertain', $mac_timeout->snapshot()['status'], 'macOS lsof timeout must fail closed as uncertain');
+	artifact_guard_assert_same('process_path_probe_timeout', $mac_timeout->snapshot()['diagnostics']['reason'] ?? null, 'macOS lsof timeouts must retain a stable error code');
+	$mac_failure = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => false, 'output' => 'permission denied: secret command argument' ));
+	artifact_guard_assert_same('process_path_probe_permission_denied', $mac_failure->snapshot()['diagnostics']['reason'] ?? null, 'macOS lsof permission failures must retain a stable error code');
+	artifact_guard_assert_same(false, isset($mac_failure->snapshot()['diagnostics']['details']), 'macOS lsof failures must not expose raw process output');
+	$mac_operation_not_permitted = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => false, 'stderr' => 'lsof: Operation not permitted' ));
+	artifact_guard_assert_same('process_path_probe_permission_denied', $mac_operation_not_permitted->snapshot()['diagnostics']['reason'] ?? null, 'macOS operation-not-permitted failures must classify as permission denied');
+	$mac_malformed = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => "pbad\0n{$path}\0" ));
+	artifact_guard_assert_same('process_path_probe_malformed_output', $mac_malformed->snapshot()['diagnostics']['reason'] ?? null, 'macOS malformed lsof output must fail closed with a stable error code');
+	$mac_truncated = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => "p42\0cnode\0fcwd\0" ));
+	artifact_guard_assert_same('process_path_probe_malformed_output', $mac_truncated->snapshot()['diagnostics']['reason'] ?? null, 'truncated macOS lsof records must fail closed as malformed');
+	$mac_cross_process = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => "p42\0cnode\0fcwd\0p43\0cnode\0n{$path}\0" ));
+	artifact_guard_assert_same('process_path_probe_malformed_output', $mac_cross_process->snapshot()['diagnostics']['reason'] ?? null, 'cross-process macOS lsof records with incomplete predecessors must fail closed as malformed');
+	$harness->process_probe = array( 'status' => 'uncertain', 'evidence' => array(), 'diagnostics' => array( 'provider' => 'lsof', 'reason' => 'process_path_probe_timeout', 'path_records' => 3 ) );
+	$timed_out = $harness->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true ));
+	artifact_guard_assert_same('active_process_probe_uncertain', $timed_out['skipped'][0]['reason_code'] ?? null, 'uncertain process evidence must fail closed');
+	artifact_guard_assert_same('timed_out', $timed_out['skipped'][0]['process_probe_diagnostics']['classification'] ?? null, 'timed out lsof evidence must be classified for operators');
+	artifact_guard_assert_same(3, $timed_out['skipped'][0]['process_probe_diagnostics']['inspected_path_count'] ?? null, 'timed out lsof evidence must preserve inspected path count');
+	artifact_guard_assert_same(true, str_contains((string) ( $timed_out['skipped'][0]['process_probe_diagnostics']['guidance'] ?? '' ), '--limit=1'), 'process-probe guidance must remain bounded and non-destructive');
+	$harness->process_probe = array( 'status' => 'uncertain', 'evidence' => array(), 'diagnostics' => array( 'provider' => 'lsof', 'reason' => 'process_path_probe_permission_denied' ) );
+	$permission_denied = $harness->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true ));
+	artifact_guard_assert_same('permission_denied', $permission_denied['skipped'][0]['process_probe_diagnostics']['classification'] ?? null, 'permission failures must be classified for operators');
+	$harness->process_probe = array( 'status' => 'uncertain', 'evidence' => array(), 'diagnostics' => array( 'provider' => 'procfs', 'reason' => 'process_path_probe_incomplete' ) );
+	$ambiguous = $harness->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true ));
+	artifact_guard_assert_same('ambiguous_evidence', $ambiguous['skipped'][0]['process_probe_diagnostics']['classification'] ?? null, 'unresolved probe evidence must remain explicitly ambiguous');
 	$mac_exit_race = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => "p42\0ctest\0" ));
 	artifact_guard_assert_same(array(), $mac_exit_race->snapshot()['records'], 'macOS lsof process-exit races without path records must remain safe no-match evidence');
 
-	if ( in_array(PHP_OS_FAMILY, array( 'Linux', 'Darwin' ), true) ) {
+	// Linux procfs exposes the child cwd deterministically. macOS lsof visibility
+	// varies with host privacy policy; its provider contract is covered above with
+	// injected lsof snapshots instead of making this portable suite host-dependent.
+	if ( 'Linux' === PHP_OS_FAMILY ) {
 		$real_scanner = new ArtifactCleanupGuardHarness($root);
 		$descriptors  = array( 0 => array( 'file', '/dev/null', 'r' ), 1 => array( 'file', '/dev/null', 'w' ), 2 => array( 'file', '/dev/null', 'w' ) );
 		$process      = proc_open(array( '/bin/sleep', '5' ), $descriptors, $pipes, $path);
 		if ( is_resource($process) ) {
-			usleep(100000);
-			$real_probe = $real_scanner->probe_processes($path, array( array( 'path' => 'vendor' ) ));
-			artifact_guard_assert_same(true, array() !== (array) ( $real_probe['evidence'] ?? array() ), 'host process scanner must detect a child process cwd in the worktree');
-			proc_terminate($process);
-			proc_close($process);
+			try {
+				$deadline   = microtime(true) + 2;
+				$seen_alive = false;
+				$seen_cwd   = 'Linux' !== PHP_OS_FAMILY;
+				$real_probe = array( 'evidence' => array() );
+				do {
+					$status     = proc_get_status($process);
+					$seen_alive = $seen_alive || ! empty($status['running']);
+					if ( 'Linux' === PHP_OS_FAMILY && ! empty($status['pid']) ) {
+						$child_cwd = @readlink('/proc/' . (int) $status['pid'] . '/cwd'); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Child cwd can race process startup and exit.
+						$seen_cwd  = $seen_cwd || $path === $child_cwd;
+					}
+					if ( ! empty($status['running']) && $seen_cwd ) {
+						$real_probe = $real_scanner->probe_processes($path, array( array( 'path' => 'vendor' ) ));
+						if ( array() !== (array) ( $real_probe['evidence'] ?? array() ) ) {
+							break;
+						}
+					}
+					usleep(50000);
+				} while ( microtime(true) < $deadline );
+				artifact_guard_assert_same(true, $seen_alive, 'host process scanner test child must remain alive while probing');
+				artifact_guard_assert_same(true, $seen_cwd, 'host process scanner test child must report the requested cwd before probing');
+				artifact_guard_assert_same(true, array() !== (array) ( $real_probe['evidence'] ?? array() ), 'host process scanner must detect a ready child process cwd in the worktree');
+			} finally {
+				proc_terminate($process);
+				proc_close($process);
+			}
 		}
 	}
 
