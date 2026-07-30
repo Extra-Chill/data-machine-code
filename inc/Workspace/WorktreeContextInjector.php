@@ -87,6 +87,15 @@ class WorktreeContextInjector {
 	public const STATE_ABANDONED        = 'abandoned';
 	public const STATE_CLEANUP_ELIGIBLE = 'cleanup_eligible';
 
+	public const CLEANUP_POLICY_MANUAL              = 'manual';
+	public const CLEANUP_POLICY_REMOVE_ON_SUCCESS   = 'remove_on_success';
+	public const CLEANUP_POLICY_PRESERVE_ON_FAILURE = 'preserve_on_failure';
+	public const VALID_CLEANUP_POLICIES = array(
+		self::CLEANUP_POLICY_MANUAL,
+		self::CLEANUP_POLICY_REMOVE_ON_SUCCESS,
+		self::CLEANUP_POLICY_PRESERVE_ON_FAILURE,
+	);
+
 	/**
 	 * Valid worktree lifecycle state values.
 	 */
@@ -183,6 +192,9 @@ class WorktreeContextInjector {
 			'base_source'      => isset($args['base_source']) && '' !== (string) $args['base_source'] ? (string) $args['base_source'] : null,
 			'branch'           => isset($args['branch']) && '' !== (string) $args['branch'] ? (string) $args['branch'] : null,
 			'repo'             => isset($args['repo']) && '' !== (string) $args['repo'] ? (string) $args['repo'] : null,
+			'purpose'          => self::optional_intent_value($args['purpose'] ?? null),
+			'owner_run_ref'    => self::optional_intent_value($args['owner_run_ref'] ?? null),
+			'cleanup_policy'   => self::normalize_cleanup_policy($args['cleanup_policy'] ?? null),
 		);
 
 		// Preserve the original context metadata field names for existing callers.
@@ -191,6 +203,33 @@ class WorktreeContextInjector {
 		$metadata['agent_slug'] = is_string($agent) ? $agent : '';
 
 		return array_filter($metadata, fn( $value ) => null !== $value);
+	}
+
+	/** Normalize the optional purpose-owned disposable worktree contract. */
+	public static function normalize_disposable_intent( array $intent ): array {
+		return array_filter(array(
+			'purpose'        => self::optional_intent_value($intent['purpose'] ?? null),
+			'owner_run_ref'  => self::optional_intent_value($intent['owner_run_ref'] ?? null),
+			'cleanup_policy' => self::normalize_cleanup_policy($intent['cleanup_policy'] ?? null),
+		), static fn( $value ) => null !== $value);
+	}
+
+	public static function normalize_cleanup_policy( mixed $policy ): ?string {
+		$policy = strtolower(trim((string) $policy));
+		return in_array($policy, self::VALID_CLEANUP_POLICIES, true) ? $policy : null;
+	}
+
+	/** True only for a creator-recorded successful disposable terminal outcome. */
+	public static function has_owner_terminal_disposable_cleanup_signal( array $metadata ): bool {
+		return self::CLEANUP_POLICY_REMOVE_ON_SUCCESS === ( $metadata['cleanup_policy'] ?? null )
+			&& '' !== trim((string) ( $metadata['purpose'] ?? '' ))
+			&& '' !== trim((string) ( $metadata['owner_run_ref'] ?? '' ))
+			&& 'success' === ( $metadata['owner_terminal_outcome'] ?? null );
+	}
+
+	private static function optional_intent_value( mixed $value ): ?string {
+		$value = trim((string) $value);
+		return '' === $value ? null : $value;
 	}
 
 	/**
@@ -751,7 +790,7 @@ class WorktreeContextInjector {
 	 * @param  string|null $pr    Optional PR URL or number.
 	 * @return array<string,mixed>
 	 */
-	public static function build_finalizer_metadata( string $state, ?string $pr = null ): array {
+	public static function build_finalizer_metadata( string $state, ?string $pr = null, ?string $owner_terminal_outcome = null, array $existing = array() ): array {
 		$normalized = self::normalize_state($state);
 		if ( null === $normalized ) {
 			$normalized = self::STATE_ACTIVE;
@@ -767,7 +806,13 @@ class WorktreeContextInjector {
 			$metadata = array_merge($metadata, $pr_metadata);
 		}
 
-		if ( self::should_mark_cleanup_eligible($normalized, $pr_metadata) ) {
+		$owner_terminal_outcome = strtolower(trim((string) $owner_terminal_outcome));
+		if ( '' !== $owner_terminal_outcome ) {
+			$metadata['owner_terminal_outcome'] = $owner_terminal_outcome;
+			$metadata['owner_terminal_at']      = $metadata['finalized_at'];
+		}
+
+		if ( self::should_mark_cleanup_eligible($normalized, $pr_metadata) || self::has_owner_terminal_disposable_cleanup_signal(array_merge($existing, $metadata)) ) {
 			$metadata['finalized_state']     = $normalized;
 			$metadata['lifecycle_state']     = self::STATE_CLEANUP_ELIGIBLE;
 			$metadata['cleanup_eligible_at'] = $metadata['finalized_at'];

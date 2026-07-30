@@ -510,6 +510,9 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Require task metadata from the registered remote worktree. Default true.',
 							),
+							'purpose'                    => array( 'type' => 'string', 'description' => 'Optional creator-owned purpose for a disposable worktree.' ),
+							'owner_run_ref'              => array( 'type' => 'string', 'description' => 'Optional opaque creator run reference required for disposable terminal cleanup.' ),
+							'cleanup_policy'             => array( 'type' => 'string', 'enum' => WorktreeContextInjector::VALID_CLEANUP_POLICIES, 'description' => 'Optional cleanup policy: manual, remove_on_success, or preserve_on_failure.' ),
 						),
 						'required'   => array( 'handle' ),
 					),
@@ -1301,6 +1304,10 @@ class WorkspaceAbilities {
 							'pr'     => array(
 								'type'        => array( 'string', 'integer' ),
 								'description' => 'PR number or URL. Defaults to the current branch PR.',
+							),
+							'owner_terminal_outcome' => array(
+								'type'        => 'string',
+								'description' => 'Creator-owned terminal outcome. Use success only after a remove_on_success disposable worktree has completed.',
 							),
 							'branch' => array(
 								'type'        => 'string',
@@ -4024,11 +4031,17 @@ class WorkspaceAbilities {
 		$force                = ! empty($input['force']);
 		$require_task_tracker = array_key_exists('require_task_tracker', $input) ? (bool) $input['require_task_tracker'] : true;
 		$task                 = array();
+		$intent               = array();
 		if ( isset($input['task_url']) && '' !== trim( (string) $input['task_url']) ) {
 			$task['task_url'] = (string) $input['task_url'];
 		}
 		if ( isset($input['task_ref']) && '' !== trim( (string) $input['task_ref']) ) {
 			$task['task_ref'] = (string) $input['task_ref'];
+		}
+		foreach ( array( 'purpose', 'owner_run_ref', 'cleanup_policy' ) as $key ) {
+			if ( array_key_exists($key, $input) ) {
+				$intent[ $key ] = $input[ $key ];
+			}
 		}
 
 		$workspace = new Workspace();
@@ -4049,6 +4062,7 @@ class WorkspaceAbilities {
 				$task,
 				$allow_unverified_freshness,
 				$require_task_tracker
+				,$intent
 			);
 		}
 
@@ -4057,7 +4071,8 @@ class WorkspaceAbilities {
 				$input['repo'] ?? '',
 				$input['branch'] ?? '',
 				$input['from'] ?? null,
-				$task
+				$task,
+				$intent
 			);
 			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
 				return self::decorate_remote_workspace_result('worktree_add', $result);
@@ -4076,6 +4091,7 @@ class WorkspaceAbilities {
 			$task,
 			$allow_unverified_freshness,
 			$require_task_tracker
+			,$intent
 		);
 	}
 
@@ -4142,7 +4158,8 @@ class WorkspaceAbilities {
 		return $workspace->worktree_finalize(
 			$input['handle'] ?? '',
 			$input['state'] ?? '',
-			isset($input['pr']) ? (string) $input['pr'] : null
+			isset($input['pr']) ? (string) $input['pr'] : null,
+			isset($input['owner_terminal_outcome']) ? (string) $input['owner_terminal_outcome'] : null
 		);
 	}
 

@@ -4169,6 +4169,11 @@ class WorkspaceCommand extends BaseCommand {
 				if ( isset($assoc_args['task-ref']) && '' !== trim( (string) $assoc_args['task-ref']) ) {
 					$input['task_ref'] = (string) $assoc_args['task-ref'];
 				}
+				foreach ( array( 'purpose', 'owner-run-ref', 'cleanup-policy' ) as $flag ) {
+					if ( isset($assoc_args[ $flag ]) && '' !== trim( (string) $assoc_args[ $flag ]) ) {
+						$input[ str_replace('-', '_', $flag) ] = (string) $assoc_args[ $flag ];
+					}
+				}
 				break;
 
 			case 'refresh-context':
@@ -4181,13 +4186,16 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'finalize':
 				if ( empty($args[1]) ) {
-					WP_CLI::error('Usage: worktree finalize <handle> [--pr=<url-or-number>] [--state=<state>]');
+					WP_CLI::error('Usage: worktree finalize <handle> [--pr=<url-or-number>] [--state=<state>] [--owner-terminal-outcome=success]');
 					return;
 				}
 				$input['handle'] = (string) $args[1];
 				$input['state']  = isset($assoc_args['state']) && '' !== trim( (string) $assoc_args['state']) ? (string) $assoc_args['state'] : ( isset($assoc_args['pr']) ? 'pr_opened' : 'active' );
 				if ( isset($assoc_args['pr']) && '' !== trim( (string) $assoc_args['pr']) ) {
 					$input['pr'] = (string) $assoc_args['pr'];
+				}
+				if ( isset($assoc_args['owner-terminal-outcome']) && '' !== trim( (string) $assoc_args['owner-terminal-outcome']) ) {
+					$input['owner_terminal_outcome'] = (string) $assoc_args['owner-terminal-outcome'];
 				}
 				break;
 

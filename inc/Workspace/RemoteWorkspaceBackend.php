@@ -107,7 +107,7 @@ class RemoteWorkspaceBackend {
 	 *
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	public function worktree_add( string $repo_name, string $branch, ?string $from = null, array $task = array() ): array|\WP_Error {
+	public function worktree_add( string $repo_name, string $branch, ?string $from = null, array $task = array(), array $intent = array() ): array|\WP_Error {
 		$repo = $this->resolve_repo($repo_name);
 		if ( is_wp_error($repo) ) {
 			return $repo;
@@ -121,12 +121,25 @@ class RemoteWorkspaceBackend {
 		$slug                          = $this->branch_slug($branch);
 		$handle                        = $repo_name . '@' . $slug;
 		$state                         = $this->state();
+		$intent                        = WorktreeContextInjector::normalize_disposable_intent($intent);
+		if ( isset($state['worktrees'][ $handle ]) && is_array($state['worktrees'][ $handle ]) ) {
+			$existing_intent = WorktreeContextInjector::normalize_disposable_intent((array) $state['worktrees'][ $handle ]);
+			if ( $intent !== $existing_intent ) {
+				return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to reuse remote worktree "%s": disposable intent mismatch.', $handle), array(
+					'status' => 409,
+					'reuse' => array( 'status' => 'refused', 'reason_code' => 'disposable_intent_mismatch', 'requested_intent' => $intent, 'stored_intent' => $existing_intent ),
+				));
+			}
+		}
 		$state['worktrees'][ $handle ] = array(
 			'repo_name'       => $repo_name,
 			'repo'            => $repo,
 			'branch'          => $branch,
 			'base_ref'        => null !== $from && '' !== $from ? $from : '',
 			'task'            => $task,
+			'purpose'         => $intent['purpose'] ?? null,
+			'owner_run_ref'   => $intent['owner_run_ref'] ?? null,
+			'cleanup_policy'  => $intent['cleanup_policy'] ?? null,
 			'pending_files'   => array(),
 			'changed_files'   => array(),
 			'last_commit_sha' => '',
@@ -141,6 +154,9 @@ class RemoteWorkspaceBackend {
 			'branch'         => $branch,
 			'slug'           => $slug,
 			'created_branch' => true,
+			'purpose'        => $intent['purpose'] ?? null,
+			'owner_run_ref'  => $intent['owner_run_ref'] ?? null,
+			'cleanup_policy' => $intent['cleanup_policy'] ?? null,
 			'message'        => sprintf('Registered remote workspace %s for %s.', $handle, $repo),
 		);
 	}

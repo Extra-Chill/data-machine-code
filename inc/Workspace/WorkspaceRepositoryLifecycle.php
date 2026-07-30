@@ -353,7 +353,12 @@ trait WorkspaceRepositoryLifecycle {
 			! empty($options['force']),
 			(array) ( $remote['task'] ?? array() ),
 			! empty($options['allow_unverified_freshness']),
-			array_key_exists('require_task_tracker', $options) ? (bool) $options['require_task_tracker'] : true
+			array_key_exists('require_task_tracker', $options) ? (bool) $options['require_task_tracker'] : true,
+			array_filter(array(
+				'purpose'        => $remote['purpose'] ?? null,
+				'owner_run_ref'  => $remote['owner_run_ref'] ?? null,
+				'cleanup_policy' => $remote['cleanup_policy'] ?? null,
+			), static fn( $value ) => null !== $value)
 		);
 		if ( is_wp_error($result) ) {
 			return $result;

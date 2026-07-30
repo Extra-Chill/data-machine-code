@@ -555,7 +555,7 @@ class WorkspaceTools extends BaseTool
         'require_task_tracker' => true,
         );
 
-        foreach ( array( 'from', 'task_url', 'task_ref' ) as $key ) {
+        foreach ( array( 'from', 'task_url', 'task_ref', 'purpose', 'owner_run_ref', 'cleanup_policy' ) as $key ) {
             if (isset($parameters[ $key ]) ) {
                 $input[ $key ] = $parameters[ $key ];
             }
@@ -1421,6 +1421,9 @@ class WorkspaceTools extends BaseTool
             'force'          => array( 'type' => 'boolean', 'description' => 'Bypass disk-budget refusal threshold. Default false.' ),
             'task_url'       => array( 'type' => 'string', 'description' => 'Optional task or issue URL to record on the worktree.' ),
             'task_ref'       => array( 'type' => 'string', 'description' => 'Optional short task or issue reference to record on the worktree.' ),
+            'purpose'        => array( 'type' => 'string', 'description' => 'Optional creator-owned disposable worktree purpose.' ),
+            'owner_run_ref'  => array( 'type' => 'string', 'description' => 'Optional opaque creator run reference.' ),
+            'cleanup_policy' => array( 'type' => 'string', 'enum' => array( 'manual', 'remove_on_success', 'preserve_on_failure' ), 'description' => 'Optional disposable cleanup policy.' ),
             ),
             'required'   => array( 'repo', 'branch' ),
             ),

@@ -119,6 +119,14 @@ worktree_cleanup_candidate_assert_same('skip', $no_signal['type'], 'missing sign
 worktree_cleanup_candidate_assert_same('no_merge_signal', $no_signal['row']['reason_code'], 'missing signal reason_code matches cleanup contract');
 worktree_cleanup_candidate_assert_same(array( 'classification' => 'no_cleanup_signal' ), $no_signal['row']['merge_signal_evidence'], 'missing signal includes evidence');
 
+$legacy_ghost = WorktreeCleanupCandidateClassifier::classify_legacy_operation_staging_ghost(array(
+	'branch' => 'release/staging', 'stale' => true, 'dirty' => 0, 'unpushed' => 0,
+	'default_contained' => true, 'workspace_contained' => true, 'liveness' => WorktreeContextInjector::LIVENESS_STALE,
+));
+worktree_cleanup_candidate_assert_same(true, $legacy_ghost['review_only'] ?? false, 'legacy staging ghosts remain review-only');
+worktree_cleanup_candidate_assert_same('likely_legacy_operation_staging_ghost', $legacy_ghost['reason_code'] ?? null, 'legacy staging ghost projection reports its evidence class');
+worktree_cleanup_candidate_assert_same(null, WorktreeCleanupCandidateClassifier::classify_legacy_operation_staging_ghost(array( 'branch' => 'release/staging', 'stale' => true, 'dirty' => 0, 'unpushed' => 0, 'default_contained' => true, 'workspace_contained' => true, 'liveness' => WorktreeContextInjector::LIVENESS_LIVE )), 'live legacy staging worktree is never projected for cleanup review');
+
 $recent_context               = $context;
 $recent_context['created_at'] = '2026-06-16T00:00:00+00:00';
 $recent_age_filter           = WorktreeAgeFilter::build('30d', 30 * 24 * 60 * 60, strtotime('2026-06-17T00:00:00+00:00'));
