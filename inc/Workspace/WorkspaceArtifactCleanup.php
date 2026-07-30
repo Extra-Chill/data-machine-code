@@ -42,7 +42,7 @@ trait WorkspaceArtifactCleanup {
 	 *
 	 * @param  array $opts Cleanup options (dry_run, force,
 	 *                     allow_active_artifact_cleanup, allow_unavailable_process_probe, apply_plan, limit,
-	 *                     offset, exhaustive, safety_probes, older_than).
+	 *                     offset, exhaustive, safety_probes, older_than, only_handles).
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_cleanup_artifacts( array $opts = array() ): array|\WP_Error {
@@ -90,7 +90,9 @@ trait WorkspaceArtifactCleanup {
 			return new \WP_Error('artifact_cleanup_plan_required', sprintf('Artifact cleanup requires a reviewed DB-backed plan. Run `%s`, note its run_id, then run `%s`. Use --dry-run first and --apply-plan=<file> only as a low-level escape hatch.', $review_command, $apply_command), array( 'status' => 400 ));
 		}
 
-		$only_handles = null;
+		$only_handles = isset($opts['only_handles']) && is_array($opts['only_handles'])
+			? array_values(array_filter(array_map('strval', $opts['only_handles']), fn( $handle ) => '' !== $handle))
+			: null;
 		$planned      = null;
 		if ( null !== $apply_plan ) {
 			$planned = $this->extract_worktree_artifact_cleanup_plan_candidates($apply_plan);
@@ -206,7 +208,7 @@ trait WorkspaceArtifactCleanup {
 			$removed_artifacts = array();
 			$artifacts         = array_values( (array) ( $candidate['artifacts'] ?? array() ));
 			$failed            = false;
-			$process_guard     = $this->active_artifact_process_protection( (string) ( $candidate['path'] ?? '' ), $artifacts, true);
+			$process_guard     = $this->active_artifact_process_protection( (string) ( $candidate['path'] ?? '' ), $artifacts, true, (string) ( $candidate['handle'] ?? '' ));
 			if ( null !== $process_guard ) {
 				if ( ! $allow_active ) {
 					$skipped[] = array_merge($candidate, $process_guard);
@@ -523,7 +525,7 @@ trait WorkspaceArtifactCleanup {
 				$safety_overrides[] = $liveness_protection;
 			}
 
-			$process_protection = $this->active_artifact_process_protection($wt_path, $artifacts);
+			$process_protection = $this->active_artifact_process_protection($wt_path, $artifacts, false, $handle);
 			if ( null !== $process_protection ) {
 				$is_probe_unavailable = str_starts_with( (string) ( $process_protection['reason_code'] ?? '' ), 'active_process_probe_');
 				if ( ( $is_probe_unavailable && ! $allow_unavailable_process_probe ) || ( ! $is_probe_unavailable && ! $allow_active ) ) {
@@ -711,9 +713,10 @@ trait WorkspaceArtifactCleanup {
 	 * @param  string           $worktree_path Worktree root.
 	 * @param  array<int,array> $artifacts     Profile-derived artifact rows.
 	 * @param  bool             $fresh         Whether to bypass the request-local process snapshot.
+	 * @param  string           $handle        Candidate worktree handle for retry guidance.
 	 * @return array<string,mixed>|null
 	 */
-	private function active_artifact_process_protection( string $worktree_path, array $artifacts, bool $fresh = false ): ?array {
+	private function active_artifact_process_protection( string $worktree_path, array $artifacts, bool $fresh = false, string $handle = '' ): ?array {
 		$probe    = $this->detect_active_artifact_processes($worktree_path, $artifacts, $fresh);
 		$evidence = (array) ( $probe['evidence'] ?? array() );
 		if ( array() !== $evidence ) {
@@ -736,7 +739,66 @@ trait WorkspaceArtifactCleanup {
 			'protecting_reason' => 'active_process_probe_' . $status,
 			'reason'            => 'active process use could not be authoritatively excluded; safe cleanup is failing closed',
 			'process_probe'     => $probe,
+			'process_probe_diagnostics' => $this->process_probe_skip_diagnostics($probe, $worktree_path, $handle),
 		);
+	}
+
+	/**
+	 * Build a stable, operator-safe diagnostic envelope for a fail-closed skip.
+	 *
+	 * @param  array<string,mixed> $probe          Process-path probe result.
+	 * @param  string              $worktree_path Candidate worktree path.
+	 * @param  string              $handle        Candidate worktree handle.
+	 * @return array<string,mixed>
+	 */
+	private function process_probe_skip_diagnostics( array $probe, string $worktree_path, string $handle ): array {
+		$diagnostics = (array) ( $probe['diagnostics'] ?? array() );
+		$status      = (string) ( $probe['status'] ?? 'unavailable' );
+		$error          = (string) ( $diagnostics['reason'] ?? '' );
+		$provider       = (string) ( $diagnostics['provider'] ?? ( isset($diagnostics['process_root']) ? 'procfs' : 'unknown' ) );
+		$classification = 'ambiguous_evidence';
+		if ( in_array($status, array( 'unavailable', 'unsupported' ), true) ) {
+			$classification = 'unavailable';
+		} elseif ( str_contains($error, 'timeout') ) {
+			$classification = 'timed_out';
+		} elseif ( str_contains($error, 'permission_denied') || str_contains($error, 'permission-denied') ) {
+			$classification = 'permission_denied';
+		} elseif ( str_contains($error, 'malformed') ) {
+			$classification = 'malformed_output';
+		}
+
+		return array(
+			'provider'             => $provider,
+			'provider_status'      => $status,
+			'classification'       => $classification,
+			'error'                => $this->process_probe_error_code($error),
+			'candidate_path'       => $worktree_path,
+			'inspected_path_count' => max(0, (int) ( $diagnostics['path_records'] ?? count((array) ( $probe['records'] ?? array() )) )),
+			'retry_command'        => $this->process_probe_retry_command($handle),
+			'guidance'             => 'Restore complete process-path visibility, then retry this candidate with a bounded non-destructive artifact cleanup dry run using safety probes and --limit=1. Cleanup remains blocked until a complete no-match probe succeeds.',
+		);
+	}
+
+	/** Build an executable bounded dry-run for this candidate only. */
+	private function process_probe_retry_command( string $handle ): string {
+		return 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --safety-probes --limit=1 --only-handle='
+			. escapeshellarg($handle) . ' --format=json';
+	}
+
+	/** Return a safe stable error code without exposing provider output. */
+	private function process_probe_error_code( string $error ): string {
+		$known = array(
+			'worktree_path_unresolved',
+			'process_filesystem_unavailable',
+			'process_filesystem_unreadable',
+			'process_path_probe_unsupported',
+			'process_path_probe_timeout',
+			'process_path_probe_failed',
+			'process_path_probe_permission_denied',
+			'process_path_probe_malformed_output',
+			'process_path_probe_incomplete',
+		);
+		return in_array($error, $known, true) ? $error : 'process_path_probe_incomplete';
 	}
 
 	/**
@@ -816,6 +878,7 @@ trait WorkspaceArtifactCleanup {
 				'diagnostics' => array(
 					'reason' => 'process_filesystem_unavailable',
 					'path'   => $proc_root,
+					'provider' => 'procfs',
 				),
 			);
 		}
@@ -829,6 +892,7 @@ trait WorkspaceArtifactCleanup {
 				'diagnostics' => array(
 					'reason' => 'process_filesystem_unreadable',
 					'path'   => $proc_root,
+					'provider' => 'procfs',
 				),
 			);
 		}
@@ -920,6 +984,7 @@ trait WorkspaceArtifactCleanup {
 			'status'      => $status,
 			'records'     => $records,
 			'diagnostics' => array(
+				'provider'                 => 'procfs',
 				'process_root'             => $proc_root,
 				'scanned_processes'        => $scanned,
 				'path_records'             => count($records),

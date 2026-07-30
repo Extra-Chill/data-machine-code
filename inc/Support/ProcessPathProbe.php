@@ -73,9 +73,8 @@ final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
 				'status'      => 'uncertain',
 				'records'     => array(),
 				'diagnostics' => array(
-					'reason'   => ! empty($data['timeout']) ? 'process_path_probe_timeout' : 'process_path_probe_failed',
+					'reason'   => ! empty($data['timeout']) ? 'process_path_probe_timeout' : self::failure_reason($data),
 					'provider' => 'lsof',
-					'details'  => $data,
 				),
 			);
 		}
@@ -84,6 +83,8 @@ final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
 		$pid     = 0;
 		$command = '';
 		$fd      = '';
+		$malformed_fields = 0;
+		$awaiting_name     = false;
 		foreach ( explode("\0", (string) ( $result['output'] ?? '' )) as $field ) {
 			$field = ltrim($field, "\n");
 			if ( '' === $field ) {
@@ -92,11 +93,26 @@ final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
 			$type  = $field[0];
 			$value = substr($field, 1);
 			if ( 'p' === $type ) {
-				$pid = ctype_digit($value) ? (int) $value : 0;
+				if ( $awaiting_name ) {
+					++$malformed_fields;
+				}
+				if ( ! ctype_digit($value) ) {
+					++$malformed_fields;
+					$pid = 0;
+					continue;
+				}
+				$pid           = (int) $value;
+				$command       = '';
+				$fd            = '';
+				$awaiting_name = false;
 			} elseif ( 'c' === $type ) {
 				$command = $value;
 			} elseif ( 'f' === $type ) {
-				$fd = $value;
+				if ( $awaiting_name ) {
+					++$malformed_fields;
+				}
+				$fd            = $value;
+				$awaiting_name = true;
 			} elseif ( 'n' === $type && $pid > 0 && str_starts_with($value, '/') ) {
 				$records[] = array(
 					'pid'        => $pid,
@@ -104,7 +120,25 @@ final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
 					'match_type' => 'cwd' === $fd ? 'cwd' : 'open_file',
 					'path'       => preg_replace('/ \(deleted\)$/', '', $value),
 				) + ( 'cwd' === $fd ? array() : array( 'fd' => $fd ) );
+				$awaiting_name = false;
+			} elseif ( 'n' === $type && str_starts_with($value, '/') ) {
+				++$malformed_fields;
+				$awaiting_name = false;
+			} elseif ( 'n' === $type ) {
+				$awaiting_name = false;
+			} elseif ( ! in_array($type, array( 'p', 'c', 'f', 'n' ), true) ) {
+				++$malformed_fields;
 			}
+		}
+		if ( $malformed_fields > 0 || $awaiting_name ) {
+			return array(
+				'status'      => 'uncertain',
+				'records'     => array(),
+				'diagnostics' => array(
+					'reason'   => 'process_path_probe_malformed_output',
+					'provider' => 'lsof',
+				),
+			);
 		}
 
 		return array(
@@ -115,5 +149,11 @@ final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
 				'path_records' => count($records),
 			),
 		);
+	}
+
+	/** @param array<string,mixed> $data */
+	private static function failure_reason( array $data ): string {
+		$details = strtolower(implode(' ', array_filter(array_map('strval', array_intersect_key($data, array_flip(array( 'error', 'message', 'output', 'stderr' )))))));
+		return str_contains($details, 'permission denied') || str_contains($details, 'operation not permitted') ? 'process_path_probe_permission_denied' : 'process_path_probe_failed';
 	}
 }

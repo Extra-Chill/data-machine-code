@@ -210,6 +210,12 @@ class WorkspaceCompactOutput {
 			(array) ( $summary['next_commands'] ?? array() ),
 			(array) ( $summary['skipped_next_commands'] ?? array() )
 		);
+		foreach ( (array) ( $result['skipped'] ?? array() ) as $row ) {
+			$retry_command = is_array($row) ? (string) ( $row['process_probe_diagnostics']['retry_command'] ?? '' ) : '';
+			if ( '' !== $retry_command ) {
+				$commands[] = $retry_command;
+			}
+		}
 		foreach ( array( 'apply_command', 'next_command', 'status_command', 'suggested_cleanup_command' ) as $field ) {
 			if ( ! empty($result[ $field ]) ) {
 				$commands[] = (string) $result[ $field ];
@@ -325,6 +331,9 @@ class WorkspaceCompactOutput {
 			if ( array_key_exists( $field, $row ) ) {
 				$compact[ $field ] = $row[ $field ];
 			}
+		}
+		if ( isset( $row['process_probe_diagnostics'] ) && is_array( $row['process_probe_diagnostics'] ) ) {
+			$compact['process_probe_diagnostics'] = $row['process_probe_diagnostics'];
 		}
 		return self::filter_empty( $compact );
 	}

@@ -2584,6 +2584,15 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'Pagination offset (0-indexed) into the inventory ordering. Combine with the previous response\'s pagination.next_offset to walk huge workspaces in pages.',
 							),
+							'only_handle'   => array(
+								'type'        => 'string',
+								'description' => 'Optional single worktree handle for a bounded dry-run retry. This scopes inspection to the reviewed candidate only.',
+							),
+							'only_handles'  => array(
+								'type'        => 'array',
+								'items'       => array( 'type' => 'string' ),
+								'description' => 'Optional worktree handles for a bounded dry-run retry. This scopes inspection to the reviewed candidates only.',
+							),
 							'exhaustive'    => array(
 								'type'        => 'boolean',
 								'description' => 'If true, scan every worktree (no limit) AND run per-worktree git status / unpushed-commit safety probes. Slow on huge workspaces; use for one-shot full audits.',
@@ -4683,7 +4692,7 @@ class WorkspaceAbilities {
 	 *
 	 * @param  array $input Input parameters (dry_run, force,
 	 *                      allow_active_artifact_cleanup, allow_unavailable_process_probe, apply_plan, limit,
-	 *                      offset, exhaustive, safety_probes).
+	 *                      offset, exhaustive, safety_probes, only_handle, only_handles).
 	 * @return array
 	 */
 	public static function worktreeCleanupArtifacts( array $input ): array|\WP_Error {
@@ -4702,6 +4711,19 @@ class WorkspaceAbilities {
 		}
 		if ( array_key_exists('offset', $input) ) {
 			$opts['offset'] = (int) $input['offset'];
+		}
+		$only_handles = array();
+		if ( isset($input['only_handle']) && '' !== trim( (string) $input['only_handle']) ) {
+			$only_handles[] = trim( (string) $input['only_handle']);
+		}
+		foreach ( (array) ( $input['only_handles'] ?? array() ) as $handle ) {
+			$handle = trim( (string) $handle );
+			if ( '' !== $handle ) {
+				$only_handles[] = $handle;
+			}
+		}
+		if ( array() !== $only_handles ) {
+			$opts['only_handles'] = array_values(array_unique($only_handles));
 		}
 		if ( array_key_exists('exhaustive', $input) ) {
 			$opts['exhaustive'] = (bool) $input['exhaustive'];
