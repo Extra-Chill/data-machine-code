@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.56.0] - 2026-07-30
+
+### Added
+- add purpose-owned worktree lifecycle
+
 ## [0.55.7] - 2026-07-30
 
 ### Fixed
