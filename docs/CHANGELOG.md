@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.55.7] - 2026-07-30
+
+### Fixed
+- diagnose uncertain artifact process probes
+
 ## [0.55.6] - 2026-07-29
 
 ### Fixed
