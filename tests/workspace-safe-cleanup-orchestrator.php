@@ -182,6 +182,7 @@ safe_cleanup_assert(isset($safe_cleanup_ability['input_schema']['properties']['f
 safe_cleanup_assert(isset($safe_cleanup_ability['input_schema']['properties']['discard_unpushed']), 'safe cleanup ability documents discard refusal');
 safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['summary']), 'safe cleanup ability documents summary output');
 safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['blockers']), 'safe cleanup ability documents blockers output');
+safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['current_blockers']), 'safe cleanup ability documents final current blockers output');
 safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['run_id']), 'safe cleanup ability documents run_id output');
 safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['continuation']), 'safe cleanup ability documents continuation output');
 safe_cleanup_assert(is_array($inventory_prune_ability), 'inventory prune ability is registered');
@@ -346,7 +347,9 @@ safe_cleanup_assert(2 === ( $result['summary']['blockers_by_reason']['unpushed_c
 safe_cleanup_assert(3 === ( $result['summary']['blockers_by_reason']['insufficient_signal'] ?? null ), 'active backlog blocker count is preserved');
 safe_cleanup_assert(1 === ( $result['summary']['blockers_by_reason']['path_present_on_disk'] ?? null ), 'recreated paths remain inventory prune skips');
 safe_cleanup_assert(1 === ( $result['summary']['blockers_by_reason']['pr_url'] ?? null ), 'protected inventory rows remain inventory prune skips');
-safe_cleanup_assert('maximum_observed_per_reason_across_stages' === ( $result['summary']['blocker_count_scope'] ?? null ), 'aggregate blocker counts document deduplication scope');
+safe_cleanup_assert('sum_of_per_reason_maximum_observations_across_stages' === ( $result['summary']['blocker_count_scope'] ?? null ), 'aggregate blocker counts document their historical aggregation scope');
+safe_cleanup_assert(4 === ( $result['summary']['current_blocker_count'] ?? null ), 'current blocker count reports the final-cycle artifact and active backlog observations');
+safe_cleanup_assert(3 === ( $result['summary']['current_blockers_by_reason']['insufficient_signal'] ?? null ), 'current blocker buckets expose final-cycle active backlog observations');
 safe_cleanup_assert(isset($result['blockers_by_stage']['cleanup_eligible_1']['dirty_worktree']), 'per-stage blocker counts remain available');
 safe_cleanup_assert(str_contains((string) ( $result['continuation']['next_command'] ?? '' ), 'active-no-signal-drain'), 'child page continuation is surfaced');
 safe_cleanup_assert(count($run_repository->updates) >= 5, 'safe cleanup checkpoints progress repeatedly');
@@ -466,5 +469,178 @@ $duplicate_preview = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestra
 );
 $duplicate_result = $duplicate_preview->run(array( 'dry_run' => true ));
 safe_cleanup_assert(145 === ( $duplicate_result['summary']['blocker_count'] ?? null ), 'the same inventory blockers are not double-counted across safe-cleanup stages');
+
+$unchanged_blocker_ability = new SafeCleanupQueuedAbility(
+	array(
+		array( 'success' => true, 'summary' => array() ),
+		array(
+			'success' => true,
+			'summary' => array(),
+			'pass_results' => array(
+				array( 'skipped_by_reason' => array( 'live_worktree' => 1 ) ),
+				array( 'skipped_by_reason' => array( 'live_worktree' => 1 ) ),
+				array( 'skipped_by_reason' => array( 'live_worktree' => 1 ) ),
+			),
+		),
+		array( 'success' => true, 'summary' => array() ),
+	)
+);
+$unchanged_preview = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+	static fn() => $unchanged_blocker_ability,
+	static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
+	new SafeCleanupFakeRunRepository()
+);
+$unchanged_result = $unchanged_preview->run(array( 'dry_run' => true ));
+safe_cleanup_assert(1 === ( $unchanged_result['summary']['blocker_count'] ?? null ), 'one unchanged blocker across three passes is reported once');
+
+$changing_blocker_ability = new SafeCleanupQueuedAbility(
+	array(
+		array( 'success' => true, 'summary' => array() ),
+		array(
+			'success' => true,
+			'summary' => array(),
+			'pass_results' => array(
+				array( 'skipped_by_reason' => array( 'dirty_worktree' => 2 ) ),
+				array( 'skipped_by_reason' => array( 'live_worktree' => 3 ) ),
+				array( 'skipped_by_reason' => array() ),
+			),
+		),
+		array( 'success' => true, 'summary' => array() ),
+	)
+);
+$cleared_run_repository = new SafeCleanupFakeRunRepository();
+$changing_preview = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+	static fn() => $changing_blocker_ability,
+	static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
+	$cleared_run_repository
+);
+$changing_result = $changing_preview->run(array());
+safe_cleanup_assert(5 === ( $changing_result['summary']['blocker_count'] ?? null ), 'blocker count sums independent per-reason maxima without claiming a maximum total');
+safe_cleanup_assert(2 === ( $changing_result['summary']['blockers_by_reason']['dirty_worktree'] ?? null ), 'dirty blocker bucket preserves its pass maximum');
+safe_cleanup_assert(3 === ( $changing_result['summary']['blockers_by_reason']['live_worktree'] ?? null ), 'live blocker bucket preserves its separate pass maximum');
+safe_cleanup_assert('complete' === ( $changing_result['state'] ?? null ), 'historical blocker maxima do not keep a cleared cleanup run blocked');
+safe_cleanup_assert('complete' === ( $cleared_run_repository->runs['cleanup-run-safe-test']['status'] ?? null ), 'persisted terminal status follows final-pass blockers rather than historical maxima');
+safe_cleanup_assert(0 === ( $changing_result['summary']['current_blocker_count'] ?? null ), 'cleared final pass exposes a machine-readable zero current blocker count');
+
+$entering_blocker_ability = new SafeCleanupQueuedAbility(
+	array(
+		array( 'success' => true, 'summary' => array() ),
+		array(
+			'success' => true,
+			'summary' => array(),
+			'pass_results' => array(
+				array( 'skipped_by_reason' => array( 'dirty_worktree' => 2 ) ),
+				array( 'skipped_by_reason' => array( 'live_worktree' => 3 ) ),
+				array( 'skipped_by_reason' => array( 'live_worktree' => 1 ) ),
+			),
+		),
+		array( 'success' => true, 'summary' => array() ),
+	)
+);
+$entering_result = ( new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+	static fn() => $entering_blocker_ability,
+	static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
+	new SafeCleanupFakeRunRepository()
+) )->run(array());
+safe_cleanup_assert(5 === ( $entering_result['summary']['blocker_count'] ?? null ), 'historical blocker maxima retain entering and leaving observations');
+safe_cleanup_assert(1 === ( $entering_result['summary']['current_blockers_by_reason']['live_worktree'] ?? null ), 'current blocker buckets retain only the final-pass live blocker count');
+safe_cleanup_assert(! isset($entering_result['summary']['current_blockers_by_reason']['dirty_worktree']), 'current blocker buckets exclude a blocker that left before the final pass');
+safe_cleanup_assert('complete_with_blockers' === ( $entering_result['state'] ?? null ), 'a blocker present in the final pass keeps cleanup terminally blocked');
+
+$cycle_blocker_ability = new SafeCleanupQueuedAbility(
+	array(
+		array( 'success' => true, 'summary' => array() ),
+		array(
+			'success'      => true,
+			'summary'      => array( 'removed' => 1 ),
+			'pass_results' => array( array( 'skipped_by_reason' => array( 'dirty_worktree' => 1 ) ) ),
+		),
+		array( 'success' => true, 'mode' => 'active_no_signal_drain', 'summary' => array() ),
+		array(
+			'success'      => true,
+			'summary'      => array( 'removed' => 0 ),
+			'pass_results' => array( array( 'skipped_by_reason' => array() ) ),
+		),
+		array( 'success' => true, 'mode' => 'active_no_signal_drain', 'summary' => array() ),
+	)
+);
+$cycle_result = ( new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+	static fn() => $cycle_blocker_ability,
+	static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
+	new SafeCleanupFakeRunRepository()
+) )->run(array( 'cycles' => 2 ));
+safe_cleanup_assert(1 === ( $cycle_result['summary']['blocker_count'] ?? null ), 'historical maxima retain blockers seen before the final cycle');
+safe_cleanup_assert('complete' === ( $cycle_result['state'] ?? null ), 'a blocker cleared in the final cycle does not keep cleanup terminally blocked');
+
+$resolved_incomplete_ability = new SafeCleanupQueuedAbility(
+	array(
+		array( 'success' => true, 'summary' => array() ),
+		array(
+			'success'      => true,
+			'summary'      => array( 'removed' => 1, 'stop_reason' => 'pass_limit' ),
+			'pass_results' => array( array( 'skipped_by_reason' => array() ) ),
+		),
+		array( 'success' => true, 'mode' => 'active_no_signal_drain', 'summary' => array() ),
+		array(
+			'success'      => true,
+			'summary'      => array( 'removed' => 0, 'stop_reason' => 'empty' ),
+			'pass_results' => array( array( 'skipped_by_reason' => array() ) ),
+		),
+		array( 'success' => true, 'mode' => 'active_no_signal_drain', 'summary' => array() ),
+	)
+);
+$resolved_incomplete_result = ( new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+	static fn() => $resolved_incomplete_ability,
+	static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
+	new SafeCleanupFakeRunRepository()
+) )->run(array( 'cycles' => 2 ));
+safe_cleanup_assert('complete' === ( $resolved_incomplete_result['state'] ?? null ), 'an incomplete child drain resolved in the final cycle does not remain latched as blocked');
+
+$active_blocker_ability = new SafeCleanupQueuedAbility(
+	array(
+		array( 'success' => true, 'summary' => array() ),
+		array( 'success' => true, 'summary' => array() ),
+		array(
+			'success' => true,
+			'mode'    => 'active_no_signal_drain',
+			'summary' => array( 'blocked_by_reason' => array( 'unpushed_commits' => 2 ) ),
+			'remaining_active_no_signal_backlog' => array( 'by_actionable_reason' => array() ),
+		),
+	)
+);
+$active_result = ( new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+	static fn() => $active_blocker_ability,
+	static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
+	new SafeCleanupFakeRunRepository()
+) )->run(array());
+safe_cleanup_assert(2 === ( $active_result['summary']['blockers_by_reason']['unpushed_commits'] ?? null ), 'historical active/no-signal blocker observations remain reported');
+safe_cleanup_assert('complete' === ( $active_result['state'] ?? null ), 'omitted active/no-signal current reasons clear cumulative summary blockers');
+
+$incomplete_active_ability = new SafeCleanupQueuedAbility(
+	array(
+		array( 'success' => true, 'summary' => array() ),
+		array( 'success' => true, 'summary' => array() ),
+		array(
+			'success' => true,
+			'mode'    => 'active_no_signal_drain',
+			'summary' => array( 'blocked_by_reason' => array( 'unpushed_commits' => 2 ) ),
+			'continuation' => array(
+				'reason'       => 'page_incomplete',
+				'next_command' => 'studio wp datamachine-code workspace worktree active-no-signal-drain --apply --offset=25 --limit=25',
+				'next_offset'  => 25,
+			),
+			'remaining_active_no_signal_backlog' => array( 'by_actionable_reason' => array() ),
+		),
+	)
+);
+$incomplete_run_repository = new SafeCleanupFakeRunRepository();
+$incomplete_result = ( new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+	static fn() => $incomplete_active_ability,
+	static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
+	$incomplete_run_repository
+) )->run(array());
+safe_cleanup_assert('complete_with_blockers' === ( $incomplete_result['state'] ?? null ), 'active/no-signal continuation prevents terminal complete without current backlog detail');
+safe_cleanup_assert('complete_with_blockers' === ( $incomplete_run_repository->runs['cleanup-run-safe-test']['status'] ?? null ), 'incomplete active/no-signal drain persists a non-complete terminal status');
+safe_cleanup_assert(25 === ( $incomplete_result['continuation']['active_no_signal']['next_offset'] ?? null ), 'typed active/no-signal continuation evidence is preserved');
 
 fwrite(STDOUT, "workspace safe cleanup orchestrator test passed\n");

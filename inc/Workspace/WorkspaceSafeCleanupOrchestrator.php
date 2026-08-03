@@ -103,6 +103,7 @@ class WorkspaceSafeCleanupOrchestrator {
 				'blockers_by_reason'      => array(),
 			),
 			'blockers'          => array(),
+			'current_blockers'  => array(),
 			'blockers_by_stage' => array(),
 			'evidence'          => array(
 				'safety' => $dry_run
@@ -158,6 +159,7 @@ class WorkspaceSafeCleanupOrchestrator {
 		}
 		$result['steps']['artifact_cleanup']             = $this->summarize_artifact_step($artifacts, $dry_run);
 		$result['blockers_by_stage']['artifact_cleanup'] = (array) ( $result['steps']['artifact_cleanup']['blockers'] ?? array() );
+		$current_artifact_blockers                       = $result['blockers_by_stage']['artifact_cleanup'];
 		$this->accumulate_artifact_step($result, $result['steps']['artifact_cleanup']);
 		$this->checkpoint_progress($run_id, $result, 'applying');
 
@@ -172,10 +174,14 @@ class WorkspaceSafeCleanupOrchestrator {
 		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
 			$common['until_budget'] = trim( (string) $input['until_budget']);
 		}
+		$current_cycle_blockers     = array();
+		$has_incomplete_child_drain = false;
 
 		for ( $cycle = 1; $cycle <= $cycles; ++$cycle ) {
 			$result['summary']['cycles'] = $cycle;
 			$cycle_progress              = 0;
+			$current_cycle_blockers      = array();
+			$has_incomplete_child_drain  = false;
 
 			$eligible = $this->execute_ability($cleanup_eligible, $common);
 			if ( is_wp_error($eligible) ) {
@@ -183,6 +189,10 @@ class WorkspaceSafeCleanupOrchestrator {
 			}
 			$result['steps'][ 'cleanup_eligible_' . $cycle ]             = $this->summarize_cleanup_step($eligible);
 			$result['blockers_by_stage'][ 'cleanup_eligible_' . $cycle ] = (array) ( $result['steps'][ 'cleanup_eligible_' . $cycle ]['blockers'] ?? array() );
+
+			$current_cycle_blockers      = $this->merge_blocker_counts($current_cycle_blockers, $this->extract_current_blocker_counts($eligible));
+			$has_incomplete_child_drain  = $this->child_drain_is_incomplete($eligible);
+
 			$cycle_progress += $this->accumulate_cleanup_step($result, $eligible);
 			$this->checkpoint_progress($run_id, $result, 'applying');
 
@@ -192,11 +202,18 @@ class WorkspaceSafeCleanupOrchestrator {
 			}
 			$result['steps'][ 'active_no_signal_' . $cycle ]             = $this->summarize_cleanup_step($active);
 			$result['blockers_by_stage'][ 'active_no_signal_' . $cycle ] = (array) ( $result['steps'][ 'active_no_signal_' . $cycle ]['blockers'] ?? array() );
+
+			$current_cycle_blockers      = $this->merge_blocker_counts($current_cycle_blockers, $this->extract_current_blocker_counts($active));
+			$has_incomplete_child_drain = $has_incomplete_child_drain || $this->child_drain_is_incomplete($active);
+
 			$cycle_progress += $this->accumulate_cleanup_step($result, $active);
-			if ( is_array($active['continuation'] ?? null) && ! empty($active['continuation']['next_command']) ) {
-				$result['continuation']['next_command'] = (string) $active['continuation']['next_command'];
-				$result['continuation']['reason']       = (string) ( $active['continuation']['reason'] ?? 'active_no_signal_page_incomplete' );
-				$result['continuation']['pending_stages']['active_no_signal'] = (array) $active['continuation'];
+			if ( is_array($active['continuation'] ?? null) && array() !== $active['continuation'] ) {
+				$result['continuation']['active_no_signal'] = $active['continuation'];
+				$result['continuation']['pending_stages']['active_no_signal'] = $active['continuation'];
+				if ( ! empty($active['continuation']['next_command']) ) {
+					$result['continuation']['next_command'] = (string) $active['continuation']['next_command'];
+					$result['continuation']['reason']       = (string) ( $active['continuation']['reason'] ?? 'active_no_signal_page_incomplete' );
+				}
 			}
 			$this->checkpoint_progress($run_id, $result, 'applying');
 
@@ -250,8 +267,15 @@ class WorkspaceSafeCleanupOrchestrator {
 		$result['blockers']                       = $this->compact_blockers($result['blockers']);
 		$result['summary']['blocker_count']       = array_sum(array_map(static fn( array $row ): int => (int) ( $row['count'] ?? 0 ), $result['blockers']));
 		$result['summary']['blockers_by_reason']  = array_column($result['blockers'], 'count', 'reason_code');
-		$result['summary']['blocker_count_scope'] = 'maximum_observed_per_reason_across_stages';
-		if ( ! $dry_run && $result['summary']['blocker_count'] > 0 ) {
+		$result['summary']['blocker_count_scope'] = 'sum_of_per_reason_maximum_observations_across_stages';
+		$current_blocker_counts                    = $this->merge_blocker_counts($current_artifact_blockers, $current_cycle_blockers);
+		$result['current_blockers']                 = $this->blocker_rows($current_blocker_counts);
+		$result['summary']['current_blocker_count'] = array_sum($current_blocker_counts);
+		$result['summary']['current_blockers_by_reason'] = $current_blocker_counts;
+		$result['summary']['current_blocker_count_scope'] = 'final_cycle_per_reason_observations';
+
+		$has_current_blockers = array() !== $current_blocker_counts;
+		if ( ! $dry_run && ( $has_current_blockers || $has_incomplete_child_drain ) ) {
 			$result['state'] = 'complete_with_blockers';
 		} else {
 			$result['state'] = 'complete';
@@ -442,6 +466,7 @@ class WorkspaceSafeCleanupOrchestrator {
 				'reason_code' => (string) $reason,
 				'count'       => (int) $count,
 			);
+
 		}
 	}
 
@@ -516,7 +541,6 @@ class WorkspaceSafeCleanupOrchestrator {
 				'count'       => (int) $count,
 			);
 		}
-
 		return (int) ( $summary['removed'] ?? 0 ) + (int) ( $summary['marked_cleanup_eligible'] ?? 0 );
 	}
 
@@ -532,14 +556,74 @@ class WorkspaceSafeCleanupOrchestrator {
 				continue;
 			}
 			foreach ( (array) ( $pass['skipped_by_reason'] ?? array() ) as $reason => $count ) {
-				$counts[ (string) $reason ] = (int) ( $counts[ (string) $reason ] ?? 0 ) + (int) $count;
+				$counts[ (string) $reason ] = max( (int) ( $counts[ (string) $reason ] ?? 0 ), (int) $count );
 			}
 		}
 		foreach ( (array) ( $step['remaining_active_no_signal_backlog']['by_actionable_reason'] ?? array() ) as $reason => $row ) {
-			$counts[ (string) $reason ] = (int) ( $counts[ (string) $reason ] ?? 0 ) + (int) ( is_array($row) ? ( $row['count'] ?? 0 ) : 0 );
+			$counts[ (string) $reason ] = max( (int) ( $counts[ (string) $reason ] ?? 0 ), (int) ( is_array($row) ? ( $row['count'] ?? 0 ) : 0 ) );
 		}
 
 		return array_filter($counts, static fn( int $count ): bool => $count > 0);
+	}
+
+	/** @return array<string,int> */
+	private function extract_current_blocker_counts( array $step ): array {
+		$passes = (array) ( $step['pass_results'] ?? array() );
+		if ( array() !== $passes ) {
+			for ( $index = count($passes) - 1; $index >= 0; --$index ) {
+				if ( ! is_array($passes[ $index ]) ) {
+					continue;
+				}
+				return array_filter(array_map('intval', (array) ( $passes[ $index ]['skipped_by_reason'] ?? array() )));
+			}
+		}
+		if ( 'active_no_signal_drain' === (string) ( $step['mode'] ?? '' ) ) {
+			return $this->extract_active_no_signal_current_blocker_counts($step);
+		}
+
+		$summary = (array) ( $step['summary'] ?? array() );
+		$counts  = (array) ( $summary['blocked_by_reason'] ?? $summary['skipped_by_reason'] ?? array() );
+		return array_filter(array_map('intval', $counts));
+	}
+
+	private function child_drain_is_incomplete( array $step ): bool {
+		if ( array() !== (array) ( $step['continuation'] ?? array() ) || ! empty($step['evidence']['budget_exhausted']) ) {
+			return true;
+		}
+
+		$stop_reason = (string) ( $step['summary']['stop_reason'] ?? '' );
+		return in_array($stop_reason, array( 'pass_limit', 'budget_exhausted' ), true);
+	}
+
+	/** @param array<string,int> $left @param array<string,int> $right @return array<string,int> */
+	private function merge_blocker_counts( array $left, array $right ): array {
+		foreach ( $right as $reason => $count ) {
+			$left[ (string) $reason ] = max( (int) ( $left[ (string) $reason ] ?? 0 ), (int) $count );
+		}
+		ksort($left);
+		return array_filter($left, static fn( int $count ): bool => $count > 0);
+	}
+
+	/** @param array<string,int> $counts @return array<int,array<string,int|string>> */
+	private function blocker_rows( array $counts ): array {
+		$rows = array();
+		foreach ( $counts as $reason => $count ) {
+			$rows[] = array(
+				'reason_code' => (string) $reason,
+				'count'       => (int) $count,
+			);
+		}
+		return $rows;
+	}
+
+	/** @return array<string,int> */
+	private function extract_active_no_signal_current_blocker_counts( array $step ): array {
+		$counts = array();
+		foreach ( (array) ( $step['remaining_active_no_signal_backlog']['by_actionable_reason'] ?? array() ) as $reason => $row ) {
+			$counts[ (string) $reason ] = (int) ( is_array($row) ? ( $row['count'] ?? 0 ) : $row );
+		}
+
+		return array_filter(array_map('intval', $counts));
 	}
 
 	/** @return array<string,mixed> */

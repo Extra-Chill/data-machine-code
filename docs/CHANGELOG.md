@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.56.1] - 2026-08-03
+
+### Fixed
+- retry remote freshness fetches
+
 ## [0.56.0] - 2026-07-30
 
 ### Added

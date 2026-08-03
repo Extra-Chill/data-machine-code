@@ -975,8 +975,12 @@ class WorkspaceCommand extends BaseCommand {
 					'value'  => (string) ( $summary['lock_files_removed'] ?? 0 ),
 				),
 				array(
-					'metric' => 'blockers',
+					'metric' => 'historical_sum_of_per_reason_maxima',
 					'value'  => (string) ( $summary['blocker_count'] ?? 0 ),
+				),
+				array(
+					'metric' => 'current_final_cycle_blockers',
+					'value'  => (string) ( $summary['current_blocker_count'] ?? 0 ),
 				),
 			),
 			array( 'metric', 'value' ),
@@ -986,8 +990,14 @@ class WorkspaceCommand extends BaseCommand {
 
 		$blockers = (array) ( $result['blockers'] ?? array() );
 		if ( array() !== $blockers ) {
-			WP_CLI::log('Compact blockers:');
+			WP_CLI::log('Historical per-reason maximum blocker observations:');
 			$this->format_items($blockers, array( 'reason_code', 'count' ), array( 'format' => 'table' ), 'reason_code');
+		}
+
+		$current_blockers = (array) ( $result['current_blockers'] ?? array() );
+		if ( array() !== $current_blockers ) {
+			WP_CLI::log('Current final-cycle blocker observations:');
+			$this->format_items($current_blockers, array( 'reason_code', 'count' ), array( 'format' => 'table' ), 'reason_code');
 		}
 	}
 
