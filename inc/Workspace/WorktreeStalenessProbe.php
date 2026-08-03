@@ -37,6 +37,7 @@ final class WorktreeStalenessProbe {
 	 * git probes, without allowing a remote to hold the workspace mutation lock.
 	 */
 	private const FETCH_TIMEOUT_SECONDS = 5;
+	private const FETCH_MAX_ATTEMPTS    = 2;
 
 
 	/**
@@ -45,31 +46,43 @@ final class WorktreeStalenessProbe {
 	 *
 	 * @param  string        $repo_path Primary repo path (passed to `git -C`).
 	 * @param  callable|null $runner    Optional git runner, used by deterministic tests.
-	 * @return array{ok: bool, error?: string, timed_out?: bool, timeout_seconds?: int}
+	 * @return array{ok: bool, attempts: int, error?: string, timed_out?: bool, timeout_seconds?: int}
 	 */
 	public static function fetch( string $repo_path, ?callable $runner = null ): array {
 		$runner = $runner ?? static fn( string $path, string $args, int $timeout ): array|\WP_Error => GitRunner::run($path, $args, $timeout);
-		$result = $runner($repo_path, 'fetch --quiet origin', self::FETCH_TIMEOUT_SECONDS);
-		if ( is_wp_error($result) ) {
+		for ( $attempt = 1; $attempt <= self::FETCH_MAX_ATTEMPTS; ++$attempt ) {
+			$result = $runner($repo_path, 'fetch --quiet origin', self::FETCH_TIMEOUT_SECONDS);
+			if ( ! is_wp_error($result) ) {
+				return array(
+					'ok'       => true,
+					'attempts' => $attempt,
+				);
+			}
+
 			$data  = $result->get_error_data();
 			$tail  = is_array($data) && isset($data['output']) ? trim( (string) $data['output']) : '';
 			$error = '' !== $tail ? $tail : $result->get_error_message();
 			$code  = method_exists($result, 'get_error_code') ? $result->get_error_code() : '';
-			if ( 'git_command_timeout' === $code ) {
+			if ( $attempt === self::FETCH_MAX_ATTEMPTS ) {
+				if ( 'git_command_timeout' === $code ) {
+					return array(
+						'ok'              => false,
+						'attempts'        => $attempt,
+						'timed_out'       => true,
+						'timeout_seconds' => self::FETCH_TIMEOUT_SECONDS,
+						'error'           => sprintf("Remote freshness fetch timed out after %d seconds. Check origin connectivity or credentials and retry; use allow_unverified_freshness=true only for intentional offline work.\nGit fetch stderr:\n%s", self::FETCH_TIMEOUT_SECONDS, $error),
+					);
+				}
+
 				return array(
-					'ok'              => false,
-					'timed_out'       => true,
-					'timeout_seconds' => self::FETCH_TIMEOUT_SECONDS,
-					'error'           => sprintf('Remote freshness fetch timed out after %d seconds. Check origin connectivity or credentials and retry; use allow_unverified_freshness=true only for intentional offline work.', self::FETCH_TIMEOUT_SECONDS),
+					'ok'       => false,
+					'attempts' => $attempt,
+					'error'    => $error,
 				);
 			}
-
-			return array(
-				'ok'    => false,
-				'error' => $error,
-			);
 		}
-		return array( 'ok' => true );
+
+		return array( 'ok' => false, 'attempts' => self::FETCH_MAX_ATTEMPTS );
 	}
 
 	/**

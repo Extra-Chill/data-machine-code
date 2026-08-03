@@ -71,7 +71,7 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  array       $task           Optional task metadata recorded on the worktree.
 	 * @param  bool        $allow_unverified_freshness Bypass fetch-failure freshness verification (default false).
 	 * @param  bool        $require_task_tracker Reject creation without task metadata (default false).
-	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
+	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, fetch_attempts?: int, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
 	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array() ): array|\WP_Error {
 		$visible = $this->require_workspace_visible();
@@ -208,19 +208,25 @@ trait WorkspaceWorktreeLifecycle {
 		$fetch                 = WorktreeStalenessProbe::fetch($primary_path);
 		$fetch_failed          = ! $fetch['ok'];
 		$fetch_error           = $fetch['error'] ?? null;
+		$fetch_attempts        = (int) ( $fetch['attempts'] ?? 1 );
 		$fetch_timed_out       = ! empty($fetch['timed_out']);
 		$fetch_timeout_seconds = $fetch['timeout_seconds'] ?? null;
 		if ( $fetch_failed && ! $allow_unverified_freshness ) {
 			return new \WP_Error(
 				'worktree_freshness_unverified',
-				'Refusing to create worktree because remote freshness could not be verified. Retry after connectivity is restored, or pass allow_unverified_freshness=true only when intentionally working offline with stale local refs.',
+				sprintf("Refusing to create worktree because remote freshness could not be verified after %d fetch attempt(s).\nGit fetch stderr:\n%s\nRefresh the primary and retry with the safe commands below. Use allow_unverified_freshness=true only when intentionally working offline with stale local refs.", $fetch_attempts, (string) $fetch_error),
 				array(
 					'status'                     => 409,
 					'fetch_failed'               => true,
 					'fetch_error'                => $fetch_error,
+					'fetch_attempts'             => $fetch_attempts,
 					'fetch_timed_out'            => $fetch_timed_out,
 					'fetch_timeout_seconds'      => $fetch_timeout_seconds,
 					'allow_unverified_freshness' => false,
+					'next_commands'              => array(
+						$this->primary_refresh_command($repo),
+						$this->worktree_freshness_retry_command($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $force, $task, $intent),
+					),
 				)
 			);
 		}
@@ -307,6 +313,7 @@ trait WorkspaceWorktreeLifecycle {
 				array(
 					'fetch_failed'          => $fetch_failed,
 					'fetch_error'           => $fetch_error,
+					'fetch_attempts'        => $fetch_attempts,
 					'fetch_timed_out'       => $fetch_timed_out,
 					'fetch_timeout_seconds' => $fetch_timeout_seconds,
 					'exists_local'          => $exists_local,
@@ -410,6 +417,48 @@ trait WorkspaceWorktreeLifecycle {
 		return $response;
 	}
 
+	/** Build a safe, task-preserving retry command after freshness verification fails. */
+	private function worktree_freshness_retry_command( string $repo, string $branch, ?string $from, bool $inject_context, bool $bootstrap, bool $allow_stale, bool $rebase_base, bool $force, array $task, array $intent ): string {
+		$parts = array(
+			'wp datamachine-code workspace worktree add',
+			escapeshellarg($repo),
+			escapeshellarg($branch),
+		);
+		if ( null !== $from && '' !== trim($from) ) {
+			$parts[] = '--from=' . escapeshellarg(trim($from));
+		}
+		if ( ! $inject_context ) {
+			$parts[] = '--skip-context-injection';
+		}
+		if ( ! $bootstrap ) {
+			$parts[] = '--skip-bootstrap';
+		}
+		if ( $allow_stale ) {
+			$parts[] = '--allow-stale';
+		}
+		if ( $rebase_base ) {
+			$parts[] = '--rebase-base';
+		}
+		if ( $force ) {
+			$parts[] = '--force';
+		}
+		foreach ( array( 'task_url' => 'task-url', 'task_ref' => 'task-ref' ) as $key => $flag ) {
+			if ( ! empty($task[ $key ]) ) {
+				$parts[] = '--' . $flag . '=' . escapeshellarg((string) $task[ $key ]);
+			}
+		}
+		if ( ! empty($task) ) {
+			$parts[] = '--require-task-tracker';
+		}
+		foreach ( array( 'purpose' => 'purpose', 'owner_run_ref' => 'owner-run-ref', 'cleanup_policy' => 'cleanup-policy' ) as $key => $flag ) {
+			if ( ! empty($intent[ $key ]) ) {
+				$parts[] = '--' . $flag . '=' . escapeshellarg((string) $intent[ $key ]);
+			}
+		}
+
+		return implode(' ', $parts);
+	}
+
 
 	/**
 	 * Create a worktree while the primary repo lifecycle lock is held.
@@ -508,6 +557,7 @@ trait WorkspaceWorktreeLifecycle {
 
 		if ( $fetch_failed ) {
 			$response['fetch_failed'] = true;
+			$response['fetch_attempts'] = (int) ( $preflight['fetch_attempts'] ?? 1 );
 			if ( $fetch_timed_out ) {
 				$response['fetch_timed_out']       = true;
 				$response['fetch_timeout_seconds'] = $fetch_timeout_seconds;
