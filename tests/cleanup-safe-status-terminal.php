@@ -208,6 +208,39 @@ namespace {
 	$blocked = $service->status('cleanup-run-blocked-safe');
 	safe_status_assert_same('complete_with_blockers', $blocked['state'] ?? null, 'Empty safe cleanup with saved blockers should finalize distinctly.');
 
+	$repo->runs['cleanup-run-historical-blockers'] = array(
+		'run_id'  => 'cleanup-run-historical-blockers',
+		'mode'    => 'safe_workspace_cleanup',
+		'status'  => 'applying',
+		'summary' => array(
+			'safe_cleanup_progress' => array(
+				'summary' => array(
+					'blocker_count'       => 2,
+					'blocker_count_scope' => 'sum_of_per_reason_maximum_observations_across_stages',
+				),
+			),
+		),
+	);
+	$historical_blockers = $service->status('cleanup-run-historical-blockers');
+	safe_status_assert_same('complete', $historical_blockers['state'] ?? null, 'Historical blocker observations must not finalize a safe cleanup as currently blocked.');
+
+	$repo->runs['cleanup-run-current-blockers'] = array(
+		'run_id'  => 'cleanup-run-current-blockers',
+		'mode'    => 'safe_workspace_cleanup',
+		'status'  => 'applying',
+		'summary' => array(
+			'safe_cleanup_progress' => array(
+				'summary' => array(
+					'blocker_count'         => 2,
+					'blocker_count_scope'   => 'sum_of_per_reason_maximum_observations_across_stages',
+					'current_blocker_count' => 1,
+				),
+			),
+		),
+	);
+	$current_blockers = $service->status('cleanup-run-current-blockers');
+	safe_status_assert_same('complete_with_blockers', $current_blockers['state'] ?? null, 'Current safe cleanup blockers must finalize distinctly from historical maxima.');
+
 	$repo->runs['cleanup-run-pending'] = array(
 		'run_id'  => 'cleanup-run-pending',
 		'mode'    => 'cleanup_plan',

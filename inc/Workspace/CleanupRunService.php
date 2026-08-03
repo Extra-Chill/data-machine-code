@@ -847,7 +847,11 @@ class CleanupRunService {
 			return $state;
 		}
 
-		$safe_summary  = (array) ( $safe_cleanup['summary'] ?? array() );
+		$safe_summary = (array) ( $safe_cleanup['summary'] ?? array() );
+		if ( 'sum_of_per_reason_maximum_observations_across_stages' === (string) ( $safe_summary['blocker_count_scope'] ?? '' ) ) {
+			$current_blocker_count = (int) ( $safe_summary['current_blocker_count'] ?? 0 );
+			return $current_blocker_count > 0 ? 'complete_with_blockers' : 'complete';
+		}
 		$blocker_count = (int) ( $safe_summary['blocker_count'] ?? 0 );
 		return $blocker_count > 0 ? 'complete_with_blockers' : 'complete';
 	}
