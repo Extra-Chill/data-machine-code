@@ -1840,6 +1840,7 @@ class WorkspaceAbilities {
 							'destructive'  => array( 'type' => 'boolean' ),
 							'summary'      => array( 'type' => 'object' ),
 							'blockers'     => array( 'type' => 'array' ),
+							'current_blockers' => array( 'type' => 'array' ),
 							'evidence'     => array( 'type' => 'object' ),
 							'steps'        => array( 'type' => 'object' ),
 							'commands'     => array( 'type' => 'object' ),
