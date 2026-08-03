@@ -897,6 +897,9 @@ class WorkspaceCommand extends BaseCommand {
 				$input[ $key ] = (int) $assoc_args[ $key ];
 			}
 		}
+		if ( isset($assoc_args['inventory-after']) ) {
+			$input['inventory_after'] = (string) $assoc_args['inventory-after'];
+		}
 		if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
 			$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
 		}
@@ -960,6 +963,9 @@ class WorkspaceCommand extends BaseCommand {
 					'metric' => 'marked_cleanup_eligible',
 					'value'  => (string) ( $summary['marked_cleanup_eligible'] ?? 0 ),
 				),
+				array( 'metric' => 'inventory_rows_pruned', 'value' => (string) ( $summary['inventory_rows_pruned'] ?? 0 ) ),
+				array( 'metric' => 'inventory_rows_planned', 'value' => (string) ( $summary['inventory_rows_planned'] ?? 0 ) ),
+				array( 'metric' => 'inventory_rows_skipped', 'value' => (string) ( $summary['inventory_rows_skipped'] ?? 0 ) ),
 				array(
 					'metric' => 'bytes_reclaimed',
 					'value'  => $this->format_bytes( (int) ( $summary['bytes_reclaimed'] ?? 0 ) ),
@@ -2472,6 +2478,15 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--force]
 	 * : (prune-missing) Allow pruning rows with unpushed commits or an open PR.
 	 *
+	 * [--limit=<count>]
+	 * : (prune-missing) Maximum rows to inspect. Default 25, maximum 200.
+	 *
+	 * [--after-handle=<handle>]
+	 * : (prune-missing) Last processed handle for bounded keyset continuation.
+	 *
+	 * [--until-budget=<duration>]
+	 * : (prune-missing) Optional compact wall-clock budget such as 30s.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -2543,6 +2558,16 @@ class WorkspaceCommand extends BaseCommand {
 	private function inventory_prune_missing( array $assoc_args ): void {
 		$dry_run = ! empty($assoc_args['dry-run']);
 		$force   = ! empty($assoc_args['force']);
+		$opts    = array( 'dry_run' => $dry_run, 'force' => $force );
+		if ( isset($assoc_args['limit']) ) {
+			$opts['limit'] = (int) $assoc_args['limit'];
+		}
+		if ( isset($assoc_args['after-handle']) ) {
+			$opts['after_handle'] = (string) $assoc_args['after-handle'];
+		}
+		if ( isset($assoc_args['until-budget']) ) {
+			$opts['until_budget'] = (string) $assoc_args['until-budget'];
+		}
 
 		$ability = wp_get_ability('datamachine-code/workspace-worktree-inventory-prune-missing');
 		if ( ! $ability ) {
@@ -2552,7 +2577,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		// A dry-run preview never mutates, so it does not need confirmation.
 		if ( ! $dry_run && empty($assoc_args['yes']) ) {
-			$preview = $ability->execute(array( 'dry_run' => true ));
+			$preview = $ability->execute(array_merge($opts, array( 'dry_run' => true )));
 			if ( is_wp_error($preview) ) {
 				WP_CLI::error($preview->get_error_message());
 				return;
@@ -2569,12 +2594,7 @@ class WorkspaceCommand extends BaseCommand {
 			WP_CLI::confirm(sprintf('Prune %d missing_path inventory row(s) (%d skipped)? Pass --yes to skip this prompt.', $would_delete, $would_skip));
 		}
 
-		$result = $ability->execute(
-			array(
-				'dry_run' => $dry_run,
-				'force'   => $force,
-			)
-		);
+		$result = $ability->execute($opts);
 		if ( is_wp_error($result) ) {
 			WP_CLI::error($result->get_error_message());
 			return;

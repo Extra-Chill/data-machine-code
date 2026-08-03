@@ -1740,10 +1740,19 @@ trait WorkspaceWorktreeLifecycle {
 	 * Re-probes each candidate on disk, protects rows with unpushed work or an
 	 * open PR unless forced, and deletes the confirmed-absent survivors.
 	 *
-	 * @param  array{dry_run?: bool, force?: bool} $opts Options.
+	 * @param  array{dry_run?: bool, force?: bool, limit?: int, after_handle?: string, until_budget?: string} $opts Options.
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_inventory_prune_missing( array $opts = array() ): array|\WP_Error {
+		$opts['lock_callback'] = function ( array $row, callable $mutation ): mixed {
+			$repo = trim( (string) ( $row['repo'] ?? '' ) );
+			if ( '' === $repo ) {
+				return new \WP_Error('workspace_lock_invalid_target', 'Missing repository handle for inventory pruning.', array( 'status' => 400 ));
+			}
+
+			return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, $mutation);
+		};
+		$opts['workspace_root'] = $this->workspace_path;
 		return $this->worktree_inventory()->pruneMissing($opts);
 	}
 

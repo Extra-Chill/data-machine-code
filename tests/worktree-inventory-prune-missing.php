@@ -41,6 +41,9 @@ final class Prune_Test_Wpdb {
 	/** @var array<string,array<string,mixed>> handle => row */
 	public array $rows = array();
 
+	/** @var callable|null */
+	public $before_query = null;
+
 	public function get_charset_collate(): string {
 		return '';
 	}
@@ -53,7 +56,42 @@ final class Prune_Test_Wpdb {
 			}
 			$out[] = $row;
 		}
+		usort($out, static fn( array $a, array $b ): int => strcmp((string) $a['handle'], (string) $b['handle']));
+		if ( preg_match("/handle > '([^']*)'/", $sql, $matches) ) {
+			$out = array_values(array_filter($out, static fn( array $row ): bool => strcmp((string) $row['handle'], stripslashes($matches[1])) > 0));
+		}
+		if ( preg_match('/LIMIT (\d+)/', $sql, $matches) ) {
+			return array_slice($out, 0, (int) $matches[1]);
+		}
 		return $out;
+	}
+
+	public function query( string $sql ): int|false {
+		if ( is_callable($this->before_query) ) {
+			( $this->before_query )($this, $sql);
+		}
+		if ( ! preg_match("/handle = '([^']*)' AND path = '([^']*)' AND missing_path = 1 AND last_probe_status = 'missing_path'/", $sql, $matches) ) {
+			return false;
+		}
+		$handle = stripslashes($matches[1]);
+		$path   = stripslashes($matches[2]);
+		if ( ! isset($this->rows[ $handle ]) || $path !== (string) $this->rows[ $handle ]['path'] || empty($this->rows[ $handle ]['missing_path']) || 'missing_path' !== (string) $this->rows[ $handle ]['last_probe_status'] ) {
+			return 0;
+		}
+		$row = $this->rows[ $handle ];
+		foreach ( array( 'origin_site', 'origin_agent', 'origin_session', 'owner_run_ref', 'cleanup_policy', 'task_url', 'task_ref' ) as $field ) {
+			if ( '' !== trim((string) ( $row[ $field ] ?? '' )) && str_contains($sql, "TRIM(COALESCE({$field}, '')) = ''") ) {
+				return 0;
+			}
+		}
+		if ( str_contains($sql, "TRIM(COALESCE(pr_url, '')) = ''") && '' !== trim((string) ( $row['pr_url'] ?? '' )) ) {
+			return 0;
+		}
+		if ( str_contains($sql, 'COALESCE(unpushed_count, 0) <= 0') && (int) ( $row['unpushed_count'] ?? 0 ) > 0 ) {
+			return 0;
+		}
+		unset($this->rows[ $handle ]);
+		return 1;
 	}
 
 	public function delete( string $table, array $where ): int|false {
@@ -67,7 +105,7 @@ final class Prune_Test_Wpdb {
 
 	public function prepare( string $query, mixed ...$args ): string {
 		foreach ( $args as $arg ) {
-			$query = preg_replace('/%s/', addslashes((string) $arg), $query, 1) ?? $query;
+			$query = preg_replace('/%s/', "'" . addslashes((string) $arg) . "'", $query, 1) ?? $query;
 		}
 		return $query;
 	}
@@ -161,7 +199,7 @@ $tests[] = static function (): void {
 	$GLOBALS['wpdb'] = $wpdb;
 
 	$repo   = new WorktreeInventoryRepository();
-	$result = $repo->pruneMissing(array( 'dry_run' => true ));
+	$result = $repo->pruneMissing(array( 'dry_run' => true, 'workspace_root' => sys_get_temp_dir() ));
 
 	assert_true(! empty($result['success']), 'dry-run returns success');
 	assert_true(! empty($result['dry_run']), 'dry-run result flags dry_run');
@@ -169,6 +207,93 @@ $tests[] = static function (): void {
 	// Rows must still be present (no mutation on dry-run).
 	assert_true(isset($wpdb->rows['homeboy']), 'dry-run did not delete homeboy');
 	assert_true(isset($wpdb->rows['homeboy-action']), 'dry-run did not delete homeboy-action');
+	++$GLOBALS['passed'];
+};
+
+/*
+ * Test 6: bounded pages retain a continuation and only mutate the current page.
+ */
+$tests[] = static function (): void {
+	$wpdb = new Prune_Test_Wpdb();
+	$absent = sys_get_temp_dir() . '/dmc-prune-smoke-absent-g-' . getmypid();
+	seed($wpdb, array(
+		make_row(array( 'handle' => 'a', 'path' => $absent )),
+		make_row(array( 'handle' => 'b', 'path' => $absent, 'pr_url' => 'https://example.test/pr/1' )),
+		make_row(array( 'handle' => 'c', 'path' => $absent )),
+	));
+	$GLOBALS['wpdb'] = $wpdb;
+
+	$result = ( new WorktreeInventoryRepository() )->pruneMissing(array( 'limit' => 2, 'workspace_root' => sys_get_temp_dir() ));
+	assert_same(1, $result['summary']['deleted'], 'bounded page deletes only its configured limit after a protected row');
+	assert_same(1, $result['summary']['skipped'], 'bounded page retains protected rows for later reconciliation');
+	assert_same('b', $result['continuation']['next_after_handle'] ?? null, 'bounded page reports its keyset continuation cursor');
+	assert_true(isset($wpdb->rows['b']) && isset($wpdb->rows['c']), 'protected and later rows remain for continuation');
+	$result = ( new WorktreeInventoryRepository() )->pruneMissing(array( 'after_handle' => 'b', 'workspace_root' => sys_get_temp_dir() ));
+	assert_same(1, $result['summary']['deleted'], 'keyset continuation processes only rows after its cursor');
+	assert_true(isset($wpdb->rows['b']) && ! isset($wpdb->rows['c']), 'keyset continuation retains the earlier protected row and deletes the survivor');
+	++$GLOBALS['passed'];
+};
+
+/*
+ * Test 7: malformed and owner-managed rows are ambiguous and never pruned.
+ */
+$tests[] = static function (): void {
+	$wpdb = new Prune_Test_Wpdb();
+	$absent = sys_get_temp_dir() . '/dmc-prune-smoke-absent-h-' . getmypid();
+	seed($wpdb, array(
+		make_row(array( 'handle' => 'relative-path', 'path' => 'github://owner/repo' )),
+		make_row(array( 'handle' => 'owner-managed', 'path' => $absent, 'origin_site' => 'remote-site' )),
+	));
+	$GLOBALS['wpdb'] = $wpdb;
+
+	$result  = ( new WorktreeInventoryRepository() )->pruneMissing(array( 'force' => true, 'workspace_root' => sys_get_temp_dir() ));
+	$reasons = array_column($result['skipped'], 'reason', 'handle');
+	assert_same('invalid_path', $reasons['relative-path'] ?? null, 'malformed remote path is preserved');
+	assert_same('owner_managed', $reasons['owner-managed'] ?? null, 'owner-managed row is preserved even under force');
+	assert_true(isset($wpdb->rows['relative-path']) && isset($wpdb->rows['owner-managed']), 'ambiguous rows remain in inventory');
+	++$GLOBALS['passed'];
+};
+
+/*
+ * Test 8: final SQL conditions preserve evidence added after the locked read.
+ */
+$tests[] = static function (): void {
+	$wpdb = new Prune_Test_Wpdb();
+	$absent = sys_get_temp_dir() . '/dmc-prune-smoke-absent-i-' . getmypid();
+	seed($wpdb, array( make_row(array( 'handle' => 'updated-pr', 'path' => $absent )) ));
+	$wpdb->before_query = static function ( Prune_Test_Wpdb $database ): void {
+		$database->rows['updated-pr']['pr_url'] = 'https://example.test/pr/2';
+	};
+	$GLOBALS['wpdb'] = $wpdb;
+
+	$result = ( new WorktreeInventoryRepository() )->pruneMissing(array( 'workspace_root' => sys_get_temp_dir() ));
+	assert_same(0, $result['summary']['deleted'], 'final SQL predicate preserves a row that gains PR evidence');
+	assert_same('conditional_delete_mismatch', $result['skipped'][0]['reason'] ?? null, 'concurrent protection update reports a conditional delete mismatch');
+	assert_true(isset($wpdb->rows['updated-pr']), 'concurrently protected row remains in inventory');
+	++$GLOBALS['passed'];
+};
+
+/*
+ * Test 9: the mutation callback recreates the path before the locked final probe.
+ */
+$tests[] = static function (): void {
+	$wpdb = new Prune_Test_Wpdb();
+	$path = sys_get_temp_dir() . '/dmc-prune-smoke-race-' . getmypid();
+	@rmdir($path);
+	seed($wpdb, array( make_row(array( 'handle' => 'recreated', 'path' => $path )) ));
+	$GLOBALS['wpdb'] = $wpdb;
+
+	$result = ( new WorktreeInventoryRepository() )->pruneMissing(array(
+		'workspace_root' => sys_get_temp_dir(),
+		'lock_callback' => static function ( array $row, callable $mutation ) use ( $path ): array {
+			mkdir($path, 0777, true);
+			return $mutation();
+		},
+	));
+	assert_same(0, $result['summary']['deleted'], 'final locked path probe prevents deletion after recreation');
+	assert_same('path_present_on_disk', $result['skipped'][0]['reason'] ?? null, 'recreated path reports final revalidation skip');
+	assert_true(isset($wpdb->rows['recreated']), 'recreated row remains in inventory');
+	rmdir($path);
 	++$GLOBALS['passed'];
 };
 
@@ -193,7 +318,7 @@ $tests[] = static function (): void {
 	$GLOBALS['wpdb'] = $wpdb;
 
 	$repo   = new WorktreeInventoryRepository();
-	$result = $repo->pruneMissing(array());
+	$result = $repo->pruneMissing(array( 'workspace_root' => sys_get_temp_dir() ));
 
 	assert_same(1, $result['summary']['deleted'], 'only the truly-absent row is deleted');
 	assert_same(1, $result['summary']['skipped'], 'the present-on-disk row is skipped');
@@ -223,7 +348,7 @@ $tests[] = static function (): void {
 	$GLOBALS['wpdb'] = $wpdb;
 
 	$repo   = new WorktreeInventoryRepository();
-	$result = $repo->pruneMissing(array());
+	$result = $repo->pruneMissing(array( 'workspace_root' => sys_get_temp_dir() ));
 
 	assert_same(1, $result['summary']['deleted'], 'only the clean ghost is deleted');
 	assert_same(2, $result['summary']['skipped'], 'unpushed + PR rows are skipped');
@@ -255,7 +380,7 @@ $tests[] = static function (): void {
 	$GLOBALS['wpdb'] = $wpdb;
 
 	$repo   = new WorktreeInventoryRepository();
-	$result = $repo->pruneMissing(array( 'force' => true ));
+	$result = $repo->pruneMissing(array( 'force' => true, 'workspace_root' => sys_get_temp_dir() ));
 
 	assert_same(2, $result['summary']['deleted'], 'force deletes the protected rows');
 	assert_same(0, $result['summary']['skipped'], 'force leaves nothing skipped');
@@ -280,7 +405,7 @@ $tests[] = static function (): void {
 	$GLOBALS['wpdb'] = $wpdb;
 
 	$repo   = new WorktreeInventoryRepository();
-	$result = $repo->pruneMissing(array());
+	$result = $repo->pruneMissing(array( 'workspace_root' => sys_get_temp_dir() ));
 
 	assert_same(1, $result['summary']['total'], 'only missing_path=1 rows are candidates');
 	assert_same(1, $result['summary']['deleted'], 'only the ghost is deleted');

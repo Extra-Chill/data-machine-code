@@ -4,6 +4,7 @@
  */
 
 define('ABSPATH', dirname(__DIR__));
+define('ARRAY_A', 'ARRAY_A');
 
 if ( ! class_exists('WP_Error') ) {
 	class WP_Error {
@@ -56,8 +57,46 @@ if ( ! function_exists('add_action') ) {
 }
 
 require_once dirname(__DIR__) . '/inc/Storage/CleanupRunRepositoryInterface.php';
+require_once dirname(__DIR__) . '/inc/Support/JsonCodec.php';
+require_once dirname(__DIR__) . '/inc/Storage/WorktreeInventoryRepository.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceSafeCleanupOrchestrator.php';
 require_once dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php';
+
+final class SafeCleanupInventoryWpdb {
+	public string $prefix = 'wp_';
+
+	/** @var array<string,array<string,mixed>> */
+	public array $rows = array();
+
+	public function get_results( string $sql, string $output = ARRAY_A ): array {
+		$rows = array_values(array_filter($this->rows, static fn( array $row ): bool => ! str_contains($sql, 'missing_path = 1') || ! empty($row['missing_path'])));
+		usort($rows, static fn( array $a, array $b ): int => strcmp((string) $a['handle'], (string) $b['handle']));
+		if ( preg_match('/LIMIT (\d+) OFFSET (\d+)/', $sql, $matches) ) {
+			return array_slice($rows, (int) $matches[2], (int) $matches[1]);
+		}
+		return $rows;
+	}
+
+	public function prepare( string $query, mixed ...$args ): string {
+		foreach ( $args as $arg ) {
+			$query = preg_replace('/%s/', "'" . addslashes((string) $arg) . "'", $query, 1) ?? $query;
+		}
+		return $query;
+	}
+
+	public function query( string $sql ): int|false {
+		if ( ! preg_match("/handle = '([^']*)' AND path = '([^']*)' AND missing_path = 1 AND last_probe_status = 'missing_path'/", $sql, $matches) ) {
+			return false;
+		}
+		$handle = stripslashes($matches[1]);
+		$path   = stripslashes($matches[2]);
+		if ( ! isset($this->rows[ $handle ]) || $path !== (string) $this->rows[ $handle ]['path'] || empty($this->rows[ $handle ]['missing_path']) || 'missing_path' !== $this->rows[ $handle ]['last_probe_status'] ) {
+			return 0;
+		}
+		unset($this->rows[ $handle ]);
+		return 1;
+	}
+}
 
 final class SafeCleanupQueuedAbility {
 	/** @var array<int,array<string,mixed>> */
@@ -74,6 +113,35 @@ final class SafeCleanupQueuedAbility {
 			'mode'    => 'empty',
 			'summary' => array(),
 		);
+	}
+}
+
+final class SafeCleanupSchemaValidatedAbility {
+	/** @var array<int,array<string,mixed>> */
+	public array $calls = array();
+
+	/** @param array<string,mixed> $response */
+	public function __construct( private array $response ) {}
+
+	public function execute( array $input ): array|\WP_Error {
+		foreach ( array( 'limit' => 'integer', 'after_handle' => 'string', 'until_budget' => 'string' ) as $key => $type ) {
+			if ( array_key_exists($key, $input) && gettype($input[ $key ]) !== $type ) {
+				return new WP_Error('ability_invalid_input', sprintf('%s must be a %s.', $key, $type));
+			}
+		}
+		$this->calls[] = $input;
+		return $this->response;
+	}
+}
+
+final class SafeCleanupRealInventoryAbility {
+	/** @var array<int,array<string,mixed>> */
+	public array $calls = array();
+
+	public function execute( array $input ): array {
+		$this->calls[] = $input;
+		$input['workspace_root'] = sys_get_temp_dir();
+		return ( new DataMachineCode\Storage\WorktreeInventoryRepository() )->pruneMissing($input);
 	}
 }
 
@@ -106,6 +174,7 @@ function safe_cleanup_assert( bool $condition, string $label ): void {
 
 new DataMachineCode\Abilities\WorkspaceAbilities();
 $safe_cleanup_ability = $GLOBALS['safe_cleanup_registered_abilities']['datamachine-code/workspace-cleanup-safe'] ?? null;
+$inventory_prune_ability = $GLOBALS['safe_cleanup_registered_abilities']['datamachine-code/workspace-worktree-inventory-prune-missing'] ?? null;
 safe_cleanup_assert(is_array($safe_cleanup_ability), 'safe cleanup ability is registered');
 safe_cleanup_assert(array( DataMachineCode\Abilities\WorkspaceAbilities::class, 'workspaceCleanupSafe' ) === $safe_cleanup_ability['execute_callback'], 'safe cleanup ability uses canonical callback');
 safe_cleanup_assert(isset($safe_cleanup_ability['input_schema']['properties']['dry_run']), 'safe cleanup ability accepts dry_run');
@@ -116,6 +185,9 @@ safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['
 safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['current_blockers']), 'safe cleanup ability documents final current blockers output');
 safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['run_id']), 'safe cleanup ability documents run_id output');
 safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['continuation']), 'safe cleanup ability documents continuation output');
+safe_cleanup_assert(is_array($inventory_prune_ability), 'inventory prune ability is registered');
+safe_cleanup_assert(isset($inventory_prune_ability['input_schema']['properties']['after_handle']), 'registered inventory ability accepts the keyset cursor');
+safe_cleanup_assert(array( DataMachineCode\Abilities\WorkspaceAbilities::class, 'worktreeInventoryPruneMissing' ) === $inventory_prune_ability['execute_callback'], 'registered inventory ability uses the canonical lifecycle callback');
 
 $ability_force_result = DataMachineCode\Abilities\WorkspaceAbilities::workspaceCleanupSafe(array( 'force' => true ));
 safe_cleanup_assert(is_wp_error($ability_force_result), 'safe cleanup ability callback executes orchestrator refusal');
@@ -194,6 +266,19 @@ $artifact_cleanup = new SafeCleanupQueuedAbility(
 		),
 	)
 );
+$inventory_wpdb = new SafeCleanupInventoryWpdb();
+$inventory_absent = sys_get_temp_dir() . '/dmc-safe-cleanup-absent-' . getmypid();
+$inventory_present = sys_get_temp_dir() . '/dmc-safe-cleanup-present-' . getmypid();
+@rmdir($inventory_absent);
+@rmdir($inventory_present);
+mkdir($inventory_present, 0777, true);
+$inventory_wpdb->rows = array(
+	'confirmed-absent' => array( 'handle' => 'confirmed-absent', 'repo' => 'repo', 'path' => $inventory_absent, 'missing_path' => 1, 'last_probe_status' => 'missing_path', 'metadata' => null ),
+	'recreated-primary' => array( 'handle' => 'recreated-primary', 'repo' => 'repo', 'path' => $inventory_present, 'missing_path' => 1, 'last_probe_status' => 'missing_path', 'metadata' => null ),
+	'protected-pr' => array( 'handle' => 'protected-pr', 'repo' => 'repo', 'path' => $inventory_absent, 'missing_path' => 1, 'last_probe_status' => 'missing_path', 'pr_url' => 'https://example.test/pr/1', 'metadata' => null ),
+);
+$GLOBALS['wpdb'] = $inventory_wpdb;
+$inventory_prune = new SafeCleanupRealInventoryAbility();
 $lock_calls = array();
 $run_repository = new SafeCleanupFakeRunRepository();
 $progress_envelopes = array();
@@ -202,6 +287,7 @@ $orchestrator = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
 		'datamachine-code/workspace-worktree-cleanup-eligible-drain' => $cleanup_eligible,
 		'datamachine-code/workspace-worktree-active-no-signal-drain' => $active_no_signal,
 		'datamachine-code/workspace-cleanup-until-empty' => $artifact_cleanup,
+		'datamachine-code/workspace-worktree-inventory-prune-missing' => $inventory_prune,
 		default => null,
 	},
 	static function ( bool $dry_run ) use ( &$lock_calls ): array {
@@ -244,11 +330,23 @@ safe_cleanup_assert(1 === ( $result['summary']['skipped_rows'] ?? null ), 'artif
 safe_cleanup_assert(3072 === ( $result['summary']['bytes_reclaimed'] ?? null ), 'measured artifact and worktree bytes are accumulated');
 safe_cleanup_assert(1 === ( $result['summary']['marked_cleanup_eligible'] ?? null ), 'marked cleanup eligible rows are accumulated');
 safe_cleanup_assert(2 === ( $result['summary']['lock_files_removed'] ?? null ), 'lock removals are accumulated');
-safe_cleanup_assert(7 === ( $result['summary']['blocker_count'] ?? null ), 'compact blockers are counted');
+safe_cleanup_assert(1 === ( $result['summary']['inventory_rows_pruned'] ?? null ), 'confirmed missing inventory rows are reported separately from removed worktrees');
+safe_cleanup_assert(0 === ( $result['summary']['inventory_rows_planned'] ?? null ), 'apply does not report inventory rows as planned');
+safe_cleanup_assert(2 === ( $result['summary']['inventory_rows_skipped'] ?? null ), 'recreated and protected inventory rows are reported separately');
+safe_cleanup_assert(false === $inventory_prune->calls[0]['dry_run'], 'apply invokes inventory pruning in apply mode');
+safe_cleanup_assert(false === $inventory_prune->calls[0]['force'], 'safe cleanup preserves inventory prune force protections');
+safe_cleanup_assert(7 === $inventory_prune->calls[0]['limit'], 'safe cleanup bounds inventory pruning to its cleanup limit');
+safe_cleanup_assert(array( array( 'handle' => 'confirmed-absent' ) ) === ( $result['steps']['inventory_prune_missing']['pruned_examples'] ?? null ), 'inventory evidence is bounded to compact examples');
+safe_cleanup_assert(! isset($inventory_wpdb->rows['confirmed-absent']), 'safe cleanup uses the real primitive to delete confirmed-absent rows');
+safe_cleanup_assert(isset($inventory_wpdb->rows['recreated-primary']), 'safe cleanup real primitive preserves recreated paths');
+safe_cleanup_assert(isset($inventory_wpdb->rows['protected-pr']), 'safe cleanup real primitive preserves PR-protected rows');
+safe_cleanup_assert(9 === ( $result['summary']['blocker_count'] ?? null ), 'compact blockers are counted');
 safe_cleanup_assert(1 === ( $result['summary']['blockers_by_reason']['artifact_plan_mismatch'] ?? null ), 'artifact blocker count is preserved');
 safe_cleanup_assert(1 === ( $result['summary']['blockers_by_reason']['dirty_worktree'] ?? null ), 'dirty blocker count is preserved');
 safe_cleanup_assert(2 === ( $result['summary']['blockers_by_reason']['unpushed_commits'] ?? null ), 'unpushed blocker count is preserved');
 safe_cleanup_assert(3 === ( $result['summary']['blockers_by_reason']['insufficient_signal'] ?? null ), 'active backlog blocker count is preserved');
+safe_cleanup_assert(1 === ( $result['summary']['blockers_by_reason']['path_present_on_disk'] ?? null ), 'recreated paths remain inventory prune skips');
+safe_cleanup_assert(1 === ( $result['summary']['blockers_by_reason']['pr_url'] ?? null ), 'protected inventory rows remain inventory prune skips');
 safe_cleanup_assert('sum_of_per_reason_maximum_observations_across_stages' === ( $result['summary']['blocker_count_scope'] ?? null ), 'aggregate blocker counts document their historical aggregation scope');
 safe_cleanup_assert(4 === ( $result['summary']['current_blocker_count'] ?? null ), 'current blocker count reports the final-cycle artifact and active backlog observations');
 safe_cleanup_assert(3 === ( $result['summary']['current_blockers_by_reason']['insufficient_signal'] ?? null ), 'current blocker buckets expose final-cycle active backlog observations');
@@ -257,6 +355,66 @@ safe_cleanup_assert(str_contains((string) ( $result['continuation']['next_comman
 safe_cleanup_assert(count($run_repository->updates) >= 5, 'safe cleanup checkpoints progress repeatedly');
 safe_cleanup_assert('complete_with_blockers' === ( $run_repository->runs['cleanup-run-safe-test']['status'] ?? null ), 'safe cleanup persists final run state');
 safe_cleanup_assert(4 === ( $run_repository->runs['cleanup-run-safe-test']['summary']['safe_cleanup_progress']['summary']['removed'] ?? null ), 'safe cleanup persists reclaimed progress summary');
+rmdir($inventory_present);
+
+$bounded_inventory = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+	static fn( string $name ) => 'datamachine-code/workspace-worktree-inventory-prune-missing' === $name ? $inventory_prune : new SafeCleanupQueuedAbility(array( array( 'success' => true, 'summary' => array() ) )),
+	static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
+	new SafeCleanupFakeRunRepository()
+);
+$bounded_inventory_result = $bounded_inventory->run(array( 'dry_run' => true, 'limit' => 1 ));
+safe_cleanup_assert(! is_wp_error($bounded_inventory_result), 'bounded real inventory prune succeeds through safe cleanup');
+safe_cleanup_assert('protected-pr' === ( $bounded_inventory_result['continuation']['inventory_after'] ?? null ), 'safe cleanup returns a bounded inventory keyset cursor');
+safe_cleanup_assert(str_contains((string) ( $bounded_inventory_result['continuation']['next_command'] ?? '' ), '--inventory-after='), 'safe cleanup continuation resumes the next inventory keyset page');
+
+$schema_validated_inventory = new SafeCleanupSchemaValidatedAbility(array( 'success' => true, 'summary' => array() ));
+$schema_validated_cleanup = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+	static fn( string $name ) => 'datamachine-code/workspace-worktree-inventory-prune-missing' === $name ? $schema_validated_inventory : new SafeCleanupQueuedAbility(array( array( 'success' => true, 'summary' => array() ) )),
+	static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
+	new SafeCleanupFakeRunRepository()
+);
+$schema_validated_result = $schema_validated_cleanup->run(array( 'dry_run' => true ));
+safe_cleanup_assert(! is_wp_error($schema_validated_result), 'safe cleanup omits unset optional inputs accepted by the inventory Ability schema');
+safe_cleanup_assert(! array_key_exists('until_budget', $schema_validated_inventory->calls[0]), 'safe cleanup does not pass a null until_budget to the inventory Ability');
+
+$cursor_inventory = new SafeCleanupQueuedAbility(array( array(
+	'success' => true,
+	'summary' => array(),
+	'continuation' => array( 'reason' => 'limit_reached', 'next_after_handle' => 'next-cursor' ),
+) ));
+$cursor_cleanup = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+	static fn( string $name ) => 'datamachine-code/workspace-worktree-inventory-prune-missing' === $name ? $cursor_inventory : new SafeCleanupQueuedAbility(array( array( 'success' => true, 'summary' => array() ) )),
+	static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
+	new SafeCleanupFakeRunRepository()
+);
+$cursor_result = $cursor_cleanup->run(array( 'dry_run' => true, 'inventory_after' => 'previous-cursor' ));
+$next_command = (string) ( $cursor_result['continuation']['next_command'] ?? '' );
+safe_cleanup_assert(1 === substr_count($next_command, '--inventory-after='), 'inventory continuation replaces rather than duplicates its cursor flag');
+safe_cleanup_assert(str_contains($next_command, "--inventory-after='next-cursor'"), 'inventory continuation uses the replacement cursor');
+
+$both_active = new SafeCleanupQueuedAbility(array( array(
+	'success' => true,
+	'summary' => array(),
+	'continuation' => array( 'reason' => 'page_incomplete', 'next_command' => 'active-resume' ),
+) ));
+$both_inventory = new SafeCleanupQueuedAbility(array( array(
+	'success' => true,
+	'summary' => array(),
+	'continuation' => array( 'reason' => 'limit_reached', 'next_after_handle' => 'inventory-handle' ),
+) ));
+$both_pending = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+	static fn( string $name ) => match ( $name ) {
+		'datamachine-code/workspace-worktree-active-no-signal-drain' => $both_active,
+		'datamachine-code/workspace-worktree-inventory-prune-missing' => $both_inventory,
+		default => new SafeCleanupQueuedAbility(array( array( 'success' => true, 'summary' => array() ) )),
+	},
+	static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
+	new SafeCleanupFakeRunRepository()
+);
+$both_pending_result = $both_pending->run(array( 'dry_run' => true ));
+safe_cleanup_assert('active-resume' === ( $both_pending_result['continuation']['next_command'] ?? null ), 'active/no-signal remains the primary continuation when multiple stages are incomplete');
+safe_cleanup_assert(isset($both_pending_result['continuation']['pending_stages']['active_no_signal']), 'active/no-signal continuation remains visible');
+safe_cleanup_assert(isset($both_pending_result['continuation']['pending_stages']['inventory_prune_missing']), 'inventory continuation remains visible alongside active/no-signal');
 
 $preview_lock_calls = array();
 $preview = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
@@ -272,6 +430,31 @@ safe_cleanup_assert(! is_wp_error($preview_result), 'preview succeeds');
 safe_cleanup_assert(false === $preview_result['applied'], 'preview does not apply');
 safe_cleanup_assert(array( true, true ) === $preview_lock_calls, 'preview lock pruning stays dry-run');
 safe_cleanup_assert(1 === ( $preview_result['summary']['cycles'] ?? null ), 'preview runs one cycle');
+
+$preview_prune = new SafeCleanupQueuedAbility(
+	array(
+		array(
+			'success' => true,
+			'dry_run' => true,
+			'deleted' => array( array( 'handle' => 'missing-preview' ) ),
+			'skipped' => array( array( 'handle' => 'protected-preview', 'reason' => 'unpushed_count' ) ),
+			'summary' => array( 'deleted' => 1, 'skipped' => 1, 'total' => 2 ),
+		),
+	)
+);
+$dry_run_ability = new SafeCleanupQueuedAbility(array( array( 'success' => true, 'summary' => array() ) ));
+$inventory_preview = new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+	static fn( string $name ) => 'datamachine-code/workspace-worktree-inventory-prune-missing' === $name ? $preview_prune : $dry_run_ability,
+	static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
+	new SafeCleanupFakeRunRepository()
+);
+$inventory_preview_result = $inventory_preview->run(array( 'dry_run' => true ));
+safe_cleanup_assert(! is_wp_error($inventory_preview_result), 'inventory prune preview succeeds');
+safe_cleanup_assert(true === $preview_prune->calls[0]['dry_run'], 'preview invokes inventory pruning in dry-run mode');
+safe_cleanup_assert(false === $preview_prune->calls[0]['force'], 'preview retains inventory prune force protections');
+safe_cleanup_assert(1 === ( $inventory_preview_result['summary']['inventory_rows_planned'] ?? null ), 'preview reports missing inventory rows planned for pruning');
+safe_cleanup_assert(0 === ( $inventory_preview_result['summary']['inventory_rows_pruned'] ?? null ), 'preview does not report inventory rows as pruned');
+safe_cleanup_assert(1 === ( $inventory_preview_result['summary']['inventory_rows_skipped'] ?? null ), 'preview reports protected inventory rows as skipped');
 
 $duplicate_blocker_ability = new SafeCleanupQueuedAbility(
 	array(
