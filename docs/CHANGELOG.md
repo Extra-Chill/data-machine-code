@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.56.2] - 2026-08-03
+
+### Changed
+- Integrate safe missing-inventory pruning
+
+### Fixed
+- Fix safe-cleanup blocker accounting
+
 ## [0.56.1] - 2026-08-03
 
 ### Fixed
