@@ -1713,6 +1713,9 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Allow pruning rows with unpushed_count > 0 or a non-empty pr_url. Default false.',
 							),
+							'limit'   => array( 'type' => 'integer', 'description' => 'Maximum missing inventory rows to inspect. Default 25, maximum 200.' ),
+							'after_handle' => array( 'type' => 'string', 'description' => 'Last processed handle for a stable missing-inventory keyset continuation.' ),
+							'until_budget' => array( 'type' => 'string', 'description' => 'Optional compact wall-clock budget such as 30s.' ),
 						),
 					),
 					'output_schema'       => array(
@@ -1724,6 +1727,7 @@ class WorkspaceAbilities {
 							'deleted'   => array( 'type' => 'array' ),
 							'skipped'   => array( 'type' => 'array' ),
 							'summary'   => array( 'type' => 'object' ),
+							'continuation' => array( 'type' => 'object' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreeInventoryPruneMissing' ),
@@ -1791,14 +1795,14 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-cleanup-safe',
 				array(
 					'label'               => 'Run Safe Workspace Cleanup',
-					'description'         => 'Run the canonical DMC safe workspace cleanup flow. Uses DMC safe classifiers/removals, refuses force and unpushed discard, and reports remaining blockers.',
+					'description'         => 'Run the canonical DMC safe workspace cleanup flow. Uses DMC safe classifiers/removals and missing-inventory pruning with fresh path revalidation, refuses force and unpushed discard, and reports remaining blockers.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
 							'dry_run'          => array(
 								'type'        => 'boolean',
-								'description' => 'Preview safe cleanup without removing worktrees or stale DMC lock files.',
+								'description' => 'Preview safe cleanup without removing worktrees, inventory rows, or stale DMC lock files.',
 							),
 							'limit'            => array(
 								'type'        => 'integer',
@@ -1812,6 +1816,7 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'Maximum safe cleanup cycles before stopping. Clamped by the orchestrator.',
 							),
+							'inventory_after' => array( 'type' => 'string', 'description' => 'Last processed missing-inventory handle for a safe-cleanup keyset continuation.' ),
 							'until_budget'     => array(
 								'type'        => 'string',
 								'description' => 'Optional child-drain time budget such as 30s.',
@@ -4243,12 +4248,21 @@ class WorkspaceAbilities {
 	 */
 	public static function worktreeInventoryPruneMissing( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
-		return $workspace->worktree_inventory_prune_missing(
-			array(
-				'dry_run' => ! empty($input['dry_run']),
-				'force'   => ! empty($input['force']),
-			)
+		$opts = array(
+			'dry_run' => ! empty($input['dry_run']),
+			'force'   => ! empty($input['force']),
 		);
+		if ( isset($input['limit']) ) {
+			$opts['limit'] = (int) $input['limit'];
+		}
+		if ( isset($input['after_handle']) ) {
+			$opts['after_handle'] = (string) $input['after_handle'];
+		}
+		if ( isset($input['until_budget']) ) {
+			$opts['until_budget'] = (string) $input['until_budget'];
+		}
+
+		return $workspace->worktree_inventory_prune_missing($opts);
 	}
 
 	/**

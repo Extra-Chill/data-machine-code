@@ -54,6 +54,7 @@ class WorkspaceSafeCleanupOrchestrator {
 		$limit             = isset($input['limit']) ? max(1, min(200, (int) $input['limit'])) : 25;
 		$passes            = isset($input['passes']) ? max(1, min(100, (int) $input['passes'])) : 10;
 		$cycles            = isset($input['cycles']) ? max(1, min(25, (int) $input['cycles'])) : 5;
+		$inventory_after   = isset($input['inventory_after']) ? trim( (string) $input['inventory_after'] ) : '';
 		$source            = isset($input['source']) && '' !== trim( (string) $input['source']) ? trim( (string) $input['source']) : self::DEFAULT_SOURCE;
 		$progress_callback = isset($input['progress_callback']) && is_callable($input['progress_callback']) ? $input['progress_callback'] : null;
 
@@ -68,6 +69,10 @@ class WorkspaceSafeCleanupOrchestrator {
 		$artifact_cleanup = $this->resolve_ability($dry_run ? 'datamachine-code/workspace-cleanup-plan' : 'datamachine-code/workspace-cleanup-until-empty');
 		if ( is_wp_error($artifact_cleanup) ) {
 			return $artifact_cleanup;
+		}
+		$inventory_prune = $this->resolve_ability('datamachine-code/workspace-worktree-inventory-prune-missing');
+		if ( is_wp_error($inventory_prune) ) {
+			return $inventory_prune;
 		}
 
 		$result = array(
@@ -91,6 +96,9 @@ class WorkspaceSafeCleanupOrchestrator {
 				'marked_cleanup_eligible' => 0,
 				'bytes_reclaimed'         => 0,
 				'lock_files_removed'      => 0,
+				'inventory_rows_pruned'   => 0,
+				'inventory_rows_planned'  => 0,
+				'inventory_rows_skipped'  => 0,
 				'blocker_count'           => 0,
 				'blockers_by_reason'      => array(),
 			),
@@ -115,6 +123,7 @@ class WorkspaceSafeCleanupOrchestrator {
 			'evidence_command' => $result['commands']['evidence'],
 			'resume_command'   => $result['commands']['resume'],
 			'note'             => 'If the client disconnects, inspect this run_id and rerun the resume command. Safe cleanup remains bounded and preserves dirty/unpushed blockers.',
+			'pending_stages'   => array(),
 		);
 		$this->checkpoint_progress($run_id, $result, 'applying');
 		if ( null !== $progress_callback ) {
@@ -187,6 +196,7 @@ class WorkspaceSafeCleanupOrchestrator {
 			if ( is_array($active['continuation'] ?? null) && ! empty($active['continuation']['next_command']) ) {
 				$result['continuation']['next_command'] = (string) $active['continuation']['next_command'];
 				$result['continuation']['reason']       = (string) ( $active['continuation']['reason'] ?? 'active_no_signal_page_incomplete' );
+				$result['continuation']['pending_stages']['active_no_signal'] = (array) $active['continuation'];
 			}
 			$this->checkpoint_progress($run_id, $result, 'applying');
 
@@ -194,6 +204,40 @@ class WorkspaceSafeCleanupOrchestrator {
 				break;
 			}
 		}
+
+		// This owning-layer primitive rechecks each path immediately before deletion.
+		$inventory_input = array(
+			'dry_run'      => $dry_run,
+			'force'        => false,
+			'limit'        => $limit,
+			'after_handle' => $inventory_after,
+		);
+		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
+			$inventory_input['until_budget'] = trim( (string) $input['until_budget']);
+		}
+		$inventory = $this->execute_ability($inventory_prune, $inventory_input);
+		if ( is_wp_error($inventory) ) {
+			return $inventory;
+		}
+		$result['steps']['inventory_prune_missing']             = $this->summarize_inventory_prune_step($inventory, $dry_run);
+		$result['blockers_by_stage']['inventory_prune_missing'] = (array) ( $result['steps']['inventory_prune_missing']['blockers'] ?? array() );
+		$this->accumulate_inventory_prune_step($result, $result['steps']['inventory_prune_missing']);
+		if ( isset($inventory['continuation']['next_after_handle']) ) {
+			$next_after                                  = (string) $inventory['continuation']['next_after_handle'];
+			$result['continuation']['inventory_after']  = $next_after;
+			$inventory_continuation = array(
+				'reason'       => (string) ( $inventory['continuation']['reason'] ?? 'inventory_prune_incomplete' ),
+				'after_handle' => $next_after,
+				'next_command' => $this->progress_commands($run_id, $dry_run, $limit, $passes, $cycles, array_merge($input, array( 'inventory_after' => $next_after )))['resume'],
+			);
+			$result['continuation']['pending_stages']['inventory_prune_missing'] = $inventory_continuation;
+			if ( empty($result['continuation']['next_command']) ) {
+				$result['continuation']['reason']       = $inventory_continuation['reason'];
+				$result['continuation']['next_command'] = $inventory_continuation['next_command'];
+			}
+		}
+		ksort($result['continuation']['pending_stages']);
+		$this->checkpoint_progress($run_id, $result, 'applying');
 
 		$lock_end = ( $this->lock_pruner )($dry_run);
 		if ( is_wp_error($lock_end) ) {
@@ -286,6 +330,9 @@ class WorkspaceSafeCleanupOrchestrator {
 		}
 		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
 			$resume .= ' --until-budget=' . trim( (string) $input['until_budget']);
+		}
+		if ( isset($input['inventory_after']) && '' !== trim( (string) $input['inventory_after']) ) {
+			$resume .= ' --inventory-after=' . escapeshellarg(trim( (string) $input['inventory_after']));
 		}
 
 		return array(
@@ -390,6 +437,65 @@ class WorkspaceSafeCleanupOrchestrator {
 		$result['summary']['removed']             += (int) ( $step['applied_rows'] ?? 0 );
 		$result['summary']['would_remove']        += (int) ( $step['planned'] ?? 0 );
 		$result['summary']['bytes_reclaimed']     += (int) ( $step['bytes_reclaimed'] ?? 0 );
+		foreach ( (array) ( $step['blockers'] ?? array() ) as $reason => $count ) {
+			$result['blockers'][] = array(
+				'reason_code' => (string) $reason,
+				'count'       => (int) $count,
+			);
+		}
+	}
+
+	/** @return array<string,mixed> */
+	private function summarize_inventory_prune_step( array $step, bool $dry_run ): array {
+		$summary  = (array) ( $step['summary'] ?? array() );
+		$deleted  = (array) ( $step['deleted'] ?? array() );
+		$skipped  = (array) ( $step['skipped'] ?? array() );
+		$blockers = array();
+		foreach ( $skipped as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$reason              = (string) ( $row['reason'] ?? 'unknown' );
+			$blockers[ $reason ] = ( $blockers[ $reason ] ?? 0 ) + 1;
+		}
+
+		return array(
+			'mode'             => 'inventory_prune_missing',
+			'dry_run'          => $dry_run,
+			'planned_rows'     => $dry_run ? (int) ( $summary['deleted'] ?? count($deleted) ) : 0,
+			'pruned_rows'      => $dry_run ? 0 : (int) ( $summary['deleted'] ?? count($deleted) ),
+			'skipped_rows'     => (int) ( $summary['skipped'] ?? count($skipped) ),
+			'candidate_rows'   => (int) ( $summary['total'] ?? ( count($deleted) + count($skipped) ) ),
+			'continuation'     => (array) ( $step['continuation'] ?? array() ),
+			'blockers'         => $blockers,
+			'pruned_examples'  => $this->inventory_prune_examples($deleted),
+			'skipped_examples' => $this->inventory_prune_examples($skipped),
+		);
+	}
+
+	/** @param array<int,mixed> $rows @return array<int,array<string,mixed>> */
+	private function inventory_prune_examples( array $rows ): array {
+		$examples = array();
+		foreach ( array_slice($rows, 0, 10) as $row ) {
+			if ( ! is_array($row) ) {
+				continue;
+			}
+			$examples[] = array_filter(
+				array(
+					'handle' => isset($row['handle']) ? (string) $row['handle'] : '',
+					'reason' => isset($row['reason']) ? (string) $row['reason'] : '',
+				),
+				static fn( string $value ): bool => '' !== $value
+			);
+		}
+
+		return $examples;
+	}
+
+	private function accumulate_inventory_prune_step( array &$result, array $step ): void {
+		$result['summary']['inventory_rows_pruned']  += (int) ( $step['pruned_rows'] ?? 0 );
+		$result['summary']['inventory_rows_planned'] += (int) ( $step['planned_rows'] ?? 0 );
+		$result['summary']['inventory_rows_skipped'] += (int) ( $step['skipped_rows'] ?? 0 );
 		foreach ( (array) ( $step['blockers'] ?? array() ) as $reason => $count ) {
 			$result['blockers'][] = array(
 				'reason_code' => (string) $reason,
