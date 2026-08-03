@@ -583,6 +583,11 @@ try {
 	$fetch_failed_default = $workspace->worktree_add('homeboy', 'audit-primitives-fetch-fails', 'origin/main', false, false, false, false, true);
 	assert_true(is_wp_error($fetch_failed_default), 'fetch failure reported success without explicit opt-in');
 	assert_true('worktree_freshness_unverified' === $fetch_failed_default->get_error_code(), 'unexpected fetch failure error code');
+	$fetch_failure_data = (array) $fetch_failed_default->get_error_data();
+	assert_true(2 === ( $fetch_failure_data['fetch_attempts'] ?? null ), 'persistent fetch failure did not report the bounded retry count');
+	assert_true(! empty($fetch_failure_data['fetch_error']), 'persistent fetch failure did not expose Git stderr');
+	assert_true(2 === count((array) ( $fetch_failure_data['next_commands'] ?? array() )), 'persistent fetch failure did not return safe refresh and retry commands');
+	assert_true(! str_contains(implode(' ', (array) $fetch_failure_data['next_commands']), '--allow-unverified-freshness'), 'persistent fetch failure recommended an unsafe freshness bypass');
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-fetch-fails'), 'fetch failure left a worktree directory behind');
 
 	$fetch_failed_allowed = $workspace->worktree_add('homeboy', 'audit-primitives-fetch-fails-allowed', 'origin/main', false, false, false, false, true, array(), true);

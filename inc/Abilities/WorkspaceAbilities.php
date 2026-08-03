@@ -1462,6 +1462,10 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Present only when fetch_failed=true. Trimmed error output from the failing fetch.',
 							),
+							'fetch_attempts'            => array(
+								'type'        => 'integer',
+								'description' => 'Present only when fetch_failed=true. Number of bounded pre-create freshness fetch attempts.',
+							),
 							'fetch_timed_out'           => array(
 								'type'        => 'boolean',
 								'description' => 'Present only when the pre-create freshness fetch timed out and allow_unverified_freshness=true allowed creation to continue. This is not stale-repository evidence.',
