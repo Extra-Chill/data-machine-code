@@ -36,6 +36,7 @@ function bootstrap_demand_assert( bool $condition, string $message ): void {
 
 $fixture = sys_get_temp_dir() . '/dmc-bootstrap-demand-' . bin2hex(random_bytes(6));
 $bin = $fixture . '/bin';
+$git_log = $fixture . '/git.log';
 $repo = $fixture . '/repo';
 $rebase_worktree = $fixture . '/rebased';
 mkdir($fixture . '/frontend', 0777, true);
@@ -67,19 +68,53 @@ try {
 	exec('git -C ' . escapeshellarg($repo) . ' checkout -qb target-tree');
 	mkdir($repo . '/frontend', 0777, true);
 	file_put_contents($repo . '/frontend/package-lock.json', '{}');
+	file_put_contents($repo . '/composer.lock', '{}');
 	for ( $index = 0; $index < 300; ++$index ) {
 		file_put_contents($repo . '/frontend/tracked-' . $index . '.txt', 'x');
 	}
-	exec('git -C ' . escapeshellarg($repo) . ' add frontend && git -C ' . escapeshellarg($repo) . ' commit -qm target');
+	$submodule_commit = trim((string) shell_exec('git -C ' . escapeshellarg($repo) . ' rev-parse HEAD'));
+	exec('git -C ' . escapeshellarg($repo) . ' add frontend composer.lock && git -C ' . escapeshellarg($repo) . ' update-index --add --cacheinfo 160000,' . $submodule_commit . ',dependency && git -C ' . escapeshellarg($repo) . ' commit -qm target');
 	exec('git -C ' . escapeshellarg($repo) . ' checkout -q ' . escapeshellarg($primary_branch));
 
 	$primary_tree = WorktreeBootstrapper::demand_plan_for_target($repo, $primary_branch, true);
 	$target_tree  = WorktreeBootstrapper::demand_plan_for_target($repo, 'target-tree', true);
 	bootstrap_demand_assert(! is_wp_error($primary_tree) && ! is_wp_error($target_tree), 'Both primary and differing target refs must resolve before admission.');
 	bootstrap_demand_assert(0 === $primary_tree['counts']['package_roots'] && 1 === $target_tree['counts']['package_roots'], 'Dependency demand must come from the target tree rather than the current primary checkout.');
+	bootstrap_demand_assert(1 === $target_tree['counts']['composer_roots'] && 1 === $target_tree['counts']['submodules'], 'Target-tree planning must detect Composer and submodule capacity from Git metadata.');
 	bootstrap_demand_assert($target_tree['counts']['tracked_entries'] > 256, 'Target-tree tracked entry demand fixture must exceed the old fixed Git reserve.');
 	bootstrap_demand_assert($target_tree['inodes'] >= $target_tree['counts']['tracked_entries'] + $target_tree['git_safety_margin']['inodes'], 'Admission must reserve tracked materialization plus an explicit Git lock margin.');
 	bootstrap_demand_assert($target_tree['target_commit'] !== $primary_tree['target_commit'], 'Differing refs must retain their exact resolved commits in demand evidence.');
+	bootstrap_demand_assert('exact_git_blob_sizes' === $target_tree['tracked_bytes_source'], 'Full clones must retain exact tracked-byte accounting.');
+
+	$system_git = trim((string) shell_exec('command -v git'));
+	file_put_contents($bin . '/git', "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " . escapeshellarg($git_log) . "\nexec " . escapeshellarg($system_git) . " \"$@\"\n");
+	chmod($bin . '/git', 0700);
+	$original_path = (string) getenv('PATH');
+	putenv('PATH=' . $bin . PATH_SEPARATOR . $original_path);
+	$logged_full_tree = WorktreeBootstrapper::demand_plan_for_target($repo, 'target-tree', true);
+	putenv('PATH=' . $original_path);
+	bootstrap_demand_assert(! is_wp_error($logged_full_tree), 'Full-clone command fixture must remain planable.');
+	$full_commands = (string) file_get_contents($git_log);
+	bootstrap_demand_assert(str_contains($full_commands, 'ls-tree -r -t -l -z --full-tree ' . $logged_full_tree['target_commit']), 'Full clones must inspect target trees with exact blob sizes.');
+
+	exec('git -C ' . escapeshellarg($repo) . ' config remote.origin.promisor true');
+	exec('git -C ' . escapeshellarg($repo) . ' config remote.origin.partialclonefilter blob:none');
+	file_put_contents($git_log, '');
+	putenv('PATH=' . $bin . PATH_SEPARATOR . $original_path);
+	$blobless_tree = WorktreeBootstrapper::demand_plan_for_target($repo, 'target-tree', true);
+	putenv('PATH=' . $original_path);
+	bootstrap_demand_assert(! is_wp_error($blobless_tree), 'Blobless target-tree command fixture must remain planable.');
+	$blobless_commands = (string) file_get_contents($git_log);
+	bootstrap_demand_assert(str_contains($blobless_commands, 'config --get-regexp ^remote\\..*\\.(promisor|partialclonefilter)$'), 'Blobless detection must inspect only promisor filter metadata.');
+	bootstrap_demand_assert(str_contains($blobless_commands, 'ls-tree -r -t -z --full-tree ' . $blobless_tree['target_commit']) && ! str_contains($blobless_commands, 'ls-tree -r -t -l -z --full-tree '), 'Blobless clones must inspect target metadata without requesting blob sizes.');
+	bootstrap_demand_assert('conservative_blobless_entry_estimate' === $blobless_tree['tracked_bytes_source'], 'Blobless plans must expose their conservative tracked-byte contract.');
+	bootstrap_demand_assert($blobless_tree['tracked_bytes'] === $blobless_tree['counts']['tracked_entries'] * 65536, 'Blobless plans must reserve the documented conservative byte estimate for every tracked entry.');
+	bootstrap_demand_assert(65536 === $blobless_tree['tracked_bytes_per_entry'], 'Blobless plans must expose the per-entry estimate used for capacity review.');
+	bootstrap_demand_assert($blobless_tree['counts']['package_roots'] === $target_tree['counts']['package_roots'] && $blobless_tree['counts']['composer_roots'] === $target_tree['counts']['composer_roots'] && $blobless_tree['counts']['submodules'] === $target_tree['counts']['submodules'], 'Metadata-only plans must preserve package, Composer, and submodule capacity detection.');
+	$GLOBALS['bootstrap_demand_filters']['datamachine_code_worktree_blobless_tracked_entry_bytes'] = static fn() => 32768;
+	$filtered_blobless_tree = WorktreeBootstrapper::demand_plan_for_target($repo, 'target-tree', true);
+	unset($GLOBALS['bootstrap_demand_filters']['datamachine_code_worktree_blobless_tracked_entry_bytes']);
+	bootstrap_demand_assert($filtered_blobless_tree['tracked_bytes'] === $filtered_blobless_tree['counts']['tracked_entries'] * 32768, 'Installations must be able to tune the conservative blobless estimate without changing core.');
 
 	exec('git -C ' . escapeshellarg($repo) . ' checkout -qb stale-branch');
 	file_put_contents($repo . '/stale.txt', 'stale');
@@ -143,6 +178,7 @@ try {
 		unlink($fixture . '/' . $file);
 	}
 	if ( is_file($bin . '/git') ) { unlink($bin . '/git'); }
+	if ( is_file($git_log) ) { unlink($git_log); }
 	rmdir($bin);
 	rmdir($fixture . '/frontend');
 	rmdir($fixture . '/php');
