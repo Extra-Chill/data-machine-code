@@ -11,6 +11,9 @@ namespace DataMachineCode\Workspace {
 
 	final class FakeUntilEmptyCleanupRunService extends CleanupRunService {
 		/** @var array<int,array<string,mixed>> */
+		public array $plan_options = array();
+
+		/** @var array<int,array<string,mixed>> */
 		private array $plans;
 
 		/** @var array<int,array<string,mixed>> */
@@ -26,6 +29,7 @@ namespace DataMachineCode\Workspace {
 		}
 
 		public function plan( array $opts = array() ): array|\WP_Error {
+			$this->plan_options[] = $opts;
 			return array_shift($this->plans);
 		}
 
@@ -76,12 +80,13 @@ namespace DataMachineCode\Workspace {
 			),
 		)
 	);
-	$result          = $service->until_empty(array( 'mode' => 'artifacts' ));
+	$result          = $service->until_empty(array( 'mode' => 'artifacts', 'limit' => 7 ));
 
 	cleanup_until_empty_assert_same(true, $result['success'] ?? null, 'Blocked-only artifact cleanup should be a successful terminal result.');
 	cleanup_until_empty_assert_same('complete_with_blockers', $result['state'] ?? null, 'Blocked-only artifact cleanup should report a distinct terminal state.');
 	cleanup_until_empty_assert_same(2, $result['remaining_blocked_count'] ?? null, 'Blocked-only result should include the blocker count.');
 	cleanup_until_empty_assert_same($blocked_summary, $result['remaining_blocked_reasons'] ?? null, 'Blocked-only result should include blocker reasons.');
+	cleanup_until_empty_assert_same(7, $service->plan_options[0]['limit'] ?? null, 'Bounded cleanup must apply its requested limit while building the DB-backed plan.');
 
 	$service = new FakeUntilEmptyCleanupRunService(
 		array( cleanup_until_empty_plan() ),

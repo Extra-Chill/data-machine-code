@@ -419,6 +419,7 @@ class CleanupRunService {
 					'include_resolvers'             => false,
 					'force_artifact_cleanup'        => ! empty($opts['force']),
 					'allow_active_artifact_cleanup' => ! empty($opts['allow_active_artifact_cleanup']),
+					'limit'                         => $limit,
 					'worktree_older_than'           => isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '',
 				)
 			);

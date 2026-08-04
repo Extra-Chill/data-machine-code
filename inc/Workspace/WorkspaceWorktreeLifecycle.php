@@ -239,13 +239,9 @@ trait WorkspaceWorktreeLifecycle {
 		if ( $demand_plan instanceof \WP_Error ) {
 			return $demand_plan;
 		}
-		$disk_budget = WorktreeDiskBudget::inspect(
-			$this->workspace_path,
-			WorktreeDiskBudget::thresholds($repo, $branch),
-			$force,
-			array( 'include_workspace_usage' => true ),
-			$demand_plan
-		);
+		$disk_budget      = $this->inspect_worktree_capacity($repo, $branch, $force, $demand_plan);
+		$capacity_reclaim = $this->reclaim_capacity_eligible_artifacts($repo, $branch, $force, $demand_plan, $disk_budget);
+		$disk_budget      = $capacity_reclaim['after'];
 		if ( 'refused' === ( $disk_budget['status'] ?? '' ) ) {
 			$recommendations = array_map(
 				static function ( $row ): string {
@@ -289,8 +285,9 @@ trait WorkspaceWorktreeLifecycle {
 					implode("\n", array_filter($recommendations))
 				),
 				array(
-					'status'      => 507,
-					'disk_budget' => $disk_budget,
+					'status'           => 507,
+					'disk_budget'      => $disk_budget,
+					'capacity_reclaim' => $capacity_reclaim['evidence'],
 				)
 			);
 		}
@@ -337,7 +334,8 @@ trait WorkspaceWorktreeLifecycle {
 			);
 		}
 
-		$response['disk_budget'] = $disk_budget;
+		$response['disk_budget']      = $disk_budget;
+		$response['capacity_reclaim'] = $capacity_reclaim['evidence'];
 		if ( ! empty($response['rebase_succeeded']) ) {
 			$post_rebase_demand = WorktreeBootstrapper::demand_plan_for_target($wt_path, 'HEAD', $bootstrap);
 			if ( $post_rebase_demand instanceof \WP_Error ) {
@@ -345,14 +343,17 @@ trait WorkspaceWorktreeLifecycle {
 				return $post_rebase_demand;
 			}
 			$post_rebase_demand                  = WorktreeBootstrapper::remaining_demand_after_materialization($post_rebase_demand);
-			$post_rebase_budget                  = WorktreeDiskBudget::inspect(
-				$this->workspace_path,
-				WorktreeDiskBudget::thresholds($repo, $branch),
+			$post_rebase_budget           = $this->inspect_worktree_capacity($repo, $branch, $force, $post_rebase_demand);
+			$post_rebase_capacity_reclaim = $this->reclaim_capacity_eligible_artifacts(
+				$repo,
+				$branch,
 				$force,
-				array( 'include_workspace_usage' => true ),
-				$post_rebase_demand
+				$post_rebase_demand,
+				$post_rebase_budget
 			);
+			$post_rebase_budget                  = $post_rebase_capacity_reclaim['after'];
 			$response['post_rebase_disk_budget'] = $post_rebase_budget;
+			$response['post_rebase_capacity_reclaim'] = $post_rebase_capacity_reclaim['evidence'];
 			$response['disk_budget']             = $post_rebase_budget;
 			if ( 'refused' === ( $post_rebase_budget['status'] ?? '' ) ) {
 				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
@@ -361,9 +362,10 @@ trait WorkspaceWorktreeLifecycle {
 					'worktree_disk_budget_exceeded',
 					'Refusing dependency bootstrap because the effective post-rebase target exceeds the workspace capacity budget.',
 					array(
-						'status'      => 507,
-						'disk_budget' => $post_rebase_budget,
-						'phase'       => 'post_rebase_admission',
+						'status'           => 507,
+						'disk_budget'      => $post_rebase_budget,
+						'capacity_reclaim' => $post_rebase_capacity_reclaim['evidence'],
+						'phase'            => 'post_rebase_admission',
 					)
 				);
 			}
@@ -2110,6 +2112,89 @@ trait WorkspaceWorktreeLifecycle {
 			'reason_code'   => 'stale_worktree_marker_repaired',
 			'reason'        => 'cleanup-eligible worktree path exactly matched a stale .git marker row and was removed from DMC workspace state',
 			'removed_paths' => $removed_paths,
+		);
+	}
+
+	/**
+	 * Inspect capacity through a testable admission seam.
+	 *
+	 * @param array<string,mixed> $demand_plan
+	 * @return array<string,mixed>
+	 */
+	protected function inspect_worktree_capacity( string $repo, string $branch, bool $force, array $demand_plan ): array {
+		return WorktreeDiskBudget::inspect(
+			$this->workspace_path,
+			WorktreeDiskBudget::thresholds($repo, $branch),
+			$force,
+			array( 'include_workspace_usage' => true ),
+			$demand_plan
+		);
+	}
+
+	/**
+	 * Reclaim only already-eligible reconstructable artifacts before refusing
+	 * admission. The caller holds the global capacity lock, so the follow-up
+	 * measurement and admission decision cannot race another worktree creation.
+	 *
+	 * @param array<string,mixed> $demand_plan
+	 * @param array<string,mixed> $before
+	 * @return array{after:array<string,mixed>,evidence:array<string,mixed>}
+	 */
+	protected function reclaim_capacity_eligible_artifacts( string $repo, string $branch, bool $force, array $demand_plan, array $before ): array {
+		$evidence = array(
+			'attempted'       => false,
+			'reclaimed_bytes' => 0,
+			'skipped'         => array(),
+			'final_decision'  => 'admitted_without_reclaim',
+		);
+		if ( $force || 'refused' !== ( $before['status'] ?? '' ) ) {
+			$evidence['skip_reason'] = $force ? 'force_override' : 'capacity_not_refused';
+			return array( 'after' => $before, 'evidence' => $evidence );
+		}
+
+		$evidence['attempted'] = true;
+		if ( ! class_exists(CleanupRunService::class) ) {
+			require_once __DIR__ . '/CleanupRunService.php';
+		}
+		$reclaim = $this->run_capacity_artifact_reclaim();
+		$after   = $this->inspect_worktree_capacity($repo, $branch, false, $demand_plan);
+		if ( $reclaim instanceof \WP_Error ) {
+			$evidence['error_code']     = $reclaim->get_error_code();
+			$evidence['final_decision'] = 'refused_after_reclaim_error';
+			return array( 'after' => $after, 'evidence' => $evidence );
+		}
+
+		$evidence['state']           = (string) ( $reclaim['state'] ?? 'unknown' );
+		$evidence['applied']         = (int) ( $reclaim['applied'] ?? 0 );
+		$evidence['reclaimed_bytes'] = (int) ( $reclaim['bytes_reclaimed'] ?? 0 );
+		$evidence['skipped']         = $this->capacity_reclaim_skipped_categories($reclaim);
+		$evidence['final_decision']  = 'refused' === ( $after['status'] ?? '' ) ? 'refused_after_reclaim' : 'admitted_after_reclaim';
+
+		return array( 'after' => $after, 'evidence' => $evidence );
+	}
+
+	/** @return array<string,int> */
+	protected function capacity_reclaim_skipped_categories( array $reclaim ): array {
+		$categories = array();
+		foreach ( (array) ( $reclaim['remaining_blocked_reasons'] ?? array() ) as $reason => $bucket ) {
+			$count = is_array($bucket) ? (int) ( $bucket['count'] ?? 0 ) : (int) $bucket;
+			if ( $count > 0 ) {
+				$categories[ (string) $reason ] = $count;
+			}
+		}
+		return $categories;
+	}
+
+	/** @return array<string,mixed>|\WP_Error */
+	protected function run_capacity_artifact_reclaim(): array|\WP_Error {
+		return ( new CleanupRunService() )->until_empty(
+			array(
+				'mode'           => 'artifacts',
+				'force'          => false,
+				'limit'          => 25,
+				'max_passes'     => 3,
+				'budget_seconds' => 30,
+			)
 		);
 	}
 

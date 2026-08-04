@@ -60,6 +60,10 @@ function wp_json_encode( mixed $value, int $flags = 0, int $depth = 512 ): strin
 	return json_encode($value, $flags, $depth);
 }
 
+function wp_generate_password( int $length = 12, bool $special_chars = true, bool $extra_special_chars = false ): string {
+	return str_repeat('a', $length);
+}
+
 $GLOBALS['datamachine_code_test_options'] = array();
 function get_option( string $name, mixed $default = false ): mixed {
 	return $GLOBALS['datamachine_code_test_options'][ $name ] ?? $default;
@@ -325,8 +329,11 @@ try {
 	assert_true('worktree_disk_budget_exceeded' === $refused->get_error_code(), 'unexpected disk pressure refusal error code');
 	$refusal_data = (array) $refused->get_error_data();
 	$disk_budget  = (array) ( $refusal_data['disk_budget'] ?? array() );
+	$reclaim      = (array) ( $refusal_data['capacity_reclaim'] ?? array() );
 	assert_true('refused' === ( $disk_budget['status'] ?? '' ), 'disk pressure refusal did not include refused budget status');
 	assert_true(isset($disk_budget['free_bytes'], $disk_budget['effective_refuse_bytes']), 'disk pressure refusal must include exact free and required bytes');
+	assert_true(true === ( $reclaim['attempted'] ?? false ), 'capacity refusal did not attempt bounded safe artifact reclaim');
+	assert_true('refused_after_reclaim' === ( $reclaim['final_decision'] ?? '' ), 'capacity refusal did not report the final reclaim decision');
 	assert_true(str_contains($refused->get_error_message(), 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25'), 'disk pressure refusal must include the next cleanup command');
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-disk-refused'), 'disk pressure refusal left a worktree directory behind');
 
