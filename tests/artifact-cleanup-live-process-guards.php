@@ -194,14 +194,26 @@ namespace {
 			);
 		}
 	}
+
+	final class ScopedArtifactCleanupGuardHarness extends ArtifactCleanupGuardHarness {
+		public function __construct( string $workspace_path, private \DataMachineCode\Support\ProcessPathProbeInterface $probe ) {
+			parent::__construct($workspace_path);
+		}
+
+		protected function artifact_process_path_probe(): \DataMachineCode\Support\ProcessPathProbeInterface {
+			return $this->probe;
+		}
+	}
 }
 
 namespace {
 	use DataMachineCode\Workspace\ArtifactCleanupGuardHarness;
 	use DataMachineCode\Workspace\ControlledArtifactCleanupGuardHarness;
 	use DataMachineCode\Workspace\MacOSArtifactCleanupGuardHarness;
+	use DataMachineCode\Workspace\ScopedArtifactCleanupGuardHarness;
 	use DataMachineCode\Workspace\WorktreeContextInjector;
 	use DataMachineCode\Support\MacOSLsofProcessPathProbe;
+	use DataMachineCode\Support\ProcessPathProbeInterface;
 	use DataMachineCode\Cli\WorkspaceCompactOutput;
 	use DataMachineCode\Abilities\WorkspaceAbilities;
 
@@ -239,6 +251,66 @@ namespace {
 			file_put_contents($path . '/node_modules/generated.js', 'x');
 		}
 	}
+
+	final class ScopedProcessProbe implements ProcessPathProbeInterface {
+		public function __construct(private array $global, private array $scoped) {}
+		public function snapshot(): array { return $this->global; }
+		public function snapshot_for_paths(array $paths): array {
+			foreach ($paths as $path) {
+				if (str_contains($path, '/repo@active')) {
+					return $this->scoped['active'];
+				}
+				if (str_contains($path, '/repo@inactive')) {
+					return $this->scoped['inactive'];
+				}
+			}
+			return array('status' => 'uncertain', 'records' => array(), 'diagnostics' => array('reason' => 'process_path_probe_incomplete'));
+		}
+	}
+
+	$scoped_root     = sys_get_temp_dir() . '/dmc-artifact-scoped-' . getmypid();
+	$active_target   = $scoped_root . '/repo@active/target';
+	$inactive_target = $scoped_root . '/repo@inactive/target';
+	foreach (array($active_target, $inactive_target) as $target) {
+		mkdir($target, 0777, true);
+		file_put_contents(dirname($target) . '/Cargo.toml', '[package]');
+		file_put_contents($target . '/generated.bin', str_repeat('x', 1024));
+	}
+	$scoped_probe = new ScopedProcessProbe(
+		array(
+			'status' => 'uncertain',
+			'records' => array(array('pid' => 4242, 'command' => 'cargo', 'match_type' => 'open_file', 'path' => $active_target)),
+			'diagnostics' => array('provider' => 'lsof', 'reason' => 'process_path_probe_incomplete'),
+		),
+		array(
+			'active' => array('status' => 'available', 'records' => array(array('pid' => 4242, 'command' => 'cargo', 'match_type' => 'open_file', 'path' => $active_target)), 'diagnostics' => array('provider' => 'lsof', 'path_records' => 1)),
+			'inactive' => array('status' => 'available', 'records' => array(), 'diagnostics' => array('provider' => 'lsof', 'path_records' => 0)),
+		)
+	);
+	$scoped_harness = new ScopedArtifactCleanupGuardHarness($scoped_root, $scoped_probe);
+	$scoped_harness->rows = array(
+		array('handle' => 'repo@active', 'repo' => 'repo', 'branch' => 'test/active', 'path' => dirname($active_target), 'is_worktree' => true, 'is_primary' => false, 'liveness' => WorktreeContextInjector::LIVENESS_STALE),
+		array('handle' => 'repo@inactive', 'repo' => 'repo', 'branch' => 'test/inactive', 'path' => dirname($inactive_target), 'is_worktree' => true, 'is_primary' => false, 'liveness' => WorktreeContextInjector::LIVENESS_STALE),
+	);
+	$scoped_active_probe = $scoped_harness->probe_processes(dirname($active_target), array(array('path' => 'target')));
+	artifact_guard_assert_same(4242, $scoped_active_probe['evidence'][0]['pid'] ?? null, 'candidate-scoped probe must retain active target evidence');
+	$scoped_preview = $scoped_harness->worktree_cleanup_artifacts(array('dry_run' => true, 'safety_probes' => true));
+	artifact_guard_assert_same(array('repo@inactive'), array_column($scoped_preview['candidates'], 'handle'), 'a sibling Cargo process must not make an inactive target probe uncertain');
+	artifact_guard_assert_same('active_build', $scoped_preview['skipped'][0]['reason_code'] ?? null, 'the active Cargo target must remain protected');
+	artifact_guard_assert_same(4242, $scoped_preview['skipped'][0]['process_evidence'][0]['pid'] ?? null, 'active-process skips must report the PID');
+	artifact_guard_assert_same(dirname($active_target), $scoped_preview['skipped'][0]['process_evidence'][0]['candidate_path'] ?? null, 'active-process skips must report the candidate path');
+	artifact_guard_assert_same('open_file', $scoped_preview['skipped'][0]['process_evidence'][0]['match_method'] ?? null, 'active-process skips must report the match method');
+	artifact_guard_assert_same('high', $scoped_preview['skipped'][0]['process_evidence'][0]['confidence'] ?? null, 'active-process skips must report match confidence');
+	$mixed_apply = $scoped_harness->worktree_cleanup_artifacts(array('apply_plan' => array('candidates' => array(
+		array('handle' => 'repo@active', 'repo' => 'repo', 'branch' => 'test/guard', 'path' => dirname($active_target), 'artifacts' => array(array('path' => 'target'))),
+		array('handle' => 'repo@inactive', 'repo' => 'repo', 'branch' => 'test/guard', 'path' => dirname($inactive_target), 'artifacts' => array(array('path' => 'target'))),
+	))));
+	artifact_guard_assert_same(1, count($mixed_apply['removed']), 'mixed apply must reclaim the independent inactive target');
+	artifact_guard_assert_same(1, count($mixed_apply['skipped']), 'mixed apply must retain the active target');
+	artifact_guard_assert_same(true, (int) ($mixed_apply['summary']['removed_size_bytes'] ?? 0) > 0, 'mixed apply must report nonzero reclaimed bytes');
+	artifact_guard_assert_same(true, is_dir($active_target), 'mixed apply must retain the active Cargo target');
+	artifact_guard_assert_same(false, is_dir($inactive_target), 'mixed apply must remove the inactive Cargo target');
+	artifact_guard_remove_tree($scoped_root);
 
 	$root = sys_get_temp_dir() . '/dmc-artifact-guards-' . getmypid();
 	$path = $root . '/repo@guard';
@@ -303,6 +375,8 @@ namespace {
 
 	$mac_no_match = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => "p42\0cnode\0f3\0n/tmp/unrelated\0" ));
 	artifact_guard_assert_same('available', $mac_no_match->snapshot()['status'], 'macOS lsof no-match snapshot must be available');
+	$mac_scoped_no_match = new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => false, 'exit_code' => 1, 'output' => '' ));
+	artifact_guard_assert_same('available', $mac_scoped_no_match->snapshot_for_paths(array($path))['status'], 'macOS scoped lsof exit 1 without output must be available no-match evidence');
 	$mac_no_process_harness = new MacOSArtifactCleanupGuardHarness($root, new MacOSLsofProcessPathProbe(fn( array $argv ) => array( 'success' => true, 'output' => '' )));
 	$mac_no_process_harness->rows = array($base);
 	$mac_no_process = $mac_no_process_harness->worktree_cleanup_artifacts(array( 'dry_run' => true, 'safety_probes' => true ));

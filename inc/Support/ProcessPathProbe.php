@@ -21,6 +21,9 @@ interface ProcessPathProbeInterface {
 
 	/** @return array{status:string,records:array<int,array<string,mixed>>,diagnostics:array<string,mixed>} */
 	public function snapshot(): array;
+
+	/** @param array<int,string> $paths Absolute candidate roots to scope the inspection to. */
+	public function snapshot_for_paths( array $paths ): array;
 }
 
 final class ProcfsProcessPathProbe implements ProcessPathProbeInterface {
@@ -30,6 +33,12 @@ final class ProcfsProcessPathProbe implements ProcessPathProbeInterface {
 
 	public function snapshot(): array {
 		return ( $this->scanner )();
+	}
+
+	public function snapshot_for_paths( array $paths ): array {
+		$result = $this->snapshot();
+		$result['diagnostics']['scoped_paths'] = array_values(array_filter($paths, fn( $path ) => is_string($path) && str_starts_with($path, '/')));
+		return $result;
 	}
 }
 
@@ -48,6 +57,12 @@ final class UnsupportedProcessPathProbe implements ProcessPathProbeInterface {
 			),
 		);
 	}
+
+	public function snapshot_for_paths( array $paths ): array {
+		$result = $this->snapshot();
+		$result['diagnostics']['scoped_paths'] = array_values(array_filter($paths, fn( $path ) => is_string($path) && str_starts_with($path, '/')));
+		return $result;
+	}
 }
 
 final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
@@ -56,7 +71,21 @@ final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
 	public function __construct(private $runner = null) {}
 
 	public function snapshot(): array {
+		return $this->run_snapshot(array());
+	}
+
+	public function snapshot_for_paths( array $paths ): array {
+		$paths = array_values(array_unique(array_filter($paths, fn( $path ) => is_string($path) && str_starts_with($path, '/'))));
+		return $this->run_snapshot($paths);
+	}
+
+	/** @param array<int,string> $paths */
+	private function run_snapshot( array $paths ): array {
 		$argv = array( 'lsof', '-n', '-P', '-Fpcfn0' );
+		if ( array() !== $paths ) {
+			$argv[] = '--';
+			$argv   = array_merge($argv, $paths);
+		}
 		if ( is_callable($this->runner) ) {
 			$result = ( $this->runner )($argv);
 		} else {
@@ -66,6 +95,17 @@ final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
 				'output_cap_bytes' => 1048576,
 				'error_as_result'  => true,
 			));
+		}
+		if ( is_array($result) && empty($result['success']) && 1 === (int) ( $result['exit_code'] ?? 0 ) && '' === trim( (string) ( $result['output'] ?? '' ) ) ) {
+			return array(
+				'status'      => 'available',
+				'records'     => array(),
+				'diagnostics' => array(
+					'provider'     => 'lsof',
+					'path_records' => 0,
+					'scoped_paths' => $paths,
+				),
+			);
 		}
 		if ( $result instanceof \WP_Error || ! is_array($result) || empty($result['success']) ) {
 			$data = $result instanceof \WP_Error ? (array) $result->get_error_data() : (array) $result;
@@ -147,6 +187,7 @@ final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
 			'diagnostics' => array(
 				'provider'     => 'lsof',
 				'path_records' => count($records),
+				'scoped_paths' => $paths,
 			),
 		);
 	}
