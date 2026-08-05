@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.56.4] - 2026-08-05
+
+### Fixed
+- avoid partial-clone hydration during worktree admission
+
 ## [0.56.3] - 2026-08-04
 
 ### Fixed
