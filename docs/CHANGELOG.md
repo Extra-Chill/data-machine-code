@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.56.5] - 2026-08-05
+
+### Fixed
+- scope active artifact process probes
+
 ## [0.56.4] - 2026-08-05
 
 ### Fixed
