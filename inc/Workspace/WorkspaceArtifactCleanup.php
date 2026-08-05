@@ -725,7 +725,7 @@ trait WorkspaceArtifactCleanup {
 				'protecting_reason' => 'active_build',
 				'reason'            => 'active process cwd or open file intersects the worktree artifacts; leaving reconstructable artifacts in place',
 				'process_probe'     => $probe,
-				'process_evidence'  => $evidence,
+				'process_evidence'  => $this->process_evidence_for_candidate($evidence, $worktree_path),
 			);
 		}
 
@@ -829,18 +829,16 @@ trait WorkspaceArtifactCleanup {
 		}
 
 		$snapshot = $this->artifact_process_path_records($fresh);
-		$records  = (array) ( $snapshot['records'] ?? array() );
-		$matches  = array();
-		foreach ( $records as $record ) {
-			$path = rtrim( (string) ( $record['path'] ?? '' ), '/');
-			foreach ( $roots as $root ) {
-				if ( $path === $root || str_starts_with($path, $root . '/') ) {
-					$matches[] = $record;
-					break;
-				}
-			}
-			if ( count($matches) >= 10 ) {
-				break;
+		$matches  = $this->match_artifact_process_records((array) ( $snapshot['records'] ?? array() ), $roots);
+
+		// A truncated host-wide lsof result cannot clear a candidate. On providers
+		// that support path-scoped inspection, retry only this candidate so unrelated
+		// sibling builds cannot poison its evidence.
+		if ( array() === $matches && 'uncertain' === (string) ( $snapshot['status'] ?? '' ) ) {
+			$scoped = $this->artifact_process_path_probe()->snapshot_for_paths($roots);
+			$matches = $this->match_artifact_process_records((array) ( $scoped['records'] ?? array() ), $roots);
+			if ( 'available' === (string) ( $scoped['status'] ?? '' ) || array() !== $matches ) {
+				$snapshot = $scoped;
 			}
 		}
 
@@ -848,6 +846,41 @@ trait WorkspaceArtifactCleanup {
 			'status'      => (string) ( $snapshot['status'] ?? 'unavailable' ),
 			'evidence'    => $matches,
 			'diagnostics' => (array) ( $snapshot['diagnostics'] ?? array() ),
+		);
+	}
+
+	/** @param array<int,array<string,mixed>> $records @param array<int,string> $roots @return array<int,array<string,mixed>> */
+	private function match_artifact_process_records( array $records, array $roots ): array {
+		$matches = array();
+		foreach ( $records as $record ) {
+			$path = rtrim( (string) ( $record['path'] ?? '' ), '/');
+			$real = realpath($path);
+			$path = false !== $real ? rtrim($real, '/') : $path;
+			foreach ( $roots as $root ) {
+				if ( $path === $root || str_starts_with($path, $root . '/') ) {
+					$record['matched_root'] = $root;
+					$matches[]              = $record;
+					break;
+				}
+			}
+			if ( count($matches) >= 10 ) {
+				break;
+			}
+		}
+		return $matches;
+	}
+
+	/** @param array<int,array<string,mixed>> $evidence @return array<int,array<string,mixed>> */
+	private function process_evidence_for_candidate( array $evidence, string $worktree_path ): array {
+		return array_map(
+			function ( array $record ) use ( $worktree_path ): array {
+				return array_merge($record, array(
+					'candidate_path' => $worktree_path,
+					'match_method'   => (string) ( $record['match_type'] ?? 'path_ancestry' ),
+					'confidence'     => 'high',
+				));
+			},
+			$evidence
 		);
 	}
 
