@@ -41,31 +41,30 @@ namespace {
 	use DataMachineCode\RunArtifacts\RunArtifactRepositoryInterface;
 
 	final class FakeRunArtifactRepository implements RunArtifactRepositoryInterface {
-		public int $artifact_job_id = 0;
-		public int $policy_job_id   = 0;
+		public int $job_id = 0;
 
-		public function artifacts_for_job( int $job_id ): array {
-			$this->artifact_job_id = $job_id;
+		public function result_for_job( int $job_id ): array {
+			$this->job_id = $job_id;
 
 			return array(
-				'daily_memory_artifacts' => array(
-					array(
-						'type'                 => 'daily_memory',
-						'agent_slug'           => 'boundary agent',
-						'bundle_relative_path' => 'memory.md',
-						'content'              => '# Boundary evidence',
+				'status'                     => 'populated',
+				'job_id'                     => $job_id,
+				'artifacts'                  => array(
+					'daily_memory_artifacts' => array(
+						array(
+							'type'                 => 'daily_memory',
+							'agent_slug'           => 'boundary agent',
+							'bundle_relative_path' => 'memory.md',
+							'content'              => '# Boundary evidence',
+						),
 					),
 				),
-			);
-		}
-
-		public function egress_policy_for_job( int $job_id ): array {
-			$this->policy_job_id = $job_id;
-
-			return array(
-				'daily_memory' => array(
-					'egress' => array( 'bundle-file' ),
+				'run_artifact_egress_policy' => array(
+					'daily_memory' => array(
+						'egress' => array( 'bundle-file' ),
+					),
 				),
+				'policy_provenance'          => array(),
 			);
 		}
 	}
@@ -82,8 +81,7 @@ namespace {
 
 	$files = $method->invoke($handler, array( 'job_id' => 42 ), array( 'bundle_root' => 'bundles/{agent_slug}' ));
 
-	boundary_assert_same(42, $repository->artifact_job_id, 'Handler should read artifacts through the injected repository.');
-	boundary_assert_same(42, $repository->policy_job_id, 'Handler should read egress policy through the injected repository.');
+	boundary_assert_same(42, $repository->job_id, 'Handler should read artifacts and policy through the injected repository.');
 	boundary_assert_same('bundles/boundary-agent/memory.md', $files[0]['file_path'] ?? null, 'Injected repository artifacts should still become bundle-file writes.');
 	boundary_assert_same('# Boundary evidence', $files[0]['content'] ?? null, 'Artifact content should be preserved.');
 

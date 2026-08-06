@@ -305,12 +305,13 @@ class GitHubPullRequestPublish extends PublishHandler {
 			return array();
 		}
 
-		$policy = $this->resolveRunArtifactPolicy($parameters);
+		$result = $this->run_artifact_repository->result_for_job($job_id);
+		$policy = $this->resolveRunArtifactPolicy($parameters, $result['run_artifact_egress_policy']);
 		if ( empty($policy) ) {
 			return array();
 		}
 
-		$artifacts = $this->run_artifact_repository->artifacts_for_job($job_id);
+		$artifacts = $result['artifacts'];
 		if ( empty($artifacts) ) {
 			return array();
 		}
@@ -336,12 +337,13 @@ class GitHubPullRequestPublish extends PublishHandler {
 	 * @return array<int,array<string,mixed>> File records accepted by the normal files loop.
 	 */
 	private function bundleFileArtifactsForPublish( array $parameters, array $handler_config ): array {
-		$artifacts = is_array($parameters['run_artifacts'] ?? null) ? $parameters['run_artifacts'] : $this->run_artifact_repository->artifacts_for_job( (int) ( $parameters['job_id'] ?? 0 ));
+		$result    = $this->run_artifact_repository->result_for_job( (int) ( $parameters['job_id'] ?? 0 ) );
+		$artifacts = is_array($parameters['run_artifacts'] ?? null) ? $parameters['run_artifacts'] : $result['artifacts'];
 		if ( empty($artifacts) ) {
 			return array();
 		}
 
-		$policy = is_array($parameters['run_artifact_egress_policy'] ?? null) ? $parameters['run_artifact_egress_policy'] : $this->resolveRunArtifactPolicy($parameters);
+		$policy = is_array($parameters['run_artifact_egress_policy'] ?? null) ? $parameters['run_artifact_egress_policy'] : $this->resolveRunArtifactPolicy($parameters, $result['run_artifact_egress_policy']);
 		if ( empty($policy) && is_array($artifacts['run_artifact_egress_policy'] ?? null) ) {
 			$policy = $artifacts['run_artifact_egress_policy'];
 		}
@@ -355,7 +357,7 @@ class GitHubPullRequestPublish extends PublishHandler {
 	 * @param  array $parameters Tool parameters.
 	 * @return array<string, array<string, mixed>>
 	 */
-	private function resolveRunArtifactPolicy( array $parameters ): array {
+	private function resolveRunArtifactPolicy( array $parameters, array $ability_policy = array() ): array {
 		$engine = $parameters['engine'] ?? null;
 		if ( is_object($engine) && method_exists($engine, 'get') ) {
 			$policy = $engine->get('run_artifact_egress_policy', array());
@@ -364,7 +366,7 @@ class GitHubPullRequestPublish extends PublishHandler {
 			}
 		}
 
-		return $this->run_artifact_repository->egress_policy_for_job( (int) ( $parameters['job_id'] ?? 0 ));
+		return $ability_policy;
 	}
 
 	/**
