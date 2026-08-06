@@ -15,6 +15,7 @@
 
 namespace DataMachineCode\Abilities;
 
+use DataMachineCode\RunArtifacts\DataMachineRunArtifactRepository;
 use DataMachineCode\Support\PermissionHelper;
 use DataMachineCode\Support\PluginSettings;
 use DataMachineCode\GitHub\PrReviewEscalationPolicy;
@@ -48,6 +49,11 @@ if ( ! class_exists(RunArtifactBundleFileWriter::class) ) {
 
 if ( ! class_exists(RunArtifactPrSectionRenderer::class) ) {
 	include_once dirname(__DIR__) . '/Support/RunArtifactPrSectionRenderer.php';
+}
+
+if ( ! class_exists(DataMachineRunArtifactRepository::class) ) {
+	include_once dirname(__DIR__) . '/RunArtifacts/RunArtifactRepositoryInterface.php';
+	include_once dirname(__DIR__) . '/RunArtifacts/DataMachineRunArtifactRepository.php';
 }
 
 if ( ! class_exists(Workspace::class) ) {
@@ -1736,12 +1742,13 @@ class GitHubAbilities {
 	 * @return array{files: array<int,array<string,string>>}|\WP_Error
 	 */
 	private static function preparePullRequestRunArtifacts( array $input, string $repo, string $head, string &$body_text ): array|\WP_Error {
-		$artifacts = self::runArtifactsFromInput($input);
+		$result    = self::runArtifactResultFromInput($input);
+		$artifacts = $result['artifacts'];
 		if ( empty($artifacts) ) {
 			return array( 'files' => array() );
 		}
 
-		$policy = self::runArtifactEgressPolicyFromInput($input, $artifacts);
+		$policy = self::runArtifactEgressPolicyFromInput($input, $artifacts, $result['run_artifact_egress_policy']);
 		if ( empty($policy) ) {
 			return array( 'files' => array() );
 		}
@@ -1781,29 +1788,22 @@ class GitHubAbilities {
 	/**
 	 * @return array<string,mixed>
 	 */
-	private static function runArtifactsFromInput( array $input ): array {
+	private static function runArtifactResultFromInput( array $input ): array {
 		if ( is_array($input['run_artifacts'] ?? null) ) {
-			return $input['run_artifacts'];
+			return array(
+				'artifacts'                  => $input['run_artifacts'],
+				'run_artifact_egress_policy' => array(),
+			);
 		}
 
-		$job_id = (int) ( $input['job_id'] ?? 0 );
-		if ( $job_id <= 0 || ! class_exists('\\DataMachine\\Core\\JobArtifacts') ) {
-			return array();
-		}
-
-		$result = ( new \DataMachine\Core\JobArtifacts() )->get($job_id);
-		if ( empty($result['success']) || ! is_array($result['artifacts'] ?? null) ) {
-			return array();
-		}
-
-		return $result['artifacts'];
+		return ( new DataMachineRunArtifactRepository() )->result_for_job( (int) ( $input['job_id'] ?? 0 ) );
 	}
 
 	/**
 	 * @param  array<string,mixed> $artifacts Run artifact payload.
 	 * @return array<string,mixed>
 	 */
-	private static function runArtifactEgressPolicyFromInput( array $input, array $artifacts ): array {
+	private static function runArtifactEgressPolicyFromInput( array $input, array $artifacts, array $ability_policy = array() ): array {
 		if ( is_array($input['run_artifact_egress_policy'] ?? null) ) {
 			return $input['run_artifact_egress_policy'];
 		}
@@ -1814,6 +1814,10 @@ class GitHubAbilities {
 			if ( is_array($policy) && ! empty($policy) ) {
 				return $policy;
 			}
+		}
+
+		if ( ! empty($ability_policy) ) {
+			return $ability_policy;
 		}
 
 		return is_array($artifacts['run_artifact_egress_policy'] ?? null) ? $artifacts['run_artifact_egress_policy'] : array();
