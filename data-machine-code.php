@@ -102,8 +102,9 @@ function datamachine_code_maybe_upgrade_schema(): void {
 	$worktrees_installed = function_exists('get_option') ? (string) get_option('datamachine_code_worktrees_schema_version', '') : '';
 	$cleanup_installed   = function_exists('get_option') ? (string) get_option('datamachine_code_cleanup_schema_version', '') : '';
 	$cleanup_version     = '20260504-cleanup-runs';
+	$worktree_version    = \DataMachineCode\Storage\WorktreeInventoryRepository::SCHEMA_VERSION;
 
-	if ( '1' !== $worktrees_installed || $cleanup_version !== $cleanup_installed ) {
+	if ( $worktree_version !== $worktrees_installed || $cleanup_version !== $cleanup_installed ) {
 		datamachine_code_install_schema();
 		if ( function_exists('update_option') ) {
 			update_option('datamachine_code_cleanup_schema_version', $cleanup_version, false);
