@@ -28,7 +28,7 @@ class WorktreeInventoryRepository {
 
 
 
-	public const TABLE = 'datamachine_code_worktrees';
+	public const TABLE          = 'datamachine_code_worktrees';
 	public const SCHEMA_VERSION = '2';
 
 	private ?\WP_Error $last_error = null;
@@ -270,17 +270,17 @@ class WorktreeInventoryRepository {
 	 * @return array<string,mixed> Result with deleted/skipped lists and summary.
 	 */
 	public function pruneMissing( array $opts = array() ): array {
-		$dry_run  = ! empty($opts['dry_run']);
-		$force    = ! empty($opts['force']);
-		$limit    = isset($opts['limit']) ? max(1, min(200, (int) $opts['limit'])) : 25;
+		$dry_run      = ! empty($opts['dry_run']);
+		$force        = ! empty($opts['force']);
+		$limit        = isset($opts['limit']) ? max(1, min(200, (int) $opts['limit'])) : 25;
 		$after_handle = isset($opts['after_handle']) ? trim( (string) $opts['after_handle'] ) : '';
-		$deadline = $this->prune_deadline($opts['until_budget'] ?? null);
+		$deadline     = $this->prune_deadline($opts['until_budget'] ?? null);
 
-		$rows    = $this->missing_path_rows($limit + 1, $after_handle);
-		$has_more = count($rows) > $limit;
-		$rows     = array_slice($rows, 0, $limit);
-		$deleted = array();
-		$skipped = array();
+		$rows        = $this->missing_path_rows($limit + 1, $after_handle);
+		$has_more    = count($rows) > $limit;
+		$rows        = array_slice($rows, 0, $limit);
+		$deleted     = array();
+		$skipped     = array();
 		$last_handle = $after_handle;
 
 		foreach ( $rows as $row ) {
@@ -288,9 +288,9 @@ class WorktreeInventoryRepository {
 				$has_more = true;
 				break;
 			}
-			$handle = (string) ( $row['handle'] ?? '' );
+			$handle      = (string) ( $row['handle'] ?? '' );
 			$last_handle = $handle;
-			$path   = trim( (string) ( $row['path'] ?? '' ) );
+			$path        = trim( (string) ( $row['path'] ?? '' ) );
 
 			if ( ! $this->is_prunable_path($path, $opts['workspace_root'] ?? null) ) {
 				$skipped[] = array(
@@ -355,28 +355,46 @@ class WorktreeInventoryRepository {
 				continue;
 			}
 
-			$mutation = function () use ( $handle, $path, $opts, $force ): array {
+			$mutation        = function () use ( $handle, $path, $opts, $force ): array {
 				$current = $this->get($handle);
 				if ( ! is_array($current) || ! $this->is_prunable_path($path, $opts['workspace_root'] ?? null) ) {
-					return array( 'deleted' => false, 'reason' => 'conditional_delete_mismatch' );
+					return array(
+						'deleted' => false,
+						'reason'  => 'conditional_delete_mismatch',
+					);
 				}
 				if ( $this->has_owner_managed_provenance($current) ) {
-					return array( 'deleted' => false, 'reason' => 'owner_managed' );
+					return array(
+						'deleted' => false,
+						'reason'  => 'owner_managed',
+					);
 				}
 				if ( ! $force && (int) ( $current['unpushed_count'] ?? 0 ) > 0 ) {
-					return array( 'deleted' => false, 'reason' => 'unpushed_count' );
+					return array(
+						'deleted' => false,
+						'reason'  => 'unpushed_count',
+					);
 				}
 				if ( ! $force && '' !== trim( (string) ( $current['pr_url'] ?? '' ) ) ) {
-					return array( 'deleted' => false, 'reason' => 'pr_url' );
+					return array(
+						'deleted' => false,
+						'reason'  => 'pr_url',
+					);
 				}
 				// Recheck while holding the lifecycle mutation lock before conditional deletion.
 				if ( is_dir($path) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_dir
-					return array( 'deleted' => false, 'reason' => 'path_present_on_disk' );
+					return array(
+						'deleted' => false,
+						'reason'  => 'path_present_on_disk',
+					);
 				}
 
 				return $this->delete_missing_if_current($handle, $path, $force)
 					? array( 'deleted' => true )
-					: array( 'deleted' => false, 'reason' => 'conditional_delete_mismatch' );
+					: array(
+						'deleted' => false,
+						'reason'  => 'conditional_delete_mismatch',
+					);
 			};
 			$mutation_result = isset($opts['lock_callback'])
 				? $opts['lock_callback']($row, $mutation)
@@ -405,24 +423,24 @@ class WorktreeInventoryRepository {
 			}
 		}
 
-		$processed   = count($deleted) + count($skipped);
-		$result     = array(
+		$processed = count($deleted) + count($skipped);
+		$result    = array(
 			'success'   => true,
 			'pruned_at' => gmdate('c'),
 			'dry_run'   => $dry_run,
 			'deleted'   => $deleted,
 			'skipped'   => $skipped,
 			'summary'   => array(
-				'deleted' => count($deleted),
-				'skipped' => count($skipped),
-				'total'   => $processed,
-				'limit'   => $limit,
+				'deleted'      => count($deleted),
+				'skipped'      => count($skipped),
+				'total'        => $processed,
+				'limit'        => $limit,
 				'after_handle' => $after_handle,
 			),
 		);
 		if ( $has_more ) {
 			$result['continuation'] = array(
-				'reason'      => null !== $deadline && microtime(true) >= $deadline ? 'budget_exhausted' : 'limit_reached',
+				'reason'            => null !== $deadline && microtime(true) >= $deadline ? 'budget_exhausted' : 'limit_reached',
 				'next_after_handle' => $last_handle,
 			);
 		}
@@ -458,7 +476,7 @@ class WorktreeInventoryRepository {
 		if ( '' === $path || ! str_starts_with($path, '/') || str_contains($path, "\0") || ! is_string($workspace_root) || '' === trim($workspace_root) ) {
 			return false;
 		}
-		$root = realpath($workspace_root);
+		$root   = realpath($workspace_root);
 		$parent = realpath(dirname($path));
 		return false !== $root && false !== $parent && str_starts_with($parent . '/', rtrim($root, '/') . '/');
 	}
@@ -495,7 +513,9 @@ class WorktreeInventoryRepository {
 		if ( ! $force ) {
 			$sql .= " AND COALESCE(unpushed_count, 0) <= 0 AND TRIM(COALESCE(pr_url, '')) = ''";
 		}
-		$sql    = $wpdb->prepare($sql, $handle, $path, 'missing_path');
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- The dynamic template contains only the prefixed table name and static predicates.
+		$sql = $wpdb->prepare($sql, $handle, $path, 'missing_path');
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Values were prepared immediately above.
 		$result = SqliteBusyRetry::run('worktree_inventory_delete_missing_if_current', fn() => $wpdb->query($sql));
 		if ( $result instanceof \WP_Error ) {
 			$this->last_error = $result;
