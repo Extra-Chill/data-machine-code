@@ -510,9 +510,19 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Require task metadata from the registered remote worktree. Default true.',
 							),
-							'purpose'                    => array( 'type' => 'string', 'description' => 'Optional creator-owned purpose for a disposable worktree.' ),
-							'owner_run_ref'              => array( 'type' => 'string', 'description' => 'Optional opaque creator run reference required for disposable terminal cleanup.' ),
-							'cleanup_policy'             => array( 'type' => 'string', 'enum' => WorktreeContextInjector::VALID_CLEANUP_POLICIES, 'description' => 'Optional cleanup policy: manual, remove_on_success, or preserve_on_failure.' ),
+							'purpose'                    => array(
+								'type'        => 'string',
+								'description' => 'Optional creator-owned purpose for a disposable worktree.',
+							),
+							'owner_run_ref'              => array(
+								'type'        => 'string',
+								'description' => 'Optional opaque creator run reference required for disposable terminal cleanup.',
+							),
+							'cleanup_policy'             => array(
+								'type'        => 'string',
+								'enum'        => WorktreeContextInjector::VALID_CLEANUP_POLICIES,
+								'description' => 'Optional cleanup policy: manual, remove_on_success, or preserve_on_failure.',
+							),
 						),
 						'required'   => array( 'handle' ),
 					),
@@ -1297,11 +1307,11 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'name'   => array(
+							'name'                   => array(
 								'type'        => 'string',
 								'description' => 'Workspace handle.',
 							),
-							'pr'     => array(
+							'pr'                     => array(
 								'type'        => array( 'string', 'integer' ),
 								'description' => 'PR number or URL. Defaults to the current branch PR.',
 							),
@@ -1309,7 +1319,7 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Creator-owned terminal outcome. Use success only after a remove_on_success disposable worktree has completed.',
 							),
-							'branch' => array(
+							'branch'                 => array(
 								'type'        => 'string',
 								'description' => 'Branch to resolve when pr is omitted.',
 							),
@@ -1709,28 +1719,37 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'dry_run' => array(
+							'dry_run'      => array(
 								'type'        => 'boolean',
 								'description' => 'Preview candidates and skips without deleting any rows. Default false.',
 							),
-							'force'   => array(
+							'force'        => array(
 								'type'        => 'boolean',
 								'description' => 'Allow pruning rows with unpushed_count > 0 or a non-empty pr_url. Default false.',
 							),
-							'limit'   => array( 'type' => 'integer', 'description' => 'Maximum missing inventory rows to inspect. Default 25, maximum 200.' ),
-							'after_handle' => array( 'type' => 'string', 'description' => 'Last processed handle for a stable missing-inventory keyset continuation.' ),
-							'until_budget' => array( 'type' => 'string', 'description' => 'Optional compact wall-clock budget such as 30s.' ),
+							'limit'        => array(
+								'type'        => 'integer',
+								'description' => 'Maximum missing inventory rows to inspect. Default 25, maximum 200.',
+							),
+							'after_handle' => array(
+								'type'        => 'string',
+								'description' => 'Last processed handle for a stable missing-inventory keyset continuation.',
+							),
+							'until_budget' => array(
+								'type'        => 'string',
+								'description' => 'Optional compact wall-clock budget such as 30s.',
+							),
 						),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success'   => array( 'type' => 'boolean' ),
-							'pruned_at' => array( 'type' => 'string' ),
-							'dry_run'   => array( 'type' => 'boolean' ),
-							'deleted'   => array( 'type' => 'array' ),
-							'skipped'   => array( 'type' => 'array' ),
-							'summary'   => array( 'type' => 'object' ),
+							'success'      => array( 'type' => 'boolean' ),
+							'pruned_at'    => array( 'type' => 'string' ),
+							'dry_run'      => array( 'type' => 'boolean' ),
+							'deleted'      => array( 'type' => 'array' ),
+							'skipped'      => array( 'type' => 'array' ),
+							'summary'      => array( 'type' => 'object' ),
 							'continuation' => array( 'type' => 'object' ),
 						),
 					),
@@ -1820,7 +1839,10 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'Maximum safe cleanup cycles before stopping. Clamped by the orchestrator.',
 							),
-							'inventory_after' => array( 'type' => 'string', 'description' => 'Last processed missing-inventory handle for a safe-cleanup keyset continuation.' ),
+							'inventory_after'  => array(
+								'type'        => 'string',
+								'description' => 'Last processed missing-inventory handle for a safe-cleanup keyset continuation.',
+							),
 							'until_budget'     => array(
 								'type'        => 'string',
 								'description' => 'Optional child-drain time budget such as 30s.',
@@ -1842,19 +1864,19 @@ class WorkspaceAbilities {
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success'      => array( 'type' => 'boolean' ),
-							'mode'         => array( 'type' => 'string' ),
-							'run_id'       => array( 'type' => 'string' ),
-							'applied'      => array( 'type' => 'boolean' ),
-							'destructive'  => array( 'type' => 'boolean' ),
-							'summary'      => array( 'type' => 'object' ),
-							'blockers'     => array( 'type' => 'array' ),
+							'success'          => array( 'type' => 'boolean' ),
+							'mode'             => array( 'type' => 'string' ),
+							'run_id'           => array( 'type' => 'string' ),
+							'applied'          => array( 'type' => 'boolean' ),
+							'destructive'      => array( 'type' => 'boolean' ),
+							'summary'          => array( 'type' => 'object' ),
+							'blockers'         => array( 'type' => 'array' ),
 							'current_blockers' => array( 'type' => 'array' ),
-							'evidence'     => array( 'type' => 'object' ),
-							'steps'        => array( 'type' => 'object' ),
-							'commands'     => array( 'type' => 'object' ),
-							'continuation' => array( 'type' => 'object' ),
-							'state'        => array( 'type' => 'string' ),
+							'evidence'         => array( 'type' => 'object' ),
+							'steps'            => array( 'type' => 'object' ),
+							'commands'         => array( 'type' => 'object' ),
+							'continuation'     => array( 'type' => 'object' ),
+							'state'            => array( 'type' => 'string' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'workspaceCleanupSafe' ),
@@ -2204,10 +2226,10 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'limit'        => array( 'type' => 'integer' ),
-							'offset'       => array( 'type' => 'integer' ),
+							'limit'         => array( 'type' => 'integer' ),
+							'offset'        => array( 'type' => 'integer' ),
 							'replan_offset' => array( 'type' => 'integer' ),
-							'until_budget' => array( 'type' => 'string' ),
+							'until_budget'  => array( 'type' => 'string' ),
 						),
 					),
 					'output_schema'       => array( 'type' => 'object' ),
@@ -4093,8 +4115,8 @@ class WorkspaceAbilities {
 				$force,
 				$task,
 				$allow_unverified_freshness,
-				$require_task_tracker
-				,$intent
+				$require_task_tracker,
+				$intent
 			);
 		}
 
@@ -4122,8 +4144,8 @@ class WorkspaceAbilities {
 			$force,
 			$task,
 			$allow_unverified_freshness,
-			$require_task_tracker
-			,$intent
+			$require_task_tracker,
+			$intent
 		);
 	}
 
@@ -4275,7 +4297,7 @@ class WorkspaceAbilities {
 	 */
 	public static function worktreeInventoryPruneMissing( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
-		$opts = array(
+		$opts      = array(
 			'dry_run' => ! empty($input['dry_run']),
 			'force'   => ! empty($input['force']),
 		);

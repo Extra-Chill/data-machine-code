@@ -396,15 +396,15 @@ class CleanupRunService {
 			return new \WP_Error('cleanup_until_empty_unsupported_mode', 'Cleanup until-empty currently supports mode=artifacts only.', array( 'status' => 400 ));
 		}
 
-		$max_passes     = max(1, min(25, (int) ( $opts['max_passes'] ?? 10 )));
-		$limit          = $this->apply_limit($opts);
-		$started        = microtime(true);
-		$budget_seconds = isset($opts['budget_seconds']) ? max(1, (int) $opts['budget_seconds']) : 0;
-		$seen           = array();
-		$passes         = array();
-		$total_bytes    = 0;
-		$total_applied  = 0;
-		$total_skipped  = 0;
+		$max_passes            = max(1, min(25, (int) ( $opts['max_passes'] ?? 10 )));
+		$limit                 = $this->apply_limit($opts);
+		$started               = microtime(true);
+		$budget_seconds        = isset($opts['budget_seconds']) ? max(1, (int) $opts['budget_seconds']) : 0;
+		$seen                  = array();
+		$passes                = array();
+		$total_bytes           = 0;
+		$total_applied         = 0;
+		$total_skipped         = 0;
 		$gross_candidate_bytes = 0;
 
 		for ( $pass = 1; $pass <= $max_passes; ++$pass ) {
@@ -416,7 +416,7 @@ class CleanupRunService {
 			$scanned_pages = array();
 			do {
 				$scanned_pages[ $offset ] = true;
-				$plan = $this->plan(
+				$plan                     = $this->plan(
 					array(
 						'mode'                          => 'artifacts',
 						'include_artifacts'             => true,
