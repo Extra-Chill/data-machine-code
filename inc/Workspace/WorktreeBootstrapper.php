@@ -304,13 +304,13 @@ final class WorktreeBootstrapper {
 			return new \WP_Error('worktree_target_tree_unavailable', 'Target tree inspection did not return parseable output.', array( 'status' => 500 ));
 		}
 
-		$tree_plan                 = self::parse_target_tree($tree_output);
-		$blobless_entry_bytes      = self::blobless_tracked_entry_bytes($repo_path);
-		$tracked_bytes             = $blobless_partial_clone
+		$tree_plan            = self::parse_target_tree($tree_output);
+		$blobless_entry_bytes = self::blobless_tracked_entry_bytes($repo_path);
+		$tracked_bytes        = $blobless_partial_clone
 			? $tree_plan['tracked_entries'] * $blobless_entry_bytes
 			: $tree_plan['tracked_bytes'];
-		$defaults  = self::filtered_demand_defaults($tree_plan['detected'], $repo_path, $bootstrap);
-		$counts    = array(
+		$defaults             = self::filtered_demand_defaults($tree_plan['detected'], $repo_path, $bootstrap);
+		$counts               = array(
 			'tracked_entries' => $tree_plan['tracked_entries'],
 			'submodules'      => $bootstrap ? count($tree_plan['detected']['submodule_roots']) : 0,
 			'package_roots'   => $bootstrap ? count($tree_plan['detected']['package_roots']) : 0,
@@ -318,23 +318,23 @@ final class WorktreeBootstrapper {
 		);
 
 		return array(
-			'bytes'              => $tracked_bytes + $defaults['git_bytes'] + ( $counts['submodules'] * $defaults['submodule_bytes'] ) + ( $counts['package_roots'] * $defaults['package_root_bytes'] ) + ( $counts['composer_roots'] * $defaults['composer_root_bytes'] ),
-			'inodes'             => $counts['tracked_entries'] + $defaults['git_inodes'] + ( $counts['submodules'] * $defaults['submodule_inodes'] ) + ( $counts['package_roots'] * $defaults['package_root_inodes'] ) + ( $counts['composer_roots'] * $defaults['composer_root_inodes'] ),
-			'source'             => 'target_git_tree_conservative',
-			'target_ref'         => $target_ref,
-			'target_commit'      => $commit,
-			'tracked_bytes'      => $tracked_bytes,
-			'tracked_bytes_source' => $blobless_partial_clone ? 'conservative_blobless_entry_estimate' : 'exact_git_blob_sizes',
+			'bytes'                   => $tracked_bytes + $defaults['git_bytes'] + ( $counts['submodules'] * $defaults['submodule_bytes'] ) + ( $counts['package_roots'] * $defaults['package_root_bytes'] ) + ( $counts['composer_roots'] * $defaults['composer_root_bytes'] ),
+			'inodes'                  => $counts['tracked_entries'] + $defaults['git_inodes'] + ( $counts['submodules'] * $defaults['submodule_inodes'] ) + ( $counts['package_roots'] * $defaults['package_root_inodes'] ) + ( $counts['composer_roots'] * $defaults['composer_root_inodes'] ),
+			'source'                  => 'target_git_tree_conservative',
+			'target_ref'              => $target_ref,
+			'target_commit'           => $commit,
+			'tracked_bytes'           => $tracked_bytes,
+			'tracked_bytes_source'    => $blobless_partial_clone ? 'conservative_blobless_entry_estimate' : 'exact_git_blob_sizes',
 			'tracked_bytes_per_entry' => $blobless_partial_clone ? $blobless_entry_bytes : null,
-			'git_safety_margin'  => array(
+			'git_safety_margin'       => array(
 				'bytes'  => $defaults['git_bytes'],
 				'inodes' => $defaults['git_inodes'],
 			),
-			'bootstrap'          => $bootstrap,
-			'detected'           => $tree_plan['detected'],
-			'counts'             => $counts,
-			'allowances'         => $defaults,
-			'fallback_semantics' => $blobless_partial_clone
+			'bootstrap'               => $bootstrap,
+			'detected'                => $tree_plan['detected'],
+			'counts'                  => $counts,
+			'allowances'              => $defaults,
+			'fallback_semantics'      => $blobless_partial_clone
 				? 'tracked target entries are measured from Git metadata; blobless partial clones reserve a conservative 64 KiB per tracked entry because exact blob sizes are unavailable; dependency installs use conservative allowances'
 				: 'tracked target entries and bytes are measured from Git; dependency installs use conservative allowances',
 		);
@@ -358,7 +358,11 @@ final class WorktreeBootstrapper {
 		}
 
 		$remotes = array();
-		foreach ( preg_split('/\r?\n/', $config) as $line ) {
+		$lines   = preg_split('/\r?\n/', $config);
+		if ( false === $lines ) {
+			return false;
+		}
+		foreach ( $lines as $line ) {
 			if ( 1 !== preg_match('/^remote\.([A-Za-z0-9._-]+)\.(promisor|partialclonefilter)\s+(.+)$/D', $line, $matches) ) {
 				continue;
 			}
@@ -407,7 +411,7 @@ final class WorktreeBootstrapper {
 			}
 			++$tracked_entries;
 			$path = $matches[4];
-			if ( 'blob' === $matches[2] && isset($matches[3]) && is_numeric($matches[3]) ) {
+			if ( 'blob' === $matches[2] && is_numeric($matches[3]) ) {
 				$tracked_bytes += max(0, (int) $matches[3]);
 			}
 			if ( '160000' === $matches[1] ) {

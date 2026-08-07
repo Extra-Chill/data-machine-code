@@ -276,11 +276,11 @@ trait WorkspaceWorktreeLifecycle {
 				$recommendations = array(
 					sprintf(
 						'1. Automatic safe artifact recovery found 0 actionable rows (0 B); gross inspected candidate bytes were %s. The capacity recovery target is not a reclaim forecast.',
-						WorktreeDiskBudget::format_bytes_for_operator((int) ( $reclaim_evidence['gross_candidate_bytes'] ?? 0 ))
+						WorktreeDiskBudget::format_bytes_for_operator( (int) ( $reclaim_evidence['gross_candidate_bytes'] ?? 0 ))
 					),
 					sprintf(
 						'2. If a human accepts this one worktree\'s projected demand of %s, retry only this request with --force: %s',
-						WorktreeDiskBudget::format_bytes_for_operator((int) ( $disk_budget['projected_demand_bytes'] ?? 0 )),
+						WorktreeDiskBudget::format_bytes_for_operator( (int) ( $disk_budget['projected_demand_bytes'] ?? 0 )),
 						$this->worktree_freshness_retry_command($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, true, $task, $intent)
 					),
 					'3. If a capacity exception is not approved, run bounded metadata reconciliation and a fresh DB-backed replan; it returns an apply command only for currently actionable rows: studio wp datamachine-code workspace worktree capacity-recovery --limit=25 --until-budget=30s --format=json',
@@ -357,19 +357,19 @@ trait WorkspaceWorktreeLifecycle {
 				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
 				return $post_rebase_demand;
 			}
-			$post_rebase_demand                  = WorktreeBootstrapper::remaining_demand_after_materialization($post_rebase_demand);
-			$post_rebase_budget           = $this->inspect_worktree_capacity($repo, $branch, $force, $post_rebase_demand);
-			$post_rebase_capacity_reclaim = $this->reclaim_capacity_eligible_artifacts(
+			$post_rebase_demand                       = WorktreeBootstrapper::remaining_demand_after_materialization($post_rebase_demand);
+			$post_rebase_budget                       = $this->inspect_worktree_capacity($repo, $branch, $force, $post_rebase_demand);
+			$post_rebase_capacity_reclaim             = $this->reclaim_capacity_eligible_artifacts(
 				$repo,
 				$branch,
 				$force,
 				$post_rebase_demand,
 				$post_rebase_budget
 			);
-			$post_rebase_budget                  = $post_rebase_capacity_reclaim['after'];
-			$response['post_rebase_disk_budget'] = $post_rebase_budget;
+			$post_rebase_budget                       = $post_rebase_capacity_reclaim['after'];
+			$response['post_rebase_disk_budget']      = $post_rebase_budget;
 			$response['post_rebase_capacity_reclaim'] = $post_rebase_capacity_reclaim['evidence'];
-			$response['disk_budget']             = $post_rebase_budget;
+			$response['disk_budget']                  = $post_rebase_budget;
 			if ( 'refused' === ( $post_rebase_budget['status'] ?? '' ) ) {
 				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
 				WorktreeContextInjector::forget_metadata($wt_handle);
@@ -459,17 +459,24 @@ trait WorkspaceWorktreeLifecycle {
 		if ( $force ) {
 			$parts[] = '--force';
 		}
-		foreach ( array( 'task_url' => 'task-url', 'task_ref' => 'task-ref' ) as $key => $flag ) {
+		foreach ( array(
+			'task_url' => 'task-url',
+			'task_ref' => 'task-ref',
+		) as $key => $flag ) {
 			if ( ! empty($task[ $key ]) ) {
-				$parts[] = '--' . $flag . '=' . escapeshellarg((string) $task[ $key ]);
+				$parts[] = '--' . $flag . '=' . escapeshellarg( (string) $task[ $key ]);
 			}
 		}
 		if ( ! empty($task) ) {
 			$parts[] = '--require-task-tracker';
 		}
-		foreach ( array( 'purpose' => 'purpose', 'owner_run_ref' => 'owner-run-ref', 'cleanup_policy' => 'cleanup-policy' ) as $key => $flag ) {
+		foreach ( array(
+			'purpose'        => 'purpose',
+			'owner_run_ref'  => 'owner-run-ref',
+			'cleanup_policy' => 'cleanup-policy',
+		) as $key => $flag ) {
 			if ( ! empty($intent[ $key ]) ) {
-				$parts[] = '--' . $flag . '=' . escapeshellarg((string) $intent[ $key ]);
+				$parts[] = '--' . $flag . '=' . escapeshellarg( (string) $intent[ $key ]);
 			}
 		}
 
@@ -573,7 +580,7 @@ trait WorkspaceWorktreeLifecycle {
 		);
 
 		if ( $fetch_failed ) {
-			$response['fetch_failed'] = true;
+			$response['fetch_failed']   = true;
 			$response['fetch_attempts'] = (int) ( $preflight['fetch_attempts'] ?? 1 );
 			if ( $fetch_timed_out ) {
 				$response['fetch_timed_out']       = true;
@@ -701,16 +708,16 @@ trait WorkspaceWorktreeLifecycle {
 
 		$lifecycle_metadata                   = WorktreeContextInjector::build_lifecycle_metadata(
 			array(
-				'handle'      => $wt_handle,
-				'path'        => $wt_path,
-				'repo'        => $repo,
-				'branch'      => $branch,
-				'base_ref'    => $created_branch ? $resolved_base : null,
-				'base_source' => $created_branch ? ( null !== $from && '' !== trim( $from ) ? 'requested_ref' : 'default_base' ) : 'existing_local_branch',
-				'task_url'    => isset( $task['task_url'] ) ? (string) $task['task_url'] : '',
-				'task_ref'    => isset( $task['task_ref'] ) ? (string) $task['task_ref'] : '',
-				'purpose'     => $intent['purpose'] ?? null,
-				'owner_run_ref' => $intent['owner_run_ref'] ?? null,
+				'handle'         => $wt_handle,
+				'path'           => $wt_path,
+				'repo'           => $repo,
+				'branch'         => $branch,
+				'base_ref'       => $created_branch ? $resolved_base : null,
+				'base_source'    => $created_branch ? ( null !== $from && '' !== trim( $from ) ? 'requested_ref' : 'default_base' ) : 'existing_local_branch',
+				'task_url'       => isset( $task['task_url'] ) ? (string) $task['task_url'] : '',
+				'task_ref'       => isset( $task['task_ref'] ) ? (string) $task['task_ref'] : '',
+				'purpose'        => $intent['purpose'] ?? null,
+				'owner_run_ref'  => $intent['owner_run_ref'] ?? null,
 				'cleanup_policy' => $intent['cleanup_policy'] ?? null,
 			)
 		);
@@ -902,12 +909,12 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		$existing_metadata = WorktreeContextInjector::get_metadata($parsed['dir_name']) ?? array();
-		$metadata = WorktreeContextInjector::build_finalizer_metadata($normalized_state, $pr, $owner_terminal_outcome, $existing_metadata);
-		$metadata = array_merge(
+		$metadata          = WorktreeContextInjector::build_finalizer_metadata($normalized_state, $pr, $owner_terminal_outcome, $existing_metadata);
+		$metadata          = array_merge(
 			array(
-				'handle'       => $parsed['dir_name'],
-				'path'         => $wt_path,
-				'repo'         => $parsed['repo'],
+				'handle' => $parsed['dir_name'],
+				'path'   => $wt_path,
+				'repo'   => $parsed['repo'],
 			),
 			$metadata
 		);
@@ -1063,33 +1070,33 @@ trait WorkspaceWorktreeLifecycle {
 		);
 		$row          = array_merge(
 			array(
-				'handle'                => $parsed['dir_name'],
-				'repo'                  => $parsed['repo'],
-				'is_worktree'           => $parsed['is_worktree'],
-				'is_primary'            => ! $parsed['is_worktree'],
-				'external'              => false,
-				'branch_slug'           => $parsed['branch_slug'],
-				'branch'                => trim( (string) ( $branch['output'] ?? '' )),
-				'head'                  => trim( (string) ( $head['output'] ?? '' )),
-				'path'                  => $path,
-				'dirty'                 => $dirty,
-				'unpushed'              => $unpushed,
-				'created_at'            => $created_at,
-				'lifecycle_state'       => $metadata['lifecycle_state'] ?? null,
-				'pr_url'                => $metadata['pr_url'] ?? null,
-				'pr_number'             => $metadata['pr_number'] ?? null,
-				'purpose'               => $metadata['purpose'] ?? null,
-				'owner_run_ref'         => $metadata['owner_run_ref'] ?? null,
-				'cleanup_policy'        => $metadata['cleanup_policy'] ?? null,
-				'owner_terminal_outcome'=> $metadata['owner_terminal_outcome'] ?? null,
-				'last_seen_at'          => $metadata['last_seen_at'] ?? null,
-				'liveness'              => $liveness['liveness'],
-				'liveness_reason'       => $liveness['reason'],
-				'heartbeat_age_seconds' => $liveness['heartbeat_age_seconds'],
-				'owner'                 => WorktreeContextInjector::summarize_owner($metadata),
-				'session'               => WorktreeContextInjector::summarize_session($metadata),
-				'task'                  => is_array($metadata['origin_task'] ?? null) ? $metadata['origin_task'] : null,
-				'metadata'              => $metadata,
+				'handle'                 => $parsed['dir_name'],
+				'repo'                   => $parsed['repo'],
+				'is_worktree'            => $parsed['is_worktree'],
+				'is_primary'             => ! $parsed['is_worktree'],
+				'external'               => false,
+				'branch_slug'            => $parsed['branch_slug'],
+				'branch'                 => trim( (string) ( $branch['output'] ?? '' )),
+				'head'                   => trim( (string) ( $head['output'] ?? '' )),
+				'path'                   => $path,
+				'dirty'                  => $dirty,
+				'unpushed'               => $unpushed,
+				'created_at'             => $created_at,
+				'lifecycle_state'        => $metadata['lifecycle_state'] ?? null,
+				'pr_url'                 => $metadata['pr_url'] ?? null,
+				'pr_number'              => $metadata['pr_number'] ?? null,
+				'purpose'                => $metadata['purpose'] ?? null,
+				'owner_run_ref'          => $metadata['owner_run_ref'] ?? null,
+				'cleanup_policy'         => $metadata['cleanup_policy'] ?? null,
+				'owner_terminal_outcome' => $metadata['owner_terminal_outcome'] ?? null,
+				'last_seen_at'           => $metadata['last_seen_at'] ?? null,
+				'liveness'               => $liveness['liveness'],
+				'liveness_reason'        => $liveness['reason'],
+				'heartbeat_age_seconds'  => $liveness['heartbeat_age_seconds'],
+				'owner'                  => WorktreeContextInjector::summarize_owner($metadata),
+				'session'                => WorktreeContextInjector::summarize_session($metadata),
+				'task'                   => is_array($metadata['origin_task'] ?? null) ? $metadata['origin_task'] : null,
+				'metadata'               => $metadata,
 			),
 			$disk
 		);
@@ -1761,7 +1768,7 @@ trait WorkspaceWorktreeLifecycle {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_inventory_prune_missing( array $opts = array() ): array|\WP_Error {
-		$opts['lock_callback'] = function ( array $row, callable $mutation ): mixed {
+		$opts['lock_callback']  = function ( array $row, callable $mutation ): mixed {
 			$repo = trim( (string) ( $row['repo'] ?? '' ) );
 			if ( '' === $repo ) {
 				return new \WP_Error('workspace_lock_invalid_target', 'Missing repository handle for inventory pruning.', array( 'status' => 400 ));
@@ -2164,7 +2171,10 @@ trait WorkspaceWorktreeLifecycle {
 		);
 		if ( $force || 'refused' !== ( $before['status'] ?? '' ) ) {
 			$evidence['skip_reason'] = $force ? 'force_override' : 'capacity_not_refused';
-			return array( 'after' => $before, 'evidence' => $evidence );
+			return array(
+				'after'    => $before,
+				'evidence' => $evidence,
+			);
 		}
 
 		$evidence['attempted'] = true;
@@ -2176,7 +2186,10 @@ trait WorkspaceWorktreeLifecycle {
 		if ( $reclaim instanceof \WP_Error ) {
 			$evidence['error_code']     = $reclaim->get_error_code();
 			$evidence['final_decision'] = 'refused_after_reclaim_error';
-			return array( 'after' => $after, 'evidence' => $evidence );
+			return array(
+				'after'    => $after,
+				'evidence' => $evidence,
+			);
 		}
 
 		$evidence['state']           = (string) ( $reclaim['state'] ?? 'unknown' );
@@ -2187,14 +2200,17 @@ trait WorkspaceWorktreeLifecycle {
 		if ( 'completed' === ( $reclaim['state'] ?? '' ) && array() !== $final_summary ) {
 			$evidence['gross_candidate_bytes']    = max(0, (int) ( $final_summary['gross_candidate_bytes'] ?? 0 ));
 			$evidence['actionable_reclaim_bytes'] = max(0, (int) ( $final_summary['actionable_reclaim_bytes'] ?? $final_summary['total_reclaimable_bytes'] ?? 0 ));
-			$evidence['actionable_rows']           = max(0, (int) ( $final_summary['total_rows'] ?? 0 ));
-			$evidence['actionability_status']      = 0 === $evidence['actionable_rows'] ? 'no_actionable_rows' : 'actionable_rows_available';
+			$evidence['actionable_rows']          = max(0, (int) ( $final_summary['total_rows'] ?? 0 ));
+			$evidence['actionability_status']     = 0 === $evidence['actionable_rows'] ? 'no_actionable_rows' : 'actionable_rows_available';
 		} elseif ( array() !== $final_summary ) {
 			$evidence['actionability_status'] = 'pagination_incomplete';
 		}
-		$evidence['final_decision']  = 'refused' === ( $after['status'] ?? '' ) ? 'refused_after_reclaim' : 'admitted_after_reclaim';
+		$evidence['final_decision'] = 'refused' === ( $after['status'] ?? '' ) ? 'refused_after_reclaim' : 'admitted_after_reclaim';
 
-		return array( 'after' => $after, 'evidence' => $evidence );
+		return array(
+			'after'    => $after,
+			'evidence' => $evidence,
+		);
 	}
 
 	/** @return array<string,int> */
@@ -2236,20 +2252,20 @@ trait WorkspaceWorktreeLifecycle {
 		$offset        = max(0, (int) ( $opts['offset'] ?? 0 ));
 		$replan_offset = max(0, (int) ( $opts['replan_offset'] ?? 0 ));
 		$until_budget  = trim( (string) ( $opts['until_budget'] ?? '30s' ));
-		$reconcile    = array(
+		$reconcile     = array(
 			'apply'        => true,
 			'limit'        => $limit,
 			'offset'       => $offset,
 			'until_budget' => '' === $until_budget ? '30s' : $until_budget,
 		);
-		$metadata = $this->worktree_reconcile_metadata($reconcile);
+		$metadata      = $this->worktree_reconcile_metadata($reconcile);
 		if ( $metadata instanceof \WP_Error ) {
 			return $metadata;
 		}
 		$metadata_continuation = (array) ( $metadata['pagination'] ?? array() );
 		if ( ! empty($metadata_continuation['partial']) || empty($metadata_continuation['complete']) ) {
-			$next_offset = max(0, (int) ( $metadata_continuation['next_offset'] ?? ( $offset + $limit ) ));
-			$next_command = $this->worktree_capacity_recovery_command($limit, $next_offset, 0, $until_budget);
+			$next_offset                           = max(0, (int) ( $metadata_continuation['next_offset'] ?? ( $offset + $limit ) ));
+			$next_command                          = $this->worktree_capacity_recovery_command($limit, $next_offset, 0, $until_budget);
 			$metadata_continuation['next_offset']  = $next_offset;
 			$metadata_continuation['next_command'] = $next_command;
 			return array(
@@ -2264,54 +2280,52 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		$plan_options = array(
-			'mode'               => 'cleanup_plan',
-			'include_artifacts'  => true,
-			'include_worktrees'  => true,
-			'include_resolvers'  => false,
-			'limit'              => $limit,
-			'offset'             => $replan_offset,
-			'until_budget'       => '' === $until_budget ? '30s' : $until_budget,
+			'mode'              => 'cleanup_plan',
+			'include_artifacts' => true,
+			'include_worktrees' => true,
+			'include_resolvers' => false,
+			'limit'             => $limit,
+			'offset'            => $replan_offset,
+			'until_budget'      => '' === $until_budget ? '30s' : $until_budget,
 		);
 		$plan         = $this->run_capacity_recovery_plan($plan_options);
 		if ( $plan instanceof \WP_Error ) {
 			return $plan;
 		}
+		$result            = array(
+			'success'                 => true,
+			'mode'                    => 'capacity_recovery',
+			'metadata_reconciliation' => $metadata,
+			'replan'                  => $plan,
+			'next_approval'           => null,
+			'continuation'            => null,
+			'next_command'            => null,
+		);
 		$plan_continuation = (array) ( $plan['continuation'] ?? array() );
 		if ( ! empty($plan_continuation['partial']) || null !== ( $plan_continuation['next_offset'] ?? null ) ) {
-			$next_replan_offset = max(0, (int) ( $plan_continuation['next_offset'] ?? ( $replan_offset + $limit ) ));
-			$next_command       = $this->worktree_capacity_recovery_command($limit, 0, $next_replan_offset, $until_budget);
+			$next_replan_offset                = max(0, (int) ( $plan_continuation['next_offset'] ?? ( $replan_offset + $limit ) ));
+			$next_command                      = $this->worktree_capacity_recovery_command($limit, 0, $next_replan_offset, $until_budget);
 			$plan_continuation['next_offset']  = $next_replan_offset;
 			$plan_continuation['next_command'] = $next_command;
-			return array(
-				'success'                 => true,
-				'mode'                    => 'capacity_recovery',
-				'metadata_reconciliation' => $metadata,
-				'replan'                  => $plan,
-				'next_approval'           => null,
-				'continuation'            => $plan_continuation,
-				'next_command'            => $next_command,
-			);
+			$result['continuation'] = $plan_continuation;
+			$result['next_command'] = $next_command;
+			return $result;
 		}
 
 		$actionable_rows = (int) ( $plan['summary']['total_rows'] ?? 0 );
 		$next_approval   = $actionable_rows > 0
 			? array(
-				'command'                 => (string) ( $plan['summary']['apply_command'] ?? '' ),
-				'destructive'             => true,
-				'actionable_rows'         => $actionable_rows,
+				'command'                  => (string) ( $plan['summary']['apply_command'] ?? '' ),
+				'destructive'              => true,
+				'actionable_rows'          => $actionable_rows,
 				'actionable_reclaim_bytes' => max(0, (int) ( $plan['summary']['actionable_reclaim_bytes'] ?? 0 )),
 			)
 			: null;
 
-		return array(
-			'success'                 => true,
-			'mode'                    => 'capacity_recovery',
-			'metadata_reconciliation' => $metadata,
-			'replan'                  => $plan,
-			'next_approval'           => $next_approval,
-			'continuation'            => $plan['continuation'] ?? null,
-			'next_command'            => $plan['continuation']['next_command'] ?? null,
-		);
+		$result['next_approval'] = $next_approval;
+		$result['continuation']  = $plan['continuation'] ?? null;
+		$result['next_command']  = $plan['continuation']['next_command'] ?? null;
+		return $result;
 	}
 
 	private function worktree_capacity_recovery_command( int $limit, int $offset, int $replan_offset, string $until_budget ): string {

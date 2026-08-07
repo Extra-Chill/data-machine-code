@@ -964,9 +964,18 @@ class WorkspaceCommand extends BaseCommand {
 					'metric' => 'marked_cleanup_eligible',
 					'value'  => (string) ( $summary['marked_cleanup_eligible'] ?? 0 ),
 				),
-				array( 'metric' => 'inventory_rows_pruned', 'value' => (string) ( $summary['inventory_rows_pruned'] ?? 0 ) ),
-				array( 'metric' => 'inventory_rows_planned', 'value' => (string) ( $summary['inventory_rows_planned'] ?? 0 ) ),
-				array( 'metric' => 'inventory_rows_skipped', 'value' => (string) ( $summary['inventory_rows_skipped'] ?? 0 ) ),
+				array(
+					'metric' => 'inventory_rows_pruned',
+					'value'  => (string) ( $summary['inventory_rows_pruned'] ?? 0 ),
+				),
+				array(
+					'metric' => 'inventory_rows_planned',
+					'value'  => (string) ( $summary['inventory_rows_planned'] ?? 0 ),
+				),
+				array(
+					'metric' => 'inventory_rows_skipped',
+					'value'  => (string) ( $summary['inventory_rows_skipped'] ?? 0 ),
+				),
 				array(
 					'metric' => 'bytes_reclaimed',
 					'value'  => $this->format_bytes( (int) ( $summary['bytes_reclaimed'] ?? 0 ) ),
@@ -2560,7 +2569,10 @@ class WorkspaceCommand extends BaseCommand {
 	private function inventory_prune_missing( array $assoc_args ): void {
 		$dry_run = ! empty($assoc_args['dry-run']);
 		$force   = ! empty($assoc_args['force']);
-		$opts    = array( 'dry_run' => $dry_run, 'force' => $force );
+		$opts    = array(
+			'dry_run' => $dry_run,
+			'force'   => $force,
+		);
 		if ( isset($assoc_args['limit']) ) {
 			$opts['limit'] = (int) $assoc_args['limit'];
 		}
