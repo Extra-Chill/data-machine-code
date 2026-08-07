@@ -41,7 +41,11 @@ try {
 	assert_true(98 * $gib === $budget['filesystem_used_bytes'], 'filesystem used bytes should be explicit');
 	assert_true(2 * $gib === $budget['filesystem_free_bytes'], 'filesystem free bytes should be explicit');
 	assert_true(100 * $gib === $budget['filesystem_total_bytes'], 'filesystem total bytes should be explicit');
-	assert_true(( 8 * $gib ) + 1 === $budget['cleanup_recommendations'][0]['expected_reclaim_bytes'], 'recommendations should include the bytes needed to move above the inclusive floor');
+	assert_true(( 8 * $gib ) + 1 === $budget['cleanup_recommendations'][0]['target_recovery_bytes'], 'recommendations should include the bytes needed to move above the inclusive floor');
+	assert_true(is_int($budget['cleanup_recommendations'][0]['expected_reclaim_bytes']), 'expected reclaim bytes must preserve its public scalar type');
+	assert_true(is_string($budget['cleanup_recommendations'][0]['expected_reclaim']), 'expected reclaim must preserve its public scalar type');
+	assert_true(( 8 * $gib ) + 1 === $budget['cleanup_recommendations'][0]['expected_reclaim_bytes'], 'expected reclaim bytes must preserve the established recovery value');
+	assert_true($budget['cleanup_recommendations'][0]['target_recovery'] === $budget['cleanup_recommendations'][0]['expected_reclaim'], 'expected reclaim must preserve the established human-readable recovery value');
 	assert_true(str_contains(WorktreeDiskBudget::format_summary($budget), '2.0 GiB (2.0%) free'), 'summary should include current free GiB and percent');
 	assert_true('studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json' === $budget['artifact_cleanup_command'], 'disk-budget artifact cleanup command should create a DB-backed review plan');
 
@@ -108,7 +112,7 @@ try {
 	assert_true(500000 === $inode_refused['filesystem_free_inodes'], 'free inode count should be explicit');
 	assert_true(13107200 === $inode_refused['filesystem_total_inodes'], 'total inode count should be explicit');
 	assert_true(810721 === $inode_refused['target_recovery_inodes'], 'global remediation should state exact inode recovery needed above the stricter inclusive floor');
-	assert_true(null === $inode_refused['cleanup_recommendations'][0]['expected_reclaim_inodes'], 'unmeasured candidates must not claim the global inode deficit as reclaim evidence');
+	assert_true(null === $inode_refused['cleanup_recommendations'][0]['target_recovery_inodes'], 'unmeasured candidates must not claim the global inode deficit as reclaim evidence');
 	assert_true(str_contains(WorktreeDiskBudget::format_summary($inode_refused), '500,000'), 'summary should include free inode capacity');
 
 	$inode_warning = WorktreeDiskBudget::evaluate(

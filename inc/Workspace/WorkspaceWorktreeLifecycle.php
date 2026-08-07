@@ -243,7 +243,8 @@ trait WorkspaceWorktreeLifecycle {
 		$capacity_reclaim = $this->reclaim_capacity_eligible_artifacts($repo, $branch, $force, $demand_plan, $disk_budget);
 		$disk_budget      = $capacity_reclaim['after'];
 		if ( 'refused' === ( $disk_budget['status'] ?? '' ) ) {
-			$recommendations = array_map(
+			$reclaim_evidence = (array) $capacity_reclaim['evidence'];
+			$recommendations  = array_map(
 				static function ( $row ): string {
 					$commands     = array_filter(
 						array(
@@ -261,16 +262,30 @@ trait WorkspaceWorktreeLifecycle {
 					);
 
 					return sprintf(
-						'%d. %s: %s (target reclaim: %s; inodes: %s)',
+						'%d. %s: %s (capacity recovery target: %s; inodes: %s; candidates are measured by the command)',
 						(int) ( $row['priority'] ?? 0 ),
 						(string) ( $row['action'] ?? 'cleanup' ),
 						$command_text,
-						(string) ( $row['expected_reclaim'] ?? 'unknown' ),
-						null === ( $row['expected_reclaim_inodes'] ?? null ) ? 'unknown' : number_format( (int) $row['expected_reclaim_inodes'] )
+						(string) ( $row['target_recovery'] ?? 'unknown' ),
+						null === ( $row['target_recovery_inodes'] ?? null ) ? 'unknown' : number_format( (int) $row['target_recovery_inodes'] )
 					);
 				},
 				(array) ( $disk_budget['cleanup_recommendations'] ?? array() )
 			);
+			if ( 'no_actionable_rows' === ( $reclaim_evidence['actionability_status'] ?? '' ) ) {
+				$recommendations = array(
+					sprintf(
+						'1. Automatic safe artifact recovery found 0 actionable rows (0 B); gross inspected candidate bytes were %s. The capacity recovery target is not a reclaim forecast.',
+						WorktreeDiskBudget::format_bytes_for_operator((int) ( $reclaim_evidence['gross_candidate_bytes'] ?? 0 ))
+					),
+					sprintf(
+						'2. If a human accepts this one worktree\'s projected demand of %s, retry only this request with --force: %s',
+						WorktreeDiskBudget::format_bytes_for_operator((int) ( $disk_budget['projected_demand_bytes'] ?? 0 )),
+						$this->worktree_freshness_retry_command($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, true, $task, $intent)
+					),
+					'3. If a capacity exception is not approved, run bounded metadata reconciliation and a fresh DB-backed replan; it returns an apply command only for currently actionable rows: studio wp datamachine-code workspace worktree capacity-recovery --limit=25 --until-budget=30s --format=json',
+				);
+			}
 			return new \WP_Error(
 				'worktree_disk_budget_exceeded',
 				sprintf(
@@ -2168,6 +2183,15 @@ trait WorkspaceWorktreeLifecycle {
 		$evidence['applied']         = (int) ( $reclaim['applied'] ?? 0 );
 		$evidence['reclaimed_bytes'] = (int) ( $reclaim['bytes_reclaimed'] ?? 0 );
 		$evidence['skipped']         = $this->capacity_reclaim_skipped_categories($reclaim);
+		$final_summary               = (array) ( $reclaim['final_plan_summary'] ?? array() );
+		if ( 'completed' === ( $reclaim['state'] ?? '' ) && array() !== $final_summary ) {
+			$evidence['gross_candidate_bytes']    = max(0, (int) ( $final_summary['gross_candidate_bytes'] ?? 0 ));
+			$evidence['actionable_reclaim_bytes'] = max(0, (int) ( $final_summary['actionable_reclaim_bytes'] ?? $final_summary['total_reclaimable_bytes'] ?? 0 ));
+			$evidence['actionable_rows']           = max(0, (int) ( $final_summary['total_rows'] ?? 0 ));
+			$evidence['actionability_status']      = 0 === $evidence['actionable_rows'] ? 'no_actionable_rows' : 'actionable_rows_available';
+		} elseif ( array() !== $final_summary ) {
+			$evidence['actionability_status'] = 'pagination_incomplete';
+		}
 		$evidence['final_decision']  = 'refused' === ( $after['status'] ?? '' ) ? 'refused_after_reclaim' : 'admitted_after_reclaim';
 
 		return array( 'after' => $after, 'evidence' => $evidence );
@@ -2196,6 +2220,113 @@ trait WorkspaceWorktreeLifecycle {
 				'budget_seconds' => 30,
 			)
 		);
+	}
+
+	/**
+	 * Reconcile bounded lifecycle metadata, then freeze a fresh non-destructive cleanup plan.
+	 *
+	 * Metadata writes never remove a worktree. Any cleanup remains behind the returned
+	 * DB-backed apply command and its existing fresh-state revalidation.
+	 *
+	 * @param array<string,mixed> $opts Bounded recovery options.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function worktree_capacity_recovery( array $opts = array() ): array|\WP_Error {
+		$limit         = max(1, min(100, (int) ( $opts['limit'] ?? 25 )));
+		$offset        = max(0, (int) ( $opts['offset'] ?? 0 ));
+		$replan_offset = max(0, (int) ( $opts['replan_offset'] ?? 0 ));
+		$until_budget  = trim( (string) ( $opts['until_budget'] ?? '30s' ));
+		$reconcile    = array(
+			'apply'        => true,
+			'limit'        => $limit,
+			'offset'       => $offset,
+			'until_budget' => '' === $until_budget ? '30s' : $until_budget,
+		);
+		$metadata = $this->worktree_reconcile_metadata($reconcile);
+		if ( $metadata instanceof \WP_Error ) {
+			return $metadata;
+		}
+		$metadata_continuation = (array) ( $metadata['pagination'] ?? array() );
+		if ( ! empty($metadata_continuation['partial']) || empty($metadata_continuation['complete']) ) {
+			$next_offset = max(0, (int) ( $metadata_continuation['next_offset'] ?? ( $offset + $limit ) ));
+			$next_command = $this->worktree_capacity_recovery_command($limit, $next_offset, 0, $until_budget);
+			$metadata_continuation['next_offset']  = $next_offset;
+			$metadata_continuation['next_command'] = $next_command;
+			return array(
+				'success'                 => true,
+				'mode'                    => 'capacity_recovery',
+				'metadata_reconciliation' => $metadata,
+				'replan'                  => null,
+				'next_approval'           => null,
+				'continuation'            => $metadata_continuation,
+				'next_command'            => $next_command,
+			);
+		}
+
+		$plan_options = array(
+			'mode'               => 'cleanup_plan',
+			'include_artifacts'  => true,
+			'include_worktrees'  => true,
+			'include_resolvers'  => false,
+			'limit'              => $limit,
+			'offset'             => $replan_offset,
+			'until_budget'       => '' === $until_budget ? '30s' : $until_budget,
+		);
+		$plan         = $this->run_capacity_recovery_plan($plan_options);
+		if ( $plan instanceof \WP_Error ) {
+			return $plan;
+		}
+		$plan_continuation = (array) ( $plan['continuation'] ?? array() );
+		if ( ! empty($plan_continuation['partial']) || null !== ( $plan_continuation['next_offset'] ?? null ) ) {
+			$next_replan_offset = max(0, (int) ( $plan_continuation['next_offset'] ?? ( $replan_offset + $limit ) ));
+			$next_command       = $this->worktree_capacity_recovery_command($limit, 0, $next_replan_offset, $until_budget);
+			$plan_continuation['next_offset']  = $next_replan_offset;
+			$plan_continuation['next_command'] = $next_command;
+			return array(
+				'success'                 => true,
+				'mode'                    => 'capacity_recovery',
+				'metadata_reconciliation' => $metadata,
+				'replan'                  => $plan,
+				'next_approval'           => null,
+				'continuation'            => $plan_continuation,
+				'next_command'            => $next_command,
+			);
+		}
+
+		$actionable_rows = (int) ( $plan['summary']['total_rows'] ?? 0 );
+		$next_approval   = $actionable_rows > 0
+			? array(
+				'command'                 => (string) ( $plan['summary']['apply_command'] ?? '' ),
+				'destructive'             => true,
+				'actionable_rows'         => $actionable_rows,
+				'actionable_reclaim_bytes' => max(0, (int) ( $plan['summary']['actionable_reclaim_bytes'] ?? 0 )),
+			)
+			: null;
+
+		return array(
+			'success'                 => true,
+			'mode'                    => 'capacity_recovery',
+			'metadata_reconciliation' => $metadata,
+			'replan'                  => $plan,
+			'next_approval'           => $next_approval,
+			'continuation'            => $plan['continuation'] ?? null,
+			'next_command'            => $plan['continuation']['next_command'] ?? null,
+		);
+	}
+
+	private function worktree_capacity_recovery_command( int $limit, int $offset, int $replan_offset, string $until_budget ): string {
+		return sprintf(
+			'studio wp datamachine-code workspace worktree capacity-recovery --limit=%d --offset=%d --replan-offset=%d --until-budget=%s --format=json',
+			$limit,
+			$offset,
+			$replan_offset,
+			escapeshellarg('' === $until_budget ? '30s' : $until_budget)
+		);
+	}
+
+	/** @return array<string,mixed>|\WP_Error */
+	protected function run_capacity_recovery_plan( array $options ): array|\WP_Error {
+		return ( new CleanupRunService(null, $this) )->plan($options);
 	}
 
 	/**

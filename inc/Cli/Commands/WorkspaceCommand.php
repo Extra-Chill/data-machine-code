@@ -54,6 +54,7 @@ class WorkspaceCommand extends BaseCommand {
 		'cleanup-eligible-drain'                  => array( 'ability' => 'datamachine-code/workspace-worktree-cleanup-eligible-drain' ),
 		'emergency-cleanup'                       => array( 'ability' => 'datamachine-code/workspace-worktree-emergency-cleanup' ),
 		'reconcile-metadata'                      => array( 'ability' => 'datamachine-code/workspace-worktree-reconcile-metadata' ),
+		'capacity-recovery'                       => array( 'ability' => 'datamachine-code/workspace-worktree-capacity-recovery' ),
 		'active-no-signal-report'                 => array(
 			'ability'       => 'datamachine-code/workspace-worktree-active-no-signal-report',
 			'input_builder' => 'build_worktree_active_no_signal_input',
@@ -2123,7 +2124,8 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log(sprintf('Run ID: %s', (string) ( $result['run_id'] ?? '' )));
 		WP_CLI::log(sprintf('Plan ID: %s', (string) ( $result['plan_id'] ?? '' )));
 		WP_CLI::log(sprintf('Rows:   %d', (int) ( $summary['total_rows'] ?? 0 )));
-		WP_CLI::log(sprintf('Reclaimable: %s', $this->format_bytes($summary['total_reclaimable_bytes'] ?? $summary['total_size_bytes'] ?? 0)));
+		WP_CLI::log(sprintf('Gross candidates: %s', $this->format_bytes($summary['gross_candidate_bytes'] ?? $summary['total_size_bytes'] ?? 0)));
+		WP_CLI::log(sprintf('Actionable reclaim: %s', $this->format_bytes($summary['actionable_reclaim_bytes'] ?? $summary['total_reclaimable_bytes'] ?? 0)));
 		$byte_totals = (array) ( $summary['byte_totals'] ?? array() );
 		if ( array() !== $byte_totals ) {
 			foreach ( $byte_totals as $type => $bytes ) {
@@ -4026,7 +4028,7 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|get|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
+			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|get|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|capacity-recovery|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
 			return;
 		}
 
@@ -4352,6 +4354,23 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				if ( $uses_plan ) {
 					$input['apply_plan'] = $this->read_worktree_json_plan( (string) $assoc_args['apply-plan'], 'metadata reconciliation');
+				}
+				break;
+			case 'capacity-recovery':
+				if ( isset($assoc_args['limit']) ) {
+					$input['limit'] = (int) $assoc_args['limit'];
+				}
+				if ( isset($assoc_args['offset']) ) {
+					$input['offset'] = (int) $assoc_args['offset'];
+				}
+				if ( isset($assoc_args['replan-offset']) ) {
+					$input['replan_offset'] = (int) $assoc_args['replan-offset'];
+				}
+				if ( isset($assoc_args['offset']) ) {
+					$input['offset'] = (int) $assoc_args['offset'];
+				}
+				if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
+					$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
 				}
 				break;
 
@@ -4873,6 +4892,21 @@ class WorkspaceCommand extends BaseCommand {
 				return;
 			case 'reconcile-metadata':
 				$this->render_worktree_metadata_reconciliation_result($result, $assoc_args);
+				return;
+			case 'capacity-recovery':
+				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+					$this->renderer()->json($result);
+					return;
+				}
+				$approval = (array) ( $result['next_approval'] ?? array() );
+				if ( '' !== (string) ( $approval['command'] ?? '' ) ) {
+					WP_CLI::success(sprintf('Capacity recovery produced %d actionable row(s). Review then approve: %s', (int) ( $approval['actionable_rows'] ?? 0 ), (string) $approval['command']));
+					return;
+				}
+				WP_CLI::log('Capacity recovery completed without an actionable cleanup approval.');
+				if ( ! empty($result['next_command']) ) {
+					WP_CLI::log('Continue: ' . (string) $result['next_command']);
+				}
 				return;
 
 			case 'active-no-signal-report':
