@@ -14,7 +14,16 @@ defined('ABSPATH') || exit;
 
 final class WorkspaceTargetInspector {
 
-	private const DEFAULT_TIMEOUT_SECONDS = 5;
+	private const DEFAULT_TIMEOUT_SECONDS = 30;
+
+	/** Resolve the bounded exact-target inspection budget. */
+	public static function timeout_seconds( string $handle ): int {
+		$timeout = function_exists('apply_filters')
+			? (int) apply_filters('datamachine_code_workspace_target_lookup_timeout_seconds', self::DEFAULT_TIMEOUT_SECONDS, $handle)
+			: self::DEFAULT_TIMEOUT_SECONDS;
+
+		return max(1, $timeout);
+	}
 
 	/**
 	 * Inspect exactly one path in a killable child process.
@@ -22,10 +31,7 @@ final class WorkspaceTargetInspector {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function inspect( string $path, string $handle ): array|\WP_Error {
-		$timeout = function_exists('apply_filters')
-			? (int) apply_filters('datamachine_code_workspace_target_lookup_timeout_seconds', self::DEFAULT_TIMEOUT_SECONDS, $handle)
-			: self::DEFAULT_TIMEOUT_SECONDS;
-		$timeout = max(1, $timeout);
+		$timeout = self::timeout_seconds($handle);
 
 		$diagnostic = array(
 			'phase'           => 'filesystem',

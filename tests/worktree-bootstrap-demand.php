@@ -115,6 +115,10 @@ try {
 	$filtered_blobless_tree = WorktreeBootstrapper::demand_plan_for_target($repo, 'target-tree', true);
 	unset($GLOBALS['bootstrap_demand_filters']['datamachine_code_worktree_blobless_tracked_entry_bytes']);
 	bootstrap_demand_assert($filtered_blobless_tree['tracked_bytes'] === $filtered_blobless_tree['counts']['tracked_entries'] * 32768, 'Installations must be able to tune the conservative blobless estimate without changing core.');
+	bootstrap_demand_assert(300 === WorktreeBootstrapper::target_tree_timeout_seconds($repo), 'Large target-tree inspection must use its operation-appropriate default budget.');
+	$GLOBALS['bootstrap_demand_filters']['datamachine_code_worktree_target_tree_timeout_seconds'] = static fn() => 77;
+	bootstrap_demand_assert(77 === WorktreeBootstrapper::target_tree_timeout_seconds($repo), 'Target-tree inspection timeout must be explicitly filterable.');
+	unset($GLOBALS['bootstrap_demand_filters']['datamachine_code_worktree_target_tree_timeout_seconds']);
 
 	exec('git -C ' . escapeshellarg($repo) . ' checkout -qb stale-branch');
 	file_put_contents($repo . '/stale.txt', 'stale');

@@ -61,6 +61,7 @@ if ( ! class_exists(GitRunner::class) ) {
 }
 
 final class WorktreeBootstrapper {
+	private const DEFAULT_TARGET_TREE_TIMEOUT_SECONDS = 300;
 
 
 
@@ -293,7 +294,7 @@ final class WorktreeBootstrapper {
 		if ( null !== $runner ) {
 			$tree_output = $runner($repo_path, $commit);
 		} else {
-			$tree = GitRunner::run($repo_path, $tree_command, 30);
+			$tree = GitRunner::run($repo_path, $tree_command, self::target_tree_timeout_seconds($repo_path));
 			if ( $tree instanceof \WP_Error ) {
 				return $tree;
 			}
@@ -337,6 +338,16 @@ final class WorktreeBootstrapper {
 				? 'tracked target entries are measured from Git metadata; blobless partial clones reserve a conservative 64 KiB per tracked entry because exact blob sizes are unavailable; dependency installs use conservative allowances'
 				: 'tracked target entries and bytes are measured from Git; dependency installs use conservative allowances',
 		);
+	}
+
+	/** Resolve the bounded target-tree inspection budget for capacity admission. */
+	public static function target_tree_timeout_seconds( string $repo_path ): int {
+		$timeout = self::DEFAULT_TARGET_TREE_TIMEOUT_SECONDS;
+		if ( function_exists('apply_filters') ) {
+			$timeout = (int) apply_filters('datamachine_code_worktree_target_tree_timeout_seconds', $timeout, $repo_path);
+		}
+
+		return max(1, $timeout);
 	}
 
 	/** Whether Git config declares a promisor remote with a blob:none filter. */

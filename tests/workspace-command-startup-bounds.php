@@ -148,6 +148,7 @@ namespace {
 	$started        = microtime(true);
 	$command_class  = WP_CLI::$commands['datamachine-code workspace'];
 	$command        = new $command_class();
+	startup_bounds_assert(1 === \DataMachineCode\Workspace\WorkspaceTargetInspector::timeout_seconds('target'), 'Exact-target lookup must honor its bounded timeout policy.');
 	$command->show(array( 'target' ), array());
 	$elapsed        = microtime(true) - $started;
 	startup_bounds_assert(in_array('Path:     ' . $workspace . '/target', WP_CLI::$output, true), 'Real workspace show dispatch returned the wrong path.');
