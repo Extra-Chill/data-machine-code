@@ -29,6 +29,7 @@ class WorktreeInventoryRepository {
 
 
 	public const TABLE = 'datamachine_code_worktrees';
+	public const SCHEMA_VERSION = '2';
 
 	private ?\WP_Error $last_error = null;
 
@@ -95,7 +96,7 @@ class WorktreeInventoryRepository {
 		}
 
 		if ( function_exists('update_option') ) {
-			update_option('datamachine_code_worktrees_schema_version', '1');
+			update_option('datamachine_code_worktrees_schema_version', self::SCHEMA_VERSION);
 		}
 	}
 
@@ -122,7 +123,11 @@ class WorktreeInventoryRepository {
 			return false;
 		}
 
-		$data = $this->normalize_row($row);
+		// Omitted nullable columns retain their DEFAULT NULL semantics and avoid SQLite REPLACE translation failures.
+		$data = array_filter(
+			$this->normalize_row($row),
+			static fn( mixed $value ): bool => null !== $value
+		);
 		if ( '' === $data['handle'] ) {
 			return false;
 		}
