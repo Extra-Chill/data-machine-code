@@ -187,6 +187,9 @@ artifact_cleanup_plan_contract_assert(2 === ( $blocker_accounting['known_count']
 artifact_cleanup_plan_contract_assert(1 === ( $blocker_accounting['known_zero_count'] ?? null ), 'blocker summary should count true zero separately');
 artifact_cleanup_plan_contract_assert(1 === ( $blocker_accounting['skipped_count'] ?? null ), 'blocker summary should count skipped size probes');
 artifact_cleanup_plan_contract_assert(1 === ( $blocker_accounting['unknown_count'] ?? null ), 'blocker summary should count unknown size rows');
+artifact_cleanup_plan_contract_assert(0 === ( $blocked_plan['summary']['total_rows'] ?? null ), 'zero-row plans must report no actionable cleanup rows');
+artifact_cleanup_plan_contract_assert(0 === ( $blocked_plan['summary']['actionable_reclaim_bytes'] ?? null ), 'zero-row plans must report zero actionable reclaim bytes');
+artifact_cleanup_plan_contract_assert(2048 === ( $blocked_plan['summary']['gross_candidate_bytes'] ?? null ), 'zero-row plans must retain gross known bytes behind protected rows');
 artifact_cleanup_plan_contract_assert(
 	'bounded_size_aware_review' === ( $blocked_plan['summary']['recommended_commands'][0]['label'] ?? null ),
 	'cleanup plan should suggest a bounded size-aware review command before exhaustive audit'

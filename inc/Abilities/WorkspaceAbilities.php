@@ -2196,6 +2196,28 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-capacity-recovery',
+				array(
+					'label'               => 'Recover Worktree Capacity Evidence',
+					'description'         => 'Boundedly reconcile lifecycle metadata, freeze a fresh cleanup plan, and return only its narrowest reviewed cleanup approval. This operation never removes worktrees.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'limit'        => array( 'type' => 'integer' ),
+							'offset'       => array( 'type' => 'integer' ),
+							'replan_offset' => array( 'type' => 'integer' ),
+							'until_budget' => array( 'type' => 'string' ),
+						),
+					),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'worktreeCapacityRecovery' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
 				'datamachine-code/workspace-worktree-active-no-signal-report',
 				array(
 					'label'               => 'Report Active Worktrees Without Cleanup Signal',
@@ -4257,8 +4279,10 @@ class WorkspaceAbilities {
 			'dry_run' => ! empty($input['dry_run']),
 			'force'   => ! empty($input['force']),
 		);
-		if ( isset($input['limit']) ) {
-			$opts['limit'] = (int) $input['limit'];
+		foreach ( array( 'limit', 'offset' ) as $field ) {
+			if ( isset($input[ $field ]) ) {
+				$opts[ $field ] = (int) $input[ $field ];
+			}
 		}
 		if ( isset($input['after_handle']) ) {
 			$opts['after_handle'] = (string) $input['after_handle'];
@@ -4559,6 +4583,23 @@ class WorkspaceAbilities {
 		}
 
 		return $workspace->worktree_reconcile_metadata($opts);
+	}
+
+	/** Run bounded metadata reconciliation followed by a fresh reviewed cleanup plan. */
+	public static function worktreeCapacityRecovery( array $input ): array|\WP_Error {
+		$opts = array();
+		foreach ( array( 'until_budget' ) as $field ) {
+			if ( isset($input[ $field ]) && '' !== trim( (string) $input[ $field ]) ) {
+				$opts[ $field ] = trim( (string) $input[ $field ]);
+			}
+		}
+		foreach ( array( 'limit', 'offset', 'replan_offset' ) as $field ) {
+			if ( isset($input[ $field ]) ) {
+				$opts[ $field ] = (int) $input[ $field ];
+			}
+		}
+
+		return ( new Workspace() )->worktree_capacity_recovery($opts);
 	}
 
 	/**

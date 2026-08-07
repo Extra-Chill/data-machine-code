@@ -110,5 +110,40 @@ namespace DataMachineCode\Workspace {
 	cleanup_until_empty_assert_same(false, $result['success'] ?? null, 'Mixed unexpected skips should preserve no-progress failure semantics.');
 	cleanup_until_empty_assert_same('no_progress', $result['state'] ?? null, 'Mixed unexpected skips should remain no_progress.');
 
+	$later_page_candidate = cleanup_until_empty_plan();
+	$later_page_candidate['run_id'] = 'cleanup-run-later-page';
+	$later_page_candidate['summary'] = array( 'gross_candidate_bytes' => 64 );
+	$terminal_zero_page = array(
+		'run_id'       => 'cleanup-run-terminal-zero',
+		'rows'         => array( 'artifact_cleanup' => array() ),
+		'summary'      => array( 'gross_candidate_bytes' => 0, 'actionable_reclaim_bytes' => 0, 'total_rows' => 0 ),
+		'continuation' => array( 'next_offset' => null ),
+	);
+	$service = new FakeUntilEmptyCleanupRunService(
+		array(
+			array(
+				'run_id'       => 'cleanup-run-empty-first-page',
+				'rows'         => array( 'artifact_cleanup' => array() ),
+				'summary'      => array( 'gross_candidate_bytes' => 32 ),
+				'continuation' => array( 'next_offset' => 25 ),
+			),
+			$later_page_candidate,
+			$terminal_zero_page,
+		),
+		array(
+			array(
+				'status'                 => 'completed',
+				'applied'                => 1,
+				'skipped'                => 0,
+				'summary'                => array( 'bytes_reclaimed' => 64 ),
+				'remaining_work_summary' => array(),
+			),
+		)
+	);
+	$result = $service->until_empty(array( 'mode' => 'artifacts', 'limit' => 25 ));
+	cleanup_until_empty_assert_same(1, $result['applied'] ?? null, 'Later-page artifact candidates must be applied before a zero-row conclusion.');
+	cleanup_until_empty_assert_same(array( 0, 25, 0 ), array_column($service->plan_options, 'offset'), 'Artifact cleanup must exhaust continuation pages before declaring zero actionable rows.');
+	cleanup_until_empty_assert_same(96, $result['final_plan_summary']['gross_candidate_bytes'] ?? null, 'Terminal zero-row evidence must retain gross bytes observed on every bounded page.');
+
 	echo "cleanup until-empty blocked-only test passed.\n";
 }

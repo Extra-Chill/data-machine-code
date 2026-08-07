@@ -366,14 +366,17 @@ final class WorktreeDiskBudget {
 	 * @return array<int,array<string,mixed>>
 	 */
 	private static function cleanup_recommendations( ?int $free_bytes, int $effective_refuse_bytes ): array {
-		$target_reclaim = null === $free_bytes ? null : max(0, $effective_refuse_bytes - $free_bytes + 1);
-		$target_human   = null === $target_reclaim ? 'enough space to clear the refusal threshold' : self::format_bytes($target_reclaim);
+		$target_recovery = null === $free_bytes ? null : max(0, $effective_refuse_bytes - $free_bytes + 1);
+		$target_human    = null === $target_recovery ? 'enough space to clear the refusal threshold' : self::format_bytes($target_recovery);
 
 		return array(
 			array(
 				'priority'                => 1,
 				'action'                  => 'create a DB-backed plan for the largest reconstructable artifacts',
-				'expected_reclaim_bytes'  => $target_reclaim,
+				'target_recovery_bytes'  => $target_recovery,
+				'target_recovery'        => $target_human,
+				'target_recovery_inodes' => null,
+				'expected_reclaim_bytes'  => $target_recovery,
 				'expected_reclaim'        => $target_human,
 				'expected_reclaim_inodes' => null,
 				'command'                 => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
@@ -384,7 +387,10 @@ final class WorktreeDiskBudget {
 			array(
 				'priority'                => 2,
 				'action'                  => 'review bounded cleanup-eligible worktrees; apply revalidates before removal',
-				'expected_reclaim_bytes'  => $target_reclaim,
+				'target_recovery_bytes'  => $target_recovery,
+				'target_recovery'        => $target_human,
+				'target_recovery_inodes' => null,
+				'expected_reclaim_bytes'  => $target_recovery,
 				'expected_reclaim'        => $target_human,
 				'expected_reclaim_inodes' => null,
 				'command'                 => 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25',
@@ -395,7 +401,10 @@ final class WorktreeDiskBudget {
 			array(
 				'priority'                => 3,
 				'action'                  => 'generate combined emergency cleanup report',
-				'expected_reclaim_bytes'  => $target_reclaim,
+				'target_recovery_bytes'  => $target_recovery,
+				'target_recovery'        => $target_human,
+				'target_recovery_inodes' => null,
+				'expected_reclaim_bytes'  => $target_recovery,
 				'expected_reclaim'        => $target_human,
 				'expected_reclaim_inodes' => null,
 				'command'                 => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
@@ -485,6 +494,11 @@ final class WorktreeDiskBudget {
 		}
 
 		return $summary;
+	}
+
+	/** Format byte evidence for operator-facing capacity remediation. */
+	public static function format_bytes_for_operator( int|float $bytes ): string {
+		return self::format_bytes($bytes);
 	}
 
 	/**

@@ -388,6 +388,8 @@ trait WorkspaceCleanupPlan {
 		unset($reasons);
 		$category_totals = $this->cleanup_plan_category_totals($rows);
 		$category_total  = array_sum(array_map('intval', $category_totals));
+		$blockers        = $this->cleanup_plan_blockers($artifact_plan, $worktree_plan);
+		$blocked_bytes   = array_sum(array_map(fn( $bucket ) => max(0, (int) ( is_array($bucket) ? ( $bucket['size_bytes'] ?? 0 ) : 0 )), $blockers));
 
 		return array(
 			'apply_command'           => $this->cleanup_plan_apply_command($inputs),
@@ -396,11 +398,14 @@ trait WorkspaceCleanupPlan {
 			'byte_totals'             => $byte_totals,
 			'total_size_bytes'        => $category_total > 0 ? $category_total : $total_bytes,
 			'total_reclaimable_bytes' => $total_bytes,
+			// Gross bytes include protected rows; only actionable bytes can be promised by an apply plan.
+			'gross_candidate_bytes'    => $total_bytes + $blocked_bytes,
+			'actionable_reclaim_bytes' => $total_bytes,
 			'category_totals'         => $category_totals,
 			'top_reclaimable'         => $this->cleanup_plan_top_reclaimable_paths($rows, (int) ( $inputs['top_n'] ?? 10 )),
 			'blocked_by_type'         => $blocked_counts,
 			'blocked_by_reason'       => $blocked_reasons,
-			'blockers'                => $this->cleanup_plan_blockers($artifact_plan, $worktree_plan),
+			'blockers'                => $blockers,
 			'recommended_commands'    => $this->cleanup_plan_recommended_commands($inputs),
 		);
 	}

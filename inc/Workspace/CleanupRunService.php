@@ -405,33 +405,75 @@ class CleanupRunService {
 		$total_bytes    = 0;
 		$total_applied  = 0;
 		$total_skipped  = 0;
+		$gross_candidate_bytes = 0;
 
 		for ( $pass = 1; $pass <= $max_passes; ++$pass ) {
 			if ( $budget_seconds > 0 && microtime(true) - $started >= $budget_seconds ) {
 				return $this->until_empty_result('budget_exhausted', $passes, $total_bytes, $total_applied, $total_skipped, array( 'budget_seconds' => $budget_seconds ));
 			}
 
-			$plan = $this->plan(
-				array(
-					'mode'                          => 'artifacts',
-					'include_artifacts'             => true,
-					'include_worktrees'             => false,
-					'include_resolvers'             => false,
-					'force_artifact_cleanup'        => ! empty($opts['force']),
-					'allow_active_artifact_cleanup' => ! empty($opts['allow_active_artifact_cleanup']),
-					'limit'                         => $limit,
-					'worktree_older_than'           => isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '',
-				)
-			);
-			if ( $plan instanceof \WP_Error ) {
-				return $plan;
-			}
+			$offset        = 0;
+			$scanned_pages = array();
+			do {
+				$scanned_pages[ $offset ] = true;
+				$plan = $this->plan(
+					array(
+						'mode'                          => 'artifacts',
+						'include_artifacts'             => true,
+						'include_worktrees'             => false,
+						'include_resolvers'             => false,
+						'force_artifact_cleanup'        => ! empty($opts['force']),
+						'allow_active_artifact_cleanup' => ! empty($opts['allow_active_artifact_cleanup']),
+						'limit'                         => $limit,
+						'offset'                        => $offset,
+						'worktree_older_than'           => isset($opts['older_than']) ? trim( (string) $opts['older_than']) : '',
+					)
+				);
+				if ( $plan instanceof \WP_Error ) {
+					return $plan;
+				}
+				$gross_candidate_bytes += max(0, (int) ( $plan['summary']['gross_candidate_bytes'] ?? 0 ));
 
-			$rows        = (array) ( $plan['rows']['artifact_cleanup'] ?? array() );
-			$fingerprint = $this->cleanup_rows_fingerprint($rows);
-			if ( array() === $rows ) {
-				return $this->until_empty_result('completed', $passes, $total_bytes, $total_applied, $total_skipped, array( 'final_run_id' => $plan['run_id'] ?? null ));
-			}
+				$rows        = (array) ( $plan['rows']['artifact_cleanup'] ?? array() );
+				$fingerprint = $this->cleanup_rows_fingerprint($rows);
+				if ( array() !== $rows ) {
+					break;
+				}
+
+				$next_offset = $plan['continuation']['next_offset'] ?? null;
+				if ( null !== $next_offset ) {
+					$offset = max(0, (int) $next_offset);
+					if ( isset($scanned_pages[ $offset ]) ) {
+						return $this->until_empty_result(
+							'pagination_incomplete',
+							$passes,
+							$total_bytes,
+							$total_applied,
+							$total_skipped,
+							array(
+								'final_run_id'       => $plan['run_id'] ?? null,
+								'final_plan_summary' => (array) ( $plan['summary'] ?? array() ),
+								'continuation'       => $plan['continuation'] ?? array(),
+							)
+						);
+					}
+					continue;
+				}
+
+				$final_summary                          = (array) ( $plan['summary'] ?? array() );
+				$final_summary['gross_candidate_bytes'] = $gross_candidate_bytes;
+				return $this->until_empty_result(
+					'completed',
+					$passes,
+					$total_bytes,
+					$total_applied,
+					$total_skipped,
+					array(
+						'final_run_id'       => $plan['run_id'] ?? null,
+						'final_plan_summary' => $final_summary,
+					)
+				);
+			} while ( true );
 			if ( isset($seen[ $fingerprint ]) ) {
 				return $this->until_empty_result(
 					'repeated_candidates',

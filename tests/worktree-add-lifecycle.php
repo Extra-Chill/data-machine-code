@@ -334,7 +334,12 @@ try {
 	assert_true(isset($disk_budget['free_bytes'], $disk_budget['effective_refuse_bytes']), 'disk pressure refusal must include exact free and required bytes');
 	assert_true(true === ( $reclaim['attempted'] ?? false ), 'capacity refusal did not attempt bounded safe artifact reclaim');
 	assert_true('refused_after_reclaim' === ( $reclaim['final_decision'] ?? '' ), 'capacity refusal did not report the final reclaim decision');
-	assert_true(str_contains($refused->get_error_message(), 'studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25'), 'disk pressure refusal must include the next cleanup command');
+	assert_true('no_actionable_rows' === ( $reclaim['actionability_status'] ?? '' ), 'zero-row artifact recovery must expose its non-actionable state');
+	assert_true(0 === ( $reclaim['actionable_reclaim_bytes'] ?? null ), 'zero-row artifact recovery must expose zero actionable bytes');
+	assert_true(array_key_exists('gross_candidate_bytes', $reclaim), 'zero-row artifact recovery must retain gross candidate bytes separately from actionable reclaim');
+	assert_true(str_contains($refused->get_error_message(), 'Automatic safe artifact recovery found 0 actionable rows (0 B)'), 'zero-row recovery must not advertise a cleanup command as reclaimable');
+	assert_true(str_contains($refused->get_error_message(), 'retry only this request with --force'), 'zero-row recovery must recommend the bounded worktree exception instead of promising reclaim');
+	assert_true(str_contains($refused->get_error_message(), 'workspace worktree capacity-recovery --limit=25 --until-budget=30s --format=json'), 'zero-row recovery must expose the bounded reconcile-and-replan path.');
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-disk-refused'), 'disk pressure refusal left a worktree directory behind');
 
 	$ability_default = WorkspaceAbilities::worktreeAdd(
