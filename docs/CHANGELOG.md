@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.56.7] - 2026-08-07
+
+### Fixed
+- restore inventory release lint
+- migrate inventory lifecycle intent
+
 ## [0.56.6] - 2026-08-07
 
 ### Changed
