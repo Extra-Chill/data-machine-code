@@ -4167,7 +4167,7 @@ class WorkspaceCommand extends BaseCommand {
 		switch ( $operation ) {
 			case 'add':
 				if ( empty($args[1]) || empty($args[2]) ) {
-					WP_CLI::error('Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-ref=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--allow-unverified-freshness] [--rebase-base] [--force] [--task-url=<url>|--task-ref=<ref>] [--require-task-tracker]');
+					WP_CLI::error('Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-ref=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--allow-unverified-freshness] [--rebase-base] [--force] [--reuse-policy=reuse_compatible|isolated|recycle_terminal] [--task-url=<url>|--task-ref=<ref>] [--require-task-tracker]');
 					return;
 				}
 				$input['repo']    = $args[1];
@@ -4205,6 +4205,9 @@ class WorkspaceCommand extends BaseCommand {
 				$input['rebase_base'] = ! empty($assoc_args['rebase-base']);
 				// --force is an explicit disk-budget override for add.
 				$input['force'] = ! empty($assoc_args['force']);
+				if ( isset($assoc_args['reuse-policy']) ) {
+					$input['reuse_policy'] = (string) $assoc_args['reuse-policy'];
+				}
 				// CLI is the explicit operator-local path; strict tracking is opt-in.
 				$input['require_task_tracker'] = ! empty($assoc_args['require-task-tracker']);
 				if ( isset($assoc_args['task-url']) && '' !== trim( (string) $assoc_args['task-url']) ) {

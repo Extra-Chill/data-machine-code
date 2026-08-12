@@ -59,13 +59,21 @@ namespace {
 				'repo'                 => 'example',
 				'branch'               => 'feature/tracked',
 				'require_task_tracker' => false,
+				'reuse_policy'         => 'isolated',
 			)
 		);
 
 		worktree_add_tool_tracker_assert(true === ( $worktree_add_tool_tracker_ability->input['require_task_tracker'] ?? null ), 'agent tool allowed tracker enforcement to be disabled');
+		worktree_add_tool_tracker_assert('isolated' === ( $worktree_add_tool_tracker_ability->input['reuse_policy'] ?? null ), 'agent tool did not forward reuse policy to the worktree ability');
 		$definition = $tool->getWorktreeAddDefinition();
 		$properties = (array) ( $definition['parameters']['properties'] ?? array() );
 		worktree_add_tool_tracker_assert(! array_key_exists('require_task_tracker', $properties), 'agent tool schema exposes a tracker-enforcement override');
+		worktree_add_tool_tracker_assert(array( 'reuse_compatible', 'isolated', 'recycle_terminal' ) === ( $properties['reuse_policy']['enum'] ?? null ), 'agent tool schema did not expose the supported reuse policies');
+		$ability_source = file_get_contents(dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php');
+		worktree_add_tool_tracker_assert(false !== $ability_source && str_contains($ability_source, "'reuse_policy'               => array("), 'worktree ability schema did not expose reuse_policy');
+		worktree_add_tool_tracker_assert(false !== $ability_source && str_contains($ability_source, "'reuse_candidates'"), 'worktree ability result schema did not expose optional reuse candidates');
+		$cli_source = file_get_contents(dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php');
+		worktree_add_tool_tracker_assert(false !== $cli_source && str_contains($cli_source, "'reuse-policy'"), 'worktree CLI did not map --reuse-policy to ability input');
 		fwrite(STDOUT, "worktree-add-tool-tracker-contract ok\n");
 	} catch (\Throwable $e) {
 		fwrite(STDERR, $e->getMessage() . "\n");

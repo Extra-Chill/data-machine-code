@@ -1440,6 +1440,11 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Require a valid task URL or task reference before creating the worktree. Defaults true; trusted operator-local callers may explicitly set false.',
 							),
+							'reuse_policy'               => array(
+								'type'        => 'string',
+								'enum'        => array( 'reuse_compatible', 'isolated', 'recycle_terminal' ),
+								'description' => 'Existing-handle behavior: reuse_compatible (default), isolated, or recycle_terminal. Recycle is limited to a clean, non-live terminal handle whose pushed HEAD is contained in its requested base.',
+							),
 						),
 						'required'   => array( 'repo', 'branch' ),
 					),
@@ -1452,6 +1457,15 @@ class WorkspaceAbilities {
 							'branch'                    => array( 'type' => 'string' ),
 							'slug'                      => array( 'type' => 'string' ),
 							'created_branch'            => array( 'type' => 'boolean' ),
+							'reused'                    => array( 'type' => 'boolean' ),
+							'reuse'                     => array( 'type' => 'object' ),
+							'recycled'                  => array( 'type' => 'boolean' ),
+							'recycle'                   => array( 'type' => 'object' ),
+							'reuse_candidates'          => array(
+								'type'        => 'array',
+								'items'       => array( 'type' => 'object' ),
+								'description' => 'Deterministically ordered same-task local worktree summaries observed before a new handle was allocated. Informational only; no candidate is adopted.',
+							),
 							'message'                   => array( 'type' => 'string' ),
 							'context_injected'          => array( 'type' => 'boolean' ),
 							'context_files'             => array(
@@ -4086,6 +4100,7 @@ class WorkspaceAbilities {
 		$require_task_tracker = array_key_exists('require_task_tracker', $input) ? (bool) $input['require_task_tracker'] : true;
 		$task                 = array();
 		$intent               = array();
+		$reuse_policy         = isset($input['reuse_policy']) ? (string) $input['reuse_policy'] : 'reuse_compatible';
 		if ( isset($input['task_url']) && '' !== trim( (string) $input['task_url']) ) {
 			$task['task_url'] = (string) $input['task_url'];
 		}
@@ -4116,7 +4131,8 @@ class WorkspaceAbilities {
 				$task,
 				$allow_unverified_freshness,
 				$require_task_tracker,
-				$intent
+				$intent,
+				$reuse_policy
 			);
 		}
 
@@ -4145,7 +4161,8 @@ class WorkspaceAbilities {
 			$task,
 			$allow_unverified_freshness,
 			$require_task_tracker,
-			$intent
+			$intent,
+			$reuse_policy
 		);
 	}
 

@@ -71,9 +71,10 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  array       $task           Optional task metadata recorded on the worktree.
 	 * @param  bool        $allow_unverified_freshness Bypass fetch-failure freshness verification (default false).
 	 * @param  bool        $require_task_tracker Reject creation without task metadata (default false).
+	 * @param  string      $reuse_policy Existing-handle policy: reuse_compatible or isolated.
 	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, fetch_attempts?: int, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
-	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array() ): array|\WP_Error {
+	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible' ): array|\WP_Error {
 		$visible = $this->require_workspace_visible();
 		if ( null !== $visible ) {
 			return $visible;
@@ -94,6 +95,10 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		$task = WorktreeContextInjector::resolve_task_metadata($task) ?? array();
+		$reuse_policy = strtolower(trim($reuse_policy));
+		if ( ! in_array($reuse_policy, array( 'reuse_compatible', 'isolated', 'recycle_terminal' ), true) ) {
+			return new \WP_Error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: reuse_compatible, isolated, recycle_terminal.', array( 'status' => 400 ));
+		}
 		if ( array_key_exists('cleanup_policy', $intent) && null === WorktreeContextInjector::normalize_cleanup_policy($intent['cleanup_policy']) ) {
 			return new \WP_Error('invalid_cleanup_policy', 'cleanup_policy must be one of: ' . implode(', ', WorktreeContextInjector::VALID_CLEANUP_POLICIES) . '.', array( 'status' => 400 ));
 		}
@@ -120,7 +125,10 @@ trait WorkspaceWorktreeLifecycle {
 		$wt_path   = $this->workspace_path . '/' . $wt_handle;
 
 		if ( is_dir($wt_path) ) {
-			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent);
+			if ( 'recycle_terminal' === $reuse_policy ) {
+				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->recycle_terminal_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path));
+			}
+			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy);
 		}
 
 		return WorkspaceMutationLock::with_repo(
@@ -144,7 +152,8 @@ trait WorkspaceWorktreeLifecycle {
 					$slug,
 					$wt_handle,
 					$wt_path,
-					$primary_path
+					$primary_path,
+					$reuse_policy
 				)
 			),
 			self::worktree_capacity_wait_timeout_seconds($bootstrap)
@@ -198,12 +207,15 @@ trait WorkspaceWorktreeLifecycle {
 		string $slug,
 		string $wt_handle,
 		string $wt_path,
-		string $primary_path
+		string $primary_path,
+		string $reuse_policy = 'reuse_compatible'
 	): array|\WP_Error {
 		$operation_deadline = microtime(true) + self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		if ( is_dir($wt_path) ) {
-			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent);
+			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy);
 		}
+		// Snapshot candidates only after this repository's admission lock is held.
+		$reuse_candidates = $this->worktree_reuse_candidates($repo, $task);
 
 		$fetch                 = WorktreeStalenessProbe::fetch($primary_path);
 		$fetch_failed          = ! $fetch['ok'];
@@ -351,6 +363,9 @@ trait WorkspaceWorktreeLifecycle {
 
 		$response['disk_budget']      = $disk_budget;
 		$response['capacity_reclaim'] = $capacity_reclaim['evidence'];
+		if ( array() !== $reuse_candidates ) {
+			$response['reuse_candidates'] = $reuse_candidates;
+		}
 		if ( ! empty($response['rebase_succeeded']) ) {
 			$post_rebase_demand = WorktreeBootstrapper::demand_plan_for_target($wt_path, 'HEAD', $bootstrap);
 			if ( $post_rebase_demand instanceof \WP_Error ) {
@@ -777,7 +792,7 @@ trait WorkspaceWorktreeLifecycle {
 	 *
 	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
-	private function reuse_existing_worktree( string $handle, string $branch, ?string $from, bool $inject_context, bool $bootstrap, array $task, array $intent = array() ): array|\WP_Error {
+	private function reuse_existing_worktree( string $handle, string $branch, ?string $from, bool $inject_context, bool $bootstrap, array $task, array $intent = array(), string $reuse_policy = 'reuse_compatible' ): array|\WP_Error {
 		$inspection = $this->worktree_get($handle, array(
 			'include_status' => true,
 			'include_disk'   => false,
@@ -799,6 +814,9 @@ trait WorkspaceWorktreeLifecycle {
 			'task'     => $existing['task'] ?? null,
 			'metadata' => $existing['metadata'] ?? null,
 		);
+		if ( 'isolated' === $reuse_policy ) {
+			return $this->worktree_reuse_refused($handle, 'isolated_requested', $evidence + array( 'reuse_policy' => $reuse_policy ));
+		}
 		if ( ( $existing['branch'] ?? null ) !== $branch ) {
 			return $this->worktree_reuse_refused($handle, 'branch_mismatch', $evidence + array( 'requested_branch' => $branch ));
 		}
@@ -861,6 +879,118 @@ trait WorkspaceWorktreeLifecycle {
 			) + $evidence,
 			'metadata'       => $metadata,
 			'message'        => sprintf('Reused clean compatible worktree "%s" at %s.', $handle, $existing['path']),
+		);
+	}
+
+	/**
+	 * Report same-task managed worktrees before creating a new handle. Candidates
+	 * are informational only: no cross-handle adoption or mutation occurs here.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function worktree_reuse_candidates( string $repo, array $task ): array {
+		$task_identity = $this->worktree_reuse_task_identity($task);
+		if ( '' === $task_identity ) {
+			return array();
+		}
+		$listing = $this->worktree_list($repo, null, array( 'include_status' => true, 'include_disk' => false ));
+		if ( is_wp_error($listing) ) {
+			return array();
+		}
+		$candidates = array();
+		foreach ( (array) ( $listing['worktrees'] ?? array() ) as $row ) {
+			if ( ! empty($row['is_primary']) || $task_identity !== $this->worktree_reuse_task_identity((array) ($row['task'] ?? array())) ) {
+				continue;
+			}
+			$candidates[] = array(
+				'handle'   => $row['handle'] ?? null,
+				'path'     => $row['path'] ?? null,
+				'branch'   => $row['branch'] ?? null,
+				'head'     => $row['head'] ?? null,
+				'dirty'    => $row['dirty'] ?? null,
+				'unpushed' => $row['unpushed'] ?? null,
+				'liveness' => $row['liveness'] ?? null,
+				'task'     => $row['task'] ?? null,
+			);
+		}
+		usort($candidates, static fn( array $left, array $right ): int => strcmp((string) $left['handle'], (string) $right['handle']));
+		return $candidates;
+	}
+
+	/** Reset an exact terminal handle only after proving its pushed HEAD is in the requested base. */
+	private function recycle_terminal_worktree( string $handle, string $branch, ?string $from, bool $inject_context, bool $bootstrap, array $task, array $intent, string $primary_path ): array|\WP_Error {
+		$inspection = $this->worktree_get($handle, array( 'include_status' => true, 'include_disk' => false ));
+		if ( is_wp_error($inspection) || empty($inspection['worktrees'][0]) ) {
+			return $this->worktree_reuse_refused($handle, 'inspection_failed', array( 'error_code' => is_wp_error($inspection) ? $inspection->get_error_code() : 'worktree_not_found' ));
+		}
+		$existing = $inspection['worktrees'][0];
+		$metadata = is_array($existing['metadata'] ?? null) ? $existing['metadata'] : array();
+		$evidence = array( 'handle' => $handle, 'branch' => $existing['branch'] ?? null, 'head' => $existing['head'] ?? null, 'dirty' => $existing['dirty'] ?? null, 'unpushed' => $existing['unpushed'] ?? null, 'liveness' => $existing['liveness'] ?? null, 'task' => $existing['task'] ?? null, 'metadata' => $metadata );
+		if ( ( $existing['branch'] ?? null ) !== $branch ) {
+			return $this->worktree_reuse_refused($handle, 'branch_mismatch', $evidence + array( 'requested_branch' => $branch ));
+		}
+		if ( ! WorktreeContextInjector::has_cleanup_signal($metadata) ) {
+			return $this->worktree_reuse_refused($handle, 'not_terminal', $evidence);
+		}
+		foreach ( array( 'dirty' => 'dirty_worktree', 'unpushed' => 'unpushed_commits' ) as $field => $reason ) {
+			if ( (int) ( $existing[ $field ] ?? 0 ) > 0 ) {
+				return $this->worktree_reuse_refused($handle, $reason, $evidence);
+			}
+		}
+		if ( WorktreeContextInjector::LIVENESS_LIVE === ( $existing['liveness'] ?? null ) ) {
+			return $this->worktree_reuse_refused($handle, 'live_worktree', $evidence);
+		}
+		if ( ! in_array($existing['liveness'] ?? null, array( WorktreeContextInjector::LIVENESS_STALE, WorktreeContextInjector::LIVENESS_STOPPED ), true) ) {
+			return $this->worktree_reuse_refused($handle, 'liveness_unverified', $evidence);
+		}
+		$contract = is_array($metadata['reuse_contract'] ?? null) ? $metadata['reuse_contract'] : array();
+		$base = null !== $from && '' !== trim($from) ? trim($from) : ( $contract['base_ref'] ?? null );
+		if ( ! is_string($base) || '' === $base || 'existing_local_branch' === $base || $base !== ( $contract['base_ref'] ?? null ) ) {
+			return $this->worktree_reuse_refused($handle, 'base_mismatch', $evidence + array( 'requested_base_ref' => $base, 'stored_base_ref' => $contract['base_ref'] ?? null ));
+		}
+		if ( $inject_context !== (bool) ( $contract['inject_context'] ?? null ) || $bootstrap !== (bool) ( $contract['bootstrap'] ?? null ) ) {
+			return $this->worktree_reuse_refused($handle, 'runtime_incompatible', $evidence);
+		}
+		$target = $this->run_git($primary_path, 'rev-parse --verify ' . escapeshellarg($base . '^{commit}'), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($target) ) {
+			return $this->worktree_reuse_refused($handle, 'base_unresolved', $evidence + array( 'requested_base_ref' => $base ));
+		}
+		$target_head = trim((string) ($target['output'] ?? ''));
+		$contained = $this->run_git((string) $existing['path'], 'merge-base --is-ancestor HEAD ' . escapeshellarg($target_head), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($contained) ) {
+			return $this->worktree_reuse_refused($handle, 'terminal_head_not_in_base', $evidence + array( 'requested_base_ref' => $base, 'requested_base_head' => $target_head ));
+		}
+		$path = (string) $existing['path'];
+		$previous_head = (string) ( $existing['head'] ?? '' );
+		$reset = $this->run_git($path, 'reset --hard ' . escapeshellarg($target_head), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($reset) ) {
+			return $reset;
+		}
+		$lineage = array( 'recycled_at' => gmdate('c'), 'previous_head' => $existing['head'] ?? null, 'new_head' => $target_head, 'previous_branch' => $existing['branch'] ?? null, 'new_branch' => $branch, 'previous_task' => $existing['task'] ?? null, 'new_task' => $task, 'base_ref' => $base );
+		$metadata = array_merge($metadata, array( 'lifecycle_state' => WorktreeContextInjector::STATE_ACTIVE, 'last_seen_at' => gmdate('c'), 'observed_at' => gmdate('c'), 'origin_task' => $task, 'purpose' => $intent['purpose'] ?? null, 'owner_run_ref' => $intent['owner_run_ref'] ?? null, 'cleanup_policy' => $intent['cleanup_policy'] ?? null, 'recycle_lineage' => array_merge((array) ($metadata['recycle_lineage'] ?? array()), array( $lineage )) ));
+		$metadata_preflight = function_exists('apply_filters') ? apply_filters('datamachine_code_worktree_recycle_metadata_preflight', null, $metadata, $handle) : null;
+		if ( $metadata_preflight instanceof \WP_Error ) {
+			return $this->worktree_recycle_rollback_error($handle, $path, $previous_head, $existing['metadata'] ?? array(), 'metadata_persistence', $metadata_preflight);
+		}
+		$stored = WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
+		if ( is_wp_error($stored) ) {
+			return $this->worktree_recycle_rollback_error($handle, $path, $previous_head, $existing['metadata'] ?? array(), 'metadata_persistence', $stored);
+		}
+		return array( 'success' => true, 'handle' => $handle, 'path' => $existing['path'], 'branch' => $branch, 'slug' => $this->slugify_branch($branch), 'created_branch' => false, 'recycled' => true, 'recycle' => array( 'status' => 'accepted', 'reason_code' => 'terminal_exact_handle', 'lineage' => $lineage, 'context' => 'preserved', 'bootstrap' => 'preserved' ), 'metadata' => WorktreeContextInjector::get_metadata($handle), 'message' => sprintf('Recycled terminal worktree "%s" at %s; compatible context and bootstrap assets were preserved.', $handle, $existing['path']) );
+	}
+
+	/** Restore the old checkout and lifecycle record after a post-reset recycle failure. */
+	private function worktree_recycle_rollback_error( string $handle, string $path, string $previous_head, array $previous_metadata, string $phase, \WP_Error $cause ): \WP_Error {
+		$head_rollback = '' !== $previous_head ? $this->run_git($path, 'reset --hard ' . escapeshellarg($previous_head), self::CLEANUP_GIT_PROBE_TIMEOUT) : new \WP_Error('previous_head_missing', 'Previous HEAD was unavailable for rollback.');
+		$metadata_rollback = WorktreeContextInjector::restore_lifecycle_metadata($handle, $previous_metadata);
+		$rollback = array(
+			'head_restored'     => ! is_wp_error($head_rollback),
+			'metadata_restored' => ! is_wp_error($metadata_rollback),
+		);
+		return new \WP_Error(
+			'worktree_recycle_' . $phase . '_failed',
+			sprintf('Terminal recycle %s failed; rollback %s.', str_replace('_', ' ', $phase), in_array(false, $rollback, true) ? 'was incomplete' : 'restored the prior state'),
+			array( 'status' => 409, 'phase' => $phase, 'cause_code' => $cause->get_error_code(), 'cause_data' => $cause->get_error_data(), 'recycle' => array( 'status' => 'failed', 'reason_code' => $phase, 'rollback' => $rollback ) )
 		);
 	}
 

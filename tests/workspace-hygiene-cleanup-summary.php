@@ -10,6 +10,7 @@ if ( ! defined('ABSPATH') ) {
 }
 
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupClassifier.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceHygieneReport.php';
 
 function hygiene_cleanup_summary_assert( bool $condition, string $message ): void {
@@ -34,6 +35,11 @@ $hygiene = new class {
 	public function capacity_evidence( array $before, array $after ): array {
 		$method = new ReflectionMethod($this, 'build_capacity_evidence');
 		return $method->invoke($this, $before, $after);
+	}
+
+	public function worktree_summary( array $worktrees ): array {
+		$method = new ReflectionMethod($this, 'summarize_workspace_worktrees');
+		return $method->invoke($this, $worktrees, null);
 	}
 };
 
@@ -97,5 +103,14 @@ $unknown_inode_evidence = $hygiene->capacity_evidence(
 	array( 'filesystem_free_bytes' => 1600 )
 );
 hygiene_cleanup_summary_assert(null === $unknown_inode_evidence['reclaimed_inodes'], 'cleanup evidence must use null when inode telemetry is unavailable');
+
+$duplicate_summary = $hygiene->worktree_summary(
+	array(
+		array( 'handle' => 'repo@one', 'is_worktree' => true, 'metadata' => array( 'origin_task' => array( 'task_url' => 'https://example.test/issues/1' ) ) ),
+		array( 'handle' => 'repo@two', 'is_worktree' => true, 'metadata' => array( 'origin_task' => array( 'task_url' => 'https://example.test/issues/1' ) ) ),
+		array( 'handle' => 'repo@three', 'is_worktree' => true, 'metadata' => array( 'origin_task' => array( 'task_url' => 'https://example.test/issues/1' ) ) ),
+	)
+);
+hygiene_cleanup_summary_assert(1 === ( $duplicate_summary['duplicate_task_groups'] ?? null ) && 2 === ( $duplicate_summary['preventable_duplicate_allocations'] ?? null ), 'hygiene did not separate preventable duplicate allocations from duplicate groups');
 
 echo "workspace hygiene cleanup summary test passed.\n";
