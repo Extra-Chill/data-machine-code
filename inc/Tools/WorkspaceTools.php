@@ -555,7 +555,7 @@ class WorkspaceTools extends BaseTool
         'require_task_tracker' => true,
         );
 
-        foreach ( array( 'from', 'task_url', 'task_ref', 'purpose', 'owner_run_ref', 'cleanup_policy' ) as $key ) {
+        foreach ( array( 'from', 'task_url', 'task_ref', 'purpose', 'owner_run_ref', 'cleanup_policy', 'reuse_policy' ) as $key ) {
             if (isset($parameters[ $key ]) ) {
                 $input[ $key ] = $parameters[ $key ];
             }
@@ -1419,6 +1419,7 @@ class WorkspaceTools extends BaseTool
             'allow_unverified_freshness' => array( 'type' => 'boolean', 'description' => 'Bypass fetch-failure freshness verification for intentional offline work. Default false.' ),
             'rebase_base'    => array( 'type' => 'boolean', 'description' => 'Rebase the worktree onto the upstream tip after creation. Default false.' ),
             'force'          => array( 'type' => 'boolean', 'description' => 'Bypass disk-budget refusal threshold. Default false.' ),
+            'reuse_policy'   => array( 'type' => 'string', 'enum' => array( 'reuse_compatible', 'isolated', 'recycle_terminal' ), 'description' => 'Existing-handle behavior. reuse_compatible returns only an exact compatible handle; isolated refuses an existing deterministic handle; recycle_terminal resets only a proven-clean terminal handle whose HEAD is contained in the requested base.' ),
             'task_url'       => array( 'type' => 'string', 'description' => 'Optional task or issue URL to record on the worktree.' ),
             'task_ref'       => array( 'type' => 'string', 'description' => 'Optional short task or issue reference to record on the worktree.' ),
             'purpose'        => array( 'type' => 'string', 'description' => 'Optional creator-owned disposable worktree purpose.' ),

@@ -1370,6 +1370,27 @@ class WorktreeContextInjector {
 		return self::upsert_inventory_metadata($handle, $stored_metadata);
 	}
 
+	/** Restore an exact prior lifecycle record after a failed multi-step mutation. */
+	public static function restore_lifecycle_metadata( string $handle, array $metadata ): bool|\WP_Error {
+		if ( ! function_exists('get_option') || ! function_exists('update_option') ) {
+			return self::upsert_inventory_metadata($handle, $metadata);
+		}
+		$updated = SqliteBusyRetry::run(
+			'worktree_lifecycle_metadata_restore',
+			static function () use ( $handle, $metadata ): bool {
+				$all = get_option( self::METADATA_OPTION, array() );
+				$all = is_array($all) ? $all : array();
+				$all[ $handle ] = $metadata;
+				update_option( self::METADATA_OPTION, $all, false );
+				return true;
+			}
+		);
+		if ( is_wp_error($updated) ) {
+			return $updated;
+		}
+		return self::upsert_inventory_metadata($handle, $metadata);
+	}
+
 	/**
 	 * Persist context-injection metadata for a worktree handle.
 	 *

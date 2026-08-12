@@ -859,6 +859,7 @@ trait WorkspaceHygieneReport {
 				WorktreeContextInjector::LIVENESS_UNKNOWN => 0,
 			),
 			'duplicate_task_groups'              => 0,
+			'preventable_duplicate_allocations'  => 0,
 		);
 
 		foreach ( $worktrees as $row ) {
@@ -916,6 +917,7 @@ trait WorkspaceHygieneReport {
 
 		$duplicates                       = WorktreeContextInjector::find_duplicate_task_ownership($worktrees);
 		$summary['duplicate_task_groups'] = count($duplicates);
+		$summary['preventable_duplicate_allocations'] = array_sum(array_map(static fn( array $duplicate ): int => max(0, count((array) ($duplicate['handles'] ?? array())) - 1), $duplicates));
 		$summary['duplicates']            = $duplicates;
 
 		if ( null !== $cleanup ) {
