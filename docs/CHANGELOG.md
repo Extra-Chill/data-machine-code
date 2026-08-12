@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.57.0] - 2026-08-12
+
+### Added
+- complete safe worktree reuse
+
 ## [0.56.7] - 2026-08-07
 
 ### Fixed
