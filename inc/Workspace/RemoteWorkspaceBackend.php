@@ -1414,9 +1414,9 @@ class RemoteWorkspaceBackend {
 	}
 
 	private function repo_from_url( string $url ): string|\WP_Error {
-		$url = trim($url);
-		if ( preg_match('#github\.com[:/]([^/]+)/([^/.]+)(?:\.git)?$#', $url, $matches) ) {
-			return $matches[1] . '/' . $matches[2];
+		$repo = GitHubRemote::slug($url);
+		if ( null !== $repo ) {
+			return $repo;
 		}
 
 		return new \WP_Error('unsupported_remote_workspace_url', 'Remote workspace backend currently supports GitHub repository URLs only.', array( 'status' => 400 ));
