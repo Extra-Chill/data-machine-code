@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.57.1] - 2026-08-13
+
+### Fixed
+- support enterprise remote workspace URLs
+
 ## [0.57.0] - 2026-08-12
 
 ### Added
