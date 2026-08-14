@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.57.2] - 2026-08-14
+
+### Fixed
+- scope worktree operation help
+
 ## [0.57.1] - 2026-08-13
 
 ### Fixed
