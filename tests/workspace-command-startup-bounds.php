@@ -22,11 +22,14 @@ namespace {
 	final class WP_CLI {
 		/** @var array<string,string> */
 		public static array $commands = array();
+		/** @var array<string,array<string,mixed>> */
+		public static array $command_args = array();
 		/** @var list<string> */
 		public static array $output = array();
 
-		public static function add_command( string $name, string $class ): void {
-			self::$commands[ $name ] = $class;
+		public static function add_command( string $name, mixed $command, array $args = array() ): void {
+			self::$commands[ $name ] = $command;
+			self::$command_args[ $name ] = $args;
 		}
 
 		public static function log( string $message ): void { self::$output[] = $message; }
@@ -127,6 +130,13 @@ namespace {
 	);
 
 	startup_bounds_assert(isset(WP_CLI::$commands['datamachine-code workspace']), 'Nested help did not register the workspace command for WP-CLI dispatch.');
+	startup_bounds_assert(isset(WP_CLI::$commands['datamachine-code workspace worktree add']), 'Operation-specific worktree help did not register the add command.');
+	startup_bounds_assert(isset(WP_CLI::$commands['datamachine-code workspace worktree cleanup']), 'Operation-specific worktree help did not register the cleanup command.');
+	foreach ( \DataMachineCode\Cli\Commands\WorkspaceCommand::worktree_command_definitions() as $operation => $definition ) {
+		$name = 'datamachine-code workspace worktree ' . $operation;
+		startup_bounds_assert(isset(WP_CLI::$commands[ $name ]), sprintf('WP-CLI did not register %s.', $operation));
+		startup_bounds_assert($definition === ( WP_CLI::$command_args[ $name ] ?? null ), sprintf('WP-CLI did not receive the %s help contract.', $operation));
+	}
 	startup_bounds_assert(0 === $GLOBALS['dmc_test_get_option_calls'], 'Nested help initialized database-backed discovery.');
 	startup_bounds_assert(0 === $GLOBALS['dmc_test_mutation_calls'], 'Nested help mutated schema or registry state.');
 	foreach ( array(

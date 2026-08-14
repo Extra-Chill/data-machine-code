@@ -2572,6 +2572,14 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Forward force to bounded cleanup removal. Unpushed commits remain protected.',
 							),
+							'discard_unpushed' => array(
+								'type'        => 'boolean',
+								'description' => 'Refused. Abandoned cleanup never discards unpushed commits.',
+							),
+							'repo'         => array(
+								'type'        => 'string',
+								'description' => 'Restrict orchestration and bounded cleanup to one primary repository or exact worktree handle.',
+							),
 							'limit'        => array(
 								'type'        => 'integer',
 								'description' => 'Page/removal limit, clamped to 1..1000. Defaults to 100.',
@@ -2792,6 +2800,10 @@ class WorkspaceAbilities {
 							'include_repaired_metadata' => array(
 								'type'        => 'boolean',
 								'description' => 'Also include repaired metadata rows. Requires explicit opt-in and still runs fresh safety probes before removal.',
+							),
+							'scope'                     => array(
+								'type'        => 'string',
+								'description' => 'Operator scope label preserved from cleanup continuation guidance.',
 							),
 							'source'                    => array(
 								'type'        => 'string',

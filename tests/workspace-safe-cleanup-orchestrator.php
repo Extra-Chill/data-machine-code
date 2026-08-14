@@ -175,6 +175,8 @@ function safe_cleanup_assert( bool $condition, string $label ): void {
 new DataMachineCode\Abilities\WorkspaceAbilities();
 $safe_cleanup_ability = $GLOBALS['safe_cleanup_registered_abilities']['datamachine-code/workspace-cleanup-safe'] ?? null;
 $inventory_prune_ability = $GLOBALS['safe_cleanup_registered_abilities']['datamachine-code/workspace-worktree-inventory-prune-missing'] ?? null;
+$abandoned_cleanup_ability = $GLOBALS['safe_cleanup_registered_abilities']['datamachine-code/workspace-worktree-abandoned-cleanup'] ?? null;
+$bounded_cleanup_ability = $GLOBALS['safe_cleanup_registered_abilities']['datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply'] ?? null;
 safe_cleanup_assert(is_array($safe_cleanup_ability), 'safe cleanup ability is registered');
 safe_cleanup_assert(array( DataMachineCode\Abilities\WorkspaceAbilities::class, 'workspaceCleanupSafe' ) === $safe_cleanup_ability['execute_callback'], 'safe cleanup ability uses canonical callback');
 safe_cleanup_assert(isset($safe_cleanup_ability['input_schema']['properties']['dry_run']), 'safe cleanup ability accepts dry_run');
@@ -185,6 +187,8 @@ safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['
 safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['current_blockers']), 'safe cleanup ability documents final current blockers output');
 safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['run_id']), 'safe cleanup ability documents run_id output');
 safe_cleanup_assert(isset($safe_cleanup_ability['output_schema']['properties']['continuation']), 'safe cleanup ability documents continuation output');
+safe_cleanup_assert(isset($abandoned_cleanup_ability['input_schema']['properties']['discard_unpushed']), 'abandoned cleanup ability documents unpushed discard refusal');
+safe_cleanup_assert(isset($bounded_cleanup_ability['input_schema']['properties']['scope']), 'bounded cleanup ability accepts scoped continuation input');
 safe_cleanup_assert(is_array($inventory_prune_ability), 'inventory prune ability is registered');
 safe_cleanup_assert(isset($inventory_prune_ability['input_schema']['properties']['after_handle']), 'registered inventory ability accepts the keyset cursor');
 safe_cleanup_assert(array( DataMachineCode\Abilities\WorkspaceAbilities::class, 'worktreeInventoryPruneMissing' ) === $inventory_prune_ability['execute_callback'], 'registered inventory ability uses the canonical lifecycle callback');
