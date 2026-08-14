@@ -365,6 +365,16 @@ function datamachine_code_register_cli_commands() {
 
 	\WP_CLI::add_command('datamachine-code github', \DataMachineCode\Cli\Commands\GitHubCommand::class);
 	\WP_CLI::add_command('datamachine-code workspace', \DataMachineCode\Cli\Commands\WorkspaceCommand::class);
+	\WP_CLI::add_command('datamachine-code workspace worktree', \WP_CLI\Dispatcher\CommandNamespace::class);
+	foreach ( \DataMachineCode\Cli\Commands\WorkspaceCommand::worktree_command_definitions() as $operation => $definition ) {
+		\WP_CLI::add_command(
+			'datamachine-code workspace worktree ' . $operation,
+			static function ( array $args, array $assoc_args ) use ( $operation ): void {
+				( new \DataMachineCode\Cli\Commands\WorkspaceCommand() )->__worktree_operation($operation, $args, $assoc_args);
+			},
+			$definition
+		);
+	}
 	\WP_CLI::add_command('datamachine-code code-task', \DataMachineCode\Cli\Commands\CodeTaskCommand::class);
 }
 add_action('plugins_loaded', 'datamachine_code_register_cli_commands', 21);

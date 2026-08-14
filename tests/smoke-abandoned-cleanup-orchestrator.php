@@ -134,7 +134,11 @@ $invalid = $orchestrator->run(array( 'stage' => 'unknown' ));
 abandoned_cleanup_assert(is_wp_error($invalid), 'invalid stage returns WP_Error');
 abandoned_cleanup_assert('invalid_worktree_abandoned_stage' === $invalid->code, 'invalid stage code');
 
-$result = $orchestrator->run(array( 'limit' => 10, 'passes' => 3 ));
+$discard_result = $orchestrator->run(array( 'discard_unpushed' => true ));
+abandoned_cleanup_assert(is_wp_error($discard_result), 'abandoned cleanup refuses unpushed discard');
+abandoned_cleanup_assert('worktree_abandoned_refuses_unpushed_discard' === $discard_result->code, 'abandoned cleanup uses the shared unpushed discard refusal');
+
+$result = $orchestrator->run(array( 'repo' => 'data-machine-code', 'limit' => 10, 'passes' => 3 ));
 abandoned_cleanup_assert(! is_wp_error($result), 'preview result succeeds');
 abandoned_cleanup_assert(false === $result['applied'], 'preview is not applied');
 abandoned_cleanup_assert(1 === $result['executed_passes'], 'preview runs one pass');
@@ -142,6 +146,11 @@ abandoned_cleanup_assert(1 === $result['summary']['would_mark_cleanup_eligible']
 abandoned_cleanup_assert(1 === $result['summary']['would_remove'], 'planned removal is counted');
 abandoned_cleanup_assert(1 === $result['summary']['blocked'], 'blocked rows are counted');
 abandoned_cleanup_assert(! empty($result['next_commands'][0]), 'next apply command is present');
+abandoned_cleanup_assert('data-machine-code' === $abilities['datamachine-code/workspace-worktree-reconcile-metadata']->calls[0]['repo'], 'abandoned orchestration routes repo to reconciliation');
+abandoned_cleanup_assert('data-machine-code' === $abilities['datamachine-code/workspace-worktree-active-no-signal-finalized-apply']->calls[0]['repo'], 'abandoned orchestration routes repo to classification');
+abandoned_cleanup_assert('data-machine-code' === $abilities['datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply']->calls[0]['repo'], 'abandoned orchestration routes repo to bounded cleanup');
+abandoned_cleanup_assert('data-machine-code' === $abilities['datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply']->calls[0]['scope'], 'abandoned orchestration forwards normalized scope to bounded cleanup');
+abandoned_cleanup_assert(str_contains((string) $result['next_commands'][0], '--scope=data-machine-code'), 'abandoned continuation preserves repo scope');
 
 $reconcile_restart = new AbandonedCleanupQueuedAbility(
 	array(
