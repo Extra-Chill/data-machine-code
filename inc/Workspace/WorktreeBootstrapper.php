@@ -21,7 +21,7 @@
  *        pnpm-lock.yaml   → pnpm install --frozen-lockfile
  *        bun.lockb/.lock  → bun install --frozen-lockfile
  *        yarn.lock        → yarn install --immutable
- *        package-lock.json → npm ci
+ *        package-lock.json/npm-shrinkwrap.json → npm ci
  *   3. `composer install --no-interaction --prefer-dist` per dependency root
  *      if `composer.lock` exists
  *
@@ -403,7 +403,7 @@ final class WorktreeBootstrapper {
 		$package_roots   = array();
 		$composer_roots  = array();
 		$submodule_roots = array();
-		$lockfiles       = array( 'pnpm-lock.yaml', 'bun.lockb', 'bun.lock', 'yarn.lock', 'package-lock.json' );
+		$lockfiles       = array( 'pnpm-lock.yaml', 'bun.lockb', 'bun.lock', 'yarn.lock', 'package-lock.json', 'npm-shrinkwrap.json' );
 
 		foreach ( explode("\0", $output) as $record ) {
 			if ( '' === $record || 1 !== preg_match('/^(\d{6})\s+(blob|tree|commit)\s+[0-9a-f]+(?:\s+(-|\d+))?\t(.*)$/sD', $record, $matches) ) {
@@ -423,11 +423,14 @@ final class WorktreeBootstrapper {
 			}
 			$basename = basename($path);
 			if ( in_array($basename, $lockfiles, true) ) {
-				$relative                   = '.' === $dirname ? '.' : $dirname;
-				$package_roots[ $relative ] = array(
-					'relative' => $relative,
-					'manager'  => self::manager_for_lockfile($basename),
-				);
+				$relative = '.' === $dirname ? '.' : $dirname;
+				$manager  = self::manager_for_lockfile($basename);
+				if ( ! isset($package_roots[ $relative ]) || self::package_manager_priority($manager) < self::package_manager_priority($package_roots[ $relative ]['manager']) ) {
+					$package_roots[ $relative ] = array(
+						'relative' => $relative,
+						'manager'  => $manager,
+					);
+				}
 			}
 			if ( 'composer.lock' === $basename ) {
 				$relative                    = '.' === $dirname ? '.' : $dirname;
@@ -456,6 +459,17 @@ final class WorktreeBootstrapper {
 			'bun.lockb', 'bun.lock' => 'bun',
 			'yarn.lock' => 'yarn',
 			default => 'npm',
+		};
+	}
+
+	/** Return the package manager's detection precedence, where lower wins. */
+	private static function package_manager_priority( string $manager ): int {
+		return match ( $manager ) {
+			'pnpm' => 0,
+			'bun'  => 1,
+			'yarn' => 2,
+			'npm'  => 3,
+			default => PHP_INT_MAX,
 		};
 	}
 
@@ -813,7 +827,7 @@ final class WorktreeBootstrapper {
 		if ( is_file($root . '/yarn.lock') ) {
 			return 'yarn';
 		}
-		if ( is_file($root . '/package-lock.json') ) {
+		if ( is_file($root . '/package-lock.json') || is_file($root . '/npm-shrinkwrap.json') ) {
 			return 'npm';
 		}
 		return null;
