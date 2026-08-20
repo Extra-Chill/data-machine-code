@@ -1443,7 +1443,7 @@ class WorkspaceAbilities {
 							'reuse_policy'               => array(
 								'type'        => 'string',
 								'enum'        => array( 'reuse_compatible', 'isolated', 'recycle_terminal' ),
-								'description' => 'Existing-handle behavior: reuse_compatible (default), isolated, or recycle_terminal. Recycle is limited to a clean, non-live terminal handle whose pushed HEAD is contained in its requested base.',
+								'description' => 'Reuse and allocation behavior: reuse_compatible (default) reuses only an exact compatible handle and refuses a new same-repo handle for the same task; isolated requires purpose, owner_run_ref, and cleanup_policy=remove_on_success for parallel same-task work. recycle_terminal is limited to a clean, non-live terminal exact handle whose pushed HEAD is contained in its requested base.',
 							),
 						),
 						'required'   => array( 'repo', 'branch' ),
@@ -1464,7 +1464,7 @@ class WorkspaceAbilities {
 							'reuse_candidates'          => array(
 								'type'        => 'array',
 								'items'       => array( 'type' => 'object' ),
-								'description' => 'Deterministically ordered same-task local worktree summaries observed before a new handle was allocated. Informational only; no candidate is adopted.',
+								'description' => 'Deterministically ordered same-repo task candidates observed before allocation. A new handle requires reuse_policy=isolated when candidates exist; no candidate is adopted.',
 							),
 							'message'                   => array( 'type' => 'string' ),
 							'context_injected'          => array( 'type' => 'boolean' ),
@@ -4154,7 +4154,8 @@ class WorkspaceAbilities {
 				$input['branch'] ?? '',
 				$input['from'] ?? null,
 				$task,
-				$intent
+				$intent,
+				$reuse_policy
 			);
 			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
 				return self::decorate_remote_workspace_result('worktree_add', $result);

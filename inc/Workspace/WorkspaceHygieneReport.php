@@ -917,8 +917,21 @@ trait WorkspaceHygieneReport {
 
 		$duplicates                       = WorktreeContextInjector::find_duplicate_task_ownership($worktrees);
 		$summary['duplicate_task_groups'] = count($duplicates);
-		$summary['preventable_duplicate_allocations'] = array_sum(array_map(static fn( array $duplicate ): int => max(0, count((array) ($duplicate['handles'] ?? array())) - 1), $duplicates));
-		$summary['duplicates']            = $duplicates;
+		$summary['preventable_duplicate_allocations'] = array_sum(array_map(
+			static function ( array $duplicate ): int {
+				$handles_by_repo = array();
+				foreach ( (array) ( $duplicate['handles'] ?? array() ) as $handle ) {
+					$repo = strstr((string) $handle, '@', true);
+					if ( false !== $repo && '' !== $repo ) {
+						$handles_by_repo[ $repo ] = (int) ( $handles_by_repo[ $repo ] ?? 0 ) + 1;
+					}
+				}
+
+				return array_sum(array_map(static fn( int $count ): int => max(0, $count - 1), $handles_by_repo));
+			},
+			$duplicates
+		));
+		$summary['duplicates'] = $duplicates;
 
 		if ( null !== $cleanup ) {
 			$by_reason                     = (array) ( $cleanup['summary']['skipped_by_reason'] ?? array() );

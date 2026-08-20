@@ -107,7 +107,8 @@ class RemoteWorkspaceBackend {
 	 *
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	public function worktree_add( string $repo_name, string $branch, ?string $from = null, array $task = array(), array $intent = array() ): array|\WP_Error {
+	public function worktree_add( string $repo_name, string $branch, ?string $from = null, array $task = array(), array $intent = array(), string $reuse_policy = 'reuse_compatible' ): array|\WP_Error {
+		$repo_name = $this->resolve_alias(trim($repo_name));
 		$repo = $this->resolve_repo($repo_name);
 		if ( is_wp_error($repo) ) {
 			return $repo;
@@ -117,18 +118,114 @@ class RemoteWorkspaceBackend {
 		if ( '' === $branch ) {
 			return new \WP_Error('missing_branch', 'Branch is required.', array( 'status' => 400 ));
 		}
+		$lock = $this->acquire_state_lock($repo_name);
+		if ( is_wp_error($lock) ) {
+			return $lock;
+		}
 
+		try {
 		$slug                          = $this->branch_slug($branch);
 		$handle                        = $repo_name . '@' . $slug;
 		$state                         = $this->state();
 		$intent                        = WorktreeContextInjector::normalize_disposable_intent($intent);
+		$reuse_policy                  = strtolower(trim($reuse_policy));
+		if ( ! in_array($reuse_policy, array( 'reuse_compatible', 'isolated', 'recycle_terminal' ), true) ) {
+			return new \WP_Error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: reuse_compatible, isolated, recycle_terminal.', array( 'status' => 400 ));
+		}
 		if ( isset($state['worktrees'][ $handle ]) && is_array($state['worktrees'][ $handle ]) ) {
+			$existing = $state['worktrees'][ $handle ];
+			if ( 'isolated' === $reuse_policy ) {
+				return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to reuse remote worktree "%s": isolated allocation requires a new handle.', $handle), array(
+					'status' => 409,
+					'reuse'  => array( 'status' => 'refused', 'reason_code' => 'isolated_requested' ),
+				));
+			}
+			if ( 'recycle_terminal' === $reuse_policy ) {
+				return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to recycle remote worktree "%s": terminal safety proof is unavailable.', $handle), array(
+					'status' => 409,
+					'reuse'  => array( 'status' => 'refused', 'reason_code' => 'remote_recycle_terminal_unsupported' ),
+				));
+			}
 			$existing_intent = WorktreeContextInjector::normalize_disposable_intent((array) $state['worktrees'][ $handle ]);
 			if ( $intent !== $existing_intent ) {
 				return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to reuse remote worktree "%s": disposable intent mismatch.', $handle), array(
 					'status' => 409,
 					'reuse' => array( 'status' => 'refused', 'reason_code' => 'disposable_intent_mismatch', 'requested_intent' => $intent, 'stored_intent' => $existing_intent ),
 				));
+			}
+			if ( ( $existing['branch'] ?? null ) !== $branch ) {
+				return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to reuse remote worktree "%s": branch mismatch.', $handle), array(
+					'status' => 409,
+					'reuse'  => array( 'status' => 'refused', 'reason_code' => 'branch_mismatch', 'requested_branch' => $branch, 'stored_branch' => $existing['branch'] ?? null ),
+				));
+			}
+			$requested_base = null !== $from && '' !== trim($from) ? trim($from) : '';
+			if ( (string) ( $existing['base_ref'] ?? '' ) !== $requested_base ) {
+				return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to reuse remote worktree "%s": base mismatch.', $handle), array(
+					'status' => 409,
+					'reuse'  => array( 'status' => 'refused', 'reason_code' => 'base_mismatch', 'requested_base_ref' => $requested_base, 'stored_base_ref' => $existing['base_ref'] ?? null ),
+				));
+			}
+			$existing_task = is_array($state['worktrees'][ $handle ]['task'] ?? null) ? $state['worktrees'][ $handle ]['task'] : array();
+			if ( (string) ( $task['task_url'] ?? $task['task_ref'] ?? '' ) !== (string) ( $existing_task['task_url'] ?? $existing_task['task_ref'] ?? '' ) ) {
+				return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to reuse remote worktree "%s": task mismatch.', $handle), array(
+					'status' => 409,
+					'reuse'  => array( 'status' => 'refused', 'reason_code' => 'task_mismatch', 'requested_task' => $task, 'stored_task' => $existing_task ),
+				));
+			}
+			return array(
+				'success'        => true,
+				'backend'        => 'github_api',
+				'handle'         => $handle,
+				'path'           => 'github://' . $repo . '#' . $branch,
+				'branch'         => $branch,
+				'slug'           => $slug,
+				'created_branch' => false,
+				'reused'         => true,
+				'reuse'          => array( 'status' => 'accepted', 'reason_code' => 'exact_compatible_handle' ),
+				'message'        => sprintf('Reused remote workspace %s for %s.', $handle, $repo),
+			);
+		} else {
+			$task_identity = (string) ( $task['task_url'] ?? $task['task_ref'] ?? '' );
+			$candidates    = array();
+			if ( '' !== $task_identity ) {
+				foreach ( (array) ( $state['worktrees'] ?? array() ) as $candidate_handle => $candidate ) {
+					if ( ! is_array($candidate) || ( $candidate['repo_name'] ?? null ) !== $repo_name ) {
+						continue;
+					}
+					$candidate_task = is_array($candidate['task'] ?? null) ? $candidate['task'] : array();
+					if ( $task_identity === (string) ( $candidate_task['task_url'] ?? $candidate_task['task_ref'] ?? '' ) ) {
+						$candidates[] = array(
+							'handle' => (string) $candidate_handle,
+							'branch' => $candidate['branch'] ?? null,
+							'task'   => $candidate_task,
+						);
+					}
+				}
+				usort($candidates, static fn( array $left, array $right ): int => strcmp((string) $left['handle'], (string) $right['handle']));
+			}
+			if ( array() !== $candidates && 'isolated' !== $reuse_policy ) {
+				return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to create remote worktree "%s": same task candidate requires explicit isolation.', $handle), array(
+					'status' => 409,
+					'reuse'  => array( 'status' => 'refused', 'reason_code' => 'same_task_candidate_requires_explicit_isolation', 'canonical_task_identity' => $task_identity, 'candidates' => $candidates ),
+				));
+			}
+			if ( array() !== $candidates && 'isolated' === $reuse_policy ) {
+				$missing_intent = array();
+				foreach ( array( 'purpose', 'owner_run_ref' ) as $field ) {
+					if ( '' === trim((string) ($intent[ $field ] ?? '')) ) {
+						$missing_intent[] = $field;
+					}
+				}
+				if ( WorktreeContextInjector::CLEANUP_POLICY_REMOVE_ON_SUCCESS !== ( $intent['cleanup_policy'] ?? null ) ) {
+					$missing_intent[] = 'cleanup_policy=remove_on_success';
+				}
+				if ( array() !== $missing_intent ) {
+					return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to create remote worktree "%s": same task isolation intent is incomplete.', $handle), array(
+						'status' => 409,
+						'reuse'  => array( 'status' => 'refused', 'reason_code' => 'same_task_isolation_intent_required', 'missing_intent' => $missing_intent, 'candidates' => $candidates ),
+					));
+				}
 			}
 		}
 		$state['worktrees'][ $handle ] = array(
@@ -159,6 +256,57 @@ class RemoteWorkspaceBackend {
 			'cleanup_policy' => $intent['cleanup_policy'] ?? null,
 			'message'        => sprintf('Registered remote workspace %s for %s.', $handle, $repo),
 		);
+		} finally {
+			$this->release_state_lock($lock);
+		}
+	}
+
+	/** Acquire an atomic option-backed lease around remote state admission. */
+	private function acquire_state_lock( string $repo_name ): array|\WP_Error {
+		$key      = 'datamachine_code_remote_workspace_lock_' . md5($repo_name);
+		$token    = function_exists('wp_generate_uuid4') ? wp_generate_uuid4() : uniqid('dmc-', true);
+		$deadline = microtime(true) + 10;
+		do {
+			$lease = array( 'token' => $token, 'expires_at' => time() + 30 );
+			if ( add_option($key, $lease, '', false) ) {
+				return array( 'key' => $key, 'token' => $token );
+			}
+			$current = get_option($key, array());
+			if ( is_array($current) && (int) ( $current['expires_at'] ?? 0 ) < time() ) {
+				$this->compare_delete_option($key, $current);
+				continue;
+			}
+			usleep(50000);
+		} while ( microtime(true) < $deadline );
+
+		return new \WP_Error('remote_workspace_lock_timeout', sprintf('Timed out waiting for remote workspace admission lock for "%s".', $repo_name), array( 'status' => 409 ));
+	}
+
+	/** Release only the lease owned by this request. */
+	private function release_state_lock( array $lock ): void {
+		$current = get_option((string) $lock['key'], array());
+		if ( is_array($current) && ( $current['token'] ?? null ) === ( $lock['token'] ?? null ) ) {
+			$this->compare_delete_option((string) $lock['key'], $current);
+		}
+	}
+
+	/** Atomically delete only the exact lease value that was observed. */
+	private function compare_delete_option( string $key, array $expected ): bool {
+		global $wpdb;
+		if ( isset($wpdb) && is_object($wpdb) && isset($wpdb->options) && method_exists($wpdb, 'delete') ) {
+			$deleted = $wpdb->delete(
+				$wpdb->options,
+				array( 'option_name' => $key, 'option_value' => maybe_serialize($expected) ),
+				array( '%s', '%s' )
+			);
+			if ( false !== $deleted && function_exists('wp_cache_delete') ) {
+				wp_cache_delete($key, 'options');
+			}
+			return 1 === $deleted;
+		}
+
+		$current = get_option($key, array());
+		return $current === $expected && delete_option($key);
 	}
 
 	/**
