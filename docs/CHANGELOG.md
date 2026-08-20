@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.57.3] - 2026-08-20
+
+### Fixed
+- require explicit duplicate isolation
+
 ## [0.57.2] - 2026-08-14
 
 ### Fixed
