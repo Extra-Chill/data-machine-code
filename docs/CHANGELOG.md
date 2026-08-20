@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.57.4] - 2026-08-20
+
+### Fixed
+- bootstrap npm shrinkwrap lockfiles
+
 ## [0.57.3] - 2026-08-20
 
 ### Fixed
