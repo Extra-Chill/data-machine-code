@@ -3925,6 +3925,15 @@ class WorkspaceCommand extends BaseCommand {
 	 *   alongside `--task-url` (applies to `add` only). Falls back to the
 	 *   `DATAMACHINE_TASK_REF` environment variable when omitted.
 	 *
+	 * [--reuse-policy=<reuse_compatible|isolated|recycle_terminal>]
+	 * : Reuse and allocation policy for `add`. The default
+	 *   `reuse_compatible` reuses only an exact compatible handle and refuses
+	 *   another handle in the same repository with the same task identity.
+	 *   `--reuse-policy=isolated` additionally requires `--purpose`,
+	 *   `--owner-run-ref`, and `--cleanup-policy=remove_on_success` for parallel
+	 *   same-task work. `recycle_terminal` applies only to a clean, non-live
+	 *   terminal exact handle.
+	 *
 	 * [--force]
 	 * : For `add`, explicitly bypass the disk-budget refusal threshold. For
 	 *   `remove`, force-remove a worktree even if it is dirty. For `cleanup`,

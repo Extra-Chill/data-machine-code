@@ -109,8 +109,9 @@ $duplicate_summary = $hygiene->worktree_summary(
 		array( 'handle' => 'repo@one', 'is_worktree' => true, 'metadata' => array( 'origin_task' => array( 'task_url' => 'https://example.test/issues/1' ) ) ),
 		array( 'handle' => 'repo@two', 'is_worktree' => true, 'metadata' => array( 'origin_task' => array( 'task_url' => 'https://example.test/issues/1' ) ) ),
 		array( 'handle' => 'repo@three', 'is_worktree' => true, 'metadata' => array( 'origin_task' => array( 'task_url' => 'https://example.test/issues/1' ) ) ),
+		array( 'handle' => 'other-repo@four', 'is_worktree' => true, 'metadata' => array( 'origin_task' => array( 'task_url' => 'https://example.test/issues/1' ) ) ),
 	)
 );
-hygiene_cleanup_summary_assert(1 === ( $duplicate_summary['duplicate_task_groups'] ?? null ) && 2 === ( $duplicate_summary['preventable_duplicate_allocations'] ?? null ), 'hygiene did not separate preventable duplicate allocations from duplicate groups');
+hygiene_cleanup_summary_assert(1 === ( $duplicate_summary['duplicate_task_groups'] ?? null ) && 2 === ( $duplicate_summary['preventable_duplicate_allocations'] ?? null ), 'hygiene counted a cross-repository duplicate as a preventable allocation');
 
 echo "workspace hygiene cleanup summary test passed.\n";
