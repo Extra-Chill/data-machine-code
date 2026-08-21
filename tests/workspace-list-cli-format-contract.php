@@ -111,6 +111,9 @@ namespace {
 		Workspace::$limit_inputs = array();
 		$ability_result = WorkspaceAbilities::listRepos(array( 'limit' => $invalid_limit ));
 		cli_format_assert(is_wp_error($ability_result) && $invalid_limit === (Workspace::$limit_inputs[0] ?? null), 'Ability must validate the raw limit before coercion.');
+		Workspace::$limit_inputs = array();
+		$worktree_ability_result = WorkspaceAbilities::worktreeList(array( 'limit' => $invalid_limit ));
+		cli_format_assert(is_wp_error($worktree_ability_result) && $invalid_limit === (Workspace::$limit_inputs[0] ?? null), 'Worktree ability must validate the raw limit before coercion.');
 	}
 
 	cli_format_reset();

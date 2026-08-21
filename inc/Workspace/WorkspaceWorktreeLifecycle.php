@@ -1717,11 +1717,14 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		$bounded        = array_key_exists('limit', $opts) || array_key_exists('cursor', $opts) || array_key_exists('all', $opts);
 		$all            = ! empty($opts['all']);
+		if ( $all && isset($opts['cursor']) ) {
+			return new \WP_Error('invalid_worktree_list_pagination', 'Worktree list --all cannot be combined with --cursor.', array( 'status' => 400 ));
+		}
 		$defer_probes   = $bounded && ! $all;
 		$run_status     = $include_status && ! $defer_probes;
 		$run_disk       = $include_disk && ! $defer_probes;
-		$limit          = isset($opts['limit']) ? $opts['limit'] : 50;
-		if ( ! is_int($limit) || $limit < 1 || $limit > 200 ) {
+		$limit = $this->normalize_worktree_list_limit($opts['limit'] ?? 50);
+		if ( is_wp_error($limit) ) {
 			return new \WP_Error('invalid_worktree_list_limit', 'Worktree list limit must be an integer between 1 and 200.', array( 'status' => 400 ));
 		}
 		$cursor = isset($opts['cursor']) ? $this->decode_worktree_list_cursor((string) $opts['cursor'], $repo, $state, $target_handle) : null;
@@ -1767,32 +1770,15 @@ trait WorkspaceWorktreeLifecycle {
 			), $include_status, $include_disk);
 		}
 
-		$primaries = array();
-		$entries   = scandir($this->workspace_path);
-		foreach ( $entries as $entry ) {
-			if ( '.' === $entry || '..' === $entry || str_contains($entry, '@') ) {
-				continue;
-			}
-			$entry_path = $this->workspace_path . '/' . $entry;
-			if ( ! file_exists($entry_path . '/.git') ) {
-				continue;
-			}
-			$primaries[] = $entry;
-		}
-
-		if ( null !== $repo ) {
-			$primaries = array_values(array_filter($primaries, fn( $p ) => $p === $repo));
-		}
-		if ( '' !== $target_handle && is_file($this->workspace_path . '/' . $target_handle . '/.git') ) {
-			// A retained worktree can be the only local Git entry point after its
-			// original primary was removed or moved. Use it to resolve its own
-			// canonical directory handle rather than requiring a primary directory.
-			$primaries = array( $target_handle );
-		}
-
 		$worktrees = array();
+		$summary   = $this->worktree_list_empty_summary();
+		$remaining = 0;
 
-		foreach ( $primaries as $primary ) {
+		foreach ( new \DirectoryIterator($this->workspace_path) as $entry ) {
+			$primary = $entry->getFilename();
+			if ( $entry->isDot() || str_contains($primary, '@') || ! $entry->isDir() || ! file_exists($entry->getPathname() . '/.git') || ( null !== $repo && $primary !== $repo ) ) {
+				continue;
+			}
 			$primary_path      = $this->workspace_path . '/' . $primary;
 			$primary_repo      = $this->parse_handle($primary)['repo'];
 			$scanning_worktree = str_contains($primary, '@');
@@ -1801,8 +1787,7 @@ trait WorkspaceWorktreeLifecycle {
 				continue;
 			}
 
-			$blocks = preg_split("/\n\n+/", trim( (string) ( $result['output'] ?? '' )));
-			foreach ( $blocks as $block ) {
+			foreach ( $this->worktree_list_blocks((string) ( $result['output'] ?? '' )) as $block ) {
 				$wt = $this->parse_worktree_block($block);
 				if ( null === $wt ) {
 					continue;
@@ -1931,13 +1916,21 @@ trait WorkspaceWorktreeLifecycle {
 					$row['fields_skipped'] = $skipped_groups;
 				}
 
-				$worktrees[] = $row;
+				$this->worktree_list_count_summary($summary, $row);
+				if ( null === $cursor || strcmp($this->worktree_list_row_key($row), $cursor) > 0 ) {
+					++$remaining;
+					if ( $bounded && ! $all ) {
+						$this->worktree_list_insert_bounded_row($worktrees, $row, $limit);
+					} else {
+						$worktrees[] = $row;
+					}
+				}
 			}
 		}
 
-		usort($worktrees, fn( array $left, array $right ): int => strcmp($this->worktree_list_row_key($left), $this->worktree_list_row_key($right)));
-		$total                 = count($worktrees);
-		$summary               = $this->worktree_list_summary($worktrees);
+		if ( ! $bounded || $all ) {
+			usort($worktrees, fn( array $left, array $right ): int => strcmp($this->worktree_list_row_key($left), $this->worktree_list_row_key($right)));
+		}
 		$duplicates            = WorktreeContextInjector::find_duplicate_task_ownership($worktrees);
 		$base_branch_worktrees = array_values(
 			array_filter(
@@ -1947,13 +1940,6 @@ trait WorkspaceWorktreeLifecycle {
 				)
 			)
 		);
-		if ( null !== $cursor ) {
-			$worktrees = array_values(array_filter($worktrees, fn( array $row ): bool => strcmp($this->worktree_list_row_key($row), $cursor) > 0));
-		}
-		$remaining = count($worktrees);
-		if ( $bounded && ! $all ) {
-			$worktrees = array_slice($worktrees, 0, $limit);
-		}
 		if ( $defer_probes && ( $include_status || $include_disk ) ) {
 			foreach ( $worktrees as &$worktree ) {
 				$probe_result = $this->hydrate_worktree_list_probes($worktree, $include_status, $include_disk);
@@ -1975,7 +1961,7 @@ trait WorkspaceWorktreeLifecycle {
 			'duplicates'            => $duplicates,
 			'base_branch_worktrees' => $base_branch_worktrees,
 			'fields_skipped'        => $skipped_groups,
-			'total'                 => $total,
+			'total'                 => $summary['total'],
 			'returned'              => count($worktrees),
 			'next_cursor'           => $next_cursor,
 			'status_requested'      => $include_status,
@@ -2032,6 +2018,65 @@ trait WorkspaceWorktreeLifecycle {
 			$worktree['stale_reason'] = $stale_reason;
 		}
 		return null;
+	}
+
+	/** @return array<string,mixed> */
+	private function worktree_list_empty_summary(): array {
+		return array( 'total' => 0, 'primary' => 0, 'worktree' => 0, 'external' => 0, 'repos' => array() );
+	}
+
+	private function normalize_worktree_list_limit( mixed $limit ): int|\WP_Error {
+		if ( is_int($limit) || ( is_string($limit) && ctype_digit($limit) ) ) {
+			$limit = (int) $limit;
+		}
+		if ( ! is_int($limit) || $limit < 1 || $limit > 200 ) {
+			return new \WP_Error('invalid_worktree_list_limit', 'Worktree list limit must be an integer between 1 and 200.', array( 'status' => 400 ));
+		}
+		return $limit;
+	}
+
+	/** @param array<string,mixed> $summary @param array<string,mixed> $row */
+	private function worktree_list_count_summary( array &$summary, array $row ): void {
+		++$summary['total'];
+		++$summary[ ! empty($row['is_primary']) ? 'primary' : 'worktree' ];
+		if ( ! empty($row['external']) ) {
+			++$summary['external'];
+		}
+	}
+
+	/** @param array<int,array<string,mixed>> $rows @param array<string,mixed> $row */
+	protected function worktree_list_insert_bounded_row( array &$rows, array $row, int $limit ): void {
+		$key = $this->worktree_list_row_key($row);
+		$position = count($rows);
+		foreach ( $rows as $index => $existing ) {
+			if ( strcmp($key, $this->worktree_list_row_key($existing)) < 0 ) {
+				$position = $index;
+				break;
+			}
+		}
+		if ( $position >= $limit && $limit === count($rows) ) {
+			return;
+		}
+		array_splice($rows, $position, 0, array( $row ));
+		if ( count($rows) > $limit ) {
+			array_pop($rows);
+		}
+	}
+
+	/** @return \Generator<int,string> */
+	private function worktree_list_blocks( string $output ): \Generator {
+		$offset = 0;
+		while ( preg_match("/\n\n+/", $output, $match, PREG_OFFSET_CAPTURE, $offset) ) {
+			$block = trim(substr($output, $offset, $match[0][1] - $offset));
+			if ( '' !== $block ) {
+				yield $block;
+			}
+			$offset = $match[0][1] + strlen($match[0][0]);
+		}
+		$block = trim(substr($output, $offset));
+		if ( '' !== $block ) {
+			yield $block;
+		}
 	}
 
 	/** @param array<int,array<string,mixed>> $worktrees */

@@ -37,9 +37,10 @@ namespace {
 	use DataMachineCode\Workspace\WorkspaceWorktreeLifecycle;
 
 	final class BoundedWorktreeListHarness {
-		use WorkspaceWorktreeLifecycle;
+		use WorkspaceWorktreeLifecycle { worktree_list_insert_bounded_row as private insert_bounded_row; }
 
 		public int $expensive_probes = 0;
+		public int $max_bounded_rows = 0;
 		public function __construct( private string $workspace_path ) {}
 		private function parse_handle( string $handle ): array {
 			$parts = explode('@', $handle, 2);
@@ -62,6 +63,10 @@ namespace {
 		private function build_primary_freshness_report( string $path, string $handle ): array { ++$this->expensive_probes; return array( 'status' => 'current' ); }
 		private function calculate_age_days( ?string $created_at ): ?int { return null; }
 		protected function detect_worktree_stale_reason( bool $is_worktree, int $dirty, ?int $age, ?string $created, array $probes = array() ): ?string { return null; }
+		protected function worktree_list_insert_bounded_row( array &$rows, array $row, int $limit ): void {
+			$this->insert_bounded_row($rows, $row, $limit);
+			$this->max_bounded_rows = max($this->max_bounded_rows, count($rows));
+		}
 	}
 
 	function bounded_worktree_assert( bool $condition, string $message ): void {
@@ -77,6 +82,7 @@ namespace {
 		$first = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'limit' => 50 ));
 		$elapsed = microtime(true) - $started;
 		bounded_worktree_assert(339 === $first['total'] && 50 === $first['returned'], 'Default worktree list must return a bounded first page and complete total.');
+		bounded_worktree_assert(50 >= $harness->max_bounded_rows, 'Bounded worktree listing must retain no more than one page of candidates.');
 		bounded_worktree_assert(1 === ($first['summary']['primary'] ?? null) && 338 === ($first['summary']['worktree'] ?? null), 'Summary must represent the complete inventory before pagination.');
 		bounded_worktree_assert(is_string($first['next_cursor']), 'A bounded worktree page must provide a continuation cursor.');
 		bounded_worktree_assert(0 === $harness->expensive_probes, 'Default worktree discovery must skip status, unpushed, disk, and freshness probes.');
@@ -96,6 +102,19 @@ namespace {
 		bounded_worktree_assert(true === $with_status['status_requested'] && 5 === $harness->expensive_probes, 'Explicit status requests must probe only returned rows, including primary freshness.');
 		$all = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'all' => true ));
 		bounded_worktree_assert(339 === $all['returned'] && null === $all['next_cursor'], 'Explicit all must retain exhaustive inventory access.');
+		$all_with_cursor = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'all' => true, 'cursor' => $first['next_cursor'] ));
+		bounded_worktree_assert(is_wp_error($all_with_cursor), 'All and cursor must be rejected as an ambiguous worktree pagination request.');
+		$cursor = null;
+		$handles = array();
+		do {
+			$page = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'limit' => 50 ) + ( null === $cursor ? array() : array( 'cursor' => $cursor ) ));
+			$handles = array_merge($handles, array_column($page['worktrees'], 'handle'));
+			$cursor = $page['next_cursor'];
+		} while ( null !== $cursor );
+		bounded_worktree_assert(339 === count($handles) && 339 === count(array_unique($handles)), 'Cursor pages must return every worktree exactly once in stable order.');
+		foreach ( array( 0, -1, 201, 1.0, '1.5', 'junk', array( 1 ), true ) as $limit ) {
+			bounded_worktree_assert(is_wp_error($harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'limit' => $limit ))), 'Invalid worktree list limits must be rejected before coercion.');
+		}
 	} finally {
 		unlink($workspace . '/repo/.git');
 		rmdir($workspace . '/repo');

@@ -4494,6 +4494,10 @@ class WorkspaceCommand extends BaseCommand {
 					WP_CLI::error('--envelope is available only with --format=json.');
 					return;
 				}
+				if ( ! empty($assoc_args['all']) && isset($assoc_args['cursor']) ) {
+					WP_CLI::error('Worktree list --all cannot be combined with --cursor.');
+					return;
+				}
 				if ( ! empty($args[1]) ) {
 					$input['repo'] = $args[1];
 				}
@@ -4501,7 +4505,12 @@ class WorkspaceCommand extends BaseCommand {
 					$input['state'] = (string) $assoc_args['state'];
 				}
 				if ( isset($assoc_args['limit']) ) {
-					$input['limit'] = (int) $assoc_args['limit'];
+					$limit = Workspace::normalize_workspace_list_limit($assoc_args['limit']);
+					if ( is_wp_error($limit) ) {
+						WP_CLI::error('Worktree list limit must be an integer between 1 and 200.');
+						return;
+					}
+					$input['limit'] = $limit;
 				}
 				if ( isset($assoc_args['cursor']) ) {
 					$input['cursor'] = (string) $assoc_args['cursor'];
