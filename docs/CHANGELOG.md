@@ -2,6 +2,17 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.58.0] - 2026-08-21
+
+### Added
+- report managed release drift
+
+### Fixed
+- recover interrupted worktree creation
+- bound worktree list inventory
+- preserve bounded list formats
+- bound default inventory list
+
 ## [0.57.4] - 2026-08-20
 
 ### Fixed
