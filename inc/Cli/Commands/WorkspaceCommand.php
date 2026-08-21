@@ -5135,14 +5135,16 @@ class WorkspaceCommand extends BaseCommand {
 				$this->format_items($items, $fields, $assoc_args, 'handle');
 				$duplicates            = (array) ( $result['duplicates'] ?? array() );
 				$base_branch_worktrees = (array) ( $result['base_branch_worktrees'] ?? array() );
+				$summary               = (array) ( $result['summary'] ?? array() );
 				if ( ! empty($duplicates) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true) ) {
-					WP_CLI::log(sprintf('Duplicate task ownership groups: %d', count($duplicates)));
+					WP_CLI::log(sprintf('Duplicate task ownership groups: %d (%d sampled)', (int) ( $summary['duplicate_task_groups_total'] ?? count($duplicates) ), count($duplicates)));
 					foreach ( $duplicates as $group ) {
 						WP_CLI::log(sprintf('  - [%s=%s] %s', (string) ( $group['kind'] ?? '' ), (string) ( $group['key'] ?? '' ), implode(', ', (array) ( $group['handles'] ?? array() ))));
 					}
 				}
 				if ( ! empty($base_branch_worktrees) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true) ) {
-					WP_CLI::warning(sprintf('Base branch checked out in %d non-primary worktree%s; gh pr merge --delete-branch can merge remotely but fail local cleanup.', count($base_branch_worktrees), 1 === count($base_branch_worktrees) ? '' : 's'));
+					$base_total = (int) ( $summary['base_branch_worktrees_total'] ?? count($base_branch_worktrees) );
+					WP_CLI::warning(sprintf('Base branch checked out in %d non-primary worktree%s (%d sampled); gh pr merge --delete-branch can merge remotely but fail local cleanup.', $base_total, 1 === $base_total ? '' : 's', count($base_branch_worktrees)));
 					foreach ( $base_branch_worktrees as $warning ) {
 						WP_CLI::log(sprintf('  - %s (%s) at %s', (string) ( $warning['handle'] ?? '' ), (string) ( $warning['branch'] ?? '' ), (string) ( $warning['path'] ?? '' )));
 					}

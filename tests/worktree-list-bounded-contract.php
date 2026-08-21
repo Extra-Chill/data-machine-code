@@ -9,11 +9,12 @@ namespace DataMachineCode\Workspace {
 	final class WorktreeContextInjector {
 		public const VALID_STATES = array( 'active' );
 		public static function normalize_state( string $state ): ?string { return 'active' === strtolower(trim($state)) ? 'active' : null; }
-		public static function get_metadata( string $key ): ?array { return array( 'lifecycle_state' => 'active' ); }
+		public static function get_metadata( string $key ): ?array { return array( 'lifecycle_state' => 'active' ) + ( str_contains($key, 'branch-300') || str_contains($key, 'branch-301') ? array( 'task' => 'duplicate-task' ) : array() ); }
 		public static function classify_liveness( ?array $metadata ): array { return array( 'liveness' => 'unknown', 'reason' => 'metadata_missing', 'heartbeat_age_seconds' => null ); }
 		public static function summarize_owner( ?array $metadata ): array { return array( 'site' => 'unknown', 'agent' => 'unknown', 'user' => 'unknown' ); }
 		public static function summarize_session( ?array $metadata ): array { return array( 'primary_id' => null, 'ids' => array() ); }
 		public static function find_duplicate_task_ownership( array $worktrees ): array { return array(); }
+		public static function task_ownership_keys( array $row, array $metadata ): array { return isset($metadata['task']) ? array( 'task_ref' => (string) $metadata['task'] ) : array(); }
 	}
 }
 
@@ -52,7 +53,8 @@ namespace {
 			if ( 'worktree list --porcelain' === $command ) {
 				$blocks = array( "worktree {$this->workspace_path}/repo\nHEAD primary\nbranch refs/heads/main" );
 				for ( $index = 0; $index < 338; ++$index ) {
-					$blocks[] = sprintf("worktree %s/repo@branch-%03d\nHEAD %040d\nbranch refs/heads/branch-%03d", $this->workspace_path, $index, $index, $index);
+					$branch = 330 === $index ? 'main' : sprintf('branch-%03d', $index);
+					$blocks[] = sprintf("worktree %s/repo@branch-%03d\nHEAD %040d\nbranch refs/heads/%s", $this->workspace_path, $index, $index, $branch);
 				}
 				return array( 'output' => implode("\n\n", $blocks) );
 			}
@@ -85,6 +87,10 @@ namespace {
 		bounded_worktree_assert(50 >= $harness->max_bounded_rows, 'Bounded worktree listing must retain no more than one page of candidates.');
 		bounded_worktree_assert(1 === ($first['summary']['primary'] ?? null) && 338 === ($first['summary']['worktree'] ?? null), 'Summary must represent the complete inventory before pagination.');
 		bounded_worktree_assert(is_string($first['next_cursor']), 'A bounded worktree page must provide a continuation cursor.');
+		bounded_worktree_assert(1 === ($first['summary']['repo_count'] ?? null) && 1 === ($first['summary']['duplicate_task_groups_total'] ?? null) && 1 === ($first['summary']['base_branch_worktrees_total'] ?? null), 'Global summary diagnostics must include rows beyond the first page.');
+		bounded_worktree_assert(1 === ($first['summary']['repos'][0]['primary'] ?? null) && 338 === ($first['summary']['repos'][0]['worktree'] ?? null), 'Selected repository summaries must aggregate every matching worktree.');
+		bounded_worktree_assert(array( 'repo@branch-300', 'repo@branch-301' ) === (($first['duplicates'][0]['handles'] ?? null)), 'Duplicate task diagnostics must include off-page handles.');
+		bounded_worktree_assert('repo@branch-330' === ($first['base_branch_worktrees'][0]['handle'] ?? null), 'Base branch diagnostics must include off-page worktrees.');
 		bounded_worktree_assert(0 === $harness->expensive_probes, 'Default worktree discovery must skip status, unpushed, disk, and freshness probes.');
 		bounded_worktree_assert($elapsed < 2.0, sprintf('Bounded worktree response exceeded deadline: %.3fs.', $elapsed));
 

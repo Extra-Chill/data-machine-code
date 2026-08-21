@@ -1931,15 +1931,10 @@ trait WorkspaceWorktreeLifecycle {
 		if ( ! $bounded || $all ) {
 			usort($worktrees, fn( array $left, array $right ): int => strcmp($this->worktree_list_row_key($left), $this->worktree_list_row_key($right)));
 		}
-		$duplicates            = WorktreeContextInjector::find_duplicate_task_ownership($worktrees);
-		$base_branch_worktrees = array_values(
-			array_filter(
-				array_map(
-					fn( $row ) => $row['base_branch_warning'] ?? null,
-					$worktrees
-				)
-			)
-		);
+		$diagnostics = $this->worktree_list_global_diagnostics($repo, $state);
+		$summary     = array_merge($summary, $diagnostics['summary']);
+		$duplicates            = $diagnostics['duplicates'];
+		$base_branch_worktrees = $diagnostics['base_branch_worktrees'];
 		if ( $defer_probes && ( $include_status || $include_disk ) ) {
 			foreach ( $worktrees as &$worktree ) {
 				$probe_result = $this->hydrate_worktree_list_probes($worktree, $include_status, $include_disk);
@@ -2077,6 +2072,90 @@ trait WorkspaceWorktreeLifecycle {
 		if ( '' !== $block ) {
 			yield $block;
 		}
+	}
+
+	/** @return \Generator<int,array<string,mixed>> */
+	private function worktree_list_diagnostic_rows( ?string $repo_filter, ?string $state_filter ): \Generator {
+		foreach ( new \DirectoryIterator($this->workspace_path) as $entry ) {
+			$primary = $entry->getFilename();
+			if ( $entry->isDot() || str_contains($primary, '@') || ! $entry->isDir() || ! file_exists($entry->getPathname() . '/.git') || ( null !== $repo_filter && $primary !== $repo_filter ) ) { continue; }
+			$primary_path = $entry->getPathname();
+			$result = $this->run_git($primary_path, 'worktree list --porcelain');
+			if ( is_wp_error($result) ) { continue; }
+			foreach ( $this->worktree_list_blocks((string) ( $result['output'] ?? '' )) as $block ) {
+				$wt = $this->parse_worktree_block($block);
+				if ( null === $wt ) { continue; }
+				$is_primary = $wt['path'] === $primary_path;
+				$inside = str_starts_with($wt['path'], $this->workspace_path . '/');
+				$handle = $is_primary ? $primary : ( $inside ? substr($wt['path'], strlen($this->workspace_path . '/')) : $wt['path'] );
+				$metadata_key = ! $is_primary ? ( $inside ? $handle : 'external:' . sha1($wt['path']) ) : null;
+				$metadata = null !== $metadata_key ? WorktreeContextInjector::get_metadata($metadata_key) : null;
+				if ( null !== $state_filter && ( ! is_array($metadata) || ( $metadata['lifecycle_state'] ?? null ) !== $state_filter ) ) { continue; }
+				yield array( 'handle' => $handle, 'repo' => $this->parse_handle($primary)['repo'], 'is_primary' => $is_primary, 'is_worktree' => ! $is_primary, 'external' => ! $is_primary && ! $inside, 'branch' => $wt['branch'], 'path' => $wt['path'], 'metadata' => $metadata, 'pr_url' => is_array($metadata) ? ( $metadata['pr_url'] ?? null ) : null, 'pr_number' => is_array($metadata) ? ( $metadata['pr_number'] ?? null ) : null );
+			}
+		}
+	}
+
+	/** @return array{summary:array<string,mixed>,duplicates:array<int,array<string,mixed>>,base_branch_worktrees:array<int,array<string,mixed>>} */
+	private function worktree_list_global_diagnostics( ?string $repo_filter, ?string $state_filter ): array {
+		$repo_names = array();
+		$base = array();
+		$base_total = 0;
+		foreach ( $this->worktree_list_diagnostic_rows($repo_filter, $state_filter) as $row ) {
+			$this->worktree_list_insert_bounded_key($repo_names, (string) $row['repo'], 25);
+			$warning = $this->base_branch_worktree_warning($row);
+			if ( null !== $warning ) { ++$base_total; $this->worktree_list_insert_bounded_row($base, $warning, 25); }
+		}
+		$repos = array();
+		foreach ( array_keys($repo_names) as $name ) { $repos[ $name ] = array( 'repo' => $name, 'primary' => 0, 'worktree' => 0, 'external' => 0, 'total' => 0 ); }
+		foreach ( $this->worktree_list_diagnostic_rows($repo_filter, $state_filter) as $row ) {
+			$name = (string) $row['repo'];
+			if ( isset($repos[ $name ]) ) { ++$repos[ $name ][ ! empty($row['is_primary']) ? 'primary' : 'worktree' ]; ++$repos[ $name ]['total']; if ( ! empty($row['external']) ) { ++$repos[ $name ]['external']; } }
+		}
+		$duplicates = $this->worktree_list_duplicate_groups($repo_filter, $state_filter);
+		$repo_count = $this->worktree_list_unique_repository_count($repo_filter, $state_filter, $repo_names);
+		return array( 'summary' => array( 'repos' => array_values($repos), 'repo_count' => $repo_count, 'repos_returned' => count($repos), 'repos_omitted' => $repo_count - count($repos), 'duplicate_task_groups_total' => $duplicates['total'], 'duplicate_task_groups_returned' => count($duplicates['groups']), 'duplicate_task_groups_omitted' => $duplicates['total'] - count($duplicates['groups']), 'base_branch_worktrees_total' => $base_total, 'base_branch_worktrees_returned' => count($base), 'base_branch_worktrees_omitted' => $base_total - count($base) ), 'duplicates' => $duplicates['groups'], 'base_branch_worktrees' => $base );
+	}
+
+	/** @param array<string,bool> $first_batch */
+	private function worktree_list_unique_repository_count( ?string $repo_filter, ?string $state_filter, array $first_batch ): int {
+		$count = count($first_batch);
+		if ( $count < 25 ) { return $count; }
+		$after = (string) array_key_last($first_batch);
+		do {
+			$batch = array();
+			foreach ( $this->worktree_list_diagnostic_rows($repo_filter, $state_filter) as $row ) { if ( (string) $row['repo'] > $after ) { $this->worktree_list_insert_bounded_key($batch, (string) $row['repo'], 26); } }
+			$size = count($batch); $count += min(25, $size);
+			if ( $size > 25 ) { $after = (string) array_keys($batch)[24]; }
+		} while ( $size > 25 );
+		return $count;
+	}
+
+	/** @return array{total:int,groups:array<int,array<string,mixed>>} */
+	private function worktree_list_duplicate_groups( ?string $repo_filter, ?string $state_filter ): array {
+		$after = ''; $total = 0; $samples = array();
+		do {
+			$batch = array();
+			foreach ( $this->worktree_list_diagnostic_rows($repo_filter, $state_filter) as $row ) {
+				foreach ( WorktreeContextInjector::task_ownership_keys($row, is_array($row['metadata'] ?? null) ? $row['metadata'] : array()) as $kind => $key ) {
+					$id = $kind . '|' . $key;
+					if ( $id <= $after ) { continue; }
+					if ( ! isset($batch[ $id ]) ) { $batch[ $id ] = array( 'kind' => $kind, 'key' => $key, 'handles' => array(), 'handle_count' => 0 ); ksort($batch); if ( count($batch) > 26 ) { array_pop($batch); } }
+					if ( isset($batch[ $id ]) ) { ++$batch[ $id ]['handle_count']; if ( count($batch[ $id ]['handles']) < 25 ) { $batch[ $id ]['handles'][] = (string) $row['handle']; } }
+				}
+			}
+			$size = count($batch); $keys = array_keys($batch);
+			foreach ( array_slice($batch, 0, min(25, $size), true) as $id => $group ) { if ( $group['handle_count'] > 1 ) { ++$total; $samples[ $id ] = $group; ksort($samples); if ( count($samples) > 25 ) { array_pop($samples); } } }
+			if ( $size > 25 ) { $after = (string) $keys[24]; }
+		} while ( $size > 25 );
+		return array( 'total' => $total, 'groups' => array_values($samples) );
+	}
+
+	/** @param array<string,bool> $keys */
+	private function worktree_list_insert_bounded_key( array &$keys, string $key, int $limit ): void {
+		$keys[ $key ] = true;
+		ksort($keys);
+		if ( count($keys) > $limit ) { array_pop($keys); }
 	}
 
 	/** @param array<int,array<string,mixed>> $worktrees */

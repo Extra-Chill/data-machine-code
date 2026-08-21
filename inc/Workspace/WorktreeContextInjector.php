@@ -402,6 +402,11 @@ class WorktreeContextInjector {
 		return $duplicates;
 	}
 
+	/** @return array<string,string> */
+	public static function task_ownership_keys( array $row, array $metadata ): array {
+		return self::extract_task_keys($row, $metadata);
+	}
+
 	/**
 	 * Summarize the owner side of persisted metadata for listing surfaces.
 	 *
