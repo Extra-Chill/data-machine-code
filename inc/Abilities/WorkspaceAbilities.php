@@ -119,7 +119,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-list',
 				array(
 					'label'               => 'List Workspace Repos',
-					'description'         => 'List repositories in the agent workspace. Primary rows include local-ref freshness metadata; refresh stale primaries before using them for verification.',
+					'description'         => 'Return a bounded, lightweight workspace inventory page. Use all for complete expansion and include_status for per-row Git status probes.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -133,6 +133,25 @@ class WorkspaceAbilities {
 								'enum'        => array( 'primary', 'worktree', 'context' ),
 								'description' => 'Optional checkout type filter. Use "primary" for base checkouts, "worktree" for branch worktrees, or "context" for read-only context repositories.',
 							),
+							'limit' => array(
+								'type'        => 'integer',
+								'minimum'     => 1,
+								'maximum'     => 200,
+								'default'     => 50,
+								'description' => 'Maximum lightweight rows to return. Defaults to 50.',
+							),
+							'cursor' => array(
+								'type'        => 'string',
+								'description' => 'Cursor returned by a previous list response with the same filters.',
+							),
+							'all' => array(
+								'type'        => 'boolean',
+								'description' => 'Return every matching row. Full expansion is explicit.',
+							),
+							'include_status' => array(
+								'type'        => 'boolean',
+								'description' => 'Include per-row Git remote, branch, and primary freshness probes.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -140,6 +159,10 @@ class WorkspaceAbilities {
 						'properties' => array(
 							'success' => array( 'type' => 'boolean' ),
 							'path'    => array( 'type' => 'string' ),
+							'total'   => array( 'type' => 'integer' ),
+							'returned' => array( 'type' => 'integer' ),
+							'next_cursor' => array( 'type' => array( 'string', 'null' ) ),
+							'status_requested' => array( 'type' => 'boolean' ),
 							'repos'   => array(
 								'type'  => 'array',
 								'items' => array(
@@ -3049,7 +3072,13 @@ class WorkspaceAbilities {
 		$workspace = new Workspace();
 		$repo      = isset($input['repo']) ? (string) $input['repo'] : null;
 		$type      = isset($input['type']) ? (string) $input['type'] : null;
-		return $workspace->list_repos($repo, $type);
+		$options   = array();
+		foreach ( array( 'limit', 'cursor', 'all', 'include_status' ) as $key ) {
+			if ( array_key_exists($key, $input) ) {
+				$options[ $key ] = 'limit' === $key ? (int) $input[ $key ] : $input[ $key ];
+			}
+		}
+		return $workspace->list_repos($repo, $type, $options);
 	}
 
 	/**

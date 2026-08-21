@@ -343,6 +343,18 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--summary]
 	 * : Show compact workspace triage counts instead of one row per checkout.
 	 *
+	 * [--limit=<limit>]
+	 * : Maximum rows to return. Defaults to 50; accepts 1-200.
+	 *
+	 * [--cursor=<cursor>]
+	 * : Continue from the cursor returned by a prior list with the same filters.
+	 *
+	 * [--all]
+	 * : Explicitly return every matching row instead of the bounded first page.
+	 *
+	 * [--include-status]
+	 * : Include per-row Git remote, branch, and primary freshness probes.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -368,6 +380,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # List only worktrees for one primary checkout
 	 *     wp datamachine-code workspace list --repo=my-plugin --type=worktree --format=json
 	 *
+	 *     # Migrate complete status-rich inventory callers
+	 *     wp datamachine-code workspace list --all --include-status --format=json
+	 *
 	 * @subcommand list
 	 */
 	public function list_repos( array $args, array $assoc_args ): void {
@@ -384,11 +399,28 @@ class WorkspaceCommand extends BaseCommand {
 		if ( isset($assoc_args['type']) ) {
 			$input['type'] = (string) $assoc_args['type'];
 		}
+		if ( isset($assoc_args['limit']) ) {
+			$input['limit'] = (int) $assoc_args['limit'];
+		}
+		if ( isset($assoc_args['cursor']) ) {
+			$input['cursor'] = (string) $assoc_args['cursor'];
+		}
+		if ( ! empty($assoc_args['all']) ) {
+			$input['all'] = true;
+		}
+		if ( ! empty($assoc_args['include-status']) ) {
+			$input['include_status'] = true;
+		}
 
 		$result = $ability->execute($input);
 
 		if ( is_wp_error($result) ) {
 			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		if ( 'json' === ( $assoc_args['format'] ?? 'table' ) ) {
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -406,6 +438,11 @@ class WorkspaceCommand extends BaseCommand {
 		if ( ! empty($assoc_args['summary']) ) {
 			$this->render_workspace_list_summary($result, $assoc_args);
 			return;
+		}
+
+		WP_CLI::log(sprintf('Workspace: %s | showing %d of %d', (string) ( $result['path'] ?? '' ), (int) ( $result['returned'] ?? 0 ), (int) ( $result['total'] ?? 0 )));
+		if ( ! empty($result['next_cursor']) ) {
+			WP_CLI::log('More rows: rerun with --cursor=' . (string) $result['next_cursor'] . ' (or use --all for complete expansion).');
 		}
 
 		$items = array_map(

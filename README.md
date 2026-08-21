@@ -82,6 +82,9 @@ wp datamachine-code github status
 wp datamachine-code workspace path
 wp datamachine-code workspace path repo-name@fix-foo
 wp datamachine-code workspace list
+# The default is a lightweight 50-row page. Continue with --cursor from JSON,
+# or explicitly expand all rows and Git status probes when needed.
+wp datamachine-code workspace list --all --include-status --format=json
 wp datamachine-code workspace clone https://github.com/org/repo.git
 wp datamachine-code workspace show repo-name
 
