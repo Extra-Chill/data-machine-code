@@ -73,6 +73,7 @@ namespace {
 		$first = $harness->list_repos();
 		$elapsed = microtime(true) - $started;
 		bounded_list_assert(338 === $first['total'], 'Bounded list must report the complete filtered total.');
+		bounded_list_assert(338 === ($first['summary']['total'] ?? null) && 338 === ($first['summary']['worktree'] ?? null), 'Summary must count the complete result before pagination.');
 		bounded_list_assert(50 === $first['returned'] && 50 === count($first['repos']), 'Default list must never exceed its 50-row bound.');
 		bounded_list_assert(is_string($first['next_cursor']), 'First bounded page must provide a continuation cursor.');
 		bounded_list_assert(false === $first['status_requested'] && 0 === $harness->git_probes, 'Default discovery must not run per-row Git probes.');
@@ -81,6 +82,17 @@ namespace {
 		$second = $harness->list_repos(null, null, array( 'cursor' => $first['next_cursor'] ));
 		bounded_list_assert('repo@branch-050' === ($second['repos'][0]['name'] ?? null), 'Cursor continuation must resume after the previous stable row.');
 		bounded_list_assert(50 === $second['returned'], 'Cursor continuation must preserve the declared output bound.');
+		$scoped_cursor = $harness->list_repos('other-repo', null, array( 'cursor' => $first['next_cursor'] ));
+		bounded_list_assert(is_wp_error($scoped_cursor), 'A cursor must reject changed repository scope.');
+
+		$cursor = null;
+		$names  = array();
+		do {
+			$page = $harness->list_repos(null, null, null === $cursor ? array() : array( 'cursor' => $cursor ));
+			$names = array_merge($names, array_column($page['repos'], 'name'));
+			$cursor = $page['next_cursor'];
+		} while ( null !== $cursor );
+		bounded_list_assert(338 === count($names) && 338 === count(array_unique($names)), 'Cursor pagination must return every matching row exactly once.');
 
 		$status = $harness->list_repos(null, null, array( 'limit' => 2, 'include_status' => true ));
 		bounded_list_assert(true === $status['status_requested'] && 4 === $harness->git_probes, 'Explicit status requests must scope Git probes to returned rows.');

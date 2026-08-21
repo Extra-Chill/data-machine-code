@@ -163,6 +163,7 @@ class WorkspaceAbilities {
 							'returned' => array( 'type' => 'integer' ),
 							'next_cursor' => array( 'type' => array( 'string', 'null' ) ),
 							'status_requested' => array( 'type' => 'boolean' ),
+							'summary' => array( 'type' => 'object' ),
 							'repos'   => array(
 								'type'  => 'array',
 								'items' => array(

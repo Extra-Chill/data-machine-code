@@ -36,7 +36,7 @@ trait WorkspaceRepositoryLifecycle {
 	 * @param  string|null $repo Optional primary repository name to include.
 	 * @param  string|null $type Optional checkout type filter: primary or worktree.
 	 * @param  array{limit?:int,cursor?:string,all?:bool,include_status?:bool} $options List options.
-	 * @return array{success: bool, repos: array, path: string, total: int, returned: int, next_cursor: string|null, status_requested: bool}|\WP_Error
+	 * @return array{success: bool, repos: array, path: string, total: int, returned: int, next_cursor: string|null, status_requested: bool, summary: array}|\WP_Error
 	 */
 	public function list_repos( ?string $repo = null, ?string $type = null, array $options = array() ): array|\WP_Error {
 		$path    = $this->workspace_path;
@@ -70,6 +70,7 @@ trait WorkspaceRepositoryLifecycle {
 				'returned'         => 0,
 				'next_cursor'      => null,
 				'status_requested' => $include_status,
+				'summary'          => $this->workspace_list_summary(array(), $path),
 			);
 		}
 
@@ -155,6 +156,7 @@ trait WorkspaceRepositoryLifecycle {
 
 		usort($repos, fn( array $left, array $right ): int => strcmp($this->workspace_list_row_key($left), $this->workspace_list_row_key($right)));
 		$total = count($repos);
+		$summary = $this->workspace_list_summary($repos, $path);
 		if ( null !== $cursor ) {
 			$repos = array_values(array_filter($repos, fn( array $row ): bool => strcmp($this->workspace_list_row_key($row), $cursor) > 0));
 		}
@@ -194,7 +196,45 @@ trait WorkspaceRepositoryLifecycle {
 			'returned'         => count($repos),
 			'next_cursor'      => $next_cursor,
 			'status_requested' => $include_status,
+			'summary'          => $summary,
 		);
+	}
+
+	/**
+	 * Build whole-result counts before pagination removes rows.
+	 *
+	 * @param array<int,array<string,mixed>> $repos Workspace rows.
+	 * @return array<string,mixed>
+	 */
+	private function workspace_list_summary( array $repos, string $path ): array {
+		$summary = array(
+			'total'     => count($repos),
+			'primary'   => 0,
+			'worktree'  => 0,
+			'context'   => 0,
+			'non_git'   => 0,
+			'repos'     => array(),
+			'workspace' => $path,
+		);
+		foreach ( $repos as $row ) {
+			$kind = ! empty($row['is_context']) ? 'context' : ( ! empty($row['is_worktree']) ? 'worktree' : 'primary' );
+			++$summary[ $kind ];
+			if ( empty($row['git']) ) {
+				++$summary['non_git'];
+			}
+			$repo = (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' );
+			if ( ! isset($summary['repos'][ $repo ]) ) {
+				$summary['repos'][ $repo ] = array( 'repo' => $repo, 'primary' => 0, 'worktree' => 0, 'context' => 0, 'total' => 0 );
+			}
+			++$summary['repos'][ $repo ][ $kind ];
+			++$summary['repos'][ $repo ]['total'];
+		}
+		ksort($summary['repos']);
+		$summary['repos'] = array_values($summary['repos']);
+		if ( $summary['non_git'] > 0 ) {
+			$summary['triage_command'] = 'wp datamachine-code workspace triage list --format=json';
+		}
+		return $summary;
 	}
 
 	/** @param array<string,mixed> $row */

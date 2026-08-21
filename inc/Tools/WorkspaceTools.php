@@ -1097,7 +1097,8 @@ class WorkspaceTools extends BaseTool
 						'type'        => 'integer',
 						'minimum'     => 1,
 						'maximum'     => 200,
-						'description' => 'Maximum rows to return; defaults to 50.',
+						'default'     => 50,
+						'description' => 'Maximum lightweight rows to return. Defaults to 50.',
 					),
 					'cursor' => array(
 						'type'        => 'string',

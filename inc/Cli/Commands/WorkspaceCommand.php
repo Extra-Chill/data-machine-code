@@ -419,6 +419,11 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
+		if ( ! empty($assoc_args['summary']) ) {
+			$this->render_workspace_list_summary($result, $assoc_args);
+			return;
+		}
+
 		if ( 'json' === ( $assoc_args['format'] ?? 'table' ) ) {
 			$this->renderer()->json($result);
 			return;
@@ -435,14 +440,11 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		if ( ! empty($assoc_args['summary']) ) {
-			$this->render_workspace_list_summary($result, $assoc_args);
-			return;
-		}
-
-		WP_CLI::log(sprintf('Workspace: %s | showing %d of %d', (string) ( $result['path'] ?? '' ), (int) ( $result['returned'] ?? 0 ), (int) ( $result['total'] ?? 0 )));
-		if ( ! empty($result['next_cursor']) ) {
-			WP_CLI::log('More rows: rerun with --cursor=' . (string) $result['next_cursor'] . ' (or use --all for complete expansion).');
+		if ( 'table' === ( $assoc_args['format'] ?? 'table' ) ) {
+			WP_CLI::log(sprintf('Workspace: %s | showing %d of %d', (string) ( $result['path'] ?? '' ), (int) ( $result['returned'] ?? 0 ), (int) ( $result['total'] ?? 0 )));
+			if ( ! empty($result['next_cursor']) ) {
+				WP_CLI::log('More rows: rerun with --cursor=' . (string) $result['next_cursor'] . ' (or use --all for complete expansion).');
+			}
 		}
 
 		$items = array_map(
@@ -626,49 +628,29 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_workspace_list_summary( array $result, array $assoc_args ): void {
-		$repos   = (array) ( $result['repos'] ?? array() );
-		$summary = array(
-			'total'     => count($repos),
-			'primary'   => 0,
-			'worktree'  => 0,
-			'context'   => 0,
-			'non_git'   => 0,
-			'repos'     => array(),
-			'workspace' => (string) ( $result['path'] ?? '' ),
-		);
-
-		foreach ( $repos as $row ) {
-			if ( ! is_array($row) ) {
-				continue;
-			}
-			$kind = ! empty($row['is_context']) ? 'context' : ( ! empty($row['is_worktree']) ? 'worktree' : 'primary' );
-			++$summary[ $kind ];
-			if ( empty($row['git']) ) {
-				++$summary['non_git'];
-			}
-			$repo = (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' );
-			if ( ! isset($summary['repos'][ $repo ]) ) {
-				$summary['repos'][ $repo ] = array(
-					'repo'     => $repo,
-					'primary'  => 0,
-					'worktree' => 0,
-					'context'  => 0,
-					'total'    => 0,
-				);
-			}
-			++$summary['repos'][ $repo ][ $kind ];
-			++$summary['repos'][ $repo ]['total'];
-		}
-
-		ksort($summary['repos']);
-		$summary['repos'] = array_values($summary['repos']);
-		if ( $summary['non_git'] > 0 ) {
-			$summary['triage_command'] = 'wp datamachine-code workspace triage list --format=json';
-		}
+		$summary = is_array($result['summary'] ?? null) ? $result['summary'] : array();
+		$summary['returned']    = (int) ( $result['returned'] ?? 0 );
+		$summary['next_cursor'] = $result['next_cursor'] ?? null;
+		$summary['status_requested'] = ! empty($result['status_requested']);
 
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( 'json' === $format ) {
 			$this->renderer()->json($summary);
+			return;
+		}
+		if ( 'csv' === $format || 'yaml' === $format ) {
+			$this->format_items(
+				array(
+					array( 'metric' => 'total', 'count' => $summary['total'] ?? 0 ),
+					array( 'metric' => 'primary', 'count' => $summary['primary'] ?? 0 ),
+					array( 'metric' => 'worktree', 'count' => $summary['worktree'] ?? 0 ),
+					array( 'metric' => 'context', 'count' => $summary['context'] ?? 0 ),
+					array( 'metric' => 'non_git', 'count' => $summary['non_git'] ?? 0 ),
+				),
+				array( 'metric', 'count' ),
+				$assoc_args,
+				'metric'
+			);
 			return;
 		}
 
