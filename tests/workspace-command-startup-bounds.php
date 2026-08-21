@@ -6,6 +6,16 @@ namespace DataMachine\Cli {
 	class BaseCommand {}
 }
 
+namespace DataMachineCode\Workspace {
+	function disk_free_space( string $path ): float|false {
+		return $GLOBALS['dmc_test_disk_free_bytes'] ?? \disk_free_space($path);
+	}
+
+	function disk_total_space( string $path ): float|false {
+		return $GLOBALS['dmc_test_disk_total_bytes'] ?? \disk_total_space($path);
+	}
+}
+
 namespace {
 	final class WP_Error {
 		public function __construct(
@@ -44,6 +54,8 @@ namespace {
 	$GLOBALS['dmc_test_mutation_calls'] = 0;
 	$GLOBALS['dmc_test_options'] = array();
 	$GLOBALS['dmc_test_filters'] = array();
+	$GLOBALS['dmc_test_disk_free_bytes'] = null;
+	$GLOBALS['dmc_test_disk_total_bytes'] = null;
 
 	function startup_bounds_assert( bool $condition, string $message ): void {
 		if ( ! $condition ) {
@@ -108,9 +120,6 @@ namespace {
 	$workspace = sys_get_temp_dir() . '/dmc-startup-bounds-' . bin2hex(random_bytes(6));
 	mkdir($workspace, 0777, true);
 	mkdir($workspace . '/target', 0777, true);
-	for ( $index = 0; $index < 600; ++$index ) {
-		mkdir($workspace . '/unrelated-' . str_pad((string) $index, 4, '0', STR_PAD_LEFT));
-	}
 
 	define('WP_CLI', true);
 	define('WPINC', 'wp-includes');
@@ -152,8 +161,11 @@ namespace {
 		startup_bounds_assert(! class_exists($service_class, false), sprintf('Nested help initialized %s.', $service_class));
 	}
 
-	// Dispatch the registered command exactly as WP-CLI does. Targeted show must
-	// not depend on the full Abilities API bootstrap that was skipped above.
+	// Dispatch the registered command exactly as WP-CLI does. A normal targeted
+	// show must not depend on the full Abilities API bootstrap that was skipped
+	// above.
+	$GLOBALS['dmc_test_disk_total_bytes'] = (float) ( 100 * 1024 * 1024 * 1024 );
+	$GLOBALS['dmc_test_disk_free_bytes']  = (float) ( 50 * 1024 * 1024 * 1024 );
 	$GLOBALS['argv'] = array( 'wp', 'datamachine-code', 'workspace', 'show', 'target' );
 	$before_entries = scandir($workspace);
 	$started        = microtime(true);
@@ -166,6 +178,47 @@ namespace {
 	startup_bounds_assert($elapsed < 3.0, sprintf('Targeted show exceeded its startup bound: %.3fs.', $elapsed));
 	startup_bounds_assert(0 === $GLOBALS['dmc_test_get_option_calls'], 'Existing local targeted show consulted registry or remote backend state.');
 	startup_bounds_assert($before_entries === scandir($workspace), 'Targeted show changed workspace state.');
+	startup_bounds_assert(! str_contains(implode("\n", WP_CLI::$output), 'Recovery (all commands are non-destructive):'), 'Normal targeted show rendered capacity recovery.');
+
+	// Make capacity pressure deterministic while retaining the actual CLI ->
+	// WorkspaceAbilities -> Workspace show path. The warning/refusal output may
+	// only consume this already-measured capacity result, not bootstrap hygiene.
+	for ( $index = 0; $index < 600; ++$index ) {
+		mkdir($workspace . '/unrelated-' . str_pad((string) $index, 4, '0', STR_PAD_LEFT));
+	}
+	$GLOBALS['dmc_test_disk_total_bytes'] = (float) ( 100 * 1024 * 1024 * 1024 );
+	$GLOBALS['dmc_test_disk_free_bytes']  = (float) ( 15 * 1024 * 1024 * 1024 );
+	WP_CLI::$output = array();
+	$warning_options_before = $GLOBALS['dmc_test_get_option_calls'];
+	$warning_started = microtime(true);
+	$command->show(array( 'target' ), array());
+	$warning_elapsed = microtime(true) - $warning_started;
+	$warning_output = implode("\n", WP_CLI::$output);
+	startup_bounds_assert(str_contains($warning_output, 'Recovery (all commands are non-destructive):'), 'Warning targeted show did not render the shared recovery suggestion.');
+	startup_bounds_assert($warning_options_before === $GLOBALS['dmc_test_get_option_calls'], 'Warning targeted show bootstrapped hygiene inventory or remote state.');
+	startup_bounds_assert($warning_elapsed < 3.0, sprintf('Warning targeted show exceeded its startup bound: %.3fs.', $warning_elapsed));
+	startup_bounds_assert(! str_contains($warning_output, '--force'), 'Warning targeted show suggested bypassing capacity protection.');
+	startup_bounds_assert(str_contains($warning_output, 'workspace hygiene --include-sizes --size-limit=100'), 'Warning targeted show did not emit bounded size inspection.');
+	startup_bounds_assert(str_contains($warning_output, 'workspace hygiene --format=json'), 'Warning targeted show did not emit the generic hygiene next step.');
+	startup_bounds_assert(! str_contains($warning_output, 'workspace worktree cleanup'), 'Warning targeted show inferred cleanup work without observed lane state.');
+	startup_bounds_assert(! str_contains($warning_output, 'workspace worktree locks'), 'Warning targeted show inferred stale locks without observed lane state.');
+
+	$GLOBALS['dmc_test_disk_free_bytes'] = (float) ( 5 * 1024 * 1024 * 1024 );
+	WP_CLI::$output = array();
+	$refusal_options_before = $GLOBALS['dmc_test_get_option_calls'];
+	$refusal_started = microtime(true);
+	$command->show(array( 'target' ), array());
+	$refusal_elapsed = microtime(true) - $refusal_started;
+	$refusal_output = implode("\n", WP_CLI::$output);
+	startup_bounds_assert(str_contains($refusal_output, 'Recovery (all commands are non-destructive):'), 'Refused targeted show did not render the shared recovery suggestion.');
+	startup_bounds_assert($refusal_options_before === $GLOBALS['dmc_test_get_option_calls'], 'Refused targeted show bootstrapped hygiene inventory or remote state.');
+	startup_bounds_assert($refusal_elapsed < 3.0, sprintf('Refused targeted show exceeded its startup bound: %.3fs.', $refusal_elapsed));
+	startup_bounds_assert(str_contains($refusal_output, 'workspace hygiene --include-sizes --size-limit=100'), 'Refused targeted show did not emit bounded size inspection.');
+	startup_bounds_assert(str_contains($refusal_output, 'workspace hygiene --format=json'), 'Refused targeted show did not emit the generic hygiene next step.');
+	startup_bounds_assert(! str_contains($refusal_output, 'workspace worktree cleanup'), 'Refused targeted show inferred cleanup work without observed lane state.');
+	startup_bounds_assert(! str_contains($refusal_output, 'workspace worktree locks'), 'Refused targeted show inferred stale locks without observed lane state.');
+	$GLOBALS['dmc_test_disk_free_bytes']  = null;
+	$GLOBALS['dmc_test_disk_total_bytes'] = null;
 
 	$stall_probe = $workspace . '/stall-boundary.php';
 	file_put_contents(

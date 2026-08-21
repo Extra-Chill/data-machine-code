@@ -92,6 +92,15 @@ trait WorkspaceHygieneReport {
 			}
 		}
 		$worktree_summary = $this->summarize_workspace_worktrees($worktrees, $cleanup);
+		$cleanup_summary  = $this->summarize_workspace_cleanup($cleanup, $cleanup_error, (array) ( $size_report['entries'] ?? array() ));
+		$disk             = $this->build_workspace_disk_report($size_report);
+		$recovery         = self::workspace_hygiene_recovery_suggestion(
+			$disk,
+			array(
+				'cleanup'     => null === $cleanup ? null : array( 'count' => count( (array) ( $cleanup['candidates'] ?? array() ) ) ),
+				'stale_locks' => array( 'count' => (int) ( $locks['stale_locks']['count'] ?? $locks['stale'] ?? 0 ) ),
+			)
+		);
 
 		return array(
 			'success'                   => true,
@@ -100,7 +109,8 @@ trait WorkspaceHygieneReport {
 			'destructive'               => false,
 			'fast_stats'                => $this->build_workspace_fast_stats($worktrees, $cleanup, $size_report, $include_worktree_status),
 			'size'                      => $size_report,
-			'disk'                      => $this->build_workspace_disk_report($size_report),
+			'disk'                      => $disk,
+			'recovery'                  => $recovery,
 			'inventory'                 => array(
 				'freshness' => $this->worktree_inventory()->freshness(),
 				'refresh'   => $inventory_refresh,
@@ -111,9 +121,7 @@ trait WorkspaceHygieneReport {
 			'top_repos_by_worktrees'    => $this->top_repos_by_worktree_count($worktrees, 10),
 			'top_repos_by_size'         => $this->top_repos_by_size( (array) ( $size_report['entries'] ?? array() ), 10),
 			'locks'                     => $locks,
-			'cleanup'                   => $this->summarize_workspace_cleanup($cleanup, $cleanup_error, (array) ( $size_report['entries'] ?? array() )),
-			'suggested_cleanup_command' => 'wp datamachine-code workspace worktree cleanup --dry-run --inventory-only --skip-github --format=json',
-			'suggested_size_command'    => 'wp datamachine-code workspace hygiene --include-sizes --size-limit=100 --format=json',
+			'cleanup'                   => $cleanup_summary,
 			'notes'                     => array_values(
 				array_filter(
 					array(
@@ -127,6 +135,67 @@ trait WorkspaceHygieneReport {
 				)
 			),
 		);
+	}
+
+	/**
+	 * Suggest bounded, non-destructive recovery commands from measured capacity.
+	 *
+	 * This accepts the capacity report already gathered by the caller. It never
+	 * refreshes inventory, scans worktrees, or invokes Git, making it safe for
+	 * targeted reads such as `workspace show`.
+	 *
+	 * Lane counts must come from a bounded or precomputed structured report. An
+	 * omitted or null lane is unknown, while a zero count is an observed clear
+	 * lane. Capacity alone must not imply cleanup or stale-lock work.
+	 *
+	 * @param  array<string,mixed>      $capacity       Measured workspace capacity report.
+	 * @param  array<string,?array{count?:int}>|null $observed_lanes Observed recovery lane counts.
+	 * @return array{status:string,commands:array<int,array{label:string,command:string}>,detail_command:?string,lanes:array{cleanup:string,stale_locks:string}}
+	 */
+	public static function workspace_hygiene_recovery_suggestion( array $capacity, ?array $observed_lanes = null ): array {
+		$status = (string) ( $capacity['status'] ?? 'unknown' );
+		$lanes  = array(
+			'cleanup'     => self::workspace_hygiene_recovery_lane_status($observed_lanes['cleanup'] ?? null),
+			'stale_locks' => self::workspace_hygiene_recovery_lane_status($observed_lanes['stale_locks'] ?? null),
+		);
+		if ( ! in_array($status, array( 'warning', 'refused' ), true) ) {
+			return array(
+				'status'         => $status,
+				'commands'       => array(),
+				'detail_command' => null,
+				'lanes'          => $lanes,
+			);
+		}
+
+		$commands = array(
+			array( 'label' => 'Bounded size review', 'command' => 'wp datamachine-code workspace hygiene --include-sizes --size-limit=100 --format=json' ),
+		);
+		if ( 'attention' === $lanes['cleanup'] ) {
+			$commands[] = array( 'label' => 'Cleanup preview', 'command' => 'wp datamachine-code workspace worktree cleanup --dry-run --inventory-only --skip-github --limit=25 --format=json' );
+		}
+		if ( 'attention' === $lanes['stale_locks'] ) {
+			$commands[] = array( 'label' => 'Stale-lock preview', 'command' => 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' );
+		}
+
+		return array(
+			'status'   => $status,
+			'commands' => $commands,
+			'detail_command' => 'wp datamachine-code workspace hygiene --format=json',
+			'lanes' => $lanes,
+		);
+	}
+
+	/**
+	 * Convert optional observed lane data into an explicit operator-facing state.
+	 *
+	 * @param array{count?:int}|null $lane Observed lane data, or null when unknown.
+	 */
+	private static function workspace_hygiene_recovery_lane_status( ?array $lane ): string {
+		if ( null === $lane || ! array_key_exists('count', $lane) || ! is_int($lane['count']) ) {
+			return 'unknown';
+		}
+
+		return $lane['count'] > 0 ? 'attention' : 'clear';
 	}
 
 	/**
@@ -632,12 +701,12 @@ trait WorkspaceHygieneReport {
 			'scanned_entries'       => 0,
 			'skipped_entries'       => array(),
 			'timed_out_entries'     => 0,
-			'scan_complete'         => true,
-			'total_bytes'           => 0,
-			'total_human'           => $this->format_bytes(0),
+			'scan_complete'         => $enabled,
+			'total_bytes'           => $enabled ? 0 : null,
+			'total_human'           => $enabled ? $this->format_bytes(0) : 'not scanned',
 			'entry_count'           => $enabled ? 0 : null,
 			'total_entry_count'     => $enabled ? 0 : null,
-			'entry_count_minimum'   => 0,
+			'entry_count_minimum'   => $enabled ? 0 : null,
 			'entry_count_scan'      => array(
 				'status'           => $enabled ? 'unknown' : 'disabled',
 				'complete'         => $enabled,

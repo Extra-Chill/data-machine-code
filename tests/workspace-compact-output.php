@@ -209,6 +209,12 @@ $hygiene = WorkspaceCompactOutput::hygiene_report(
 	array(
 		'success'                   => true,
 		'workspace_path'            => '/workspace',
+		'recovery'                  => array(
+			'status'         => 'warning',
+			'lanes'          => array( 'cleanup' => 'unknown', 'stale_locks' => 'attention' ),
+			'commands'       => array( array( 'label' => 'Stale-lock preview', 'command' => 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' ) ),
+			'detail_command' => 'wp datamachine-code workspace hygiene --format=json',
+		),
 		'disk'                      => array( 'free_bytes' => 999 ),
 		'fast_stats'                => array(
 			'counts'              => array(
@@ -261,11 +267,13 @@ $hygiene = WorkspaceCompactOutput::hygiene_report(
 			'entries'     => $large_rows,
 			'top_entries' => $large_rows,
 		),
-		'suggested_cleanup_command' => 'wp datamachine-code workspace worktree cleanup --dry-run --format=json',
 	)
 );
 
 compact_output_assert(40 === ( $hygiene['worktrees']['worktrees'] ?? null ), 'Compact hygiene output must preserve worktree counts.');
+compact_output_assert('unknown' === ( $hygiene['recovery']['lanes']['cleanup'] ?? null ), 'Compact hygiene output must preserve unknown recovery lanes.');
+compact_output_assert('attention' === ( $hygiene['recovery']['lanes']['stale_locks'] ?? null ), 'Compact hygiene output must preserve observed recovery lanes.');
+compact_output_assert(! isset($hygiene['suggested_cleanup_command']), 'Compact hygiene output must use shared recovery guidance instead of legacy cleanup suggestions.');
 compact_output_assert(40 === ( $hygiene['fast_stats']['counts']['cleanup_eligible_unprobed_count'] ?? null ), 'Compact hygiene output must label cheap cleanup candidates as unprobed.');
 compact_output_assert(! isset($hygiene['fast_stats']['counts']['safe_removable_count']), 'Compact hygiene output must not expose misleading safe_removable_count for cheap inventory.');
 compact_output_assert(40 === ( $hygiene['cleanup']['summary']['inventory_cleanup_candidate_count'] ?? null ), 'Compact cleanup summary must expose inventory cleanup candidates separately.');

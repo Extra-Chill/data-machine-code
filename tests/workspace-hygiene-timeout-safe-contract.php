@@ -28,8 +28,10 @@ if ( false === $hygiene || false === $cli || false === $task || false === $plugi
 
 workspace_hygiene_contract_assert_contains("array_key_exists('include_sizes', \$opts) ? (bool) \$opts['include_sizes'] : false", $hygiene, 'Workspace hygiene must skip du sizing by default.');
 workspace_hygiene_contract_assert_contains('Size scan skipped by default for large-workspace safety', $hygiene, 'Default report must explain why size data is partial.');
-workspace_hygiene_contract_assert_contains('suggested_size_command', $hygiene, 'Default report must expose a continuation command for bounded sizing.');
+workspace_hygiene_contract_assert_contains("'recovery'                  => \$recovery", $hygiene, 'Default report must expose shared recovery guidance.');
 workspace_hygiene_contract_assert_contains('--include-sizes --size-limit=100 --format=json', $hygiene, 'Continuation command must keep sizing bounded.');
+workspace_hygiene_contract_assert_contains("'total_bytes'           => \$enabled ? 0 : null", $hygiene, 'Disabled size scans must remain unknown rather than reporting measured zero bytes.');
+workspace_hygiene_contract_assert_contains("'total_human'           => \$enabled ? \$this->format_bytes(0) : 'not scanned'", $hygiene, 'Disabled size scans must render as not scanned.');
 workspace_hygiene_contract_assert_contains('ProcessRunner::run(', $hygiene, 'Workspace hygiene sizing must use the supervised process runner.');
 workspace_hygiene_contract_assert_contains("'entry_timeout'", $hygiene, 'Workspace hygiene must classify per-entry timeouts.');
 workspace_hygiene_contract_assert_contains("'total_timeout'", $hygiene, 'Workspace hygiene must classify whole-pass timeouts.');
@@ -44,5 +46,6 @@ workspace_hygiene_contract_assert_contains('HYGIENE_DEFAULT_SIZE_ENTRY_TIMEOUT',
 workspace_hygiene_contract_assert_contains('HYGIENE_DEFAULT_SIZE_TOTAL_TIMEOUT', $task, 'Scheduled hygiene must inherit the bounded total deadline.');
 workspace_hygiene_contract_assert_contains("'include_sizes'   => false", $plugin, 'Registered weekly hygiene schedule must remain cheap by default.');
 workspace_hygiene_contract_assert_contains('Default false for huge-workspace safety', $ability, 'Ability schema must document cheap size default.');
+workspace_hygiene_contract_assert_contains("'recovery'                  => array( 'type' => 'object' )", $ability, 'Ability schema must expose shared recovery guidance.');
 
 echo "workspace-hygiene-timeout-safe-contract: ok\n";
