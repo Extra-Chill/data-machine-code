@@ -2148,6 +2148,10 @@ trait WorkspaceWorktreeLifecycle {
 			foreach ( array_slice($batch, 0, min(25, $size), true) as $id => $group ) { if ( $group['handle_count'] > 1 ) { ++$total; $samples[ $id ] = $group; ksort($samples); if ( count($samples) > 25 ) { array_pop($samples); } } }
 			if ( $size > 25 ) { $after = (string) $keys[24]; }
 		} while ( $size > 25 );
+		foreach ( $samples as &$sample ) {
+			$sample['handles_omitted'] = $sample['handle_count'] - count($sample['handles']);
+		}
+		unset($sample);
 		return array( 'total' => $total, 'groups' => array_values($samples) );
 	}
 
