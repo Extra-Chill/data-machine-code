@@ -31,9 +31,10 @@ namespace {
 	use DataMachineCode\Workspace\WorkspaceRepositoryLifecycle;
 
 	final class BoundedWorkspaceListHarness {
-		use WorkspaceRepositoryLifecycle;
+		use WorkspaceRepositoryLifecycle { workspace_list_insert_bounded_row as private insert_bounded_row; }
 
 		public int $git_probes = 0;
+		public int $max_bounded_rows = 0;
 		public function __construct( private string $workspace_path ) {}
 		private function require_workspace_visible(): ?WP_Error { return null; }
 		private function parse_handle( string $handle ): array {
@@ -43,6 +44,10 @@ namespace {
 		private function git_get_remote( string $path ): ?string { ++$this->git_probes; return 'https://example.test/repo.git'; }
 		private function git_get_branch( string $path ): ?string { ++$this->git_probes; return 'main'; }
 		private function build_primary_freshness_report( string $path, string $handle ): ?array { ++$this->git_probes; return array( 'status' => 'current' ); }
+		protected function workspace_list_insert_bounded_row( array &$rows, array $row, int $limit ): void {
+			$this->insert_bounded_row($rows, $row, $limit);
+			$this->max_bounded_rows = max($this->max_bounded_rows, count($rows));
+		}
 	}
 
 	function bounded_list_assert( bool $condition, string $message ): void {
@@ -74,8 +79,9 @@ namespace {
 		$elapsed = microtime(true) - $started;
 		bounded_list_assert(338 === $first['total'], 'Bounded list must report the complete filtered total.');
 		bounded_list_assert(338 === ($first['summary']['total'] ?? null) && 338 === ($first['summary']['worktree'] ?? null), 'Summary must count the complete result before pagination.');
-		bounded_list_assert(338 === ($first['summary']['repo_count'] ?? null) && 25 === ($first['summary']['repos_returned'] ?? null) && 313 === ($first['summary']['repos_omitted'] ?? null), 'Summary repository samples must be bounded and report omitted repositories.');
+		bounded_list_assert(25 === ($first['summary']['repos_returned'] ?? null) && 313 === ($first['summary']['repos_omitted'] ?? null), 'Summary repository samples must be bounded and report omitted repositories.');
 		bounded_list_assert(50 === $first['returned'] && 50 === count($first['repos']), 'Default list must never exceed its 50-row bound.');
+		bounded_list_assert(50 >= $harness->max_bounded_rows, 'Default list must retain no more than one bounded page or summary sample set.');
 		bounded_list_assert(is_string($first['next_cursor']), 'First bounded page must provide a continuation cursor.');
 		bounded_list_assert(false === $first['status_requested'] && 0 === $harness->git_probes, 'Default discovery must not run per-row Git probes.');
 		bounded_list_assert($elapsed < 2.0, sprintf('Bounded high-cardinality response exceeded deadline: %.3fs.', $elapsed));
@@ -101,6 +107,12 @@ namespace {
 		bounded_list_assert(338 === $all['returned'] && null === $all['next_cursor'], 'Explicit all must return the complete inventory without a continuation cursor.');
 		$all_with_cursor = $harness->list_repos(null, null, array( 'all' => true, 'cursor' => $first['next_cursor'] ));
 		bounded_list_assert(is_wp_error($all_with_cursor), 'All and cursor must be rejected as an ambiguous pagination request.');
+		foreach ( array( 1, 200, '1', '050' ) as $limit ) {
+			bounded_list_assert(! is_wp_error(BoundedWorkspaceListHarness::normalize_workspace_list_limit($limit)), 'Documented integer limit representations must be accepted.');
+		}
+		foreach ( array( 0, -1, 201, 1.0, '1.5', '1x', '', array( 1 ), true, false ) as $limit ) {
+			bounded_list_assert(is_wp_error(BoundedWorkspaceListHarness::normalize_workspace_list_limit($limit)), 'Non-integer workspace list limits must be rejected before coercion.');
+		}
 	} finally {
 		bounded_list_remove_tree($workspace);
 	}

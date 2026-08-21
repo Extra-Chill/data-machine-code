@@ -57,9 +57,9 @@ trait WorkspaceRepositoryLifecycle {
 		if ( $all && isset($options['cursor']) ) {
 			return new \WP_Error('invalid_workspace_list_pagination', 'Workspace list --all cannot be combined with --cursor.', array( 'status' => 400 ));
 		}
-		$limit          = isset($options['limit']) ? $options['limit'] : self::WORKSPACE_LIST_DEFAULT_LIMIT;
-		if ( ! is_int($limit) || $limit < 1 || $limit > self::WORKSPACE_LIST_MAX_LIMIT ) {
-			return new \WP_Error('invalid_workspace_list_limit', sprintf('Workspace list limit must be an integer between 1 and %d.', self::WORKSPACE_LIST_MAX_LIMIT), array( 'status' => 400 ));
+		$limit = self::normalize_workspace_list_limit($options['limit'] ?? self::WORKSPACE_LIST_DEFAULT_LIMIT);
+		if ( is_wp_error($limit) ) {
+			return $limit;
 		}
 		$cursor = isset($options['cursor']) ? $this->decode_workspace_list_cursor((string) $options['cursor'], $repo_filter, $type_filter) : null;
 		if ( is_wp_error($cursor) ) {
@@ -75,100 +75,28 @@ trait WorkspaceRepositoryLifecycle {
 				'returned'         => 0,
 				'next_cursor'      => null,
 				'status_requested' => $include_status,
-				'summary'          => $this->workspace_list_summary(array(), $path),
+				'summary'          => $this->workspace_list_summary($path),
 			);
 		}
 
-		$repos   = array();
-		$entries = scandir($path);
-
-		if ( 'context' !== $type_filter ) {
-			foreach ( $entries as $entry ) {
-				if ( '.' === $entry || '..' === $entry ) {
-					continue;
+		$repos     = array();
+		$summary   = $this->workspace_list_summary($path);
+		$remaining = 0;
+		foreach ( $this->workspace_list_rows($path, $repo_filter, $type_filter) as $repo_info ) {
+			$this->workspace_list_count_summary($summary, $repo_info);
+			if ( null === $cursor || strcmp($this->workspace_list_row_key($repo_info), $cursor) > 0 ) {
+				++$remaining;
+				if ( $all ) {
+					$repos[] = $repo_info;
+				} else {
+					$this->workspace_list_insert_bounded_row($repos, $repo_info, $limit);
 				}
-
-				// Skip dotfile entries (e.g. internal infra dirs like .locks).
-				if ( str_starts_with($entry, '.') ) {
-					continue;
-				}
-
-				$entry_path = $path . '/' . $entry;
-				if ( ! is_dir($entry_path) ) {
-					continue;
-				}
-
-				$git_path = $entry_path . '/.git';
-				$is_git   = is_dir($git_path) || is_file($git_path);
-				$is_wt    = is_file($git_path);
-
-				// A real primary or worktree always has a .git entry. Non-git
-				// directories are not repositories and must not be emitted as rows.
-				if ( ! $is_git ) {
-					continue;
-				}
-
-				$parsed = $this->parse_handle($entry);
-
-				if ( null !== $repo_filter && $parsed['repo'] !== $repo_filter ) {
-					continue;
-				}
-
-				$is_worktree = $is_wt || $parsed['is_worktree'];
-				if ( 'primary' === $type_filter && $is_worktree ) {
-					continue;
-				}
-				if ( 'worktree' === $type_filter && ! $is_worktree ) {
-					continue;
-				}
-
-				$repo_info = array(
-					'name'        => $entry,
-					'path'        => $entry_path,
-					'git'         => $is_git,
-					'is_worktree' => $is_worktree,
-					'repo'        => $parsed['repo'],
-				);
-
-				if ( $parsed['is_worktree'] ) {
-					$repo_info['branch_slug'] = $parsed['branch_slug'];
-				}
-
-				$repos[] = $repo_info;
 			}
 		}
-
-		if ( null === $type_filter || 'context' === $type_filter ) {
-			foreach ( WorkspaceAliasResolver::context_repositories() as $alias => $context ) {
-				if ( null !== $repo_filter && $this->parse_handle( (string) ( $context['target'] ?? $alias ) )['repo'] !== $repo_filter && $alias !== $repo_filter ) {
-					continue;
-				}
-
-				$target       = (string) ( $context['target'] ?? $alias );
-				$context_path = $this->workspace_path . '/' . $this->parse_handle($target)['dir_name'];
-				$repos[] = array(
-					'name'             => $alias,
-					'path'             => is_dir($context_path) ? $context_path : null,
-					'git'              => is_dir($context_path . '/.git') || is_file($context_path . '/.git'),
-					'is_worktree'      => false,
-					'is_context'       => true,
-					'repo'             => (string) ( $context['repo'] ?? $target ),
-					'ref'              => (string) ( $context['ref'] ?? '' ),
-					'workspace_policy' => WorkspaceAliasResolver::policy_attestation($alias),
-				);
-			}
+		if ( $all ) {
+			usort($repos, fn( array $left, array $right ): int => strcmp($this->workspace_list_row_key($left), $this->workspace_list_row_key($right)));
 		}
-
-		usort($repos, fn( array $left, array $right ): int => strcmp($this->workspace_list_row_key($left), $this->workspace_list_row_key($right)));
-		$total = count($repos);
-		$summary = $this->workspace_list_summary($repos, $path);
-		if ( null !== $cursor ) {
-			$repos = array_values(array_filter($repos, fn( array $row ): bool => strcmp($this->workspace_list_row_key($row), $cursor) > 0));
-		}
-		$remaining = count($repos);
-		if ( ! $all ) {
-			$repos = array_slice($repos, 0, $limit);
-		}
+		$this->workspace_list_finish_summary($summary);
 		if ( $include_status ) {
 			foreach ( $repos as &$repo_info ) {
 				if ( empty($repo_info['git']) || ! is_string($repo_info['path'] ?? null) ) {
@@ -197,7 +125,7 @@ trait WorkspaceRepositoryLifecycle {
 			'success'          => true,
 			'repos'            => $repos,
 			'path'             => $path,
-			'total'            => $total,
+			'total'            => $summary['total'],
 			'returned'         => count($repos),
 			'next_cursor'      => $next_cursor,
 			'status_requested' => $include_status,
@@ -206,14 +134,12 @@ trait WorkspaceRepositoryLifecycle {
 	}
 
 	/**
-	 * Build whole-result counts before pagination removes rows.
-	 *
-	 * @param array<int,array<string,mixed>> $repos Workspace rows.
+	 * Build bounded whole-result counts before pagination removes rows.
 	 * @return array<string,mixed>
 	 */
-	private function workspace_list_summary( array $repos, string $path ): array {
-		$summary = array(
-			'total'     => count($repos),
+	private function workspace_list_summary( string $path ): array {
+		return array(
+			'total'     => 0,
 			'primary'   => 0,
 			'worktree'  => 0,
 			'context'   => 0,
@@ -221,28 +147,77 @@ trait WorkspaceRepositoryLifecycle {
 			'repos'     => array(),
 			'workspace' => $path,
 		);
-		foreach ( $repos as $row ) {
-			$kind = ! empty($row['is_context']) ? 'context' : ( ! empty($row['is_worktree']) ? 'worktree' : 'primary' );
-			++$summary[ $kind ];
-			if ( empty($row['git']) ) {
-				++$summary['non_git'];
-			}
-			$repo = (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' );
-			if ( ! isset($summary['repos'][ $repo ]) ) {
-				$summary['repos'][ $repo ] = array( 'repo' => $repo, 'primary' => 0, 'worktree' => 0, 'context' => 0, 'total' => 0 );
-			}
-			++$summary['repos'][ $repo ][ $kind ];
-			++$summary['repos'][ $repo ]['total'];
+	}
+
+	/** @param array<string,mixed> $summary @param array<string,mixed> $row */
+	private function workspace_list_count_summary( array &$summary, array $row ): void {
+		++$summary['total'];
+		$kind = ! empty($row['is_context']) ? 'context' : ( ! empty($row['is_worktree']) ? 'worktree' : 'primary' );
+		++$summary[ $kind ];
+		if ( empty($row['git']) ) {
+			++$summary['non_git'];
 		}
-		ksort($summary['repos']);
-		$summary['repo_count']     = count($summary['repos']);
-		$summary['repos']          = array_slice(array_values($summary['repos']), 0, self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT);
+		$this->workspace_list_insert_bounded_row($summary['repos'], array( 'name' => (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' ), 'path' => (string) ( $row['path'] ?? '' ), 'repo' => (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' ), 'primary' => 'primary' === $kind ? 1 : 0, 'worktree' => 'worktree' === $kind ? 1 : 0, 'context' => 'context' === $kind ? 1 : 0, 'total' => 1 ), self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT);
+	}
+
+	/** @param array<string,mixed> $summary */
+	private function workspace_list_finish_summary( array &$summary ): void {
 		$summary['repos_returned'] = count($summary['repos']);
-		$summary['repos_omitted']  = $summary['repo_count'] - $summary['repos_returned'];
+		$summary['repos_omitted']  = $summary['total'] - $summary['repos_returned'];
 		if ( $summary['non_git'] > 0 ) {
 			$summary['triage_command'] = 'wp datamachine-code workspace triage list --format=json';
 		}
-		return $summary;
+	}
+
+	/** @return \Generator<int,array<string,mixed>> */
+	protected function workspace_list_rows( string $path, ?string $repo_filter, ?string $type_filter ): \Generator {
+		if ( 'context' !== $type_filter ) {
+			foreach ( new \DirectoryIterator($path) as $entry ) {
+				$name = $entry->getFilename();
+				if ( $entry->isDot() || str_starts_with($name, '.') || ! $entry->isDir() ) { continue; }
+				$entry_path = $entry->getPathname();
+				$git_path = $entry_path . '/.git';
+				$is_git = is_dir($git_path) || is_file($git_path);
+				if ( ! $is_git ) { continue; }
+				$parsed = $this->parse_handle($name);
+				if ( null !== $repo_filter && $parsed['repo'] !== $repo_filter ) { continue; }
+				$is_worktree = is_file($git_path) || $parsed['is_worktree'];
+				if ( ( 'primary' === $type_filter && $is_worktree ) || ( 'worktree' === $type_filter && ! $is_worktree ) ) { continue; }
+				$row = array( 'name' => $name, 'path' => $entry_path, 'git' => $is_git, 'is_worktree' => $is_worktree, 'repo' => $parsed['repo'] );
+				if ( $parsed['is_worktree'] ) { $row['branch_slug'] = $parsed['branch_slug']; }
+				yield $row;
+			}
+		}
+		if ( null === $type_filter || 'context' === $type_filter ) {
+			foreach ( WorkspaceAliasResolver::context_repositories() as $alias => $context ) {
+				if ( null !== $repo_filter && $this->parse_handle((string) ( $context['target'] ?? $alias ))['repo'] !== $repo_filter && $alias !== $repo_filter ) { continue; }
+				$target = (string) ( $context['target'] ?? $alias );
+				$context_path = $path . '/' . $this->parse_handle($target)['dir_name'];
+				yield array( 'name' => $alias, 'path' => is_dir($context_path) ? $context_path : null, 'git' => is_dir($context_path . '/.git') || is_file($context_path . '/.git'), 'is_worktree' => false, 'is_context' => true, 'repo' => (string) ( $context['repo'] ?? $target ), 'ref' => (string) ( $context['ref'] ?? '' ), 'workspace_policy' => WorkspaceAliasResolver::policy_attestation($alias) );
+			}
+		}
+	}
+
+	/** @param array<int,array<string,mixed>> $rows @param array<string,mixed> $row */
+	protected function workspace_list_insert_bounded_row( array &$rows, array $row, int $limit ): void {
+		$key = $this->workspace_list_row_key($row);
+		$position = count($rows);
+		foreach ( $rows as $index => $existing ) {
+			if ( strcmp($key, $this->workspace_list_row_key($existing)) < 0 ) { $position = $index; break; }
+		}
+		if ( $position >= $limit && $limit === count($rows) ) { return; }
+		array_splice($rows, $position, 0, array( $row ));
+		if ( count($rows) > $limit ) { array_pop($rows); }
+	}
+
+	public static function normalize_workspace_list_limit( mixed $limit ): int|\WP_Error {
+		if ( is_int($limit) || ( is_string($limit) && ctype_digit($limit) ) ) {
+			$limit = (int) $limit;
+		}
+		if ( ! is_int($limit) || $limit < 1 || $limit > self::WORKSPACE_LIST_MAX_LIMIT ) {
+			return new \WP_Error('invalid_workspace_list_limit', sprintf('Workspace list limit must be an integer between 1 and %d.', self::WORKSPACE_LIST_MAX_LIMIT), array( 'status' => 400 ));
+		}
+		return $limit;
 	}
 
 	/** @param array<string,mixed> $row */

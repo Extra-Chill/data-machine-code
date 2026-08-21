@@ -3085,7 +3085,15 @@ class WorkspaceAbilities {
 		$options   = array();
 		foreach ( array( 'limit', 'cursor', 'all', 'include_status' ) as $key ) {
 			if ( array_key_exists($key, $input) ) {
-				$options[ $key ] = 'limit' === $key ? (int) $input[ $key ] : $input[ $key ];
+				if ( 'limit' === $key ) {
+					$limit = Workspace::normalize_workspace_list_limit($input[ $key ]);
+					if ( is_wp_error($limit) ) {
+						return $limit;
+					}
+					$options[ $key ] = $limit;
+					continue;
+				}
+				$options[ $key ] = $input[ $key ];
 			}
 		}
 		return $workspace->list_repos($repo, $type, $options);

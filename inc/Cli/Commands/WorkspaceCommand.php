@@ -403,7 +403,12 @@ class WorkspaceCommand extends BaseCommand {
 			$input['type'] = (string) $assoc_args['type'];
 		}
 		if ( isset($assoc_args['limit']) ) {
-			$input['limit'] = (int) $assoc_args['limit'];
+			$limit = Workspace::normalize_workspace_list_limit($assoc_args['limit']);
+			if ( is_wp_error($limit) ) {
+				WP_CLI::error($limit->get_error_message());
+				return;
+			}
+			$input['limit'] = $limit;
 		}
 		if ( isset($assoc_args['cursor']) ) {
 			$input['cursor'] = (string) $assoc_args['cursor'];
