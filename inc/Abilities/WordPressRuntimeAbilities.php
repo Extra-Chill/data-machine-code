@@ -61,6 +61,7 @@ class WordPressRuntimeAbilities {
 							'theme'      => array( 'type' => 'object' ),
 							'themes'     => array( 'type' => 'array' ),
 							'plugins'    => array( 'type' => 'array' ),
+							'managed_release' => array( 'type' => 'object' ),
 							'mu_plugins' => array( 'type' => 'array' ),
 							'drop_ins'   => array( 'type' => 'array' ),
 							'roots'      => array( 'type' => 'array' ),

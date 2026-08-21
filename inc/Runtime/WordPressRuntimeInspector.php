@@ -35,6 +35,7 @@ final class WordPressRuntimeInspector {
 			'theme'      => $this->getThemeInventory(),
 			'themes'     => $this->getInstalledThemes(),
 			'plugins'    => $this->getInstalledPlugins(),
+			'managed_release' => ( new ManagedReleaseDrift() )->status(),
 			'mu_plugins' => $this->getMustUsePlugins(),
 			'drop_ins'   => $this->getDropIns(),
 			'constants'  => $this->getSafeConstants(),
