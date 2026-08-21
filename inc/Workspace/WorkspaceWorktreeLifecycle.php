@@ -1580,13 +1580,38 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  array       $opts  {
 	 * @type   bool $include_status Whether to run `git status --porcelain` per worktree. Default true.
 	 * @type   bool $include_disk   Whether to run size/artifact `du` probes per worktree. Default true.
+	 * @type   int  $limit          Bounded response page size when supplied.
+	 * @type   string $cursor       Continuation cursor for a bounded response.
+	 * @type   bool $all            Return every row when using bounded response options.
 	 * }
-	 * @return array{success: bool, worktrees: array, fields_skipped: array<int,string>}|\WP_Error
+	 * @return array{success: bool, worktrees: array, fields_skipped: array<int,string>, total?:int, returned?:int, next_cursor?:string|null, status_requested?:bool, disk_requested?:bool, summary?:array}|\WP_Error
 	 */
 	public function worktree_list( ?string $repo = null, ?string $state = null, array $opts = array() ): array|\WP_Error {
 		$include_status = array_key_exists('include_status', $opts) ? (bool) $opts['include_status'] : true;
 		$include_disk   = array_key_exists('include_disk', $opts) ? (bool) $opts['include_disk'] : true;
 		$target_handle  = isset($opts['handle']) ? trim( (string) $opts['handle']) : '';
+		$repo           = null !== $repo && '' !== trim($repo) ? $this->sanitize_name($repo) : null;
+		if ( null !== $state && '' !== trim($state) ) {
+			$state = WorktreeContextInjector::normalize_state($state);
+			if ( null === $state ) {
+				return new \WP_Error('invalid_lifecycle_state', sprintf('Invalid lifecycle state. Valid states: %s.', implode(', ', WorktreeContextInjector::VALID_STATES)), array( 'status' => 400 ));
+			}
+		} else {
+			$state = null;
+		}
+		$bounded        = array_key_exists('limit', $opts) || array_key_exists('cursor', $opts) || array_key_exists('all', $opts);
+		$all            = ! empty($opts['all']);
+		$defer_probes   = $bounded && ! $all;
+		$run_status     = $include_status && ! $defer_probes;
+		$run_disk       = $include_disk && ! $defer_probes;
+		$limit          = isset($opts['limit']) ? $opts['limit'] : 50;
+		if ( ! is_int($limit) || $limit < 1 || $limit > 200 ) {
+			return new \WP_Error('invalid_worktree_list_limit', 'Worktree list limit must be an integer between 1 and 200.', array( 'status' => 400 ));
+		}
+		$cursor = isset($opts['cursor']) ? $this->decode_worktree_list_cursor((string) $opts['cursor'], $repo, $state, $target_handle) : null;
+		if ( is_wp_error($cursor) ) {
+			return $cursor;
+		}
 		$skipped_groups = array();
 		if ( ! $include_status ) {
 			$skipped_groups[] = 'status';
@@ -1595,14 +1620,6 @@ trait WorkspaceWorktreeLifecycle {
 			$skipped_groups[] = 'disk';
 		}
 
-		if ( null !== $state && '' !== trim($state) ) {
-			$state = WorktreeContextInjector::normalize_state( (string) $state);
-			if ( null === $state ) {
-				return new \WP_Error('invalid_lifecycle_state', sprintf('Invalid lifecycle state. Valid states: %s.', implode(', ', WorktreeContextInjector::VALID_STATES)), array( 'status' => 400 ));
-			}
-		} else {
-			$state = null;
-		}
 		if ( '' !== $target_handle ) {
 			// A handle is a single-checkout query, not a filtered workspace scan.
 			$result = $this->worktree_get($target_handle, $opts);
@@ -1610,28 +1627,28 @@ trait WorkspaceWorktreeLifecycle {
 				if ( 'worktree_not_found' !== $result->get_error_code() ) {
 					return $result;
 				}
-				return array(
+				return $this->worktree_list_add_response_metadata(array(
 					'success'               => true,
 					'worktrees'             => array(),
 					'duplicates'            => array(),
 					'base_branch_worktrees' => array(),
 					'fields_skipped'        => $skipped_groups,
-				);
+				), $include_status, $include_disk);
 			}
 			if ( null === $state ) {
-				return $result;
+				return $this->worktree_list_add_response_metadata($result, $include_status, $include_disk);
 			}
 			if ( ( $result['worktrees'][0]['lifecycle_state'] ?? null ) !== $state ) {
 				$result['worktrees'] = array();
 			}
-			return $result;
+			return $this->worktree_list_add_response_metadata($result, $include_status, $include_disk);
 		}
 		if ( ! is_dir($this->workspace_path) ) {
-			return array(
+			return $this->worktree_list_add_response_metadata(array(
 				'success'        => true,
 				'worktrees'      => array(),
 				'fields_skipped' => $skipped_groups,
-			);
+			), $include_status, $include_disk);
 		}
 
 		$primaries = array();
@@ -1648,7 +1665,6 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		if ( null !== $repo ) {
-			$repo      = $this->sanitize_name($repo);
 			$primaries = array_values(array_filter($primaries, fn( $p ) => $p === $repo));
 		}
 		if ( '' !== $target_handle && is_file($this->workspace_path . '/' . $target_handle . '/.git') ) {
@@ -1695,7 +1711,7 @@ trait WorkspaceWorktreeLifecycle {
 					continue;
 				}
 
-				if ( $include_status ) {
+				if ( $run_status ) {
 					$dirty_result     = $this->run_git($wt['path'], 'status --porcelain');
 					$dirty_files      = is_wp_error($dirty_result)
 					? 0
@@ -1722,7 +1738,7 @@ trait WorkspaceWorktreeLifecycle {
 					continue;
 				}
 
-				if ( $include_disk ) {
+				if ( $run_disk ) {
 					$disk = $this->build_worktree_disk_report($primary_repo, $wt['path'], ! $is_primary, $created_at, $metadata);
 				} else {
 					$disk = array(
@@ -1744,8 +1760,8 @@ trait WorkspaceWorktreeLifecycle {
 					$disk['age_days'] ?? null,
 					$created_at,
 					array(
-						'status_probed' => $include_status,
-						'disk_probed'   => $include_disk,
+						'status_probed' => $run_status,
+						'disk_probed'   => $run_disk,
 					)
 				);
 				if ( null !== $stale_reason ) {
@@ -1786,7 +1802,7 @@ trait WorkspaceWorktreeLifecycle {
 					$disk
 				);
 
-				if ( $is_primary ) {
+				if ( $run_status && $is_primary ) {
 					$row['primary_freshness'] = $this->build_primary_freshness_report($wt['path'], $handle);
 				}
 
@@ -1803,6 +1819,9 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		}
 
+		usort($worktrees, fn( array $left, array $right ): int => strcmp($this->worktree_list_row_key($left), $this->worktree_list_row_key($right)));
+		$total                 = count($worktrees);
+		$summary               = $this->worktree_list_summary($worktrees);
 		$duplicates            = WorktreeContextInjector::find_duplicate_task_ownership($worktrees);
 		$base_branch_worktrees = array_values(
 			array_filter(
@@ -1812,6 +1831,27 @@ trait WorkspaceWorktreeLifecycle {
 				)
 			)
 		);
+		if ( null !== $cursor ) {
+			$worktrees = array_values(array_filter($worktrees, fn( array $row ): bool => strcmp($this->worktree_list_row_key($row), $cursor) > 0));
+		}
+		$remaining = count($worktrees);
+		if ( $bounded && ! $all ) {
+			$worktrees = array_slice($worktrees, 0, $limit);
+		}
+		if ( $defer_probes && ( $include_status || $include_disk ) ) {
+			foreach ( $worktrees as &$worktree ) {
+				$probe_result = $this->hydrate_worktree_list_probes($worktree, $include_status, $include_disk);
+				if ( is_wp_error($probe_result) ) {
+					unset($worktree);
+					return $probe_result;
+				}
+			}
+			unset($worktree);
+		}
+		$next_cursor = null;
+		if ( $bounded && ! $all && $remaining > count($worktrees) && ! empty($worktrees) ) {
+			$next_cursor = $this->encode_worktree_list_cursor($this->worktree_list_row_key($worktrees[ count($worktrees) - 1 ]), $repo, $state, $target_handle);
+		}
 
 		return array(
 			'success'               => true,
@@ -1819,7 +1859,110 @@ trait WorkspaceWorktreeLifecycle {
 			'duplicates'            => $duplicates,
 			'base_branch_worktrees' => $base_branch_worktrees,
 			'fields_skipped'        => $skipped_groups,
+			'total'                 => $total,
+			'returned'              => count($worktrees),
+			'next_cursor'           => $next_cursor,
+			'status_requested'      => $include_status,
+			'disk_requested'        => $include_disk,
+			'summary'               => $summary,
 		);
+	}
+
+	/**
+	 * Run requested expensive probes only after bounded pagination selected a row.
+	 *
+	 * @param array<string,mixed> $worktree Worktree row to enrich in place.
+	 * @return \WP_Error|null
+	 */
+	private function hydrate_worktree_list_probes( array &$worktree, bool $include_status, bool $include_disk ): ?\WP_Error {
+		$path = (string) ( $worktree['path'] ?? '' );
+		if ( '' === $path ) {
+			return null;
+		}
+		if ( $include_status ) {
+			$dirty_result        = $this->run_git($path, 'status --porcelain');
+			$worktree['dirty']   = is_wp_error($dirty_result) ? 0 : count(array_filter(array_map('trim', explode("\n", $dirty_result['output'] ?? ''))));
+			$unpushed_commits    = $this->count_unpushed_commits($path);
+			if ( is_wp_error($unpushed_commits) ) {
+				return $unpushed_commits;
+			}
+			$worktree['unpushed'] = $unpushed_commits;
+			if ( ! empty($worktree['is_primary']) ) {
+				$worktree['primary_freshness'] = $this->build_primary_freshness_report($path, (string) ( $worktree['handle'] ?? '' ));
+			}
+		}
+		if ( $include_disk ) {
+			$worktree = array_merge(
+				$worktree,
+				$this->build_worktree_disk_report(
+					(string) ( $worktree['repo'] ?? '' ),
+					$path,
+					! empty($worktree['is_worktree']),
+					isset($worktree['created_at']) ? (string) $worktree['created_at'] : null,
+					is_array($worktree['metadata'] ?? null) ? $worktree['metadata'] : null
+				)
+			);
+		}
+		$stale_reason = $this->detect_worktree_stale_reason(
+			! empty($worktree['is_worktree']),
+			(int) ( $worktree['dirty'] ?? 0 ),
+			$worktree['age_days'] ?? null,
+			isset($worktree['created_at']) ? (string) $worktree['created_at'] : null,
+			array( 'status_probed' => $include_status, 'disk_probed' => $include_disk )
+		);
+		if ( null === $stale_reason ) {
+			unset($worktree['stale_reason']);
+		} else {
+			$worktree['stale_reason'] = $stale_reason;
+		}
+		return null;
+	}
+
+	/** @param array<int,array<string,mixed>> $worktrees */
+	private function worktree_list_summary( array $worktrees ): array {
+		$summary = array( 'total' => count($worktrees), 'primary' => 0, 'worktree' => 0, 'external' => 0, 'repos' => array() );
+		foreach ( $worktrees as $worktree ) {
+			$kind = ! empty($worktree['is_primary']) ? 'primary' : 'worktree';
+			++$summary[ $kind ];
+			if ( ! empty($worktree['external']) ) {
+				++$summary['external'];
+			}
+			$repo = (string) ( $worktree['repo'] ?? 'unknown' );
+			$summary['repos'][ $repo ] = 1 + ( $summary['repos'][ $repo ] ?? 0 );
+		}
+		ksort($summary['repos']);
+		return $summary;
+	}
+
+	/** @param array<string,mixed> $result */
+	private function worktree_list_add_response_metadata( array $result, bool $include_status, bool $include_disk ): array {
+		$worktrees = (array) ( $result['worktrees'] ?? array() );
+		$result['total']            = count($worktrees);
+		$result['returned']         = count($worktrees);
+		$result['next_cursor']      = null;
+		$result['status_requested'] = $include_status;
+		$result['disk_requested']   = $include_disk;
+		$result['summary']          = $this->worktree_list_summary($worktrees);
+		return $result;
+	}
+
+	/** @param array<string,mixed> $row */
+	private function worktree_list_row_key( array $row ): string {
+		return (string) ( $row['handle'] ?? '' ) . "\0" . (string) ( $row['path'] ?? '' );
+	}
+
+	private function encode_worktree_list_cursor( string $after, ?string $repo, ?string $state, string $handle ): string {
+		return rtrim(strtr(base64_encode(wp_json_encode(array( 'v' => 1, 'after' => $after, 'repo' => $repo, 'state' => $state, 'handle' => $handle ))), '+/', '-_'), '=');
+	}
+
+	private function decode_worktree_list_cursor( string $cursor, ?string $repo, ?string $state, string $handle ): string|\WP_Error {
+		$encoded = strtr($cursor, '-_', '+/');
+		$decoded = base64_decode(str_pad($encoded, strlen($encoded) + ( 4 - strlen($encoded) % 4 ) % 4, '='), true);
+		$payload = is_string($decoded) ? json_decode($decoded, true) : null;
+		if ( ! is_array($payload) || 1 !== ( $payload['v'] ?? null ) || ! is_string($payload['after'] ?? null ) || ( $payload['repo'] ?? null ) !== $repo || ( $payload['state'] ?? null ) !== $state || ( $payload['handle'] ?? null ) !== $handle ) {
+			return new \WP_Error('invalid_worktree_list_cursor', 'Worktree list cursor is invalid for the requested filters.', array( 'status' => 400 ));
+		}
+		return $payload['after'];
 	}
 
 	/**

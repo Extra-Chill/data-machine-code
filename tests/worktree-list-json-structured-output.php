@@ -40,6 +40,11 @@ namespace {
 	use DataMachineCode\Cli\Commands\WorkspaceCommand;
 
 	$result = array(
+		'total' => 1,
+		'returned' => 1,
+		'next_cursor' => null,
+		'status_requested' => false,
+		'disk_requested' => false,
 		'worktrees' => array(
 			array(
 				'handle'   => 'repo@task',
@@ -63,6 +68,16 @@ namespace {
 
 	$decoded = json_decode(WP_CLI::$output, true, 512, JSON_THROW_ON_ERROR);
 	$row     = $decoded[0] ?? null;
+	if ( ! is_array($row) ) {
+		throw new RuntimeException('Legacy worktree list JSON must remain a row array.');
+	}
+	WP_CLI::$output = '';
+	$method->invoke($command, 'list', $result, array( 'format' => 'json', 'envelope' => true ));
+	$decoded = json_decode(WP_CLI::$output, true, 512, JSON_THROW_ON_ERROR);
+	if (1 !== ($decoded['total'] ?? null) || 1 !== ($decoded['returned'] ?? null) || ! array_key_exists('next_cursor', $decoded)) {
+		throw new RuntimeException('Envelope JSON must retain bounded-page metadata.');
+	}
+	$row = $decoded['worktrees'][0] ?? null;
 	if ( ! is_array($row) ) {
 		throw new RuntimeException('Worktree list JSON must render a row.');
 	}

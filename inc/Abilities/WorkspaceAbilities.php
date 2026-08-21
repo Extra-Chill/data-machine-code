@@ -1927,7 +1927,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-worktree-list',
 				array(
 					'label'               => 'List Workspace Worktrees',
-					'description'         => 'List all worktrees in the workspace (optionally filtered by repo and lifecycle state). Defaults to a fast cheap-inventory listing on large workspaces; opt in to per-worktree git status and disk probes via include_status / include_disk.',
+					'description'         => 'Return a bounded, summary-first worktree inventory page. Defaults to 50 cheap rows; opt in to complete expansion, status, or disk probes.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -1952,12 +1952,21 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Run size and artifact `du` probes per worktree. Default false (cheap listing). Expensive on large workspaces.',
 							),
+							'limit'          => array( 'type' => 'integer', 'minimum' => 1, 'maximum' => 200, 'default' => 50, 'description' => 'Maximum rows to return. Defaults to 50.' ),
+							'cursor'         => array( 'type' => 'string', 'description' => 'Cursor returned by a previous response with the same filters.' ),
+							'all'            => array( 'type' => 'boolean', 'description' => 'Return every matching row.' ),
 						),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
 							'success'        => array( 'type' => 'boolean' ),
+							'total'          => array( 'type' => 'integer' ),
+							'returned'       => array( 'type' => 'integer' ),
+							'next_cursor'    => array( 'type' => array( 'string', 'null' ) ),
+							'status_requested' => array( 'type' => 'boolean' ),
+							'disk_requested' => array( 'type' => 'boolean' ),
+							'summary'        => array( 'type' => 'object' ),
 							'fields_skipped' => array(
 								'type'        => 'array',
 								'description' => 'Probe groups skipped on this listing (e.g. "status", "disk"). Empty when full data is requested.',
@@ -4299,7 +4308,12 @@ class WorkspaceAbilities {
 			'include_status' => array_key_exists('include_status', $input) ? (bool) $input['include_status'] : false,
 			'include_disk'   => array_key_exists('include_disk', $input) ? (bool) $input['include_disk'] : false,
 			'handle'         => isset($input['handle']) ? (string) $input['handle'] : '',
+			'limit'          => isset($input['limit']) ? (int) $input['limit'] : 50,
+			'all'            => ! empty($input['all']),
 		);
+		if ( isset($input['cursor']) ) {
+			$opts['cursor'] = (string) $input['cursor'];
+		}
 
 		return $workspace->worktree_list($repo, $state, $opts);
 	}

@@ -162,8 +162,8 @@ class WorkspaceCommand extends BaseCommand {
 			),
 			'list' => array(
 				'shortdesc' => 'List managed worktrees from cheap inventory.',
-				'longdesc'  => "Lists worktrees without per-worktree probes by default. Add probe flags only for the details required.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree list --format=json\n    wp datamachine-code workspace worktree list data-machine-code --full",
-				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name.' ), $option('state', 'Lifecycle state filter.'), $flag('with-status', 'Probe working-tree status.'), $flag('with-size', 'Probe disk use.'), $flag('full', 'Probe status and disk use.'), $flag('stale', 'Show stale rows; implies status.'), $format ),
+				'longdesc'  => "Returns a summary-first, 50-row cheap-inventory table by default. Legacy JSON, CSV, and YAML row streams remain exhaustive. Use --format=json --envelope for a bounded structured response and cursor. Add probe flags only for the details required.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree list --format=json\n    wp datamachine-code workspace worktree list --format=json --envelope\n    wp datamachine-code workspace worktree list --all --full",
+				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name.' ), $option('state', 'Lifecycle state filter.'), $option('limit', 'Maximum rows for table or --envelope output; default 50, maximum 200.'), $option('cursor', 'Continue an --envelope JSON response with the same filters.'), $flag('all', 'Explicitly return every matching row.'), $flag('envelope', 'Emit the bounded structured JSON response with summary and cursor metadata.'), $flag('with-status', 'Probe working-tree status.'), $flag('with-size', 'Probe disk use.'), $flag('full', 'Probe status and disk use.'), $flag('stale', 'Show stale rows; implies status.'), $format ),
 			),
 			'get' => array(
 				'shortdesc' => 'Inspect one managed worktree.',
@@ -4466,12 +4466,28 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 
 			case 'list':
+				$format = (string) ( $assoc_args['format'] ?? 'table' );
+				if ( in_array($format, array( 'json', 'csv', 'yaml' ), true) && ( isset($assoc_args['limit']) || isset($assoc_args['cursor']) ) && ( 'json' !== $format || empty($assoc_args['envelope']) ) ) {
+					WP_CLI::error('Use --format=json --envelope with --limit or --cursor. Legacy JSON, CSV, and YAML row streams are exhaustive.');
+					return;
+				}
+				if ( ! empty($assoc_args['envelope']) && 'json' !== $format ) {
+					WP_CLI::error('--envelope is available only with --format=json.');
+					return;
+				}
 				if ( ! empty($args[1]) ) {
 					$input['repo'] = $args[1];
 				}
 				if ( isset($assoc_args['state']) && '' !== trim( (string) $assoc_args['state']) ) {
 					$input['state'] = (string) $assoc_args['state'];
 				}
+				if ( isset($assoc_args['limit']) ) {
+					$input['limit'] = (int) $assoc_args['limit'];
+				}
+				if ( isset($assoc_args['cursor']) ) {
+					$input['cursor'] = (string) $assoc_args['cursor'];
+				}
+				$input['all'] = ! empty($assoc_args['all']) || ( in_array($format, array( 'json', 'csv', 'yaml' ), true) && empty($assoc_args['envelope']) );
 				// Cheap inventory by default — opt in to expensive probes via flags.
 				// `--full` is a shorthand for both, `--stale` requires status to detect dirty.
 				$want_status             = ! empty($assoc_args['with-status'])
@@ -5061,6 +5077,11 @@ class WorkspaceCommand extends BaseCommand {
 				$worktrees
 				);
 				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'liveness', 'last_seen_at', 'owner', 'agent', 'session', 'task', 'pr', 'age_days', 'size', 'artifacts', 'stale', 'path' );
+				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) && ! empty($assoc_args['envelope']) ) {
+					$result['worktrees'] = $items;
+					$this->renderer()->json($result);
+					return;
+				}
 				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 					$this->renderer()->json($items);
 					return;
@@ -5069,6 +5090,12 @@ class WorkspaceCommand extends BaseCommand {
 					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'safety', 'state', 'created_at', 'liveness', 'liveness_reason', 'last_seen_at', 'owner_full', 'session_full', 'task_full', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'fields_skipped', 'metadata', 'path' );
 				}
 				$skipped_global = (array) ( $result['fields_skipped'] ?? array() );
+				if ( 'list' === $operation && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true) ) {
+					WP_CLI::log(sprintf('Worktrees: showing %d of %d', (int) ( $result['returned'] ?? count($items) ), (int) ( $result['total'] ?? count($items) )));
+					if ( ! empty($result['next_cursor']) ) {
+						WP_CLI::log('More rows: rerun with --cursor=' . (string) $result['next_cursor'] . ' (or use --all for complete expansion).');
+					}
+				}
 				if ( ! empty($skipped_global) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true) ) {
 					WP_CLI::log(
 					sprintf(

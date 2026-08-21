@@ -90,7 +90,11 @@ wp datamachine-code workspace show repo-name
 
 # Worktrees — one per branch, parallel-safe
 wp datamachine-code workspace worktree add repo-name fix/foo
+# The table default is a summary-first, lightweight 50-row page. Legacy JSON,
+# CSV, and YAML streams remain exhaustive; use JSON --envelope for a cursor.
 wp datamachine-code workspace worktree list
+wp datamachine-code workspace worktree list --format=json --envelope
+wp datamachine-code workspace worktree list --all --full --format=json
 wp datamachine-code workspace worktree remove repo-name fix/foo
 wp datamachine-code workspace worktree prune
 
