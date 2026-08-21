@@ -136,6 +136,9 @@ class WorktreeContextInjector {
 	 */
 	public const METADATA_OPTION = 'datamachine_worktree_metadata';
 
+	/** Journal-only record written before a Git worktree mutation. */
+	public const CREATION_INTENT_KEY = 'creation_intent';
+
 	public const ORIGIN_SESSION_LEGACY_MIGRATED_OPTION = 'datamachine_code_worktree_attribution_legacy_migrated_v2';
 
 	/**
@@ -1368,6 +1371,83 @@ class WorktreeContextInjector {
 		}
 
 		return self::upsert_inventory_metadata($handle, $stored_metadata);
+	}
+
+	/** Persist the exact creation contract before Git materializes a worktree. */
+	public static function store_creation_intent( string $handle, array $intent ): bool|\WP_Error {
+		if ( ! function_exists('get_option') || ! function_exists('update_option') ) {
+			return new \WP_Error('worktree_creation_intent_storage_unavailable', 'Worktree creation intent storage is unavailable; refusing Git mutation.');
+		}
+
+		return SqliteBusyRetry::run(
+			'worktree_creation_intent_store',
+			static function () use ( $handle, $intent ): bool {
+				$all = get_option(self::METADATA_OPTION, array());
+				$all = is_array($all) ? $all : array();
+				if ( isset($all[ $handle ]) ) {
+					return false;
+				}
+				$all[ $handle ] = array( self::CREATION_INTENT_KEY => $intent );
+				return update_option(self::METADATA_OPTION, $all, false);
+			}
+		);
+	}
+
+	/** Return a journal only when it is the handle's sole durable record. */
+	public static function get_creation_intent( string $handle ): ?array {
+		if ( ! function_exists('get_option') ) {
+			return null;
+		}
+		$all = get_option(self::METADATA_OPTION, array());
+		$record = is_array($all) ? ( $all[ $handle ] ?? null ) : null;
+		if ( ! is_array($record) || array( self::CREATION_INTENT_KEY ) !== array_keys($record) || ! is_array($record[ self::CREATION_INTENT_KEY ] ?? null) ) {
+			return null;
+		}
+		return $record[ self::CREATION_INTENT_KEY ];
+	}
+
+	/** Replace a matching journal with lifecycle metadata after Git creation succeeds. */
+	public static function promote_creation_intent( string $handle, array $intent, array $metadata ): bool|\WP_Error {
+		if ( ! function_exists('get_option') || ! function_exists('update_option') ) {
+			return new \WP_Error('worktree_creation_intent_storage_unavailable', 'Worktree creation intent storage is unavailable; refusing lifecycle promotion.');
+		}
+		$promoted = SqliteBusyRetry::run(
+			'worktree_creation_intent_promote',
+			static function () use ( $handle, $intent, $metadata ): bool|\WP_Error {
+				$all = get_option(self::METADATA_OPTION, array());
+				$all = is_array($all) ? $all : array();
+				$record = $all[ $handle ] ?? null;
+				if ( ! is_array($record) || array( self::CREATION_INTENT_KEY ) !== array_keys($record) || $intent !== ( $record[ self::CREATION_INTENT_KEY ] ?? null ) ) {
+					return new \WP_Error('worktree_creation_intent_mismatch', 'Worktree creation intent changed before lifecycle metadata could be committed.');
+				}
+				$all[ $handle ] = $metadata;
+				return update_option(self::METADATA_OPTION, $all, false);
+			}
+		);
+		if ( is_wp_error($promoted) ) {
+			return $promoted;
+		}
+		return self::upsert_inventory_metadata($handle, $metadata);
+	}
+
+	/** Remove an unpromoted journal when its Git mutation is rolled back. */
+	public static function forget_creation_intent( string $handle, array $intent ): bool|\WP_Error {
+		if ( ! function_exists('get_option') || ! function_exists('update_option') ) {
+			return new \WP_Error('worktree_creation_intent_storage_unavailable', 'Worktree creation intent storage is unavailable; refusing cleanup.');
+		}
+		return SqliteBusyRetry::run(
+			'worktree_creation_intent_forget',
+			static function () use ( $handle, $intent ): bool|\WP_Error {
+				$all = get_option(self::METADATA_OPTION, array());
+				$all = is_array($all) ? $all : array();
+				$record = $all[ $handle ] ?? null;
+				if ( ! is_array($record) || array( self::CREATION_INTENT_KEY ) !== array_keys($record) || $intent !== ( $record[ self::CREATION_INTENT_KEY ] ?? null ) ) {
+					return new \WP_Error('worktree_creation_intent_mismatch', 'Worktree creation intent changed before rollback cleanup.');
+				}
+				unset($all[ $handle ]);
+				return update_option(self::METADATA_OPTION, $all, false);
+			}
+		);
 	}
 
 	/** Restore an exact prior lifecycle record after a failed multi-step mutation. */
