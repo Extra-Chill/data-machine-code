@@ -130,6 +130,7 @@ namespace {
 	);
 
 	startup_bounds_assert(isset(WP_CLI::$commands['datamachine-code workspace']), 'Nested help did not register the workspace command for WP-CLI dispatch.');
+	startup_bounds_assert(isset(WP_CLI::$commands['datamachine-code runtime']), 'Nested help did not register the managed runtime command for WP-CLI dispatch.');
 	startup_bounds_assert(isset(WP_CLI::$commands['datamachine-code workspace worktree add']), 'Operation-specific worktree help did not register the add command.');
 	startup_bounds_assert(isset(WP_CLI::$commands['datamachine-code workspace worktree cleanup']), 'Operation-specific worktree help did not register the cleanup command.');
 	foreach ( \DataMachineCode\Cli\Commands\WorkspaceCommand::worktree_command_definitions() as $operation => $definition ) {

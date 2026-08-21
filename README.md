@@ -78,6 +78,10 @@ wp datamachine-code github repos owner
 wp datamachine-code github review-flow create --repo=owner/repo --agent=code-reviewer
 wp datamachine-code github status
 
+# Managed release drift (the configured distribution channel owns updates)
+wp datamachine-code runtime release --format=json
+wp datamachine-code runtime release --apply --format=json
+
 # Workspace
 wp datamachine-code workspace path
 wp datamachine-code workspace path repo-name@fix-foo
@@ -109,6 +113,32 @@ wp datamachine-code workspace git commit repo-name@fix-foo "fix: something"
 wp datamachine-code workspace git push repo-name@fix-foo
 wp datamachine-code workspace git log repo-name@fix-foo
 wp datamachine-code workspace git diff repo-name@fix-foo
+```
+
+### Managed Release Channels
+
+The runtime inventory and `runtime release` command query the owning distribution
+through `datamachine_code_managed_release_channel`; they never infer availability
+from WordPress.org metadata. A managed distributor supplies an `id`,
+`latest_version`, one `action` (`command` or `handoff`), and may supply in-process
+`converge`, `read_installed_version`, and `verify` callbacks. DMC invokes a
+converger only when its command action sets `authorize_callback: true`; handoffs
+are never invoked. The callback result is not installation evidence: DMC reads
+the installed version again through `read_installed_version`, then calls `verify`
+with that observed version. `verify` returns `state: verified` and any contract
+evidence, such as `cli_contract_present`.
+
+```php
+add_filter('datamachine_code_managed_release_channel', static function (array $channel): array {
+    return array(
+        'id'             => 'managed-distributor',
+        'latest_version' => '0.57.4',
+        'action'         => array('type' => 'command', 'command' => 'managed-plugin update data-machine-code', 'authorize_callback' => true),
+		'converge'       => static fn(): array => array('success' => true),
+		'read_installed_version' => static fn(): string => '0.57.4',
+        'verify'         => static fn(string $version): array => array('state' => 'verified', 'cli_contract_present' => '0.57.4' === $version),
+    );
+});
 ```
 
 ### Worktrees: parallel-safe branch work
