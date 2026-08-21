@@ -79,7 +79,7 @@ namespace {
 		$elapsed = microtime(true) - $started;
 		bounded_list_assert(338 === $first['total'], 'Bounded list must report the complete filtered total.');
 		bounded_list_assert(338 === ($first['summary']['total'] ?? null) && 338 === ($first['summary']['worktree'] ?? null), 'Summary must count the complete result before pagination.');
-		bounded_list_assert(25 === ($first['summary']['repos_returned'] ?? null) && 313 === ($first['summary']['repos_omitted'] ?? null), 'Summary repository samples must be bounded and report omitted repositories.');
+		bounded_list_assert(338 === ($first['summary']['repo_count'] ?? null) && 25 === ($first['summary']['repos_returned'] ?? null) && 313 === ($first['summary']['repos_omitted'] ?? null), 'Summary repository samples must be bounded and report omitted repositories.');
 		bounded_list_assert(50 === $first['returned'] && 50 === count($first['repos']), 'Default list must never exceed its 50-row bound.');
 		bounded_list_assert(50 >= $harness->max_bounded_rows, 'Default list must retain no more than one bounded page or summary sample set.');
 		bounded_list_assert(is_string($first['next_cursor']), 'First bounded page must provide a continuation cursor.');
@@ -107,6 +107,16 @@ namespace {
 		bounded_list_assert(338 === $all['returned'] && null === $all['next_cursor'], 'Explicit all must return the complete inventory without a continuation cursor.');
 		$all_with_cursor = $harness->list_repos(null, null, array( 'all' => true, 'cursor' => $first['next_cursor'] ));
 		bounded_list_assert(is_wp_error($all_with_cursor), 'All and cursor must be rejected as an ambiguous pagination request.');
+		mkdir($workspace . '/aggregate/.git', 0700, true);
+		for ( $index = 0; $index < 50; ++$index ) {
+			$path = $workspace . '/aggregate@task-' . str_pad((string) $index, 3, '0', STR_PAD_LEFT);
+			mkdir($path, 0700, true);
+			file_put_contents($path . '/.git', 'gitdir: /tmp/none');
+		}
+		$duplicate_summary = $harness->list_repos();
+		$aggregate = array_values(array_filter($duplicate_summary['summary']['repos'], fn( array $repo ): bool => 'aggregate' === $repo['repo']));
+		bounded_list_assert(339 === ($duplicate_summary['summary']['repo_count'] ?? null) && 25 === ($duplicate_summary['summary']['repos_returned'] ?? null) && 314 === ($duplicate_summary['summary']['repos_omitted'] ?? null), 'Summary repository counts must use unique repository units.');
+		bounded_list_assert(1 === ($aggregate[0]['primary'] ?? null) && 50 === ($aggregate[0]['worktree'] ?? null) && 51 === ($aggregate[0]['total'] ?? null), 'Summary samples must aggregate every checkout for a selected repository.');
 		foreach ( array( 1, 200, '1', '050' ) as $limit ) {
 			bounded_list_assert(! is_wp_error(BoundedWorkspaceListHarness::normalize_workspace_list_limit($limit)), 'Documented integer limit representations must be accepted.');
 		}

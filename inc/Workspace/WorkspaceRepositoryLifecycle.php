@@ -81,9 +81,11 @@ trait WorkspaceRepositoryLifecycle {
 
 		$repos     = array();
 		$summary   = $this->workspace_list_summary($path);
+		$summary_repo_names = array();
 		$remaining = 0;
 		foreach ( $this->workspace_list_rows($path, $repo_filter, $type_filter) as $repo_info ) {
 			$this->workspace_list_count_summary($summary, $repo_info);
+			$this->workspace_list_insert_bounded_repo_name($summary_repo_names, (string) ( $repo_info['repo'] ?? $repo_info['name'] ?? 'unknown' ), self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT);
 			if ( null === $cursor || strcmp($this->workspace_list_row_key($repo_info), $cursor) > 0 ) {
 				++$remaining;
 				if ( $all ) {
@@ -96,6 +98,8 @@ trait WorkspaceRepositoryLifecycle {
 		if ( $all ) {
 			usort($repos, fn( array $left, array $right ): int => strcmp($this->workspace_list_row_key($left), $this->workspace_list_row_key($right)));
 		}
+		$summary['repos'] = $this->workspace_list_aggregate_repos($path, $repo_filter, $type_filter, $summary_repo_names);
+		$summary['repo_count'] = $this->workspace_list_count_repositories($path, $repo_filter, $type_filter, $summary_repo_names);
 		$this->workspace_list_finish_summary($summary);
 		if ( $include_status ) {
 			foreach ( $repos as &$repo_info ) {
@@ -157,13 +161,12 @@ trait WorkspaceRepositoryLifecycle {
 		if ( empty($row['git']) ) {
 			++$summary['non_git'];
 		}
-		$this->workspace_list_insert_bounded_row($summary['repos'], array( 'name' => (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' ), 'path' => (string) ( $row['path'] ?? '' ), 'repo' => (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' ), 'primary' => 'primary' === $kind ? 1 : 0, 'worktree' => 'worktree' === $kind ? 1 : 0, 'context' => 'context' === $kind ? 1 : 0, 'total' => 1 ), self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT);
 	}
 
 	/** @param array<string,mixed> $summary */
 	private function workspace_list_finish_summary( array &$summary ): void {
 		$summary['repos_returned'] = count($summary['repos']);
-		$summary['repos_omitted']  = $summary['total'] - $summary['repos_returned'];
+		$summary['repos_omitted']  = $summary['repo_count'] - $summary['repos_returned'];
 		if ( $summary['non_git'] > 0 ) {
 			$summary['triage_command'] = 'wp datamachine-code workspace triage list --format=json';
 		}
@@ -208,6 +211,66 @@ trait WorkspaceRepositoryLifecycle {
 		if ( $position >= $limit && $limit === count($rows) ) { return; }
 		array_splice($rows, $position, 0, array( $row ));
 		if ( count($rows) > $limit ) { array_pop($rows); }
+	}
+
+	/** @param array<string,bool> $repos */
+	private function workspace_list_insert_bounded_repo_name( array &$repos, string $repo, int $limit ): void {
+		$repos[ $repo ] = true;
+		ksort($repos);
+		if ( count($repos) > $limit ) {
+			array_pop($repos);
+		}
+	}
+
+	/**
+	 * Aggregate selected repository names in a second streaming pass.
+	 *
+	 * @param array<string,bool> $repo_names
+	 * @return array<int,array<string,int|string>>
+	 */
+	private function workspace_list_aggregate_repos( string $path, ?string $repo_filter, ?string $type_filter, array $repo_names ): array {
+		$repos = array();
+		foreach ( array_keys($repo_names) as $repo ) {
+			$repos[ $repo ] = array( 'repo' => $repo, 'primary' => 0, 'worktree' => 0, 'context' => 0, 'total' => 0 );
+		}
+		foreach ( $this->workspace_list_rows($path, $repo_filter, $type_filter) as $row ) {
+			$repo = (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' );
+			if ( ! isset($repos[ $repo ]) ) {
+				continue;
+			}
+			$kind = ! empty($row['is_context']) ? 'context' : ( ! empty($row['is_worktree']) ? 'worktree' : 'primary' );
+			++$repos[ $repo ][ $kind ];
+			++$repos[ $repo ]['total'];
+		}
+		return array_values($repos);
+	}
+
+	/**
+	 * Count distinct repositories in bounded keyset batches.
+	 *
+	 * @param array<string,bool> $first_batch The selected smallest repository names.
+	 */
+	private function workspace_list_count_repositories( string $path, ?string $repo_filter, ?string $type_filter, array $first_batch ): int {
+		$count = count($first_batch);
+		if ( $count < self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT ) {
+			return $count;
+		}
+		$after = (string) array_key_last($first_batch);
+		do {
+			$batch = array();
+			foreach ( $this->workspace_list_rows($path, $repo_filter, $type_filter) as $row ) {
+				$repo = (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' );
+				if ( $repo > $after ) {
+					$this->workspace_list_insert_bounded_repo_name($batch, $repo, self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT + 1);
+				}
+			}
+			$batch_count = count($batch);
+			$count += min(self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT, $batch_count);
+			if ( $batch_count > self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT ) {
+				$after = (string) array_keys($batch)[ self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT - 1 ];
+			}
+		} while ( $batch_count > self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT );
+		return $count;
 	}
 
 	public static function normalize_workspace_list_limit( mixed $limit ): int|\WP_Error {
