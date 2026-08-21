@@ -146,7 +146,7 @@ class WorkspaceAbilities {
 							),
 							'all' => array(
 								'type'        => 'boolean',
-								'description' => 'Return every matching row. Full expansion is explicit.',
+								'description' => 'Return every matching row. Full expansion is explicit and cannot be combined with cursor.',
 							),
 							'include_status' => array(
 								'type'        => 'boolean',

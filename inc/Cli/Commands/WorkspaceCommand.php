@@ -350,7 +350,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * : Continue from the cursor returned by a prior list with the same filters.
 	 *
 	 * [--all]
-	 * : Explicitly return every matching row instead of the bounded first page.
+	 * : Explicitly return every matching row instead of the bounded first page. Cannot be combined with --cursor.
+	 *
+	 * [--envelope]
+	 * : Include pagination metadata in JSON output. The default JSON output remains the legacy row array.
 	 *
 	 * [--include-status]
 	 * : Include per-row Git remote, branch, and primary freshness probes.
@@ -411,6 +414,10 @@ class WorkspaceCommand extends BaseCommand {
 		if ( ! empty($assoc_args['include-status']) ) {
 			$input['include_status'] = true;
 		}
+		if ( ! empty($assoc_args['envelope']) && 'json' !== ( $assoc_args['format'] ?? 'table' ) ) {
+			WP_CLI::error('Workspace list --envelope requires --format=json.');
+			return;
+		}
 
 		$result = $ability->execute($input);
 
@@ -425,11 +432,15 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( 'json' === ( $assoc_args['format'] ?? 'table' ) ) {
-			$this->renderer()->json($result);
+			$this->renderer()->json(! empty($assoc_args['envelope']) ? $result : (array) ( $result['repos'] ?? array() ));
 			return;
 		}
 
 		if ( empty($result['repos']) ) {
+			if ( 'csv' === ( $assoc_args['format'] ?? 'table' ) || 'yaml' === ( $assoc_args['format'] ?? 'table' ) ) {
+				$this->format_items(array(), array( 'name', 'kind', 'repo', 'branch', 'freshness', 'behind', 'remote', 'git' ), $assoc_args, 'name');
+				return;
+			}
 			if ( isset($assoc_args['repo']) ) {
 				WP_CLI::log(sprintf('No repos matching "%s" in workspace (%s).', (string) $assoc_args['repo'], $result['path'] ?? ''));
 				return;
@@ -686,6 +697,9 @@ class WorkspaceCommand extends BaseCommand {
 		if ( array() !== $summary['repos'] ) {
 			WP_CLI::log('Repos:');
 			$this->format_items($summary['repos'], array( 'repo', 'primary', 'worktree', 'context', 'total' ), array( 'format' => 'table' ), 'repo');
+			if ( ! empty($summary['repos_omitted']) ) {
+				WP_CLI::log(sprintf('Additional repositories omitted: %d', (int) $summary['repos_omitted']));
+			}
 		}
 
 		if ( ! empty($summary['triage_command']) ) {

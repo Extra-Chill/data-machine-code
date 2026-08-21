@@ -29,6 +29,8 @@ trait WorkspaceRepositoryLifecycle {
 	/** Maximum page size for workspace list. */
 	private const WORKSPACE_LIST_MAX_LIMIT = 200;
 
+	/** Maximum per-repository summary rows returned with a workspace list. */
+	private const WORKSPACE_LIST_SUMMARY_REPO_LIMIT = 25;
 
 	/**
 	 * List repositories in the workspace.
@@ -52,6 +54,9 @@ trait WorkspaceRepositoryLifecycle {
 		}
 		$all            = ! empty($options['all']);
 		$include_status = ! empty($options['include_status']);
+		if ( $all && isset($options['cursor']) ) {
+			return new \WP_Error('invalid_workspace_list_pagination', 'Workspace list --all cannot be combined with --cursor.', array( 'status' => 400 ));
+		}
 		$limit          = isset($options['limit']) ? $options['limit'] : self::WORKSPACE_LIST_DEFAULT_LIMIT;
 		if ( ! is_int($limit) || $limit < 1 || $limit > self::WORKSPACE_LIST_MAX_LIMIT ) {
 			return new \WP_Error('invalid_workspace_list_limit', sprintf('Workspace list limit must be an integer between 1 and %d.', self::WORKSPACE_LIST_MAX_LIMIT), array( 'status' => 400 ));
@@ -230,7 +235,10 @@ trait WorkspaceRepositoryLifecycle {
 			++$summary['repos'][ $repo ]['total'];
 		}
 		ksort($summary['repos']);
-		$summary['repos'] = array_values($summary['repos']);
+		$summary['repo_count']     = count($summary['repos']);
+		$summary['repos']          = array_slice(array_values($summary['repos']), 0, self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT);
+		$summary['repos_returned'] = count($summary['repos']);
+		$summary['repos_omitted']  = $summary['repo_count'] - $summary['repos_returned'];
 		if ( $summary['non_git'] > 0 ) {
 			$summary['triage_command'] = 'wp datamachine-code workspace triage list --format=json';
 		}
