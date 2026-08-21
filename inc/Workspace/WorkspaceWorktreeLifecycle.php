@@ -128,7 +128,7 @@ trait WorkspaceWorktreeLifecycle {
 			if ( 'recycle_terminal' === $reuse_policy ) {
 				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->recycle_terminal_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path));
 			}
-			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy);
+			return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path));
 		}
 
 		return WorkspaceMutationLock::with_repo(
@@ -212,7 +212,7 @@ trait WorkspaceWorktreeLifecycle {
 	): array|\WP_Error {
 		$operation_deadline = microtime(true) + self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		if ( is_dir($wt_path) ) {
-			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy);
+			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path);
 		}
 		// Snapshot candidates only after this repository's admission lock is held.
 		$reuse_candidates = $this->worktree_reuse_candidates($repo, $task);
@@ -605,16 +605,38 @@ trait WorkspaceWorktreeLifecycle {
 			$cmd            = sprintf('worktree add -b %s %s %s', escapeshellarg($branch), escapeshellarg($wt_path), escapeshellarg($base));
 			$created_branch = true;
 		}
+		$intent_base_ref  = $created_branch ? (string) $resolved_base : 'existing_local_branch';
+		$intent_base_head = $this->run_git($primary_path, 'rev-parse --verify ' . escapeshellarg(( $created_branch ? (string) $resolved_base : $branch ) . '^{commit}'), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($intent_base_head) ) {
+			return $intent_base_head;
+		}
+		$creation_intent = $this->worktree_creation_intent(
+			$repo,
+			$branch,
+			$intent_base_ref,
+			trim((string) ($intent_base_head['output'] ?? '')),
+			$task,
+			$inject_context,
+			$bootstrap,
+			$intent
+		);
+		$intent_stored = WorktreeContextInjector::store_creation_intent($wt_handle, $creation_intent);
+		if ( is_wp_error($intent_stored) || ! $intent_stored ) {
+			return is_wp_error($intent_stored)
+				? $intent_stored
+				: new \WP_Error('worktree_creation_intent_conflict', sprintf('Refusing to create worktree "%s" because a creation intent already exists.', $wt_handle), array( 'status' => 409 ));
+		}
 
 		$add_remaining = max(1, (int) floor( (float) ( $preflight['operation_deadline'] ?? 0.0 ) - microtime(true)));
 		$result        = $this->run_git($primary_path, $cmd, min(300, $add_remaining));
 		if ( is_wp_error($result) ) {
+			WorktreeContextInjector::forget_creation_intent($wt_handle, $creation_intent);
 			return $result;
 		}
 
 		$identity_configuration = $this->configure_repository_git_identity($wt_path);
 		if ( null !== $identity_configuration ) {
-			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch);
+			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent);
 			return $identity_configuration;
 		}
 
@@ -697,6 +719,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( ! $allow_stale && ! $fetch_failed ) {
 			if ( isset($response['default_branch_commits_behind']) && (int) $response['default_branch_commits_behind'] > 0 ) {
 				$this->run_git($primary_path, sprintf('worktree remove --force %s', escapeshellarg($wt_path)));
+				WorktreeContextInjector::forget_creation_intent($wt_handle, $creation_intent);
 
 				return $this->worktree_behind_default_branch_error(
 					(int) $response['default_branch_commits_behind'],
@@ -723,6 +746,7 @@ trait WorkspaceWorktreeLifecycle {
 				// Tear the worktree down so we don't leak a half-cooked
 				// checkout on the user's disk.
 				$this->run_git($primary_path, sprintf('worktree remove --force %s', escapeshellarg($wt_path)));
+				WorktreeContextInjector::forget_creation_intent($wt_handle, $creation_intent);
 
 				$label    = $response['upstream'] ?? ( $response['base_upstream'] ?? 'upstream' );
 				$guidance = sprintf(
@@ -779,9 +803,14 @@ trait WorkspaceWorktreeLifecycle {
 			'owner_run_ref'  => $intent['owner_run_ref'] ?? null,
 			'cleanup_policy' => $intent['cleanup_policy'] ?? null,
 		);
-		$metadata_stored                      = WorktreeContextInjector::store_lifecycle_metadata( $wt_handle, $lifecycle_metadata );
+		$metadata_stored                      = WorktreeContextInjector::promote_creation_intent( $wt_handle, $creation_intent, $lifecycle_metadata );
 		if ( is_wp_error( $metadata_stored ) ) {
-			$this->rollback_rejected_worktree( $primary_path, $wt_path, $branch, $created_branch );
+			if ( null !== WorktreeContextInjector::get_creation_intent($wt_handle) ) {
+				$this->rollback_rejected_worktree( $primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent );
+			} else {
+				$this->rollback_rejected_worktree( $primary_path, $wt_path, $branch, $created_branch );
+				WorktreeContextInjector::forget_metadata($wt_handle);
+			}
 			return $metadata_stored;
 		}
 		$response['created_at'] = $lifecycle_metadata['created_at'] ?? null;
@@ -826,7 +855,7 @@ trait WorkspaceWorktreeLifecycle {
 	 *
 	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
-	private function reuse_existing_worktree( string $handle, string $branch, ?string $from, bool $inject_context, bool $bootstrap, array $task, array $intent = array(), string $reuse_policy = 'reuse_compatible' ): array|\WP_Error {
+	private function reuse_existing_worktree( string $handle, string $branch, ?string $from, bool $inject_context, bool $bootstrap, array $task, array $intent = array(), string $reuse_policy = 'reuse_compatible', string $primary_path = '' ): array|\WP_Error {
 		$inspection = $this->worktree_get($handle, array(
 			'include_status' => true,
 			'include_disk'   => false,
@@ -867,6 +896,10 @@ trait WorkspaceWorktreeLifecycle {
 		$metadata = is_array($existing['metadata'] ?? null) ? $existing['metadata'] : array();
 		$contract = is_array($metadata['reuse_contract'] ?? null) ? $metadata['reuse_contract'] : array();
 		if ( array() === $contract ) {
+			$creation_intent = WorktreeContextInjector::get_creation_intent($handle);
+			if ( null === ( $existing['metadata'] ?? null ) || null !== $creation_intent ) {
+				return $this->adopt_interrupted_worktree($handle, $existing, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path, $creation_intent);
+			}
 			return $this->worktree_reuse_refused($handle, 'reuse_contract_missing', $evidence);
 		}
 		$requested_base = null !== $from && '' !== trim($from) ? trim($from) : ( $contract['base_ref'] ?? null );
@@ -913,6 +946,89 @@ trait WorkspaceWorktreeLifecycle {
 			) + $evidence,
 			'metadata'       => $metadata,
 			'message'        => sprintf('Reused clean compatible worktree "%s" at %s.', $handle, $existing['path']),
+		);
+	}
+
+	/**
+	 * Complete only the metadata half of an interrupted exact add operation.
+	 *
+	 * The journal is the only ownership proof for a metadata-less directory.
+	 * Its creation contract must exactly match the retry and the Git checkout
+	 * must remain clean at the journal's requested base tip.
+	 */
+	private function adopt_interrupted_worktree( string $handle, array $existing, string $branch, ?string $from, bool $inject_context, bool $bootstrap, array $task, array $intent, string $primary_path, ?array $creation_intent ): array|\WP_Error {
+		$evidence = array(
+			'handle'   => $handle,
+			'branch'   => $existing['branch'] ?? null,
+			'head'     => $existing['head'] ?? null,
+			'dirty'    => $existing['dirty'] ?? null,
+			'unpushed' => $existing['unpushed'] ?? null,
+			'liveness' => $existing['liveness'] ?? null,
+			'task'     => $existing['task'] ?? null,
+			'metadata' => null,
+		);
+		if ( ( $existing['branch'] ?? null ) !== $branch ) {
+			return $this->worktree_reuse_refused($handle, 'branch_mismatch', $evidence + array( 'requested_branch' => $branch ));
+		}
+		if ( (int) ( $existing['dirty'] ?? 0 ) > 0 ) {
+			return $this->worktree_reuse_refused($handle, 'dirty_worktree', $evidence);
+		}
+		if ( (int) ( $existing['unpushed'] ?? 0 ) > 0 ) {
+			return $this->worktree_reuse_refused($handle, 'unpushed_commits', $evidence);
+		}
+		if ( WorktreeContextInjector::LIVENESS_LIVE === ( $existing['liveness'] ?? null ) ) {
+			return $this->worktree_reuse_refused($handle, 'live_worktree', $evidence);
+		}
+		if ( '' === $primary_path || ! GitCheckout::exists($primary_path) ) {
+			return $this->worktree_reuse_refused($handle, 'primary_unavailable', $evidence);
+		}
+
+		$base = null !== $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path);
+		if ( '' === $base ) {
+			return $this->worktree_reuse_refused($handle, 'base_unresolved', $evidence);
+		}
+		$base_head = $this->run_git($primary_path, 'rev-parse --verify ' . escapeshellarg($base . '^{commit}'), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($base_head) ) {
+			return $this->worktree_reuse_refused($handle, 'base_unresolved', $evidence + array( 'requested_base_ref' => $base ));
+		}
+		$base_head = trim((string) ($base_head['output'] ?? ''));
+		$requested_intent = $this->worktree_creation_intent(explode('@', $handle, 2)[0], $branch, $base, $base_head, $task, $inject_context, $bootstrap, $intent);
+		if ( null === $creation_intent ) {
+			return $this->worktree_reuse_refused($handle, 'interrupted_recovery_intent_missing', $evidence + array( 'requested_creation_intent' => $requested_intent ));
+		}
+		if ( $creation_intent !== $requested_intent ) {
+			return $this->worktree_reuse_refused($handle, 'interrupted_recovery_intent_mismatch', $evidence + array( 'requested_creation_intent' => $requested_intent ));
+		}
+		$ancestry = $this->run_git((string) $existing['path'], 'merge-base --is-ancestor HEAD ' . escapeshellarg($base_head), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($ancestry) || $base_head !== (string) ( $existing['head'] ?? '' ) ) {
+			return $this->worktree_reuse_refused($handle, 'interrupted_recovery_head_mismatch', $evidence + array( 'requested_base_ref' => $base, 'requested_base_head' => $base_head ));
+		}
+
+		$metadata = WorktreeContextInjector::build_lifecycle_metadata(array(
+			'handle' => $handle, 'path' => $existing['path'], 'repo' => explode('@', $handle, 2)[0], 'branch' => $branch, 'base_ref' => $base, 'base_source' => 'requested_ref',
+			'task_url' => (string) ( $task['task_url'] ?? '' ), 'task_ref' => (string) ( $task['task_ref'] ?? '' ), 'purpose' => $intent['purpose'] ?? null, 'owner_run_ref' => $intent['owner_run_ref'] ?? null, 'cleanup_policy' => $intent['cleanup_policy'] ?? null,
+		));
+		$metadata['reuse_contract'] = array( 'branch' => $branch, 'base_ref' => $base, 'inject_context' => $inject_context, 'bootstrap' => $bootstrap, 'purpose' => $intent['purpose'] ?? null, 'owner_run_ref' => $intent['owner_run_ref'] ?? null, 'cleanup_policy' => $intent['cleanup_policy'] ?? null );
+		$stored = WorktreeContextInjector::promote_creation_intent($handle, $creation_intent, $metadata);
+		if ( is_wp_error($stored) ) {
+			return $stored;
+		}
+		$this->emit_workspace_changed('worktree_adopt_interrupted', explode('@', $handle, 2)[0], $handle, (string) $existing['path']);
+
+		return array( 'success' => true, 'handle' => $handle, 'path' => $existing['path'], 'branch' => $branch, 'slug' => $this->slugify_branch($branch), 'created_branch' => false, 'adopted' => true, 'recovery' => array( 'status' => 'adopted', 'reason_code' => 'interrupted_exact_handle', 'requested_base_ref' => $base, 'requested_base_head' => $base_head, 'task_identity' => $this->worktree_reuse_task_identity($task) ), 'metadata' => WorktreeContextInjector::get_metadata($handle), 'message' => sprintf('Adopted interrupted worktree "%s" at %s after exact journal, branch, base, HEAD, and task verification.', $handle, $existing['path']) );
+	}
+
+	/** Build the immutable contract recorded before a Git worktree mutation. */
+	private function worktree_creation_intent( string $repo, string $branch, string $base_ref, string $base_head, array $task, bool $inject_context, bool $bootstrap, array $intent ): array {
+		return array(
+			'repo'           => $repo,
+			'branch'         => $branch,
+			'base_ref'       => $base_ref,
+			'base_head'      => $base_head,
+			'task'           => $task,
+			'inject_context' => $inject_context,
+			'bootstrap'      => $bootstrap,
+			'intent'         => $intent,
 		);
 	}
 
@@ -2659,10 +2775,13 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param bool   $created_branch Whether the branch was created by this call.
 	 * @return void
 	 */
-	private function rollback_rejected_worktree( string $primary_path, string $wt_path, string $branch, bool $created_branch ): void {
+	private function rollback_rejected_worktree( string $primary_path, string $wt_path, string $branch, bool $created_branch, ?string $handle = null, ?array $creation_intent = null ): void {
 		$this->run_git($primary_path, sprintf('worktree remove --force %s', escapeshellarg($wt_path)));
 		if ( $created_branch ) {
 			$this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)));
+		}
+		if ( null !== $handle && null !== $creation_intent ) {
+			WorktreeContextInjector::forget_creation_intent($handle, $creation_intent);
 		}
 	}
 

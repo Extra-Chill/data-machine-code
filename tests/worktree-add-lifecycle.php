@@ -195,6 +195,7 @@ require_once dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php';
 
 use DataMachineCode\Abilities\WorkspaceAbilities;
 use DataMachineCode\Workspace\Workspace;
+use DataMachineCode\Workspace\WorktreeContextInjector;
 
 function run_command( string $command, ?string $cwd = null ): string {
 	$prefix = null === $cwd ? '' : 'cd ' . escapeshellarg($cwd) . ' && ';
@@ -225,6 +226,19 @@ function assert_true( bool $condition, string $message ): void {
 	if ( ! $condition ) {
 		throw new RuntimeException($message);
 	}
+}
+
+function interrupted_creation_intent( string $branch, string $base_head, array $task ): array {
+	return array(
+		'repo'           => 'homeboy',
+		'branch'         => $branch,
+		'base_ref'       => 'origin/main',
+		'base_head'      => $base_head,
+		'task'           => $task,
+		'inject_context' => false,
+		'bootstrap'      => false,
+		'intent'         => array(),
+	);
 }
 
 function create_primary_checkout( string $workspace_root ): void {
@@ -380,6 +394,7 @@ try {
 	assert_true(! is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : 'worktree_add failed');
 	assert_true(is_dir($result['path']), 'successful worktree_add path is not accessible');
 	assert_true(isset($wpdb->rows['homeboy@audit-primitives-20260616']), 'successful worktree_add was not persisted');
+	assert_true(null === WorktreeContextInjector::get_creation_intent('homeboy@audit-primitives-20260616'), 'successful worktree_add left its pre-creation journal behind');
 	assert_true('refused' !== ( $result['disk_budget']['status'] ?? '' ), 'normal worktree_add should pass the disk budget gate without hard refusal');
 	$capacity_locks = array_values(
 		array_filter(
@@ -503,6 +518,47 @@ try {
 	run_command('git add reuse-commit.txt && git commit -m reuse-unpushed', $reusable['path']);
 	$unpushed_reuse_refusal = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
 	assert_true(is_wp_error($unpushed_reuse_refusal) && 'unpushed_commits' === ( $unpushed_reuse_refusal->get_error_data()['reuse']['reason_code'] ?? null ), 'unpushed worktree reuse did not fail closed');
+
+	// Simulate process termination immediately after `git worktree add`: the
+	// durable pre-creation journal exists, while lifecycle metadata does not.
+	$interrupted_base_head = trim(run_command('git rev-parse origin/main', $primary_path));
+	$interrupted_path = $workspace_root . '/homeboy@interrupted-add-recovery';
+	$interrupted_task = array( 'task_url' => 'https://example.test/issues/interrupted-add' );
+	assert_true(true === WorktreeContextInjector::store_creation_intent('homeboy@interrupted-add-recovery', interrupted_creation_intent('interrupted-add-recovery', $interrupted_base_head, $interrupted_task)), 'interruption fixture could not persist its pre-creation intent');
+	run_command('git worktree add -b interrupted-add-recovery ' . escapeshellarg($interrupted_path) . ' origin/main', $primary_path);
+	$adopted = $workspace->worktree_add('homeboy', 'interrupted-add-recovery', 'origin/main', false, false, false, false, true, $interrupted_task);
+	assert_true(! is_wp_error($adopted) && true === ( $adopted['adopted'] ?? false ), is_wp_error($adopted) ? $adopted->get_error_message() : 'exact interrupted worktree was not adopted');
+	assert_true('interrupted_exact_handle' === ( $adopted['recovery']['reason_code'] ?? null ) && 'https://example.test/issues/interrupted-add' === ( $adopted['metadata']['origin_task']['task_url'] ?? null ) && 'origin/main' === ( $adopted['metadata']['reuse_contract']['base_ref'] ?? null ) && null === WorktreeContextInjector::get_creation_intent('homeboy@interrupted-add-recovery'), 'interrupted adoption did not promote and clear the exact journal contract');
+
+	$external_path = $workspace_root . '/homeboy@interrupted-add-external';
+	run_command('git worktree add -b interrupted-add-external ' . escapeshellarg($external_path) . ' origin/main', $primary_path);
+	$external = $workspace->worktree_add('homeboy', 'interrupted-add-external', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/external' ));
+	assert_true(is_wp_error($external) && 'interrupted_recovery_intent_missing' === ( $external->get_error_data()['reuse']['reason_code'] ?? null ) && null === WorktreeContextInjector::get_creation_intent('homeboy@interrupted-add-external'), 'external metadata-less worktree was adopted from the retry task alone');
+
+	$mismatch_path = $workspace_root . '/homeboy@interrupted-add-task-mismatch';
+	$mismatch_task = array( 'task_url' => 'https://example.test/issues/original-task' );
+	$mismatch_intent = interrupted_creation_intent('interrupted-add-task-mismatch', $interrupted_base_head, $mismatch_task);
+	assert_true(true === WorktreeContextInjector::store_creation_intent('homeboy@interrupted-add-task-mismatch', $mismatch_intent), 'mismatched-task fixture could not persist its pre-creation intent');
+	run_command('git worktree add -b interrupted-add-task-mismatch ' . escapeshellarg($mismatch_path) . ' origin/main', $primary_path);
+	$mismatched_task = $workspace->worktree_add('homeboy', 'interrupted-add-task-mismatch', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/retry-task' ));
+	assert_true(is_wp_error($mismatched_task) && 'interrupted_recovery_intent_mismatch' === ( $mismatched_task->get_error_data()['reuse']['reason_code'] ?? null ) && $mismatch_intent === WorktreeContextInjector::get_creation_intent('homeboy@interrupted-add-task-mismatch'), 'mismatched retry task adopted or cleared an interrupted creation journal');
+
+	$dirty_interrupted_path = $workspace_root . '/homeboy@interrupted-add-dirty';
+	$dirty_interrupted_task = array( 'task_url' => 'https://example.test/issues/interrupted-dirty' );
+	assert_true(true === WorktreeContextInjector::store_creation_intent('homeboy@interrupted-add-dirty', interrupted_creation_intent('interrupted-add-dirty', $interrupted_base_head, $dirty_interrupted_task)), 'dirty interruption fixture could not persist its pre-creation intent');
+	run_command('git worktree add -b interrupted-add-dirty ' . escapeshellarg($dirty_interrupted_path) . ' origin/main', $primary_path);
+	file_put_contents($dirty_interrupted_path . '/interrupted-dirty.txt', "dirty\n");
+	$dirty_interrupted = $workspace->worktree_add('homeboy', 'interrupted-add-dirty', 'origin/main', false, false, false, false, true, $dirty_interrupted_task);
+	assert_true(is_wp_error($dirty_interrupted) && 'dirty_worktree' === ( $dirty_interrupted->get_error_data()['reuse']['reason_code'] ?? null ) && null !== WorktreeContextInjector::get_creation_intent('homeboy@interrupted-add-dirty'), 'dirty interrupted worktree was adopted');
+
+	$advanced_interrupted_path = $workspace_root . '/homeboy@interrupted-add-advanced';
+	$advanced_interrupted_task = array( 'task_url' => 'https://example.test/issues/interrupted-advanced' );
+	assert_true(true === WorktreeContextInjector::store_creation_intent('homeboy@interrupted-add-advanced', interrupted_creation_intent('interrupted-add-advanced', $interrupted_base_head, $advanced_interrupted_task)), 'advanced interruption fixture could not persist its pre-creation intent');
+	run_command('git worktree add -b interrupted-add-advanced ' . escapeshellarg($advanced_interrupted_path) . ' origin/main', $primary_path);
+	file_put_contents($advanced_interrupted_path . '/advanced.txt', "advanced\n");
+	run_command('git add advanced.txt && git commit -m interrupted-advanced', $advanced_interrupted_path);
+	$advanced_interrupted = $workspace->worktree_add('homeboy', 'interrupted-add-advanced', 'origin/main', false, false, false, false, true, $advanced_interrupted_task);
+	assert_true(is_wp_error($advanced_interrupted) && 'unpushed_commits' === ( $advanced_interrupted->get_error_data()['reuse']['reason_code'] ?? null ) && null !== WorktreeContextInjector::get_creation_intent('homeboy@interrupted-add-advanced'), 'advanced interrupted worktree was adopted');
 
 	$handle = 'homeboy@audit-primitives-20260616';
 
@@ -647,6 +703,7 @@ try {
 	assert_true(! str_contains((string) ( $failure_data['database_error'] ?? '' ), 'ghp_abcdefghijklmnop'), 'inventory persistence failure exposed a secret-like database detail');
 	assert_true(strlen((string) ( $failure_data['database_error'] ?? '' )) <= 512, 'inventory persistence failure did not bound database details');
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-persist-fails'), 'failed persistence left a worktree directory behind');
+	assert_true(null === WorktreeContextInjector::get_creation_intent('homeboy@audit-primitives-persist-fails'), 'rolled-back worktree creation left its pre-creation journal behind');
 
 	$contention_wpdb = new Datamachine_Code_Test_Wpdb();
 	$contention_wpdb->sqlite = true;
