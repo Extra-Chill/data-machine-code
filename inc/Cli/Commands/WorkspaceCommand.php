@@ -162,8 +162,8 @@ class WorkspaceCommand extends BaseCommand {
 			),
 			'list' => array(
 				'shortdesc' => 'List managed worktrees from cheap inventory.',
-				'longdesc'  => "Lists worktrees without per-worktree probes by default. Add probe flags only for the details required.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree list --format=json\n    wp datamachine-code workspace worktree list data-machine-code --full",
-				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name.' ), $option('state', 'Lifecycle state filter.'), $flag('with-status', 'Probe working-tree status.'), $flag('with-size', 'Probe disk use.'), $flag('full', 'Probe status and disk use.'), $flag('stale', 'Show stale rows; implies status.'), $format ),
+				'longdesc'  => "Returns a summary-first, 50-row cheap-inventory table by default. Legacy JSON, CSV, and YAML row streams remain exhaustive. Use --format=json --envelope for a bounded structured response and cursor. Add probe flags only for the details required.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree list --format=json\n    wp datamachine-code workspace worktree list --format=json --envelope\n    wp datamachine-code workspace worktree list --all --full",
+				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name.' ), $option('state', 'Lifecycle state filter.'), $option('limit', 'Maximum rows for table or --envelope output; default 50, maximum 200.'), $option('cursor', 'Continue an --envelope JSON response with the same filters.'), $flag('all', 'Explicitly return every matching row.'), $flag('envelope', 'Emit the bounded structured JSON response with summary and cursor metadata.'), $flag('with-status', 'Probe working-tree status.'), $flag('with-size', 'Probe disk use.'), $flag('full', 'Probe status and disk use.'), $flag('stale', 'Show stale rows; implies status.'), $format ),
 			),
 			'get' => array(
 				'shortdesc' => 'Inspect one managed worktree.',
@@ -343,6 +343,18 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--summary]
 	 * : Show compact workspace triage counts instead of one row per checkout.
 	 *
+	 * [--limit=<limit>]
+	 * : Maximum rows to return. Defaults to 50; accepts 1-200.
+	 *
+	 * [--cursor=<cursor>]
+	 * : Continue from the cursor returned by a prior list with the same filters.
+	 *
+	 * [--all]
+	 * : Explicitly return every matching row instead of the bounded first page.
+	 *
+	 * [--include-status]
+	 * : Include per-row Git remote, branch, and primary freshness probes.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -368,6 +380,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *     # List only worktrees for one primary checkout
 	 *     wp datamachine-code workspace list --repo=my-plugin --type=worktree --format=json
 	 *
+	 *     # Migrate complete status-rich inventory callers
+	 *     wp datamachine-code workspace list --all --include-status --format=json
+	 *
 	 * @subcommand list
 	 */
 	public function list_repos( array $args, array $assoc_args ): void {
@@ -384,11 +399,33 @@ class WorkspaceCommand extends BaseCommand {
 		if ( isset($assoc_args['type']) ) {
 			$input['type'] = (string) $assoc_args['type'];
 		}
+		if ( isset($assoc_args['limit']) ) {
+			$input['limit'] = (int) $assoc_args['limit'];
+		}
+		if ( isset($assoc_args['cursor']) ) {
+			$input['cursor'] = (string) $assoc_args['cursor'];
+		}
+		if ( ! empty($assoc_args['all']) ) {
+			$input['all'] = true;
+		}
+		if ( ! empty($assoc_args['include-status']) ) {
+			$input['include_status'] = true;
+		}
 
 		$result = $ability->execute($input);
 
 		if ( is_wp_error($result) ) {
 			WP_CLI::error($result->get_error_message());
+			return;
+		}
+
+		if ( ! empty($assoc_args['summary']) ) {
+			$this->render_workspace_list_summary($result, $assoc_args);
+			return;
+		}
+
+		if ( 'json' === ( $assoc_args['format'] ?? 'table' ) ) {
+			$this->renderer()->json($result);
 			return;
 		}
 
@@ -403,9 +440,11 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		if ( ! empty($assoc_args['summary']) ) {
-			$this->render_workspace_list_summary($result, $assoc_args);
-			return;
+		if ( 'table' === ( $assoc_args['format'] ?? 'table' ) ) {
+			WP_CLI::log(sprintf('Workspace: %s | showing %d of %d', (string) ( $result['path'] ?? '' ), (int) ( $result['returned'] ?? 0 ), (int) ( $result['total'] ?? 0 )));
+			if ( ! empty($result['next_cursor']) ) {
+				WP_CLI::log('More rows: rerun with --cursor=' . (string) $result['next_cursor'] . ' (or use --all for complete expansion).');
+			}
 		}
 
 		$items = array_map(
@@ -589,49 +628,29 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_workspace_list_summary( array $result, array $assoc_args ): void {
-		$repos   = (array) ( $result['repos'] ?? array() );
-		$summary = array(
-			'total'     => count($repos),
-			'primary'   => 0,
-			'worktree'  => 0,
-			'context'   => 0,
-			'non_git'   => 0,
-			'repos'     => array(),
-			'workspace' => (string) ( $result['path'] ?? '' ),
-		);
-
-		foreach ( $repos as $row ) {
-			if ( ! is_array($row) ) {
-				continue;
-			}
-			$kind = ! empty($row['is_context']) ? 'context' : ( ! empty($row['is_worktree']) ? 'worktree' : 'primary' );
-			++$summary[ $kind ];
-			if ( empty($row['git']) ) {
-				++$summary['non_git'];
-			}
-			$repo = (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' );
-			if ( ! isset($summary['repos'][ $repo ]) ) {
-				$summary['repos'][ $repo ] = array(
-					'repo'     => $repo,
-					'primary'  => 0,
-					'worktree' => 0,
-					'context'  => 0,
-					'total'    => 0,
-				);
-			}
-			++$summary['repos'][ $repo ][ $kind ];
-			++$summary['repos'][ $repo ]['total'];
-		}
-
-		ksort($summary['repos']);
-		$summary['repos'] = array_values($summary['repos']);
-		if ( $summary['non_git'] > 0 ) {
-			$summary['triage_command'] = 'wp datamachine-code workspace triage list --format=json';
-		}
+		$summary = is_array($result['summary'] ?? null) ? $result['summary'] : array();
+		$summary['returned']    = (int) ( $result['returned'] ?? 0 );
+		$summary['next_cursor'] = $result['next_cursor'] ?? null;
+		$summary['status_requested'] = ! empty($result['status_requested']);
 
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( 'json' === $format ) {
 			$this->renderer()->json($summary);
+			return;
+		}
+		if ( 'csv' === $format || 'yaml' === $format ) {
+			$this->format_items(
+				array(
+					array( 'metric' => 'total', 'count' => $summary['total'] ?? 0 ),
+					array( 'metric' => 'primary', 'count' => $summary['primary'] ?? 0 ),
+					array( 'metric' => 'worktree', 'count' => $summary['worktree'] ?? 0 ),
+					array( 'metric' => 'context', 'count' => $summary['context'] ?? 0 ),
+					array( 'metric' => 'non_git', 'count' => $summary['non_git'] ?? 0 ),
+				),
+				array( 'metric', 'count' ),
+				$assoc_args,
+				'metric'
+			);
 			return;
 		}
 
@@ -4447,12 +4466,28 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 
 			case 'list':
+				$format = (string) ( $assoc_args['format'] ?? 'table' );
+				if ( in_array($format, array( 'json', 'csv', 'yaml' ), true) && ( isset($assoc_args['limit']) || isset($assoc_args['cursor']) ) && ( 'json' !== $format || empty($assoc_args['envelope']) ) ) {
+					WP_CLI::error('Use --format=json --envelope with --limit or --cursor. Legacy JSON, CSV, and YAML row streams are exhaustive.');
+					return;
+				}
+				if ( ! empty($assoc_args['envelope']) && 'json' !== $format ) {
+					WP_CLI::error('--envelope is available only with --format=json.');
+					return;
+				}
 				if ( ! empty($args[1]) ) {
 					$input['repo'] = $args[1];
 				}
 				if ( isset($assoc_args['state']) && '' !== trim( (string) $assoc_args['state']) ) {
 					$input['state'] = (string) $assoc_args['state'];
 				}
+				if ( isset($assoc_args['limit']) ) {
+					$input['limit'] = (int) $assoc_args['limit'];
+				}
+				if ( isset($assoc_args['cursor']) ) {
+					$input['cursor'] = (string) $assoc_args['cursor'];
+				}
+				$input['all'] = ! empty($assoc_args['all']) || ( in_array($format, array( 'json', 'csv', 'yaml' ), true) && empty($assoc_args['envelope']) );
 				// Cheap inventory by default — opt in to expensive probes via flags.
 				// `--full` is a shorthand for both, `--stale` requires status to detect dirty.
 				$want_status             = ! empty($assoc_args['with-status'])
@@ -5042,6 +5077,11 @@ class WorkspaceCommand extends BaseCommand {
 				$worktrees
 				);
 				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'liveness', 'last_seen_at', 'owner', 'agent', 'session', 'task', 'pr', 'age_days', 'size', 'artifacts', 'stale', 'path' );
+				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) && ! empty($assoc_args['envelope']) ) {
+					$result['worktrees'] = $items;
+					$this->renderer()->json($result);
+					return;
+				}
 				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 					$this->renderer()->json($items);
 					return;
@@ -5050,6 +5090,12 @@ class WorkspaceCommand extends BaseCommand {
 					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'safety', 'state', 'created_at', 'liveness', 'liveness_reason', 'last_seen_at', 'owner_full', 'session_full', 'task_full', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'fields_skipped', 'metadata', 'path' );
 				}
 				$skipped_global = (array) ( $result['fields_skipped'] ?? array() );
+				if ( 'list' === $operation && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true) ) {
+					WP_CLI::log(sprintf('Worktrees: showing %d of %d', (int) ( $result['returned'] ?? count($items) ), (int) ( $result['total'] ?? count($items) )));
+					if ( ! empty($result['next_cursor']) ) {
+						WP_CLI::log('More rows: rerun with --cursor=' . (string) $result['next_cursor'] . ' (or use --all for complete expansion).');
+					}
+				}
 				if ( ! empty($skipped_global) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true) ) {
 					WP_CLI::log(
 					sprintf(

@@ -232,9 +232,14 @@ class WorkspaceTools extends BaseTool
         if (isset($parameters['repo']) ) {
             $input['repo'] = (string) $parameters['repo'];
         }
-        if (isset($parameters['type']) ) {
-            $input['type'] = (string) $parameters['type'];
-        }
+		if (isset($parameters['type']) ) {
+			$input['type'] = (string) $parameters['type'];
+		}
+		foreach ( array( 'limit', 'cursor', 'all', 'include_status' ) as $key ) {
+			if (isset($parameters[$key]) ) {
+				$input[$key] = 'limit' === $key ? (int) $parameters[$key] : $parameters[$key];
+			}
+		}
 
         $result = $ability->execute($input);
 
@@ -1075,7 +1080,7 @@ class WorkspaceTools extends BaseTool
             array(
             'class'       => __CLASS__,
             'method'      => 'handleList',
-            'description' => 'List repositories currently present in the Data Machine workspace.',
+            'description' => 'Return a bounded, lightweight workspace inventory page. Request all rows or Git status probes explicitly.',
             'parameters'  => array(
             'type'       => 'object',
             'properties' => array(
@@ -1088,6 +1093,25 @@ class WorkspaceTools extends BaseTool
                         'enum'        => array( 'primary', 'worktree', 'context' ),
                         'description' => 'Optional checkout type filter. Use "primary" for base checkouts, "worktree" for branch worktrees, or "context" for read-only context repositories.',
                     ),
+					'limit' => array(
+						'type'        => 'integer',
+						'minimum'     => 1,
+						'maximum'     => 200,
+						'default'     => 50,
+						'description' => 'Maximum lightweight rows to return. Defaults to 50.',
+					),
+					'cursor' => array(
+						'type'        => 'string',
+						'description' => 'Cursor returned by a previous response with the same filters.',
+					),
+					'all' => array(
+						'type'        => 'boolean',
+						'description' => 'Return every matching row.',
+					),
+					'include_status' => array(
+						'type'        => 'boolean',
+						'description' => 'Include per-row Git remote, branch, and freshness probes.',
+					),
             ),
             'required'   => array(),
             ),

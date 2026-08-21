@@ -86,12 +86,19 @@ wp datamachine-code runtime release --apply --format=json
 wp datamachine-code workspace path
 wp datamachine-code workspace path repo-name@fix-foo
 wp datamachine-code workspace list
+# The default is a lightweight 50-row page. Continue with --cursor from JSON,
+# or explicitly expand all rows and Git status probes when needed.
+wp datamachine-code workspace list --all --include-status --format=json
 wp datamachine-code workspace clone https://github.com/org/repo.git
 wp datamachine-code workspace show repo-name
 
 # Worktrees — one per branch, parallel-safe
 wp datamachine-code workspace worktree add repo-name fix/foo
+# The table default is a summary-first, lightweight 50-row page. Legacy JSON,
+# CSV, and YAML streams remain exhaustive; use JSON --envelope for a cursor.
 wp datamachine-code workspace worktree list
+wp datamachine-code workspace worktree list --format=json --envelope
+wp datamachine-code workspace worktree list --all --full --format=json
 wp datamachine-code workspace worktree remove repo-name fix/foo
 wp datamachine-code workspace worktree prune
 

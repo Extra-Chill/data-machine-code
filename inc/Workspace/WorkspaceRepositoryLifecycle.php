@@ -23,6 +23,11 @@ if ( ! class_exists(CommandSpec::class) ) {
 
 trait WorkspaceRepositoryLifecycle {
 
+	/** Default number of lightweight inventory rows returned by workspace list. */
+	private const WORKSPACE_LIST_DEFAULT_LIMIT = 50;
+
+	/** Maximum page size for workspace list. */
+	private const WORKSPACE_LIST_MAX_LIMIT = 200;
 
 
 	/**
@@ -30,9 +35,10 @@ trait WorkspaceRepositoryLifecycle {
 	 *
 	 * @param  string|null $repo Optional primary repository name to include.
 	 * @param  string|null $type Optional checkout type filter: primary or worktree.
-	 * @return array{success: bool, repos: array, path: string}|\WP_Error
+	 * @param  array{limit?:int,cursor?:string,all?:bool,include_status?:bool} $options List options.
+	 * @return array{success: bool, repos: array, path: string, total: int, returned: int, next_cursor: string|null, status_requested: bool, summary: array}|\WP_Error
 	 */
-	public function list_repos( ?string $repo = null, ?string $type = null ): array|\WP_Error {
+	public function list_repos( ?string $repo = null, ?string $type = null, array $options = array() ): array|\WP_Error {
 		$path    = $this->workspace_path;
 		$visible = $this->require_workspace_visible();
 		if ( null !== $visible ) {
@@ -44,12 +50,27 @@ trait WorkspaceRepositoryLifecycle {
 		if ( null !== $type_filter && ! in_array($type_filter, array( 'primary', 'worktree', 'context' ), true) ) {
 			return new \WP_Error('invalid_workspace_type', 'Workspace list type must be "primary", "worktree", or "context".', array( 'status' => 400 ));
 		}
+		$all            = ! empty($options['all']);
+		$include_status = ! empty($options['include_status']);
+		$limit          = isset($options['limit']) ? $options['limit'] : self::WORKSPACE_LIST_DEFAULT_LIMIT;
+		if ( ! is_int($limit) || $limit < 1 || $limit > self::WORKSPACE_LIST_MAX_LIMIT ) {
+			return new \WP_Error('invalid_workspace_list_limit', sprintf('Workspace list limit must be an integer between 1 and %d.', self::WORKSPACE_LIST_MAX_LIMIT), array( 'status' => 400 ));
+		}
+		$cursor = isset($options['cursor']) ? $this->decode_workspace_list_cursor((string) $options['cursor'], $repo_filter, $type_filter) : null;
+		if ( is_wp_error($cursor) ) {
+			return $cursor;
+		}
 
 		if ( ! is_dir($path) ) {
 			return array(
-				'success' => true,
-				'repos'   => array(),
-				'path'    => $path,
+				'success'          => true,
+				'repos'            => array(),
+				'path'             => $path,
+				'total'            => 0,
+				'returned'         => 0,
+				'next_cursor'      => null,
+				'status_requested' => $include_status,
+				'summary'          => $this->workspace_list_summary(array(), $path),
 			);
 		}
 
@@ -108,23 +129,6 @@ trait WorkspaceRepositoryLifecycle {
 					$repo_info['branch_slug'] = $parsed['branch_slug'];
 				}
 
-				// Get git remote if available.
-				if ( $is_git ) {
-					$remote = $this->git_get_remote($entry_path);
-					if ( null !== $remote ) {
-						$repo_info['remote'] = $remote;
-					}
-
-					$branch = $this->git_get_branch($entry_path);
-					if ( null !== $branch ) {
-						$repo_info['branch'] = $branch;
-					}
-
-					if ( ! $is_worktree ) {
-						$repo_info['primary_freshness'] = $this->build_primary_freshness_report($entry_path, $entry);
-					}
-				}
-
 				$repos[] = $repo_info;
 			}
 		}
@@ -135,12 +139,12 @@ trait WorkspaceRepositoryLifecycle {
 					continue;
 				}
 
-				$target  = (string) ( $context['target'] ?? $alias );
-				$path    = $this->workspace_path . '/' . $this->parse_handle($target)['dir_name'];
+				$target       = (string) ( $context['target'] ?? $alias );
+				$context_path = $this->workspace_path . '/' . $this->parse_handle($target)['dir_name'];
 				$repos[] = array(
 					'name'             => $alias,
-					'path'             => is_dir($path) ? $path : null,
-					'git'              => is_dir($path . '/.git') || is_file($path . '/.git'),
+					'path'             => is_dir($context_path) ? $context_path : null,
+					'git'              => is_dir($context_path . '/.git') || is_file($context_path . '/.git'),
 					'is_worktree'      => false,
 					'is_context'       => true,
 					'repo'             => (string) ( $context['repo'] ?? $target ),
@@ -150,11 +154,106 @@ trait WorkspaceRepositoryLifecycle {
 			}
 		}
 
+		usort($repos, fn( array $left, array $right ): int => strcmp($this->workspace_list_row_key($left), $this->workspace_list_row_key($right)));
+		$total = count($repos);
+		$summary = $this->workspace_list_summary($repos, $path);
+		if ( null !== $cursor ) {
+			$repos = array_values(array_filter($repos, fn( array $row ): bool => strcmp($this->workspace_list_row_key($row), $cursor) > 0));
+		}
+		$remaining = count($repos);
+		if ( ! $all ) {
+			$repos = array_slice($repos, 0, $limit);
+		}
+		if ( $include_status ) {
+			foreach ( $repos as &$repo_info ) {
+				if ( empty($repo_info['git']) || ! is_string($repo_info['path'] ?? null) ) {
+					continue;
+				}
+				$remote = $this->git_get_remote($repo_info['path']);
+				if ( null !== $remote ) {
+					$repo_info['remote'] = $remote;
+				}
+				$branch = $this->git_get_branch($repo_info['path']);
+				if ( null !== $branch ) {
+					$repo_info['branch'] = $branch;
+				}
+				if ( empty($repo_info['is_worktree']) && empty($repo_info['is_context']) ) {
+					$repo_info['primary_freshness'] = $this->build_primary_freshness_report($repo_info['path'], (string) $repo_info['name']);
+				}
+			}
+			unset($repo_info);
+		}
+		$next_cursor = null;
+		if ( ! $all && $remaining > count($repos) && ! empty($repos) ) {
+			$next_cursor = $this->encode_workspace_list_cursor($this->workspace_list_row_key($repos[ count($repos) - 1 ]), $repo_filter, $type_filter);
+		}
+
 		return array(
-			'success' => true,
-			'repos'   => $repos,
-			'path'    => $path,
+			'success'          => true,
+			'repos'            => $repos,
+			'path'             => $path,
+			'total'            => $total,
+			'returned'         => count($repos),
+			'next_cursor'      => $next_cursor,
+			'status_requested' => $include_status,
+			'summary'          => $summary,
 		);
+	}
+
+	/**
+	 * Build whole-result counts before pagination removes rows.
+	 *
+	 * @param array<int,array<string,mixed>> $repos Workspace rows.
+	 * @return array<string,mixed>
+	 */
+	private function workspace_list_summary( array $repos, string $path ): array {
+		$summary = array(
+			'total'     => count($repos),
+			'primary'   => 0,
+			'worktree'  => 0,
+			'context'   => 0,
+			'non_git'   => 0,
+			'repos'     => array(),
+			'workspace' => $path,
+		);
+		foreach ( $repos as $row ) {
+			$kind = ! empty($row['is_context']) ? 'context' : ( ! empty($row['is_worktree']) ? 'worktree' : 'primary' );
+			++$summary[ $kind ];
+			if ( empty($row['git']) ) {
+				++$summary['non_git'];
+			}
+			$repo = (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' );
+			if ( ! isset($summary['repos'][ $repo ]) ) {
+				$summary['repos'][ $repo ] = array( 'repo' => $repo, 'primary' => 0, 'worktree' => 0, 'context' => 0, 'total' => 0 );
+			}
+			++$summary['repos'][ $repo ][ $kind ];
+			++$summary['repos'][ $repo ]['total'];
+		}
+		ksort($summary['repos']);
+		$summary['repos'] = array_values($summary['repos']);
+		if ( $summary['non_git'] > 0 ) {
+			$summary['triage_command'] = 'wp datamachine-code workspace triage list --format=json';
+		}
+		return $summary;
+	}
+
+	/** @param array<string,mixed> $row */
+	private function workspace_list_row_key( array $row ): string {
+		return (string) ( $row['name'] ?? '' ) . "\0" . (string) ( $row['path'] ?? '' );
+	}
+
+	private function encode_workspace_list_cursor( string $after, ?string $repo, ?string $type ): string {
+		return rtrim(strtr(base64_encode(wp_json_encode(array( 'v' => 1, 'after' => $after, 'repo' => $repo, 'type' => $type ))), '+/', '-_'), '=');
+	}
+
+	private function decode_workspace_list_cursor( string $cursor, ?string $repo, ?string $type ): string|\WP_Error {
+		$encoded = strtr($cursor, '-_', '+/');
+		$decoded = base64_decode(str_pad($encoded, strlen($encoded) + ( 4 - strlen($encoded) % 4 ) % 4, '='), true);
+		$payload = is_string($decoded) ? json_decode($decoded, true) : null;
+		if ( ! is_array($payload) || 1 !== ( $payload['v'] ?? null ) || ! is_string($payload['after'] ?? null ) || ( $payload['repo'] ?? null ) !== $repo || ( $payload['type'] ?? null ) !== $type ) {
+			return new \WP_Error('invalid_workspace_list_cursor', 'Workspace list cursor is invalid for the requested filters.', array( 'status' => 400 ));
+		}
+		return $payload['after'];
 	}
 
 	/**

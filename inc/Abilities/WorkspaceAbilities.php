@@ -119,7 +119,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-list',
 				array(
 					'label'               => 'List Workspace Repos',
-					'description'         => 'List repositories in the agent workspace. Primary rows include local-ref freshness metadata; refresh stale primaries before using them for verification.',
+					'description'         => 'Return a bounded, lightweight workspace inventory page. Use all for complete expansion and include_status for per-row Git status probes.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -133,6 +133,25 @@ class WorkspaceAbilities {
 								'enum'        => array( 'primary', 'worktree', 'context' ),
 								'description' => 'Optional checkout type filter. Use "primary" for base checkouts, "worktree" for branch worktrees, or "context" for read-only context repositories.',
 							),
+							'limit' => array(
+								'type'        => 'integer',
+								'minimum'     => 1,
+								'maximum'     => 200,
+								'default'     => 50,
+								'description' => 'Maximum lightweight rows to return. Defaults to 50.',
+							),
+							'cursor' => array(
+								'type'        => 'string',
+								'description' => 'Cursor returned by a previous list response with the same filters.',
+							),
+							'all' => array(
+								'type'        => 'boolean',
+								'description' => 'Return every matching row. Full expansion is explicit.',
+							),
+							'include_status' => array(
+								'type'        => 'boolean',
+								'description' => 'Include per-row Git remote, branch, and primary freshness probes.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -140,6 +159,11 @@ class WorkspaceAbilities {
 						'properties' => array(
 							'success' => array( 'type' => 'boolean' ),
 							'path'    => array( 'type' => 'string' ),
+							'total'   => array( 'type' => 'integer' ),
+							'returned' => array( 'type' => 'integer' ),
+							'next_cursor' => array( 'type' => array( 'string', 'null' ) ),
+							'status_requested' => array( 'type' => 'boolean' ),
+							'summary' => array( 'type' => 'object' ),
 							'repos'   => array(
 								'type'  => 'array',
 								'items' => array(
@@ -1903,7 +1927,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-worktree-list',
 				array(
 					'label'               => 'List Workspace Worktrees',
-					'description'         => 'List all worktrees in the workspace (optionally filtered by repo and lifecycle state). Defaults to a fast cheap-inventory listing on large workspaces; opt in to per-worktree git status and disk probes via include_status / include_disk.',
+					'description'         => 'Return a bounded, summary-first worktree inventory page. Defaults to 50 cheap rows; opt in to complete expansion, status, or disk probes.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -1928,12 +1952,21 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Run size and artifact `du` probes per worktree. Default false (cheap listing). Expensive on large workspaces.',
 							),
+							'limit'          => array( 'type' => 'integer', 'minimum' => 1, 'maximum' => 200, 'default' => 50, 'description' => 'Maximum rows to return. Defaults to 50.' ),
+							'cursor'         => array( 'type' => 'string', 'description' => 'Cursor returned by a previous response with the same filters.' ),
+							'all'            => array( 'type' => 'boolean', 'description' => 'Return every matching row.' ),
 						),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
 							'success'        => array( 'type' => 'boolean' ),
+							'total'          => array( 'type' => 'integer' ),
+							'returned'       => array( 'type' => 'integer' ),
+							'next_cursor'    => array( 'type' => array( 'string', 'null' ) ),
+							'status_requested' => array( 'type' => 'boolean' ),
+							'disk_requested' => array( 'type' => 'boolean' ),
+							'summary'        => array( 'type' => 'object' ),
 							'fields_skipped' => array(
 								'type'        => 'array',
 								'description' => 'Probe groups skipped on this listing (e.g. "status", "disk"). Empty when full data is requested.',
@@ -3049,7 +3082,13 @@ class WorkspaceAbilities {
 		$workspace = new Workspace();
 		$repo      = isset($input['repo']) ? (string) $input['repo'] : null;
 		$type      = isset($input['type']) ? (string) $input['type'] : null;
-		return $workspace->list_repos($repo, $type);
+		$options   = array();
+		foreach ( array( 'limit', 'cursor', 'all', 'include_status' ) as $key ) {
+			if ( array_key_exists($key, $input) ) {
+				$options[ $key ] = 'limit' === $key ? (int) $input[ $key ] : $input[ $key ];
+			}
+		}
+		return $workspace->list_repos($repo, $type, $options);
 	}
 
 	/**
@@ -4269,7 +4308,12 @@ class WorkspaceAbilities {
 			'include_status' => array_key_exists('include_status', $input) ? (bool) $input['include_status'] : false,
 			'include_disk'   => array_key_exists('include_disk', $input) ? (bool) $input['include_disk'] : false,
 			'handle'         => isset($input['handle']) ? (string) $input['handle'] : '',
+			'limit'          => isset($input['limit']) ? (int) $input['limit'] : 50,
+			'all'            => ! empty($input['all']),
 		);
+		if ( isset($input['cursor']) ) {
+			$opts['cursor'] = (string) $input['cursor'];
+		}
 
 		return $workspace->worktree_list($repo, $state, $opts);
 	}
