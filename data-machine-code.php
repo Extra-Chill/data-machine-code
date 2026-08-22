@@ -51,21 +51,48 @@ function datamachine_code_is_side_effect_free_cli_request( ?array $argv = null )
 }
 
 /**
- * End a metadata-only CLI request without running unrelated shutdown work.
+ * Whether this is a workspace command with a synchronous CLI result.
  *
- * WP-CLI renders nested help before WordPress fires `shutdown`. At that point
- * this request has deliberately skipped DMC runtime initialization, so queue
- * dispatchers, transports, and other plugin shutdown callbacks cannot produce
- * part of its response. Removing their callbacks keeps the metadata contract
- * bounded without changing the lifecycle of executable commands.
+ * Workspace commands commit their metadata and Git state before rendering their
+ * result. They do not require the web runtime's deferred dispatchers after
+ * dispatch, which can otherwise keep a completed WP-CLI process alive.
+ *
+ * @param array<int,mixed>|null $argv Raw process arguments.
  */
-function datamachine_code_finish_side_effect_free_cli_request(): void {
-	if ( datamachine_code_is_side_effect_free_cli_request() && function_exists('remove_all_actions') ) {
+function datamachine_code_is_bounded_workspace_cli_request( ?array $argv = null ): bool {
+	// @phpstan-ignore-next-line WP_CLI is only guaranteed true in the analysis bootstrap.
+	if ( ! defined('WP_CLI') || ! WP_CLI ) {
+		return false;
+	}
+
+	$tokens    = array_values(array_map('strval', $argv ?? ( is_array($GLOBALS['argv'] ?? null) ? $GLOBALS['argv'] : array() )));
+	$dmc_index = array_search('datamachine-code', $tokens, true);
+	return false !== $dmc_index && 'workspace' === ( $tokens[ $dmc_index + 1 ] ?? '' );
+}
+
+/**
+ * Whether DMC should avoid bootstrapping the web runtime for this CLI request.
+ */
+function datamachine_code_is_minimal_runtime_cli_request( ?array $argv = null ): bool {
+	return datamachine_code_is_side_effect_free_cli_request($argv) || datamachine_code_is_bounded_workspace_cli_request($argv);
+}
+
+/**
+ * End a completed minimal-runtime CLI request without unrelated shutdown work.
+ *
+ * Help has no durable work. Workspace operations commit their database and Git
+ * mutations synchronously before they render output, so the web runtime's
+ * deferred dispatchers cannot contribute to either result. Removing shutdown
+ * callbacks only at this post-dispatch boundary keeps both request types
+ * bounded without masking a command failure or skipping required persistence.
+ */
+function datamachine_code_finish_minimal_runtime_cli_request(): void {
+	if ( datamachine_code_is_minimal_runtime_cli_request() && function_exists('remove_all_actions') ) {
 		remove_all_actions('shutdown');
 	}
 }
-if ( datamachine_code_is_side_effect_free_cli_request() ) {
-	add_action('shutdown', 'datamachine_code_finish_side_effect_free_cli_request', PHP_INT_MIN);
+if ( datamachine_code_is_minimal_runtime_cli_request() ) {
+	add_action('shutdown', 'datamachine_code_finish_minimal_runtime_cli_request', PHP_INT_MIN);
 }
 
 /**
@@ -148,7 +175,7 @@ function datamachine_code_has_datamachine_integration(): bool {
 function datamachine_code_register_bundle_artifacts(): void {
 	static $registered = false;
 
-	if ( $registered || datamachine_code_is_side_effect_free_cli_request() ) {
+	if ( $registered || datamachine_code_is_minimal_runtime_cli_request() ) {
 		return;
 	}
 
@@ -163,7 +190,7 @@ datamachine_code_register_bundle_artifacts();
 function datamachine_code_register_datamachine_integrations(): void {
 	static $registered = false;
 
-	if ( $registered || datamachine_code_is_side_effect_free_cli_request() || ! datamachine_code_has_datamachine_integration() ) {
+	if ( $registered || datamachine_code_is_minimal_runtime_cli_request() || ! datamachine_code_has_datamachine_integration() ) {
 		return;
 	}
 
@@ -190,7 +217,7 @@ function datamachine_code_register_datamachine_integrations(): void {
 function datamachine_code_bootstrap() {
 	static $bootstrapped = false;
 
-	if ( $bootstrapped || datamachine_code_is_side_effect_free_cli_request() || datamachine_code_is_targeted_workspace_read_cli_request() ) {
+	if ( $bootstrapped || datamachine_code_is_minimal_runtime_cli_request() || datamachine_code_is_targeted_workspace_read_cli_request() ) {
 		return;
 	}
 
@@ -405,7 +432,7 @@ add_action('plugins_loaded', 'datamachine_code_register_cli_commands', 21);
  * Only load when Data Machine core's AI engine is available.
  */
 function datamachine_code_load_chat_tools() {
-	if ( datamachine_code_is_side_effect_free_cli_request() || datamachine_code_is_targeted_workspace_read_cli_request() || ! class_exists('DataMachine\Engine\AI\Tools\BaseTool') ) {
+	if ( datamachine_code_is_minimal_runtime_cli_request() || datamachine_code_is_targeted_workspace_read_cli_request() || ! class_exists('DataMachine\Engine\AI\Tools\BaseTool') ) {
 		return;
 	}
 
