@@ -115,6 +115,13 @@ trait WorkspaceGitOperations {
 			return $recovered_upstream;
 		}
 
+		if ( empty($parsed['is_worktree']) ) {
+			$preflight = $this->preflight_primary_refresh($repo_path, $parsed['repo'], $remote);
+			if ( is_wp_error($preflight) ) {
+				return $preflight;
+			}
+		}
+
 		$command = 'pull --ff-only';
 		if ( null !== $branch && '' !== $branch ) {
 			$command .= ' ' . escapeshellarg($remote) . ' ' . escapeshellarg($branch);
@@ -140,6 +147,65 @@ trait WorkspaceGitOperations {
 		}
 
 		return $response;
+	}
+
+	/**
+	 * Fetch and classify a primary checkout before asking Git to fast-forward it.
+	 *
+	 * An ahead or diverged primary cannot be safely refreshed by this operation.
+	 * Return a managed recovery contract instead of exposing Git's merge/rebase
+	 * hints, which conflict with the primary read-only policy.
+	 *
+	 * @return true|\WP_Error
+	 */
+	private function preflight_primary_refresh( string $repo_path, string $repo, string $remote ): true|\WP_Error {
+		$fetch = $this->run_git($repo_path, 'fetch --no-tags --prune ' . escapeshellarg($remote));
+		if ( is_wp_error($fetch) ) {
+			return new \WP_Error('primary_refresh_fetch_failed', sprintf('Primary refresh is blocked: unable to fetch %s before checking freshness.', $remote), array( 'status' => 409 ));
+		}
+
+		$upstream = $this->run_git($repo_path, 'rev-parse --abbrev-ref --symbolic-full-name @{upstream}');
+		$upstream = is_wp_error($upstream) ? '' : trim((string) ( $upstream['output'] ?? '' ));
+		if ( '' === $upstream ) {
+			return true;
+		}
+
+		$counts = $this->run_git($repo_path, 'rev-list --left-right --count HEAD...' . escapeshellarg($upstream));
+		if ( is_wp_error($counts) || ! preg_match('/^(\d+)\s+(\d+)$/', trim((string) ( $counts['output'] ?? '' )), $matches) ) {
+			return true;
+		}
+
+		$ahead  = (int) $matches[1];
+		$behind = (int) $matches[2];
+		if ( 0 === $ahead ) {
+			return true;
+		}
+
+		$state     = $behind > 0 ? 'diverged' : 'ahead';
+		$freshness = array(
+			'status'        => $state,
+			'branch'        => $this->git_get_branch($repo_path),
+			'upstream'      => $upstream,
+			'behind'        => $behind,
+			'ahead'         => $ahead,
+			'detached'      => false,
+			'local_refs'    => false,
+			'fetch_checked' => true,
+		);
+
+		return new \WP_Error(
+			'primary_refresh_' . $state,
+			sprintf('Primary refresh is blocked: the clean primary is %d commit(s) ahead and %d behind %s. Create a fresh origin-based investigation worktree; primary history mutation requires explicit dangerous-primary authorization.', $ahead, $behind, $upstream),
+			array(
+				'status' => 409,
+				'primary_freshness' => $freshness,
+				'recommended_recovery' => array(
+					'kind'    => 'fresh_origin_worktree',
+					'command' => sprintf('wp datamachine-code workspace worktree add %s <investigation-branch> --from=%s', escapeshellarg($repo), escapeshellarg($upstream)),
+				),
+				'dangerous_primary_history_mutation_requires_authorization' => true,
+			)
+		);
 	}
 
 	/**

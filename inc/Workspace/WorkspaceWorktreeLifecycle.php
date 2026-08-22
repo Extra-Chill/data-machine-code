@@ -14,6 +14,165 @@ defined('ABSPATH') || exit;
 
 trait WorkspaceWorktreeLifecycle {
 
+	/**
+	 * Produce a non-mutating, digest-addressed worktree allocation decision.
+	 *
+	 * This deliberately shares add's validation, target resolution, capacity, and
+	 * exact-handle policy inputs. Apply re-runs this method immediately before add
+	 * so remote refs, capacity, ownership, and destination changes fail closed.
+	 *
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function worktree_plan( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible' ): array|\WP_Error {
+		$visible = $this->require_workspace_visible();
+		if ( null !== $visible ) {
+			return $visible;
+		}
+		$repo = $this->resolve_primary_repo_name($repo);
+		$branch = trim($branch);
+		if ( is_wp_error($repo) ) {
+			return $repo;
+		}
+		if ( '' === $repo || '' === $branch ) {
+			return new \WP_Error('invalid_worktree_intent', 'Repository name and branch are required.', array( 'status' => 400 ));
+		}
+		$task = WorktreeContextInjector::resolve_task_metadata($task) ?? array();
+		$reuse_policy = strtolower(trim($reuse_policy));
+		if ( ! in_array($reuse_policy, array( 'reuse_compatible', 'isolated', 'recycle_terminal' ), true) ) {
+			return new \WP_Error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: reuse_compatible, isolated, recycle_terminal.', array( 'status' => 400 ));
+		}
+		if ( array_key_exists('cleanup_policy', $intent) && null === WorktreeContextInjector::normalize_cleanup_policy($intent['cleanup_policy']) ) {
+			return new \WP_Error('invalid_cleanup_policy', 'cleanup_policy must be one of: ' . implode(', ', WorktreeContextInjector::VALID_CLEANUP_POLICIES) . '.', array( 'status' => 400 ));
+		}
+		$intent = WorktreeContextInjector::normalize_disposable_intent($intent);
+		if ( $require_task_tracker && empty($task) ) {
+			return new \WP_Error('worktree_task_tracker_required', 'Refusing to plan a managed worktree without a valid task URL or task reference.', array( 'status' => 400 ));
+		}
+		$slug = $this->slugify_branch($branch);
+		if ( '' === $slug ) {
+			return new \WP_Error('invalid_branch', sprintf('Branch "%s" produced an empty slug.', $branch), array( 'status' => 400 ));
+		}
+		$primary_path = $this->get_primary_path($repo);
+		if ( ! GitCheckout::exists($primary_path) ) {
+			return new \WP_Error('primary_not_found', sprintf('Primary checkout for "%s" does not exist. Clone it first.', $repo), array( 'status' => 404 ));
+		}
+
+		$handle = $repo . '@' . $slug;
+		$path = $this->workspace_path . '/' . $handle;
+		$input = $this->capacity_add_intent($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $task, $intent, $reuse_policy);
+		$input['allow_unverified_freshness'] = $allow_unverified_freshness;
+		$input['require_task_tracker'] = $require_task_tracker;
+
+		if ( is_dir($path) ) {
+			$inspection = $this->worktree_get($handle, array( 'include_status' => true, 'include_disk' => false ));
+			if ( is_wp_error($inspection) || empty($inspection['worktrees'][0]) ) {
+				return new \WP_Error('worktree_plan_unsafe', 'The planned destination exists but cannot be safely inspected.', array( 'status' => 409, 'handle' => $handle ));
+			}
+			$existing = (array) $inspection['worktrees'][0];
+			$metadata = is_array($existing['metadata'] ?? null) ? $existing['metadata'] : array();
+			$contract = is_array($metadata['reuse_contract'] ?? null) ? $metadata['reuse_contract'] : array();
+			$stored_intent = WorktreeContextInjector::normalize_disposable_intent($contract + $metadata);
+			$exact = ( $existing['branch'] ?? null ) === $branch
+				&& 0 === (int) ( $existing['dirty'] ?? 0 )
+				&& 0 === (int) ( $existing['unpushed'] ?? 0 )
+				&& array() !== $contract
+				&& ( $contract['base_ref'] ?? null ) === ( null !== $from && '' !== trim($from) ? trim($from) : ( $contract['base_ref'] ?? null ) )
+				&& (bool) ( $contract['inject_context'] ?? null ) === $inject_context
+				&& (bool) ( $contract['bootstrap'] ?? null ) === $bootstrap
+				&& $this->worktree_reuse_task_identity($task) === $this->worktree_reuse_task_identity((array) ($existing['task'] ?? array()))
+				&& $intent === $stored_intent;
+			$disposition = $exact ? 'exact_reuse' : ( null !== WorktreeContextInjector::get_creation_intent($handle) && array() === $contract ? 'adoptable' : 'unsafe' );
+			if ( $exact && WorktreeContextInjector::LIVENESS_LIVE === ( $existing['liveness'] ?? null ) && empty($intent['owner_run_ref']) ) {
+				$disposition = 'owner_conflict';
+			}
+			return $this->worktree_plan_result($input, $handle, $path, $slug, $disposition, array( 'destination' => $existing, 'ownership' => $stored_intent ));
+		}
+
+		$fetch = WorktreeStalenessProbe::fetch($primary_path);
+		if ( ! $fetch['ok'] && ! $allow_unverified_freshness ) {
+			return new \WP_Error('worktree_freshness_unverified', 'Refusing to plan worktree creation because remote freshness could not be verified.', array( 'status' => 409, 'fetch' => $fetch ));
+		}
+		$exists_local = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
+		$target_ref = $exists_local ? 'refs/heads/' . $branch : ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) );
+		$target_head = $this->run_git($primary_path, 'rev-parse --verify ' . escapeshellarg($target_ref . '^{commit}'), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$freshness = array( 'verified' => ! empty($fetch['ok']), 'fetch' => $fetch, 'target_ref' => $target_ref, 'target_head' => is_wp_error($target_head) ? null : trim((string) ($target_head['output'] ?? '')) );
+		if ( ! $allow_stale && ! $rebase_base && ! empty($fetch['ok']) ) {
+			$guard = $this->assert_ref_current_with_default_branch($primary_path, $target_ref, $repo, $branch, $exists_local ? 'branch' : 'base');
+			if ( is_wp_error($guard) ) {
+				return $this->worktree_plan_result($input, $handle, $path, $slug, 'stale', array( 'freshness' => $freshness, 'safety' => array( 'code' => $guard->get_error_code(), 'message' => $guard->get_error_message() ) ));
+			}
+		}
+		$demand_plan = WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
+		if ( $demand_plan instanceof \WP_Error ) {
+			return $demand_plan;
+		}
+		if ( ! class_exists(WorktreeDemandCalibration::class) ) {
+			require_once __DIR__ . '/WorktreeDemandCalibration.php';
+		}
+		$demand_plan = WorktreeDemandCalibration::forecast($repo, $demand_plan);
+		$disk_budget = $this->inspect_worktree_capacity($repo, $branch, $force, $demand_plan);
+		$candidates = $this->worktree_reuse_candidates($repo, $task);
+		$disposition = 'create';
+		if ( 'refused' === ( $disk_budget['status'] ?? '' ) ) {
+			$disposition = 'capacity_blocked';
+		} elseif ( array() !== $candidates && 'isolated' !== $reuse_policy ) {
+			$disposition = 'owner_conflict';
+		} elseif ( array() !== $candidates && ( '' === trim((string) ($intent['purpose'] ?? '')) || '' === trim((string) ($intent['owner_run_ref'] ?? '')) || WorktreeContextInjector::CLEANUP_POLICY_REMOVE_ON_SUCCESS !== ( $intent['cleanup_policy'] ?? null ) ) ) {
+			$disposition = 'unsafe';
+		}
+		return $this->worktree_plan_result($input, $handle, $path, $slug, $disposition, array(
+			'freshness' => $freshness,
+			'capacity' => $disk_budget,
+			'bootstrap_demand' => $demand_plan,
+			'reuse_candidates' => $candidates,
+			'ownership' => $intent,
+		));
+	}
+
+	/** Apply a previously reviewed plan only if the live replan is byte-for-byte identical. */
+	public function worktree_apply_plan( array $plan ): array|\WP_Error {
+		$expected = (string) ($plan['digest'] ?? '');
+		$input = (array) ($plan['apply_intent'] ?? array());
+		if ( '' === $expected || array() === $input ) {
+			return new \WP_Error('invalid_worktree_plan', 'A digest-addressed worktree plan with apply_intent is required.', array( 'status' => 400 ));
+		}
+		$current = $this->worktree_plan((string) ($input['repo'] ?? ''), (string) ($input['branch'] ?? ''), $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ($input['task'] ?? array()), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ($input['intent'] ?? array()), (string) ($input['reuse_policy'] ?? 'reuse_compatible'));
+		if ( is_wp_error($current) ) {
+			return $current;
+		}
+		if ( ! hash_equals($expected, (string) ($current['digest'] ?? '')) || ! in_array($current['disposition'] ?? '', array( 'create', 'exact_reuse', 'adoptable' ), true) ) {
+			return new \WP_Error('stale_worktree_plan', 'The worktree plan no longer matches live remote, capacity, ownership, or destination state.', array( 'status' => 409, 'expected_digest' => $expected, 'actual_digest' => $current['digest'] ?? null, 'disposition' => $current['disposition'] ?? null ));
+		}
+		return $this->worktree_add((string) $input['repo'], (string) $input['branch'], $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ($input['task'] ?? array()), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ($input['intent'] ?? array()), (string) ($input['reuse_policy'] ?? 'reuse_compatible'));
+	}
+
+	/** @return array<string,mixed> */
+	private function worktree_plan_result( array $input, string $handle, string $path, string $slug, string $disposition, array $evidence ): array {
+		$plan = array( 'version' => 1, 'handle' => $handle, 'path' => $path, 'branch' => $input['branch'], 'slug' => $slug, 'disposition' => $disposition, 'apply_intent' => $input ) + $evidence;
+		$digest_plan = array(
+			'version' => $plan['version'], 'handle' => $handle, 'path' => $path, 'branch' => $input['branch'], 'disposition' => $disposition, 'apply_intent' => $input,
+			'freshness' => array( 'verified' => $plan['freshness']['verified'] ?? null, 'target_ref' => $plan['freshness']['target_ref'] ?? null, 'target_head' => $plan['freshness']['target_head'] ?? null ),
+			'capacity' => array( 'status' => $plan['capacity']['status'] ?? null, 'projected_demand_bytes' => $plan['capacity']['projected_demand_bytes'] ?? null, 'projected_demand_inodes' => $plan['capacity']['projected_demand_inodes'] ?? null ),
+			'destination' => $plan['destination'] ?? null, 'ownership' => $plan['ownership'] ?? null, 'reuse_candidates' => $plan['reuse_candidates'] ?? null,
+		);
+		$plan['digest'] = hash('sha256', wp_json_encode($this->worktree_plan_sort($digest_plan)) ?: '');
+		$plan['apply'] = array( 'ability' => 'datamachine-code/workspace-worktree-apply-plan', 'intent' => array( 'digest' => $plan['digest'], 'apply_intent' => $input ) );
+		return $plan;
+	}
+
+	private function worktree_plan_sort( mixed $value ): mixed {
+		if ( ! is_array($value) ) {
+			return $value;
+		}
+		foreach ( $value as $key => $item ) {
+			$value[ $key ] = $this->worktree_plan_sort($item);
+		}
+		if ( array_keys($value) !== range(0, count($value) - 1) ) {
+			ksort($value);
+		}
+		return $value;
+	}
+
 
 
 	/**
@@ -1512,9 +1671,19 @@ trait WorkspaceWorktreeLifecycle {
 
 	/** @return \WP_Error Typed evidence for a non-reusable exact handle. */
 	private function worktree_reuse_refused( string $handle, string $reason_code, array $evidence ): \WP_Error {
+		$conflicting_handle = '';
+		if ( 'same_task_candidate_requires_explicit_isolation' === $reason_code && ! empty($evidence['candidates'][0]['handle']) ) {
+			$conflicting_handle = (string) $evidence['candidates'][0]['handle'];
+			$evidence['conflicting_handle'] = $conflicting_handle;
+			$evidence['supported_reuse_policy'] = 'isolated';
+		}
+		$message = '' !== $conflicting_handle
+			? sprintf('Refusing to create worktree "%s": same-task candidate "%s" requires --reuse-policy=isolated with purpose, owner_run_ref, and cleanup_policy=remove_on_success.', $handle, $conflicting_handle)
+			: sprintf('Refusing to reuse worktree "%s": %s.', $handle, str_replace('_', ' ', $reason_code));
+
 		return new \WP_Error(
 			'worktree_reuse_refused',
-			sprintf('Refusing to reuse worktree "%s": %s.', $handle, str_replace('_', ' ', $reason_code)),
+			$message,
 			array(
 				'status' => 409,
 				'reuse'  => array(

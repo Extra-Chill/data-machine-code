@@ -269,6 +269,22 @@ try {
 	$workspace = new Workspace();
 	$source_path = $workspace_root . '/source';
 	$primary_path = $workspace_root . '/homeboy';
+	$create_plan = $workspace->worktree_plan('homeboy', 'planned-create', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-create' ));
+	assert_true(! is_wp_error($create_plan) && 'create' === ( $create_plan['disposition'] ?? null ) && ! empty($create_plan['digest']) && 'homeboy@planned-create' === ( $create_plan['handle'] ?? null ) && ! is_dir($workspace_root . '/homeboy@planned-create'), 'create plan was not a non-mutating typed allocation');
+	$applied_plan = $workspace->worktree_apply_plan($create_plan);
+	assert_true(! is_wp_error($applied_plan) && is_dir($workspace_root . '/homeboy@planned-create'), is_wp_error($applied_plan) ? $applied_plan->get_error_message() : 'unchanged create plan did not apply');
+	$capacity_planner = new class extends Workspace {
+		protected function inspect_worktree_capacity( string $repo, string $branch, bool $force, array $demand_plan ): array {
+			return array( 'status' => 'refused', 'demand_plan' => $demand_plan );
+		}
+	};
+	$capacity_plan = $capacity_planner->worktree_plan('homeboy', 'planned-capacity', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-capacity' ));
+	assert_true(! is_wp_error($capacity_plan) && 'capacity_blocked' === ( $capacity_plan['disposition'] ?? null ), 'capacity-blocked plan was not deterministic');
+	$stale_plan = $workspace->worktree_plan('homeboy', 'planned-stale', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-stale' ));
+	file_put_contents($source_path . '/plan-remote-change.txt', "changed\n");
+	run_command('git add plan-remote-change.txt && git commit -m plan-remote-change && git push', $source_path);
+	$stale_apply = $workspace->worktree_apply_plan($stale_plan);
+	assert_true(is_wp_error($stale_apply) && 'stale_worktree_plan' === $stale_apply->get_error_code() && ! is_dir($workspace_root . '/homeboy@planned-stale'), 'remote change did not fail closed as a stale plan');
 	run_command('git checkout -b stale-rebase-demand', $source_path);
 	file_put_contents($source_path . '/stale.txt', "stale\n");
 	run_command('git add stale.txt && git commit -m stale && git push -u origin stale-rebase-demand', $source_path);
@@ -546,6 +562,8 @@ try {
 	assert_true(! is_wp_error($disposable_finalized) && 'cleanup_eligible' === ( $disposable_finalized['lifecycle_state'] ?? '' ), 'successful owner terminal outcome did not make disposable worktree cleanup eligible');
 	assert_true(strtotime((string) ( $disposable_finalized['metadata']['last_seen_at'] ?? '' )) < strtotime((string) ( $disposable_finalized['metadata']['finalized_at'] ?? '' )), 'terminal finalization must not refresh heartbeat activity');
 	$reuse_created_at  = $wpdb->rows[$reuse_handle]['created_at'] ?? null;
+	$owner_conflict_plan = $workspace->worktree_plan('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	assert_true(! is_wp_error($owner_conflict_plan) && 'owner_conflict' === ( $owner_conflict_plan['disposition'] ?? null ), 'live owner conflict was not planned');
 	$live_reuse_refusal = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
 	assert_true(is_wp_error($live_reuse_refusal) && 'worktree_reuse_refused' === $live_reuse_refusal->get_error_code(), 'live worktree reuse did not fail closed');
 	assert_true('live_worktree' === ( $live_reuse_refusal->get_error_data()['reuse']['reason_code'] ?? null ), 'live worktree refusal lacked typed reuse evidence');
@@ -558,7 +576,6 @@ try {
 	assert_true('accepted' === ( $reused['reuse']['status'] ?? null ) && 'homeboy@idempotent-reuse' === ( $reused['reuse']['handle'] ?? null ), 'default exact reuse did not preserve typed result evidence');
 	assert_true($reuse_created_at === ( $wpdb->rows[$reuse_handle]['created_at'] ?? null ), 'reuse rewrote durable lifecycle metadata');
 	assert_true('https://example.test/issues/reuse' === ( $wpdb->rows[$reuse_handle]['task_url'] ?? '' ), 'reuse rewrote durable task metadata');
-
 	// Simulate a caller being terminated after checkout materialization and after
 	// bootstrap starts: its durable running phase must block readiness until the
 	// exact compatible add retry completes bootstrap.
@@ -579,7 +596,11 @@ try {
 	$resumed_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
 	assert_true(! is_wp_error($resumed_bootstrap) && true === ( $resumed_bootstrap['resumed'] ?? false ) && 'succeeded' === ( $resumed_bootstrap['metadata']['provisioning']['bootstrap']['outcome'] ?? null ), is_wp_error($resumed_bootstrap) ? $resumed_bootstrap->get_error_message() : 'exact retry did not resume interrupted bootstrap');
 	assert_true(true === ( $workspace->worktree_get($interrupted_bootstrap_handle)['worktrees'][0]['readiness']['ready'] ?? false ), 'resumed bootstrap remained incomplete');
+	$exact_reuse_plan = $workspace->worktree_plan('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	assert_true(! is_wp_error($exact_reuse_plan) && 'exact_reuse' === ( $exact_reuse_plan['disposition'] ?? null ), 'exact compatible reuse was not planned');
 	file_put_contents($reusable['path'] . '/reuse-dirty.txt', "dirty\n");
+	$unsafe_plan = $workspace->worktree_plan('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	assert_true(! is_wp_error($unsafe_plan) && 'unsafe' === ( $unsafe_plan['disposition'] ?? null ), 'unsafe existing destination was not planned');
 	$dirty_reuse_refusal = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
 	assert_true(is_wp_error($dirty_reuse_refusal) && 'dirty_worktree' === ( $dirty_reuse_refusal->get_error_data()['reuse']['reason_code'] ?? null ), 'dirty worktree reuse did not fail closed');
 	unlink($reusable['path'] . '/reuse-dirty.txt');
@@ -600,6 +621,8 @@ try {
 	$interrupted_task = array( 'task_url' => 'https://example.test/issues/interrupted-add' );
 	assert_true(true === WorktreeContextInjector::store_creation_intent('homeboy@interrupted-add-recovery', interrupted_creation_intent('interrupted-add-recovery', $interrupted_base_head, $interrupted_task)), 'interruption fixture could not persist its pre-creation intent');
 	run_command('git worktree add -b interrupted-add-recovery ' . escapeshellarg($interrupted_path) . ' origin/main', $primary_path);
+	$adoptable_plan = $workspace->worktree_plan('homeboy', 'interrupted-add-recovery', 'origin/main', false, false, false, false, true, $interrupted_task);
+	assert_true(! is_wp_error($adoptable_plan) && 'adoptable' === ( $adoptable_plan['disposition'] ?? null ) && null !== WorktreeContextInjector::get_creation_intent('homeboy@interrupted-add-recovery'), 'interrupted exact handle was not planned as adoptable without metadata mutation');
 	$adopted = $workspace->worktree_add('homeboy', 'interrupted-add-recovery', 'origin/main', false, false, false, false, true, $interrupted_task);
 	assert_true(! is_wp_error($adopted) && true === ( $adopted['adopted'] ?? false ), is_wp_error($adopted) ? $adopted->get_error_message() : 'exact interrupted worktree was not adopted');
 	assert_true('interrupted_exact_handle' === ( $adopted['recovery']['reason_code'] ?? null ) && 'https://example.test/issues/interrupted-add' === ( $adopted['metadata']['origin_task']['task_url'] ?? null ) && 'origin/main' === ( $adopted['metadata']['reuse_contract']['base_ref'] ?? null ) && null === WorktreeContextInjector::get_creation_intent('homeboy@interrupted-add-recovery'), 'interrupted adoption did not promote and clear the exact journal contract');
