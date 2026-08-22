@@ -4,7 +4,13 @@ declare(strict_types=1);
 
 namespace DataMachineCode\Abilities {
 	final class WorkspaceAbilities {
+		private static bool $scheduled = false;
+
 		public function __construct() {
+			if ( self::$scheduled ) {
+				return;
+			}
+			self::$scheduled = true;
 			++$GLOBALS['dmc_minimal_workspace_abilities'];
 		}
 	}
@@ -58,6 +64,7 @@ namespace {
 	$GLOBALS['dmc_minimal_wordpress_runtime_abilities'] = 0;
 
 	require_once dirname(__DIR__) . '/data-machine-code.php';
+	minimal_runtime_assert_same(1, $GLOBALS['dmc_minimal_workspace_abilities'], 'Executable workspace CLI did not schedule WorkspaceAbilities at plugin load time.');
 	datamachine_code_bootstrap();
 	datamachine_code_bootstrap();
 

@@ -123,6 +123,13 @@ function datamachine_code_is_targeted_workspace_read_cli_request( ?array $argv =
 // PSR-4 Autoloading.
 require_once __DIR__ . '/vendor/autoload.php';
 
+// Data Machine may initialize Core's lazy Abilities registry during its own
+// plugins_loaded callback. Schedule the bounded workspace CLI surface before
+// that shared lifecycle can fire; targeted reads do not use Abilities.
+if ( datamachine_code_is_bounded_workspace_cli_request() && ! datamachine_code_is_targeted_workspace_read_cli_request() ) {
+	new \DataMachineCode\Abilities\WorkspaceAbilities();
+}
+
 /**
  * Install DMC-owned database tables.
  */
