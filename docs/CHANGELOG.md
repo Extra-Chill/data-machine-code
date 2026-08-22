@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.60.2] - 2026-08-22
+
+### Fixed
+- schedule workspace surface before plugins load
+
 ## [0.60.1] - 2026-08-22
 
 ### Fixed
