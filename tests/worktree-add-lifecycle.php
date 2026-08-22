@@ -194,6 +194,7 @@ require_once dirname(__DIR__) . '/inc/Workspace/Workspace.php';
 require_once dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php';
 
 use DataMachineCode\Abilities\WorkspaceAbilities;
+use DataMachineCode\Workspace\RemoteWorkspaceBackend;
 use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 
@@ -269,6 +270,31 @@ try {
 	$workspace = new Workspace();
 	$source_path = $workspace_root . '/source';
 	$primary_path = $workspace_root . '/homeboy';
+	$remote_backend = new RemoteWorkspaceBackend();
+	$public_remote = $remote_backend->clone_repo('https://github.com/example/public-project.git', 'public-project');
+	assert_true(! is_wp_error($public_remote), 'public GitHub remote registration failed');
+	$ghe_remote = $remote_backend->clone_repo('git@github.example.com:example/enterprise-project.git', 'enterprise-project');
+	assert_true(! is_wp_error($ghe_remote), 'GitHub Enterprise remote registration failed');
+	$ghe_context = $remote_backend->materialization_context('enterprise-project');
+	assert_true(! is_wp_error($ghe_context), 'GitHub Enterprise registration was not materializable');
+	assert_true('git@github.example.com:example/enterprise-project.git' === ( $ghe_context['url'] ?? '' ), 'GitHub Enterprise materialization did not preserve its clone URL');
+
+	// Existing API-backed state must not divert a capable local runtime away
+	// from creating the primary checkout requested by workspace clone.
+	$clone_origin = $workspace_root . '/source/clone-origin.git';
+	run_command('git clone --bare ' . escapeshellarg($workspace_root . '/origin.git') . ' ' . escapeshellarg($clone_origin));
+	$cloned = WorkspaceAbilities::cloneRepo(
+		array(
+			'url'  => $clone_origin,
+			'name' => 'clone-handoff',
+		)
+	);
+	assert_true(! is_wp_error($cloned), is_wp_error($cloned) ? $cloned->get_error_message() : 'local clone was diverted to remote registration');
+	assert_true(is_dir($workspace_root . '/clone-handoff/.git'), 'workspace clone did not materialize the local primary');
+	$cloned_worktree = $workspace->worktree_add('clone-handoff', 'feat/clone-handoff', 'origin/main', false, false, false, false, true);
+	assert_true(! is_wp_error($cloned_worktree), is_wp_error($cloned_worktree) ? $cloned_worktree->get_error_message() : 'worktree add failed from the cloned primary');
+	assert_true(is_file($workspace_root . '/clone-handoff@feat-clone-handoff/.git'), 'cloned primary did not support worktree materialization');
+
 	run_command('git checkout -b stale-rebase-demand', $source_path);
 	file_put_contents($source_path . '/stale.txt', "stale\n");
 	run_command('git add stale.txt && git commit -m stale && git push -u origin stale-rebase-demand', $source_path);
