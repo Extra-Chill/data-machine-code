@@ -1172,9 +1172,6 @@ trait WorkspaceWorktreeLifecycle {
 			'task'     => $existing['task'] ?? null,
 			'metadata' => $existing['metadata'] ?? null,
 		);
-		if ( 'isolated' === $reuse_policy ) {
-			return $this->worktree_reuse_refused($handle, 'isolated_requested', $evidence + array( 'reuse_policy' => $reuse_policy ));
-		}
 		if ( ( $existing['branch'] ?? null ) !== $branch ) {
 			return $this->worktree_reuse_refused($handle, 'branch_mismatch', $evidence + array( 'requested_branch' => $branch ));
 		}
@@ -1184,10 +1181,6 @@ trait WorkspaceWorktreeLifecycle {
 		if ( (int) ( $existing['unpushed'] ?? 0 ) > 0 ) {
 			return $this->worktree_reuse_refused($handle, 'unpushed_commits', $evidence);
 		}
-		if ( WorktreeContextInjector::LIVENESS_LIVE === ( $existing['liveness'] ?? null ) ) {
-			return $this->worktree_reuse_refused($handle, 'live_worktree', $evidence);
-		}
-
 		$metadata = is_array($existing['metadata'] ?? null) ? $existing['metadata'] : array();
 		$contract = is_array($metadata['reuse_contract'] ?? null) ? $metadata['reuse_contract'] : array();
 		if ( array() === $contract ) {
@@ -1220,11 +1213,18 @@ trait WorkspaceWorktreeLifecycle {
 			return $this->worktree_reuse_refused($handle, 'task_mismatch', $evidence + array( 'requested_task' => $task ));
 		}
 		$stored_intent = WorktreeContextInjector::normalize_disposable_intent($contract + $metadata);
+		if ( 'isolated' === $reuse_policy && empty($intent['owner_run_ref']) ) {
+			return $this->worktree_reuse_refused($handle, 'isolated_requested', $evidence + array( 'reuse_policy' => $reuse_policy ));
+		}
 		if ( $intent !== $stored_intent ) {
 			return $this->worktree_reuse_refused($handle, 'disposable_intent_mismatch', $evidence + array(
 				'requested_intent' => $intent,
 				'stored_intent'    => $stored_intent,
 			));
+		}
+		$live_owner_retry = WorktreeContextInjector::LIVENESS_LIVE === ( $existing['liveness'] ?? null ) && ! empty($intent['owner_run_ref']);
+		if ( WorktreeContextInjector::LIVENESS_LIVE === ( $existing['liveness'] ?? null ) && ! $live_owner_retry ) {
+			return $this->worktree_reuse_refused($handle, 'live_worktree', $evidence);
 		}
 
 		return array(
@@ -1237,7 +1237,7 @@ trait WorkspaceWorktreeLifecycle {
 			'reused'         => true,
 			'reuse'          => array(
 				'status'      => 'accepted',
-				'reason_code' => 'exact_compatible_handle',
+				'reason_code' => $live_owner_retry ? 'owner_identical_live_retry' : 'exact_compatible_handle',
 			) + $evidence,
 			'metadata'       => $metadata,
 			'message'        => sprintf('Reused clean compatible worktree "%s" at %s.', $handle, $existing['path']),
