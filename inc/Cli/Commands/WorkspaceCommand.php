@@ -190,7 +190,7 @@ class WorkspaceCommand extends BaseCommand {
 			'cleanup-artifacts' => array(
 				'shortdesc' => 'Review or remove reclaimable worktree artifacts.',
 				'longdesc'  => "Reviews generated artifacts with bounded safety probes; applying a reviewed plan revalidates every row.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree cleanup-artifacts --dry-run --safety-probes --format=json",
-				'synopsis'  => array( $flag('dry-run', 'Preview without removal.'), $flag('force', 'Override eligible artifact cleanup safeguards.'), $flag('allow-active-artifact-cleanup', 'Allow cleanup despite active-worktree evidence.'), $flag('allow-unavailable-process-probe', 'Allow cleanup when process probing is unavailable.'), $option('limit', 'Maximum worktrees to process.'), $option('offset', 'Zero-indexed inventory offset.'), $option('only-handle', 'Only process this worktree handle.'), $flag('exhaustive', 'Run the unbounded artifact audit.'), $flag('safety-probes', 'Run per-worktree safety probes.'), $option('sort', 'Candidate reporting sort field.'), $option('older-than', 'Only process worktrees older than this duration.'), $option('apply-plan', 'Reviewed JSON cleanup plan file.'), $format ),
+				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name or worktree handle scope.' ), $flag('dry-run', 'Preview without removal.'), $flag('force', 'Override eligible artifact cleanup safeguards.'), $flag('allow-active-artifact-cleanup', 'Allow cleanup despite active-worktree evidence.'), $flag('allow-unavailable-process-probe', 'Allow cleanup when process probing is unavailable.'), $option('limit', 'Maximum worktrees to process.'), $option('offset', 'Zero-indexed inventory offset.'), $option('only-handle', 'Only process this worktree handle.'), $flag('exhaustive', 'Run the unbounded artifact audit.'), $flag('safety-probes', 'Run per-worktree safety probes.'), $option('sort', 'Candidate reporting sort field.'), $option('older-than', 'Only process worktrees older than this duration.'), $option('apply-plan', 'Reviewed JSON cleanup plan file.'), $format ),
 			),
 			'emergency-cleanup' => array(
 				'shortdesc' => 'Produce an emergency artifact cleanup review.',
@@ -4402,6 +4402,10 @@ class WorkspaceCommand extends BaseCommand {
 			WP_CLI::error(sprintf('Unknown worktree operation: %s', $operation));
 			return;
 		}
+		if ( ! empty($args[1]) && in_array($operation, array( 'cleanup-eligible-drain', 'emergency-cleanup', 'capacity-recovery' ), true) ) {
+			WP_CLI::error(sprintf('`worktree %s` is workspace-wide and does not accept a repository argument.', $operation));
+			return;
+		}
 
 		$ability = wp_get_ability($ability_name);
 		if ( ! $ability ) {
@@ -4675,6 +4679,9 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 
 			case 'cleanup-artifacts':
+				if ( ! empty($args[1]) ) {
+					$input['repo'] = (string) $args[1];
+				}
 				$input['dry_run']                         = ! empty($assoc_args['dry-run']);
 				$input['force']                           = ! empty($assoc_args['force']);
 				$input['allow_active_artifact_cleanup']   = ! empty($assoc_args['allow-active-artifact-cleanup']);
