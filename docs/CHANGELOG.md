@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.61.1] - 2026-08-22
+
+### Fixed
+- classify divergent primary refresh
+
 ## [0.61.0] - 2026-08-22
 
 ### Added
