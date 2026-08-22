@@ -1658,9 +1658,16 @@ trait WorkspaceGitOperations {
 			return new \WP_Error('detached_primary_default_ref_missing', sprintf('Primary refresh is blocked: %s/%s is unavailable after fetch.', $remote, $default_branch), array( 'status' => 409 ));
 		}
 
-		$merge_base = $this->run_git($repo_path, 'merge-base ' . escapeshellarg($head_before) . ' ' . escapeshellarg($remote_ref));
+		$merge_base   = $this->run_git($repo_path, 'merge-base ' . escapeshellarg($head_before) . ' ' . escapeshellarg($remote_ref));
+		$preservation = null;
 		if ( is_wp_error($merge_base) || $head_before !== trim( (string) ( $merge_base['output'] ?? '' ) ) ) {
-			return new \WP_Error('detached_primary_diverged', sprintf('Primary refresh is blocked: detached HEAD %s is not an ancestor of %s/%s; refusing to discard or merge divergent history.', $head_before, $remote, $default_branch), array( 'status' => 409 ));
+			$preservation = $this->find_remote_detached_preservation($repo_path, $remote, $head_before);
+			if ( is_wp_error($preservation) ) {
+				return $preservation;
+			}
+			if ( null === $preservation ) {
+				return new \WP_Error('detached_primary_diverged', sprintf('Primary refresh is blocked: detached HEAD %s is not preserved by a freshly verified %s branch or tag.', $head_before, $remote), array( 'status' => 409 ));
+			}
 		}
 
 		$local = $this->run_git($repo_path, 'rev-parse --verify ' . escapeshellarg('refs/heads/' . $default_branch));
@@ -1704,7 +1711,52 @@ trait WorkspaceGitOperations {
 			'head_before' => $head_before,
 			'head_after'  => $this->git_head_sha($repo_path),
 			'branch_repointed' => $branch_repointed,
+			'preservation' => $preservation,
 		);
+	}
+
+	/** @return array{remote:string,ref:string,commit:string}|null|\WP_Error */
+	private function find_remote_detached_preservation( string $repo_path, string $remote, string $head ): array|null|\WP_Error {
+		$fetch = $this->run_git($repo_path, 'fetch --no-tags --prune ' . escapeshellarg($remote));
+		if ( is_wp_error($fetch) ) {
+			return new \WP_Error('detached_primary_preservation_fetch_failed', sprintf('Primary refresh is blocked: unable to freshly verify remote preservation on %s.', $remote), array( 'status' => 409 ));
+		}
+
+		$refs = $this->run_git($repo_path, 'for-each-ref --format=' . escapeshellarg('%(refname) %(objectname)') . ' ' . escapeshellarg('refs/remotes/' . $remote));
+		if ( is_wp_error($refs) ) {
+			return new \WP_Error('detached_primary_preservation_refs_unavailable', 'Primary refresh is blocked: refreshed remote branch refs could not be listed.', array( 'status' => 409 ));
+		}
+
+		foreach (explode("\n", trim((string) ( $refs['output'] ?? '' ))) as $line) {
+			if ( ! preg_match('#^(refs/remotes/' . preg_quote($remote, '#') . '/(.+)) ([a-f0-9]{40})$#', $line, $matches) || str_ends_with($matches[1], '/HEAD')) { continue; }
+			$base = $this->run_git($repo_path, 'merge-base ' . escapeshellarg($head) . ' ' . escapeshellarg($matches[1]));
+			if ( is_wp_error($base) || $head !== trim((string) ( $base['output'] ?? '' )) ) { continue; }
+			$branch = $matches[2];
+			$live   = $this->run_git($repo_path, 'ls-remote --heads ' . escapeshellarg($remote) . ' ' . escapeshellarg($branch));
+			if ( is_wp_error($live) || ! preg_match('/^' . preg_quote($matches[3], '/') . '\s+refs\/heads\/' . preg_quote($branch, '/') . '$/m', (string) ( $live['output'] ?? '' )) ) {
+				return new \WP_Error('detached_primary_preservation_ref_changed', sprintf('Primary refresh is blocked: preserving remote branch %s/%s changed or was deleted during verification.', $remote, $branch), array( 'status' => 409 ));
+			}
+			return array( 'remote' => $remote, 'ref' => 'refs/heads/' . $branch, 'commit' => $head );
+		}
+
+		$tags = $this->run_git($repo_path, 'ls-remote --tags ' . escapeshellarg($remote));
+		if ( is_wp_error($tags) ) {
+			return new \WP_Error('detached_primary_preservation_tags_unavailable', sprintf('Primary refresh is blocked: remote tags on %s could not be verified.', $remote), array( 'status' => 409 ));
+		}
+		foreach (explode("\n", trim((string) ( $tags['output'] ?? '' ))) as $line) {
+			if ( ! preg_match('#^([a-f0-9]{40})\s+(refs/tags/.+)$#', $line, $matches) || str_ends_with($matches[2], '^{}')) { continue; }
+			$tag = substr($matches[2], 10);
+			$tag_fetch = $this->run_git($repo_path, 'fetch --no-tags ' . escapeshellarg($remote) . ' ' . escapeshellarg($matches[2]));
+			$tag_commit = $tag_fetch instanceof \WP_Error ? '' : $this->run_git($repo_path, 'rev-parse FETCH_HEAD^{commit}');
+			if ( ! is_array($tag_commit) || $head !== trim((string) ( $tag_commit['output'] ?? '' )) ) { continue; }
+			$live = $this->run_git($repo_path, 'ls-remote --tags ' . escapeshellarg($remote) . ' ' . escapeshellarg($matches[2]));
+			if ( is_wp_error($live) || ! str_contains((string) ( $live['output'] ?? '' ), $matches[2]) ) {
+				return new \WP_Error('detached_primary_preservation_ref_changed', sprintf('Primary refresh is blocked: preserving remote tag %s changed or was deleted during verification.', $tag), array( 'status' => 409 ));
+			}
+			return array( 'remote' => $remote, 'ref' => $matches[2], 'commit' => $head );
+		}
+
+		return null;
 	}
 
 	/** @return array{handle:string,path:string,inspect_command:string,retry_command:string}|null|\WP_Error */
