@@ -56,22 +56,15 @@ class WorkspaceAbilities {
 			return;
 		}
 
-		if ( ! function_exists('wp_register_ability') ) {
-			add_action(
-				'wp_abilities_api_init', function (): void {
-					if ( self::$registered || ! function_exists('wp_register_ability') ) {
-						return;
-					}
-
-					$this->registerAbilities();
-					self::$registered = true;
+		AbilityRegistry::when_ready(
+			function (): void {
+				if ( self::$registered ) {
+					return;
 				}
-			);
-			return;
-		}
-
-		$this->registerAbilities();
-		self::$registered = true;
+				$this->registerAbilities();
+				self::$registered = true;
+			}
+		);
 	}
 
 	private function registerAbilities(): void {
