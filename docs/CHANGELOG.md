@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.59.5] - 2026-08-22
+
+### Fixed
+- route artifact cleanup handle scope
+- clarify artifact byte accounting
+- end metadata help before shutdown work
+- bound admission recovery
+
 ## [0.59.4] - 2026-08-22
 
 ### Fixed
