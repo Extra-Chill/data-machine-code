@@ -110,6 +110,14 @@ trait WorkspaceGitOperations {
 			$remote = 'origin';
 		}
 
+		if ( empty($parsed['is_worktree']) && ( null === $branch || '' === $branch ) && $this->is_detached_head($repo_path) ) {
+			$repaired = $this->repair_detached_primary_for_pull($repo_path, $remote);
+			if ( is_wp_error($repaired) ) {
+				return $repaired;
+			}
+			$branch = $repaired['branch'];
+		}
+
 		// A primary's default branch can lack upstream tracking (issue #833):
 		// `git pull --ff-only` then hard-fails with "no tracking information".
 		// When the local branch has no upstream but a same-named branch exists
@@ -135,11 +143,16 @@ trait WorkspaceGitOperations {
 			$this->emit_workspace_changed('primary_refresh', $parsed['repo'], $parsed['dir_name'], $repo_path);
 		}
 
-		return array(
+		$response = array(
 			'success' => true,
 			'message' => trim( (string) $result['output']),
 			'name'    => $parsed['dir_name'],
 		);
+		if ( isset($repaired) ) {
+			$response['primary_repair'] = $repaired;
+		}
+
+		return $response;
 	}
 
 	/**
@@ -1610,6 +1623,68 @@ trait WorkspaceGitOperations {
 		}
 
 		return true;
+	}
+
+	/**
+	 * Reattach a clean detached primary only when the remote default can fast-forward it.
+	 *
+	 * @return array{branch:string,upstream:string,head_before:string,head_after:string}|\WP_Error
+	 */
+	private function repair_detached_primary_for_pull( string $repo_path, string $remote ): array|\WP_Error {
+		$head_before = $this->git_head_sha($repo_path);
+		if ( '' === $head_before ) {
+			return new \WP_Error('detached_primary_head_unknown', 'Primary refresh is blocked: detached HEAD cannot be resolved. Inspect the checkout before retrying.', array( 'status' => 409 ));
+		}
+
+		$default = $this->run_git($repo_path, 'ls-remote --symref ' . escapeshellarg($remote) . ' HEAD');
+		if ( is_wp_error($default) ) {
+			return new \WP_Error('detached_primary_default_branch_unavailable', 'Primary refresh is blocked: the remote default branch could not be resolved. Verify the remote and retry.', array( 'status' => 409 ));
+		}
+
+		if ( ! preg_match('/^ref: refs\/heads\/([^\s]+)\s+HEAD$/m', (string) ( $default['output'] ?? '' ), $matches) ) {
+			return new \WP_Error('detached_primary_default_branch_ambiguous', 'Primary refresh is blocked: the remote does not advertise an unambiguous default branch. Set the remote HEAD or reattach the primary manually.', array( 'status' => 409 ));
+		}
+
+		$default_branch = $matches[1];
+		$remote_ref     = 'refs/remotes/' . $remote . '/' . $default_branch;
+		$fetch          = $this->run_git($repo_path, 'fetch --no-tags ' . escapeshellarg($remote) . ' ' . escapeshellarg('refs/heads/' . $default_branch . ':' . $remote_ref));
+		if ( is_wp_error($fetch) ) {
+			return new \WP_Error('detached_primary_fetch_failed', sprintf('Primary refresh is blocked: unable to fetch %s/%s.', $remote, $default_branch), array( 'status' => 409 ));
+		}
+
+		$target = $this->run_git($repo_path, 'rev-parse --verify ' . escapeshellarg($remote_ref));
+		if ( is_wp_error($target) || '' === trim( (string) ( $target['output'] ?? '' ) ) ) {
+			return new \WP_Error('detached_primary_default_ref_missing', sprintf('Primary refresh is blocked: %s/%s is unavailable after fetch.', $remote, $default_branch), array( 'status' => 409 ));
+		}
+
+		$merge_base = $this->run_git($repo_path, 'merge-base ' . escapeshellarg($head_before) . ' ' . escapeshellarg($remote_ref));
+		if ( is_wp_error($merge_base) || $head_before !== trim( (string) ( $merge_base['output'] ?? '' ) ) ) {
+			return new \WP_Error('detached_primary_diverged', sprintf('Primary refresh is blocked: detached HEAD %s is not an ancestor of %s/%s; refusing to discard or merge divergent history.', $head_before, $remote, $default_branch), array( 'status' => 409 ));
+		}
+
+		$local = $this->run_git($repo_path, 'rev-parse --verify ' . escapeshellarg('refs/heads/' . $default_branch));
+		if ( ! is_wp_error($local) && $head_before !== trim( (string) ( $local['output'] ?? '' ) ) ) {
+			return new \WP_Error('detached_primary_local_branch_ambiguous', sprintf('Primary refresh is blocked: local branch %s does not point at detached HEAD; refusing to move an ambiguous branch.', $default_branch), array( 'status' => 409 ));
+		}
+
+		$checkout = is_wp_error($local)
+			? $this->run_git($repo_path, 'checkout --track -b ' . escapeshellarg($default_branch) . ' ' . escapeshellarg($remote . '/' . $default_branch))
+			: $this->run_git($repo_path, 'checkout ' . escapeshellarg($default_branch));
+		if ( is_wp_error($checkout) ) {
+			return new \WP_Error('detached_primary_checkout_failed', sprintf('Primary refresh is blocked: unable to attach local branch %s to the verified default branch.', $default_branch), array( 'status' => 409 ));
+		}
+
+		return array(
+			'branch'      => $default_branch,
+			'upstream'    => $remote . '/' . $default_branch,
+			'head_before' => $head_before,
+			'head_after'  => $this->git_head_sha($repo_path),
+		);
+	}
+
+	private function is_detached_head( string $repo_path ): bool {
+		$branch = $this->git_get_branch($repo_path);
+		return null === $branch || '' === $branch || 'HEAD' === $branch;
 	}
 
 	/**
