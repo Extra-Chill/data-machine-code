@@ -46,6 +46,10 @@ trait WorkspaceArtifactCleanup {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_cleanup_artifacts( array $opts = array() ): array|\WP_Error {
+		$scope                           = $this->normalize_worktree_operation_scope(isset($opts['repo']) ? (string) $opts['repo'] : '');
+		if ( is_wp_error($scope) ) {
+			return $scope;
+		}
 		$dry_run                         = ! empty($opts['dry_run']);
 		$force                           = ! empty($opts['force']);
 		$allow_active                    = ! empty($opts['allow_active_artifact_cleanup']);
@@ -95,6 +99,19 @@ trait WorkspaceArtifactCleanup {
 			: null;
 		$planned      = null;
 		if ( null !== $apply_plan ) {
+			$plan_scope = $this->worktree_cleanup_plan_scope($apply_plan);
+			if ( is_wp_error($plan_scope) ) {
+				return $plan_scope;
+			}
+			if ( null !== $scope && null === $plan_scope ) {
+				return new \WP_Error('artifact_cleanup_plan_scope_missing', 'A repository-scoped artifact cleanup apply requires a reviewed plan that records the same scope.', array( 'status' => 400 ));
+			}
+			if ( null !== $scope && null !== $plan_scope && $scope !== $plan_scope ) {
+				return new \WP_Error('artifact_cleanup_plan_scope_mismatch', 'The reviewed artifact cleanup plan scope does not match the requested repository scope.', array( 'status' => 400 ));
+			}
+			if ( null === $scope && null !== $plan_scope ) {
+				$scope = $plan_scope;
+			}
 			$planned = $this->extract_worktree_artifact_cleanup_plan_candidates($apply_plan);
 			if ( $planned instanceof \WP_Error ) {
 				return $planned;
@@ -122,6 +139,7 @@ trait WorkspaceArtifactCleanup {
 				'only_handles'                    => $only_handles,
 				'safety_probes'                   => $safety_probes,
 				'older_than'                      => $older_than,
+				'scope'                           => $scope,
 			)
 		);
 		if ( $plan instanceof \WP_Error ) {
@@ -162,6 +180,7 @@ trait WorkspaceArtifactCleanup {
 				'safety_probes' => $safety_probes,
 				'sort'          => 'size',
 				'ranked_total'  => $total_ranked,
+				'scope'         => $scope,
 			);
 			if ( null !== $age_filter ) {
 				$pagination['age_filter'] = $age_filter;
@@ -169,6 +188,7 @@ trait WorkspaceArtifactCleanup {
 		}
 
 		$summary = $this->build_worktree_artifact_cleanup_summary($candidates, array(), $skipped);
+		$summary['scope'] = $scope;
 		if ( null !== $pagination ) {
 			$summary['pagination'] = $pagination;
 		}
@@ -180,6 +200,7 @@ trait WorkspaceArtifactCleanup {
 			$response = array(
 				'success'               => true,
 				'dry_run'               => true,
+				'scope'                 => $scope,
 				'review_command'        => $review_command,
 				'apply_command'         => $apply_command,
 				'preview_command'       => $preview_command,
@@ -267,12 +288,14 @@ trait WorkspaceArtifactCleanup {
 		$removed       = $this->observe_artifact_reclamation_rows($removed);
 		$partial       = $this->observe_artifact_reclamation_rows($partial);
 		$apply_summary = $this->build_worktree_artifact_cleanup_summary($candidates, $removed, $skipped, $partial);
+		$apply_summary['scope'] = $scope;
 		if ( null !== $pagination ) {
 			$apply_summary['pagination'] = $pagination;
 		}
 		$response = array(
 			'success'    => true,
 			'dry_run'    => false,
+			'scope'      => $scope,
 			'candidates' => $candidates,
 			'removed'    => $removed,
 			'partial'    => $partial,
@@ -315,7 +338,9 @@ trait WorkspaceArtifactCleanup {
 	 * @return string
 	 */
 	private function build_artifact_cleanup_preview_command( array $opts ): string {
-		$parts = array( 'studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run' );
+		$scope = $this->normalize_worktree_operation_scope(isset($opts['repo']) ? (string) $opts['repo'] : '');
+		$scope = is_array($scope) ? $scope : null;
+		$parts = array( 'studio wp datamachine-code workspace worktree cleanup-artifacts' . $this->worktree_operation_scope_cli_arg($scope) . ' --dry-run' );
 		if ( ! empty($opts['force']) ) {
 			$parts[] = '--force';
 		}
@@ -372,6 +397,7 @@ trait WorkspaceArtifactCleanup {
 	 * @return array{candidates: array<int,array>, skipped: array<int,array>, pagination: ?array<string,mixed>, age_filter: ?array<string,mixed>}|\WP_Error
 	 */
 	private function build_worktree_artifact_cleanup_plan( bool $force, array $opts = array() ): array|\WP_Error {
+		$scope                           = isset($opts['scope']) && is_array($opts['scope']) ? $opts['scope'] : null;
 		$limit                           = isset($opts['limit']) ? (int) $opts['limit'] : 0;
 		$offset                          = isset($opts['offset']) ? max(0, (int) $opts['offset']) : 0;
 		$allow_active                    = ! empty($opts['allow_active_artifact_cleanup']);
@@ -425,6 +451,7 @@ trait WorkspaceArtifactCleanup {
 		if ( null !== $only_index ) {
 			$rows = array_values(array_filter($rows, fn( $wt ) => isset($only_index[ (string) ( $wt['handle'] ?? '' ) ])));
 		}
+		$rows = array_values(array_filter($rows, fn( $wt ) => is_array($wt) && $this->worktree_row_matches_operation_scope($wt, $scope)));
 
 		$total       = count($rows);
 		$bounded     = $limit > 0;
@@ -640,6 +667,7 @@ trait WorkspaceArtifactCleanup {
 			'partial'       => $bounded && $slice_end < $total,
 			'next_offset'   => ( $bounded && $slice_end < $total ) ? $slice_end : null,
 			'safety_probes' => $safety_probes,
+			'scope'         => $scope,
 		);
 		if ( null !== $age_filter ) {
 			$pagination['age_filter'] = $age_filter;

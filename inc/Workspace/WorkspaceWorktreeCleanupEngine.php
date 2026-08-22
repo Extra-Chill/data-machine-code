@@ -50,6 +50,10 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_cleanup_merged( array $opts = array() ): array|\WP_Error {
+		$scope                     = $this->normalize_worktree_operation_scope(isset($opts['repo']) ? (string) $opts['repo'] : '');
+		if ( is_wp_error($scope) ) {
+			return $scope;
+		}
 		$dry_run                   = ! empty($opts['dry_run']);
 		$force                     = ! empty($opts['force']);
 		$discard_unpushed          = ! empty($opts['discard_unpushed']);
@@ -108,11 +112,24 @@ trait WorkspaceWorktreeCleanupEngine {
 				return new \WP_Error('inventory_cleanup_apply_plan_unsupported', 'Inventory-only cleanup cannot apply a plan because it intentionally skips full safety revalidation.', array( 'status' => 400 ));
 			}
 
-			return $this->worktree_cleanup_inventory_only($older_than, $sort, $include_repaired_metadata, $limit, $offset);
+			return $this->worktree_cleanup_inventory_only($older_than, $sort, $include_repaired_metadata, $limit, $offset, null === $scope ? '' : (string) $scope['argument']);
 		}
 
 		$planned_candidates = null;
 		if ( null !== $apply_plan ) {
+			$plan_scope = $this->worktree_cleanup_plan_scope($apply_plan);
+			if ( is_wp_error($plan_scope) ) {
+				return $plan_scope;
+			}
+			if ( null !== $scope && null === $plan_scope ) {
+				return new \WP_Error('cleanup_plan_scope_missing', 'A repository-scoped cleanup apply requires a reviewed plan that records the same scope.', array( 'status' => 400 ));
+			}
+			if ( null !== $scope && null !== $plan_scope && $scope !== $plan_scope ) {
+				return new \WP_Error('cleanup_plan_scope_mismatch', 'The reviewed cleanup plan scope does not match the requested repository scope.', array( 'status' => 400 ));
+			}
+			if ( null === $scope && null !== $plan_scope ) {
+				$scope = $plan_scope;
+			}
 			$planned_candidates = $this->extract_worktree_cleanup_plan_candidates($apply_plan);
 			if ( is_wp_error($planned_candidates) ) {
 				return $planned_candidates;
@@ -162,6 +179,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				$this->discover_broken_orphan_worktree_markers( (array) $listing['worktrees'])
 			)
 		);
+		$all_worktrees = array_values(array_filter($all_worktrees, fn( $wt ) => is_array($wt) && $this->worktree_row_matches_operation_scope($wt, $scope)));
 		$total_worktrees = count($all_worktrees);
 		$worktrees       = array_slice($all_worktrees, $offset, $limit);
 		$checked         = 0;
@@ -609,7 +627,8 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		$summary    = $this->build_worktree_cleanup_summary($candidates, array(), $skipped, $age_filter);
-		$pagination = $this->build_worktree_cleanup_pagination($offset, $limit, $processed, $total_worktrees, $budget_stopped, $budget_context);
+		$summary['scope'] = $scope;
+		$pagination = $this->build_worktree_cleanup_pagination($offset, $limit, $processed, $total_worktrees, $budget_stopped, $budget_context, $scope);
 		if ( null !== $pagination ) {
 			$pagination['reviewed_apply_path'] = array(
 				'plan_command'  => $this->build_worktree_cleanup_review_plan_command($limit, $offset, null !== $budget_context ? (string) ( $budget_context['label'] ?? '' ) : ''),
@@ -625,6 +644,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			$result = array(
 				'success'    => true,
 				'dry_run'    => true,
+				'scope'      => $scope,
 				'candidates' => $candidates,
 				'removed'    => array(),
 				'skipped'    => $skipped,
@@ -637,6 +657,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				$result['evidence'] = array(
 					'elapsed_ms' => (int) round(( microtime(true) - $started_at ) * 1000),
 					'budget'     => $this->summarize_worktree_loop_budget_context($budget_context, $budget_stopped),
+					'repo_scope' => $scope,
 				);
 			}
 
@@ -704,13 +725,16 @@ trait WorkspaceWorktreeCleanupEngine {
 
 		$this->emit_worktree_cleanup_progress($progress, 'done', '', $checked, $total_worktrees, $candidates, $skipped, $removed_count, $started_at);
 
+		$summary          = $this->build_worktree_cleanup_summary($candidates, $removed, $skipped, $age_filter);
+		$summary['scope'] = $scope;
 		return array(
 			'success'    => true,
 			'dry_run'    => false,
+			'scope'      => $scope,
 			'candidates' => $candidates,
 			'removed'    => $removed,
 			'skipped'    => $skipped,
-			'summary'    => $this->build_worktree_cleanup_summary($candidates, $removed, $skipped, $age_filter),
+			'summary'    => $summary,
 		);
 	}
 
@@ -725,7 +749,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  array|null $budget_context Optional budget context.
 	 * @return array<string,mixed>|null
 	 */
-	private function build_worktree_cleanup_pagination( int $offset, ?int $limit, int $processed, int $total, bool $budget_stopped, ?array $budget_context ): ?array {
+	private function build_worktree_cleanup_pagination( int $offset, ?int $limit, int $processed, int $total, bool $budget_stopped, ?array $budget_context, ?array $scope = null ): ?array {
 		if ( 0 === $offset && null === $limit && null === $budget_context ) {
 			return null;
 		}
@@ -734,7 +758,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		$command     = null;
 		if ( null !== $next_offset ) {
 			$parts   = array(
-				'studio wp datamachine-code workspace worktree cleanup --dry-run',
+				'studio wp datamachine-code workspace worktree cleanup' . $this->worktree_operation_scope_cli_arg($scope) . ' --dry-run',
 				null === $limit ? null : '--limit=' . $limit,
 				'--offset=' . $next_offset,
 				null === $budget_context ? null : '--until-budget=' . (string) ( $budget_context['label'] ?? '' ),
@@ -753,7 +777,30 @@ trait WorkspaceWorktreeCleanupEngine {
 			'next_offset'    => $next_offset,
 			'next_command'   => $command,
 			'budget_stopped' => $budget_stopped,
+			'scope'          => $scope,
 		);
+	}
+
+	/**
+	 * Read and validate the scope captured by a reviewed cleanup plan.
+	 *
+	 * @return array{argument: string, repo: string, handle: string|null}|null|\WP_Error
+	 */
+	private function worktree_cleanup_plan_scope( array $plan ): array|null|\WP_Error {
+		if ( ! array_key_exists('scope', $plan) || null === $plan['scope'] ) {
+			return null;
+		}
+		if ( ! is_array($plan['scope']) || '' === trim( (string) ( $plan['scope']['argument'] ?? '' )) ) {
+			return new \WP_Error('invalid_cleanup_plan_scope', 'Reviewed cleanup plan has an invalid scope.', array( 'status' => 400 ));
+		}
+		$scope = $this->normalize_worktree_operation_scope((string) $plan['scope']['argument']);
+		if ( is_wp_error($scope) ) {
+			return $scope;
+		}
+		if ( (string) ( $plan['scope']['repo'] ?? '' ) !== $scope['repo'] || ( $plan['scope']['handle'] ?? null ) !== $scope['handle'] ) {
+			return new \WP_Error('invalid_cleanup_plan_scope', 'Reviewed cleanup plan scope identity does not match its argument.', array( 'status' => 400 ));
+		}
+		return $scope;
 	}
 
 	/**

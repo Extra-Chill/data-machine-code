@@ -25,11 +25,14 @@ namespace {
 namespace DataMachineCode\Workspace {
 	require_once dirname(__DIR__) . '/inc/Support/JsonCodec.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupClassifier.php';
+	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceHandle.php';
+	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceCoreUtilities.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceArtifactCleanup.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceCleanupPlan.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeCleanupEngine.php';
 
 	final class Workspace {
+		use WorkspaceCoreUtilities;
 		use WorkspaceArtifactCleanup;
 		use WorkspaceCleanupPlan;
 		use WorkspaceWorktreeCleanupEngine;
@@ -317,6 +320,33 @@ namespace {
 	reviewed_artifact_assert(true, is_dir($root . '/repo@age-transition/vendor'), 'candidate made young before apply must be preserved');
 	$age_items = $age_repository->get_items('cleanup-run-reviewed');
 	reviewed_artifact_assert('age_filter', array_column($age_items, 'reason_code', 'handle')['repo@age-transition'] ?? null, 'apply-time age transition should record the age gate reason');
+
+	foreach (array('scoped-target' => 12000, 'unrelated' => 24000) as $repo => $bytes) {
+		$path = $root . '/' . $repo . '@scoped';
+		mkdir($path . '/vendor', 0777, true);
+		file_put_contents($path . '/composer.json', '{}');
+		file_put_contents($path . '/vendor/generated.bin', str_repeat('s', $bytes));
+		$workspace->rows[] = array(
+			'handle' => $repo . '@scoped',
+			'repo' => $repo,
+			'branch' => 'test/scoped',
+			'path' => $path,
+			'is_worktree' => true,
+			'is_primary' => false,
+		);
+	}
+	$scoped_preview = $workspace->worktree_cleanup_artifacts(array('dry_run' => true, 'repo' => 'scoped-target', 'sort' => 'size', 'limit' => 1));
+	reviewed_artifact_assert(array('scoped-target@scoped'), array_column($scoped_preview['candidates'], 'handle'), 'repository-scoped artifact preview must exclude unrelated candidates even when they are larger');
+	reviewed_artifact_assert('scoped-target', $scoped_preview['scope']['repo'] ?? null, 'artifact preview must report its effective repository scope');
+	reviewed_artifact_assert('scoped-target', $scoped_preview['pagination']['scope']['repo'] ?? null, 'artifact pagination must retain its repository scope');
+	$scoped_apply_plan = array(
+		'scope' => $scoped_preview['scope'],
+		'candidates' => $scoped_preview['candidates'],
+	);
+	$scoped_apply = $workspace->worktree_cleanup_artifacts(array('repo' => 'scoped-target', 'apply_plan' => $scoped_apply_plan));
+	reviewed_artifact_assert(false, is_dir($root . '/scoped-target@scoped/vendor'), 'repository-scoped artifact apply must remove the reviewed target artifact');
+	reviewed_artifact_assert(true, is_dir($root . '/unrelated@scoped/vendor'), 'repository-scoped artifact apply must never remove an unrelated artifact');
+	reviewed_artifact_assert('scoped-target', $scoped_apply['summary']['scope']['repo'] ?? null, 'artifact apply summary must retain the reviewed repository scope');
 	$cli_source       = file_get_contents(dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php');
 	$retention_source = file_get_contents(dirname(__DIR__) . '/inc/Tasks/WorkspaceRetentionCleanupTask.php');
 	$chunk_source     = file_get_contents(dirname(__DIR__) . '/inc/Tasks/WorktreeCleanupChunkTask.php');
