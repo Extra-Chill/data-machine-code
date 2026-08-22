@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.60.1] - 2026-08-22
+
+### Fixed
+- register workspace surface in lifecycle
+- contain nested target probes
+
 ## [0.60.0] - 2026-08-22
 
 ### Added
