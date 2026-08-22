@@ -514,7 +514,7 @@ try {
 	run_command('git reset --hard origin/main', $recycle_fixture['path']);
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata($recycle_handle, array( 'last_seen_at' => gmdate('c') ));
 	$recycle_live = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal');
-	assert_true(is_wp_error($recycle_live) && 'live_worktree' === ( $recycle_live->get_error_data()['reuse']['reason_code'] ?? null ), 'live terminal recycle did not fail closed');
+	assert_true(! is_wp_error($recycle_live) && true === ( $recycle_live['recycled'] ?? false ), 'finalized terminal worktree heartbeat revived lifecycle state instead of allowing terminal recycle');
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata($recycle_handle, array( 'last_seen_at' => gmdate('c', time() - 90000) ));
 	$recycle_base = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/other-base', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal');
 	assert_true(is_wp_error($recycle_base) && 'base_mismatch' === ( $recycle_base->get_error_data()['reuse']['reason_code'] ?? null ), 'base-mismatched terminal recycle did not fail closed');

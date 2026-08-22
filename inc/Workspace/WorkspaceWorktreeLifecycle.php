@@ -1544,7 +1544,7 @@ trait WorkspaceWorktreeLifecycle {
 				'dirty'                  => $dirty,
 				'unpushed'               => $unpushed,
 				'created_at'             => $created_at,
-				'lifecycle_state'        => $metadata['lifecycle_state'] ?? null,
+				'lifecycle_state'        => null === $metadata ? null : WorktreeContextInjector::project_lifecycle_state($metadata),
 				'pr_url'                 => $metadata['pr_url'] ?? null,
 				'pr_number'              => $metadata['pr_number'] ?? null,
 				'purpose'                => $metadata['purpose'] ?? null,
@@ -2016,7 +2016,7 @@ trait WorkspaceWorktreeLifecycle {
 				}
 				$metadata        = null !== $metadata_key ? WorktreeContextInjector::get_metadata($metadata_key) : null;
 				$created_at      = is_array($metadata) ? ( $metadata['created_at'] ?? null ) : null;
-				$lifecycle_state = is_array($metadata) ? ( $metadata['lifecycle_state'] ?? null ) : null;
+				$lifecycle_state = is_array($metadata) ? WorktreeContextInjector::project_lifecycle_state($metadata) : null;
 				if ( null !== $state && $lifecycle_state !== $state ) {
 					continue;
 				}

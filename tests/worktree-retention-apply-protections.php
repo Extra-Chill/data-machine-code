@@ -111,6 +111,8 @@ namespace {
 		protected const CLEANUP_SUMMARY_TOP_LIMIT  = 10;
 
 		public string $workspace_path;
+		public string $status_output = '';
+		public int $unpushed_count = 0;
 		private string $primary_path;
 
 		public function __construct( string $workspace_path, string $primary_path ) {
@@ -164,11 +166,11 @@ namespace {
 			if ( is_string($prelock_probe) && '' !== $prelock_probe && str_starts_with($command, 'status --porcelain') ) {
 				file_put_contents($prelock_probe, 'entered');
 			}
-			return array( 'output' => '' );
+			return array( 'output' => $this->status_output );
 		}
 
 		private function count_unpushed_commits( string $path, int $timeout = 0 ): int|WP_Error {
-			return 0;
+			return $this->unpushed_count;
 		}
 
 		private function git_get_remote( string $path ): ?string {
@@ -224,6 +226,24 @@ namespace {
 	GitHubAbilities::$mode                    = 'none';
 	$active                                   = $harness->revalidate($active_candidate);
 	retention_apply_protections_assert('active_lifecycle' === ( $active['skipped']['reason_code'] ?? null ), 'active lifecycle rows are protected from apply removal');
+
+	$finalized_active_candidate = $active_candidate;
+	$finalized_active_candidate['metadata'] = array_merge($finalized_active_candidate['metadata'], array(
+		'finalized_state' => WorktreeContextInjector::STATE_MERGED,
+		'finalized_at' => $old,
+		'cleanup_eligible_at' => $old,
+		'pr_url' => 'https://github.com/Extra-Chill/example/pull/864',
+	));
+	$finalized_active = $harness->revalidate($finalized_active_candidate);
+	retention_apply_protections_assert(! isset($finalized_active['skipped']), 'durably finalized active metadata is removable after normal revalidation');
+	$harness->status_output = ' M dirty.php';
+	$dirty_finalized = $harness->revalidate($finalized_active_candidate);
+	retention_apply_protections_assert('dirty_worktree' === ( $dirty_finalized['skipped']['reason_code'] ?? null ), 'dirty finalized rows remain blocked by deletion safeguards');
+	$harness->status_output = '';
+	$harness->unpushed_count = 1;
+	$unpushed_finalized = $harness->revalidate($finalized_active_candidate);
+	retention_apply_protections_assert('unpushed_commits' === ( $unpushed_finalized['skipped']['reason_code'] ?? null ), 'unpushed finalized rows remain blocked by deletion safeguards');
+	$harness->unpushed_count = 0;
 
 	$recent_candidate                         = $base_candidate;
 	$recent_candidate['metadata']['last_seen_at'] = gmdate('c', time() - 60);
