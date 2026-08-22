@@ -649,10 +649,22 @@ trait WorkspaceWorktreeLifecycle {
 			$bootstrap_before_capacity = $this->inspect_worktree_capacity($repo, $branch, false, array());
 			$remaining_seconds = $this->worktree_operation_remaining_seconds($operation_deadline);
 			if ( $remaining_seconds <= 0 ) {
-				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
-				return $this->worktree_operation_timeout('bootstrap', $operation_timeout, $operation_started, array( 'cleanup' => 'rollback_requested' ));
+				$recorded = $this->record_bootstrap_outcome($wt_handle, 'failed', array(), 'operation_timeout');
+				if ( is_wp_error($recorded) ) {
+					return $recorded;
+				}
+				return $this->worktree_operation_timeout('bootstrap', $operation_timeout, $operation_started, array( 'readiness' => 'incomplete' ));
+			}
+			$recorded = $this->record_bootstrap_outcome($wt_handle, 'running');
+			if ( is_wp_error($recorded) ) {
+				return $recorded;
 			}
 			$response['bootstrap'] = WorktreeBootstrapper::bootstrap($wt_path, $remaining_seconds);
+			$recorded = $this->record_bootstrap_outcome($wt_handle, ! empty($response['bootstrap']['success']) ? 'succeeded' : 'failed', $response['bootstrap']);
+			if ( is_wp_error($recorded) ) {
+				return $recorded;
+			}
+			$response['metadata'] = WorktreeContextInjector::get_metadata($wt_handle);
 		}
 		if ( ! is_dir($wt_path) || ! file_exists($wt_path . '/.git') ) {
 			return new \WP_Error(
@@ -1099,6 +1111,17 @@ trait WorkspaceWorktreeLifecycle {
 			'owner_run_ref'  => $intent['owner_run_ref'] ?? null,
 			'cleanup_policy' => $intent['cleanup_policy'] ?? null,
 		);
+		$lifecycle_metadata['provisioning'] = array(
+			'create'    => array(
+				'outcome'      => 'succeeded',
+				'completed_at'  => gmdate('c'),
+			),
+			'bootstrap' => array(
+				'requested'      => $bootstrap,
+				'outcome'        => $bootstrap ? 'pending' : 'not_requested',
+				'resume_command' => $bootstrap ? $this->worktree_freshness_retry_command($repo, $branch, $from, $inject_context, $bootstrap, false, false, false, $task, $intent) : null,
+			),
+		);
 		$metadata_stored                      = WorktreeContextInjector::promote_creation_intent( $wt_handle, $creation_intent, $lifecycle_metadata );
 		if ( is_wp_error( $metadata_stored ) ) {
 			if ( null !== WorktreeContextInjector::get_creation_intent($wt_handle) ) {
@@ -1218,6 +1241,10 @@ trait WorkspaceWorktreeLifecycle {
 		if ( WorktreeContextInjector::LIVENESS_LIVE === ( $existing['liveness'] ?? null ) && ! $live_owner_retry ) {
 			return $this->worktree_reuse_refused($handle, 'live_worktree', $evidence);
 		}
+		$readiness = WorktreeContextInjector::bootstrap_readiness($metadata);
+		if ( ! $readiness['ready'] && $bootstrap ) {
+			return $this->resume_incomplete_bootstrap($handle, $existing, $metadata, $branch);
+		}
 
 		return array(
 			'success'        => true,
@@ -1234,6 +1261,53 @@ trait WorkspaceWorktreeLifecycle {
 			'metadata'       => $metadata,
 			'message'        => sprintf('Reused clean compatible worktree "%s" at %s.', $handle, $existing['path']),
 		);
+	}
+
+	/** Resume a durable incomplete bootstrap for an otherwise compatible handle. */
+	private function resume_incomplete_bootstrap( string $handle, array $existing, array $metadata, string $branch ): array|\WP_Error {
+		$stored = $this->record_bootstrap_outcome($handle, 'running');
+		if ( is_wp_error($stored) ) {
+			return $stored;
+		}
+		$result = WorktreeBootstrapper::bootstrap((string) $existing['path']);
+		$stored = $this->record_bootstrap_outcome($handle, ! empty($result['success']) ? 'succeeded' : 'failed', $result);
+		if ( is_wp_error($stored) ) {
+			return $stored;
+		}
+		$metadata = WorktreeContextInjector::get_metadata($handle) ?? $metadata;
+		return array(
+			'success'        => true,
+			'handle'         => $handle,
+			'path'           => $existing['path'],
+			'branch'         => $branch,
+			'slug'           => $this->slugify_branch($branch),
+			'created_branch' => false,
+			'resumed'        => true,
+			'bootstrap'      => $result,
+			'metadata'       => $metadata,
+			'message'        => sprintf('Resumed incomplete bootstrap for worktree "%s".', $handle),
+		);
+	}
+
+	/** Persist a bootstrap phase transition without coupling to any dependency manager. */
+	private function record_bootstrap_outcome( string $handle, string $outcome, array $result = array(), ?string $reason = null ): bool|\WP_Error {
+		$metadata = WorktreeContextInjector::get_metadata($handle) ?? array();
+		$bootstrap = is_array($metadata['provisioning']['bootstrap'] ?? null) ? $metadata['provisioning']['bootstrap'] : array();
+		$bootstrap['outcome'] = $outcome;
+		if ( 'running' === $outcome ) {
+			$bootstrap['started_at'] = gmdate('c');
+		} else {
+			$bootstrap['completed_at'] = gmdate('c');
+			$bootstrap['steps'] = array_map(
+				static fn( array $step ): array => array_filter(array( 'step' => $step['step'] ?? null, 'status' => $step['status'] ?? null, 'reason' => $step['reason'] ?? null, 'command' => $step['command'] ?? null )),
+				(array) ($result['steps'] ?? array())
+			);
+			if ( null !== $reason ) {
+				$bootstrap['reason'] = $reason;
+			}
+		}
+		$metadata['provisioning']['bootstrap'] = $bootstrap;
+		return WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
 	}
 
 	/**
@@ -1655,6 +1729,7 @@ trait WorkspaceWorktreeLifecycle {
 				'unpushed'               => $unpushed,
 				'created_at'             => $created_at,
 				'lifecycle_state'        => null === $metadata ? null : WorktreeContextInjector::project_lifecycle_state($metadata),
+				'readiness'              => WorktreeContextInjector::bootstrap_readiness($metadata),
 				'pr_url'                 => $metadata['pr_url'] ?? null,
 				'pr_number'              => $metadata['pr_number'] ?? null,
 				'purpose'                => $metadata['purpose'] ?? null,

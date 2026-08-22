@@ -885,6 +885,48 @@ class WorktreeContextInjector {
 		return isset($metadata['lifecycle_state']) ? self::normalize_state( (string) $metadata['lifecycle_state'] ) : null;
 	}
 
+	/**
+	 * Project whether a materialized worktree is ready for consumers that need
+	 * its requested dependency bootstrap. Records created before provisioning
+	 * evidence existed retain their historical ready behavior.
+	 *
+	 * @return array{ready: bool, status: string, reason: string, phase: string|null, outcome: string|null, resume_command: string|null}
+	 */
+	public static function bootstrap_readiness( ?array $metadata ): array {
+		$phase = is_array($metadata['provisioning']['bootstrap'] ?? null) ? $metadata['provisioning']['bootstrap'] : null;
+		if ( null === $phase ) {
+			return array(
+				'ready'          => true,
+				'status'         => 'ready',
+				'reason'         => 'legacy_metadata_without_bootstrap_evidence',
+				'phase'          => null,
+				'outcome'        => null,
+				'resume_command' => null,
+			);
+		}
+
+		$outcome = (string) ( $phase['outcome'] ?? 'pending' );
+		if ( in_array($outcome, array( 'succeeded', 'not_requested' ), true) ) {
+			return array(
+				'ready'          => true,
+				'status'         => 'ready',
+				'reason'         => 'bootstrap_' . $outcome,
+				'phase'          => 'bootstrap',
+				'outcome'        => $outcome,
+				'resume_command' => null,
+			);
+		}
+
+		return array(
+			'ready'          => false,
+			'status'         => 'incomplete',
+			'reason'         => 'bootstrap_' . $outcome,
+			'phase'          => 'bootstrap',
+			'outcome'        => $outcome,
+			'resume_command' => isset($phase['resume_command']) ? (string) $phase['resume_command'] : null,
+		);
+	}
+
 	/** Whether a durable cleanup timestamp is backed by a finalized lifecycle record. */
 	public static function has_explicit_cleanup_eligibility( array $metadata ): bool {
 		if ( empty($metadata['cleanup_eligible_at']) || false === strtotime( (string) $metadata['cleanup_eligible_at'] ) || empty($metadata['finalized_at']) || false === strtotime( (string) $metadata['finalized_at'] ) ) {
