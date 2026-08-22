@@ -334,6 +334,9 @@ final class WorktreeBootstrapper {
 			'detected'                => $tree_plan['detected'],
 			'counts'                  => $counts,
 			'allowances'              => $defaults,
+			'lockfile_identities'     => array(
+				'git_tree' => $commit,
+			),
 			'fallback_semantics'      => $blobless_partial_clone
 				? 'tracked target entries are measured from Git metadata; blobless partial clones reserve a conservative 64 KiB per tracked entry because exact blob sizes are unavailable; dependency installs use conservative allowances'
 				: 'tracked target entries and bytes are measured from Git; dependency installs use conservative allowances',

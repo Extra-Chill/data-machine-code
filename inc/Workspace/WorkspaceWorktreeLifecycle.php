@@ -354,6 +354,10 @@ trait WorkspaceWorktreeLifecycle {
 			}
 			return $demand_plan;
 		}
+		if ( ! class_exists(WorktreeDemandCalibration::class) ) {
+			require_once __DIR__ . '/WorktreeDemandCalibration.php';
+		}
+		$demand_plan = WorktreeDemandCalibration::forecast($repo, $demand_plan);
 		$disk_budget      = $this->inspect_worktree_capacity($repo, $branch, $force, $demand_plan);
 		$capacity_reclaim = ( $remediate_capacity || $remediate_capacity_dry_run )
 			? array( 'after' => $disk_budget, 'evidence' => array( 'attempted' => false, 'skip_reason' => $remediate_capacity_dry_run ? 'remediation_dry_run' : 'remediation_preview_then_apply' ) )
@@ -503,6 +507,7 @@ trait WorkspaceWorktreeLifecycle {
 
 		$response['disk_budget']      = $disk_budget;
 		$response['capacity_reclaim'] = $capacity_reclaim['evidence'];
+		$measurement_plan             = $demand_plan;
 		if ( is_array($capacity_remediation) ) {
 			$response['capacity_remediation'] = $capacity_remediation;
 			$response['capacity_retry']       = array( 'disposition' => 'retried_once_admitted', 'attempts' => 1 );
@@ -516,6 +521,8 @@ trait WorkspaceWorktreeLifecycle {
 				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
 				return $post_rebase_demand;
 			}
+			$post_rebase_demand                       = WorktreeDemandCalibration::forecast($repo, $post_rebase_demand);
+			$measurement_plan                         = $post_rebase_demand;
 			$post_rebase_demand                       = WorktreeBootstrapper::remaining_demand_after_materialization($post_rebase_demand);
 			$post_rebase_budget                       = $this->inspect_worktree_capacity($repo, $branch, $force, $post_rebase_demand);
 			$post_rebase_capacity_reclaim             = $this->reclaim_capacity_eligible_artifacts(
@@ -530,7 +537,7 @@ trait WorkspaceWorktreeLifecycle {
 			$response['post_rebase_capacity_reclaim'] = $post_rebase_capacity_reclaim['evidence'];
 			$response['disk_budget']                  = $post_rebase_budget;
 			if ( 'refused' === ( $post_rebase_budget['status'] ?? '' ) ) {
-				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+				$rollback_evidence = $this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
 				WorktreeContextInjector::forget_metadata($wt_handle);
 				return new \WP_Error(
 					'worktree_disk_budget_exceeded',
@@ -538,14 +545,16 @@ trait WorkspaceWorktreeLifecycle {
 					array(
 						'status'           => 507,
 						'disk_budget'      => $post_rebase_budget,
-						'capacity_reclaim' => $post_rebase_capacity_reclaim['evidence'],
-						'phase'            => 'post_rebase_admission',
+						'capacity_reclaim'  => $post_rebase_capacity_reclaim['evidence'],
+						'capacity_evidence' => $rollback_evidence,
+						'phase'             => 'post_rebase_admission',
 					)
 				);
 			}
 		}
 
 		if ( $bootstrap ) {
+			$bootstrap_before_capacity = $this->inspect_worktree_capacity($repo, $branch, false, array());
 			$remaining_seconds = (int) floor($operation_deadline - microtime(true));
 			if ( $remaining_seconds <= 0 ) {
 				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
@@ -553,7 +562,6 @@ trait WorkspaceWorktreeLifecycle {
 			}
 			$response['bootstrap'] = WorktreeBootstrapper::bootstrap($wt_path, $remaining_seconds);
 		}
-
 		if ( ! is_dir($wt_path) || ! file_exists($wt_path . '/.git') ) {
 			return new \WP_Error(
 				'worktree_not_materialized',
@@ -564,6 +572,12 @@ trait WorkspaceWorktreeLifecycle {
 					'path'   => $wt_path,
 				)
 			);
+		}
+		if ( $bootstrap ) {
+			$after_capacity = $this->inspect_worktree_capacity($repo, $branch, false, array());
+			$response['capacity_evidence'] = WorktreeDemandCalibration::record_bootstrap($repo, $measurement_plan, $bootstrap_before_capacity, $after_capacity, ! empty($response['bootstrap']['success']));
+		} else {
+			$response['capacity_evidence'] = array( 'outcome' => 'bootstrap_disabled', 'recorded' => false, 'reason' => 'bootstrap_disabled' );
 		}
 
 		$inventory = $this->worktree_inventory();
@@ -3356,9 +3370,10 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param string $wt_path        Worktree path.
 	 * @param string $branch         Branch checked out in the worktree.
 	 * @param bool   $created_branch Whether the branch was created by this call.
-	 * @return void
+	 * @return array<string,mixed>
 	 */
-	private function rollback_rejected_worktree( string $primary_path, string $wt_path, string $branch, bool $created_branch, ?string $handle = null, ?array $creation_intent = null ): void {
+	private function rollback_rejected_worktree( string $primary_path, string $wt_path, string $branch, bool $created_branch, ?string $handle = null, ?array $creation_intent = null ): array {
+		$before = WorktreeDiskBudget::inspect($this->workspace_path);
 		$this->run_git($primary_path, sprintf('worktree remove --force %s', escapeshellarg($wt_path)));
 		if ( $created_branch ) {
 			$this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)));
@@ -3366,6 +3381,12 @@ trait WorkspaceWorktreeLifecycle {
 		if ( null !== $handle && null !== $creation_intent ) {
 			WorktreeContextInjector::forget_creation_intent($handle, $creation_intent);
 		}
+		$after = WorktreeDiskBudget::inspect($this->workspace_path);
+		return array(
+			'before'  => array( 'filesystem_free_bytes' => $before['filesystem_free_bytes'] ?? null, 'filesystem_free_inodes' => $before['filesystem_free_inodes'] ?? null ),
+			'after'   => array( 'filesystem_free_bytes' => $after['filesystem_free_bytes'] ?? null, 'filesystem_free_inodes' => $after['filesystem_free_inodes'] ?? null ),
+			'outcome' => 'rollback',
+		);
 	}
 
 	/**
