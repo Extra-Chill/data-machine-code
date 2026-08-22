@@ -43,6 +43,7 @@ require_once dirname(__DIR__) . '/inc/Support/RuntimeCapabilities.php';
 require_once dirname(__DIR__) . '/inc/Support/PathSecurity.php';
 require_once dirname(__DIR__) . '/inc/Support/ProcessRunner.php';
 require_once dirname(__DIR__) . '/inc/Support/GitRunner.php';
+require_once dirname(__DIR__) . '/inc/Workspace/GitCheckout.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceHandle.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceCoreUtilities.php';

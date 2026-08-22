@@ -543,17 +543,16 @@ trait WorkspaceActiveNoSignalCleanup {
 		$path   = (string) ( $row['path'] ?? '' );
 		$pr     = is_array($row['pr'] ?? null) ? $row['pr'] : array();
 
-		foreach (
-		array(
-			'handle' => $handle,
-			'repo'   => $repo,
-			'branch' => $branch,
-			'path'   => $path,
-		) as $field => $value
-		) {
-			if ( '' === $value ) {
-				return new \WP_Error('missing_identity', 'missing required identity field: ' . $field);
-			}
+		$identity_error = $this->validate_active_no_signal_identity(
+			array(
+				'handle' => $handle,
+				'repo'   => $repo,
+				'branch' => $branch,
+				'path'   => $path,
+			)
+		);
+		if ( null !== $identity_error ) {
+			return $identity_error;
 		}
 		if ( ! is_dir($path) ) {
 			return new \WP_Error('missing_worktree', 'worktree path no longer exists');
@@ -636,17 +635,16 @@ trait WorkspaceActiveNoSignalCleanup {
 		$branch = (string) ( $row['branch'] ?? '' );
 		$path   = (string) ( $row['path'] ?? '' );
 
-		foreach (
-		array(
-			'handle' => $handle,
-			'repo'   => $repo,
-			'branch' => $branch,
-			'path'   => $path,
-		) as $field => $value
-		) {
-			if ( '' === $value ) {
-				return new \WP_Error('missing_identity', 'missing required identity field: ' . $field);
-			}
+		$identity_error = $this->validate_active_no_signal_identity(
+			array(
+				'handle' => $handle,
+				'repo'   => $repo,
+				'branch' => $branch,
+				'path'   => $path,
+			)
+		);
+		if ( null !== $identity_error ) {
+			return $identity_error;
 		}
 		if ( ! is_dir($path) ) {
 			return new \WP_Error('missing_worktree', 'worktree path no longer exists');
@@ -693,30 +691,7 @@ trait WorkspaceActiveNoSignalCleanup {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private function build_active_no_signal_merged_to_default_metadata( array $row ): array|\WP_Error {
-		$handle = (string) ( $row['handle'] ?? '' );
-		$repo   = (string) ( $row['repo'] ?? '' );
-		$branch = (string) ( $row['branch'] ?? '' );
-		$path   = (string) ( $row['path'] ?? '' );
-
-		$evidence = $this->build_current_merged_to_default_cleanup_evidence($handle, $repo, $branch, $path);
-		if ( is_wp_error($evidence) ) {
-			return $evidence;
-		}
-
-		$metadata                                 = $this->build_active_no_signal_cleanup_metadata(
-			$row,
-			$handle,
-			$repo,
-			$branch,
-			(string) ( $evidence['path'] ?? $path ),
-			WorktreeContextInjector::STATE_MERGED
-		);
-		$metadata['auto_finalized_by']            = 'active_no_signal_merged_apply';
-		$metadata['auto_finalized_signal']        = 'merged-to-default';
-		$metadata['auto_finalized_reason']        = sprintf('active/no-signal report found branch contained in %s', (string) ( $evidence['default_ref'] ?? 'remote default' ));
-		$metadata['cleanup_eligibility_evidence'] = $evidence;
-
-		return $metadata;
+		return $this->build_active_no_signal_classified_metadata($row, 'merged');
 	}
 
 	/**
@@ -726,30 +701,7 @@ trait WorkspaceActiveNoSignalCleanup {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private function build_active_no_signal_patch_equivalent_to_default_metadata( array $row ): array|\WP_Error {
-		$handle = (string) ( $row['handle'] ?? '' );
-		$repo   = (string) ( $row['repo'] ?? '' );
-		$branch = (string) ( $row['branch'] ?? '' );
-		$path   = (string) ( $row['path'] ?? '' );
-
-		$evidence = $this->build_current_patch_equivalent_to_default_cleanup_evidence($handle, $repo, $branch, $path);
-		if ( is_wp_error($evidence) ) {
-			return $evidence;
-		}
-
-		$metadata                                 = $this->build_active_no_signal_cleanup_metadata(
-			$row,
-			$handle,
-			$repo,
-			$branch,
-			(string) ( $evidence['path'] ?? $path ),
-			WorktreeContextInjector::STATE_MERGED
-		);
-		$metadata['auto_finalized_by']            = 'active_no_signal_merged_apply';
-		$metadata['auto_finalized_signal']        = 'patch-equivalent-to-default';
-		$metadata['auto_finalized_reason']        = sprintf('active/no-signal report found branch patch-equivalent to %s', (string) ( $evidence['default_ref'] ?? 'remote default' ));
-		$metadata['cleanup_eligibility_evidence'] = $evidence;
-
-		return $metadata;
+		return $this->build_active_no_signal_classified_metadata($row, 'patch_equivalent');
 	}
 
 	/**
@@ -759,15 +711,45 @@ trait WorkspaceActiveNoSignalCleanup {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private function build_active_no_signal_remote_clean_metadata( array $row ): array|\WP_Error {
+		return $this->build_active_no_signal_classified_metadata($row, 'remote_clean');
+	}
+
+	/** Build cleanup metadata from one safely revalidated classification. */
+	private function build_active_no_signal_classified_metadata( array $row, string $classification ): array|\WP_Error {
 		$handle = (string) ( $row['handle'] ?? '' );
 		$repo   = (string) ( $row['repo'] ?? '' );
 		$branch = (string) ( $row['branch'] ?? '' );
 		$path   = (string) ( $row['path'] ?? '' );
 
-		$evidence = $this->build_current_remote_tracking_clean_cleanup_evidence($handle, $repo, $branch, $path);
+		$evidence = match ( $classification ) {
+			'merged'           => $this->build_current_merged_to_default_cleanup_evidence($handle, $repo, $branch, $path),
+			'patch_equivalent' => $this->build_current_patch_equivalent_to_default_cleanup_evidence($handle, $repo, $branch, $path),
+			'remote_clean'     => $this->build_current_remote_tracking_clean_cleanup_evidence($handle, $repo, $branch, $path),
+			default            => new \WP_Error('invalid_active_no_signal_classification', sprintf('Unknown active/no-signal classification: %s.', $classification)),
+		};
 		if ( is_wp_error($evidence) ) {
 			return $evidence;
 		}
+		$config = match ( $classification ) {
+			'merged' => array(
+				'state'  => WorktreeContextInjector::STATE_MERGED,
+				'by'     => 'active_no_signal_merged_apply',
+				'signal' => 'merged-to-default',
+				'reason' => sprintf('active/no-signal report found branch contained in %s', (string) ( $evidence['default_ref'] ?? 'remote default' )),
+			),
+			'patch_equivalent' => array(
+				'state'  => WorktreeContextInjector::STATE_MERGED,
+				'by'     => 'active_no_signal_merged_apply',
+				'signal' => 'patch-equivalent-to-default',
+				'reason' => sprintf('active/no-signal report found branch patch-equivalent to %s', (string) ( $evidence['default_ref'] ?? 'remote default' )),
+			),
+			'remote_clean' => array(
+				'state'  => WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE,
+				'by'     => 'active_no_signal_remote_clean_apply',
+				'signal' => 'remote-tracking-clean',
+				'reason' => 'active/no-signal report found a clean local worktree whose work is preserved by its remote branch',
+			),
+		};
 
 		$metadata                                 = $this->build_active_no_signal_cleanup_metadata(
 			$row,
@@ -775,11 +757,11 @@ trait WorkspaceActiveNoSignalCleanup {
 			$repo,
 			$branch,
 			(string) ( $evidence['path'] ?? $path ),
-			WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE
+			$config['state']
 		);
-		$metadata['auto_finalized_by']            = 'active_no_signal_remote_clean_apply';
-		$metadata['auto_finalized_signal']        = 'remote-tracking-clean';
-		$metadata['auto_finalized_reason']        = 'active/no-signal report found a clean local worktree whose work is preserved by its remote branch';
+		$metadata['auto_finalized_by']            = $config['by'];
+		$metadata['auto_finalized_signal']        = $config['signal'];
+		$metadata['auto_finalized_reason']        = $config['reason'];
 		$metadata['cleanup_eligibility_evidence'] = $evidence;
 
 		return $metadata;
@@ -822,6 +804,17 @@ trait WorkspaceActiveNoSignalCleanup {
 		);
 	}
 
+	/** Return the first missing field error from an ordered worktree identity. */
+	private function validate_active_no_signal_identity( array $identity ): ?\WP_Error {
+		foreach ( $identity as $field => $value ) {
+			if ( '' === $value ) {
+				return new \WP_Error('missing_identity', 'missing required identity field: ' . $field);
+			}
+		}
+
+		return null;
+	}
+
 	/**
 	 * Recompute clean remote-tracking evidence for the current worktree state.
 	 *
@@ -832,17 +825,16 @@ trait WorkspaceActiveNoSignalCleanup {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private function build_current_remote_tracking_clean_cleanup_evidence( string $handle, string $repo, string $branch, string $path ): array|\WP_Error {
-		foreach (
-		array(
-			'handle' => $handle,
-			'repo'   => $repo,
-			'branch' => $branch,
-			'path'   => $path,
-		) as $field => $value
-		) {
-			if ( '' === $value ) {
-				return new \WP_Error('missing_identity', 'missing required identity field: ' . $field);
-			}
+		$identity_error = $this->validate_active_no_signal_identity(
+			array(
+				'handle' => $handle,
+				'repo'   => $repo,
+				'branch' => $branch,
+				'path'   => $path,
+			)
+		);
+		if ( null !== $identity_error ) {
+			return $identity_error;
 		}
 
 		$facts = $this->validate_current_cleanup_worktree(
@@ -933,17 +925,16 @@ trait WorkspaceActiveNoSignalCleanup {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private function build_current_merged_to_default_cleanup_evidence( string $handle, string $repo, string $branch, string $path ): array|\WP_Error {
-		foreach (
-		array(
-			'handle' => $handle,
-			'repo'   => $repo,
-			'branch' => $branch,
-			'path'   => $path,
-		) as $field => $value
-		) {
-			if ( '' === $value ) {
-				return new \WP_Error('missing_identity', 'missing required identity field: ' . $field);
-			}
+		$identity_error = $this->validate_active_no_signal_identity(
+			array(
+				'handle' => $handle,
+				'repo'   => $repo,
+				'branch' => $branch,
+				'path'   => $path,
+			)
+		);
+		if ( null !== $identity_error ) {
+			return $identity_error;
 		}
 
 		$facts = $this->validate_current_cleanup_worktree(
@@ -1023,17 +1014,16 @@ trait WorkspaceActiveNoSignalCleanup {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private function build_current_patch_equivalent_to_default_cleanup_evidence( string $handle, string $repo, string $branch, string $path ): array|\WP_Error {
-		foreach (
-		array(
-			'handle' => $handle,
-			'repo'   => $repo,
-			'branch' => $branch,
-			'path'   => $path,
-		) as $field => $value
-		) {
-			if ( '' === $value ) {
-				return new \WP_Error('missing_identity', 'missing required identity field: ' . $field);
-			}
+		$identity_error = $this->validate_active_no_signal_identity(
+			array(
+				'handle' => $handle,
+				'repo'   => $repo,
+				'branch' => $branch,
+				'path'   => $path,
+			)
+		);
+		if ( null !== $identity_error ) {
+			return $identity_error;
 		}
 
 		$facts = $this->validate_current_cleanup_worktree(

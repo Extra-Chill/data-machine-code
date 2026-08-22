@@ -75,25 +75,12 @@ trait WorkspaceGitOperations {
 	 * @return array
 	 */
 	public function git_pull( string $handle, bool $allow_dirty = false, bool $allow_primary_mutation = false, string $remote = 'origin', ?string $branch = null ): array|\WP_Error {
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			return WorkspaceAliasResolver::mutation_error($handle, 'git pull');
+		$mutation = $this->prepare_git_mutation($handle, 'git pull', $allow_primary_mutation, false, 'Pass allow_primary_refresh=true to refresh it');
+		if ( is_wp_error($mutation) ) {
+			return $mutation;
 		}
-
-		$parsed    = $this->parse_handle($handle);
-		$repo_path = $this->resolve_repo_path($handle);
-		if ( is_wp_error($repo_path) ) {
-			return $repo_path;
-		}
-
-		$policy_check = $this->ensure_git_mutation_allowed($parsed['repo']);
-		if ( is_wp_error($policy_check) ) {
-			return $policy_check;
-		}
-
-		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation, 'Pass allow_primary_refresh=true to refresh it');
-		if ( is_wp_error($primary_check) ) {
-			return $primary_check;
-		}
+		$parsed    = $mutation['parsed'];
+		$repo_path = $mutation['repo_path'];
 
 		$status = $this->git_status($handle);
 		if ( is_wp_error($status) ) {
@@ -273,26 +260,13 @@ trait WorkspaceGitOperations {
 	 * @return array
 	 */
 	public function git_add( string $handle, array $paths, bool $allow_primary_mutation = false ): array|\WP_Error {
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			return WorkspaceAliasResolver::mutation_error($handle, 'git add');
+		$mutation = $this->prepare_git_mutation($handle, 'git add', $allow_primary_mutation);
+		if ( is_wp_error($mutation) ) {
+			return $mutation;
 		}
-
-		$parsed    = $this->parse_handle($handle);
-		$repo_name = $parsed['repo'];
-		$repo_path = $this->resolve_repo_path($handle);
-		if ( is_wp_error($repo_path) ) {
-			return $repo_path;
-		}
-
-		$policy_check = $this->ensure_git_mutation_allowed($repo_name);
-		if ( is_wp_error($policy_check) ) {
-			return $policy_check;
-		}
-
-		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation);
-		if ( is_wp_error($primary_check) ) {
-			return $primary_check;
-		}
+		$parsed    = $mutation['parsed'];
+		$repo_name = $mutation['repo_name'];
+		$repo_path = $mutation['repo_path'];
 
 		if ( empty($paths) ) {
 			return new \WP_Error('missing_paths', 'At least one path is required for git add.', array( 'status' => 400 ));
@@ -374,30 +348,13 @@ trait WorkspaceGitOperations {
 	 * @return array{success: bool, name: string, repo: string, path: string, deleted: array<int,string>, was_tracked: bool}|\WP_Error
 	 */
 	public function delete_path( string $handle, string $path, bool $recursive = false, bool $allow_primary_mutation = false ): array|\WP_Error {
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			return WorkspaceAliasResolver::mutation_error($handle, 'delete');
+		$mutation = $this->prepare_git_mutation($handle, 'delete', $allow_primary_mutation, false, 'Pass allow_primary_mutation=true to operate on it', true);
+		if ( is_wp_error($mutation) ) {
+			return $mutation;
 		}
-
-		$parsed = $this->require_explicit_workspace_handle($handle);
-		if ( is_wp_error($parsed) ) {
-			return $parsed;
-		}
-
-		$repo_name = $parsed['repo'];
-		$repo_path = $this->resolve_repo_path($handle);
-		if ( is_wp_error($repo_path) ) {
-			return $repo_path;
-		}
-
-		$policy_check = $this->ensure_git_mutation_allowed($repo_name);
-		if ( is_wp_error($policy_check) ) {
-			return $policy_check;
-		}
-
-		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation);
-		if ( is_wp_error($primary_check) ) {
-			return $primary_check;
-		}
+		$parsed    = $mutation['parsed'];
+		$repo_name = $mutation['repo_name'];
+		$repo_path = $mutation['repo_path'];
 
 		$relative = trim($path);
 		if ( '' === $relative ) {
@@ -483,26 +440,13 @@ trait WorkspaceGitOperations {
 	 * @return array
 	 */
 	public function git_commit( string $handle, string $message, bool $allow_primary_mutation = false ): array|\WP_Error {
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			return WorkspaceAliasResolver::mutation_error($handle, 'git commit');
+		$mutation = $this->prepare_git_mutation($handle, 'git commit', $allow_primary_mutation, true, 'Pass allow_dangerous_primary_mutation=true to commit on it');
+		if ( is_wp_error($mutation) ) {
+			return $mutation;
 		}
-
-		$parsed    = $this->parse_handle($handle);
-		$repo_name = $parsed['repo'];
-		$repo_path = $this->resolve_repo_path($handle);
-		if ( is_wp_error($repo_path) ) {
-			return $repo_path;
-		}
-
-		$policy_check = $this->ensure_git_mutation_allowed($repo_name, true);
-		if ( is_wp_error($policy_check) ) {
-			return $policy_check;
-		}
-
-		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation, 'Pass allow_dangerous_primary_mutation=true to commit on it');
-		if ( is_wp_error($primary_check) ) {
-			return $primary_check;
-		}
+		$parsed    = $mutation['parsed'];
+		$repo_name = $mutation['repo_name'];
+		$repo_path = $mutation['repo_path'];
 
 		$message = trim($message);
 		if ( '' === $message ) {
@@ -569,26 +513,13 @@ trait WorkspaceGitOperations {
 	 * @return array
 	 */
 	public function git_push( string $handle, string $remote = 'origin', ?string $branch = null, bool $allow_primary_mutation = false, bool $force_with_lease = false, ?string $expected_sha = null ): array|\WP_Error {
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			return WorkspaceAliasResolver::mutation_error($handle, 'git push');
+		$mutation = $this->prepare_git_mutation($handle, 'git push', $allow_primary_mutation, true, 'Pass allow_dangerous_primary_mutation=true to push from it');
+		if ( is_wp_error($mutation) ) {
+			return $mutation;
 		}
-
-		$parsed    = $this->parse_handle($handle);
-		$repo_name = $parsed['repo'];
-		$repo_path = $this->resolve_repo_path($handle);
-		if ( is_wp_error($repo_path) ) {
-			return $repo_path;
-		}
-
-		$policy_check = $this->ensure_git_mutation_allowed($repo_name, true);
-		if ( is_wp_error($policy_check) ) {
-			return $policy_check;
-		}
-
-		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation, 'Pass allow_dangerous_primary_mutation=true to push from it');
-		if ( is_wp_error($primary_check) ) {
-			return $primary_check;
-		}
+		$parsed    = $mutation['parsed'];
+		$repo_name = $mutation['repo_name'];
+		$repo_path = $mutation['repo_path'];
 
 		$current_branch_result = $this->run_git($repo_path, 'rev-parse --abbrev-ref HEAD');
 		if ( is_wp_error($current_branch_result) ) {
@@ -692,26 +623,12 @@ trait WorkspaceGitOperations {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function git_rebase( string $handle, ?string $onto = null, ?string $strategy_option = null, bool $continue_rebase = false, bool $allow_primary_mutation = false ): array|\WP_Error {
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			return WorkspaceAliasResolver::mutation_error($handle, 'git rebase');
+		$mutation = $this->prepare_git_mutation($handle, 'git rebase', $allow_primary_mutation, false, 'Pass allow_dangerous_primary_mutation=true to rebase it');
+		if ( is_wp_error($mutation) ) {
+			return $mutation;
 		}
-
-		$parsed    = $this->parse_handle($handle);
-		$repo_name = $parsed['repo'];
-		$repo_path = $this->resolve_repo_path($handle);
-		if ( is_wp_error($repo_path) ) {
-			return $repo_path;
-		}
-
-		$policy_check = $this->ensure_git_mutation_allowed($repo_name);
-		if ( is_wp_error($policy_check) ) {
-			return $policy_check;
-		}
-
-		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation, 'Pass allow_dangerous_primary_mutation=true to rebase it');
-		if ( is_wp_error($primary_check) ) {
-			return $primary_check;
-		}
+		$parsed    = $mutation['parsed'];
+		$repo_path = $mutation['repo_path'];
 
 		if ( $continue_rebase ) {
 			$result = $this->run_git($repo_path, '-c core.editor=true rebase --continue');
@@ -766,26 +683,12 @@ trait WorkspaceGitOperations {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function git_reset( string $handle, string $mode = 'mixed', ?string $target = null, bool $allow_destructive = false, bool $allow_primary_mutation = false ): array|\WP_Error {
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			return WorkspaceAliasResolver::mutation_error($handle, 'git reset');
+		$mutation = $this->prepare_git_mutation($handle, 'git reset', $allow_primary_mutation, false, 'Pass allow_dangerous_primary_mutation=true to reset it');
+		if ( is_wp_error($mutation) ) {
+			return $mutation;
 		}
-
-		$parsed    = $this->parse_handle($handle);
-		$repo_name = $parsed['repo'];
-		$repo_path = $this->resolve_repo_path($handle);
-		if ( is_wp_error($repo_path) ) {
-			return $repo_path;
-		}
-
-		$policy_check = $this->ensure_git_mutation_allowed($repo_name);
-		if ( is_wp_error($policy_check) ) {
-			return $policy_check;
-		}
-
-		$primary_check = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation, 'Pass allow_dangerous_primary_mutation=true to reset it');
-		if ( is_wp_error($primary_check) ) {
-			return $primary_check;
-		}
+		$parsed    = $mutation['parsed'];
+		$repo_path = $mutation['repo_path'];
 
 		$mode = trim($mode);
 		if ( ! in_array($mode, array( 'soft', 'mixed', 'hard' ), true) ) {
@@ -1173,6 +1076,43 @@ trait WorkspaceGitOperations {
 				$parsed['repo']
 			),
 			array( 'status' => 403 )
+		);
+	}
+
+	/**
+	 * Resolve and authorize the context shared by git mutation operations.
+	 *
+	 * @return array{parsed:array<string,mixed>,repo_name:string,repo_path:string}|\WP_Error
+	 */
+	private function prepare_git_mutation( string $handle, string $operation, bool $allow_primary_mutation, bool $require_push = false, string $allow_guidance = 'Pass allow_primary_mutation=true to operate on it', bool $require_explicit_handle = false ): array|\WP_Error {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			return WorkspaceAliasResolver::mutation_error($handle, $operation);
+		}
+
+		$parsed = $require_explicit_handle ? $this->require_explicit_workspace_handle($handle) : $this->parse_handle($handle);
+		if ( is_wp_error($parsed) ) {
+			return $parsed;
+		}
+
+		$repo_path = $this->resolve_repo_path($handle);
+		if ( is_wp_error($repo_path) ) {
+			return $repo_path;
+		}
+
+		$allowed = $this->ensure_git_mutation_allowed($parsed['repo'], $require_push);
+		if ( is_wp_error($allowed) ) {
+			return $allowed;
+		}
+
+		$allowed = $this->ensure_primary_mutation_allowed($parsed, $allow_primary_mutation, $allow_guidance);
+		if ( is_wp_error($allowed) ) {
+			return $allowed;
+		}
+
+		return array(
+			'parsed'    => $parsed,
+			'repo_name' => $parsed['repo'],
+			'repo_path' => $repo_path,
 		);
 	}
 
