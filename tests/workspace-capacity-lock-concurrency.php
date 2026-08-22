@@ -213,7 +213,31 @@ try {
 		capacity_lock_assert(array() === array_filter($queue, static fn( array $request ): bool => $killed_pid === (int) ($request['pid'] ?? 0)), 'SIGKILL request was not reconciled after its owner exited.');
 		fclose($holder_pipes[1]); fclose($holder_pipes[2]); proc_close($holder);
 		unlink($ready);
+
+		// A holder killed after acquisition must release its OS flock so the next
+		// admission can proceed without waiting for its stale DB lease.
+		$ready = $workspace . '/owner-exit-ready';
+		$holder = proc_open(array( PHP_BINARY, __FILE__, 'holder', $workspace, $ready, '10' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
+		capacity_lock_assert(is_resource($holder), 'Could not start owner-exit holder.');
+		fclose($holder_pipes[0]);
+		$deadline = microtime(true) + 3;
+		while ( ! is_file($ready) && microtime(true) < $deadline ) { usleep(10000); }
+		$holder_status = proc_get_status($holder);
+		posix_kill((int) $holder_status['pid'], SIGKILL);
+		fclose($holder_pipes[1]); fclose($holder_pipes[2]); proc_close($holder);
+		$recovered = WorkspaceMutationLock::with_repo($workspace, 'workspace-capacity-admission', static fn(): string => 'acquired', 1);
+		capacity_lock_assert('acquired' === $recovered, 'Next admission remained blocked after its lock owner exited.');
+		unlink($ready);
 	}
+
+	// A stale queue record is diagnostic only and must be pruned before the
+	// next admission without preventing that admission from acquiring.
+	$request_dir = $workspace . '/.locks/requests';
+	if ( ! is_dir($request_dir) ) { mkdir($request_dir, 0777, true); }
+	file_put_contents($request_dir . '/stale-owner.json', json_encode(array( 'pid' => 999999, 'state' => 'queued' )));
+	$after_stale_queue = WorkspaceMutationLock::with_repo($workspace, 'workspace-capacity-admission', static fn(): string => 'acquired', 1);
+	capacity_lock_assert('acquired' === $after_stale_queue, 'Stale queue evidence blocked the next admission.');
+	capacity_lock_assert(array() === ( glob($request_dir . '/*.json') ?: array() ), 'Stale queue evidence was not removed before the next admission.');
 
 	// Eight independent admissions must remain observable while an unrelated
 	// holder stalls the shared capacity resource, then drain without leftovers.
