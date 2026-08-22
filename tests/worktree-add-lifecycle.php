@@ -576,6 +576,26 @@ try {
 	assert_true('accepted' === ( $reused['reuse']['status'] ?? null ) && 'homeboy@idempotent-reuse' === ( $reused['reuse']['handle'] ?? null ), 'default exact reuse did not preserve typed result evidence');
 	assert_true($reuse_created_at === ( $wpdb->rows[$reuse_handle]['created_at'] ?? null ), 'reuse rewrote durable lifecycle metadata');
 	assert_true('https://example.test/issues/reuse' === ( $wpdb->rows[$reuse_handle]['task_url'] ?? '' ), 'reuse rewrote durable task metadata');
+	// Simulate a caller being terminated after checkout materialization and after
+	// bootstrap starts: its durable running phase must block readiness until the
+	// exact compatible add retry completes bootstrap.
+	$interrupted_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	assert_true(! is_wp_error($interrupted_bootstrap), is_wp_error($interrupted_bootstrap) ? $interrupted_bootstrap->get_error_message() : 'interrupted bootstrap fixture creation failed');
+	$interrupted_bootstrap_handle = 'homeboy@interrupted-bootstrap';
+	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, array(
+		'provisioning' => array(
+			'create'    => array( 'outcome' => 'succeeded', 'completed_at' => gmdate('c') ),
+			'bootstrap' => array( 'requested' => true, 'outcome' => 'running', 'started_at' => gmdate('c'), 'resume_command' => 'wp datamachine-code workspace worktree add homeboy interrupted-bootstrap --from=origin/main --skip-context-injection --task-url=https://example.test/issues/interrupted-bootstrap --require-task-tracker' ),
+		),
+	));
+	$incomplete_get = $workspace->worktree_get($interrupted_bootstrap_handle);
+	assert_true(false === ( $incomplete_get['worktrees'][0]['readiness']['ready'] ?? true ) && 'bootstrap_running' === ( $incomplete_get['worktrees'][0]['readiness']['reason'] ?? '' ) && str_contains((string) ($incomplete_get['worktrees'][0]['readiness']['resume_command'] ?? ''), 'worktree add homeboy interrupted-bootstrap'), 'interrupted bootstrap did not survive as explicit incomplete readiness evidence');
+	$incomplete_show = $workspace->show_repo($interrupted_bootstrap_handle);
+	assert_true(false === ( $incomplete_show['readiness']['ready'] ?? true ) && 'incomplete' === ( $incomplete_show['readiness']['status'] ?? '' ), 'workspace show did not project incomplete bootstrap readiness');
+	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, array( 'last_seen_at' => gmdate('c', time() - 90000) ));
+	$resumed_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	assert_true(! is_wp_error($resumed_bootstrap) && true === ( $resumed_bootstrap['resumed'] ?? false ) && 'succeeded' === ( $resumed_bootstrap['metadata']['provisioning']['bootstrap']['outcome'] ?? null ), is_wp_error($resumed_bootstrap) ? $resumed_bootstrap->get_error_message() : 'exact retry did not resume interrupted bootstrap');
+	assert_true(true === ( $workspace->worktree_get($interrupted_bootstrap_handle)['worktrees'][0]['readiness']['ready'] ?? false ), 'resumed bootstrap remained incomplete');
 	$exact_reuse_plan = $workspace->worktree_plan('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
 	assert_true(! is_wp_error($exact_reuse_plan) && 'exact_reuse' === ( $exact_reuse_plan['disposition'] ?? null ), 'exact compatible reuse was not planned');
 	file_put_contents($reusable['path'] . '/reuse-dirty.txt', "dirty\n");

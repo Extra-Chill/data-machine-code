@@ -5137,6 +5137,8 @@ class WorkspaceCommand extends BaseCommand {
 						'dirty'               => null === $dirty ? '-' : (int) $dirty,
 						'created_at'          => $wt['created_at'] ?? null,
 						'state'               => $wt['lifecycle_state'] ?? null,
+						'readiness'           => $wt['readiness'] ?? null,
+						'readiness_status'    => $wt['readiness']['status'] ?? 'unknown',
 						'liveness'            => $wt['liveness'] ?? 'unknown',
 						'liveness_reason'     => $wt['liveness_reason'] ?? '',
 						'last_seen_at'        => $wt['last_seen_at'] ?? null,
@@ -5172,7 +5174,7 @@ class WorkspaceCommand extends BaseCommand {
 				},
 				$worktrees
 				);
-				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'liveness', 'last_seen_at', 'owner', 'agent', 'session', 'task', 'pr', 'age_days', 'size', 'artifacts', 'stale', 'path' );
+				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'readiness_status', 'liveness', 'last_seen_at', 'owner', 'agent', 'session', 'task', 'pr', 'age_days', 'size', 'artifacts', 'stale', 'path' );
 				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) && ! empty($assoc_args['envelope']) ) {
 					$result['worktrees'] = $items;
 					$this->renderer()->json($result);
@@ -5183,7 +5185,7 @@ class WorkspaceCommand extends BaseCommand {
 					return;
 				}
 				if ( in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true) ) {
-					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'safety', 'state', 'created_at', 'liveness', 'liveness_reason', 'last_seen_at', 'owner_full', 'session_full', 'task_full', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'fields_skipped', 'metadata', 'path' );
+					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'safety', 'state', 'readiness', 'readiness_status', 'created_at', 'liveness', 'liveness_reason', 'last_seen_at', 'owner_full', 'session_full', 'task_full', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'fields_skipped', 'metadata', 'path' );
 				}
 				$skipped_global = (array) ( $result['fields_skipped'] ?? array() );
 				if ( 'list' === $operation && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true) ) {

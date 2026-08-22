@@ -55,5 +55,25 @@ namespace {
 		throw new \RuntimeException('JSON worktree get not-found output did not return the typed error envelope.');
 	}
 
+	WP_CLI::$lines = array();
+	$method->invoke($command, 'get', array(
+		'worktrees' => array(array(
+			'handle'    => 'repo@interrupted-bootstrap',
+			'repo'      => 'repo',
+			'branch'    => 'fix/interrupted-bootstrap',
+			'is_primary' => false,
+			'readiness' => array(
+				'ready'          => false,
+				'status'         => 'incomplete',
+				'reason'         => 'bootstrap_running',
+				'resume_command' => 'wp datamachine-code workspace worktree add repo interrupted-bootstrap',
+			),
+		)),
+	), array( 'format' => 'json' ));
+	$payload = json_decode(implode("\n", WP_CLI::$lines), true);
+	if ( 'incomplete' !== ( $payload[0]['readiness']['status'] ?? null ) || ! str_contains((string) ($payload[0]['readiness']['resume_command'] ?? ''), 'worktree add repo interrupted-bootstrap') ) {
+		throw new \RuntimeException('JSON worktree get did not retain incomplete readiness remediation.');
+	}
+
 	echo "worktree-get-cli-json-contract: ok\n";
 }
