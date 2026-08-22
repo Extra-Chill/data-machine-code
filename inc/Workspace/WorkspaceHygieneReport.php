@@ -730,6 +730,36 @@ trait WorkspaceHygieneReport {
 	 * @return array{success:bool,bytes?:int,reason?:string,timeout_seconds?:int,cleanup?:array<string,mixed>}
 	 */
 	private function directory_size_bytes_best_effort( string $path, int $timeout_seconds ): array {
+		$probe = $this->directory_du_metric_best_effort($path, $timeout_seconds, array( '-sk' ), false);
+		if ( empty($probe['success']) ) {
+			return $probe;
+		}
+
+		return array(
+			'success' => true,
+			'bytes'   => max(0, (int) $probe['value']) * 1024,
+		);
+	}
+
+	/**
+	 * Best-effort allocated entry count via GNU `du --inodes` with a hard deadline.
+	 *
+	 * @return array{success:bool,entry_count?:int,reason?:string,timeout_seconds?:int,cleanup?:array<string,mixed>}
+	 */
+	private function directory_entry_count_best_effort( string $path, int $timeout_seconds ): array {
+		$probe = $this->directory_du_metric_best_effort($path, $timeout_seconds, array( '--inodes', '-s' ), true);
+		if ( empty($probe['success']) ) {
+			return $probe;
+		}
+
+		return array(
+			'success'     => true,
+			'entry_count' => max(0, (int) $probe['value']),
+		);
+	}
+
+	/** Run one bounded `du` first-column metric probe. */
+	private function directory_du_metric_best_effort( string $path, int $timeout_seconds, array $arguments, bool $require_digits ): array {
 		if ( ! is_dir($path) ) {
 			return array(
 				'success' => false,
@@ -737,7 +767,7 @@ trait WorkspaceHygieneReport {
 			);
 		}
 
-		$command = CommandSpec::from_argv(array( 'du', '-sk', '--', $path ));
+		$command = CommandSpec::from_argv(array_merge(array( 'du' ), $arguments, array( '--', $path )));
 		if ( $command instanceof \WP_Error ) {
 			return array(
 				'success' => false,
@@ -764,7 +794,7 @@ trait WorkspaceHygieneReport {
 
 		$parts = preg_split('/\s+/', trim( (string) ( $result['output'] ?? '' )));
 		$parts = false === $parts ? array() : $parts;
-		if ( ! isset($parts[0]) || ! is_numeric($parts[0]) ) {
+		if ( ! isset($parts[0]) || ( $require_digits ? ! ctype_digit($parts[0]) : ! is_numeric($parts[0]) ) ) {
 			return array(
 				'success' => false,
 				'reason'  => 'invalid_output',
@@ -773,57 +803,7 @@ trait WorkspaceHygieneReport {
 
 		return array(
 			'success' => true,
-			'bytes'   => max(0, (int) $parts[0]) * 1024,
-		);
-	}
-
-	/**
-	 * Best-effort allocated entry count via GNU `du --inodes` with a hard deadline.
-	 *
-	 * @return array{success:bool,entry_count?:int,reason?:string,timeout_seconds?:int,cleanup?:array<string,mixed>}
-	 */
-	private function directory_entry_count_best_effort( string $path, int $timeout_seconds ): array {
-		if ( ! is_dir($path) ) {
-			return array(
-				'success' => false,
-				'reason'  => 'missing_directory',
-			);
-		}
-
-		$command = CommandSpec::from_argv(array( 'du', '--inodes', '-s', '--', $path ));
-		if ( $command instanceof \WP_Error ) {
-			return array(
-				'success' => false,
-				'reason'  => 'invalid_command',
-			);
-		}
-		$result = ProcessRunner::run($command, array(
-			'timeout_seconds'  => max(1, $timeout_seconds),
-			'output_cap_bytes' => 1024,
-			'error_as_result'  => true,
-		));
-		if ( $result instanceof \WP_Error || empty($result['success']) ) {
-			$timed_out = is_array($result) && isset($result['timeout']);
-			return array(
-				'success'         => false,
-				'reason'          => $timed_out ? 'entry_timeout' : 'probe_failed',
-				'timeout_seconds' => $timed_out ? (int) $result['timeout'] : null,
-				'cleanup'         => is_array($result) && is_array($result['cleanup'] ?? null) ? $result['cleanup'] : null,
-			);
-		}
-
-		$parts = preg_split('/\s+/', trim( (string) ( $result['output'] ?? '' )));
-		$parts = false === $parts ? array() : $parts;
-		if ( ! isset($parts[0]) || ! ctype_digit($parts[0]) ) {
-			return array(
-				'success' => false,
-				'reason'  => 'invalid_output',
-			);
-		}
-
-		return array(
-			'success'     => true,
-			'entry_count' => max(0, (int) $parts[0]),
+			'value'   => $parts[0],
 		);
 	}
 
