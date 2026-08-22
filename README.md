@@ -82,6 +82,17 @@ wp datamachine-code github status
 wp datamachine-code runtime release --format=json
 wp datamachine-code runtime release --apply --format=json
 
+# Runtime/source drift (read-only unless --apply is explicit)
+wp datamachine-code runtime doctor
+wp datamachine-code runtime doctor --apply
+
+Configure the authoritative checkout and optional command contract with the
+`datamachine_code_runtime_source_doctor_config` filter. Its `source_path` and
+`release_ref` values are read-only inputs; `command_contract` may provide a
+`command` and `flag` so the doctor can report a source-supported flag that the
+active WP-CLI registration rejects. The doctor never reconciles unless
+`--apply` is explicit.
+
 # Workspace
 wp datamachine-code workspace path
 wp datamachine-code workspace path repo-name@fix-foo
