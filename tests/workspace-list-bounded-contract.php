@@ -26,6 +26,7 @@ namespace {
 		public function __construct( public string $code = '', public string $message = '', public array $data = array() ) {}
 	}
 
+	require_once dirname(__DIR__) . '/inc/Support/ListCursor.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceRepositoryLifecycle.php';
 
 	use DataMachineCode\Workspace\WorkspaceRepositoryLifecycle;
@@ -83,10 +84,12 @@ namespace {
 		bounded_list_assert(50 === $first['returned'] && 50 === count($first['repos']), 'Default list must never exceed its 50-row bound.');
 		bounded_list_assert(50 >= $harness->max_bounded_rows, 'Default list must retain no more than one bounded page or summary sample set.');
 		bounded_list_assert(is_string($first['next_cursor']), 'First bounded page must provide a continuation cursor.');
+		$legacy_cursor = rtrim(strtr(base64_encode(wp_json_encode(array( 'v' => 1, 'after' => "repo-049@branch\0{$workspace}/repo-049@branch", 'repo' => null, 'type' => null ))), '+/', '-_'), '=');
+		bounded_list_assert($legacy_cursor === $first['next_cursor'], 'Shared cursor encoding must preserve the existing serialized workspace cursor.');
 		bounded_list_assert(false === $first['status_requested'] && 0 === $harness->git_probes, 'Default discovery must not run per-row Git probes.');
 		bounded_list_assert($elapsed < 2.0, sprintf('Bounded high-cardinality response exceeded deadline: %.3fs.', $elapsed));
 
-		$second = $harness->list_repos(null, null, array( 'cursor' => $first['next_cursor'] ));
+		$second = $harness->list_repos(null, null, array( 'cursor' => $legacy_cursor ));
 		bounded_list_assert('repo-050@branch' === ($second['repos'][0]['name'] ?? null), 'Cursor continuation must resume after the previous stable row.');
 		bounded_list_assert(50 === $second['returned'], 'Cursor continuation must preserve the declared output bound.');
 		$scoped_cursor = $harness->list_repos('other-repo', null, array( 'cursor' => $first['next_cursor'] ));

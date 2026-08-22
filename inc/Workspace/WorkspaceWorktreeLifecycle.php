@@ -8,6 +8,7 @@
 namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Support\GitRunner;
+use DataMachineCode\Support\ListCursor;
 
 defined('ABSPATH') || exit;
 
@@ -2491,17 +2492,16 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	private function encode_worktree_list_cursor( string $after, ?string $repo, ?string $state, string $handle ): string {
-		return rtrim(strtr(base64_encode(wp_json_encode(array( 'v' => 1, 'after' => $after, 'repo' => $repo, 'state' => $state, 'handle' => $handle ))), '+/', '-_'), '=');
+		return ListCursor::encode($after, array( 'repo' => $repo, 'state' => $state, 'handle' => $handle ));
 	}
 
 	private function decode_worktree_list_cursor( string $cursor, ?string $repo, ?string $state, string $handle ): string|\WP_Error {
-		$encoded = strtr($cursor, '-_', '+/');
-		$decoded = base64_decode(str_pad($encoded, strlen($encoded) + ( 4 - strlen($encoded) % 4 ) % 4, '='), true);
-		$payload = is_string($decoded) ? json_decode($decoded, true) : null;
-		if ( ! is_array($payload) || 1 !== ( $payload['v'] ?? null ) || ! is_string($payload['after'] ?? null ) || ( $payload['repo'] ?? null ) !== $repo || ( $payload['state'] ?? null ) !== $state || ( $payload['handle'] ?? null ) !== $handle ) {
-			return new \WP_Error('invalid_worktree_list_cursor', 'Worktree list cursor is invalid for the requested filters.', array( 'status' => 400 ));
-		}
-		return $payload['after'];
+		return ListCursor::decode(
+			$cursor,
+			array( 'repo' => $repo, 'state' => $state, 'handle' => $handle ),
+			'invalid_worktree_list_cursor',
+			'Worktree list cursor is invalid for the requested filters.'
+		);
 	}
 
 	/**
