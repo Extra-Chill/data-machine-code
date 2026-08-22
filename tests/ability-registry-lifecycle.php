@@ -8,7 +8,6 @@ $GLOBALS['ability_lifecycle_doing'] = false;
 $GLOBALS['ability_lifecycle_did'] = 0;
 $GLOBALS['ability_lifecycle_callbacks'] = array();
 
-function wp_register_ability( string $name, array $args ): void {}
 function doing_action( string $hook ): bool { return 'wp_abilities_api_init' === $hook && $GLOBALS['ability_lifecycle_doing']; }
 function did_action( string $hook ): int { return 'wp_abilities_api_init' === $hook ? $GLOBALS['ability_lifecycle_did'] : 0; }
 function add_action( string $hook, callable $callback ): void { $GLOBALS['ability_lifecycle_callbacks'][ $hook ][] = $callback; }
@@ -26,6 +25,9 @@ $calls = 0;
 ability_lifecycle_assert_same(0, $calls, 'Registration ran before the abilities lifecycle window.');
 ability_lifecycle_assert_same(1, count($GLOBALS['ability_lifecycle_callbacks']['wp_abilities_api_init'] ?? array()), 'Registration was not deferred to the abilities lifecycle window.');
 
+if ( ! function_exists('wp_register_ability') ) {
+	function wp_register_ability( string $name, array $args ): void {}
+}
 $GLOBALS['ability_lifecycle_doing'] = true;
 foreach ( $GLOBALS['ability_lifecycle_callbacks']['wp_abilities_api_init'] as $callback ) {
 	$callback();

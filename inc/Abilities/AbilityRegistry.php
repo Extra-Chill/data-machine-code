@@ -15,15 +15,21 @@ class AbilityRegistry {
 	 * Run ability registration only inside Core's valid lifecycle window.
 	 */
 	public static function when_ready( callable $register ): void {
-		if ( ! function_exists('wp_register_ability') ) {
-			return;
-		}
-		if ( doing_action('wp_abilities_api_init') ) {
+		$doing = function_exists('doing_action') && doing_action('wp_abilities_api_init');
+		$did   = function_exists('did_action') ? did_action('wp_abilities_api_init') : 0;
+		if ( $doing && function_exists('wp_register_ability') ) {
 			$register();
 			return;
 		}
-		if ( ! did_action('wp_abilities_api_init') ) {
-			add_action('wp_abilities_api_init', $register);
+		if ( ! $did && function_exists('add_action') ) {
+			add_action(
+				'wp_abilities_api_init',
+				static function () use ( $register ): void {
+					if ( function_exists('wp_register_ability') ) {
+						$register();
+					}
+				}
+			);
 		}
 	}
 
