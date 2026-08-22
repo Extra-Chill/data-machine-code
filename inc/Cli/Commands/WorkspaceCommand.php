@@ -4686,7 +4686,7 @@ class WorkspaceCommand extends BaseCommand {
 					$input['offset'] = (int) $assoc_args['offset'];
 				}
 				if ( isset($assoc_args['only-handle']) && '' !== trim( (string) $assoc_args['only-handle']) ) {
-					$input['only_handles'] = array( trim( (string) $assoc_args['only-handle']) );
+					$input['only_handle'] = trim( (string) $assoc_args['only-handle']);
 				}
 				if ( ! empty($assoc_args['exhaustive']) ) {
 					$input['exhaustive'] = true;
