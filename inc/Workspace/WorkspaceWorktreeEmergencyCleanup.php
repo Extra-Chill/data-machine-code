@@ -228,84 +228,82 @@ trait WorkspaceWorktreeEmergencyCleanup {
 			return $planned_worktrees;
 		}
 
-		$listing = $this->worktree_list();
-		if ( $listing instanceof \WP_Error ) {
-			return $listing;
-		}
-
-		$current_by_handle = array();
-		foreach ( (array) ( $listing['worktrees'] ?? array() ) as $wt ) {
-			if ( ! empty($wt['is_primary']) ) {
-				continue;
-			}
-			$handle = (string) ( $wt['handle'] ?? '' );
-			if ( '' !== $handle ) {
-				$current_by_handle[ $handle ] = $wt;
-			}
-		}
-
 		$removed_artifacts = array();
 		$removed_worktrees = array();
 		$skipped           = array();
 
 		foreach ( $planned_artifacts as $row ) {
-			$current = $current_by_handle[ (string) ( $row['handle'] ?? '' ) ] ?? null;
-			if ( null === $current || ! $this->emergency_row_identity_matches_current($row, $current, false) ) {
-				$skipped[] = $this->build_emergency_apply_skip($row, $current, 'emergency_artifact_plan_not_current', 'planned artifact row no longer matches the current worktree');
-				continue;
-			}
-
-			$removed_for_row = array();
-			foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
-				$relative = is_array($artifact) ? (string) ( $artifact['path'] ?? '' ) : '';
-				$remove   = $this->remove_worktree_artifact_path( (string) ( $current['path'] ?? '' ), $relative);
-				if ( $remove instanceof \WP_Error ) {
-					$skipped[] = $this->build_emergency_apply_skip($row, $current, 'emergency_artifact_remove_failed', sprintf('artifact %s removal failed: %s', $relative, $remove->get_error_message()));
-					continue 2;
+			$result = WorkspaceMutationLock::with_repo($this->workspace_path, (string) $row['repo'], function () use ( $row ) {
+				$current = $this->emergency_current_worktree_row($row);
+				if ( null === $current || ! $this->emergency_row_identity_matches_current($row, $current, false) ) {
+					return array( 'skipped' => $this->build_emergency_apply_skip($row, $current, 'emergency_artifact_plan_not_current', 'planned artifact row no longer matches the current worktree') );
 				}
-				$removed_for_row[] = $artifact;
-			}
+				$protection = $this->emergency_current_liveness_protection($current);
+				if ( null !== $protection ) {
+					return array( 'skipped' => $this->build_emergency_apply_skip($row, $current, (string) $protection['reason_code'], (string) $protection['reason']) );
+				}
 
-			$removed_artifacts[] = array_merge($row, array( 'artifacts' => $removed_for_row ));
+				$removed = array();
+				foreach ( (array) $row['artifacts'] as $artifact ) {
+					$relative = is_array($artifact) ? (string) ( $artifact['path'] ?? '' ) : '';
+					$remove = $this->remove_worktree_artifact_path((string) $current['path'], $relative);
+					if ( $remove instanceof \WP_Error ) {
+						return array( 'skipped' => $this->build_emergency_apply_skip($row, $current, 'emergency_artifact_remove_failed', sprintf('artifact %s removal failed: %s', $relative, $remove->get_error_message())) );
+					}
+					$removed[] = $artifact;
+				}
+				return array( 'current' => $current, 'artifacts' => $removed );
+			});
+			if ( $result instanceof \WP_Error ) {
+				$skipped[] = $this->build_emergency_apply_skip($row, null, 'emergency_artifact_lock_failed', $result->get_error_message());
+			} elseif ( isset($result['skipped']) ) {
+				$skipped[] = $result['skipped'];
+			} else {
+				$removed_artifacts[] = array_merge($row, array( 'artifacts' => $result['artifacts'] ));
+			}
 		}
 
 		foreach ( $planned_worktrees as $row ) {
-			$current = $current_by_handle[ (string) ( $row['handle'] ?? '' ) ] ?? null;
-			if ( null === $current || ! $this->emergency_row_identity_matches_current($row, $current, true) ) {
-				$skipped[] = $this->build_emergency_apply_skip($row, $current, 'emergency_worktree_plan_not_current', 'planned worktree row no longer matches the current worktree');
-				continue;
-			}
+			$result = WorkspaceMutationLock::with_repo($this->workspace_path, (string) $row['repo'], function () use ( $row, $force ) {
+				$current = $this->emergency_current_worktree_row($row);
+				if ( null === $current || ! $this->emergency_row_identity_matches_current($row, $current, true) ) {
+					return array( 'skipped' => $this->build_emergency_apply_skip($row, $current, 'emergency_worktree_plan_not_current', 'planned worktree row no longer matches the current worktree') );
+				}
+				$protection = $this->emergency_current_liveness_protection($current);
+				if ( null !== $protection ) {
+					return array( 'skipped' => $this->build_emergency_apply_skip($row, $current, (string) $protection['reason_code'], (string) $protection['reason']) );
+				}
 
-			$metadata = is_array($current['metadata'] ?? null) ? (array) $current['metadata'] : array();
+				$metadata = is_array($current['metadata'] ?? null) ? (array) $current['metadata'] : array();
 			$state    = (string) ( $metadata['lifecycle_state'] ?? '' );
 			if ( ! in_array($state, $this->emergency_cleanup_lifecycle_states(), true) ) {
-				$skipped[] = $this->build_emergency_apply_skip($row, $current, 'emergency_lifecycle_not_current', 'current lifecycle state is no longer finalized or cleanup-eligible');
-				continue;
+				return array( 'skipped' => $this->build_emergency_apply_skip($row, $current, 'emergency_lifecycle_not_current', 'current lifecycle state is no longer finalized or cleanup-eligible') );
 			}
 
 			$dirty = (int) ( $current['dirty'] ?? 0 );
 			if ( $dirty > 0 && ! $force ) {
-				$skipped[] = $this->build_emergency_apply_skip($row, $current, 'dirty_worktree', sprintf('working tree dirty (%d files) - pass --force only after human review', $dirty));
-				continue;
+				return array( 'skipped' => $this->build_emergency_apply_skip($row, $current, 'dirty_worktree', sprintf('working tree dirty (%d files) - pass --force only after human review', $dirty)) );
 			}
 
 			$unpushed = $this->count_unpushed_commits( (string) ( $current['path'] ?? '' ));
 			if ( $unpushed > 0 && ! $force ) {
-				$skipped[] = $this->build_emergency_apply_skip($row, $current, 'unpushed_commits', sprintf('%d unpushed commit(s) - pass --force only after human review', $unpushed));
-				continue;
+				return array( 'skipped' => $this->build_emergency_apply_skip($row, $current, 'unpushed_commits', sprintf('%d unpushed commit(s) - pass --force only after human review', $unpushed)) );
 			}
 
-			$remove = WorkspaceMutationLock::with_repo(
-				$this->workspace_path,
-				(string) ( $current['repo'] ?? '' ),
-				fn() => $this->remove_worktree_by_path( (string) ( $current['repo'] ?? '' ), (string) ( $current['branch'] ?? '' ), (string) ( $current['path'] ?? '' ), $force)
-			);
+			$remove = $this->remove_worktree_by_path( (string) $current['repo'], (string) $current['branch'], (string) $current['path'], $force);
 			if ( $remove instanceof \WP_Error ) {
-				$skipped[] = $this->build_emergency_apply_skip($row, $current, 'emergency_worktree_remove_failed', 'worktree removal failed: ' . $remove->get_error_message());
-				continue;
+				return array( 'skipped' => $this->build_emergency_apply_skip($row, $current, 'emergency_worktree_remove_failed', 'worktree removal failed: ' . $remove->get_error_message()) );
 			}
+				return array( 'current' => $current );
+			});
 
-			$removed_worktrees[] = array_merge($row, array( 'current' => $current ));
+			if ( $result instanceof \WP_Error ) {
+				$skipped[] = $this->build_emergency_apply_skip($row, null, 'emergency_worktree_lock_failed', $result->get_error_message());
+			} elseif ( isset($result['skipped']) ) {
+				$skipped[] = $result['skipped'];
+			} else {
+				$removed_worktrees[] = array_merge($row, array( 'current' => $result['current'] ));
+			}
 		}
 
 		$this->worktree_prune();
@@ -385,6 +383,38 @@ trait WorkspaceWorktreeEmergencyCleanup {
 		}
 
 		return array_values($rows);
+	}
+
+	/** Read one current row only after its repository lock is held. */
+	private function emergency_current_worktree_row( array $planned ): ?array {
+		$listing = $this->worktree_list(
+			(string) ( $planned['repo'] ?? '' ),
+			null,
+			array(
+				'handle'         => (string) ( $planned['handle'] ?? '' ),
+				'include_status' => true,
+				'include_disk'   => false,
+			)
+		);
+		if ( $listing instanceof \WP_Error ) {
+			return null;
+		}
+
+		$current = (array) ( $listing['worktrees'] ?? array() );
+		return isset($current[0]) && is_array($current[0]) ? $current[0] : null;
+	}
+
+	/** Refuse emergency mutation when the locked row has been reactivated. */
+	private function emergency_current_liveness_protection( array $current ): ?array {
+		$metadata = is_array($current['metadata'] ?? null) ? $current['metadata'] : null;
+		$liveness = WorktreeContextInjector::classify_liveness($metadata);
+
+		return WorktreeCleanupCandidateClassifier::live_protection(
+			array(
+				'liveness'        => $liveness['liveness'],
+				'liveness_reason' => $liveness['reason'],
+			)
+		);
 	}
 
 	/**

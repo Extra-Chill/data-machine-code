@@ -94,7 +94,7 @@ class WorkspaceCommand extends BaseCommand {
 		$definitions = array(
 			'add' => array(
 				'shortdesc' => 'Create an isolated, managed worktree.',
-				'longdesc'  => "Creates `<repo>@<branch-slug>` and reports its handle, path, and disk-budget evaluation. Creation verifies remote freshness by default; `--force` is the explicit disk-budget override.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --from=origin/main --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1025\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --skip-bootstrap",
+				'longdesc'  => "Creates `<repo>@<branch-slug>` and reports its handle, path, and disk-budget evaluation. Creation verifies remote freshness by default; `--force` is the explicit disk-budget override. `--remediate-capacity` instead runs bounded safe reclamation after a refusal and retries the exact add once when capacity recovers.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --from=origin/main --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1025\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --skip-bootstrap",
 				'synopsis'  => array(
 					array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Primary repository name.', 'required' => true ),
 					array( 'type' => 'positional', 'name' => 'branch', 'description' => 'Branch to create or check out.', 'required' => true ),
@@ -108,6 +108,8 @@ class WorkspaceCommand extends BaseCommand {
 					array( 'type' => 'flag', 'name' => 'allow-unverified-freshness', 'description' => 'Allow intentional offline creation.' ),
 					array( 'type' => 'flag', 'name' => 'rebase-base', 'description' => 'Rebase onto upstream after creation.' ),
 					array( 'type' => 'flag', 'name' => 'force', 'description' => 'Override the disk-budget refusal threshold.' ),
+					array( 'type' => 'flag', 'name' => 'remediate-capacity', 'description' => 'Run bounded safe remediation after a capacity refusal, then retry this add once.' ),
+					array( 'type' => 'flag', 'name' => 'remediate-capacity-dry-run', 'description' => 'Preview capacity remediation without cleanup or creation.' ),
 					array( 'type' => 'assoc', 'name' => 'task-url', 'description' => 'Task or issue URL to record.' ),
 					array( 'type' => 'assoc', 'name' => 'task-ref', 'description' => 'Short task reference to record.' ),
 					array( 'type' => 'flag', 'name' => 'require-task-tracker', 'description' => 'Require task tracking metadata.' ),
@@ -4416,7 +4418,7 @@ class WorkspaceCommand extends BaseCommand {
 		switch ( $operation ) {
 			case 'add':
 				if ( empty($args[1]) || empty($args[2]) ) {
-					WP_CLI::error('Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-ref=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--allow-unverified-freshness] [--rebase-base] [--force] [--reuse-policy=reuse_compatible|isolated|recycle_terminal] [--task-url=<url>|--task-ref=<ref>] [--require-task-tracker]');
+					WP_CLI::error('Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-ref=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--allow-unverified-freshness] [--rebase-base] [--force|--remediate-capacity [--remediate-capacity-dry-run]] [--reuse-policy=reuse_compatible|isolated|recycle_terminal] [--task-url=<url>|--task-ref=<ref>] [--require-task-tracker]');
 					return;
 				}
 				$input['repo']    = $args[1];
@@ -4454,6 +4456,8 @@ class WorkspaceCommand extends BaseCommand {
 				$input['rebase_base'] = ! empty($assoc_args['rebase-base']);
 				// --force is an explicit disk-budget override for add.
 				$input['force'] = ! empty($assoc_args['force']);
+				$input['remediate_capacity'] = ! empty($assoc_args['remediate-capacity']);
+				$input['remediate_capacity_dry_run'] = ! empty($assoc_args['remediate-capacity-dry-run']);
 				if ( isset($assoc_args['reuse-policy']) ) {
 					$input['reuse_policy'] = (string) $assoc_args['reuse-policy'];
 				}

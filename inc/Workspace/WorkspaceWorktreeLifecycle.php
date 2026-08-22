@@ -74,7 +74,7 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  string      $reuse_policy Existing-handle and same-task allocation policy.
 	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, fetch_attempts?: int, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
-	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible' ): array|\WP_Error {
+	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible', bool $remediate_capacity = false, bool $remediate_capacity_dry_run = false ): array|\WP_Error {
 		$visible = $this->require_workspace_visible();
 		if ( null !== $visible ) {
 			return $visible;
@@ -98,6 +98,12 @@ trait WorkspaceWorktreeLifecycle {
 		$reuse_policy = strtolower(trim($reuse_policy));
 		if ( ! in_array($reuse_policy, array( 'reuse_compatible', 'isolated', 'recycle_terminal' ), true) ) {
 			return new \WP_Error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: reuse_compatible, isolated, recycle_terminal.', array( 'status' => 400 ));
+		}
+		if ( $force && $remediate_capacity ) {
+			return new \WP_Error('worktree_capacity_policy_conflict', '--force bypasses capacity admission; use it separately from --remediate-capacity.', array( 'status' => 400 ));
+		}
+		if ( $remediate_capacity_dry_run && ! $remediate_capacity ) {
+			return new \WP_Error('worktree_capacity_remediation_dry_run_requires_remediation', 'Capacity remediation dry-run requires remediate_capacity=true.', array( 'status' => 400 ));
 		}
 		if ( array_key_exists('cleanup_policy', $intent) && null === WorktreeContextInjector::normalize_cleanup_policy($intent['cleanup_policy']) ) {
 			return new \WP_Error('invalid_cleanup_policy', 'cleanup_policy must be one of: ' . implode(', ', WorktreeContextInjector::VALID_CLEANUP_POLICIES) . '.', array( 'status' => 400 ));
@@ -124,7 +130,13 @@ trait WorkspaceWorktreeLifecycle {
 		$wt_handle = $repo . '@' . $slug;
 		$wt_path   = $this->workspace_path . '/' . $wt_handle;
 
-		if ( is_dir($wt_path) ) {
+		if ( $remediate_capacity_dry_run ) {
+			return $this->worktree_capacity_dry_run($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $force, $task, $intent, $reuse_policy, $wt_handle, $primary_path);
+		}
+
+		// A remediation dry-run must reach capacity planning before any existing
+		// handle path can reset a terminal checkout or rewrite its metadata.
+		if ( is_dir($wt_path) && ! $remediate_capacity_dry_run ) {
 			if ( 'recycle_terminal' === $reuse_policy ) {
 				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->recycle_terminal_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path));
 			}
@@ -134,10 +146,7 @@ trait WorkspaceWorktreeLifecycle {
 		return WorkspaceMutationLock::with_repo(
 			$this->workspace_path,
 			'workspace-capacity-admission',
-			fn() => WorkspaceMutationLock::with_repo(
-				$this->workspace_path,
-				$repo,
-				fn() => $this->worktree_add_with_capacity_lock(
+			fn() => $this->worktree_add_with_capacity_lock(
 					$repo,
 					$branch,
 					$from,
@@ -153,10 +162,50 @@ trait WorkspaceWorktreeLifecycle {
 					$wt_handle,
 					$wt_path,
 					$primary_path,
-					$reuse_policy
-				)
-			),
+					$reuse_policy,
+					$remediate_capacity,
+					$remediate_capacity_dry_run
+				),
 			self::worktree_capacity_wait_timeout_seconds($bootstrap)
+		);
+	}
+
+	/**
+	 * Preview capacity and bounded cleanup strictly from local, read-only state.
+	 *
+	 * In particular, this deliberately avoids remote fetches and mutation locks:
+	 * lock acquisition records durable request/lifecycle evidence, which a preview
+	 * must not create.
+	 */
+	private function worktree_capacity_dry_run( string $repo, string $branch, ?string $from, bool $inject_context, bool $bootstrap, bool $allow_stale, bool $rebase_base, bool $force, array $task, array $intent, string $reuse_policy, string $wt_handle, string $primary_path ): array|\WP_Error {
+		$exists_local = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
+		$target_ref   = $exists_local
+			? 'refs/heads/' . $branch
+			: ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) );
+		$demand_plan  = WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
+		if ( $demand_plan instanceof \WP_Error ) {
+			return $demand_plan;
+		}
+
+		$disk_budget          = $this->inspect_worktree_capacity($repo, $branch, $force, $demand_plan);
+		$capacity_remediation = 'refused' === ( $disk_budget['status'] ?? '' )
+			? $this->remediate_capacity_refusal($repo, $branch, $demand_plan, $disk_budget, true)
+			: null;
+		if ( isset($capacity_remediation['failure']) ) {
+			$failure = (array) $capacity_remediation['failure'];
+			return new \WP_Error('worktree_capacity_remediation_failed', (string) ( $failure['message'] ?? 'Bounded capacity remediation preview failed.' ), array( 'status' => 507, 'failure' => $failure, 'capacity_remediation' => $capacity_remediation ));
+		}
+
+		return array(
+			'success'              => true,
+			'dry_run'              => true,
+			'created'              => false,
+			'handle'               => $wt_handle,
+			'branch'               => $branch,
+			'disk_budget'          => $disk_budget,
+			'capacity_reclaim'     => array( 'attempted' => false, 'skip_reason' => 'remediation_dry_run' ),
+			'capacity_remediation' => $capacity_remediation ?? array( 'mode' => 'not_required', 'dry_run' => true, 'before' => $disk_budget, 'after' => $disk_budget ),
+			'add_intent'           => $this->capacity_add_intent($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $task, $intent, $reuse_policy),
 		);
 	}
 
@@ -208,13 +257,17 @@ trait WorkspaceWorktreeLifecycle {
 		string $wt_handle,
 		string $wt_path,
 		string $primary_path,
-		string $reuse_policy = 'reuse_compatible'
+		string $reuse_policy = 'reuse_compatible',
+		bool $remediate_capacity = false,
+		bool $remediate_capacity_dry_run = false
 	): array|\WP_Error {
 		$operation_deadline = microtime(true) + self::worktree_capacity_operation_timeout_seconds($bootstrap);
-		if ( is_dir($wt_path) ) {
+		if ( is_dir($wt_path) && ! $remediate_capacity_dry_run ) {
 			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path);
 		}
-		// Snapshot candidates only after this repository's admission lock is held.
+		// The workspace capacity lock serializes admission. The target repo lock is
+		// acquired only for final creation, so remediation can safely take per-repo
+		// cleanup locks without self-deadlocking.
 		$reuse_candidates = $this->worktree_reuse_candidates($repo, $task);
 		if ( array() !== $reuse_candidates && 'isolated' !== $reuse_policy ) {
 			return $this->worktree_reuse_refused(
@@ -302,8 +355,43 @@ trait WorkspaceWorktreeLifecycle {
 			return $demand_plan;
 		}
 		$disk_budget      = $this->inspect_worktree_capacity($repo, $branch, $force, $demand_plan);
-		$capacity_reclaim = $this->reclaim_capacity_eligible_artifacts($repo, $branch, $force, $demand_plan, $disk_budget);
+		$capacity_reclaim = ( $remediate_capacity || $remediate_capacity_dry_run )
+			? array( 'after' => $disk_budget, 'evidence' => array( 'attempted' => false, 'skip_reason' => $remediate_capacity_dry_run ? 'remediation_dry_run' : 'remediation_preview_then_apply' ) )
+			: $this->reclaim_capacity_eligible_artifacts($repo, $branch, $force, $demand_plan, $disk_budget);
 		$disk_budget      = $capacity_reclaim['after'];
+		$capacity_remediation = null;
+		if ( $remediate_capacity && 'refused' === ( $disk_budget['status'] ?? '' ) ) {
+			$capacity_remediation = $this->remediate_capacity_refusal($repo, $branch, $demand_plan, $disk_budget, $remediate_capacity_dry_run);
+			$capacity_remediation['artifact_reclaim'] = $capacity_reclaim['evidence'];
+			if ( isset($capacity_remediation['failure']) ) {
+				$failure = (array) $capacity_remediation['failure'];
+				return new \WP_Error(
+					'worktree_capacity_remediation_failed',
+					(string) ( $failure['message'] ?? 'Bounded capacity remediation failed before worktree creation.' ),
+					array(
+						'status'               => 507,
+						'failure'              => $failure,
+						'capacity_reclaim'     => $capacity_reclaim['evidence'],
+						'capacity_remediation' => $capacity_remediation,
+						'add_intent'           => $this->capacity_add_intent($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $task, $intent, $reuse_policy),
+					)
+				);
+			}
+			$disk_budget = $capacity_remediation['after'];
+		}
+		if ( $remediate_capacity_dry_run ) {
+			return array(
+				'success'              => true,
+				'dry_run'              => true,
+				'created'              => false,
+				'handle'               => $wt_handle,
+				'branch'               => $branch,
+				'disk_budget'          => $disk_budget,
+				'capacity_reclaim'     => $capacity_reclaim['evidence'],
+				'capacity_remediation' => $capacity_remediation ?? array( 'mode' => 'not_required', 'dry_run' => true, 'before' => $disk_budget, 'after' => $disk_budget ),
+				'add_intent'           => $this->capacity_add_intent($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $task, $intent, $reuse_policy),
+			);
+		}
 		if ( 'refused' === ( $disk_budget['status'] ?? '' ) ) {
 			$reclaim_evidence = (array) $capacity_reclaim['evidence'];
 			$recommendations  = array_map(
@@ -365,11 +453,13 @@ trait WorkspaceWorktreeLifecycle {
 					'status'           => 507,
 					'disk_budget'      => $disk_budget,
 					'capacity_reclaim' => $capacity_reclaim['evidence'],
+					'capacity_remediation' => $capacity_remediation,
+					'add_intent'       => $this->capacity_add_intent($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $task, $intent, $reuse_policy),
 				)
 			);
 		}
 
-		$response = $this->worktree_add_locked(
+		$response = WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_locked(
 				$repo,
 				$branch,
 				$from,
@@ -394,7 +484,7 @@ trait WorkspaceWorktreeLifecycle {
 					'target_ref'            => $target_ref,
 					'operation_deadline'    => $operation_deadline,
 				)
-			);
+			));
 
 		if ( is_wp_error($response) ) {
 			return $response;
@@ -413,6 +503,10 @@ trait WorkspaceWorktreeLifecycle {
 
 		$response['disk_budget']      = $disk_budget;
 		$response['capacity_reclaim'] = $capacity_reclaim['evidence'];
+		if ( is_array($capacity_remediation) ) {
+			$response['capacity_remediation'] = $capacity_remediation;
+			$response['capacity_retry']       = array( 'disposition' => 'retried_once_admitted', 'attempts' => 1 );
+		}
 		if ( array() !== $reuse_candidates ) {
 			$response['reuse_candidates'] = $reuse_candidates;
 		}
@@ -2665,8 +2759,13 @@ trait WorkspaceWorktreeLifecycle {
 				continue;
 			}
 
+			$repo         = '' !== $repo ? $repo : (string) ( $parsed['repo'] ?? '' );
 			$primary_path = '' !== $repo ? $this->get_primary_path($repo) : (string) ( $row['primary_path'] ?? '' );
-			$repair       = $this->repair_cleanup_eligible_stale_worktree_marker($row, $parsed, $gitdir, $primary_path);
+			$repair       = WorkspaceMutationLock::with_repo(
+				$this->workspace_path,
+				$repo,
+				fn() => $this->repair_cleanup_eligible_stale_worktree_marker($row, $parsed, $gitdir, $primary_path)
+			);
 			if ( $repair instanceof \WP_Error ) {
 				return $repair;
 			}
@@ -2710,8 +2809,15 @@ trait WorkspaceWorktreeLifecycle {
 	 */
 	private function repair_cleanup_eligible_stale_worktree_marker( array $row, array $parsed, string $gitdir, string $primary_path ): array|null|\WP_Error {
 		$handle   = (string) ( $row['handle'] ?? '' );
-		$repo     = (string) ( $row['repo'] ?? '' );
+		$repo     = (string) ( $row['repo'] ?? $parsed['repo'] ?? '' );
 		$path     = rtrim( (string) ( $row['path'] ?? '' ), '/');
+		$current  = $this->worktree_inventory()->get($handle);
+		if ( ! is_array($current)
+			|| $repo !== (string) ( $current['repo'] ?? '' )
+			|| $path !== rtrim((string) ( $current['path'] ?? '' ), '/') ) {
+			return null;
+		}
+		$row      = $current;
 		$metadata = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
 		if ( empty($metadata) && ! empty($row['lifecycle_state']) ) {
 			$metadata['lifecycle_state'] = (string) $row['lifecycle_state'];
@@ -2734,6 +2840,11 @@ trait WorkspaceWorktreeLifecycle {
 		if ( empty($validation['valid']) || false === $expected_real || (string) ( $validation['real_path'] ?? '' ) !== $expected_real ) {
 			return null;
 		}
+		$current_marker = $path . '/.git';
+		$current_contents = is_file($current_marker) ? file_get_contents($current_marker) : false;
+		if ( false === $current_contents || ! str_contains($current_contents, $gitdir) || file_exists($gitdir) ) {
+			return null;
+		}
 
 		$removed_paths = $this->remove_contained_directory_recursive($path, $this->workspace_path, $this->workspace_path);
 		if ( $removed_paths instanceof \WP_Error ) {
@@ -2743,11 +2854,7 @@ trait WorkspaceWorktreeLifecycle {
 		WorktreeContextInjector::forget_metadata($handle);
 		$this->worktree_inventory()->delete($handle);
 		if ( '' !== $primary_path && GitCheckout::exists($primary_path) ) {
-			WorkspaceMutationLock::with_repo(
-				$this->workspace_path,
-				$repo,
-				fn() => $this->run_git($primary_path, 'worktree prune')
-			);
+			$this->run_git($primary_path, 'worktree prune');
 		}
 
 		return array(
@@ -2775,6 +2882,136 @@ trait WorkspaceWorktreeLifecycle {
 			$force,
 			array( 'include_workspace_usage' => true ),
 			$demand_plan
+		);
+	}
+
+	/**
+	 * Run one bounded, already-classified remediation pass while the caller owns
+	 * the workspace capacity lock. This never broadens cleanup policy or retries
+	 * creation recursively: the caller continues its original immutable request.
+	 *
+	 * @param array<string,mixed> $demand_plan
+	 * @param array<string,mixed> $before
+	 * @return array<string,mixed>
+	 */
+	protected function remediate_capacity_refusal( string $repo, string $branch, array $demand_plan, array $before, bool $dry_run ): array {
+		if ( ! class_exists(WorkspaceCleanupEligibleDrainOrchestrator::class) ) {
+			require_once __DIR__ . '/WorkspaceCleanupEligibleDrainOrchestrator.php';
+		}
+
+		$artifact_preview = $this->worktree_cleanup_artifacts(
+			array(
+				'dry_run'       => true,
+				'limit'         => 25,
+				'safety_probes' => true,
+			)
+		);
+		if ( $artifact_preview instanceof \WP_Error ) {
+			return $this->capacity_remediation_failure($before, $dry_run, 'artifact_preview', $artifact_preview);
+		}
+
+		$artifact_apply = null;
+		if ( ! $dry_run ) {
+			$repos = array_values(array_unique(array_filter(array_map(
+				static fn( $candidate ): string => is_array($candidate) ? (string) ( $candidate['repo'] ?? '' ) : '',
+				(array) ( $artifact_preview['candidates'] ?? array() )
+			))));
+			$artifact_apply = WorkspaceMutationLock::with_repos(
+				$this->workspace_path,
+				$repos,
+				fn() => $this->worktree_cleanup_artifacts(
+					array(
+						'apply_plan'    => array( 'candidates' => (array) ( $artifact_preview['candidates'] ?? array() ) ),
+						'limit'         => 25,
+						'safety_probes' => true,
+					)
+				)
+			);
+			if ( $artifact_apply instanceof \WP_Error ) {
+				return $this->capacity_remediation_failure($before, $dry_run, 'artifact_apply', $artifact_apply, $artifact_preview);
+			}
+		}
+
+		$drain_preview = ( new WorkspaceCleanupEligibleDrainOrchestrator() )->run(
+			array(
+				'apply'        => false,
+				'limit'        => 25,
+				'passes'       => 1,
+				'until_budget' => '30s',
+				'source'       => 'worktree_capacity_admission_remediation',
+			)
+		);
+		if ( $drain_preview instanceof \WP_Error ) {
+			return $this->capacity_remediation_failure($before, $dry_run, 'cleanup_drain', $drain_preview, $artifact_preview, $artifact_apply);
+		}
+		$drain = $drain_preview;
+		if ( ! $dry_run ) {
+			$drain = ( new WorkspaceCleanupEligibleDrainOrchestrator() )->run(
+				array(
+					'apply'        => true,
+					'limit'        => 25,
+					'passes'       => 1,
+					'until_budget' => '30s',
+					'source'       => 'worktree_capacity_admission_remediation',
+					'apply_plan'   => (array) ( $drain_preview['apply_plan'] ?? array() ),
+				)
+			);
+			if ( $drain instanceof \WP_Error ) {
+				return $this->capacity_remediation_failure($before, false, 'cleanup_drain', $drain, $artifact_preview, $artifact_apply);
+			}
+		}
+
+		$after = $dry_run ? $before : $this->inspect_worktree_capacity($repo, $branch, false, $demand_plan);
+		return array(
+			'mode'            => 'bounded_safe_remediation',
+			'dry_run'         => $dry_run,
+			'before'          => $before,
+			'after'           => $after,
+			'artifact_preview' => $artifact_preview,
+			'artifact_apply'   => $artifact_apply,
+			'cleanup_drain'   => $drain,
+			'reclaimed_bytes' => (int) ( $drain['summary']['bytes_reclaimed'] ?? 0 ),
+			'reclaimed_inodes' => max(0, (int) ( $after['free_inodes'] ?? 0 ) - (int) ( $before['free_inodes'] ?? 0 )),
+			'retry_disposition' => $dry_run
+				? 'dry_run_no_retry'
+				: ( 'refused' === ( $after['status'] ?? '' ) ? 'insufficient_safe_reclaim' : 'retry_once' ),
+		);
+	}
+
+	/** @return array<string,mixed> */
+	private function capacity_remediation_failure( array $before, bool $dry_run, string $stage, \WP_Error $error, ?array $artifact_preview = null, ?array $artifact_apply = null ): array {
+		$error_data = $error->get_error_data();
+		return array(
+			'mode'             => 'bounded_safe_remediation',
+			'dry_run'          => $dry_run,
+			'before'           => $before,
+			'after'            => $before,
+			'artifact_preview' => $artifact_preview,
+			'artifact_apply'   => $artifact_apply,
+			'cleanup_drain'    => is_array($error_data) && is_array($error_data['cleanup_drain'] ?? null) ? $error_data['cleanup_drain'] : null,
+			'failure'          => array(
+				'stage'   => $stage,
+				'code'    => $error->get_error_code(),
+				'message' => $error->get_error_message(),
+				'data'    => $error_data,
+			),
+			'retry_disposition' => 'no_retry_remediation_failed',
+		);
+	}
+
+	/** @return array<string,mixed> */
+	private function capacity_add_intent( string $repo, string $branch, ?string $from, bool $inject_context, bool $bootstrap, bool $allow_stale, bool $rebase_base, array $task, array $intent, string $reuse_policy ): array {
+		return array(
+			'repo'           => $repo,
+			'branch'         => $branch,
+			'from'           => $from,
+			'inject_context' => $inject_context,
+			'bootstrap'      => $bootstrap,
+			'allow_stale'    => $allow_stale,
+			'rebase_base'    => $rebase_base,
+			'task'           => $task,
+			'intent'         => $intent,
+			'reuse_policy'   => $reuse_policy,
 		);
 	}
 
@@ -2818,6 +3055,7 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		$evidence['state']           = (string) ( $reclaim['state'] ?? 'unknown' );
+		$evidence['run_ids']         = array_values(array_filter(array_map(static fn( $pass ): string => is_array($pass) ? (string) ( $pass['run_id'] ?? '' ) : '', (array) ( $reclaim['passes'] ?? array() ))));
 		$evidence['applied']         = (int) ( $reclaim['applied'] ?? 0 );
 		$evidence['reclaimed_bytes'] = (int) ( $reclaim['bytes_reclaimed'] ?? 0 );
 		$evidence['skipped']         = $this->capacity_reclaim_skipped_categories($reclaim);

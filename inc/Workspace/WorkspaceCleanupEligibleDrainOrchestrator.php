@@ -49,6 +49,7 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 		$limit                     = isset($input['limit']) ? max(1, min(200, (int) $input['limit'])) : 25;
 		$passes                    = isset($input['passes']) ? max(1, min(100, (int) $input['passes'])) : 10;
 		$source                    = isset($input['source']) && '' !== trim( (string) $input['source']) ? trim( (string) $input['source']) : self::DEFAULT_SOURCE;
+		$apply_plan                = isset($input['apply_plan']) && is_array($input['apply_plan']) ? $input['apply_plan'] : null;
 		$deadline                  = null;
 		$started_at                = $this->now();
 
@@ -95,7 +96,7 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 			),
 		);
 
-		$effective_passes = $apply ? $passes : 1;
+		$effective_passes = $apply && null === $apply_plan ? $passes : 1;
 		$workspace_path   = '';
 		$stop_reason      = 'pass_limit';
 
@@ -117,10 +118,21 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 					$pass_input[ $key ] = $input[ $key ];
 				}
 			}
+			if ( null !== $apply_plan ) {
+				$pass_input['apply_plan'] = $apply_plan;
+			}
 
 			$pass_result = $ability->execute($pass_input);
 			if ( is_wp_error($pass_result) ) {
-				return $pass_result;
+				return new \WP_Error(
+					$pass_result->get_error_code(),
+					$pass_result->get_error_message(),
+					array(
+						'cleanup_drain' => $result,
+						'failed_pass'   => $pass,
+						'cause_data'    => $pass_result->get_error_data(),
+					)
+				);
 			}
 			if ( ! is_array($pass_result) ) {
 				return new \WP_Error('cleanup_eligible_drain_invalid_result', 'Bounded cleanup-eligible apply returned an invalid result.', array( 'status' => 500 ));
@@ -143,10 +155,19 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 				'elapsed_ms'        => (int) ( $evidence['elapsed_ms'] ?? 0 ),
 				'removed_handles'   => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', (array) ( $pass_result['removed'] ?? array() )))),
 				'candidate_handles' => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', (array) ( $pass_result['candidates'] ?? array() )))),
+				'candidate_rows'    => array_values(array_filter((array) ( $pass_result['candidates'] ?? array() ), 'is_array')),
+				'removed_rows'      => array_values(array_filter((array) ( $pass_result['removed'] ?? array() ), 'is_array')),
+				'skipped_rows'      => array_values(array_filter((array) ( $pass_result['skipped'] ?? array() ), 'is_array')),
 				'skipped_by_reason' => $this->summarize_skipped( (array) ( $pass_result['skipped'] ?? array() ) ),
 			);
 
 			$result['pass_results'][] = $pass_summary;
+			if ( ! $apply && 1 === $pass ) {
+				$result['apply_plan'] = array(
+					'plan_id'    => hash('sha256', serialize($pass_summary['candidate_rows'])),
+					'candidates' => $pass_summary['candidate_rows'],
+				);
+			}
 			++$result['summary']['passes'];
 			$result['summary']['processed']       += $pass_summary['processed'];
 			$result['summary']['planned']         += $pass_summary['planned'];

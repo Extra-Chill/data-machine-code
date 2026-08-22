@@ -1452,6 +1452,14 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Explicitly bypass the disk-budget refusal threshold. The disk-budget report still appears in output so the override is visible.',
 							),
+							'remediate_capacity'         => array(
+								'type'        => 'boolean',
+								'description' => 'After a refused capacity admission, run bounded artifact and cleanup-eligible remediation under the capacity lock, remeasure, and retry this exact add once only if the safety floor is met. Separate from force.',
+							),
+							'remediate_capacity_dry_run' => array(
+								'type'        => 'boolean',
+								'description' => 'Preview bounded capacity remediation without deleting artifacts, removing worktrees, or creating the requested worktree. Requires remediate_capacity=true.',
+							),
 							'task_url'                   => array(
 								'type'        => 'string',
 								'description' => 'Optional task/issue URL (e.g. GitHub issue link) to record on the worktree for ownership/duplicate detection. Falls back to DATAMACHINE_TASK_URL env when omitted.',
@@ -2143,6 +2151,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'If true, return the plan without removing anything.',
 							),
+							'apply_plan'                => array(
+								'type'        => 'object',
+								'description' => 'Decoded cleanup dry-run report to apply after revalidating every candidate.',
+							),
 							'force'                     => array(
 								'type'        => 'boolean',
 								'description' => 'If true, ignore dirty working-tree safety check.',
@@ -2800,6 +2812,10 @@ class WorkspaceAbilities {
 							'dry_run'                   => array(
 								'type'        => 'boolean',
 								'description' => 'Preview the bounded batch without removing anything.',
+							),
+							'apply_plan'                => array(
+								'type'        => 'object',
+								'description' => 'Exact bounded cleanup review plan containing its plan_id and candidates. Revalidates each reviewed candidate without discovering new inventory rows.',
 							),
 							'limit'                     => array(
 								'type'        => 'integer',
@@ -4155,6 +4171,8 @@ class WorkspaceAbilities {
 		// Default rebase_base=false; only true when explicitly requested.
 		$rebase_base          = array_key_exists('rebase_base', $input) ? (bool) $input['rebase_base'] : false;
 		$force                = ! empty($input['force']);
+		$remediate_capacity   = ! empty($input['remediate_capacity']);
+		$remediate_capacity_dry_run = ! empty($input['remediate_capacity_dry_run']);
 		$require_task_tracker = array_key_exists('require_task_tracker', $input) ? (bool) $input['require_task_tracker'] : true;
 		$task                 = array();
 		$intent               = array();
@@ -4190,11 +4208,20 @@ class WorkspaceAbilities {
 				$allow_unverified_freshness,
 				$require_task_tracker,
 				$intent,
-				$reuse_policy
+				$reuse_policy,
+				$remediate_capacity,
+				$remediate_capacity_dry_run
 			);
 		}
 
 		if ( RemoteWorkspaceBackend::should_handle() ) {
+			if ( $remediate_capacity || $remediate_capacity_dry_run ) {
+				return new \WP_Error(
+					'remote_worktree_capacity_remediation_unsupported',
+					'Capacity remediation requires a local workspace because remote workspace allocation has no filesystem capacity or cleanup lifecycle.',
+					array( 'status' => 400, 'remediate_capacity' => $remediate_capacity, 'remediate_capacity_dry_run' => $remediate_capacity_dry_run )
+				);
+			}
 			$result = ( new RemoteWorkspaceBackend() )->worktree_add(
 				$input['repo'] ?? '',
 				$input['branch'] ?? '',
@@ -4221,7 +4248,9 @@ class WorkspaceAbilities {
 			$allow_unverified_freshness,
 			$require_task_tracker,
 			$intent,
-			$reuse_policy
+			$reuse_policy,
+			$remediate_capacity,
+			$remediate_capacity_dry_run
 		);
 	}
 
@@ -4928,7 +4957,7 @@ class WorkspaceAbilities {
 	/**
 	 * Apply only worktrees with explicit lifecycle cleanup_eligible metadata in a bounded batch.
 	 *
-	 * @param  array $input Input parameters (repo, dry_run, limit, older_than, sort, force, discard_unpushed, via_jobs, remove_timeout, source).
+	 * @param  array $input Input parameters (repo, dry_run, apply_plan, limit, older_than, sort, force, discard_unpushed, via_jobs, remove_timeout, source).
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function worktreeBoundedCleanupEligibleApply( array $input ): array|\WP_Error {
@@ -4942,6 +4971,9 @@ class WorkspaceAbilities {
 		);
 		if ( isset($input['limit']) ) {
 			$opts['limit'] = (int) $input['limit'];
+		}
+		if ( isset($input['apply_plan']) && is_array($input['apply_plan']) ) {
+			$opts['apply_plan'] = $input['apply_plan'];
 		}
 		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
 			$opts['repo'] = trim( (string) $input['repo']);

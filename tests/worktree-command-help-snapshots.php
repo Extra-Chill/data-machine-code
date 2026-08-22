@@ -46,7 +46,7 @@ namespace {
 
 	$add = $definitions['add'];
 	worktree_help_assert('Create an isolated, managed worktree.' === $add['shortdesc'], 'Add help snapshot changed.');
-	worktree_help_assert(array_column($add['synopsis'], 'name') === array( 'repo', 'branch', 'from', 'base', 'base-ref', 'base-branch', 'skip-context-injection', 'skip-bootstrap', 'allow-stale', 'allow-unverified-freshness', 'rebase-base', 'force', 'task-url', 'task-ref', 'require-task-tracker', 'reuse-policy', 'purpose', 'owner-run-ref', 'cleanup-policy', 'format' ), 'Add help option snapshot changed.');
+	worktree_help_assert(array_column($add['synopsis'], 'name') === array( 'repo', 'branch', 'from', 'base', 'base-ref', 'base-branch', 'skip-context-injection', 'skip-bootstrap', 'allow-stale', 'allow-unverified-freshness', 'rebase-base', 'force', 'remediate-capacity', 'remediate-capacity-dry-run', 'task-url', 'task-ref', 'require-task-tracker', 'reuse-policy', 'purpose', 'owner-run-ref', 'cleanup-policy', 'format' ), 'Add help option snapshot changed.');
 	worktree_help_assert(str_contains($add['longdesc'], 'worktree add data-machine-code fix/1025'), 'Add help lacks a creation example.');
 
 	$remove = $definitions['remove'];
