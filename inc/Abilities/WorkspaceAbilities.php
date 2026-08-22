@@ -50,11 +50,13 @@ class WorkspaceAbilities {
 
 
 	private static bool $registered = false;
+	private static bool $scheduled  = false;
 
 	public function __construct() {
-		if ( self::$registered ) {
+		if ( self::$registered || self::$scheduled ) {
 			return;
 		}
+		self::$scheduled = true;
 
 		AbilityRegistry::when_ready(
 			function (): void {
