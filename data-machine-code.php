@@ -123,6 +123,10 @@ function datamachine_code_is_targeted_workspace_read_cli_request( ?array $argv =
 // PSR-4 Autoloading.
 require_once __DIR__ . '/vendor/autoload.php';
 
+// Every DMC ability references a DMC-owned category. Attach this lightweight
+// declaration before either lazy Core registry can initialize.
+add_action('wp_abilities_api_categories_init', 'datamachine_code_register_ability_categories');
+
 // Data Machine may initialize Core's lazy Abilities registry during its own
 // plugins_loaded callback. Schedule the bounded workspace CLI surface before
 // that shared lifecycle can fire; targeted reads do not use Abilities.
@@ -248,8 +252,6 @@ function datamachine_code_bootstrap() {
 	\DataMachineCode\Runtime\MountedRuntimeBootstrap::register();
 	datamachine_code_register_datamachine_integrations();
 
-	// Register ability categories on the correct hook (must happen during wp_abilities_api_categories_init).
-	add_action('wp_abilities_api_categories_init', 'datamachine_code_register_ability_categories');
 }
 add_action('plugins_loaded', 'datamachine_code_bootstrap', 20);
 add_action(
