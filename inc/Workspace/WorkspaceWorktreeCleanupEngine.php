@@ -2835,7 +2835,8 @@ trait WorkspaceWorktreeCleanupEngine {
 		$last_touched_at = $this->detect_worktree_last_touched_at($path, $metadata, $created_at);
 		$age_days        = $this->calculate_age_days($created_at);
 		$artifacts       = $is_worktree ? $this->detect_worktree_artifacts($repo, $path) : array();
-		$artifact_bytes  = array_sum(array_map(fn( $artifact ) => (int) ( $artifact['size_bytes'] ?? 0 ), $artifacts));
+		$artifact_bytes  = array_sum(array_map(fn( $artifact ) => (int) ( $artifact['allocated_bytes'] ?? $artifact['size_bytes'] ?? 0 ), $artifacts));
+		$artifact_apparent_bytes = array_sum(array_map(fn( $artifact ) => (int) ( $artifact['apparent_bytes'] ?? 0 ), $artifacts));
 
 		return array(
 			'size_bytes'           => $size_bytes,
@@ -2843,6 +2844,8 @@ trait WorkspaceWorktreeCleanupEngine {
 			'last_touched_at'      => $last_touched_at,
 			'age_days'             => $age_days,
 			'artifacts'            => $artifacts,
+			'artifact_apparent_bytes' => $artifact_apparent_bytes,
+			'artifact_allocated_bytes' => $artifact_bytes,
 			'artifact_size_bytes'  => $artifact_bytes,
 		);
 	}
@@ -2872,14 +2875,45 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @return int|null Size in bytes, or null when unavailable.
 	 */
 	private function estimate_path_size_bytes( string $path ): ?int {
-		if ( '' === $path || ( ! file_exists($path) && ! is_link($path) ) ) {
-			return null;
-		}
+		$measurement = $this->measure_path_bytes($path);
+		return $measurement['allocated_bytes'];
+	}
 
+	/**
+	 * Measure logical and allocated directory bytes through bounded native `du`.
+	 * Directory totals cannot prove exclusive reclamation with clones or hardlinks
+	 * without an unbounded filesystem-wide scan.
+	 *
+	 * @return array{apparent_bytes:?int,allocated_bytes:?int,allocation_accounting:string,reclaimable_bytes:?int}
+	 */
+	private function measure_path_bytes( string $path ): array {
+		if ( '' === $path || ( ! file_exists($path) && ! is_link($path) ) ) {
+			return array( 'apparent_bytes' => null, 'allocated_bytes' => null, 'allocation_accounting' => 'unknown', 'reclaimable_bytes' => null );
+		}
+		$allocated = $this->du_path_bytes($path, false);
+		$apparent  = $this->du_path_bytes($path, true);
+		return array(
+			'apparent_bytes'        => $apparent,
+			'allocated_bytes'       => $allocated,
+			'allocation_accounting' => null === $allocated ? 'unknown' : 'clone_or_hardlink_sensitive',
+			'reclaimable_bytes'     => null,
+		);
+	}
+
+	private function du_path_bytes( string $path, bool $apparent ): ?int {
 		$output = array();
 		$code   = 1;
-     // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		exec(sprintf('du -sk %s 2>/dev/null', escapeshellarg($path)), $output, $code);
+		if ( $apparent && 'Darwin' === PHP_OS_FAMILY ) {
+			$command = sprintf('du -A -sk %s 2>/dev/null', escapeshellarg($path));
+		} elseif ( $apparent && 'Linux' === PHP_OS_FAMILY ) {
+			$command = sprintf('du --apparent-size -sk %s 2>/dev/null', escapeshellarg($path));
+		} elseif ( $apparent ) {
+			return null;
+		} else {
+			$command = sprintf('du -sk %s 2>/dev/null', escapeshellarg($path));
+		}
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
+		exec($command, $output, $code);
 		if ( 0 !== $code || empty($output[0]) ) {
 			return null;
 		}
@@ -2924,15 +2958,20 @@ trait WorkspaceWorktreeCleanupEngine {
 				continue;
 			}
 
-			$size   = $this->estimate_path_size_bytes($artifact_path);
+			$measurement = $this->measure_path_bytes($artifact_path);
 			$rows[] = array(
-				'path'       => $relative,
-				'label'      => (string) $label,
-				'size_bytes' => $size,
+				'path'                  => $relative,
+				'label'                 => (string) $label,
+				'apparent_bytes'        => $measurement['apparent_bytes'],
+				'allocated_bytes'       => $measurement['allocated_bytes'],
+				'allocation_accounting' => $measurement['allocation_accounting'],
+				'reclaimable_bytes'     => $measurement['reclaimable_bytes'],
+				// Compatibility alias. New consumers must use allocated_bytes.
+				'size_bytes'            => $measurement['allocated_bytes'],
 			);
 		}
 
-		usort($rows, fn( $a, $b ) => (int) ( $b['size_bytes'] ?? 0 ) <=> (int) ( $a['size_bytes'] ?? 0 ));
+		usort($rows, fn( $a, $b ) => (int) ( $b['allocated_bytes'] ?? 0 ) <=> (int) ( $a['allocated_bytes'] ?? 0 ));
 		return $rows;
 	}
 

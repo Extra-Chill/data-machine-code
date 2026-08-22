@@ -50,6 +50,13 @@ try {
 	file_put_contents($copy . '/inc/payload.php', 'changed');
 	$diverged = RuntimeSourceDoctor::inspect($copy . '/data-machine-code.php', '1.2.0', array( 'source_path' => $source ));
 	runtime_doctor_assert('runtime_source_drift' === $diverged['drift']['classification'], 'Copied deployment divergence was not detected.');
+	for ( $index = 0; $index < 500; ++$index ) {
+		file_put_contents($source . '/inc/unused-' . $index . '.php', 'unused');
+	}
+	$started = microtime(true);
+	$predates = RuntimeSourceDoctor::inspect($copy . '/data-machine-code.php', '1.1.0', array( 'source_path' => $source ));
+	runtime_doctor_assert('runtime_predates_source' === $predates['drift']['classification'], 'Older runtime version was not classified without an unbounded fingerprint walk.');
+	runtime_doctor_assert(microtime(true) - $started < 1.0, 'Older runtime diagnostic scanned the authoritative source tree.');
 
 	// Git mode only requires a checkout marker for deployment detection; no repository mutation occurs.
 	mkdir($other . '/.git');

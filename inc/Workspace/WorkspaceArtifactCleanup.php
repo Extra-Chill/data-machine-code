@@ -159,7 +159,7 @@ trait WorkspaceArtifactCleanup {
 
 		if ( $rank_by_size ) {
 			usort($candidates, function ( $a, $b ): int {
-				$size = (int) ( $b['artifact_size_bytes'] ?? 0 ) <=> (int) ( $a['artifact_size_bytes'] ?? 0 );
+				$size = (int) ( $b['artifact_allocated_bytes'] ?? $b['artifact_size_bytes'] ?? 0 ) <=> (int) ( $a['artifact_allocated_bytes'] ?? $a['artifact_size_bytes'] ?? 0 );
 				return 0 !== $size ? $size : strcmp( (string) ( $a['handle'] ?? '' ), (string) ( $b['handle'] ?? '' ));
 			});
 			$total_ranked = count($candidates);
@@ -223,6 +223,7 @@ trait WorkspaceArtifactCleanup {
 			return $response;
 		}
 
+		$capacity_before = $this->artifact_capacity_snapshot();
 		$removed = array();
 		$partial = array();
 		foreach ( $candidates as $candidate ) {
@@ -287,8 +288,9 @@ trait WorkspaceArtifactCleanup {
 
 		$removed       = $this->observe_artifact_reclamation_rows($removed);
 		$partial       = $this->observe_artifact_reclamation_rows($partial);
-		$apply_summary = $this->build_worktree_artifact_cleanup_summary($candidates, $removed, $skipped, $partial);
-		$apply_summary['scope'] = $scope;
+		$apply_summary                      = $this->build_worktree_artifact_cleanup_summary($candidates, $removed, $skipped, $partial);
+		$apply_summary['capacity_evidence'] = $this->artifact_capacity_evidence($capacity_before, $this->artifact_capacity_snapshot(), (int) ( $apply_summary['predicted_allocated_reclaim_bytes'] ?? 0 ));
+		$apply_summary['scope']             = $scope;
 		if ( null !== $pagination ) {
 			$apply_summary['pagination'] = $pagination;
 		}
@@ -633,7 +635,9 @@ trait WorkspaceArtifactCleanup {
 				$base_row, array(
 					'artifacts'           => $artifacts,
 					'artifact_count'      => count($artifacts),
-					'artifact_size_bytes' => array_sum(array_map(fn( $artifact ) => (int) ( $artifact['size_bytes'] ?? 0 ), $artifacts)),
+					'artifact_apparent_bytes' => array_sum(array_map(fn( $artifact ) => (int) ( $artifact['apparent_bytes'] ?? 0 ), $artifacts)),
+					'artifact_allocated_bytes' => array_sum(array_map(fn( $artifact ) => (int) ( $artifact['allocated_bytes'] ?? $artifact['size_bytes'] ?? 0 ), $artifacts)),
+					'artifact_size_bytes' => array_sum(array_map(fn( $artifact ) => (int) ( $artifact['allocated_bytes'] ?? $artifact['size_bytes'] ?? 0 ), $artifacts)),
 					'reason_code'         => 'profile_artifacts',
 					'reason'              => 'profile-derived reconstructable artifacts can be removed',
 				)
@@ -1199,7 +1203,7 @@ trait WorkspaceArtifactCleanup {
 		foreach ( $candidates as $row ) {
 			$repo = (string) ( $row['repo'] ?? 'unknown' );
 			foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
-				$bytes        = (int) ( is_array($artifact) ? ( $artifact['size_bytes'] ?? 0 ) : 0 );
+				$bytes        = (int) ( is_array($artifact) ? ( $artifact['allocated_bytes'] ?? $artifact['size_bytes'] ?? 0 ) : 0 );
 				$would_bytes += max(0, $bytes);
 				++$would_count;
 				$artifact_by_repo[ $repo ] = ( $artifact_by_repo[ $repo ] ?? 0 ) + max(0, $bytes);
@@ -1228,10 +1232,31 @@ trait WorkspaceArtifactCleanup {
 			'skipped_by_reason'           => $skipped_by_reason,
 			'artifact_count'              => 0 === $removed_count ? $would_count : $removed_count,
 			'artifact_size_bytes'         => 0 === $removed_count ? $would_bytes : $removed_bytes,
+			'artifact_byte_semantics'     => 'allocated_bytes; clone_or_hardlink_sensitive estimates are not guaranteed reclaimable capacity',
+			'predicted_allocated_reclaim_bytes' => 0 === $removed_count ? $would_bytes : $removed_bytes,
 			'removed_size_bytes'          => $removed_bytes,
 			'durable_reclaimed_bytes'     => $durable_bytes,
 			'rebuilt_artifact_bytes'      => $rebuilt_bytes,
 			'artifact_size_by_repo'       => $artifact_by_repo,
+		);
+	}
+
+	/** @return array{filesystem_free_bytes:?int} */
+	protected function artifact_capacity_snapshot(): array {
+		$free = '' !== (string) $this->workspace_path ? @disk_free_space($this->workspace_path) : false; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Capacity telemetry is best effort.
+		return array( 'filesystem_free_bytes' => false === $free ? null : (int) $free );
+	}
+
+	/** @return array<string,mixed> */
+	private function artifact_capacity_evidence( array $before, array $after, int $predicted_allocated_reclaim_bytes ): array {
+		$before_free = is_numeric($before['filesystem_free_bytes'] ?? null) ? (int) $before['filesystem_free_bytes'] : null;
+		$after_free  = is_numeric($after['filesystem_free_bytes'] ?? null) ? (int) $after['filesystem_free_bytes'] : null;
+		return array(
+			'before' => $before,
+			'after' => $after,
+			'predicted_allocated_reclaim_bytes' => max(0, $predicted_allocated_reclaim_bytes),
+			'observed_reclaimed_bytes' => null === $before_free || null === $after_free ? null : max(0, $after_free - $before_free),
+			'observation_basis' => 'filesystem_free_bytes_before_after',
 		);
 	}
 

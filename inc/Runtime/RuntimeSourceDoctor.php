@@ -16,10 +16,19 @@ final class RuntimeSourceDoctor {
 		$runtime_path = dirname($runtime_file);
 		$source_path  = trim((string) ($config['source_path'] ?? ''));
 		$release_ref  = trim((string) ($config['release_ref'] ?? 'release-latest'));
-		$runtime       = self::identity($runtime_path, $runtime_version);
-		$source        = self::sourceIdentity($source_path);
+		$runtime       = self::identity($runtime_path, $runtime_version, false);
+		$source        = self::sourceIdentity($source_path, false);
 		$release       = self::releaseIdentity($source_path, $release_ref);
 		$contract      = self::contract($source_path, (array) ($config['command_contract'] ?? array()));
+		$drift         = self::classify($runtime, $source, $contract);
+
+		// File fingerprints are a fallback for copied deployments. Avoid walking
+		// large plugin trees when version or Git evidence already identifies drift.
+		if ( 'runtime_source_drift' === $drift['classification'] ) {
+			$runtime['fingerprint'] = self::fingerprint($runtime_path);
+			$source['fingerprint']  = ! empty($source['available']) ? self::fingerprint($source_path) : '';
+			$drift = self::classify($runtime, $source, $contract);
+		}
 
 		return array(
 			'success'                => true,
@@ -28,7 +37,7 @@ final class RuntimeSourceDoctor {
 			'authoritative_source'   => $source,
 			'release_deploy_source'  => $release,
 			'command_contract'       => $contract,
-			'drift'                  => self::classify($runtime, $source, $contract),
+			'drift'                  => $drift,
 			'reconciliation_command' => 'studio wp datamachine-code runtime doctor --apply',
 			'apply_safety'           => 'The default command is read-only. --apply requires a configured source_path and synchronizes only the active plugin directory.',
 		);
@@ -70,6 +79,12 @@ final class RuntimeSourceDoctor {
 		if ( empty($source['available']) ) {
 			return array( 'classification' => 'source_unavailable', 'reason' => (string) ($source['reason'] ?? 'authoritative source is unavailable') );
 		}
+		if ( self::isVersion($runtime['version'] ?? '') && self::isVersion($source['version'] ?? '') ) {
+			$comparison = version_compare((string) $runtime['version'], (string) $source['version']);
+			if ( $comparison < 0 ) {
+				return array( 'classification' => 'runtime_predates_source', 'reason' => 'The installed runtime version predates the authoritative source version.' );
+			}
+		}
 		if ( ($runtime['head'] ?? '') !== '' && ($runtime['head'] ?? '') === ($source['head'] ?? '') ) {
 			return array( 'classification' => 'aligned', 'reason' => 'Runtime and authoritative source resolve to the same Git head.' );
 		}
@@ -86,7 +101,7 @@ final class RuntimeSourceDoctor {
 	}
 
 	/** @return array<string,mixed> */
-	private static function identity( string $path, string $version ): array {
+	private static function identity( string $path, string $version, bool $include_fingerprint = true ): array {
 		$path = rtrim($path, '/');
 		if ( ! is_dir($path) && ! is_link($path) ) {
 			return array( 'available' => false, 'path' => $path, 'reason' => 'path_missing' );
@@ -98,18 +113,18 @@ final class RuntimeSourceDoctor {
 		if ( '' === $version ) {
 			$version = self::pluginVersion($real);
 		}
-		return array( 'available' => true, 'path' => $path, 'real_path' => $real, 'deployment' => $deployment, 'version' => $version, 'branch' => $branch, 'head' => $head, 'fingerprint' => self::fingerprint($real) );
+		return array( 'available' => true, 'path' => $path, 'real_path' => $real, 'deployment' => $deployment, 'version' => $version, 'branch' => $branch, 'head' => $head, 'fingerprint' => $include_fingerprint ? self::fingerprint($real) : '' );
 	}
 
 	/** @return array<string,mixed> */
-	private static function sourceIdentity( string $path ): array {
+	private static function sourceIdentity( string $path, bool $include_fingerprint = true ): array {
 		if ( '' === $path ) {
 			return array( 'available' => false, 'reason' => 'source_path_not_configured' );
 		}
 		if ( ! self::isSource($path) ) {
 			return array( 'available' => false, 'path' => $path, 'reason' => 'source_entrypoint_missing' );
 		}
-		return self::identity($path, '');
+		return self::identity($path, '', $include_fingerprint);
 	}
 
 	private static function isSource( string $path ): bool {
@@ -145,6 +160,10 @@ final class RuntimeSourceDoctor {
 
 	private static function versionFromBody( string $body ): string {
 		return preg_match('/^\s*\*\s*Version:\s*(.+)$/mi', $body, $matches) ? trim($matches[1]) : '';
+	}
+
+	private static function isVersion( mixed $version ): bool {
+		return is_string($version) && 1 === preg_match('/^\d+(?:\.\d+){1,3}(?:-[0-9A-Za-z.-]+)?$/', $version);
 	}
 
 	private static function fingerprint( string $path ): string {

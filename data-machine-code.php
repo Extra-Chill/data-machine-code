@@ -3,7 +3,7 @@
  * Plugin Name: Data Machine Code
  * Plugin URI: https://github.com/Extra-Chill/data-machine-code
  * Description: Provides the workspace, git, and GitHub coding tools a coding agent uses to make tracked, reviewable changes — whether the agent runtime runs on the host or inside a Codebox sandbox. Owns AGENTS.md and the workspace area. Activation is the declarative "a coding agent lives here" signal.
- * Version: 0.59.3
+ * Version: 0.59.5
  * Requires at least: 6.9
  * Requires PHP: 8.2
  * Author: Chris Huber, extrachill
@@ -17,7 +17,7 @@ if ( ! defined('WPINC') ) {
 	die;
 }
 
-define( 'DATAMACHINE_CODE_VERSION', '0.59.3' );
+define( 'DATAMACHINE_CODE_VERSION', '0.59.5' );
 define( 'DATAMACHINE_CODE_PATH', plugin_dir_path( __FILE__ ) );
 define( 'DATAMACHINE_CODE_URL', plugin_dir_url( __FILE__ ) );
 
@@ -48,6 +48,24 @@ function datamachine_code_is_side_effect_free_cli_request( ?array $argv = null )
 	$help_index = array_search('help', $tokens, true);
 	$dmc_index  = array_search('datamachine-code', $tokens, true);
 	return false !== $help_index && false !== $dmc_index && $help_index < $dmc_index;
+}
+
+/**
+ * End a metadata-only CLI request without running unrelated shutdown work.
+ *
+ * WP-CLI renders nested help before WordPress fires `shutdown`. At that point
+ * this request has deliberately skipped DMC runtime initialization, so queue
+ * dispatchers, transports, and other plugin shutdown callbacks cannot produce
+ * part of its response. Removing their callbacks keeps the metadata contract
+ * bounded without changing the lifecycle of executable commands.
+ */
+function datamachine_code_finish_side_effect_free_cli_request(): void {
+	if ( datamachine_code_is_side_effect_free_cli_request() && function_exists('remove_all_actions') ) {
+		remove_all_actions('shutdown');
+	}
+}
+if ( datamachine_code_is_side_effect_free_cli_request() ) {
+	add_action('shutdown', 'datamachine_code_finish_side_effect_free_cli_request', PHP_INT_MIN);
 }
 
 /**
