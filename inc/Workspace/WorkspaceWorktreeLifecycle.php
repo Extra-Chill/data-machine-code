@@ -1597,9 +1597,19 @@ trait WorkspaceWorktreeLifecycle {
 
 	/** @return \WP_Error Typed evidence for a non-reusable exact handle. */
 	private function worktree_reuse_refused( string $handle, string $reason_code, array $evidence ): \WP_Error {
+		$conflicting_handle = '';
+		if ( 'same_task_candidate_requires_explicit_isolation' === $reason_code && ! empty($evidence['candidates'][0]['handle']) ) {
+			$conflicting_handle = (string) $evidence['candidates'][0]['handle'];
+			$evidence['conflicting_handle'] = $conflicting_handle;
+			$evidence['supported_reuse_policy'] = 'isolated';
+		}
+		$message = '' !== $conflicting_handle
+			? sprintf('Refusing to create worktree "%s": same-task candidate "%s" requires --reuse-policy=isolated with purpose, owner_run_ref, and cleanup_policy=remove_on_success.', $handle, $conflicting_handle)
+			: sprintf('Refusing to reuse worktree "%s": %s.', $handle, str_replace('_', ' ', $reason_code));
+
 		return new \WP_Error(
 			'worktree_reuse_refused',
-			sprintf('Refusing to reuse worktree "%s": %s.', $handle, str_replace('_', ' ', $reason_code)),
+			$message,
 			array(
 				'status' => 409,
 				'reuse'  => array(

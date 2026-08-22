@@ -8,6 +8,7 @@ $GLOBALS['remote_workspace_task_isolation_state'] = array(
 	'worktrees'  => array(),
 );
 $GLOBALS['remote_workspace_task_isolation_locks'] = array();
+$GLOBALS['remote_workspace_task_isolation_fail_state_write'] = false;
 
 if ( ! defined('ABSPATH') ) {
 	define('ABSPATH', __DIR__ . '/fixtures/');
@@ -24,6 +25,9 @@ function get_option( string $name, mixed $default = null ): mixed {
 }
 function update_option( string $name, mixed $value, bool $autoload = false ): bool {
 	if ( 'datamachine_code_remote_workspace_state' === $name ) {
+		if ( $GLOBALS['remote_workspace_task_isolation_fail_state_write'] ) {
+			return false;
+		}
 		$GLOBALS['remote_workspace_task_isolation_state'] = $value;
 	}
 	return true;
@@ -57,6 +61,19 @@ function remote_isolation_assert( bool $condition, string $message ): void {
 
 $backend = new RemoteWorkspaceBackend();
 $task    = array( 'task_url' => 'https://example.test/issues/1' );
+$invalid = $backend->worktree_add('repo', 'invalid-cleanup-policy', 'main', $task, array( 'cleanup_policy' => 'retain' ));
+remote_isolation_assert(is_wp_error($invalid) && 'invalid_cleanup_policy' === $invalid->get_error_code(), 'invalid cleanup policy did not return a typed validation error');
+remote_isolation_assert(! isset($GLOBALS['remote_workspace_task_isolation_state']['worktrees']['repo@invalid-cleanup-policy']), 'invalid cleanup policy reserved a remote worktree lifecycle record');
+$corrected = $backend->worktree_add('repo', 'invalid-cleanup-policy', 'main', $task, array( 'cleanup_policy' => 'manual' ));
+remote_isolation_assert(! is_wp_error($corrected) && isset($GLOBALS['remote_workspace_task_isolation_state']['worktrees']['repo@invalid-cleanup-policy']), 'corrected immediate retry was blocked by an invalid reservation');
+$GLOBALS['remote_workspace_task_isolation_fail_state_write'] = true;
+$persistence_failed = $backend->worktree_add('repo', 'state-write-failure', 'main', array( 'task_url' => 'https://example.test/issues/write-failure' ));
+$GLOBALS['remote_workspace_task_isolation_fail_state_write'] = false;
+remote_isolation_assert(is_wp_error($persistence_failed) && 'remote_workspace_state_persist_failed' === $persistence_failed->get_error_code(), 'state write failure did not return a typed creation failure');
+remote_isolation_assert(! isset($GLOBALS['remote_workspace_task_isolation_state']['worktrees']['repo@state-write-failure']), 'failed remote creation retained a reservation');
+$persistence_retry = $backend->worktree_add('repo', 'state-write-failure', 'main', array( 'task_url' => 'https://example.test/issues/write-failure' ));
+remote_isolation_assert(! is_wp_error($persistence_retry), 'immediate retry after state write failure remained reserved');
+$GLOBALS['remote_workspace_task_isolation_state']['worktrees'] = array();
 $first   = $backend->worktree_add('repo', 'first', 'main', $task);
 remote_isolation_assert(! is_wp_error($first), 'first remote task worktree failed');
 $reused = $backend->worktree_add('repo', 'first', 'main', $task);
@@ -72,6 +89,7 @@ remote_isolation_assert(is_wp_error($branch_collision) && 'branch_mismatch' === 
 
 $refused = $backend->worktree_add('repo', 'second', 'main', $task);
 remote_isolation_assert(is_wp_error($refused) && 'same_task_candidate_requires_explicit_isolation' === ( $refused->get_error_data()['reuse']['reason_code'] ?? null ), 'default remote duplicate was not refused');
+remote_isolation_assert('repo@first' === ( $refused->get_error_data()['reuse']['conflicting_handle'] ?? null ) && 'isolated' === ( $refused->get_error_data()['reuse']['supported_reuse_policy'] ?? null ), 'remote conflict did not identify the blocking handle and supported reuse policy');
 remote_isolation_assert(! isset($GLOBALS['remote_workspace_task_isolation_state']['worktrees']['repo@second']), 'refused remote duplicate mutated state');
 
 $ownerless = $backend->worktree_add('repo', 'second', 'main', $task, array(), 'isolated');

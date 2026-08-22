@@ -122,6 +122,14 @@ class RemoteWorkspaceBackend {
 		if ( '' === $branch ) {
 			return new \WP_Error('missing_branch', 'Branch is required.', array( 'status' => 400 ));
 		}
+		if ( array_key_exists('cleanup_policy', $intent) && null === WorktreeContextInjector::normalize_cleanup_policy($intent['cleanup_policy']) ) {
+			return new \WP_Error('invalid_cleanup_policy', 'cleanup_policy must be one of: ' . implode(', ', WorktreeContextInjector::VALID_CLEANUP_POLICIES) . '.', array( 'status' => 400 ));
+		}
+		$intent       = WorktreeContextInjector::normalize_disposable_intent($intent);
+		$reuse_policy = strtolower(trim($reuse_policy));
+		if ( ! in_array($reuse_policy, array( 'reuse_compatible', 'isolated', 'recycle_terminal' ), true) ) {
+			return new \WP_Error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: reuse_compatible, isolated, recycle_terminal.', array( 'status' => 400 ));
+		}
 		$lock = $this->acquire_state_lock($repo_name);
 		if ( is_wp_error($lock) ) {
 			return $lock;
@@ -131,11 +139,6 @@ class RemoteWorkspaceBackend {
 		$slug                          = $this->branch_slug($branch);
 		$handle                        = $repo_name . '@' . $slug;
 		$state                         = $this->state();
-		$intent                        = WorktreeContextInjector::normalize_disposable_intent($intent);
-		$reuse_policy                  = strtolower(trim($reuse_policy));
-		if ( ! in_array($reuse_policy, array( 'reuse_compatible', 'isolated', 'recycle_terminal' ), true) ) {
-			return new \WP_Error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: reuse_compatible, isolated, recycle_terminal.', array( 'status' => 400 ));
-		}
 		if ( isset($state['worktrees'][ $handle ]) && is_array($state['worktrees'][ $handle ]) ) {
 			$existing = $state['worktrees'][ $handle ];
 			if ( 'isolated' === $reuse_policy ) {
@@ -209,9 +212,10 @@ class RemoteWorkspaceBackend {
 				usort($candidates, static fn( array $left, array $right ): int => strcmp((string) $left['handle'], (string) $right['handle']));
 			}
 			if ( array() !== $candidates && 'isolated' !== $reuse_policy ) {
-				return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to create remote worktree "%s": same task candidate requires explicit isolation.', $handle), array(
+				$conflicting_handle = (string) $candidates[0]['handle'];
+				return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to create remote worktree "%s": same-task candidate "%s" requires --reuse-policy=isolated with purpose, owner_run_ref, and cleanup_policy=remove_on_success.', $handle, $conflicting_handle), array(
 					'status' => 409,
-					'reuse'  => array( 'status' => 'refused', 'reason_code' => 'same_task_candidate_requires_explicit_isolation', 'canonical_task_identity' => $task_identity, 'candidates' => $candidates ),
+					'reuse'  => array( 'status' => 'refused', 'reason_code' => 'same_task_candidate_requires_explicit_isolation', 'canonical_task_identity' => $task_identity, 'conflicting_handle' => $conflicting_handle, 'supported_reuse_policy' => 'isolated', 'candidates' => $candidates ),
 				));
 			}
 			if ( array() !== $candidates && 'isolated' === $reuse_policy ) {
@@ -245,7 +249,9 @@ class RemoteWorkspaceBackend {
 			'changed_files'   => array(),
 			'last_commit_sha' => '',
 		);
-		$this->save_state($state);
+		if ( ! $this->save_state($state) ) {
+			return new \WP_Error('remote_workspace_state_persist_failed', sprintf('Remote worktree "%s" was not registered because its lifecycle state could not be persisted.', $handle), array( 'status' => 500, 'handle' => $handle ));
+		}
 
 		return array(
 			'success'        => true,
@@ -1592,9 +1598,7 @@ class RemoteWorkspaceBackend {
 	/**
 	 * @param array<string,mixed> $state State to persist.
 	 */
-	private function save_state( array $state ): void {
-		if ( function_exists('update_option') ) {
-			update_option(self::OPTION, $state, false);
-		}
+	private function save_state( array $state ): bool {
+		return ! function_exists('update_option') || update_option(self::OPTION, $state, false);
 	}
 }
