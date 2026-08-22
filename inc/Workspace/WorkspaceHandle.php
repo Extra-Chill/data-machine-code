@@ -7,7 +7,7 @@
 
 namespace DataMachineCode\Workspace;
 
-defined('ABSPATH') || exit;
+defined('ABSPATH') || defined('DATAMACHINE_CODE_STANDALONE') || exit;
 
 /**
  * Parsed workspace handle identity.
