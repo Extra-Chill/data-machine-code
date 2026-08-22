@@ -111,7 +111,7 @@ trait WorkspaceGitOperations {
 		}
 
 		if ( empty($parsed['is_worktree']) && ( null === $branch || '' === $branch ) && $this->is_detached_head($repo_path) ) {
-			$repaired = $this->repair_detached_primary_for_pull($repo_path, $remote);
+			$repaired = $this->repair_detached_primary_for_pull($repo_path, $remote, $parsed['repo']);
 			if ( is_wp_error($repaired) ) {
 				return $repaired;
 			}
@@ -1628,9 +1628,9 @@ trait WorkspaceGitOperations {
 	/**
 	 * Reattach a clean detached primary only when the remote default can fast-forward it.
 	 *
-	 * @return array{branch:string,upstream:string,head_before:string,head_after:string}|\WP_Error
+	 * @return array{branch:string,upstream:string,head_before:string,head_after:string,branch_repointed:bool}|\WP_Error
 	 */
-	private function repair_detached_primary_for_pull( string $repo_path, string $remote ): array|\WP_Error {
+	private function repair_detached_primary_for_pull( string $repo_path, string $remote, string $repo ): array|\WP_Error {
 		$head_before = $this->git_head_sha($repo_path);
 		if ( '' === $head_before ) {
 			return new \WP_Error('detached_primary_head_unknown', 'Primary refresh is blocked: detached HEAD cannot be resolved. Inspect the checkout before retrying.', array( 'status' => 409 ));
@@ -1653,7 +1653,8 @@ trait WorkspaceGitOperations {
 		}
 
 		$target = $this->run_git($repo_path, 'rev-parse --verify ' . escapeshellarg($remote_ref));
-		if ( is_wp_error($target) || '' === trim( (string) ( $target['output'] ?? '' ) ) ) {
+		$target_sha = is_wp_error($target) ? '' : trim( (string) ( $target['output'] ?? '' ) );
+		if ( '' === $target_sha ) {
 			return new \WP_Error('detached_primary_default_ref_missing', sprintf('Primary refresh is blocked: %s/%s is unavailable after fetch.', $remote, $default_branch), array( 'status' => 409 ));
 		}
 
@@ -1663,8 +1664,31 @@ trait WorkspaceGitOperations {
 		}
 
 		$local = $this->run_git($repo_path, 'rev-parse --verify ' . escapeshellarg('refs/heads/' . $default_branch));
-		if ( ! is_wp_error($local) && $head_before !== trim( (string) ( $local['output'] ?? '' ) ) ) {
-			return new \WP_Error('detached_primary_local_branch_ambiguous', sprintf('Primary refresh is blocked: local branch %s does not point at detached HEAD; refusing to move an ambiguous branch.', $default_branch), array( 'status' => 409 ));
+		$local_sha = is_wp_error($local) ? '' : trim( (string) ( $local['output'] ?? '' ) );
+		$branch_repointed = false;
+		if ( '' !== $local_sha && $head_before !== $local_sha ) {
+			$local_base = $this->run_git($repo_path, 'merge-base ' . escapeshellarg($local_sha) . ' ' . escapeshellarg($target_sha));
+			if ( is_wp_error($local_base) || $local_sha !== trim( (string) ( $local_base['output'] ?? '' ) ) ) {
+				return new \WP_Error('detached_primary_local_branch_diverged', sprintf('Primary refresh is blocked: local branch %s contains commits outside %s/%s; refusing to discard or merge divergent history.', $default_branch, $remote, $default_branch), array( 'status' => 409 ));
+			}
+
+			$holder = $this->default_branch_holder($repo_path, $default_branch, $repo);
+			if ( is_wp_error($holder) ) {
+				return $holder;
+			}
+			if ( null !== $holder ) {
+				return new \WP_Error(
+					'detached_primary_default_branch_held',
+					sprintf('Primary refresh is blocked: local branch %s is held by worktree %s at %s. Inspect or reconcile that holder, then retry with `%s`.', $default_branch, $holder['handle'], $holder['path'], $holder['retry_command']),
+					array( 'status' => 409, 'holder' => $holder )
+				);
+			}
+
+			$repoint = $this->run_git($repo_path, 'update-ref ' . escapeshellarg('refs/heads/' . $default_branch) . ' ' . escapeshellarg($target_sha) . ' ' . escapeshellarg($local_sha));
+			if ( is_wp_error($repoint) ) {
+				return new \WP_Error('detached_primary_local_branch_repoint_failed', sprintf('Primary refresh is blocked: local branch %s changed while reconciling it. Inspect and retry.', $default_branch), array( 'status' => 409 ));
+			}
+			$branch_repointed = true;
 		}
 
 		$checkout = is_wp_error($local)
@@ -1679,7 +1703,36 @@ trait WorkspaceGitOperations {
 			'upstream'    => $remote . '/' . $default_branch,
 			'head_before' => $head_before,
 			'head_after'  => $this->git_head_sha($repo_path),
+			'branch_repointed' => $branch_repointed,
 		);
+	}
+
+	/** @return array{handle:string,path:string,inspect_command:string,retry_command:string}|null|\WP_Error */
+	private function default_branch_holder( string $repo_path, string $branch, string $repo ): array|null|\WP_Error {
+		$listing = $this->run_git($repo_path, 'worktree list --porcelain');
+		if ( is_wp_error($listing) ) {
+			return new \WP_Error('detached_primary_worktree_listing_failed', 'Primary refresh is blocked: unable to verify whether another worktree holds the default branch.', array( 'status' => 409 ));
+		}
+
+		foreach (preg_split('/\n\n+/', trim((string) ( $listing['output'] ?? '' ))) ?: array() as $block) {
+			$path = null;
+			$ref  = null;
+			foreach (explode("\n", $block) as $line) {
+				if (str_starts_with($line, 'worktree ')) { $path = substr($line, 9); }
+				if (str_starts_with($line, 'branch ')) { $ref = substr($line, 7); }
+			}
+			if (null === $path || $path === $repo_path || 'refs/heads/' . $branch !== $ref) { continue; }
+			$basename = basename($path);
+			$handle   = str_starts_with($basename, $repo . '@') ? $basename : $path;
+			return array(
+				'handle'          => $handle,
+				'path'            => $path,
+				'inspect_command' => sprintf('wp datamachine-code workspace worktree get %s --with-status --format=json', escapeshellarg($handle)),
+				'retry_command'   => sprintf('wp datamachine-code workspace git pull %s --allow-primary-refresh', escapeshellarg($repo)),
+			);
+		}
+
+		return null;
 	}
 
 	private function is_detached_head( string $repo_path ): bool {

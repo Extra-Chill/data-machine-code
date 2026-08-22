@@ -18,6 +18,7 @@ namespace {
 	final class WP_Error {
 		public function __construct( public string $code = '', public string $message = '', public array $data = array() ) {}
 		public function get_error_code(): string { return $this->code; }
+		public function get_error_data(): array { return $this->data; }
 	}
 }
 
@@ -55,6 +56,12 @@ namespace DataMachineCode\Tests\DetachedPrimary {
 
 		// A detached commit already at tip reattaches without moving backward.
 		mkdir($root . '/tip'); [$_, $_seed, $primary] = fixture($root . '/tip'); run($primary, 'checkout -q --detach'); $before = run($primary, 'rev-parse HEAD'); $result = (new RealGitWorkspace($primary))->git_pull('repo', false, true); assert_true(! $result instanceof \WP_Error && $before === trim(run($primary, 'rev-parse HEAD')), 'tip detached primary changed commit');
+
+		// Differing detached and local branch ancestors can both advance to the verified remote tip.
+		mkdir($root . '/contained'); [$_, $seed, $primary] = fixture($root . '/contained'); run($primary, 'checkout -q --detach'); advance($seed, 'two'); run($primary, 'fetch -q origin'); run($primary, 'branch -f main origin/main'); advance($seed, 'three'); $result = (new RealGitWorkspace($primary))->git_pull('repo', false, true); assert_true(! $result instanceof \WP_Error && ! empty($result['primary_repair']['branch_repointed']), 'contained local branch was not safely repointed'); assert_true(trim(run($primary, 'rev-parse main')) === trim(run($primary, 'rev-parse origin/main')), 'contained branch was not refreshed to origin');
+
+		// A holder, including a dirty holder, must remain untouched until explicitly removed; retry is idempotent after removal.
+		mkdir($root . '/held'); [$_, $seed, $primary] = fixture($root . '/held'); run($primary, 'checkout -q --detach'); advance($seed, 'two'); run($primary, 'fetch -q origin'); run($primary, 'branch -f main origin/main'); $holder = $root . '/held/holder'; run($primary, 'worktree add -q ' . escapeshellarg($holder) . ' main'); file_put_contents($holder . '/dirty', 'dirty'); advance($seed, 'three'); $held = (new RealGitWorkspace($primary))->git_pull('repo', false, true); assert_error($held, 'detached_primary_default_branch_held'); assert_true(($held->get_error_data()['holder']['path'] ?? '') === $holder && str_contains((string) ($held->get_error_data()['holder']['retry_command'] ?? ''), 'workspace git pull'), 'holder remediation is incomplete'); assert_true(file_exists($holder . '/dirty'), 'dirty holder was modified'); run($primary, 'worktree remove --force ' . escapeshellarg($holder)); $result = (new RealGitWorkspace($primary))->git_pull('repo', false, true); assert_true(! $result instanceof \WP_Error && trim(run($primary, 'rev-parse main')) === trim(run($primary, 'rev-parse origin/main')), 'retry after holder removal was not idempotent');
 
 		// Divergent history, dirty trees, and missing remote HEAD must leave detached state untouched.
 		mkdir($root . '/divergent'); [$_, $seed, $primary] = fixture($root . '/divergent'); run($primary, 'checkout -q --detach'); file_put_contents($primary . '/local', 'local'); run($primary, 'add local'); run($primary, '-c user.email=t@t -c user.name=t commit -qm local'); advance($seed, 'remote'); assert_error((new RealGitWorkspace($primary))->git_pull('repo', false, true), 'detached_primary_diverged'); assert_true('HEAD' === trim(run($primary, 'rev-parse --abbrev-ref HEAD')), 'divergent primary was changed');
