@@ -74,6 +74,10 @@ namespace {
 		worktree_add_tool_tracker_assert(false !== $ability_source && str_contains($ability_source, "'reuse_candidates'"), 'worktree ability result schema did not expose optional reuse candidates');
 		$cli_source = file_get_contents(dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php');
 		worktree_add_tool_tracker_assert(false !== $cli_source && str_contains($cli_source, "'reuse-policy'"), 'worktree CLI did not map --reuse-policy to ability input');
+		$plan_definition = $tool->getWorktreePlanDefinition();
+		worktree_add_tool_tracker_assert('handleWorktreePlan' === ( $plan_definition['method'] ?? null ), 'generic command providers cannot configure worktree planning directly');
+		worktree_add_tool_tracker_assert('string' === ( $plan_definition['parameters']['properties']['repo']['type'] ?? '' ) && 'string' === ( $plan_definition['parameters']['properties']['branch']['type'] ?? '' ), 'plan definition was not projected from the typed worktree intent');
+		worktree_add_tool_tracker_assert(false !== $ability_source && str_contains($ability_source, "'datamachine-code/workspace-worktree-plan'"), 'worktree plan ability was not registered');
 		fwrite(STDOUT, "worktree-add-tool-tracker-contract ok\n");
 	} catch (\Throwable $e) {
 		fwrite(STDERR, $e->getMessage() . "\n");
