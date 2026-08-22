@@ -170,9 +170,7 @@ trait WorkspaceActiveNoSignalCleanup {
 				'operation'      => 'active-no-signal-finalized-apply',
 				'mode'           => 'active_no_signal_finalized_apply',
 				'destructive'    => false,
-				'summary_extra'  => static function ( array $report ): array {
-					return array( 'report_action_counts' => $report['summary']['by_suggested_action'] ?? array() );
-				},
+				'summary_extra'  => array( self::class, 'build_active_no_signal_report_action_summary' ),
 				'prepare_row'    => function ( array $row ): array|\WP_Error {
 					if ( 'finalized_pr_reconcile' !== (string) ( $row['suggested_action'] ?? '' ) ) {
 						return new \WP_Error('not_finalized_pr', 'row is not a finalized merged PR candidate');
@@ -181,16 +179,7 @@ trait WorkspaceActiveNoSignalCleanup {
 					return $row;
 				},
 				'build_metadata' => fn( array $row ): array|\WP_Error => $this->build_active_no_signal_finalized_metadata($row),
-				'build_planned'  => static function ( array $row, array $metadata ): array {
-					return array(
-						'handle'   => (string) ( $row['handle'] ?? '' ),
-						'repo'     => (string) ( $row['repo'] ?? '' ),
-						'branch'   => (string) ( $row['branch'] ?? '' ),
-						'path'     => (string) ( $row['path'] ?? '' ),
-						'pr'       => $row['pr'] ?? null,
-						'metadata' => $metadata,
-					);
-				},
+				'build_planned'  => static fn( array $row, array $metadata ): array => self::build_active_no_signal_planned_row($row, $metadata, 'pr', $row['pr'] ?? null),
 				'evidence'       => array(
 					'scope'  => 'promote finalized active_no_signal PR evidence into cleanup_eligible metadata',
 					'safety' => 'Revalidates dirty, unpushed, identity, and closed+merged PR evidence before writing metadata. Does not delete worktrees.',
@@ -215,9 +204,7 @@ trait WorkspaceActiveNoSignalCleanup {
 				'operation'      => 'active-no-signal-equivalent-clean-apply',
 				'mode'           => 'active_no_signal_equivalent_clean_apply',
 				'destructive'    => false,
-				'summary_extra'  => static function ( array $report ): array {
-					return array( 'report_action_counts' => $report['summary']['by_suggested_action'] ?? array() );
-				},
+				'summary_extra'  => array( self::class, 'build_active_no_signal_report_action_summary' ),
 				'prepare_row'    => function ( array $row ): array|\WP_Error {
 					$effective_status = (string) ( $row['upstream_equivalence']['effective_status'] ?? '' );
 					if ( ! in_array($effective_status, array( 'equivalent_clean', 'contained_non_default_remote' ), true) ) {
@@ -227,16 +214,7 @@ trait WorkspaceActiveNoSignalCleanup {
 					return $row;
 				},
 				'build_metadata' => fn( array $row ): array|\WP_Error => $this->build_active_no_signal_equivalent_clean_metadata($row),
-				'build_planned'  => static function ( array $row, array $metadata ): array {
-					return array(
-						'handle'               => (string) ( $row['handle'] ?? '' ),
-						'repo'                 => (string) ( $row['repo'] ?? '' ),
-						'branch'               => (string) ( $row['branch'] ?? '' ),
-						'path'                 => (string) ( $row['path'] ?? '' ),
-						'upstream_equivalence' => $metadata['cleanup_eligibility_evidence']['upstream_equivalence'] ?? null,
-						'metadata'             => $metadata,
-					);
-				},
+				'build_planned'  => static fn( array $row, array $metadata ): array => self::build_active_no_signal_planned_row($row, $metadata, 'upstream_equivalence', $metadata['cleanup_eligibility_evidence']['upstream_equivalence'] ?? null),
 				'evidence'       => array(
 					'scope'  => 'promote effectively clean upstream-equivalent active_no_signal rows into cleanup_eligible metadata',
 					'safety' => 'Revalidates upstream-equivalence evidence before writing metadata. Does not delete worktrees.',
@@ -262,9 +240,7 @@ trait WorkspaceActiveNoSignalCleanup {
 				'mode'             => 'active_no_signal_merged_apply',
 				'destructive'      => false,
 				'upsert_inventory' => true,
-				'summary_extra'    => static function ( array $report ): array {
-					return array( 'report_action_counts' => $report['summary']['by_suggested_action'] ?? array() );
-				},
+				'summary_extra'    => array( self::class, 'build_active_no_signal_report_action_summary' ),
 				'prepare_row'      => function ( array $row ): array|\WP_Error {
 					$action = (string) ( $row['suggested_action'] ?? '' );
 					if ( in_array($action, array( 'merged_to_default', 'patch_equivalent_default' ), true) ) {
@@ -289,16 +265,7 @@ trait WorkspaceActiveNoSignalCleanup {
 
 					return $this->build_active_no_signal_merged_to_default_metadata($row);
 				},
-				'build_planned'    => static function ( array $row, array $metadata ): array {
-					return array(
-						'handle'   => (string) ( $row['handle'] ?? '' ),
-						'repo'     => (string) ( $row['repo'] ?? '' ),
-						'branch'   => (string) ( $row['branch'] ?? '' ),
-						'path'     => (string) ( $row['path'] ?? '' ),
-						'evidence' => $metadata['cleanup_eligibility_evidence'] ?? null,
-						'metadata' => $metadata,
-					);
-				},
+				'build_planned'    => static fn( array $row, array $metadata ): array => self::build_active_no_signal_planned_row($row, $metadata, 'evidence', $metadata['cleanup_eligibility_evidence'] ?? null),
 				'evidence'         => array(
 					'scope'  => 'promote clean active_no_signal rows contained in remote default into cleanup_eligible metadata',
 					'safety' => 'Revalidates clean worktree, no unpushed commits, containment, primary protection, branch identity, and merged-to-default evidence before writing metadata. Does not delete worktrees.',
@@ -343,21 +310,34 @@ trait WorkspaceActiveNoSignalCleanup {
 					return $row;
 				},
 				'build_metadata'     => fn( array $row ): array|\WP_Error => $this->build_active_no_signal_remote_clean_metadata($row),
-				'build_planned'      => static function ( array $row, array $metadata ): array {
-					return array(
-						'handle'   => (string) ( $row['handle'] ?? '' ),
-						'repo'     => (string) ( $row['repo'] ?? '' ),
-						'branch'   => (string) ( $row['branch'] ?? '' ),
-						'path'     => (string) ( $row['path'] ?? '' ),
-						'metadata' => $metadata,
-					);
-				},
+				'build_planned'      => static fn( array $row, array $metadata ): array => self::build_active_no_signal_planned_row($row, $metadata),
 				'evidence'           => array(
 					'scope'  => 'promote clean remote-tracking active_no_signal rows into cleanup_eligible metadata',
 					'safety' => 'Revalidates clean worktree, no unpushed commits, remote branch existence, primary protection, and branch identity before writing metadata. Does not delete worktrees or remote branches.',
 				),
 			)
 		);
+	}
+
+	/** Build the shared action-count summary for report-derived apply modes. */
+	private static function build_active_no_signal_report_action_summary( array $report ): array {
+		return array( 'report_action_counts' => $report['summary']['by_suggested_action'] ?? array() );
+	}
+
+	/** Build the common planned-row identity and optional classification evidence. */
+	private static function build_active_no_signal_planned_row( array $row, array $metadata, ?string $evidence_key = null, mixed $evidence = null ): array {
+		$planned = array(
+			'handle' => (string) ( $row['handle'] ?? '' ),
+			'repo'   => (string) ( $row['repo'] ?? '' ),
+			'branch' => (string) ( $row['branch'] ?? '' ),
+			'path'   => (string) ( $row['path'] ?? '' ),
+		);
+		if ( null !== $evidence_key ) {
+			$planned[ $evidence_key ] = $evidence;
+		}
+		$planned['metadata'] = $metadata;
+
+		return $planned;
 	}
 
 	/**
@@ -925,83 +905,7 @@ trait WorkspaceActiveNoSignalCleanup {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private function build_current_merged_to_default_cleanup_evidence( string $handle, string $repo, string $branch, string $path ): array|\WP_Error {
-		$identity_error = $this->validate_active_no_signal_identity(
-			array(
-				'handle' => $handle,
-				'repo'   => $repo,
-				'branch' => $branch,
-				'path'   => $path,
-			)
-		);
-		if ( null !== $identity_error ) {
-			return $identity_error;
-		}
-
-		$facts = $this->validate_current_cleanup_worktree(
-			$repo,
-			$path,
-			$branch,
-			array(
-				'require_clean'          => true,
-				'dirty_error_message'    => 'refusing to mark dirty worktree cleanup_eligible from merged-to-default evidence',
-				'unpushed_error_message' => 'refusing to mark worktree with unpushed commits cleanup_eligible from merged-to-default evidence',
-			)
-		);
-		if ( is_wp_error($facts) ) {
-			return $facts;
-		}
-
-		$real_path    = (string) $facts['real_path'];
-		$primary_path = (string) $facts['primary_path'];
-		$dirty        = (int) $facts['dirty'];
-		$unpushed     = (int) $facts['unpushed'];
-
-		$default_ref = $this->resolve_remote_default_ref($primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( ! is_string($default_ref) || '' === $default_ref ) {
-			return new \WP_Error('missing_default_ref', 'primary checkout default ref could not be resolved');
-		}
-
-		$branch_ref = 'refs/heads/' . $branch;
-		$outside    = $this->run_git(
-			$primary_path,
-			sprintf('rev-list --count %s..%s', escapeshellarg($default_ref), escapeshellarg($branch_ref)),
-			self::CLEANUP_GIT_PROBE_TIMEOUT
-		);
-		if ( is_wp_error($outside) ) {
-			return $outside;
-		}
-
-		$commits_outside_default = (int) trim( (string) ( $outside['output'] ?? '' ));
-		if ( 0 !== $commits_outside_default ) {
-			return new \WP_Error('not_merged_to_default', 'current branch still has commits outside remote default');
-		}
-
-		$branch_head = $this->run_git($primary_path, sprintf('rev-parse --verify %s', escapeshellarg($branch_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( is_wp_error($branch_head) ) {
-			return $branch_head;
-		}
-		$default_head = $this->run_git($primary_path, sprintf('rev-parse --verify %s', escapeshellarg($default_ref . '^{commit}')), self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( is_wp_error($default_head) ) {
-			return $default_head;
-		}
-
-		return array(
-			'signal'                  => 'merged-to-default',
-			'finalized_state'         => WorktreeContextInjector::STATE_MERGED,
-			'reason'                  => 'branch has no commits outside the remote default ref',
-			'detected_at'             => gmdate('c'),
-			'handle'                  => $handle,
-			'repo'                    => $repo,
-			'branch'                  => $branch,
-			'path'                    => $real_path,
-			'default_ref'             => $default_ref,
-			'branch_ref'              => $branch_ref,
-			'branch_head'             => trim( (string) ( $branch_head['output'] ?? '' )),
-			'default_head'            => trim( (string) ( $default_head['output'] ?? '' )),
-			'commits_outside_default' => $commits_outside_default,
-			'dirty'                   => (int) $dirty,
-			'unpushed'                => (int) $unpushed,
-		);
+		return $this->build_current_default_branch_classified_cleanup_evidence($handle, $repo, $branch, $path, 'merged');
 	}
 
 	/**
@@ -1014,6 +918,89 @@ trait WorkspaceActiveNoSignalCleanup {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private function build_current_patch_equivalent_to_default_cleanup_evidence( string $handle, string $repo, string $branch, string $path ): array|\WP_Error {
+		return $this->build_current_default_branch_classified_cleanup_evidence($handle, $repo, $branch, $path, 'patch_equivalent');
+	}
+
+	/** Recompute one default-branch cleanup classification without duplicating safety probes. */
+	private function build_current_default_branch_classified_cleanup_evidence( string $handle, string $repo, string $branch, string $path, string $classification ): array|\WP_Error {
+		$config = match ( $classification ) {
+			'merged' => array(
+				'label'  => 'merged-to-default',
+				'signal' => 'merged-to-default',
+				'reason' => 'branch has no commits outside the remote default ref',
+			),
+			'patch_equivalent' => array(
+				'label'  => 'patch-equivalent-to-default',
+				'signal' => 'patch-equivalent-to-default',
+				'reason' => 'branch commits are patch-equivalent to the remote default ref',
+			),
+			default => null,
+		};
+		if ( null === $config ) {
+			return new \WP_Error('invalid_default_branch_cleanup_classification', sprintf('Unknown default-branch cleanup classification: %s.', $classification));
+		}
+
+		$context = $this->build_current_default_branch_cleanup_context($handle, $repo, $branch, $path, $config['label']);
+		if ( is_wp_error($context) ) {
+			return $context;
+		}
+		$real_path    = $context['real_path'];
+		$primary_path = $context['primary_path'];
+		$default_ref  = $context['default_ref'];
+		$branch_ref   = 'refs/heads/' . $branch;
+
+		if ( 'merged' === $classification ) {
+			$outside = $this->run_git(
+				$primary_path,
+				sprintf('rev-list --count %s..%s', escapeshellarg($default_ref), escapeshellarg($branch_ref)),
+				self::CLEANUP_GIT_PROBE_TIMEOUT
+			);
+			if ( is_wp_error($outside) ) {
+				return $outside;
+			}
+			$commits_outside_default = (int) trim( (string) ( $outside['output'] ?? '' ));
+			if ( 0 !== $commits_outside_default ) {
+				return new \WP_Error('not_merged_to_default', 'current branch still has commits outside remote default');
+			}
+			$classification_evidence = array( 'commits_outside_default' => $commits_outside_default );
+		} else {
+			$upstream_equivalence = $this->build_clean_upstream_equivalence_evidence($primary_path, $real_path, $default_ref, $branch);
+			if ( 'equivalent_clean' !== (string) ( $upstream_equivalence['effective_status'] ?? '' ) ) {
+				return new \WP_Error('not_patch_equivalent_to_default', 'current branch is not patch-equivalent to remote default');
+			}
+			$classification_evidence = array( 'upstream_equivalence' => $upstream_equivalence );
+		}
+
+		$heads = $this->resolve_current_cleanup_heads($primary_path, $branch_ref, $default_ref);
+		if ( is_wp_error($heads) ) {
+			return $heads;
+		}
+
+		return array_merge(
+			array(
+				'signal'          => $config['signal'],
+				'finalized_state' => WorktreeContextInjector::STATE_MERGED,
+				'reason'          => $config['reason'],
+				'detected_at'     => gmdate('c'),
+				'handle'          => $handle,
+				'repo'            => $repo,
+				'branch'          => $branch,
+				'path'            => $real_path,
+				'default_ref'     => $default_ref,
+				'branch_ref'      => $branch_ref,
+				'branch_head'     => $heads['branch_head'],
+				'default_head'    => $heads['default_head'],
+			),
+			$classification_evidence,
+			array(
+				'dirty'    => (int) $context['dirty'],
+				'unpushed' => (int) $context['unpushed'],
+			)
+		);
+	}
+
+	/** Build the shared current-state context for default-branch cleanup evidence. */
+	private function build_current_default_branch_cleanup_context( string $handle, string $repo, string $branch, string $path, string $evidence_label ): array|\WP_Error {
 		$identity_error = $this->validate_active_no_signal_identity(
 			array(
 				'handle' => $handle,
@@ -1032,30 +1019,31 @@ trait WorkspaceActiveNoSignalCleanup {
 			$branch,
 			array(
 				'require_clean'          => true,
-				'dirty_error_message'    => 'refusing to mark dirty worktree cleanup_eligible from patch-equivalent-to-default evidence',
-				'unpushed_error_message' => 'refusing to mark worktree with unpushed commits cleanup_eligible from patch-equivalent-to-default evidence',
+				'dirty_error_message'    => 'refusing to mark dirty worktree cleanup_eligible from ' . $evidence_label . ' evidence',
+				'unpushed_error_message' => 'refusing to mark worktree with unpushed commits cleanup_eligible from ' . $evidence_label . ' evidence',
 			)
 		);
 		if ( is_wp_error($facts) ) {
 			return $facts;
 		}
 
-		$real_path    = (string) $facts['real_path'];
 		$primary_path = (string) $facts['primary_path'];
-		$dirty        = (int) $facts['dirty'];
-		$unpushed     = (int) $facts['unpushed'];
-
-		$default_ref = $this->resolve_remote_default_ref($primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$default_ref  = $this->resolve_remote_default_ref($primary_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
 		if ( ! is_string($default_ref) || '' === $default_ref ) {
 			return new \WP_Error('missing_default_ref', 'primary checkout default ref could not be resolved');
 		}
 
-		$upstream_equivalence = $this->build_clean_upstream_equivalence_evidence($primary_path, $real_path, $default_ref, $branch);
-		if ( 'equivalent_clean' !== (string) ( $upstream_equivalence['effective_status'] ?? '' ) ) {
-			return new \WP_Error('not_patch_equivalent_to_default', 'current branch is not patch-equivalent to remote default');
-		}
+		return array(
+			'real_path'    => (string) $facts['real_path'],
+			'primary_path' => $primary_path,
+			'dirty'        => (int) $facts['dirty'],
+			'unpushed'     => (int) $facts['unpushed'],
+			'default_ref'  => $default_ref,
+		);
+	}
 
-		$branch_ref  = 'refs/heads/' . $branch;
+	/** Resolve the branch and default commit heads after classification-specific checks pass. */
+	private function resolve_current_cleanup_heads( string $primary_path, string $branch_ref, string $default_ref ): array|\WP_Error {
 		$branch_head = $this->run_git($primary_path, sprintf('rev-parse --verify %s', escapeshellarg($branch_ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
 		if ( is_wp_error($branch_head) ) {
 			return $branch_head;
@@ -1066,21 +1054,8 @@ trait WorkspaceActiveNoSignalCleanup {
 		}
 
 		return array(
-			'signal'               => 'patch-equivalent-to-default',
-			'finalized_state'      => WorktreeContextInjector::STATE_MERGED,
-			'reason'               => 'branch commits are patch-equivalent to the remote default ref',
-			'detected_at'          => gmdate('c'),
-			'handle'               => $handle,
-			'repo'                 => $repo,
-			'branch'               => $branch,
-			'path'                 => $real_path,
-			'default_ref'          => $default_ref,
-			'branch_ref'           => $branch_ref,
-			'branch_head'          => trim( (string) ( $branch_head['output'] ?? '' )),
-			'default_head'         => trim( (string) ( $default_head['output'] ?? '' )),
-			'upstream_equivalence' => $upstream_equivalence,
-			'dirty'                => (int) $dirty,
-			'unpushed'             => (int) $unpushed,
+			'branch_head'  => trim( (string) ( $branch_head['output'] ?? '' )),
+			'default_head' => trim( (string) ( $default_head['output'] ?? '' )),
 		);
 	}
 
