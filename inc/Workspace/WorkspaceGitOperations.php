@@ -1634,7 +1634,7 @@ trait WorkspaceGitOperations {
 	/**
 	 * Reattach a clean detached primary only when the remote default can fast-forward it.
 	 *
-	 * @return array{branch:string,upstream:string,head_before:string,head_after:string,branch_repointed:bool}|\WP_Error
+	 * @return array{branch:string,upstream:string,head_before:string,head_after:string,branch_repointed:bool,default_branch_sources:array<int,array{source:string,status:string}>}|\WP_Error
 	 */
 	private function repair_detached_primary_for_pull( string $repo_path, string $remote, string $repo ): array|\WP_Error {
 		$head_before = $this->git_head_sha($repo_path);
@@ -1642,17 +1642,13 @@ trait WorkspaceGitOperations {
 			return new \WP_Error('detached_primary_head_unknown', 'Primary refresh is blocked: detached HEAD cannot be resolved. Inspect the checkout before retrying.', array( 'status' => 409 ));
 		}
 
-		$default = $this->run_git($repo_path, 'ls-remote --symref ' . escapeshellarg($remote) . ' HEAD');
+		$default = $this->resolve_detached_primary_default_branch($repo_path, $remote);
 		if ( is_wp_error($default) ) {
-			return new \WP_Error('detached_primary_default_branch_unavailable', 'Primary refresh is blocked: the remote default branch could not be resolved. Verify the remote and retry.', array( 'status' => 409 ));
+			return $default;
 		}
 
-		if ( ! preg_match('/^ref: refs\/heads\/([^\s]+)\s+HEAD$/m', (string) ( $default['output'] ?? '' ), $matches) ) {
-			return new \WP_Error('detached_primary_default_branch_ambiguous', 'Primary refresh is blocked: the remote does not advertise an unambiguous default branch. Set the remote HEAD or reattach the primary manually.', array( 'status' => 409 ));
-		}
-
-		$default_branch = $matches[1];
-		$remote_ref     = 'refs/remotes/' . $remote . '/' . $default_branch;
+		$default_branch = $default['branch'];
+		$remote_ref     = $default['remote_ref'];
 		$fetch          = $this->run_git($repo_path, 'fetch --no-tags ' . escapeshellarg($remote) . ' ' . escapeshellarg('refs/heads/' . $default_branch . ':' . $remote_ref));
 		if ( is_wp_error($fetch) ) {
 			return new \WP_Error('detached_primary_fetch_failed', sprintf('Primary refresh is blocked: unable to fetch %s/%s.', $remote, $default_branch), array( 'status' => 409 ));
@@ -1717,7 +1713,67 @@ trait WorkspaceGitOperations {
 			'head_before' => $head_before,
 			'head_after'  => $this->git_head_sha($repo_path),
 			'branch_repointed' => $branch_repointed,
+			'default_branch_sources' => $default['attempted_sources'],
 			'preservation' => $preservation,
+		);
+	}
+
+	/**
+	 * Resolve the remote default branch without requiring an available network.
+	 *
+	 * A cloned primary normally already has a symbolic remote HEAD. Validate both
+	 * the symbolic ref and its target before trusting it; only then ask the
+	 * remote, so a detached primary can begin its safe repair offline until the
+	 * later mandatory fetch verifies the selected branch.
+	 *
+	 * @return array{branch:string,remote_ref:string,attempted_sources:array<int,array{source:string,status:string}>}|\WP_Error
+	 */
+	private function resolve_detached_primary_default_branch( string $repo_path, string $remote ): array|\WP_Error {
+		$attempted_sources = array();
+		$prefix            = 'refs/remotes/' . $remote . '/';
+		$local             = $this->run_git($repo_path, 'symbolic-ref --quiet ' . escapeshellarg('refs/remotes/' . $remote . '/HEAD'));
+		$local_ref         = is_wp_error($local) ? '' : trim( (string) ( $local['output'] ?? '' ) );
+
+		if ( '' !== $local_ref && str_starts_with($local_ref, $prefix) ) {
+			$branch = substr($local_ref, strlen($prefix));
+			$target = $this->run_git($repo_path, 'rev-parse --verify ' . escapeshellarg($local_ref));
+			if ( '' !== $branch && ! is_wp_error($target) && '' !== trim( (string) ( $target['output'] ?? '' ) ) ) {
+				$attempted_sources[] = array( 'source' => 'local_symbolic_ref', 'status' => 'validated' );
+				return array(
+					'branch'            => $branch,
+					'remote_ref'        => $local_ref,
+					'attempted_sources' => $attempted_sources,
+				);
+			}
+			$attempted_sources[] = array( 'source' => 'local_symbolic_ref', 'status' => 'stale' );
+		} else {
+			$attempted_sources[] = array( 'source' => 'local_symbolic_ref', 'status' => '' === $local_ref ? 'unavailable' : 'malformed' );
+		}
+
+		$remote_head = $this->run_git($repo_path, 'ls-remote --symref ' . escapeshellarg($remote) . ' HEAD');
+		if ( is_wp_error($remote_head) ) {
+			$attempted_sources[] = array( 'source' => 'remote_symref', 'status' => 'unavailable' );
+			return new \WP_Error(
+				'detached_primary_default_branch_unavailable',
+				'Primary refresh is blocked: the remote default branch could not be resolved. Verify the remote and retry.',
+				array( 'status' => 409, 'attempted_sources' => $attempted_sources )
+			);
+		}
+
+		if ( ! preg_match('/^ref: refs\/heads\/([^\s]+)\s+HEAD$/m', (string) ( $remote_head['output'] ?? '' ), $matches) ) {
+			$attempted_sources[] = array( 'source' => 'remote_symref', 'status' => 'ambiguous' );
+			return new \WP_Error(
+				'detached_primary_default_branch_ambiguous',
+				'Primary refresh is blocked: the remote does not advertise an unambiguous default branch. Set the remote HEAD or reattach the primary manually.',
+				array( 'status' => 409, 'attempted_sources' => $attempted_sources )
+			);
+		}
+
+		$attempted_sources[] = array( 'source' => 'remote_symref', 'status' => 'validated' );
+		return array(
+			'branch'            => $matches[1],
+			'remote_ref'        => $prefix . $matches[1],
+			'attempted_sources' => $attempted_sources,
 		);
 	}
 
