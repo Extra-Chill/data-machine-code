@@ -67,6 +67,10 @@ class WorkspaceAbilities {
 	}
 
 	private function registerAbilities(): void {
+		if ( ! class_exists(Workspace::class) ) {
+			require_once dirname(__DIR__) . '/Workspace/Workspace.php';
+		}
+
 		$register_callback = function () {
 
 			// -----------------------------------------------------------------
