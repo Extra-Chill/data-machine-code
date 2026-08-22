@@ -84,13 +84,13 @@ final class ActiveNoSignalApplyPresentation {
 	}
 
 	/** @param array<string,mixed> $row */
-	private static function detail_value( string $detail_key, array $row ): string {
+	private static function detail_value( string $detail_key, array $row ): mixed {
 		if ( 'pr' === $detail_key ) {
 			return is_array($row['pr'] ?? null)
 				? (string) ( $row['pr']['html_url'] ?? $row['pr']['number'] ?? '' )
 				: (string) ( $row['metadata']['pr_url'] ?? '' );
 		}
 
-		return (string) ( $row['metadata']['cleanup_eligibility_evidence'][ $detail_key ] ?? '' );
+		return $row['metadata']['cleanup_eligibility_evidence'][ $detail_key ] ?? '';
 	}
 }
