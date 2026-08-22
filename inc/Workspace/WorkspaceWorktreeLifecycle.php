@@ -2685,8 +2685,13 @@ trait WorkspaceWorktreeLifecycle {
 				continue;
 			}
 
+			$repo         = '' !== $repo ? $repo : (string) ( $parsed['repo'] ?? '' );
 			$primary_path = '' !== $repo ? $this->get_primary_path($repo) : (string) ( $row['primary_path'] ?? '' );
-			$repair       = $this->repair_cleanup_eligible_stale_worktree_marker($row, $parsed, $gitdir, $primary_path);
+			$repair       = WorkspaceMutationLock::with_repo(
+				$this->workspace_path,
+				$repo,
+				fn() => $this->repair_cleanup_eligible_stale_worktree_marker($row, $parsed, $gitdir, $primary_path)
+			);
 			if ( $repair instanceof \WP_Error ) {
 				return $repair;
 			}
@@ -2730,8 +2735,15 @@ trait WorkspaceWorktreeLifecycle {
 	 */
 	private function repair_cleanup_eligible_stale_worktree_marker( array $row, array $parsed, string $gitdir, string $primary_path ): array|null|\WP_Error {
 		$handle   = (string) ( $row['handle'] ?? '' );
-		$repo     = (string) ( $row['repo'] ?? '' );
+		$repo     = (string) ( $row['repo'] ?? $parsed['repo'] ?? '' );
 		$path     = rtrim( (string) ( $row['path'] ?? '' ), '/');
+		$current  = $this->worktree_inventory()->get($handle);
+		if ( ! is_array($current)
+			|| $repo !== (string) ( $current['repo'] ?? '' )
+			|| $path !== rtrim((string) ( $current['path'] ?? '' ), '/') ) {
+			return null;
+		}
+		$row      = $current;
 		$metadata = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
 		if ( empty($metadata) && ! empty($row['lifecycle_state']) ) {
 			$metadata['lifecycle_state'] = (string) $row['lifecycle_state'];
@@ -2754,6 +2766,11 @@ trait WorkspaceWorktreeLifecycle {
 		if ( empty($validation['valid']) || false === $expected_real || (string) ( $validation['real_path'] ?? '' ) !== $expected_real ) {
 			return null;
 		}
+		$current_marker = $path . '/.git';
+		$current_contents = is_file($current_marker) ? file_get_contents($current_marker) : false;
+		if ( false === $current_contents || ! str_contains($current_contents, $gitdir) || file_exists($gitdir) ) {
+			return null;
+		}
 
 		$removed_paths = $this->remove_contained_directory_recursive($path, $this->workspace_path, $this->workspace_path);
 		if ( $removed_paths instanceof \WP_Error ) {
@@ -2763,11 +2780,7 @@ trait WorkspaceWorktreeLifecycle {
 		WorktreeContextInjector::forget_metadata($handle);
 		$this->worktree_inventory()->delete($handle);
 		if ( '' !== $primary_path && GitCheckout::exists($primary_path) ) {
-			WorkspaceMutationLock::with_repo(
-				$this->workspace_path,
-				$repo,
-				fn() => $this->run_git($primary_path, 'worktree prune')
-			);
+			$this->run_git($primary_path, 'worktree prune');
 		}
 
 		return array(
