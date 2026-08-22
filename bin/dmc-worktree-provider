@@ -1,0 +1,26 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use DataMachineCode\Workspace\StandaloneWorktreeProvider;
+
+define('DATAMACHINE_CODE_STANDALONE', true);
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+$operation = (string) ( $argv[1] ?? '' );
+$workspace = (string) ( $argv[2] ?? '' );
+$value     = (string) ( $argv[3] ?? '' );
+
+if ( ! in_array($operation, array( 'identity', 'safety' ), true) || '' === $workspace || '' === $value ) {
+	fwrite(STDERR, "Usage: dmc-worktree-provider <identity|safety> <workspace-root> <handle|identity-token>\n");
+	exit(2);
+}
+
+$provider = new StandaloneWorktreeProvider();
+$result   = 'identity' === $operation
+	? $provider->resolve_identity($workspace, $value)
+	: $provider->attest_safety($workspace, $value);
+
+fwrite(STDOUT, json_encode($result, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
+exit('error' === ( $result['status'] ?? '' ) ? 1 : 0);

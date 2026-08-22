@@ -179,6 +179,20 @@ make prolonged multi-writer contention equivalent to MySQL throughput.
 
 Workspace and worktree commands are shell-backed and require a host where PHP can see the configured workspace root.
 
+Automation that only needs exact worktree identity or current safety can avoid a
+WordPress bootstrap with the standalone provider executable:
+
+```bash
+bin/dmc-worktree-provider identity /path/to/workspace repo@fix-foo
+bin/dmc-worktree-provider safety /path/to/workspace '<identity-token>'
+```
+
+Identity reads only the canonical direct-child path and linked-worktree `HEAD`.
+Safety is a separate operation with bounded local Git probes; neither operation
+loads WordPress, reads the database, enumerates the workspace, fetches a remote,
+or performs network I/O. Consumers should persist the returned opaque identity
+token and pass it back unchanged when requesting safety evidence.
+
 The primary checkout (bare `<repo>`) is **read-only by default** for mutating
 operations — pass `--allow-primary-mutation` to override. The default-deny is
 intentional: the primary tracks the deployed branch, and silent branch-switches
