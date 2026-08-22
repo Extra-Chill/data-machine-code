@@ -1500,11 +1500,7 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Require a valid task URL or task reference before creating the worktree. Defaults true; trusted operator-local callers may explicitly set false.',
 							),
-							'reuse_policy'               => array(
-								'type'        => 'string',
-								'enum'        => array( 'reuse_compatible', 'isolated', 'recycle_terminal' ),
-								'description' => 'Reuse and allocation behavior: reuse_compatible (default) reuses only an exact compatible handle and refuses a new same-repo handle for the same task; isolated requires purpose, owner_run_ref, and cleanup_policy=remove_on_success for parallel same-task work. recycle_terminal is limited to a clean, non-live terminal exact handle whose pushed HEAD is contained in its requested base.',
-							),
+							...WorktreeContextInjector::worktree_add_policy_schema_properties(),
 						),
 						'required'   => array( 'repo', 'branch' ),
 					),
@@ -4198,7 +4194,7 @@ class WorkspaceAbilities {
 
 	/** @return array<string,array<string,mixed>> */
 	private static function worktreeIntentSchemaProperties(): array {
-		return array( 'repo' => array( 'type' => 'string' ), 'branch' => array( 'type' => 'string' ), 'from' => array( 'type' => 'string' ), 'inject_context' => array( 'type' => 'boolean' ), 'bootstrap' => array( 'type' => 'boolean' ), 'allow_stale' => array( 'type' => 'boolean' ), 'allow_unverified_freshness' => array( 'type' => 'boolean' ), 'rebase_base' => array( 'type' => 'boolean' ), 'force' => array( 'type' => 'boolean' ), 'task_url' => array( 'type' => 'string' ), 'task_ref' => array( 'type' => 'string' ), 'require_task_tracker' => array( 'type' => 'boolean' ), 'reuse_policy' => array( 'type' => 'string', 'enum' => array( 'reuse_compatible', 'isolated', 'recycle_terminal' ) ), 'purpose' => array( 'type' => 'string' ), 'owner_run_ref' => array( 'type' => 'string' ), 'cleanup_policy' => array( 'type' => 'string', 'enum' => array( 'manual', 'remove_on_success', 'preserve_on_failure' ) ) );
+		return array( 'repo' => array( 'type' => 'string' ), 'branch' => array( 'type' => 'string' ), 'from' => array( 'type' => 'string' ), 'inject_context' => array( 'type' => 'boolean' ), 'bootstrap' => array( 'type' => 'boolean' ), 'allow_stale' => array( 'type' => 'boolean' ), 'allow_unverified_freshness' => array( 'type' => 'boolean' ), 'rebase_base' => array( 'type' => 'boolean' ), 'force' => array( 'type' => 'boolean' ), 'task_url' => array( 'type' => 'string' ), 'task_ref' => array( 'type' => 'string' ), 'require_task_tracker' => array( 'type' => 'boolean' ), ...WorktreeContextInjector::worktree_add_policy_schema_properties() );
 	}
 
 	/**
