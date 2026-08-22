@@ -3346,14 +3346,6 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function cloneRepo( array $input ): array|\WP_Error {
-		if ( RemoteWorkspaceBackend::should_handle() ) {
-			$result = ( new RemoteWorkspaceBackend() )->clone_repo(
-				$input['url'] ?? '',
-				$input['name'] ?? null
-			);
-			return self::decorate_remote_workspace_result('clone_repo', $result);
-		}
-
 		$workspace = new Workspace();
 		$result    = $workspace->clone_repo(
 			$input['url'] ?? '',
