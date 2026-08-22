@@ -2,6 +2,26 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.60.6] - 2026-08-22
+
+### Changed
+- share result normalization
+- share cleanup probe transactions
+- share pull context loading
+- share local read admission
+- share file mutation admission
+- share remote result boundaries
+- share cleanup evidence pipelines
+- centralize mutation and cleanup guards
+- follow ability lifecycle registration
+- consolidate shared operation logic
+- share bounded list cursor codec
+
+### Fixed
+- load workspace dependency directly
+- preserve bounded help startup
+- preserve apply evidence value types
+
 ## [0.60.5] - 2026-08-22
 
 ### Fixed
