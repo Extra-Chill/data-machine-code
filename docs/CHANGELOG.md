@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.59.2] - 2026-08-22
+
+### Fixed
+- harden demand calibration
+- calibrate bootstrap demand
+
 ## [0.59.1] - 2026-08-22
 
 ### Fixed
