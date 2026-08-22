@@ -228,24 +228,10 @@ final class WorkspaceLockStore {
 			return null;
 		}
 
-		$row['id']       = (int) ( $row['id'] ?? 0 );
-		$row['job_id']   = isset($row['job_id']) ? (int) $row['job_id'] : null;
-		$row['metadata'] = self::decode_metadata( (string) ( $row['metadata_json'] ?? '' ) );
-		unset($row['metadata_json']);
-
-		$acquired  = self::timestamp_seconds( (string) ( $row['acquired_at'] ?? '' ) );
-		$heartbeat = self::timestamp_seconds( (string) ( $row['heartbeat_at'] ?? '' ) );
-		$expires   = self::timestamp_seconds( (string) ( $row['expires_at'] ?? '' ) );
-		$time      = time();
-		if ( null !== $acquired ) {
-			$row['age_seconds'] = max(0, $time - $acquired);
-		}
-		if ( null !== $heartbeat ) {
-			$row['heartbeat_age_seconds'] = max(0, $time - $heartbeat);
-		}
-		if ( null !== $expires ) {
-			$row['expires_in_seconds']  = max(0, $expires - $time);
-			$row['retry_after_seconds'] = max(0, $expires - $time);
+		$row = self::normalize_lock_row($row, 'active');
+		unset($row['state'], $row['expires_age_seconds']);
+		if ( isset($row['expires_in_seconds']) ) {
+			$row['retry_after_seconds'] = $row['expires_in_seconds'];
 		}
 
 		return $row;

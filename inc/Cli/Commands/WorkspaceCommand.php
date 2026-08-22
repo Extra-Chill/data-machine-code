@@ -6023,19 +6023,7 @@ class WorkspaceCommand extends BaseCommand {
 		if ( ! empty($candidates) && ( '' === $only || 'candidates' === $only ) ) {
 			WP_CLI::log('');
 			WP_CLI::log($dry_run ? 'Would remove:' : 'Candidates:');
-			$candidate_rows = array_map(
-				fn( $c ) => array(
-					'handle'      => $c['handle'] ?? '',
-					'branch'      => $c['branch'] ?? '',
-					'age_days'    => $c['age_days'] ?? '',
-					'size'        => $this->format_bytes($c['size_bytes'] ?? null),
-					'artifacts'   => $this->format_bytes($c['artifact_size_bytes'] ?? 0),
-					'signal'      => $c['signal'] ?? '',
-					'reason_code' => $c['reason_code'] ?? ( $c['signal'] ?? '' ),
-					'reason'      => $c['reason'] ?? '',
-				),
-				array_slice($candidates, 0, $limit)
-			);
+			$candidate_rows = $this->worktree_cleanup_table_rows(array_slice($candidates, 0, $limit));
 			$fields         = $verbose ? array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason' ) : array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason_code' );
 			$this->format_items($candidate_rows, $fields, array( 'format' => 'table' ), 'handle');
 			$this->render_cleanup_truncation_hint(count($candidates), $limit, 'candidate rows');
@@ -6044,19 +6032,7 @@ class WorkspaceCommand extends BaseCommand {
 		if ( ! empty($removed) && ( '' === $only || 'removed' === $only ) ) {
 			WP_CLI::log('');
 			WP_CLI::log('Removed:');
-			$removed_rows = array_map(
-				fn( $c ) => array(
-					'handle'      => $c['handle'] ?? '',
-					'branch'      => $c['branch'] ?? '',
-					'age_days'    => $c['age_days'] ?? '',
-					'size'        => $this->format_bytes($c['size_bytes'] ?? null),
-					'artifacts'   => $this->format_bytes($c['artifact_size_bytes'] ?? 0),
-					'signal'      => $c['signal'] ?? '',
-					'reason_code' => $c['reason_code'] ?? ( $c['signal'] ?? '' ),
-					'reason'      => $c['reason'] ?? '',
-				),
-				array_slice($removed, 0, $limit)
-			);
+			$removed_rows = $this->worktree_cleanup_table_rows(array_slice($removed, 0, $limit));
 			$fields       = $verbose ? array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason' ) : array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason_code' );
 			$this->format_items($removed_rows, $fields, array( 'format' => 'table' ), 'handle');
 			$this->render_cleanup_truncation_hint(count($removed), $limit, 'removed rows');
@@ -6102,6 +6078,23 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 		WP_CLI::success(sprintf('Removed %d worktree(s); %d skipped.', count($result['removed'] ?? array()), count($result['skipped'] ?? array())));
+	}
+
+	/** Project cleanup candidates and removals into their shared table schema. */
+	private function worktree_cleanup_table_rows( array $rows ): array {
+		return array_map(
+			fn( $row ) => array(
+				'handle'      => $row['handle'] ?? '',
+				'branch'      => $row['branch'] ?? '',
+				'age_days'    => $row['age_days'] ?? '',
+				'size'        => $this->format_bytes($row['size_bytes'] ?? null),
+				'artifacts'   => $this->format_bytes($row['artifact_size_bytes'] ?? 0),
+				'signal'      => $row['signal'] ?? '',
+				'reason_code' => $row['reason_code'] ?? ( $row['signal'] ?? '' ),
+				'reason'      => $row['reason'] ?? '',
+			),
+			$rows
+		);
 	}
 
 	/**

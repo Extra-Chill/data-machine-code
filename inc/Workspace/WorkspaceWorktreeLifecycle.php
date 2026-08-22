@@ -1163,16 +1163,7 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		$existing = $inspection['worktrees'][0];
-		$evidence = array(
-			'handle'   => $handle,
-			'branch'   => $existing['branch'] ?? null,
-			'head'     => $existing['head'] ?? null,
-			'dirty'    => $existing['dirty'] ?? null,
-			'unpushed' => $existing['unpushed'] ?? null,
-			'liveness' => $existing['liveness'] ?? null,
-			'task'     => $existing['task'] ?? null,
-			'metadata' => $existing['metadata'] ?? null,
-		);
+		$evidence = $this->worktree_reuse_evidence($handle, $existing, $existing['metadata'] ?? null);
 		if ( ( $existing['branch'] ?? null ) !== $branch ) {
 			return $this->worktree_reuse_refused($handle, 'branch_mismatch', $evidence + array( 'requested_branch' => $branch ));
 		}
@@ -1253,16 +1244,7 @@ trait WorkspaceWorktreeLifecycle {
 	 * must remain clean at the journal's requested base tip.
 	 */
 	private function adopt_interrupted_worktree( string $handle, array $existing, string $branch, ?string $from, bool $inject_context, bool $bootstrap, array $task, array $intent, string $primary_path, ?array $creation_intent ): array|\WP_Error {
-		$evidence = array(
-			'handle'   => $handle,
-			'branch'   => $existing['branch'] ?? null,
-			'head'     => $existing['head'] ?? null,
-			'dirty'    => $existing['dirty'] ?? null,
-			'unpushed' => $existing['unpushed'] ?? null,
-			'liveness' => $existing['liveness'] ?? null,
-			'task'     => $existing['task'] ?? null,
-			'metadata' => null,
-		);
+		$evidence = $this->worktree_reuse_evidence($handle, $existing, null);
 		if ( ( $existing['branch'] ?? null ) !== $branch ) {
 			return $this->worktree_reuse_refused($handle, 'branch_mismatch', $evidence + array( 'requested_branch' => $branch ));
 		}
@@ -1371,7 +1353,7 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		$existing = $inspection['worktrees'][0];
 		$metadata = is_array($existing['metadata'] ?? null) ? $existing['metadata'] : array();
-		$evidence = array( 'handle' => $handle, 'branch' => $existing['branch'] ?? null, 'head' => $existing['head'] ?? null, 'dirty' => $existing['dirty'] ?? null, 'unpushed' => $existing['unpushed'] ?? null, 'liveness' => $existing['liveness'] ?? null, 'task' => $existing['task'] ?? null, 'metadata' => $metadata );
+		$evidence = $this->worktree_reuse_evidence($handle, $existing, $metadata);
 		if ( ( $existing['branch'] ?? null ) !== $branch ) {
 			return $this->worktree_reuse_refused($handle, 'branch_mismatch', $evidence + array( 'requested_branch' => $branch ));
 		}
@@ -1423,6 +1405,20 @@ trait WorkspaceWorktreeLifecycle {
 			return $this->worktree_recycle_rollback_error($handle, $path, $previous_head, $existing['metadata'] ?? array(), 'metadata_persistence', $stored);
 		}
 		return array( 'success' => true, 'handle' => $handle, 'path' => $existing['path'], 'branch' => $branch, 'slug' => $this->slugify_branch($branch), 'created_branch' => false, 'recycled' => true, 'recycle' => array( 'status' => 'accepted', 'reason_code' => 'terminal_exact_handle', 'lineage' => $lineage, 'context' => 'preserved', 'bootstrap' => 'preserved' ), 'metadata' => WorktreeContextInjector::get_metadata($handle), 'message' => sprintf('Recycled terminal worktree "%s" at %s; compatible context and bootstrap assets were preserved.', $handle, $existing['path']) );
+	}
+
+	/** Build the shared evidence snapshot for worktree reuse decisions. */
+	private function worktree_reuse_evidence( string $handle, array $existing, mixed $metadata ): array {
+		return array(
+			'handle'   => $handle,
+			'branch'   => $existing['branch'] ?? null,
+			'head'     => $existing['head'] ?? null,
+			'dirty'    => $existing['dirty'] ?? null,
+			'unpushed' => $existing['unpushed'] ?? null,
+			'liveness' => $existing['liveness'] ?? null,
+			'task'     => $existing['task'] ?? null,
+			'metadata' => $metadata,
+		);
 	}
 
 	/** Restore the old checkout and lifecycle record after a post-reset recycle failure. */
