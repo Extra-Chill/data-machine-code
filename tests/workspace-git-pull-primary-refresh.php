@@ -25,6 +25,8 @@ namespace {
 
 	final class WP_Error {
 		public function __construct( public string $code = '', public string $message = '', public array $data = array() ) {}
+		public function get_error_code(): string { return $this->code; }
+		public function get_error_data(): array { return $this->data; }
 	}
 }
 
@@ -123,6 +125,11 @@ namespace DataMachineCode\Tests {
 		if ( ! $actual ) {
 			throw new \RuntimeException($message);
 		}
+	}
+
+	function resolve_detached_default_branch( GitPullWorkspaceDouble $workspace ): array|\WP_Error {
+		$method = new \ReflectionMethod($workspace, 'resolve_detached_primary_default_branch');
+		return $method->invoke($workspace, '/workspace/data-machine-code', 'origin');
 	}
 
 	$primary = new GitPullWorkspaceDouble();
@@ -242,6 +249,68 @@ namespace DataMachineCode\Tests {
 	assert_same(true, $result->data['dangerous_primary_history_mutation_requires_authorization'] ?? null, 'diverged recovery did not retain dangerous-primary authorization');
 	assert_true(! str_contains($result->message, 'rebase'), 'diverged recovery exposed rebase advice');
 	assert_true(! $diverged->ran_command_containing('pull --ff-only'), 'diverged primary refresh invoked raw pull');
+
+	// Issue #987: a validated local origin/HEAD avoids a network probe during
+	// default-branch selection. The later fetch remains the freshness gate.
+	$local_head = new GitPullWorkspaceDouble();
+	$local_head->responses = array(
+		'symbolic-ref --quiet'                              => array( 'output' => "refs/remotes/origin/main\n" ),
+		"rev-parse --verify 'refs/remotes/origin/main'" => array( 'output' => "abcabcabcabcabcabcabcabcabcabcabcabcabca\n" ),
+	);
+	$resolved = resolve_detached_default_branch($local_head);
+	assert_same('main', $resolved['branch'] ?? null, 'valid local origin/HEAD did not resolve main');
+	assert_same(false, $local_head->ran_command_containing('ls-remote --symref'), 'valid local origin/HEAD unexpectedly used the network');
+
+	// Stale and malformed local symbolic refs are not trusted and use the
+	// bounded remote symref fallback instead.
+	$stale_head = new GitPullWorkspaceDouble();
+	$stale_head->responses = array(
+		'symbolic-ref --quiet'                                => array( 'output' => "refs/remotes/origin/missing\n" ),
+		"rev-parse --verify 'refs/remotes/origin/missing'" => new \WP_Error('missing_ref'),
+		'ls-remote --symref'                                   => array( 'output' => "ref: refs/heads/main\tHEAD\n" ),
+	);
+	$resolved = resolve_detached_default_branch($stale_head);
+	assert_same('main', $resolved['branch'] ?? null, 'stale local origin/HEAD did not use remote fallback');
+	assert_same(true, $stale_head->ran_command_containing('ls-remote --symref'), 'stale local origin/HEAD did not use remote fallback');
+
+	$malformed_head = new GitPullWorkspaceDouble();
+	$malformed_head->responses = array(
+		'symbolic-ref --quiet' => array( 'output' => "refs/heads/main\n" ),
+		'ls-remote --symref'    => array( 'output' => "ref: refs/heads/main\tHEAD\n" ),
+	);
+	$resolved = resolve_detached_default_branch($malformed_head);
+	assert_same('main', $resolved['branch'] ?? null, 'malformed local origin/HEAD did not use remote fallback');
+
+	$offline = new GitPullWorkspaceDouble();
+	$offline->responses = array(
+		'symbolic-ref --quiet' => new \WP_Error('missing_ref'),
+		'ls-remote --symref'    => new \WP_Error('network_unavailable'),
+	);
+	$resolved = resolve_detached_default_branch($offline);
+	assert_same('detached_primary_default_branch_unavailable', $resolved->get_error_code(), 'unavailable default-branch sources returned the wrong error');
+	assert_same(
+		array(
+			array( 'source' => 'local_symbolic_ref', 'status' => 'unavailable' ),
+			array( 'source' => 'remote_symref', 'status' => 'unavailable' ),
+		),
+		$resolved->get_error_data()['attempted_sources'] ?? null,
+		'unavailable default-branch sources were not reported'
+	);
+
+	$ambiguous = new GitPullWorkspaceDouble();
+	$ambiguous->responses = array(
+		'symbolic-ref --quiet' => new \WP_Error('missing_ref'),
+		'ls-remote --symref'    => array( 'output' => '' ),
+	);
+	$resolved = resolve_detached_default_branch($ambiguous);
+	assert_same('detached_primary_default_branch_ambiguous', $resolved->get_error_code(), 'ambiguous topology returned the wrong error');
+
+	// An explicit branch continues to bypass default-branch discovery.
+	$explicit_branch = new GitPullWorkspaceDouble();
+	$explicit_branch->current_branch = 'HEAD';
+	$result = $explicit_branch->git_pull('data-machine-code', false, true, 'origin', 'main');
+	assert_same(true, $result['success'] ?? null, 'explicit branch override did not advance pull');
+	assert_same(false, $explicit_branch->ran_command_containing('symbolic-ref --quiet'), 'explicit branch override resolved the default branch');
 
 	fwrite(STDOUT, "workspace git pull primary refresh passed\n");
 }
