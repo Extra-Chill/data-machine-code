@@ -175,11 +175,11 @@ final class WorkspaceMutationLock {
 			self::update_request($request_path, 'queued');
 
 			if ( 0 === $timeout || ( microtime(true) - $started ) >= $timeout ) {
-				self::remove_request($request_path);
-				fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-				$error_data                         = self::busy_error_data($repo, $lock_path);
+				$error_data                         = self::busy_error_data($repo, $lock_path, $request_path);
 				$error_data['wait_timeout_seconds'] = $timeout;
 				$error_data['timed_out']            = true;
+				self::remove_request($request_path);
+				fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 				return new \WP_Error(
 					'workspace_repo_busy',
 					sprintf(
@@ -294,6 +294,7 @@ final class WorkspaceMutationLock {
 		}
 		$request_id = bin2hex(random_bytes(12));
 		$path       = $request_dir . '/' . $request_id . '.json';
+		$queue_position = count(self::queued_requests_for_resource($lock_dir, $lock_path)) + 1;
 		self::write_request($path, array(
 			'request_id' => $request_id,
 			'repo'       => $repo,
@@ -301,6 +302,7 @@ final class WorkspaceMutationLock {
 			'state'      => 'queued',
 			'pid'        => getmypid(),
 			'created_at' => gmdate('c'),
+			'queue_position' => $queue_position,
 		));
 		return $path;
 	}
@@ -523,7 +525,7 @@ final class WorkspaceMutationLock {
 	/**
 	 * @return array<string,mixed>
 	 */
-	private static function busy_error_data( string $repo, string $lock_path ): array {
+	private static function busy_error_data( string $repo, string $lock_path, string $request_path = '' ): array {
 		$lock_key = 'worktree-' . $repo;
 		$data     = array(
 			'status'              => 423,
@@ -540,6 +542,12 @@ final class WorkspaceMutationLock {
 		$filesystem_lock = self::filesystem_lock_entry($lock_path);
 		if ( ! empty($filesystem_lock) ) {
 			$data['filesystem_lock'] = $filesystem_lock;
+			$data['owner']           = array_filter(array(
+				'lock_key' => $lock_key,
+				'source'   => 'filesystem',
+				'path'     => $filesystem_lock['path'] ?? null,
+				'mtime'    => $filesystem_lock['mtime'] ?? null,
+			));
 			if ( isset($filesystem_lock['age_seconds']) ) {
 				$data['filesystem_age_seconds'] = (int) $filesystem_lock['age_seconds'];
 			}
@@ -548,8 +556,18 @@ final class WorkspaceMutationLock {
 		$active_lock = WorkspaceLockStore::active_lock($lock_key, $repo);
 		if ( is_array($active_lock) ) {
 			$data['active_lock'] = $active_lock;
+			$data['owner']       = array_filter(array(
+				'owner'          => $active_lock['owner'] ?? null,
+				'run_id'         => $active_lock['run_id'] ?? null,
+				'job_id'         => $active_lock['job_id'] ?? null,
+				'owner_context'  => $active_lock['metadata']['owner_context'] ?? null,
+				'acquired_at'    => $active_lock['acquired_at'] ?? null,
+				'heartbeat_at'   => $active_lock['heartbeat_at'] ?? null,
+				'source'         => 'database',
+			));
 			if ( isset($active_lock['retry_after_seconds']) ) {
 				$data['retry_after_seconds'] = (int) $active_lock['retry_after_seconds'];
+				$data['estimated_wait_seconds'] = (int) $active_lock['retry_after_seconds'];
 			}
 			if ( isset($active_lock['age_seconds']) ) {
 				$data['age_seconds'] = (int) $active_lock['age_seconds'];
@@ -557,8 +575,53 @@ final class WorkspaceMutationLock {
 		} elseif ( is_wp_error($active_lock) ) {
 			$data['lock_store_error'] = $active_lock->get_error_message();
 		}
+		if ( ! array_key_exists('estimated_wait_seconds', $data) ) {
+			$data['estimated_wait_seconds'] = null;
+			$data['eta_status']             = 'unavailable_without_db_lease';
+		} else {
+			$data['eta_status'] = 'db_lease_expiry';
+		}
+
+		if ( '' !== $request_path ) {
+			$data['request_id'] = basename($request_path, '.json');
+			$data['progress']   = array(
+				'phase' => 'lock_wait',
+				'state' => 'timed_out',
+			);
+			$request = json_decode( (string) file_get_contents($request_path), true); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reads this local request's durable admission evidence.
+			if ( is_array($request) && isset($request['queue_position']) ) {
+				$data['queue_position'] = (int) $request['queue_position'];
+			}
+			$queue = self::queued_requests_for_resource(dirname($lock_path), $lock_path);
+			foreach ( $queue as $position => $request ) {
+				if ( $request_path === (string) ($request['path'] ?? '') ) {
+					$data['queue_position'] = $position + 1;
+					break;
+				}
+			}
+			// The queue file can disappear during a concurrent stale-request prune.
+			// This request still reached the lock after the active holder, so report
+			// the minimum truthful position instead of omitting admission progress.
+			$data['queue_position'] = $data['queue_position'] ?? 1;
+		}
 
 		return $data;
+	}
+
+	/** @return array<int,array<string,mixed>> */
+	private static function queued_requests_for_resource( string $lock_dir, string $lock_path ): array {
+		self::prune_exited_requests($lock_dir);
+		$files = glob($lock_dir . '/requests/*.json');
+		$rows  = array();
+		foreach ( false === $files ? array() : $files as $file ) {
+			$row = json_decode( (string) file_get_contents($file), true); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reads local lock queue evidence.
+			if ( is_array($row) && 'queued' === (string) ($row['state'] ?? '') && $lock_path === (string) ($row['resource'] ?? '') ) {
+				$row['path'] = $file;
+				$rows[]      = $row;
+			}
+		}
+		usort($rows, static fn( array $left, array $right ): int => strcmp((string) ($left['created_at'] ?? ''), (string) ($right['created_at'] ?? '')));
+		return $rows;
 	}
 
 	/**

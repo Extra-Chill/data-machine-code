@@ -151,6 +151,20 @@ trait WorkspaceWorktreeLifecycle {
 			return $this->worktree_operation_timeout('capacity_lock_wait', $operation_timeout, $operation_started);
 		}
 
+		// Fetch and demand planning only touch this primary. Keep them out of the
+		// global capacity critical section so unrelated repositories can prepare in
+		// parallel; capacity-changing checkout and bootstrap remain globally fenced.
+		$preflight = WorkspaceMutationLock::with_repo(
+			$this->workspace_path,
+			$repo,
+			fn() => $this->worktree_capacity_preflight($primary_path, $repo, $branch, $from, $bootstrap, $operation_deadline),
+			$capacity_timeout
+		);
+		$preflight = $this->worktree_operation_lock_result($preflight, 'repo_preflight_lock_wait', $operation_timeout, $operation_started);
+		if ( is_wp_error($preflight) ) {
+			return $preflight;
+		}
+
 		$locked = WorkspaceMutationLock::with_repo(
 			$this->workspace_path,
 			'workspace-capacity-admission',
@@ -175,12 +189,45 @@ trait WorkspaceWorktreeLifecycle {
 				$remediate_capacity_dry_run,
 				$operation_deadline,
 				$operation_timeout,
-				$operation_started
+				$operation_started,
+				$preflight
 			),
 			$capacity_timeout
 		);
 
 		return $this->worktree_operation_lock_result($locked, 'capacity_lock_wait', $operation_timeout, $operation_started);
+	}
+
+	/** Prepare repo-local freshness and projected demand before global admission. */
+	private function worktree_capacity_preflight( string $primary_path, string $repo, string $branch, ?string $from, bool $bootstrap, float $operation_deadline ): array|\WP_Error {
+		$fetch = WorktreeStalenessProbe::fetch($primary_path, null, $operation_deadline);
+		if ( ! $fetch['ok'] ) {
+			return array( 'fetch' => $fetch );
+		}
+
+		$exists_local = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
+		$target_ref   = $exists_local ? 'refs/heads/' . $branch : ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) );
+		$demand_plan  = WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
+		if ( $demand_plan instanceof \WP_Error ) {
+			// Preserve the existing capacity-path wrapper for explicit missing bases;
+			// it adds detected default-ref evidence and a replayable retry command.
+			return array(
+				'fetch'        => $fetch,
+				'exists_local' => $exists_local,
+				'target_ref'   => $target_ref,
+				'demand_plan'  => $demand_plan,
+			);
+		}
+		if ( ! class_exists(WorktreeDemandCalibration::class) ) {
+			require_once __DIR__ . '/WorktreeDemandCalibration.php';
+		}
+
+		return array(
+			'fetch'        => $fetch,
+			'exists_local' => $exists_local,
+			'target_ref'   => $target_ref,
+			'demand_plan'  => WorktreeDemandCalibration::forecast($repo, $demand_plan),
+		);
 	}
 
 	/**
@@ -275,7 +322,8 @@ trait WorkspaceWorktreeLifecycle {
 		bool $remediate_capacity_dry_run = false,
 		?float $operation_deadline = null,
 		int $operation_timeout = 0,
-		float $operation_started = 0.0
+		float $operation_started = 0.0,
+		array $preflight = array()
 	): array|\WP_Error {
 		$operation_timeout  = $operation_timeout > 0 ? $operation_timeout : self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		$operation_started  = $operation_started > 0.0 ? $operation_started : microtime(true);
@@ -326,7 +374,7 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		}
 
-		$fetch                 = WorktreeStalenessProbe::fetch($primary_path, null, $operation_deadline);
+		$fetch                 = (array) ( $preflight['fetch'] ?? WorktreeStalenessProbe::fetch($primary_path, null, $operation_deadline) );
 		$fetch_failed          = ! $fetch['ok'];
 		$fetch_error           = $fetch['error'] ?? null;
 		$fetch_attempts        = (int) ( $fetch['attempts'] ?? 1 );
@@ -355,11 +403,9 @@ trait WorkspaceWorktreeLifecycle {
 			);
 		}
 
-		$exists_local = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
-		$target_ref   = $exists_local
-			? 'refs/heads/' . $branch
-			: ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) );
-		$demand_plan  = WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
+		$exists_local = array_key_exists('exists_local', $preflight) ? (bool) $preflight['exists_local'] : GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
+		$target_ref   = (string) ( $preflight['target_ref'] ?? ( $exists_local ? 'refs/heads/' . $branch : ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) ) ) );
+		$demand_plan  = $preflight['demand_plan'] ?? WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
 		if ( $demand_plan instanceof \WP_Error ) {
 			if ( 'worktree_target_ref_invalid' === $demand_plan->get_error_code() && ! $exists_local && null !== $from && '' !== trim($from) ) {
 				return $this->worktree_missing_explicit_base_error(
@@ -379,10 +425,12 @@ trait WorkspaceWorktreeLifecycle {
 			}
 			return $demand_plan;
 		}
-		if ( ! class_exists(WorktreeDemandCalibration::class) ) {
-			require_once __DIR__ . '/WorktreeDemandCalibration.php';
+		if ( ! isset($preflight['demand_plan']) ) {
+			if ( ! class_exists(WorktreeDemandCalibration::class) ) {
+				require_once __DIR__ . '/WorktreeDemandCalibration.php';
+			}
+			$demand_plan = WorktreeDemandCalibration::forecast($repo, $demand_plan);
 		}
-		$demand_plan = WorktreeDemandCalibration::forecast($repo, $demand_plan);
 		$deadline_error = $this->worktree_operation_deadline_error('demand_disk_planning', $operation_deadline, $operation_timeout, $operation_started);
 		if ( null !== $deadline_error ) {
 			return $deadline_error;
