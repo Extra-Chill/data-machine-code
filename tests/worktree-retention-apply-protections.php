@@ -41,6 +41,11 @@ namespace {
 
 	function get_option( string $key, mixed $default = false ): mixed {
 		if ( DataMachineCode\Workspace\WorktreeContextInjector::METADATA_OPTION === $key ) {
+			$metadata_file = $GLOBALS['retention_apply_metadata_file'] ?? '';
+			if ( is_string($metadata_file) && is_file($metadata_file) ) {
+				$metadata = json_decode((string) file_get_contents($metadata_file), true);
+				return is_array($metadata) ? $metadata : $default;
+			}
 			return $GLOBALS['retention_apply_metadata'];
 		}
 
@@ -85,6 +90,7 @@ namespace {
 	require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 
 	use DataMachineCode\Abilities\GitHubAbilities;
+	use DataMachineCode\Workspace\WorkspaceMutationLock;
 	use DataMachineCode\Workspace\WorkspaceWorktreeCleanupEngine;
 	use DataMachineCode\Workspace\WorktreeContextInjector;
 
@@ -132,6 +138,11 @@ namespace {
 			return $method->invoke($this, $candidate, false, false, false, $reviewed_lifecycle_snapshot);
 		}
 
+		public function apply_reviewed( array $candidate ): array {
+			$method = new ReflectionMethod($this, 'apply_worktree_cleanup_plan_candidates');
+			return $method->invoke($this, array( $candidate ), false, microtime(true));
+		}
+
 		public function remove_artifact( string $worktree_path, string $relative ): array|WP_Error {
 			return $this->remove_worktree_artifact_path($worktree_path, $relative);
 		}
@@ -151,6 +162,10 @@ namespace {
 		}
 
 		private function run_git( string $path, string $command, int $timeout = 0 ): array|WP_Error {
+			$prelock_probe = $GLOBALS['retention_apply_prelock_probe'] ?? '';
+			if ( is_string($prelock_probe) && '' !== $prelock_probe && str_starts_with($command, 'status --porcelain') ) {
+				file_put_contents($prelock_probe, 'entered');
+			}
 			return array( 'output' => $this->status_output );
 		}
 
@@ -171,6 +186,26 @@ namespace {
 	file_put_contents($work . '/.git', 'gitdir: ' . $primary . '/.git/worktrees/fix-retention-safety');
 
 	$harness = new RetentionApplyProtectionHarness($root, $primary);
+	if ( 'reactivator' === ( $argv[1] ?? '' ) ) {
+		$metadata_file = (string) $argv[2];
+		$workspace     = (string) $argv[3];
+		$ready         = (string) $argv[4];
+		$prelock_probe = (string) $argv[5];
+		$reactivated   = WorkspaceMutationLock::with_repo(
+			$workspace,
+			'example',
+			static function () use ( $metadata_file, $ready, $prelock_probe ): string {
+				file_put_contents($ready, 'locked');
+				$deadline = microtime(true) + 2;
+				while ( ! is_file($prelock_probe) && microtime(true) < $deadline ) {
+					usleep(10000);
+				}
+				file_put_contents($metadata_file, json_encode(array( 'example@fix-retention-safety' => array( 'lifecycle_state' => WorktreeContextInjector::STATE_ACTIVE, 'last_seen_at' => gmdate('c') ) )));
+				return 'reactivated';
+			}
+		);
+		exit(is_wp_error($reactivated) ? 2 : 0);
+	}
 	$old     = gmdate('c', time() - 172800);
 
 	$base_candidate = array(
@@ -281,6 +316,30 @@ namespace {
 	$became_live          = $harness->revalidate_current($base_candidate, $became_live_metadata);
 	retention_apply_protections_assert('live_worktree' === ( $became_live['skipped']['reason_code'] ?? null ), 'a worktree that becomes live after planning is protected during apply revalidation');
 	retention_apply_protections_assert('heartbeat_fresh' === ( $became_live['skipped']['liveness_reason'] ?? null ), 'apply-time protection surfaces fresh liveness evidence');
+
+	$metadata_file = $root . '/metadata.json';
+	$ready         = $root . '/reactivator-ready';
+	$prelock_probe = $root . '/prelock-probe';
+	file_put_contents($metadata_file, json_encode(array( $base_candidate['handle'] => $base_candidate['metadata'] )));
+	$GLOBALS['retention_apply_metadata_file'] = $metadata_file;
+	$GLOBALS['retention_apply_prelock_probe'] = $prelock_probe;
+	$reactivator = proc_open(array( PHP_BINARY, __FILE__, 'reactivator', $metadata_file, $root, $ready, $prelock_probe ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $reactivator_pipes);
+	retention_apply_protections_assert(is_resource($reactivator), 'concurrent reuse reactivator must start');
+	fclose($reactivator_pipes[0]);
+	$deadline = microtime(true) + 3;
+	while ( ! is_file($ready) && microtime(true) < $deadline ) {
+		usleep(10000);
+	}
+	retention_apply_protections_assert(is_file($ready), 'concurrent reuse reactivator must acquire the repository lock');
+	$reactivated_apply = $harness->apply_reviewed($base_candidate);
+	stream_get_contents($reactivator_pipes[1]);
+	stream_get_contents($reactivator_pipes[2]);
+	fclose($reactivator_pipes[1]);
+	fclose($reactivator_pipes[2]);
+	retention_apply_protections_assert(0 === proc_close($reactivator), 'concurrent reuse reactivator must complete');
+	retention_apply_protections_assert('live_worktree' === ( $reactivated_apply['skipped'][0]['reason_code'] ?? null ), 'reactivation while the repository lock is held must skip removal');
+	retention_apply_protections_assert(! is_file($prelock_probe), 'locked revalidation must not begin Git safety probes before acquiring the repository lock');
+	unset($GLOBALS['retention_apply_metadata_file'], $GLOBALS['retention_apply_prelock_probe']);
 
 	fwrite(STDOUT, "worktree-retention-apply-protections ok\n");
 }

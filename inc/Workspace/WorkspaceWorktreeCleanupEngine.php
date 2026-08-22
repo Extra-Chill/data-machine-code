@@ -647,45 +647,53 @@ trait WorkspaceWorktreeCleanupEngine {
 
 		foreach ( $candidates as $cand ) {
 			$this->emit_worktree_cleanup_progress($progress, 'removing', (string) ( $cand['handle'] ?? '' ), $checked, count($worktrees), $candidates, $skipped, $removed_count, $started_at);
-			$live_protection = $this->worktree_cleanup_live_protection($cand);
-			if ( null !== $live_protection ) {
-				$skipped[] = array_merge($cand, $live_protection);
-				continue;
-			}
 			$remove = WorkspaceMutationLock::with_repo(
 				$this->workspace_path,
 				$cand['repo'],
 				function () use ( $cand, $force, $remove_timeout_seconds ) {
-					$remove = $this->remove_worktree_by_path($cand['repo'], $cand['branch'], $cand['path'], $force, $remove_timeout_seconds);
+					// The plan may be stale by the time this lock is acquired. Recheck
+					// liveness, lifecycle protection, dirty state, and unpushed commits
+					// while the matching repo cannot be reused or mutated concurrently.
+					$validated = $this->revalidate_bounded_cleanup_eligible_candidate($cand, $force, false, false, is_array($cand['metadata'] ?? null) ? $cand['metadata'] : array(), false);
+					if ( isset($validated['skipped']) ) {
+						return $validated;
+					}
+
+					$remove = $this->remove_worktree_by_path($validated['repo'], $validated['branch'], $validated['path'], $force, $remove_timeout_seconds);
 					if ( is_wp_error($remove) ) {
 						return $remove;
 					}
 
-					if ( ! empty($cand['preserve_local_branch']) ) {
+					if ( ! empty($validated['preserve_local_branch']) ) {
 						$remove['local_branch_preserved'] = true;
 						$remove['branch_delete_skipped']  = 'patch-equivalent cleanup preserves the local branch instead of force-deleting commits whose containment was not proven';
-						return $remove;
+						return array( 'validated' => $validated, 'remove' => $remove );
 					}
 
 					// Delete the now-detached local branch while the repo lock still covers
 					// shared git metadata.
-					$primary_path = $this->get_primary_path($cand['repo']);
-					if ( '' === (string) ( $cand['branch'] ?? '' ) ) {
-						return $remove;
+					$primary_path = $this->get_primary_path($validated['repo']);
+					if ( '' === (string) ( $validated['branch'] ?? '' ) ) {
+						return array( 'validated' => $validated, 'remove' => $remove );
 					}
-					$branch = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($cand['branch'])), self::CLEANUP_GIT_PROBE_TIMEOUT);
-					return is_wp_error($branch) ? $branch : $remove;
+					$branch = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($validated['branch'])), self::CLEANUP_GIT_PROBE_TIMEOUT);
+					return is_wp_error($branch) ? $branch : array( 'validated' => $validated, 'remove' => $remove );
 				}
 			);
 			if ( is_wp_error($remove) ) {
 				$skipped[] = $this->build_worktree_remove_failure_skip($cand, $remove, $remove_timeout_seconds);
 				continue;
 			}
+			if ( isset($remove['skipped']) ) {
+				$skipped[] = $remove['skipped'];
+				continue;
+			}
+			$validated = $remove['validated'];
 			$removed[] = array_merge(
-				$cand,
+				$validated,
 				array(
-					'removed_path'      => (string) ( $cand['path'] ?? '' ),
-					'path_exists_after' => is_dir( (string) ( $cand['path'] ?? '' ) ),
+					'removed_path'      => (string) ( $validated['path'] ?? '' ),
+					'path_exists_after' => is_dir( (string) ( $validated['path'] ?? '' ) ),
 				)
 			);
 			++$removed_count;
@@ -1150,6 +1158,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		$sort                      = isset($opts['sort']) ? trim( (string) $opts['sort']) : 'age';
 		$source                    = isset($opts['source']) ? trim( (string) $opts['source']) : 'workspace_bounded_cleanup_eligible_apply';
 		$repo                      = isset($opts['repo']) ? trim( (string) $opts['repo']) : '';
+		$apply_plan                = isset($opts['apply_plan']) && is_array($opts['apply_plan']) ? $opts['apply_plan'] : null;
 		$remove_timeout_seconds    = $this->normalize_worktree_cleanup_remove_timeout($opts['remove_timeout'] ?? null);
 		if ( is_wp_error($remove_timeout_seconds) ) {
 			return $remove_timeout_seconds;
@@ -1172,18 +1181,29 @@ trait WorkspaceWorktreeCleanupEngine {
 			return new \WP_Error('bounded_cleanup_eligible_apply_via_jobs_no_dry_run', 'Job-backed bounded cleanup-eligible apply cannot run as dry-run; use the synchronous dry-run path to review candidates first.', array( 'status' => 400 ));
 		}
 
-		// Reuse the cheap inventory_only review path for candidate discovery so
-		// the bounded cleanup-eligible apply never triggers full worktree_list / fetch / GitHub
-		// API work just to plan. This intentionally does not honor `apply_plan`
-		// — bounded cleanup-eligible apply IS the apply path; no separate plan file is needed.
-		$inventory = $this->worktree_cleanup_inventory_only($older_than, $sort, $include_repaired_metadata, null, 0, $repo);
-		if ( $inventory instanceof \WP_Error ) {
-			return $inventory;
-		}
+		if ( null !== $apply_plan ) {
+			$plan_id = (string) ( $apply_plan['plan_id'] ?? '' );
+			if ( '' === $plan_id || ! hash_equals(hash('sha256', serialize((array) ( $apply_plan['candidates'] ?? array() ))), $plan_id) ) {
+				return new \WP_Error('invalid_cleanup_plan', 'Cleanup apply plan must retain the exact reviewed plan_id and candidates.', array( 'status' => 400 ));
+			}
+			$all_candidates = $this->extract_worktree_cleanup_plan_candidates($apply_plan);
+			if ( $all_candidates instanceof \WP_Error ) {
+				return $all_candidates;
+			}
+			$inventory_skipped = array();
+			$scope             = is_array($apply_plan['scope'] ?? null) ? $apply_plan['scope'] : null;
+		} else {
+			// Reuse the cheap inventory_only review path for candidate discovery so
+			// the bounded cleanup-eligible apply never triggers full worktree_list / fetch / GitHub API work just to plan.
+			$inventory = $this->worktree_cleanup_inventory_only($older_than, $sort, $include_repaired_metadata, null, 0, $repo);
+			if ( $inventory instanceof \WP_Error ) {
+				return $inventory;
+			}
 
-		$all_candidates    = array_values( (array) ( $inventory['candidates'] ?? array() ));
-		$inventory_skipped = array_values( (array) ( $inventory['skipped'] ?? array() ));
-		$scope             = is_array($inventory['scope'] ?? null) ? $inventory['scope'] : null;
+			$all_candidates    = array_values( (array) ( $inventory['candidates'] ?? array() ));
+			$inventory_skipped = array_values( (array) ( $inventory['skipped'] ?? array() ));
+			$scope             = is_array($inventory['scope'] ?? null) ? $inventory['scope'] : null;
+		}
 
 		$batch    = array_slice($all_candidates, 0, $limit);
 		$deferred = array_slice($all_candidates, $limit);
@@ -1247,27 +1267,26 @@ trait WorkspaceWorktreeCleanupEngine {
 
 		foreach ( $batch as $candidate ) {
 			++$processed;
-			$revalidated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, false, $discard_unpushed);
-			if ( isset($revalidated['skipped']) ) {
-				$processed_candidates[] = $this->build_bounded_cleanup_processed_candidate($candidate, 'skipped', $revalidated['skipped']);
-				$skipped[]              = $revalidated['skipped'];
-				continue;
-			}
-
-			$validated = $revalidated;
-			$repo      = (string) ( $validated['repo'] ?? '' );
-			$branch    = (string) ( $validated['branch'] ?? '' );
-			$wt_path   = (string) ( $validated['path'] ?? '' );
-			$size      = (int) ( $validated['size_bytes'] ?? 0 );
-			if ( $size <= 0 ) {
-				$measured = $this->estimate_path_size_bytes($wt_path);
-				$size     = null === $measured ? null : (int) $measured;
-			}
-
-			$remove = WorkspaceMutationLock::with_repo(
+			$repo = (string) ( $candidate['repo'] ?? '' );
+			$locked = WorkspaceMutationLock::with_repo(
 				$this->workspace_path,
 				$repo,
-				function () use ( $repo, $branch, $wt_path, $force, $remove_timeout_seconds ) {
+				function () use ( $candidate, $force, $remove_timeout_seconds, $discard_unpushed ) {
+					// Revalidate only after the lifecycle lock is held so reuse cannot
+					// change liveness or Git state between the safety probes and removal.
+					$validated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, false, $discard_unpushed);
+					if ( isset($validated['skipped']) ) {
+						return $validated;
+					}
+
+					$repo    = (string) $validated['repo'];
+					$branch  = (string) $validated['branch'];
+					$wt_path = (string) $validated['path'];
+					$size    = (int) ( $validated['size_bytes'] ?? 0 );
+					if ( $size <= 0 ) {
+						$measured = $this->estimate_path_size_bytes($wt_path);
+						$size     = null === $measured ? null : (int) $measured;
+					}
 					$result = $this->remove_worktree_by_path($repo, $branch, $wt_path, $force, $remove_timeout_seconds);
 					if ( is_wp_error($result) ) {
 							return $result;
@@ -1284,19 +1303,31 @@ trait WorkspaceWorktreeCleanupEngine {
 						}
 					}
 
-					return $result;
+					return array( 'validated' => $validated, 'size' => $size, 'remove' => $result );
 				}
 			);
 
-			if ( is_wp_error($remove) ) {
-				$skip                   = $this->build_worktree_remove_failure_skip($candidate, $remove, $remove_timeout_seconds);
-				$processed_candidates[] = $this->build_bounded_cleanup_processed_candidate($validated, 'skipped', $skip);
+			if ( is_wp_error($locked) ) {
+				$skip                   = $this->build_worktree_remove_failure_skip($candidate, $locked, $remove_timeout_seconds);
+				$processed_candidates[] = $this->build_bounded_cleanup_processed_candidate($candidate, 'skipped', $skip);
 				$skipped[]              = $skip;
 				if ( 'remove_timeout' === (string) ( $skip['reason_code'] ?? '' ) ) {
 					$timeout_handles[] = (string) ( $skip['handle'] ?? '' );
 				}
 				continue;
 			}
+			if ( isset($locked['skipped']) ) {
+				$processed_candidates[] = $this->build_bounded_cleanup_processed_candidate($candidate, 'skipped', $locked['skipped']);
+				$skipped[]              = $locked['skipped'];
+				continue;
+			}
+
+			$validated = $locked['validated'];
+			$size      = $locked['size'];
+			$remove    = $locked['remove'];
+			$repo      = (string) $validated['repo'];
+			$branch    = (string) $validated['branch'];
+			$wt_path   = (string) $validated['path'];
 
 			$unpushed_count         = (int) ( $validated['unpushed'] ?? 0 );
 			$removed_row            = array_merge(
@@ -1425,26 +1456,25 @@ trait WorkspaceWorktreeCleanupEngine {
 		foreach ( $candidates as $candidate ) {
 			++$processed;
 			$reviewed_lifecycle_snapshot = is_array($candidate['metadata'] ?? null) ? $candidate['metadata'] : array();
-			$revalidated                 = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, $stale_liveness_only, $discard_unpushed, $reviewed_lifecycle_snapshot);
-			if ( isset($revalidated['skipped']) ) {
-				$skipped[] = $revalidated['skipped'];
-				continue;
-			}
-
-			$validated = $revalidated;
-			$repo      = (string) ( $validated['repo'] ?? '' );
-			$branch    = (string) ( $validated['branch'] ?? '' );
-			$wt_path   = (string) ( $validated['path'] ?? '' );
-			$size      = (int) ( $validated['size_bytes'] ?? 0 );
-			if ( $size <= 0 ) {
-				$measured = $this->estimate_path_size_bytes($wt_path);
-				$size     = null === $measured ? null : (int) $measured;
-			}
-
-			$remove = WorkspaceMutationLock::with_repo(
+			$repo                        = (string) ( $candidate['repo'] ?? '' );
+			$locked = WorkspaceMutationLock::with_repo(
 				$this->workspace_path,
 				$repo,
-				function () use ( $repo, $branch, $wt_path, $force, $remove_timeout_seconds ) {
+				function () use ( $candidate, $force, $stale_liveness_only, $discard_unpushed, $reviewed_lifecycle_snapshot, $remove_timeout_seconds ) {
+					// Keep the full safety snapshot adjacent to mutation under the repo lock.
+					$validated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, $stale_liveness_only, $discard_unpushed, $reviewed_lifecycle_snapshot);
+					if ( isset($validated['skipped']) ) {
+						return $validated;
+					}
+
+					$repo    = (string) $validated['repo'];
+					$branch  = (string) $validated['branch'];
+					$wt_path = (string) $validated['path'];
+					$size    = (int) ( $validated['size_bytes'] ?? 0 );
+					if ( $size <= 0 ) {
+						$measured = $this->estimate_path_size_bytes($wt_path);
+						$size     = null === $measured ? null : (int) $measured;
+					}
 					$result = $this->remove_worktree_by_path($repo, $branch, $wt_path, $force, $remove_timeout_seconds);
 					if ( is_wp_error($result) ) {
 						return $result;
@@ -1458,17 +1488,27 @@ trait WorkspaceWorktreeCleanupEngine {
 						}
 					}
 
-					return $result;
+					return array( 'validated' => $validated, 'size' => $size, 'remove' => $result );
 				}
 			);
 
-			if ( is_wp_error($remove) ) {
+			if ( is_wp_error($locked) ) {
 				$skipped[] = array_merge(
-					$this->build_worktree_remove_failure_skip($candidate, $remove, $remove_timeout_seconds),
-					array( 'size_bytes' => $size )
+					$this->build_worktree_remove_failure_skip($candidate, $locked, $remove_timeout_seconds)
 				);
 				continue;
 			}
+			if ( isset($locked['skipped']) ) {
+				$skipped[] = $locked['skipped'];
+				continue;
+			}
+
+			$validated = $locked['validated'];
+			$size      = $locked['size'];
+			$remove    = $locked['remove'];
+			$repo      = (string) $validated['repo'];
+			$branch    = (string) $validated['branch'];
+			$wt_path   = (string) $validated['path'];
 
 			$removed[] = array_merge(
 				$validated,
@@ -1531,9 +1571,10 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  bool  $stale_liveness_only Limit removal to stale worktrees.
 	 * @param  bool  $discard_unpushed     Allow removal of reviewed unpushed commits.
 	 * @param  array<string,mixed>|null $reviewed_lifecycle_snapshot Lifecycle metadata captured in a reviewed plan.
+	 * @param  bool  $require_removable_lifecycle Whether lifecycle eligibility is required by this cleanup mode.
 	 * @return array<string,mixed>
 	 */
-	private function revalidate_bounded_cleanup_eligible_candidate( array $candidate, bool $force, bool $stale_liveness_only = false, bool $discard_unpushed = false, ?array $reviewed_lifecycle_snapshot = null ): array {
+	private function revalidate_bounded_cleanup_eligible_candidate( array $candidate, bool $force, bool $stale_liveness_only = false, bool $discard_unpushed = false, ?array $reviewed_lifecycle_snapshot = null, bool $require_removable_lifecycle = true ): array {
 		$handle   = (string) ( $candidate['handle'] ?? '' );
 		$repo     = (string) ( $candidate['repo'] ?? '' );
 		$branch   = (string) ( $candidate['branch'] ?? '' );
@@ -1609,7 +1650,7 @@ trait WorkspaceWorktreeCleanupEngine {
 
 		$owner_terminal_disposable = WorktreeContextInjector::has_owner_terminal_disposable_cleanup_signal($metadata);
 		$recent_activity = $this->worktree_cleanup_recent_activity_protection($metadata);
-		if ( ! $owner_terminal_disposable && null !== $recent_activity && ( null === $reviewed_lifecycle_snapshot || ! $this->worktree_cleanup_lifecycle_matches_reviewed_plan($reviewed_lifecycle_snapshot, $metadata) ) ) {
+		if ( $require_removable_lifecycle && ! $owner_terminal_disposable && null !== $recent_activity && ( null === $reviewed_lifecycle_snapshot || ! $this->worktree_cleanup_lifecycle_matches_reviewed_plan($reviewed_lifecycle_snapshot, $metadata) ) ) {
 			return array(
 				'skipped' => array_merge(
 					array(
@@ -1628,7 +1669,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			);
 		}
 
-		if ( ! $this->worktree_cleanup_has_removable_lifecycle($metadata) ) {
+		if ( $require_removable_lifecycle && ! $this->worktree_cleanup_has_removable_lifecycle($metadata) ) {
 			return array(
 				'skipped' => array(
 					'handle'            => $handle,

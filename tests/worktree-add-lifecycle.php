@@ -355,6 +355,42 @@ try {
 	assert_true(str_contains($refused->get_error_message(), 'retry only this request with --force'), 'zero-row recovery must recommend the bounded worktree exception instead of promising reclaim');
 	assert_true(str_contains($refused->get_error_message(), 'workspace worktree capacity-recovery --limit=25 --until-budget=30s --format=json'), 'zero-row recovery must expose the bounded reconcile-and-replan path.');
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-disk-refused'), 'disk pressure refusal left a worktree directory behind');
+	$dry_run_remote_refs = run_command("git for-each-ref --format='%(refname) %(objectname)' refs/remotes", $primary_path);
+	$dry_run_lock_rows   = $wpdb->lock_rows;
+	$dry_run_requests    = glob($workspace_root . '/.locks/requests/*.json') ?: array();
+	$dry_run_metadata    = $wpdb->rows;
+	$GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds'] = static function ( array $thresholds ): array {
+		$thresholds['refuse_free_bytes']   = 1;
+		$thresholds['warn_free_bytes']     = 1;
+		$thresholds['refuse_free_percent'] = 0.0;
+		$thresholds['warn_free_percent']   = 0.0;
+		return $thresholds;
+	};
+	$admitted_dry_run = $workspace->worktree_add('homeboy', 'capacity-remediation-admitted-dry-run', 'origin/main', false, false, false, false, false, array(), false, false, array(), 'reuse_compatible', true, true);
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds']);
+	assert_true(! is_wp_error($admitted_dry_run), is_wp_error($admitted_dry_run) ? $admitted_dry_run->get_error_message() : 'admitted capacity remediation dry-run failed');
+	assert_true(true === ( $admitted_dry_run['dry_run'] ?? false ), 'admitted capacity remediation request did not report dry-run.');
+	assert_true(false === ( $admitted_dry_run['created'] ?? true ), 'admitted capacity remediation dry-run created a worktree.');
+	assert_true(! is_dir($workspace_root . '/homeboy@capacity-remediation-admitted-dry-run'), 'admitted capacity remediation dry-run materialized a worktree directory.');
+	assert_true($dry_run_remote_refs === run_command("git for-each-ref --format='%(refname) %(objectname)' refs/remotes", $primary_path), 'capacity remediation dry-run fetched or changed remote refs.');
+	assert_true($dry_run_lock_rows === $wpdb->lock_rows, 'capacity remediation dry-run wrote lock-store lifecycle rows.');
+	assert_true($dry_run_requests === ( glob($workspace_root . '/.locks/requests/*.json') ?: array() ), 'capacity remediation dry-run wrote lock request files.');
+	assert_true($dry_run_metadata === $wpdb->rows, 'capacity remediation dry-run rewrote lifecycle metadata.');
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_remote_workspace_backend_should_handle'] = static fn(): bool => true;
+	$remote_remediation = WorkspaceAbilities::worktreeAdd(
+		array(
+			'repo'                       => 'remote-only',
+			'branch'                     => 'capacity-remediation-remote',
+			'inject_context'             => false,
+			'bootstrap'                  => false,
+			'require_task_tracker'       => false,
+			'remediate_capacity'         => true,
+			'remediate_capacity_dry_run' => true,
+		)
+	);
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_remote_workspace_backend_should_handle']);
+	assert_true(is_wp_error($remote_remediation), 'remote capacity remediation silently created a remote worktree.');
+	assert_true('remote_worktree_capacity_remediation_unsupported' === $remote_remediation->get_error_code(), 'remote capacity remediation did not return its explicit unsupported error.');
 
 	$ability_default = WorkspaceAbilities::worktreeAdd(
 		array(
@@ -442,6 +478,19 @@ try {
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata($recycle_handle, array( 'last_seen_at' => gmdate('c', time() - 90000) ));
 	$recycle_finalized = $workspace->worktree_finalize($recycle_handle, 'merged');
 	assert_true(! is_wp_error($recycle_finalized), is_wp_error($recycle_finalized) ? $recycle_finalized->get_error_message() : 'terminal recycle fixture finalization failed');
+	$dry_recycle_head     = trim(run_command('git rev-parse HEAD', $recycle_fixture['path']));
+	$dry_recycle_metadata = $wpdb->rows[$recycle_handle];
+	$GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds'] = static function ( array $thresholds ): array {
+		$thresholds['refuse_free_bytes']   = 1;
+		$thresholds['warn_free_bytes']     = 1;
+		$thresholds['refuse_free_percent'] = 0.0;
+		return $thresholds;
+	};
+	$dry_recycle = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/recycle-dry-run' ), false, false, array(), 'recycle_terminal', true, true);
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds']);
+	assert_true(! is_wp_error($dry_recycle) && true === ($dry_recycle['dry_run'] ?? false), 'capacity remediation dry-run did not return its non-mutating preview');
+	assert_true($dry_recycle_head === trim(run_command('git rev-parse HEAD', $recycle_fixture['path'])), 'capacity remediation dry-run reset a terminal worktree');
+	assert_true($dry_recycle_metadata === $wpdb->rows[$recycle_handle], 'capacity remediation dry-run rewrote terminal worktree metadata');
 	$recycle_exclude = trim(run_command('git rev-parse --git-path info/exclude', $recycle_fixture['path']));
 	file_put_contents($recycle_exclude, ".recycle-context\nvendor/\n", FILE_APPEND);
 	file_put_contents($recycle_fixture['path'] . '/.recycle-context', "preserved context\n");
