@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.59.11] - 2026-08-22
+
+### Fixed
+- make worktree options optional
+
 ## [0.59.10] - 2026-08-22
 
 ### Fixed
