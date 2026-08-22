@@ -822,7 +822,7 @@ trait WorkspaceCoreUtilities {
 	 * @return bool True when refresh guidance should be shown.
 	 */
 	private function primary_freshness_needs_refresh( string $status ): bool {
-		return in_array($status, array( 'stale', 'diverged' ), true);
+		return in_array($status, array( 'stale', 'diverged', 'detached' ), true);
 	}
 
 	/**
