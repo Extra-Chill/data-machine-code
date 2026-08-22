@@ -38,8 +38,8 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		$task = WorktreeContextInjector::resolve_task_metadata($task) ?? array();
 		$reuse_policy = strtolower(trim($reuse_policy));
-		if ( ! in_array($reuse_policy, array( 'reuse_compatible', 'isolated', 'recycle_terminal' ), true) ) {
-			return new \WP_Error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: reuse_compatible, isolated, recycle_terminal.', array( 'status' => 400 ));
+		if ( ! in_array($reuse_policy, WorktreeContextInjector::VALID_REUSE_POLICIES, true) ) {
+			return new \WP_Error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: ' . implode(', ', WorktreeContextInjector::VALID_REUSE_POLICIES) . '.', array( 'status' => 400 ));
 		}
 		if ( array_key_exists('cleanup_policy', $intent) && null === WorktreeContextInjector::normalize_cleanup_policy($intent['cleanup_policy']) ) {
 			return new \WP_Error('invalid_cleanup_policy', 'cleanup_policy must be one of: ' . implode(', ', WorktreeContextInjector::VALID_CLEANUP_POLICIES) . '.', array( 'status' => 400 ));
@@ -256,8 +256,8 @@ trait WorkspaceWorktreeLifecycle {
 
 		$task = WorktreeContextInjector::resolve_task_metadata($task) ?? array();
 		$reuse_policy = strtolower(trim($reuse_policy));
-		if ( ! in_array($reuse_policy, array( 'reuse_compatible', 'isolated', 'recycle_terminal' ), true) ) {
-			return new \WP_Error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: reuse_compatible, isolated, recycle_terminal.', array( 'status' => 400 ));
+		if ( ! in_array($reuse_policy, WorktreeContextInjector::VALID_REUSE_POLICIES, true) ) {
+			return new \WP_Error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: ' . implode(', ', WorktreeContextInjector::VALID_REUSE_POLICIES) . '.', array( 'status' => 400 ));
 		}
 		if ( $force && $remediate_capacity ) {
 			return new \WP_Error('worktree_capacity_policy_conflict', '--force bypasses capacity admission; use it separately from --remediate-capacity.', array( 'status' => 400 ));
@@ -511,15 +511,7 @@ trait WorkspaceWorktreeLifecycle {
 			);
 		}
 		if ( array() !== $reuse_candidates && 'isolated' === $reuse_policy ) {
-			$missing_intent = array();
-			foreach ( array( 'purpose', 'owner_run_ref' ) as $field ) {
-				if ( '' === trim((string) ($intent[ $field ] ?? '')) ) {
-					$missing_intent[] = $field;
-				}
-			}
-			if ( WorktreeContextInjector::CLEANUP_POLICY_REMOVE_ON_SUCCESS !== ( $intent['cleanup_policy'] ?? null ) ) {
-				$missing_intent[] = 'cleanup_policy=remove_on_success';
-			}
+			$missing_intent = WorktreeContextInjector::missing_isolation_intent($intent);
 			if ( array() !== $missing_intent ) {
 				return $this->worktree_reuse_refused(
 					$wt_handle,

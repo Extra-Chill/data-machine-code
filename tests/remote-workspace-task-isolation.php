@@ -95,6 +95,27 @@ remote_isolation_assert(! isset($GLOBALS['remote_workspace_task_isolation_state'
 $ownerless = $backend->worktree_add('repo', 'second', 'main', $task, array(), 'isolated');
 remote_isolation_assert(is_wp_error($ownerless) && 'same_task_isolation_intent_required' === ( $ownerless->get_error_data()['reuse']['reason_code'] ?? null ), 'ownerless remote isolation was not refused');
 
+$isolation_fields = array(
+	'purpose'                           => 'parallel-review',
+	'owner_run_ref'                     => 'run-1',
+	'cleanup_policy=remove_on_success' => 'remove_on_success',
+);
+for ( $mask = 0; $mask < 7; $mask++ ) {
+	$intent  = array();
+	$missing = array();
+	foreach ( $isolation_fields as $field => $value ) {
+		$bit = array_search($field, array_keys($isolation_fields), true);
+		if ( 0 !== ( $mask & ( 1 << $bit ) ) ) {
+			$intent[ 'cleanup_policy=remove_on_success' === $field ? 'cleanup_policy' : $field ] = $value;
+		} else {
+			$missing[] = $field;
+		}
+	}
+	$incomplete = $backend->worktree_add('repo', 'incomplete-isolation-' . $mask, 'main', $task, $intent, 'isolated');
+	remote_isolation_assert(is_wp_error($incomplete), 'incomplete remote isolation was accepted for mask ' . $mask);
+	remote_isolation_assert($missing === ( $incomplete->get_error_data()['reuse']['missing_intent'] ?? null ), 'incomplete remote isolation did not return the complete missing-field list for mask ' . $mask);
+}
+
 $isolated = $backend->worktree_add('repo', 'second', 'main', $task, array( 'purpose' => 'parallel-review', 'owner_run_ref' => 'run-1', 'cleanup_policy' => 'remove_on_success' ), 'isolated');
 remote_isolation_assert(! is_wp_error($isolated) && isset($GLOBALS['remote_workspace_task_isolation_state']['worktrees']['repo@second']), 'owned remote isolation was not created');
 

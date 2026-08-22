@@ -102,6 +102,7 @@ class WorkspaceCommand extends BaseCommand {
 		$option = static fn ( string $name, string $description = 'Operation option.' ): array => array( 'type' => 'assoc', 'name' => $name, 'description' => $description, 'optional' => true );
 		$flag   = static fn ( string $name, string $description = 'Operation flag.' ): array => array( 'type' => 'flag', 'name' => $name, 'description' => $description, 'optional' => true );
 		$format = $option('format', 'Output format (table, json, csv, yaml).');
+		$worktree_policy = WorktreeContextInjector::worktree_add_policy_schema_properties();
 		$definitions = array(
 			'add' => array(
 				'shortdesc' => 'Create an isolated, managed worktree.',
@@ -124,10 +125,10 @@ class WorkspaceCommand extends BaseCommand {
 					array( 'type' => 'assoc', 'name' => 'task-url', 'description' => 'Task or issue URL to record.' ),
 					array( 'type' => 'assoc', 'name' => 'task-ref', 'description' => 'Short task reference to record.' ),
 					array( 'type' => 'flag', 'name' => 'require-task-tracker', 'description' => 'Require task tracking metadata.' ),
-					array( 'type' => 'assoc', 'name' => 'reuse-policy', 'description' => 'Existing-handle policy.' ),
-					array( 'type' => 'assoc', 'name' => 'purpose', 'description' => 'Worktree purpose metadata.' ),
-					array( 'type' => 'assoc', 'name' => 'owner-run-ref', 'description' => 'Owning run reference.' ),
-					array( 'type' => 'assoc', 'name' => 'cleanup-policy', 'description' => 'Cleanup policy metadata.' ),
+					array( 'type' => 'assoc', 'name' => 'reuse-policy', 'description' => implode('|', $worktree_policy['reuse_policy']['enum'] ) . '. ' . $worktree_policy['reuse_policy']['description'] ),
+					array( 'type' => 'assoc', 'name' => 'purpose', 'description' => $worktree_policy['purpose']['description'] ),
+					array( 'type' => 'assoc', 'name' => 'owner-run-ref', 'description' => $worktree_policy['owner_run_ref']['description'] ),
+					array( 'type' => 'assoc', 'name' => 'cleanup-policy', 'description' => implode('|', $worktree_policy['cleanup_policy']['enum'] ) . '. ' . $worktree_policy['cleanup_policy']['description'] ),
 					$format,
 				),
 			),
