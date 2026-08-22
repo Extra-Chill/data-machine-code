@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.61.3] - 2026-08-22
+
+### Fixed
+- resolve local default branch
+- persist bootstrap readiness
+
 ## [0.61.2] - 2026-08-22
 
 ### Fixed
