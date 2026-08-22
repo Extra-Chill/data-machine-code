@@ -1402,6 +1402,40 @@ class WorkspaceAbilities {
 			// -----------------------------------------------------------------
 			// Worktree abilities (mutating, CLI-only by default).
 			// -----------------------------------------------------------------
+			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-plan',
+				array(
+					'label'               => 'Plan Workspace Worktree',
+					'description'         => 'Non-mutatingly resolve a managed worktree intent into a typed, digest-addressed allocation plan. The returned apply intent is revalidated against remote freshness, capacity, ownership, and destination state before mutation.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => self::worktreeIntentSchemaProperties(),
+						'required'   => array( 'repo', 'branch' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array( 'digest' => array( 'type' => 'string' ), 'disposition' => array( 'type' => 'string', 'enum' => array( 'create', 'exact_reuse', 'adoptable', 'owner_conflict', 'unsafe', 'stale', 'capacity_blocked' ) ), 'apply_intent' => array( 'type' => 'object' ), 'apply' => array( 'type' => 'object' ) ),
+					),
+					'execute_callback'    => array( self::class, 'worktreePlan' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-apply-plan',
+				array(
+					'label'               => 'Apply Workspace Worktree Plan',
+					'description'         => 'Apply a digest-addressed worktree plan after fail-closed live revalidation.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array( 'type' => 'object', 'properties' => array( 'plan' => array( 'type' => 'object' ) ), 'required' => array( 'plan' ) ),
+					'output_schema'       => array( 'type' => 'object', 'properties' => array( 'success' => array( 'type' => 'boolean' ), 'handle' => array( 'type' => 'string' ), 'path' => array( 'type' => 'string' ) ) ),
+					'execute_callback'    => array( self::class, 'worktreeApplyPlan' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
 
 			AbilityRegistry::register(
 				'datamachine-code/workspace-worktree-add',
@@ -4140,6 +4174,37 @@ class WorkspaceAbilities {
 			$remediate_capacity,
 			$remediate_capacity_dry_run
 		);
+	}
+
+	/** Plan a local worktree using the same typed fields and defaults as add. */
+	public static function worktreePlan( array $input ): array|\WP_Error {
+		$request = self::worktreeIntentRequest($input);
+		if ( $request instanceof \WP_Error ) {
+			return $request;
+		}
+		return ( new Workspace() )->worktree_plan(...$request);
+	}
+
+	/** Apply a previously returned local worktree plan. */
+	public static function worktreeApplyPlan( array $input ): array|\WP_Error {
+		return ( new Workspace() )->worktree_apply_plan((array) ($input['plan'] ?? array()));
+	}
+
+	/** @return array<int,mixed>|\WP_Error */
+	private static function worktreeIntentRequest( array $input ): array|\WP_Error {
+		$task = array_filter(array( 'task_url' => $input['task_url'] ?? null, 'task_ref' => $input['task_ref'] ?? null ), static fn( $value ): bool => is_string($value) && '' !== trim($value));
+		$intent = array();
+		foreach ( array( 'purpose', 'owner_run_ref', 'cleanup_policy' ) as $key ) {
+			if ( array_key_exists($key, $input) ) {
+				$intent[ $key ] = $input[ $key ];
+			}
+		}
+		return array( (string) ($input['repo'] ?? ''), (string) ($input['branch'] ?? ''), $input['from'] ?? null, array_key_exists('inject_context', $input) ? (bool) $input['inject_context'] : true, array_key_exists('bootstrap', $input) ? (bool) $input['bootstrap'] : true, ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), $task, ! empty($input['allow_unverified_freshness']), array_key_exists('require_task_tracker', $input) ? (bool) $input['require_task_tracker'] : true, $intent, (string) ($input['reuse_policy'] ?? 'reuse_compatible') );
+	}
+
+	/** @return array<string,array<string,mixed>> */
+	private static function worktreeIntentSchemaProperties(): array {
+		return array( 'repo' => array( 'type' => 'string' ), 'branch' => array( 'type' => 'string' ), 'from' => array( 'type' => 'string' ), 'inject_context' => array( 'type' => 'boolean' ), 'bootstrap' => array( 'type' => 'boolean' ), 'allow_stale' => array( 'type' => 'boolean' ), 'allow_unverified_freshness' => array( 'type' => 'boolean' ), 'rebase_base' => array( 'type' => 'boolean' ), 'force' => array( 'type' => 'boolean' ), 'task_url' => array( 'type' => 'string' ), 'task_ref' => array( 'type' => 'string' ), 'require_task_tracker' => array( 'type' => 'boolean' ), 'reuse_policy' => array( 'type' => 'string', 'enum' => array( 'reuse_compatible', 'isolated', 'recycle_terminal' ) ), 'purpose' => array( 'type' => 'string' ), 'owner_run_ref' => array( 'type' => 'string' ), 'cleanup_policy' => array( 'type' => 'string', 'enum' => array( 'manual', 'remove_on_success', 'preserve_on_failure' ) ) );
 	}
 
 	/**

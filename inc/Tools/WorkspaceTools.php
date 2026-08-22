@@ -96,6 +96,7 @@ class WorkspaceTools extends BaseTool
         $this->registerTool('workspace_git_log', array( $this, 'getGitLogDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-log' ));
         $this->registerTool('workspace_git_diff', array( $this, 'getGitDiffDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-diff' ));
         $this->registerTool('workspace_git_pull', array( $this, 'getGitPullDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-pull' ));
+		$this->registerProjectedToolFallback('workspace_worktree_plan', array( $this, 'getWorktreePlanDefinition' ), $contexts, array( 'ability' => 'datamachine-code/workspace-worktree-plan' ));
         $this->registerTool('workspace_worktree_add', array( $this, 'getWorktreeAddDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-worktree-add' ));
         $this->registerTool('workspace_git_add', array( $this, 'getGitAddDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-add' ));
         $this->registerTool('workspace_git_commit', array( $this, 'getGitCommitDefinition' ), $policy_contexts, $policy_meta + array( 'ability' => 'datamachine-code/workspace-git-commit' ));
@@ -583,6 +584,23 @@ class WorkspaceTools extends BaseTool
 
         return $this->executeAbility('datamachine-code/workspace-worktree-add', 'workspace_worktree_add', $input, array( 'repo' ));
     }
+
+	/** @param array<string,mixed> $parameters @return array<string,mixed> */
+	public function handleWorktreePlan( array $parameters ): array
+	{
+		$input = array( 'repo' => $parameters['repo'] ?? '', 'branch' => $parameters['branch'] ?? '', 'require_task_tracker' => true );
+		foreach ( array( 'from', 'task_url', 'task_ref', 'purpose', 'owner_run_ref', 'cleanup_policy', 'reuse_policy' ) as $key ) {
+			if ( isset($parameters[ $key ]) ) {
+				$input[ $key ] = $parameters[ $key ];
+			}
+		}
+		foreach ( array( 'inject_context', 'bootstrap', 'allow_stale', 'allow_unverified_freshness', 'rebase_base', 'force' ) as $key ) {
+			if ( array_key_exists($key, $parameters) ) {
+				$input[ $key ] = (bool) $parameters[ $key ];
+			}
+		}
+		return $this->executeAbility('datamachine-code/workspace-worktree-plan', 'workspace_worktree_plan', $input, array( 'repo', 'branch' ));
+	}
 
     /**
      * @param array<string,mixed> $parameters Tool parameters. @return array<string,mixed> 
@@ -1464,6 +1482,15 @@ class WorkspaceTools extends BaseTool
             ) 
         );
     }
+
+	/** @return array<string,mixed> */
+	public function getWorktreePlanDefinition(): array
+	{
+		$definition = $this->getWorktreeAddDefinition();
+		$definition['method'] = 'handleWorktreePlan';
+		$definition['description'] = 'Plan a git worktree allocation without mutation. Returns a digest-addressed apply intent for a generic command provider.';
+		return $definition;
+	}
 
     /**
      * @return array<string,mixed> 

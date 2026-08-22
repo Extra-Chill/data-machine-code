@@ -44,6 +44,8 @@ class WorkspaceCommand extends BaseCommand {
 
 	private const WORKTREE_OPERATIONS = array(
 		'add'                                     => array( 'ability' => 'datamachine-code/workspace-worktree-add' ),
+		'plan'                                    => array( 'ability' => 'datamachine-code/workspace-worktree-plan' ),
+		'apply-plan'                              => array( 'ability' => 'datamachine-code/workspace-worktree-apply-plan' ),
 		'list'                                    => array( 'ability' => 'datamachine-code/workspace-worktree-list' ),
 		'get'                                     => array( 'ability' => 'datamachine-code/workspace-worktree-list' ),
 		'remove'                                  => array( 'ability' => 'datamachine-code/workspace-worktree-remove' ),
@@ -119,6 +121,11 @@ class WorkspaceCommand extends BaseCommand {
 					array( 'type' => 'assoc', 'name' => 'cleanup-policy', 'description' => 'Cleanup policy metadata.' ),
 					$format,
 				),
+			),
+			'apply-plan' => array(
+				'shortdesc' => 'Apply a digest-addressed worktree plan.',
+				'longdesc'  => "Applies a plan only when a fresh replan has the same digest. Changed remote, capacity, ownership, or destination state is refused.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree apply-plan --plan='<json-plan>' --format=json",
+				'synopsis'  => array( $option('plan', 'JSON object returned by worktree plan.'), $format ),
 			),
 			'remove' => array(
 				'shortdesc' => 'Remove a managed worktree.',
@@ -207,6 +214,11 @@ class WorkspaceCommand extends BaseCommand {
 				'longdesc'  => "Runs capacity recovery using the supplied bounded page controls.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree capacity-recovery --limit=25 --until-budget=60s --format=json",
 				'synopsis'  => array( $option('limit', 'Maximum worktrees to process.'), $option('offset', 'Zero-indexed inventory offset.'), $option('replan-offset', 'Offset for a replanned page.'), $option('until-budget', 'Compact wall-clock budget.'), $format ),
 			),
+		);
+		$definitions['plan'] = array(
+			'shortdesc' => 'Plan a managed worktree without creating it.',
+			'longdesc'  => "Resolves the exact allocation, freshness, capacity, ownership, reuse, and bootstrap decision into a digest-addressed plan. Apply it with `worktree apply-plan` to revalidate live state before creation.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree plan data-machine-code fix/1091 --from=origin/main --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1091 --format=json",
+			'synopsis'  => $definitions['add']['synopsis'],
 		);
 
 		foreach ( array( 'active-no-signal-report', 'active-no-signal-finalized-apply', 'active-no-signal-equivalent-clean-apply', 'active-no-signal-merged-apply', 'active-no-signal-remote-clean-apply' ) as $operation ) {
@@ -4433,6 +4445,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		switch ( $operation ) {
 			case 'add':
+			case 'plan':
 				if ( empty($args[1]) || empty($args[2]) ) {
 					WP_CLI::error('Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-ref=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--allow-unverified-freshness] [--rebase-base] [--force|--remediate-capacity [--remediate-capacity-dry-run]] [--reuse-policy=reuse_compatible|isolated|recycle_terminal] [--task-url=<url>|--task-ref=<ref>] [--require-task-tracker]');
 					return;
@@ -4490,6 +4503,15 @@ class WorkspaceCommand extends BaseCommand {
 						$input[ str_replace('-', '_', $flag) ] = (string) $assoc_args[ $flag ];
 					}
 				}
+				break;
+
+			case 'apply-plan':
+				$decoded = json_decode((string) ($assoc_args['plan'] ?? ''), true);
+				if ( ! is_array($decoded) ) {
+					WP_CLI::error('Usage: worktree apply-plan --plan=<json-plan>');
+					return;
+				}
+				$input['plan'] = $decoded;
 				break;
 
 			case 'refresh-context':
@@ -5275,7 +5297,13 @@ class WorkspaceCommand extends BaseCommand {
 				return;
 
 			case 'add':
+			case 'plan':
 				WP_CLI::success($result['message'] ?? 'Worktree created.');
+				if ( 'plan' === $operation ) {
+					WP_CLI::log(sprintf('Disposition: %s', $result['disposition'] ?? '-'));
+					WP_CLI::log(sprintf('Digest: %s', $result['digest'] ?? '-'));
+					return;
+				}
 				if ( isset($result['disk_budget']) && is_array($result['disk_budget']) ) {
 					$budget = $result['disk_budget'];
 					WP_CLI::log(\DataMachineCode\Workspace\WorktreeDiskBudget::format_summary($budget));
