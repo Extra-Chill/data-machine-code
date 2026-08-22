@@ -44,27 +44,11 @@ class WorkspaceReader {
 	 * @return array{success: bool, content?: string, path?: string, size?: int, lines_read?: int, offset?: int}|\WP_Error
 	 */
 	public function read_file( string $name, string $path, int $max_size = Workspace::MAX_READ_SIZE, ?int $offset = null, ?int $limit = null, bool $allow_stale_primary = false ): array|\WP_Error {
-		$handle_check = $this->workspace->require_explicit_workspace_handle($name);
-		if ( is_wp_error($handle_check) ) {
-			return $handle_check;
+		$repo_path = $this->prepare_workspace_read($name, $path, $allow_stale_primary);
+		if ( is_wp_error($repo_path) ) {
+			return $repo_path;
 		}
-
-		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($name, $path);
-		if ( null !== $policy_error ) {
-			return $policy_error;
-		}
-
-		$primary_read = $this->workspace->ensure_primary_read_allowed($name, $allow_stale_primary);
-		if ( is_wp_error($primary_read) ) {
-			return $primary_read;
-		}
-
-		$repo_path = $this->workspace->get_repo_path($name);
 		$path      = ltrim($path, '/');
-
-		if ( ! is_dir($repo_path) ) {
-			return new \WP_Error('repo_not_found', sprintf('Repository "%s" not found in workspace.', $name), array( 'status' => 404 ));
-		}
 
 		$file_path  = $repo_path . '/' . $path;
 		$validation = $this->workspace->validate_containment($file_path, $repo_path);
@@ -144,16 +128,12 @@ class WorkspaceReader {
 			'size'    => $size,
 		);
 
-		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($name);
-		}
-
 		if ( null !== $offset || null !== $limit ) {
 			$result['lines_read'] = $lines_read;
 			$result['offset']     = $start_line;
 		}
 
-		return $result;
+		return $this->with_context_policy($name, $result);
 	}
 
 	/**
@@ -199,25 +179,9 @@ class WorkspaceReader {
 	 * @return array{success: bool, repo?: string, path?: string, entries?: array}|\WP_Error
 	 */
 	public function list_directory( string $name, ?string $path = null, bool $allow_stale_primary = false ): array|\WP_Error {
-		$handle_check = $this->workspace->require_explicit_workspace_handle($name);
-		if ( is_wp_error($handle_check) ) {
-			return $handle_check;
-		}
-
-		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($name, $path ?? '');
-		if ( null !== $policy_error ) {
-			return $policy_error;
-		}
-
-		$primary_read = $this->workspace->ensure_primary_read_allowed($name, $allow_stale_primary);
-		if ( is_wp_error($primary_read) ) {
-			return $primary_read;
-		}
-
-		$repo_path = $this->workspace->get_repo_path($name);
-
-		if ( ! is_dir($repo_path) ) {
-			return new \WP_Error('repo_not_found', sprintf('Repository "%s" not found in workspace.', $name), array( 'status' => 404 ));
+		$repo_path = $this->prepare_workspace_read($name, $path ?? '', $allow_stale_primary);
+		if ( is_wp_error($repo_path) ) {
+			return $repo_path;
 		}
 
 		$target_path = $repo_path;
@@ -285,11 +249,7 @@ class WorkspaceReader {
 			'entries' => $items,
 		);
 
-		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($name);
-		}
-
-		return $result;
+		return $this->with_context_policy($name, $result);
 	}
 
 	/**
@@ -304,24 +264,9 @@ class WorkspaceReader {
 	 * @return array{success: bool, repo?: string, path?: string, pattern?: string, matches?: array, count?: int, truncated?: bool}|\WP_Error
 	 */
 	public function grep( string $name, string $pattern, ?string $path = null, ?string $include_pattern = null, int $max_results = 100, int $context_lines = 0, bool $allow_stale_primary = false ): array|\WP_Error {
-		$handle_check = $this->workspace->require_explicit_workspace_handle($name);
-		if ( is_wp_error($handle_check) ) {
-			return $handle_check;
-		}
-
-		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($name, $path ?? '');
-		if ( null !== $policy_error ) {
-			return $policy_error;
-		}
-
-		$primary_read = $this->workspace->ensure_primary_read_allowed($name, $allow_stale_primary);
-		if ( is_wp_error($primary_read) ) {
-			return $primary_read;
-		}
-
-		$repo_path = $this->workspace->get_repo_path($name);
-		if ( ! is_dir($repo_path) ) {
-			return new \WP_Error('repo_not_found', sprintf('Repository "%s" not found in workspace.', $name), array( 'status' => 404 ));
+		$repo_path = $this->prepare_workspace_read($name, $path ?? '', $allow_stale_primary);
+		if ( is_wp_error($repo_path) ) {
+			return $repo_path;
 		}
 
 		$repo_real = realpath($repo_path);
@@ -387,6 +332,36 @@ class WorkspaceReader {
 			'truncated' => count($matches) >= $max_results,
 		);
 
+		return $this->with_context_policy($name, $result);
+	}
+
+	/** Validate read access and resolve an existing local repository path. */
+	private function prepare_workspace_read( string $name, string $path, bool $allow_stale_primary ): string|\WP_Error {
+		$handle_check = $this->workspace->require_explicit_workspace_handle($name);
+		if ( is_wp_error($handle_check) ) {
+			return $handle_check;
+		}
+
+		$policy_error = WorkspaceAliasResolver::read_error_if_disallowed($name, $path);
+		if ( null !== $policy_error ) {
+			return $policy_error;
+		}
+
+		$primary_read = $this->workspace->ensure_primary_read_allowed($name, $allow_stale_primary);
+		if ( is_wp_error($primary_read) ) {
+			return $primary_read;
+		}
+
+		$repo_path = $this->workspace->get_repo_path($name);
+		if ( ! is_dir($repo_path) ) {
+			return new \WP_Error('repo_not_found', sprintf('Repository "%s" not found in workspace.', $name), array( 'status' => 404 ));
+		}
+
+		return $repo_path;
+	}
+
+	/** Attach the read-only context policy attestation when the handle requires one. */
+	private function with_context_policy( string $name, array $result ): array {
 		if ( WorkspaceAliasResolver::is_context_repository($name) ) {
 			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($name);
 		}
