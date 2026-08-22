@@ -105,6 +105,8 @@ trait WorkspaceWorktreeEmergencyCleanup {
 					$base_row, array(
 						'artifacts'           => $disk['artifacts'],
 						'artifact_count'      => count( (array) $disk['artifacts']),
+						'artifact_apparent_bytes' => (int) ( $disk['artifact_apparent_bytes'] ?? 0 ),
+						'artifact_allocated_bytes' => (int) ( $disk['artifact_allocated_bytes'] ?? $disk['artifact_size_bytes'] ?? 0 ),
 						'artifact_size_bytes' => (int) ( $disk['artifact_size_bytes'] ?? 0 ),
 						'entry_count'         => $disk['artifact_entry_count'] ?? null,
 						'entry_count_minimum' => (int) ( $disk['artifact_entry_count_minimum'] ?? 0 ),
@@ -146,7 +148,7 @@ trait WorkspaceWorktreeEmergencyCleanup {
 				return $b_measured <=> $a_measured;
 			}
 			$count = (int) ( $b['entry_count'] ?? -1 ) <=> (int) ( $a['entry_count'] ?? -1 );
-			return 0 !== $count ? $count : (int) ( $b['artifact_size_bytes'] ?? 0 ) <=> (int) ( $a['artifact_size_bytes'] ?? 0 );
+			return 0 !== $count ? $count : (int) ( $b['artifact_allocated_bytes'] ?? $b['artifact_size_bytes'] ?? 0 ) <=> (int) ( $a['artifact_allocated_bytes'] ?? $a['artifact_size_bytes'] ?? 0 );
 		});
 		usort($worktree_candidates, fn( $a, $b ) => (int) ( $b['age_days'] ?? -1 ) <=> (int) ( $a['age_days'] ?? -1 ));
 
