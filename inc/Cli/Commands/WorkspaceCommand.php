@@ -88,8 +88,8 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array<string,array<string,mixed>>
 	 */
 	public static function worktree_command_definitions(): array {
-		$option = static fn ( string $name, string $description = 'Operation option.' ): array => array( 'type' => 'assoc', 'name' => $name, 'description' => $description );
-		$flag   = static fn ( string $name, string $description = 'Operation flag.' ): array => array( 'type' => 'flag', 'name' => $name, 'description' => $description );
+		$option = static fn ( string $name, string $description = 'Operation option.' ): array => array( 'type' => 'assoc', 'name' => $name, 'description' => $description, 'optional' => true );
+		$flag   = static fn ( string $name, string $description = 'Operation flag.' ): array => array( 'type' => 'flag', 'name' => $name, 'description' => $description, 'optional' => true );
 		$format = $option('format', 'Output format (table, json, csv, yaml).');
 		$definitions = array(
 			'add' => array(

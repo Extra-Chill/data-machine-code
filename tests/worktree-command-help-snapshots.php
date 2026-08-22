@@ -29,6 +29,11 @@ namespace {
 		worktree_help_assert(str_contains((string) ( $definition['longdesc'] ?? '' ), '## EXAMPLES'), sprintf('%s help lacks an example.', $operation));
 		worktree_help_assert(! str_contains((string) ( $definition['longdesc'] ?? '' ), 'Delegates to the canonical'), sprintf('%s help uses placeholder fallback content.', $operation));
 		worktree_help_assert(isset($definition['synopsis']), sprintf('%s help lacks a synopsis.', $operation));
+		foreach ( $definition['synopsis'] as $argument ) {
+			if ( in_array($argument['type'] ?? '', array( 'assoc', 'flag' ), true) ) {
+				worktree_help_assert(true === ( $argument['optional'] ?? false ), sprintf('%s --%s must be optional in WP-CLI.', $operation, $argument['name'] ?? 'unknown'));
+			}
+		}
 	}
 
 	$assert_synopsis = static function ( string $operation, array $expected ) use ( $definitions ): void {
