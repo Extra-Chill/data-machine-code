@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.60.0] - 2026-08-22
+
+### Added
+- add standalone worktree provider
+
 ## [0.59.13] - 2026-08-22
 
 ### Fixed
