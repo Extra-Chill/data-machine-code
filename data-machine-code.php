@@ -217,11 +217,18 @@ function datamachine_code_register_datamachine_integrations(): void {
 function datamachine_code_bootstrap() {
 	static $bootstrapped = false;
 
-	if ( $bootstrapped || datamachine_code_is_minimal_runtime_cli_request() || datamachine_code_is_targeted_workspace_read_cli_request() ) {
+	if ( $bootstrapped || datamachine_code_is_side_effect_free_cli_request() || datamachine_code_is_targeted_workspace_read_cli_request() ) {
 		return;
 	}
 
 	$bootstrapped = true;
+
+	// Executable workspace commands still dispatch through WorkspaceAbilities.
+	// Register only that surface while keeping unrelated web runtime services out.
+	if ( datamachine_code_is_bounded_workspace_cli_request() ) {
+		new \DataMachineCode\Abilities\WorkspaceAbilities();
+		return;
+	}
 
 	// Load Abilities (they self-register).
 	new \DataMachineCode\Abilities\GitHubAbilities();
