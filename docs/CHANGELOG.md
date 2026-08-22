@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.59.8] - 2026-08-22
+
+### Fixed
+- reconcile contained detached branch
+
 ## [0.59.7] - 2026-08-22
 
 ### Fixed
