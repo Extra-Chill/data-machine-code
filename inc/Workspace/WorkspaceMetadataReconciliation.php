@@ -556,6 +556,9 @@ trait WorkspaceMetadataReconciliation {
 		if ( null === $metadata || array() === $metadata ) {
 			return 'missing_metadata';
 		}
+		if ( WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE === WorktreeContextInjector::project_lifecycle_state($metadata) && WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE !== WorktreeContextInjector::normalize_state( (string) ( $metadata['lifecycle_state'] ?? '' ) ) ) {
+			return 'explicit_cleanup_eligibility';
+		}
 
 		foreach ( array( 'handle', 'repo', 'branch', 'path', 'created_at', 'observed_at', 'lifecycle_state' ) as $field ) {
 			if ( ! array_key_exists($field, $metadata) || '' === trim( (string) $metadata[ $field ] ) ) {
@@ -678,6 +681,9 @@ trait WorkspaceMetadataReconciliation {
 				'path'   => $path,
 			)
 		);
+		if ( WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE === WorktreeContextInjector::project_lifecycle_state($metadata) && WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE !== WorktreeContextInjector::normalize_state( (string) ( $metadata['lifecycle_state'] ?? '' ) ) ) {
+			return $this->build_explicit_cleanup_eligibility_reconciliation_proposal($base_row, $metadata, $handle, $repo, $branch, $path, $dirty, $unpushed);
+		}
 		$finalizer_signal = $this->detect_worktree_lifecycle_finalizer_signal($resolved_wt, $metadata, $github_cache, $fetched);
 		if ( null !== $finalizer_signal && 'probe-timeout' === ( $finalizer_signal['signal'] ?? '' ) ) {
 			return $this->build_worktree_metadata_reconciliation_skip(
@@ -948,8 +954,9 @@ trait WorkspaceMetadataReconciliation {
 		if ( '' !== $raw_state && null === $existing_state ) {
 			$invalid_fields[] = 'lifecycle_state';
 		}
-		if ( null !== $existing_state ) {
-			$this->set_reconciled_metadata_field($proposed, $source_map, 'lifecycle_state', $existing_state, 'metadata');
+		$projected_state = WorktreeContextInjector::project_lifecycle_state($metadata);
+		if ( null !== $projected_state ) {
+			$this->set_reconciled_metadata_field($proposed, $source_map, 'lifecycle_state', $projected_state, $projected_state === $existing_state ? 'metadata' : 'explicit_cleanup_eligibility');
 		} else {
 			$this->set_reconciled_metadata_field($proposed, $source_map, 'lifecycle_state', WorktreeContextInjector::STATE_ACTIVE, 'operator_plan');
 		}
@@ -959,6 +966,17 @@ trait WorkspaceMetadataReconciliation {
 			'source_map'        => $source_map,
 			'invalid_fields'    => $invalid_fields,
 		);
+	}
+
+	/** Build a state-only repair for already durable finalization evidence. */
+	private function build_explicit_cleanup_eligibility_reconciliation_proposal( array $base_row, array $metadata, string $handle, string $repo, string $branch, string $path, int $dirty, int $unpushed ): array {
+		$classification = $this->build_worktree_metadata_backfill_classification($metadata, $handle, $repo, $branch, $path);
+		$proposed       = $classification['proposed_metadata'];
+		$source_map     = $classification['source_map'];
+		$proposed['lifecycle_state'] = WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE;
+		$source_map['lifecycle_state'] = 'explicit_cleanup_eligibility';
+
+		return $this->build_worktree_metadata_backfill_proposal($base_row, $dirty, $unpushed, $this->get_missing_worktree_metadata_fields($metadata), $classification['invalid_fields'], $proposed, $source_map);
 	}
 
 	/**
@@ -1453,7 +1471,7 @@ trait WorkspaceMetadataReconciliation {
 			}
 			$metadata['lifecycle_state'] = $state;
 
-			if ( WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE === $state ) {
+			if ( WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE === $state && 'explicit_cleanup_eligibility' !== ( $source_map['lifecycle_state'] ?? null ) ) {
 				$path  = (string) ( $current['path'] ?? '' );
 				$dirty = ! empty($plan['direct_apply']) ? $this->probe_worktree_dirty_count($path, self::CLEANUP_GIT_PROBE_TIMEOUT) : (int) ( $current['dirty'] ?? 0 );
 				if ( is_wp_error($dirty) ) {

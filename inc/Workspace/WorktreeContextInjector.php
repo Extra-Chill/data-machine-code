@@ -288,7 +288,7 @@ class WorktreeContextInjector {
 			);
 		}
 
-		$state = isset($metadata['lifecycle_state']) ? self::normalize_state( (string) $metadata['lifecycle_state']) : null;
+		$state = self::project_lifecycle_state($metadata);
 		if ( self::STATE_PR_OPENED === $state ) {
 			return array(
 				'liveness'              => self::LIVENESS_STOPPED,
@@ -859,13 +859,44 @@ class WorktreeContextInjector {
 	 * @return bool
 	 */
 	public static function has_cleanup_signal( array $metadata ): bool {
-		$state = isset($metadata['lifecycle_state']) ? self::normalize_state( (string) $metadata['lifecycle_state']) : null;
+		$state = self::project_lifecycle_state($metadata);
 		if ( null !== $state && self::should_mark_cleanup_eligible($state, self::extract_pr_metadata($metadata)) ) {
 			return true;
 		}
 
 		$finalized_state = isset($metadata['finalized_state']) ? self::normalize_state( (string) $metadata['finalized_state']) : null;
 		return null !== $finalized_state && self::should_mark_cleanup_eligible($finalized_state, self::extract_pr_metadata($metadata));
+	}
+
+	/**
+	 * Project the canonical lifecycle state from persisted finalization evidence.
+	 *
+	 * Finalizer writes used to leave some rows with a stale active state alongside
+	 * durable cleanup eligibility. That explicit terminal signal outranks activity
+	 * heartbeats; dirty and unpushed checks remain independent removal gates.
+	 *
+	 * @param array<string,mixed> $metadata Worktree lifecycle metadata.
+	 */
+	public static function project_lifecycle_state( array $metadata ): ?string {
+		if ( self::has_explicit_cleanup_eligibility($metadata) ) {
+			return self::STATE_CLEANUP_ELIGIBLE;
+		}
+
+		return isset($metadata['lifecycle_state']) ? self::normalize_state( (string) $metadata['lifecycle_state'] ) : null;
+	}
+
+	/** Whether a durable cleanup timestamp is backed by a finalized lifecycle record. */
+	public static function has_explicit_cleanup_eligibility( array $metadata ): bool {
+		if ( empty($metadata['cleanup_eligible_at']) || false === strtotime( (string) $metadata['cleanup_eligible_at'] ) || empty($metadata['finalized_at']) || false === strtotime( (string) $metadata['finalized_at'] ) ) {
+			return false;
+		}
+
+		$finalized_state = isset($metadata['finalized_state']) ? self::normalize_state( (string) $metadata['finalized_state'] ) : null;
+		if ( null !== $finalized_state && in_array($finalized_state, array( self::STATE_MERGED, self::STATE_CLOSED, self::STATE_ABANDONED, self::STATE_CLEANUP_ELIGIBLE ), true) ) {
+			return true;
+		}
+
+		return array() !== self::extract_pr_metadata($metadata);
 	}
 
 	/**
