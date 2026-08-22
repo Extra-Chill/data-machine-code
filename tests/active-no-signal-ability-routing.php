@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace DataMachineCode\Abilities {
 	final class AbilityRegistry {
 		public static array $registered = array();
+		public static function when_ready( callable $register ): void { $register(); }
 		public static function register( string $name, array $definition ): void { self::$registered[ $name ] = $definition; }
 	}
 	final class GitHubAbilities {}
