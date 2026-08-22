@@ -46,6 +46,8 @@ namespace {
 	$parse('add', array( 'data-machine-code', 'fix/1070' ), array( 'base-branch' => 'main' ));
 	$parse('remove', array( 'data-machine-code@fix-1070' ), array( 'force' => true ));
 	$parse('remove', array( 'data-machine-code', 'fix/1070' ), array());
+	$parse('finalize', array( 'data-machine-code@fix-1070' ), array( 'pr' => 'https://github.com/Extra-Chill/data-machine-code/pull/1070' ));
+	$parse('locks', array(), array( 'prune-stale' => true, 'dry-run' => true, 'format' => 'json' ));
 
 	$remove_synopsis = \WP_CLI\SynopsisParser::render($definitions['remove']['synopsis']);
 	worktree_wp_cli_synopsis_assert(str_starts_with($remove_synopsis, '<repo-or-handle> [<branch>]'), 'remove did not render branch as an optional positional argument.');
