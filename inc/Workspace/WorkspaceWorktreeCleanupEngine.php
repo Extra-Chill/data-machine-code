@@ -1928,7 +1928,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @return bool
 	 */
 	private function worktree_cleanup_has_removable_lifecycle( array $metadata ): bool {
-		$state           = isset($metadata['lifecycle_state']) ? WorktreeContextInjector::normalize_state( (string) $metadata['lifecycle_state']) : null;
+		$state           = WorktreeContextInjector::project_lifecycle_state($metadata);
 		$finalized_state = isset($metadata['finalized_state']) ? WorktreeContextInjector::normalize_state( (string) $metadata['finalized_state']) : null;
 		$removable       = $this->worktree_cleanup_removable_lifecycle_states();
 

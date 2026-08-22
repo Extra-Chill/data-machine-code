@@ -9,6 +9,7 @@ namespace DataMachineCode\Storage;
 
 use DataMachineCode\Support\JsonCodec;
 use DataMachineCode\Support\SecretRedactor;
+use DataMachineCode\Workspace\WorktreeContextInjector;
 
 defined('ABSPATH') || exit;
 
@@ -616,7 +617,7 @@ class WorktreeInventoryRepository {
 			'path'                => (string) ( $row['path'] ?? $metadata['path'] ?? '' ),
 			'primary_path'        => isset($row['primary_path']) ? (string) $row['primary_path'] : null,
 			'is_primary'          => ! empty($row['is_primary']) ? 1 : 0,
-			'lifecycle_state'     => isset($row['lifecycle_state']) ? (string) $row['lifecycle_state'] : ( isset($metadata['lifecycle_state']) ? (string) $metadata['lifecycle_state'] : null ),
+			'lifecycle_state'     => isset($row['lifecycle_state']) ? (string) $row['lifecycle_state'] : ( array() !== $metadata ? WorktreeContextInjector::project_lifecycle_state($metadata) : null ),
 			'origin_site'         => (string) ( $owner['site'] ?? $metadata['origin_site'] ?? $metadata['origin_site_name'] ?? '' ),
 			'origin_agent'        => (string) ( $owner['agent'] ?? $metadata['origin_agent'] ?? '' ),
 			'origin_session'      => isset($session['primary_id']) ? (string) $session['primary_id'] : ( isset($metadata['origin_session']) ? (string) $metadata['origin_session'] : null ),
