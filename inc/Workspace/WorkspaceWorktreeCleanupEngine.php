@@ -1150,6 +1150,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		$sort                      = isset($opts['sort']) ? trim( (string) $opts['sort']) : 'age';
 		$source                    = isset($opts['source']) ? trim( (string) $opts['source']) : 'workspace_bounded_cleanup_eligible_apply';
 		$repo                      = isset($opts['repo']) ? trim( (string) $opts['repo']) : '';
+		$apply_plan                = isset($opts['apply_plan']) && is_array($opts['apply_plan']) ? $opts['apply_plan'] : null;
 		$remove_timeout_seconds    = $this->normalize_worktree_cleanup_remove_timeout($opts['remove_timeout'] ?? null);
 		if ( is_wp_error($remove_timeout_seconds) ) {
 			return $remove_timeout_seconds;
@@ -1172,18 +1173,29 @@ trait WorkspaceWorktreeCleanupEngine {
 			return new \WP_Error('bounded_cleanup_eligible_apply_via_jobs_no_dry_run', 'Job-backed bounded cleanup-eligible apply cannot run as dry-run; use the synchronous dry-run path to review candidates first.', array( 'status' => 400 ));
 		}
 
-		// Reuse the cheap inventory_only review path for candidate discovery so
-		// the bounded cleanup-eligible apply never triggers full worktree_list / fetch / GitHub
-		// API work just to plan. This intentionally does not honor `apply_plan`
-		// — bounded cleanup-eligible apply IS the apply path; no separate plan file is needed.
-		$inventory = $this->worktree_cleanup_inventory_only($older_than, $sort, $include_repaired_metadata, null, 0, $repo);
-		if ( $inventory instanceof \WP_Error ) {
-			return $inventory;
-		}
+		if ( null !== $apply_plan ) {
+			$plan_id = (string) ( $apply_plan['plan_id'] ?? '' );
+			if ( '' === $plan_id || ! hash_equals(hash('sha256', serialize((array) ( $apply_plan['candidates'] ?? array() ))), $plan_id) ) {
+				return new \WP_Error('invalid_cleanup_plan', 'Cleanup apply plan must retain the exact reviewed plan_id and candidates.', array( 'status' => 400 ));
+			}
+			$all_candidates = $this->extract_worktree_cleanup_plan_candidates($apply_plan);
+			if ( $all_candidates instanceof \WP_Error ) {
+				return $all_candidates;
+			}
+			$inventory_skipped = array();
+			$scope             = is_array($apply_plan['scope'] ?? null) ? $apply_plan['scope'] : null;
+		} else {
+			// Reuse the cheap inventory_only review path for candidate discovery so
+			// the bounded cleanup-eligible apply never triggers full worktree_list / fetch / GitHub API work just to plan.
+			$inventory = $this->worktree_cleanup_inventory_only($older_than, $sort, $include_repaired_metadata, null, 0, $repo);
+			if ( $inventory instanceof \WP_Error ) {
+				return $inventory;
+			}
 
-		$all_candidates    = array_values( (array) ( $inventory['candidates'] ?? array() ));
-		$inventory_skipped = array_values( (array) ( $inventory['skipped'] ?? array() ));
-		$scope             = is_array($inventory['scope'] ?? null) ? $inventory['scope'] : null;
+			$all_candidates    = array_values( (array) ( $inventory['candidates'] ?? array() ));
+			$inventory_skipped = array_values( (array) ( $inventory['skipped'] ?? array() ));
+			$scope             = is_array($inventory['scope'] ?? null) ? $inventory['scope'] : null;
+		}
 
 		$batch    = array_slice($all_candidates, 0, $limit);
 		$deferred = array_slice($all_candidates, $limit);

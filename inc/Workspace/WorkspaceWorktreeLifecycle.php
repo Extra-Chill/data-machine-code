@@ -130,7 +130,9 @@ trait WorkspaceWorktreeLifecycle {
 		$wt_handle = $repo . '@' . $slug;
 		$wt_path   = $this->workspace_path . '/' . $wt_handle;
 
-		if ( is_dir($wt_path) ) {
+		// A remediation dry-run must reach capacity planning before any existing
+		// handle path can reset a terminal checkout or rewrite its metadata.
+		if ( is_dir($wt_path) && ! $remediate_capacity_dry_run ) {
 			if ( 'recycle_terminal' === $reuse_policy ) {
 				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->recycle_terminal_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path));
 			}
@@ -217,7 +219,7 @@ trait WorkspaceWorktreeLifecycle {
 		bool $remediate_capacity_dry_run = false
 	): array|\WP_Error {
 		$operation_deadline = microtime(true) + self::worktree_capacity_operation_timeout_seconds($bootstrap);
-		if ( is_dir($wt_path) ) {
+		if ( is_dir($wt_path) && ! $remediate_capacity_dry_run ) {
 			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path);
 		}
 		// The workspace capacity lock serializes admission. The target repo lock is
@@ -2792,17 +2794,33 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		}
 
-		$drain = ( new WorkspaceCleanupEligibleDrainOrchestrator() )->run(
+		$drain_preview = ( new WorkspaceCleanupEligibleDrainOrchestrator() )->run(
 			array(
-				'apply'        => ! $dry_run,
+				'apply'        => false,
 				'limit'        => 25,
-				'passes'       => 3,
+				'passes'       => 1,
 				'until_budget' => '30s',
 				'source'       => 'worktree_capacity_admission_remediation',
 			)
 		);
-		if ( $drain instanceof \WP_Error ) {
-			return $this->capacity_remediation_failure($before, $dry_run, 'cleanup_drain', $drain, $artifact_preview, $artifact_apply);
+		if ( $drain_preview instanceof \WP_Error ) {
+			return $this->capacity_remediation_failure($before, $dry_run, 'cleanup_drain', $drain_preview, $artifact_preview, $artifact_apply);
+		}
+		$drain = $drain_preview;
+		if ( ! $dry_run ) {
+			$drain = ( new WorkspaceCleanupEligibleDrainOrchestrator() )->run(
+				array(
+					'apply'        => true,
+					'limit'        => 25,
+					'passes'       => 1,
+					'until_budget' => '30s',
+					'source'       => 'worktree_capacity_admission_remediation',
+					'apply_plan'   => (array) ( $drain_preview['apply_plan'] ?? array() ),
+				)
+			);
+			if ( $drain instanceof \WP_Error ) {
+				return $this->capacity_remediation_failure($before, false, 'cleanup_drain', $drain, $artifact_preview, $artifact_apply);
+			}
 		}
 
 		$after = $dry_run ? $before : $this->inspect_worktree_capacity($repo, $branch, false, $demand_plan);
@@ -2824,6 +2842,7 @@ trait WorkspaceWorktreeLifecycle {
 
 	/** @return array<string,mixed> */
 	private function capacity_remediation_failure( array $before, bool $dry_run, string $stage, \WP_Error $error, ?array $artifact_preview = null, ?array $artifact_apply = null ): array {
+		$error_data = $error->get_error_data();
 		return array(
 			'mode'             => 'bounded_safe_remediation',
 			'dry_run'          => $dry_run,
@@ -2831,11 +2850,12 @@ trait WorkspaceWorktreeLifecycle {
 			'after'            => $before,
 			'artifact_preview' => $artifact_preview,
 			'artifact_apply'   => $artifact_apply,
+			'cleanup_drain'    => is_array($error_data) && is_array($error_data['cleanup_drain'] ?? null) ? $error_data['cleanup_drain'] : null,
 			'failure'          => array(
 				'stage'   => $stage,
 				'code'    => $error->get_error_code(),
 				'message' => $error->get_error_message(),
-				'data'    => $error->get_error_data(),
+				'data'    => $error_data,
 			),
 			'retry_disposition' => 'no_retry_remediation_failed',
 		);

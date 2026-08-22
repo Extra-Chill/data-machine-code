@@ -33,13 +33,13 @@ namespace DataMachineCode\Workspace {
 	final class CapacityAdmissionRemediationAbility {
 		public array $calls = array();
 
-		public function execute( array $input ): array {
+		public function execute( array $input ): array|\WP_Error {
 			$this->calls[] = $input;
 			$dry_run = ! empty($input['dry_run']);
 			return array(
 				'dry_run'        => $dry_run,
 				'workspace_path' => '/tmp',
-				'candidates'     => $dry_run ? array( array( 'handle' => 'repo@protected-recent' ) ) : array(),
+				'candidates'     => $dry_run ? array( array( 'handle' => 'repo@protected-recent', 'repo' => 'repo', 'branch' => 'protected-recent', 'path' => '/tmp/repo@protected-recent', 'signal' => 'cleanup_eligible' ) ) : array(),
 				'removed'        => $dry_run ? array() : array( array( 'handle' => 'repo@eligible', 'size_bytes' => 50 ) ),
 				'skipped'        => array( array( 'handle' => 'repo@dirty', 'reason_code' => 'dirty_worktree' ) ),
 				'summary'        => array( 'processed' => 1, 'removed' => $dry_run ? 0 : 1, 'skipped' => 1, 'bytes_reclaimed' => $dry_run ? 0 : 50 ),
@@ -84,7 +84,10 @@ namespace DataMachineCode\Workspace {
 	$insufficient_harness = new CapacityAdmissionRemediationHarness(array( $before ));
 	$insufficient = $insufficient_harness->remediate($before, false);
 	capacity_remediation_assert_same('insufficient_safe_reclaim', $insufficient['retry_disposition'], 'A still-refused remeasurement must return a typed no-retry disposition.');
-	capacity_remediation_assert_same(false, $GLOBALS['capacity_remediation_ability']->calls[0]['dry_run'] ?? true, 'Applied remediation must invoke the bounded drain once.');
+	capacity_remediation_assert_same(2, count($GLOBALS['capacity_remediation_ability']->calls), 'Applied remediation must preview then apply the bounded drain once.');
+	capacity_remediation_assert_same(true, $GLOBALS['capacity_remediation_ability']->calls[0]['dry_run'] ?? false, 'Applied remediation must preview the eligible drain before apply.');
+	capacity_remediation_assert_same(false, $GLOBALS['capacity_remediation_ability']->calls[1]['dry_run'] ?? true, 'Applied remediation must apply the reviewed eligible drain plan.');
+	capacity_remediation_assert_same(array( 'repo@protected-recent' ), array_column((array) ($GLOBALS['capacity_remediation_ability']->calls[1]['apply_plan']['candidates'] ?? array()), 'handle'), 'Applied remediation must use only previewed cleanup-eligible candidates despite inventory changes.');
 	capacity_remediation_assert_same(array( array( 'handle' => 'repo@artifact', 'path' => 'vendor' ) ), $insufficient_harness->artifact_options[1]['apply_plan']['candidates'] ?? null, 'Apply must use the exact reviewed artifact candidates.');
 	capacity_remediation_assert_same(1, $insufficient['cleanup_drain']['summary']['removed'] ?? null, 'Applied remediation must retain removed-row evidence.');
 	capacity_remediation_assert_same(1, $insufficient['cleanup_drain']['summary']['skipped'] ?? null, 'Applied remediation must retain protected skipped-row evidence.');

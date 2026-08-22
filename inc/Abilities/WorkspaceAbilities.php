@@ -2151,6 +2151,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'If true, return the plan without removing anything.',
 							),
+							'apply_plan'                => array(
+								'type'        => 'object',
+								'description' => 'Decoded cleanup dry-run report to apply after revalidating every candidate.',
+							),
 							'force'                     => array(
 								'type'        => 'boolean',
 								'description' => 'If true, ignore dirty working-tree safety check.',
@@ -2808,6 +2812,10 @@ class WorkspaceAbilities {
 							'dry_run'                   => array(
 								'type'        => 'boolean',
 								'description' => 'Preview the bounded batch without removing anything.',
+							),
+							'apply_plan'                => array(
+								'type'        => 'object',
+								'description' => 'Exact bounded cleanup review plan containing its plan_id and candidates. Revalidates each reviewed candidate without discovering new inventory rows.',
 							),
 							'limit'                     => array(
 								'type'        => 'integer',
@@ -4949,7 +4957,7 @@ class WorkspaceAbilities {
 	/**
 	 * Apply only worktrees with explicit lifecycle cleanup_eligible metadata in a bounded batch.
 	 *
-	 * @param  array $input Input parameters (repo, dry_run, limit, older_than, sort, force, discard_unpushed, via_jobs, remove_timeout, source).
+	 * @param  array $input Input parameters (repo, dry_run, apply_plan, limit, older_than, sort, force, discard_unpushed, via_jobs, remove_timeout, source).
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function worktreeBoundedCleanupEligibleApply( array $input ): array|\WP_Error {
@@ -4963,6 +4971,9 @@ class WorkspaceAbilities {
 		);
 		if ( isset($input['limit']) ) {
 			$opts['limit'] = (int) $input['limit'];
+		}
+		if ( isset($input['apply_plan']) && is_array($input['apply_plan']) ) {
+			$opts['apply_plan'] = $input['apply_plan'];
 		}
 		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
 			$opts['repo'] = trim( (string) $input['repo']);

@@ -462,6 +462,12 @@ try {
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata($recycle_handle, array( 'last_seen_at' => gmdate('c', time() - 90000) ));
 	$recycle_finalized = $workspace->worktree_finalize($recycle_handle, 'merged');
 	assert_true(! is_wp_error($recycle_finalized), is_wp_error($recycle_finalized) ? $recycle_finalized->get_error_message() : 'terminal recycle fixture finalization failed');
+	$dry_recycle_head     = trim(run_command('git rev-parse HEAD', $recycle_fixture['path']));
+	$dry_recycle_metadata = $wpdb->rows[$recycle_handle];
+	$dry_recycle = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/recycle-dry-run' ), false, false, array(), 'recycle_terminal', true, true);
+	assert_true(! is_wp_error($dry_recycle) && true === ($dry_recycle['dry_run'] ?? false), 'capacity remediation dry-run did not return its non-mutating preview');
+	assert_true($dry_recycle_head === trim(run_command('git rev-parse HEAD', $recycle_fixture['path'])), 'capacity remediation dry-run reset a terminal worktree');
+	assert_true($dry_recycle_metadata === $wpdb->rows[$recycle_handle], 'capacity remediation dry-run rewrote terminal worktree metadata');
 	$recycle_exclude = trim(run_command('git rev-parse --git-path info/exclude', $recycle_fixture['path']));
 	file_put_contents($recycle_exclude, ".recycle-context\nvendor/\n", FILE_APPEND);
 	file_put_contents($recycle_fixture['path'] . '/.recycle-context', "preserved context\n");
