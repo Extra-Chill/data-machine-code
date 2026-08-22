@@ -283,6 +283,22 @@ trait WorkspaceWorktreeLifecycle {
 			: ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) );
 		$demand_plan  = WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
 		if ( $demand_plan instanceof \WP_Error ) {
+			if ( 'worktree_target_ref_invalid' === $demand_plan->get_error_code() && ! $exists_local && null !== $from && '' !== trim($from) ) {
+				return $this->worktree_missing_explicit_base_error(
+					$demand_plan,
+					$primary_path,
+					$repo,
+					$branch,
+					$from,
+					$inject_context,
+					$bootstrap,
+					$allow_stale,
+					$rebase_base,
+					$force,
+					$task,
+					$intent
+				);
+			}
 			return $demand_plan;
 		}
 		$disk_budget      = $this->inspect_worktree_capacity($repo, $branch, $force, $demand_plan);
@@ -530,6 +546,64 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		return implode(' ', $parts);
+	}
+
+	/**
+	 * Add default-base evidence to an invalid explicit-ref error without replacing it.
+	 *
+	 * Fetch failures return before ref resolution, so this path means freshness was
+	 * verified and only the requested ref could not be resolved locally.
+	 */
+	private function worktree_missing_explicit_base_error( \WP_Error $error, string $primary_path, string $repo, string $branch, string $from, bool $inject_context, bool $bootstrap, bool $allow_stale, bool $rebase_base, bool $force, array $task, array $intent ): \WP_Error {
+		$default = $this->detect_workspace_default_base($primary_path);
+		$data    = (array) $error->get_error_data();
+		$data['requested_ref']        = trim($from);
+		$data['detected_default_ref'] = $default['ref'];
+		$data['default_ref_source']   = $default['source'];
+		$data['next_commands']        = null === $default['ref']
+			? array()
+			: array( $this->worktree_freshness_retry_command($repo, $branch, $default['ref'], $inject_context, $bootstrap, $allow_stale, $rebase_base, $force, $task, $intent) );
+
+		$message = $error->get_error_message();
+		if ( null !== $default['ref'] ) {
+			$message .= sprintf(' The configured default ref is "%s". Retry with: %s', $default['ref'], $data['next_commands'][0]);
+		} else {
+			$message .= ' Remote default metadata is unavailable. Inspect the configured upstream or remote HEAD, then retry with an explicit --from ref.';
+		}
+
+		return new \WP_Error($error->get_error_code(), $message, $data);
+	}
+
+	/**
+	 * Detect a replayable default base from remote metadata or the primary's upstream.
+	 *
+	 * @return array{ref: string|null, source: 'remote_head'|'workspace_upstream'|'unavailable'}
+	 */
+	private function detect_workspace_default_base( string $repo_path ): array {
+		$remote_head = $this->resolve_remote_default_ref($repo_path);
+		$remote_prefix = 'refs/remotes/origin/';
+		if ( null !== $remote_head && str_starts_with($remote_head, $remote_prefix) && strlen($remote_head) > strlen($remote_prefix) && GitRunner::ref_exists($repo_path, $remote_head) ) {
+			return array(
+				'ref'    => substr($remote_head, strlen('refs/remotes/')),
+				'source' => 'remote_head',
+			);
+		}
+
+		$upstream = $this->run_git($repo_path, 'rev-parse --abbrev-ref --symbolic-full-name @{upstream}');
+		if ( ! is_wp_error($upstream) ) {
+			$ref = trim( (string) ( $upstream['output'] ?? '' ) );
+			if ( '' !== $ref ) {
+				return array(
+					'ref'    => $ref,
+					'source' => 'workspace_upstream',
+				);
+			}
+		}
+
+		return array(
+			'ref'    => null,
+			'source' => 'unavailable',
+		);
 	}
 
 
