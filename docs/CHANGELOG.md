@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.59.0] - 2026-08-22
+
+### Added
+- add runtime source drift doctor
+
+### Fixed
+- suggest configured base ref
+
 ## [0.58.1] - 2026-08-22
 
 ### Fixed
