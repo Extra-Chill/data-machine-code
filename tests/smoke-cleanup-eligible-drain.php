@@ -18,6 +18,10 @@ if ( ! class_exists('WP_Error') ) {
 			$this->message = $message;
 			$this->data    = $data;
 		}
+
+		public function get_error_code(): string { return $this->code; }
+		public function get_error_message(): string { return $this->message; }
+		public function get_error_data(): array { return $this->data; }
 	}
 }
 
@@ -37,9 +41,12 @@ final class CleanupEligibleDrainFakeAbility {
 	public function __construct( private array $responses ) {}
 
 	/** @return array<string,mixed> */
-	public function execute( array $input ): array {
+	public function execute( array $input ): array|\WP_Error {
 		$this->calls[] = $input;
 		$response      = array_shift($this->responses) ?: array( 'processed' => 0, 'removed' => 0, 'remaining_total' => 0 );
+		if ( $response instanceof \WP_Error ) {
+			return $response;
+		}
 		$removed_count = (int) ( $response['removed'] ?? 0 );
 		$candidates    = array();
 		$removed       = array();
@@ -153,6 +160,22 @@ $budget      = $orchestrator->run(array( 'apply' => true, 'passes' => 5, 'until_
 cleanup_eligible_drain_assert(! is_wp_error($budget), 'budget drain succeeds');
 cleanup_eligible_drain_assert('budget_exhausted' === $budget['summary']['stop_reason'], 'budget stop reason');
 cleanup_eligible_drain_assert(1 === count($budget_ability->calls), 'budget stops before second pass');
+
+$failure_ability = new CleanupEligibleDrainFakeAbility(
+	array(
+		array( 'processed' => 1, 'removed' => 1, 'remaining_total' => 1 ),
+		new WP_Error('later_pass_failed', 'Second pass failed.'),
+	)
+);
+$orchestrator = new DataMachineCode\Workspace\WorkspaceCleanupEligibleDrainOrchestrator(
+	static fn() => $failure_ability,
+	static fn(): float => 1000.0,
+	$disk_reporter
+);
+$failure = $orchestrator->run(array( 'apply' => true, 'passes' => 2 ));
+cleanup_eligible_drain_assert(is_wp_error($failure), 'later drain failure is returned');
+cleanup_eligible_drain_assert(1 === ($failure->data['cleanup_drain']['summary']['removed'] ?? 0), 'later drain failure retains prior removals');
+cleanup_eligible_drain_assert(1 === count((array) ($failure->data['cleanup_drain']['pass_results'] ?? array())), 'later drain failure retains completed pass evidence');
 
 $discard = $orchestrator->run(array( 'apply' => true, 'discard_unpushed' => true ));
 cleanup_eligible_drain_assert(is_wp_error($discard), 'discard unpushed refused');

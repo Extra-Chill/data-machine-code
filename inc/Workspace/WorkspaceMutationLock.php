@@ -65,6 +65,35 @@ final class WorkspaceMutationLock {
 	}
 
 	/**
+	 * Run a callback while holding a deterministic set of repository locks.
+	 *
+	 * Callers that also need the workspace capacity lock must acquire it first.
+	 *
+	 * @param array<int,string> $repos Primary repository handles.
+	 */
+	public static function with_repos( string $workspace_path, array $repos, callable $callback, int $timeout = 30 ): mixed {
+		$repos = array_values(array_unique(array_filter(array_map(array( self::class, 'sanitize_repo_key' ), $repos))));
+		sort($repos, SORT_STRING);
+		$locks = array();
+
+		try {
+			foreach ( $repos as $repo ) {
+				$lock = self::acquire($workspace_path, $repo, $timeout);
+				if ( is_wp_error($lock) ) {
+					return $lock;
+				}
+				$locks[] = $lock;
+			}
+
+			return $callback();
+		} finally {
+			foreach ( array_reverse($locks) as $lock ) {
+				$lock->release();
+			}
+		}
+	}
+
+	/**
 	 * Acquire a per-primary-repo lock.
 	 *
 	 * @param  string $workspace_path Workspace root.

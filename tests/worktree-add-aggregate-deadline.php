@@ -12,12 +12,16 @@ final class WP_Error {
 
 function is_wp_error(mixed $value): bool { return $value instanceof WP_Error; }
 
+require_once dirname(__DIR__) . '/vendor/autoload.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeDiskBudget.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php';
 
 use DataMachineCode\Workspace\WorkspaceWorktreeLifecycle;
 
 final class Worktree_Add_Aggregate_Deadline_Harness {
 	use WorkspaceWorktreeLifecycle;
+	protected string $workspace_path = '';
+	public function workspace(string $path): void { $this->workspace_path = $path; }
 	public function remaining(float $deadline): int { return $this->worktree_operation_remaining_seconds($deadline); }
 	public function timeout(string $phase, int $timeout, float $started, array $extra = array()): WP_Error { return $this->worktree_operation_timeout($phase, $timeout, $started, $extra); }
 	public function lock_result(mixed $result, string $phase, int $timeout, float $started): mixed { return $this->worktree_operation_lock_result($result, $phase, $timeout, $started); }
@@ -58,6 +62,7 @@ try {
 	mkdir($root, 0777, true);
 	$primary = $root . '/primary';
 	$worktree = $root . '/timed-out';
+	$harness->workspace($root);
 	exec('git init -b main ' . escapeshellarg($primary) . ' >/dev/null 2>&1');
 	exec('git -C ' . escapeshellarg($primary) . ' config user.email test@example.test');
 	exec('git -C ' . escapeshellarg($primary) . ' config user.name test');

@@ -41,9 +41,10 @@ if ( 'holder' === $mode ) {
 	$workspace = (string) $argv[2];
 	$ready     = (string) $argv[3];
 	$seconds   = (int) $argv[4];
+	$lock_key  = (string) ( $argv[5] ?? 'workspace-capacity-admission' );
 	$result    = WorkspaceMutationLock::with_repo(
 		$workspace,
-		'workspace-capacity-admission',
+		$lock_key,
 		static function () use ( $ready, $seconds ): string {
 			file_put_contents($ready, 'ready');
 			sleep($seconds);
@@ -52,6 +53,27 @@ if ( 'holder' === $mode ) {
 		1
 	);
 	exit(is_wp_error($result) ? 2 : 0);
+}
+
+if ( 'artifact-cleanup' === $mode ) {
+	$workspace = (string) $argv[2];
+	$marker    = (string) $argv[3];
+	$result    = WorkspaceMutationLock::with_repo(
+		$workspace,
+		'workspace-capacity-admission',
+		static fn() => WorkspaceMutationLock::with_repos(
+			$workspace,
+			array( 'repo-z', 'repo-a' ),
+			static function () use ( $marker ): string {
+				file_put_contents($marker, 'artifact removed');
+				return 'removed';
+			},
+			1
+		),
+		1
+	);
+	fwrite(STDOUT, is_wp_error($result) ? 'error:' . $result->get_error_code() : $result);
+	exit(is_wp_error($result) ? 5 : 0);
 }
 
 if ( 'waiter' === $mode ) {
@@ -141,6 +163,33 @@ try {
 	capacity_lock_assert(3 === $timed_out['waiter_exit'], 'Short waiter did not return the retryable timeout path.');
 	capacity_lock_assert('error:workspace_repo_busy' === $timed_out['output'], 'Short waiter returned an unexpected lock error.');
 	capacity_lock_assert(array() === ( glob($workspace . '/.locks/requests/*.json') ?: array() ), 'Cancelled or released requests left queue evidence behind.');
+
+	// Automatic artifact cleanup takes the global capacity lock before sorted
+	// affected-repository locks. A concurrent lifecycle lock must prevent the
+	// deletion callback from running.
+	$artifact_ready = $workspace . '/artifact-ready';
+	$artifact_marker = $workspace . '/artifact-removed';
+	$artifact_holder = proc_open(array( PHP_BINARY, __FILE__, 'holder', $workspace, $artifact_ready, '2', 'repo-a'), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $artifact_holder_pipes);
+	capacity_lock_assert(is_resource($artifact_holder), 'Could not start per-repo lifecycle lock holder.');
+	fclose($artifact_holder_pipes[0]);
+	$deadline = microtime(true) + 3;
+	while ( ! is_file($artifact_ready) && microtime(true) < $deadline ) { usleep(10000); }
+	capacity_lock_assert(is_file($artifact_ready), 'Per-repo lifecycle lock holder did not signal acquisition.');
+	$artifact_cleanup = proc_open(array( PHP_BINARY, __FILE__, 'artifact-cleanup', $workspace, $artifact_marker), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $artifact_cleanup_pipes);
+	capacity_lock_assert(is_resource($artifact_cleanup), 'Could not start automatic artifact cleanup process.');
+	fclose($artifact_cleanup_pipes[0]);
+	$artifact_output = stream_get_contents($artifact_cleanup_pipes[1]);
+	$artifact_error = stream_get_contents($artifact_cleanup_pipes[2]);
+	fclose($artifact_cleanup_pipes[1]);
+	fclose($artifact_cleanup_pipes[2]);
+	$artifact_exit = proc_close($artifact_cleanup);
+	fclose($artifact_holder_pipes[1]);
+	fclose($artifact_holder_pipes[2]);
+	proc_close($artifact_holder);
+	capacity_lock_assert(5 === $artifact_exit && 'error:workspace_repo_busy' === $artifact_output, 'Concurrent per-repo lifecycle operation did not block automatic artifact cleanup: ' . $artifact_error);
+	capacity_lock_assert(! is_file($artifact_marker), 'Blocked automatic artifact cleanup deleted an artifact.');
+	capacity_lock_assert(array() === ( glob($workspace . '/.locks/requests/*.json') ?: array() ), 'Blocked artifact cleanup left a request file behind.');
+	unlink($artifact_ready);
 
 	if ( function_exists('posix_kill') ) {
 		$ready = $workspace . '/kill-ready';
