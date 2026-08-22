@@ -41,6 +41,7 @@ final class WorkspaceHygieneBoundedDuHarness {
 		directory_size_bytes_best_effort as public probeDirectorySize;
 		directory_entry_count_best_effort as public probeEntryCount;
 		build_workspace_size_report as public buildSizeReport;
+		empty_workspace_size_report as public emptySizeReport;
 	}
 
 	private string $workspace_path;
@@ -90,6 +91,25 @@ $original_path = (string) getenv('PATH');
 putenv('PATH=' . $bin . PATH_SEPARATOR . $original_path);
 
 try {
+	$normal_recovery = WorkspaceHygieneBoundedDuHarness::workspace_hygiene_recovery_suggestion(array( 'status' => 'ok' ));
+	workspace_hygiene_du_assert_same(array(), $normal_recovery['commands'], 'Normal capacity must not suggest recovery commands.');
+	$unknown_recovery = WorkspaceHygieneBoundedDuHarness::workspace_hygiene_recovery_suggestion(array( 'status' => 'warning' ));
+	workspace_hygiene_du_assert_same(array( 'cleanup' => 'unknown', 'stale_locks' => 'unknown' ), $unknown_recovery['lanes'], 'Omitted lane evidence must remain unknown.');
+	workspace_hygiene_du_assert_same(1, count($unknown_recovery['commands']), 'Capacity-only recovery must only suggest bounded sizing.');
+	workspace_hygiene_du_assert_same('wp datamachine-code workspace hygiene --format=json', $unknown_recovery['detail_command'], 'Capacity-only recovery must offer hygiene as the generic next step.');
+	$clear_recovery = WorkspaceHygieneBoundedDuHarness::workspace_hygiene_recovery_suggestion(array( 'status' => 'refused' ), array( 'cleanup' => array( 'count' => 0 ), 'stale_locks' => array( 'count' => 0 ) ));
+	workspace_hygiene_du_assert_same(array( 'cleanup' => 'clear', 'stale_locks' => 'clear' ), $clear_recovery['lanes'], 'Observed zero lane counts must remain distinct from unknown.');
+	workspace_hygiene_du_assert_same(1, count($clear_recovery['commands']), 'Clear observed lanes must not suggest lane-specific recovery.');
+	$observed_recovery = WorkspaceHygieneBoundedDuHarness::workspace_hygiene_recovery_suggestion(array( 'status' => 'refused' ), array( 'cleanup' => array( 'count' => 1 ), 'stale_locks' => array( 'count' => 1 ) ));
+	workspace_hygiene_du_assert_same(3, count($observed_recovery['commands']), 'Observed recovery lanes must expose their matching commands.');
+	workspace_hygiene_du_assert_same(true, str_contains($observed_recovery['commands'][1]['command'], '--limit=25'), 'Observed cleanup preview must remain bounded.');
+
+	$disabled = ( new WorkspaceHygieneBoundedDuHarness() )->emptySizeReport(100, false);
+	workspace_hygiene_du_assert_same(true, array_key_exists('total_bytes', $disabled), 'Disabled size scans must expose byte-total state.');
+	workspace_hygiene_du_assert_same(null, $disabled['total_bytes'], 'Disabled size scans must leave byte totals unknown.');
+	workspace_hygiene_du_assert_same('not scanned', $disabled['total_human'] ?? null, 'Disabled size scans must report not scanned.');
+	workspace_hygiene_du_assert_same(false, $disabled['scan_complete'] ?? null, 'Disabled size scans must not report a complete measurement.');
+
 	file_put_contents($du, "#!/bin/sh\nexec sleep 5\n");
 	chmod($du, 0700);
 

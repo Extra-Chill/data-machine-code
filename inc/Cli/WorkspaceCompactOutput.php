@@ -88,6 +88,7 @@ class WorkspaceCompactOutput {
 				'destructive'               => (bool) ( $report['destructive'] ?? false ),
 				'fast_stats'                => $report['fast_stats'] ?? null,
 				'disk'                      => $report['disk'] ?? null,
+				'recovery'                  => $report['recovery'] ?? null,
 				'inventory'                 => $report['inventory'] ?? null,
 				'worktrees'                 => $report['worktrees'] ?? null,
 				'worktree_status_mode'      => $report['worktree_status_mode'] ?? null,
@@ -111,8 +112,6 @@ class WorkspaceCompactOutput {
 					'entry_count_scan'     => $size['entry_count_scan'] ?? null,
 					'top_entries_by_count' => self::compact_rows( (array) ( $size['top_entries_by_count'] ?? array() ) ),
 				),
-				'suggested_cleanup_command' => $report['suggested_cleanup_command'] ?? null,
-				'suggested_size_command'    => $report['suggested_size_command'] ?? null,
 				'notes'                     => $report['notes'] ?? null,
 				'full_detail_hint'          => 'Re-run with --verbose --format=json for full hygiene arrays.',
 			)

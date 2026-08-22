@@ -2861,7 +2861,9 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log(sprintf('Remote:   %s', $result['remote'] ?? '-'));
 		WP_CLI::log(sprintf('Latest:   %s', $result['commit'] ?? '-'));
 		if ( is_array($result['workspace_capacity'] ?? null) ) {
-			WP_CLI::log(\DataMachineCode\Workspace\WorktreeDiskBudget::format_summary($result['workspace_capacity']));
+			$capacity = $result['workspace_capacity'];
+			WP_CLI::log(\DataMachineCode\Workspace\WorktreeDiskBudget::format_summary($capacity));
+			$this->render_workspace_capacity_recovery(Workspace::workspace_hygiene_recovery_suggestion($capacity));
 		}
 		if ( empty($result['is_worktree']) && is_array($result['primary_freshness'] ?? null) ) {
 			$freshness = $result['primary_freshness'];
@@ -2876,6 +2878,27 @@ class WorkspaceCommand extends BaseCommand {
 
 		$dirty = $result['dirty'] ?? 0;
 		WP_CLI::log(sprintf('Dirty:    %s', ( 0 === $dirty ) ? 'no' : "yes ({$dirty} files)"));
+	}
+
+	/**
+	 * Render pressure recovery using the bounded, non-destructive hygiene contracts.
+	 *
+	 * @param array<string,mixed> $recovery Bounded hygiene recovery suggestion.
+	 * @return void
+	 */
+	private function render_workspace_capacity_recovery( array $recovery ): void {
+		$commands = (array) ( $recovery['commands'] ?? array() );
+		if ( array() === $commands ) {
+			return;
+		}
+
+		WP_CLI::log('Recovery (all commands are non-destructive):');
+		foreach ( $commands as $recovery_command ) {
+			WP_CLI::log(sprintf('%s: %s', (string) ( $recovery_command['label'] ?? '' ), (string) ( $recovery_command['command'] ?? '' )));
+		}
+		if ( ! empty($recovery['detail_command']) ) {
+			WP_CLI::log(sprintf('More recovery detail (non-destructive): %s', (string) $recovery['detail_command']));
+		}
 	}
 
 	/**
@@ -5544,6 +5567,7 @@ class WorkspaceCommand extends BaseCommand {
 		$inventory        = (array) ( $report['inventory']['freshness'] ?? array() );
 		$cleanup          = (array) ( $report['cleanup'] ?? array() );
 		$cleanup_summary  = (array) ( $cleanup['summary'] ?? array() );
+		$recovery         = (array) ( $report['recovery'] ?? array() );
 		$inode_total      = null === ( $disk['filesystem_total_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_total_inodes'] );
 		$inode_used       = null === ( $disk['filesystem_used_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_used_inodes'] );
 		$inode_free       = null === ( $disk['filesystem_free_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_free_inodes'] );
@@ -5802,19 +5826,28 @@ class WorkspaceCommand extends BaseCommand {
 			);
 		}
 
-		if ( ! empty($report['suggested_cleanup_command']) ) {
+		if ( array() !== $recovery ) {
 			WP_CLI::log('');
-			WP_CLI::log('Suggested cleanup review:');
-			WP_CLI::log( (string) $report['suggested_cleanup_command']);
-			if ( ! empty($cleanup['expected_outcome']) ) {
-				WP_CLI::log( (string) $cleanup['expected_outcome']);
+			WP_CLI::log(sprintf('Recovery guidance (status: %s):', (string) ( $recovery['status'] ?? 'unknown' )));
+			$lanes = (array) ( $recovery['lanes'] ?? array() );
+			$this->format_items(
+				array(
+					array( 'lane' => 'cleanup', 'state' => (string) ( $lanes['cleanup'] ?? 'unknown' ) ),
+					array( 'lane' => 'stale_locks', 'state' => (string) ( $lanes['stale_locks'] ?? 'unknown' ) ),
+				),
+				array( 'lane', 'state' ),
+				array( 'format' => 'table' ),
+				'lane'
+			);
+			foreach ( (array) ( $recovery['commands'] ?? array() ) as $command ) {
+				if ( ! is_array($command) || '' === trim( (string) ( $command['command'] ?? '' )) ) {
+					continue;
+				}
+				WP_CLI::log(sprintf('%s: %s', (string) ( $command['label'] ?? 'Recovery command' ), (string) $command['command']));
 			}
-		}
-
-		if ( ! empty($report['suggested_size_command']) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Suggested bounded size review:');
-			WP_CLI::log( (string) $report['suggested_size_command']);
+			if ( ! empty($recovery['detail_command']) ) {
+				WP_CLI::log(sprintf('More recovery detail (non-destructive): %s', (string) $recovery['detail_command']));
+			}
 		}
 
 		foreach ( (array) ( $report['notes'] ?? array() ) as $note ) {
