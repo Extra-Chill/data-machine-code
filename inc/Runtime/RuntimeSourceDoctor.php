@@ -17,7 +17,7 @@ final class RuntimeSourceDoctor {
 		$source_path  = trim((string) ($config['source_path'] ?? ''));
 		$release_ref  = trim((string) ($config['release_ref'] ?? 'release-latest'));
 		$runtime       = self::identity($runtime_path, $runtime_version);
-		$source        = '' === $source_path ? array( 'available' => false, 'reason' => 'source_path_not_configured' ) : self::identity($source_path, '');
+		$source        = self::sourceIdentity($source_path);
 		$release       = self::releaseIdentity($source_path, $release_ref);
 		$contract      = self::contract($source_path, (array) ($config['command_contract'] ?? array()));
 
@@ -38,17 +38,26 @@ final class RuntimeSourceDoctor {
 	public static function apply( string $runtime_file, array $config = array() ): array|\WP_Error {
 		$source = trim((string) ($config['source_path'] ?? ''));
 		$target = dirname($runtime_file);
-		if ( '' === $source || ! is_dir($source) ) {
-			return new \WP_Error('runtime_source_unavailable', 'A readable authoritative source_path is required before reconciliation.');
+		if ( ! self::isSource($source) ) {
+			return new \WP_Error('runtime_source_unavailable', 'A readable authoritative source_path with data-machine-code.php is required before reconciliation.');
 		}
 		if ( realpath($source) === realpath($target) ) {
 			return array( 'success' => true, 'changed' => false, 'message' => 'Runtime already resolves to the authoritative source.' );
 		}
 		if ( is_link($target) ) {
-			if ( ! unlink($target) || ! symlink($source, $target) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
-				return new \WP_Error('runtime_reconciliation_failed', 'Could not repoint the runtime symlink.');
+			$replacement = $target . '.dmc-reconcile-' . bin2hex(random_bytes(8));
+			if ( ! symlink($source, $replacement) || realpath($replacement) !== realpath($source) || ! is_readable($replacement . '/data-machine-code.php') ) {
+				if ( is_link($replacement) ) {
+					unlink($replacement); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+				}
+				return new \WP_Error('runtime_reconciliation_failed', 'Could not create and validate a replacement runtime symlink.');
 			}
-			return array( 'success' => true, 'changed' => true, 'message' => 'Runtime symlink repointed to the authoritative source.' );
+			$rename = $config['rename'] ?? 'rename';
+			if ( ! is_callable($rename) || ! call_user_func($rename, $replacement, $target) ) {
+				unlink($replacement); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+				return new \WP_Error('runtime_reconciliation_failed', 'Could not atomically replace the runtime symlink. The existing runtime was preserved.');
+			}
+			return array( 'success' => true, 'changed' => true, 'message' => 'Runtime symlink atomically repointed to the authoritative source.' );
 		}
 		return new \WP_Error('runtime_reconciliation_requires_deployer', 'Copied and git runtime deployments require the configured deployer reconciliation command; DMC will not overwrite them generically.');
 	}
@@ -93,6 +102,21 @@ final class RuntimeSourceDoctor {
 	}
 
 	/** @return array<string,mixed> */
+	private static function sourceIdentity( string $path ): array {
+		if ( '' === $path ) {
+			return array( 'available' => false, 'reason' => 'source_path_not_configured' );
+		}
+		if ( ! self::isSource($path) ) {
+			return array( 'available' => false, 'path' => $path, 'reason' => 'source_entrypoint_missing' );
+		}
+		return self::identity($path, '');
+	}
+
+	private static function isSource( string $path ): bool {
+		return is_dir($path) && is_readable(rtrim($path, '/') . '/data-machine-code.php');
+	}
+
+	/** @return array<string,mixed> */
 	private static function releaseIdentity( string $source_path, string $release_ref ): array {
 		if ( '' === $source_path || ! is_dir($source_path) || '' === self::git($source_path, 'rev-parse --git-dir') ) {
 			return array( 'available' => false, 'ref' => $release_ref, 'reason' => 'source_git_checkout_unavailable' );
@@ -129,12 +153,21 @@ final class RuntimeSourceDoctor {
 		} catch ( \UnexpectedValueException ) {
 			return '';
 		}
-		$hash = hash_init('sha256');
+		$paths = array();
 		foreach ( $iterator as $file ) {
 			if ( ! $file->isFile() || str_contains($file->getPathname(), DIRECTORY_SEPARATOR . '.git' . DIRECTORY_SEPARATOR) ) {
 				continue;
 			}
-			hash_update($hash, substr($file->getPathname(), strlen($path)) . "\0" . hash_file('sha256', $file->getPathname()) . "\0");
+			$paths[] = str_replace('\\', '/', ltrim(substr($file->getPathname(), strlen($path)), '/\\'));
+		}
+		sort($paths, SORT_STRING);
+		$hash = hash_init('sha256');
+		foreach ( $paths as $relative ) {
+			$contents = file_get_contents($path . '/' . $relative);
+			if ( false === $contents ) {
+				return '';
+			}
+			hash_update($hash, $relative . "\0" . $contents . "\0");
 		}
 		return hash_final($hash);
 	}
