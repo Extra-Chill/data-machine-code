@@ -484,19 +484,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			if ( $unpushed > 0 ) {
 				$primary_path = $this->get_primary_path($repo);
 				if ( ! GitCheckout::exists($primary_path) ) {
-					$skipped[] = array_merge(
-						array(
-							'handle'      => $handle,
-							'repo'        => $repo,
-							'branch'      => $branch,
-							'path'        => $wt_path,
-							'reason_code' => 'missing_metadata',
-							'reason'      => 'primary checkout missing',
-							'hint'        => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
-							'created_at'  => $created_at,
-							'metadata'    => $metadata,
-						), $disk_fields
-					);
+					$skipped[] = $this->build_missing_primary_cleanup_skip($handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields);
 					continue;
 				}
 
@@ -549,19 +537,7 @@ trait WorkspaceWorktreeCleanupEngine {
 
 			$primary_path = $this->get_primary_path($repo);
 			if ( ! GitCheckout::exists($primary_path) ) {
-				$skipped[] = array_merge(
-					array(
-						'handle'      => $handle,
-						'repo'        => $repo,
-						'branch'      => $branch,
-						'path'        => $wt_path,
-						'reason_code' => 'missing_metadata',
-						'reason'      => 'primary checkout missing',
-						'hint'        => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
-						'created_at'  => $created_at,
-						'metadata'    => $metadata,
-					), $disk_fields
-				);
+				$skipped[] = $this->build_missing_primary_cleanup_skip($handle, $repo, $branch, $wt_path, $created_at, $metadata, $disk_fields);
 				continue;
 			}
 
@@ -1314,45 +1290,7 @@ trait WorkspaceWorktreeCleanupEngine {
 
 		foreach ( $batch as $candidate ) {
 			++$processed;
-			$repo = (string) ( $candidate['repo'] ?? '' );
-			$locked = WorkspaceMutationLock::with_repo(
-				$this->workspace_path,
-				$repo,
-				function () use ( $candidate, $force, $remove_timeout_seconds, $discard_unpushed ) {
-					// Revalidate only after the lifecycle lock is held so reuse cannot
-					// change liveness or Git state between the safety probes and removal.
-					$validated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, false, $discard_unpushed);
-					if ( isset($validated['skipped']) ) {
-						return $validated;
-					}
-
-					$repo    = (string) $validated['repo'];
-					$branch  = (string) $validated['branch'];
-					$wt_path = (string) $validated['path'];
-					$size    = (int) ( $validated['size_bytes'] ?? 0 );
-					if ( $size <= 0 ) {
-						$measured = $this->estimate_path_size_bytes($wt_path);
-						$size     = null === $measured ? null : (int) $measured;
-					}
-					$result = $this->remove_worktree_by_path($repo, $branch, $wt_path, $force, $remove_timeout_seconds);
-					if ( is_wp_error($result) ) {
-							return $result;
-					}
-
-					$primary_path = $this->get_primary_path($repo);
-					if ( '' !== $branch ) {
-						$delete = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)), self::CLEANUP_GIT_PROBE_TIMEOUT);
-						if ( is_wp_error($delete) ) {
-							// Branch deletion failure is non-fatal: the worktree is
-							// gone, the local branch may still be useful or may have
-							// already been pruned. Bubble up the original removal.
-							return $result;
-						}
-					}
-
-					return array( 'validated' => $validated, 'size' => $size, 'remove' => $result );
-				}
-			);
+			$locked = $this->remove_cleanup_candidate_with_repo_lock($candidate, $force, false, $remove_timeout_seconds, $discard_unpushed);
 
 			if ( is_wp_error($locked) ) {
 				$skip                   = $this->build_worktree_remove_failure_skip($candidate, $locked, $remove_timeout_seconds);
@@ -1503,41 +1441,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		foreach ( $candidates as $candidate ) {
 			++$processed;
 			$reviewed_lifecycle_snapshot = is_array($candidate['metadata'] ?? null) ? $candidate['metadata'] : array();
-			$repo                        = (string) ( $candidate['repo'] ?? '' );
-			$locked = WorkspaceMutationLock::with_repo(
-				$this->workspace_path,
-				$repo,
-				function () use ( $candidate, $force, $stale_liveness_only, $discard_unpushed, $reviewed_lifecycle_snapshot, $remove_timeout_seconds ) {
-					// Keep the full safety snapshot adjacent to mutation under the repo lock.
-					$validated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, $stale_liveness_only, $discard_unpushed, $reviewed_lifecycle_snapshot);
-					if ( isset($validated['skipped']) ) {
-						return $validated;
-					}
-
-					$repo    = (string) $validated['repo'];
-					$branch  = (string) $validated['branch'];
-					$wt_path = (string) $validated['path'];
-					$size    = (int) ( $validated['size_bytes'] ?? 0 );
-					if ( $size <= 0 ) {
-						$measured = $this->estimate_path_size_bytes($wt_path);
-						$size     = null === $measured ? null : (int) $measured;
-					}
-					$result = $this->remove_worktree_by_path($repo, $branch, $wt_path, $force, $remove_timeout_seconds);
-					if ( is_wp_error($result) ) {
-						return $result;
-					}
-
-					$primary_path = $this->get_primary_path($repo);
-					if ( '' !== $branch ) {
-						$delete = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)), self::CLEANUP_GIT_PROBE_TIMEOUT);
-						if ( is_wp_error($delete) ) {
-							return $result;
-						}
-					}
-
-					return array( 'validated' => $validated, 'size' => $size, 'remove' => $result );
-				}
-			);
+			$locked                      = $this->remove_cleanup_candidate_with_repo_lock($candidate, $force, $stale_liveness_only, $remove_timeout_seconds, $discard_unpushed, $reviewed_lifecycle_snapshot);
 
 			if ( is_wp_error($locked) ) {
 				$skipped[] = array_merge(
@@ -1595,6 +1499,66 @@ trait WorkspaceWorktreeCleanupEngine {
 				'direct_apply_plan' => true,
 			),
 		);
+	}
+
+	/** Hold the repository mutation lock across final safety probes and removal. */
+	private function remove_cleanup_candidate_with_repo_lock( array $candidate, bool $force, bool $stale_liveness_only, int $remove_timeout_seconds, bool $discard_unpushed, ?array $reviewed_lifecycle_snapshot = null ): array|\WP_Error {
+		return WorkspaceMutationLock::with_repo(
+			$this->workspace_path,
+			(string) ( $candidate['repo'] ?? '' ),
+			fn() => $this->remove_revalidated_cleanup_candidate($candidate, $force, $stale_liveness_only, $remove_timeout_seconds, $discard_unpushed, $reviewed_lifecycle_snapshot)
+		);
+	}
+
+	/** Build the shared missing-primary blocker for cleanup inventory rows. */
+	private function build_missing_primary_cleanup_skip( string $handle, string $repo, string $branch, string $path, ?string $created_at, mixed $metadata, array $disk_fields ): array {
+		return array_merge(
+			array(
+				'handle'      => $handle,
+				'repo'        => $repo,
+				'branch'      => $branch,
+				'path'        => $path,
+				'reason_code' => 'missing_metadata',
+				'reason'      => 'primary checkout missing',
+				'hint'        => 'Run workspace worktree prune if this is a stale registry entry; inspect manually if the path still exists.',
+				'created_at'  => $created_at,
+				'metadata'    => $metadata,
+			),
+			$disk_fields
+		);
+	}
+
+	/** Revalidate and remove one cleanup candidate while its repository lock is held. */
+	private function remove_revalidated_cleanup_candidate( array $candidate, bool $force, bool $stale_liveness_only, int $remove_timeout_seconds, bool $discard_unpushed, ?array $reviewed_lifecycle_snapshot = null ): array|\WP_Error {
+		$validated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, $stale_liveness_only, $discard_unpushed, $reviewed_lifecycle_snapshot);
+		if ( isset($validated['skipped']) ) {
+			return $validated;
+		}
+
+		$repo    = (string) $validated['repo'];
+		$branch  = (string) $validated['branch'];
+		$wt_path = (string) $validated['path'];
+		$size    = (int) ( $validated['size_bytes'] ?? 0 );
+		if ( $size <= 0 ) {
+			$measured = $this->estimate_path_size_bytes($wt_path);
+			$size     = null === $measured ? null : (int) $measured;
+		}
+
+		$result = $this->remove_worktree_by_path($repo, $branch, $wt_path, $force, $remove_timeout_seconds);
+		if ( is_wp_error($result) ) {
+			return $result;
+		}
+
+		$primary_path = $this->get_primary_path($repo);
+		if ( '' !== $branch ) {
+			$delete = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+			if ( is_wp_error($delete) ) {
+				// Branch deletion is best-effort after the worktree has been removed.
+				return $result;
+			}
+		}
+
+		return array( 'validated' => $validated, 'size' => $size, 'remove' => $result );
 	}
 
 	/**

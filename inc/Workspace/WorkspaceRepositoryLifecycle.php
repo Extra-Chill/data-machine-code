@@ -10,6 +10,7 @@ namespace DataMachineCode\Workspace;
 use DataMachineCode\Support\CommandSpec;
 use DataMachineCode\Support\GitHubRemote;
 use DataMachineCode\Support\GitRunner;
+use DataMachineCode\Support\ListCursor;
 use DataMachineCode\Support\ProcessRunner;
 
 defined('ABSPATH') || exit;
@@ -289,17 +290,16 @@ trait WorkspaceRepositoryLifecycle {
 	}
 
 	private function encode_workspace_list_cursor( string $after, ?string $repo, ?string $type ): string {
-		return rtrim(strtr(base64_encode(wp_json_encode(array( 'v' => 1, 'after' => $after, 'repo' => $repo, 'type' => $type ))), '+/', '-_'), '=');
+		return ListCursor::encode($after, array( 'repo' => $repo, 'type' => $type ));
 	}
 
 	private function decode_workspace_list_cursor( string $cursor, ?string $repo, ?string $type ): string|\WP_Error {
-		$encoded = strtr($cursor, '-_', '+/');
-		$decoded = base64_decode(str_pad($encoded, strlen($encoded) + ( 4 - strlen($encoded) % 4 ) % 4, '='), true);
-		$payload = is_string($decoded) ? json_decode($decoded, true) : null;
-		if ( ! is_array($payload) || 1 !== ( $payload['v'] ?? null ) || ! is_string($payload['after'] ?? null ) || ( $payload['repo'] ?? null ) !== $repo || ( $payload['type'] ?? null ) !== $type ) {
-			return new \WP_Error('invalid_workspace_list_cursor', 'Workspace list cursor is invalid for the requested filters.', array( 'status' => 400 ));
-		}
-		return $payload['after'];
+		return ListCursor::decode(
+			$cursor,
+			array( 'repo' => $repo, 'type' => $type ),
+			'invalid_workspace_list_cursor',
+			'Workspace list cursor is invalid for the requested filters.'
+		);
 	}
 
 	/**

@@ -9,6 +9,7 @@ namespace DataMachineCode\Workspace {
 	final class WorktreeContextInjector {
 		public const VALID_STATES = array( 'active' );
 		public static function normalize_state( string $state ): ?string { return 'active' === strtolower(trim($state)) ? 'active' : null; }
+		public static function project_lifecycle_state( array $metadata ): ?string { return self::normalize_state((string) ( $metadata['lifecycle_state'] ?? '' )); }
 		public static function get_metadata( string $key ): ?array { return array( 'lifecycle_state' => 'active' ) + ( str_contains($key, 'branch-300') || str_contains($key, 'branch-301') ? array( 'task' => 'duplicate-task' ) : array() ); }
 		public static function classify_liveness( ?array $metadata ): array { return array( 'liveness' => 'unknown', 'reason' => 'metadata_missing', 'heartbeat_age_seconds' => null ); }
 		public static function summarize_owner( ?array $metadata ): array { return array( 'site' => 'unknown', 'agent' => 'unknown', 'user' => 'unknown' ); }
@@ -33,6 +34,7 @@ namespace {
 		public function get_error_code(): string { return $this->code; }
 	}
 
+	require_once dirname(__DIR__) . '/inc/Support/ListCursor.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php';
 
 	use DataMachineCode\Workspace\WorkspaceWorktreeLifecycle;
@@ -87,6 +89,8 @@ namespace {
 		bounded_worktree_assert(50 >= $harness->max_bounded_rows, 'Bounded worktree listing must retain no more than one page of candidates.');
 		bounded_worktree_assert(1 === ($first['summary']['primary'] ?? null) && 338 === ($first['summary']['worktree'] ?? null), 'Summary must represent the complete inventory before pagination.');
 		bounded_worktree_assert(is_string($first['next_cursor']), 'A bounded worktree page must provide a continuation cursor.');
+		$legacy_cursor = rtrim(strtr(base64_encode(wp_json_encode(array( 'v' => 1, 'after' => "repo@branch-048\0{$workspace}/repo@branch-048", 'repo' => null, 'state' => null, 'handle' => '' ))), '+/', '-_'), '=');
+		bounded_worktree_assert($legacy_cursor === $first['next_cursor'], 'Shared cursor encoding must preserve the existing serialized worktree cursor.');
 		bounded_worktree_assert(1 === ($first['summary']['repo_count'] ?? null) && 1 === ($first['summary']['duplicate_task_groups_total'] ?? null) && 1 === ($first['summary']['base_branch_worktrees_total'] ?? null), 'Global summary diagnostics must include rows beyond the first page.');
 		bounded_worktree_assert(1 === ($first['summary']['repos'][0]['primary'] ?? null) && 338 === ($first['summary']['repos'][0]['worktree'] ?? null), 'Selected repository summaries must aggregate every matching worktree.');
 		bounded_worktree_assert(array( 'repo@branch-300', 'repo@branch-301' ) === (($first['duplicates'][0]['handles'] ?? null)), 'Duplicate task diagnostics must include off-page handles.');
@@ -94,7 +98,7 @@ namespace {
 		bounded_worktree_assert(0 === $harness->expensive_probes, 'Default worktree discovery must skip status, unpushed, disk, and freshness probes.');
 		bounded_worktree_assert($elapsed < 2.0, sprintf('Bounded worktree response exceeded deadline: %.3fs.', $elapsed));
 
-		$second = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'limit' => 50, 'cursor' => $first['next_cursor'] ));
+		$second = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'limit' => 50, 'cursor' => $legacy_cursor ));
 		bounded_worktree_assert('repo@branch-049' === ($second['worktrees'][0]['handle'] ?? null), 'Cursor continuation must resume after the stable first page.');
 		$wrong_scope = $harness->worktree_list('other', null, array( 'include_status' => false, 'include_disk' => false, 'limit' => 50, 'cursor' => $first['next_cursor'] ));
 		bounded_worktree_assert(is_wp_error($wrong_scope), 'A cursor must reject changed worktree filters.');

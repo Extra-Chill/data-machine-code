@@ -38,9 +38,6 @@ if ( ! class_exists(AbilityRegistry::class) ) {
 if ( ! class_exists(RuntimeCapabilities::class) ) {
 	require_once dirname(__DIR__) . '/Support/RuntimeCapabilities.php';
 }
-if ( ! class_exists(GitHubAbilities::class) ) {
-	require_once __DIR__ . '/GitHubAbilities.php';
-}
 if ( ! class_exists(RunnerWorkspacePublisher::class) ) {
 	require_once dirname(__DIR__) . '/Workspace/RunnerWorkspacePublisher.php';
 }
@@ -70,6 +67,10 @@ class WorkspaceAbilities {
 	}
 
 	private function registerAbilities(): void {
+		if ( ! class_exists(Workspace::class) ) {
+			require_once dirname(__DIR__) . '/Workspace/Workspace.php';
+		}
+
 		$register_callback = function () {
 
 			// -----------------------------------------------------------------
@@ -2335,197 +2336,36 @@ class WorkspaceAbilities {
 				)
 			);
 
-			AbilityRegistry::register(
-				'datamachine-code/workspace-worktree-active-no-signal-finalized-apply',
-				array(
-					'label'               => 'Promote Finalized Active Worktrees',
-					'description'         => 'Promote active_no_signal rows with merged PR evidence into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees.',
-					'category'            => 'datamachine-code-workspace',
-					'input_schema'        => array(
-						'type'       => 'object',
-						'properties' => array(
-							'dry_run'      => array(
-								'type'        => 'boolean',
-								'description' => 'If true, preview metadata promotions without writing.',
-							),
-							'limit'        => array(
-								'type'        => 'integer',
-								'description' => 'Positive maximum active_no_signal rows to inspect in this page. Defaults to 25.',
-							),
-							'offset'       => array(
-								'type'        => 'integer',
-								'description' => 'Pagination offset into the active_no_signal inventory ordering.',
-							),
-							'until_budget' => array(
-								'type'        => 'string',
-								'description' => 'Compact time budget for the underlying active_no_signal report page, such as 60s or 10m.',
-							),
-							'repo'         => array(
-								'type'        => 'string',
-								'description' => 'Optional primary repo or worktree handle scope. When supplied, pagination, evidence, and writes are constrained to matching rows.',
-							),
-						),
-					),
-					'output_schema'       => array(
-						'type'       => 'object',
-						'properties' => array(
-							'success' => array( 'type' => 'boolean' ),
-							'dry_run' => array( 'type' => 'boolean' ),
-							'planned' => array( 'type' => 'array' ),
-							'written' => array( 'type' => 'array' ),
-							'skipped' => array( 'type' => 'array' ),
-							'summary' => array( 'type' => 'object' ),
-						),
-					),
-					'execute_callback'    => array( self::class, 'worktreeActiveNoSignalFinalizedApply' ),
-					'permission_callback' => fn() => PermissionHelper::can_manage(),
-					'meta'                => array( 'show_in_rest' => false ),
-				)
+			$active_no_signal_apply_abilities = array(
+				'finalized' => array(
+					'label'          => 'Promote Finalized Active Worktrees',
+					'description'    => 'Promote active_no_signal rows with merged PR evidence into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees.',
+					'callback'       => 'worktreeActiveNoSignalFinalizedApply',
+					'positive_limit' => true,
+				),
+				'equivalent-clean' => array(
+					'label'          => 'Promote Equivalent Clean Active Worktrees',
+					'description'    => 'Promote active_no_signal rows with effective_status=equivalent_clean into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees.',
+					'callback'       => 'worktreeActiveNoSignalEquivalentCleanApply',
+					'positive_limit' => true,
+				),
+				'merged' => array(
+					'label'       => 'Promote Merged Active Worktrees',
+					'description' => 'Promote clean active_no_signal rows with suggested_action=merged_to_default into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees.',
+					'callback'    => 'worktreeActiveNoSignalMergedApply',
+				),
+				'remote-clean' => array(
+					'label'       => 'Promote Clean Remote Active Worktrees',
+					'description' => 'Promote clean active_no_signal rows with suggested_action=remote_tracking_clean into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees or remote branches.',
+					'callback'    => 'worktreeActiveNoSignalRemoteCleanApply',
+				),
 			);
-
-			AbilityRegistry::register(
-				'datamachine-code/workspace-worktree-active-no-signal-equivalent-clean-apply',
-				array(
-					'label'               => 'Promote Equivalent Clean Active Worktrees',
-					'description'         => 'Promote active_no_signal rows with effective_status=equivalent_clean into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees.',
-					'category'            => 'datamachine-code-workspace',
-					'input_schema'        => array(
-						'type'       => 'object',
-						'properties' => array(
-							'dry_run'      => array(
-								'type'        => 'boolean',
-								'description' => 'If true, preview metadata promotions without writing.',
-							),
-							'limit'        => array(
-								'type'        => 'integer',
-								'description' => 'Positive maximum active_no_signal rows to inspect in this page. Defaults to 25.',
-							),
-							'offset'       => array(
-								'type'        => 'integer',
-								'description' => 'Pagination offset into the active_no_signal inventory ordering.',
-							),
-							'until_budget' => array(
-								'type'        => 'string',
-								'description' => 'Compact time budget for the underlying active_no_signal report page, such as 60s or 10m.',
-							),
-							'repo'         => array(
-								'type'        => 'string',
-								'description' => 'Optional primary repo or worktree handle scope. When supplied, pagination, evidence, and writes are constrained to matching rows.',
-							),
-						),
-					),
-					'output_schema'       => array(
-						'type'       => 'object',
-						'properties' => array(
-							'success' => array( 'type' => 'boolean' ),
-							'dry_run' => array( 'type' => 'boolean' ),
-							'planned' => array( 'type' => 'array' ),
-							'written' => array( 'type' => 'array' ),
-							'skipped' => array( 'type' => 'array' ),
-							'summary' => array( 'type' => 'object' ),
-						),
-					),
-					'execute_callback'    => array( self::class, 'worktreeActiveNoSignalEquivalentCleanApply' ),
-					'permission_callback' => fn() => PermissionHelper::can_manage(),
-					'meta'                => array( 'show_in_rest' => false ),
-				)
-			);
-
-			AbilityRegistry::register(
-				'datamachine-code/workspace-worktree-active-no-signal-merged-apply',
-				array(
-					'label'               => 'Promote Merged Active Worktrees',
-					'description'         => 'Promote clean active_no_signal rows with suggested_action=merged_to_default into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees.',
-					'category'            => 'datamachine-code-workspace',
-					'input_schema'        => array(
-						'type'       => 'object',
-						'properties' => array(
-							'dry_run'      => array(
-								'type'        => 'boolean',
-								'description' => 'If true, preview metadata promotions without writing.',
-							),
-							'limit'        => array(
-								'type'        => 'integer',
-								'description' => 'Maximum active_no_signal rows to inspect in this page. Defaults to 25.',
-							),
-							'offset'       => array(
-								'type'        => 'integer',
-								'description' => 'Pagination offset into the active_no_signal inventory ordering.',
-							),
-							'until_budget' => array(
-								'type'        => 'string',
-								'description' => 'Compact time budget for the underlying active_no_signal report page, such as 60s or 10m.',
-							),
-							'repo'         => array(
-								'type'        => 'string',
-								'description' => 'Optional primary repo or worktree handle scope. When supplied, pagination, evidence, and writes are constrained to matching rows.',
-							),
-						),
-					),
-					'output_schema'       => array(
-						'type'       => 'object',
-						'properties' => array(
-							'success' => array( 'type' => 'boolean' ),
-							'dry_run' => array( 'type' => 'boolean' ),
-							'planned' => array( 'type' => 'array' ),
-							'written' => array( 'type' => 'array' ),
-							'skipped' => array( 'type' => 'array' ),
-							'summary' => array( 'type' => 'object' ),
-						),
-					),
-					'execute_callback'    => array( self::class, 'worktreeActiveNoSignalMergedApply' ),
-					'permission_callback' => fn() => PermissionHelper::can_manage(),
-					'meta'                => array( 'show_in_rest' => false ),
-				)
-			);
-
-			AbilityRegistry::register(
-				'datamachine-code/workspace-worktree-active-no-signal-remote-clean-apply',
-				array(
-					'label'               => 'Promote Clean Remote Active Worktrees',
-					'description'         => 'Promote clean active_no_signal rows with suggested_action=remote_tracking_clean into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees or remote branches.',
-					'category'            => 'datamachine-code-workspace',
-					'input_schema'        => array(
-						'type'       => 'object',
-						'properties' => array(
-							'dry_run'      => array(
-								'type'        => 'boolean',
-								'description' => 'If true, preview metadata promotions without writing.',
-							),
-							'limit'        => array(
-								'type'        => 'integer',
-								'description' => 'Maximum active_no_signal rows to inspect in this page. Defaults to 25.',
-							),
-							'offset'       => array(
-								'type'        => 'integer',
-								'description' => 'Pagination offset into the active_no_signal inventory ordering.',
-							),
-							'until_budget' => array(
-								'type'        => 'string',
-								'description' => 'Compact time budget for the underlying active_no_signal report page, such as 60s or 10m.',
-							),
-							'repo'         => array(
-								'type'        => 'string',
-								'description' => 'Optional primary repo or worktree handle scope. When supplied, pagination, evidence, and writes are constrained to matching rows.',
-							),
-						),
-					),
-					'output_schema'       => array(
-						'type'       => 'object',
-						'properties' => array(
-							'success' => array( 'type' => 'boolean' ),
-							'dry_run' => array( 'type' => 'boolean' ),
-							'planned' => array( 'type' => 'array' ),
-							'written' => array( 'type' => 'array' ),
-							'skipped' => array( 'type' => 'array' ),
-							'summary' => array( 'type' => 'object' ),
-						),
-					),
-					'execute_callback'    => array( self::class, 'worktreeActiveNoSignalRemoteCleanApply' ),
-					'permission_callback' => fn() => PermissionHelper::can_manage(),
-					'meta'                => array( 'show_in_rest' => false ),
-				)
-			);
+			foreach ( $active_no_signal_apply_abilities as $classification => $definition ) {
+				AbilityRegistry::register(
+					'datamachine-code/workspace-worktree-active-no-signal-' . $classification . '-apply',
+					self::activeNoSignalApplyAbilityDefinition($definition)
+				);
+			}
 
 			AbilityRegistry::register(
 				'datamachine-code/workspace-worktree-active-no-signal-drain',
@@ -3032,6 +2872,59 @@ class WorkspaceAbilities {
 		} else {
 			add_action('wp_abilities_api_init', $register_callback);
 		}
+		}
+
+	/**
+	 * Build the shared contract for one active/no-signal apply ability.
+	 *
+	 * @param array{label:string,description:string,callback:string,positive_limit?:bool} $definition Classification-specific fields.
+	 * @return array<string,mixed>
+	 */
+	private static function activeNoSignalApplyAbilityDefinition( array $definition ): array {
+		return array(
+			'label'               => $definition['label'],
+			'description'         => $definition['description'],
+			'category'            => 'datamachine-code-workspace',
+			'input_schema'        => array(
+				'type'       => 'object',
+				'properties' => array(
+					'dry_run'      => array(
+						'type'        => 'boolean',
+						'description' => 'If true, preview metadata promotions without writing.',
+					),
+					'limit'        => array(
+						'type'        => 'integer',
+						'description' => ( ! empty($definition['positive_limit']) ? 'Positive maximum' : 'Maximum' ) . ' active_no_signal rows to inspect in this page. Defaults to 25.',
+					),
+					'offset'       => array(
+						'type'        => 'integer',
+						'description' => 'Pagination offset into the active_no_signal inventory ordering.',
+					),
+					'until_budget' => array(
+						'type'        => 'string',
+						'description' => 'Compact time budget for the underlying active_no_signal report page, such as 60s or 10m.',
+					),
+					'repo'         => array(
+						'type'        => 'string',
+						'description' => 'Optional primary repo or worktree handle scope. When supplied, pagination, evidence, and writes are constrained to matching rows.',
+					),
+				),
+			),
+			'output_schema'       => array(
+				'type'       => 'object',
+				'properties' => array(
+					'success' => array( 'type' => 'boolean' ),
+					'dry_run' => array( 'type' => 'boolean' ),
+					'planned' => array( 'type' => 'array' ),
+					'written' => array( 'type' => 'array' ),
+					'skipped' => array( 'type' => 'array' ),
+					'summary' => array( 'type' => 'object' ),
+				),
+			),
+			'execute_callback'    => array( self::class, $definition['callback'] ),
+			'permission_callback' => fn() => PermissionHelper::can_manage(),
+			'meta'                => array( 'show_in_rest' => false ),
+		);
 	}
 
 	// =========================================================================
@@ -4743,22 +4636,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function worktreeActiveNoSignalReport( array $input ): array|\WP_Error {
-		$workspace = new Workspace();
-		$opts      = array();
-		if ( array_key_exists('limit', $input) ) {
-			$opts['limit'] = (int) $input['limit'];
-		}
-		if ( array_key_exists('offset', $input) ) {
-			$opts['offset'] = (int) $input['offset'];
-		}
-		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
-			$opts['until_budget'] = trim( (string) $input['until_budget']);
-		}
-		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
-			$opts['repo'] = trim( (string) $input['repo']);
-		}
-
-		return $workspace->worktree_active_no_signal_report($opts);
+		return ( new Workspace() )->worktree_active_no_signal_report(self::worktreeActiveNoSignalOptions($input));
 	}
 
 	/**
@@ -4768,24 +4646,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function worktreeActiveNoSignalFinalizedApply( array $input ): array|\WP_Error {
-		$workspace = new Workspace();
-		$opts      = array(
-			'dry_run' => ! empty($input['dry_run']),
-		);
-		if ( array_key_exists('limit', $input) ) {
-			$opts['limit'] = (int) $input['limit'];
-		}
-		if ( array_key_exists('offset', $input) ) {
-			$opts['offset'] = (int) $input['offset'];
-		}
-		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
-			$opts['until_budget'] = trim( (string) $input['until_budget']);
-		}
-		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
-			$opts['repo'] = trim( (string) $input['repo']);
-		}
-
-		return $workspace->worktree_active_no_signal_finalized_apply($opts);
+		return self::worktreeActiveNoSignalApply($input, 'finalized');
 	}
 
 	/**
@@ -4795,24 +4656,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function worktreeActiveNoSignalEquivalentCleanApply( array $input ): array|\WP_Error {
-		$workspace = new Workspace();
-		$opts      = array(
-			'dry_run' => ! empty($input['dry_run']),
-		);
-		if ( array_key_exists('limit', $input) ) {
-			$opts['limit'] = (int) $input['limit'];
-		}
-		if ( array_key_exists('offset', $input) ) {
-			$opts['offset'] = (int) $input['offset'];
-		}
-		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
-			$opts['until_budget'] = trim( (string) $input['until_budget']);
-		}
-		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
-			$opts['repo'] = trim( (string) $input['repo']);
-		}
-
-		return $workspace->worktree_active_no_signal_equivalent_clean_apply($opts);
+		return self::worktreeActiveNoSignalApply($input, 'equivalent_clean');
 	}
 
 	/**
@@ -4822,24 +4666,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function worktreeActiveNoSignalMergedApply( array $input ): array|\WP_Error {
-		$workspace = new Workspace();
-		$opts      = array(
-			'dry_run' => ! empty($input['dry_run']),
-		);
-		if ( array_key_exists('limit', $input) ) {
-			$opts['limit'] = (int) $input['limit'];
-		}
-		if ( array_key_exists('offset', $input) ) {
-			$opts['offset'] = (int) $input['offset'];
-		}
-		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
-			$opts['until_budget'] = trim( (string) $input['until_budget']);
-		}
-		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
-			$opts['repo'] = trim( (string) $input['repo']);
-		}
-
-		return $workspace->worktree_active_no_signal_merged_apply($opts);
+		return self::worktreeActiveNoSignalApply($input, 'merged');
 	}
 
 	/**
@@ -4849,10 +4676,26 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function worktreeActiveNoSignalRemoteCleanApply( array $input ): array|\WP_Error {
+		return self::worktreeActiveNoSignalApply($input, 'remote_clean');
+	}
+
+	/** Run one active/no-signal metadata apply classification. */
+	private static function worktreeActiveNoSignalApply( array $input, string $variant ): array|\WP_Error {
 		$workspace = new Workspace();
-		$opts      = array(
-			'dry_run' => ! empty($input['dry_run']),
-		);
+		$opts      = self::worktreeActiveNoSignalOptions($input, true);
+
+		return match ( $variant ) {
+			'finalized'        => $workspace->worktree_active_no_signal_finalized_apply($opts),
+			'equivalent_clean' => $workspace->worktree_active_no_signal_equivalent_clean_apply($opts),
+			'merged'           => $workspace->worktree_active_no_signal_merged_apply($opts),
+			'remote_clean'     => $workspace->worktree_active_no_signal_remote_clean_apply($opts),
+			default            => new \WP_Error('invalid_active_no_signal_apply_variant', sprintf('Unknown active/no-signal apply variant: %s.', $variant), array( 'status' => 500 )),
+		};
+	}
+
+	/** Normalize the shared bounded active/no-signal operation options. */
+	private static function worktreeActiveNoSignalOptions( array $input, bool $include_dry_run = false ): array {
+		$opts = $include_dry_run ? array( 'dry_run' => ! empty($input['dry_run']) ) : array();
 		if ( array_key_exists('limit', $input) ) {
 			$opts['limit'] = (int) $input['limit'];
 		}
@@ -4866,7 +4709,7 @@ class WorkspaceAbilities {
 			$opts['repo'] = trim( (string) $input['repo']);
 		}
 
-		return $workspace->worktree_active_no_signal_remote_clean_apply($opts);
+		return $opts;
 	}
 
 	/**

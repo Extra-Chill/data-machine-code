@@ -2761,58 +2761,23 @@ class GitHubAbilities {
 	 * @return array|\WP_Error Success payload or error.
 	 */
 	public static function getPullReviewContext( array $input ): array|\WP_Error {
-		$repo        = sanitize_text_field($input['repo'] ?? '');
-		$pull_number = (int) ( $input['pull_number'] ?? $input['pr_number'] ?? 0 );
-
-		if ( empty($repo) || $pull_number <= 0 ) {
-			return new \WP_Error('missing_params', 'Repository (owner/repo) and pull_number are required.', array( 'status' => 400 ));
+		$pull_context = self::loadPullWithFiles($input);
+		if ( is_wp_error($pull_context) ) {
+			return $pull_context;
 		}
-
-		$pat = self::getPatForRepo($repo);
-		if ( empty($pat) ) {
-			return self::patError();
-		}
-
-		$pull = self::getPull(
-			array(
-				'repo'        => $repo,
-				'pull_number' => $pull_number,
-			)
-		);
-		if ( is_wp_error($pull) ) {
-			return $pull;
-		}
-
-		$files = array();
-		$page  = 1;
-		do {
-			$file_page = self::listPullFiles(
-				array(
-					'repo'        => $repo,
-					'pull_number' => $pull_number,
-					'per_page'    => self::MAX_PER_PAGE,
-					'page'        => $page,
-				)
-			);
-			if ( is_wp_error($file_page) ) {
-				return $file_page;
-			}
-
-			$page_files = $file_page['files'] ?? array();
-			$page_count = count($page_files);
-			$files      = array_merge($files, $page_files);
-			++$page;
-		} while ( $page_count >= self::MAX_PER_PAGE );
+		$repo  = $pull_context['repo'];
+		$pull  = $pull_context['pull'];
+		$files = $pull_context['files'];
 
 		$context = self::normalizePullReviewContext(
 			$repo,
-			$pull['pull'],
+			$pull,
 			$files,
 			array(
 				'head_sha'         => sanitize_text_field($input['head_sha'] ?? ''),
 				'max_patch_chars'  => (int) ( $input['max_patch_chars'] ?? 200000 ),
-				'expanded_context' => self::buildPullReviewExpandedContext($repo, $pull['pull'], $files, $input),
-				'checks'           => self::buildPullReviewCheckContext($repo, $pull['pull'], $input),
+				'expanded_context' => self::buildPullReviewExpandedContext($repo, $pull, $files, $input),
+				'checks'           => self::buildPullReviewCheckContext($repo, $pull, $input),
 			)
 		);
 
@@ -2867,24 +2832,52 @@ class GitHubAbilities {
 	 * @return array|\WP_Error Success payload or error.
 	 */
 	public static function getPullDocumentationImpact( array $input, ?callable $tree_fetcher = null ): array|\WP_Error {
+		$pull_context = self::loadPullWithFiles($input);
+		if ( is_wp_error($pull_context) ) {
+			return $pull_context;
+		}
+		$repo  = $pull_context['repo'];
+		$pull  = $pull_context['pull'];
+		$files = $pull_context['files'];
+
+		$docs_paths = self::normalizeContextPaths($input['docs_paths'] ?? $input['docs_path_allowlist'] ?? array());
+		$base_ref   = sanitize_text_field($input['base_ref'] ?? ( $pull['base_ref'] ?? '' ));
+		$repo_docs  = self::resolveDocumentationTreePaths($repo, $base_ref, $docs_paths, $tree_fetcher);
+
+		$packet = self::buildDocumentationImpactPacket(
+			$repo,
+			$pull,
+			$files,
+			array(
+				'head_sha'  => sanitize_text_field($input['head_sha'] ?? ''),
+				'base_ref'  => $base_ref,
+				'repo_docs' => $repo_docs,
+			)
+		);
+
+		if ( is_wp_error($packet) ) {
+			return $packet;
+		}
+
+		return array(
+			'success' => true,
+			'packet'  => $packet,
+		);
+	}
+
+	/** Load one pull request and every changed-file page for context builders. */
+	private static function loadPullWithFiles( array $input ): array|\WP_Error {
 		$repo        = sanitize_text_field($input['repo'] ?? '');
 		$pull_number = (int) ( $input['pull_number'] ?? $input['pr_number'] ?? 0 );
-
 		if ( empty($repo) || $pull_number <= 0 ) {
 			return new \WP_Error('missing_params', 'Repository (owner/repo) and pull_number are required.', array( 'status' => 400 ));
 		}
 
-		$pat = self::getPatForRepo($repo);
-		if ( empty($pat) ) {
+		if ( empty(self::getPatForRepo($repo)) ) {
 			return self::patError();
 		}
 
-		$pull = self::getPull(
-			array(
-				'repo'        => $repo,
-				'pull_number' => $pull_number,
-			)
-		);
+		$pull = self::getPull(array( 'repo' => $repo, 'pull_number' => $pull_number ));
 		if ( is_wp_error($pull) ) {
 			return $pull;
 		}
@@ -2910,28 +2903,10 @@ class GitHubAbilities {
 			++$page;
 		} while ( $page_count >= self::MAX_PER_PAGE );
 
-		$docs_paths = self::normalizeContextPaths($input['docs_paths'] ?? $input['docs_path_allowlist'] ?? array());
-		$base_ref   = sanitize_text_field($input['base_ref'] ?? ( $pull['pull']['base_ref'] ?? '' ));
-		$repo_docs  = self::resolveDocumentationTreePaths($repo, $base_ref, $docs_paths, $tree_fetcher);
-
-		$packet = self::buildDocumentationImpactPacket(
-			$repo,
-			$pull['pull'],
-			$files,
-			array(
-				'head_sha'  => sanitize_text_field($input['head_sha'] ?? ''),
-				'base_ref'  => $base_ref,
-				'repo_docs' => $repo_docs,
-			)
-		);
-
-		if ( is_wp_error($packet) ) {
-			return $packet;
-		}
-
 		return array(
-			'success' => true,
-			'packet'  => $packet,
+			'repo'  => $repo,
+			'pull'  => $pull['pull'],
+			'files' => $files,
 		);
 	}
 

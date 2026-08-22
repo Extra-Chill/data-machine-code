@@ -156,8 +156,8 @@ namespace {
 	}
 	startup_bounds_assert(0 === $GLOBALS['dmc_test_get_option_calls'], 'Nested help initialized database-backed discovery.');
 	startup_bounds_assert(0 === $GLOBALS['dmc_test_mutation_calls'], 'Nested help mutated schema or registry state.');
+	startup_bounds_assert(class_exists(\DataMachineCode\Abilities\WorkspaceAbilities::class, false), 'Nested help did not schedule the bounded workspace ability surface.');
 	foreach ( array(
-		'DataMachineCode\\Abilities\\WorkspaceAbilities',
 		'DataMachineCode\\Abilities\\GitHubAbilities',
 		'DataMachineCode\\Storage\\WorktreeInventoryRepository',
 		'DataMachineCode\\Workspace\\Workspace',

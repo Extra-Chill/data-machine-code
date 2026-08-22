@@ -12,6 +12,10 @@ use DataMachineCode\Support\GitHubRemote;
 
 defined('ABSPATH') || exit;
 
+if ( ! class_exists(WorkspaceText::class) ) {
+	require_once __DIR__ . '/WorkspaceText.php';
+}
+
 class RemoteWorkspaceBackend {
 
 	/**
@@ -456,11 +460,7 @@ class RemoteWorkspaceBackend {
 			'path'    => $path,
 			'size'    => $size,
 		);
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
-		}
-
-		return $result;
+		return $this->with_context_policy($handle, $result);
 	}
 
 	/**
@@ -480,15 +480,7 @@ class RemoteWorkspaceBackend {
 		}
 
 		$prefix = null === $path ? '' : trim(ltrim($path, '/'), '/');
-		$tree   = GitHubAbilities::getRepoTree(
-			array(
-				'repo' => $context['repo'],
-				'ref'  => $context['read_ref'],
-			)
-		);
-		if ( is_wp_error($tree) && '' !== $context['read_ref'] ) {
-			$tree = GitHubAbilities::getRepoTree(array( 'repo' => $context['repo'] ));
-		}
+		$tree   = $this->get_repo_tree_with_fallback($context);
 		if ( is_wp_error($tree) ) {
 			return $tree;
 		}
@@ -521,11 +513,7 @@ class RemoteWorkspaceBackend {
 			'path'    => '' === $prefix ? '/' : $prefix,
 			'entries' => $entries,
 		);
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
-		}
-
-		return $result;
+		return $this->with_context_policy($handle, $result);
 	}
 
 	/**
@@ -549,24 +537,12 @@ class RemoteWorkspaceBackend {
 			return new \WP_Error('path_traversal', 'Path traversal detected. Access denied.', array( 'status' => 403 ));
 		}
 
-		$regex = $this->compile_search_pattern($pattern);
+		$regex = WorkspaceText::compile_search_pattern($pattern);
 		if ( is_wp_error($regex) ) {
 			return $regex;
 		}
 
-		$tree_input = array(
-			'repo' => $context['repo'],
-			'ref'  => $context['read_ref'],
-		);
-		if ( '' !== $prefix ) {
-			$tree_input['path'] = $prefix;
-		}
-
-		$tree = GitHubAbilities::getRepoTree($tree_input);
-		if ( is_wp_error($tree) && '' !== $context['read_ref'] ) {
-			unset($tree_input['ref']);
-			$tree = GitHubAbilities::getRepoTree($tree_input);
-		}
+		$tree = $this->get_repo_tree_with_fallback($context, $prefix);
 		if ( is_wp_error($tree) ) {
 			return $tree;
 		}
@@ -595,7 +571,7 @@ class RemoteWorkspaceBackend {
 			if ( null !== $context_policy && ! WorkspaceAliasResolver::path_allowed_by_policy($file_path, $context_policy) ) {
 				continue;
 			}
-			if ( '' === $file_path || isset($seen[ $file_path ]) || ! $this->path_matches_include($file_path, $include_pattern) ) {
+			if ( '' === $file_path || isset($seen[ $file_path ]) || ! WorkspaceText::path_matches_include($file_path, $include_pattern) ) {
 				continue;
 			}
 			$seen[ $file_path ] = true;
@@ -614,7 +590,7 @@ class RemoteWorkspaceBackend {
 				continue;
 			}
 
-			$file_matches = $this->grep_content($content, $handle, $file_path, $regex, $context_lines, $max_results - count($matches));
+			$file_matches = WorkspaceText::grep_content($content, $handle, $file_path, $regex, $context_lines, $max_results - count($matches));
 			$matches      = array_merge($matches, $file_matches);
 			if ( count($matches) >= $max_results ) {
 				break;
@@ -631,11 +607,7 @@ class RemoteWorkspaceBackend {
 			'count'     => count($matches),
 			'truncated' => count($matches) >= $max_results,
 		);
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
-		}
-
-		return $result;
+		return $this->with_context_policy($handle, $result);
 	}
 
 	/**
@@ -714,7 +686,7 @@ class RemoteWorkspaceBackend {
 				'string_not_found', 'old_string not found in file content.', array(
 					'status'      => 400,
 					'path'        => (string) ( $current['path'] ?? $path ),
-					'suggestions' => $this->build_edit_suggestions($content, $old_string),
+					'suggestions' => WorkspaceText::build_edit_suggestions($content, $old_string),
 				)
 			);
 		}
@@ -775,11 +747,7 @@ class RemoteWorkspaceBackend {
 			'dirty'       => count($files),
 			'files'       => $files,
 		);
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
-		}
-
-		return $result;
+		return $this->with_context_policy($handle, $result);
 	}
 
 	/**
@@ -865,11 +833,7 @@ class RemoteWorkspaceBackend {
 			'repo'    => $context['repo_name'],
 			'diff'    => $diff,
 		);
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
-		}
-
-		return $result;
+		return $this->with_context_policy($handle, $result);
 	}
 
 	/**
@@ -898,11 +862,7 @@ class RemoteWorkspaceBackend {
 			'dirty'       => count($files),
 			'files'       => $files,
 		);
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
-		}
-
-		return $result;
+		return $this->with_context_policy($handle, $result);
 	}
 
 	/**
@@ -954,11 +914,7 @@ class RemoteWorkspaceBackend {
 			'message'      => 'Runner workspace command execution is unavailable for GitHub API remote workspaces; use a local runner workspace backend for shell commands.',
 		);
 
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
-		}
-
-		return $result;
+		return $this->with_context_policy($handle, $result);
 	}
 
 	/**
@@ -1475,6 +1431,34 @@ class RemoteWorkspaceBackend {
 		);
 	}
 
+	/** Read a repository tree at the requested ref, falling back to its default ref. */
+	private function get_repo_tree_with_fallback( array $context, string $path = '' ): array|\WP_Error {
+		$input = array(
+			'repo' => $context['repo'],
+			'ref'  => $context['read_ref'],
+		);
+		if ( '' !== $path ) {
+			$input['path'] = $path;
+		}
+
+		$tree = GitHubAbilities::getRepoTree($input);
+		if ( is_wp_error($tree) && '' !== (string) $context['read_ref'] ) {
+			unset($input['ref']);
+			$tree = GitHubAbilities::getRepoTree($input);
+		}
+
+		return $tree;
+	}
+
+	/** Attach the read-only context policy attestation when the handle requires one. */
+	private function with_context_policy( string $handle, array $result ): array {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
+		}
+
+		return $result;
+	}
+
 	/**
 	 * @return array<string,mixed>
 	 */
@@ -1589,126 +1573,6 @@ class RemoteWorkspaceBackend {
 
 	private function branch_slug( string $branch ): string {
 		return trim(strtolower(preg_replace('/[^a-zA-Z0-9._-]+/', '-', $branch)), '-');
-	}
-
-	private function compile_search_pattern( string $pattern ): string|\WP_Error {
-		if ( '' === $pattern ) {
-			return new \WP_Error('missing_pattern', 'Search pattern is required.', array( 'status' => 400 ));
-		}
-
-		$regex = '~' . str_replace('~', '\\~', $pattern) . '~u';
-     // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_set_error_handler -- Validate user-supplied regex without surfacing PHP warnings.
-		$previous_handler = set_error_handler(fn() => true);
-		$is_valid         = false !== preg_match($regex, '');
-		restore_error_handler();
-		unset($previous_handler);
-
-		if ( ! $is_valid ) {
-			return new \WP_Error('invalid_pattern', 'Search pattern is not a valid regular expression.', array( 'status' => 400 ));
-		}
-
-		return $regex;
-	}
-
-	private function path_matches_include( string $path, ?string $include_pattern ): bool {
-		if ( null === $include_pattern || '' === $include_pattern ) {
-			return true;
-		}
-
-		return fnmatch($include_pattern, $path) || fnmatch($include_pattern, basename($path));
-	}
-
-	/**
-	 * @return array<int,array<string,mixed>>
-	 */
-	private function grep_content( string $content, string $repo, string $path, string $regex, int $context_lines, int $limit ): array {
-		$lines   = explode("\n", $content);
-		$matches = array();
-		foreach ( $lines as $index => $line ) {
-			if ( ! preg_match($regex, $line) ) {
-				continue;
-			}
-
-			$start      = max(0, $index - $context_lines);
-			$end        = min(count($lines) - 1, $index + $context_lines);
-			$read_limit = $end - $start + 1;
-
-			$match = array(
-				'match_id'  => substr(hash('sha256', $path . ':' . ( $index + 1 ) . ':' . $line), 0, 16),
-				'path'      => $path,
-				'line'      => $index + 1,
-				'text'      => $line,
-				'preview'   => $this->build_preview($lines, $start, $end),
-				'read_args' => array(
-					'repo'   => $repo,
-					'path'   => $path,
-					'offset' => $start + 1,
-					'limit'  => $read_limit,
-				),
-			);
-
-			if ( $context_lines > 0 ) {
-				$match['context'] = array();
-				for ( $context_index = $start; $context_index <= $end; ++$context_index ) {
-					$match['context'][] = array(
-						'line' => $context_index + 1,
-						'text' => $lines[ $context_index ],
-					);
-				}
-			}
-
-			$matches[] = $match;
-			if ( count($matches) >= $limit ) {
-				break;
-			}
-		}
-
-		return $matches;
-	}
-
-	private function build_preview( array $lines, int $start, int $end ): string {
-		$preview = array();
-		for ( $context_index = $start; $context_index <= $end; ++$context_index ) {
-			$preview[] = sprintf('%d: %s', $context_index + 1, $lines[ $context_index ]);
-		}
-
-		return implode("\n", $preview);
-	}
-
-	/**
-	 * @return array<int,array<string,mixed>>
-	 */
-	private function build_edit_suggestions( string $content, string $old_string ): array {
-		$candidates = array_values(array_filter(array_map('trim', explode("\n", $old_string)), static fn( $line ) => strlen($line) >= 4));
-		usort($candidates, static fn( $a, $b ) => strlen($b) <=> strlen($a));
-
-		$needle = $candidates[0] ?? trim($old_string);
-		if ( '' === $needle ) {
-			return array();
-		}
-
-		$needle      = substr($needle, 0, 120);
-		$lines       = explode("\n", $content);
-		$suggestions = array();
-		foreach ( $lines as $index => $line ) {
-			if ( false === strpos($line, $needle) ) {
-				continue;
-			}
-
-			$start         = max(0, $index - 2);
-			$end           = min(count($lines) - 1, $index + 2);
-			$suggestions[] = array(
-				'line'    => $index + 1,
-				'text'    => $line,
-				'preview' => $this->build_preview($lines, $start, $end),
-			);
-
-			if ( count($suggestions) >= 3 ) {
-				break;
-			}
-		}
-
-		return $suggestions;
 	}
 
 	/**

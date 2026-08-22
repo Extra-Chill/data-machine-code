@@ -20,6 +20,10 @@ use DataMachineCode\Support\PathSecurity;
 
 defined('ABSPATH') || exit;
 
+if ( ! class_exists(WorkspaceText::class) ) {
+	require_once __DIR__ . '/WorkspaceText.php';
+}
+
 class WorkspaceWriter {
 
 
@@ -56,17 +60,11 @@ class WorkspaceWriter {
 	 * @return array{success: bool, path?: string, size?: int, created?: bool}|\WP_Error
 	 */
 	public function write_file( string $name, string $path, string $content, bool $allow_primary_mutation = false ): array|\WP_Error {
-		$mutation_check = $this->ensure_workspace_mutation_allowed($name, 'write', $allow_primary_mutation);
-		if ( is_wp_error($mutation_check) ) {
-			return $mutation_check;
+		$repo_path = $this->prepare_workspace_mutation($name, 'write', $allow_primary_mutation);
+		if ( is_wp_error($repo_path) ) {
+			return $repo_path;
 		}
-
-		$repo_path = $this->workspace->get_repo_path($name);
 		$path      = ltrim($path, '/');
-
-		if ( ! is_dir($repo_path) ) {
-			return new \WP_Error('repo_not_found', sprintf('Repository "%s" not found in workspace.', $name), array( 'status' => 404 ));
-		}
 
 		if ( '' === $path ) {
 			return new \WP_Error('missing_path', 'File path is required.', array( 'status' => 400 ));
@@ -140,17 +138,11 @@ class WorkspaceWriter {
 	 * @return array{success: bool, path?: string, replacements?: int}|\WP_Error
 	 */
 	public function edit_file( string $name, string $path, string $old_string, string $new_string, bool $replace_all = false, bool $allow_primary_mutation = false ): array|\WP_Error {
-		$mutation_check = $this->ensure_workspace_mutation_allowed($name, 'edit', $allow_primary_mutation);
-		if ( is_wp_error($mutation_check) ) {
-			return $mutation_check;
+		$repo_path = $this->prepare_workspace_mutation($name, 'edit', $allow_primary_mutation);
+		if ( is_wp_error($repo_path) ) {
+			return $repo_path;
 		}
-
-		$repo_path = $this->workspace->get_repo_path($name);
 		$path      = ltrim($path, '/');
-
-		if ( ! is_dir($repo_path) ) {
-			return new \WP_Error('repo_not_found', sprintf('Repository "%s" not found in workspace.', $name), array( 'status' => 404 ));
-		}
 
 		$file_path  = $repo_path . '/' . $path;
 		$validation = $this->workspace->validate_containment($file_path, $repo_path);
@@ -193,7 +185,7 @@ class WorkspaceWriter {
 				'string_not_found', 'old_string not found in file content.', array(
 					'status'      => 400,
 					'path'        => $path,
-					'suggestions' => $this->build_edit_suggestions($content, $old_string),
+					'suggestions' => WorkspaceText::build_edit_suggestions($content, $old_string),
 				)
 			);
 		}
@@ -244,15 +236,9 @@ class WorkspaceWriter {
 	 * @return array{success: bool, name: string, path: string, changed_files: string[], diff: string, status: string, check_output: string, apply_output: string}|\WP_Error
 	 */
 	public function apply_patch( string $name, string $patch, bool $allow_primary_mutation = false ): array|\WP_Error {
-		$mutation_check = $this->ensure_workspace_mutation_allowed($name, 'apply-patch', $allow_primary_mutation);
-		if ( is_wp_error($mutation_check) ) {
-			return $mutation_check;
-		}
-
-		$repo_path = $this->workspace->get_repo_path($name);
-
-		if ( ! is_dir($repo_path) ) {
-			return new \WP_Error('repo_not_found', sprintf('Repository "%s" not found in workspace.', $name), array( 'status' => 404 ));
+		$repo_path = $this->prepare_workspace_mutation($name, 'apply-patch', $allow_primary_mutation);
+		if ( is_wp_error($repo_path) ) {
+			return $repo_path;
 		}
 
 		$patch = str_replace("\r\n", "\n", $patch);
@@ -359,49 +345,19 @@ class WorkspaceWriter {
 		return true;
 	}
 
-	/**
-	 * @return array<int,array<string,mixed>>
-	 */
-	private function build_edit_suggestions( string $content, string $old_string ): array {
-		$candidates = array_values(array_filter(array_map('trim', explode("\n", $old_string)), static fn( $line ) => strlen($line) >= 4));
-		usort($candidates, static fn( $a, $b ) => strlen($b) <=> strlen($a));
-
-		$needle = $candidates[0] ?? trim($old_string);
-		if ( '' === $needle ) {
-			return array();
+	/** Validate mutation access and resolve an existing local repository path. */
+	private function prepare_workspace_mutation( string $name, string $operation, bool $allow_primary_mutation ): string|\WP_Error {
+		$allowed = $this->ensure_workspace_mutation_allowed($name, $operation, $allow_primary_mutation);
+		if ( is_wp_error($allowed) ) {
+			return $allowed;
 		}
 
-		$needle      = substr($needle, 0, 120);
-		$lines       = explode("\n", $content);
-		$suggestions = array();
-		foreach ( $lines as $index => $line ) {
-			if ( false === strpos($line, $needle) ) {
-				continue;
-			}
-
-			$start         = max(0, $index - 2);
-			$end           = min(count($lines) - 1, $index + 2);
-			$suggestions[] = array(
-				'line'    => $index + 1,
-				'text'    => $line,
-				'preview' => $this->build_preview($lines, $start, $end),
-			);
-
-			if ( count($suggestions) >= 3 ) {
-				break;
-			}
+		$repo_path = $this->workspace->get_repo_path($name);
+		if ( ! is_dir($repo_path) ) {
+			return new \WP_Error('repo_not_found', sprintf('Repository "%s" not found in workspace.', $name), array( 'status' => 404 ));
 		}
 
-		return $suggestions;
-	}
-
-	private function build_preview( array $lines, int $start, int $end ): string {
-		$preview = array();
-		for ( $context_index = $start; $context_index <= $end; ++$context_index ) {
-			$preview[] = sprintf('%d: %s', $context_index + 1, $lines[ $context_index ]);
-		}
-
-		return implode("\n", $preview);
+		return $repo_path;
 	}
 
 	/**

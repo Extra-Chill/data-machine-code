@@ -5246,19 +5246,16 @@ class WorkspaceCommand extends BaseCommand {
 				return;
 
 			case 'active-no-signal-finalized-apply':
-				$this->render_worktree_active_no_signal_finalized_apply_result($result, $assoc_args);
-				return;
-
 			case 'active-no-signal-equivalent-clean-apply':
-				$this->render_worktree_active_no_signal_equivalent_clean_apply_result($result, $assoc_args);
-				return;
-
 			case 'active-no-signal-merged-apply':
-				$this->render_worktree_active_no_signal_merged_apply_result($result, $assoc_args);
-				return;
-
 			case 'active-no-signal-remote-clean-apply':
-				$this->render_worktree_active_no_signal_remote_clean_apply_result($result, $assoc_args);
+				$variants = array(
+					'active-no-signal-finalized-apply'        => 'finalized',
+					'active-no-signal-equivalent-clean-apply' => 'equivalent_clean',
+					'active-no-signal-merged-apply'           => 'merged',
+					'active-no-signal-remote-clean-apply'     => 'remote_clean',
+				);
+				$this->render_worktree_active_no_signal_apply_result($result, $assoc_args, $variants[ $operation ]);
 				return;
 
 			case 'cleanup-artifacts':
@@ -6026,19 +6023,7 @@ class WorkspaceCommand extends BaseCommand {
 		if ( ! empty($candidates) && ( '' === $only || 'candidates' === $only ) ) {
 			WP_CLI::log('');
 			WP_CLI::log($dry_run ? 'Would remove:' : 'Candidates:');
-			$candidate_rows = array_map(
-				fn( $c ) => array(
-					'handle'      => $c['handle'] ?? '',
-					'branch'      => $c['branch'] ?? '',
-					'age_days'    => $c['age_days'] ?? '',
-					'size'        => $this->format_bytes($c['size_bytes'] ?? null),
-					'artifacts'   => $this->format_bytes($c['artifact_size_bytes'] ?? 0),
-					'signal'      => $c['signal'] ?? '',
-					'reason_code' => $c['reason_code'] ?? ( $c['signal'] ?? '' ),
-					'reason'      => $c['reason'] ?? '',
-				),
-				array_slice($candidates, 0, $limit)
-			);
+			$candidate_rows = $this->worktree_cleanup_table_rows(array_slice($candidates, 0, $limit));
 			$fields         = $verbose ? array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason' ) : array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason_code' );
 			$this->format_items($candidate_rows, $fields, array( 'format' => 'table' ), 'handle');
 			$this->render_cleanup_truncation_hint(count($candidates), $limit, 'candidate rows');
@@ -6047,19 +6032,7 @@ class WorkspaceCommand extends BaseCommand {
 		if ( ! empty($removed) && ( '' === $only || 'removed' === $only ) ) {
 			WP_CLI::log('');
 			WP_CLI::log('Removed:');
-			$removed_rows = array_map(
-				fn( $c ) => array(
-					'handle'      => $c['handle'] ?? '',
-					'branch'      => $c['branch'] ?? '',
-					'age_days'    => $c['age_days'] ?? '',
-					'size'        => $this->format_bytes($c['size_bytes'] ?? null),
-					'artifacts'   => $this->format_bytes($c['artifact_size_bytes'] ?? 0),
-					'signal'      => $c['signal'] ?? '',
-					'reason_code' => $c['reason_code'] ?? ( $c['signal'] ?? '' ),
-					'reason'      => $c['reason'] ?? '',
-				),
-				array_slice($removed, 0, $limit)
-			);
+			$removed_rows = $this->worktree_cleanup_table_rows(array_slice($removed, 0, $limit));
 			$fields       = $verbose ? array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason' ) : array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason_code' );
 			$this->format_items($removed_rows, $fields, array( 'format' => 'table' ), 'handle');
 			$this->render_cleanup_truncation_hint(count($removed), $limit, 'removed rows');
@@ -6105,6 +6078,23 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 		WP_CLI::success(sprintf('Removed %d worktree(s); %d skipped.', count($result['removed'] ?? array()), count($result['skipped'] ?? array())));
+	}
+
+	/** Project cleanup candidates and removals into their shared table schema. */
+	private function worktree_cleanup_table_rows( array $rows ): array {
+		return array_map(
+			fn( $row ) => array(
+				'handle'      => $row['handle'] ?? '',
+				'branch'      => $row['branch'] ?? '',
+				'age_days'    => $row['age_days'] ?? '',
+				'size'        => $this->format_bytes($row['size_bytes'] ?? null),
+				'artifacts'   => $this->format_bytes($row['artifact_size_bytes'] ?? 0),
+				'signal'      => $row['signal'] ?? '',
+				'reason_code' => $row['reason_code'] ?? ( $row['signal'] ?? '' ),
+				'reason'      => $row['reason'] ?? '',
+			),
+			$rows
+		);
 	}
 
 	/**
@@ -6442,14 +6432,8 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::success(sprintf('Inspected %d active/no-signal worktree(s). Review-only; no cleanup was applied.', count($rows)));
 	}
 
-	/**
-	 * Render finalized active/no-signal metadata apply output.
-	 *
-	 * @param  array $result     Apply result.
-	 * @param  array $assoc_args CLI assoc args.
-	 * @return void
-	 */
-	private function render_worktree_active_no_signal_finalized_apply_result( array $result, array $assoc_args ): void {
+	/** Render one active/no-signal metadata apply classification. */
+	private function render_worktree_active_no_signal_apply_result( array $result, array $assoc_args, string $variant ): void {
 		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
 			if ( empty($assoc_args['verbose']) ) {
@@ -6459,359 +6443,28 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		$summary = (array) ( $result['summary'] ?? array() );
-		$planned = (array) ( $result['planned'] ?? array() );
-		$written = (array) ( $result['written'] ?? array() );
-		$skipped = (array) ( $result['skipped'] ?? array() );
-		$dry_run = ! empty($result['dry_run']);
+		$presentation = ActiveNoSignalApplyPresentation::build($variant, $result);
+		WP_CLI::log($presentation['summary_title']);
+		$this->format_items($presentation['summary_rows'], array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric');
 
-		WP_CLI::log('Finalized active/no-signal apply summary:');
-		$summary_rows = array(
-			array(
-				'metric' => 'inspected',
-				'count'  => (int) ( $summary['inspected'] ?? 0 ),
-			),
-			array(
-				'metric' => 'planned',
-				'count'  => (int) ( $summary['planned'] ?? count($planned) ),
-			),
-			array(
-				'metric' => 'written',
-				'count'  => (int) ( $summary['written'] ?? count($written) ),
-			),
-			array(
-				'metric' => 'skipped',
-				'count'  => (int) ( $summary['skipped'] ?? count($skipped) ),
-			),
-		);
-		foreach ( (array) ( $summary['skipped_by_reason'] ?? array() ) as $reason => $count ) {
-			$summary_rows[] = array(
-				'metric' => 'skipped:' . $reason,
-				'count'  => (int) $count,
-			);
-		}
-		$this->format_items($summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric');
-
-		$rows = $dry_run ? $planned : $written;
-		if ( ! empty($rows) ) {
+		if ( ! empty($presentation['items']) ) {
 			WP_CLI::log('');
-			WP_CLI::log($dry_run ? 'Would promote:' : 'Promoted:');
-			$items = array_map(
-				fn( $row ) => array(
-					'handle' => $row['handle'] ?? '',
-					'branch' => $row['branch'] ?? '',
-					'pr'     => is_array($row['pr'] ?? null) ? (string) ( $row['pr']['html_url'] ?? $row['pr']['number'] ?? '' ) : (string) ( $row['metadata']['pr_url'] ?? '' ),
-					'state'  => $row['metadata']['lifecycle_state'] ?? '',
-				),
-				$rows
-			);
-			$this->format_items($items, array( 'handle', 'branch', 'pr', 'state' ), array( 'format' => 'table' ), 'handle');
+			WP_CLI::log($presentation['items_title']);
+			$this->format_items($presentation['items'], $presentation['item_fields'], array( 'format' => 'table' ), 'handle');
 		}
 
-		if ( ! empty($skipped) ) {
+		if ( ! empty($presentation['skipped_items']) ) {
 			WP_CLI::log('');
 			WP_CLI::log('Skipped:');
-			$items = array_map(
-				fn( $row ) => array(
-					'handle'      => $row['handle'] ?? '',
-					'action'      => $row['action'] ?? '',
-					'reason_code' => $row['reason_code'] ?? '',
-					'reason'      => $row['reason'] ?? '',
-				),
-				array_slice($skipped, 0, 10)
-			);
-			$this->format_items($items, array( 'handle', 'action', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
+			$this->format_items($presentation['skipped_items'], array( 'handle', 'action', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
 		}
 
-		if ( ! empty($result['pagination']['next_command']) ) {
+		if ( '' !== $presentation['next_command'] ) {
 			WP_CLI::log('');
-			WP_CLI::log('Next page: ' . (string) $result['pagination']['next_command']);
+			WP_CLI::log('Next page: ' . $presentation['next_command']);
 		}
 
-		if ( $dry_run ) {
-			WP_CLI::success(sprintf('%d finalized worktree(s) would be promoted to cleanup_eligible metadata.', count($planned)));
-			return;
-		}
-		WP_CLI::success(sprintf('Promoted %d finalized worktree(s) to cleanup_eligible metadata.', count($written)));
-	}
-
-	/**
-	 * Render equivalent-clean active/no-signal metadata apply output.
-	 *
-	 * @param  array $result     Apply result.
-	 * @param  array $assoc_args CLI assoc args.
-	 * @return void
-	 */
-	private function render_worktree_active_no_signal_equivalent_clean_apply_result( array $result, array $assoc_args ): void {
-		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
-		if ( 'json' === $format ) {
-			if ( empty($assoc_args['verbose']) ) {
-				$result = WorkspaceCompactOutput::cleanup_result($result);
-			}
-			$this->renderer()->json($result);
-			return;
-		}
-
-		$summary = (array) ( $result['summary'] ?? array() );
-		$planned = (array) ( $result['planned'] ?? array() );
-		$written = (array) ( $result['written'] ?? array() );
-		$skipped = (array) ( $result['skipped'] ?? array() );
-		$dry_run = ! empty($result['dry_run']);
-
-		WP_CLI::log('Equivalent-clean active/no-signal apply summary:');
-		$summary_rows = array(
-			array(
-				'metric' => 'inspected',
-				'count'  => (int) ( $summary['inspected'] ?? 0 ),
-			),
-			array(
-				'metric' => 'planned',
-				'count'  => (int) ( $summary['planned'] ?? count($planned) ),
-			),
-			array(
-				'metric' => 'written',
-				'count'  => (int) ( $summary['written'] ?? count($written) ),
-			),
-			array(
-				'metric' => 'skipped',
-				'count'  => (int) ( $summary['skipped'] ?? count($skipped) ),
-			),
-		);
-		foreach ( (array) ( $summary['skipped_by_reason'] ?? array() ) as $reason => $count ) {
-			$summary_rows[] = array(
-				'metric' => 'skipped:' . $reason,
-				'count'  => (int) $count,
-			);
-		}
-		$this->format_items($summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric');
-
-		$rows = $dry_run ? $planned : $written;
-		if ( ! empty($rows) ) {
-			WP_CLI::log('');
-			WP_CLI::log($dry_run ? 'Would promote:' : 'Promoted:');
-			$items = array_map(
-				fn( $row ) => array(
-					'handle' => $row['handle'] ?? '',
-					'branch' => $row['branch'] ?? '',
-					'signal' => $row['metadata']['cleanup_eligibility_evidence']['signal'] ?? '',
-					'state'  => $row['metadata']['lifecycle_state'] ?? '',
-				),
-				$rows
-			);
-			$this->format_items($items, array( 'handle', 'branch', 'signal', 'state' ), array( 'format' => 'table' ), 'handle');
-		}
-
-		if ( ! empty($skipped) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Skipped:');
-			$items = array_map(
-				fn( $row ) => array(
-					'handle'      => $row['handle'] ?? '',
-					'action'      => $row['action'] ?? '',
-					'reason_code' => $row['reason_code'] ?? '',
-					'reason'      => $row['reason'] ?? '',
-				),
-				array_slice($skipped, 0, 10)
-			);
-			$this->format_items($items, array( 'handle', 'action', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
-		}
-
-		if ( ! empty($result['pagination']['next_command']) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Next page: ' . (string) $result['pagination']['next_command']);
-		}
-
-		if ( $dry_run ) {
-			WP_CLI::success(sprintf('%d equivalent-clean worktree(s) would be promoted to cleanup_eligible metadata.', count($planned)));
-			return;
-		}
-		WP_CLI::success(sprintf('Promoted %d equivalent-clean worktree(s) to cleanup_eligible metadata.', count($written)));
-	}
-
-	/**
-	 * Render merged-to-default active/no-signal metadata apply output.
-	 *
-	 * @param  array $result     Apply result.
-	 * @param  array $assoc_args CLI assoc args.
-	 * @return void
-	 */
-	private function render_worktree_active_no_signal_merged_apply_result( array $result, array $assoc_args ): void {
-		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
-		if ( 'json' === $format ) {
-			if ( empty($assoc_args['verbose']) ) {
-				$result = WorkspaceCompactOutput::cleanup_result($result);
-			}
-			$this->renderer()->json($result);
-			return;
-		}
-
-		$summary = (array) ( $result['summary'] ?? array() );
-		$planned = (array) ( $result['planned'] ?? array() );
-		$written = (array) ( $result['written'] ?? array() );
-		$skipped = (array) ( $result['skipped'] ?? array() );
-		$dry_run = ! empty($result['dry_run']);
-
-		WP_CLI::log('Merged-to-default active/no-signal apply summary:');
-		$summary_rows = array(
-			array(
-				'metric' => 'inspected',
-				'count'  => (int) ( $summary['inspected'] ?? 0 ),
-			),
-			array(
-				'metric' => 'planned',
-				'count'  => (int) ( $summary['planned'] ?? count($planned) ),
-			),
-			array(
-				'metric' => 'written',
-				'count'  => (int) ( $summary['written'] ?? count($written) ),
-			),
-			array(
-				'metric' => 'skipped',
-				'count'  => (int) ( $summary['skipped'] ?? count($skipped) ),
-			),
-		);
-		foreach ( (array) ( $summary['skipped_by_reason'] ?? array() ) as $reason => $count ) {
-			$summary_rows[] = array(
-				'metric' => 'skipped:' . $reason,
-				'count'  => (int) $count,
-			);
-		}
-		$this->format_items($summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric');
-
-		$rows = $dry_run ? $planned : $written;
-		if ( ! empty($rows) ) {
-			WP_CLI::log('');
-			WP_CLI::log($dry_run ? 'Would promote:' : 'Promoted:');
-			$items = array_map(
-				fn( $row ) => array(
-					'handle'      => $row['handle'] ?? '',
-					'branch'      => $row['branch'] ?? '',
-					'default_ref' => $row['metadata']['cleanup_eligibility_evidence']['default_ref'] ?? '',
-					'state'       => $row['metadata']['lifecycle_state'] ?? '',
-				),
-				$rows
-			);
-			$this->format_items($items, array( 'handle', 'branch', 'default_ref', 'state' ), array( 'format' => 'table' ), 'handle');
-		}
-
-		if ( ! empty($skipped) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Skipped:');
-			$items = array_map(
-				fn( $row ) => array(
-					'handle'      => $row['handle'] ?? '',
-					'action'      => $row['action'] ?? '',
-					'reason_code' => $row['reason_code'] ?? '',
-					'reason'      => $row['reason'] ?? '',
-				),
-				array_slice($skipped, 0, 10)
-			);
-			$this->format_items($items, array( 'handle', 'action', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
-		}
-
-		if ( ! empty($result['pagination']['next_command']) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Next page: ' . (string) $result['pagination']['next_command']);
-		}
-
-		if ( $dry_run ) {
-			WP_CLI::success(sprintf('%d merged-to-default worktree(s) would be promoted to cleanup_eligible metadata.', count($planned)));
-			return;
-		}
-		WP_CLI::success(sprintf('Promoted %d merged-to-default worktree(s) to cleanup_eligible metadata.', count($written)));
-	}
-
-	/**
-	 * Render remote-clean active/no-signal metadata apply output.
-	 *
-	 * @param  array $result     Apply result.
-	 * @param  array $assoc_args CLI assoc args.
-	 * @return void
-	 */
-	private function render_worktree_active_no_signal_remote_clean_apply_result( array $result, array $assoc_args ): void {
-		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
-		if ( 'json' === $format ) {
-			if ( empty($assoc_args['verbose']) ) {
-				$result = WorkspaceCompactOutput::cleanup_result($result);
-			}
-			$this->renderer()->json($result);
-			return;
-		}
-
-		$summary = (array) ( $result['summary'] ?? array() );
-		$planned = (array) ( $result['planned'] ?? array() );
-		$written = (array) ( $result['written'] ?? array() );
-		$skipped = (array) ( $result['skipped'] ?? array() );
-		$dry_run = ! empty($result['dry_run']);
-
-		WP_CLI::log('Remote-clean active/no-signal apply summary:');
-		$summary_rows = array(
-			array(
-				'metric' => 'inspected',
-				'count'  => (int) ( $summary['inspected'] ?? 0 ),
-			),
-			array(
-				'metric' => 'planned',
-				'count'  => (int) ( $summary['planned'] ?? count($planned) ),
-			),
-			array(
-				'metric' => 'written',
-				'count'  => (int) ( $summary['written'] ?? count($written) ),
-			),
-			array(
-				'metric' => 'skipped',
-				'count'  => (int) ( $summary['skipped'] ?? count($skipped) ),
-			),
-		);
-		foreach ( (array) ( $summary['skipped_by_reason'] ?? array() ) as $reason => $count ) {
-			$summary_rows[] = array(
-				'metric' => 'skipped:' . $reason,
-				'count'  => (int) $count,
-			);
-		}
-		$this->format_items($summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric');
-
-		$rows = $dry_run ? $planned : $written;
-		if ( ! empty($rows) ) {
-			WP_CLI::log('');
-			WP_CLI::log($dry_run ? 'Would promote:' : 'Promoted:');
-			$items = array_map(
-				fn( $row ) => array(
-					'handle'     => $row['handle'] ?? '',
-					'branch'     => $row['branch'] ?? '',
-					'remote_ref' => $row['metadata']['cleanup_eligibility_evidence']['remote_ref'] ?? '',
-					'state'      => $row['metadata']['lifecycle_state'] ?? '',
-				),
-				$rows
-			);
-			$this->format_items($items, array( 'handle', 'branch', 'remote_ref', 'state' ), array( 'format' => 'table' ), 'handle');
-		}
-
-		if ( ! empty($skipped) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Skipped:');
-			$items = array_map(
-				fn( $row ) => array(
-					'handle'      => $row['handle'] ?? '',
-					'action'      => $row['action'] ?? '',
-					'reason_code' => $row['reason_code'] ?? '',
-					'reason'      => $row['reason'] ?? '',
-				),
-				array_slice($skipped, 0, 10)
-			);
-			$this->format_items($items, array( 'handle', 'action', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
-		}
-
-		if ( ! empty($result['pagination']['next_command']) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Next page: ' . (string) $result['pagination']['next_command']);
-		}
-
-		if ( $dry_run ) {
-			WP_CLI::success(sprintf('%d remote-clean worktree(s) would be promoted to cleanup_eligible metadata.', count($planned)));
-			return;
-		}
-		WP_CLI::success(sprintf('Promoted %d remote-clean worktree(s) to cleanup_eligible metadata.', count($written)));
+		WP_CLI::success($presentation['success']);
 	}
 
 	/**
