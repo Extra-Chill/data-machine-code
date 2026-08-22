@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.59.12] - 2026-08-22
+
+### Fixed
+- narrow capacity admission scope
+- bound workspace command shutdown
+
 ## [0.59.11] - 2026-08-22
 
 ### Fixed
