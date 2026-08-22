@@ -131,14 +131,28 @@ trait WorkspaceWorktreeLifecycle {
 			return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path));
 		}
 
-		return WorkspaceMutationLock::with_repo(
+		$operation_timeout  = self::worktree_capacity_operation_timeout_seconds($bootstrap);
+		$operation_started  = microtime(true);
+		$operation_deadline = $operation_started + $operation_timeout;
+		$capacity_timeout   = $this->worktree_operation_remaining_seconds($operation_deadline);
+		if ( $capacity_timeout <= 0 ) {
+			return $this->worktree_operation_timeout('capacity_lock_wait', $operation_timeout, $operation_started);
+		}
+
+		$locked = WorkspaceMutationLock::with_repo(
 			$this->workspace_path,
 			'workspace-capacity-admission',
-			fn() => WorkspaceMutationLock::with_repo(
-				$this->workspace_path,
-				$repo,
-				fn() => $this->worktree_add_with_capacity_lock(
+			function () use ( $repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $force, $task, $allow_unverified_freshness, $intent, $slug, $wt_handle, $wt_path, $primary_path, $reuse_policy, $operation_deadline, $operation_timeout, $operation_started ) {
+				$repo_timeout = $this->worktree_operation_remaining_seconds($operation_deadline);
+				if ( $repo_timeout <= 0 ) {
+					return $this->worktree_operation_timeout('repo_lock_wait', $operation_timeout, $operation_started);
+				}
+
+				$repo_locked = WorkspaceMutationLock::with_repo(
+					$this->workspace_path,
 					$repo,
+					fn() => $this->worktree_add_with_capacity_lock(
+						$repo,
 					$branch,
 					$from,
 					$inject_context,
@@ -153,11 +167,19 @@ trait WorkspaceWorktreeLifecycle {
 					$wt_handle,
 					$wt_path,
 					$primary_path,
-					$reuse_policy
-				)
-			),
-			self::worktree_capacity_wait_timeout_seconds($bootstrap)
+						$reuse_policy,
+						$operation_deadline,
+						$operation_timeout,
+						$operation_started
+					),
+					$repo_timeout
+				);
+				return $this->worktree_operation_lock_result($repo_locked, 'repo_lock_wait', $operation_timeout, $operation_started);
+			},
+			$capacity_timeout
 		);
+
+		return $this->worktree_operation_lock_result($locked, 'capacity_lock_wait', $operation_timeout, $operation_started);
 	}
 
 	/**
@@ -208,9 +230,18 @@ trait WorkspaceWorktreeLifecycle {
 		string $wt_handle,
 		string $wt_path,
 		string $primary_path,
-		string $reuse_policy = 'reuse_compatible'
+		string $reuse_policy = 'reuse_compatible',
+		?float $operation_deadline = null,
+		int $operation_timeout = 0,
+		float $operation_started = 0.0
 	): array|\WP_Error {
-		$operation_deadline = microtime(true) + self::worktree_capacity_operation_timeout_seconds($bootstrap);
+		$operation_timeout  = $operation_timeout > 0 ? $operation_timeout : self::worktree_capacity_operation_timeout_seconds($bootstrap);
+		$operation_started  = $operation_started > 0.0 ? $operation_started : microtime(true);
+		$operation_deadline = $operation_deadline ?? ( $operation_started + $operation_timeout );
+		$deadline_error     = $this->worktree_operation_deadline_error('freshness', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $deadline_error ) {
+			return $deadline_error;
+		}
 		if ( is_dir($wt_path) ) {
 			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path);
 		}
@@ -251,12 +282,15 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		}
 
-		$fetch                 = WorktreeStalenessProbe::fetch($primary_path);
+		$fetch                 = WorktreeStalenessProbe::fetch($primary_path, null, $operation_deadline);
 		$fetch_failed          = ! $fetch['ok'];
 		$fetch_error           = $fetch['error'] ?? null;
 		$fetch_attempts        = (int) ( $fetch['attempts'] ?? 1 );
 		$fetch_timed_out       = ! empty($fetch['timed_out']);
 		$fetch_timeout_seconds = $fetch['timeout_seconds'] ?? null;
+		if ( $fetch_timed_out && $this->worktree_operation_remaining_seconds($operation_deadline) <= 0 ) {
+			return $this->worktree_operation_timeout('freshness', $operation_timeout, $operation_started, array( 'fetch' => $fetch ));
+		}
 		if ( $fetch_failed && ! $allow_unverified_freshness ) {
 			return new \WP_Error(
 				'worktree_freshness_unverified',
@@ -301,8 +335,16 @@ trait WorkspaceWorktreeLifecycle {
 			}
 			return $demand_plan;
 		}
+		$deadline_error = $this->worktree_operation_deadline_error('demand_disk_planning', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $deadline_error ) {
+			return $deadline_error;
+		}
 		$disk_budget      = $this->inspect_worktree_capacity($repo, $branch, $force, $demand_plan);
 		$capacity_reclaim = $this->reclaim_capacity_eligible_artifacts($repo, $branch, $force, $demand_plan, $disk_budget);
+		$deadline_error   = $this->worktree_operation_deadline_error('demand_disk_planning', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $deadline_error ) {
+			return $deadline_error;
+		}
 		$disk_budget      = $capacity_reclaim['after'];
 		if ( 'refused' === ( $disk_budget['status'] ?? '' ) ) {
 			$reclaim_evidence = (array) $capacity_reclaim['evidence'];
@@ -393,6 +435,8 @@ trait WorkspaceWorktreeLifecycle {
 					'exists_local'          => $exists_local,
 					'target_ref'            => $target_ref,
 					'operation_deadline'    => $operation_deadline,
+					'operation_timeout'     => $operation_timeout,
+					'operation_started'     => $operation_started,
 				)
 			);
 
@@ -452,10 +496,10 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		if ( $bootstrap ) {
-			$remaining_seconds = (int) floor($operation_deadline - microtime(true));
+			$remaining_seconds = $this->worktree_operation_remaining_seconds($operation_deadline);
 			if ( $remaining_seconds <= 0 ) {
 				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
-				return new \WP_Error('worktree_operation_timeout', 'The aggregate worktree operation deadline expired before dependency bootstrap.', array( 'status' => 504 ));
+				return $this->worktree_operation_timeout('bootstrap', $operation_timeout, $operation_started, array( 'cleanup' => 'rollback_requested' ));
 			}
 			$response['bootstrap'] = WorktreeBootstrapper::bootstrap($wt_path, $remaining_seconds);
 		}
@@ -472,6 +516,12 @@ trait WorkspaceWorktreeLifecycle {
 			);
 		}
 
+		$deadline_error = $this->worktree_operation_deadline_error('metadata', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $deadline_error ) {
+			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+			WorktreeContextInjector::forget_metadata($wt_handle);
+			return $deadline_error;
+		}
 		$inventory = $this->worktree_inventory();
 		$persisted = $inventory->upsert($this->build_worktree_inventory_row_from_handle($wt_handle));
 		if ( ! $persisted ) {
@@ -701,11 +751,27 @@ trait WorkspaceWorktreeLifecycle {
 				: new \WP_Error('worktree_creation_intent_conflict', sprintf('Refusing to create worktree "%s" because a creation intent already exists.', $wt_handle), array( 'status' => 409 ));
 		}
 
-		$add_remaining = max(1, (int) floor( (float) ( $preflight['operation_deadline'] ?? 0.0 ) - microtime(true)));
+		$operation_deadline = (float) ( $preflight['operation_deadline'] ?? 0.0 );
+		$operation_timeout  = (int) ( $preflight['operation_timeout'] ?? 0 );
+		$operation_started  = (float) ( $preflight['operation_started'] ?? 0.0 );
+		$add_remaining      = $this->worktree_operation_remaining_seconds($operation_deadline);
+		if ( $add_remaining <= 0 ) {
+			WorktreeContextInjector::forget_creation_intent($wt_handle, $creation_intent);
+			return $this->worktree_operation_timeout('git_worktree_add', $operation_timeout, $operation_started, array( 'cleanup' => 'no_checkout_created' ));
+		}
 		$result        = $this->run_git($primary_path, $cmd, min(300, $add_remaining));
 		if ( is_wp_error($result) ) {
+			if ( $this->worktree_operation_remaining_seconds($operation_deadline) <= 0 ) {
+				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent);
+				return $this->worktree_operation_timeout('git_worktree_add', $operation_timeout, $operation_started, array( 'cleanup' => 'rollback_requested' ));
+			}
 			WorktreeContextInjector::forget_creation_intent($wt_handle, $creation_intent);
 			return $result;
+		}
+		$deadline_error = $this->worktree_operation_deadline_error('git_worktree_add', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $deadline_error ) {
+			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent);
+			return $deadline_error;
 		}
 
 		$identity_configuration = $this->configure_repository_git_identity($wt_path);
@@ -3121,13 +3187,62 @@ trait WorkspaceWorktreeLifecycle {
 	 * @return void
 	 */
 	private function rollback_rejected_worktree( string $primary_path, string $wt_path, string $branch, bool $created_branch, ?string $handle = null, ?array $creation_intent = null ): void {
-		$this->run_git($primary_path, sprintf('worktree remove --force %s', escapeshellarg($wt_path)));
+		$timeout = function_exists('apply_filters') ? (int) apply_filters('datamachine_code_worktree_rollback_timeout_seconds', 5) : 5;
+		$timeout = max(1, $timeout);
+		$this->run_git($primary_path, sprintf('worktree remove --force %s', escapeshellarg($wt_path)), $timeout);
 		if ( $created_branch ) {
-			$this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)));
+			$this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)), $timeout);
 		}
 		if ( null !== $handle && null !== $creation_intent ) {
 			WorktreeContextInjector::forget_creation_intent($handle, $creation_intent);
 		}
+	}
+
+	/** Return whole seconds left in the operation-wide deadline. */
+	private function worktree_operation_remaining_seconds( float $deadline ): int {
+		return max(0, (int) ceil($deadline - microtime(true)));
+	}
+
+	/** Create typed timeout evidence shared by every lifecycle phase. */
+	private function worktree_operation_timeout( string $phase, int $timeout, float $started, array $extra = array() ): \WP_Error {
+		$elapsed = $started > 0.0 ? max(0.0, microtime(true) - $started) : null;
+		return new \WP_Error(
+			'worktree_operation_timeout',
+			sprintf('The aggregate worktree operation deadline expired during %s.', str_replace('_', ' ', $phase)),
+			array_merge(
+				array(
+					'status'                    => 504,
+					'phase'                     => $phase,
+					'timed_out'                 => true,
+					'operation_timeout_seconds' => $timeout,
+					'elapsed_seconds'           => null === $elapsed ? null : round($elapsed, 3),
+					'progress'                  => array( 'phase' => $phase, 'state' => 'timed_out' ),
+				),
+				$extra
+			)
+		);
+	}
+
+	/** Return typed timeout evidence only after the shared deadline expires. */
+	private function worktree_operation_deadline_error( string $phase, float $deadline, int $timeout, float $started ): ?\WP_Error {
+		return $this->worktree_operation_remaining_seconds($deadline) <= 0
+			? $this->worktree_operation_timeout($phase, $timeout, $started)
+			: null;
+	}
+
+	/** Normalize lock wait expiry into the public aggregate timeout contract. */
+	private function worktree_operation_lock_result( mixed $result, string $phase, int $timeout, float $started ): mixed {
+		$data = is_wp_error($result) ? (array) $result->get_error_data() : array();
+		if ( ! is_wp_error($result) || 'workspace_repo_busy' !== $result->get_error_code() || empty($data['timed_out']) ) {
+			return $result;
+		}
+		$owner = array_filter(array(
+			'active_lock'         => $data['active_lock'] ?? null,
+			'filesystem_lock'     => $data['filesystem_lock'] ?? null,
+			'lock_key'            => $data['lock_key'] ?? null,
+			'wait_timeout_seconds' => $data['wait_timeout_seconds'] ?? null,
+		));
+		return $this->worktree_operation_timeout($phase, $timeout, $started, array( 'lock_owner' => $owner ));
 	}
 
 	/**

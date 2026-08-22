@@ -100,6 +100,7 @@ final class WorkspaceMutationLock {
 		}
 
 		$lock_path    = $lock_dir . '/worktree-' . $repo . '.lock';
+		self::prune_exited_requests($lock_dir);
 		$request_path = self::record_request($lock_dir, $repo, $lock_path);
 		$request_id   = '' === $request_path ? '' : basename($request_path, '.json');
 		$handle       = fopen($lock_path, 'c'); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
@@ -306,7 +307,9 @@ final class WorkspaceMutationLock {
 
 	/** @return array<int,array<string,mixed>> */
 	private static function queued_requests( string $workspace_path ): array {
-		$files = glob(rtrim($workspace_path, '/') . '/.locks/requests/*.json');
+		$lock_dir = rtrim($workspace_path, '/') . '/.locks';
+		self::prune_exited_requests($lock_dir);
+		$files = glob($lock_dir . '/requests/*.json');
 		$files = false !== $files ? $files : array();
 		$rows  = array();
 		foreach ( array_slice($files, 0, 25) as $file ) {
@@ -318,6 +321,17 @@ final class WorkspaceMutationLock {
 			}
 		}
 		return $rows;
+	}
+
+	/** Remove queue records whose local owner has exited before a new admission. */
+	private static function prune_exited_requests( string $lock_dir ): void {
+		$files = glob($lock_dir . '/requests/*.json');
+		foreach ( false === $files ? array() : $files as $file ) {
+			$request = json_decode( (string) file_get_contents($file), true); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reads local lock queue evidence.
+			if ( is_array($request) && self::request_owner_exited($request) ) {
+				self::remove_request($file);
+			}
+		}
 	}
 
 	private static function request_owner_exited( array $request ): bool {

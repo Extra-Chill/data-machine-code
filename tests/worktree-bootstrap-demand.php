@@ -145,7 +145,7 @@ try {
 	$lock_policy = new class { use DataMachineCode\Workspace\WorkspaceWorktreeLifecycle; };
 	bootstrap_demand_assert(77 === $lock_policy::worktree_capacity_wait_timeout_seconds(true), 'Capacity admission wait must use its explicit filter instead of the lock default.');
 	$lifecycle_source = file_get_contents(dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php');
-	bootstrap_demand_assert(str_contains((string) $lifecycle_source, 'self::worktree_capacity_wait_timeout_seconds($bootstrap)'), 'Admission must pass the explicit capacity wait policy to the global lock.');
+	bootstrap_demand_assert(str_contains((string) $lifecycle_source, '$operation_deadline = $operation_started + $operation_timeout;') && str_contains((string) $lifecycle_source, '$capacity_timeout   = $this->worktree_operation_remaining_seconds($operation_deadline);'), 'Admission must derive its capacity lock wait from the shared operation deadline.');
 	bootstrap_demand_assert(str_contains((string) $lifecycle_source, 'remaining_demand_after_materialization') && str_contains((string) $lifecycle_source, "'post_rebase_admission'"), 'Successful rebase must remeasure and re-run admission before bootstrap.');
 	bootstrap_demand_assert(str_contains((string) $lifecycle_source, "'rebase --abort', min(5, \$abort_remaining)") && str_contains((string) $lifecycle_source, "'rebase_cleanup_failed' => is_wp_error(\$abort)"), 'Rebase cleanup must be bounded and its failure must be surfaced.');
 	unset($GLOBALS['bootstrap_demand_filters']['datamachine_code_worktree_capacity_wait_timeout_seconds']);

@@ -48,10 +48,20 @@ final class WorktreeStalenessProbe {
 	 * @param  callable|null $runner    Optional git runner, used by deterministic tests.
 	 * @return array{ok: bool, attempts: int, error?: string, timed_out?: bool, timeout_seconds?: int}
 	 */
-	public static function fetch( string $repo_path, ?callable $runner = null ): array {
+	public static function fetch( string $repo_path, ?callable $runner = null, ?float $deadline = null ): array {
 		$runner = $runner ?? static fn( string $path, string $args, int $timeout ): array|\WP_Error => GitRunner::run($path, $args, $timeout);
 		for ( $attempt = 1; $attempt <= self::FETCH_MAX_ATTEMPTS; ++$attempt ) {
-			$result = $runner($repo_path, 'fetch --quiet origin', self::FETCH_TIMEOUT_SECONDS);
+			$remaining = null === $deadline ? self::FETCH_TIMEOUT_SECONDS : (int) floor($deadline - microtime(true));
+			if ( $remaining <= 0 ) {
+				return array(
+					'ok'              => false,
+					'attempts'        => $attempt - 1,
+					'timed_out'       => true,
+					'timeout_seconds' => 0,
+					'error'           => 'The aggregate worktree operation deadline expired during remote freshness verification.',
+				);
+			}
+			$result = $runner($repo_path, 'fetch --quiet origin', min(self::FETCH_TIMEOUT_SECONDS, $remaining));
 			if ( ! is_wp_error($result) ) {
 				return array(
 					'ok'       => true,
