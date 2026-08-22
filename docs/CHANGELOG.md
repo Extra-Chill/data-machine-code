@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.60.5] - 2026-08-22
+
+### Fixed
+- allow owner-identical live retries
+
 ## [0.60.4] - 2026-08-22
 
 ### Fixed
