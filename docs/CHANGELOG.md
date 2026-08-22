@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.61.5] - 2026-08-22
+
+### Fixed
+- prefer local clone capability
+
 ## [0.61.4] - 2026-08-22
 
 ### Fixed
