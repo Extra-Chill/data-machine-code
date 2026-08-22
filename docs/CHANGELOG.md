@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.59.3] - 2026-08-22
+
+### Fixed
+- atomically reconcile runtime symlinks
+
 ## [0.59.2] - 2026-08-22
 
 ### Fixed
