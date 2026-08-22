@@ -1452,6 +1452,14 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Explicitly bypass the disk-budget refusal threshold. The disk-budget report still appears in output so the override is visible.',
 							),
+							'remediate_capacity'         => array(
+								'type'        => 'boolean',
+								'description' => 'After a refused capacity admission, run bounded artifact and cleanup-eligible remediation under the capacity lock, remeasure, and retry this exact add once only if the safety floor is met. Separate from force.',
+							),
+							'remediate_capacity_dry_run' => array(
+								'type'        => 'boolean',
+								'description' => 'Preview bounded capacity remediation without deleting artifacts, removing worktrees, or creating the requested worktree. Requires remediate_capacity=true.',
+							),
 							'task_url'                   => array(
 								'type'        => 'string',
 								'description' => 'Optional task/issue URL (e.g. GitHub issue link) to record on the worktree for ownership/duplicate detection. Falls back to DATAMACHINE_TASK_URL env when omitted.',
@@ -4155,6 +4163,8 @@ class WorkspaceAbilities {
 		// Default rebase_base=false; only true when explicitly requested.
 		$rebase_base          = array_key_exists('rebase_base', $input) ? (bool) $input['rebase_base'] : false;
 		$force                = ! empty($input['force']);
+		$remediate_capacity   = ! empty($input['remediate_capacity']);
+		$remediate_capacity_dry_run = ! empty($input['remediate_capacity_dry_run']);
 		$require_task_tracker = array_key_exists('require_task_tracker', $input) ? (bool) $input['require_task_tracker'] : true;
 		$task                 = array();
 		$intent               = array();
@@ -4190,7 +4200,9 @@ class WorkspaceAbilities {
 				$allow_unverified_freshness,
 				$require_task_tracker,
 				$intent,
-				$reuse_policy
+				$reuse_policy,
+				$remediate_capacity,
+				$remediate_capacity_dry_run
 			);
 		}
 
@@ -4221,7 +4233,9 @@ class WorkspaceAbilities {
 			$allow_unverified_freshness,
 			$require_task_tracker,
 			$intent,
-			$reuse_policy
+			$reuse_policy,
+			$remediate_capacity,
+			$remediate_capacity_dry_run
 		);
 	}
 

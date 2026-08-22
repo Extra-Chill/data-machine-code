@@ -143,6 +143,9 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 				'elapsed_ms'        => (int) ( $evidence['elapsed_ms'] ?? 0 ),
 				'removed_handles'   => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', (array) ( $pass_result['removed'] ?? array() )))),
 				'candidate_handles' => array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', (array) ( $pass_result['candidates'] ?? array() )))),
+				'candidate_rows'    => array_values(array_filter((array) ( $pass_result['candidates'] ?? array() ), 'is_array')),
+				'removed_rows'      => array_values(array_filter((array) ( $pass_result['removed'] ?? array() ), 'is_array')),
+				'skipped_rows'      => array_values(array_filter((array) ( $pass_result['skipped'] ?? array() ), 'is_array')),
 				'skipped_by_reason' => $this->summarize_skipped( (array) ( $pass_result['skipped'] ?? array() ) ),
 			);
 
