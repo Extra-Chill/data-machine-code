@@ -63,6 +63,13 @@ namespace {
 		}
 	}
 
+	function startup_bounds_assert_process_stopped( int $pid ): void {
+		$states = array();
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Process-level regression coverage must verify the timed child exited.
+		exec(sprintf('ps -o stat= -p %d', $pid), $states);
+		startup_bounds_assert(empty($states) || str_starts_with(trim($states[0]), 'Z'), sprintf('Timed workspace probe process %d remained alive.', $pid));
+	}
+
 	function is_wp_error( mixed $value ): bool { return $value instanceof WP_Error; }
 	function plugin_dir_path( string $file ): string { return dirname($file) . '/'; }
 	function plugin_dir_url( string $file ): string { return 'https://example.test/' . basename(dirname($file)) . '/'; }
@@ -220,11 +227,13 @@ namespace {
 	$GLOBALS['dmc_test_disk_free_bytes']  = null;
 	$GLOBALS['dmc_test_disk_total_bytes'] = null;
 
-	$stall_probe = $workspace . '/stall-boundary.php';
+	$stall_probe    = $workspace . '/stall-boundary.php';
+	$stall_pid_file = $workspace . '/stall-pids';
 	file_put_contents(
 		$stall_probe,
-		'<?php while (true) { usleep(100000); }'
+		'<?php file_put_contents(' . var_export($stall_pid_file, true) . ', getmypid() . PHP_EOL, FILE_APPEND | LOCK_EX); while (true) { usleep(100000); }'
 	);
+	file_put_contents($stall_pid_file, '');
 	$state_before_failures = scandir($workspace);
 	foreach ( array(
 		'filesystem' => 'datamachine_code_workspace_target_filesystem_probe_command',
@@ -279,6 +288,11 @@ namespace {
 	startup_bounds_assert(! empty($context['is_context']), 'Remote context alias lost its context policy.');
 	startup_bounds_assert(is_array($context['workspace_capacity'] ?? null), 'Context show variant must attach measurable local workspace capacity.');
 	unset($GLOBALS['dmc_test_filters']['datamachine_code_context_repositories']);
+	$stall_pids = array_unique(array_map('intval', file($stall_pid_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: array()));
+	startup_bounds_assert(3 === count($stall_pids), 'Startup-bound fixture did not record every injected stalled process.');
+	foreach ( $stall_pids as $stall_pid ) {
+		startup_bounds_assert_process_stopped($stall_pid);
+	}
 
 	startup_bounds_assert(! is_dir($workspace . '/.locks'), 'Read/help startup acquired a mutation lock.');
 	startup_bounds_assert(0 === $GLOBALS['dmc_test_mutation_calls'], 'A failed startup probe left partial registry state.');
