@@ -11,8 +11,10 @@ namespace {
 
 	if ( ! class_exists('WP_Error') ) {
 		class WP_Error {
-			public function __construct( private string $code = '' ) {}
+			public function __construct( private string $code = '', private string $message = '', private mixed $data = null ) {}
 			public function get_error_code(): string { return $this->code; }
+			public function get_error_message(): string { return $this->message; }
+			public function get_error_data(): mixed { return $this->data; }
 		}
 	}
 	if ( ! function_exists('is_wp_error') ) {
@@ -52,9 +54,14 @@ namespace DataMachineCode\Workspace {
 		public array $artifact_options = array();
 		public array $budgets;
 
+		public ?\WP_Error $artifact_failure = null;
+
 		public function __construct( array $budgets ) { $this->budgets = $budgets; }
-		public function remediate( array $before, bool $dry_run ): array|\WP_Error { return $this->remediate_capacity_refusal('repo', 'branch', array( 'bytes' => 1 ), $before, $dry_run); }
-		protected function worktree_cleanup_artifacts( array $opts = array() ): array { $this->artifact_options[] = $opts; return array( 'candidates' => array( array( 'handle' => 'repo@artifact' ) ), 'skipped' => array() ); }
+		public function remediate( array $before, bool $dry_run ): array { return $this->remediate_capacity_refusal('repo', 'branch', array( 'bytes' => 1 ), $before, $dry_run); }
+		protected function worktree_cleanup_artifacts( array $opts = array() ): array|\WP_Error {
+			$this->artifact_options[] = $opts;
+			return $this->artifact_failure ?? array( 'candidates' => array( array( 'handle' => 'repo@artifact', 'path' => 'vendor' ) ), 'skipped' => array() );
+		}
 		protected function inspect_worktree_capacity( string $repo, string $branch, bool $force, array $demand_plan ): array { return array_shift($this->budgets) ?? array( 'status' => 'refused' ); }
 	}
 
@@ -78,6 +85,7 @@ namespace DataMachineCode\Workspace {
 	$insufficient = $insufficient_harness->remediate($before, false);
 	capacity_remediation_assert_same('insufficient_safe_reclaim', $insufficient['retry_disposition'], 'A still-refused remeasurement must return a typed no-retry disposition.');
 	capacity_remediation_assert_same(false, $GLOBALS['capacity_remediation_ability']->calls[0]['dry_run'] ?? true, 'Applied remediation must invoke the bounded drain once.');
+	capacity_remediation_assert_same(array( array( 'handle' => 'repo@artifact', 'path' => 'vendor' ) ), $insufficient_harness->artifact_options[1]['apply_plan']['candidates'] ?? null, 'Apply must use the exact reviewed artifact candidates.');
 	capacity_remediation_assert_same(1, $insufficient['cleanup_drain']['summary']['removed'] ?? null, 'Applied remediation must retain removed-row evidence.');
 	capacity_remediation_assert_same(1, $insufficient['cleanup_drain']['summary']['skipped'] ?? null, 'Applied remediation must retain protected skipped-row evidence.');
 	capacity_remediation_assert_same('repo@eligible', $insufficient['cleanup_drain']['pass_results'][0]['removed_rows'][0]['handle'] ?? null, 'Applied remediation must retain every removed row.');
@@ -89,6 +97,15 @@ namespace DataMachineCode\Workspace {
 	capacity_remediation_assert_same('retry_once', $success['retry_disposition'], 'Crossing the floor must authorize exactly one continuation of the original add.');
 	capacity_remediation_assert_same(3, $success['reclaimed_inodes'], 'Post-remediation measurement must report inode recovery.');
 	capacity_remediation_assert_same(50, $success['reclaimed_bytes'], 'Remediation must report reclaimed bytes.');
+
+	$GLOBALS['capacity_remediation_ability'] = new class {
+		public function execute( array $input ): \WP_Error { return new \WP_Error('drain_failed', 'Drain failed after artifact reclamation.'); }
+	};
+	$partial_harness = new CapacityAdmissionRemediationHarness(array());
+	$partial = $partial_harness->remediate($before, false);
+	capacity_remediation_assert_same('cleanup_drain', $partial['failure']['stage'] ?? null, 'Drain failures must retain their stage.');
+	capacity_remediation_assert_same(array( array( 'handle' => 'repo@artifact', 'path' => 'vendor' ) ), $partial['artifact_preview']['candidates'] ?? null, 'Drain failures must retain reviewed artifact evidence.');
+	capacity_remediation_assert_same(2, count($partial_harness->artifact_options), 'Drain failures must retain the completed artifact apply evidence.');
 
 	echo "worktree-capacity-admission-remediation: ok\n";
 }

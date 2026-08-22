@@ -4207,6 +4207,13 @@ class WorkspaceAbilities {
 		}
 
 		if ( RemoteWorkspaceBackend::should_handle() ) {
+			if ( $remediate_capacity || $remediate_capacity_dry_run ) {
+				return new \WP_Error(
+					'remote_worktree_capacity_remediation_unsupported',
+					'Capacity remediation requires a local workspace because remote workspace allocation has no filesystem capacity or cleanup lifecycle.',
+					array( 'status' => 400, 'remediate_capacity' => $remediate_capacity, 'remediate_capacity_dry_run' => $remediate_capacity_dry_run )
+				);
+			}
 			$result = ( new RemoteWorkspaceBackend() )->worktree_add(
 				$input['repo'] ?? '',
 				$input['branch'] ?? '',

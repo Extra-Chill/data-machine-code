@@ -355,6 +355,26 @@ try {
 	assert_true(str_contains($refused->get_error_message(), 'retry only this request with --force'), 'zero-row recovery must recommend the bounded worktree exception instead of promising reclaim');
 	assert_true(str_contains($refused->get_error_message(), 'workspace worktree capacity-recovery --limit=25 --until-budget=30s --format=json'), 'zero-row recovery must expose the bounded reconcile-and-replan path.');
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-disk-refused'), 'disk pressure refusal left a worktree directory behind');
+	$admitted_dry_run = $workspace->worktree_add('homeboy', 'capacity-remediation-admitted-dry-run', 'origin/main', false, false, false, false, false, array(), false, false, array(), 'reuse_compatible', true, true);
+	assert_true(! is_wp_error($admitted_dry_run), is_wp_error($admitted_dry_run) ? $admitted_dry_run->get_error_message() : 'admitted capacity remediation dry-run failed');
+	assert_true(true === ( $admitted_dry_run['dry_run'] ?? false ), 'admitted capacity remediation request did not report dry-run.');
+	assert_true(false === ( $admitted_dry_run['created'] ?? true ), 'admitted capacity remediation dry-run created a worktree.');
+	assert_true(! is_dir($workspace_root . '/homeboy@capacity-remediation-admitted-dry-run'), 'admitted capacity remediation dry-run materialized a worktree directory.');
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_remote_workspace_backend_should_handle'] = static fn(): bool => true;
+	$remote_remediation = WorkspaceAbilities::worktreeAdd(
+		array(
+			'repo'                       => 'remote-only',
+			'branch'                     => 'capacity-remediation-remote',
+			'inject_context'             => false,
+			'bootstrap'                  => false,
+			'require_task_tracker'       => false,
+			'remediate_capacity'         => true,
+			'remediate_capacity_dry_run' => true,
+		)
+	);
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_remote_workspace_backend_should_handle']);
+	assert_true(is_wp_error($remote_remediation), 'remote capacity remediation silently created a remote worktree.');
+	assert_true('remote_worktree_capacity_remediation_unsupported' === $remote_remediation->get_error_code(), 'remote capacity remediation did not return its explicit unsupported error.');
 
 	$ability_default = WorkspaceAbilities::worktreeAdd(
 		array(
