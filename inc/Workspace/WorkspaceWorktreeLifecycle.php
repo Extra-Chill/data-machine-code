@@ -401,6 +401,7 @@ trait WorkspaceWorktreeLifecycle {
 
 		$response['disk_budget']      = $disk_budget;
 		$response['capacity_reclaim'] = $capacity_reclaim['evidence'];
+		$measurement_plan             = $demand_plan;
 		if ( array() !== $reuse_candidates ) {
 			$response['reuse_candidates'] = $reuse_candidates;
 		}
@@ -410,6 +411,8 @@ trait WorkspaceWorktreeLifecycle {
 				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
 				return $post_rebase_demand;
 			}
+			$post_rebase_demand                       = WorktreeDemandCalibration::forecast($repo, $post_rebase_demand);
+			$measurement_plan                         = $post_rebase_demand;
 			$post_rebase_demand                       = WorktreeBootstrapper::remaining_demand_after_materialization($post_rebase_demand);
 			$post_rebase_budget                       = $this->inspect_worktree_capacity($repo, $branch, $force, $post_rebase_demand);
 			$post_rebase_capacity_reclaim             = $this->reclaim_capacity_eligible_artifacts(
@@ -441,6 +444,7 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		if ( $bootstrap ) {
+			$bootstrap_before_capacity = $this->inspect_worktree_capacity($repo, $branch, false, array());
 			$remaining_seconds = (int) floor($operation_deadline - microtime(true));
 			if ( $remaining_seconds <= 0 ) {
 				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
@@ -459,8 +463,12 @@ trait WorkspaceWorktreeLifecycle {
 				)
 			);
 		}
-		$after_capacity = $this->inspect_worktree_capacity($repo, $branch, false, array());
-		$response['capacity_evidence'] = WorktreeDemandCalibration::record($repo, $demand_plan, $disk_budget, $after_capacity, empty($response['bootstrap']) || ! empty($response['bootstrap']['success']) ? 'success' : 'failed');
+		if ( $bootstrap ) {
+			$after_capacity = $this->inspect_worktree_capacity($repo, $branch, false, array());
+			$response['capacity_evidence'] = WorktreeDemandCalibration::record_bootstrap($repo, $measurement_plan, $bootstrap_before_capacity, $after_capacity, ! empty($response['bootstrap']['success']));
+		} else {
+			$response['capacity_evidence'] = array( 'outcome' => 'bootstrap_disabled', 'recorded' => false, 'reason' => 'bootstrap_disabled' );
+		}
 
 		$inventory = $this->worktree_inventory();
 		$persisted = $inventory->upsert($this->build_worktree_inventory_row_from_handle($wt_handle));
