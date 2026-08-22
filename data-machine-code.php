@@ -51,6 +51,24 @@ function datamachine_code_is_side_effect_free_cli_request( ?array $argv = null )
 }
 
 /**
+ * End a metadata-only CLI request without running unrelated shutdown work.
+ *
+ * WP-CLI renders nested help before WordPress fires `shutdown`. At that point
+ * this request has deliberately skipped DMC runtime initialization, so queue
+ * dispatchers, transports, and other plugin shutdown callbacks cannot produce
+ * part of its response. Removing their callbacks keeps the metadata contract
+ * bounded without changing the lifecycle of executable commands.
+ */
+function datamachine_code_finish_side_effect_free_cli_request(): void {
+	if ( datamachine_code_is_side_effect_free_cli_request() && function_exists('remove_all_actions') ) {
+		remove_all_actions('shutdown');
+	}
+}
+if ( datamachine_code_is_side_effect_free_cli_request() ) {
+	add_action('shutdown', 'datamachine_code_finish_side_effect_free_cli_request', PHP_INT_MIN);
+}
+
+/**
  * Whether this request is a targeted, read-only workspace command.
  */
 function datamachine_code_is_targeted_workspace_read_cli_request( ?array $argv = null ): bool {
