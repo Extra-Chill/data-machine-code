@@ -119,6 +119,12 @@ namespace DataMachineCode\Tests {
 		}
 	}
 
+	function assert_true( bool $actual, string $message ): void {
+		if ( ! $actual ) {
+			throw new \RuntimeException($message);
+		}
+	}
+
 	$primary = new GitPullWorkspaceDouble();
 	$result  = $primary->git_pull('data-machine-code', false, true);
 	assert_same(true, $result['success'] ?? null, 'primary pull did not succeed');
@@ -190,6 +196,52 @@ namespace DataMachineCode\Tests {
 		$tracked->ran_command_containing('--set-upstream-to'),
 		'pull set an upstream on an already-tracking branch'
 	);
+
+	// Issue #1097: refresh fetches and classifies primary freshness before raw
+	// pull, keeping Git's merge/rebase advice out of primary-safe recovery.
+	$current = new GitPullWorkspaceDouble();
+	$current->responses = array(
+		'@{upstream}'                       => array( 'output' => "origin/main\n" ),
+		'rev-list --left-right --count HEAD' => array( 'output' => "0\t0\n" ),
+	);
+	$result = $current->git_pull('data-machine-code', false, true);
+	assert_same(true, $result['success'] ?? null, 'current primary refresh did not succeed');
+	assert_true($current->ran_command_containing('fetch --no-tags --prune'), 'current primary refresh did not fetch before pull');
+
+	$behind = new GitPullWorkspaceDouble();
+	$behind->responses = array(
+		'@{upstream}'                       => array( 'output' => "origin/main\n" ),
+		'rev-list --left-right --count HEAD' => array( 'output' => "0\t3\n" ),
+	);
+	$result = $behind->git_pull('data-machine-code', false, true);
+	assert_same(true, $result['success'] ?? null, 'behind-only primary refresh did not fast-forward');
+	assert_true($behind->ran_command_containing('pull --ff-only'), 'behind-only primary refresh did not run fast-forward pull');
+
+	$ahead = new GitPullWorkspaceDouble();
+	$ahead->responses = array(
+		'@{upstream}'                       => array( 'output' => "origin/main\n" ),
+		'rev-list --left-right --count HEAD' => array( 'output' => "2\t0\n" ),
+	);
+	$result = $ahead->git_pull('data-machine-code', false, true);
+	assert_true($result instanceof \WP_Error && 'primary_refresh_ahead' === $result->code, 'ahead-only primary refresh was not classified');
+	assert_same(2, $result->data['primary_freshness']['ahead'] ?? null, 'ahead-only evidence omitted ahead count');
+	assert_same(0, $result->data['primary_freshness']['behind'] ?? null, 'ahead-only evidence omitted behind count');
+	assert_true(! $ahead->ran_command_containing('pull --ff-only'), 'ahead-only primary refresh invoked raw pull');
+
+	$diverged = new GitPullWorkspaceDouble();
+	$diverged->responses = array(
+		'@{upstream}'                       => array( 'output' => "origin/main\n" ),
+		'rev-list --left-right --count HEAD' => array( 'output' => "2\t3\n" ),
+	);
+	$result = $diverged->git_pull('data-machine-code', false, true);
+	assert_true($result instanceof \WP_Error && 'primary_refresh_diverged' === $result->code, 'diverged primary refresh was not classified');
+	assert_same('diverged', $result->data['primary_freshness']['status'] ?? null, 'diverged evidence omitted state');
+	assert_same(2, $result->data['primary_freshness']['ahead'] ?? null, 'diverged evidence omitted ahead count');
+	assert_same(3, $result->data['primary_freshness']['behind'] ?? null, 'diverged evidence omitted behind count');
+	assert_same('fresh_origin_worktree', $result->data['recommended_recovery']['kind'] ?? null, 'diverged recovery did not recommend a fresh origin worktree');
+	assert_same(true, $result->data['dangerous_primary_history_mutation_requires_authorization'] ?? null, 'diverged recovery did not retain dangerous-primary authorization');
+	assert_true(! str_contains($result->message, 'rebase'), 'diverged recovery exposed rebase advice');
+	assert_true(! $diverged->ran_command_containing('pull --ff-only'), 'diverged primary refresh invoked raw pull');
 
 	fwrite(STDOUT, "workspace git pull primary refresh passed\n");
 }
