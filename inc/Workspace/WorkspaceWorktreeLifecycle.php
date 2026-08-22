@@ -285,6 +285,10 @@ trait WorkspaceWorktreeLifecycle {
 		if ( $demand_plan instanceof \WP_Error ) {
 			return $demand_plan;
 		}
+		if ( ! class_exists(WorktreeDemandCalibration::class) ) {
+			require_once __DIR__ . '/WorktreeDemandCalibration.php';
+		}
+		$demand_plan = WorktreeDemandCalibration::forecast($repo, $demand_plan);
 		$disk_budget      = $this->inspect_worktree_capacity($repo, $branch, $force, $demand_plan);
 		$capacity_reclaim = $this->reclaim_capacity_eligible_artifacts($repo, $branch, $force, $demand_plan, $disk_budget);
 		$disk_budget      = $capacity_reclaim['after'];
@@ -420,7 +424,7 @@ trait WorkspaceWorktreeLifecycle {
 			$response['post_rebase_capacity_reclaim'] = $post_rebase_capacity_reclaim['evidence'];
 			$response['disk_budget']                  = $post_rebase_budget;
 			if ( 'refused' === ( $post_rebase_budget['status'] ?? '' ) ) {
-				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+				$rollback_evidence = $this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
 				WorktreeContextInjector::forget_metadata($wt_handle);
 				return new \WP_Error(
 					'worktree_disk_budget_exceeded',
@@ -428,8 +432,9 @@ trait WorkspaceWorktreeLifecycle {
 					array(
 						'status'           => 507,
 						'disk_budget'      => $post_rebase_budget,
-						'capacity_reclaim' => $post_rebase_capacity_reclaim['evidence'],
-						'phase'            => 'post_rebase_admission',
+						'capacity_reclaim'  => $post_rebase_capacity_reclaim['evidence'],
+						'capacity_evidence' => $rollback_evidence,
+						'phase'             => 'post_rebase_admission',
 					)
 				);
 			}
@@ -443,7 +448,6 @@ trait WorkspaceWorktreeLifecycle {
 			}
 			$response['bootstrap'] = WorktreeBootstrapper::bootstrap($wt_path, $remaining_seconds);
 		}
-
 		if ( ! is_dir($wt_path) || ! file_exists($wt_path . '/.git') ) {
 			return new \WP_Error(
 				'worktree_not_materialized',
@@ -455,6 +459,8 @@ trait WorkspaceWorktreeLifecycle {
 				)
 			);
 		}
+		$after_capacity = $this->inspect_worktree_capacity($repo, $branch, false, array());
+		$response['capacity_evidence'] = WorktreeDemandCalibration::record($repo, $demand_plan, $disk_budget, $after_capacity, empty($response['bootstrap']) || ! empty($response['bootstrap']['success']) ? 'success' : 'failed');
 
 		$inventory = $this->worktree_inventory();
 		$persisted = $inventory->upsert($this->build_worktree_inventory_row_from_handle($wt_handle));
@@ -3044,9 +3050,10 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param string $wt_path        Worktree path.
 	 * @param string $branch         Branch checked out in the worktree.
 	 * @param bool   $created_branch Whether the branch was created by this call.
-	 * @return void
+	 * @return array<string,mixed>
 	 */
-	private function rollback_rejected_worktree( string $primary_path, string $wt_path, string $branch, bool $created_branch, ?string $handle = null, ?array $creation_intent = null ): void {
+	private function rollback_rejected_worktree( string $primary_path, string $wt_path, string $branch, bool $created_branch, ?string $handle = null, ?array $creation_intent = null ): array {
+		$before = WorktreeDiskBudget::inspect($this->workspace_path);
 		$this->run_git($primary_path, sprintf('worktree remove --force %s', escapeshellarg($wt_path)));
 		if ( $created_branch ) {
 			$this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)));
@@ -3054,6 +3061,12 @@ trait WorkspaceWorktreeLifecycle {
 		if ( null !== $handle && null !== $creation_intent ) {
 			WorktreeContextInjector::forget_creation_intent($handle, $creation_intent);
 		}
+		$after = WorktreeDiskBudget::inspect($this->workspace_path);
+		return array(
+			'before'  => array( 'filesystem_free_bytes' => $before['filesystem_free_bytes'] ?? null, 'filesystem_free_inodes' => $before['filesystem_free_inodes'] ?? null ),
+			'after'   => array( 'filesystem_free_bytes' => $after['filesystem_free_bytes'] ?? null, 'filesystem_free_inodes' => $after['filesystem_free_inodes'] ?? null ),
+			'outcome' => 'rollback',
+		);
 	}
 
 	/**
