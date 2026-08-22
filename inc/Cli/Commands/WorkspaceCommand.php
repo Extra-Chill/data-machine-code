@@ -125,7 +125,7 @@ class WorkspaceCommand extends BaseCommand {
 				'longdesc'  => "Removes one worktree. Dirty worktrees are refused unless `--force` is supplied.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree remove data-machine-code fix/1025\n    wp datamachine-code workspace worktree remove data-machine-code@fix-1025 --force",
 				'synopsis'  => array(
 					array( 'type' => 'positional', 'name' => 'repo-or-handle', 'description' => 'Primary repo or `<repo>@<branch-slug>` handle.', 'required' => true ),
-					array( 'type' => 'positional', 'name' => 'branch', 'description' => 'Branch when a repo is supplied.' ),
+					array( 'type' => 'positional', 'name' => 'branch', 'description' => 'Branch when a repo is supplied.', 'optional' => true ),
 					array( 'type' => 'flag', 'name' => 'force', 'description' => 'Remove even when dirty.' ),
 					$format,
 				),
@@ -245,6 +245,18 @@ class WorkspaceCommand extends BaseCommand {
 			'longdesc'  => "## EXAMPLES\n\n    wp datamachine-code workspace worktree backfill-origin-session\n    wp datamachine-code workspace worktree backfill-origin-session --apply",
 			'synopsis'  => array( $flag('apply', 'Rewrite legacy metadata.'), $format ),
 		);
+
+		// Leaf commands are registered from structured definitions. WP-CLI requires
+		// this marker to render and validate named arguments as optional.
+		foreach ( $definitions as &$definition ) {
+			foreach ( $definition['synopsis'] as &$argument ) {
+				if ( in_array($argument['type'] ?? '', array( 'assoc', 'flag' ), true) ) {
+					$argument['optional'] = true;
+				}
+			}
+			unset($argument);
+		}
+		unset($definition);
 
 		return $definitions;
 	}
