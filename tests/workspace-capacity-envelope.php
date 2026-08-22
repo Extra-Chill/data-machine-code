@@ -25,6 +25,7 @@ foreach ( array( 'total_bytes', 'used_bytes', 'free_bytes', 'used_percent', 'fre
 }
 $summary = WorktreeDiskBudget::format_summary($budget);
 capacity_envelope_assert(str_contains($summary, 'Inodes: 75 (75.0%) used, 25 (25.0%) free, 100 total; status='), 'Human capacity summary must render inode total, used, free, percentages, and status.');
+capacity_envelope_assert(array() === WorktreeDiskBudget::format_trigger_reasons($budget), 'Healthy capacity should not render threshold reasons.');
 
 $one_worktree = WorktreeDiskBudget::evaluate(
 	array( 'workspace_path' => '/workspace', 'free_bytes' => 110, 'total_bytes' => 1000, 'free_inodes' => 1000, 'total_inodes' => 2000, 'inode_probe' => 'test' ),
@@ -42,5 +43,6 @@ $cli_source = file_get_contents(dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceC
 capacity_envelope_assert(str_contains((string) $ability_source, "'workspace_capacity' => array("), 'Workspace-show ability schema must declare workspace_capacity.');
 capacity_envelope_assert(str_contains((string) $cli_source, "'metric' => 'inode_capacity'"), 'Human hygiene rendering must expose inode capacity.');
 capacity_envelope_assert(str_contains((string) $cli_source, "'metric' => 'capacity_status'"), 'Human hygiene rendering must expose capacity status.');
+capacity_envelope_assert(str_contains((string) $cli_source, 'WorktreeDiskBudget::format_trigger_reasons($capacity)'), 'Workspace show must render capacity trigger reasons.');
 
 echo "workspace-capacity-envelope: ok\n";

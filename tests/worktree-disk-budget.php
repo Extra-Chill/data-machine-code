@@ -127,6 +127,9 @@ try {
 	assert_true('warning' === $inode_warning['status'], 'inode warning threshold should not refuse admission');
 	assert_true(in_array('projected_free_inodes_absolute_warning_floor', $inode_warning['trigger_reasons'], true), 'inode warning should have a stable trigger reason');
 	assert_true(500001 === $inode_warning['target_recovery_inodes'], 'warning pressure should target recovery through the inclusive warning floor');
+	assert_true(str_contains(WorktreeDiskBudget::format_trigger_reasons($inode_warning)[0] ?? '', '1,500,000'), 'inode warning rendering should identify the observed inode value');
+	assert_true(str_contains(WorktreeDiskBudget::format_trigger_reasons($inode_warning)[0] ?? '', '2,000,000'), 'inode warning rendering should identify the configured inode threshold');
+	assert_true(str_contains(WorktreeDiskBudget::format_trigger_reasons($inode_warning)[0] ?? '', 'advisory'), 'inode warning rendering should identify advisory meaning');
 
 	$inode_recovered = WorktreeDiskBudget::evaluate(
 		array(
@@ -151,6 +154,24 @@ try {
 	assert_true('refused' === $byte_only_pressure['status'], 'healthy inodes must not weaken byte refusal');
 	assert_true(in_array('projected_free_bytes_absolute_refusal_floor', $byte_only_pressure['trigger_reasons'], true), 'byte refusal remains independently visible');
 	assert_true(! in_array('projected_free_inodes_absolute_refusal_floor', $byte_only_pressure['trigger_reasons'], true), 'healthy inodes should not be mislabeled under byte pressure');
+	assert_true(str_contains(WorktreeDiskBudget::format_trigger_reasons($byte_only_pressure)[0] ?? '', 'blocking'), 'byte refusal rendering should identify blocking meaning');
+
+	$worktree_count_warning = WorktreeDiskBudget::evaluate(
+		array(
+			'free_bytes'     => 40 * $gib,
+			'total_bytes'    => 100 * $gib,
+			'free_inodes'    => 4000000,
+			'total_inodes'   => 13107200,
+			'worktree_count' => 224,
+		),
+		$inode_thresholds
+	);
+	assert_true('warning' === $worktree_count_warning['status'], 'worktree count above its threshold should warn with healthy byte and inode capacity');
+	assert_true(array( 'worktree_count_warning_threshold' ) === $worktree_count_warning['trigger_reasons'], 'worktree count warning should retain its stable reason code');
+	$count_reason = WorktreeDiskBudget::format_trigger_reasons($worktree_count_warning)[0] ?? '';
+	assert_true(str_contains($count_reason, '224'), 'worktree count rendering should identify the observed count');
+	assert_true(str_contains($count_reason, '100'), 'worktree count rendering should identify the configured threshold');
+	assert_true(str_contains($count_reason, 'advisory'), 'worktree count rendering should identify advisory meaning');
 
 	$unsupported_inodes = WorktreeDiskBudget::evaluate(
 		array(
