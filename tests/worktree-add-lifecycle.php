@@ -355,6 +355,42 @@ try {
 	assert_true(str_contains($refused->get_error_message(), 'retry only this request with --force'), 'zero-row recovery must recommend the bounded worktree exception instead of promising reclaim');
 	assert_true(str_contains($refused->get_error_message(), 'workspace worktree capacity-recovery --limit=25 --until-budget=30s --format=json'), 'zero-row recovery must expose the bounded reconcile-and-replan path.');
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-disk-refused'), 'disk pressure refusal left a worktree directory behind');
+	$dry_run_remote_refs = run_command("git for-each-ref --format='%(refname) %(objectname)' refs/remotes", $primary_path);
+	$dry_run_lock_rows   = $wpdb->lock_rows;
+	$dry_run_requests    = glob($workspace_root . '/.locks/requests/*.json') ?: array();
+	$dry_run_metadata    = $wpdb->rows;
+	$GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds'] = static function ( array $thresholds ): array {
+		$thresholds['refuse_free_bytes']   = 1;
+		$thresholds['warn_free_bytes']     = 1;
+		$thresholds['refuse_free_percent'] = 0.0;
+		$thresholds['warn_free_percent']   = 0.0;
+		return $thresholds;
+	};
+	$admitted_dry_run = $workspace->worktree_add('homeboy', 'capacity-remediation-admitted-dry-run', 'origin/main', false, false, false, false, false, array(), false, false, array(), 'reuse_compatible', true, true);
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds']);
+	assert_true(! is_wp_error($admitted_dry_run), is_wp_error($admitted_dry_run) ? $admitted_dry_run->get_error_message() : 'admitted capacity remediation dry-run failed');
+	assert_true(true === ( $admitted_dry_run['dry_run'] ?? false ), 'admitted capacity remediation request did not report dry-run.');
+	assert_true(false === ( $admitted_dry_run['created'] ?? true ), 'admitted capacity remediation dry-run created a worktree.');
+	assert_true(! is_dir($workspace_root . '/homeboy@capacity-remediation-admitted-dry-run'), 'admitted capacity remediation dry-run materialized a worktree directory.');
+	assert_true($dry_run_remote_refs === run_command("git for-each-ref --format='%(refname) %(objectname)' refs/remotes", $primary_path), 'capacity remediation dry-run fetched or changed remote refs.');
+	assert_true($dry_run_lock_rows === $wpdb->lock_rows, 'capacity remediation dry-run wrote lock-store lifecycle rows.');
+	assert_true($dry_run_requests === ( glob($workspace_root . '/.locks/requests/*.json') ?: array() ), 'capacity remediation dry-run wrote lock request files.');
+	assert_true($dry_run_metadata === $wpdb->rows, 'capacity remediation dry-run rewrote lifecycle metadata.');
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_remote_workspace_backend_should_handle'] = static fn(): bool => true;
+	$remote_remediation = WorkspaceAbilities::worktreeAdd(
+		array(
+			'repo'                       => 'remote-only',
+			'branch'                     => 'capacity-remediation-remote',
+			'inject_context'             => false,
+			'bootstrap'                  => false,
+			'require_task_tracker'       => false,
+			'remediate_capacity'         => true,
+			'remediate_capacity_dry_run' => true,
+		)
+	);
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_remote_workspace_backend_should_handle']);
+	assert_true(is_wp_error($remote_remediation), 'remote capacity remediation silently created a remote worktree.');
+	assert_true('remote_worktree_capacity_remediation_unsupported' === $remote_remediation->get_error_code(), 'remote capacity remediation did not return its explicit unsupported error.');
 
 	$ability_default = WorkspaceAbilities::worktreeAdd(
 		array(
@@ -442,6 +478,19 @@ try {
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata($recycle_handle, array( 'last_seen_at' => gmdate('c', time() - 90000) ));
 	$recycle_finalized = $workspace->worktree_finalize($recycle_handle, 'merged');
 	assert_true(! is_wp_error($recycle_finalized), is_wp_error($recycle_finalized) ? $recycle_finalized->get_error_message() : 'terminal recycle fixture finalization failed');
+	$dry_recycle_head     = trim(run_command('git rev-parse HEAD', $recycle_fixture['path']));
+	$dry_recycle_metadata = $wpdb->rows[$recycle_handle];
+	$GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds'] = static function ( array $thresholds ): array {
+		$thresholds['refuse_free_bytes']   = 1;
+		$thresholds['warn_free_bytes']     = 1;
+		$thresholds['refuse_free_percent'] = 0.0;
+		return $thresholds;
+	};
+	$dry_recycle = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/recycle-dry-run' ), false, false, array(), 'recycle_terminal', true, true);
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds']);
+	assert_true(! is_wp_error($dry_recycle) && true === ($dry_recycle['dry_run'] ?? false), 'capacity remediation dry-run did not return its non-mutating preview');
+	assert_true($dry_recycle_head === trim(run_command('git rev-parse HEAD', $recycle_fixture['path'])), 'capacity remediation dry-run reset a terminal worktree');
+	assert_true($dry_recycle_metadata === $wpdb->rows[$recycle_handle], 'capacity remediation dry-run rewrote terminal worktree metadata');
 	$recycle_exclude = trim(run_command('git rev-parse --git-path info/exclude', $recycle_fixture['path']));
 	file_put_contents($recycle_exclude, ".recycle-context\nvendor/\n", FILE_APPEND);
 	file_put_contents($recycle_fixture['path'] . '/.recycle-context', "preserved context\n");
@@ -704,6 +753,60 @@ try {
 	assert_true(strlen((string) ( $failure_data['database_error'] ?? '' )) <= 512, 'inventory persistence failure did not bound database details');
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-persist-fails'), 'failed persistence left a worktree directory behind');
 	assert_true(null === WorktreeContextInjector::get_creation_intent('homeboy@audit-primitives-persist-fails'), 'rolled-back worktree creation left its pre-creation journal behind');
+
+	// An explicit missing base remains fail-closed, but exposes the detected
+	// default ref and an exact corrected command for main, trunk, and custom heads.
+	$missing_main = $workspace->worktree_add('homeboy', 'missing-main-base', 'origin/not-a-ref', false, false, false, false, true);
+	assert_true(is_wp_error($missing_main), 'missing explicit main base reported success');
+	assert_true('worktree_target_ref_invalid' === $missing_main->get_error_code(), 'missing explicit main base changed the existing error code');
+	$missing_main_data = (array) $missing_main->get_error_data();
+	assert_true('origin/main' === ( $missing_main_data['detected_default_ref'] ?? null ), 'missing explicit main base did not detect origin/main');
+	assert_true('remote_head' === ( $missing_main_data['default_ref_source'] ?? null ), 'missing explicit main base did not report remote-head evidence');
+	assert_true(1 === count((array) ( $missing_main_data['next_commands'] ?? array() )) && str_contains((string) $missing_main_data['next_commands'][0], "--from='origin/main'"), 'missing explicit main base did not return a corrected replay command');
+	$adversarial_branch = 'missing;$(touch should-not-run)';
+	$adversarial_intent = array(
+		'purpose'        => 'review;$(touch should-not-run)',
+		'owner_run_ref'  => 'run;$(touch should-not-run)',
+		'cleanup_policy' => 'remove_on_success',
+	);
+	$adversarial = $workspace->worktree_add('homeboy', $adversarial_branch, 'origin/not-a-ref;$(touch should-not-run)', false, false, false, false, true, array(), false, false, $adversarial_intent);
+	$adversarial_data = (array) $adversarial->get_error_data();
+	$adversarial_command = (string) ( $adversarial_data['next_commands'][0] ?? '' );
+	assert_true(is_wp_error($adversarial) && 'worktree_target_ref_invalid' === $adversarial->get_error_code(), 'adversarial missing base changed fail-closed error behavior');
+	assert_true(str_contains($adversarial_command, escapeshellarg($adversarial_branch)) && str_contains($adversarial_command, '--purpose=' . escapeshellarg($adversarial_intent['purpose'])) && str_contains($adversarial_command, '--owner-run-ref=' . escapeshellarg($adversarial_intent['owner_run_ref'])), 'replay command did not shell-escape adversarial values');
+	assert_true(! str_contains($adversarial_command, 'origin/not-a-ref;'), 'replay command retained the invalid explicit base');
+	assert_true(! file_exists($workspace_root . '/should-not-run'), 'replay command executed adversarial shell input while rendering');
+
+	run_command('git checkout main', $source_path);
+	run_command('git branch -f trunk main && git push -f origin trunk', $source_path);
+	run_command('git fetch origin && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk', $primary_path);
+	$missing_trunk = $workspace->worktree_add('homeboy', 'missing-trunk-base', 'origin/not-a-ref', false, false, false, false, true);
+	$missing_trunk_data = (array) $missing_trunk->get_error_data();
+	assert_true(is_wp_error($missing_trunk) && 'origin/trunk' === ( $missing_trunk_data['detected_default_ref'] ?? null ), 'missing explicit trunk base did not detect origin/trunk');
+
+	run_command('git branch -f release/current main && git push -f origin release/current', $source_path);
+	run_command('git fetch origin && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/release/current', $primary_path);
+	$missing_custom = $workspace->worktree_add('homeboy', 'missing-custom-base', 'origin/not-a-ref', false, false, false, false, true);
+	$missing_custom_data = (array) $missing_custom->get_error_data();
+	assert_true(is_wp_error($missing_custom) && 'origin/release/current' === ( $missing_custom_data['detected_default_ref'] ?? null ), 'missing explicit custom base did not detect the configured remote head');
+
+	run_command('git --git-dir=' . escapeshellarg($workspace_root . '/origin.git') . ' symbolic-ref HEAD refs/heads/no-default-branch', $primary_path);
+	run_command('git symbolic-ref -d refs/remotes/origin/HEAD', $primary_path);
+	$missing_remote_head = $workspace->worktree_add('homeboy', 'missing-remote-head-base', 'origin/not-a-ref', false, false, false, false, true);
+	$missing_remote_head_data = (array) $missing_remote_head->get_error_data();
+	assert_true(is_wp_error($missing_remote_head) && 'origin/main' === ( $missing_remote_head_data['detected_default_ref'] ?? null ) && 'workspace_upstream' === ( $missing_remote_head_data['default_ref_source'] ?? null ), 'missing remote head did not fall back to the configured workspace upstream');
+	run_command('git symbolic-ref refs/remotes/origin/HEAD refs/heads/main', $primary_path);
+	$malformed_remote_head = $workspace->worktree_add('homeboy', 'malformed-remote-head-base', 'origin/not-a-ref', false, false, false, false, true);
+	$malformed_remote_head_data = (array) $malformed_remote_head->get_error_data();
+	assert_true(is_wp_error($malformed_remote_head) && 'origin/main' === ( $malformed_remote_head_data['detected_default_ref'] ?? null ) && 'workspace_upstream' === ( $malformed_remote_head_data['default_ref_source'] ?? null ), 'malformed remote head did not fall back to the configured workspace upstream');
+
+	run_command('git symbolic-ref -d refs/remotes/origin/HEAD', $primary_path);
+	run_command('git config --unset branch.main.remote && git config --unset branch.main.merge', $primary_path);
+	$missing_metadata = $workspace->worktree_add('homeboy', 'missing-metadata-base', 'origin/not-a-ref', false, false, false, false, true);
+	$missing_metadata_data = (array) $missing_metadata->get_error_data();
+	assert_true(is_wp_error($missing_metadata) && array_key_exists('detected_default_ref', $missing_metadata_data) && null === $missing_metadata_data['detected_default_ref'], 'unavailable remote metadata reported a default ref');
+	assert_true('unavailable' === ( $missing_metadata_data['default_ref_source'] ?? null ), 'unavailable remote metadata did not report its evidence state');
+	assert_true(array() === ( $missing_metadata_data['next_commands'] ?? null ), 'unavailable remote metadata returned an unsafe replay command');
 
 	$contention_wpdb = new Datamachine_Code_Test_Wpdb();
 	$contention_wpdb->sqlite = true;
