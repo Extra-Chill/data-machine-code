@@ -13,6 +13,10 @@ if ( ! class_exists('WP_Error') ) {
 		public function get_error_code(): string {
 			return $this->code;
 		}
+
+		public function get_error_data(): mixed {
+			return $this->data;
+		}
 	}
 }
 
@@ -86,6 +90,33 @@ if ( 'waiter' === $mode ) {
 		exit(3);
 	}
 	fwrite(STDOUT, sprintf('acquired:%.3f', microtime(true) - $started));
+	exit(0);
+}
+
+if ( 'repo-holder' === $mode ) {
+	$workspace = (string) $argv[2];
+	$repo      = (string) $argv[3];
+	$ready     = (string) $argv[4];
+	$result    = WorkspaceMutationLock::with_repo(
+		$workspace,
+		$repo,
+		static function () use ( $ready ): string {
+			file_put_contents($ready, 'ready');
+			sleep(1);
+			return 'released';
+		},
+		2
+	);
+	exit(is_wp_error($result) ? 6 : 0);
+}
+
+if ( 'diagnostic-waiter' === $mode ) {
+	$workspace = (string) $argv[2];
+	$result    = WorkspaceMutationLock::with_repo($workspace, 'workspace-capacity-admission', static fn(): string => 'acquired', 1);
+	if ( ! is_wp_error($result) ) {
+		exit(7);
+	}
+	fwrite(STDOUT, json_encode($result->get_error_data()));
 	exit(0);
 }
 
@@ -163,6 +194,44 @@ try {
 	capacity_lock_assert(3 === $timed_out['waiter_exit'], 'Short waiter did not return the retryable timeout path.');
 	capacity_lock_assert('error:workspace_repo_busy' === $timed_out['output'], 'Short waiter returned an unexpected lock error.');
 	capacity_lock_assert(array() === ( glob($workspace . '/.locks/requests/*.json') ?: array() ), 'Cancelled or released requests left queue evidence behind.');
+
+	// A timed-out client receives durable diagnostic identity and enough owner
+	// state to inspect the holder rather than silently guessing at completion.
+	$ready = $workspace . '/diagnostic-ready';
+	$holder = proc_open(array( PHP_BINARY, __FILE__, 'holder', $workspace, $ready, '2' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
+	capacity_lock_assert(is_resource($holder), 'Could not start diagnostic lock holder.');
+	fclose($holder_pipes[0]);
+	$deadline = microtime(true) + 3;
+	while ( ! is_file($ready) && microtime(true) < $deadline ) { usleep(10000); }
+	$diagnostic = proc_open(array( PHP_BINARY, __FILE__, 'diagnostic-waiter', $workspace), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $diagnostic_pipes);
+	capacity_lock_assert(is_resource($diagnostic), 'Could not start diagnostic waiter.');
+	fclose($diagnostic_pipes[0]);
+	$diagnostic_output = stream_get_contents($diagnostic_pipes[1]);
+	fclose($diagnostic_pipes[1]); fclose($diagnostic_pipes[2]);
+	capacity_lock_assert(0 === proc_close($diagnostic), 'Diagnostic waiter did not return typed timeout evidence.');
+	$diagnostic_data = json_decode($diagnostic_output, true);
+	capacity_lock_assert(is_array($diagnostic_data) && ! empty($diagnostic_data['request_id']), 'Timeout must expose a durable request identity.');
+	capacity_lock_assert(1 === ($diagnostic_data['queue_position'] ?? null), 'Single waiter must report queue position one.');
+	capacity_lock_assert('lock_wait' === ($diagnostic_data['progress']['phase'] ?? null), 'Timeout must identify lock-wait progress.');
+	capacity_lock_assert(is_array($diagnostic_data['owner'] ?? null), 'Timeout must expose the active lock owner.');
+	capacity_lock_assert(array_key_exists('estimated_wait_seconds', $diagnostic_data) && ! empty($diagnostic_data['eta_status']), 'Timeout must expose an ETA or state why it cannot be estimated.');
+	fclose($holder_pipes[1]); fclose($holder_pipes[2]); proc_close($holder);
+	unlink($ready);
+
+	// Repository-local preparation locks are independent. This is the property
+	// used by worktree admission before it enters the global disk-safety fence.
+	$parallel_started = microtime(true);
+	$repo_a_ready = $workspace . '/repo-a-ready';
+	$repo_b_ready = $workspace . '/repo-b-ready';
+	$repo_a = proc_open(array( PHP_BINARY, __FILE__, 'repo-holder', $workspace, 'repo-a', $repo_a_ready), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $repo_a_pipes);
+	$repo_b = proc_open(array( PHP_BINARY, __FILE__, 'repo-holder', $workspace, 'repo-b', $repo_b_ready), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $repo_b_pipes);
+	capacity_lock_assert(is_resource($repo_a) && is_resource($repo_b), 'Could not start independent repository preflight holders.');
+	fclose($repo_a_pipes[0]); fclose($repo_b_pipes[0]);
+	foreach ( array( $repo_a_ready, $repo_b_ready ) as $ready_path ) { $deadline = microtime(true) + 2; while ( ! is_file($ready_path) && microtime(true) < $deadline ) { usleep(10000); } capacity_lock_assert(is_file($ready_path), 'Independent repository preflight did not acquire.'); }
+	fclose($repo_a_pipes[1]); fclose($repo_a_pipes[2]); fclose($repo_b_pipes[1]); fclose($repo_b_pipes[2]);
+	capacity_lock_assert(0 === proc_close($repo_a) && 0 === proc_close($repo_b), 'Independent repository preflight holder failed.');
+	capacity_lock_assert(microtime(true) - $parallel_started < 1.8, 'Independent repository preflight locks serialized globally.');
+	unlink($repo_a_ready); unlink($repo_b_ready);
 
 	// Automatic artifact cleanup takes the global capacity lock before sorted
 	// affected-repository locks. A concurrent lifecycle lock must prevent the
@@ -278,6 +347,8 @@ try {
 	$policy = new class {
 		use DataMachineCode\Workspace\WorkspaceWorktreeLifecycle;
 	};
+	$lifecycle_source = (string) file_get_contents(dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php');
+	capacity_lock_assert(strpos($lifecycle_source, 'worktree_capacity_preflight') < strpos($lifecycle_source, "'workspace-capacity-admission'"), 'Repo-local preflight must run before global capacity admission.');
 	capacity_lock_assert(2400 === $policy::worktree_capacity_wait_timeout_seconds(true), 'Bootstrap admission wait must exceed the complete bounded operation lifecycle.');
 
 	$state = $workspace . '/capacity-state';
@@ -303,7 +374,7 @@ try {
 	capacity_lock_assert('130' === file_get_contents($state), 'Refused second admission must not consume stale capacity.');
 	echo "workspace-capacity-lock-concurrency: ok\n";
 } finally {
-	foreach ( array( 'capacity-state', 'admission-ready', 'second-ready', 'fanout-ready', 'kill-ready' ) as $file ) {
+	foreach ( array( 'capacity-state', 'admission-ready', 'second-ready', 'fanout-ready', 'kill-ready', 'diagnostic-ready', 'repo-a-ready', 'repo-b-ready' ) as $file ) {
 		if ( is_file($workspace . '/' . $file) ) { unlink($workspace . '/' . $file); }
 	}
 	if ( is_file($workspace . '/ready') ) {
