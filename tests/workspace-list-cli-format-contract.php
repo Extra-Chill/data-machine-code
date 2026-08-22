@@ -14,6 +14,24 @@ namespace DataMachine\Cli {
 	}
 }
 
+namespace DataMachine\Engine\AI\Tools {
+	class BaseTool {
+		protected function buildErrorResponse( string $message, string $tool ): array { return array( 'success' => false, 'message' => $message, 'tool_name' => $tool ); }
+	}
+}
+
+namespace DataMachineCode\Workspace {
+	class Workspace {
+		public static array $limit_inputs = array();
+		public static function normalize_workspace_list_limit( mixed $limit ): int|\WP_Error {
+			self::$limit_inputs[] = $limit;
+			if ( ! is_int($limit) && ! ( is_string($limit) && ctype_digit($limit) ) ) { return new \WP_Error('invalid limit'); }
+			return (int) $limit;
+		}
+	}
+	class WorkspaceAliasResolver {}
+}
+
 namespace {
 	if ( ! defined('ABSPATH') ) {
 		define('ABSPATH', __DIR__ . '/fixtures/');
@@ -42,9 +60,16 @@ namespace {
 
 	require_once dirname(__DIR__) . '/inc/Cli/CliResponseRenderer.php';
 	require_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
+	require_once dirname(__DIR__) . '/inc/Tools/WorkspaceTools.php';
+	require_once dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php';
 
 	use DataMachine\Cli\BaseCommand;
 	use DataMachineCode\Cli\Commands\WorkspaceCommand;
+	use DataMachineCode\Tools\WorkspaceTools;
+	use DataMachineCode\Abilities\WorkspaceAbilities;
+	use DataMachineCode\Workspace\Workspace;
+
+	final class WorkspaceListToolContract extends WorkspaceTools { public function __construct() {} }
 
 	function cli_format_assert( bool $condition, string $message ): void {
 		if ( ! $condition ) { throw new RuntimeException($message); }
@@ -70,6 +95,36 @@ namespace {
 	);
 	$GLOBALS['dmc_workspace_list_ability'] = new WorkspaceListAbility($result);
 	$command = new WorkspaceCommand();
+	$tool = new WorkspaceListToolContract();
+
+	foreach ( array( '1.5', 'junk', array( 1 ), true ) as $invalid_limit ) {
+		Workspace::$limit_inputs = array();
+		try {
+			$command->list_repos(array(), array( 'limit' => $invalid_limit ));
+			throw new RuntimeException('CLI must reject invalid limits.');
+		} catch ( RuntimeException $error ) {
+			cli_format_assert($invalid_limit === (Workspace::$limit_inputs[0] ?? null), 'CLI must validate the raw limit before coercion.');
+		}
+		Workspace::$limit_inputs = array();
+		$tool_result = $tool->handleList(array( 'limit' => $invalid_limit ));
+		cli_format_assert(false === ($tool_result['success'] ?? true) && $invalid_limit === (Workspace::$limit_inputs[0] ?? null), 'Tool must validate the raw limit before coercion.');
+		Workspace::$limit_inputs = array();
+		$ability_result = WorkspaceAbilities::listRepos(array( 'limit' => $invalid_limit ));
+		cli_format_assert(is_wp_error($ability_result) && $invalid_limit === (Workspace::$limit_inputs[0] ?? null), 'Ability must validate the raw limit before coercion.');
+		Workspace::$limit_inputs = array();
+		$worktree_ability_result = WorkspaceAbilities::worktreeList(array( 'limit' => $invalid_limit ));
+		cli_format_assert(is_wp_error($worktree_ability_result) && $invalid_limit === (Workspace::$limit_inputs[0] ?? null), 'Worktree ability must validate the raw limit before coercion.');
+	}
+
+	cli_format_reset();
+	$command->list_repos(array(), array( 'format' => 'json' ));
+	$rows_json = json_decode(WP_CLI::$lines[0] ?? '', true);
+	cli_format_assert(2 === count($rows_json) && 'repo-a' === ($rows_json[0]['name'] ?? null), 'Default JSON must preserve the legacy row array.');
+
+	cli_format_reset();
+	$command->list_repos(array(), array( 'format' => 'json', 'envelope' => true ));
+	$envelope_json = json_decode(WP_CLI::$lines[0] ?? '', true);
+	cli_format_assert(100 === ($envelope_json['total'] ?? null) && 'cursor-2' === ($envelope_json['next_cursor'] ?? null), 'Envelope JSON must explicitly expose pagination metadata.');
 
 	cli_format_reset();
 	$command->list_repos(array(), array( 'summary' => true, 'format' => 'json' ));
@@ -92,6 +147,13 @@ namespace {
 		$command->list_repos(array(), array( 'summary' => true, 'format' => $format ));
 		cli_format_assert(array() === WP_CLI::$logs && array() === WP_CLI::$lines, strtoupper($format) . ' summary must remain pure machine serialization.');
 		cli_format_assert(100 === (BaseCommand::$formatted[0]['items'][0]['count'] ?? null), strtoupper($format) . ' summary must use complete aggregate counts.');
+
+		$GLOBALS['dmc_workspace_list_ability'] = new WorkspaceListAbility(array_merge($result, array( 'repos' => array(), 'returned' => 0, 'next_cursor' => null )));
+		cli_format_reset();
+		$command->list_repos(array(), array( 'format' => $format ));
+		cli_format_assert(array() === WP_CLI::$logs && array() === WP_CLI::$lines, strtoupper($format) . ' empty output must not include human text.');
+		cli_format_assert(array() === (BaseCommand::$formatted[0]['items'] ?? null), strtoupper($format) . ' empty output must use native machine serialization.');
+		$GLOBALS['dmc_workspace_list_ability'] = new WorkspaceListAbility($result);
 	}
 
 	echo "workspace-list-cli-format-contract: ok\n";

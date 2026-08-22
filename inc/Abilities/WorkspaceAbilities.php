@@ -146,7 +146,7 @@ class WorkspaceAbilities {
 							),
 							'all' => array(
 								'type'        => 'boolean',
-								'description' => 'Return every matching row. Full expansion is explicit.',
+								'description' => 'Return every matching row. Full expansion is explicit and cannot be combined with cursor.',
 							),
 							'include_status' => array(
 								'type'        => 'boolean',
@@ -3084,7 +3084,15 @@ class WorkspaceAbilities {
 		$options   = array();
 		foreach ( array( 'limit', 'cursor', 'all', 'include_status' ) as $key ) {
 			if ( array_key_exists($key, $input) ) {
-				$options[ $key ] = 'limit' === $key ? (int) $input[ $key ] : $input[ $key ];
+				if ( 'limit' === $key ) {
+					$limit = Workspace::normalize_workspace_list_limit($input[ $key ]);
+					if ( is_wp_error($limit) ) {
+						return $limit;
+					}
+					$options[ $key ] = $limit;
+					continue;
+				}
+				$options[ $key ] = $input[ $key ];
 			}
 		}
 		return $workspace->list_repos($repo, $type, $options);
@@ -4303,11 +4311,18 @@ class WorkspaceAbilities {
 		// Default to the cheap listing on the ability surface so MCP/REST/CLI callers
 		// don't pay the per-worktree git status + du cost on huge workspaces.
 		// Internal PHP callers can still call worktree_list() directly with full probes.
+		$limit = Workspace::normalize_workspace_list_limit($input['limit'] ?? 50);
+		if ( is_wp_error($limit) ) {
+			return new \WP_Error('invalid_worktree_list_limit', 'Worktree list limit must be an integer between 1 and 200.', array( 'status' => 400 ));
+		}
+		if ( ! empty($input['all']) && isset($input['cursor']) ) {
+			return new \WP_Error('invalid_worktree_list_pagination', 'Worktree list --all cannot be combined with --cursor.', array( 'status' => 400 ));
+		}
 		$opts = array(
 			'include_status' => array_key_exists('include_status', $input) ? (bool) $input['include_status'] : false,
 			'include_disk'   => array_key_exists('include_disk', $input) ? (bool) $input['include_disk'] : false,
 			'handle'         => isset($input['handle']) ? (string) $input['handle'] : '',
-			'limit'          => isset($input['limit']) ? (int) $input['limit'] : 50,
+			'limit'          => $limit,
 			'all'            => ! empty($input['all']),
 		);
 		if ( isset($input['cursor']) ) {

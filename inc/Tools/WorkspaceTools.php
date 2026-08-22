@@ -12,6 +12,7 @@
 namespace DataMachineCode\Tools;
 
 use DataMachine\Engine\AI\Tools\BaseTool;
+use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorkspaceAliasResolver;
 
 defined('ABSPATH') || exit;
@@ -237,7 +238,15 @@ class WorkspaceTools extends BaseTool
 		}
 		foreach ( array( 'limit', 'cursor', 'all', 'include_status' ) as $key ) {
 			if (isset($parameters[$key]) ) {
-				$input[$key] = 'limit' === $key ? (int) $parameters[$key] : $parameters[$key];
+				if ( 'limit' === $key ) {
+					$limit = Workspace::normalize_workspace_list_limit($parameters[$key]);
+					if (is_wp_error($limit) ) {
+						return $this->buildErrorResponse($limit->get_error_message(), 'workspace_list');
+					}
+					$input[$key] = $limit;
+					continue;
+				}
+				$input[$key] = $parameters[$key];
 			}
 		}
 

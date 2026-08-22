@@ -11,12 +11,23 @@ namespace DataMachine\Cli {
 	}
 }
 
+namespace DataMachineCode\Workspace {
+	class Workspace {
+		public static array $limit_inputs = array();
+		public static function normalize_workspace_list_limit( mixed $limit ): int|\WP_Error {
+			self::$limit_inputs[] = $limit;
+			return ( is_int($limit) || ( is_string($limit) && ctype_digit($limit) ) ) ? (int) $limit : new \WP_Error();
+		}
+	}
+}
+
 namespace {
 	if ( ! defined('ABSPATH') ) {
 		define('ABSPATH', __DIR__ . '/fixtures/');
 	}
 	function wp_json_encode( mixed $value, int $flags = 0, int $depth = 512 ): string|false { return json_encode($value, $flags, $depth); }
-	function is_wp_error( mixed $value ): bool { return false; }
+	final class WP_Error {}
+	function is_wp_error( mixed $value ): bool { return $value instanceof WP_Error; }
 	final class WP_CLI {
 		public static string $output = '';
 		public static function line( string $message ): void { self::$output .= $message; }
@@ -76,6 +87,13 @@ namespace {
 		throw new RuntimeException('Legacy JSON pagination must fail explicitly.');
 	} catch (RuntimeException $error) {
 		pagination_compat_assert(str_contains($error->getMessage(), '--envelope'), 'Legacy JSON pagination failure must direct callers to the envelope contract.');
+	}
+	DataMachineCode\Workspace\Workspace::$limit_inputs = array();
+	try {
+		invoke_worktree_list($command, array( 'format' => 'json', 'envelope' => true, 'limit' => '1.5' ));
+		throw new RuntimeException('Worktree CLI must reject invalid limits.');
+	} catch (RuntimeException $error) {
+		pagination_compat_assert('1.5' === (DataMachineCode\Workspace\Workspace::$limit_inputs[0] ?? null), 'Worktree CLI must validate the raw limit before coercion.');
 	}
 
 	echo "worktree-list-cli-pagination-compatibility: ok\n";

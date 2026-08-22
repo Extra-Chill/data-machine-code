@@ -350,7 +350,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * : Continue from the cursor returned by a prior list with the same filters.
 	 *
 	 * [--all]
-	 * : Explicitly return every matching row instead of the bounded first page.
+	 * : Explicitly return every matching row instead of the bounded first page. Cannot be combined with --cursor.
+	 *
+	 * [--envelope]
+	 * : Include pagination metadata in JSON output. The default JSON output remains the legacy row array.
 	 *
 	 * [--include-status]
 	 * : Include per-row Git remote, branch, and primary freshness probes.
@@ -400,7 +403,12 @@ class WorkspaceCommand extends BaseCommand {
 			$input['type'] = (string) $assoc_args['type'];
 		}
 		if ( isset($assoc_args['limit']) ) {
-			$input['limit'] = (int) $assoc_args['limit'];
+			$limit = Workspace::normalize_workspace_list_limit($assoc_args['limit']);
+			if ( is_wp_error($limit) ) {
+				WP_CLI::error($limit->get_error_message());
+				return;
+			}
+			$input['limit'] = $limit;
 		}
 		if ( isset($assoc_args['cursor']) ) {
 			$input['cursor'] = (string) $assoc_args['cursor'];
@@ -410,6 +418,10 @@ class WorkspaceCommand extends BaseCommand {
 		}
 		if ( ! empty($assoc_args['include-status']) ) {
 			$input['include_status'] = true;
+		}
+		if ( ! empty($assoc_args['envelope']) && 'json' !== ( $assoc_args['format'] ?? 'table' ) ) {
+			WP_CLI::error('Workspace list --envelope requires --format=json.');
+			return;
 		}
 
 		$result = $ability->execute($input);
@@ -425,11 +437,15 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( 'json' === ( $assoc_args['format'] ?? 'table' ) ) {
-			$this->renderer()->json($result);
+			$this->renderer()->json(! empty($assoc_args['envelope']) ? $result : (array) ( $result['repos'] ?? array() ));
 			return;
 		}
 
 		if ( empty($result['repos']) ) {
+			if ( 'csv' === ( $assoc_args['format'] ?? 'table' ) || 'yaml' === ( $assoc_args['format'] ?? 'table' ) ) {
+				$this->format_items(array(), array( 'name', 'kind', 'repo', 'branch', 'freshness', 'behind', 'remote', 'git' ), $assoc_args, 'name');
+				return;
+			}
 			if ( isset($assoc_args['repo']) ) {
 				WP_CLI::log(sprintf('No repos matching "%s" in workspace (%s).', (string) $assoc_args['repo'], $result['path'] ?? ''));
 				return;
@@ -686,6 +702,9 @@ class WorkspaceCommand extends BaseCommand {
 		if ( array() !== $summary['repos'] ) {
 			WP_CLI::log('Repos:');
 			$this->format_items($summary['repos'], array( 'repo', 'primary', 'worktree', 'context', 'total' ), array( 'format' => 'table' ), 'repo');
+			if ( ! empty($summary['repos_omitted']) ) {
+				WP_CLI::log(sprintf('Additional repositories omitted: %d', (int) $summary['repos_omitted']));
+			}
 		}
 
 		if ( ! empty($summary['triage_command']) ) {
@@ -4498,6 +4517,10 @@ class WorkspaceCommand extends BaseCommand {
 					WP_CLI::error('--envelope is available only with --format=json.');
 					return;
 				}
+				if ( ! empty($assoc_args['all']) && isset($assoc_args['cursor']) ) {
+					WP_CLI::error('Worktree list --all cannot be combined with --cursor.');
+					return;
+				}
 				if ( ! empty($args[1]) ) {
 					$input['repo'] = $args[1];
 				}
@@ -4505,7 +4528,12 @@ class WorkspaceCommand extends BaseCommand {
 					$input['state'] = (string) $assoc_args['state'];
 				}
 				if ( isset($assoc_args['limit']) ) {
-					$input['limit'] = (int) $assoc_args['limit'];
+					$limit = Workspace::normalize_workspace_list_limit($assoc_args['limit']);
+					if ( is_wp_error($limit) ) {
+						WP_CLI::error('Worktree list limit must be an integer between 1 and 200.');
+						return;
+					}
+					$input['limit'] = $limit;
 				}
 				if ( isset($assoc_args['cursor']) ) {
 					$input['cursor'] = (string) $assoc_args['cursor'];
@@ -5130,14 +5158,16 @@ class WorkspaceCommand extends BaseCommand {
 				$this->format_items($items, $fields, $assoc_args, 'handle');
 				$duplicates            = (array) ( $result['duplicates'] ?? array() );
 				$base_branch_worktrees = (array) ( $result['base_branch_worktrees'] ?? array() );
+				$summary               = (array) ( $result['summary'] ?? array() );
 				if ( ! empty($duplicates) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true) ) {
-					WP_CLI::log(sprintf('Duplicate task ownership groups: %d', count($duplicates)));
+					WP_CLI::log(sprintf('Duplicate task ownership groups: %d (%d sampled)', (int) ( $summary['duplicate_task_groups_total'] ?? count($duplicates) ), count($duplicates)));
 					foreach ( $duplicates as $group ) {
 						WP_CLI::log(sprintf('  - [%s=%s] %s', (string) ( $group['kind'] ?? '' ), (string) ( $group['key'] ?? '' ), implode(', ', (array) ( $group['handles'] ?? array() ))));
 					}
 				}
 				if ( ! empty($base_branch_worktrees) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true) ) {
-					WP_CLI::warning(sprintf('Base branch checked out in %d non-primary worktree%s; gh pr merge --delete-branch can merge remotely but fail local cleanup.', count($base_branch_worktrees), 1 === count($base_branch_worktrees) ? '' : 's'));
+					$base_total = (int) ( $summary['base_branch_worktrees_total'] ?? count($base_branch_worktrees) );
+					WP_CLI::warning(sprintf('Base branch checked out in %d non-primary worktree%s (%d sampled); gh pr merge --delete-branch can merge remotely but fail local cleanup.', $base_total, 1 === $base_total ? '' : 's', count($base_branch_worktrees)));
 					foreach ( $base_branch_worktrees as $warning ) {
 						WP_CLI::log(sprintf('  - %s (%s) at %s', (string) ( $warning['handle'] ?? '' ), (string) ( $warning['branch'] ?? '' ), (string) ( $warning['path'] ?? '' )));
 					}
