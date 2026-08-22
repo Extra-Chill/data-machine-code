@@ -6841,8 +6841,8 @@ class WorkspaceCommand extends BaseCommand {
 					'count'  => (int) ( $summary['skipped'] ?? count($skipped) ),
 				),
 				array(
-					'metric' => 'artifact_size',
-					'count'  => $this->format_bytes($summary['artifact_size_bytes'] ?? null),
+					'metric' => 'allocated_artifact_bytes (not guaranteed reclaimable)',
+					'count'  => $this->format_bytes($summary['predicted_allocated_reclaim_bytes'] ?? $summary['artifact_size_bytes'] ?? null),
 				),
 			),
 			array( 'metric', 'count' ),
@@ -6853,13 +6853,13 @@ class WorkspaceCommand extends BaseCommand {
 		if ( ! empty($candidates) ) {
 			WP_CLI::log('');
 			WP_CLI::log($dry_run && is_array($pagination) && 'size' === (string) ( $pagination['sort'] ?? '' ) ? 'Largest artifact opportunities:' : ( $dry_run ? 'Would remove artifacts:' : 'Artifact candidates:' ));
-			$this->format_items($this->flatten_artifact_cleanup_rows($candidates), array( 'handle', 'repo', 'branch', 'artifact', 'size', 'path' ), array( 'format' => 'table' ), 'handle');
+			$this->format_items($this->flatten_artifact_cleanup_rows($candidates), array( 'handle', 'repo', 'branch', 'artifact', 'apparent', 'allocated', 'accounting', 'path' ), array( 'format' => 'table' ), 'handle');
 		}
 
 		if ( ! empty($removed) ) {
 			WP_CLI::log('');
 			WP_CLI::log('Removed artifacts:');
-			$this->format_items($this->flatten_artifact_cleanup_rows($removed), array( 'handle', 'repo', 'branch', 'artifact', 'size', 'path' ), array( 'format' => 'table' ), 'handle');
+			$this->format_items($this->flatten_artifact_cleanup_rows($removed), array( 'handle', 'repo', 'branch', 'artifact', 'apparent', 'allocated', 'accounting', 'path' ), array( 'format' => 'table' ), 'handle');
 		}
 
 		if ( ! empty($skipped) ) {
@@ -6936,7 +6936,9 @@ class WorkspaceCommand extends BaseCommand {
 					'repo'     => $row['repo'] ?? '',
 					'branch'   => $row['branch'] ?? '',
 					'artifact' => $artifact['path'] ?? '',
-					'size'     => $this->format_bytes($artifact['size_bytes'] ?? null),
+					'apparent'  => $this->format_bytes($artifact['apparent_bytes'] ?? null),
+					'allocated' => $this->format_bytes($artifact['allocated_bytes'] ?? $artifact['size_bytes'] ?? null),
+					'accounting' => $artifact['allocation_accounting'] ?? 'unknown',
 					'path'     => rtrim( (string) ( $row['path'] ?? '' ), '/') . '/' . ltrim( (string) ( $artifact['path'] ?? '' ), '/'),
 				);
 			}

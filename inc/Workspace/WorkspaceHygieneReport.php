@@ -350,7 +350,7 @@ trait WorkspaceHygieneReport {
 
 		$artifact_candidates              = (array) ( $plan['artifact_candidates'] ?? array() );
 		$worktree_candidates              = (array) ( $plan['worktree_candidates'] ?? array() );
-		$top_artifact_offenders           = $this->summarize_top_worktree_rows($artifact_candidates, 'artifact_size_bytes');
+		$top_artifact_offenders           = $this->summarize_top_worktree_rows($artifact_candidates, 'artifact_allocated_bytes');
 		$budget['top_artifact_offenders'] = $top_artifact_offenders;
 
 		$triggered = ! empty($budget['emergency_triggered']);
@@ -374,7 +374,7 @@ trait WorkspaceHygieneReport {
 
 		$target_bytes       = (int) ( $budget['target_recovery_bytes'] ?? 0 );
 		$target_inodes      = (int) ( $budget['target_recovery_inodes'] ?? 0 );
-		$selection          = WorkspaceEmergencyCandidateSelector::select($artifact_candidates, $target_bytes, $target_inodes, $artifact_chunk_size, 'artifact_size_bytes');
+		$selection          = WorkspaceEmergencyCandidateSelector::select($artifact_candidates, $target_bytes, $target_inodes, $artifact_chunk_size, 'artifact_allocated_bytes');
 		$selected_artifacts = $selection['candidates'];
 		$blocked_reasons    = array();
 		$selected_worktrees = array();
