@@ -42,9 +42,11 @@ namespace {
 
 	$ability = new WorktreeCommandFakeAbility();
 	$bounded_ability = new WorktreeCommandFakeAbility();
+	$artifact_ability = new WorktreeCommandFakeAbility();
 	$GLOBALS['worktree_command_abilities'] = array(
 		'datamachine-code/workspace-worktree-abandoned-cleanup' => $ability,
 		'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => $bounded_ability,
+		'datamachine-code/workspace-worktree-cleanup-artifacts' => $artifact_ability,
 	);
 	$command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
 	try {
@@ -70,6 +72,28 @@ namespace {
 		worktree_command_routing_assert('Recorded abandoned routing input.' === $error->getMessage(), 'bounded cleanup command did not render the routed ability result.');
 	}
 	worktree_command_routing_assert('repo:stage-finalized' === ( $bounded_ability->calls[0]['scope'] ?? null ), 'bounded cleanup --scope was not routed to its ability input.');
+
+	$retry_command = "studio wp datamachine-code workspace worktree cleanup-artifacts --dry-run --safety-probes --limit=1 --only-handle='repo@blocked' --format=json";
+	$artifact_definition = \DataMachineCode\Cli\Commands\WorkspaceCommand::worktree_command_definitions()['cleanup-artifacts'];
+	$registered_options = array_column($artifact_definition['synopsis'], 'name');
+	preg_match_all("/(?:[^\\s']+|'[^']*')+/", $retry_command, $matches);
+	$parsed_args = array();
+	foreach ( array_slice($matches[0], 6) as $token ) {
+		if ( ! str_starts_with($token, '--') ) {
+			continue;
+		}
+		$parts = explode('=', substr($token, 2), 2);
+		worktree_command_routing_assert(in_array($parts[0], $registered_options, true), sprintf('generated artifact retry command uses unregistered --%s.', $parts[0]));
+		$parsed_args[ $parts[0] ] = isset($parts[1]) ? trim($parts[1], "'") : true;
+	}
+	try {
+		$command->__worktree_operation('cleanup-artifacts', array(), $parsed_args);
+		throw new \RuntimeException('artifact retry command did not execute its ability.');
+	} catch ( \RuntimeException $error ) {
+		worktree_command_routing_assert('Recorded abandoned routing input.' === $error->getMessage(), sprintf('generated artifact retry command did not dispatch: %s', $retry_command));
+	}
+	worktree_command_routing_assert('repo@blocked' === ( $artifact_ability->calls[0]['only_handle'] ?? null ), 'generated artifact retry command did not preserve its exact worktree handle.');
+	worktree_command_routing_assert(1 === ( $artifact_ability->calls[0]['limit'] ?? null ), 'generated artifact retry command did not preserve its one-worktree limit.');
 
 	echo "worktree-command-routing: ok\n";
 }
