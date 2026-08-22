@@ -70,8 +70,6 @@ class WorkspaceAbilities {
 	}
 
 	private function registerAbilities(): void {
-		$register_callback = function () {
-
 			// -----------------------------------------------------------------
 			// Read-only discovery abilities (show_in_rest = true).
 			// -----------------------------------------------------------------
@@ -3025,13 +3023,17 @@ class WorkspaceAbilities {
 					)
 				);
 			}
-		};
+	}
 
-		if ( doing_action('wp_abilities_api_init') ) {
-			$register_callback();
-		} else {
-			add_action('wp_abilities_api_init', $register_callback);
-		}
+	/**
+	 * Describe an unavailable workspace ability for CLI and API callers.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public static function unavailable_diagnostic( string $expected_ability ): array {
+		return AbilityRegistry::unavailable_diagnostic($expected_ability) + array(
+			'workspace_registration_state' => self::$registered ? 'registered' : ( self::$scheduled ? 'scheduled' : 'not_scheduled' ),
+		);
 	}
 
 	// =========================================================================
