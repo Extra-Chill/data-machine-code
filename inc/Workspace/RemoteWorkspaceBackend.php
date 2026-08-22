@@ -460,11 +460,7 @@ class RemoteWorkspaceBackend {
 			'path'    => $path,
 			'size'    => $size,
 		);
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
-		}
-
-		return $result;
+		return $this->with_context_policy($handle, $result);
 	}
 
 	/**
@@ -484,15 +480,7 @@ class RemoteWorkspaceBackend {
 		}
 
 		$prefix = null === $path ? '' : trim(ltrim($path, '/'), '/');
-		$tree   = GitHubAbilities::getRepoTree(
-			array(
-				'repo' => $context['repo'],
-				'ref'  => $context['read_ref'],
-			)
-		);
-		if ( is_wp_error($tree) && '' !== $context['read_ref'] ) {
-			$tree = GitHubAbilities::getRepoTree(array( 'repo' => $context['repo'] ));
-		}
+		$tree   = $this->get_repo_tree_with_fallback($context);
 		if ( is_wp_error($tree) ) {
 			return $tree;
 		}
@@ -525,11 +513,7 @@ class RemoteWorkspaceBackend {
 			'path'    => '' === $prefix ? '/' : $prefix,
 			'entries' => $entries,
 		);
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
-		}
-
-		return $result;
+		return $this->with_context_policy($handle, $result);
 	}
 
 	/**
@@ -558,19 +542,7 @@ class RemoteWorkspaceBackend {
 			return $regex;
 		}
 
-		$tree_input = array(
-			'repo' => $context['repo'],
-			'ref'  => $context['read_ref'],
-		);
-		if ( '' !== $prefix ) {
-			$tree_input['path'] = $prefix;
-		}
-
-		$tree = GitHubAbilities::getRepoTree($tree_input);
-		if ( is_wp_error($tree) && '' !== $context['read_ref'] ) {
-			unset($tree_input['ref']);
-			$tree = GitHubAbilities::getRepoTree($tree_input);
-		}
+		$tree = $this->get_repo_tree_with_fallback($context, $prefix);
 		if ( is_wp_error($tree) ) {
 			return $tree;
 		}
@@ -635,11 +607,7 @@ class RemoteWorkspaceBackend {
 			'count'     => count($matches),
 			'truncated' => count($matches) >= $max_results,
 		);
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
-		}
-
-		return $result;
+		return $this->with_context_policy($handle, $result);
 	}
 
 	/**
@@ -779,11 +747,7 @@ class RemoteWorkspaceBackend {
 			'dirty'       => count($files),
 			'files'       => $files,
 		);
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
-		}
-
-		return $result;
+		return $this->with_context_policy($handle, $result);
 	}
 
 	/**
@@ -869,11 +833,7 @@ class RemoteWorkspaceBackend {
 			'repo'    => $context['repo_name'],
 			'diff'    => $diff,
 		);
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
-		}
-
-		return $result;
+		return $this->with_context_policy($handle, $result);
 	}
 
 	/**
@@ -902,11 +862,7 @@ class RemoteWorkspaceBackend {
 			'dirty'       => count($files),
 			'files'       => $files,
 		);
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
-		}
-
-		return $result;
+		return $this->with_context_policy($handle, $result);
 	}
 
 	/**
@@ -958,11 +914,7 @@ class RemoteWorkspaceBackend {
 			'message'      => 'Runner workspace command execution is unavailable for GitHub API remote workspaces; use a local runner workspace backend for shell commands.',
 		);
 
-		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
-			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
-		}
-
-		return $result;
+		return $this->with_context_policy($handle, $result);
 	}
 
 	/**
@@ -1477,6 +1429,34 @@ class RemoteWorkspaceBackend {
 			'html_url'       => $branch_url,
 			'message'        => 'Remote workspace branch already updated via GitHub API.',
 		);
+	}
+
+	/** Read a repository tree at the requested ref, falling back to its default ref. */
+	private function get_repo_tree_with_fallback( array $context, string $path = '' ): array|\WP_Error {
+		$input = array(
+			'repo' => $context['repo'],
+			'ref'  => $context['read_ref'],
+		);
+		if ( '' !== $path ) {
+			$input['path'] = $path;
+		}
+
+		$tree = GitHubAbilities::getRepoTree($input);
+		if ( is_wp_error($tree) && '' !== (string) $context['read_ref'] ) {
+			unset($input['ref']);
+			$tree = GitHubAbilities::getRepoTree($input);
+		}
+
+		return $tree;
+	}
+
+	/** Attach the read-only context policy attestation when the handle requires one. */
+	private function with_context_policy( string $handle, array $result ): array {
+		if ( WorkspaceAliasResolver::is_context_repository($handle) ) {
+			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
+		}
+
+		return $result;
 	}
 
 	/**
