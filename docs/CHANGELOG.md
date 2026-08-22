@@ -2,6 +2,17 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.58.1] - 2026-08-22
+
+### Fixed
+- mark diagnostic handle samples
+- restore bounded global diagnostics
+- bound paginated inventory
+- aggregate bounded summary repos
+- bound list materialization
+- preserve bounded list contracts
+- surface bounded recovery guidance
+
 ## [0.58.0] - 2026-08-21
 
 ### Added
