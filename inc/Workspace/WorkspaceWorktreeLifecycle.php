@@ -130,6 +130,10 @@ trait WorkspaceWorktreeLifecycle {
 		$wt_handle = $repo . '@' . $slug;
 		$wt_path   = $this->workspace_path . '/' . $wt_handle;
 
+		if ( $remediate_capacity_dry_run ) {
+			return $this->worktree_capacity_dry_run($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $force, $task, $intent, $reuse_policy, $wt_handle, $primary_path);
+		}
+
 		// A remediation dry-run must reach capacity planning before any existing
 		// handle path can reset a terminal checkout or rewrite its metadata.
 		if ( is_dir($wt_path) && ! $remediate_capacity_dry_run ) {
@@ -163,6 +167,45 @@ trait WorkspaceWorktreeLifecycle {
 					$remediate_capacity_dry_run
 				),
 			self::worktree_capacity_wait_timeout_seconds($bootstrap)
+		);
+	}
+
+	/**
+	 * Preview capacity and bounded cleanup strictly from local, read-only state.
+	 *
+	 * In particular, this deliberately avoids remote fetches and mutation locks:
+	 * lock acquisition records durable request/lifecycle evidence, which a preview
+	 * must not create.
+	 */
+	private function worktree_capacity_dry_run( string $repo, string $branch, ?string $from, bool $inject_context, bool $bootstrap, bool $allow_stale, bool $rebase_base, bool $force, array $task, array $intent, string $reuse_policy, string $wt_handle, string $primary_path ): array|\WP_Error {
+		$exists_local = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
+		$target_ref   = $exists_local
+			? 'refs/heads/' . $branch
+			: ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) );
+		$demand_plan  = WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
+		if ( $demand_plan instanceof \WP_Error ) {
+			return $demand_plan;
+		}
+
+		$disk_budget          = $this->inspect_worktree_capacity($repo, $branch, $force, $demand_plan);
+		$capacity_remediation = 'refused' === ( $disk_budget['status'] ?? '' )
+			? $this->remediate_capacity_refusal($repo, $branch, $demand_plan, $disk_budget, true)
+			: null;
+		if ( isset($capacity_remediation['failure']) ) {
+			$failure = (array) $capacity_remediation['failure'];
+			return new \WP_Error('worktree_capacity_remediation_failed', (string) ( $failure['message'] ?? 'Bounded capacity remediation preview failed.' ), array( 'status' => 507, 'failure' => $failure, 'capacity_remediation' => $capacity_remediation ));
+		}
+
+		return array(
+			'success'              => true,
+			'dry_run'              => true,
+			'created'              => false,
+			'handle'               => $wt_handle,
+			'branch'               => $branch,
+			'disk_budget'          => $disk_budget,
+			'capacity_reclaim'     => array( 'attempted' => false, 'skip_reason' => 'remediation_dry_run' ),
+			'capacity_remediation' => $capacity_remediation ?? array( 'mode' => 'not_required', 'dry_run' => true, 'before' => $disk_budget, 'after' => $disk_budget ),
+			'add_intent'           => $this->capacity_add_intent($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $task, $intent, $reuse_policy),
 		);
 	}
 
@@ -2782,11 +2825,19 @@ trait WorkspaceWorktreeLifecycle {
 
 		$artifact_apply = null;
 		if ( ! $dry_run ) {
-			$artifact_apply = $this->worktree_cleanup_artifacts(
-				array(
-					'apply_plan'    => array( 'candidates' => (array) ( $artifact_preview['candidates'] ?? array() ) ),
-					'limit'         => 25,
-					'safety_probes' => true,
+			$repos = array_values(array_unique(array_filter(array_map(
+				static fn( $candidate ): string => is_array($candidate) ? (string) ( $candidate['repo'] ?? '' ) : '',
+				(array) ( $artifact_preview['candidates'] ?? array() )
+			))));
+			$artifact_apply = WorkspaceMutationLock::with_repos(
+				$this->workspace_path,
+				$repos,
+				fn() => $this->worktree_cleanup_artifacts(
+					array(
+						'apply_plan'    => array( 'candidates' => (array) ( $artifact_preview['candidates'] ?? array() ) ),
+						'limit'         => 25,
+						'safety_probes' => true,
+					)
 				)
 			);
 			if ( $artifact_apply instanceof \WP_Error ) {

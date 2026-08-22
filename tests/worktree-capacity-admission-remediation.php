@@ -29,6 +29,7 @@ namespace DataMachineCode\Workspace {
 
 	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceCleanupEligibleDrainOrchestrator.php';
+	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceMutationLock.php';
 
 	final class CapacityAdmissionRemediationAbility {
 		public array $calls = array();
@@ -53,10 +54,15 @@ namespace DataMachineCode\Workspace {
 		use WorkspaceWorktreeLifecycle;
 		public array $artifact_options = array();
 		public array $budgets;
+		public string $workspace_path;
 
 		public ?\WP_Error $artifact_failure = null;
 
-		public function __construct( array $budgets ) { $this->budgets = $budgets; }
+		public function __construct( array $budgets ) {
+			$this->budgets        = $budgets;
+			$this->workspace_path = sys_get_temp_dir() . '/dmc-capacity-remediation-' . bin2hex(random_bytes(6));
+			mkdir($this->workspace_path, 0777, true);
+		}
 		public function remediate( array $before, bool $dry_run ): array { return $this->remediate_capacity_refusal('repo', 'branch', array( 'bytes' => 1 ), $before, $dry_run); }
 		protected function worktree_cleanup_artifacts( array $opts = array() ): array|\WP_Error {
 			$this->artifact_options[] = $opts;
