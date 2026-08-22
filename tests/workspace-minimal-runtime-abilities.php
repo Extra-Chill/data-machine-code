@@ -50,7 +50,7 @@ namespace {
 	function plugin_dir_path( string $file ): string { return dirname($file) . '/'; }
 	function plugin_dir_url( string $file ): string { return 'https://example.test/'; }
 	function register_activation_hook( string $file, callable|string $callback ): void {}
-	function add_action( string $hook, callable|string|array $callback, int $priority = 10, int $accepted_args = 1 ): void {}
+	function add_action( string $hook, callable|string|array $callback, int $priority = 10, int $accepted_args = 1 ): void { $GLOBALS['dmc_minimal_actions'][ $hook ][] = $callback; }
 	function add_filter( string $hook, callable|string|array $callback, int $priority = 10, int $accepted_args = 1 ): void {}
 	function did_action( string $hook ): int { return 0; }
 
@@ -62,8 +62,10 @@ namespace {
 	$GLOBALS['dmc_minimal_workspace_diff_abilities'] = 0;
 	$GLOBALS['dmc_minimal_code_task_abilities'] = 0;
 	$GLOBALS['dmc_minimal_wordpress_runtime_abilities'] = 0;
+	$GLOBALS['dmc_minimal_actions'] = array();
 
 	require_once dirname(__DIR__) . '/data-machine-code.php';
+	minimal_runtime_assert_same('datamachine_code_register_ability_categories', $GLOBALS['dmc_minimal_actions']['wp_abilities_api_categories_init'][0] ?? null, 'DMC categories were not scheduled before lazy registry initialization.');
 	minimal_runtime_assert_same(1, $GLOBALS['dmc_minimal_workspace_abilities'], 'Executable workspace CLI did not schedule WorkspaceAbilities at plugin load time.');
 	datamachine_code_bootstrap();
 	datamachine_code_bootstrap();
