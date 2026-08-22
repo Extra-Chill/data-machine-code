@@ -71,8 +71,6 @@ class WorkspaceAbilities {
 			require_once dirname(__DIR__) . '/Workspace/Workspace.php';
 		}
 
-		$register_callback = function () {
-
 			// -----------------------------------------------------------------
 			// Read-only discovery abilities (show_in_rest = true).
 			// -----------------------------------------------------------------
@@ -2899,14 +2897,7 @@ class WorkspaceAbilities {
 					)
 				);
 			}
-		};
-
-		if ( doing_action('wp_abilities_api_init') ) {
-			$register_callback();
-		} else {
-			add_action('wp_abilities_api_init', $register_callback);
-		}
-		}
+	}
 
 	/**
 	 * Build the shared contract for one active/no-signal apply ability.
@@ -2958,6 +2949,17 @@ class WorkspaceAbilities {
 			'execute_callback'    => array( self::class, $definition['callback'] ),
 			'permission_callback' => fn() => PermissionHelper::can_manage(),
 			'meta'                => array( 'show_in_rest' => false ),
+		);
+	}
+
+	/**
+	 * Describe an unavailable workspace ability for CLI and API callers.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public static function unavailable_diagnostic( string $expected_ability ): array {
+		return AbilityRegistry::unavailable_diagnostic($expected_ability) + array(
+			'workspace_registration_state' => self::$registered ? 'registered' : ( self::$scheduled ? 'scheduled' : 'not_scheduled' ),
 		);
 	}
 

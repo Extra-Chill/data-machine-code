@@ -85,6 +85,15 @@ class WorkspaceCommand extends BaseCommand {
 	);
 
 	/**
+	 * Stop with a typed diagnostic when a canonical workspace ability is absent.
+	 */
+	private function unavailable_ability( string $expected_ability ): void {
+		$diagnostic = WorkspaceAbilities::unavailable_diagnostic($expected_ability);
+		$message    = function_exists('wp_json_encode') ? wp_json_encode($diagnostic) : json_encode($diagnostic);
+		WP_CLI::error(is_string($message) ? $message : sprintf('Workspace ability not available: %s', $expected_ability));
+	}
+
+	/**
 	 * WP-CLI leaf definitions for the ability-backed worktree operations.
 	 *
 	 * @return array<string,array<string,mixed>>
@@ -417,7 +426,7 @@ class WorkspaceCommand extends BaseCommand {
 	public function list_repos( array $args, array $assoc_args ): void {
 		$ability = wp_get_ability('datamachine-code/workspace-list');
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace list ability not available.');
+			$this->unavailable_ability('datamachine-code/workspace-list');
 			return;
 		}
 
@@ -3726,7 +3735,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$ability = wp_get_ability($ability_name);
 		if ( ! $ability ) {
-			WP_CLI::error(sprintf('Workspace git ability not available: %s', $ability_name));
+			$this->unavailable_ability($ability_name);
 			return;
 		}
 
@@ -4433,7 +4442,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$ability = wp_get_ability($ability_name);
 		if ( ! $ability ) {
-			WP_CLI::error(sprintf('Worktree ability not available: %s', $ability_name));
+			$this->unavailable_ability($ability_name);
 			return;
 		}
 
