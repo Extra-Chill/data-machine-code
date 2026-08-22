@@ -38,9 +38,6 @@ if ( ! class_exists(AbilityRegistry::class) ) {
 if ( ! class_exists(RuntimeCapabilities::class) ) {
 	require_once dirname(__DIR__) . '/Support/RuntimeCapabilities.php';
 }
-if ( ! class_exists(GitHubAbilities::class) ) {
-	require_once __DIR__ . '/GitHubAbilities.php';
-}
 if ( ! class_exists(RunnerWorkspacePublisher::class) ) {
 	require_once dirname(__DIR__) . '/Workspace/RunnerWorkspacePublisher.php';
 }
