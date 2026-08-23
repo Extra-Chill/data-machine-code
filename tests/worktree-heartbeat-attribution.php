@@ -64,13 +64,16 @@ try {
 	heartbeat_attribution_assert_same('chris', WorktreeContextInjector::summarize_owner($canonical_ownership)['user'], 'canonical user metadata renders for listings');
 	heartbeat_attribution_assert_same('session-1', WorktreeContextInjector::summarize_session($canonical_ownership)['primary_id'], 'canonical session metadata renders for listings');
 
-	$malformed_structured_ownership = $canonical_ownership;
-	$malformed_structured_ownership['origin_session'] = array( 'primary_id' => 'session-1', 'ids' => array() );
-	$malformed_structured_ownership['origin_user'] = array( 'id' => 1 );
-	$malformed_structured_liveness = WorktreeContextInjector::classify_liveness($malformed_structured_ownership);
-	heartbeat_attribution_assert_same('malformed', $malformed_structured_liveness['attribution'], 'malformed structured ownership remains fail-closed');
-	heartbeat_attribution_assert_same(array( 'origin_session', 'origin_user' ), $malformed_structured_liveness['missing_ownership_fields'], 'malformed structured ownership is treated as missing');
-	heartbeat_attribution_assert_same(array( 'origin_session', 'origin_user' ), $malformed_structured_liveness['malformed_ownership_fields'], 'malformed structured ownership is surfaced deterministically');
+	$generic_structured_ownership = array( 'origin_agent' => 'agent', 'origin_session' => array( 'ids' => array( 'runtime' => 'session' ) ), 'origin_user' => array( 'login' => 'user' ), 'owner_run_ref' => 'run-1' );
+	$generic_structured_liveness = WorktreeContextInjector::classify_liveness($generic_structured_ownership, $now, 60);
+	heartbeat_attribution_assert_same('attributable', $generic_structured_liveness['attribution'], 'non-empty structured ownership envelopes remain attributable');
+	heartbeat_attribution_assert_same(array(), $generic_structured_liveness['missing_ownership_fields'], 'non-empty structured ownership envelopes have no missing fields');
+	heartbeat_attribution_assert_same(array(), $generic_structured_liveness['malformed_ownership_fields'], 'non-empty structured ownership envelopes are not malformed');
+
+	$empty_structured = WorktreeContextInjector::classify_liveness(array( 'origin_agent' => array(), 'origin_session' => array( 'ids' => array() ), 'origin_user' => new \stdClass(), 'owner_run_ref' => ' ' ), $now, 60);
+	heartbeat_attribution_assert_same('unattributed', $empty_structured['attribution'], 'empty or unsupported ownership envelopes are unattributed');
+	heartbeat_attribution_assert_same(array( 'origin_agent', 'origin_session', 'origin_user', 'owner_run_ref' ), $empty_structured['missing_ownership_fields'], 'empty ownership envelopes report deterministic missing fields');
+	heartbeat_attribution_assert_same(array(), $empty_structured['malformed_ownership_fields'], 'empty or unsupported ownership envelopes are not malformed claims');
 	heartbeat_attribution_assert_same(null, WorktreeContextInjector::normalize_scalar_metadata_value(array( 'run-1' )), 'metadata scalar normalization rejects arrays');
 	heartbeat_attribution_assert_same(false, WorktreeContextInjector::has_owner_terminal_disposable_cleanup_signal(array( 'cleanup_policy' => WorktreeContextInjector::CLEANUP_POLICY_REMOVE_ON_SUCCESS, 'purpose' => 'test', 'owner_run_ref' => array( 'run-1' ), 'owner_terminal_outcome' => 'success' )), 'array owner run references cannot establish terminal cleanup authority');
 } finally {

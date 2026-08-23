@@ -21,6 +21,7 @@ namespace {
 	require_once rtrim($wp_cli_root, '/') . '/php/WP_CLI/SynopsisValidator.php';
 
 	define('ABSPATH', __DIR__ . '/');
+	require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 	require_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
 
 	$definitions = \DataMachineCode\Cli\Commands\WorkspaceCommand::worktree_command_definitions();
@@ -48,6 +49,10 @@ namespace {
 	$parse('remove', array( 'data-machine-code', 'fix/1070' ), array());
 	$parse('finalize', array( 'data-machine-code@fix-1070' ), array( 'pr' => 'https://github.com/Extra-Chill/data-machine-code/pull/1070' ));
 	$parse('locks', array(), array( 'prune-stale' => true, 'dry-run' => true, 'format' => 'json' ));
+	$parse('abandoned', array(), array( 'apply' => true, 'limit' => '100', 'passes' => '2', 'until-budget' => '300s', 'format' => 'json' ));
+	$active_drain_synopsis = $parse('active-no-signal-drain', array(), array( 'apply' => true, 'limit' => '100', 'passes' => '2', 'until-budget' => '300s', 'format' => 'json' ));
+	$parse('active-no-signal-drain', array( 'data-machine-code' ), array( 'apply' => true, 'format' => 'json' ));
+	worktree_wp_cli_synopsis_assert(str_starts_with($active_drain_synopsis, '[<repo>]'), 'active-no-signal-drain did not render repo as an optional positional argument.');
 
 	$remove_synopsis = \WP_CLI\SynopsisParser::render($definitions['remove']['synopsis']);
 	worktree_wp_cli_synopsis_assert(str_starts_with($remove_synopsis, '<repo-or-handle> [<branch>]'), 'remove did not render branch as an optional positional argument.');

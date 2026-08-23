@@ -108,6 +108,9 @@ try {
 	);
 	assert_true('refused' === $inode_refused['status'], 'healthy bytes with insufficient inodes should refuse admission');
 	assert_true(in_array('projected_free_inodes_absolute_refusal_floor', $inode_refused['trigger_reasons'], true), 'inode refusal should have an independent trigger reason');
+	assert_true(false === $inode_refused['creation_allowed'], 'inode-only refusal must deny creation');
+	assert_true(true === $inode_refused['force_override_required'], 'inode-only refusal must require force');
+	assert_true('inodes' === ($inode_refused['typed_trigger_reasons'][0]['resource'] ?? null), 'inode-only refusal must expose its typed resource');
 	assert_true(12607200 === $inode_refused['filesystem_used_inodes'], 'used inode count should be explicit');
 	assert_true(500000 === $inode_refused['filesystem_free_inodes'], 'free inode count should be explicit');
 	assert_true(13107200 === $inode_refused['filesystem_total_inodes'], 'total inode count should be explicit');
@@ -154,6 +157,9 @@ try {
 	assert_true('refused' === $byte_only_pressure['status'], 'healthy inodes must not weaken byte refusal');
 	assert_true(in_array('projected_free_bytes_absolute_refusal_floor', $byte_only_pressure['trigger_reasons'], true), 'byte refusal remains independently visible');
 	assert_true(! in_array('projected_free_inodes_absolute_refusal_floor', $byte_only_pressure['trigger_reasons'], true), 'healthy inodes should not be mislabeled under byte pressure');
+	assert_true(false === $byte_only_pressure['creation_allowed'], 'byte-only refusal must deny creation');
+	assert_true(true === $byte_only_pressure['force_override_required'], 'byte-only refusal must require force');
+	assert_true('bytes' === ($byte_only_pressure['typed_trigger_reasons'][0]['resource'] ?? null), 'byte-only refusal must expose its typed resource');
 	assert_true(str_contains(WorktreeDiskBudget::format_trigger_reasons($byte_only_pressure)[0] ?? '', 'blocking'), 'byte refusal rendering should identify blocking meaning');
 
 	$worktree_count_warning = WorktreeDiskBudget::evaluate(
@@ -168,10 +174,21 @@ try {
 	);
 	assert_true('warning' === $worktree_count_warning['status'], 'worktree count above its threshold should warn with healthy byte and inode capacity');
 	assert_true(array( 'worktree_count_warning_threshold' ) === $worktree_count_warning['trigger_reasons'], 'worktree count warning should retain its stable reason code');
+	assert_true(true === $worktree_count_warning['creation_allowed'], 'count-only pressure must allow creation');
+	assert_true(false === $worktree_count_warning['force_override_required'], 'count-only pressure must not require force');
+	assert_true(array( array( 'code' => 'worktree_count_warning_threshold', 'severity' => 'advisory', 'resource' => 'worktree_count', 'threshold' => 'warning_floor' ) ) === $worktree_count_warning['typed_trigger_reasons'], 'count-only pressure must expose a typed advisory trigger');
 	$count_reason = WorktreeDiskBudget::format_trigger_reasons($worktree_count_warning)[0] ?? '';
 	assert_true(str_contains($count_reason, '224'), 'worktree count rendering should identify the observed count');
 	assert_true(str_contains($count_reason, '100'), 'worktree count rendering should identify the configured threshold');
 	assert_true(str_contains($count_reason, 'advisory'), 'worktree count rendering should identify advisory meaning');
+	$forced_count_warning = WorktreeDiskBudget::evaluate(
+		array( 'free_bytes' => 40 * $gib, 'total_bytes' => 100 * $gib, 'free_inodes' => 4000000, 'total_inodes' => 13107200, 'worktree_count' => 224 ),
+		$inode_thresholds,
+		true
+	);
+	assert_true(true === $forced_count_warning['creation_allowed'], 'force must preserve count-only advisory admission');
+	assert_true(false === $forced_count_warning['force_override_required'], 'count-only advisory pressure must not require force');
+	assert_true(false === $forced_count_warning['force_override_applied'], 'force must not report an override when count-only advisory pressure is already allowed');
 
 	$unsupported_inodes = WorktreeDiskBudget::evaluate(
 		array(
@@ -197,6 +214,9 @@ try {
 	);
 	assert_true('warning' === $forced_inode_pressure['status'], 'explicit force should downgrade inode refusal to a warning');
 	assert_true(true === $forced_inode_pressure['force_override_applied'], 'forced inode admission should remain explicit in evidence');
+	assert_true(true === $forced_inode_pressure['creation_allowed'], 'force must allow otherwise-blocked inode admission');
+	assert_true(true === $forced_inode_pressure['force_override_required'], 'forced inode admission must retain that force was required');
+	assert_true('blocking' === ($forced_inode_pressure['typed_trigger_reasons'][0]['severity'] ?? null), 'forced inode admission must retain its blocking trigger severity');
 
 	$projected_equality = WorktreeDiskBudget::evaluate(
 		array(
@@ -243,6 +263,52 @@ try {
 	assert_true('refused' === $large_percentage_floor['status'], 'large filesystems must retain the independent percentage refusal floor');
 	assert_true(in_array('projected_free_bytes_percentage_refusal_floor', $large_percentage_floor['trigger_reasons'], true), 'percentage refusal reason should be independently exposed');
 	assert_true(! in_array('projected_free_bytes_absolute_refusal_floor', $large_percentage_floor['trigger_reasons'], true), 'percentage pressure must not fabricate an absolute-floor reason');
+	assert_true(array( 'code' => 'projected_free_bytes_percentage_refusal_floor', 'severity' => 'blocking', 'resource' => 'bytes', 'threshold' => 'refusal_floor' ) === $large_percentage_floor['typed_trigger_reasons'][0], 'percentage byte refusal must expose a typed blocking trigger');
+
+	$percentage_thresholds = array(
+		'warn_free_bytes'           => 0,
+		'refuse_free_bytes'         => 0,
+		'warn_free_percent'         => 15.0,
+		'refuse_free_percent'       => 10.0,
+		'warn_free_inodes'          => 0,
+		'refuse_free_inodes'        => 0,
+		'warn_free_inode_percent'   => 15.0,
+		'refuse_free_inode_percent' => 10.0,
+		'warn_worktree_count'       => 100,
+	);
+	$percentage_warning = WorktreeDiskBudget::evaluate(array( 'free_bytes' => 14 * $gib, 'total_bytes' => 100 * $gib, 'free_inodes' => 140, 'total_inodes' => 1000 ), $percentage_thresholds);
+	assert_true(array( 'code' => 'projected_free_bytes_percentage_warning_floor', 'severity' => 'advisory', 'resource' => 'bytes', 'threshold' => 'warning_floor' ) === $percentage_warning['typed_trigger_reasons'][0], 'percentage byte warning must expose a typed advisory trigger');
+	assert_true(array( 'code' => 'projected_free_inodes_percentage_warning_floor', 'severity' => 'advisory', 'resource' => 'inodes', 'threshold' => 'warning_floor' ) === $percentage_warning['typed_trigger_reasons'][1], 'percentage inode warning must expose a typed advisory trigger');
+	$percentage_refusal = WorktreeDiskBudget::evaluate(array( 'free_bytes' => 9 * $gib, 'total_bytes' => 100 * $gib, 'free_inodes' => 90, 'total_inodes' => 1000 ), $percentage_thresholds);
+	assert_true(array( 'code' => 'projected_free_bytes_percentage_refusal_floor', 'severity' => 'blocking', 'resource' => 'bytes', 'threshold' => 'refusal_floor' ) === $percentage_refusal['typed_trigger_reasons'][0], 'percentage byte refusal must expose a typed blocking trigger');
+	assert_true(array( 'code' => 'projected_free_inodes_percentage_refusal_floor', 'severity' => 'blocking', 'resource' => 'inodes', 'threshold' => 'refusal_floor' ) === $percentage_refusal['typed_trigger_reasons'][1], 'percentage inode refusal must expose a typed blocking trigger');
+	$forced_percentage_refusal = WorktreeDiskBudget::evaluate(array( 'free_bytes' => 9 * $gib, 'total_bytes' => 100 * $gib, 'free_inodes' => 90, 'total_inodes' => 1000 ), $percentage_thresholds, true);
+	assert_true(true === $forced_percentage_refusal['creation_allowed'], 'force must allow percentage byte and inode refusal admission');
+	assert_true(true === $forced_percentage_refusal['force_override_required'], 'forced percentage refusal must retain that force was required');
+	assert_true(true === $forced_percentage_refusal['force_override_applied'], 'forced percentage refusal must record the applied override');
+	assert_true(array( 'code' => 'projected_free_bytes_percentage_refusal_floor', 'severity' => 'blocking', 'resource' => 'bytes', 'threshold' => 'refusal_floor' ) === $forced_percentage_refusal['typed_trigger_reasons'][0], 'forced percentage byte refusal must retain typed blocking evidence');
+	assert_true(array( 'code' => 'projected_free_inodes_percentage_refusal_floor', 'severity' => 'blocking', 'resource' => 'inodes', 'threshold' => 'refusal_floor' ) === $forced_percentage_refusal['typed_trigger_reasons'][1], 'forced percentage inode refusal must retain typed blocking evidence');
+
+	$combined_thresholds = array_merge($inode_thresholds, array(
+		'warn_free_percent'         => 0.0,
+		'refuse_free_percent'       => 0.0,
+		'warn_free_inode_percent'   => 0.0,
+		'refuse_free_inode_percent' => 0.0,
+	));
+	$combined_pressure = WorktreeDiskBudget::evaluate(
+		array( 'free_bytes' => 2 * $gib, 'total_bytes' => 100 * $gib, 'free_inodes' => 500000, 'total_inodes' => 13107200, 'worktree_count' => 224 ),
+		$combined_thresholds
+	);
+	assert_true('refused' === $combined_pressure['status'], 'combined byte, inode, and count pressure must refuse admission');
+	assert_true(false === $combined_pressure['creation_allowed'], 'combined blocking pressure must deny creation');
+	assert_true(true === $combined_pressure['force_override_required'], 'combined byte or inode pressure must require force');
+	assert_true(array( 'blocking', 'advisory', 'blocking' ) === array_column($combined_pressure['typed_trigger_reasons'], 'severity'), 'combined pressure must preserve each trigger severity in stable reason order');
+	$combined_summary = WorktreeDiskBudget::format_summary($combined_pressure);
+	assert_true(str_contains($combined_summary, 'Admission: blocked; force override required=yes; advisory triggers=worktree_count_warning_threshold; blocking triggers=projected_free_bytes_absolute_refusal_floor,projected_free_inodes_absolute_refusal_floor.'), 'human summary must distinguish advisory count pressure from byte and inode refusal');
+	$legacy_summary = WorktreeDiskBudget::format_summary(array( 'status' => 'warning', 'trigger_reasons' => array( 'worktree_count_warning_threshold' ) ));
+	assert_true(str_contains($legacy_summary, 'Admission: allowed; force override required=no; advisory triggers=worktree_count_warning_threshold; blocking triggers=none.'), 'legacy budget payloads must derive allowed advisory admission when explicit decision fields are absent');
+	$legacy_forced_summary = WorktreeDiskBudget::format_summary(array( 'status' => 'warning', 'forced' => true, 'trigger_reasons' => array( 'projected_free_bytes_percentage_refusal_floor' ) ));
+	assert_true(str_contains($legacy_forced_summary, 'Admission: allowed; force override required=yes; advisory triggers=none; blocking triggers=projected_free_bytes_percentage_refusal_floor. Force override applied=yes.'), 'legacy forced warning payloads must derive blocking override semantics from refusal reasons');
 
 	$gnu_fixture = "Filesystem Inodes IUsed IFree IUse% Mounted on\n/dev/sda 1000 750 250 75% /workspace\n";
 	$gnu = WorktreeDiskBudget::parse_inode_probe_output($gnu_fixture, 'gnu_df_i');

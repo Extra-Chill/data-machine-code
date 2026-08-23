@@ -50,10 +50,29 @@ class WorkspaceCompactOutput {
 		if ( array() === $capacity ) {
 			return array();
 		}
+		$typed_trigger_reasons = isset($capacity['typed_trigger_reasons']) && is_array($capacity['typed_trigger_reasons'])
+			? $capacity['typed_trigger_reasons']
+			: array_map(
+				static function ( string $code ): array {
+					$is_blocking = str_contains($code, '_refusal_floor');
+					return array(
+						'code'      => $code,
+						'severity'  => $is_blocking ? 'blocking' : 'advisory',
+						'resource'  => str_contains($code, '_inodes_') ? 'inodes' : ( 'worktree_count_warning_threshold' === $code ? 'worktree_count' : 'bytes' ),
+						'threshold' => $is_blocking ? 'refusal_floor' : 'warning_floor',
+					);
+				},
+				array_values(array_map('strval', (array) ( $capacity['trigger_reasons'] ?? array() )))
+			);
+		$has_blocking_trigger = array() !== array_filter($typed_trigger_reasons, static fn( array $trigger ): bool => 'blocking' === $trigger['severity']);
 
 		return self::filter_empty(array(
-			'status'         => $capacity['status'] ?? null,
-			'force_override' => isset( $capacity['force_override'] ) ? (bool) $capacity['force_override'] : null,
+			'status'                  => $capacity['status'] ?? null,
+			'force_override'          => isset( $capacity['force_override'] ) ? (bool) $capacity['force_override'] : null,
+			'creation_allowed'        => array_key_exists('creation_allowed', $capacity) ? (bool) $capacity['creation_allowed'] : ( 'refused' !== ( $capacity['status'] ?? '' ) ),
+			'force_override_required' => array_key_exists('force_override_required', $capacity) ? (bool) $capacity['force_override_required'] : $has_blocking_trigger,
+			'force_override_applied'  => array_key_exists('force_override_applied', $capacity) ? (bool) $capacity['force_override_applied'] : ( ! empty($capacity['forced']) && $has_blocking_trigger ),
+			'typed_trigger_reasons'   => $typed_trigger_reasons,
 		));
 	}
 

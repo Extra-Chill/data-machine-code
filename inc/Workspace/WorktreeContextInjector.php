@@ -340,15 +340,13 @@ class WorktreeContextInjector {
 		$malformed_ownership_fields = array();
 		foreach ( $ownership_fields as $field ) {
 			$value = $metadata[ $field ] ?? null;
-			if ( null === $value || ( is_scalar($value) && '' === trim((string) $value) ) ) {
+			if ( ! self::ownership_value_is_present($value) ) {
 				$missing_ownership_fields[] = $field;
 				continue;
 			}
 			if ( ! self::is_valid_ownership_value($field, $value) ) {
-				if ( null !== $value ) {
-					$malformed_ownership_fields[] = $field;
-				}
-				$missing_ownership_fields[] = $field;
+				$malformed_ownership_fields[] = $field;
+				$missing_ownership_fields[]   = $field;
 			}
 		}
 		$attribution = array() !== $malformed_ownership_fields ? 'malformed' : ( array() === $missing_ownership_fields ? 'attributable' : 'unattributed' );
@@ -429,6 +427,19 @@ class WorktreeContextInjector {
 			'heartbeat_age_seconds' => $age,
 			'last_seen_at'          => $last_seen_raw,
 		), $evidence);
+	}
+
+	private static function ownership_value_is_present( mixed $value ): bool {
+		if ( is_array($value) ) {
+			foreach ( $value as $nested ) {
+				if ( self::ownership_value_is_present($nested) ) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		return is_scalar($value) && '' !== trim((string) $value);
 	}
 
 	/**
@@ -546,7 +557,8 @@ class WorktreeContextInjector {
 	 * Determine whether a persisted ownership field has a producer-valid value.
 	 *
 	 * Scalars retain compatibility with legacy metadata. Structured user and
-	 * session values must match the envelopes emitted by this class.
+	 * session values preserve recursively-normalized runtime envelopes, while
+	 * scalar-only ownership fields reject array claims.
 	 *
 	 * @param mixed $value Persisted ownership value.
 	 */
@@ -557,28 +569,8 @@ class WorktreeContextInjector {
 		if ( ! is_array($value) ) {
 			return false;
 		}
-		if ( 'origin_user' === $field ) {
-			return isset($value['id'], $value['login'], $value['display_name'])
-				&& is_int($value['id'])
-				&& 0 < $value['id']
-				&& is_string($value['login'])
-				&& is_string($value['display_name']);
-		}
-		if ( 'origin_session' !== $field || ! isset($value['primary_id'], $value['ids']) || ! is_string($value['primary_id']) || '' === trim($value['primary_id']) || ! is_array($value['ids']) || array() === $value['ids'] ) {
-			return false;
-		}
-		foreach ( $value['ids'] as $runtime_id => $entry ) {
-			if ( ! is_string($runtime_id) || '' === $runtime_id || ! is_array($entry) || array() === $entry ) {
-				return false;
-			}
-			foreach ( $entry as $subkey => $identifier ) {
-				if ( ! is_string($subkey) || '' === $subkey || ! is_scalar($identifier) || '' === trim((string) $identifier) ) {
-					return false;
-				}
-			}
-		}
-
-		return true;
+		return in_array($field, array( 'origin_session', 'origin_user' ), true)
+			&& self::ownership_value_is_present($value);
 	}
 
 	/**

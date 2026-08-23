@@ -254,7 +254,25 @@ class WorkspaceCommand extends BaseCommand {
 			$definitions[ $operation ] = array(
 				'shortdesc' => 'Run the bounded abandoned-worktree cleanup orchestration.',
 				'longdesc'  => sprintf("Reconciles, classifies, and safely drains abandoned worktrees with continuation evidence.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree %s --apply --limit=100 --passes=5 --until-budget=120s --format=json", $operation),
-				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository scope.' ), $flag('apply', 'Apply eligible cleanup steps.'), $flag('force', 'Force abandoned cleanup; active/no-signal drain refuses it.'), $flag('discard-unpushed', 'Accepted for compatibility; this orchestration refuses it.'), $option('limit', 'Maximum worktrees per page.'), $option('passes', 'Maximum apply passes.'), $option('offset', 'Zero-indexed inventory offset.'), $option('stage', 'Orchestration stage.'), $option('scope', 'Operator scope label.'), $option('until-budget', 'Compact wall-clock budget.'), $format, $flag('verbose', 'Include full JSON result details.') ),
+				'synopsis'  => array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'repo',
+						'description' => 'Optional repository scope.',
+						'optional'    => true,
+					),
+					$flag('apply', 'Apply eligible cleanup steps.'),
+					$flag('force', 'Force abandoned cleanup; active/no-signal drain refuses it.'),
+					$flag('discard-unpushed', 'Accepted for compatibility; this orchestration refuses it.'),
+					$option('limit', 'Maximum worktrees per page.'),
+					$option('passes', 'Maximum apply passes.'),
+					$option('offset', 'Zero-indexed inventory offset.'),
+					$option('stage', 'Orchestration stage.'),
+					$option('scope', 'Operator scope label.'),
+					$option('until-budget', 'Compact wall-clock budget.'),
+					$format,
+					$flag('verbose', 'Include full JSON result details.'),
+				),
 			);
 		}
 
