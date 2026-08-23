@@ -1308,6 +1308,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		foreach ( $batch as $candidate ) {
 			++$processed;
 			$locked = $this->remove_cleanup_candidate_with_repo_lock($candidate, $force, false, $remove_timeout_seconds, $discard_unpushed);
+			$locked = $this->normalize_bounded_cleanup_locked_result($locked, $candidate);
 
 			if ( is_wp_error($locked) ) {
 				$skip                   = $this->build_worktree_remove_failure_skip($candidate, $locked, $remove_timeout_seconds);
@@ -1343,6 +1344,8 @@ trait WorkspaceWorktreeCleanupEngine {
 					'cleanup_reason_code'        => 'cleanup_eligible',
 					'removal_status'             => (string) ( $remove['removal_status'] ?? 'complete' ),
 					'removal_error'              => $remove['removal_error'] ?? null,
+					'local_branch_deleted'       => $remove['local_branch_deleted'] ?? null,
+					'branch_delete_error'        => $remove['branch_delete_error'] ?? null,
 					'unpushed_before_remove'     => $unpushed_count,
 					'discarded_unpushed_commits' => $discard_unpushed && $unpushed_count > 0,
 					'path_exists_after'          => is_dir($wt_path),
@@ -1430,7 +1433,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 */
 	private function build_bounded_cleanup_processed_candidate( array $candidate, string $action, array $outcome ): array {
 		$row = $candidate;
-		foreach ( array( 'dirty', 'unpushed', 'path', 'size_bytes' ) as $field ) {
+		foreach ( array( 'dirty', 'unpushed', 'path', 'size_bytes', 'removal_status', 'removal_error', 'local_branch_deleted', 'branch_delete_error', 'path_exists_after' ) as $field ) {
 			if ( array_key_exists($field, $outcome) ) {
 				$row[ $field ] = $outcome[ $field ];
 			}
@@ -1464,6 +1467,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			++$processed;
 			$reviewed_lifecycle_snapshot = is_array($candidate['metadata'] ?? null) ? $candidate['metadata'] : array();
 			$locked                      = $this->remove_cleanup_candidate_with_repo_lock($candidate, $force, $stale_liveness_only, $remove_timeout_seconds, $discard_unpushed, $reviewed_lifecycle_snapshot);
+			$locked                      = $this->normalize_bounded_cleanup_locked_result($locked, $candidate);
 
 			if ( is_wp_error($locked) ) {
 				$skipped[] = array_merge(
@@ -1486,13 +1490,15 @@ trait WorkspaceWorktreeCleanupEngine {
 			$removed[] = array_merge(
 				$validated,
 				array(
-					'size_bytes'          => $size,
-					'removed_path'        => $wt_path,
-					'path_exists_after'   => is_dir($wt_path),
-					'reason_code'         => (string) ( $remove['reason_code'] ?? ( $validated['reason_code'] ?? 'cleanup_eligible' ) ),
-					'cleanup_reason_code' => 'cleanup_eligible',
-					'removal_status'      => (string) ( $remove['removal_status'] ?? 'complete' ),
-					'removal_error'       => $remove['removal_error'] ?? null,
+					'size_bytes'           => $size,
+					'removed_path'         => $wt_path,
+					'path_exists_after'    => is_dir($wt_path),
+					'reason_code'          => (string) ( $remove['reason_code'] ?? ( $validated['reason_code'] ?? 'cleanup_eligible' ) ),
+					'cleanup_reason_code'  => 'cleanup_eligible',
+					'removal_status'       => (string) ( $remove['removal_status'] ?? 'complete' ),
+					'removal_error'        => $remove['removal_error'] ?? null,
+					'local_branch_deleted' => $remove['local_branch_deleted'] ?? null,
+					'branch_delete_error'  => $remove['branch_delete_error'] ?? null,
 				)
 			);
 			if ( null === $size ) {
@@ -1570,17 +1576,49 @@ trait WorkspaceWorktreeCleanupEngine {
 		if ( is_wp_error($result) ) {
 			return $result;
 		}
+		if ( ! is_array($result) ) {
+			return $this->normalize_bounded_cleanup_locked_result($result, $validated);
+		}
 
 		$primary_path = $this->get_primary_path($repo);
 		if ( '' !== $branch ) {
 			$delete = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)), self::CLEANUP_GIT_PROBE_TIMEOUT);
 			if ( is_wp_error($delete) ) {
 				// Branch deletion is best-effort after the worktree has been removed.
-				return $result;
+				$result['local_branch_deleted'] = false;
+				$result['branch_delete_error']  = array(
+					'code'    => $delete->get_error_code(),
+					'message' => $delete->get_error_message(),
+				);
+			} else {
+				$result['local_branch_deleted'] = true;
 			}
 		}
 
 		return array( 'validated' => $validated, 'size' => $size, 'remove' => $result );
+	}
+
+	/** Normalize the repository-lock callback contract before callers inspect it. */
+	private function normalize_bounded_cleanup_locked_result( mixed $result, array $candidate ): array|\WP_Error {
+		if ( is_wp_error($result) ) {
+			return $result;
+		}
+		if ( is_array($result)
+			&& ( ( isset($result['skipped']) && is_array($result['skipped']) )
+				|| ( is_array($result['validated'] ?? null) && array_key_exists('size', $result) && is_array($result['remove'] ?? null) ) ) ) {
+			return $result;
+		}
+
+		return array(
+			'skipped' => array_merge(
+				$candidate,
+				array(
+					'reason_code'       => 'cleanup_callback_invalid_result',
+					'reason'            => 'cleanup callback returned an unexpected result; removal completion was not inferred',
+					'path_exists_after' => is_dir( (string) ( $candidate['path'] ?? '' ) ),
+				)
+			),
+		);
 	}
 
 	/**
