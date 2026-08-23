@@ -12,6 +12,7 @@ $source = (string) file_get_contents(dirname(__DIR__) . '/inc/Workspace/Workspac
 handoff_deadline_contract_assert(str_contains($source, 'resolve_remote_default_ref($primary, $remaining)'), 'Handoff proof did not forward its remaining remote-probe deadline to remote-default resolution.');
 handoff_deadline_contract_assert(str_contains($source, 'resolve_remote_default_ref( string $repo_path, int $timeout_seconds = 0 )'), 'Remote-default resolver does not accept an explicit bounded timeout.');
 handoff_deadline_contract_assert(str_contains($source, "'symbolic-ref --quiet refs/remotes/origin/HEAD', \$timeout_seconds"), 'Remote-default resolver did not forward its timeout to run_git.');
+handoff_deadline_contract_assert(str_contains($source, "'ls-remote --symref origin HEAD', \$timeout_seconds"), 'Handoff proof did not require bounded remote default-branch evidence.');
 handoff_deadline_contract_assert(str_contains($source, "new \\WP_Error('worktree_handoff_revalidation_timeout'"), 'Bounded remote-default timeout does not produce the typed handoff timeout.');
 handoff_deadline_contract_assert(str_contains($source, 'worktree_handoff_remaining_seconds'), 'Handoff probes do not use their deadline-safe timeout conversion.');
 handoff_deadline_contract_assert(str_contains($source, 'floor($deadline - microtime(true))'), 'Handoff revalidation rounds partial GitRunner seconds beyond its remote-probe deadline.');

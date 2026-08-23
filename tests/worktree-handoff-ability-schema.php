@@ -34,7 +34,7 @@ $GLOBALS['worktree_handoff_registered'] = true;
 
 $add = $GLOBALS['worktree_handoff_abilities']['datamachine-code/workspace-worktree-add'] ?? array();
 $revalidate = $GLOBALS['worktree_handoff_abilities']['datamachine-code/workspace-worktree-handoff-revalidate'] ?? array();
-$fields = array( 'version', 'proof_id', 'handle', 'worktree_sha', 'resolved_base_ref', 'resolved_base_sha', 'remote_default_ref', 'remote_default_sha', 'digest' );
+$fields = array( 'version', 'proof_id', 'handle', 'worktree_sha', 'resolved_base_ref', 'resolved_base_sha', 'remote_default_ref', 'remote_default_sha', 'verified_at', 'digest' );
 $freshness = $add['output_schema']['properties']['handoff_freshness'] ?? array();
 worktree_handoff_schema_assert(array( 'success', 'handoff_freshness' ) === (array) ( $add['output_schema']['required'] ?? array() ), 'Add schema does not require the handoff freshness contract on successful output.');
 worktree_handoff_schema_assert(array( 'status', 'proof', 'reason', 'error_code' ) === array_keys((array) ( $freshness['properties'] ?? array() )), 'Add schema omitted the uniform handoff freshness contract.');

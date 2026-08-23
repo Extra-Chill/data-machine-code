@@ -4422,6 +4422,7 @@ class WorkspaceAbilities {
 			'resolved_base_sha'  => array( 'type' => 'string' ),
 			'remote_default_ref' => array( 'type' => 'string' ),
 			'remote_default_sha' => array( 'type' => 'string' ),
+			'verified_at'        => array( 'type' => 'string', 'format' => 'date-time' ),
 			'digest'             => array( 'type' => 'string' ),
 		);
 	}
@@ -4451,7 +4452,7 @@ class WorkspaceAbilities {
 
 	/** @return array<int,string> */
 	private static function worktreeHandoffProofSchemaRequired(): array {
-		return array( 'version', 'proof_id', 'handle', 'worktree_sha', 'resolved_base_ref', 'resolved_base_sha', 'remote_default_ref', 'remote_default_sha', 'digest' );
+		return array( 'version', 'proof_id', 'handle', 'worktree_sha', 'resolved_base_ref', 'resolved_base_sha', 'remote_default_ref', 'remote_default_sha', 'verified_at', 'digest' );
 	}
 
 	/**

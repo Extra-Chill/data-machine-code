@@ -397,7 +397,7 @@ trait WorkspaceWorktreeLifecycle {
 			return is_wp_error($head) ? $head : ( is_wp_error($base) ? $base : $default );
 		}
 		$proof           = array(
-			'version'            => 1,
+			'version'            => 2,
 			'proof_id'           => $proof_id,
 			'handle'             => $handle,
 			'worktree_sha'       => trim( (string) $head['output']),
@@ -405,6 +405,7 @@ trait WorkspaceWorktreeLifecycle {
 			'resolved_base_sha'  => trim( (string) $base['output']),
 			'remote_default_ref' => $remote_default_ref,
 			'remote_default_sha' => trim( (string) $default['output']),
+			'verified_at'        => gmdate('c'),
 		);
 		$proof['digest'] = $this->worktree_handoff_proof_digest($proof);
 		return $proof;
@@ -4469,6 +4470,20 @@ trait WorkspaceWorktreeLifecycle {
 	 * @return string|null Fully-qualified remote default ref, or null when absent.
 	 */
 	private function resolve_remote_default_ref( string $repo_path, int $timeout_seconds = 0 ): string|\WP_Error|null {
+		if ( $timeout_seconds > 0 ) {
+			$remote = $this->run_git($repo_path, 'ls-remote --symref origin HEAD', $timeout_seconds);
+			if ( is_wp_error($remote) ) {
+				if ( $this->is_git_timeout_error($remote) ) {
+					return new \WP_Error('worktree_handoff_revalidation_timeout', 'The bounded handoff remote probe deadline expired while resolving the remote default ref.', array( 'status' => 409 ));
+				}
+				return new \WP_Error('remote_default_unresolved', 'The remote default branch could not be verified. Check remote network, proxy, and credentials, then retry.', array( 'status' => 409 ));
+			}
+			if ( ! preg_match('/^ref: refs\/heads\/([^\s]+)\s+HEAD$/m', (string) ( $remote['output'] ?? '' ), $matches) ) {
+				return new \WP_Error('remote_default_unresolved', 'The remote did not advertise an unambiguous default branch. Configure the remote HEAD or retry with an explicit base branch.', array( 'status' => 409 ));
+			}
+			return 'refs/remotes/origin/' . $matches[1];
+		}
+
 		$result = $this->run_git($repo_path, 'symbolic-ref --quiet refs/remotes/origin/HEAD', $timeout_seconds);
 		if ( is_wp_error($result) ) {
 			if ( $timeout_seconds > 0 && $this->is_git_timeout_error($result) ) {

@@ -1792,10 +1792,17 @@ trait WorkspaceGitOperations {
 		$remote_head = $this->run_git($repo_path, 'ls-remote --symref ' . escapeshellarg($remote) . ' HEAD');
 		if ( is_wp_error($remote_head) ) {
 			$attempted_sources[] = array( 'source' => 'remote_symref', 'status' => 'unavailable' );
+			$error_data = (array) $remote_head->get_error_data();
+			$stderr     = trim( (string) ( $error_data['output'] ?? $remote_head->get_error_message() ) );
 			return new \WP_Error(
 				'detached_primary_default_branch_unavailable',
-				'Primary refresh is blocked: the remote default branch could not be resolved. Verify the remote and retry.',
-				array( 'status' => 409, 'attempted_sources' => $attempted_sources )
+				'Primary refresh is blocked: the remote default branch could not be resolved. Check remote network, proxy, and credentials; if the default branch is known, retry with --branch=<default-branch>.',
+				array(
+					'status'            => 409,
+					'attempted_sources' => $attempted_sources,
+					'remote_stderr'     => $stderr,
+					'retry_hint'        => 'Retry the primary refresh with --branch=<default-branch> after restoring remote network, proxy, and credentials.',
+				)
 			);
 		}
 
@@ -1905,7 +1912,17 @@ trait WorkspaceGitOperations {
 	private function verified_primary_default_ref( string $repo_path, string $remote, string $error_prefix = 'primary' ): array|\WP_Error {
 		$default = $this->run_git($repo_path, 'ls-remote --symref ' . escapeshellarg($remote) . ' HEAD');
 		if ( is_wp_error($default) ) {
-			return new \WP_Error($error_prefix . '_default_branch_unavailable', 'Primary refresh is blocked: the remote default branch could not be resolved.', array( 'status' => 409 ));
+			$error_data = (array) $default->get_error_data();
+			$stderr     = trim( (string) ( $error_data['output'] ?? $default->get_error_message() ) );
+			return new \WP_Error(
+				$error_prefix . '_default_branch_unavailable',
+				'Primary refresh is blocked: the remote default branch could not be resolved. Check remote network, proxy, and credentials; if the default branch is known, retry with --branch=<default-branch>.',
+				array(
+					'status'       => 409,
+					'remote_stderr' => $stderr,
+					'retry_hint'    => 'Retry the primary refresh with --branch=<default-branch> after restoring remote network, proxy, and credentials.',
+				)
+			);
 		}
 		if ( ! preg_match('/^ref: refs\/heads\/([^\s]+)\s+HEAD$/m', (string) ($default['output'] ?? ''), $matches) ) {
 			return new \WP_Error($error_prefix . '_default_branch_ambiguous', 'Primary refresh is blocked: the remote does not advertise an unambiguous default branch.', array( 'status' => 409 ));

@@ -507,7 +507,7 @@ try {
 	$handoff_freshness = (array) ( $result['handoff_freshness'] ?? array() );
 	$handoff_proof = (array) ( $handoff_freshness['proof'] ?? array() );
 	assert_true('verified' === ( $handoff_freshness['status'] ?? null ), 'new allocation did not issue a verified handoff freshness contract');
-	assert_true('homeboy@audit-primitives-20260616' === ( $handoff_proof['handle'] ?? '' ) && ! empty($handoff_proof['worktree_sha']) && ! empty($handoff_proof['resolved_base_sha']) && ! empty($handoff_proof['resolved_base_ref']) && ! empty($handoff_proof['remote_default_sha']) && ! empty($handoff_proof['remote_default_ref']), 'new allocation did not issue a complete handoff proof');
+	assert_true('homeboy@audit-primitives-20260616' === ( $handoff_proof['handle'] ?? '' ) && ! empty($handoff_proof['worktree_sha']) && ! empty($handoff_proof['resolved_base_sha']) && ! empty($handoff_proof['resolved_base_ref']) && ! empty($handoff_proof['remote_default_sha']) && ! empty($handoff_proof['remote_default_ref']) && ! empty($handoff_proof['verified_at']), 'new allocation did not issue a complete handoff proof');
 	$current_handoff = $workspace->worktree_handoff_revalidate((string) $result['handle'], $handoff_proof);
 	assert_true(! is_wp_error($current_handoff) && 'current' === ( $current_handoff['status'] ?? null ), 'fresh handoff proof did not revalidate as current');
 	$reordered_handoff = $handoff_proof;
