@@ -804,7 +804,7 @@ trait WorkspaceCoreUtilities {
 
 	/** Build the immutable local identity a reviewed plan must retain through apply. */
 	protected function primary_freshness_identity( string $repo_path, string $target_ref ): ?array {
-		$target = $this->run_git($repo_path, 'rev-parse --verify ' . escapeshellarg($target_ref . '^{commit}'), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$target      = $this->run_git($repo_path, 'rev-parse --verify ' . escapeshellarg($target_ref . '^{commit}'), self::CLEANUP_GIT_PROBE_TIMEOUT);
 		$remote_refs = $this->primary_remote_refs_digest($repo_path);
 		if ( is_wp_error($target) || null === $remote_refs ) {
 			return null;
