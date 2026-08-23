@@ -767,7 +767,20 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( 'table' === ( $assoc_args['format'] ?? 'table' ) ) {
-			WP_CLI::log( sprintf( 'Workspace: %s | showing %d of %d', (string) ( $result['path'] ?? '' ), (int) ( $result['returned'] ?? 0 ), (int) ( $result['total'] ?? 0 ) ) );
+			if ( ! empty( $result['partial'] ) ) {
+				$diagnostics = is_array( $result['diagnostics'] ?? null ) ? $result['diagnostics'] : array();
+				WP_CLI::log(
+					sprintf(
+						'Workspace: %s | showing %d rows; totals incomplete after %.2fs (%s). Use --all for complete inventory.',
+						(string) ( $result['path'] ?? '' ),
+						(int) ( $result['returned'] ?? 0 ),
+						(float) ( $diagnostics['scan_elapsed_seconds'] ?? 0 ),
+						(string) ( $diagnostics['budget_exhaustion_reason'] ?? 'scan budget exhausted' )
+					)
+				);
+			} else {
+				WP_CLI::log( sprintf( 'Workspace: %s | showing %d of %d', (string) ( $result['path'] ?? '' ), (int) ( $result['returned'] ?? 0 ), (int) ( $result['total'] ?? 0 ) ) );
+			}
 			if ( ! empty( $result['next_cursor'] ) ) {
 				WP_CLI::log( 'More rows: rerun with --cursor=' . (string) $result['next_cursor'] . ' (or use --all for complete expansion).' );
 			}
