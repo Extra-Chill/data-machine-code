@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.65.3] - 2026-08-23
+
+### Fixed
+- repair Homeboy workflow inputs
+
 ## [0.65.2] - 2026-08-23
 
 ### Fixed
