@@ -28,7 +28,7 @@ final class ProcessRunner {
 	 * Execute a shell command and return a normalized result envelope.
 	 *
 	 * @param  string|CommandSpec $command Shell command or argv command spec to execute.
-	 * @param  array<string,mixed> $options Execution options.
+	 * @param  array<string,mixed> $options Execution options, including at most 4 KiB of stdin.
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function run( string|CommandSpec $command, array $options = array() ): array|\WP_Error {
@@ -43,7 +43,7 @@ final class ProcessRunner {
 			return self::error($options, 'Process command environment must be an array.', array( 'status' => 400 ));
 		}
 
-		if ( ! $is_command_spec && 0 === $timeout_seconds && null === $on_output && null === $env && null === $cwd ) {
+		if ( ! $is_command_spec && 0 === $timeout_seconds && null === $on_output && null === $env && null === $cwd && ! array_key_exists('stdin', $options) ) {
 			return self::run_via_exec($command, $options, $output_cap);
 		}
 
@@ -105,6 +105,14 @@ final class ProcessRunner {
 			1 => array( 'pipe', 'w' ),
 			2 => array( 'pipe', 'w' ),
 		);
+		$stdin = isset($options['stdin']) && is_string($options['stdin']) ? $options['stdin'] : null;
+		$fail_on_output_overflow = ! empty($options['fail_on_output_overflow']);
+		if ( null !== $stdin && strlen($stdin) > 4096 ) {
+			return self::error($options, 'Process command stdin exceeds the supported limit.', array( 'status' => 400 ));
+		}
+		if ( null !== $stdin ) {
+			$descriptor_spec[0] = array( 'pipe', 'r' );
+		}
 
 		$grouped_command    = self::command_with_process_group($command, $timeout_seconds);
 		$process_command    = $grouped_command['command'];
@@ -115,6 +123,13 @@ final class ProcessRunner {
 		$process = proc_open($process_command, $descriptor_spec, $pipes, $cwd, $env, $process_options);
 		if ( ! is_resource($process) ) {
 			return self::error($options, 'Process command failed to start.', array( 'status' => 500 ));
+		}
+		if ( null !== $stdin ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- Process stdin is not a filesystem path.
+			fwrite($pipes[0], $stdin);
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- Process stdin is not a filesystem path.
+			fclose($pipes[0]);
+			unset($pipes[0]);
 		}
 
 		stream_set_blocking($pipes[1], false);
@@ -135,6 +150,19 @@ final class ProcessRunner {
 				$stdout .= $stdout_chunk;
 				$stderr .= $stderr_chunk;
 				$output .= $chunk;
+				if ( $fail_on_output_overflow && $output_cap > 0 && strlen($output) > $output_cap ) {
+					$overflow_status = proc_get_status($process);
+					$remaining = self::terminate_timed_out_process($process, $pipes, $output, $stdout, $stderr, (int) ( $overflow_status['pid'] ?? 0 ), $uses_process_group);
+					return self::error(
+						$options,
+						'Process command output exceeded the supported limit.',
+						array(
+							'output_overflow' => true,
+							'output'          => self::cap_output(trim($remaining['output']), $output_cap),
+							'cleanup'         => $remaining['cleanup'],
+						)
+					);
+				}
 				if ( null !== $on_output ) {
 					$on_output($chunk);
 				}
@@ -393,6 +421,9 @@ final class ProcessRunner {
 			}
 			if ( array_key_exists('timeout', $data) ) {
 				$result['timeout'] = (int) $data['timeout'];
+			}
+			if ( array_key_exists('output_overflow', $data) ) {
+				$result['output_overflow'] = (bool) $data['output_overflow'];
 			}
 
 			return $result;

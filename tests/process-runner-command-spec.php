@@ -102,6 +102,27 @@ process_runner_assert_not_error($result, 'ProcessRunner should execute argv spec
 process_runner_assert_same('argv-ok|' . basename($cwd), $result['stdout'], 'CommandSpec preserves argv, cwd, and env policy.');
 process_runner_assert_same('', $result['stderr'], 'CommandSpec captures stderr separately.');
 
+$stdin_result = ProcessRunner::run(
+	CommandSpec::from_argv(array( PHP_BINARY, '-r', 'fwrite(STDOUT, stream_get_contents(STDIN));' )),
+	array( 'stdin' => "/workspace/candidate\n" )
+);
+process_runner_assert_not_error($stdin_result, 'ProcessRunner should send bounded probe input through stdin.');
+process_runner_assert_same('/workspace/candidate', $stdin_result['output'], 'ProcessRunner preserves external probe stdin without shell interpolation.');
+
+$string_stdin_result = ProcessRunner::run(
+	PHP_BINARY . ' -r ' . escapeshellarg('fwrite(STDOUT, stream_get_contents(STDIN));'),
+	array( 'stdin' => "string-stdin\n" )
+);
+process_runner_assert_not_error($string_stdin_result, 'ProcessRunner should route string commands with stdin through proc_open.');
+process_runner_assert_same('string-stdin', $string_stdin_result['output'], 'String commands must not silently drop configured stdin.');
+
+$overflow = ProcessRunner::run(
+	CommandSpec::from_argv(array( PHP_BINARY, '-r', 'fwrite(STDOUT, str_repeat("x", 8192)); usleep(500000);' )),
+	array( 'output_cap_bytes' => 1024, 'fail_on_output_overflow' => true, 'error_as_result' => true )
+);
+process_runner_assert_same(false, $overflow['success'], 'Hard output limits must fail instead of retaining unbounded provider output.');
+process_runner_assert_same(true, $overflow['output_overflow'] ?? false, 'Hard output-limit failures must remain typed.');
+
 $timed_out = ProcessRunner::run(
 	CommandSpec::from_argv(array( PHP_BINARY, '-r', 'while (true) {}' )),
 	array(
