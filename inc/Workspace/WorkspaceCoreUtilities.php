@@ -767,6 +767,57 @@ trait WorkspaceCoreUtilities {
 		return sprintf('wp datamachine-code workspace git pull %s --allow-primary-refresh', $handle);
 	}
 
+	/** Store the local remote-ref identity observed by an explicit primary refresh. */
+	protected function remember_primary_freshness_evidence( string $repo_path, string $handle ): void {
+		if ( ! function_exists('update_option') ) {
+			return;
+		}
+
+		$remote_refs = $this->primary_remote_refs_digest($repo_path);
+		if ( null === $remote_refs ) {
+			return;
+		}
+
+		update_option($this->primary_freshness_option_name($handle), array( 'version' => 1, 'remote_refs_digest' => $remote_refs ));
+	}
+
+	/** Return an explicit-refresh record only while its remote refs remain unchanged. */
+	protected function primary_freshness_evidence( string $repo_path, string $handle ): ?array {
+		if ( ! function_exists('get_option') ) {
+			return null;
+		}
+
+		$evidence = get_option($this->primary_freshness_option_name($handle));
+		if ( ! is_array($evidence) || 1 !== (int) ($evidence['version'] ?? 0) || empty($evidence['remote_refs_digest']) ) {
+			return null;
+		}
+
+		$remote_refs = $this->primary_remote_refs_digest($repo_path);
+		return is_string($remote_refs) && hash_equals((string) $evidence['remote_refs_digest'], $remote_refs) ? $evidence : null;
+	}
+
+	/** Build the immutable local identity a reviewed plan must retain through apply. */
+	protected function primary_freshness_identity( string $repo_path, string $target_ref ): ?array {
+		$target = $this->run_git($repo_path, 'rev-parse --verify ' . escapeshellarg($target_ref . '^{commit}'), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$remote_refs = $this->primary_remote_refs_digest($repo_path);
+		if ( is_wp_error($target) || null === $remote_refs ) {
+			return null;
+		}
+
+		$target_head = trim((string) ($target['output'] ?? ''));
+		return '' === $target_head ? null : array( 'target_ref' => $target_ref, 'target_head' => $target_head, 'remote_refs_digest' => $remote_refs );
+	}
+
+	/** Hash origin's local tracking refs without contacting the network. */
+	private function primary_remote_refs_digest( string $repo_path ): ?string {
+		$refs = $this->run_git($repo_path, "for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin", self::CLEANUP_GIT_PROBE_TIMEOUT);
+		return is_wp_error($refs) ? null : hash('sha256', (string) ($refs['output'] ?? ''));
+	}
+
+	private function primary_freshness_option_name( string $handle ): string {
+		return 'datamachine_code_primary_freshness_' . hash('sha256', $this->workspace_path . "\0" . $handle);
+	}
+
 	/**
 	 * Guard reads from stale or otherwise unsafe primary checkouts.
 	 *

@@ -1410,7 +1410,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-worktree-plan',
 				array(
 					'label'               => 'Plan Workspace Worktree',
-					'description'         => 'Non-mutatingly resolve a managed worktree intent into a typed, digest-addressed allocation plan. The returned apply intent is revalidated against remote freshness, capacity, ownership, and destination state before mutation.',
+					'description'         => 'Resolve a managed worktree intent without network or repository mutation. Planning reuses explicit-refresh freshness evidence or returns an exact refresh command; apply revalidates the reviewed freshness identity, capacity, ownership, and destination state before mutation.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',

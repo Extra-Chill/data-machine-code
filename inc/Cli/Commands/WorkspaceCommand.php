@@ -455,7 +455,7 @@ class WorkspaceCommand extends BaseCommand {
 		);
 		$definitions['plan'] = array(
 			'shortdesc' => 'Plan a managed worktree without creating it.',
-			'longdesc'  => "Resolves the exact allocation, freshness, capacity, ownership, reuse, and bootstrap decision into a digest-addressed plan. Apply it with `worktree apply-plan` to revalidate live state before creation.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree plan data-machine-code fix/1091 --from=origin/main --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1091 --format=json",
+			'longdesc'  => "Resolves the exact allocation, freshness, capacity, ownership, reuse, and bootstrap decision without fetching or mutating repository state. If no verified explicit-refresh evidence is available, the typed result provides the exact refresh command. Apply it with `worktree apply-plan` to revalidate live state before creation.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree plan data-machine-code fix/1091 --from=origin/main --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1091 --format=json",
 			'synopsis'  => $definitions['add']['synopsis'],
 		);
 
