@@ -25,6 +25,8 @@ class WorkspaceSafeCleanupOrchestrator {
 	/** @var \DataMachineCode\Storage\CleanupRunRepositoryInterface|null */
 	private $run_repository;
 
+	private string $active_run_id = '';
+
 	/**
 	 * @param callable|null $ability_resolver Resolver receiving an ability name.
 	 * @param callable|null $lock_pruner      Callback receiving a dry-run bool.
@@ -112,11 +114,12 @@ class WorkspaceSafeCleanupOrchestrator {
 			),
 		);
 
-		$run_id = $this->create_progress_run($result, $dry_run, $limit, $passes, $cycles, $source);
+		$run_id = $this->create_progress_run($result, $dry_run, $limit, $passes, $cycles, $source, (string) ( $input['run_id'] ?? '' ), (string) ( $input['request_id'] ?? '' ));
 		if ( $run_id instanceof \WP_Error ) {
 			return $run_id;
 		}
 		$result['run_id']       = $run_id;
+		$this->active_run_id    = $run_id;
 		$result['commands']     = $this->progress_commands($run_id, $dry_run, $limit, $passes, $cycles, $input);
 		$result['continuation'] = array(
 			'run_id'           => $run_id,
@@ -286,7 +289,10 @@ class WorkspaceSafeCleanupOrchestrator {
 	}
 
 	/** @return string|\WP_Error */
-	private function create_progress_run( array $result, bool $dry_run, int $limit, int $passes, int $cycles, string $source ): string|\WP_Error {
+	private function create_progress_run( array $result, bool $dry_run, int $limit, int $passes, int $cycles, string $source, string $existing_run_id = '', string $request_id = '' ): string|\WP_Error {
+		if ( '' !== trim($existing_run_id) ) {
+			return trim($existing_run_id);
+		}
 		$repository = $this->progress_repository();
 		$run_id     = $repository->create_run(
 			array(
@@ -301,6 +307,7 @@ class WorkspaceSafeCleanupOrchestrator {
 					'passes'           => $passes,
 					'cycles'           => $cycles,
 					'source'           => $source,
+					'request_id'       => $request_id,
 				),
 				'summary'    => $this->progress_summary($result),
 			)
@@ -311,6 +318,12 @@ class WorkspaceSafeCleanupOrchestrator {
 
 	private function checkpoint_progress( string $run_id, array $result, string $status ): void {
 		$repository = $this->progress_repository();
+		if ( method_exists($repository, 'get_run') ) {
+			$existing = $repository->get_run($run_id);
+			if ( is_array($existing) && 'cancelled' === (string) ( $existing['status'] ?? '' ) ) {
+				return;
+			}
+		}
 		$fields     = array(
 			'status'  => $status,
 			'summary' => $this->progress_summary($result),
@@ -363,6 +376,7 @@ class WorkspaceSafeCleanupOrchestrator {
 			'status'   => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
 			'evidence' => sprintf('studio wp datamachine-code workspace cleanup evidence %s --format=json', $run_id),
 			'resume'   => $resume . ' --format=json',
+			'cancel'   => sprintf('studio wp datamachine-code workspace cleanup cancel %s --format=json', $run_id),
 		);
 	}
 
@@ -392,12 +406,24 @@ class WorkspaceSafeCleanupOrchestrator {
 	}
 
 	private function execute_ability( object $ability, array $input ): array|\WP_Error {
+		if ( '' !== $this->active_run_id && $this->run_is_cancelled($this->active_run_id) ) {
+			return new \WP_Error('safe_cleanup_cancelled', 'Safe workspace cleanup was cancelled while running.', array( 'status' => 409 ));
+		}
 		$executor = array( $ability, 'execute' );
 		if ( ! is_callable($executor) ) {
 			return new \WP_Error('safe_cleanup_ability_missing', 'Safe cleanup ability is not executable.', array( 'status' => 500 ));
 		}
 		$result = $executor($input);
 		return is_array($result) || is_wp_error($result) ? $result : new \WP_Error('safe_cleanup_invalid_result', 'Safe cleanup child ability returned an invalid result.', array( 'status' => 500 ));
+	}
+
+	private function run_is_cancelled( string $run_id ): bool {
+		$repository = $this->progress_repository();
+		if ( ! method_exists($repository, 'get_run') ) {
+			return false;
+		}
+		$run = $repository->get_run($run_id);
+		return is_array($run) && 'cancelled' === (string) ( $run['status'] ?? '' );
 	}
 
 	private function prune_locks( bool $dry_run ): array {

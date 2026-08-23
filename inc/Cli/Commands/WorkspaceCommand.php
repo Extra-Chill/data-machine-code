@@ -969,7 +969,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## OPTIONS
 	 *
 	 * <operation>
-	 * : Cleanup operation. One of: <safe|plan|apply|until-empty|run|status|resume|cancel|evidence>.
+		 * : Cleanup operation. One of: <safe|list|plan|apply|until-empty|run|status|resume|cancel|evidence>.
 	 *   Existing task-backed controls remain: <run|status|resume|cancel|evidence>.
 	 *
 	 * [<run-id>]
@@ -1065,9 +1065,21 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--passes=<count>]
 	 * : For `cleanup safe`, maximum child-drain passes per cycle. Defaults to 10.
 	 *
-	 * [--cycles=<count>]
-	 * : For `cleanup safe`, maximum safe cleanup cycles before stopping. Defaults to 5.
-	 *
+		 * [--cycles=<count>]
+		 * : For `cleanup safe`, maximum safe cleanup cycles before stopping. Defaults to 5.
+		 *
+		 * [--request-id=<identifier>]
+		 * : Stable caller correlation for `cleanup safe --format=json` and `cleanup list` recovery after a disconnect.
+		 *
+		 * [--status=<state>]
+		 * : For `cleanup list`, filter persisted runs by state.
+		 *
+		 * [--source=<source>]
+		 * : For `cleanup list`, filter persisted runs by caller source.
+		 *
+		 * [--since=<datetime>]
+		 * : For `cleanup list`, include runs created at or after this UTC datetime.
+		 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -1081,7 +1093,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Apply all currently safe DMC workspace cleanup and report blockers
-	 *     wp datamachine-code workspace cleanup safe --format=json
+		 *     wp datamachine-code workspace cleanup safe --format=json
+		 *
+		 *     # Recover a disconnected JSON caller by its request correlation
+		 *     wp datamachine-code workspace cleanup list --request-id=cleanup-request-123 --format=json
 	 *
 	 *     # Create a DB-backed cleanup plan for review
 	 *     wp datamachine-code workspace cleanup plan --mode=retention
@@ -1136,6 +1151,9 @@ class WorkspaceCommand extends BaseCommand {
 		switch ( $operation ) {
 			case 'safe':
 				$this->run_cleanup_safe($assoc_args);
+				return;
+			case 'list':
+				$this->run_cleanup_list($assoc_args);
 				return;
 
 			case 'plan':
@@ -1202,6 +1220,9 @@ class WorkspaceCommand extends BaseCommand {
 		if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
 			$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
 		}
+		if ( isset($assoc_args['request-id']) && '' !== trim( (string) $assoc_args['request-id']) ) {
+			$input['request_id'] = trim( (string) $assoc_args['request-id']);
+		}
 		if ( 'json' !== (string) ( $assoc_args['format'] ?? '' ) ) {
 			// JSON stdout is a terminal response contract; progress is persisted with the run.
 			$input['progress_callback'] = function ( array $progress ) use ( $assoc_args ): void {
@@ -1210,7 +1231,7 @@ class WorkspaceCommand extends BaseCommand {
 			};
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-cleanup-safe');
+		$ability = wp_get_ability('json' === (string) ( $assoc_args['format'] ?? '' ) ? 'datamachine-code/workspace-cleanup-safe-run' : 'datamachine-code/workspace-cleanup-safe');
 		if ( ! $ability ) {
 			WP_CLI::error('Safe workspace cleanup ability not available.');
 			return;
@@ -1223,6 +1244,25 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$this->render_cleanup_safe_result($result, $assoc_args);
+	}
+
+	private function run_cleanup_list( array $assoc_args ): void {
+		$ability = wp_get_ability('datamachine-code/workspace-cleanup-list');
+		if ( ! $ability ) {
+			WP_CLI::error('Workspace cleanup list ability not registered.');
+			return;
+		}
+		$input = array_intersect_key($assoc_args, array_flip(array( 'mode', 'status', 'source', 'request-id', 'since', 'limit' )));
+		if ( isset($input['request-id']) ) {
+			$input['request_id'] = $input['request-id'];
+			unset($input['request-id']);
+		}
+		$result = $ability->execute($input);
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return;
+		}
+		$this->render_cleanup_control_result($result, $assoc_args);
 	}
 
 	private function render_cleanup_safe_result( array $result, array $assoc_args ): void {

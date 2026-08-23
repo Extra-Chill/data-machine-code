@@ -352,6 +352,50 @@ class CleanupRunService {
 	}
 
 	/**
+	 * Return a bounded discovery page with recovery commands for each run.
+	 *
+	 * @param array<string,mixed> $filters Discovery filters.
+	 * @return array<string,mixed>
+	 */
+	public function list( array $filters = array() ): array {
+		$rows = $this->repository->list_runs($filters);
+		return array(
+			'success' => true,
+			'limit'   => max(1, min(100, (int) ( $filters['limit'] ?? 25 ))),
+			'filters' => array_intersect_key($filters, array_flip(array( 'mode', 'status', 'source', 'request_id', 'since' ))),
+			'runs'    => array_map(array( $this, 'discovery_row'), $rows),
+		);
+	}
+
+	/** @param array<string,mixed> $run @return array<string,mixed> */
+	private function discovery_row( array $run ): array {
+		$run_id = (string) ( $run['run_id'] ?? '' );
+		$safe   = 'safe_workspace_cleanup' === (string) ( $run['mode'] ?? '' );
+		$request_id = (string) ( $run['policy']['request_id'] ?? '' );
+		$resume = $safe
+			? 'studio wp datamachine-code workspace cleanup safe --format=json' . ( '' !== $request_id ? ' --request-id=' . escapeshellarg($request_id) : '' )
+			: sprintf('studio wp datamachine-code workspace cleanup resume %s --format=json', $run_id);
+		return array(
+			'run_id'       => $run_id,
+			'mode'         => (string) ( $run['mode'] ?? '' ),
+			'state'        => (string) ( $run['status'] ?? '' ),
+			'created_at'   => (string) ( $run['created_at'] ?? '' ),
+			'started_at'   => $run['started_at'] ?? null,
+			'completed_at' => $run['completed_at'] ?? null,
+			'source'       => (string) ( $run['policy']['source'] ?? '' ),
+			'request_id'   => $request_id,
+			'preview'      => ! empty($run['policy']['dry_run']),
+			'commands'     => array(
+				'status'   => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
+				'evidence' => sprintf('studio wp datamachine-code workspace cleanup evidence %s --format=json', $run_id),
+				// Safe runs are orchestration records, not reviewed item batches. Resume creates a new bounded safe pass.
+				'resume'   => $resume,
+				'cancel'   => sprintf('studio wp datamachine-code workspace cleanup cancel %s --format=json', $run_id),
+			),
+		);
+	}
+
+	/**
 	 * Mark pending rows cancelled.
 	 *
 	 * @param  string $run_id Run ID.
@@ -886,17 +930,8 @@ class CleanupRunService {
 		}
 
 		$state = (string) ( $safe_cleanup['state'] ?? '' );
-		if ( in_array($state, array( 'complete', 'complete_with_blockers' ), true) ) {
-			return $state;
-		}
-
-		$safe_summary = (array) ( $safe_cleanup['summary'] ?? array() );
-		if ( 'sum_of_per_reason_maximum_observations_across_stages' === (string) ( $safe_summary['blocker_count_scope'] ?? '' ) ) {
-			$current_blocker_count = (int) ( $safe_summary['current_blocker_count'] ?? 0 );
-			return $current_blocker_count > 0 ? 'complete_with_blockers' : 'complete';
-		}
-		$blocker_count = (int) ( $safe_summary['blocker_count'] ?? 0 );
-		return $blocker_count > 0 ? 'complete_with_blockers' : 'complete';
+		// Item-less orchestration has no row count that proves the task has stopped.
+		return in_array($state, array( 'complete', 'complete_with_blockers' ), true) ? $state : null;
 	}
 
 	/**

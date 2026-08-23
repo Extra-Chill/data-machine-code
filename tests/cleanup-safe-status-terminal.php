@@ -92,6 +92,10 @@ namespace {
 			$this->runs[ $run_id ] = array_merge($this->runs[ $run_id ] ?? array(), $fields);
 			return true;
 		}
+
+		public function list_runs( array $filters = array() ): array {
+			return array_values(array_filter($this->runs, static fn( array $run ): bool => ! isset($filters['request_id']) || (string) ( $run['policy']['request_id'] ?? '' ) === (string) $filters['request_id']));
+		}
 	}
 
 	final class SafeCleanupCliAbility {
@@ -111,10 +115,28 @@ namespace {
 		}
 	}
 
+	final class SafeCleanupQueuedCliAbility {
+		public function execute( array $input ): array {
+			return array(
+				'success'    => true,
+				'state'      => 'queued',
+				'run_id'     => 'cleanup-run-disconnected-safe',
+				'mode'       => 'safe_workspace_cleanup',
+				'request_id' => (string) ( $input['request_id'] ?? '' ),
+				'commands'   => array( 'status' => 'studio wp datamachine-code workspace cleanup status cleanup-run-disconnected-safe --format=json' ),
+			);
+		}
+	}
+
 	$cleanup_safe_cli_ability = new SafeCleanupCliAbility();
+	$cleanup_safe_queued_cli_ability = new SafeCleanupQueuedCliAbility();
 	if ( ! function_exists('wp_get_ability') ) {
-		function wp_get_ability( string $name ): ?SafeCleanupCliAbility {
-			return 'datamachine-code/workspace-cleanup-safe' === $name ? $GLOBALS['cleanup_safe_cli_ability'] : null;
+		function wp_get_ability( string $name ): mixed {
+			return match ( $name ) {
+				'datamachine-code/workspace-cleanup-safe' => $GLOBALS['cleanup_safe_cli_ability'],
+				'datamachine-code/workspace-cleanup-safe-run' => $GLOBALS['cleanup_safe_queued_cli_ability'],
+				default => null,
+			};
 		}
 	}
 
@@ -141,7 +163,7 @@ namespace {
 		'completed_at' => null,
 		'summary'      => array(
 			'safe_cleanup_progress' => array(
-				'state'    => 'applying',
+				'state'    => 'complete',
 				'summary'  => array( 'blocker_count' => 0 ),
 				'commands' => array(
 					'status' => 'studio wp datamachine-code workspace cleanup status cleanup-run-empty-safe --format=json',
@@ -201,6 +223,7 @@ namespace {
 		'status'  => 'applying',
 		'summary' => array(
 			'safe_cleanup_progress' => array(
+				'state'   => 'complete_with_blockers',
 				'summary' => array( 'blocker_count' => 2 ),
 			),
 		),
@@ -214,6 +237,7 @@ namespace {
 		'status'  => 'applying',
 		'summary' => array(
 			'safe_cleanup_progress' => array(
+				'state'   => 'complete',
 				'summary' => array(
 					'blocker_count'       => 2,
 					'blocker_count_scope' => 'sum_of_per_reason_maximum_observations_across_stages',
@@ -230,6 +254,7 @@ namespace {
 		'status'  => 'applying',
 		'summary' => array(
 			'safe_cleanup_progress' => array(
+				'state'   => 'complete_with_blockers',
 				'summary' => array(
 					'blocker_count'         => 2,
 					'blocker_count_scope'   => 'sum_of_per_reason_maximum_observations_across_stages',
@@ -260,14 +285,39 @@ namespace {
 	safe_status_assert_same('applying', $pending['state'] ?? null, 'Applying run with pending work should stay applying.');
 	safe_status_assert_same(true, $pending['progress']['resumable'] ?? null, 'Applying run with pending work should remain resumable.');
 
+	$repo->runs['cleanup-run-active-safe'] = array(
+		'run_id' => 'cleanup-run-active-safe', 'mode' => 'safe_workspace_cleanup', 'status' => 'applying',
+		'summary' => array( 'safe_cleanup_progress' => array( 'state' => 'applying', 'summary' => array( 'blocker_count' => 0 ) ) ),
+	);
+	$active_safe = $service->status('cleanup-run-active-safe');
+	safe_status_assert_same('applying', $active_safe['state'] ?? null, 'Concurrent polling must not terminalize an item-less safe run while its task is active.');
+
+	$repo->runs['cleanup-run-queued-safe'] = array(
+		'run_id' => 'cleanup-run-queued-safe', 'mode' => 'safe_workspace_cleanup', 'status' => 'queued',
+		'summary' => array( 'safe_cleanup_progress' => array( 'state' => 'queued', 'summary' => array() ) ),
+	);
+	$queued_safe = $service->status('cleanup-run-queued-safe');
+	safe_status_assert_same('queued', $queued_safe['state'] ?? null, 'Concurrent polling must preserve a queued item-less safe run.');
+
 	require_once dirname(__DIR__) . '/inc/Cli/CliResponseRenderer.php';
 	require_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
 	WP_CLI::$output = '';
 	$command = new DataMachineCode\Cli\Commands\WorkspaceCommand();
-	$command->cleanup(array( 'safe' ), array( 'format' => 'json' ));
+	$command->cleanup(array( 'safe' ), array( 'format' => 'json', 'request-id' => 'disconnected-client-1' ));
 	$json_output = json_decode(WP_CLI::$output, true, 512, JSON_THROW_ON_ERROR);
-	safe_status_assert_same('complete', $json_output['state'] ?? null, 'Safe cleanup JSON stdout must contain the terminal response.');
-	safe_status_assert_same(1, $json_output['summary']['cycles'] ?? null, 'Safe cleanup JSON stdout must not contain the initial progress checkpoint.');
+	safe_status_assert_same('queued', $json_output['state'] ?? null, 'Safe cleanup JSON stdout must return the durable initial envelope before child execution.');
+	safe_status_assert_same('cleanup-run-disconnected-safe', $json_output['run_id'] ?? null, 'Disconnected JSON callers must receive a resolvable safe cleanup run ID.');
+	safe_status_assert_same('disconnected-client-1', $json_output['request_id'] ?? null, 'Initial envelope must preserve request correlation.');
+
+	$repo->runs['cleanup-run-disconnected-safe'] = array(
+		'run_id' => 'cleanup-run-disconnected-safe', 'mode' => 'safe_workspace_cleanup', 'status' => 'queued', 'created_at' => gmdate('Y-m-d H:i:s'),
+		'policy' => array( 'dry_run' => true, 'source' => 'workspace_cleanup_cli', 'request_id' => 'disconnected-client-1' ),
+	);
+	$discovery = $service->list(array( 'request_id' => 'disconnected-client-1', 'limit' => 1 ));
+	safe_status_assert_same('cleanup-run-disconnected-safe', $discovery['runs'][0]['run_id'] ?? null, 'Request correlation must deterministically recover a disconnected safe run.');
+	safe_status_assert_same(true, $discovery['runs'][0]['preview'] ?? null, 'Discovery must distinguish preview safe runs.');
+	safe_status_assert_same("studio wp datamachine-code workspace cleanup safe --format=json --request-id='disconnected-client-1'", $discovery['runs'][0]['commands']['resume'] ?? null, 'Safe discovery must resume through a new bounded safe pass with preserved correlation.');
+	safe_status_assert_same('studio wp datamachine-code workspace cleanup cancel cleanup-run-disconnected-safe --format=json', $discovery['runs'][0]['commands']['cancel'] ?? null, 'Discovery rows must include canonical cancel commands.');
 
 	echo "cleanup safe status terminal test passed.\n";
 }

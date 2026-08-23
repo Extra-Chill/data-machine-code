@@ -67,7 +67,16 @@ class WorkspaceSafeCleanupTask extends SystemTask {
 	 * @param array $params Task parameters.
 	 */
 	public function executeTask( int $jobId, array $params ): void {
+		$run_id = trim( (string) ( $params['run_id'] ?? '' ) );
+		if ( '' !== $run_id ) {
+			$run = $this->run_repository()->get_run($run_id);
+			if ( is_array($run) && 'cancelled' === (string) ( $run['status'] ?? '' ) ) {
+				$this->completeJob($jobId, array( 'skipped' => true, 'reason' => 'Safe cleanup run was cancelled before execution.', 'run_id' => $run_id ));
+				return;
+			}
+		}
 		if ( ! PluginSettings::get(self::SETTING_KEY, true) ) {
+			$this->terminalize_run($run_id, 'skipped_disabled');
 			$this->completeJob(
 				$jobId,
 				array(
@@ -85,12 +94,15 @@ class WorkspaceSafeCleanupTask extends SystemTask {
 			'cycles'           => isset($params['cycles']) ? (int) $params['cycles'] : 5,
 			'until_budget'     => isset($params['until_budget']) ? (string) $params['until_budget'] : '45s',
 			'dry_run'          => ! empty($params['dry_run']),
+			'run_id'            => (string) ( $params['run_id'] ?? '' ),
+			'request_id'        => (string) ( $params['request_id'] ?? '' ),
 			'force'            => false,
 			'discard_unpushed' => false,
 		);
 		$result = $this->run_safe_cleanup($input);
 
 		if ( $result instanceof \WP_Error ) {
+			$this->terminalize_run($run_id, 'safe_cleanup_cancelled' === $result->get_error_code() ? 'cancelled' : 'failed');
 			do_action('datamachine_log', 'error', 'Safe workspace cleanup failed', array(
 				'task'  => $this->getTaskType(),
 				'jobId' => $jobId,
@@ -107,6 +119,17 @@ class WorkspaceSafeCleanupTask extends SystemTask {
 			'result' => $result,
 		));
 		$this->completeJob($jobId, $result);
+	}
+
+	protected function run_repository(): \DataMachineCode\Storage\CleanupRunRepository {
+		return new \DataMachineCode\Storage\CleanupRunRepository();
+	}
+
+	private function terminalize_run( string $run_id, string $status ): void {
+		if ( '' === $run_id ) {
+			return;
+		}
+		$this->run_repository()->update_run($run_id, array( 'status' => $status, 'completed_at' => gmdate('Y-m-d H:i:s') ));
 	}
 
 	/** @return array<string,mixed>|\WP_Error */

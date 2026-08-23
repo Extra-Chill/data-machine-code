@@ -16,6 +16,7 @@ namespace DataMachineCode\Abilities;
 
 use DataMachineCode\Support\PermissionHelper;
 use DataMachineCode\Cleanup\WorkspaceCleanupRunEvidenceStore;
+use DataMachineCode\Storage\CleanupRunRepository;
 use DataMachineCode\Workspace\CleanupRunService;
 use DataMachineCode\Workspace\RemoteWorkspaceBackend;
 use DataMachineCode\Workspace\RunnerWorkspacePublisher;
@@ -1999,6 +2000,36 @@ class WorkspaceAbilities {
 						),
 					),
 					'execute_callback'    => array( self::class, 'workspaceCleanupSafe' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-cleanup-safe-run',
+				array(
+					'label'               => 'Schedule Safe Workspace Cleanup',
+					'description'         => 'Persist and schedule bounded safe cleanup before executing child work. Returns immediately with a durable run ID.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array( 'type' => 'object', 'properties' => array(
+						'dry_run' => array( 'type' => 'boolean' ), 'limit' => array( 'type' => 'integer' ), 'passes' => array( 'type' => 'integer' ), 'cycles' => array( 'type' => 'integer' ), 'until_budget' => array( 'type' => 'string' ), 'source' => array( 'type' => 'string' ), 'request_id' => array( 'type' => 'string' ),
+					) ),
+					'output_schema'       => array( 'type' => 'object', 'properties' => array( 'success' => array( 'type' => 'boolean' ), 'run_id' => array( 'type' => 'string' ), 'state' => array( 'type' => 'string' ), 'mode' => array( 'type' => 'string' ), 'request_id' => array( 'type' => 'string' ), 'commands' => array( 'type' => 'object' ) ) ),
+					'execute_callback'    => array( self::class, 'workspaceCleanupSafeRun' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-cleanup-list',
+				array(
+					'label'               => 'List Cleanup Runs',
+					'description'         => 'Return a bounded page of persisted cleanup runs with canonical recovery commands.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array( 'type' => 'object', 'properties' => array( 'mode' => array( 'type' => 'string' ), 'status' => array( 'type' => 'string' ), 'source' => array( 'type' => 'string' ), 'request_id' => array( 'type' => 'string' ), 'since' => array( 'type' => 'string' ), 'limit' => array( 'type' => 'integer' ) ) ),
+					'output_schema'       => array( 'type' => 'object', 'properties' => array( 'success' => array( 'type' => 'boolean' ), 'runs' => array( 'type' => 'array' ) ) ),
+					'execute_callback'    => array( self::class, 'workspaceCleanupList' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
 				)
@@ -4584,6 +4615,86 @@ class WorkspaceAbilities {
 	public static function workspaceCleanupSafe( array $input ): array|\WP_Error {
 		$orchestrator = new WorkspaceSafeCleanupOrchestrator();
 		return $orchestrator->run($input);
+	}
+
+	/** Schedule a durable safe cleanup run before child work begins. */
+	public static function workspaceCleanupSafeRun( array $input ): array|\WP_Error {
+		if ( ! class_exists('\DataMachine\Engine\Tasks\TaskScheduler') ) {
+			return new \WP_Error('task_scheduler_unavailable', 'Data Machine TaskScheduler is unavailable.', array( 'status' => 500 ));
+		}
+
+		$dry_run    = ! empty($input['dry_run']);
+		$source     = trim( (string) ( $input['source'] ?? 'workspace_cleanup_cli' ) );
+		$request_id = trim( (string) ( $input['request_id'] ?? '' ) );
+		if ( '' === $request_id ) {
+			$request_id = 'cleanup-request-' . wp_generate_uuid4();
+		}
+		$repository = new CleanupRunRepository();
+		$run_id     = 'cleanup-run-request-' . substr(hash('sha256', $request_id), 0, 32);
+		$existing   = $repository->get_run($run_id);
+		if ( is_array($existing) ) {
+			return self::safeCleanupRunEnvelope($existing, $request_id);
+		}
+		$created_run_id = $repository->create_run(array(
+			'run_id'     => $run_id,
+			'mode'       => 'safe_workspace_cleanup',
+			'status'     => 'queued',
+			'policy'     => array( 'dry_run' => $dry_run, 'force' => false, 'discard_unpushed' => false, 'source' => $source, 'request_id' => $request_id ),
+			'summary'    => array( 'safe_cleanup_progress' => array( 'state' => 'queued', 'summary' => array(), 'commands' => array() ) ),
+		));
+		if ( is_wp_error($created_run_id) ) {
+			$existing = $repository->get_run($run_id);
+			return is_array($existing) ? self::safeCleanupRunEnvelope($existing, $request_id) : $created_run_id;
+		}
+
+		$params = array( 'run_id' => $run_id, 'dry_run' => $dry_run, 'source' => $source, 'request_id' => $request_id );
+		foreach ( array( 'limit', 'passes', 'cycles' ) as $field ) {
+			if ( isset($input[ $field ]) ) {
+				$params[ $field ] = (int) $input[ $field ];
+			}
+		}
+		if ( isset($input['until_budget']) ) {
+			$params['until_budget'] = (string) $input['until_budget'];
+		}
+		$scheduled = \DataMachine\Engine\Tasks\TaskScheduler::scheduleBatch('workspace_safe_cleanup', array( $params ), array());
+		if ( false === $scheduled ) {
+			$repository->update_run($run_id, array( 'status' => 'schedule_failed', 'completed_at' => gmdate('Y-m-d H:i:s') ));
+			return new \WP_Error('workspace_safe_cleanup_schedule_failed', 'Failed to schedule safe workspace cleanup.', array( 'status' => 500 ));
+		}
+		$job_id = (int) ( $scheduled['job_ids'][0] ?? $scheduled['batch_job_id'] ?? 0 );
+		if ( $job_id <= 0 ) {
+			$repository->update_run($run_id, array( 'status' => 'schedule_failed', 'completed_at' => gmdate('Y-m-d H:i:s') ));
+			return new \WP_Error('workspace_safe_cleanup_schedule_failed', 'Failed to schedule safe workspace cleanup.', array( 'status' => 500 ));
+		}
+		$repository->update_run($run_id, array( 'parent_job_id' => $job_id ));
+		$commands = self::safeCleanupRunCommands($run_id, $request_id);
+		$repository->update_run($run_id, array( 'summary' => array( 'safe_cleanup_progress' => array( 'state' => 'queued', 'summary' => array(), 'commands' => $commands ) ) ));
+		return array( 'success' => true, 'state' => 'queued', 'run_id' => $run_id, 'job_id' => $job_id, 'mode' => 'safe_workspace_cleanup', 'request_id' => $request_id, 'preview' => $dry_run, 'commands' => $commands );
+	}
+
+	/** @return array<string,string> */
+	private static function safeCleanupRunCommands( string $run_id, string $request_id ): array {
+		return array(
+			'status' => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
+			'evidence' => sprintf('studio wp datamachine-code workspace cleanup evidence %s --format=json', $run_id),
+			'resume' => 'studio wp datamachine-code workspace cleanup safe --format=json --request-id=' . escapeshellarg($request_id),
+			'cancel' => sprintf('studio wp datamachine-code workspace cleanup cancel %s --format=json', $run_id),
+		);
+	}
+
+	/** @param array<string,mixed> $run @return array<string,mixed> */
+	private static function safeCleanupRunEnvelope( array $run, string $request_id ): array {
+		$run_id = (string) ( $run['run_id'] ?? '' );
+		return array(
+			'success' => true, 'state' => (string) ( $run['status'] ?? 'queued' ), 'run_id' => $run_id,
+			'job_id' => (int) ( $run['parent_job_id'] ?? 0 ), 'mode' => 'safe_workspace_cleanup', 'request_id' => $request_id,
+			'preview' => ! empty($run['policy']['dry_run']), 'commands' => self::safeCleanupRunCommands($run_id, $request_id), 'idempotent' => true,
+		);
+	}
+
+	/** @return array<string,mixed> */
+	public static function workspaceCleanupList( array $input ): array {
+		return ( new CleanupRunService() )->list($input);
 	}
 
 	/**

@@ -121,6 +121,43 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 	}
 
 	/**
+	 * Return a bounded newest-first page of cleanup runs.
+	 *
+	 * @param array<string,mixed> $filters Supported mode, status, source, request_id, since, and limit filters.
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function list_runs( array $filters = array() ): array {
+		global $wpdb;
+
+		$limit  = max(1, min(100, (int) ( $filters['limit'] ?? 25 )));
+		$where  = array( '1=1' );
+		$values = array();
+		foreach ( array( 'mode', 'status' ) as $field ) {
+			if ( isset($filters[ $field ]) && '' !== trim( (string) $filters[ $field ]) ) {
+				$where[]  = $field . ' = %s';
+				$values[] = trim( (string) $filters[ $field ]);
+			}
+		}
+		if ( isset($filters['since']) && '' !== trim( (string) $filters['since']) ) {
+			$where[]  = 'created_at >= %s';
+			$values[] = trim( (string) $filters['since']);
+		}
+		// Source and request ID live in policy to keep the run schema generic.
+		foreach ( array( 'source', 'request_id' ) as $field ) {
+			if ( isset($filters[ $field ]) && '' !== trim( (string) $filters[ $field ]) ) {
+				$where[]  = "policy LIKE %s";
+				$values[] = '%"' . $field . '":"' . $wpdb->esc_like(trim( (string) $filters[ $field ])) . '"%';
+			}
+		}
+		$values[] = $limit;
+		// phpcs:disable WordPress.DB.PreparedSQL -- Table name derives from $wpdb prefix; predicates are prepared.
+		$sql  = 'SELECT * FROM ' . CleanupSchema::runs_table() . ' WHERE ' . implode(' AND ', $where) . ' ORDER BY created_at DESC, id DESC LIMIT %d';
+		$rows = $wpdb->get_results($wpdb->prepare($sql, ...$values), ARRAY_A);
+		// phpcs:enable WordPress.DB.PreparedSQL
+		return array_map(fn( $row ) => $this->decode_run( (array) $row), is_array($rows) ? $rows : array());
+	}
+
+	/**
 	 * Fetch items for a run.
 	 *
 	 * @param  string $run_id Run ID.

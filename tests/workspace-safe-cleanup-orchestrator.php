@@ -158,12 +158,24 @@ final class SafeCleanupFakeRunRepository implements \DataMachineCode\Storage\Cle
 		return $run_id;
 	}
 
-	public function update_run( string $run_id, array $fields ): bool {
+		public function update_run( string $run_id, array $fields ): bool {
 		$this->updates[] = array( 'run_id' => $run_id, 'fields' => $fields );
 		$this->runs[ $run_id ] = array_merge($this->runs[ $run_id ] ?? array( 'run_id' => $run_id ), $fields);
-		return true;
+			return true;
+		}
+
+		public function get_run( string $run_id ): ?array {
+			return $this->runs[ $run_id ] ?? null;
+		}
 	}
-}
+
+	final class SafeCleanupCancellingAbility {
+		public function __construct( private SafeCleanupFakeRunRepository $repository ) {}
+		public function execute( array $input ): array {
+			$this->repository->runs['cleanup-run-safe-test']['status'] = 'cancelled';
+			return array( 'success' => true, 'summary' => array() );
+		}
+	}
 
 function safe_cleanup_assert( bool $condition, string $label ): void {
 	if ( ! $condition ) {
@@ -638,13 +650,24 @@ $incomplete_active_ability = new SafeCleanupQueuedAbility(
 	)
 );
 $incomplete_run_repository = new SafeCleanupFakeRunRepository();
-$incomplete_result = ( new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+	$incomplete_result = ( new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
 	static fn() => $incomplete_active_ability,
 	static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
 	$incomplete_run_repository
 ) )->run(array());
 safe_cleanup_assert('complete_with_blockers' === ( $incomplete_result['state'] ?? null ), 'active/no-signal continuation prevents terminal complete without current backlog detail');
 safe_cleanup_assert('complete_with_blockers' === ( $incomplete_run_repository->runs['cleanup-run-safe-test']['status'] ?? null ), 'incomplete active/no-signal drain persists a non-complete terminal status');
-safe_cleanup_assert(25 === ( $incomplete_result['continuation']['active_no_signal']['next_offset'] ?? null ), 'typed active/no-signal continuation evidence is preserved');
+	safe_cleanup_assert(25 === ( $incomplete_result['continuation']['active_no_signal']['next_offset'] ?? null ), 'typed active/no-signal continuation evidence is preserved');
 
-fwrite(STDOUT, "workspace safe cleanup orchestrator test passed\n");
+	$cancellation_repository = new SafeCleanupFakeRunRepository();
+	$cancelling_ability      = new SafeCleanupCancellingAbility($cancellation_repository);
+	$cancelled_mid_run = ( new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+		static fn() => $cancelling_ability,
+		static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
+		$cancellation_repository
+	) )->run(array());
+	safe_cleanup_assert(is_wp_error($cancelled_mid_run), 'mid-run cancellation stops before the next child stage');
+	safe_cleanup_assert('safe_cleanup_cancelled' === $cancelled_mid_run->code, 'mid-run cancellation returns its durable cancellation error code');
+	safe_cleanup_assert('cancelled' === ($cancellation_repository->runs['cleanup-run-safe-test']['status'] ?? null), 'mid-run cancellation is not overwritten by later progress checkpoints');
+
+	fwrite(STDOUT, "workspace safe cleanup orchestrator test passed\n");
