@@ -87,6 +87,7 @@ compact_output_assert('unverified' === ( $worktree_add['handoff_freshness']['sta
 
 $dry_run_handoff = WorkspaceCompactOutput::worktree_add_result(array( 'success' => true, 'dry_run' => true, 'created' => false, 'handle' => 'repo@dry-run', 'handoff_freshness' => array( 'status' => 'not_applicable', 'reason' => 'non_allocation_dry_run' ) ));
 compact_output_assert('not_applicable' === ( $dry_run_handoff['handoff_freshness']['status'] ?? null ) && 'non_allocation_dry_run' === ( $dry_run_handoff['handoff_freshness']['reason'] ?? null ), 'Compact output must preserve dry-run non-allocation handoff status.');
+compact_output_assert(true === ( $dry_run_handoff['dry_run'] ?? null ) && false === ( $dry_run_handoff['created'] ?? null ), 'Compact output must preserve dry-run non-allocation state.');
 
 $legacy_forced_worktree_add = WorkspaceCompactOutput::worktree_add_result(array( 'disk_budget' => array( 'status' => 'warning', 'forced' => true, 'trigger_reasons' => array( 'projected_free_bytes_percentage_refusal_floor' ) ) ));
 compact_output_assert(true === ( $legacy_forced_worktree_add['capacity']['creation_allowed'] ?? null ), 'Compact legacy forced warning output must derive allowed admission.');
