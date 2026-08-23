@@ -954,7 +954,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-git-pull',
 				array(
 					'label'               => 'Workspace Git Pull',
-					'description'         => 'Run git pull --ff-only for a workspace handle. Primary refresh requires allow_primary_refresh=true; worktrees are always allowed.',
+					'description'         => 'Run git pull --ff-only for a workspace handle. A clean diverged primary is preserved in a managed recovery worktree before refresh. Primary refresh requires allow_primary_refresh=true; worktrees are always allowed.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -992,6 +992,10 @@ class WorkspaceAbilities {
 							'success' => array( 'type' => 'boolean' ),
 							'name'    => array( 'type' => 'string' ),
 							'message' => array( 'type' => 'string' ),
+							'primary_diverged' => array(
+								'type'        => 'object',
+								'description' => 'Typed attached-primary divergence recovery evidence, including SHAs, ahead/behind counts, preservation worktree, and reconciliation guidance.',
+							),
 						),
 					),
 					'execute_callback'    => array( self::class, 'gitPull' ),

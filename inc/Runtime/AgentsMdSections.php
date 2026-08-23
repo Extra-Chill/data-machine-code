@@ -127,7 +127,7 @@ MD;
 
 	private static function render_workspace_policy_section( string $workspace_path, string $wp ): string {
 		$default = <<<MD
-- **Primary freshness:** before using a primary checkout for investigation or verification, inspect `{$wp} datamachine-code workspace show <repo>` or `{$wp} datamachine-code workspace hygiene`. If the primary is stale, run `{$wp} datamachine-code workspace git pull <repo> --allow-primary-refresh` or create a worktree from `origin/<base>`. Stale primary reads require an explicit `--allow-stale-primary` opt-in. Do not clone a second top-level primary for the same remote just to get fresh code.
+- **Primary freshness:** before using a primary checkout for investigation or verification, inspect `{$wp} datamachine-code workspace show <repo>` or `{$wp} datamachine-code workspace hygiene`. If the primary is stale, run `{$wp} datamachine-code workspace git pull <repo> --allow-primary-refresh` or create a worktree from `origin/<base>`. A clean diverged default branch is preserved in a deterministic managed recovery worktree before the primary is refreshed; review its typed recovery evidence and reconcile that branch. Stale primary reads require an explicit `--allow-stale-primary` opt-in. Do not clone a second top-level primary for the same remote just to get fresh code.
 - **Primary is read-only.** Never edit `<workspace>/<repo>` (no `@slug`). Safe primary refresh uses `--allow-primary-refresh`; primary commit, push, reset, and rebase require the stronger `--allow-dangerous-primary-mutation` approval. The primary tracks the deployed branch — operate on a worktree.
 MD;
 

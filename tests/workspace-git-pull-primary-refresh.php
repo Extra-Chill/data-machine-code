@@ -96,6 +96,15 @@ namespace DataMachineCode\Tests {
 					return $response;
 				}
 			}
+			if ( str_contains($command, 'ls-remote --symref') ) {
+				return array( 'output' => "ref: refs/heads/main\tHEAD\n" );
+			}
+			if ( str_contains($command, 'rev-list --left-right --count') ) {
+				return array( 'output' => "0\t0" );
+			}
+			if ( str_contains($command, 'rev-parse --verify') ) {
+				return array( 'output' => 'abcabcabcabcabcabcabcabcabcabcabcabcabca' );
+			}
 
 			return array( 'output' => 'Already up to date.' );
 		}
@@ -311,6 +320,15 @@ namespace DataMachineCode\Tests {
 	$result = $explicit_branch->git_pull('data-machine-code', false, true, 'origin', 'main');
 	assert_same(true, $result['success'] ?? null, 'explicit branch override did not advance pull');
 	assert_same(false, $explicit_branch->ran_command_containing('symbolic-ref --quiet'), 'explicit branch override resolved the default branch');
+
+	// Detached-primary callers retain the established fetch failure code.
+	$detached_fetch = new GitPullWorkspaceDouble();
+	$detached_fetch->current_branch = 'HEAD';
+	$detached_fetch->responses = array(
+		'fetch --no-tags' => new \WP_Error('git_command_failed', 'fetch failed'),
+	);
+	$result = $detached_fetch->git_pull('data-machine-code', false, true);
+	assert_true($result instanceof \WP_Error && 'detached_primary_fetch_failed' === $result->code, 'detached primary fetch failure code changed');
 
 	fwrite(STDOUT, "workspace git pull primary refresh passed\n");
 }
