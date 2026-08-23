@@ -75,6 +75,18 @@ trait WorkspaceGitOperations {
 	 * @return array
 	 */
 	public function git_pull( string $handle, bool $allow_dirty = false, bool $allow_primary_mutation = false, string $remote = 'origin', ?string $branch = null ): array|\WP_Error {
+		$parsed = $this->parse_handle($handle);
+
+		return $this->with_workspace_repo_mutation_lock(
+			$parsed['repo'],
+			fn() => $this->git_pull_locked($handle, $allow_dirty, $allow_primary_mutation, $remote, $branch)
+		);
+	}
+
+	/**
+	 * Perform a pull after acquiring the primary repository mutation lock.
+	 */
+	private function git_pull_locked( string $handle, bool $allow_dirty, bool $allow_primary_mutation, string $remote, ?string $branch ): array|\WP_Error {
 		$mutation = $this->prepare_git_mutation($handle, 'git pull', $allow_primary_mutation, false, 'Pass allow_primary_refresh=true to refresh it');
 		if ( is_wp_error($mutation) ) {
 			return $mutation;
@@ -161,6 +173,19 @@ trait WorkspaceGitOperations {
 		}
 
 		return $response;
+	}
+
+	/**
+	 * Run a Git mutation while holding the primary repository's shared lock.
+	 *
+	 * A worktree's Git metadata is stored by its primary checkout, so pulls for
+	 * both handle shapes must finish their post-processing and release this lock
+	 * before the CLI reports a successful mutation.
+	 *
+	 * @param callable(): mixed $callback Mutation and post-processing work.
+	 */
+	protected function with_workspace_repo_mutation_lock( string $repo, callable $callback ): mixed {
+		return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, $callback);
 	}
 
 	/**

@@ -40,6 +40,7 @@ namespace DataMachineCode\Tests {
 
 		public array $emitted = array();
 		public array $commands = array();
+		public array $lock_states = array();
 
 		/**
 		 * Optional canned responses keyed by a substring of the git command.
@@ -78,6 +79,15 @@ namespace DataMachineCode\Tests {
 
 		protected function ensure_primary_mutation_allowed( array $parsed, bool $allow_primary_mutation, string $message ): true {
 			return true;
+		}
+
+		protected function with_workspace_repo_mutation_lock( string $repo, callable $callback ): mixed {
+			$this->lock_states[] = array( 'status' => 'acquired', 'repo' => $repo );
+			try {
+				return $callback();
+			} finally {
+				$this->lock_states[] = array( 'status' => 'released', 'repo' => $repo );
+			}
 		}
 
 		protected function git_get_branch( string $repo_path ): ?string {
@@ -144,6 +154,14 @@ namespace DataMachineCode\Tests {
 	$primary = new GitPullWorkspaceDouble();
 	$result  = $primary->git_pull('data-machine-code', false, true);
 	assert_same(true, $result['success'] ?? null, 'primary pull did not succeed');
+	assert_same(
+		array(
+			array( 'status' => 'acquired', 'repo' => 'data-machine-code' ),
+			array( 'status' => 'released', 'repo' => 'data-machine-code' ),
+		),
+		$primary->lock_states,
+		'primary pull did not release its shared mutation lock before returning'
+	);
 	assert_same(
 		array(
 			array(

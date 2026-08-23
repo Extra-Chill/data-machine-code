@@ -41,6 +41,7 @@ namespace DataMachineCode\Tests\DetachedPrimary {
 		protected function resolve_repo_path( string $handle ): string { return $this->path; }
 		protected function ensure_git_mutation_allowed( string $repo ): true { return true; }
 		protected function ensure_primary_mutation_allowed( array $parsed, bool $allow, string $message = '' ): true { return true; }
+		protected function with_workspace_repo_mutation_lock( string $repo, callable $callback ): mixed { return $callback(); }
 		public function git_status( string $handle ): array { return array( 'dirty' => '' === trim(run($this->path, 'status --porcelain')) ? 0 : 1 ); }
 		protected function git_get_branch( string $path ): ?string { $branch = run_allow_fail($path, 'rev-parse --abbrev-ref HEAD'); return 0 === $branch['code'] ? trim($branch['output']) : null; }
 		protected function emit_workspace_changed( string $op, string $repo, string $name, string $path ): void {}

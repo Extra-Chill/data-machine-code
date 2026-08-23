@@ -55,6 +55,7 @@ namespace {
 		$marker    = (string) ( $argv[3] ?? '' );
 		$commands  = array(
 			'show'     => array( 'wp', 'datamachine-code', 'workspace', 'show', 'data-machine-code' ),
+			'pull'     => array( 'wp', 'datamachine-code', 'workspace', 'git', 'pull', 'data-machine-code', '--allow-primary-refresh' ),
 			'finalize' => array( 'wp', 'datamachine-code', 'workspace', 'worktree', 'finalize', 'data-machine-code@issue-1068', '--pr=https://example.test/pr/1068' ),
 			'remove'   => array( 'wp', 'datamachine-code', 'workspace', 'worktree', 'remove', 'data-machine-code@issue-1068' ),
 			'locks'    => array( 'wp', 'datamachine-code', 'workspace', 'worktree', 'locks', '--format=json' ),
@@ -70,6 +71,11 @@ namespace {
 		do_action('plugins_loaded');
 		bounded_exit_assert(isset(WP_CLI::$commands['datamachine-code workspace']), 'Workspace command was not registered.');
 
+		if ( 'pull' === $operation ) {
+			file_put_contents($marker, 'fast-forwarded');
+			file_put_contents($marker . '.post-processing', 'complete');
+			file_put_contents($marker . '.lock', 'released');
+		}
 		if ( 'finalize' === $operation ) {
 			file_put_contents($marker, 'committed');
 		}
@@ -80,7 +86,8 @@ namespace {
 		exit(0);
 	}
 
-	$operations = array( 'show', 'finalize', 'remove', 'locks', 'list' );
+	$operations = array( 'show', 'pull', 'finalize', 'remove', 'locks', 'list' );
+	$max_elapsed = 0.0;
 	foreach ( $operations as $operation ) {
 		$marker = tempnam(sys_get_temp_dir(), 'dmc-bounded-exit-');
 		$start  = microtime(true);
@@ -92,6 +99,7 @@ namespace {
 		fclose($pipes[2]);
 		$status  = proc_close($process);
 		$elapsed = microtime(true) - $start;
+		$max_elapsed = max($max_elapsed, $elapsed);
 
 		bounded_exit_assert(0 === $status, "{$operation} lifecycle process failed: {$error}");
 		bounded_exit_assert(str_contains($output, "output-complete {$operation}"), "{$operation} did not complete output.");
@@ -99,8 +107,15 @@ namespace {
 		if ( 'finalize' === $operation ) {
 			bounded_exit_assert('committed' === file_get_contents($marker), 'Finalize did not durably commit before its output-complete boundary.');
 		}
+		if ( 'pull' === $operation ) {
+			bounded_exit_assert('fast-forwarded' === file_get_contents($marker), 'Primary refresh did not complete its fast-forward before output-complete.');
+			bounded_exit_assert('complete' === file_get_contents($marker . '.post-processing'), 'Primary refresh did not complete post-processing before output-complete.');
+			bounded_exit_assert('released' === file_get_contents($marker . '.lock'), 'Primary refresh did not release its mutation lock before output-complete.');
+			unlink($marker . '.post-processing');
+			unlink($marker . '.lock');
+		}
 		unlink($marker);
 	}
 
-	echo "workspace-cli-bounded-exit: ok\n";
+	echo sprintf("workspace-cli-bounded-exit: ok (max %.3fs)\n", $max_elapsed);
 }
