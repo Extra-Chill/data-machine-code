@@ -266,6 +266,12 @@ final class WorktreeDiskBudget {
 		$warn_inode_shortfall   = null === $projected_free_inodes ? null : max(0, $effective_warn_inodes - $projected_free_inodes + 1);
 		$typed_trigger_reasons  = self::typed_trigger_reasons($trigger_reasons);
 		$has_blocking_trigger   = array_filter($typed_trigger_reasons, static fn( array $trigger ): bool => 'blocking' === $trigger['severity']);
+		$admission_exception    = self::percentage_byte_floor_exception($demand, $typed_trigger_reasons, $thresholds, $projected_free_bytes, $projected_free_inodes);
+		$exception_allowed      = 'admitted' === $admission_exception['status'];
+		if ( $exception_allowed ) {
+			$refused = false;
+			$status  = 'warning';
+		}
 		$floor_shortfalls       = array(
 			'refuse_bytes_absolute'    => null === $projected_free_bytes ? null : max(0, (int) $thresholds['refuse_free_bytes'] - $projected_free_bytes + 1),
 			'refuse_bytes_percentage'  => null === $projected_free_bytes || null === $refuse_percent_bytes ? null : max(0, $refuse_percent_bytes - $projected_free_bytes + 1),
@@ -349,6 +355,7 @@ final class WorktreeDiskBudget {
 			'forced'                       => $forced,
 			'status'                       => $status,
 			'creation_allowed'             => ! $refused,
+			'admission_exception'          => $admission_exception,
 			'warnings'                     => $warnings,
 			'emergency_triggered'          => array() !== $trigger_reasons,
 			'trigger_reasons'              => $trigger_reasons,
@@ -357,8 +364,51 @@ final class WorktreeDiskBudget {
 			'artifact_cleanup_command'     => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
 			'emergency_cleanup_command'    => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
 			'cleanup_recommendations'      => self::cleanup_recommendations($projected_free_bytes, $effective_refuse_bytes),
-			'force_override_required'      => array() !== $has_blocking_trigger,
+			'force_override_required'      => ! $exception_allowed && array() !== $has_blocking_trigger,
 			'force_override_applied'       => $forced && array() !== $has_blocking_trigger,
+		);
+	}
+
+	/** Admit an explicitly requested, small, calibrated demand past only the byte percentage refusal floor. */
+	private static function percentage_byte_floor_exception( array $demand, array $triggers, array $thresholds, ?int $projected_free_bytes, ?int $projected_free_inodes ): array {
+		$requested = ! empty($demand['allow_percentage_byte_floor_exception']);
+		$source    = (string) ($demand['source'] ?? 'not_provided');
+		$bytes     = isset($demand['bytes']) && is_numeric($demand['bytes']) ? max(0, (int) $demand['bytes']) : 0;
+		$maximum   = 64 * 1024 * 1024;
+		if ( function_exists('apply_filters') ) {
+			$maximum = max(1, (int) apply_filters('datamachine_code_worktree_percentage_byte_floor_exception_max_demand_bytes', $maximum, $demand));
+		}
+		$blocking = array_values(array_map(static fn( array $trigger ): string => (string) ($trigger['code'] ?? ''), array_filter($triggers, static fn( array $trigger ): bool => 'blocking' === ($trigger['severity'] ?? ''))));
+		$trusted  = in_array($source, array( 'conservative_defaults', 'compatible_observed_percentile', 'post_materialization_target_tree_conservative' ), true);
+		$status   = 'not_requested';
+		$reason   = null;
+		if ( $requested ) {
+			if ( array( 'projected_free_bytes_percentage_refusal_floor' ) !== $blocking ) {
+				$status = 'rejected';
+				$reason = 'not_percentage_byte_floor_only';
+			} elseif ( ! $trusted ) {
+				$status = 'rejected';
+				$reason = 'untrusted_demand_source';
+			} elseif ( 0 === $bytes || $bytes >= $maximum ) {
+				$status = 'rejected';
+				$reason = 'demand_exceeds_bounded_ceiling';
+			} else {
+				$status = 'admitted';
+			}
+		}
+		return array(
+			'type'                           => 'percentage_byte_floor_demand_bounded',
+			'operator_intent'                => $requested,
+			'status'                         => $status,
+			'rejection_reason'               => $reason,
+			'waived_trigger'                 => 'admitted' === $status ? 'projected_free_bytes_percentage_refusal_floor' : null,
+			'blocking_triggers'              => $blocking,
+			'demand_bytes'                   => $bytes,
+			'maximum_demand_bytes'           => $maximum,
+			'demand_source'                  => $source,
+			'trusted_demand_source'          => $trusted,
+			'projected_post_create_capacity' => array( 'free_bytes' => $projected_free_bytes, 'free_inodes' => $projected_free_inodes ),
+			'retained_hard_floors'           => array( 'refuse_free_bytes' => (int) $thresholds['refuse_free_bytes'], 'refuse_free_inodes' => (int) $thresholds['refuse_free_inodes'], 'refuse_free_inode_percent' => (float) $thresholds['refuse_free_inode_percent'] ),
 		);
 	}
 

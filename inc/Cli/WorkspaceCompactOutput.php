@@ -73,6 +73,27 @@ class WorkspaceCompactOutput {
 			'force_override_required' => array_key_exists('force_override_required', $capacity) ? (bool) $capacity['force_override_required'] : $has_blocking_trigger,
 			'force_override_applied'  => array_key_exists('force_override_applied', $capacity) ? (bool) $capacity['force_override_applied'] : ( ! empty($capacity['forced']) && $has_blocking_trigger ),
 			'typed_trigger_reasons'   => $typed_trigger_reasons,
+			'admission_exception'     => self::admission_exception_summary((array) ($capacity['admission_exception'] ?? array())),
+		));
+	}
+
+	/** Preserve the required operator-facing exception proof without full diagnostics. */
+	private static function admission_exception_summary( array $exception ): array {
+		if ( array() === $exception || 'not_requested' === ($exception['status'] ?? null) ) {
+			return array();
+		}
+		return self::filter_empty(array(
+			'type'                           => $exception['type'] ?? null,
+			'operator_intent'                => isset($exception['operator_intent']) ? (bool) $exception['operator_intent'] : null,
+			'status'                         => $exception['status'] ?? null,
+			'rejection_reason'               => $exception['rejection_reason'] ?? null,
+			'waived_trigger'                 => $exception['waived_trigger'] ?? null,
+			'blocking_triggers'              => $exception['blocking_triggers'] ?? null,
+			'demand_bytes'                   => $exception['demand_bytes'] ?? null,
+			'maximum_demand_bytes'           => $exception['maximum_demand_bytes'] ?? null,
+			'demand_source'                  => $exception['demand_source'] ?? null,
+			'projected_post_create_capacity' => $exception['projected_post_create_capacity'] ?? null,
+			'retained_hard_floors'           => $exception['retained_hard_floors'] ?? null,
 		));
 	}
 
