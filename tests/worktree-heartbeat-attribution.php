@@ -30,4 +30,12 @@ heartbeat_attribution_assert_same(WorktreeContextInjector::LIVENESS_STALE, $attr
 heartbeat_attribution_assert_same('attributable', $attributed['attribution'], 'complete ownership is attributable');
 heartbeat_attribution_assert_same(array(), $attributed['missing_ownership_fields'], 'complete ownership has no missing fields');
 
+$structured = WorktreeContextInjector::classify_liveness(array( 'origin_agent' => 'agent', 'origin_session' => array( 'ids' => array( 'runtime' => 'session' ) ), 'origin_user' => array( 'login' => 'user' ), 'owner_run_ref' => 'run-1' ), $now, 60);
+heartbeat_attribution_assert_same('attributable', $structured['attribution'], 'structured ownership envelopes are attributable');
+heartbeat_attribution_assert_same(array(), $structured['missing_ownership_fields'], 'structured ownership envelopes have no missing fields');
+
+$empty_structured = WorktreeContextInjector::classify_liveness(array( 'origin_agent' => array(), 'origin_session' => array( 'ids' => array() ), 'origin_user' => new \stdClass(), 'owner_run_ref' => ' ' ), $now, 60);
+heartbeat_attribution_assert_same('unattributed', $empty_structured['attribution'], 'empty or unsupported ownership envelopes are unattributed');
+heartbeat_attribution_assert_same(array( 'origin_agent', 'origin_session', 'origin_user', 'owner_run_ref' ), $empty_structured['missing_ownership_fields'], 'empty ownership envelopes report deterministic missing fields');
+
 echo "worktree-heartbeat-attribution: ok\n";

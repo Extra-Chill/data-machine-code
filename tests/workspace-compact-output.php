@@ -57,10 +57,13 @@ $worktree_add = WorkspaceCompactOutput::worktree_add_result(
 		'slug'           => 'bounded-output',
 		'created_branch' => true,
 		'disk_budget'    => array(
-			'status'                 => 'warn',
+			'status'                  => 'warn',
+			'creation_allowed'        => true,
+			'force_override_required' => false,
 			'free_bytes'             => 500000,
 			'projected_demand_bytes' => 200000,
 			'trigger_reasons'        => array( 'low_free_space' ),
+			'typed_trigger_reasons'  => array( array( 'code' => 'worktree_count_warning_threshold', 'severity' => 'advisory', 'resource' => 'worktree_count', 'threshold' => 'warning_floor' ) ),
 			'calibration'            => array_fill(0, 20, str_repeat('x', 100)),
 		),
 		'bootstrap'      => array(
@@ -76,6 +79,14 @@ $worktree_add = WorkspaceCompactOutput::worktree_add_result(
 compact_output_assert('repo@bounded-output' === ( $worktree_add['handle'] ?? null ), 'Compact worktree add output must preserve identity.');
 compact_output_assert('origin/main' === ( $worktree_add['base'] ?? null ), 'Compact worktree add output must preserve the requested base.');
 compact_output_assert('warn' === ( $worktree_add['capacity']['status'] ?? null ), 'Compact worktree add output must preserve capacity decision.');
+compact_output_assert(true === ( $worktree_add['capacity']['creation_allowed'] ?? null ), 'Compact worktree add output must expose admission permission.');
+compact_output_assert(false === ( $worktree_add['capacity']['force_override_required'] ?? null ), 'Compact worktree add output must expose whether force is required.');
+compact_output_assert('advisory' === ( $worktree_add['capacity']['typed_trigger_reasons'][0]['severity'] ?? null ), 'Compact worktree add output must expose typed trigger severity.');
+
+$legacy_forced_worktree_add = WorkspaceCompactOutput::worktree_add_result(array( 'disk_budget' => array( 'status' => 'warning', 'forced' => true, 'trigger_reasons' => array( 'projected_free_bytes_percentage_refusal_floor' ) ) ));
+compact_output_assert(true === ( $legacy_forced_worktree_add['capacity']['creation_allowed'] ?? null ), 'Compact legacy forced warning output must derive allowed admission.');
+compact_output_assert(true === ( $legacy_forced_worktree_add['capacity']['force_override_required'] ?? null ), 'Compact legacy forced warning output must derive required override semantics.');
+compact_output_assert(true === ( $legacy_forced_worktree_add['capacity']['force_override_applied'] ?? null ), 'Compact legacy forced warning output must derive applied override semantics.');
 compact_output_assert(! isset($worktree_add['capacity']['calibration']), 'Compact worktree add output must omit full capacity diagnostics.');
 compact_output_assert(! isset($worktree_add['capacity']['free_bytes']) && ! isset($worktree_add['capacity']['projected_demand_bytes']), 'Compact worktree add output must omit disk and demand projections.');
 compact_output_assert(! isset($worktree_add['bootstrap']['steps'][0]['output_tail']), 'Compact worktree add output must omit bootstrap output tails.');

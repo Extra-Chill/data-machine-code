@@ -412,7 +412,7 @@ trait WorkspaceWorktreeLifecycle {
 		$operation_timeout  = self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		$operation_started  = microtime(true);
 		$operation_deadline = $operation_started + $operation_timeout;
-		$capacity_timeout   = $this->worktree_operation_remaining_seconds($operation_deadline);
+		$capacity_timeout   = self::worktree_capacity_admission_wait_seconds($operation_deadline);
 		if ( $capacity_timeout <= 0 ) {
 			return $this->worktree_operation_timeout('capacity_lock_wait', $operation_timeout, $operation_started);
 		}
@@ -429,6 +429,13 @@ trait WorkspaceWorktreeLifecycle {
 		$preflight = $this->worktree_operation_lock_result($preflight, 'repo_preflight_lock_wait', $operation_timeout, $operation_started);
 		if ( is_wp_error($preflight) ) {
 			return $preflight;
+		}
+
+		// Preflight shares the operation budget. Recompute before joining the
+		// global queue so a slow fetch/plan cannot receive a second full wait.
+		$capacity_timeout = self::worktree_capacity_admission_wait_seconds($operation_deadline);
+		if ( $capacity_timeout <= 0 ) {
+			return $this->worktree_operation_timeout('capacity_lock_wait', $operation_timeout, $operation_started);
 		}
 
 		$locked = WorkspaceMutationLock::with_repo(
@@ -551,6 +558,24 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		return max(1, $timeout);
+	}
+
+	/** Return the bounded wait used to turn capacity contention into an observable result. */
+	public static function worktree_capacity_admission_timeout_seconds(): int {
+		$timeout = 30;
+		if ( function_exists('apply_filters') ) {
+			$timeout = (int) apply_filters('datamachine_code_worktree_capacity_admission_timeout_seconds', $timeout);
+		}
+
+		return max(1, $timeout);
+	}
+
+	/** Bound capacity-lock admission by both the operation deadline and its wait cap. */
+	private static function worktree_capacity_admission_wait_seconds( float $operation_deadline, ?float $now = null ): int {
+		$now       = $now ?? microtime(true);
+		$remaining = max(0, (int) ceil($operation_deadline - $now));
+
+		return min($remaining, self::worktree_capacity_admission_timeout_seconds());
 	}
 
 	/** Resolve the aggregate deadline covering create, rebase, and bootstrap. */
@@ -3944,6 +3969,7 @@ trait WorkspaceWorktreeLifecycle {
 					'timed_out'                 => true,
 					'operation_timeout_seconds' => $timeout,
 					'elapsed_seconds'           => null === $elapsed ? null : round($elapsed, 3),
+					'retryable'                 => true,
 					'progress'                  => array( 'phase' => $phase, 'state' => 'timed_out' ),
 				),
 				$extra
@@ -3970,7 +3996,27 @@ trait WorkspaceWorktreeLifecycle {
 			'lock_key'            => $data['lock_key'] ?? null,
 			'wait_timeout_seconds' => $data['wait_timeout_seconds'] ?? null,
 		));
-		return $this->worktree_operation_timeout($phase, $timeout, $started, array( 'lock_owner' => $owner ));
+		$admission = array_filter(
+			array(
+				'request_id'             => $data['request_id'] ?? null,
+				'queue_position'         => $data['queue_position'] ?? null,
+				'owner'                  => $data['owner'] ?? null,
+				'retry_after_seconds'    => $data['retry_after_seconds'] ?? null,
+				'estimated_wait_seconds' => $data['estimated_wait_seconds'] ?? null,
+				'eta_status'             => $data['eta_status'] ?? null,
+				'retry_command'          => $data['retry_command'] ?? null,
+			),
+			static fn( mixed $value ): bool => null !== $value && '' !== $value
+		);
+		return $this->worktree_operation_timeout(
+			$phase,
+			$timeout,
+			$started,
+			array(
+				'lock_owner' => $owner,
+				'admission'  => array_merge(array( 'mutation_committed' => false ), $admission),
+			)
+		);
 	}
 
 	/**

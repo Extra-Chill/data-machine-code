@@ -264,6 +264,8 @@ final class WorktreeDiskBudget {
 		$warn_byte_shortfall    = null === $projected_free_bytes ? null : max(0, $effective_warn_bytes - $projected_free_bytes + 1);
 		$refuse_inode_shortfall = null === $projected_free_inodes ? null : max(0, $effective_refuse_inodes - $projected_free_inodes + 1);
 		$warn_inode_shortfall   = null === $projected_free_inodes ? null : max(0, $effective_warn_inodes - $projected_free_inodes + 1);
+		$typed_trigger_reasons  = self::typed_trigger_reasons($trigger_reasons);
+		$has_blocking_trigger   = array_filter($typed_trigger_reasons, static fn( array $trigger ): bool => 'blocking' === $trigger['severity']);
 		$floor_shortfalls       = array(
 			'refuse_bytes_absolute'    => null === $projected_free_bytes ? null : max(0, (int) $thresholds['refuse_free_bytes'] - $projected_free_bytes + 1),
 			'refuse_bytes_percentage'  => null === $projected_free_bytes || null === $refuse_percent_bytes ? null : max(0, $refuse_percent_bytes - $projected_free_bytes + 1),
@@ -346,15 +348,17 @@ final class WorktreeDiskBudget {
 			'warn_worktree_count'          => $thresholds['warn_worktree_count'],
 			'forced'                       => $forced,
 			'status'                       => $status,
+			'creation_allowed'             => ! $refused,
 			'warnings'                     => $warnings,
 			'emergency_triggered'          => array() !== $trigger_reasons,
 			'trigger_reasons'              => $trigger_reasons,
+			'typed_trigger_reasons'        => $typed_trigger_reasons,
 			'cleanup_dry_run_command'      => 'studio wp datamachine-code workspace worktree cleanup --dry-run',
 			'artifact_cleanup_command'     => 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json',
 			'emergency_cleanup_command'    => 'studio wp datamachine-code workspace worktree emergency-cleanup --format=json',
 			'cleanup_recommendations'      => self::cleanup_recommendations($projected_free_bytes, $effective_refuse_bytes),
-			'force_override_required'      => $refused,
-			'force_override_applied'       => $forced && ! empty($warnings),
+			'force_override_required'      => array() !== $has_blocking_trigger,
+			'force_override_applied'       => $forced && array() !== $has_blocking_trigger,
 		);
 	}
 
@@ -492,8 +496,52 @@ final class WorktreeDiskBudget {
 				self::bytes_to_gib( (int) $budget['shared_usage_estimate_bytes'] )
 			);
 		}
+		$advisory              = array();
+		$blocking              = array();
+		$typed_trigger_reasons = isset($budget['typed_trigger_reasons']) && is_array($budget['typed_trigger_reasons'])
+			? $budget['typed_trigger_reasons']
+			: self::typed_trigger_reasons( (array) ( $budget['trigger_reasons'] ?? array() ) );
+		foreach ( $typed_trigger_reasons as $trigger ) {
+			$trigger = (array) $trigger;
+			$code    = (string) ( $trigger['code'] ?? '' );
+			if ( '' === $code ) {
+				continue;
+			}
+			if ( 'blocking' === ( $trigger['severity'] ?? '' ) ) {
+				$blocking[] = $code;
+			} else {
+				$advisory[] = $code;
+			}
+		}
+		$has_blocking_trigger = array() !== $blocking;
+		$force_required       = array_key_exists('force_override_required', $budget) ? (bool) $budget['force_override_required'] : $has_blocking_trigger;
+		$force_applied        = array_key_exists('force_override_applied', $budget) ? (bool) $budget['force_override_applied'] : ( ! empty($budget['forced']) && $has_blocking_trigger );
+		$summary .= sprintf(
+			' Admission: %s; force override required=%s; advisory triggers=%s; blocking triggers=%s.',
+			array_key_exists('creation_allowed', $budget) ? ( ! empty($budget['creation_allowed']) ? 'allowed' : 'blocked' ) : ( 'refused' === ( $budget['status'] ?? '' ) ? 'blocked' : 'allowed' ),
+			$force_required ? 'yes' : 'no',
+			empty($advisory) ? 'none' : implode(',', $advisory),
+			empty($blocking) ? 'none' : implode(',', $blocking)
+		);
+		$summary .= sprintf(' Force override applied=%s.', $force_applied ? 'yes' : 'no');
 
 		return $summary;
+	}
+
+	/** @return array<int,array{code:string,severity:string,resource:string,threshold:string}> */
+	private static function typed_trigger_reasons( array $trigger_reasons ): array {
+		return array_map(
+			static function ( string $code ): array {
+				$is_blocking = str_contains($code, '_refusal_floor');
+				return array(
+					'code'      => $code,
+					'severity'  => $is_blocking ? 'blocking' : 'advisory',
+					'resource'  => str_contains($code, '_inodes_') ? 'inodes' : ( 'worktree_count_warning_threshold' === $code ? 'worktree_count' : 'bytes' ),
+					'threshold' => $is_blocking ? 'refusal_floor' : 'warning_floor',
+				);
+			},
+			array_values(array_map('strval', $trigger_reasons))
+		);
 	}
 
 	/**
