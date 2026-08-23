@@ -81,6 +81,10 @@ namespace DataMachineCode\Tests\NoUpstream {
 			return true;
 		}
 
+		protected function with_workspace_repo_mutation_lock( string $repo, callable $callback ): mixed {
+			return $callback();
+		}
+
 		// Bypass the policy-attestation machinery (WorkspacePolicy etc.) — this
 		// test targets the upstream-recovery + fast-forward git behavior, which
 		// runs after the clean-tree check.
