@@ -201,6 +201,9 @@ final class StandaloneWorktreeProvider {
 		if ( ! $base['success'] ) {
 			return $this->convergence_validation($identity['path'], $head, $this->convergence_result('refused', 'base_not_found', $token, $base_sha, $head, $head, $started));
 		}
+		if ( $base_sha !== trim($base['stdout']) ) {
+			return $this->convergence_validation($identity['path'], $head, $this->convergence_result('refused', 'noncanonical_base_sha', $token, $base_sha, $head, $head, $started));
+		}
 
 		$status = $this->run_git($identity['path'], array( 'status', '--porcelain=v1', '--untracked-files=normal' ));
 		if ( ! $status['success'] ) {
@@ -209,15 +212,15 @@ final class StandaloneWorktreeProvider {
 		if ( '' !== trim($status['stdout']) ) {
 			return $this->convergence_validation($identity['path'], $head, $this->convergence_result('refused', 'dirty_worktree', $token, $base_sha, $head, $head, $started));
 		}
-		if ( $head === $base_sha ) {
-			return $this->convergence_validation($identity['path'], $head, $this->convergence_result('converged', null, $token, $base_sha, $head, $head, $started));
-		}
 		$push_safety = $this->has_unpushed_commits($identity['path']);
 		if ( ! $push_safety['proven'] ) {
 			return $this->convergence_validation($identity['path'], $head, $this->convergence_result('refused', $push_safety['code'], $token, $base_sha, $head, $head, $started));
 		}
 		if ( $push_safety['unpushed'] ) {
 			return $this->convergence_validation($identity['path'], $head, $this->convergence_result('refused', 'unpushed_commits', $token, $base_sha, $head, $head, $started));
+		}
+		if ( $head === $base_sha ) {
+			return $this->convergence_validation($identity['path'], $head, $this->convergence_result('converged', null, $token, $base_sha, $head, $head, $started));
 		}
 
 		$behind = $this->run_git($identity['path'], array( 'merge-base', '--is-ancestor', 'HEAD', $base_sha ));

@@ -112,9 +112,17 @@ try {
 	standalone_provider_assert($identity_payload['token'] === $converged_payload['identity_token'], 'Convergence changed the identity token.');
 	standalone_provider_assert($base === $converged_payload['after_head'], 'Convergence did not reach the requested base.');
 	standalone_provider_assert(true === $converged_payload['changed'], 'Convergence did not record its HEAD change.');
+	$at_base_unpushed = standalone_provider_run(array( PHP_BINARY, $script, 'converge', $root, $identity_payload['token'], $base ));
+	$at_base_unpushed_payload = json_decode($at_base_unpushed['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	standalone_provider_assert('unpushed_commits' === $at_base_unpushed_payload['code'], 'Unpushed HEAD equal to base was not refused.');
+	standalone_provider_git($path, array( 'push' ));
 	$retry = standalone_provider_run(array( PHP_BINARY, $script, 'converge', $root, $identity_payload['token'], $base ));
 	$retry_payload = json_decode($retry['stdout'], true, 512, JSON_THROW_ON_ERROR);
 	standalone_provider_assert('converged' === $retry_payload['status'] && false === $retry_payload['changed'], 'Idempotent convergence retry was not a no-op.');
+	$uppercase = standalone_provider_run(array( PHP_BINARY, $script, 'converge', $root, $identity_payload['token'], strtoupper($base) ));
+	$uppercase_payload = json_decode($uppercase['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	standalone_provider_assert('noncanonical_base_sha' === $uppercase_payload['code'], 'Noncanonical base SHA was not refused.');
+	standalone_provider_assert($uppercase_payload['before_head'] === $uppercase_payload['after_head'], 'Noncanonical base SHA mutated HEAD.');
 
 	file_put_contents($path . '/dirty.txt', "dirty\n");
 	$dirty = standalone_provider_run(array( PHP_BINARY, $script, 'converge', $root, $identity_payload['token'], $base ));
@@ -131,14 +139,9 @@ try {
 	standalone_provider_git($primary, array( 'worktree', 'add', '-b', 'fix/untracked', $untracked_path ));
 	$untracked_identity = standalone_provider_run(array( PHP_BINARY, $script, 'identity', $root, 'fixture@untracked' ));
 	$untracked_token = json_decode($untracked_identity['stdout'], true, 512, JSON_THROW_ON_ERROR)['token'];
-	file_put_contents($primary . '/untracked-base.txt', "untracked\n");
-	standalone_provider_git($primary, array( 'add', 'untracked-base.txt' ));
-	standalone_provider_git($primary, array( 'commit', '-m', 'untracked base' ));
-	standalone_provider_git($primary, array( 'push' ));
-	$untracked_base = trim(standalone_provider_run(array( 'git', '-C', $primary, 'rev-parse', 'HEAD' ))['stdout']);
-	$untracked = standalone_provider_run(array( PHP_BINARY, $script, 'converge', $root, $untracked_token, $untracked_base ));
+	$untracked = standalone_provider_run(array( PHP_BINARY, $script, 'converge', $root, $untracked_token, $base ));
 	$untracked_payload = json_decode($untracked['stdout'], true, 512, JSON_THROW_ON_ERROR);
-	standalone_provider_assert('unpushed_probe_failed' === $untracked_payload['code'], 'Unproven push safety was not refused.');
+	standalone_provider_assert('unpushed_probe_failed' === $untracked_payload['code'], 'Unknown upstream at base was not refused.');
 
 	standalone_provider_git($path, array( 'push', '-u', 'origin', 'fix/example' ));
 	file_put_contents($path . '/unpushed.txt', "unpushed\n");
@@ -176,6 +179,7 @@ try {
 	$race_path   = $root . '/' . $race_handle;
 	standalone_provider_git($primary, array( 'worktree', 'add', '-b', 'fix/race', $race_path ));
 	standalone_provider_git($race_path, array( 'push', '-u', 'origin', 'fix/race' ));
+	standalone_provider_git($race_path, array( 'branch', '--set-upstream-to=origin/main' ));
 	file_put_contents($primary . '/race-base.txt', "race\n");
 	standalone_provider_git($primary, array( 'add', 'race-base.txt' ));
 	standalone_provider_git($primary, array( 'commit', '-m', 'race base' ));

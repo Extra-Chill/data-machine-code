@@ -194,7 +194,10 @@ loads WordPress, reads the database, enumerates the workspace, fetches a remote,
 or performs network I/O. Consumers should persist the returned opaque identity
 token and pass it back unchanged when requesting safety evidence.
 
-`converge` accepts only a full 40-character commit SHA already present locally. It
+`converge` accepts only a full lowercase 40-character commit SHA already present
+locally. It resolves that input to Git's canonical commit OID and refuses any
+noncanonical spelling before mutation, preserving the exact caller-supplied
+`base_sha` evidence binding. It
 revalidates the token-bound identity and ownership, linked-worktree status, clean
 state, absence of unpushed commits, and strict fast-forward ancestry immediately
 before running `git merge --ff-only <base-sha>`. It never fetches or performs any
