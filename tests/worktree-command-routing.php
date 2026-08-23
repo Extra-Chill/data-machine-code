@@ -38,13 +38,16 @@ namespace {
 	}
 
 	define('ABSPATH', __DIR__ . '/');
+	require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 	require_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
 
 	$ability = new WorktreeCommandFakeAbility();
+	$active_drain_ability = new WorktreeCommandFakeAbility();
 	$bounded_ability = new WorktreeCommandFakeAbility();
 	$artifact_ability = new WorktreeCommandFakeAbility();
 	$GLOBALS['worktree_command_abilities'] = array(
 		'datamachine-code/workspace-worktree-abandoned-cleanup' => $ability,
+		'datamachine-code/workspace-worktree-active-no-signal-drain' => $active_drain_ability,
 		'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => $bounded_ability,
 		'datamachine-code/workspace-worktree-cleanup-artifacts' => $artifact_ability,
 	);
@@ -64,6 +67,27 @@ namespace {
 		worktree_command_routing_assert('Recorded abandoned routing input.' === $error->getMessage(), 'abandoned --discard-unpushed did not route to the owning ability.');
 	}
 	worktree_command_routing_assert(true === ( $ability->calls[1]['discard_unpushed'] ?? false ), 'abandoned --discard-unpushed was not forwarded to the owning ability.');
+
+	try {
+		$command->__worktree_operation('active-no-signal-drain', array(), array( 'apply' => true, 'limit' => '100', 'passes' => '2', 'until-budget' => '300s', 'format' => 'json' ));
+		throw new \RuntimeException('unscoped active/no-signal drain did not execute its ability.');
+	} catch ( \RuntimeException $error ) {
+		worktree_command_routing_assert('Recorded abandoned routing input.' === $error->getMessage(), 'unscoped active/no-signal drain did not render the routed ability result.');
+	}
+	worktree_command_routing_assert(! array_key_exists('repo', $active_drain_ability->calls[0]), 'unscoped active/no-signal drain must omit repo from ability input.');
+	worktree_command_routing_assert(true === ( $active_drain_ability->calls[0]['apply'] ?? false ), 'unscoped active/no-signal drain lost --apply.');
+	worktree_command_routing_assert('100' === ( $active_drain_ability->calls[0]['limit'] ?? null ), 'unscoped active/no-signal drain lost --limit.');
+	worktree_command_routing_assert('2' === ( $active_drain_ability->calls[0]['passes'] ?? null ), 'unscoped active/no-signal drain lost --passes.');
+	worktree_command_routing_assert('300s' === ( $active_drain_ability->calls[0]['until_budget'] ?? null ), 'unscoped active/no-signal drain lost --until-budget.');
+
+	try {
+		$command->__worktree_operation('active-no-signal-drain', array( 'data-machine-code' ), array( 'apply' => true, 'format' => 'json' ));
+		throw new \RuntimeException('scoped active/no-signal drain did not execute its ability.');
+	} catch ( \RuntimeException $error ) {
+		worktree_command_routing_assert('Recorded abandoned routing input.' === $error->getMessage(), 'scoped active/no-signal drain did not render the routed ability result.');
+	}
+	worktree_command_routing_assert('data-machine-code' === ( $active_drain_ability->calls[1]['repo'] ?? null ), 'active/no-signal drain positional repo was not routed to its ability input.');
+	worktree_command_routing_assert('data-machine-code' === ( $active_drain_ability->calls[1]['scope'] ?? null ), 'active/no-signal drain positional repo did not preserve continuation scope.');
 
 	try {
 		$command->__worktree_operation('bounded-cleanup-eligible-apply', array(), array( 'scope' => 'repo:stage-finalized', 'format' => 'json' ));
