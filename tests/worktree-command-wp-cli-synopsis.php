@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace DataMachine\Cli {
 	class BaseCommand {}
 }
@@ -13,14 +11,18 @@ namespace {
 		}
 	}
 
-	$wp_cli_root = getenv('WP_CLI_ROOT');
-	if ( ! is_string($wp_cli_root) || '' === $wp_cli_root ) {
-		throw new \RuntimeException('Set WP_CLI_ROOT to a WP-CLI installation before running this integration test.');
+	if ( ! class_exists(\WP_CLI\SynopsisParser::class) ) {
+		$wp_cli_root = getenv('WP_CLI_ROOT');
+		if ( ! is_string($wp_cli_root) || '' === $wp_cli_root ) {
+			throw new \RuntimeException('Set WP_CLI_ROOT to a WP-CLI installation before running this integration test.');
+		}
+		require_once rtrim($wp_cli_root, '/') . '/php/WP_CLI/SynopsisParser.php';
+		require_once rtrim($wp_cli_root, '/') . '/php/WP_CLI/SynopsisValidator.php';
 	}
-	require_once rtrim($wp_cli_root, '/') . '/php/WP_CLI/SynopsisParser.php';
-	require_once rtrim($wp_cli_root, '/') . '/php/WP_CLI/SynopsisValidator.php';
 
-	define('ABSPATH', __DIR__ . '/');
+	if ( ! defined('ABSPATH') ) {
+		define('ABSPATH', __DIR__ . '/');
+	}
 	require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 	require_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
 
