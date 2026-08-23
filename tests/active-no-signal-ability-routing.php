@@ -19,6 +19,7 @@ namespace DataMachineCode\Workspace {
 	final class RunnerWorkspacePublisher {}
 	final class WorktreeContextInjector {
 		public const VALID_CLEANUP_POLICIES = array( 'manual', 'remove_on_success', 'preserve_on_failure' );
+		public static function worktree_add_policy_schema_properties(): array { return array( 'reuse_policy' => array( 'type' => 'string', 'enum' => array( 'reuse_compatible', 'isolated', 'recycle_terminal', 'claim_expired' ), 'description' => 'reuse policy' ), 'purpose' => array(), 'owner_run_ref' => array(), 'cleanup_policy' => array() ); }
 	}
 
 	final class Workspace {

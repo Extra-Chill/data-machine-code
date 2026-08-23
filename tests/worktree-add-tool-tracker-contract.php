@@ -69,7 +69,7 @@ namespace {
 		$definition = $tool->getWorktreeAddDefinition();
 		$properties = (array) ( $definition['parameters']['properties'] ?? array() );
 		worktree_add_tool_tracker_assert(! array_key_exists('require_task_tracker', $properties), 'agent tool schema exposes a tracker-enforcement override');
-		worktree_add_tool_tracker_assert(array( 'reuse_compatible', 'isolated', 'recycle_terminal' ) === ( $properties['reuse_policy']['enum'] ?? null ), 'agent tool schema did not expose the supported reuse policies');
+		worktree_add_tool_tracker_assert(array( 'reuse_compatible', 'isolated', 'recycle_terminal', 'claim_expired' ) === ( $properties['reuse_policy']['enum'] ?? null ), 'agent tool schema did not expose the supported reuse policies');
 		worktree_add_tool_tracker_assert(array( 'manual', 'remove_on_success', 'preserve_on_failure' ) === ( $properties['cleanup_policy']['enum'] ?? null ), 'agent tool schema did not expose the supported cleanup policies');
 		worktree_add_tool_tracker_assert(str_contains((string) ( $properties['reuse_policy']['description'] ?? '' ), 'purpose, owner_run_ref, and cleanup_policy=remove_on_success'), 'agent tool schema did not describe the isolated same-task contract');
 		$ability_source = file_get_contents(dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php');

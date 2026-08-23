@@ -96,7 +96,7 @@ class WorktreeContextInjector {
 		self::CLEANUP_POLICY_PRESERVE_ON_FAILURE,
 	);
 
-	public const VALID_REUSE_POLICIES = array( 'reuse_compatible', 'isolated', 'recycle_terminal' );
+	public const VALID_REUSE_POLICIES = array( 'reuse_compatible', 'isolated', 'recycle_terminal', 'claim_expired' );
 
 	/**
 	 * The required lifecycle intent for a parallel worktree of the same task.
@@ -117,7 +117,7 @@ class WorktreeContextInjector {
 			'reuse_policy'   => array(
 				'type'        => 'string',
 				'enum'        => self::VALID_REUSE_POLICIES,
-				'description' => 'Reuse and allocation behavior. reuse_compatible reuses only an exact compatible handle and refuses another same-repo handle for the same task. isolated requires purpose, owner_run_ref, and cleanup_policy=remove_on_success for parallel same-task work. recycle_terminal resets only a proven-clean terminal exact handle whose HEAD is contained in the requested base.',
+				'description' => 'Reuse and allocation behavior. reuse_compatible reuses only an exact compatible handle and refuses another same-repo handle for the same task. isolated requires purpose, owner_run_ref, and cleanup_policy=remove_on_success for parallel same-task work. recycle_terminal resets only a proven-clean terminal exact handle whose HEAD is contained in the requested base. claim_expired transfers an exact clean handle only after its unattributed heartbeat expires or an authoritative terminal signal exists.',
 			),
 			'purpose'        => array( 'type' => 'string', 'description' => 'Purpose required with owner_run_ref and cleanup_policy=remove_on_success for isolated same-task work.' ),
 			'owner_run_ref'  => array( 'type' => 'string', 'description' => 'Owner run reference required with purpose and cleanup_policy=remove_on_success for isolated same-task work.' ),
@@ -319,34 +319,44 @@ class WorktreeContextInjector {
 	 * @param  array<string,mixed>|null $metadata Worktree lifecycle metadata.
 	 * @param  int|null                 $now      Override "now" for tests. Unix timestamp.
 	 * @param  int                      $ttl      Heartbeat TTL in seconds.
-	 * @return array{liveness:string,reason:string,heartbeat_age_seconds:?int,last_seen_at:?string}
+	 * @return array{liveness:string,reason:string,heartbeat_age_seconds:?int,last_seen_at:?string,heartbeat_ttl_seconds:int,review_after:?string,attribution:string,missing_ownership_fields:string[]}
 	 */
 	public static function classify_liveness( ?array $metadata, ?int $now = null, int $ttl = self::DEFAULT_HEARTBEAT_TTL_SECONDS ): array {
+		$ttl = max(0, $ttl);
+		$ownership_fields = array( 'origin_agent', 'origin_session', 'origin_user', 'owner_run_ref' );
+		$missing_ownership_fields = array_values(array_filter($ownership_fields, static fn( string $field ): bool => '' === trim((string) ($metadata[ $field ] ?? ''))));
+		$attribution = array() === $missing_ownership_fields ? 'attributable' : 'unattributed';
+		$evidence = array(
+			'heartbeat_ttl_seconds' => $ttl,
+			'review_after' => null,
+			'attribution' => $attribution,
+			'missing_ownership_fields' => $missing_ownership_fields,
+		);
 		if ( ! is_array($metadata) || empty($metadata) ) {
-			return array(
+			return array_merge(array(
 				'liveness'              => self::LIVENESS_UNKNOWN,
 				'reason'                => 'metadata_missing',
 				'heartbeat_age_seconds' => null,
 				'last_seen_at'          => null,
-			);
+			), $evidence);
 		}
 
 		$state = self::project_lifecycle_state($metadata);
 		if ( self::STATE_PR_OPENED === $state ) {
-			return array(
+			return array_merge(array(
 				'liveness'              => self::LIVENESS_STOPPED,
 				'reason'                => 'lifecycle_pr_opened',
 				'heartbeat_age_seconds' => null,
 				'last_seen_at'          => isset($metadata['last_seen_at']) ? (string) $metadata['last_seen_at'] : null,
-			);
+			), $evidence);
 		}
 		if ( null !== $state && in_array($state, array( self::STATE_MERGED, self::STATE_CLOSED, self::STATE_ABANDONED, self::STATE_CLEANUP_ELIGIBLE ), true) ) {
-			return array(
+			return array_merge(array(
 				'liveness'              => self::LIVENESS_STOPPED,
 				'reason'                => 'lifecycle_finalized',
 				'heartbeat_age_seconds' => null,
 				'last_seen_at'          => isset($metadata['last_seen_at']) ? (string) $metadata['last_seen_at'] : null,
-			);
+			), $evidence);
 		}
 
 		$last_seen_raw = isset($metadata['last_seen_at']) ? (string) $metadata['last_seen_at'] : '';
@@ -355,42 +365,43 @@ class WorktreeContextInjector {
 		}
 
 		if ( '' === $last_seen_raw ) {
-			return array(
+			return array_merge(array(
 				'liveness'              => self::LIVENESS_UNKNOWN,
 				'reason'                => 'heartbeat_unknown',
 				'heartbeat_age_seconds' => null,
 				'last_seen_at'          => null,
-			);
+			), $evidence);
 		}
 
 		$last_seen_ts = strtotime($last_seen_raw);
 		if ( false === $last_seen_ts ) {
-			return array(
+			return array_merge(array(
 				'liveness'              => self::LIVENESS_UNKNOWN,
 				'reason'                => 'heartbeat_unknown',
 				'heartbeat_age_seconds' => null,
 				'last_seen_at'          => $last_seen_raw,
-			);
+			), $evidence);
 		}
 
 		$now_ts = null === $now ? time() : $now;
 		$age    = max(0, $now_ts - $last_seen_ts);
+		$evidence['review_after'] = gmdate('c', $last_seen_ts + $ttl);
 
-		if ( $age <= max(0, $ttl) ) {
-			return array(
+		if ( $age <= $ttl ) {
+			return array_merge(array(
 				'liveness'              => self::LIVENESS_LIVE,
 				'reason'                => 'heartbeat_fresh',
 				'heartbeat_age_seconds' => $age,
 				'last_seen_at'          => $last_seen_raw,
-			);
+			), $evidence);
 		}
 
-		return array(
+		return array_merge(array(
 			'liveness'              => self::LIVENESS_STALE,
 			'reason'                => 'heartbeat_stale',
 			'heartbeat_age_seconds' => $age,
 			'last_seen_at'          => $last_seen_raw,
-		);
+		), $evidence);
 	}
 
 	/**
