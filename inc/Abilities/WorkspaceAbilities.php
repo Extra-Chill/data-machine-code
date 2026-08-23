@@ -16,6 +16,7 @@ namespace DataMachineCode\Abilities;
 
 use DataMachineCode\Support\PermissionHelper;
 use DataMachineCode\Cleanup\WorkspaceCleanupRunEvidenceStore;
+use DataMachineCode\Storage\CleanupRunRepository;
 use DataMachineCode\Workspace\CleanupRunService;
 use DataMachineCode\Workspace\RemoteWorkspaceBackend;
 use DataMachineCode\Workspace\RunnerWorkspacePublisher;
@@ -30,20 +31,21 @@ use DataMachineCode\Workspace\WorktreeDiskBudget;
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\RuntimeCapabilities;
 
-defined('ABSPATH') || exit;
+defined( 'ABSPATH' ) || exit;
 
-if ( ! class_exists(AbilityRegistry::class) ) {
+if ( ! class_exists( AbilityRegistry::class ) ) {
 	require_once __DIR__ . '/AbilityRegistry.php';
 }
-if ( ! class_exists(RuntimeCapabilities::class) ) {
-	require_once dirname(__DIR__) . '/Support/RuntimeCapabilities.php';
+if ( ! class_exists( RuntimeCapabilities::class ) ) {
+	require_once dirname( __DIR__ ) . '/Support/RuntimeCapabilities.php';
 }
-if ( ! class_exists(RunnerWorkspacePublisher::class) ) {
-	require_once dirname(__DIR__) . '/Workspace/RunnerWorkspacePublisher.php';
+if ( ! class_exists( RunnerWorkspacePublisher::class ) ) {
+	require_once dirname( __DIR__ ) . '/Workspace/RunnerWorkspacePublisher.php';
 }
 
 class WorkspaceAbilities {
 
+	private const CLEANUP_CLI_SOURCE = 'workspace_cleanup_cli';
 
 
 	private static bool $registered = false;
@@ -67,8 +69,8 @@ class WorkspaceAbilities {
 	}
 
 	private function registerAbilities(): void {
-		if ( ! class_exists(Workspace::class) ) {
-			require_once dirname(__DIR__) . '/Workspace/Workspace.php';
+		if ( ! class_exists( Workspace::class ) ) {
+			require_once dirname( __DIR__ ) . '/Workspace/Workspace.php';
 		}
 
 			// -----------------------------------------------------------------
@@ -118,27 +120,27 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'repo' => array(
+							'repo'           => array(
 								'type'        => 'string',
 								'description' => 'Optional primary repository name to filter by. Includes the primary checkout and its worktrees.',
 							),
-							'type' => array(
+							'type'           => array(
 								'type'        => 'string',
 								'enum'        => array( 'primary', 'worktree', 'context' ),
 								'description' => 'Optional checkout type filter. Use "primary" for base checkouts, "worktree" for branch worktrees, or "context" for read-only context repositories.',
 							),
-							'limit' => array(
+							'limit'          => array(
 								'type'        => 'integer',
 								'minimum'     => 1,
 								'maximum'     => 200,
 								'default'     => 50,
 								'description' => 'Maximum lightweight rows to return. Defaults to 50.',
 							),
-							'cursor' => array(
+							'cursor'         => array(
 								'type'        => 'string',
 								'description' => 'Cursor returned by a previous list response with the same filters.',
 							),
-							'all' => array(
+							'all'            => array(
 								'type'        => 'boolean',
 								'description' => 'Return every matching row. Full expansion is explicit and cannot be combined with cursor.',
 							),
@@ -151,14 +153,14 @@ class WorkspaceAbilities {
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success' => array( 'type' => 'boolean' ),
-							'path'    => array( 'type' => 'string' ),
-							'total'   => array( 'type' => 'integer' ),
-							'returned' => array( 'type' => 'integer' ),
-							'next_cursor' => array( 'type' => array( 'string', 'null' ) ),
+							'success'          => array( 'type' => 'boolean' ),
+							'path'             => array( 'type' => 'string' ),
+							'total'            => array( 'type' => 'integer' ),
+							'returned'         => array( 'type' => 'integer' ),
+							'next_cursor'      => array( 'type' => array( 'string', 'null' ) ),
 							'status_requested' => array( 'type' => 'boolean' ),
-							'summary' => array( 'type' => 'object' ),
-							'repos'   => array(
+							'summary'          => array( 'type' => 'object' ),
+							'repos'            => array(
 								'type'  => 'array',
 								'items' => array(
 									'type'       => 'object',
@@ -989,9 +991,9 @@ class WorkspaceAbilities {
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success' => array( 'type' => 'boolean' ),
-							'name'    => array( 'type' => 'string' ),
-							'message' => array( 'type' => 'string' ),
+							'success'          => array( 'type' => 'boolean' ),
+							'name'             => array( 'type' => 'string' ),
+							'message'          => array( 'type' => 'string' ),
 							'primary_diverged' => array(
 								'type'        => 'object',
 								'description' => 'Typed attached-primary divergence recovery evidence, including SHAs, ahead/behind counts, preservation worktree, and reconciliation guidance.',
@@ -1417,7 +1419,16 @@ class WorkspaceAbilities {
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
-						'properties' => array( 'digest' => array( 'type' => 'string' ), 'disposition' => array( 'type' => 'string', 'enum' => array( 'create', 'exact_reuse', 'adoptable', 'legacy_handoff_required', 'owner_conflict', 'unsafe', 'stale', 'capacity_blocked' ) ), 'apply_intent' => array( 'type' => 'object' ), 'apply' => array( 'type' => 'object' ), 'legacy_handoff' => array( 'type' => 'object' ) ),
+						'properties' => array(
+							'digest'         => array( 'type' => 'string' ),
+							'disposition'    => array(
+								'type' => 'string',
+								'enum' => array( 'create', 'exact_reuse', 'adoptable', 'legacy_handoff_required', 'owner_conflict', 'unsafe', 'stale', 'capacity_blocked' ),
+							),
+							'apply_intent'   => array( 'type' => 'object' ),
+							'apply'          => array( 'type' => 'object' ),
+							'legacy_handoff' => array( 'type' => 'object' ),
+						),
 					),
 					'execute_callback'    => array( self::class, 'worktreePlan' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
@@ -1431,8 +1442,19 @@ class WorkspaceAbilities {
 					'label'               => 'Apply Workspace Worktree Plan',
 					'description'         => 'Apply a digest-addressed worktree plan after fail-closed live revalidation.',
 					'category'            => 'datamachine-code-workspace',
-					'input_schema'        => array( 'type' => 'object', 'properties' => array( 'plan' => array( 'type' => 'object' ) ), 'required' => array( 'plan' ) ),
-					'output_schema'       => array( 'type' => 'object', 'properties' => array( 'success' => array( 'type' => 'boolean' ), 'handle' => array( 'type' => 'string' ), 'path' => array( 'type' => 'string' ) ) ),
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array( 'plan' => array( 'type' => 'object' ) ),
+						'required'   => array( 'plan' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'handle'  => array( 'type' => 'string' ),
+							'path'    => array( 'type' => 'string' ),
+						),
+					),
 					'execute_callback'    => array( self::class, 'worktreeApplyPlan' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
@@ -1445,8 +1467,19 @@ class WorkspaceAbilities {
 					'label'               => 'Apply Primary Restore Plan',
 					'description'         => 'Apply a digest-addressed missing-primary restore plan after fail-closed live revalidation.',
 					'category'            => 'datamachine-code-workspace',
-					'input_schema'        => array( 'type' => 'object', 'properties' => array( 'plan' => array( 'type' => 'object' ) ), 'required' => array( 'plan' ) ),
-					'output_schema'       => array( 'type' => 'object', 'properties' => array( 'success' => array( 'type' => 'boolean' ), 'primary' => array( 'type' => 'object' ), 'next_offset' => array( 'type' => 'integer' ) ) ),
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array( 'plan' => array( 'type' => 'object' ) ),
+						'required'   => array( 'plan' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'     => array( 'type' => 'boolean' ),
+							'primary'     => array( 'type' => 'object' ),
+							'next_offset' => array( 'type' => 'integer' ),
+						),
+					),
 					'execute_callback'    => array( self::class, 'primaryRestoreApply' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
@@ -1456,14 +1489,31 @@ class WorkspaceAbilities {
 			AbilityRegistry::register(
 				'datamachine-code/workspace-worktree-legacy-handoff-apply',
 				array(
-					'label' => 'Apply Legacy Worktree Handoff',
-					'description' => 'Apply a reviewed legacy handoff only after re-planning confirms clean, pushed, non-primary, stopped or stale, unlocked, process-idle ownership evidence.',
-					'category' => 'datamachine-code-workspace',
-					'input_schema' => array( 'type' => 'object', 'properties' => array( 'plan' => array( 'type' => 'object' ), 'mode' => array( 'type' => 'string', 'enum' => array( 'adopt_runtime', 'replace_isolated' ) ) ), 'required' => array( 'plan', 'mode' ) ),
-					'output_schema' => array( 'type' => 'object', 'properties' => array( 'success' => array( 'type' => 'boolean' ), 'type' => array( 'type' => 'string' ), 'lineage' => array( 'type' => 'object' ) ) ),
-					'execute_callback' => array( self::class, 'worktreeLegacyHandoffApply' ),
+					'label'               => 'Apply Legacy Worktree Handoff',
+					'description'         => 'Apply a reviewed legacy handoff only after re-planning confirms clean, pushed, non-primary, stopped or stale, unlocked, process-idle ownership evidence.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'plan' => array( 'type' => 'object' ),
+							'mode' => array(
+								'type' => 'string',
+								'enum' => array( 'adopt_runtime', 'replace_isolated' ),
+							),
+						),
+						'required'   => array( 'plan', 'mode' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'type'    => array( 'type' => 'string' ),
+							'lineage' => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeLegacyHandoffApply' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
-					'meta' => array( 'show_in_rest' => false ),
+					'meta'                => array( 'show_in_rest' => false ),
 				)
 			);
 
@@ -1532,7 +1582,7 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Require a valid task URL or task reference before creating the worktree. Defaults true; trusted operator-local callers may explicitly set false.',
 							),
-							...(method_exists(WorktreeContextInjector::class, 'worktree_add_policy_schema_properties') ? WorktreeContextInjector::worktree_add_policy_schema_properties() : array()),
+							...WorktreeContextInjector::worktree_add_policy_schema_properties(),
 							'verbose'                    => array(
 								'type'        => 'boolean',
 								'description' => 'Return full capacity diagnostics and capped bootstrap output evidence. Default false returns a bounded summary.',
@@ -1547,7 +1597,10 @@ class WorkspaceAbilities {
 							'handle'                    => array( 'type' => 'string' ),
 							'path'                      => array( 'type' => 'string' ),
 							'branch'                    => array( 'type' => 'string' ),
-							'base'                      => array( 'type' => 'string', 'description' => 'Resolved base ref for a newly created branch.' ),
+							'base'                      => array(
+								'type'        => 'string',
+								'description' => 'Resolved base ref for a newly created branch.',
+							),
 							'slug'                      => array( 'type' => 'string' ),
 							'created_branch'            => array( 'type' => 'boolean' ),
 							'reused'                    => array( 'type' => 'boolean' ),
@@ -1780,21 +1833,21 @@ class WorkspaceAbilities {
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success'                   => array( 'type' => 'boolean' ),
-							'generated_at'              => array( 'type' => 'string' ),
-							'workspace_path'            => array( 'type' => 'string' ),
-							'destructive'               => array( 'type' => 'boolean' ),
-							'size'                      => array( 'type' => 'object' ),
-							'disk'                      => array( 'type' => 'object' ),
-							'recovery'                  => array( 'type' => 'object' ),
-							'inventory'                 => array( 'type' => 'object' ),
-							'worktrees'                 => array( 'type' => 'object' ),
-							'worktree_status_mode'      => array( 'type' => 'string' ),
-							'top_repos_by_worktrees'    => array( 'type' => 'array' ),
-							'top_repos_by_size'         => array( 'type' => 'array' ),
-							'locks'                     => array( 'type' => 'object' ),
-							'cleanup'                   => array( 'type' => 'object' ),
-							'notes'                     => array( 'type' => 'array' ),
+							'success'                => array( 'type' => 'boolean' ),
+							'generated_at'           => array( 'type' => 'string' ),
+							'workspace_path'         => array( 'type' => 'string' ),
+							'destructive'            => array( 'type' => 'boolean' ),
+							'size'                   => array( 'type' => 'object' ),
+							'disk'                   => array( 'type' => 'object' ),
+							'recovery'               => array( 'type' => 'object' ),
+							'inventory'              => array( 'type' => 'object' ),
+							'worktrees'              => array( 'type' => 'object' ),
+							'worktree_status_mode'   => array( 'type' => 'string' ),
+							'top_repos_by_worktrees' => array( 'type' => 'array' ),
+							'top_repos_by_size'      => array( 'type' => 'array' ),
+							'locks'                  => array( 'type' => 'object' ),
+							'cleanup'                => array( 'type' => 'object' ),
+							'notes'                  => array( 'type' => 'array' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'workspaceHygieneReport' ),
@@ -2005,6 +2058,71 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
+				'datamachine-code/workspace-cleanup-safe-run',
+				array(
+					'label'               => 'Schedule Safe Workspace Cleanup',
+					'description'         => 'Persist and schedule bounded safe cleanup before executing child work. Returns immediately with a durable run ID.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'dry_run'      => array( 'type' => 'boolean' ),
+							'limit'        => array( 'type' => 'integer' ),
+							'passes'       => array( 'type' => 'integer' ),
+							'cycles'       => array( 'type' => 'integer' ),
+							'until_budget' => array( 'type' => 'string' ),
+							'source'       => array( 'type' => 'string' ),
+							'request_id'   => array( 'type' => 'string' ),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'    => array( 'type' => 'boolean' ),
+							'run_id'     => array( 'type' => 'string' ),
+							'state'      => array( 'type' => 'string' ),
+							'mode'       => array( 'type' => 'string' ),
+							'request_id' => array( 'type' => 'string' ),
+							'commands'   => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'workspaceCleanupSafeRun' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-cleanup-list',
+				array(
+					'label'               => 'List Cleanup Runs',
+					'description'         => 'Return a bounded page of persisted cleanup runs with canonical recovery commands.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'mode'       => array( 'type' => 'string' ),
+							'status'     => array( 'type' => 'string' ),
+							'source'     => array( 'type' => 'string' ),
+							'request_id' => array( 'type' => 'string' ),
+							'since'      => array( 'type' => 'string' ),
+							'limit'      => array( 'type' => 'integer' ),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success' => array( 'type' => 'boolean' ),
+							'runs'    => array( 'type' => 'array' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'workspaceCleanupList' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
 				'datamachine-code/workspace-worktree-list',
 				array(
 					'label'               => 'List Workspace Worktrees',
@@ -2033,27 +2151,39 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Run size and artifact `du` probes per worktree. Default false (cheap listing). Expensive on large workspaces.',
 							),
-							'limit'          => array( 'type' => 'integer', 'minimum' => 1, 'maximum' => 200, 'default' => 50, 'description' => 'Maximum rows to return. Defaults to 50.' ),
-							'cursor'         => array( 'type' => 'string', 'description' => 'Cursor returned by a previous response with the same filters.' ),
-							'all'            => array( 'type' => 'boolean', 'description' => 'Return every matching row.' ),
+							'limit'          => array(
+								'type'        => 'integer',
+								'minimum'     => 1,
+								'maximum'     => 200,
+								'default'     => 50,
+								'description' => 'Maximum rows to return. Defaults to 50.',
+							),
+							'cursor'         => array(
+								'type'        => 'string',
+								'description' => 'Cursor returned by a previous response with the same filters.',
+							),
+							'all'            => array(
+								'type'        => 'boolean',
+								'description' => 'Return every matching row.',
+							),
 						),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success'        => array( 'type' => 'boolean' ),
-							'total'          => array( 'type' => 'integer' ),
-							'returned'       => array( 'type' => 'integer' ),
-							'next_cursor'    => array( 'type' => array( 'string', 'null' ) ),
+							'success'          => array( 'type' => 'boolean' ),
+							'total'            => array( 'type' => 'integer' ),
+							'returned'         => array( 'type' => 'integer' ),
+							'next_cursor'      => array( 'type' => array( 'string', 'null' ) ),
 							'status_requested' => array( 'type' => 'boolean' ),
-							'disk_requested' => array( 'type' => 'boolean' ),
-							'summary'        => array( 'type' => 'object' ),
-							'fields_skipped' => array(
+							'disk_requested'   => array( 'type' => 'boolean' ),
+							'summary'          => array( 'type' => 'object' ),
+							'fields_skipped'   => array(
 								'type'        => 'array',
 								'description' => 'Probe groups skipped on this listing (e.g. "status", "disk"). Empty when full data is requested.',
 								'items'       => array( 'type' => 'string' ),
 							),
-							'worktrees'      => array(
+							'worktrees'        => array(
 								'type'  => 'array',
 								'items' => array(
 									'type'       => 'object',
@@ -2125,7 +2255,7 @@ class WorkspaceAbilities {
 									),
 								),
 							),
-							'duplicates'     => array(
+							'duplicates'       => array(
 								'type'        => 'array',
 								'description' => 'Groups of worktrees sharing a task_url, task_ref, pr_url, or pr_repo#pr_number. Reported only — never used to drive deletions.',
 								'items'       => array(
@@ -2224,10 +2354,6 @@ class WorkspaceAbilities {
 							'dry_run'                   => array(
 								'type'        => 'boolean',
 								'description' => 'If true, return the plan without removing anything.',
-							),
-							'apply_plan'                => array(
-								'type'        => 'object',
-								'description' => 'Decoded cleanup dry-run report to apply after revalidating every candidate.',
 							),
 							'force'                     => array(
 								'type'        => 'boolean',
@@ -2415,7 +2541,7 @@ class WorkspaceAbilities {
 			);
 
 			$active_no_signal_apply_abilities = array(
-				'finalized' => array(
+				'finalized'        => array(
 					'label'          => 'Promote Finalized Active Worktrees',
 					'description'    => 'Promote active_no_signal rows with merged PR evidence into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees.',
 					'callback'       => 'worktreeActiveNoSignalFinalizedApply',
@@ -2427,12 +2553,12 @@ class WorkspaceAbilities {
 					'callback'       => 'worktreeActiveNoSignalEquivalentCleanApply',
 					'positive_limit' => true,
 				),
-				'merged' => array(
+				'merged'           => array(
 					'label'       => 'Promote Merged Active Worktrees',
 					'description' => 'Promote clean active_no_signal rows with suggested_action=merged_to_default into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees.',
 					'callback'    => 'worktreeActiveNoSignalMergedApply',
 				),
-				'remote-clean' => array(
+				'remote-clean'     => array(
 					'label'       => 'Promote Clean Remote Active Worktrees',
 					'description' => 'Promote clean active_no_signal rows with suggested_action=remote_tracking_clean into explicit cleanup_eligible metadata. Reviewable and bounded; never deletes worktrees or remote branches.',
 					'callback'    => 'worktreeActiveNoSignalRemoteCleanApply',
@@ -2441,7 +2567,7 @@ class WorkspaceAbilities {
 			foreach ( $active_no_signal_apply_abilities as $classification => $definition ) {
 				AbilityRegistry::register(
 					'datamachine-code/workspace-worktree-active-no-signal-' . $classification . '-apply',
-					self::activeNoSignalApplyAbilityDefinition($definition)
+					self::activeNoSignalApplyAbilityDefinition( $definition )
 				);
 			}
 
@@ -2521,11 +2647,11 @@ class WorkspaceAbilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'properties' => array(
-							'apply'        => array(
+							'apply'            => array(
 								'type'        => 'boolean',
 								'description' => 'If true, write cleanup metadata and remove bounded cleanup-eligible worktrees. Defaults to preview mode.',
 							),
-							'force'        => array(
+							'force'            => array(
 								'type'        => 'boolean',
 								'description' => 'Forward force to bounded cleanup removal. Unpushed commits remain protected.',
 							),
@@ -2533,36 +2659,36 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Refused. Abandoned cleanup never discards unpushed commits.',
 							),
-							'repo'         => array(
+							'repo'             => array(
 								'type'        => 'string',
 								'description' => 'Restrict orchestration and bounded cleanup to one primary repository or exact worktree handle.',
 							),
-							'limit'        => array(
+							'limit'            => array(
 								'type'        => 'integer',
 								'description' => 'Page/removal limit, clamped to 1..1000. Defaults to 100.',
 							),
-							'passes'       => array(
+							'passes'           => array(
 								'type'        => 'integer',
 								'description' => 'Maximum apply passes, clamped to 1..25. Preview mode runs one pass.',
 							),
-							'offset'       => array(
+							'offset'           => array(
 								'type'        => 'integer',
 								'description' => 'Stage pagination offset for resumed runs.',
 							),
-							'stage'        => array(
+							'stage'            => array(
 								'type'        => 'string',
 								'enum'        => array( 'reconcile', 'finalized', 'equivalent-clean', 'merged', 'remote-clean', 'bounded' ),
 								'description' => 'Stage to start from. Defaults to reconcile.',
 							),
-							'until_budget' => array(
+							'until_budget'     => array(
 								'type'        => 'string',
 								'description' => 'Optional compact wall-clock budget such as 60s, 10m, or 1h.',
 							),
-							'scope'        => array(
+							'scope'            => array(
 								'type'        => 'string',
 								'description' => 'Operator scope label preserved in continuation commands and forwarded to child cleanup abilities.',
 							),
-							'source'       => array(
+							'source'           => array(
 								'type'        => 'string',
 								'description' => 'Caller source marker forwarded to underlying cleanup abilities.',
 							),
@@ -2919,30 +3045,30 @@ class WorkspaceAbilities {
 				)
 			);
 
-			foreach ( array( 'status', 'evidence', 'resume', 'cancel' ) as $cleanup_operation ) {
-				AbilityRegistry::register(
-					'datamachine-code/workspace-cleanup-' . $cleanup_operation,
-					array(
-						'label'               => 'Workspace Cleanup ' . ucfirst($cleanup_operation),
-						'description'         => 'Operate on a DB-backed workspace cleanup run by run_id.',
-						'category'            => 'datamachine-code-workspace',
-						'input_schema'        => array(
-							'type'       => 'object',
-							'required'   => array( 'run_id' ),
-							'properties' => array(
-								'run_id' => array( 'type' => 'string' ),
-								'force'  => array( 'type' => 'boolean' ),
-								'allow_active_artifact_cleanup' => array( 'type' => 'boolean' ),
-								'limit'  => array( 'type' => 'integer' ),
-							),
+		foreach ( array( 'status', 'evidence', 'resume', 'cancel' ) as $cleanup_operation ) {
+			AbilityRegistry::register(
+				'datamachine-code/workspace-cleanup-' . $cleanup_operation,
+				array(
+					'label'               => 'Workspace Cleanup ' . ucfirst( $cleanup_operation ),
+					'description'         => 'Operate on a DB-backed workspace cleanup run by run_id.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'run_id' ),
+						'properties' => array(
+							'run_id' => array( 'type' => 'string' ),
+							'force'  => array( 'type' => 'boolean' ),
+							'allow_active_artifact_cleanup' => array( 'type' => 'boolean' ),
+							'limit'  => array( 'type' => 'integer' ),
 						),
-						'output_schema'       => array( 'type' => 'object' ),
-						'execute_callback'    => array( self::class, 'workspaceCleanup' . ucfirst($cleanup_operation) ),
-						'permission_callback' => fn() => PermissionHelper::can_manage(),
-						'meta'                => array( 'show_in_rest' => false ),
-					)
-				);
-			}
+					),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'workspaceCleanup' . ucfirst( $cleanup_operation ) ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+		}
 	}
 
 	/**
@@ -2965,7 +3091,7 @@ class WorkspaceAbilities {
 					),
 					'limit'        => array(
 						'type'        => 'integer',
-						'description' => ( ! empty($definition['positive_limit']) ? 'Positive maximum' : 'Maximum' ) . ' active_no_signal rows to inspect in this page. Defaults to 25.',
+						'description' => ( ! empty( $definition['positive_limit'] ) ? 'Positive maximum' : 'Maximum' ) . ' active_no_signal rows to inspect in this page. Defaults to 25.',
 					),
 					'offset'       => array(
 						'type'        => 'integer',
@@ -3004,7 +3130,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>
 	 */
 	public static function unavailable_diagnostic( string $expected_ability ): array {
-		return AbilityRegistry::unavailable_diagnostic($expected_ability) + array(
+		return AbilityRegistry::unavailable_diagnostic( $expected_ability ) + array(
 			'workspace_registration_state' => self::$registered ? 'registered' : ( self::$scheduled ? 'scheduled' : 'not_scheduled' ),
 		);
 	}
@@ -3020,9 +3146,9 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function getPath( array $input ): array|\WP_Error {
-		if ( ! empty($input['name']) ) {
-			$result = self::showRepo(array( 'name' => (string) $input['name'] ));
-			if ( is_wp_error($result) ) {
+		if ( ! empty( $input['name'] ) ) {
+			$result = self::showRepo( array( 'name' => (string) $input['name'] ) );
+			if ( is_wp_error( $result ) ) {
 				return $result;
 			}
 
@@ -3030,15 +3156,15 @@ class WorkspaceAbilities {
 			return array(
 				'success' => true,
 				'path'    => $path,
-				'exists'  => '' !== $path && ( RemoteWorkspaceBackend::should_handle() || is_dir($path) ),
+				'exists'  => '' !== $path && ( RemoteWorkspaceBackend::should_handle() || is_dir( $path ) ),
 			);
 		}
 
 		$workspace = new Workspace();
 
-		if ( ! empty($input['ensure']) ) {
+		if ( ! empty( $input['ensure'] ) ) {
 			$result = $workspace->ensure_exists();
-			if ( is_wp_error($result) ) {
+			if ( is_wp_error( $result ) ) {
 				return $result;
 			}
 
@@ -3053,7 +3179,7 @@ class WorkspaceAbilities {
 		return array(
 			'success' => true,
 			'path'    => $workspace->get_path(),
-			'exists'  => is_dir($workspace->get_path()),
+			'exists'  => is_dir( $workspace->get_path() ),
 		);
 	}
 
@@ -3065,14 +3191,14 @@ class WorkspaceAbilities {
 	 */
 	public static function listRepos( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
-		$repo      = isset($input['repo']) ? (string) $input['repo'] : null;
-		$type      = isset($input['type']) ? (string) $input['type'] : null;
+		$repo      = isset( $input['repo'] ) ? (string) $input['repo'] : null;
+		$type      = isset( $input['type'] ) ? (string) $input['type'] : null;
 		$options   = array();
 		foreach ( array( 'limit', 'cursor', 'all', 'include_status' ) as $key ) {
-			if ( array_key_exists($key, $input) ) {
+			if ( array_key_exists( $key, $input ) ) {
 				if ( 'limit' === $key ) {
-					$limit = Workspace::normalize_workspace_list_limit($input[ $key ]);
-					if ( is_wp_error($limit) ) {
+					$limit = Workspace::normalize_workspace_list_limit( $input[ $key ] );
+					if ( is_wp_error( $limit ) ) {
 						return $limit;
 					}
 					$options[ $key ] = $limit;
@@ -3081,7 +3207,7 @@ class WorkspaceAbilities {
 				$options[ $key ] = $input[ $key ];
 			}
 		}
-		return $workspace->list_repos($repo, $type, $options);
+		return $workspace->list_repos( $repo, $type, $options );
 	}
 
 	/**
@@ -3117,18 +3243,18 @@ class WorkspaceAbilities {
 	public static function showRepo( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$handle    = (string) ( $input['name'] ?? '' );
-		$local     = $workspace->show_repo($handle);
-		if ( ! is_wp_error($local) && empty($local['is_context']) ) {
+		$local     = $workspace->show_repo( $handle );
+		if ( ! is_wp_error( $local ) && empty( $local['is_context'] ) ) {
 			return $local;
 		}
 
 		// Registered remote state remains authoritative for local misses, bounded
 		// local failures, and context aliases whose checkout is not mounted.
 		if ( RemoteWorkspaceBackend::should_handle() ) {
-			$result = ( new RemoteWorkspaceBackend() )->show($handle);
-			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
-				if ( is_array($result) && is_dir($workspace->get_path()) ) {
-					$result['workspace_capacity'] = WorktreeDiskBudget::inspect($workspace->get_path());
+			$result = ( new RemoteWorkspaceBackend() )->show( $handle );
+			if ( ! self::shouldFallbackToLocalWorkspace( $result ) ) {
+				if ( is_array( $result ) && is_dir( $workspace->get_path() ) ) {
+					$result['workspace_capacity'] = WorktreeDiskBudget::inspect( $workspace->get_path() );
 				}
 				return $result;
 			}
@@ -3144,21 +3270,21 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function readFile( array $input ): array|\WP_Error {
-		$input        = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$input        = self::normalize_mounted_workspace_path_input( $input, array( 'repo' ) );
 		$workspace    = new Workspace();
-		$handle_check = $workspace->require_explicit_workspace_handle($input['repo'] ?? '');
-		if ( is_wp_error($handle_check) ) {
+		$handle_check = $workspace->require_explicit_workspace_handle( $input['repo'] ?? '' );
+		if ( is_wp_error( $handle_check ) ) {
 			return $handle_check;
 		}
-		$reader = new WorkspaceReader($workspace);
-		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
+		$reader = new WorkspaceReader( $workspace );
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent( $workspace, (string) ( $input['repo'] ?? '' ) ) ) {
 			return $reader->read_file(
 				$input['repo'] ?? '',
 				$input['path'] ?? '',
-				isset($input['max_size']) ? (int) $input['max_size'] : Workspace::MAX_READ_SIZE,
-				isset($input['offset']) ? (int) $input['offset'] : null,
-				isset($input['limit']) ? (int) $input['limit'] : null,
-				! empty($input['allow_stale_primary'])
+				isset( $input['max_size'] ) ? (int) $input['max_size'] : Workspace::MAX_READ_SIZE,
+				isset( $input['offset'] ) ? (int) $input['offset'] : null,
+				isset( $input['limit'] ) ? (int) $input['limit'] : null,
+				! empty( $input['allow_stale_primary'] )
 			);
 		}
 
@@ -3166,11 +3292,11 @@ class WorkspaceAbilities {
 			$result = ( new RemoteWorkspaceBackend() )->read_file(
 				$input['repo'] ?? '',
 				$input['path'] ?? '',
-				isset($input['max_size']) ? (int) $input['max_size'] : Workspace::MAX_READ_SIZE,
-				isset($input['offset']) ? (int) $input['offset'] : null,
-				isset($input['limit']) ? (int) $input['limit'] : null
+				isset( $input['max_size'] ) ? (int) $input['max_size'] : Workspace::MAX_READ_SIZE,
+				isset( $input['offset'] ) ? (int) $input['offset'] : null,
+				isset( $input['limit'] ) ? (int) $input['limit'] : null
 			);
-			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
+			if ( ! self::shouldFallbackToLocalWorkspace( $result ) ) {
 				return $result;
 			}
 		}
@@ -3178,10 +3304,10 @@ class WorkspaceAbilities {
 		return $reader->read_file(
 			$input['repo'] ?? '',
 			$input['path'] ?? '',
-			isset($input['max_size']) ? (int) $input['max_size'] : Workspace::MAX_READ_SIZE,
-			isset($input['offset']) ? (int) $input['offset'] : null,
-			isset($input['limit']) ? (int) $input['limit'] : null,
-			! empty($input['allow_stale_primary'])
+			isset( $input['max_size'] ) ? (int) $input['max_size'] : Workspace::MAX_READ_SIZE,
+			isset( $input['offset'] ) ? (int) $input['offset'] : null,
+			isset( $input['limit'] ) ? (int) $input['limit'] : null,
+			! empty( $input['allow_stale_primary'] )
 		);
 	}
 
@@ -3192,18 +3318,18 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function listDirectory( array $input ): array|\WP_Error {
-		$input        = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$input        = self::normalize_mounted_workspace_path_input( $input, array( 'repo' ) );
 		$workspace    = new Workspace();
-		$handle_check = $workspace->require_explicit_workspace_handle($input['repo'] ?? '');
-		if ( is_wp_error($handle_check) ) {
+		$handle_check = $workspace->require_explicit_workspace_handle( $input['repo'] ?? '' );
+		if ( is_wp_error( $handle_check ) ) {
 			return $handle_check;
 		}
-		$reader = new WorkspaceReader($workspace);
-		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
+		$reader = new WorkspaceReader( $workspace );
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent( $workspace, (string) ( $input['repo'] ?? '' ) ) ) {
 			return $reader->list_directory(
 				$input['repo'] ?? '',
 				$input['path'] ?? null,
-				! empty($input['allow_stale_primary'])
+				! empty( $input['allow_stale_primary'] )
 			);
 		}
 
@@ -3212,7 +3338,7 @@ class WorkspaceAbilities {
 				$input['repo'] ?? '',
 				$input['path'] ?? null
 			);
-			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
+			if ( ! self::shouldFallbackToLocalWorkspace( $result ) ) {
 				return $result;
 			}
 		}
@@ -3220,7 +3346,7 @@ class WorkspaceAbilities {
 		return $reader->list_directory(
 			$input['repo'] ?? '',
 			$input['path'] ?? null,
-			! empty($input['allow_stale_primary'])
+			! empty( $input['allow_stale_primary'] )
 		);
 	}
 
@@ -3231,22 +3357,22 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function grepFiles( array $input ): array|\WP_Error {
-		$input        = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$input        = self::normalize_mounted_workspace_path_input( $input, array( 'repo' ) );
 		$workspace    = new Workspace();
-		$handle_check = $workspace->require_explicit_workspace_handle($input['repo'] ?? '');
-		if ( is_wp_error($handle_check) ) {
+		$handle_check = $workspace->require_explicit_workspace_handle( $input['repo'] ?? '' );
+		if ( is_wp_error( $handle_check ) ) {
 			return $handle_check;
 		}
-		$reader = new WorkspaceReader($workspace);
-		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['repo'] ?? '' )) ) {
+		$reader = new WorkspaceReader( $workspace );
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent( $workspace, (string) ( $input['repo'] ?? '' ) ) ) {
 			return $reader->grep(
 				$input['repo'] ?? '',
 				$input['pattern'] ?? '',
 				$input['path'] ?? null,
 				$input['include'] ?? null,
-				isset($input['max_results']) ? (int) $input['max_results'] : 100,
-				isset($input['context_lines']) ? (int) $input['context_lines'] : 0,
-				! empty($input['allow_stale_primary'])
+				isset( $input['max_results'] ) ? (int) $input['max_results'] : 100,
+				isset( $input['context_lines'] ) ? (int) $input['context_lines'] : 0,
+				! empty( $input['allow_stale_primary'] )
 			);
 		}
 
@@ -3256,10 +3382,10 @@ class WorkspaceAbilities {
 				$input['pattern'] ?? '',
 				$input['path'] ?? null,
 				$input['include'] ?? null,
-				isset($input['max_results']) ? (int) $input['max_results'] : 100,
-				isset($input['context_lines']) ? (int) $input['context_lines'] : 0
+				isset( $input['max_results'] ) ? (int) $input['max_results'] : 100,
+				isset( $input['context_lines'] ) ? (int) $input['context_lines'] : 0
 			);
-			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
+			if ( ! self::shouldFallbackToLocalWorkspace( $result ) ) {
 				return $result;
 			}
 		}
@@ -3269,9 +3395,9 @@ class WorkspaceAbilities {
 			$input['pattern'] ?? '',
 			$input['path'] ?? null,
 			$input['include'] ?? null,
-			isset($input['max_results']) ? (int) $input['max_results'] : 100,
-			isset($input['context_lines']) ? (int) $input['context_lines'] : 0,
-			! empty($input['allow_stale_primary'])
+			isset( $input['max_results'] ) ? (int) $input['max_results'] : 100,
+			isset( $input['context_lines'] ) ? (int) $input['context_lines'] : 0,
+			! empty( $input['allow_stale_primary'] )
 		);
 	}
 
@@ -3281,21 +3407,21 @@ class WorkspaceAbilities {
 	 * RemoteWorkspaceBackend returns domain state only; this adapter is the
 	 * explicitly agent-facing layer that preserves CLI/tool loop guidance.
 	 *
-	 * @param string                 $operation Remote backend operation name.
+	 * @param string                        $operation Remote backend operation name.
 	 * @param array<string,mixed>|\WP_Error $result Backend result.
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private static function decorate_remote_workspace_result( string $operation, array|\WP_Error $result ): array|\WP_Error {
-		if ( is_wp_error($result) ) {
+		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
 
-		$guidance = self::remote_workspace_guidance($operation, $result);
-		if ( empty($guidance) ) {
+		$guidance = self::remote_workspace_guidance( $operation, $result );
+		if ( empty( $guidance ) ) {
 			return $result;
 		}
 
-		return array_merge($result, $guidance);
+		return array_merge( $result, $guidance );
 	}
 
 	/**
@@ -3399,16 +3525,16 @@ class WorkspaceAbilities {
 			array(
 				'full'                   => (bool) ( $input['full'] ?? false ),
 				'auth_token_env'         => $input['auth_token_env'] ?? '',
-				'allow_duplicate_remote' => ! empty($input['allow_duplicate_remote']),
+				'allow_duplicate_remote' => ! empty( $input['allow_duplicate_remote'] ),
 			)
 		);
 
-		if ( is_wp_error($result) && 'datamachine_workspace_git_unavailable' === $result->get_error_code() ) {
+		if ( is_wp_error( $result ) && 'datamachine_workspace_git_unavailable' === $result->get_error_code() ) {
 			$remote_result = ( new RemoteWorkspaceBackend() )->clone_repo(
 				$input['url'] ?? '',
 				$input['name'] ?? null
 			);
-			return self::decorate_remote_workspace_result('clone_repo', $remote_result);
+			return self::decorate_remote_workspace_result( 'clone_repo', $remote_result );
 		}
 
 		return $result;
@@ -3422,13 +3548,13 @@ class WorkspaceAbilities {
 	 */
 	public static function materializeRemoteWorkspace( array $input ): array|\WP_Error {
 		$remote  = new RemoteWorkspaceBackend();
-		$context = $remote->materialization_context( (string) ( $input['handle'] ?? '' ));
-		if ( is_wp_error($context) ) {
+		$context = $remote->materialization_context( (string) ( $input['handle'] ?? '' ) );
+		if ( is_wp_error( $context ) ) {
 			return $context;
 		}
 
 		$workspace = new Workspace();
-		return $workspace->materialize_remote_workspace($context, $input);
+		return $workspace->materialize_remote_workspace( $context, $input );
 	}
 
 	/**
@@ -3438,22 +3564,22 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function registerContextRepositories( array $input ): array|\WP_Error {
-		$repositories = self::normalizeContextRepositories($input['repositories'] ?? array());
-		if ( is_wp_error($repositories) ) {
+		$repositories = self::normalizeContextRepositories( $input['repositories'] ?? array() );
+		if ( is_wp_error( $repositories ) ) {
 			return $repositories;
 		}
 
-		if ( ! function_exists('update_option') ) {
-			return new \WP_Error('context_repositories_storage_unavailable', 'Context repositories cannot be registered because option storage is unavailable.', array( 'status' => 500 ));
+		if ( ! function_exists( 'update_option' ) ) {
+			return new \WP_Error( 'context_repositories_storage_unavailable', 'Context repositories cannot be registered because option storage is unavailable.', array( 'status' => 500 ) );
 		}
 
-		update_option('datamachine_code_context_repositories', $repositories, false);
+		update_option( 'datamachine_code_context_repositories', $repositories, false );
 
 		return array(
 			'success'      => true,
 			'access'       => 'readonly',
-			'count'        => count($repositories),
-			'repositories' => array_values($repositories),
+			'count'        => count( $repositories ),
+			'repositories' => array_values( $repositories ),
 		);
 	}
 
@@ -3462,28 +3588,28 @@ class WorkspaceAbilities {
 	 * @return array<string,array<string,mixed>>|\WP_Error
 	 */
 	private static function normalizeContextRepositories( mixed $repositories ): array|\WP_Error {
-		if ( ! is_array($repositories) ) {
-			return new \WP_Error('invalid_context_repositories', 'repositories must be an array.', array( 'status' => 400 ));
+		if ( ! is_array( $repositories ) ) {
+			return new \WP_Error( 'invalid_context_repositories', 'repositories must be an array.', array( 'status' => 400 ) );
 		}
 
 		$normalized = array();
 		foreach ( $repositories as $repository ) {
-			if ( ! is_array($repository) ) {
+			if ( ! is_array( $repository ) ) {
 				continue;
 			}
 
-			$repo = trim( (string) ( $repository['repo'] ?? '' ));
+			$repo = trim( (string) ( $repository['repo'] ?? '' ) );
 			if ( '' === $repo ) {
-				return new \WP_Error('invalid_context_repository', 'Each context repository requires a repo value.', array( 'status' => 400 ));
+				return new \WP_Error( 'invalid_context_repository', 'Each context repository requires a repo value.', array( 'status' => 400 ) );
 			}
 
-			$alias = sanitize_key( (string) ( $repository['alias'] ?? basename($repo) ) );
+			$alias = sanitize_key( (string) ( $repository['alias'] ?? basename( $repo ) ) );
 			if ( '' === $alias ) {
-				return new \WP_Error('invalid_context_repository_alias', sprintf('Could not derive a context repository alias for %s.', $repo), array( 'status' => 400 ));
+				return new \WP_Error( 'invalid_context_repository_alias', sprintf( 'Could not derive a context repository alias for %s.', $repo ), array( 'status' => 400 ) );
 			}
 
 			$paths = array();
-			if ( is_array($repository['paths'] ?? null) ) {
+			if ( is_array( $repository['paths'] ?? null ) ) {
 				foreach ( $repository['paths'] as $path ) {
 					$path = trim( (string) $path );
 					if ( '' !== $path ) {
@@ -3495,9 +3621,9 @@ class WorkspaceAbilities {
 			$normalized[ $alias ] = array(
 				'alias'  => $alias,
 				'repo'   => $repo,
-				'ref'    => trim( (string) ( $repository['ref'] ?? '' )),
+				'ref'    => trim( (string) ( $repository['ref'] ?? '' ) ),
 				'target' => $alias,
-				'paths'  => array_values(array_unique($paths)),
+				'paths'  => array_values( array_unique( $paths ) ),
 			);
 		}
 
@@ -3526,7 +3652,7 @@ class WorkspaceAbilities {
 	 */
 	public static function removeRepo( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
-		return $workspace->remove_repo($input['name'] ?? '');
+		return $workspace->remove_repo( $input['name'] ?? '' );
 	}
 
 	/**
@@ -3536,10 +3662,10 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function writeFile( array $input ): array|\WP_Error {
-		$input        = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$input        = self::normalize_mounted_workspace_path_input( $input, array( 'repo' ) );
 		$workspace    = new Workspace();
-		$handle_check = $workspace->ensure_workspace_mutation_allowed($input['repo'] ?? '', ! empty($input['allow_primary_mutation']));
-		if ( is_wp_error($handle_check) ) {
+		$handle_check = $workspace->ensure_workspace_mutation_allowed( $input['repo'] ?? '', ! empty( $input['allow_primary_mutation'] ) );
+		if ( is_wp_error( $handle_check ) ) {
 			return $handle_check;
 		}
 
@@ -3549,16 +3675,16 @@ class WorkspaceAbilities {
 				$input['path'] ?? '',
 				$input['content'] ?? ''
 			);
-			return self::decorate_remote_workspace_result('write_file', $result);
+			return self::decorate_remote_workspace_result( 'write_file', $result );
 		}
 
-		$writer = new WorkspaceWriter($workspace);
+		$writer = new WorkspaceWriter( $workspace );
 
 		return $writer->write_file(
 			$input['repo'] ?? '',
 			$input['path'] ?? '',
 			$input['content'] ?? '',
-			! empty($input['allow_primary_mutation'])
+			! empty( $input['allow_primary_mutation'] )
 		);
 	}
 
@@ -3569,21 +3695,21 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function editFile( array $input ): array|\WP_Error {
-		$input        = self::normalize_mounted_workspace_path_input($input, array( 'repo' ));
+		$input        = self::normalize_mounted_workspace_path_input( $input, array( 'repo' ) );
 		$workspace    = new Workspace();
-		$handle_check = $workspace->ensure_workspace_mutation_allowed($input['repo'] ?? '', ! empty($input['allow_primary_mutation']));
-		if ( is_wp_error($handle_check) ) {
+		$handle_check = $workspace->ensure_workspace_mutation_allowed( $input['repo'] ?? '', ! empty( $input['allow_primary_mutation'] ) );
+		if ( is_wp_error( $handle_check ) ) {
 			return $handle_check;
 		}
 		$old_string = (string) ( $input['old_string'] ?? $input['search'] ?? $input['old'] ?? '' );
 		$new_string = (string) ( $input['new_string'] ?? $input['replace'] ?? $input['new'] ?? '' );
 
 		if ( '' === $old_string ) {
-			return new \WP_Error('missing_old_string', 'old_string is required.', array( 'status' => 400 ));
+			return new \WP_Error( 'missing_old_string', 'old_string is required.', array( 'status' => 400 ) );
 		}
 
-		if ( ! array_key_exists('new_string', $input) && ! array_key_exists('replace', $input) && ! array_key_exists('new', $input) ) {
-			return new \WP_Error('missing_new_string', 'new_string is required.', array( 'status' => 400 ));
+		if ( ! array_key_exists( 'new_string', $input ) && ! array_key_exists( 'replace', $input ) && ! array_key_exists( 'new', $input ) ) {
+			return new \WP_Error( 'missing_new_string', 'new_string is required.', array( 'status' => 400 ) );
 		}
 
 		if ( RemoteWorkspaceBackend::should_handle() ) {
@@ -3592,20 +3718,20 @@ class WorkspaceAbilities {
 				$input['path'] ?? '',
 				$old_string,
 				$new_string,
-				! empty($input['replace_all'])
+				! empty( $input['replace_all'] )
 			);
-			return self::decorate_remote_workspace_result('edit_file', $result);
+			return self::decorate_remote_workspace_result( 'edit_file', $result );
 		}
 
-		$writer = new WorkspaceWriter($workspace);
+		$writer = new WorkspaceWriter( $workspace );
 
 		return $writer->edit_file(
 			$input['repo'] ?? '',
 			$input['path'] ?? '',
 			$old_string,
 			$new_string,
-			! empty($input['replace_all']),
-			! empty($input['allow_primary_mutation'])
+			! empty( $input['replace_all'] ),
+			! empty( $input['allow_primary_mutation'] )
 		);
 	}
 
@@ -3617,12 +3743,12 @@ class WorkspaceAbilities {
 	 */
 	public static function applyPatch( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
-		$writer    = new WorkspaceWriter($workspace);
+		$writer    = new WorkspaceWriter( $workspace );
 
 		return $writer->apply_patch(
 			$input['repo'] ?? '',
 			$input['patch'] ?? '',
-			! empty($input['allow_primary_mutation'])
+			! empty( $input['allow_primary_mutation'] )
 		);
 	}
 
@@ -3664,18 +3790,18 @@ class WorkspaceAbilities {
 	 */
 	public static function gitStatus( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
-		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, (string) ( $input['name'] ?? '' )) ) {
-			return $workspace->git_status($input['name'] ?? '');
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent( $workspace, (string) ( $input['name'] ?? '' ) ) ) {
+			return $workspace->git_status( $input['name'] ?? '' );
 		}
 
 		if ( RemoteWorkspaceBackend::should_handle() ) {
-			$result = ( new RemoteWorkspaceBackend() )->git_status($input['name'] ?? '');
-			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
-				return self::decorate_remote_workspace_result('git_status', $result);
+			$result = ( new RemoteWorkspaceBackend() )->git_status( $input['name'] ?? '' );
+			if ( ! self::shouldFallbackToLocalWorkspace( $result ) ) {
+				return self::decorate_remote_workspace_result( 'git_status', $result );
 			}
 		}
 
-		return $workspace->git_status($input['name'] ?? '');
+		return $workspace->git_status( $input['name'] ?? '' );
 	}
 
 	/**
@@ -3688,10 +3814,10 @@ class WorkspaceAbilities {
 		$workspace = new Workspace();
 		return $workspace->git_pull(
 			$input['name'] ?? '',
-			! empty($input['allow_dirty']),
-			! empty($input['allow_primary_refresh']) || ! empty($input['allow_primary_mutation']),
+			! empty( $input['allow_dirty'] ),
+			! empty( $input['allow_primary_refresh'] ) || ! empty( $input['allow_primary_mutation'] ),
 			(string) ( $input['remote'] ?? 'origin' ),
-			isset($input['branch']) ? (string) $input['branch'] : null
+			isset( $input['branch'] ) ? (string) $input['branch'] : null
 		);
 	}
 
@@ -3706,18 +3832,18 @@ class WorkspaceAbilities {
 			$paths = $input['paths'] ?? array();
 			return ( new RemoteWorkspaceBackend() )->git_add(
 				$input['name'] ?? '',
-				is_array($paths) ? $paths : array()
+				is_array( $paths ) ? $paths : array()
 			);
 		}
 
 		$workspace = new Workspace();
 		$paths     = $input['paths'] ?? array();
 
-		if ( ! is_array($paths) ) {
+		if ( ! is_array( $paths ) ) {
 			$paths = array();
 		}
 
-		return $workspace->git_add($input['name'] ?? '', $paths, ! empty($input['allow_primary_mutation']));
+		return $workspace->git_add( $input['name'] ?? '', $paths, ! empty( $input['allow_primary_mutation'] ) );
 	}
 
 	/**
@@ -3732,8 +3858,8 @@ class WorkspaceAbilities {
 		return $workspace->delete_path(
 			$input['repo'] ?? '',
 			$input['path'] ?? '',
-			! empty($input['recursive']),
-			! empty($input['allow_primary_mutation'])
+			! empty( $input['recursive'] ),
+			! empty( $input['allow_primary_mutation'] )
 		);
 	}
 
@@ -3749,14 +3875,14 @@ class WorkspaceAbilities {
 				$input['name'] ?? '',
 				$input['message'] ?? ''
 			);
-			return self::decorate_remote_workspace_result('git_commit', $result);
+			return self::decorate_remote_workspace_result( 'git_commit', $result );
 		}
 
 		$workspace = new Workspace();
 		return $workspace->git_commit(
 			$input['name'] ?? '',
 			$input['message'] ?? '',
-			! empty($input['allow_dangerous_primary_mutation'])
+			! empty( $input['allow_dangerous_primary_mutation'] )
 		);
 	}
 
@@ -3773,7 +3899,7 @@ class WorkspaceAbilities {
 				$input['remote'] ?? 'origin',
 				$input['branch'] ?? null
 			);
-			return self::decorate_remote_workspace_result('git_push', $result);
+			return self::decorate_remote_workspace_result( 'git_push', $result );
 		}
 
 		$workspace = new Workspace();
@@ -3781,8 +3907,8 @@ class WorkspaceAbilities {
 			$input['name'] ?? '',
 			$input['remote'] ?? 'origin',
 			$input['branch'] ?? null,
-			! empty($input['allow_dangerous_primary_mutation']),
-			! empty($input['force_with_lease']),
+			! empty( $input['allow_dangerous_primary_mutation'] ),
+			! empty( $input['force_with_lease'] ),
 			$input['expected_sha'] ?? null
 		);
 	}
@@ -3794,7 +3920,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function publishRunnerWorkspace( array $input ): array|\WP_Error {
-		return ( new RunnerWorkspacePublisher() )->publish($input);
+		return ( new RunnerWorkspacePublisher() )->publish( $input );
 	}
 
 	/**
@@ -3806,8 +3932,8 @@ class WorkspaceAbilities {
 	public static function runRunnerWorkspaceCommand( array $input ): array|\WP_Error {
 		$handle  = trim( (string) ( $input['workspace_handle'] ?? $input['name'] ?? $input['repo'] ?? '' ) );
 		$command = trim( (string) ( $input['command'] ?? '' ) );
-		$timeout = isset($input['timeout']) ? (int) $input['timeout'] : (int) ( $input['timeout_seconds'] ?? 300 );
-		$env     = isset($input['env']) && is_array($input['env']) ? $input['env'] : array();
+		$timeout = isset( $input['timeout'] ) ? (int) $input['timeout'] : (int) ( $input['timeout_seconds'] ?? 300 );
+		$env     = isset( $input['env'] ) && is_array( $input['env'] ) ? $input['env'] : array();
 
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			$result = ( new RemoteWorkspaceBackend() )->run_command(
@@ -3816,9 +3942,9 @@ class WorkspaceAbilities {
 				(string) ( $input['description'] ?? '' ),
 				$timeout,
 				$env,
-				isset($input['cwd']) ? (string) $input['cwd'] : null
+				isset( $input['cwd'] ) ? (string) $input['cwd'] : null
 			);
-			return self::decorate_remote_workspace_result('run_runner_workspace_command', $result);
+			return self::decorate_remote_workspace_result( 'run_runner_workspace_command', $result );
 		}
 
 		$workspace = new Workspace();
@@ -3828,7 +3954,7 @@ class WorkspaceAbilities {
 			(string) ( $input['description'] ?? '' ),
 			$timeout,
 			$env,
-			isset($input['cwd']) ? (string) $input['cwd'] : null
+			isset( $input['cwd'] ) ? (string) $input['cwd'] : null
 		);
 	}
 
@@ -4056,8 +4182,8 @@ class WorkspaceAbilities {
 			$input['name'] ?? '',
 			$input['onto'] ?? null,
 			$input['strategy_option'] ?? null,
-			! empty($input['continue']),
-			! empty($input['allow_dangerous_primary_mutation'])
+			! empty( $input['continue'] ),
+			! empty( $input['allow_dangerous_primary_mutation'] )
 		);
 	}
 
@@ -4073,8 +4199,8 @@ class WorkspaceAbilities {
 			$input['name'] ?? '',
 			$input['mode'] ?? 'mixed',
 			$input['target'] ?? null,
-			! empty($input['allow_destructive']),
-			! empty($input['allow_dangerous_primary_mutation'])
+			! empty( $input['allow_destructive'] ),
+			! empty( $input['allow_dangerous_primary_mutation'] )
 		);
 	}
 
@@ -4102,16 +4228,16 @@ class WorkspaceAbilities {
 	public static function prRebase( array $input ): array|\WP_Error {
 		$workspace  = new Workspace();
 		$drop_paths = $input['drop_paths'] ?? array();
-		if ( ! is_array($drop_paths) ) {
+		if ( ! is_array( $drop_paths ) ) {
 			$drop_paths = array();
 		}
 
 		return $workspace->pr_rebase(
 			$input['name'] ?? '',
 			$input['pr'] ?? null,
-			! empty($input['squash']),
+			! empty( $input['squash'] ),
 			$drop_paths,
-			! empty($input['allow_dangerous_primary_mutation'])
+			! empty( $input['allow_dangerous_primary_mutation'] )
 		);
 	}
 
@@ -4123,57 +4249,60 @@ class WorkspaceAbilities {
 	 */
 	public static function worktreeAdd( array $input ): array|\WP_Error {
 		// Default inject_context=true; only false when explicitly provided.
-		$inject_context = array_key_exists('inject_context', $input) ? (bool) $input['inject_context'] : true;
+		$inject_context = array_key_exists( 'inject_context', $input ) ? (bool) $input['inject_context'] : true;
 		// Default bootstrap=true; only false when explicitly provided.
-		$bootstrap = array_key_exists('bootstrap', $input) ? (bool) $input['bootstrap'] : true;
+		$bootstrap = array_key_exists( 'bootstrap', $input ) ? (bool) $input['bootstrap'] : true;
 		// Default allow_stale=false (gate enforced); only true when explicitly opted in.
-		$allow_stale = array_key_exists('allow_stale', $input) ? (bool) $input['allow_stale'] : false;
+		$allow_stale = array_key_exists( 'allow_stale', $input ) ? (bool) $input['allow_stale'] : false;
 		// Default allow_unverified_freshness=false (fetch-failure gate enforced).
-		$allow_unverified_freshness = array_key_exists('allow_unverified_freshness', $input) ? (bool) $input['allow_unverified_freshness'] : false;
+		$allow_unverified_freshness = array_key_exists( 'allow_unverified_freshness', $input ) ? (bool) $input['allow_unverified_freshness'] : false;
 		// Default rebase_base=false; only true when explicitly requested.
-		$rebase_base          = array_key_exists('rebase_base', $input) ? (bool) $input['rebase_base'] : false;
-		$force                = ! empty($input['force']);
-		$remediate_capacity   = ! empty($input['remediate_capacity']);
-		$remediate_capacity_dry_run = ! empty($input['remediate_capacity_dry_run']);
-		$require_task_tracker = array_key_exists('require_task_tracker', $input) ? (bool) $input['require_task_tracker'] : true;
-		$task                 = array();
-		$intent               = array();
-		$reuse_policy         = isset($input['reuse_policy']) ? (string) $input['reuse_policy'] : 'reuse_compatible';
-		if ( isset($input['task_url']) && '' !== trim( (string) $input['task_url']) ) {
+		$rebase_base                = array_key_exists( 'rebase_base', $input ) ? (bool) $input['rebase_base'] : false;
+		$force                      = ! empty( $input['force'] );
+		$remediate_capacity         = ! empty( $input['remediate_capacity'] );
+		$remediate_capacity_dry_run = ! empty( $input['remediate_capacity_dry_run'] );
+		$require_task_tracker       = array_key_exists( 'require_task_tracker', $input ) ? (bool) $input['require_task_tracker'] : true;
+		$task                       = array();
+		$intent                     = array();
+		$reuse_policy               = isset( $input['reuse_policy'] ) ? (string) $input['reuse_policy'] : 'reuse_compatible';
+		if ( isset( $input['task_url'] ) && '' !== trim( (string) $input['task_url'] ) ) {
 			$task['task_url'] = (string) $input['task_url'];
 		}
-		if ( isset($input['task_ref']) && '' !== trim( (string) $input['task_ref']) ) {
+		if ( isset( $input['task_ref'] ) && '' !== trim( (string) $input['task_ref'] ) ) {
 			$task['task_ref'] = (string) $input['task_ref'];
 		}
 		foreach ( array( 'purpose', 'owner_run_ref', 'cleanup_policy' ) as $key ) {
-			if ( array_key_exists($key, $input) ) {
+			if ( array_key_exists( $key, $input ) ) {
 				$intent[ $key ] = $input[ $key ];
 			}
 		}
 
 		$workspace = new Workspace();
-		$task      = WorktreeContextInjector::resolve_task_metadata($task) ?? array();
-		if ( $require_task_tracker && empty($task) && RemoteWorkspaceBackend::should_handle() && ! self::hasLocalPrimaryCheckout($workspace, (string) ( $input['repo'] ?? '' )) ) {
-			return new \WP_Error('worktree_task_tracker_required', 'Refusing to create a managed worktree without a valid task URL or task reference.', array( 'status' => 400 ));
+		$task      = WorktreeContextInjector::resolve_task_metadata( $task ) ?? array();
+		if ( $require_task_tracker && empty( $task ) && RemoteWorkspaceBackend::should_handle() && ! self::hasLocalPrimaryCheckout( $workspace, (string) ( $input['repo'] ?? '' ) ) ) {
+			return new \WP_Error( 'worktree_task_tracker_required', 'Refusing to create a managed worktree without a valid task URL or task reference.', array( 'status' => 400 ) );
 		}
-		if ( RemoteWorkspaceBackend::should_handle() && self::hasLocalPrimaryCheckout($workspace, (string) ( $input['repo'] ?? '' )) ) {
-			return self::worktree_add_response($workspace->worktree_add(
-				$input['repo'] ?? '',
-				$input['branch'] ?? '',
-				$input['from'] ?? null,
-				$inject_context,
-				$bootstrap,
-				$allow_stale,
-				$rebase_base,
-				$force,
-				$task,
-				$allow_unverified_freshness,
-				$require_task_tracker,
-				$intent,
-				$reuse_policy,
-				$remediate_capacity,
-				$remediate_capacity_dry_run
-			), $input);
+		if ( RemoteWorkspaceBackend::should_handle() && self::hasLocalPrimaryCheckout( $workspace, (string) ( $input['repo'] ?? '' ) ) ) {
+			return self::worktree_add_response(
+				$workspace->worktree_add(
+					$input['repo'] ?? '',
+					$input['branch'] ?? '',
+					$input['from'] ?? null,
+					$inject_context,
+					$bootstrap,
+					$allow_stale,
+					$rebase_base,
+					$force,
+					$task,
+					$allow_unverified_freshness,
+					$require_task_tracker,
+					$intent,
+					$reuse_policy,
+					$remediate_capacity,
+					$remediate_capacity_dry_run
+				),
+				$input
+			);
 		}
 
 		if ( RemoteWorkspaceBackend::should_handle() ) {
@@ -4181,7 +4310,11 @@ class WorkspaceAbilities {
 				return new \WP_Error(
 					'remote_worktree_capacity_remediation_unsupported',
 					'Capacity remediation requires a local workspace because remote workspace allocation has no filesystem capacity or cleanup lifecycle.',
-					array( 'status' => 400, 'remediate_capacity' => $remediate_capacity, 'remediate_capacity_dry_run' => $remediate_capacity_dry_run )
+					array(
+						'status'                     => 400,
+						'remediate_capacity'         => $remediate_capacity,
+						'remediate_capacity_dry_run' => $remediate_capacity_dry_run,
+					)
 				);
 			}
 			$result = ( new RemoteWorkspaceBackend() )->worktree_add(
@@ -4192,8 +4325,8 @@ class WorkspaceAbilities {
 				$intent,
 				$reuse_policy
 			);
-			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
-				return self::worktree_add_response(self::decorate_remote_workspace_result('worktree_add', $result), $input);
+			if ( ! self::shouldFallbackToLocalWorkspace( $result ) ) {
+				return self::worktree_add_response( self::decorate_remote_workspace_result( 'worktree_add', $result ), $input );
 			}
 		}
 
@@ -4214,83 +4347,100 @@ class WorkspaceAbilities {
 			$remediate_capacity,
 			$remediate_capacity_dry_run
 		);
-		return self::worktree_add_response($result, $input);
+		return self::worktree_add_response( $result, $input );
 	}
 
 	/** Keep the detailed lifecycle contract internal and opt it into public responses explicitly. */
 	private static function worktree_add_response( array|\WP_Error $result, array $input ): array|\WP_Error {
-		return ! empty($input['verbose']) || $result instanceof \WP_Error ? $result : \DataMachineCode\Cli\WorkspaceCompactOutput::worktree_add_result($result);
+		return ! empty( $input['verbose'] ) || $result instanceof \WP_Error ? $result : \DataMachineCode\Cli\WorkspaceCompactOutput::worktree_add_result( $result );
 	}
 
 	/** Plan a local worktree using the same typed fields and defaults as add. */
 	public static function worktreePlan( array $input ): array|\WP_Error {
-		$request = self::worktreeIntentRequest($input);
-		if ( $request instanceof \WP_Error ) {
-			return $request;
-		}
-		return ( new Workspace() )->worktree_plan(...$request);
+		$request = self::worktreeIntentRequest( $input );
+		return ( new Workspace() )->worktree_plan( ...$request );
 	}
 
 	/** Apply a previously returned local worktree plan. */
 	public static function worktreeApplyPlan( array $input ): array|\WP_Error {
-		return ( new Workspace() )->worktree_apply_plan((array) ($input['plan'] ?? array()));
+		return ( new Workspace() )->worktree_apply_plan( (array) ( $input['plan'] ?? array() ) );
 	}
 
 	/** Apply a previously returned missing-primary restore plan. */
 	public static function primaryRestoreApply( array $input ): array|\WP_Error {
-		return ( new Workspace() )->primary_restore_apply((array) ($input['plan'] ?? array()));
+		return ( new Workspace() )->primary_restore_apply( (array) ( $input['plan'] ?? array() ) );
 	}
 
 	public static function worktreeLegacyHandoffApply( array $input ): array|\WP_Error {
-		return ( new Workspace() )->worktree_apply_legacy_handoff((array) ($input['plan'] ?? array()), (string) ($input['mode'] ?? ''));
+		return ( new Workspace() )->worktree_apply_legacy_handoff( (array) ( $input['plan'] ?? array() ), (string) ( $input['mode'] ?? '' ) );
 	}
 
-	/** @return array<int,mixed>|\WP_Error */
-	private static function worktreeIntentRequest( array $input ): array|\WP_Error {
-		$task = array_filter(array( 'task_url' => $input['task_url'] ?? null, 'task_ref' => $input['task_ref'] ?? null ), static fn( $value ): bool => is_string($value) && '' !== trim($value));
+	/** @return array<int,mixed> */
+	private static function worktreeIntentRequest( array $input ): array {
+		$task   = array_filter(
+			array(
+				'task_url' => $input['task_url'] ?? null,
+				'task_ref' => $input['task_ref'] ?? null,
+			),
+			static fn( $value ): bool => is_string( $value ) && '' !== trim( $value )
+		);
 		$intent = array();
 		foreach ( array( 'purpose', 'owner_run_ref', 'cleanup_policy' ) as $key ) {
-			if ( array_key_exists($key, $input) ) {
+			if ( array_key_exists( $key, $input ) ) {
 				$intent[ $key ] = $input[ $key ];
 			}
 		}
-		return array( (string) ($input['repo'] ?? ''), (string) ($input['branch'] ?? ''), $input['from'] ?? null, array_key_exists('inject_context', $input) ? (bool) $input['inject_context'] : true, array_key_exists('bootstrap', $input) ? (bool) $input['bootstrap'] : true, ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), $task, ! empty($input['allow_unverified_freshness']), array_key_exists('require_task_tracker', $input) ? (bool) $input['require_task_tracker'] : true, $intent, (string) ($input['reuse_policy'] ?? 'reuse_compatible') );
+		return array( (string) ( $input['repo'] ?? '' ), (string) ( $input['branch'] ?? '' ), $input['from'] ?? null, array_key_exists( 'inject_context', $input ) ? (bool) $input['inject_context'] : true, array_key_exists( 'bootstrap', $input ) ? (bool) $input['bootstrap'] : true, ! empty( $input['allow_stale'] ), ! empty( $input['rebase_base'] ), ! empty( $input['force'] ), $task, ! empty( $input['allow_unverified_freshness'] ), array_key_exists( 'require_task_tracker', $input ) ? (bool) $input['require_task_tracker'] : true, $intent, (string) ( $input['reuse_policy'] ?? 'reuse_compatible' ) );
 	}
 
 	/** @return array<string,array<string,mixed>> */
 	private static function worktreeIntentSchemaProperties(): array {
-		$policy = method_exists(WorktreeContextInjector::class, 'worktree_add_policy_schema_properties') ? WorktreeContextInjector::worktree_add_policy_schema_properties() : array();
-		return array( 'repo' => array( 'type' => 'string' ), 'branch' => array( 'type' => 'string' ), 'from' => array( 'type' => 'string' ), 'inject_context' => array( 'type' => 'boolean' ), 'bootstrap' => array( 'type' => 'boolean' ), 'allow_stale' => array( 'type' => 'boolean' ), 'allow_unverified_freshness' => array( 'type' => 'boolean' ), 'rebase_base' => array( 'type' => 'boolean' ), 'force' => array( 'type' => 'boolean' ), 'task_url' => array( 'type' => 'string' ), 'task_ref' => array( 'type' => 'string' ), 'require_task_tracker' => array( 'type' => 'boolean' ), ...$policy );
+		$policy = WorktreeContextInjector::worktree_add_policy_schema_properties();
+		return array(
+			'repo'                       => array( 'type' => 'string' ),
+			'branch'                     => array( 'type' => 'string' ),
+			'from'                       => array( 'type' => 'string' ),
+			'inject_context'             => array( 'type' => 'boolean' ),
+			'bootstrap'                  => array( 'type' => 'boolean' ),
+			'allow_stale'                => array( 'type' => 'boolean' ),
+			'allow_unverified_freshness' => array( 'type' => 'boolean' ),
+			'rebase_base'                => array( 'type' => 'boolean' ),
+			'force'                      => array( 'type' => 'boolean' ),
+			'task_url'                   => array( 'type' => 'string' ),
+			'task_ref'                   => array( 'type' => 'string' ),
+			'require_task_tracker'       => array( 'type' => 'boolean' ),
+			...$policy,
+		);
 	}
 
 	/**
 	 * Whether a repo argument resolves to an editable local primary checkout.
 	 */
 	private static function hasLocalPrimaryCheckout( Workspace $workspace, string $repo ): bool {
-		$result = self::showLocalWorkspaceHandleIfPresent($workspace, $repo);
+		$result = self::showLocalWorkspaceHandleIfPresent( $workspace, $repo );
 		if ( null === $result ) {
 			return false;
 		}
 
 		$path = (string) ( $result['path'] ?? '' );
-		return ! str_contains(basename($path), '@');
+		return ! str_contains( basename( $path ), '@' );
 	}
 
 	/**
 	 * Return local workspace details for an existing local handle, if present.
 	 */
 	private static function showLocalWorkspaceHandleIfPresent( Workspace $workspace, string $handle ): ?array {
-		if ( '' === trim($handle) ) {
+		if ( '' === trim( $handle ) ) {
 			return null;
 		}
 
-		$result = $workspace->show_repo($handle);
-		if ( is_wp_error($result) ) {
+		$result = $workspace->show_repo( $handle );
+		if ( is_wp_error( $result ) ) {
 			return null;
 		}
 
 		$path = (string) ( $result['path'] ?? '' );
-		if ( '' === $path || str_starts_with($path, 'github://') ) {
+		if ( '' === $path || str_starts_with( $path, 'github://' ) ) {
 			return null;
 		}
 
@@ -4301,7 +4451,7 @@ class WorkspaceAbilities {
 	 * Whether a remote-backend miss should be retried against local workspace discovery.
 	 */
 	private static function shouldFallbackToLocalWorkspace( mixed $result ): bool {
-		return is_wp_error($result) && in_array($result->get_error_code(), array( 'remote_workspace_repo_not_found', 'unsupported_remote_workspace_repo_argument' ), true);
+		return is_wp_error( $result ) && in_array( $result->get_error_code(), array( 'remote_workspace_repo_not_found', 'unsupported_remote_workspace_repo_argument' ), true );
 	}
 
 	/**
@@ -4312,7 +4462,7 @@ class WorkspaceAbilities {
 	 */
 	public static function worktreeRefreshContext( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
-		return $workspace->worktree_refresh_context($input['handle'] ?? '');
+		return $workspace->worktree_refresh_context( $input['handle'] ?? '' );
 	}
 
 	/**
@@ -4326,8 +4476,8 @@ class WorkspaceAbilities {
 		return $workspace->worktree_finalize(
 			$input['handle'] ?? '',
 			$input['state'] ?? '',
-			isset($input['pr']) ? (string) $input['pr'] : null,
-			isset($input['owner_terminal_outcome']) ? (string) $input['owner_terminal_outcome'] : null
+			isset( $input['pr'] ) ? (string) $input['pr'] : null,
+			isset( $input['owner_terminal_outcome'] ) ? (string) $input['owner_terminal_outcome'] : null
 		);
 	}
 
@@ -4339,35 +4489,35 @@ class WorkspaceAbilities {
 	 */
 	public static function worktreeList( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
-		$repo      = isset($input['repo']) && '' !== trim( (string) $input['repo'])
+		$repo      = isset( $input['repo'] ) && '' !== trim( (string) $input['repo'] )
 		? (string) $input['repo']
 		: null;
-		$state     = isset($input['state']) && '' !== trim( (string) $input['state'])
+		$state     = isset( $input['state'] ) && '' !== trim( (string) $input['state'] )
 		? (string) $input['state']
 		: null;
 
 		// Default to the cheap listing on the ability surface so MCP/REST/CLI callers
 		// don't pay the per-worktree git status + du cost on huge workspaces.
 		// Internal PHP callers can still call worktree_list() directly with full probes.
-		$limit = Workspace::normalize_workspace_list_limit($input['limit'] ?? 50);
-		if ( is_wp_error($limit) ) {
-			return new \WP_Error('invalid_worktree_list_limit', 'Worktree list limit must be an integer between 1 and 200.', array( 'status' => 400 ));
+		$limit = Workspace::normalize_workspace_list_limit( $input['limit'] ?? 50 );
+		if ( is_wp_error( $limit ) ) {
+			return new \WP_Error( 'invalid_worktree_list_limit', 'Worktree list limit must be an integer between 1 and 200.', array( 'status' => 400 ) );
 		}
-		if ( ! empty($input['all']) && isset($input['cursor']) ) {
-			return new \WP_Error('invalid_worktree_list_pagination', 'Worktree list --all cannot be combined with --cursor.', array( 'status' => 400 ));
+		if ( ! empty( $input['all'] ) && isset( $input['cursor'] ) ) {
+			return new \WP_Error( 'invalid_worktree_list_pagination', 'Worktree list --all cannot be combined with --cursor.', array( 'status' => 400 ) );
 		}
 		$opts = array(
-			'include_status' => array_key_exists('include_status', $input) ? (bool) $input['include_status'] : false,
-			'include_disk'   => array_key_exists('include_disk', $input) ? (bool) $input['include_disk'] : false,
-			'handle'         => isset($input['handle']) ? (string) $input['handle'] : '',
+			'include_status' => array_key_exists( 'include_status', $input ) ? (bool) $input['include_status'] : false,
+			'include_disk'   => array_key_exists( 'include_disk', $input ) ? (bool) $input['include_disk'] : false,
+			'handle'         => isset( $input['handle'] ) ? (string) $input['handle'] : '',
 			'limit'          => $limit,
-			'all'            => ! empty($input['all']),
+			'all'            => ! empty( $input['all'] ),
 		);
-		if ( isset($input['cursor']) ) {
+		if ( isset( $input['cursor'] ) ) {
 			$opts['cursor'] = (string) $input['cursor'];
 		}
 
-		return $workspace->worktree_list($repo, $state, $opts);
+		return $workspace->worktree_list( $repo, $state, $opts );
 	}
 
 	/**
@@ -4379,29 +4529,29 @@ class WorkspaceAbilities {
 	public static function workspaceHygieneReport( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$opts      = array();
-		if ( array_key_exists('include_cleanup', $input) ) {
+		if ( array_key_exists( 'include_cleanup', $input ) ) {
 			$opts['include_cleanup'] = (bool) $input['include_cleanup'];
 		}
-		if ( array_key_exists('include_sizes', $input) ) {
+		if ( array_key_exists( 'include_sizes', $input ) ) {
 			$opts['include_sizes'] = (bool) $input['include_sizes'];
 		}
-		if ( array_key_exists('include_worktree_status', $input) ) {
+		if ( array_key_exists( 'include_worktree_status', $input ) ) {
 			$opts['include_worktree_status'] = (bool) $input['include_worktree_status'];
 		}
-		if ( array_key_exists('refresh_inventory', $input) ) {
+		if ( array_key_exists( 'refresh_inventory', $input ) ) {
 			$opts['refresh_inventory'] = (bool) $input['refresh_inventory'];
 		}
-		if ( isset($input['size_limit']) ) {
+		if ( isset( $input['size_limit'] ) ) {
 			$opts['size_limit'] = (int) $input['size_limit'];
 		}
-		if ( isset($input['size_entry_timeout']) ) {
+		if ( isset( $input['size_entry_timeout'] ) ) {
 			$opts['size_entry_timeout'] = (int) $input['size_entry_timeout'];
 		}
-		if ( isset($input['size_total_timeout']) ) {
+		if ( isset( $input['size_total_timeout'] ) ) {
 			$opts['size_total_timeout'] = (int) $input['size_total_timeout'];
 		}
 
-		return $workspace->workspace_hygiene_report($opts);
+		return $workspace->workspace_hygiene_report( $opts );
 	}
 
 	/**
@@ -4424,22 +4574,22 @@ class WorkspaceAbilities {
 	public static function worktreeInventoryPruneMissing( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$opts      = array(
-			'dry_run' => ! empty($input['dry_run']),
-			'force'   => ! empty($input['force']),
+			'dry_run' => ! empty( $input['dry_run'] ),
+			'force'   => ! empty( $input['force'] ),
 		);
 		foreach ( array( 'limit', 'offset' ) as $field ) {
-			if ( isset($input[ $field ]) ) {
+			if ( isset( $input[ $field ] ) ) {
 				$opts[ $field ] = (int) $input[ $field ];
 			}
 		}
-		if ( isset($input['after_handle']) ) {
+		if ( isset( $input['after_handle'] ) ) {
 			$opts['after_handle'] = (string) $input['after_handle'];
 		}
-		if ( isset($input['until_budget']) ) {
+		if ( isset( $input['until_budget'] ) ) {
 			$opts['until_budget'] = (string) $input['until_budget'];
 		}
 
-		return $workspace->worktree_inventory_prune_missing($opts);
+		return $workspace->worktree_inventory_prune_missing( $opts );
 	}
 
 	/**
@@ -4449,11 +4599,11 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function workspaceCleanupRun( array $input ): array|\WP_Error {
-		if ( ! empty($input['dry_run']) ) {
-			return new \WP_Error('workspace_cleanup_run_no_dry_run', 'Background cleanup scheduling does not accept dry_run. Use the synchronous workspace cleanup review abilities instead.', array( 'status' => 400 ));
+		if ( ! empty( $input['dry_run'] ) ) {
+			return new \WP_Error( 'workspace_cleanup_run_no_dry_run', 'Background cleanup scheduling does not accept dry_run. Use the synchronous workspace cleanup review abilities instead.', array( 'status' => 400 ) );
 		}
 
-		$mode = strtolower(preg_replace('/[^a-z0-9_\-]/', '', (string) ( $input['mode'] ?? 'retention' )));
+		$mode = strtolower( preg_replace( '/[^a-z0-9_\-]/', '', (string) ( $input['mode'] ?? 'retention' ) ) );
 		$map  = array(
 			'inventory'       => array(
 				'task_type' => 'workspace_hygiene_report',
@@ -4501,49 +4651,49 @@ class WorkspaceAbilities {
 			),
 		);
 
-		if ( ! isset($map[ $mode ]) ) {
-			return new \WP_Error('unknown_workspace_cleanup_mode', sprintf('Unknown cleanup mode: %s.', $mode), array( 'status' => 400 ));
+		if ( ! isset( $map[ $mode ] ) ) {
+			return new \WP_Error( 'unknown_workspace_cleanup_mode', sprintf( 'Unknown cleanup mode: %s.', $mode ), array( 'status' => 400 ) );
 		}
 
-		if ( ! class_exists('\DataMachine\Engine\Tasks\TaskScheduler') ) {
-			return new \WP_Error('task_scheduler_unavailable', 'Data Machine TaskScheduler is unavailable.', array( 'status' => 500 ));
+		if ( ! class_exists( '\DataMachine\Engine\Tasks\TaskScheduler' ) ) {
+			return new \WP_Error( 'task_scheduler_unavailable', 'Data Machine TaskScheduler is unavailable.', array( 'status' => 500 ) );
 		}
 
 		$task_type        = (string) $map[ $mode ]['task_type'];
 		$params           = (array) $map[ $mode ]['params'];
 		$params['source'] = (string) ( $input['source'] ?? 'workspace_cleanup_ability' );
 
-		if ( isset($input['force']) ) {
+		if ( isset( $input['force'] ) ) {
 			$params['force'] = (bool) $input['force'];
 		}
-		if ( isset($input['older_than']) && '' !== trim( (string) $input['older_than']) ) {
-			$params['worktree_older_than'] = trim( (string) $input['older_than']);
+		if ( isset( $input['older_than'] ) && '' !== trim( (string) $input['older_than'] ) ) {
+			$params['worktree_older_than'] = trim( (string) $input['older_than'] );
 		}
-		if ( isset($input['worktree_stale_only']) ) {
+		if ( isset( $input['worktree_stale_only'] ) ) {
 			$params['worktree_stale_only'] = (bool) $input['worktree_stale_only'];
 		}
 		if ( 'artifacts' === $mode ) {
-			if ( isset($input['limit']) ) {
+			if ( isset( $input['limit'] ) ) {
 				$params['limit'] = (int) $input['limit'];
 			}
-			if ( isset($input['offset']) ) {
+			if ( isset( $input['offset'] ) ) {
 				$params['offset'] = (int) $input['offset'];
 			}
-			if ( ! empty($input['exhaustive']) ) {
+			if ( ! empty( $input['exhaustive'] ) ) {
 				$params['exhaustive'] = true;
 			}
 		}
 
 		$context = array();
-		if ( isset($input['user_id']) ) {
+		if ( isset( $input['user_id'] ) ) {
 			$context['user_id'] = (int) $input['user_id'];
 		}
-		if ( isset($input['agent_id']) ) {
+		if ( isset( $input['agent_id'] ) ) {
 			$context['agent_id'] = (int) $input['agent_id'];
 		}
-		if ( isset($input['agent_slug']) && '' !== trim( (string) $input['agent_slug']) ) {
-			$context['agent_slug'] = sanitize_key( (string) $input['agent_slug']);
-		} elseif ( empty($context['agent_id']) ) {
+		if ( isset( $input['agent_slug'] ) && '' !== trim( (string) $input['agent_slug'] ) ) {
+			$context['agent_slug'] = sanitize_key( (string) $input['agent_slug'] );
+		} elseif ( empty( $context['agent_id'] ) ) {
 			$agent_slug = self::resolveCleanupAgentSlug( (int) ( $context['user_id'] ?? 0 ) );
 			if ( '' !== $agent_slug ) {
 				$context['agent_slug'] = $agent_slug;
@@ -4556,13 +4706,13 @@ class WorkspaceAbilities {
 			$context
 		);
 		if ( false === $batch_result ) {
-			return new \WP_Error('workspace_cleanup_schedule_failed', 'Failed to schedule workspace cleanup task.', array( 'status' => 500 ));
+			return new \WP_Error( 'workspace_cleanup_schedule_failed', 'Failed to schedule workspace cleanup task.', array( 'status' => 500 ) );
 		}
 
-		$job_ids = is_array($batch_result['job_ids'] ?? null) ? $batch_result['job_ids'] : array();
+		$job_ids = is_array( $batch_result['job_ids'] ?? null ) ? $batch_result['job_ids'] : array();
 		$job_id  = (int) ( $job_ids[0] ?? ( $batch_result['batch_job_id'] ?? 0 ) );
 		if ( $job_id <= 0 ) {
-			return new \WP_Error('workspace_cleanup_schedule_empty', 'Workspace cleanup scheduling returned no job id. Check Data Machine logs for the rejected task reason.', array( 'status' => 500 ));
+			return new \WP_Error( 'workspace_cleanup_schedule_empty', 'Workspace cleanup scheduling returned no job id. Check Data Machine logs for the rejected task reason.', array( 'status' => 500 ) );
 		}
 
 		return array(
@@ -4583,7 +4733,144 @@ class WorkspaceAbilities {
 	 */
 	public static function workspaceCleanupSafe( array $input ): array|\WP_Error {
 		$orchestrator = new WorkspaceSafeCleanupOrchestrator();
-		return $orchestrator->run($input);
+		return $orchestrator->run( $input );
+	}
+
+	/** Schedule a durable safe cleanup run before child work begins. */
+	public static function workspaceCleanupSafeRun( array $input ): array|\WP_Error {
+		if ( ! class_exists( '\DataMachine\Engine\Tasks\TaskScheduler' ) ) {
+			return new \WP_Error( 'task_scheduler_unavailable', 'Data Machine TaskScheduler is unavailable.', array( 'status' => 500 ) );
+		}
+
+		$dry_run    = ! empty( $input['dry_run'] );
+		$source     = trim( (string) ( $input['source'] ?? self::CLEANUP_CLI_SOURCE ) );
+		$request_id = trim( (string) ( $input['request_id'] ?? '' ) );
+		if ( '' === $request_id ) {
+			$request_id = 'cleanup-request-' . wp_generate_uuid4();
+		}
+		$repository = new CleanupRunRepository();
+		$run_id     = 'cleanup-run-request-' . substr( hash( 'sha256', $request_id ), 0, 32 );
+		$existing   = $repository->get_run( $run_id );
+		if ( is_array( $existing ) ) {
+			return self::safeCleanupRunEnvelope( $existing, $request_id );
+		}
+		$created_run_id = $repository->create_run(
+			array(
+				'run_id'  => $run_id,
+				'mode'    => 'safe_workspace_cleanup',
+				'status'  => 'queued',
+				'policy'  => array(
+					'dry_run'          => $dry_run,
+					'force'            => false,
+					'discard_unpushed' => false,
+					'source'           => $source,
+					'request_id'       => $request_id,
+				),
+				'summary' => array(
+					'safe_cleanup_progress' => array(
+						'state'    => 'queued',
+						'summary'  => array(),
+						'commands' => array(),
+					),
+				),
+			)
+		);
+		if ( is_wp_error( $created_run_id ) ) {
+			$existing = $repository->get_run( $run_id );
+			return is_array( $existing ) ? self::safeCleanupRunEnvelope( $existing, $request_id ) : $created_run_id;
+		}
+
+		$params = array(
+			'run_id'     => $run_id,
+			'dry_run'    => $dry_run,
+			'source'     => $source,
+			'request_id' => $request_id,
+		);
+		foreach ( array( 'limit', 'passes', 'cycles' ) as $field ) {
+			if ( isset( $input[ $field ] ) ) {
+				$params[ $field ] = (int) $input[ $field ];
+			}
+		}
+		if ( isset( $input['until_budget'] ) ) {
+			$params['until_budget'] = (string) $input['until_budget'];
+		}
+		$scheduled = \DataMachine\Engine\Tasks\TaskScheduler::scheduleBatch( 'workspace_safe_cleanup', array( $params ), array() );
+		if ( false === $scheduled ) {
+			$repository->update_run(
+				$run_id,
+				array(
+					'status'       => 'schedule_failed',
+					'completed_at' => gmdate( 'Y-m-d H:i:s' ),
+				)
+			);
+			return new \WP_Error( 'workspace_safe_cleanup_schedule_failed', 'Failed to schedule safe workspace cleanup.', array( 'status' => 500 ) );
+		}
+		$job_id = (int) ( $scheduled['job_ids'][0] ?? $scheduled['batch_job_id'] ?? 0 );
+		if ( $job_id <= 0 ) {
+			$repository->update_run(
+				$run_id,
+				array(
+					'status'       => 'schedule_failed',
+					'completed_at' => gmdate( 'Y-m-d H:i:s' ),
+				)
+			);
+			return new \WP_Error( 'workspace_safe_cleanup_schedule_failed', 'Failed to schedule safe workspace cleanup.', array( 'status' => 500 ) );
+		}
+		$repository->update_run( $run_id, array( 'parent_job_id' => $job_id ) );
+		$commands = self::safeCleanupRunCommands( $run_id, $request_id );
+		$repository->update_run(
+			$run_id,
+			array(
+				'summary' => array(
+					'safe_cleanup_progress' => array(
+						'state'    => 'queued',
+						'summary'  => array(),
+						'commands' => $commands,
+					),
+				),
+			)
+		);
+		return array(
+			'success'    => true,
+			'state'      => 'queued',
+			'run_id'     => $run_id,
+			'job_id'     => $job_id,
+			'mode'       => 'safe_workspace_cleanup',
+			'request_id' => $request_id,
+			'preview'    => $dry_run,
+			'commands'   => $commands,
+		);
+	}
+
+	/** @return array<string,string> */
+	private static function safeCleanupRunCommands( string $run_id, string $request_id ): array {
+		return array(
+			'status'   => sprintf( 'studio wp datamachine-code workspace cleanup status %s --format=json', $run_id ),
+			'evidence' => sprintf( 'studio wp datamachine-code workspace cleanup evidence %s --format=json', $run_id ),
+			'resume'   => 'studio wp datamachine-code workspace cleanup safe --format=json --request-id=' . escapeshellarg( $request_id ),
+			'cancel'   => sprintf( 'studio wp datamachine-code workspace cleanup cancel %s --format=json', $run_id ),
+		);
+	}
+
+	/** @param array<string,mixed> $run @return array<string,mixed> */
+	private static function safeCleanupRunEnvelope( array $run, string $request_id ): array {
+		$run_id = (string) ( $run['run_id'] ?? '' );
+		return array(
+			'success'    => true,
+			'state'      => (string) ( $run['status'] ?? 'queued' ),
+			'run_id'     => $run_id,
+			'job_id'     => (int) ( $run['parent_job_id'] ?? 0 ),
+			'mode'       => 'safe_workspace_cleanup',
+			'request_id' => $request_id,
+			'preview'    => ! empty( $run['policy']['dry_run'] ),
+			'commands'   => self::safeCleanupRunCommands( $run_id, $request_id ),
+			'idempotent' => true,
+		);
+	}
+
+	/** @return array<string,mixed> */
+	public static function workspaceCleanupList( array $input ): array {
+		return ( new CleanupRunService() )->list( $input );
 	}
 
 	/**
@@ -4593,15 +4880,15 @@ class WorkspaceAbilities {
 	 * @return string
 	 */
 	private static function resolveCleanupAgentSlug( int $user_id = 0 ): string {
-		if ( ! class_exists('\\DataMachine\\Core\\FilesRepository\\DirectoryManager') ) {
+		if ( ! class_exists( '\\DataMachine\\Core\\FilesRepository\\DirectoryManager' ) ) {
 			return '';
 		}
 
 		try {
 			$manager        = new \DataMachine\Core\FilesRepository\DirectoryManager();
-			$effective_user = $manager->get_effective_user_id($user_id);
-			$agent_slug     = $manager->resolve_agent_slug(array( 'user_id' => $effective_user ));
-			return '' !== trim( (string) $agent_slug) ? sanitize_key( (string) $agent_slug) : '';
+			$effective_user = $manager->get_effective_user_id( $user_id );
+			$agent_slug     = $manager->resolve_agent_slug( array( 'user_id' => $effective_user ) );
+			return '' !== trim( (string) $agent_slug ) ? sanitize_key( (string) $agent_slug ) : '';
 		} catch ( \Throwable $e ) {
 			return '';
 		}
@@ -4617,13 +4904,13 @@ class WorkspaceAbilities {
 		$workspace = new Workspace();
 		$repo      = (string) ( $input['repo'] ?? '' );
 		$branch    = (string) ( $input['branch'] ?? '' );
-		$handle    = $repo . '@' . $workspace->slugify_branch($branch);
+		$handle    = $repo . '@' . $workspace->slugify_branch( $branch );
 
-		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent($workspace, $handle) ) {
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent( $workspace, $handle ) ) {
 			return $workspace->worktree_remove(
 				$repo,
 				$branch,
-				! empty($input['force'])
+				! empty( $input['force'] )
 			);
 		}
 
@@ -4632,13 +4919,13 @@ class WorkspaceAbilities {
 				$repo,
 				$branch
 			);
-			return self::decorate_remote_workspace_result('worktree_remove', $result);
+			return self::decorate_remote_workspace_result( 'worktree_remove', $result );
 		}
 
 		return $workspace->worktree_remove(
 			$repo,
 			$branch,
-			! empty($input['force'])
+			! empty( $input['force'] )
 		);
 	}
 
@@ -4651,7 +4938,7 @@ class WorkspaceAbilities {
 	public static function worktreePrune( array $input ): array|\WP_Error {   // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 		if ( RemoteWorkspaceBackend::has_registered_state() && RemoteWorkspaceBackend::should_handle() ) {
 			$result = ( new RemoteWorkspaceBackend() )->worktree_prune();
-			return self::decorate_remote_workspace_result('worktree_prune', $result);
+			return self::decorate_remote_workspace_result( 'worktree_prune', $result );
 		}
 
 		$workspace = new Workspace();
@@ -4667,35 +4954,35 @@ class WorkspaceAbilities {
 	public static function worktreeCleanup( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$opts      = array(
-			'dry_run'                   => ! empty($input['dry_run']),
-			'force'                     => ! empty($input['force']),
-			'skip_github'               => ! empty($input['skip_github']),
-			'inventory_only'            => ! empty($input['inventory_only']),
-			'include_repaired_metadata' => ! empty($input['include_repaired_metadata']),
+			'dry_run'                   => ! empty( $input['dry_run'] ),
+			'force'                     => ! empty( $input['force'] ),
+			'skip_github'               => ! empty( $input['skip_github'] ),
+			'inventory_only'            => ! empty( $input['inventory_only'] ),
+			'include_repaired_metadata' => ! empty( $input['include_repaired_metadata'] ),
 		);
-		if ( isset($input['apply_plan']) && is_array($input['apply_plan']) ) {
+		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
 			$opts['apply_plan'] = $input['apply_plan'];
 		}
-		if ( isset($input['older_than']) && '' !== trim( (string) $input['older_than']) ) {
-			$opts['older_than'] = trim( (string) $input['older_than']);
+		if ( isset( $input['older_than'] ) && '' !== trim( (string) $input['older_than'] ) ) {
+			$opts['older_than'] = trim( (string) $input['older_than'] );
 		}
-		if ( isset($input['sort']) && '' !== trim( (string) $input['sort']) ) {
-			$opts['sort'] = trim( (string) $input['sort']);
+		if ( isset( $input['sort'] ) && '' !== trim( (string) $input['sort'] ) ) {
+			$opts['sort'] = trim( (string) $input['sort'] );
 		}
-		if ( array_key_exists('limit', $input) ) {
+		if ( array_key_exists( 'limit', $input ) ) {
 			$opts['limit'] = (int) $input['limit'];
 		}
-		if ( array_key_exists('offset', $input) ) {
+		if ( array_key_exists( 'offset', $input ) ) {
 			$opts['offset'] = (int) $input['offset'];
 		}
-		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
-			$opts['until_budget'] = trim( (string) $input['until_budget']);
+		if ( isset( $input['until_budget'] ) && '' !== trim( (string) $input['until_budget'] ) ) {
+			$opts['until_budget'] = trim( (string) $input['until_budget'] );
 		}
-		if ( isset($input['progress_callback']) && is_callable($input['progress_callback']) ) {
+		if ( isset( $input['progress_callback'] ) && is_callable( $input['progress_callback'] ) ) {
 			$opts['progress_callback'] = $input['progress_callback'];
 		}
 
-		return $workspace->worktree_cleanup_merged($opts);
+		return $workspace->worktree_cleanup_merged( $opts );
 	}
 
 	/**
@@ -4707,47 +4994,47 @@ class WorkspaceAbilities {
 	public static function worktreeReconcileMetadata( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$opts      = array(
-			'dry_run'  => ! empty($input['dry_run']),
-			'apply'    => ! empty($input['apply']),
-			'via_jobs' => ! empty($input['via_jobs']),
+			'dry_run'  => ! empty( $input['dry_run'] ),
+			'apply'    => ! empty( $input['apply'] ),
+			'via_jobs' => ! empty( $input['via_jobs'] ),
 		);
-		if ( isset($input['apply_plan']) && is_array($input['apply_plan']) ) {
+		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
 			$opts['apply_plan'] = $input['apply_plan'];
 		}
-		if ( array_key_exists('limit', $input) ) {
+		if ( array_key_exists( 'limit', $input ) ) {
 			$opts['limit'] = (int) $input['limit'];
 		}
-		if ( array_key_exists('offset', $input) ) {
+		if ( array_key_exists( 'offset', $input ) ) {
 			$opts['offset'] = (int) $input['offset'];
 		}
-		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
-			$opts['until_budget'] = trim( (string) $input['until_budget']);
+		if ( isset( $input['until_budget'] ) && '' !== trim( (string) $input['until_budget'] ) ) {
+			$opts['until_budget'] = trim( (string) $input['until_budget'] );
 		}
-		if ( isset($input['source']) && '' !== trim( (string) $input['source']) ) {
-			$opts['source'] = trim( (string) $input['source']);
+		if ( isset( $input['source'] ) && '' !== trim( (string) $input['source'] ) ) {
+			$opts['source'] = trim( (string) $input['source'] );
 		}
-		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
-			$opts['repo'] = trim( (string) $input['repo']);
+		if ( isset( $input['repo'] ) && '' !== trim( (string) $input['repo'] ) ) {
+			$opts['repo'] = trim( (string) $input['repo'] );
 		}
 
-		return $workspace->worktree_reconcile_metadata($opts);
+		return $workspace->worktree_reconcile_metadata( $opts );
 	}
 
 	/** Run bounded metadata reconciliation followed by a fresh reviewed cleanup plan. */
 	public static function worktreeCapacityRecovery( array $input ): array|\WP_Error {
 		$opts = array();
 		foreach ( array( 'until_budget' ) as $field ) {
-			if ( isset($input[ $field ]) && '' !== trim( (string) $input[ $field ]) ) {
-				$opts[ $field ] = trim( (string) $input[ $field ]);
+			if ( isset( $input[ $field ] ) && '' !== trim( (string) $input[ $field ] ) ) {
+				$opts[ $field ] = trim( (string) $input[ $field ] );
 			}
 		}
 		foreach ( array( 'limit', 'offset', 'replan_offset' ) as $field ) {
-			if ( isset($input[ $field ]) ) {
+			if ( isset( $input[ $field ] ) ) {
 				$opts[ $field ] = (int) $input[ $field ];
 			}
 		}
 
-		return ( new Workspace() )->worktree_capacity_recovery($opts);
+		return ( new Workspace() )->worktree_capacity_recovery( $opts );
 	}
 
 	/**
@@ -4757,7 +5044,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function worktreeActiveNoSignalReport( array $input ): array|\WP_Error {
-		return ( new Workspace() )->worktree_active_no_signal_report(self::worktreeActiveNoSignalOptions($input));
+		return ( new Workspace() )->worktree_active_no_signal_report( self::worktreeActiveNoSignalOptions( $input ) );
 	}
 
 	/**
@@ -4767,7 +5054,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function worktreeActiveNoSignalFinalizedApply( array $input ): array|\WP_Error {
-		return self::worktreeActiveNoSignalApply($input, 'finalized');
+		return self::worktreeActiveNoSignalApply( $input, 'finalized' );
 	}
 
 	/**
@@ -4777,7 +5064,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function worktreeActiveNoSignalEquivalentCleanApply( array $input ): array|\WP_Error {
-		return self::worktreeActiveNoSignalApply($input, 'equivalent_clean');
+		return self::worktreeActiveNoSignalApply( $input, 'equivalent_clean' );
 	}
 
 	/**
@@ -4787,7 +5074,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function worktreeActiveNoSignalMergedApply( array $input ): array|\WP_Error {
-		return self::worktreeActiveNoSignalApply($input, 'merged');
+		return self::worktreeActiveNoSignalApply( $input, 'merged' );
 	}
 
 	/**
@@ -4797,37 +5084,37 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function worktreeActiveNoSignalRemoteCleanApply( array $input ): array|\WP_Error {
-		return self::worktreeActiveNoSignalApply($input, 'remote_clean');
+		return self::worktreeActiveNoSignalApply( $input, 'remote_clean' );
 	}
 
 	/** Run one active/no-signal metadata apply classification. */
 	private static function worktreeActiveNoSignalApply( array $input, string $variant ): array|\WP_Error {
 		$workspace = new Workspace();
-		$opts      = self::worktreeActiveNoSignalOptions($input, true);
+		$opts      = self::worktreeActiveNoSignalOptions( $input, true );
 
 		return match ( $variant ) {
-			'finalized'        => $workspace->worktree_active_no_signal_finalized_apply($opts),
-			'equivalent_clean' => $workspace->worktree_active_no_signal_equivalent_clean_apply($opts),
-			'merged'           => $workspace->worktree_active_no_signal_merged_apply($opts),
-			'remote_clean'     => $workspace->worktree_active_no_signal_remote_clean_apply($opts),
-			default            => new \WP_Error('invalid_active_no_signal_apply_variant', sprintf('Unknown active/no-signal apply variant: %s.', $variant), array( 'status' => 500 )),
+			'finalized'        => $workspace->worktree_active_no_signal_finalized_apply( $opts ),
+			'equivalent_clean' => $workspace->worktree_active_no_signal_equivalent_clean_apply( $opts ),
+			'merged'           => $workspace->worktree_active_no_signal_merged_apply( $opts ),
+			'remote_clean'     => $workspace->worktree_active_no_signal_remote_clean_apply( $opts ),
+			default            => new \WP_Error( 'invalid_active_no_signal_apply_variant', sprintf( 'Unknown active/no-signal apply variant: %s.', $variant ), array( 'status' => 500 ) ),
 		};
 	}
 
 	/** Normalize the shared bounded active/no-signal operation options. */
 	private static function worktreeActiveNoSignalOptions( array $input, bool $include_dry_run = false ): array {
-		$opts = $include_dry_run ? array( 'dry_run' => ! empty($input['dry_run']) ) : array();
-		if ( array_key_exists('limit', $input) ) {
+		$opts = $include_dry_run ? array( 'dry_run' => ! empty( $input['dry_run'] ) ) : array();
+		if ( array_key_exists( 'limit', $input ) ) {
 			$opts['limit'] = (int) $input['limit'];
 		}
-		if ( array_key_exists('offset', $input) ) {
+		if ( array_key_exists( 'offset', $input ) ) {
 			$opts['offset'] = (int) $input['offset'];
 		}
-		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
-			$opts['until_budget'] = trim( (string) $input['until_budget']);
+		if ( isset( $input['until_budget'] ) && '' !== trim( (string) $input['until_budget'] ) ) {
+			$opts['until_budget'] = trim( (string) $input['until_budget'] );
 		}
-		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
-			$opts['repo'] = trim( (string) $input['repo']);
+		if ( isset( $input['repo'] ) && '' !== trim( (string) $input['repo'] ) ) {
+			$opts['repo'] = trim( (string) $input['repo'] );
 		}
 
 		return $opts;
@@ -4841,13 +5128,13 @@ class WorkspaceAbilities {
 	 */
 	public static function worktreeActiveNoSignalDrain( array $input ): array|\WP_Error {
 		$input['active_no_signal_drain'] = true;
-		if ( ! array_key_exists('force', $input) ) {
+		if ( ! array_key_exists( 'force', $input ) ) {
 			$input['force'] = false;
 		}
 
 		$orchestrator = new WorkspaceAbandonedCleanupOrchestrator();
 
-		return $orchestrator->run($input);
+		return $orchestrator->run( $input );
 	}
 
 	/**
@@ -4859,7 +5146,7 @@ class WorkspaceAbilities {
 	public static function worktreeAbandonedCleanup( array $input ): array|\WP_Error {
 		$orchestrator = new WorkspaceAbandonedCleanupOrchestrator();
 
-		return $orchestrator->run($input);
+		return $orchestrator->run( $input );
 	}
 
 	/**
@@ -4873,23 +5160,23 @@ class WorkspaceAbilities {
 	public static function worktreeCleanupArtifacts( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$opts      = array(
-			'dry_run'                         => ! empty($input['dry_run']),
-			'force'                           => ! empty($input['force']),
-			'allow_active_artifact_cleanup'   => ! empty($input['allow_active_artifact_cleanup']),
-			'allow_unavailable_process_probe' => ! empty($input['allow_unavailable_process_probe']),
+			'dry_run'                         => ! empty( $input['dry_run'] ),
+			'force'                           => ! empty( $input['force'] ),
+			'allow_active_artifact_cleanup'   => ! empty( $input['allow_active_artifact_cleanup'] ),
+			'allow_unavailable_process_probe' => ! empty( $input['allow_unavailable_process_probe'] ),
 		);
-		if ( isset($input['apply_plan']) && is_array($input['apply_plan']) ) {
+		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
 			$opts['apply_plan'] = $input['apply_plan'];
 		}
-		if ( array_key_exists('limit', $input) ) {
+		if ( array_key_exists( 'limit', $input ) ) {
 			$opts['limit'] = (int) $input['limit'];
 		}
-		if ( array_key_exists('offset', $input) ) {
+		if ( array_key_exists( 'offset', $input ) ) {
 			$opts['offset'] = (int) $input['offset'];
 		}
 		$only_handles = array();
-		if ( isset($input['only_handle']) && '' !== trim( (string) $input['only_handle']) ) {
-			$only_handles[] = trim( (string) $input['only_handle']);
+		if ( isset( $input['only_handle'] ) && '' !== trim( (string) $input['only_handle'] ) ) {
+			$only_handles[] = trim( (string) $input['only_handle'] );
 		}
 		foreach ( (array) ( $input['only_handles'] ?? array() ) as $handle ) {
 			$handle = trim( (string) $handle );
@@ -4898,19 +5185,19 @@ class WorkspaceAbilities {
 			}
 		}
 		if ( array() !== $only_handles ) {
-			$opts['only_handles'] = array_values(array_unique($only_handles));
+			$opts['only_handles'] = array_values( array_unique( $only_handles ) );
 		}
-		if ( array_key_exists('exhaustive', $input) ) {
+		if ( array_key_exists( 'exhaustive', $input ) ) {
 			$opts['exhaustive'] = (bool) $input['exhaustive'];
 		}
-		if ( array_key_exists('safety_probes', $input) ) {
+		if ( array_key_exists( 'safety_probes', $input ) ) {
 			$opts['safety_probes'] = (bool) $input['safety_probes'];
 		}
-		if ( isset($input['older_than']) && '' !== trim( (string) $input['older_than']) ) {
-			$opts['older_than'] = trim( (string) $input['older_than']);
+		if ( isset( $input['older_than'] ) && '' !== trim( (string) $input['older_than'] ) ) {
+			$opts['older_than'] = trim( (string) $input['older_than'] );
 		}
 
-		return $workspace->worktree_cleanup_artifacts($opts);
+		return $workspace->worktree_cleanup_artifacts( $opts );
 	}
 
 	/**
@@ -4922,35 +5209,35 @@ class WorkspaceAbilities {
 	public static function worktreeBoundedCleanupEligibleApply( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$opts      = array(
-			'dry_run'                   => ! empty($input['dry_run']),
-			'force'                     => ! empty($input['force']),
-			'discard_unpushed'          => ! empty($input['discard_unpushed']),
-			'via_jobs'                  => ! empty($input['via_jobs']),
-			'include_repaired_metadata' => ! empty($input['include_repaired_metadata']),
+			'dry_run'                   => ! empty( $input['dry_run'] ),
+			'force'                     => ! empty( $input['force'] ),
+			'discard_unpushed'          => ! empty( $input['discard_unpushed'] ),
+			'via_jobs'                  => ! empty( $input['via_jobs'] ),
+			'include_repaired_metadata' => ! empty( $input['include_repaired_metadata'] ),
 		);
-		if ( isset($input['limit']) ) {
+		if ( isset( $input['limit'] ) ) {
 			$opts['limit'] = (int) $input['limit'];
 		}
-		if ( isset($input['apply_plan']) && is_array($input['apply_plan']) ) {
+		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
 			$opts['apply_plan'] = $input['apply_plan'];
 		}
-		if ( isset($input['repo']) && '' !== trim( (string) $input['repo']) ) {
-			$opts['repo'] = trim( (string) $input['repo']);
+		if ( isset( $input['repo'] ) && '' !== trim( (string) $input['repo'] ) ) {
+			$opts['repo'] = trim( (string) $input['repo'] );
 		}
-		if ( isset($input['older_than']) && '' !== trim( (string) $input['older_than']) ) {
-			$opts['older_than'] = trim( (string) $input['older_than']);
+		if ( isset( $input['older_than'] ) && '' !== trim( (string) $input['older_than'] ) ) {
+			$opts['older_than'] = trim( (string) $input['older_than'] );
 		}
-		if ( isset($input['sort']) && '' !== trim( (string) $input['sort']) ) {
-			$opts['sort'] = trim( (string) $input['sort']);
+		if ( isset( $input['sort'] ) && '' !== trim( (string) $input['sort'] ) ) {
+			$opts['sort'] = trim( (string) $input['sort'] );
 		}
-		if ( isset($input['remove_timeout']) ) {
+		if ( isset( $input['remove_timeout'] ) ) {
 			$opts['remove_timeout'] = (int) $input['remove_timeout'];
 		}
-		if ( isset($input['source']) && '' !== trim( (string) $input['source']) ) {
-			$opts['source'] = trim( (string) $input['source']);
+		if ( isset( $input['source'] ) && '' !== trim( (string) $input['source'] ) ) {
+			$opts['source'] = trim( (string) $input['source'] );
 		}
 
-		return $workspace->worktree_bounded_cleanup_eligible_apply($opts);
+		return $workspace->worktree_bounded_cleanup_eligible_apply( $opts );
 	}
 
 	/**
@@ -4962,7 +5249,7 @@ class WorkspaceAbilities {
 	public static function worktreeCleanupEligibleDrain( array $input ): array|\WP_Error {
 		$orchestrator = new WorkspaceCleanupEligibleDrainOrchestrator();
 
-		return $orchestrator->run($input);
+		return $orchestrator->run( $input );
 	}
 
 	/**
@@ -4974,14 +5261,14 @@ class WorkspaceAbilities {
 	public static function worktreeEmergencyCleanup( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$opts      = array(
-			'dry_run' => ! empty($input['dry_run']),
-			'force'   => ! empty($input['force']),
+			'dry_run' => ! empty( $input['dry_run'] ),
+			'force'   => ! empty( $input['force'] ),
 		);
-		if ( isset($input['apply_plan']) && is_array($input['apply_plan']) ) {
+		if ( isset( $input['apply_plan'] ) && is_array( $input['apply_plan'] ) ) {
 			$opts['apply_plan'] = $input['apply_plan'];
 		}
 
-		return $workspace->worktree_emergency_cleanup($opts);
+		return $workspace->worktree_emergency_cleanup( $opts );
 	}
 
 	/**
@@ -4992,49 +5279,49 @@ class WorkspaceAbilities {
 	 */
 	public static function workspaceCleanupPlan( array $input ): array|\WP_Error {
 		$opts = array(
-			'force_artifact_cleanup'        => ! empty($input['force_artifact_cleanup']),
-			'allow_active_artifact_cleanup' => ! empty($input['allow_active_artifact_cleanup']),
-			'include_resolvers'             => ! empty($input['include_resolvers']),
+			'force_artifact_cleanup'        => ! empty( $input['force_artifact_cleanup'] ),
+			'allow_active_artifact_cleanup' => ! empty( $input['allow_active_artifact_cleanup'] ),
+			'include_resolvers'             => ! empty( $input['include_resolvers'] ),
 			'mode'                          => (string) ( $input['mode'] ?? 'cleanup_plan' ),
-			'worktree_stale_only'           => ! empty($input['worktree_stale_only']),
+			'worktree_stale_only'           => ! empty( $input['worktree_stale_only'] ),
 		);
 		foreach ( array( 'include_artifacts', 'include_worktrees', 'full_workspace' ) as $key ) {
-			if ( array_key_exists($key, $input) ) {
+			if ( array_key_exists( $key, $input ) ) {
 				$opts[ $key ] = (bool) $input[ $key ];
 			}
 		}
 		foreach ( array( 'limit', 'offset' ) as $key ) {
-			if ( isset($input[ $key ]) ) {
+			if ( isset( $input[ $key ] ) ) {
 				$opts[ $key ] = (int) $input[ $key ];
 			}
 		}
-		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
-			$opts['until_budget'] = trim( (string) $input['until_budget']);
+		if ( isset( $input['until_budget'] ) && '' !== trim( (string) $input['until_budget'] ) ) {
+			$opts['until_budget'] = trim( (string) $input['until_budget'] );
 		}
-		if ( isset($input['worktree_older_than']) && '' !== trim( (string) $input['worktree_older_than']) ) {
-			$opts['worktree_older_than'] = trim( (string) $input['worktree_older_than']);
+		if ( isset( $input['worktree_older_than'] ) && '' !== trim( (string) $input['worktree_older_than'] ) ) {
+			$opts['worktree_older_than'] = trim( (string) $input['worktree_older_than'] );
 		}
-		if ( isset($input['worktree_sort']) && '' !== trim( (string) $input['worktree_sort']) ) {
-			$opts['worktree_sort'] = trim( (string) $input['worktree_sort']);
+		if ( isset( $input['worktree_sort'] ) && '' !== trim( (string) $input['worktree_sort'] ) ) {
+			$opts['worktree_sort'] = trim( (string) $input['worktree_sort'] );
 		}
-		if ( isset($input['artifact_sort']) && '' !== trim( (string) $input['artifact_sort']) ) {
-			$opts['artifact_sort'] = trim( (string) $input['artifact_sort']);
+		if ( isset( $input['artifact_sort'] ) && '' !== trim( (string) $input['artifact_sort'] ) ) {
+			$opts['artifact_sort'] = trim( (string) $input['artifact_sort'] );
 		}
-		if ( isset($input['plan']) && is_array($input['plan']) ) {
+		if ( isset( $input['plan'] ) && is_array( $input['plan'] ) ) {
 			$opts['plan'] = $input['plan'];
 		}
-		if ( isset($input['chunk_size']) ) {
+		if ( isset( $input['chunk_size'] ) ) {
 			$opts['chunk_size'] = (int) $input['chunk_size'];
 		}
 
 		$service = new CleanupRunService();
-		$plan    = $service->plan($opts);
-		if ( $plan instanceof \WP_Error || empty($input['emit_chunks']) ) {
+		$plan    = $service->plan( $opts );
+		if ( $plan instanceof \WP_Error || empty( $input['emit_chunks'] ) ) {
 			return $plan;
 		}
 
 		$workspace = new Workspace();
-		$chunks    = $workspace->workspace_cleanup_plan_chunks(array_merge($opts, array( 'plan' => $plan )));
+		$chunks    = $workspace->workspace_cleanup_plan_chunks( array_merge( $opts, array( 'plan' => $plan ) ) );
 		if ( $chunks instanceof \WP_Error ) {
 			return $chunks;
 		}
@@ -5050,7 +5337,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function workspaceCleanupApply( array $input ): array|\WP_Error {
-		return ( new CleanupRunService() )->apply( (string) ( $input['run_id'] ?? '' ), self::cleanupRunApplyOptions($input));
+		return ( new CleanupRunService() )->apply( (string) ( $input['run_id'] ?? '' ), self::cleanupRunApplyOptions( $input ) );
 	}
 
 	/**
@@ -5060,13 +5347,13 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function workspaceCleanupUntilEmpty( array $input ): array|\WP_Error {
-		$options = self::cleanupRunApplyOptions($input);
+		$options = self::cleanupRunApplyOptions( $input );
 		foreach ( array( 'mode', 'max_passes', 'budget_seconds', 'older_than' ) as $key ) {
-			if ( isset($input[ $key ]) ) {
-				$options[ $key ] = in_array($key, array( 'mode', 'older_than' ), true) ? trim( (string) $input[ $key ]) : (int) $input[ $key ];
+			if ( isset( $input[ $key ] ) ) {
+				$options[ $key ] = in_array( $key, array( 'mode', 'older_than' ), true ) ? trim( (string) $input[ $key ] ) : (int) $input[ $key ];
 			}
 		}
-		return ( new CleanupRunService() )->until_empty($options);
+		return ( new CleanupRunService() )->until_empty( $options );
 	}
 
 	/**
@@ -5076,7 +5363,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function workspaceCleanupStatus( array $input ): array|\WP_Error {
-		return ( new WorkspaceCleanupRunEvidenceStore() )->read( (string) ( $input['run_id'] ?? '' ));
+		return ( new WorkspaceCleanupRunEvidenceStore() )->read( (string) ( $input['run_id'] ?? '' ) );
 	}
 
 	/**
@@ -5096,7 +5383,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function workspaceCleanupResume( array $input ): array|\WP_Error {
-		return ( new CleanupRunService() )->resume( (string) ( $input['run_id'] ?? '' ), self::cleanupRunApplyOptions($input));
+		return ( new CleanupRunService() )->resume( (string) ( $input['run_id'] ?? '' ), self::cleanupRunApplyOptions( $input ) );
 	}
 
 	/**
@@ -5107,10 +5394,10 @@ class WorkspaceAbilities {
 	 */
 	private static function cleanupRunApplyOptions( array $input ): array {
 		$options = array(
-			'force'                         => ! empty($input['force']),
-			'allow_active_artifact_cleanup' => ! empty($input['allow_active_artifact_cleanup']),
+			'force'                         => ! empty( $input['force'] ),
+			'allow_active_artifact_cleanup' => ! empty( $input['allow_active_artifact_cleanup'] ),
 		);
-		if ( isset($input['limit']) ) {
+		if ( isset( $input['limit'] ) ) {
 			$options['limit'] = (int) $input['limit'];
 		}
 		return $options;
@@ -5123,7 +5410,7 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public static function workspaceCleanupCancel( array $input ): array|\WP_Error {
-		return ( new CleanupRunService() )->cancel( (string) ( $input['run_id'] ?? '' ));
+		return ( new CleanupRunService() )->cancel( (string) ( $input['run_id'] ?? '' ) );
 	}
 
 	/**
@@ -5134,41 +5421,41 @@ class WorkspaceAbilities {
 	 * @return array<string,mixed>
 	 */
 	private static function normalize_mounted_workspace_path_input( array $input, array $handle_keys ): array {
-		$workspace_root = defined('DATAMACHINE_WORKSPACE_PATH') ? self::normalize_workspace_root( (string) DATAMACHINE_WORKSPACE_PATH ) : '';
+		$workspace_root = defined( 'DATAMACHINE_WORKSPACE_PATH' ) ? self::normalize_workspace_root( (string) DATAMACHINE_WORKSPACE_PATH ) : '';
 		if ( '' === $workspace_root ) {
 			return $input;
 		}
 
 		foreach ( $handle_keys as $key ) {
-			if ( isset($input[ $key ]) && is_string($input[ $key ]) && self::is_absolute_path($input[ $key ]) ) {
-				$parts = self::split_workspace_root_path($input[ $key ], $workspace_root);
+			if ( isset( $input[ $key ] ) && is_string( $input[ $key ] ) && self::is_absolute_path( $input[ $key ] ) ) {
+				$parts = self::split_workspace_root_path( $input[ $key ], $workspace_root );
 				if ( null === $parts ) {
 					return $input;
 				}
 
 				$input[ $key ] = $parts['repo'];
 				if ( '' !== $parts['path'] ) {
-					$existing_path = isset($input['path']) && is_string($input['path']) ? trim($input['path'], '/') : '';
+					$existing_path = isset( $input['path'] ) && is_string( $input['path'] ) ? trim( $input['path'], '/' ) : '';
 					$input['path'] = '' === $existing_path ? $parts['path'] : $parts['path'] . '/' . $existing_path;
 				}
 			}
 		}
 
-		if ( isset($input['path']) && is_string($input['path']) && self::is_absolute_path($input['path']) ) {
-			$parts = self::split_workspace_root_path($input['path'], $workspace_root);
+		if ( isset( $input['path'] ) && is_string( $input['path'] ) && self::is_absolute_path( $input['path'] ) ) {
+			$parts = self::split_workspace_root_path( $input['path'], $workspace_root );
 			if ( null === $parts ) {
 				return $input;
 			}
 
 			$current_handle = '';
 			foreach ( $handle_keys as $key ) {
-				if ( isset($input[ $key ]) && is_string($input[ $key ]) && '' !== trim($input[ $key ]) ) {
-					$current_handle = trim($input[ $key ]);
+				if ( isset( $input[ $key ] ) && is_string( $input[ $key ] ) && '' !== trim( $input[ $key ] ) ) {
+					$current_handle = trim( $input[ $key ] );
 					break;
 				}
 			}
 
-			if ( '' === $current_handle && ! empty($handle_keys) ) {
+			if ( '' === $current_handle && ! empty( $handle_keys ) ) {
 				$input[ $handle_keys[0] ] = $parts['repo'];
 			}
 			if ( '' === $current_handle || $current_handle === $parts['repo'] ) {
@@ -5180,66 +5467,66 @@ class WorkspaceAbilities {
 	}
 
 	private static function normalize_workspace_root( string $root ): string {
-		$root = trim(str_replace('\\', '/', trim($root)), '/');
+		$root = trim( str_replace( '\\', '/', trim( $root ) ), '/' );
 		return '' === $root ? '' : '/' . $root;
 	}
 
 	private static function is_absolute_path( string $path ): bool {
-		$path = str_replace('\\', '/', trim($path));
-		return str_starts_with($path, '/') || (bool) preg_match('#^[a-zA-Z][a-zA-Z0-9+.-]*://#', $path);
+		$path = str_replace( '\\', '/', trim( $path ) );
+		return str_starts_with( $path, '/' ) || (bool) preg_match( '#^[a-zA-Z][a-zA-Z0-9+.-]*://#', $path );
 	}
 
 	/**
 	 * @return array{repo:string,path:string}|null
 	 */
 	private static function split_workspace_root_path( string $path, string $workspace_root ): ?array {
-		$path = str_replace('\\', '/', trim($path));
-		if ( preg_match('#^[a-zA-Z][a-zA-Z0-9+.-]*://#', $path) ) {
+		$path = str_replace( '\\', '/', trim( $path ) );
+		if ( preg_match( '#^[a-zA-Z][a-zA-Z0-9+.-]*://#', $path ) ) {
 			return null;
 		}
 
-		$root = rtrim($workspace_root, '/');
-		if ( $path !== $root && ! str_starts_with($path, $root . '/') ) {
+		$root = rtrim( $workspace_root, '/' );
+		if ( $path !== $root && ! str_starts_with( $path, $root . '/' ) ) {
 			return null;
 		}
 
 		foreach ( self::mounted_workspace_path_aliases() as $mount_path => $workspace_ref ) {
-			if ( $path !== $mount_path && ! str_starts_with($path, $mount_path . '/') ) {
+			if ( $path !== $mount_path && ! str_starts_with( $path, $mount_path . '/' ) ) {
 				continue;
 			}
 
-			$relative = ltrim(substr($path, strlen($mount_path)), '/');
-			$segments = '' === $relative ? array() : array_values(array_filter(explode('/', $relative), static fn( string $segment ): bool => '' !== $segment && '.' !== $segment));
-			if ( in_array('..', $segments, true) ) {
+			$relative = ltrim( substr( $path, strlen( $mount_path ) ), '/' );
+			$segments = '' === $relative ? array() : array_values( array_filter( explode( '/', $relative ), static fn( string $segment ): bool => '' !== $segment && '.' !== $segment ) );
+			if ( in_array( '..', $segments, true ) ) {
 				return null;
 			}
 
 			return array(
 				'repo' => $workspace_ref,
-				'path' => implode('/', $segments),
+				'path' => implode( '/', $segments ),
 			);
 		}
 
-		$relative = ltrim(substr($path, strlen($root)), '/');
+		$relative = ltrim( substr( $path, strlen( $root ) ), '/' );
 		if ( '' === $relative ) {
 			return null;
 		}
 
-		$segments = array_values(array_filter(explode('/', $relative), static fn( string $segment ): bool => '' !== $segment && '.' !== $segment));
-		if ( empty($segments) || in_array('..', $segments, true) ) {
+		$segments = array_values( array_filter( explode( '/', $relative ), static fn( string $segment ): bool => '' !== $segment && '.' !== $segment ) );
+		if ( empty( $segments ) || in_array( '..', $segments, true ) ) {
 			return null;
 		}
 
-		$repo = array_shift($segments);
+		$repo = array_shift( $segments );
 		return array(
 			'repo' => $repo,
-			'path' => implode('/', $segments),
+			'path' => implode( '/', $segments ),
 		);
 	}
 
 	/** @return array<string,string> */
 	private static function mounted_workspace_path_aliases(): array {
-		if ( ! class_exists('\DataMachineCode\Runtime\MountedRuntimeBootstrap') ) {
+		if ( ! class_exists( '\DataMachineCode\Runtime\MountedRuntimeBootstrap' ) ) {
 			return array();
 		}
 
@@ -5247,14 +5534,14 @@ class WorkspaceAbilities {
 
 		$normalized = array();
 		foreach ( $aliases as $path => $workspace_ref ) {
-			$path          = rtrim(str_replace('\\', '/', (string) $path), '/');
+			$path          = rtrim( str_replace( '\\', '/', (string) $path ), '/' );
 			$workspace_ref = trim( (string) $workspace_ref );
 			if ( '' !== $path && '' !== $workspace_ref ) {
 				$normalized[ $path ] = $workspace_ref;
 			}
 		}
 
-		uksort($normalized, static fn ( string $left, string $right ): int => strlen($right) <=> strlen($left));
+		uksort( $normalized, static fn ( string $left, string $right ): int => strlen( $right ) <=> strlen( $left ) );
 		return $normalized;
 	}
 
@@ -5268,7 +5555,7 @@ class WorkspaceAbilities {
 		$workspace = new Workspace();
 		return $workspace->git_log(
 			$input['name'] ?? '',
-			isset($input['limit']) ? (int) $input['limit'] : 20
+			isset( $input['limit'] ) ? (int) $input['limit'] : 20
 		);
 	}
 
@@ -5279,13 +5566,13 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function gitDiff( array $input ): array|\WP_Error {
-		$input = self::normalize_mounted_workspace_path_input($input, array( 'name' ));
+		$input = self::normalize_mounted_workspace_path_input( $input, array( 'name' ) );
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			return ( new RemoteWorkspaceBackend() )->git_diff(
 				$input['name'] ?? '',
 				$input['from'] ?? null,
 				$input['to'] ?? null,
-				! empty($input['staged']),
+				! empty( $input['staged'] ),
 				$input['path'] ?? null
 			);
 		}
@@ -5295,7 +5582,7 @@ class WorkspaceAbilities {
 			$input['name'] ?? '',
 			$input['from'] ?? null,
 			$input['to'] ?? null,
-			! empty($input['staged']),
+			! empty( $input['staged'] ),
 			$input['path'] ?? null
 		);
 	}
