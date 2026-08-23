@@ -9,9 +9,9 @@ function homeboy_workflow_assert( bool $condition, string $message ): void {
 }
 
 $contract_path = $argv[1] ?? '';
-homeboy_workflow_assert('' !== $contract_path && is_file($contract_path), 'Usage: php tests/homeboy-workflow-input-contract.php <downloaded-homeboy-action-ci.yml>');
+homeboy_workflow_assert('' !== $contract_path && is_file($contract_path), 'Usage: php .github/scripts/homeboy-workflow-input-contract.php <downloaded-homeboy-action-ci.yml>');
 
-$workflow = file_get_contents(dirname(__DIR__) . '/.github/workflows/homeboy.yml');
+$workflow = file_get_contents(dirname(__DIR__, 2) . '/.github/workflows/homeboy.yml');
 homeboy_workflow_assert(false !== $workflow, 'Homeboy workflow must be readable.');
 
 preg_match('/^    uses: Extra-Chill\/homeboy-action\/\.github\/workflows\/ci\.yml@v2\n    with:\n(?<inputs>(?:^      .*\n|^ {8,}.*\n)*)^    secrets:/m', $workflow, $match);
