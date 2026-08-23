@@ -137,6 +137,12 @@ namespace {
 	cli_format_assert(in_array('Workspace: /workspace', WP_CLI::$logs, true), 'Table summary must identify the workspace.');
 	cli_format_assert(100 === (BaseCommand::$formatted[0]['items'][0]['count'] ?? null), 'Table summary must report total inventory, not the current page.');
 
+	$GLOBALS['dmc_workspace_list_ability'] = new WorkspaceListAbility(array_merge($result, array( 'total' => null, 'partial' => true, 'diagnostics' => array( 'scan_elapsed_seconds' => 5.0, 'budget_exhaustion_reason' => 'scan_budget_exhausted' ) )));
+	cli_format_reset();
+	$command->list_repos(array(), array());
+	cli_format_assert(str_contains(WP_CLI::$logs[0] ?? '', 'totals incomplete after 5.00s (scan_budget_exhausted)'), 'Partial table output must not coerce an unknown total to zero.');
+	$GLOBALS['dmc_workspace_list_ability'] = new WorkspaceListAbility($result);
+
 	foreach ( array( 'csv', 'yaml' ) as $format ) {
 		cli_format_reset();
 		$command->list_repos(array(), array( 'format' => $format ));
