@@ -13,6 +13,7 @@ final class StandaloneWorktreeProvider {
 
 	private const IDENTITY_SCHEMA = 'datamachine-code/worktree-identity/v1';
 	private const SAFETY_SCHEMA   = 'datamachine-code/worktree-safety/v1';
+	private const CONVERGE_SCHEMA = 'datamachine-code/worktree-convergence/v1';
 	private const TOKEN_PREFIX    = 'dmc-worktree-v1.';
 	private const PROBE_TIMEOUT   = 2.0;
 
@@ -110,6 +111,121 @@ final class StandaloneWorktreeProvider {
 		}
 
 		return $this->safety_result($token, $dirty, 0 !== $unpushed, true, $started);
+	}
+
+	/**
+	 * Fast-forward a token-bound linked worktree to an already-local base commit.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public function converge( string $workspace, string $token, string $base_sha ): array {
+		$started = microtime(true);
+		if ( ! preg_match('/^[a-fA-F0-9]{40}$/D', $base_sha) ) {
+			return $this->convergence_result('refused', 'invalid_base_sha', $token, $base_sha, null, null, $started);
+		}
+
+		$validation = $this->validate_convergence($workspace, $token, $base_sha, $started);
+		if ( null !== $validation['result'] ) {
+			return $validation['result'];
+		}
+
+		$this->run_convergence_test_hook($validation['path']);
+		$validation = $this->validate_convergence($workspace, $token, $base_sha, $started);
+		if ( null !== $validation['result'] ) {
+			return $validation['result'];
+		}
+
+		$merge = $this->run_git($validation['path'], array( 'merge', '--ff-only', $base_sha ));
+		if ( ! $merge['success'] ) {
+			return $this->convergence_result('error', $merge['timed_out'] ? 'convergence_timeout' : 'convergence_failed', $token, $base_sha, $validation['head'], $validation['head'], $started);
+		}
+		$after = $this->read_head($validation['path']);
+		if ( null === $after ) {
+			return $this->convergence_result('error', 'head_probe_failed', $token, $base_sha, $validation['head'], null, $started);
+		}
+
+		return $this->convergence_result('converged', null, $token, $base_sha, $validation['head'], $after, $started);
+	}
+
+	/**
+	 * @return array{path:string,head:string,result:array<string,mixed>|null}
+	 */
+	private function validate_convergence( string $workspace, string $token, string $base_sha, float $started ): array {
+		$identity = $this->decode_token($token);
+		if ( null === $identity ) {
+			return $this->convergence_validation('', '', $this->convergence_result('refused', 'invalid_identity_token', $token, $base_sha, null, null, $started));
+		}
+
+		$current = $this->resolve_identity($workspace, $identity['handle']);
+		$fresh   = 'owned' === ( $current['status'] ?? '' )
+			&& $identity['path'] === ( $current['path'] ?? null )
+			&& $identity['branch'] === ( $current['branch'] ?? null )
+			&& $identity['primary'] === ( $current['primary'] ?? null );
+		if ( ! $fresh ) {
+			return $this->convergence_validation('', '', $this->convergence_result('refused', 'identity_drift', $token, $base_sha, null, null, $started));
+		}
+		if ( $identity['primary'] ) {
+			return $this->convergence_validation($identity['path'], '', $this->convergence_result('refused', 'primary_worktree', $token, $base_sha, null, null, $started));
+		}
+
+		$head = $this->read_head($identity['path']);
+		if ( null === $head ) {
+			return $this->convergence_validation($identity['path'], '', $this->convergence_result('error', 'head_probe_failed', $token, $base_sha, null, null, $started));
+		}
+		$base = $this->run_git($identity['path'], array( 'rev-parse', '--verify', $base_sha . '^{commit}' ));
+		if ( ! $base['success'] ) {
+			return $this->convergence_validation($identity['path'], $head, $this->convergence_result('refused', 'base_not_found', $token, $base_sha, $head, $head, $started));
+		}
+
+		$status = $this->run_git($identity['path'], array( 'status', '--porcelain=v1', '--untracked-files=normal' ));
+		if ( ! $status['success'] ) {
+			return $this->convergence_validation($identity['path'], $head, $this->convergence_result('error', $status['timed_out'] ? 'safety_probe_timeout' : 'safety_probe_failed', $token, $base_sha, $head, $head, $started));
+		}
+		if ( '' !== trim($status['stdout']) ) {
+			return $this->convergence_validation($identity['path'], $head, $this->convergence_result('refused', 'dirty_worktree', $token, $base_sha, $head, $head, $started));
+		}
+		if ( $this->has_unpushed_commits($identity['path']) ) {
+			return $this->convergence_validation($identity['path'], $head, $this->convergence_result('refused', 'unpushed_commits', $token, $base_sha, $head, $head, $started));
+		}
+
+		$behind = $this->run_git($identity['path'], array( 'merge-base', '--is-ancestor', 'HEAD', $base_sha ));
+		if ( $behind['success'] ) {
+			return $this->convergence_validation($identity['path'], $head, null);
+		}
+		$ahead = $this->run_git($identity['path'], array( 'merge-base', '--is-ancestor', $base_sha, 'HEAD' ));
+		$code  = $ahead['success'] ? 'destination_ahead' : 'destination_diverged';
+		return $this->convergence_validation($identity['path'], $head, $this->convergence_result('refused', $code, $token, $base_sha, $head, $head, $started));
+	}
+
+	/** @return array{path:string,head:string,result:array<string,mixed>|null} */
+	private function convergence_validation( string $path, string $head, ?array $result ): array {
+		return array( 'path' => $path, 'head' => $head, 'result' => $result );
+	}
+
+	private function has_unpushed_commits( string $path ): bool {
+		foreach ( array( '@{push}..HEAD', '@{upstream}..HEAD' ) as $range ) {
+			$result = $this->run_git($path, array( 'rev-list', '--count', $range ));
+			$count  = trim($result['stdout']);
+			if ( $result['success'] && '' !== $count && ctype_digit($count) && 0 < (int) $count ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private function read_head( string $path ): ?string {
+		$result = $this->run_git($path, array( 'rev-parse', '--verify', 'HEAD^{commit}' ));
+		return $result['success'] ? trim($result['stdout']) : null;
+	}
+
+	private function run_convergence_test_hook( string $path ): void {
+		$hook = getenv('DMC_WORKTREE_PROVIDER_TEST_CONVERGE_HOOK');
+		if ( false !== $hook && '' !== $hook ) {
+			$process = proc_open(array( $hook, $path ), array( 1 => array( 'file', '/dev/null', 'w' ), 2 => array( 'file', '/dev/null', 'w' ) ), $pipes);
+			if ( is_resource($process) ) {
+				proc_close($process);
+			}
+		}
 	}
 
 	private function read_branch( string $path ): ?string {
@@ -239,6 +355,24 @@ final class StandaloneWorktreeProvider {
 			'fresh'          => $fresh,
 			'latency_ms'     => $this->elapsed_ms($started),
 		);
+	}
+
+	/** @return array<string,mixed> */
+	private function convergence_result( string $status, ?string $code, string $token, string $base_sha, ?string $before, ?string $after, float $started ): array {
+		$result = array(
+			'schema'         => self::CONVERGE_SCHEMA,
+			'status'         => $status,
+			'identity_token' => $token,
+			'base_sha'       => $base_sha,
+			'before_head'    => $before,
+			'after_head'     => $after,
+			'changed'        => null !== $before && null !== $after ? $before !== $after : null,
+			'latency_ms'     => $this->elapsed_ms($started),
+		);
+		if ( null !== $code ) {
+			$result['code'] = $code;
+		}
+		return $result;
 	}
 
 	/** @return array<string,mixed> */

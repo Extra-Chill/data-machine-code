@@ -185,6 +185,7 @@ WordPress bootstrap with the standalone provider executable:
 ```bash
 bin/dmc-worktree-provider identity /path/to/workspace repo@fix-foo
 bin/dmc-worktree-provider safety /path/to/workspace '<identity-token>'
+bin/dmc-worktree-provider converge /path/to/workspace '<identity-token>' '<full-base-sha>'
 ```
 
 Identity reads only the canonical direct-child path and linked-worktree `HEAD`.
@@ -192,6 +193,14 @@ Safety is a separate operation with bounded local Git probes; neither operation
 loads WordPress, reads the database, enumerates the workspace, fetches a remote,
 or performs network I/O. Consumers should persist the returned opaque identity
 token and pass it back unchanged when requesting safety evidence.
+
+`converge` accepts only a full 40-character commit SHA already present locally. It
+revalidates the token-bound identity and ownership, linked-worktree status, clean
+state, absence of unpushed commits, and strict fast-forward ancestry immediately
+before running `git merge --ff-only <base-sha>`. It never fetches or performs any
+other Git mutation. Its `datamachine-code/worktree-convergence/v1` evidence binds
+the unchanged identity token and requested base SHA with the before/after HEADs.
+Unsafe state is returned as typed `refused` evidence without mutation.
 
 The primary checkout (bare `<repo>`) is **read-only by default** for mutating
 operations — pass `--allow-primary-mutation` to override. The default-deny is
