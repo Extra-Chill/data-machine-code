@@ -4823,6 +4823,17 @@ class WorkspaceCommand extends BaseCommand {
 		$result = $ability->execute($input);
 
 		if ( is_wp_error($result) ) {
+			if ( 'add' === $operation && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+				$this->renderer()->json(array(
+					'success' => false,
+					'error'   => array(
+						'code'    => $result->get_error_code(),
+						'message' => $result->get_error_message(),
+						'data'    => $result->get_error_data(),
+					),
+				));
+				WP_CLI::halt(1);
+			}
 			$this->render_workspace_error($result);
 			return;
 		}
