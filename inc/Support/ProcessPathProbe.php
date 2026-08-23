@@ -65,6 +65,123 @@ final class UnsupportedProcessPathProbe implements ProcessPathProbeInterface {
 	}
 }
 
+/** Run a host-provided argv probe for candidate paths when native inspection is unavailable. */
+final class ExternalProcessPathProbe implements ProcessPathProbeInterface {
+
+	private const MAX_OUTPUT_BYTES = 65536;
+	private const MAX_PROCESSES = 100;
+
+	/** @param mixed $argv @param callable|null $runner Receives argv and stdin and returns a ProcessRunner envelope. */
+	public function __construct(private mixed $argv, private $runner = null) {}
+
+	public function snapshot(): array {
+		return $this->failure('process_path_probe_requires_path');
+	}
+
+	public function snapshot_for_paths( array $paths ): array {
+		$paths = array_values(array_unique(array_filter($paths, fn( $path ) => is_string($path) && str_starts_with($path, '/'))));
+		if ( array() === $paths ) {
+			return $this->failure('process_path_probe_requires_path');
+		}
+
+		$argv = $this->normalized_argv();
+		if ( null === $argv ) {
+			return $this->failure('process_path_probe_invalid_configuration');
+		}
+
+		$records = array();
+		foreach ( $paths as $path ) {
+			$result = $this->run($argv, $path);
+			if ( $result instanceof \WP_Error || ! is_array($result) || empty($result['success']) ) {
+				$data = $result instanceof \WP_Error ? (array) $result->get_error_data() : (array) $result;
+				return $this->failure($this->failure_reason($data, $path));
+			}
+			$parsed = $this->parse_response((string) ( $result['output'] ?? '' ), $path);
+			if ( null === $parsed ) {
+				return $this->failure('process_path_probe_malformed_output');
+			}
+			$records = array_merge($records, $parsed);
+		}
+
+		return array(
+			'status'      => 'available',
+			'records'     => $records,
+			'diagnostics' => array( 'provider' => 'external', 'path_records' => count($records), 'scoped_paths' => $paths ),
+		);
+	}
+
+	/** @return list<string>|null */
+	private function normalized_argv(): ?array {
+		if ( ! is_array($this->argv) ) {
+			return null;
+		}
+		$command = CommandSpec::from_argv($this->argv);
+		return $command instanceof \WP_Error ? null : $command->argv();
+	}
+
+	private function run( array $argv, string $path ): array|\WP_Error {
+		if ( is_callable($this->runner) ) {
+			return ( $this->runner )($argv, $path . "\n");
+		}
+		$command = CommandSpec::from_argv($argv);
+		return $command instanceof \WP_Error ? $command : ProcessRunner::run($command, array(
+			'timeout_seconds'  => 2,
+			'output_cap_bytes' => self::MAX_OUTPUT_BYTES,
+			'fail_on_output_overflow' => true,
+			'stdin'            => $path . "\n",
+			'error_as_result'  => true,
+		));
+	}
+
+	/** @return array<int,array<string,mixed>>|null */
+	private function parse_response( string $output, string $path ): ?array {
+		if ( strlen($output) > self::MAX_OUTPUT_BYTES ) {
+			return null;
+		}
+		$response = json_decode($output, true);
+		if ( ! is_array($response) || 'available' !== ( $response['status'] ?? null ) || $path !== ( $response['path'] ?? null ) || ! isset($response['processes']) || ! is_array($response['processes']) || count($response['processes']) > self::MAX_PROCESSES ) {
+			return null;
+		}
+		$records = array();
+		foreach ( $response['processes'] as $process ) {
+			if ( ! is_array($process) || ! isset($process['pid'], $process['path']) || ! is_int($process['pid']) || $process['pid'] <= 0 || ! is_string($process['path']) || ( $process['path'] !== $path && ! str_starts_with($process['path'], rtrim($path, '/') . '/') ) ) {
+				return null;
+			}
+			$records[] = array(
+				'pid'        => $process['pid'],
+				'command'    => isset($process['command']) && is_string($process['command']) ? $process['command'] : '',
+				'match_type' => isset($process['match_type']) && in_array($process['match_type'], array( 'cwd', 'open_file' ), true) ? $process['match_type'] : 'path',
+				'path'       => $process['path'],
+			);
+		}
+		return $records;
+	}
+
+	/** @param array<string,mixed> $data */
+	private function failure_reason( array $data, string $path ): string {
+		if ( ! empty($data['timeout']) ) {
+			return 'process_path_probe_timeout';
+		}
+		if ( ! empty($data['output_overflow']) ) {
+			return 'process_path_probe_output_limit';
+		}
+		$response = json_decode((string) ( $data['output'] ?? '' ), true);
+		if ( is_array($response) && $path === ( $response['path'] ?? $path ) ) {
+			if ( 'rejected' === ( $response['status'] ?? null ) ) {
+				return 'process_path_probe_rejected';
+			}
+			if ( 'unavailable' === ( $response['status'] ?? null ) ) {
+				return 'process_path_probe_unavailable';
+			}
+		}
+		return 'process_path_probe_failed';
+	}
+
+	private function failure( string $reason ): array {
+		return array( 'status' => 'uncertain', 'records' => array(), 'diagnostics' => array( 'provider' => 'external', 'reason' => $reason ) );
+	}
+}
+
 final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
 
 	/** @param callable|null $runner Receives argv and returns a ProcessRunner envelope. */

@@ -85,6 +85,15 @@ class WorkspaceCommand extends BaseCommand {
 	);
 
 	/**
+	 * Stop with a typed diagnostic when a canonical workspace ability is absent.
+	 */
+	private function unavailable_ability( string $expected_ability ): void {
+		$diagnostic = WorkspaceAbilities::unavailable_diagnostic($expected_ability);
+		$message    = function_exists('wp_json_encode') ? wp_json_encode($diagnostic) : json_encode($diagnostic);
+		WP_CLI::error(is_string($message) ? $message : sprintf('Workspace ability not available: %s', $expected_ability));
+	}
+
+	/**
 	 * WP-CLI leaf definitions for the ability-backed worktree operations.
 	 *
 	 * @return array<string,array<string,mixed>>
@@ -93,6 +102,7 @@ class WorkspaceCommand extends BaseCommand {
 		$option = static fn ( string $name, string $description = 'Operation option.' ): array => array( 'type' => 'assoc', 'name' => $name, 'description' => $description, 'optional' => true );
 		$flag   = static fn ( string $name, string $description = 'Operation flag.' ): array => array( 'type' => 'flag', 'name' => $name, 'description' => $description, 'optional' => true );
 		$format = $option('format', 'Output format (table, json, csv, yaml).');
+		$worktree_policy = WorktreeContextInjector::worktree_add_policy_schema_properties();
 		$definitions = array(
 			'add' => array(
 				'shortdesc' => 'Create an isolated, managed worktree.',
@@ -115,10 +125,10 @@ class WorkspaceCommand extends BaseCommand {
 					array( 'type' => 'assoc', 'name' => 'task-url', 'description' => 'Task or issue URL to record.' ),
 					array( 'type' => 'assoc', 'name' => 'task-ref', 'description' => 'Short task reference to record.' ),
 					array( 'type' => 'flag', 'name' => 'require-task-tracker', 'description' => 'Require task tracking metadata.' ),
-					array( 'type' => 'assoc', 'name' => 'reuse-policy', 'description' => 'Existing-handle policy.' ),
-					array( 'type' => 'assoc', 'name' => 'purpose', 'description' => 'Worktree purpose metadata.' ),
-					array( 'type' => 'assoc', 'name' => 'owner-run-ref', 'description' => 'Owning run reference.' ),
-					array( 'type' => 'assoc', 'name' => 'cleanup-policy', 'description' => 'Cleanup policy metadata.' ),
+					array( 'type' => 'assoc', 'name' => 'reuse-policy', 'description' => implode('|', $worktree_policy['reuse_policy']['enum'] ) . '. ' . $worktree_policy['reuse_policy']['description'] ),
+					array( 'type' => 'assoc', 'name' => 'purpose', 'description' => $worktree_policy['purpose']['description'] ),
+					array( 'type' => 'assoc', 'name' => 'owner-run-ref', 'description' => $worktree_policy['owner_run_ref']['description'] ),
+					array( 'type' => 'assoc', 'name' => 'cleanup-policy', 'description' => implode('|', $worktree_policy['cleanup_policy']['enum'] ) . '. ' . $worktree_policy['cleanup_policy']['description'] ),
 					array( 'type' => 'flag', 'name' => 'verbose', 'description' => 'Include full capacity and capped bootstrap evidence in JSON output.' ),
 					$format,
 				),
@@ -418,7 +428,7 @@ class WorkspaceCommand extends BaseCommand {
 	public function list_repos( array $args, array $assoc_args ): void {
 		$ability = wp_get_ability('datamachine-code/workspace-list');
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace list ability not available.');
+			$this->unavailable_ability('datamachine-code/workspace-list');
 			return;
 		}
 
@@ -2909,6 +2919,9 @@ class WorkspaceCommand extends BaseCommand {
 		if ( is_array($result['workspace_capacity'] ?? null) ) {
 			$capacity = $result['workspace_capacity'];
 			WP_CLI::log(\DataMachineCode\Workspace\WorktreeDiskBudget::format_summary($capacity));
+			foreach ( \DataMachineCode\Workspace\WorktreeDiskBudget::format_trigger_reasons($capacity) as $reason ) {
+				WP_CLI::warning($reason);
+			}
 			$this->render_workspace_capacity_recovery(Workspace::workspace_hygiene_recovery_suggestion($capacity));
 		}
 		if ( empty($result['is_worktree']) && is_array($result['primary_freshness'] ?? null) ) {
@@ -2938,7 +2951,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		WP_CLI::log('Recovery (all commands are non-destructive):');
+		WP_CLI::log('Recovery for the listed capacity warning(s) (all commands are non-destructive):');
 		foreach ( $commands as $recovery_command ) {
 			WP_CLI::log(sprintf('%s: %s', (string) ( $recovery_command['label'] ?? '' ), (string) ( $recovery_command['command'] ?? '' )));
 		}
@@ -3727,7 +3740,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$ability = wp_get_ability($ability_name);
 		if ( ! $ability ) {
-			WP_CLI::error(sprintf('Workspace git ability not available: %s', $ability_name));
+			$this->unavailable_ability($ability_name);
 			return;
 		}
 
@@ -4434,7 +4447,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$ability = wp_get_ability($ability_name);
 		if ( ! $ability ) {
-			WP_CLI::error(sprintf('Worktree ability not available: %s', $ability_name));
+			$this->unavailable_ability($ability_name);
 			return;
 		}
 
@@ -5139,6 +5152,8 @@ class WorkspaceCommand extends BaseCommand {
 						'dirty'               => null === $dirty ? '-' : (int) $dirty,
 						'created_at'          => $wt['created_at'] ?? null,
 						'state'               => $wt['lifecycle_state'] ?? null,
+						'readiness'           => $wt['readiness'] ?? null,
+						'readiness_status'    => $wt['readiness']['status'] ?? 'unknown',
 						'liveness'            => $wt['liveness'] ?? 'unknown',
 						'liveness_reason'     => $wt['liveness_reason'] ?? '',
 						'last_seen_at'        => $wt['last_seen_at'] ?? null,
@@ -5174,7 +5189,7 @@ class WorkspaceCommand extends BaseCommand {
 				},
 				$worktrees
 				);
-				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'liveness', 'last_seen_at', 'owner', 'agent', 'session', 'task', 'pr', 'age_days', 'size', 'artifacts', 'stale', 'path' );
+				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'readiness_status', 'liveness', 'last_seen_at', 'owner', 'agent', 'session', 'task', 'pr', 'age_days', 'size', 'artifacts', 'stale', 'path' );
 				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) && ! empty($assoc_args['envelope']) ) {
 					$result['worktrees'] = $items;
 					$this->renderer()->json($result);
@@ -5185,7 +5200,7 @@ class WorkspaceCommand extends BaseCommand {
 					return;
 				}
 				if ( in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true) ) {
-					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'safety', 'state', 'created_at', 'liveness', 'liveness_reason', 'last_seen_at', 'owner_full', 'session_full', 'task_full', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'fields_skipped', 'metadata', 'path' );
+					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'safety', 'state', 'readiness', 'readiness_status', 'created_at', 'liveness', 'liveness_reason', 'last_seen_at', 'owner_full', 'session_full', 'task_full', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'fields_skipped', 'metadata', 'path' );
 				}
 				$skipped_global = (array) ( $result['fields_skipped'] ?? array() );
 				if ( 'list' === $operation && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true) ) {

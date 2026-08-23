@@ -127,8 +127,8 @@ class RemoteWorkspaceBackend {
 		}
 		$intent       = WorktreeContextInjector::normalize_disposable_intent($intent);
 		$reuse_policy = strtolower(trim($reuse_policy));
-		if ( ! in_array($reuse_policy, array( 'reuse_compatible', 'isolated', 'recycle_terminal' ), true) ) {
-			return new \WP_Error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: reuse_compatible, isolated, recycle_terminal.', array( 'status' => 400 ));
+		if ( ! in_array($reuse_policy, WorktreeContextInjector::VALID_REUSE_POLICIES, true) ) {
+			return new \WP_Error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: ' . implode(', ', WorktreeContextInjector::VALID_REUSE_POLICIES) . '.', array( 'status' => 400 ));
 		}
 		$lock = $this->acquire_state_lock($repo_name);
 		if ( is_wp_error($lock) ) {
@@ -219,15 +219,7 @@ class RemoteWorkspaceBackend {
 				));
 			}
 			if ( array() !== $candidates && 'isolated' === $reuse_policy ) {
-				$missing_intent = array();
-				foreach ( array( 'purpose', 'owner_run_ref' ) as $field ) {
-					if ( '' === trim((string) ($intent[ $field ] ?? '')) ) {
-						$missing_intent[] = $field;
-					}
-				}
-				if ( WorktreeContextInjector::CLEANUP_POLICY_REMOVE_ON_SUCCESS !== ( $intent['cleanup_policy'] ?? null ) ) {
-					$missing_intent[] = 'cleanup_policy=remove_on_success';
-				}
+				$missing_intent = WorktreeContextInjector::missing_isolation_intent($intent);
 				if ( array() !== $missing_intent ) {
 					return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to create remote worktree "%s": same task isolation intent is incomplete.', $handle), array(
 						'status' => 409,

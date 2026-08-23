@@ -96,6 +96,49 @@ class WorktreeContextInjector {
 		self::CLEANUP_POLICY_PRESERVE_ON_FAILURE,
 	);
 
+	public const VALID_REUSE_POLICIES = array( 'reuse_compatible', 'isolated', 'recycle_terminal' );
+
+	/**
+	 * The required lifecycle intent for a parallel worktree of the same task.
+	 */
+	public const ISOLATION_REQUIRED_INTENT = array(
+		'purpose',
+		'owner_run_ref',
+		'cleanup_policy=remove_on_success',
+	);
+
+	/**
+	 * Shared policy schema for all worktree-add callers.
+	 *
+	 * @return array<string,array<string,mixed>>
+	 */
+	public static function worktree_add_policy_schema_properties(): array {
+		return array(
+			'reuse_policy'   => array(
+				'type'        => 'string',
+				'enum'        => self::VALID_REUSE_POLICIES,
+				'description' => 'Reuse and allocation behavior. reuse_compatible reuses only an exact compatible handle and refuses another same-repo handle for the same task. isolated requires purpose, owner_run_ref, and cleanup_policy=remove_on_success for parallel same-task work. recycle_terminal resets only a proven-clean terminal exact handle whose HEAD is contained in the requested base.',
+			),
+			'purpose'        => array( 'type' => 'string', 'description' => 'Purpose required with owner_run_ref and cleanup_policy=remove_on_success for isolated same-task work.' ),
+			'owner_run_ref'  => array( 'type' => 'string', 'description' => 'Owner run reference required with purpose and cleanup_policy=remove_on_success for isolated same-task work.' ),
+			'cleanup_policy' => array( 'type' => 'string', 'enum' => self::VALID_CLEANUP_POLICIES, 'description' => 'Cleanup policy: manual, remove_on_success, or preserve_on_failure. Isolated same-task work requires remove_on_success.' ),
+		);
+	}
+
+	/** @return string[] */
+	public static function missing_isolation_intent( array $intent ): array {
+		$missing = array();
+		foreach ( self::ISOLATION_REQUIRED_INTENT as $requirement ) {
+			$parts    = explode('=', $requirement, 2);
+			$field    = $parts[0];
+			$expected = $parts[1] ?? null;
+			if ( null === $expected ? '' === trim((string) ($intent[ $field ] ?? '')) : $expected !== ( $intent[ $field ] ?? null ) ) {
+				$missing[] = $requirement;
+			}
+		}
+		return $missing;
+	}
+
 	/**
 	 * Valid worktree lifecycle state values.
 	 */
@@ -883,6 +926,48 @@ class WorktreeContextInjector {
 		}
 
 		return isset($metadata['lifecycle_state']) ? self::normalize_state( (string) $metadata['lifecycle_state'] ) : null;
+	}
+
+	/**
+	 * Project whether a materialized worktree is ready for consumers that need
+	 * its requested dependency bootstrap. Records created before provisioning
+	 * evidence existed retain their historical ready behavior.
+	 *
+	 * @return array{ready: bool, status: string, reason: string, phase: string|null, outcome: string|null, resume_command: string|null}
+	 */
+	public static function bootstrap_readiness( ?array $metadata ): array {
+		$phase = is_array($metadata['provisioning']['bootstrap'] ?? null) ? $metadata['provisioning']['bootstrap'] : null;
+		if ( null === $phase ) {
+			return array(
+				'ready'          => true,
+				'status'         => 'ready',
+				'reason'         => 'legacy_metadata_without_bootstrap_evidence',
+				'phase'          => null,
+				'outcome'        => null,
+				'resume_command' => null,
+			);
+		}
+
+		$outcome = (string) ( $phase['outcome'] ?? 'pending' );
+		if ( in_array($outcome, array( 'succeeded', 'not_requested' ), true) ) {
+			return array(
+				'ready'          => true,
+				'status'         => 'ready',
+				'reason'         => 'bootstrap_' . $outcome,
+				'phase'          => 'bootstrap',
+				'outcome'        => $outcome,
+				'resume_command' => null,
+			);
+		}
+
+		return array(
+			'ready'          => false,
+			'status'         => 'incomplete',
+			'reason'         => 'bootstrap_' . $outcome,
+			'phase'          => 'bootstrap',
+			'outcome'        => $outcome,
+			'resume_command' => isset($phase['resume_command']) ? (string) $phase['resume_command'] : null,
+		);
 	}
 
 	/** Whether a durable cleanup timestamp is backed by a finalized lifecycle record. */

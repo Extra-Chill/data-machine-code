@@ -71,8 +71,6 @@ class WorkspaceAbilities {
 			require_once dirname(__DIR__) . '/Workspace/Workspace.php';
 		}
 
-		$register_callback = function () {
-
 			// -----------------------------------------------------------------
 			// Read-only discovery abilities (show_in_rest = true).
 			// -----------------------------------------------------------------
@@ -1502,11 +1500,7 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Require a valid task URL or task reference before creating the worktree. Defaults true; trusted operator-local callers may explicitly set false.',
 							),
-							'reuse_policy'               => array(
-								'type'        => 'string',
-								'enum'        => array( 'reuse_compatible', 'isolated', 'recycle_terminal' ),
-								'description' => 'Reuse and allocation behavior: reuse_compatible (default) reuses only an exact compatible handle and refuses a new same-repo handle for the same task; isolated requires purpose, owner_run_ref, and cleanup_policy=remove_on_success for parallel same-task work. recycle_terminal is limited to a clean, non-live terminal exact handle whose pushed HEAD is contained in its requested base.',
-							),
+							...WorktreeContextInjector::worktree_add_policy_schema_properties(),
 							'verbose'                    => array(
 								'type'        => 'boolean',
 								'description' => 'Return full capacity diagnostics and capped bootstrap output evidence. Default false returns a bounded summary.',
@@ -2916,14 +2910,7 @@ class WorkspaceAbilities {
 					)
 				);
 			}
-		};
-
-		if ( doing_action('wp_abilities_api_init') ) {
-			$register_callback();
-		} else {
-			add_action('wp_abilities_api_init', $register_callback);
-		}
-		}
+	}
 
 	/**
 	 * Build the shared contract for one active/no-signal apply ability.
@@ -2975,6 +2962,17 @@ class WorkspaceAbilities {
 			'execute_callback'    => array( self::class, $definition['callback'] ),
 			'permission_callback' => fn() => PermissionHelper::can_manage(),
 			'meta'                => array( 'show_in_rest' => false ),
+		);
+	}
+
+	/**
+	 * Describe an unavailable workspace ability for CLI and API callers.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public static function unavailable_diagnostic( string $expected_ability ): array {
+		return AbilityRegistry::unavailable_diagnostic($expected_ability) + array(
+			'workspace_registration_state' => self::$registered ? 'registered' : ( self::$scheduled ? 'scheduled' : 'not_scheduled' ),
 		);
 	}
 
@@ -3361,14 +3359,6 @@ class WorkspaceAbilities {
 	 * @return array Result.
 	 */
 	public static function cloneRepo( array $input ): array|\WP_Error {
-		if ( RemoteWorkspaceBackend::should_handle() ) {
-			$result = ( new RemoteWorkspaceBackend() )->clone_repo(
-				$input['url'] ?? '',
-				$input['name'] ?? null
-			);
-			return self::decorate_remote_workspace_result('clone_repo', $result);
-		}
-
 		$workspace = new Workspace();
 		$result    = $workspace->clone_repo(
 			$input['url'] ?? '',
@@ -4227,7 +4217,7 @@ class WorkspaceAbilities {
 
 	/** @return array<string,array<string,mixed>> */
 	private static function worktreeIntentSchemaProperties(): array {
-		return array( 'repo' => array( 'type' => 'string' ), 'branch' => array( 'type' => 'string' ), 'from' => array( 'type' => 'string' ), 'inject_context' => array( 'type' => 'boolean' ), 'bootstrap' => array( 'type' => 'boolean' ), 'allow_stale' => array( 'type' => 'boolean' ), 'allow_unverified_freshness' => array( 'type' => 'boolean' ), 'rebase_base' => array( 'type' => 'boolean' ), 'force' => array( 'type' => 'boolean' ), 'task_url' => array( 'type' => 'string' ), 'task_ref' => array( 'type' => 'string' ), 'require_task_tracker' => array( 'type' => 'boolean' ), 'reuse_policy' => array( 'type' => 'string', 'enum' => array( 'reuse_compatible', 'isolated', 'recycle_terminal' ) ), 'purpose' => array( 'type' => 'string' ), 'owner_run_ref' => array( 'type' => 'string' ), 'cleanup_policy' => array( 'type' => 'string', 'enum' => array( 'manual', 'remove_on_success', 'preserve_on_failure' ) ) );
+		return array( 'repo' => array( 'type' => 'string' ), 'branch' => array( 'type' => 'string' ), 'from' => array( 'type' => 'string' ), 'inject_context' => array( 'type' => 'boolean' ), 'bootstrap' => array( 'type' => 'boolean' ), 'allow_stale' => array( 'type' => 'boolean' ), 'allow_unverified_freshness' => array( 'type' => 'boolean' ), 'rebase_base' => array( 'type' => 'boolean' ), 'force' => array( 'type' => 'boolean' ), 'task_url' => array( 'type' => 'string' ), 'task_ref' => array( 'type' => 'string' ), 'require_task_tracker' => array( 'type' => 'boolean' ), ...WorktreeContextInjector::worktree_add_policy_schema_properties() );
 	}
 
 	/**

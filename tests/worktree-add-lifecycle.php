@@ -194,6 +194,7 @@ require_once dirname(__DIR__) . '/inc/Workspace/Workspace.php';
 require_once dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php';
 
 use DataMachineCode\Abilities\WorkspaceAbilities;
+use DataMachineCode\Workspace\RemoteWorkspaceBackend;
 use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 
@@ -285,6 +286,31 @@ try {
 	run_command('git add plan-remote-change.txt && git commit -m plan-remote-change && git push', $source_path);
 	$stale_apply = $workspace->worktree_apply_plan($stale_plan);
 	assert_true(is_wp_error($stale_apply) && 'stale_worktree_plan' === $stale_apply->get_error_code() && ! is_dir($workspace_root . '/homeboy@planned-stale'), 'remote change did not fail closed as a stale plan');
+	$remote_backend = new RemoteWorkspaceBackend();
+	$public_remote = $remote_backend->clone_repo('https://github.com/example/public-project.git', 'public-project');
+	assert_true(! is_wp_error($public_remote), 'public GitHub remote registration failed');
+	$ghe_remote = $remote_backend->clone_repo('git@github.example.com:example/enterprise-project.git', 'enterprise-project');
+	assert_true(! is_wp_error($ghe_remote), 'GitHub Enterprise remote registration failed');
+	$ghe_context = $remote_backend->materialization_context('enterprise-project');
+	assert_true(! is_wp_error($ghe_context), 'GitHub Enterprise registration was not materializable');
+	assert_true('git@github.example.com:example/enterprise-project.git' === ( $ghe_context['url'] ?? '' ), 'GitHub Enterprise materialization did not preserve its clone URL');
+
+	// Existing API-backed state must not divert a capable local runtime away
+	// from creating the primary checkout requested by workspace clone.
+	$clone_origin = $workspace_root . '/source/clone-origin.git';
+	run_command('git clone --bare ' . escapeshellarg($workspace_root . '/origin.git') . ' ' . escapeshellarg($clone_origin));
+	$cloned = WorkspaceAbilities::cloneRepo(
+		array(
+			'url'  => $clone_origin,
+			'name' => 'clone-handoff',
+		)
+	);
+	assert_true(! is_wp_error($cloned), is_wp_error($cloned) ? $cloned->get_error_message() : 'local clone was diverted to remote registration');
+	assert_true(is_dir($workspace_root . '/clone-handoff/.git'), 'workspace clone did not materialize the local primary');
+	$cloned_worktree = $workspace->worktree_add('clone-handoff', 'feat/clone-handoff', 'origin/main', false, false, false, false, true);
+	assert_true(! is_wp_error($cloned_worktree), is_wp_error($cloned_worktree) ? $cloned_worktree->get_error_message() : 'worktree add failed from the cloned primary');
+	assert_true(is_file($workspace_root . '/clone-handoff@feat-clone-handoff/.git'), 'cloned primary did not support worktree materialization');
+
 	run_command('git checkout -b stale-rebase-demand', $source_path);
 	file_put_contents($source_path . '/stale.txt', "stale\n");
 	run_command('git add stale.txt && git commit -m stale && git push -u origin stale-rebase-demand', $source_path);
@@ -579,6 +605,26 @@ try {
 	assert_true('accepted' === ( $reused['reuse']['status'] ?? null ) && 'homeboy@idempotent-reuse' === ( $reused['reuse']['handle'] ?? null ), 'default exact reuse did not preserve typed result evidence');
 	assert_true($reuse_created_at === ( $wpdb->rows[$reuse_handle]['created_at'] ?? null ), 'reuse rewrote durable lifecycle metadata');
 	assert_true('https://example.test/issues/reuse' === ( $wpdb->rows[$reuse_handle]['task_url'] ?? '' ), 'reuse rewrote durable task metadata');
+	// Simulate a caller being terminated after checkout materialization and after
+	// bootstrap starts: its durable running phase must block readiness until the
+	// exact compatible add retry completes bootstrap.
+	$interrupted_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	assert_true(! is_wp_error($interrupted_bootstrap), is_wp_error($interrupted_bootstrap) ? $interrupted_bootstrap->get_error_message() : 'interrupted bootstrap fixture creation failed');
+	$interrupted_bootstrap_handle = 'homeboy@interrupted-bootstrap';
+	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, array(
+		'provisioning' => array(
+			'create'    => array( 'outcome' => 'succeeded', 'completed_at' => gmdate('c') ),
+			'bootstrap' => array( 'requested' => true, 'outcome' => 'running', 'started_at' => gmdate('c'), 'resume_command' => 'wp datamachine-code workspace worktree add homeboy interrupted-bootstrap --from=origin/main --skip-context-injection --task-url=https://example.test/issues/interrupted-bootstrap --require-task-tracker' ),
+		),
+	));
+	$incomplete_get = $workspace->worktree_get($interrupted_bootstrap_handle);
+	assert_true(false === ( $incomplete_get['worktrees'][0]['readiness']['ready'] ?? true ) && 'bootstrap_running' === ( $incomplete_get['worktrees'][0]['readiness']['reason'] ?? '' ) && str_contains((string) ($incomplete_get['worktrees'][0]['readiness']['resume_command'] ?? ''), 'worktree add homeboy interrupted-bootstrap'), 'interrupted bootstrap did not survive as explicit incomplete readiness evidence');
+	$incomplete_show = $workspace->show_repo($interrupted_bootstrap_handle);
+	assert_true(false === ( $incomplete_show['readiness']['ready'] ?? true ) && 'incomplete' === ( $incomplete_show['readiness']['status'] ?? '' ), 'workspace show did not project incomplete bootstrap readiness');
+	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, array( 'last_seen_at' => gmdate('c', time() - 90000) ));
+	$resumed_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	assert_true(! is_wp_error($resumed_bootstrap) && true === ( $resumed_bootstrap['resumed'] ?? false ) && 'succeeded' === ( $resumed_bootstrap['metadata']['provisioning']['bootstrap']['outcome'] ?? null ), is_wp_error($resumed_bootstrap) ? $resumed_bootstrap->get_error_message() : 'exact retry did not resume interrupted bootstrap');
+	assert_true(true === ( $workspace->worktree_get($interrupted_bootstrap_handle)['worktrees'][0]['readiness']['ready'] ?? false ), 'resumed bootstrap remained incomplete');
 	$exact_reuse_plan = $workspace->worktree_plan('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
 	assert_true(! is_wp_error($exact_reuse_plan) && 'exact_reuse' === ( $exact_reuse_plan['disposition'] ?? null ), 'exact compatible reuse was not planned');
 	file_put_contents($reusable['path'] . '/reuse-dirty.txt', "dirty\n");

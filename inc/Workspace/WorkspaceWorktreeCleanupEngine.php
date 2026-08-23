@@ -207,7 +207,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			$repo            = $wt['repo'] ?? '';
 			$branch          = $wt['branch'] ?? '';
 			$wt_path         = $wt['path'] ?? '';
-			$metadata        = $wt['metadata'] ?? null;
+			$metadata        = is_array($wt['metadata'] ?? null) ? $wt['metadata'] : array();
 			$created_at      = $wt['created_at'] ?? null;
 			$liveness        = (string) ( $wt['liveness'] ?? '' );
 			$liveness_reason = (string) ( $wt['liveness_reason'] ?? '' );

@@ -14,6 +14,7 @@ namespace {
 	}
 
 	define('ABSPATH', __DIR__ . '/');
+	require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 	require_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
 
 	$definitions = \DataMachineCode\Cli\Commands\WorkspaceCommand::worktree_command_definitions();
@@ -51,8 +52,12 @@ namespace {
 
 	$add = $definitions['add'];
 	worktree_help_assert('Create an isolated, managed worktree.' === $add['shortdesc'], 'Add help snapshot changed.');
-	worktree_help_assert(array_column($add['synopsis'], 'name') === array( 'repo', 'branch', 'from', 'base', 'base-ref', 'base-branch', 'skip-context-injection', 'skip-bootstrap', 'allow-stale', 'allow-unverified-freshness', 'rebase-base', 'force', 'remediate-capacity', 'remediate-capacity-dry-run', 'task-url', 'task-ref', 'require-task-tracker', 'reuse-policy', 'purpose', 'owner-run-ref', 'cleanup-policy', 'format' ), 'Add help option snapshot changed.');
+	worktree_help_assert(array_column($add['synopsis'], 'name') === array( 'repo', 'branch', 'from', 'base', 'base-ref', 'base-branch', 'skip-context-injection', 'skip-bootstrap', 'allow-stale', 'allow-unverified-freshness', 'rebase-base', 'force', 'remediate-capacity', 'remediate-capacity-dry-run', 'task-url', 'task-ref', 'require-task-tracker', 'reuse-policy', 'purpose', 'owner-run-ref', 'cleanup-policy', 'verbose', 'format' ), 'Add help option snapshot changed.');
 	worktree_help_assert(str_contains($add['longdesc'], 'worktree add data-machine-code fix/1025'), 'Add help lacks a creation example.');
+	$add_options = array_column($add['synopsis'], null, 'name');
+	worktree_help_assert(str_contains($add_options['reuse-policy']['description'], 'reuse_compatible|isolated|recycle_terminal'), 'Compact add help does not enumerate reuse policies.');
+	worktree_help_assert(str_contains($add_options['cleanup-policy']['description'], 'manual|remove_on_success|preserve_on_failure'), 'Compact add help does not enumerate cleanup policies.');
+	worktree_help_assert(str_contains($add_options['reuse-policy']['description'], 'purpose, owner_run_ref, and cleanup_policy=remove_on_success'), 'Compact add help does not describe the isolated same-task contract.');
 
 	$remove = $definitions['remove'];
 	worktree_help_assert(array_column($remove['synopsis'], 'name') === array( 'repo-or-handle', 'branch', 'force', 'format' ), 'Remove help option snapshot changed.');

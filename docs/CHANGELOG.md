@@ -2,6 +2,35 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.62.0] - 2026-08-23
+
+### Added
+- consume external process probe
+
+### Fixed
+- explain capacity warnings
+
+## [0.61.5] - 2026-08-22
+
+### Fixed
+- prefer local clone capability
+
+## [0.61.4] - 2026-08-22
+
+### Fixed
+- stabilize workspace CLI registration
+
+## [0.61.3] - 2026-08-22
+
+### Fixed
+- resolve local default branch
+- persist bootstrap readiness
+
+## [0.61.2] - 2026-08-22
+
+### Fixed
+- handle null cleanup metadata
+
 ## [0.61.1] - 2026-08-22
 
 ### Fixed

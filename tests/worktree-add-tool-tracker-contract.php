@@ -39,6 +39,7 @@ namespace {
 	}
 
 	require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceAliasResolver.php';
+	require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 	require_once dirname(__DIR__) . '/inc/Tools/WorkspaceTools.php';
 
 	final class Worktree_Add_Tool_Tracker_Contract extends \DataMachineCode\Tools\WorkspaceTools {
@@ -69,8 +70,10 @@ namespace {
 		$properties = (array) ( $definition['parameters']['properties'] ?? array() );
 		worktree_add_tool_tracker_assert(! array_key_exists('require_task_tracker', $properties), 'agent tool schema exposes a tracker-enforcement override');
 		worktree_add_tool_tracker_assert(array( 'reuse_compatible', 'isolated', 'recycle_terminal' ) === ( $properties['reuse_policy']['enum'] ?? null ), 'agent tool schema did not expose the supported reuse policies');
+		worktree_add_tool_tracker_assert(array( 'manual', 'remove_on_success', 'preserve_on_failure' ) === ( $properties['cleanup_policy']['enum'] ?? null ), 'agent tool schema did not expose the supported cleanup policies');
+		worktree_add_tool_tracker_assert(str_contains((string) ( $properties['reuse_policy']['description'] ?? '' ), 'purpose, owner_run_ref, and cleanup_policy=remove_on_success'), 'agent tool schema did not describe the isolated same-task contract');
 		$ability_source = file_get_contents(dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php');
-		worktree_add_tool_tracker_assert(false !== $ability_source && str_contains($ability_source, "'reuse_policy'               => array("), 'worktree ability schema did not expose reuse_policy');
+		worktree_add_tool_tracker_assert(false !== $ability_source && str_contains($ability_source, '...WorktreeContextInjector::worktree_add_policy_schema_properties()'), 'worktree ability schema did not project the shared worktree policy contract');
 		worktree_add_tool_tracker_assert(false !== $ability_source && str_contains($ability_source, "'reuse_candidates'"), 'worktree ability result schema did not expose optional reuse candidates');
 		$cli_source = file_get_contents(dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php');
 		worktree_add_tool_tracker_assert(false !== $cli_source && str_contains($cli_source, "'reuse-policy'"), 'worktree CLI did not map --reuse-policy to ability input');

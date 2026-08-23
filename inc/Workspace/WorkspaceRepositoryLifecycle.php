@@ -1025,6 +1025,9 @@ trait WorkspaceRepositoryLifecycle {
 				? $this->build_primary_freshness_report_from_status_output( (string) $inspection['branch_status'], $parsed['dir_name'])
 				: null,
 		);
+		if ( $parsed['is_worktree'] ) {
+			$result['readiness'] = WorktreeContextInjector::bootstrap_readiness(WorktreeContextInjector::get_metadata($parsed['dir_name']));
+		}
 		if ( null !== $context_policy ) {
 			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
 		}

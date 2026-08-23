@@ -8,6 +8,7 @@
 namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Support\MacOSLsofProcessPathProbe;
+use DataMachineCode\Support\ExternalProcessPathProbe;
 use DataMachineCode\Support\ProcfsProcessPathProbe;
 use DataMachineCode\Support\ProcessPathProbeInterface;
 use DataMachineCode\Support\UnsupportedProcessPathProbe;
@@ -829,6 +830,11 @@ trait WorkspaceArtifactCleanup {
 			'process_path_probe_permission_denied',
 			'process_path_probe_malformed_output',
 			'process_path_probe_incomplete',
+			'process_path_probe_requires_path',
+			'process_path_probe_invalid_configuration',
+			'process_path_probe_rejected',
+			'process_path_probe_unavailable',
+			'process_path_probe_output_limit',
 		);
 		return in_array($error, $known, true) ? $error : 'process_path_probe_incomplete';
 	}
@@ -1070,6 +1076,15 @@ trait WorkspaceArtifactCleanup {
 
 	/** Resolve the host process-path provider. Overridable for deterministic tests. */
 	protected function artifact_process_path_probe(): ProcessPathProbeInterface {
+		// Hosts without usable native inspection can configure an argv probe through
+		// the option or filter. It receives each absolute candidate path on stdin.
+		$external_argv = function_exists('get_option') ? get_option('datamachine_code_external_process_path_probe_argv', null) : null;
+		if ( function_exists('apply_filters') ) {
+			$external_argv = apply_filters('datamachine_code_external_process_path_probe_argv', $external_argv);
+		}
+		if ( null !== $external_argv && false !== $external_argv && array() !== $external_argv ) {
+			return new ExternalProcessPathProbe($external_argv);
+		}
 		if ( '/proc' !== $this->artifact_process_root() ) {
 			return new ProcfsProcessPathProbe(fn() => $this->artifact_procfs_process_path_records());
 		}
