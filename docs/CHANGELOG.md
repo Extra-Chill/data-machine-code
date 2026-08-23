@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.62.5] - 2026-08-23
+
+### Fixed
+- allow unscoped bounded cleanup
+
 ## [0.62.4] - 2026-08-23
 
 ### Fixed
