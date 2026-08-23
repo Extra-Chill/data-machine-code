@@ -85,6 +85,9 @@ compact_output_assert(false === ( $worktree_add['capacity']['force_override_requ
 compact_output_assert('advisory' === ( $worktree_add['capacity']['typed_trigger_reasons'][0]['severity'] ?? null ), 'Compact worktree add output must expose typed trigger severity.');
 compact_output_assert('unverified' === ( $worktree_add['handoff_freshness']['status'] ?? null ) && 'remote_freshness_probe_unsupported' === ( $worktree_add['handoff_freshness']['reason'] ?? null ), 'Compact worktree add output must preserve the explicit freshness decision.');
 
+$dry_run_handoff = WorkspaceCompactOutput::worktree_add_result(array( 'success' => true, 'dry_run' => true, 'created' => false, 'handle' => 'repo@dry-run', 'handoff_freshness' => array( 'status' => 'not_applicable', 'reason' => 'non_allocation_dry_run' ) ));
+compact_output_assert('not_applicable' === ( $dry_run_handoff['handoff_freshness']['status'] ?? null ) && 'non_allocation_dry_run' === ( $dry_run_handoff['handoff_freshness']['reason'] ?? null ), 'Compact output must preserve dry-run non-allocation handoff status.');
+
 $legacy_forced_worktree_add = WorkspaceCompactOutput::worktree_add_result(array( 'disk_budget' => array( 'status' => 'warning', 'forced' => true, 'trigger_reasons' => array( 'projected_free_bytes_percentage_refusal_floor' ) ) ));
 compact_output_assert(true === ( $legacy_forced_worktree_add['capacity']['creation_allowed'] ?? null ), 'Compact legacy forced warning output must derive allowed admission.');
 compact_output_assert(true === ( $legacy_forced_worktree_add['capacity']['force_override_required'] ?? null ), 'Compact legacy forced warning output must derive required override semantics.');

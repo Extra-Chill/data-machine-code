@@ -1544,6 +1544,8 @@ class WorkspaceAbilities {
 						'type'       => 'object',
 						'properties' => array(
 							'success'                   => array( 'type' => 'boolean' ),
+							'dry_run'                   => array( 'type' => 'boolean' ),
+							'created'                   => array( 'type' => 'boolean' ),
 							'handle'                    => array( 'type' => 'string' ),
 							'path'                      => array( 'type' => 'string' ),
 							'branch'                    => array( 'type' => 'string' ),
@@ -1608,7 +1610,7 @@ class WorkspaceAbilities {
 								'type'        => 'object',
 								'properties'  => self::worktreeHandoffFreshnessSchemaProperties(),
 								'required'    => array( 'status' ),
-								'description' => 'Required handoff contract. verified includes a metadata-bound proof; unverified includes a typed reason and requires an explicit allow_unverified_freshness opt-in before the add ability returns success.',
+								'description' => 'Required handoff contract. verified includes a metadata-bound proof; unverified requires explicit allow_unverified_freshness; not_applicable identifies a non-allocation dry-run.',
 							),
 							'stale_commits_behind'      => array(
 								'type'        => 'integer',
@@ -4211,7 +4213,8 @@ class WorkspaceAbilities {
 				$input['from'] ?? null,
 				$task,
 				$intent,
-				$reuse_policy
+				$reuse_policy,
+				$allow_unverified_freshness
 			);
 			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
 				return self::worktree_add_response(self::decorate_remote_workspace_result('worktree_add', $result), $input);
@@ -4240,11 +4243,7 @@ class WorkspaceAbilities {
 
 	/** Keep the detailed lifecycle contract internal and opt it into public responses explicitly. */
 	private static function worktree_add_response( array|\WP_Error $result, array $input ): array|\WP_Error {
-		if ( $result instanceof \WP_Error || empty($result['success']) || 'unverified' !== ( $result['handoff_freshness']['status'] ?? null ) || ! empty($input['allow_unverified_freshness']) ) {
-			return ! empty($input['verbose']) || $result instanceof \WP_Error ? $result : \DataMachineCode\Cli\WorkspaceCompactOutput::worktree_add_result($result);
-		}
-
-		return new \WP_Error('worktree_handoff_freshness_unverified', 'The worktree was allocated but no verified handoff freshness proof is available. Retry, or set allow_unverified_freshness=true only for intentional offline or remote-probe-unsupported work.', array( 'status' => 409, 'handle' => $result['handle'] ?? null, 'path' => $result['path'] ?? null, 'handoff_freshness' => $result['handoff_freshness'] ));
+		return ! empty($input['verbose']) || $result instanceof \WP_Error ? $result : \DataMachineCode\Cli\WorkspaceCompactOutput::worktree_add_result($result);
 	}
 
 	/** Plan a local worktree using the same typed fields and defaults as add. */
@@ -4299,7 +4298,7 @@ class WorkspaceAbilities {
 
 	/** Schema for the required allocation handoff freshness decision. */
 	private static function worktreeHandoffFreshnessSchemaProperties(): array {
-		return array( 'status' => array( 'type' => 'string', 'enum' => array( 'verified', 'unverified' ) ), 'proof' => array( 'type' => 'object', 'properties' => self::worktreeHandoffProofSchemaProperties(), 'required' => self::worktreeHandoffProofSchemaRequired() ), 'reason' => array( 'type' => 'string', 'enum' => array( 'allocation_identity_missing', 'fetch_failed', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'worktree_handoff_base_unresolved', 'proof_generation_failed', 'metadata_persist_failed', 'remote_freshness_probe_unsupported' ) ), 'error_code' => array( 'type' => 'string', 'description' => 'Underlying typed failure code when proof generation or metadata persistence could not complete.' ) );
+		return array( 'status' => array( 'type' => 'string', 'enum' => array( 'verified', 'unverified', 'not_applicable' ) ), 'proof' => array( 'type' => 'object', 'properties' => self::worktreeHandoffProofSchemaProperties(), 'required' => self::worktreeHandoffProofSchemaRequired() ), 'reason' => array( 'type' => 'string', 'enum' => array( 'allocation_identity_missing', 'fetch_failed', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'worktree_handoff_base_unresolved', 'proof_generation_failed', 'metadata_persist_failed', 'remote_freshness_probe_unsupported', 'non_allocation_dry_run' ) ), 'error_code' => array( 'type' => 'string', 'description' => 'Underlying typed failure code when proof generation or metadata persistence could not complete.' ) );
 	}
 
 	/** @return array<int,string> */

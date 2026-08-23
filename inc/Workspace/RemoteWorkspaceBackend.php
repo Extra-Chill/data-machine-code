@@ -111,7 +111,7 @@ class RemoteWorkspaceBackend {
 	 *
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	public function worktree_add( string $repo_name, string $branch, ?string $from = null, array $task = array(), array $intent = array(), string $reuse_policy = 'reuse_compatible' ): array|\WP_Error {
+	public function worktree_add( string $repo_name, string $branch, ?string $from = null, array $task = array(), array $intent = array(), string $reuse_policy = 'reuse_compatible', bool $allow_unverified_freshness = false ): array|\WP_Error {
 		$repo_name = $this->resolve_alias(trim($repo_name));
 		$repo = $this->resolve_repo($repo_name);
 		if ( is_wp_error($repo) ) {
@@ -129,6 +129,18 @@ class RemoteWorkspaceBackend {
 		$reuse_policy = strtolower(trim($reuse_policy));
 		if ( ! in_array($reuse_policy, WorktreeContextInjector::VALID_REUSE_POLICIES, true) ) {
 			return new \WP_Error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: ' . implode(', ', WorktreeContextInjector::VALID_REUSE_POLICIES) . '.', array( 'status' => 400 ));
+		}
+		if ( ! $allow_unverified_freshness ) {
+			return new \WP_Error(
+				'worktree_handoff_freshness_unverified',
+				'Refusing remote worktree allocation because this backend cannot generate a handoff freshness proof. Set allow_unverified_freshness=true only for an intentional remote-probe-unsupported allocation.',
+				array(
+					'status'                     => 409,
+					'handle'                     => $repo_name . '@' . $this->branch_slug($branch),
+					'handoff_freshness'          => $this->unverified_handoff_freshness(),
+					'allow_unverified_freshness' => false,
+				)
+			);
 		}
 		$lock = $this->acquire_state_lock($repo_name);
 		if ( is_wp_error($lock) ) {

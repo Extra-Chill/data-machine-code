@@ -443,6 +443,7 @@ try {
 	assert_true(! is_wp_error($admitted_dry_run), is_wp_error($admitted_dry_run) ? $admitted_dry_run->get_error_message() : 'admitted capacity remediation dry-run failed');
 	assert_true(true === ( $admitted_dry_run['dry_run'] ?? false ), 'admitted capacity remediation request did not report dry-run.');
 	assert_true(false === ( $admitted_dry_run['created'] ?? true ), 'admitted capacity remediation dry-run created a worktree.');
+	assert_true('not_applicable' === ( $admitted_dry_run['handoff_freshness']['status'] ?? null ) && 'non_allocation_dry_run' === ( $admitted_dry_run['handoff_freshness']['reason'] ?? null ), 'capacity remediation dry-run did not report its non-allocation handoff status.');
 	assert_true(! is_dir($workspace_root . '/homeboy@capacity-remediation-admitted-dry-run'), 'admitted capacity remediation dry-run materialized a worktree directory.');
 	assert_true($dry_run_remote_refs === run_command("git for-each-ref --format='%(refname) %(objectname)' refs/remotes", $primary_path), 'capacity remediation dry-run fetched or changed remote refs.');
 	assert_true($dry_run_lock_rows === $wpdb->lock_rows, 'capacity remediation dry-run wrote lock-store lifecycle rows.');
@@ -985,6 +986,13 @@ try {
 
 	$GLOBALS['wpdb'] = new Datamachine_Code_Test_Wpdb();
 	run_command('git remote set-url origin ' . escapeshellarg($workspace_root . '/missing-origin.git'), $workspace_root . '/homeboy');
+	$handoff_proof_issuer = new ReflectionMethod($workspace, 'worktree_add_handoff_proof');
+	$post_allocation_refusal = $handoff_proof_issuer->invoke($workspace, $result, false);
+	$post_allocation_data = is_wp_error($post_allocation_refusal) ? (array) $post_allocation_refusal->get_error_data() : array();
+	assert_true(is_wp_error($post_allocation_refusal) && 'worktree_handoff_freshness_unverified' === $post_allocation_refusal->get_error_code(), 'direct Workspace caller did not fail closed after post-allocation proof failure');
+	assert_true((string) $result['handle'] === (string) ( $post_allocation_data['handle'] ?? '' ) && (string) $result['path'] === (string) ( $post_allocation_data['path'] ?? '' ) && true === ( $post_allocation_data['retry']['allocation_preserved'] ?? false ), 'post-allocation freshness refusal omitted preserved allocation and safe retry evidence');
+	$post_allocation_opt_in = $handoff_proof_issuer->invoke($workspace, $result, true);
+	assert_true(! is_wp_error($post_allocation_opt_in) && 'unverified' === ( $post_allocation_opt_in['handoff_freshness']['status'] ?? null ), 'explicit post-allocation freshness opt-in did not return typed unverified state');
 	$fetch_failed_default = $workspace->worktree_add('homeboy', 'audit-primitives-fetch-fails', 'origin/main', false, false, false, false, true);
 	assert_true(is_wp_error($fetch_failed_default), 'fetch failure reported success without explicit opt-in');
 	assert_true('worktree_freshness_unverified' === $fetch_failed_default->get_error_code(), 'unexpected fetch failure error code');

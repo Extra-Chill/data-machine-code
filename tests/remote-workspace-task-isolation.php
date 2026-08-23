@@ -59,7 +59,23 @@ function remote_isolation_assert( bool $condition, string $message ): void {
 	}
 }
 
-$backend = new RemoteWorkspaceBackend();
+$remote_backend = new RemoteWorkspaceBackend();
+$unverified_refused = $remote_backend->worktree_add('repo', 'freshness-refused', 'main', array( 'task_url' => 'https://example.test/issues/freshness' ));
+remote_isolation_assert(is_wp_error($unverified_refused) && 'worktree_handoff_freshness_unverified' === $unverified_refused->get_error_code(), 'remote backend did not fail closed before unsupported-proof allocation');
+remote_isolation_assert(! isset($GLOBALS['remote_workspace_task_isolation_state']['worktrees']['repo@freshness-refused']), 'remote freshness refusal mutated state');
+$backend = new class( $remote_backend ) {
+	public function __construct( private RemoteWorkspaceBackend $backend ) {}
+	public function worktree_add( mixed ...$args ): array|WP_Error {
+		if ( count($args) < 5 ) {
+			$args[] = array();
+		}
+		if ( count($args) < 6 ) {
+			$args[] = 'reuse_compatible';
+		}
+		$args[] = true;
+		return $this->backend->worktree_add(...$args);
+	}
+};
 $task    = array( 'task_url' => 'https://example.test/issues/1' );
 $invalid = $backend->worktree_add('repo', 'invalid-cleanup-policy', 'main', $task, array( 'cleanup_policy' => 'retain' ));
 remote_isolation_assert(is_wp_error($invalid) && 'invalid_cleanup_policy' === $invalid->get_error_code(), 'invalid cleanup policy did not return a typed validation error');

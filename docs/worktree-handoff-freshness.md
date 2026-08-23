@@ -10,6 +10,9 @@ the caller explicitly set `allow_unverified_freshness=true`; that opt-in is
 intended for offline work and the GitHub API backend, which cannot issue a
 local Git freshness proof (`remote_freshness_probe_unsupported`).
 
+Capacity-remediation dry-run responses allocate nothing and return
+`{ status: "not_applicable", reason: "non_allocation_dry_run" }`.
+
 `current` is a bounded observation, not an atomic cross-process lease held
 across external admission. The proof and revalidation endpoint intentionally
 do not invent that lease; the broader admission contract remains tracked by

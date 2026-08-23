@@ -23,6 +23,8 @@ class WorkspaceCompactOutput {
 		return self::filter_empty(
 			array(
 				'success'        => (bool) ( $result['success'] ?? true ),
+				'dry_run'        => isset( $result['dry_run'] ) ? (bool) $result['dry_run'] : null,
+				'created'        => isset( $result['created'] ) ? (bool) $result['created'] : null,
 				'handle'         => $result['handle'] ?? null,
 				'path'           => $result['path'] ?? null,
 				'branch'         => $result['branch'] ?? null,

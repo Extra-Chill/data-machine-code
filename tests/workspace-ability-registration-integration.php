@@ -93,7 +93,7 @@ if ( 'worker' === ( $argv[1] ?? '' ) ) {
 			throw new RuntimeException('Handoff proof schema did not expose its exact required fields.');
 		}
 	}
-	if ( array( 'success', 'handoff_freshness' ) !== (array) ( $GLOBALS['dmc_ability_registry']['datamachine-code/workspace-worktree-add']['output_schema']['required'] ?? array() ) || array( 'status' ) !== (array) ( $add_freshness['required'] ?? array() ) || array( 'verified', 'unverified' ) !== (array) ( $add_freshness['properties']['status']['enum'] ?? array() ) ) {
+	if ( array( 'success', 'handoff_freshness' ) !== (array) ( $GLOBALS['dmc_ability_registry']['datamachine-code/workspace-worktree-add']['output_schema']['required'] ?? array() ) || array( 'status' ) !== (array) ( $add_freshness['required'] ?? array() ) || array( 'verified', 'unverified', 'not_applicable' ) !== (array) ( $add_freshness['properties']['status']['enum'] ?? array() ) ) {
 		throw new RuntimeException('Worktree add did not require the typed handoff freshness contract.');
 	}
 	$status = (array) ( $revalidate['output_schema']['properties']['status']['enum'] ?? array() );
