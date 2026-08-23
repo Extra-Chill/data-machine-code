@@ -639,7 +639,7 @@ try {
 	assert_true(! is_wp_error($claim_fixture), is_wp_error($claim_fixture) ? $claim_fixture->get_error_message() : 'claim fixture creation failed');
 	run_command('git push -u origin claim-expired', $claim_fixture['path']);
 	$claim_handle = 'homeboy@claim-expired';
-	WorktreeContextInjector::store_lifecycle_metadata($claim_handle, array( 'last_seen_at' => gmdate('c', time() - WorktreeContextInjector::DEFAULT_HEARTBEAT_TTL_SECONDS - 1), 'origin_agent' => array( 'invalid' ), 'origin_session' => 'session', 'origin_user' => 'user', 'owner_run_ref' => 'old-run' ));
+	WorktreeContextInjector::store_lifecycle_metadata($claim_handle, array( 'last_seen_at' => gmdate('c', time() - WorktreeContextInjector::DEFAULT_HEARTBEAT_TTL_SECONDS - 1), 'origin_agent' => (object) array( 'id' => 'invalid' ), 'origin_session' => 'session', 'origin_user' => 'user', 'owner_run_ref' => 'old-run' ));
 	$claim_intent = array( 'purpose' => 'recovered-owner', 'owner_run_ref' => 'claim-run-1', 'cleanup_policy' => 'remove_on_success' );
 	$malformed_claim = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ), false, false, $claim_intent, 'claim_expired');
 	assert_true(is_wp_error($malformed_claim) && 'malformed_ownership_metadata' === ( $malformed_claim->get_error_data()['reuse']['reason_code'] ?? null ) && 'malformed' === ( $malformed_claim->get_error_data()['reuse']['liveness_evidence']['attribution'] ?? null ) && array( 'origin_agent' ) === ( $malformed_claim->get_error_data()['reuse']['liveness_evidence']['malformed_ownership_fields'] ?? null ), 'claim expired refused malformed ownership metadata');

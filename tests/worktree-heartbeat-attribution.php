@@ -74,6 +74,10 @@ try {
 	heartbeat_attribution_assert_same('unattributed', $empty_structured['attribution'], 'empty or unsupported ownership envelopes are unattributed');
 	heartbeat_attribution_assert_same(array( 'origin_agent', 'origin_session', 'origin_user', 'owner_run_ref' ), $empty_structured['missing_ownership_fields'], 'empty ownership envelopes report deterministic missing fields');
 	heartbeat_attribution_assert_same(array(), $empty_structured['malformed_ownership_fields'], 'empty or unsupported ownership envelopes are not malformed claims');
+	$object_ownership = WorktreeContextInjector::classify_liveness(array( 'origin_agent' => (object) array( 'id' => 'agent' ), 'origin_session' => 'session', 'origin_user' => 'user', 'owner_run_ref' => 'run-1' ), $now, 60);
+	heartbeat_attribution_assert_same('malformed', $object_ownership['attribution'], 'non-empty object ownership is malformed rather than unattributed');
+	heartbeat_attribution_assert_same(array( 'origin_agent' ), $object_ownership['missing_ownership_fields'], 'non-empty object ownership is treated as missing');
+	heartbeat_attribution_assert_same(array( 'origin_agent' ), $object_ownership['malformed_ownership_fields'], 'non-empty object ownership is surfaced as malformed');
 	heartbeat_attribution_assert_same(null, WorktreeContextInjector::normalize_scalar_metadata_value(array( 'run-1' )), 'metadata scalar normalization rejects arrays');
 	heartbeat_attribution_assert_same(false, WorktreeContextInjector::has_owner_terminal_disposable_cleanup_signal(array( 'cleanup_policy' => WorktreeContextInjector::CLEANUP_POLICY_REMOVE_ON_SUCCESS, 'purpose' => 'test', 'owner_run_ref' => array( 'run-1' ), 'owner_terminal_outcome' => 'success' )), 'array owner run references cannot establish terminal cleanup authority');
 } finally {

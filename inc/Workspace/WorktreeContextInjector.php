@@ -438,6 +438,9 @@ class WorktreeContextInjector {
 			}
 			return false;
 		}
+		if ( is_object($value) ) {
+			return array() !== (array) $value;
+		}
 
 		return is_scalar($value) && '' !== trim((string) $value);
 	}
