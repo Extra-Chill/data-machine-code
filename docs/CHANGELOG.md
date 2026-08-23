@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.66.0] - 2026-08-23
+
+### Added
+- make safe runs recoverable
+- verify external release convergence
+
+### Fixed
+- queue capacity admissions
+
 ## [0.65.4] - 2026-08-23
 
 ### Changed
