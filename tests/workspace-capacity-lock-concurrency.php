@@ -93,6 +93,23 @@ if ( 'waiter' === $mode ) {
 	exit(0);
 }
 
+if ( 'ordered-waiter' === $mode ) {
+	$workspace = (string) $argv[2];
+	$id        = (string) $argv[3];
+	$order     = (string) $argv[4];
+	$result    = WorkspaceMutationLock::with_repo(
+		$workspace,
+		'workspace-capacity-admission',
+		static function () use ( $id, $order ): string {
+			file_put_contents($order, $id . "\n", FILE_APPEND | LOCK_EX);
+			return $id;
+		},
+		5
+	);
+	fwrite(STDOUT, is_wp_error($result) ? 'error:' . $result->get_error_code() : $result);
+	exit(is_wp_error($result) ? 8 : 0);
+}
+
 if ( 'repo-holder' === $mode ) {
 	$workspace = (string) $argv[2];
 	$repo      = (string) $argv[3];
@@ -153,6 +170,11 @@ $workspace = sys_get_temp_dir() . '/dmc-capacity-lock-' . bin2hex(random_bytes(6
 mkdir($workspace, 0777, true);
 
 try {
+	$zero_argument_callback = WorkspaceMutationLock::with_repo($workspace, 'callback-compat', static fn(): string => 'zero-argument', 1);
+	capacity_lock_assert('zero-argument' === $zero_argument_callback, 'Zero-argument lock callback compatibility regressed.');
+	$lock_aware_callback = WorkspaceMutationLock::with_repo($workspace, 'callback-compat', static fn( WorkspaceMutationLock $lock ): string => $lock instanceof WorkspaceMutationLock ? 'lock-aware' : 'invalid', 1);
+	capacity_lock_assert('lock-aware' === $lock_aware_callback, 'Lock-aware callback did not receive the safe lease handle.');
+
 	$run_contention = static function ( int $hold_seconds, int $wait_timeout ) use ( $workspace ): array {
 		$ready   = $workspace . '/ready';
 		$command = array( PHP_BINARY, __FILE__, 'holder', $workspace, $ready, (string) $hold_seconds );
@@ -189,6 +211,7 @@ try {
 	capacity_lock_assert(0 === $waited['waiter_exit'], 'A bounded legitimate waiter failed instead of acquiring: ' . $waited['error']);
 	capacity_lock_assert(str_starts_with($waited['output'], 'acquired:'), 'Successful waiter did not report acquisition.');
 	capacity_lock_assert((float) substr($waited['output'], 9) >= 1.0, 'Waiter did not actually serialize behind the holder.');
+	capacity_lock_assert((float) substr($waited['output'], 9) < 2.5, 'Waiter did not wake promptly after the holder released the OS flock.');
 
 	$timed_out = $run_contention(2, 1);
 	capacity_lock_assert(3 === $timed_out['waiter_exit'], 'Short waiter did not return the retryable timeout path.');
@@ -214,7 +237,7 @@ try {
 	capacity_lock_assert(1 === ($diagnostic_data['queue_position'] ?? null), 'Single waiter must report queue position one.');
 	capacity_lock_assert('lock_wait' === ($diagnostic_data['progress']['phase'] ?? null), 'Timeout must identify lock-wait progress.');
 	capacity_lock_assert(is_array($diagnostic_data['owner'] ?? null), 'Timeout must expose the active lock owner.');
-	capacity_lock_assert(array_key_exists('estimated_wait_seconds', $diagnostic_data) && ! empty($diagnostic_data['eta_status']), 'Timeout must expose an ETA or state why it cannot be estimated.');
+	capacity_lock_assert(array_key_exists('estimated_wait_seconds', $diagnostic_data) && 'active_holder_release_unknown' === ($diagnostic_data['eta_status'] ?? null), 'Timeout without an owner operation deadline must not estimate completion from the DB lease.');
 	fclose($holder_pipes[1]); fclose($holder_pipes[2]); proc_close($holder);
 	unlink($ready);
 
@@ -280,7 +303,14 @@ try {
 		fclose($waiter_pipes[1]); fclose($waiter_pipes[2]); proc_close($waiter);
 		$queue = WorkspaceMutationLock::status($workspace)['queue'] ?? array();
 		capacity_lock_assert(array() === array_filter($queue, static fn( array $request ): bool => $killed_pid === (int) ($request['pid'] ?? 0)), 'SIGKILL request was not reconciled after its owner exited.');
+		$cancel_order = $workspace . '/cancel-order';
+		$next = proc_open(array( PHP_BINARY, __FILE__, 'ordered-waiter', $workspace, 'after-cancel', $cancel_order), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $next_pipes);
+		capacity_lock_assert(is_resource($next), 'Could not start the follower promoted after cancellation.');
+		fclose($next_pipes[0]);
 		fclose($holder_pipes[1]); fclose($holder_pipes[2]); proc_close($holder);
+		$next_output = stream_get_contents($next_pipes[1]); $next_error = stream_get_contents($next_pipes[2]); fclose($next_pipes[1]); fclose($next_pipes[2]);
+		capacity_lock_assert(0 === proc_close($next) && 'after-cancel' === $next_output && "after-cancel\n" === file_get_contents($cancel_order), 'Cancellation did not promote the next queued admission: ' . $next_error);
+		unlink($cancel_order);
 		unlink($ready);
 
 		// A holder killed after acquisition must release its OS flock so the next
@@ -337,12 +367,46 @@ try {
 		$error = stream_get_contents($pipes[2]);
 		fclose($pipes[1]); fclose($pipes[2]);
 		capacity_lock_assert(0 === proc_close($process), 'Queued fanout admission did not drain: ' . $error);
-		capacity_lock_assert(str_starts_with($output, 'acquired:'), 'Queued fanout admission did not report acquisition.');
+		capacity_lock_assert(str_starts_with($output, 'acquired:'), 'Queued fanout admission did not report acquisition: ' . $output . ' ' . $error);
 	}
 	fclose($holder_pipes[1]); fclose($holder_pipes[2]);
 	capacity_lock_assert(0 === proc_close($holder), 'Fanout lock holder failed.');
 	capacity_lock_assert(array() === ( glob($workspace . '/.locks/requests/*.json') ?: array() ), 'Completed fanout admissions left queue evidence behind.');
 	unlink($ready);
+
+	// Queue records are admission tokens, not diagnostics: followers retain their
+	// arrival order and a later request cannot barge ahead after release.
+	$ready = $workspace . '/fifo-ready';
+	$order = $workspace . '/fifo-order';
+	$holder = proc_open(array( PHP_BINARY, __FILE__, 'holder', $workspace, $ready, '1' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
+	capacity_lock_assert(is_resource($holder), 'Could not start FIFO holder.');
+	fclose($holder_pipes[0]);
+	$deadline = microtime(true) + 3;
+	while ( ! is_file($ready) && microtime(true) < $deadline ) { usleep(10000); }
+	capacity_lock_assert(is_file($ready), 'FIFO holder did not acquire.');
+	$fifo_waiters = array();
+	foreach ( array( 'first', 'second', 'late' ) as $id ) {
+		$process = proc_open(array( PHP_BINARY, __FILE__, 'ordered-waiter', $workspace, $id, $order), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $pipes);
+		capacity_lock_assert(is_resource($process), 'Could not start FIFO waiter ' . $id . '.');
+		fclose($pipes[0]);
+		$fifo_waiters[] = array( $id, $process, $pipes );
+		$deadline = microtime(true) + 2;
+		do { $queued = array_filter(WorkspaceMutationLock::status($workspace)['queue'] ?? array(), static fn( array $request ): bool => 'queued' === ($request['state'] ?? '')); usleep(10000); } while ( count($queued) < count($fifo_waiters) && microtime(true) < $deadline );
+		capacity_lock_assert(count($queued) === count($fifo_waiters), 'FIFO waiter did not become durably queued.');
+	}
+	usort($queued, static fn( array $left, array $right ): int => strcmp((string) ($left['queue_order'] ?? ''), (string) ($right['queue_order'] ?? '')));
+	capacity_lock_assert(array( 1, 2, 3 ) === array_map(static fn( array $request ): int => (int) ($request['queue_position'] ?? 0), $queued), 'Queued followers did not retain FIFO queue positions.');
+	foreach ( $fifo_waiters as [ $id, $process, $pipes ] ) {
+		$output = stream_get_contents($pipes[1]);
+		$error  = stream_get_contents($pipes[2]);
+		fclose($pipes[1]); fclose($pipes[2]);
+		capacity_lock_assert(0 === proc_close($process) && $id === $output, 'FIFO waiter failed or completed out of contract: ' . $error);
+	}
+	fclose($holder_pipes[1]); fclose($holder_pipes[2]);
+	capacity_lock_assert(0 === proc_close($holder), 'FIFO holder failed.');
+	capacity_lock_assert(array( 'first', 'second', 'late' ) === array_values(array_filter(explode("\n", trim((string) file_get_contents($order))))), 'Capacity queue permitted barging instead of FIFO admission.');
+	capacity_lock_assert(array() === ( glob($workspace . '/.locks/requests/*.json') ?: array() ), 'FIFO admissions left queue evidence behind.');
+	unlink($ready); unlink($order);
 
 	$policy = new class {
 		use DataMachineCode\Workspace\WorkspaceWorktreeLifecycle;
@@ -374,7 +438,7 @@ try {
 	capacity_lock_assert('130' === file_get_contents($state), 'Refused second admission must not consume stale capacity.');
 	echo "workspace-capacity-lock-concurrency: ok\n";
 } finally {
-	foreach ( array( 'capacity-state', 'admission-ready', 'second-ready', 'fanout-ready', 'kill-ready', 'diagnostic-ready', 'repo-a-ready', 'repo-b-ready' ) as $file ) {
+	foreach ( array( 'capacity-state', 'admission-ready', 'second-ready', 'fanout-ready', 'fifo-ready', 'fifo-order', 'cancel-order', 'kill-ready', 'diagnostic-ready', 'repo-a-ready', 'repo-b-ready' ) as $file ) {
 		if ( is_file($workspace . '/' . $file) ) { unlink($workspace . '/' . $file); }
 	}
 	if ( is_file($workspace . '/ready') ) {
