@@ -95,6 +95,9 @@ namespace {
 	} catch (RuntimeException $error) {
 		pagination_compat_assert('1.5' === (DataMachineCode\Workspace\Workspace::$limit_inputs[0] ?? null), 'Worktree CLI must validate the raw limit before coercion.');
 	}
+	invoke_worktree_list($command, array( 'format' => 'json', 'envelope' => true, 'task-ref' => 'https://example.test/issues/42', 'owner-run-ref' => 'run-42' ));
+	$filtered_input = $GLOBALS['dmc_worktree_list_ability']->inputs[ count($GLOBALS['dmc_worktree_list_ability']->inputs) - 1 ];
+	pagination_compat_assert('https://example.test/issues/42' === ($filtered_input['task_ref'] ?? null) && 'run-42' === ($filtered_input['owner_run_ref'] ?? null), 'Worktree CLI must forward exact task and owner filters to the bounded ability.');
 
 	echo "worktree-list-cli-pagination-compatibility: ok\n";
 }

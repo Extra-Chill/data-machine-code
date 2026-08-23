@@ -2143,6 +2143,14 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Optional lifecycle state filter.',
 							),
+							'task_ref'       => array(
+								'type'        => 'string',
+								'description' => 'Optional exact task URL or task reference filter.',
+							),
+							'owner_run_ref'  => array(
+								'type'        => 'string',
+								'description' => 'Optional exact owner run reference filter.',
+							),
 							'include_status' => array(
 								'type'        => 'boolean',
 								'description' => 'Run `git status --porcelain` per worktree to populate the dirty count. Default false (cheap listing). Expensive on large workspaces.',
@@ -4515,6 +4523,11 @@ class WorkspaceAbilities {
 		);
 		if ( isset( $input['cursor'] ) ) {
 			$opts['cursor'] = (string) $input['cursor'];
+		}
+		foreach ( array( 'task_ref', 'owner_run_ref' ) as $filter ) {
+			if ( isset( $input[ $filter ] ) ) {
+				$opts[ $filter ] = (string) $input[ $filter ];
+			}
 		}
 
 		return $workspace->worktree_list( $repo, $state, $opts );

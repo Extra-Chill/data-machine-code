@@ -4956,6 +4956,11 @@ class WorkspaceCommand extends BaseCommand {
 				if ( isset( $assoc_args['state'] ) && '' !== trim( (string) $assoc_args['state'] ) ) {
 					$input['state'] = (string) $assoc_args['state'];
 				}
+				foreach ( array( 'task-ref', 'owner-run-ref' ) as $filter ) {
+					if ( isset( $assoc_args[ $filter ] ) && '' !== trim( (string) $assoc_args[ $filter ] ) ) {
+						$input[ str_replace( '-', '_', $filter ) ] = (string) $assoc_args[ $filter ];
+					}
+				}
 				if ( isset( $assoc_args['limit'] ) ) {
 					$limit = Workspace::normalize_workspace_list_limit( $assoc_args['limit'] );
 					if ( is_wp_error( $limit ) ) {
