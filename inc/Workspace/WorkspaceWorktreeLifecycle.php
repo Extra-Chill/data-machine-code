@@ -925,6 +925,7 @@ trait WorkspaceWorktreeLifecycle {
 			$response['reuse_candidates'] = $reuse_candidates;
 		}
 		if ( ! empty($response['rebase_succeeded']) ) {
+			$this->worktree_add_progress($progress_callback, 'post_rebase_demand_planning');
 			$post_rebase_demand = WorktreeBootstrapper::demand_plan_for_target($wt_path, 'HEAD', $bootstrap);
 			if ( $post_rebase_demand instanceof \WP_Error ) {
 				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
@@ -933,7 +934,9 @@ trait WorkspaceWorktreeLifecycle {
 			$post_rebase_demand                       = WorktreeDemandCalibration::forecast($repo, $post_rebase_demand);
 			$measurement_plan                         = $post_rebase_demand;
 			$post_rebase_demand                       = WorktreeBootstrapper::remaining_demand_after_materialization($post_rebase_demand);
+			$this->worktree_add_progress($progress_callback, 'post_rebase_capacity_inspection');
 			$post_rebase_budget                       = $this->inspect_worktree_capacity($repo, $branch, $force, $post_rebase_demand);
+			$this->worktree_add_progress($progress_callback, 'post_rebase_artifact_reclamation');
 			$post_rebase_capacity_reclaim             = $this->reclaim_capacity_eligible_artifacts(
 				$repo,
 				$branch,

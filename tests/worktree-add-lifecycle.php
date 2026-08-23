@@ -360,8 +360,11 @@ try {
 	$staleness_probe = array_search('staleness_probe', $rebase_progress, true);
 	$rebase_start = array_search('rebase', $rebase_progress, true);
 	$default_branch_probe = array_search('default_branch_probe', $rebase_progress, true);
+	$post_rebase_demand = array_search('post_rebase_demand_planning', $rebase_progress, true);
+	$post_rebase_capacity = array_search('post_rebase_capacity_inspection', $rebase_progress, true);
+	$post_rebase_reclaim = array_search('post_rebase_artifact_reclamation', $rebase_progress, true);
 	$bootstrap_start = array_search('bootstrap_start', $rebase_progress, true);
-	assert_true(false !== $post_create_validation && false !== $staleness_probe && false !== $rebase_start && false !== $default_branch_probe && false !== $bootstrap_start && $post_create_validation < $staleness_probe && $staleness_probe < $rebase_start && $rebase_start < $default_branch_probe && $default_branch_probe < $bootstrap_start, 'real rebase/bootstrap creation did not report post-create validation, slow probes, and bootstrap in order');
+	assert_true(false !== $post_create_validation && false !== $staleness_probe && false !== $rebase_start && false !== $default_branch_probe && false !== $post_rebase_demand && false !== $post_rebase_capacity && false !== $post_rebase_reclaim && false !== $bootstrap_start && $post_create_validation < $staleness_probe && $staleness_probe < $rebase_start && $rebase_start < $default_branch_probe && $default_branch_probe < $post_rebase_demand && $post_rebase_demand < $post_rebase_capacity && $post_rebase_capacity < $post_rebase_reclaim && $post_rebase_reclaim < $bootstrap_start, 'real rebase/bootstrap creation did not report post-create validation, slow probes, post-rebase admission, and bootstrap in order');
 	assert_true(1 === ( $rebased_admission['post_rebase_disk_budget']['demand_plan']['counts']['composer_roots'] ?? 0 ), 'post-rebase admission did not reserve the dependency root introduced only by upstream');
 	assert_true('post_materialization_target_tree_conservative' === ( $rebased_admission['post_rebase_disk_budget']['demand_source'] ?? '' ), 'post-rebase admission did not report its effective target-tree demand source');
 	run_command(
