@@ -412,7 +412,7 @@ trait WorkspaceWorktreeLifecycle {
 		$operation_timeout  = self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		$operation_started  = microtime(true);
 		$operation_deadline = $operation_started + $operation_timeout;
-		$capacity_timeout   = self::worktree_capacity_admission_wait_seconds($operation_deadline);
+		$capacity_timeout   = self::worktree_capacity_admission_wait_seconds($operation_deadline, null, $bootstrap);
 		if ( $capacity_timeout <= 0 ) {
 			return $this->worktree_operation_timeout('capacity_lock_wait', $operation_timeout, $operation_started);
 		}
@@ -433,7 +433,7 @@ trait WorkspaceWorktreeLifecycle {
 
 		// Preflight shares the operation budget. Recompute before joining the
 		// global queue so a slow fetch/plan cannot receive a second full wait.
-		$capacity_timeout = self::worktree_capacity_admission_wait_seconds($operation_deadline);
+		$capacity_timeout = self::worktree_capacity_admission_wait_seconds($operation_deadline, null, $bootstrap);
 		if ( $capacity_timeout <= 0 ) {
 			return $this->worktree_operation_timeout('capacity_lock_wait', $operation_timeout, $operation_started);
 		}
@@ -441,7 +441,7 @@ trait WorkspaceWorktreeLifecycle {
 		$locked = WorkspaceMutationLock::with_repo(
 			$this->workspace_path,
 			'workspace-capacity-admission',
-			fn() => $this->worktree_add_with_capacity_lock(
+			fn( WorkspaceMutationLock $capacity_lock ) => $this->worktree_add_with_capacity_lock(
 				$repo,
 				$branch,
 				$from,
@@ -463,9 +463,15 @@ trait WorkspaceWorktreeLifecycle {
 				$operation_deadline,
 				$operation_timeout,
 				$operation_started,
-				$preflight
+				$preflight,
+				$capacity_lock
 			),
-			$capacity_timeout
+			$capacity_timeout,
+			array(
+				'expected_release_at'      => gmdate('c', (int) ceil($operation_deadline)),
+				'operation_timeout_seconds' => $operation_timeout,
+				'lease_strategy'            => 'operation_deadline',
+			)
 		);
 
 		return $this->worktree_operation_lock_result($locked, 'capacity_lock_wait', $operation_timeout, $operation_started);
@@ -561,21 +567,21 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/** Return the bounded wait used to turn capacity contention into an observable result. */
-	public static function worktree_capacity_admission_timeout_seconds(): int {
-		$timeout = 30;
+	public static function worktree_capacity_admission_timeout_seconds( bool $bootstrap = true ): int {
+		$timeout = self::worktree_capacity_wait_timeout_seconds($bootstrap);
 		if ( function_exists('apply_filters') ) {
-			$timeout = (int) apply_filters('datamachine_code_worktree_capacity_admission_timeout_seconds', $timeout);
+			$timeout = (int) apply_filters('datamachine_code_worktree_capacity_admission_timeout_seconds', $timeout, $bootstrap);
 		}
 
 		return max(1, $timeout);
 	}
 
 	/** Bound capacity-lock admission by both the operation deadline and its wait cap. */
-	private static function worktree_capacity_admission_wait_seconds( float $operation_deadline, ?float $now = null ): int {
+	private static function worktree_capacity_admission_wait_seconds( float $operation_deadline, ?float $now = null, bool $bootstrap = true ): int {
 		$now       = $now ?? microtime(true);
 		$remaining = max(0, (int) ceil($operation_deadline - $now));
 
-		return min($remaining, self::worktree_capacity_admission_timeout_seconds());
+		return min($remaining, self::worktree_capacity_admission_timeout_seconds($bootstrap));
 	}
 
 	/** Resolve the aggregate deadline covering create, rebase, and bootstrap. */
@@ -614,7 +620,8 @@ trait WorkspaceWorktreeLifecycle {
 		?float $operation_deadline = null,
 		int $operation_timeout = 0,
 		float $operation_started = 0.0,
-		array $preflight = array()
+		array $preflight = array(),
+		?WorkspaceMutationLock $capacity_lock = null
 	): array|\WP_Error {
 		$operation_timeout  = $operation_timeout > 0 ? $operation_timeout : self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		$operation_started  = $operation_started > 0.0 ? $operation_started : microtime(true);
@@ -622,6 +629,10 @@ trait WorkspaceWorktreeLifecycle {
 		$deadline_error     = $this->worktree_operation_deadline_error('freshness', $operation_deadline, $operation_timeout, $operation_started);
 		if ( null !== $deadline_error ) {
 			return $deadline_error;
+		}
+		$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'capacity_admitted', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $heartbeat_error ) {
+			return $heartbeat_error;
 		}
 		if ( is_dir($wt_path) && ! $remediate_capacity_dry_run ) {
 			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path);
@@ -718,6 +729,10 @@ trait WorkspaceWorktreeLifecycle {
 		if ( null !== $deadline_error ) {
 			return $deadline_error;
 		}
+		$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'capacity_reclaim', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $heartbeat_error ) {
+			return $heartbeat_error;
+		}
 		$disk_budget      = $this->inspect_worktree_capacity($repo, $branch, $force, $demand_plan);
 		$capacity_reclaim = ( $remediate_capacity || $remediate_capacity_dry_run )
 			? array( 'after' => $disk_budget, 'evidence' => array( 'attempted' => false, 'skip_reason' => $remediate_capacity_dry_run ? 'remediation_dry_run' : 'remediation_preview_then_apply' ) )
@@ -727,6 +742,10 @@ trait WorkspaceWorktreeLifecycle {
 			return $deadline_error;
 		}
 		$disk_budget      = $capacity_reclaim['after'];
+		$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'capacity_reclaim_complete', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $heartbeat_error ) {
+			return $heartbeat_error;
+		}
 		$capacity_remediation = null;
 		if ( $remediate_capacity && 'refused' === ( $disk_budget['status'] ?? '' ) ) {
 			$capacity_remediation = $this->remediate_capacity_refusal($repo, $branch, $demand_plan, $disk_budget, $remediate_capacity_dry_run);
@@ -835,6 +854,10 @@ trait WorkspaceWorktreeLifecycle {
 		if ( $repo_timeout <= 0 ) {
 			return $this->worktree_operation_timeout('repo_lock_wait', $operation_timeout, $operation_started);
 		}
+		$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'worktree_create', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $heartbeat_error ) {
+			return $heartbeat_error;
+		}
 		$response = WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_locked(
 				$repo,
 				$branch,
@@ -866,6 +889,10 @@ trait WorkspaceWorktreeLifecycle {
 
 		if ( is_wp_error($response) ) {
 			return $response;
+		}
+		$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'worktree_create_complete', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $heartbeat_error ) {
+			return $heartbeat_error;
 		}
 		if ( ! empty($response['rebase_cleanup_failed']) ) {
 			return new \WP_Error(
@@ -928,6 +955,10 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		if ( $bootstrap ) {
+			$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'bootstrap', $operation_deadline, $operation_timeout, $operation_started);
+			if ( null !== $heartbeat_error ) {
+				return $heartbeat_error;
+			}
 			$bootstrap_before_capacity = $this->inspect_worktree_capacity($repo, $branch, false, array());
 			$remaining_seconds = $this->worktree_operation_remaining_seconds($operation_deadline);
 			if ( $remaining_seconds <= 0 ) {
@@ -942,6 +973,10 @@ trait WorkspaceWorktreeLifecycle {
 				return $recorded;
 			}
 			$response['bootstrap'] = WorktreeBootstrapper::bootstrap($wt_path, $remaining_seconds);
+			$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'bootstrap_complete', $operation_deadline, $operation_timeout, $operation_started);
+			if ( null !== $heartbeat_error ) {
+				return $heartbeat_error;
+			}
 			$recorded = $this->record_bootstrap_outcome($wt_handle, ! empty($response['bootstrap']['success']) ? 'succeeded' : 'failed', $response['bootstrap']);
 			if ( is_wp_error($recorded) ) {
 				return $recorded;
@@ -997,6 +1032,38 @@ trait WorkspaceWorktreeLifecycle {
 		$this->emit_workspace_changed('worktree_add', $repo, $wt_handle, $wt_path);
 
 		return $response;
+	}
+
+	/** Renew the capacity lease at observable lifecycle boundaries only. */
+	private function worktree_capacity_lock_heartbeat( ?WorkspaceMutationLock $lock, string $phase, float $operation_deadline, int $operation_timeout, float $operation_started ): ?\WP_Error {
+		if ( null === $lock ) {
+			return null;
+		}
+		if ( $this->worktree_operation_remaining_seconds($operation_deadline) <= 0 ) {
+			return $this->worktree_operation_timeout($phase, $operation_timeout, $operation_started);
+		}
+		$renewed = $lock->heartbeat(array(
+			'expected_release_at' => gmdate('c', (int) ceil($operation_deadline)),
+			'capacity_phase'      => $phase,
+		));
+		if ( is_wp_error($renewed) ) {
+			return $renewed;
+		}
+		if ( false === $renewed ) {
+			return new \WP_Error(
+				'workspace_capacity_lock_heartbeat_lost',
+				'The workspace capacity lock is no longer active; refusing to continue allocation without current ownership evidence.',
+				array(
+					'status'             => 423,
+					'retryable'          => true,
+					'phase'              => $phase,
+					'operation_timeout'  => $operation_timeout,
+					'operation_started'  => $operation_started,
+					'operation_deadline' => gmdate('c', (int) ceil($operation_deadline)),
+				)
+			);
+		}
+		return null;
 	}
 
 	/** Build a safe, task-preserving retry command after freshness verification fails. */
