@@ -98,14 +98,32 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		$exists_local = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
-		$target_ref = $exists_local ? 'refs/heads/' . $branch : ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) );
-		$evidence = $this->primary_freshness_evidence($primary_path, $repo);
-		$identity = $this->primary_freshness_identity($primary_path, $target_ref);
+		$target_ref   = $exists_local ? 'refs/heads/' . $branch : ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) );
+		$evidence     = $this->primary_freshness_evidence($primary_path, $repo);
+		$identity     = $this->primary_freshness_identity($primary_path, $target_ref);
 		if ( null === $evidence || null === $identity ) {
 			$refresh_command = $this->primary_refresh_command($repo);
-			return new \WP_Error('freshness_refresh_required', sprintf('Refusing to plan worktree creation without verified freshness evidence. Refresh the primary explicitly with `%s`, then re-run this plan.', $refresh_command), array( 'status' => 409, 'refresh_command' => $refresh_command, 'freshness' => array( 'status' => 'refresh_required', 'verified' => false, 'target_ref' => $target_ref ) ));
+			return new \WP_Error(
+				'freshness_refresh_required',
+				sprintf('Refusing to plan worktree creation without verified freshness evidence. Refresh the primary explicitly with `%s`, then re-run this plan.', $refresh_command),
+				array(
+					'status'          => 409,
+					'refresh_command' => $refresh_command,
+					'freshness'       => array(
+						'status'     => 'refresh_required',
+						'verified'   => false,
+						'target_ref' => $target_ref,
+					),
+				)
+			);
 		}
-		$freshness = array( 'verified' => true, 'evidence' => $evidence, 'identity' => $identity, 'target_ref' => $target_ref, 'target_head' => $identity['target_head'] );
+		$freshness = array(
+			'verified'    => true,
+			'evidence'    => $evidence,
+			'identity'    => $identity,
+			'target_ref'  => $target_ref,
+			'target_head' => $identity['target_head'],
+		);
 		if ( ! $allow_stale && ! $rebase_base ) {
 			$guard = $this->assert_ref_current_with_default_branch($primary_path, $target_ref, $repo, $branch, $exists_local ? 'branch' : 'base');
 			if ( is_wp_error($guard) ) {
@@ -192,7 +210,15 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		$result = $this->worktree_add((string) $input['repo'], (string) $input['branch'], $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ($input['task'] ?? array()), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ($input['intent'] ?? array()), (string) ($input['reuse_policy'] ?? 'reuse_compatible'), false, false, (array) ($plan['freshness']['identity'] ?? array()));
 		if ( is_wp_error($result) && 'stale_worktree_freshness' === $result->get_error_code() ) {
-			return new \WP_Error('stale_worktree_plan', 'The worktree plan no longer matches live remote freshness state.', array( 'status' => 409, 'expected_freshness_identity' => $plan['freshness']['identity'] ?? null, 'actual_freshness_identity' => $result->get_error_data()['actual_freshness_identity'] ?? null ));
+			return new \WP_Error(
+				'stale_worktree_plan',
+				'The worktree plan no longer matches live remote freshness state.',
+				array(
+					'status'                    => 409,
+					'expected_freshness_identity' => $plan['freshness']['identity'] ?? null,
+					'actual_freshness_identity'   => $result->get_error_data()['actual_freshness_identity'] ?? null,
+				)
+			);
 		}
 		return $result;
 	}
@@ -259,7 +285,12 @@ trait WorkspaceWorktreeLifecycle {
 		$plan = array( 'version' => 1, 'handle' => $handle, 'path' => $path, 'branch' => $input['branch'], 'slug' => $slug, 'disposition' => $disposition, 'apply_intent' => $input ) + $evidence;
 		$digest_plan = array(
 			'version' => $plan['version'], 'handle' => $handle, 'path' => $path, 'branch' => $input['branch'], 'disposition' => $disposition, 'apply_intent' => $input,
-			'freshness' => array( 'verified' => $plan['freshness']['verified'] ?? null, 'identity' => $plan['freshness']['identity'] ?? null, 'target_ref' => $plan['freshness']['target_ref'] ?? null, 'target_head' => $plan['freshness']['target_head'] ?? null ),
+			'freshness' => array(
+				'verified'    => $plan['freshness']['verified'] ?? null,
+				'identity'    => $plan['freshness']['identity'] ?? null,
+				'target_ref'  => $plan['freshness']['target_ref'] ?? null,
+				'target_head' => $plan['freshness']['target_head'] ?? null,
+			),
 			'capacity' => array( 'status' => $plan['capacity']['status'] ?? null, 'projected_demand_bytes' => $plan['capacity']['projected_demand_bytes'] ?? null, 'projected_demand_inodes' => $plan['capacity']['projected_demand_inodes'] ?? null ),
 			'destination' => $plan['destination'] ?? null, 'ownership' => $plan['ownership'] ?? null, 'reuse_candidates' => $plan['reuse_candidates'] ?? null, 'legacy_handoff' => $plan['legacy_handoff'] ?? null,
 		);
@@ -709,7 +740,15 @@ trait WorkspaceWorktreeLifecycle {
 		if ( array() !== $expected_freshness_identity ) {
 			$actual_freshness_identity = $this->primary_freshness_identity($primary_path, $target_ref);
 			if ( $expected_freshness_identity !== $actual_freshness_identity ) {
-				return new \WP_Error('stale_worktree_freshness', 'The reviewed freshness identity changed after apply refreshed remote refs.', array( 'status' => 409, 'expected_freshness_identity' => $expected_freshness_identity, 'actual_freshness_identity' => $actual_freshness_identity ));
+				return new \WP_Error(
+					'stale_worktree_freshness',
+					'The reviewed freshness identity changed after apply refreshed remote refs.',
+					array(
+						'status'                    => 409,
+						'expected_freshness_identity' => $expected_freshness_identity,
+						'actual_freshness_identity'   => $actual_freshness_identity,
+					)
+				);
 			}
 		}
 		$demand_plan  = $preflight['demand_plan'] ?? WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);

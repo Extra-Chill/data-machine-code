@@ -778,7 +778,13 @@ trait WorkspaceCoreUtilities {
 			return;
 		}
 
-		update_option($this->primary_freshness_option_name($handle), array( 'version' => 1, 'remote_refs_digest' => $remote_refs ));
+		update_option(
+			$this->primary_freshness_option_name($handle),
+			array(
+				'version'            => 1,
+				'remote_refs_digest' => $remote_refs,
+			)
+		);
 	}
 
 	/** Return an explicit-refresh record only while its remote refs remain unchanged. */
@@ -788,12 +794,12 @@ trait WorkspaceCoreUtilities {
 		}
 
 		$evidence = get_option($this->primary_freshness_option_name($handle));
-		if ( ! is_array($evidence) || 1 !== (int) ($evidence['version'] ?? 0) || empty($evidence['remote_refs_digest']) ) {
+		if ( ! is_array($evidence) || 1 !== (int) ( $evidence['version'] ?? 0 ) || empty($evidence['remote_refs_digest']) ) {
 			return null;
 		}
 
 		$remote_refs = $this->primary_remote_refs_digest($repo_path);
-		return is_string($remote_refs) && hash_equals((string) $evidence['remote_refs_digest'], $remote_refs) ? $evidence : null;
+		return is_string($remote_refs) && hash_equals( (string) $evidence['remote_refs_digest'], $remote_refs ) ? $evidence : null;
 	}
 
 	/** Build the immutable local identity a reviewed plan must retain through apply. */
@@ -804,14 +810,18 @@ trait WorkspaceCoreUtilities {
 			return null;
 		}
 
-		$target_head = trim((string) ($target['output'] ?? ''));
-		return '' === $target_head ? null : array( 'target_ref' => $target_ref, 'target_head' => $target_head, 'remote_refs_digest' => $remote_refs );
+		$target_head = trim( (string) ( $target['output'] ?? '' ) );
+		return '' === $target_head ? null : array(
+			'target_ref'         => $target_ref,
+			'target_head'        => $target_head,
+			'remote_refs_digest' => $remote_refs,
+		);
 	}
 
 	/** Hash origin's local tracking refs without contacting the network. */
 	private function primary_remote_refs_digest( string $repo_path ): ?string {
 		$refs = $this->run_git($repo_path, "for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin", self::CLEANUP_GIT_PROBE_TIMEOUT);
-		return is_wp_error($refs) ? null : hash('sha256', (string) ($refs['output'] ?? ''));
+		return is_wp_error($refs) ? null : hash('sha256', (string) ( $refs['output'] ?? '' ));
 	}
 
 	private function primary_freshness_option_name( string $handle ): string {
