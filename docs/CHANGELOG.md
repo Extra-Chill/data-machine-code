@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.62.4] - 2026-08-23
+
+### Fixed
+- preserve diverged primary commits
+
 ## [0.62.3] - 2026-08-23
 
 ### Fixed
