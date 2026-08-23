@@ -18,6 +18,7 @@ namespace DataMachineCode\Cli\Commands;
 use WP_CLI;
 use DataMachine\Cli\BaseCommand;
 use DataMachineCode\Abilities\WorkspaceAbilities;
+use DataMachineCode\Cli\ActiveNoSignalApplyPresentation;
 use DataMachineCode\Cli\CliResponseRenderer;
 use DataMachineCode\Cli\CliRepeatableOptionParser;
 use DataMachineCode\Cli\WorkspaceCompactOutput;
@@ -28,7 +29,7 @@ use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 use DataMachineCode\Workspace\WorkspaceMutationLock;
 
-defined('ABSPATH') || exit;
+defined( 'ABSPATH' ) || exit;
 
 class WorkspaceCommand extends BaseCommand {
 
@@ -88,9 +89,9 @@ class WorkspaceCommand extends BaseCommand {
 	 * Stop with a typed diagnostic when a canonical workspace ability is absent.
 	 */
 	private function unavailable_ability( string $expected_ability ): void {
-		$diagnostic = WorkspaceAbilities::unavailable_diagnostic($expected_ability);
-		$message    = function_exists('wp_json_encode') ? wp_json_encode($diagnostic) : json_encode($diagnostic);
-		WP_CLI::error(is_string($message) ? $message : sprintf('Workspace ability not available: %s', $expected_ability));
+		$diagnostic = WorkspaceAbilities::unavailable_diagnostic( $expected_ability );
+		$message    = wp_json_encode( $diagnostic );
+		WP_CLI::error( is_string( $message ) ? $message : sprintf( 'Workspace ability not available: %s', $expected_ability ) );
 	}
 
 	/**
@@ -99,131 +100,357 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array<string,array<string,mixed>>
 	 */
 	public static function worktree_command_definitions(): array {
-		$option = static fn ( string $name, string $description = 'Operation option.' ): array => array( 'type' => 'assoc', 'name' => $name, 'description' => $description, 'optional' => true );
-		$flag   = static fn ( string $name, string $description = 'Operation flag.' ): array => array( 'type' => 'flag', 'name' => $name, 'description' => $description, 'optional' => true );
-		$format = $option('format', 'Output format (table, json, csv, yaml).');
-		$worktree_policy = WorktreeContextInjector::worktree_add_policy_schema_properties();
-		$definitions = array(
-			'add' => array(
+		$option              = static fn ( string $name, string $description = 'Operation option.' ): array => array(
+			'type'        => 'assoc',
+			'name'        => $name,
+			'description' => $description,
+			'optional'    => true,
+		);
+		$flag                = static fn ( string $name, string $description = 'Operation flag.' ): array => array(
+			'type'        => 'flag',
+			'name'        => $name,
+			'description' => $description,
+			'optional'    => true,
+		);
+		$format              = $option( 'format', 'Output format (table, json, csv, yaml).' );
+		$worktree_policy     = WorktreeContextInjector::worktree_add_policy_schema_properties();
+		$definitions         = array(
+			'add'                   => array(
 				'shortdesc' => 'Create an isolated, managed worktree.',
 				'longdesc'  => "Creates `<repo>@<branch-slug>` and reports its handle, path, and disk-budget evaluation. Creation verifies remote freshness by default; `--force` is the explicit disk-budget override. `--remediate-capacity` instead runs bounded safe reclamation after a refusal and retries the exact add once when capacity recovers.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --from=origin/main --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1025\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --skip-bootstrap",
 				'synopsis'  => array(
-					array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Primary repository name.', 'required' => true ),
-					array( 'type' => 'positional', 'name' => 'branch', 'description' => 'Branch to create or check out.', 'required' => true ),
-					array( 'type' => 'assoc', 'name' => 'from', 'description' => 'Base ref (default origin/HEAD).' ),
-					array( 'type' => 'assoc', 'name' => 'base', 'description' => 'Alias for --from.' ),
-					array( 'type' => 'assoc', 'name' => 'base-ref', 'description' => 'Alias for --from.' ),
-					array( 'type' => 'assoc', 'name' => 'base-branch', 'description' => 'Branch name converted to origin/<branch>.' ),
-					array( 'type' => 'flag', 'name' => 'skip-context-injection', 'description' => 'Create without site-agent context.' ),
-					array( 'type' => 'flag', 'name' => 'skip-bootstrap', 'description' => 'Skip dependency bootstrap.' ),
-					array( 'type' => 'flag', 'name' => 'allow-stale', 'description' => 'Bypass the staleness gate.' ),
-					array( 'type' => 'flag', 'name' => 'allow-unverified-freshness', 'description' => 'Allow intentional offline creation.' ),
-					array( 'type' => 'flag', 'name' => 'rebase-base', 'description' => 'Rebase onto upstream after creation.' ),
-					array( 'type' => 'flag', 'name' => 'force', 'description' => 'Override the disk-budget refusal threshold.' ),
-					array( 'type' => 'flag', 'name' => 'remediate-capacity', 'description' => 'Run bounded safe remediation after a capacity refusal, then retry this add once.' ),
-					array( 'type' => 'flag', 'name' => 'remediate-capacity-dry-run', 'description' => 'Preview capacity remediation without cleanup or creation.' ),
-					array( 'type' => 'assoc', 'name' => 'task-url', 'description' => 'Task or issue URL to record.' ),
-					array( 'type' => 'assoc', 'name' => 'task-ref', 'description' => 'Short task reference to record.' ),
-					array( 'type' => 'flag', 'name' => 'require-task-tracker', 'description' => 'Require task tracking metadata.' ),
-					array( 'type' => 'assoc', 'name' => 'reuse-policy', 'description' => implode('|', $worktree_policy['reuse_policy']['enum'] ) . '. ' . $worktree_policy['reuse_policy']['description'] ),
-					array( 'type' => 'assoc', 'name' => 'purpose', 'description' => $worktree_policy['purpose']['description'] ),
-					array( 'type' => 'assoc', 'name' => 'owner-run-ref', 'description' => $worktree_policy['owner_run_ref']['description'] ),
-					array( 'type' => 'assoc', 'name' => 'cleanup-policy', 'description' => implode('|', $worktree_policy['cleanup_policy']['enum'] ) . '. ' . $worktree_policy['cleanup_policy']['description'] ),
-					array( 'type' => 'flag', 'name' => 'verbose', 'description' => 'Include full capacity and capped bootstrap evidence in JSON output.' ),
+					array(
+						'type'        => 'positional',
+						'name'        => 'repo',
+						'description' => 'Primary repository name.',
+						'required'    => true,
+					),
+					array(
+						'type'        => 'positional',
+						'name'        => 'branch',
+						'description' => 'Branch to create or check out.',
+						'required'    => true,
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'from',
+						'description' => 'Base ref (default origin/HEAD).',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'base',
+						'description' => 'Alias for --from.',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'base-ref',
+						'description' => 'Alias for --from.',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'base-branch',
+						'description' => 'Branch name converted to origin/<branch>.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'skip-context-injection',
+						'description' => 'Create without site-agent context.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'skip-bootstrap',
+						'description' => 'Skip dependency bootstrap.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'allow-stale',
+						'description' => 'Bypass the staleness gate.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'allow-unverified-freshness',
+						'description' => 'Allow intentional offline creation.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'rebase-base',
+						'description' => 'Rebase onto upstream after creation.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'force',
+						'description' => 'Override the disk-budget refusal threshold.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'remediate-capacity',
+						'description' => 'Run bounded safe remediation after a capacity refusal, then retry this add once.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'remediate-capacity-dry-run',
+						'description' => 'Preview capacity remediation without cleanup or creation.',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'task-url',
+						'description' => 'Task or issue URL to record.',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'task-ref',
+						'description' => 'Short task reference to record.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'require-task-tracker',
+						'description' => 'Require task tracking metadata.',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'reuse-policy',
+						'description' => implode( '|', $worktree_policy['reuse_policy']['enum'] ) . '. ' . $worktree_policy['reuse_policy']['description'],
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'purpose',
+						'description' => $worktree_policy['purpose']['description'],
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'owner-run-ref',
+						'description' => $worktree_policy['owner_run_ref']['description'],
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'cleanup-policy',
+						'description' => implode( '|', $worktree_policy['cleanup_policy']['enum'] ) . '. ' . $worktree_policy['cleanup_policy']['description'],
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'verbose',
+						'description' => 'Include full capacity and capped bootstrap evidence in JSON output.',
+					),
 					$format,
 				),
 			),
-			'apply-plan' => array(
+			'apply-plan'            => array(
 				'shortdesc' => 'Apply a digest-addressed worktree plan.',
 				'longdesc'  => "Applies a plan only when a fresh replan has the same digest. Changed remote, capacity, ownership, or destination state is refused.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree apply-plan --plan='<json-plan>' --format=json",
-				'synopsis'  => array( $option('plan', 'JSON object returned by worktree plan.'), $format ),
+				'synopsis'  => array( $option( 'plan', 'JSON object returned by worktree plan.' ), $format ),
 			),
-			'remove' => array(
+			'remove'                => array(
 				'shortdesc' => 'Remove a managed worktree.',
 				'longdesc'  => "Removes one worktree. Dirty worktrees are refused unless `--force` is supplied.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree remove data-machine-code fix/1025\n    wp datamachine-code workspace worktree remove data-machine-code@fix-1025 --force",
 				'synopsis'  => array(
-					array( 'type' => 'positional', 'name' => 'repo-or-handle', 'description' => 'Primary repo or `<repo>@<branch-slug>` handle.', 'required' => true ),
-					array( 'type' => 'positional', 'name' => 'branch', 'description' => 'Branch when a repo is supplied.', 'optional' => true ),
-					array( 'type' => 'flag', 'name' => 'force', 'description' => 'Remove even when dirty.' ),
+					array(
+						'type'        => 'positional',
+						'name'        => 'repo-or-handle',
+						'description' => 'Primary repo or `<repo>@<branch-slug>` handle.',
+						'required'    => true,
+					),
+					array(
+						'type'        => 'positional',
+						'name'        => 'branch',
+						'description' => 'Branch when a repo is supplied.',
+						'optional'    => true,
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'force',
+						'description' => 'Remove even when dirty.',
+					),
 					$format,
 				),
 			),
-			'finalize' => array(
+			'finalize'              => array(
 				'shortdesc' => 'Record terminal worktree lifecycle metadata.',
 				'longdesc'  => "Attaches PR or completion state to a worktree. Finalization records cleanup eligibility but never bypasses dirty or unpushed safety gates.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree finalize data-machine-code@fix-1025 --pr=https://github.com/Extra-Chill/data-machine-code/pull/1026\n    wp datamachine-code workspace worktree finalize data-machine-code@fix-1025 --owner-terminal-outcome=success",
 				'synopsis'  => array(
-					array( 'type' => 'positional', 'name' => 'handle', 'description' => 'Worktree handle.', 'required' => true ),
-					array( 'type' => 'assoc', 'name' => 'pr', 'description' => 'Pull request URL or number.' ),
-					array( 'type' => 'assoc', 'name' => 'state', 'description' => 'Lifecycle state.' ),
-					array( 'type' => 'assoc', 'name' => 'owner-terminal-outcome', 'description' => 'Creator terminal outcome.' ),
+					array(
+						'type'        => 'positional',
+						'name'        => 'handle',
+						'description' => 'Worktree handle.',
+						'required'    => true,
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'pr',
+						'description' => 'Pull request URL or number.',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'state',
+						'description' => 'Lifecycle state.',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'owner-terminal-outcome',
+						'description' => 'Creator terminal outcome.',
+					),
 					$format,
 				),
 			),
-			'cleanup' => array(
+			'cleanup'               => array(
 				'shortdesc' => 'Review or remove merged worktrees.',
 				'longdesc'  => "Use `--dry-run` to review candidates. The canonical task-backed cleanup flow is `workspace cleanup plan` followed by `workspace cleanup apply <run-id>`.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree cleanup --dry-run --format=json\n    wp datamachine-code workspace cleanup plan --mode=retention",
 				'synopsis'  => array(
-					array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name.' ),
-					array( 'type' => 'flag', 'name' => 'dry-run', 'description' => 'Preview without removal.' ),
-					array( 'type' => 'flag', 'name' => 'force', 'description' => 'Ignore dirty-worktree safety.' ),
-					array( 'type' => 'flag', 'name' => 'skip-github', 'description' => 'Use only local upstream-gone evidence.' ),
-					$flag('inventory-only', 'Use cheap inventory without per-worktree probes.'),
-					$flag('include-repaired-metadata', 'Include operator-approved repaired metadata rows.'),
-					array( 'type' => 'assoc', 'name' => 'limit', 'description' => 'Maximum candidates to process.' ),
-					$option('offset', 'Zero-indexed inventory offset.'),
-					$option('until-budget', 'Compact wall-clock budget.'),
-					$option('apply-plan', 'Reviewed JSON cleanup plan file.'),
-					$option('older-than', 'Only process worktrees older than this duration.'),
-					$option('sort', 'Candidate reporting sort field.'),
+					array(
+						'type'        => 'positional',
+						'name'        => 'repo',
+						'description' => 'Optional repository name.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'dry-run',
+						'description' => 'Preview without removal.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'force',
+						'description' => 'Ignore dirty-worktree safety.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'skip-github',
+						'description' => 'Use only local upstream-gone evidence.',
+					),
+					$flag( 'inventory-only', 'Use cheap inventory without per-worktree probes.' ),
+					$flag( 'include-repaired-metadata', 'Include operator-approved repaired metadata rows.' ),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'limit',
+						'description' => 'Maximum candidates to process.',
+					),
+					$option( 'offset', 'Zero-indexed inventory offset.' ),
+					$option( 'until-budget', 'Compact wall-clock budget.' ),
+					$option( 'apply-plan', 'Reviewed JSON cleanup plan file.' ),
+					$option( 'older-than', 'Only process worktrees older than this duration.' ),
+					$option( 'sort', 'Candidate reporting sort field.' ),
 					$format,
-					$flag('verbose', 'Include every cleanup row.'),
-					$option('only', 'Limit output to one cleanup section or reason.'),
+					$flag( 'verbose', 'Include every cleanup row.' ),
+					$option( 'only', 'Limit output to one cleanup section or reason.' ),
 				),
 			),
-			'list' => array(
+			'list'                  => array(
 				'shortdesc' => 'List managed worktrees from cheap inventory.',
 				'longdesc'  => "Returns a summary-first, 50-row cheap-inventory table by default. Legacy JSON, CSV, and YAML row streams remain exhaustive. Use --format=json --envelope for a bounded structured response and cursor. Add probe flags only for the details required.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree list --format=json\n    wp datamachine-code workspace worktree list --format=json --envelope\n    wp datamachine-code workspace worktree list --all --full",
-				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name.' ), $option('state', 'Lifecycle state filter.'), $option('limit', 'Maximum rows for table or --envelope output; default 50, maximum 200.'), $option('cursor', 'Continue an --envelope JSON response with the same filters.'), $flag('all', 'Explicitly return every matching row.'), $flag('envelope', 'Emit the bounded structured JSON response with summary and cursor metadata.'), $flag('with-status', 'Probe working-tree status.'), $flag('with-size', 'Probe disk use.'), $flag('full', 'Probe status and disk use.'), $flag('stale', 'Show stale rows; implies status.'), $format ),
+				'synopsis'  => array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'repo',
+						'description' => 'Optional repository name.',
+					),
+					$option( 'state', 'Lifecycle state filter.' ),
+					$option( 'limit', 'Maximum rows for table or --envelope output; default 50, maximum 200.' ),
+					$option( 'cursor', 'Continue an --envelope JSON response with the same filters.' ),
+					$flag( 'all', 'Explicitly return every matching row.' ),
+					$flag( 'envelope', 'Emit the bounded structured JSON response with summary and cursor metadata.' ),
+					$flag( 'with-status', 'Probe working-tree status.' ),
+					$flag( 'with-size', 'Probe disk use.' ),
+					$flag( 'full', 'Probe status and disk use.' ),
+					$flag( 'stale', 'Show stale rows; implies status.' ),
+					$format,
+				),
 			),
-			'get' => array(
+			'get'                   => array(
 				'shortdesc' => 'Inspect one managed worktree.',
 				'longdesc'  => "Resolves one handle or canonical path through the bounded local lookup path.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree get data-machine-code@fix-1025 --format=json",
-				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'handle-or-canonical-path', 'description' => 'Worktree handle or canonical path.', 'required' => true ), $flag('with-status', 'Accepted compatibility flag; status is always included.'), $format ),
+				'synopsis'  => array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'handle-or-canonical-path',
+						'description' => 'Worktree handle or canonical path.',
+						'required'    => true,
+					),
+					$flag( 'with-status', 'Accepted compatibility flag; status is always included.' ),
+					$format,
+				),
 			),
-			'prune' => array(
+			'prune'                 => array(
 				'shortdesc' => 'Prune stale Git worktree metadata.',
 				'longdesc'  => "Prunes stale Git worktree registry entries across managed primaries.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree prune --format=json",
 				'synopsis'  => array( $format ),
 			),
-			'refresh-context' => array(
+			'refresh-context'       => array(
 				'shortdesc' => 'Refresh a worktree\'s injected site context.',
 				'longdesc'  => "Re-reads the originating site context into one existing worktree.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree refresh-context data-machine-code@fix-1025 --format=json",
-				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'handle', 'description' => 'Worktree handle.', 'required' => true ), $format ),
+				'synopsis'  => array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'handle',
+						'description' => 'Worktree handle.',
+						'required'    => true,
+					),
+					$format,
+				),
 			),
 			'mark-cleanup-eligible' => array(
 				'shortdesc' => 'Mark a worktree eligible for safe cleanup.',
 				'longdesc'  => "Records cleanup-eligible lifecycle metadata without bypassing later removal safety gates.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree mark-cleanup-eligible data-machine-code@fix-1025 --pr=1026",
-				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'handle', 'description' => 'Worktree handle.', 'required' => true ), $option('pr', 'Pull request URL or number.'), $format ),
+				'synopsis'  => array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'handle',
+						'description' => 'Worktree handle.',
+						'required'    => true,
+					),
+					$option( 'pr', 'Pull request URL or number.' ),
+					$format,
+				),
 			),
-			'cleanup-artifacts' => array(
+			'cleanup-artifacts'     => array(
 				'shortdesc' => 'Review or remove reclaimable worktree artifacts.',
 				'longdesc'  => "Reviews generated artifacts with bounded safety probes; applying a reviewed plan revalidates every row.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree cleanup-artifacts --dry-run --safety-probes --format=json",
-				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name or worktree handle scope.' ), $flag('dry-run', 'Preview without removal.'), $flag('force', 'Override eligible artifact cleanup safeguards.'), $flag('allow-active-artifact-cleanup', 'Allow cleanup despite active-worktree evidence.'), $flag('allow-unavailable-process-probe', 'Allow cleanup when process probing is unavailable.'), $option('limit', 'Maximum worktrees to process.'), $option('offset', 'Zero-indexed inventory offset.'), $option('only-handle', 'Only process this worktree handle.'), $flag('exhaustive', 'Run the unbounded artifact audit.'), $flag('safety-probes', 'Run per-worktree safety probes.'), $option('sort', 'Candidate reporting sort field.'), $option('older-than', 'Only process worktrees older than this duration.'), $option('apply-plan', 'Reviewed JSON cleanup plan file.'), $format ),
+				'synopsis'  => array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'repo',
+						'description' => 'Optional repository name or worktree handle scope.',
+					),
+					$flag( 'dry-run', 'Preview without removal.' ),
+					$flag( 'force', 'Override eligible artifact cleanup safeguards.' ),
+					$flag( 'allow-active-artifact-cleanup', 'Allow cleanup despite active-worktree evidence.' ),
+					$flag( 'allow-unavailable-process-probe', 'Allow cleanup when process probing is unavailable.' ),
+					$option( 'limit', 'Maximum worktrees to process.' ),
+					$option( 'offset', 'Zero-indexed inventory offset.' ),
+					$option( 'only-handle', 'Only process this worktree handle.' ),
+					$flag( 'exhaustive', 'Run the unbounded artifact audit.' ),
+					$flag( 'safety-probes', 'Run per-worktree safety probes.' ),
+					$option( 'sort', 'Candidate reporting sort field.' ),
+					$option( 'older-than', 'Only process worktrees older than this duration.' ),
+					$option( 'apply-plan', 'Reviewed JSON cleanup plan file.' ),
+					$format,
+				),
 			),
-			'emergency-cleanup' => array(
+			'emergency-cleanup'     => array(
 				'shortdesc' => 'Produce an emergency artifact cleanup review.',
 				'longdesc'  => "Creates an emergency cleanup review. Use the DB-backed cleanup plan/apply workflow for destructive application.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree emergency-cleanup --format=json",
-				'synopsis'  => array( $flag('apply', 'Accepted so the operation can return its DB-backed workflow guidance.'), $flag('force', 'Include forceable artifact candidates.'), $option('apply-plan', 'Reviewed emergency cleanup JSON plan file.'), $format ),
+				'synopsis'  => array( $flag( 'apply', 'Accepted so the operation can return its DB-backed workflow guidance.' ), $flag( 'force', 'Include forceable artifact candidates.' ), $option( 'apply-plan', 'Reviewed emergency cleanup JSON plan file.' ), $format ),
 			),
-			'reconcile-metadata' => array(
+			'reconcile-metadata'    => array(
 				'shortdesc' => 'Reconcile bounded worktree lifecycle metadata.',
 				'longdesc'  => "Previews or applies bounded DMC-owned metadata reconciliation.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --format=json",
-				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name.' ), $flag('dry-run', 'Preview reconciliation.'), $flag('apply', 'Apply reconciliation.'), $flag('via-jobs', 'Schedule reconciliation as jobs.'), $option('limit', 'Maximum worktrees to process.'), $option('offset', 'Zero-indexed inventory offset.'), $option('until-budget', 'Compact wall-clock budget.'), $option('apply-plan', 'Reviewed JSON reconciliation plan file.'), $format ),
+				'synopsis'  => array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'repo',
+						'description' => 'Optional repository name.',
+					),
+					$flag( 'dry-run', 'Preview reconciliation.' ),
+					$flag( 'apply', 'Apply reconciliation.' ),
+					$flag( 'via-jobs', 'Schedule reconciliation as jobs.' ),
+					$option( 'limit', 'Maximum worktrees to process.' ),
+					$option( 'offset', 'Zero-indexed inventory offset.' ),
+					$option( 'until-budget', 'Compact wall-clock budget.' ),
+					$option( 'apply-plan', 'Reviewed JSON reconciliation plan file.' ),
+					$format,
+				),
 			),
-			'capacity-recovery' => array(
+			'capacity-recovery'     => array(
 				'shortdesc' => 'Run bounded worktree capacity recovery.',
 				'longdesc'  => "Runs capacity recovery using the supplied bounded page controls.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree capacity-recovery --limit=25 --until-budget=60s --format=json",
-				'synopsis'  => array( $option('limit', 'Maximum worktrees to process.'), $option('offset', 'Zero-indexed inventory offset.'), $option('replan-offset', 'Offset for a replanned page.'), $option('until-budget', 'Compact wall-clock budget.'), $format ),
+				'synopsis'  => array( $option( 'limit', 'Maximum worktrees to process.' ), $option( 'offset', 'Zero-indexed inventory offset.' ), $option( 'replan-offset', 'Offset for a replanned page.' ), $option( 'until-budget', 'Compact wall-clock budget.' ), $format ),
 			),
 		);
 		$definitions['plan'] = array(
@@ -233,27 +460,55 @@ class WorkspaceCommand extends BaseCommand {
 		);
 
 		foreach ( array( 'active-no-signal-report', 'active-no-signal-finalized-apply', 'active-no-signal-equivalent-clean-apply', 'active-no-signal-merged-apply', 'active-no-signal-remote-clean-apply' ) as $operation ) {
-			$apply = 'active-no-signal-report' !== $operation;
+			$apply                     = 'active-no-signal-report' !== $operation;
 			$definitions[ $operation ] = array(
 				'shortdesc' => $apply ? 'Apply one active/no-signal cleanup classification.' : 'Report active worktrees without lifecycle signals.',
-				'longdesc'  => sprintf("Runs the bounded %s workflow with explicit pagination.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree %s --limit=25 --offset=0 --format=json", $apply ? 'apply' : 'report', $operation),
-				'synopsis'  => array_merge(array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name.' ) ), $apply ? array( $flag('dry-run', 'Preview without application.') ) : array(), array( $option('limit', 'Maximum worktrees to process.'), $option('offset', 'Zero-indexed inventory offset.'), $option('until-budget', 'Compact wall-clock budget.'), $format )),
+				'longdesc'  => sprintf( "Runs the bounded %s workflow with explicit pagination.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree %s --limit=25 --offset=0 --format=json", $apply ? 'apply' : 'report', $operation ),
+				'synopsis'  => array_merge(
+					array(
+						array(
+							'type'        => 'positional',
+							'name'        => 'repo',
+							'description' => 'Optional repository name.',
+						),
+					),
+					$apply ? array( $flag( 'dry-run', 'Preview without application.' ) ) : array(),
+					array( $option( 'limit', 'Maximum worktrees to process.' ), $option( 'offset', 'Zero-indexed inventory offset.' ), $option( 'until-budget', 'Compact wall-clock budget.' ), $format )
+				),
 			);
 		}
 		$definitions['bounded-cleanup-eligible-apply'] = array(
 			'shortdesc' => 'Run a bounded cleanup-eligible worktree pass.',
 			'longdesc'  => "Removes explicitly cleanup-eligible worktrees after fresh safety checks.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25 --format=json",
-			'synopsis'  => array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name.', 'optional' => true ), $flag('dry-run', 'Preview without removal.'), $flag('force', 'Override dirty-worktree safety.'), $flag('discard-unpushed', 'Explicitly discard unpushed commits.'), $flag('via-jobs', 'Schedule work as jobs.'), $flag('include-repaired-metadata', 'Include repaired metadata rows.'), $option('limit', 'Maximum worktrees to process.'), $option('older-than', 'Only process worktrees older than this duration.'), $option('sort', 'Candidate reporting sort field.'), $option('remove-timeout', 'Removal timeout in seconds.'), $option('scope', 'Repository or worktree scope emitted by abandoned-cleanup guidance.'), $format ),
+			'synopsis'  => array(
+				array(
+					'type'        => 'positional',
+					'name'        => 'repo',
+					'description' => 'Optional repository name.',
+					'optional'    => true,
+				),
+				$flag( 'dry-run', 'Preview without removal.' ),
+				$flag( 'force', 'Override dirty-worktree safety.' ),
+				$flag( 'discard-unpushed', 'Explicitly discard unpushed commits.' ),
+				$flag( 'via-jobs', 'Schedule work as jobs.' ),
+				$flag( 'include-repaired-metadata', 'Include repaired metadata rows.' ),
+				$option( 'limit', 'Maximum worktrees to process.' ),
+				$option( 'older-than', 'Only process worktrees older than this duration.' ),
+				$option( 'sort', 'Candidate reporting sort field.' ),
+				$option( 'remove-timeout', 'Removal timeout in seconds.' ),
+				$option( 'scope', 'Repository or worktree scope emitted by abandoned-cleanup guidance.' ),
+				$format,
+			),
 		);
-		$definitions['cleanup-eligible-drain'] = array(
+		$definitions['cleanup-eligible-drain']         = array(
 			'shortdesc' => 'Drain cleanup-eligible worktrees in bounded passes.',
 			'longdesc'  => "Runs bounded cleanup-eligible passes until the page, pass, or time budget is exhausted.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree cleanup-eligible-drain --apply --limit=25 --passes=10 --format=json",
-			'synopsis'  => array( $flag('apply', 'Apply removal passes.'), $flag('force', 'Override dirty-worktree safety.'), $flag('discard-unpushed', 'Accepted for compatibility; the operation refuses it.'), $flag('include-repaired-metadata', 'Include repaired metadata rows.'), $option('limit', 'Maximum worktrees per pass.'), $option('passes', 'Maximum passes.'), $option('remove-timeout', 'Removal timeout in seconds.'), $option('older-than', 'Only process worktrees older than this duration.'), $option('sort', 'Candidate reporting sort field.'), $option('until-budget', 'Compact wall-clock budget.'), $format ),
+			'synopsis'  => array( $flag( 'apply', 'Apply removal passes.' ), $flag( 'force', 'Override dirty-worktree safety.' ), $flag( 'discard-unpushed', 'Accepted for compatibility; the operation refuses it.' ), $flag( 'include-repaired-metadata', 'Include repaired metadata rows.' ), $option( 'limit', 'Maximum worktrees per pass.' ), $option( 'passes', 'Maximum passes.' ), $option( 'remove-timeout', 'Removal timeout in seconds.' ), $option( 'older-than', 'Only process worktrees older than this duration.' ), $option( 'sort', 'Candidate reporting sort field.' ), $option( 'until-budget', 'Compact wall-clock budget.' ), $format ),
 		);
 		foreach ( array( 'abandoned', 'active-no-signal-drain' ) as $operation ) {
 			$definitions[ $operation ] = array(
 				'shortdesc' => 'Run the bounded abandoned-worktree cleanup orchestration.',
-				'longdesc'  => sprintf("Reconciles, classifies, and safely drains abandoned worktrees with continuation evidence.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree %s --apply --limit=100 --passes=5 --until-budget=120s --format=json", $operation),
+				'longdesc'  => sprintf( "Reconciles, classifies, and safely drains abandoned worktrees with continuation evidence.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree %s --apply --limit=100 --passes=5 --until-budget=120s --format=json", $operation ),
 				'synopsis'  => array(
 					array(
 						'type'        => 'positional',
@@ -261,43 +516,43 @@ class WorkspaceCommand extends BaseCommand {
 						'description' => 'Optional repository scope.',
 						'optional'    => true,
 					),
-					$flag('apply', 'Apply eligible cleanup steps.'),
-					$flag('force', 'Force abandoned cleanup; active/no-signal drain refuses it.'),
-					$flag('discard-unpushed', 'Accepted for compatibility; this orchestration refuses it.'),
-					$option('limit', 'Maximum worktrees per page.'),
-					$option('passes', 'Maximum apply passes.'),
-					$option('offset', 'Zero-indexed inventory offset.'),
-					$option('stage', 'Orchestration stage.'),
-					$option('scope', 'Operator scope label.'),
-					$option('until-budget', 'Compact wall-clock budget.'),
+					$flag( 'apply', 'Apply eligible cleanup steps.' ),
+					$flag( 'force', 'Force abandoned cleanup; active/no-signal drain refuses it.' ),
+					$flag( 'discard-unpushed', 'Accepted for compatibility; this orchestration refuses it.' ),
+					$option( 'limit', 'Maximum worktrees per page.' ),
+					$option( 'passes', 'Maximum apply passes.' ),
+					$option( 'offset', 'Zero-indexed inventory offset.' ),
+					$option( 'stage', 'Orchestration stage.' ),
+					$option( 'scope', 'Operator scope label.' ),
+					$option( 'until-budget', 'Compact wall-clock budget.' ),
 					$format,
-					$flag('verbose', 'Include full JSON result details.'),
+					$flag( 'verbose', 'Include full JSON result details.' ),
 				),
 			);
 		}
 
-		$definitions['locks'] = array(
+		$definitions['locks']                   = array(
 			'shortdesc' => 'Inspect or prune workspace mutation locks.',
 			'longdesc'  => "## EXAMPLES\n\n    wp datamachine-code workspace worktree locks --format=json\n    wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json",
-			'synopsis'  => array( $flag('prune-stale', 'Prune stale locks.'), $flag('dry-run', 'Preview lock pruning.'), $format ),
+			'synopsis'  => array( $flag( 'prune-stale', 'Prune stale locks.' ), $flag( 'dry-run', 'Preview lock pruning.' ), $format ),
 		);
 		$definitions['backfill-origin-session'] = array(
 			'shortdesc' => 'Backfill legacy worktree origin-session metadata.',
 			'longdesc'  => "## EXAMPLES\n\n    wp datamachine-code workspace worktree backfill-origin-session\n    wp datamachine-code workspace worktree backfill-origin-session --apply",
-			'synopsis'  => array( $flag('apply', 'Rewrite legacy metadata.'), $format ),
+			'synopsis'  => array( $flag( 'apply', 'Rewrite legacy metadata.' ), $format ),
 		);
 
 		// Leaf commands are registered from structured definitions. WP-CLI requires
 		// this marker to render and validate named arguments as optional.
 		foreach ( $definitions as &$definition ) {
 			foreach ( $definition['synopsis'] as &$argument ) {
-				if ( in_array($argument['type'] ?? '', array( 'assoc', 'flag' ), true) ) {
+				if ( in_array( $argument['type'] ?? '', array( 'assoc', 'flag' ), true ) ) {
 					$argument['optional'] = true;
 				}
 			}
-			unset($argument);
+			unset( $argument );
 		}
-		unset($definition);
+		unset( $definition );
 
 		return $definitions;
 	}
@@ -308,11 +563,11 @@ class WorkspaceCommand extends BaseCommand {
 	 * The leading double underscore keeps this dispatcher out of WP-CLI's
 	 * reflection-based workspace command map.
 	 *
-	 * @param array<int,string>    $args Positional operation arguments.
+	 * @param array<int,string>   $args Positional operation arguments.
 	 * @param array<string,mixed> $assoc_args Named operation arguments.
 	 */
 	public function __worktree_operation( string $operation, array $args, array $assoc_args ): void {
-		$this->worktree(array_merge(array( $operation ), $args), $assoc_args);
+		$this->worktree( array_merge( array( $operation ), $args ), $assoc_args );
 	}
 
 	private ?CleanupRunEvidenceStoreInterface $cleanup_run_evidence_store = null;
@@ -347,35 +602,35 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand path
 	 */
 	public function path( array $args, array $assoc_args ): void {
-		$ability = wp_get_ability('datamachine-code/workspace-path');
+		$ability = wp_get_ability( 'datamachine-code/workspace-path' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace path ability not available.');
+			WP_CLI::error( 'Workspace path ability not available.' );
 			return;
 		}
 
 		$input = array(
-			'ensure' => ! empty($assoc_args['ensure']),
+			'ensure' => ! empty( $assoc_args['ensure'] ),
 		);
-		if ( ! empty($args[0]) ) {
+		if ( ! empty( $args[0] ) ) {
 			$input['name'] = (string) $args[0];
 		}
 
-		$result = $ability->execute($input);
+		$result = $ability->execute( $input );
 
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
-		if ( ! empty($result['created']) ) {
-			WP_CLI::success(sprintf('Created workspace: %s', $result['path']));
+		if ( ! empty( $result['created'] ) ) {
+			WP_CLI::success( sprintf( 'Created workspace: %s', $result['path'] ) );
 			return;
 		}
 
-		WP_CLI::log($result['path']);
+		WP_CLI::log( $result['path'] );
 
-		if ( empty($result['exists']) && empty($assoc_args['ensure']) ) {
-			WP_CLI::warning('Directory does not exist yet. Use --ensure to create it.');
+		if ( empty( $result['exists'] ) && empty( $assoc_args['ensure'] ) ) {
+			WP_CLI::warning( 'Directory does not exist yet. Use --ensure to create it.' );
 		}
 	}
 
@@ -444,90 +699,90 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand list
 	 */
 	public function list_repos( array $args, array $assoc_args ): void {
-		$ability = wp_get_ability('datamachine-code/workspace-list');
+		$ability = wp_get_ability( 'datamachine-code/workspace-list' );
 		if ( ! $ability ) {
-			$this->unavailable_ability('datamachine-code/workspace-list');
+			$this->unavailable_ability( 'datamachine-code/workspace-list' );
 			return;
 		}
 
 		$input = array();
-		if ( isset($assoc_args['repo']) ) {
+		if ( isset( $assoc_args['repo'] ) ) {
 			$input['repo'] = (string) $assoc_args['repo'];
 		}
-		if ( isset($assoc_args['type']) ) {
+		if ( isset( $assoc_args['type'] ) ) {
 			$input['type'] = (string) $assoc_args['type'];
 		}
-		if ( isset($assoc_args['limit']) ) {
-			$limit = Workspace::normalize_workspace_list_limit($assoc_args['limit']);
-			if ( is_wp_error($limit) ) {
-				WP_CLI::error($limit->get_error_message());
+		if ( isset( $assoc_args['limit'] ) ) {
+			$limit = Workspace::normalize_workspace_list_limit( $assoc_args['limit'] );
+			if ( is_wp_error( $limit ) ) {
+				WP_CLI::error( $limit->get_error_message() );
 				return;
 			}
 			$input['limit'] = $limit;
 		}
-		if ( isset($assoc_args['cursor']) ) {
+		if ( isset( $assoc_args['cursor'] ) ) {
 			$input['cursor'] = (string) $assoc_args['cursor'];
 		}
-		if ( ! empty($assoc_args['all']) ) {
+		if ( ! empty( $assoc_args['all'] ) ) {
 			$input['all'] = true;
 		}
-		if ( ! empty($assoc_args['include-status']) ) {
+		if ( ! empty( $assoc_args['include-status'] ) ) {
 			$input['include_status'] = true;
 		}
-		if ( ! empty($assoc_args['envelope']) && 'json' !== ( $assoc_args['format'] ?? 'table' ) ) {
-			WP_CLI::error('Workspace list --envelope requires --format=json.');
+		if ( ! empty( $assoc_args['envelope'] ) && 'json' !== ( $assoc_args['format'] ?? 'table' ) ) {
+			WP_CLI::error( 'Workspace list --envelope requires --format=json.' );
 			return;
 		}
 
-		$result = $ability->execute($input);
+		$result = $ability->execute( $input );
 
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
-		if ( ! empty($assoc_args['summary']) ) {
-			$this->render_workspace_list_summary($result, $assoc_args);
+		if ( ! empty( $assoc_args['summary'] ) ) {
+			$this->render_workspace_list_summary( $result, $assoc_args );
 			return;
 		}
 
 		if ( 'json' === ( $assoc_args['format'] ?? 'table' ) ) {
-			$this->renderer()->json(! empty($assoc_args['envelope']) ? $result : (array) ( $result['repos'] ?? array() ));
+			$this->renderer()->json( ! empty( $assoc_args['envelope'] ) ? $result : (array) ( $result['repos'] ?? array() ) );
 			return;
 		}
 
-		if ( empty($result['repos']) ) {
+		if ( empty( $result['repos'] ) ) {
 			if ( 'csv' === ( $assoc_args['format'] ?? 'table' ) || 'yaml' === ( $assoc_args['format'] ?? 'table' ) ) {
-				$this->format_items(array(), array( 'name', 'kind', 'repo', 'branch', 'freshness', 'behind', 'remote', 'git' ), $assoc_args, 'name');
+				$this->format_items( array(), array( 'name', 'kind', 'repo', 'branch', 'freshness', 'behind', 'remote', 'git' ), $assoc_args, 'name' );
 				return;
 			}
-			if ( isset($assoc_args['repo']) ) {
-				WP_CLI::log(sprintf('No repos matching "%s" in workspace (%s).', (string) $assoc_args['repo'], $result['path'] ?? ''));
+			if ( isset( $assoc_args['repo'] ) ) {
+				WP_CLI::log( sprintf( 'No repos matching "%s" in workspace (%s).', (string) $assoc_args['repo'], $result['path'] ?? '' ) );
 				return;
 			}
 
-			WP_CLI::log(sprintf('No repos in workspace (%s).', $result['path'] ?? ''));
-			WP_CLI::log('Clone one with: wp datamachine-code workspace clone <url>');
+			WP_CLI::log( sprintf( 'No repos in workspace (%s).', $result['path'] ?? '' ) );
+			WP_CLI::log( 'Clone one with: wp datamachine-code workspace clone <url>' );
 			return;
 		}
 
 		if ( 'table' === ( $assoc_args['format'] ?? 'table' ) ) {
-			WP_CLI::log(sprintf('Workspace: %s | showing %d of %d', (string) ( $result['path'] ?? '' ), (int) ( $result['returned'] ?? 0 ), (int) ( $result['total'] ?? 0 )));
-			if ( ! empty($result['next_cursor']) ) {
-				WP_CLI::log('More rows: rerun with --cursor=' . (string) $result['next_cursor'] . ' (or use --all for complete expansion).');
+			WP_CLI::log( sprintf( 'Workspace: %s | showing %d of %d', (string) ( $result['path'] ?? '' ), (int) ( $result['returned'] ?? 0 ), (int) ( $result['total'] ?? 0 ) ) );
+			if ( ! empty( $result['next_cursor'] ) ) {
+				WP_CLI::log( 'More rows: rerun with --cursor=' . (string) $result['next_cursor'] . ' (or use --all for complete expansion).' );
 			}
 		}
 
 		$items = array_map(
 			function ( $repo ) {
-				$freshness = is_array($repo['primary_freshness'] ?? null) ? $repo['primary_freshness'] : null;
+				$freshness = is_array( $repo['primary_freshness'] ?? null ) ? $repo['primary_freshness'] : null;
 				return array(
 					'name'      => $repo['name'],
-					'kind'      => ! empty($repo['is_worktree']) ? 'worktree' : 'primary',
+					'kind'      => ! empty( $repo['is_worktree'] ) ? 'worktree' : 'primary',
 					'repo'      => $repo['repo'] ?? $repo['name'],
 					'branch'    => $repo['branch'] ?? '-',
-					'freshness' => is_array($freshness) ? (string) ( $freshness['status'] ?? '-' ) : '-',
-					'behind'    => is_array($freshness) && null !== ( $freshness['behind'] ?? null ) ? (string) $freshness['behind'] : '-',
+					'freshness' => is_array( $freshness ) ? (string) ( $freshness['status'] ?? '-' ) : '-',
+					'behind'    => is_array( $freshness ) && null !== ( $freshness['behind'] ?? null ) ? (string) $freshness['behind'] : '-',
 					'remote'    => $repo['remote'] ?? '-',
 					'git'       => $repo['git'] ? 'yes' : 'no',
 					'path'      => $repo['path'],
@@ -603,34 +858,34 @@ class WorkspaceCommand extends BaseCommand {
 			case 'list':
 				$result = $workspace->workspace_row_triage_list(
 					array(
-						'status'           => isset($assoc_args['status']) ? (string) $assoc_args['status'] : '',
-						'include_resolved' => ! empty($assoc_args['include-resolved']),
+						'status'           => isset( $assoc_args['status'] ) ? (string) $assoc_args['status'] : '',
+						'include_resolved' => ! empty( $assoc_args['include-resolved'] ),
 					)
 				);
-				$this->render_workspace_triage_result($result, $assoc_args, true);
+				$this->render_workspace_triage_result( $result, $assoc_args, true );
 				return;
 
 			case 'ignore':
 			case 'quarantine':
-				if ( empty($args[1]) ) {
-					WP_CLI::error('Usage: wp datamachine-code workspace triage ' . $operation . ' <row-id> --reason=<reason>');
+				if ( empty( $args[1] ) ) {
+					WP_CLI::error( 'Usage: wp datamachine-code workspace triage ' . $operation . ' <row-id> --reason=<reason>' );
 					return;
 				}
 				$result = $workspace->workspace_row_triage_mark( (string) $args[1], 'ignore' === $operation ? 'ignored' : 'quarantined', (string) ( $assoc_args['reason'] ?? '' ) );
-				$this->render_workspace_triage_result($result, $assoc_args, false);
+				$this->render_workspace_triage_result( $result, $assoc_args, false );
 				return;
 
 			case 'adopt':
-				if ( empty($args[1]) ) {
-					WP_CLI::error('Usage: wp datamachine-code workspace triage adopt <row-id> [--name=<name>]');
+				if ( empty( $args[1] ) ) {
+					WP_CLI::error( 'Usage: wp datamachine-code workspace triage adopt <row-id> [--name=<name>]' );
 					return;
 				}
-				$result = $workspace->workspace_row_triage_adopt( (string) $args[1], isset($assoc_args['name']) ? (string) $assoc_args['name'] : null );
-				$this->render_workspace_triage_result($result, $assoc_args, false);
+				$result = $workspace->workspace_row_triage_adopt( (string) $args[1], isset( $assoc_args['name'] ) ? (string) $assoc_args['name'] : null );
+				$this->render_workspace_triage_result( $result, $assoc_args, false );
 				return;
 
 			default:
-				WP_CLI::error(sprintf('Unknown triage operation: %s', $operation));
+				WP_CLI::error( sprintf( 'Unknown triage operation: %s', $operation ) );
 		}
 	}
 
@@ -642,35 +897,35 @@ class WorkspaceCommand extends BaseCommand {
 	 * @param bool                          $is_list    Whether result is a list.
 	 */
 	private function render_workspace_triage_result( array|\WP_Error $result, array $assoc_args, bool $is_list ): void {
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( 'json' === $format ) {
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
 
 		if ( ! $is_list ) {
 			WP_CLI::success( (string) ( $result['message'] ?? 'Workspace triage updated.' ) );
-			$row = is_array($result['row'] ?? null) ? (array) $result['row'] : array();
+			$row = is_array( $result['row'] ?? null ) ? (array) $result['row'] : array();
 			if ( array() !== $row ) {
-				$this->format_items(array( $this->workspace_triage_table_row($row) ), array( 'row_id', 'status', 'issues', 'age_days', 'reason', 'path' ), $assoc_args, 'row_id');
+				$this->format_items( array( $this->workspace_triage_table_row( $row ) ), array( 'row_id', 'status', 'issues', 'age_days', 'reason', 'path' ), $assoc_args, 'row_id' );
 			}
 			return;
 		}
 
-		WP_CLI::log(sprintf('Workspace: %s', (string) ( $result['workspace_path'] ?? '' )));
-		$rows = array_map(fn( array $row ): array => $this->workspace_triage_table_row($row), (array) ( $result['rows'] ?? array() ));
+		WP_CLI::log( sprintf( 'Workspace: %s', (string) ( $result['workspace_path'] ?? '' ) ) );
+		$rows = array_map( fn( array $row ): array => $this->workspace_triage_table_row( $row ), (array) ( $result['rows'] ?? array() ) );
 		if ( array() === $rows ) {
-			WP_CLI::log('No unresolved external, noncanonical, or non-git workspace rows.');
+			WP_CLI::log( 'No unresolved external, noncanonical, or non-git workspace rows.' );
 			return;
 		}
 
-		$this->format_items($rows, array( 'row_id', 'status', 'issues', 'age_days', 'repo', 'path' ), $assoc_args, 'row_id');
-		WP_CLI::log('Next: use `workspace triage ignore|quarantine <row-id> --reason=<reason>` or `workspace triage adopt <row-id>` for safe primary rows.');
+		$this->format_items( $rows, array( 'row_id', 'status', 'issues', 'age_days', 'repo', 'path' ), $assoc_args, 'row_id' );
+		WP_CLI::log( 'Next: use `workspace triage ignore|quarantine <row-id> --reason=<reason>` or `workspace triage adopt <row-id>` for safe primary rows.' );
 	}
 
 	/**
@@ -683,7 +938,7 @@ class WorkspaceCommand extends BaseCommand {
 		return array(
 			'row_id'   => (string) ( $row['row_id'] ?? '' ),
 			'status'   => (string) ( $row['triage_status'] ?? '' ),
-			'issues'   => implode(',', array_map('strval', (array) ( $row['issues'] ?? array() ))),
+			'issues'   => implode( ',', array_map( 'strval', (array) ( $row['issues'] ?? array() ) ) ),
 			'age_days' => null === ( $row['age_days'] ?? null ) ? '-' : (string) $row['age_days'],
 			'repo'     => (string) ( $row['repo'] ?? '' ),
 			'reason'   => (string) ( $row['triage_reason'] ?? '' ),
@@ -699,24 +954,39 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_workspace_list_summary( array $result, array $assoc_args ): void {
-		$summary = is_array($result['summary'] ?? null) ? $result['summary'] : array();
-		$summary['returned']    = (int) ( $result['returned'] ?? 0 );
-		$summary['next_cursor'] = $result['next_cursor'] ?? null;
-		$summary['status_requested'] = ! empty($result['status_requested']);
+		$summary                     = is_array( $result['summary'] ?? null ) ? $result['summary'] : array();
+		$summary['returned']         = (int) ( $result['returned'] ?? 0 );
+		$summary['next_cursor']      = $result['next_cursor'] ?? null;
+		$summary['status_requested'] = ! empty( $result['status_requested'] );
 
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( 'json' === $format ) {
-			$this->renderer()->json($summary);
+			$this->renderer()->json( $summary );
 			return;
 		}
 		if ( 'csv' === $format || 'yaml' === $format ) {
 			$this->format_items(
 				array(
-					array( 'metric' => 'total', 'count' => $summary['total'] ?? 0 ),
-					array( 'metric' => 'primary', 'count' => $summary['primary'] ?? 0 ),
-					array( 'metric' => 'worktree', 'count' => $summary['worktree'] ?? 0 ),
-					array( 'metric' => 'context', 'count' => $summary['context'] ?? 0 ),
-					array( 'metric' => 'non_git', 'count' => $summary['non_git'] ?? 0 ),
+					array(
+						'metric' => 'total',
+						'count'  => $summary['total'] ?? 0,
+					),
+					array(
+						'metric' => 'primary',
+						'count'  => $summary['primary'] ?? 0,
+					),
+					array(
+						'metric' => 'worktree',
+						'count'  => $summary['worktree'] ?? 0,
+					),
+					array(
+						'metric' => 'context',
+						'count'  => $summary['context'] ?? 0,
+					),
+					array(
+						'metric' => 'non_git',
+						'count'  => $summary['non_git'] ?? 0,
+					),
 				),
 				array( 'metric', 'count' ),
 				$assoc_args,
@@ -725,7 +995,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		WP_CLI::log(sprintf('Workspace: %s', $summary['workspace']));
+		WP_CLI::log( sprintf( 'Workspace: %s', $summary['workspace'] ) );
 		$this->format_items(
 			array(
 				array(
@@ -755,15 +1025,15 @@ class WorkspaceCommand extends BaseCommand {
 		);
 
 		if ( array() !== $summary['repos'] ) {
-			WP_CLI::log('Repos:');
-			$this->format_items($summary['repos'], array( 'repo', 'primary', 'worktree', 'context', 'total' ), array( 'format' => 'table' ), 'repo');
-			if ( ! empty($summary['repos_omitted']) ) {
-				WP_CLI::log(sprintf('Additional repositories omitted: %d', (int) $summary['repos_omitted']));
+			WP_CLI::log( 'Repos:' );
+			$this->format_items( $summary['repos'], array( 'repo', 'primary', 'worktree', 'context', 'total' ), array( 'format' => 'table' ), 'repo' );
+			if ( ! empty( $summary['repos_omitted'] ) ) {
+				WP_CLI::log( sprintf( 'Additional repositories omitted: %d', (int) $summary['repos_omitted'] ) );
 			}
 		}
 
-		if ( ! empty($summary['triage_command']) ) {
-			WP_CLI::log(sprintf('Triage: %s', $summary['triage_command']));
+		if ( ! empty( $summary['triage_command'] ) ) {
+			WP_CLI::log( sprintf( 'Triage: %s', $summary['triage_command'] ) );
 		}
 	}
 
@@ -795,35 +1065,35 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand clone
 	 */
 	public function clone_repo( array $args, array $assoc_args ): void {
-		if ( empty($args[0]) ) {
-			WP_CLI::error('Repository URL is required.');
+		if ( empty( $args[0] ) ) {
+			WP_CLI::error( 'Repository URL is required.' );
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-clone');
+		$ability = wp_get_ability( 'datamachine-code/workspace-clone' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace clone ability not available.');
+			WP_CLI::error( 'Workspace clone ability not available.' );
 			return;
 		}
 
 		$input = array(
 			'url'                    => $args[0],
-			'full'                   => isset($assoc_args['full']),
-			'allow_duplicate_remote' => isset($assoc_args['allow-duplicate-remote']),
+			'full'                   => isset( $assoc_args['full'] ),
+			'allow_duplicate_remote' => isset( $assoc_args['allow-duplicate-remote'] ),
 		);
-		if ( isset($assoc_args['name']) ) {
+		if ( isset( $assoc_args['name'] ) ) {
 			$input['name'] = $assoc_args['name'];
 		}
 
-		$result = $ability->execute($input);
+		$result = $ability->execute( $input );
 
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
-		WP_CLI::success( (string) ( $result['message'] ?? 'Repository cloned.' ));
-		WP_CLI::log(sprintf('Path: %s', (string) ( $result['path'] ?? '' )));
+		WP_CLI::success( (string) ( $result['message'] ?? 'Repository cloned.' ) );
+		WP_CLI::log( sprintf( 'Path: %s', (string) ( $result['path'] ?? '' ) ) );
 	}
 
 	/**
@@ -850,38 +1120,38 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand materialize
 	 */
 	public function materialize( array $args, array $assoc_args ): void {
-		if ( empty($args[0]) ) {
-			WP_CLI::error('Remote workspace handle is required.');
+		if ( empty( $args[0] ) ) {
+			WP_CLI::error( 'Remote workspace handle is required.' );
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-materialize');
+		$ability = wp_get_ability( 'datamachine-code/workspace-materialize' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace materialize ability not available.');
+			WP_CLI::error( 'Workspace materialize ability not available.' );
 			return;
 		}
 
 		$result = $ability->execute(
 			array(
 				'handle'                     => (string) $args[0],
-				'full'                       => ! empty($assoc_args['full']),
-				'allow_duplicate_remote'     => ! empty($assoc_args['allow-duplicate-remote']),
-				'inject_context'             => empty($assoc_args['skip-context-injection']),
-				'bootstrap'                  => empty($assoc_args['skip-bootstrap']),
-				'allow_stale'                => ! empty($assoc_args['allow-stale']),
-				'allow_unverified_freshness' => ! empty($assoc_args['allow-unverified-freshness']),
-				'rebase_base'                => ! empty($assoc_args['rebase-base']),
-				'force'                      => ! empty($assoc_args['force']),
-				'require_task_tracker'       => ! isset($assoc_args['require-task-tracker']) || ! empty($assoc_args['require-task-tracker']),
+				'full'                       => ! empty( $assoc_args['full'] ),
+				'allow_duplicate_remote'     => ! empty( $assoc_args['allow-duplicate-remote'] ),
+				'inject_context'             => empty( $assoc_args['skip-context-injection'] ),
+				'bootstrap'                  => empty( $assoc_args['skip-bootstrap'] ),
+				'allow_stale'                => ! empty( $assoc_args['allow-stale'] ),
+				'allow_unverified_freshness' => ! empty( $assoc_args['allow-unverified-freshness'] ),
+				'rebase_base'                => ! empty( $assoc_args['rebase-base'] ),
+				'force'                      => ! empty( $assoc_args['force'] ),
+				'require_task_tracker'       => ! isset( $assoc_args['require-task-tracker'] ) || ! empty( $assoc_args['require-task-tracker'] ),
 			)
 		);
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
-		WP_CLI::success( (string) ( $result['message'] ?? 'Remote workspace materialized.' ));
-		WP_CLI::log(sprintf('Path: %s', (string) ( $result['path'] ?? '' )));
+		WP_CLI::success( (string) ( $result['message'] ?? 'Remote workspace materialized.' ) );
+		WP_CLI::log( sprintf( 'Path: %s', (string) ( $result['path'] ?? '' ) ) );
 	}
 
 	/**
@@ -895,19 +1165,21 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand restore
 	 */
 	public function restore( array $args, array $assoc_args ): void {
-		$operation = (string) ($args[0] ?? '');
+		$operation = (string) ( $args[0] ?? '' );
 		$workspace = new Workspace();
-		if ('plan' === $operation) {
-			$result = $workspace->primary_restore_plan((string) ($args[1] ?? ''), isset($assoc_args['limit']) ? (int) $assoc_args['limit'] : 25, isset($assoc_args['offset']) ? (int) $assoc_args['offset'] : 0);
-		} elseif ('apply' === $operation) {
-			$plan = json_decode((string) ($assoc_args['plan'] ?? ''), true);
-			$result = is_array($plan) ? $workspace->primary_restore_apply($plan) : new \WP_Error('invalid_primary_restore_plan', 'restore apply requires a JSON --plan returned by restore plan.');
+		if ( 'plan' === $operation ) {
+			$result = $workspace->primary_restore_plan( (string) ( $args[1] ?? '' ), isset( $assoc_args['limit'] ) ? (int) $assoc_args['limit'] : 25, isset( $assoc_args['offset'] ) ? (int) $assoc_args['offset'] : 0 );
+		} elseif ( 'apply' === $operation ) {
+			$plan   = json_decode( (string) ( $assoc_args['plan'] ?? '' ), true );
+			$result = is_array( $plan ) ? $workspace->primary_restore_apply( $plan ) : new \WP_Error( 'invalid_primary_restore_plan', 'restore apply requires a JSON --plan returned by restore plan.' );
 		} else {
-			WP_CLI::error('Usage: wp datamachine-code workspace restore <plan|apply> [<repo>] [--plan=<json>]');
+			WP_CLI::error( 'Usage: wp datamachine-code workspace restore <plan|apply> [<repo>] [--plan=<json>]' );
 			return;
 		}
-		if (is_wp_error($result)) { WP_CLI::error($result->get_error_message()); return; }
-		WP_CLI::log((string) wp_json_encode($result));
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
+			return; }
+		WP_CLI::log( (string) wp_json_encode( $result ) );
 	}
 
 	/**
@@ -928,32 +1200,32 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand adopt
 	 */
 	public function adopt_repo( array $args, array $assoc_args ): void {
-		if ( empty($args[0]) ) {
-			WP_CLI::error('Checkout path is required.');
+		if ( empty( $args[0] ) ) {
+			WP_CLI::error( 'Checkout path is required.' );
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-adopt');
+		$ability = wp_get_ability( 'datamachine-code/workspace-adopt' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace adopt ability not available.');
+			WP_CLI::error( 'Workspace adopt ability not available.' );
 			return;
 		}
 
 		$input = array( 'path' => $args[0] );
-		if ( ! empty($assoc_args['name']) ) {
+		if ( ! empty( $assoc_args['name'] ) ) {
 			$input['name'] = $assoc_args['name'];
 		}
 
-		$result = $ability->execute($input);
+		$result = $ability->execute( $input );
 
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
-		WP_CLI::success($result['message']);
-		WP_CLI::log(sprintf('Name: %s', $result['name']));
-		WP_CLI::log(sprintf('Path: %s', $result['path']));
+		WP_CLI::success( $result['message'] );
+		WP_CLI::log( sprintf( 'Name: %s', $result['name'] ) );
+		WP_CLI::log( sprintf( 'Path: %s', $result['path'] ) );
 	}
 
 	/**
@@ -969,7 +1241,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## OPTIONS
 	 *
 	 * <operation>
-		 * : Cleanup operation. One of: <safe|list|plan|apply|until-empty|run|status|resume|cancel|evidence>.
+	 * : Cleanup operation. One of: <safe|list|plan|apply|until-empty|run|status|resume|cancel|evidence>.
 	 *   Existing task-backed controls remain: <run|status|resume|cancel|evidence>.
 	 *
 	 * [<run-id>]
@@ -1065,21 +1337,21 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--passes=<count>]
 	 * : For `cleanup safe`, maximum child-drain passes per cycle. Defaults to 10.
 	 *
-		 * [--cycles=<count>]
-		 * : For `cleanup safe`, maximum safe cleanup cycles before stopping. Defaults to 5.
-		 *
-		 * [--request-id=<identifier>]
-		 * : Stable caller correlation for `cleanup safe --format=json` and `cleanup list` recovery after a disconnect.
-		 *
-		 * [--status=<state>]
-		 * : For `cleanup list`, filter persisted runs by state.
-		 *
-		 * [--source=<source>]
-		 * : For `cleanup list`, filter persisted runs by caller source.
-		 *
-		 * [--since=<datetime>]
-		 * : For `cleanup list`, include runs created at or after this UTC datetime.
-		 *
+	 * [--cycles=<count>]
+	 * : For `cleanup safe`, maximum safe cleanup cycles before stopping. Defaults to 5.
+	 *
+	 * [--request-id=<identifier>]
+	 * : Stable caller correlation for `cleanup safe --format=json` and `cleanup list` recovery after a disconnect.
+	 *
+	 * [--status=<state>]
+	 * : For `cleanup list`, filter persisted runs by state.
+	 *
+	 * [--source=<source>]
+	 * : For `cleanup list`, filter persisted runs by caller source.
+	 *
+	 * [--since=<datetime>]
+	 * : For `cleanup list`, include runs created at or after this UTC datetime.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -1093,10 +1365,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * ## EXAMPLES
 	 *
 	 *     # Apply all currently safe DMC workspace cleanup and report blockers
-		 *     wp datamachine-code workspace cleanup safe --format=json
-		 *
-		 *     # Recover a disconnected JSON caller by its request correlation
-		 *     wp datamachine-code workspace cleanup list --request-id=cleanup-request-123 --format=json
+	 *     wp datamachine-code workspace cleanup safe --format=json
+	 *
+	 *     # Recover a disconnected JSON caller by its request correlation
+	 *     wp datamachine-code workspace cleanup list --request-id=cleanup-request-123 --format=json
 	 *
 	 *     # Create a DB-backed cleanup plan for review
 	 *     wp datamachine-code workspace cleanup plan --mode=retention
@@ -1144,143 +1416,143 @@ class WorkspaceCommand extends BaseCommand {
 	public function cleanup( array $args, array $assoc_args ): void {
 		$operation = (string) ( $args[0] ?? '' );
 		if ( '' === $operation ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace cleanup <safe|plan|apply|run|status|resume|cancel|evidence> [<run-id>] [--mode=<mode>]');
+			WP_CLI::error( 'Usage: wp datamachine-code workspace cleanup <safe|plan|apply|run|status|resume|cancel|evidence> [<run-id>] [--mode=<mode>]' );
 			return;
 		}
 
 		switch ( $operation ) {
 			case 'safe':
-				$this->run_cleanup_safe($assoc_args);
+				$this->run_cleanup_safe( $assoc_args );
 				return;
 			case 'list':
-				$this->run_cleanup_list($assoc_args);
+				$this->run_cleanup_list( $assoc_args );
 				return;
 
 			case 'plan':
-				$this->run_cleanup_plan($assoc_args);
+				$this->run_cleanup_plan( $assoc_args );
 				return;
 
 			case 'apply':
-				$this->run_cleanup_control_ability('apply', (string) ( $args[1] ?? '' ), $assoc_args);
+				$this->run_cleanup_control_ability( 'apply', (string) ( $args[1] ?? '' ), $assoc_args );
 				return;
 
 			case 'until-empty':
-				$this->run_cleanup_until_empty($assoc_args);
+				$this->run_cleanup_until_empty( $assoc_args );
 				return;
 
 			case 'run':
-				$this->run_cleanup_task($assoc_args);
+				$this->run_cleanup_task( $assoc_args );
 				return;
 
 			case 'status':
 			case 'evidence':
 				$run_id = (string) ( $args[1] ?? '' );
-				if ( '' === trim($run_id) ) {
-					WP_CLI::error('Usage: wp datamachine-code workspace cleanup ' . $operation . ' <run-id>');
+				if ( '' === trim( $run_id ) ) {
+					WP_CLI::error( 'Usage: wp datamachine-code workspace cleanup ' . $operation . ' <run-id>' );
 					return;
 				}
-				$this->render_cleanup_run_status($run_id, $assoc_args, 'evidence' === $operation);
+				$this->render_cleanup_run_status( $run_id, $assoc_args, 'evidence' === $operation );
 				return;
 
 			case 'resume':
 			case 'cancel':
-				if ( ! $this->is_job_cleanup_run_id( (string) ( $args[1] ?? '' )) ) {
-					$this->run_cleanup_control_ability($operation, (string) ( $args[1] ?? '' ), $assoc_args);
+				if ( ! $this->is_job_cleanup_run_id( (string) ( $args[1] ?? '' ) ) ) {
+					$this->run_cleanup_control_ability( $operation, (string) ( $args[1] ?? '' ), $assoc_args );
 					return;
 				}
-				$job_id = $this->cleanup_run_job_id( (string) ( $args[1] ?? '' ));
+				$job_id = $this->cleanup_run_job_id( (string) ( $args[1] ?? '' ) );
 				if ( $job_id <= 0 ) {
-					WP_CLI::error('Usage: wp datamachine-code workspace cleanup ' . $operation . ' <run-id>');
+					WP_CLI::error( 'Usage: wp datamachine-code workspace cleanup ' . $operation . ' <run-id>' );
 					return;
 				}
-				$this->control_cleanup_run_job($operation, $job_id, $assoc_args);
+				$this->control_cleanup_run_job( $operation, $job_id, $assoc_args );
 				return;
 
 			default:
-				WP_CLI::error(sprintf('Unknown cleanup operation: %s', $operation));
+				WP_CLI::error( sprintf( 'Unknown cleanup operation: %s', $operation ) );
 				return;
 		}
 	}
 
 	private function run_cleanup_safe( array $assoc_args ): void {
 		$input = array(
-			'dry_run'          => ! empty($assoc_args['dry-run']),
-			'force'            => ! empty($assoc_args['force']),
-			'discard_unpushed' => ! empty($assoc_args['discard-unpushed']),
+			'dry_run'          => ! empty( $assoc_args['dry-run'] ),
+			'force'            => ! empty( $assoc_args['force'] ),
+			'discard_unpushed' => ! empty( $assoc_args['discard-unpushed'] ),
 			'source'           => self::CLEANUP_CLI_SOURCE,
 		);
 		foreach ( array( 'limit', 'passes', 'cycles' ) as $key ) {
-			if ( isset($assoc_args[ $key ]) ) {
+			if ( isset( $assoc_args[ $key ] ) ) {
 				$input[ $key ] = (int) $assoc_args[ $key ];
 			}
 		}
-		if ( isset($assoc_args['inventory-after']) ) {
+		if ( isset( $assoc_args['inventory-after'] ) ) {
 			$input['inventory_after'] = (string) $assoc_args['inventory-after'];
 		}
-		if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
-			$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
+		if ( isset( $assoc_args['until-budget'] ) && '' !== trim( (string) $assoc_args['until-budget'] ) ) {
+			$input['until_budget'] = trim( (string) $assoc_args['until-budget'] );
 		}
-		if ( isset($assoc_args['request-id']) && '' !== trim( (string) $assoc_args['request-id']) ) {
-			$input['request_id'] = trim( (string) $assoc_args['request-id']);
+		if ( isset( $assoc_args['request-id'] ) && '' !== trim( (string) $assoc_args['request-id'] ) ) {
+			$input['request_id'] = trim( (string) $assoc_args['request-id'] );
 		}
 		if ( 'json' !== (string) ( $assoc_args['format'] ?? '' ) ) {
 			// JSON stdout is a terminal response contract; progress is persisted with the run.
 			$input['progress_callback'] = function ( array $progress ) use ( $assoc_args ): void {
-				$this->render_cleanup_safe_result($progress, $assoc_args);
+				$this->render_cleanup_safe_result( $progress, $assoc_args );
 				$this->flush_cli_output();
 			};
 		}
 
-		$ability = wp_get_ability('json' === (string) ( $assoc_args['format'] ?? '' ) ? 'datamachine-code/workspace-cleanup-safe-run' : 'datamachine-code/workspace-cleanup-safe');
+		$ability = wp_get_ability( 'json' === (string) ( $assoc_args['format'] ?? '' ) ? 'datamachine-code/workspace-cleanup-safe-run' : 'datamachine-code/workspace-cleanup-safe' );
 		if ( ! $ability ) {
-			WP_CLI::error('Safe workspace cleanup ability not available.');
+			WP_CLI::error( 'Safe workspace cleanup ability not available.' );
 			return;
 		}
 
-		$result = $ability->execute($input);
-		if ( is_wp_error($result) ) {
-			$this->render_workspace_error($result);
+		$result = $ability->execute( $input );
+		if ( is_wp_error( $result ) ) {
+			$this->render_workspace_error( $result );
 			return;
 		}
 
-		$this->render_cleanup_safe_result($result, $assoc_args);
+		$this->render_cleanup_safe_result( $result, $assoc_args );
 	}
 
 	private function run_cleanup_list( array $assoc_args ): void {
-		$ability = wp_get_ability('datamachine-code/workspace-cleanup-list');
+		$ability = wp_get_ability( 'datamachine-code/workspace-cleanup-list' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace cleanup list ability not registered.');
+			WP_CLI::error( 'Workspace cleanup list ability not registered.' );
 			return;
 		}
-		$input = array_intersect_key($assoc_args, array_flip(array( 'mode', 'status', 'source', 'request-id', 'since', 'limit' )));
-		if ( isset($input['request-id']) ) {
+		$input = array_intersect_key( $assoc_args, array_flip( array( 'mode', 'status', 'source', 'request-id', 'since', 'limit' ) ) );
+		if ( isset( $input['request-id'] ) ) {
 			$input['request_id'] = $input['request-id'];
-			unset($input['request-id']);
+			unset( $input['request-id'] );
 		}
-		$result = $ability->execute($input);
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		$result = $ability->execute( $input );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
-		$this->render_cleanup_control_result($result, $assoc_args);
+		$this->render_cleanup_control_result( $result, $assoc_args );
 	}
 
 	private function render_cleanup_safe_result( array $result, array $assoc_args ): void {
 		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-			if ( empty($assoc_args['verbose']) ) {
+			if ( empty( $assoc_args['verbose'] ) ) {
 				$result['steps'] = $this->compact_safe_cleanup_steps( (array) ( $result['steps'] ?? array() ) );
 			}
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
 
 		$summary = (array) ( $result['summary'] ?? array() );
-		WP_CLI::log('Safe workspace cleanup:');
+		WP_CLI::log( 'Safe workspace cleanup:' );
 		$this->format_items(
 			array(
 				array(
 					'metric' => 'applied',
-					'value'  => ! empty($result['applied']) ? 'yes' : 'no',
+					'value'  => ! empty( $result['applied'] ) ? 'yes' : 'no',
 				),
 				array(
 					'metric' => 'state',
@@ -1338,21 +1610,21 @@ class WorkspaceCommand extends BaseCommand {
 
 		$blockers = (array) ( $result['blockers'] ?? array() );
 		if ( array() !== $blockers ) {
-			WP_CLI::log('Historical per-reason maximum blocker observations:');
-			$this->format_items($blockers, array( 'reason_code', 'count' ), array( 'format' => 'table' ), 'reason_code');
+			WP_CLI::log( 'Historical per-reason maximum blocker observations:' );
+			$this->format_items( $blockers, array( 'reason_code', 'count' ), array( 'format' => 'table' ), 'reason_code' );
 		}
 
 		$current_blockers = (array) ( $result['current_blockers'] ?? array() );
 		if ( array() !== $current_blockers ) {
-			WP_CLI::log('Current final-cycle blocker observations:');
-			$this->format_items($current_blockers, array( 'reason_code', 'count' ), array( 'format' => 'table' ), 'reason_code');
+			WP_CLI::log( 'Current final-cycle blocker observations:' );
+			$this->format_items( $current_blockers, array( 'reason_code', 'count' ), array( 'format' => 'table' ), 'reason_code' );
 		}
 	}
 
 	private function compact_safe_cleanup_steps( array $steps ): array {
 		$compact = array();
 		foreach ( $steps as $key => $step ) {
-			if ( is_array($step) ) {
+			if ( is_array( $step ) ) {
 				$compact[ $key ] = $step;
 			}
 		}
@@ -1361,66 +1633,66 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	private function run_cleanup_task( array $assoc_args ): void {
-		if ( isset($assoc_args['dry-run']) ) {
-			$this->run_cleanup_review($assoc_args);
+		if ( isset( $assoc_args['dry-run'] ) ) {
+			$this->run_cleanup_review( $assoc_args );
 			return;
 		}
 
-		$mode = strtolower(preg_replace('/[^a-z0-9_\-]/', '', (string) ( $assoc_args['mode'] ?? 'retention' )));
-		if ( ! in_array($mode, self::CLEANUP_MODES, true) ) {
-			WP_CLI::error(sprintf('Unknown cleanup mode: %s. Expected one of: %s.', $mode, implode(', ', self::CLEANUP_MODES)));
+		$mode = strtolower( preg_replace( '/[^a-z0-9_\-]/', '', (string) ( $assoc_args['mode'] ?? 'retention' ) ) );
+		if ( ! in_array( $mode, self::CLEANUP_MODES, true ) ) {
+			WP_CLI::error( sprintf( 'Unknown cleanup mode: %s. Expected one of: %s.', $mode, implode( ', ', self::CLEANUP_MODES ) ) );
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-cleanup-run');
+		$ability = wp_get_ability( 'datamachine-code/workspace-cleanup-run' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace cleanup run ability not registered.');
+			WP_CLI::error( 'Workspace cleanup run ability not registered.' );
 			return;
 		}
 
-		$result = $ability->execute($this->cleanup_run_input($mode, $assoc_args));
+		$result = $ability->execute( $this->cleanup_run_input( $mode, $assoc_args ) );
 
 		if ( ! ( $result['success'] ?? false ) ) {
-			WP_CLI::error( (string) ( $result['error'] ?? 'Failed to schedule cleanup run.' ));
+			WP_CLI::error( (string) ( $result['error'] ?? 'Failed to schedule cleanup run.' ) );
 			return;
 		}
 
-		$result = $this->attach_cleanup_run_commands($result, $mode);
-		if ( ! empty($assoc_args['drain']) ) {
+		$result = $this->attach_cleanup_run_commands( $result, $mode );
+		if ( ! empty( $assoc_args['drain'] ) ) {
 			if ( 'json' === (string) ( $assoc_args['format'] ?? 'table' ) ) {
-				$this->render_cleanup_control_result($result + array( 'drain_state' => 'scheduled' ), $assoc_args);
+				$this->render_cleanup_control_result( $result + array( 'drain_state' => 'scheduled' ), $assoc_args );
 				$this->flush_cli_output();
 			}
-			$result = $this->drain_cleanup_run_to_status($result, $assoc_args);
+			$result = $this->drain_cleanup_run_to_status( $result, $assoc_args );
 		}
 
-		$this->render_cleanup_control_result($result, $assoc_args);
+		$this->render_cleanup_control_result( $result, $assoc_args );
 	}
 
 	private function run_cleanup_until_empty( array $assoc_args ): void {
-		$mode = strtolower(preg_replace('/[^a-z0-9_\-]/', '', (string) ( $assoc_args['mode'] ?? 'artifacts' )));
+		$mode = strtolower( preg_replace( '/[^a-z0-9_\-]/', '', (string) ( $assoc_args['mode'] ?? 'artifacts' ) ) );
 		if ( 'artifacts' !== $mode ) {
-			WP_CLI::error('cleanup until-empty currently supports --mode=artifacts only.');
+			WP_CLI::error( 'cleanup until-empty currently supports --mode=artifacts only.' );
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-cleanup-until-empty');
+		$ability = wp_get_ability( 'datamachine-code/workspace-cleanup-until-empty' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace cleanup until-empty ability not registered.');
+			WP_CLI::error( 'Workspace cleanup until-empty ability not registered.' );
 			return;
 		}
 
 		$input = array( 'mode' => $mode );
 		foreach ( array( 'force', 'limit' ) as $key ) {
-			if ( isset($assoc_args[ $key ]) ) {
+			if ( isset( $assoc_args[ $key ] ) ) {
 				$input[ $key ] = 'force' === $key ? (bool) $assoc_args[ $key ] : (int) $assoc_args[ $key ];
 			}
 		}
-		if ( isset($assoc_args['allow-active-artifact-cleanup']) ) {
+		if ( isset( $assoc_args['allow-active-artifact-cleanup'] ) ) {
 			$input['allow_active_artifact_cleanup'] = (bool) $assoc_args['allow-active-artifact-cleanup'];
 		}
-		if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
-			$input['older_than'] = trim( (string) $assoc_args['older-than']);
+		if ( isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ) {
+			$input['older_than'] = trim( (string) $assoc_args['older-than'] );
 		}
 		foreach (
 			array(
@@ -1428,18 +1700,18 @@ class WorkspaceCommand extends BaseCommand {
 				'budget-seconds' => 'budget_seconds',
 			) as $cli_key => $input_key
 		) {
-			if ( isset($assoc_args[ $cli_key ]) ) {
+			if ( isset( $assoc_args[ $cli_key ] ) ) {
 				$input[ $input_key ] = (int) $assoc_args[ $cli_key ];
 			}
 		}
 
-		$result = $ability->execute($input);
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		$result = $ability->execute( $input );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
-		$this->render_cleanup_control_result($result, $assoc_args);
+		$this->render_cleanup_control_result( $result, $assoc_args );
 	}
 
 	/**
@@ -1448,8 +1720,8 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function flush_cli_output(): void {
-		if ( defined('STDOUT') ) {
-			fflush(STDOUT);
+		if ( defined( 'STDOUT' ) ) {
+			fflush( STDOUT );
 		}
 		flush();
 	}
@@ -1463,17 +1735,17 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function attach_cleanup_run_commands( array $result, string $mode ): array {
 		$job_id = (int) ( $result['job_id'] ?? 0 );
-		$run_id = (string) ( $result['run_id'] ?? ( $job_id > 0 ? $this->cleanup_run_id($job_id) : '' ) );
+		$run_id = (string) ( $result['run_id'] ?? ( $job_id > 0 ? $this->cleanup_run_id( $job_id ) : '' ) );
 		if ( $job_id <= 0 || '' === $run_id ) {
 			return $result;
 		}
 
 		$result['commands'] = array(
-			'drain_parent'       => sprintf('studio wp datamachine drain --job-id=%d', $job_id),
-			'status'             => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
-			'status_verbose'     => sprintf('studio wp datamachine-code workspace cleanup status %s --verbose --format=json', $run_id),
-			'one_command_drain'  => sprintf('studio wp datamachine-code workspace cleanup run --mode=%s --drain --format=json', $mode),
-			'bytes_verification' => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
+			'drain_parent'       => sprintf( 'studio wp datamachine drain --job-id=%d', $job_id ),
+			'status'             => sprintf( 'studio wp datamachine-code workspace cleanup status %s --format=json', $run_id ),
+			'status_verbose'     => sprintf( 'studio wp datamachine-code workspace cleanup status %s --verbose --format=json', $run_id ),
+			'one_command_drain'  => sprintf( 'studio wp datamachine-code workspace cleanup run --mode=%s --drain --format=json', $mode ),
+			'bytes_verification' => sprintf( 'studio wp datamachine-code workspace cleanup status %s --format=json', $run_id ),
 		);
 
 		return $result;
@@ -1488,7 +1760,7 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function drain_cleanup_run_to_status( array $result, array $assoc_args ): array {
 		$job_id = (int) ( $result['job_id'] ?? 0 );
-		$run_id = (string) ( $result['run_id'] ?? ( $job_id > 0 ? $this->cleanup_run_id($job_id) : '' ) );
+		$run_id = (string) ( $result['run_id'] ?? ( $job_id > 0 ? $this->cleanup_run_id( $job_id ) : '' ) );
 		if ( $job_id <= 0 || '' === $run_id ) {
 			$result['drain'] = array(
 				'success' => false,
@@ -1503,15 +1775,15 @@ class WorkspaceCommand extends BaseCommand {
 		$repaired_child_ids   = array();
 		$max_passes           = 10;
 
-		$parent_command = sprintf('datamachine drain --job-id=%d', $job_id);
+		$parent_command = sprintf( 'datamachine drain --job-id=%d', $job_id );
 		$commands[]     = 'studio wp ' . $parent_command;
-		$error          = $this->run_wp_cli_command($parent_command);
+		$error          = $this->run_wp_cli_command( $parent_command );
 		if ( '' !== $error ) {
 			$errors[] = $error;
 		}
 
 		for ( $pass = 0; $pass < $max_passes; ++$pass ) {
-			$status = $this->cleanup_run_evidence_store()->read($run_id, true, true);
+			$status = $this->cleanup_run_evidence_store()->read( $run_id, true, true );
 			if ( $status instanceof \WP_Error ) {
 				$errors[] = $status->get_error_message();
 				break;
@@ -1521,16 +1793,16 @@ class WorkspaceCommand extends BaseCommand {
 			$undrainable_child_ids = array_values(
 				array_unique(
 					array_filter(
-						array_map('intval', (array) ( $children['pending_without_drainable_action_job_ids'] ?? array() ))
+						array_map( 'intval', (array) ( $children['pending_without_drainable_action_job_ids'] ?? array() ) )
 					)
 				)
 			);
 			if ( array() !== $undrainable_child_ids ) {
-				$repair                  = SystemTaskDrainability::ensure_jobs_have_execute_step_actions($undrainable_child_ids);
+				$repair                  = SystemTaskDrainability::ensure_jobs_have_execute_step_actions( $undrainable_child_ids );
 				$pass_repaired_child_ids = array_values(
-					array_diff($undrainable_child_ids, (array) $repair['unrepairable'])
+					array_diff( $undrainable_child_ids, (array) $repair['unrepairable'] )
 				);
-				$repaired_child_ids      = array_values(array_unique(array_merge($repaired_child_ids, $pass_repaired_child_ids)));
+				$repaired_child_ids      = array_values( array_unique( array_merge( $repaired_child_ids, $pass_repaired_child_ids ) ) );
 				$drainability_repairs[]  = array(
 					'pass'                       => $pass + 1,
 					'detected_child_job_ids'     => $undrainable_child_ids,
@@ -1555,25 +1827,25 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 			}
 
-			$child_command = sprintf('datamachine drain --job-id=%s', implode(',', $active_child_ids));
+			$child_command = sprintf( 'datamachine drain --job-id=%s', implode( ',', $active_child_ids ) );
 			$commands[]    = 'studio wp ' . $child_command;
-			$error         = $this->run_wp_cli_command($child_command);
+			$error         = $this->run_wp_cli_command( $child_command );
 			if ( '' !== $error ) {
 				$errors[] = $error;
 				break;
 			}
 		}
 
-		$final                 = $this->cleanup_run_evidence_store()->read($run_id, false, ! empty($assoc_args['verbose']));
+		$final                 = $this->cleanup_run_evidence_store()->read( $run_id, false, ! empty( $assoc_args['verbose'] ) );
 		$output                = $final instanceof \WP_Error ? $result : $final;
 		$output['initial_run'] = $result;
 		$output['drain']       = array(
 			'success'                => array() === $errors,
 			'commands'               => $commands,
 			'errors'                 => $errors,
-			'verify_command'         => sprintf('studio wp datamachine-code workspace cleanup status %s --format=json', $run_id),
+			'verify_command'         => sprintf( 'studio wp datamachine-code workspace cleanup status %s --format=json', $run_id ),
 			'bytes_reclaimed'        => (int) ( $output['cleanup_items']['bytes_reclaimed'] ?? 0 ),
-			'freed_human'            => (string) ( $output['cleanup_items']['freed_human'] ?? $this->format_bytes(0) ),
+			'freed_human'            => (string) ( $output['cleanup_items']['freed_human'] ?? $this->format_bytes( 0 ) ),
 			'completion_state'       => (string) ( $output['state'] ?? 'unknown' ),
 			'drainability_repairs'   => $drainability_repairs,
 			'repaired_child_job_ids' => $repaired_child_ids,
@@ -1609,26 +1881,26 @@ class WorkspaceCommand extends BaseCommand {
 			'mode'   => $mode,
 			'source' => self::CLEANUP_CLI_SOURCE,
 		);
-		if ( isset($assoc_args['force']) ) {
+		if ( isset( $assoc_args['force'] ) ) {
 			$input['force'] = (bool) $assoc_args['force'];
 		}
-		if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
-			$input['older_than'] = trim( (string) $assoc_args['older-than']);
+		if ( isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ) {
+			$input['older_than'] = trim( (string) $assoc_args['older-than'] );
 		}
 		if ( 'stale-worktrees' === $mode ) {
 			$input['worktree_stale_only'] = true;
-			if ( ! isset($input['older_than']) ) {
+			if ( ! isset( $input['older_than'] ) ) {
 				$input['older_than'] = '14d';
 			}
 		}
 		if ( 'artifacts' === $mode ) {
-			if ( isset($assoc_args['limit']) ) {
+			if ( isset( $assoc_args['limit'] ) ) {
 				$input['limit'] = (int) $assoc_args['limit'];
 			}
-			if ( isset($assoc_args['offset']) ) {
+			if ( isset( $assoc_args['offset'] ) ) {
 				$input['offset'] = (int) $assoc_args['offset'];
 			}
-			if ( ! empty($assoc_args['exhaustive']) ) {
+			if ( ! empty( $assoc_args['exhaustive'] ) ) {
 				$input['exhaustive'] = true;
 			}
 		}
@@ -1637,31 +1909,31 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	private function run_cleanup_plan( array $assoc_args ): void {
-		$ability = wp_get_ability('datamachine-code/workspace-cleanup-plan');
+		$ability = wp_get_ability( 'datamachine-code/workspace-cleanup-plan' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace cleanup plan ability not registered.');
+			WP_CLI::error( 'Workspace cleanup plan ability not registered.' );
 			return;
 		}
 
-		$mode = strtolower(preg_replace('/[^a-z0-9_\-]/', '', (string) ( $assoc_args['mode'] ?? 'retention' )));
-		if ( ! in_array($mode, self::CLEANUP_MODES, true) ) {
-			WP_CLI::error(sprintf('Unknown cleanup mode: %s. Expected one of: %s.', $mode, implode(', ', self::CLEANUP_MODES)));
+		$mode = strtolower( preg_replace( '/[^a-z0-9_\-]/', '', (string) ( $assoc_args['mode'] ?? 'retention' ) ) );
+		if ( ! in_array( $mode, self::CLEANUP_MODES, true ) ) {
+			WP_CLI::error( sprintf( 'Unknown cleanup mode: %s. Expected one of: %s.', $mode, implode( ', ', self::CLEANUP_MODES ) ) );
 			return;
 		}
 
-		$input = $this->cleanup_plan_input($mode, $assoc_args);
+		$input = $this->cleanup_plan_input( $mode, $assoc_args );
 		if ( 'json' !== (string) ( $assoc_args['format'] ?? 'table' ) ) {
-			$profile = ! empty($input['include_artifacts']) ? 'full-workspace inventory, biggest wins first' : 'local worktree merge signals';
-			WP_CLI::log(sprintf('Planning cleanup (%s; %s)...', $mode, $profile));
+			$profile = ! empty( $input['include_artifacts'] ) ? 'full-workspace inventory, biggest wins first' : 'local worktree merge signals';
+			WP_CLI::log( sprintf( 'Planning cleanup (%s; %s)...', $mode, $profile ) );
 		}
 
-		$result = $ability->execute($input);
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		$result = $ability->execute( $input );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
-		$this->render_cleanup_plan_result($result, $assoc_args);
+		$this->render_cleanup_plan_result( $result, $assoc_args );
 	}
 
 	/**
@@ -1672,7 +1944,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array<string,mixed>
 	 */
 	private function cleanup_plan_input( string $mode, array $assoc_args ): array {
-		$include_artifacts = 'retention' === $mode || 'artifacts' === $mode || ! empty($assoc_args['include-artifacts']);
+		$include_artifacts = 'retention' === $mode || 'artifacts' === $mode || ! empty( $assoc_args['include-artifacts'] );
 		$include_worktrees = 'artifacts' !== $mode;
 		$input             = array(
 			'mode'              => $mode,
@@ -1680,38 +1952,38 @@ class WorkspaceCommand extends BaseCommand {
 			'include_worktrees' => $include_worktrees,
 			'include_resolvers' => true,
 		);
-		if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
-			$input['worktree_older_than'] = trim( (string) $assoc_args['older-than']);
+		if ( isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ) {
+			$input['worktree_older_than'] = trim( (string) $assoc_args['older-than'] );
 		}
-		if ( isset($assoc_args['top']) ) {
+		if ( isset( $assoc_args['top'] ) ) {
 			$input['top_n'] = (int) $assoc_args['top'];
 		}
-		if ( isset($assoc_args['force']) ) {
+		if ( isset( $assoc_args['force'] ) ) {
 			$input['force_artifact_cleanup'] = (bool) $assoc_args['force'];
 		}
-		if ( isset($assoc_args['allow-active-artifact-cleanup']) ) {
+		if ( isset( $assoc_args['allow-active-artifact-cleanup'] ) ) {
 			$input['allow_active_artifact_cleanup'] = (bool) $assoc_args['allow-active-artifact-cleanup'];
 		}
-		if ( isset($assoc_args['sort']) && '' !== trim( (string) $assoc_args['sort']) ) {
-			$sort                   = trim( (string) $assoc_args['sort']);
+		if ( isset( $assoc_args['sort'] ) && '' !== trim( (string) $assoc_args['sort'] ) ) {
+			$sort                   = trim( (string) $assoc_args['sort'] );
 			$input['artifact_sort'] = $sort;
 			$input['worktree_sort'] = $sort;
 		}
-		if ( isset($assoc_args['limit']) ) {
+		if ( isset( $assoc_args['limit'] ) ) {
 			$input['limit'] = (int) $assoc_args['limit'];
 		}
-		if ( isset($assoc_args['offset']) ) {
+		if ( isset( $assoc_args['offset'] ) ) {
 			$input['offset'] = (int) $assoc_args['offset'];
 		}
-		if ( ! empty($assoc_args['exhaustive']) ) {
+		if ( ! empty( $assoc_args['exhaustive'] ) ) {
 			$input['full_workspace'] = true;
 		}
-		if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
-			$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
+		if ( isset( $assoc_args['until-budget'] ) && '' !== trim( (string) $assoc_args['until-budget'] ) ) {
+			$input['until_budget'] = trim( (string) $assoc_args['until-budget'] );
 		}
 		if ( 'stale-worktrees' === $mode ) {
 			$input['worktree_stale_only'] = true;
-			if ( empty($input['worktree_older_than']) ) {
+			if ( empty( $input['worktree_older_than'] ) ) {
 				$input['worktree_older_than'] = '14d';
 			}
 		}
@@ -1720,136 +1992,136 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	private function run_cleanup_control_ability( string $operation, string $run_id, array $assoc_args ): void {
-		$run_id = trim($run_id);
+		$run_id = trim( $run_id );
 		if ( '' === $run_id ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace cleanup ' . $operation . ' <run-id>');
+			WP_CLI::error( 'Usage: wp datamachine-code workspace cleanup ' . $operation . ' <run-id>' );
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-cleanup-' . $operation);
+		$ability = wp_get_ability( 'datamachine-code/workspace-cleanup-' . $operation );
 		if ( ! $ability ) {
-			WP_CLI::error(sprintf('Workspace cleanup %s ability not registered.', $operation));
+			WP_CLI::error( sprintf( 'Workspace cleanup %s ability not registered.', $operation ) );
 			return;
 		}
 
 		$result = $ability->execute(
 			array(
 				'run_id'                        => $run_id,
-				'force'                         => ! empty($assoc_args['force']),
-				'allow_active_artifact_cleanup' => ! empty($assoc_args['allow-active-artifact-cleanup']),
-			) + ( isset($assoc_args['limit']) ? array( 'limit' => (int) $assoc_args['limit'] ) : array() )
+				'force'                         => ! empty( $assoc_args['force'] ),
+				'allow_active_artifact_cleanup' => ! empty( $assoc_args['allow-active-artifact-cleanup'] ),
+			) + ( isset( $assoc_args['limit'] ) ? array( 'limit' => (int) $assoc_args['limit'] ) : array() )
 		);
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
-		$this->render_cleanup_control_result($result, $assoc_args);
+		$this->render_cleanup_control_result( $result, $assoc_args );
 	}
 
 	private function run_cleanup_review( array $assoc_args ): void {
-		$mode = strtolower(preg_replace('/[^a-z0-9_\-]/', '', (string) ( $assoc_args['mode'] ?? 'retention' )));
-		if ( ! in_array($mode, self::CLEANUP_MODES, true) ) {
-			WP_CLI::error(sprintf('Unknown cleanup mode: %s. Expected one of: %s.', $mode, implode(', ', self::CLEANUP_MODES)));
+		$mode = strtolower( preg_replace( '/[^a-z0-9_\-]/', '', (string) ( $assoc_args['mode'] ?? 'retention' ) ) );
+		if ( ! in_array( $mode, self::CLEANUP_MODES, true ) ) {
+			WP_CLI::error( sprintf( 'Unknown cleanup mode: %s. Expected one of: %s.', $mode, implode( ', ', self::CLEANUP_MODES ) ) );
 			return;
 		}
 
 		switch ( $mode ) {
 			case 'inventory':
-				$ability = wp_get_ability('datamachine-code/workspace-hygiene-report');
+				$ability = wp_get_ability( 'datamachine-code/workspace-hygiene-report' );
 				$result  = $ability ? $ability->execute(
-				array(
-					'include_cleanup'         => true,
-					'include_sizes'           => false,
-					'include_worktree_status' => false,
-				)
-				) : new \WP_Error('workspace_hygiene_ability_missing', 'Workspace hygiene ability not registered.');
-				$this->render_workspace_hygiene_report_from_ability($result, $assoc_args);
+					array(
+						'include_cleanup'         => true,
+						'include_sizes'           => false,
+						'include_worktree_status' => false,
+					)
+				) : new \WP_Error( 'workspace_hygiene_ability_missing', 'Workspace hygiene ability not registered.' );
+				$this->render_workspace_hygiene_report_from_ability( $result, $assoc_args );
 				return;
 
 			case 'artifacts':
-				$ability = wp_get_ability('datamachine-code/workspace-cleanup-plan');
-				$result  = $ability ? $ability->execute($this->cleanup_plan_input($mode, $assoc_args)) : new \WP_Error('cleanup_plan_ability_missing', 'Workspace cleanup plan ability not registered.');
-				if ( is_wp_error($result) ) {
-					WP_CLI::error($result->get_error_message());
+				$ability = wp_get_ability( 'datamachine-code/workspace-cleanup-plan' );
+				$result  = $ability ? $ability->execute( $this->cleanup_plan_input( $mode, $assoc_args ) ) : new \WP_Error( 'cleanup_plan_ability_missing', 'Workspace cleanup plan ability not registered.' );
+				if ( is_wp_error( $result ) ) {
+					WP_CLI::error( $result->get_error_message() );
 					return;
 				}
-				$this->render_cleanup_plan_result($result, $assoc_args);
+				$this->render_cleanup_plan_result( $result, $assoc_args );
 				return;
 
 			case 'emergency':
-				$ability = wp_get_ability('datamachine-code/workspace-worktree-emergency-cleanup');
+				$ability = wp_get_ability( 'datamachine-code/workspace-worktree-emergency-cleanup' );
 				$result  = $ability ? $ability->execute(
-				array(
-					'dry_run' => true,
-					'force'   => ! empty($assoc_args['force']),
-				)
-				) : new \WP_Error('emergency_cleanup_ability_missing', 'Emergency cleanup ability not registered.');
-				$this->render_worktree_emergency_cleanup_result_from_ability($result, $assoc_args);
+					array(
+						'dry_run' => true,
+						'force'   => ! empty( $assoc_args['force'] ),
+					)
+				) : new \WP_Error( 'emergency_cleanup_ability_missing', 'Emergency cleanup ability not registered.' );
+				$this->render_worktree_emergency_cleanup_result_from_ability( $result, $assoc_args );
 				return;
 
 			case 'stale-worktrees':
-				$ability = wp_get_ability('datamachine-code/workspace-worktree-cleanup');
+				$ability = wp_get_ability( 'datamachine-code/workspace-worktree-cleanup' );
 				$input   = array(
 					'dry_run'             => true,
-					'force'               => ! empty($assoc_args['force']),
+					'force'               => ! empty( $assoc_args['force'] ),
 					'skip_github'         => true,
 					'stale_liveness_only' => true,
-					'older_than'          => isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ? trim( (string) $assoc_args['older-than']) : '14d',
+					'older_than'          => isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ? trim( (string) $assoc_args['older-than'] ) : '14d',
 				);
-				$result  = $ability ? $ability->execute($input) : new \WP_Error('worktree_cleanup_ability_missing', 'Worktree cleanup ability not registered.');
-				$this->render_worktree_cleanup_result_from_ability($result, $assoc_args);
+				$result  = $ability ? $ability->execute( $input ) : new \WP_Error( 'worktree_cleanup_ability_missing', 'Worktree cleanup ability not registered.' );
+				$this->render_worktree_cleanup_result_from_ability( $result, $assoc_args );
 				return;
 
 			case 'retention':
 			default:
-				$ability = wp_get_ability('datamachine-code/workspace-worktree-cleanup');
+				$ability = wp_get_ability( 'datamachine-code/workspace-worktree-cleanup' );
 				$input   = array(
 					'dry_run'     => true,
-					'force'       => ! empty($assoc_args['force']),
+					'force'       => ! empty( $assoc_args['force'] ),
 					'skip_github' => true,
 				);
-				if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
-					$input['older_than'] = trim( (string) $assoc_args['older-than']);
+				if ( isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ) {
+					$input['older_than'] = trim( (string) $assoc_args['older-than'] );
 				}
-				$result = $ability ? $ability->execute($input) : new \WP_Error('worktree_cleanup_ability_missing', 'Worktree cleanup ability not registered.');
-				$this->render_worktree_cleanup_result_from_ability($result, $assoc_args);
+				$result = $ability ? $ability->execute( $input ) : new \WP_Error( 'worktree_cleanup_ability_missing', 'Worktree cleanup ability not registered.' );
+				$this->render_worktree_cleanup_result_from_ability( $result, $assoc_args );
 				return;
 		}
 	}
 
 	private function render_workspace_hygiene_report_from_ability( array|\WP_Error $result, array $assoc_args ): void {
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
-		$this->render_workspace_hygiene_report($result, $assoc_args);
+		$this->render_workspace_hygiene_report( $result, $assoc_args );
 	}
 
 	private function render_worktree_cleanup_result_from_ability( array|\WP_Error $result, array $assoc_args ): void {
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
-		$this->render_worktree_cleanup_result($result, $assoc_args);
+		$this->render_worktree_cleanup_result( $result, $assoc_args );
 	}
 
 	private function render_worktree_emergency_cleanup_result_from_ability( array|\WP_Error $result, array $assoc_args ): void {
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
-		$this->render_worktree_emergency_cleanup_result($result, $assoc_args);
+		$this->render_worktree_emergency_cleanup_result( $result, $assoc_args );
 	}
 
 	private function render_cleanup_run_status( string $run_id, array $assoc_args, bool $evidence ): void {
-		$output = $this->cleanup_run_evidence_store()->read($run_id, $evidence, ! empty($assoc_args['verbose']));
+		$output = $this->cleanup_run_evidence_store()->read( $run_id, $evidence, ! empty( $assoc_args['verbose'] ) );
 		if ( $output instanceof \WP_Error ) {
-			WP_CLI::error($output->get_error_message());
+			WP_CLI::error( $output->get_error_message() );
 			return;
 		}
 
-		$this->render_cleanup_control_result($output, $assoc_args, $evidence);
+		$this->render_cleanup_control_result( $output, $assoc_args, $evidence );
 	}
 
 	private function cleanup_run_evidence_store(): CleanupRunEvidenceStoreInterface {
@@ -1862,25 +2134,25 @@ class WorkspaceCommand extends BaseCommand {
 
 	private function control_cleanup_run_job( string $operation, int $job_id, array $assoc_args ): void {
 		$ability_name = 'resume' === $operation ? 'datamachine-code/retry-job' : 'datamachine-code/fail-job';
-		$ability      = wp_get_ability($ability_name);
+		$ability      = wp_get_ability( $ability_name );
 		if ( ! $ability ) {
-			WP_CLI::error(sprintf('Job control ability not registered: %s', $ability_name));
+			WP_CLI::error( sprintf( 'Job control ability not registered: %s', $ability_name ) );
 			return;
 		}
 
-		$target_job_ids = $this->cleanup_run_control_job_ids($operation, $job_id);
+		$target_job_ids = $this->cleanup_run_control_job_ids( $operation, $job_id );
 		$results        = array();
 		foreach ( $target_job_ids as $target_job_id ) {
 			$input = array( 'job_id' => $target_job_id );
 			if ( 'resume' === $operation ) {
-				$input['force'] = ! empty($assoc_args['force']);
+				$input['force'] = ! empty( $assoc_args['force'] );
 			} else {
 				$input['reason'] = 'cleanup_cancelled';
 			}
 
-			$result = $ability->execute($input);
+			$result = $ability->execute( $input );
 			if ( ! ( $result['success'] ?? false ) ) {
-				WP_CLI::error( (string) ( $result['error'] ?? 'Cleanup run control failed.' ));
+				WP_CLI::error( (string) ( $result['error'] ?? 'Cleanup run control failed.' ) );
 				return;
 			}
 			$results[] = $result;
@@ -1890,11 +2162,11 @@ class WorkspaceCommand extends BaseCommand {
 			'success' => true,
 			'job_id'  => $job_id,
 		);
-		$output['run_id']             = $this->cleanup_run_id($job_id);
+		$output['run_id']             = $this->cleanup_run_id( $job_id );
 		$output['state']              = 'resume' === $operation ? 'running' : 'cancelled';
 		$output['controlled_job_ids'] = $target_job_ids;
 		$output['results']            = $results;
-		$this->render_cleanup_control_result($output, $assoc_args);
+		$this->render_cleanup_control_result( $output, $assoc_args );
 	}
 
 	/**
@@ -1905,74 +2177,74 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array<int,int>
 	 */
 	private function cleanup_run_control_job_ids( string $operation, int $job_id ): array {
-		$output = $this->cleanup_run_evidence_store()->read($this->cleanup_run_id($job_id), true, true);
+		$output = $this->cleanup_run_evidence_store()->read( $this->cleanup_run_id( $job_id ), true, true );
 		if ( $output instanceof \WP_Error ) {
 			return array( $job_id );
 		}
 
 		$children        = (array) ( $output['evidence']['children'] ?? array() );
-		$processing_ids  = array_map('intval', (array) ( $children['processing_job_ids'] ?? array() ));
-		$failed_ids      = array_map('intval', (array) ( $children['failed_job_ids'] ?? array() ));
-		$pending_ids     = array_map('intval', (array) ( $children['pending_job_ids'] ?? array() ));
-		$undrainable_ids = array_map('intval', (array) ( $children['pending_without_drainable_action_job_ids'] ?? array() ));
+		$processing_ids  = array_map( 'intval', (array) ( $children['processing_job_ids'] ?? array() ) );
+		$failed_ids      = array_map( 'intval', (array) ( $children['failed_job_ids'] ?? array() ) );
+		$pending_ids     = array_map( 'intval', (array) ( $children['pending_job_ids'] ?? array() ) );
+		$undrainable_ids = array_map( 'intval', (array) ( $children['pending_without_drainable_action_job_ids'] ?? array() ) );
 
 		if ( 'resume' === $operation ) {
-			$repair        = \DataMachineCode\Support\SystemTaskDrainability::ensure_jobs_have_execute_step_actions($undrainable_ids);
-			$child_targets = array_values(array_unique(array_filter(array_merge($processing_ids, $failed_ids))));
+			$repair        = \DataMachineCode\Support\SystemTaskDrainability::ensure_jobs_have_execute_step_actions( $undrainable_ids );
+			$child_targets = array_values( array_unique( array_filter( array_merge( $processing_ids, $failed_ids ) ) ) );
 			if ( array() === $child_targets && (int) $repair['repaired'] > 0 ) {
 				return array();
 			}
 			return array() !== $child_targets ? $child_targets : array( $job_id );
 		}
 
-		return array_values(array_unique(array_filter(array_merge(array( $job_id ), $pending_ids, $processing_ids))));
+		return array_values( array_unique( array_filter( array_merge( array( $job_id ), $pending_ids, $processing_ids ) ) ) );
 	}
 
 	private function render_cleanup_control_result( array $result, array $assoc_args, bool $full_evidence = false ): void {
-		$result = $this->attach_current_workspace_lock_status($result);
+		$result = $this->attach_current_workspace_lock_status( $result );
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
-		if ( ! empty($assoc_args['summary']) ) {
-			$result = $this->build_cleanup_operator_summary($result);
+		if ( ! empty( $assoc_args['summary'] ) ) {
+			$result = $this->build_cleanup_operator_summary( $result );
 		}
 		if ( 'json' === $format ) {
-			if ( empty($assoc_args['verbose']) && empty($assoc_args['summary']) && ! $full_evidence ) {
-				$result = WorkspaceCompactOutput::cleanup_control_result($result);
+			if ( empty( $assoc_args['verbose'] ) && empty( $assoc_args['summary'] ) && ! $full_evidence ) {
+				$result = WorkspaceCompactOutput::cleanup_control_result( $result );
 			}
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
-		if ( 'yaml' === $format && class_exists('Spyc') ) {
-			WP_CLI::log( (string) \Spyc::YAMLDump($result, false, false, true));
+		if ( 'yaml' === $format && class_exists( 'Spyc' ) ) {
+			WP_CLI::log( (string) \Spyc::YAMLDump( $result, false, false, true ) );
 			return;
 		}
 
-		WP_CLI::log(sprintf('State: %s', $result['state'] ?? 'unknown'));
+		WP_CLI::log( sprintf( 'State: %s', $result['state'] ?? 'unknown' ) );
 		foreach ( array( 'run_id', 'job_id', 'mode', 'task_type', 'status' ) as $key ) {
-			if ( isset($result[ $key ]) && '' !== (string) $result[ $key ] ) {
-				WP_CLI::log(sprintf('%s: %s', ucfirst(str_replace('_', ' ', $key)), (string) $result[ $key ]));
+			if ( isset( $result[ $key ] ) && '' !== (string) $result[ $key ] ) {
+				WP_CLI::log( sprintf( '%s: %s', ucfirst( str_replace( '_', ' ', $key ) ), (string) $result[ $key ] ) );
 			}
 		}
-		if ( ! empty($assoc_args['summary']) ) {
-			$this->render_cleanup_operator_summary($result);
+		if ( ! empty( $assoc_args['summary'] ) ) {
+			$this->render_cleanup_operator_summary( $result );
 			return;
 		}
-		if ( ! empty($result['progress']) && is_array($result['progress']) ) {
-			$this->render_cleanup_progress_summary( (array) $result['progress']);
+		if ( ! empty( $result['progress'] ) && is_array( $result['progress'] ) ) {
+			$this->render_cleanup_progress_summary( (array) $result['progress'] );
 		}
-		if ( ! empty($result['commands']) && is_array($result['commands']) ) {
-			$this->render_cleanup_command_hints( (array) $result['commands']);
+		if ( ! empty( $result['commands'] ) && is_array( $result['commands'] ) ) {
+			$this->render_cleanup_command_hints( (array) $result['commands'] );
 		}
-		if ( ! empty($result['drain']) && is_array($result['drain']) ) {
-			$this->render_cleanup_drain_summary( (array) $result['drain']);
+		if ( ! empty( $result['drain'] ) && is_array( $result['drain'] ) ) {
+			$this->render_cleanup_drain_summary( (array) $result['drain'] );
 		}
-		if ( ! empty($result['remaining_work_summary']) && is_array($result['remaining_work_summary']) ) {
-			$this->render_cleanup_remaining_work_summary( (array) $result['remaining_work_summary']);
+		if ( ! empty( $result['remaining_work_summary'] ) && is_array( $result['remaining_work_summary'] ) ) {
+			$this->render_cleanup_remaining_work_summary( (array) $result['remaining_work_summary'] );
 		}
-		if ( ! empty($result['locks']['stale_locks']) && is_array($result['locks']['stale_locks']) ) {
-			$this->render_stale_lock_followup( (array) $result['locks']['stale_locks']);
+		if ( ! empty( $result['locks']['stale_locks'] ) && is_array( $result['locks']['stale_locks'] ) ) {
+			$this->render_stale_lock_followup( (array) $result['locks']['stale_locks'] );
 		}
-		if ( ! empty($result['evidence']) ) {
-			$this->renderer()->json($result['evidence']);
+		if ( ! empty( $result['evidence'] ) ) {
+			$this->renderer()->json( $result['evidence'] );
 		}
 	}
 
@@ -1983,8 +2255,8 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_cleanup_operator_summary( array $summary ): void {
-		WP_CLI::log('');
-		WP_CLI::log('Cleanup operator summary:');
+		WP_CLI::log( '' );
+		WP_CLI::log( 'Cleanup operator summary:' );
 		$cleanup_counts = (array) ( $summary['cleanup_counts'] ?? array() );
 		$artifacts      = (array) ( $summary['artifact_cleanup'] ?? array() );
 		$remaining_safe = (int) ( $summary['remaining_safe_candidates'] ?? $summary['remaining_safely_removable_worktrees'] ?? 0 );
@@ -2008,7 +2280,7 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array(
 					'metric' => 'bytes_reclaimed',
-					'value'  => $this->format_bytes($cleanup_counts['bytes_reclaimed'] ?? 0),
+					'value'  => $this->format_bytes( $cleanup_counts['bytes_reclaimed'] ?? 0 ),
 				),
 				array(
 					'metric' => 'remaining_safe_candidates',
@@ -2020,7 +2292,7 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array(
 					'metric' => 'remaining_reclaimable_artifacts',
-					'value'  => $this->format_bytes($artifacts['remaining_reclaimable_artifact_bytes'] ?? 0),
+					'value'  => $this->format_bytes( $artifacts['remaining_reclaimable_artifact_bytes'] ?? 0 ),
 				),
 			),
 			array( 'metric', 'value' ),
@@ -2028,40 +2300,40 @@ class WorkspaceCommand extends BaseCommand {
 			'metric'
 		);
 
-		$this->render_cleanup_summary_reason_rows('Skipped rows by reason:', (array) ( $summary['skipped_by_reason'] ?? array() ));
-		$this->render_cleanup_summary_reason_rows('Failed rows by reason:', (array) ( $summary['failed_by_reason'] ?? array() ));
+		$this->render_cleanup_summary_reason_rows( 'Skipped rows by reason:', (array) ( $summary['skipped_by_reason'] ?? array() ) );
+		$this->render_cleanup_summary_reason_rows( 'Failed rows by reason:', (array) ( $summary['failed_by_reason'] ?? array() ) );
 
 		$examples = (array) ( $summary['top_blocked_examples'] ?? array() );
 		if ( array() !== $examples ) {
-			WP_CLI::log('');
-			WP_CLI::log('Top blocked examples:');
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Top blocked examples:' );
 			$rows = array_map(
 				fn( $row ) => array(
-					'size'          => $this->format_bytes(is_array($row) ? ( $row['size_bytes'] ?? 0 ) : 0),
-					'reason'        => is_array($row) ? (string) ( $row['reason'] ?? '' ) : '',
-					'handle'        => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '',
-					'artifact_path' => is_array($row) ? (string) ( $row['artifact_path'] ?? '' ) : '',
-					'path'          => is_array($row) ? (string) ( $row['path'] ?? '' ) : '',
+					'size'          => $this->format_bytes( is_array( $row ) ? ( $row['size_bytes'] ?? 0 ) : 0 ),
+					'reason'        => is_array( $row ) ? (string) ( $row['reason'] ?? '' ) : '',
+					'handle'        => is_array( $row ) ? (string) ( $row['handle'] ?? '' ) : '',
+					'artifact_path' => is_array( $row ) ? (string) ( $row['artifact_path'] ?? '' ) : '',
+					'path'          => is_array( $row ) ? (string) ( $row['path'] ?? '' ) : '',
 				),
-				array_slice($examples, 0, 10)
+				array_slice( $examples, 0, 10 )
 			);
-			$this->format_items($rows, array( 'size', 'reason', 'handle', 'artifact_path', 'path' ), array( 'format' => 'table' ), 'size');
+			$this->format_items( $rows, array( 'size', 'reason', 'handle', 'artifact_path', 'path' ), array( 'format' => 'table' ), 'size' );
 		}
 
 		$commands = (array) ( $summary['recommended_commands'] ?? array() );
 		if ( array() !== $commands ) {
-			WP_CLI::log('');
-			WP_CLI::log('Recommended next commands:');
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Recommended next commands:' );
 			$rows = array_map(
 				fn( $row ) => array(
-					'bucket'            => is_array($row) ? (string) ( $row['bucket'] ?? '' ) : '',
-					'review_command'    => is_array($row) ? (string) ( $row['command'] ?? '' ) : '',
-					'apply_command'     => is_array($row) ? (string) ( $row['apply'] ?? '' ) : '',
-					'apply_destructive' => is_array($row) && ! empty($row['apply_destructive']) ? 'yes' : 'no',
+					'bucket'            => is_array( $row ) ? (string) ( $row['bucket'] ?? '' ) : '',
+					'review_command'    => is_array( $row ) ? (string) ( $row['command'] ?? '' ) : '',
+					'apply_command'     => is_array( $row ) ? (string) ( $row['apply'] ?? '' ) : '',
+					'apply_destructive' => is_array( $row ) && ! empty( $row['apply_destructive'] ) ? 'yes' : 'no',
 				),
-				array_slice($commands, 0, 10)
+				array_slice( $commands, 0, 10 )
 			);
-			$this->format_items($rows, array( 'bucket', 'review_command', 'apply_command', 'apply_destructive' ), array( 'format' => 'table' ), 'bucket');
+			$this->format_items( $rows, array( 'bucket', 'review_command', 'apply_command', 'apply_destructive' ), array( 'format' => 'table' ), 'bucket' );
 		}
 	}
 
@@ -2080,7 +2352,7 @@ class WorkspaceCommand extends BaseCommand {
 			array(
 				'success'                       => (bool) ( $result['success'] ?? false ),
 				'run_id'                        => (string) ( $result['run_id'] ?? '' ),
-				'job_id'                        => isset($result['job_id']) ? (int) $result['job_id'] : null,
+				'job_id'                        => isset( $result['job_id'] ) ? (int) $result['job_id'] : null,
 				'mode'                          => (string) ( $result['mode'] ?? $result['evidence']['engine_data']['cleanup_run']['mode'] ?? '' ),
 				'state'                         => (string) ( $result['state'] ?? '' ),
 				'status'                        => (string) ( $result['status'] ?? '' ),
@@ -2094,10 +2366,10 @@ class WorkspaceCommand extends BaseCommand {
 					'skipped'         => (int) ( $cleanup_items['skipped_rows'] ?? 0 ),
 					'failed'          => (int) ( $cleanup_items['failed_rows'] ?? 0 ),
 					'bytes_reclaimed' => (int) ( $cleanup_items['bytes_reclaimed'] ?? 0 ),
-					'freed_human'     => (string) ( $cleanup_items['freed_human'] ?? $this->format_bytes($cleanup_items['bytes_reclaimed'] ?? 0) ),
+					'freed_human'     => (string) ( $cleanup_items['freed_human'] ?? $this->format_bytes( $cleanup_items['bytes_reclaimed'] ?? 0 ) ),
 				),
 				'total_bytes_reclaimed'         => (int) ( $remaining['total_bytes_reclaimed'] ?? $cleanup_items['bytes_reclaimed'] ?? 0 ),
-				'total_reclaimed_human'         => $this->format_bytes($remaining['total_bytes_reclaimed'] ?? $cleanup_items['bytes_reclaimed'] ?? 0),
+				'total_reclaimed_human'         => $this->format_bytes( $remaining['total_bytes_reclaimed'] ?? $cleanup_items['bytes_reclaimed'] ?? 0 ),
 				'remaining_safe_candidates'     => (int) ( $remaining['remaining_safe_candidates'] ?? $remaining['remaining_safely_removable_worktrees'] ?? 0 ),
 				'protected_unpushed_candidates' => (int) ( $remaining['protected_unpushed_candidates'] ?? 0 ),
 				'artifact_cleanup'              => array(
@@ -2108,13 +2380,13 @@ class WorkspaceCommand extends BaseCommand {
 					'failed'                               => (int) ( $artifacts['failed_rows'] ?? 0 ),
 					'bytes_reclaimed'                      => (int) ( $artifacts['bytes_reclaimed'] ?? 0 ),
 					'remaining_reclaimable_artifact_bytes' => (int) ( $remaining['remaining_reclaimable_artifact_bytes'] ?? $artifacts['remaining_reclaimable_artifact_bytes'] ?? 0 ),
-					'remaining_reclaimable_human'          => $this->format_bytes($remaining['remaining_reclaimable_artifact_bytes'] ?? $artifacts['remaining_reclaimable_artifact_bytes'] ?? 0),
+					'remaining_reclaimable_human'          => $this->format_bytes( $remaining['remaining_reclaimable_artifact_bytes'] ?? $artifacts['remaining_reclaimable_artifact_bytes'] ?? 0 ),
 				),
 				'children'                      => $this->build_cleanup_operator_child_summary( (array) ( $result['children'] ?? $result['evidence']['children'] ?? array() ) ),
 				'by_type'                       => (array) ( $cleanup_items['by_type'] ?? array() ),
 				'skipped_by_reason'             => (array) ( $remaining['skipped_by_reason'] ?? $cleanup_items['skipped_examples_by_reason'] ?? array() ),
 				'failed_by_reason'              => (array) ( $cleanup_items['failed_by_reason'] ?? $artifacts['failed_by_reason'] ?? array() ),
-				'top_blocked_examples'          => $this->cleanup_operator_blocked_examples($result),
+				'top_blocked_examples'          => $this->cleanup_operator_blocked_examples( $result ),
 				'recommended_commands'          => (array) ( $remaining['recommended_commands'] ?? array() ),
 				'next_commands'                 => (array) ( $remaining['next_commands'] ?? array() ),
 				'locks'                         => (array) ( $result['locks'] ?? array() ),
@@ -2137,8 +2409,8 @@ class WorkspaceCommand extends BaseCommand {
 			'failed'     => (int) ( $children['failed'] ?? 0 ),
 			'skipped'    => (int) ( $children['skipped'] ?? 0 ),
 			'statuses'   => (array) ( $children['statuses'] ?? array() ),
-			'batch_jobs' => isset($children['batch_total']) ? (int) $children['batch_total'] : count( (array) ( $children['batch_job_ids'] ?? array() ) ),
-			'chunk_jobs' => isset($children['chunk_total']) ? (int) $children['chunk_total'] : count( (array) ( $children['chunk_job_ids'] ?? array() ) ),
+			'batch_jobs' => isset( $children['batch_total'] ) ? (int) $children['batch_total'] : count( (array) ( $children['batch_job_ids'] ?? array() ) ),
+			'chunk_jobs' => isset( $children['chunk_total'] ) ? (int) $children['chunk_total'] : count( (array) ( $children['chunk_job_ids'] ?? array() ) ),
 		);
 	}
 
@@ -2151,38 +2423,40 @@ class WorkspaceCommand extends BaseCommand {
 	private function cleanup_operator_blocked_examples( array $result ): array {
 		$examples = array();
 		foreach ( (array) ( $result['remaining_work_summary']['skipped_by_reason'] ?? array() ) as $reason => $bucket ) {
-			foreach ( (array) ( is_array($bucket) ? ( $bucket['examples'] ?? array() ) : array() ) as $row ) {
-				if ( is_array($row) ) {
-					$examples[] = $this->cleanup_operator_example_row($row, (string) $reason);
+			foreach ( (array) ( is_array( $bucket ) ? ( $bucket['examples'] ?? array() ) : array() ) as $row ) {
+				if ( is_array( $row ) ) {
+					$examples[] = $this->cleanup_operator_example_row( $row, (string) $reason );
 				}
 			}
 		}
 
 		foreach ( (array) ( $result['evidence']['child_jobs'] ?? array() ) as $job ) {
-			$engine_data = (array) ( is_array($job) ? ( $job['engine_data'] ?? array() ) : array() );
+			$engine_data = (array) ( is_array( $job ) ? ( $job['engine_data'] ?? array() ) : array() );
 			foreach ( array( 'skipped', 'failed' ) as $bucket ) {
 				foreach ( (array) ( $engine_data[ $bucket ] ?? array() ) as $row ) {
-					if ( is_array($row) ) {
-						$examples[] = $this->cleanup_operator_example_row($row, (string) ( $row['reason_code'] ?? $bucket ));
+					if ( is_array( $row ) ) {
+						$examples[] = $this->cleanup_operator_example_row( $row, (string) ( $row['reason_code'] ?? $bucket ) );
 					}
 				}
 			}
 		}
 
-		usort($examples, fn( $a, $b ) => (int) ( $b['size_bytes'] ?? 0 ) <=> (int) ( $a['size_bytes'] ?? 0 ));
+		usort( $examples, fn( $a, $b ) => (int) ( $b['size_bytes'] ?? 0 ) <=> (int) ( $a['size_bytes'] ?? 0 ) );
 		$seen    = array();
-		$deduped = array_values(array_filter(
-			$examples,
-			function ( array $row ) use ( &$seen ): bool {
-				$key = (string) ( $row['handle'] ?? '' ) . '|' . (string) ( $row['reason'] ?? '' ) . '|' . (string) ( $row['path'] ?? '' );
-				if ( isset($seen[ $key ]) ) {
-					return false;
+		$deduped = array_values(
+			array_filter(
+				$examples,
+				function ( array $row ) use ( &$seen ): bool {
+					$key = (string) ( $row['handle'] ?? '' ) . '|' . (string) ( $row['reason'] ?? '' ) . '|' . (string) ( $row['path'] ?? '' );
+					if ( isset( $seen[ $key ] ) ) {
+						return false;
+					}
+					$seen[ $key ] = true;
+					return true;
 				}
-				$seen[ $key ] = true;
-				return true;
-			}
-		));
-		return array_slice($deduped, 0, 10);
+			)
+		);
+		return array_slice( $deduped, 0, 10 );
 	}
 
 	/**
@@ -2195,7 +2469,7 @@ class WorkspaceCommand extends BaseCommand {
 	private function cleanup_operator_example_row( array $row, string $reason ): array {
 		$artifact_path = (string) ( $row['artifact_path'] ?? '' );
 		$artifacts     = (array) ( $row['artifacts'] ?? array() );
-		if ( '' === $artifact_path && isset($artifacts[0]) && is_array($artifacts[0]) ) {
+		if ( '' === $artifact_path && isset( $artifacts[0] ) && is_array( $artifacts[0] ) ) {
 			$artifact_path = (string) ( $artifacts[0]['path'] ?? '' );
 		}
 
@@ -2205,8 +2479,8 @@ class WorkspaceCommand extends BaseCommand {
 				'reason'        => (string) ( $row['reason_code'] ?? $row['reason'] ?? $reason ),
 				'path'          => (string) ( $row['path'] ?? '' ),
 				'artifact_path' => $artifact_path,
-				'size_bytes'    => $this->cleanup_operator_row_bytes($row),
-				'size'          => $this->format_bytes($this->cleanup_operator_row_bytes($row)),
+				'size_bytes'    => $this->cleanup_operator_row_bytes( $row ),
+				'size'          => $this->format_bytes( $this->cleanup_operator_row_bytes( $row ) ),
 			),
 			fn( $value ) => '' !== $value && 0 !== $value
 		);
@@ -2220,13 +2494,13 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function cleanup_operator_row_bytes( array $row ): int {
 		foreach ( array( 'artifact_size_bytes', 'size_bytes', 'bytes_reclaimed' ) as $field ) {
-			if ( isset($row[ $field ]) ) {
-				return max(0, (int) $row[ $field ]);
+			if ( isset( $row[ $field ] ) ) {
+				return max( 0, (int) $row[ $field ] );
 			}
 		}
 		$total = 0;
 		foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
-			$total += max(0, (int) ( is_array($artifact) ? ( $artifact['size_bytes'] ?? 0 ) : 0 ));
+			$total += max( 0, (int) ( is_array( $artifact ) ? ( $artifact['size_bytes'] ?? 0 ) : 0 ) );
 		}
 		return $total;
 	}
@@ -2238,10 +2512,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array<string,mixed>
 	 */
 	private function attach_current_workspace_lock_status( array $result ): array {
-		if ( ! isset($result['locks']) && class_exists(Workspace::class) && class_exists(WorkspaceMutationLock::class) ) {
+		if ( ! isset( $result['locks'] ) && class_exists( Workspace::class ) && class_exists( WorkspaceMutationLock::class ) ) {
 			try {
 				$workspace       = new Workspace();
-				$result['locks'] = WorkspaceMutationLock::status($workspace->get_path());
+				$result['locks'] = WorkspaceMutationLock::status( $workspace->get_path() );
 			} catch ( \Throwable $e ) {
 				$result['locks'] = array(
 					'error' => $e->getMessage(),
@@ -2249,7 +2523,7 @@ class WorkspaceCommand extends BaseCommand {
 			}
 		}
 
-		return $this->attach_stale_lock_recommendation($result);
+		return $this->attach_stale_lock_recommendation( $result );
 	}
 
 	/**
@@ -2260,14 +2534,14 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function attach_stale_lock_recommendation( array $result ): array {
 		$report = $result['locks']['stale_locks'] ?? null;
-		if ( ! is_array($report) || (int) ( $report['count'] ?? 0 ) <= 0 ) {
+		if ( ! is_array( $report ) || (int) ( $report['count'] ?? 0 ) <= 0 ) {
 			return $result;
 		}
 
 		$protected = 0;
 		foreach ( array( 'database', 'filesystem' ) as $source ) {
 			foreach ( (array) ( $report[ $source ] ?? array() ) as $row ) {
-				if ( is_array($row) && empty($row['safe_to_prune']) ) {
+				if ( is_array( $row ) && empty( $row['safe_to_prune'] ) ) {
 					++$protected;
 				}
 			}
@@ -2295,17 +2569,17 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_cleanup_remaining_work_summary( array $summary ): void {
-		WP_CLI::log('');
-		WP_CLI::log('Remaining work summary:');
+		WP_CLI::log( '' );
+		WP_CLI::log( 'Remaining work summary:' );
 		$this->format_items(
 			array(
 				array(
 					'metric' => 'total_bytes_reclaimed',
-					'value'  => $this->format_bytes($summary['total_bytes_reclaimed'] ?? 0),
+					'value'  => $this->format_bytes( $summary['total_bytes_reclaimed'] ?? 0 ),
 				),
 				array(
 					'metric' => 'remaining_reclaimable_artifact_bytes',
-					'value'  => $this->format_bytes($summary['remaining_reclaimable_artifact_bytes'] ?? 0),
+					'value'  => $this->format_bytes( $summary['remaining_reclaimable_artifact_bytes'] ?? 0 ),
 				),
 				array(
 					'metric' => 'remaining_safe_candidates',
@@ -2321,24 +2595,24 @@ class WorkspaceCommand extends BaseCommand {
 			'metric'
 		);
 
-		$this->render_cleanup_summary_type_rows('Applied rows by type:', (array) ( $summary['applied_by_type'] ?? array() ));
-		$this->render_cleanup_summary_reason_rows('Skipped rows by reason:', (array) ( $summary['skipped_by_reason'] ?? array() ));
-		$this->render_cleanup_summary_reason_rows('Blocked resolver rows by reason:', (array) ( $summary['blocked_resolvers_by_reason'] ?? array() ));
+		$this->render_cleanup_summary_type_rows( 'Applied rows by type:', (array) ( $summary['applied_by_type'] ?? array() ) );
+		$this->render_cleanup_summary_reason_rows( 'Skipped rows by reason:', (array) ( $summary['skipped_by_reason'] ?? array() ) );
+		$this->render_cleanup_summary_reason_rows( 'Blocked resolver rows by reason:', (array) ( $summary['blocked_resolvers_by_reason'] ?? array() ) );
 
 		$commands = (array) ( $summary['recommended_commands'] ?? array() );
 		if ( array() !== $commands ) {
-			WP_CLI::log('');
-			WP_CLI::log('Recommended next commands:');
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Recommended next commands:' );
 			$rows = array_map(
 				fn( $row ) => array(
-					'bucket'            => is_array($row) ? (string) ( $row['bucket'] ?? '' ) : '',
-					'review_command'    => is_array($row) ? (string) ( $row['command'] ?? '' ) : '',
-					'apply_command'     => is_array($row) ? (string) ( $row['apply'] ?? '' ) : '',
-					'apply_destructive' => is_array($row) && ! empty($row['apply_destructive']) ? 'yes' : 'no',
+					'bucket'            => is_array( $row ) ? (string) ( $row['bucket'] ?? '' ) : '',
+					'review_command'    => is_array( $row ) ? (string) ( $row['command'] ?? '' ) : '',
+					'apply_command'     => is_array( $row ) ? (string) ( $row['apply'] ?? '' ) : '',
+					'apply_destructive' => is_array( $row ) && ! empty( $row['apply_destructive'] ) ? 'yes' : 'no',
 				),
-				array_slice($commands, 0, 10)
+				array_slice( $commands, 0, 10 )
 			);
-			$this->format_items($rows, array( 'bucket', 'review_command', 'apply_command', 'apply_destructive' ), array( 'format' => 'table' ), 'bucket');
+			$this->format_items( $rows, array( 'bucket', 'review_command', 'apply_command', 'apply_destructive' ), array( 'format' => 'table' ), 'bucket' );
 		}
 	}
 
@@ -2349,8 +2623,8 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_cleanup_command_hints( array $commands ): void {
-		WP_CLI::log('');
-		WP_CLI::log('Cleanup commands:');
+		WP_CLI::log( '' );
+		WP_CLI::log( 'Cleanup commands:' );
 		$rows = array();
 		foreach ( $commands as $purpose => $command ) {
 			$rows[] = array(
@@ -2358,7 +2632,7 @@ class WorkspaceCommand extends BaseCommand {
 				'command' => (string) $command,
 			);
 		}
-		$this->format_items($rows, array( 'purpose', 'command' ), array( 'format' => 'table' ), 'purpose');
+		$this->format_items( $rows, array( 'purpose', 'command' ), array( 'format' => 'table' ), 'purpose' );
 	}
 
 	/**
@@ -2368,13 +2642,13 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_cleanup_drain_summary( array $drain ): void {
-		WP_CLI::log('');
-		WP_CLI::log('Drain summary:');
+		WP_CLI::log( '' );
+		WP_CLI::log( 'Drain summary:' );
 		$this->format_items(
 			array(
 				array(
 					'metric' => 'success',
-					'value'  => ! empty($drain['success']) ? 'yes' : 'no',
+					'value'  => ! empty( $drain['success'] ) ? 'yes' : 'no',
 				),
 				array(
 					'metric' => 'completion_state',
@@ -2382,7 +2656,7 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array(
 					'metric' => 'bytes_reclaimed',
-					'value'  => $this->format_bytes($drain['bytes_reclaimed'] ?? 0),
+					'value'  => $this->format_bytes( $drain['bytes_reclaimed'] ?? 0 ),
 				),
 				array(
 					'metric' => 'verify_command',
@@ -2396,8 +2670,8 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	private function render_cleanup_progress_summary( array $progress ): void {
-		WP_CLI::log('');
-		WP_CLI::log('Progress:');
+		WP_CLI::log( '' );
+		WP_CLI::log( 'Progress:' );
 		$this->format_items(
 			array(
 				array(
@@ -2410,15 +2684,15 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array(
 					'metric' => 'resumable',
-					'value'  => ! empty($progress['resumable']) ? 'yes' : 'no',
+					'value'  => ! empty( $progress['resumable'] ) ? 'yes' : 'no',
 				),
 			),
 			array( 'metric', 'value' ),
 			array( 'format' => 'table' ),
 			'metric'
 		);
-		if ( ! empty($progress['note']) ) {
-			WP_CLI::log( (string) $progress['note']);
+		if ( ! empty( $progress['note'] ) ) {
+			WP_CLI::log( (string) $progress['note'] );
 		}
 	}
 
@@ -2426,71 +2700,71 @@ class WorkspaceCommand extends BaseCommand {
 		if ( array() === $types ) {
 			return;
 		}
-		WP_CLI::log('');
-		WP_CLI::log($label);
+		WP_CLI::log( '' );
+		WP_CLI::log( $label );
 		$rows = array();
 		foreach ( $types as $type => $bucket ) {
 			$bucket = (array) $bucket;
 			$rows[] = array(
 				'type'            => (string) $type,
 				'count'           => (int) ( $bucket['count'] ?? 0 ),
-				'bytes_reclaimed' => $this->format_bytes($bucket['bytes_reclaimed'] ?? 0),
+				'bytes_reclaimed' => $this->format_bytes( $bucket['bytes_reclaimed'] ?? 0 ),
 			);
 		}
-		$this->format_items($rows, array( 'type', 'count', 'bytes_reclaimed' ), array( 'format' => 'table' ), 'type');
+		$this->format_items( $rows, array( 'type', 'count', 'bytes_reclaimed' ), array( 'format' => 'table' ), 'type' );
 	}
 
 	private function render_cleanup_summary_reason_rows( string $label, array $reasons ): void {
 		if ( array() === $reasons ) {
 			return;
 		}
-		WP_CLI::log('');
-		WP_CLI::log($label);
+		WP_CLI::log( '' );
+		WP_CLI::log( $label );
 		$rows = array();
 		foreach ( $reasons as $reason => $bucket ) {
 			$bucket   = (array) $bucket;
-			$examples = array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : (string) $row, (array) ( $bucket['examples'] ?? array() ));
+			$examples = array_map( fn( $row ) => is_array( $row ) ? (string) ( $row['handle'] ?? '' ) : (string) $row, (array) ( $bucket['examples'] ?? array() ) );
 			$rows[]   = array(
 				'reason'   => (string) $reason,
 				'count'    => (int) ( $bucket['count'] ?? 0 ),
-				'examples' => implode(', ', array_filter($examples)),
+				'examples' => implode( ', ', array_filter( $examples ) ),
 			);
 		}
-		$this->format_items($rows, array( 'reason', 'count', 'examples' ), array( 'format' => 'table' ), 'reason');
+		$this->format_items( $rows, array( 'reason', 'count', 'examples' ), array( 'format' => 'table' ), 'reason' );
 	}
 
 	private function render_cleanup_plan_result( array $result, array $assoc_args ): void {
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( 'json' === $format ) {
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
 
 		$summary = (array) ( $result['summary'] ?? array() );
-		WP_CLI::success(sprintf('Cleanup plan stored as %s.', (string) ( $result['run_id'] ?? '' )));
-		WP_CLI::log(sprintf('Run ID: %s', (string) ( $result['run_id'] ?? '' )));
-		WP_CLI::log(sprintf('Plan ID: %s', (string) ( $result['plan_id'] ?? '' )));
-		WP_CLI::log(sprintf('Rows:   %d', (int) ( $summary['total_rows'] ?? 0 )));
-		WP_CLI::log(sprintf('Gross candidates: %s', $this->format_bytes($summary['gross_candidate_bytes'] ?? $summary['total_size_bytes'] ?? 0)));
-		WP_CLI::log(sprintf('Actionable reclaim: %s', $this->format_bytes($summary['actionable_reclaim_bytes'] ?? $summary['total_reclaimable_bytes'] ?? 0)));
+		WP_CLI::success( sprintf( 'Cleanup plan stored as %s.', (string) ( $result['run_id'] ?? '' ) ) );
+		WP_CLI::log( sprintf( 'Run ID: %s', (string) ( $result['run_id'] ?? '' ) ) );
+		WP_CLI::log( sprintf( 'Plan ID: %s', (string) ( $result['plan_id'] ?? '' ) ) );
+		WP_CLI::log( sprintf( 'Rows:   %d', (int) ( $summary['total_rows'] ?? 0 ) ) );
+		WP_CLI::log( sprintf( 'Gross candidates: %s', $this->format_bytes( $summary['gross_candidate_bytes'] ?? $summary['total_size_bytes'] ?? 0 ) ) );
+		WP_CLI::log( sprintf( 'Actionable reclaim: %s', $this->format_bytes( $summary['actionable_reclaim_bytes'] ?? $summary['total_reclaimable_bytes'] ?? 0 ) ) );
 		$byte_totals = (array) ( $summary['byte_totals'] ?? array() );
 		if ( array() !== $byte_totals ) {
 			foreach ( $byte_totals as $type => $bytes ) {
-				WP_CLI::log(sprintf('  %s: %s', (string) $type, $this->format_bytes($bytes)));
+				WP_CLI::log( sprintf( '  %s: %s', (string) $type, $this->format_bytes( $bytes ) ) );
 			}
 		}
-		WP_CLI::log(sprintf('Apply:  wp datamachine-code workspace cleanup apply %s', (string) ( $result['run_id'] ?? '' )));
+		WP_CLI::log( sprintf( 'Apply:  wp datamachine-code workspace cleanup apply %s', (string) ( $result['run_id'] ?? '' ) ) );
 		$blocked = (array) ( $summary['blocked_by_type'] ?? array() );
-		if ( array_sum(array_map('intval', $blocked)) > 0 ) {
-			WP_CLI::log('Blocked/kept rows are included in JSON under `blocked` with reason_code/reason; they are not applyable cleanup rows.');
+		if ( array_sum( array_map( 'intval', $blocked ) ) > 0 ) {
+			WP_CLI::log( 'Blocked/kept rows are included in JSON under `blocked` with reason_code/reason; they are not applyable cleanup rows.' );
 		}
 		$this->render_cleanup_plan_category_totals( (array) ( $summary['category_totals'] ?? array() ) );
 		$this->render_cleanup_plan_top_reclaimable( (array) ( $summary['top_reclaimable'] ?? array() ) );
 		$this->render_cleanup_plan_blockers( (array) ( $summary['blockers'] ?? array() ) );
 		$this->render_cleanup_plan_recommended_commands( (array) ( $summary['recommended_commands'] ?? array() ), (string) ( $result['run_id'] ?? '' ) );
 		$inputs = (array) ( $result['inputs'] ?? array() );
-		if ( empty($inputs['include_artifacts']) ) {
-			WP_CLI::log('Artifacts: skipped for bounded retention planning; run `wp datamachine-code workspace cleanup plan --mode=artifacts` when you want artifact rows.');
+		if ( empty( $inputs['include_artifacts'] ) ) {
+			WP_CLI::log( 'Artifacts: skipped for bounded retention planning; run `wp datamachine-code workspace cleanup plan --mode=artifacts` when you want artifact rows.' );
 		}
 	}
 
@@ -2504,8 +2778,8 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		WP_CLI::log('');
-		WP_CLI::log('Reclaimable space by category:');
+		WP_CLI::log( '' );
+		WP_CLI::log( 'Reclaimable space by category:' );
 		$labels = array(
 			'whole_worktrees'      => 'whole worktrees',
 			'dependency_artifacts' => 'dependency artifacts',
@@ -2516,10 +2790,10 @@ class WorkspaceCommand extends BaseCommand {
 		foreach ( $labels as $category => $label ) {
 			$rows[] = array(
 				'category' => $label,
-				'bytes'    => $this->format_bytes($totals[ $category ] ?? 0),
+				'bytes'    => $this->format_bytes( $totals[ $category ] ?? 0 ),
 			);
 		}
-		$this->format_items($rows, array( 'category', 'bytes' ), array( 'format' => 'table' ), 'category');
+		$this->format_items( $rows, array( 'category', 'bytes' ), array( 'format' => 'table' ), 'category' );
 	}
 
 	/**
@@ -2532,11 +2806,11 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		WP_CLI::log('');
-		WP_CLI::log('Top reclaimable paths:');
+		WP_CLI::log( '' );
+		WP_CLI::log( 'Top reclaimable paths:' );
 		$rows = array_map(
 			fn( $row ) => array(
-				'size'     => $this->format_bytes($row['size_bytes'] ?? 0),
+				'size'     => $this->format_bytes( $row['size_bytes'] ?? 0 ),
 				'category' => (string) ( $row['category'] ?? '' ),
 				'risk'     => (string) ( $row['safety_class'] ?? '' ),
 				'handle'   => (string) ( $row['handle'] ?? '' ),
@@ -2544,7 +2818,7 @@ class WorkspaceCommand extends BaseCommand {
 			),
 			$paths
 		);
-		$this->format_items($rows, array( 'size', 'category', 'risk', 'handle', 'path' ), array( 'format' => 'table' ), 'size');
+		$this->format_items( $rows, array( 'size', 'category', 'risk', 'handle', 'path' ), array( 'format' => 'table' ), 'size' );
 	}
 
 	/**
@@ -2557,25 +2831,25 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		WP_CLI::log('');
-		WP_CLI::log('Blockers by reason and repo:');
+		WP_CLI::log( '' );
+		WP_CLI::log( 'Blockers by reason and repo:' );
 		$rows = array();
 		foreach ( $blockers as $reason => $bucket ) {
 			$bucket = (array) $bucket;
 			$repos  = array();
 			foreach ( (array) ( $bucket['repos'] ?? array() ) as $repo => $repo_bucket ) {
 				$repo_bucket = (array) $repo_bucket;
-				$repos[]     = sprintf('%s=%d', (string) $repo, (int) ( $repo_bucket['count'] ?? 0 ));
+				$repos[]     = sprintf( '%s=%d', (string) $repo, (int) ( $repo_bucket['count'] ?? 0 ) );
 			}
 			$rows[] = array(
 				'reason'   => (string) $reason,
 				'count'    => (int) ( $bucket['count'] ?? 0 ),
-				'bytes'    => $this->format_cleanup_size_accounting($bucket),
-				'repos'    => implode(', ', array_slice($repos, 0, 5)),
-				'examples' => implode(', ', array_slice(array_map(fn( $row ) => $this->format_cleanup_blocker_example($row), (array) ( $bucket['examples'] ?? array() )), 0, 5)),
+				'bytes'    => $this->format_cleanup_size_accounting( $bucket ),
+				'repos'    => implode( ', ', array_slice( $repos, 0, 5 ) ),
+				'examples' => implode( ', ', array_slice( array_map( fn( $row ) => $this->format_cleanup_blocker_example( $row ), (array) ( $bucket['examples'] ?? array() ) ), 0, 5 ) ),
 			);
 		}
-		$this->format_items($rows, array( 'reason', 'count', 'bytes', 'repos', 'examples' ), array( 'format' => 'table' ), 'reason');
+		$this->format_items( $rows, array( 'reason', 'count', 'bytes', 'repos', 'examples' ), array( 'format' => 'table' ), 'reason' );
 	}
 
 	/**
@@ -2590,23 +2864,23 @@ class WorkspaceCommand extends BaseCommand {
 		$known_zero = (int) ( $accounting['known_zero_count'] ?? 0 );
 		$skipped    = (int) ( $accounting['skipped_count'] ?? 0 );
 		$unknown    = (int) ( $accounting['unknown_count'] ?? 0 );
-		$bytes      = array_key_exists('known_bytes', $accounting) ? (int) $accounting['known_bytes'] : (int) ( $bucket['size_bytes'] ?? 0 );
+		$bytes      = array_key_exists( 'known_bytes', $accounting ) ? (int) $accounting['known_bytes'] : (int) ( $bucket['size_bytes'] ?? 0 );
 
 		$parts = array();
 		if ( $known > 0 ) {
-			$parts[] = sprintf('%s known', $this->format_bytes($bytes));
+			$parts[] = sprintf( '%s known', $this->format_bytes( $bytes ) );
 		}
 		if ( $known_zero > 0 ) {
-			$parts[] = sprintf('%d true zero', $known_zero);
+			$parts[] = sprintf( '%d true zero', $known_zero );
 		}
 		if ( $skipped > 0 ) {
-			$parts[] = sprintf('%d skipped', $skipped);
+			$parts[] = sprintf( '%d skipped', $skipped );
 		}
 		if ( $unknown > 0 ) {
-			$parts[] = sprintf('%d unknown', $unknown);
+			$parts[] = sprintf( '%d unknown', $unknown );
 		}
 
-		return array() === $parts ? $this->format_bytes($bucket['size_bytes'] ?? null) : implode('; ', $parts);
+		return array() === $parts ? $this->format_bytes( $bucket['size_bytes'] ?? null ) : implode( '; ', $parts );
 	}
 
 	/**
@@ -2616,13 +2890,13 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return string
 	 */
 	private function format_cleanup_blocker_example( mixed $row ): string {
-		if ( ! is_array($row) ) {
+		if ( ! is_array( $row ) ) {
 			return (string) $row;
 		}
 
 		$handle = (string) ( $row['handle'] ?? $row['path'] ?? '' );
 		$status = (string) ( $row['size_status'] ?? '' );
-		return '' === $status ? $handle : sprintf('%s (%s)', $handle, $status);
+		return '' === $status ? $handle : sprintf( '%s (%s)', $handle, $status );
 	}
 
 	/**
@@ -2636,14 +2910,14 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		WP_CLI::log('');
-		WP_CLI::log('Recommended commands:');
+		WP_CLI::log( '' );
+		WP_CLI::log( 'Recommended commands:' );
 		$rows = array_map(
 			function ( $row ) use ( $run_id ): array {
 				$row     = (array) $row;
 				$command = (string) ( $row['command'] ?? '' );
 				if ( '' !== $run_id ) {
-					$command = str_replace('<run-id>', $run_id, $command);
+					$command = str_replace( '<run-id>', $run_id, $command );
 				}
 				return array(
 					'label'   => (string) ( $row['label'] ?? '' ),
@@ -2653,7 +2927,7 @@ class WorkspaceCommand extends BaseCommand {
 			},
 			$commands
 		);
-		$this->format_items($rows, array( 'label', 'risk', 'command' ), array( 'format' => 'table' ), 'label');
+		$this->format_items( $rows, array( 'label', 'risk', 'command' ), array( 'format' => 'table' ), 'label' );
 	}
 
 	private function cleanup_run_id( int $job_id ): string {
@@ -2661,18 +2935,18 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	private function cleanup_run_job_id( string $run_id ): int {
-		$run_id = trim($run_id);
-		if ( is_numeric($run_id) ) {
+		$run_id = trim( $run_id );
+		if ( is_numeric( $run_id ) ) {
 			return (int) $run_id;
 		}
-		if ( preg_match('/^cleanup-run-(\d+)$/', $run_id, $matches) ) {
+		if ( preg_match( '/^cleanup-run-(\d+)$/', $run_id, $matches ) ) {
 			return (int) $matches[1];
 		}
 		return 0;
 	}
 
 	private function is_job_cleanup_run_id( string $run_id ): bool {
-		return $this->cleanup_run_job_id($run_id) > 0;
+		return $this->cleanup_run_job_id( $run_id ) > 0;
 	}
 
 	/**
@@ -2697,34 +2971,34 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand remove
 	 */
 	public function remove_repo( array $args, array $assoc_args ): void {
-		if ( empty($args[0]) ) {
-			WP_CLI::error('Repository name is required.');
+		if ( empty( $args[0] ) ) {
+			WP_CLI::error( 'Repository name is required.' );
 			return;
 		}
 
 		$name = $args[0];
 
 		// Confirm unless --yes is passed. This stays in CLI — abilities don't prompt.
-		if ( empty($assoc_args['yes']) ) {
+		if ( empty( $assoc_args['yes'] ) ) {
 			$workspace = new Workspace();
-			$repo_path = $workspace->get_repo_path($name);
-			WP_CLI::confirm(sprintf('Remove "%s" from workspace? This deletes %s', $name, $repo_path));
+			$repo_path = $workspace->get_repo_path( $name );
+			WP_CLI::confirm( sprintf( 'Remove "%s" from workspace? This deletes %s', $name, $repo_path ) );
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-remove');
+		$ability = wp_get_ability( 'datamachine-code/workspace-remove' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace remove ability not available.');
+			WP_CLI::error( 'Workspace remove ability not available.' );
 			return;
 		}
 
-		$result = $ability->execute(array( 'name' => $name ));
+		$result = $ability->execute( array( 'name' => $name ) );
 
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
-		WP_CLI::success($result['message']);
+		WP_CLI::success( $result['message'] );
 	}
 
 	/**
@@ -2779,35 +3053,35 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand hygiene
 	 */
 	public function hygiene( array $args, array $assoc_args ): void {   // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
-		$ability = wp_get_ability('datamachine-code/workspace-hygiene-report');
+		$ability = wp_get_ability( 'datamachine-code/workspace-hygiene-report' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace hygiene ability not available.');
+			WP_CLI::error( 'Workspace hygiene ability not available.' );
 			return;
 		}
 
 		$input = array(
-			'include_cleanup'         => empty($assoc_args['skip-cleanup']),
-			'include_sizes'           => ! empty($assoc_args['include-sizes']),
-			'include_worktree_status' => ! empty($assoc_args['include-worktree-status']),
-			'refresh_inventory'       => ! empty($assoc_args['refresh-inventory']),
+			'include_cleanup'         => empty( $assoc_args['skip-cleanup'] ),
+			'include_sizes'           => ! empty( $assoc_args['include-sizes'] ),
+			'include_worktree_status' => ! empty( $assoc_args['include-worktree-status'] ),
+			'refresh_inventory'       => ! empty( $assoc_args['refresh-inventory'] ),
 		);
-		if ( isset($assoc_args['size-limit']) ) {
+		if ( isset( $assoc_args['size-limit'] ) ) {
 			$input['size_limit'] = (int) $assoc_args['size-limit'];
 		}
-		if ( isset($assoc_args['size-entry-timeout']) ) {
+		if ( isset( $assoc_args['size-entry-timeout'] ) ) {
 			$input['size_entry_timeout'] = (int) $assoc_args['size-entry-timeout'];
 		}
-		if ( isset($assoc_args['size-total-timeout']) ) {
+		if ( isset( $assoc_args['size-total-timeout'] ) ) {
 			$input['size_total_timeout'] = (int) $assoc_args['size-total-timeout'];
 		}
 
-		$result = $ability->execute($input);
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		$result = $ability->execute( $input );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
-		$this->render_workspace_hygiene_report($result, $assoc_args);
+		$this->render_workspace_hygiene_report( $result, $assoc_args );
 	}
 
 	/**
@@ -2869,7 +3143,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		WP_CLI::error('Usage: wp datamachine-code workspace inventory <refresh|prune-missing> [--format=<format>]');
+		WP_CLI::error( 'Usage: wp datamachine-code workspace inventory <refresh|prune-missing> [--format=<format>]' );
 	}
 
 	/**
@@ -2878,25 +3152,25 @@ class WorkspaceCommand extends BaseCommand {
 	 * @param array<string,mixed> $assoc_args Associative args.
 	 */
 	private function inventory_refresh( array $assoc_args ): void {
-		$ability = wp_get_ability('datamachine-code/workspace-worktree-inventory-refresh');
+		$ability = wp_get_ability( 'datamachine-code/workspace-worktree-inventory-refresh' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace inventory refresh ability not available.');
+			WP_CLI::error( 'Workspace inventory refresh ability not available.' );
 			return;
 		}
 
-		$result = $ability->execute(array());
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		$result = $ability->execute( array() );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
 		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
 
 		$summary = (array) ( $result['summary'] ?? array() );
-		WP_CLI::success(sprintf('Inventory refreshed: %d upserted, %d marked missing.', (int) ( $summary['upserted'] ?? 0 ), (int) ( $summary['marked_missing'] ?? 0 )));
+		WP_CLI::success( sprintf( 'Inventory refreshed: %d upserted, %d marked missing.', (int) ( $summary['upserted'] ?? 0 ), (int) ( $summary['marked_missing'] ?? 0 ) ) );
 	}
 
 	/**
@@ -2905,33 +3179,33 @@ class WorkspaceCommand extends BaseCommand {
 	 * @param array<string,mixed> $assoc_args Associative args.
 	 */
 	private function inventory_prune_missing( array $assoc_args ): void {
-		$dry_run = ! empty($assoc_args['dry-run']);
-		$force   = ! empty($assoc_args['force']);
+		$dry_run = ! empty( $assoc_args['dry-run'] );
+		$force   = ! empty( $assoc_args['force'] );
 		$opts    = array(
 			'dry_run' => $dry_run,
 			'force'   => $force,
 		);
-		if ( isset($assoc_args['limit']) ) {
+		if ( isset( $assoc_args['limit'] ) ) {
 			$opts['limit'] = (int) $assoc_args['limit'];
 		}
-		if ( isset($assoc_args['after-handle']) ) {
+		if ( isset( $assoc_args['after-handle'] ) ) {
 			$opts['after_handle'] = (string) $assoc_args['after-handle'];
 		}
-		if ( isset($assoc_args['until-budget']) ) {
+		if ( isset( $assoc_args['until-budget'] ) ) {
 			$opts['until_budget'] = (string) $assoc_args['until-budget'];
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-worktree-inventory-prune-missing');
+		$ability = wp_get_ability( 'datamachine-code/workspace-worktree-inventory-prune-missing' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace inventory prune-missing ability not available.');
+			WP_CLI::error( 'Workspace inventory prune-missing ability not available.' );
 			return;
 		}
 
 		// A dry-run preview never mutates, so it does not need confirmation.
-		if ( ! $dry_run && empty($assoc_args['yes']) ) {
-			$preview = $ability->execute(array_merge($opts, array( 'dry_run' => true )));
-			if ( is_wp_error($preview) ) {
-				WP_CLI::error($preview->get_error_message());
+		if ( ! $dry_run && empty( $assoc_args['yes'] ) ) {
+			$preview = $ability->execute( array_merge( $opts, array( 'dry_run' => true ) ) );
+			if ( is_wp_error( $preview ) ) {
+				WP_CLI::error( $preview->get_error_message() );
 				return;
 			}
 
@@ -2939,29 +3213,29 @@ class WorkspaceCommand extends BaseCommand {
 			$would_delete    = (int) ( $preview_summary['deleted'] ?? 0 );
 			$would_skip      = (int) ( $preview_summary['skipped'] ?? 0 );
 			if ( 0 === $would_delete ) {
-				WP_CLI::success(sprintf('Nothing to prune: 0 rows would be deleted, %d skipped.', $would_skip));
+				WP_CLI::success( sprintf( 'Nothing to prune: 0 rows would be deleted, %d skipped.', $would_skip ) );
 				return;
 			}
 
-			WP_CLI::confirm(sprintf('Prune %d missing_path inventory row(s) (%d skipped)? Pass --yes to skip this prompt.', $would_delete, $would_skip));
+			WP_CLI::confirm( sprintf( 'Prune %d missing_path inventory row(s) (%d skipped)? Pass --yes to skip this prompt.', $would_delete, $would_skip ) );
 		}
 
-		$result = $ability->execute($opts);
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		$result = $ability->execute( $opts );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
 		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
 
 		$summary = (array) ( $result['summary'] ?? array() );
 		if ( $dry_run ) {
-			WP_CLI::success(sprintf('Inventory prune (dry-run): %d would be deleted, %d skipped.', (int) ( $summary['deleted'] ?? 0 ), (int) ( $summary['skipped'] ?? 0 )));
+			WP_CLI::success( sprintf( 'Inventory prune (dry-run): %d would be deleted, %d skipped.', (int) ( $summary['deleted'] ?? 0 ), (int) ( $summary['skipped'] ?? 0 ) ) );
 		} else {
-			WP_CLI::success(sprintf('Inventory pruned: %d deleted, %d skipped.', (int) ( $summary['deleted'] ?? 0 ), (int) ( $summary['skipped'] ?? 0 )));
+			WP_CLI::success( sprintf( 'Inventory pruned: %d deleted, %d skipped.', (int) ( $summary['deleted'] ?? 0 ), (int) ( $summary['skipped'] ?? 0 ) ) );
 		}
 	}
 
@@ -2981,46 +3255,46 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand show
 	 */
 	public function show( array $args, array $assoc_args ): void {
-		if ( empty($args[0]) ) {
-			WP_CLI::error('Repository name is required.');
+		if ( empty( $args[0] ) ) {
+			WP_CLI::error( 'Repository name is required.' );
 			return;
 		}
 
 		// This targeted read is also the lightweight startup path used before the
 		// Abilities API runtime has been bootstrapped.
-		$result = WorkspaceAbilities::showRepo(array( 'name' => $args[0] ));
+		$result = WorkspaceAbilities::showRepo( array( 'name' => $args[0] ) );
 
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
-		WP_CLI::log(sprintf('Name:     %s', $result['name']));
-		WP_CLI::log(sprintf('Path:     %s', $result['path']));
-		WP_CLI::log(sprintf('Branch:   %s', $result['branch'] ?? '-'));
-		WP_CLI::log(sprintf('Remote:   %s', $result['remote'] ?? '-'));
-		WP_CLI::log(sprintf('Latest:   %s', $result['commit'] ?? '-'));
-		if ( is_array($result['workspace_capacity'] ?? null) ) {
+		WP_CLI::log( sprintf( 'Name:     %s', $result['name'] ) );
+		WP_CLI::log( sprintf( 'Path:     %s', $result['path'] ) );
+		WP_CLI::log( sprintf( 'Branch:   %s', $result['branch'] ?? '-' ) );
+		WP_CLI::log( sprintf( 'Remote:   %s', $result['remote'] ?? '-' ) );
+		WP_CLI::log( sprintf( 'Latest:   %s', $result['commit'] ?? '-' ) );
+		if ( is_array( $result['workspace_capacity'] ?? null ) ) {
 			$capacity = $result['workspace_capacity'];
-			WP_CLI::log(\DataMachineCode\Workspace\WorktreeDiskBudget::format_summary($capacity));
-			foreach ( \DataMachineCode\Workspace\WorktreeDiskBudget::format_trigger_reasons($capacity) as $reason ) {
-				WP_CLI::warning($reason);
+			WP_CLI::log( \DataMachineCode\Workspace\WorktreeDiskBudget::format_summary( $capacity ) );
+			foreach ( \DataMachineCode\Workspace\WorktreeDiskBudget::format_trigger_reasons( $capacity ) as $reason ) {
+				WP_CLI::warning( $reason );
 			}
-			$this->render_workspace_capacity_recovery(Workspace::workspace_hygiene_recovery_suggestion($capacity));
+			$this->render_workspace_capacity_recovery( Workspace::workspace_hygiene_recovery_suggestion( $capacity ) );
 		}
-		if ( empty($result['is_worktree']) && is_array($result['primary_freshness'] ?? null) ) {
+		if ( empty( $result['is_worktree'] ) && is_array( $result['primary_freshness'] ?? null ) ) {
 			$freshness = $result['primary_freshness'];
-			WP_CLI::log(sprintf('Freshness: %s', (string) ( $freshness['status'] ?? 'unknown' )));
-			WP_CLI::log(sprintf('Upstream: %s', (string) ( $freshness['upstream'] ?? '-' )));
-			WP_CLI::log(sprintf('Behind:   %s', null === ( $freshness['behind'] ?? null ) ? '-' : (string) $freshness['behind']));
-			WP_CLI::log(sprintf('Ahead:    %s', null === ( $freshness['ahead'] ?? null ) ? '-' : (string) $freshness['ahead']));
-			if ( ! empty($freshness['suggested_command']) ) {
-				WP_CLI::log(sprintf('Refresh:  %s', (string) $freshness['suggested_command']));
+			WP_CLI::log( sprintf( 'Freshness: %s', (string) ( $freshness['status'] ?? 'unknown' ) ) );
+			WP_CLI::log( sprintf( 'Upstream: %s', (string) ( $freshness['upstream'] ?? '-' ) ) );
+			WP_CLI::log( sprintf( 'Behind:   %s', null === ( $freshness['behind'] ?? null ) ? '-' : (string) $freshness['behind'] ) );
+			WP_CLI::log( sprintf( 'Ahead:    %s', null === ( $freshness['ahead'] ?? null ) ? '-' : (string) $freshness['ahead'] ) );
+			if ( ! empty( $freshness['suggested_command'] ) ) {
+				WP_CLI::log( sprintf( 'Refresh:  %s', (string) $freshness['suggested_command'] ) );
 			}
 		}
 
 		$dirty = $result['dirty'] ?? 0;
-		WP_CLI::log(sprintf('Dirty:    %s', ( 0 === $dirty ) ? 'no' : "yes ({$dirty} files)"));
+		WP_CLI::log( sprintf( 'Dirty:    %s', ( 0 === $dirty ) ? 'no' : "yes ({$dirty} files)" ) );
 	}
 
 	/**
@@ -3035,12 +3309,12 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		WP_CLI::log('Recovery for the listed capacity warning(s) (all commands are non-destructive):');
+		WP_CLI::log( 'Recovery for the listed capacity warning(s) (all commands are non-destructive):' );
 		foreach ( $commands as $recovery_command ) {
-			WP_CLI::log(sprintf('%s: %s', (string) ( $recovery_command['label'] ?? '' ), (string) ( $recovery_command['command'] ?? '' )));
+			WP_CLI::log( sprintf( '%s: %s', (string) ( $recovery_command['label'] ?? '' ), (string) ( $recovery_command['command'] ?? '' ) ) );
 		}
-		if ( ! empty($recovery['detail_command']) ) {
-			WP_CLI::log(sprintf('More recovery detail (non-destructive): %s', (string) $recovery['detail_command']));
+		if ( ! empty( $recovery['detail_command'] ) ) {
+			WP_CLI::log( sprintf( 'More recovery detail (non-destructive): %s', (string) $recovery['detail_command'] ) );
 		}
 	}
 
@@ -3066,14 +3340,14 @@ class WorkspaceCommand extends BaseCommand {
 	 * default: 1048576
 	 * ---
 	 *
-		 * [--offset=<line>]
-		 * : Line number to start reading from (1-indexed).
-		 *
-		 * [--limit=<lines>]
-		 * : Maximum number of lines to return.
-		 *
-		 * [--allow-stale-primary]
-		 * : Explicitly read from a stale, diverged, detached, or otherwise unsafe primary checkout.
+	 * [--offset=<line>]
+	 * : Line number to start reading from (1-indexed).
+	 *
+	 * [--limit=<lines>]
+	 * : Maximum number of lines to return.
+	 *
+	 * [--allow-stale-primary]
+	 * : Explicitly read from a stale, diverged, detached, or otherwise unsafe primary checkout.
 	 *
 	 * ## EXAMPLES
 	 *
@@ -3089,14 +3363,14 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand read
 	 */
 	public function read( array $args, array $assoc_args ): void {
-		if ( empty($args[0]) || empty($args[1]) ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace read <repo> <path>');
+		if ( empty( $args[0] ) || empty( $args[1] ) ) {
+			WP_CLI::error( 'Usage: wp datamachine-code workspace read <repo> <path>' );
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-read');
+		$ability = wp_get_ability( 'datamachine-code/workspace-read' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace read ability not available.');
+			WP_CLI::error( 'Workspace read ability not available.' );
 			return;
 		}
 
@@ -3105,31 +3379,31 @@ class WorkspaceCommand extends BaseCommand {
 			'path' => $args[1],
 		);
 
-		if ( isset($assoc_args['max-size']) ) {
+		if ( isset( $assoc_args['max-size'] ) ) {
 			$input['max_size'] = (int) $assoc_args['max-size'];
 		}
 
-		if ( isset($assoc_args['offset']) ) {
+		if ( isset( $assoc_args['offset'] ) ) {
 			$input['offset'] = (int) $assoc_args['offset'];
 		}
 
-		if ( isset($assoc_args['limit']) ) {
+		if ( isset( $assoc_args['limit'] ) ) {
 			$input['limit'] = (int) $assoc_args['limit'];
 		}
 
-		if ( ! empty($assoc_args['allow-stale-primary']) ) {
+		if ( ! empty( $assoc_args['allow-stale-primary'] ) ) {
 			$input['allow_stale_primary'] = true;
 		}
 
-		$result = $ability->execute($input);
+		$result = $ability->execute( $input );
 
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
 		// Output raw content — suitable for piping.
-		WP_CLI::log($result['content']);
+		WP_CLI::log( $result['content'] );
 	}
 
 	/**
@@ -3143,15 +3417,15 @@ class WorkspaceCommand extends BaseCommand {
 	 * <repo>
 	 * : Repository directory name.
 	 *
-		 * [<path>]
-		 * : Relative directory path within the repo (defaults to root).
-		 *
-		 * [--allow-stale-primary]
-		 * : Explicitly list a stale, diverged, detached, or otherwise unsafe primary checkout.
-		 *
-		 * [--format=<format>]
-		 * : Output format.
-		 * ---
+	 * [<path>]
+	 * : Relative directory path within the repo (defaults to root).
+	 *
+	 * [--allow-stale-primary]
+	 * : Explicitly list a stale, diverged, detached, or otherwise unsafe primary checkout.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
 	 * default: table
 	 * options:
 	 *   - table
@@ -3174,36 +3448,36 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand ls
 	 */
 	public function ls( array $args, array $assoc_args ): void {
-		if ( empty($args[0]) ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace ls <repo> [<path>]');
+		if ( empty( $args[0] ) ) {
+			WP_CLI::error( 'Usage: wp datamachine-code workspace ls <repo> [<path>]' );
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-ls');
+		$ability = wp_get_ability( 'datamachine-code/workspace-ls' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace ls ability not available.');
+			WP_CLI::error( 'Workspace ls ability not available.' );
 			return;
 		}
 
 		$input = array( 'repo' => $args[0] );
 
-		if ( ! empty($args[1]) ) {
+		if ( ! empty( $args[1] ) ) {
 			$input['path'] = $args[1];
 		}
 
-		if ( ! empty($assoc_args['allow-stale-primary']) ) {
+		if ( ! empty( $assoc_args['allow-stale-primary'] ) ) {
 			$input['allow_stale_primary'] = true;
 		}
 
-		$result = $ability->execute($input);
+		$result = $ability->execute( $input );
 
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
-		if ( empty($result['entries']) ) {
-			WP_CLI::log('Empty directory.');
+		if ( empty( $result['entries'] ) ) {
+			WP_CLI::log( 'Empty directory.' );
 			return;
 		}
 
@@ -3212,7 +3486,7 @@ class WorkspaceCommand extends BaseCommand {
 				return array(
 					'name' => $entry['name'],
 					'type' => $entry['type'],
-					'size' => isset($entry['size']) ? size_format($entry['size']) : '-',
+					'size' => isset( $entry['size'] ) ? size_format( $entry['size'] ) : '-',
 				);
 			},
 			$result['entries']
@@ -3249,18 +3523,18 @@ class WorkspaceCommand extends BaseCommand {
 	 * default: 100
 	 * ---
 	 *
-		 * [--context-lines=<count>]
-		 * : Number of surrounding lines to include for each match.
-		 * ---
-		 * default: 0
-		 * ---
-		 *
-		 * [--allow-stale-primary]
-		 * : Explicitly grep a stale, diverged, detached, or otherwise unsafe primary checkout.
-		 *
-		 * [--format=<format>]
-		 * : Output format.
-		 * ---
+	 * [--context-lines=<count>]
+	 * : Number of surrounding lines to include for each match.
+	 * ---
+	 * default: 0
+	 * ---
+	 *
+	 * [--allow-stale-primary]
+	 * : Explicitly grep a stale, diverged, detached, or otherwise unsafe primary checkout.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
 	 * default: table
 	 * options:
 	 *   - table
@@ -3276,14 +3550,14 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand grep
 	 */
 	public function grep( array $args, array $assoc_args ): void {
-		if ( empty($args[0]) || ! isset($args[1]) ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace grep <repo> <pattern> [<path>]');
+		if ( empty( $args[0] ) || ! isset( $args[1] ) ) {
+			WP_CLI::error( 'Usage: wp datamachine-code workspace grep <repo> <pattern> [<path>]' );
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-grep');
+		$ability = wp_get_ability( 'datamachine-code/workspace-grep' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace grep ability not available.');
+			WP_CLI::error( 'Workspace grep ability not available.' );
 			return;
 		}
 
@@ -3292,35 +3566,35 @@ class WorkspaceCommand extends BaseCommand {
 			'pattern' => $args[1],
 		);
 
-		if ( ! empty($args[2]) ) {
+		if ( ! empty( $args[2] ) ) {
 			$input['path'] = $args[2];
 		}
 
-		if ( isset($assoc_args['include']) ) {
+		if ( isset( $assoc_args['include'] ) ) {
 			$input['include'] = $assoc_args['include'];
 		}
 
-		if ( isset($assoc_args['max-results']) ) {
+		if ( isset( $assoc_args['max-results'] ) ) {
 			$input['max_results'] = (int) $assoc_args['max-results'];
 		}
 
-		if ( isset($assoc_args['context-lines']) ) {
+		if ( isset( $assoc_args['context-lines'] ) ) {
 			$input['context_lines'] = (int) $assoc_args['context-lines'];
 		}
 
-		if ( ! empty($assoc_args['allow-stale-primary']) ) {
+		if ( ! empty( $assoc_args['allow-stale-primary'] ) ) {
 			$input['allow_stale_primary'] = true;
 		}
 
-		$result = $ability->execute($input);
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		$result = $ability->execute( $input );
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
 		$matches = (array) ( $result['matches'] ?? array() );
-		if ( empty($matches) ) {
-			WP_CLI::log('No matches.');
+		if ( empty( $matches ) ) {
+			WP_CLI::log( 'No matches.' );
 			return;
 		}
 
@@ -3335,9 +3609,9 @@ class WorkspaceCommand extends BaseCommand {
 			$matches
 		);
 
-		$this->format_items($items, array( 'path', 'line', 'text' ), $assoc_args, 'path');
-		if ( ! empty($result['truncated']) ) {
-			WP_CLI::warning('Results truncated. Increase --max-results for more matches.');
+		$this->format_items( $items, array( 'path', 'line', 'text' ), $assoc_args, 'path' );
+		if ( ! empty( $result['truncated'] ) ) {
+			WP_CLI::warning( 'Results truncated. Increase --max-results for more matches.' );
 		}
 	}
 
@@ -3373,14 +3647,14 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand write
 	 */
 	public function write( array $args, array $assoc_args ): void {
-		if ( empty($args[0]) || empty($args[1]) ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace write <repo> <path> --content=<content>');
+		if ( empty( $args[0] ) || empty( $args[1] ) ) {
+			WP_CLI::error( 'Usage: wp datamachine-code workspace write <repo> <path> --content=<content>' );
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-write');
+		$ability = wp_get_ability( 'datamachine-code/workspace-write' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace write ability not available.');
+			WP_CLI::error( 'Workspace write ability not available.' );
 			return;
 		}
 
@@ -3388,19 +3662,19 @@ class WorkspaceCommand extends BaseCommand {
 
 		// Resolve @file syntax — read content from a local file.
 		if ( null !== $content ) {
-			$content = $this->resolveAtFile($content);
+			$content = $this->resolveAtFile( $content );
 		}
 
 		// Read from stdin if --content not provided.
 		if ( null === $content ) {
-			if ( function_exists('posix_isatty') && posix_isatty(STDIN) ) {
-				WP_CLI::error('No content provided. Use --content=<content> or pipe content via stdin.');
+			if ( function_exists( 'posix_isatty' ) && posix_isatty( STDIN ) ) {
+				WP_CLI::error( 'No content provided. Use --content=<content> or pipe content via stdin.' );
 				return;
 			}
          // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
-			$content = file_get_contents('php://stdin');
+			$content = file_get_contents( 'php://stdin' );
 			if ( false === $content ) {
-				WP_CLI::error('Failed to read from stdin.');
+				WP_CLI::error( 'Failed to read from stdin.' );
 				return;
 			}
 		}
@@ -3413,13 +3687,13 @@ class WorkspaceCommand extends BaseCommand {
 			)
 		);
 
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
-		$action = ! empty($result['created']) ? 'Created' : 'Updated';
-		WP_CLI::success(sprintf('%s %s (%s)', $action, $result['path'], size_format($result['size'])));
+		$action = ! empty( $result['created'] ) ? 'Created' : 'Updated';
+		WP_CLI::success( sprintf( '%s %s (%s)', $action, $result['path'], size_format( $result['size'] ) ) );
 	}
 
 	/**
@@ -3459,37 +3733,37 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand edit
 	 */
 	public function edit( array $args, array $assoc_args ): void {
-		if ( empty($args[0]) || empty($args[1]) ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace edit <repo> <path> --old=<string> --new=<string>');
+		if ( empty( $args[0] ) || empty( $args[1] ) ) {
+			WP_CLI::error( 'Usage: wp datamachine-code workspace edit <repo> <path> --old=<string> --new=<string>' );
 			return;
 		}
 
-		if ( ! isset($assoc_args['old']) || ! isset($assoc_args['new']) ) {
-			WP_CLI::error('Both --old and --new flags are required.');
+		if ( ! isset( $assoc_args['old'] ) || ! isset( $assoc_args['new'] ) ) {
+			WP_CLI::error( 'Both --old and --new flags are required.' );
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-edit');
+		$ability = wp_get_ability( 'datamachine-code/workspace-edit' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace edit ability not available.');
+			WP_CLI::error( 'Workspace edit ability not available.' );
 			return;
 		}
 
 		$input = array(
 			'repo'       => $args[0],
 			'path'       => $args[1],
-			'old_string' => $this->resolveAtFile($assoc_args['old']),
-			'new_string' => $this->resolveAtFile($assoc_args['new']),
+			'old_string' => $this->resolveAtFile( $assoc_args['old'] ),
+			'new_string' => $this->resolveAtFile( $assoc_args['new'] ),
 		);
 
-		if ( ! empty($assoc_args['replace-all']) ) {
+		if ( ! empty( $assoc_args['replace-all'] ) ) {
 			$input['replace_all'] = true;
 		}
 
-		$result = $ability->execute($input);
+		$result = $ability->execute( $input );
 
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
@@ -3549,30 +3823,30 @@ class WorkspaceCommand extends BaseCommand {
 		$repo      = (string) ( $args[1] ?? '' );
 
 		if ( 'apply' !== $operation || '' === $repo ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace patch apply <repo> [--patch=<diff>] [--allow-primary-mutation]');
+			WP_CLI::error( 'Usage: wp datamachine-code workspace patch apply <repo> [--patch=<diff>] [--allow-primary-mutation]' );
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-apply-patch');
+		$ability = wp_get_ability( 'datamachine-code/workspace-apply-patch' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace apply patch ability not available.');
+			WP_CLI::error( 'Workspace apply patch ability not available.' );
 			return;
 		}
 
 		$patch = $assoc_args['patch'] ?? null;
 		if ( null !== $patch ) {
-			$patch = $this->resolveAtFile( (string) $patch);
+			$patch = $this->resolveAtFile( (string) $patch );
 		}
 
 		if ( null === $patch ) {
-			if ( function_exists('posix_isatty') && posix_isatty(STDIN) ) {
-				WP_CLI::error('No patch provided. Use --patch=<diff>, --patch=@/tmp/fix.diff, or pipe a unified diff via stdin.');
+			if ( function_exists( 'posix_isatty' ) && posix_isatty( STDIN ) ) {
+				WP_CLI::error( 'No patch provided. Use --patch=<diff>, --patch=@/tmp/fix.diff, or pipe a unified diff via stdin.' );
 				return;
 			}
          // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
-			$patch = file_get_contents('php://stdin');
+			$patch = file_get_contents( 'php://stdin' );
 			if ( false === $patch ) {
-				WP_CLI::error('Failed to read patch from stdin.');
+				WP_CLI::error( 'Failed to read patch from stdin.' );
 				return;
 			}
 		}
@@ -3581,24 +3855,24 @@ class WorkspaceCommand extends BaseCommand {
 			array(
 				'repo'                   => $repo,
 				'patch'                  => $patch,
-				'allow_primary_mutation' => ! empty($assoc_args['allow-primary-mutation']),
+				'allow_primary_mutation' => ! empty( $assoc_args['allow-primary-mutation'] ),
 			)
 		);
 
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
 		if ( 'json' === (string) ( $assoc_args['format'] ?? 'table' ) ) {
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
 
-		$changed_files = is_array($result['changed_files'] ?? null) ? $result['changed_files'] : array();
-		WP_CLI::success(sprintf('Applied patch to %s (%d changed file%s).', $repo, count($changed_files), 1 === count($changed_files) ? '' : 's'));
+		$changed_files = is_array( $result['changed_files'] ?? null ) ? $result['changed_files'] : array();
+		WP_CLI::success( sprintf( 'Applied patch to %s (%d changed file%s).', $repo, count( $changed_files ), 1 === count( $changed_files ) ? '' : 's' ) );
 		foreach ( $changed_files as $file ) {
-			WP_CLI::log('  - ' . $file);
+			WP_CLI::log( '  - ' . $file );
 		}
 	}
 
@@ -3638,14 +3912,14 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand delete
 	 */
 	public function delete( array $args, array $assoc_args ): void {
-		if ( empty($args[0]) || empty($args[1]) ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace delete <repo> <path> [--recursive] [--allow-primary-mutation]');
+		if ( empty( $args[0] ) || empty( $args[1] ) ) {
+			WP_CLI::error( 'Usage: wp datamachine-code workspace delete <repo> <path> [--recursive] [--allow-primary-mutation]' );
 			return;
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-delete');
+		$ability = wp_get_ability( 'datamachine-code/workspace-delete' );
 		if ( ! $ability ) {
-			WP_CLI::error('Workspace delete ability not available.');
+			WP_CLI::error( 'Workspace delete ability not available.' );
 			return;
 		}
 
@@ -3654,22 +3928,22 @@ class WorkspaceCommand extends BaseCommand {
 			'path' => $args[1],
 		);
 
-		if ( ! empty($assoc_args['recursive']) ) {
+		if ( ! empty( $assoc_args['recursive'] ) ) {
 			$input['recursive'] = true;
 		}
-		if ( ! empty($assoc_args['allow-primary-mutation']) ) {
+		if ( ! empty( $assoc_args['allow-primary-mutation'] ) ) {
 			$input['allow_primary_mutation'] = true;
 		}
 
-		$result = $ability->execute($input);
+		$result = $ability->execute( $input );
 
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
-		$count = is_array($result['deleted'] ?? null) ? count($result['deleted']) : 1;
-		$mode  = ! empty($result['was_tracked']) ? 'git rm' : 'unlink';
+		$count = is_array( $result['deleted'] ?? null ) ? count( $result['deleted'] ) : 1;
+		$mode  = ! empty( $result['was_tracked'] ) ? 'git rm' : 'unlink';
 		WP_CLI::success(
 			sprintf(
 				'Deleted %s via %s (%d path%s removed)',
@@ -3691,29 +3965,29 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return string Resolved content (file contents or original value).
 	 */
 	private function resolveAtFile( string $value ): string {
-		if ( 0 !== strpos($value, '@') ) {
+		if ( 0 !== strpos( $value, '@' ) ) {
 			return $value;
 		}
 
-		$file_path = substr($value, 1);
+		$file_path = substr( $value, 1 );
 
-		if ( empty($file_path) ) {
-			WP_CLI::error('Empty file path after @. Usage: --content=@/path/to/file');
+		if ( empty( $file_path ) ) {
+			WP_CLI::error( 'Empty file path after @. Usage: --content=@/path/to/file' );
 		}
 
-		if ( ! file_exists($file_path) ) {
-			WP_CLI::error(sprintf('File not found: %s', $file_path));
+		if ( ! file_exists( $file_path ) ) {
+			WP_CLI::error( sprintf( 'File not found: %s', $file_path ) );
 		}
 
-		if ( ! is_readable($file_path) ) {
-			WP_CLI::error(sprintf('File not readable: %s', $file_path));
+		if ( ! is_readable( $file_path ) ) {
+			WP_CLI::error( sprintf( 'File not readable: %s', $file_path ) );
 		}
 
      // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
-		$content = file_get_contents($file_path);
+		$content = file_get_contents( $file_path );
 
 		if ( false === $content ) {
-			WP_CLI::error(sprintf('Failed to read file: %s', $file_path));
+			WP_CLI::error( sprintf( 'Failed to read file: %s', $file_path ) );
 			return '';
 		}
 
@@ -3738,17 +4012,17 @@ class WorkspaceCommand extends BaseCommand {
 	 * : Relative path (repeatable) for add/diff operations. Named `--rel`
 	 *   to avoid colliding with WP-CLI's documented global `--path` flag.
 	 *
-		 * [--allow-dirty]
-		 * : Allow pull with dirty working tree.
-		 *
-		 * [--allow-primary-refresh]
-		 * : Permit safe primary refresh with `git pull --ff-only`.
-		 *
-		 * [--allow-primary-mutation]
-		 * : Legacy alias for `--allow-primary-refresh` on `git pull`, and for non-dangerous primary file/index mutations. Does not permit primary commit, push, reset, or rebase.
-		 *
-		 * [--allow-dangerous-primary-mutation]
-		 * : Permit primary commit, push, reset, or rebase. Use only for an explicitly approved primary mutation.
+	 * [--allow-dirty]
+	 * : Allow pull with dirty working tree.
+	 *
+	 * [--allow-primary-refresh]
+	 * : Permit safe primary refresh with `git pull --ff-only`.
+	 *
+	 * [--allow-primary-mutation]
+	 * : Legacy alias for `--allow-primary-refresh` on `git pull`, and for non-dangerous primary file/index mutations. Does not permit primary commit, push, reset, or rebase.
+	 *
+	 * [--allow-dangerous-primary-mutation]
+	 * : Permit primary commit, push, reset, or rebase. Use only for an explicitly approved primary mutation.
 	 *
 	 * [--remote=<remote>]
 	 * : Remote name for pull/push (default: origin).
@@ -3798,7 +4072,7 @@ class WorkspaceCommand extends BaseCommand {
 		$repo      = $args[1] ?? '';
 
 		if ( '' === $operation || '' === $repo ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace git <operation> <repo> [<value>] [--flags]');
+			WP_CLI::error( 'Usage: wp datamachine-code workspace git <operation> <repo> [<value>] [--flags]' );
 			return;
 		}
 
@@ -3818,47 +4092,47 @@ class WorkspaceCommand extends BaseCommand {
 		};
 
 		if ( '' === $ability_name ) {
-			WP_CLI::error(sprintf('Unknown git operation: %s', $operation));
+			WP_CLI::error( sprintf( 'Unknown git operation: %s', $operation ) );
 			return;
 		}
 
-		$ability = wp_get_ability($ability_name);
+		$ability = wp_get_ability( $ability_name );
 		if ( ! $ability ) {
-			$this->unavailable_ability($ability_name);
+			$this->unavailable_ability( $ability_name );
 			return;
 		}
 
 		$input = array( 'name' => $repo );
 
 		if ( 'pull' === $operation ) {
-			$input['allow_primary_refresh'] = ! empty($assoc_args['allow-primary-refresh']) || ! empty($assoc_args['allow-primary-mutation']);
-		} elseif ( in_array($operation, array( 'commit', 'push', 'rebase', 'reset', 'pr-rebase' ), true) ) {
-			$input['allow_dangerous_primary_mutation'] = ! empty($assoc_args['allow-dangerous-primary-mutation']);
-		} elseif ( in_array($operation, array( 'add' ), true) ) {
-			$input['allow_primary_mutation'] = ! empty($assoc_args['allow-primary-mutation']);
+			$input['allow_primary_refresh'] = ! empty( $assoc_args['allow-primary-refresh'] ) || ! empty( $assoc_args['allow-primary-mutation'] );
+		} elseif ( in_array( $operation, array( 'commit', 'push', 'rebase', 'reset', 'pr-rebase' ), true ) ) {
+			$input['allow_dangerous_primary_mutation'] = ! empty( $assoc_args['allow-dangerous-primary-mutation'] );
+		} elseif ( in_array( $operation, array( 'add' ), true ) ) {
+			$input['allow_primary_mutation'] = ! empty( $assoc_args['allow-primary-mutation'] );
 		}
 
 		if ( 'pull' === $operation ) {
-			$input['allow_dirty'] = ! empty($assoc_args['allow-dirty']);
+			$input['allow_dirty'] = ! empty( $assoc_args['allow-dirty'] );
 			$input['remote']      = $assoc_args['remote'] ?? 'origin';
-			if ( ! empty($assoc_args['branch']) ) {
+			if ( ! empty( $assoc_args['branch'] ) ) {
 				$input['branch'] = (string) $assoc_args['branch'];
 			}
 		}
 
 		if ( 'add' === $operation ) {
-			$input['paths'] = CliRepeatableOptionParser::collect('rel');
+			$input['paths'] = CliRepeatableOptionParser::collect( 'rel' );
 
-			if ( empty($input['paths']) ) {
-				WP_CLI::error('git add requires at least one --rel=<relative/path>.');
+			if ( empty( $input['paths'] ) ) {
+				WP_CLI::error( 'git add requires at least one --rel=<relative/path>.' );
 				return;
 			}
 		}
 
 		if ( 'commit' === $operation ) {
 			$message = $args[2] ?? '';
-			if ( '' === trim($message) ) {
-				WP_CLI::error('git commit requires a commit message as the third argument.');
+			if ( '' === trim( $message ) ) {
+				WP_CLI::error( 'git commit requires a commit message as the third argument.' );
 				return;
 			}
 			$input['message'] = $message;
@@ -3866,91 +4140,91 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( 'push' === $operation ) {
 			$input['remote'] = $assoc_args['remote'] ?? 'origin';
-			if ( ! empty($assoc_args['branch']) ) {
+			if ( ! empty( $assoc_args['branch'] ) ) {
 				$input['branch'] = (string) $assoc_args['branch'];
 			}
-			if ( ! empty($assoc_args['force-with-lease']) ) {
+			if ( ! empty( $assoc_args['force-with-lease'] ) ) {
 				$input['force_with_lease'] = true;
 			}
-			if ( ! empty($assoc_args['expected-sha']) ) {
+			if ( ! empty( $assoc_args['expected-sha'] ) ) {
 				$input['expected_sha'] = (string) $assoc_args['expected-sha'];
 			}
 		}
 
 		if ( 'rebase' === $operation ) {
-			if ( ! empty($assoc_args['onto']) ) {
+			if ( ! empty( $assoc_args['onto'] ) ) {
 				$input['onto'] = (string) $assoc_args['onto'];
 			}
-			if ( ! empty($assoc_args['strategy-option']) ) {
+			if ( ! empty( $assoc_args['strategy-option'] ) ) {
 				$input['strategy_option'] = (string) $assoc_args['strategy-option'];
 			}
-			if ( ! empty($assoc_args['continue']) ) {
+			if ( ! empty( $assoc_args['continue'] ) ) {
 				$input['continue'] = true;
 			}
 		}
 
 		if ( 'reset' === $operation ) {
-			if ( ! empty($assoc_args['mode']) ) {
+			if ( ! empty( $assoc_args['mode'] ) ) {
 				$input['mode'] = (string) $assoc_args['mode'];
 			}
-			if ( ! empty($assoc_args['target']) ) {
+			if ( ! empty( $assoc_args['target'] ) ) {
 				$input['target'] = (string) $assoc_args['target'];
 			}
-			if ( ! empty($assoc_args['allow-destructive']) ) {
+			if ( ! empty( $assoc_args['allow-destructive'] ) ) {
 				$input['allow_destructive'] = true;
 			}
 		}
 
 		if ( 'pr-status' === $operation || 'pr-rebase' === $operation ) {
-			if ( ! empty($assoc_args['pr']) ) {
+			if ( ! empty( $assoc_args['pr'] ) ) {
 				$input['pr'] = (string) $assoc_args['pr'];
 			}
 		}
 
-		if ( 'pr-status' === $operation && ! empty($assoc_args['branch']) ) {
+		if ( 'pr-status' === $operation && ! empty( $assoc_args['branch'] ) ) {
 			$input['branch'] = (string) $assoc_args['branch'];
 		}
 
 		if ( 'pr-rebase' === $operation ) {
-			if ( ! empty($assoc_args['squash']) ) {
+			if ( ! empty( $assoc_args['squash'] ) ) {
 				$input['squash'] = true;
 			}
-			$drop_paths = CliRepeatableOptionParser::collect('drop-path');
-			if ( ! empty($drop_paths) ) {
+			$drop_paths = CliRepeatableOptionParser::collect( 'drop-path' );
+			if ( ! empty( $drop_paths ) ) {
 				$input['drop_paths'] = $drop_paths;
 			}
 		}
 
 		if ( 'log' === $operation ) {
-			if ( isset($assoc_args['limit']) ) {
+			if ( isset( $assoc_args['limit'] ) ) {
 				$input['limit'] = (int) $assoc_args['limit'];
 			}
 		}
 
 		if ( 'diff' === $operation ) {
-			if ( isset($assoc_args['from']) ) {
+			if ( isset( $assoc_args['from'] ) ) {
 				$input['from'] = (string) $assoc_args['from'];
 			}
-			if ( isset($assoc_args['to']) ) {
+			if ( isset( $assoc_args['to'] ) ) {
 				$input['to'] = (string) $assoc_args['to'];
 			}
-			if ( ! empty($assoc_args['staged']) ) {
+			if ( ! empty( $assoc_args['staged'] ) ) {
 				$input['staged'] = true;
 			}
-			$diff_paths = CliRepeatableOptionParser::collect('rel');
-			if ( ! empty($diff_paths) ) {
+			$diff_paths = CliRepeatableOptionParser::collect( 'rel' );
+			if ( ! empty( $diff_paths ) ) {
 				$input['path'] = (string) $diff_paths[0];
 			}
 		}
 
-		$result = $ability->execute($input);
+		$result = $ability->execute( $input );
 
-		if ( is_wp_error($result) ) {
-			WP_CLI::error($result->get_error_message());
+		if ( is_wp_error( $result ) ) {
+			WP_CLI::error( $result->get_error_message() );
 			return;
 		}
 
-		$this->renderGitOperationResult($operation, $result, $assoc_args);
+		$this->renderGitOperationResult( $operation, $result, $assoc_args );
 	}
 
 	/**
@@ -3963,46 +4237,46 @@ class WorkspaceCommand extends BaseCommand {
 	private function renderGitOperationResult( string $operation, array $result, array $assoc_args ): void {
 		switch ( $operation ) {
 			case 'status':
-				WP_CLI::log(sprintf('Repo:   %s', $result['name'] ?? '-'));
-				WP_CLI::log(sprintf('Path:   %s', $result['path'] ?? '-'));
-				WP_CLI::log(sprintf('Branch: %s', $result['branch'] ?? '-'));
-				WP_CLI::log(sprintf('Remote: %s', $result['remote'] ?? '-'));
-				WP_CLI::log(sprintf('Latest: %s', $result['commit'] ?? '-'));
+				WP_CLI::log( sprintf( 'Repo:   %s', $result['name'] ?? '-' ) );
+				WP_CLI::log( sprintf( 'Path:   %s', $result['path'] ?? '-' ) );
+				WP_CLI::log( sprintf( 'Branch: %s', $result['branch'] ?? '-' ) );
+				WP_CLI::log( sprintf( 'Remote: %s', $result['remote'] ?? '-' ) );
+				WP_CLI::log( sprintf( 'Latest: %s', $result['commit'] ?? '-' ) );
 				$dirty = (int) ( $result['dirty'] ?? 0 );
-				WP_CLI::log(sprintf('Dirty:  %s', 0 === $dirty ? 'no' : "yes ({$dirty} files)"));
-				if ( ! empty($result['files']) ) {
-					WP_CLI::log('');
+				WP_CLI::log( sprintf( 'Dirty:  %s', 0 === $dirty ? 'no' : "yes ({$dirty} files)" ) );
+				if ( ! empty( $result['files'] ) ) {
+					WP_CLI::log( '' );
 					foreach ( $result['files'] as $file ) {
-						WP_CLI::log( (string) $file);
+						WP_CLI::log( (string) $file );
 					}
 				}
 				return;
 
 			case 'log':
-				if ( empty($result['entries']) ) {
-					WP_CLI::log('No commits found.');
+				if ( empty( $result['entries'] ) ) {
+					WP_CLI::log( 'No commits found.' );
 					return;
 				}
 
 				$items = array_map(
-				fn( $entry ) => array(
-					'hash'    => $entry['hash'] ?? '',
-					'author'  => $entry['author'] ?? '',
-					'date'    => $entry['date'] ?? '',
-					'subject' => $entry['subject'] ?? '',
-				),
-				$result['entries']
+					fn( $entry ) => array(
+						'hash'    => $entry['hash'] ?? '',
+						'author'  => $entry['author'] ?? '',
+						'date'    => $entry['date'] ?? '',
+						'subject' => $entry['subject'] ?? '',
+					),
+					$result['entries']
 				);
 
-				$this->format_items($items, array( 'hash', 'author', 'date', 'subject' ), $assoc_args, 'hash');
+				$this->format_items( $items, array( 'hash', 'author', 'date', 'subject' ), $assoc_args, 'hash' );
 				return;
 
 			case 'diff':
-				WP_CLI::log( (string) ( $result['diff'] ?? '' ));
+				WP_CLI::log( (string) ( $result['diff'] ?? '' ) );
 				return;
 
 			default:
-				WP_CLI::success($result['message'] ?? 'Workspace git operation completed.');
+				WP_CLI::success( $result['message'] ?? 'Workspace git operation completed.' );
 				return;
 		}
 	}
@@ -4067,28 +4341,28 @@ class WorkspaceCommand extends BaseCommand {
 	 *   read use (faster, no deps installed). The ability-level input is
 	 *   `bootstrap=false`; this flag is the CLI shorthand (matches the
 	 *   existing `--skip-context-injection` convention).
-		 *
-		 * [--allow-stale]
-		 * : Bypass the staleness gate (applies to `add` only). By default,
-		 *   `worktree add` refuses any branch/base that is behind the remote
-		 *   default branch after fetch, fails closed when fetch cannot verify
-		 *   remote freshness, and refuses to return a worktree that
-		 *   would be more than
-		 *   `datamachine_worktree_stale_threshold` commits (default 50) behind
-		 *   upstream — the stale checkout is torn down and a `worktree_stale`
-		 *   error is returned with remediation options. Pass `--allow-stale` to
-		 *   opt in to a known-stale checkout. Default-branch freshness is
-		 *   zero-tolerance: one missing default-branch commit is stale. The
-		 *   ability-level input is
-		 *   `allow_stale=true`.
-		 *
-		 * [--allow-unverified-freshness]
-		 * : Bypass the fetch-failure freshness gate (applies to `add` only).
-		 *   By default, `worktree add` refuses to create a checkout when `git fetch`
-		 *   fails because remote freshness cannot be verified. Use this only for
-		 *   intentional offline work with local refs. The ability-level input is
-		 *   `allow_unverified_freshness=true`.
-		 *
+	 *
+	 * [--allow-stale]
+	 * : Bypass the staleness gate (applies to `add` only). By default,
+	 *   `worktree add` refuses any branch/base that is behind the remote
+	 *   default branch after fetch, fails closed when fetch cannot verify
+	 *   remote freshness, and refuses to return a worktree that
+	 *   would be more than
+	 *   `datamachine_worktree_stale_threshold` commits (default 50) behind
+	 *   upstream — the stale checkout is torn down and a `worktree_stale`
+	 *   error is returned with remediation options. Pass `--allow-stale` to
+	 *   opt in to a known-stale checkout. Default-branch freshness is
+	 *   zero-tolerance: one missing default-branch commit is stale. The
+	 *   ability-level input is
+	 *   `allow_stale=true`.
+	 *
+	 * [--allow-unverified-freshness]
+	 * : Bypass the fetch-failure freshness gate (applies to `add` only).
+	 *   By default, `worktree add` refuses to create a checkout when `git fetch`
+	 *   fails because remote freshness cannot be verified. Use this only for
+	 *   intentional offline work with local refs. The ability-level input is
+	 *   `allow_unverified_freshness=true`.
+	 *
 	 * [--rebase-base]
 	 * : After creating the worktree, rebase onto the upstream tip (applies
 	 *   to `add` only). For existing branches this is `@{upstream}`; for
@@ -4189,7 +4463,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--remove-timeout=<seconds>]
 	 * : Timeout for destructive `git worktree remove` during cleanup apply.
 	 *   Defaults to a larger removal-specific budget than cheap git probes.
-		 *
+	 *
 	 * [--sort=<field>]
 	 * : Sort cleanup candidates by reporting field. For artifact cleanup,
 	 *   `--sort=size` scans the cheap inventory once and returns the largest
@@ -4387,14 +4661,14 @@ class WorkspaceCommand extends BaseCommand {
 	 *
 	 *     # Create a bare worktree (skip the default bootstrap pass)
 	 *     wp datamachine-code workspace worktree add data-machine fix/foo --skip-bootstrap
-		 *
-		 *     # Proceed with a known-stale base/branch (bypass the staleness gate)
-		 *     wp datamachine-code workspace worktree add data-machine fix/foo --allow-stale
-		 *
-		 *     # Proceed intentionally while offline when fetch cannot verify freshness
-		 *     wp datamachine-code workspace worktree add data-machine fix/foo --allow-unverified-freshness
-		 *
-		 *     # Auto-rebase onto upstream after creation
+	 *
+	 *     # Proceed with a known-stale base/branch (bypass the staleness gate)
+	 *     wp datamachine-code workspace worktree add data-machine fix/foo --allow-stale
+	 *
+	 *     # Proceed intentionally while offline when fetch cannot verify freshness
+	 *     wp datamachine-code workspace worktree add data-machine fix/foo --allow-unverified-freshness
+	 *
+	 *     # Auto-rebase onto upstream after creation
 	 *     wp datamachine-code workspace worktree add data-machine fix/foo --rebase-base
 	 *
 	 *     # Re-read the originating site's agent memory into an existing worktree
@@ -4413,52 +4687,52 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|get|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|capacity-recovery|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
+			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <add|get|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|capacity-recovery|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
 			return;
 		}
 
 		if ( 'abandoned' === $operation ) {
-			$result = $this->run_worktree_abandoned_orchestration($assoc_args, isset($args[1]) ? (string) $args[1] : '');
-			if ( is_wp_error($result) ) {
-				$this->render_workspace_error($result);
+			$result = $this->run_worktree_abandoned_orchestration( $assoc_args, isset( $args[1] ) ? (string) $args[1] : '' );
+			if ( is_wp_error( $result ) ) {
+				$this->render_workspace_error( $result );
 				return;
 			}
-			$this->render_worktree_abandoned_result($result, $assoc_args);
+			$this->render_worktree_abandoned_result( $result, $assoc_args );
 			return;
 		}
 
 		if ( 'active-no-signal-drain' === $operation ) {
-			$result = $this->run_worktree_active_no_signal_drain($assoc_args, isset($args[1]) ? (string) $args[1] : '');
-			if ( is_wp_error($result) ) {
-				$this->render_workspace_error($result);
+			$result = $this->run_worktree_active_no_signal_drain( $assoc_args, isset( $args[1] ) ? (string) $args[1] : '' );
+			if ( is_wp_error( $result ) ) {
+				$this->render_workspace_error( $result );
 				return;
 			}
-			$this->render_worktree_abandoned_result($result, $assoc_args);
+			$this->render_worktree_abandoned_result( $result, $assoc_args );
 			return;
 		}
 
 		if ( 'locks' === $operation ) {
 			$workspace      = new Workspace();
 			$workspace_path = $workspace->get_path();
-			$dry_run        = ! empty($assoc_args['dry-run']) || empty($assoc_args['prune-stale']);
-			$result         = ! empty($assoc_args['prune-stale'])
-				? WorkspaceMutationLock::prune_stale($workspace_path, $dry_run)
-				: WorkspaceMutationLock::status($workspace_path);
-			$this->render_workspace_lock_result($result, $assoc_args, ! empty($assoc_args['prune-stale']));
+			$dry_run        = ! empty( $assoc_args['dry-run'] ) || empty( $assoc_args['prune-stale'] );
+			$result         = ! empty( $assoc_args['prune-stale'] )
+				? WorkspaceMutationLock::prune_stale( $workspace_path, $dry_run )
+				: WorkspaceMutationLock::status( $workspace_path );
+			$this->render_workspace_lock_result( $result, $assoc_args, ! empty( $assoc_args['prune-stale'] ) );
 			return;
 		}
 
 		if ( 'backfill-origin-session' === $operation ) {
-			$result = WorktreeContextInjector::backfill_legacy_origin_sessions( ! empty($assoc_args['apply']) );
+			$result = WorktreeContextInjector::backfill_legacy_origin_sessions( ! empty( $assoc_args['apply'] ) );
 			if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-				$this->renderer()->json($result);
+				$this->renderer()->json( $result );
 				return;
 			}
 
 			$items = array(
 				array(
 					'field' => 'Applied',
-					'value' => ! empty($result['applied']) ? 'yes' : 'no',
+					'value' => ! empty( $result['applied'] ) ? 'yes' : 'no',
 				),
 				array(
 					'field' => 'Planned',
@@ -4466,18 +4740,18 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array(
 					'field' => 'Migrated option',
-					'value' => ! empty($result['migrated']) ? 'yes' : 'no',
+					'value' => ! empty( $result['migrated'] ) ? 'yes' : 'no',
 				),
 				array(
 					'field' => 'Message',
 					'value' => (string) ( $result['message'] ?? '' ),
 				),
 			);
-			$this->format_items($items, array( 'field', 'value' ), $assoc_args);
-			if ( ! empty($result['applied']) ) {
-				WP_CLI::success('Backfilled legacy origin_session metadata.');
+			$this->format_items( $items, array( 'field', 'value' ), $assoc_args );
+			if ( ! empty( $result['applied'] ) ) {
+				WP_CLI::success( 'Backfilled legacy origin_session metadata.' );
 			} else {
-				WP_CLI::log('Dry run complete; pass --apply to rewrite metadata.');
+				WP_CLI::log( 'Dry run complete; pass --apply to rewrite metadata.' );
 			}
 			return;
 		}
@@ -4485,8 +4759,8 @@ class WorkspaceCommand extends BaseCommand {
 		// `worktree get` has a minimal CLI bootstrap path because it is a single
 		// bounded local lookup. It must not depend on registered Abilities.
 		if ( 'get' === $operation ) {
-			if ( empty($args[1]) ) {
-				WP_CLI::error('Usage: worktree get <handle|canonical-path> [--with-status] [--format=json]');
+			if ( empty( $args[1] ) ) {
+				WP_CLI::error( 'Usage: worktree get <handle|canonical-path> [--with-status] [--format=json]' );
 				return;
 			}
 			$result = ( new Workspace() )->worktree_get(
@@ -4496,7 +4770,7 @@ class WorkspaceCommand extends BaseCommand {
 					'include_disk'   => false,
 				)
 			);
-			if ( is_wp_error($result) ) {
+			if ( is_wp_error( $result ) ) {
 				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 					$this->renderer()->json(
 						array(
@@ -4508,12 +4782,12 @@ class WorkspaceCommand extends BaseCommand {
 							),
 						)
 					);
-					WP_CLI::halt(1);
+					WP_CLI::halt( 1 );
 				}
-				$this->render_workspace_error($result);
+				$this->render_workspace_error( $result );
 				return;
 			}
-			$this->renderWorktreeResult('get', $result, $assoc_args);
+			$this->renderWorktreeResult( 'get', $result, $assoc_args );
 			return;
 		}
 
@@ -4521,31 +4795,31 @@ class WorkspaceCommand extends BaseCommand {
 		$ability_name     = (string) ( $operation_config['ability'] ?? '' );
 
 		if ( '' === $ability_name ) {
-			WP_CLI::error(sprintf('Unknown worktree operation: %s', $operation));
+			WP_CLI::error( sprintf( 'Unknown worktree operation: %s', $operation ) );
 			return;
 		}
-		if ( ! empty($args[1]) && in_array($operation, array( 'cleanup-eligible-drain', 'emergency-cleanup', 'capacity-recovery' ), true) ) {
-			WP_CLI::error(sprintf('`worktree %s` is workspace-wide and does not accept a repository argument.', $operation));
+		if ( ! empty( $args[1] ) && in_array( $operation, array( 'cleanup-eligible-drain', 'emergency-cleanup', 'capacity-recovery' ), true ) ) {
+			WP_CLI::error( sprintf( '`worktree %s` is workspace-wide and does not accept a repository argument.', $operation ) );
 			return;
 		}
 
-		$ability = wp_get_ability($ability_name);
+		$ability = wp_get_ability( $ability_name );
 		if ( ! $ability ) {
-			$this->unavailable_ability($ability_name);
+			$this->unavailable_ability( $ability_name );
 			return;
 		}
 
 		$input         = array();
 		$input_builder = (string) ( $operation_config['input_builder'] ?? '' );
 		if ( '' !== $input_builder ) {
-			$input = $this->{$input_builder}($operation, $assoc_args, isset($args[1]) ? (string) $args[1] : '');
+			$input = $this->{$input_builder}( $operation, $assoc_args, isset( $args[1] ) ? (string) $args[1] : '' );
 		}
 
 		switch ( $operation ) {
 			case 'add':
 			case 'plan':
-				if ( empty($args[1]) || empty($args[2]) ) {
-					WP_CLI::error('Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-ref=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--allow-unverified-freshness] [--rebase-base] [--force|--remediate-capacity [--remediate-capacity-dry-run]] [--reuse-policy=reuse_compatible|isolated|recycle_terminal|claim_expired] [--task-url=<url>|--task-ref=<ref>] [--require-task-tracker]');
+				if ( empty( $args[1] ) || empty( $args[2] ) ) {
+					WP_CLI::error( 'Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-ref=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--allow-unverified-freshness] [--rebase-base] [--force|--remediate-capacity [--remediate-capacity-dry-run]] [--reuse-policy=reuse_compatible|isolated|recycle_terminal|claim_expired] [--task-url=<url>|--task-ref=<ref>] [--require-task-tracker]' );
 					return;
 				}
 				$input['repo']    = $args[1];
@@ -4558,142 +4832,142 @@ class WorkspaceCommand extends BaseCommand {
 						'base-ref' => $assoc_args['base-ref'] ?? '',
 					)
 				);
-				if ( count($exact_base_flags) > 1 ) {
-					WP_CLI::error('Use only one of --from=<ref>, --base=<ref>, or --base-ref=<ref>.');
+				if ( count( $exact_base_flags ) > 1 ) {
+					WP_CLI::error( 'Use only one of --from=<ref>, --base=<ref>, or --base-ref=<ref>.' );
 					return;
 				}
-				if ( ! empty($exact_base) && ! empty($assoc_args['base-branch']) ) {
-					WP_CLI::error('Use either --from=<ref>/--base=<ref>/--base-ref=<ref> or --base-branch=<branch>, not both.');
+				if ( ! empty( $exact_base ) && ! empty( $assoc_args['base-branch'] ) ) {
+					WP_CLI::error( 'Use either --from=<ref>/--base=<ref>/--base-ref=<ref> or --base-branch=<branch>, not both.' );
 					return;
 				}
-				if ( ! empty($exact_base) ) {
+				if ( ! empty( $exact_base ) ) {
 					$input['from'] = (string) $exact_base;
-				} elseif ( ! empty($assoc_args['base-branch']) ) {
-					$input['from'] = self::base_branch_to_ref( (string) $assoc_args['base-branch']);
+				} elseif ( ! empty( $assoc_args['base-branch'] ) ) {
+					$input['from'] = self::base_branch_to_ref( (string) $assoc_args['base-branch'] );
 				}
 				// --skip-context-injection disables the default-on injection step.
-				$input['inject_context'] = empty($assoc_args['skip-context-injection']);
+				$input['inject_context'] = empty( $assoc_args['skip-context-injection'] );
 				// --skip-bootstrap disables the default-on bootstrap step.
-				$input['bootstrap'] = empty($assoc_args['skip-bootstrap']);
+				$input['bootstrap'] = empty( $assoc_args['skip-bootstrap'] );
 				// --allow-stale opts in to a known-stale worktree (default: gate enforced).
-				$input['allow_stale'] = ! empty($assoc_args['allow-stale']);
+				$input['allow_stale'] = ! empty( $assoc_args['allow-stale'] );
 				// --allow-unverified-freshness opts in when fetch cannot verify remote refs.
-				$input['allow_unverified_freshness'] = ! empty($assoc_args['allow-unverified-freshness']);
+				$input['allow_unverified_freshness'] = ! empty( $assoc_args['allow-unverified-freshness'] );
 				// --rebase-base auto-rebases onto upstream after creation (default: off).
-				$input['rebase_base'] = ! empty($assoc_args['rebase-base']);
+				$input['rebase_base'] = ! empty( $assoc_args['rebase-base'] );
 				// --force is an explicit disk-budget override for add.
-				$input['force'] = ! empty($assoc_args['force']);
-				$input['remediate_capacity'] = ! empty($assoc_args['remediate-capacity']);
-				$input['remediate_capacity_dry_run'] = ! empty($assoc_args['remediate-capacity-dry-run']);
-				$input['verbose'] = ! empty($assoc_args['verbose']);
-				if ( isset($assoc_args['reuse-policy']) ) {
+				$input['force']                      = ! empty( $assoc_args['force'] );
+				$input['remediate_capacity']         = ! empty( $assoc_args['remediate-capacity'] );
+				$input['remediate_capacity_dry_run'] = ! empty( $assoc_args['remediate-capacity-dry-run'] );
+				$input['verbose']                    = ! empty( $assoc_args['verbose'] );
+				if ( isset( $assoc_args['reuse-policy'] ) ) {
 					$input['reuse_policy'] = (string) $assoc_args['reuse-policy'];
 				}
 				// CLI is the explicit operator-local path; strict tracking is opt-in.
-				$input['require_task_tracker'] = ! empty($assoc_args['require-task-tracker']);
-				if ( isset($assoc_args['task-url']) && '' !== trim( (string) $assoc_args['task-url']) ) {
+				$input['require_task_tracker'] = ! empty( $assoc_args['require-task-tracker'] );
+				if ( isset( $assoc_args['task-url'] ) && '' !== trim( (string) $assoc_args['task-url'] ) ) {
 					$input['task_url'] = (string) $assoc_args['task-url'];
 				}
-				if ( isset($assoc_args['task-ref']) && '' !== trim( (string) $assoc_args['task-ref']) ) {
+				if ( isset( $assoc_args['task-ref'] ) && '' !== trim( (string) $assoc_args['task-ref'] ) ) {
 					$input['task_ref'] = (string) $assoc_args['task-ref'];
 				}
 				foreach ( array( 'purpose', 'owner-run-ref', 'cleanup-policy' ) as $flag ) {
-					if ( isset($assoc_args[ $flag ]) && '' !== trim( (string) $assoc_args[ $flag ]) ) {
-						$input[ str_replace('-', '_', $flag) ] = (string) $assoc_args[ $flag ];
+					if ( isset( $assoc_args[ $flag ] ) && '' !== trim( (string) $assoc_args[ $flag ] ) ) {
+						$input[ str_replace( '-', '_', $flag ) ] = (string) $assoc_args[ $flag ];
 					}
 				}
 				break;
 
 			case 'apply-plan':
-				$decoded = json_decode((string) ($assoc_args['plan'] ?? ''), true);
-				if ( ! is_array($decoded) ) {
-					WP_CLI::error('Usage: worktree apply-plan --plan=<json-plan>');
+				$decoded = json_decode( (string) ( $assoc_args['plan'] ?? '' ), true );
+				if ( ! is_array( $decoded ) ) {
+					WP_CLI::error( 'Usage: worktree apply-plan --plan=<json-plan>' );
 					return;
 				}
 				$input['plan'] = $decoded;
 				break;
 
 			case 'refresh-context':
-				if ( empty($args[1]) ) {
-					WP_CLI::error('Usage: worktree refresh-context <handle>');
+				if ( empty( $args[1] ) ) {
+					WP_CLI::error( 'Usage: worktree refresh-context <handle>' );
 					return;
 				}
 				$input['handle'] = (string) $args[1];
 				break;
 
 			case 'finalize':
-				if ( empty($args[1]) ) {
-					WP_CLI::error('Usage: worktree finalize <handle> [--pr=<url-or-number>] [--state=<state>] [--owner-terminal-outcome=success]');
+				if ( empty( $args[1] ) ) {
+					WP_CLI::error( 'Usage: worktree finalize <handle> [--pr=<url-or-number>] [--state=<state>] [--owner-terminal-outcome=success]' );
 					return;
 				}
 				$input['handle'] = (string) $args[1];
-				$input['state']  = isset($assoc_args['state']) && '' !== trim( (string) $assoc_args['state']) ? (string) $assoc_args['state'] : ( isset($assoc_args['pr']) ? 'pr_opened' : 'active' );
-				if ( isset($assoc_args['pr']) && '' !== trim( (string) $assoc_args['pr']) ) {
+				$input['state']  = isset( $assoc_args['state'] ) && '' !== trim( (string) $assoc_args['state'] ) ? (string) $assoc_args['state'] : ( isset( $assoc_args['pr'] ) ? 'pr_opened' : 'active' );
+				if ( isset( $assoc_args['pr'] ) && '' !== trim( (string) $assoc_args['pr'] ) ) {
 					$input['pr'] = (string) $assoc_args['pr'];
 				}
-				if ( isset($assoc_args['owner-terminal-outcome']) && '' !== trim( (string) $assoc_args['owner-terminal-outcome']) ) {
+				if ( isset( $assoc_args['owner-terminal-outcome'] ) && '' !== trim( (string) $assoc_args['owner-terminal-outcome'] ) ) {
 					$input['owner_terminal_outcome'] = (string) $assoc_args['owner-terminal-outcome'];
 				}
 				break;
 
 			case 'mark-cleanup-eligible':
-				if ( empty($args[1]) ) {
-					WP_CLI::error('Usage: worktree mark-cleanup-eligible <handle> [--pr=<url-or-number>]');
+				if ( empty( $args[1] ) ) {
+					WP_CLI::error( 'Usage: worktree mark-cleanup-eligible <handle> [--pr=<url-or-number>]' );
 					return;
 				}
 				$input['handle'] = (string) $args[1];
 				$input['state']  = 'cleanup_eligible';
-				if ( isset($assoc_args['pr']) && '' !== trim( (string) $assoc_args['pr']) ) {
+				if ( isset( $assoc_args['pr'] ) && '' !== trim( (string) $assoc_args['pr'] ) ) {
 					$input['pr'] = (string) $assoc_args['pr'];
 				}
 				break;
 
 			case 'list':
 				$format = (string) ( $assoc_args['format'] ?? 'table' );
-				if ( in_array($format, array( 'json', 'csv', 'yaml' ), true) && ( isset($assoc_args['limit']) || isset($assoc_args['cursor']) ) && ( 'json' !== $format || empty($assoc_args['envelope']) ) ) {
-					WP_CLI::error('Use --format=json --envelope with --limit or --cursor. Legacy JSON, CSV, and YAML row streams are exhaustive.');
+				if ( in_array( $format, array( 'json', 'csv', 'yaml' ), true ) && ( isset( $assoc_args['limit'] ) || isset( $assoc_args['cursor'] ) ) && ( 'json' !== $format || empty( $assoc_args['envelope'] ) ) ) {
+					WP_CLI::error( 'Use --format=json --envelope with --limit or --cursor. Legacy JSON, CSV, and YAML row streams are exhaustive.' );
 					return;
 				}
-				if ( ! empty($assoc_args['envelope']) && 'json' !== $format ) {
-					WP_CLI::error('--envelope is available only with --format=json.');
+				if ( ! empty( $assoc_args['envelope'] ) && 'json' !== $format ) {
+					WP_CLI::error( '--envelope is available only with --format=json.' );
 					return;
 				}
-				if ( ! empty($assoc_args['all']) && isset($assoc_args['cursor']) ) {
-					WP_CLI::error('Worktree list --all cannot be combined with --cursor.');
+				if ( ! empty( $assoc_args['all'] ) && isset( $assoc_args['cursor'] ) ) {
+					WP_CLI::error( 'Worktree list --all cannot be combined with --cursor.' );
 					return;
 				}
-				if ( ! empty($args[1]) ) {
+				if ( ! empty( $args[1] ) ) {
 					$input['repo'] = $args[1];
 				}
-				if ( isset($assoc_args['state']) && '' !== trim( (string) $assoc_args['state']) ) {
+				if ( isset( $assoc_args['state'] ) && '' !== trim( (string) $assoc_args['state'] ) ) {
 					$input['state'] = (string) $assoc_args['state'];
 				}
-				if ( isset($assoc_args['limit']) ) {
-					$limit = Workspace::normalize_workspace_list_limit($assoc_args['limit']);
-					if ( is_wp_error($limit) ) {
-						WP_CLI::error('Worktree list limit must be an integer between 1 and 200.');
+				if ( isset( $assoc_args['limit'] ) ) {
+					$limit = Workspace::normalize_workspace_list_limit( $assoc_args['limit'] );
+					if ( is_wp_error( $limit ) ) {
+						WP_CLI::error( 'Worktree list limit must be an integer between 1 and 200.' );
 						return;
 					}
 					$input['limit'] = $limit;
 				}
-				if ( isset($assoc_args['cursor']) ) {
+				if ( isset( $assoc_args['cursor'] ) ) {
 					$input['cursor'] = (string) $assoc_args['cursor'];
 				}
-				$input['all'] = ! empty($assoc_args['all']) || ( in_array($format, array( 'json', 'csv', 'yaml' ), true) && empty($assoc_args['envelope']) );
+				$input['all'] = ! empty( $assoc_args['all'] ) || ( in_array( $format, array( 'json', 'csv', 'yaml' ), true ) && empty( $assoc_args['envelope'] ) );
 				// Cheap inventory by default — opt in to expensive probes via flags.
 				// `--full` is a shorthand for both, `--stale` requires status to detect dirty.
-				$want_status             = ! empty($assoc_args['with-status'])
-				|| ! empty($assoc_args['full'])
-				|| ! empty($assoc_args['stale']);
-				$want_disk               = ! empty($assoc_args['with-size'])
-				|| ! empty($assoc_args['full']);
+				$want_status             = ! empty( $assoc_args['with-status'] )
+				|| ! empty( $assoc_args['full'] )
+				|| ! empty( $assoc_args['stale'] );
+				$want_disk               = ! empty( $assoc_args['with-size'] )
+				|| ! empty( $assoc_args['full'] );
 				$input['include_status'] = $want_status;
 				$input['include_disk']   = $want_disk;
 				break;
 
 			case 'get':
-				if ( empty($args[1]) ) {
-					WP_CLI::error('Usage: worktree get <handle|canonical-path> [--with-status] [--format=json]');
+				if ( empty( $args[1] ) ) {
+					WP_CLI::error( 'Usage: worktree get <handle|canonical-path> [--with-status] [--format=json]' );
 					return;
 				}
 				$input['handle']         = (string) $args[1];
@@ -4709,98 +4983,98 @@ class WorkspaceCommand extends BaseCommand {
 				// the FIRST `@` into repo + branch-slug.
 				$remove_repo   = (string) ( $args[1] ?? '' );
 				$remove_branch = (string) ( $args[2] ?? '' );
-				if ( '' === $remove_branch && false !== strpos($remove_repo, '@') ) {
-					list( $remove_repo, $remove_branch ) = explode('@', $remove_repo, 2);
+				if ( '' === $remove_branch && false !== strpos( $remove_repo, '@' ) ) {
+					list( $remove_repo, $remove_branch ) = explode( '@', $remove_repo, 2 );
 				}
 				if ( '' === $remove_repo || '' === $remove_branch ) {
-					WP_CLI::error('Usage: worktree remove <repo> <branch> | <repo>@<branch-slug> [--force]');
+					WP_CLI::error( 'Usage: worktree remove <repo> <branch> | <repo>@<branch-slug> [--force]' );
 					return;
 				}
 				$input['repo']   = $remove_repo;
 				$input['branch'] = $remove_branch;
-				$input['force']  = ! empty($assoc_args['force']);
+				$input['force']  = ! empty( $assoc_args['force'] );
 				break;
 
 			case 'cleanup':
-				if ( ! empty($args[1]) ) {
+				if ( ! empty( $args[1] ) ) {
 					$input['repo'] = (string) $args[1];
 				}
-				$input['dry_run']                   = ! empty($assoc_args['dry-run']);
-				$input['force']                     = ! empty($assoc_args['force']);
-				$input['skip_github']               = ! empty($assoc_args['skip-github']);
-				$input['inventory_only']            = ! empty($assoc_args['inventory-only']);
-				$input['include_repaired_metadata'] = ! empty($assoc_args['include-repaired-metadata']);
-				if ( isset($assoc_args['limit']) ) {
+				$input['dry_run']                   = ! empty( $assoc_args['dry-run'] );
+				$input['force']                     = ! empty( $assoc_args['force'] );
+				$input['skip_github']               = ! empty( $assoc_args['skip-github'] );
+				$input['inventory_only']            = ! empty( $assoc_args['inventory-only'] );
+				$input['include_repaired_metadata'] = ! empty( $assoc_args['include-repaired-metadata'] );
+				if ( isset( $assoc_args['limit'] ) ) {
 					$input['limit'] = (int) $assoc_args['limit'];
 				}
-				if ( isset($assoc_args['offset']) ) {
+				if ( isset( $assoc_args['offset'] ) ) {
 					$input['offset'] = (int) $assoc_args['offset'];
 				}
-				if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
-					$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
+				if ( isset( $assoc_args['until-budget'] ) && '' !== trim( (string) $assoc_args['until-budget'] ) ) {
+					$input['until_budget'] = trim( (string) $assoc_args['until-budget'] );
 				}
-				if ( ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true) ) {
+				if ( ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
 					$input['progress_callback'] = function ( array $event ): void {
-						$this->render_worktree_cleanup_progress($event);
+						$this->render_worktree_cleanup_progress( $event );
 					};
 				}
-				if ( ! empty($assoc_args['apply-plan']) ) {
-					if ( ! empty($assoc_args['force']) ) {
-						WP_CLI::error('Do not combine --apply-plan with --force. Plan application always revalidates and refuses dirty worktrees.');
+				if ( ! empty( $assoc_args['apply-plan'] ) ) {
+					if ( ! empty( $assoc_args['force'] ) ) {
+						WP_CLI::error( 'Do not combine --apply-plan with --force. Plan application always revalidates and refuses dirty worktrees.' );
 						return;
 					}
-					$input['apply_plan'] = $this->read_worktree_cleanup_plan( (string) $assoc_args['apply-plan']);
+					$input['apply_plan'] = $this->read_worktree_cleanup_plan( (string) $assoc_args['apply-plan'] );
 				}
-				if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
-					$input['older_than'] = trim( (string) $assoc_args['older-than']);
+				if ( isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ) {
+					$input['older_than'] = trim( (string) $assoc_args['older-than'] );
 				}
-				if ( isset($assoc_args['sort']) && '' !== trim( (string) $assoc_args['sort']) ) {
-					$input['sort'] = trim( (string) $assoc_args['sort']);
+				if ( isset( $assoc_args['sort'] ) && '' !== trim( (string) $assoc_args['sort'] ) ) {
+					$input['sort'] = trim( (string) $assoc_args['sort'] );
 				}
 				break;
 			case 'reconcile-metadata':
-				if ( ! empty($args[1]) ) {
+				if ( ! empty( $args[1] ) ) {
 					$input['repo'] = (string) $args[1];
 				}
-				$input['dry_run']  = ! empty($assoc_args['dry-run']);
-				$input['apply']    = ! empty($assoc_args['apply']);
-				$input['via_jobs'] = ! empty($assoc_args['via-jobs']);
+				$input['dry_run']  = ! empty( $assoc_args['dry-run'] );
+				$input['apply']    = ! empty( $assoc_args['apply'] );
+				$input['via_jobs'] = ! empty( $assoc_args['via-jobs'] );
 				$input['source']   = self::CLEANUP_CLI_SOURCE;
-				$uses_plan         = ! empty($assoc_args['apply-plan']);
-				$has_bounds        = isset($assoc_args['limit']) || isset($assoc_args['offset']) || ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) );
+				$uses_plan         = ! empty( $assoc_args['apply-plan'] );
+				$has_bounds        = isset( $assoc_args['limit'] ) || isset( $assoc_args['offset'] ) || ( isset( $assoc_args['until-budget'] ) && '' !== trim( (string) $assoc_args['until-budget'] ) );
 				if ( ! $uses_plan && ! $has_bounds && ( $input['dry_run'] || $input['apply'] ) ) {
 					$input['limit']        = self::METADATA_RECONCILE_DEFAULT_LIMIT;
 					$input['offset']       = 0;
 					$input['until_budget'] = self::METADATA_RECONCILE_DEFAULT_BUDGET;
 				}
-				if ( isset($assoc_args['limit']) ) {
+				if ( isset( $assoc_args['limit'] ) ) {
 					$input['limit'] = (int) $assoc_args['limit'];
 				}
-				if ( isset($assoc_args['offset']) ) {
+				if ( isset( $assoc_args['offset'] ) ) {
 					$input['offset'] = (int) $assoc_args['offset'];
 				}
-				if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
-					$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
+				if ( isset( $assoc_args['until-budget'] ) && '' !== trim( (string) $assoc_args['until-budget'] ) ) {
+					$input['until_budget'] = trim( (string) $assoc_args['until-budget'] );
 				}
 				if ( $uses_plan ) {
-					$input['apply_plan'] = $this->read_worktree_json_plan( (string) $assoc_args['apply-plan'], 'metadata reconciliation');
+					$input['apply_plan'] = $this->read_worktree_json_plan( (string) $assoc_args['apply-plan'], 'metadata reconciliation' );
 				}
 				break;
 			case 'capacity-recovery':
-				if ( isset($assoc_args['limit']) ) {
+				if ( isset( $assoc_args['limit'] ) ) {
 					$input['limit'] = (int) $assoc_args['limit'];
 				}
-				if ( isset($assoc_args['offset']) ) {
+				if ( isset( $assoc_args['offset'] ) ) {
 					$input['offset'] = (int) $assoc_args['offset'];
 				}
-				if ( isset($assoc_args['replan-offset']) ) {
+				if ( isset( $assoc_args['replan-offset'] ) ) {
 					$input['replan_offset'] = (int) $assoc_args['replan-offset'];
 				}
-				if ( isset($assoc_args['offset']) ) {
+				if ( isset( $assoc_args['offset'] ) ) {
 					$input['offset'] = (int) $assoc_args['offset'];
 				}
-				if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
-					$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
+				if ( isset( $assoc_args['until-budget'] ) && '' !== trim( (string) $assoc_args['until-budget'] ) ) {
+					$input['until_budget'] = trim( (string) $assoc_args['until-budget'] );
 				}
 				break;
 
@@ -4812,117 +5086,119 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 
 			case 'cleanup-artifacts':
-				if ( ! empty($args[1]) ) {
+				if ( ! empty( $args[1] ) ) {
 					$input['repo'] = (string) $args[1];
 				}
-				$input['dry_run']                         = ! empty($assoc_args['dry-run']);
-				$input['force']                           = ! empty($assoc_args['force']);
-				$input['allow_active_artifact_cleanup']   = ! empty($assoc_args['allow-active-artifact-cleanup']);
-				$input['allow_unavailable_process_probe'] = ! empty($assoc_args['allow-unavailable-process-probe']);
-				if ( isset($assoc_args['limit']) ) {
+				$input['dry_run']                         = ! empty( $assoc_args['dry-run'] );
+				$input['force']                           = ! empty( $assoc_args['force'] );
+				$input['allow_active_artifact_cleanup']   = ! empty( $assoc_args['allow-active-artifact-cleanup'] );
+				$input['allow_unavailable_process_probe'] = ! empty( $assoc_args['allow-unavailable-process-probe'] );
+				if ( isset( $assoc_args['limit'] ) ) {
 					$input['limit'] = (int) $assoc_args['limit'];
 				}
-				if ( isset($assoc_args['offset']) ) {
+				if ( isset( $assoc_args['offset'] ) ) {
 					$input['offset'] = (int) $assoc_args['offset'];
 				}
-				if ( isset($assoc_args['only-handle']) && '' !== trim( (string) $assoc_args['only-handle']) ) {
-					$input['only_handle'] = trim( (string) $assoc_args['only-handle']);
+				if ( isset( $assoc_args['only-handle'] ) && '' !== trim( (string) $assoc_args['only-handle'] ) ) {
+					$input['only_handle'] = trim( (string) $assoc_args['only-handle'] );
 				}
-				if ( ! empty($assoc_args['exhaustive']) ) {
+				if ( ! empty( $assoc_args['exhaustive'] ) ) {
 					$input['exhaustive'] = true;
 				}
-				if ( ! empty($assoc_args['safety-probes']) ) {
+				if ( ! empty( $assoc_args['safety-probes'] ) ) {
 					$input['safety_probes'] = true;
 				}
-				if ( isset($assoc_args['sort']) && '' !== trim( (string) $assoc_args['sort']) ) {
-					$input['sort'] = trim( (string) $assoc_args['sort']);
+				if ( isset( $assoc_args['sort'] ) && '' !== trim( (string) $assoc_args['sort'] ) ) {
+					$input['sort'] = trim( (string) $assoc_args['sort'] );
 				}
-				if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
-					$input['older_than'] = trim( (string) $assoc_args['older-than']);
+				if ( isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ) {
+					$input['older_than'] = trim( (string) $assoc_args['older-than'] );
 				}
-				if ( ! empty($assoc_args['apply-plan']) ) {
-					$input['apply_plan'] = $this->read_worktree_cleanup_plan( (string) $assoc_args['apply-plan']);
+				if ( ! empty( $assoc_args['apply-plan'] ) ) {
+					$input['apply_plan'] = $this->read_worktree_cleanup_plan( (string) $assoc_args['apply-plan'] );
 				}
 				break;
 
 			case 'emergency-cleanup':
-				if ( ! empty($assoc_args['apply']) ) {
-					WP_CLI::error('`workspace worktree emergency-cleanup --apply` is not supported. Review a DB-backed artifact plan with `studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json`, then apply it with `studio wp datamachine-code workspace cleanup apply <run-id>`.');
+				if ( ! empty( $assoc_args['apply'] ) ) {
+					WP_CLI::error( '`workspace worktree emergency-cleanup --apply` is not supported. Review a DB-backed artifact plan with `studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json`, then apply it with `studio wp datamachine-code workspace cleanup apply <run-id>`.' );
 					return;
 				}
 				$input['dry_run'] = true;
-				$input['force']   = ! empty($assoc_args['force']);
-				if ( ! empty($assoc_args['apply-plan']) ) {
+				$input['force']   = ! empty( $assoc_args['force'] );
+				if ( ! empty( $assoc_args['apply-plan'] ) ) {
 					$input['dry_run']    = false;
-					$input['apply_plan'] = $this->read_worktree_json_plan( (string) $assoc_args['apply-plan'], 'emergency cleanup');
+					$input['apply_plan'] = $this->read_worktree_json_plan( (string) $assoc_args['apply-plan'], 'emergency cleanup' );
 				}
 				break;
 
 			case 'bounded-cleanup-eligible-apply':
-				$input['dry_run']                   = ! empty($assoc_args['dry-run']);
-				$input['force']                     = ! empty($assoc_args['force']);
-				$input['discard_unpushed']          = ! empty($assoc_args['discard-unpushed']);
-				$input['via_jobs']                  = ! empty($assoc_args['via-jobs']);
-				$input['include_repaired_metadata'] = ! empty($assoc_args['include-repaired-metadata']);
+				$input['dry_run']                   = ! empty( $assoc_args['dry-run'] );
+				$input['force']                     = ! empty( $assoc_args['force'] );
+				$input['discard_unpushed']          = ! empty( $assoc_args['discard-unpushed'] );
+				$input['via_jobs']                  = ! empty( $assoc_args['via-jobs'] );
+				$input['include_repaired_metadata'] = ! empty( $assoc_args['include-repaired-metadata'] );
 				$input['source']                    = self::CLEANUP_CLI_SOURCE;
-				if ( ! empty($args[1]) ) {
+				if ( ! empty( $args[1] ) ) {
 					$input['repo'] = (string) $args[1];
 				}
-				if ( isset($assoc_args['limit']) ) {
+				if ( isset( $assoc_args['limit'] ) ) {
 					$input['limit'] = (int) $assoc_args['limit'];
 				}
-				if ( isset($assoc_args['older-than']) && '' !== trim( (string) $assoc_args['older-than']) ) {
-					$input['older_than'] = trim( (string) $assoc_args['older-than']);
+				if ( isset( $assoc_args['older-than'] ) && '' !== trim( (string) $assoc_args['older-than'] ) ) {
+					$input['older_than'] = trim( (string) $assoc_args['older-than'] );
 				}
-				if ( isset($assoc_args['sort']) && '' !== trim( (string) $assoc_args['sort']) ) {
-					$input['sort'] = trim( (string) $assoc_args['sort']);
+				if ( isset( $assoc_args['sort'] ) && '' !== trim( (string) $assoc_args['sort'] ) ) {
+					$input['sort'] = trim( (string) $assoc_args['sort'] );
 				}
-				if ( isset($assoc_args['remove-timeout']) && '' !== trim( (string) $assoc_args['remove-timeout']) ) {
+				if ( isset( $assoc_args['remove-timeout'] ) && '' !== trim( (string) $assoc_args['remove-timeout'] ) ) {
 					$input['remove_timeout'] = (int) $assoc_args['remove-timeout'];
 				}
-				if ( isset($assoc_args['scope']) && '' !== trim( (string) $assoc_args['scope']) ) {
-					$input['scope'] = trim( (string) $assoc_args['scope']);
+				if ( isset( $assoc_args['scope'] ) && '' !== trim( (string) $assoc_args['scope'] ) ) {
+					$input['scope'] = trim( (string) $assoc_args['scope'] );
 				}
 				break;
 
 			case 'cleanup-eligible-drain':
-				$input['apply']                     = ! empty($assoc_args['apply']);
-				$input['force']                     = ! empty($assoc_args['force']);
-				$input['discard_unpushed']          = ! empty($assoc_args['discard-unpushed']);
-				$input['include_repaired_metadata'] = ! empty($assoc_args['include-repaired-metadata']);
+				$input['apply']                     = ! empty( $assoc_args['apply'] );
+				$input['force']                     = ! empty( $assoc_args['force'] );
+				$input['discard_unpushed']          = ! empty( $assoc_args['discard-unpushed'] );
+				$input['include_repaired_metadata'] = ! empty( $assoc_args['include-repaired-metadata'] );
 				$input['source']                    = self::CLEANUP_CLI_SOURCE;
 				foreach ( array( 'limit', 'passes', 'remove-timeout' ) as $key ) {
-					if ( isset($assoc_args[ $key ]) ) {
-						$input[ str_replace('-', '_', $key) ] = (int) $assoc_args[ $key ];
+					if ( isset( $assoc_args[ $key ] ) ) {
+						$input[ str_replace( '-', '_', $key ) ] = (int) $assoc_args[ $key ];
 					}
 				}
 				foreach ( array( 'older-than', 'sort', 'until-budget' ) as $key ) {
-					if ( isset($assoc_args[ $key ]) && '' !== trim( (string) $assoc_args[ $key ]) ) {
-						$input[ str_replace('-', '_', $key) ] = trim( (string) $assoc_args[ $key ]);
+					if ( isset( $assoc_args[ $key ] ) && '' !== trim( (string) $assoc_args[ $key ] ) ) {
+						$input[ str_replace( '-', '_', $key ) ] = trim( (string) $assoc_args[ $key ] );
 					}
 				}
 				break;
 		}
 
-		$result = $ability->execute($input);
+		$result = $ability->execute( $input );
 
-		if ( is_wp_error($result) ) {
+		if ( is_wp_error( $result ) ) {
 			if ( 'add' === $operation && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-				$this->renderer()->json(array(
-					'success' => false,
-					'error'   => array(
-						'code'    => $result->get_error_code(),
-						'message' => $result->get_error_message(),
-						'data'    => $result->get_error_data(),
-					),
-				));
-				WP_CLI::halt(1);
+				$this->renderer()->json(
+					array(
+						'success' => false,
+						'error'   => array(
+							'code'    => $result->get_error_code(),
+							'message' => $result->get_error_message(),
+							'data'    => $result->get_error_data(),
+						),
+					)
+				);
+				WP_CLI::halt( 1 );
 			}
-			$this->render_workspace_error($result);
+			$this->render_workspace_error( $result );
 			return;
 		}
 
-		$this->renderWorktreeResult($operation, $result, $assoc_args);
+		$this->renderWorktreeResult( $operation, $result, $assoc_args );
 	}
 
 	/**
@@ -4934,21 +5210,21 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function build_worktree_active_no_signal_input( string $operation, array $assoc_args, string $repo = '' ): array {
 		$input = array();
-		if ( '' !== trim($repo) ) {
-			$input['repo'] = trim($repo);
+		if ( '' !== trim( $repo ) ) {
+			$input['repo'] = trim( $repo );
 		}
 
-		if ( in_array($operation, array( 'active-no-signal-finalized-apply', 'active-no-signal-equivalent-clean-apply', 'active-no-signal-merged-apply', 'active-no-signal-remote-clean-apply' ), true) ) {
-			$input['dry_run'] = ! empty($assoc_args['dry-run']);
+		if ( in_array( $operation, array( 'active-no-signal-finalized-apply', 'active-no-signal-equivalent-clean-apply', 'active-no-signal-merged-apply', 'active-no-signal-remote-clean-apply' ), true ) ) {
+			$input['dry_run'] = ! empty( $assoc_args['dry-run'] );
 		}
-		if ( isset($assoc_args['limit']) ) {
+		if ( isset( $assoc_args['limit'] ) ) {
 			$input['limit'] = (int) $assoc_args['limit'];
 		}
-		if ( isset($assoc_args['offset']) ) {
+		if ( isset( $assoc_args['offset'] ) ) {
 			$input['offset'] = (int) $assoc_args['offset'];
 		}
-		if ( isset($assoc_args['until-budget']) && '' !== trim( (string) $assoc_args['until-budget']) ) {
-			$input['until_budget'] = trim( (string) $assoc_args['until-budget']);
+		if ( isset( $assoc_args['until-budget'] ) && '' !== trim( (string) $assoc_args['until-budget'] ) ) {
+			$input['until_budget'] = trim( (string) $assoc_args['until-budget'] );
 		}
 
 		return $input;
@@ -4961,30 +5237,30 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private function run_worktree_abandoned_orchestration( array $assoc_args, string $repo = '' ): array|\WP_Error {
-		$ability = wp_get_ability('datamachine-code/workspace-worktree-abandoned-cleanup');
+		$ability = wp_get_ability( 'datamachine-code/workspace-worktree-abandoned-cleanup' );
 		if ( ! $ability ) {
-			return new \WP_Error('worktree_abandoned_ability_missing', 'Worktree abandoned cleanup ability not available: datamachine-code/workspace-worktree-abandoned-cleanup', array( 'status' => 500 ));
+			return new \WP_Error( 'worktree_abandoned_ability_missing', 'Worktree abandoned cleanup ability not available: datamachine-code/workspace-worktree-abandoned-cleanup', array( 'status' => 500 ) );
 		}
 
 		$input = array(
-			'apply'            => ! empty($assoc_args['apply']),
-			'force'            => ! empty($assoc_args['force']),
-			'discard_unpushed' => ! empty($assoc_args['discard-unpushed']),
+			'apply'            => ! empty( $assoc_args['apply'] ),
+			'force'            => ! empty( $assoc_args['force'] ),
+			'discard_unpushed' => ! empty( $assoc_args['discard-unpushed'] ),
 			'source'           => self::CLEANUP_CLI_SOURCE,
 		);
 		foreach ( array( 'limit', 'passes', 'offset', 'stage', 'scope' ) as $key ) {
-			if ( array_key_exists($key, $assoc_args) ) {
+			if ( array_key_exists( $key, $assoc_args ) ) {
 				$input[ $key ] = $assoc_args[ $key ];
 			}
 		}
-		if ( isset($assoc_args['until-budget']) ) {
+		if ( isset( $assoc_args['until-budget'] ) ) {
 			$input['until_budget'] = $assoc_args['until-budget'];
 		}
-		if ( '' !== trim($repo) ) {
-			$input['repo'] = trim($repo);
+		if ( '' !== trim( $repo ) ) {
+			$input['repo'] = trim( $repo );
 		}
 
-		return $ability->execute($input);
+		return $ability->execute( $input );
 	}
 
 	/**
@@ -4994,38 +5270,38 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private function run_worktree_active_no_signal_drain( array $assoc_args, string $repo = '' ): array|\WP_Error {
-		if ( ! empty($assoc_args['force']) ) {
-			return new \WP_Error('active_no_signal_drain_refuses_force', 'Active/no-signal drain will not force cleanup. Protected blockers remain blocked.', array( 'status' => 400 ));
+		if ( ! empty( $assoc_args['force'] ) ) {
+			return new \WP_Error( 'active_no_signal_drain_refuses_force', 'Active/no-signal drain will not force cleanup. Protected blockers remain blocked.', array( 'status' => 400 ) );
 		}
-		if ( ! empty($assoc_args['discard-unpushed']) ) {
-			return new \WP_Error('active_no_signal_drain_refuses_unpushed_discard', 'Active/no-signal drain will not discard unpushed commits.', array( 'status' => 400 ));
+		if ( ! empty( $assoc_args['discard-unpushed'] ) ) {
+			return new \WP_Error( 'active_no_signal_drain_refuses_unpushed_discard', 'Active/no-signal drain will not discard unpushed commits.', array( 'status' => 400 ) );
 		}
 
-		$ability = wp_get_ability('datamachine-code/workspace-worktree-active-no-signal-drain');
+		$ability = wp_get_ability( 'datamachine-code/workspace-worktree-active-no-signal-drain' );
 		if ( ! $ability ) {
-			return new \WP_Error('active_no_signal_drain_ability_missing', 'Worktree active/no-signal drain ability not available: datamachine-code/workspace-worktree-active-no-signal-drain', array( 'status' => 500 ));
+			return new \WP_Error( 'active_no_signal_drain_ability_missing', 'Worktree active/no-signal drain ability not available: datamachine-code/workspace-worktree-active-no-signal-drain', array( 'status' => 500 ) );
 		}
 
 		$input = array(
-			'apply'  => ! empty($assoc_args['apply']),
+			'apply'  => ! empty( $assoc_args['apply'] ),
 			'source' => self::CLEANUP_CLI_SOURCE,
 		);
 		foreach ( array( 'limit', 'passes', 'offset', 'stage', 'scope' ) as $key ) {
-			if ( array_key_exists($key, $assoc_args) ) {
+			if ( array_key_exists( $key, $assoc_args ) ) {
 				$input[ $key ] = $assoc_args[ $key ];
 			}
 		}
-		if ( '' !== trim($repo) ) {
-			$input['repo'] = trim($repo);
-			if ( empty($input['scope']) ) {
-				$input['scope'] = trim($repo);
+		if ( '' !== trim( $repo ) ) {
+			$input['repo'] = trim( $repo );
+			if ( empty( $input['scope'] ) ) {
+				$input['scope'] = trim( $repo );
 			}
 		}
-		if ( isset($assoc_args['until-budget']) ) {
+		if ( isset( $assoc_args['until-budget'] ) ) {
 			$input['until_budget'] = $assoc_args['until-budget'];
 		}
 
-		return $ability->execute($input);
+		return $ability->execute( $input );
 	}
 
 	/**
@@ -5036,25 +5312,25 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function render_worktree_abandoned_result( array $result, array $assoc_args ): void {
 		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-			if ( empty($assoc_args['verbose']) ) {
-				$result = $this->compact_worktree_abandoned_result($result);
+			if ( empty( $assoc_args['verbose'] ) ) {
+				$result = $this->compact_worktree_abandoned_result( $result );
 			}
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
 
 		if ( 'yaml' === (string) ( $assoc_args['format'] ?? '' ) ) {
-			$this->format_items(array( $result ), array_keys($result), $assoc_args);
+			$this->format_items( array( $result ), array_keys( $result ), $assoc_args );
 			return;
 		}
 
 		$summary = (array) ( $result['summary'] ?? array() );
-		WP_CLI::log('Abandoned worktree cleanup:');
+		WP_CLI::log( 'Abandoned worktree cleanup:' );
 		$this->format_items(
 			array(
 				array(
 					'metric' => 'applied',
-					'value'  => ! empty($result['applied']) ? 'yes' : 'no',
+					'value'  => ! empty( $result['applied'] ) ? 'yes' : 'no',
 				),
 				array(
 					'metric' => 'scanned',
@@ -5096,7 +5372,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$blocked_by_reason = (array) ( $summary['blocked_by_reason'] ?? array() );
 		if ( array() !== $blocked_by_reason ) {
-			WP_CLI::log('Blocked rows by reason:');
+			WP_CLI::log( 'Blocked rows by reason:' );
 			$items = array();
 			foreach ( $blocked_by_reason as $reason => $count ) {
 				$items[] = array(
@@ -5104,14 +5380,14 @@ class WorkspaceCommand extends BaseCommand {
 					'count'  => (int) $count,
 				);
 			}
-			$this->format_items($items, array( 'reason', 'count' ), array( 'format' => 'table' ), 'reason');
+			$this->format_items( $items, array( 'reason', 'count' ), array( 'format' => 'table' ), 'reason' );
 		}
 
 		$next_commands = (array) ( $result['next_commands'] ?? array() );
 		if ( array() !== $next_commands ) {
-			WP_CLI::log('Next commands:');
+			WP_CLI::log( 'Next commands:' );
 			foreach ( $next_commands as $command ) {
-				WP_CLI::log('  - ' . (string) $command);
+				WP_CLI::log( '  - ' . (string) $command );
 			}
 		}
 	}
@@ -5126,18 +5402,18 @@ class WorkspaceCommand extends BaseCommand {
 		$result['steps'] = $this->compact_worktree_abandoned_steps( (array) ( $result['steps'] ?? array() ) );
 
 		$blocked = (array) ( $result['blocked'] ?? array() );
-		if ( count($blocked) <= 25 ) {
+		if ( count( $blocked ) <= 25 ) {
 			return $result;
 		}
 
 		$examples_by_reason = array();
 		foreach ( $blocked as $row ) {
-			if ( ! is_array($row) ) {
+			if ( ! is_array( $row ) ) {
 				continue;
 			}
 
 			$reason = (string) ( $row['reason_code'] ?? 'unknown' );
-			if ( count($examples_by_reason[ $reason ] ?? array()) >= 3 ) {
+			if ( count( $examples_by_reason[ $reason ] ?? array() ) >= 3 ) {
 				continue;
 			}
 
@@ -5147,13 +5423,13 @@ class WorkspaceCommand extends BaseCommand {
 				'branch'      => (string) ( $row['branch'] ?? '' ),
 				'reason_code' => $reason,
 				'reason'      => (string) ( $row['reason'] ?? '' ),
-				'unpushed'    => isset($row['unpushed']) ? (int) $row['unpushed'] : null,
+				'unpushed'    => isset( $row['unpushed'] ) ? (int) $row['unpushed'] : null,
 			);
 		}
 
 		$result['blocked_examples']              = $examples_by_reason;
 		$result['evidence']['blocked_truncated'] = true;
-		$result['evidence']['blocked_full_rows'] = count($blocked);
+		$result['evidence']['blocked_full_rows'] = count( $blocked );
 		$result['evidence']['blocked_full_hint'] = 'Re-run with --verbose --format=json to include full blocked rows.';
 		$result['blocked']                       = array();
 
@@ -5168,21 +5444,21 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function compact_worktree_abandoned_steps( array $steps ): array {
 		foreach ( $steps as $step_key => $step ) {
-			if ( ! is_array($step) ) {
+			if ( ! is_array( $step ) ) {
 				continue;
 			}
 
 			$pagination = (array) ( $step['pagination'] ?? array() );
 			foreach ( array( 'remaining_handles', 'handles' ) as $field ) {
 				$handles = (array) ( $pagination[ $field ] ?? array() );
-				if ( count($handles) <= 25 ) {
+				if ( count( $handles ) <= 25 ) {
 					continue;
 				}
 
-				$pagination[ $field . '_examples' ]  = array_slice(array_values($handles), 0, 25);
+				$pagination[ $field . '_examples' ]  = array_slice( array_values( $handles ), 0, 25 );
 				$pagination[ $field . '_truncated' ] = true;
-				$pagination[ $field . '_count' ]     = count($handles);
-				unset($pagination[ $field ]);
+				$pagination[ $field . '_count' ]     = count( $handles );
+				unset( $pagination[ $field ] );
 			}
 
 			$step['pagination'] = $pagination;
@@ -5201,7 +5477,7 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function renderWorktreeResult( string $operation, array $result, array $assoc_args ): void {
 		if ( 'add' === $operation && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
 
@@ -5209,10 +5485,10 @@ class WorkspaceCommand extends BaseCommand {
 			case 'get':
 			case 'list':
 				$worktrees = $result['worktrees'] ?? array();
-				if ( ! empty($assoc_args['stale']) ) {
-					$worktrees = array_values(array_filter($worktrees, fn( $wt ) => ! empty($wt['stale_reason'])));
+				if ( ! empty( $assoc_args['stale'] ) ) {
+					$worktrees = array_values( array_filter( $worktrees, fn( $wt ) => ! empty( $wt['stale_reason'] ) ) );
 				}
-				if ( empty($worktrees) ) {
+				if ( empty( $worktrees ) ) {
 					if ( 'get' === $operation && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 						$this->renderer()->json(
 							array(
@@ -5223,110 +5499,110 @@ class WorkspaceCommand extends BaseCommand {
 								),
 							)
 						);
-						WP_CLI::halt(1);
+						WP_CLI::halt( 1 );
 					}
-					WP_CLI::log('No worktrees found.');
+					WP_CLI::log( 'No worktrees found.' );
 					$duplicates = (array) ( $result['duplicates'] ?? array() );
-					if ( ! empty($duplicates) ) {
-						WP_CLI::log(sprintf('Duplicate task ownership groups: %d', count($duplicates)));
+					if ( ! empty( $duplicates ) ) {
+						WP_CLI::log( sprintf( 'Duplicate task ownership groups: %d', count( $duplicates ) ) );
 					}
 					return;
 				}
 				$items  = array_map(
-				function ( $wt ) {
-					$skipped  = (array) ( $wt['fields_skipped'] ?? array() );
-					$dirty    = $wt['dirty'] ?? null;
-					$unpushed = $wt['unpushed'] ?? null;
-					$size     = $wt['size_bytes'] ?? null;
-					$item     = array(
-						'handle'              => $wt['handle'] ?? '',
-						'repo'                => $wt['repo'] ?? '',
-						'kind'                => ! empty($wt['is_primary']) ? 'primary' : 'worktree',
-						'branch'              => $wt['branch'] ?? '-',
-						'head'                => isset($wt['head']) ? substr( (string) $wt['head'], 0, 7) : '-',
-						'dirty'               => null === $dirty ? '-' : (int) $dirty,
-						'created_at'          => $wt['created_at'] ?? null,
-						'state'               => $wt['lifecycle_state'] ?? null,
-						'readiness'           => $wt['readiness'] ?? null,
-						'readiness_status'    => $wt['readiness']['status'] ?? 'unknown',
-						'liveness'            => $wt['liveness'] ?? 'unknown',
-						'liveness_reason'     => $wt['liveness_reason'] ?? '',
-						'last_seen_at'        => $wt['last_seen_at'] ?? null,
-						'owner'               => isset($wt['owner']['user']) ? (string) $wt['owner']['user'] : 'unknown',
-						'agent'               => isset($wt['owner']['agent']) ? (string) $wt['owner']['agent'] : 'unknown',
-						'site'                => isset($wt['owner']['site']) ? (string) $wt['owner']['site'] : 'unknown',
-						'session'             => isset($wt['session']['primary_id']) ? (string) $wt['session']['primary_id'] : '',
-						'task'                => is_array($wt['task'] ?? null) ? (string) ( $wt['task']['task_url'] ?? $wt['task']['task_ref'] ?? '' ) : '',
-						'pr'                  => $wt['pr_url'] ?? null,
-						'age_days'            => $wt['age_days'] ?? null,
-						'size_bytes'          => $size,
-						'size'                => null === $size ? '-' : $this->format_bytes($size),
-						'artifact_size_bytes' => $wt['artifact_size_bytes'] ?? 0,
-						'artifacts'           => in_array('disk', $skipped, true) ? '-' : $this->format_bytes($wt['artifact_size_bytes'] ?? 0),
-						'artifact_paths'      => $wt['artifacts'] ?? array(),
-						'stale'               => $wt['stale_reason'] ?? '',
-						'fields_skipped'      => $skipped,
-						'metadata'            => $wt['metadata'] ?? null,
-						'session_full'        => $wt['session'] ?? null,
-						'owner_full'          => $wt['owner'] ?? null,
-						'task_full'           => $wt['task'] ?? null,
-						'path'                => $wt['path'] ?? '',
-					);
-					if ( null !== $dirty && null !== $unpushed ) {
-						$item['safety'] = array(
-							'dirty'    => 0 !== (int) $dirty,
-							'unpushed' => 0 !== (int) $unpushed,
-							'primary'  => ! empty($wt['is_primary']),
+					function ( $wt ) {
+						$skipped  = (array) ( $wt['fields_skipped'] ?? array() );
+						$dirty    = $wt['dirty'] ?? null;
+						$unpushed = $wt['unpushed'] ?? null;
+						$size     = $wt['size_bytes'] ?? null;
+						$item     = array(
+							'handle'              => $wt['handle'] ?? '',
+							'repo'                => $wt['repo'] ?? '',
+							'kind'                => ! empty( $wt['is_primary'] ) ? 'primary' : 'worktree',
+							'branch'              => $wt['branch'] ?? '-',
+							'head'                => isset( $wt['head'] ) ? substr( (string) $wt['head'], 0, 7 ) : '-',
+							'dirty'               => null === $dirty ? '-' : (int) $dirty,
+							'created_at'          => $wt['created_at'] ?? null,
+							'state'               => $wt['lifecycle_state'] ?? null,
+							'readiness'           => $wt['readiness'] ?? null,
+							'readiness_status'    => $wt['readiness']['status'] ?? 'unknown',
+							'liveness'            => $wt['liveness'] ?? 'unknown',
+							'liveness_reason'     => $wt['liveness_reason'] ?? '',
+							'last_seen_at'        => $wt['last_seen_at'] ?? null,
+							'owner'               => isset( $wt['owner']['user'] ) ? (string) $wt['owner']['user'] : 'unknown',
+							'agent'               => isset( $wt['owner']['agent'] ) ? (string) $wt['owner']['agent'] : 'unknown',
+							'site'                => isset( $wt['owner']['site'] ) ? (string) $wt['owner']['site'] : 'unknown',
+							'session'             => isset( $wt['session']['primary_id'] ) ? (string) $wt['session']['primary_id'] : '',
+							'task'                => is_array( $wt['task'] ?? null ) ? (string) ( $wt['task']['task_url'] ?? $wt['task']['task_ref'] ?? '' ) : '',
+							'pr'                  => $wt['pr_url'] ?? null,
+							'age_days'            => $wt['age_days'] ?? null,
+							'size_bytes'          => $size,
+							'size'                => null === $size ? '-' : $this->format_bytes( $size ),
+							'artifact_size_bytes' => $wt['artifact_size_bytes'] ?? 0,
+							'artifacts'           => in_array( 'disk', $skipped, true ) ? '-' : $this->format_bytes( $wt['artifact_size_bytes'] ?? 0 ),
+							'artifact_paths'      => $wt['artifacts'] ?? array(),
+							'stale'               => $wt['stale_reason'] ?? '',
+							'fields_skipped'      => $skipped,
+							'metadata'            => $wt['metadata'] ?? null,
+							'session_full'        => $wt['session'] ?? null,
+							'owner_full'          => $wt['owner'] ?? null,
+							'task_full'           => $wt['task'] ?? null,
+							'path'                => $wt['path'] ?? '',
 						);
-					}
+						if ( null !== $dirty && null !== $unpushed ) {
+							$item['safety'] = array(
+								'dirty'    => 0 !== (int) $dirty,
+								'unpushed' => 0 !== (int) $unpushed,
+								'primary'  => ! empty( $wt['is_primary'] ),
+							);
+						}
 
-					return $item;
-				},
-				$worktrees
+						return $item;
+					},
+					$worktrees
 				);
 				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'readiness_status', 'liveness', 'last_seen_at', 'owner', 'agent', 'session', 'task', 'pr', 'age_days', 'size', 'artifacts', 'stale', 'path' );
-				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) && ! empty($assoc_args['envelope']) ) {
+				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) && ! empty( $assoc_args['envelope'] ) ) {
 					$result['worktrees'] = $items;
-					$this->renderer()->json($result);
+					$this->renderer()->json( $result );
 					return;
 				}
 				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-					$this->renderer()->json($items);
+					$this->renderer()->json( $items );
 					return;
 				}
-				if ( in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true) ) {
+				if ( in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
 					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'safety', 'state', 'readiness', 'readiness_status', 'created_at', 'liveness', 'liveness_reason', 'last_seen_at', 'owner_full', 'session_full', 'task_full', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'fields_skipped', 'metadata', 'path' );
 				}
 				$skipped_global = (array) ( $result['fields_skipped'] ?? array() );
-				if ( 'list' === $operation && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true) ) {
-					WP_CLI::log(sprintf('Worktrees: showing %d of %d', (int) ( $result['returned'] ?? count($items) ), (int) ( $result['total'] ?? count($items) )));
-					if ( ! empty($result['next_cursor']) ) {
-						WP_CLI::log('More rows: rerun with --cursor=' . (string) $result['next_cursor'] . ' (or use --all for complete expansion).');
+				if ( 'list' === $operation && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true ) ) {
+					WP_CLI::log( sprintf( 'Worktrees: showing %d of %d', (int) ( $result['returned'] ?? count( $items ) ), (int) ( $result['total'] ?? count( $items ) ) ) );
+					if ( ! empty( $result['next_cursor'] ) ) {
+						WP_CLI::log( 'More rows: rerun with --cursor=' . (string) $result['next_cursor'] . ' (or use --all for complete expansion).' );
 					}
 				}
-				if ( ! empty($skipped_global) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true) ) {
+				if ( ! empty( $skipped_global ) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true ) ) {
 					WP_CLI::log(
-					sprintf(
-						'# Cheap listing — fields skipped: %s. Pass --with-status, --with-size, or --full to populate.',
-						implode(', ', $skipped_global)
-					)
+						sprintf(
+							'# Cheap listing — fields skipped: %s. Pass --with-status, --with-size, or --full to populate.',
+							implode( ', ', $skipped_global )
+						)
 					);
 				}
-				$this->format_items($items, $fields, $assoc_args, 'handle');
+				$this->format_items( $items, $fields, $assoc_args, 'handle' );
 				$duplicates            = (array) ( $result['duplicates'] ?? array() );
 				$base_branch_worktrees = (array) ( $result['base_branch_worktrees'] ?? array() );
 				$summary               = (array) ( $result['summary'] ?? array() );
-				if ( ! empty($duplicates) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true) ) {
-					WP_CLI::log(sprintf('Duplicate task ownership groups: %d (%d sampled)', (int) ( $summary['duplicate_task_groups_total'] ?? count($duplicates) ), count($duplicates)));
+				if ( ! empty( $duplicates ) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
+					WP_CLI::log( sprintf( 'Duplicate task ownership groups: %d (%d sampled)', (int) ( $summary['duplicate_task_groups_total'] ?? count( $duplicates ) ), count( $duplicates ) ) );
 					foreach ( $duplicates as $group ) {
-						WP_CLI::log(sprintf('  - [%s=%s] %s', (string) ( $group['kind'] ?? '' ), (string) ( $group['key'] ?? '' ), implode(', ', (array) ( $group['handles'] ?? array() ))));
+						WP_CLI::log( sprintf( '  - [%s=%s] %s', (string) ( $group['kind'] ?? '' ), (string) ( $group['key'] ?? '' ), implode( ', ', (array) ( $group['handles'] ?? array() ) ) ) );
 					}
 				}
-				if ( ! empty($base_branch_worktrees) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true) ) {
-					$base_total = (int) ( $summary['base_branch_worktrees_total'] ?? count($base_branch_worktrees) );
-					WP_CLI::warning(sprintf('Base branch checked out in %d non-primary worktree%s (%d sampled); gh pr merge --delete-branch can merge remotely but fail local cleanup.', $base_total, 1 === $base_total ? '' : 's', count($base_branch_worktrees)));
+				if ( ! empty( $base_branch_worktrees ) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
+					$base_total = (int) ( $summary['base_branch_worktrees_total'] ?? count( $base_branch_worktrees ) );
+					WP_CLI::warning( sprintf( 'Base branch checked out in %d non-primary worktree%s (%d sampled); gh pr merge --delete-branch can merge remotely but fail local cleanup.', $base_total, 1 === $base_total ? '' : 's', count( $base_branch_worktrees ) ) );
 					foreach ( $base_branch_worktrees as $warning ) {
-						WP_CLI::log(sprintf('  - %s (%s) at %s', (string) ( $warning['handle'] ?? '' ), (string) ( $warning['branch'] ?? '' ), (string) ( $warning['path'] ?? '' )));
+						WP_CLI::log( sprintf( '  - %s (%s) at %s', (string) ( $warning['handle'] ?? '' ), (string) ( $warning['branch'] ?? '' ), (string) ( $warning['path'] ?? '' ) ) );
 					}
 				}
 				return;
@@ -5335,48 +5611,48 @@ class WorkspaceCommand extends BaseCommand {
 				$pruned                = (array) ( $result['pruned'] ?? array() );
 				$stale_inventory       = (array) ( $result['stale_inventory'] ?? array() );
 				$stale_marker_blockers = (array) ( $result['stale_marker_blockers'] ?? array() );
-				if ( empty($pruned) && empty($stale_inventory) && empty($stale_marker_blockers) ) {
-					WP_CLI::log('Nothing to prune.');
+				if ( empty( $pruned ) && empty( $stale_inventory ) && empty( $stale_marker_blockers ) ) {
+					WP_CLI::log( 'Nothing to prune.' );
 					return;
 				}
-				if ( ! empty($pruned) ) {
-					WP_CLI::success(sprintf('Pruned worktree registry across: %s', implode(', ', $pruned)));
+				if ( ! empty( $pruned ) ) {
+					WP_CLI::success( sprintf( 'Pruned worktree registry across: %s', implode( ', ', $pruned ) ) );
 				}
-				if ( ! empty($stale_inventory) ) {
-					WP_CLI::success(sprintf('Removed %d stale worktree inventory artifact%s.', count($stale_inventory), 1 === count($stale_inventory) ? '' : 's'));
+				if ( ! empty( $stale_inventory ) ) {
+					WP_CLI::success( sprintf( 'Removed %d stale worktree inventory artifact%s.', count( $stale_inventory ), 1 === count( $stale_inventory ) ? '' : 's' ) );
 				}
-				if ( ! empty($stale_marker_blockers) ) {
-					WP_CLI::warning(sprintf('Found %d path-present stale worktree marker blocker%s; left checkout paths in place for review.', count($stale_marker_blockers), 1 === count($stale_marker_blockers) ? '' : 's'));
+				if ( ! empty( $stale_marker_blockers ) ) {
+					WP_CLI::warning( sprintf( 'Found %d path-present stale worktree marker blocker%s; left checkout paths in place for review.', count( $stale_marker_blockers ), 1 === count( $stale_marker_blockers ) ? '' : 's' ) );
 					foreach ( $stale_marker_blockers as $blocker ) {
-						WP_CLI::log(sprintf('  - %s at %s', (string) ( $blocker['handle'] ?? '' ), (string) ( $blocker['path'] ?? '' )));
+						WP_CLI::log( sprintf( '  - %s at %s', (string) ( $blocker['handle'] ?? '' ), (string) ( $blocker['path'] ?? '' ) ) );
 					}
 				}
 				return;
 
 			case 'cleanup':
-				$this->render_worktree_cleanup_result($result, $assoc_args);
+				$this->render_worktree_cleanup_result( $result, $assoc_args );
 				return;
 			case 'reconcile-metadata':
-				$this->render_worktree_metadata_reconciliation_result($result, $assoc_args);
+				$this->render_worktree_metadata_reconciliation_result( $result, $assoc_args );
 				return;
 			case 'capacity-recovery':
 				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-					$this->renderer()->json($result);
+					$this->renderer()->json( $result );
 					return;
 				}
 				$approval = (array) ( $result['next_approval'] ?? array() );
 				if ( '' !== (string) ( $approval['command'] ?? '' ) ) {
-					WP_CLI::success(sprintf('Capacity recovery produced %d actionable row(s). Review then approve: %s', (int) ( $approval['actionable_rows'] ?? 0 ), (string) $approval['command']));
+					WP_CLI::success( sprintf( 'Capacity recovery produced %d actionable row(s). Review then approve: %s', (int) ( $approval['actionable_rows'] ?? 0 ), (string) $approval['command'] ) );
 					return;
 				}
-				WP_CLI::log('Capacity recovery completed without an actionable cleanup approval.');
-				if ( ! empty($result['next_command']) ) {
-					WP_CLI::log('Continue: ' . (string) $result['next_command']);
+				WP_CLI::log( 'Capacity recovery completed without an actionable cleanup approval.' );
+				if ( ! empty( $result['next_command'] ) ) {
+					WP_CLI::log( 'Continue: ' . (string) $result['next_command'] );
 				}
 				return;
 
 			case 'active-no-signal-report':
-				$this->render_worktree_active_no_signal_report_result($result, $assoc_args);
+				$this->render_worktree_active_no_signal_report_result( $result, $assoc_args );
 				return;
 
 			case 'active-no-signal-finalized-apply':
@@ -5384,110 +5660,110 @@ class WorkspaceCommand extends BaseCommand {
 			case 'active-no-signal-merged-apply':
 			case 'active-no-signal-remote-clean-apply':
 				$variants = array(
-					'active-no-signal-finalized-apply'        => 'finalized',
+					'active-no-signal-finalized-apply'    => 'finalized',
 					'active-no-signal-equivalent-clean-apply' => 'equivalent_clean',
-					'active-no-signal-merged-apply'           => 'merged',
-					'active-no-signal-remote-clean-apply'     => 'remote_clean',
+					'active-no-signal-merged-apply'       => 'merged',
+					'active-no-signal-remote-clean-apply' => 'remote_clean',
 				);
-				$this->render_worktree_active_no_signal_apply_result($result, $assoc_args, $variants[ $operation ]);
+				$this->render_worktree_active_no_signal_apply_result( $result, $assoc_args, $variants[ $operation ] );
 				return;
 
 			case 'cleanup-artifacts':
-				$this->render_worktree_artifact_cleanup_result($result, $assoc_args);
+				$this->render_worktree_artifact_cleanup_result( $result, $assoc_args );
 				return;
 
 			case 'bounded-cleanup-eligible-apply':
-				$this->render_worktree_bounded_cleanup_eligible_apply_result($result, $assoc_args);
+				$this->render_worktree_bounded_cleanup_eligible_apply_result( $result, $assoc_args );
 				return;
 
 			case 'cleanup-eligible-drain':
-				$this->render_worktree_cleanup_eligible_drain_result($result, $assoc_args);
+				$this->render_worktree_cleanup_eligible_drain_result( $result, $assoc_args );
 				return;
 
 			case 'emergency-cleanup':
-				$this->render_worktree_emergency_cleanup_result($result, $assoc_args);
+				$this->render_worktree_emergency_cleanup_result( $result, $assoc_args );
 				return;
 
 			case 'add':
 			case 'plan':
-				WP_CLI::success($result['message'] ?? 'Worktree created.');
+				WP_CLI::success( $result['message'] ?? 'Worktree created.' );
 				if ( 'plan' === $operation ) {
-					WP_CLI::log(sprintf('Disposition: %s', $result['disposition'] ?? '-'));
-					WP_CLI::log(sprintf('Digest: %s', $result['digest'] ?? '-'));
+					WP_CLI::log( sprintf( 'Disposition: %s', $result['disposition'] ?? '-' ) );
+					WP_CLI::log( sprintf( 'Digest: %s', $result['digest'] ?? '-' ) );
 					return;
 				}
-				if ( isset($result['disk_budget']) && is_array($result['disk_budget']) ) {
+				if ( isset( $result['disk_budget'] ) && is_array( $result['disk_budget'] ) ) {
 					$budget = $result['disk_budget'];
-					WP_CLI::log(\DataMachineCode\Workspace\WorktreeDiskBudget::format_summary($budget));
+					WP_CLI::log( \DataMachineCode\Workspace\WorktreeDiskBudget::format_summary( $budget ) );
 					foreach ( (array) ( $budget['warnings'] ?? array() ) as $warning ) {
-						WP_CLI::warning($warning);
+						WP_CLI::warning( $warning );
 					}
-					if ( ! empty($budget['force_override_applied']) ) {
-						WP_CLI::warning('Disk budget override applied because --force was explicit.');
+					if ( ! empty( $budget['force_override_applied'] ) ) {
+						WP_CLI::warning( 'Disk budget override applied because --force was explicit.' );
 					}
 				}
-				if ( ! empty($result['handle']) ) {
-					WP_CLI::log(sprintf('Handle: %s', $result['handle']));
-					WP_CLI::log(sprintf('Path:   %s', $result['path'] ?? '-'));
-					WP_CLI::log(sprintf('Branch: %s%s', $result['branch'] ?? '-', ! empty($result['created_branch']) ? ' (created)' : ''));
+				if ( ! empty( $result['handle'] ) ) {
+					WP_CLI::log( sprintf( 'Handle: %s', $result['handle'] ) );
+					WP_CLI::log( sprintf( 'Path:   %s', $result['path'] ?? '-' ) );
+					WP_CLI::log( sprintf( 'Branch: %s%s', $result['branch'] ?? '-', ! empty( $result['created_branch'] ) ? ' (created)' : '' ) );
 				}
-				if ( isset($result['context_injected']) ) {
-					if ( ! empty($result['context_injected']) ) {
+				if ( isset( $result['context_injected'] ) ) {
+					if ( ! empty( $result['context_injected'] ) ) {
 						$written = $result['context_files'] ?? array();
-						WP_CLI::log(sprintf('Context: injected (%d file%s)', count($written), 1 === count($written) ? '' : 's'));
+						WP_CLI::log( sprintf( 'Context: injected (%d file%s)', count( $written ), 1 === count( $written ) ? '' : 's' ) );
 						foreach ( $written as $file ) {
-							WP_CLI::log('  - ' . $file);
+							WP_CLI::log( '  - ' . $file );
 						}
-						if ( ! empty($result['context_exclude_path']) ) {
-							WP_CLI::log(sprintf('Excluded via: %s', $result['context_exclude_path']));
+						if ( ! empty( $result['context_exclude_path'] ) ) {
+							WP_CLI::log( sprintf( 'Excluded via: %s', $result['context_exclude_path'] ) );
 						}
 					} else {
 						$reason = $result['context_skip_reason'] ?? 'unknown';
-						WP_CLI::log(sprintf('Context: not injected (%s)', $reason));
+						WP_CLI::log( sprintf( 'Context: not injected (%s)', $reason ) );
 					}
 				}
-				if ( isset($result['bootstrap']) && is_array($result['bootstrap']) ) {
+				if ( isset( $result['bootstrap'] ) && is_array( $result['bootstrap'] ) ) {
 					$bs      = $result['bootstrap'];
-					$ok      = ! empty($bs['success']);
-					$ran_any = ! empty($bs['ran_any']);
+					$ok      = ! empty( $bs['success'] );
+					$ran_any = ! empty( $bs['ran_any'] );
 					$label   = $ok ? ( $ran_any ? 'Bootstrap: ok' : 'Bootstrap: nothing to do' ) : 'Bootstrap: one or more steps FAILED';
-					WP_CLI::log($label);
-					WP_CLI::log(\DataMachineCode\Workspace\WorktreeBootstrapper::format($bs));
+					WP_CLI::log( $label );
+					WP_CLI::log( \DataMachineCode\Workspace\WorktreeBootstrapper::format( $bs ) );
 					if ( ! $ok ) {
-						WP_CLI::warning('Worktree was created but bootstrap had failures. Re-run the failing step manually, or remove and retry.');
+						WP_CLI::warning( 'Worktree was created but bootstrap had failures. Re-run the failing step manually, or remove and retry.' );
 					}
 				}
-				$this->render_worktree_freshness($result);
+				$this->render_worktree_freshness( $result );
 				return;
 
 			case 'refresh-context':
-				WP_CLI::success($result['message'] ?? 'Worktree context refreshed.');
-				WP_CLI::log(sprintf('Handle: %s', $result['handle'] ?? '-'));
-				WP_CLI::log(sprintf('Path:   %s', $result['path'] ?? '-'));
+				WP_CLI::success( $result['message'] ?? 'Worktree context refreshed.' );
+				WP_CLI::log( sprintf( 'Handle: %s', $result['handle'] ?? '-' ) );
+				WP_CLI::log( sprintf( 'Path:   %s', $result['path'] ?? '-' ) );
 				foreach ( (array) ( $result['written'] ?? array() ) as $file ) {
-					WP_CLI::log('  - ' . $file);
+					WP_CLI::log( '  - ' . $file );
 				}
-				if ( ! empty($result['exclude_path']) ) {
-					WP_CLI::log(sprintf('Exclude file: %s', $result['exclude_path']));
+				if ( ! empty( $result['exclude_path'] ) ) {
+					WP_CLI::log( sprintf( 'Exclude file: %s', $result['exclude_path'] ) );
 				}
-				if ( ! empty($result['metadata']['site_url']) ) {
-					WP_CLI::log(sprintf('Originating site: %s', $result['metadata']['site_url']));
+				if ( ! empty( $result['metadata']['site_url'] ) ) {
+					WP_CLI::log( sprintf( 'Originating site: %s', $result['metadata']['site_url'] ) );
 				}
 				return;
 
 			case 'finalize':
 			case 'mark-cleanup-eligible':
-				WP_CLI::success($result['message'] ?? 'Worktree finalized.');
-				WP_CLI::log(sprintf('Handle: %s', $result['handle'] ?? '-'));
-				WP_CLI::log(sprintf('State:  %s', $result['lifecycle_state'] ?? '-'));
-				if ( ! empty($result['metadata']['pr_url']) ) {
-					WP_CLI::log(sprintf('PR:     %s', $result['metadata']['pr_url']));
+				WP_CLI::success( $result['message'] ?? 'Worktree finalized.' );
+				WP_CLI::log( sprintf( 'Handle: %s', $result['handle'] ?? '-' ) );
+				WP_CLI::log( sprintf( 'State:  %s', $result['lifecycle_state'] ?? '-' ) );
+				if ( ! empty( $result['metadata']['pr_url'] ) ) {
+					WP_CLI::log( sprintf( 'PR:     %s', $result['metadata']['pr_url'] ) );
 				}
 				return;
 
 			case 'remove':
 			default:
-				WP_CLI::success($result['message'] ?? 'Worktree operation complete.');
+				WP_CLI::success( $result['message'] ?? 'Worktree operation complete.' );
 				return;
 		}
 	}
@@ -5499,10 +5775,10 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function render_workspace_lock_result( array $result, array $assoc_args, bool $prune ): void {
 		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-			if ( empty($assoc_args['verbose']) ) {
-				$result = WorkspaceCompactOutput::lock_result($result);
+			if ( empty( $assoc_args['verbose'] ) ) {
+				$result = WorkspaceCompactOutput::lock_result( $result );
 			}
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
 
@@ -5510,21 +5786,21 @@ class WorkspaceCommand extends BaseCommand {
 		$fs     = (array) ( $status['filesystem'] ?? array() );
 		$db     = (array) ( $status['database'] ?? array() );
 
-		WP_CLI::log($prune ? 'Workspace mutation locks: stale prune complete' : 'Workspace mutation locks:');
-		WP_CLI::log(sprintf('Active: %d  Stale: %d', (int) ( $status['active'] ?? 0 ), (int) ( $status['stale'] ?? 0 )));
-		WP_CLI::log(sprintf('Database: %s active, %s stale, available=%s', (string) ( $db['active'] ?? 0 ), (string) ( $db['stale'] ?? 0 ), ! empty($db['available']) ? 'yes' : 'no'));
-		WP_CLI::log(sprintf('Filesystem: %s active, %s stale, %s recent', (string) ( $fs['active'] ?? 0 ), (string) ( $fs['stale'] ?? 0 ), (string) ( $fs['recent'] ?? 0 )));
+		WP_CLI::log( $prune ? 'Workspace mutation locks: stale prune complete' : 'Workspace mutation locks:' );
+		WP_CLI::log( sprintf( 'Active: %d  Stale: %d', (int) ( $status['active'] ?? 0 ), (int) ( $status['stale'] ?? 0 ) ) );
+		WP_CLI::log( sprintf( 'Database: %s active, %s stale, available=%s', (string) ( $db['active'] ?? 0 ), (string) ( $db['stale'] ?? 0 ), ! empty( $db['available'] ) ? 'yes' : 'no' ) );
+		WP_CLI::log( sprintf( 'Filesystem: %s active, %s stale, %s recent', (string) ( $fs['active'] ?? 0 ), (string) ( $fs['stale'] ?? 0 ), (string) ( $fs['recent'] ?? 0 ) ) );
 
 		if ( $prune ) {
 			$filesystem = (array) ( $result['filesystem'] ?? array() );
-			WP_CLI::log(sprintf('Filesystem removed: %d; skipped: %d', (int) ( $filesystem['removed_count'] ?? 0 ), (int) ( $filesystem['skipped_count'] ?? 0 )));
-			if ( ! empty($result['dry_run']) ) {
-				WP_CLI::log('Dry-run only. Re-run without --dry-run to remove stale unlocked lock files.');
+			WP_CLI::log( sprintf( 'Filesystem removed: %d; skipped: %d', (int) ( $filesystem['removed_count'] ?? 0 ), (int) ( $filesystem['skipped_count'] ?? 0 ) ) );
+			if ( ! empty( $result['dry_run'] ) ) {
+				WP_CLI::log( 'Dry-run only. Re-run without --dry-run to remove stale unlocked lock files.' );
 			}
 		}
 
 		$locks = (array) ( $fs['locks'] ?? array() );
-		if ( ! empty($locks) ) {
+		if ( ! empty( $locks ) ) {
 			$items = array_map(
 				static function ( array $lock ): array {
 					$owner = (array) ( $lock['owner_evidence'] ?? array() );
@@ -5533,18 +5809,18 @@ class WorkspaceCommand extends BaseCommand {
 						'scope'         => (string) ( $lock['scope'] ?? '' ),
 						'state'         => (string) ( $lock['state'] ?? '' ),
 						'age_seconds'   => $lock['age_seconds'] ?? null,
-						'safe_to_prune' => ! empty($lock['safe_to_prune']) ? 'yes' : 'no',
+						'safe_to_prune' => ! empty( $lock['safe_to_prune'] ) ? 'yes' : 'no',
 						'owner_source'  => (string) ( $owner['source'] ?? '' ),
 						'path'          => (string) ( $lock['path'] ?? '' ),
 					);
 				},
 				$locks
 			);
-			$this->format_items($items, array( 'lock_key', 'scope', 'state', 'age_seconds', 'safe_to_prune', 'owner_source', 'path' ), $assoc_args, 'lock_key');
+			$this->format_items( $items, array( 'lock_key', 'scope', 'state', 'age_seconds', 'safe_to_prune', 'owner_source', 'path' ), $assoc_args, 'lock_key' );
 		}
 
 		$db_locks = (array) ( $db['locks'] ?? array() );
-		if ( ! empty($db_locks) ) {
+		if ( ! empty( $db_locks ) ) {
 			$items = array_map(
 				static function ( array $lock ): array {
 					return array(
@@ -5558,19 +5834,19 @@ class WorkspaceCommand extends BaseCommand {
 				},
 				$db_locks
 			);
-			WP_CLI::log('');
-			WP_CLI::log('Database lock rows:');
-			$this->format_items($items, array( 'lock_key', 'scope', 'state', 'owner', 'age_seconds', 'expires_at' ), $assoc_args, 'lock_key');
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Database lock rows:' );
+			$this->format_items( $items, array( 'lock_key', 'scope', 'state', 'owner', 'age_seconds', 'expires_at' ), $assoc_args, 'lock_key' );
 		}
 
-		if ( ! empty($status['stale_locks']) && is_array($status['stale_locks']) ) {
-			$this->render_stale_lock_followup( (array) $status['stale_locks']);
+		if ( ! empty( $status['stale_locks'] ) && is_array( $status['stale_locks'] ) ) {
+			$this->render_stale_lock_followup( (array) $status['stale_locks'] );
 		}
 
 		$guidance = (array) ( $fs['guidance'] ?? $status['recovery_guidance'] ?? array() );
-		if ( ! empty($guidance) ) {
-			WP_CLI::log(sprintf('Status: %s', (string) ( $guidance['status_command'] ?? 'wp datamachine-code workspace worktree locks --format=json' )));
-			WP_CLI::log(sprintf('Prune:  %s', (string) ( $guidance['dry_run_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' )));
+		if ( ! empty( $guidance ) ) {
+			WP_CLI::log( sprintf( 'Status: %s', (string) ( $guidance['status_command'] ?? 'wp datamachine-code workspace worktree locks --format=json' ) ) );
+			WP_CLI::log( sprintf( 'Prune:  %s', (string) ( $guidance['dry_run_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' ) ) );
 			WP_CLI::log( (string) ( $guidance['safety'] ?? 'Active filesystem flocks are not pruned.' ) );
 		}
 	}
@@ -5585,15 +5861,15 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		WP_CLI::log('');
-		WP_CLI::log('Stale workspace locks:');
-		WP_CLI::log(sprintf('Preview: %s', (string) ( $report['preview_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' )));
-		WP_CLI::log(sprintf('Apply:   %s', (string) ( $report['apply_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --format=json' )));
+		WP_CLI::log( '' );
+		WP_CLI::log( 'Stale workspace locks:' );
+		WP_CLI::log( sprintf( 'Preview: %s', (string) ( $report['preview_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' ) ) );
+		WP_CLI::log( sprintf( 'Apply:   %s', (string) ( $report['apply_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --format=json' ) ) );
 		WP_CLI::log( (string) ( $report['safety'] ?? 'Active filesystem flocks are reported and protected.' ) );
 
 		$rows = array();
 		foreach ( (array) ( $report['database'] ?? array() ) as $row ) {
-			if ( ! is_array($row) ) {
+			if ( ! is_array( $row ) ) {
 				continue;
 			}
 			$rows[] = array(
@@ -5603,12 +5879,12 @@ class WorkspaceCommand extends BaseCommand {
 				'owner'              => (string) ( $row['owner'] ?? '' ),
 				'session'            => (string) ( $row['session'] ?? '' ),
 				'age_seconds'        => $row['age_seconds'] ?? null,
-				'live_flock_present' => ! empty($row['live_flock_present']) ? 'yes' : 'no',
-				'safe_to_prune'      => ! empty($row['safe_to_prune']) ? 'yes' : 'no',
+				'live_flock_present' => ! empty( $row['live_flock_present'] ) ? 'yes' : 'no',
+				'safe_to_prune'      => ! empty( $row['safe_to_prune'] ) ? 'yes' : 'no',
 			);
 		}
 		foreach ( (array) ( $report['filesystem'] ?? array() ) as $row ) {
-			if ( ! is_array($row) ) {
+			if ( ! is_array( $row ) ) {
 				continue;
 			}
 			$rows[] = array(
@@ -5618,82 +5894,82 @@ class WorkspaceCommand extends BaseCommand {
 				'owner'              => '',
 				'session'            => '',
 				'age_seconds'        => $row['age_seconds'] ?? null,
-				'live_flock_present' => ! empty($row['live_flock_present']) ? 'yes' : 'no',
-				'safe_to_prune'      => ! empty($row['safe_to_prune']) ? 'yes' : 'no',
+				'live_flock_present' => ! empty( $row['live_flock_present'] ) ? 'yes' : 'no',
+				'safe_to_prune'      => ! empty( $row['safe_to_prune'] ) ? 'yes' : 'no',
 			);
 		}
 
-		$this->format_items($rows, array( 'source', 'lock_key', 'scope', 'owner', 'session', 'age_seconds', 'live_flock_present', 'safe_to_prune' ), array( 'format' => 'table' ), 'lock_key');
+		$this->format_items( $rows, array( 'source', 'lock_key', 'scope', 'owner', 'session', 'age_seconds', 'live_flock_present', 'safe_to_prune' ), array( 'format' => 'table' ), 'lock_key' );
 	}
 
 	private function render_workspace_error( \WP_Error $error ): void {
 		$data = (array) $error->get_error_data();
-		if ( 'workspace_repo_busy' !== $error->get_error_code() && ! empty($data['next_commands']) && is_array($data['next_commands']) ) {
-			WP_CLI::warning($error->get_error_message());
-			WP_CLI::log('Next commands:');
+		if ( 'workspace_repo_busy' !== $error->get_error_code() && ! empty( $data['next_commands'] ) && is_array( $data['next_commands'] ) ) {
+			WP_CLI::warning( $error->get_error_message() );
+			WP_CLI::log( 'Next commands:' );
 			foreach ( $data['next_commands'] as $command ) {
-				if ( is_scalar($command) && '' !== trim( (string) $command) ) {
-					WP_CLI::log('  ' . (string) $command);
+				if ( is_scalar( $command ) && '' !== trim( (string) $command ) ) {
+					WP_CLI::log( '  ' . (string) $command );
 				}
 			}
-			if ( ! empty($data['hint']) ) {
-				WP_CLI::log('Hint: ' . (string) $data['hint']);
+			if ( ! empty( $data['hint'] ) ) {
+				WP_CLI::log( 'Hint: ' . (string) $data['hint'] );
 			}
-			WP_CLI::error($error->get_error_message());
+			WP_CLI::error( $error->get_error_message() );
 			return;
 		}
 		if ( 'workspace_repo_busy' !== $error->get_error_code() ) {
-			WP_CLI::error($error->get_error_message());
+			WP_CLI::error( $error->get_error_message() );
 			return;
 		}
 
-		$lock = is_array($data['active_lock'] ?? null) ? (array) $data['active_lock'] : array();
-		if ( ! empty($lock) ) {
-			WP_CLI::warning(sprintf('Lock owner: %s', (string) ( $lock['owner'] ?? 'unknown' )));
-			WP_CLI::log(sprintf('Lock key:   %s', (string) ( $lock['lock_key'] ?? $data['lock_key'] ?? '-' )));
-			WP_CLI::log(sprintf('Scope:      %s', (string) ( $lock['scope'] ?? $data['scope'] ?? $data['repo'] ?? '-' )));
-			WP_CLI::log(sprintf('Path:       %s', (string) ( $lock['metadata']['lock_path'] ?? $data['lock_path'] ?? '-' )));
-			WP_CLI::log(sprintf('Acquired:   %s', (string) ( $lock['acquired_at'] ?? '-' )));
-			WP_CLI::log(sprintf('Heartbeat:  %s', (string) ( $lock['heartbeat_at'] ?? '-' )));
-			WP_CLI::log(sprintf('Expires:    %s', (string) ( $lock['expires_at'] ?? '-' )));
-			if ( isset($lock['age_seconds']) || isset($lock['retry_after_seconds']) ) {
-				WP_CLI::log(sprintf('Age/retry:  %ss old; retry after up to %ss', (string) ( $lock['age_seconds'] ?? '-' ), (string) ( $lock['retry_after_seconds'] ?? '-' )));
+		$lock = is_array( $data['active_lock'] ?? null ) ? (array) $data['active_lock'] : array();
+		if ( ! empty( $lock ) ) {
+			WP_CLI::warning( sprintf( 'Lock owner: %s', (string) ( $lock['owner'] ?? 'unknown' ) ) );
+			WP_CLI::log( sprintf( 'Lock key:   %s', (string) ( $lock['lock_key'] ?? $data['lock_key'] ?? '-' ) ) );
+			WP_CLI::log( sprintf( 'Scope:      %s', (string) ( $lock['scope'] ?? $data['scope'] ?? $data['repo'] ?? '-' ) ) );
+			WP_CLI::log( sprintf( 'Path:       %s', (string) ( $lock['metadata']['lock_path'] ?? $data['lock_path'] ?? '-' ) ) );
+			WP_CLI::log( sprintf( 'Acquired:   %s', (string) ( $lock['acquired_at'] ?? '-' ) ) );
+			WP_CLI::log( sprintf( 'Heartbeat:  %s', (string) ( $lock['heartbeat_at'] ?? '-' ) ) );
+			WP_CLI::log( sprintf( 'Expires:    %s', (string) ( $lock['expires_at'] ?? '-' ) ) );
+			if ( isset( $lock['age_seconds'] ) || isset( $lock['retry_after_seconds'] ) ) {
+				WP_CLI::log( sprintf( 'Age/retry:  %ss old; retry after up to %ss', (string) ( $lock['age_seconds'] ?? '-' ), (string) ( $lock['retry_after_seconds'] ?? '-' ) ) );
 			}
 			$owner_context = (array) ( $lock['metadata']['owner_context'] ?? array() );
-			if ( ! empty($owner_context['wp_cli_args']) ) {
-				WP_CLI::log(sprintf('Command:    %s', (string) $owner_context['wp_cli_args']));
+			if ( ! empty( $owner_context['wp_cli_args'] ) ) {
+				WP_CLI::log( sprintf( 'Command:    %s', (string) $owner_context['wp_cli_args'] ) );
 			}
-			$session_id = $this->resolve_owner_context_session_id($owner_context);
+			$session_id = $this->resolve_owner_context_session_id( $owner_context );
 			if ( '' !== $session_id ) {
-				WP_CLI::log(sprintf('Session:    %s', $session_id));
+				WP_CLI::log( sprintf( 'Session:    %s', $session_id ) );
 			}
 		}
 
-		$filesystem_lock = is_array($data['filesystem_lock'] ?? null) ? (array) $data['filesystem_lock'] : array();
-		if ( ! empty($filesystem_lock) ) {
-			WP_CLI::warning(sprintf('Filesystem lock: %s (%s)', (string) ( $filesystem_lock['lock_key'] ?? $data['lock_key'] ?? '-' ), (string) ( $filesystem_lock['state'] ?? 'unknown' )));
-			WP_CLI::log(sprintf('Path:       %s', (string) ( $filesystem_lock['path'] ?? $data['lock_path'] ?? '-' )));
-			WP_CLI::log(sprintf('Age:        %ss', (string) ( $filesystem_lock['age_seconds'] ?? '-' )));
+		$filesystem_lock = is_array( $data['filesystem_lock'] ?? null ) ? (array) $data['filesystem_lock'] : array();
+		if ( ! empty( $filesystem_lock ) ) {
+			WP_CLI::warning( sprintf( 'Filesystem lock: %s (%s)', (string) ( $filesystem_lock['lock_key'] ?? $data['lock_key'] ?? '-' ), (string) ( $filesystem_lock['state'] ?? 'unknown' ) ) );
+			WP_CLI::log( sprintf( 'Path:       %s', (string) ( $filesystem_lock['path'] ?? $data['lock_path'] ?? '-' ) ) );
+			WP_CLI::log( sprintf( 'Age:        %ss', (string) ( $filesystem_lock['age_seconds'] ?? '-' ) ) );
 			$owner_evidence = (array) ( $filesystem_lock['owner_evidence'] ?? array() );
-			if ( ! empty($owner_evidence['source']) ) {
-				WP_CLI::log(sprintf('Owner src:  %s', (string) $owner_evidence['source']));
+			if ( ! empty( $owner_evidence['source'] ) ) {
+				WP_CLI::log( sprintf( 'Owner src:  %s', (string) $owner_evidence['source'] ) );
 			}
-			if ( ! empty($owner_evidence['message']) ) {
-				WP_CLI::log(sprintf('Owner note: %s', (string) $owner_evidence['message']));
+			if ( ! empty( $owner_evidence['message'] ) ) {
+				WP_CLI::log( sprintf( 'Owner note: %s', (string) $owner_evidence['message'] ) );
 			}
-			if ( ! empty($filesystem_lock['operator_guidance']) ) {
-				WP_CLI::log(sprintf('Guidance:   %s', (string) $filesystem_lock['operator_guidance']));
+			if ( ! empty( $filesystem_lock['operator_guidance'] ) ) {
+				WP_CLI::log( sprintf( 'Guidance:   %s', (string) $filesystem_lock['operator_guidance'] ) );
 			}
 		}
 
-		if ( ! empty($data['status_command']) ) {
-			WP_CLI::log(sprintf('Inspect:    %s', (string) $data['status_command']));
+		if ( ! empty( $data['status_command'] ) ) {
+			WP_CLI::log( sprintf( 'Inspect:    %s', (string) $data['status_command'] ) );
 		}
-		if ( ! empty($data['stale_prune_command']) ) {
-			WP_CLI::log(sprintf('Recover:    %s', (string) $data['stale_prune_command']));
+		if ( ! empty( $data['stale_prune_command'] ) ) {
+			WP_CLI::log( sprintf( 'Recover:    %s', (string) $data['stale_prune_command'] ) );
 		}
 
-		WP_CLI::error($error->get_error_message());
+		WP_CLI::error( $error->get_error_message() );
 	}
 
 	/**
@@ -5712,17 +5988,17 @@ class WorkspaceCommand extends BaseCommand {
 		$runtime_ids = (array) ( $owner_context['runtime_ids'] ?? array() );
 
 		foreach ( $runtime_ids as $entry ) {
-			if ( is_array($entry) && '' !== trim( (string) ( $entry['session_id'] ?? '' )) ) {
+			if ( is_array( $entry ) && '' !== trim( (string) ( $entry['session_id'] ?? '' ) ) ) {
 				return (string) $entry['session_id'];
 			}
 		}
 
 		foreach ( $runtime_ids as $entry ) {
-			if ( ! is_array($entry) ) {
+			if ( ! is_array( $entry ) ) {
 				continue;
 			}
 			foreach ( $entry as $value ) {
-				if ( '' !== trim( (string) $value) ) {
+				if ( '' !== trim( (string) $value ) ) {
 					return (string) $value;
 				}
 			}
@@ -5739,12 +6015,12 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_workspace_hygiene_report( array $report, array $assoc_args ): void {
-		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			if ( empty($assoc_args['verbose']) ) {
-				$report = WorkspaceCompactOutput::hygiene_report($report);
+			if ( empty( $assoc_args['verbose'] ) ) {
+				$report = WorkspaceCompactOutput::hygiene_report( $report );
 			}
-			$this->renderer()->json($report);
+			$this->renderer()->json( $report );
 			return;
 		}
 
@@ -5764,7 +6040,7 @@ class WorkspaceCommand extends BaseCommand {
 		$inode_used_pct   = null === ( $disk['used_inode_percent'] ?? null ) ? 'unknown' : (string) $disk['used_inode_percent'];
 		$inode_free_pct   = null === ( $disk['free_inode_percent'] ?? null ) ? 'unknown' : (string) $disk['free_inode_percent'];
 
-		WP_CLI::log('Workspace hygiene:');
+		WP_CLI::log( 'Workspace hygiene:' );
 		$this->format_items(
 			array(
 				array(
@@ -5793,15 +6069,15 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array(
 					'metric' => 'size_scan_complete',
-					'value'  => ! empty($size['scan_complete']) ? 'yes' : 'no',
+					'value'  => ! empty( $size['scan_complete'] ) ? 'yes' : 'no',
 				),
 				array(
 					'metric' => 'disk_free',
-					'value'  => sprintf('%s (%s%%)', (string) ( $disk['free_human'] ?? '-' ), null === ( $disk['free_percent'] ?? null ) ? '-' : (string) $disk['free_percent']),
+					'value'  => sprintf( '%s (%s%%)', (string) ( $disk['free_human'] ?? '-' ), null === ( $disk['free_percent'] ?? null ) ? '-' : (string) $disk['free_percent'] ),
 				),
 				array(
 					'metric' => 'disk_used',
-					'value'  => sprintf('%s (%s%%)', null === ( $disk['filesystem_used_bytes'] ?? null ) ? '-' : $this->format_bytes( (int) $disk['filesystem_used_bytes'] ), null === ( $disk['used_percent'] ?? null ) ? '-' : (string) $disk['used_percent']),
+					'value'  => sprintf( '%s (%s%%)', null === ( $disk['filesystem_used_bytes'] ?? null ) ? '-' : $this->format_bytes( (int) $disk['filesystem_used_bytes'] ), null === ( $disk['used_percent'] ?? null ) ? '-' : (string) $disk['used_percent'] ),
 				),
 				array(
 					'metric' => 'disk_total',
@@ -5809,7 +6085,7 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array(
 					'metric' => 'inode_capacity',
-					'value'  => sprintf('total=%s used=%s (%s%%) free=%s (%s%%)', $inode_total, $inode_used, $inode_used_pct, $inode_free, $inode_free_pct),
+					'value'  => sprintf( 'total=%s used=%s (%s%%) free=%s (%s%%)', $inode_total, $inode_used, $inode_used_pct, $inode_free, $inode_free_pct ),
 				),
 				array(
 					'metric' => 'capacity_status',
@@ -5905,33 +6181,33 @@ class WorkspaceCommand extends BaseCommand {
 			'metric'
 		);
 
-		if ( ! empty($locks['stale_locks']) && is_array($locks['stale_locks']) ) {
-			$this->render_stale_lock_followup( (array) $locks['stale_locks']);
+		if ( ! empty( $locks['stale_locks'] ) && is_array( $locks['stale_locks'] ) ) {
+			$this->render_stale_lock_followup( (array) $locks['stale_locks'] );
 		}
 
 		$duplicates = (array) ( $worktrees['duplicates'] ?? array() );
 		if ( array() !== $duplicates ) {
-			WP_CLI::log('');
-			WP_CLI::log('Duplicate task ownership groups (reported only — never auto-deleted):');
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Duplicate task ownership groups (reported only — never auto-deleted):' );
 			foreach ( $duplicates as $group ) {
 				WP_CLI::log(
 					sprintf(
 						'  - [%s=%s] %s',
 						(string) ( $group['kind'] ?? '' ),
 						(string) ( $group['key'] ?? '' ),
-						implode(', ', (array) ( $group['handles'] ?? array() ))
+						implode( ', ', (array) ( $group['handles'] ?? array() ) )
 					)
 				);
 			}
 		}
 
-		$top_size = array_slice( (array) ( $report['top_repos_by_size'] ?? array() ), 0, 10);
-		$by_kind  = array_slice( (array) ( $size['by_kind'] ?? array() ), 0, 10);
-		$entries  = array_slice( (array) ( $size['top_entries'] ?? array() ), 0, 10);
+		$top_size = array_slice( (array) ( $report['top_repos_by_size'] ?? array() ), 0, 10 );
+		$by_kind  = array_slice( (array) ( $size['by_kind'] ?? array() ), 0, 10 );
+		$entries  = array_slice( (array) ( $size['top_entries'] ?? array() ), 0, 10 );
 
 		if ( array() !== $by_kind ) {
-			WP_CLI::log('');
-			WP_CLI::log('Workspace size by kind:');
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Workspace size by kind:' );
 			$this->format_items(
 				array_map(
 					fn( $row ) => array(
@@ -5948,8 +6224,8 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( array() !== $entries ) {
-			WP_CLI::log('');
-			WP_CLI::log('Top workspace entries by size:');
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Top workspace entries by size:' );
 			$this->format_items(
 				array_map(
 					fn( $row ) => array(
@@ -5968,8 +6244,8 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( array() !== $top_size ) {
-			WP_CLI::log('');
-			WP_CLI::log('Top repos by size:');
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Top repos by size:' );
 			$this->format_items(
 				array_map(
 					fn( $row ) => array(
@@ -5985,17 +6261,17 @@ class WorkspaceCommand extends BaseCommand {
 			);
 		}
 
-		$top_counts = array_slice( (array) ( $report['top_repos_by_worktrees'] ?? array() ), 0, 10);
+		$top_counts = array_slice( (array) ( $report['top_repos_by_worktrees'] ?? array() ), 0, 10 );
 		if ( array() !== $top_counts ) {
-			WP_CLI::log('');
-			WP_CLI::log('Top repos by worktree count:');
-			$this->format_items($top_counts, array( 'repo', 'worktree_count' ), array( 'format' => 'table' ), 'worktree_count');
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Top repos by worktree count:' );
+			$this->format_items( $top_counts, array( 'repo', 'worktree_count' ), array( 'format' => 'table' ), 'worktree_count' );
 		}
 
-		$candidates = array_slice( (array) ( $cleanup['biggest_candidates'] ?? array() ), 0, 10);
+		$candidates = array_slice( (array) ( $cleanup['biggest_candidates'] ?? array() ), 0, 10 );
 		if ( array() !== $candidates ) {
-			WP_CLI::log('');
-			WP_CLI::log('Cleanup candidates:');
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Cleanup candidates:' );
 			$this->format_items(
 				array_map(
 					fn( $row ) => array(
@@ -6003,10 +6279,10 @@ class WorkspaceCommand extends BaseCommand {
 						'branch'         => $row['branch'] ?? '',
 						'signal'         => $row['signal'] ?? '',
 						'size'           => $row['size_human'] ?? '',
-						'dirty'          => array_key_exists('dirty', (array) $row) ? ( null === $row['dirty'] ? 'unknown' : $row['dirty'] ) : '',
-						'unpushed'       => array_key_exists('unpushed', (array) $row) ? ( null === $row['unpushed'] ? 'unknown' : $row['unpushed'] ) : '',
+						'dirty'          => array_key_exists( 'dirty', (array) $row ) ? ( null === $row['dirty'] ? 'unknown' : $row['dirty'] ) : '',
+						'unpushed'       => array_key_exists( 'unpushed', (array) $row ) ? ( null === $row['unpushed'] ? 'unknown' : $row['unpushed'] ) : '',
 						'fresh_status'   => $row['fresh_revalidation_status'] ?? '',
-						'fresh_blockers' => implode(',', array_map('strval', (array) ( $row['fresh_revalidation_blockers'] ?? array() ))),
+						'fresh_blockers' => implode( ',', array_map( 'strval', (array) ( $row['fresh_revalidation_blockers'] ?? array() ) ) ),
 					),
 					$candidates
 				),
@@ -6017,31 +6293,37 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( array() !== $recovery ) {
-			WP_CLI::log('');
-			WP_CLI::log(sprintf('Recovery guidance (status: %s):', (string) ( $recovery['status'] ?? 'unknown' )));
+			WP_CLI::log( '' );
+			WP_CLI::log( sprintf( 'Recovery guidance (status: %s):', (string) ( $recovery['status'] ?? 'unknown' ) ) );
 			$lanes = (array) ( $recovery['lanes'] ?? array() );
 			$this->format_items(
 				array(
-					array( 'lane' => 'cleanup', 'state' => (string) ( $lanes['cleanup'] ?? 'unknown' ) ),
-					array( 'lane' => 'stale_locks', 'state' => (string) ( $lanes['stale_locks'] ?? 'unknown' ) ),
+					array(
+						'lane'  => 'cleanup',
+						'state' => (string) ( $lanes['cleanup'] ?? 'unknown' ),
+					),
+					array(
+						'lane'  => 'stale_locks',
+						'state' => (string) ( $lanes['stale_locks'] ?? 'unknown' ),
+					),
 				),
 				array( 'lane', 'state' ),
 				array( 'format' => 'table' ),
 				'lane'
 			);
 			foreach ( (array) ( $recovery['commands'] ?? array() ) as $command ) {
-				if ( ! is_array($command) || '' === trim( (string) ( $command['command'] ?? '' )) ) {
+				if ( ! is_array( $command ) || '' === trim( (string) ( $command['command'] ?? '' ) ) ) {
 					continue;
 				}
-				WP_CLI::log(sprintf('%s: %s', (string) ( $command['label'] ?? 'Recovery command' ), (string) $command['command']));
+				WP_CLI::log( sprintf( '%s: %s', (string) ( $command['label'] ?? 'Recovery command' ), (string) $command['command'] ) );
 			}
-			if ( ! empty($recovery['detail_command']) ) {
-				WP_CLI::log(sprintf('More recovery detail (non-destructive): %s', (string) $recovery['detail_command']));
+			if ( ! empty( $recovery['detail_command'] ) ) {
+				WP_CLI::log( sprintf( 'More recovery detail (non-destructive): %s', (string) $recovery['detail_command'] ) );
 			}
 		}
 
 		foreach ( (array) ( $report['notes'] ?? array() ) as $note ) {
-			WP_CLI::log('Note: ' . $note);
+			WP_CLI::log( 'Note: ' . $note );
 		}
 	}
 
@@ -6053,15 +6335,15 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_worktree_cleanup_result( array $result, array $assoc_args ): void {
-		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
-		$only   = isset($assoc_args['only']) ? $this->normalize_worktree_cleanup_only( (string) $assoc_args['only']) : '';
-		$report = $this->filter_worktree_cleanup_report($result, $only);
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
+		$only   = isset( $assoc_args['only'] ) ? $this->normalize_worktree_cleanup_only( (string) $assoc_args['only'] ) : '';
+		$report = $this->filter_worktree_cleanup_report( $result, $only );
 
 		if ( 'json' === $format ) {
-			if ( empty($assoc_args['verbose']) ) {
-				$report = WorkspaceCompactOutput::cleanup_result($report);
+			if ( empty( $assoc_args['verbose'] ) ) {
+				$report = WorkspaceCompactOutput::cleanup_result( $report );
 			}
-			$this->renderer()->json($report);
+			$this->renderer()->json( $report );
 			return;
 		}
 
@@ -6069,32 +6351,32 @@ class WorkspaceCommand extends BaseCommand {
 		$removed    = $report['removed'] ?? array();
 		$skipped    = $report['skipped'] ?? array();
 		$summary    = $report['summary'] ?? array();
-		$dry_run    = ! empty($report['dry_run']);
-		$verbose    = ! empty($assoc_args['verbose']);
+		$dry_run    = ! empty( $report['dry_run'] );
+		$verbose    = ! empty( $assoc_args['verbose'] );
 		$limit      = $verbose ? PHP_INT_MAX : 10;
 
-		if ( empty($candidates) && empty($removed) && empty($skipped) ) {
-			WP_CLI::log('No worktrees found.');
+		if ( empty( $candidates ) && empty( $removed ) && empty( $skipped ) ) {
+			WP_CLI::log( 'No worktrees found.' );
 			return;
 		}
 
 		if ( ! $dry_run ) {
-			WP_CLI::log(sprintf('Result: removed %d worktree(s); reclaimed %s; skipped %d.', (int) ( $summary['removed'] ?? count($removed) ), $this->format_bytes($summary['bytes_reclaimed'] ?? 0), (int) ( $summary['skipped'] ?? count($skipped) )));
+			WP_CLI::log( sprintf( 'Result: removed %d worktree(s); reclaimed %s; skipped %d.', (int) ( $summary['removed'] ?? count( $removed ) ), $this->format_bytes( $summary['bytes_reclaimed'] ?? 0 ), (int) ( $summary['skipped'] ?? count( $skipped ) ) ) );
 		}
 
-		WP_CLI::log('Summary:');
+		WP_CLI::log( 'Summary:' );
 		$summary_rows = array(
 			array(
 				'metric' => 'would_remove',
-				'count'  => (int) ( $summary['would_remove'] ?? count($candidates) ),
+				'count'  => (int) ( $summary['would_remove'] ?? count( $candidates ) ),
 			),
 			array(
 				'metric' => 'removed',
-				'count'  => (int) ( $summary['removed'] ?? count($removed) ),
+				'count'  => (int) ( $summary['removed'] ?? count( $removed ) ),
 			),
 			array(
 				'metric' => 'skipped',
-				'count'  => (int) ( $summary['skipped'] ?? count($skipped) ),
+				'count'  => (int) ( $summary['skipped'] ?? count( $skipped ) ),
 			),
 		);
 		foreach ( (array) ( $summary['skipped_by_reason'] ?? array() ) as $reason_code => $count ) {
@@ -6121,7 +6403,7 @@ class WorkspaceCommand extends BaseCommand {
 				'count'  => (int) $count,
 			);
 		}
-		if ( isset($summary['age_filter']) && is_array($summary['age_filter']) ) {
+		if ( isset( $summary['age_filter'] ) && is_array( $summary['age_filter'] ) ) {
 			$summary_rows[] = array(
 				'metric' => 'age_filter:excluded',
 				'count'  => (int) ( $summary['age_filter']['excluded'] ?? 0 ),
@@ -6133,91 +6415,91 @@ class WorkspaceCommand extends BaseCommand {
 		}
 		$summary_rows[] = array(
 			'metric' => 'total_size',
-			'count'  => $this->format_bytes($summary['total_size_bytes'] ?? null),
+			'count'  => $this->format_bytes( $summary['total_size_bytes'] ?? null ),
 		);
 		$summary_rows[] = array(
 			'metric' => 'artifact_size',
-			'count'  => $this->format_bytes($summary['artifact_size_bytes'] ?? null),
+			'count'  => $this->format_bytes( $summary['artifact_size_bytes'] ?? null ),
 		);
-		$this->format_items($summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric');
+		$this->format_items( $summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric' );
 
-		if ( ! empty($summary['size_by_repo']) && is_array($summary['size_by_repo']) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Top repos by worktree size:');
+		if ( ! empty( $summary['size_by_repo'] ) && is_array( $summary['size_by_repo'] ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Top repos by worktree size:' );
 			$repo_rows = array();
-			foreach ( array_slice($summary['size_by_repo'], 0, 5, true) as $repo => $bytes ) {
+			foreach ( array_slice( $summary['size_by_repo'], 0, 5, true ) as $repo => $bytes ) {
 				$repo_rows[] = array(
 					'repo' => (string) $repo,
-					'size' => $this->format_bytes($bytes),
+					'size' => $this->format_bytes( $bytes ),
 				);
 			}
-			$this->format_items($repo_rows, array( 'repo', 'size' ), array( 'format' => 'table' ), 'size');
+			$this->format_items( $repo_rows, array( 'repo', 'size' ), array( 'format' => 'table' ), 'size' );
 		}
 
 		if ( '' !== $only ) {
-			WP_CLI::log(sprintf('Filter: %s', $only));
+			WP_CLI::log( sprintf( 'Filter: %s', $only ) );
 		}
 
-		$this->render_worktree_cleanup_next_commands( (array) ( $summary['skipped_next_commands'] ?? array() ));
+		$this->render_worktree_cleanup_next_commands( (array) ( $summary['skipped_next_commands'] ?? array() ) );
 
-		if ( ! empty($candidates) && ( '' === $only || 'candidates' === $only ) ) {
-			WP_CLI::log('');
-			WP_CLI::log($dry_run ? 'Would remove:' : 'Candidates:');
-			$candidate_rows = $this->worktree_cleanup_table_rows(array_slice($candidates, 0, $limit));
+		if ( ! empty( $candidates ) && ( '' === $only || 'candidates' === $only ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( $dry_run ? 'Would remove:' : 'Candidates:' );
+			$candidate_rows = $this->worktree_cleanup_table_rows( array_slice( $candidates, 0, $limit ) );
 			$fields         = $verbose ? array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason' ) : array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason_code' );
-			$this->format_items($candidate_rows, $fields, array( 'format' => 'table' ), 'handle');
-			$this->render_cleanup_truncation_hint(count($candidates), $limit, 'candidate rows');
+			$this->format_items( $candidate_rows, $fields, array( 'format' => 'table' ), 'handle' );
+			$this->render_cleanup_truncation_hint( count( $candidates ), $limit, 'candidate rows' );
 		}
 
-		if ( ! empty($removed) && ( '' === $only || 'removed' === $only ) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Removed:');
-			$removed_rows = $this->worktree_cleanup_table_rows(array_slice($removed, 0, $limit));
+		if ( ! empty( $removed ) && ( '' === $only || 'removed' === $only ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Removed:' );
+			$removed_rows = $this->worktree_cleanup_table_rows( array_slice( $removed, 0, $limit ) );
 			$fields       = $verbose ? array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason' ) : array( 'handle', 'branch', 'age_days', 'size', 'artifacts', 'signal', 'reason_code' );
-			$this->format_items($removed_rows, $fields, array( 'format' => 'table' ), 'handle');
-			$this->render_cleanup_truncation_hint(count($removed), $limit, 'removed rows');
+			$this->format_items( $removed_rows, $fields, array( 'format' => 'table' ), 'handle' );
+			$this->render_cleanup_truncation_hint( count( $removed ), $limit, 'removed rows' );
 		}
 
-		if ( ! empty($skipped) ) {
-			WP_CLI::log('');
+		if ( ! empty( $skipped ) ) {
+			WP_CLI::log( '' );
 			if ( $verbose ) {
-				WP_CLI::log('Skipped:');
+				WP_CLI::log( 'Skipped:' );
 				$skipped_rows = array_map(
 					fn( $s ) => array(
 						'handle'       => $s['handle'] ?? '',
 						'reason_code'  => $s['reason_code'] ?? '',
 						'reason'       => $s['reason'] ?? '',
 						'age_days'     => $s['age_days'] ?? '',
-						'size'         => $this->format_bytes($s['size_bytes'] ?? null),
-						'artifacts'    => $this->format_bytes($s['artifact_size_bytes'] ?? 0),
+						'size'         => $this->format_bytes( $s['size_bytes'] ?? null ),
+						'artifacts'    => $this->format_bytes( $s['artifact_size_bytes'] ?? 0 ),
 						'repo'         => $s['repo'] ?? '',
 						'branch'       => $s['branch'] ?? '',
 						'path'         => $s['path'] ?? '',
 						'primary_path' => $s['primary_path'] ?? '',
-						'missing'      => implode(',', (array) ( $s['missing_fields'] ?? array() )),
+						'missing'      => implode( ',', (array) ( $s['missing_fields'] ?? array() ) ),
 						'hint'         => $s['hint'] ?? '',
 					),
-					array_slice($skipped, 0, $limit)
+					array_slice( $skipped, 0, $limit )
 				);
-				$this->format_items($skipped_rows, array( 'handle', 'reason_code', 'reason', 'age_days', 'size', 'artifacts', 'repo', 'branch', 'path', 'primary_path', 'missing', 'hint' ), array( 'format' => 'table' ), 'handle');
-				$this->render_cleanup_truncation_hint(count($skipped), $limit, 'skipped rows');
+				$this->format_items( $skipped_rows, array( 'handle', 'reason_code', 'reason', 'age_days', 'size', 'artifacts', 'repo', 'branch', 'path', 'primary_path', 'missing', 'hint' ), array( 'format' => 'table' ), 'handle' );
+				$this->render_cleanup_truncation_hint( count( $skipped ), $limit, 'skipped rows' );
 			} else {
-				WP_CLI::log('Skipped summary:');
-				$this->format_items($this->summarize_cleanup_skipped_rows($skipped), array( 'reason_code', 'count', 'examples' ), array( 'format' => 'table' ), 'reason_code');
-				WP_CLI::log('Re-run with --verbose to list every skipped row or --only=<reason_code> to inspect one bucket.');
+				WP_CLI::log( 'Skipped summary:' );
+				$this->format_items( $this->summarize_cleanup_skipped_rows( $skipped ), array( 'reason_code', 'count', 'examples' ), array( 'format' => 'table' ), 'reason_code' );
+				WP_CLI::log( 'Re-run with --verbose to list every skipped row or --only=<reason_code> to inspect one bucket.' );
 			}
 		}
 
-		WP_CLI::log('');
+		WP_CLI::log( '' );
 		if ( $dry_run ) {
-			if ( ! empty($result['inventory_only']) && ! empty($summary['apply_command']) ) {
-				WP_CLI::success(sprintf('%d cleanup-eligible worktree(s) would be removed. Apply this bounded reviewed class with: %s', count($result['candidates'] ?? array()), (string) $summary['apply_command']));
+			if ( ! empty( $result['inventory_only'] ) && ! empty( $summary['apply_command'] ) ) {
+				WP_CLI::success( sprintf( '%d cleanup-eligible worktree(s) would be removed. Apply this bounded reviewed class with: %s', count( $result['candidates'] ?? array() ), (string) $summary['apply_command'] ) );
 				return;
 			}
-			WP_CLI::success(sprintf('%d worktree(s) would be removed. Re-run without --dry-run to apply.', count($result['candidates'] ?? array())));
+			WP_CLI::success( sprintf( '%d worktree(s) would be removed. Re-run without --dry-run to apply.', count( $result['candidates'] ?? array() ) ) );
 			return;
 		}
-		WP_CLI::success(sprintf('Removed %d worktree(s); %d skipped.', count($result['removed'] ?? array()), count($result['skipped'] ?? array())));
+		WP_CLI::success( sprintf( 'Removed %d worktree(s); %d skipped.', count( $result['removed'] ?? array() ), count( $result['skipped'] ?? array() ) ) );
 	}
 
 	/** Project cleanup candidates and removals into their shared table schema. */
@@ -6227,8 +6509,8 @@ class WorkspaceCommand extends BaseCommand {
 				'handle'      => $row['handle'] ?? '',
 				'branch'      => $row['branch'] ?? '',
 				'age_days'    => $row['age_days'] ?? '',
-				'size'        => $this->format_bytes($row['size_bytes'] ?? null),
-				'artifacts'   => $this->format_bytes($row['artifact_size_bytes'] ?? 0),
+				'size'        => $this->format_bytes( $row['size_bytes'] ?? null ),
+				'artifacts'   => $this->format_bytes( $row['artifact_size_bytes'] ?? 0 ),
 				'signal'      => $row['signal'] ?? '',
 				'reason_code' => $row['reason_code'] ?? ( $row['signal'] ?? '' ),
 				'reason'      => $row['reason'] ?? '',
@@ -6244,23 +6526,23 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_worktree_cleanup_next_commands( array $commands ): void {
-		if ( empty($commands) ) {
+		if ( empty( $commands ) ) {
 			return;
 		}
 
-		WP_CLI::log('');
-		WP_CLI::log('Next commands for skipped buckets:');
+		WP_CLI::log( '' );
+		WP_CLI::log( 'Next commands for skipped buckets:' );
 		$rows = array_map(
 			fn( $row ) => array(
 				'reason_code' => $row['reason_code'] ?? '',
 				'count'       => (int) ( $row['count'] ?? 0 ),
 				'command'     => $row['command'] ?? '',
 				'alternative' => $row['alternative'] ?? '',
-				'destructive' => ! empty($row['destructive']) ? 'yes' : 'no',
+				'destructive' => ! empty( $row['destructive'] ) ? 'yes' : 'no',
 			),
 			$commands
 		);
-		$this->format_items($rows, array( 'reason_code', 'count', 'destructive', 'command', 'alternative' ), array( 'format' => 'table' ), 'reason_code');
+		$this->format_items( $rows, array( 'reason_code', 'count', 'destructive', 'command', 'alternative' ), array( 'format' => 'table' ), 'reason_code' );
 	}
 
 	/**
@@ -6272,7 +6554,7 @@ class WorkspaceCommand extends BaseCommand {
 	private function render_worktree_cleanup_progress( array $event ): void {
 		$label = (string) ( $event['event'] ?? 'progress' );
 		if ( 'start' === $label ) {
-			WP_CLI::log(sprintf('Cleanup progress: starting scan of %d worktree(s).', (int) ( $event['total'] ?? 0 )));
+			WP_CLI::log( sprintf( 'Cleanup progress: starting scan of %d worktree(s).', (int) ( $event['total'] ?? 0 ) ) );
 			return;
 		}
 
@@ -6299,9 +6581,9 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_worktree_metadata_reconciliation_result( array $result, array $assoc_args ): void {
-		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
 
@@ -6311,11 +6593,11 @@ class WorkspaceCommand extends BaseCommand {
 		$skipped            = (array) ( $result['skipped'] ?? array() );
 		$still_unsafe       = (array) ( $result['still_unsafe'] ?? array() );
 		$external_worktrees = (array) ( $result['external_worktrees'] ?? array() );
-		$verbose            = ! empty($assoc_args['verbose']);
+		$verbose            = ! empty( $assoc_args['verbose'] );
 		$limit              = $verbose ? PHP_INT_MAX : 10;
 
-		WP_CLI::log('Summary:');
-		if ( isset($result['pagination']) && is_array($result['pagination']) ) {
+		WP_CLI::log( 'Summary:' );
+		if ( isset( $result['pagination'] ) && is_array( $result['pagination'] ) ) {
 			$pagination = (array) $result['pagination'];
 			WP_CLI::log(
 				sprintf(
@@ -6325,7 +6607,7 @@ class WorkspaceCommand extends BaseCommand {
 					(int) ( $pagination['scanned'] ?? 0 ),
 					(int) ( $pagination['total'] ?? 0 ),
 					null === ( $pagination['next_offset'] ?? null ) ? '-' : (string) $pagination['next_offset'],
-					! empty($pagination['complete']) ? 'yes' : 'no'
+					! empty( $pagination['complete'] ) ? 'yes' : 'no'
 				)
 			);
 		}
@@ -6336,15 +6618,15 @@ class WorkspaceCommand extends BaseCommand {
 			),
 			array(
 				'metric' => 'proposed',
-				'count'  => (int) ( $summary['proposed'] ?? count($proposals) ),
+				'count'  => (int) ( $summary['proposed'] ?? count( $proposals ) ),
 			),
 			array(
 				'metric' => 'written',
-				'count'  => (int) ( $summary['written'] ?? count($written) ),
+				'count'  => (int) ( $summary['written'] ?? count( $written ) ),
 			),
 			array(
 				'metric' => 'skipped',
-				'count'  => (int) ( $summary['skipped'] ?? count($skipped) ),
+				'count'  => (int) ( $summary['skipped'] ?? count( $skipped ) ),
 			),
 		);
 		foreach ( (array) ( $summary['skipped_by_reason'] ?? array() ) as $reason_code => $count ) {
@@ -6359,29 +6641,29 @@ class WorkspaceCommand extends BaseCommand {
 				'count'  => (int) $count,
 			);
 		}
-		$this->format_items($summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric');
+		$this->format_items( $summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric' );
 
-		if ( ! empty($proposals) ) {
-			WP_CLI::log('');
-			WP_CLI::log( ! empty($result['dry_run']) ? 'Would write metadata:' : 'Reviewed proposals:');
+		if ( ! empty( $proposals ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( ! empty( $result['dry_run'] ) ? 'Would write metadata:' : 'Reviewed proposals:' );
 			$proposal_rows = array_map(
 				fn( $row ) => array(
 					'handle'   => $row['handle'] ?? '',
 					'branch'   => $row['branch'] ?? '',
 					'state'    => $row['proposed_metadata']['lifecycle_state'] ?? '',
-					'missing'  => implode(',', (array) ( $row['missing_fields'] ?? array() )),
+					'missing'  => implode( ',', (array) ( $row['missing_fields'] ?? array() ) ),
 					'dirty'    => (int) ( $row['dirty'] ?? 0 ),
 					'unpushed' => (int) ( $row['unpushed'] ?? 0 ),
 				),
-				array_slice($proposals, 0, $limit)
+				array_slice( $proposals, 0, $limit )
 			);
-			$this->format_items($proposal_rows, array( 'handle', 'branch', 'state', 'missing', 'dirty', 'unpushed' ), array( 'format' => 'table' ), 'handle');
-			$this->render_cleanup_truncation_hint(count($proposals), $limit, 'proposal rows');
+			$this->format_items( $proposal_rows, array( 'handle', 'branch', 'state', 'missing', 'dirty', 'unpushed' ), array( 'format' => 'table' ), 'handle' );
+			$this->render_cleanup_truncation_hint( count( $proposals ), $limit, 'proposal rows' );
 		}
 
-		if ( ! empty($written) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Written:');
+		if ( ! empty( $written ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Written:' );
 			$written_rows = array_map(
 				fn( $row ) => array(
 					'handle'      => $row['handle'] ?? '',
@@ -6389,30 +6671,30 @@ class WorkspaceCommand extends BaseCommand {
 					'state'       => $row['metadata']['lifecycle_state'] ?? '',
 					'observed_at' => $row['metadata']['observed_at'] ?? '',
 				),
-				array_slice($written, 0, $limit)
+				array_slice( $written, 0, $limit )
 			);
-			$this->format_items($written_rows, array( 'handle', 'branch', 'state', 'observed_at' ), array( 'format' => 'table' ), 'handle');
-			$this->render_cleanup_truncation_hint(count($written), $limit, 'written rows');
+			$this->format_items( $written_rows, array( 'handle', 'branch', 'state', 'observed_at' ), array( 'format' => 'table' ), 'handle' );
+			$this->render_cleanup_truncation_hint( count( $written ), $limit, 'written rows' );
 		}
 
-		if ( ! empty($still_unsafe) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Still unsafe:');
+		if ( ! empty( $still_unsafe ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Still unsafe:' );
 			$unsafe_rows = array_map(
 				fn( $row ) => array(
 					'handle'      => $row['handle'] ?? '',
 					'reason_code' => $row['reason_code'] ?? '',
-					'reason'      => $verbose ? ( $row['reason'] ?? '' ) : $this->shorten_cleanup_reason( (string) ( $row['reason'] ?? '' )),
+					'reason'      => $verbose ? ( $row['reason'] ?? '' ) : $this->shorten_cleanup_reason( (string) ( $row['reason'] ?? '' ) ),
 				),
-				array_slice($still_unsafe, 0, $limit)
+				array_slice( $still_unsafe, 0, $limit )
 			);
-			$this->format_items($unsafe_rows, array( 'handle', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
-			$this->render_cleanup_truncation_hint(count($still_unsafe), $limit, 'still-unsafe rows');
+			$this->format_items( $unsafe_rows, array( 'handle', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle' );
+			$this->render_cleanup_truncation_hint( count( $still_unsafe ), $limit, 'still-unsafe rows' );
 		}
 
-		if ( ! empty($external_worktrees) ) {
-			WP_CLI::log('');
-			WP_CLI::log('External worktrees:');
+		if ( ! empty( $external_worktrees ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'External worktrees:' );
 			$external_rows = array_map(
 				fn( $row ) => array(
 					'handle' => $row['handle'] ?? '',
@@ -6420,32 +6702,32 @@ class WorkspaceCommand extends BaseCommand {
 					'branch' => $row['branch'] ?? '',
 					'path'   => $row['path'] ?? '',
 				),
-				array_slice($external_worktrees, 0, $limit)
+				array_slice( $external_worktrees, 0, $limit )
 			);
-			$this->format_items($external_rows, array( 'handle', 'repo', 'branch', 'path' ), array( 'format' => 'table' ), 'handle');
-			$this->render_cleanup_truncation_hint(count($external_worktrees), $limit, 'external worktree rows');
+			$this->format_items( $external_rows, array( 'handle', 'repo', 'branch', 'path' ), array( 'format' => 'table' ), 'handle' );
+			$this->render_cleanup_truncation_hint( count( $external_worktrees ), $limit, 'external worktree rows' );
 		}
 
-		if ( ! empty($skipped) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Skipped:');
+		if ( ! empty( $skipped ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Skipped:' );
 			$skipped_rows = array_map(
 				fn( $row ) => array(
 					'handle'      => $row['handle'] ?? '',
 					'reason_code' => $row['reason_code'] ?? '',
-					'reason'      => $verbose ? ( $row['reason'] ?? '' ) : $this->shorten_cleanup_reason( (string) ( $row['reason'] ?? '' )),
+					'reason'      => $verbose ? ( $row['reason'] ?? '' ) : $this->shorten_cleanup_reason( (string) ( $row['reason'] ?? '' ) ),
 				),
-				array_slice($skipped, 0, $limit)
+				array_slice( $skipped, 0, $limit )
 			);
-			$this->format_items($skipped_rows, array( 'handle', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
-			$this->render_cleanup_truncation_hint(count($skipped), $limit, 'skipped rows');
+			$this->format_items( $skipped_rows, array( 'handle', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle' );
+			$this->render_cleanup_truncation_hint( count( $skipped ), $limit, 'skipped rows' );
 		}
 
-		WP_CLI::log('');
-		if ( ! empty($result['dry_run']) ) {
-			if ( isset($result['pagination']['next_offset']) ) {
-				if ( ! empty($result['pagination']['next_command']) ) {
-					WP_CLI::log('Next page: ' . (string) $result['pagination']['next_command']);
+		WP_CLI::log( '' );
+		if ( ! empty( $result['dry_run'] ) ) {
+			if ( isset( $result['pagination']['next_offset'] ) ) {
+				if ( ! empty( $result['pagination']['next_command'] ) ) {
+					WP_CLI::log( 'Next page: ' . (string) $result['pagination']['next_command'] );
 				} else {
 					WP_CLI::log(
 						sprintf(
@@ -6456,16 +6738,16 @@ class WorkspaceCommand extends BaseCommand {
 					);
 				}
 			}
-			WP_CLI::success(sprintf('%d metadata reconciliation proposal(s). Review JSON output before applying; --apply-plan remains a low-level escape hatch until DB-backed cleanup runs land.', count($proposals)));
+			WP_CLI::success( sprintf( '%d metadata reconciliation proposal(s). Review JSON output before applying; --apply-plan remains a low-level escape hatch until DB-backed cleanup runs land.', count( $proposals ) ) );
 			return;
 		}
-		if ( ! empty($result['job_backed']) ) {
-			WP_CLI::success(sprintf('Scheduled %d metadata reconciliation page job(s).', (int) ( $summary['scheduled_jobs'] ?? 0 )));
+		if ( ! empty( $result['job_backed'] ) ) {
+			WP_CLI::success( sprintf( 'Scheduled %d metadata reconciliation page job(s).', (int) ( $summary['scheduled_jobs'] ?? 0 ) ) );
 			return;
 		}
-		if ( isset($result['pagination']['next_offset']) ) {
-			if ( ! empty($result['pagination']['next_command']) ) {
-				WP_CLI::log('Next page: ' . (string) $result['pagination']['next_command']);
+		if ( isset( $result['pagination']['next_offset'] ) ) {
+			if ( ! empty( $result['pagination']['next_command'] ) ) {
+				WP_CLI::log( 'Next page: ' . (string) $result['pagination']['next_command'] );
 			} else {
 				WP_CLI::log(
 					sprintf(
@@ -6476,7 +6758,7 @@ class WorkspaceCommand extends BaseCommand {
 				);
 			}
 		}
-		WP_CLI::success(sprintf('Wrote metadata for %d worktree(s); %d skipped.', count($written), count($skipped)));
+		WP_CLI::success( sprintf( 'Wrote metadata for %d worktree(s); %d skipped.', count( $written ), count( $skipped ) ) );
 	}
 
 	/**
@@ -6487,12 +6769,12 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_worktree_active_no_signal_report_result( array $result, array $assoc_args ): void {
-		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			if ( empty($assoc_args['verbose']) ) {
-				$result = WorkspaceCompactOutput::cleanup_result($result);
+			if ( empty( $assoc_args['verbose'] ) ) {
+				$result = WorkspaceCompactOutput::cleanup_result( $result );
 			}
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
 
@@ -6500,7 +6782,7 @@ class WorkspaceCommand extends BaseCommand {
 		$pagination = (array) ( $result['pagination'] ?? array() );
 		$rows       = (array) ( $result['rows'] ?? array() );
 
-		WP_CLI::log('Summary:');
+		WP_CLI::log( 'Summary:' );
 		$summary_rows = array(
 			array(
 				'metric' => 'total_active_no_signal',
@@ -6529,9 +6811,9 @@ class WorkspaceCommand extends BaseCommand {
 				'count'  => (int) $count,
 			);
 		}
-		$this->format_items($summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric');
+		$this->format_items( $summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric' );
 
-		if ( ! empty($pagination) ) {
+		if ( ! empty( $pagination ) ) {
 			WP_CLI::log(
 				sprintf(
 					'Page: offset=%d limit=%d scanned=%d total=%d next_offset=%s complete=%s',
@@ -6540,14 +6822,14 @@ class WorkspaceCommand extends BaseCommand {
 					(int) ( $pagination['scanned'] ?? 0 ),
 					(int) ( $pagination['total'] ?? 0 ),
 					null === ( $pagination['next_offset'] ?? null ) ? '-' : (string) $pagination['next_offset'],
-					! empty($pagination['complete']) ? 'yes' : 'no'
+					! empty( $pagination['complete'] ) ? 'yes' : 'no'
 				)
 			);
 		}
 
-		if ( ! empty($rows) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Evidence:');
+		if ( ! empty( $rows ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Evidence:' );
 			$items = array_map(
 				fn( $row ) => array(
 					'handle'          => $row['handle'] ?? '',
@@ -6555,56 +6837,56 @@ class WorkspaceCommand extends BaseCommand {
 					'action'          => $row['suggested_action'] ?? '',
 					'dirty'           => null === ( $row['dirty'] ?? null ) ? '-' : (int) $row['dirty'],
 					'unpushed'        => null === ( $row['unpushed'] ?? null ) ? '-' : (int) $row['unpushed'],
-					'pr'              => is_array($row['pr'] ?? null) ? (string) ( $row['pr']['html_url'] ?? $row['pr']['number'] ?? '' ) : '',
+					'pr'              => is_array( $row['pr'] ?? null ) ? (string) ( $row['pr']['html_url'] ?? $row['pr']['number'] ?? '' ) : '',
 					'outside_default' => null === ( $row['commits_outside_default'] ?? null ) ? '-' : (int) $row['commits_outside_default'],
-					'remote_tracking' => null === ( $row['remote_tracking'] ?? null ) ? '-' : ( ! empty($row['remote_tracking']) ? 'yes' : 'no' ),
+					'remote_tracking' => null === ( $row['remote_tracking'] ?? null ) ? '-' : ( ! empty( $row['remote_tracking'] ) ? 'yes' : 'no' ),
 				),
 				$rows
 			);
-			$this->format_items($items, array( 'handle', 'branch', 'action', 'dirty', 'unpushed', 'pr', 'outside_default', 'remote_tracking' ), array( 'format' => 'table' ), 'handle');
+			$this->format_items( $items, array( 'handle', 'branch', 'action', 'dirty', 'unpushed', 'pr', 'outside_default', 'remote_tracking' ), array( 'format' => 'table' ), 'handle' );
 		}
 
-		if ( ! empty($pagination['next_command']) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Next page: ' . (string) $pagination['next_command']);
+		if ( ! empty( $pagination['next_command'] ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Next page: ' . (string) $pagination['next_command'] );
 		}
 
-		WP_CLI::success(sprintf('Inspected %d active/no-signal worktree(s). Review-only; no cleanup was applied.', count($rows)));
+		WP_CLI::success( sprintf( 'Inspected %d active/no-signal worktree(s). Review-only; no cleanup was applied.', count( $rows ) ) );
 	}
 
 	/** Render one active/no-signal metadata apply classification. */
 	private function render_worktree_active_no_signal_apply_result( array $result, array $assoc_args, string $variant ): void {
-		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			if ( empty($assoc_args['verbose']) ) {
-				$result = WorkspaceCompactOutput::cleanup_result($result);
+			if ( empty( $assoc_args['verbose'] ) ) {
+				$result = WorkspaceCompactOutput::cleanup_result( $result );
 			}
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
 
-		$presentation = ActiveNoSignalApplyPresentation::build($variant, $result);
-		WP_CLI::log($presentation['summary_title']);
-		$this->format_items($presentation['summary_rows'], array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric');
+		$presentation = ActiveNoSignalApplyPresentation::build( $variant, $result );
+		WP_CLI::log( $presentation['summary_title'] );
+		$this->format_items( $presentation['summary_rows'], array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric' );
 
-		if ( ! empty($presentation['items']) ) {
-			WP_CLI::log('');
-			WP_CLI::log($presentation['items_title']);
-			$this->format_items($presentation['items'], $presentation['item_fields'], array( 'format' => 'table' ), 'handle');
+		if ( ! empty( $presentation['items'] ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( $presentation['items_title'] );
+			$this->format_items( $presentation['items'], $presentation['item_fields'], array( 'format' => 'table' ), 'handle' );
 		}
 
-		if ( ! empty($presentation['skipped_items']) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Skipped:');
-			$this->format_items($presentation['skipped_items'], array( 'handle', 'action', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
+		if ( ! empty( $presentation['skipped_items'] ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Skipped:' );
+			$this->format_items( $presentation['skipped_items'], array( 'handle', 'action', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle' );
 		}
 
 		if ( '' !== $presentation['next_command'] ) {
-			WP_CLI::log('');
-			WP_CLI::log('Next page: ' . $presentation['next_command']);
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Next page: ' . $presentation['next_command'] );
 		}
 
-		WP_CLI::success($presentation['success']);
+		WP_CLI::success( $presentation['success'] );
 	}
 
 	/**
@@ -6615,12 +6897,12 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_worktree_artifact_cleanup_result( array $result, array $assoc_args ): void {
-		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			if ( empty($assoc_args['verbose']) ) {
-				$result = WorkspaceCompactOutput::cleanup_result($result);
+			if ( empty( $assoc_args['verbose'] ) ) {
+				$result = WorkspaceCompactOutput::cleanup_result( $result );
 			}
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
 
@@ -6628,16 +6910,16 @@ class WorkspaceCommand extends BaseCommand {
 		$removed    = (array) ( $result['removed'] ?? array() );
 		$skipped    = (array) ( $result['skipped'] ?? array() );
 		$summary    = (array) ( $result['summary'] ?? array() );
-		$dry_run    = ! empty($result['dry_run']);
-		$verbose    = ! empty($assoc_args['verbose']);
+		$dry_run    = ! empty( $result['dry_run'] );
+		$verbose    = ! empty( $assoc_args['verbose'] );
 		$pagination = $result['pagination'] ?? ( $summary['pagination'] ?? null );
 
-		if ( empty($candidates) && empty($removed) && empty($skipped) ) {
-			WP_CLI::log('No worktree artifacts found.');
+		if ( empty( $candidates ) && empty( $removed ) && empty( $skipped ) ) {
+			WP_CLI::log( 'No worktree artifacts found.' );
 			return;
 		}
 
-		WP_CLI::log('Artifact cleanup summary:');
+		WP_CLI::log( 'Artifact cleanup summary:' );
 		$this->format_items(
 			array(
 				array(
@@ -6650,11 +6932,11 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array(
 					'metric' => 'skipped_worktrees',
-					'count'  => (int) ( $summary['skipped'] ?? count($skipped) ),
+					'count'  => (int) ( $summary['skipped'] ?? count( $skipped ) ),
 				),
 				array(
 					'metric' => 'allocated_artifact_bytes (not guaranteed reclaimable)',
-					'count'  => $this->format_bytes($summary['predicted_allocated_reclaim_bytes'] ?? $summary['artifact_size_bytes'] ?? null),
+					'count'  => $this->format_bytes( $summary['predicted_allocated_reclaim_bytes'] ?? $summary['artifact_size_bytes'] ?? null ),
 				),
 			),
 			array( 'metric', 'count' ),
@@ -6662,44 +6944,44 @@ class WorkspaceCommand extends BaseCommand {
 			'metric'
 		);
 
-		if ( ! empty($candidates) ) {
-			WP_CLI::log('');
-			WP_CLI::log($dry_run && is_array($pagination) && 'size' === (string) ( $pagination['sort'] ?? '' ) ? 'Largest artifact opportunities:' : ( $dry_run ? 'Would remove artifacts:' : 'Artifact candidates:' ));
-			$this->format_items($this->flatten_artifact_cleanup_rows($candidates), array( 'handle', 'repo', 'branch', 'artifact', 'apparent', 'allocated', 'accounting', 'path' ), array( 'format' => 'table' ), 'handle');
+		if ( ! empty( $candidates ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( $dry_run && is_array( $pagination ) && 'size' === (string) ( $pagination['sort'] ?? '' ) ? 'Largest artifact opportunities:' : ( $dry_run ? 'Would remove artifacts:' : 'Artifact candidates:' ) );
+			$this->format_items( $this->flatten_artifact_cleanup_rows( $candidates ), array( 'handle', 'repo', 'branch', 'artifact', 'apparent', 'allocated', 'accounting', 'path' ), array( 'format' => 'table' ), 'handle' );
 		}
 
-		if ( ! empty($removed) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Removed artifacts:');
-			$this->format_items($this->flatten_artifact_cleanup_rows($removed), array( 'handle', 'repo', 'branch', 'artifact', 'apparent', 'allocated', 'accounting', 'path' ), array( 'format' => 'table' ), 'handle');
+		if ( ! empty( $removed ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Removed artifacts:' );
+			$this->format_items( $this->flatten_artifact_cleanup_rows( $removed ), array( 'handle', 'repo', 'branch', 'artifact', 'apparent', 'allocated', 'accounting', 'path' ), array( 'format' => 'table' ), 'handle' );
 		}
 
-		if ( ! empty($skipped) ) {
-			WP_CLI::log('');
+		if ( ! empty( $skipped ) ) {
+			WP_CLI::log( '' );
 			if ( $verbose ) {
-				WP_CLI::log('Skipped worktrees:');
+				WP_CLI::log( 'Skipped worktrees:' );
 				$rows = array_map(
 					fn( $row ) => array(
 						'handle'      => $row['handle'] ?? '',
 						'repo'        => $row['repo'] ?? '',
 						'branch'      => $row['branch'] ?? '',
-						'artifacts'   => count( (array) ( $row['artifacts'] ?? array() )),
+						'artifacts'   => count( (array) ( $row['artifacts'] ?? array() ) ),
 						'reason_code' => $row['reason_code'] ?? '',
 						'reason'      => $row['reason'] ?? '',
 					),
 					$skipped
 				);
-				$this->format_items($rows, array( 'handle', 'repo', 'branch', 'artifacts', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
+				$this->format_items( $rows, array( 'handle', 'repo', 'branch', 'artifacts', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle' );
 			} else {
-				WP_CLI::log('Skipped worktrees summary:');
-				$this->format_items($this->summarize_cleanup_skipped_rows($skipped), array( 'reason_code', 'count', 'examples' ), array( 'format' => 'table' ), 'reason_code');
-				WP_CLI::log('Re-run with --verbose to list every skipped worktree.');
+				WP_CLI::log( 'Skipped worktrees summary:' );
+				$this->format_items( $this->summarize_cleanup_skipped_rows( $skipped ), array( 'reason_code', 'count', 'examples' ), array( 'format' => 'table' ), 'reason_code' );
+				WP_CLI::log( 'Re-run with --verbose to list every skipped worktree.' );
 			}
 		}
 
-		WP_CLI::log('');
+		WP_CLI::log( '' );
 
-		if ( is_array($pagination) ) {
+		if ( is_array( $pagination ) ) {
 			$mode_label = (string) ( $pagination['mode'] ?? 'bounded_inventory' );
 			WP_CLI::log(
 				sprintf(
@@ -6709,25 +6991,25 @@ class WorkspaceCommand extends BaseCommand {
 					(int) ( $pagination['total'] ?? 0 ),
 					(int) ( $pagination['offset'] ?? 0 ),
 					(int) ( $pagination['limit'] ?? 0 ),
-					! empty($pagination['complete']) ? 'yes' : 'no',
-					! empty($pagination['safety_probes']) ? 'yes' : 'no'
+					! empty( $pagination['complete'] ) ? 'yes' : 'no',
+					! empty( $pagination['safety_probes'] ) ? 'yes' : 'no'
 				)
 			);
-			if ( ! empty($pagination['partial']) && isset($pagination['next_offset']) ) {
-				WP_CLI::log(sprintf('Partial scan — re-run with --offset=%d to continue, or pass --exhaustive for a full audit.', (int) $pagination['next_offset']));
+			if ( ! empty( $pagination['partial'] ) && isset( $pagination['next_offset'] ) ) {
+				WP_CLI::log( sprintf( 'Partial scan — re-run with --offset=%d to continue, or pass --exhaustive for a full audit.', (int) $pagination['next_offset'] ) );
 			} elseif ( 'size' === (string) ( $pagination['sort'] ?? '' ) ) {
-				WP_CLI::log(sprintf('Ranked by size across %d scanned worktree(s); showing the largest %d candidate(s).', (int) ( $pagination['scanned'] ?? 0 ), count($candidates)));
+				WP_CLI::log( sprintf( 'Ranked by size across %d scanned worktree(s); showing the largest %d candidate(s).', (int) ( $pagination['scanned'] ?? 0 ), count( $candidates ) ) );
 			}
-			WP_CLI::log('');
+			WP_CLI::log( '' );
 		}
 
 		if ( $dry_run ) {
 			$review_command = (string) ( $result['review_command'] ?? $summary['review_command'] ?? 'studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json' );
 			$apply_command  = (string) ( $result['apply_command'] ?? $summary['apply_command'] ?? 'studio wp datamachine-code workspace cleanup apply <run-id>' );
-			WP_CLI::success(sprintf('%d artifact(s) would be removed. Create a reviewed DB-backed plan with `%s`, note its run_id, then apply it with `%s`; --apply-plan remains a low-level escape hatch.', (int) ( $summary['would_remove_artifacts'] ?? 0 ), $review_command, $apply_command));
+			WP_CLI::success( sprintf( '%d artifact(s) would be removed. Create a reviewed DB-backed plan with `%s`, note its run_id, then apply it with `%s`; --apply-plan remains a low-level escape hatch.', (int) ( $summary['would_remove_artifacts'] ?? 0 ), $review_command, $apply_command ) );
 			return;
 		}
-		WP_CLI::success(sprintf('Removed %d artifact(s); %d worktree(s) skipped.', (int) ( $summary['removed_artifacts'] ?? 0 ), count($skipped)));
+		WP_CLI::success( sprintf( 'Removed %d artifact(s); %d worktree(s) skipped.', (int) ( $summary['removed_artifacts'] ?? 0 ), count( $skipped ) ) );
 	}
 
 	/**
@@ -6740,18 +7022,18 @@ class WorkspaceCommand extends BaseCommand {
 		$flat = array();
 		foreach ( $rows as $row ) {
 			foreach ( (array) ( $row['artifacts'] ?? array() ) as $artifact ) {
-				if ( ! is_array($artifact) ) {
+				if ( ! is_array( $artifact ) ) {
 					continue;
 				}
 				$flat[] = array(
-					'handle'   => $row['handle'] ?? '',
-					'repo'     => $row['repo'] ?? '',
-					'branch'   => $row['branch'] ?? '',
-					'artifact' => $artifact['path'] ?? '',
-					'apparent'  => $this->format_bytes($artifact['apparent_bytes'] ?? null),
-					'allocated' => $this->format_bytes($artifact['allocated_bytes'] ?? $artifact['size_bytes'] ?? null),
+					'handle'     => $row['handle'] ?? '',
+					'repo'       => $row['repo'] ?? '',
+					'branch'     => $row['branch'] ?? '',
+					'artifact'   => $artifact['path'] ?? '',
+					'apparent'   => $this->format_bytes( $artifact['apparent_bytes'] ?? null ),
+					'allocated'  => $this->format_bytes( $artifact['allocated_bytes'] ?? $artifact['size_bytes'] ?? null ),
 					'accounting' => $artifact['allocation_accounting'] ?? 'unknown',
-					'path'     => rtrim( (string) ( $row['path'] ?? '' ), '/') . '/' . ltrim( (string) ( $artifact['path'] ?? '' ), '/'),
+					'path'       => rtrim( (string) ( $row['path'] ?? '' ), '/' ) . '/' . ltrim( (string) ( $artifact['path'] ?? '' ), '/' ),
 				);
 			}
 		}
@@ -6767,10 +7049,10 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_worktree_bounded_cleanup_eligible_apply_result( array $result, array $assoc_args ): void {
-		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			$report = ! empty($assoc_args['verbose']) ? $result : WorkspaceCompactOutput::cleanup_result($result);
-			$this->renderer()->json($report);
+			$report = ! empty( $assoc_args['verbose'] ) ? $result : WorkspaceCompactOutput::cleanup_result( $result );
+			$this->renderer()->json( $report );
 			return;
 		}
 
@@ -6779,15 +7061,15 @@ class WorkspaceCommand extends BaseCommand {
 		$removed      = (array) ( $result['removed'] ?? array() );
 		$skipped      = (array) ( $result['skipped'] ?? array() );
 		$continuation = (array) ( $result['continuation'] ?? array() );
-		$dry_run      = ! empty($result['dry_run']);
-		$job_backed   = ! empty($result['job_backed']);
-		$verbose      = ! empty($assoc_args['verbose']);
+		$dry_run      = ! empty( $result['dry_run'] );
+		$job_backed   = ! empty( $result['job_backed'] );
+		$verbose      = ! empty( $assoc_args['verbose'] );
 
 		if ( ! $dry_run ) {
-			WP_CLI::log(sprintf('Result: removed %d worktree(s); reclaimed %s; skipped %d.', (int) ( $summary['removed'] ?? count($removed) ), $this->format_bytes($summary['bytes_reclaimed'] ?? 0), (int) ( $summary['skipped'] ?? count($skipped) )));
+			WP_CLI::log( sprintf( 'Result: removed %d worktree(s); reclaimed %s; skipped %d.', (int) ( $summary['removed'] ?? count( $removed ) ), $this->format_bytes( $summary['bytes_reclaimed'] ?? 0 ), (int) ( $summary['skipped'] ?? count( $skipped ) ) ) );
 		}
 
-		WP_CLI::log('Bounded cleanup apply summary:');
+		WP_CLI::log( 'Bounded cleanup apply summary:' );
 		$summary_rows = array(
 			array(
 				'metric' => 'mode',
@@ -6807,7 +7089,7 @@ class WorkspaceCommand extends BaseCommand {
 			),
 			array(
 				'metric' => 'bytes_reclaimed',
-				'value'  => $this->format_bytes($summary['bytes_reclaimed'] ?? 0),
+				'value'  => $this->format_bytes( $summary['bytes_reclaimed'] ?? 0 ),
 			),
 			array(
 				'metric' => 'limit',
@@ -6820,11 +7102,11 @@ class WorkspaceCommand extends BaseCommand {
 				'value'  => (int) ( $summary['scheduled_jobs'] ?? 0 ),
 			);
 		}
-		$this->format_items($summary_rows, array( 'metric', 'value' ), array( 'format' => 'table' ), 'metric');
+		$this->format_items( $summary_rows, array( 'metric', 'value' ), array( 'format' => 'table' ), 'metric' );
 
-		if ( ! empty($candidates) && ( $dry_run || ! empty($assoc_args['verbose']) ) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Bounded cleanup-eligible apply candidates:');
+		if ( ! empty( $candidates ) && ( $dry_run || ! empty( $assoc_args['verbose'] ) ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Bounded cleanup-eligible apply candidates:' );
 			$rows = array_map(
 				fn( $row ) => array(
 					'handle'      => $row['handle'] ?? '',
@@ -6836,82 +7118,82 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				$candidates
 			);
-			$this->format_items($rows, array( 'handle', 'repo', 'branch', 'reason_code', 'pr_url', 'created_at' ), array( 'format' => 'table' ), 'handle');
+			$this->format_items( $rows, array( 'handle', 'repo', 'branch', 'reason_code', 'pr_url', 'created_at' ), array( 'format' => 'table' ), 'handle' );
 		}
 
-		if ( ! empty($removed) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Removed worktrees:');
+		if ( ! empty( $removed ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Removed worktrees:' );
 			$rows = array_map(
 				fn( $row ) => array(
 					'handle'   => $row['handle'] ?? '',
 					'repo'     => $row['repo'] ?? '',
 					'branch'   => $row['branch'] ?? '',
-					'size'     => $this->format_bytes($row['size_bytes'] ?? null),
+					'size'     => $this->format_bytes( $row['size_bytes'] ?? null ),
 					'unpushed' => (int) ( $row['unpushed_before_remove'] ?? 0 ),
 					'path'     => $row['path'] ?? '',
 				),
 				$removed
 			);
-			$this->format_items($rows, array( 'handle', 'repo', 'branch', 'size', 'unpushed', 'path' ), array( 'format' => 'table' ), 'handle');
+			$this->format_items( $rows, array( 'handle', 'repo', 'branch', 'size', 'unpushed', 'path' ), array( 'format' => 'table' ), 'handle' );
 		}
 
 		$evidence           = (array) ( $result['evidence'] ?? array() );
 		$discarded_unpushed = (array) ( $evidence['discarded_unpushed'] ?? array() );
-		if ( ! empty($discarded_unpushed) ) {
-			WP_CLI::warning('Discarded unpushed commits for cleanup-eligible worktrees. Evidence follows.');
+		if ( ! empty( $discarded_unpushed ) ) {
+			WP_CLI::warning( 'Discarded unpushed commits for cleanup-eligible worktrees. Evidence follows.' );
 			$rows = array_map(
 				fn( $row ) => array(
 					'handle'            => $row['handle'] ?? '',
 					'unpushed_before'   => (int) ( $row['unpushed_before_remove'] ?? 0 ),
-					'path_exists_after' => ! empty($row['path_exists_after']) ? 'yes' : 'no',
+					'path_exists_after' => ! empty( $row['path_exists_after'] ) ? 'yes' : 'no',
 					'path'              => $row['path'] ?? '',
 				),
 				$discarded_unpushed
 			);
-			$this->format_items($rows, array( 'handle', 'unpushed_before', 'path_exists_after', 'path' ), array( 'format' => 'table' ), 'handle');
+			$this->format_items( $rows, array( 'handle', 'unpushed_before', 'path_exists_after', 'path' ), array( 'format' => 'table' ), 'handle' );
 		}
 
-		if ( ! empty($skipped) ) {
-			WP_CLI::log('');
+		if ( ! empty( $skipped ) ) {
+			WP_CLI::log( '' );
 			if ( $verbose ) {
-				WP_CLI::log('Skipped:');
+				WP_CLI::log( 'Skipped:' );
 				$rows = array_map(
 					fn( $row ) => array(
 						'handle'      => $row['handle'] ?? '',
 						'reason_code' => $row['reason_code'] ?? '',
-						'reason'      => $this->shorten_cleanup_reason( (string) ( $row['reason'] ?? '' )),
+						'reason'      => $this->shorten_cleanup_reason( (string) ( $row['reason'] ?? '' ) ),
 					),
 					$skipped
 				);
-				$this->format_items($rows, array( 'handle', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
+				$this->format_items( $rows, array( 'handle', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle' );
 			} else {
-				WP_CLI::log('Skipped summary:');
-				$this->format_items($this->summarize_cleanup_skipped_rows($skipped), array( 'reason_code', 'count', 'examples' ), array( 'format' => 'table' ), 'reason_code');
-				WP_CLI::log('Re-run with --verbose to list every skipped row.');
+				WP_CLI::log( 'Skipped summary:' );
+				$this->format_items( $this->summarize_cleanup_skipped_rows( $skipped ), array( 'reason_code', 'count', 'examples' ), array( 'format' => 'table' ), 'reason_code' );
+				WP_CLI::log( 'Re-run with --verbose to list every skipped row.' );
 			}
 		}
 
 		$this->render_active_no_signal_triage_preview( (array) ( $result['active_no_signal_triage'] ?? array() ) );
 
-		WP_CLI::log('');
+		WP_CLI::log( '' );
 		$remaining = (int) ( $continuation['remaining_total'] ?? 0 );
 		if ( $remaining > 0 ) {
-			WP_CLI::log(sprintf('Continuation: %d candidate(s) remaining outside this batch.', $remaining));
+			WP_CLI::log( sprintf( 'Continuation: %d candidate(s) remaining outside this batch.', $remaining ) );
 			$hint = (string) ( $continuation['next_call_hint'] ?? '' );
 			if ( '' !== $hint ) {
-				WP_CLI::log('  ' . $hint);
+				WP_CLI::log( '  ' . $hint );
 			}
 		} else {
-			WP_CLI::log('Continuation: no candidates remaining outside this batch.');
+			WP_CLI::log( 'Continuation: no candidates remaining outside this batch.' );
 		}
 
 		if ( $dry_run ) {
-			WP_CLI::success('Bounded cleanup-eligible apply dry-run complete.');
+			WP_CLI::success( 'Bounded cleanup-eligible apply dry-run complete.' );
 		} elseif ( $job_backed ) {
-			WP_CLI::success(sprintf('Bounded cleanup-eligible apply scheduled %d cleanup chunk job(s).', (int) ( $summary['scheduled_jobs'] ?? 0 )));
+			WP_CLI::success( sprintf( 'Bounded cleanup-eligible apply scheduled %d cleanup chunk job(s).', (int) ( $summary['scheduled_jobs'] ?? 0 ) ) );
 		} else {
-			WP_CLI::success(sprintf('Bounded cleanup-eligible apply removed %d worktree(s); reclaimed %s.', (int) ( $summary['removed'] ?? 0 ), $this->format_bytes($summary['bytes_reclaimed'] ?? 0)));
+			WP_CLI::success( sprintf( 'Bounded cleanup-eligible apply removed %d worktree(s); reclaimed %s.', (int) ( $summary['removed'] ?? 0 ), $this->format_bytes( $summary['bytes_reclaimed'] ?? 0 ) ) );
 		}
 	}
 
@@ -6924,21 +7206,21 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function render_worktree_cleanup_eligible_drain_result( array $result, array $assoc_args ): void {
 		if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-			if ( empty($assoc_args['verbose']) ) {
-				$result = WorkspaceCompactOutput::cleanup_result($result);
+			if ( empty( $assoc_args['verbose'] ) ) {
+				$result = WorkspaceCompactOutput::cleanup_result( $result );
 			}
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
 
 		$summary          = (array) ( $result['summary'] ?? array() );
 		$final_free_space = (array) ( $summary['final_free_space'] ?? array() );
-		WP_CLI::log('Cleanup-eligible drain summary:');
+		WP_CLI::log( 'Cleanup-eligible drain summary:' );
 		$this->format_items(
 			array(
 				array(
 					'metric' => 'mode',
-					'value'  => ! empty($result['applied']) ? 'apply' : 'preview',
+					'value'  => ! empty( $result['applied'] ) ? 'apply' : 'preview',
 				),
 				array(
 					'metric' => 'passes',
@@ -6983,9 +7265,9 @@ class WorkspaceCommand extends BaseCommand {
 		);
 
 		$passes = (array) ( $result['pass_results'] ?? array() );
-		if ( ! empty($passes) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Pass evidence:');
+		if ( ! empty( $passes ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Pass evidence:' );
 			$this->format_items(
 				array_map(
 					fn( $row ) => array(
@@ -6996,7 +7278,7 @@ class WorkspaceCommand extends BaseCommand {
 						'removed'         => (int) ( $row['removed'] ?? 0 ),
 						'skipped'         => (int) ( $row['skipped'] ?? 0 ),
 						'remaining_total' => (int) ( $row['remaining_total'] ?? 0 ),
-						'bytes'           => $this->format_bytes($row['bytes_reclaimed'] ?? 0),
+						'bytes'           => $this->format_bytes( $row['bytes_reclaimed'] ?? 0 ),
 					),
 					$passes
 				),
@@ -7006,9 +7288,9 @@ class WorkspaceCommand extends BaseCommand {
 			);
 		}
 
-		if ( ! empty($result['next_commands']) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Next command: ' . (string) ( (array) $result['next_commands'] )[0]);
+		if ( ! empty( $result['next_commands'] ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Next command: ' . (string) ( (array) $result['next_commands'] )[0] );
 		}
 	}
 
@@ -7024,8 +7306,8 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		WP_CLI::log('');
-		WP_CLI::log(sprintf('Active/no-signal triage preview: %d unresolved active worktree(s).', $total));
+		WP_CLI::log( '' );
+		WP_CLI::log( sprintf( 'Active/no-signal triage preview: %d unresolved active worktree(s).', $total ) );
 		$summary_rows = array();
 		foreach ( (array) ( $preview['by_age'] ?? array() ) as $bucket => $count ) {
 			if ( (int) $count > 0 ) {
@@ -7050,24 +7332,24 @@ class WorkspaceCommand extends BaseCommand {
 				'count'     => (int) $count,
 			);
 		}
-		$this->format_items($summary_rows, array( 'dimension', 'bucket', 'count' ), array( 'format' => 'table' ), 'dimension');
+		$this->format_items( $summary_rows, array( 'dimension', 'bucket', 'count' ), array( 'format' => 'table' ), 'dimension' );
 
-		WP_CLI::log('Non-destructive next commands:');
+		WP_CLI::log( 'Non-destructive next commands:' );
 		foreach ( (array) ( $preview['commands'] ?? array() ) as $label => $command ) {
-			WP_CLI::log(sprintf('  %s: %s', (string) $label, (string) $command));
+			WP_CLI::log( sprintf( '  %s: %s', (string) $label, (string) $command ) );
 		}
-		if ( ! empty($preview['safety']) ) {
-			WP_CLI::log('Safety: ' . (string) $preview['safety']);
+		if ( ! empty( $preview['safety'] ) ) {
+			WP_CLI::log( 'Safety: ' . (string) $preview['safety'] );
 		}
 	}
 
 	private function render_worktree_emergency_cleanup_result( array $result, array $assoc_args ): void {
-		$format = isset($assoc_args['format']) ? (string) $assoc_args['format'] : 'table';
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
 		if ( 'json' === $format ) {
-			if ( empty($assoc_args['verbose']) ) {
-				$result = WorkspaceCompactOutput::cleanup_result($result);
+			if ( empty( $assoc_args['verbose'] ) ) {
+				$result = WorkspaceCompactOutput::cleanup_result( $result );
 			}
-			$this->renderer()->json($result);
+			$this->renderer()->json( $result );
 			return;
 		}
 
@@ -7077,9 +7359,9 @@ class WorkspaceCommand extends BaseCommand {
 		$removed_artifacts   = (array) ( $result['removed_artifacts'] ?? array() );
 		$removed_worktrees   = (array) ( $result['removed_worktrees'] ?? array() );
 		$skipped             = (array) ( $result['skipped'] ?? array() );
-		$dry_run             = ! empty($result['dry_run']);
+		$dry_run             = ! empty( $result['dry_run'] );
 
-		WP_CLI::log('Emergency cleanup summary:');
+		WP_CLI::log( 'Emergency cleanup summary:' );
 		$summary_rows = array(
 			array(
 				'metric' => 'would_remove_artifacts',
@@ -7099,74 +7381,74 @@ class WorkspaceCommand extends BaseCommand {
 			),
 			array(
 				'metric' => 'artifact_size',
-				'count'  => $this->format_bytes($summary['artifact_size_bytes'] ?? null),
+				'count'  => $this->format_bytes( $summary['artifact_size_bytes'] ?? null ),
 			),
 			array(
 				'metric' => 'worktree_size',
-				'count'  => $this->format_bytes($summary['worktree_size_bytes'] ?? null),
+				'count'  => $this->format_bytes( $summary['worktree_size_bytes'] ?? null ),
 			),
 			array(
 				'metric' => 'skipped',
 				'count'  => (int) ( $summary['skipped'] ?? 0 ),
 			),
 		);
-		$this->format_items($summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric');
+		$this->format_items( $summary_rows, array( 'metric', 'count' ), array( 'format' => 'table' ), 'metric' );
 
-		if ( ! empty($artifact_candidates) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Priority 1 - artifact/cache deletion:');
-			$this->format_items($this->flatten_artifact_cleanup_rows($artifact_candidates), array( 'handle', 'repo', 'branch', 'artifact', 'size', 'path' ), array( 'format' => 'table' ), 'handle');
+		if ( ! empty( $artifact_candidates ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Priority 1 - artifact/cache deletion:' );
+			$this->format_items( $this->flatten_artifact_cleanup_rows( $artifact_candidates ), array( 'handle', 'repo', 'branch', 'artifact', 'size', 'path' ), array( 'format' => 'table' ), 'handle' );
 		}
 
-		if ( ! empty($worktree_candidates) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Priority 2 - oldest finalized/eligible worktrees:');
+		if ( ! empty( $worktree_candidates ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Priority 2 - oldest finalized/eligible worktrees:' );
 			$rows = array_map(
 				fn( $row ) => array(
 					'handle'      => $row['handle'] ?? '',
 					'branch'      => $row['branch'] ?? '',
 					'age_days'    => $row['age_days'] ?? '',
-					'size'        => $this->format_bytes($row['size_bytes'] ?? null),
+					'size'        => $this->format_bytes( $row['size_bytes'] ?? null ),
 					'signal'      => $row['signal'] ?? '',
 					'reason_code' => $row['reason_code'] ?? '',
 				),
 				$worktree_candidates
 			);
-			$this->format_items($rows, array( 'handle', 'branch', 'age_days', 'size', 'signal', 'reason_code' ), array( 'format' => 'table' ), 'handle');
+			$this->format_items( $rows, array( 'handle', 'branch', 'age_days', 'size', 'signal', 'reason_code' ), array( 'format' => 'table' ), 'handle' );
 		}
 
-		if ( ! empty($removed_artifacts) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Removed artifacts:');
-			$this->format_items($this->flatten_artifact_cleanup_rows($removed_artifacts), array( 'handle', 'repo', 'branch', 'artifact', 'size', 'path' ), array( 'format' => 'table' ), 'handle');
+		if ( ! empty( $removed_artifacts ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Removed artifacts:' );
+			$this->format_items( $this->flatten_artifact_cleanup_rows( $removed_artifacts ), array( 'handle', 'repo', 'branch', 'artifact', 'size', 'path' ), array( 'format' => 'table' ), 'handle' );
 		}
 
-		if ( ! empty($removed_worktrees) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Removed worktrees:');
-			$this->format_items($removed_worktrees, array( 'handle', 'repo', 'branch', 'path' ), array( 'format' => 'table' ), 'handle');
+		if ( ! empty( $removed_worktrees ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Removed worktrees:' );
+			$this->format_items( $removed_worktrees, array( 'handle', 'repo', 'branch', 'path' ), array( 'format' => 'table' ), 'handle' );
 		}
 
-		if ( ! empty($skipped) ) {
-			WP_CLI::log('');
-			WP_CLI::log('Skipped:');
+		if ( ! empty( $skipped ) ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( 'Skipped:' );
 			$rows = array_map(
 				fn( $row ) => array(
 					'handle'      => $row['handle'] ?? '',
 					'reason_code' => $row['reason_code'] ?? '',
-					'reason'      => $this->shorten_cleanup_reason( (string) ( $row['reason'] ?? '' )),
+					'reason'      => $this->shorten_cleanup_reason( (string) ( $row['reason'] ?? '' ) ),
 				),
 				$skipped
 			);
-			$this->format_items($rows, array( 'handle', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle');
+			$this->format_items( $rows, array( 'handle', 'reason_code', 'reason' ), array( 'format' => 'table' ), 'handle' );
 		}
 
-		WP_CLI::log('');
+		WP_CLI::log( '' );
 		if ( $dry_run ) {
-			WP_CLI::success('Emergency preview generated. Create a DB-backed artifact review run with `studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json`, note its run_id, then apply it with `studio wp datamachine-code workspace cleanup apply <run-id>`.');
+			WP_CLI::success( 'Emergency preview generated. Create a DB-backed artifact review run with `studio wp datamachine-code workspace cleanup plan --mode=artifacts --format=json`, note its run_id, then apply it with `studio wp datamachine-code workspace cleanup apply <run-id>`.' );
 			return;
 		}
-		WP_CLI::success(sprintf('Emergency cleanup removed %d artifact group(s) and %d worktree(s); %d skipped.', count($removed_artifacts), count($removed_worktrees), count($skipped)));
+		WP_CLI::success( sprintf( 'Emergency cleanup removed %d artifact group(s) and %d worktree(s); %d skipped.', count( $removed_artifacts ), count( $removed_worktrees ), count( $skipped ) ) );
 	}
 
 	/**
@@ -7176,7 +7458,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array
 	 */
 	private function read_worktree_cleanup_plan( string $path ): array {
-		return $this->read_worktree_json_plan($path, 'cleanup');
+		return $this->read_worktree_json_plan( $path, 'cleanup' );
 	}
 
 	/**
@@ -7187,26 +7469,26 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array
 	 */
 	private function read_worktree_json_plan( string $path, string $label ): array {
-		if ( '' === trim($path) ) {
-			WP_CLI::error('--apply-plan requires a file path.');
+		if ( '' === trim( $path ) ) {
+			WP_CLI::error( '--apply-plan requires a file path.' );
 			return array();
 		}
 
-		if ( ! is_readable($path) ) {
-			WP_CLI::error(sprintf('%s plan is not readable: %s', ucfirst($label), $path));
+		if ( ! is_readable( $path ) ) {
+			WP_CLI::error( sprintf( '%s plan is not readable: %s', ucfirst( $label ), $path ) );
 			return array();
 		}
 
      // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
-		$raw = file_get_contents($path);
+		$raw = file_get_contents( $path );
 		if ( false === $raw ) {
-			WP_CLI::error(sprintf('Failed to read %s plan: %s', $label, $path));
+			WP_CLI::error( sprintf( 'Failed to read %s plan: %s', $label, $path ) );
 			return array();
 		}
 
-		$decoded = json_decode($raw, true);
-		if ( JSON_ERROR_NONE !== json_last_error() || ! is_array($decoded) ) {
-			WP_CLI::error(sprintf('%s plan must be a JSON object: %s', ucfirst($label), json_last_error_msg()));
+		$decoded = json_decode( $raw, true );
+		if ( JSON_ERROR_NONE !== json_last_error() || ! is_array( $decoded ) ) {
+			WP_CLI::error( sprintf( '%s plan must be a JSON object: %s', ucfirst( $label ), json_last_error_msg() ) );
 			return array();
 		}
 
@@ -7221,7 +7503,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array
 	 */
 	private function filter_worktree_cleanup_report( array $report, string $only ): array {
-		$only = $this->normalize_worktree_cleanup_only($only);
+		$only = $this->normalize_worktree_cleanup_only( $only );
 
 		if ( '' === $only ) {
 			return $report;
@@ -7234,7 +7516,7 @@ class WorkspaceCommand extends BaseCommand {
 			$report['removed'] = array();
 		}
 
-		if ( ! in_array($only, array( 'candidates', 'removed' ), true) ) {
+		if ( ! in_array( $only, array( 'candidates', 'removed' ), true ) ) {
 			$report['skipped'] = array_values(
 				array_filter(
 					(array) ( $report['skipped'] ?? array() ),
@@ -7283,11 +7565,11 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return string Shortened reason text.
 	 */
 	private function shorten_cleanup_reason( string $reason ): string {
-		if ( strlen($reason) <= 72 ) {
+		if ( strlen( $reason ) <= 72 ) {
 			return $reason;
 		}
 
-		return rtrim(substr($reason, 0, 69)) . '...';
+		return rtrim( substr( $reason, 0, 69 ) ) . '...';
 	}
 
 	/**
@@ -7302,7 +7584,7 @@ class WorkspaceCommand extends BaseCommand {
 		if ( $total <= $limit ) {
 			return;
 		}
-		WP_CLI::log(sprintf('Showing %d of %d %s. Re-run with --verbose for all rows or --only=<reason_code> to filter.', $limit, $total, $label));
+		WP_CLI::log( sprintf( 'Showing %d of %d %s. Re-run with --verbose for all rows or --only=<reason_code> to filter.', $limit, $total, $label ) );
 	}
 
 	/**
@@ -7315,7 +7597,7 @@ class WorkspaceCommand extends BaseCommand {
 		$summary = array();
 		foreach ( $skipped as $row ) {
 			$reason_code = (string) ( $row['reason_code'] ?? 'unknown' );
-			if ( ! isset($summary[ $reason_code ]) ) {
+			if ( ! isset( $summary[ $reason_code ] ) ) {
 				$summary[ $reason_code ] = array(
 					'reason_code' => $reason_code,
 					'count'       => 0,
@@ -7324,18 +7606,18 @@ class WorkspaceCommand extends BaseCommand {
 			}
 			++$summary[ $reason_code ]['count'];
 			$handle = (string) ( $row['handle'] ?? '' );
-			if ( '' !== $handle && count($summary[ $reason_code ]['examples']) < 3 ) {
+			if ( '' !== $handle && count( $summary[ $reason_code ]['examples'] ) < 3 ) {
 				$summary[ $reason_code ]['examples'][] = $handle;
 			}
 		}
 
-		ksort($summary);
+		ksort( $summary );
 		return array_values(
 			array_map(
 				fn( $row ) => array(
 					'reason_code' => $row['reason_code'],
 					'count'       => $row['count'],
-					'examples'    => implode(', ', $row['examples']),
+					'examples'    => implode( ', ', $row['examples'] ),
 				),
 				$summary
 			)
@@ -7353,17 +7635,17 @@ class WorkspaceCommand extends BaseCommand {
 			return '-';
 		}
 
-		$bytes      = max(0, (float) $bytes);
+		$bytes      = max( 0, (float) $bytes );
 		$units      = array( 'B', 'KiB', 'MiB', 'GiB', 'TiB' );
 		$unit       = 0;
-		$unit_count = count($units);
+		$unit_count = count( $units );
 		while ( $bytes >= 1024 && $unit < $unit_count - 1 ) {
 			$bytes /= 1024;
 			++$unit;
 		}
 
 		$precision = 0 === $unit ? 0 : 1;
-		return number_format($bytes, $precision) . ' ' . $units[ $unit ];
+		return number_format( $bytes, $precision ) . ' ' . $units[ $unit ];
 	}
 
 	/**
@@ -7384,36 +7666,36 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_worktree_freshness( array $result ): void {
-		if ( ! empty($result['fetch_failed']) ) {
+		if ( ! empty( $result['fetch_failed'] ) ) {
 			$msg = 'Freshness: ⚠ fetch failed — staleness unknown';
-			if ( ! empty($result['fetch_error']) ) {
+			if ( ! empty( $result['fetch_error'] ) ) {
 				$msg .= "\n  " . $result['fetch_error'];
 			}
-			WP_CLI::warning($msg);
+			WP_CLI::warning( $msg );
 			return;
 		}
 
-		if ( ! empty($result['rebase_attempted']) ) {
-			$target = isset($result['rebase_target']) ? (string) $result['rebase_target'] : 'upstream';
-			if ( ! empty($result['rebase_succeeded']) ) {
-				WP_CLI::log(sprintf('Freshness: rebased onto %s', $target));
+		if ( ! empty( $result['rebase_attempted'] ) ) {
+			$target = isset( $result['rebase_target'] ) ? (string) $result['rebase_target'] : 'upstream';
+			if ( ! empty( $result['rebase_succeeded'] ) ) {
+				WP_CLI::log( sprintf( 'Freshness: rebased onto %s', $target ) );
 				// Fall through in case either behind-count is still set (e.g. the
 				// "other" path's metadata is present but zeroed). Renderer below
 				// handles the 0-case correctly.
 			} else {
-				$msg = sprintf('Freshness: ⚠ rebase onto %s failed — worktree stayed at pre-rebase HEAD', $target);
-				if ( ! empty($result['rebase_error']) ) {
+				$msg = sprintf( 'Freshness: ⚠ rebase onto %s failed — worktree stayed at pre-rebase HEAD', $target );
+				if ( ! empty( $result['rebase_error'] ) ) {
 					$msg .= "\n  " . $result['rebase_error'];
 				}
-				WP_CLI::warning($msg);
+				WP_CLI::warning( $msg );
 				// Staleness block below will still fire with the pre-rebase
 				// behind-count so the agent sees exactly how stale it is.
 			}
 		}
 
-		if ( isset($result['stale_commits_behind']) ) {
+		if ( isset( $result['stale_commits_behind'] ) ) {
 			$behind   = (int) $result['stale_commits_behind'];
-			$upstream = isset($result['upstream']) ? (string) $result['upstream'] : 'upstream';
+			$upstream = isset( $result['upstream'] ) ? (string) $result['upstream'] : 'upstream';
 			if ( $behind > 0 ) {
 				WP_CLI::warning(
 					sprintf(
@@ -7426,13 +7708,13 @@ class WorkspaceCommand extends BaseCommand {
 				);
 				return;
 			}
-			WP_CLI::log(sprintf('Freshness: up to date (vs %s)', $upstream));
+			WP_CLI::log( sprintf( 'Freshness: up to date (vs %s)', $upstream ) );
 			return;
 		}
 
-		if ( isset($result['base_stale_commits_behind']) ) {
+		if ( isset( $result['base_stale_commits_behind'] ) ) {
 			$behind        = (int) $result['base_stale_commits_behind'];
-			$base_upstream = isset($result['base_upstream']) ? (string) $result['base_upstream'] : 'origin';
+			$base_upstream = isset( $result['base_upstream'] ) ? (string) $result['base_upstream'] : 'origin';
 			if ( $behind > 0 ) {
 				WP_CLI::warning(
 					sprintf(
@@ -7445,7 +7727,7 @@ class WorkspaceCommand extends BaseCommand {
 				);
 				return;
 			}
-			WP_CLI::log(sprintf('Freshness: up to date (base %s)', $base_upstream));
+			WP_CLI::log( sprintf( 'Freshness: up to date (base %s)', $base_upstream ) );
 			return;
 		}
 
@@ -7468,12 +7750,12 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return string Ref to pass to the worktree-add ability.
 	 */
 	private static function base_branch_to_ref( string $base_branch ): string {
-		$base_branch = trim($base_branch);
+		$base_branch = trim( $base_branch );
 
-		if ( preg_match('/^(?:refs\/|(?:origin|upstream)\/|HEAD$|[a-f0-9]{7,40}$)/i', $base_branch) ) {
+		if ( preg_match( '/^(?:refs\/|(?:origin|upstream)\/|HEAD$|[a-f0-9]{7,40}$)/i', $base_branch ) ) {
 			return $base_branch;
 		}
 
-		return 'origin/' . ltrim($base_branch, '/');
+		return 'origin/' . ltrim( $base_branch, '/' );
 	}
 }
