@@ -18,11 +18,23 @@ permissions:
   issues: write
 
 jobs:
+  reusable-workflow-contract:
+    name: Reusable workflow contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download pinned reusable workflow contract
+        env:
+          CONTRACT_URL: https://raw.githubusercontent.com/Extra-Chill/homeboy-action/v2/.github/workflows/ci.yml
+        run: curl --fail --location --retry 3 --silent --show-error "$CONTRACT_URL" --output "$RUNNER_TEMP/homeboy-action-ci.yml"
+
+      - name: Verify caller inputs
+        run: php .github/scripts/homeboy-workflow-input-contract.php "$RUNNER_TEMP/homeboy-action-ci.yml"
+
   homeboy:
     uses: Extra-Chill/homeboy-action/.github/workflows/ci.yml@v2
     with:
       commands: review audit,review lint,review test
       expected-commands: review audit,review lint,review test
-      autofix: 'true'
-      autofix-commands: 'review lint --fix'
     secrets: inherit
