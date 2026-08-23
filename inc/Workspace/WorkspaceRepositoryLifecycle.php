@@ -900,17 +900,9 @@ trait WorkspaceRepositoryLifecycle {
 		if ( ! $validation['valid'] ) {
 			return new \WP_Error('path_traversal', $validation['message'], array( 'status' => 403 ));
 		}
-
-		// Refuse to remove a primary that still has live worktrees attached.
-		if ( ! $parsed['is_worktree'] ) {
-			$worktrees = $this->worktree_list($parsed['repo']);
-			if ( ! is_wp_error($worktrees) ) {
-				$linked = array_filter($worktrees['worktrees'], fn( $wt ) => ! empty($wt['is_worktree']));
-				if ( ! empty($linked) ) {
-					$slugs = array_map(fn( $wt ) => $wt['branch_slug'] ?? '?', $linked);
-					return new \WP_Error('has_worktrees', sprintf('Cannot remove primary "%s": linked worktrees exist (%s). Remove them first with "workspace worktree remove".', $parsed['repo'], implode(', ', $slugs)), array( 'status' => 400 ));
-				}
-			}
+		$protection = GitCheckout::deletion_protection($validation['real_path'], $this->workspace_path);
+		if ( null !== $protection ) {
+			return new \WP_Error($protection['code'], $protection['message'], array( 'status' => 409 ) + $protection);
 		}
 
 		$removed = $this->remove_contained_directory_recursive($validation['real_path'], $this->workspace_path, $this->workspace_path);

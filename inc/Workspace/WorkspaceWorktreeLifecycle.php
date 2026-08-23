@@ -3119,6 +3119,10 @@ trait WorkspaceWorktreeLifecycle {
 			$this->workspace_path,
 			$repo,
 			function () use ( $primary_path, $wt_path, $force, $wt_handle ) {
+				$protection = GitCheckout::deletion_protection($wt_path, $this->workspace_path);
+				if ( null !== $protection ) {
+					return new \WP_Error($protection['code'], $protection['message'], array( 'status' => 409 ) + $protection);
+				}
 				$cmd    = sprintf('worktree remove %s%s', $force ? '--force ' : '', escapeshellarg($wt_path));
 				$result = $this->run_git($primary_path, $cmd);
 
@@ -3131,7 +3135,12 @@ trait WorkspaceWorktreeLifecycle {
 						)
 					);
 				}
+				clearstatcache(true, $wt_path);
+				if ( is_dir($wt_path) ) {
+					return new \WP_Error('worktree_remove_incomplete', sprintf('Git reported worktree removal success, but the directory still exists: %s', $wt_path), array( 'status' => 500, 'path' => $wt_path ));
+				}
 
+				// Commit metadata removal only after the destructive mutation is proven.
 				WorktreeContextInjector::forget_metadata($wt_handle);
 				$this->worktree_inventory()->delete($wt_handle);
 				return $result;

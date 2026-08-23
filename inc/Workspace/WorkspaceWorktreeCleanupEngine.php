@@ -3419,6 +3419,10 @@ trait WorkspaceWorktreeCleanupEngine {
 				array( 'status' => 403 )
 			);
 		}
+		$protection = GitCheckout::deletion_protection($real_path, $this->workspace_path);
+		if ( null !== $protection ) {
+			return new \WP_Error($protection['code'], $protection['message'], array( 'status' => 409 ) + $protection);
+		}
 
 		$broken_marker = $this->classify_broken_orphan_worktree_marker($real_path);
 		if ( null !== $broken_marker ) {

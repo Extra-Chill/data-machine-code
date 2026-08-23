@@ -1440,6 +1440,20 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
+				'datamachine-code/workspace-primary-restore-apply',
+				array(
+					'label'               => 'Apply Primary Restore Plan',
+					'description'         => 'Apply a digest-addressed missing-primary restore plan after fail-closed live revalidation.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array( 'type' => 'object', 'properties' => array( 'plan' => array( 'type' => 'object' ) ), 'required' => array( 'plan' ) ),
+					'output_schema'       => array( 'type' => 'object', 'properties' => array( 'success' => array( 'type' => 'boolean' ), 'primary' => array( 'type' => 'object' ), 'next_offset' => array( 'type' => 'integer' ) ) ),
+					'execute_callback'    => array( self::class, 'primaryRestoreApply' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
 				'datamachine-code/workspace-worktree-legacy-handoff-apply',
 				array(
 					'label' => 'Apply Legacy Worktree Handoff',
@@ -4220,6 +4234,11 @@ class WorkspaceAbilities {
 	/** Apply a previously returned local worktree plan. */
 	public static function worktreeApplyPlan( array $input ): array|\WP_Error {
 		return ( new Workspace() )->worktree_apply_plan((array) ($input['plan'] ?? array()));
+	}
+
+	/** Apply a previously returned missing-primary restore plan. */
+	public static function primaryRestoreApply( array $input ): array|\WP_Error {
+		return ( new Workspace() )->primary_restore_apply((array) ($input['plan'] ?? array()));
 	}
 
 	public static function worktreeLegacyHandoffApply( array $input ): array|\WP_Error {
