@@ -486,7 +486,8 @@ class WorktreeInventoryRepository {
 	private function has_owner_managed_provenance( array $row ): bool {
 		$metadata = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
 		foreach ( array( 'origin_site', 'origin_agent', 'origin_session', 'owner_run_ref', 'cleanup_policy', 'task_url', 'task_ref' ) as $field ) {
-			if ( '' !== trim( (string) ( $row[ $field ] ?? $metadata[ $field ] ?? '' ) ) ) {
+			$value = $row[ $field ] ?? $metadata[ $field ] ?? null;
+			if ( ! is_scalar($value) ? null !== $value : null !== WorktreeContextInjector::normalize_scalar_metadata_value($value) ) {
 				return true;
 			}
 		}
@@ -618,15 +619,15 @@ class WorktreeInventoryRepository {
 			'primary_path'        => isset($row['primary_path']) ? (string) $row['primary_path'] : null,
 			'is_primary'          => ! empty($row['is_primary']) ? 1 : 0,
 			'lifecycle_state'     => isset($row['lifecycle_state']) ? (string) $row['lifecycle_state'] : ( array() !== $metadata ? WorktreeContextInjector::project_lifecycle_state($metadata) : null ),
-			'origin_site'         => (string) ( $owner['site'] ?? $metadata['origin_site'] ?? $metadata['origin_site_name'] ?? '' ),
-			'origin_agent'        => is_scalar($owner['agent'] ?? null) ? (string) $owner['agent'] : ( is_scalar($metadata['origin_agent'] ?? null) ? (string) $metadata['origin_agent'] : '' ),
-			'origin_session'      => is_scalar($session['primary_id'] ?? null) ? (string) $session['primary_id'] : ( is_scalar($metadata['origin_session'] ?? null) ? (string) $metadata['origin_session'] : null ),
+			'origin_site'         => WorktreeContextInjector::normalize_scalar_metadata_value($owner['site'] ?? null) ?? WorktreeContextInjector::normalize_scalar_metadata_value($metadata['origin_site'] ?? $metadata['origin_site_name'] ?? null) ?? '',
+			'origin_agent'        => WorktreeContextInjector::normalize_scalar_metadata_value($owner['agent'] ?? null) ?? WorktreeContextInjector::normalize_scalar_metadata_value($metadata['origin_agent'] ?? null) ?? '',
+			'origin_session'      => WorktreeContextInjector::normalize_scalar_metadata_value($session['primary_id'] ?? null) ?? WorktreeContextInjector::normalize_scalar_metadata_value($metadata['origin_session'] ?? null),
 			'task_url'            => isset($task['task_url']) ? (string) $task['task_url'] : null,
 			'task_ref'            => isset($task['task_ref']) ? (string) $task['task_ref'] : null,
 			'pr_url'              => isset($row['pr_url']) ? (string) $row['pr_url'] : ( isset($metadata['pr_url']) ? (string) $metadata['pr_url'] : null ),
-			'purpose'             => isset($row['purpose']) ? (string) $row['purpose'] : ( isset($metadata['purpose']) ? (string) $metadata['purpose'] : null ),
-			'owner_run_ref'       => isset($row['owner_run_ref']) ? (string) $row['owner_run_ref'] : ( isset($metadata['owner_run_ref']) ? (string) $metadata['owner_run_ref'] : null ),
-			'cleanup_policy'      => isset($row['cleanup_policy']) ? (string) $row['cleanup_policy'] : ( isset($metadata['cleanup_policy']) ? (string) $metadata['cleanup_policy'] : null ),
+			'purpose'             => WorktreeContextInjector::normalize_scalar_metadata_value($row['purpose'] ?? $metadata['purpose'] ?? null),
+			'owner_run_ref'       => WorktreeContextInjector::normalize_scalar_metadata_value($row['owner_run_ref'] ?? $metadata['owner_run_ref'] ?? null),
+			'cleanup_policy'      => WorktreeContextInjector::normalize_scalar_metadata_value($row['cleanup_policy'] ?? $metadata['cleanup_policy'] ?? null),
 			'created_at'          => $this->datetime($row['created_at'] ?? $metadata['created_at'] ?? null),
 			'last_seen_at'        => $this->datetime($row['last_seen_at'] ?? $metadata['last_seen_at'] ?? null),
 			'last_probe_at'       => current_time('mysql', true),

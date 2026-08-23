@@ -132,7 +132,7 @@ class WorktreeContextInjector {
 			$parts    = explode('=', $requirement, 2);
 			$field    = $parts[0];
 			$expected = $parts[1] ?? null;
-			if ( null === $expected ? '' === trim((string) ($intent[ $field ] ?? '')) : $expected !== ( $intent[ $field ] ?? null ) ) {
+			if ( null === $expected ? null === self::normalize_scalar_metadata_value($intent[ $field ] ?? null) : $expected !== ( $intent[ $field ] ?? null ) ) {
 				$missing[] = $requirement;
 			}
 		}
@@ -261,21 +261,33 @@ class WorktreeContextInjector {
 	}
 
 	public static function normalize_cleanup_policy( mixed $policy ): ?string {
-		$policy = strtolower(trim((string) $policy));
+		$policy = self::normalize_scalar_metadata_value($policy);
+		if ( null === $policy ) {
+			return null;
+		}
+		$policy = strtolower($policy);
 		return in_array($policy, self::VALID_CLEANUP_POLICIES, true) ? $policy : null;
+	}
+
+	/** Normalize a scalar persisted metadata value without coercing arrays. */
+	public static function normalize_scalar_metadata_value( mixed $value ): ?string {
+		if ( ! is_scalar($value) ) {
+			return null;
+		}
+		$value = trim((string) $value);
+		return '' === $value ? null : $value;
 	}
 
 	/** True only for a creator-recorded successful disposable terminal outcome. */
 	public static function has_owner_terminal_disposable_cleanup_signal( array $metadata ): bool {
 		return self::CLEANUP_POLICY_REMOVE_ON_SUCCESS === ( $metadata['cleanup_policy'] ?? null )
-			&& '' !== trim((string) ( $metadata['purpose'] ?? '' ))
-			&& '' !== trim((string) ( $metadata['owner_run_ref'] ?? '' ))
+			&& null !== self::normalize_scalar_metadata_value($metadata['purpose'] ?? null)
+			&& null !== self::normalize_scalar_metadata_value($metadata['owner_run_ref'] ?? null)
 			&& 'success' === ( $metadata['owner_terminal_outcome'] ?? null );
 	}
 
 	private static function optional_intent_value( mixed $value ): ?string {
-		$value = trim((string) $value);
-		return '' === $value ? null : $value;
+		return self::normalize_scalar_metadata_value($value);
 	}
 
 	/**
@@ -339,7 +351,7 @@ class WorktreeContextInjector {
 				$missing_ownership_fields[] = $field;
 			}
 		}
-		$attribution = array() === $missing_ownership_fields ? 'attributable' : 'unattributed';
+		$attribution = array() !== $malformed_ownership_fields ? 'malformed' : ( array() === $missing_ownership_fields ? 'attributable' : 'unattributed' );
 		$evidence = array(
 			'heartbeat_ttl_seconds' => $ttl,
 			'review_after' => null,
@@ -1677,7 +1689,7 @@ class WorktreeContextInjector {
 				'origin_site'      => '' !== (string) ( $payload['site_name'] ?? '' ) ? (string) $payload['site_name'] : (string) ( $payload['site_url'] ?? '' ),
 				'origin_site_url'  => (string) ( $payload['site_url'] ?? '' ),
 				'origin_site_name' => (string) ( $payload['site_name'] ?? '' ),
-				'origin_agent'     => (string) ( $payload['agent_slug'] ?? '' ),
+				'origin_agent'     => self::normalize_scalar_metadata_value($payload['agent_slug'] ?? null) ?? '',
 				'abspath'          => (string) ( $payload['abspath'] ?? '' ),
 				'created_at'       => (string) ( $payload['timestamp'] ?? gmdate('c') ),
 			)

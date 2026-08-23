@@ -46,7 +46,7 @@ try {
 	heartbeat_attribution_assert_same(array(), $empty_ownership['malformed_ownership_fields'], 'empty scalar ownership is not malformed');
 
 	$array_ownership = WorktreeContextInjector::classify_liveness(array( 'origin_agent' => array( 'agent' ), 'origin_session' => 'session', 'origin_user' => 'user', 'owner_run_ref' => 'run-1' ));
-	heartbeat_attribution_assert_same('unattributed', $array_ownership['attribution'], 'array ownership cannot make a worktree attributable');
+	heartbeat_attribution_assert_same('malformed', $array_ownership['attribution'], 'array ownership is distinguished from anonymous ownership');
 	heartbeat_attribution_assert_same(array( 'origin_agent' ), $array_ownership['missing_ownership_fields'], 'array ownership is treated as missing');
 	heartbeat_attribution_assert_same(array( 'origin_agent' ), $array_ownership['malformed_ownership_fields'], 'array ownership is surfaced as malformed');
 	heartbeat_attribution_assert_same('unknown', WorktreeContextInjector::summarize_owner(array( 'origin_agent' => array( 'agent' ) ))['agent'], 'malformed agent metadata renders safely as unknown');
@@ -68,9 +68,11 @@ try {
 	$malformed_structured_ownership['origin_session'] = array( 'primary_id' => 'session-1', 'ids' => array() );
 	$malformed_structured_ownership['origin_user'] = array( 'id' => 1 );
 	$malformed_structured_liveness = WorktreeContextInjector::classify_liveness($malformed_structured_ownership);
-	heartbeat_attribution_assert_same('unattributed', $malformed_structured_liveness['attribution'], 'malformed structured ownership remains fail-closed');
+	heartbeat_attribution_assert_same('malformed', $malformed_structured_liveness['attribution'], 'malformed structured ownership remains fail-closed');
 	heartbeat_attribution_assert_same(array( 'origin_session', 'origin_user' ), $malformed_structured_liveness['missing_ownership_fields'], 'malformed structured ownership is treated as missing');
 	heartbeat_attribution_assert_same(array( 'origin_session', 'origin_user' ), $malformed_structured_liveness['malformed_ownership_fields'], 'malformed structured ownership is surfaced deterministically');
+	heartbeat_attribution_assert_same(null, WorktreeContextInjector::normalize_scalar_metadata_value(array( 'run-1' )), 'metadata scalar normalization rejects arrays');
+	heartbeat_attribution_assert_same(false, WorktreeContextInjector::has_owner_terminal_disposable_cleanup_signal(array( 'cleanup_policy' => WorktreeContextInjector::CLEANUP_POLICY_REMOVE_ON_SUCCESS, 'purpose' => 'test', 'owner_run_ref' => array( 'run-1' ), 'owner_terminal_outcome' => 'success' )), 'array owner run references cannot establish terminal cleanup authority');
 } finally {
 	restore_error_handler();
 }

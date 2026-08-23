@@ -33,7 +33,7 @@ final class LegacyWorktreeHandoff {
 			'owner_run_ref' => $contract['owner_run_ref'] ?? $metadata['owner_run_ref'] ?? null,
 			'origin_session' => $metadata['origin_session'] ?? null,
 		);
-		$owner['classification'] = '' === trim((string) $owner['owner_run_ref']) ? 'unknown_legacy' : 'foreign_legacy';
+		$owner['classification'] = null === WorktreeContextInjector::normalize_scalar_metadata_value($owner['owner_run_ref']) ? 'unknown_legacy' : 'foreign_legacy';
 		$task_identity = (string) ($requested['task_identity'] ?? '');
 		$candidate_task_identity = (string) ($candidate['task_identity'] ?? '');
 		$checks = array(
