@@ -47,6 +47,39 @@ function compact_output_large_rows( int $count ): array {
 }
 
 $large_rows = compact_output_large_rows(40);
+$worktree_add = WorkspaceCompactOutput::worktree_add_result(
+	array(
+		'success'        => true,
+		'handle'         => 'repo@bounded-output',
+		'path'           => '/workspace/repo@bounded-output',
+		'branch'         => 'bounded-output',
+		'slug'           => 'bounded-output',
+		'created_branch' => true,
+		'disk_budget'    => array(
+			'status'                 => 'warn',
+			'free_bytes'             => 500000,
+			'projected_demand_bytes' => 200000,
+			'warnings'               => array( array( 'code' => 'low_free_space' ) ),
+			'calibration'            => array_fill(0, 20, str_repeat('x', 100)),
+		),
+		'bootstrap'      => array(
+			'success'     => true,
+			'ran_any'     => true,
+			'duration_ms' => 123,
+			'steps'       => array(
+				array( 'step' => 'composer', 'status' => 'ran', 'duration_ms' => 120, 'output_tail' => str_repeat('log ', 1000), 'output_evidence' => array( 'retained_bytes' => 4000, 'sha256' => 'digest', 'cap_bytes' => 4096 ) ),
+			),
+		),
+	)
+);
+compact_output_assert('repo@bounded-output' === ( $worktree_add['handle'] ?? null ), 'Compact worktree add output must preserve identity.');
+compact_output_assert('warn' === ( $worktree_add['capacity']['status'] ?? null ), 'Compact worktree add output must preserve capacity decision.');
+compact_output_assert(! isset($worktree_add['capacity']['calibration']), 'Compact worktree add output must omit full capacity diagnostics.');
+compact_output_assert(! isset($worktree_add['bootstrap']['steps'][0]['output_tail']), 'Compact worktree add output must omit bootstrap output tails.');
+compact_output_assert(4096 === ( $worktree_add['bootstrap']['steps'][0]['output_evidence']['cap_bytes'] ?? null ), 'Compact worktree add output must retain capped output evidence.');
+compact_output_assert(in_array('low_free_space', (array) ( $worktree_add['warning_codes'] ?? array() ), true), 'Compact worktree add output must preserve warning codes.');
+compact_output_assert(true === ( $worktree_add['evidence']['verbose_input']['verbose'] ?? null ), 'Compact worktree add output must provide an explicit verbose evidence request.');
+
 $hygiene_candidate_rows = $large_rows;
 $hygiene_candidate_rows[0]['dirty']                        = null;
 $hygiene_candidate_rows[0]['fresh_revalidation_status']    = 'not_run_inventory_only';

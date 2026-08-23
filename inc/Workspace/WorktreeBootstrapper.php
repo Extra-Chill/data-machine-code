@@ -138,6 +138,7 @@ final class WorktreeBootstrapper {
 	 * }
 	 */
 	public static function bootstrap( string $worktree_path, ?int $remaining_operation_seconds = null ): array {
+		$started_at    = microtime(true);
 		$total_timeout = self::total_timeout_seconds();
 		if ( null !== $remaining_operation_seconds ) {
 			$total_timeout = min($total_timeout, max(1, $remaining_operation_seconds));
@@ -158,7 +159,17 @@ final class WorktreeBootstrapper {
 			'ran_any'               => $ran_any,
 			'skipped_package_roots' => $package_discovery['skipped'],
 			'steps'                 => $steps,
+			'duration_ms'           => (int) round(( microtime(true) - $started_at ) * 1000),
 		);
+		foreach ( $result['steps'] as &$step ) {
+			$output = (string) ( $step['output_tail'] ?? '' );
+			$step['output_evidence'] = array(
+				'retained_bytes' => strlen($output),
+				'sha256'         => hash('sha256', $output),
+				'cap_bytes'      => self::OUTPUT_CAP_BYTES,
+			);
+		}
+		unset($step);
 		self::$bootstrap_deadline = null;
 		return $result;
 	}
