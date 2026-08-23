@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/worktree-lifecycle-fixture-guard-support.php';
+require_once __DIR__ . '/worktree-lifecycle-fixture-guard-support.inc';
 
 function fixture_guard_assert( bool $condition, string $message ): void {
 	if ( ! $condition ) {

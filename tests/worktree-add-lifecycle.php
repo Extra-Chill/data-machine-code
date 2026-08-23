@@ -8,7 +8,7 @@ if ( ! defined('ABSPATH') ) {
 	define('ABSPATH', __DIR__ . '/fixtures/');
 }
 
-require_once __DIR__ . '/worktree-lifecycle-fixture-guard-support.php';
+require_once __DIR__ . '/worktree-lifecycle-fixture-guard-support.inc';
 
 $temp_root      = realpath(sys_get_temp_dir()) ?: sys_get_temp_dir();
 $workspace_root = rtrim($temp_root, '/') . '/datamachine-code-worktree-add-' . getmypid() . '-' . bin2hex(random_bytes(8));
