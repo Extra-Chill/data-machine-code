@@ -73,6 +73,7 @@ if ( 'worker' === ( $argv[1] ?? '' ) ) {
 	$expected = array(
 		'datamachine-code/workspace-list',
 		'datamachine-code/workspace-worktree-add',
+		'datamachine-code/workspace-worktree-handoff-revalidate',
 		'datamachine-code/workspace-worktree-list',
 		'datamachine-code/workspace-git-pull',
 	);
@@ -80,6 +81,21 @@ if ( 'worker' === ( $argv[1] ?? '' ) ) {
 		if ( ! wp_get_ability($ability) ) {
 			throw new RuntimeException(sprintf('Expected workspace ability %s was not registered.', $ability));
 		}
+	}
+	$proof_fields = array( 'version', 'proof_id', 'handle', 'worktree_sha', 'resolved_base_ref', 'resolved_base_sha', 'remote_default_ref', 'remote_default_sha', 'digest' );
+	$add_proof = (array) ( $GLOBALS['dmc_ability_registry']['datamachine-code/workspace-worktree-add']['output_schema']['properties']['handoff_freshness_proof'] ?? array() );
+	$revalidate = (array) ( $GLOBALS['dmc_ability_registry']['datamachine-code/workspace-worktree-handoff-revalidate'] ?? array() );
+	$input_proof = (array) ( $revalidate['input_schema']['properties']['proof'] ?? array() );
+	$output_proof = (array) ( $revalidate['output_schema']['properties']['proof'] ?? array() );
+	foreach ( array( $add_proof, $input_proof, $output_proof ) as $schema ) {
+		if ( $proof_fields !== array_keys((array) ( $schema['properties'] ?? array() )) || $proof_fields !== (array) ( $schema['required'] ?? array() ) ) {
+			throw new RuntimeException('Handoff proof schema did not expose its exact required fields.');
+		}
+	}
+	$status = (array) ( $revalidate['output_schema']['properties']['status']['enum'] ?? array() );
+	$errors = (array) ( $revalidate['output_schema']['properties']['error']['properties']['code']['enum'] ?? array() );
+	if ( array( 'current', 'drift', 'fetch_failed', 'contention' ) !== $status || array( 'invalid_worktree_handoff_proof', 'untrusted_worktree_handoff_proof', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'worktree_handoff_base_unresolved' ) !== $errors ) {
+		throw new RuntimeException('Handoff revalidation schema omitted typed statuses or errors.');
 	}
 	$diagnostic = \DataMachineCode\Abilities\WorkspaceAbilities::unavailable_diagnostic('datamachine-code/workspace-unsupported');
 	if ( 'datamachine_code_ability_unavailable' !== ( $diagnostic['code'] ?? null ) || 1 !== ( $diagnostic['registration_generation'] ?? null ) || ! in_array('datamachine-code/workspace-worktree-add', $diagnostic['registered_siblings'] ?? array(), true) ) {

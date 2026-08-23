@@ -1590,6 +1590,12 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'Present only when fetch_timed_out=true. The bounded freshness-fetch budget in seconds.',
 							),
+							'handoff_freshness_proof'   => array(
+								'type'        => 'object',
+								'properties'  => self::worktreeHandoffProofSchemaProperties(),
+								'required'    => self::worktreeHandoffProofSchemaRequired(),
+								'description' => 'Metadata-bound proof for bounded revalidation immediately before a consumer admits work.',
+							),
 							'stale_commits_behind'      => array(
 								'type'        => 'integer',
 								'description' => 'For the existing-local-branch path, how many commits the worktree branch is behind its configured upstream. Omitted when no upstream is configured.',
@@ -1641,6 +1647,20 @@ class WorkspaceAbilities {
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreeAdd' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-handoff-revalidate',
+				array(
+					'label'               => 'Revalidate Worktree Handoff Freshness',
+					'description'         => 'Boundedly verify the exact metadata-bound worktree handoff proof immediately before consumer admission.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array( 'type' => 'object', 'properties' => array( 'handle' => array( 'type' => 'string', 'description' => 'Managed worktree handle.' ), 'proof' => array( 'type' => 'object', 'properties' => self::worktreeHandoffProofSchemaProperties(), 'required' => self::worktreeHandoffProofSchemaRequired(), 'description' => 'Exact proof returned by worktree add.' ) ), 'required' => array( 'handle', 'proof' ) ),
+					'output_schema'       => array( 'type' => 'object', 'properties' => array( 'success' => array( 'type' => 'boolean' ), 'status' => array( 'type' => 'string', 'enum' => array( 'current', 'drift', 'fetch_failed', 'contention' ) ), 'handle' => array( 'type' => 'string' ), 'proof' => array( 'type' => 'object', 'properties' => self::worktreeHandoffProofSchemaProperties(), 'required' => self::worktreeHandoffProofSchemaRequired() ), 'drift' => array( 'type' => 'object' ), 'fetch' => array( 'type' => 'object' ), 'contention' => array( 'type' => 'object' ), 'error' => array( 'type' => 'object', 'properties' => array( 'code' => array( 'type' => 'string', 'enum' => array( 'invalid_worktree_handoff_proof', 'untrusted_worktree_handoff_proof', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'worktree_handoff_base_unresolved' ) ), 'message' => array( 'type' => 'string' ) ) ) ) ),
+					'execute_callback'    => array( self::class, 'worktreeHandoffRevalidate' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
 				)
@@ -4222,6 +4242,10 @@ class WorkspaceAbilities {
 		return ( new Workspace() )->worktree_apply_plan((array) ($input['plan'] ?? array()));
 	}
 
+	public static function worktreeHandoffRevalidate( array $input ): array|\WP_Error {
+		return ( new Workspace() )->worktree_handoff_revalidate((string) ( $input['handle'] ?? '' ), (array) ( $input['proof'] ?? array() ));
+	}
+
 	public static function worktreeLegacyHandoffApply( array $input ): array|\WP_Error {
 		return ( new Workspace() )->worktree_apply_legacy_handoff((array) ($input['plan'] ?? array()), (string) ($input['mode'] ?? ''));
 	}
@@ -4242,6 +4266,16 @@ class WorkspaceAbilities {
 	private static function worktreeIntentSchemaProperties(): array {
 		$policy = method_exists(WorktreeContextInjector::class, 'worktree_add_policy_schema_properties') ? WorktreeContextInjector::worktree_add_policy_schema_properties() : array();
 		return array( 'repo' => array( 'type' => 'string' ), 'branch' => array( 'type' => 'string' ), 'from' => array( 'type' => 'string' ), 'inject_context' => array( 'type' => 'boolean' ), 'bootstrap' => array( 'type' => 'boolean' ), 'allow_stale' => array( 'type' => 'boolean' ), 'allow_unverified_freshness' => array( 'type' => 'boolean' ), 'rebase_base' => array( 'type' => 'boolean' ), 'force' => array( 'type' => 'boolean' ), 'task_url' => array( 'type' => 'string' ), 'task_ref' => array( 'type' => 'string' ), 'require_task_tracker' => array( 'type' => 'boolean' ), ...$policy );
+	}
+
+	/** Schema shared by allocation and revalidation handoff proof payloads. */
+	private static function worktreeHandoffProofSchemaProperties(): array {
+		return array( 'version' => array( 'type' => 'integer' ), 'proof_id' => array( 'type' => 'string' ), 'handle' => array( 'type' => 'string' ), 'worktree_sha' => array( 'type' => 'string' ), 'resolved_base_ref' => array( 'type' => 'string' ), 'resolved_base_sha' => array( 'type' => 'string' ), 'remote_default_ref' => array( 'type' => 'string' ), 'remote_default_sha' => array( 'type' => 'string' ), 'digest' => array( 'type' => 'string' ) );
+	}
+
+	/** @return array<int,string> */
+	private static function worktreeHandoffProofSchemaRequired(): array {
+		return array( 'version', 'proof_id', 'handle', 'worktree_sha', 'resolved_base_ref', 'resolved_base_sha', 'remote_default_ref', 'remote_default_sha', 'digest' );
 	}
 
 	/**

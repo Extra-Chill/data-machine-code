@@ -46,6 +46,7 @@ class WorkspaceCommand extends BaseCommand {
 		'add'                                     => array( 'ability' => 'datamachine-code/workspace-worktree-add' ),
 		'plan'                                    => array( 'ability' => 'datamachine-code/workspace-worktree-plan' ),
 		'apply-plan'                              => array( 'ability' => 'datamachine-code/workspace-worktree-apply-plan' ),
+		'handoff-revalidate'                      => array( 'ability' => 'datamachine-code/workspace-worktree-handoff-revalidate' ),
 		'list'                                    => array( 'ability' => 'datamachine-code/workspace-worktree-list' ),
 		'get'                                     => array( 'ability' => 'datamachine-code/workspace-worktree-list' ),
 		'remove'                                  => array( 'ability' => 'datamachine-code/workspace-worktree-remove' ),
@@ -137,6 +138,11 @@ class WorkspaceCommand extends BaseCommand {
 				'shortdesc' => 'Apply a digest-addressed worktree plan.',
 				'longdesc'  => "Applies a plan only when a fresh replan has the same digest. Changed remote, capacity, ownership, or destination state is refused.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree apply-plan --plan='<json-plan>' --format=json",
 				'synopsis'  => array( $option('plan', 'JSON object returned by worktree plan.'), $format ),
+			),
+			'handoff-revalidate' => array(
+				'shortdesc' => 'Revalidate a worktree handoff freshness proof.',
+				'longdesc'  => "Fetches and probes the managed worktree under one bounded deadline. Returns current, drift, fetch_failed, or contention.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree handoff-revalidate data-machine-code@fix-1117 --proof='<json-proof>' --format=json",
+				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'handle', 'description' => 'Managed worktree handle.', 'required' => true ), $option('proof', 'JSON proof returned by worktree add.'), $format ),
 			),
 			'remove' => array(
 				'shortdesc' => 'Remove a managed worktree.',
@@ -4329,7 +4335,7 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|get|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|capacity-recovery|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
+			WP_CLI::error('Usage: wp datamachine-code workspace worktree <add|get|list|remove|prune|locks|handoff-revalidate|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|capacity-recovery|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]');
 			return;
 		}
 
@@ -4527,6 +4533,16 @@ class WorkspaceCommand extends BaseCommand {
 					return;
 				}
 				$input['plan'] = $decoded;
+				break;
+
+			case 'handoff-revalidate':
+				$proof = json_decode((string) ( $assoc_args['proof'] ?? '' ), true);
+				if ( empty($args[1]) || ! is_array($proof) ) {
+					WP_CLI::error('Usage: worktree handoff-revalidate <handle> --proof=<json-proof>');
+					return;
+				}
+				$input['handle'] = (string) $args[1];
+				$input['proof']  = $proof;
 				break;
 
 			case 'refresh-context':
@@ -4823,7 +4839,7 @@ class WorkspaceCommand extends BaseCommand {
 		$result = $ability->execute($input);
 
 		if ( is_wp_error($result) ) {
-			if ( 'add' === $operation && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			if ( in_array($operation, array( 'add', 'handoff-revalidate' ), true) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 				$this->renderer()->json(array(
 					'success' => false,
 					'error'   => array(
@@ -5116,12 +5132,25 @@ class WorkspaceCommand extends BaseCommand {
 	 * @param array  $assoc_args CLI assoc args.
 	 */
 	private function renderWorktreeResult( string $operation, array $result, array $assoc_args ): void {
-		if ( 'add' === $operation && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+		if ( in_array($operation, array( 'add', 'handoff-revalidate' ), true) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 			$this->renderer()->json($result);
 			return;
 		}
 
 		switch ( $operation ) {
+			case 'handoff-revalidate':
+				WP_CLI::log(sprintf('Handoff status: %s', $result['status'] ?? 'unknown'));
+				WP_CLI::log(sprintf('Handle: %s', $result['handle'] ?? '-'));
+				if ( ! empty($result['drift']) ) {
+					WP_CLI::warning('Handoff drift detected; obtain a new allocation proof before admission.');
+				}
+				if ( ! empty($result['fetch']['error']) ) {
+					WP_CLI::warning('Remote freshness fetch failed: ' . (string) $result['fetch']['error']);
+				}
+				if ( ! empty($result['contention']['retry_command']) ) {
+					WP_CLI::log('Retry: ' . (string) $result['contention']['retry_command']);
+				}
+				return;
 			case 'get':
 			case 'list':
 				$worktrees = $result['worktrees'] ?? array();
