@@ -198,9 +198,20 @@ token and pass it back unchanged when requesting safety evidence.
 revalidates the token-bound identity and ownership, linked-worktree status, clean
 state, absence of unpushed commits, and strict fast-forward ancestry immediately
 before running `git merge --ff-only <base-sha>`. It never fetches or performs any
-other Git mutation. Its `datamachine-code/worktree-convergence/v1` evidence binds
-the unchanged identity token and requested base SHA with the before/after HEADs.
-Unsafe state is returned as typed `refused` evidence without mutation.
+other Git mutation. A bounded provider lock, keyed by the canonical linked Git
+directory and its filesystem identity, serializes that final admission and merge.
+It re-observes HEAD and clean status after merging, and reports an ambiguous or
+mutated failure from observed state if Git returns an error or times out. Its
+`datamachine-code/worktree-convergence/v1` evidence binds the unchanged identity
+token and requested base SHA with the before/after HEADs. Unsafe state is returned
+as typed `refused` evidence without mutation.
+
+The identity token is an integrity and staleness binding for the exact canonical
+worktree, branch, primary status, and linked Git directory. It is not an
+authorization secret: callers with host access can invoke Git directly. The
+provider's safety guarantees therefore apply to cooperating local callers and its
+own serialized convergence operations, while Git remains the final admission for
+index and worktree mutations.
 
 The primary checkout (bare `<repo>`) is **read-only by default** for mutating
 operations — pass `--allow-primary-mutation` to override. The default-deny is

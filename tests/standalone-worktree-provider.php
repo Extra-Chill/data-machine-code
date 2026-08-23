@@ -20,6 +20,20 @@ function standalone_provider_run( array $command ): array {
 	return array( 'status' => $status, 'stdout' => $stdout, 'stderr' => $stderr, 'elapsed' => microtime(true) - $started );
 }
 
+function standalone_provider_start( array $command ): array {
+	$process = proc_open($command, array( 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $pipes);
+	standalone_provider_assert(is_resource($process), 'Could not start provider process.');
+	return array( 'process' => $process, 'pipes' => $pipes );
+}
+
+function standalone_provider_wait( array $running ): array {
+	$stdout = stream_get_contents($running['pipes'][1]);
+	$stderr = stream_get_contents($running['pipes'][2]);
+	fclose($running['pipes'][1]);
+	fclose($running['pipes'][2]);
+	return array( 'status' => proc_close($running['process']), 'stdout' => $stdout, 'stderr' => $stderr );
+}
+
 function standalone_provider_git( string $path, array $arguments ): void {
 	$command = array_merge(array( 'git', '-C', $path ), $arguments);
 	$result  = standalone_provider_run($command);
@@ -60,6 +74,7 @@ try {
 	standalone_provider_git($primary, array( 'commit', '-m', 'fixture' ));
 	standalone_provider_git($primary, array( 'push', '-u', 'origin', 'main' ));
 	standalone_provider_git($primary, array( 'worktree', 'add', '-b', 'fix/example', $path ));
+	standalone_provider_git($path, array( 'push', '-u', 'origin', 'fix/example' ));
 
 	$missing = standalone_provider_run(array( PHP_BINARY, $script, 'identity', $root, 'fixture@missing' ));
 	standalone_provider_assert(0 === $missing['status'], 'Missing identity must be a successful typed decline.');
@@ -112,6 +127,18 @@ try {
 	$missing_base = standalone_provider_run(array( PHP_BINARY, $script, 'converge', $root, $identity_payload['token'], str_repeat('a', 40) ));
 	$missing_base_payload = json_decode($missing_base['stdout'], true, 512, JSON_THROW_ON_ERROR);
 	standalone_provider_assert('base_not_found' === $missing_base_payload['code'], 'Absent base SHA was not refused.');
+	$untracked_path = $root . '/fixture@untracked';
+	standalone_provider_git($primary, array( 'worktree', 'add', '-b', 'fix/untracked', $untracked_path ));
+	$untracked_identity = standalone_provider_run(array( PHP_BINARY, $script, 'identity', $root, 'fixture@untracked' ));
+	$untracked_token = json_decode($untracked_identity['stdout'], true, 512, JSON_THROW_ON_ERROR)['token'];
+	file_put_contents($primary . '/untracked-base.txt', "untracked\n");
+	standalone_provider_git($primary, array( 'add', 'untracked-base.txt' ));
+	standalone_provider_git($primary, array( 'commit', '-m', 'untracked base' ));
+	standalone_provider_git($primary, array( 'push' ));
+	$untracked_base = trim(standalone_provider_run(array( 'git', '-C', $primary, 'rev-parse', 'HEAD' ))['stdout']);
+	$untracked = standalone_provider_run(array( PHP_BINARY, $script, 'converge', $root, $untracked_token, $untracked_base ));
+	$untracked_payload = json_decode($untracked['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	standalone_provider_assert('unpushed_probe_failed' === $untracked_payload['code'], 'Unproven push safety was not refused.');
 
 	standalone_provider_git($path, array( 'push', '-u', 'origin', 'fix/example' ));
 	file_put_contents($path . '/unpushed.txt', "unpushed\n");
@@ -148,6 +175,7 @@ try {
 	$race_handle = 'fixture@race';
 	$race_path   = $root . '/' . $race_handle;
 	standalone_provider_git($primary, array( 'worktree', 'add', '-b', 'fix/race', $race_path ));
+	standalone_provider_git($race_path, array( 'push', '-u', 'origin', 'fix/race' ));
 	file_put_contents($primary . '/race-base.txt', "race\n");
 	standalone_provider_git($primary, array( 'add', 'race-base.txt' ));
 	standalone_provider_git($primary, array( 'commit', '-m', 'race base' ));
@@ -164,6 +192,22 @@ try {
 	$race_payload = json_decode($race['stdout'], true, 512, JSON_THROW_ON_ERROR);
 	standalone_provider_assert('dirty_worktree' === $race_payload['code'], 'State changed before merge was not refused.');
 	standalone_provider_assert($race_payload['before_head'] === $race_payload['after_head'], 'Race refusal mutated HEAD.');
+	unlink($race_path . '/race.txt');
+	$sleep_hook = $root . '/sleep-hook.php';
+	file_put_contents($sleep_hook, "#!/usr/bin/env php\n<?php usleep(500000);\n");
+	chmod($sleep_hook, 0700);
+	putenv('DMC_WORKTREE_PROVIDER_TEST_CONVERGE_HOOK=' . $sleep_hook);
+	$first = standalone_provider_start(array( PHP_BINARY, $script, 'converge', $root, $race_token, $race_base ));
+	usleep(100000);
+	$second = standalone_provider_start(array( PHP_BINARY, $script, 'converge', $root, $race_token, $race_base ));
+	$first_result = standalone_provider_wait($first);
+	$second_result = standalone_provider_wait($second);
+	putenv('DMC_WORKTREE_PROVIDER_TEST_CONVERGE_HOOK');
+	$first_payload = json_decode($first_result['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	$second_payload = json_decode($second_result['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	standalone_provider_assert(0 === $first_result['status'] && 0 === $second_result['status'], 'Competing convergence did not complete.');
+	standalone_provider_assert('converged' === $first_payload['status'] && 'converged' === $second_payload['status'], 'Competing convergence did not return convergence evidence.');
+	standalone_provider_assert($first_payload['changed'] !== $second_payload['changed'], 'Competing convergence interleaved instead of serializing admission.');
 
 	$outside = standalone_provider_run(array( PHP_BINARY, $script, 'identity', dirname($root), $handle ));
 	$outside_payload = json_decode($outside['stdout'], true, 512, JSON_THROW_ON_ERROR);
