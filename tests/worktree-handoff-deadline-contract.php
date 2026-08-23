@@ -13,6 +13,8 @@ handoff_deadline_contract_assert(str_contains($source, 'resolve_remote_default_r
 handoff_deadline_contract_assert(str_contains($source, 'resolve_remote_default_ref( string $repo_path, int $timeout_seconds = 0 )'), 'Remote-default resolver does not accept an explicit bounded timeout.');
 handoff_deadline_contract_assert(str_contains($source, "'symbolic-ref --quiet refs/remotes/origin/HEAD', \$timeout_seconds"), 'Remote-default resolver did not forward its timeout to run_git.');
 handoff_deadline_contract_assert(str_contains($source, "new \\WP_Error('worktree_handoff_revalidation_timeout'"), 'Bounded remote-default timeout does not produce the typed handoff timeout.');
-handoff_deadline_contract_assert(str_contains($source, 'if ( $remaining <= 0 )'), 'Handoff probes do not refuse an expired aggregate deadline before Git execution.');
+handoff_deadline_contract_assert(str_contains($source, 'worktree_handoff_remaining_seconds'), 'Handoff probes do not use their deadline-safe timeout conversion.');
+handoff_deadline_contract_assert(str_contains($source, 'floor($deadline - microtime(true))'), 'Handoff revalidation rounds partial GitRunner seconds beyond its aggregate deadline.');
+handoff_deadline_contract_assert(str_contains($source, 'less than one safe Git execution second remaining'), 'Handoff revalidation does not explain partial-second refusal.');
 
 fwrite(STDOUT, "worktree-handoff-deadline-contract: ok\n");

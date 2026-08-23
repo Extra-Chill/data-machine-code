@@ -141,7 +141,7 @@ class WorkspaceCommand extends BaseCommand {
 			),
 			'handoff-revalidate' => array(
 				'shortdesc' => 'Revalidate a worktree handoff freshness proof.',
-				'longdesc'  => "Fetches and probes the managed worktree under one bounded deadline. Returns current, drift, fetch_failed, or contention.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree handoff-revalidate data-machine-code@fix-1117 --proof='<json-proof>' --format=json",
+				'longdesc'  => "Fetches and probes the managed worktree under one bounded deadline. current is an observation for an immediate consumer converge-or-refuse decision, not a lease held across external admission. Returns current, drift, fetch_failed, or contention.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree handoff-revalidate data-machine-code@fix-1117 --proof='<json-proof>' --format=json",
 				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'handle', 'description' => 'Managed worktree handle.', 'required' => true ), $option('proof', 'JSON proof returned by worktree add.'), $format ),
 			),
 			'remove' => array(

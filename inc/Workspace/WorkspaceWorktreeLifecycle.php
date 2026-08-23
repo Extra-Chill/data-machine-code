@@ -194,7 +194,13 @@ trait WorkspaceWorktreeLifecycle {
 
 	private const HANDOFF_REVALIDATION_TIMEOUT = 5;
 
-	/** Revalidate the exact server-issued proof under one aggregate deadline. */
+	/**
+	 * Revalidate the exact server-issued proof under one aggregate deadline.
+	 *
+	 * A current result is a bounded observation for an immediate consumer to
+	 * converge or refuse. It is not a cross-process lease across later external
+	 * admission.
+	 */
 	public function worktree_handoff_revalidate( string $handle, array $proof ): array|\WP_Error {
 		$parsed = $this->parse_handle($handle);
 		if ( ! $parsed['is_worktree'] || $handle !== (string) ( $proof['handle'] ?? '' ) ) {
@@ -203,10 +209,14 @@ trait WorkspaceWorktreeLifecycle {
 
 		$started  = microtime(true);
 		$deadline = $started + self::HANDOFF_REVALIDATION_TIMEOUT;
+		$lock_timeout = $this->worktree_handoff_remaining_seconds($deadline);
+		if ( $lock_timeout <= 0 ) {
+			return $this->worktree_handoff_timeout();
+		}
 		$result   = WorkspaceMutationLock::with_repo($this->workspace_path, (string) $parsed['repo'], function () use ( $handle, $proof, $deadline ) {
 			$metadata = WorktreeContextInjector::get_metadata_fresh($handle);
 			$stored   = is_array($metadata) ? (array) ( $metadata['handoff_freshness_proof'] ?? array() ) : array();
-			if ( array() === $stored || ! hash_equals($this->worktree_handoff_proof_digest($stored), (string) ( $stored['digest'] ?? '' )) || $stored !== $proof ) {
+			if ( array() === $stored || ! hash_equals($this->worktree_handoff_proof_digest($stored), (string) ( $stored['digest'] ?? '' )) || ! hash_equals((string) ($stored['digest'] ?? ''), (string) ($proof['digest'] ?? '')) || $this->worktree_handoff_proof_canonical_json($stored) !== $this->worktree_handoff_proof_canonical_json($proof) ) {
 				return new \WP_Error('untrusted_worktree_handoff_proof', 'The supplied proof is not the active metadata-bound managed proof.', array( 'status' => 409 ));
 			}
 			$primary = $this->get_primary_path((string) $this->parse_handle($handle)['repo']);
@@ -225,7 +235,7 @@ trait WorkspaceWorktreeLifecycle {
 				}
 			}
 			return array( 'success' => array() === $drift, 'status' => array() === $drift ? 'current' : 'drift', 'handle' => $handle, 'proof' => $current, 'drift' => $drift );
-		}, max(0, (int) ceil($deadline - microtime(true))));
+		}, $lock_timeout);
 
 		if ( is_wp_error($result) && 'workspace_repo_busy' === $result->get_error_code() ) {
 			return array( 'success' => false, 'status' => 'contention', 'handle' => $handle, 'contention' => $result->get_error_data() );
@@ -266,9 +276,9 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	private function worktree_handoff_proof( string $handle, string $path, string $primary, float $deadline, string $proof_id ): array|\WP_Error {
-		$remaining = $this->worktree_operation_remaining_seconds($deadline);
+		$remaining = $this->worktree_handoff_remaining_seconds($deadline);
 		if ( $remaining <= 0 ) {
-			return new \WP_Error('worktree_handoff_revalidation_timeout', 'The aggregate handoff revalidation deadline expired.', array( 'status' => 409 ));
+			return $this->worktree_handoff_timeout();
 		}
 		$remote_default_ref = $this->resolve_remote_default_ref($primary, $remaining);
 		if ( is_wp_error($remote_default_ref) ) {
@@ -298,16 +308,43 @@ trait WorkspaceWorktreeLifecycle {
 
 	/** Never pass a zero timeout to GitRunner, where zero means unbounded. */
 	private function worktree_handoff_git( string $path, string $arguments, float $deadline ): array|\WP_Error {
-		$remaining = $this->worktree_operation_remaining_seconds($deadline);
+		$remaining = $this->worktree_handoff_remaining_seconds($deadline);
 		if ( $remaining <= 0 ) {
-			return new \WP_Error('worktree_handoff_revalidation_timeout', 'The aggregate handoff revalidation deadline expired.', array( 'status' => 409 ));
+			return $this->worktree_handoff_timeout();
 		}
 		return $this->run_git($path, $arguments, $remaining);
 	}
 
 	private function worktree_handoff_proof_digest( array $proof ): string {
 		unset($proof['digest']);
-		return hash('sha256', wp_json_encode($proof) ?: '');
+		return hash('sha256', $this->worktree_handoff_proof_canonical_json($proof));
+	}
+
+	/** Canonical JSON makes proof object-key order irrelevant while retaining exact values. */
+	private function worktree_handoff_proof_canonical_json( array $proof ): string {
+		return wp_json_encode($this->worktree_handoff_proof_canonicalize($proof)) ?: '';
+	}
+
+	private function worktree_handoff_proof_canonicalize( mixed $value ): mixed {
+		if ( ! is_array($value) ) {
+			return $value;
+		}
+		foreach ( $value as $key => $item ) {
+			$value[ $key ] = $this->worktree_handoff_proof_canonicalize($item);
+		}
+		if ( array_keys($value) !== range(0, count($value) - 1) ) {
+			ksort($value, SORT_STRING);
+		}
+		return $value;
+	}
+
+	/** GitRunner accepts whole seconds, so refuse partial time rather than extend the deadline. */
+	private function worktree_handoff_remaining_seconds( float $deadline ): int {
+		return max(0, (int) floor($deadline - microtime(true)));
+	}
+
+	private function worktree_handoff_timeout(): \WP_Error {
+		return new \WP_Error('worktree_handoff_revalidation_timeout', 'The aggregate handoff revalidation deadline has less than one safe Git execution second remaining.', array( 'status' => 409 ));
 	}
 
 	/** Apply a reviewed legacy handoff after re-planning and taking the repo lock. */
@@ -742,7 +779,18 @@ trait WorkspaceWorktreeLifecycle {
 			return $deadline_error;
 		}
 		if ( is_dir($wt_path) && ! $remediate_capacity_dry_run ) {
-			return $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path);
+			// Capacity is already held. Take the repo lock once for reuse and proof
+			// issuance; do not re-enter the capacity lock from this callback.
+			$repo_timeout = $this->worktree_operation_remaining_seconds($operation_deadline);
+			if ( $repo_timeout <= 0 ) {
+				return $this->worktree_operation_timeout('repo_lock_wait', $operation_timeout, $operation_started);
+			}
+			return WorkspaceMutationLock::with_repo(
+				$this->workspace_path,
+				$repo,
+				fn() => $this->worktree_add_handoff_proof($this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path)),
+				$repo_timeout
+			);
 		}
 		// The workspace capacity lock serializes admission. The target repo lock is
 		// acquired only for final creation, so remediation can safely take per-repo

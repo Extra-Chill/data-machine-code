@@ -1608,7 +1608,7 @@ class WorkspaceAbilities {
 								'type'        => 'object',
 								'properties'  => self::worktreeHandoffProofSchemaProperties(),
 								'required'    => self::worktreeHandoffProofSchemaRequired(),
-								'description' => 'Metadata-bound proof for bounded revalidation immediately before a consumer admits work.',
+								'description' => 'Metadata-bound bounded observation for an immediate consumer converge-or-refuse decision; it is not an external admission lease.',
 							),
 							'stale_commits_behind'      => array(
 								'type'        => 'integer',
@@ -1670,7 +1670,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-worktree-handoff-revalidate',
 				array(
 					'label'               => 'Revalidate Worktree Handoff Freshness',
-					'description'         => 'Boundedly verify the exact metadata-bound worktree handoff proof immediately before consumer admission.',
+					'description'         => 'Return a bounded current/drift observation for an immediate consumer converge-or-refuse decision; this does not hold a lease across external admission.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array( 'type' => 'object', 'properties' => array( 'handle' => array( 'type' => 'string', 'description' => 'Managed worktree handle.' ), 'proof' => array( 'type' => 'object', 'properties' => self::worktreeHandoffProofSchemaProperties(), 'required' => self::worktreeHandoffProofSchemaRequired(), 'description' => 'Exact proof returned by worktree add.' ) ), 'required' => array( 'handle', 'proof' ) ),
 					'output_schema'       => array( 'type' => 'object', 'properties' => array( 'success' => array( 'type' => 'boolean' ), 'status' => array( 'type' => 'string', 'enum' => array( 'current', 'drift', 'fetch_failed', 'contention' ) ), 'handle' => array( 'type' => 'string' ), 'proof' => array( 'type' => 'object', 'properties' => self::worktreeHandoffProofSchemaProperties(), 'required' => self::worktreeHandoffProofSchemaRequired() ), 'drift' => array( 'type' => 'object' ), 'fetch' => array( 'type' => 'object' ), 'contention' => array( 'type' => 'object' ), 'error' => array( 'type' => 'object', 'properties' => array( 'code' => array( 'type' => 'string', 'enum' => array( 'invalid_worktree_handoff_proof', 'untrusted_worktree_handoff_proof', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'worktree_handoff_base_unresolved' ) ), 'message' => array( 'type' => 'string' ) ) ) ) ),

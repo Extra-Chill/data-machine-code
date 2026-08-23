@@ -507,6 +507,10 @@ try {
 	assert_true('homeboy@audit-primitives-20260616' === ( $handoff_proof['handle'] ?? '' ) && ! empty($handoff_proof['worktree_sha']) && ! empty($handoff_proof['resolved_base_sha']) && ! empty($handoff_proof['resolved_base_ref']) && ! empty($handoff_proof['remote_default_sha']) && ! empty($handoff_proof['remote_default_ref']), 'new allocation did not issue a complete handoff proof');
 	$current_handoff = $workspace->worktree_handoff_revalidate((string) $result['handle'], $handoff_proof);
 	assert_true(! is_wp_error($current_handoff) && 'current' === ( $current_handoff['status'] ?? null ), 'fresh handoff proof did not revalidate as current');
+	$reordered_handoff = $handoff_proof;
+	krsort($reordered_handoff, SORT_STRING);
+	$reordered_result = $workspace->worktree_handoff_revalidate((string) $result['handle'], $reordered_handoff);
+	assert_true(! is_wp_error($reordered_result) && 'current' === ( $reordered_result['status'] ?? null ), 'semantically identical reordered handoff proof was refused');
 	$handoff_lock = \DataMachineCode\Workspace\WorkspaceMutationLock::acquire($workspace_root, 'homeboy', 0);
 	assert_true(! is_wp_error($handoff_lock), 'handoff contention fixture could not acquire the repository lock');
 	try {
@@ -658,6 +662,17 @@ try {
 	assert_true(true === ( $reused['reused'] ?? false ) && 'exact_compatible_handle' === ( $reused['reuse']['reason_code'] ?? null ), 'exact reuse did not return accepted evidence');
 	assert_true('accepted' === ( $reused['reuse']['status'] ?? null ) && 'homeboy@idempotent-reuse' === ( $reused['reuse']['handle'] ?? null ), 'default exact reuse did not preserve typed result evidence');
 	assert_true(! empty($reused['handoff_freshness_proof']), 'exact reuse did not issue a handoff proof');
+	$late_reuse = new ReflectionMethod($workspace, 'worktree_add_with_capacity_lock');
+	$late_reuse_lock = \DataMachineCode\Workspace\WorkspaceMutationLock::acquire($workspace_root, 'homeboy', 0);
+	assert_true(! is_wp_error($late_reuse_lock), 'late capacity reuse fixture could not acquire the repository lock');
+	try {
+		$late_reuse_contended = $late_reuse->invoke($workspace, 'homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, array(), 'idempotent-reuse', $reuse_handle, (string) $reused['path'], $primary_path, 'reuse_compatible', false, false, microtime(true) + 0.1, 1, microtime(true), array());
+	} finally {
+		$late_reuse_lock->release();
+	}
+	assert_true(is_wp_error($late_reuse_contended) && 'workspace_repo_busy' === $late_reuse_contended->get_error_code(), 'late capacity admission reuse bypassed the repository lock');
+	$late_reuse_result = $late_reuse->invoke($workspace, 'homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, array(), 'idempotent-reuse', $reuse_handle, (string) $reused['path'], $primary_path, 'reuse_compatible', false, false, microtime(true) + 30, 30, microtime(true), array());
+	assert_true(! is_wp_error($late_reuse_result) && true === ( $late_reuse_result['reused'] ?? false ) && ! empty($late_reuse_result['handoff_freshness_proof']), 'late capacity admission reuse did not take the repo-locked proof path');
 	assert_true($reuse_created_at === ( $wpdb->rows[$reuse_handle]['created_at'] ?? null ), 'reuse rewrote durable lifecycle metadata');
 	assert_true('https://example.test/issues/reuse' === ( $wpdb->rows[$reuse_handle]['task_url'] ?? '' ), 'reuse rewrote durable task metadata');
 	$claim_fixture = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ));
