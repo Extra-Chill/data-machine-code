@@ -44,6 +44,7 @@ class WorkspaceCommand extends BaseCommand {
 	private const METADATA_RECONCILE_DEFAULT_BUDGET = '30s';
 
 	private const WORKTREE_OPERATIONS = array(
+		'provider'                                => array(),
 		'add'                                     => array( 'ability' => 'datamachine-code/workspace-worktree-add' ),
 		'plan'                                    => array( 'ability' => 'datamachine-code/workspace-worktree-plan' ),
 		'apply-plan'                              => array( 'ability' => 'datamachine-code/workspace-worktree-apply-plan' ),
@@ -115,6 +116,11 @@ class WorkspaceCommand extends BaseCommand {
 		$format              = $option( 'format', 'Output format (table, json, csv, yaml).' );
 		$worktree_policy     = WorktreeContextInjector::worktree_add_policy_schema_properties();
 		$definitions         = array(
+			'provider'              => array(
+				'shortdesc' => 'Resolve the standalone worktree provider executable.',
+				'longdesc'  => "Returns the executable path from this installed Data Machine Code source tree.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree provider --format=json",
+				'synopsis'  => array( $format ),
+			),
 			'add'                   => array(
 				'shortdesc' => 'Create an isolated, managed worktree.',
 				'longdesc'  => "Creates `<repo>@<branch-slug>` and reports its handle, path, and disk-budget evaluation. Creation verifies remote freshness by default; `--force` is the explicit disk-budget override. `--remediate-capacity` instead runs bounded safe reclamation after a refusal and retries the exact add once when capacity recovers.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --from=origin/main --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1025\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --skip-bootstrap",
@@ -569,6 +575,17 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	public function __worktree_operation( string $operation, array $args, array $assoc_args ): void {
 		$this->worktree( array_merge( array( $operation ), $args ), $assoc_args );
+	}
+
+	/** Resolve the standalone provider from this installed source tree. */
+	public static function standalone_worktree_provider_executable(): string {
+		$resolved = realpath(dirname(__DIR__, 3) . '/bin/dmc-worktree-provider');
+
+		if ( false === $resolved || ! is_file($resolved) ) {
+			throw new \RuntimeException('The standalone worktree provider executable is unavailable from this Data Machine Code source tree.');
+		}
+
+		return $resolved;
 	}
 
 	private ?CleanupRunEvidenceStoreInterface $cleanup_run_evidence_store = null;
@@ -4701,7 +4718,30 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <add|get|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|capacity-recovery|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
+			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <provider|add|get|list|remove|prune|locks|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|capacity-recovery|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
+			return;
+		}
+
+		if ( 'provider' === $operation ) {
+			if ( ! empty( $args[1] ) ) {
+				WP_CLI::error( 'Usage: worktree provider [--format=json]' );
+				return;
+			}
+			try {
+				$executable = self::standalone_worktree_provider_executable();
+			} catch ( \RuntimeException $error ) {
+				WP_CLI::error( $error->getMessage() );
+				return;
+			}
+			$payload = array(
+				'schema'     => 'datamachine-code/standalone-worktree-provider-command/v1',
+				'executable' => $executable,
+			);
+			if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+				$this->renderer()->json( $payload );
+				return;
+			}
+			WP_CLI::line($executable);
 			return;
 		}
 

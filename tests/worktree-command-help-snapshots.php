@@ -44,6 +44,9 @@ namespace {
 		}
 	};
 	$assert_synopsis('cleanup', array( 'dry-run', 'force', 'skip-github', 'inventory-only', 'include-repaired-metadata', 'limit', 'offset', 'until-budget', 'apply-plan', 'older-than', 'sort', 'format', 'verbose', 'only' ));
+	$provider = $definitions['provider'];
+	worktree_help_assert('Resolve the standalone worktree provider executable.' === $provider['shortdesc'], 'Provider help snapshot changed.');
+	worktree_help_assert(array_column($provider['synopsis'], 'name') === array( 'format' ), 'Provider help option snapshot changed.');
 	$assert_synopsis('emergency-cleanup', array( 'apply', 'force', 'apply-plan', 'format' ));
 	$assert_synopsis('cleanup-artifacts', array( 'dry-run', 'force', 'allow-active-artifact-cleanup', 'allow-unavailable-process-probe', 'limit', 'offset', 'only-handle', 'exhaustive', 'safety-probes', 'sort', 'older-than', 'apply-plan', 'format' ));
 	$artifact_cleanup_options = array_column($definitions['cleanup-artifacts']['synopsis'], null, 'name');
