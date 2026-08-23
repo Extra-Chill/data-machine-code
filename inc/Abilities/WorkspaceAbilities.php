@@ -1604,11 +1604,11 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'Present only when fetch_timed_out=true. The bounded freshness-fetch budget in seconds.',
 							),
-							'handoff_freshness_proof'   => array(
+							'handoff_freshness'         => array(
 								'type'        => 'object',
-								'properties'  => self::worktreeHandoffProofSchemaProperties(),
-								'required'    => self::worktreeHandoffProofSchemaRequired(),
-								'description' => 'Metadata-bound bounded observation for an immediate consumer converge-or-refuse decision; it is not an external admission lease.',
+								'properties'  => self::worktreeHandoffFreshnessSchemaProperties(),
+								'required'    => array( 'status' ),
+								'description' => 'Required handoff contract. verified includes a metadata-bound proof; unverified includes a typed reason and requires an explicit allow_unverified_freshness opt-in before the add ability returns success.',
 							),
 							'stale_commits_behind'      => array(
 								'type'        => 'integer',
@@ -1659,6 +1659,7 @@ class WorkspaceAbilities {
 								'description' => 'Present only when `rebase_succeeded=false`. Trimmed error output from the failing rebase.',
 							),
 						),
+						'required'   => array( 'success', 'handoff_freshness' ),
 					),
 					'execute_callback'    => array( self::class, 'worktreeAdd' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
@@ -4239,7 +4240,11 @@ class WorkspaceAbilities {
 
 	/** Keep the detailed lifecycle contract internal and opt it into public responses explicitly. */
 	private static function worktree_add_response( array|\WP_Error $result, array $input ): array|\WP_Error {
-		return ! empty($input['verbose']) || $result instanceof \WP_Error ? $result : \DataMachineCode\Cli\WorkspaceCompactOutput::worktree_add_result($result);
+		if ( $result instanceof \WP_Error || empty($result['success']) || 'unverified' !== ( $result['handoff_freshness']['status'] ?? null ) || ! empty($input['allow_unverified_freshness']) ) {
+			return ! empty($input['verbose']) || $result instanceof \WP_Error ? $result : \DataMachineCode\Cli\WorkspaceCompactOutput::worktree_add_result($result);
+		}
+
+		return new \WP_Error('worktree_handoff_freshness_unverified', 'The worktree was allocated but no verified handoff freshness proof is available. Retry, or set allow_unverified_freshness=true only for intentional offline or remote-probe-unsupported work.', array( 'status' => 409, 'handle' => $result['handle'] ?? null, 'path' => $result['path'] ?? null, 'handoff_freshness' => $result['handoff_freshness'] ));
 	}
 
 	/** Plan a local worktree using the same typed fields and defaults as add. */
@@ -4290,6 +4295,11 @@ class WorkspaceAbilities {
 	/** Schema shared by allocation and revalidation handoff proof payloads. */
 	private static function worktreeHandoffProofSchemaProperties(): array {
 		return array( 'version' => array( 'type' => 'integer' ), 'proof_id' => array( 'type' => 'string' ), 'handle' => array( 'type' => 'string' ), 'worktree_sha' => array( 'type' => 'string' ), 'resolved_base_ref' => array( 'type' => 'string' ), 'resolved_base_sha' => array( 'type' => 'string' ), 'remote_default_ref' => array( 'type' => 'string' ), 'remote_default_sha' => array( 'type' => 'string' ), 'digest' => array( 'type' => 'string' ) );
+	}
+
+	/** Schema for the required allocation handoff freshness decision. */
+	private static function worktreeHandoffFreshnessSchemaProperties(): array {
+		return array( 'status' => array( 'type' => 'string', 'enum' => array( 'verified', 'unverified' ) ), 'proof' => array( 'type' => 'object', 'properties' => self::worktreeHandoffProofSchemaProperties(), 'required' => self::worktreeHandoffProofSchemaRequired() ), 'reason' => array( 'type' => 'string', 'enum' => array( 'allocation_identity_missing', 'fetch_failed', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'worktree_handoff_base_unresolved', 'proof_generation_failed', 'metadata_persist_failed', 'remote_freshness_probe_unsupported' ) ), 'error_code' => array( 'type' => 'string', 'description' => 'Underlying typed failure code when proof generation or metadata persistence could not complete.' ) );
 	}
 
 	/** @return array<int,string> */

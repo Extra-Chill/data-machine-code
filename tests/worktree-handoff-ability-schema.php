@@ -35,8 +35,14 @@ $GLOBALS['worktree_handoff_registered'] = true;
 $add = $GLOBALS['worktree_handoff_abilities']['datamachine-code/workspace-worktree-add'] ?? array();
 $revalidate = $GLOBALS['worktree_handoff_abilities']['datamachine-code/workspace-worktree-handoff-revalidate'] ?? array();
 $fields = array( 'version', 'proof_id', 'handle', 'worktree_sha', 'resolved_base_ref', 'resolved_base_sha', 'remote_default_ref', 'remote_default_sha', 'digest' );
+$freshness = $add['output_schema']['properties']['handoff_freshness'] ?? array();
+worktree_handoff_schema_assert(array( 'success', 'handoff_freshness' ) === (array) ( $add['output_schema']['required'] ?? array() ), 'Add schema does not require the handoff freshness contract on successful output.');
+worktree_handoff_schema_assert(array( 'status', 'proof', 'reason', 'error_code' ) === array_keys((array) ( $freshness['properties'] ?? array() )), 'Add schema omitted the uniform handoff freshness contract.');
+worktree_handoff_schema_assert(array( 'status' ) === (array) ( $freshness['required'] ?? array() ), 'Add schema does not require a handoff freshness status.');
+worktree_handoff_schema_assert(array( 'verified', 'unverified' ) === ( $freshness['properties']['status']['enum'] ?? array() ), 'Add schema omitted typed handoff freshness statuses.');
+worktree_handoff_schema_assert(array( 'allocation_identity_missing', 'fetch_failed', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'worktree_handoff_base_unresolved', 'proof_generation_failed', 'metadata_persist_failed', 'remote_freshness_probe_unsupported' ) === ( $freshness['properties']['reason']['enum'] ?? array() ), 'Add schema omitted typed unverified freshness reasons.');
 foreach ( array(
-	$add['output_schema']['properties']['handoff_freshness_proof'] ?? array(),
+	$freshness['properties']['proof'] ?? array(),
 	$revalidate['input_schema']['properties']['proof'] ?? array(),
 	$revalidate['output_schema']['properties']['proof'] ?? array(),
 ) as $proof ) {

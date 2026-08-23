@@ -83,7 +83,8 @@ if ( 'worker' === ( $argv[1] ?? '' ) ) {
 		}
 	}
 	$proof_fields = array( 'version', 'proof_id', 'handle', 'worktree_sha', 'resolved_base_ref', 'resolved_base_sha', 'remote_default_ref', 'remote_default_sha', 'digest' );
-	$add_proof = (array) ( $GLOBALS['dmc_ability_registry']['datamachine-code/workspace-worktree-add']['output_schema']['properties']['handoff_freshness_proof'] ?? array() );
+	$add_freshness = (array) ( $GLOBALS['dmc_ability_registry']['datamachine-code/workspace-worktree-add']['output_schema']['properties']['handoff_freshness'] ?? array() );
+	$add_proof = (array) ( $add_freshness['properties']['proof'] ?? array() );
 	$revalidate = (array) ( $GLOBALS['dmc_ability_registry']['datamachine-code/workspace-worktree-handoff-revalidate'] ?? array() );
 	$input_proof = (array) ( $revalidate['input_schema']['properties']['proof'] ?? array() );
 	$output_proof = (array) ( $revalidate['output_schema']['properties']['proof'] ?? array() );
@@ -91,6 +92,9 @@ if ( 'worker' === ( $argv[1] ?? '' ) ) {
 		if ( $proof_fields !== array_keys((array) ( $schema['properties'] ?? array() )) || $proof_fields !== (array) ( $schema['required'] ?? array() ) ) {
 			throw new RuntimeException('Handoff proof schema did not expose its exact required fields.');
 		}
+	}
+	if ( array( 'success', 'handoff_freshness' ) !== (array) ( $GLOBALS['dmc_ability_registry']['datamachine-code/workspace-worktree-add']['output_schema']['required'] ?? array() ) || array( 'status' ) !== (array) ( $add_freshness['required'] ?? array() ) || array( 'verified', 'unverified' ) !== (array) ( $add_freshness['properties']['status']['enum'] ?? array() ) ) {
+		throw new RuntimeException('Worktree add did not require the typed handoff freshness contract.');
 	}
 	$status = (array) ( $revalidate['output_schema']['properties']['status']['enum'] ?? array() );
 	$errors = (array) ( $revalidate['output_schema']['properties']['error']['properties']['code']['enum'] ?? array() );

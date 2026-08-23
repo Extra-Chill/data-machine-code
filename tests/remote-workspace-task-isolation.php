@@ -66,6 +66,7 @@ remote_isolation_assert(is_wp_error($invalid) && 'invalid_cleanup_policy' === $i
 remote_isolation_assert(! isset($GLOBALS['remote_workspace_task_isolation_state']['worktrees']['repo@invalid-cleanup-policy']), 'invalid cleanup policy reserved a remote worktree lifecycle record');
 $corrected = $backend->worktree_add('repo', 'invalid-cleanup-policy', 'main', $task, array( 'cleanup_policy' => 'manual' ));
 remote_isolation_assert(! is_wp_error($corrected) && isset($GLOBALS['remote_workspace_task_isolation_state']['worktrees']['repo@invalid-cleanup-policy']), 'corrected immediate retry was blocked by an invalid reservation');
+remote_isolation_assert('unverified' === ( $corrected['handoff_freshness']['status'] ?? null ) && 'remote_freshness_probe_unsupported' === ( $corrected['handoff_freshness']['reason'] ?? null ), 'remote creation did not expose its typed unverified freshness contract');
 $GLOBALS['remote_workspace_task_isolation_fail_state_write'] = true;
 $persistence_failed = $backend->worktree_add('repo', 'state-write-failure', 'main', array( 'task_url' => 'https://example.test/issues/write-failure' ));
 $GLOBALS['remote_workspace_task_isolation_fail_state_write'] = false;
@@ -78,6 +79,7 @@ $first   = $backend->worktree_add('repo', 'first', 'main', $task);
 remote_isolation_assert(! is_wp_error($first), 'first remote task worktree failed');
 $reused = $backend->worktree_add('repo', 'first', 'main', $task);
 remote_isolation_assert(! is_wp_error($reused) && true === ( $reused['reused'] ?? false ) && false === ( $reused['created_branch'] ?? true ), 'exact remote handle was not reused idempotently');
+remote_isolation_assert('unverified' === ( $reused['handoff_freshness']['status'] ?? null ) && 'remote_freshness_probe_unsupported' === ( $reused['handoff_freshness']['reason'] ?? null ), 'remote reuse did not expose its typed unverified freshness contract');
 $isolated_exact = $backend->worktree_add('repo', 'first', 'main', $task, array(), 'isolated');
 remote_isolation_assert(is_wp_error($isolated_exact) && 'isolated_requested' === ( $isolated_exact->get_error_data()['reuse']['reason_code'] ?? null ), 'isolated exact remote handle was silently reused');
 $recycle_exact = $backend->worktree_add('repo', 'first', 'main', $task, array(), 'recycle_terminal');

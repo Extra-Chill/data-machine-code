@@ -190,6 +190,7 @@ class RemoteWorkspaceBackend {
 				'created_branch' => false,
 				'reused'         => true,
 				'reuse'          => array( 'status' => 'accepted', 'reason_code' => 'exact_compatible_handle' ),
+				'handoff_freshness' => $this->unverified_handoff_freshness(),
 				'message'        => sprintf('Reused remote workspace %s for %s.', $handle, $repo),
 			);
 		} else {
@@ -256,11 +257,17 @@ class RemoteWorkspaceBackend {
 			'purpose'        => $intent['purpose'] ?? null,
 			'owner_run_ref'  => $intent['owner_run_ref'] ?? null,
 			'cleanup_policy' => $intent['cleanup_policy'] ?? null,
+			'handoff_freshness' => $this->unverified_handoff_freshness(),
 			'message'        => sprintf('Registered remote workspace %s for %s.', $handle, $repo),
 		);
 		} finally {
 			$this->release_state_lock($lock);
 		}
+	}
+
+	/** The GitHub API backend has no local Git fetch/ref probe to issue a proof. */
+	private function unverified_handoff_freshness(): array {
+		return array( 'status' => 'unverified', 'reason' => 'remote_freshness_probe_unsupported' );
 	}
 
 	/** Acquire an atomic option-backed lease around remote state admission. */

@@ -107,7 +107,7 @@ class WorkspaceCommand extends BaseCommand {
 		$definitions = array(
 			'add' => array(
 				'shortdesc' => 'Create an isolated, managed worktree.',
-				'longdesc'  => "Creates `<repo>@<branch-slug>` and reports its handle, path, and disk-budget evaluation. Creation verifies remote freshness by default; `--force` is the explicit disk-budget override. `--remediate-capacity` instead runs bounded safe reclamation after a refusal and retries the exact add once when capacity recovers.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --from=origin/main --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1025\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --skip-bootstrap",
+				'longdesc'  => "Creates `<repo>@<branch-slug>` and reports its handle, path, disk-budget evaluation, and required `handoff_freshness` contract. A verified result includes a proof for immediate revalidation; an unverified result is refused unless `--allow-unverified-freshness` is explicit. `--force` is the explicit disk-budget override. `--remediate-capacity` instead runs bounded safe reclamation after a refusal and retries the exact add once when capacity recovers.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --from=origin/main --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1025\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --skip-bootstrap",
 				'synopsis'  => array(
 					array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Primary repository name.', 'required' => true ),
 					array( 'type' => 'positional', 'name' => 'branch', 'description' => 'Branch to create or check out.', 'required' => true ),
@@ -141,7 +141,7 @@ class WorkspaceCommand extends BaseCommand {
 			),
 			'handoff-revalidate' => array(
 				'shortdesc' => 'Revalidate a worktree handoff freshness proof.',
-				'longdesc'  => "Fetches and probes the managed worktree under one bounded deadline. current is an observation for an immediate consumer converge-or-refuse decision, not a lease held across external admission. Returns current, drift, fetch_failed, or contention.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree handoff-revalidate data-machine-code@fix-1117 --proof='<json-proof>' --format=json",
+				'longdesc'  => "After lock acquisition and fresh metadata validation, fetches and probes the managed worktree under a five-second shared Git remote-probe deadline. Metadata lookup and lock waiting are outside that bound because the storage API cannot accept a query timeout. current is an observation for an immediate consumer converge-or-refuse decision, not a lease held across external admission. Returns current, drift, fetch_failed, or contention.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree handoff-revalidate data-machine-code@fix-1117 --proof='<json-proof>' --format=json",
 				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'handle', 'description' => 'Managed worktree handle.', 'required' => true ), $option('proof', 'JSON proof returned by worktree add.'), $format ),
 			),
 			'remove' => array(
