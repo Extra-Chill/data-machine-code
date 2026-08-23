@@ -311,7 +311,7 @@ namespace {
 
 	$repo->runs['cleanup-run-disconnected-safe'] = array(
 		'run_id' => 'cleanup-run-disconnected-safe', 'mode' => 'safe_workspace_cleanup', 'status' => 'queued', 'created_at' => gmdate('Y-m-d H:i:s'),
-		'policy' => array( 'dry_run' => true, 'source' => 'workspace_cleanup_cli', 'request_id' => 'disconnected-client-1' ),
+		'policy' => array( 'dry_run' => true, 'source' => DataMachineCode\Cli\Commands\WorkspaceCommand::CLEANUP_CLI_SOURCE, 'request_id' => 'disconnected-client-1' ),
 	);
 	$discovery = $service->list(array( 'request_id' => 'disconnected-client-1', 'limit' => 1 ));
 	safe_status_assert_same('cleanup-run-disconnected-safe', $discovery['runs'][0]['run_id'] ?? null, 'Request correlation must deterministically recover a disconnected safe run.');

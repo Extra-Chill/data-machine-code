@@ -145,7 +145,7 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 		// Source and request ID live in policy to keep the run schema generic.
 		foreach ( array( 'source', 'request_id' ) as $field ) {
 			if ( isset($filters[ $field ]) && '' !== trim( (string) $filters[ $field ]) ) {
-				$where[]  = "policy LIKE %s";
+				$where[]  = 'policy LIKE %s';
 				$values[] = '%"' . $field . '":"' . $wpdb->esc_like(trim( (string) $filters[ $field ])) . '"%';
 			}
 		}

@@ -34,7 +34,7 @@ class WorkspaceCommand extends BaseCommand {
 
 
 
-	private const CLEANUP_CLI_SOURCE = 'workspace_cleanup_cli';
+	public const CLEANUP_CLI_SOURCE = 'workspace_cleanup_cli';
 
 	private const CLEANUP_MODES = array( 'inventory', 'artifacts', 'retention', 'stale-worktrees', 'emergency' );
 

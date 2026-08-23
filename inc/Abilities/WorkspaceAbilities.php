@@ -16,6 +16,7 @@ namespace DataMachineCode\Abilities;
 
 use DataMachineCode\Support\PermissionHelper;
 use DataMachineCode\Cleanup\WorkspaceCleanupRunEvidenceStore;
+use DataMachineCode\Cli\Commands\WorkspaceCommand;
 use DataMachineCode\Storage\CleanupRunRepository;
 use DataMachineCode\Workspace\CleanupRunService;
 use DataMachineCode\Workspace\RemoteWorkspaceBackend;
@@ -4624,7 +4625,7 @@ class WorkspaceAbilities {
 		}
 
 		$dry_run    = ! empty($input['dry_run']);
-		$source     = trim( (string) ( $input['source'] ?? 'workspace_cleanup_cli' ) );
+		$source     = trim( (string) ( $input['source'] ?? WorkspaceCommand::CLEANUP_CLI_SOURCE ) );
 		$request_id = trim( (string) ( $input['request_id'] ?? '' ) );
 		if ( '' === $request_id ) {
 			$request_id = 'cleanup-request-' . wp_generate_uuid4();
