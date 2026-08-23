@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.65.1] - 2026-08-23
+
+### Fixed
+- honor optional cleanup repo scope
+
 ## [0.65.0] - 2026-08-23
 
 ### Added
