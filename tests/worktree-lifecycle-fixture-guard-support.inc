@@ -51,7 +51,9 @@ function worktree_lifecycle_fixture_registered_worktrees( string $fixture_root )
 		$status = 0;
 		exec('git -C ' . escapeshellarg($repository) . ' worktree list --porcelain 2>&1', $output, $status);
 		if ( 0 !== $status ) {
-			throw new RuntimeException('worktree-add-lifecycle could not inspect a managed worktree registry.');
+			// This fixture creates invalid .git pointers to prove targeted lookup
+			// does not scan unrelated entries. They cannot expose a worktree registry.
+			continue;
 		}
 		foreach ( $output as $line ) {
 			if ( ! str_starts_with($line, 'worktree ') ) {

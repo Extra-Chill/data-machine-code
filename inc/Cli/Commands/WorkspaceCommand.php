@@ -407,6 +407,7 @@ class WorkspaceCommand extends BaseCommand {
 						'type'        => 'positional',
 						'name'        => 'repo',
 						'description' => 'Optional repository name or worktree handle scope.',
+						'optional'    => true,
 					),
 					$flag( 'dry-run', 'Preview without removal.' ),
 					$flag( 'force', 'Override eligible artifact cleanup safeguards.' ),
@@ -503,7 +504,7 @@ class WorkspaceCommand extends BaseCommand {
 		$definitions['cleanup-eligible-drain']         = array(
 			'shortdesc' => 'Drain cleanup-eligible worktrees in bounded passes.',
 			'longdesc'  => "Runs bounded cleanup-eligible passes until the page, pass, or time budget is exhausted.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree cleanup-eligible-drain --apply --limit=25 --passes=10 --format=json",
-			'synopsis'  => array( $flag( 'apply', 'Apply removal passes.' ), $flag( 'force', 'Override dirty-worktree safety.' ), $flag( 'discard-unpushed', 'Accepted for compatibility; the operation refuses it.' ), $flag( 'include-repaired-metadata', 'Include repaired metadata rows.' ), $option( 'limit', 'Maximum worktrees per pass.' ), $option( 'passes', 'Maximum passes.' ), $option( 'remove-timeout', 'Removal timeout in seconds.' ), $option( 'older-than', 'Only process worktrees older than this duration.' ), $option( 'sort', 'Candidate reporting sort field.' ), $option( 'until-budget', 'Compact wall-clock budget.' ), $format ),
+			'synopsis'  => array( $flag( 'apply', 'Apply removal passes.' ), $flag( 'force', 'Override dirty-worktree safety.' ), $flag( 'discard-unpushed', 'Accepted for compatibility; the operation refuses it.' ), $flag( 'include-repaired-metadata', 'Include repaired metadata rows.' ), $option( 'limit', 'Maximum worktrees per pass.' ), $option( 'passes', 'Maximum passes.' ), $option( 'remove-timeout', 'Removal timeout in seconds.' ), $option( 'older-than', 'Only process worktrees older than this duration.' ), $option( 'sort', 'Candidate reporting sort field.' ), $option( 'until-budget', 'Compact wall-clock budget.' ), $format, $flag( 'verbose', 'Include full JSON result details.' ) ),
 		);
 		foreach ( array( 'abandoned', 'active-no-signal-drain' ) as $operation ) {
 			$definitions[ $operation ] = array(
