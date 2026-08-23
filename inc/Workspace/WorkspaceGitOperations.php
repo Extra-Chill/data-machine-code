@@ -103,6 +103,14 @@ trait WorkspaceGitOperations {
 				return $repaired;
 			}
 			$branch = $repaired['branch'];
+		} elseif ( empty($parsed['is_worktree']) ) {
+			$recovery = $this->recover_diverged_primary_for_pull($repo_path, $remote, $parsed['repo'], $branch);
+			if ( is_wp_error($recovery) ) {
+				return $recovery;
+			}
+			if ( null !== $recovery ) {
+				$branch = $recovery['branch'];
+			}
 		}
 
 		// A primary's default branch can lack upstream tracking (issue #833):
@@ -115,7 +123,10 @@ trait WorkspaceGitOperations {
 			return $recovered_upstream;
 		}
 
-		if ( empty($parsed['is_worktree']) ) {
+		// An eligible recovery has just fetched, classified, preserved, and
+		// compare-and-swap refreshed the requested default branch. Every other
+		// primary state retains the #1101 typed ahead/diverged preflight.
+		if ( empty($parsed['is_worktree']) && ( ! isset($recovery) || null === $recovery ) ) {
 			$preflight = $this->preflight_primary_refresh($repo_path, $parsed['repo'], $remote);
 			if ( is_wp_error($preflight) ) {
 				return $preflight;
@@ -144,6 +155,9 @@ trait WorkspaceGitOperations {
 		);
 		if ( isset($repaired) ) {
 			$response['primary_repair'] = $repaired;
+		}
+		if ( isset($recovery) && null !== $recovery ) {
+			$response['primary_diverged'] = $recovery;
 		}
 
 		return $response;
@@ -1775,6 +1789,205 @@ trait WorkspaceGitOperations {
 			'remote_ref'        => $prefix . $matches[1],
 			'attempted_sources' => $attempted_sources,
 		);
+	}
+
+	/**
+	 * Preserve and replace a clean attached primary only when it diverges from
+	 * the verified remote default. This is deliberately before `pull --ff-only`:
+	 * Git's failure does not retain an operator-visible recovery checkout.
+	 *
+	 * @return array{branch:string,local_sha:string,remote_sha:string,ahead:int,behind:int,preservation:array,reconciliation_guidance:array<int,string>}|null|\WP_Error
+	 */
+	private function recover_diverged_primary_for_pull( string $repo_path, string $remote, string $repo, ?string $requested_branch = null ): array|null|\WP_Error {
+		$branch = $this->git_get_branch($repo_path);
+		if ( null === $branch || '' === $branch || 'HEAD' === $branch ) {
+			return null;
+		}
+
+		$default = $this->verified_primary_default_ref($repo_path, $remote);
+		if ( is_wp_error($default) ) {
+			return $default;
+		}
+		// An explicit default-branch argument has the same safety semantics as an
+		// implicit pull. Other explicit targets remain protected by #1101's
+		// upstream preflight below.
+		if ( $branch !== $default['branch'] || ( null !== $requested_branch && '' !== $requested_branch && $requested_branch !== $default['branch'] ) ) {
+			return null;
+		}
+
+		$local_sha = $this->git_head_sha($repo_path);
+		$counts    = $this->run_git($repo_path, 'rev-list --left-right --count ' . escapeshellarg($local_sha . '...' . $default['sha']));
+		if ( is_wp_error($counts) || ! preg_match('/^(\d+)\s+(\d+)$/', trim((string) ($counts['output'] ?? '')), $matches) ) {
+			return new \WP_Error('primary_divergence_unverified', 'Primary refresh is blocked: unable to classify local and remote default-branch history.', array( 'status' => 409 ));
+		}
+		$ahead  = (int) $matches[1];
+		$behind = (int) $matches[2];
+		if ( 0 === $ahead || 0 === $behind ) {
+			return null;
+		}
+
+		$holder = $this->default_branch_holder($repo_path, $branch, $repo);
+		if ( is_wp_error($holder) ) {
+			return $holder;
+		}
+		if ( null !== $holder ) {
+			return new \WP_Error('primary_divergence_default_branch_held', 'Primary refresh is blocked: another linked worktree holds the default branch.', array( 'status' => 409, 'holder' => $holder ));
+		}
+
+		$preservation = $this->preserve_primary_divergence_tip($repo_path, $repo, $branch, $local_sha);
+		if ( is_wp_error($preservation) ) {
+			return $preservation;
+		}
+
+		// Fetch again after preservation so a remote race cannot make the primary
+		// appear fresh against an obsolete target.
+		$verified = $this->verified_primary_default_ref($repo_path, $remote);
+		if ( is_wp_error($verified) ) {
+			return $this->primary_divergence_error('primary_divergence_verification_failed', 'Primary recovery was preserved, but the remote default branch could not be reverified.', $preservation);
+		}
+		if ( $verified['branch'] !== $branch || $verified['sha'] !== $default['sha'] || $this->git_head_sha($repo_path) !== $local_sha ) {
+			return new \WP_Error('primary_divergence_changed_during_recovery', 'Primary refresh is blocked: the local or remote default branch changed while recovery was being prepared.', array( 'status' => 409, 'preservation' => $preservation ));
+		}
+		$status = $this->run_git($repo_path, 'status --porcelain');
+		if ( is_wp_error($status) || '' !== trim((string) ($status['output'] ?? '')) ) {
+			return new \WP_Error('primary_divergence_changed_during_recovery', 'Primary refresh is blocked: the primary working tree changed while recovery was being prepared.', array( 'status' => 409, 'preservation' => $preservation ));
+		}
+
+		$repoint = $this->run_git($repo_path, 'update-ref ' . escapeshellarg('refs/heads/' . $branch) . ' ' . escapeshellarg($verified['sha']) . ' ' . escapeshellarg($local_sha));
+		if ( is_wp_error($repoint) ) {
+			return new \WP_Error('primary_divergence_changed_during_recovery', 'Primary refresh is blocked: the local default branch changed during compare-and-swap refresh.', array( 'status' => 409, 'preservation' => $preservation ));
+		}
+		$reset = $this->run_git($repo_path, 'reset --hard ' . escapeshellarg($verified['sha']));
+		if ( is_wp_error($reset) ) {
+			return new \WP_Error('primary_divergence_refresh_failed', 'Primary recovery was preserved, but the authoritative checkout could not be refreshed. Inspect the recovery worktree before retrying.', array( 'status' => 409, 'preservation' => $preservation ));
+		}
+
+		return array(
+			'branch'                   => $branch,
+			'local_sha'                => $local_sha,
+			'remote_sha'               => $verified['sha'],
+			'ahead'                    => $ahead,
+			'behind'                   => $behind,
+			'preservation'             => $preservation,
+			'reconciliation_guidance'  => array(
+				sprintf('Review preserved local commits in %s at %s.', $preservation['handle'], $preservation['path']),
+				sprintf('Reconcile %s onto %s/%s before merging or pushing.', $preservation['branch'], $remote, $branch),
+			),
+		);
+	}
+
+	/** @return array{branch:string,sha:string}|\WP_Error */
+	private function verified_primary_default_ref( string $repo_path, string $remote, string $error_prefix = 'primary' ): array|\WP_Error {
+		$default = $this->run_git($repo_path, 'ls-remote --symref ' . escapeshellarg($remote) . ' HEAD');
+		if ( is_wp_error($default) ) {
+			return new \WP_Error($error_prefix . '_default_branch_unavailable', 'Primary refresh is blocked: the remote default branch could not be resolved.', array( 'status' => 409 ));
+		}
+		if ( ! preg_match('/^ref: refs\/heads\/([^\s]+)\s+HEAD$/m', (string) ($default['output'] ?? ''), $matches) ) {
+			return new \WP_Error($error_prefix . '_default_branch_ambiguous', 'Primary refresh is blocked: the remote does not advertise an unambiguous default branch.', array( 'status' => 409 ));
+		}
+		$branch = $matches[1];
+		$ref    = 'refs/remotes/' . $remote . '/' . $branch;
+		$fetch  = $this->run_git($repo_path, 'fetch --no-tags ' . escapeshellarg($remote) . ' ' . escapeshellarg('refs/heads/' . $branch . ':' . $ref));
+		if ( is_wp_error($fetch) ) {
+			return new \WP_Error($error_prefix . '_fetch_failed', sprintf('Primary refresh is blocked: unable to fetch %s/%s.', $remote, $branch), array( 'status' => 409 ));
+		}
+		$target = $this->run_git($repo_path, 'rev-parse --verify ' . escapeshellarg($ref));
+		$sha    = is_wp_error($target) ? '' : trim((string) ($target['output'] ?? ''));
+		if ( '' === $sha ) {
+			return new \WP_Error($error_prefix . '_default_ref_missing', sprintf('Primary refresh is blocked: %s/%s could not be verified.', $remote, $branch), array( 'status' => 409 ));
+		}
+		return array( 'branch' => $branch, 'sha' => $sha );
+	}
+
+	/** @return array{branch:string,ref:string,commit:string,handle:string,path:string,status:string,reused:bool,metadata:array<string,mixed>}|\WP_Error */
+	private function preserve_primary_divergence_tip( string $repo_path, string $repo, string $default_branch, string $local_sha ): array|\WP_Error {
+		$slug     = 'primary-recovery-' . substr($local_sha, 0, 12);
+		$branch   = 'recovery/' . $slug;
+		$handle   = $repo . '@' . $slug;
+		$path     = dirname($repo_path) . '/' . $handle;
+		$ref      = 'refs/heads/' . $branch;
+		$existing = $this->run_git($repo_path, 'rev-parse --verify ' . escapeshellarg($ref));
+		$created  = false;
+		if ( ! is_wp_error($existing) && $local_sha !== trim((string) ($existing['output'] ?? '')) ) {
+			return new \WP_Error('primary_divergence_recovery_branch_conflict', 'Primary refresh is blocked: the deterministic recovery branch names a different commit.', array( 'status' => 409 ));
+		}
+		if ( is_wp_error($existing) && is_wp_error($this->run_git($repo_path, 'branch ' . escapeshellarg($branch) . ' ' . escapeshellarg($local_sha))) ) {
+			return new \WP_Error('primary_divergence_unpreservable', 'Primary refresh is blocked: the local-only tip could not be retained in a recovery branch.', array( 'status' => 409 ));
+		}
+		$created = is_wp_error($existing);
+		$listed  = $this->recovery_worktree_at_path($repo_path, $path, $ref);
+		if ( is_wp_error($listed) ) {
+			return $listed;
+		}
+		if ( null === $listed && is_dir($path) ) {
+			if ( $created ) {
+				$this->run_git($repo_path, 'branch -D ' . escapeshellarg($branch));
+			}
+			return new \WP_Error('primary_divergence_recovery_path_conflict', 'Primary refresh is blocked: the deterministic recovery path is occupied by an unrelated directory.', array( 'status' => 409, 'preservation' => array( 'ref' => $ref, 'commit' => $local_sha, 'path' => $path, 'rolled_back' => $created ) ));
+		}
+		if ( null === $listed ) {
+			$added = $this->run_git($repo_path, 'worktree add ' . escapeshellarg($path) . ' ' . escapeshellarg($branch));
+			if ( is_wp_error($added) ) {
+				if ( $created ) {
+					$this->run_git($repo_path, 'branch -D ' . escapeshellarg($branch));
+				}
+				return new \WP_Error('primary_divergence_unpreservable', 'Primary refresh is blocked: the recovery branch could not be materialized as a worktree.', array( 'status' => 409, 'preservation' => array( 'ref' => $ref, 'commit' => $local_sha, 'path' => $path, 'rolled_back' => $created ) ));
+			}
+			$listed = $this->recovery_worktree_at_path($repo_path, $path, $ref);
+			if ( is_wp_error($listed) || null === $listed ) {
+				return is_wp_error($listed) ? $listed : new \WP_Error('primary_divergence_recovery_unverified', 'Primary refresh is blocked: the recovery worktree could not be verified after creation.', array( 'status' => 409, 'preservation' => array( 'ref' => $ref, 'commit' => $local_sha, 'path' => $path ) ));
+			}
+		}
+		$preservation = array( 'branch' => $branch, 'ref' => $ref, 'commit' => $local_sha, 'handle' => $handle, 'path' => $path, 'status' => 'preserved', 'reused' => ! $created );
+		$head = $this->run_git($path, 'rev-parse HEAD');
+		if ( is_wp_error($head) || $local_sha !== trim((string) ($head['output'] ?? '')) ) {
+			return new \WP_Error('primary_divergence_recovery_unverified', 'Primary refresh is blocked: the recovery worktree does not resolve to the preserved commit.', array( 'status' => 409, 'preservation' => $preservation ));
+		}
+		$metadata = array(
+			'lifecycle_state' => 'active',
+			'handle'          => $handle,
+			'path'            => $path,
+			'repo'            => $repo,
+			'branch'          => $branch,
+			'base_ref'        => $default_branch,
+			'base_source'     => 'primary_divergence_recovery',
+			'purpose'         => 'Preserve local-only authoritative-primary commits during safe refresh.',
+		);
+		$stored = WorktreeContextInjector::store_lifecycle_metadata($handle, WorktreeContextInjector::build_lifecycle_metadata($metadata));
+		if ( is_wp_error($stored) || ! $stored ) {
+			return new \WP_Error('primary_divergence_recovery_metadata_failed', 'Primary refresh is blocked: recovery lifecycle metadata could not be recorded; the preserved recovery worktree remains available.', array( 'status' => 409, 'preservation' => $preservation ));
+		}
+		$metadata = WorktreeContextInjector::get_metadata($handle) ?? $metadata;
+		$preservation['metadata'] = $metadata;
+		return $preservation;
+	}
+
+	/** @return true|null|\WP_Error True when $path is the expected linked worktree. */
+	private function recovery_worktree_at_path( string $repo_path, string $path, string $ref ): true|null|\WP_Error {
+		$listing = $this->run_git($repo_path, 'worktree list --porcelain');
+		if ( is_wp_error($listing) ) {
+			return new \WP_Error('primary_divergence_recovery_listing_failed', 'Primary refresh is blocked: recovery worktree state could not be verified.', array( 'status' => 409 ));
+		}
+		foreach ( preg_split('/\n\n+/', trim((string) ($listing['output'] ?? ''))) ?: array() as $block ) {
+			$worktree_path = null;
+			$branch_ref    = null;
+			foreach ( explode("\n", $block) as $line ) {
+				if ( str_starts_with($line, 'worktree ') ) { $worktree_path = substr($line, 9); }
+				if ( str_starts_with($line, 'branch ') ) { $branch_ref = substr($line, 7); }
+			}
+			if ( $path === $worktree_path ) {
+				return $ref === $branch_ref ? true : new \WP_Error('primary_divergence_recovery_path_conflict', 'Primary refresh is blocked: the deterministic recovery path is attached to a different branch.', array( 'status' => 409 ));
+			}
+			if ( $ref === $branch_ref ) {
+				return new \WP_Error('primary_divergence_recovery_branch_held', 'Primary refresh is blocked: the deterministic recovery branch is attached at a different path.', array( 'status' => 409, 'holder_path' => $worktree_path ));
+			}
+		}
+		return null;
+	}
+
+	/** @param array<string,mixed> $preservation */
+	private function primary_divergence_error( string $code, string $message, array $preservation ): \WP_Error {
+		return new \WP_Error($code, $message, array( 'status' => 409, 'preservation' => $preservation ));
 	}
 
 	/** @return array{remote:string,ref:string,commit:string}|null|\WP_Error */
