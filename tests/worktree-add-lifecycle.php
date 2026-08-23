@@ -8,11 +8,36 @@ if ( ! defined('ABSPATH') ) {
 	define('ABSPATH', __DIR__ . '/fixtures/');
 }
 
+require_once __DIR__ . '/worktree-lifecycle-fixture-guard-support.php';
+
 $temp_root      = realpath(sys_get_temp_dir()) ?: sys_get_temp_dir();
-$workspace_root = rtrim($temp_root, '/') . '/datamachine-code-worktree-add-' . getmypid();
-if ( ! defined('DATAMACHINE_WORKSPACE_PATH') ) {
-	define('DATAMACHINE_WORKSPACE_PATH', $workspace_root);
+$workspace_root = rtrim($temp_root, '/') . '/datamachine-code-worktree-add-' . getmypid() . '-' . bin2hex(random_bytes(8));
+if ( defined('DATAMACHINE_WORKSPACE_PATH') && rtrim((string) DATAMACHINE_WORKSPACE_PATH, '/') !== $workspace_root ) {
+	throw new RuntimeException('worktree-add-lifecycle refuses a predefined DATAMACHINE_WORKSPACE_PATH that is not its owned fixture.');
 }
+define('DATAMACHINE_WORKSPACE_PATH', $workspace_root);
+
+if ( ! mkdir($workspace_root, 0700) ) {
+	throw new RuntimeException('worktree-add-lifecycle could not create its owned fixture.');
+}
+$fixture_identity = realpath($workspace_root);
+if ( false === $fixture_identity || $workspace_root !== $fixture_identity || worktree_lifecycle_fixture_has_symlink_component($workspace_root) ) {
+	worktree_lifecycle_dispose_incomplete_fixture($workspace_root, is_string($fixture_identity) ? $fixture_identity : '', '');
+	throw new RuntimeException('worktree-add-lifecycle could not establish a canonical non-symlink fixture identity.');
+}
+$fixture_sentinel = $workspace_root . '/.datamachine-code-worktree-add-fixture';
+$fixture_token    = bin2hex(random_bytes(16));
+if ( false === file_put_contents($fixture_sentinel, $fixture_token . "\n") || false === realpath($fixture_sentinel) || $fixture_sentinel !== realpath($fixture_sentinel) || is_link($fixture_sentinel) ) {
+	worktree_lifecycle_dispose_incomplete_fixture($workspace_root, $fixture_identity, $fixture_sentinel);
+	throw new RuntimeException('worktree-add-lifecycle could not establish its fixture sentinel.');
+}
+$fixture = array(
+	'root'              => $workspace_root,
+	'identity'          => $fixture_identity,
+	'sentinel'          => $fixture_sentinel,
+	'sentinel_identity' => $fixture_sentinel,
+	'token'             => $fixture_token,
+);
 
 final class WP_Error {
 	private string $code;
@@ -189,9 +214,15 @@ final class Datamachine_Code_Test_Wpdb {
 	}
 }
 
-require_once dirname(__DIR__) . '/vendor/autoload.php';
-require_once dirname(__DIR__) . '/inc/Workspace/Workspace.php';
-require_once dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php';
+try {
+	require_once dirname(__DIR__) . '/vendor/autoload.php';
+	require_once dirname(__DIR__) . '/inc/Workspace/Workspace.php';
+	require_once dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php';
+} catch (Throwable $e) {
+	remove_tree($workspace_root, $fixture);
+	fwrite(STDERR, "worktree-add-lifecycle bootstrap failure cleaned fixture {$workspace_root}\n");
+	throw $e;
+}
 
 use DataMachineCode\Abilities\WorkspaceAbilities;
 use DataMachineCode\Workspace\RemoteWorkspaceBackend;
@@ -209,18 +240,17 @@ function run_command( string $command, ?string $cwd = null ): string {
 	return implode("\n", $output);
 }
 
-function remove_tree( string $path ): void {
-	if ( ! file_exists($path) ) {
-		return;
-	}
+function remove_tree( string $path, array $fixture ): void {
+	worktree_lifecycle_assert_fixture_cleanup_safe($path, $fixture);
+
 	$iterator = new RecursiveIteratorIterator(
-		new RecursiveDirectoryIterator($path, FilesystemIterator::SKIP_DOTS),
+		new RecursiveDirectoryIterator($fixture['identity'], FilesystemIterator::SKIP_DOTS),
 		RecursiveIteratorIterator::CHILD_FIRST
 	);
 	foreach ( $iterator as $item ) {
 		$item->isDir() && ! $item->isLink() ? rmdir($item->getPathname()) : unlink($item->getPathname());
 	}
-	rmdir($path);
+	rmdir($fixture['identity']);
 }
 
 function assert_true( bool $condition, string $message ): void {
@@ -260,14 +290,14 @@ function create_primary_checkout( string $workspace_root ): void {
 	run_command('git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main', $workspace_root . '/homeboy');
 }
 
-remove_tree($workspace_root);
-
 try {
+	$workspace = new Workspace();
+	assert_true($workspace_root === $workspace->get_path(), 'worktree-add-lifecycle resolved a workspace outside its owned fixture before lifecycle operations.');
+
 	create_primary_checkout($workspace_root);
 	$wpdb = new Datamachine_Code_Test_Wpdb();
 	$GLOBALS['wpdb'] = $wpdb;
 
-	$workspace = new Workspace();
 	$source_path = $workspace_root . '/source';
 	$primary_path = $workspace_root . '/homeboy';
 	$create_plan = $workspace->worktree_plan('homeboy', 'planned-create', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-create' ));
@@ -913,10 +943,13 @@ try {
 	assert_true(! empty($fetch_failed_allowed['fetch_failed']), 'fetch failure opt-in did not surface fetch_failed');
 	assert_true(is_dir($fetch_failed_allowed['path']), 'fetch failure opt-in worktree path is not accessible');
 
-	remove_tree($workspace_root);
-	fwrite(STDOUT, "worktree-add-lifecycle ok\n");
+	remove_tree($workspace_root, $fixture);
+	fwrite(STDOUT, "worktree-add-lifecycle ok: fixture {$workspace_root}\n");
 } catch (Throwable $e) {
-	remove_tree($workspace_root);
+	if ( is_dir($workspace_root) ) {
+		remove_tree($workspace_root, $fixture);
+		fwrite(STDERR, "worktree-add-lifecycle failure cleaned fixture {$workspace_root}\n");
+	}
 	fwrite(STDERR, $e->getMessage() . "\n");
 	exit(1);
 }
