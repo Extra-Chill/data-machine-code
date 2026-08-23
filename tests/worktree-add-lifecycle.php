@@ -503,6 +503,29 @@ try {
 	putenv('DATAMACHINE_TASK_URL=https://example.test/issues/environment');
 	$result    = $workspace->worktree_add('homeboy', 'audit-primitives-20260616', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/explicit' ), false, true);
 	assert_true(! is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : 'worktree_add failed');
+	$handoff_proof = (array) ( $result['handoff_freshness_proof'] ?? array() );
+	assert_true('homeboy@audit-primitives-20260616' === ( $handoff_proof['handle'] ?? '' ) && ! empty($handoff_proof['worktree_sha']) && ! empty($handoff_proof['resolved_base_sha']) && ! empty($handoff_proof['resolved_base_ref']) && ! empty($handoff_proof['remote_default_sha']) && ! empty($handoff_proof['remote_default_ref']), 'new allocation did not issue a complete handoff proof');
+	$current_handoff = $workspace->worktree_handoff_revalidate((string) $result['handle'], $handoff_proof);
+	assert_true(! is_wp_error($current_handoff) && 'current' === ( $current_handoff['status'] ?? null ), 'fresh handoff proof did not revalidate as current');
+	$handoff_lock = \DataMachineCode\Workspace\WorkspaceMutationLock::acquire($workspace_root, 'homeboy', 0);
+	assert_true(! is_wp_error($handoff_lock), 'handoff contention fixture could not acquire the repository lock');
+	try {
+		$handoff_contention = $workspace->worktree_handoff_revalidate((string) $result['handle'], $handoff_proof);
+	} finally {
+		$handoff_lock->release();
+	}
+	assert_true(! is_wp_error($handoff_contention) && 'contention' === ( $handoff_contention['status'] ?? null ), 'handoff revalidation did not return typed contention');
+	$tampered_handoff = $handoff_proof;
+	$tampered_handoff['worktree_sha'] = str_repeat('0', 40);
+	$tampered_result = $workspace->worktree_handoff_revalidate((string) $result['handle'], $tampered_handoff);
+	assert_true(is_wp_error($tampered_result) && 'untrusted_worktree_handoff_proof' === $tampered_result->get_error_code(), 'tampered handoff proof was accepted');
+	run_command('git checkout main', $source_path);
+	file_put_contents($source_path . '/handoff-remote-advance.txt', "advance\n");
+	run_command('git add handoff-remote-advance.txt && git commit -m handoff-remote-advance && git push', $source_path);
+	$drifted_handoff = $workspace->worktree_handoff_revalidate((string) $result['handle'], $handoff_proof);
+	assert_true(! is_wp_error($drifted_handoff) && 'drift' === ( $drifted_handoff['status'] ?? null ) && isset($drifted_handoff['drift']['remote_default_sha']), 'remote advance did not produce typed handoff drift');
+	$replayed_drift = $workspace->worktree_handoff_revalidate((string) $result['handle'], (array) ( $drifted_handoff['proof'] ?? array() ));
+	assert_true(is_wp_error($replayed_drift) && 'untrusted_worktree_handoff_proof' === $replayed_drift->get_error_code(), 'a drift response could be replayed as a trusted proof');
 	assert_true(is_dir($result['path']), 'successful worktree_add path is not accessible');
 	assert_true(isset($wpdb->rows['homeboy@audit-primitives-20260616']), 'successful worktree_add was not persisted');
 	assert_true(null === WorktreeContextInjector::get_creation_intent('homeboy@audit-primitives-20260616'), 'successful worktree_add left its pre-creation journal behind');
@@ -577,6 +600,7 @@ try {
 	file_put_contents($recycle_fixture['path'] . '/vendor/.recycle-bootstrap-marker', "preserved bootstrap\n");
 	$recycled = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal');
 	assert_true(! is_wp_error($recycled) && true === ( $recycled['recycled'] ?? false ), is_wp_error($recycled) ? $recycled->get_error_message() : 'terminal recycle did not succeed');
+	assert_true(! empty($recycled['handoff_freshness_proof']), 'terminal recycle did not issue a handoff proof');
 	assert_true('terminal_exact_handle' === ( $recycled['recycle']['reason_code'] ?? null ) && 'https://example.test/issues/recycle-old' === ( $recycled['recycle']['lineage']['previous_task']['task_url'] ?? null ) && 'https://example.test/issues/recycle-new' === ( $recycled['recycle']['lineage']['new_task']['task_url'] ?? null ), 'terminal recycle did not return durable task lineage');
 	assert_true('https://example.test/issues/recycle-new' === ( $wpdb->rows[$recycle_handle]['task_url'] ?? '' ) && 'https://example.test/issues/recycle-old' === ( $recycled['metadata']['recycle_lineage'][0]['previous_task']['task_url'] ?? null ), 'terminal recycle did not persist task lineage');
 	assert_true('preserved context' === trim((string) file_get_contents($recycle_fixture['path'] . '/.recycle-context')) && 'preserved bootstrap' === trim((string) file_get_contents($recycle_fixture['path'] . '/vendor/.recycle-bootstrap-marker')) && 'preserved' === ( $recycled['recycle']['context'] ?? null ) && 'preserved' === ( $recycled['recycle']['bootstrap'] ?? null ), 'terminal recycle did not preserve compatible context/bootstrap assets');
@@ -633,6 +657,7 @@ try {
 	assert_true(! is_wp_error($reused), is_wp_error($reused) ? $reused->get_error_message() : 'clean compatible worktree was not reused');
 	assert_true(true === ( $reused['reused'] ?? false ) && 'exact_compatible_handle' === ( $reused['reuse']['reason_code'] ?? null ), 'exact reuse did not return accepted evidence');
 	assert_true('accepted' === ( $reused['reuse']['status'] ?? null ) && 'homeboy@idempotent-reuse' === ( $reused['reuse']['handle'] ?? null ), 'default exact reuse did not preserve typed result evidence');
+	assert_true(! empty($reused['handoff_freshness_proof']), 'exact reuse did not issue a handoff proof');
 	assert_true($reuse_created_at === ( $wpdb->rows[$reuse_handle]['created_at'] ?? null ), 'reuse rewrote durable lifecycle metadata');
 	assert_true('https://example.test/issues/reuse' === ( $wpdb->rows[$reuse_handle]['task_url'] ?? '' ), 'reuse rewrote durable task metadata');
 	$claim_fixture = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ));
@@ -699,6 +724,7 @@ try {
 	$adopted = $workspace->worktree_add('homeboy', 'interrupted-add-recovery', 'origin/main', false, false, false, false, true, $interrupted_task);
 	assert_true(! is_wp_error($adopted) && true === ( $adopted['adopted'] ?? false ), is_wp_error($adopted) ? $adopted->get_error_message() : 'exact interrupted worktree was not adopted');
 	assert_true('interrupted_exact_handle' === ( $adopted['recovery']['reason_code'] ?? null ) && 'https://example.test/issues/interrupted-add' === ( $adopted['metadata']['origin_task']['task_url'] ?? null ) && 'origin/main' === ( $adopted['metadata']['reuse_contract']['base_ref'] ?? null ) && null === WorktreeContextInjector::get_creation_intent('homeboy@interrupted-add-recovery'), 'interrupted adoption did not promote and clear the exact journal contract');
+	assert_true(! empty($adopted['handoff_freshness_proof']), 'interrupted adoption did not issue a handoff proof');
 
 	$external_path = $workspace_root . '/homeboy@interrupted-add-external';
 	run_command('git worktree add -b interrupted-add-external ' . escapeshellarg($external_path) . ' origin/main', $primary_path);
@@ -956,6 +982,8 @@ try {
 	assert_true(! is_wp_error($fetch_failed_allowed), is_wp_error($fetch_failed_allowed) ? $fetch_failed_allowed->get_error_message() : 'fetch failure opt-in failed');
 	assert_true(! empty($fetch_failed_allowed['fetch_failed']), 'fetch failure opt-in did not surface fetch_failed');
 	assert_true(is_dir($fetch_failed_allowed['path']), 'fetch failure opt-in worktree path is not accessible');
+	$handoff_fetch_failed = $workspace->worktree_handoff_revalidate((string) $result['handle'], $handoff_proof);
+	assert_true(! is_wp_error($handoff_fetch_failed) && 'fetch_failed' === ( $handoff_fetch_failed['status'] ?? null ), 'handoff revalidation did not return typed fetch failure');
 
 	remove_tree($workspace_root, $fixture);
 	fwrite(STDOUT, "worktree-add-lifecycle ok: fixture {$workspace_root}\n");

@@ -192,6 +192,124 @@ trait WorkspaceWorktreeLifecycle {
 		return $this->worktree_add((string) $input['repo'], (string) $input['branch'], $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ($input['task'] ?? array()), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ($input['intent'] ?? array()), (string) ($input['reuse_policy'] ?? 'reuse_compatible'));
 	}
 
+	private const HANDOFF_REVALIDATION_TIMEOUT = 5;
+
+	/** Revalidate the exact server-issued proof under one aggregate deadline. */
+	public function worktree_handoff_revalidate( string $handle, array $proof ): array|\WP_Error {
+		$parsed = $this->parse_handle($handle);
+		if ( ! $parsed['is_worktree'] || $handle !== (string) ( $proof['handle'] ?? '' ) ) {
+			return new \WP_Error('invalid_worktree_handoff_proof', 'A matching managed worktree handoff proof is required.', array( 'status' => 400 ));
+		}
+
+		$started  = microtime(true);
+		$deadline = $started + self::HANDOFF_REVALIDATION_TIMEOUT;
+		$result   = WorkspaceMutationLock::with_repo($this->workspace_path, (string) $parsed['repo'], function () use ( $handle, $proof, $deadline ) {
+			$metadata = WorktreeContextInjector::get_metadata_fresh($handle);
+			$stored   = is_array($metadata) ? (array) ( $metadata['handoff_freshness_proof'] ?? array() ) : array();
+			if ( array() === $stored || ! hash_equals($this->worktree_handoff_proof_digest($stored), (string) ( $stored['digest'] ?? '' )) || $stored !== $proof ) {
+				return new \WP_Error('untrusted_worktree_handoff_proof', 'The supplied proof is not the active metadata-bound managed proof.', array( 'status' => 409 ));
+			}
+			$primary = $this->get_primary_path((string) $this->parse_handle($handle)['repo']);
+			$fetch   = WorktreeStalenessProbe::fetch($primary, null, $deadline);
+			if ( empty($fetch['ok']) ) {
+				return array( 'success' => false, 'status' => 'fetch_failed', 'handle' => $handle, 'fetch' => $fetch );
+			}
+			$current = $this->worktree_handoff_proof($handle, $this->workspace_path . '/' . $this->parse_handle($handle)['dir_name'], $primary, $deadline, (string) $stored['proof_id']);
+			if ( is_wp_error($current) ) {
+				return $current;
+			}
+			$drift = array();
+			foreach ( array( 'worktree_sha', 'resolved_base_ref', 'resolved_base_sha', 'remote_default_ref', 'remote_default_sha' ) as $field ) {
+				if ( ! hash_equals((string) $proof[ $field ], (string) $current[ $field ]) ) {
+					$drift[ $field ] = array( 'expected' => $proof[ $field ], 'actual' => $current[ $field ] );
+				}
+			}
+			return array( 'success' => array() === $drift, 'status' => array() === $drift ? 'current' : 'drift', 'handle' => $handle, 'proof' => $current, 'drift' => $drift );
+		}, max(0, (int) ceil($deadline - microtime(true))));
+
+		if ( is_wp_error($result) && 'workspace_repo_busy' === $result->get_error_code() ) {
+			return array( 'success' => false, 'status' => 'contention', 'handle' => $handle, 'contention' => $result->get_error_data() );
+		}
+		return $result;
+	}
+
+	/** Issue the proof while the caller still holds the allocation's repository lock. */
+	private function worktree_add_handoff_proof( array|\WP_Error $result ): array|\WP_Error {
+		if ( is_wp_error($result) || empty($result['success']) ) {
+			return $result;
+		}
+		if ( empty($result['handle']) || empty($result['path']) ) {
+			$result['handoff_freshness'] = array( 'status' => 'unverified', 'reason' => 'allocation_identity_missing' );
+			return $result;
+		}
+		$deadline = microtime(true) + self::HANDOFF_REVALIDATION_TIMEOUT;
+		$primary  = $this->get_primary_path(explode('@', (string) $result['handle'], 2)[0]);
+		$fetch    = WorktreeStalenessProbe::fetch($primary, null, $deadline);
+		if ( empty($fetch['ok']) ) {
+			$result['handoff_freshness'] = array( 'status' => 'unverified', 'reason' => 'fetch_failed', 'fetch' => $fetch );
+			return $result;
+		}
+		$proof = $this->worktree_handoff_proof((string) $result['handle'], (string) $result['path'], $primary, $deadline, bin2hex(random_bytes(16)));
+		if ( is_wp_error($proof) ) {
+			$result['handoff_freshness'] = array( 'status' => 'unverified', 'reason' => $proof->get_error_code() );
+			return $result;
+		}
+		$metadata = WorktreeContextInjector::get_metadata_fresh((string) $result['handle']) ?? array();
+		$stored   = WorktreeContextInjector::store_lifecycle_metadata((string) $result['handle'], array( 'handoff_freshness_proof' => $proof ));
+		if ( is_wp_error($stored) || ! $stored ) {
+			$result['handoff_freshness'] = array( 'status' => 'unverified', 'reason' => is_wp_error($stored) ? $stored->get_error_code() : 'metadata_persist_failed' );
+			return $result;
+		}
+		$result['metadata']                = array_merge($metadata, array( 'handoff_freshness_proof' => $proof ));
+		$result['handoff_freshness_proof'] = $proof;
+		return $result;
+	}
+
+	private function worktree_handoff_proof( string $handle, string $path, string $primary, float $deadline, string $proof_id ): array|\WP_Error {
+		$remaining = $this->worktree_operation_remaining_seconds($deadline);
+		if ( $remaining <= 0 ) {
+			return new \WP_Error('worktree_handoff_revalidation_timeout', 'The aggregate handoff revalidation deadline expired.', array( 'status' => 409 ));
+		}
+		$remote_default_ref = $this->resolve_remote_default_ref($primary, $remaining);
+		if ( is_wp_error($remote_default_ref) ) {
+			return $remote_default_ref;
+		}
+		if ( ! is_string($remote_default_ref) || '' === $remote_default_ref ) {
+			return new \WP_Error('remote_default_unresolved', 'The remote default ref is unavailable.', array( 'status' => 409 ));
+		}
+		$metadata = WorktreeContextInjector::get_metadata($handle) ?? array();
+		$base_ref = (string) ( $metadata['reuse_contract']['base_ref'] ?? '' );
+		if ( 'existing_local_branch' === $base_ref ) {
+			$base_ref = 'refs/heads/' . (string) ( $metadata['branch'] ?? '' );
+		}
+		if ( '' === $base_ref ) {
+			return new \WP_Error('worktree_handoff_base_unresolved', 'The managed worktree has no resolved base ref.', array( 'status' => 409 ));
+		}
+		$head = $this->worktree_handoff_git($path, 'rev-parse --verify HEAD^{commit}', $deadline);
+		$base = $this->worktree_handoff_git($primary, 'rev-parse --verify ' . escapeshellarg($base_ref . '^{commit}'), $deadline);
+		$default = $this->worktree_handoff_git($primary, 'rev-parse --verify ' . escapeshellarg($remote_default_ref . '^{commit}'), $deadline);
+		if ( is_wp_error($head) || is_wp_error($base) || is_wp_error($default) ) {
+			return is_wp_error($head) ? $head : ( is_wp_error($base) ? $base : $default );
+		}
+		$proof = array( 'version' => 1, 'proof_id' => $proof_id, 'handle' => $handle, 'worktree_sha' => trim((string) $head['output']), 'resolved_base_ref' => $base_ref, 'resolved_base_sha' => trim((string) $base['output']), 'remote_default_ref' => $remote_default_ref, 'remote_default_sha' => trim((string) $default['output']) );
+		$proof['digest'] = $this->worktree_handoff_proof_digest($proof);
+		return $proof;
+	}
+
+	/** Never pass a zero timeout to GitRunner, where zero means unbounded. */
+	private function worktree_handoff_git( string $path, string $arguments, float $deadline ): array|\WP_Error {
+		$remaining = $this->worktree_operation_remaining_seconds($deadline);
+		if ( $remaining <= 0 ) {
+			return new \WP_Error('worktree_handoff_revalidation_timeout', 'The aggregate handoff revalidation deadline expired.', array( 'status' => 409 ));
+		}
+		return $this->run_git($path, $arguments, $remaining);
+	}
+
+	private function worktree_handoff_proof_digest( array $proof ): string {
+		unset($proof['digest']);
+		return hash('sha256', wp_json_encode($proof) ?: '');
+	}
+
 	/** Apply a reviewed legacy handoff after re-planning and taking the repo lock. */
 	public function worktree_apply_legacy_handoff( array $plan, string $mode ): array|\WP_Error {
 		$expected = (string) ($plan['digest'] ?? '');
@@ -229,7 +347,7 @@ trait WorkspaceWorktreeLifecycle {
 				if ( is_wp_error($stored) ) {
 					return $stored;
 				}
-				return array( 'success' => true, 'type' => 'legacy_handoff', 'mode' => $mode, 'handle' => $old_handle, 'lineage' => $lineage, 'metadata' => WorktreeContextInjector::get_metadata($old_handle) );
+				return $this->worktree_add_handoff_proof(array( 'success' => true, 'type' => 'legacy_handoff', 'mode' => $mode, 'handle' => $old_handle, 'path' => (string) ( $handoff['candidate']['path'] ?? $metadata['path'] ?? '' ), 'lineage' => $lineage, 'metadata' => WorktreeContextInjector::get_metadata_fresh($old_handle) ));
 			}
 			if ((string) ($current['handle'] ?? '') === $old_handle) {
 				return new \WP_Error('legacy_handoff_replacement_requires_new_handle', 'An isolated replacement must use a different worktree handle.', array( 'status' => 409 ));
@@ -401,12 +519,12 @@ trait WorkspaceWorktreeLifecycle {
 		// handle path can reset a terminal checkout or rewrite its metadata.
 		if ( is_dir($wt_path) && ! $remediate_capacity_dry_run ) {
 			if ( 'recycle_terminal' === $reuse_policy ) {
-				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->recycle_terminal_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path));
+				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->recycle_terminal_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path)));
 			}
 			if ( 'claim_expired' === $reuse_policy ) {
-				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->claim_expired_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path));
+				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->claim_expired_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path)));
 			}
-			return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path));
+			return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path)));
 		}
 
 		$operation_timeout  = self::worktree_capacity_operation_timeout_seconds($bootstrap);
@@ -835,7 +953,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( $repo_timeout <= 0 ) {
 			return $this->worktree_operation_timeout('repo_lock_wait', $operation_timeout, $operation_started);
 		}
-		$response = WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_locked(
+		$response = WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->worktree_add_locked(
 				$repo,
 				$branch,
 				$from,
@@ -861,7 +979,7 @@ trait WorkspaceWorktreeLifecycle {
 					'operation_deadline'    => $operation_deadline,
 					'operation_timeout'     => $operation_timeout,
 					'operation_started'     => $operation_started,
-			)), $repo_timeout);
+			))), $repo_timeout);
 		$response = $this->worktree_operation_lock_result($response, 'repo_lock_wait', $operation_timeout, $operation_started);
 
 		if ( is_wp_error($response) ) {
@@ -3836,9 +3954,12 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  string $repo_path Primary repo path.
 	 * @return string|null Fully-qualified remote default ref, or null when absent.
 	 */
-	private function resolve_remote_default_ref( string $repo_path ): ?string {
-		$result = $this->run_git($repo_path, 'symbolic-ref --quiet refs/remotes/origin/HEAD');
+	private function resolve_remote_default_ref( string $repo_path, int $timeout_seconds = 0 ): string|\WP_Error|null {
+		$result = $this->run_git($repo_path, 'symbolic-ref --quiet refs/remotes/origin/HEAD', $timeout_seconds);
 		if ( is_wp_error($result) ) {
+			if ( $timeout_seconds > 0 && $this->is_git_timeout_error($result) ) {
+				return new \WP_Error('worktree_handoff_revalidation_timeout', 'The aggregate handoff revalidation deadline expired while resolving the remote default ref.', array( 'status' => 409 ));
+			}
 			return null;
 		}
 
@@ -3862,7 +3983,7 @@ trait WorkspaceWorktreeLifecycle {
 	 */
 	private function assert_ref_current_with_default_branch( string $primary_path, string $ref, string $repo, string $branch, string $ref_role ): true|\WP_Error {
 		$default_ref = $this->resolve_remote_default_ref($primary_path);
-		if ( null === $default_ref ) {
+		if ( ! is_string($default_ref) ) {
 			return true;
 		}
 
@@ -3883,7 +4004,7 @@ trait WorkspaceWorktreeLifecycle {
 	 */
 	private function populate_default_branch_behind_count( string $primary_path, string $branch, array &$response ): void {
 		$default_ref = $this->resolve_remote_default_ref($primary_path);
-		if ( null === $default_ref ) {
+		if ( ! is_string($default_ref) ) {
 			return;
 		}
 
