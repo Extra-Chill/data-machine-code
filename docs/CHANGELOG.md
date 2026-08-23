@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.62.3] - 2026-08-23
+
+### Fixed
+- preserve bounded removal evidence
+
 ## [0.62.2] - 2026-08-23
 
 ### Fixed
