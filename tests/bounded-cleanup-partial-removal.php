@@ -35,8 +35,10 @@ if ( ! function_exists('is_wp_error') ) {
 }
 
 require_once dirname(__DIR__) . '/vendor/autoload.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceCoreUtilities.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeCleanupEngine.php';
 
+use DataMachineCode\Workspace\WorkspaceCoreUtilities;
 use DataMachineCode\Workspace\WorkspaceWorktreeCleanupEngine;
 
 function bounded_cleanup_partial_assert_same( mixed $expected, mixed $actual, string $message ): void {
@@ -46,6 +48,7 @@ function bounded_cleanup_partial_assert_same( mixed $expected, mixed $actual, st
 }
 
 final class BoundedCleanupPartialRemovalHarness {
+	use WorkspaceCoreUtilities;
 	use WorkspaceWorktreeCleanupEngine;
 
 	protected const CLEANUP_GIT_PROBE_TIMEOUT  = 5;
@@ -58,9 +61,14 @@ final class BoundedCleanupPartialRemovalHarness {
 		private string $primary_path
 	) {}
 
-	public function remove( string $path ): array|WP_Error {
+	public function remove( string $path, bool $broken_orphan_only = false ): array|WP_Error {
 		$method = new ReflectionMethod($this, 'remove_worktree_by_path');
-		return $method->invoke($this, 'repo', 'fix/cleanup', $path, false, 60);
+		return $method->invoke($this, 'repo', 'fix/cleanup', $path, false, 60, $broken_orphan_only);
+	}
+
+	public function classify_broken_orphan( string $path ): ?array {
+		$method = new ReflectionMethod($this, 'classify_broken_orphan_worktree_marker');
+		return $method->invoke($this, $path);
 	}
 
 	public function reclaimed_bytes( int $known_bytes, int $unknown_paths ): array {
@@ -74,17 +82,6 @@ final class BoundedCleanupPartialRemovalHarness {
 
 	private function get_primary_path( string $repo ): string {
 		return $this->primary_path;
-	}
-
-	private function validate_containment( string $path, string $container ): array {
-		$real_path = realpath($path);
-		$real_root = realpath($container);
-		$valid     = is_string($real_path) && is_string($real_root) && str_starts_with($real_path, rtrim($real_root, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR);
-
-		return array(
-			'valid'     => $valid,
-			'real_path' => $valid ? $real_path : null,
-		);
 	}
 
 	private function run_git( string $path, string $command, int $timeout = 0 ): array|WP_Error {
@@ -138,6 +135,40 @@ bounded_cleanup_partial_assert_same(true, is_dir($worktree), 'full failure must 
 unlink($worktree . '/.git');
 rmdir($worktree);
 rmdir($git_target);
+
+$orphan_path   = $root . '/repo@broken-orphan';
+$orphan_target = $primary . '/.git/worktrees/broken-orphan';
+mkdir($orphan_path, 0777, true);
+file_put_contents($orphan_path . '/.git', 'gitdir: ' . $orphan_target);
+file_put_contents($orphan_path . '/artifact.txt', str_repeat('x', 1024));
+$detected = $harness->classify_broken_orphan($orphan_path);
+bounded_cleanup_partial_assert_same($orphan_target, $detected['gitdir'] ?? null, 'dry-run detection must report the missing Git metadata target');
+
+$ambiguous_path = $root . '/repo@ambiguous';
+mkdir($ambiguous_path, 0777, true);
+file_put_contents($ambiguous_path . '/.git', 'gitdir: ' . $root . '/unrelated/.git/worktrees/ambiguous');
+bounded_cleanup_partial_assert_same(null, $harness->classify_broken_orphan($ambiguous_path), 'a pointer outside the owning primary metadata must remain ambiguous');
+
+$removed_orphan = $harness->remove($orphan_path, true);
+bounded_cleanup_partial_assert_same('broken_orphan', $removed_orphan['reason_code'] ?? null, 'guarded orphan removal must retain its stable classification');
+bounded_cleanup_partial_assert_same($orphan_target, $removed_orphan['broken_target_path'] ?? null, 'guarded orphan removal must retain target-path evidence');
+bounded_cleanup_partial_assert_same(false, is_dir($orphan_path), 'guarded orphan removal must remove the contained directory');
+
+$race_path   = $root . '/repo@race-orphan';
+$race_target = $primary . '/.git/worktrees/race-orphan';
+mkdir($race_path, 0777, true);
+file_put_contents($race_path . '/.git', 'gitdir: ' . $race_target);
+bounded_cleanup_partial_assert_same($race_target, $harness->classify_broken_orphan($race_path)['gitdir'] ?? null, 'race fixture must initially classify as broken');
+mkdir($race_target, 0777, true);
+$race_refusal = $harness->remove($race_path, true);
+bounded_cleanup_partial_assert_same('broken_orphan_revalidation_failed', $race_refusal->get_error_code(), 'metadata restored before deletion must fail fresh orphan revalidation');
+bounded_cleanup_partial_assert_same(true, is_dir($race_path), 'fresh revalidation refusal must preserve the directory');
+
+unlink($ambiguous_path . '/.git');
+rmdir($ambiguous_path);
+unlink($race_path . '/.git');
+rmdir($race_path);
+rmdir($race_target);
 rmdir(dirname($git_target));
 rmdir($primary . '/.git');
 rmdir($primary);

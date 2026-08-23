@@ -244,11 +244,12 @@ trait WorkspaceWorktreeCleanupEngine {
 					array(
 						'handle'             => $handle,
 						'repo'               => $repo,
-						'branch'             => '',
+						'branch'             => $branch,
 						'path'               => $wt_path,
 						'dirty'              => null,
-						'signal'             => 'broken_orphan_worktree_marker',
-						'reason_code'        => 'broken_orphan_worktree_marker',
+						'signal'             => 'broken_orphan',
+						'reason_code'        => 'broken_orphan',
+						'classification'     => 'broken_orphan',
 						'reason'             => 'managed worktree directory has a .git pointer to missing Git worktree metadata',
 						'broken_target_path' => (string) ( $wt['broken_target_path'] ?? '' ),
 						'hint'               => 'Cleanup apply will remove this orphan directory only after revalidating that the .git pointer still targets missing worktree metadata.',
@@ -937,7 +938,7 @@ trait WorkspaceWorktreeCleanupEngine {
 					'is_primary'           => false,
 					'external'             => false,
 					'branch_slug'          => $parsed['branch_slug'] ?? null,
-					'branch'               => '',
+					'branch'               => is_array($metadata) && ! empty($metadata['branch']) ? (string) $metadata['branch'] : (string) ( $parsed['branch_slug'] ?? '' ),
 					'head'                 => '',
 					'path'                 => $path,
 					'dirty'                => null,
@@ -980,8 +981,17 @@ trait WorkspaceWorktreeCleanupEngine {
 			$gitdir = rtrim($path, '/') . '/' . $gitdir;
 		}
 
-		$normalized = str_replace('\\', '/', $gitdir);
-		if ( ! str_contains($normalized, '/.git/worktrees/') || file_exists($gitdir) ) {
+		$handle       = basename(rtrim($path, '/'));
+		$separator    = strpos($handle, '@');
+		$repo         = false === $separator ? '' : substr($handle, 0, $separator);
+		$primary_git  = '' === $repo ? false : realpath($this->get_primary_path($repo) . '/.git');
+		$gitdir_owner = realpath(dirname(dirname($gitdir)));
+		if ( false === $primary_git
+			|| false === $gitdir_owner
+			|| $primary_git !== $gitdir_owner
+			|| 'worktrees' !== basename(dirname($gitdir))
+			|| file_exists($gitdir)
+			|| is_link($gitdir) ) {
 			return null;
 		}
 
@@ -1243,6 +1253,8 @@ trait WorkspaceWorktreeCleanupEngine {
 		$active_no_signal_triage = WorktreeActiveNoSignalTriagePreview::build($inventory_skipped, min($limit, 25));
 
 		if ( $dry_run ) {
+			$broken_candidates = count(array_filter($batch, static fn( $row ) => 'broken_orphan' === (string) ( $row['classification'] ?? '' )));
+			$broken_blocked    = count(array_filter($inventory_skipped, static fn( $row ) => 'broken_orphan' === (string) ( $row['classification'] ?? '' )));
 			return array(
 				'success'                 => true,
 				'mode'                    => 'bounded_cleanup_eligible_apply',
@@ -1260,6 +1272,11 @@ trait WorkspaceWorktreeCleanupEngine {
 					'skipped'         => count($inventory_skipped),
 					'bytes_reclaimed' => 0,
 					'limit'           => $limit,
+					'broken_orphans'  => array(
+						'candidates' => $broken_candidates,
+						'removed'    => 0,
+						'blocked'    => $broken_blocked,
+					),
 				),
 				'continuation'            => $continuation,
 				'active_no_signal_triage' => $active_no_signal_triage,
@@ -1379,6 +1396,11 @@ trait WorkspaceWorktreeCleanupEngine {
 					'skipped'            => count($skipped),
 					'limit'              => $limit,
 					'discarded_unpushed' => count($discarded_unpushed),
+					'broken_orphans'      => array(
+						'candidates' => count(array_filter($batch, static fn( $row ) => 'broken_orphan' === (string) ( $row['classification'] ?? '' ))),
+						'removed'    => count(array_filter($removed, static fn( $row ) => 'broken_orphan' === (string) $row['reason_code'])),
+						'blocked'    => count(array_filter($skipped, static fn( $row ) => 'broken_orphan' === (string) ( $row['classification'] ?? '' ))),
+					),
 				),
 				$this->build_reclaimed_bytes_summary($bytes_reclaimed, $unknown_reclaimed)
 			),
@@ -1544,7 +1566,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			$size     = null === $measured ? null : (int) $measured;
 		}
 
-		$result = $this->remove_worktree_by_path($repo, $branch, $wt_path, $force, $remove_timeout_seconds);
+		$result = $this->remove_worktree_by_path($repo, $branch, $wt_path, $force, $remove_timeout_seconds, ! empty($validated['broken_orphan']));
 		if ( is_wp_error($result) ) {
 			return $result;
 		}
@@ -1763,28 +1785,32 @@ trait WorkspaceWorktreeCleanupEngine {
 			) );
 		}
 
-		if ( 'broken_orphan_worktree_marker' === (string) ( $candidate['signal'] ?? $candidate['reason_code'] ?? '' ) ) {
-			$broken = $this->classify_broken_orphan_worktree_marker($real_path);
-			if ( null === $broken ) {
-				return array(
-					'skipped' => array(
-						'handle'      => $handle,
-						'repo'        => $repo,
-						'branch'      => $branch,
-						'path'        => $wt_path,
-						'reason_code' => 'plan_not_current',
-						'reason'      => 'planned broken orphan marker no longer points at missing Git worktree metadata',
-					),
-				);
-			}
-
+		$broken = $this->classify_broken_orphan_worktree_marker($real_path);
+		if ( null !== $broken ) {
 			return array_merge(
 				$candidate,
 				array(
-					'branch'             => '',
+					'broken_orphan'       => true,
+					'classification'      => 'broken_orphan',
+					'reason_code'         => 'broken_orphan',
 					'path'               => $real_path,
 					'broken_target_path' => $broken['gitdir'],
 				)
+			);
+		}
+		$planned_broken_orphan = 'broken_orphan' === (string) ( $candidate['classification'] ?? '' )
+			|| in_array( (string) ( $candidate['signal'] ?? $candidate['reason_code'] ?? '' ), array( 'broken_orphan', 'broken_orphan_worktree_marker' ), true );
+		if ( $planned_broken_orphan ) {
+			return array(
+				'skipped' => array(
+					'handle'         => $handle,
+					'repo'           => $repo,
+					'branch'         => $branch,
+					'path'           => $wt_path,
+					'classification' => 'broken_orphan',
+					'reason_code'    => 'broken_orphan_revalidation_failed',
+					'reason'         => 'planned broken orphan no longer proves missing Git worktree metadata',
+				),
 			);
 		}
 
@@ -2321,6 +2347,11 @@ trait WorkspaceWorktreeCleanupEngine {
 
 		if ( isset($candidate['size_bytes']) ) {
 			$row['size_bytes'] = $candidate['size_bytes'];
+		}
+		foreach ( array( 'classification', 'broken_target_path' ) as $field ) {
+			if ( isset($candidate[ $field ]) ) {
+				$row[ $field ] = $candidate[ $field ];
+			}
 		}
 
 		if ( $is_timeout ) {
@@ -3179,7 +3210,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				return new \WP_Error('invalid_cleanup_plan', sprintf('Cleanup plan candidate #%d is not an object.', (int) $index), array( 'status' => 400 ));
 			}
 			foreach ( $required as $field ) {
-				if ( 'branch' === $field && 'broken_orphan_worktree_marker' === (string) ( $row['signal'] ?? $row['reason_code'] ?? '' ) ) {
+				if ( 'branch' === $field && in_array( (string) ( $row['signal'] ?? $row['reason_code'] ?? '' ), array( 'broken_orphan', 'broken_orphan_worktree_marker' ), true ) ) {
 					continue;
 				}
 				if ( '' === trim( (string) ( $row[ $field ] ?? '' )) ) {
@@ -3301,9 +3332,11 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  string $branch  Branch the worktree is checked out to.
 	 * @param  string $wt_path Absolute path to the worktree directory.
 	 * @param  bool   $force   Pass --force to `git worktree remove`.
+	 * @param  int    $remove_timeout_seconds Git removal timeout.
+	 * @param  bool   $broken_orphan_only Refuse normal Git removal if orphan evidence changes.
 	 * @return array{success: bool, handle: string, message: string, removal_status: string, reason_code?: string, removal_error?: array{code: string, message: string}}|\WP_Error
 	 */
-	private function remove_worktree_by_path( string $repo, string $branch, string $wt_path, bool $force, int $remove_timeout_seconds = self::CLEANUP_GIT_REMOVE_TIMEOUT ): array|\WP_Error {
+	private function remove_worktree_by_path( string $repo, string $branch, string $wt_path, bool $force, int $remove_timeout_seconds = self::CLEANUP_GIT_REMOVE_TIMEOUT, bool $broken_orphan_only = false ): array|\WP_Error {
 		$repo = $this->sanitize_name($repo);
 		if ( '' === $repo ) {
 			return new \WP_Error('invalid_repo', 'Repository name is required.', array( 'status' => 400 ));
@@ -3365,9 +3398,20 @@ trait WorkspaceWorktreeCleanupEngine {
 				'message'            => sprintf('Broken orphan worktree directory at "%s" removed.', $wt_path),
 				'branch'             => '',
 				'removal_status'     => 'complete',
-				'reason_code'        => 'broken_orphan_removed',
+				'reason_code'        => 'broken_orphan',
+				'classification'     => 'broken_orphan',
 				'broken_target_path' => $broken_marker['gitdir'],
 				'removed_paths'      => $removed_paths,
+			);
+		}
+		if ( $broken_orphan_only ) {
+			return new \WP_Error(
+				'broken_orphan_revalidation_failed',
+				sprintf('Refusing to remove "%s": its .git pointer no longer proves missing Git worktree metadata.', $wt_path),
+				array(
+					'status'      => 409,
+					'reason_code' => 'broken_orphan_revalidation_failed',
+				)
 			);
 		}
 
