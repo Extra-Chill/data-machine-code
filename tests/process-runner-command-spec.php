@@ -210,6 +210,12 @@ if ( 'Windows' !== PHP_OS_FAMILY ) {
 	}
 	process_runner_assert_running($sibling_pid, 'GitRunner cleanup must not signal an unrelated sibling.');
 	process_runner_assert_less_than(3.0, $elapsed, 'GitRunner string commands must not wait for pipe-owning descendants.');
+	$leak_args = '-c ' . escapeshellarg('alias.leak=!sh -c ' . escapeshellarg('echo "fatal: https://user:secret@example.test/repo?token=secret-token" >&2; exit 1')) . ' leak';
+	$leak      = GitRunner::run(sys_get_temp_dir(), $leak_args, 1);
+	process_runner_assert_same(true, $leak instanceof WP_Error, 'GitRunner must return a typed remote diagnostic failure.');
+	$leak_output = (string) ( $leak->get_error_data()['output'] ?? '' );
+	process_runner_assert_same(false, str_contains($leak_output, 'user:secret') || str_contains($leak_output, 'secret-token'), 'GitRunner leaked remote URL credentials.');
+	process_runner_assert_same(true, str_contains($leak_output, 'https://***@example.test/repo?token=***'), 'GitRunner did not retain the sanitized remote diagnostic.');
 	proc_terminate($sibling, 9);
 	proc_close($sibling);
 }

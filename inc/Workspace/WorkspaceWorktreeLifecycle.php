@@ -231,20 +231,27 @@ trait WorkspaceWorktreeLifecycle {
 	 *
 	 * A current result is a bounded observation for an immediate consumer to
 	 * converge or refuse. It is not a cross-process lease across later external
-	 * admission. The deadline starts after the repository lock and the fresh
-	 * metadata read: the option/inventory storage APIs expose no query timeout,
-	 * so they are deliberately outside this hard Git remote-probe bound.
+	 * admission. One deadline covers lock acquisition, metadata lookup, fetch,
+	 * and proof construction. Metadata storage cannot be interrupted, so an
+	 * overdue lookup is refused before it can start a Git operation.
 	 */
 	public function worktree_handoff_revalidate( string $handle, array $proof ): array|\WP_Error {
+		$deadline = microtime(true) + self::HANDOFF_REMOTE_PROBE_TIMEOUT;
 		$parsed = $this->parse_handle($handle);
 		if ( ! $parsed['is_worktree'] || (string) ( $proof['handle'] ?? '' ) !== $handle ) {
 			return new \WP_Error('invalid_worktree_handoff_proof', 'A matching managed worktree handoff proof is required.', array( 'status' => 400 ));
 		}
 
-		$result = WorkspaceMutationLock::with_repo($this->workspace_path, (string) $parsed['repo'], function () use ( $handle, $proof ) {
+		$result = WorkspaceMutationLock::with_repo($this->workspace_path, (string) $parsed['repo'], function () use ( $handle, $proof, $deadline ) {
+			if ( $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
+				return $this->worktree_handoff_timeout();
+			}
 			$metadata = WorktreeContextInjector::get_metadata_fresh($handle);
+			if ( $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
+				return $this->worktree_handoff_timeout();
+			}
 			$stored   = is_array($metadata) ? (array) ( $metadata['handoff_freshness_proof'] ?? array() ) : array();
-			if ( array() === $stored || ! hash_equals($this->worktree_handoff_proof_digest($stored), (string) ( $stored['digest'] ?? '' )) || ! hash_equals( (string) ( $stored['digest'] ?? '' ), (string) ( $proof['digest'] ?? '' )) || $this->worktree_handoff_proof_canonical_json($stored) !== $this->worktree_handoff_proof_canonical_json($proof) ) {
+			if ( 3 !== (int) ( $stored['version'] ?? 0 ) || 3 !== (int) ( $proof['version'] ?? 0 ) || array() === $stored || ! hash_equals($this->worktree_handoff_proof_digest($stored), (string) ( $stored['digest'] ?? '' )) || ! hash_equals( (string) ( $stored['digest'] ?? '' ), (string) ( $proof['digest'] ?? '' )) || $this->worktree_handoff_proof_canonical_json($stored) !== $this->worktree_handoff_proof_canonical_json($proof) ) {
 				return new \WP_Error('untrusted_worktree_handoff_proof', 'The supplied proof is not the active metadata-bound managed proof.', array( 'status' => 409 ));
 			}
 			$primary  = $this->get_primary_path( (string) $this->parse_handle($handle)['repo']);
@@ -252,7 +259,6 @@ trait WorkspaceWorktreeLifecycle {
 			if ( is_wp_error($base_ref) ) {
 				return $base_ref;
 			}
-			$deadline = microtime(true) + self::HANDOFF_REMOTE_PROBE_TIMEOUT;
 			$fetch    = WorktreeStalenessProbe::fetch($primary, null, $deadline);
 			if ( empty($fetch['ok']) ) {
 				return array(
@@ -383,32 +389,50 @@ trait WorkspaceWorktreeLifecycle {
 		if ( $remaining <= 0 ) {
 			return $this->worktree_handoff_timeout();
 		}
-		$remote_default_ref = $this->resolve_remote_default_ref($primary, $remaining);
-		if ( is_wp_error($remote_default_ref) ) {
-			return $remote_default_ref;
+		$remote_default = $this->worktree_handoff_remote_default($primary, $remaining);
+		if ( is_wp_error($remote_default) ) {
+			return $remote_default;
 		}
-		if ( ! is_string($remote_default_ref) || '' === $remote_default_ref ) {
-			return new \WP_Error('remote_default_unresolved', 'The remote default ref is unavailable.', array( 'status' => 409 ));
-		}
+		$remote_default_ref = $remote_default['ref'];
 		$head    = $this->worktree_handoff_git($path, 'rev-parse --verify HEAD^{commit}', $deadline);
 		$base    = $this->worktree_handoff_git($primary, 'rev-parse --verify ' . escapeshellarg($base_ref . '^{commit}'), $deadline);
 		$default = $this->worktree_handoff_git($primary, 'rev-parse --verify ' . escapeshellarg($remote_default_ref . '^{commit}'), $deadline);
 		if ( is_wp_error($head) || is_wp_error($base) || is_wp_error($default) ) {
 			return is_wp_error($head) ? $head : ( is_wp_error($base) ? $base : $default );
 		}
+		if ( ! hash_equals($remote_default['sha'], trim( (string) $default['output'] )) ) {
+			return new \WP_Error('remote_default_changed_during_verification', 'The remote default branch changed after the bounded fetch. Retry to obtain a proof for one remote advertisement.', array( 'status' => 409 ));
+		}
 		$proof           = array(
-			'version'            => 2,
+			'version'            => 3,
 			'proof_id'           => $proof_id,
 			'handle'             => $handle,
 			'worktree_sha'       => trim( (string) $head['output']),
 			'resolved_base_ref'  => $base_ref,
 			'resolved_base_sha'  => trim( (string) $base['output']),
 			'remote_default_ref' => $remote_default_ref,
-			'remote_default_sha' => trim( (string) $default['output']),
+			'remote_default_sha' => $remote_default['sha'],
+			'remote_default_advertised_sha' => $remote_default['sha'],
 			'verified_at'        => gmdate('c'),
 		);
 		$proof['digest'] = $this->worktree_handoff_proof_digest($proof);
 		return $proof;
+	}
+
+	/** @return array{ref:string,sha:string}|\WP_Error */
+	private function worktree_handoff_remote_default( string $primary, int $timeout_seconds ): array|\WP_Error {
+		$remote = $this->run_git($primary, 'ls-remote --symref origin HEAD', $timeout_seconds);
+		if ( is_wp_error($remote) ) {
+			if ( $this->is_git_timeout_error($remote) ) {
+				return $this->worktree_handoff_timeout();
+			}
+			return new \WP_Error('remote_default_unresolved', 'The remote default branch could not be verified. Check remote network, proxy, and credentials, then retry.', array( 'status' => 409 ));
+		}
+		$output = (string) ( $remote['output'] ?? '' );
+		if ( ! preg_match('/^ref: refs\/heads\/([^\s]+)\s+HEAD$/m', $output, $ref_matches) || ! preg_match('/^([0-9a-f]{40,64})\s+HEAD$/mi', $output, $sha_matches) ) {
+			return new \WP_Error('remote_default_unresolved', 'The remote did not advertise an unambiguous default branch and commit. Configure the remote HEAD or retry with an explicit base branch.', array( 'status' => 409 ));
+		}
+		return array( 'ref' => 'refs/remotes/origin/' . $ref_matches[1], 'sha' => strtolower($sha_matches[1]) );
 	}
 
 	/** Resolve metadata-dependent base state before starting a bounded Git probe. */

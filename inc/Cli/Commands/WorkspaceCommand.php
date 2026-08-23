@@ -242,7 +242,7 @@ class WorkspaceCommand extends BaseCommand {
 			),
 			'handoff-revalidate'    => array(
 				'shortdesc' => 'Revalidate a worktree handoff freshness proof.',
-				'longdesc'  => "After lock acquisition and fresh metadata validation, fetches and probes the managed worktree under a five-second shared Git remote-probe deadline. Metadata lookup and lock waiting are outside that bound because the storage API cannot accept a query timeout. current is an observation for an immediate consumer converge-or-refuse decision, not a lease held across external admission. Returns current, drift, fetch_failed, or contention.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree handoff-revalidate data-machine-code@fix-1117 --proof='<json-proof>' --format=json",
+				'longdesc'  => "Acquires the repository lock, validates fresh metadata, fetches, and probes the managed worktree under one five-second deadline. A proof is schema version 3 and binds the SHA advertised by `git ls-remote --symref origin HEAD`; older proof versions require a fresh allocation proof. current is an observation for an immediate consumer converge-or-refuse decision, not a lease held across external admission. Returns current, drift, fetch_failed, or contention.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree handoff-revalidate data-machine-code@fix-1117 --proof='<json-proof>' --format=json",
 				'synopsis'  => array(
 					array(
 						'type'        => 'positional',
