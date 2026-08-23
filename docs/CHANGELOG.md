@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.62.0] - 2026-08-23
+
+### Added
+- consume external process probe
+
+### Fixed
+- explain capacity warnings
+
 ## [0.61.5] - 2026-08-22
 
 ### Fixed
