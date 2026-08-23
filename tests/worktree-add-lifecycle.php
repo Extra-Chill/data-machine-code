@@ -350,9 +350,18 @@ try {
 	mkdir($source_path . '/upstream-package', 0777, true);
 	file_put_contents($source_path . '/upstream-package/composer.lock', '{}');
 	run_command('git add upstream-package/composer.lock && git commit -m upstream-dependency && git push', $source_path);
-	$rebased_admission = $workspace->worktree_add('homeboy', 'stale-rebase-demand', null, false, true, false, true, true);
+	$rebase_progress = array();
+	$rebased_admission = $workspace->worktree_add('homeboy', 'stale-rebase-demand', null, false, true, false, true, true, array(), false, false, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$rebase_progress ): void {
+		$rebase_progress[] = $event['phase'] ?? null;
+	});
 	assert_true(! is_wp_error($rebased_admission), is_wp_error($rebased_admission) ? $rebased_admission->get_error_message() : 'stale branch rebase admission failed');
 	assert_true(true === ( $rebased_admission['rebase_succeeded'] ?? false ), 'stale branch was not rebased onto its advanced upstream');
+	$post_create_validation = array_search('post_create_validation', $rebase_progress, true);
+	$staleness_probe = array_search('staleness_probe', $rebase_progress, true);
+	$rebase_start = array_search('rebase', $rebase_progress, true);
+	$default_branch_probe = array_search('default_branch_probe', $rebase_progress, true);
+	$bootstrap_start = array_search('bootstrap_start', $rebase_progress, true);
+	assert_true(false !== $post_create_validation && false !== $staleness_probe && false !== $rebase_start && false !== $default_branch_probe && false !== $bootstrap_start && $post_create_validation < $staleness_probe && $staleness_probe < $rebase_start && $rebase_start < $default_branch_probe && $default_branch_probe < $bootstrap_start, 'real rebase/bootstrap creation did not report post-create validation, slow probes, and bootstrap in order');
 	assert_true(1 === ( $rebased_admission['post_rebase_disk_budget']['demand_plan']['counts']['composer_roots'] ?? 0 ), 'post-rebase admission did not reserve the dependency root introduced only by upstream');
 	assert_true('post_materialization_target_tree_conservative' === ( $rebased_admission['post_rebase_disk_budget']['demand_source'] ?? '' ), 'post-rebase admission did not report its effective target-tree demand source');
 	run_command(
@@ -510,7 +519,7 @@ try {
 	assert_true(! is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : 'worktree_add failed');
 	assert_true(is_dir($result['path']), 'successful worktree_add path is not accessible');
 	assert_true(isset($wpdb->rows['homeboy@audit-primitives-20260616']), 'successful worktree_add was not persisted');
-	assert_true(array( 'repo_preflight', 'freshness_fetch', 'demand_planning', 'capacity_lock_wait', 'capacity_admitted', 'git_worktree_add', 'post_create_validation', 'lifecycle_metadata', 'inventory_metadata' ) === $progress, 'worktree add did not emit ordered phase progress through slow probes, creation, and post-create inventory persistence');
+	assert_true(array( 'repo_preflight', 'freshness_fetch', 'demand_planning', 'capacity_lock_wait', 'capacity_admitted', 'git_worktree_add', 'post_create_validation', 'staleness_probe', 'default_branch_probe', 'lifecycle_metadata', 'inventory_metadata' ) === $progress, 'worktree add did not emit ordered phase progress through slow probes, creation, and post-create inventory persistence');
 	assert_true(null === WorktreeContextInjector::get_creation_intent('homeboy@audit-primitives-20260616'), 'successful worktree_add left its pre-creation journal behind');
 	assert_true('refused' !== ( $result['disk_budget']['status'] ?? '' ), 'normal worktree_add should pass the disk budget gate without hard refusal');
 	$capacity_locks = array_values(
@@ -658,8 +667,15 @@ try {
 	// Simulate a caller being terminated after checkout materialization and after
 	// bootstrap starts: its durable running phase must block readiness until the
 	// exact compatible add retry completes bootstrap.
-	$interrupted_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	$bootstrap_progress = array();
+	$interrupted_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ), false, false, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$bootstrap_progress ): void {
+		$bootstrap_progress[] = $event['phase'] ?? null;
+	});
 	assert_true(! is_wp_error($interrupted_bootstrap), is_wp_error($interrupted_bootstrap) ? $interrupted_bootstrap->get_error_message() : 'interrupted bootstrap fixture creation failed');
+	$bootstrap_start = array_search('bootstrap_start', $bootstrap_progress, true);
+	$bootstrap_complete = array_search('bootstrap_complete', $bootstrap_progress, true);
+	$inventory_metadata = array_search('inventory_metadata', $bootstrap_progress, true);
+	assert_true(false !== $bootstrap_start && false !== $bootstrap_complete && false !== $inventory_metadata && $bootstrap_start < $bootstrap_complete && $bootstrap_complete < $inventory_metadata, 'worktree add did not report actual bootstrap start, completion, and the following inventory phase in order');
 	$interrupted_bootstrap_handle = 'homeboy@interrupted-bootstrap';
 	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, array(
 		'provisioning' => array(

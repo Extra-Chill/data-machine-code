@@ -980,7 +980,9 @@ trait WorkspaceWorktreeLifecycle {
 			if ( is_wp_error($recorded) ) {
 				return $recorded;
 			}
+			$this->worktree_add_progress($progress_callback, 'bootstrap_start');
 			$response['bootstrap'] = WorktreeBootstrapper::bootstrap($wt_path, $remaining_seconds);
+			$this->worktree_add_progress($progress_callback, 'bootstrap_complete');
 			$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'bootstrap_complete', $operation_deadline, $operation_timeout, $operation_started);
 			if ( null !== $heartbeat_error ) {
 				return $heartbeat_error;
@@ -1296,6 +1298,7 @@ trait WorkspaceWorktreeLifecycle {
 			WorktreeContextInjector::forget_creation_intent($wt_handle, $creation_intent);
 			return $result;
 		}
+		$this->worktree_add_progress($progress_callback, 'post_create_validation');
 		$deadline_error = $this->worktree_operation_deadline_error('git_worktree_add', $operation_deadline, $operation_timeout, $operation_started);
 		if ( null !== $deadline_error ) {
 			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent);
@@ -1335,6 +1338,7 @@ trait WorkspaceWorktreeLifecycle {
 		// upstream refs are potentially stale themselves and any behind-count we
 		// produce would be misleading.
 		if ( ! $fetch_failed ) {
+			$this->worktree_add_progress($progress_callback, 'staleness_probe');
 			if ( ! $created_branch ) {
 				// Existing local branch: compare against its configured upstream.
 				$behind = WorktreeStalenessProbe::behind_count($wt_path, $branch, '@{upstream}');
@@ -1372,6 +1376,7 @@ trait WorkspaceWorktreeLifecycle {
 		// the worktree at its pre-rebase state AND still trips the gate, so
 		// --rebase-base alone on a conflicting rebase isn't a silent bypass.
 		if ( $rebase_base && ! $fetch_failed ) {
+			$this->worktree_add_progress($progress_callback, 'rebase');
 			$rebase_result = $this->try_rebase_worktree($wt_path, $response, $created_branch, (float) ( $preflight['operation_deadline'] ?? 0.0 ));
 			if ( null !== $rebase_result ) {
 				$response = array_merge($response, $rebase_result);
@@ -1379,6 +1384,7 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		if ( ! $fetch_failed ) {
+			$this->worktree_add_progress($progress_callback, 'default_branch_probe');
 			$this->populate_default_branch_behind_count($primary_path, $branch, $response);
 		}
 
@@ -1448,7 +1454,6 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		}
 
-		$this->worktree_add_progress($progress_callback, 'post_create_validation');
 		$lifecycle_metadata                   = WorktreeContextInjector::build_lifecycle_metadata(
 			array(
 				'handle'         => $wt_handle,
