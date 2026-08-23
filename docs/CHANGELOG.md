@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.64.0] - 2026-08-23
+
+### Added
+- add primary restore plan
+
+### Fixed
+- complete primary restore pagination
+- protect primary common git dirs
+
 ## [0.63.0] - 2026-08-23
 
 ### Added
