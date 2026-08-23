@@ -335,9 +335,10 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  bool        $allow_unverified_freshness Bypass fetch-failure freshness verification (default false).
 	 * @param  bool        $require_task_tracker Reject creation without task metadata (default false).
 	 * @param  string      $reuse_policy Existing-handle and same-task allocation policy.
+	 * @param  callable|null $progress_callback Best-effort lifecycle phase observer.
 	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, fetch_attempts?: int, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
-	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible', bool $remediate_capacity = false, bool $remediate_capacity_dry_run = false ): array|\WP_Error {
+	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible', bool $remediate_capacity = false, bool $remediate_capacity_dry_run = false, ?callable $progress_callback = null ): array|\WP_Error {
 		$visible = $this->require_workspace_visible();
 		if ( null !== $visible ) {
 			return $visible;
@@ -420,10 +421,11 @@ trait WorkspaceWorktreeLifecycle {
 		// Fetch and demand planning only touch this primary. Keep them out of the
 		// global capacity critical section so unrelated repositories can prepare in
 		// parallel; capacity-changing checkout and bootstrap remain globally fenced.
+		$this->worktree_add_progress($progress_callback, 'repo_preflight');
 		$preflight = WorkspaceMutationLock::with_repo(
 			$this->workspace_path,
 			$repo,
-			fn() => $this->worktree_capacity_preflight($primary_path, $repo, $branch, $from, $bootstrap, $operation_deadline),
+			fn() => $this->worktree_capacity_preflight($primary_path, $repo, $branch, $from, $bootstrap, $operation_deadline, $progress_callback),
 			$capacity_timeout
 		);
 		$preflight = $this->worktree_operation_lock_result($preflight, 'repo_preflight_lock_wait', $operation_timeout, $operation_started);
@@ -438,6 +440,7 @@ trait WorkspaceWorktreeLifecycle {
 			return $this->worktree_operation_timeout('capacity_lock_wait', $operation_timeout, $operation_started);
 		}
 
+		$this->worktree_add_progress($progress_callback, 'capacity_lock_wait');
 		$locked = WorkspaceMutationLock::with_repo(
 			$this->workspace_path,
 			'workspace-capacity-admission',
@@ -464,7 +467,8 @@ trait WorkspaceWorktreeLifecycle {
 				$operation_timeout,
 				$operation_started,
 				$preflight,
-				$capacity_lock
+				$capacity_lock,
+				$progress_callback
 			),
 			$capacity_timeout,
 			array(
@@ -478,7 +482,8 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/** Prepare repo-local freshness and projected demand before global admission. */
-	private function worktree_capacity_preflight( string $primary_path, string $repo, string $branch, ?string $from, bool $bootstrap, float $operation_deadline ): array|\WP_Error {
+	private function worktree_capacity_preflight( string $primary_path, string $repo, string $branch, ?string $from, bool $bootstrap, float $operation_deadline, ?callable $progress_callback = null ): array|\WP_Error {
+		$this->worktree_add_progress($progress_callback, 'freshness_fetch');
 		$fetch = WorktreeStalenessProbe::fetch($primary_path, null, $operation_deadline);
 		if ( ! $fetch['ok'] ) {
 			return array( 'fetch' => $fetch );
@@ -486,6 +491,7 @@ trait WorkspaceWorktreeLifecycle {
 
 		$exists_local = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
 		$target_ref   = $exists_local ? 'refs/heads/' . $branch : ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) );
+		$this->worktree_add_progress($progress_callback, 'demand_planning');
 		$demand_plan  = WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
 		if ( $demand_plan instanceof \WP_Error ) {
 			// Preserve the existing capacity-path wrapper for explicit missing bases;
@@ -621,7 +627,8 @@ trait WorkspaceWorktreeLifecycle {
 		int $operation_timeout = 0,
 		float $operation_started = 0.0,
 		array $preflight = array(),
-		?WorkspaceMutationLock $capacity_lock = null
+		?WorkspaceMutationLock $capacity_lock = null,
+		?callable $progress_callback = null
 	): array|\WP_Error {
 		$operation_timeout  = $operation_timeout > 0 ? $operation_timeout : self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		$operation_started  = $operation_started > 0.0 ? $operation_started : microtime(true);
@@ -630,6 +637,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( null !== $deadline_error ) {
 			return $deadline_error;
 		}
+		$this->worktree_add_progress($progress_callback, 'capacity_admitted');
 		$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'capacity_admitted', $operation_deadline, $operation_timeout, $operation_started);
 		if ( null !== $heartbeat_error ) {
 			return $heartbeat_error;
@@ -884,7 +892,7 @@ trait WorkspaceWorktreeLifecycle {
 					'operation_deadline'    => $operation_deadline,
 					'operation_timeout'     => $operation_timeout,
 					'operation_started'     => $operation_started,
-			)), $repo_timeout);
+				), $progress_callback), $repo_timeout);
 		$response = $this->worktree_operation_lock_result($response, 'repo_lock_wait', $operation_timeout, $operation_started);
 
 		if ( is_wp_error($response) ) {
@@ -1007,6 +1015,7 @@ trait WorkspaceWorktreeLifecycle {
 			WorktreeContextInjector::forget_metadata($wt_handle);
 			return $deadline_error;
 		}
+		$this->worktree_add_progress($progress_callback, 'inventory_metadata');
 		$inventory = $this->worktree_inventory();
 		$persisted = $inventory->upsert($this->build_worktree_inventory_row_from_handle($wt_handle));
 		if ( ! $persisted ) {
@@ -1207,7 +1216,8 @@ trait WorkspaceWorktreeLifecycle {
 		array $task = array(),
 		bool $allow_unverified_freshness = false,
 		array $intent = array(),
-		array $preflight = array()
+		array $preflight = array(),
+		?callable $progress_callback = null
 	): array|\WP_Error {
 		if ( is_dir($wt_path) ) {
 			return new \WP_Error('worktree_exists', sprintf('Worktree handle "%s" already exists.', $wt_handle), array( 'status' => 400 ));
@@ -1276,6 +1286,7 @@ trait WorkspaceWorktreeLifecycle {
 			WorktreeContextInjector::forget_creation_intent($wt_handle, $creation_intent);
 			return $this->worktree_operation_timeout('git_worktree_add', $operation_timeout, $operation_started, array( 'cleanup' => 'no_checkout_created' ));
 		}
+		$this->worktree_add_progress($progress_callback, 'git_worktree_add');
 		$result        = $this->run_git($primary_path, $cmd, min(300, $add_remaining));
 		if ( is_wp_error($result) ) {
 			if ( $this->worktree_operation_remaining_seconds($operation_deadline) <= 0 ) {
@@ -1437,6 +1448,7 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		}
 
+		$this->worktree_add_progress($progress_callback, 'post_create_validation');
 		$lifecycle_metadata                   = WorktreeContextInjector::build_lifecycle_metadata(
 			array(
 				'handle'         => $wt_handle,
@@ -1472,6 +1484,7 @@ trait WorkspaceWorktreeLifecycle {
 				'resume_command' => $bootstrap ? $this->worktree_freshness_retry_command($repo, $branch, $from, $inject_context, $bootstrap, false, false, false, $task, $intent) : null,
 			),
 		);
+		$this->worktree_add_progress($progress_callback, 'lifecycle_metadata');
 		$metadata_stored                      = WorktreeContextInjector::promote_creation_intent( $wt_handle, $creation_intent, $lifecycle_metadata );
 		if ( is_wp_error( $metadata_stored ) ) {
 			if ( null !== WorktreeContextInjector::get_creation_intent($wt_handle) ) {
@@ -1489,6 +1502,7 @@ trait WorkspaceWorktreeLifecycle {
 			$response['context_injected']    = false;
 			$response['context_skip_reason'] = 'inject_context flag disabled';
 		} else {
+			$this->worktree_add_progress($progress_callback, 'context_injection');
 			$payload = WorktreeContextInjector::build_payload();
 			if ( null === $payload ) {
 				$response['context_injected']    = false;
@@ -1515,6 +1529,18 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		return $response;
+	}
+
+	/** Emit best-effort phase visibility without allowing a presentation failure to alter creation. */
+	private function worktree_add_progress( ?callable $callback, string $phase ): void {
+		if ( null === $callback ) {
+			return;
+		}
+		try {
+			$callback(array( 'operation' => 'worktree_add', 'phase' => $phase ));
+		} catch ( \Throwable ) {
+			// Progress reporting must never interrupt a protected workspace mutation.
+		}
 	}
 
 	/**

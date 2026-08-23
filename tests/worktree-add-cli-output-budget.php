@@ -24,7 +24,10 @@ namespace {
 	final class WP_CLI {
 		/** @var list<string> */
 		public static array $lines = array();
+		/** @var list<string> */
+		public static array $warnings = array();
 		public static function line( string $message ): void { self::$lines[] = $message; }
+		public static function warning( string $message ): void { self::$warnings[] = $message; }
 		public static function error( string $message ): void { throw new \RuntimeException($message); }
 		public static function halt( int $status ): never { throw new Worktree_Add_Cli_Halt($status); }
 	}
@@ -35,7 +38,12 @@ namespace {
 
 	final class Worktree_Add_Cli_Ability {
 		public function __construct( private array|WP_Error $result ) {}
-		public function execute( array $input ): array|WP_Error { return $this->result; }
+		public function execute( array $input ): array|WP_Error {
+			if ( isset($input['progress_callback']) && is_callable($input['progress_callback']) ) {
+				$input['progress_callback']( array( 'operation' => 'worktree_add', 'phase' => 'freshness_fetch' ) );
+			}
+			return $this->result;
+		}
 	}
 
 	function worktree_add_cli_assert( bool $condition, string $message ): void {
@@ -91,6 +99,7 @@ namespace {
 	worktree_add_cli_assert(in_array('worktree_count_warning_threshold', (array) ( $payload['warning_codes'] ?? array() ), true), 'Successful worktree-add JSON did not retain the stable worktree-count warning code.');
 	worktree_add_cli_assert(! isset($payload['capacity']['worktree_count']) && ! isset($payload['capacity']['free_bytes']) && ! isset($payload['capacity']['projected_demand_bytes']), 'Successful worktree-add JSON exposed detailed capacity projections.');
 	worktree_add_cli_assert(! isset($payload['bootstrap']['steps'][0]['output_tail']) && ! isset($payload['bootstrap']['steps'][0]['output_evidence']), 'Successful worktree-add JSON exposed bootstrap command evidence.');
+	worktree_add_cli_assert(array( 'Worktree add progress: freshness fetch.' ) === WP_CLI::$warnings, 'Worktree-add JSON progress was not routed to the stderr warning channel.');
 
 	WP_CLI::$lines = array();
 	$GLOBALS['worktree_add_cli_abilities']['datamachine-code/workspace-worktree-add'] = new Worktree_Add_Cli_Ability(

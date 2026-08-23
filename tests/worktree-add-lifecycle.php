@@ -503,10 +503,14 @@ try {
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-tracker-required'), 'strict tracker refusal left a worktree directory behind');
 
 	putenv('DATAMACHINE_TASK_URL=https://example.test/issues/environment');
-	$result    = $workspace->worktree_add('homeboy', 'audit-primitives-20260616', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/explicit' ), false, true);
+	$progress = array();
+	$result    = $workspace->worktree_add('homeboy', 'audit-primitives-20260616', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/explicit' ), false, true, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$progress ): void {
+		$progress[] = $event['phase'] ?? null;
+	});
 	assert_true(! is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : 'worktree_add failed');
 	assert_true(is_dir($result['path']), 'successful worktree_add path is not accessible');
 	assert_true(isset($wpdb->rows['homeboy@audit-primitives-20260616']), 'successful worktree_add was not persisted');
+	assert_true(array( 'repo_preflight', 'freshness_fetch', 'demand_planning', 'capacity_lock_wait', 'capacity_admitted', 'git_worktree_add', 'post_create_validation', 'lifecycle_metadata', 'inventory_metadata' ) === $progress, 'worktree add did not emit ordered phase progress through slow probes, creation, and post-create inventory persistence');
 	assert_true(null === WorktreeContextInjector::get_creation_intent('homeboy@audit-primitives-20260616'), 'successful worktree_add left its pre-creation journal behind');
 	assert_true('refused' !== ( $result['disk_budget']['status'] ?? '' ), 'normal worktree_add should pass the disk budget gate without hard refusal');
 	$capacity_locks = array_values(
