@@ -1507,6 +1507,10 @@ class WorkspaceAbilities {
 								'enum'        => array( 'reuse_compatible', 'isolated', 'recycle_terminal' ),
 								'description' => 'Reuse and allocation behavior: reuse_compatible (default) reuses only an exact compatible handle and refuses a new same-repo handle for the same task; isolated requires purpose, owner_run_ref, and cleanup_policy=remove_on_success for parallel same-task work. recycle_terminal is limited to a clean, non-live terminal exact handle whose pushed HEAD is contained in its requested base.',
 							),
+							'verbose'                    => array(
+								'type'        => 'boolean',
+								'description' => 'Return full capacity diagnostics and capped bootstrap output evidence. Default false returns a bounded summary.',
+							),
 						),
 						'required'   => array( 'repo', 'branch' ),
 					),
@@ -1536,9 +1540,22 @@ class WorkspaceAbilities {
 							),
 							'context_exclude_path'      => array( 'type' => 'string' ),
 							'context_skip_reason'       => array( 'type' => 'string' ),
+							'capacity'                  => array(
+								'type'        => 'object',
+								'description' => 'Default bounded capacity decision with status, free/projected capacity, demand, and worktree count.',
+							),
+							'warning_codes'             => array(
+								'type'        => 'array',
+								'items'       => array( 'type' => 'string' ),
+								'description' => 'Typed capacity, bootstrap, and freshness warning codes.',
+							),
+							'evidence'                  => array(
+								'type'        => 'object',
+								'description' => 'States how to request omitted diagnostic evidence. Use verbose=true for the full bounded internal result.',
+							),
 							'bootstrap'                 => array(
 								'type'        => 'object',
-								'description' => 'Present only when bootstrap=true. Contains success/ran_any booleans and a steps array.',
+								'description' => 'Present only when bootstrap=true. Default output contains concise step status, duration, and capped-output digest evidence; verbose=true includes capped output tails.',
 							),
 							'fetch_failed'              => array(
 								'type'        => 'boolean',
@@ -1590,7 +1607,7 @@ class WorkspaceAbilities {
 							),
 							'disk_budget'               => array(
 								'type'        => 'object',
-								'description' => 'Pre-create disk-budget report: filesystem capacity/used/free and safety thresholds, bounded workspace allocation and mount diagnostics when available, estimated shared usage, worktree count, warnings, and force override state.',
+								'description' => 'Verbose-only pre-create disk-budget report: filesystem capacity/used/free and safety thresholds, bounded workspace allocation and mount diagnostics when available, estimated shared usage, worktree count, warnings, and force override state.',
 							),
 							'rebase_attempted'          => array(
 								'type'        => 'boolean',
@@ -4117,7 +4134,7 @@ class WorkspaceAbilities {
 			return new \WP_Error('worktree_task_tracker_required', 'Refusing to create a managed worktree without a valid task URL or task reference.', array( 'status' => 400 ));
 		}
 		if ( RemoteWorkspaceBackend::should_handle() && self::hasLocalPrimaryCheckout($workspace, (string) ( $input['repo'] ?? '' )) ) {
-			return $workspace->worktree_add(
+			return self::worktree_add_response($workspace->worktree_add(
 				$input['repo'] ?? '',
 				$input['branch'] ?? '',
 				$input['from'] ?? null,
@@ -4133,7 +4150,7 @@ class WorkspaceAbilities {
 				$reuse_policy,
 				$remediate_capacity,
 				$remediate_capacity_dry_run
-			);
+			), $input);
 		}
 
 		if ( RemoteWorkspaceBackend::should_handle() ) {
@@ -4153,11 +4170,11 @@ class WorkspaceAbilities {
 				$reuse_policy
 			);
 			if ( ! self::shouldFallbackToLocalWorkspace($result) ) {
-				return self::decorate_remote_workspace_result('worktree_add', $result);
+				return self::worktree_add_response(self::decorate_remote_workspace_result('worktree_add', $result), $input);
 			}
 		}
 
-		return $workspace->worktree_add(
+		$result = $workspace->worktree_add(
 			$input['repo'] ?? '',
 			$input['branch'] ?? '',
 			$input['from'] ?? null,
@@ -4174,6 +4191,12 @@ class WorkspaceAbilities {
 			$remediate_capacity,
 			$remediate_capacity_dry_run
 		);
+		return self::worktree_add_response($result, $input);
+	}
+
+	/** Keep the detailed lifecycle contract internal and opt it into public responses explicitly. */
+	private static function worktree_add_response( array|\WP_Error $result, array $input ): array|\WP_Error {
+		return ! empty($input['verbose']) || $result instanceof \WP_Error ? $result : \DataMachineCode\Cli\WorkspaceCompactOutput::worktree_add_result($result);
 	}
 
 	/** Plan a local worktree using the same typed fields and defaults as add. */

@@ -435,6 +435,9 @@ try {
 	);
 	assert_true(! is_wp_error($ability_operator_local), is_wp_error($ability_operator_local) ? $ability_operator_local->get_error_message() : 'explicit operator-local ability creation failed');
 	assert_true(is_dir($workspace_root . '/homeboy@ability-operator-local'), 'explicit operator-local ability creation did not materialize a worktree');
+	assert_true(! isset($ability_operator_local['disk_budget']), 'default ability response exposed the full disk-budget model');
+	assert_true(isset($ability_operator_local['capacity']['status']), 'default ability response omitted the concise capacity decision');
+	assert_true('verbose_on_request' === ( $ability_operator_local['evidence']['mode'] ?? null ), 'default ability response omitted its explicit verbose evidence mode');
 
 	$strict_missing = $workspace->worktree_add('homeboy', 'audit-primitives-tracker-required', 'origin/main', false, false, false, false, true, array(), false, true);
 	assert_true(is_wp_error($strict_missing), 'strict worktree creation accepted missing tracker metadata');

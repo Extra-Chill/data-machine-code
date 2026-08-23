@@ -119,6 +119,7 @@ class WorkspaceCommand extends BaseCommand {
 					array( 'type' => 'assoc', 'name' => 'purpose', 'description' => 'Worktree purpose metadata.' ),
 					array( 'type' => 'assoc', 'name' => 'owner-run-ref', 'description' => 'Owning run reference.' ),
 					array( 'type' => 'assoc', 'name' => 'cleanup-policy', 'description' => 'Cleanup policy metadata.' ),
+					array( 'type' => 'flag', 'name' => 'verbose', 'description' => 'Include full capacity and capped bootstrap evidence in JSON output.' ),
 					$format,
 				),
 			),
@@ -4487,6 +4488,7 @@ class WorkspaceCommand extends BaseCommand {
 				$input['force'] = ! empty($assoc_args['force']);
 				$input['remediate_capacity'] = ! empty($assoc_args['remediate-capacity']);
 				$input['remediate_capacity_dry_run'] = ! empty($assoc_args['remediate-capacity-dry-run']);
+				$input['verbose'] = ! empty($assoc_args['verbose']);
 				if ( isset($assoc_args['reuse-policy']) ) {
 					$input['reuse_policy'] = (string) $assoc_args['reuse-policy'];
 				}

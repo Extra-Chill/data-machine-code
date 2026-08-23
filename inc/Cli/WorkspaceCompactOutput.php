@@ -13,6 +13,93 @@ class WorkspaceCompactOutput {
 
 	private const ROW_SAMPLE_LIMIT = 5;
 
+	/** Project a worktree-add result for bounded public JSON responses. */
+	public static function worktree_add_result( array $result ): array {
+		$bootstrap = (array) ( $result['bootstrap'] ?? array() );
+		$capacity  = (array) ( $result['disk_budget'] ?? array() );
+
+		return self::filter_empty(
+			array(
+				'success'        => (bool) ( $result['success'] ?? true ),
+				'handle'         => $result['handle'] ?? null,
+				'path'           => $result['path'] ?? null,
+				'branch'         => $result['branch'] ?? null,
+				'slug'           => $result['slug'] ?? null,
+				'created_branch' => isset( $result['created_branch'] ) ? (bool) $result['created_branch'] : null,
+				'reused'         => isset( $result['reused'] ) ? (bool) $result['reused'] : null,
+				'recycled'       => isset( $result['recycled'] ) ? (bool) $result['recycled'] : null,
+				'adopted'        => isset( $result['adopted'] ) ? (bool) $result['adopted'] : null,
+				'message'        => $result['message'] ?? null,
+				'capacity'       => self::worktree_capacity_summary( $capacity ),
+				'bootstrap'      => self::worktree_bootstrap_summary( $bootstrap ),
+				'warning_codes'  => self::worktree_warning_codes( $result, $capacity, $bootstrap ),
+				'evidence'       => array(
+					'mode'          => 'verbose_on_request',
+					'verbose_input' => array( 'verbose' => true ),
+					'omitted'       => array( 'capacity_model', 'capacity_reclaim', 'bootstrap_step_output', 'metadata' ),
+				),
+			)
+		);
+	}
+
+	private static function worktree_capacity_summary( array $capacity ): array {
+		if ( array() === $capacity ) {
+			return array();
+		}
+
+		return self::filter_empty(
+			array_intersect_key(
+				$capacity,
+				array_flip(array( 'status', 'force_override', 'worktree_count', 'free_bytes', 'free_gib', 'free_percent', 'free_inodes', 'free_inode_percent', 'projected_demand_bytes', 'projected_demand_inodes', 'projected_free_bytes', 'projected_free_inodes', 'demand_source' ))
+			)
+		);
+	}
+
+	private static function worktree_bootstrap_summary( array $bootstrap ): array {
+		if ( array() === $bootstrap ) {
+			return array();
+		}
+		$steps = array();
+		foreach ( (array) ( $bootstrap['steps'] ?? array() ) as $step ) {
+			$step = (array) $step;
+			$steps[] = self::filter_empty(array(
+				'step'             => $step['step'] ?? null,
+				'relative'         => $step['relative'] ?? null,
+				'status'           => $step['status'] ?? null,
+				'reason'           => $step['reason'] ?? null,
+				'exit_code'        => $step['exit_code'] ?? null,
+				'timed_out'        => $step['timed_out'] ?? null,
+				'duration_ms'      => $step['duration_ms'] ?? null,
+				'output_evidence'  => $step['output_evidence'] ?? null,
+			));
+		}
+
+		return self::filter_empty(array(
+			'success'     => isset( $bootstrap['success'] ) ? (bool) $bootstrap['success'] : null,
+			'ran_any'     => isset( $bootstrap['ran_any'] ) ? (bool) $bootstrap['ran_any'] : null,
+			'duration_ms' => $bootstrap['duration_ms'] ?? null,
+			'steps'       => $steps,
+		));
+	}
+
+	private static function worktree_warning_codes( array $result, array $capacity, array $bootstrap ): array {
+		$codes = array();
+		foreach ( (array) ( $capacity['warnings'] ?? array() ) as $warning ) {
+			$codes[] = is_array($warning) ? (string) ( $warning['code'] ?? $warning['reason_code'] ?? '' ) : (string) $warning;
+		}
+		foreach ( (array) ( $bootstrap['steps'] ?? array() ) as $step ) {
+			if ( 'failed' === ( $step['status'] ?? '' ) ) {
+				$codes[] = 'bootstrap_' . (string) ( $step['reason'] ?? 'failed' );
+			}
+		}
+		foreach ( array( 'fetch_failed', 'fetch_timed_out', 'rebase_succeeded' ) as $field ) {
+			if ( array_key_exists($field, $result) && false === $result[ $field ] ) {
+				$codes[] = $field;
+			}
+		}
+		return array_values(array_unique(array_filter($codes)));
+	}
+
 	public static function cleanup_result( array $result ): array {
 		$summary    = (array) ( $result['summary'] ?? array() );
 		$candidates = (array) ( $result['candidates'] ?? $result['artifact_candidates'] ?? $result['worktree_candidates'] ?? $result['rows'] ?? array() );
