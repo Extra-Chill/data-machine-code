@@ -4026,7 +4026,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *   alongside `--task-url` (applies to `add` only). Falls back to the
 	 *   `DATAMACHINE_TASK_REF` environment variable when omitted.
 	 *
-	 * [--reuse-policy=<reuse_compatible|isolated|recycle_terminal>]
+	 * [--reuse-policy=<reuse_compatible|isolated|recycle_terminal|claim_expired>]
 	 * : Reuse and allocation policy for `add`. The default
 	 *   `reuse_compatible` reuses only an exact compatible handle and refuses
 	 *   another handle in the same repository with the same task identity.
@@ -4461,7 +4461,7 @@ class WorkspaceCommand extends BaseCommand {
 			case 'add':
 			case 'plan':
 				if ( empty($args[1]) || empty($args[2]) ) {
-					WP_CLI::error('Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-ref=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--allow-unverified-freshness] [--rebase-base] [--force|--remediate-capacity [--remediate-capacity-dry-run]] [--reuse-policy=reuse_compatible|isolated|recycle_terminal] [--task-url=<url>|--task-ref=<ref>] [--require-task-tracker]');
+					WP_CLI::error('Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-ref=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--allow-unverified-freshness] [--rebase-base] [--force|--remediate-capacity [--remediate-capacity-dry-run]] [--reuse-policy=reuse_compatible|isolated|recycle_terminal|claim_expired] [--task-url=<url>|--task-ref=<ref>] [--require-task-tracker]');
 					return;
 				}
 				$input['repo']    = $args[1];

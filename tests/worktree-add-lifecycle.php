@@ -605,6 +605,17 @@ try {
 	assert_true('accepted' === ( $reused['reuse']['status'] ?? null ) && 'homeboy@idempotent-reuse' === ( $reused['reuse']['handle'] ?? null ), 'default exact reuse did not preserve typed result evidence');
 	assert_true($reuse_created_at === ( $wpdb->rows[$reuse_handle]['created_at'] ?? null ), 'reuse rewrote durable lifecycle metadata');
 	assert_true('https://example.test/issues/reuse' === ( $wpdb->rows[$reuse_handle]['task_url'] ?? '' ), 'reuse rewrote durable task metadata');
+	$claim_fixture = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ));
+	assert_true(! is_wp_error($claim_fixture), is_wp_error($claim_fixture) ? $claim_fixture->get_error_message() : 'claim fixture creation failed');
+	run_command('git push -u origin claim-expired', $claim_fixture['path']);
+	$claim_handle = 'homeboy@claim-expired';
+	WorktreeContextInjector::store_lifecycle_metadata($claim_handle, array( 'last_seen_at' => gmdate('c'), 'origin_agent' => '', 'origin_session' => '', 'origin_user' => '', 'owner_run_ref' => '' ));
+	$claim_intent = array( 'purpose' => 'recovered-owner', 'owner_run_ref' => 'claim-run-1', 'cleanup_policy' => 'remove_on_success' );
+	$fresh_claim = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ), false, false, $claim_intent, 'claim_expired');
+	assert_true(is_wp_error($fresh_claim) && 'fresh_unattributed_heartbeat' === ( $fresh_claim->get_error_data()['reuse']['reason_code'] ?? null ) && 0 <= (int) ( $fresh_claim->get_error_data()['reuse']['liveness_evidence']['heartbeat_age_seconds'] ?? -1 ) && WorktreeContextInjector::DEFAULT_HEARTBEAT_TTL_SECONDS === (int) ( $fresh_claim->get_error_data()['reuse']['liveness_evidence']['heartbeat_ttl_seconds'] ?? 0 ) && array( 'origin_agent', 'origin_session', 'origin_user', 'owner_run_ref' ) === ( $fresh_claim->get_error_data()['reuse']['liveness_evidence']['missing_ownership_fields'] ?? null ), 'fresh unattributed heartbeat did not refuse with complete deterministic evidence');
+	WorktreeContextInjector::store_lifecycle_metadata($claim_handle, array( 'last_seen_at' => gmdate('c', time() - WorktreeContextInjector::DEFAULT_HEARTBEAT_TTL_SECONDS - 1) ));
+	$claimed = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ), false, false, $claim_intent, 'claim_expired');
+	assert_true(! is_wp_error($claimed) && true === ( $claimed['claimed'] ?? false ) && 'expired_unattributed_heartbeat' === ( $claimed['claim']['reason_code'] ?? null ) && 'claim-run-1' === ( $claimed['metadata']['owner_run_ref'] ?? null ) && '' === ( $claimed['metadata']['ownership_lineage'][0]['previous_owner_run_ref'] ?? 'not-empty' ), is_wp_error($claimed) ? $claimed->get_error_message() : 'expired anonymous heartbeat was not safely claimed with ownership lineage');
 	// Simulate a caller being terminated after checkout materialization and after
 	// bootstrap starts: its durable running phase must block readiness until the
 	// exact compatible add retry completes bootstrap.

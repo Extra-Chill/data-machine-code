@@ -9,8 +9,13 @@ namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\ListCursor;
+use DataMachineCode\Support\MacOSLsofProcessPathProbe;
 
 defined('ABSPATH') || exit;
+
+if ( ! class_exists(MacOSLsofProcessPathProbe::class) ) {
+	require_once dirname(__DIR__) . '/Support/ProcessPathProbe.php';
+}
 
 trait WorkspaceWorktreeLifecycle {
 
@@ -299,6 +304,9 @@ trait WorkspaceWorktreeLifecycle {
 		if ( is_dir($wt_path) && ! $remediate_capacity_dry_run ) {
 			if ( 'recycle_terminal' === $reuse_policy ) {
 				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->recycle_terminal_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path));
+			}
+			if ( 'claim_expired' === $reuse_policy ) {
+				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->claim_expired_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path));
 			}
 			return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path));
 		}
@@ -1632,8 +1640,81 @@ trait WorkspaceWorktreeLifecycle {
 		return array( 'success' => true, 'handle' => $handle, 'path' => $existing['path'], 'branch' => $branch, 'slug' => $this->slugify_branch($branch), 'created_branch' => false, 'recycled' => true, 'recycle' => array( 'status' => 'accepted', 'reason_code' => 'terminal_exact_handle', 'lineage' => $lineage, 'context' => 'preserved', 'bootstrap' => 'preserved' ), 'metadata' => WorktreeContextInjector::get_metadata($handle), 'message' => sprintf('Recycled terminal worktree "%s" at %s; compatible context and bootstrap assets were preserved.', $handle, $existing['path']) );
 	}
 
+	/**
+	 * Claim an exact worktree whose anonymous heartbeat has expired, or whose
+	 * lifecycle has an authoritative terminal signal. This is intentionally a
+	 * named operation: ordinary compatible reuse never transfers ownership.
+	 */
+	private function claim_expired_worktree( string $handle, string $branch, ?string $from, bool $inject_context, bool $bootstrap, array $task, array $intent, string $primary_path ): array|\WP_Error {
+		$inspection = $this->worktree_get($handle, array( 'include_status' => true, 'include_disk' => false ));
+		if ( is_wp_error($inspection) || empty($inspection['worktrees'][0]) ) {
+			return $this->worktree_reuse_refused($handle, 'inspection_failed', array( 'error_code' => is_wp_error($inspection) ? $inspection->get_error_code() : 'worktree_not_found' ));
+		}
+		$existing = $inspection['worktrees'][0];
+		$metadata = is_array($existing['metadata'] ?? null) ? $existing['metadata'] : array();
+		$evidence = $this->worktree_reuse_evidence($handle, $existing, $metadata);
+		$liveness = WorktreeContextInjector::classify_liveness($metadata);
+		$evidence['liveness_evidence'] = $liveness;
+
+		if ( array() !== WorktreeContextInjector::missing_isolation_intent($intent) ) {
+			return $this->worktree_reuse_refused($handle, 'claim_ownership_required', $evidence + array( 'missing_ownership_fields' => WorktreeContextInjector::missing_isolation_intent($intent) ));
+		}
+		if ( ( $existing['branch'] ?? null ) !== $branch ) {
+			return $this->worktree_reuse_refused($handle, 'branch_mismatch', $evidence + array( 'requested_branch' => $branch ));
+		}
+		foreach ( array( 'dirty' => 'dirty_worktree', 'unpushed' => 'unpushed_commits' ) as $field => $reason ) {
+			if ( (int) ( $existing[ $field ] ?? 0 ) > 0 ) {
+				return $this->worktree_reuse_refused($handle, $reason, $evidence);
+			}
+		}
+		$contract = is_array($metadata['reuse_contract'] ?? null) ? $metadata['reuse_contract'] : array();
+		$base = null !== $from && '' !== trim($from) ? trim($from) : ( $contract['base_ref'] ?? null );
+		if ( ! is_string($base) || '' === $base || $base !== ( $contract['base_ref'] ?? null ) ) {
+			return $this->worktree_reuse_refused($handle, 'base_mismatch', $evidence + array( 'requested_base_ref' => $base, 'stored_base_ref' => $contract['base_ref'] ?? null ));
+		}
+		if ( $inject_context !== (bool) ( $contract['inject_context'] ?? null ) || $bootstrap !== (bool) ( $contract['bootstrap'] ?? null ) ) {
+			return $this->worktree_reuse_refused($handle, 'runtime_incompatible', $evidence);
+		}
+		if ( $this->worktree_reuse_task_identity($task) !== $this->worktree_reuse_task_identity((array) ($existing['task'] ?? array())) ) {
+			return $this->worktree_reuse_refused($handle, 'task_mismatch', $evidence + array( 'requested_task' => $task ));
+		}
+		$terminal = WorktreeContextInjector::has_cleanup_signal($metadata);
+		if ( ! $terminal && 'unattributable' !== (string) $liveness['attribution'] && 'unattributed' !== (string) $liveness['attribution'] ) {
+			return $this->worktree_reuse_refused($handle, 'foreign_owned_worktree', $evidence);
+		}
+		if ( ! $terminal && WorktreeContextInjector::LIVENESS_STALE !== ( $liveness['liveness'] ?? null ) ) {
+			return $this->worktree_reuse_refused($handle, 'fresh_unattributed_heartbeat', $evidence);
+		}
+		$process_probe = ( new MacOSLsofProcessPathProbe() )->snapshot_for_paths(array( (string) $existing['path'] ));
+		if ( 'available' !== (string) ($process_probe['status'] ?? '') ) {
+			return $this->worktree_reuse_refused($handle, 'active_process_probe_unavailable', $evidence + array( 'process_probe' => $process_probe ));
+		}
+		if ( array() !== (array) ($process_probe['records'] ?? array()) ) {
+			return $this->worktree_reuse_refused($handle, 'active_process', $evidence + array( 'process_probe' => $process_probe ));
+		}
+		$target = $this->run_git($primary_path, 'rev-parse --verify ' . escapeshellarg($base . '^{commit}'), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($target) ) {
+			return $this->worktree_reuse_refused($handle, 'base_unresolved', $evidence + array( 'requested_base_ref' => $base ));
+		}
+		$target_head = trim((string) ($target['output'] ?? ''));
+		$contained = $this->run_git((string) $existing['path'], 'merge-base --is-ancestor HEAD ' . escapeshellarg($target_head), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($contained) ) {
+			return $this->worktree_reuse_refused($handle, 'claim_head_not_in_base', $evidence + array( 'requested_base_ref' => $base, 'requested_base_head' => $target_head ));
+		}
+
+		$lineage = array( 'claimed_at' => gmdate('c'), 'previous_owner' => WorktreeContextInjector::summarize_owner($metadata), 'previous_owner_run_ref' => $metadata['owner_run_ref'] ?? null, 'previous_liveness' => $liveness, 'new_owner_run_ref' => $intent['owner_run_ref'], 'new_purpose' => $intent['purpose'], 'base_ref' => $base );
+		$metadata = array_merge($metadata, array( 'lifecycle_state' => WorktreeContextInjector::STATE_ACTIVE, 'last_seen_at' => gmdate('c'), 'observed_at' => gmdate('c'), 'purpose' => $intent['purpose'], 'owner_run_ref' => $intent['owner_run_ref'], 'cleanup_policy' => $intent['cleanup_policy'], 'ownership_lineage' => array_merge((array) ($metadata['ownership_lineage'] ?? array()), array( $lineage )) ));
+		$metadata['reuse_contract'] = array_merge($contract, $intent);
+		$stored = WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
+		if ( is_wp_error($stored) ) {
+			return new \WP_Error('worktree_claim_metadata_persistence_failed', 'Claim ownership metadata could not be persisted.', array( 'status' => 500, 'claim' => array( 'status' => 'failed', 'reason_code' => 'metadata_persistence' ) ));
+		}
+		return array( 'success' => true, 'handle' => $handle, 'path' => $existing['path'], 'branch' => $branch, 'slug' => $this->slugify_branch($branch), 'created_branch' => false, 'claimed' => true, 'claim' => array( 'status' => 'accepted', 'reason_code' => $terminal ? 'terminal_exact_handle' : 'expired_unattributed_heartbeat', 'lineage' => $lineage ), 'metadata' => WorktreeContextInjector::get_metadata($handle), 'message' => sprintf('Claimed expired or terminal worktree "%s" after exact clean branch, task, and base verification.', $handle) );
+	}
+
 	/** Build the shared evidence snapshot for worktree reuse decisions. */
 	private function worktree_reuse_evidence( string $handle, array $existing, mixed $metadata ): array {
+		$liveness = WorktreeContextInjector::classify_liveness(is_array($metadata) ? $metadata : null);
 		return array(
 			'handle'   => $handle,
 			'branch'   => $existing['branch'] ?? null,
@@ -1641,6 +1722,7 @@ trait WorkspaceWorktreeLifecycle {
 			'dirty'    => $existing['dirty'] ?? null,
 			'unpushed' => $existing['unpushed'] ?? null,
 			'liveness' => $existing['liveness'] ?? null,
+			'liveness_evidence' => $liveness,
 			'task'     => $existing['task'] ?? null,
 			'metadata' => $metadata,
 		);
