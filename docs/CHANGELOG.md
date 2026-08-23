@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.62.2] - 2026-08-23
+
+### Fixed
+- remove broken orphan worktrees safely
+
 ## [0.62.1] - 2026-08-23
 
 ### Fixed
