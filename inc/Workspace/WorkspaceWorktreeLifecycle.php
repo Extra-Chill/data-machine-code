@@ -2535,7 +2535,9 @@ trait WorkspaceWorktreeLifecycle {
 		if ( is_wp_error($limit) ) {
 			return new \WP_Error('invalid_worktree_list_limit', 'Worktree list limit must be an integer between 1 and 200.', array( 'status' => 400 ));
 		}
-		$cursor = isset($opts['cursor']) ? $this->decode_worktree_list_cursor((string) $opts['cursor'], $repo, $state, $target_handle, $task_ref, $owner_run_ref) : null;
+		$cursor = isset( $opts['cursor'] )
+			? $this->decode_worktree_list_cursor( (string) $opts['cursor'], $repo, $state, $target_handle, $task_ref, $owner_run_ref )
+			: null;
 		if ( is_wp_error($cursor) ) {
 			return $cursor;
 		}
@@ -2842,10 +2844,10 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	private function normalize_worktree_list_metadata_filter( mixed $value ): ?string {
-		if ( ! is_string($value) ) {
+		if ( ! is_string( $value ) ) {
 			return null;
 		}
-		$value = trim($value);
+		$value = trim( $value );
 		return '' === $value ? null : $value;
 	}
 
@@ -2853,16 +2855,20 @@ trait WorkspaceWorktreeLifecycle {
 		if ( null === $task_ref && null === $owner_run_ref ) {
 			return true;
 		}
-		if ( ! is_array($metadata) ) {
+		if ( ! is_array( $metadata ) ) {
 			return false;
 		}
 		if ( null !== $task_ref ) {
-			$task = is_array($metadata['origin_task'] ?? null) ? $metadata['origin_task'] : array();
-			if ( ! in_array($task_ref, array_filter(array( $task['task_url'] ?? null, $task['task_ref'] ?? null ), 'is_string'), true) ) {
+			$task       = is_array( $metadata['origin_task'] ?? null ) ? $metadata['origin_task'] : array();
+			$references = array_filter(
+				array( $task['task_url'] ?? null, $task['task_ref'] ?? null ),
+				'is_string'
+			);
+			if ( ! in_array( $task_ref, $references, true ) ) {
 				return false;
 			}
 		}
-		return null === $owner_run_ref || $owner_run_ref === ( $metadata['owner_run_ref'] ?? null );
+		return null === $owner_run_ref || ( $metadata['owner_run_ref'] ?? null ) === $owner_run_ref;
 	}
 
 	/** @param array<string,mixed> $summary @param array<string,mixed> $row */
@@ -2926,7 +2932,9 @@ trait WorkspaceWorktreeLifecycle {
 				$metadata_key = ! $is_primary ? ( $inside ? $handle : 'external:' . sha1($wt['path']) ) : null;
 				$metadata = null !== $metadata_key ? WorktreeContextInjector::get_metadata($metadata_key) : null;
 				if ( null !== $state_filter && ( ! is_array($metadata) || ( $metadata['lifecycle_state'] ?? null ) !== $state_filter ) ) { continue; }
-				if ( ! $this->worktree_list_matches_metadata_filters($metadata, $task_ref, $owner_run_ref) ) { continue; }
+				if ( ! $this->worktree_list_matches_metadata_filters( $metadata, $task_ref, $owner_run_ref ) ) {
+					continue;
+				}
 				yield array( 'handle' => $handle, 'repo' => $this->parse_handle($primary)['repo'], 'is_primary' => $is_primary, 'is_worktree' => ! $is_primary, 'external' => ! $is_primary && ! $inside, 'branch' => $wt['branch'], 'path' => $wt['path'], 'metadata' => $metadata, 'pr_url' => is_array($metadata) ? ( $metadata['pr_url'] ?? null ) : null, 'pr_number' => is_array($metadata) ? ( $metadata['pr_number'] ?? null ) : null );
 			}
 		}
@@ -3046,7 +3054,11 @@ trait WorkspaceWorktreeLifecycle {
 
 	/** @return array<string,string|null> */
 	private function worktree_list_cursor_filters( ?string $repo, ?string $state, string $handle, ?string $task_ref, ?string $owner_run_ref ): array {
-		$filters = array( 'repo' => $repo, 'state' => $state, 'handle' => $handle );
+		$filters = array(
+			'repo'   => $repo,
+			'state'  => $state,
+			'handle' => $handle,
+		);
 		if ( null !== $task_ref ) {
 			$filters['task_ref'] = $task_ref;
 		}
