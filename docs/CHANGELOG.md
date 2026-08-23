@@ -2,6 +2,19 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.63.0] - 2026-08-23
+
+### Added
+- add legacy handoff plans
+
+### Changed
+- contain lifecycle fixture cleanup
+
+### Fixed
+- complete pull before CLI success
+- claim expired anonymous heartbeats
+- bound worktree add JSON output
+
 ## [0.62.5] - 2026-08-23
 
 ### Fixed
