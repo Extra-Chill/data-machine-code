@@ -18,6 +18,7 @@ namespace DataMachineCode\Cli\Commands;
 use WP_CLI;
 use DataMachine\Cli\BaseCommand;
 use DataMachineCode\Abilities\WorkspaceAbilities;
+use DataMachineCode\Cli\ActiveNoSignalApplyPresentation;
 use DataMachineCode\Cli\CliResponseRenderer;
 use DataMachineCode\Cli\CliRepeatableOptionParser;
 use DataMachineCode\Cli\WorkspaceCompactOutput;
@@ -89,7 +90,8 @@ class WorkspaceCommand extends BaseCommand {
 	 */
 	private function unavailable_ability( string $expected_ability ): void {
 		$diagnostic = WorkspaceAbilities::unavailable_diagnostic($expected_ability);
-		$message    = function_exists('wp_json_encode') ? wp_json_encode($diagnostic) : json_encode($diagnostic);
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode -- This bootstrap path supports runtimes without wp_json_encode().
+		$message = function_exists('wp_json_encode') ? wp_json_encode($diagnostic) : json_encode($diagnostic);
 		WP_CLI::error(is_string($message) ? $message : sprintf('Workspace ability not available: %s', $expected_ability));
 	}
 
@@ -99,77 +101,228 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array<string,array<string,mixed>>
 	 */
 	public static function worktree_command_definitions(): array {
-		$option = static fn ( string $name, string $description = 'Operation option.' ): array => array( 'type' => 'assoc', 'name' => $name, 'description' => $description, 'optional' => true );
-		$flag   = static fn ( string $name, string $description = 'Operation flag.' ): array => array( 'type' => 'flag', 'name' => $name, 'description' => $description, 'optional' => true );
-		$format = $option('format', 'Output format (table, json, csv, yaml).');
-		$worktree_policy = WorktreeContextInjector::worktree_add_policy_schema_properties();
-		$definitions = array(
-			'add' => array(
+		$option              = static fn ( string $name, string $description = 'Operation option.' ): array => array(
+			'type'        => 'assoc',
+			'name'        => $name,
+			'description' => $description,
+			'optional'    => true,
+		);
+		$flag                = static fn ( string $name, string $description = 'Operation flag.' ): array => array(
+			'type'        => 'flag',
+			'name'        => $name,
+			'description' => $description,
+			'optional'    => true,
+		);
+		$format              = $option('format', 'Output format (table, json, csv, yaml).');
+		$worktree_policy     = WorktreeContextInjector::worktree_add_policy_schema_properties();
+		$definitions         = array(
+			'add'                   => array(
 				'shortdesc' => 'Create an isolated, managed worktree.',
 				'longdesc'  => "Creates `<repo>@<branch-slug>` and reports its handle, path, and disk-budget evaluation. Creation verifies remote freshness by default; `--force` is the explicit disk-budget override. `--remediate-capacity` instead runs bounded safe reclamation after a refusal and retries the exact add once when capacity recovers.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --from=origin/main --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1025\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --skip-bootstrap",
 				'synopsis'  => array(
-					array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Primary repository name.', 'required' => true ),
-					array( 'type' => 'positional', 'name' => 'branch', 'description' => 'Branch to create or check out.', 'required' => true ),
-					array( 'type' => 'assoc', 'name' => 'from', 'description' => 'Base ref (default origin/HEAD).' ),
-					array( 'type' => 'assoc', 'name' => 'base', 'description' => 'Alias for --from.' ),
-					array( 'type' => 'assoc', 'name' => 'base-ref', 'description' => 'Alias for --from.' ),
-					array( 'type' => 'assoc', 'name' => 'base-branch', 'description' => 'Branch name converted to origin/<branch>.' ),
-					array( 'type' => 'flag', 'name' => 'skip-context-injection', 'description' => 'Create without site-agent context.' ),
-					array( 'type' => 'flag', 'name' => 'skip-bootstrap', 'description' => 'Skip dependency bootstrap.' ),
-					array( 'type' => 'flag', 'name' => 'allow-stale', 'description' => 'Bypass the staleness gate.' ),
-					array( 'type' => 'flag', 'name' => 'allow-unverified-freshness', 'description' => 'Allow intentional offline creation.' ),
-					array( 'type' => 'flag', 'name' => 'rebase-base', 'description' => 'Rebase onto upstream after creation.' ),
-					array( 'type' => 'flag', 'name' => 'force', 'description' => 'Override the disk-budget refusal threshold.' ),
-					array( 'type' => 'flag', 'name' => 'remediate-capacity', 'description' => 'Run bounded safe remediation after a capacity refusal, then retry this add once.' ),
-					array( 'type' => 'flag', 'name' => 'remediate-capacity-dry-run', 'description' => 'Preview capacity remediation without cleanup or creation.' ),
-					array( 'type' => 'assoc', 'name' => 'task-url', 'description' => 'Task or issue URL to record.' ),
-					array( 'type' => 'assoc', 'name' => 'task-ref', 'description' => 'Short task reference to record.' ),
-					array( 'type' => 'flag', 'name' => 'require-task-tracker', 'description' => 'Require task tracking metadata.' ),
-					array( 'type' => 'assoc', 'name' => 'reuse-policy', 'description' => implode('|', $worktree_policy['reuse_policy']['enum'] ) . '. ' . $worktree_policy['reuse_policy']['description'] ),
-					array( 'type' => 'assoc', 'name' => 'purpose', 'description' => $worktree_policy['purpose']['description'] ),
-					array( 'type' => 'assoc', 'name' => 'owner-run-ref', 'description' => $worktree_policy['owner_run_ref']['description'] ),
-					array( 'type' => 'assoc', 'name' => 'cleanup-policy', 'description' => implode('|', $worktree_policy['cleanup_policy']['enum'] ) . '. ' . $worktree_policy['cleanup_policy']['description'] ),
-					array( 'type' => 'flag', 'name' => 'verbose', 'description' => 'Include full capacity and capped bootstrap evidence in JSON output.' ),
+					array(
+						'type'        => 'positional',
+						'name'        => 'repo',
+						'description' => 'Primary repository name.',
+						'required'    => true,
+					),
+					array(
+						'type'        => 'positional',
+						'name'        => 'branch',
+						'description' => 'Branch to create or check out.',
+						'required'    => true,
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'from',
+						'description' => 'Base ref (default origin/HEAD).',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'base',
+						'description' => 'Alias for --from.',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'base-ref',
+						'description' => 'Alias for --from.',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'base-branch',
+						'description' => 'Branch name converted to origin/<branch>.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'skip-context-injection',
+						'description' => 'Create without site-agent context.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'skip-bootstrap',
+						'description' => 'Skip dependency bootstrap.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'allow-stale',
+						'description' => 'Bypass the staleness gate.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'allow-unverified-freshness',
+						'description' => 'Allow intentional offline creation.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'rebase-base',
+						'description' => 'Rebase onto upstream after creation.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'force',
+						'description' => 'Override the disk-budget refusal threshold.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'remediate-capacity',
+						'description' => 'Run bounded safe remediation after a capacity refusal, then retry this add once.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'remediate-capacity-dry-run',
+						'description' => 'Preview capacity remediation without cleanup or creation.',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'task-url',
+						'description' => 'Task or issue URL to record.',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'task-ref',
+						'description' => 'Short task reference to record.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'require-task-tracker',
+						'description' => 'Require task tracking metadata.',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'reuse-policy',
+						'description' => implode('|', $worktree_policy['reuse_policy']['enum'] ) . '. ' . $worktree_policy['reuse_policy']['description'],
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'purpose',
+						'description' => $worktree_policy['purpose']['description'],
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'owner-run-ref',
+						'description' => $worktree_policy['owner_run_ref']['description'],
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'cleanup-policy',
+						'description' => implode('|', $worktree_policy['cleanup_policy']['enum'] ) . '. ' . $worktree_policy['cleanup_policy']['description'],
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'verbose',
+						'description' => 'Include full capacity and capped bootstrap evidence in JSON output.',
+					),
 					$format,
 				),
 			),
-			'apply-plan' => array(
+			'apply-plan'            => array(
 				'shortdesc' => 'Apply a digest-addressed worktree plan.',
 				'longdesc'  => "Applies a plan only when a fresh replan has the same digest. Changed remote, capacity, ownership, or destination state is refused.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree apply-plan --plan='<json-plan>' --format=json",
 				'synopsis'  => array( $option('plan', 'JSON object returned by worktree plan.'), $format ),
 			),
-			'remove' => array(
+			'remove'                => array(
 				'shortdesc' => 'Remove a managed worktree.',
 				'longdesc'  => "Removes one worktree. Dirty worktrees are refused unless `--force` is supplied.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree remove data-machine-code fix/1025\n    wp datamachine-code workspace worktree remove data-machine-code@fix-1025 --force",
 				'synopsis'  => array(
-					array( 'type' => 'positional', 'name' => 'repo-or-handle', 'description' => 'Primary repo or `<repo>@<branch-slug>` handle.', 'required' => true ),
-					array( 'type' => 'positional', 'name' => 'branch', 'description' => 'Branch when a repo is supplied.', 'optional' => true ),
-					array( 'type' => 'flag', 'name' => 'force', 'description' => 'Remove even when dirty.' ),
+					array(
+						'type'        => 'positional',
+						'name'        => 'repo-or-handle',
+						'description' => 'Primary repo or `<repo>@<branch-slug>` handle.',
+						'required'    => true,
+					),
+					array(
+						'type'        => 'positional',
+						'name'        => 'branch',
+						'description' => 'Branch when a repo is supplied.',
+						'optional'    => true,
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'force',
+						'description' => 'Remove even when dirty.',
+					),
 					$format,
 				),
 			),
-			'finalize' => array(
+			'finalize'              => array(
 				'shortdesc' => 'Record terminal worktree lifecycle metadata.',
 				'longdesc'  => "Attaches PR or completion state to a worktree. Finalization records cleanup eligibility but never bypasses dirty or unpushed safety gates.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree finalize data-machine-code@fix-1025 --pr=https://github.com/Extra-Chill/data-machine-code/pull/1026\n    wp datamachine-code workspace worktree finalize data-machine-code@fix-1025 --owner-terminal-outcome=success",
 				'synopsis'  => array(
-					array( 'type' => 'positional', 'name' => 'handle', 'description' => 'Worktree handle.', 'required' => true ),
-					array( 'type' => 'assoc', 'name' => 'pr', 'description' => 'Pull request URL or number.' ),
-					array( 'type' => 'assoc', 'name' => 'state', 'description' => 'Lifecycle state.' ),
-					array( 'type' => 'assoc', 'name' => 'owner-terminal-outcome', 'description' => 'Creator terminal outcome.' ),
+					array(
+						'type'        => 'positional',
+						'name'        => 'handle',
+						'description' => 'Worktree handle.',
+						'required'    => true,
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'pr',
+						'description' => 'Pull request URL or number.',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'state',
+						'description' => 'Lifecycle state.',
+					),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'owner-terminal-outcome',
+						'description' => 'Creator terminal outcome.',
+					),
 					$format,
 				),
 			),
-			'cleanup' => array(
+			'cleanup'               => array(
 				'shortdesc' => 'Review or remove merged worktrees.',
 				'longdesc'  => "Use `--dry-run` to review candidates. The canonical task-backed cleanup flow is `workspace cleanup plan` followed by `workspace cleanup apply <run-id>`.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree cleanup --dry-run --format=json\n    wp datamachine-code workspace cleanup plan --mode=retention",
 				'synopsis'  => array(
-					array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name.' ),
-					array( 'type' => 'flag', 'name' => 'dry-run', 'description' => 'Preview without removal.' ),
-					array( 'type' => 'flag', 'name' => 'force', 'description' => 'Ignore dirty-worktree safety.' ),
-					array( 'type' => 'flag', 'name' => 'skip-github', 'description' => 'Use only local upstream-gone evidence.' ),
+					array(
+						'type'        => 'positional',
+						'name'        => 'repo',
+						'description' => 'Optional repository name.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'dry-run',
+						'description' => 'Preview without removal.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'force',
+						'description' => 'Ignore dirty-worktree safety.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'skip-github',
+						'description' => 'Use only local upstream-gone evidence.',
+					),
 					$flag('inventory-only', 'Use cheap inventory without per-worktree probes.'),
 					$flag('include-repaired-metadata', 'Include operator-approved repaired metadata rows.'),
-					array( 'type' => 'assoc', 'name' => 'limit', 'description' => 'Maximum candidates to process.' ),
+					array(
+						'type'        => 'assoc',
+						'name'        => 'limit',
+						'description' => 'Maximum candidates to process.',
+					),
 					$option('offset', 'Zero-indexed inventory offset.'),
 					$option('until-budget', 'Compact wall-clock budget.'),
 					$option('apply-plan', 'Reviewed JSON cleanup plan file.'),
@@ -180,32 +333,74 @@ class WorkspaceCommand extends BaseCommand {
 					$option('only', 'Limit output to one cleanup section or reason.'),
 				),
 			),
-			'list' => array(
+			'list'                  => array(
 				'shortdesc' => 'List managed worktrees from cheap inventory.',
 				'longdesc'  => "Returns a summary-first, 50-row cheap-inventory table by default. Legacy JSON, CSV, and YAML row streams remain exhaustive. Use --format=json --envelope for a bounded structured response and cursor. Add probe flags only for the details required.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree list --format=json\n    wp datamachine-code workspace worktree list --format=json --envelope\n    wp datamachine-code workspace worktree list --all --full",
-				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name.' ), $option('state', 'Lifecycle state filter.'), $option('limit', 'Maximum rows for table or --envelope output; default 50, maximum 200.'), $option('cursor', 'Continue an --envelope JSON response with the same filters.'), $flag('all', 'Explicitly return every matching row.'), $flag('envelope', 'Emit the bounded structured JSON response with summary and cursor metadata.'), $flag('with-status', 'Probe working-tree status.'), $flag('with-size', 'Probe disk use.'), $flag('full', 'Probe status and disk use.'), $flag('stale', 'Show stale rows; implies status.'), $format ),
+				'synopsis'  => array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'repo',
+						'description' => 'Optional repository name.',
+					),
+					$option('state', 'Lifecycle state filter.'),
+					$option('limit', 'Maximum rows for table or --envelope output; default 50, maximum 200.'),
+					$option('cursor', 'Continue an --envelope JSON response with the same filters.'),
+					$flag('all', 'Explicitly return every matching row.'),
+					$flag('envelope', 'Emit the bounded structured JSON response with summary and cursor metadata.'),
+					$flag('with-status', 'Probe working-tree status.'),
+					$flag('with-size', 'Probe disk use.'),
+					$flag('full', 'Probe status and disk use.'),
+					$flag('stale', 'Show stale rows; implies status.'),
+					$format,
+				),
 			),
-			'get' => array(
+			'get'                   => array(
 				'shortdesc' => 'Inspect one managed worktree.',
 				'longdesc'  => "Resolves one handle or canonical path through the bounded local lookup path.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree get data-machine-code@fix-1025 --format=json",
-				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'handle-or-canonical-path', 'description' => 'Worktree handle or canonical path.', 'required' => true ), $flag('with-status', 'Accepted compatibility flag; status is always included.'), $format ),
+				'synopsis'  => array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'handle-or-canonical-path',
+						'description' => 'Worktree handle or canonical path.',
+						'required'    => true,
+					),
+					$flag('with-status', 'Accepted compatibility flag; status is always included.'),
+					$format,
+				),
 			),
-			'prune' => array(
+			'prune'                 => array(
 				'shortdesc' => 'Prune stale Git worktree metadata.',
 				'longdesc'  => "Prunes stale Git worktree registry entries across managed primaries.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree prune --format=json",
 				'synopsis'  => array( $format ),
 			),
-			'refresh-context' => array(
+			'refresh-context'       => array(
 				'shortdesc' => 'Refresh a worktree\'s injected site context.',
 				'longdesc'  => "Re-reads the originating site context into one existing worktree.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree refresh-context data-machine-code@fix-1025 --format=json",
-				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'handle', 'description' => 'Worktree handle.', 'required' => true ), $format ),
+				'synopsis'  => array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'handle',
+						'description' => 'Worktree handle.',
+						'required'    => true,
+					),
+					$format,
+				),
 			),
 			'mark-cleanup-eligible' => array(
 				'shortdesc' => 'Mark a worktree eligible for safe cleanup.',
 				'longdesc'  => "Records cleanup-eligible lifecycle metadata without bypassing later removal safety gates.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree mark-cleanup-eligible data-machine-code@fix-1025 --pr=1026",
-				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'handle', 'description' => 'Worktree handle.', 'required' => true ), $option('pr', 'Pull request URL or number.'), $format ),
+				'synopsis'  => array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'handle',
+						'description' => 'Worktree handle.',
+						'required'    => true,
+					),
+					$option('pr', 'Pull request URL or number.'),
+					$format,
+				),
 			),
-			'cleanup-artifacts' => array(
+			'cleanup-artifacts'     => array(
 				'shortdesc' => 'Review or remove reclaimable worktree artifacts.',
 				'longdesc'  => "Reviews generated artifacts with bounded safety probes; applying a reviewed plan revalidates every row.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree cleanup-artifacts --dry-run --safety-probes --format=json",
 				'synopsis'  => array(
@@ -230,17 +425,31 @@ class WorkspaceCommand extends BaseCommand {
 					$format,
 				),
 			),
-			'emergency-cleanup' => array(
+			'emergency-cleanup'     => array(
 				'shortdesc' => 'Produce an emergency artifact cleanup review.',
 				'longdesc'  => "Creates an emergency cleanup review. Use the DB-backed cleanup plan/apply workflow for destructive application.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree emergency-cleanup --format=json",
 				'synopsis'  => array( $flag('apply', 'Accepted so the operation can return its DB-backed workflow guidance.'), $flag('force', 'Include forceable artifact candidates.'), $option('apply-plan', 'Reviewed emergency cleanup JSON plan file.'), $format ),
 			),
-			'reconcile-metadata' => array(
+			'reconcile-metadata'    => array(
 				'shortdesc' => 'Reconcile bounded worktree lifecycle metadata.',
 				'longdesc'  => "Previews or applies bounded DMC-owned metadata reconciliation.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree reconcile-metadata --dry-run --limit=25 --format=json",
-				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name.' ), $flag('dry-run', 'Preview reconciliation.'), $flag('apply', 'Apply reconciliation.'), $flag('via-jobs', 'Schedule reconciliation as jobs.'), $option('limit', 'Maximum worktrees to process.'), $option('offset', 'Zero-indexed inventory offset.'), $option('until-budget', 'Compact wall-clock budget.'), $option('apply-plan', 'Reviewed JSON reconciliation plan file.'), $format ),
+				'synopsis'  => array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'repo',
+						'description' => 'Optional repository name.',
+					),
+					$flag('dry-run', 'Preview reconciliation.'),
+					$flag('apply', 'Apply reconciliation.'),
+					$flag('via-jobs', 'Schedule reconciliation as jobs.'),
+					$option('limit', 'Maximum worktrees to process.'),
+					$option('offset', 'Zero-indexed inventory offset.'),
+					$option('until-budget', 'Compact wall-clock budget.'),
+					$option('apply-plan', 'Reviewed JSON reconciliation plan file.'),
+					$format,
+				),
 			),
-			'capacity-recovery' => array(
+			'capacity-recovery'     => array(
 				'shortdesc' => 'Run bounded worktree capacity recovery.',
 				'longdesc'  => "Runs capacity recovery using the supplied bounded page controls.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree capacity-recovery --limit=25 --until-budget=60s --format=json",
 				'synopsis'  => array( $option('limit', 'Maximum worktrees to process.'), $option('offset', 'Zero-indexed inventory offset.'), $option('replan-offset', 'Offset for a replanned page.'), $option('until-budget', 'Compact wall-clock budget.'), $format ),
@@ -253,19 +462,43 @@ class WorkspaceCommand extends BaseCommand {
 		);
 
 		foreach ( array( 'active-no-signal-report', 'active-no-signal-finalized-apply', 'active-no-signal-equivalent-clean-apply', 'active-no-signal-merged-apply', 'active-no-signal-remote-clean-apply' ) as $operation ) {
-			$apply = 'active-no-signal-report' !== $operation;
+			$apply                     = 'active-no-signal-report' !== $operation;
 			$definitions[ $operation ] = array(
 				'shortdesc' => $apply ? 'Apply one active/no-signal cleanup classification.' : 'Report active worktrees without lifecycle signals.',
 				'longdesc'  => sprintf("Runs the bounded %s workflow with explicit pagination.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree %s --limit=25 --offset=0 --format=json", $apply ? 'apply' : 'report', $operation),
-				'synopsis'  => array_merge(array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name.' ) ), $apply ? array( $flag('dry-run', 'Preview without application.') ) : array(), array( $option('limit', 'Maximum worktrees to process.'), $option('offset', 'Zero-indexed inventory offset.'), $option('until-budget', 'Compact wall-clock budget.'), $format )),
+				'synopsis'  => array_merge(array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'repo',
+						'description' => 'Optional repository name.',
+					),
+				), $apply ? array( $flag('dry-run', 'Preview without application.') ) : array(), array( $option('limit', 'Maximum worktrees to process.'), $option('offset', 'Zero-indexed inventory offset.'), $option('until-budget', 'Compact wall-clock budget.'), $format )),
 			);
 		}
 		$definitions['bounded-cleanup-eligible-apply'] = array(
 			'shortdesc' => 'Run a bounded cleanup-eligible worktree pass.',
 			'longdesc'  => "Removes explicitly cleanup-eligible worktrees after fresh safety checks.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25 --format=json",
-			'synopsis'  => array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name.', 'optional' => true ), $flag('dry-run', 'Preview without removal.'), $flag('force', 'Override dirty-worktree safety.'), $flag('discard-unpushed', 'Explicitly discard unpushed commits.'), $flag('via-jobs', 'Schedule work as jobs.'), $flag('include-repaired-metadata', 'Include repaired metadata rows.'), $option('limit', 'Maximum worktrees to process.'), $option('older-than', 'Only process worktrees older than this duration.'), $option('sort', 'Candidate reporting sort field.'), $option('remove-timeout', 'Removal timeout in seconds.'), $option('scope', 'Repository or worktree scope emitted by abandoned-cleanup guidance.'), $format ),
+			'synopsis'  => array(
+				array(
+					'type'        => 'positional',
+					'name'        => 'repo',
+					'description' => 'Optional repository name.',
+					'optional'    => true,
+				),
+				$flag('dry-run', 'Preview without removal.'),
+				$flag('force', 'Override dirty-worktree safety.'),
+				$flag('discard-unpushed', 'Explicitly discard unpushed commits.'),
+				$flag('via-jobs', 'Schedule work as jobs.'),
+				$flag('include-repaired-metadata', 'Include repaired metadata rows.'),
+				$option('limit', 'Maximum worktrees to process.'),
+				$option('older-than', 'Only process worktrees older than this duration.'),
+				$option('sort', 'Candidate reporting sort field.'),
+				$option('remove-timeout', 'Removal timeout in seconds.'),
+				$option('scope', 'Repository or worktree scope emitted by abandoned-cleanup guidance.'),
+				$format,
+			),
 		);
-		$definitions['cleanup-eligible-drain'] = array(
+		$definitions['cleanup-eligible-drain']         = array(
 			'shortdesc' => 'Drain cleanup-eligible worktrees in bounded passes.',
 			'longdesc'  => "Runs bounded cleanup-eligible passes until the page, pass, or time budget is exhausted.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree cleanup-eligible-drain --apply --limit=25 --passes=10 --format=json",
 			'synopsis'  => array(
@@ -309,7 +542,7 @@ class WorkspaceCommand extends BaseCommand {
 			);
 		}
 
-		$definitions['locks'] = array(
+		$definitions['locks']                   = array(
 			'shortdesc' => 'Inspect or prune workspace mutation locks.',
 			'longdesc'  => "## EXAMPLES\n\n    wp datamachine-code workspace worktree locks --format=json\n    wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json",
 			'synopsis'  => array( $flag('prune-stale', 'Prune stale locks.'), $flag('dry-run', 'Preview lock pruning.'), $format ),
@@ -525,7 +758,7 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( 'json' === ( $assoc_args['format'] ?? 'table' ) ) {
-			$this->renderer()->json(! empty($assoc_args['envelope']) ? $result : (array) ( $result['repos'] ?? array() ));
+			$this->renderer()->json( ! empty($assoc_args['envelope']) ? $result : (array) ( $result['repos'] ?? array() ));
 			return;
 		}
 
@@ -732,9 +965,9 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_workspace_list_summary( array $result, array $assoc_args ): void {
-		$summary = is_array($result['summary'] ?? null) ? $result['summary'] : array();
-		$summary['returned']    = (int) ( $result['returned'] ?? 0 );
-		$summary['next_cursor'] = $result['next_cursor'] ?? null;
+		$summary                     = is_array($result['summary'] ?? null) ? $result['summary'] : array();
+		$summary['returned']         = (int) ( $result['returned'] ?? 0 );
+		$summary['next_cursor']      = $result['next_cursor'] ?? null;
 		$summary['status_requested'] = ! empty($result['status_requested']);
 
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
@@ -745,11 +978,26 @@ class WorkspaceCommand extends BaseCommand {
 		if ( 'csv' === $format || 'yaml' === $format ) {
 			$this->format_items(
 				array(
-					array( 'metric' => 'total', 'count' => $summary['total'] ?? 0 ),
-					array( 'metric' => 'primary', 'count' => $summary['primary'] ?? 0 ),
-					array( 'metric' => 'worktree', 'count' => $summary['worktree'] ?? 0 ),
-					array( 'metric' => 'context', 'count' => $summary['context'] ?? 0 ),
-					array( 'metric' => 'non_git', 'count' => $summary['non_git'] ?? 0 ),
+					array(
+						'metric' => 'total',
+						'count'  => $summary['total'] ?? 0,
+					),
+					array(
+						'metric' => 'primary',
+						'count'  => $summary['primary'] ?? 0,
+					),
+					array(
+						'metric' => 'worktree',
+						'count'  => $summary['worktree'] ?? 0,
+					),
+					array(
+						'metric' => 'context',
+						'count'  => $summary['context'] ?? 0,
+					),
+					array(
+						'metric' => 'non_git',
+						'count'  => $summary['non_git'] ?? 0,
+					),
 				),
 				array( 'metric', 'count' ),
 				$assoc_args,
@@ -928,19 +1176,21 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand restore
 	 */
 	public function restore( array $args, array $assoc_args ): void {
-		$operation = (string) ($args[0] ?? '');
+		$operation = (string) ( $args[0] ?? '' );
 		$workspace = new Workspace();
-		if ('plan' === $operation) {
-			$result = $workspace->primary_restore_plan((string) ($args[1] ?? ''), isset($assoc_args['limit']) ? (int) $assoc_args['limit'] : 25, isset($assoc_args['offset']) ? (int) $assoc_args['offset'] : 0);
-		} elseif ('apply' === $operation) {
-			$plan = json_decode((string) ($assoc_args['plan'] ?? ''), true);
+		if ( 'plan' === $operation ) {
+			$result = $workspace->primary_restore_plan( (string) ( $args[1] ?? '' ), isset($assoc_args['limit']) ? (int) $assoc_args['limit'] : 25, isset($assoc_args['offset']) ? (int) $assoc_args['offset'] : 0);
+		} elseif ( 'apply' === $operation ) {
+			$plan   = json_decode( (string) ( $assoc_args['plan'] ?? '' ), true);
 			$result = is_array($plan) ? $workspace->primary_restore_apply($plan) : new \WP_Error('invalid_primary_restore_plan', 'restore apply requires a JSON --plan returned by restore plan.');
 		} else {
 			WP_CLI::error('Usage: wp datamachine-code workspace restore <plan|apply> [<repo>] [--plan=<json>]');
 			return;
 		}
-		if (is_wp_error($result)) { WP_CLI::error($result->get_error_message()); return; }
-		WP_CLI::log((string) wp_json_encode($result));
+		if ( is_wp_error($result) ) {
+			WP_CLI::error($result->get_error_message());
+			return; }
+		WP_CLI::log( (string) wp_json_encode($result));
 	}
 
 	/**
@@ -4577,10 +4827,10 @@ class WorkspaceCommand extends BaseCommand {
 				// --rebase-base auto-rebases onto upstream after creation (default: off).
 				$input['rebase_base'] = ! empty($assoc_args['rebase-base']);
 				// --force is an explicit disk-budget override for add.
-				$input['force'] = ! empty($assoc_args['force']);
-				$input['remediate_capacity'] = ! empty($assoc_args['remediate-capacity']);
+				$input['force']                      = ! empty($assoc_args['force']);
+				$input['remediate_capacity']         = ! empty($assoc_args['remediate-capacity']);
 				$input['remediate_capacity_dry_run'] = ! empty($assoc_args['remediate-capacity-dry-run']);
-				$input['verbose'] = ! empty($assoc_args['verbose']);
+				$input['verbose']                    = ! empty($assoc_args['verbose']);
 				if ( isset($assoc_args['reuse-policy']) ) {
 					$input['reuse_policy'] = (string) $assoc_args['reuse-policy'];
 				}
@@ -4600,7 +4850,7 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 
 			case 'apply-plan':
-				$decoded = json_decode((string) ($assoc_args['plan'] ?? ''), true);
+				$decoded = json_decode( (string) ( $assoc_args['plan'] ?? '' ), true);
 				if ( ! is_array($decoded) ) {
 					WP_CLI::error('Usage: worktree apply-plan --plan=<json-plan>');
 					return;
@@ -5379,10 +5629,10 @@ class WorkspaceCommand extends BaseCommand {
 			case 'active-no-signal-merged-apply':
 			case 'active-no-signal-remote-clean-apply':
 				$variants = array(
-					'active-no-signal-finalized-apply'        => 'finalized',
+					'active-no-signal-finalized-apply'    => 'finalized',
 					'active-no-signal-equivalent-clean-apply' => 'equivalent_clean',
-					'active-no-signal-merged-apply'           => 'merged',
-					'active-no-signal-remote-clean-apply'     => 'remote_clean',
+					'active-no-signal-merged-apply'       => 'merged',
+					'active-no-signal-remote-clean-apply' => 'remote_clean',
 				);
 				$this->render_worktree_active_no_signal_apply_result($result, $assoc_args, $variants[ $operation ]);
 				return;
@@ -6017,8 +6267,14 @@ class WorkspaceCommand extends BaseCommand {
 			$lanes = (array) ( $recovery['lanes'] ?? array() );
 			$this->format_items(
 				array(
-					array( 'lane' => 'cleanup', 'state' => (string) ( $lanes['cleanup'] ?? 'unknown' ) ),
-					array( 'lane' => 'stale_locks', 'state' => (string) ( $lanes['stale_locks'] ?? 'unknown' ) ),
+					array(
+						'lane'  => 'cleanup',
+						'state' => (string) ( $lanes['cleanup'] ?? 'unknown' ),
+					),
+					array(
+						'lane'  => 'stale_locks',
+						'state' => (string) ( $lanes['stale_locks'] ?? 'unknown' ),
+					),
 				),
 				array( 'lane', 'state' ),
 				array( 'format' => 'table' ),
@@ -6739,14 +6995,14 @@ class WorkspaceCommand extends BaseCommand {
 					continue;
 				}
 				$flat[] = array(
-					'handle'   => $row['handle'] ?? '',
-					'repo'     => $row['repo'] ?? '',
-					'branch'   => $row['branch'] ?? '',
-					'artifact' => $artifact['path'] ?? '',
-					'apparent'  => $this->format_bytes($artifact['apparent_bytes'] ?? null),
-					'allocated' => $this->format_bytes($artifact['allocated_bytes'] ?? $artifact['size_bytes'] ?? null),
+					'handle'     => $row['handle'] ?? '',
+					'repo'       => $row['repo'] ?? '',
+					'branch'     => $row['branch'] ?? '',
+					'artifact'   => $artifact['path'] ?? '',
+					'apparent'   => $this->format_bytes($artifact['apparent_bytes'] ?? null),
+					'allocated'  => $this->format_bytes($artifact['allocated_bytes'] ?? $artifact['size_bytes'] ?? null),
 					'accounting' => $artifact['allocation_accounting'] ?? 'unknown',
-					'path'     => rtrim( (string) ( $row['path'] ?? '' ), '/') . '/' . ltrim( (string) ( $artifact['path'] ?? '' ), '/'),
+					'path'       => rtrim( (string) ( $row['path'] ?? '' ), '/') . '/' . ltrim( (string) ( $artifact['path'] ?? '' ), '/'),
 				);
 			}
 		}
