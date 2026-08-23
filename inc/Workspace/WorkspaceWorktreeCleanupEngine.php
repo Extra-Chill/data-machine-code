@@ -244,7 +244,7 @@ trait WorkspaceWorktreeCleanupEngine {
 					array(
 						'handle'             => $handle,
 						'repo'               => $repo,
-						'branch'             => '',
+						'branch'             => $branch,
 						'path'               => $wt_path,
 						'dirty'              => null,
 						'signal'             => 'broken_orphan',
@@ -3210,7 +3210,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				return new \WP_Error('invalid_cleanup_plan', sprintf('Cleanup plan candidate #%d is not an object.', (int) $index), array( 'status' => 400 ));
 			}
 			foreach ( $required as $field ) {
-				if ( 'branch' === $field && in_array((string) ( $row['signal'] ?? $row['reason_code'] ?? '' ), array( 'broken_orphan', 'broken_orphan_worktree_marker' ), true) ) {
+				if ( 'branch' === $field && in_array( (string) ( $row['signal'] ?? $row['reason_code'] ?? '' ), array( 'broken_orphan', 'broken_orphan_worktree_marker' ), true ) ) {
 					continue;
 				}
 				if ( '' === trim( (string) ( $row[ $field ] ?? '' )) ) {
@@ -3332,6 +3332,8 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  string $branch  Branch the worktree is checked out to.
 	 * @param  string $wt_path Absolute path to the worktree directory.
 	 * @param  bool   $force   Pass --force to `git worktree remove`.
+	 * @param  int    $remove_timeout_seconds Git removal timeout.
+	 * @param  bool   $broken_orphan_only Refuse normal Git removal if orphan evidence changes.
 	 * @return array{success: bool, handle: string, message: string, removal_status: string, reason_code?: string, removal_error?: array{code: string, message: string}}|\WP_Error
 	 */
 	private function remove_worktree_by_path( string $repo, string $branch, string $wt_path, bool $force, int $remove_timeout_seconds = self::CLEANUP_GIT_REMOVE_TIMEOUT, bool $broken_orphan_only = false ): array|\WP_Error {
