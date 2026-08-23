@@ -109,6 +109,7 @@ $root    = sys_get_temp_dir() . '/dmc-cleanup-null-metadata-' . getmypid();
 $primary = $root . '/example';
 $work    = $root . '/example@fix-null-metadata';
 mkdir($primary . '/.git', 0777, true);
+mkdir($primary . '/.git/worktrees/fix-null-metadata', 0777, true);
 mkdir($work, 0777, true);
 file_put_contents($work . '/.git', 'gitdir: ' . $primary . '/.git/worktrees/fix-null-metadata');
 

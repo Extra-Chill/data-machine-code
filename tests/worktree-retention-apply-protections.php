@@ -182,6 +182,7 @@ namespace {
 	$primary = $root . '/example';
 	$work    = $root . '/example@fix-retention-safety';
 	mkdir($primary . '/.git', 0777, true);
+	mkdir($primary . '/.git/worktrees/fix-retention-safety', 0777, true);
 	mkdir($work, 0777, true);
 	file_put_contents($work . '/.git', 'gitdir: ' . $primary . '/.git/worktrees/fix-retention-safety');
 
@@ -308,6 +309,18 @@ namespace {
 	GitHubAbilities::$mode = 'none';
 	$removable            = $harness->revalidate($base_candidate);
 	retention_apply_protections_assert(! isset($removable['skipped']), 'finalized remote-tracking-clean rows remain removable when no open PR exists and GitHub is verified');
+
+	$git_target = $primary . '/.git/worktrees/fix-retention-safety';
+	rmdir($git_target);
+	$broken_candidate                   = $base_candidate;
+	$broken_candidate['signal']         = 'broken_orphan';
+	$broken_candidate['reason_code']    = 'broken_orphan';
+	$broken_candidate['classification'] = 'broken_orphan';
+	$broken = $harness->revalidate($broken_candidate);
+	retention_apply_protections_assert('broken_orphan' === ( $broken['reason_code'] ?? null ), 'fresh revalidation must classify a missing managed Git metadata target without running Git probes');
+	mkdir($git_target, 0777, true);
+	$restored = $harness->revalidate($broken_candidate);
+	retention_apply_protections_assert('broken_orphan_revalidation_failed' === ( $restored['skipped']['reason_code'] ?? null ), 'metadata restored after planning must block broken orphan removal');
 
 	$became_live_metadata = array(
 		'lifecycle_state' => WorktreeContextInjector::STATE_ACTIVE,

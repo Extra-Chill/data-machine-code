@@ -68,9 +68,9 @@ trait WorkspaceWorktreeInventoryCleanup {
 			if ( '' === $branch ) {
 				$branch = $branch_slug;
 			}
-			$path            = (string) ( $wt['path'] ?? '' );
-			$created_at      = $wt['created_at'] ?? null;
-			$base_row        = array(
+			$path       = (string) ( $wt['path'] ?? '' );
+			$created_at = $wt['created_at'] ?? null;
+			$base_row   = array(
 				'handle'          => $handle,
 				'repo'            => $repo,
 				'branch'          => $branch,
@@ -81,6 +81,13 @@ trait WorkspaceWorktreeInventoryCleanup {
 				'liveness_reason' => (string) ( $wt['liveness_reason'] ?? '' ),
 				'metadata'        => $metadata,
 			);
+			$broken_orphan = $this->classify_broken_orphan_worktree_marker($path);
+			if ( null !== $broken_orphan ) {
+				$base_row['classification']       = 'broken_orphan';
+				$base_row['broken_target_path']   = $broken_orphan['gitdir'];
+				$base_row['size_bytes']           = $this->estimate_path_size_bytes($path);
+				$base_row['estimated_size_bytes'] = $base_row['size_bytes'];
+			}
 			$live_protection = WorktreeCleanupCandidateClassifier::live_protection($base_row);
 			if ( null !== $live_protection ) {
 				$skipped[] = array_merge($base_row, $live_protection);
@@ -184,6 +191,20 @@ trait WorkspaceWorktreeInventoryCleanup {
 					continue;
 				}
 			}
+			if ( null !== $broken_orphan ) {
+				$candidates[] = array_merge(
+					$base_row,
+					array(
+						'dirty'               => null,
+						'signal'              => 'broken_orphan',
+						'reason_code'         => 'broken_orphan',
+						'reason'              => 'managed worktree directory has a .git pointer to missing Git worktree metadata',
+						'hint'                => 'Cleanup apply will remove this orphan only after locked revalidation proves the Git metadata is still missing.',
+						'safety_probe_status' => 'broken_orphan_marker_validated',
+					)
+				);
+				continue;
+			}
 
 			$signal    = WorktreeCleanupSignal::from_metadata($metadata);
 			$candidate = array_merge(
@@ -204,6 +225,10 @@ trait WorkspaceWorktreeInventoryCleanup {
 		$candidates = $this->sort_worktree_cleanup_rows($candidates, $sort);
 		$pagination = $this->build_worktree_cleanup_pagination($offset, $limit, $processed, $total, false, null);
 		$summary    = $this->build_worktree_cleanup_summary($candidates, array(), $skipped, $age_filter, WorktreeCleanupClassifier::BUCKET_CLEANUP_ELIGIBLE_UNPROBED);
+		$summary['broken_orphans'] = array(
+			'candidates' => count(array_filter($candidates, static fn( $row ) => 'broken_orphan' === (string) ( $row['classification'] ?? '' ))),
+			'blocked'    => count(array_filter($skipped, static fn( $row ) => 'broken_orphan' === (string) ( $row['classification'] ?? '' ))),
+		);
 		if ( null !== $pagination ) {
 			$summary['pagination'] = $pagination;
 		}
