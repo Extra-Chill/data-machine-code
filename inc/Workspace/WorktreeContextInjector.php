@@ -324,7 +324,7 @@ class WorktreeContextInjector {
 	public static function classify_liveness( ?array $metadata, ?int $now = null, int $ttl = self::DEFAULT_HEARTBEAT_TTL_SECONDS ): array {
 		$ttl = max(0, $ttl);
 		$ownership_fields = array( 'origin_agent', 'origin_session', 'origin_user', 'owner_run_ref' );
-		$missing_ownership_fields = array_values(array_filter($ownership_fields, static fn( string $field ): bool => '' === trim((string) ($metadata[ $field ] ?? ''))));
+		$missing_ownership_fields = array_values(array_filter($ownership_fields, static fn( string $field ): bool => ! self::ownership_value_is_present($metadata[ $field ] ?? null)));
 		$attribution = array() === $missing_ownership_fields ? 'attributable' : 'unattributed';
 		$evidence = array(
 			'heartbeat_ttl_seconds' => $ttl,
@@ -402,6 +402,19 @@ class WorktreeContextInjector {
 			'heartbeat_age_seconds' => $age,
 			'last_seen_at'          => $last_seen_raw,
 		), $evidence);
+	}
+
+	private static function ownership_value_is_present( mixed $value ): bool {
+		if ( is_array($value) ) {
+			foreach ( $value as $nested ) {
+				if ( self::ownership_value_is_present($nested) ) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		return is_scalar($value) && '' !== trim((string) $value);
 	}
 
 	/**
