@@ -867,6 +867,32 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	/**
+	 * Plan or apply registered-primary recovery after common Git directory loss.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp datamachine-code workspace restore plan static-site-importer --limit=25 --format=json
+	 *     wp datamachine-code workspace restore apply --plan='<json-plan>' --format=json
+	 *
+	 * @subcommand restore
+	 */
+	public function restore( array $args, array $assoc_args ): void {
+		$operation = (string) ($args[0] ?? '');
+		$workspace = new Workspace();
+		if ('plan' === $operation) {
+			$result = $workspace->primary_restore_plan((string) ($args[1] ?? ''), isset($assoc_args['limit']) ? (int) $assoc_args['limit'] : 25, isset($assoc_args['offset']) ? (int) $assoc_args['offset'] : 0);
+		} elseif ('apply' === $operation) {
+			$plan = json_decode((string) ($assoc_args['plan'] ?? ''), true);
+			$result = is_array($plan) ? $workspace->primary_restore_apply($plan) : new \WP_Error('invalid_primary_restore_plan', 'restore apply requires a JSON --plan returned by restore plan.');
+		} else {
+			WP_CLI::error('Usage: wp datamachine-code workspace restore <plan|apply> [<repo>] [--plan=<json>]');
+			return;
+		}
+		if (is_wp_error($result)) { WP_CLI::error($result->get_error_message()); return; }
+		WP_CLI::log((string) wp_json_encode($result));
+	}
+
+	/**
 	 * Adopt an existing primary checkout already under the workspace root.
 	 *
 	 * ## OPTIONS

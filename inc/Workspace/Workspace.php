@@ -25,6 +25,7 @@ require_once __DIR__ . '/WorkspaceGitIdentityPolicy.php';
 require_once __DIR__ . '/WorkspaceHygieneReport.php';
 require_once __DIR__ . '/WorkspaceMetadataReconciliation.php';
 require_once __DIR__ . '/WorkspaceRepositoryLifecycle.php';
+require_once __DIR__ . '/WorkspacePrimaryRestore.php';
 require_once __DIR__ . '/WorkspaceRowTriage.php';
 require_once __DIR__ . '/WorkspaceWorktreeLifecycle.php';
 require_once __DIR__ . '/WorktreeAgeFilter.php';
@@ -47,6 +48,7 @@ class Workspace {
 	use WorkspaceHygieneReport;
 	use WorkspaceMetadataReconciliation;
 	use WorkspaceRepositoryLifecycle;
+	use WorkspacePrimaryRestore;
 	use WorkspaceRowTriage;
 	use WorkspaceWorktreeLifecycle;
 	use WorkspaceWorktreeCleanupEngine;
