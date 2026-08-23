@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.65.0] - 2026-08-23
+
+### Added
+- expose typed admission decisions
+
+### Fixed
+- honor optional cleanup repo scope
+- bound worktree add admission
+
 ## [0.64.1] - 2026-08-23
 
 ### Fixed
