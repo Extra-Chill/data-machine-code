@@ -11,16 +11,19 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 $operation = (string) ( $argv[1] ?? '' );
 $workspace = (string) ( $argv[2] ?? '' );
 $value     = (string) ( $argv[3] ?? '' );
+$base_sha  = (string) ( $argv[4] ?? '' );
 
-if ( ! in_array($operation, array( 'identity', 'safety' ), true) || '' === $workspace || '' === $value ) {
-	fwrite(STDERR, "Usage: dmc-worktree-provider <identity|safety> <workspace-root> <handle|identity-token>\n");
+if ( ! in_array($operation, array( 'identity', 'safety', 'converge' ), true) || '' === $workspace || '' === $value || ( 'converge' === $operation && '' === $base_sha ) ) {
+	fwrite(STDERR, "Usage: dmc-worktree-provider <identity|safety|converge> <workspace-root> <handle|identity-token> [base-sha]\n");
 	exit(2);
 }
 
 $provider = new StandaloneWorktreeProvider();
-$result   = 'identity' === $operation
-	? $provider->resolve_identity($workspace, $value)
-	: $provider->attest_safety($workspace, $value);
+$result   = match ( $operation ) {
+	'identity' => $provider->resolve_identity($workspace, $value),
+	'safety' => $provider->attest_safety($workspace, $value),
+	'converge' => $provider->converge($workspace, $value, $base_sha),
+};
 
 fwrite(STDOUT, json_encode($result, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
 exit('error' === ( $result['status'] ?? '' ) ? 1 : 0);
