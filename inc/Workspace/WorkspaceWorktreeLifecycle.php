@@ -126,7 +126,7 @@ trait WorkspaceWorktreeLifecycle {
 			$disposition = 'capacity_blocked';
 		} elseif ( array() !== $candidates && 'isolated' !== $reuse_policy ) {
 			$disposition = 'owner_conflict';
-		} elseif ( array() !== $candidates && ( '' === trim((string) ($intent['purpose'] ?? '')) || '' === trim((string) ($intent['owner_run_ref'] ?? '')) || WorktreeContextInjector::CLEANUP_POLICY_REMOVE_ON_SUCCESS !== ( $intent['cleanup_policy'] ?? null ) ) ) {
+		} elseif ( array() !== $candidates && ( null === WorktreeContextInjector::normalize_scalar_metadata_value($intent['purpose'] ?? null) || null === WorktreeContextInjector::normalize_scalar_metadata_value($intent['owner_run_ref'] ?? null) || WorktreeContextInjector::CLEANUP_POLICY_REMOVE_ON_SUCCESS !== ( $intent['cleanup_policy'] ?? null ) ) ) {
 			$disposition = 'unsafe';
 		}
 		$legacy_handoff = $this->legacy_handoff_plan_for_candidates($repo, $candidates, $task, $intent, $inject_context, $bootstrap);
@@ -1803,6 +1803,9 @@ trait WorkspaceWorktreeLifecycle {
 			return $this->worktree_reuse_refused($handle, 'task_mismatch', $evidence + array( 'requested_task' => $task ));
 		}
 		$terminal = WorktreeContextInjector::has_cleanup_signal($metadata);
+		if ( 'malformed' === ( $liveness['attribution'] ?? null ) ) {
+			return $this->worktree_reuse_refused($handle, 'malformed_ownership_metadata', $evidence);
+		}
 		if ( ! $terminal && 'unattributable' !== (string) $liveness['attribution'] && 'unattributed' !== (string) $liveness['attribution'] ) {
 			return $this->worktree_reuse_refused($handle, 'foreign_owned_worktree', $evidence);
 		}

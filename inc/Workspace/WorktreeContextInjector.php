@@ -132,7 +132,7 @@ class WorktreeContextInjector {
 			$parts    = explode('=', $requirement, 2);
 			$field    = $parts[0];
 			$expected = $parts[1] ?? null;
-			if ( null === $expected ? '' === trim((string) ($intent[ $field ] ?? '')) : $expected !== ( $intent[ $field ] ?? null ) ) {
+			if ( null === $expected ? null === self::normalize_scalar_metadata_value($intent[ $field ] ?? null) : $expected !== ( $intent[ $field ] ?? null ) ) {
 				$missing[] = $requirement;
 			}
 		}
@@ -261,21 +261,33 @@ class WorktreeContextInjector {
 	}
 
 	public static function normalize_cleanup_policy( mixed $policy ): ?string {
-		$policy = strtolower(trim((string) $policy));
+		$policy = self::normalize_scalar_metadata_value($policy);
+		if ( null === $policy ) {
+			return null;
+		}
+		$policy = strtolower($policy);
 		return in_array($policy, self::VALID_CLEANUP_POLICIES, true) ? $policy : null;
+	}
+
+	/** Normalize a scalar persisted metadata value without coercing arrays. */
+	public static function normalize_scalar_metadata_value( mixed $value ): ?string {
+		if ( ! is_scalar($value) ) {
+			return null;
+		}
+		$value = trim((string) $value);
+		return '' === $value ? null : $value;
 	}
 
 	/** True only for a creator-recorded successful disposable terminal outcome. */
 	public static function has_owner_terminal_disposable_cleanup_signal( array $metadata ): bool {
 		return self::CLEANUP_POLICY_REMOVE_ON_SUCCESS === ( $metadata['cleanup_policy'] ?? null )
-			&& '' !== trim((string) ( $metadata['purpose'] ?? '' ))
-			&& '' !== trim((string) ( $metadata['owner_run_ref'] ?? '' ))
+			&& null !== self::normalize_scalar_metadata_value($metadata['purpose'] ?? null)
+			&& null !== self::normalize_scalar_metadata_value($metadata['owner_run_ref'] ?? null)
 			&& 'success' === ( $metadata['owner_terminal_outcome'] ?? null );
 	}
 
 	private static function optional_intent_value( mixed $value ): ?string {
-		$value = trim((string) $value);
-		return '' === $value ? null : $value;
+		return self::normalize_scalar_metadata_value($value);
 	}
 
 	/**
@@ -319,18 +331,31 @@ class WorktreeContextInjector {
 	 * @param  array<string,mixed>|null $metadata Worktree lifecycle metadata.
 	 * @param  int|null                 $now      Override "now" for tests. Unix timestamp.
 	 * @param  int                      $ttl      Heartbeat TTL in seconds.
-	 * @return array{liveness:string,reason:string,heartbeat_age_seconds:?int,last_seen_at:?string,heartbeat_ttl_seconds:int,review_after:?string,attribution:string,missing_ownership_fields:string[]}
+	 * @return array{liveness:string,reason:string,heartbeat_age_seconds:?int,last_seen_at:?string,heartbeat_ttl_seconds:int,review_after:?string,attribution:string,missing_ownership_fields:string[],malformed_ownership_fields:string[]}
 	 */
 	public static function classify_liveness( ?array $metadata, ?int $now = null, int $ttl = self::DEFAULT_HEARTBEAT_TTL_SECONDS ): array {
 		$ttl = max(0, $ttl);
 		$ownership_fields = array( 'origin_agent', 'origin_session', 'origin_user', 'owner_run_ref' );
-		$missing_ownership_fields = array_values(array_filter($ownership_fields, static fn( string $field ): bool => ! self::ownership_value_is_present($metadata[ $field ] ?? null)));
-		$attribution = array() === $missing_ownership_fields ? 'attributable' : 'unattributed';
+		$missing_ownership_fields = array();
+		$malformed_ownership_fields = array();
+		foreach ( $ownership_fields as $field ) {
+			$value = $metadata[ $field ] ?? null;
+			if ( ! self::ownership_value_is_present($value) ) {
+				$missing_ownership_fields[] = $field;
+				continue;
+			}
+			if ( ! self::is_valid_ownership_value($field, $value) ) {
+				$malformed_ownership_fields[] = $field;
+				$missing_ownership_fields[]   = $field;
+			}
+		}
+		$attribution = array() !== $malformed_ownership_fields ? 'malformed' : ( array() === $missing_ownership_fields ? 'attributable' : 'unattributed' );
 		$evidence = array(
 			'heartbeat_ttl_seconds' => $ttl,
 			'review_after' => null,
 			'attribution' => $attribution,
 			'missing_ownership_fields' => $missing_ownership_fields,
+			'malformed_ownership_fields' => $malformed_ownership_fields,
 		);
 		if ( ! is_array($metadata) || empty($metadata) ) {
 			return array_merge(array(
@@ -413,6 +438,9 @@ class WorktreeContextInjector {
 			}
 			return false;
 		}
+		if ( is_object($value) ) {
+			return array() !== (array) $value;
+		}
 
 		return is_scalar($value) && '' !== trim((string) $value);
 	}
@@ -490,24 +518,29 @@ class WorktreeContextInjector {
 		$user     = 'unknown';
 
 		if ( is_array($metadata) ) {
-			$origin_site = trim( (string) ( $metadata['origin_site'] ?? $metadata['site_name'] ?? '' ));
+			$origin_site_value = $metadata['origin_site'] ?? $metadata['site_name'] ?? '';
+			$origin_site       = is_scalar($origin_site_value) ? trim((string) $origin_site_value) : '';
 			if ( '' !== $origin_site ) {
 				$site = $origin_site;
 			}
 
-			$origin_site_url = trim( (string) ( $metadata['origin_site_url'] ?? $metadata['site_url'] ?? '' ));
+			$origin_site_url_value = $metadata['origin_site_url'] ?? $metadata['site_url'] ?? '';
+			$origin_site_url       = is_scalar($origin_site_url_value) ? trim((string) $origin_site_url_value) : '';
 			if ( '' !== $origin_site_url ) {
 				$site_url = $origin_site_url;
 			}
 
-			$origin_agent = trim( (string) ( $metadata['origin_agent'] ?? $metadata['agent_slug'] ?? '' ));
+			$origin_agent_value = $metadata['origin_agent'] ?? $metadata['agent_slug'] ?? '';
+			$origin_agent       = is_scalar($origin_agent_value) ? trim((string) $origin_agent_value) : '';
 			if ( '' !== $origin_agent ) {
 				$agent = $origin_agent;
 			}
 
 			$origin_user = is_array($metadata['origin_user'] ?? null) ? $metadata['origin_user'] : array();
-			$display     = trim( (string) ( $origin_user['display_name'] ?? '' ));
-			$login       = trim( (string) ( $origin_user['login'] ?? '' ));
+			$display_value = $origin_user['display_name'] ?? '';
+			$login_value   = $origin_user['login'] ?? '';
+			$display       = is_scalar($display_value) ? trim((string) $display_value) : '';
+			$login         = is_scalar($login_value) ? trim((string) $login_value) : '';
 			if ( '' !== $login ) {
 				$user = $login;
 			} elseif ( '' !== $display ) {
@@ -521,6 +554,26 @@ class WorktreeContextInjector {
 			'agent'    => $agent,
 			'user'     => $user,
 		);
+	}
+
+	/**
+	 * Determine whether a persisted ownership field has a producer-valid value.
+	 *
+	 * Scalars retain compatibility with legacy metadata. Structured user and
+	 * session values preserve recursively-normalized runtime envelopes, while
+	 * scalar-only ownership fields reject array claims.
+	 *
+	 * @param mixed $value Persisted ownership value.
+	 */
+	private static function is_valid_ownership_value( string $field, $value ): bool {
+		if ( is_scalar($value) ) {
+			return '' !== trim((string) $value);
+		}
+		if ( ! is_array($value) ) {
+			return false;
+		}
+		return in_array($field, array( 'origin_session', 'origin_user' ), true)
+			&& self::ownership_value_is_present($value);
 	}
 
 	/**
@@ -1631,7 +1684,7 @@ class WorktreeContextInjector {
 				'origin_site'      => '' !== (string) ( $payload['site_name'] ?? '' ) ? (string) $payload['site_name'] : (string) ( $payload['site_url'] ?? '' ),
 				'origin_site_url'  => (string) ( $payload['site_url'] ?? '' ),
 				'origin_site_name' => (string) ( $payload['site_name'] ?? '' ),
-				'origin_agent'     => (string) ( $payload['agent_slug'] ?? '' ),
+				'origin_agent'     => self::normalize_scalar_metadata_value($payload['agent_slug'] ?? null) ?? '',
 				'abspath'          => (string) ( $payload['abspath'] ?? '' ),
 				'created_at'       => (string) ( $payload['timestamp'] ?? gmdate('c') ),
 			)
