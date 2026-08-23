@@ -85,7 +85,11 @@ trait WorkspaceWorktreeLifecycle {
 			if ( $exact && WorktreeContextInjector::LIVENESS_LIVE === ( $existing['liveness'] ?? null ) && empty($intent['owner_run_ref']) ) {
 				$disposition = 'owner_conflict';
 			}
-			return $this->worktree_plan_result($input, $handle, $path, $slug, $disposition, array( 'destination' => $existing, 'ownership' => $stored_intent ));
+			$legacy_handoff = $this->legacy_handoff_plan($existing, $repo, $task, $intent, $inject_context, $bootstrap);
+			if ( 'legacy_handoff_required' === ($legacy_handoff['status'] ?? null) ) {
+				$disposition = 'legacy_handoff_required';
+			}
+			return $this->worktree_plan_result($input, $handle, $path, $slug, $disposition, array( 'destination' => $existing, 'ownership' => $stored_intent, 'legacy_handoff' => $legacy_handoff ));
 		}
 
 		$fetch = WorktreeStalenessProbe::fetch($primary_path);
@@ -120,13 +124,50 @@ trait WorkspaceWorktreeLifecycle {
 		} elseif ( array() !== $candidates && ( '' === trim((string) ($intent['purpose'] ?? '')) || '' === trim((string) ($intent['owner_run_ref'] ?? '')) || WorktreeContextInjector::CLEANUP_POLICY_REMOVE_ON_SUCCESS !== ( $intent['cleanup_policy'] ?? null ) ) ) {
 			$disposition = 'unsafe';
 		}
+		$legacy_handoff = $this->legacy_handoff_plan_for_candidates($repo, $candidates, $task, $intent, $inject_context, $bootstrap);
+		if ( 'legacy_handoff_required' === ($legacy_handoff['status'] ?? null) ) {
+			$disposition = 'legacy_handoff_required';
+		}
 		return $this->worktree_plan_result($input, $handle, $path, $slug, $disposition, array(
 			'freshness' => $freshness,
 			'capacity' => $disk_budget,
 			'bootstrap_demand' => $demand_plan,
 			'reuse_candidates' => $candidates,
 			'ownership' => $intent,
+			'legacy_handoff' => $legacy_handoff,
 		));
+	}
+
+	/** Build a fail-closed handoff plan for an inspected exact destination. */
+	private function legacy_handoff_plan( array $existing, string $repo, array $task, array $intent, bool $inject_context, bool $bootstrap ): array {
+		$process_probe = $this->artifact_process_path_probe()->snapshot_for_paths(array( (string) ($existing['path'] ?? '') ));
+		$lock = WorkspaceLockStore::active_lock('worktree-' . $repo, $repo);
+		return LegacyWorktreeHandoff::plan($existing + array(
+			'same_repository'  => true,
+			'task_identity'    => $this->worktree_reuse_task_identity((array) ($existing['task'] ?? array())),
+			'verifiable'       => true,
+			'locked'           => is_wp_error($lock) ? null : is_array($lock),
+			'no_active_process' => 'available' === ($process_probe['status'] ?? null) && array() === (array) ($process_probe['evidence'] ?? array()),
+		), array(
+			'task_identity' => $this->worktree_reuse_task_identity($task),
+			'inject_context' => $inject_context,
+			'bootstrap' => $bootstrap,
+		) + $intent);
+	}
+
+	/** Existing same-task listings lack process proof, so they remain plan-only vetoes. */
+	private function legacy_handoff_plan_for_candidates( string $repo, array $candidates, array $task, array $intent, bool $inject_context, bool $bootstrap ): ?array {
+		foreach ( $candidates as $candidate ) {
+			$inspection = ! empty($candidate['handle']) ? $this->worktree_get((string) $candidate['handle'], array( 'include_status' => true, 'include_disk' => false )) : null;
+			if ( is_wp_error($inspection) || empty($inspection['worktrees'][0]) ) {
+				continue;
+			}
+			$plan = $this->legacy_handoff_plan((array) $inspection['worktrees'][0], $repo, $task, $intent, $inject_context, $bootstrap);
+			if ( 'legacy_handoff_required' === ($plan['status'] ?? null) || ! empty($plan['vetoes']) ) {
+				return $plan;
+			}
+		}
+		return null;
 	}
 
 	/** Apply a previously reviewed plan only if the live replan is byte-for-byte identical. */
@@ -146,6 +187,63 @@ trait WorkspaceWorktreeLifecycle {
 		return $this->worktree_add((string) $input['repo'], (string) $input['branch'], $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ($input['task'] ?? array()), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ($input['intent'] ?? array()), (string) ($input['reuse_policy'] ?? 'reuse_compatible'));
 	}
 
+	/** Apply a reviewed legacy handoff after re-planning and taking the repo lock. */
+	public function worktree_apply_legacy_handoff( array $plan, string $mode ): array|\WP_Error {
+		$expected = (string) ($plan['digest'] ?? '');
+		$input = (array) ($plan['apply_intent'] ?? array());
+		if ( '' === $expected || ! in_array($mode, array( 'adopt_runtime', 'replace_isolated' ), true) ) {
+			return new \WP_Error('invalid_legacy_handoff_plan', 'A digest-addressed legacy handoff plan and supported mode are required.', array( 'status' => 400 ));
+		}
+		if ( 'replace_isolated' === $mode && array() !== WorktreeContextInjector::missing_isolation_intent((array) ($input['intent'] ?? array())) ) {
+			return new \WP_Error('legacy_handoff_isolation_intent_required', 'An isolated replacement requires purpose, owner_run_ref, and cleanup_policy=remove_on_success before the old candidate can be superseded.', array( 'status' => 400 ));
+		}
+		$current = $this->worktree_plan((string) ($input['repo'] ?? ''), (string) ($input['branch'] ?? ''), $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ($input['task'] ?? array()), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ($input['intent'] ?? array()), (string) ($input['reuse_policy'] ?? 'reuse_compatible'));
+		if ( is_wp_error($current) || ! hash_equals($expected, (string) ($current['digest'] ?? '')) || 'legacy_handoff_required' !== ($current['disposition'] ?? null) ) {
+			return new \WP_Error('stale_legacy_handoff_plan', 'The legacy handoff plan no longer has complete safety proof.', array( 'status' => 409, 'current' => is_wp_error($current) ? $current->get_error_code() : $current['disposition'] ?? null ));
+		}
+		$handoff = (array) ($current['legacy_handoff'] ?? array());
+		$old_handle = (string) ($handoff['candidate']['handle'] ?? '');
+		$repo = (string) ($input['repo'] ?? '');
+		$apply = function () use ( $mode, $current, $input, $handoff, $old_handle ): array|\WP_Error {
+			$metadata = WorktreeContextInjector::get_metadata($old_handle);
+			if ( ! is_array($metadata) ) {
+				return new \WP_Error('legacy_handoff_metadata_missing', 'Legacy handoff metadata disappeared before mutation.', array( 'status' => 409 ));
+			}
+			$lineage = (array) ($handoff['lineage'] ?? array()) + array( 'handoff_at' => gmdate('c'), 'mode' => $mode );
+			if ( 'adopt_runtime' === $mode ) {
+				$metadata['reuse_contract']['inject_context'] = ! empty($input['inject_context']);
+				$metadata['reuse_contract']['bootstrap'] = ! empty($input['bootstrap']);
+				foreach ( array( 'purpose', 'owner_run_ref', 'cleanup_policy' ) as $field ) {
+					if ( array_key_exists($field, (array) ($input['intent'] ?? array())) ) {
+						$metadata['reuse_contract'][ $field ] = $input['intent'][ $field ];
+						$metadata[ $field ] = $input['intent'][ $field ];
+					}
+				}
+				$metadata['handoff_lineage'] = array_merge((array) ($metadata['handoff_lineage'] ?? array()), array( $lineage ));
+				$stored = WorktreeContextInjector::store_lifecycle_metadata($old_handle, $metadata);
+				if ( is_wp_error($stored) ) {
+					return $stored;
+				}
+				return array( 'success' => true, 'type' => 'legacy_handoff', 'mode' => $mode, 'handle' => $old_handle, 'lineage' => $lineage, 'metadata' => WorktreeContextInjector::get_metadata($old_handle) );
+			}
+			if ((string) ($current['handle'] ?? '') === $old_handle) {
+				return new \WP_Error('legacy_handoff_replacement_requires_new_handle', 'An isolated replacement must use a different worktree handle.', array( 'status' => 409 ));
+			}
+			$metadata['lifecycle_state'] = WorktreeContextInjector::STATE_ABANDONED;
+			$metadata['handoff_lineage'] = array_merge((array) ($metadata['handoff_lineage'] ?? array()), array( $lineage + array( 'terminal_classification' => 'superseded' ) ));
+			$stored = WorktreeContextInjector::store_lifecycle_metadata($old_handle, $metadata);
+			if ( is_wp_error($stored) ) {
+				return $stored;
+			}
+			$result = $this->worktree_add((string) $input['repo'], (string) $input['branch'], $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ($input['task'] ?? array()), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ($input['intent'] ?? array()), 'isolated');
+			if ( is_wp_error($result) ) {
+				return $result;
+			}
+			return $result + array( 'legacy_handoff' => array( 'mode' => $mode, 'old_handle' => $old_handle, 'terminal_classification' => 'superseded', 'lineage' => $lineage ) );
+		};
+		return 'adopt_runtime' === $mode ? WorkspaceMutationLock::with_repo($this->workspace_path, $repo, $apply) : $apply();
+	}
+
 	/** @return array<string,mixed> */
 	private function worktree_plan_result( array $input, string $handle, string $path, string $slug, string $disposition, array $evidence ): array {
 		$plan = array( 'version' => 1, 'handle' => $handle, 'path' => $path, 'branch' => $input['branch'], 'slug' => $slug, 'disposition' => $disposition, 'apply_intent' => $input ) + $evidence;
@@ -153,7 +251,7 @@ trait WorkspaceWorktreeLifecycle {
 			'version' => $plan['version'], 'handle' => $handle, 'path' => $path, 'branch' => $input['branch'], 'disposition' => $disposition, 'apply_intent' => $input,
 			'freshness' => array( 'verified' => $plan['freshness']['verified'] ?? null, 'target_ref' => $plan['freshness']['target_ref'] ?? null, 'target_head' => $plan['freshness']['target_head'] ?? null ),
 			'capacity' => array( 'status' => $plan['capacity']['status'] ?? null, 'projected_demand_bytes' => $plan['capacity']['projected_demand_bytes'] ?? null, 'projected_demand_inodes' => $plan['capacity']['projected_demand_inodes'] ?? null ),
-			'destination' => $plan['destination'] ?? null, 'ownership' => $plan['ownership'] ?? null, 'reuse_candidates' => $plan['reuse_candidates'] ?? null,
+			'destination' => $plan['destination'] ?? null, 'ownership' => $plan['ownership'] ?? null, 'reuse_candidates' => $plan['reuse_candidates'] ?? null, 'legacy_handoff' => $plan['legacy_handoff'] ?? null,
 		);
 		$plan['digest'] = hash('sha256', wp_json_encode($this->worktree_plan_sort($digest_plan)) ?: '');
 		$plan['apply'] = array( 'ability' => 'datamachine-code/workspace-worktree-apply-plan', 'intent' => array( 'digest' => $plan['digest'], 'apply_intent' => $input ) );
