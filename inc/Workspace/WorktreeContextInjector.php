@@ -319,18 +319,33 @@ class WorktreeContextInjector {
 	 * @param  array<string,mixed>|null $metadata Worktree lifecycle metadata.
 	 * @param  int|null                 $now      Override "now" for tests. Unix timestamp.
 	 * @param  int                      $ttl      Heartbeat TTL in seconds.
-	 * @return array{liveness:string,reason:string,heartbeat_age_seconds:?int,last_seen_at:?string,heartbeat_ttl_seconds:int,review_after:?string,attribution:string,missing_ownership_fields:string[]}
+	 * @return array{liveness:string,reason:string,heartbeat_age_seconds:?int,last_seen_at:?string,heartbeat_ttl_seconds:int,review_after:?string,attribution:string,missing_ownership_fields:string[],malformed_ownership_fields:string[]}
 	 */
 	public static function classify_liveness( ?array $metadata, ?int $now = null, int $ttl = self::DEFAULT_HEARTBEAT_TTL_SECONDS ): array {
 		$ttl = max(0, $ttl);
 		$ownership_fields = array( 'origin_agent', 'origin_session', 'origin_user', 'owner_run_ref' );
-		$missing_ownership_fields = array_values(array_filter($ownership_fields, static fn( string $field ): bool => '' === trim((string) ($metadata[ $field ] ?? ''))));
+		$missing_ownership_fields = array();
+		$malformed_ownership_fields = array();
+		foreach ( $ownership_fields as $field ) {
+			$value = $metadata[ $field ] ?? null;
+			if ( ! is_scalar($value) ) {
+				if ( null !== $value ) {
+					$malformed_ownership_fields[] = $field;
+				}
+				$missing_ownership_fields[] = $field;
+				continue;
+			}
+			if ( '' === trim((string) $value) ) {
+				$missing_ownership_fields[] = $field;
+			}
+		}
 		$attribution = array() === $missing_ownership_fields ? 'attributable' : 'unattributed';
 		$evidence = array(
 			'heartbeat_ttl_seconds' => $ttl,
 			'review_after' => null,
 			'attribution' => $attribution,
 			'missing_ownership_fields' => $missing_ownership_fields,
+			'malformed_ownership_fields' => $malformed_ownership_fields,
 		);
 		if ( ! is_array($metadata) || empty($metadata) ) {
 			return array_merge(array(
