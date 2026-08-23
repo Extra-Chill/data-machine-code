@@ -496,6 +496,50 @@ final class WorktreeDiskBudget {
 		return $summary;
 	}
 
+	/**
+	 * Format the capacity thresholds that caused the current status.
+	 *
+	 * @param  array $budget Budget report.
+	 * @return array<int,string>
+	 */
+	public static function format_trigger_reasons( array $budget ): array {
+		$formatted_reasons = array();
+		foreach ( (array) ( $budget['trigger_reasons'] ?? array() ) as $reason ) {
+			$reason = (string) $reason;
+			switch ( $reason ) {
+				case 'projected_free_bytes_absolute_refusal_floor':
+					$formatted_reasons[] = sprintf('%s: projected free filesystem space is %s; blocking refusal threshold is %s. Creation is blocked unless --force is explicit.', $reason, self::format_bytes( (int) ( $budget['projected_free_bytes'] ?? 0 )), self::format_bytes( (int) ( $budget['refuse_free_bytes'] ?? 0 )));
+					break;
+				case 'projected_free_bytes_percentage_refusal_floor':
+					$formatted_reasons[] = sprintf('%s: projected free filesystem space is %.1f%%; blocking refusal threshold is %.1f%%. Creation is blocked unless --force is explicit.', $reason, (float) ( $budget['projected_free_percent'] ?? 0 ), (float) ( $budget['refuse_free_percent'] ?? 0 ));
+					break;
+				case 'projected_free_bytes_absolute_warning_floor':
+					$formatted_reasons[] = sprintf('%s: projected free filesystem space is %s; advisory warning threshold is %s. Creation remains allowed.', $reason, self::format_bytes( (int) ( $budget['projected_free_bytes'] ?? 0 )), self::format_bytes( (int) ( $budget['warn_free_bytes'] ?? 0 )));
+					break;
+				case 'projected_free_bytes_percentage_warning_floor':
+					$formatted_reasons[] = sprintf('%s: projected free filesystem space is %.1f%%; advisory warning threshold is %.1f%%. Creation remains allowed.', $reason, (float) ( $budget['projected_free_percent'] ?? 0 ), (float) ( $budget['warn_free_percent'] ?? 0 ));
+					break;
+				case 'projected_free_inodes_absolute_refusal_floor':
+					$formatted_reasons[] = sprintf('%s: projected free filesystem inodes are %s; blocking refusal threshold is %s. Creation is blocked unless --force is explicit.', $reason, number_format( (int) ( $budget['projected_free_inodes'] ?? 0 )), number_format( (int) ( $budget['refuse_free_inodes'] ?? 0 )));
+					break;
+				case 'projected_free_inodes_percentage_refusal_floor':
+					$formatted_reasons[] = sprintf('%s: projected free filesystem inodes are %.1f%% free; blocking refusal threshold is %.1f%%. Creation is blocked unless --force is explicit.', $reason, (float) ( $budget['projected_free_inode_percent'] ?? 0 ), (float) ( $budget['refuse_free_inode_percent'] ?? 0 ));
+					break;
+				case 'projected_free_inodes_absolute_warning_floor':
+					$formatted_reasons[] = sprintf('%s: projected free filesystem inodes are %s; advisory warning threshold is %s. Creation remains allowed.', $reason, number_format( (int) ( $budget['projected_free_inodes'] ?? 0 )), number_format( (int) ( $budget['warn_free_inodes'] ?? 0 )));
+					break;
+				case 'projected_free_inodes_percentage_warning_floor':
+					$formatted_reasons[] = sprintf('%s: projected free filesystem inodes are %.1f%% free; advisory warning threshold is %.1f%%. Creation remains allowed.', $reason, (float) ( $budget['projected_free_inode_percent'] ?? 0 ), (float) ( $budget['warn_free_inode_percent'] ?? 0 ));
+					break;
+				case 'worktree_count_warning_threshold':
+					$formatted_reasons[] = sprintf('%s: workspace has %d worktree-like directories; advisory warning threshold is %d. Creation remains allowed.', $reason, (int) ( $budget['worktree_count'] ?? 0 ), (int) ( $budget['warn_worktree_count'] ?? 0 ));
+					break;
+			}
+		}
+
+		return $formatted_reasons;
+	}
+
 	/** Format byte evidence for operator-facing capacity remediation. */
 	public static function format_bytes_for_operator( int|float $bytes ): string {
 		return self::format_bytes($bytes);

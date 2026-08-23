@@ -2918,6 +2918,9 @@ class WorkspaceCommand extends BaseCommand {
 		if ( is_array($result['workspace_capacity'] ?? null) ) {
 			$capacity = $result['workspace_capacity'];
 			WP_CLI::log(\DataMachineCode\Workspace\WorktreeDiskBudget::format_summary($capacity));
+			foreach ( \DataMachineCode\Workspace\WorktreeDiskBudget::format_trigger_reasons($capacity) as $reason ) {
+				WP_CLI::warning($reason);
+			}
 			$this->render_workspace_capacity_recovery(Workspace::workspace_hygiene_recovery_suggestion($capacity));
 		}
 		if ( empty($result['is_worktree']) && is_array($result['primary_freshness'] ?? null) ) {
@@ -2947,7 +2950,7 @@ class WorkspaceCommand extends BaseCommand {
 			return;
 		}
 
-		WP_CLI::log('Recovery (all commands are non-destructive):');
+		WP_CLI::log('Recovery for the listed capacity warning(s) (all commands are non-destructive):');
 		foreach ( $commands as $recovery_command ) {
 			WP_CLI::log(sprintf('%s: %s', (string) ( $recovery_command['label'] ?? '' ), (string) ( $recovery_command['command'] ?? '' )));
 		}
