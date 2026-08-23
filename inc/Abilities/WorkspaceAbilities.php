@@ -1764,7 +1764,7 @@ class WorkspaceAbilities {
 								'properties' => array(
 									'code'    => array(
 										'type' => 'string',
-										'enum' => array( 'invalid_worktree_handoff_proof', 'untrusted_worktree_handoff_proof', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'worktree_handoff_base_unresolved' ),
+										'enum' => array( 'invalid_worktree_handoff_proof', 'untrusted_worktree_handoff_proof', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'remote_default_changed_during_verification', 'worktree_handoff_base_unresolved' ),
 									),
 									'message' => array( 'type' => 'string' ),
 								),

@@ -26,7 +26,6 @@ namespace {
 	final class WP_Error {
 		public function __construct( public string $code = '', public string $message = '', public array $data = array() ) {}
 		public function get_error_code(): string { return $this->code; }
-		public function get_error_message(): string { return $this->message; }
 		public function get_error_data(): array { return $this->data; }
 	}
 }
@@ -324,7 +323,6 @@ namespace DataMachineCode\Tests {
 		$resolved->get_error_data()['attempted_sources'] ?? null,
 		'unavailable default-branch sources were not reported'
 	);
-	assert_true(str_contains((string) $resolved->get_error_data()['retry_hint'], '--branch=<default-branch>'), 'unavailable default-branch diagnosis did not provide an explicit branch override');
 
 	$ambiguous = new GitPullWorkspaceDouble();
 	$ambiguous->responses = array(

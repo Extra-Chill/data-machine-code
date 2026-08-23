@@ -88,10 +88,55 @@ wp datamachine-code runtime doctor --apply
 
 Configure the authoritative checkout and optional command contract with the
 `datamachine_code_runtime_source_doctor_config` filter. Its `source_path` and
-`release_ref` values are read-only inputs; `command_contract` may provide a
+`release_ref` values resolve only an `origin/<branch>` tracking ref or an immutable
+tag; the doctor reports stale or diverged local branch refs without fetching or
+mutating Git state. `command_contract` may provide a
 `command` and `flag` so the doctor can report a source-supported flag that the
 active WP-CLI registration rejects. The doctor never reconciles unless
-`--apply` is explicit.
+`--apply` is explicit. Copied and Git runtimes may register `external_reconciler`
+with an `owner`, typed `action`, and explicit `reconcile` callback. The callback
+receives runtime/source/release identities, and its result is accepted only after
+the active runtime is re-inspected. Official packages may include immutable
+`Package-Version`, `Package-Source-Tag`, `Package-Source-Commit`, and
+`Package-Digest` headers in `data-machine-code.php`; matching headers verify
+package provenance without requiring a source-tree file-set match. Headers are
+package metadata, not trust roots: configure an independently obtained
+`trusted_release_provenance` record with the same version, tag, commit, and
+digest or the doctor reports the package as untrusted. Package assemblers inject
+the headers with:
+
+```bash
+php bin/dmc-package-provenance --package-dir=/path/to/package --version=1.2.3 --source-tag=v1.2.3 --source-commit=<40-char-commit>
+```
+
+Persist the command's JSON result with the release record and supply it through
+the runtime configuration filter. The package digest excludes only the digest
+header value itself, allowing the independently persisted digest to detect every
+other package/header change.
+
+```php
+add_filter('datamachine_code_runtime_source_doctor_config', static function (array $config): array {
+	$config['external_reconciler'] = array(
+		'owner' => 'deployment integration',
+		'action' => array(
+			'type' => 'command',
+			'command' => 'owner deploy command',
+			'authorize_callback' => static fn(): bool => current_user_can('update_plugins'),
+		),
+		'reconcile' => static function (array $identity): array {
+			// The owning integration updates $identity['runtime']['path'].
+			return array( 'success' => true, 'changed' => true, 'message' => 'Deployment completed.' );
+		},
+	);
+	$config['trusted_release_provenance'] = array(
+		'version' => '1.2.3',
+		'source_tag' => 'v1.2.3',
+		'source_commit' => '<40-char-commit>',
+		'package_digest' => '<64-char-sha256-from-release-record>',
+	);
+	return $config;
+});
+```
 
 # Workspace
 wp datamachine-code workspace path

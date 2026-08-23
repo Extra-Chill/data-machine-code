@@ -10,8 +10,11 @@ function handoff_deadline_contract_assert( bool $condition, string $message ): v
 
 $source = (string) file_get_contents(dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php');
 handoff_deadline_contract_assert(str_contains($source, '$deadline = microtime(true) + self::HANDOFF_REMOTE_PROBE_TIMEOUT;'), 'Handoff revalidation does not establish its deadline before lock acquisition.');
+handoff_deadline_contract_assert(str_contains($source, '$lock_timeout = $this->worktree_handoff_remaining_seconds($deadline);'), 'Handoff revalidation does not derive lock acquisition timeout from the remaining deadline.');
+handoff_deadline_contract_assert(str_contains($source, '}, $lock_timeout);'), 'Handoff revalidation still uses a fixed lock timeout instead of the remaining deadline.');
 handoff_deadline_contract_assert(str_contains($source, 'function () use ( $handle, $proof, $deadline )'), 'Handoff deadline is not passed through the locked revalidation phase.');
-handoff_deadline_contract_assert(2 === substr_count($source, 'WorktreeContextInjector::get_metadata_fresh($handle);') || 1 === substr_count($source, 'WorktreeContextInjector::get_metadata_fresh($handle);'), 'Handoff metadata lookup is not visible to the deadline contract.');
+handoff_deadline_contract_assert(str_contains($source, 'private function worktree_handoff_metadata'), 'Handoff metadata I/O does not have its own deadline-aware boundary.');
+handoff_deadline_contract_assert(str_contains($source, 'WorktreeContextInjector::get_metadata_fresh($handle);'), 'Handoff metadata lookup is not visible to the deadline contract.');
 handoff_deadline_contract_assert(str_contains($source, "'ls-remote --symref origin HEAD', \$timeout_seconds"), 'Handoff proof did not require bounded remote default-branch evidence.');
 handoff_deadline_contract_assert(str_contains($source, "'remote_default_changed_during_verification'"), 'Handoff proof does not reject a remote advertisement that differs from the fetched remote ref.');
 handoff_deadline_contract_assert(str_contains($source, "new \\WP_Error('worktree_handoff_revalidation_timeout'"), 'Bounded remote-default timeout does not produce the typed handoff timeout.');

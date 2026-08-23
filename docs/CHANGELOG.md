@@ -2,6 +2,25 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.66.2] - 2026-08-23
+
+### Fixed
+- align cleanup command contracts
+
+## [0.66.1] - 2026-08-23
+
+### Changed
+- bound list discovery
+
+## [0.66.0] - 2026-08-23
+
+### Added
+- make safe runs recoverable
+- verify external release convergence
+
+### Fixed
+- queue capacity admissions
+
 ## [0.65.4] - 2026-08-23
 
 ### Changed

@@ -45,11 +45,13 @@ namespace {
 	$active_drain_ability = new WorktreeCommandFakeAbility();
 	$bounded_ability = new WorktreeCommandFakeAbility();
 	$artifact_ability = new WorktreeCommandFakeAbility();
+	$cleanup_eligible_drain_ability = new WorktreeCommandFakeAbility();
 	$GLOBALS['worktree_command_abilities'] = array(
 		'datamachine-code/workspace-worktree-abandoned-cleanup' => $ability,
 		'datamachine-code/workspace-worktree-active-no-signal-drain' => $active_drain_ability,
 		'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => $bounded_ability,
 		'datamachine-code/workspace-worktree-cleanup-artifacts' => $artifact_ability,
+		'datamachine-code/workspace-worktree-cleanup-eligible-drain' => $cleanup_eligible_drain_ability,
 	);
 	$command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
 	try {
@@ -118,6 +120,16 @@ namespace {
 	}
 	worktree_command_routing_assert('repo@blocked' === ( $artifact_ability->calls[0]['only_handle'] ?? null ), 'generated artifact retry command did not preserve its exact worktree handle.');
 	worktree_command_routing_assert(1 === ( $artifact_ability->calls[0]['limit'] ?? null ), 'generated artifact retry command did not preserve its one-worktree limit.');
+
+	try {
+		$command->__worktree_operation('cleanup-eligible-drain', array(), array( 'apply' => true, 'limit' => '25', 'passes' => '2', 'verbose' => true, 'format' => 'json' ));
+		throw new \RuntimeException('cleanup-eligible drain command did not execute its ability.');
+	} catch ( \RuntimeException $error ) {
+		worktree_command_routing_assert('Recorded abandoned routing input.' === $error->getMessage(), 'cleanup-eligible drain --verbose did not route to the owning ability.');
+	}
+	worktree_command_routing_assert(true === ( $cleanup_eligible_drain_ability->calls[0]['apply'] ?? false ), 'cleanup-eligible drain lost --apply.');
+	worktree_command_routing_assert(25 === ( $cleanup_eligible_drain_ability->calls[0]['limit'] ?? null ), 'cleanup-eligible drain lost --limit.');
+	worktree_command_routing_assert(2 === ( $cleanup_eligible_drain_ability->calls[0]['passes'] ?? null ), 'cleanup-eligible drain lost --passes.');
 
 	echo "worktree-command-routing: ok\n";
 }

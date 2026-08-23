@@ -1,0 +1,23 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+if ( ! class_exists('WP_Error') ) {
+	class WP_Error {
+		public function __construct( public string $code, public string $message ) {}
+		public function get_error_message(): string { return $this->message; }
+	}
+}
+define('ABSPATH', __DIR__ . '/../');
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+$values = array();
+foreach ( array_slice($argv, 1) as $argument ) {
+	if ( str_starts_with($argument, '--') && str_contains($argument, '=') ) {
+		[ $key, $value ] = explode('=', substr($argument, 2), 2);
+		$values[$key] = $value;
+	}
+}
+$result = \DataMachineCode\Runtime\RuntimeSourceDoctor::injectPackageProvenance((string) ($values['package-dir'] ?? ''), (string) ($values['version'] ?? ''), (string) ($values['source-tag'] ?? ''), (string) ($values['source-commit'] ?? ''));
+if ( $result instanceof WP_Error ) { fwrite(STDERR, $result->get_error_message() . "\n"); exit(1); }
+fwrite(STDOUT, json_encode($result, JSON_UNESCAPED_SLASHES) . "\n");

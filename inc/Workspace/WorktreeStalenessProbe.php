@@ -30,6 +30,10 @@ use DataMachineCode\Support\GitRunner;
 
 defined('ABSPATH') || exit;
 
+if ( ! class_exists(GitRunner::class) ) {
+	require_once dirname(__DIR__) . '/Support/GitRunner.php';
+}
+
 final class WorktreeStalenessProbe {
 
 	/**
@@ -97,9 +101,7 @@ final class WorktreeStalenessProbe {
 
 	/** Remove URL userinfo and query credentials before remote output is surfaced. */
 	public static function sanitize_remote_diagnostic( string $diagnostic ): string {
-		$diagnostic = preg_replace('#([a-z][a-z0-9+.-]*://)[^\s/@:]+(?::[^\s/@]*)?@#i', '$1***@', $diagnostic) ?? $diagnostic;
-		$diagnostic = preg_replace('#([?&](?:access_token|token|password|credential|key)=)[^\s&]+#i', '$1***', $diagnostic) ?? $diagnostic;
-		return $diagnostic;
+		return GitRunner::sanitize_diagnostic($diagnostic);
 	}
 
 	/**

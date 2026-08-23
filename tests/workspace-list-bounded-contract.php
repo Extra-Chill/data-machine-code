@@ -35,6 +35,7 @@ namespace {
 		use WorkspaceRepositoryLifecycle { workspace_list_insert_bounded_row as private insert_bounded_row; }
 
 		public int $git_probes = 0;
+		public int $scan_passes = 0;
 		public int $max_bounded_rows = 0;
 		public function __construct( private string $workspace_path ) {}
 		private function require_workspace_visible(): ?WP_Error { return null; }
@@ -48,6 +49,25 @@ namespace {
 		protected function workspace_list_insert_bounded_row( array &$rows, array $row, int $limit ): void {
 			$this->insert_bounded_row($rows, $row, $limit);
 			$this->max_bounded_rows = max($this->max_bounded_rows, count($rows));
+		}
+		protected function workspace_list_scan_started(): void { ++$this->scan_passes; }
+	}
+
+	final class BudgetExhaustedWorkspaceListHarness {
+		use WorkspaceRepositoryLifecycle;
+
+		public int $scan_passes = 0;
+		public function __construct( private string $workspace_path ) {}
+		private function require_workspace_visible(): ?WP_Error { return null; }
+		private function parse_handle( string $handle ): array { return array( 'repo' => $handle, 'is_worktree' => false, 'branch_slug' => '', 'dir_name' => $handle ); }
+		protected function workspace_list_scan_budget_seconds(): float { return 0.001; }
+		protected function workspace_list_scan_started(): void { ++$this->scan_passes; }
+		protected function workspace_list_rows( string $path, ?string $repo_filter, ?string $type_filter ): \Generator {
+			$this->workspace_list_scan_started();
+			for ( $index = 0; $index < 3; ++$index ) {
+				usleep(2000);
+				yield array( 'name' => 'slow-' . $index, 'path' => $path . '/slow-' . $index, 'git' => true, 'is_worktree' => true, 'repo' => 'slow-' . $index );
+			}
 		}
 	}
 
@@ -87,6 +107,7 @@ namespace {
 		$legacy_cursor = rtrim(strtr(base64_encode(wp_json_encode(array( 'v' => 1, 'after' => "repo-049@branch\0{$workspace}/repo-049@branch", 'repo' => null, 'type' => null ))), '+/', '-_'), '=');
 		bounded_list_assert($legacy_cursor === $first['next_cursor'], 'Shared cursor encoding must preserve the existing serialized workspace cursor.');
 		bounded_list_assert(false === $first['status_requested'] && 0 === $harness->git_probes, 'Default discovery must not run per-row Git probes.');
+		bounded_list_assert(1 === $harness->scan_passes && false === $first['partial'] && 1 === $first['diagnostics']['scan_passes'], 'Complete default discovery must use one scan pass and report its diagnostics.');
 		bounded_list_assert($elapsed < 2.0, sprintf('Bounded high-cardinality response exceeded deadline: %.3fs.', $elapsed));
 
 		$second = $harness->list_repos(null, null, array( 'cursor' => $legacy_cursor ));
@@ -126,6 +147,12 @@ namespace {
 		foreach ( array( 0, -1, 201, 1.0, '1.5', '1x', '', array( 1 ), true, false ) as $limit ) {
 			bounded_list_assert(is_wp_error(BoundedWorkspaceListHarness::normalize_workspace_list_limit($limit)), 'Non-integer workspace list limits must be rejected before coercion.');
 		}
+
+		$slow = new BudgetExhaustedWorkspaceListHarness($workspace);
+		$partial = $slow->list_repos();
+		bounded_list_assert(true === $partial['partial'] && null === $partial['total'] && null === $partial['summary']['total'], 'Budget exhaustion must not present observed rows as a complete total.');
+		bounded_list_assert(1 === $slow->scan_passes && 1 === $partial['diagnostics']['scan_passes'] && true === $partial['diagnostics']['budget_exhausted'] && 'scan_budget_exhausted' === $partial['diagnostics']['budget_exhaustion_reason'], 'Budget exhaustion must stop after one scan pass and expose diagnostic evidence.');
+		bounded_list_assert(1 === $partial['summary']['observed']['total'] && false === $partial['continuation']['available'] && 'scan_budget_exhausted' === $partial['continuation']['reason'], 'Partial results must retain observed lower bounds and truthful continuation state.');
 	} finally {
 		bounded_list_remove_tree($workspace);
 	}

@@ -36,6 +36,7 @@ require_once dirname(__DIR__) . '/inc/Support/CommandSpec.php';
 require_once dirname(__DIR__) . '/inc/Support/RuntimeCapabilities.php';
 require_once dirname(__DIR__) . '/inc/Support/ProcessRunner.php';
 require_once dirname(__DIR__) . '/inc/Support/GitRunner.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeStalenessProbe.php';
 
 use DataMachineCode\Support\CommandSpec;
 use DataMachineCode\Support\GitRunner;
@@ -216,6 +217,11 @@ if ( 'Windows' !== PHP_OS_FAMILY ) {
 	$leak_output = (string) ( $leak->get_error_data()['output'] ?? '' );
 	process_runner_assert_same(false, str_contains($leak_output, 'user:secret') || str_contains($leak_output, 'secret-token'), 'GitRunner leaked remote URL credentials.');
 	process_runner_assert_same(true, str_contains($leak_output, 'https://***@example.test/repo?token=***'), 'GitRunner did not retain the sanitized remote diagnostic.');
+	$adversarial = "fatal: https://user:secret@example.test/repo?api_key=key-value&client_secret=client-value&trace=keep\nAuthorization: Bearer header-value\nX-Auth-Token: auth-value\nX-Request-Id: diagnostic-value";
+	$redacted = GitRunner::sanitize_diagnostic($adversarial);
+	process_runner_assert_same(false, str_contains($redacted, 'key-value') || str_contains($redacted, 'client-value') || str_contains($redacted, 'header-value') || str_contains($redacted, 'auth-value'), 'GitRunner leaked generic URL or header credentials.');
+	process_runner_assert_same(true, str_contains($redacted, 'trace=keep') && str_contains($redacted, 'X-Request-Id: diagnostic-value'), 'GitRunner over-redacted ordinary diagnostic values.');
+	process_runner_assert_same($redacted, DataMachineCode\Workspace\WorktreeStalenessProbe::sanitize_remote_diagnostic($adversarial), 'Remote staleness diagnostics do not use GitRunner credential redaction.');
 	proc_terminate($sibling, 9);
 	proc_close($sibling);
 }

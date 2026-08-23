@@ -242,13 +242,14 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error('invalid_worktree_handoff_proof', 'A matching managed worktree handoff proof is required.', array( 'status' => 400 ));
 		}
 
+		$lock_timeout = $this->worktree_handoff_remaining_seconds($deadline);
+		if ( $lock_timeout <= 0 ) {
+			return $this->worktree_handoff_timeout();
+		}
 		$result = WorkspaceMutationLock::with_repo($this->workspace_path, (string) $parsed['repo'], function () use ( $handle, $proof, $deadline ) {
-			if ( $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
-				return $this->worktree_handoff_timeout();
-			}
-			$metadata = WorktreeContextInjector::get_metadata_fresh($handle);
-			if ( $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
-				return $this->worktree_handoff_timeout();
+			$metadata = $this->worktree_handoff_metadata($handle, $deadline);
+			if ( is_wp_error($metadata) ) {
+				return $metadata;
 			}
 			$stored   = is_array($metadata) ? (array) ( $metadata['handoff_freshness_proof'] ?? array() ) : array();
 			if ( 3 !== (int) ( $stored['version'] ?? 0 ) || 3 !== (int) ( $proof['version'] ?? 0 ) || array() === $stored || ! hash_equals($this->worktree_handoff_proof_digest($stored), (string) ( $stored['digest'] ?? '' )) || ! hash_equals( (string) ( $stored['digest'] ?? '' ), (string) ( $proof['digest'] ?? '' )) || $this->worktree_handoff_proof_canonical_json($stored) !== $this->worktree_handoff_proof_canonical_json($proof) ) {
@@ -288,15 +289,10 @@ trait WorkspaceWorktreeLifecycle {
 				'proof'   => $current,
 				'drift'   => $drift,
 			);
-		}, self::HANDOFF_REMOTE_PROBE_TIMEOUT);
+		}, $lock_timeout);
 
 		if ( is_wp_error($result) && 'workspace_repo_busy' === $result->get_error_code() ) {
-			return array(
-				'success'    => false,
-				'status'     => 'contention',
-				'handle'     => $handle,
-				'contention' => $result->get_error_data(),
-			);
+			return $this->worktree_handoff_timeout();
 		}
 		return $result;
 	}
@@ -445,6 +441,17 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error('worktree_handoff_base_unresolved', 'The managed worktree has no resolved base ref.', array( 'status' => 409 ));
 		}
 		return $base_ref;
+	}
+
+	/** Metadata backends are synchronous, so refuse an overdue read deterministically. */
+	private function worktree_handoff_metadata( string $handle, float $deadline ): array|\WP_Error|null {
+		if ( $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
+			return $this->worktree_handoff_timeout();
+		}
+		$metadata = WorktreeContextInjector::get_metadata_fresh($handle);
+		return $this->worktree_handoff_remaining_seconds($deadline) <= 0
+			? $this->worktree_handoff_timeout()
+			: $metadata;
 	}
 
 	/** Never pass a zero timeout to GitRunner, where zero means unbounded. */
@@ -1109,6 +1116,10 @@ trait WorkspaceWorktreeLifecycle {
 			return $deadline_error;
 		}
 		$disk_budget          = $capacity_reclaim['after'];
+		$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'capacity_reclaim_complete', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $heartbeat_error ) {
+			return $heartbeat_error;
+		}
 		$capacity_remediation = null;
 		if ( $remediate_capacity && 'refused' === ( $disk_budget['status'] ?? '' ) ) {
 			$capacity_remediation                     = $this->remediate_capacity_refusal($repo, $branch, $demand_plan, $disk_budget, $remediate_capacity_dry_run);
@@ -1226,6 +1237,10 @@ trait WorkspaceWorktreeLifecycle {
 		if ( $repo_timeout <= 0 ) {
 			return $this->worktree_operation_timeout('repo_lock_wait', $operation_timeout, $operation_started);
 		}
+		$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'worktree_create', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $heartbeat_error ) {
+			return $heartbeat_error;
+		}
 		$response = WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->worktree_add_locked(
 				$repo,
 				$branch,
@@ -1336,6 +1351,10 @@ trait WorkspaceWorktreeLifecycle {
 				return $recorded;
 			}
 			$response['bootstrap'] = WorktreeBootstrapper::bootstrap($wt_path, $remaining_seconds);
+			$heartbeat_error       = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'bootstrap_complete', $operation_deadline, $operation_timeout, $operation_started);
+			if ( null !== $heartbeat_error ) {
+				return $heartbeat_error;
+			}
 			$recorded              = $this->record_bootstrap_outcome($wt_handle, ! empty($response['bootstrap']['success']) ? 'succeeded' : 'failed', $response['bootstrap']);
 			if ( is_wp_error($recorded) ) {
 				return $recorded;
