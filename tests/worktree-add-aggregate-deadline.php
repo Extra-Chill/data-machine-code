@@ -25,6 +25,7 @@ final class Worktree_Add_Aggregate_Deadline_Harness {
 	public function remaining(float $deadline): int { return $this->worktree_operation_remaining_seconds($deadline); }
 	public function timeout(string $phase, int $timeout, float $started, array $extra = array()): WP_Error { return $this->worktree_operation_timeout($phase, $timeout, $started, $extra); }
 	public function lock_result(mixed $result, string $phase, int $timeout, float $started): mixed { return $this->worktree_operation_lock_result($result, $phase, $timeout, $started); }
+	public static function admission_wait(float $deadline, float $now): int { return self::worktree_capacity_admission_wait_seconds($deadline, $now); }
 	public function rollback(string $primary, string $path, string $branch): void { $this->rollback_rejected_worktree($primary, $path, $branch, true); }
 	protected function run_git(string $path, string $args, int $timeout = 30): array|WP_Error {
 		$lines = array();
@@ -51,11 +52,29 @@ try {
 		'timed_out' => true,
 		'lock_key' => 'worktree-workspace-capacity-admission',
 		'active_lock' => array('owner' => 'exited-owner'),
+		'request_id' => 'admission-123',
+		'queue_position' => 2,
+		'owner' => array('owner' => 'active-owner'),
+		'retry_after_seconds' => 11,
+		'estimated_wait_seconds' => 11,
+		'eta_status' => 'db_lease_expiry',
+		'retry_command' => 'wp datamachine-code workspace worktree add repo branch',
 	)), 'capacity_lock_wait', 2, $started);
 	deadline_assert(is_wp_error($timed_out), 'expired capacity acquisition must return an error');
 	deadline_assert('worktree_operation_timeout' === $timed_out->get_error_code(), 'lock expiry must use the aggregate timeout type');
 	deadline_assert('capacity_lock_wait' === ($timed_out->get_error_data()['phase'] ?? null), 'lock expiry must name the acquisition phase');
 	deadline_assert('exited-owner' === ($timed_out->get_error_data()['lock_owner']['active_lock']['owner'] ?? null), 'lock expiry must retain owner evidence');
+	deadline_assert('admission-123' === ($timed_out->get_error_data()['admission']['request_id'] ?? null), 'lock expiry must retain its durable admission identity');
+	deadline_assert(2 === ($timed_out->get_error_data()['admission']['queue_position'] ?? null), 'lock expiry must retain queue position');
+	deadline_assert('active-owner' === ($timed_out->get_error_data()['admission']['owner']['owner'] ?? null), 'lock expiry must retain active lock owner details');
+	deadline_assert(11 === ($timed_out->get_error_data()['admission']['retry_after_seconds'] ?? null), 'lock expiry must retain retry timing');
+	deadline_assert('db_lease_expiry' === ($timed_out->get_error_data()['admission']['eta_status'] ?? null), 'lock expiry must retain ETA status');
+	deadline_assert(false === ($timed_out->get_error_data()['admission']['mutation_committed'] ?? true), 'lock expiry must confirm that admission has not mutated the workspace');
+	deadline_assert(true === ($timed_out->get_error_data()['retryable'] ?? false), 'lock expiry must be explicitly retryable');
+	deadline_assert(30 === $harness::worktree_capacity_admission_timeout_seconds(), 'Capacity admission must return a bounded result before normal caller deadlines.');
+	deadline_assert(30 === $harness::admission_wait(140.0, 100.0), 'Capacity admission must stop at its bounded wait cap.');
+	deadline_assert(1 === $harness::admission_wait(100.1, 100.0), 'Capacity admission must use only the aggregate deadline remainder after preflight.');
+	deadline_assert(0 === $harness::admission_wait(100.0, 100.0), 'Expired aggregate deadlines must not enter capacity admission.');
 	$rollback = $harness->timeout('git_worktree_add', 2, $started, array('cleanup' => 'rollback_requested'));
 	deadline_assert('rollback_requested' === ($rollback->get_error_data()['cleanup'] ?? null), 'post-create timeout must report rollback evidence');
 	$root = sys_get_temp_dir() . '/dmc-deadline-rollback-' . bin2hex(random_bytes(6));
