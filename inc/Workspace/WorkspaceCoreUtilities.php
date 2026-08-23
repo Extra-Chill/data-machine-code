@@ -996,6 +996,13 @@ trait WorkspaceCoreUtilities {
 	}
 
 	/**
+	 * Normalize a repository name to its workspace directory form.
+	 */
+	public function sanitize_repo_name( string $name ): string {
+		return $this->sanitize_name($name);
+	}
+
+	/**
 	 * Run a git command in a repository.
 	 *
 	 * @param  string $repo_path       Resolved repository path.

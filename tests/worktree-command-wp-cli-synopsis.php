@@ -45,6 +45,9 @@ namespace {
 	$parse('add', array( 'data-machine-code', 'fix/1070' ), array( 'base' => 'origin/main' ));
 	$parse('add', array( 'data-machine-code', 'fix/1070' ), array( 'base-ref' => 'origin/main' ));
 	$parse('add', array( 'data-machine-code', 'fix/1070' ), array( 'base-branch' => 'main' ));
+	$list_synopsis = $parse('list', array(), array( 'repo' => 'data-machine-code' ));
+	worktree_wp_cli_synopsis_assert(str_contains($list_synopsis, '[--repo=<repo>]'), 'list did not render the canonical --repo filter.');
+	$parse('list', array( 'data-machine-code' ), array());
 	$parse('remove', array( 'data-machine-code@fix-1070' ), array( 'force' => true ));
 	$parse('remove', array( 'data-machine-code', 'fix/1070' ), array());
 	$parse('finalize', array( 'data-machine-code@fix-1070' ), array( 'pr' => 'https://github.com/Extra-Chill/data-machine-code/pull/1070' ));

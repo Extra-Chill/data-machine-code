@@ -182,8 +182,8 @@ class WorkspaceCommand extends BaseCommand {
 			),
 			'list' => array(
 				'shortdesc' => 'List managed worktrees from cheap inventory.',
-				'longdesc'  => "Returns a summary-first, 50-row cheap-inventory table by default. Legacy JSON, CSV, and YAML row streams remain exhaustive. Use --format=json --envelope for a bounded structured response and cursor. Add probe flags only for the details required.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree list --format=json\n    wp datamachine-code workspace worktree list --format=json --envelope\n    wp datamachine-code workspace worktree list --all --full",
-				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Optional repository name.' ), $option('state', 'Lifecycle state filter.'), $option('limit', 'Maximum rows for table or --envelope output; default 50, maximum 200.'), $option('cursor', 'Continue an --envelope JSON response with the same filters.'), $flag('all', 'Explicitly return every matching row.'), $flag('envelope', 'Emit the bounded structured JSON response with summary and cursor metadata.'), $flag('with-status', 'Probe working-tree status.'), $flag('with-size', 'Probe disk use.'), $flag('full', 'Probe status and disk use.'), $flag('stale', 'Show stale rows; implies status.'), $format ),
+				'longdesc'  => "Returns a summary-first, 50-row cheap-inventory table by default. Filter one repository with `--repo=<repo>`. The positional `<repo>` form remains compatible; supplying both requires the same value. Legacy JSON, CSV, and YAML row streams remain exhaustive. Use --format=json --envelope for a bounded structured response and cursor. Add probe flags only for the details required.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree list --repo=data-machine-code --format=json\n    wp datamachine-code workspace worktree list --repo=data-machine-code --format=json --envelope\n    wp datamachine-code workspace worktree list --all --full",
+				'synopsis'  => array( array( 'type' => 'positional', 'name' => 'repo', 'description' => 'Legacy optional repository name.', 'optional' => true ), $option('repo', 'Repository name filter.'), $option('state', 'Lifecycle state filter.'), $option('limit', 'Maximum rows for table or --envelope output; default 50, maximum 200.'), $option('cursor', 'Continue an --envelope JSON response with the same filters.'), $flag('all', 'Explicitly return every matching row.'), $flag('envelope', 'Emit the bounded structured JSON response with summary and cursor metadata.'), $flag('with-status', 'Probe working-tree status.'), $flag('with-size', 'Probe disk use.'), $flag('full', 'Probe status and disk use.'), $flag('stale', 'Show stale rows; implies status.'), $format ),
 			),
 			'get' => array(
 				'shortdesc' => 'Inspect one managed worktree.',
@@ -4257,7 +4257,7 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace worktree list
 	 *
 	 *     # List worktrees for one repo
-	 *     wp datamachine-code workspace worktree list data-machine
+	 *     wp datamachine-code workspace worktree list --repo=data-machine
 	 *
 	 *     # Cheap JSON inventory for huge workspaces (~800 worktrees) — completes fast
 	 *     wp datamachine-code workspace worktree list --format=json
@@ -4622,8 +4622,25 @@ class WorkspaceCommand extends BaseCommand {
 					WP_CLI::error('Worktree list --all cannot be combined with --cursor.');
 					return;
 				}
-				if ( ! empty($args[1]) ) {
-					$input['repo'] = $args[1];
+				$workspace       = new Workspace();
+				$positional_repo = $workspace->sanitize_repo_name(trim( (string) ( $args[1] ?? '' ) ));
+				$flag_repo       = $workspace->sanitize_repo_name(trim( (string) ( $assoc_args['repo'] ?? '' ) ));
+				if ( '' !== $positional_repo && '' !== $flag_repo && $positional_repo !== $flag_repo ) {
+					$diagnostic = array(
+						'code'    => 'worktree_list_repo_filter_conflict',
+						'message' => 'Positional repository and --repo must match.',
+						'data'    => array(
+							'positional_repo' => $positional_repo,
+							'repo'            => $flag_repo,
+							'remediation'     => sprintf('Use one repository filter: wp datamachine-code workspace worktree list --repo=%s', $flag_repo),
+						),
+					);
+					WP_CLI::error((string) ( function_exists('wp_json_encode') ? wp_json_encode($diagnostic) : json_encode($diagnostic) ));
+					return;
+				}
+				if ( '' !== $flag_repo || '' !== $positional_repo ) {
+					$input['repo']      = '' !== $flag_repo ? $flag_repo : $positional_repo;
+					$assoc_args['repo'] = $input['repo'];
 				}
 				if ( isset($assoc_args['state']) && '' !== trim( (string) $assoc_args['state']) ) {
 					$input['state'] = (string) $assoc_args['state'];
@@ -5261,7 +5278,10 @@ class WorkspaceCommand extends BaseCommand {
 				if ( 'list' === $operation && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true) ) {
 					WP_CLI::log(sprintf('Worktrees: showing %d of %d', (int) ( $result['returned'] ?? count($items) ), (int) ( $result['total'] ?? count($items) )));
 					if ( ! empty($result['next_cursor']) ) {
-						WP_CLI::log('More rows: rerun with --cursor=' . (string) $result['next_cursor'] . ' (or use --all for complete expansion).');
+						$repo_filter = isset($assoc_args['repo']) && '' !== trim( (string) $assoc_args['repo'] )
+							? ' --repo=' . trim( (string) $assoc_args['repo'] )
+							: '';
+						WP_CLI::log('More rows: rerun with --cursor=' . (string) $result['next_cursor'] . $repo_filter . ' (or use --all for complete expansion).');
 					}
 				}
 				if ( ! empty($skipped_global) && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true) ) {
