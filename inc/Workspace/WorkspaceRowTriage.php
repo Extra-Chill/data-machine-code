@@ -352,6 +352,7 @@ trait WorkspaceRowTriage {
 		}
 
 		$owner = WorktreeContextInjector::summarize_owner($metadata);
+		$session = WorktreeContextInjector::summarize_session($metadata);
 
 		return array_merge(
 			$row,
@@ -376,7 +377,7 @@ trait WorkspaceRowTriage {
 				'provenance'      => array(
 					'origin_site'    => $owner['site'],
 					'origin_agent'   => $owner['agent'],
-					'origin_session' => isset($metadata['origin_session']) ? (string) $metadata['origin_session'] : null,
+					'origin_session' => $session['primary_id'],
 					'created_at'     => $created_at,
 					'last_seen_at'   => isset($metadata['last_seen_at']) ? (string) $metadata['last_seen_at'] : null,
 				),

@@ -328,14 +328,14 @@ class WorktreeContextInjector {
 		$malformed_ownership_fields = array();
 		foreach ( $ownership_fields as $field ) {
 			$value = $metadata[ $field ] ?? null;
-			if ( ! is_scalar($value) ) {
-				if ( null !== $value ) {
-					$malformed_ownership_fields[] = $field;
-				}
+			if ( null === $value || ( is_scalar($value) && '' === trim((string) $value) ) ) {
 				$missing_ownership_fields[] = $field;
 				continue;
 			}
-			if ( '' === trim((string) $value) ) {
+			if ( ! self::is_valid_ownership_value($field, $value) ) {
+				if ( null !== $value ) {
+					$malformed_ownership_fields[] = $field;
+				}
 				$missing_ownership_fields[] = $field;
 			}
 		}
@@ -492,24 +492,29 @@ class WorktreeContextInjector {
 		$user     = 'unknown';
 
 		if ( is_array($metadata) ) {
-			$origin_site = trim( (string) ( $metadata['origin_site'] ?? $metadata['site_name'] ?? '' ));
+			$origin_site_value = $metadata['origin_site'] ?? $metadata['site_name'] ?? '';
+			$origin_site       = is_scalar($origin_site_value) ? trim((string) $origin_site_value) : '';
 			if ( '' !== $origin_site ) {
 				$site = $origin_site;
 			}
 
-			$origin_site_url = trim( (string) ( $metadata['origin_site_url'] ?? $metadata['site_url'] ?? '' ));
+			$origin_site_url_value = $metadata['origin_site_url'] ?? $metadata['site_url'] ?? '';
+			$origin_site_url       = is_scalar($origin_site_url_value) ? trim((string) $origin_site_url_value) : '';
 			if ( '' !== $origin_site_url ) {
 				$site_url = $origin_site_url;
 			}
 
-			$origin_agent = trim( (string) ( $metadata['origin_agent'] ?? $metadata['agent_slug'] ?? '' ));
+			$origin_agent_value = $metadata['origin_agent'] ?? $metadata['agent_slug'] ?? '';
+			$origin_agent       = is_scalar($origin_agent_value) ? trim((string) $origin_agent_value) : '';
 			if ( '' !== $origin_agent ) {
 				$agent = $origin_agent;
 			}
 
 			$origin_user = is_array($metadata['origin_user'] ?? null) ? $metadata['origin_user'] : array();
-			$display     = trim( (string) ( $origin_user['display_name'] ?? '' ));
-			$login       = trim( (string) ( $origin_user['login'] ?? '' ));
+			$display_value = $origin_user['display_name'] ?? '';
+			$login_value   = $origin_user['login'] ?? '';
+			$display       = is_scalar($display_value) ? trim((string) $display_value) : '';
+			$login         = is_scalar($login_value) ? trim((string) $login_value) : '';
 			if ( '' !== $login ) {
 				$user = $login;
 			} elseif ( '' !== $display ) {
@@ -523,6 +528,45 @@ class WorktreeContextInjector {
 			'agent'    => $agent,
 			'user'     => $user,
 		);
+	}
+
+	/**
+	 * Determine whether a persisted ownership field has a producer-valid value.
+	 *
+	 * Scalars retain compatibility with legacy metadata. Structured user and
+	 * session values must match the envelopes emitted by this class.
+	 *
+	 * @param mixed $value Persisted ownership value.
+	 */
+	private static function is_valid_ownership_value( string $field, $value ): bool {
+		if ( is_scalar($value) ) {
+			return '' !== trim((string) $value);
+		}
+		if ( ! is_array($value) ) {
+			return false;
+		}
+		if ( 'origin_user' === $field ) {
+			return isset($value['id'], $value['login'], $value['display_name'])
+				&& is_int($value['id'])
+				&& 0 < $value['id']
+				&& is_string($value['login'])
+				&& is_string($value['display_name']);
+		}
+		if ( 'origin_session' !== $field || ! isset($value['primary_id'], $value['ids']) || ! is_string($value['primary_id']) || '' === trim($value['primary_id']) || ! is_array($value['ids']) || array() === $value['ids'] ) {
+			return false;
+		}
+		foreach ( $value['ids'] as $runtime_id => $entry ) {
+			if ( ! is_string($runtime_id) || '' === $runtime_id || ! is_array($entry) || array() === $entry ) {
+				return false;
+			}
+			foreach ( $entry as $subkey => $identifier ) {
+				if ( ! is_string($subkey) || '' === $subkey || ! is_scalar($identifier) || '' === trim((string) $identifier) ) {
+					return false;
+				}
+			}
+		}
+
+		return true;
 	}
 
 	/**
