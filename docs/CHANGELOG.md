@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.62.1] - 2026-08-23
+
+### Fixed
+- bound worktree add output
+
 ## [0.62.0] - 2026-08-23
 
 ### Added
