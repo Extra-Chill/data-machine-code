@@ -36,8 +36,8 @@ final class ProcfsProcessPathProbe implements ProcessPathProbeInterface {
 	}
 
 	public function snapshot_for_paths( array $paths ): array {
-		$result = $this->snapshot();
-		$result['diagnostics']['scoped_paths'] = array_values(array_filter($paths, fn( $path ) => is_string($path) && str_starts_with($path, '/')));
+		$result                                = $this->snapshot();
+		$result['diagnostics']['scoped_paths'] = array_values(array_filter($paths, fn( $path ) => str_starts_with($path, '/')));
 		return $result;
 	}
 }
@@ -59,8 +59,8 @@ final class UnsupportedProcessPathProbe implements ProcessPathProbeInterface {
 	}
 
 	public function snapshot_for_paths( array $paths ): array {
-		$result = $this->snapshot();
-		$result['diagnostics']['scoped_paths'] = array_values(array_filter($paths, fn( $path ) => is_string($path) && str_starts_with($path, '/')));
+		$result                                = $this->snapshot();
+		$result['diagnostics']['scoped_paths'] = array_values(array_filter($paths, fn( $path ) => str_starts_with($path, '/')));
 		return $result;
 	}
 }
@@ -69,7 +69,7 @@ final class UnsupportedProcessPathProbe implements ProcessPathProbeInterface {
 final class ExternalProcessPathProbe implements ProcessPathProbeInterface {
 
 	private const MAX_OUTPUT_BYTES = 65536;
-	private const MAX_PROCESSES = 100;
+	private const MAX_PROCESSES    = 100;
 
 	/** @param mixed $argv @param callable|null $runner Receives argv and stdin and returns a ProcessRunner envelope. */
 	public function __construct(private mixed $argv, private $runner = null) {}
@@ -79,7 +79,7 @@ final class ExternalProcessPathProbe implements ProcessPathProbeInterface {
 	}
 
 	public function snapshot_for_paths( array $paths ): array {
-		$paths = array_values(array_unique(array_filter($paths, fn( $path ) => is_string($path) && str_starts_with($path, '/'))));
+		$paths = array_values(array_unique(array_filter($paths, fn( $path ) => str_starts_with($path, '/'))));
 		if ( array() === $paths ) {
 			return $this->failure('process_path_probe_requires_path');
 		}
@@ -92,11 +92,11 @@ final class ExternalProcessPathProbe implements ProcessPathProbeInterface {
 		$records = array();
 		foreach ( $paths as $path ) {
 			$result = $this->run($argv, $path);
-			if ( $result instanceof \WP_Error || ! is_array($result) || empty($result['success']) ) {
+			if ( $result instanceof \WP_Error || empty($result['success']) ) {
 				$data = $result instanceof \WP_Error ? (array) $result->get_error_data() : (array) $result;
 				return $this->failure($this->failure_reason($data, $path));
 			}
-			$parsed = $this->parse_response((string) ( $result['output'] ?? '' ), $path);
+			$parsed = $this->parse_response( (string) ( $result['output'] ?? '' ), $path);
 			if ( null === $parsed ) {
 				return $this->failure('process_path_probe_malformed_output');
 			}
@@ -106,7 +106,11 @@ final class ExternalProcessPathProbe implements ProcessPathProbeInterface {
 		return array(
 			'status'      => 'available',
 			'records'     => $records,
-			'diagnostics' => array( 'provider' => 'external', 'path_records' => count($records), 'scoped_paths' => $paths ),
+			'diagnostics' => array(
+				'provider'     => 'external',
+				'path_records' => count($records),
+				'scoped_paths' => $paths,
+			),
 		);
 	}
 
@@ -125,11 +129,11 @@ final class ExternalProcessPathProbe implements ProcessPathProbeInterface {
 		}
 		$command = CommandSpec::from_argv($argv);
 		return $command instanceof \WP_Error ? $command : ProcessRunner::run($command, array(
-			'timeout_seconds'  => 2,
-			'output_cap_bytes' => self::MAX_OUTPUT_BYTES,
+			'timeout_seconds'         => 2,
+			'output_cap_bytes'        => self::MAX_OUTPUT_BYTES,
 			'fail_on_output_overflow' => true,
-			'stdin'            => $path . "\n",
-			'error_as_result'  => true,
+			'stdin'                   => $path . "\n",
+			'error_as_result'         => true,
 		));
 	}
 
@@ -139,7 +143,7 @@ final class ExternalProcessPathProbe implements ProcessPathProbeInterface {
 			return null;
 		}
 		$response = json_decode($output, true);
-		if ( ! is_array($response) || 'available' !== ( $response['status'] ?? null ) || $path !== ( $response['path'] ?? null ) || ! isset($response['processes']) || ! is_array($response['processes']) || count($response['processes']) > self::MAX_PROCESSES ) {
+		if ( ! is_array($response) || 'available' !== ( $response['status'] ?? null ) || ( $response['path'] ?? null ) !== $path || ! isset($response['processes']) || ! is_array($response['processes']) || self::MAX_PROCESSES < count($response['processes']) ) {
 			return null;
 		}
 		$records = array();
@@ -165,8 +169,8 @@ final class ExternalProcessPathProbe implements ProcessPathProbeInterface {
 		if ( ! empty($data['output_overflow']) ) {
 			return 'process_path_probe_output_limit';
 		}
-		$response = json_decode((string) ( $data['output'] ?? '' ), true);
-		if ( is_array($response) && $path === ( $response['path'] ?? $path ) ) {
+		$response = json_decode( (string) ( $data['output'] ?? '' ), true);
+		if ( is_array($response) && ( $response['path'] ?? $path ) === $path ) {
 			if ( 'rejected' === ( $response['status'] ?? null ) ) {
 				return 'process_path_probe_rejected';
 			}
@@ -177,8 +181,16 @@ final class ExternalProcessPathProbe implements ProcessPathProbeInterface {
 		return 'process_path_probe_failed';
 	}
 
+	/** @return array{status:string,records:array<int,array<string,mixed>>,diagnostics:array<string,mixed>} */
 	private function failure( string $reason ): array {
-		return array( 'status' => 'uncertain', 'records' => array(), 'diagnostics' => array( 'provider' => 'external', 'reason' => $reason ) );
+		return array(
+			'status'      => 'uncertain',
+			'records'     => array(),
+			'diagnostics' => array(
+				'provider' => 'external',
+				'reason'   => $reason,
+			),
+		);
 	}
 }
 
@@ -192,11 +204,14 @@ final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
 	}
 
 	public function snapshot_for_paths( array $paths ): array {
-		$paths = array_values(array_unique(array_filter($paths, fn( $path ) => is_string($path) && str_starts_with($path, '/'))));
+		$paths = array_values(array_unique(array_filter($paths, fn( $path ) => str_starts_with($path, '/'))));
 		return $this->run_snapshot($paths);
 	}
 
-	/** @param array<int,string> $paths */
+	/**
+	 * @param array<int,string> $paths Candidate paths.
+	 * @return array{status:string,records:array<int,array<string,mixed>>,diagnostics:array<string,mixed>}
+	 */
 	private function run_snapshot( array $paths ): array {
 		$argv = array( 'lsof', '-n', '-P', '-Fpcfn0' );
 		if ( array() !== $paths ) {
@@ -236,12 +251,12 @@ final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
 			);
 		}
 
-		$records = array();
-		$pid     = 0;
-		$command = '';
-		$fd      = '';
+		$records          = array();
+		$pid              = 0;
+		$command          = '';
+		$fd               = '';
 		$malformed_fields = 0;
-		$awaiting_name     = false;
+		$awaiting_name    = false;
 		foreach ( explode("\0", (string) ( $result['output'] ?? '' )) as $field ) {
 			$field = ltrim($field, "\n");
 			if ( '' === $field ) {
@@ -271,7 +286,7 @@ final class MacOSLsofProcessPathProbe implements ProcessPathProbeInterface {
 				$fd            = $value;
 				$awaiting_name = true;
 			} elseif ( 'n' === $type && $pid > 0 && str_starts_with($value, '/') ) {
-				$records[] = array(
+				$records[]     = array(
 					'pid'        => $pid,
 					'command'    => $command,
 					'match_type' => 'cwd' === $fd ? 'cwd' : 'open_file',

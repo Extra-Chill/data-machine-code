@@ -251,7 +251,6 @@ function datamachine_code_bootstrap() {
 	\DataMachineCode\AgentsApi\WorkspaceExecutorAdapter::register();
 	\DataMachineCode\Runtime\MountedRuntimeBootstrap::register();
 	datamachine_code_register_datamachine_integrations();
-
 }
 add_action('plugins_loaded', 'datamachine_code_bootstrap', 20);
 add_action(
