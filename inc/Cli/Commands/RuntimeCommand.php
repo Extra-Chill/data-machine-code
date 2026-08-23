@@ -89,6 +89,7 @@ final class RuntimeCommand extends BaseCommand {
 		if ( ! empty($assoc_args['apply']) ) {
 			$result = RuntimeSourceDoctor::apply(DATAMACHINE_CODE_PATH . 'data-machine-code.php', $config);
 			if ( is_wp_error($result) ) { WP_CLI::error($result->get_error_message()); return; }
+			if ( empty($result['success']) ) { WP_CLI::error((string) wp_json_encode($result, JSON_UNESCAPED_SLASHES)); return; }
 			WP_CLI::success((string) $result['message']);
 			return;
 		}
