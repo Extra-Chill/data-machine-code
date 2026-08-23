@@ -49,6 +49,8 @@ namespace {
 	$assert_synopsis('abandoned', array( 'apply', 'force', 'discard-unpushed', 'limit', 'passes', 'offset', 'stage', 'scope', 'until-budget', 'format', 'verbose' ));
 	$assert_synopsis('cleanup-eligible-drain', array( 'apply', 'force', 'discard-unpushed', 'include-repaired-metadata', 'limit', 'passes', 'remove-timeout', 'older-than', 'sort', 'until-budget', 'format' ));
 	$assert_synopsis('bounded-cleanup-eligible-apply', array( 'dry-run', 'force', 'discard-unpushed', 'via-jobs', 'include-repaired-metadata', 'limit', 'older-than', 'sort', 'remove-timeout', 'scope', 'format' ));
+	$bounded_cleanup_options = array_column($definitions['bounded-cleanup-eligible-apply']['synopsis'], null, 'name');
+	worktree_help_assert(true === ( $bounded_cleanup_options['repo']['optional'] ?? false ), 'Bounded cleanup must accept the unscoped commands emitted by hygiene.');
 
 	$add = $definitions['add'];
 	worktree_help_assert('Create an isolated, managed worktree.' === $add['shortdesc'], 'Add help snapshot changed.');
