@@ -1202,6 +1202,7 @@ trait WorkspaceWorktreeLifecycle {
 			'handle'         => $wt_handle,
 			'path'           => $wt_path,
 			'branch'         => $branch,
+			'base'           => $created_branch ? $resolved_base : null,
 			'slug'           => $slug,
 			'created_branch' => $created_branch,
 			'message'        => sprintf('Worktree "%s" added at %s (branch %s).', $wt_handle, $wt_path, $branch),

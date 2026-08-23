@@ -1533,6 +1533,7 @@ class WorkspaceAbilities {
 							'handle'                    => array( 'type' => 'string' ),
 							'path'                      => array( 'type' => 'string' ),
 							'branch'                    => array( 'type' => 'string' ),
+							'base'                      => array( 'type' => 'string', 'description' => 'Resolved base ref for a newly created branch.' ),
 							'slug'                      => array( 'type' => 'string' ),
 							'created_branch'            => array( 'type' => 'boolean' ),
 							'reused'                    => array( 'type' => 'boolean' ),
@@ -1554,7 +1555,7 @@ class WorkspaceAbilities {
 							'context_skip_reason'       => array( 'type' => 'string' ),
 							'capacity'                  => array(
 								'type'        => 'object',
-								'description' => 'Default bounded capacity decision with status, free/projected capacity, demand, and worktree count.',
+								'description' => 'Default bounded capacity decision with status and any explicit force override.',
 							),
 							'warning_codes'             => array(
 								'type'        => 'array',
@@ -1567,7 +1568,7 @@ class WorkspaceAbilities {
 							),
 							'bootstrap'                 => array(
 								'type'        => 'object',
-								'description' => 'Present only when bootstrap=true. Default output contains concise step status, duration, and capped-output digest evidence; verbose=true includes capped output tails.',
+								'description' => 'Present only when bootstrap=true. Default output contains bounded step status and duration; verbose=true includes capped command output evidence.',
 							),
 							'fetch_failed'              => array(
 								'type'        => 'boolean',

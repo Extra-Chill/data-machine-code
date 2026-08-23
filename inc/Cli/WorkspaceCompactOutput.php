@@ -12,6 +12,8 @@ defined('ABSPATH') || exit;
 class WorkspaceCompactOutput {
 
 	private const ROW_SAMPLE_LIMIT = 5;
+	private const WORKTREE_BOOTSTRAP_STEP_LIMIT = 5;
+	private const WORKTREE_WARNING_CODE_LIMIT = 10;
 
 	/** Project a worktree-add result for bounded public JSON responses. */
 	public static function worktree_add_result( array $result ): array {
@@ -24,6 +26,7 @@ class WorkspaceCompactOutput {
 				'handle'         => $result['handle'] ?? null,
 				'path'           => $result['path'] ?? null,
 				'branch'         => $result['branch'] ?? null,
+				'base'           => $result['base'] ?? $result['metadata']['base_ref'] ?? null,
 				'slug'           => $result['slug'] ?? null,
 				'created_branch' => isset( $result['created_branch'] ) ? (bool) $result['created_branch'] : null,
 				'reused'         => isset( $result['reused'] ) ? (bool) $result['reused'] : null,
@@ -34,9 +37,10 @@ class WorkspaceCompactOutput {
 				'bootstrap'      => self::worktree_bootstrap_summary( $bootstrap ),
 				'warning_codes'  => self::worktree_warning_codes( $result, $capacity, $bootstrap ),
 				'evidence'       => array(
-					'mode'          => 'verbose_on_request',
-					'verbose_input' => array( 'verbose' => true ),
-					'omitted'       => array( 'capacity_model', 'capacity_reclaim', 'bootstrap_step_output', 'metadata' ),
+					'verbose' => array(
+						'input'    => array( 'verbose' => true ),
+						'includes' => array( 'capacity_model', 'capacity_reclaim', 'bootstrap_step_output', 'metadata' ),
+					),
 				),
 			)
 		);
@@ -47,12 +51,10 @@ class WorkspaceCompactOutput {
 			return array();
 		}
 
-		return self::filter_empty(
-			array_intersect_key(
-				$capacity,
-				array_flip(array( 'status', 'force_override', 'worktree_count', 'free_bytes', 'free_gib', 'free_percent', 'free_inodes', 'free_inode_percent', 'projected_demand_bytes', 'projected_demand_inodes', 'projected_free_bytes', 'projected_free_inodes', 'demand_source' ))
-			)
-		);
+		return self::filter_empty(array(
+			'status'         => $capacity['status'] ?? null,
+			'force_override' => isset( $capacity['force_override'] ) ? (bool) $capacity['force_override'] : null,
+		));
 	}
 
 	private static function worktree_bootstrap_summary( array $bootstrap ): array {
@@ -60,7 +62,7 @@ class WorkspaceCompactOutput {
 			return array();
 		}
 		$steps = array();
-		foreach ( (array) ( $bootstrap['steps'] ?? array() ) as $step ) {
+		foreach ( array_slice( (array) ( $bootstrap['steps'] ?? array() ), 0, self::WORKTREE_BOOTSTRAP_STEP_LIMIT ) as $step ) {
 			$step = (array) $step;
 			$steps[] = self::filter_empty(array(
 				'step'             => $step['step'] ?? null,
@@ -70,7 +72,6 @@ class WorkspaceCompactOutput {
 				'exit_code'        => $step['exit_code'] ?? null,
 				'timed_out'        => $step['timed_out'] ?? null,
 				'duration_ms'      => $step['duration_ms'] ?? null,
-				'output_evidence'  => $step['output_evidence'] ?? null,
 			));
 		}
 
@@ -78,14 +79,20 @@ class WorkspaceCompactOutput {
 			'success'     => isset( $bootstrap['success'] ) ? (bool) $bootstrap['success'] : null,
 			'ran_any'     => isset( $bootstrap['ran_any'] ) ? (bool) $bootstrap['ran_any'] : null,
 			'duration_ms' => $bootstrap['duration_ms'] ?? null,
+			'step_count'  => count( (array) ( $bootstrap['steps'] ?? array() ) ),
 			'steps'       => $steps,
 		));
 	}
 
 	private static function worktree_warning_codes( array $result, array $capacity, array $bootstrap ): array {
 		$codes = array();
+		foreach ( (array) ( $capacity['trigger_reasons'] ?? array() ) as $warning ) {
+			$codes[] = (string) $warning;
+		}
 		foreach ( (array) ( $capacity['warnings'] ?? array() ) as $warning ) {
-			$codes[] = is_array($warning) ? (string) ( $warning['code'] ?? $warning['reason_code'] ?? '' ) : (string) $warning;
+			if ( is_array($warning) ) {
+				$codes[] = (string) ( $warning['code'] ?? $warning['reason_code'] ?? '' );
+			}
 		}
 		foreach ( (array) ( $bootstrap['steps'] ?? array() ) as $step ) {
 			if ( 'failed' === ( $step['status'] ?? '' ) ) {
@@ -97,7 +104,7 @@ class WorkspaceCompactOutput {
 				$codes[] = $field;
 			}
 		}
-		return array_values(array_unique(array_filter($codes)));
+		return array_slice(array_values(array_unique(array_filter($codes))), 0, self::WORKTREE_WARNING_CODE_LIMIT);
 	}
 
 	public static function cleanup_result( array $result ): array {
