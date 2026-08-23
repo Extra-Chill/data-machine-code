@@ -30,6 +30,7 @@ require_once __DIR__ . '/WorkspaceWorktreeLifecycle.php';
 require_once __DIR__ . '/WorktreeAgeFilter.php';
 require_once __DIR__ . '/WorktreeCleanupSignal.php';
 require_once __DIR__ . '/WorktreeCleanupCandidateClassifier.php';
+require_once __DIR__ . '/LegacyWorktreeHandoff.php';
 require_once __DIR__ . '/WorkspaceWorktreeCleanupEngine.php';
 require_once __DIR__ . '/WorkspaceWorktreeInventoryCleanup.php';
 require_once __DIR__ . '/WorkspaceWorktreeEmergencyCleanup.php';

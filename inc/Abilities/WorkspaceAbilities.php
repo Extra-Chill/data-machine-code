@@ -1417,7 +1417,7 @@ class WorkspaceAbilities {
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
-						'properties' => array( 'digest' => array( 'type' => 'string' ), 'disposition' => array( 'type' => 'string', 'enum' => array( 'create', 'exact_reuse', 'adoptable', 'owner_conflict', 'unsafe', 'stale', 'capacity_blocked' ) ), 'apply_intent' => array( 'type' => 'object' ), 'apply' => array( 'type' => 'object' ) ),
+						'properties' => array( 'digest' => array( 'type' => 'string' ), 'disposition' => array( 'type' => 'string', 'enum' => array( 'create', 'exact_reuse', 'adoptable', 'legacy_handoff_required', 'owner_conflict', 'unsafe', 'stale', 'capacity_blocked' ) ), 'apply_intent' => array( 'type' => 'object' ), 'apply' => array( 'type' => 'object' ), 'legacy_handoff' => array( 'type' => 'object' ) ),
 					),
 					'execute_callback'    => array( self::class, 'worktreePlan' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
@@ -1436,6 +1436,20 @@ class WorkspaceAbilities {
 					'execute_callback'    => array( self::class, 'worktreeApplyPlan' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-legacy-handoff-apply',
+				array(
+					'label' => 'Apply Legacy Worktree Handoff',
+					'description' => 'Apply a reviewed legacy handoff only after re-planning confirms clean, pushed, non-primary, stopped or stale, unlocked, process-idle ownership evidence.',
+					'category' => 'datamachine-code-workspace',
+					'input_schema' => array( 'type' => 'object', 'properties' => array( 'plan' => array( 'type' => 'object' ), 'mode' => array( 'type' => 'string', 'enum' => array( 'adopt_runtime', 'replace_isolated' ) ) ), 'required' => array( 'plan', 'mode' ) ),
+					'output_schema' => array( 'type' => 'object', 'properties' => array( 'success' => array( 'type' => 'boolean' ), 'type' => array( 'type' => 'string' ), 'lineage' => array( 'type' => 'object' ) ) ),
+					'execute_callback' => array( self::class, 'worktreeLegacyHandoffApply' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta' => array( 'show_in_rest' => false ),
 				)
 			);
 
@@ -1504,7 +1518,7 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Require a valid task URL or task reference before creating the worktree. Defaults true; trusted operator-local callers may explicitly set false.',
 							),
-							...WorktreeContextInjector::worktree_add_policy_schema_properties(),
+							...(method_exists(WorktreeContextInjector::class, 'worktree_add_policy_schema_properties') ? WorktreeContextInjector::worktree_add_policy_schema_properties() : array()),
 							'verbose'                    => array(
 								'type'        => 'boolean',
 								'description' => 'Return full capacity diagnostics and capped bootstrap output evidence. Default false returns a bounded summary.',
@@ -4207,6 +4221,10 @@ class WorkspaceAbilities {
 		return ( new Workspace() )->worktree_apply_plan((array) ($input['plan'] ?? array()));
 	}
 
+	public static function worktreeLegacyHandoffApply( array $input ): array|\WP_Error {
+		return ( new Workspace() )->worktree_apply_legacy_handoff((array) ($input['plan'] ?? array()), (string) ($input['mode'] ?? ''));
+	}
+
 	/** @return array<int,mixed>|\WP_Error */
 	private static function worktreeIntentRequest( array $input ): array|\WP_Error {
 		$task = array_filter(array( 'task_url' => $input['task_url'] ?? null, 'task_ref' => $input['task_ref'] ?? null ), static fn( $value ): bool => is_string($value) && '' !== trim($value));
@@ -4221,7 +4239,8 @@ class WorkspaceAbilities {
 
 	/** @return array<string,array<string,mixed>> */
 	private static function worktreeIntentSchemaProperties(): array {
-		return array( 'repo' => array( 'type' => 'string' ), 'branch' => array( 'type' => 'string' ), 'from' => array( 'type' => 'string' ), 'inject_context' => array( 'type' => 'boolean' ), 'bootstrap' => array( 'type' => 'boolean' ), 'allow_stale' => array( 'type' => 'boolean' ), 'allow_unverified_freshness' => array( 'type' => 'boolean' ), 'rebase_base' => array( 'type' => 'boolean' ), 'force' => array( 'type' => 'boolean' ), 'task_url' => array( 'type' => 'string' ), 'task_ref' => array( 'type' => 'string' ), 'require_task_tracker' => array( 'type' => 'boolean' ), ...WorktreeContextInjector::worktree_add_policy_schema_properties() );
+		$policy = method_exists(WorktreeContextInjector::class, 'worktree_add_policy_schema_properties') ? WorktreeContextInjector::worktree_add_policy_schema_properties() : array();
+		return array( 'repo' => array( 'type' => 'string' ), 'branch' => array( 'type' => 'string' ), 'from' => array( 'type' => 'string' ), 'inject_context' => array( 'type' => 'boolean' ), 'bootstrap' => array( 'type' => 'boolean' ), 'allow_stale' => array( 'type' => 'boolean' ), 'allow_unverified_freshness' => array( 'type' => 'boolean' ), 'rebase_base' => array( 'type' => 'boolean' ), 'force' => array( 'type' => 'boolean' ), 'task_url' => array( 'type' => 'string' ), 'task_ref' => array( 'type' => 'string' ), 'require_task_tracker' => array( 'type' => 'boolean' ), ...$policy );
 	}
 
 	/**
