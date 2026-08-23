@@ -46,13 +46,15 @@ namespace {
 	$assert_synopsis('cleanup', array( 'dry-run', 'force', 'skip-github', 'inventory-only', 'include-repaired-metadata', 'limit', 'offset', 'until-budget', 'apply-plan', 'older-than', 'sort', 'format', 'verbose', 'only' ));
 	$assert_synopsis('emergency-cleanup', array( 'apply', 'force', 'apply-plan', 'format' ));
 	$assert_synopsis('cleanup-artifacts', array( 'dry-run', 'force', 'allow-active-artifact-cleanup', 'allow-unavailable-process-probe', 'limit', 'offset', 'only-handle', 'exhaustive', 'safety-probes', 'sort', 'older-than', 'apply-plan', 'format' ));
+	$artifact_cleanup_options = array_column($definitions['cleanup-artifacts']['synopsis'], null, 'name');
+	worktree_help_assert(true === ( $artifact_cleanup_options['repo']['optional'] ?? false ), 'Artifact cleanup must accept the unscoped command shown in its help.');
 	$assert_synopsis('abandoned', array( 'apply', 'force', 'discard-unpushed', 'limit', 'passes', 'offset', 'stage', 'scope', 'until-budget', 'format', 'verbose' ));
 	$assert_synopsis('active-no-signal-drain', array( 'apply', 'force', 'discard-unpushed', 'limit', 'passes', 'offset', 'stage', 'scope', 'until-budget', 'format', 'verbose' ));
 	foreach ( array( 'abandoned', 'active-no-signal-drain' ) as $operation ) {
 		$options = array_column($definitions[ $operation ]['synopsis'], null, 'name');
 		worktree_help_assert(true === ( $options['repo']['optional'] ?? false ), sprintf('%s must accept its documented global invocation.', $operation));
 	}
-	$assert_synopsis('cleanup-eligible-drain', array( 'apply', 'force', 'discard-unpushed', 'include-repaired-metadata', 'limit', 'passes', 'remove-timeout', 'older-than', 'sort', 'until-budget', 'format' ));
+	$assert_synopsis('cleanup-eligible-drain', array( 'apply', 'force', 'discard-unpushed', 'include-repaired-metadata', 'limit', 'passes', 'remove-timeout', 'older-than', 'sort', 'until-budget', 'format', 'verbose' ));
 	$assert_synopsis('bounded-cleanup-eligible-apply', array( 'dry-run', 'force', 'discard-unpushed', 'via-jobs', 'include-repaired-metadata', 'limit', 'older-than', 'sort', 'remove-timeout', 'scope', 'format' ));
 	$bounded_cleanup_options = array_column($definitions['bounded-cleanup-eligible-apply']['synopsis'], null, 'name');
 	worktree_help_assert(true === ( $bounded_cleanup_options['repo']['optional'] ?? false ), 'Bounded cleanup must accept the unscoped commands emitted by hygiene.');
