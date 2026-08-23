@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.64.1] - 2026-08-23
+
+### Fixed
+- normalize ownership envelopes
+
 ## [0.64.0] - 2026-08-23
 
 ### Added
