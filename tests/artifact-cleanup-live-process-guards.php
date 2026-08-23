@@ -82,6 +82,7 @@ namespace {
 
 	class ArtifactCleanupGuardHarness {
 		use WorkspaceArtifactCleanup;
+		use WorkspaceCoreUtilities;
 		use WorkspaceWorktreeCleanupEngine;
 
 		public const ARTIFACT_CLEANUP_DEFAULT_LIMIT = 100;

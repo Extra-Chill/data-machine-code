@@ -287,6 +287,8 @@ function create_primary_checkout( string $workspace_root ): void {
 	run_command('git remote add origin ' . escapeshellarg($origin), $source);
 	run_command('git push -u origin main', $source);
 	run_command('git clone ' . escapeshellarg($origin) . ' ' . escapeshellarg($workspace_root . '/homeboy'));
+	run_command('git config user.email test@example.test', $workspace_root . '/homeboy');
+	run_command('git config user.name "DMC Test"', $workspace_root . '/homeboy');
 	run_command('git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main', $workspace_root . '/homeboy');
 }
 
