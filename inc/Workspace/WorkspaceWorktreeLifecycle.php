@@ -407,7 +407,14 @@ trait WorkspaceWorktreeLifecycle {
 			if ( 'claim_expired' === $reuse_policy ) {
 				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->claim_expired_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path));
 			}
-			return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path));
+			$reuse = fn() => WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path));
+			$reused = $bootstrap
+				? WorkspaceMutationLock::with_repo($this->workspace_path, 'workspace-capacity-admission', $reuse, self::worktree_capacity_admission_timeout_seconds(true))
+				: $reuse();
+			if ( is_wp_error($reused) || ! $bootstrap || empty($reused['bootstrap_deferred']) ) {
+				return $reused;
+			}
+			return $this->complete_resumed_bootstrap($reused);
 		}
 
 		$operation_timeout  = self::worktree_capacity_operation_timeout_seconds($bootstrap);
@@ -420,7 +427,8 @@ trait WorkspaceWorktreeLifecycle {
 
 		// Fetch and demand planning only touch this primary. Keep them out of the
 		// global capacity critical section so unrelated repositories can prepare in
-		// parallel; capacity-changing checkout and bootstrap remain globally fenced.
+		// parallel; capacity-changing checkout remains globally fenced. Bootstrap
+		// demand is reserved durably before its child processes run without locks.
 		$this->worktree_add_progress($progress_callback, 'repo_preflight');
 		$preflight = WorkspaceMutationLock::with_repo(
 			$this->workspace_path,
@@ -478,7 +486,14 @@ trait WorkspaceWorktreeLifecycle {
 			)
 		);
 
-		return $this->worktree_operation_lock_result($locked, 'capacity_lock_wait', $operation_timeout, $operation_started);
+		$locked = $this->worktree_operation_lock_result($locked, 'capacity_lock_wait', $operation_timeout, $operation_started);
+		if ( is_wp_error($locked) || ! $bootstrap || empty($locked['bootstrap_deferred']) ) {
+			return $locked;
+		}
+
+		// The reservation was committed during admission, before both lock handles
+		// are closed by with_repo(). Dependency children therefore inherit neither.
+		return $this->complete_deferred_bootstrap($locked, $repo, $branch, $operation_deadline, $operation_timeout, $operation_started, $progress_callback);
 	}
 
 	/** Prepare repo-local freshness and projected demand before global admission. */
@@ -558,10 +573,9 @@ trait WorkspaceWorktreeLifecycle {
 	 * Resolve the explicit global-capacity lock wait budget.
 	 *
 	 * Lock order is always global capacity first, then the repository lock. The
-	 * global lock remains held through bounded bootstrap so concurrent admissions
-	 * cannot inspect stale capacity. Its default wait exceeds the default bounded
-	 * dependency command timeout and can be tuned for installations with many
-	 * bootstrap roots.
+	 * global lock remains held through checkout and durable bootstrap reservation.
+	 * Later admissions include that reservation while dependency children run
+	 * without inheriting this lock descriptor.
 	 */
 	public static function worktree_capacity_wait_timeout_seconds( bool $bootstrap = true ): int {
 		$timeout = self::worktree_capacity_operation_timeout_seconds($bootstrap) + 60;
@@ -600,9 +614,9 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/**
-	 * Inspect, create, and bootstrap while holding the workspace-wide capacity
-	 * lock. A later concurrent admission therefore measures the first one's
-	 * completed dependency allocation rather than overcommitting stale capacity.
+	 * Inspect, create, and reserve bootstrap demand while holding the workspace-
+	 * wide capacity lock. A later admission includes the durable reservation while
+	 * the dependency process runs outside mutation lock boundaries.
 	 */
 	private function worktree_add_with_capacity_lock(
 		string $repo,
@@ -966,10 +980,6 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		if ( $bootstrap ) {
-			$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'bootstrap', $operation_deadline, $operation_timeout, $operation_started);
-			if ( null !== $heartbeat_error ) {
-				return $heartbeat_error;
-			}
 			$bootstrap_before_capacity = $this->inspect_worktree_capacity($repo, $branch, false, array());
 			$remaining_seconds = $this->worktree_operation_remaining_seconds($operation_deadline);
 			if ( $remaining_seconds <= 0 ) {
@@ -979,49 +989,13 @@ trait WorkspaceWorktreeLifecycle {
 				}
 				return $this->worktree_operation_timeout('bootstrap', $operation_timeout, $operation_started, array( 'readiness' => 'incomplete' ));
 			}
-			$recorded = $this->record_bootstrap_outcome($wt_handle, 'running');
+			$reservation = WorktreeBootstrapper::remaining_demand_after_materialization($measurement_plan);
+			$recorded = $this->record_bootstrap_outcome($wt_handle, 'running', array(), null, $reservation);
 			if ( is_wp_error($recorded) ) {
 				return $recorded;
 			}
-			$this->worktree_add_progress($progress_callback, 'bootstrap_start');
-			$response['bootstrap'] = WorktreeBootstrapper::bootstrap($wt_path, $remaining_seconds);
-			$this->worktree_add_progress($progress_callback, 'bootstrap_complete');
-			$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'bootstrap_complete', $operation_deadline, $operation_timeout, $operation_started);
-			if ( null !== $heartbeat_error ) {
-				return $heartbeat_error;
-			}
-			$bootstrap_created_dirty_paths = (array) ( $response['bootstrap']['git_state']['bootstrap_created_dirty_paths'] ?? array() );
-			$git_state_inspected           = ! empty($response['bootstrap']['git_state']['inspected']);
-			$bootstrap_outcome             = ! empty($response['bootstrap']['success']) && $git_state_inspected && array() === $bootstrap_created_dirty_paths ? 'succeeded' : 'failed';
-			$bootstrap_reason              = ! $git_state_inspected ? 'bootstrap_git_state_unavailable' : ( array() !== $bootstrap_created_dirty_paths ? 'bootstrap_created_dirty_paths' : null );
-			$recorded                      = $this->record_bootstrap_outcome($wt_handle, $bootstrap_outcome, $response['bootstrap'], $bootstrap_reason);
-			if ( is_wp_error($recorded) ) {
-				return $recorded;
-			}
-			$response['metadata'] = WorktreeContextInjector::get_metadata($wt_handle);
-			if ( ! $git_state_inspected || array() !== $bootstrap_created_dirty_paths ) {
-				$error_code = $git_state_inspected ? 'bootstrap_created_dirty_paths' : 'bootstrap_git_state_unavailable';
-				$message    = $git_state_inspected
-					? sprintf('Bootstrap created %d new dirty path(s) in worktree "%s". The worktree was retained without deleting files that may need review.', count($bootstrap_created_dirty_paths), $wt_handle)
-					: sprintf('Could not verify post-bootstrap Git cleanliness for worktree "%s". The worktree was retained without deleting files.', $wt_handle);
-				return new \WP_Error(
-					$error_code,
-					$message,
-					array(
-						'status'                        => 409,
-						'handle'                        => $wt_handle,
-						'path'                          => $wt_path,
-						'bootstrap'                     => $response['bootstrap'],
-						'bootstrap_created_dirty_paths' => $bootstrap_created_dirty_paths,
-						'rollback'                      => array(
-							'git_materialization_rolled_back' => false,
-							'lifecycle_metadata_rolled_back'  => false,
-							'reason'                          => 'new bootstrap outputs are retained for review',
-						),
-						'remediation_command'           => 'git -C ' . escapeshellarg($wt_path) . ' status --short --branch --untracked-files=all',
-					)
-				);
-			}
+			$response['bootstrap_deferred'] = true;
+			$response['bootstrap_reservation'] = $reservation;
 		}
 		if ( ! is_dir($wt_path) || ! file_exists($wt_path . '/.git') ) {
 			return new \WP_Error(
@@ -1035,8 +1009,8 @@ trait WorkspaceWorktreeLifecycle {
 			);
 		}
 		if ( $bootstrap ) {
-			$after_capacity = $this->inspect_worktree_capacity($repo, $branch, false, array());
-			$response['capacity_evidence'] = WorktreeDemandCalibration::record_bootstrap($repo, $measurement_plan, $bootstrap_before_capacity, $after_capacity, ! empty($response['bootstrap']['success']));
+			$response['bootstrap_capacity_before'] = $bootstrap_before_capacity;
+			$response['bootstrap_measurement_plan'] = $measurement_plan;
 		} else {
 			$response['capacity_evidence'] = array( 'outcome' => 'bootstrap_disabled', 'recorded' => false, 'reason' => 'bootstrap_disabled' );
 		}
@@ -1701,16 +1675,47 @@ trait WorkspaceWorktreeLifecycle {
 
 	/** Resume a durable incomplete bootstrap for an otherwise compatible handle. */
 	private function resume_incomplete_bootstrap( string $handle, array $existing, array $metadata, string $branch ): array|\WP_Error {
-		$stored = $this->record_bootstrap_outcome($handle, 'running');
+		$bootstrap = (array) ($metadata['provisioning']['bootstrap'] ?? array());
+		if ( 'running' === ($bootstrap['outcome'] ?? null) && is_array($bootstrap['capacity_reservation'] ?? null) ) {
+			$coordinator = WorktreeContextInjector::bootstrap_owner_state($bootstrap['coordinator'] ?? $bootstrap['owner'] ?? null);
+			$child = isset($bootstrap['active_child']) ? WorktreeContextInjector::bootstrap_owner_state($bootstrap['active_child']) : array( 'state' => 'stale', 'reason' => 'no_active_child' );
+			if ( 'active' === $coordinator['state'] || 'active' === $child['state'] ) {
+				return new \WP_Error(
+					'worktree_bootstrap_in_progress',
+					'Refusing to start a second dependency bootstrap while its coordinator or active child is still live.',
+					array( 'status' => 409, 'retryable' => true, 'handle' => $handle, 'coordinator' => $coordinator, 'active_child' => $child )
+				);
+			}
+			if ( 'unverifiable' === $coordinator['state'] || 'unverifiable' === $child['state'] ) {
+				return new \WP_Error(
+					'worktree_bootstrap_owner_unverifiable',
+					'Cannot safely resume dependency bootstrap because its coordinator or active child cannot be verified. Inspect both processes and retry after confirming they have exited.',
+					array( 'status' => 423, 'retryable' => true, 'handle' => $handle, 'coordinator' => $coordinator, 'active_child' => $child, 'remediation_command' => 'ps -p ' . (int) (($bootstrap['coordinator']['pid'] ?? $bootstrap['owner']['pid'] ?? 0)) . ',' . (int) (($bootstrap['active_child']['pid'] ?? 0)) . ' -o pid=,lstart=,command=' )
+				);
+			}
+			$reconciled = $this->record_bootstrap_outcome($handle, 'interrupted', array(), 'coordinator_' . (string) $coordinator['reason'] . ';active_child_' . (string) $child['reason']);
+			if ( is_wp_error($reconciled) ) {
+				return $reconciled;
+			}
+			$metadata = WorktreeContextInjector::get_metadata($handle) ?? $metadata;
+		}
+		$demand_plan = WorktreeBootstrapper::demand_plan_for_target((string) $existing['path'], 'HEAD', true);
+		if ( $demand_plan instanceof \WP_Error ) {
+			return $demand_plan;
+		}
+		$reservation = WorktreeBootstrapper::remaining_demand_after_materialization($demand_plan);
+		$capacity = $this->inspect_worktree_capacity((string) ($metadata['repo'] ?? ''), $branch, false, $reservation);
+		if ( 'refused' === ($capacity['status'] ?? null) ) {
+			return new \WP_Error(
+				'worktree_disk_budget_exceeded',
+				'Refusing to resume dependency bootstrap because the current workspace capacity budget is unsafe.',
+				array( 'status' => 507, 'handle' => $handle, 'disk_budget' => $capacity )
+			);
+		}
+		$stored = $this->record_bootstrap_outcome($handle, 'running', array(), null, $reservation);
 		if ( is_wp_error($stored) ) {
 			return $stored;
 		}
-		$result = WorktreeBootstrapper::bootstrap((string) $existing['path']);
-		$stored = $this->record_bootstrap_outcome($handle, ! empty($result['success']) ? 'succeeded' : 'failed', $result);
-		if ( is_wp_error($stored) ) {
-			return $stored;
-		}
-		$metadata = WorktreeContextInjector::get_metadata($handle) ?? $metadata;
 		return array(
 			'success'        => true,
 			'handle'         => $handle,
@@ -1719,21 +1724,99 @@ trait WorkspaceWorktreeLifecycle {
 			'slug'           => $this->slugify_branch($branch),
 			'created_branch' => false,
 			'resumed'        => true,
-			'bootstrap'      => $result,
-			'metadata'       => $metadata,
+			'bootstrap_deferred' => true,
+			'bootstrap_reservation' => $reservation,
+			'metadata'       => WorktreeContextInjector::get_metadata($handle) ?? $metadata,
 			'message'        => sprintf('Resumed incomplete bootstrap for worktree "%s".', $handle),
 		);
 	}
 
+	/** Run a claimed resume only after the short repository-lock claim has ended. */
+	private function complete_resumed_bootstrap( array $response ): array|\WP_Error {
+		$response['bootstrap'] = WorktreeBootstrapper::bootstrap((string) $response['path'], null, fn( array $process ) => $this->record_bootstrap_active_child((string) $response['handle'], (int) ($process['pid'] ?? 0)), fn( array $process ) => $this->clear_bootstrap_active_child((string) $response['handle'], (int) ($process['pid'] ?? 0)));
+		$response = $this->record_completed_bootstrap($response);
+		if ( is_wp_error($response) ) {
+			return $response;
+		}
+		unset($response['bootstrap_deferred'], $response['bootstrap_reservation']);
+		return $response;
+	}
+
+	/** Complete a reserved bootstrap after the capacity and repository locks are released. */
+	private function complete_deferred_bootstrap( array $response, string $repo, string $branch, float $operation_deadline, int $operation_timeout, float $operation_started, ?callable $progress_callback = null ): array|\WP_Error {
+		$remaining_seconds = $this->worktree_operation_remaining_seconds($operation_deadline);
+		if ( $remaining_seconds <= 0 ) {
+			$recorded = $this->record_bootstrap_outcome((string) $response['handle'], 'failed', array(), 'operation_timeout');
+			return is_wp_error($recorded) ? $recorded : $this->worktree_operation_timeout('bootstrap', $operation_timeout, $operation_started, array( 'readiness' => 'incomplete' ));
+		}
+
+		$this->worktree_add_progress($progress_callback, 'bootstrap_start');
+		$response['bootstrap'] = WorktreeBootstrapper::bootstrap((string) $response['path'], $remaining_seconds, fn( array $process ) => $this->record_bootstrap_active_child((string) $response['handle'], (int) ($process['pid'] ?? 0)), fn( array $process ) => $this->clear_bootstrap_active_child((string) $response['handle'], (int) ($process['pid'] ?? 0)));
+		$this->worktree_add_progress($progress_callback, 'bootstrap_complete');
+		$response = $this->record_completed_bootstrap($response);
+		if ( is_wp_error($response) ) {
+			return $response;
+		}
+		$after_capacity = $this->inspect_worktree_capacity($repo, $branch, false, array());
+		$measurement_plan = (array) ($response['bootstrap_measurement_plan'] ?? array());
+		$bootstrap_before_capacity = (array) ($response['bootstrap_capacity_before'] ?? array());
+		$response['capacity_evidence'] = WorktreeDemandCalibration::record_bootstrap($repo, $measurement_plan, $bootstrap_before_capacity, $after_capacity, ! empty($response['bootstrap']['success']));
+		unset($response['bootstrap_deferred'], $response['bootstrap_reservation'], $response['bootstrap_capacity_before'], $response['bootstrap_measurement_plan']);
+		return $response;
+	}
+
+	/** Persist bootstrap cleanliness evidence and retain generated dirty paths for review. */
+	private function record_completed_bootstrap( array $response ): array|\WP_Error {
+		$bootstrap_created_dirty_paths = (array) ( $response['bootstrap']['git_state']['bootstrap_created_dirty_paths'] ?? array() );
+		$git_state_inspected           = ! empty($response['bootstrap']['git_state']['inspected']);
+		$bootstrap_outcome             = ! empty($response['bootstrap']['success']) && $git_state_inspected && array() === $bootstrap_created_dirty_paths ? 'succeeded' : 'failed';
+		$bootstrap_reason              = ! $git_state_inspected ? 'bootstrap_git_state_unavailable' : ( array() !== $bootstrap_created_dirty_paths ? 'bootstrap_created_dirty_paths' : null );
+		$recorded                      = $this->record_bootstrap_outcome((string) $response['handle'], $bootstrap_outcome, (array) $response['bootstrap'], $bootstrap_reason);
+		if ( is_wp_error($recorded) ) {
+			return $recorded;
+		}
+		$response['metadata'] = WorktreeContextInjector::get_metadata((string) $response['handle']);
+		if ( $git_state_inspected && array() === $bootstrap_created_dirty_paths ) {
+			return $response;
+		}
+
+		$error_code = $git_state_inspected ? 'bootstrap_created_dirty_paths' : 'bootstrap_git_state_unavailable';
+		$message    = $git_state_inspected
+			? sprintf('Bootstrap created %d new dirty path(s) in worktree "%s". The worktree was retained without deleting files that may need review.', count($bootstrap_created_dirty_paths), (string) $response['handle'])
+			: sprintf('Could not verify post-bootstrap Git cleanliness for worktree "%s". The worktree was retained without deleting files.', (string) $response['handle']);
+		return new \WP_Error(
+			$error_code,
+			$message,
+			array(
+				'status'                        => 409,
+				'handle'                        => $response['handle'],
+				'path'                          => $response['path'],
+				'bootstrap'                     => $response['bootstrap'],
+				'bootstrap_created_dirty_paths' => $bootstrap_created_dirty_paths,
+				'rollback'                      => array(
+					'git_materialization_rolled_back' => false,
+					'lifecycle_metadata_rolled_back'  => false,
+					'reason'                          => 'new bootstrap outputs are retained for review',
+				),
+				'remediation_command'           => 'git -C ' . escapeshellarg((string) $response['path']) . ' status --short --branch --untracked-files=all',
+			)
+		);
+	}
+
 	/** Persist a bootstrap phase transition without coupling to any dependency manager. */
-	private function record_bootstrap_outcome( string $handle, string $outcome, array $result = array(), ?string $reason = null ): bool|\WP_Error {
+	private function record_bootstrap_outcome( string $handle, string $outcome, array $result = array(), ?string $reason = null, ?array $reservation = null ): bool|\WP_Error {
 		$metadata = WorktreeContextInjector::get_metadata($handle) ?? array();
 		$bootstrap = is_array($metadata['provisioning']['bootstrap'] ?? null) ? $metadata['provisioning']['bootstrap'] : array();
 		$bootstrap['outcome'] = $outcome;
 		if ( 'running' === $outcome ) {
 			$bootstrap['started_at'] = gmdate('c');
+			$bootstrap['capacity_reservation'] = $reservation;
+			$bootstrap['coordinator'] = WorktreeContextInjector::bootstrap_owner();
+			unset($bootstrap['active_child'], $bootstrap['owner']);
 		} else {
 			$bootstrap['completed_at'] = gmdate('c');
+			unset($bootstrap['capacity_reservation']);
+			unset($bootstrap['coordinator'], $bootstrap['active_child'], $bootstrap['owner']);
 			$bootstrap['steps'] = array_map(
 				static fn( array $step ): array => array_filter(array( 'step' => $step['step'] ?? null, 'status' => $step['status'] ?? null, 'reason' => $step['reason'] ?? null, 'command' => $step['command'] ?? null )),
 				(array) ($result['steps'] ?? array())
@@ -1747,6 +1830,29 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		$metadata['provisioning']['bootstrap'] = $bootstrap;
 		return WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
+	}
+
+	/** Record the current ProcessRunner child without replacing the coordinator. */
+	private function record_bootstrap_active_child( string $handle, int $pid ): void {
+		if ( $pid <= 0 ) {
+			return;
+		}
+		$metadata = WorktreeContextInjector::get_metadata($handle);
+		if ( ! is_array($metadata) || 'running' !== ($metadata['provisioning']['bootstrap']['outcome'] ?? null) ) {
+			return;
+		}
+		$metadata['provisioning']['bootstrap']['active_child'] = WorktreeContextInjector::bootstrap_owner($pid);
+		WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
+	}
+
+	/** Clear only the child that completed, preserving a newer sequential child. */
+	private function clear_bootstrap_active_child( string $handle, int $pid ): void {
+		$metadata = WorktreeContextInjector::get_metadata($handle);
+		if ( ! is_array($metadata) || $pid !== (int) ($metadata['provisioning']['bootstrap']['active_child']['pid'] ?? 0) ) {
+			return;
+		}
+		unset($metadata['provisioning']['bootstrap']['active_child']);
+		WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
 	}
 
 	/**
@@ -3609,6 +3715,10 @@ trait WorkspaceWorktreeLifecycle {
 	 * @return array<string,mixed>
 	 */
 	protected function inspect_worktree_capacity( string $repo, string $branch, bool $force, array $demand_plan ): array {
+		$reservations = WorktreeContextInjector::bootstrap_capacity_reservations();
+		$demand_plan['bytes'] = max(0, (int) ($demand_plan['bytes'] ?? 0)) + (int) $reservations['bytes'];
+		$demand_plan['inodes'] = max(0, (int) ($demand_plan['inodes'] ?? 0)) + (int) $reservations['inodes'];
+		$demand_plan['capacity_reservations'] = $reservations;
 		return WorktreeDiskBudget::inspect(
 			$this->workspace_path,
 			WorktreeDiskBudget::thresholds($repo, $branch),

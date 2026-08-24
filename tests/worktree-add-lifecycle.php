@@ -677,7 +677,7 @@ try {
 	$bootstrap_start = array_search('bootstrap_start', $bootstrap_progress, true);
 	$bootstrap_complete = array_search('bootstrap_complete', $bootstrap_progress, true);
 	$inventory_metadata = array_search('inventory_metadata', $bootstrap_progress, true);
-	assert_true(false !== $bootstrap_start && false !== $bootstrap_complete && false !== $inventory_metadata && $bootstrap_start < $bootstrap_complete && $bootstrap_complete < $inventory_metadata, 'worktree add did not report actual bootstrap start, completion, and the following inventory phase in order');
+	assert_true(false !== $bootstrap_start && false !== $bootstrap_complete && false !== $inventory_metadata && $inventory_metadata < $bootstrap_start && $bootstrap_start < $bootstrap_complete, 'worktree add did not persist inventory before the deferred bootstrap completed');
 	$interrupted_bootstrap_handle = 'homeboy@interrupted-bootstrap';
 	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, array(
 		'provisioning' => array(
@@ -689,9 +689,43 @@ try {
 	assert_true(false === ( $incomplete_get['worktrees'][0]['readiness']['ready'] ?? true ) && 'bootstrap_running' === ( $incomplete_get['worktrees'][0]['readiness']['reason'] ?? '' ) && str_contains((string) ($incomplete_get['worktrees'][0]['readiness']['resume_command'] ?? ''), 'worktree add homeboy interrupted-bootstrap'), 'interrupted bootstrap did not survive as explicit incomplete readiness evidence');
 	$incomplete_show = $workspace->show_repo($interrupted_bootstrap_handle);
 	assert_true(false === ( $incomplete_show['readiness']['ready'] ?? true ) && 'incomplete' === ( $incomplete_show['readiness']['status'] ?? '' ), 'workspace show did not project incomplete bootstrap readiness');
-	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, array( 'last_seen_at' => gmdate('c', time() - 90000) ));
+	$interrupted_metadata = WorktreeContextInjector::get_metadata($interrupted_bootstrap_handle) ?? array();
+	$interrupted_metadata['last_seen_at'] = gmdate('c', time() - 90000);
+	$interrupted_metadata['provisioning']['bootstrap']['capacity_reservation'] = array( 'bytes' => 10, 'inodes' => 1 );
+	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => array( 'platform' => 'test', 'pid' => $pid, 'token' => 'live' ) ));
+	$interrupted_metadata['provisioning']['bootstrap']['owner'] = WorktreeContextInjector::bootstrap_owner();
+	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, $interrupted_metadata);
+	$live_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	assert_true(is_wp_error($live_bootstrap) && 'worktree_bootstrap_in_progress' === $live_bootstrap->get_error_code(), 'live bootstrap owner did not reject concurrent resume');
+	$interrupted_metadata = WorktreeContextInjector::get_metadata($interrupted_bootstrap_handle) ?? array();
+	$interrupted_metadata['provisioning']['bootstrap']['coordinator'] = $interrupted_metadata['provisioning']['bootstrap']['owner'];
+	$interrupted_metadata['provisioning']['bootstrap']['active_child'] = array( 'pid' => 4242, 'identity' => array( 'platform' => 'test', 'pid' => 4242, 'token' => 'child' ) );
+	unset($interrupted_metadata['provisioning']['bootstrap']['owner']);
+	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, $interrupted_metadata);
+	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => 4242 === $pid ? array( 'state' => 'active', 'identity' => array( 'platform' => 'test', 'pid' => 4242, 'token' => 'child' ) ) : array( 'state' => 'stale', 'reason' => 'owner_process_missing' ));
+	$child_live_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	assert_true(is_wp_error($child_live_bootstrap) && 'worktree_bootstrap_in_progress' === $child_live_bootstrap->get_error_code(), 'dead coordinator with live child did not reject resume');
+	$interrupted_metadata = WorktreeContextInjector::get_metadata($interrupted_bootstrap_handle) ?? array();
+	unset($interrupted_metadata['provisioning']['bootstrap']['active_child']);
+	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => array( 'platform' => 'test', 'pid' => $pid, 'token' => 'live' ) ));
+	$interrupted_metadata['provisioning']['bootstrap']['coordinator'] = WorktreeContextInjector::bootstrap_owner();
+	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, $interrupted_metadata);
+	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'unverifiable', 'reason' => 'owner_probe_denied' ));
+	$unverifiable_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	assert_true(is_wp_error($unverifiable_bootstrap) && 'worktree_bootstrap_owner_unverifiable' === $unverifiable_bootstrap->get_error_code() && 'owner_probe_denied' === ($unverifiable_bootstrap->get_error_data()['coordinator']['reason'] ?? null), 'unverifiable bootstrap owner did not fail closed with typed evidence');
+	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => array( 'platform' => 'test', 'pid' => $pid, 'token' => 'replacement' ) ));
 	$resumed_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
-	assert_true(! is_wp_error($resumed_bootstrap) && true === ( $resumed_bootstrap['resumed'] ?? false ) && 'succeeded' === ( $resumed_bootstrap['metadata']['provisioning']['bootstrap']['outcome'] ?? null ), is_wp_error($resumed_bootstrap) ? $resumed_bootstrap->get_error_message() : 'exact retry did not resume interrupted bootstrap');
+	assert_true(! is_wp_error($resumed_bootstrap) && true === ( $resumed_bootstrap['resumed'] ?? false ) && 'succeeded' === ( $resumed_bootstrap['metadata']['provisioning']['bootstrap']['outcome'] ?? null ) && empty($resumed_bootstrap['metadata']['provisioning']['bootstrap']['capacity_reservation']), is_wp_error($resumed_bootstrap) ? $resumed_bootstrap->get_error_message() : 'verified PID identity mismatch did not reconcile and resume');
+	$interrupted_metadata = WorktreeContextInjector::get_metadata($interrupted_bootstrap_handle) ?? array();
+	$interrupted_metadata['provisioning']['bootstrap']['outcome'] = 'running';
+	$interrupted_metadata['provisioning']['bootstrap']['capacity_reservation'] = array( 'bytes' => 10, 'inodes' => 1 );
+	$interrupted_metadata['provisioning']['bootstrap']['coordinator'] = array( 'pid' => 999999, 'identity' => array( 'platform' => 'linux_proc', 'start_ticks' => '1' ) );
+	unset($interrupted_metadata['provisioning']['bootstrap']['active_child'], $interrupted_metadata['provisioning']['bootstrap']['owner']);
+	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, $interrupted_metadata);
+	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'stale', 'reason' => 'owner_process_missing' ));
+	$dead_owner_resume = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	assert_true(! is_wp_error($dead_owner_resume) && true === ($dead_owner_resume['resumed'] ?? false) && 'succeeded' === ($dead_owner_resume['metadata']['provisioning']['bootstrap']['outcome'] ?? null), is_wp_error($dead_owner_resume) ? $dead_owner_resume->get_error_message() : 'verified dead bootstrap owner did not reconcile and resume');
+	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(null);
 	assert_true(true === ( $workspace->worktree_get($interrupted_bootstrap_handle)['worktrees'][0]['readiness']['ready'] ?? false ), 'resumed bootstrap remained incomplete');
 	$probe_timeout_workspace = new class extends Workspace {
 		protected function worktree_behind_count( string $repo_path, string $ref, string $upstream, int $timeout_seconds ): int|null|\WP_Error {

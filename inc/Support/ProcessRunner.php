@@ -124,6 +124,11 @@ final class ProcessRunner {
 		if ( ! is_resource($process) ) {
 			return self::error($options, 'Process command failed to start.', array( 'status' => 500 ));
 		}
+		if ( is_callable($options['on_start'] ?? null) ) {
+			$status = proc_get_status($process);
+			$options['on_start'](array( 'pid' => (int) ($status['pid'] ?? 0) ));
+		}
+		$process_pid = (int) ((proc_get_status($process)['pid'] ?? 0));
 		if ( null !== $stdin ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- Process stdin is not a filesystem path.
 			fwrite($pipes[0], $stdin);
@@ -153,6 +158,7 @@ final class ProcessRunner {
 				if ( $fail_on_output_overflow && $output_cap > 0 && strlen($output) > $output_cap ) {
 					$overflow_status = proc_get_status($process);
 					$remaining = self::terminate_timed_out_process($process, $pipes, $output, $stdout, $stderr, (int) ( $overflow_status['pid'] ?? 0 ), $uses_process_group);
+					self::notify_completion($options, $process_pid);
 					return self::error(
 						$options,
 						'Process command output exceeded the supported limit.',
@@ -176,6 +182,7 @@ final class ProcessRunner {
 
 			if ( null !== $deadline && microtime(true) >= $deadline ) {
 				$remaining = self::terminate_timed_out_process($process, $pipes, $output, $stdout, $stderr, (int) $status['pid'], $uses_process_group);
+				self::notify_completion($options, $process_pid);
 				return self::error(
 					$options,
 					sprintf('Process command timed out after %d second(s).', $timeout_seconds),
@@ -203,6 +210,7 @@ final class ProcessRunner {
 		}
 
 		$close_code = proc_close($process);
+		self::notify_completion($options, $process_pid);
 		if ( -1 === $exit_code ) {
 			$exit_code = $close_code;
 		}
@@ -238,6 +246,18 @@ final class ProcessRunner {
 		}
 
 		return $result;
+	}
+
+	/** Notify optional lifecycle observers after this owned process has ended. */
+	private static function notify_completion( array $options, int $pid ): void {
+		if ( ! is_callable($options['on_complete'] ?? null) ) {
+			return;
+		}
+		try {
+			$options['on_complete'](array( 'pid' => $pid ));
+		} catch ( \Throwable ) {
+			// Lifecycle observation must not alter process result handling.
+		}
 	}
 
 	/**

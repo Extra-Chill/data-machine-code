@@ -102,6 +102,17 @@ process_runner_assert_not_error($result, 'ProcessRunner should execute argv spec
 process_runner_assert_same('argv-ok|' . basename($cwd), $result['stdout'], 'CommandSpec preserves argv, cwd, and env policy.');
 process_runner_assert_same('', $result['stderr'], 'CommandSpec captures stderr separately.');
 
+$process_events = array();
+$completed = ProcessRunner::run(
+	CommandSpec::from_argv(array( PHP_BINARY, '-r', 'exit(0);' )),
+	array(
+		'on_start' => static function ( array $process ) use ( &$process_events ): void { $process_events['start'] = (int) ($process['pid'] ?? 0); },
+		'on_complete' => static function ( array $process ) use ( &$process_events ): void { $process_events['complete'] = (int) ($process['pid'] ?? 0); },
+	)
+);
+process_runner_assert_not_error($completed, 'ProcessRunner should complete lifecycle callbacks.');
+process_runner_assert_same($process_events['start'] ?? 0, $process_events['complete'] ?? -1, 'ProcessRunner completion must identify the started child.');
+
 $stdin_result = ProcessRunner::run(
 	CommandSpec::from_argv(array( PHP_BINARY, '-r', 'fwrite(STDOUT, stream_get_contents(STDIN));' )),
 	array( 'stdin' => "/workspace/candidate\n" )
