@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+define('DATAMACHINE_CODE_STANDALONE', true);
+require dirname(__DIR__) . '/vendor/autoload.php';
+
 function standalone_provider_assert( bool $condition, string $message ): void {
 	if ( ! $condition ) {
 		throw new RuntimeException($message);
@@ -75,15 +78,19 @@ try {
 	standalone_provider_git($primary, array( 'push', '-u', 'origin', 'main' ));
 	standalone_provider_git($primary, array( 'worktree', 'add', '-b', 'fix/example', $path ));
 	standalone_provider_git($path, array( 'push', '-u', 'origin', 'fix/example' ));
-	$git_pointer = trim((string) file_get_contents($path . '/.git'));
-	$git_dir = trim(substr($git_pointer, strlen('gitdir:')));
-	file_put_contents($git_dir . '/datamachine-code-task.json', json_encode(array( 'task_url' => ' HTTPS://GitHub.COM/Example/Fixture/issues/1/?source=dmc#identity ' ), JSON_THROW_ON_ERROR));
 
 	$missing = standalone_provider_run(array( PHP_BINARY, $script, 'identity', $root, 'fixture@missing' ));
 	standalone_provider_assert(0 === $missing['status'], 'Missing identity must be a successful typed decline.');
 	standalone_provider_assert($missing['elapsed'] < 1.0, 'Missing identity exceeded one second.');
 	$missing_payload = json_decode($missing['stdout'], true, 512, JSON_THROW_ON_ERROR);
 	standalone_provider_assert('not_owned' === $missing_payload['status'], 'Missing identity did not return not_owned.');
+	$legacy_metadata = array(
+		'path'        => $path,
+		'origin_task' => array( 'task_url' => ' HTTPS://GitHub.COM/Example/Fixture/issues/1/?source=dmc#identity ' ),
+	);
+	standalone_provider_assert(! \DataMachineCode\Workspace\WorktreeContextInjector::standalone_worktree_tracker_is_current($legacy_metadata), 'Legacy worktree unexpectedly started with standalone tracker identity.');
+	standalone_provider_assert(true === \DataMachineCode\Workspace\WorktreeContextInjector::store_standalone_worktree_tracker($legacy_metadata), 'Legacy worktree tracker backfill failed.');
+	standalone_provider_assert(\DataMachineCode\Workspace\WorktreeContextInjector::standalone_worktree_tracker_is_current($legacy_metadata), 'Legacy worktree tracker backfill was not current.');
 
 	$identity = standalone_provider_run(array( PHP_BINARY, $script, 'identity', $root, $handle ));
 	standalone_provider_assert(0 === $identity['status'], 'Existing identity failed: ' . $identity['stderr']);

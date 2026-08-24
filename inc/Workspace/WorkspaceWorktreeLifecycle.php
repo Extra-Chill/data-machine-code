@@ -1943,7 +1943,6 @@ trait WorkspaceWorktreeLifecycle {
 			}
 			return $metadata_stored;
 		}
-		$this->store_standalone_worktree_tracker($wt_path, $lifecycle_metadata);
 		$response['created_at'] = $lifecycle_metadata['created_at'] ?? null;
 		$response['metadata']   = WorktreeContextInjector::get_metadata($wt_handle);
 
@@ -1978,22 +1977,6 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		return $response;
-	}
-
-	/** Persist the task tracker beside linked-worktree Git metadata for standalone consumers. */
-	private function store_standalone_worktree_tracker( string $path, array $metadata ): void {
-		$task_url = is_array($metadata['origin_task'] ?? null) ? TaskUrl::canonicalize($metadata['origin_task']['task_url'] ?? null) : null;
-		$git_file = $path . '/.git';
-		$pointer  = is_file($git_file) ? trim((string) @file_get_contents($git_file)) : '';
-		if ( null === $task_url || ! str_starts_with($pointer, 'gitdir:') ) {
-			return;
-		}
-		$git_dir = trim(substr($pointer, strlen('gitdir:')));
-		$git_dir = str_starts_with($git_dir, '/') ? $git_dir : $path . '/' . $git_dir;
-		$git_dir = realpath($git_dir);
-		if ( false !== $git_dir ) {
-			@file_put_contents($git_dir . '/datamachine-code-task.json', wp_json_encode(array( 'task_url' => $task_url )));
-		}
 	}
 
 	/** Emit best-effort phase visibility without allowing a presentation failure to alter creation. */

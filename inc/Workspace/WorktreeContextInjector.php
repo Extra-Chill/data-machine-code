@@ -1657,7 +1657,9 @@ class WorktreeContextInjector {
 	public static function store_lifecycle_metadata( string $handle, array $metadata ): bool|\WP_Error {
 		if ( ! function_exists('get_option') || ! function_exists('update_option') ) {
 			$existing = self::get_inventory_metadata($handle) ?? array();
-			return self::upsert_inventory_metadata($handle, array_merge($existing, $metadata));
+			$stored = array_merge($existing, $metadata);
+			$result = self::upsert_inventory_metadata($handle, $stored);
+			return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($stored);
 		}
 
 		$stored_metadata = array();
@@ -1683,7 +1685,48 @@ class WorktreeContextInjector {
 			return $updated;
 		}
 
-		return self::upsert_inventory_metadata($handle, $stored_metadata);
+		$result = self::upsert_inventory_metadata($handle, $stored_metadata);
+		return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($stored_metadata);
+	}
+
+	/** Whether standalone identity already carries the persisted task tracker. */
+	public static function standalone_worktree_tracker_is_current( array $metadata ): bool {
+		$target = self::standalone_worktree_tracker_target($metadata);
+		if ( null === $target ) {
+			return true;
+		}
+		$payload = @file_get_contents($target['path']);
+		$stored  = is_string($payload) ? json_decode($payload, true) : null;
+		return is_array($stored) && $target['task_url'] === TaskUrl::canonicalize($stored['task_url'] ?? null);
+	}
+
+	/** Persist the task tracker beside linked-worktree Git metadata. */
+	public static function store_standalone_worktree_tracker( array $metadata ): bool|\WP_Error {
+		$target = self::standalone_worktree_tracker_target($metadata);
+		if ( null === $target ) {
+			return true;
+		}
+		$encoded = function_exists('wp_json_encode')
+			? wp_json_encode(array( 'task_url' => $target['task_url'] ))
+			: json_encode(array( 'task_url' => $target['task_url'] ), JSON_UNESCAPED_SLASHES);
+		if ( ! is_string($encoded) || false === @file_put_contents($target['path'], $encoded, LOCK_EX) ) {
+			return new \WP_Error('worktree_standalone_tracker_persist_failed', 'Could not persist standalone worktree tracker identity.', array( 'path' => $target['path'] ));
+		}
+		return true;
+	}
+
+	/** @return array{path:string,task_url:string}|null */
+	private static function standalone_worktree_tracker_target( array $metadata ): ?array {
+		$task_url = is_array($metadata['origin_task'] ?? null) ? TaskUrl::canonicalize($metadata['origin_task']['task_url'] ?? null) : null;
+		$path     = is_string($metadata['path'] ?? null) ? rtrim((string) $metadata['path'], '/') : '';
+		$pointer  = '' !== $path && is_file($path . '/.git') ? trim((string) @file_get_contents($path . '/.git')) : '';
+		if ( null === $task_url || ! str_starts_with($pointer, 'gitdir:') ) {
+			return null;
+		}
+		$git_dir = trim(substr($pointer, strlen('gitdir:')));
+		$git_dir = str_starts_with($git_dir, '/') ? $git_dir : $path . '/' . $git_dir;
+		$git_dir = realpath($git_dir);
+		return false === $git_dir ? null : array( 'path' => $git_dir . '/datamachine-code-task.json', 'task_url' => $task_url );
 	}
 
 	/** Persist the exact creation contract before Git materializes a worktree. */
@@ -1740,7 +1783,8 @@ class WorktreeContextInjector {
 		if ( is_wp_error($promoted) ) {
 			return $promoted;
 		}
-		return self::upsert_inventory_metadata($handle, $metadata);
+		$result = self::upsert_inventory_metadata($handle, $metadata);
+		return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($metadata);
 	}
 
 	/** Remove an unpromoted journal when its Git mutation is rolled back. */
@@ -1781,7 +1825,8 @@ class WorktreeContextInjector {
 		if ( is_wp_error($updated) ) {
 			return $updated;
 		}
-		return self::upsert_inventory_metadata($handle, $metadata);
+		$result = self::upsert_inventory_metadata($handle, $metadata);
+		return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($metadata);
 	}
 
 	/**
