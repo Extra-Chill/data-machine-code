@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.69.6] - 2026-08-24
+
+### Changed
+- fix cleanup process probe lint
+- fix artifact cleanup lint findings
+- align cleanup telemetry evidence
+
+### Fixed
+- report signed filesystem cleanup delta
+
 ## [0.69.5] - 2026-08-24
 
 ### Fixed
