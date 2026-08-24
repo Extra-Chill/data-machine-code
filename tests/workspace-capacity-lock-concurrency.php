@@ -48,6 +48,25 @@ function capacity_lock_assert( bool $condition, string $message ): void {
 	}
 }
 
+function capacity_lock_process_has_descriptor( int $pid, string $path ): bool {
+	$lsof = null;
+	foreach ( array( '/usr/sbin/lsof', '/usr/bin/lsof' ) as $candidate ) {
+		if ( is_executable($candidate) ) {
+			$lsof = $candidate;
+			break;
+		}
+	}
+	if ( $pid <= 0 || null === $lsof ) {
+		return false;
+	}
+
+	$output = array();
+	$status = 1;
+	// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- This verifies the OS-level descriptor inheritance contract.
+	@exec(escapeshellarg($lsof) . ' -Fn -a -p ' . $pid . ' -- ' . escapeshellarg($path), $output, $status);
+	return 0 === $status && in_array('n' . $path, $output, true);
+}
+
 $mode = $argv[1] ?? 'test';
 if ( 'holder' === $mode ) {
 	$workspace = (string) $argv[2];
@@ -351,12 +370,14 @@ try {
 		$deadline = microtime(true) + 3;
 		while ((! is_file($reserved) || ! is_file($child_ready) || ! is_file($child_pid_path)) && microtime(true) < $deadline) { usleep(10000); }
 		capacity_lock_assert(is_file($reserved) && is_file($child_ready) && is_file($child_pid_path), 'Deferred bootstrap did not commit reservation before starting its child.');
+		$child_pid = (int) file_get_contents($child_pid_path);
+		$lock_path = $workspace . '/.locks/worktree-workspace-capacity-admission.lock';
+		capacity_lock_assert(! capacity_lock_process_has_descriptor($child_pid, $lock_path), 'Bootstrap child inherited the global capacity lock descriptor.');
 		$parent_status = proc_get_status($parent);
 		posix_kill((int) $parent_status['pid'], SIGKILL);
 		fclose($parent_pipes[1]); fclose($parent_pipes[2]); proc_close($parent);
 		$independent = WorkspaceMutationLock::with_repo($workspace, 'workspace-capacity-admission', static fn(): string => 'admitted', 1);
 		capacity_lock_assert('admitted' === $independent, 'A blocked bootstrap child retained the global capacity lock after its parent exited.');
-		$child_pid = (int) file_get_contents($child_pid_path);
 		capacity_lock_assert(@posix_kill($child_pid, 0), 'Deferred bootstrap child did not remain available for descriptor verification.');
 		posix_kill($child_pid, SIGKILL);
 		foreach (array($reserved, $child_ready, $child_pid_path) as $path) { unlink($path); }
