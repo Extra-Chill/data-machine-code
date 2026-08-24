@@ -64,7 +64,7 @@ class CleanupRunService {
 			return $this->planning_failure( $run_id, $mode, (string) $plan->get_error_code(), $plan->get_error_message(), is_array( $error_data ) ? (int) ( $error_data['status'] ?? 500 ) : 500 );
 		}
 
-		$items          = $this->plan_items( $plan );
+		$items           = $this->plan_items( $plan );
 		$plan['summary'] = $this->materialize_plan_recommended_commands( (array) ( $plan['summary'] ?? array() ), $run_id );
 
 		$inserted = $this->repository->add_items( $run_id, $items );
