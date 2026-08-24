@@ -265,8 +265,8 @@ final class StandaloneWorktreeProvider {
 	private function read_task_url( string $git_dir ): ?string {
 		$payload = @file_get_contents($git_dir . '/datamachine-code-task.json');
 		$data    = is_string($payload) ? json_decode($payload, true) : null;
-		$url     = is_array($data) && is_string($data['task_url'] ?? null) ? trim($data['task_url']) : '';
-		return '' === $url || ! filter_var($url, FILTER_VALIDATE_URL) ? null : $url;
+		$url     = is_array($data) && is_string($data['task_url'] ?? null) ? $data['task_url'] : null;
+		return TaskUrl::canonicalize($url);
 	}
 
 	/** @return resource|null */

@@ -1589,10 +1589,10 @@ trait WorkspaceWorktreeLifecycle {
 
 	/** Persist the task tracker beside linked-worktree Git metadata for standalone consumers. */
 	private function store_standalone_worktree_tracker( string $path, array $metadata ): void {
-		$task_url = is_array($metadata['origin_task'] ?? null) ? trim((string) ( $metadata['origin_task']['task_url'] ?? '' )) : '';
+		$task_url = is_array($metadata['origin_task'] ?? null) ? TaskUrl::canonicalize($metadata['origin_task']['task_url'] ?? null) : null;
 		$git_file = $path . '/.git';
 		$pointer  = is_file($git_file) ? trim((string) @file_get_contents($git_file)) : '';
-		if ( '' === $task_url || ! filter_var($task_url, FILTER_VALIDATE_URL) || ! str_starts_with($pointer, 'gitdir:') ) {
+		if ( null === $task_url || ! str_starts_with($pointer, 'gitdir:') ) {
 			return;
 		}
 		$git_dir = trim(substr($pointer, strlen('gitdir:')));
@@ -2631,6 +2631,8 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		$bounded        = array_key_exists('limit', $opts) || array_key_exists('cursor', $opts) || array_key_exists('all', $opts);
 		$all            = ! empty($opts['all']);
+		$task_lookup     = null !== $task_ref;
+		$task_limit      = 200;
 		if ( $all && isset($opts['cursor']) ) {
 			return new \WP_Error('invalid_worktree_list_pagination', 'Worktree list --all cannot be combined with --cursor.', array( 'status' => 400 ));
 		}
@@ -2669,9 +2671,10 @@ trait WorkspaceWorktreeLifecycle {
 				), $include_status, $include_disk);
 			}
 			if ( null === $state ) {
+				$result['worktrees'] = array_values(array_filter((array) $result['worktrees'], fn( array $row ): bool => $this->worktree_list_matches_metadata_filters(is_array($row['metadata'] ?? null) ? $row['metadata'] : null, $task_ref, $owner_run_ref)));
 				return $this->worktree_list_add_response_metadata($result, $include_status, $include_disk);
 			}
-			if ( ( $result['worktrees'][0]['lifecycle_state'] ?? null ) !== $state ) {
+			if ( ( $result['worktrees'][0]['lifecycle_state'] ?? null ) !== $state || ! $this->worktree_list_matches_metadata_filters(is_array($result['worktrees'][0]['metadata'] ?? null) ? $result['worktrees'][0]['metadata'] : null, $task_ref, $owner_run_ref) ) {
 				$result['worktrees'] = array();
 			}
 			return $this->worktree_list_add_response_metadata($result, $include_status, $include_disk);
@@ -2833,8 +2836,8 @@ trait WorkspaceWorktreeLifecycle {
 				$this->worktree_list_count_summary($summary, $row);
 				if ( null === $cursor || strcmp($this->worktree_list_row_key($row), $cursor) > 0 ) {
 					++$remaining;
-					if ( $bounded && ! $all ) {
-						$this->worktree_list_insert_bounded_row($worktrees, $row, $limit);
+					if ( $bounded && ( ! $all || $task_lookup ) ) {
+						$this->worktree_list_insert_bounded_row($worktrees, $row, $task_lookup && $all ? $task_limit : $limit);
 					} else {
 						$worktrees[] = $row;
 					}
@@ -2844,6 +2847,9 @@ trait WorkspaceWorktreeLifecycle {
 
 		if ( ! $bounded || $all ) {
 			usort($worktrees, fn( array $left, array $right ): int => strcmp($this->worktree_list_row_key($left), $this->worktree_list_row_key($right)));
+		}
+		if ( $task_lookup && $all && $summary['total'] > $task_limit ) {
+			return new \WP_Error('worktree_task_candidates_overflow', 'Task worktree lookup exceeded the complete bounded candidate limit.', array( 'status' => 409, 'task_ref' => $task_ref, 'total' => $summary['total'], 'limit' => $task_limit ));
 		}
 		$diagnostics = $this->worktree_list_global_diagnostics($repo, $state, $task_ref, $owner_run_ref);
 		$summary     = array_merge($summary, $diagnostics['summary']);
@@ -3129,7 +3135,7 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	private function normalize_worktree_list_task_ref( mixed $task_ref ): ?string {
-		return is_scalar($task_ref) && '' !== trim((string) $task_ref) ? strtolower(trim((string) $task_ref)) : null;
+		return TaskUrl::canonicalize($task_ref) ?? ( is_scalar($task_ref) && '' !== trim((string) $task_ref) ? strtolower(trim((string) $task_ref)) : null );
 	}
 
 	private function normalize_worktree_list_owner_run_ref( mixed $owner_run_ref ): ?string {
@@ -3140,7 +3146,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( null === $task_ref && null === $owner_run_ref ) { return true; }
 		if ( ! is_array($metadata) ) { return false; }
 		$task = is_array($metadata['origin_task'] ?? null) ? $metadata['origin_task'] : array();
-		if ( null !== $task_ref && $task_ref !== strtolower(trim((string) ( $task['task_url'] ?? '' ))) && $task_ref !== strtolower(trim((string) ( $task['task_ref'] ?? '' ))) ) { return false; }
+		if ( null !== $task_ref && $task_ref !== TaskUrl::canonicalize($task['task_url'] ?? null) && $task_ref !== strtolower(trim((string) ( $task['task_ref'] ?? '' ))) ) { return false; }
 		return null === $owner_run_ref || $owner_run_ref === ( is_scalar($metadata['owner_run_ref'] ?? null) ? trim((string) $metadata['owner_run_ref']) : '' );
 	}
 

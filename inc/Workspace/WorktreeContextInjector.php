@@ -1840,13 +1840,9 @@ class WorktreeContextInjector {
 				$task_url = trim($env_task_url);
 			}
 		}
-		$task_url_parts = false;
-		if ( '' !== $task_url ) {
-			// phpcs:ignore WordPress.WP.AlternativeFunctions.parse_url_parse_url -- This class also runs in standalone bootstrap contexts without WordPress loaded.
-			$task_url_parts = function_exists('wp_parse_url') ? wp_parse_url($task_url) : parse_url($task_url);
-		}
-		if ( is_array($task_url_parts) && isset($task_url_parts['host'], $task_url_parts['scheme']) && in_array(strtolower( (string) $task_url_parts['scheme']), array( 'http', 'https' ), true) ) {
-			$task['task_url'] = $task_url;
+		$canonical_task_url = TaskUrl::canonicalize($task_url);
+		if ( null !== $canonical_task_url ) {
+			$task['task_url'] = $canonical_task_url;
 		}
 
 		$task_ref = isset($args['task_ref']) && '' !== trim( (string) $args['task_ref']) ? trim( (string) $args['task_ref']) : '';
@@ -1862,6 +1858,11 @@ class WorktreeContextInjector {
 		}
 
 		return empty($task) ? null : $task;
+	}
+
+	/** Match Homeboy task URL identity: trim, discard query/fragment, trim slash, preserve casing. */
+	public static function canonical_task_url( mixed $task_url ): ?string {
+		return TaskUrl::canonicalize($task_url);
 	}
 
 	/**
