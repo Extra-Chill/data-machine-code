@@ -1610,6 +1610,8 @@ class WorkspaceAbilities {
 						'type'       => 'object',
 						'properties' => array(
 							'success'                   => array( 'type' => 'boolean' ),
+							'dry_run'                   => array( 'type' => 'boolean' ),
+							'created'                   => array( 'type' => 'boolean' ),
 							'handle'                    => array( 'type' => 'string' ),
 							'path'                      => array( 'type' => 'string' ),
 							'branch'                    => array( 'type' => 'string' ),
@@ -1673,6 +1675,12 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'Present only when fetch_timed_out=true. The bounded freshness-fetch budget in seconds.',
 							),
+							'handoff_freshness'         => array(
+								'type'        => 'object',
+								'properties'  => self::worktreeHandoffFreshnessSchemaProperties(),
+								'required'    => array( 'status' ),
+								'description' => 'Required handoff contract. verified includes a metadata-bound proof; unverified requires explicit allow_unverified_freshness; not_applicable identifies a non-allocation dry-run.',
+							),
 							'stale_commits_behind'      => array(
 								'type'        => 'integer',
 								'description' => 'For the existing-local-branch path, how many commits the worktree branch is behind its configured upstream. Omitted when no upstream is configured.',
@@ -1722,8 +1730,66 @@ class WorkspaceAbilities {
 								'description' => 'Present only when `rebase_succeeded=false`. Trimmed error output from the failing rebase.',
 							),
 						),
+						'required'   => array( 'success', 'handoff_freshness' ),
 					),
 					'execute_callback'    => array( self::class, 'worktreeAdd' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-handoff-revalidate',
+				array(
+					'label'               => 'Revalidate Worktree Handoff Freshness',
+					'description'         => 'Return a bounded current/drift observation for an immediate consumer converge-or-refuse decision; this does not hold a lease across external admission.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'handle' => array(
+								'type'        => 'string',
+								'description' => 'Managed worktree handle.',
+							),
+							'proof'  => array(
+								'type'        => 'object',
+								'properties'  => self::worktreeHandoffProofSchemaProperties(),
+								'required'    => self::worktreeHandoffProofSchemaRequired(),
+								'description' => 'Exact proof returned by worktree add.',
+							),
+						),
+						'required'   => array( 'handle', 'proof' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'    => array( 'type' => 'boolean' ),
+							'status'     => array(
+								'type' => 'string',
+								'enum' => array( 'current', 'drift', 'fetch_failed', 'contention' ),
+							),
+							'handle'     => array( 'type' => 'string' ),
+							'proof'      => array(
+								'type'       => 'object',
+								'properties' => self::worktreeHandoffProofSchemaProperties(),
+								'required'   => self::worktreeHandoffProofSchemaRequired(),
+							),
+							'drift'      => array( 'type' => 'object' ),
+							'fetch'      => array( 'type' => 'object' ),
+							'contention' => array( 'type' => 'object' ),
+							'error'      => array(
+								'type'       => 'object',
+								'properties' => array(
+									'code'    => array(
+										'type' => 'string',
+										'enum' => array( 'invalid_worktree_handoff_proof', 'untrusted_worktree_handoff_proof', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'remote_default_changed_during_verification', 'worktree_handoff_base_unresolved' ),
+									),
+									'message' => array( 'type' => 'string' ),
+								),
+							),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeHandoffRevalidate' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
 				)
@@ -3241,12 +3307,12 @@ class WorkspaceAbilities {
 		return array_merge(
 			$diagnostic,
 			array(
-				'success'        => true,
-				'backend'        => $backend,
-				'local_backend'  => $diagnostic['backend'] ?? 'local_git',
-				'workspace_path' => $workspace->get_path(),
+				'success'          => true,
+				'backend'          => $backend,
+				'local_backend'    => $diagnostic['backend'] ?? 'local_git',
+				'workspace_path'   => $workspace->get_path(),
 				'runtime_identity' => self::runtimeIdentity(array()),
-				'remediation'    => $remediation,
+				'remediation'      => $remediation,
 			)
 		);
 	}
@@ -3254,9 +3320,9 @@ class WorkspaceAbilities {
 	/** @return array<string,mixed> */
 	public static function runtimeIdentity( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 		$config = apply_filters('datamachine_code_runtime_identity_config', array(
-			'runtime_file' => DATAMACHINE_CODE_PATH . 'data-machine-code.php',
+			'runtime_file'    => DATAMACHINE_CODE_PATH . 'data-machine-code.php',
 			'runtime_version' => DATAMACHINE_CODE_VERSION,
-			'source_path' => defined('DATAMACHINE_CODE_SOURCE_PATH') ? DATAMACHINE_CODE_SOURCE_PATH : '',
+			'source_path'     => defined('DATAMACHINE_CODE_SOURCE_PATH') ? DATAMACHINE_CODE_SOURCE_PATH : '',
 		));
 		$config = is_array($config) ? $config : array();
 		return RuntimeSourceSkewDiagnostic::inspect(
@@ -4357,7 +4423,8 @@ class WorkspaceAbilities {
 				$input['from'] ?? null,
 				$task,
 				$intent,
-				$reuse_policy
+				$reuse_policy,
+				$allow_unverified_freshness
 			);
 			if ( ! self::shouldFallbackToLocalWorkspace( $result ) ) {
 				return self::worktree_add_response( self::decorate_remote_workspace_result( 'worktree_add', $result ), $input );
@@ -4406,6 +4473,10 @@ class WorkspaceAbilities {
 		return ( new Workspace() )->primary_restore_apply( (array) ( $input['plan'] ?? array() ) );
 	}
 
+	public static function worktreeHandoffRevalidate( array $input ): array|\WP_Error {
+		return ( new Workspace() )->worktree_handoff_revalidate( (string) ( $input['handle'] ?? '' ), (array) ( $input['proof'] ?? array() ) );
+	}
+
 	public static function worktreeLegacyHandoffApply( array $input ): array|\WP_Error {
 		return ( new Workspace() )->worktree_apply_legacy_handoff( (array) ( $input['plan'] ?? array() ), (string) ( $input['mode'] ?? '' ) );
 	}
@@ -4446,6 +4517,61 @@ class WorkspaceAbilities {
 			'require_task_tracker'       => array( 'type' => 'boolean' ),
 			...$policy,
 		);
+	}
+
+	/** Schema shared by allocation and revalidation handoff proof payloads. */
+	private static function worktreeHandoffProofSchemaProperties(): array {
+		return array(
+			'version'                       => array(
+				'type'        => 'integer',
+				'enum'        => array( 3 ),
+				'description' => 'Only proof schema version 3 is accepted. Earlier proofs must be replaced by a fresh allocation proof.',
+			),
+			'proof_id'                      => array( 'type' => 'string' ),
+			'handle'                        => array( 'type' => 'string' ),
+			'worktree_sha'                  => array( 'type' => 'string' ),
+			'resolved_base_ref'             => array( 'type' => 'string' ),
+			'resolved_base_sha'             => array( 'type' => 'string' ),
+			'remote_default_ref'            => array( 'type' => 'string' ),
+			'remote_default_sha'            => array( 'type' => 'string' ),
+			'remote_default_advertised_sha' => array(
+				'type'        => 'string',
+				'description' => 'Commit SHA advertised by git ls-remote --symref origin HEAD and matched to the fetched remote-tracking ref.',
+			),
+			'verified_at'                   => array(
+				'type'   => 'string',
+				'format' => 'date-time',
+			),
+			'digest'                        => array( 'type' => 'string' ),
+		);
+	}
+
+	/** Schema for the required allocation handoff freshness decision. */
+	private static function worktreeHandoffFreshnessSchemaProperties(): array {
+		return array(
+			'status'     => array(
+				'type' => 'string',
+				'enum' => array( 'verified', 'unverified', 'not_applicable' ),
+			),
+			'proof'      => array(
+				'type'       => 'object',
+				'properties' => self::worktreeHandoffProofSchemaProperties(),
+				'required'   => self::worktreeHandoffProofSchemaRequired(),
+			),
+			'reason'     => array(
+				'type' => 'string',
+				'enum' => array( 'allocation_identity_missing', 'fetch_failed', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'worktree_handoff_base_unresolved', 'proof_generation_failed', 'metadata_persist_failed', 'remote_freshness_probe_unsupported', 'non_allocation_dry_run' ),
+			),
+			'error_code' => array(
+				'type'        => 'string',
+				'description' => 'Underlying typed failure code when proof generation or metadata persistence could not complete.',
+			),
+		);
+	}
+
+	/** @return array<int,string> */
+	private static function worktreeHandoffProofSchemaRequired(): array {
+		return array( 'version', 'proof_id', 'handle', 'worktree_sha', 'resolved_base_ref', 'resolved_base_sha', 'remote_default_ref', 'remote_default_sha', 'remote_default_advertised_sha', 'verified_at', 'digest' );
 	}
 
 	/**

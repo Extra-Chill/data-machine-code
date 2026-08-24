@@ -30,6 +30,10 @@ use DataMachineCode\Support\GitRunner;
 
 defined('ABSPATH') || exit;
 
+if ( ! class_exists(GitRunner::class) ) {
+	require_once dirname(__DIR__) . '/Support/GitRunner.php';
+}
+
 final class WorktreeStalenessProbe {
 
 	/**
@@ -50,7 +54,8 @@ final class WorktreeStalenessProbe {
 	 */
 	public static function fetch( string $repo_path, ?callable $runner = null, ?float $deadline = null ): array {
 		$runner = $runner ?? static fn( string $path, string $args, int $timeout ): array|\WP_Error => GitRunner::run($path, $args, $timeout);
-		for ( $attempt = 1; $attempt <= self::FETCH_MAX_ATTEMPTS; ++$attempt ) {
+		for ( $attempt_index = 0; $attempt_index < self::FETCH_MAX_ATTEMPTS; ++$attempt_index ) {
+			$attempt   = $attempt_index + 1;
 			$remaining = null === $deadline ? self::FETCH_TIMEOUT_SECONDS : (int) floor($deadline - microtime(true));
 			if ( $remaining <= 0 ) {
 				return array(
@@ -71,9 +76,9 @@ final class WorktreeStalenessProbe {
 
 			$data  = $result->get_error_data();
 			$tail  = is_array($data) && isset($data['output']) ? trim( (string) $data['output']) : '';
-			$error = '' !== $tail ? $tail : $result->get_error_message();
+			$error = self::sanitize_remote_diagnostic('' !== $tail ? $tail : $result->get_error_message());
 			$code  = method_exists($result, 'get_error_code') ? $result->get_error_code() : '';
-			if ( $attempt === self::FETCH_MAX_ATTEMPTS ) {
+			if ( self::FETCH_MAX_ATTEMPTS === $attempt ) {
 				if ( 'git_command_timeout' === $code ) {
 					return array(
 						'ok'              => false,
@@ -92,7 +97,15 @@ final class WorktreeStalenessProbe {
 			}
 		}
 
-		return array( 'ok' => false, 'attempts' => self::FETCH_MAX_ATTEMPTS );
+		return array(
+			'ok'       => false,
+			'attempts' => self::FETCH_MAX_ATTEMPTS,
+		);
+	}
+
+	/** Redact remote output through the shared Git diagnostic boundary. */
+	public static function sanitize_remote_diagnostic( string $diagnostic ): string {
+		return GitRunner::redact_diagnostic($diagnostic);
 	}
 
 	/**

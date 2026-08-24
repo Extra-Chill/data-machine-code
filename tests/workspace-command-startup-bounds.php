@@ -185,7 +185,7 @@ namespace {
 	startup_bounds_assert($elapsed < 3.0, sprintf('Targeted show exceeded its startup bound: %.3fs.', $elapsed));
 	startup_bounds_assert(0 === $GLOBALS['dmc_test_get_option_calls'], 'Existing local targeted show consulted registry or remote backend state.');
 	startup_bounds_assert($before_entries === scandir($workspace), 'Targeted show changed workspace state.');
-	startup_bounds_assert(! str_contains(implode("\n", WP_CLI::$output), 'Recovery (all commands are non-destructive):'), 'Normal targeted show rendered capacity recovery.');
+	startup_bounds_assert(! str_contains(implode("\n", WP_CLI::$output), 'Recovery for the listed capacity warning(s) (all commands are non-destructive):'), 'Normal targeted show rendered capacity recovery.');
 
 	// Make capacity pressure deterministic while retaining the actual CLI ->
 	// WorkspaceAbilities -> Workspace show path. The warning/refusal output may
