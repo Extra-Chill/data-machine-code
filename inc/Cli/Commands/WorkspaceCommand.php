@@ -3328,7 +3328,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( is_wp_error( $result ) ) {
 			if ( 'json' === $format ) {
-				$this->render_workspace_show_error( $result->get_error_code(), $result->get_error_message(), $result->get_error_data() );
+				$this->render_workspace_show_error( (string) $result->get_error_code(), $result->get_error_message(), $result->get_error_data() );
 				return;
 			}
 			WP_CLI::error( $result->get_error_message() );
