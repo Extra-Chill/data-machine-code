@@ -6096,6 +6096,23 @@ class WorkspaceCommand extends BaseCommand {
 			WP_CLI::error( $error->get_error_message() );
 			return;
 		}
+		$candidate_actions = (array) ( $data['reuse']['candidate_actions'] ?? array() );
+		if ( array() !== $candidate_actions ) {
+			WP_CLI::warning( $error->get_error_message() );
+			WP_CLI::log( 'Safe candidate actions:' );
+			$rows = array_map(
+				static fn( array $action ): array => array(
+					'action' => (string) ( $action['action'] ?? '' ),
+					'handle' => (string) ( $action['handle'] ?? '' ),
+					'cwd'    => (string) ( $action['cwd'] ?? '' ),
+					'command' => (string) ( $action['command'] ?? '' ),
+				),
+				$candidate_actions
+			);
+			$this->format_items( $rows, array( 'action', 'handle', 'cwd', 'command' ), array( 'format' => 'table' ), 'handle' );
+			WP_CLI::error( $error->get_error_message() );
+			return;
+		}
 		if ( 'workspace_repo_busy' !== $error->get_error_code() ) {
 			WP_CLI::error( $error->get_error_message() );
 			return;
