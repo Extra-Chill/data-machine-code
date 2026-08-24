@@ -1047,6 +1047,32 @@ class WorktreeContextInjector {
 		);
 	}
 
+	/** Return dependency demand reserved by materialized worktrees still bootstrapping. */
+	public static function bootstrap_capacity_reservations(): array {
+		if ( ! function_exists('get_option') ) {
+			return array( 'bytes' => 0, 'inodes' => 0, 'handles' => array() );
+		}
+		// Capacity admission must not reuse an earlier request's option snapshot
+		// after another process has committed a reservation.
+		if ( function_exists('wp_cache_delete') ) {
+			wp_cache_delete(self::METADATA_OPTION, 'options');
+		}
+		$all = get_option(self::METADATA_OPTION, array());
+		$bytes = 0;
+		$inodes = 0;
+		$handles = array();
+		foreach ( is_array($all) ? $all : array() as $handle => $metadata ) {
+			$reservation = is_array($metadata['provisioning']['bootstrap']['capacity_reservation'] ?? null) ? $metadata['provisioning']['bootstrap']['capacity_reservation'] : null;
+			if ( ! is_array($reservation) || 'running' !== ($metadata['provisioning']['bootstrap']['outcome'] ?? null) ) {
+				continue;
+			}
+			$bytes += max(0, (int) ($reservation['bytes'] ?? 0));
+			$inodes += max(0, (int) ($reservation['inodes'] ?? 0));
+			$handles[] = (string) $handle;
+		}
+		return array( 'bytes' => $bytes, 'inodes' => $inodes, 'handles' => $handles );
+	}
+
 	/** Whether a durable cleanup timestamp is backed by a finalized lifecycle record. */
 	public static function has_explicit_cleanup_eligibility( array $metadata ): bool {
 		if ( empty($metadata['cleanup_eligible_at']) || false === strtotime( (string) $metadata['cleanup_eligible_at'] ) || empty($metadata['finalized_at']) || false === strtotime( (string) $metadata['finalized_at'] ) ) {
