@@ -5257,6 +5257,12 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 		}
 
+		if ( 'add' === $operation ) {
+			$input['progress_callback'] = function ( array $event ) use ( $assoc_args ): void {
+				$this->render_worktree_add_progress($event, 'json' === (string) ( $assoc_args['format'] ?? '' ));
+			};
+		}
+
 		$result = $ability->execute( $input );
 
 		if ( is_wp_error( $result ) ) {
@@ -5278,6 +5284,17 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$this->renderWorktreeResult( $operation, $result, $assoc_args );
+	}
+
+	/** Render phase checkpoints without contaminating JSON response stdout. */
+	private function render_worktree_add_progress( array $event, bool $json ): void {
+		$phase = (string) ( $event['phase'] ?? 'working' );
+		$message = sprintf('Worktree add progress: %s.', str_replace('_', ' ', $phase));
+		if ( $json ) {
+			WP_CLI::warning($message);
+			return;
+		}
+		WP_CLI::log($message);
 	}
 
 	/**
@@ -5996,6 +6013,18 @@ class WorkspaceCommand extends BaseCommand {
 
 	private function render_workspace_error( \WP_Error $error ): void {
 		$data = (array) $error->get_error_data();
+		$runtime_identity = WorkspaceAbilities::runtimeIdentity(array());
+		$active_runtime   = (array) ( $runtime_identity['active_runtime'] ?? array() );
+		if ( ! empty($active_runtime['version']) ) {
+			WP_CLI::log(sprintf('Active runtime: %s%s', (string) $active_runtime['version'], ! empty($active_runtime['build']) ? ' (' . (string) $active_runtime['build'] . ')' : ''));
+		}
+		$skew = (array) ( $runtime_identity['skew'] ?? array() );
+		if ( ! empty($skew['classification']) ) {
+			WP_CLI::log(sprintf('Runtime/source: %s', (string) $skew['classification']));
+		}
+		if ( ! empty($skew['recovery']['guidance']) ) {
+			WP_CLI::log(sprintf('Runtime recovery: %s', (string) $skew['recovery']['guidance']));
+		}
 		if ( 'workspace_repo_busy' !== $error->get_error_code() && ! empty( $data['next_commands'] ) && is_array( $data['next_commands'] ) ) {
 			WP_CLI::warning( $error->get_error_message() );
 			WP_CLI::log( 'Next commands:' );

@@ -48,4 +48,18 @@ staleness_timeout_assert_same(false, str_contains((string) ( $result['error'] ??
 staleness_timeout_assert_same(false, str_contains((string) ( $result['error'] ?? '' ), 'secret-token'), 'Timed-out freshness fetch leaked query credentials.');
 staleness_timeout_assert_same(true, str_contains((string) ( $result['error'] ?? '' ), 'https://***@example.test/repo?access_token=***'), 'Timed-out freshness fetch did not retain a sanitized remote diagnostic.');
 
+$calls = array();
+$behind = WorktreeStalenessProbe::behind_count(
+	'/repo',
+	'feature',
+	'origin/main',
+	7,
+	static function ( string $path, string $args, int $timeout ) use ( &$calls ): WP_Error {
+		$calls[] = array( $path, $args, $timeout );
+		return new WP_Error('git_command_timeout', 'Process command timed out after 7 second(s).', array( 'timeout' => 7 ));
+	}
+);
+staleness_timeout_assert_same(array( array( '/repo', "rev-list --count 'feature'..'origin/main'", 7 ) ), $calls, 'Behind-count probes must use their caller-provided bounded GitRunner timeout.');
+staleness_timeout_assert_same('git_command_timeout', $behind instanceof WP_Error ? $behind->get_error_code() : null, 'Timed-out behind-count probes must preserve the Git timeout type.');
+
 fwrite(STDOUT, "worktree-staleness-fetch-timeout: ok\n");

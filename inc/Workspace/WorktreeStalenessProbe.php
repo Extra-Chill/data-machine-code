@@ -112,12 +112,15 @@ final class WorktreeStalenessProbe {
 	 *
 	 * @param  string $repo_path Repository path (worktree path or primary).
 	 * @param  string $ref       Left-hand revision (e.g. current branch name).
-	 * @param  string $upstream  Right-hand revision (e.g. `@{upstream}` or `origin/main`).
+	 * @param  string        $upstream  Right-hand revision (e.g. `@{upstream}` or `origin/main`).
+	 * @param  int           $timeout_seconds Bounded GitRunner timeout; zero disables it.
+	 * @param  callable|null $runner    Optional git runner, used by deterministic tests.
 	 * @return int|null|\WP_Error
 	 */
-	public static function behind_count( string $repo_path, string $ref, string $upstream ): int|null|\WP_Error {
+	public static function behind_count( string $repo_path, string $ref, string $upstream, int $timeout_seconds = 0, ?callable $runner = null ): int|null|\WP_Error {
 		$args   = sprintf('rev-list --count %s..%s', escapeshellarg($ref), escapeshellarg($upstream));
-		$result = GitRunner::run($repo_path, $args);
+		$runner = $runner ?? static fn( string $path, string $arguments, int $timeout ): array|\WP_Error => GitRunner::run($path, $arguments, $timeout);
+		$result = $runner($repo_path, $args, max(0, $timeout_seconds));
 		if ( is_wp_error($result) ) {
 			$data = $result->get_error_data();
 			$out  = is_array($data) && isset($data['output']) ? (string) $data['output'] : '';

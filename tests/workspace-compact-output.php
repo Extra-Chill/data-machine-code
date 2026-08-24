@@ -100,6 +100,11 @@ compact_output_assert(! isset($worktree_add['bootstrap']['steps'][0]['output_evi
 compact_output_assert(in_array('low_free_space', (array) ( $worktree_add['warning_codes'] ?? array() ), true), 'Compact worktree add output must preserve warning codes.');
 compact_output_assert(true === ( $worktree_add['evidence']['verbose']['input']['verbose'] ?? null ), 'Compact worktree add output must provide an explicit verbose evidence request.');
 
+$offline_worktree_add = WorkspaceCompactOutput::worktree_add_result(array( 'success' => true, 'handle' => 'repo@offline', 'fetch_failed' => true ));
+compact_output_assert(in_array('fetch_failed', (array) ( $offline_worktree_add['warning_codes'] ?? array() ), true), 'Successful offline worktree output must retain fetch_failed warning evidence.');
+$timed_out_worktree_add = WorkspaceCompactOutput::worktree_add_result(array( 'success' => true, 'handle' => 'repo@fetch-timeout', 'fetch_failed' => true, 'fetch_timed_out' => true ));
+compact_output_assert(in_array('fetch_failed', (array) ( $timed_out_worktree_add['warning_codes'] ?? array() ), true) && in_array('fetch_timed_out', (array) ( $timed_out_worktree_add['warning_codes'] ?? array() ), true), 'Successful fetch-timeout worktree output must retain both freshness warning codes.');
+
 $hygiene_candidate_rows = $large_rows;
 $hygiene_candidate_rows[0]['dirty']                        = null;
 $hygiene_candidate_rows[0]['fresh_revalidation_status']    = 'not_run_inventory_only';

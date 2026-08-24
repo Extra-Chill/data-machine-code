@@ -121,8 +121,8 @@ class WorkspaceCompactOutput {
 				$codes[] = 'bootstrap_' . (string) ( $step['reason'] ?? 'failed' );
 			}
 		}
-		foreach ( array( 'fetch_failed', 'fetch_timed_out', 'rebase_succeeded' ) as $field ) {
-			if ( array_key_exists($field, $result) && false === $result[ $field ] ) {
+		foreach ( array( 'fetch_failed', 'fetch_timed_out' ) as $field ) {
+			if ( ! empty($result[ $field ]) ) {
 				$codes[] = $field;
 			}
 		}
