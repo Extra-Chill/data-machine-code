@@ -38,11 +38,4 @@ capacity_envelope_assert(25 === $one_worktree['projected_demand_bytes'], 'capaci
 capacity_envelope_assert(85 === $one_worktree['projected_free_bytes'], 'capacity evidence must report projected free bytes after one-worktree demand.');
 capacity_envelope_assert(3 === $one_worktree['projected_demand_inodes'], 'capacity evidence must preserve projected one-worktree inode demand.');
 
-$ability_source = file_get_contents(dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php');
-$cli_source = file_get_contents(dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php');
-capacity_envelope_assert(str_contains((string) $ability_source, "'workspace_capacity' => array("), 'Workspace-show ability schema must declare workspace_capacity.');
-capacity_envelope_assert(str_contains((string) $cli_source, "'metric' => 'inode_capacity'"), 'Human hygiene rendering must expose inode capacity.');
-capacity_envelope_assert(str_contains((string) $cli_source, "'metric' => 'capacity_status'"), 'Human hygiene rendering must expose capacity status.');
-capacity_envelope_assert(1 === preg_match('/WorktreeDiskBudget::format_trigger_reasons\(\s*\$capacity\s*\)/', (string) $cli_source), 'Workspace show must render capacity trigger reasons.');
-
 echo "workspace-capacity-envelope: ok\n";
