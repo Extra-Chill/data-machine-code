@@ -10,8 +10,8 @@ if ( false === $cli_source || false === $list_source ) {
 	throw new RuntimeException('Unable to read worktree list sources.');
 }
 
-foreach ( array( "'dirty'    => 0 !== (int) \$dirty", "'unpushed' => 0 !== (int) \$unpushed", "'primary'  => ! empty(\$wt['is_primary'])" ) as $expected ) {
-	if ( ! str_contains($cli_source, $expected) ) {
+foreach ( array( '/\'dirty\'\s*=>\s*0 !== \(int\) \$dirty/', '/\'unpushed\'\s*=>\s*0 !== \(int\) \$unpushed/', '/\'primary\'\s*=>\s*! empty\( \$wt\[\'is_primary\'\] \)/' ) as $expected ) {
+	if ( 1 !== preg_match($expected, $cli_source) ) {
 		throw new RuntimeException(sprintf('Worktree list safety mapping is missing %s.', $expected));
 	}
 }

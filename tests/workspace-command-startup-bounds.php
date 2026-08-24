@@ -185,7 +185,7 @@ namespace {
 	startup_bounds_assert($elapsed < 3.0, sprintf('Targeted show exceeded its startup bound: %.3fs.', $elapsed));
 	startup_bounds_assert(0 === $GLOBALS['dmc_test_get_option_calls'], 'Existing local targeted show consulted registry or remote backend state.');
 	startup_bounds_assert($before_entries === scandir($workspace), 'Targeted show changed workspace state.');
-	startup_bounds_assert(! str_contains(implode("\n", WP_CLI::$output), 'Recovery (all commands are non-destructive):'), 'Normal targeted show rendered capacity recovery.');
+	startup_bounds_assert(! str_contains(implode("\n", WP_CLI::$output), 'Recovery for the listed capacity warning(s) (all commands are non-destructive):'), 'Normal targeted show rendered capacity recovery.');
 
 	// Make capacity pressure deterministic while retaining the actual CLI ->
 	// WorkspaceAbilities -> Workspace show path. The warning/refusal output may
@@ -201,7 +201,7 @@ namespace {
 	$command->show(array( 'target' ), array());
 	$warning_elapsed = microtime(true) - $warning_started;
 	$warning_output = implode("\n", WP_CLI::$output);
-	startup_bounds_assert(str_contains($warning_output, 'Recovery (all commands are non-destructive):'), 'Warning targeted show did not render the shared recovery suggestion.');
+	startup_bounds_assert(str_contains($warning_output, 'Recovery for the listed capacity warning(s) (all commands are non-destructive):'), 'Warning targeted show did not render the shared recovery suggestion.');
 	startup_bounds_assert($warning_options_before === $GLOBALS['dmc_test_get_option_calls'], 'Warning targeted show bootstrapped hygiene inventory or remote state.');
 	startup_bounds_assert($warning_elapsed < 3.0, sprintf('Warning targeted show exceeded its startup bound: %.3fs.', $warning_elapsed));
 	startup_bounds_assert(! str_contains($warning_output, '--force'), 'Warning targeted show suggested bypassing capacity protection.');
@@ -217,7 +217,7 @@ namespace {
 	$command->show(array( 'target' ), array());
 	$refusal_elapsed = microtime(true) - $refusal_started;
 	$refusal_output = implode("\n", WP_CLI::$output);
-	startup_bounds_assert(str_contains($refusal_output, 'Recovery (all commands are non-destructive):'), 'Refused targeted show did not render the shared recovery suggestion.');
+	startup_bounds_assert(str_contains($refusal_output, 'Recovery for the listed capacity warning(s) (all commands are non-destructive):'), 'Refused targeted show did not render the shared recovery suggestion.');
 	startup_bounds_assert($refusal_options_before === $GLOBALS['dmc_test_get_option_calls'], 'Refused targeted show bootstrapped hygiene inventory or remote state.');
 	startup_bounds_assert($refusal_elapsed < 3.0, sprintf('Refused targeted show exceeded its startup bound: %.3fs.', $refusal_elapsed));
 	startup_bounds_assert(str_contains($refusal_output, 'workspace hygiene --include-sizes --size-limit=100'), 'Refused targeted show did not emit bounded size inspection.');

@@ -26,6 +26,7 @@ namespace {
 	final class WP_Error {
 		public function __construct( public string $code = '', public string $message = '', public array $data = array() ) {}
 		public function get_error_code(): string { return $this->code; }
+		public function get_error_message(): string { return $this->message; }
 		public function get_error_data(): array { return $this->data; }
 	}
 }
@@ -323,7 +324,6 @@ namespace DataMachineCode\Tests {
 		$resolved->get_error_data()['attempted_sources'] ?? null,
 		'unavailable default-branch sources were not reported'
 	);
-
 	$ambiguous = new GitPullWorkspaceDouble();
 	$ambiguous->responses = array(
 		'symbolic-ref --quiet' => new \WP_Error('missing_ref'),

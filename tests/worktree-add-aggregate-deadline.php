@@ -23,6 +23,7 @@ final class Worktree_Add_Aggregate_Deadline_Harness {
 	protected string $workspace_path = '';
 	public function workspace(string $path): void { $this->workspace_path = $path; }
 	public function remaining(float $deadline): int { return $this->worktree_operation_remaining_seconds($deadline); }
+	public function handoff_remaining(float $deadline): int { return $this->worktree_handoff_remaining_seconds($deadline); }
 	public function timeout(string $phase, int $timeout, float $started, array $extra = array()): WP_Error { return $this->worktree_operation_timeout($phase, $timeout, $started, $extra); }
 	public function lock_result(mixed $result, string $phase, int $timeout, float $started): mixed { return $this->worktree_operation_lock_result($result, $phase, $timeout, $started); }
 	public static function admission_wait(float $deadline, float $now, bool $bootstrap = true): int { return self::worktree_capacity_admission_wait_seconds($deadline, $now, $bootstrap); }
@@ -102,6 +103,8 @@ try {
 	deadline_remove_tree($root);
 	deadline_assert(0 === $harness->remaining(microtime(true) - 0.01), 'expired deadlines must not grant another command second');
 	deadline_assert(1 === $harness->remaining(microtime(true) + 0.01), 'a partial second must retain one bounded command second');
+	deadline_assert(0 === $harness->handoff_remaining(microtime(true) + 0.99), 'handoff revalidation must refuse partial GitRunner seconds rather than extend its aggregate deadline');
+	deadline_assert(1 === $harness->handoff_remaining(microtime(true) + 1.01), 'handoff revalidation must allow exactly one whole safe GitRunner second');
 	fwrite(STDOUT, "worktree-add-aggregate-deadline ok\n");
 } catch (Throwable $error) {
 	fwrite(STDERR, $error->getMessage() . "\n");
