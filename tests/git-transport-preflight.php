@@ -6,6 +6,10 @@ if ( ! defined('ABSPATH') ) {
 	define('ABSPATH', __DIR__ . '/fixtures/');
 }
 
+function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
+	return 'datamachine_code_github_allowed_hosts' === $hook ? array( 'github.com', 'github.example' ) : $value;
+}
+
 require_once dirname(__DIR__) . '/inc/Support/GitHubRemote.php';
 require_once dirname(__DIR__) . '/inc/Support/GitTransportPreflight.php';
 
@@ -28,6 +32,9 @@ transport_assert_same('ssh_agent_no_identities', $empty['code'] ?? null, 'An emp
 
 $ready = GitTransportPreflight::classify($ssh_remote, true, 0);
 transport_assert_same(true, $ready['ready'] ?? null, 'An SSH agent with identities must pass the preflight.');
+
+$custom_port = GitTransportPreflight::classify('ssh://git@github.example:2222/owner/repository.git', false, null);
+transport_assert_same(2222, $custom_port['ssh_port'] ?? null, 'SSH URI ports must be carried into transport preflight.');
 
 $refused = GitTransportPreflight::signing_failure($ssh_remote, 'sign_and_send_pubkey: signing failed: agent refused operation');
 transport_assert_same('ssh_agent_signing_refused', $refused['code'] ?? null, 'A signing refusal must remain actionable after Git starts.');

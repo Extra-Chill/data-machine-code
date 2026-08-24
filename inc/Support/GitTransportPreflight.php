@@ -52,6 +52,10 @@ final class GitTransportPreflight {
 			'https_authenticated'      => 'unverified',
 			'fallback_is_non_mutating' => true,
 		);
+		$descriptor = GitHubRemote::descriptor($remote_url);
+		if ( null !== $descriptor && null !== $descriptor['ssh_port'] ) {
+			$result['ssh_port'] = $descriptor['ssh_port'];
+		}
 
 		if ( ! $socket_usable ) {
 			return array_merge(
@@ -99,6 +103,7 @@ final class GitTransportPreflight {
 	}
 
 	private static function is_ssh_remote( string $remote_url ): bool {
-		return 1 === preg_match('#^(?:ssh://)?git@[^:/]+[:/]#i', trim($remote_url));
+		return 1 === preg_match('#^(?:ssh://)?git@[A-Za-z0-9.-]+(?::\d+)?(?:/|:)#i', trim($remote_url))
+			&& null !== GitHubRemote::descriptor($remote_url);
 	}
 }

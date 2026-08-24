@@ -23,8 +23,11 @@ final class GitHubRemote {
 
 
 	/**
-	 * Detect a supported GitHub remote. Matches public GitHub and
-	 * GitHub Enterprise-style hosts such as github.a8c.com.
+	 * Detect a supported GitHub remote.
+	 *
+	 * GitHub.com is always supported. GitHub Enterprise hosts are opt-in through
+	 * the `datamachine_code_github_allowed_hosts` filter; an SSH remote alone is
+	 * never enough to classify an arbitrary service as GitHub.
 	 */
 	public static function isGitHubRemote( string $url ): bool {
 		return null !== self::descriptor($url);
@@ -38,6 +41,7 @@ final class GitHubRemote {
 	 *     web_base_url:string,
 	 *     api_base_url:string,
 	 *     ssh_host:string,
+	 *     ssh_port:int|null,
 	 *     owner:string,
 	 *     repo:string,
 	 *     slug:string,
@@ -52,18 +56,24 @@ final class GitHubRemote {
 			return null;
 		}
 
-		$host  = self::PUBLIC_SSH_HOST;
-		$owner = '';
-		$repo  = '';
+		$host     = self::PUBLIC_SSH_HOST;
+		$owner    = '';
+		$repo     = '';
+		$ssh_port = null;
 
 		if ( preg_match('#^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$#', $value, $m) ) {
 			$owner = $m[1];
 			$repo  = $m[2];
-		} elseif ( preg_match('#^https?://([^/]+)/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?(?:/.*)?$#', $value, $m) ) {
+		} elseif ( preg_match('#^https?://([A-Za-z0-9.-]+)(?::\d+)?/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?(?:/.*)?$#', $value, $m) ) {
 			$host  = strtolower($m[1]);
 			$owner = $m[2];
 			$repo  = $m[3];
-		} elseif ( preg_match('#^(?:ssh://)?git@([^:/]+)[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$#', $value, $m) ) {
+		} elseif ( preg_match('#^ssh://git@([A-Za-z0-9.-]+)(?::([1-9]\d{0,4}))?/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$#', $value, $m) ) {
+			$host     = strtolower($m[1]);
+			$ssh_port = '' !== $m[2] ? (int) $m[2] : null;
+			$owner    = $m[3];
+			$repo     = $m[4];
+		} elseif ( preg_match('#^git@([A-Za-z0-9.-]+):([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$#', $value, $m) ) {
 			$host  = strtolower($m[1]);
 			$owner = $m[2];
 			$repo  = $m[3];
@@ -71,7 +81,7 @@ final class GitHubRemote {
 			return null;
 		}
 
-		if ( ! self::isGitHubHost($host) || '' === $owner || '' === $repo ) {
+		if ( ! self::isGitHubHost($host) || ! self::isValidPort($ssh_port) ) {
 			return null;
 		}
 
@@ -83,11 +93,12 @@ final class GitHubRemote {
 			'web_base_url'    => self::webBaseUrl($host),
 			'api_base_url'    => self::apiBaseUrl($host),
 			'ssh_host'        => $host,
+			'ssh_port'        => $ssh_port,
 			'owner'           => $owner,
 			'repo'            => $repo,
 			'slug'            => $slug,
 			'https_clone_url' => self::webBaseUrl($host) . '/' . $slug . '.git',
-			'ssh_clone_url'   => 'git@' . $host . ':' . $slug . '.git',
+			'ssh_clone_url'   => null === $ssh_port ? 'git@' . $host . ':' . $slug . '.git' : sprintf('ssh://git@%s:%d/%s.git', $host, $ssh_port, $slug),
 			'web_url'         => self::webBaseUrl($host) . '/' . $slug,
 		);
 	}
@@ -175,7 +186,26 @@ final class GitHubRemote {
 	}
 
 	private static function isGitHubHost( string $host ): bool {
+		$hosts = array( self::PUBLIC_SSH_HOST );
+		if ( function_exists('apply_filters') ) {
+			$hosts = apply_filters('datamachine_code_github_allowed_hosts', $hosts);
+		}
+
+		if ( ! is_array($hosts) ) {
+			return false;
+		}
+
 		$host = strtolower($host);
-		return self::PUBLIC_SSH_HOST === $host || str_starts_with($host, 'github.');
+		foreach ( $hosts as $allowed_host ) {
+			if ( is_string($allowed_host) && $host === strtolower(trim($allowed_host)) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static function isValidPort( ?int $port ): bool {
+		return null === $port || ( $port >= 1 && $port <= 65535 );
 	}
 }
