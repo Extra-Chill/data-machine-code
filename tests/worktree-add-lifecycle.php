@@ -285,6 +285,9 @@ function create_primary_checkout( string $workspace_root ): void {
 	run_command('git init --bare ' . escapeshellarg($origin));
 	run_command('git remote add origin ' . escapeshellarg($origin), $source);
 	run_command('git push -u origin main', $source);
+	// The handoff proof verifies the remote's live HEAD advertisement, not this
+	// clone's cached origin/HEAD ref. Make the fixture's remote contract explicit.
+	run_command('git symbolic-ref HEAD refs/heads/main', $origin);
 	run_command('git clone ' . escapeshellarg($origin) . ' ' . escapeshellarg($workspace_root . '/homeboy'));
 	run_command('git config user.email test@example.test', $workspace_root . '/homeboy');
 	run_command('git config user.name "DMC Test"', $workspace_root . '/homeboy');
@@ -524,6 +527,8 @@ try {
 	$handoff_proof = (array) ( $handoff_freshness['proof'] ?? array() );
 	assert_true('verified' === ( $handoff_freshness['status'] ?? null ), 'new allocation did not issue a verified handoff freshness contract');
 	assert_true(3 === ( $handoff_proof['version'] ?? null ) && 'homeboy@audit-primitives-20260616' === ( $handoff_proof['handle'] ?? '' ) && ! empty($handoff_proof['worktree_sha']) && ! empty($handoff_proof['resolved_base_sha']) && ! empty($handoff_proof['resolved_base_ref']) && ! empty($handoff_proof['remote_default_sha']) && ( $handoff_proof['remote_default_sha'] ?? null ) === ( $handoff_proof['remote_default_advertised_sha'] ?? null ) && ! empty($handoff_proof['remote_default_ref']) && ! empty($handoff_proof['verified_at']), 'new allocation did not issue a complete advertised-remote handoff proof');
+	$persisted_handoff_proof = (array) ( \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('homeboy@audit-primitives-20260616')['handoff_freshness_proof'] ?? array() );
+	assert_true($handoff_proof === $persisted_handoff_proof, 'full-bootstrap allocation did not persist the returned remotely verified handoff proof');
 	$current_handoff = $workspace->worktree_handoff_revalidate((string) $result['handle'], $handoff_proof);
 	assert_true(! is_wp_error($current_handoff) && 'current' === ( $current_handoff['status'] ?? null ), 'fresh handoff proof did not revalidate as current');
 	$reordered_handoff = $handoff_proof;
