@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.69.7] - 2026-08-24
+
+### Changed
+- reconcile lint and test against PR base
+
 ## [0.69.6] - 2026-08-24
 
 ### Changed
