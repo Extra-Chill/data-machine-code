@@ -29,7 +29,7 @@ class RemoteWorkspaceBackend {
 
 
 
-	private const OPTION        = 'datamachine_code_remote_workspace_state';
+	public const OPTION         = 'datamachine_code_remote_workspace_state';
 	private const MAX_READ_SIZE = 1048576;
 
 	/**
@@ -266,8 +266,7 @@ class RemoteWorkspaceBackend {
 							'candidates'              => $candidates,
 						),
 					));
-				}
-				if ( array() !== $candidates ) {
+				} elseif ( array() !== $candidates ) {
 					$missing_intent = WorktreeContextInjector::missing_isolation_intent($intent);
 					if ( array() !== $missing_intent ) {
 						return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to create remote worktree "%s": same task isolation intent is incomplete.', $handle), array(
