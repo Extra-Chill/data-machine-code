@@ -317,6 +317,9 @@ try {
 	run_command('git add plan-remote-change.txt && git commit -m plan-remote-change && git push', $source_path);
 	$stale_apply = $workspace->worktree_apply_plan($stale_plan);
 	assert_true(is_wp_error($stale_apply) && 'stale_worktree_plan' === $stale_apply->get_error_code() && ! is_dir($workspace_root . '/homeboy@planned-stale'), 'remote change did not fail closed as a stale plan');
+	$GLOBALS['datamachine_code_test_options']['github_credential_profiles'] = array(
+		array( 'id' => 'enterprise', 'host' => 'github.example.com' ),
+	);
 	$remote_backend = new RemoteWorkspaceBackend();
 	$public_remote = $remote_backend->clone_repo('https://github.com/example/public-project.git', 'public-project');
 	assert_true(! is_wp_error($public_remote), 'public GitHub remote registration failed');

@@ -7,25 +7,28 @@ if ( ! defined('ABSPATH') ) {
 }
 
 function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
+	if ( 'datamachine_code_github_allowed_hosts' === $hook ) {
+		return array_merge($value, $GLOBALS['github_remote_allowed_hosts'] ?? array());
+	}
 	return $value;
 }
 
 function get_option( string $name, mixed $default = false ): mixed {
-	if ( 'github_credential_profiles' === $name ) {
-		return array(
-			array(
-				'id'           => 'enterprise',
-				'default_repo' => 'ssh://git@enterprise.example.test:2222/owner/repository.git',
-			),
-		);
-	}
-	return $default;
+	return $GLOBALS['github_remote_options'][ $name ] ?? $default;
 }
 
+$GLOBALS['github_remote_options'] = array(
+	'github_credential_profiles' => array(
+		array( 'id' => 'enterprise', 'host' => 'enterprise.example.test' ),
+	),
+);
+
 require_once dirname(__DIR__) . '/inc/Support/GitHubRemote.php';
+require_once dirname(__DIR__) . '/inc/Workspace/RemoteWorkspaceBackend.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 
 use DataMachineCode\Support\GitHubRemote;
+use DataMachineCode\Workspace\RemoteWorkspaceBackend;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 
 function assert_same( mixed $expected, mixed $actual, string $message ): void {
@@ -61,6 +64,29 @@ $pr_metadata = WorktreeContextInjector::parse_pr_reference('https://enterprise.e
 assert_same('https://enterprise.example.test/owner/repository/pull/42', $pr_metadata['pr_url'] ?? null, 'GitHub Enterprise PR URL should round-trip.');
 assert_same(42, $pr_metadata['pr_number'] ?? null, 'GitHub Enterprise PR number should parse.');
 assert_same('owner/repository', $pr_metadata['pr_repo'] ?? null, 'GitHub Enterprise PR repo should parse.');
+
+$GLOBALS['github_remote_options'] = array(
+	'github_credential_profiles' => array(
+		array( 'id' => 'limited', 'allowed_repos' => array( 'ssh://git@arbitrary.example.test:2222/owner/allowed.git' ) ),
+	),
+);
+assert_same(null, GitHubRemote::descriptor('git@arbitrary.example.test:owner/other.git'), 'An allowed repository must not authorize another repository on its host.');
+assert_same('owner/allowed', GitHubRemote::descriptor('git@arbitrary.example.test:owner/allowed.git')['slug'] ?? null, 'An allowed repository must authorize its exact host/owner/repo identity.');
+
+$GLOBALS['github_remote_options'][ RemoteWorkspaceBackend::OPTION ] = array(
+	'repos' => array(
+		array( 'remote' => 'ssh://git@workspace.example.test:2222/owner/registered.git' ),
+	),
+);
+assert_same(null, GitHubRemote::descriptor('git@workspace.example.test:owner/other.git'), 'A registered workspace remote must not authorize another repository on its host.');
+assert_same('owner/registered', GitHubRemote::descriptor('git@workspace.example.test:owner/registered.git')['slug'] ?? null, 'A registered workspace remote must authorize its exact identity.');
+
+$GLOBALS['github_remote_options']['github_credential_profiles'][] = array( 'id' => 'host-wide', 'host' => 'arbitrary.example.test' );
+assert_same('owner/other', GitHubRemote::descriptor('git@arbitrary.example.test:owner/other.git')['slug'] ?? null, 'An explicit profile host must authorize the whole host.');
+
+$GLOBALS['github_remote_allowed_hosts'] = array( 'filtered.example.test' );
+assert_same('owner/other', GitHubRemote::descriptor('git@filtered.example.test:owner/other.git')['slug'] ?? null, 'The allowed-hosts filter must authorize the whole host.');
+unset($GLOBALS['github_remote_allowed_hosts']);
 
 assert_same(null, GitHubRemote::descriptor('https://gitlab.com/example/project.git'), 'Non-GitHub hosts should not parse.');
 assert_same(null, GitHubRemote::descriptor('git@ssh.example.test:owner/repository.git'), 'Arbitrary SSH remotes must not be classified as GitHub.');
