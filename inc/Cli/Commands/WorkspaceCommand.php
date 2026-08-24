@@ -776,26 +776,31 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( ! empty( $assoc_args['summary'] ) ) {
 			$this->render_workspace_list_summary( $result, $assoc_args );
+			$this->finish_minimal_workspace_cli_request();
 			return;
 		}
 
 		if ( 'json' === ( $assoc_args['format'] ?? 'table' ) ) {
 			$this->renderer()->json( ! empty( $assoc_args['envelope'] ) ? $result : (array) ( $result['repos'] ?? array() ) );
+			$this->finish_minimal_workspace_cli_request();
 			return;
 		}
 
 		if ( empty( $result['repos'] ) ) {
 			if ( 'csv' === ( $assoc_args['format'] ?? 'table' ) || 'yaml' === ( $assoc_args['format'] ?? 'table' ) ) {
 				$this->format_items( array(), array( 'name', 'kind', 'repo', 'branch', 'freshness', 'behind', 'remote', 'git' ), $assoc_args, 'name' );
+				$this->finish_minimal_workspace_cli_request();
 				return;
 			}
 			if ( isset( $assoc_args['repo'] ) ) {
 				WP_CLI::log( sprintf( 'No repos matching "%s" in workspace (%s).', (string) $assoc_args['repo'], $result['path'] ?? '' ) );
+				$this->finish_minimal_workspace_cli_request();
 				return;
 			}
 
 			WP_CLI::log( sprintf( 'No repos in workspace (%s).', $result['path'] ?? '' ) );
 			WP_CLI::log( 'Clone one with: wp datamachine-code workspace clone <url>' );
+			$this->finish_minimal_workspace_cli_request();
 			return;
 		}
 
@@ -843,6 +848,7 @@ class WorkspaceCommand extends BaseCommand {
 			$assoc_args,
 			'name'
 		);
+		$this->finish_minimal_workspace_cli_request();
 	}
 
 	/**
@@ -3338,11 +3344,13 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( 'json' === $format ) {
 			$this->renderer()->json( $result );
+			$this->finish_minimal_workspace_cli_request();
 			return;
 		}
 
 		if ( in_array( $format, array( 'csv', 'yaml' ), true ) ) {
 			$this->renderer()->items( array( $result ), array_keys( $result ), $assoc_args );
+			$this->finish_minimal_workspace_cli_request();
 			return;
 		}
 
@@ -3372,6 +3380,14 @@ class WorkspaceCommand extends BaseCommand {
 
 		$dirty = $result['dirty'] ?? 0;
 		WP_CLI::log( sprintf( 'Dirty:    %s', ( 0 === $dirty ) ? 'no' : "yes ({$dirty} files)" ) );
+		$this->finish_minimal_workspace_cli_request();
+	}
+
+	/** Mark a successful list/show response for the minimal native shutdown boundary. */
+	private function finish_minimal_workspace_cli_request(): void {
+		if ( function_exists('datamachine_code_mark_minimal_runtime_cli_request_complete') ) {
+			datamachine_code_mark_minimal_runtime_cli_request_complete();
+		}
 	}
 
 	/**

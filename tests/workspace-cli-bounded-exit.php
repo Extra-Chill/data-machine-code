@@ -60,6 +60,7 @@ namespace {
 			'remove'   => array( 'wp', 'datamachine-code', 'workspace', 'worktree', 'remove', 'data-machine-code@issue-1068' ),
 			'locks'    => array( 'wp', 'datamachine-code', 'workspace', 'worktree', 'locks', '--format=json' ),
 			'list'     => array( 'wp', 'datamachine-code', 'workspace', 'list', '--limit=1' ),
+			'failure'  => array( 'wp', 'datamachine-code', 'workspace', 'list', '--limit=1' ),
 		);
 		bounded_exit_assert(isset($commands[ $operation ]), 'Unknown executable workspace command.');
 
@@ -67,6 +68,8 @@ namespace {
 		define('WPINC', 'wp-includes');
 		define('ABSPATH', __DIR__ . '/fixtures/');
 		$GLOBALS['argv'] = $commands[ $operation ];
+		// Model WordPress' native bridge before DMC registers its own callback.
+		register_shutdown_function(static function (): void { do_action('shutdown'); });
 		require_once dirname(__DIR__) . '/data-machine-code.php';
 		do_action('plugins_loaded');
 		bounded_exit_assert(isset(WP_CLI::$commands['datamachine-code workspace']), 'Workspace command was not registered.');
@@ -81,29 +84,54 @@ namespace {
 		}
 		fwrite(STDOUT, "output-complete {$operation}\n");
 		fflush(STDOUT);
-		add_action('shutdown', static function (): void { usleep(1500000); }, 10);
-		do_action('shutdown');
+		if ( 'failure' === $operation ) {
+			register_shutdown_function(static function () use ( $marker ): void { file_put_contents($marker, 'failure-shutdown'); });
+			exit(1);
+		}
+		datamachine_code_mark_minimal_runtime_cli_request_complete();
+		register_shutdown_function(static function (): void { usleep(1500000); });
 		exit(0);
 	}
 
-	$operations = array( 'show', 'pull', 'finalize', 'remove', 'locks', 'list' );
+	$operations = array( 'show', 'pull', 'finalize', 'remove', 'locks', 'list', 'failure' );
 	$max_elapsed = 0.0;
 	foreach ( $operations as $operation ) {
 		$marker = tempnam(sys_get_temp_dir(), 'dmc-bounded-exit-');
-		$start  = microtime(true);
 		$process = proc_open(array( PHP_BINARY, __FILE__, 'child', $operation, $marker ), array( 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $pipes);
 		bounded_exit_assert(is_resource($process), "Could not start {$operation} lifecycle process.");
-		$output = stream_get_contents($pipes[1]);
-		$error  = stream_get_contents($pipes[2]);
+		stream_set_blocking($pipes[1], false);
+		stream_set_blocking($pipes[2], false);
+		$output      = '';
+		$error       = '';
+		$output_at   = null;
+		$child_status = null;
+		while ( true ) {
+			$output .= stream_get_contents($pipes[1]);
+			$error  .= stream_get_contents($pipes[2]);
+			if ( null === $output_at && str_contains($output, "output-complete {$operation}") ) {
+				$output_at = microtime(true);
+			}
+			$child_status = proc_get_status($process);
+			if ( ! $child_status['running'] ) {
+				break;
+			}
+			usleep(1000);
+		}
+		$output .= stream_get_contents($pipes[1]);
+		$error  .= stream_get_contents($pipes[2]);
 		fclose($pipes[1]);
 		fclose($pipes[2]);
 		$status  = proc_close($process);
-		$elapsed = microtime(true) - $start;
-		$max_elapsed = max($max_elapsed, $elapsed);
+		$status  = -1 === $status ? (int) ($child_status['exitcode'] ?? -1) : $status;
+		$elapsed = null === $output_at ? null : microtime(true) - $output_at;
+		$max_elapsed = max($max_elapsed, (float) $elapsed);
 
-		bounded_exit_assert(0 === $status, "{$operation} lifecycle process failed: {$error}");
+		bounded_exit_assert(( 'failure' === $operation ? 1 : 0 ) === $status, "{$operation} lifecycle process returned {$status}: {$error}");
 		bounded_exit_assert(str_contains($output, "output-complete {$operation}"), "{$operation} did not complete output.");
-		bounded_exit_assert($elapsed < 0.5, sprintf('%s exceeded the bounded post-output exit deadline: %.3fs.', $operation, $elapsed));
+		bounded_exit_assert(null !== $elapsed && $elapsed < 0.5, sprintf('%s exceeded the bounded post-output exit deadline: %.3fs.', $operation, (float) $elapsed));
+		if ( 'failure' === $operation ) {
+			bounded_exit_assert('failure-shutdown' === file_get_contents($marker), 'Failure exit did not preserve later native shutdown handling.');
+		}
 		if ( 'finalize' === $operation ) {
 			bounded_exit_assert('committed' === file_get_contents($marker), 'Finalize did not durably commit before its output-complete boundary.');
 		}
