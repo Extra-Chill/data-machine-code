@@ -677,7 +677,7 @@ try {
 	$bootstrap_start = array_search('bootstrap_start', $bootstrap_progress, true);
 	$bootstrap_complete = array_search('bootstrap_complete', $bootstrap_progress, true);
 	$inventory_metadata = array_search('inventory_metadata', $bootstrap_progress, true);
-	assert_true(false !== $bootstrap_start && false !== $bootstrap_complete && false !== $inventory_metadata && $bootstrap_start < $bootstrap_complete && $bootstrap_complete < $inventory_metadata, 'worktree add did not report actual bootstrap start, completion, and the following inventory phase in order');
+	assert_true(false !== $bootstrap_start && false !== $bootstrap_complete && false !== $inventory_metadata && $inventory_metadata < $bootstrap_start && $bootstrap_start < $bootstrap_complete, 'worktree add did not persist inventory before the deferred bootstrap completed');
 	$interrupted_bootstrap_handle = 'homeboy@interrupted-bootstrap';
 	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, array(
 		'provisioning' => array(

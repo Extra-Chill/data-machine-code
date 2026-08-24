@@ -991,7 +991,6 @@ trait WorkspaceWorktreeLifecycle {
 			if ( is_wp_error($recorded) ) {
 				return $recorded;
 			}
-			$this->worktree_add_progress($progress_callback, 'bootstrap_start');
 			$response['bootstrap_deferred'] = true;
 			$response['bootstrap_reservation'] = $reservation;
 		}
@@ -1724,6 +1723,7 @@ trait WorkspaceWorktreeLifecycle {
 			return is_wp_error($recorded) ? $recorded : $this->worktree_operation_timeout('bootstrap', $operation_timeout, $operation_started, array( 'readiness' => 'incomplete' ));
 		}
 
+		$this->worktree_add_progress($progress_callback, 'bootstrap_start');
 		$response['bootstrap'] = WorktreeBootstrapper::bootstrap((string) $response['path'], $remaining_seconds);
 		$this->worktree_add_progress($progress_callback, 'bootstrap_complete');
 		$response = $this->record_completed_bootstrap($response);
