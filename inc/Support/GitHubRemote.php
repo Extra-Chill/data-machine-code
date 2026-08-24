@@ -218,11 +218,7 @@ final class GitHubRemote {
 	 */
 	private static function configuredHosts(): array {
 		$references = array();
-		if ( ! class_exists(PluginSettings::class) ) {
-			require_once __DIR__ . '/PluginSettings.php';
-		}
-
-		$profiles = PluginSettings::get('github_credential_profiles', array());
+		$profiles   = self::configuredSetting('github_credential_profiles', array());
 		if ( is_array($profiles) ) {
 			foreach ( $profiles as $profile ) {
 				if ( ! is_array($profile) ) {
@@ -235,7 +231,7 @@ final class GitHubRemote {
 				}
 			}
 		}
-		$references[] = PluginSettings::get('github_default_repo', '');
+		$references[] = self::configuredSetting('github_default_repo', '');
 
 		$state = function_exists('get_option') ? get_option('datamachine_code_remote_workspace_state', array()) : array();
 		if ( is_array($state) && isset($state['repos']) && is_array($state['repos']) ) {
@@ -256,6 +252,17 @@ final class GitHubRemote {
 		}
 
 		return array_values(array_unique($hosts));
+	}
+
+	private static function configuredSetting( string $key, mixed $fallback ): mixed {
+		if ( function_exists('apply_filters') ) {
+			if ( ! class_exists(PluginSettings::class) ) {
+				require_once __DIR__ . '/PluginSettings.php';
+			}
+			return PluginSettings::get($key, $fallback);
+		}
+
+		return function_exists('get_option') ? get_option($key, $fallback) : $fallback;
 	}
 
 	private static function hostFromConfiguredReference( mixed $reference ): ?string {
