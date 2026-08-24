@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.69.2] - 2026-08-24
+
+### Changed
+- synchronize FIFO queue admission
+
+### Fixed
+- remove rebase conflict marker
+
 ## [0.69.1] - 2026-08-24
 
 ### Changed
