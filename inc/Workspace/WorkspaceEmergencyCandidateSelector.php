@@ -11,7 +11,7 @@ defined('ABSPATH') || exit;
 
 final class WorkspaceEmergencyCandidateSelector {
 	private const MAX_SEARCH_CANDIDATES = 256;
-	private const MAX_SEARCH_STATES     = 4096;
+	private const MAX_SEARCH_STATES     = 256;
 
 	/** Select a viable bounded recovery set, or the strongest truthful fallback. */
 	public static function select( array $candidates, int $target_bytes, int $target_inodes, int $limit, string $bytes_field ): array {
