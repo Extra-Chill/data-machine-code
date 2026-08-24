@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.69.1] - 2026-08-24
+
+### Changed
+- cover show capacity production
+- cover capacity diagnostics by behavior
+
 ## [0.69.0] - 2026-08-24
 
 ### Added
