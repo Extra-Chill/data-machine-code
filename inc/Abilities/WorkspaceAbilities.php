@@ -31,6 +31,7 @@ use DataMachineCode\Workspace\WorktreeDiskBudget;
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\RuntimeCapabilities;
 use DataMachineCode\Runtime\RuntimeSourceSkewDiagnostic;
+use DataMachineCode\Workspace\WorkspaceSourceResolver;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -188,7 +189,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-runtime-identity',
 				array(
 					'label'               => 'Get Workspace Runtime Identity',
-					'description'         => 'Return the loaded plugin identity and one explicitly configured managed source identity without scanning the workspace.',
+					'description'         => 'Return the loaded plugin identity and its authoritative registered source identity using bounded, read-only workspace discovery.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array( 'type' => 'object' ),
 					'output_schema'       => array( 'type' => 'object' ),
@@ -3341,16 +3342,33 @@ class WorkspaceAbilities {
 
 	/** @return array<string,mixed> */
 	public static function runtimeIdentity( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
-		$config = apply_filters('datamachine_code_runtime_identity_config', array(
-			'runtime_file'    => DATAMACHINE_CODE_PATH . 'data-machine-code.php',
-			'runtime_version' => DATAMACHINE_CODE_VERSION,
-			'source_path'     => defined('DATAMACHINE_CODE_SOURCE_PATH') ? DATAMACHINE_CODE_SOURCE_PATH : '',
+		$config      = apply_filters('datamachine_code_runtime_identity_config', array(
+			'runtime_file'      => DATAMACHINE_CODE_PATH . 'data-machine-code.php',
+			'runtime_version'   => DATAMACHINE_CODE_VERSION,
+			'source_path'       => defined('DATAMACHINE_CODE_SOURCE_PATH') ? DATAMACHINE_CODE_SOURCE_PATH : '',
+			'source_repository' => 'https://github.com/Extra-Chill/data-machine-code.git',
 		));
-		$config = is_array($config) ? $config : array();
+		$config      = is_array($config) ? $config : array();
+		$source_path = (string) ( $config['source_path'] ?? '' );
+		$resolution  = array();
+		if ( '' === trim($source_path) ) {
+			$workspace_path = isset($config['workspace_path']) ? (string) $config['workspace_path'] : ( new Workspace() )->get_path();
+			$resolution     = WorkspaceSourceResolver::discover(
+				$workspace_path,
+				(string) ( $config['source_repository'] ?? 'https://github.com/Extra-Chill/data-machine-code.git' ),
+				'data-machine-code.php',
+				(int) ( $config['source_discovery_entry_limit'] ?? 1000 ),
+				(float) ( $config['source_discovery_budget_seconds'] ?? 1.0 )
+			);
+			if ( 'resolved' === ( $resolution['state'] ?? '' ) ) {
+				$source_path = (string) ( $resolution['source_path'] ?? '' );
+			}
+		}
 		return RuntimeSourceSkewDiagnostic::inspect(
 			(string) ( $config['runtime_file'] ?? DATAMACHINE_CODE_PATH . 'data-machine-code.php' ),
 			(string) ( $config['runtime_version'] ?? DATAMACHINE_CODE_VERSION ),
-			(string) ( $config['source_path'] ?? '' )
+			$source_path,
+			$resolution
 		);
 	}
 

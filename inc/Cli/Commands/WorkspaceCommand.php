@@ -1558,7 +1558,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$result = $ability->execute( $input );
 		if ( is_wp_error( $result ) ) {
-			$this->render_workspace_error( $result );
+			$this->render_workspace_error( $result, (string) ( $assoc_args['format'] ?? 'table' ) );
 			return;
 		}
 
@@ -4819,7 +4819,7 @@ class WorkspaceCommand extends BaseCommand {
 		if ( 'abandoned' === $operation ) {
 			$result = $this->run_worktree_abandoned_orchestration( $assoc_args, isset( $args[1] ) ? (string) $args[1] : '' );
 			if ( is_wp_error( $result ) ) {
-				$this->render_workspace_error( $result );
+				$this->render_workspace_error( $result, (string) ( $assoc_args['format'] ?? 'table' ) );
 				return;
 			}
 			$this->render_worktree_abandoned_result( $result, $assoc_args );
@@ -4829,7 +4829,7 @@ class WorkspaceCommand extends BaseCommand {
 		if ( 'active-no-signal-drain' === $operation ) {
 			$result = $this->run_worktree_active_no_signal_drain( $assoc_args, isset( $args[1] ) ? (string) $args[1] : '' );
 			if ( is_wp_error( $result ) ) {
-				$this->render_workspace_error( $result );
+				$this->render_workspace_error( $result, (string) ( $assoc_args['format'] ?? 'table' ) );
 				return;
 			}
 			$this->render_worktree_abandoned_result( $result, $assoc_args );
@@ -4909,7 +4909,7 @@ class WorkspaceCommand extends BaseCommand {
 					);
 					WP_CLI::halt( 1 );
 				}
-				$this->render_workspace_error( $result );
+				$this->render_workspace_error( $result, (string) ( $assoc_args['format'] ?? 'table' ) );
 				return;
 			}
 			$this->renderWorktreeResult( 'get', $result, $assoc_args );
@@ -5335,7 +5335,7 @@ class WorkspaceCommand extends BaseCommand {
 				);
 				WP_CLI::halt( 1 );
 			}
-			$this->render_workspace_error( $result );
+			$this->render_workspace_error( $result, (string) ( $assoc_args['format'] ?? 'table' ) );
 			return;
 		}
 
@@ -6068,18 +6068,28 @@ class WorkspaceCommand extends BaseCommand {
 		$this->format_items( $rows, array( 'source', 'lock_key', 'scope', 'owner', 'session', 'age_seconds', 'live_flock_present', 'safe_to_prune' ), array( 'format' => 'table' ), 'lock_key' );
 	}
 
-	private function render_workspace_error( \WP_Error $error ): void {
+	private function render_workspace_error( \WP_Error $error, string $format = 'table' ): void {
 		$data             = (array) $error->get_error_data();
-		$runtime_identity = class_exists(WorkspaceAbilities::class) ? WorkspaceAbilities::runtimeIdentity(array()) : array();
-		$active_runtime   = (array) ( $runtime_identity['active_runtime'] ?? array() );
+		$runtime_identity = 'table' === $format && class_exists(WorkspaceAbilities::class) ? WorkspaceAbilities::runtimeIdentity(array()) : array();
+		$skew             = (array) ( $runtime_identity['skew'] ?? array() );
+		$classification   = (string) ( $skew['classification'] ?? '' );
+		if ( ! in_array($classification, array( 'older', 'newer', 'diverged', 'ambiguous' ), true) ) {
+			$runtime_identity = array();
+		}
+		$active_runtime = (array) ( $runtime_identity['active_runtime'] ?? array() );
 		if ( ! empty($active_runtime['version']) ) {
 			WP_CLI::log(sprintf('Active runtime: %s%s', (string) $active_runtime['version'], ! empty($active_runtime['build']) ? ' (' . (string) $active_runtime['build'] . ')' : ''));
 		}
-		$skew = (array) ( $runtime_identity['skew'] ?? array() );
-		if ( ! empty($skew['classification']) ) {
-			WP_CLI::log(sprintf('Runtime/source: %s', (string) $skew['classification']));
+		if ( '' !== $classification && ! empty($runtime_identity) ) {
+			WP_CLI::log(sprintf('Runtime/source: %s', $classification));
 		}
-		if ( ! empty($skew['recovery']['guidance']) ) {
+		if ( 'ambiguous' === $classification && ! empty($runtime_identity) ) {
+			$paths = array_values(array_filter(array_map(static fn( array $candidate ): string => (string) ( $candidate['path'] ?? '' ), (array) ( $runtime_identity['source_resolution']['candidates'] ?? array() ))));
+			if ( ! empty($paths) ) {
+				WP_CLI::log(sprintf('Source candidates: %s', implode(', ', $paths)));
+			}
+		}
+		if ( ! empty($runtime_identity) && ! empty($skew['recovery']['guidance']) ) {
 			WP_CLI::log(sprintf('Runtime recovery: %s', (string) $skew['recovery']['guidance']));
 		}
 		if ( 'workspace_repo_busy' !== $error->get_error_code() && ! empty( $data['next_commands'] ) && is_array( $data['next_commands'] ) ) {
