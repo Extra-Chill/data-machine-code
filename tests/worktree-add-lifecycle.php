@@ -275,7 +275,6 @@ function interrupted_creation_intent( string $branch, string $base_head, array $
 function create_primary_checkout( string $workspace_root ): void {
 	$source = $workspace_root . '/source';
 	$origin = $workspace_root . '/origin.git';
-	mkdir($workspace_root, 0777, true);
 	mkdir($source, 0777, true);
 	run_command('git init -b main', $source);
 	run_command('git config user.email test@example.test', $source);
