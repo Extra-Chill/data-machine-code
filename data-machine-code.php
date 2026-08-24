@@ -91,28 +91,8 @@ function datamachine_code_finish_minimal_runtime_cli_request(): void {
 		remove_all_actions('shutdown');
 	}
 }
-
-/** Mark a synchronous workspace command after it has rendered success output. */
-function datamachine_code_mark_minimal_runtime_cli_request_complete(): void {
-	$GLOBALS['datamachine_code_minimal_runtime_cli_request_complete'] = true;
-}
-
-/**
- * Stop after WordPress shutdown when a command has explicitly completed.
- *
- * WordPress actions can be cleared, but native PHP shutdown callbacks cannot.
- * This callback is registered after WordPress has registered its own shutdown
- * bridge, so successful synchronous commands terminate before later callbacks
- * can keep the CLI process alive.
- */
-function datamachine_code_finish_completed_minimal_runtime_cli_request(): void {
-	if ( datamachine_code_is_minimal_runtime_cli_request() && ! empty($GLOBALS['datamachine_code_minimal_runtime_cli_request_complete']) ) {
-		exit(0);
-	}
-}
 if ( datamachine_code_is_minimal_runtime_cli_request() ) {
 	add_action('shutdown', 'datamachine_code_finish_minimal_runtime_cli_request', PHP_INT_MIN);
-	register_shutdown_function('datamachine_code_finish_completed_minimal_runtime_cli_request');
 }
 
 /**
