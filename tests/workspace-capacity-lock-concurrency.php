@@ -105,6 +105,26 @@ if ( 'holder' === $mode ) {
 	exit(is_wp_error($result) ? 2 : 0);
 }
 
+if ( 'signal-holder' === $mode ) {
+	$workspace = (string) $argv[2];
+	$ready     = (string) $argv[3];
+	$release   = (string) $argv[4];
+	$result    = WorkspaceMutationLock::with_repo(
+		$workspace,
+		'workspace-capacity-admission',
+		static function () use ( $ready, $release ): string|WP_Error {
+			file_put_contents($ready, 'ready');
+			$deadline = microtime(true) + 5;
+			while ( ! is_file($release) && microtime(true) < $deadline ) {
+				usleep(10000);
+			}
+			return is_file($release) ? 'released' : new WP_Error('release_signal_timeout');
+		},
+		1
+	);
+	exit(is_wp_error($result) ? 2 : 0);
+}
+
 if ( 'artifact-cleanup' === $mode ) {
 	$workspace = (string) $argv[2];
 	$marker    = (string) $argv[3];
@@ -590,8 +610,10 @@ try {
 	// Queue records are admission tokens, not diagnostics: followers retain their
 	// arrival order and a later request cannot barge ahead after release.
 	$ready = $workspace . '/fifo-ready';
+	$release = $workspace . '/fifo-release';
 	$order = $workspace . '/fifo-order';
-	$holder = proc_open(array( PHP_BINARY, __FILE__, 'holder', $workspace, $ready, '5' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
+<<<<<<< HEAD
+	$holder = proc_open(array( PHP_BINARY, __FILE__, 'signal-holder', $workspace, $ready, $release), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
 	capacity_lock_assert(is_resource($holder), 'Could not start FIFO holder.');
 	fclose($holder_pipes[0]);
 	$deadline = microtime(true) + 3;
@@ -609,6 +631,7 @@ try {
 	}
 	usort($queued, static fn( array $left, array $right ): int => strcmp((string) ($left['queue_order'] ?? ''), (string) ($right['queue_order'] ?? '')));
 	capacity_lock_assert(array( 1, 2, 3 ) === array_map(static fn( array $request ): int => (int) ($request['queue_position'] ?? 0), $queued), 'Queued followers did not retain FIFO queue positions.');
+	file_put_contents($release, 'release');
 	foreach ( $fifo_waiters as [ $id, $process, $pipes ] ) {
 		$output = stream_get_contents($pipes[1]);
 		$error  = stream_get_contents($pipes[2]);
@@ -619,7 +642,7 @@ try {
 	capacity_lock_assert(0 === proc_close($holder), 'FIFO holder failed.');
 	capacity_lock_assert(array( 'first', 'second', 'late' ) === array_values(array_filter(explode("\n", trim((string) file_get_contents($order))))), 'Capacity queue permitted barging instead of FIFO admission.');
 	capacity_lock_assert(array() === ( glob($workspace . '/.locks/requests/*.json') ?: array() ), 'FIFO admissions left queue evidence behind.');
-	unlink($ready); unlink($order);
+	unlink($ready); unlink($release); unlink($order);
 
 	$policy = new class {
 		use DataMachineCode\Workspace\WorkspaceWorktreeLifecycle;
@@ -651,7 +674,7 @@ try {
 	capacity_lock_assert('130' === file_get_contents($state), 'Refused second admission must not consume stale capacity.');
 	echo "workspace-capacity-lock-concurrency: ok\n";
 } finally {
-	foreach ( array( 'capacity-state', 'admission-ready', 'second-ready', 'fanout-ready', 'fifo-ready', 'fifo-order', 'cancel-order', 'kill-ready', 'diagnostic-ready', 'repo-a-ready', 'repo-b-ready' ) as $file ) {
+	foreach ( array( 'capacity-state', 'admission-ready', 'second-ready', 'fanout-ready', 'fifo-ready', 'fifo-release', 'fifo-order', 'cancel-order', 'kill-ready', 'diagnostic-ready', 'repo-a-ready', 'repo-b-ready' ) as $file ) {
 		if ( is_file($workspace . '/' . $file) ) { unlink($workspace . '/' . $file); }
 	}
 	if ( is_file($workspace . '/ready') ) {
