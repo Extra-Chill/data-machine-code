@@ -978,30 +978,34 @@ trait WorkspaceWorktreeLifecycle {
 				return $heartbeat_error;
 			}
 			$bootstrap_created_dirty_paths = (array) ( $response['bootstrap']['git_state']['bootstrap_created_dirty_paths'] ?? array() );
-			$git_state_inspected = ! empty($response['bootstrap']['git_state']['inspected']);
-			$bootstrap_outcome = ! empty($response['bootstrap']['success']) && $git_state_inspected && array() === $bootstrap_created_dirty_paths ? 'succeeded' : 'failed';
-			$bootstrap_reason  = ! $git_state_inspected ? 'bootstrap_git_state_unavailable' : ( array() !== $bootstrap_created_dirty_paths ? 'bootstrap_created_dirty_paths' : null );
-			$recorded = $this->record_bootstrap_outcome($wt_handle, $bootstrap_outcome, $response['bootstrap'], $bootstrap_reason);
+			$git_state_inspected           = ! empty($response['bootstrap']['git_state']['inspected']);
+			$bootstrap_outcome             = ! empty($response['bootstrap']['success']) && $git_state_inspected && array() === $bootstrap_created_dirty_paths ? 'succeeded' : 'failed';
+			$bootstrap_reason              = ! $git_state_inspected ? 'bootstrap_git_state_unavailable' : ( array() !== $bootstrap_created_dirty_paths ? 'bootstrap_created_dirty_paths' : null );
+			$recorded                      = $this->record_bootstrap_outcome($wt_handle, $bootstrap_outcome, $response['bootstrap'], $bootstrap_reason);
 			if ( is_wp_error($recorded) ) {
 				return $recorded;
 			}
 			$response['metadata'] = WorktreeContextInjector::get_metadata($wt_handle);
 			if ( ! $git_state_inspected || array() !== $bootstrap_created_dirty_paths ) {
 				$error_code = $git_state_inspected ? 'bootstrap_created_dirty_paths' : 'bootstrap_git_state_unavailable';
-				$message = $git_state_inspected
+				$message    = $git_state_inspected
 					? sprintf('Bootstrap created %d new dirty path(s) in worktree "%s". The worktree was retained without deleting files that may need review.', count($bootstrap_created_dirty_paths), $wt_handle)
 					: sprintf('Could not verify post-bootstrap Git cleanliness for worktree "%s". The worktree was retained without deleting files.', $wt_handle);
 				return new \WP_Error(
 					$error_code,
 					$message,
 					array(
-						'status'                       => 409,
-						'handle'                       => $wt_handle,
-						'path'                         => $wt_path,
-						'bootstrap'                    => $response['bootstrap'],
+						'status'                        => 409,
+						'handle'                        => $wt_handle,
+						'path'                          => $wt_path,
+						'bootstrap'                     => $response['bootstrap'],
 						'bootstrap_created_dirty_paths' => $bootstrap_created_dirty_paths,
-						'rollback'                     => array( 'git_materialization_rolled_back' => false, 'lifecycle_metadata_rolled_back' => false, 'reason' => 'new bootstrap outputs are retained for review' ),
-						'remediation_command'          => 'git -C ' . escapeshellarg($wt_path) . ' status --short --branch --untracked-files=all',
+						'rollback'                      => array(
+							'git_materialization_rolled_back' => false,
+							'lifecycle_metadata_rolled_back'  => false,
+							'reason'                          => 'new bootstrap outputs are retained for review',
+						),
+						'remediation_command'           => 'git -C ' . escapeshellarg($wt_path) . ' status --short --branch --untracked-files=all',
 					)
 				);
 			}

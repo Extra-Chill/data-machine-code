@@ -155,15 +155,15 @@ final class WorktreeBootstrapper {
 		$failed  = array_filter( $steps, fn( $s ) => self::STATUS_FAILED === ( $s['status'] ?? '' ) );
 		$ran_any = (bool) array_filter( $steps, fn( $s ) => self::STATUS_RAN === ( $s['status'] ?? '' ) );
 
-		$result                   = array(
+		$result              = array(
 			'success'               => empty( $failed ),
 			'ran_any'               => $ran_any,
 			'skipped_package_roots' => $package_discovery['skipped'],
 			'steps'                 => $steps,
 			'duration_ms'           => (int) round(( microtime(true) - $started_at ) * 1000),
 		);
-		$after_dirty             = self::dirty_paths($worktree_path);
-		$result['git_state']     = array(
+		$after_dirty         = self::dirty_paths($worktree_path);
+		$result['git_state'] = array(
 			'inspected'                     => null !== $before_dirty && null !== $after_dirty,
 			'before_dirty_paths'            => $before_dirty ?? array(),
 			'after_dirty_paths'             => $after_dirty ?? array(),
@@ -171,7 +171,7 @@ final class WorktreeBootstrapper {
 			'bootstrap_created_dirty_paths' => null !== $before_dirty && null !== $after_dirty ? array_values(array_diff($after_dirty, $before_dirty)) : array(),
 		);
 		foreach ( $result['steps'] as &$step ) {
-			$output = (string) ( $step['output_tail'] ?? '' );
+			$output                  = (string) ( $step['output_tail'] ?? '' );
 			$step['output_evidence'] = array(
 				'retained_bytes' => strlen($output),
 				'sha256'         => hash('sha256', $output),
@@ -1171,7 +1171,7 @@ final class WorktreeBootstrapper {
 			if ( '' === $record || strlen($record) < 4 ) {
 				continue;
 			}
-			$status = substr($record, 0, 2);
+			$status  = substr($record, 0, 2);
 			$paths[] = substr($record, 3);
 			if ( str_contains($status, 'R') || str_contains($status, 'C') ) {
 				++$index;
