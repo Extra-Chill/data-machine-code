@@ -5628,7 +5628,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * @param array  $assoc_args CLI assoc args.
 	 */
 	private function renderWorktreeResult( string $operation, array $result, array $assoc_args ): void {
-		if ( in_array( $operation, array( 'add', 'handoff-revalidate' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+		if ( in_array( $operation, array( 'add', 'plan', 'handoff-revalidate' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 			$this->renderer()->json( $result );
 			return;
 		}
@@ -5851,12 +5851,13 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'add':
 			case 'plan':
-				WP_CLI::success( $result['message'] ?? 'Worktree created.' );
 				if ( 'plan' === $operation ) {
+					WP_CLI::success( 'Worktree plan generated.' );
 					WP_CLI::log( sprintf( 'Disposition: %s', $result['disposition'] ?? '-' ) );
 					WP_CLI::log( sprintf( 'Digest: %s', $result['digest'] ?? '-' ) );
 					return;
 				}
+				WP_CLI::success( $result['message'] ?? 'Worktree created.' );
 				if ( isset( $result['disk_budget'] ) && is_array( $result['disk_budget'] ) ) {
 					$budget = $result['disk_budget'];
 					WP_CLI::log( \DataMachineCode\Workspace\WorktreeDiskBudget::format_summary( $budget ) );
