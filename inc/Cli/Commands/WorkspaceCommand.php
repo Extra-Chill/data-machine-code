@@ -3293,6 +3293,17 @@ class WorkspaceCommand extends BaseCommand {
 	 * <name>
 	 * : Repository directory name.
 	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 *   - csv
+	 *   - yaml
+	 * ---
+	 *
 	 * ## EXAMPLES
 	 *
 	 *     # Show repo info
@@ -3301,7 +3312,12 @@ class WorkspaceCommand extends BaseCommand {
 	 * @subcommand show
 	 */
 	public function show( array $args, array $assoc_args ): void {
+		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( empty( $args[0] ) ) {
+			if ( 'json' === $format ) {
+				$this->render_workspace_show_error( 'workspace_name_required', 'Repository name is required.' );
+				return;
+			}
 			WP_CLI::error( 'Repository name is required.' );
 			return;
 		}
@@ -3311,7 +3327,21 @@ class WorkspaceCommand extends BaseCommand {
 		$result = WorkspaceAbilities::showRepo( array( 'name' => $args[0] ) );
 
 		if ( is_wp_error( $result ) ) {
+			if ( 'json' === $format ) {
+				$this->render_workspace_show_error( $result->get_error_code(), $result->get_error_message(), $result->get_error_data() );
+				return;
+			}
 			WP_CLI::error( $result->get_error_message() );
+			return;
+		}
+
+		if ( 'json' === $format ) {
+			$this->renderer()->json( $result );
+			return;
+		}
+
+		if ( in_array( $format, array( 'csv', 'yaml' ), true ) ) {
+			$this->renderer()->items( array( $result ), array_keys( $result ), $assoc_args );
 			return;
 		}
 
@@ -3341,6 +3371,31 @@ class WorkspaceCommand extends BaseCommand {
 
 		$dirty = $result['dirty'] ?? 0;
 		WP_CLI::log( sprintf( 'Dirty:    %s', ( 0 === $dirty ) ? 'no' : "yes ({$dirty} files)" ) );
+	}
+
+	/**
+	 * Render a workspace-show error using the standard machine-readable envelope.
+	 *
+	 * @param string $code    Error code.
+	 * @param string $message Error message.
+	 * @param mixed  $data    Optional error data.
+	 */
+	private function render_workspace_show_error( string $code, string $message, mixed $data = null ): void {
+		$error = array(
+			'code'    => $code,
+			'message' => $message,
+		);
+		if ( null !== $data ) {
+			$error['data'] = $data;
+		}
+
+		$this->renderer()->json(
+			array(
+				'success' => false,
+				'error'   => $error,
+			)
+		);
+		WP_CLI::halt( 1 );
 	}
 
 	/**
