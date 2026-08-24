@@ -224,6 +224,7 @@ class WorktreeContextInjector {
 		$created_at = gmdate('c');
 
 		$metadata = array(
+			'allocation_id'    => bin2hex(random_bytes(16)),
 			'created_at'       => $created_at,
 			'observed_at'      => $created_at,
 			'last_seen_at'     => $created_at,

@@ -134,8 +134,10 @@ $GLOBALS['worktree_handoff_registering'] = false;
 $GLOBALS['worktree_handoff_registered'] = true;
 
 $add = $GLOBALS['worktree_handoff_abilities']['datamachine-code/workspace-worktree-add'] ?? array();
+$resume = $GLOBALS['worktree_handoff_abilities']['datamachine-code/workspace-worktree-handoff-resume'] ?? array();
 $revalidate = $GLOBALS['worktree_handoff_abilities']['datamachine-code/workspace-worktree-handoff-revalidate'] ?? array();
 $fields = array( 'version', 'proof_id', 'handle', 'worktree_sha', 'resolved_base_ref', 'resolved_base_sha', 'remote_default_ref', 'remote_default_sha', 'remote_default_advertised_sha', 'verified_at', 'digest' );
+$identity_fields = array( 'version', 'allocation_id', 'handle', 'path', 'branch', 'worktree_sha', 'resolved_base_ref', 'metadata_digest', 'digest' );
 $freshness = $add['output_schema']['properties']['handoff_freshness'] ?? array();
 worktree_handoff_schema_assert(array( 'success', 'handoff_freshness' ) === (array) ( $add['output_schema']['required'] ?? array() ), 'Add schema does not require the handoff freshness contract on successful output.');
 worktree_handoff_schema_assert(array( 'status', 'proof', 'reason', 'error_code' ) === array_keys((array) ( $freshness['properties'] ?? array() )), 'Add schema omitted the uniform handoff freshness contract.');
@@ -144,6 +146,7 @@ worktree_handoff_schema_assert(array( 'verified', 'unverified', 'not_applicable'
 worktree_handoff_schema_assert(array( 'allocation_identity_missing', 'fetch_failed', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'worktree_handoff_base_unresolved', 'proof_generation_failed', 'metadata_persist_failed', 'remote_freshness_probe_unsupported', 'non_allocation_dry_run' ) === ( $freshness['properties']['reason']['enum'] ?? array() ), 'Add schema omitted typed unverified freshness reasons.');
 foreach ( array(
 	$freshness['properties']['proof'] ?? array(),
+	$resume['output_schema']['properties']['observation'] ?? array(),
 	$revalidate['input_schema']['properties']['proof'] ?? array(),
 	$revalidate['output_schema']['properties']['proof'] ?? array(),
 ) as $proof ) {
@@ -151,6 +154,13 @@ foreach ( array(
 	worktree_handoff_schema_assert($fields === (array) ( $proof['required'] ?? array() ), 'Proof schema does not require every bound field.');
 }
 worktree_handoff_schema_assert(array( 3 ) === ( $freshness['properties']['proof']['properties']['version']['enum'] ?? array() ), 'Proof schema does not declare its version 3 compatibility boundary.');
+worktree_handoff_schema_assert(array( 'handle', 'allocation_identity' ) === (array) ( $resume['input_schema']['required'] ?? array() ), 'Resume schema does not require an exact allocation identity.');
+foreach ( array( $resume['input_schema']['properties']['allocation_identity'] ?? array(), $resume['output_schema']['properties']['allocation_identity'] ?? array() ) as $identity ) {
+	worktree_handoff_schema_assert($identity_fields === array_keys((array) ( $identity['properties'] ?? array() )), 'Resume allocation identity schema fields are incomplete or reordered.');
+	worktree_handoff_schema_assert($identity_fields === (array) ( $identity['required'] ?? array() ), 'Resume allocation identity schema does not require every bound field.');
+}
+worktree_handoff_schema_assert(array( 'current', 'contention' ) === ( $resume['output_schema']['properties']['status']['enum'] ?? array() ), 'Resume schema permits an unsafe handoff status.');
+worktree_handoff_schema_assert(str_contains((string) ( $resume['description'] ?? '' ), 'does not fetch') && str_contains((string) ( $resume['description'] ?? '' ), 'persist lifecycle metadata'), 'Resume schema does not declare its read-only boundary.');
 worktree_handoff_schema_assert(array( 'current', 'drift', 'fetch_failed', 'contention' ) === ( $revalidate['output_schema']['properties']['status']['enum'] ?? array() ), 'Revalidation schema omitted typed statuses.');
 worktree_handoff_schema_assert(array( 'invalid_worktree_handoff_proof', 'untrusted_worktree_handoff_proof', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'remote_default_changed_during_verification', 'worktree_handoff_base_unresolved' ) === ( $revalidate['output_schema']['properties']['error']['properties']['code']['enum'] ?? array() ), 'Revalidation schema omitted typed errors.');
 

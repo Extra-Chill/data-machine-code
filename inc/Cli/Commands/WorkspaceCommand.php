@@ -48,6 +48,7 @@ class WorkspaceCommand extends BaseCommand {
 		'add'                                     => array( 'ability' => 'datamachine-code/workspace-worktree-add' ),
 		'plan'                                    => array( 'ability' => 'datamachine-code/workspace-worktree-plan' ),
 		'apply-plan'                              => array( 'ability' => 'datamachine-code/workspace-worktree-apply-plan' ),
+		'handoff-resume'                          => array( 'ability' => 'datamachine-code/workspace-worktree-handoff-resume' ),
 		'handoff-revalidate'                      => array( 'ability' => 'datamachine-code/workspace-worktree-handoff-revalidate' ),
 		'list'                                    => array( 'ability' => 'datamachine-code/workspace-worktree-list' ),
 		'get'                                     => array( 'ability' => 'datamachine-code/workspace-worktree-list' ),
@@ -257,6 +258,20 @@ class WorkspaceCommand extends BaseCommand {
 						'required'    => true,
 					),
 					$option('proof', 'JSON proof returned by worktree add.'),
+					$format,
+				),
+			),
+			'handoff-resume'        => array(
+				'shortdesc' => 'Resume handoff for an exact committed allocation.',
+				'longdesc'  => "Validates the server-issued allocation identity, bootstrap readiness, branch, HEAD, and cleanliness, then performs a no-fetch remote advertisement observation. It never repeats allocation, capacity planning, context injection, bootstrap, or lifecycle persistence.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree handoff-resume data-machine-code@fix-1205 --allocation-identity='<json-identity>' --format=json",
+				'synopsis'  => array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'handle',
+						'description' => 'Exact managed worktree handle.',
+						'required'    => true,
+					),
+					$option('allocation-identity', 'JSON allocation identity returned by the partial-success add result.'),
 					$format,
 				),
 			),
@@ -4789,7 +4804,7 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <provider|add|get|list|remove|prune|locks|handoff-revalidate|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|capacity-recovery|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
+			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <provider|add|get|list|remove|prune|locks|handoff-resume|handoff-revalidate|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|capacity-recovery|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
 			return;
 		}
 
@@ -5020,6 +5035,16 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				$input['handle'] = (string) $args[1];
 				$input['proof']  = $proof;
+				break;
+
+			case 'handoff-resume':
+				$allocation_identity = json_decode( (string) ( $assoc_args['allocation-identity'] ?? '' ), true);
+				if ( empty($args[1]) || ! is_array($allocation_identity) ) {
+					WP_CLI::error('Usage: worktree handoff-resume <handle> --allocation-identity=<json-identity>');
+					return;
+				}
+				$input['handle']              = (string) $args[1];
+				$input['allocation_identity'] = $allocation_identity;
 				break;
 
 			case 'refresh-context':
@@ -5322,7 +5347,7 @@ class WorkspaceCommand extends BaseCommand {
 		$result = $ability->execute( $input );
 
 		if ( is_wp_error( $result ) ) {
-			if ( in_array( $operation, array( 'add', 'handoff-revalidate' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			if ( in_array( $operation, array( 'add', 'handoff-resume', 'handoff-revalidate' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 				$this->renderer()->json(
 					array(
 						'success' => false,
@@ -5628,12 +5653,16 @@ class WorkspaceCommand extends BaseCommand {
 	 * @param array  $assoc_args CLI assoc args.
 	 */
 	private function renderWorktreeResult( string $operation, array $result, array $assoc_args ): void {
-		if ( in_array( $operation, array( 'add', 'plan', 'handoff-revalidate' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+		if ( in_array( $operation, array( 'add', 'plan', 'handoff-resume', 'handoff-revalidate' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 			$this->renderer()->json( $result );
 			return;
 		}
 
 		switch ( $operation ) {
+			case 'handoff-resume':
+				WP_CLI::log(sprintf('Handoff continuation status: %s', $result['status'] ?? 'unknown'));
+				WP_CLI::log(sprintf('Handle: %s', $result['handle'] ?? '-'));
+				return;
 			case 'handoff-revalidate':
 				WP_CLI::log(sprintf('Handoff status: %s', $result['status'] ?? 'unknown'));
 				WP_CLI::log(sprintf('Handle: %s', $result['handle'] ?? '-'));

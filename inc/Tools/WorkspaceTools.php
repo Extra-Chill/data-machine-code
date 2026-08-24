@@ -779,7 +779,11 @@ class WorkspaceTools extends BaseTool
 
         $result = $ability->execute($input);
         if (is_wp_error($result) ) {
-            return $this->buildErrorResponse($result->get_error_message(), $tool_name);
+            $response               = $this->buildErrorResponse($result->get_error_message(), $tool_name);
+            $response['error_code'] = $result->get_error_code();
+            $error_data             = (array) $result->get_error_data();
+            $response['error_data'] = ! empty($error_data['mutation_committed']) ? $error_data : $this->sanitizeWorkspaceResult($error_data, $input);
+            return $response;
         }
 
         return array(

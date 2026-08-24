@@ -301,6 +301,111 @@ trait WorkspaceWorktreeLifecycle {
 		return $result;
 	}
 
+	/** Resume only the read-only handoff boundary for one exact committed allocation. */
+	public function worktree_handoff_resume( string $handle, array $allocation_identity ): array|\WP_Error {
+		$deadline = microtime(true) + self::HANDOFF_REMOTE_PROBE_TIMEOUT;
+		$parsed   = $this->parse_handle($handle);
+		if ( ! $parsed['is_worktree'] || (string) ( $allocation_identity['handle'] ?? '' ) !== $handle || 1 !== (int) ( $allocation_identity['version'] ?? 0 ) ) {
+			return new \WP_Error('invalid_worktree_handoff_allocation_identity', 'An exact server-issued committed allocation identity is required.', array( 'status' => 400 ));
+		}
+
+		$result = WorkspaceMutationLock::with_repo($this->workspace_path, (string) $parsed['repo'], function () use ( $handle, $parsed, $allocation_identity, $deadline ) {
+			if ( $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
+				return $this->worktree_handoff_resume_failure($this->worktree_handoff_timeout(), $allocation_identity);
+			}
+			$metadata = WorktreeContextInjector::get_metadata_fresh($handle);
+			$path     = $this->workspace_path . '/' . $parsed['dir_name'];
+			$base_ref = $this->worktree_handoff_base_ref($metadata);
+			$readiness = WorktreeContextInjector::bootstrap_readiness($metadata);
+			$stored_identity = is_array($metadata['handoff_continuation_identity'] ?? null) ? $metadata['handoff_continuation_identity'] : array();
+			if ( ! is_array($metadata)
+				|| $this->worktree_handoff_proof_canonical_json($stored_identity) !== $this->worktree_handoff_proof_canonical_json($allocation_identity)
+				|| ! hash_equals( (string) ( $metadata['allocation_id'] ?? '' ), (string) ( $allocation_identity['allocation_id'] ?? '' ) )
+				|| ! hash_equals($this->worktree_handoff_allocation_metadata_digest($metadata), (string) ( $allocation_identity['metadata_digest'] ?? '' ) )
+				|| ! hash_equals( (string) ( $metadata['path'] ?? '' ), (string) ( $allocation_identity['path'] ?? '' ) )
+				|| ! hash_equals($path, (string) ( $allocation_identity['path'] ?? '' ))
+				|| ! hash_equals( (string) ( $metadata['branch'] ?? '' ), (string) ( $allocation_identity['branch'] ?? '' ) )
+				|| is_wp_error($base_ref)
+				|| ! hash_equals( (string) $base_ref, (string) ( $allocation_identity['resolved_base_ref'] ?? '' ) )
+				|| ! $readiness['ready']
+				|| ! is_dir($path)
+				|| ! file_exists($path . '/.git')
+			) {
+				return $this->worktree_handoff_resume_failure(
+					new \WP_Error(
+						'worktree_handoff_allocation_drift',
+						'The committed allocation no longer matches its exact handoff continuation identity.',
+						array( 'status' => 409, 'readiness' => $readiness )
+					),
+					$allocation_identity
+				);
+			}
+
+			$head   = $this->worktree_handoff_git($path, 'rev-parse --verify HEAD^{commit}', $deadline);
+			$branch = $this->worktree_handoff_git($path, 'branch --show-current', $deadline);
+			$status = $this->worktree_handoff_git($path, 'status --porcelain --untracked-files=all', $deadline);
+			foreach ( array( $head, $branch, $status ) as $probe ) {
+				if ( is_wp_error($probe) ) {
+					return $this->worktree_handoff_resume_failure($probe, $allocation_identity);
+				}
+			}
+			if ( ! hash_equals( (string) ( $allocation_identity['worktree_sha'] ?? '' ), trim( (string) $head['output'] ) )
+				|| ! hash_equals( (string) ( $allocation_identity['branch'] ?? '' ), trim( (string) $branch['output'] ) )
+				|| '' !== trim( (string) $status['output'] )
+			) {
+				return $this->worktree_handoff_resume_failure(
+					new \WP_Error('worktree_handoff_allocation_drift', 'The committed allocation changed after handoff was deferred; refusing to issue a freshness observation.', array( 'status' => 409 )),
+					$allocation_identity
+				);
+			}
+
+			$proof = $this->worktree_handoff_proof($handle, $path, $this->get_primary_path( (string) $parsed['repo']), (string) $base_ref, $deadline, (string) $allocation_identity['digest']);
+			if ( is_wp_error($proof) ) {
+				return $this->worktree_handoff_resume_failure($proof, $allocation_identity);
+			}
+			$remote_base = $this->worktree_handoff_resume_remote_base_current($this->get_primary_path( (string) $parsed['repo']), (string) $base_ref, $proof, $deadline);
+			if ( is_wp_error($remote_base) ) {
+				return $this->worktree_handoff_resume_failure($remote_base, $allocation_identity);
+			}
+			$final_head   = $this->worktree_handoff_git($path, 'rev-parse --verify HEAD^{commit}', $deadline);
+			$final_branch = $this->worktree_handoff_git($path, 'branch --show-current', $deadline);
+			$final_status = $this->worktree_handoff_git($path, 'status --porcelain --untracked-files=all', $deadline);
+			if ( is_wp_error($final_head) || is_wp_error($final_branch) || is_wp_error($final_status)
+				|| ! hash_equals( (string) $allocation_identity['worktree_sha'], trim( (string) ( $final_head['output'] ?? '' ) ) )
+				|| ! hash_equals( (string) $allocation_identity['branch'], trim( (string) ( $final_branch['output'] ?? '' ) ) )
+				|| '' !== trim( (string) ( $final_status['output'] ?? '' ) )
+			) {
+				return $this->worktree_handoff_resume_failure(
+					new \WP_Error('worktree_handoff_allocation_drift', 'The worktree branch, HEAD, or cleanliness changed during handoff continuation verification.', array( 'status' => 409 )),
+					$allocation_identity
+				);
+			}
+
+			return array(
+				'success'             => true,
+				'status'              => 'current',
+				'handle'              => $handle,
+				'mutation_committed'  => true,
+				'allocation_identity' => $allocation_identity,
+				'observation'         => $proof,
+				'read_only'           => true,
+			);
+		}, self::HANDOFF_REMOTE_PROBE_TIMEOUT);
+
+		if ( is_wp_error($result) && 'workspace_repo_busy' === $result->get_error_code() ) {
+			return array(
+				'success'             => false,
+				'status'              => 'contention',
+				'handle'              => $handle,
+				'mutation_committed'  => true,
+				'allocation_identity' => $allocation_identity,
+				'continuation'        => $this->worktree_handoff_continuation($allocation_identity),
+				'contention'          => $result->get_error_data(),
+			);
+		}
+		return $result;
+	}
+
 	/** Issue the proof while the caller still holds the allocation's repository lock. */
 	private function worktree_add_handoff_proof( array|\WP_Error $result, bool $allow_unverified_freshness = false ): array|\WP_Error {
 		if ( is_wp_error($result) || empty($result['success']) ) {
@@ -365,23 +470,145 @@ trait WorkspaceWorktreeLifecycle {
 		if ( $allow_unverified_freshness ) {
 			return $result;
 		}
+		$allocation_identity = $this->worktree_handoff_allocation_identity($result);
+		if ( ! is_wp_error($allocation_identity) ) {
+			$bound = WorktreeContextInjector::store_lifecycle_metadata( (string) $allocation_identity['handle'], array( 'handoff_continuation_identity' => $allocation_identity ));
+			if ( is_wp_error($bound) || ! $bound ) {
+				$allocation_identity = new \WP_Error('worktree_handoff_allocation_identity_persist_failed', 'The exact handoff continuation identity could not be persisted.', array( 'status' => 500 ));
+			}
+		}
+		$continuation        = is_wp_error($allocation_identity) ? null : $this->worktree_handoff_continuation($allocation_identity);
+		$message             = null === $continuation
+			? 'The worktree allocation is committed but no verified handoff freshness proof or exact continuation is available. Do not repeat allocation or bootstrap; inspect the preserved allocation.'
+			: 'The worktree allocation is committed but no verified handoff freshness proof is available. Do not repeat allocation or bootstrap; run the exact handoff continuation.';
 
 		return new \WP_Error(
 			'worktree_handoff_freshness_unverified',
-			'The worktree was allocated but no verified handoff freshness proof is available. Retry the same compatible allocation, or set allow_unverified_freshness=true only for intentional offline work.',
-			array(
+			$message,
+			array_filter(array(
 				'status'                     => 409,
+				'partial_success'            => true,
+				'mutation_committed'         => true,
+				'mutation_boundary'          => 'worktree_allocation_committed',
+				'state'                      => 'allocation_committed_handoff_pending',
 				'handle'                     => $result['handle'] ?? null,
 				'path'                       => $result['path'] ?? null,
 				'allocation'                 => $result,
+				'allocation_identity'        => is_wp_error($allocation_identity) ? null : $allocation_identity,
 				'handoff_freshness'          => $result['handoff_freshness'] ?? null,
 				'allow_unverified_freshness' => false,
+				'continuation'               => $continuation,
+				'next_commands'              => null === $continuation ? array() : array( $continuation['command'] ),
 				'retry'                      => array(
-					'reuse_policy'         => 'reuse_compatible',
 					'allocation_preserved' => true,
+					'repeat_allocation'    => false,
+					'repeat_bootstrap'     => false,
 				),
-			)
+			), static fn( $value ): bool => null !== $value)
 		);
+	}
+
+	/** Bind a continuation to one allocation and its exact post-bootstrap HEAD. */
+	private function worktree_handoff_allocation_identity( array $result ): array|\WP_Error {
+		$handle   = (string) ( $result['handle'] ?? '' );
+		$path     = (string) ( $result['path'] ?? '' );
+		$metadata = WorktreeContextInjector::get_metadata_fresh($handle);
+		$base_ref = $this->worktree_handoff_base_ref($metadata);
+		if ( is_array($metadata) && '' === (string) ( $metadata['allocation_id'] ?? '' ) ) {
+			$allocation_id = bin2hex(random_bytes(16));
+			$stored        = WorktreeContextInjector::store_lifecycle_metadata($handle, array( 'allocation_id' => $allocation_id ));
+			$metadata      = is_wp_error($stored) || ! $stored ? $metadata : WorktreeContextInjector::get_metadata_fresh($handle);
+		}
+		if ( '' === $handle || '' === $path || ! is_array($metadata) || '' === (string) ( $metadata['allocation_id'] ?? '' ) || is_wp_error($base_ref) ) {
+			return new \WP_Error('worktree_handoff_allocation_identity_missing', 'The committed allocation lacks exact continuation identity metadata.', array( 'status' => 409 ));
+		}
+		$head = $this->run_git($path, 'rev-parse --verify HEAD^{commit}', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($head) ) {
+			return $head;
+		}
+
+		$identity = array(
+			'version'           => 1,
+			'allocation_id'     => (string) $metadata['allocation_id'],
+			'handle'            => $handle,
+			'path'              => $path,
+			'branch'            => (string) ( $metadata['branch'] ?? $result['branch'] ?? '' ),
+			'worktree_sha'      => trim( (string) ( $head['output'] ?? '' )),
+			'resolved_base_ref' => (string) $base_ref,
+			'metadata_digest'   => $this->worktree_handoff_allocation_metadata_digest($metadata),
+		);
+		$identity['digest'] = $this->worktree_handoff_allocation_identity_digest($identity);
+		return $identity;
+	}
+
+	private function worktree_handoff_allocation_identity_digest( array $identity ): string {
+		unset($identity['digest']);
+		return hash('sha256', $this->worktree_handoff_proof_canonical_json($identity));
+	}
+
+	/** Bind continuation ownership without including the continuation itself. */
+	private function worktree_handoff_allocation_metadata_digest( array $metadata ): string {
+		return hash('sha256', $this->worktree_handoff_proof_canonical_json(array(
+			'allocation_id'  => $metadata['allocation_id'] ?? null,
+			'origin_task'    => $metadata['origin_task'] ?? null,
+			'purpose'        => $metadata['purpose'] ?? null,
+			'owner_run_ref'  => $metadata['owner_run_ref'] ?? null,
+			'cleanup_policy' => $metadata['cleanup_policy'] ?? null,
+			'reuse_contract' => $metadata['reuse_contract'] ?? null,
+		)));
+	}
+
+	/** Verify a non-default remote base without mutating remote-tracking refs. */
+	private function worktree_handoff_resume_remote_base_current( string $primary, string $base_ref, array $proof, float $deadline ): bool|\WP_Error {
+		$prefix = 'refs/remotes/origin/';
+		if ( ! str_starts_with($base_ref, $prefix) || $base_ref === (string) ( $proof['remote_default_ref'] ?? '' ) ) {
+			return true;
+		}
+		$remote_ref = 'refs/heads/' . substr($base_ref, strlen($prefix));
+		$remote     = $this->worktree_handoff_git($primary, 'ls-remote origin ' . escapeshellarg($remote_ref), $deadline);
+		if ( is_wp_error($remote) ) {
+			return $remote;
+		}
+		if ( ! preg_match('/^([0-9a-f]{40,64})\s+' . preg_quote($remote_ref, '/') . '$/mi', trim( (string) ( $remote['output'] ?? '' ) ), $matches)
+			|| ! hash_equals(strtolower($matches[1]), strtolower( (string) ( $proof['resolved_base_sha'] ?? '' ) ))
+		) {
+			return new \WP_Error('worktree_handoff_base_changed', 'The remote base changed after allocation; refresh and create a new handoff observation.', array( 'status' => 409 ));
+		}
+		return true;
+	}
+
+	/** Return the one non-allocating continuation accepted for a committed allocation. */
+	private function worktree_handoff_continuation( array $allocation_identity ): array {
+		$encoded = wp_json_encode($allocation_identity, JSON_UNESCAPED_SLASHES);
+		$input   = array(
+			'handle'              => (string) $allocation_identity['handle'],
+			'allocation_identity' => $allocation_identity,
+		);
+		return array(
+			'operation' => 'worktree_handoff_resume',
+			'ability'   => 'datamachine-code/workspace-worktree-handoff-resume',
+			'input'     => $input,
+			'command'   => 'studio wp datamachine-code workspace worktree handoff-resume ' . escapeshellarg( (string) $allocation_identity['handle']) . ' --allocation-identity=' . escapeshellarg(is_string($encoded) ? $encoded : '{}') . ' --format=json',
+			'read_only' => true,
+			'idempotent' => true,
+		);
+	}
+
+	/** Preserve the prior committed mutation boundary when continuation refuses. */
+	private function worktree_handoff_resume_failure( \WP_Error $error, array $allocation_identity ): \WP_Error {
+		$data         = (array) $error->get_error_data();
+		$continuation = $this->worktree_handoff_continuation($allocation_identity);
+		return new \WP_Error($error->get_error_code(), $error->get_error_message(), array_merge($data, array(
+			'partial_success'     => true,
+			'mutation_committed'  => true,
+			'mutation_boundary'   => 'worktree_allocation_committed',
+			'state'               => 'allocation_committed_handoff_pending',
+			'handle'              => $allocation_identity['handle'] ?? null,
+			'path'                => $allocation_identity['path'] ?? null,
+			'allocation_identity' => $allocation_identity,
+			'continuation'        => $continuation,
+			'next_commands'       => array( $continuation['command'] ),
+		)));
 	}
 
 	private function worktree_handoff_proof( string $handle, string $path, string $primary, string $base_ref, float $deadline, string $proof_id ): array|\WP_Error {
