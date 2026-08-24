@@ -26,7 +26,15 @@ if ( ! function_exists('is_wp_error') ) {
 	}
 }
 
+$GLOBALS['dmc_capacity_lock_options'] = array();
+if ( ! function_exists('get_option') ) {
+	function get_option( string $key, mixed $default = false ): mixed {
+		return $GLOBALS['dmc_capacity_lock_options'][ $key ] ?? $default;
+	}
+}
+
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceMutationLock.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeBootstrapper.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeDiskBudget.php';
@@ -137,6 +145,36 @@ if ( 'diagnostic-waiter' === $mode ) {
 	exit(0);
 }
 
+if ( 'bootstrap-child' === $mode ) {
+	file_put_contents((string) $argv[2], 'ready');
+	sleep(10);
+	exit(0);
+}
+
+if ( 'bootstrap-parent' === $mode ) {
+	$workspace   = (string) $argv[2];
+	$reserved    = (string) $argv[3];
+	$child_ready = (string) $argv[4];
+	$child_pid   = (string) $argv[5];
+	$result = WorkspaceMutationLock::with_repo(
+		$workspace,
+		'workspace-capacity-admission',
+		static function ( WorkspaceMutationLock $lock ) use ( $reserved, $child_ready, $child_pid ): void {
+			// This marker represents the metadata reservation committed under admission.
+			file_put_contents($reserved, 'reserved');
+			$lock->release();
+			$child = proc_open(array( PHP_BINARY, __FILE__, 'bootstrap-child', $child_ready ), array(), $pipes);
+			if (! is_resource($child)) {
+				exit(9);
+			}
+			file_put_contents($child_pid, (string) proc_get_status($child)['pid']);
+			sleep(10);
+		},
+		2
+	);
+	exit(is_wp_error($result) ? 9 : 0);
+}
+
 if ( 'admission' === $mode ) {
 	$workspace = (string) $argv[2];
 	$state     = (string) $argv[3];
@@ -170,6 +208,23 @@ $workspace = sys_get_temp_dir() . '/dmc-capacity-lock-' . bin2hex(random_bytes(6
 mkdir($workspace, 0777, true);
 
 try {
+	$GLOBALS['dmc_capacity_lock_options']['datamachine_worktree_metadata'] = array(
+		'repo@blocked-bootstrap' => array(
+			'provisioning' => array(
+				'bootstrap' => array(
+					'outcome' => 'running',
+					'capacity_reservation' => array( 'bytes' => 400, 'inodes' => 40 ),
+				),
+			),
+		),
+	);
+	$reservations = DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_capacity_reservations();
+	capacity_lock_assert(400 === $reservations['bytes'] && 40 === $reservations['inodes'] && array( 'repo@blocked-bootstrap' ) === $reservations['handles'], 'A running bootstrap reservation was not durably visible to the next admission.');
+	$GLOBALS['dmc_capacity_lock_options']['datamachine_worktree_metadata']['repo@blocked-bootstrap']['provisioning']['bootstrap']['outcome'] = 'succeeded';
+	$reservations = DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_capacity_reservations();
+	capacity_lock_assert(0 === $reservations['bytes'] && 0 === $reservations['inodes'], 'Completed bootstrap reservations must not remain charged to later admissions.');
+	$GLOBALS['dmc_capacity_lock_options']['datamachine_worktree_metadata'] = array();
+
 	$zero_argument_callback = WorkspaceMutationLock::with_repo($workspace, 'callback-compat', static fn(): string => 'zero-argument', 1);
 	capacity_lock_assert('zero-argument' === $zero_argument_callback, 'Zero-argument lock callback compatibility regressed.');
 	$lock_aware_callback = WorkspaceMutationLock::with_repo($workspace, 'callback-compat', static fn( WorkspaceMutationLock $lock ): string => $lock instanceof WorkspaceMutationLock ? 'lock-aware' : 'invalid', 1);
@@ -284,6 +339,28 @@ try {
 	unlink($artifact_ready);
 
 	if ( function_exists('posix_kill') ) {
+		// Bootstrap children start only after their parent has committed the
+		// reservation and released admission. Killing the parent must therefore
+		// leave the child unable to retain the global flock.
+		$reserved = $workspace . '/bootstrap-reserved';
+		$child_ready = $workspace . '/bootstrap-child-ready';
+		$child_pid_path = $workspace . '/bootstrap-child-pid';
+		$parent = proc_open(array( PHP_BINARY, __FILE__, 'bootstrap-parent', $workspace, $reserved, $child_ready, $child_pid_path), array(0 => array('pipe', 'r'), 1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $parent_pipes);
+		capacity_lock_assert(is_resource($parent), 'Could not start deferred bootstrap parent.');
+		fclose($parent_pipes[0]);
+		$deadline = microtime(true) + 3;
+		while ((! is_file($reserved) || ! is_file($child_ready) || ! is_file($child_pid_path)) && microtime(true) < $deadline) { usleep(10000); }
+		capacity_lock_assert(is_file($reserved) && is_file($child_ready) && is_file($child_pid_path), 'Deferred bootstrap did not commit reservation before starting its child.');
+		$parent_status = proc_get_status($parent);
+		posix_kill((int) $parent_status['pid'], SIGKILL);
+		fclose($parent_pipes[1]); fclose($parent_pipes[2]); proc_close($parent);
+		$independent = WorkspaceMutationLock::with_repo($workspace, 'workspace-capacity-admission', static fn(): string => 'admitted', 1);
+		capacity_lock_assert('admitted' === $independent, 'A blocked bootstrap child retained the global capacity lock after its parent exited.');
+		$child_pid = (int) file_get_contents($child_pid_path);
+		capacity_lock_assert(@posix_kill($child_pid, 0), 'Deferred bootstrap child did not remain available for descriptor verification.');
+		posix_kill($child_pid, SIGKILL);
+		foreach (array($reserved, $child_ready, $child_pid_path) as $path) { unlink($path); }
+
 		$ready = $workspace . '/kill-ready';
 		$holder = proc_open(array( PHP_BINARY, __FILE__, 'holder', $workspace, $ready, '2' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
 		capacity_lock_assert(is_resource($holder), 'Could not start cancellation lock holder.');
@@ -378,7 +455,7 @@ try {
 	// arrival order and a later request cannot barge ahead after release.
 	$ready = $workspace . '/fifo-ready';
 	$order = $workspace . '/fifo-order';
-	$holder = proc_open(array( PHP_BINARY, __FILE__, 'holder', $workspace, $ready, '1' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
+	$holder = proc_open(array( PHP_BINARY, __FILE__, 'holder', $workspace, $ready, '5' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
 	capacity_lock_assert(is_resource($holder), 'Could not start FIFO holder.');
 	fclose($holder_pipes[0]);
 	$deadline = microtime(true) + 3;
