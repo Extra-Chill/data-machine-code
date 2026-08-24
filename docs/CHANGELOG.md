@@ -2,6 +2,17 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.69.8] - 2026-08-24
+
+### Changed
+- bound worktree plan candidate probes
+
+### Fixed
+- discover registered runtime source
+- accept nullable worktree handoff plans
+- bound emergency cleanup selection
+- project safe worktree candidate actions
+
 ## [0.69.7] - 2026-08-24
 
 ### Changed
