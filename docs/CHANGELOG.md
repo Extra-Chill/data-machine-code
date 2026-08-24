@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.69.4] - 2026-08-24
+
+### Changed
+- Document workspace native shutdown boundary
+
 ## [0.69.3] - 2026-08-24
 
 ### Changed
