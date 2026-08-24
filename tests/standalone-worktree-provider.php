@@ -77,7 +77,7 @@ try {
 	standalone_provider_git($path, array( 'push', '-u', 'origin', 'fix/example' ));
 	$git_pointer = trim((string) file_get_contents($path . '/.git'));
 	$git_dir = trim(substr($git_pointer, strlen('gitdir:')));
-	file_put_contents($git_dir . '/datamachine-code-task.json', json_encode(array( 'task_url' => ' https://GitHub.com/example/fixture/issues/1/?source=dmc#identity ' ), JSON_THROW_ON_ERROR));
+	file_put_contents($git_dir . '/datamachine-code-task.json', json_encode(array( 'task_url' => ' HTTPS://GitHub.COM/Example/Fixture/issues/1/?source=dmc#identity ' ), JSON_THROW_ON_ERROR));
 
 	$missing = standalone_provider_run(array( PHP_BINARY, $script, 'identity', $root, 'fixture@missing' ));
 	standalone_provider_assert(0 === $missing['status'], 'Missing identity must be a successful typed decline.');
@@ -94,8 +94,8 @@ try {
 	standalone_provider_assert(realpath($path) === $identity_payload['path'], 'Identity path is not canonical.');
 	standalone_provider_assert('fix/example' === $identity_payload['branch'], 'Identity branch mismatch.');
 	standalone_provider_assert(false === $identity_payload['primary'], 'Linked worktree was classified as primary.');
-	standalone_provider_assert('https://GitHub.com/example/fixture/issues/1' === ($identity_payload['task_url'] ?? null), 'Identity did not canonicalize the persisted task tracker.');
-	standalone_provider_assert(str_contains((string) base64_decode(strtr(explode('.', $identity_payload['token'], 3)[2], '-_', '+/'), true), 'https://GitHub.com/example/fixture/issues/1'), 'Identity token did not bind the canonical task tracker.');
+	standalone_provider_assert('https://github.com/Example/Fixture/issues/1' === ($identity_payload['task_url'] ?? null), 'Identity did not canonicalize the persisted task tracker.');
+	standalone_provider_assert(str_contains((string) base64_decode(strtr(explode('.', $identity_payload['token'], 3)[2], '-_', '+/'), true), 'https://github.com/Example/Fixture/issues/1'), 'Identity token did not bind the canonical task tracker.');
 
 	$safety = standalone_provider_run(array( PHP_BINARY, $script, 'safety', $root, $identity_payload['token'] ));
 	standalone_provider_assert(0 === $safety['status'], 'Clean safety attestation failed: ' . $safety['stderr']);
