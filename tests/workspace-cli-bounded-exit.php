@@ -116,8 +116,10 @@ namespace {
 		bounded_exit_assert(isset(WP_CLI::$commands['datamachine-code workspace']), 'Minimal runtime did not register the workspace command.');
 		$command_class = WP_CLI::$commands['datamachine-code workspace'];
 		$command = new $command_class();
+		$started = microtime(true);
 		$command->list_repos(array(), array());
 		$command->show(array( 'repo' ), array());
+		bounded_exit_assert(microtime(true) - $started < 0.5, 'Registered workspace list/show dispatch exceeded its bounded command deadline.');
 		bounded_exit_assert(in_array('Name:     repo', WP_CLI::$output, true), 'Workspace show did not dispatch through the registered command.');
 		fwrite(STDOUT, "buffered-output {$mode}\n");
 		fflush(STDOUT);
