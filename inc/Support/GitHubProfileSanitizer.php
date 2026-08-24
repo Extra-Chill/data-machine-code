@@ -70,6 +70,7 @@ final class GitHubProfileSanitizer {
 			$sanitized[] = array(
 				'id'                  => $id,
 				'label'               => sanitize_text_field( (string) ( $entry['label'] ?? $id )),
+				'host'                => sanitize_text_field( (string) ( $entry['host'] ?? '' )),
 				'mode'                => $mode,
 				'pat'                 => sanitize_text_field( (string) ( $entry['pat'] ?? '' )),
 				'app_id'              => sanitize_text_field( (string) ( $entry['app_id'] ?? '' )),

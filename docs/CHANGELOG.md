@@ -2,6 +2,99 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.69.5] - 2026-08-24
+
+### Fixed
+- render worktree plans as JSON
+
+## [0.69.4] - 2026-08-24
+
+### Changed
+- Document workspace native shutdown boundary
+
+## [0.69.3] - 2026-08-24
+
+### Changed
+- fix remote workspace lint
+- configure remote workspace repository authority
+- fix changed-scope lint
+
+### Fixed
+- scope configured GitHub remote authority
+- support standalone GitHub host resolution
+- derive GitHub transport hosts from configuration
+- configure SSH transport preflight hosts
+- preflight SSH workspace transport
+
+## [0.69.2] - 2026-08-24
+
+### Changed
+- synchronize FIFO queue admission
+
+### Fixed
+- remove rebase conflict marker
+
+## [0.69.1] - 2026-08-24
+
+### Changed
+- cover show capacity production
+- cover capacity diagnostics by behavior
+
+## [0.69.0] - 2026-08-24
+
+### Added
+- add handoff freshness proof
+
+### Changed
+- advertise fixture default head
+- use stable command cwd
+- satisfy handoff lint
+- satisfy handoff lint contract
+- preserve dry-run allocation state
+
+### Fixed
+- issue handoff proof after bootstrap
+- resolve candidate quality regressions
+- normalize workspace show error code
+- reconcile handoff integration
+- ignore unresolved fixture registry entries
+- avoid duplicate lifecycle fixture creation
+- guard malformed lifecycle fixtures
+- resolve handoff lint blockers
+- bind handoff proof to remote SHA
+- verify handoff remote evidence
+- enforce handoff freshness at allocation
+- require explicit handoff freshness
+- harden handoff proof revalidation
+
+## [0.68.1] - 2026-08-24
+
+### Changed
+- align deferred bootstrap lifecycle
+- verify bootstrap child lock descriptors
+
+### Fixed
+- track bootstrap coordinator and child separately
+- fail closed on unverifiable bootstrap owners
+- reconcile stale bootstrap reservations
+- release worktree locks before bootstrap
+
+## [0.68.0] - 2026-08-24
+
+### Added
+- add workspace show formats
+
+### Changed
+- tolerate workspace contract formatting
+- align cleanup plan assignments
+- align bootstrap dirt handling
+
+### Fixed
+- satisfy cleanup planning lint
+- persist cleanup run before planning
+- verify clone postcondition
+- reject bootstrap-created dirt
+
 ## [0.67.0] - 2026-08-24
 
 ### Added

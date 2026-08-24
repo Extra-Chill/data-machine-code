@@ -26,18 +26,64 @@ if ( ! function_exists('is_wp_error') ) {
 	}
 }
 
+$GLOBALS['dmc_capacity_lock_options'] = array();
+if ( ! function_exists('get_option') ) {
+	function get_option( string $key, mixed $default = false ): mixed {
+		return $GLOBALS['dmc_capacity_lock_options'][ $key ] ?? $default;
+	}
+}
+
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceMutationLock.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeBootstrapper.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeDiskBudget.php';
 
 use DataMachineCode\Workspace\WorkspaceMutationLock;
 use DataMachineCode\Workspace\WorktreeDiskBudget;
+use DataMachineCode\Workspace\WorktreeBootstrapper;
 
 function capacity_lock_assert( bool $condition, string $message ): void {
 	if ( ! $condition ) {
 		throw new RuntimeException($message);
 	}
+}
+
+function capacity_lock_remove_tree( string $path ): void {
+	foreach ( scandir($path) ?: array() as $entry ) {
+		if ( '.' === $entry || '..' === $entry ) {
+			continue;
+		}
+		$child = $path . '/' . $entry;
+		if ( is_dir($child) ) {
+			capacity_lock_remove_tree($child);
+		} else {
+			unlink($child);
+		}
+	}
+	rmdir($path);
+}
+
+function capacity_lock_lsof_binary(): ?string {
+	foreach ( array( '/usr/sbin/lsof', '/usr/bin/lsof' ) as $candidate ) {
+		if ( is_executable($candidate) ) {
+			return $candidate;
+		}
+	}
+	return null;
+}
+
+function capacity_lock_process_has_descriptor( int $pid, string $path ): bool {
+	$lsof = capacity_lock_lsof_binary();
+	if ( $pid <= 0 || null === $lsof ) {
+		return false;
+	}
+
+	$output = array();
+	$status = 1;
+	// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- This verifies the OS-level descriptor inheritance contract.
+	@exec(escapeshellarg($lsof) . ' -Fn -a -p ' . $pid . ' -- ' . escapeshellarg($path), $output, $status);
+	return 0 === $status && in_array('n' . $path, $output, true);
 }
 
 $mode = $argv[1] ?? 'test';
@@ -53,6 +99,26 @@ if ( 'holder' === $mode ) {
 			file_put_contents($ready, 'ready');
 			sleep($seconds);
 			return 'released';
+		},
+		1
+	);
+	exit(is_wp_error($result) ? 2 : 0);
+}
+
+if ( 'signal-holder' === $mode ) {
+	$workspace = (string) $argv[2];
+	$ready     = (string) $argv[3];
+	$release   = (string) $argv[4];
+	$result    = WorkspaceMutationLock::with_repo(
+		$workspace,
+		'workspace-capacity-admission',
+		static function () use ( $ready, $release ): string|WP_Error {
+			file_put_contents($ready, 'ready');
+			$deadline = microtime(true) + 5;
+			while ( ! is_file($release) && microtime(true) < $deadline ) {
+				usleep(10000);
+			}
+			return is_file($release) ? 'released' : new WP_Error('release_signal_timeout');
 		},
 		1
 	);
@@ -137,6 +203,67 @@ if ( 'diagnostic-waiter' === $mode ) {
 	exit(0);
 }
 
+if ( 'bootstrap-child' === $mode ) {
+	file_put_contents((string) $argv[2], (string) getmypid());
+	sleep(10);
+	exit(0);
+}
+
+if ( 'bootstrap-descendant' === $mode ) {
+	file_put_contents((string) $argv[2], (string) getmypid());
+	sleep(10);
+	exit(0);
+}
+
+if ( 'bootstrap-real-parent' === $mode ) {
+	$workspace = (string) $argv[2];
+	$root = (string) $argv[3];
+	$reserved = (string) $argv[4];
+	$child_pid = (string) $argv[5];
+	$descendant_pid = (string) $argv[6];
+	$old_path = getenv('PATH') ?: '';
+	putenv('PATH=' . $root . '/bin:' . $old_path);
+	$result = WorkspaceMutationLock::with_repo(
+		$workspace,
+		'workspace-capacity-admission',
+		static fn() => WorkspaceMutationLock::with_repo($workspace, 'repo-a', static function () use ( $reserved ): bool {
+			file_put_contents($reserved, 'reserved');
+			return true;
+		}),
+		2
+	);
+	if ( is_wp_error($result) ) {
+		exit(9);
+	}
+	$result = WorktreeBootstrapper::bootstrap($root, 30);
+	file_put_contents($root . '/result.json', json_encode($result));
+	exit(0);
+}
+
+if ( 'bootstrap-parent' === $mode ) {
+	$workspace   = (string) $argv[2];
+	$reserved    = (string) $argv[3];
+	$child_ready = (string) $argv[4];
+	$child_pid   = (string) $argv[5];
+	$result = WorkspaceMutationLock::with_repo(
+		$workspace,
+		'workspace-capacity-admission',
+		static function ( WorkspaceMutationLock $lock ) use ( $reserved, $child_ready, $child_pid ): void {
+			// This marker represents the metadata reservation committed under admission.
+			file_put_contents($reserved, 'reserved');
+			$lock->release();
+			$child = proc_open(array( PHP_BINARY, __FILE__, 'bootstrap-child', $child_ready ), array(), $pipes);
+			if (! is_resource($child)) {
+				exit(9);
+			}
+			file_put_contents($child_pid, (string) proc_get_status($child)['pid']);
+			sleep(10);
+		},
+		2
+	);
+	exit(is_wp_error($result) ? 9 : 0);
+}
+
 if ( 'admission' === $mode ) {
 	$workspace = (string) $argv[2];
 	$state     = (string) $argv[3];
@@ -170,6 +297,52 @@ $workspace = sys_get_temp_dir() . '/dmc-capacity-lock-' . bin2hex(random_bytes(6
 mkdir($workspace, 0777, true);
 
 try {
+	$owner = array( 'pid' => 100, 'identity' => array( 'platform' => 'linux_proc', 'start_ticks' => '123' ) );
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => $owner['identity'] ));
+	capacity_lock_assert('active' === (DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_owner_state($owner)['state'] ?? null), 'Exact process identity was not active.');
+	$mac_owner = array( 'pid' => 101, 'identity' => array( 'platform' => 'ps', 'started_at' => 'Mon Aug 24 12:00:00 2026', 'command' => '/usr/bin/php worker', 'command_sha256' => hash('sha256', '/usr/bin/php worker') ) );
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => array_merge($mac_owner['identity'], array( 'command' => '/usr/bin/php other', 'command_sha256' => hash('sha256', '/usr/bin/php other') )) ));
+	capacity_lock_assert('stale' === (DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_owner_state($mac_owner)['state'] ?? null), 'Same coarse macOS start time with another command did not prove PID reuse.');
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => $mac_owner['identity'] ));
+	capacity_lock_assert('unverifiable' === (DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_owner_state($mac_owner)['state'] ?? null), 'Exact coarse macOS identity did not fail closed.');
+	foreach ( array( 'owner_probe_unavailable', 'owner_probe_denied', 'owner_probe_unparsable' ) as $reason ) {
+		DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'unverifiable', 'reason' => $reason ));
+		capacity_lock_assert('unverifiable' === (DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_owner_state($owner)['state'] ?? null), 'Unverifiable owner probe was classified as stale for ' . $reason . '.');
+	}
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'stale', 'reason' => 'owner_process_missing' ));
+	capacity_lock_assert('stale' === (DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_owner_state($owner)['state'] ?? null), 'ESRCH-equivalent owner absence was not stale.');
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'unverifiable', 'reason' => 'owner_probe_denied' ));
+	capacity_lock_assert('unverifiable' === (DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_owner_state($owner)['state'] ?? null), 'EPERM-equivalent owner denial was not unverifiable.');
+	$GLOBALS['dmc_capacity_lock_options']['datamachine_worktree_metadata'] = array(
+		'repo@blocked-bootstrap' => array(
+			'provisioning' => array(
+				'bootstrap' => array(
+					'outcome' => 'running',
+					'capacity_reservation' => array( 'bytes' => 400, 'inodes' => 40 ),
+					'coordinator' => $owner,
+					'active_child' => array( 'pid' => 101, 'identity' => array( 'platform' => 'linux_proc', 'start_ticks' => '124' ) ),
+				),
+			),
+		),
+	);
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => 100 === $pid ? $owner['identity'] : array( 'platform' => 'linux_proc', 'start_ticks' => '124' ) ));
+	$reservations = DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_capacity_reservations();
+	capacity_lock_assert(400 === $reservations['bytes'] && 40 === $reservations['inodes'] && array( 'repo@blocked-bootstrap' ) === $reservations['handles'], 'A running bootstrap reservation was not durably visible to the next admission.');
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => 100 === $pid ? array( 'state' => 'stale', 'reason' => 'owner_process_missing' ) : array( 'state' => 'active', 'identity' => array( 'platform' => 'linux_proc', 'start_ticks' => '124' ) ));
+	$reservations = DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_capacity_reservations();
+	capacity_lock_assert(400 === $reservations['bytes'] && 40 === $reservations['inodes'], 'Live child reservation must remain charged after coordinator death.');
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => 100 === $pid ? array( 'state' => 'unverifiable', 'reason' => 'owner_probe_denied' ) : array( 'state' => 'stale', 'reason' => 'owner_process_missing' ));
+	$reservations = DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_capacity_reservations();
+	capacity_lock_assert(400 === $reservations['bytes'] && 40 === $reservations['inodes'], 'Unverifiable coordinator reservation must remain capacity charged.');
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'stale', 'reason' => 'owner_process_missing' ));
+	$reservations = DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_capacity_reservations();
+	capacity_lock_assert(0 === $reservations['bytes'] && 0 === $reservations['inodes'], 'Verified stale owner reservation remained capacity charged.');
+	$GLOBALS['dmc_capacity_lock_options']['datamachine_worktree_metadata']['repo@blocked-bootstrap']['provisioning']['bootstrap']['outcome'] = 'succeeded';
+	$reservations = DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_capacity_reservations();
+	capacity_lock_assert(0 === $reservations['bytes'] && 0 === $reservations['inodes'], 'Completed bootstrap reservations must not remain charged to later admissions.');
+	$GLOBALS['dmc_capacity_lock_options']['datamachine_worktree_metadata'] = array();
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(null);
+
 	$zero_argument_callback = WorkspaceMutationLock::with_repo($workspace, 'callback-compat', static fn(): string => 'zero-argument', 1);
 	capacity_lock_assert('zero-argument' === $zero_argument_callback, 'Zero-argument lock callback compatibility regressed.');
 	$lock_aware_callback = WorkspaceMutationLock::with_repo($workspace, 'callback-compat', static fn( WorkspaceMutationLock $lock ): string => $lock instanceof WorkspaceMutationLock ? 'lock-aware' : 'invalid', 1);
@@ -283,7 +456,67 @@ try {
 	capacity_lock_assert(array() === ( glob($workspace . '/.locks/requests/*.json') ?: array() ), 'Blocked artifact cleanup left a request file behind.');
 	unlink($artifact_ready);
 
-	if ( function_exists('posix_kill') ) {
+	if ( ! function_exists('posix_kill') || null === capacity_lock_lsof_binary() ) {
+		fwrite(STDERR, "workspace-capacity-lock-concurrency: SKIP fd lifetime proof requires posix_kill and lsof\n");
+	} else {
+		// Bootstrap children start only after their parent has committed the
+		// reservation and released admission. Killing the parent must therefore
+		// leave the child unable to retain the global flock.
+		$reserved = $workspace . '/bootstrap-reserved';
+		$child_ready = $workspace . '/bootstrap-child-ready';
+		$child_pid_path = $workspace . '/bootstrap-child-pid';
+		$parent = proc_open(array( PHP_BINARY, __FILE__, 'bootstrap-parent', $workspace, $reserved, $child_ready, $child_pid_path), array(0 => array('pipe', 'r'), 1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $parent_pipes);
+		capacity_lock_assert(is_resource($parent), 'Could not start deferred bootstrap parent.');
+		fclose($parent_pipes[0]);
+		$deadline = microtime(true) + 3;
+		while ((! is_file($reserved) || ! is_file($child_ready) || ! is_file($child_pid_path)) && microtime(true) < $deadline) { usleep(10000); }
+		capacity_lock_assert(is_file($reserved) && is_file($child_ready) && is_file($child_pid_path), 'Deferred bootstrap did not commit reservation before starting its child.');
+		$child_pid = (int) file_get_contents($child_pid_path);
+		$lock_path = $workspace . '/.locks/worktree-workspace-capacity-admission.lock';
+		capacity_lock_assert(! capacity_lock_process_has_descriptor($child_pid, $lock_path), 'Bootstrap child inherited the global capacity lock descriptor.');
+		$parent_status = proc_get_status($parent);
+		posix_kill((int) $parent_status['pid'], SIGKILL);
+		fclose($parent_pipes[1]); fclose($parent_pipes[2]); proc_close($parent);
+		$independent = WorkspaceMutationLock::with_repo($workspace, 'workspace-capacity-admission', static fn(): string => 'admitted', 1);
+		capacity_lock_assert('admitted' === $independent, 'A blocked bootstrap child retained the global capacity lock after its parent exited.');
+		capacity_lock_assert(@posix_kill($child_pid, 0), 'Deferred bootstrap child did not remain available for descriptor verification.');
+		posix_kill($child_pid, SIGKILL);
+		foreach (array($reserved, $child_ready, $child_pid_path) as $path) { unlink($path); }
+
+		// Run the actual WorktreeBootstrapper -> ProcessRunner composer path after
+		// both locks are released, then prove neither the command nor its child
+		// process can retain either lock after the foreground parent is killed.
+		$bootstrap_root = $workspace . '/real-bootstrap';
+		mkdir($bootstrap_root . '/bin', 0777, true);
+		file_put_contents($bootstrap_root . '/composer.lock', "{}\n");
+		file_put_contents($bootstrap_root . '/composer.json', "{}\n");
+		// Bootstrap snapshots tracked state before Composer, so this fixture must be
+		// a real committed Git checkout rather than a synthetic directory.
+		$git_root = escapeshellarg($bootstrap_root);
+		@exec('git -C ' . $git_root . ' init && git -C ' . $git_root . ' config user.email test@example.test && git -C ' . $git_root . ' config user.name Test && git -C ' . $git_root . ' add composer.json composer.lock && git -C ' . $git_root . ' commit -m fixture', $git_output, $git_status); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Sets up the real bootstrap fixture checkout.
+		capacity_lock_assert(0 === $git_status, 'Could not initialize the real bootstrap Git fixture.');
+		file_put_contents($bootstrap_root . '/bin/composer', '#!/bin/sh' . "\n" . PHP_BINARY . ' ' . escapeshellarg(__FILE__) . ' bootstrap-child ' . escapeshellarg($bootstrap_root . '/child.pid') . ' &' . "\n" . PHP_BINARY . ' ' . escapeshellarg(__FILE__) . ' bootstrap-descendant ' . escapeshellarg($bootstrap_root . '/descendant.pid') . ' &' . "\n" . 'sleep 10' . "\n");
+		chmod($bootstrap_root . '/bin/composer', 0755);
+		$real_reserved = $workspace . '/real-bootstrap-reserved';
+		$real_parent = proc_open(array( PHP_BINARY, __FILE__, 'bootstrap-real-parent', $workspace, $bootstrap_root, $real_reserved, $bootstrap_root . '/child.pid', $bootstrap_root . '/descendant.pid' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $real_pipes);
+		capacity_lock_assert(is_resource($real_parent), 'Could not start real deferred bootstrap parent.');
+		fclose($real_pipes[0]);
+		$deadline = microtime(true) + 5;
+		while ((! is_file($real_reserved) || ! is_file($bootstrap_root . '/child.pid') || ! is_file($bootstrap_root . '/descendant.pid')) && microtime(true) < $deadline) { usleep(10000); }
+		capacity_lock_assert(is_file($real_reserved) && is_file($bootstrap_root . '/child.pid') && is_file($bootstrap_root . '/descendant.pid'), 'Real WorktreeBootstrapper fixture did not start its Composer child and descendant: ' . (is_file($bootstrap_root . '/result.json') ? (string) file_get_contents($bootstrap_root . '/result.json') : (string) stream_get_contents($real_pipes[2])));
+		$global_lock = $workspace . '/.locks/worktree-workspace-capacity-admission.lock';
+		$repo_lock = $workspace . '/.locks/worktree-repo-a.lock';
+		foreach ( array( (int) file_get_contents($bootstrap_root . '/child.pid'), (int) file_get_contents($bootstrap_root . '/descendant.pid') ) as $pid ) {
+			capacity_lock_assert(! capacity_lock_process_has_descriptor($pid, $global_lock) && ! capacity_lock_process_has_descriptor($pid, $repo_lock), 'Real bootstrap descendant inherited a workspace lock descriptor.');
+		}
+		$real_parent_status = proc_get_status($real_parent);
+		posix_kill((int) $real_parent_status['pid'], SIGKILL);
+		fclose($real_pipes[1]); fclose($real_pipes[2]); proc_close($real_parent);
+		$second_repo = WorkspaceMutationLock::with_repo($workspace, 'repo-b', static fn(): string => 'admitted', 1);
+		capacity_lock_assert('admitted' === $second_repo, 'Second repository allocation remained blocked by a real bootstrap process.');
+		foreach ( array( (int) file_get_contents($bootstrap_root . '/child.pid'), (int) file_get_contents($bootstrap_root . '/descendant.pid') ) as $pid ) { posix_kill($pid, SIGKILL); }
+		capacity_lock_remove_tree($bootstrap_root); unlink($real_reserved);
+
 		$ready = $workspace . '/kill-ready';
 		$holder = proc_open(array( PHP_BINARY, __FILE__, 'holder', $workspace, $ready, '2' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
 		capacity_lock_assert(is_resource($holder), 'Could not start cancellation lock holder.');
@@ -377,8 +610,9 @@ try {
 	// Queue records are admission tokens, not diagnostics: followers retain their
 	// arrival order and a later request cannot barge ahead after release.
 	$ready = $workspace . '/fifo-ready';
+	$release = $workspace . '/fifo-release';
 	$order = $workspace . '/fifo-order';
-	$holder = proc_open(array( PHP_BINARY, __FILE__, 'holder', $workspace, $ready, '1' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
+	$holder = proc_open(array( PHP_BINARY, __FILE__, 'signal-holder', $workspace, $ready, $release), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
 	capacity_lock_assert(is_resource($holder), 'Could not start FIFO holder.');
 	fclose($holder_pipes[0]);
 	$deadline = microtime(true) + 3;
@@ -396,6 +630,7 @@ try {
 	}
 	usort($queued, static fn( array $left, array $right ): int => strcmp((string) ($left['queue_order'] ?? ''), (string) ($right['queue_order'] ?? '')));
 	capacity_lock_assert(array( 1, 2, 3 ) === array_map(static fn( array $request ): int => (int) ($request['queue_position'] ?? 0), $queued), 'Queued followers did not retain FIFO queue positions.');
+	file_put_contents($release, 'release');
 	foreach ( $fifo_waiters as [ $id, $process, $pipes ] ) {
 		$output = stream_get_contents($pipes[1]);
 		$error  = stream_get_contents($pipes[2]);
@@ -406,13 +641,13 @@ try {
 	capacity_lock_assert(0 === proc_close($holder), 'FIFO holder failed.');
 	capacity_lock_assert(array( 'first', 'second', 'late' ) === array_values(array_filter(explode("\n", trim((string) file_get_contents($order))))), 'Capacity queue permitted barging instead of FIFO admission.');
 	capacity_lock_assert(array() === ( glob($workspace . '/.locks/requests/*.json') ?: array() ), 'FIFO admissions left queue evidence behind.');
-	unlink($ready); unlink($order);
+	unlink($ready); unlink($release); unlink($order);
 
 	$policy = new class {
 		use DataMachineCode\Workspace\WorkspaceWorktreeLifecycle;
 	};
 	$lifecycle_source = (string) file_get_contents(dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php');
-	capacity_lock_assert(strpos($lifecycle_source, 'worktree_capacity_preflight') < strpos($lifecycle_source, "'workspace-capacity-admission'"), 'Repo-local preflight must run before global capacity admission.');
+	capacity_lock_assert(str_contains($lifecycle_source, "'workspace-capacity-admission', \$reuse"), 'Bootstrap resume must acquire global capacity admission before its repository lock.');
 	capacity_lock_assert(2400 === $policy::worktree_capacity_wait_timeout_seconds(true), 'Bootstrap admission wait must exceed the complete bounded operation lifecycle.');
 
 	$state = $workspace . '/capacity-state';
@@ -438,7 +673,7 @@ try {
 	capacity_lock_assert('130' === file_get_contents($state), 'Refused second admission must not consume stale capacity.');
 	echo "workspace-capacity-lock-concurrency: ok\n";
 } finally {
-	foreach ( array( 'capacity-state', 'admission-ready', 'second-ready', 'fanout-ready', 'fifo-ready', 'fifo-order', 'cancel-order', 'kill-ready', 'diagnostic-ready', 'repo-a-ready', 'repo-b-ready' ) as $file ) {
+	foreach ( array( 'capacity-state', 'admission-ready', 'second-ready', 'fanout-ready', 'fifo-ready', 'fifo-release', 'fifo-order', 'cancel-order', 'kill-ready', 'diagnostic-ready', 'repo-a-ready', 'repo-b-ready' ) as $file ) {
 		if ( is_file($workspace . '/' . $file) ) { unlink($workspace . '/' . $file); }
 	}
 	if ( is_file($workspace . '/ready') ) {

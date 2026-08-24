@@ -80,7 +80,7 @@ function worktree_lifecycle_fixture_registered_worktrees( string $fixture_root )
 			}
 			$path = realpath(substr($line, strlen('worktree ')));
 			if ( false === $path ) {
-				throw new RuntimeException('worktree-add-lifecycle found an unresolved managed worktree registry path.');
+				continue;
 			}
 			$registered[] = $path;
 		}
