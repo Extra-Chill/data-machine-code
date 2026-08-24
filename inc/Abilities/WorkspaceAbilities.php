@@ -4538,7 +4538,10 @@ class WorkspaceAbilities {
 				'type'        => 'string',
 				'description' => 'Commit SHA advertised by git ls-remote --symref origin HEAD and matched to the fetched remote-tracking ref.',
 			),
-			'verified_at'        => array( 'type' => 'string', 'format' => 'date-time' ),
+			'verified_at'        => array(
+				'type'   => 'string',
+				'format' => 'date-time',
+			),
 			'digest'             => array( 'type' => 'string' ),
 		);
 	}

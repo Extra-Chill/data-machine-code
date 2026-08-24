@@ -5314,7 +5314,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( 'add' === $operation ) {
 			$input['progress_callback'] = function ( array $event ) use ( $assoc_args ): void {
-				$this->render_worktree_add_progress($event, 'json' === (string) ( $assoc_args['format'] ?? '' ) );
+				$this->render_worktree_add_progress($event, (string) ( $assoc_args['format'] ?? '' ) === 'json' );
 			};
 		}
 

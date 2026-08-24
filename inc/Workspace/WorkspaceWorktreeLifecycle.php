@@ -1999,7 +1999,8 @@ trait WorkspaceWorktreeLifecycle {
 					'phase'     => $phase,
 				)
 			);
-		} catch ( \Throwable ) {
+		} catch ( \Throwable $error ) {
+			unset($error);
 			// Progress reporting must never interrupt a protected workspace mutation.
 		}
 	}
