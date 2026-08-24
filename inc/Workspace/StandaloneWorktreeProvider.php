@@ -397,7 +397,14 @@ final class StandaloneWorktreeProvider {
 			|| ( ! is_string($decoded['task_url'] ?? null) && null !== ( $decoded['task_url'] ?? null ) ) ) {
 			return null;
 		}
-		return $decoded;
+		return array(
+			'handle'   => $decoded['handle'],
+			'path'     => $decoded['path'],
+			'branch'   => $decoded['branch'],
+			'primary'  => $decoded['primary'],
+			'git_dir'  => $decoded['git_dir'],
+			'task_url' => $decoded['task_url'] ?? null,
+		);
 	}
 
 	/**

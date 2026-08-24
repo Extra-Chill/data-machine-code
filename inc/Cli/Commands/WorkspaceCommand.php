@@ -3316,7 +3316,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( is_wp_error( $result ) ) {
 			if ( 'json' === $format ) {
-				$this->render_workspace_show_error( $result->get_error_code(), $result->get_error_message(), $result->get_error_data() );
+				$this->render_workspace_show_error( (string) $result->get_error_code(), $result->get_error_message(), $result->get_error_data() );
 				return;
 			}
 			WP_CLI::error( $result->get_error_message() );
@@ -6039,7 +6039,7 @@ class WorkspaceCommand extends BaseCommand {
 
 	private function render_workspace_error( \WP_Error $error ): void {
 		$data = (array) $error->get_error_data();
-		$runtime_identity = WorkspaceAbilities::runtimeIdentity(array());
+		$runtime_identity = class_exists(WorkspaceAbilities::class) ? WorkspaceAbilities::runtimeIdentity(array()) : array();
 		$active_runtime   = (array) ( $runtime_identity['active_runtime'] ?? array() );
 		if ( ! empty($active_runtime['version']) ) {
 			WP_CLI::log(sprintf('Active runtime: %s%s', (string) $active_runtime['version'], ! empty($active_runtime['build']) ? ' (' . (string) $active_runtime['build'] . ')' : ''));
