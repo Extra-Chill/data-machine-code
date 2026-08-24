@@ -46,7 +46,7 @@ final class GitTransportPreflight {
 		if ( null === $fallback ) {
 			return null;
 		}
-		$result   = array(
+		$result     = array(
 			'transport'                => 'ssh',
 			'https_alternative'        => $fallback,
 			'https_authenticated'      => 'unverified',
@@ -69,7 +69,10 @@ final class GitTransportPreflight {
 		}
 
 		if ( 0 === $ssh_add_exit_code ) {
-			return array_merge($result, array( 'ready' => true, 'code' => 'ssh_agent_ready' ));
+			return array_merge($result, array(
+				'ready' => true,
+				'code'  => 'ssh_agent_ready',
+			));
 		}
 
 		return array_merge(
@@ -92,7 +95,7 @@ final class GitTransportPreflight {
 			return null;
 		}
 
-		$result                = self::classify($remote_url, true, 0);
+		$result = self::classify($remote_url, true, 0);
 		if ( null === $result ) {
 			return null;
 		}

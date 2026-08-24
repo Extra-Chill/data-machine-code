@@ -25,9 +25,10 @@ final class GitHubRemote {
 	/**
 	 * Detect a supported GitHub remote.
 	 *
-	 * GitHub.com is always supported. GitHub Enterprise hosts are opt-in through
-	 * the `datamachine_code_github_allowed_hosts` filter; an SSH remote alone is
-	 * never enough to classify an arbitrary service as GitHub.
+	 * GitHub.com is always supported. GitHub Enterprise hosts come from configured
+	 * credential profiles and registered remote workspaces. The
+	 * `datamachine_code_github_allowed_hosts` filter remains an additive extension
+	 * seam; an SSH remote alone never classifies an arbitrary service as GitHub.
 	 */
 	public static function isGitHubRemote( string $url ): bool {
 		return null !== self::descriptor($url);
@@ -186,7 +187,7 @@ final class GitHubRemote {
 	}
 
 	private static function isGitHubHost( string $host ): bool {
-		$hosts = array( self::PUBLIC_SSH_HOST );
+		$hosts = self::configuredHosts();
 		if ( function_exists('apply_filters') ) {
 			$hosts = apply_filters('datamachine_code_github_allowed_hosts', $hosts);
 		}
@@ -197,12 +198,86 @@ final class GitHubRemote {
 
 		$host = strtolower($host);
 		foreach ( $hosts as $allowed_host ) {
-			if ( is_string($allowed_host) && $host === strtolower(trim($allowed_host)) ) {
+			if ( is_string($allowed_host) && strtolower(trim($allowed_host)) === $host ) {
 				return true;
 			}
 		}
 
 		return false;
+	}
+
+	/**
+	 * Return hosts explicitly authorized by persisted DMC configuration.
+	 *
+	 * Credential profile repository references and registered remote workspace
+	 * URLs are authoritative because they name a GitHub-compatible service DMC
+	 * is configured to use. They are parsed independently from descriptors to
+	 * avoid requiring prior host recognition.
+	 *
+	 * @return array<int,string>
+	 */
+	private static function configuredHosts(): array {
+		$references = array();
+		if ( ! class_exists(PluginSettings::class) ) {
+			require_once __DIR__ . '/PluginSettings.php';
+		}
+
+		$profiles = PluginSettings::get('github_credential_profiles', array());
+		if ( is_array($profiles) ) {
+			foreach ( $profiles as $profile ) {
+				if ( ! is_array($profile) ) {
+					continue;
+				}
+				$references[] = $profile['default_repo'] ?? '';
+				$references[] = $profile['host'] ?? '';
+				if ( isset($profile['allowed_repos']) && is_array($profile['allowed_repos']) ) {
+					$references = array_merge($references, $profile['allowed_repos']);
+				}
+			}
+		}
+		$references[] = PluginSettings::get('github_default_repo', '');
+
+		$state = function_exists('get_option') ? get_option('datamachine_code_remote_workspace_state', array()) : array();
+		if ( is_array($state) && isset($state['repos']) && is_array($state['repos']) ) {
+			foreach ( $state['repos'] as $repository ) {
+				if ( is_array($repository) ) {
+					$references[] = $repository['url'] ?? '';
+					$references[] = $repository['remote'] ?? '';
+				}
+			}
+		}
+
+		$hosts = array( self::PUBLIC_SSH_HOST );
+		foreach ( $references as $reference ) {
+			$host = self::hostFromConfiguredReference($reference);
+			if ( null !== $host ) {
+				$hosts[] = $host;
+			}
+		}
+
+		return array_values(array_unique($hosts));
+	}
+
+	private static function hostFromConfiguredReference( mixed $reference ): ?string {
+		if ( ! is_string($reference) ) {
+			return null;
+		}
+
+		$reference = trim($reference);
+		if ( '' === $reference ) {
+			return null;
+		}
+		if ( 1 === preg_match('#^(?:https?|ssh)://(?:[^@/]+@)?([A-Za-z0-9.-]+)(?::\d+)?(?:/|$)#i', $reference, $matches) ) {
+			return strtolower($matches[1]);
+		}
+		if ( 1 === preg_match('#^[^@\s]+@([A-Za-z0-9.-]+):#', $reference, $matches) ) {
+			return strtolower($matches[1]);
+		}
+		if ( 1 === preg_match('#^[A-Za-z0-9.-]+$#', $reference) ) {
+			return strtolower($reference);
+		}
+
+		return null;
 	}
 
 	private static function isValidPort( ?int $port ): bool {

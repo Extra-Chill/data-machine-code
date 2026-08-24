@@ -21,9 +21,13 @@ namespace {
 	}
 
 	function is_wp_error( mixed $value ): bool { return $value instanceof WP_Error; }
-	function get_option( string $name, mixed $default = false ): mixed { return array( 'repos' => array() ); }
+	function get_option( string $name, mixed $default = false ): mixed {
+		return 'github_credential_profiles' === $name
+			? array( array( 'id' => 'enterprise', 'host' => 'enterprise.example.test' ) )
+			: $default;
+	}
 	function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
-		return 'datamachine_code_github_allowed_hosts' === $hook ? array( 'github.com', 'forge.example.test' ) : $value;
+		return $value;
 	}
 
 	require_once dirname(__DIR__) . '/inc/Support/GitHubRemote.php';
@@ -84,11 +88,11 @@ namespace {
 	try {
 		exec('git init ' . escapeshellarg($repo) . ' >/dev/null 2>&1', $output, $exit_code); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- The integration fixture requires a real remote configuration.
 		push_transport_assert_same(0, $exit_code, 'Git fixture initialization failed.');
-		exec('git -C ' . escapeshellarg($repo) . ' remote add origin ' . escapeshellarg('ssh://git@forge.example.test:2222/owner/repository.git'), $output, $exit_code); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- The integration fixture requires a real remote configuration.
+		exec('git -C ' . escapeshellarg($repo) . ' remote add origin ' . escapeshellarg('ssh://git@enterprise.example.test:2222/owner/repository.git'), $output, $exit_code); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- The integration fixture requires a real remote configuration.
 		push_transport_assert_same(0, $exit_code, 'Git fixture remote setup failed.');
 
 		putenv('SSH_AUTH_SOCK=/missing-agent-socket');
-		$diagnostic = GitTransportPreflight::diagnose('ssh://git@forge.example.test:2222/owner/repository.git');
+		$diagnostic = GitTransportPreflight::diagnose('ssh://git@enterprise.example.test:2222/owner/repository.git');
 		push_transport_assert_same('ssh_agent_unavailable', $diagnostic['code'] ?? null, 'diagnose() must classify a missing socket.');
 		push_transport_assert_same(2222, $diagnostic['ssh_port'] ?? null, 'diagnose() must retain the SSH port.');
 		push_transport_assert_same('unverified', $diagnostic['https_authenticated'] ?? null, 'The HTTPS alternative must remain unverified.');
@@ -106,7 +110,7 @@ namespace {
 		putenv('SSH_AUTH_SOCK=' . $agent_matches[1]);
 		$agent_pid = $agent_matches[2];
 		putenv('SSH_AGENT_PID=' . $agent_pid);
-		$diagnostic = GitTransportPreflight::diagnose('ssh://git@forge.example.test:2222/owner/repository.git');
+		$diagnostic = GitTransportPreflight::diagnose('ssh://git@enterprise.example.test:2222/owner/repository.git');
 		push_transport_assert_same('ssh_agent_no_identities', $diagnostic['code'] ?? null, 'diagnose() must classify an empty agent.');
 
 		$harness = new GitPushTransportHarness($root);
