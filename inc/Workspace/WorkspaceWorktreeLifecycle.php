@@ -1056,13 +1056,18 @@ trait WorkspaceWorktreeLifecycle {
 		// cleanup locks without self-deadlocking.
 		$reuse_candidates = $this->worktree_reuse_candidates($repo, $task);
 		if ( array() !== $reuse_candidates && 'isolated' !== $reuse_policy ) {
+			if ( ! class_exists(WorktreeCandidateActions::class) ) {
+				require_once __DIR__ . '/WorktreeCandidateActions.php';
+			}
+			$candidate_actions = WorktreeCandidateActions::project($reuse_candidates, $repo, $branch, $from, $task, $intent);
 			return $this->worktree_reuse_refused(
 				$wt_handle,
 				'same_task_candidate_requires_explicit_isolation',
 				array(
 					'reuse_policy'            => $reuse_policy,
 					'canonical_task_identity' => $this->worktree_reuse_task_identity($task),
-					'candidates'              => $reuse_candidates,
+					'candidates'              => $candidate_actions['candidates'],
+					'candidate_actions'       => $candidate_actions['actions'],
 				)
 			);
 		}
@@ -2439,27 +2444,44 @@ trait WorkspaceWorktreeLifecycle {
 		if ( '' === $task_identity ) {
 			return array();
 		}
-		$listing = $this->worktree_list($repo, null, array(
-			'include_status' => true,
-			'include_disk'   => false,
-		));
+
+		$primary_path = $this->workspace_path . '/' . $repo;
+		$listing      = $this->run_git($primary_path, 'worktree list --porcelain');
 		if ( is_wp_error($listing) ) {
 			return array();
 		}
 		$candidates = array();
-		foreach ( (array) ( $listing['worktrees'] ?? array() ) as $row ) {
-			if ( ! empty($row['is_primary']) || $task_identity !== $this->worktree_reuse_task_identity( (array) ( $row['task'] ?? array() )) ) {
+		foreach ( $this->worktree_list_blocks( (string) ( $listing['output'] ?? '' )) as $block ) {
+			$worktree = $this->parse_worktree_block($block);
+			if ( null === $worktree || $primary_path === $worktree['path'] ) {
 				continue;
 			}
+			$inside_workspace = str_starts_with($worktree['path'], $this->workspace_path . '/');
+			$handle           = $inside_workspace ? substr($worktree['path'], strlen($this->workspace_path . '/')) : $worktree['path'];
+			$metadata_key     = $inside_workspace ? $handle : 'external:' . sha1($worktree['path']);
+			$metadata         = WorktreeContextInjector::get_metadata($metadata_key);
+			$metadata         = is_array($metadata) ? $metadata : null;
+			$candidate_task   = is_array($metadata['origin_task'] ?? null) ? (array) $metadata['origin_task'] : array();
+			if ( $task_identity !== $this->worktree_reuse_task_identity($candidate_task) ) {
+				continue;
+			}
+
+			$dirty_result = $this->run_git($worktree['path'], 'status --porcelain');
+			$dirty        = is_wp_error($dirty_result) ? 0 : count(array_filter(array_map('trim', explode("\n", $dirty_result['output'] ?? ''))));
+			$unpushed     = $this->count_unpushed_commits($worktree['path']);
+			if ( is_wp_error($unpushed) ) {
+				return array();
+			}
+			$liveness     = WorktreeContextInjector::classify_liveness($metadata);
 			$candidates[] = array(
-				'handle'   => $row['handle'] ?? null,
-				'path'     => $row['path'] ?? null,
-				'branch'   => $row['branch'] ?? null,
-				'head'     => $row['head'] ?? null,
-				'dirty'    => $row['dirty'] ?? null,
-				'unpushed' => $row['unpushed'] ?? null,
-				'liveness' => $row['liveness'] ?? null,
-				'task'     => $row['task'] ?? null,
+				'handle'   => $handle,
+				'path'     => $worktree['path'],
+				'branch'   => $worktree['branch'],
+				'head'     => $worktree['head'],
+				'dirty'    => $dirty,
+				'unpushed' => $unpushed,
+				'liveness' => $liveness['liveness'],
+				'task'     => $candidate_task,
 			);
 		}
 		usort($candidates, static fn( array $left, array $right ): int => strcmp( (string) $left['handle'], (string) $right['handle']));
