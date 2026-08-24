@@ -2220,6 +2220,19 @@ trait WorkspaceWorktreeLifecycle {
 		if ( ! $include_disk ) {
 			$skipped_groups[] = 'disk';
 		}
+		$metadata = $parsed['is_worktree'] ? WorktreeContextInjector::get_metadata($parsed['dir_name']) : null;
+		$metadata = is_array($metadata) ? $metadata : null;
+		$task_ref = $this->normalize_worktree_list_task_ref($opts['task_ref'] ?? null);
+		$owner_run_ref = $this->normalize_worktree_list_owner_run_ref($opts['owner_run_ref'] ?? null);
+		if ( ! $this->worktree_list_matches_metadata_filters($metadata, $task_ref, $owner_run_ref) ) {
+			return array(
+				'success'               => true,
+				'worktrees'             => array(),
+				'duplicates'            => array(),
+				'base_branch_worktrees' => array(),
+				'fields_skipped'        => $skipped_groups,
+			);
+		}
 
 		$head = $this->run_git($path, 'rev-parse --verify HEAD', self::CLEANUP_GIT_PROBE_TIMEOUT);
 		if ( $head instanceof \WP_Error ) {
@@ -2245,8 +2258,6 @@ trait WorkspaceWorktreeLifecycle {
 			$unpushed = null;
 		}
 
-		$metadata     = $parsed['is_worktree'] ? WorktreeContextInjector::get_metadata($parsed['dir_name']) : null;
-		$metadata     = is_array($metadata) ? $metadata : null;
 		$created_at   = $metadata['created_at'] ?? null;
 		$liveness     = WorktreeContextInjector::classify_liveness($metadata);
 		$disk         = $include_disk ? $this->build_worktree_disk_report($parsed['repo'], $path, $parsed['is_worktree'], $created_at, $metadata) : array(

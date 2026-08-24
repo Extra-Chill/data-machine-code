@@ -5305,7 +5305,7 @@ class WorkspaceCommand extends BaseCommand {
 		$result = $ability->execute( $input );
 
 		if ( is_wp_error( $result ) ) {
-			if ( 'add' === $operation && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			if ( in_array( $operation, array( 'add', 'get', 'list' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 				$this->renderer()->json(
 					array(
 						'success' => false,

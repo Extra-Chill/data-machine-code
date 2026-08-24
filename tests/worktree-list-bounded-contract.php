@@ -52,7 +52,7 @@ namespace {
 			return array( 'repo' => $parts[0], 'branch_slug' => $parts[1] ?? null );
 		}
 		private function sanitize_name( string $name ): string { return trim($name); }
-		private function worktree_get( string $handle, array $opts ): array|WP_Error { if ( 'repo@branch-300' !== $handle ) { return new WP_Error( 'worktree_not_found' ); } return array( 'worktrees' => array( array( 'handle' => $handle, 'metadata' => \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata($handle), 'lifecycle_state' => 'active' ) ) ); }
+		private function worktree_get( string $handle, array $opts ): array|WP_Error { if ( 'repo@branch-300' !== $handle ) { return new WP_Error( 'worktree_not_found' ); } $metadata = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata($handle); if ( ! empty($opts['task_ref']) && \DataMachineCode\Workspace\TaskUrl::canonicalize($opts['task_ref']) !== \DataMachineCode\Workspace\TaskUrl::canonicalize($metadata['origin_task']['task_url'] ?? null) ) { return array( 'worktrees' => array() ); } if ( $this->fail_probes && ! empty($opts['include_status']) ) { throw new RuntimeException('A mismatched handle must not start a status probe.'); } return array( 'worktrees' => array( array( 'handle' => $handle, 'metadata' => $metadata, 'lifecycle_state' => 'active' ) ) ); }
 		private function run_git( string $path, string $command ): array {
 			if ( 'worktree list --porcelain' === $command ) {
 				$blocks = array( "worktree {$this->workspace_path}/repo\nHEAD primary\nbranch refs/heads/main" );
@@ -119,6 +119,10 @@ namespace {
 		bounded_worktree_assert(1 === $handle_match['total'], 'Exact handle lookup must accept its canonical task and owner identity.');
 		$handle_mismatch = $harness->worktree_list(null, null, array( 'handle' => 'repo@branch-300', 'include_status' => false, 'include_disk' => false, 'task_ref' => 'https://github.com/example/repo/issues/other', 'owner_run_ref' => 'run-300' ));
 		bounded_worktree_assert(0 === $handle_mismatch['total'], 'Exact handle lookup must enforce a mismatched task filter.');
+		$harness->fail_probes = true;
+		$handle_mismatch_status = $harness->worktree_list(null, null, array( 'handle' => 'repo@branch-300', 'include_status' => true, 'include_disk' => false, 'task_ref' => 'https://github.com/example/repo/issues/other', 'owner_run_ref' => 'run-300' ));
+		$harness->fail_probes = false;
+		bounded_worktree_assert(0 === $handle_mismatch_status['total'], 'A mismatched exact handle must be rejected before its requested status probe.');
 		$GLOBALS['dmc_task_every_row'] = true;
 		$harness->fail_probes = true;
 		$overflow = $harness->worktree_list(null, null, array( 'include_status' => true, 'include_disk' => false, 'all' => true, 'task_ref' => 'https://github.com/example/repo/issues/300', 'owner_run_ref' => 'run-300' ));
