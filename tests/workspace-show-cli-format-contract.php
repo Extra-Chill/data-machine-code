@@ -72,10 +72,6 @@ namespace {
 		'commit'      => 'abc1234 subject',
 		'dirty'       => 0,
 		'is_worktree' => false,
-		'workspace_capacity' => array(
-			'summary'         => 'Disk budget: 10 GiB free; status=warning.',
-			'trigger_reasons' => array( 'Warning: workspace count is above the advisory threshold.' ),
-		),
 	);
 	$command = new WorkspaceCommand();
 	$command->show( array( 'example' ), array() );
@@ -86,8 +82,6 @@ namespace {
 			'Branch:   main',
 			'Remote:   https://github.com/example/example.git',
 			'Latest:   abc1234 subject',
-			'Disk budget: 10 GiB free; status=warning.',
-			'Warning: workspace count is above the advisory threshold.',
 			'Dirty:    no',
 		) === WP_CLI::$logs,
 		'Default workspace show output changed.'

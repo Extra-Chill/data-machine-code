@@ -190,18 +190,37 @@ namespace {
 	// Make capacity pressure deterministic while retaining the actual CLI ->
 	// WorkspaceAbilities -> Workspace show path. The warning/refusal output may
 	// only consume this already-measured capacity result, not bootstrap hygiene.
-	for ( $index = 0; $index < 600; ++$index ) {
-		mkdir($workspace . '/unrelated-' . str_pad((string) $index, 4, '0', STR_PAD_LEFT));
+	for ( $index = 0; $index < 101; ++$index ) {
+		mkdir($workspace . '/unrelated@' . str_pad((string) $index, 4, '0', STR_PAD_LEFT));
 	}
 	$GLOBALS['dmc_test_disk_total_bytes'] = (float) ( 100 * 1024 * 1024 * 1024 );
 	$GLOBALS['dmc_test_disk_free_bytes']  = (float) ( 15 * 1024 * 1024 * 1024 );
+	$produced_show = \DataMachineCode\Abilities\WorkspaceAbilities::showRepo(array( 'name' => 'target' ));
+	startup_bounds_assert(! is_wp_error($produced_show), 'WorkspaceAbilities::showRepo did not produce the bounded local result.');
+	$produced_capacity = $produced_show['workspace_capacity'] ?? null;
+	startup_bounds_assert(is_array($produced_capacity), 'WorkspaceAbilities::showRepo did not emit workspace_capacity.');
+	foreach ( array( 'workspace_path', 'filesystem_free_bytes', 'filesystem_total_bytes', 'worktree_count', 'status', 'warnings', 'trigger_reasons', 'typed_trigger_reasons', 'creation_allowed' ) as $field ) {
+		startup_bounds_assert(array_key_exists($field, $produced_capacity), sprintf('WorkspaceAbilities::showRepo emitted an incomplete workspace_capacity: missing %s.', $field));
+	}
+	startup_bounds_assert($workspace === $produced_capacity['workspace_path'], 'WorkspaceAbilities::showRepo emitted capacity for the wrong workspace.');
+	startup_bounds_assert(101 === $produced_capacity['worktree_count'], 'WorkspaceAbilities::showRepo did not measure the bounded worktree fixture.');
+	startup_bounds_assert('warning' === $produced_capacity['status'], 'WorkspaceAbilities::showRepo did not preserve the fixture capacity status.');
+	startup_bounds_assert(in_array('worktree_count_warning_threshold', $produced_capacity['trigger_reasons'], true), 'WorkspaceAbilities::showRepo did not emit the worktree capacity trigger.');
+	$produced_reasons = \DataMachineCode\Workspace\WorktreeDiskBudget::format_trigger_reasons($produced_capacity);
 	WP_CLI::$output = array();
 	$warning_options_before = $GLOBALS['dmc_test_get_option_calls'];
 	$warning_started = microtime(true);
 	$command->show(array( 'target' ), array());
 	$warning_elapsed = microtime(true) - $warning_started;
 	$warning_output = implode("\n", WP_CLI::$output);
-	startup_bounds_assert(str_contains($warning_output, 'Recovery (all commands are non-destructive):'), 'Warning targeted show did not render the shared recovery suggestion.');
+	$rendered_capacity = array_values(array_filter(WP_CLI::$output, static fn ( string $line ): bool => str_starts_with($line, 'Disk budget: ')));
+	startup_bounds_assert(1 === count($rendered_capacity), 'Workspace show did not render its workspace capacity summary.');
+	startup_bounds_assert(str_contains($rendered_capacity[0], 'workspace=' . $produced_capacity['workspace_path']), 'Workspace show capacity summary lost the producer workspace path.');
+	startup_bounds_assert(str_contains($rendered_capacity[0], sprintf('%d worktree-like dirs, status=%s.', $produced_capacity['worktree_count'], $produced_capacity['status'])), 'Workspace show capacity summary lost the producer count or status.');
+	foreach ( $produced_reasons as $reason ) {
+		startup_bounds_assert(in_array($reason, WP_CLI::$output, true), 'Workspace show did not render a capacity trigger reason produced by WorkspaceAbilities::showRepo.');
+	}
+	startup_bounds_assert(str_contains($warning_output, 'Recovery for the listed capacity warning(s) (all commands are non-destructive):'), 'Warning targeted show did not render the shared recovery suggestion.');
 	startup_bounds_assert($warning_options_before === $GLOBALS['dmc_test_get_option_calls'], 'Warning targeted show bootstrapped hygiene inventory or remote state.');
 	startup_bounds_assert($warning_elapsed < 3.0, sprintf('Warning targeted show exceeded its startup bound: %.3fs.', $warning_elapsed));
 	startup_bounds_assert(! str_contains($warning_output, '--force'), 'Warning targeted show suggested bypassing capacity protection.');
@@ -217,7 +236,7 @@ namespace {
 	$command->show(array( 'target' ), array());
 	$refusal_elapsed = microtime(true) - $refusal_started;
 	$refusal_output = implode("\n", WP_CLI::$output);
-	startup_bounds_assert(str_contains($refusal_output, 'Recovery (all commands are non-destructive):'), 'Refused targeted show did not render the shared recovery suggestion.');
+	startup_bounds_assert(str_contains($refusal_output, 'Recovery for the listed capacity warning(s) (all commands are non-destructive):'), 'Refused targeted show did not render the shared recovery suggestion.');
 	startup_bounds_assert($refusal_options_before === $GLOBALS['dmc_test_get_option_calls'], 'Refused targeted show bootstrapped hygiene inventory or remote state.');
 	startup_bounds_assert($refusal_elapsed < 3.0, sprintf('Refused targeted show exceeded its startup bound: %.3fs.', $refusal_elapsed));
 	startup_bounds_assert(str_contains($refusal_output, 'workspace hygiene --include-sizes --size-limit=100'), 'Refused targeted show did not emit bounded size inspection.');
