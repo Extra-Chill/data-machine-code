@@ -46,4 +46,18 @@ staleness_timeout_assert_same(5, $result['timeout_seconds'] ?? null, 'Timed-out 
 staleness_timeout_assert_same(true, str_contains((string) ( $result['error'] ?? '' ), 'allow_unverified_freshness=true'), 'Timed-out freshness fetch must provide an actionable opt-in diagnostic.');
 staleness_timeout_assert_same(true, str_contains((string) ( $result['error'] ?? '' ), 'ssh: connect to host github.com port 22: Operation timed out'), 'Timed-out freshness fetch must expose Git stderr.');
 
+$calls = array();
+$behind = WorktreeStalenessProbe::behind_count(
+	'/repo',
+	'feature',
+	'origin/main',
+	7,
+	static function ( string $path, string $args, int $timeout ) use ( &$calls ): WP_Error {
+		$calls[] = array( $path, $args, $timeout );
+		return new WP_Error('git_command_timeout', 'Process command timed out after 7 second(s).', array( 'timeout' => 7 ));
+	}
+);
+staleness_timeout_assert_same(array( array( '/repo', "rev-list --count 'feature'..'origin/main'", 7 ) ), $calls, 'Behind-count probes must use their caller-provided bounded GitRunner timeout.');
+staleness_timeout_assert_same('git_command_timeout', $behind instanceof WP_Error ? $behind->get_error_code() : null, 'Timed-out behind-count probes must preserve the Git timeout type.');
+
 fwrite(STDOUT, "worktree-staleness-fetch-timeout: ok\n");

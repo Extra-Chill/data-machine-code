@@ -694,6 +694,21 @@ try {
 	$resumed_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
 	assert_true(! is_wp_error($resumed_bootstrap) && true === ( $resumed_bootstrap['resumed'] ?? false ) && 'succeeded' === ( $resumed_bootstrap['metadata']['provisioning']['bootstrap']['outcome'] ?? null ), is_wp_error($resumed_bootstrap) ? $resumed_bootstrap->get_error_message() : 'exact retry did not resume interrupted bootstrap');
 	assert_true(true === ( $workspace->worktree_get($interrupted_bootstrap_handle)['worktrees'][0]['readiness']['ready'] ?? false ), 'resumed bootstrap remained incomplete');
+	$probe_timeout_workspace = new class extends Workspace {
+		protected function worktree_behind_count( string $repo_path, string $ref, string $upstream, int $timeout_seconds ): int|null|\WP_Error {
+			if ( 'post-create-probe-timeout' === $ref ) {
+				return new \WP_Error('git_command_timeout', 'Synthetic hanging post-create probe.', array( 'timeout' => $timeout_seconds ));
+			}
+			return parent::worktree_behind_count($repo_path, $ref, $upstream, $timeout_seconds);
+		}
+	};
+	$probe_timeout = $probe_timeout_workspace->worktree_add('homeboy', 'post-create-probe-timeout', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/post-create-probe-timeout' ));
+	$probe_timeout_handle = 'homeboy@post-create-probe-timeout';
+	$probe_timeout_path = $workspace_root . '/' . $probe_timeout_handle;
+	assert_true(is_wp_error($probe_timeout) && 'worktree_operation_timeout' === $probe_timeout->get_error_code() && 'default_branch_probe' === ( $probe_timeout->get_error_data()['phase'] ?? null ) && 'creation_journal_retained' === ( $probe_timeout->get_error_data()['recovery']['status'] ?? null ) && is_dir($probe_timeout_path) && null !== WorktreeContextInjector::get_creation_intent($probe_timeout_handle), 'timed-out post-create default-branch probe did not retain typed recovery state');
+	run_command('git worktree remove --force ' . escapeshellarg($probe_timeout_path), $primary_path);
+	run_command('git branch -D post-create-probe-timeout', $primary_path);
+	WorktreeContextInjector::forget_creation_intent($probe_timeout_handle, WorktreeContextInjector::get_creation_intent($probe_timeout_handle) ?? array());
 	$exact_reuse_plan = $workspace->worktree_plan('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
 	assert_true(! is_wp_error($exact_reuse_plan) && 'exact_reuse' === ( $exact_reuse_plan['disposition'] ?? null ), 'exact compatible reuse was not planned');
 	file_put_contents($reusable['path'] . '/reuse-dirty.txt', "dirty\n");

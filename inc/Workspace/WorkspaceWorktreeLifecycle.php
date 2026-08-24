@@ -1162,6 +1162,9 @@ trait WorkspaceWorktreeLifecycle {
 	 */
 	private function detect_workspace_default_base( string $repo_path ): array {
 		$remote_head = $this->resolve_remote_default_ref($repo_path);
+		if ( is_wp_error($remote_head) ) {
+			$remote_head = null;
+		}
 		$remote_prefix = 'refs/remotes/origin/';
 		if ( null !== $remote_head && str_starts_with($remote_head, $remote_prefix) && strlen($remote_head) > strlen($remote_prefix) && GitRunner::ref_exists($repo_path, $remote_head) ) {
 			return array(
@@ -1342,9 +1345,16 @@ trait WorkspaceWorktreeLifecycle {
 		// produce would be misleading.
 		if ( ! $fetch_failed ) {
 			$this->worktree_add_progress($progress_callback, 'staleness_probe');
+			$probe_timeout = $this->worktree_operation_remaining_seconds($operation_deadline);
+			if ( $probe_timeout <= 0 ) {
+				return $this->worktree_post_create_probe_timeout('staleness_probe', $operation_timeout, $operation_started, $wt_handle, $wt_path);
+			}
 			if ( ! $created_branch ) {
 				// Existing local branch: compare against its configured upstream.
-				$behind = WorktreeStalenessProbe::behind_count($wt_path, $branch, '@{upstream}');
+				$behind = $this->worktree_behind_count($wt_path, $branch, '@{upstream}', $probe_timeout);
+				if ( $this->is_git_timeout_error($behind) ) {
+					return $this->worktree_post_create_probe_timeout('staleness_probe', $operation_timeout, $operation_started, $wt_handle, $wt_path, $behind);
+				}
 				if ( is_int($behind) ) {
 					$response['stale_commits_behind'] = $behind;
 					// Derive a human-readable upstream label. Best-effort; silently
@@ -1366,7 +1376,10 @@ trait WorkspaceWorktreeLifecycle {
 				// New branch cut from a local ref: compare that ref to its origin
 				// counterpart so the agent sees when the base itself was stale.
 				$base_upstream = 'origin/' . $resolved_base;
-				$behind        = WorktreeStalenessProbe::behind_count($primary_path, $resolved_base, $base_upstream);
+				$behind        = $this->worktree_behind_count($primary_path, $resolved_base, $base_upstream, $probe_timeout);
+				if ( $this->is_git_timeout_error($behind) ) {
+					return $this->worktree_post_create_probe_timeout('staleness_probe', $operation_timeout, $operation_started, $wt_handle, $wt_path, $behind);
+				}
 				if ( is_int($behind) ) {
 					$response['base_stale_commits_behind'] = $behind;
 					$response['base_upstream']             = $base_upstream;
@@ -1388,7 +1401,14 @@ trait WorkspaceWorktreeLifecycle {
 
 		if ( ! $fetch_failed ) {
 			$this->worktree_add_progress($progress_callback, 'default_branch_probe');
-			$this->populate_default_branch_behind_count($primary_path, $branch, $response);
+			$probe_timeout = $this->worktree_operation_remaining_seconds($operation_deadline);
+			if ( $probe_timeout <= 0 ) {
+				return $this->worktree_post_create_probe_timeout('default_branch_probe', $operation_timeout, $operation_started, $wt_handle, $wt_path);
+			}
+			$default_branch_probe = $this->populate_default_branch_behind_count($primary_path, $branch, $response, $probe_timeout);
+			if ( $this->is_git_timeout_error($default_branch_probe) ) {
+				return $this->worktree_post_create_probe_timeout('default_branch_probe', $operation_timeout, $operation_started, $wt_handle, $wt_path, $default_branch_probe);
+			}
 		}
 
 		// Staleness gate. Threshold filterable per-site / per-repo. Only fires
@@ -3937,10 +3957,10 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  string $repo_path Primary repo path.
 	 * @return string|null Fully-qualified remote default ref, or null when absent.
 	 */
-	private function resolve_remote_default_ref( string $repo_path ): ?string {
-		$result = $this->run_git($repo_path, 'symbolic-ref --quiet refs/remotes/origin/HEAD');
+	private function resolve_remote_default_ref( string $repo_path, int $timeout_seconds = 0 ): string|\WP_Error|null {
+		$result = $this->run_git($repo_path, 'symbolic-ref --quiet refs/remotes/origin/HEAD', $timeout_seconds);
 		if ( is_wp_error($result) ) {
-			return null;
+			return $this->is_git_timeout_error($result) ? $result : null;
 		}
 
 		$ref = trim( (string) ( $result['output'] ?? '' ));
@@ -3963,6 +3983,9 @@ trait WorkspaceWorktreeLifecycle {
 	 */
 	private function assert_ref_current_with_default_branch( string $primary_path, string $ref, string $repo, string $branch, string $ref_role ): true|\WP_Error {
 		$default_ref = $this->resolve_remote_default_ref($primary_path);
+		if ( is_wp_error($default_ref) ) {
+			return $default_ref;
+		}
 		if ( null === $default_ref ) {
 			return true;
 		}
@@ -3982,17 +4005,24 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  string $branch       Requested worktree branch.
 	 * @param  array  $response     Worktree response payload, mutated in place.
 	 */
-	private function populate_default_branch_behind_count( string $primary_path, string $branch, array &$response ): void {
-		$default_ref = $this->resolve_remote_default_ref($primary_path);
+	private function populate_default_branch_behind_count( string $primary_path, string $branch, array &$response, int $timeout_seconds = 0 ): ?\WP_Error {
+		$default_ref = $this->resolve_remote_default_ref($primary_path, $timeout_seconds);
+		if ( is_wp_error($default_ref) ) {
+			return $default_ref;
+		}
 		if ( null === $default_ref ) {
-			return;
+			return null;
 		}
 
-		$behind = WorktreeStalenessProbe::behind_count($primary_path, $branch, $default_ref);
+		$behind = $this->worktree_behind_count($primary_path, $branch, $default_ref, $timeout_seconds);
+		if ( is_wp_error($behind) ) {
+			return $behind;
+		}
 		if ( is_int($behind) ) {
 			$response['default_branch_commits_behind'] = $behind;
 			$response['default_branch_ref']            = $default_ref;
 		}
+		return null;
 	}
 
 	/**
@@ -4079,6 +4109,37 @@ trait WorkspaceWorktreeLifecycle {
 				$extra
 			)
 		);
+	}
+
+	/** Preserve an exact post-create journal when a bounded safety probe times out. */
+	private function worktree_post_create_probe_timeout( string $phase, int $timeout, float $started, string $handle, string $path, ?\WP_Error $probe_error = null ): \WP_Error {
+		$probe = null;
+		if ( null !== $probe_error ) {
+			$probe = array(
+				'code' => $probe_error->get_error_code(),
+				'data' => $probe_error->get_error_data(),
+			);
+		}
+		return $this->worktree_operation_timeout(
+			$phase,
+			$timeout,
+			$started,
+			array(
+				'handle'   => $handle,
+				'path'     => $path,
+				'probe'    => $probe,
+				'recovery' => array(
+					'status'      => 'creation_journal_retained',
+					'reason_code' => 'post_create_probe_timeout',
+					'retry_same_request' => true,
+				),
+			)
+		);
+	}
+
+	/** Run a bounded post-create staleness probe; overridable by lifecycle fixtures. */
+	protected function worktree_behind_count( string $repo_path, string $ref, string $upstream, int $timeout_seconds ): int|null|\WP_Error {
+		return WorktreeStalenessProbe::behind_count($repo_path, $ref, $upstream, $timeout_seconds);
 	}
 
 	/** Return typed timeout evidence only after the shared deadline expires. */
