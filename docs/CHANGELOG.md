@@ -2,6 +2,18 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.68.1] - 2026-08-24
+
+### Changed
+- align deferred bootstrap lifecycle
+- verify bootstrap child lock descriptors
+
+### Fixed
+- track bootstrap coordinator and child separately
+- fail closed on unverifiable bootstrap owners
+- reconcile stale bootstrap reservations
+- release worktree locks before bootstrap
+
 ## [0.68.0] - 2026-08-24
 
 ### Added
