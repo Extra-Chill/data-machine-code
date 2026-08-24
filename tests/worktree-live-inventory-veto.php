@@ -62,10 +62,6 @@ $harness = new class {
 		return null;
 	}
 
-	private function estimate_path_size_bytes( string $path ): int {
-		return 0;
-	}
-
 	private function sort_worktree_cleanup_rows( array $rows, string $sort ): array {
 		return $rows;
 	}

@@ -86,23 +86,18 @@ final class WorkspaceEmergencyCandidateSelector {
 				$next_states[] = $next;
 			}
 
-			// Equivalent capped recovery totals cannot produce a better later set.
-			// Collapse them before sorting so uniform candidate sets stay bounded.
 			$unique_states = array();
 			foreach ( $next_states as $state ) {
-				$key = implode(
-					':',
-					array(
-						count($state['selected']),
-						min($target_bytes, $state['bytes']),
-						min($target_inodes, $state['inodes']),
-					)
+				$key                     = sprintf(
+					'%d:%d:%d',
+					min($target_bytes, $state['bytes']),
+					min($target_inodes, $state['inodes']),
+					count($state['selected'])
 				);
-				if ( ! isset($unique_states[ $key ]) ) {
-					$unique_states[ $key ] = $state;
-				}
+				$unique_states[ $key ] ??= $state;
 			}
 			$next_states = array_values($unique_states);
+
 			usort(
 				$next_states,
 				static function ( array $left, array $right ) use ( $target_bytes, $target_inodes ): int {

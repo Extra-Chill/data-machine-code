@@ -6,10 +6,29 @@ if ( ! defined('ABSPATH') ) {
 	define('ABSPATH', __DIR__ . '/fixtures/');
 }
 
+function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
+	if ( 'datamachine_code_github_allowed_hosts' === $hook ) {
+		return array_merge($value, $GLOBALS['github_remote_allowed_hosts'] ?? array());
+	}
+	return $value;
+}
+
+function get_option( string $name, mixed $default = false ): mixed {
+	return $GLOBALS['github_remote_options'][ $name ] ?? $default;
+}
+
+$GLOBALS['github_remote_options'] = array(
+	'github_credential_profiles' => array(
+		array( 'id' => 'enterprise', 'host' => 'enterprise.example.test' ),
+	),
+);
+
 require_once dirname(__DIR__) . '/inc/Support/GitHubRemote.php';
+require_once dirname(__DIR__) . '/inc/Workspace/RemoteWorkspaceBackend.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 
 use DataMachineCode\Support\GitHubRemote;
+use DataMachineCode\Workspace\RemoteWorkspaceBackend;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 
 function assert_same( mixed $expected, mixed $actual, string $message ): void {
@@ -26,19 +45,50 @@ assert_same('git@github.com:Extra-Chill/data-machine-code.git', $public['ssh_clo
 assert_same('https://api.github.com/repos/Extra-Chill/data-machine-code/pulls/1', GitHubRemote::apiUrl('Extra-Chill/data-machine-code', 'pulls/1'), 'Public GitHub repo API URL should render from a slug.');
 assert_same('https://github.com/Extra-Chill/data-machine-code/tree/refactor%2Fdescriptor', GitHubRemote::branchUrl('git@github.com:Extra-Chill/data-machine-code.git', 'refactor/descriptor'), 'Public GitHub branch URL should render from SSH remote.');
 
-$enterprise = GitHubRemote::descriptor('git@github.a8c.com:Automattic/data-machine-code.git');
-assert_same('github.a8c.com', $enterprise['host'] ?? null, 'GitHub Enterprise host should parse.');
-assert_same('Automattic/data-machine-code', $enterprise['slug'] ?? null, 'GitHub Enterprise slug should parse.');
-assert_same('https://github.a8c.com/api/v3', $enterprise['api_base_url'] ?? null, 'GitHub Enterprise API base URL should render.');
-assert_same('https://github.a8c.com/Automattic/data-machine-code.git', $enterprise['https_clone_url'] ?? null, 'GitHub Enterprise HTTPS clone URL should render.');
-assert_same('https://github.a8c.com/api/v3/repos/Automattic/data-machine-code/issues', GitHubRemote::apiUrl('https://github.a8c.com/Automattic/data-machine-code', 'issues'), 'GitHub Enterprise repo API URL should render from web URL.');
-assert_same('https://github.a8c.com/Automattic/data-machine-code/tree/feature%2Fbranch', GitHubRemote::branchUrl('git@github.a8c.com:Automattic/data-machine-code.git', 'feature/branch'), 'GitHub Enterprise branch URL should render from SSH remote.');
+$enterprise = GitHubRemote::descriptor('git@enterprise.example.test:owner/repository.git');
+assert_same('enterprise.example.test', $enterprise['host'] ?? null, 'Configured GitHub Enterprise profile host should parse.');
+assert_same('owner/repository', $enterprise['slug'] ?? null, 'GitHub Enterprise slug should parse.');
+assert_same('https://enterprise.example.test/api/v3', $enterprise['api_base_url'] ?? null, 'GitHub Enterprise API base URL should render.');
+assert_same('https://enterprise.example.test/owner/repository.git', $enterprise['https_clone_url'] ?? null, 'GitHub Enterprise HTTPS clone URL should render.');
+assert_same('https://enterprise.example.test/api/v3/repos/owner/repository/issues', GitHubRemote::apiUrl('https://enterprise.example.test/owner/repository', 'issues'), 'GitHub Enterprise repo API URL should render from web URL.');
+assert_same('https://enterprise.example.test/owner/repository/tree/feature%2Fbranch', GitHubRemote::branchUrl('git@enterprise.example.test:owner/repository.git', 'feature/branch'), 'GitHub Enterprise branch URL should render from SSH remote.');
 
-$pr_metadata = WorktreeContextInjector::parse_pr_reference('https://github.a8c.com/Automattic/data-machine-code/pull/42');
-assert_same('https://github.a8c.com/Automattic/data-machine-code/pull/42', $pr_metadata['pr_url'] ?? null, 'GitHub Enterprise PR URL should round-trip.');
+$custom_port = GitHubRemote::descriptor('ssh://git@enterprise.example.test:2222/owner/repository.git');
+assert_same('enterprise.example.test', $custom_port['host'] ?? null, 'Configured GitHub Enterprise hosts should parse without hostname heuristics.');
+assert_same(2222, $custom_port['ssh_port'] ?? null, 'SSH URI ports should parse.');
+assert_same('https://enterprise.example.test/owner/repository.git', $custom_port['https_clone_url'] ?? null, 'HTTPS alternatives must not inherit SSH ports.');
+assert_same('ssh://git@enterprise.example.test:2222/owner/repository.git', $custom_port['ssh_clone_url'] ?? null, 'SSH URI ports should round-trip.');
+assert_same('enterprise.example.test', GitHubRemote::descriptor('git@enterprise.example.test:owner/repository.git')['host'] ?? null, 'SCP-style configured GitHub Enterprise remotes should parse.');
+
+$pr_metadata = WorktreeContextInjector::parse_pr_reference('https://enterprise.example.test/owner/repository/pull/42');
+assert_same('https://enterprise.example.test/owner/repository/pull/42', $pr_metadata['pr_url'] ?? null, 'GitHub Enterprise PR URL should round-trip.');
 assert_same(42, $pr_metadata['pr_number'] ?? null, 'GitHub Enterprise PR number should parse.');
-assert_same('Automattic/data-machine-code', $pr_metadata['pr_repo'] ?? null, 'GitHub Enterprise PR repo should parse.');
+assert_same('owner/repository', $pr_metadata['pr_repo'] ?? null, 'GitHub Enterprise PR repo should parse.');
+
+$GLOBALS['github_remote_options'] = array(
+	'github_credential_profiles' => array(
+		array( 'id' => 'limited', 'allowed_repos' => array( 'ssh://git@arbitrary.example.test:2222/owner/allowed.git' ) ),
+	),
+);
+assert_same(null, GitHubRemote::descriptor('git@arbitrary.example.test:owner/other.git'), 'An allowed repository must not authorize another repository on its host.');
+assert_same('owner/allowed', GitHubRemote::descriptor('git@arbitrary.example.test:owner/allowed.git')['slug'] ?? null, 'An allowed repository must authorize its exact host/owner/repo identity.');
+
+$GLOBALS['github_remote_options'][ RemoteWorkspaceBackend::OPTION ] = array(
+	'repos' => array(
+		array( 'remote' => 'ssh://git@workspace.example.test:2222/owner/registered.git' ),
+	),
+);
+assert_same(null, GitHubRemote::descriptor('git@workspace.example.test:owner/other.git'), 'A registered workspace remote must not authorize another repository on its host.');
+assert_same('owner/registered', GitHubRemote::descriptor('git@workspace.example.test:owner/registered.git')['slug'] ?? null, 'A registered workspace remote must authorize its exact identity.');
+
+$GLOBALS['github_remote_options']['github_credential_profiles'][] = array( 'id' => 'host-wide', 'host' => 'arbitrary.example.test' );
+assert_same('owner/other', GitHubRemote::descriptor('git@arbitrary.example.test:owner/other.git')['slug'] ?? null, 'An explicit profile host must authorize the whole host.');
+
+$GLOBALS['github_remote_allowed_hosts'] = array( 'filtered.example.test' );
+assert_same('owner/other', GitHubRemote::descriptor('git@filtered.example.test:owner/other.git')['slug'] ?? null, 'The allowed-hosts filter must authorize the whole host.');
+unset($GLOBALS['github_remote_allowed_hosts']);
 
 assert_same(null, GitHubRemote::descriptor('https://gitlab.com/example/project.git'), 'Non-GitHub hosts should not parse.');
+assert_same(null, GitHubRemote::descriptor('git@ssh.example.test:owner/repository.git'), 'Arbitrary SSH remotes must not be classified as GitHub.');
 
 echo "GitHubRemote descriptor tests passed.\n";
