@@ -5958,6 +5958,18 @@ class WorkspaceCommand extends BaseCommand {
 
 	private function render_workspace_error( \WP_Error $error ): void {
 		$data = (array) $error->get_error_data();
+		$runtime_identity = WorkspaceAbilities::runtimeIdentity(array());
+		$active_runtime   = (array) ( $runtime_identity['active_runtime'] ?? array() );
+		if ( ! empty($active_runtime['version']) ) {
+			WP_CLI::log(sprintf('Active runtime: %s%s', (string) $active_runtime['version'], ! empty($active_runtime['build']) ? ' (' . (string) $active_runtime['build'] . ')' : ''));
+		}
+		$skew = (array) ( $runtime_identity['skew'] ?? array() );
+		if ( ! empty($skew['classification']) ) {
+			WP_CLI::log(sprintf('Runtime/source: %s', (string) $skew['classification']));
+		}
+		if ( ! empty($skew['recovery']['guidance']) ) {
+			WP_CLI::log(sprintf('Runtime recovery: %s', (string) $skew['recovery']['guidance']));
+		}
 		if ( 'workspace_repo_busy' !== $error->get_error_code() && ! empty( $data['next_commands'] ) && is_array( $data['next_commands'] ) ) {
 			WP_CLI::warning( $error->get_error_message() );
 			WP_CLI::log( 'Next commands:' );
