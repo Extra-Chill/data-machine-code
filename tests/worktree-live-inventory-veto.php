@@ -58,6 +58,10 @@ $harness = new class {
 		return null;
 	}
 
+	private function classify_broken_orphan_worktree_marker( string $path ): ?array {
+		return null;
+	}
+
 	private function sort_worktree_cleanup_rows( array $rows, string $sort ): array {
 		return $rows;
 	}

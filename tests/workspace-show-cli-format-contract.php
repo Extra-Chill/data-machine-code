@@ -22,8 +22,8 @@ namespace DataMachineCode\Workspace {
 	}
 
 	class WorktreeDiskBudget {
-		public static function format_summary( array $capacity ): string { return ''; }
-		public static function format_trigger_reasons( array $capacity ): array { return array(); }
+		public static function format_summary( array $capacity ): string { return (string) ( $capacity['summary'] ?? '' ); }
+		public static function format_trigger_reasons( array $capacity ): array { return $capacity['trigger_reasons'] ?? array(); }
 	}
 }
 

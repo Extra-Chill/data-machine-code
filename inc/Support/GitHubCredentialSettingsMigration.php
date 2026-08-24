@@ -132,6 +132,7 @@ final class GitHubCredentialSettingsMigration {
 				array(
 					'id'                  => GitHubCredentialResolver::DEFAULT_PROFILE_ID,
 					'label'               => 'Default',
+					'host'                => '',
 					'mode'                => $mode,
 					'pat'                 => (string) PluginSettings::get('github_pat', ''),
 					'app_id'              => (string) PluginSettings::get('github_app_id', ''),
