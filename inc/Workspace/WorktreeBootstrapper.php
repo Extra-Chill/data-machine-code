@@ -115,11 +115,11 @@ final class WorktreeBootstrapper {
 	/** Blobless trees omit blob sizes; reserve 64 KiB for every tracked tree entry. */
 	private const BLOBLESS_TRACKED_ENTRY_BYTES = 65536;
 
-	private const DEFAULT_COMMAND_TIMEOUT_SECONDS = 600;
-	private const DEFAULT_TOTAL_TIMEOUT_SECONDS   = 1800;
-	private static ?float $bootstrap_deadline     = null;
-	private static $process_start_callback         = null;
-	private static $process_complete_callback      = null;
+	private const DEFAULT_COMMAND_TIMEOUT_SECONDS   = 600;
+	private const DEFAULT_TOTAL_TIMEOUT_SECONDS     = 1800;
+	private static ?float $bootstrap_deadline       = null;
+	private static mixed $process_start_callback    = null;
+	private static mixed $process_complete_callback = null;
 
 	/**
 	 * Run all applicable bootstrap steps inside the given worktree.
@@ -146,11 +146,11 @@ final class WorktreeBootstrapper {
 		if ( null !== $remaining_operation_seconds ) {
 			$total_timeout = min($total_timeout, max(1, $remaining_operation_seconds));
 		}
-		self::$bootstrap_deadline = microtime(true) + $total_timeout;
-		self::$process_start_callback = $on_process_start;
+		self::$bootstrap_deadline        = microtime(true) + $total_timeout;
+		self::$process_start_callback    = $on_process_start;
 		self::$process_complete_callback = $on_process_complete;
-		$package_discovery        = self::discover_package_roots( $worktree_path );
-		$steps                    = array();
+		$package_discovery               = self::discover_package_roots( $worktree_path );
+		$steps                           = array();
 
 		$steps[] = self::run_submodules( $worktree_path );
 		$steps   = array_merge( $steps, self::run_packages( $package_discovery['roots'] ) );
@@ -183,8 +183,8 @@ final class WorktreeBootstrapper {
 			);
 		}
 		unset($step);
-		self::$bootstrap_deadline = null;
-		self::$process_start_callback = null;
+		self::$bootstrap_deadline        = null;
+		self::$process_start_callback    = null;
 		self::$process_complete_callback = null;
 		return $result;
 	}
