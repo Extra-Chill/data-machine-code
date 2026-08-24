@@ -664,13 +664,18 @@ trait WorkspaceWorktreeLifecycle {
 		// cleanup locks without self-deadlocking.
 		$reuse_candidates = $this->worktree_reuse_candidates($repo, $task);
 		if ( array() !== $reuse_candidates && 'isolated' !== $reuse_policy ) {
+			if ( ! class_exists(WorktreeCandidateActions::class) ) {
+				require_once __DIR__ . '/WorktreeCandidateActions.php';
+			}
+			$candidate_actions = WorktreeCandidateActions::project($reuse_candidates, $repo, $branch, $from, $task, $intent);
 			return $this->worktree_reuse_refused(
 				$wt_handle,
 				'same_task_candidate_requires_explicit_isolation',
 				array(
 					'reuse_policy'            => $reuse_policy,
 					'canonical_task_identity' => $this->worktree_reuse_task_identity($task),
-					'candidates'              => $reuse_candidates,
+					'candidates'              => $candidate_actions['candidates'],
+					'candidate_actions'       => $candidate_actions['actions'],
 				)
 			);
 		}
