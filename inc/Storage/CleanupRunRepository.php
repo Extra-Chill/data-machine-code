@@ -190,7 +190,7 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 	public function update_run( string $run_id, array $fields ): bool {
 		global $wpdb;
 
-		$data = array();
+		$data  = array();
 		$where = array( 'run_id' => $run_id );
 		if ( array_key_exists( 'expected_status', $fields ) ) {
 			$where['status'] = (string) $fields['expected_status'];

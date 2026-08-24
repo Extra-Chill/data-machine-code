@@ -61,16 +61,16 @@ class CleanupRunService {
 		}
 		if ( $plan instanceof \WP_Error ) {
 			$error_data = $plan->get_error_data();
-			return $this->planning_failure( $run_id, $mode, $plan->get_error_code(), $plan->get_error_message(), is_array( $error_data ) ? (int) ( $error_data['status'] ?? 500 ) : 500 );
+			return $this->planning_failure( $run_id, $mode, (string) $plan->get_error_code(), $plan->get_error_message(), is_array( $error_data ) ? (int) ( $error_data['status'] ?? 500 ) : 500 );
 		}
 
-		$items  = $this->plan_items( $plan );
+		$items          = $this->plan_items( $plan );
 		$plan['summary'] = $this->materialize_plan_recommended_commands( (array) ( $plan['summary'] ?? array() ), $run_id );
 
 		$inserted = $this->repository->add_items( $run_id, $items );
 		if ( $inserted instanceof \WP_Error ) {
 			$error_data = $inserted->get_error_data();
-			return $this->planning_failure( $run_id, $mode, $inserted->get_error_code(), $inserted->get_error_message(), is_array( $error_data ) ? (int) ( $error_data['status'] ?? 500 ) : 500 );
+			return $this->planning_failure( $run_id, $mode, (string) $inserted->get_error_code(), $inserted->get_error_message(), is_array( $error_data ) ? (int) ( $error_data['status'] ?? 500 ) : 500 );
 		}
 		$updated = $this->update_run_or_error(
 			$run_id,
@@ -146,8 +146,8 @@ class CleanupRunService {
 
 	/** @return \WP_Error */
 	private function planning_failure( string $run_id, string $mode, string $error_code, string $error_message, int $status ): \WP_Error {
-		$summary  = $this->planning_summary( $mode, 'planning_failed', $error_code, $error_message );
-		$recovery = array(
+		$summary             = $this->planning_summary( $mode, 'planning_failed', $error_code, $error_message );
+		$recovery            = array(
 			'run_id'           => $run_id,
 			'state'            => 'planning_failed',
 			'status_command'   => sprintf( 'studio wp datamachine-code workspace cleanup status %s --format=json', $run_id ),
@@ -155,7 +155,7 @@ class CleanupRunService {
 			'apply_authorized' => false,
 		);
 		$summary['recovery'] = array_merge( $summary['recovery'], $recovery );
-		$checkpoint = $this->update_run_or_error(
+		$checkpoint          = $this->update_run_or_error(
 			$run_id,
 			array(
 				'expected_status' => 'planning',
@@ -172,7 +172,10 @@ class CleanupRunService {
 				array_merge(
 					(array) ( $checkpoint->get_error_data() ?? array() ),
 					array(
-						'planning_error' => array( 'code' => $error_code, 'message' => $error_message ),
+						'planning_error' => array(
+							'code'    => $error_code,
+							'message' => $error_message,
+						),
 						'recovery'       => $recovery,
 					)
 				)
@@ -185,7 +188,10 @@ class CleanupRunService {
 			array(
 				'status'         => $status,
 				'run_id'         => $run_id,
-				'planning_error' => array( 'code' => $error_code, 'message' => $error_message ),
+				'planning_error' => array(
+					'code'    => $error_code,
+					'message' => $error_message,
+				),
 				'recovery'       => $recovery,
 			)
 		);
