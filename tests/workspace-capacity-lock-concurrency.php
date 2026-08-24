@@ -612,7 +612,6 @@ try {
 	$ready = $workspace . '/fifo-ready';
 	$release = $workspace . '/fifo-release';
 	$order = $workspace . '/fifo-order';
-<<<<<<< HEAD
 	$holder = proc_open(array( PHP_BINARY, __FILE__, 'signal-holder', $workspace, $ready, $release), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
 	capacity_lock_assert(is_resource($holder), 'Could not start FIFO holder.');
 	fclose($holder_pipes[0]);
