@@ -38,7 +38,7 @@ namespace {
 	}
 
 	$ability_source = file_get_contents(dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php');
-	recovery_presentation_assert(false !== $ability_source && 1 === preg_match("/'recovery'\\s*=>\\s*array\\(\\s*'type'\\s*=>\\s*'object'\\s*\\)/", $ability_source), 'Hygiene ability schema must declare recovery as an object.');
+	recovery_presentation_assert(1 === preg_match("/'recovery'\\s*=>\\s*array\\(\\s*'type'\\s*=>\\s*'object'\\s*\\)/", (string) $ability_source), 'Hygiene ability schema must declare recovery as an object.');
 	recovery_presentation_assert(! str_contains((string) $ability_source, "'suggested_cleanup_command' => array( 'type' => 'string' )"), 'Hygiene ability schema must not retain independent cleanup suggestions.');
 
 	$command = new DataMachineCode\Cli\Commands\WorkspaceCommand();

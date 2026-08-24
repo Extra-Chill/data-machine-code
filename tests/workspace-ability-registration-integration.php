@@ -101,7 +101,7 @@ if ( 'worker' === ( $argv[1] ?? '' ) ) {
 	}
 	$status = (array) ( $revalidate['output_schema']['properties']['status']['enum'] ?? array() );
 	$errors = (array) ( $revalidate['output_schema']['properties']['error']['properties']['code']['enum'] ?? array() );
-	if ( array( 'current', 'drift', 'fetch_failed', 'contention' ) !== $status || array( 'invalid_worktree_handoff_proof', 'untrusted_worktree_handoff_proof', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'worktree_handoff_base_unresolved' ) !== $errors ) {
+	if ( array( 'current', 'drift', 'fetch_failed', 'contention' ) !== $status || array( 'invalid_worktree_handoff_proof', 'untrusted_worktree_handoff_proof', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'remote_default_changed_during_verification', 'worktree_handoff_base_unresolved' ) !== $errors ) {
 		throw new RuntimeException('Handoff revalidation schema omitted typed statuses or errors.');
 	}
 	$diagnostic = \DataMachineCode\Abilities\WorkspaceAbilities::unavailable_diagnostic('datamachine-code/workspace-unsupported');

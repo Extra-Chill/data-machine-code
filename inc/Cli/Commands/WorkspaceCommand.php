@@ -1139,6 +1139,7 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		WP_CLI::success( (string) ( $result['message'] ?? 'Repository cloned.' ) );
+		WP_CLI::log( sprintf( 'Handle: %s', (string) ( $result['name'] ?? '' ) ) );
 		WP_CLI::log( sprintf( 'Path: %s', (string) ( $result['path'] ?? '' ) ) );
 	}
 

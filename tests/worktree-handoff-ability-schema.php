@@ -51,6 +51,6 @@ foreach ( array(
 }
 worktree_handoff_schema_assert(array( 3 ) === ( $freshness['properties']['proof']['properties']['version']['enum'] ?? array() ), 'Proof schema does not declare its version 3 compatibility boundary.');
 worktree_handoff_schema_assert(array( 'current', 'drift', 'fetch_failed', 'contention' ) === ( $revalidate['output_schema']['properties']['status']['enum'] ?? array() ), 'Revalidation schema omitted typed statuses.');
-worktree_handoff_schema_assert(array( 'invalid_worktree_handoff_proof', 'untrusted_worktree_handoff_proof', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'worktree_handoff_base_unresolved' ) === ( $revalidate['output_schema']['properties']['error']['properties']['code']['enum'] ?? array() ), 'Revalidation schema omitted typed errors.');
+worktree_handoff_schema_assert(array( 'invalid_worktree_handoff_proof', 'untrusted_worktree_handoff_proof', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'remote_default_changed_during_verification', 'worktree_handoff_base_unresolved' ) === ( $revalidate['output_schema']['properties']['error']['properties']['code']['enum'] ?? array() ), 'Revalidation schema omitted typed errors.');
 
 fwrite(STDOUT, "worktree-handoff-ability-schema: ok\n");

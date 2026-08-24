@@ -2,6 +2,22 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.68.0] - 2026-08-24
+
+### Added
+- add workspace show formats
+
+### Changed
+- tolerate workspace contract formatting
+- align cleanup plan assignments
+- align bootstrap dirt handling
+
+### Fixed
+- satisfy cleanup planning lint
+- persist cleanup run before planning
+- verify clone postcondition
+- reject bootstrap-created dirt
+
 ## [0.67.0] - 2026-08-24
 
 ### Added

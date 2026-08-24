@@ -68,8 +68,9 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 	public function add_items( string $run_id, array $items ): int|\WP_Error {
 		global $wpdb;
 
-		$count = 0;
-		$now   = gmdate( 'Y-m-d H:i:s' );
+		$count               = 0;
+		$now                 = gmdate( 'Y-m-d H:i:s' );
+		$transaction_started = false !== $wpdb->query( 'START TRANSACTION' );
 		foreach ( $items as $item ) {
 			if ( ! is_array( $item ) ) {
 				continue;
@@ -97,9 +98,16 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 			);
 
 			if ( false === $ok ) {
-					return new \WP_Error( 'cleanup_item_insert_failed', 'Failed to create cleanup item.' );
+				if ( $transaction_started ) {
+					$wpdb->query( 'ROLLBACK' );
+				}
+				return new \WP_Error( 'cleanup_item_insert_failed', 'Failed to create cleanup item.' );
 			}
 			++$count;
+		}
+		if ( $transaction_started && false === $wpdb->query( 'COMMIT' ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new \WP_Error( 'cleanup_item_commit_failed', 'Failed to commit cleanup items.' );
 		}
 
 		return $count;
@@ -182,11 +190,18 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 	public function update_run( string $run_id, array $fields ): bool {
 		global $wpdb;
 
-		$data = array();
+		$data  = array();
+		$where = array( 'run_id' => $run_id );
+		if ( array_key_exists( 'expected_status', $fields ) ) {
+			$where['status'] = (string) $fields['expected_status'];
+		}
 		foreach ( array( 'status', 'started_at', 'completed_at', 'parent_job_id', 'batch_job_id' ) as $field ) {
 			if ( array_key_exists( $field, $fields ) ) {
 				$data[ $field ] = $fields[ $field ];
 			}
+		}
+		if ( array_key_exists( 'policy', $fields ) ) {
+			$data['policy'] = $this->encode( $fields['policy'] );
 		}
 		if ( array_key_exists( 'summary', $fields ) ) {
 			$data['summary'] = $this->encode( $fields['summary'] );
@@ -195,7 +210,8 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 			return true;
 		}
 
-		return false !== $wpdb->update( CleanupSchema::runs_table(), $data, array( 'run_id' => $run_id ) );
+		$result = $wpdb->update( CleanupSchema::runs_table(), $data, $where );
+		return array_key_exists( 'expected_status', $fields ) ? 1 === $result : false !== $result;
 	}
 
 	/**

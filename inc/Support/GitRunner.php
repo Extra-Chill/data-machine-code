@@ -138,11 +138,19 @@ final class GitRunner {
 		);
 	}
 
-	/** Remove URL userinfo and query credentials from command diagnostics. */
-	private static function sanitize_diagnostic( string $diagnostic ): string {
+	/** Remove credentials from diagnostics that can be returned to callers. */
+	public static function redact_diagnostic( string $diagnostic ): string {
 		$diagnostic = preg_replace('#([a-z][a-z0-9+.-]*://)[^\s/@:]+(?::[^\s/@]*)?@#i', '$1***@', $diagnostic) ?? $diagnostic;
-		$diagnostic = preg_replace('#([?&](?:access_token|token|password|credential|key)=)[^\s&]+#i', '$1***', $diagnostic) ?? $diagnostic;
+		$diagnostic = preg_replace('~([?&](?:access_token|token|password|credential|key|api_key|client_secret)=)[^\s&#;]+~i', '$1***', $diagnostic) ?? $diagnostic;
+		$diagnostic = preg_replace('/\b(api_key|client_secret|access_token|token|password|credential|key)\b(\s*[:=]\s*)([^\s,;&#]+)/i', '$1$2***', $diagnostic) ?? $diagnostic;
+		$diagnostic = preg_replace('/\b(authorization)\b(\s*[:=]\s*)(?:bearer|basic|token)\s+[^\s,;]+/i', '$1$2***', $diagnostic) ?? $diagnostic;
+		$diagnostic = preg_replace('/\b(bearer|basic|token)\s+[A-Za-z0-9._~+\/-]+=*/i', '$1 ***', $diagnostic) ?? $diagnostic;
 		return $diagnostic;
+	}
+
+	/** @deprecated Use redact_diagnostic() for shared remote diagnostics. */
+	private static function sanitize_diagnostic( string $diagnostic ): string {
+		return self::redact_diagnostic($diagnostic);
 	}
 
 	/**

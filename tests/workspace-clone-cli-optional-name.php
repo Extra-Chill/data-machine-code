@@ -17,19 +17,23 @@ namespace {
 
 		return array(
 			'message' => 'Repository cloned.',
+			'name'    => 'homeboy-desktop',
 			'path'    => '/tmp/homeboy-desktop',
 		);
 	}
 }
 
 	final class WP_CLI {
+		/** @var array<int,string> */
+		public static array $logs = array();
+
 	public static function error( string $message ): never {
 		throw new \RuntimeException($message);
 	}
 
 	public static function success( string $message ): void {}
 
-	public static function log( string $message ): void {}
+	public static function log( string $message ): void { self::$logs[] = $message; }
 	}
 
 	$ability = new Workspace_Clone_Cli_Optional_Name_Ability();
@@ -61,6 +65,9 @@ namespace {
 	}
 	if ( 'https://github.com/Extra-Chill/homeboy-desktop.git' !== ( $ability->input['url'] ?? null ) ) {
 		throw new \RuntimeException('Workspace clone CLI did not forward the repository URL.');
+	}
+	if ( array( 'Handle: homeboy-desktop', 'Path: /tmp/homeboy-desktop' ) !== WP_CLI::$logs ) {
+		throw new \RuntimeException('Workspace clone CLI must report the resolved handle and checkout path.');
 	}
 
 	echo "workspace-clone-cli-optional-name: ok\n";
