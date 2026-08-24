@@ -83,7 +83,7 @@ function process_runner_assert_running( int $pid, string $message ): void {
 	}
 }
 
-$cwd = sys_get_temp_dir();
+$cwd = dirname(__DIR__);
 
 $spec = CommandSpec::from_argv(
 	array( PHP_BINARY, '-r', 'fwrite(STDOUT, getenv("DMC_COMMAND_SPEC_TEST") . "|" . basename(getcwd()));' ),
