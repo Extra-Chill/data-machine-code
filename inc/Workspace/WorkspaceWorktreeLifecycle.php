@@ -990,11 +990,38 @@ trait WorkspaceWorktreeLifecycle {
 			if ( null !== $heartbeat_error ) {
 				return $heartbeat_error;
 			}
-			$recorded = $this->record_bootstrap_outcome($wt_handle, ! empty($response['bootstrap']['success']) ? 'succeeded' : 'failed', $response['bootstrap']);
+			$bootstrap_created_dirty_paths = (array) ( $response['bootstrap']['git_state']['bootstrap_created_dirty_paths'] ?? array() );
+			$git_state_inspected           = ! empty($response['bootstrap']['git_state']['inspected']);
+			$bootstrap_outcome             = ! empty($response['bootstrap']['success']) && $git_state_inspected && array() === $bootstrap_created_dirty_paths ? 'succeeded' : 'failed';
+			$bootstrap_reason              = ! $git_state_inspected ? 'bootstrap_git_state_unavailable' : ( array() !== $bootstrap_created_dirty_paths ? 'bootstrap_created_dirty_paths' : null );
+			$recorded                      = $this->record_bootstrap_outcome($wt_handle, $bootstrap_outcome, $response['bootstrap'], $bootstrap_reason);
 			if ( is_wp_error($recorded) ) {
 				return $recorded;
 			}
 			$response['metadata'] = WorktreeContextInjector::get_metadata($wt_handle);
+			if ( ! $git_state_inspected || array() !== $bootstrap_created_dirty_paths ) {
+				$error_code = $git_state_inspected ? 'bootstrap_created_dirty_paths' : 'bootstrap_git_state_unavailable';
+				$message    = $git_state_inspected
+					? sprintf('Bootstrap created %d new dirty path(s) in worktree "%s". The worktree was retained without deleting files that may need review.', count($bootstrap_created_dirty_paths), $wt_handle)
+					: sprintf('Could not verify post-bootstrap Git cleanliness for worktree "%s". The worktree was retained without deleting files.', $wt_handle);
+				return new \WP_Error(
+					$error_code,
+					$message,
+					array(
+						'status'                        => 409,
+						'handle'                        => $wt_handle,
+						'path'                          => $wt_path,
+						'bootstrap'                     => $response['bootstrap'],
+						'bootstrap_created_dirty_paths' => $bootstrap_created_dirty_paths,
+						'rollback'                      => array(
+							'git_materialization_rolled_back' => false,
+							'lifecycle_metadata_rolled_back'  => false,
+							'reason'                          => 'new bootstrap outputs are retained for review',
+						),
+						'remediation_command'           => 'git -C ' . escapeshellarg($wt_path) . ' status --short --branch --untracked-files=all',
+					)
+				);
+			}
 		}
 		if ( ! is_dir($wt_path) || ! file_exists($wt_path . '/.git') ) {
 			return new \WP_Error(
@@ -1590,17 +1617,22 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		$existing = $inspection['worktrees'][0];
-		$evidence = $this->worktree_reuse_evidence($handle, $existing, $existing['metadata'] ?? null);
+		$metadata = is_array($existing['metadata'] ?? null) ? $existing['metadata'] : array();
+		$evidence = $this->worktree_reuse_evidence($handle, $existing, $metadata);
 		if ( ( $existing['branch'] ?? null ) !== $branch ) {
 			return $this->worktree_reuse_refused($handle, 'branch_mismatch', $evidence + array( 'requested_branch' => $branch ));
 		}
 		if ( (int) ( $existing['dirty'] ?? 0 ) > 0 ) {
+			if ( in_array($metadata['provisioning']['bootstrap']['reason'] ?? null, array( 'bootstrap_created_dirty_paths', 'bootstrap_git_state_unavailable' ), true) ) {
+				return $this->worktree_reuse_refused($handle, (string) $metadata['provisioning']['bootstrap']['reason'], $evidence + array(
+					'bootstrap' => $metadata['provisioning']['bootstrap'],
+				));
+			}
 			return $this->worktree_reuse_refused($handle, 'dirty_worktree', $evidence);
 		}
 		if ( (int) ( $existing['unpushed'] ?? 0 ) > 0 ) {
 			return $this->worktree_reuse_refused($handle, 'unpushed_commits', $evidence);
 		}
-		$metadata = is_array($existing['metadata'] ?? null) ? $existing['metadata'] : array();
 		$contract = is_array($metadata['reuse_contract'] ?? null) ? $metadata['reuse_contract'] : array();
 		if ( array() === $contract ) {
 			$creation_intent = WorktreeContextInjector::get_creation_intent($handle);
@@ -1708,6 +1740,9 @@ trait WorkspaceWorktreeLifecycle {
 			);
 			if ( null !== $reason ) {
 				$bootstrap['reason'] = $reason;
+			}
+			if ( is_array($result['git_state'] ?? null) ) {
+				$bootstrap['git_state'] = $result['git_state'];
 			}
 		}
 		$metadata['provisioning']['bootstrap'] = $bootstrap;

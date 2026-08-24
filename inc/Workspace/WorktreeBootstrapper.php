@@ -139,6 +139,7 @@ final class WorktreeBootstrapper {
 	 */
 	public static function bootstrap( string $worktree_path, ?int $remaining_operation_seconds = null ): array {
 		$started_at    = microtime(true);
+		$before_dirty  = self::dirty_paths($worktree_path);
 		$total_timeout = self::total_timeout_seconds();
 		if ( null !== $remaining_operation_seconds ) {
 			$total_timeout = min($total_timeout, max(1, $remaining_operation_seconds));
@@ -154,15 +155,23 @@ final class WorktreeBootstrapper {
 		$failed  = array_filter( $steps, fn( $s ) => self::STATUS_FAILED === ( $s['status'] ?? '' ) );
 		$ran_any = (bool) array_filter( $steps, fn( $s ) => self::STATUS_RAN === ( $s['status'] ?? '' ) );
 
-		$result                   = array(
+		$result              = array(
 			'success'               => empty( $failed ),
 			'ran_any'               => $ran_any,
 			'skipped_package_roots' => $package_discovery['skipped'],
 			'steps'                 => $steps,
 			'duration_ms'           => (int) round(( microtime(true) - $started_at ) * 1000),
 		);
+		$after_dirty         = self::dirty_paths($worktree_path);
+		$result['git_state'] = array(
+			'inspected'                     => null !== $before_dirty && null !== $after_dirty,
+			'before_dirty_paths'            => $before_dirty ?? array(),
+			'after_dirty_paths'             => $after_dirty ?? array(),
+			'pre_existing_dirty_paths'      => $before_dirty ?? array(),
+			'bootstrap_created_dirty_paths' => null !== $before_dirty && null !== $after_dirty ? array_values(array_diff($after_dirty, $before_dirty)) : array(),
+		);
 		foreach ( $result['steps'] as &$step ) {
-			$output = (string) ( $step['output_tail'] ?? '' );
+			$output                  = (string) ( $step['output_tail'] ?? '' );
 			$step['output_evidence'] = array(
 				'retained_bytes' => strlen($output),
 				'sha256'         => hash('sha256', $output),
@@ -1146,6 +1155,33 @@ final class WorktreeBootstrapper {
 		$output = ! $result instanceof \WP_Error && ! empty($result['success']) ? file_get_contents($path) : false; // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reads exact NUL-delimited Git output from a local temporary file.
 		unlink($path); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Removes the private Git output file immediately after reading it.
 		return false === $output ? null : $output;
+	}
+
+	/** Return all dirty paths, including nested untracked bootstrap outputs. */
+	private static function dirty_paths( string $worktree_path ): ?array {
+		$output = self::git_raw_output($worktree_path, 'git status --porcelain=v1 -z --untracked-files=all');
+		if ( null === $output ) {
+			return null;
+		}
+
+		$records = explode("\0", $output);
+		$paths   = array();
+		for ( $index = 0, $count = count($records); $index < $count; ++$index ) {
+			$record = $records[ $index ];
+			if ( '' === $record || strlen($record) < 4 ) {
+				continue;
+			}
+			$status  = substr($record, 0, 2);
+			$paths[] = substr($record, 3);
+			if ( str_contains($status, 'R') || str_contains($status, 'C') ) {
+				++$index;
+				if ( isset($records[ $index ]) && '' !== $records[ $index ] ) {
+					$paths[] = $records[ $index ];
+				}
+			}
+		}
+
+		return self::unique_paths($paths);
 	}
 
 	/** @return array<int, string> */
