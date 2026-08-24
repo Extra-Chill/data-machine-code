@@ -1677,22 +1677,23 @@ trait WorkspaceWorktreeLifecycle {
 	private function resume_incomplete_bootstrap( string $handle, array $existing, array $metadata, string $branch ): array|\WP_Error {
 		$bootstrap = (array) ($metadata['provisioning']['bootstrap'] ?? array());
 		if ( 'running' === ($bootstrap['outcome'] ?? null) && is_array($bootstrap['capacity_reservation'] ?? null) ) {
-			$owner = WorktreeContextInjector::bootstrap_owner_state($bootstrap['owner'] ?? null);
-			if ( 'active' === $owner['state'] ) {
+			$coordinator = WorktreeContextInjector::bootstrap_owner_state($bootstrap['coordinator'] ?? $bootstrap['owner'] ?? null);
+			$child = isset($bootstrap['active_child']) ? WorktreeContextInjector::bootstrap_owner_state($bootstrap['active_child']) : array( 'state' => 'stale', 'reason' => 'no_active_child' );
+			if ( 'active' === $coordinator['state'] || 'active' === $child['state'] ) {
 				return new \WP_Error(
 					'worktree_bootstrap_in_progress',
-					'Refusing to start a second dependency bootstrap while the recorded bootstrap owner is still live.',
-					array( 'status' => 409, 'retryable' => true, 'handle' => $handle, 'owner' => $owner )
+					'Refusing to start a second dependency bootstrap while its coordinator or active child is still live.',
+					array( 'status' => 409, 'retryable' => true, 'handle' => $handle, 'coordinator' => $coordinator, 'active_child' => $child )
 				);
 			}
-			if ( 'unverifiable' === $owner['state'] ) {
+			if ( 'unverifiable' === $coordinator['state'] || 'unverifiable' === $child['state'] ) {
 				return new \WP_Error(
 					'worktree_bootstrap_owner_unverifiable',
-					'Cannot safely resume dependency bootstrap because its recorded owner cannot be verified. Inspect the owner process and retry after confirming it has exited.',
-					array( 'status' => 423, 'retryable' => true, 'handle' => $handle, 'owner' => $owner, 'remediation_command' => 'ps -p ' . (int) (($bootstrap['owner']['pid'] ?? 0)) . ' -o pid=,lstart=,command=' )
+					'Cannot safely resume dependency bootstrap because its coordinator or active child cannot be verified. Inspect both processes and retry after confirming they have exited.',
+					array( 'status' => 423, 'retryable' => true, 'handle' => $handle, 'coordinator' => $coordinator, 'active_child' => $child, 'remediation_command' => 'ps -p ' . (int) (($bootstrap['coordinator']['pid'] ?? $bootstrap['owner']['pid'] ?? 0)) . ',' . (int) (($bootstrap['active_child']['pid'] ?? 0)) . ' -o pid=,lstart=,command=' )
 				);
 			}
-			$reconciled = $this->record_bootstrap_outcome($handle, 'interrupted', array(), (string) $owner['reason']);
+			$reconciled = $this->record_bootstrap_outcome($handle, 'interrupted', array(), 'coordinator_' . (string) $coordinator['reason'] . ';active_child_' . (string) $child['reason']);
 			if ( is_wp_error($reconciled) ) {
 				return $reconciled;
 			}
@@ -1732,7 +1733,7 @@ trait WorkspaceWorktreeLifecycle {
 
 	/** Run a claimed resume only after the short repository-lock claim has ended. */
 	private function complete_resumed_bootstrap( array $response ): array|\WP_Error {
-		$response['bootstrap'] = WorktreeBootstrapper::bootstrap((string) $response['path'], null, fn( array $process ) => $this->record_bootstrap_owner((string) $response['handle'], (int) ($process['pid'] ?? 0)));
+		$response['bootstrap'] = WorktreeBootstrapper::bootstrap((string) $response['path'], null, fn( array $process ) => $this->record_bootstrap_active_child((string) $response['handle'], (int) ($process['pid'] ?? 0)), fn( array $process ) => $this->clear_bootstrap_active_child((string) $response['handle'], (int) ($process['pid'] ?? 0)));
 		$response = $this->record_completed_bootstrap($response);
 		if ( is_wp_error($response) ) {
 			return $response;
@@ -1750,7 +1751,7 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		$this->worktree_add_progress($progress_callback, 'bootstrap_start');
-		$response['bootstrap'] = WorktreeBootstrapper::bootstrap((string) $response['path'], $remaining_seconds, fn( array $process ) => $this->record_bootstrap_owner((string) $response['handle'], (int) ($process['pid'] ?? 0)));
+		$response['bootstrap'] = WorktreeBootstrapper::bootstrap((string) $response['path'], $remaining_seconds, fn( array $process ) => $this->record_bootstrap_active_child((string) $response['handle'], (int) ($process['pid'] ?? 0)), fn( array $process ) => $this->clear_bootstrap_active_child((string) $response['handle'], (int) ($process['pid'] ?? 0)));
 		$this->worktree_add_progress($progress_callback, 'bootstrap_complete');
 		$response = $this->record_completed_bootstrap($response);
 		if ( is_wp_error($response) ) {
@@ -1810,11 +1811,12 @@ trait WorkspaceWorktreeLifecycle {
 		if ( 'running' === $outcome ) {
 			$bootstrap['started_at'] = gmdate('c');
 			$bootstrap['capacity_reservation'] = $reservation;
-			$bootstrap['owner'] = WorktreeContextInjector::bootstrap_owner();
+			$bootstrap['coordinator'] = WorktreeContextInjector::bootstrap_owner();
+			unset($bootstrap['active_child'], $bootstrap['owner']);
 		} else {
 			$bootstrap['completed_at'] = gmdate('c');
 			unset($bootstrap['capacity_reservation']);
-			unset($bootstrap['owner']);
+			unset($bootstrap['coordinator'], $bootstrap['active_child'], $bootstrap['owner']);
 			$bootstrap['steps'] = array_map(
 				static fn( array $step ): array => array_filter(array( 'step' => $step['step'] ?? null, 'status' => $step['status'] ?? null, 'reason' => $step['reason'] ?? null, 'command' => $step['command'] ?? null )),
 				(array) ($result['steps'] ?? array())
@@ -1830,8 +1832,8 @@ trait WorkspaceWorktreeLifecycle {
 		return WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
 	}
 
-	/** Replace the foreground owner with the actual ProcessRunner child identity. */
-	private function record_bootstrap_owner( string $handle, int $pid ): void {
+	/** Record the current ProcessRunner child without replacing the coordinator. */
+	private function record_bootstrap_active_child( string $handle, int $pid ): void {
 		if ( $pid <= 0 ) {
 			return;
 		}
@@ -1839,7 +1841,17 @@ trait WorkspaceWorktreeLifecycle {
 		if ( ! is_array($metadata) || 'running' !== ($metadata['provisioning']['bootstrap']['outcome'] ?? null) ) {
 			return;
 		}
-		$metadata['provisioning']['bootstrap']['owner'] = WorktreeContextInjector::bootstrap_owner($pid);
+		$metadata['provisioning']['bootstrap']['active_child'] = WorktreeContextInjector::bootstrap_owner($pid);
+		WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
+	}
+
+	/** Clear only the child that completed, preserving a newer sequential child. */
+	private function clear_bootstrap_active_child( string $handle, int $pid ): void {
+		$metadata = WorktreeContextInjector::get_metadata($handle);
+		if ( ! is_array($metadata) || $pid !== (int) ($metadata['provisioning']['bootstrap']['active_child']['pid'] ?? 0) ) {
+			return;
+		}
+		unset($metadata['provisioning']['bootstrap']['active_child']);
 		WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
 	}
 

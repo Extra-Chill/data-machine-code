@@ -1065,8 +1065,11 @@ class WorktreeContextInjector {
 		$inodes = 0;
 		$handles = array();
 		foreach ( is_array($all) ? $all : array() as $handle => $metadata ) {
-			$reservation = is_array($metadata['provisioning']['bootstrap']['capacity_reservation'] ?? null) ? $metadata['provisioning']['bootstrap']['capacity_reservation'] : null;
-			if ( ! is_array($reservation) || 'running' !== ($metadata['provisioning']['bootstrap']['outcome'] ?? null) || 'stale' === (self::bootstrap_owner_state($metadata['provisioning']['bootstrap']['owner'] ?? null)['state'] ?? null) ) {
+			$bootstrap = (array) ($metadata['provisioning']['bootstrap'] ?? array());
+			$reservation = is_array($bootstrap['capacity_reservation'] ?? null) ? $bootstrap['capacity_reservation'] : null;
+			$coordinator = self::bootstrap_owner_state($bootstrap['coordinator'] ?? $bootstrap['owner'] ?? null);
+			$child = isset($bootstrap['active_child']) ? self::bootstrap_owner_state($bootstrap['active_child']) : array( 'state' => 'stale' );
+			if ( ! is_array($reservation) || 'running' !== ($bootstrap['outcome'] ?? null) || ( 'stale' === $coordinator['state'] && 'stale' === $child['state'] ) ) {
 				continue;
 			}
 			$bytes += max(0, (int) ($reservation['bytes'] ?? 0));
@@ -1131,6 +1134,16 @@ class WorktreeContextInjector {
 				return array( 'state' => 'active', 'identity' => array( 'platform' => 'linux_proc', 'start_ticks' => (string) $fields[19] ) );
 			}
 			return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unparsable' );
+		}
+		if ( function_exists('posix_kill') && ! posix_kill($pid, 0) ) {
+			$errno = function_exists('posix_get_last_error') ? posix_get_last_error() : 0;
+			if ( defined('POSIX_ESRCH') && POSIX_ESRCH === $errno ) {
+				return array( 'state' => 'stale', 'reason' => 'owner_process_missing' );
+			}
+			if ( defined('POSIX_EPERM') && POSIX_EPERM === $errno ) {
+				return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_denied' );
+			}
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unavailable' );
 		}
 		$output = array();
 		$status = 1;
