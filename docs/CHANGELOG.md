@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.67.0] - 2026-08-24
+
+### Added
+- resolve standalone provider command
+
+### Changed
+- Keep malformed Git fixtures from masking lifecycle tests
+- Report and bound worktree add lifecycle phases
+- Expose runtime and source version skew
+
 ## [0.66.2] - 2026-08-23
 
 ### Fixed
