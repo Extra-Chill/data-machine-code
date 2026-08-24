@@ -2,6 +2,20 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.69.3] - 2026-08-24
+
+### Changed
+- fix remote workspace lint
+- configure remote workspace repository authority
+- fix changed-scope lint
+
+### Fixed
+- scope configured GitHub remote authority
+- support standalone GitHub host resolution
+- derive GitHub transport hosts from configuration
+- configure SSH transport preflight hosts
+- preflight SSH workspace transport
+
 ## [0.69.2] - 2026-08-24
 
 ### Changed
