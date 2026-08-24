@@ -4293,6 +4293,7 @@ class WorkspaceAbilities {
 		$force                      = ! empty( $input['force'] );
 		$remediate_capacity         = ! empty( $input['remediate_capacity'] );
 		$remediate_capacity_dry_run = ! empty( $input['remediate_capacity_dry_run'] );
+		$progress_callback          = isset( $input['progress_callback'] ) && is_callable( $input['progress_callback'] ) ? $input['progress_callback'] : null;
 		$require_task_tracker       = array_key_exists( 'require_task_tracker', $input ) ? (bool) $input['require_task_tracker'] : true;
 		$task                       = array();
 		$intent                     = array();
@@ -4331,7 +4332,8 @@ class WorkspaceAbilities {
 					$intent,
 					$reuse_policy,
 					$remediate_capacity,
-					$remediate_capacity_dry_run
+					$remediate_capacity_dry_run,
+					$progress_callback
 				),
 				$input
 			);
@@ -4377,7 +4379,8 @@ class WorkspaceAbilities {
 			$intent,
 			$reuse_policy,
 			$remediate_capacity,
-			$remediate_capacity_dry_run
+			$remediate_capacity_dry_run,
+			$progress_callback
 		);
 		return self::worktree_add_response( $result, $input );
 	}

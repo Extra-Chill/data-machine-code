@@ -5232,6 +5232,12 @@ class WorkspaceCommand extends BaseCommand {
 				break;
 		}
 
+		if ( 'add' === $operation ) {
+			$input['progress_callback'] = function ( array $event ) use ( $assoc_args ): void {
+				$this->render_worktree_add_progress($event, 'json' === (string) ( $assoc_args['format'] ?? '' ));
+			};
+		}
+
 		$result = $ability->execute( $input );
 
 		if ( is_wp_error( $result ) ) {
@@ -5253,6 +5259,17 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$this->renderWorktreeResult( $operation, $result, $assoc_args );
+	}
+
+	/** Render phase checkpoints without contaminating JSON response stdout. */
+	private function render_worktree_add_progress( array $event, bool $json ): void {
+		$phase = (string) ( $event['phase'] ?? 'working' );
+		$message = sprintf('Worktree add progress: %s.', str_replace('_', ' ', $phase));
+		if ( $json ) {
+			WP_CLI::warning($message);
+			return;
+		}
+		WP_CLI::log($message);
 	}
 
 	/**

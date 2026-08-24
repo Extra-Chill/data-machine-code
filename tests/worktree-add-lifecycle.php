@@ -350,9 +350,21 @@ try {
 	mkdir($source_path . '/upstream-package', 0777, true);
 	file_put_contents($source_path . '/upstream-package/composer.lock', '{}');
 	run_command('git add upstream-package/composer.lock && git commit -m upstream-dependency && git push', $source_path);
-	$rebased_admission = $workspace->worktree_add('homeboy', 'stale-rebase-demand', null, false, true, false, true, true);
+	$rebase_progress = array();
+	$rebased_admission = $workspace->worktree_add('homeboy', 'stale-rebase-demand', null, false, true, false, true, true, array(), false, false, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$rebase_progress ): void {
+		$rebase_progress[] = $event['phase'] ?? null;
+	});
 	assert_true(! is_wp_error($rebased_admission), is_wp_error($rebased_admission) ? $rebased_admission->get_error_message() : 'stale branch rebase admission failed');
 	assert_true(true === ( $rebased_admission['rebase_succeeded'] ?? false ), 'stale branch was not rebased onto its advanced upstream');
+	$post_create_validation = array_search('post_create_validation', $rebase_progress, true);
+	$staleness_probe = array_search('staleness_probe', $rebase_progress, true);
+	$rebase_start = array_search('rebase', $rebase_progress, true);
+	$default_branch_probe = array_search('default_branch_probe', $rebase_progress, true);
+	$post_rebase_demand = array_search('post_rebase_demand_planning', $rebase_progress, true);
+	$post_rebase_capacity = array_search('post_rebase_capacity_inspection', $rebase_progress, true);
+	$post_rebase_reclaim = array_search('post_rebase_artifact_reclamation', $rebase_progress, true);
+	$bootstrap_start = array_search('bootstrap_start', $rebase_progress, true);
+	assert_true(false !== $post_create_validation && false !== $staleness_probe && false !== $rebase_start && false !== $default_branch_probe && false !== $post_rebase_demand && false !== $post_rebase_capacity && false !== $post_rebase_reclaim && false !== $bootstrap_start && $post_create_validation < $staleness_probe && $staleness_probe < $rebase_start && $rebase_start < $default_branch_probe && $default_branch_probe < $post_rebase_demand && $post_rebase_demand < $post_rebase_capacity && $post_rebase_capacity < $post_rebase_reclaim && $post_rebase_reclaim < $bootstrap_start, 'real rebase/bootstrap creation did not report post-create validation, slow probes, post-rebase admission, and bootstrap in order');
 	assert_true(1 === ( $rebased_admission['post_rebase_disk_budget']['demand_plan']['counts']['composer_roots'] ?? 0 ), 'post-rebase admission did not reserve the dependency root introduced only by upstream');
 	assert_true('post_materialization_target_tree_conservative' === ( $rebased_admission['post_rebase_disk_budget']['demand_source'] ?? '' ), 'post-rebase admission did not report its effective target-tree demand source');
 	run_command(
@@ -503,10 +515,14 @@ try {
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-tracker-required'), 'strict tracker refusal left a worktree directory behind');
 
 	putenv('DATAMACHINE_TASK_URL=https://example.test/issues/environment');
-	$result    = $workspace->worktree_add('homeboy', 'audit-primitives-20260616', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/explicit' ), false, true);
+	$progress = array();
+	$result    = $workspace->worktree_add('homeboy', 'audit-primitives-20260616', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/explicit' ), false, true, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$progress ): void {
+		$progress[] = $event['phase'] ?? null;
+	});
 	assert_true(! is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : 'worktree_add failed');
 	assert_true(is_dir($result['path']), 'successful worktree_add path is not accessible');
 	assert_true(isset($wpdb->rows['homeboy@audit-primitives-20260616']), 'successful worktree_add was not persisted');
+	assert_true(array( 'repo_preflight', 'freshness_fetch', 'demand_planning', 'capacity_lock_wait', 'capacity_admitted', 'git_worktree_add', 'post_create_validation', 'staleness_probe', 'default_branch_probe', 'lifecycle_metadata', 'inventory_metadata' ) === $progress, 'worktree add did not emit ordered phase progress through slow probes, creation, and post-create inventory persistence');
 	assert_true(null === WorktreeContextInjector::get_creation_intent('homeboy@audit-primitives-20260616'), 'successful worktree_add left its pre-creation journal behind');
 	assert_true('refused' !== ( $result['disk_budget']['status'] ?? '' ), 'normal worktree_add should pass the disk budget gate without hard refusal');
 	$capacity_locks = array_values(
@@ -654,8 +670,15 @@ try {
 	// Simulate a caller being terminated after checkout materialization and after
 	// bootstrap starts: its durable running phase must block readiness until the
 	// exact compatible add retry completes bootstrap.
-	$interrupted_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	$bootstrap_progress = array();
+	$interrupted_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ), false, false, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$bootstrap_progress ): void {
+		$bootstrap_progress[] = $event['phase'] ?? null;
+	});
 	assert_true(! is_wp_error($interrupted_bootstrap), is_wp_error($interrupted_bootstrap) ? $interrupted_bootstrap->get_error_message() : 'interrupted bootstrap fixture creation failed');
+	$bootstrap_start = array_search('bootstrap_start', $bootstrap_progress, true);
+	$bootstrap_complete = array_search('bootstrap_complete', $bootstrap_progress, true);
+	$inventory_metadata = array_search('inventory_metadata', $bootstrap_progress, true);
+	assert_true(false !== $bootstrap_start && false !== $bootstrap_complete && false !== $inventory_metadata && $bootstrap_start < $bootstrap_complete && $bootstrap_complete < $inventory_metadata, 'worktree add did not report actual bootstrap start, completion, and the following inventory phase in order');
 	$interrupted_bootstrap_handle = 'homeboy@interrupted-bootstrap';
 	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, array(
 		'provisioning' => array(
@@ -671,6 +694,21 @@ try {
 	$resumed_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
 	assert_true(! is_wp_error($resumed_bootstrap) && true === ( $resumed_bootstrap['resumed'] ?? false ) && 'succeeded' === ( $resumed_bootstrap['metadata']['provisioning']['bootstrap']['outcome'] ?? null ), is_wp_error($resumed_bootstrap) ? $resumed_bootstrap->get_error_message() : 'exact retry did not resume interrupted bootstrap');
 	assert_true(true === ( $workspace->worktree_get($interrupted_bootstrap_handle)['worktrees'][0]['readiness']['ready'] ?? false ), 'resumed bootstrap remained incomplete');
+	$probe_timeout_workspace = new class extends Workspace {
+		protected function worktree_behind_count( string $repo_path, string $ref, string $upstream, int $timeout_seconds ): int|null|\WP_Error {
+			if ( 'post-create-probe-timeout' === $ref ) {
+				return new \WP_Error('git_command_timeout', 'Synthetic hanging post-create probe.', array( 'timeout' => $timeout_seconds ));
+			}
+			return parent::worktree_behind_count($repo_path, $ref, $upstream, $timeout_seconds);
+		}
+	};
+	$probe_timeout = $probe_timeout_workspace->worktree_add('homeboy', 'post-create-probe-timeout', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/post-create-probe-timeout' ));
+	$probe_timeout_handle = 'homeboy@post-create-probe-timeout';
+	$probe_timeout_path = $workspace_root . '/' . $probe_timeout_handle;
+	assert_true(is_wp_error($probe_timeout) && 'worktree_operation_timeout' === $probe_timeout->get_error_code() && 'default_branch_probe' === ( $probe_timeout->get_error_data()['phase'] ?? null ) && 'creation_journal_retained' === ( $probe_timeout->get_error_data()['recovery']['status'] ?? null ) && is_dir($probe_timeout_path) && null !== WorktreeContextInjector::get_creation_intent($probe_timeout_handle), 'timed-out post-create default-branch probe did not retain typed recovery state');
+	run_command('git worktree remove --force ' . escapeshellarg($probe_timeout_path), $primary_path);
+	run_command('git branch -D post-create-probe-timeout', $primary_path);
+	WorktreeContextInjector::forget_creation_intent($probe_timeout_handle, WorktreeContextInjector::get_creation_intent($probe_timeout_handle) ?? array());
 	$exact_reuse_plan = $workspace->worktree_plan('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
 	assert_true(! is_wp_error($exact_reuse_plan) && 'exact_reuse' === ( $exact_reuse_plan['disposition'] ?? null ), 'exact compatible reuse was not planned');
 	file_put_contents($reusable['path'] . '/reuse-dirty.txt', "dirty\n");
