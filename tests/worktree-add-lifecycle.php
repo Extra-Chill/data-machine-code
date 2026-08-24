@@ -275,7 +275,6 @@ function interrupted_creation_intent( string $branch, string $base_head, array $
 function create_primary_checkout( string $workspace_root ): void {
 	$source = $workspace_root . '/source';
 	$origin = $workspace_root . '/origin.git';
-	mkdir($workspace_root, 0777, true);
 	mkdir($source, 0777, true);
 	run_command('git init -b main', $source);
 	run_command('git config user.email test@example.test', $source);
@@ -1000,10 +999,14 @@ try {
 	remove_tree($workspace_root, $fixture);
 	fwrite(STDOUT, "worktree-add-lifecycle ok: fixture {$workspace_root}\n");
 } catch (Throwable $e) {
-	if ( is_dir($workspace_root) ) {
-		remove_tree($workspace_root, $fixture);
-		fwrite(STDERR, "worktree-add-lifecycle failure cleaned fixture {$workspace_root}\n");
-	}
 	fwrite(STDERR, $e->getMessage() . "\n");
+	if ( is_dir($workspace_root) ) {
+		try {
+			remove_tree($workspace_root, $fixture);
+			fwrite(STDERR, "worktree-add-lifecycle failure cleaned fixture {$workspace_root}\n");
+		} catch (Throwable $cleanup_error) {
+			fwrite(STDERR, "worktree-add-lifecycle cleanup failure after test failure: {$cleanup_error->getMessage()}\n");
+		}
+	}
 	exit(1);
 }
