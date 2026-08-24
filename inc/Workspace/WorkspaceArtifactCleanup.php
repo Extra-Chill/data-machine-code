@@ -290,7 +290,12 @@ trait WorkspaceArtifactCleanup {
 		$removed       = $this->observe_artifact_reclamation_rows($removed);
 		$partial       = $this->observe_artifact_reclamation_rows($partial);
 		$apply_summary                      = $this->build_worktree_artifact_cleanup_summary($candidates, $removed, $skipped, $partial);
-		$apply_summary['capacity_evidence'] = $this->artifact_capacity_evidence($capacity_before, $this->artifact_capacity_snapshot(), (int) ( $apply_summary['predicted_allocated_reclaim_bytes'] ?? 0 ));
+		$apply_summary['capacity_evidence'] = $this->artifact_capacity_evidence(
+			$capacity_before,
+			$this->artifact_capacity_snapshot(),
+			(int) ( $apply_summary['predicted_allocated_reclaim_bytes'] ?? 0 ),
+			(int) ( $apply_summary['durable_reclaimed_bytes'] ?? 0 )
+		);
 		$apply_summary['scope']             = $scope;
 		if ( null !== $pagination ) {
 			$apply_summary['pagination'] = $pagination;
@@ -1248,6 +1253,7 @@ trait WorkspaceArtifactCleanup {
 			'artifact_count'              => 0 === $removed_count ? $would_count : $removed_count,
 			'artifact_size_bytes'         => 0 === $removed_count ? $would_bytes : $removed_bytes,
 			'artifact_byte_semantics'     => 'allocated_bytes; clone_or_hardlink_sensitive estimates are not guaranteed reclaimable capacity',
+			'reclamation_telemetry_semantics' => 'durable_reclaimed_bytes is scoped durable cleanup recovery; filesystem_free_bytes_delta is signed host telemetry that may include concurrent activity; observed_reclaimed_bytes is deprecated compatibility telemetry',
 			'predicted_allocated_reclaim_bytes' => 0 === $removed_count ? $would_bytes : $removed_bytes,
 			'removed_size_bytes'          => $removed_bytes,
 			'durable_reclaimed_bytes'     => $durable_bytes,
@@ -1263,14 +1269,23 @@ trait WorkspaceArtifactCleanup {
 	}
 
 	/** @return array<string,mixed> */
-	private function artifact_capacity_evidence( array $before, array $after, int $predicted_allocated_reclaim_bytes ): array {
+	private function artifact_capacity_evidence( array $before, array $after, int $predicted_allocated_reclaim_bytes, int $durable_reclaimed_bytes ): array {
 		$before_free = is_numeric($before['filesystem_free_bytes'] ?? null) ? (int) $before['filesystem_free_bytes'] : null;
 		$after_free  = is_numeric($after['filesystem_free_bytes'] ?? null) ? (int) $after['filesystem_free_bytes'] : null;
+		$free_delta  = null === $before_free || null === $after_free ? null : $after_free - $before_free;
 		return array(
 			'before' => $before,
 			'after' => $after,
+			'filesystem_free_bytes_before' => $before_free,
+			'filesystem_free_bytes_after' => $after_free,
+			'filesystem_free_bytes_delta' => $free_delta,
+			'filesystem_free_bytes_delta_semantics' => 'host_filesystem_noisy_concurrent_telemetry_not_scoped_cleanup_proof',
 			'predicted_allocated_reclaim_bytes' => max(0, $predicted_allocated_reclaim_bytes),
-			'observed_reclaimed_bytes' => null === $before_free || null === $after_free ? null : max(0, $after_free - $before_free),
+			'durable_reclaimed_bytes' => max(0, $durable_reclaimed_bytes),
+			'durable_reclaimed_bytes_semantics' => 'scoped_artifact_paths_absent_at_cleanup_completion',
+			'observed_reclaimed_bytes' => null === $free_delta ? null : max(0, $free_delta),
+			'observed_reclaimed_bytes_deprecated' => true,
+			'observed_reclaimed_bytes_semantics' => 'deprecated_nonnegative_projection_of_filesystem_free_bytes_delta',
 			'observation_basis' => 'filesystem_free_bytes_before_after',
 		);
 	}
