@@ -4414,7 +4414,11 @@ class WorkspaceAbilities {
 	/** Schema shared by allocation and revalidation handoff proof payloads. */
 	private static function worktreeHandoffProofSchemaProperties(): array {
 		return array(
-			'version'            => array( 'type' => 'integer', 'enum' => array( 3 ), 'description' => 'Only proof schema version 3 is accepted. Earlier proofs must be replaced by a fresh allocation proof.' ),
+			'version'                     => array(
+				'type'        => 'integer',
+				'enum'        => array( 3 ),
+				'description' => 'Only proof schema version 3 is accepted. Earlier proofs must be replaced by a fresh allocation proof.',
+			),
 			'proof_id'           => array( 'type' => 'string' ),
 			'handle'             => array( 'type' => 'string' ),
 			'worktree_sha'       => array( 'type' => 'string' ),
@@ -4422,8 +4426,14 @@ class WorkspaceAbilities {
 			'resolved_base_sha'  => array( 'type' => 'string' ),
 			'remote_default_ref' => array( 'type' => 'string' ),
 			'remote_default_sha' => array( 'type' => 'string' ),
-			'remote_default_advertised_sha' => array( 'type' => 'string', 'description' => 'Commit SHA advertised by git ls-remote --symref origin HEAD and matched to the fetched remote-tracking ref.' ),
-			'verified_at'        => array( 'type' => 'string', 'format' => 'date-time' ),
+			'remote_default_advertised_sha' => array(
+				'type'        => 'string',
+				'description' => 'Commit SHA advertised by git ls-remote --symref origin HEAD and matched to the fetched remote-tracking ref.',
+			),
+			'verified_at'                 => array(
+				'type'   => 'string',
+				'format' => 'date-time',
+			),
 			'digest'             => array( 'type' => 'string' ),
 		);
 	}

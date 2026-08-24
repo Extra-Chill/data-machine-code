@@ -53,8 +53,9 @@ final class WorktreeStalenessProbe {
 	 * @return array{ok: bool, attempts: int, error?: string, timed_out?: bool, timeout_seconds?: int}
 	 */
 	public static function fetch( string $repo_path, ?callable $runner = null, ?float $deadline = null ): array {
-		$runner = $runner ?? static fn( string $path, string $args, int $timeout ): array|\WP_Error => GitRunner::run($path, $args, $timeout);
-		for ( $attempt = 1; $attempt <= self::FETCH_MAX_ATTEMPTS; ++$attempt ) {
+		$runner   = $runner ?? static fn( string $path, string $args, int $timeout ): array|\WP_Error => GitRunner::run($path, $args, $timeout);
+		$attempts = range(1, self::FETCH_MAX_ATTEMPTS);
+		foreach ( $attempts as $attempt ) {
 			$remaining = null === $deadline ? self::FETCH_TIMEOUT_SECONDS : (int) floor($deadline - microtime(true));
 			if ( $remaining <= 0 ) {
 				return array(
@@ -77,7 +78,7 @@ final class WorktreeStalenessProbe {
 			$tail  = is_array($data) && isset($data['output']) ? trim( (string) $data['output']) : '';
 			$error = self::sanitize_remote_diagnostic('' !== $tail ? $tail : $result->get_error_message());
 			$code  = method_exists($result, 'get_error_code') ? $result->get_error_code() : '';
-			if ( $attempt === self::FETCH_MAX_ATTEMPTS ) {
+			if ( self::FETCH_MAX_ATTEMPTS === $attempt ) {
 				if ( 'git_command_timeout' === $code ) {
 					return array(
 						'ok'              => false,
@@ -96,7 +97,10 @@ final class WorktreeStalenessProbe {
 			}
 		}
 
-		return array( 'ok' => false, 'attempts' => self::FETCH_MAX_ATTEMPTS );
+		return array(
+			'ok'       => false,
+			'attempts' => self::FETCH_MAX_ATTEMPTS,
+		);
 	}
 
 	/** Remove URL userinfo and query credentials before remote output is surfaced. */

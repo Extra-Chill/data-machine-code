@@ -236,7 +236,7 @@ trait WorkspaceWorktreeLifecycle {
 	 * overdue lookup is refused before it can start a Git operation.
 	 */
 	public function worktree_handoff_revalidate( string $handle, array $proof ): array|\WP_Error {
-		$deadline = microtime(true) + self::HANDOFF_REMOTE_PROBE_TIMEOUT;
+		$deadline   = microtime(true) + self::HANDOFF_REMOTE_PROBE_TIMEOUT;
 		$parsed = $this->parse_handle($handle);
 		if ( ! $parsed['is_worktree'] || (string) ( $proof['handle'] ?? '' ) !== $handle ) {
 			return new \WP_Error('invalid_worktree_handoff_proof', 'A matching managed worktree handoff proof is required.', array( 'status' => 400 ));
@@ -251,7 +251,7 @@ trait WorkspaceWorktreeLifecycle {
 			if ( is_wp_error($metadata) ) {
 				return $metadata;
 			}
-			$stored   = is_array($metadata) ? (array) ( $metadata['handoff_freshness_proof'] ?? array() ) : array();
+			$stored = is_array($metadata) ? (array) ( $metadata['handoff_freshness_proof'] ?? array() ) : array();
 			if ( 3 !== (int) ( $stored['version'] ?? 0 ) || 3 !== (int) ( $proof['version'] ?? 0 ) || array() === $stored || ! hash_equals($this->worktree_handoff_proof_digest($stored), (string) ( $stored['digest'] ?? '' )) || ! hash_equals( (string) ( $stored['digest'] ?? '' ), (string) ( $proof['digest'] ?? '' )) || $this->worktree_handoff_proof_canonical_json($stored) !== $this->worktree_handoff_proof_canonical_json($proof) ) {
 				return new \WP_Error('untrusted_worktree_handoff_proof', 'The supplied proof is not the active metadata-bound managed proof.', array( 'status' => 409 ));
 			}
@@ -260,7 +260,7 @@ trait WorkspaceWorktreeLifecycle {
 			if ( is_wp_error($base_ref) ) {
 				return $base_ref;
 			}
-			$fetch    = WorktreeStalenessProbe::fetch($primary, null, $deadline);
+			$fetch = WorktreeStalenessProbe::fetch($primary, null, $deadline);
 			if ( empty($fetch['ok']) ) {
 				return array(
 					'success' => false,
@@ -399,17 +399,17 @@ trait WorkspaceWorktreeLifecycle {
 		if ( ! hash_equals($remote_default['sha'], trim( (string) $default['output'] )) ) {
 			return new \WP_Error('remote_default_changed_during_verification', 'The remote default branch changed after the bounded fetch. Retry to obtain a proof for one remote advertisement.', array( 'status' => 409 ));
 		}
-		$proof           = array(
-			'version'            => 3,
-			'proof_id'           => $proof_id,
-			'handle'             => $handle,
-			'worktree_sha'       => trim( (string) $head['output']),
-			'resolved_base_ref'  => $base_ref,
-			'resolved_base_sha'  => trim( (string) $base['output']),
-			'remote_default_ref' => $remote_default_ref,
-			'remote_default_sha' => $remote_default['sha'],
+		$proof                         = array(
+			'version'                     => 3,
+			'proof_id'                    => $proof_id,
+			'handle'                      => $handle,
+			'worktree_sha'                => trim( (string) $head['output'] ),
+			'resolved_base_ref'           => $base_ref,
+			'resolved_base_sha'           => trim( (string) $base['output'] ),
+			'remote_default_ref'          => $remote_default_ref,
+			'remote_default_sha'          => $remote_default['sha'],
 			'remote_default_advertised_sha' => $remote_default['sha'],
-			'verified_at'        => gmdate('c'),
+			'verified_at'                 => gmdate('c'),
 		);
 		$proof['digest'] = $this->worktree_handoff_proof_digest($proof);
 		return $proof;
@@ -428,7 +428,10 @@ trait WorkspaceWorktreeLifecycle {
 		if ( ! preg_match('/^ref: refs\/heads\/([^\s]+)\s+HEAD$/m', $output, $ref_matches) || ! preg_match('/^([0-9a-f]{40,64})\s+HEAD$/mi', $output, $sha_matches) ) {
 			return new \WP_Error('remote_default_unresolved', 'The remote did not advertise an unambiguous default branch and commit. Configure the remote HEAD or retry with an explicit base branch.', array( 'status' => 409 ));
 		}
-		return array( 'ref' => 'refs/remotes/origin/' . $ref_matches[1], 'sha' => strtolower($sha_matches[1]) );
+		return array(
+			'ref' => 'refs/remotes/origin/' . $ref_matches[1],
+			'sha' => strtolower($sha_matches[1]),
+		);
 	}
 
 	/** Resolve metadata-dependent base state before starting a bounded Git probe. */
@@ -1115,7 +1118,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( null !== $deadline_error ) {
 			return $deadline_error;
 		}
-		$disk_budget          = $capacity_reclaim['after'];
+		$disk_budget     = $capacity_reclaim['after'];
 		$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'capacity_reclaim_complete', $operation_deadline, $operation_timeout, $operation_started);
 		if ( null !== $heartbeat_error ) {
 			return $heartbeat_error;
@@ -1355,7 +1358,7 @@ trait WorkspaceWorktreeLifecycle {
 			if ( null !== $heartbeat_error ) {
 				return $heartbeat_error;
 			}
-			$recorded              = $this->record_bootstrap_outcome($wt_handle, ! empty($response['bootstrap']['success']) ? 'succeeded' : 'failed', $response['bootstrap']);
+			$recorded = $this->record_bootstrap_outcome($wt_handle, ! empty($response['bootstrap']['success']) ? 'succeeded' : 'failed', $response['bootstrap']);
 			if ( is_wp_error($recorded) ) {
 				return $recorded;
 			}

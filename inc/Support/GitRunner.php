@@ -140,11 +140,11 @@ final class GitRunner {
 
 	/** Remove URL userinfo and query credentials from command diagnostics. */
 	public static function sanitize_diagnostic( string $diagnostic ): string {
-		$diagnostic = preg_replace('#([a-z][a-z0-9+.-]*://)[^\s/@:]+(?::[^\s/@]*)?@#i', '$1***@', $diagnostic) ?? $diagnostic;
+		$diagnostic   = preg_replace('#([a-z][a-z0-9+.-]*://)[^\s/@:]+(?::[^\s/@]*)?@#i', '$1***@', $diagnostic) ?? $diagnostic;
 		$sensitive_key = '(?:(?:[a-z0-9]+[._-])*(?:access[._-]?token|api[._-]?key|client[._-]?secret|authorization|bearer|token|password|credential|key|auth|secret)(?:[._-][a-z0-9]+)*)';
-		$diagnostic = preg_replace('#([?&;]' . $sensitive_key . '=)[^\s&\#]+#i', '$1***', $diagnostic) ?? $diagnostic;
-		$diagnostic = preg_replace('#(^|\n)(\s*' . $sensitive_key . '\s*:\s*)[^\r\n]*#im', '$1$2***', $diagnostic) ?? $diagnostic;
-		$diagnostic = preg_replace('#\b(Bearer)\s+[A-Za-z0-9._~+/-]+#i', '$1 ***', $diagnostic) ?? $diagnostic;
+		$diagnostic   = preg_replace('#([?&;]' . $sensitive_key . '=)[^\s&\#]+#i', '$1***', $diagnostic) ?? $diagnostic;
+		$diagnostic   = preg_replace('#(^|\n)(\s*' . $sensitive_key . '\s*:\s*)[^\r\n]*#im', '$1$2***', $diagnostic) ?? $diagnostic;
+		$diagnostic   = preg_replace('#\b(Bearer)\s+[A-Za-z0-9._~+/-]+#i', '$1 ***', $diagnostic) ?? $diagnostic;
 		return $diagnostic;
 	}
 
