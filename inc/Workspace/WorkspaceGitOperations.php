@@ -9,6 +9,7 @@ namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Support\GitHubRemote;
 use DataMachineCode\Support\GitRunner;
+use DataMachineCode\Support\GitTransportPreflight;
 use DataMachineCode\Support\PathSecurity;
 use DataMachineCode\Support\ProcessRunner;
 
@@ -637,6 +638,16 @@ trait WorkspaceGitOperations {
 			return new \WP_Error('invalid_branch', 'Cannot push from a detached HEAD without an explicit branch.', array( 'status' => 400 ));
 		}
 
+		$remote_url = $this->git_get_remote($repo_path, $remote);
+		$transport  = null !== $remote_url ? GitTransportPreflight::diagnose($remote_url) : null;
+		if ( is_array($transport) && empty($transport['ready']) ) {
+			return new \WP_Error(
+				'git_ssh_transport_unavailable',
+				'SSH Git transport is unavailable. ' . $transport['remediation'],
+				array( 'status' => 409, 'transport' => $transport )
+			);
+		}
+
 		if ( $force_with_lease ) {
 			$force_guard = $this->ensure_force_push_branch_allowed($repo_name, $target_branch);
 			if ( is_wp_error($force_guard) ) {
@@ -676,12 +687,21 @@ trait WorkspaceGitOperations {
 		$result  = $this->run_git($repo_path, $cmd);
 
 		if ( is_wp_error($result) ) {
+			$failure = null !== $remote_url
+				? GitTransportPreflight::signing_failure($remote_url, (string) ( $result->get_error_data()['output'] ?? $result->get_error_message() ))
+				: null;
+			if ( null !== $failure ) {
+				return new \WP_Error(
+					'git_ssh_transport_unavailable',
+					'SSH Git transport could not sign the request. ' . $failure['remediation'],
+					array( 'status' => 409, 'transport' => $failure )
+				);
+			}
 			return $result;
 		}
 
 		$github_repo = null;
 		$branch_url  = null;
-		$remote_url  = $this->git_get_remote($repo_path, $remote);
 		if ( null !== $remote_url ) {
 			$github_repo = GitHubRemote::slug($remote_url);
 			if ( null !== $github_repo ) {
