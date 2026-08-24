@@ -50,7 +50,8 @@ final class WorktreeStalenessProbe {
 	 */
 	public static function fetch( string $repo_path, ?callable $runner = null, ?float $deadline = null ): array {
 		$runner = $runner ?? static fn( string $path, string $args, int $timeout ): array|\WP_Error => GitRunner::run($path, $args, $timeout);
-		for ( $attempt = 1; $attempt <= self::FETCH_MAX_ATTEMPTS; ++$attempt ) {
+		for ( $attempt_index = 0; $attempt_index < self::FETCH_MAX_ATTEMPTS; ++$attempt_index ) {
+			$attempt   = $attempt_index + 1;
 			$remaining = null === $deadline ? self::FETCH_TIMEOUT_SECONDS : (int) floor($deadline - microtime(true));
 			if ( $remaining <= 0 ) {
 				return array(

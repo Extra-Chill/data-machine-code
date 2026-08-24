@@ -432,7 +432,10 @@ trait WorkspaceWorktreeLifecycle {
 		if ( ! preg_match('/^ref: refs\/heads\/([^\s]+)\s+HEAD$/m', $output, $ref_matches) || ! preg_match('/^([0-9a-f]{40,64})\s+HEAD$/mi', $output, $sha_matches) ) {
 			return new \WP_Error('remote_default_unresolved', 'The remote did not advertise an unambiguous default branch and commit. Configure the remote HEAD or retry with an explicit base branch.', array( 'status' => 409 ));
 		}
-		return array( 'ref' => 'refs/remotes/origin/' . $ref_matches[1], 'sha' => strtolower($sha_matches[1]) );
+		return array(
+			'ref' => 'refs/remotes/origin/' . $ref_matches[1],
+			'sha' => strtolower($sha_matches[1]),
+		);
 	}
 
 	/** Resolve metadata-dependent base state before starting a bounded Git probe. */
@@ -1963,7 +1966,12 @@ trait WorkspaceWorktreeLifecycle {
 			return;
 		}
 		try {
-			$callback(array( 'operation' => 'worktree_add', 'phase' => $phase ));
+			$callback(
+				array(
+					'operation' => 'worktree_add',
+					'phase'     => $phase,
+				)
+			);
 		} catch ( \Throwable ) {
 			// Progress reporting must never interrupt a protected workspace mutation.
 		}
