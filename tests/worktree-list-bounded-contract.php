@@ -45,6 +45,7 @@ namespace {
 
 		public int $expensive_probes = 0;
 		public int $max_bounded_rows = 0;
+		public bool $fail_probes = false;
 		public function __construct( private string $workspace_path ) {}
 		private function parse_handle( string $handle ): array {
 			$parts = explode('@', $handle, 2);
@@ -61,6 +62,7 @@ namespace {
 				}
 				return array( 'output' => implode("\n\n", $blocks) );
 			}
+			if ( $this->fail_probes ) { throw new RuntimeException('A task overflow must not run a probe.'); }
 			++$this->expensive_probes;
 			return array( 'output' => '' );
 		}
@@ -118,9 +120,11 @@ namespace {
 		$handle_mismatch = $harness->worktree_list(null, null, array( 'handle' => 'repo@branch-300', 'include_status' => false, 'include_disk' => false, 'task_ref' => 'https://github.com/example/repo/issues/other', 'owner_run_ref' => 'run-300' ));
 		bounded_worktree_assert(0 === $handle_mismatch['total'], 'Exact handle lookup must enforce a mismatched task filter.');
 		$GLOBALS['dmc_task_every_row'] = true;
-		$overflow = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'all' => true, 'task_ref' => 'https://github.com/example/repo/issues/300', 'owner_run_ref' => 'run-300' ));
+		$harness->fail_probes = true;
+		$overflow = $harness->worktree_list(null, null, array( 'include_status' => true, 'include_disk' => false, 'all' => true, 'task_ref' => 'https://github.com/example/repo/issues/300', 'owner_run_ref' => 'run-300' ));
+		$harness->fail_probes = false;
 		unset($GLOBALS['dmc_task_every_row']);
-		bounded_worktree_assert(is_wp_error($overflow) && 'worktree_task_candidates_overflow' === $overflow->get_error_code(), 'A task candidate set beyond the complete bounded limit must fail closed rather than hide ambiguity.');
+		bounded_worktree_assert(is_wp_error($overflow) && 'worktree_task_candidates_overflow' === $overflow->get_error_code(), 'The wp-coding-agents complete task lookup must overflow before any status probe can run.');
 		$missing = $harness->worktree_list(null, null, array( 'handle' => 'repo@missing', 'include_status' => false, 'include_disk' => false, 'limit' => 50 ));
 		bounded_worktree_assert(0 === $missing['total'] && 0 === $missing['returned'] && null === $missing['next_cursor'] && array() === $missing['summary']['repos'], 'Missing handles must return the advertised empty envelope shape.');
 

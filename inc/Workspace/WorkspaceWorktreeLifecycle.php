@@ -2636,7 +2636,9 @@ trait WorkspaceWorktreeLifecycle {
 		if ( $all && isset($opts['cursor']) ) {
 			return new \WP_Error('invalid_worktree_list_pagination', 'Worktree list --all cannot be combined with --cursor.', array( 'status' => 400 ));
 		}
-		$defer_probes   = $bounded && ! $all;
+		// Complete task lookups admit their bounded candidate set before any
+		// requested probe. Overflow must never spend work or hide ambiguity.
+		$defer_probes   = ( $bounded && ! $all ) || ( $task_lookup && $all );
 		$run_status     = $include_status && ! $defer_probes;
 		$run_disk       = $include_disk && ! $defer_probes;
 		$limit = $this->normalize_worktree_list_limit($opts['limit'] ?? 50);
