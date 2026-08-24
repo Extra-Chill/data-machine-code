@@ -189,6 +189,9 @@ class WorktreeContextInjector {
 	 */
 	private const MEMORY_FILES = array( 'MEMORY.md', 'USER.md', 'RULES.md' );
 
+	/** @var callable|null Deterministic process-owner probe seam for focused tests. */
+	private static $bootstrap_owner_probe = null;
+
 	/**
 	 * Filterable registry hook for worktree context projection targets.
 	 */
@@ -1073,45 +1076,77 @@ class WorktreeContextInjector {
 		return array( 'bytes' => $bytes, 'inodes' => $inodes, 'handles' => $handles );
 	}
 
-	/** Capture a PID and OS-issued process-start identity for bootstrap ownership. */
+	/** Capture a PID and OS-issued process identity for bootstrap ownership. */
 	public static function bootstrap_owner( ?int $pid = null ): array {
 		$pid = $pid ?? getmypid();
-		return array( 'pid' => max(0, (int) $pid), 'start_id' => self::bootstrap_process_start_id((int) $pid), 'recorded_at' => gmdate('c') );
+		$probe = self::bootstrap_process_probe((int) $pid);
+		return array( 'pid' => max(0, (int) $pid), 'identity' => $probe['identity'] ?? null, 'recorded_at' => gmdate('c') );
 	}
 
-	/** Resolve whether a recorded bootstrap owner is live, stale, or unverifiable. */
+	/** Resolve whether a recorded bootstrap owner is active, stale, or unverifiable. */
 	public static function bootstrap_owner_state( mixed $owner ): array {
-		if ( ! is_array($owner) || empty($owner['pid']) || empty($owner['start_id']) ) {
-			return array( 'state' => 'stale', 'reason' => 'owner_identity_missing' );
+		if ( ! is_array($owner) || empty($owner['pid']) || ! is_array($owner['identity'] ?? null) ) {
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_identity_missing' );
 		}
-		$current = self::bootstrap_process_start_id((int) $owner['pid']);
-		if ( null === $current ) {
-			return array( 'state' => 'stale', 'reason' => 'owner_process_missing' );
+		$probe = self::bootstrap_process_probe((int) $owner['pid']);
+		if ( 'active' !== ($probe['state'] ?? null) ) {
+			return array( 'state' => $probe['state'] ?? 'unverifiable', 'reason' => $probe['reason'] ?? 'owner_probe_unavailable' );
 		}
-		if ( ! hash_equals((string) $owner['start_id'], $current) ) {
-			return array( 'state' => 'stale', 'reason' => 'owner_pid_reused' );
+		if ( $owner['identity'] !== ($probe['identity'] ?? null) ) {
+			return array( 'state' => 'stale', 'reason' => 'owner_identity_mismatch', 'observed_identity' => $probe['identity'] ?? null );
 		}
-		return array( 'state' => 'live', 'reason' => 'owner_process_matches' );
+		if ( 'ps' === ($owner['identity']['platform'] ?? null) ) {
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_identity_coarse' );
+		}
+		return array( 'state' => 'active', 'reason' => 'owner_process_matches' );
 	}
 
-	/** Read a platform process-start token so PID reuse cannot claim a live owner. */
-	private static function bootstrap_process_start_id( int $pid ): ?string {
+	/** Install a deterministic owner probe for focused tests. */
+	public static function set_bootstrap_owner_probe_for_test( ?callable $probe ): void {
+		self::$bootstrap_owner_probe = $probe;
+	}
+
+	/** Read a platform process identity without treating failed probes as dead owners. */
+	private static function bootstrap_process_probe( int $pid ): array {
 		if ( $pid <= 0 ) {
-			return null;
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_pid_invalid' );
+		}
+		if ( null !== self::$bootstrap_owner_probe ) {
+			return (self::$bootstrap_owner_probe)($pid);
 		}
 		$stat_path = '/proc/' . $pid . '/stat';
-		$stat = is_readable($stat_path) ? @file_get_contents($stat_path) : false; // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_get_contents -- Linux process identity probe.
-		if ( is_string($stat) && false !== ( $close = strrpos($stat, ')') ) ) {
+		if ( is_dir('/proc') ) {
+			if ( ! file_exists($stat_path) ) {
+				return array( 'state' => 'stale', 'reason' => 'owner_process_missing' );
+			}
+			if ( ! is_readable($stat_path) ) {
+				return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_denied' );
+			}
+			$stat = @file_get_contents($stat_path); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_get_contents -- Linux process identity probe.
+			if ( ! is_string($stat) || false === ( $close = strrpos($stat, ')') ) ) {
+				return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unparsable' );
+			}
 			$fields = preg_split('/\\s+/', trim(substr($stat, $close + 1)));
 			if ( is_array($fields) && isset($fields[19]) ) {
-				return 'proc:' . $fields[19];
+				return array( 'state' => 'active', 'identity' => array( 'platform' => 'linux_proc', 'start_ticks' => (string) $fields[19] ) );
 			}
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unparsable' );
 		}
 		$output = array();
 		$status = 1;
-		@exec('ps -o lstart= -p ' . $pid . ' 2>/dev/null', $output, $status); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Portable process identity probe.
-		$started = trim(implode('', $output));
-		return 0 === $status && '' !== $started ? 'ps:' . $started : null;
+		@exec('ps -o lstart= -o command= -p ' . $pid . ' 2>/dev/null', $output, $status); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Portable process identity probe.
+		$line = trim(implode('', $output));
+		if ( 0 !== $status ) {
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unavailable' );
+		}
+		if ( 1 !== preg_match('/^(.{24})\\s+(.+)$/', $line, $matches) ) {
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unparsable' );
+		}
+		$command = preg_replace('/\\s+/', ' ', trim($matches[2]));
+		if ( ! is_string($command) || '' === $command ) {
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unparsable' );
+		}
+		return array( 'state' => 'active', 'identity' => array( 'platform' => 'ps', 'started_at' => trim($matches[1]), 'command' => $command, 'command_sha256' => hash('sha256', $command) ) );
 	}
 
 	/** Whether a durable cleanup timestamp is backed by a finalized lifecycle record. */

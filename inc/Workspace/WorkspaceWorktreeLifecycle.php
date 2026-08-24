@@ -1678,11 +1678,18 @@ trait WorkspaceWorktreeLifecycle {
 		$bootstrap = (array) ($metadata['provisioning']['bootstrap'] ?? array());
 		if ( 'running' === ($bootstrap['outcome'] ?? null) && is_array($bootstrap['capacity_reservation'] ?? null) ) {
 			$owner = WorktreeContextInjector::bootstrap_owner_state($bootstrap['owner'] ?? null);
-			if ( 'live' === $owner['state'] ) {
+			if ( 'active' === $owner['state'] ) {
 				return new \WP_Error(
 					'worktree_bootstrap_in_progress',
 					'Refusing to start a second dependency bootstrap while the recorded bootstrap owner is still live.',
 					array( 'status' => 409, 'retryable' => true, 'handle' => $handle, 'owner' => $owner )
+				);
+			}
+			if ( 'unverifiable' === $owner['state'] ) {
+				return new \WP_Error(
+					'worktree_bootstrap_owner_unverifiable',
+					'Cannot safely resume dependency bootstrap because its recorded owner cannot be verified. Inspect the owner process and retry after confirming it has exited.',
+					array( 'status' => 423, 'retryable' => true, 'handle' => $handle, 'owner' => $owner, 'remediation_command' => 'ps -p ' . (int) (($bootstrap['owner']['pid'] ?? 0)) . ' -o pid=,lstart=,command=' )
 				);
 			}
 			$reconciled = $this->record_bootstrap_outcome($handle, 'interrupted', array(), (string) $owner['reason']);

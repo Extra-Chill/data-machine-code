@@ -277,23 +277,43 @@ $workspace = sys_get_temp_dir() . '/dmc-capacity-lock-' . bin2hex(random_bytes(6
 mkdir($workspace, 0777, true);
 
 try {
+	$owner = array( 'pid' => 100, 'identity' => array( 'platform' => 'linux_proc', 'start_ticks' => '123' ) );
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => $owner['identity'] ));
+	capacity_lock_assert('active' === (DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_owner_state($owner)['state'] ?? null), 'Exact process identity was not active.');
+	$mac_owner = array( 'pid' => 101, 'identity' => array( 'platform' => 'ps', 'started_at' => 'Mon Aug 24 12:00:00 2026', 'command' => '/usr/bin/php worker', 'command_sha256' => hash('sha256', '/usr/bin/php worker') ) );
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => array_merge($mac_owner['identity'], array( 'command' => '/usr/bin/php other', 'command_sha256' => hash('sha256', '/usr/bin/php other') )) ));
+	capacity_lock_assert('stale' === (DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_owner_state($mac_owner)['state'] ?? null), 'Same coarse macOS start time with another command did not prove PID reuse.');
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => $mac_owner['identity'] ));
+	capacity_lock_assert('unverifiable' === (DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_owner_state($mac_owner)['state'] ?? null), 'Exact coarse macOS identity did not fail closed.');
+	foreach ( array( 'owner_probe_unavailable', 'owner_probe_denied', 'owner_probe_unparsable' ) as $reason ) {
+		DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'unverifiable', 'reason' => $reason ));
+		capacity_lock_assert('unverifiable' === (DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_owner_state($owner)['state'] ?? null), 'Unverifiable owner probe was classified as stale for ' . $reason . '.');
+	}
 	$GLOBALS['dmc_capacity_lock_options']['datamachine_worktree_metadata'] = array(
 		'repo@blocked-bootstrap' => array(
 			'provisioning' => array(
 				'bootstrap' => array(
 					'outcome' => 'running',
 					'capacity_reservation' => array( 'bytes' => 400, 'inodes' => 40 ),
-					'owner' => DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_owner(),
+					'owner' => $owner,
 				),
 			),
 		),
 	);
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => $owner['identity'] ));
 	$reservations = DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_capacity_reservations();
 	capacity_lock_assert(400 === $reservations['bytes'] && 40 === $reservations['inodes'] && array( 'repo@blocked-bootstrap' ) === $reservations['handles'], 'A running bootstrap reservation was not durably visible to the next admission.');
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'unverifiable', 'reason' => 'owner_probe_denied' ));
+	$reservations = DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_capacity_reservations();
+	capacity_lock_assert(400 === $reservations['bytes'] && 40 === $reservations['inodes'], 'Unverifiable owner reservation must remain capacity charged.');
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'stale', 'reason' => 'owner_process_missing' ));
+	$reservations = DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_capacity_reservations();
+	capacity_lock_assert(0 === $reservations['bytes'] && 0 === $reservations['inodes'], 'Verified stale owner reservation remained capacity charged.');
 	$GLOBALS['dmc_capacity_lock_options']['datamachine_worktree_metadata']['repo@blocked-bootstrap']['provisioning']['bootstrap']['outcome'] = 'succeeded';
 	$reservations = DataMachineCode\Workspace\WorktreeContextInjector::bootstrap_capacity_reservations();
 	capacity_lock_assert(0 === $reservations['bytes'] && 0 === $reservations['inodes'], 'Completed bootstrap reservations must not remain charged to later admissions.');
 	$GLOBALS['dmc_capacity_lock_options']['datamachine_worktree_metadata'] = array();
+	DataMachineCode\Workspace\WorktreeContextInjector::set_bootstrap_owner_probe_for_test(null);
 
 	$zero_argument_callback = WorkspaceMutationLock::with_repo($workspace, 'callback-compat', static fn(): string => 'zero-argument', 1);
 	capacity_lock_assert('zero-argument' === $zero_argument_callback, 'Zero-argument lock callback compatibility regressed.');
