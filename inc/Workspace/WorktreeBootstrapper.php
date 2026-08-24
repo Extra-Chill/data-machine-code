@@ -118,6 +118,7 @@ final class WorktreeBootstrapper {
 	private const DEFAULT_COMMAND_TIMEOUT_SECONDS = 600;
 	private const DEFAULT_TOTAL_TIMEOUT_SECONDS   = 1800;
 	private static ?float $bootstrap_deadline     = null;
+	private static $process_start_callback         = null;
 
 	/**
 	 * Run all applicable bootstrap steps inside the given worktree.
@@ -137,7 +138,7 @@ final class WorktreeBootstrapper {
 	 *     }>,
 	 * }
 	 */
-	public static function bootstrap( string $worktree_path, ?int $remaining_operation_seconds = null ): array {
+	public static function bootstrap( string $worktree_path, ?int $remaining_operation_seconds = null, ?callable $on_process_start = null ): array {
 		$started_at    = microtime(true);
 		$before_dirty  = self::dirty_paths($worktree_path);
 		$total_timeout = self::total_timeout_seconds();
@@ -145,6 +146,7 @@ final class WorktreeBootstrapper {
 			$total_timeout = min($total_timeout, max(1, $remaining_operation_seconds));
 		}
 		self::$bootstrap_deadline = microtime(true) + $total_timeout;
+		self::$process_start_callback = $on_process_start;
 		$package_discovery        = self::discover_package_roots( $worktree_path );
 		$steps                    = array();
 
@@ -180,6 +182,7 @@ final class WorktreeBootstrapper {
 		}
 		unset($step);
 		self::$bootstrap_deadline = null;
+		self::$process_start_callback = null;
 		return $result;
 	}
 
@@ -978,6 +981,7 @@ final class WorktreeBootstrapper {
 				'timeout_seconds'  => $timeout_seconds,
 				'output_cap_bytes' => self::OUTPUT_CAP_BYTES,
 				'error_as_result'  => true,
+				'on_start'         => self::$process_start_callback,
 			)
 		);
 

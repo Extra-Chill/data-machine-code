@@ -124,6 +124,10 @@ final class ProcessRunner {
 		if ( ! is_resource($process) ) {
 			return self::error($options, 'Process command failed to start.', array( 'status' => 500 ));
 		}
+		if ( is_callable($options['on_start'] ?? null) ) {
+			$status = proc_get_status($process);
+			$options['on_start'](array( 'pid' => (int) ($status['pid'] ?? 0) ));
+		}
 		if ( null !== $stdin ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- Process stdin is not a filesystem path.
 			fwrite($pipes[0], $stdin);

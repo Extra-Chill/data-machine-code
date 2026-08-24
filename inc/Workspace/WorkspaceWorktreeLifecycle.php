@@ -407,7 +407,10 @@ trait WorkspaceWorktreeLifecycle {
 			if ( 'claim_expired' === $reuse_policy ) {
 				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->claim_expired_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path));
 			}
-			$reused = WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path));
+			$reuse = fn() => WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path));
+			$reused = $bootstrap
+				? WorkspaceMutationLock::with_repo($this->workspace_path, 'workspace-capacity-admission', $reuse, self::worktree_capacity_admission_timeout_seconds(true))
+				: $reuse();
 			if ( is_wp_error($reused) || ! $bootstrap || empty($reused['bootstrap_deferred']) ) {
 				return $reused;
 			}
@@ -1674,17 +1677,33 @@ trait WorkspaceWorktreeLifecycle {
 	private function resume_incomplete_bootstrap( string $handle, array $existing, array $metadata, string $branch ): array|\WP_Error {
 		$bootstrap = (array) ($metadata['provisioning']['bootstrap'] ?? array());
 		if ( 'running' === ($bootstrap['outcome'] ?? null) && is_array($bootstrap['capacity_reservation'] ?? null) ) {
-			return new \WP_Error(
-				'worktree_bootstrap_in_progress',
-				'Refusing to start a second dependency bootstrap while this worktree has an active durable capacity reservation.',
-				array( 'status' => 409, 'retryable' => true, 'handle' => $handle )
-			);
+			$owner = WorktreeContextInjector::bootstrap_owner_state($bootstrap['owner'] ?? null);
+			if ( 'live' === $owner['state'] ) {
+				return new \WP_Error(
+					'worktree_bootstrap_in_progress',
+					'Refusing to start a second dependency bootstrap while the recorded bootstrap owner is still live.',
+					array( 'status' => 409, 'retryable' => true, 'handle' => $handle, 'owner' => $owner )
+				);
+			}
+			$reconciled = $this->record_bootstrap_outcome($handle, 'interrupted', array(), (string) $owner['reason']);
+			if ( is_wp_error($reconciled) ) {
+				return $reconciled;
+			}
+			$metadata = WorktreeContextInjector::get_metadata($handle) ?? $metadata;
 		}
 		$demand_plan = WorktreeBootstrapper::demand_plan_for_target((string) $existing['path'], 'HEAD', true);
 		if ( $demand_plan instanceof \WP_Error ) {
 			return $demand_plan;
 		}
 		$reservation = WorktreeBootstrapper::remaining_demand_after_materialization($demand_plan);
+		$capacity = $this->inspect_worktree_capacity((string) ($metadata['repo'] ?? ''), $branch, false, $reservation);
+		if ( 'refused' === ($capacity['status'] ?? null) ) {
+			return new \WP_Error(
+				'worktree_disk_budget_exceeded',
+				'Refusing to resume dependency bootstrap because the current workspace capacity budget is unsafe.',
+				array( 'status' => 507, 'handle' => $handle, 'disk_budget' => $capacity )
+			);
+		}
 		$stored = $this->record_bootstrap_outcome($handle, 'running', array(), null, $reservation);
 		if ( is_wp_error($stored) ) {
 			return $stored;
@@ -1706,7 +1725,7 @@ trait WorkspaceWorktreeLifecycle {
 
 	/** Run a claimed resume only after the short repository-lock claim has ended. */
 	private function complete_resumed_bootstrap( array $response ): array|\WP_Error {
-		$response['bootstrap'] = WorktreeBootstrapper::bootstrap((string) $response['path']);
+		$response['bootstrap'] = WorktreeBootstrapper::bootstrap((string) $response['path'], null, fn( array $process ) => $this->record_bootstrap_owner((string) $response['handle'], (int) ($process['pid'] ?? 0)));
 		$response = $this->record_completed_bootstrap($response);
 		if ( is_wp_error($response) ) {
 			return $response;
@@ -1724,7 +1743,7 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		$this->worktree_add_progress($progress_callback, 'bootstrap_start');
-		$response['bootstrap'] = WorktreeBootstrapper::bootstrap((string) $response['path'], $remaining_seconds);
+		$response['bootstrap'] = WorktreeBootstrapper::bootstrap((string) $response['path'], $remaining_seconds, fn( array $process ) => $this->record_bootstrap_owner((string) $response['handle'], (int) ($process['pid'] ?? 0)));
 		$this->worktree_add_progress($progress_callback, 'bootstrap_complete');
 		$response = $this->record_completed_bootstrap($response);
 		if ( is_wp_error($response) ) {
@@ -1784,9 +1803,11 @@ trait WorkspaceWorktreeLifecycle {
 		if ( 'running' === $outcome ) {
 			$bootstrap['started_at'] = gmdate('c');
 			$bootstrap['capacity_reservation'] = $reservation;
+			$bootstrap['owner'] = WorktreeContextInjector::bootstrap_owner();
 		} else {
 			$bootstrap['completed_at'] = gmdate('c');
 			unset($bootstrap['capacity_reservation']);
+			unset($bootstrap['owner']);
 			$bootstrap['steps'] = array_map(
 				static fn( array $step ): array => array_filter(array( 'step' => $step['step'] ?? null, 'status' => $step['status'] ?? null, 'reason' => $step['reason'] ?? null, 'command' => $step['command'] ?? null )),
 				(array) ($result['steps'] ?? array())
@@ -1800,6 +1821,19 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		$metadata['provisioning']['bootstrap'] = $bootstrap;
 		return WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
+	}
+
+	/** Replace the foreground owner with the actual ProcessRunner child identity. */
+	private function record_bootstrap_owner( string $handle, int $pid ): void {
+		if ( $pid <= 0 ) {
+			return;
+		}
+		$metadata = WorktreeContextInjector::get_metadata($handle);
+		if ( ! is_array($metadata) || 'running' !== ($metadata['provisioning']['bootstrap']['outcome'] ?? null) ) {
+			return;
+		}
+		$metadata['provisioning']['bootstrap']['owner'] = WorktreeContextInjector::bootstrap_owner($pid);
+		WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
 	}
 
 	/**

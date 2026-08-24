@@ -1063,7 +1063,7 @@ class WorktreeContextInjector {
 		$handles = array();
 		foreach ( is_array($all) ? $all : array() as $handle => $metadata ) {
 			$reservation = is_array($metadata['provisioning']['bootstrap']['capacity_reservation'] ?? null) ? $metadata['provisioning']['bootstrap']['capacity_reservation'] : null;
-			if ( ! is_array($reservation) || 'running' !== ($metadata['provisioning']['bootstrap']['outcome'] ?? null) ) {
+			if ( ! is_array($reservation) || 'running' !== ($metadata['provisioning']['bootstrap']['outcome'] ?? null) || 'stale' === (self::bootstrap_owner_state($metadata['provisioning']['bootstrap']['owner'] ?? null)['state'] ?? null) ) {
 				continue;
 			}
 			$bytes += max(0, (int) ($reservation['bytes'] ?? 0));
@@ -1071,6 +1071,47 @@ class WorktreeContextInjector {
 			$handles[] = (string) $handle;
 		}
 		return array( 'bytes' => $bytes, 'inodes' => $inodes, 'handles' => $handles );
+	}
+
+	/** Capture a PID and OS-issued process-start identity for bootstrap ownership. */
+	public static function bootstrap_owner( ?int $pid = null ): array {
+		$pid = $pid ?? getmypid();
+		return array( 'pid' => max(0, (int) $pid), 'start_id' => self::bootstrap_process_start_id((int) $pid), 'recorded_at' => gmdate('c') );
+	}
+
+	/** Resolve whether a recorded bootstrap owner is live, stale, or unverifiable. */
+	public static function bootstrap_owner_state( mixed $owner ): array {
+		if ( ! is_array($owner) || empty($owner['pid']) || empty($owner['start_id']) ) {
+			return array( 'state' => 'stale', 'reason' => 'owner_identity_missing' );
+		}
+		$current = self::bootstrap_process_start_id((int) $owner['pid']);
+		if ( null === $current ) {
+			return array( 'state' => 'stale', 'reason' => 'owner_process_missing' );
+		}
+		if ( ! hash_equals((string) $owner['start_id'], $current) ) {
+			return array( 'state' => 'stale', 'reason' => 'owner_pid_reused' );
+		}
+		return array( 'state' => 'live', 'reason' => 'owner_process_matches' );
+	}
+
+	/** Read a platform process-start token so PID reuse cannot claim a live owner. */
+	private static function bootstrap_process_start_id( int $pid ): ?string {
+		if ( $pid <= 0 ) {
+			return null;
+		}
+		$stat_path = '/proc/' . $pid . '/stat';
+		$stat = is_readable($stat_path) ? @file_get_contents($stat_path) : false; // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_get_contents -- Linux process identity probe.
+		if ( is_string($stat) && false !== ( $close = strrpos($stat, ')') ) ) {
+			$fields = preg_split('/\\s+/', trim(substr($stat, $close + 1)));
+			if ( is_array($fields) && isset($fields[19]) ) {
+				return 'proc:' . $fields[19];
+			}
+		}
+		$output = array();
+		$status = 1;
+		@exec('ps -o lstart= -p ' . $pid . ' 2>/dev/null', $output, $status); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Portable process identity probe.
+		$started = trim(implode('', $output));
+		return 0 === $status && '' !== $started ? 'ps:' . $started : null;
 	}
 
 	/** Whether a durable cleanup timestamp is backed by a finalized lifecycle record. */
