@@ -6,8 +6,6 @@ namespace DataMachine\Cli { class BaseCommand {} }
 
 namespace DataMachineCode\Abilities { class AbilityRegistry {} }
 
-namespace DataMachineCode\Support { class RuntimeCapabilities {} }
-
 namespace {
 	final class WP_CLI {
 		/** @var list<string> */
@@ -56,6 +54,7 @@ namespace {
 		$source = $root . '/source';
 		skew_tree($runtime, '0.65.0', 'active-build');
 		skew_tree($source, '0.66.1', 'source-build');
+		mkdir($runtime . '/.git');
 		for ($index = 0; $index < 500; ++$index) { mkdir($root . '/unrelated-' . $index); }
 		$GLOBALS['dmc_skew_config'] = array( 'runtime_file' => $runtime . '/data-machine-code.php', 'runtime_version' => '0.65.0', 'source_path' => $source );
 
@@ -69,6 +68,14 @@ namespace {
 		(new \DataMachineCode\Cli\Commands\RuntimeCommand())->identity(array(), array());
 		$cli = json_decode(WP_CLI::$lines[0] ?? '', true);
 		skew_assert('older' === ($cli['skew']['classification'] ?? null), 'CLI identity command did not render the skew diagnostic.');
+		$restricted = array();
+		$restricted_status = 1;
+		$restricted_script = 'define("ABSPATH", ' . var_export(__DIR__ . '/fixtures/', true) . '); require ' . var_export(dirname(__DIR__) . '/vendor/autoload.php', true) . '; $report = \\DataMachineCode\\Runtime\\RuntimeSourceSkewDiagnostic::inspect(' . var_export($runtime . '/data-machine-code.php', true) . ', "0.65.0", ' . var_export($source, true) . '); echo json_encode(array("exec_exists" => function_exists("exec"), "skew" => $report["skew"]["classification"]));';
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Verifies a separate PHP runtime with exec disabled.
+		exec(escapeshellarg(PHP_BINARY) . ' -d disable_functions=exec -r ' . escapeshellarg($restricted_script), $restricted, $restricted_status);
+		$restricted_report = json_decode(implode("\n", $restricted), true);
+		skew_assert(0 === $restricted_status && false === ($restricted_report['exec_exists'] ?? true), 'Restricted PHP fixture did not disable exec.');
+		skew_assert('older' === ($restricted_report['skew'] ?? null), 'Restricted PHP fixture did not preserve version skew diagnostics.');
 		WP_CLI::$lines = array();
 		$render = new ReflectionMethod(\DataMachineCode\Cli\Commands\WorkspaceCommand::class, 'render_workspace_error');
 		try { $render->invoke(new \DataMachineCode\Cli\Commands\WorkspaceCommand(), new WP_Error('fixture_failure', 'fixture failure')); } catch (RuntimeException) {}

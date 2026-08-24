@@ -7,6 +7,8 @@
 
 namespace DataMachineCode\Runtime;
 
+use DataMachineCode\Support\RuntimeCapabilities;
+
 defined('ABSPATH') || exit;
 
 final class RuntimeSourceSkewDiagnostic {
@@ -104,6 +106,10 @@ final class RuntimeSourceSkewDiagnostic {
 	}
 
 	private static function git_head( string $path ): string {
+		$shell = RuntimeCapabilities::shell_diagnostic();
+		if ( empty($shell['exec_available']) ) {
+			return '';
+		}
 		$output = array();
 		$status = 1;
 		exec('git -C ' . escapeshellarg($path) . ' rev-parse HEAD 2>/dev/null', $output, $status); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- A single bounded Git metadata probe.
