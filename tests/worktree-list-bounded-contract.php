@@ -10,7 +10,7 @@ namespace DataMachineCode\Workspace {
 		public const VALID_STATES = array( 'active' );
 		public static function normalize_state( string $state ): ?string { return 'active' === strtolower(trim($state)) ? 'active' : null; }
 		public static function project_lifecycle_state( array $metadata ): ?string { return self::normalize_state((string) ( $metadata['lifecycle_state'] ?? '' )); }
-		public static function get_metadata( string $key ): ?array { return array( 'lifecycle_state' => 'active' ) + ( str_contains($key, 'branch-300') || str_contains($key, 'branch-301') ? array( 'task' => 'duplicate-task' ) : array() ); }
+		public static function get_metadata( string $key ): ?array { return array( 'lifecycle_state' => 'active' ) + ( str_contains($key, 'branch-300') || str_contains($key, 'branch-301') ? array( 'task' => 'duplicate-task', 'origin_task' => array( 'task_url' => 'https://github.com/example/repo/issues/300', 'task_ref' => 'example/repo#300' ), 'owner_run_ref' => 'run-300' ) : array() ); }
 		public static function classify_liveness( ?array $metadata ): array { return array( 'liveness' => 'unknown', 'reason' => 'metadata_missing', 'heartbeat_age_seconds' => null ); }
 		public static function summarize_owner( ?array $metadata ): array { return array( 'site' => 'unknown', 'agent' => 'unknown', 'user' => 'unknown' ); }
 		public static function summarize_session( ?array $metadata ): array { return array( 'primary_id' => null, 'ids' => array() ); }
@@ -105,6 +105,13 @@ namespace {
 		$normalized = $harness->worktree_list(' repo ', 'ACTIVE', array( 'include_status' => false, 'include_disk' => false, 'limit' => 50 ));
 		$normalized_next = $harness->worktree_list('repo', 'active', array( 'include_status' => false, 'include_disk' => false, 'limit' => 50, 'cursor' => $normalized['next_cursor'] ));
 		bounded_worktree_assert('repo@branch-050' === ($normalized_next['worktrees'][0]['handle'] ?? null), 'Cursor validation must use normalized repository and state filters.');
+		$probes_before_task = $harness->expensive_probes;
+		$task_candidates = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'limit' => 1, 'task_ref' => 'HTTPS://GITHUB.COM/EXAMPLE/REPO/ISSUES/300', 'owner_run_ref' => 'run-300' ));
+		bounded_worktree_assert(2 === $task_candidates['total'] && 'repo@branch-300' === ($task_candidates['worktrees'][0]['handle'] ?? null), 'Task and owner filters must select candidates beyond the first unfiltered page.');
+		bounded_worktree_assert($probes_before_task === $harness->expensive_probes, 'Task and owner filtering must run before requested probes.');
+		$task_next = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'limit' => 1, 'task_ref' => 'https://github.com/example/repo/issues/300', 'owner_run_ref' => 'run-300', 'cursor' => $task_candidates['next_cursor'] ));
+		bounded_worktree_assert('repo@branch-301' === ($task_next['worktrees'][0]['handle'] ?? null), 'Task-filtered cursor continuation must be deterministic.');
+		bounded_worktree_assert(is_wp_error($harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'limit' => 1, 'task_ref' => 'https://github.com/example/repo/issues/300', 'owner_run_ref' => 'other-run', 'cursor' => $task_candidates['next_cursor'] ))), 'Task cursor must reject a changed owner scope.');
 		$missing = $harness->worktree_list(null, null, array( 'handle' => 'repo@missing', 'include_status' => false, 'include_disk' => false, 'limit' => 50 ));
 		bounded_worktree_assert(0 === $missing['total'] && 0 === $missing['returned'] && null === $missing['next_cursor'] && array() === $missing['summary']['repos'], 'Missing handles must return the advertised empty envelope shape.');
 

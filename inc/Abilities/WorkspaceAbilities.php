@@ -2155,6 +2155,14 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Optional exact worktree handle. Filters before status and disk probes.',
 							),
+							'task_ref'       => array(
+								'type'        => 'string',
+								'description' => 'Optional exact recorded task URL or task reference. Filters before pagination and expensive probes.',
+							),
+							'owner_run_ref'  => array(
+								'type'        => 'string',
+								'description' => 'Optional exact recorded owner-run reference. Filters before pagination and expensive probes.',
+							),
 							'state'          => array(
 								'type'        => 'string',
 								'description' => 'Optional lifecycle state filter.',
@@ -4548,6 +4556,11 @@ class WorkspaceAbilities {
 			'limit'          => $limit,
 			'all'            => ! empty( $input['all'] ),
 		);
+		foreach ( array( 'task_ref', 'owner_run_ref' ) as $filter ) {
+			if ( isset( $input[ $filter ] ) ) {
+				$opts[ $filter ] = (string) $input[ $filter ];
+			}
+		}
 		if ( isset( $input['cursor'] ) ) {
 			$opts['cursor'] = (string) $input['cursor'];
 		}

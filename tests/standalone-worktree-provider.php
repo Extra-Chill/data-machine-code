@@ -75,6 +75,9 @@ try {
 	standalone_provider_git($primary, array( 'push', '-u', 'origin', 'main' ));
 	standalone_provider_git($primary, array( 'worktree', 'add', '-b', 'fix/example', $path ));
 	standalone_provider_git($path, array( 'push', '-u', 'origin', 'fix/example' ));
+	$git_pointer = trim((string) file_get_contents($path . '/.git'));
+	$git_dir = trim(substr($git_pointer, strlen('gitdir:')));
+	file_put_contents($git_dir . '/datamachine-code-task.json', json_encode(array( 'task_url' => 'https://github.com/example/fixture/issues/1' ), JSON_THROW_ON_ERROR));
 
 	$missing = standalone_provider_run(array( PHP_BINARY, $script, 'identity', $root, 'fixture@missing' ));
 	standalone_provider_assert(0 === $missing['status'], 'Missing identity must be a successful typed decline.');
@@ -91,6 +94,8 @@ try {
 	standalone_provider_assert(realpath($path) === $identity_payload['path'], 'Identity path is not canonical.');
 	standalone_provider_assert('fix/example' === $identity_payload['branch'], 'Identity branch mismatch.');
 	standalone_provider_assert(false === $identity_payload['primary'], 'Linked worktree was classified as primary.');
+	standalone_provider_assert('https://github.com/example/fixture/issues/1' === ($identity_payload['task_url'] ?? null), 'Identity omitted the persisted task tracker.');
+	standalone_provider_assert(str_contains((string) base64_decode(strtr(explode('.', $identity_payload['token'], 3)[2], '-_', '+/'), true), 'https://github.com/example/fixture/issues/1'), 'Identity token did not bind the persisted task tracker.');
 
 	$safety = standalone_provider_run(array( PHP_BINARY, $script, 'safety', $root, $identity_payload['token'] ));
 	standalone_provider_assert(0 === $safety['status'], 'Clean safety attestation failed: ' . $safety['stderr']);
@@ -138,7 +143,9 @@ try {
 	$untracked_path = $root . '/fixture@untracked';
 	standalone_provider_git($primary, array( 'worktree', 'add', '-b', 'fix/untracked', $untracked_path ));
 	$untracked_identity = standalone_provider_run(array( PHP_BINARY, $script, 'identity', $root, 'fixture@untracked' ));
-	$untracked_token = json_decode($untracked_identity['stdout'], true, 512, JSON_THROW_ON_ERROR)['token'];
+	$untracked_identity_payload = json_decode($untracked_identity['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	standalone_provider_assert(null === ($untracked_identity_payload['task_url'] ?? null), 'Identity must preserve absent tracker metadata as null.');
+	$untracked_token = $untracked_identity_payload['token'];
 	$untracked = standalone_provider_run(array( PHP_BINARY, $script, 'converge', $root, $untracked_token, $base ));
 	$untracked_payload = json_decode($untracked['stdout'], true, 512, JSON_THROW_ON_ERROR);
 	standalone_provider_assert('unpushed_probe_failed' === $untracked_payload['code'], 'Unknown upstream at base was not refused.');

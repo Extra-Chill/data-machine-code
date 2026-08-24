@@ -78,9 +78,13 @@ namespace {
 	$envelope = json_decode(WP_CLI::$output, true, 512, JSON_THROW_ON_ERROR);
 	pagination_compat_assert(100 === ($envelope['total'] ?? null) && 'next' === ($envelope['next_cursor'] ?? null), 'Envelope JSON must expose continuation metadata.');
 
+	WP_CLI::$output = '';
+	invoke_worktree_list($command, array( 'format' => 'json', 'envelope' => true, 'task-ref' => 'https://github.com/example/repo/issues/100', 'owner-run-ref' => 'cook/run/100' ));
+	pagination_compat_assert('https://github.com/example/repo/issues/100' === ($GLOBALS['dmc_worktree_list_ability']->inputs[2]['task_ref'] ?? null) && 'cook/run/100' === ($GLOBALS['dmc_worktree_list_ability']->inputs[2]['owner_run_ref'] ?? null), 'CLI did not forward task and owner filters to the worktree ability.');
+
 	invoke_worktree_list($command, array( 'format' => 'csv' ));
 	invoke_worktree_list($command, array( 'format' => 'yaml' ));
-	pagination_compat_assert(true === ($GLOBALS['dmc_worktree_list_ability']->inputs[2]['all'] ?? false) && true === ($GLOBALS['dmc_worktree_list_ability']->inputs[3]['all'] ?? false), 'CSV and YAML must request exhaustive row streams.');
+	pagination_compat_assert(true === ($GLOBALS['dmc_worktree_list_ability']->inputs[3]['all'] ?? false) && true === ($GLOBALS['dmc_worktree_list_ability']->inputs[4]['all'] ?? false), 'CSV and YAML must request exhaustive row streams.');
 
 	try {
 		invoke_worktree_list($command, array( 'format' => 'json', 'limit' => 10 ));

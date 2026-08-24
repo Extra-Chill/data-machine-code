@@ -81,6 +81,10 @@ if ( 'worker' === ( $argv[1] ?? '' ) ) {
 			throw new RuntimeException(sprintf('Expected workspace ability %s was not registered.', $ability));
 		}
 	}
+	$worktree_list_schema = wp_get_ability('datamachine-code/workspace-worktree-list')['input_schema']['properties'] ?? array();
+	if ( ! isset($worktree_list_schema['task_ref'], $worktree_list_schema['owner_run_ref']) ) {
+		throw new RuntimeException('Worktree-list ability omitted task and owner filters.');
+	}
 	$diagnostic = \DataMachineCode\Abilities\WorkspaceAbilities::unavailable_diagnostic('datamachine-code/workspace-unsupported');
 	if ( 'datamachine_code_ability_unavailable' !== ( $diagnostic['code'] ?? null ) || 1 !== ( $diagnostic['registration_generation'] ?? null ) || ! in_array('datamachine-code/workspace-worktree-add', $diagnostic['registered_siblings'] ?? array(), true) ) {
 		throw new RuntimeException('Unavailable-ability diagnostic omitted lifecycle or sibling information.');
