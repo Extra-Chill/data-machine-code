@@ -409,6 +409,12 @@ trait WorkspaceRepositoryLifecycle {
 			return $this->clone_failed_error($result, $name, $repo_path, $url);
 		}
 
+		$this->emit_clone_progress($progress_callback, 'verify', sprintf('Verifying cloned checkout at %s.', $repo_path), $started_at);
+		$validation = $this->validate_clone_target($url, $name, $repo_path);
+		if ( is_wp_error($validation) ) {
+			return $validation;
+		}
+
 		// Guarantee the freshly cloned default branch tracks its remote (issue
 		// #833). `git clone` normally sets this, but some server/git/partial-clone
 		// configurations leave the default branch with no upstream, which later
@@ -646,7 +652,7 @@ trait WorkspaceRepositoryLifecycle {
 	 * @param  float         $started_at        Clone start timestamp.
 	 * @return array{success: true, output: string}|\WP_Error
 	 */
-	private function run_clone_command( CommandSpec $command, ?callable $progress_callback, float $started_at ): array|\WP_Error {
+	protected function run_clone_command( CommandSpec $command, ?callable $progress_callback, float $started_at ): array|\WP_Error {
 		$result = ProcessRunner::run(
 			$command,
 			array(
@@ -675,6 +681,48 @@ trait WorkspaceRepositoryLifecycle {
 		return array(
 			'success' => true,
 			'output'  => $result['output'],
+		);
+	}
+
+	/**
+	 * Verify that a successful clone runner result materialized the requested primary.
+	 *
+	 * @return true|\WP_Error
+	 */
+	private function validate_clone_target( string $url, string $name, string $repo_path ): true|\WP_Error {
+		$phase         = 'post_clone_validation';
+		$state         = 'missing';
+		$actual_remote = null;
+		if ( GitCheckout::exists($repo_path) ) {
+			$actual_remote = $this->git_get_remote($repo_path);
+			$state         = null === $actual_remote || '' === trim($actual_remote) ? 'incomplete' : 'remote_mismatch';
+			if ( null !== $actual_remote && $this->normalize_git_remote_url($url) === $this->normalize_git_remote_url($actual_remote) ) {
+				return true;
+			}
+		} elseif ( is_dir($repo_path) ) {
+			$state = 'incomplete';
+		}
+
+		$next_steps = array(
+			sprintf('Inspect the target: %s', $repo_path),
+			sprintf('Confirm it is a checkout of the requested repository: %s', $url),
+			sprintf('If the target is safe to discard, remove it explicitly: wp datamachine-code workspace remove %s', $name),
+			'Then retry the clone command.',
+		);
+
+		return new \WP_Error(
+			'clone_postcondition_failed',
+			sprintf('Clone postcondition failed during %s for repository %s at %s: target is %s. Next steps: %s', $phase, $url, $repo_path, $state, implode(' ', $next_steps)),
+			array(
+				'status'           => 500,
+				'phase'            => $phase,
+				'repository'       => $url,
+				'name'             => $name,
+				'path'             => $repo_path,
+				'validation_state' => $state,
+				'actual_remote'    => $actual_remote,
+				'next_steps'       => $next_steps,
+			)
 		);
 	}
 
