@@ -101,11 +101,11 @@ final class ProcessRunner {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private static function run_via_proc_open( string|array $command, array $options, int $timeout_seconds, int $output_cap, ?callable $on_output, ?string $cwd, ?array $env ): array|\WP_Error {
-		$descriptor_spec = array(
+		$descriptor_spec         = array(
 			1 => array( 'pipe', 'w' ),
 			2 => array( 'pipe', 'w' ),
 		);
-		$stdin = isset($options['stdin']) && is_string($options['stdin']) ? $options['stdin'] : null;
+		$stdin                   = isset($options['stdin']) && is_string($options['stdin']) ? $options['stdin'] : null;
 		$fail_on_output_overflow = ! empty($options['fail_on_output_overflow']);
 		if ( null !== $stdin && strlen($stdin) > 4096 ) {
 			return self::error($options, 'Process command stdin exceeds the supported limit.', array( 'status' => 400 ));
@@ -157,7 +157,7 @@ final class ProcessRunner {
 				$output .= $chunk;
 				if ( $fail_on_output_overflow && $output_cap > 0 && strlen($output) > $output_cap ) {
 					$overflow_status = proc_get_status($process);
-					$remaining = self::terminate_timed_out_process($process, $pipes, $output, $stdout, $stderr, (int) $overflow_status['pid'], $uses_process_group);
+					$remaining       = self::terminate_timed_out_process($process, $pipes, $output, $stdout, $stderr, (int) $overflow_status['pid'], $uses_process_group);
 					self::notify_completion($options, $process_pid);
 					return self::error(
 						$options,
@@ -255,7 +255,8 @@ final class ProcessRunner {
 		}
 		try {
 			$options['on_complete'](array( 'pid' => $pid ));
-		} catch ( \Throwable ) {
+		} catch ( \Throwable $error ) {
+			unset($error);
 			// Lifecycle observation must not alter process result handling.
 		}
 	}

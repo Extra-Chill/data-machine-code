@@ -722,6 +722,7 @@ try {
 		$bootstrap_progress[] = $event['phase'] ?? null;
 	});
 	assert_true(! is_wp_error($interrupted_bootstrap), is_wp_error($interrupted_bootstrap) ? $interrupted_bootstrap->get_error_message() : 'interrupted bootstrap fixture creation failed');
+	assert_true('verified' === ( $interrupted_bootstrap['handoff_freshness']['status'] ?? null ) && ! empty($interrupted_bootstrap['handoff_freshness']['proof']) && 'succeeded' === ( $interrupted_bootstrap['metadata']['provisioning']['bootstrap']['outcome'] ?? null ), 'completed bootstrap allocation did not receive a verified handoff proof');
 	$bootstrap_start = array_search('bootstrap_start', $bootstrap_progress, true);
 	$bootstrap_complete = array_search('bootstrap_complete', $bootstrap_progress, true);
 	$inventory_metadata = array_search('inventory_metadata', $bootstrap_progress, true);
