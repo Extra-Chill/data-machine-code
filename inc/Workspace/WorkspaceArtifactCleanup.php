@@ -773,10 +773,10 @@ trait WorkspaceArtifactCleanup {
 		}
 
 		return array(
-			'reason_code'            => 'uncertain' === $status ? 'active_process_probe_uncertain' : 'active_process_probe_unavailable',
-			'protecting_reason'      => 'active_process_probe_' . $status,
-			'reason'                 => 'active process use could not be authoritatively excluded; safe cleanup is failing closed',
-			'process_probe'          => $probe,
+			'reason_code'               => 'uncertain' === $status ? 'active_process_probe_uncertain' : 'active_process_probe_unavailable',
+			'protecting_reason'         => 'active_process_probe_' . $status,
+			'reason'                    => 'active process use could not be authoritatively excluded; safe cleanup is failing closed',
+			'process_probe'             => $probe,
 			'process_probe_diagnostics' => $this->process_probe_skip_diagnostics($probe, $worktree_path, $handle),
 		);
 	}
@@ -811,7 +811,7 @@ trait WorkspaceArtifactCleanup {
 			'classification'       => $classification,
 			'error'                => $this->process_probe_error_code($error),
 			'candidate_path'       => $worktree_path,
-			'inspected_path_count' => max(0, ( int ) ( $diagnostics['path_records'] ?? count((array) ( $probe['records'] ?? array() )) )),
+			'inspected_path_count' => max(0, (int) ( $diagnostics['path_records'] ?? count( (array) ( $probe['records'] ?? array() ) ) )),
 			'retry_command'        => $this->process_probe_retry_command($handle),
 			'guidance'             => 'Restore complete process-path visibility, then retry this candidate with a bounded non-destructive artifact cleanup dry run using safety probes and --limit=1. Cleanup remains blocked until a complete no-match probe succeeds.',
 		);
@@ -872,14 +872,14 @@ trait WorkspaceArtifactCleanup {
 		}
 
 		$snapshot = $this->artifact_process_path_records($fresh);
-		$matches  = $this->match_artifact_process_records(( array ) ( $snapshot['records'] ?? array() ), $roots);
+		$matches  = $this->match_artifact_process_records( (array) ( $snapshot['records'] ?? array() ), $roots );
 
 		// A truncated host-wide lsof result cannot clear a candidate. On providers
 		// that support path-scoped inspection, retry only this candidate so unrelated
 		// sibling builds cannot poison its evidence.
 		if ( array() === $matches && 'uncertain' === (string) ( $snapshot['status'] ?? '' ) ) {
 			$scoped  = $this->artifact_process_path_probe()->snapshot_for_paths($roots);
-			$matches = $this->match_artifact_process_records(( array ) ( $scoped['records'] ?? array() ), $roots);
+			$matches = $this->match_artifact_process_records( (array) ( $scoped['records'] ?? array() ), $roots );
 			if ( 'available' === (string) ( $scoped['status'] ?? '' ) || array() !== $matches ) {
 				$snapshot = $scoped;
 			}
