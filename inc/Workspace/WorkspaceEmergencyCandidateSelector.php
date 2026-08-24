@@ -86,6 +86,18 @@ final class WorkspaceEmergencyCandidateSelector {
 				$next_states[] = $next;
 			}
 
+			$unique_states = array();
+			foreach ( $next_states as $state ) {
+				$key = sprintf(
+					'%d:%d:%d',
+					min($target_bytes, $state['bytes']),
+					min($target_inodes, $state['inodes']),
+					count($state['selected'])
+				);
+				$unique_states[ $key ] ??= $state;
+			}
+			$next_states = array_values($unique_states);
+
 			usort(
 				$next_states,
 				static function ( array $left, array $right ) use ( $target_bytes, $target_inodes ): int {

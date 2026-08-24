@@ -122,17 +122,27 @@ final class GitRunner {
 		if ( is_wp_error($result) ) {
 			$data = method_exists($result, 'get_error_data') ? $result->get_error_data() : array();
 			$data = is_array($data) ? $data : array();
+			if ( isset($data['output']) && is_string($data['output']) ) {
+				$data['output'] = self::sanitize_diagnostic($data['output']);
+			}
 			if ( $timeout_seconds > 0 && isset($data['timeout']) ) {
-				return new \WP_Error('git_command_timeout', $result->get_error_message(), $data);
+				return new \WP_Error('git_command_timeout', self::sanitize_diagnostic($result->get_error_message()), $data);
 			}
 
-			return new \WP_Error('git_command_failed', str_replace('Process command', 'Git command', $result->get_error_message()), $data);
+			return new \WP_Error('git_command_failed', self::sanitize_diagnostic(str_replace('Process command', 'Git command', $result->get_error_message())), $data);
 		}
 
 		return array(
 			'success' => true,
 			'output'  => $result['output'],
 		);
+	}
+
+	/** Remove URL userinfo and query credentials from command diagnostics. */
+	private static function sanitize_diagnostic( string $diagnostic ): string {
+		$diagnostic = preg_replace('#([a-z][a-z0-9+.-]*://)[^\s/@:]+(?::[^\s/@]*)?@#i', '$1***@', $diagnostic) ?? $diagnostic;
+		$diagnostic = preg_replace('#([?&](?:access_token|token|password|credential|key)=)[^\s&]+#i', '$1***', $diagnostic) ?? $diagnostic;
+		return $diagnostic;
 	}
 
 	/**

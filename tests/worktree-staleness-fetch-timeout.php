@@ -34,7 +34,7 @@ $result = WorktreeStalenessProbe::fetch(
 	'/repo',
 	static function ( string $path, string $args, int $timeout ) use ( &$calls ): WP_Error {
 		$calls[] = array( $path, $args, $timeout );
-		return new WP_Error('git_command_timeout', 'Process command timed out after 5 second(s).', array( 'timeout' => 5, 'output' => 'ssh: connect to host github.com port 22: Operation timed out' ));
+		return new WP_Error('git_command_timeout', 'Process command timed out after 5 second(s).', array( 'timeout' => 5, 'output' => 'fatal: could not read https://user:secret@example.test/repo?access_token=secret-token' ));
 	}
 );
 
@@ -44,6 +44,8 @@ staleness_timeout_assert_same(2, $result['attempts'] ?? null, 'Timed-out freshne
 staleness_timeout_assert_same(true, $result['timed_out'] ?? null, 'Timed-out freshness fetch must remain distinct from stale evidence.');
 staleness_timeout_assert_same(5, $result['timeout_seconds'] ?? null, 'Timed-out freshness fetch must surface its budget.');
 staleness_timeout_assert_same(true, str_contains((string) ( $result['error'] ?? '' ), 'allow_unverified_freshness=true'), 'Timed-out freshness fetch must provide an actionable opt-in diagnostic.');
-staleness_timeout_assert_same(true, str_contains((string) ( $result['error'] ?? '' ), 'ssh: connect to host github.com port 22: Operation timed out'), 'Timed-out freshness fetch must expose Git stderr.');
+staleness_timeout_assert_same(false, str_contains((string) ( $result['error'] ?? '' ), 'user:secret'), 'Timed-out freshness fetch leaked URL credentials.');
+staleness_timeout_assert_same(false, str_contains((string) ( $result['error'] ?? '' ), 'secret-token'), 'Timed-out freshness fetch leaked query credentials.');
+staleness_timeout_assert_same(true, str_contains((string) ( $result['error'] ?? '' ), 'https://***@example.test/repo?access_token=***'), 'Timed-out freshness fetch did not retain a sanitized remote diagnostic.');
 
 fwrite(STDOUT, "worktree-staleness-fetch-timeout: ok\n");

@@ -71,7 +71,7 @@ final class WorktreeStalenessProbe {
 
 			$data  = $result->get_error_data();
 			$tail  = is_array($data) && isset($data['output']) ? trim( (string) $data['output']) : '';
-			$error = '' !== $tail ? $tail : $result->get_error_message();
+			$error = self::sanitize_remote_diagnostic('' !== $tail ? $tail : $result->get_error_message());
 			$code  = method_exists($result, 'get_error_code') ? $result->get_error_code() : '';
 			if ( $attempt === self::FETCH_MAX_ATTEMPTS ) {
 				if ( 'git_command_timeout' === $code ) {
@@ -93,6 +93,13 @@ final class WorktreeStalenessProbe {
 		}
 
 		return array( 'ok' => false, 'attempts' => self::FETCH_MAX_ATTEMPTS );
+	}
+
+	/** Remove URL userinfo and query credentials before remote output is surfaced. */
+	public static function sanitize_remote_diagnostic( string $diagnostic ): string {
+		$diagnostic = preg_replace('#([a-z][a-z0-9+.-]*://)[^\s/@:]+(?::[^\s/@]*)?@#i', '$1***@', $diagnostic) ?? $diagnostic;
+		$diagnostic = preg_replace('#([?&](?:access_token|token|password|credential|key)=)[^\s&]+#i', '$1***', $diagnostic) ?? $diagnostic;
+		return $diagnostic;
 	}
 
 	/**
