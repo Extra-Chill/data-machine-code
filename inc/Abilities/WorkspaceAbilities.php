@@ -1443,7 +1443,29 @@ class WorkspaceAbilities {
 							),
 							'apply_intent'   => array( 'type' => 'object' ),
 							'apply'          => array( 'type' => 'object' ),
-							'legacy_handoff' => array( 'type' => 'object' ),
+							'legacy_handoff' => array( 'type' => array( 'object', 'null' ) ),
+						),
+						'oneOf'      => array(
+							array(
+								'properties' => array(
+									'disposition'    => array(
+										'type' => 'string',
+										'enum' => array( 'create', 'exact_reuse', 'adoptable', 'owner_conflict', 'unsafe', 'stale', 'capacity_blocked' ),
+									),
+									'legacy_handoff' => self::worktreeLegacyHandoffSchema( nullable: true ),
+								),
+								'required'   => array( 'disposition' ),
+							),
+							array(
+								'properties' => array(
+									'disposition'    => array(
+										'type' => 'string',
+										'enum' => array( 'legacy_handoff_required' ),
+									),
+									'legacy_handoff' => self::worktreeLegacyHandoffSchema( required: true ),
+								),
+								'required'   => array( 'disposition', 'legacy_handoff' ),
+							),
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreePlan' ),
@@ -4516,6 +4538,107 @@ class WorkspaceAbilities {
 			'task_ref'                   => array( 'type' => 'string' ),
 			'require_task_tracker'       => array( 'type' => 'boolean' ),
 			...$policy,
+		);
+	}
+
+	/** Typed legacy handoff evidence returned by worktree planning. */
+	private static function worktreeLegacyHandoffSchema( bool $required = false, bool $nullable = false ): array {
+		$check = array( 'type' => 'boolean' );
+		if ( $required ) {
+			$check['enum'] = array( true );
+		}
+		$vetoes  = array(
+			'type'  => 'array',
+			'items' => array( 'type' => 'string' ),
+		);
+		$actions = array(
+			'type'  => 'array',
+			'items' => array(
+				'type'       => 'object',
+				'properties' => array(
+					'type'                    => array(
+						'type' => 'string',
+						'enum' => array( 'adopt_runtime', 'replace_isolated' ),
+					),
+					'ability'                 => array(
+						'type' => 'string',
+						'enum' => array( 'datamachine-code/workspace-worktree-legacy-handoff-apply' ),
+					),
+					'mode'                    => array(
+						'type' => 'string',
+						'enum' => array( 'adopt_runtime', 'replace_isolated' ),
+					),
+					'old_handle'              => array( 'type' => array( 'string', 'null' ) ),
+					'terminal_classification' => array(
+						'type' => 'string',
+						'enum' => array( 'superseded' ),
+					),
+					'lineage'                 => array( 'type' => 'object' ),
+				),
+				'required'   => array( 'type', 'ability', 'mode', 'old_handle', 'lineage' ),
+				'oneOf'      => array(
+					array(
+						'properties' => array(
+							'type' => array(
+								'type' => 'string',
+								'enum' => array( 'adopt_runtime' ),
+							),
+							'mode' => array(
+								'type' => 'string',
+								'enum' => array( 'adopt_runtime' ),
+							),
+						),
+					),
+					array(
+						'properties' => array(
+							'type' => array(
+								'type' => 'string',
+								'enum' => array( 'replace_isolated' ),
+							),
+							'mode' => array(
+								'type' => 'string',
+								'enum' => array( 'replace_isolated' ),
+							),
+						),
+						'required'   => array( 'terminal_classification' ),
+					),
+				),
+			),
+		);
+		if ( $required ) {
+			$vetoes['maxItems']  = 0;
+			$actions['minItems'] = 2;
+			$actions['maxItems'] = 2;
+		} else {
+			$vetoes['minItems']  = 1;
+			$actions['maxItems'] = 0;
+		}
+
+		return array(
+			'type'       => $nullable ? array( 'object', 'null' ) : 'object',
+			'properties' => array(
+				'type'          => array(
+					'type' => 'string',
+					'enum' => array( 'legacy_handoff' ),
+				),
+				'status'        => array(
+					'type' => 'string',
+					'enum' => array( $required ? 'legacy_handoff_required' : 'legacy_handoff_refused' ),
+				),
+				'candidate'     => array( 'type' => 'object' ),
+				'task_identity' => array( 'type' => 'string' ),
+				'owner'         => array( 'type' => 'object' ),
+				'runtime_delta' => array( 'type' => 'object' ),
+				'checks'        => array(
+					'type'       => 'object',
+					'properties' => array_fill_keys( array( 'same_repository', 'same_task', 'non_primary', 'clean', 'pushed', 'stopped_or_stale', 'unlocked', 'no_active_process', 'candidate_verifiable', 'runtime_mismatch' ), $check ),
+					'required'   => array( 'same_repository', 'same_task', 'non_primary', 'clean', 'pushed', 'stopped_or_stale', 'unlocked', 'no_active_process', 'candidate_verifiable', 'runtime_mismatch' ),
+				),
+				'vetoes'        => $vetoes,
+				'lineage'       => array( 'type' => 'object' ),
+				'actions'       => $actions,
+			),
+			'required'   => array( 'type', 'status', 'candidate', 'task_identity', 'owner', 'runtime_delta', 'checks', 'vetoes', 'lineage', 'actions' ),
 		);
 	}
 
